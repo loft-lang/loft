@@ -9,6 +9,8 @@ still covers the rule totally — and record which rules are done.
     scripts/suite_curate.py plan <rule>       # one rule's evidence and the proposed core
     scripts/suite_curate.py related <rule> <regex>   # every test home's programs matching the rule's
                                               # construct, and the code sites that enforce it
+    scripts/suite_curate.py merge <target> <intro> <cell>…   # one clause's cells into one, every
+                                              # case and receipt kept (gate E verdicts must agree)
     scripts/suite_curate.py done <rule> [note]   # record the rule as curated (after the commit)
     scripts/suite_curate.py init              # (re)write the ledger's rows for every defined rule
 
@@ -218,6 +220,104 @@ def related(tag, pattern):
     return 0
 
 
+GATE_E = os.path.join(ROOT, "selfhost", "front", "elab_gate.baseline.tsv")
+
+
+def gate_e_verdict(cell):
+    """Gate E's verdict on a suite cell: its baseline row's, or `agree` when it has none (the
+    baseline lists only the programs the self-hosted elaborator does not agree with yet)."""
+    suite = os.path.normpath(os.environ.get("LOFT_SUITE_DIR") or os.path.join(os.path.dirname(ROOT), "loft-suite"))
+    item = "loft-suite/" + os.path.relpath(os.path.normpath(os.path.abspath(cell)), suite)
+    for line in open(GATE_E, encoding="utf-8"):
+        f = line.rstrip("\n").split("\t")
+        if len(f) == 3 and f[2] == item:
+            return f[1]
+    return "agree"
+
+
+def merge(target, intro_file, cells):
+    """Merge suite cells of ONE clause into `target`, every case and receipt kept: each cell's
+    header (license lines off) is a section of its own, its code follows verbatim, a `main`
+    becomes `test_<the cell's name>`, and a top-level name or enum variant that another section
+    already declares takes a per-section prefix (whole word, strings included, so a printed
+    variant and its expected text change together).  Refused when gate E's verdicts differ: the
+    merged file is refused whole if any part is, and the gate would lose a program it handled.
+    Writes `target` only; retiring the cells, gate E's rows and the pin are the caller's."""
+    verdicts = {c: gate_e_verdict(c) for c in cells}
+    if len(set(verdicts.values())) > 1:
+        print("gate E's verdicts differ — not merged:")
+        for c, v in verdicts.items():
+            print(f"  {v:<8} {os.path.basename(c)}")
+        return 1
+    intro = open(intro_file, encoding="utf-8").read().rstrip("\n").split("\n")
+
+    def declared(code):
+        top = set(re.findall(r"^(?:pub )?(?:fn|struct|enum|value struct|type) ([A-Za-z_0-9]+)", code, re.M))
+        variants = set()
+        for m in re.finditer(r"^enum [A-Za-z_0-9]+(?:<[^>]*>)?\s*\{", code, re.M):
+            # The enum's body, brace-matched: a variant may carry a braced payload.
+            depth, j = 1, m.end()
+            while j < len(code) and depth:
+                depth += {"{": 1, "}": -1}.get(code[j], 0)
+                j += 1
+            body = code[m.end():j - 1]
+            depth, cur, parts = 0, "", []
+            for ch in body:
+                if ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                elif ch == "," and depth == 0:
+                    parts.append(cur)
+                    cur = ""
+                elif depth == 0:
+                    cur += ch
+            parts.append(cur)
+            variants |= {x.strip().split()[0] for x in parts if x.strip() and x.strip()[0].isupper()}
+        return top, variants
+
+    taken_top, taken_var = set(), set()
+    heads, codes = [], []
+    for k, cell in enumerate(cells):
+        lines = open(cell, encoding="utf-8").read().split("\n")
+        i = next(j for j, l in enumerate(lines) if l and not l.startswith("//"))
+        head = lines[2:i]
+        while head and head[0].strip() in ("//", ""):
+            head.pop(0)
+        while head and head[-1].strip() in ("//", ""):
+            head.pop()
+        code = "\n".join(lines[i:]).strip() + "\n"
+        stem = os.path.basename(cell)[:-5]
+        top, var = declared(code)
+        px = "s" + str(k + 1)
+        ren = {}
+        for n in top:
+            if n in taken_top and not n.startswith("test_"):
+                ren[n] = (px.upper() + n) if n[0].isupper() else (px + "_" + n)
+        for v in var:
+            if v in taken_var:
+                ren[v] = px.upper() + v
+        for o, nw in sorted(ren.items(), key=lambda x: -len(x[0])):
+            code = re.sub(r"\b" + re.escape(o) + r"\b", nw, code)
+        if "fn main()" in code:
+            tname = "test_" + re.sub(r"[^a-z0-9_]", "_", re.sub(r"^[0-9]+-", "", stem).replace("-", "_"))[:70]
+            code = code.replace("fn main()", f"fn {tname}()", 1)
+        for t in re.findall(r"^fn (test_[a-z_0-9]+)", code, re.M):
+            if t in taken_top:
+                raise SystemExit(f"two sections declare {t}")
+        t2, v2 = declared(code)
+        taken_top |= t2
+        taken_var |= v2
+        if ren:
+            print(f"  {stem}: renamed {ren}")
+        heads.append(f"// ── {stem} ──\n//\n" + "\n".join(head))
+        codes.append(code)
+    out = "\n".join(intro) + "\n//\n" + "\n//\n".join(heads) + "\n\n" + "\n".join(codes)
+    open(target, "w", encoding="utf-8").write(out)
+    print(f"merged {len(cells)} cell(s) into {os.path.basename(target)} (gate E: {next(iter(verdicts.values()))})")
+    return 0
+
+
 def rel(p):
     """A cell's place: `suite:rules/<chapter>/<rule>/<file>` for the language suite, else the
     path under this tree."""
@@ -306,6 +406,8 @@ def main():
         return nxt(int(a[1]) if len(a) > 1 else 3)
     if cmd == "plan" and tag:
         return plan(tag)
+    if cmd == "merge" and len(a) > 4:
+        return merge(a[1], a[2], a[3:])
     if cmd == "related" and tag and len(a) > 2:
         return related(tag, a[2])
     if cmd == "done" and tag:
