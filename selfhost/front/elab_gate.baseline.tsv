@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	d614b9aa0af41a4e2045746aeaf3d94c31ded596
+suite	d2fd5287adf56ce2c406d7843ae5567b35881911
 
-layer	elab	agree	1031	of	2184
+layer	elab	agree	1031	of	2183
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -126,15 +126,14 @@ elab	refused	loft-suite/rules/calls/F-Recv/a-call-reaches-the-method-spelled-for
 elab	refused	loft-suite/rules/calls/F-Recv/a-short-lambda-takes-its-type-from-every-callee-spelling.loft
 elab	refused	loft-suite/rules/calls/F-Ret/1350-a-lifetime-tuple-result-joins-a-tuple-literal.loft
 elab	refused	loft-suite/rules/calls/F-Ret/153-p4-a-nullable-parameter-and-return-deliver-like-their-dense-twins.loft
-elab	refused	loft-suite/rules/calls/F-Ret/1884-a-parameter-returned-on-one-path-is-the-callers-copy.loft
 elab	refused	loft-suite/rules/calls/F-Ret/1949-a-generic-returning-a-borrowing-call-copies.loft
-elab	refused	loft-suite/rules/calls/F-Ret/2179-a-parameter-returned-on-one-of-several-paths-is-the-callers-copy.loft
 elab	refused	loft-suite/rules/calls/F-Ret/2443-a-record-copied-out-of-a-kept-buffer-releases-it.loft
 elab	refused	loft-suite/rules/calls/F-Ret/2511-a-stored-reference-returned-through-or-hands-back-a-copy.loft
 elab	refused	loft-suite/rules/calls/F-Ret/2525-a-tail-after-an-early-return-of-a-local-delivers-its-own-value.loft
 elab	refused	loft-suite/rules/calls/F-Ret/a-container-temporary-of-another-type-is-not-the-return-buffer.loft
 elab	refused	loft-suite/rules/calls/F-Ret/a-function-returning-a-stored-reference-hands-back-a-copy.loft
 elab	refused	loft-suite/rules/calls/F-Ret/a-nullable-return-hands-out-a-fresh-owned-value-as-its-dense-twin-does.loft
+elab	refused	loft-suite/rules/calls/F-Ret/a-parameter-returned-on-any-of-several-paths-is-the-callers-copy.loft
 elab	refused	loft-suite/rules/calls/F-Ret/a-part-of-a-calls-result-returned-is-the-callers-own-copy.loft
 elab	refused	loft-suite/rules/calls/F-Ret/a-recursive-call-after-an-early-fresh-return-may-still-answer-its-argument.loft
 elab	refused	loft-suite/rules/calls/F-Ret/a-text-match-over-types-declared-below-returns-through-every-caller.loft
