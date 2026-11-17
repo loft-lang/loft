@@ -360,7 +360,14 @@ def merge(target, intro_file, cells):
             print(f"  {stem}: renamed {ren}")
         heads.append(f"// ── {stem} ──\n//\n" + "\n".join(head))
         codes.append(code)
-    out = "\n".join(intro) + "\n//\n" + "\n//\n".join(heads) + "\n\n" + "\n".join(codes)
+    # `use` statements must stand before every definition: lift each section's, once each.
+    uses = []
+    for k, c in enumerate(codes):
+        mine = re.findall(r"(?m)^(?:pub )?use [^;\n]+;[ \t]*\n", c)
+        uses += [u for u in mine if u not in uses]
+        codes[k] = re.sub(r"(?m)^(?:pub )?use [^;\n]+;[ \t]*\n", "", c)
+    out = ("\n".join(intro) + "\n//\n" + "\n//\n".join(heads) + "\n\n" + "".join(uses)
+           + ("\n" if uses else "") + "\n".join(codes))
     open(target, "w", encoding="utf-8").write(out)
     print(f"merged {len(cells)} cell(s) into {os.path.basename(target)} (gate E: {next(iter(verdicts.values()))})")
     return 0

@@ -58,7 +58,7 @@ F-Rec	calls	curated	4	2026-11-17	3 cells: two patches and a gate-E-agreeing conf
 F-Recv	calls	curated	12	2026-11-17	own dir 10 -> 8: a call reaches the method spelled for its receiver's nullability (loft#1427, #1432, the narrow/wide crossing) 3->1, all seven warning expectations proven alone; the rest are patches or gate-E-agreeing
 F-Ret	calls	curated	43	2026-11-17	own dir 25 -> 18: nullable returns as fresh as their dense twins (loft#1337, #1345 + the N-Road crossing) 3->1; a part of a call's result returned (loft#2289, #2443, #2515, its @catches kept and shown to hold) 3->1; a returned parameter (loft#1884, #2179) 2->1; a returned stored reference (loft#1977, #2511) 2->1; a text match tail (wrapper, declaration order) 2->1; the rest are distinct clauses, patches or gate-E-agreeing
 F-Return	calls	curated	1	2026-11-17	own dir 2 -> 1: what a function answers (loft#1347, #2383) 2->1, plus a real discarded-return case where the dropped main's test calls had been the rule's only discarded context
-F-Surface	calls	todo			
+F-Surface	calls	curated	19	2026-11-17	own dir 9 -> 8: the non-pub method refusals (qualifier, own record) 2->1; the function refusal stays apart (an earlier pass masks the method refusals); package-share refusal, the pub-either-spelling cell, 2331 and the two fixture libraries stay
 F-Visible	calls	todo			
 Cap-Call	capabilities	todo			
 Cap-Deny	capabilities	todo			
