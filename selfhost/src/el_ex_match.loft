@@ -229,7 +229,9 @@ pub fn link_argument(e: el::El, vars: el_vars::Vars, arg: ir::Node, at: ir::Type
         return sp;
       }
     }
-    if same && is_place && (struct_ref(e, el_types::base(at)) >= 0 || el_types::base(at) is TyVector) {
+    // (A keyed collection in a field is held and linked the same way.)
+    // (So is a struct enum in a field — its inline record.)
+    if same && is_place && (struct_ref(e, el_types::base(at)) >= 0 || el_types::struct_enum_def(el_types::base(at)) >= 0 || el_types::base(at) is TyVector || keyed_kind(el_types::base(at))) {
       wv = el_vars::work_ref(vars, at);
       if !e.first_pass {
         vars.vars[wv].skip_free = true;
