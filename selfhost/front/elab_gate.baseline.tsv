@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	fac3652dc1b37371599d8511c95e1683ff5a73ed
 
-layer	elab	agree	1053	of	2191
+layer	elab	agree	1057	of	2191
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -661,7 +661,6 @@ elab	refused	loft-suite/rules/rewrites/R-KeyedEntry/a-keyed-insert-writes-the-en
 elab	refused	loft-suite/rules/rewrites/R-LitHoist/a-literal-of-a-const-records-fields-is-built-once-only-while-no-name-writes-it.loft
 elab	refused	loft-suite/rules/rewrites/R-Mint/a-minted-element-evicts-no-hoisted-scalar-and-an-alias-write-does.loft
 elab	refused	loft-suite/rules/rewrites/R-MoveLast/2192-a-local-copied-into-two-literals-is-moved-only-at-its-last.loft
-elab	refused	loft-suite/rules/rewrites/R-Place/164-place-result.loft
 elab	refused	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft
 elab	refused	loft-suite/rules/rewrites/R-Prefill/164-prefill-image.loft
 elab	refused	loft-suite/rules/rewrites/R-PushFill/a-counted-loop-pushing-to-several-vectors-reserves-each.loft
@@ -670,7 +669,6 @@ elab	refused	loft-suite/rules/rewrites/R-PushFill/a-nested-comprehension-pushes-
 elab	refused	loft-suite/rules/rewrites/R-PushFill/vectors-built-side-by-side-each-push-through-a-window.loft
 elab	refused	loft-suite/rules/rewrites/R-PushRec/a-record-append-takes-its-growth-before-its-field-writes.loft
 elab	refused	loft-suite/rules/rewrites/R-Range/a-call-that-moves-its-arguments-by-a-literal-steps-them.loft
-elab	refused	loft-suite/rules/rewrites/R-Rebind/a-rebind-hands-its-own-record-only-where-the-place-rule-would.loft
 elab	refused	loft-suite/rules/rewrites/R-RecPtr/a-value-record-is-copied-through-one-address.loft
 elab	refused	loft-suite/rules/rewrites/R-RefillBuffer/a-live-buffer-is-refilled-where-it-is.loft
 elab	refused	loft-suite/rules/rewrites/R-RetAdopt/a-vector-built-in-the-return-buffer-is-the-vector-the-caller-reads.loft
@@ -1054,7 +1052,6 @@ elab	refused	tests/scripts/a-hash-walked-unordered-repeats-its-order.loft
 elab	refused	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft
 elab	refused	tests/scripts/a-keyed-bind-from-a-call-on-a-vector-literal-compiles-natively.loft
 elab	refused	tests/scripts/a-keyed-insert-stages-its-values-before-the-entry-is-found.loft
-elab	refused	tests/scripts/a-later-declared-call-is-never-handed-the-return-buffer.loft
 elab	refused	tests/scripts/a-leaf-early-exit-is-decided-toward-its-access.loft
 elab	refused	tests/scripts/a-library-carries-generic-types-across-the-boundary.loft
 elab	refused	tests/scripts/a-library-carries-generics-across-the-boundary.loft
@@ -1088,7 +1085,6 @@ elab	refused	tests/scripts/a-pure-call-made-twice-is-computed-once.loft
 elab	refused	tests/scripts/a-qualified-name-reaches-what-a-library-publishes.loft
 elab	refused	tests/scripts/a-read-only-record-copy-is-a-view.loft
 elab	refused	tests/scripts/a-rebind-from-a-fresh-result-exchanges-the-stores.loft
-elab	refused	tests/scripts/a-rebind-hands-the-displaced-store-to-the-call.loft
 elab	refused	tests/scripts/a-record-built-into-a-callers-slot-needs-no-prefill.loft
 elab	refused	tests/scripts/a-record-read-by-index-from-a-held-vector-is-addressed-off-its-base.loft
 elab	refused	tests/scripts/a-repeated-element-fills-in-one-block.loft
@@ -1145,7 +1141,7 @@ elab	refused	tests/scripts/store_persist_size_710.loft
 elab	refused	tests/scripts/store_rebuild_b1.loft
 elab	refused	tests/scripts/the-reference-safety-traps-are-what-it-catalogues.loft
 
-layer	elab-functions	agree	15662	of	28176
+layer	elab-functions	agree	15564	of	28071
 elab-functions	agree	lib/code.loft::Block
 elab-functions	agree	lib/code.loft::Boolean
 elab-functions	agree	lib/code.loft::Call
@@ -10257,54 +10253,6 @@ elab-functions	agree	loft-suite/rules/rewrites/R-MoveLast/2192-a-local-copied-in
 elab-functions	agree	loft-suite/rules/rewrites/R-MoveLast/2192-a-local-copied-into-two-literals-is-moved-only-at-its-last.loft::n_three
 elab-functions	agree	loft-suite/rules/rewrites/R-MoveLast/2192-a-local-copied-into-two-literals-is-moved-only-at-its-last.loft::t_3Img_len_self
 elab-functions	agree	loft-suite/rules/rewrites/R-MoveLast/2192-a-local-copied-into-two-literals-is-moved-only-at-its-last.loft::vector<Px>
-elab-functions	agree	loft-suite/rules/rewrites/R-Place/164-place-result.loft::(schema)
-elab-functions	agree	loft-suite/rules/rewrites/R-Place/164-place-result.loft::Card
-elab-functions	agree	loft-suite/rules/rewrites/R-Place/164-place-result.loft::Deck
-elab-functions	agree	loft-suite/rules/rewrites/R-Place/164-place-result.loft::Label
-elab-functions	agree	loft-suite/rules/rewrites/R-Place/164-place-result.loft::Op
-elab-functions	agree	loft-suite/rules/rewrites/R-Place/164-place-result.loft::Paint
-elab-functions	agree	loft-suite/rules/rewrites/R-Place/164-place-result.loft::Pixel
-elab-functions	agree	loft-suite/rules/rewrites/R-Place/164-place-result.loft::Rgb
-elab-functions	agree	loft-suite/rules/rewrites/R-Place/164-place-result.loft::Row
-elab-functions	agree	loft-suite/rules/rewrites/R-Place/164-place-result.loft::Sketch
-elab-functions	agree	loft-suite/rules/rewrites/R-Place/164-place-result.loft::main_vector<Card>
-elab-functions	agree	loft-suite/rules/rewrites/R-Place/164-place-result.loft::main_vector<Op>
-elab-functions	agree	loft-suite/rules/rewrites/R-Place/164-place-result.loft::main_vector<Pixel>
-elab-functions	agree	loft-suite/rules/rewrites/R-Place/164-place-result.loft::main_vector<float>
-elab-functions	agree	loft-suite/rules/rewrites/R-Place/164-place-result.loft::n_add_card
-elab-functions	agree	loft-suite/rules/rewrites/R-Place/164-place-result.loft::n_add_derived
-elab-functions	agree	loft-suite/rules/rewrites/R-Place/164-place-result.loft::n_add_either
-elab-functions	agree	loft-suite/rules/rewrites/R-Place/164-place-result.loft::n_add_opt
-elab-functions	agree	loft-suite/rules/rewrites/R-Place/164-place-result.loft::n_add_poly
-elab-functions	agree	loft-suite/rules/rewrites/R-Place/164-place-result.loft::n_add_px
-elab-functions	agree	loft-suite/rules/rewrites/R-Place/164-place-result.loft::n_add_read_after
-elab-functions	agree	loft-suite/rules/rewrites/R-Place/164-place-result.loft::n_b1
-elab-functions	agree	loft-suite/rules/rewrites/R-Place/164-place-result.loft::n_b10
-elab-functions	agree	loft-suite/rules/rewrites/R-Place/164-place-result.loft::n_b11
-elab-functions	agree	loft-suite/rules/rewrites/R-Place/164-place-result.loft::n_b12
-elab-functions	agree	loft-suite/rules/rewrites/R-Place/164-place-result.loft::n_b13
-elab-functions	agree	loft-suite/rules/rewrites/R-Place/164-place-result.loft::n_b14
-elab-functions	agree	loft-suite/rules/rewrites/R-Place/164-place-result.loft::n_b15
-elab-functions	agree	loft-suite/rules/rewrites/R-Place/164-place-result.loft::n_b2
-elab-functions	agree	loft-suite/rules/rewrites/R-Place/164-place-result.loft::n_b3
-elab-functions	agree	loft-suite/rules/rewrites/R-Place/164-place-result.loft::n_b4
-elab-functions	agree	loft-suite/rules/rewrites/R-Place/164-place-result.loft::n_b5
-elab-functions	agree	loft-suite/rules/rewrites/R-Place/164-place-result.loft::n_b6
-elab-functions	agree	loft-suite/rules/rewrites/R-Place/164-place-result.loft::n_b7
-elab-functions	agree	loft-suite/rules/rewrites/R-Place/164-place-result.loft::n_b8
-elab-functions	agree	loft-suite/rules/rewrites/R-Place/164-place-result.loft::n_b9
-elab-functions	agree	loft-suite/rules/rewrites/R-Place/164-place-result.loft::n_derive
-elab-functions	agree	loft-suite/rules/rewrites/R-Place/164-place-result.loft::n_keep_const
-elab-functions	agree	loft-suite/rules/rewrites/R-Place/164-place-result.loft::n_main
-elab-functions	agree	loft-suite/rules/rewrites/R-Place/164-place-result.loft::n_maybe_paint
-elab-functions	agree	loft-suite/rules/rewrites/R-Place/164-place-result.loft::n_mk_label
-elab-functions	agree	loft-suite/rules/rewrites/R-Place/164-place-result.loft::n_mk_rgb
-elab-functions	agree	loft-suite/rules/rewrites/R-Place/164-place-result.loft::n_read_paint
-elab-functions	agree	loft-suite/rules/rewrites/R-Place/164-place-result.loft::n_sum_spec
-elab-functions	agree	loft-suite/rules/rewrites/R-Place/164-place-result.loft::vector<Card>
-elab-functions	agree	loft-suite/rules/rewrites/R-Place/164-place-result.loft::vector<Op>
-elab-functions	agree	loft-suite/rules/rewrites/R-Place/164-place-result.loft::vector<Pixel>
-elab-functions	agree	loft-suite/rules/rewrites/R-Place/164-place-result.loft::vector<float>
 elab-functions	agree	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft::(schema)
 elab-functions	agree	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft::E
 elab-functions	agree	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft::Empty
@@ -10403,28 +10351,6 @@ elab-functions	agree	loft-suite/rules/rewrites/R-Range/a-call-that-moves-its-arg
 elab-functions	agree	loft-suite/rules/rewrites/R-Range/a-call-that-moves-its-arguments-by-a-literal-steps-them.loft::n_twice
 elab-functions	agree	loft-suite/rules/rewrites/R-Range/a-call-that-moves-its-arguments-by-a-literal-steps-them.loft::n_up3
 elab-functions	agree	loft-suite/rules/rewrites/R-Range/a-call-that-moves-its-arguments-by-a-literal-steps-them.loft::n_walk
-elab-functions	agree	loft-suite/rules/rewrites/R-Rebind/a-rebind-hands-its-own-record-only-where-the-place-rule-would.loft::(schema)
-elab-functions	agree	loft-suite/rules/rewrites/R-Rebind/a-rebind-hands-its-own-record-only-where-the-place-rule-would.loft::Doc
-elab-functions	agree	loft-suite/rules/rewrites/R-Rebind/a-rebind-hands-its-own-record-only-where-the-place-rule-would.loft::Ed
-elab-functions	agree	loft-suite/rules/rewrites/R-Rebind/a-rebind-hands-its-own-record-only-where-the-place-rule-would.loft::Piece
-elab-functions	agree	loft-suite/rules/rewrites/R-Rebind/a-rebind-hands-its-own-record-only-where-the-place-rule-would.loft::Shelf
-elab-functions	agree	loft-suite/rules/rewrites/R-Rebind/a-rebind-hands-its-own-record-only-where-the-place-rule-would.loft::Two
-elab-functions	agree	loft-suite/rules/rewrites/R-Rebind/a-rebind-hands-its-own-record-only-where-the-place-rule-would.loft::main_vector<Doc>
-elab-functions	agree	loft-suite/rules/rewrites/R-Rebind/a-rebind-hands-its-own-record-only-where-the-place-rule-would.loft::main_vector<Piece>
-elab-functions	agree	loft-suite/rules/rewrites/R-Rebind/a-rebind-hands-its-own-record-only-where-the-place-rule-would.loft::n_add
-elab-functions	agree	loft-suite/rules/rewrites/R-Rebind/a-rebind-hands-its-own-record-only-where-the-place-rule-would.loft::n_main
-elab-functions	agree	loft-suite/rules/rewrites/R-Rebind/a-rebind-hands-its-own-record-only-where-the-place-rule-would.loft::n_mk
-elab-functions	agree	loft-suite/rules/rewrites/R-Rebind/a-rebind-hands-its-own-record-only-where-the-place-rule-would.loft::n_psum
-elab-functions	agree	loft-suite/rules/rewrites/R-Rebind/a-rebind-hands-its-own-record-only-where-the-place-rule-would.loft::n_shrink
-elab-functions	agree	loft-suite/rules/rewrites/R-Rebind/a-rebind-hands-its-own-record-only-where-the-place-rule-would.loft::n_test_a_callee_whose_exit_answers_another_parameter
-elab-functions	agree	loft-suite/rules/rewrites/R-Rebind/a-rebind-hands-its-own-record-only-where-the-place-rule-would.loft::n_test_a_local_rebound_from_a_call_taking_it
-elab-functions	agree	loft-suite/rules/rewrites/R-Rebind/a-rebind-hands-its-own-record-only-where-the-place-rule-would.loft::n_test_a_place_and_a_rebind_on_one_field
-elab-functions	agree	loft-suite/rules/rewrites/R-Rebind/a-rebind-hands-its-own-record-only-where-the-place-rule-would.loft::n_test_a_second_argument_in_xs_store
-elab-functions	agree	loft-suite/rules/rewrites/R-Rebind/a-rebind-hands-its-own-record-only-where-the-place-rule-would.loft::n_test_a_vector_result_into_its_own_field_and_a_sibling
-elab-functions	agree	loft-suite/rules/rewrites/R-Rebind/a-rebind-hands-its-own-record-only-where-the-place-rule-would.loft::n_test_the_field_form_over_a_field_and_an_element
-elab-functions	agree	loft-suite/rules/rewrites/R-Rebind/a-rebind-hands-its-own-record-only-where-the-place-rule-would.loft::n_twice_v
-elab-functions	agree	loft-suite/rules/rewrites/R-Rebind/a-rebind-hands-its-own-record-only-where-the-place-rule-would.loft::vector<Doc>
-elab-functions	agree	loft-suite/rules/rewrites/R-Rebind/a-rebind-hands-its-own-record-only-where-the-place-rule-would.loft::vector<Piece>
 elab-functions	agree	loft-suite/rules/rewrites/R-RecPtr/a-value-record-is-copied-through-one-address.loft::(schema)
 elab-functions	agree	loft-suite/rules/rewrites/R-RecPtr/a-value-record-is-copied-through-one-address.loft::C
 elab-functions	agree	loft-suite/rules/rewrites/R-RecPtr/a-value-record-is-copied-through-one-address.loft::E
@@ -15178,6 +15104,8 @@ elab-functions	agree	tests/scripts/981-split-ownership-return.loft::n_i981_id
 elab-functions	agree	tests/scripts/981-split-ownership-return.loft::n_i981_keyed
 elab-functions	agree	tests/scripts/981-split-ownership-return.loft::n_i981_make
 elab-functions	agree	tests/scripts/981-split-ownership-return.loft::n_i981_param_is_a_copy
+elab-functions	agree	tests/scripts/981-split-ownership-return.loft::n_i981_pick
+elab-functions	agree	tests/scripts/981-split-ownership-return.loft::n_i981_pick_second
 elab-functions	agree	tests/scripts/981-split-ownership-return.loft::n_i981_pluck
 elab-functions	agree	tests/scripts/981-split-ownership-return.loft::n_i981_read
 elab-functions	agree	tests/scripts/981-split-ownership-return.loft::n_i981_seed_bag
@@ -15571,18 +15499,6 @@ elab-functions	agree	tests/scripts/a-keyed-insert-stages-its-values-before-the-e
 elab-functions	agree	tests/scripts/a-keyed-insert-stages-its-values-before-the-entry-is-found.loft::Shade
 elab-functions	agree	tests/scripts/a-keyed-insert-stages-its-values-before-the-entry-is-found.loft::W
 elab-functions	agree	tests/scripts/a-keyed-insert-stages-its-values-before-the-entry-is-found.loft::n_note
-elab-functions	agree	tests/scripts/a-later-declared-call-is-never-handed-the-return-buffer.loft::(schema)
-elab-functions	agree	tests/scripts/a-later-declared-call-is-never-handed-the-return-buffer.loft::Ex
-elab-functions	agree	tests/scripts/a-later-declared-call-is-never-handed-the-return-buffer.loft::NdInt
-elab-functions	agree	tests/scripts/a-later-declared-call-is-never-handed-the-return-buffer.loft::NdNull
-elab-functions	agree	tests/scripts/a-later-declared-call-is-never-handed-the-return-buffer.loft::NdPair
-elab-functions	agree	tests/scripts/a-later-declared-call-is-never-handed-the-return-buffer.loft::Node
-elab-functions	agree	tests/scripts/a-later-declared-call-is-never-handed-the-return-buffer.loft::n_ex
-elab-functions	agree	tests/scripts/a-later-declared-call-is-never-handed-the-return-buffer.loft::n_f
-elab-functions	agree	tests/scripts/a-later-declared-call-is-never-handed-the-return-buffer.loft::n_h
-elab-functions	agree	tests/scripts/a-later-declared-call-is-never-handed-the-return-buffer.loft::n_main
-elab-functions	agree	tests/scripts/a-later-declared-call-is-never-handed-the-return-buffer.loft::n_val
-elab-functions	agree	tests/scripts/a-later-declared-call-is-never-handed-the-return-buffer.loft::n_wrap
 elab-functions	agree	tests/scripts/a-leaf-early-exit-is-decided-toward-its-access.loft::(schema)
 elab-functions	agree	tests/scripts/a-leaf-early-exit-is-decided-toward-its-access.loft::Hz
 elab-functions	agree	tests/scripts/a-leaf-early-exit-is-decided-toward-its-access.loft::main_vector<float>
@@ -16067,24 +15983,6 @@ elab-functions	agree	tests/scripts/a-rebind-from-a-fresh-result-exchanges-the-st
 elab-functions	agree	tests/scripts/a-rebind-from-a-fresh-result-exchanges-the-stores.loft::vector<Inner>
 elab-functions	agree	tests/scripts/a-rebind-from-a-fresh-result-exchanges-the-stores.loft::vector<Node>
 elab-functions	agree	tests/scripts/a-rebind-from-a-fresh-result-exchanges-the-stores.loft::vector<float>
-elab-functions	agree	tests/scripts/a-rebind-hands-the-displaced-store-to-the-call.loft::(schema)
-elab-functions	agree	tests/scripts/a-rebind-hands-the-displaced-store-to-the-call.loft::M
-elab-functions	agree	tests/scripts/a-rebind-hands-the-displaced-store-to-the-call.loft::Named
-elab-functions	agree	tests/scripts/a-rebind-hands-the-displaced-store-to-the-call.loft::main_vector<float>
-elab-functions	agree	tests/scripts/a-rebind-hands-the-displaced-store-to-the-call.loft::n_acc
-elab-functions	agree	tests/scripts/a-rebind-hands-the-displaced-store-to-the-call.loft::n_add4
-elab-functions	agree	tests/scripts/a-rebind-hands-the-displaced-store-to-the-call.loft::n_b1
-elab-functions	agree	tests/scripts/a-rebind-hands-the-displaced-store-to-the-call.loft::n_b2
-elab-functions	agree	tests/scripts/a-rebind-hands-the-displaced-store-to-the-call.loft::n_b3
-elab-functions	agree	tests/scripts/a-rebind-hands-the-displaced-store-to-the-call.loft::n_b4
-elab-functions	agree	tests/scripts/a-rebind-hands-the-displaced-store-to-the-call.loft::n_b5
-elab-functions	agree	tests/scripts/a-rebind-hands-the-displaced-store-to-the-call.loft::n_b6
-elab-functions	agree	tests/scripts/a-rebind-hands-the-displaced-store-to-the-call.loft::n_b7
-elab-functions	agree	tests/scripts/a-rebind-hands-the-displaced-store-to-the-call.loft::n_b8
-elab-functions	agree	tests/scripts/a-rebind-hands-the-displaced-store-to-the-call.loft::n_b9
-elab-functions	agree	tests/scripts/a-rebind-hands-the-displaced-store-to-the-call.loft::n_main
-elab-functions	agree	tests/scripts/a-rebind-hands-the-displaced-store-to-the-call.loft::n_rename
-elab-functions	agree	tests/scripts/a-rebind-hands-the-displaced-store-to-the-call.loft::vector<float>
 elab-functions	agree	tests/scripts/a-record-built-into-a-callers-slot-needs-no-prefill.loft::(schema)
 elab-functions	agree	tests/scripts/a-record-built-into-a-callers-slot-needs-no-prefill.loft::B
 elab-functions	agree	tests/scripts/a-record-built-into-a-callers-slot-needs-no-prefill.loft::R
