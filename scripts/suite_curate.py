@@ -326,9 +326,10 @@ def merge(target, intro_file, cells):
         for o, nw in sorted(ren.items(), key=lambda x: -len(x[0])):
             code = re.sub(r"\b" + re.escape(o) + r"\b", nw, code)
         mm = re.search(r"(?ms)^fn main\(\) \{\n(.*?)^\}\n", code)
-        if mm and all(re.fullmatch(r"\s*(test_[a-z_0-9]+\(\);)?\s*", l) for l in mm.group(1).split("\n")):
-            # A `main` that only calls the file's own tests: in a merged file the tests run
-            # themselves, so it would run each twice.
+        if mm and all(re.fullmatch(r'\s*(test_[a-z_0-9]+\(\);|println\("[^"{}]*"\);)?\s*', l)
+                      for l in mm.group(1).split("\n")):
+            # A `main` that only calls the file's own tests (and perhaps prints a fixed line): in
+            # a merged file the tests run themselves, so it would run each twice.
             code = code[:mm.start()] + code[mm.end():].lstrip("\n")
             print(f"  {stem}: dropped its main (it only called the tests)")
         elif "fn main()" in code:

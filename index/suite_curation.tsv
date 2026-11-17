@@ -43,14 +43,14 @@ F-Arity	calls	curated	3	2026-11-17	was Rust-only: two suite cells, split on the 
 F-Block	calls	curated	12	2026-11-17	8 files, no merge: the two block-yields-a-call-on-a-reference cells are one clause but gate E splits them (refused / agree); 1722 (patch, the null path) and the tail-match cell with its fixture library (frees across a package boundary) are distinct clauses; 1382/2456 statement-position cells agree; 1386 the value-position refusal
 F-Call	calls	curated	5	2026-11-17	own dir 2 -> 1: the frame frees exactly what it owns — loft#1935 (patch) and the conformance cell — 2->1
 F-Default	calls	curated	3	2026-11-17	own dir 4 -> 3: D-call-26's well-formed default (the match default over records, patch; the unit variant, loft#2410) 2->1; 1758 and the earlier-arguments cell (both patches) stay
-F-Default-Field	calls	todo			
-F-Drop	calls	todo			
-F-OneBody	calls	todo			
-F-Package	calls	todo			
-F-ParamGrow	calls	todo			
-F-ParamHeap	calls	todo			
-F-ParamRebind	calls	todo			
-F-ParamRef	calls	todo			
+F-Default-Field	calls	curated	1	2026-11-17	one cell (a field default reads the record it fills)
+F-Drop	calls	curated	2	2026-11-17	one own cell (a dropped tuple-answering call runs for its effect) plus one citing cell elsewhere
+F-OneBody	calls	curated	5	2026-11-17	one cell (loft#2318) and the c97 runtime fixture library another cell imports
+F-Package	calls	curated	7	2026-11-17	one cell and its two fixture libraries (core, relay)
+F-ParamGrow	calls	curated	2	2026-11-17	one own cell (loft#1251, a heap parameter is shared not copied) plus one citing cell elsewhere
+F-ParamHeap	calls	curated	11	2026-11-17	own dir 2 -> 1: loft#2137 (patch) and loft#1415 — a heap argument shares the caller's store and nothing in the frame releases it — 2->1
+F-ParamRebind	calls	curated	8	2026-11-17	own dir 3 -> 2: the whole write through a link to a plain parameter (the re-pointing walk, the written record) 2->1; the rebind built apart (gate E agrees) stays
+F-ParamRef	calls	curated	9	2026-11-17	2 cells, gate E splits them (the slot parameter, refused; the whole-value write through a ref parameter, agrees)
 F-ParamScalar	calls	todo			
 F-ParamText	calls	todo			
 F-ParamTuple	calls	todo			
