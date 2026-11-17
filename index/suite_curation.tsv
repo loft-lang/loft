@@ -59,8 +59,8 @@ F-Recv	calls	curated	12	2026-11-17	own dir 10 -> 8: a call reaches the method sp
 F-Ret	calls	curated	43	2026-11-17	own dir 25 -> 18: nullable returns as fresh as their dense twins (loft#1337, #1345 + the N-Road crossing) 3->1; a part of a call's result returned (loft#2289, #2443, #2515, its @catches kept and shown to hold) 3->1; a returned parameter (loft#1884, #2179) 2->1; a returned stored reference (loft#1977, #2511) 2->1; a text match tail (wrapper, declaration order) 2->1; the rest are distinct clauses, patches or gate-E-agreeing
 F-Return	calls	curated	1	2026-11-17	own dir 2 -> 1: what a function answers (loft#1347, #2383) 2->1, plus a real discarded-return case where the dropped main's test calls had been the rule's only discarded context
 F-Surface	calls	curated	19	2026-11-17	own dir 9 -> 8: the non-pub method refusals (qualifier, own record) 2->1; the function refusal stays apart (an earlier pass masks the method refusals); package-share refusal, the pub-either-spelling cell, 2331 and the two fixture libraries stay
-F-Visible	calls	todo			
-Cap-Call	capabilities	todo			
+F-Visible	calls	curated	5	2026-11-17	was Rust-only (tests/pub_visibility.rs): a fixture library, a positive cell (name-only named/passed/stored, pub fields, all-pub struct built, pub enum variants), a six-refusal cell (patch receipt) and the invisible-type cell (a pass earlier); writing them found loft#2541 and #2542, fixed
+Cap-Call	capabilities	curated	10	2026-11-17	2 cells, the refusal and the admission (gate E splits them) — nothing to merge
 Cap-Deny	capabilities	todo			
 Cap-Own	capabilities	todo			
 Cap-Read	capabilities	todo			
