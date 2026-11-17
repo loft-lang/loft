@@ -132,7 +132,12 @@ fn print_target_surface(want: Option<&str>) {
 /// resolves for the loft-written C writer (`ir_store::bundle_facts`), as the image `LOFT_CGEN`
 /// is handed does.
 #[cfg(feature = "mmap")]
-fn emit_program_image(p: &mut parser::Parser, ships_live_tier: bool, c_facts: bool, out: &str) -> ! {
+fn emit_program_image(
+    p: &mut parser::Parser,
+    ships_live_tier: bool,
+    c_facts: bool,
+    out: &str,
+) -> ! {
     if ships_live_tier {
         p.data.open_world = true;
     }

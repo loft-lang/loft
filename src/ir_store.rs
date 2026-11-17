@@ -806,6 +806,10 @@ pub fn save_data(data: &Data, path: &str) -> std::io::Result<()> {
 /// `BUNDLE_TYPES`.  The whole root is zeroed HERE: `materialize_data_at` clears
 /// only its own `DATA_STRIDE` bytes, and the schema vector's header sits past
 /// them, so an uncleared header is a junk record id on the first push.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one pass over the bundle's sections in their record order — data, schema, then the writer's facts"
+)]
 pub fn materialize_bundle(
     stores: &mut Stores,
     root: DbRef,
