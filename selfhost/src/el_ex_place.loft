@@ -2109,10 +2109,19 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
           // The old record handed to its own out-of-line field: held as a view of the local
           // (`__ref_N: ref(T)["v"] = v`, bound where it is made), the child set from the view.
           if el::def(e, def_nr).name == "OpSetChildRec" && len(args) == 3 && el_ir::unspan(args[1]) == ir::NdVar { n: v } && place_root(e, el_ir::unspan(args[0])) == v {
-            // (A plain struct's old record is snapshot by a copy instead: not carried.)
+            // (A plain struct's old record is snapshot by a COPY into a work ref of its own —
+            // `staged_heap_copy` — and the child set from the copy.)
             if el_types::struct_enum_def(el_vars::tp(vars, v)) < 0 {
-              el::refuse(e, "an out-of-line field given the record it lies in (the demote)");
-              return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+              sd0 = struct_ref(e, el_types::base(el_vars::tp(vars, v)));
+              skt = if sd0 >= 0 { el::def(e, sd0).known_type } else { el_schema::NO_TYPE };
+              if sd0 < 0 || skt == el_schema::NO_TYPE {
+                el::refuse(e, "an out-of-line field given the record it lies in (the demote)");
+                return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+              }
+              cw = el_vars::work_ref_p2(vars, ir::TyReference { n: sd0, dep: [] });
+              staged += [el_ir::v_set(cw, ir::NdNull), el_ir::v_block([el_ir::cl(e, "OpDatabase", [ir::NdVar { n: cw }, ir::NdInt { n: skt }]), el_ir::cl(e, "OpCopyRecord", [args[1]!, ir::NdVar { n: cw }, ir::NdInt { n: skt }])], ir::TyVoid, "tuple_member_copy_fill")];
+              ops[op#index] = ir::NdCall { def_nr: def_nr, args: [args[0]!, ir::NdVar { n: cw }, args[2]!] };
+              continue;
             }
             vt = el_types::with_deps(el_types::without_deps(el_types::base(el_vars::tp(vars, v))), [v]);
             vtmp = el_vars::work_ref(vars, vt);
@@ -2167,19 +2176,23 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
   // a fresh child of its own store that becomes the field, the record — its number kept —
   // left zeroed for the other fields (`OpDemoteRec`); where it is absent the literal's own
   // prelude runs and the field is left absent.
+  demoted_buffer = false;
   if demote >= 0 && len(ops) >= 2 {
     content = el_schema::out_of_line_content(e, el::def(e, d).attributes[demote]!.typedef[0]);
     off = ir::NdInt { n: field_position(e, d, el::def(e, d).attributes[demote]!.name) };
     hv = ir::NdVar { n: v };
     present = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [hv]), ir::NdBoolean { b: false }, el_ir::cl(e, "OpConvBoolFromRef", [hv]));
     moved = el_ir::v_block([el_ir::cl(e, "OpDemoteRec", [hv, off, ir::NdInt { n: el::def(e, content).known_type }])], ir::TyVoid, "demote");
-    fresh = el_ir::v_block([ops[0]!, ops[1]!, el_ir::cl(e, "OpSetInt4", [hv, off, ir::NdInt { n: 0 }])], ir::TyVoid, "demote_fresh");
+    // (A return buffer's own prelude is its guarded `OpDatabase` alone, no reset.)
+    pre_ops: vector<ir::Node> = if vars.vars[v].argument { [el_ir::v_if(present, ir::NdNull, ops[1]!)] } else { [ops[0]!, ops[1]!] };
+    fresh = el_ir::v_block(pre_ops + [el_ir::cl(e, "OpSetInt4", [hv, off, ir::NdInt { n: 0 }])], ir::TyVoid, "demote_fresh");
     rest = ops[2..];
     ops = [el_ir::v_if(present, moved, fresh)] + rest;
+    demoted_buffer = vars.vars[v].argument;
   }
   // A promoted return buffer (an argument) is built into: its mint guarded to reuse a buffer
   // the caller handed in live, and no reset.
-  if vars.vars[v].argument && len(ops) >= 2 {
+  if vars.vars[v].argument && len(ops) >= 2 && !demoted_buffer {
     r = ir::NdVar { n: v };
     live = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [r]), ir::NdBoolean { b: false }, el_ir::cl(e, "OpConvBoolFromRef", [r]));
     guarded: vector<ir::Node> = [el_ir::v_if(live, ir::NdNull, ops[1] ?? ir::NdNull)];
@@ -2311,7 +2324,8 @@ fn is_bare_name(e: el::El, n: integer, name: text) -> boolean {
 // struct, or for a variant its enum where `v` is of that enum — and reads `v` nowhere else.
 // The field's attribute number, or -1.
 pub fn demote_field(e: el::El, vars: el_vars::Vars, v: integer, d: integer, fields: vector<integer>) -> integer {
-  if vars.vars[v].argument || el_vars::is_compiler_generated(vars, v) {
+  // (The local a return buffer was renamed onto is demoted as any local is.)
+  if (vars.vars[v].argument && !el_ex_base::hidden_param(e, vars, v)) || el_vars::is_compiler_generated(vars, v) {
     return -1;
   }
   a = -1;
