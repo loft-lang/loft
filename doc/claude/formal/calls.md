@@ -591,7 +591,7 @@ measurement that closed it — is the companion [calls-history.md](calls-history
   materialisation is what keeps the refusal (loft#1303).
 - **Return independence (`F-Ret`)** — `a = mk(); a[0]=99; b = mk()` leaves `b[0]==1`.  The
   NULLABLE record return, which has no delivery buffer, is pinned apart in
-  `loft-suite/rules/calls/F-Ret/1337-a-view-of-a-local-returned-through-a-nullable-return-is-copied.loft`:
+  `loft-suite/rules/calls/F-Ret/a-nullable-return-hands-out-a-fresh-owned-value-as-its-dense-twin-does.loft`:
   a walker's local rebound through its own reference field, a projection inside an `if` arm
   beside a `null` and beside a literal, the walk that ends at null, eight nullable controls
   and the two dense twins — each read after a filler allocation, both backends
