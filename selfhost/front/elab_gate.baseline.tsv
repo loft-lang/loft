@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	4cbfe954e3b64009e1ef6b47d56bb4f1dc2733a9
+suite	7d2eef83154189543c4978d45550c66aa50c6d83
 
-layer	elab	agree	1031	of	2115
+layer	elab	agree	1031	of	2114
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -314,15 +314,14 @@ elab	refused	loft-suite/rules/interfaces/G-Mono/1872-a-generic-instance-answers-
 elab	refused	loft-suite/rules/interfaces/G-Mono/1881-a-recursive-generic-hands-back-what-its-sites-do.loft
 elab	refused	loft-suite/rules/interfaces/G-Mono/2270-a-generic-writes-a-nullable-element-as-its-scalar.loft
 elab	refused	loft-suite/rules/interfaces/G-Mono/a-generic-at-a-keyed-collection-builds-its-empty-and-copies-its-bind.loft
+elab	refused	loft-suite/rules/interfaces/G-Mono/a-generic-at-a-tuple-answers-the-boxed-record-and-its-callback-is-its-twins-type.loft
 elab	refused	loft-suite/rules/interfaces/G-Mono/a-generic-format-hole-renders-as-its-instance-type.loft
-elab	refused	loft-suite/rules/interfaces/G-Mono/a-generic-hands-up-its-callbacks-pure-value-tuple.loft
 elab	refused	loft-suite/rules/interfaces/G-Mono/a-generic-instantiates-once-per-distinct-type-and-two-widths-are-two.loft
 elab	refused	loft-suite/rules/interfaces/G-Mono/a-generic-nullable-result-at-a-tuple-answers-on-every-path.loft
 elab	refused	loft-suite/rules/interfaces/G-Mono/a-generic-over-a-vector-of-tuples-of-its-type-variables.loft
 elab	refused	loft-suite/rules/interfaces/G-Mono/a-generic-reserves-at-its-elements-width.loft
 elab	refused	loft-suite/rules/interfaces/G-Mono/a-slice-inside-a-generic-is-copied-at-its-element.loft
 elab	refused	loft-suite/rules/interfaces/G-Mono/a-spec-part-only-some-instances-execute-renders-on-those.loft
-elab	refused	loft-suite/rules/interfaces/G-Mono/a-tuple-callback-of-a-generic-answers-the-boxed-record.loft
 elab	refused	loft-suite/rules/interfaces/G-Mono/a-tuple-element-read-inside-a-generic-is-its-tuple.loft
 elab	refused	loft-suite/rules/interfaces/G-Mono/filter-and-map-inside-a-generic-copy-at-their-element.loft
 elab	refused	loft-suite/rules/interfaces/G-Mono/sizeof-inside-a-generic-is-its-instances-size.loft
