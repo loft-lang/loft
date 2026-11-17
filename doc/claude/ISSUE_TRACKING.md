@@ -693,7 +693,10 @@ scripts/claim.py check N           # who holds it
   `index/stability_weekly.tsv` is more than seven days old, it records one
   (`make stability-read ARGS="--record"`, [STABILITY_METHOD.md](STABILITY_METHOD.md)
   § The weekly read), and when the read shows the performance portal's row older than a week,
-  it asks the performance stream for `make perf-check ARGS="--record"`.
+  it asks the performance stream for `make perf-check ARGS="--record"`.  Recording that row is
+  also the week's FILE SPLIT: the top Rust file past the 5000-line ceiling
+  (`make file-sizes ARGS="--pick 1 --ceiling 5000"`) is split with the `split-file` skill on the
+  `-next` branch, one pure-move commit ([RELEASE.md § File split](RELEASE.md)).
 
 A claim written in prose ("claimed by the … stream") is invisible to the script, the work queue
 and the hook.  Write it with the script.

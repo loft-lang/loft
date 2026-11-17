@@ -145,10 +145,26 @@ right and globally inconsistent is what that produces.
   release branch's PR beside other work — the COMMIT is what keeps the move reviewable on
   its own, so it never shares one with a behaviour change.  Take two picks when the previous
   release's split landed clean, one otherwise.
-- **One hard ceiling, any time (owner): no source file passes 5000 lines.**  A file that
-  reaches it is split, before more is added to it, into files of at most 2500 lines each —
-  whatever the release cycle.  Below the ceiling, how large a file has grown is this row's
-  question; a fix never has to carve a file first.
+- **One hard ceiling (owner): no source file passes 5000 lines**, split into parts of at most
+  2500.  How it is kept differs by language, because the loft sources are where the language
+  is going and the Rust ones will end as its reference implementation:
+  - **loft source — on the spot.**  A `.loft` file of the language's own code (stdlib,
+    self-hosted compiler, tools; tests and cells are programs and do not count) that passes
+    the ceiling is split before it lands: `no_loft_source_file_passes_the_ceiling`
+    (`tests/doc_hygiene.rs`) fails the PR that grows it.  A loft split is a move plus the
+    callers' qualification (`use <part>;`, `<part>::name`), since each file is a module.
+  - **Rust — weekly.**  Each week the issue sweep splits the top of
+    `make file-sizes ARGS="--pick 1 --ceiling 5000"` (one file, a pure move, its own commit;
+    a file too large for one week carries over to the next), and the weekly stability row
+    counts what is left (`over_ceiling`, `index/stability_weekly.tsv`) — a number that only
+    shrinks.  A fix never has to carve a Rust file first.
+  - **A file that cannot be split without fallout says so in its header**,
+    `@no-split: <why>` — a generated file whose bulk is one function the split would turn
+    into calls on a hot path, say (`selfhost/src/fill.loft`: its `run` is the interpreter's
+    inlined loop).  The guard, the pick and the weekly count skip it; `file-sizes.py` lists it
+    with its reason, so a mark is a stated decision that stays visible, never a way to stop
+    counting.  A generated file carries the mark in its GENERATOR's header text, or the next
+    regeneration drops it.
 - **Payoff check**, read in `M-file-sizes`: did last release's split land, and did the
   file it came from stay down?  A split whose parts have regrown had its seam chosen
   wrong.  Re-open that seam; do not add a third part.

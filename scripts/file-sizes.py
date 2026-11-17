@@ -98,6 +98,23 @@ def kind_of(path: str) -> str | None:
         return "code"
     if path.endswith(".py") and path.startswith("scripts/"):
         return "code"
+    # The language's own loft source (stdlib, self-hosted compiler, tools); tests and cells are
+    # programs, not modules.  Split ON THE SPOT past the ceiling (doc_hygiene's guard).
+    if path.endswith(".loft") and not (path.startswith("tests/") or "/tests/" in path):
+        return "code"
+    return None
+
+
+NO_SPLIT = re.compile(r"@no-split:\s*(.*)")
+
+
+def no_split_reason(text: str) -> str | None:
+    """The header's `@no-split: <why>` — a file that cannot be split without fallout
+    (RELEASE.md § File split).  Skipped by every pick and count, but listed with its reason."""
+    for line in text.split("\n", 40)[:40]:
+        m = NO_SPLIT.search(line)
+        if m:
+            return m.group(1).strip() or "(no reason given)"
     return None
 
 
@@ -291,6 +308,7 @@ def main() -> int:
     args = ap.parse_args()
 
     rows: dict[str, list] = {"doc": [], "code": []}
+    marked: list[tuple[int, str, str]] = []
     totals: dict[str, list[int]] = {"doc": [], "code": []}
 
     for rel in tracked_files():
@@ -309,6 +327,10 @@ def main() -> int:
         bar = args.doc_bar if kind == "doc" else args.code_bar
         if n < bar:
             continue
+        reason = no_split_reason(text)
+        if reason:
+            marked.append((n, rel, reason))
+            continue
         gen = bool(GENERATED.search(text[:4000]))
         secs = sections(lines, kind, rel)
         what, why = ("generated", "machine-written — not a file anyone reads") if gen else verdict(n, secs)
@@ -322,6 +344,7 @@ def main() -> int:
                 print(f"no code file is past {args.ceiling} lines")
                 return 0
             print(f"{len(code)} code file(s) past {args.ceiling} lines\n")
+        print_marked(marked, args.ceiling or args.code_bar)
         return pick(code, args.pick, ceiling=args.ceiling)
 
     print("file sizes — which files are too long to use, and which want SPLITTING")
@@ -351,6 +374,16 @@ def main() -> int:
     print("SPLIT = split per subject · KEEP = one long subject, leave it · look = judgement")
     print("Bars are candidates, not verdicts: --doc-bar / --code-bar move them.")
     return 0
+
+
+def print_marked(marked: list, bar: int) -> None:
+    """The files a split would do harm to, by their own `@no-split` header: never picked."""
+    over = sorted((m for m in marked if m[0] >= bar), key=lambda m: -m[0])
+    if over:
+        print(f"marked @no-split, never picked ({len(over)}):")
+        for n, rel, why in over:
+            print(f"  {n:>6}  {rel} — {why[:110]}")
+        print()
 
 
 def pick(code: list, n: int, ceiling: int | None = None) -> int:

@@ -63,7 +63,8 @@ One row per ISO week (Monday).  The columns, by source:
                        week's last commit (`scripts/scripts_named.py list`): the backlog to
                        move into the suite, gated on the PR so it only shrinks
     over_ceiling       code files past the owner's 5000-line hard ceiling at the week's last
-                       commit (`.rs` anywhere, `scripts/*.py`; generated ones excluded) —
+                       commit (`.rs` anywhere, `scripts/*.py`; generated and `@no-split` ones
+                       excluded) —
                        the weekly split's backlog (RELEASE.md § File split), only shrinking
     deviations_stale   open deviation entries whose tracking reference is DEAD at the
                        week's end: none named (and not ruled `not resolvable in a
@@ -259,7 +260,10 @@ def over_ceiling(sha):
         size = int(head[2])
         body = batch[at:at + size]
         at += size + 1
-        if body.count(b"\n") > CEILING and not GENERATED.search(body[:4000].decode("utf-8", "replace")):
+        head = body[:4000].decode("utf-8", "replace")
+        # A generated file is its generator's question; a `@no-split` one says why a split
+        # would do harm (RELEASE.md § File split) and is listed by `file-sizes.py`, not counted.
+        if body.count(b"\n") > CEILING and not GENERATED.search(head) and "@no-split:" not in head:
             count += 1
     return count
 
