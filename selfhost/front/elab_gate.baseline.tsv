@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	d2fd5287adf56ce2c406d7843ae5567b35881911
+suite	2fd91d4ee73742fd516c9ca1d110e73114fff14e
 
-layer	elab	agree	1031	of	2183
+layer	elab	agree	1031	of	2182
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -128,14 +128,13 @@ elab	refused	loft-suite/rules/calls/F-Ret/1350-a-lifetime-tuple-result-joins-a-t
 elab	refused	loft-suite/rules/calls/F-Ret/153-p4-a-nullable-parameter-and-return-deliver-like-their-dense-twins.loft
 elab	refused	loft-suite/rules/calls/F-Ret/1949-a-generic-returning-a-borrowing-call-copies.loft
 elab	refused	loft-suite/rules/calls/F-Ret/2443-a-record-copied-out-of-a-kept-buffer-releases-it.loft
-elab	refused	loft-suite/rules/calls/F-Ret/2511-a-stored-reference-returned-through-or-hands-back-a-copy.loft
 elab	refused	loft-suite/rules/calls/F-Ret/2525-a-tail-after-an-early-return-of-a-local-delivers-its-own-value.loft
 elab	refused	loft-suite/rules/calls/F-Ret/a-container-temporary-of-another-type-is-not-the-return-buffer.loft
-elab	refused	loft-suite/rules/calls/F-Ret/a-function-returning-a-stored-reference-hands-back-a-copy.loft
 elab	refused	loft-suite/rules/calls/F-Ret/a-nullable-return-hands-out-a-fresh-owned-value-as-its-dense-twin-does.loft
 elab	refused	loft-suite/rules/calls/F-Ret/a-parameter-returned-on-any-of-several-paths-is-the-callers-copy.loft
 elab	refused	loft-suite/rules/calls/F-Ret/a-part-of-a-calls-result-returned-is-the-callers-own-copy.loft
 elab	refused	loft-suite/rules/calls/F-Ret/a-recursive-call-after-an-early-fresh-return-may-still-answer-its-argument.loft
+elab	refused	loft-suite/rules/calls/F-Ret/a-stored-reference-returned-hands-back-a-fresh-copy-however-it-is-spelled.loft
 elab	refused	loft-suite/rules/calls/F-Ret/a-text-match-over-types-declared-below-returns-through-every-caller.loft
 elab	refused	loft-suite/rules/calls/F-Ret/a-text-match-tail-returns-each-arms-value-whatever-its-wrapper.loft
 elab	refused	loft-suite/rules/calls/F-Ret/each-result-is-a-fresh-record-written-to-its-defaults.loft
