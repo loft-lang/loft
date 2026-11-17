@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	2fd91d4ee73742fd516c9ca1d110e73114fff14e
+suite	2067993d876625619139c70698d4ebc4c0e372d1
 
-layer	elab	agree	1031	of	2182
+layer	elab	agree	1031	of	2181
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -135,8 +135,7 @@ elab	refused	loft-suite/rules/calls/F-Ret/a-parameter-returned-on-any-of-several
 elab	refused	loft-suite/rules/calls/F-Ret/a-part-of-a-calls-result-returned-is-the-callers-own-copy.loft
 elab	refused	loft-suite/rules/calls/F-Ret/a-recursive-call-after-an-early-fresh-return-may-still-answer-its-argument.loft
 elab	refused	loft-suite/rules/calls/F-Ret/a-stored-reference-returned-hands-back-a-fresh-copy-however-it-is-spelled.loft
-elab	refused	loft-suite/rules/calls/F-Ret/a-text-match-over-types-declared-below-returns-through-every-caller.loft
-elab	refused	loft-suite/rules/calls/F-Ret/a-text-match-tail-returns-each-arms-value-whatever-its-wrapper.loft
+elab	refused	loft-suite/rules/calls/F-Ret/a-text-match-tail-answers-each-arms-value-whatever-its-lowering-or-declaration-order.loft
 elab	refused	loft-suite/rules/calls/F-Ret/each-result-is-a-fresh-record-written-to-its-defaults.loft
 elab	refused	loft-suite/rules/calls/F-Return/a-function-answers-the-value-its-return-or-its-tail-names.loft
 elab	refused	loft-suite/rules/calls/F-Surface/2331-a-librarys-own-function-below-its-call-wins-over-the-stdlib.loft
