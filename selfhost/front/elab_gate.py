@@ -274,7 +274,8 @@ def main():
     # `program::definition\tverdict` per line — what a skip sweep compares function by function.
     if os.environ.get("LOFT_ELAB_FN_VERDICTS"):
         with open(os.environ["LOFT_ELAB_FN_VERDICTS"], "w", encoding="utf-8") as fh:
-            fh.write("".join(f"{k}\t{v}\n" for k, v in sorted(fn_results.items())))
+            shape_of = {f"{prog}::{fname}": shape for shape, prog, fname in beside}
+            fh.write("".join(f"{k}\t{v}\t{shape_of.get(k, '')}\n" for k, v in sorted(fn_results.items())))
     if os.environ.get("LOFT_ELAB_VERDICTS"):
         with open(os.environ["LOFT_ELAB_VERDICTS"], "w", encoding="utf-8") as fh:
             fh.write("\n".join(sorted(verdicts)) + "\n")
