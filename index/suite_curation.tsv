@@ -150,11 +150,11 @@ Disp-Trigger	dispatch	curated	2	2026-11-17	needs packages in reach (declared dep
 Disp-World	dispatch	curated	1	2026-11-17	needs a live world (LOFT_LIVE_RELOAD=1, a set growing between reloads): no single suite program can reach it; guarded by tests/live_world.rs
 Fact-Direction	facts	curated	1	2026-11-17	had no guard: a first suite cell (writes through a function value and a recursion cycle, an effectful call not shared, a null remainder) — the new facts chapter
 Fact-Engine	facts	curated	1	2026-11-17	structural (one routine, one answer per compilation, every writer reads it): not observable by one program beyond the writers agreeing; the Fact-Direction cell exercises its answers; Rust sites in src/opt/facts.rs
-Fact-Kind	facts	needs-cell	0	2026-11-17	structural (what a kind declares): not observable by a program; its kinds' answers are exercised by the Fact-Direction/Twin cells
-Fact-One	facts	needs-cell	0	2026-11-17	structural (no rewrite walks a callee itself): not observable by a program; D-fact-1 OPEN
+Fact-Kind	facts	structural	0	2026-11-17	what a kind declares (domain, direction, key, flow, cycle scope): no program observes the declaration; its kinds' answers are exercised by the Fact-Direction and Fact-Twin cells
+Fact-One	facts	structural	0	2026-11-17	no rewrite walks a callee itself: a property of the compiler's code, not of a program's answers; D-fact-1 OPEN
 Fact-Oracle	facts	needs-cell	0	2026-11-17	unbuilt: LOFT_FACT_VERIFY is read nowhere in src/ — recorded as D-fact-4 (OPEN, @PLN211 Arc C step 2); no program can guard a missing switch
-Fact-Reach	facts	needs-cell	0	2026-11-17	structural (depth/cycles parameters of a query): the cycle answer is exercised by the Fact-Direction cell's mutual recursion
-Fact-ReachMin	facts	needs-cell	0	2026-11-17	process rule (smallest reach; widening measured by make rewrite-census): not observable by a program
+Fact-Reach	facts	structural	0	2026-11-17	the depth and cycle parameters of a query: no program observes them; the cycle answer is exercised by the Fact-Direction cell's mutual recursion
+Fact-ReachMin	facts	structural	0	2026-11-17	a rewrite asks the smallest reach, a widening measured by make rewrite-census: a process rule, not a program's answer
 Fact-Relational	facts	curated	1	2026-11-17	a first suite cell: an accessor's bound answers by its own test inside, outside and below zero (negative counts from the end); the accessor inlining clause is PROPOSED
 Fact-Twin	facts	curated	1	2026-11-17	a first suite cell: a twin chain from proving and non-proving sites (C: __rg twins vs general bodies), values alike with NN twins on and off; tests/twin_base.rs + tests/scripts/157-twin-base.loft (read by path) guard R-Base's twin
 F-Desugar	formatting	todo			

@@ -18,12 +18,16 @@ still covers the rule totally — and record which rules are done.
                                               # cells: checks (a lost feature named), repoints every
                                               # reference, suite commit, gate E rows, pin
     scripts/suite_curate.py done <rule> [note]   # record the rule as curated (after the commit)
+    scripts/suite_curate.py done <rule> --structural <why>   # a rule no program can observe
     scripts/suite_curate.py init              # (re)write the ledger's rows for every defined rule
 
 THE LEDGER is `index/suite_curation.tsv`: one row per defined rule (`rule_tags.py list`, all of
 them — not only the cited ones), with its state, the cell count when it was done, and a note.
 States: `todo`; `curated` (the rule's cells are its core, each one needed); `needs-cell` (no cell
-names the rule: it goes to the rule-led walk's queue, `rule_tags.py worklist`).
+names the rule: it goes to the rule-led walk's queue, `rule_tags.py worklist`); `structural` (a
+rule about how the compiler is organised — one routine, what a kind declares, how a reach is
+chosen — that no program can observe: no cell can guard it, and the note says why and what
+exercises its answers instead).
 
 WHAT "COVERS THE RULE TOTALLY" MEANS HERE — the features a rule's cells reach today, which the
 core must keep, every one:
@@ -736,7 +740,7 @@ def nxt(n):
     return 0
 
 
-def done(tag, note):
+def done(tag, note, structural=False):
     rows = read_ledger()
     if tag not in rows:
         print(f"no ledger row for {tag} (init first)")
@@ -744,12 +748,15 @@ def done(tag, note):
     cells = cells_of(tag)
     n = len(cells)
     in_suite = [c for c in cells if c.startswith("suite:") or "/rules/" in c or c.startswith("rules/")]
-    if n and not in_suite:
+    if structural and not note.strip():
+        print(f"@FR-{tag}: --structural needs the reason no program can observe the rule")
+        return 1
+    if n and not in_suite and not structural:
         # Guarded only outside the language suite (a Rust test, a source comment): the owner's
         # rule is a first suite cell from the formal text, or a note that says why none can be.
         print(f"  note  no SUITE cell cites @FR-{tag} ({n} citing file(s), none a cell): write its "
               "first cell from the formal text, or say in the note why a program cannot observe it")
-    rows[tag][2] = "needs-cell" if n == 0 else "curated"
+    rows[tag][2] = "structural" if structural else "needs-cell" if n == 0 else "curated"
     rows[tag][3] = str(n)
     rows[tag][4] = datetime.date.today().isoformat()
     rows[tag][5] = note.replace("\t", " ")
@@ -788,6 +795,8 @@ def main():
     if cmd == "related" and tag and len(a) > 2:
         return related(tag, a[2])
     if cmd == "done" and tag:
+        if len(a) > 2 and a[2] == "--structural":
+            return done(tag, " ".join(a[3:]), structural=True)
         return done(tag, " ".join(a[2:]))
     print(__doc__)
     return 2

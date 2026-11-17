@@ -622,7 +622,10 @@ A rule no cell names is marked `needs-cell` and gets its first guard from the ru
 A rule guarded only by Rust tests gets its first suite cell when the walk reaches it — in ledger
 order, since a cell-less rule is mostly one that never broke — written from the formal text,
 every clause, not copied from the Rust twins; each expectation is shown met only by its own
-refusal (corrupt it alone).
+refusal (corrupt it alone).  A rule about how the compiler is organised — one routine, what an
+analysis declares, how a query's reach is chosen — that no program can observe is recorded
+`done <rule> --structural <why>`, the reason naming what exercises its answers instead; a rule
+the code does not keep at all is a deviation entry in its chapter, not a cell.
 
 ---
 
