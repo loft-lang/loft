@@ -454,6 +454,10 @@ impl Parser {
                     depth += 1;
                     self.lexer.cont();
                 }
+                // A closing bracket at depth 0 is the enclosing match's own: the arm has no
+                // `=>` (a malformed body), and skipping past it ran the skip to the end of the
+                // file, where the arm loop never met its `}` again and spun.
+                LexItem::Token(t) if depth == 0 && (*t == "]" || *t == ")" || *t == "}") => break,
                 LexItem::Token(t) if *t == "]" || *t == ")" || *t == "}" => {
                     depth -= 1;
                     self.lexer.cont();

@@ -1,0 +1,20 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// A `match` whose subject has no type on the first pass (here an undeclared name) skips each
+// arm's pattern to its `=>`.  An arm with no `=>` at all — it starts with `if` or another
+// `match` — must end at the match's own `}`: the skip used to step past that brace and run to
+// the end of the file, where the arm loop never met a `}` again and the parser spun for ever.
+// The program is rejected with its real error instead.
+// @EXPECT_ERROR: Unknown variable 'code'
+// @EXPECT_ERROR: match requires an enum, struct, or scalar type
+// @EXPECT_ERROR: expect variant name or '_' in match arm
+// @EXPECT_ERROR: Expect token }
+// @EXPECT_ERROR: Syntax error: unexpected '}'
+
+fn an_if_where_a_pattern_goes(x: integer) -> integer {
+  match code {
+    if x > 0 { 1 } else { 2 }
+  }
+}
+
+fn main() { }

@@ -1,0 +1,17 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// The second shape of the skip that ran past its match (see
+// a-match-arm-with-no-pattern-over-an-unknown-subject-ends-with-an-error.loft): a `match` whose
+// subject has no type, written again where its first arm goes.  The skip stops at the inner
+// match's `}`, and the outer one is reported unclosed instead of the parser spinning.
+// @EXPECT_ERROR: Expect token ;
+// @EXPECT_ERROR: Expect token }
+
+fn a_second_match_where_a_pattern_goes(x: integer) -> integer {
+  match code {
+  match code {
+    _ => 3
+  }
+}
+
+fn main() { }

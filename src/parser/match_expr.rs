@@ -350,7 +350,9 @@ impl Parser {
         let mut hoisted_bindings: Vec<Value> = Vec::new();
 
         loop {
-            if self.lexer.peek_token("}") {
+            // The end of the file ends the arms too: an arm that consumed nothing there would
+            // be read again for ever.
+            if self.lexer.peek_token("}") || matches!(self.lexer.peek().has, LexItem::None) {
                 break;
             }
             // @PLN25 — a `null` pattern arm on a nullable inline enum element
