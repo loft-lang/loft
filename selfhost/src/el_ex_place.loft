@@ -252,7 +252,9 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
     refuse_known(e, x.tp, "a nullable record slot assigned {type_kind(x.tp)}");
     return ex(ir::NdNull, ir::TyVoid);
   }
-  if op == "=" && e.p.nodes[rhs] is SStructLit && !(p.tp is TyOptional) && struct_ref(e, el_types::base(p.tp)) >= 0 {
+  // (An element at an index nothing proves reads as `τ?`; a literal is still written into it
+  // field by field, a record there or a fault.)
+  if op == "=" && e.p.nodes[rhs] is SStructLit && (!(p.tp is TyOptional) || calls(e, el_ir::unspan(p.code), "OpGetVector")) && struct_ref(e, el_types::base(p.tp)) >= 0 {
     return literal_into_place(e, vars, el_ir::unspan(p.code), struct_ref(e, el_types::base(p.tp)), rhs);
   }
   // `assign_var_nr`'s text arm: `o.s += t` appends to a `_field_N` local that takes the

@@ -1180,6 +1180,16 @@ pub fn unary(e: el::El, vars: el_vars::Vars, op: text, n: integer?) -> Ex {
       }
       return a;
     }
+    // A link to a record LOCAL (`pc = &c`) is the local's slot (`OpCreateStack`), typed as a
+    // link borrowing it; its fields are reached as the record's are (`@FR-C-Ref`).
+    match a.code {
+      NdVar { n: rv } => {
+        if !(a.tp is TyOptional) && struct_ref(e, rb) >= 0 && el::def(e, struct_ref(e, rb)).def_type == el::DT_STRUCT && !vars.vars[rv].argument && !(el_vars::tp(vars, rv) is TyRefVar) {
+          return ex(el_ir::cl(e, "OpCreateStack", [a.code]), ir::TyRefVar { inner: el_types::with_deps(rb, [rv]) });
+        }
+      },
+      _ => {}
+    }
     if e.first_pass && el_types::is_unknown(a.tp) {
       return a;
     }

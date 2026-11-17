@@ -1,0 +1,19 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a record literal written into a vector element at an index nothing proves is written field by field into the element (no copy, no work ref); a call's record is copied in, its store given away — in a local vector, a vector field and a record field.
+// Prints: 5z 8 6
+
+struct It { n: integer, t: text }
+struct B { items: vector<It>, p: It }
+fn mp(n: integer) -> It { It { n: n, t: "m" } }
+fn main() {
+  v = [It { n: 1, t: "a" }, It { n: 2, t: "b" }];
+  j = 1;
+  v[j] = It { n: 9, t: "z" };
+  v[0] = mp(5);
+  b = B { items: [It { n: 3, t: "c" }], p: It { n: 4, t: "d" } };
+  b.items[0] = It { n: 8, t: "y" };
+  b.p = mp(6);
+  println("{v[0].n}{v[1].t} {b.items[0].n} {b.p.n}");
+}

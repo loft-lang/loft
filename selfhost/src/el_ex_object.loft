@@ -1956,6 +1956,11 @@ pub fn method_call(e: el::El, vars: el_vars::Vars, at: integer, re: integer, nam
   if name == "remove" && len(list) == 2 && el_types::base(x.tp) is TyVector {
     return vector_remove(e, at, x, ex(list[1], types[1]));
   }
+  // (Through a link to a vector too: `v.remove(i)` on a `v: &vector<T>` removes from the vector
+  // it names.)
+  if name == "remove" && len(list) == 2 && match x.tp { TyRefVar { inner: ri } => el_types::base(ri) is TyVector && !(ri is TyOptional), _ => false } {
+    return vector_remove(e, at, ex(x.code, match x.tp { TyRefVar { inner: ri2 } => ri2, _ => x.tp }), ex(list[1], types[1]));
+  }
   if name == "reserve" {
     return reserve_call(e, list, types);
   }
