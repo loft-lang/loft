@@ -19364,6 +19364,33 @@ a_function_returning_foreign_data_must_say_const:2:33",
     .warning("Variable w is never read at a_function_returning_foreign_data_must_say_const:3:16");
 }
 
+/// loft#2536 — a function that rebinds its tail local from a call READING it
+/// (`cv = grow(cv, 2); cv`) answers the call's result.  The return-buffer handover gave the
+/// callee `cv` as its buffer, so it built into the record it read: `1 2 1 0`, not `5 4 1 4`.
+#[test]
+fn a_call_reading_the_local_it_rebinds_answers_its_result() {
+    code!(
+        "struct Canvas { data: vector<integer>, w: integer }
+fn grow(c: const Canvas, extra: integer) -> Canvas {
+  g = Canvas { data: [], w: c.w + 1 };
+  for x in c.data { g.data += [x]; }
+  for _k in 0..extra { g.data += [c.w]; }
+  g
+}
+fn mk(t: integer) -> Canvas { Canvas { data: [t, t], w: t + 3 } }
+fn one(t: integer) -> Canvas { cv = mk(t); cv = grow(cv, 2); cv }
+fn two(t: integer) -> Canvas {
+  cv = mk(t);
+  cv = grow(cv, 2);
+  cv
+}
+fn sig(c: Canvas) -> integer { c.w * 1000 + len(c.data) * 100 + (c.data[0] ?? 9) * 10 + (c.data[3] ?? 9) }
+fn run() -> integer { sig(one(1)) * 10000 + sig(two(1)) }"
+    )
+    .expr("run()")
+    .result(Value::Long(54_145_414));
+}
+
 /// `@FR-Const-Foreign` — asking whether a body's tail is foreign data follows each local's
 /// assignments once.  Locals assigned from each other form a cycle (`y = n; x = y; y = x; y`),
 /// and following it again and again overflowed the compiler's stack: a crash on a valid program.

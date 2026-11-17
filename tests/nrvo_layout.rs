@@ -108,3 +108,27 @@ fn a_tail_local_is_handed_to_its_bind_whatever_the_layout() {
 fn a_statement_between_the_bind_and_the_tail_keeps_the_work_ref() {
     assert!(buffer_of(STATEMENT_BETWEEN, "n_mk").starts_with("__ref_"));
 }
+
+const GROW: &str = "struct Canvas { data: vector<integer>, w: integer }
+fn grow(c: const Canvas, extra: integer) -> Canvas {
+  g = Canvas { data: [], w: c.w + 1 };
+  for x in c.data { g.data += [x]; }
+  for _k in 0..extra { g.data += [c.w]; }
+  g
+}
+fn mk(t: integer) -> Canvas { Canvas { data: [t, t], w: t + 3 } }
+";
+
+/// A call that READS the tail local must not be handed it as its buffer: the callee would
+/// build its answer into the record it reads (`cv = grow(cv, 2); cv` answered `1 2 1 0` for
+/// `5 4 1 4`, silently, on both backends).  On one line and on two.
+#[test]
+fn a_call_reading_the_tail_local_keeps_its_work_ref() {
+    let one =
+        format!("{GROW}fn after(t: integer) -> Canvas {{ cv = mk(t); cv = grow(cv, 2); cv }}");
+    let two = format!(
+        "{GROW}fn after(t: integer) -> Canvas {{\n  cv = mk(t);\n  cv = grow(cv, 2);\n  cv\n}}"
+    );
+    assert!(buffer_of(&one, "n_grow").starts_with("__ref_"), "one line");
+    assert!(buffer_of(&two, "n_grow").starts_with("__ref_"), "two lines");
+}

@@ -4832,6 +4832,12 @@ impl Parser {
         if work_ref == cv {
             return;
         }
+        // (4b) The call must not READ `cv`: handed `cv` as its buffer, the callee builds its
+        //      answer into the very record it reads its argument from (`cv = grow(cv, 2); cv`
+        //      answered a half-overwritten record, silently, on both backends).
+        if Self::args_read_var(args, i, cv) {
+            return;
+        }
         let nm = self.vars.name(work_ref);
         if !nm.starts_with("__ref_") && !nm.starts_with("__rref_") {
             return;
@@ -4908,6 +4914,10 @@ impl Parser {
             if !enm.starts_with("__ref_") && !enm.starts_with("__rref_") {
                 break;
             }
+            // (4b) as above: an earlier call that reads `cv` must not build into it.
+            if Self::args_read_var(eargs, ei, cv) {
+                break;
+            }
             for a in eargs.iter_mut() {
                 Self::substitute_work_ref(a, ework_ref, cv);
             }
@@ -4915,6 +4925,22 @@ impl Parser {
         }
 
         self.suppress_collapsed_workrefs(l, collapsed_refs);
+    }
+
+    /// Does a call READ `cv` — any argument but the return buffer at `buf` naming it?  Handed
+    /// `cv` as its buffer, such a call would build its answer into the record it reads.
+    fn args_read_var(args: &[Value], buf: usize, cv: u16) -> bool {
+        args.iter().enumerate().any(|(k, a)| {
+            let mut reads = false;
+            if k != buf {
+                a.walk(&mut |n| {
+                    if matches!(n.unspan(), Value::Var(x) if *x == cv) {
+                        reads = true;
+                    }
+                });
+            }
+            reads
+        })
     }
 
     /// A work-ref collapsed onto `cv` (its inner call now delivers into `cv`
