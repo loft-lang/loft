@@ -154,6 +154,21 @@ edit landed while a run's build was under a minute old (a development build at 2
 gate's at 35 s); both runs were discarded and repeated.  Check the build's age in ONE command
 and edit in the NEXT, never in the same one.
 
+**REBASED onto main c34c1d177 (PR #2529 carried the cut 605f3d2f5), 2026-11-17.**  The suite
+pin is main's now (`tests/loft-suite.pin` = b705cdb48; a scratch clone at that pin is the
+`LOFT_SUITE_DIR`).  Gate E's baseline there, the real gate's own figure: **931 of 2209 agree,
+0 differ, 1278 refused** (eebe9df85).  The two rows the union left differing are settled: the
+captured-view row agrees (a `!` subject's `_ncr_N` is minted on the first pass), the
+match-subject cell is refused by name (`a match whose subject is typed only on the second
+pass`: the temp is named for its site as Rust's is, but this port's first pass skips an
+untyped match's arms and Rust's does not).  That refusal also took one agreeing program
+(`coroutines/G-Next/a-generator-resumes-at-the-yield-it-suspended-at`) — narrow it, or better
+read the arms on the first pass.
+
+The writer difference recorded below is CURED on main (loft3 reran the steps on c34c1d177:
+0 differ in all three programs); the writer and runner baselines are being re-written at
+main's pin and can be committed once that chain shows no differing function.
+
 **All layers measured at this tree's suite pin (508580956), 2026-11-17** — into scratch
 baselines, NOT committed: the committed `bgen_survey` / `run_image_survey` baselines are still
 pinned at 38d4877cb and a `--check` refuses to run against them.
