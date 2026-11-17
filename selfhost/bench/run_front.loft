@@ -96,6 +96,11 @@ fn main() {
     exit(4);
   }
   b = front_bundle::graft(base!, e.b);
+  // `LOFT_FRONT_VARS=1`: each program function's locals as the scope pass receives them, with
+  // the flags it reads — what gate E's report does not print.
+  if env_variable("LOFT_FRONT_VARS") == "1" {
+    front_bundle::dump_vars(b);
+  }
   // The scope pass over the program's own functions: what it does not lay out yet is no run.
   sr = scope::scope_bundle(b);
   if len(sr) > 0 {
