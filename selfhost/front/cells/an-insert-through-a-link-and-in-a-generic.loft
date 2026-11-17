@@ -1,0 +1,16 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: an insert through a link, and inside a generic at a text and an integer element (the template's `tvinsert` lowered at the bound element).
+// Prints: [7,1,99,2] ["a","b"]
+
+fn amp_insert(v: &vector<integer>) { insert(v, 1, 99); }
+fn put<T>(v: vector<T>, x: T) { v.insert(0, x); }
+fn main() {
+  v = [1, 2];
+  amp_insert(v);
+  t = ["b"];
+  put(t, "a");
+  put(v, 7);
+  println("{v} {t}");
+}

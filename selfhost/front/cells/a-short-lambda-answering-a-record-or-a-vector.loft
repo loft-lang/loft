@@ -1,0 +1,14 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a short lambda handed to a two-variable generic answers a record or a vector its position does not name: the answer is settled on the first pass and delivered through the lambda's late return buffer.
+// Prints: 2 [[1,2],[2,3]]
+
+struct P { n: integer }
+fn my_map<T, U>(v: vector<T>, f: fn(T) -> U) -> vector<U> { r: vector<U> = []; for x in v { r += [f(x)]; } r }
+fn main() {
+  xs = [1, 2];
+  a = my_map(xs, |x| { P { n: x } });
+  b = my_map(xs, |x| { [x, x + 1] });
+  println("{a[1].n} {b}");
+}
