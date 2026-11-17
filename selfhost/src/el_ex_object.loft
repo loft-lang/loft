@@ -2762,9 +2762,20 @@ pub fn bind_type_vars(e: el::El, p: ir::TypeT, a: ir::TypeT, b: Binding) {
     at = if picked is TyReference || picked is TyVector || picked is TyEnum || picked is TyText { el_types::with_deps(picked, []) } else { picked };
     for v in b.vars {
       if v == tv {
-        if !el_types::is_equal(e, b.types[v#index] ?? ir::TyVoid, at) {
-          b.ok = false;
+        cur = b.types[v#index] ?? ir::TyVoid;
+        if el_types::is_equal(e, cur, at) {
+          return;
         }
+        // `τ?` and `τ` meet at `τ?` (the optional unify): a nullable argument beside a plain
+        // one of its type binds the variable to the nullable.
+        if cur is TyOptional && !(at is TyOptional) && el_types::is_equal(e, el_types::base(cur), el_types::base(at)) {
+          return;
+        }
+        if at is TyOptional && !(cur is TyOptional) && el_types::is_equal(e, el_types::base(cur), el_types::base(at)) {
+          b.types[v#index] = at;
+          return;
+        }
+        b.ok = false;
         return;
       }
     }

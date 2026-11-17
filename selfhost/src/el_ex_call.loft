@@ -101,8 +101,14 @@ pub fn instantiate(e: el::El, g: integer, types: vector<ir::TypeT>) -> integer {
   record = match bound { TyReference { n } => el::def(e, n).def_type == el::DT_STRUCT && el_types::type_var(e, bound) < 0 && !el::def(e, n).name.starts_with("__"), _ => false };
   // A nullable binding is carried for a plain scalar (`integer?`): its value is the scalar's
   // own slot with a sentinel (@FR-L-Null).
-  nullable_scalar = match bound { TyOptional { inner } => el_ex_object::scalar_type(inner) && !(inner is TyEnum), _ => false };
-  if !(el_ex_object::scalar_type(bound) || bound is TyText || record) || el_types::base(bound) is TyEnum || (bound is TyOptional && !nullable_scalar) || el_dispatch::identity(e, bound) == "" {
+  nullable_scalar = match bound { TyOptional { inner } => el_ex_object::scalar_type(inner) && !(match inner { TyEnum { n: _, is_ref: nr } => nr, _ => false }), _ => false };
+  // A plain enum is a byte, a scalar like any other; a struct enum is the record its variants
+  // share, bound as a record is.
+  plain_enum = match bound { TyEnum { n: _, is_ref } => !is_ref, _ => false };
+  struct_enum = match bound { TyEnum { n: _, is_ref } => is_ref, _ => false };
+  // A vector of plain scalars or texts is bound as the collection it is.
+  scalar_vec = match bound { TyVector { inner: vi } => el_ex_object::scalar_type(vi) || vi is TyText || struct_ref(e, vi) >= 0, _ => false };
+  if !(el_ex_object::scalar_type(bound) || bound is TyText || record || plain_enum || struct_enum || scalar_vec) || (bound is TyOptional && !nullable_scalar) || el_dispatch::identity(e, bound) == "" {
     // A reference says which definition kind it names: a struct-enum variant, a tuple's or a
     // nullable's synthetic record, a type variable not yet bound.
     kind = match bound { TyReference { n } => "TyReference of a {def_kind(el::def(e, n))}", _ => type_kind(bound) };
@@ -190,6 +196,8 @@ pub fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::T
   fresh_row = match el_types::base(bound) {
     TyReference { n: frd } => el::def(e, frd).known_type,
     TyEnum { n: fed } => el::def(e, fed).known_type,
+    // (A vector is its own row: what a content comparison walks it by.)
+    TyVector { inner: _ } => el_schema::content_type(e, el_types::without_deps(el_types::base(bound))),
     _ => el_ex_vector::append_row(e, el_types::base(bound))
   };
   rows_known = stale_row != el::NO_TYPE && fresh_row >= 0 && fresh_row != el::NO_TYPE;
@@ -233,9 +241,10 @@ pub fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::T
   code = substitute_code(e, tmpl.code[0] ?? ir::NdNull, h, bound);
   // `resolve_content_eq` (`@FR-G-Sat-Eq`): a bound `==` over the variable becomes the concrete
   // `a == b` for the bound type — `call_op`, the one lowering a concrete site gets.
-  if rows_known && !(el_types::base(bound) is TyReference) && el_types::struct_enum_def(bound) < 0 {
+  if rows_known {
+    heap_bound = el_types::base(bound) is TyReference || el_types::base(bound) is TyVector || el_types::struct_enum_def(bound) >= 0;
     iv = el_vars::load(f);
-    code = resolve_content_eq(e, iv, code, stale_row, bound);
+    code = resolve_content_eq(e, iv, code, stale_row, bound, heap_bound);
     f = el_vars::stored(iv);
   }
   if rows_known && stale_row != fresh_row {
@@ -338,39 +347,44 @@ pub fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::T
   true
 }
 
-pub fn resolve_content_eq(e: el::El, vars: el_vars::Vars, n: ir::Node, stale: integer, bound: ir::TypeT) -> ir::Node {
+// (A bound `!=` is the negation of the bound `==`, whatever the type; a record, a vector or a
+// struct enum keeps the content comparison, its row retargeted after.)
+pub fn resolve_content_eq(e: el::El, vars: el_vars::Vars, n: ir::Node, stale: integer, bound: ir::TypeT, heap: boolean) -> ir::Node {
   match n {
-    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: resolve_content_eq(e, vars, inner, stale, bound) },
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: resolve_content_eq(e, vars, inner, stale, bound, heap) },
     NdCall { def_nr, args } => {
       nm = el::def(e, def_nr).name;
-      a2: vector<ir::Node> = [for a in args { resolve_content_eq(e, vars, a, stale, bound) }];
+      a2: vector<ir::Node> = [for a in args { resolve_content_eq(e, vars, a, stale, bound, heap) }];
       if (nm == "OpEqContent" || nm == "OpNeContent") && len(a2) == 3 && a2[2]! == ir::NdInt { n: stale } {
-        x = call_op(e, vars, if nm == "OpEqContent" { "==" } else { "!=" }, [a2[0]!, a2[1]!], [bound, bound]);
-        if x.tp is TyBoolean && !(x.code is NdNull) {
-          return x.code;
+        eq = if heap { el_ir::cl(e, "OpEqContent", [a2[0]!, a2[1]!, a2[2]!]) } else {
+          x = call_op(e, vars, "==", [a2[0]!, a2[1]!], [bound, bound]);
+          if x.tp is TyBoolean && !(x.code is NdNull) { x.code } else { ir::NdNull }
+        };
+        if !(eq is NdNull) {
+          return if nm == "OpEqContent" { eq } else { el_ir::cl(e, "OpNot", [eq]) };
         }
       }
       ir::NdCall { def_nr: def_nr, args: a2 }
     },
-    NdCallRef { var, args } => ir::NdCallRef { var: var, args: [for a in args { resolve_content_eq(e, vars, a, stale, bound) }] },
+    NdCallRef { var, args } => ir::NdCallRef { var: var, args: [for a in args { resolve_content_eq(e, vars, a, stale, bound, heap) }] },
     NdBlock { block } => {
       bl = block[0]!;
-      bl.operators = [for o in bl.operators { resolve_content_eq(e, vars, o, stale, bound) }];
+      bl.operators = [for o in bl.operators { resolve_content_eq(e, vars, o, stale, bound, heap) }];
       ir::NdBlock { block: [bl] }
     },
     NdLoop { block } => {
       bl = block[0]!;
-      bl.operators = [for o in bl.operators { resolve_content_eq(e, vars, o, stale, bound) }];
+      bl.operators = [for o in bl.operators { resolve_content_eq(e, vars, o, stale, bound, heap) }];
       ir::NdLoop { block: [bl] }
     },
-    NdInsert { items } => ir::NdInsert { items: [for o in items { resolve_content_eq(e, vars, o, stale, bound) }] },
-    NdSet { var, inner } => ir::NdSet { var: var, inner: resolve_content_eq(e, vars, inner, stale, bound) },
-    NdReturn { inner } => ir::NdReturn { inner: resolve_content_eq(e, vars, inner, stale, bound) },
-    NdIf { cond, t, f } => ir::NdIf { cond: resolve_content_eq(e, vars, cond, stale, bound), t: resolve_content_eq(e, vars, t, stale, bound), f: resolve_content_eq(e, vars, f, stale, bound) },
-    NdDrop { inner } => ir::NdDrop { inner: resolve_content_eq(e, vars, inner, stale, bound) },
-    NdTuple { items } => ir::NdTuple { items: [for o in items { resolve_content_eq(e, vars, o, stale, bound) }] },
-    NdTuplePut { var, idx, inner } => ir::NdTuplePut { var: var, idx: idx, inner: resolve_content_eq(e, vars, inner, stale, bound) },
-    NdYield { inner } => ir::NdYield { inner: resolve_content_eq(e, vars, inner, stale, bound) },
+    NdInsert { items } => ir::NdInsert { items: [for o in items { resolve_content_eq(e, vars, o, stale, bound, heap) }] },
+    NdSet { var, inner } => ir::NdSet { var: var, inner: resolve_content_eq(e, vars, inner, stale, bound, heap) },
+    NdReturn { inner } => ir::NdReturn { inner: resolve_content_eq(e, vars, inner, stale, bound, heap) },
+    NdIf { cond, t, f } => ir::NdIf { cond: resolve_content_eq(e, vars, cond, stale, bound, heap), t: resolve_content_eq(e, vars, t, stale, bound, heap), f: resolve_content_eq(e, vars, f, stale, bound, heap) },
+    NdDrop { inner } => ir::NdDrop { inner: resolve_content_eq(e, vars, inner, stale, bound, heap) },
+    NdTuple { items } => ir::NdTuple { items: [for o in items { resolve_content_eq(e, vars, o, stale, bound, heap) }] },
+    NdTuplePut { var, idx, inner } => ir::NdTuplePut { var: var, idx: idx, inner: resolve_content_eq(e, vars, inner, stale, bound, heap) },
+    NdYield { inner } => ir::NdYield { inner: resolve_content_eq(e, vars, inner, stale, bound, heap) },
     _ => n
   }
 }
