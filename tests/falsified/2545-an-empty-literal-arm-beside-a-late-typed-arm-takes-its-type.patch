@@ -1,0 +1,22 @@
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index 32f63d913..6c5e2babe 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -6458,17 +6458,6 @@ impl Parser {
+                     self.parse_block("else", &mut false_code, &Self::arm_expectation(&true_type));
+                 false_fact = std::mem::take(&mut self.operand_fact);
+                 false_is_null_literal = self.block_tail_null_literal;
+-                // loft#2545 — an empty literal `[]` beside a then arm of no type yet (on pass 1 a
+-                // forward callee) names no type either: it answers `Unknown`, as the same `[]`
+-                // does as a THEN arm (`true_is_empty_literal`).  Parsed against `Unknown` it came
+-                // back `void`, the `if` adopted it, and `m = if … { mk(t) } else { [] }` bound
+-                // `m` as void on pass 1 — then refused its vector on pass 2.
+-                if self.block_tail_empty_literal
+-                    && true_type == Type::Unknown(0)
+-                    && matches!(false_type, Type::Void)
+-                {
+-                    false_type = Type::Unknown(0);
+-                }
+                 // loft#2066 — a NAMED-width sibling expects nothing of this arm
+                 // (`arm_expectation`), so a bare `null` here takes the sibling's typed null, as
+                 // it did when the sibling was its expectation: native reads an untyped one as 0.
