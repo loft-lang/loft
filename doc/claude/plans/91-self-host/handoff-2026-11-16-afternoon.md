@@ -154,6 +154,18 @@ edit landed while a run's build was under a minute old (a development build at 2
 gate's at 35 s); both runs were discarded and repeated.  Check the build's age in ONE command
 and edit in the NEXT, never in the same one.
 
+**Two worktrees (owner, 2026-11-17).**  This checkout, on `tuxedo-pln204-int32`, is the TESTED
+line: it takes only fixes for what the tester reports.  New work lives in a second worktree,
+`../loft2-next` on branch `tuxedo-pln204-next` (stacked on the tested line, pushed), probed
+with its own script; a finished feature is rebased onto the tested line and pushed there for
+the tester.  Never mix the two in one tree.
+
+**Owed after PR #2531 merges** (this branch's cut 0a48655a8 with a peer's 785918351): the
+peer's change to how a `[for _ …]` comprehension binds its own `_` and counters moves two
+programs' numbering (`tests/scripts/85-yield-resume.loft`, `_index_3` for the port's
+`_index_2`; `a-counted-loop-pushing-one-value-is-one-fill.loft`, `_index_16` for
+`_index_15`) — mirror it in the elaborator once this branch is rebased onto that main.
+
 **Working mode since 2026-11-17 (owner): this stream TRANSLATES, a second agent TESTS.**  This
 stream ports whole features from the Rust source, checks each on a few single-program probes
 (`i.sh` / `elab_probe.py one`), and pushes the tip WITHOUT a corpus or gate run.  The tester
