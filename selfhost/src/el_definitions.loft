@@ -1278,8 +1278,16 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
             if inner is TyFloat || inner is TySingle || inner is TyBoolean || inner is TyCharacter {
               el_ex_pattern::vector_of(e, inner);
             }
-            if bat >= 0 && nm != "" && !el_types::is_unknown(inner) && len(e.type_vars) == 0 && el::def_nr(e, "main_vector<{nm}>") < 0 {
+            // (A vector over a type variable the PROGRAM mints has its definitions made here as
+            // well, under the placeholder's registered name; the library's own exist already.)
+            own_var = match inner { TyReference { n: ivn } => el_types::type_var(e, inner) >= 0 && el::def(e, ivn).source != el::STD_SOURCE, _ => false };
+            if bat >= 0 && nm != "" && !el_types::is_unknown(inner) && (len(e.type_vars) == 0 || own_var) && el::def_nr(e, "main_vector<{nm}>") < 0 {
               el_schema::make_vector_def(e, inner, nm, el::pos_at(e, bat), true);
+              // (The placeholder has its row already, so its vector row is made at once — ahead
+              // of the wrapper's.)
+              if own_var {
+                el_schema::vector_store_type(e, inner, nm);
+              }
             }
           },
           _ => {}

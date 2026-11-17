@@ -655,6 +655,20 @@ fn store_type(e: el::El, t: ir::TypeT, field: boolean) -> integer {
       // `check_vector` finds the store type by the definition's name, which a narrow element's
       // (`vector<integer(0, 255)>` over `vector<byte>`) does not carry.
       vd = el::def_nr(e, "vector<{nm}>");
+      // (A type variable the PROGRAM mints: `check_vector` names the definition after the
+      // placeholder's own name, `vector<T#n>`, made where missing at the registered one's
+      // place and given the store type; the `vector<__typevar_T#n>` one keeps none.)
+      own_tv = match inner { TyReference { n: pn } => if el_types::type_var(e, inner) >= 0 && el::def(e, pn).source != el::STD_SOURCE { pn } else { -1 }, _ => -1 };
+      if own_tv >= 0 && vd >= 0 {
+        tn = "vector<{el::def(e, own_tv).name}>";
+        td = el::def_nr(e, tn);
+        if td < 0 {
+          td = el::add_def(e, tn, el::def(e, vd).position, el::DT_VECTOR);
+          e.b.data.definitions[td].parent = own_tv;
+        }
+        e.b.data.definitions[td].known_type = vt;
+        return vt;
+      }
       if vd >= 0 && e.b.types[vt].name == "vector<{nm}>" {
         e.b.data.definitions[vd].known_type = vt;
       }

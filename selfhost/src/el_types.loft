@@ -484,18 +484,8 @@ fn type_of(e: el::El, n: integer, attach: boolean) -> ir::TypeT? {
         if inner == null {
           return null;
         }
-        // A vector over a type variable the program mints (`T#n` not in the standard library)
-        // has rows and wrapper definitions registered for it (`vector<__typevar_T#n>`), which
-        // the standard library's placeholders already carry: not carried.
-        match inner! {
-          TyReference { n } => {
-            if el::def(e, n).source != el::STD_SOURCE && el::def(e, n).def_type == el::DT_STRUCT && len(el::def(e, n).attributes) == 0 && el::def(e, n).name.contains("#") {
-              el::refuse(e, "a vector over a type variable the program declares");
-              return null;
-            }
-          },
-          _ => {}
-        }
+        // (A vector over a type variable the program mints has its `vector<__typevar_T#n>`
+        // definitions and rows made where the parameter is read, `parse_function`.)
         // `e2_nullable_elem` (@FR-L-Null-Tag): a `vector<S?>` of a program's plain struct stores
         // the tagged `__nullable<S>`, minted here with the lexer past the closing `>`.
         el_t = inner!;
