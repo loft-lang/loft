@@ -84,20 +84,8 @@ pub fn binds_to_itself(e: el::El, g: integer, types: vector<ir::TypeT>) -> boole
   false
 }
 
-// `Parser::instantiate_template` for a template of one unbounded variable bound to a plain
-// scalar or a text (@FR-G-Mono): the instance `i_<LEN><T>_<template>` the second pass makes,
-// its parameters and result the template's with the variable replaced; its body is filled by
-// `fill_instance`, at once or — for a template declared below the call — after the pass.
-// -1, refused by name, for a binding or a signature shape this port does not carry.
-pub fn instantiate(e: el::El, g: integer, types: vector<ir::TypeT>) -> integer {
-  tmpl = el::def(e, g);
-  b = el_ex_object::template_binding(e, g, types);
-  if b == null {
-    el::refuse(e, "a generic call whose argument types bind no type");
-    return -1;
-  }
-  h = b!.vars[0] ?? -1;
-  bound = b!.types[0] ?? ir::TyVoid;
+// The kind of a bound type this port does not instantiate at, or "".
+fn bound_refused(e: el::El, bound: ir::TypeT) -> text {
   record = match bound { TyReference { n } => el::def(e, n).def_type == el::DT_STRUCT && el_types::type_var(e, bound) < 0 && !el::def(e, n).name.starts_with("__"), _ => false };
   // A nullable binding is carried for a plain scalar (`integer?`): its value is the scalar's
   // own slot with a sentinel (@FR-L-Null).
@@ -112,36 +100,84 @@ pub fn instantiate(e: el::El, g: integer, types: vector<ir::TypeT>) -> integer {
     // A reference says which definition kind it names: a struct-enum variant, a tuple's or a
     // nullable's synthetic record, a type variable not yet bound.
     kind = match bound { TyReference { n } => "TyReference of a {def_kind(el::def(e, n))}", _ => type_kind(bound) };
-    el::refuse(e, "a generic instance at this type: {kind}");
+    return kind;
+  }
+  ""
+}
+
+// An instance filled for every variable its template binds: one variable at a time, each step
+// reading the body the step before left (`instantiate_template` over its `bindings`); the
+// passes that close the body — nested instances, the text-return promotion, the result's
+// borrows — run on the last.
+pub fn fill_all(e: el::El, d: integer, g: integer, hs: vector<integer>, bounds: vector<ir::TypeT>) -> boolean {
+  for hv in hs {
+    src = if hv#index == 0 { g } else { d };
+    if !fill_instance(e, d, src, hv, bounds[hv#index] ?? ir::TyVoid, closing: hv#index == len(hs) - 1) {
+      return false;
+    }
+  }
+  true
+}
+
+// `Parser::instantiate_template` for a template of one unbounded variable bound to a plain
+// scalar or a text (@FR-G-Mono): the instance `i_<LEN><T>_<template>` the second pass makes,
+// its parameters and result the template's with the variable replaced; its body is filled by
+// `fill_instance`, at once or — for a template declared below the call — after the pass.
+// -1, refused by name, for a binding or a signature shape this port does not carry.
+pub fn instantiate(e: el::El, g: integer, types: vector<ir::TypeT>) -> integer {
+  tmpl = el::def(e, g);
+  b = el_ex_object::template_binding(e, g, types);
+  if b == null {
+    el::refuse(e, "a generic call whose argument types bind no type");
     return -1;
   }
-  nm = el_ex_object::instance_name(e, g, b!);
-  for a in tmpl.attributes {
-    if !bare_over(a.typedef[0] ?? ir::TyVoid, h) {
-      el::refuse(e, "a generic parameter over the type variable in another shape");
+  // Every variable the call binds: each bound type one this port instantiates at.
+  for bt in b!.types {
+    kind = bound_refused(e, bt);
+    if kind != "" {
+      el::refuse(e, "a generic instance at this type: {kind}");
       return -1;
     }
   }
-  if !bare_over(tmpl.returned[0] ?? ir::TyVoid, h) {
-    el::refuse(e, "a generic result over the type variable in another shape");
-    return -1;
+  nm = el_ex_object::instance_name(e, g, b!);
+  for hv in b!.vars {
+    for a in tmpl.attributes {
+      if !bare_over(a.typedef[0] ?? ir::TyVoid, hv) {
+        el::refuse(e, "a generic parameter over the type variable in another shape");
+        return -1;
+      }
+    }
+    if !bare_over(tmpl.returned[0] ?? ir::TyVoid, hv) {
+      el::refuse(e, "a generic result over the type variable in another shape");
+      return -1;
+    }
   }
   d = el::add_def(e, nm, tmpl.position, el::DT_FUNCTION);
   for a in tmpl.attributes {
-    na = el::attribute(a.name, substitute(a.typedef[0] ?? ir::TyVoid, h, bound));
+    at = a.typedef[0] ?? ir::TyVoid;
+    for hv in b!.vars {
+      at = substitute(at, hv, b!.types[hv#index] ?? ir::TyVoid);
+    }
+    na = el::attribute(a.name, at);
     na.value = a.value;
     na.value_const = a.value_const;
     na.hidden = a.hidden;
     e.b.data.definitions[d].attributes += [na];
   }
-  el::set_returned(e, d, substitute(tmpl.returned[0] ?? ir::TyVoid, h, bound));
+  rt = tmpl.returned[0] ?? ir::TyVoid;
+  for hv in b!.vars {
+    rt = substitute(rt, hv, b!.types[hv#index] ?? ir::TyVoid);
+  }
+  el::set_returned(e, d, rt);
   // `rewrite_vector_write_triplets` registers `vector<T>`'s row on the first fill, at the call.
-  el_schema::vector_type(e, el::def(e, type_def_nr(e, el_types::base(bound))).known_type);
+  for bt in b!.types {
+    el_schema::vector_type(e, el::def(e, type_def_nr(e, el_types::base(bt))).known_type);
+  }
   // `stale_monomorphs`: a template whose second-pass body is not read yet (declared below the
   // call) is filled once the pass is through (`rebuild_stale_monomorphs`).
   if !has_body(e, g) {
-    e.stale += [el::StaleInstance { d: d, g: g, holder: h, bound: bound }];
-  } else if !fill_instance(e, d, g, h, bound) {
+    e.stale += [el::StaleInstance { d: d, g: g, holders: b!.vars, bounds: b!.types }];
+  } else if !fill_all(e, d, g, b!.vars, b!.types) {
     return -1;
   }
   d
@@ -160,7 +196,7 @@ pub fn rebuild_stale(e: el::El) {
     if !has_body(e, st.g) {
       el::refuse(e, "a generic instance whose template has no second-pass body");
     } else {
-      fill_instance(e, st.d, st.g, st.holder, st.bound);
+      fill_all(e, st.d, st.g, st.holders, st.bounds);
     }
   }
 }
@@ -168,7 +204,7 @@ pub fn rebuild_stale(e: el::El) {
 // `fill_monomorph_body` for instance `d` of template `g` at `[h ↦ bound]`: the variable table,
 // the body and the passes this port carries; false, refused by name, where the body holds what
 // a later pass would rewrite.
-pub fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::TypeT) -> boolean {
+pub fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::TypeT, closing: boolean = true) -> boolean {
   tmpl = el::def(e, g);
   textual = bound is TyText;
   record = bound is TyReference;
@@ -323,6 +359,16 @@ pub fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::T
   }
   e.b.data.definitions[d].variables = f;
   e.b.data.definitions[d].code = [code];
+  // (Another variable is still to be bound: the body is left as this step made it.)
+  if !closing {
+    return true;
+  }
+  // `push_deferred_fnref_buffers`: a call through a function value that answers a text is
+  // handed a work buffer made in the instance — not carried: refused by name.
+  if calls_text_fn_value(f, code) {
+    el::refuse(e, "a generic instance calling a function value that answers a text");
+    return false;
+  }
   // `instantiate_nested_generics`: each call of a template in the body is aimed at that
   // template's instance for the argument types it now has — the first argument's own type where
   // it is a variable (else the callee's first parameter at this binding), the later ones the
@@ -532,6 +578,23 @@ pub fn lower_tv_blocks(e: el::El, vars: el_vars::Vars, n: ir::Node, bound: ir::T
     NdYield { inner } => ir::NdYield { inner: lower_tv_blocks(e, vars, inner, bound, stale) },
     _ => n
   }
+}
+
+fn calls_text_fn_value(f: ir::Function, n: ir::Node) -> boolean {
+  match n {
+    NdCallRef { var, args: _ } => {
+      if match el_types::base(f.variables[var]!.type_def[0] ?? ir::TyVoid) { TyFunction { args: _, result } => el_types::base(result) is TyText, _ => false } {
+        return true;
+      }
+    },
+    _ => {}
+  }
+  for c in el_ir::children(n) {
+    if calls_text_fn_value(f, c) {
+      return true;
+    }
+  }
+  false
 }
 
 // The order form a bound stub stands for (`t_<N><T>_OpLt` → `<`), or "".

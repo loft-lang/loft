@@ -1393,7 +1393,36 @@ pub fn text_argument_copy(e: el::El, vars: el_vars::Vars, arg: ir::Node) -> ir::
 // `d` declares types a `|…|` argument there.  A template's parameter (closed over its bindings,
 // `close_open`) is not carried: the lambda then meets its refusal by name.  Only the lambda half
 // of `argument_hint` is ported; any other argument reads as it does without a hint.
-pub fn hint_lambda(e: el::El, vars: el_vars::Vars, d: integer, i: integer, node: integer) {
+pub fn hint_lambda(e: el::El, vars: el_vars::Vars, d: integer, i: integer, node: integer, sofar: vector<ir::TypeT> = []) {
+  // A TEMPLATE's `fn(T) -> U` parameter hints a lambda once the arguments before it bound its
+  // parameter types: each bound variable replaced, a result still over a variable left for the
+  // lambda's body to give (`Unknown`, loft#945).
+  // (Only a SHORT lambda takes it: a spelled `fn(…) -> R { … }` types itself.)
+  if d >= 0 && el::def(e, d).def_type == el::DT_GENERIC && i < len(el::def(e, d).attributes) && match e.p.nodes[node] { SLambda { short: is_short } => is_short, _ => false } {
+    gt = el::def(e, d).attributes[i]!.typedef[0] ?? ir::TyVoid;
+    gb = template_binding(e, d, sofar);
+    if gb != null {
+      for bt in gb!.types {
+        gt = substitute(gt, gb!.vars[bt#index] ?? -1, bt);
+      }
+    }
+    match el_types::base(gt) {
+      TyFunction { args: ga, result: gr, dep: gd, consts: gc } => {
+        open_arg = false;
+        for x in ga {
+          if over_type_var(e, x) {
+            open_arg = true;
+          }
+        }
+        if !open_arg {
+          vars.lambda_node = node;
+          vars.lambda_hint = ir::TyFunction { args: ga, result: if over_type_var(e, gr) { ir::TyUnknown { n: 0 } } else { gr }, dep: gd, consts: gc };
+        }
+      },
+      _ => {}
+    }
+    return;
+  }
   if d < 0 || el::def(e, d).def_type != el::DT_FUNCTION || i >= len(el::def(e, d).attributes) {
     return;
   }
@@ -1511,7 +1540,7 @@ pub fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?,
         // `free_call_hint`, asked per argument with the types read so far: its parameter's
         // `fn(…)` types a short lambda argument.  A qualified call asks the library alone.
         hd = if source >= 0 { look(e, source, "n_{name}") } else { el_dispatch::free_call_hint(e, name, types) };
-        hint_lambda(e, vars, hd, a#index, ae!);
+        hint_lambda(e, vars, hd, a#index, ae!, sofar: types);
         eh = argument_element_hint(e, hd, a#index, ae!);
         built += [eh];
         if el_trace::on() {
@@ -2316,7 +2345,7 @@ pub fn method_call_on(e: el::El, vars: el_vars::Vars, at: integer, x: Ex, re: in
         if el_trace::on() {
           el_trace::state(e, vars, "arg", aat, ae!);
         }
-        hint_lambda(e, vars, hint_nr, len(list), ae!);
+        hint_lambda(e, vars, hint_nr, len(list), ae!, sofar: types);
         eh = argument_element_hint(e, hint_nr, len(list), ae!);
         y = hinted_argument(e, vars, ae!, eh, d: hint_nr, i: len(list), sofar: types);
         built += [eh];
@@ -2825,6 +2854,23 @@ pub fn bind_type_vars(e: el::El, p: ir::TypeT, a: ir::TypeT, b: Binding) {
       match a {
         TyVector { inner: ai } => bind_type_vars(e, pi, ai, b),
         _ => { b.ok = false; }
+      }
+    },
+    // A function parameter binds through its own parameters and its result (`fn(T) -> U`
+    // against `fn(integer) -> text`).
+    TyFunction { args: pa, result: pr } => {
+      match a {
+        TyFunction { args: aa, result: ar } => {
+          if len(pa) != len(aa) {
+            b.ok = false;
+            return;
+          }
+          for x in pa {
+            bind_type_vars(e, x, aa[x#index] ?? ir::TyVoid, b);
+          }
+          bind_type_vars(e, pr, ar, b);
+        },
+        _ => {}
       }
     },
     _ => {}

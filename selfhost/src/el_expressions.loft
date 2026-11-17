@@ -112,6 +112,9 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
     }
   }
   b = el_ex_assign::parse_block(e, vars, body, "return from block", result);
+  // (What the body itself answers, before any delivery: a short lambda with no declared
+  // result takes it, loft#945.)
+  vars.tail_tp = [b.tp];
   // `block_result`'s conversion of a `null` tail to the declared result: the type's own null
   // (`Parser::null_value`) — the sentinel of a record or a vector, a scalar's or a text's
   // `OpConv…FromNull` (a text then delivered through its hidden buffer, `el_tret`).
@@ -789,6 +792,32 @@ pub fn text_return(e: el::El, vars: el_vars::Vars, t: ir::TypeT) {
       el_vars::become_argument(vars, v);
       dep += [len(el::def(e, d).attributes) - 1];
       el_vars::set_var_type(vars, v, stack);
+    }
+  }
+  // P227: every text-returning LAMBDA carries one hidden `&text` work buffer, `__work_ret`, so
+  // the fn-ref dispatch hands every such lambda exactly one — made on the first pass where the
+  // body promoted none, found again on the second.
+  if starts_with(el::def(e, d).name, "n___lambda_") {
+    held = false;
+    for ha in el::def(e, d).attributes {
+      if ha.hidden && (ha.typedef[0]) is TyRefVar && ha.name != "__work_ret" {
+        held = true;
+      }
+    }
+    wa = attr_nr(el::def(e, d), "__work_ret");
+    if e.first_pass && !held && wa < 0 {
+      na = el::attribute("__work_ret", stack);
+      na.hidden = true;
+      e.b.data.definitions[d].attributes += [na];
+      wa = len(el::def(e, d).attributes) - 1;
+    }
+    if wa >= 0 {
+      wv = el_vars::add_variable(vars, "__work_ret", stack);
+      el_vars::become_argument(vars, wv);
+      el_vars::set_var_type(vars, wv, stack);
+      if !dep.contains(wa) {
+        dep += [wa];
+      }
     }
   }
   nt = ir::TyText { dep: dep };
