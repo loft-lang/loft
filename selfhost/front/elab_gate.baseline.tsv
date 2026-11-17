@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	b705cdb48d7d8f4e3838e2eb570de60ce345bab5
 
-layer	elab	agree	959	of	2220
+layer	elab	agree	966	of	2224
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -709,7 +709,6 @@ elab	refused	loft-suite/rules/rewrites/R-AppendTwin/a-call-result-appended-is-bu
 elab	refused	loft-suite/rules/rewrites/R-AppendTwin/an-append-twin-runs-a-builder-whose-leaves-are-inlined.loft
 elab	refused	loft-suite/rules/rewrites/R-Base/158-a-base-survives-a-growth-of-another-store.loft
 elab	refused	loft-suite/rules/rewrites/R-Base/a-byte-read-through-a-held-header-takes-its-base-at-the-read.loft
-elab	refused	loft-suite/rules/rewrites/R-BoundAppend/a-result-bound-then-appended-is-appended-at-the-end-of-the-destination.loft
 elab	refused	loft-suite/rules/rewrites/R-CompleteWrite/157-complete-write.loft
 elab	refused	loft-suite/rules/rewrites/R-CompleteWrite/a-reused-record-is-written-whole-by-every-literal.loft
 elab	refused	loft-suite/rules/rewrites/R-CompleteWrite/a-struct-enum-field-is-covered-only-by-a-write-as-wide-as-it.loft
@@ -987,7 +986,6 @@ elab	refused	tests/scripts/1200-a-nullable-record-local-frees-what-it-displaces.
 elab	refused	tests/scripts/1235-a-returned-text-outlives-its-store.loft
 elab	refused	tests/scripts/124-vector-amortised-growth.loft
 elab	refused	tests/scripts/1259-the-parser-library-accepts-the-language-it-documents.loft
-elab	refused	tests/scripts/127-keyed-indexed-set.loft
 elab	refused	tests/scripts/1272-a-remove-inside-a-keyed-range.loft
 elab	refused	tests/scripts/1274-a-bound-is-satisfied-by-signature-not-name.loft
 elab	refused	tests/scripts/13-map-filter-reduce.loft
@@ -1151,7 +1149,6 @@ elab	refused	tests/scripts/980-variant-field-answers-its-own-variant.loft
 elab	refused	tests/scripts/981-split-ownership-return.loft
 elab	refused	tests/scripts/987-par-empty-body-discard.loft
 elab	refused	tests/scripts/992-match-tail-with-return-arm.loft
-elab	refused	tests/scripts/a-bound-result-appended-later-is-appended-where-it-is-made.loft
 elab	refused	tests/scripts/a-builder-rebinds-into-its-own-return-buffer.loft
 elab	refused	tests/scripts/a-byte-range-of-a-vector-copied-one-at-a-time-is-one-append.loft
 elab	refused	tests/scripts/a-call-text-moves-into-its-local.loft
