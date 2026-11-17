@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	b705cdb48d7d8f4e3838e2eb570de60ce345bab5
+suite	28b9b46d25b7a5ea93d5e12c68c22383b008d9bd
 
-layer	elab	agree	966	of	2224
+layer	elab	agree	964	of	2225
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -1130,6 +1130,7 @@ elab	refused	tests/scripts/845-generic-format.loft
 elab	refused	tests/scripts/85-short-lambda-capture.loft
 elab	refused	tests/scripts/85-temp-subject-borrow-return-uaf.loft
 elab	refused	tests/scripts/85-tier1-local-source-matrix.loft
+elab	differ	tests/scripts/85-yield-resume.loft
 elab	refused	tests/scripts/850-cross-package-method-name-collision.loft
 elab	refused	tests/scripts/850b-collision-import-order.loft
 elab	refused	tests/scripts/850c-two-packages-one-enum-name.loft
@@ -1156,6 +1157,7 @@ elab	refused	tests/scripts/a-call-two-wrappers-share-is-made-once.loft
 elab	refused	tests/scripts/a-chain-exit-hands-the-placed-buffer-through.loft
 elab	refused	tests/scripts/a-comprehension-element-goes-straight-into-its-push.loft
 elab	refused	tests/scripts/a-comprehension-over-a-keyed-collection-walks-its-snapshot.loft
+elab	differ	tests/scripts/a-counted-loop-pushing-one-value-is-one-fill.loft
 elab	refused	tests/scripts/a-counted-loop-variable-shares-its-index-slot.loft
 elab	refused	tests/scripts/a-decoded-text-is-read-where-it-lies.loft
 elab	refused	tests/scripts/a-decoded-value-is-read-at-its-position.loft
@@ -1264,3 +1266,4 @@ elab	refused	tests/scripts/store_paged_enum_field.loft
 elab	refused	tests/scripts/store_persist_size_710.loft
 elab	refused	tests/scripts/store_rebuild_b1.loft
 elab	refused	tests/scripts/the-reference-safety-traps-are-what-it-catalogues.loft
+elab	refused	tests/scripts/two-discard-comprehensions-each-bind-their-own-variable.loft
