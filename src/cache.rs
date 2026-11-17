@@ -655,7 +655,7 @@ pub fn cache_base_dir() -> std::path::PathBuf {
 }
 
 /// The identity of the file at `path` as one string: its length, its BIRTH time in nanoseconds
-/// and, on Unix, its inode.  Each is fixed for the file's life: a rename keeps all three, and
+/// and, on Unix, its device and inode.  Each is fixed for the file's life: a rename keeps all three, and
 /// so does the cache's touch-on-use ([`touch_now`] moves the modification time, which is the
 /// eviction clock and therefore no identity), while a later file that reuses a freed inode is
 /// born at another time.  So the identity a writer reads off its temp file is the published
@@ -670,11 +670,9 @@ pub fn file_identity(path: &std::path::Path) -> Option<String> {
         .ok()
         .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
         .map_or_else(|| "-".to_string(), |d| d.as_nanos().to_string());
-    #[cfg(unix)]
-    let ino = std::os::unix::fs::MetadataExt::ino(&meta);
-    #[cfg(not(unix))]
-    let ino = 0u64;
-    Some(format!("{}:{born}:{ino}", meta.len()))
+    // `(device, inode)` where the platform has one (`platform::file_identity`).
+    let (dev, ino) = crate::platform::file_identity(&meta).unwrap_or((0, 0));
+    Some(format!("{}:{born}:{dev}:{ino}", meta.len()))
 }
 
 /// Lower-case 64-hex of a 32-byte key.
