@@ -916,6 +916,13 @@ pub fn materialize_bundle(
         r.set_field_str(stores, ds::IMAGELAZYDRIVER_ELEMENT, element);
         r.set_field_int(stores, ds::IMAGELAZYDRIVER_D, i64::from(*d));
     }
+    let consts = rec.field_recvec(ds::BUNDLE_CONSTS, ds::IMAGECONST_STRIDE);
+    for (d, n, words) in &host.consts {
+        let r = consts.push(stores);
+        r.set_field_int(stores, ds::IMAGECONST_D, i64::from(*d));
+        r.set_field_int(stores, ds::IMAGECONST_N, i64::from(*n));
+        r.set_field_str(stores, ds::IMAGECONST_WORDS, words);
+    }
 }
 
 /// What the host resolved for the loft-written C writer beside the IR (@PLN91 strand 12): the
@@ -948,6 +955,8 @@ pub struct HostFacts {
     pub sql_plans: Vec<SqlPlanShape>,
     pub lazy_drivers: Vec<(String, u32)>,
     pub lazy_refusal: String,
+    /// Each built constant's store (`c::const_facts`): definition, word count, words.
+    pub consts: Vec<(u32, u32, String)>,
 }
 
 /// One keyed collection's SQL plan (`ImageSqlPlan`): the equality select, its parameter count

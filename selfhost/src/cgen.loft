@@ -432,6 +432,10 @@ pub fn emit_program(b: ir::Bundle, runtime_text: text) -> Unit {
 // One function body's line of the `bodies` layer.
 fn body_line(cx: Cx, t: cgen_names::Twin) -> text {
   name = cgen_names::twin_name(cx.b, cx.dups, t);
+  // A `#c` binding is written by `cgen_clibs` (`c_binding`), with no frame body to trace.
+  if cx.b.data.definitions[t.d]!.c_symbol != "" {
+    return "";
+  }
   wr = cgen_fn::write_function(cx, t);
   if wr.refused != "" {
     return "[refused]\t{name}\t{wr.refused}\n";

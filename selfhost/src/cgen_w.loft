@@ -220,6 +220,13 @@ struct W {
   shapes: vector<text>,
   ret: text,
   body: text,
+  // How much of `body`, and how many `temps`, have had their tuple structs numbered
+  // (`number_pending`).
+  numbered: integer,
+  numbered_temps: integer,
+  // The body length and temporaries at the first refusal (`refuse`).
+  why_body: integer,
+  why_temps: integer,
   temps: vector<Temp>,
   // The first construct this writer does not carry; "" while everything was.
   why: text,
@@ -552,7 +559,22 @@ pub struct Written {
 fn refuse(w: W, why: text) {
   if w.why == "" {
     w.why = why;
+    // Where the Rust writer stopped (its first `Err`): what it named up to here it numbered.
+    w.why_body = w.body.size();
+    w.why_temps = len(w.temps);
   }
+}
+
+// `number_pending` for a body refused: the tuples it named up to its first refusal.
+pub fn number_refused(x: Cx, w: W) {
+  for t in w.temps {
+    if t#index >= w.numbered_temps && t#index < w.why_temps && is_tuple(t.shape) {
+      tuple_id(x, t.shape);
+    }
+  }
+  n = if w.why_body < w.body.size() { w.why_body } else { w.body.size() };
+  from = if w.numbered < n { w.numbered } else { n };
+  resolve_tuples(x, w.body[from..n]);
 }
 
 fn none() -> E {
@@ -668,6 +690,23 @@ fn tuple_id(x: Cx, shape: text) -> integer {
   }
   x.tuples += [shape];
   len(x.tuples) - 1
+}
+
+// Number the tuple structs the lines written so far name, before a nested body (a twin written
+// on the way) names its own: the unit numbers a tuple when the writer first asks for it
+// (`Cx::tuple_id`), which is as each line is written.
+pub fn number_pending(x: Cx, w: W) {
+  // A temporary's shape is asked as it is made, before the line that writes it.
+  for t in w.temps {
+    if t#index >= w.numbered_temps && is_tuple(t.shape) {
+      tuple_id(x, t.shape);
+    }
+  }
+  w.numbered_temps = len(w.temps);
+  n = w.body.size();
+  from = if w.numbered < n { w.numbered } else { n };
+  resolve_tuples(x, w.body[from..n]);
+  w.numbered = n;
 }
 
 pub fn resolve_tuples(x: Cx, code: text) -> text {

@@ -1,8 +1,8 @@
 {
  "bodies|default|program|corpus": {
-  "agree": 1079,
-  "differ": 2,
-  "equal": 13597,
+  "agree": 1080,
+  "differ": 0,
+  "equal": 13598,
   "functions": 13598,
   "refused": 0,
   "switches": [
@@ -11,9 +11,9 @@
   "units": 1080
  },
  "bodies|plain|program|corpus": {
-  "agree": 1079,
-  "differ": 2,
-  "equal": 13597,
+  "agree": 1080,
+  "differ": 0,
+  "equal": 13598,
   "functions": 13598,
   "refused": 0,
   "switches": [
@@ -22,9 +22,9 @@
   "units": 1080
  },
  "bodies|plain|program|corpus:tests": {
-  "agree": 601,
-  "differ": 0,
-  "equal": 6610,
+  "agree": 600,
+  "differ": 2,
+  "equal": 6615,
   "functions": 6620,
   "refused": 0,
   "switches": [

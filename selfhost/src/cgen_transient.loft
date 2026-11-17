@@ -2184,6 +2184,7 @@ pub fn call_args(x: Cx, w: W, d: integer, args: vector<ir::Node>, xs: vector<tex
   if params == 0 && !result {
     return out;
   }
+  number_pending(x, w);
   name = twin(x, d, params, result);
   if name == "" {
     refuse(w, "no transient twin of {def_name(x.b, d)}");
