@@ -1,8 +1,8 @@
 diff --git a/src/parser/control.rs b/src/parser/control.rs
-index 370a4ec79..ad9285e99 100644
+index 347391422..675ee2a2e 100644
 --- a/src/parser/control.rs
 +++ b/src/parser/control.rs
-@@ -589,6 +589,7 @@ pub(crate) enum MethodSelect {
+@@ -774,6 +774,7 @@ pub(crate) enum MethodSelect {
  /// `@FR-M-Match` — is `v` a PLACE, read the same each time it is read: a variable, or a field
  /// or element of one at a constant or variable position?  A call, an expression that builds a
  /// value, or anything else answers no, and the match binds it once.
@@ -10,7 +10,7 @@ index 370a4ec79..ad9285e99 100644
  fn is_place(v: &Value, data: &crate::data::Data) -> bool {
      match v.unspan() {
          Value::Var(_) => true,
-@@ -6086,15 +6087,8 @@ impl Parser {
+@@ -6954,15 +6955,8 @@ impl Parser {
              }
          };
  
@@ -26,4 +26,4 @@ index 370a4ec79..ad9285e99 100644
 +            if is_struct || !valid_enum {
                  (subject, None)
              } else {
-                 let v = self.create_unique("match_subj", &subject_type);
+                 let v = self.create_match_subject(&subject_type);
