@@ -91,6 +91,8 @@ scripts/ci-run.sh start                         # the full gate, both clippy leg
 make file-sizes ARGS="--all"                    # the source shrank, no part is over the bar
 make docs-lint-baseline                         # moved doc comments shift the baseline: re-pin it
 python3 scripts/decisions.py check              # a decision whose site names a moved fn by file: re-locate it
+scripts/receipts_after_split.py <orig> <part>…  # patch receipts naming the original: re-place each hunk
+                                                #   where its code moved, regenerate; re-score the ones it lists
 ```
 
 A plain `grep -c '^[+-]'` over the diff counts every moved line twice and says nothing.  If
