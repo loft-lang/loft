@@ -2141,6 +2141,39 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
             staged += [el_ir::v_set(vtmp, args[1]!)];
             ops[op#index] = ir::NdCall { def_nr: def_nr, args: [args[0]!, ir::NdVar { n: vtmp }, args[2]!] };
           }
+          // `@FR-B-View` × `@FR-B-Disturb`: a field copied from a local that VIEWS the record
+          // being rebuilt (`w = Outer { inner: a }` after `a = w.inner`) has that local held
+          // in a view of its own first, the copy made from it.
+          if el::def(e, def_nr).name == "OpCopyRecord" && len(args) == 3 && place_root(e, el_ir::unspan(args[1])) == v {
+            cvw = match el_ir::unspan(args[0]) { NdVar { n: cvn } => cvn, _ => -1 };
+            if cvw >= 0 && cvw != v && viewers.contains(cvw) {
+              cvt = el_types::with_deps(el_types::without_deps(el_types::base(el_vars::tp(vars, cvw))), [cvw]);
+              cvtmp = el_vars::work_ref(vars, cvt);
+              vars.vars[cvtmp].skip_free = true;
+              staged += [el_ir::v_set(cvtmp, args[0]!)];
+              ops[op#index] = ir::NdCall { def_nr: def_nr, args: [ir::NdVar { n: cvtmp }, args[1]!, args[2]!] };
+            }
+            // A NESTED literal that reads such a viewer is built whole into a work ref first
+            // (an owner, declared with the others) and copied from it.
+            nb_reads = false;
+            match el_ir::unspan(args[0]) {
+              NdBlock { block: nbb } => {
+                if nbb[0].name == "Object" {
+                  for w in viewers {
+                    if w != v && el_ir::reads_var(args[0]!, w) {
+                      nb_reads = true;
+                    }
+                  }
+                  if nb_reads {
+                    nbt = el_vars::work_ref(vars, el_types::without_deps(nbb[0].result[0] ?? ir::TyVoid));
+                    staged += [el_ir::v_set(nbt, args[0]!)];
+                    ops[op#index] = ir::NdCall { def_nr: def_nr, args: [ir::NdVar { n: nbt }, args[1]!, args[2]!] };
+                  }
+                }
+              },
+              _ => {}
+            }
+          }
           if starts_with(el::def(e, def_nr).name, "OpSet") && len(args) >= 3 && el_ir::unspan(args[0]) == ir::NdVar { n: v } {
             reads = false;
             for w in viewers {
@@ -2493,18 +2526,6 @@ pub fn stage_self_reads(e: el::El, vars: el_vars::Vars, code: ir::Node, coll: in
 pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: integer, fields: vector<integer>) -> vector<ir::Node>? {
   def = el::def(e, d);
   list: vector<ir::Node> = [];
-  // `@FR-B-View` × `@FR-B-Disturb`: a field given a local that VIEWS the record this literal
-  // rebuilds (`w = Outer { inner: a }` after `a = w.inner`) has the value staged in a work
-  // ref before the record is remade — not carried: refused by name.
-  if !e.first_pass && v >= 0 {
-    for fi in fields {
-      fv = match e.p.nodes[fi] { SFieldInit { e: fe0 } => if fe0 == null { -1 } else { match e.p.nodes[fe0!] { SName { name: sn, member: sm } => if sm == "" { el_vars::var(vars, sn) } else { -1 }, _ => -1 } }, _ => -1 };
-      if fv >= 0 && fv != v && el_types::deps(el_vars::tp(vars, fv)).contains(v) {
-        el::refuse(e, "a literal rebuilding a record that a field's value views (the value is staged first)");
-        return null;
-      }
-    }
-  }
   // loft#924 — a linked collection group's headers are zeroed as one block, in offset order,
   // before any member is filled: an insert through one member indexes the record into all.  A
   // member the literal names is not carried yet (`group_fills`, the bulk-fill maintenance).
