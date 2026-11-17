@@ -267,7 +267,7 @@ pub fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::T
   // type's (`coalesce_not_null`, `monomorph_default`).
   if tv_lowered(bound) {
     tvv = el_vars::load(f);
-    code = lower_tv_blocks(e, tvv, code, bound);
+    code = lower_tv_blocks(e, tvv, code, bound, stale_row);
     f = el_vars::stored(tvv);
   }
   // `@FR-Op-Order`: an order form over the variable that the bound type answers through its
@@ -484,14 +484,28 @@ pub fn tv_lowered(bound: ir::TypeT) -> boolean {
   el_ex_object::scalar_type(b) && !(b is TyEnum) || b is TyText
 }
 
-pub fn lower_tv_blocks(e: el::El, vars: el_vars::Vars, n: ir::Node, bound: ir::TypeT) -> ir::Node {
+pub fn lower_tv_blocks(e: el::El, vars: el_vars::Vars, n: ir::Node, bound: ir::TypeT, stale: integer) -> ir::Node {
   match n {
-    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: lower_tv_blocks(e, vars, inner, bound) },
-    NdCall { def_nr, args } => ir::NdCall { def_nr: def_nr, args: [for a in args { lower_tv_blocks(e, vars, a, bound) }] },
-    NdCallRef { var, args } => ir::NdCallRef { var: var, args: [for a in args { lower_tv_blocks(e, vars, a, bound) }] },
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: lower_tv_blocks(e, vars, inner, bound, stale) },
+    NdCall { def_nr, args } => {
+      a2: vector<ir::Node> = [for a in args { lower_tv_blocks(e, vars, a, bound, stale) }];
+      nm = el::def(e, def_nr).name;
+      // `resolve_pending_formats`: a format hole over the variable is the bound type's
+      // (`append_data`, the lowering a concrete hole gets).
+      if (nm == "OpFormatDatabase" || nm == "OpFormatStackDatabase") && len(a2) == 4 && a2[2]! == ir::NdInt { n: stale } {
+        wv = match el_ir::unspan(a2[0]!) { NdVar { n: fw } => fw, _ => -1 };
+        if wv >= 0 {
+          list: vector<ir::Node> = [];
+          append_spec(e, list, wv, a2[1]!, el_types::base(bound), nm == "OpFormatStackDatabase", plain_fmt());
+          return ir::NdInsert { items: list };
+        }
+      }
+      ir::NdCall { def_nr: def_nr, args: a2 }
+    },
+    NdCallRef { var, args } => ir::NdCallRef { var: var, args: [for a in args { lower_tv_blocks(e, vars, a, bound, stale) }] },
     NdBlock { block } => {
       bl = block[0]!;
-      ops: vector<ir::Node> = [for o in bl.operators { lower_tv_blocks(e, vars, o, bound) }];
+      ops: vector<ir::Node> = [for o in bl.operators { lower_tv_blocks(e, vars, o, bound, stale) }];
       b = el_types::base(bound);
       if bl.name == "tvnullcheck" && len(ops) == 1 {
         t = present_check(e, vars, ops[0]!, b, false, false);
@@ -507,15 +521,15 @@ pub fn lower_tv_blocks(e: el::El, vars: el_vars::Vars, n: ir::Node, bound: ir::T
     },
     NdLoop { block } => {
       bl = block[0]!;
-      bl.operators = [for o in bl.operators { lower_tv_blocks(e, vars, o, bound) }];
+      bl.operators = [for o in bl.operators { lower_tv_blocks(e, vars, o, bound, stale) }];
       ir::NdLoop { block: [bl] }
     },
-    NdInsert { items } => ir::NdInsert { items: [for o in items { lower_tv_blocks(e, vars, o, bound) }] },
-    NdSet { var, inner } => ir::NdSet { var: var, inner: lower_tv_blocks(e, vars, inner, bound) },
-    NdReturn { inner } => ir::NdReturn { inner: lower_tv_blocks(e, vars, inner, bound) },
-    NdIf { cond, t, f } => ir::NdIf { cond: lower_tv_blocks(e, vars, cond, bound), t: lower_tv_blocks(e, vars, t, bound), f: lower_tv_blocks(e, vars, f, bound) },
-    NdDrop { inner } => ir::NdDrop { inner: lower_tv_blocks(e, vars, inner, bound) },
-    NdYield { inner } => ir::NdYield { inner: lower_tv_blocks(e, vars, inner, bound) },
+    NdInsert { items } => ir::NdInsert { items: [for o in items { lower_tv_blocks(e, vars, o, bound, stale) }] },
+    NdSet { var, inner } => ir::NdSet { var: var, inner: lower_tv_blocks(e, vars, inner, bound, stale) },
+    NdReturn { inner } => ir::NdReturn { inner: lower_tv_blocks(e, vars, inner, bound, stale) },
+    NdIf { cond, t, f } => ir::NdIf { cond: lower_tv_blocks(e, vars, cond, bound, stale), t: lower_tv_blocks(e, vars, t, bound, stale), f: lower_tv_blocks(e, vars, f, bound, stale) },
+    NdDrop { inner } => ir::NdDrop { inner: lower_tv_blocks(e, vars, inner, bound, stale) },
+    NdYield { inner } => ir::NdYield { inner: lower_tv_blocks(e, vars, inner, bound, stale) },
     _ => n
   }
 }

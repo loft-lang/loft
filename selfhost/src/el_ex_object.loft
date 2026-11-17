@@ -2974,7 +2974,9 @@ pub fn instance_carried(e: el::El, n: ir::Node, h: integer, row: integer, tv: ir
       // (`writes`: the instance rewrites a vector write's triplet itself.)
       // (An append's element row is retargeted with the other rows.)
       triplet = w == "OpNewRecord" || w == "OpFinishRecord" || w == "OpCopyRecord" || w == "OpPreAllocVector" || w == "OpAppendVector";
-      if !(writes && triplet) && (w == "OpNewRecord" || w == "OpFinishRecord" || w == "OpCopyRecord" || w == "OpAppendVector" || w == "OpPreAllocVector" || w == "OpFormatDatabase" || w == "OpFormatStackDatabase" || w == "OpConvBoolFromRef") && el_ex_call::reads_over(n, tv, h) {
+      // (`lowers`: a format hole over the variable is lowered with the bound type's.)
+      hole = lowers && (w == "OpFormatDatabase" || w == "OpFormatStackDatabase");
+      if !(writes && triplet) && !hole && (w == "OpNewRecord" || w == "OpFinishRecord" || w == "OpCopyRecord" || w == "OpAppendVector" || w == "OpPreAllocVector" || w == "OpFormatDatabase" || w == "OpFormatStackDatabase" || w == "OpConvBoolFromRef") && el_ex_call::reads_over(n, tv, h) {
         return "a `{w}` over the variable";
       }
       stub = stub_call(e, def_nr, h);
