@@ -53,20 +53,48 @@ pub fn scope_bundle(b: ir::Bundle) -> vector<text> {
 }
 
 // Why `f`'s locals cannot be laid out yet, or "" when they can: only values that need no free.
+// A refusal names every kind of local that needs a free, so the frees can be ported kind by
+// kind against what each one stops.
 fn unsupported(f: ir::Function) -> text {
+  kinds: vector<text> = [];
   for v in f.variables {
     if v.argument {
       continue;
     }
     t = v.type_def[0] ?? ir::TyVoid;
     if needs_free(t) {
-      return "a local that needs a free (a text, a reference or a collection)";
-    }
-    if t is TyTuple || t is TyFunction {
+      k = free_kind(t);
+      if !kinds.contains(k) {
+        kinds += [k];
+      }
+    } else if t is TyTuple || t is TyFunction {
       return "a local tuple or function value";
     }
   }
-  ""
+  if len(kinds) == 0 {
+    return "";
+  }
+  kinds.sort();
+  "locals that need a free: {kinds.join(", ")}"
+}
+
+// The kind of free a local needs, as the refusal names it.
+fn free_kind(t: ir::TypeT) -> text {
+  match t {
+    TyOptional { inner } => free_kind(inner),
+    TyText => "text",
+    TyRefVar => "a `&` variable",
+    TyReference => "reference",
+    TyEnum => "reference",
+    TyVector => "collection",
+    TySorted => "collection",
+    TyIndex => "collection",
+    TyHash => "collection",
+    TyRadix => "collection",
+    TyTrie => "collection",
+    TyKeys => "collection",
+    _ => "other"
+  }
 }
 
 fn needs_free(t: ir::TypeT) -> boolean {
