@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	28b9b46d25b7a5ea93d5e12c68c22383b008d9bd
+suite	3db4361091f6e1ddca30ca32079e141872304fa0
 
-layer	elab	agree	964	of	2225
+layer	elab	agree	964	of	2220
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -28,9 +28,6 @@ elab	refused	loft-suite/rules/binding/B-Copy/1472-a-materialised-value-struct-vi
 elab	refused	loft-suite/rules/binding/B-Copy/1612-a-coalesce-chain-copies-the-operand-it-chooses.loft
 elab	refused	loft-suite/rules/binding/B-Copy/1686-a-local-bound-from-a-vector-constant-copies-it.loft
 elab	refused	loft-suite/rules/binding/B-Copy/1752-a-coalesce-over-a-whole-local-copies.loft
-elab	refused	loft-suite/rules/binding/B-Copy/2368-an-update-whose-field-reads-its-destination-reads-what-it-held.loft
-elab	refused	loft-suite/rules/binding/B-Copy/2370-an-update-over-a-field-read-copies-its-base-as-a-temporary.loft
-elab	refused	loft-suite/rules/binding/B-Copy/2371-an-update-nested-in-an-updates-field-releases-every-temporary.loft
 elab	refused	loft-suite/rules/binding/B-Copy/2521-a-place-assigned-a-variant-that-embeds-its-own-old-value-keeps-that-value.loft
 elab	refused	loft-suite/rules/binding/B-Copy/2527-an-element-assigned-a-literal-that-embeds-it-keeps-the-old-value.loft
 elab	refused	loft-suite/rules/binding/B-Copy/a-branch-handing-back-a-local-copies-it-into-a-binding-assigned-before.loft
@@ -43,12 +40,10 @@ elab	refused	loft-suite/rules/binding/B-Copy/a-keyed-local-rebound-from-a-call-t
 elab	refused	loft-suite/rules/binding/B-Copy/a-projection-into-a-kept-local-in-a-loop-is-a-copy.loft
 elab	refused	loft-suite/rules/binding/B-Copy/a-re-bind-of-a-whole-local-copies-in-every-spelling.loft
 elab	refused	loft-suite/rules/binding/B-Copy/a-record-local-first-bound-from-a-value-branch-then-rebound-owns-a-copy.loft
-elab	refused	loft-suite/rules/binding/B-Copy/a-record-update-copies-the-base-then-writes-the-named-fields.loft
+elab	refused	loft-suite/rules/binding/B-Copy/a-record-update-copies-its-base-then-writes-the-named-fields.loft
 elab	refused	loft-suite/rules/binding/B-Copy/a-struct-enum-whole-value-bind-copies-like-a-struct.loft
-elab	refused	loft-suite/rules/binding/B-Copy/a-variant-update-copies-a-base-typed-as-that-variant.loft
 elab	refused	loft-suite/rules/binding/B-Copy/a-variant-widened-into-its-enum-copies-at-every-position.loft
 elab	refused	loft-suite/rules/binding/B-Copy/a-vector-local-bound-from-a-value-branch-copies-the-chosen-arm.loft
-elab	refused	loft-suite/rules/binding/B-Copy/an-update-copies-a-base-that-views-a-place.loft
 elab	refused	loft-suite/rules/binding/B-Copy/c131-a-cast-to-a-variant-answers-the-variant.loft
 elab	refused	loft-suite/rules/binding/B-Disturb/1373-growing-a-container-ends-the-places-inside-it.loft
 elab	refused	loft-suite/rules/binding/B-Disturb/2161-a-container-named-through-a-field-or-an-element-ends-its-views.loft
