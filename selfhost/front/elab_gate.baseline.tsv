@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	d2373eb81cba2968d077b690523349906a05825d
+suite	8b2886778f8d6d9ce0bfdbd0ad83485a65dfb15d
 
-layer	elab	agree	964	of	2187
+layer	elab	agree	964	of	2186
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -94,8 +94,7 @@ elab	refused	loft-suite/rules/binding/Const-Foreign/a-mapped-vector-appended-as-
 elab	refused	loft-suite/rules/binding/Const-Value/a-copy-out-of-a-const-is-the-copys-own.loft
 elab	refused	loft-suite/rules/binding/Const-Value/a-link-a-view-and-a-discharge-of-a-const-value-read-as-the-value.loft
 elab	refused	loft-suite/rules/binding/Const-Value/a-value-const-scalar-local-can-be-declared.loft
-elab	refused	loft-suite/rules/binding/P-Cap-Fresh/a-rest-and-a-repetition-are-fresh-stores.loft
-elab	refused	loft-suite/rules/binding/P-Cap-Fresh/a-rest-is-fresh-and-a-bind-of-it-is-a-copy-of-its-own.loft
+elab	refused	loft-suite/rules/binding/P-Cap-Fresh/a-rest-or-a-repetition-is-a-fresh-store-and-deeply-so.loft
 elab	refused	loft-suite/rules/binding/P-Cap-View/a-pattern-capture-is-a-view-and-a-rest-is-fresh.loft
 elab	refused	loft-suite/rules/binding/P-Cap-View/a-pattern-capture-is-a-view-of-the-subjects-place-on-b-views-terms.loft
 elab	refused	loft-suite/rules/calls/F-Args/insert-takes-its-arguments-before-the-vector-grows.loft
