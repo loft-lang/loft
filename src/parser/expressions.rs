@@ -4505,8 +4505,11 @@ use a separate collection or add after the loop"
         // what no grammar of loft allows).
         if self.preset_rhs.is_none() && self.operand_absent() {
             diagnostic!(self.lexer, Level::Error, "Expected a value after `{op}`");
-            *code = Value::Null;
-            return Type::Void;
+            // A stray `?` (`k = ? 4`) is read past, as at a binary operator (loft#2543).
+            if !self.lexer.has_token("?") {
+                *code = Value::Null;
+                return Type::Void;
+            }
         }
         // @FR-N-Decl — an assignment's TARGET is a PLACE, not a value read, so a flow
         // narrowing has nothing to say about it: the proof describes what the slot currently

@@ -2074,19 +2074,25 @@ impl Parser {
         }
     }
 
-    /// Is the next token one that cannot begin a value — a separator, a closer, or the
-    /// end of the input?  Asked where a value is REQUIRED (the right of an operator or of
-    /// an assignment), so a missing one is named instead of read as nothing.
+    /// Is the next token one that cannot begin a value — a separator, a closer, the end of
+    /// the input, a binary-only operator or the postfix `?`?  Asked where a value is REQUIRED
+    /// (the right of an operator or of an assignment), so a missing one is named instead of
+    /// read as nothing: `k = or true` once compiled to `null or true` (loft#2543), and
+    /// `n * * 4` was refused as a missing argument of `OpMulInt`.  Of the binary operators
+    /// only `-` (negation), `&` (a link) and `|` (a lambda) also open an operand.
     pub(crate) fn operand_absent(&mut self) -> bool {
         // After a fatal lexing error (an unterminated string) the input ends where the
         // error is, so a missing value there is that error's echo, not a second fault.
         if self.lexer.diagnostics().level() == Level::Fatal {
             return false;
         }
-        [";", "}", ")", "]", ","]
+        [";", "}", ")", "]", ",", "?"]
             .iter()
             .any(|t| self.lexer.peek_token(t))
             || self.lexer.peek().has == crate::lexer::LexItem::None
+            || self
+                .peek_binary_operator()
+                .is_some_and(|(_, op)| !matches!(op, "-" | "&" | "|"))
     }
 
     /// @PLN188 — the binary operator the next token is, and its level in `OPERATORS`, by one
@@ -2441,9 +2447,13 @@ impl Parser {
                     Level::Error,
                     "Expected a value after `{operator}`"
                 );
-                *code = Value::Null;
-                current_type = Type::Unknown(0);
-                continue;
+                // A stray `?` (`n ??? 4`) is read past, so the operand after it parses and
+                // the line is refused once rather than again at its `;`.
+                if !self.lexer.has_token("?") {
+                    *code = Value::Null;
+                    current_type = Type::Unknown(0);
+                    continue;
+                }
             }
             if operator.is_empty() {
                 // `expr is VariantName` — variant check at comparison precedence.
