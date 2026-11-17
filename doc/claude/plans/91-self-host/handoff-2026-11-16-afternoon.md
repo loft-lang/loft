@@ -154,6 +154,29 @@ edit landed while a run's build was under a minute old (a development build at 2
 gate's at 35 s); both runs were discarded and repeated.  Check the build's age in ONE command
 and edit in the NEXT, never in the same one.
 
+**State, 2026-11-17 late: the real gate (the tester's GitHub runner) reads 988 of 2229 agree, 0
+differ at b01aa7783** — baseline 754d4f3ad, joined here with the tester's branch `loft30-gate`
+(a parallel C build for the elaborator, `LOFT_NO_PARALLEL_UNIT=1` turns it off; a gate
+workflow, `.github/workflows/elab-gate.yml`).  Above it, pushed for the tester and not yet
+run: generics slice 3 (3484cd930 — several type variables, short lambdas handed to a
+template, a generic's null check / default / format hole, `__work_ret` on every text
+lambda).
+
+GENERICS, what is carried (all in `el_ex_call.loft::instantiate` / `fill_all` /
+`fill_instance` and their passes): a variable bound to a scalar, a text, a record, a plain or
+struct enum, a nullable plain enum, a vector of scalars / texts / records; `T?` beside `T`;
+several variables (one fill step each); rows retargeted (`retarget_rows`, the wrapper's too);
+the bound `==` / `!=` and order forms (`resolve_content_eq`, `resolve_order_stubs`); vector
+writes over the variable (`rewrite_vector_writes`); `tvnullcheck` / `tvdefault` / format
+holes at a scalar or text (`lower_tv_blocks`); a record's branch answer over parameters
+(`___ret_join_N`); a program-declared variable's `vector<__typevar_T#n>` definitions.
+STILL REFUSED, in rough order of programs touched: an instance at a tuple; a one-byte or
+four-byte integer element; `tvinsert` / `tvreverse` / `tvsort` / the other `tv…` blocks
+(Rust: `rewrite_generic_type_defaults`, monomorph.rs ~1551); a short lambda answering a text
+or a record; an instance calling a text-answering function value
+(`push_deferred_fnref_buffers`); `sizeof` of a variable; nested generic calls in a
+several-variable generic are untested.
+
 **Two worktrees (owner, 2026-11-17).**  This checkout, on `tuxedo-pln204-int32`, is the TESTED
 line: it takes only fixes for what the tester reports.  New work lives in a second worktree,
 `../loft2-next` on branch `tuxedo-pln204-next` (stacked on the tested line, pushed), probed
