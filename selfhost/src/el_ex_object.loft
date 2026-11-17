@@ -432,6 +432,173 @@ pub fn fn_number_write(e: el::El, vars: el_vars::Vars, r: ir::Node, pos: ir::Nod
   el_ir::v_block([el_ir::v_set(tmp, val), el_ir::cl(e, "OpSetInt4", [r, pos, ir::NdFnRefDnr { n: tmp }])], ir::TyVoid, "fn_number_write")
 }
 
+// The capturing lambda the syntax node `n` is, as `closure_value` just read it; -1 otherwise.
+pub fn closure_lambda_at(e: el::El, vars: el_vars::Vars, n: integer) -> integer {
+  match e.p.nodes[n] {
+    SLambda { body } => if body != null && vars.last_closure >= 0 && vars.last_closure_body == body! { vars.last_closure } else { -1 },
+    _ => -1
+  }
+}
+
+// `emit_fn_ref_field_write`'s capturing arm (`@FR-L-Escape`, `@FR-L-CapOwn`): a capturing lambda
+// stored in field `fname` of host struct `hd`.  The first pass records the lambda on the
+// attribute (`assigned_lambda_d_nr`), which splits the field's layout into the function's number
+// and `<field>__closure_rec`, a child record of the closure's.  The second builds the closure
+// record IN PLACE in that child slot (`OpChildRec`, the record the host's), writes the captures
+// straight into it and then the function's number.  Carried for plain scalar captures and one
+// lambda per field; a union of lambdas and a record or collection capture are refused by name.
+pub fn closure_field_write(e: el::El, vars: el_vars::Vars, hd: integer, fname: text, r: ir::Node, ld: integer, val: ir::Node, ft: ir::TypeT) -> ir::Node? {
+  a = attr_nr(el::def(e, hd), fname);
+  if a < 0 || ld < 0 {
+    return null;
+  }
+  if e.first_pass {
+    prev = el::def(e, hd).attributes[a]!.assigned_lambda_d_nr;
+    if prev == el::NONE {
+      e.b.data.definitions[hd].attributes[a].assigned_lambda_d_nr = ld;
+    } else if prev != ld {
+      // `@FR-L-Escape` (loft#1874): a field holds any closure, so every lambda written into it
+      // shares ONE closure record — the union of their captures, each read by name.
+      unite_closure_records(e, prev, ld);
+    }
+    fn_number_write(e, vars, r, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }, ft);
+    return ir::NdNull;
+  }
+  rd = el::def(e, ld).closure_record;
+  bl = match el_ir::unspan(val) { NdBlock { block } => block[0], _ => return null };
+  first_ld = el::def(e, hd).attributes[a]!.assigned_lambda_d_nr;
+  if bl.name != "fn_ref_with_closure" || rd < 0 || first_ld == el::NONE || first_ld < 0 || el::def(e, first_ld).closure_record != rd {
+    el::refuse(e, "a capturing lambda stored in a field whose closure record is not the field's");
+    return null;
+  }
+  w = match el_ir::unspan(el_ir::last(bl.operators)) { NdFnRef { def_nr: _, var: fw } => fw, _ => -1 };
+  if w < 0 {
+    return null;
+  }
+  kt = el::def(e, rd).known_type;
+  pos = field_position(e, hd, fname);
+  field = el_ir::cl(e, "OpGetField", [r, ir::NdInt { n: pos + 4 }, ir::NdInt { n: kt }]);
+  ops: vector<ir::Node> = [];
+  // The release of what the record held before reads that record where it lives, in the field
+  // (`old`): every step ahead of the build names it in place of the local.
+  old = el_ir::cl(e, "OpRefFromChildRec", [field]);
+  // `displaced_union_captures` (loft#1874): a union record may hold another lambda's captures —
+  // each store slot this build does not write is released from the old record, and starts
+  // empty in the new one.
+  releases: vector<ir::Node> = [];
+  unwritten: vector<integer> = [];
+  if starts_with(el::def(e, rd).name, "__closure_u_") {
+    written: vector<integer> = [];
+    for op in bl.operators {
+      match el_ir::unspan(op) {
+        NdCall { def_nr: wd, args: wa } => {
+          if el::def(e, wd).name == "OpSetDbRef" && el_ir::unspan(wa[0] ?? ir::NdNull) == ir::NdVar { n: w } {
+            written += [match el_ir::unspan(wa[1] ?? ir::NdNull) { NdInt { n: wp } => wp, _ => -1 }];
+          }
+        },
+        _ => {}
+      }
+    }
+    for ua in el::def(e, rd).attributes {
+      shares = match el_types::base(ua.typedef[0] ?? ir::TyVoid) { TyReference { n: _, dep: ud } => len(ud) > 0, _ => false };
+      upos = el_schema::field_position(e, kt, ua.name);
+      if !shares || upos == el::NO_TYPE || written.contains(upos) {
+        continue;
+      }
+      unwritten += [upos];
+      slot = el_ir::cl(e, "OpGetDbRef", [old, ir::NdInt { n: upos }]);
+      releases += [el_ir::v_if(el_ir::cl(e, "OpConvBoolFromRef", [old]), el_ir::v_if(el_ir::cl(e, "OpConvBoolFromRef", [slot]), el_ir::cl(e, "OpFreeRef", [slot]), ir::NdNull), ir::NdNull)];
+    }
+    // `own_build_keeps_its_captures` (loft#2284): where the record replaced is one an EARLIER
+    // build of this frame made (a `___clos_k` of the same record), the frame still owns what it
+    // captured — that local is emptied instead of the slots released.
+    if len(releases) > 0 {
+      rest = ir::NdInsert { items: releases };
+      any_earlier = false;
+      for kv in vars.vars {
+        if kv#index != w && starts_with(kv.name, "___clos_") && match el_types::base(kv.type_def[0] ?? ir::TyVoid) { TyReference { n: kr } => kr == rd, _ => false } {
+          rest = el_ir::v_if(el_ir::cl(e, "OpEqRef", [old, ir::NdVar { n: kv#index }]), el_ir::v_set(kv#index, el_ir::cl(e, "OpNullRefSentinel", [])), rest);
+          any_earlier = true;
+        }
+      }
+      if any_earlier {
+        releases = [rest];
+      }
+    }
+  }
+  built = false;
+  for op in bl.operators {
+    if op#index == len(bl.operators) - 1 {
+      continue;
+    }
+    is_build = match el_ir::unspan(op) { NdCall { def_nr: od, args: oa } => el::def(e, od).name == "OpDatabase" && el_ir::unspan(oa[0] ?? ir::NdNull) == ir::NdVar { n: w }, _ => false };
+    is_null = match el_ir::unspan(op) { NdSet { var: sv, inner: si } => sv == w && el_ir::unspan(si) is NdNull, _ => false };
+    if is_build {
+      built = true;
+      ops += releases;
+      ops += [el_ir::v_set(w, el_ir::cl(e, "OpChildRec", [field, ir::NdInt { n: kt }]))];
+      for up in unwritten {
+        ops += [el_ir::cl(e, "OpSetDbRef", [ir::NdVar { n: w }, ir::NdInt { n: up }, el_ir::cl(e, "OpNullRefSentinel", [])])];
+      }
+    } else if built || is_null {
+      ops += [op];
+    } else {
+      ops += [el_ir::replace_subtree(op, ir::NdVar { n: w }, old)];
+    }
+  }
+  vars.vars[w].skip_free = true;
+  nw = fn_number_write(e, vars, r, ir::NdInt { n: pos }, ir::NdInt { n: ld }, ft);
+  if nw == null {
+    return null;
+  }
+  ops += [nw!];
+  el_ir::v_block(ops, ir::TyVoid, "fn_ref_field_set")
+}
+
+// `unite_field_closure_records` (loft#1874): lambda `b` takes the closure record lambda `a`
+// shares with any other lambda written into the same fn field, grown by `b`'s captures (by
+// name).  The first union gets a record of its own, `__closure_u_<a's record>`, so neither
+// lambda's own record changes shape.  A name the two type differently wants a slot per lambda
+// (`capture_alias`) — not carried: refused by name.
+fn unite_closure_records(e: el::El, a: integer, b: integer) {
+  ra = el::def(e, a).closure_record;
+  rb = el::def(e, b).closure_record;
+  if ra < 0 || rb < 0 || ra == rb {
+    return;
+  }
+  union = ra;
+  if !starts_with(el::def(e, ra).name, "__closure_u_") {
+    union = el::add_def(e, "__closure_u_{el::def(e, ra).name}", el::def(e, ra).position, el::DT_STRUCT);
+    e.b.data.definitions[union].returned = [ir::TyReference { n: union, dep: [] }];
+    merge_closure_attrs(e, union, ra);
+  }
+  merge_closure_attrs(e, union, rb);
+  e.b.data.definitions[a].closure_record = union;
+  e.b.data.definitions[b].closure_record = union;
+}
+
+fn merge_closure_attrs(e: el::El, into: integer, from: integer) {
+  for fa in el::def(e, from).attributes {
+    at = attr_nr(el::def(e, into), fa.name);
+    if at < 0 {
+      e.b.data.definitions[into].attributes += [fa];
+    } else if (el::def(e, into).attributes[at]!.typedef[0] ?? ir::TyVoid) != (fa.typedef[0] ?? ir::TyVoid) {
+      el::refuse(e, "a union closure record with a capture two lambdas type differently");
+    }
+  }
+}
+
+// Is field `a` of struct `d` split into its function's number and a closure child record
+// (`fn_ref_field_is_split`: a capturing lambda was assigned to it)?
+pub fn fn_field_split(e: el::El, d: integer, name: text) -> boolean {
+  a = attr_nr(el::def(e, d), name);
+  if a < 0 {
+    return false;
+  }
+  ld = el::def(e, d).attributes[a]!.assigned_lambda_d_nr;
+  ld != el::NONE && ld >= 0 && el::def(e, ld).closure_record >= 0
+}
+
 // `emit_tuple_set_ops`: a tuple field written member by member, each at the field's position
 // plus its own in the `__tuple<…>` struct.  Null where the value is no tuple of the field's
 // shape, or a member is no plain scalar or text.
@@ -618,7 +785,9 @@ pub fn member(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: t
         return cr;
       }
       vars.vars[fw].skip_free = true;
-      read = el_ir::v_block([el_ir::cl(e, "OpGetInt4", [ir::NdVar { n: hw }, ir::NdInt { n: field_position(e, hd, name) }]), el_ir::cl(e, "OpNullRefSentinel", [])], ft, "fn_ref_field_read");
+      // (A split field's closure half is its child record, read where it lies.)
+      half = if fn_field_split(e, hd, name) { el_ir::cl(e, "OpRefFromChildRec", [el_ir::cl(e, "OpGetField", [ir::NdVar { n: hw }, ir::NdInt { n: field_position(e, hd, name) + 4 }, ir::NdInt { n: 0 }])]) } else { el_ir::cl(e, "OpNullRefSentinel", []) };
+      read = el_ir::v_block([el_ir::cl(e, "OpGetInt4", [ir::NdVar { n: hw }, ir::NdInt { n: field_position(e, hd, name) }]), half], ft, "fn_ref_field_read");
       base = el_ir::v_block([el_ir::v_set(hw, hx.code), read], ft, "fn_ref_field_base");
       return ex(el_ir::v_block([el_ir::v_set(fw, base), cr.code], cr.tp, "fn_call_tmp"), cr.tp);
     }
@@ -706,7 +875,8 @@ pub fn member(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: t
   // (`fn_ref_field_read`, the legacy layout; a split field is not carried).
   if el_types::base(t) is TyFunction {
     fpos = if e.first_pass { 0 } else { field_position(e, d, name) };
-    return ex(el_ir::v_block([el_ir::cl(e, "OpGetInt4", [x.code, ir::NdInt { n: fpos }]), el_ir::cl(e, "OpNullRefSentinel", [])], el_types::with_deps(t, []), "fn_ref_field_read"), t);
+    half2 = if !e.first_pass && fn_field_split(e, d, name) { el_ir::cl(e, "OpRefFromChildRec", [el_ir::cl(e, "OpGetField", [x.code, ir::NdInt { n: fpos + 4 }, ir::NdInt { n: 0 }])]) } else { el_ir::cl(e, "OpNullRefSentinel", []) };
+    return ex(el_ir::v_block([el_ir::cl(e, "OpGetInt4", [x.code, ir::NdInt { n: fpos }]), half2], el_types::with_deps(t, []), "fn_ref_field_read"), t);
   }
   got = field_get(e, d, a, x.code);
   if got == null {

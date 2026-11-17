@@ -445,6 +445,13 @@ fn fill_database(e: el::El, d: integer) {
     // `@FR-L-OutOfLine`: a field whose record holds its host is the number of a child record
     // in the host's store, typed by the content it holds (`child_rec<S>`).
     c = -1;
+    // (A split function field's closure record is laid out before the field's own number.)
+    if ft is TyFunction && a.assigned_lambda_d_nr != el::NONE && a.assigned_lambda_d_nr >= 0 {
+      crd0 = el::def(e, a.assigned_lambda_d_nr).closure_record;
+      if crd0 >= 0 && el::def(e, crd0).known_type == NO_TYPE {
+        fill_database(e, crd0);
+      }
+    }
     if out_of_line(e, d, a#index) {
       sd = out_of_line_content(e, ft);
       if el::def(e, sd).known_type == NO_TYPE {
@@ -464,6 +471,17 @@ fn fill_database(e: el::El, d: integer) {
     f = field(e, s, a.name, c);
     if a.nullable {
       set_field_nullable(e, s, f);
+    }
+    // A function field a capturing lambda was assigned to is split: its closure half is a
+    // child record of the lambda's closure record, right after the function's number.
+    if ft is TyFunction && a.assigned_lambda_d_nr != el::NONE && a.assigned_lambda_d_nr >= 0 {
+      crd = el::def(e, a.assigned_lambda_d_nr).closure_record;
+      if crd >= 0 {
+        if el::def(e, crd).known_type == NO_TYPE {
+          fill_database(e, crd);
+        }
+        field(e, s, "{a.name}__closure_rec", child_rec(e, el::def(e, crd).known_type));
+      }
     }
   }
 }

@@ -192,6 +192,18 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
       el::refuse(e, "a compound write to a function-valued field");
       return ex(ir::NdNull, ir::TyVoid);
     }
+    // A capturing lambda assigned to a field of a local's record (`h.f = fn() { … n … }`).
+    cld = el_ex_object::closure_lambda_at(e, vars, rhs);
+    host_d = match el_ir::unspan(fargs[0]!) { NdVar { n: hv } => struct_ref(e, el_types::base(el_vars::tp(vars, hv))), _ => -1 };
+    if cld >= 0 {
+      fname2 = match e.p.nodes[target] { SMember { name: mn } => mn, SName { member: sm } => sm, _ => "" };
+      cw2 = if host_d >= 0 && fname2 != "" { el_ex_object::closure_field_write(e, vars, host_d, fname2, fargs[0]!, cld, fx.code, p.tp) } else { null };
+      if cw2 == null {
+        el::refuse(e, "a function-valued field given something other than a named function");
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      return ex(cw2!, ir::TyVoid);
+    }
     fw = el_ex_object::fn_number_write(e, vars, fargs[0]!, fargs[1]!, if e.first_pass && !(el_ir::unspan(fx.code) is NdVar) { ir::NdInt { n: 0 } } else { fx.code }, p.tp);
     if fw == null {
       el::refuse(e, "a function-valued field given something other than a named function");
@@ -2532,6 +2544,18 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
               return null;
             }
           }
+        } else if el_types::base(at) is TyFunction && el_ex_object::closure_lambda_at(e, vars, fe!) >= 0 {
+          // A capturing lambda: its closure record is built in the field's child slot.
+          cw = el_ex_object::closure_field_write(e, vars, d, fname, r, el_ex_object::closure_lambda_at(e, vars, fe!), x.code, at);
+          if cw == null {
+            el::refuse(e, "a function-valued field given something other than a named function");
+            return null;
+          }
+          if !e.first_pass {
+            list += [cw!];
+          }
+          found += [fname];
+          continue;
         } else if el_types::base(at) is TyFunction {
           // A function-valued field given a named function (`fn_number_write`).
           if e.first_pass {

@@ -208,6 +208,9 @@ pub struct Vars {
   pub match_site: integer = -1,
   // The node whose tuple FIELD read is taken member by member (`x.f.0`, `x.f = …`): no copy.
   pub tuple_raw: integer = -1,
+  // The capturing lambda `closure_value` read last, and the body node it was read at.
+  pub last_closure: integer = -1,
+  pub last_closure_body: integer = -1,
   // The tuple locals declared with a narrow integer member (a write to one is range-checked).
   pub narrow_tuples: vector<integer> = [],
   // The slot variable of a `&` link to a child record (`_slot_<name>_N`), per link, in step.
