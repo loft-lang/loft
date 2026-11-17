@@ -1604,6 +1604,9 @@ pub fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?,
   if source < 0 && name == "reserve" {
     return reserve_call(e, list, types);
   }
+  if source < 0 && name == "reverse" && len(list) == 1 {
+    return reverse_call(e, list, types);
+  }
   if source < 0 && name == "sort" && sorts_itself(types) {
     return sort_call(e, list, types);
   }
@@ -1862,6 +1865,30 @@ pub fn size_call(e: el::El, list: vector<ir::Node>, t: ir::TypeT) -> Ex? {
 // elements, `OpReserveVector(v, n, <element size>)`, or a hash's buckets, `OpReserveHash(h, n,
 // <its type>)` — nothing on the first pass.  A malformed call is refused by name (Rust reports
 // it).
+// `Parser::parse_reverse`: `reverse(v)` / `v.reverse()` reverses the vector in place at its
+// element's store size; over a type variable's element the choice is each instance's
+// (`tvreverse`).
+pub fn reverse_call(e: el::El, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex {
+  if e.first_pass {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  coll = match types[0] ?? ir::TyVoid { TyRefVar { inner } => inner, _ => types[0] ?? ir::TyVoid };
+  match el_types::base(coll) {
+    TyVector { inner } => {
+      if el_types::type_var(e, el_types::base(inner)) >= 0 {
+        return ex(el_ir::v_block(list, types[0] ?? ir::TyVoid, "tvreverse"), ir::TyVoid);
+      }
+      stride = elem_stride(e, inner);
+      if stride >= 0 {
+        return ex(el_ir::cl(e, "OpReverseVector", [list[0]!, ir::NdInt { n: stride }]), ir::TyVoid);
+      }
+    },
+    _ => {}
+  }
+  refuse_known(e, coll, "a `reverse` of this collection: {type_kind(coll)}");
+  ex(ir::NdNull, ir::TyVoid)
+}
+
 pub fn reserve_call(e: el::El, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex {
   if e.first_pass {
     return ex(ir::NdNull, ir::TyVoid);
@@ -2401,6 +2428,9 @@ pub fn method_call_on(e: el::El, vars: el_vars::Vars, at: integer, x: Ex, re: in
   }
   if name == "reserve" {
     return reserve_call(e, list, types);
+  }
+  if name == "reverse" && len(list) == 1 {
+    return reverse_call(e, list, types);
   }
   if name == "sort" && sorts_itself(types) {
     return sort_call(e, list, types);
@@ -3043,7 +3073,7 @@ pub fn instance_carried(e: el::El, n: ir::Node, h: integer, row: integer, tv: ir
     NdBlock { block } => {
       bl = block[0]!;
       // (`lowers`: the instance lowers a null check and a default of the variable itself.)
-      lowered = lowers && (bl.name == "tvnullcheck" || bl.name == "tvdefault");
+      lowered = (lowers && (bl.name == "tvnullcheck" || bl.name == "tvdefault")) || (writes && bl.name == "tvreverse");
       if !lowered && bl.name.starts_with("tv") || bl.name == "yield_copy" || bl.name == "tuple_member_copy" || bl.name == "tuple_member_move" || bl.name == "materialized_view_return" {
         return "a `{bl.name}` block";
       }

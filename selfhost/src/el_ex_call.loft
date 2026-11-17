@@ -768,6 +768,13 @@ pub fn rewrite_vector_writes(e: el::El, vars: el_vars::Vars, n: ir::Node, stale:
     NdCallRef { var, args } => ir::NdCallRef { var: var, args: [for a in args { rewrite_vector_writes(e, vars, a, stale, bound) }] },
     NdBlock { block } => {
       bl = block[0]!;
+      // `parse_reverse` at the bound element: the vector reversed at its element's store size.
+      if bl.name == "tvreverse" && len(bl.operators) == 1 {
+        rc = el_schema::content_type(e, el_types::without_deps(el_types::base(bound)));
+        if rc >= 0 && rc < len(e.b.types) {
+          return el_ir::cl(e, "OpReverseVector", [rewrite_vector_writes(e, vars, bl.operators[0]!, stale, bound), ir::NdInt { n: e.b.types[rc]!.size }]);
+        }
+      }
       bl.operators = write_triplets(e, vars, [for o in bl.operators { rewrite_vector_writes(e, vars, o, stale, bound) }], stale, bound);
       ir::NdBlock { block: [bl] }
     },
