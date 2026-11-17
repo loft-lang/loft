@@ -3,7 +3,7 @@
 
 //! Slice-pattern repetition `( [name:] V )*` with its separator, and alternation — a single
 //! element `(A | B)`, a sequence `(A B | C)`, an optional group — with the captures each binds.
-//! A part of the match subject split out of `control.rs`; the others are listed there.
+//! A part of the match subject split out of `control.rs`; the others are listed there (`@F99`).
 
 use super::control::{AltSpan, SepSpec, match_arm_types_unify};
 use super::{

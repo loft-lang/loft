@@ -3,7 +3,7 @@
 
 //! Vector, slice and tuple matches: their element patterns, alternatives inside a sequence, and
 //! the scalar condition chains a pattern lowers to.
-//! A part of the match subject split out of `control.rs`; the others are listed there.
+//! A part of the match subject split out of `control.rs`; the others are listed there (`@F29`, `@F99`).
 
 use super::control::{
     PatternArm, SliceGroupKind, SliceShape, SliceSubject, SubruleGroup, chain_pattern_arms,

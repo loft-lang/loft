@@ -3,7 +3,7 @@
 
 //! The bindings a match pattern makes: the field bindings of a struct-enum arm, forward captures,
 //! slice elements read by position, the rest of a slice, and literal-value matches.
-//! A part of the match subject split out of `control.rs`; the others are listed there.
+//! A part of the match subject split out of `control.rs`; the others are listed there (`@F29`).
 
 use super::control::{SliceGroupKind, max_lookahead};
 use super::{
