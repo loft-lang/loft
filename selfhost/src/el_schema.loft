@@ -302,7 +302,9 @@ pub fn make_vector_def(e: el::El, t: ir::TypeT, nm: text, pos: ir::Position, typ
     _ => {}
   }
   // (A tagged `__nullable<S>` element's row follows its holder's: made where `main_vector` is filled.)
-  if !typed && !starts_with(nm, "__nullable<") {
+  // (A struct FIELD's vector of a struct enum is made with the struct's layout, after the
+  // enum's variants.)
+  if !typed && !starts_with(nm, "__nullable<") && el_types::struct_enum_def(t) < 0 {
     vector_store_type(e, t, nm);
   }
   md = el::add_def(e, "main_vector<{nm}>", pos, el::DT_STRUCT);
@@ -582,8 +584,14 @@ fn store_type(e: el::El, t: ir::TypeT, field: boolean) -> integer {
       schema_type(e, "integer")
     },
     TyText { dep: _ } => known(e, "text"),
+    // A function value in a field is its function's number: four bytes (`int<0,false>`).
+    TyFunction { args: _ } => if field { int_part(e, ir::IntegerSpec { min: 0, max: 2147483647, not_null: false, forced_size: 4 }, el::NONE, false) } else { -1 },
     TyTuple { elems } => {
       td = el_types::tuple_def_of(e, elems);
+      // A struct field's tuple is filled where the field is met, as a field's struct is.
+      if field && td >= 0 && el::def(e, td).known_type == NO_TYPE {
+        fill_database(e, td);
+      }
       if td < 0 || el::def(e, td).known_type == NO_TYPE { -1 } else { el::def(e, td).known_type }
     },
     TyEnum { n } => enum_content(e, n),

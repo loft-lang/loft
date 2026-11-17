@@ -524,6 +524,38 @@ pub fn splice(l: vector<ir::Node>, items: vector<ir::Node>) -> vector<ir::Node> 
   r
 }
 
+// A tuple FIELD read as a value (`y = x.f`): a text member is copied into a work text of the
+// tuple's own on the second pass (`tuple_member_copy`), so the tuple does not borrow the
+// record.  A read taken member by member (`vars.tuple_raw`) stands as it is.
+fn tuple_field_copy(e: el::El, vars: el_vars::Vars, n: integer, r: Ex) -> Ex {
+  if n == vars.tuple_raw || e.first_pass || !(r.tp is TyTuple) {
+    return r;
+  }
+  items = match el_ir::unspan(r.code) { NdTuple { items: ri } => ri, _ => [] };
+  elems = match r.tp { TyTuple { elems: re } => re, _ => [] };
+  if len(items) == 0 || len(items) != len(elems) {
+    return r;
+  }
+  out: vector<ir::Node> = [];
+  tps: vector<ir::TypeT> = [];
+  for it in items {
+    reads = match el_ir::unspan(it) { NdCall { def_nr: rd } => starts_with(el::def(e, rd).name, "OpGet"), _ => false };
+    if !reads {
+      return r;
+    }
+    if el_types::base(elems[it#index]!) is TyText {
+      w = el_vars::work_text_p2(vars);
+      owned = ir::TyText { dep: [w] };
+      out += [el_ir::v_block([el_ir::v_set(w, it), ir::NdVar { n: w }], owned, "tuple_member_copy")];
+      tps += [owned];
+    } else {
+      out += [it];
+      tps += [elems[it#index]!];
+    }
+  }
+  ex(ir::NdTuple { items: out }, ir::TyTuple { elems: tps })
+}
+
 // `Parser::expression`: one expression node.
 pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
   vars.site = n;
@@ -537,13 +569,13 @@ pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     SChar { c } => ex(el_ir::cl(e, "OpConvCharacterFromInt", [ir::NdInt { n: c }]), ir::TyCharacter),
     SBool { b } => ex(ir::NdBoolean { b: b }, ir::TyBoolean),
     SNull => ex(ir::NdNull, ir::TyNull),
-    SName { name, member } => name_expression(e, vars, name, member, n == vars.read_into),
+    SName { name, member } => tuple_field_copy(e, vars, n, name_expression(e, vars, name, member, n == vars.read_into)),
     SAssign { at, fixed, op, target, e: rhs } => noted_bind(e, vars, assignment(e, vars, at, fixed, op, target, rhs)),
     SLet { fixed, name, amp, tfixed, tp, e: rhs } => noted_bind(e, vars, el_ex_place::declaration(e, vars, fixed || amp || tfixed, name, tp, rhs)),
     SCall { at, f, args } => el_ex_object::call_expression(e, vars, at, f, args),
     SString { parts } => el_ex_call::string_expression(e, vars, parts),
     SIntrinsic { at, kind, args } => el_ex_object::intrinsic(e, vars, at, kind, args),
-    SMember { at, e: re, name, args, call } => el_ex_object::member(e, vars, at, re, name, args, call),
+    SMember { at, e: re, name, args, call } => tuple_field_copy(e, vars, n, el_ex_object::member(e, vars, at, re, name, args, call)),
     SBin { at, op, l, r } => el_ex_call::binary(e, vars, at, op, l, r),
     SUnary { op, e: ue } => el_ex_vector::unary(e, vars, op, ue),
     SIf { cond, then, other } => el_ex_null::if_expr(e, vars, cond, then, other, if n == vars.expect_node { el_types::without_deps(vars.expect) } else { ir::TyVoid }),
@@ -629,7 +661,9 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
       for c in captured_names(e, vars, body!, own) {
         cv = el_vars::var(vars, c);
         ct = el_vars::tp(vars, cv);
-        if writes_a_name(e, body!, [el::Capture { name: c, tp: ct }]) {
+        // A vector the lambda writes is shared through its pointer as a read one is
+        // (`@FR-L-CapHeap`): the write goes through the capture, no cell.
+        if writes_a_name(e, body!, [el::Capture { name: c, tp: ct }]) && !(el_types::base(ct) is TyVector && !(ct is TyOptional)) {
           boxable = if e.first_pass { el_cell::cell_name(e, ct) != "" } else { el_cell::cell_of(e, ct) >= 0 };
           if !boxable {
             el::refuse(e, "a lambda that captures a local of its function: written by it, of this type {type_kind(ct)}");
@@ -1135,6 +1169,7 @@ pub fn captured_name(e: el::El, vars: el_vars::Vars, n: integer, own: vector<tex
 // literals (`(T-Cons)`): a stack tuple, typed by its members.  Any other member — nullable,
 // null, a call's record — is refused by name.
 pub fn tuple_lit(e: el::El, vars: el_vars::Vars, elems: vector<integer>) -> Ex {
+  in_boxed_tail = vars.boxed_tail >= 0 && vars.site == vars.boxed_tail;
   items: vector<ir::Node> = [];
   tps: vector<ir::TypeT> = [];
   for n in elems {
@@ -1144,7 +1179,13 @@ pub fn tuple_lit(e: el::El, vars: el_vars::Vars, elems: vector<integer>) -> Ex {
     }
     // `tuple_member_copy` of a record or vector local: the tuple holds a copy in a store of its
     // own, so it borrows nothing of the local.
-    if !(x.tp is TyOptional) && (x.tp is TyReference || x.tp is TyVector) && el_ir::unspan(x.code) is NdVar {
+    // (A boxed return's tail writes each member into its record: no copy of its own.)
+    // Rust still mints the copy's `__ref_p2_N` there and then writes the local itself.
+    boxed_rec = in_boxed_tail && !(x.tp is TyOptional) && x.tp is TyReference && el_ir::unspan(x.code) is NdVar;
+    if boxed_rec && !e.first_pass {
+      el_vars::work_ref_p2(vars, el_types::with_deps(x.tp, []));
+    }
+    if !in_boxed_tail && !(x.tp is TyOptional) && (x.tp is TyReference || x.tp is TyVector) && el_ir::unspan(x.code) is NdVar {
       c = tuple_member_copy(e, vars, x);
       if c == null {
         return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -1189,7 +1230,15 @@ pub fn tuple_lit(e: el::El, vars: el_vars::Vars, elems: vector<integer>) -> Ex {
     }
     // A nullable plain scalar is held as it is: its null is the scalar's own sentinel.
     nullable_scalar = match x.tp { TyOptional { inner } => is_scalar(inner), _ => false };
-    if !(is_scalar(x.tp) || x.tp is TyText || nullable_scalar) {
+    // A vector LITERAL member is its value block (`Vector`), the tuple holding the vector.
+    vec_lit = x.tp is TyVector && e.p.nodes[n] is SVecLit && (e.first_pass || match el_ir::unspan(x.code) { NdBlock { block: vb } => vb[0].name == "Vector", _ => false });
+    // A tuple of plain values as a member (`((1, 2), 3)`) is held as the tuple it is.
+    plain_inner = match x.tp { TyTuple { elems: ie } => len([for it in ie if !is_scalar(it) { it }]) == 0 && len(ie) > 0, _ => false };
+    // A record a call answers fresh is held as that call (`(mk(11), 2)`), the tuple its owner.
+    // (Not carried: a tuple holding a call's record is moved and released by rules of its own
+    // — `tuple_member_move` — so the member stays refused by name.)
+    call_rec = false;
+    if !(is_scalar(x.tp) || x.tp is TyText || nullable_scalar || vec_lit || boxed_rec || plain_inner || call_rec) {
       el::refuse(e, "a tuple with a member of this type: {type_kind(x.tp)}");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
     }
@@ -1199,16 +1248,21 @@ pub fn tuple_lit(e: el::El, vars: el_vars::Vars, elems: vector<integer>) -> Ex {
     if x.tp is TyText {
       match el_ir::unspan(x.code) {
         NdText { s: _ } => {},
+        // A text member of another tuple (`(t.1, t.0)`) is held as that read, a view of it.
+        NdTupleGet { var: _ } => {},
         NdVar { n: tv } => {
-          if !vars.vars[tv].argument && !e.first_pass {
+          if !vars.vars[tv].argument && !e.first_pass && !in_boxed_tail {
             w = el_vars::work_text_p2(vars);
             owned = ir::TyText { dep: [w] };
             x = ex(el_ir::v_block([el_ir::v_set(w, x.code), ir::NdVar { n: w }], owned, "tuple_member_copy"), owned);
           }
         },
         _ => {
-          el::refuse(e, "a tuple with a text member that is no literal or variable");
-          return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+          // (A boxed return's tail writes the member into its record: any text value.)
+          if !in_boxed_tail {
+            el::refuse(e, "a tuple with a text member that is no literal or variable");
+            return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+          }
         }
       }
     }
@@ -1269,7 +1323,21 @@ pub fn tuple_get(e: el::El, vars: el_vars::Vars, te: integer?, index: integer) -
     el::refuse(e, "a tuple member with no subject");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
+  vars.tuple_raw = te!;
   x = expression(e, vars, te!);
+  // A member of a tuple FIELD (`x.f.1`): the member's own read.
+  match el_ir::unspan(x.code) {
+    NdTuple { items: fi } => {
+      fe = match x.tp { TyTuple { elems: xe } => xe, _ => [] };
+      fread = match el_ir::unspan(fi[index] ?? ir::NdNull) { NdCall { def_nr: fd } => starts_with(el::def(e, fd).name, "OpGet"), _ => false };
+      if fread && index >= 0 && index < len(fe) {
+        froot = place_root(e, fi[index]!);
+        fmt = fe[index]!;
+        return ex(fi[index]!, if el_types::base(fmt) is TyText && froot >= 0 { ir::TyText { dep: [froot] } } else { fmt });
+      }
+    },
+    _ => {}
+  }
   match el_ir::unspan(x.code) {
     NdVar { n: tv } => {
       match x.tp {
@@ -1282,9 +1350,84 @@ pub fn tuple_get(e: el::El, vars: el_vars::Vars, te: integer?, index: integer) -
           if t is TyText {
             t = ir::TyText { dep: [tv] };
           }
+          // A vector member is read as the vector it is, a view of the tuple's local.
+          if t is TyVector {
+            t = el_types::with_deps(t, [tv]);
+          }
           return ex(ir::NdTupleGet { var: tv, idx: index }, t);
         },
+        // A boxed tuple a call answered is its `__tuple<…>` record: member `i` its field `_i`.
+        TyReference { n: bd } => {
+          if starts_with(el::def(e, bd).name, "__tuple<") && index >= 0 && index < len(el::def(e, bd).attributes) {
+            mt = el::def(e, bd).attributes[index]!.typedef[0] ?? ir::TyVoid;
+            // (A record member is read where it lies: a view of the tuple's local.)
+            rec = struct_ref(e, mt) >= 0 && el_ex_object::literal_def(e, struct_ref(e, mt)) && !(mt is TyOptional);
+            if !(mt is TyText || el_convert::plain_scalar(mt) || rec) {
+              el::refuse(e, "a member of a boxed tuple that is no plain scalar, text or record");
+              return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+            }
+            got = field_get(e, bd, index, x.code);
+            if got == null {
+              return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+            }
+            return ex(got!, if mt is TyText { ir::TyText { dep: [tv] } } else if rec { el_types::with_deps(mt, [tv]) } else { mt });
+          }
+        },
         _ => {}
+      }
+    },
+    _ => {}
+  }
+  // A member of an ELEMENT of a vector of tuples (`v[1].0`): the element is its `__tuple<…>`
+  // record, the member read at its field's position — a text a view of the vector's local.
+  match x.tp {
+    TyTuple { elems: ee } => {
+      td = el_types::tuple_def_of(e, ee);
+      elem_read = match el_ir::unspan(x.code) { NdCall { def_nr: xd } => el::def(e, xd).name == "OpGetVector", _ => false };
+      mt = ee[index] ?? ir::TyVoid;
+      // A member of a tuple that is itself a tuple's member (`n.0.1`): the inner tuple held in
+      // a work ref first (`tuple_tmp`).
+      if el_ir::unspan(x.code) is NdTupleGet && index >= 0 && index < len(ee) && (mt is TyText || is_scalar(mt)) {
+        tw = el_vars::work_ref(vars, el_types::with_deps(x.tp, []));
+        return ex(el_ir::v_block([el_ir::v_set(tw, x.code), ir::NdTupleGet { var: tw, idx: index }], mt, "tuple_tmp"), mt);
+      }
+      // A record member of an element is read where it lies, a view of the vector's local.
+      rsd = struct_ref(e, mt);
+      if td >= 0 && elem_read && index >= 0 && index < len(ee) && rsd >= 0 && !(mt is TyOptional) && el_ex_object::literal_def(e, rsd) {
+        uw2 = el_vars::work_ref(vars, ir::TyReference { n: td, dep: [] });
+        vars.vars[uw2].skip_free = true;
+        el_vars::unregister_work_ref(vars, uw2);
+        if e.first_pass {
+          return ex(ir::NdNull, mt);
+        }
+        rroot = place_root(e, x.code);
+        return ex(el_ir::cl(e, "OpGetField", [x.code, ir::NdInt { n: field_position(e, td, "_{index}") }, ir::NdInt { n: el::def(e, rsd).known_type }]), el_types::with_deps(mt, if rroot >= 0 { [rroot] } else { [] }));
+      }
+      // A narrow member of an element is read at its width (`OpGetByte`, `OpGetShortRaw`).
+      if td >= 0 && elem_read && index >= 0 && index < len(ee) && match mt { TyInteger { spec: nsp } => el_types::narrow_width(nsp) > 0, _ => false } {
+        nw = el_vars::work_ref(vars, ir::TyReference { n: td, dep: [] });
+        vars.vars[nw].skip_free = true;
+        el_vars::unregister_work_ref(vars, nw);
+        if e.first_pass {
+          return ex(ir::NdNull, mt);
+        }
+        ng = field_get(e, td, index, x.code);
+        if ng != null {
+          return ex(ng!, mt);
+        }
+      }
+      if td >= 0 && elem_read && index >= 0 && index < len(ee) && (mt is TyText || (el_convert::plain_scalar(mt) && read_op(mt) != "" && match mt { TyInteger { spec } => spec.forced_size == 0 && el_types::narrow_width(spec) == 0, _ => true })) {
+        // Rust holds the element in a work ref here (the unbox it then drops): the name is
+        // taken on both passes, so later buffers number past it.
+        uw = el_vars::work_ref(vars, ir::TyReference { n: td, dep: [] });
+        vars.vars[uw].skip_free = true;
+        el_vars::unregister_work_ref(vars, uw);
+        if e.first_pass {
+          return ex(ir::NdNull, mt);
+        }
+        pos = field_position(e, td, "_{index}");
+        root = place_root(e, x.code);
+        return ex(el_ir::cl(e, read_op(mt), [x.code, ir::NdInt { n: pos }]), if mt is TyText && root >= 0 { ir::TyText { dep: [root] } } else { mt });
       }
     },
     _ => {}
@@ -1750,6 +1893,15 @@ pub fn unit_variant(e: el::El, vars: el_vars::Vars, en: integer, vd: integer) ->
   ex(el_ir::v_block(list, ir::TyEnum { n: en, is_ref: true, dep: [w] }, "EnumUnitLit"), ret)
 }
 
+// The local an `if` arm answers — a block whose one operator is a bare variable — or -1.
+fn keyed_arm_local(n: ir::Node) -> integer {
+  match el_ir::unspan(n) {
+    NdBlock { block } => if block[0].name == "block" && len(block[0].operators) == 1 { match el_ir::unspan(block[0].operators[0]) { NdVar { n: v } => v, _ => -1 } } else { -1 },
+    NdVar { n: v } => v,
+    _ => -1
+  }
+}
+
 // `collection_bind_source`'s copy verdicts for a vector source: a bare variable, or a one-level
 // field read off a record local that owns its store.
 // `Parser::lower_vec_copy_bind` for a dense local `v` given a copy of the vector place `x`: the
@@ -2174,12 +2326,60 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
   if e.p.nodes[target] is SMember || e.p.nodes[target] is SIndex {
     return el_ex_place::place_assignment(e, vars, op, target, rhs!);
   }
+  // A member of a tuple LOCAL written in place (`q.0 = 5`, `q.1 *= 2.0`): a plain scalar member
+  // through its operator, a text member assigned whole.  A text member's `+=` builds through
+  // work texts of its own and a parameter's tuple through its `__tp_` shadow — not carried.
+  match e.p.nodes[target] {
+    STupleGet { e: tse, index: tix } => {
+      tvar = match e.p.nodes[tse ?? 0] { SName { name: tn, member: tm } => if tse != null && tm == "" { el_vars::var(vars, tn) } else { -1 }, _ => -1 };
+      members = if tvar >= 0 { match el_vars::tp(vars, tvar) { TyTuple { elems: tel } => tel, _ => [] } } else { [] };
+      // (A local declared with its type may hold a narrow member, range-checked on a write —
+      // not carried: refused by name.)
+      if tvar >= 0 && vars.narrow_tuples.contains(tvar) && !e.first_pass {
+        el::refuse(e, "a write to a member of a tuple local declared with a narrow member");
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      if tvar >= 0 && !vars.vars[tvar].argument && tix >= 0 && tix < len(members) {
+        mt = members[tix]!;
+        tx = expression(e, vars, rhs!);
+        if e.first_pass {
+          return ex(ir::NdNull, ir::TyVoid);
+        }
+        el_vars::in_use(vars, tvar, true);
+        if op == "=" && (el_convert::plain_scalar(mt) || mt is TyText) {
+          sv = stored(e, vars, tx, mt);
+          if sv != null {
+            return ex(ir::NdTuplePut { var: tvar, idx: tix, inner: el_convert::guard_range(e, sv!, mt, tx.tp, false) }, ir::TyVoid);
+          }
+        }
+        if op != "=" && el_convert::plain_scalar(mt) {
+          cx = call_op(e, vars, op[..-1], [ir::NdTupleGet { var: tvar, idx: tix }, tx.code], [mt, tx.tp]);
+          if !el_types::is_unknown(cx.tp) {
+            // (`guard_declared_range`: a narrow member takes its default outside its range.)
+            return ex(ir::NdTuplePut { var: tvar, idx: tix, inner: el_convert::guard_range(e, cx.code, mt, ir::TyInteger { spec: i32_spec() }, false) }, ir::TyVoid);
+          }
+          return ex(ir::NdNull, ir::TyVoid);
+        }
+        el::refuse(e, "a write to a tuple member that is no plain scalar, or a text member appended");
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+    },
+    _ => {}
+  }
   // `f#format = F`, `f#next = n`, `f#index = n`, `f#size = n` (`call_to_set_op`'s file arms).
   match e.p.nodes[target] {
     SVarAttr { var, attr, arg, tp } => {
       fv = el_vars::var(vars, var);
       if op == "=" && (attr == "format" || attr == "next" || attr == "index" || attr == "size") && arg == null && tp == null && fv >= 0 && el_ex_pattern::is_file(e, el_vars::tp(vars, fv)) {
         return el_ex_null::file_attr_set(e, vars, fv, attr, rhs!);
+      }
+      // `d#lock = b` (`towards_set`'s `n_get_store_lock` arm): the store's lock is set.
+      if op == "=" && attr == "lock" && arg == null && tp == null && fv >= 0 && !vars.vars[fv].argument && (el_types::base(el_vars::tp(vars, fv)) is TyReference || el_types::base(el_vars::tp(vars, fv)) is TyVector) {
+        lx = expression(e, vars, rhs!);
+        if lx.tp is TyBoolean {
+          el_vars::in_use(vars, fv, true);
+          return ex(el_ir::cl(e, "n_set_store_lock", [ir::NdVar { n: fv }, lx.code]), ir::TyVoid);
+        }
       }
     },
     _ => {}
@@ -2337,8 +2537,83 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
   if amp_rhs && match e.p.nodes[rhs!] { SUnary { e: o } => o != null && !(e.p.nodes[o!] is SName), _ => false } && !vars.amp_places.contains(v) {
     vars.amp_places += [v];
   }
+  // A link to a CHILD record that is written whole later (`cur = &n.next; … cur = cur.next`):
+  // the bind holds the child's slot in `_slot_<name>_N` and reads the child through it; the
+  // write moves the next child into that slot (`OpMoveChildRec`) and reads it again.  The
+  // first pass records the write; the second pass's bind acts on it.
+  lkey = e.context * 65536 + v;
+  if !amp_rhs && vars.amp_places.contains(v) && e.first_pass && op == "=" && !e.slot_links.contains(lkey) {
+    e.slot_links += [lkey];
+  }
+  if amp_rhs && !e.first_pass && op == "=" && e.slot_links.contains(lkey) {
+    bx = expression(e, vars, rhs!);
+    inner_get = match el_ir::unspan(bx.code) { NdCall { def_nr: bd, args: ba } => if el::def(e, bd).name == "OpRefFromChildRec" && len(ba) == 1 { ba[0]! } else { ir::NdNull }, _ => ir::NdNull };
+    // A link bound again (`cur = &cur.next` in a walk) writes the slot it has.
+    had = -1;
+    for so in vars.slot_of {
+      if so == v {
+        had = vars.slot_vars[so#index] ?? -1;
+      }
+    }
+    if !(inner_get is NdNull) && had >= 0 && el_vars::change_var_type(e, vars, v, bx.tp) {
+      return ex(ir::NdInsert { items: [el_ir::v_set(had, inner_get), el_ir::v_set(v, el_ir::cl(e, "OpRefFromChildRec", [ir::NdVar { n: had }]))] }, ir::TyVoid);
+    }
+    if !(inner_get is NdNull) && el_vars::change_var_type(e, vars, v, bx.tp) {
+      sv = el_vars::create_unique(vars, "slot_{el_vars::name_of(vars, v)}", bx.tp);
+      el_vars::set_defined(vars, sv);
+      el_vars::set_defined(vars, v);
+      vars.slot_vars += [sv];
+      vars.slot_of += [v];
+      return ex(ir::NdInsert { items: [el_ir::v_set(sv, inner_get), el_ir::v_set(v, el_ir::cl(e, "OpRefFromChildRec", [ir::NdVar { n: sv }]))] }, ir::TyVoid);
+    }
+    // (Any other place — a field, an element — is bound as it always is; the bind above read
+    // nothing that mints.)
+  }
+  if !amp_rhs && !e.first_pass && op == "=" && vars.slot_of.contains(v) {
+    wsv = -1;
+    for so in vars.slot_of {
+      if so == v {
+        wsv = vars.slot_vars[so#index] ?? -1;
+      }
+    }
+    // `cur = null` clears the child in its slot (`OpSetChildRec` of the null sentinel).
+    srd = match el_types::base(el_vars::tp(vars, if wsv >= 0 { wsv } else { v })) { TyReference { n: sn } => sn, _ => -1 };
+    if wsv >= 0 && srd >= 0 && e.p.nodes[rhs!] is SNull {
+      return ex(ir::NdInsert { items: [el_ir::cl(e, "OpSetChildRec", [ir::NdVar { n: wsv }, el_ir::cl(e, "OpNullRefSentinel", []), ir::NdInt { n: el::def(e, srd).known_type }]), el_ir::v_set(v, el_ir::cl(e, "OpRefFromChildRec", [ir::NdVar { n: wsv }]))] }, ir::TyVoid);
+    }
+    wx = expression(e, vars, rhs!);
+    winner = match el_ir::unspan(wx.code) { NdCall { def_nr: wd, args: wa } => if el::def(e, wd).name == "OpRefFromChildRec" && len(wa) == 1 { wa[0]! } else { ir::NdNull }, _ => ir::NdNull };
+    wkt = match el_ir::unspan(winner) { NdCall { args: ga } => ga[2] ?? ir::NdNull, _ => ir::NdNull };
+    // A fresh call's record is MOVED into the slot (the known type with its move bit).
+    fresh_call = match el_ir::unspan(wx.code) { NdCall { def_nr: fd } => starts_with(el::def(e, fd).name, "n_"), _ => false };
+    if wsv >= 0 && srd >= 0 && fresh_call && match el_types::base(wx.tp) { TyReference { n: wn } => wn == srd, _ => false } {
+      return ex(ir::NdInsert { items: [el_ir::cl(e, "OpSetChildRec", [ir::NdVar { n: wsv }, wx.code, ir::NdInt { n: el::def(e, srd).known_type + 32768 }]), el_ir::v_set(v, el_ir::cl(e, "OpRefFromChildRec", [ir::NdVar { n: wsv }]))] }, ir::TyVoid);
+    }
+    if wsv >= 0 && !(winner is NdNull) && !(wkt is NdNull) {
+      return ex(ir::NdInsert { items: [el_ir::cl(e, "OpMoveChildRec", [ir::NdVar { n: wsv }, winner, wkt]), el_ir::v_set(v, el_ir::cl(e, "OpRefFromChildRec", [ir::NdVar { n: wsv }]))] }, ir::TyVoid);
+    }
+    el::refuse(e, "a whole-value write through a `&` link to a record place");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
   vb = el_types::base(el_vars::tp(vars, v));
-  if !amp_rhs && vars.amp_places.contains(v) && (struct_ref(e, vb) >= 0 || el_convert::struct_enum(vb)) {
+  // `copy_ref` (loft#1376): a literal or a fresh call's record is copied into the place the
+  // link names (a call's store given away); a bare record local re-points the link, as a view.
+  if !amp_rhs && vars.amp_places.contains(v) && struct_ref(e, vb) >= 0 && op == "=" && !(e.p.nodes[rhs!] is SName) {
+    lit = e.p.nodes[rhs!] is SStructLit && struct_literal_def(e, rhs!) == struct_ref(e, vb);
+    if lit || e.p.nodes[rhs!] is SCall {
+      wx = expression(e, vars, rhs!);
+      if e.first_pass {
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      kt = el::def(e, struct_ref(e, vb)).known_type;
+      fresh_call = match el_ir::unspan(wx.code) { NdCall { def_nr: wd } => starts_with(el::def(e, wd).name, "n_") && struct_ref(e, el_types::base(wx.tp)) == struct_ref(e, vb) && !(wx.tp is TyOptional), _ => false };
+      built = match el_ir::unspan(wx.code) { NdBlock { block: wb } => wb[0].name == "Object", _ => false };
+      if (lit && built) || (!lit && fresh_call) {
+        return ex(el_ir::cl(e, "OpCopyRecord", [wx.code, ir::NdVar { n: v }, ir::NdInt { n: kt + (if !lit && el_ex_match::gives_away_its_store(e, wx.code) { 32768 } else { 0 }) }]), ir::TyVoid);
+      }
+    }
+  }
+  if !e.first_pass && !amp_rhs && vars.amp_places.contains(v) && (struct_ref(e, vb) >= 0 || el_convert::struct_enum(vb)) && !(e.p.nodes[rhs!] is SName && struct_ref(e, vb) >= 0) {
     el::refuse(e, "a whole-value write through a `&` link to a record place");
     return ex(ir::NdNull, ir::TyVoid);
   }
@@ -2402,6 +2677,11 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
     x = expression(e, vars, rhs!);
     view = el_ir::unspan(x.code);
     bare_var = match view { NdVar { n: rv } => rv != v, _ => false };
+    // (A `!` read is a view as well, copied with its check inside — not carried.)
+    if !e.first_pass && match view { NdBlock { block: nb } => nb[0].name == "ncr", _ => false } {
+      el::refuse(e, "a `!` read written whole through a `&` link to a record");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
     if !bare_var && !calls(e, view, "OpGetField") {
       return ex(if e.first_pass { ir::NdNull } else { el_ir::v_set(v, x.code) }, ir::TyVoid);
     }
@@ -2440,6 +2720,18 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
   if link && !el_ex_match::scalar_link(vars, v) && !declaring {
     el::refuse(e, "a whole value written through a `&` link");
     return ex(ir::NdNull, ir::TyVoid);
+  }
+  // `null` written through a link to a nullable place is the place's own null; a narrow
+  // place's is range-checked (`OpRangeDefault`) — not carried.
+  if link && !declaring && e.p.nodes[rhs!] is SNull {
+    li = match el_vars::tp(vars, v) { TyRefVar { inner } => inner, _ => ir::TyVoid };
+    nl = el_convert::null_of(e, el_types::base(li));
+    narrow = match el_types::base(li) { TyInteger { spec } => el_types::narrow_width(spec) > 0 || spec.forced_size != 0, _ => false };
+    if !(li is TyOptional) || nl == null || narrow {
+      el::refuse(e, "a `null` written through a `&` link to a place of this type: {type_kind(li)}");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    return ex(el_ir::v_set(v, if e.first_pass { ir::NdNull } else { nl! }), ir::TyVoid);
   }
   // @PLN87 P2.4 (`@FR-F-ParamRebind`): a vector literal rebinding a visible vector parameter
   // rebinds it locally — its entry witness taken before the literal is read, the literal built
@@ -2565,7 +2857,11 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
   vars.bind_rhs = op == "=";
   outer_target = vars.assign_target;
   vars.assign_target = v;
+  // A boxed tuple a call answers is bound as the record it is (`a = mk(3)`).
+  outer_boxed = vars.boxed_tuple_at;
+  vars.boxed_tuple_at = if op == "=" { match e.p.nodes[rhs!] { SCall { at: ca } => ca, _ => -1 } } else { -1 };
   x = expression(e, vars, rhs!);
+  vars.boxed_tuple_at = outer_boxed;
   vars.assign_target = outer_target;
   // `@FR-L-Null-Which`: a local spells `S?` as the pointer, so a tagged slot (a field, a vector
   // element) bound to one is read through its tag here, on both passes; a `&` keeps the slot.
@@ -2586,6 +2882,14 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
   }
   if el_ex_place::promotes_text_param(e, vars, v) {
     v = el_vars::promote_text_param(vars, v);
+  }
+  // A vector local rebound from a call that takes that local is staged through a
+  // `__refvec_rhs_N` (cleared, then refilled) where a link names it, and rotates its buffers
+  // inside a loop (`OpPutRef`) — neither carried: refused by name.  The plain rebind is the
+  // call bound as any other.
+  if !e.first_pass && (vars.amp_vectors.contains(v) || len(vars.active_loops) > 0 || vars.whiles > 0) && el_types::base(el_vars::tp(vars, v)) is TyVector && len(el_types::deps(el_vars::tp(vars, v))) > 0 && match el_ir::unspan(x.code) { NdCall { def_nr: rc } => starts_with(el::def(e, rc).name, "n_") && el_ir::reads_var(x.code, v), _ => false } {
+    el::refuse(e, "a vector local rebound from a call that takes it");
+    return ex(ir::NdNull, ir::TyVoid);
   }
   // A call's vector bound to a local a closure shares rotates the call's buffer afterwards
   // (`OpPutRef`, loft#1447's collection half): not carried.
@@ -2659,6 +2963,35 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
           el_vars::drop_use(vars, v);
           kt = el_schema::keyed_type(e, el_types::base(kcur));
           return ex(ir::NdInsert { items: [el_ir::v_set(v, ir::NdNull), el_ir::cl(e, "OpReplaceKeyed", [x.code, ir::NdVar { n: v }, ir::NdInt { n: kt + 32768 }])] }, ir::TyVoid);
+        }
+        // A keyed FIELD of a record (through its fields): the field's collection replaced
+        // into the local, which is its own copy.
+        // A NESTED projection (`m.inn.h`, a field of an element) is a view of its root instead
+        // (`@FR-B-View-Depth`): bound as the read, borrowing the root.
+        direct = match el_ir::unspan(x.code) { NdCall { args: ga } => len(ga) > 0 && el_ir::unspan(ga[0]) is NdVar, _ => false };
+        if el::def(e, cd).name == "OpGetField" && place_root(e, el_ir::unspan(x.code)) >= 0 && !direct {
+          el_vars::drop_use(vars, v);
+          el_vars::set_var_type(vars, v, el_types::with_deps(el_vars::tp(vars, v), [place_root(e, el_ir::unspan(x.code))]));
+          return ex(el_ir::v_set(v, x.code), ir::TyVoid);
+        }
+        if el::def(e, cd).name == "OpGetField" && place_root(e, el_ir::unspan(x.code)) >= 0 {
+          el_vars::drop_use(vars, v);
+          // (The local holds its own copy: it borrows nothing of the source.)
+          el_vars::set_var_type(vars, v, el_types::with_deps(el_vars::tp(vars, v), []));
+          kt = el_schema::keyed_type(e, el_types::base(kcur));
+          return ex(ir::NdInsert { items: [el_ir::v_set(v, ir::NdNull), el_ir::cl(e, "OpReplaceKeyed", [x.code, ir::NdVar { n: v }, ir::NdInt { n: kt }])] }, ir::TyVoid);
+        }
+        el::refuse(e, "a keyed local bound from something other than a local");
+        return ex(ir::NdNull, ir::TyVoid);
+      },
+      // An `if` whose arms each answer a keyed local: whichever it answers is replaced in.
+      NdIf { cond: _, t: kt_arm, f: kf_arm } => {
+        if keyed_arm_local(kt_arm) >= 0 && keyed_arm_local(kf_arm) >= 0 {
+          el_vars::drop_use(vars, v);
+          // (The local holds its own copy: it borrows nothing of the source.)
+          el_vars::set_var_type(vars, v, el_types::with_deps(el_vars::tp(vars, v), []));
+          kt = el_schema::keyed_type(e, el_types::base(kcur));
+          return ex(ir::NdInsert { items: [el_ir::v_set(v, ir::NdNull), el_ir::cl(e, "OpReplaceKeyed", [x.code, ir::NdVar { n: v }, ir::NdInt { n: kt }])] }, ir::TyVoid);
         }
         el::refuse(e, "a keyed local bound from something other than a local");
         return ex(ir::NdNull, ir::TyVoid);

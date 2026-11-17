@@ -835,6 +835,8 @@ pub fn leftmost(e: el::El, n: integer) -> integer {
 pub fn copies_whole_vector(e: el::El, vars: el_vars::Vars, code: ir::Node) -> boolean {
   match el_ir::unspan(code) {
     NdVar { n: _ } => true,
+    // A vector member of a stack tuple (`b = a.0`).
+    NdTupleGet { var: _ } => true,
     NdCall { def_nr, args } => {
       if el::def(e, def_nr).name != "OpGetField" {
         return false;
@@ -1076,6 +1078,47 @@ pub fn field_get(e: el::El, d: integer, a: integer, r: ir::Node) -> ir::Node? {
       }
       el_ir::cl(e, "OpGetField", [r, pos, ir::NdInt { n: el::def(e, fd).known_type }])
     },
+    // A tuple field lies in the record as its `__tuple<…>` struct: read member by member, each
+    // at the field's position plus its own.
+    TyTuple { elems } => {
+      td = el_types::tuple_def_of(e, elems);
+      if td < 0 {
+        el::refuse(e, "a field read of a tuple with no record");
+        return null;
+      }
+      base = field_position(e, d, def.attributes[a]!.name);
+      items: vector<ir::Node> = [];
+      for ta in el::def(e, td).attributes {
+        mpos = ir::NdInt { n: base + field_position(e, td, ta.name) };
+        mt = el_types::base(ta.typedef[0]);
+        mop = match mt {
+          TyText { dep: _ } => "OpGetText",
+          TyBoolean => "OpGetBoolean",
+          TyFloat => "OpGetFloat",
+          TySingle => "OpGetSingle",
+          TyCharacter => "OpGetCharacter",
+          _ => ""
+        };
+        match mt {
+          TyInteger { spec: ms } => {
+            msl = int_slot(e, ms, ta.alias_d_nr, ta.nullable);
+            if slot_takes_min(msl.kind) {
+              items += [el_ir::cl(e, "OpGet{msl.kind}", [r, mpos, ir::NdInt { n: msl.min }])];
+            } else {
+              items += [el_ir::cl(e, "OpGet{msl.kind}", [r, mpos])];
+            }
+          },
+          _ => {
+            if mop == "" {
+              el::refuse(e, "a tuple field with a member that is no plain scalar or text");
+              return null;
+            }
+            items += [el_ir::cl(e, mop, [r, mpos])];
+          }
+        }
+      }
+      ir::NdTuple { items: items }
+    },
     TyInteger { spec } => {
       fa = def.attributes[a]!;
       sl = int_slot(e, spec, fa.alias_d_nr, fa.nullable);
@@ -1243,6 +1286,14 @@ pub fn type_def_nr(e: el::El, t: ir::TypeT) -> integer {
     TyRefVar { inner } => if inner is TyReference { type_def_nr(e, inner) } else { el::source_nr(e, 0, "reference") },
     // A function value is its definition number: named by `i32`.
     TyFunction { args: _ } => el::def_nr(e, "i32"),
+    // A tuple is named by its synthetic `__tuple<…>` record, where the shape has one.
+    TyTuple { elems } => {
+      td = el_types::tuple_def_of(e, elems);
+      if td < 0 {
+        el::refuse(e, "a call whose first argument is a collection, a tuple or a function: {type_kind(t)}");
+      }
+      td
+    },
     _ => {
       el::refuse(e, "a call whose first argument is a collection, a tuple or a function: {type_kind(t)}");
       -1
@@ -2099,7 +2150,7 @@ pub fn vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean) -> 
 // `vector<__tuple<…>>` under the row's own name, at the same place.
 pub fn tuple_vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean) -> VecRows? {
   elems = match t { TyTuple { elems: es } => es, _ => [] };
-  sp = el_types::tuple_spelling(elems, ", ");
+  sp = el_types::tuple_spelling_e(e, elems, ", ");
   if sp == "" {
     el::refuse(e, "a vector of tuples with a member of this kind");
     return null;

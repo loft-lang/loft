@@ -5,11 +5,13 @@
 // @PLN91 strand 12 — the push window of `src/c/body.rs` (`open_window`, `windowed`): a
 // counted push loop reserves its trips once and writes its pushes through a window.
 
+use cgen_transient;
 use ir;
 use cgen_tables;
 use cgen::(Cx);
 use cgen_w::*;
 use cgen_fn;
+use cgen_apart;
 use cgen_names;
 use cgen_hoist;
 use cgen_ref;
@@ -53,10 +55,14 @@ fn window_loop(x: Cx, w: W, lp: ir::Block) -> opt_window::PushLoop? {
 
 // `open_window`: opens the window of push loop `lp`; answers whether it did.
 pub fn open_window(x: Cx, w: W, lp: ir::Block, ind: integer) -> boolean {
-  if w.gen_elem != "" || (env_variable("LOFT_NO_PUSH_FILL") ?? "0") != "0" || (env_variable("LOFT_NO_PUSH_WINDOW") ?? "0") != "0" {
+  if w.gen_elem != "" || cgen_transient::lean(w) || cgen_apart::av_any(w) || (env_variable("LOFT_NO_PUSH_FILL") ?? "0") != "0" || (env_variable("LOFT_NO_PUSH_WINDOW") ?? "0") != "0" {
     return false;
   }
   p = window_loop(x, w, lp) ?? return deep_window(x, w, lp, ind);
+  // A push window on a value held apart (`@FR-R-Apart`) has no record to open.
+  if cgen_apart::holds(w, cgen_apart::path_root(p.path)) {
+    return false;
+  }
   // `@FR-R-AppendTwin`'s window clause: a twin's buffer is already under its caller's window,
   // so the loop takes a local copy of THAT window and gives it back at the loop's one exit.
   // Any other path already windowed keeps its window.
@@ -93,7 +99,7 @@ pub fn open_window(x: Cx, w: W, lp: ir::Block, ind: integer) -> boolean {
 // `deep_window`: one window for the pushes onto the single path a loop pushes to at any
 // depth — no reservation, the pushes grow the record through the window.
 fn deep_window(x: Cx, w: W, lp: ir::Block, ind: integer) -> boolean {
-  if (env_variable("LOFT_NO_DEEP_WINDOW") ?? "0") != "0" {
+  if (env_variable("LOFT_NO_DEEP_WINDOW") ?? "0") != "0" || cgen_transient::lean(w) {
     return false;
   }
   paths: vector<text> = [];
@@ -108,7 +114,7 @@ fn deep_window(x: Cx, w: W, lp: ir::Block, ind: integer) -> boolean {
           path = "";
           root = -1;
           size = opt_push::fused(x.b, x.b.data.definitions[def_nr]!.name, args, path, root);
-          if size > 0 {
+          if size > 0 && !cgen_apart::holds(w, root) {
             seen = false;
             for p in paths {
               if p == path {
@@ -407,7 +413,7 @@ fn mentions_outside(b: ir::Bundle, v: ir::Node, reach: vector<boolean>, skip_sit
 // after the loop's end.  The loop may leave only by its own end.  A text an enclosing loop
 // holds a window for keeps that one.  `LOFT_NO_TEXT_WINDOW=1`.
 pub fn open_text_windows(x: Cx, w: W, lp: ir::Block, ind: integer) -> integer {
-  if w.gen_elem != "" || (env_variable("LOFT_NO_TEXT_WINDOW") ?? "0") != "0" {
+  if w.gen_elem != "" || cgen_transient::lean(w) || (env_variable("LOFT_NO_TEXT_WINDOW") ?? "0") != "0" {
     return 0;
   }
   leaves = false;

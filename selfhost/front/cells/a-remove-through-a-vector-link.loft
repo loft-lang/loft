@@ -1,0 +1,15 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: `v.remove(i)` through a link to a vector removes from the vector it names; `h.len()` on a hash is its `len`.
+// Prints: 2 2 1 2
+
+struct E { k: integer, v: integer }
+struct S { n: integer }
+fn drop_first(v: &vector<S>) { v.remove(0); }
+fn main() {
+  h: hash<E[k]> = [E { k: 1, v: 2 }, E { k: 3, v: 4 }];
+  w = [S { n: 1 }, S { n: 2 }];
+  drop_first(w);
+  println("{h.len()} {len(h)} {len(w)} {w[0].n}");
+}

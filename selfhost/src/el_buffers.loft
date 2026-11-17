@@ -225,11 +225,22 @@ fn promote_in(e: el::El, d: integer) -> integer {
       el::refuse(e, "a work-buffer candidate written and not read (the dead-store decline)");
       continue;
     }
+    // `move_after_arguments`: a local numbered before an argument takes the table's last
+    // number — unless that last variable is the local itself or an argument, or the result
+    // names frame variables; then the local keeps its store.  The swap itself is not carried.
+    before_arg = false;
     for a in vars.vars {
       if a.argument && a#index > v {
-        el::refuse(e, "a work-buffer candidate numbered before an argument");
-        return promoted;
+        before_arg = true;
       }
+    }
+    if before_arg {
+      last = len(vars.vars) - 1;
+      if last == v || vars.vars[last].argument || len(el_types::deps(el::def(e, d).returned[0] ?? ir::TyVoid)) > 0 {
+        continue;
+      }
+      el::refuse(e, "a work-buffer candidate numbered before an argument");
+      return promoted;
     }
     code = promote_one(e, d, vars, code, v, db);
     promoted += 1;
@@ -963,7 +974,7 @@ fn runs_again(e: el::El) -> vector<boolean> {
     grew = false;
     for cs in graph {
       d = cs#index;
-      if again[d] ?? false || cs.contains(d) {
+      if (again[d] ?? false) || cs.contains(d) {
         for c in cs {
           if !(again[c] ?? true) {
             again[c] = true;

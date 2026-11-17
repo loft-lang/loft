@@ -2,114 +2,1045 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-// @PLN91 strand 12 — the size test of `(R-CSplit)` (`src/c/split.rs`): `strip`, `idents`,
-// `call_sites` and the reading of a body's lines that `statements` refuses.  The split
-// itself — the frame struct and the part functions — is not carried: a body over the budget
-// is refused by name.
+// @PLN91 strand 12 — `(R-CSplit)` (@PLN212, `src/c/split.rs`): a function body over the size
+// budget of runtime-call sites is written as a chain of `LOFT_NOINLINE` part functions sharing
+// one frame struct, so no function the C compiler optimises is large enough for its optimiser
+// time to grow out of bounds.  A text pass over the written body, line by line, as the Rust one.
+//
+// The shape: every parameter and every top-level local becomes a member of `struct
+// <fn>__frame` (its declaration an assignment in place) — or a local of the one part that alone
+// names it; consecutive top-level statements go into `<fn>__part<k>`, each at most the budget
+// where the statements allow; the static slots move to file scope under the function's name.
+// A statement that returns is lifted (its value to `loft_split_ret`, the part answering 1);
+// `LOFT_HOLD` and a statement that leaves the frame otherwise stay in the function; a `goto`
+// and its label land in one part.  A body this pass cannot read for certain stays whole.
 
 // A body over this many runtime-call sites is written in parts (`DEFAULT_BUDGET`).
 BUDGET = 300;
 
-fn ident_char(c: integer) -> boolean {
-  (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95
+// The budget the split runs under, 0 when it is off (`budget`): `LOFT_NO_C_SPLIT=1` over any
+// setting — the host sets it for a unit that keeps its functions whole (a shipped artefact) —
+// `LOFT_C_SPLIT=0` off, 1 or unreadable the default, any other number that budget.
+pub fn budget() -> integer {
+  if (env_variable("LOFT_NO_C_SPLIT") ?? "0") != "0" {
+    return 0;
+  }
+  v = env_variable("LOFT_C_SPLIT") ?? "";
+  if v == "" {
+    return BUDGET;
+  }
+  n = (v.trim() as integer?) ?? 1;
+  if n == 1 || n < 0 { BUDGET } else { n }
 }
 
-// The runtime-call sites of one line of C (`call_sites` over `strip`): the identifiers that
-// start `loft_` and are followed by `(`, outside string and character literals and comments.
-// -1 for a line the splitter cannot read: a block comment that does not close on it.
-fn line_sites(l: text) -> integer {
-  n = l.size();
-  count = 0;
+// `everywhere`: the parts are written for every C compiler only where a budget was asked for
+// (`LOFT_C_SPLIT=<n>`, `n > 1`); by default for MSVC alone, the whole body in the `#else` arm.
+pub fn everywhere() -> boolean {
+  v = env_variable("LOFT_C_SPLIT") ?? "";
+  n = (v.trim() as integer?) ?? 0;
+  v != "" && n > 1
+}
+
+fn ident_start(c: integer) -> boolean {
+  (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95
+}
+
+fn ident_char(c: integer) -> boolean {
+  (c >= 48 && c <= 57) || ident_start(c)
+}
+
+fn is_space(c: integer) -> boolean {
+  c == 32 || c == 9 || c == 10 || c == 13 || c == 11 || c == 12
+}
+
+fn spaces(k: integer) -> text {
+  s = "";
+  for _ in 0..k {
+    s += " ";
+  }
+  s
+}
+
+// `strip`: `line` with its string and character literals' contents and its comments blanked,
+// byte for byte, so a position in one is a position in the other.  Null when a block comment
+// runs past the line.
+fn strip(line: text) -> text? {
+  n = line.size();
+  out = "";
+  i = 0;
+  start = 0;
+  for _ in 0..n + 1 {
+    if i >= n {
+      break;
+    }
+    c = line.byte_at(i);
+    if c == 34 || c == 39 {
+      out += line[start..i + 1];
+      q = c;
+      i += 1;
+      blank = 0;
+      for _ in 0..n + 1 {
+        if i >= n || line.byte_at(i) == q {
+          break;
+        }
+        if line.byte_at(i) == 92 && i + 1 < n {
+          blank += 2;
+          i += 2;
+        } else {
+          blank += 1;
+          i += 1;
+        }
+      }
+      out += spaces(blank);
+      start = i;
+      if i < n {
+        i += 1;
+      }
+    } else if c == 47 && i + 1 < n && line.byte_at(i + 1) == 47 {
+      out += line[start..i];
+      out += spaces(n - i);
+      return out;
+    } else if c == 47 && i + 1 < n && line.byte_at(i + 1) == 42 {
+      out += line[start..i];
+      rel = line[i + 2..n].find("*/") ?? return null;
+      end = rel + i + 4;
+      out += spaces(end - i);
+      i = end;
+      start = i;
+    } else {
+      i += 1;
+    }
+  }
+  out += line[start..n];
+  out
+}
+
+// `idents`: every identifier of a stripped text, as `[start, end, …]`; number literals skipped
+// whole, so `0x1F` and `INT64_C`'s `1` name nothing.
+fn idents(s: text) -> vector<integer> {
+  out: vector<integer> = [];
+  n = s.size();
   i = 0;
   for _ in 0..n + 1 {
     if i >= n {
       break;
     }
-    c = l.byte_at(i);
-    if c == 34 || c == 39 {
-      // A literal: skipped to its closing quote, an escape taking two bytes.
-      i += 1;
-      for _ in 0..n {
-        if i >= n || l.byte_at(i) == c {
-          break;
-        }
-        i += if l.byte_at(i) == 92 && i + 1 < n { 2 } else { 1 };
-      }
-      i += 1;
-    } else if c == 47 && i + 1 < n && l.byte_at(i + 1) == 47 {
-      break;
-    } else if c == 47 && i + 1 < n && l.byte_at(i + 1) == 42 {
-      end = l[i + 2..n].find("*/") ?? return -1;
-      i = end + i + 4;
-    } else if c >= 48 && c <= 57 {
-      // A number, with any suffix and exponent, is no identifier.
-      for _ in 0..n {
-        if i >= n || !(ident_char(l.byte_at(i)) || l.byte_at(i) == 46) {
+    c = s.byte_at(i);
+    if c >= 48 && c <= 57 {
+      for _ in 0..n + 1 {
+        if i >= n || !(ident_char(s.byte_at(i)) || s.byte_at(i) == 46) {
           break;
         }
         i += 1;
       }
-    } else if ident_char(c) {
-      start = i;
-      for _ in 0..n {
-        if i >= n || !ident_char(l.byte_at(i)) {
+    } else if ident_start(c) {
+      s0 = i;
+      for _ in 0..n + 1 {
+        if i >= n || !ident_char(s.byte_at(i)) {
           break;
         }
         i += 1;
       }
-      if l[start..i].starts_with("loft_") {
-        j = i;
-        for _ in 0..n {
-          if j >= n || !(l.byte_at(j) == 32 || l.byte_at(j) == 9) {
-            break;
-          }
-          j += 1;
-        }
-        if j < n && l.byte_at(j) == 40 {
-          count += 1;
-        }
-      }
+      out += [s0, i];
     } else {
       i += 1;
+    }
+  }
+  out
+}
+
+// `call_sites`: the runtime-call sites of a stripped text, `loft_<name>(`.
+fn call_sites(s: text) -> integer {
+  ids = idents(s);
+  n = s.size();
+  count = 0;
+  for a in ids {
+    if a#index % 2 != 0 {
+      continue;
+    }
+    e = ids[a#index + 1]!;
+    if s[a..e].starts_with("loft_") {
+      j = e;
+      for _ in 0..n + 1 {
+        if j >= n || !is_space(s.byte_at(j)) {
+          break;
+        }
+        j += 1;
+      }
+      if j < n && s.byte_at(j) == 40 {
+        count += 1;
+      }
     }
   }
   count
 }
 
-// Does `(R-CSplit)` write `body` — a function's lines, of storage `storage` — in parts?  An
-// under-approximation of "kept whole": a body over the budget that the splitter would still
-// keep whole for a reason found later in its reading is answered as split.
+// Does `(R-CSplit)` write `body` in parts?
 pub fn over_budget(storage: text, params: text, body: text) -> boolean {
-  if (env_variable("LOFT_NO_C_SPLIT") ?? "0") != "0" {
-    return false;
+  split_body(storage, "void", "f", params, body) != ""
+}
+
+// A name the frame renames.
+struct Nm {
+  k: text,
+  v: text,
+}
+
+// The part that alone owns a local.
+struct Own {
+  k: text,
+  p: integer,
+}
+
+// Per member, the part of the first statement naming it (-1 the function) and whether more.
+struct Use {
+  k: text,
+  first: integer,
+  many: boolean,
+}
+
+// `rewrite`: `orig` with every identifier `names` maps replaced, except one written after `.`
+// or `->`, one inside a literal or comment, and a local part `pi` owns.
+fn rewrite(orig: text, bare: text, names: hash<Nm[k]>, own: hash<Own[k]>, pi: integer) -> text {
+  out = "";
+  last = 0;
+  ids = idents(bare);
+  for a in ids {
+    if a#index % 2 != 0 {
+      continue;
+    }
+    e = ids[a#index + 1]!;
+    w = bare[a..e];
+    to = names[w];
+    if to == null {
+      continue;
+    }
+    o = own[w];
+    if o != null && pi >= 0 && o.p == pi {
+      continue;
+    }
+    before = bare[0..a].trim_end();
+    if before.ends_with(".") || before.ends_with("->") {
+      continue;
+    }
+    out += orig[last..a];
+    out += to.v;
+    last = e;
   }
-  // `LOFT_C_SPLIT`: 1 (or unreadable) the default budget, 0 off, any other number the budget.
-  budget = (env_variable("LOFT_C_SPLIT") ?? "1").trim() as integer ?? 1;
-  if budget == 0 {
-    return false;
+  out += orig[last..orig.size()];
+  out
+}
+
+// A top-level statement: its lines, original and stripped.
+struct Stmt {
+  orig: vector<text>,
+  bare: vector<text>,
+}
+
+fn bare_text(s: Stmt) -> text {
+  s.bare.join("\n")
+}
+
+fn depth_of(bare: text) -> integer {
+  d = 0;
+  for i in 0..bare.size() {
+    c = bare.byte_at(i);
+    if c == 123 || c == 40 {
+      d += 1;
+    } else if c == 125 || c == 41 {
+      d -= 1;
+    }
   }
-  if budget == 1 {
-    budget = BUDGET;
-  }
-  total = 0;
-  for l in body.split('\n') {
-    t = l.trim();
-    // A preprocessor line other than `#line` leaves the body whole.
+  d
+}
+
+// `statements`: the body's top-level statements by brace and parenthesis depth; `ok` false for a
+// body this pass cannot read.
+fn statements(lines: vector<text>, ok: &boolean) -> vector<Stmt> {
+  out: vector<Stmt> = [];
+  ok = true;
+  has_cur = false;
+  co: vector<text> = [];
+  cb: vector<text> = [];
+  depth = 0;
+  for l in lines {
+    bare = strip(l);
+    if bare == null {
+      ok = false;
+      return out;
+    }
+    t = bare!.trim();
     if t.starts_with("#") && !t.starts_with("#line") {
-      return false;
+      ok = false;
+      return out;
     }
-    sites = line_sites(l);
-    if sites < 0 {
-      return false;
+    if !has_cur && depth == 0 && t.starts_with("else") && len(out) > 0 {
+      prev = out[len(out) - 1]!;
+      co = [for x in prev.orig { x }];
+      cb = [for x in prev.bare { x }];
+      out = [for x in out[0..len(out) - 1] { x }];
+      has_cur = true;
     }
-    total += sites;
+    if !has_cur {
+      co = [];
+      cb = [];
+      has_cur = true;
+    }
+    depth += depth_of(bare!);
+    co += [l];
+    cb += [bare!];
+    if depth < 0 {
+      ok = false;
+      return out;
+    }
+    if depth == 0 && !t.starts_with("#") && (t.ends_with(";") || t.ends_with("}}")) {
+      out += [Stmt { orig: co, bare: cb }];
+      has_cur = false;
+    }
   }
-  if total <= budget {
+  if has_cur {
+    out += [Stmt { orig: co, bare: cb }];
+  }
+  out
+}
+
+// `split_top`: `s` cut at every top-level `sep` (outside brackets), as `[start, end, …]`.
+fn split_top(s: text, sep: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  depth = 0;
+  start = 0;
+  for i in 0..s.size() {
+    c = s.byte_at(i);
+    if c == 123 || c == 40 || c == 91 {
+      depth += 1;
+    } else if c == 125 || c == 41 || c == 93 {
+      depth -= 1;
+    } else if c == sep && depth == 0 {
+      out += [start, i];
+      start = i + 1;
+    }
+  }
+  out += [start, s.size()];
+  out
+}
+
+// `first_assign`: the first top-level `=` that assigns, -1 none.
+fn first_assign(s: text) -> integer {
+  depth = 0;
+  n = s.size();
+  for i in 0..n {
+    c = s.byte_at(i);
+    if c == 123 || c == 40 || c == 91 {
+      depth += 1;
+    } else if c == 125 || c == 41 || c == 93 {
+      depth -= 1;
+    } else if c == 61 && depth == 0 {
+      next = if i + 1 < n { s.byte_at(i + 1) } else { 0 };
+      prev = if i > 0 { s.byte_at(i - 1) } else { 0 };
+      if next != 61 && prev != 61 && prev != 60 && prev != 62 && prev != 33 {
+        return i;
+      }
+    }
+  }
+  -1
+}
+
+struct Dclr {
+  ok: boolean,
+  words: text,
+  stars: text,
+  name: text,
+  arr: text,
+}
+
+fn no_dclr() -> Dclr {
+  Dclr { ok: false, words: "", stars: "", name: "", arr: "" }
+}
+
+// `declarator`: `TYPE *NAME[N]` — the type words, the stars, the name and the array suffix.
+fn declarator(bare: text, orig: text) -> Dclr {
+  t = bare.trim_end();
+  head = t;
+  arr = "";
+  k = t.find("[");
+  if k != null {
+    head = t[0..k!];
+    arr = orig[k!..t.size()].trim();
+  }
+  if arr != "" && !arr.ends_with("]") {
+    return no_dclr();
+  }
+  ids = idents(head);
+  if len(ids) == 0 {
+    return no_dclr();
+  }
+  na = ids[len(ids) - 2]!;
+  ne = ids[len(ids) - 1]!;
+  if head[ne..head.size()].trim() != "" {
+    return no_dclr();
+  }
+  before = head[0..na].trim_end();
+  stars = "";
+  cut = before.size();
+  for _ in 0..before.size() + 1 {
+    if cut == 0 {
+      break;
+    }
+    c = before.byte_at(cut - 1);
+    if c == 42 {
+      stars += "*";
+    } else if !is_space(c) {
+      break;
+    }
+    cut -= 1;
+  }
+  words = before[0..cut];
+  for i in 0..words.size() {
+    c = words.byte_at(i);
+    if !ident_char(c) && !is_space(c) {
+      return no_dclr();
+    }
+  }
+  Dclr { ok: true, words: words.trim(), stars: stars, name: head[na..ne], arr: arr }
+}
+
+// `is_macro_name`: an upper-case identifier, by the C convention an object-like macro.
+fn is_macro_name(init: text) -> boolean {
+  n = init.size();
+  if n == 0 || (init.byte_at(0) >= 48 && init.byte_at(0) <= 57) {
     return false;
   }
-  // An inline function, and a function-pointer or variadic parameter, stay whole.
-  if storage != "static" && !storage.starts_with("static /*loft_hot") {
-    return false;
+  upper = false;
+  for i in 0..n {
+    c = init.byte_at(i);
+    if c >= 65 && c <= 90 {
+      upper = true;
+    } else if !(c >= 48 && c <= 57) && c != 95 {
+      return false;
+    }
   }
-  !(params.contains("(") || params.contains("..."))
+  upper
+}
+
+fn not_type(w: text) -> boolean {
+  w == "return" || w == "goto" || w == "if" || w == "else" || w == "for" || w == "while" || w == "do" || w == "switch" || w == "case" || w == "default" || w == "break" || w == "continue" || w == "sizeof" || w == "static"
+}
+
+// One declarator: the member's spelling in the frame struct, its name, and the assignment that
+// replaces it in place ("" none).
+struct Decl {
+  member: text,
+  name: text,
+  assign: text,
+}
+
+// `declaration`: the declarators of a top-level declaration statement; `ok` false when it is no
+// declaration.
+fn declaration(orig: text, bare: text, ok: &boolean) -> vector<Decl> {
+  out: vector<Decl> = [];
+  ok = false;
+  if bare.trim_start().starts_with("#") {
+    return out;
+  }
+  segs: vector<integer> = [];
+  st = split_top(bare, 59);
+  for a in st {
+    if a#index % 2 == 0 && bare[a..st[a#index + 1]!].trim() != "" {
+      segs += [a, st[a#index + 1]!];
+    }
+  }
+  if len(segs) == 0 {
+    return out;
+  }
+  for a in segs {
+    if a#index % 2 != 0 {
+      continue;
+    }
+    e = segs[a#index + 1]!;
+    sb = bare[a..e];
+    so = orig[a..e];
+    parts = split_top(sb, 44);
+    ty = "";
+    for pa in parts {
+      if pa#index % 2 != 0 {
+        continue;
+      }
+      k = pa#index / 2;
+      pe = parts[pa#index + 1]!;
+      pb = sb[pa..pe];
+      po = so[pa..pe];
+      fa = first_assign(pb);
+      lhs_b = if fa < 0 { pb } else { pb[0..fa] };
+      lhs_o = if fa < 0 { po } else { po[0..fa] };
+      init = if fa < 0 { "" } else { po[fa + 1..po.size()].trim() };
+      dc = declarator(lhs_b, lhs_o);
+      if !dc.ok {
+        return [];
+      }
+      if k == 0 {
+        w: vector<text> = [];
+        for x in dc.words.split(' ') {
+          if x.trim() != "" {
+            w += [x.trim()];
+          }
+        }
+        if len(w) == 0 {
+          return [];
+        }
+        for x in w {
+          if not_type(x) {
+            return [];
+          }
+        }
+        // A `const` value becomes an assigned member, so it loses its qualifier.
+        ty = if dc.stars == "" && w[0]! == "const" { w[1..len(w)].join(" ") } else { w.join(" ") };
+        if ty == "" {
+          return [];
+        }
+      } else if dc.words != "" {
+        return [];
+      }
+      member = "{ty} {dc.stars}{dc.name}{dc.arr}";
+      assign = "";
+      if fa >= 0 {
+        if dc.arr != "" {
+          assign = "{{ {ty} {dc.stars}loft_split_tmp{dc.arr} = {init}; memcpy({dc.name}, loft_split_tmp, sizeof loft_split_tmp); }}";
+        } else if init.starts_with("{{") {
+          assign = "{dc.name} = ({ty} {dc.stars}){init};";
+        } else if is_macro_name(init) {
+          assign = "{{ {ty} {dc.stars}loft_split_tmp = {init}; {dc.name} = loft_split_tmp; }}";
+        } else {
+          assign = "{dc.name} = {init};";
+        }
+      }
+      out += [Decl { member: member, name: dc.name, assign: assign }];
+    }
+  }
+  ok = true;
+  out
+}
+
+// `pinned`: must `bare` stay in the function itself?
+fn pinned(bare: text) -> boolean {
+  ids = idents(bare);
+  for a in ids {
+    if a#index % 2 == 0 {
+      w = bare[a..ids[a#index + 1]!];
+      if w == "LOFT_HOLD" || w == "loft_hd" || w == "longjmp" || w == "va_start" || w == "alloca" {
+        return true;
+      }
+    }
+  }
+  false
+}
+
+// `lift_returns`: `s` with each `return` made a part's; `ok` false when one cannot be rewritten,
+// `any` whether `s` returns at all.
+fn lift_returns(s: Stmt, void: boolean, ok: &boolean, any: &boolean) -> Stmt {
+  out = Stmt { orig: [], bare: [] };
+  ok = true;
+  any = false;
+  for o0 in s.orig {
+    b = s.bare[o0#index]!;
+    o = o0;
+    ids = idents(b);
+    rets: vector<integer> = [];
+    for a in ids {
+      if a#index % 2 == 0 && b[a..ids[a#index + 1]!] == "return" {
+        rets += [a, ids[a#index + 1]!];
+      }
+    }
+    k = len(rets) - 2;
+    for _ in 0..len(rets) / 2 {
+      a = rets[k]!;
+      e = rets[k + 1]!;
+      k -= 2;
+      any = true;
+      depth = 0;
+      semi = -1;
+      for i in e..b.size() {
+        c = b.byte_at(i);
+        if c == 40 || c == 91 || c == 123 {
+          depth += 1;
+        } else if c == 41 || c == 93 || c == 125 {
+          depth -= 1;
+        } else if c == 59 && depth == 0 {
+          semi = i;
+          break;
+        }
+      }
+      if semi < 0 {
+        ok = false;
+        return out;
+      }
+      expr = o[e..semi].trim();
+      with = if expr == "" { "return 1;" } else if void { "{{ (void) ({expr}); return 1; }}" } else { "{{ loft_split_ret = ({expr}); return 1; }}" };
+      o = "{o[0..a]}{with}{o[semi + 1..o.size()]}";
+    }
+    nb = strip(o);
+    if nb == null {
+      ok = false;
+      return out;
+    }
+    out.orig += [o];
+    out.bare += [nb!];
+  }
+  out
+}
+
+// `label_of`: the label a stripped line starts with ("" none).
+fn label_of(bare_line: text) -> text {
+  t = bare_line.trim();
+  e = 0;
+  for i in 0..t.size() {
+    if !ident_char(t.byte_at(i)) {
+      break;
+    }
+    e = i + 1;
+  }
+  if e == 0 || !ident_start(t.byte_at(0)) {
+    return "";
+  }
+  rest = t[e..t.size()];
+  w = t[0..e];
+  if rest.starts_with(":") && !rest.starts_with("::") && w != "default" && w != "case" { w } else { "" }
+}
+
+fn trim_trailing(s: text, ch: integer) -> text {
+  e = s.size();
+  for _ in 0..s.size() + 1 {
+    if e == 0 || s.byte_at(e - 1) != ch {
+      break;
+    }
+    e -= 1;
+  }
+  s[0..e]
+}
+
+fn last_ident(p: text) -> text {
+  ids = idents(p);
+  if len(ids) == 0 { "" } else { p[ids[len(ids) - 2]!..ids[len(ids) - 1]!] }
+}
+
+fn put(names: hash<Nm[k]>, k: text, v: text) {
+  if names[k] != null {
+    names[k] = null;
+  }
+  names += [Nm { k: k, v: v }];
+}
+
+// One unit of statements no goto crosses: its range, cost, and whether it may move to a part.
+struct Unit {
+  first: integer,
+  last: integer,
+  cost: integer,
+  movable: boolean,
+}
+
+// `split`: the written text of `<storage> <ret> <name>(<params>) { <body> }` in parts, or "" when
+// it stays as it is: under the budget, or a body this pass does not split.
+pub fn split_body(storage: text, ret: text, name: text, params: text, body: text) -> text {
+  bud = budget();
+  if bud == 0 {
+    return "";
+  }
+  src = if body.ends_with("\n") { body[0..body.size() - 1] } else { body };
+  lines: vector<text> = [for l in src.split('\n') { l }];
+  sok = false;
+  stmts0 = statements(lines, sok);
+  if !sok {
+    return "";
+  }
+  cost0: vector<integer> = [for s in stmts0 { call_sites(bare_text(s)) }];
+  total = 0;
+  for c in cost0 {
+    total += c;
+  }
+  if total <= bud {
+    return "";
+  }
+  if storage != "static" && !storage.starts_with("static /*loft_hot:") {
+    return "";
+  }
+  if params.contains("(") || params.contains("...") {
+    return "";
+  }
+  for s in stmts0 {
+    bt = bare_text(s);
+    ids = idents(bt);
+    for a in ids {
+      if a#index % 2 == 0 {
+        w = bt[a..ids[a#index + 1]!];
+        if w == "setjmp" || w == "_setjmp" || w == "sigsetjmp" {
+          return "";
+        }
+      }
+    }
+  }
+  // The members: every parameter, every top-level local (name, declaration).
+  mnames: vector<text> = [];
+  mdecls: vector<text> = [];
+  param_names: hash<Nm[k]> = [];
+  names: hash<Nm[k]> = [];
+  statics: vector<text> = [];
+  stmts: vector<Stmt> = [];
+  cost: vector<integer> = [];
+  pv = params.trim();
+  if pv != "void" && pv != "" {
+    for p0 in params.split(',') {
+      p = p0.trim();
+      pn = last_ident(p);
+      if pn == "" {
+        return "";
+      }
+      mnames += [pn];
+      mdecls += [p];
+      put(param_names, pn, "");
+      put(names, pn, "loft_fr->{pn}");
+    }
+  }
+  slot_from: vector<text> = [];
+  slot_to: vector<text> = [];
+  for s in stmts0 {
+    c = cost0[s#index]!;
+    bt = bare_text(s);
+    t = bt.trim();
+    if t.starts_with("LOFT_REF_IN(") {
+      v = trim_trailing(trim_trailing(t["LOFT_REF_IN(".size()..t.size()], 59), 41).trim();
+      for i in 0..v.size() {
+        if !ident_char(v.byte_at(i)) {
+          return "";
+        }
+      }
+      mnames += [v];
+      mdecls += ["loft_ref {v}"];
+      put(names, v, "loft_fr->{v}");
+      l = "    {v} = {v}__in;";
+      stmts += [Stmt { orig: [l], bare: [l] }];
+      cost += [0];
+      continue;
+    }
+    if t.starts_with("static ") {
+      decl = t["static ".size()..t.size()];
+      dok = false;
+      ds = declaration(decl, decl, dok);
+      if !dok {
+        return "";
+      }
+      for d in ds {
+        slot_from += [d.name];
+        slot_to += ["{name}__{d.name}"];
+      }
+      statics += [[for l in s.orig { l.trim() }].join(" ")];
+      continue;
+    }
+    dok2 = false;
+    ds2 = declaration(s.orig.join("\n"), bt, dok2);
+    if dok2 {
+      assigns: vector<text> = [];
+      for d in ds2 {
+        mnames += [d.name];
+        mdecls += [d.member];
+        put(names, d.name, "loft_fr->{d.name}");
+        if d.assign != "" {
+          assigns += [d.assign];
+        }
+      }
+      if len(assigns) > 0 {
+        l = "    {assigns.join(" ")}";
+        lb = strip(l);
+        if lb == null {
+          return "";
+        }
+        stmts += [Stmt { orig: [l], bare: [lb!] }];
+        cost += [c];
+      }
+      continue;
+    }
+    stmts += [s];
+    cost += [c];
+  }
+  for f in slot_from {
+    put(names, f, slot_to[f#index]!);
+  }
+  put(names, "loft_split_ret", "loft_fr->loft_split_ret");
+  void = ret.trim() == "void";
+  n = len(stmts);
+  lifted: vector<Stmt> = [];
+  lifted_ok: vector<boolean> = [];
+  lifted_any: vector<boolean> = [];
+  for s in stmts {
+    lok = false;
+    lany = false;
+    ls = lift_returns(s, void, lok, lany);
+    lifted += [ls];
+    lifted_ok += [lok];
+    lifted_any += [lok && lany];
+  }
+  // Labels and gotos: a goto and its label land in one unit.
+  label_name: vector<text> = [];
+  label_at: vector<integer> = [];
+  for s in stmts {
+    for b in s.bare {
+      lb2 = label_of(b);
+      if lb2 != "" {
+        label_name += [lb2];
+        label_at += [s#index];
+      }
+    }
+  }
+  joined_to: vector<integer> = [for _ in 0..n { 0 }];
+  for s in stmts {
+    k = s#index;
+    if joined_to[k]! < k {
+      joined_to[k] = k;
+    }
+    bt = bare_text(s);
+    ids = idents(bt);
+    i = 0;
+    for _ in 0..len(ids) {
+      if i + 3 >= len(ids) {
+        break;
+      }
+      if bt[ids[i]!..ids[i + 1]!] == "goto" {
+        target = bt[ids[i + 2]!..ids[i + 3]!];
+        tl = -1;
+        for ln in label_name {
+          if ln == target {
+            tl = label_at[ln#index]!;
+          }
+        }
+        if tl < 0 {
+          return "";
+        }
+        lo = if k < tl { k } else { tl };
+        hi = if k < tl { tl } else { k };
+        if joined_to[lo]! < hi {
+          joined_to[lo] = hi;
+        }
+      }
+      i += 2;
+    }
+  }
+  // Units: maximal runs that no goto crosses.
+  units: vector<Unit> = [];
+  k2 = 0;
+  for _ in 0..n + 1 {
+    if k2 >= n {
+      break;
+    }
+    end = joined_to[k2]!;
+    j = k2;
+    for _ in 0..n + 1 {
+      if j > end {
+        break;
+      }
+      if joined_to[j]! > end {
+        end = joined_to[j]!;
+      }
+      j += 1;
+    }
+    uc = 0;
+    movable = true;
+    for q in k2..end + 1 {
+      uc += cost[q]!;
+      if pinned(bare_text(stmts[q]!)) || !lifted_ok[q]! {
+        movable = false;
+      }
+    }
+    units += [Unit { first: k2, last: end, cost: uc, movable: movable }];
+    k2 = end + 1;
+  }
+  // Greedy runs of movable units under the budget, as unit numbers.
+  plist: vector<vector<integer>> = [];
+  cur: vector<integer> = [];
+  cur_cost = 0;
+  for u in units {
+    if !u.movable {
+      if len(cur) > 0 {
+        plist += [cur];
+        cur = [];
+      }
+      cur_cost = 0;
+      continue;
+    }
+    if len(cur) > 0 && cur_cost + u.cost > bud {
+      plist += [cur];
+      cur = [];
+      cur_cost = 0;
+    }
+    cur += [u#index];
+    cur_cost += u.cost;
+  }
+  if len(cur) > 0 {
+    plist += [cur];
+  }
+  // A small run stays in the function while the function stays under the budget.
+  parent_cost = 0;
+  for u in units {
+    if !u.movable {
+      parent_cost += u.cost;
+    }
+  }
+  parts: vector<vector<integer>> = [];
+  for p in plist {
+    pc = 0;
+    for u in p {
+      pc += units[u]!.cost;
+    }
+    if pc < bud / 4 && parent_cost + pc <= bud {
+      parent_cost += pc;
+    } else {
+      parts += [p];
+    }
+  }
+  // One part holding nearly everything moves the size, it does not cut it.
+  if len(parts) == 0 || (len(parts) == 1 && parent_cost < bud / 4) {
+    return "";
+  }
+  in_part: vector<integer> = [for _ in 0..n { -1 }];
+  for p in parts {
+    for u in p {
+      for q in units[u]!.first..units[u]!.last + 1 {
+        in_part[q] = p#index;
+      }
+    }
+  }
+  // A local only one part names stays that part's own; every other local, every parameter,
+  // and a local whose address is taken, is a frame member.
+  member_set: hash<Nm[k]> = [];
+  for m in mnames {
+    put(member_set, m, "");
+  }
+  used: hash<Use[k]> = [];
+  addr_taken: hash<Nm[k]> = [];
+  for s in stmts {
+    bt = bare_text(s);
+    ids = idents(bt);
+    ip = in_part[s#index]!;
+    for a in ids {
+      if a#index % 2 != 0 {
+        continue;
+      }
+      w = bt[a..ids[a#index + 1]!];
+      if member_set[w] == null {
+        continue;
+      }
+      u0 = used[w];
+      if u0 == null {
+        used += [Use { k: w, first: ip, many: false }];
+      } else if u0.first != ip {
+        u0.many = true;
+      }
+      before = bt[0..a].trim_end();
+      if before.ends_with("&") && !before.ends_with("&&") && addr_taken[w] == null {
+        put(addr_taken, w, "");
+      }
+    }
+  }
+  own: hash<Own[k]> = [];
+  frame_members: vector<text> = [];
+  part_locals: vector<vector<text>> = [for _ in parts { [] }];
+  for m in mnames {
+    op = -1;
+    if param_names[m] == null && addr_taken[m] == null {
+      u1 = used[m];
+      if u1 != null && !u1.many && u1.first >= 0 {
+        op = u1.first;
+      }
+    }
+    if op >= 0 {
+      if own[m] == null {
+        own += [Own { k: m, p: op }];
+      }
+      part_locals[op] += [mdecls[m#index]!];
+    } else {
+      frame_members += [mdecls[m#index]!];
+    }
+  }
+  frame = "{name}__frame";
+  out = "";
+  for st in statics {
+    sb = strip(st);
+    if sb == null {
+      return "";
+    }
+    out += "{rewrite(st, sb!, names, own, -1)}\n";
+  }
+  out += "struct {frame} {{\n";
+  for m in frame_members {
+    out += "    {m};\n";
+  }
+  returns: vector<boolean> = [];
+  for p in parts {
+    r = false;
+    for u in p {
+      for q in units[u]!.first..units[u]!.last + 1 {
+        if lifted_any[q]! {
+          r = true;
+        }
+      }
+    }
+    returns += [r];
+  }
+  if !void && returns.contains(true) {
+    out += "    {ret} loft_split_ret;\n";
+  }
+  out += "    char loft_unused;\n}};\n";
+  for p in parts {
+    pi = p#index;
+    kind = if returns[pi]! { "int" } else { "void" };
+    out += "static LOFT_NOINLINE {kind} {name}__part{pi}(void *loft_frv) {{\n    struct {frame} *const loft_fr = (struct {frame} *) loft_frv;\n";
+    for d in part_locals[pi]! {
+      out += "    {d};\n";
+    }
+    for u in p {
+      for q in units[u]!.first..units[u]!.last + 1 {
+        s = if lifted_ok[q]! { lifted[q]! } else { stmts[q]! };
+        for o in s.orig {
+          out += "{rewrite(o, s.bare[o#index]!, names, own, pi)}\n";
+        }
+      }
+    }
+    if returns[pi]! {
+      out += "    return 0;\n";
+    }
+    out += "}}\n";
+  }
+  out += "{storage} {ret} {name}({params}) {{\n";
+  out += "    struct {frame} loft_frs;\n    struct {frame} *const loft_fr = &loft_frs;\n";
+  out += "    memset(&loft_frs, 0, sizeof loft_frs);\n";
+  if pv != "void" && pv != "" {
+    for p0 in params.split(',') {
+      pn = last_ident(p0.trim());
+      if pn != "" {
+        out += "    loft_fr->{pn} = {pn};\n";
+      }
+    }
+  }
+  called: vector<boolean> = [for _ in parts { false }];
+  for s in stmts {
+    pi = in_part[s#index]!;
+    if pi >= 0 {
+      if !called[pi]! {
+        called[pi] = true;
+        if !returns[pi]! {
+          out += "    LOFT_PART_CALL({name}__part{pi}, loft_fr);\n";
+        } else if void {
+          out += "    if (LOFT_PART_RET({name}__part{pi}, loft_fr)) return;\n";
+        } else {
+          out += "    if (LOFT_PART_RET({name}__part{pi}, loft_fr)) return loft_fr->loft_split_ret;\n";
+        }
+      }
+    } else {
+      for o in s.orig {
+        out += "{rewrite(o, s.bare[o#index]!, names, own, -1)}\n";
+      }
+    }
+  }
+  if !void && n > 0 && in_part[n - 1]! >= 0 {
+    out += "    return loft_fr->loft_split_ret;\n";
+  }
+  out += "}}\n";
+  out
 }

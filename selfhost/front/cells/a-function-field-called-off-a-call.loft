@@ -1,0 +1,16 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a function field called off a call's result holds the record in a work ref first (`fn_ref_field_base`), reads the field from it and calls through a temporary; a `??` over a call's nullable vector with an empty and a filled literal default.
+// Prints: 42 0 [3]
+
+struct Op { n: integer, f: fn(integer) -> integer }
+fn dbl(x: integer) -> integer { x * 2 }
+fn mk(n: integer) -> Op { Op { n: n, f: dbl } }
+fn maybe(k: integer) -> vector<integer>? { if k > 0 { [k] } else { null } }
+fn main() {
+  a = mk(1).f(21);
+  q = maybe(0) ?? [];
+  w = maybe(3) ?? [7];
+  println("{a} {len(q)} {w}");
+}

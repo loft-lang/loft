@@ -1,0 +1,643 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `@FR-R-ValueRecord`'s LEAVES and use accounting, as
+// `src/opt/value_records/leaves.rs` and `sites.rs` find them: the leaf nodes at a body's value
+// positions, the reads whose value is dropped, the store-identity tests a tuple serves, the
+// hand-offs to tuple parameters.  Nodes are numbered as `opt_vr_shape` numbers them.
+
+use ir;
+use loop_shape;
+use cgen_types;
+use el_ir;
+use opt_vr_layout;
+use opt_vr_shape;
+use opt_view;
+
+pub const GETTERS = ["OpGetFloat", "OpGetInt", "OpGetSingle", "OpGetBoolean", "OpGetByte", "OpGetShort"];
+pub const SETTERS = ["OpSetInt", "OpSetFloat", "OpSetSingle"];
+pub const VIEW_LEAF_READ_OPS = ["OpLengthVector", "OpRefIsNull", "OpConvBoolFromRef"];
+
+// The leaf nodes of a function's value positions (`ValueLeaves`), per node number: views (`Var`
+// leaves that are no value locals), `Object` builds, every `Var` read at a value position,
+// discharged-view returns, `null` exits, and the widened leaves with their nullable key (-1).
+pub struct Leaves {
+  pub views: vector<boolean>,
+  pub objects: vector<boolean>,
+  pub reads: vector<boolean>,
+  pub mv_returns: vector<boolean>,
+  pub nulls: vector<boolean>,
+  pub widen: vector<integer>,
+}
+
+pub fn empty_leaves(n: integer) -> Leaves {
+  Leaves { views: [for _ in 0..n { false }], objects: [for _ in 0..n { false }], reads: [for _ in 0..n { false }], mv_returns: [for _ in 0..n { false }], nulls: [for _ in 0..n { false }], widen: [for _ in 0..n { -1 }] }
+}
+
+fn kids(n: ir::Node) -> vector<ir::Node> {
+  opt_vr_shape::kids(n)
+}
+
+fn name_of(b: ir::Bundle, d: integer) -> text {
+  opt_vr_shape::def_name(b, d)
+}
+
+// `leaves` of `collect_leaves`: the leaves under result position `v` (number `num`).
+fn leaf_walk(b: ir::Bundle, sz: vector<integer>, v: ir::Node, num: integer, locals: vector<integer>, out: Leaves) {
+  u = loop_shape::unspan(v);
+  match u {
+    NdVar { n } => {
+      out.reads[num] = true;
+      if opt_vr_shape::at(locals, n) < 0 {
+        out.views[num] = true;
+      }
+    },
+    NdCall { def_nr, args } => {
+      if len(args) == 0 && opt_vr_shape::is_null_record(b, def_nr) {
+        out.nulls[num] = true;
+      }
+    },
+    NdBlock { block } => {
+      bl = block[0]!;
+      if bl.name == "Object" {
+        out.objects[num] = true;
+        return;
+      }
+      ca = opt_vr_shape::mv_copy_at(b, bl);
+      if ca >= 0 {
+        out.mv_returns[num] = true;
+        copy_num = opt_vr_shape::child_num(sz, num, ca);
+        src = match loop_shape::unspan(bl.operators[ca]!) { NdCall { def_nr: _, args } => args[0]!, _ => ir::NdNull };
+        leaf_walk(b, sz, src, opt_vr_shape::child_num(sz, copy_num, 0), locals, out);
+        return;
+      }
+      if len(bl.operators) > 0 {
+        k = len(bl.operators) - 1;
+        leaf_walk(b, sz, bl.operators[k]!, opt_vr_shape::child_num(sz, num, k), locals, out);
+      }
+    },
+    NdIf { cond: _, t, f } => {
+      leaf_walk(b, sz, t, opt_vr_shape::child_num(sz, num, 1), locals, out);
+      leaf_walk(b, sz, f, opt_vr_shape::child_num(sz, num, 2), locals, out);
+    },
+    NdInsert { items } => {
+      if len(items) > 0 {
+        k = len(items) - 1;
+        leaf_walk(b, sz, items[k]!, opt_vr_shape::child_num(sz, num, k), locals, out);
+      }
+    },
+    NdReturn { inner } => leaf_walk(b, sz, inner, opt_vr_shape::child_num(sz, num, 0), locals, out),
+    _ => {},
+  }
+}
+
+// `collect_leaves`: the leaf nodes of `body`'s value positions.
+pub fn collect_leaves(b: ir::Bundle, body: ir::Node, sz: vector<integer>, locals: vector<integer>, own: boolean) -> Leaves {
+  out = empty_leaves(len(sz));
+  skip: vector<boolean> = [for _ in sz { false }];
+  cl_walk(b, sz, loop_shape::unspan(body), 0, locals, own, out, skip);
+  if own {
+    leaf_walk(b, sz, body, 0, locals, out);
+  }
+  out
+}
+
+fn cl_walk(b: ir::Bundle, sz: vector<integer>, n: ir::Node, num: integer, locals: vector<integer>, own: boolean, out: Leaves, skip: vector<boolean>) {
+  match n {
+    NdBlock { block } => {
+      bl = block[0]!;
+      if own && opt_vr_shape::object_own_return(bl) >= 0 {
+        out.objects[num] = true;
+        if len(bl.operators) > 0 {
+          skip[opt_vr_shape::child_num(sz, num, len(bl.operators) - 1)] = true;
+        }
+      } else if own && opt_vr_shape::has_mv(b, bl) {
+        leaf_walk(b, sz, n, num, locals, out);
+        if len(bl.operators) > 0 {
+          skip[opt_vr_shape::child_num(sz, num, len(bl.operators) - 1)] = true;
+        }
+      }
+    },
+    NdReturn { inner } => {
+      if own && !skip[num]! {
+        leaf_walk(b, sz, inner, opt_vr_shape::child_num(sz, num, 0), locals, out);
+      }
+    },
+    NdSet { var, inner } => {
+      if opt_vr_shape::at(locals, var) >= 0 {
+        leaf_walk(b, sz, inner, opt_vr_shape::child_num(sz, num, 0), locals, out);
+      }
+    },
+    _ => {},
+  }
+  cs = kids(n);
+  c = num + 1;
+  for k in cs {
+    cl_walk(b, sz, k, c, locals, own, out, skip);
+    c += sz[c]!;
+  }
+}
+
+// `dropped_reads`: the `Var` reads whose value is dropped — the tail of a statement block, of a
+// loop body, of a `Drop`.
+pub fn dropped_reads(body: ir::Node, sz: vector<integer>) -> vector<boolean> {
+  out: vector<boolean> = [for _ in sz { false }];
+  dr_walk(loop_shape::unspan(body), 0, true, sz, out);
+  out
+}
+
+fn dr_walk(n: ir::Node, num: integer, used: boolean, sz: vector<integer>, out: vector<boolean>) {
+  match n {
+    NdVar { n: _ } => {
+      if !used {
+        out[num] = true;
+      }
+    },
+    NdBlock { block } => {
+      bl = block[0]!;
+      tail_used = used && !opt_vr_shape::result_void(bl);
+      c = num + 1;
+      for op in bl.operators {
+        dr_walk(loop_shape::unspan(op), c, tail_used && op#index + 1 == len(bl.operators), sz, out);
+        c += sz[c]!;
+      }
+    },
+    NdLoop { block } => {
+      c = num + 1;
+      for op in block[0]!.operators {
+        dr_walk(loop_shape::unspan(op), c, false, sz, out);
+        c += sz[c]!;
+      }
+    },
+    NdIf { cond, t, f } => {
+      c0 = num + 1;
+      dr_walk(loop_shape::unspan(cond), c0, true, sz, out);
+      c1 = c0 + sz[c0]!;
+      dr_walk(loop_shape::unspan(t), c1, used, sz, out);
+      c2 = c1 + sz[c1]!;
+      dr_walk(loop_shape::unspan(f), c2, used, sz, out);
+    },
+    NdInsert { items } => {
+      c = num + 1;
+      for op in items {
+        dr_walk(loop_shape::unspan(op), c, used && op#index + 1 == len(items), sz, out);
+        c += sz[c]!;
+      }
+    },
+    NdDrop { inner } => dr_walk(loop_shape::unspan(inner), num + 1, false, sz, out),
+    _ => {
+      c = num + 1;
+      for k in kids(n) {
+        dr_walk(k, c, true, sz, out);
+        c += sz[c]!;
+      }
+    },
+  }
+}
+
+// `served_reads`: every read at a value position and every read whose value is dropped.
+pub fn served_reads(b: ir::Bundle, body: ir::Node, sz: vector<integer>, locals: vector<integer>, own: boolean) -> vector<boolean> {
+  s = collect_leaves(b, body, sz, locals, own).reads;
+  d = dropped_reads(body, sz);
+  [for r in s { r || d[r#index]! }]
+}
+
+// `is_presence_test`: `OpConvBoolFromRef(local)` / `OpRefIsNull(local)`.
+pub fn is_presence_test(name: text, args: vector<ir::Node>, local: integer) -> boolean {
+  (name == "OpConvBoolFromRef" || name == "OpRefIsNull") && len(args) == 1 && opt_vr_shape::is_var(args[0]!) && opt_vr_shape::var_of(args[0]!) == local
+}
+
+// `HoldGraph`: which locals each local's binds may hand on, as `[holder, held, …]`.
+pub fn hold_graph(body: ir::Node) -> vector<integer> {
+  edges: vector<integer> = [];
+  hg_walk(loop_shape::unspan(body), edges);
+  edges
+}
+
+fn hg_walk(n: ir::Node, edges: vector<integer>) {
+  match n {
+    NdSet { var, inner } => hg_leaves(var, inner, edges),
+    _ => {},
+  }
+  for k in kids(n) {
+    hg_walk(k, edges);
+  }
+}
+
+fn hg_leaves(w: integer, node: ir::Node, edges: vector<integer>) {
+  u = loop_shape::unspan(node);
+  match u {
+    NdVar { n } => { edges += [w, n]; },
+    NdIf { cond: _, t, f } => {
+      hg_leaves(w, t, edges);
+      hg_leaves(w, f, edges);
+    },
+    NdBlock { block } => {
+      bl = block[0]!;
+      if !opt_vr_shape::result_void(bl) && len(bl.operators) > 0 {
+        hg_leaves(w, opt_vr_shape::last_op(bl.operators), edges);
+      }
+    },
+    NdInsert { items } => {
+      if len(items) > 0 {
+        hg_leaves(w, opt_vr_shape::last_op(items), edges);
+      }
+    },
+    NdReturn { inner } => hg_leaves(w, inner, edges),
+    _ => {},
+  }
+}
+
+// `HoldGraph::may_hold`: can local `holder` hold what local `held` holds?
+pub fn may_hold(edges: vector<integer>, holder: integer, held: integer) -> boolean {
+  if holder == held {
+    return false;
+  }
+  seen: vector<integer> = [];
+  todo: vector<integer> = [holder];
+  for _ in 0..len(edges) + 2 {
+    if len(todo) == 0 {
+      return false;
+    }
+    v = todo[len(todo) - 1]!;
+    todo.remove(len(todo) - 1);
+    if seen.contains(v) {
+      continue;
+    }
+    seen += [v];
+    for e in edges {
+      if e#index % 2 == 0 && e == v {
+        x = edges[e#index + 1]!;
+        if x == held {
+          return true;
+        }
+        todo += [x];
+      }
+    }
+  }
+  false
+}
+
+// `identity_turns_on_path`: between two locals one of which may hold the other, a
+// store-identity test's answer turns on the path.
+pub fn identity_turns_on_path(edges: vector<integer>, args: vector<ir::Node>) -> boolean {
+  if len(args) < 2 || !opt_vr_shape::is_var(args[0]!) || !opt_vr_shape::is_var(args[1]!) {
+    return false;
+  }
+  l = opt_vr_shape::var_of(args[0]!);
+  r = opt_vr_shape::var_of(args[1]!);
+  may_hold(edges, l, r) || may_hold(edges, r, l)
+}
+
+// `release_uses`: the uses of local `v` a release-side call accounts.  `moot` per variable: a
+// value local or a converted build's work-ref, which no store holds.
+pub fn release_uses(edges: vector<integer>, name: text, args: vector<ir::Node>, v: integer, settled: boolean, moot: vector<boolean>) -> integer {
+  identity = name == "OpFreeRefIfDistinct" || name == "OpDistinctStore";
+  if identity && identity_turns_on_path(edges, args) {
+    others: vector<integer> = [];
+    for a in args {
+      if opt_vr_shape::is_var(a) && opt_vr_shape::var_of(a) != v {
+        others += [opt_vr_shape::var_of(a)];
+      }
+    }
+    if len(others) == 0 {
+      return 0;
+    }
+    for o in others {
+      if !(moot[o] ?? false) {
+        return 0;
+      }
+    }
+  }
+  arg_v0 = len(args) > 0 && opt_vr_shape::is_var(args[0]!) && opt_vr_shape::var_of(args[0]!) == v;
+  arg_v1 = len(args) > 1 && opt_vr_shape::is_var(args[1]!) && opt_vr_shape::var_of(args[1]!) == v;
+  first = arg_v0 && !settled && (name == "OpFreeRef" || name == "OpFreeRefIfDistinct" || name == "OpCopyRecord" || name == "OpDistinctStore");
+  (if first { 1 } else { 0 }) + (if identity && arg_v1 { 1 } else { 0 })
+}
+
+// `converted_build_ref`: is local `w` the work-ref an `Object` build the value form converts
+// (`objects`, per node number) ends in?
+pub fn converted_build_ref(body: ir::Node, sz: vector<integer>, objects: vector<boolean>, w: integer) -> boolean {
+  cb_walk(loop_shape::unspan(body), 0, sz, objects, w)
+}
+
+fn cb_walk(n: ir::Node, num: integer, sz: vector<integer>, objects: vector<boolean>, w: integer) -> boolean {
+  match n {
+    NdBlock { block } => {
+      bl = block[0]!;
+      if bl.name == "Object" && (objects[num] ?? false) && len(bl.operators) > 0 && opt_vr_shape::is_var(opt_vr_shape::last_op(bl.operators)) && opt_vr_shape::var_of(opt_vr_shape::last_op(bl.operators)) == w {
+        return true;
+      }
+    },
+    _ => {},
+  }
+  c = num + 1;
+  for k in kids(n) {
+    if cb_walk(k, c, sz, objects, w) {
+      return true;
+    }
+    c += sz[c]!;
+  }
+  false
+}
+
+// `sub_record`: a sub-record of a record variable as an `OpGetField` chain names one — the root
+// variable (-1 none), and its schema type in `sub`.
+pub fn sub_record(b: ir::Bundle, v: ir::Node, sub: &integer) -> integer {
+  sub = -1;
+  match loop_shape::unspan(v) {
+    NdCall { def_nr, args } => {
+      if len(args) != 3 || name_of(b, def_nr) != "OpGetField" {
+        return -1;
+      }
+      content = match loop_shape::unspan(args[2]!) { NdInt { n } => n, _ => return -1 };
+      off = 0;
+      root = opt_view::view_field(b, args[0]!, args[1]!, off);
+      if root < 0 || content < 0 || content > 65535 {
+        return -1;
+      }
+      sub = content;
+      root
+    },
+    _ => -1,
+  }
+}
+
+// `sub_record_of`: the type of the sub-record of `v` that `arg` names, -1 none.
+pub fn sub_record_of(b: ir::Bundle, arg: ir::Node, v: integer) -> integer {
+  sub = -1;
+  root = sub_record(b, arg, sub);
+  if root == v && root >= 0 { sub } else { -1 }
+}
+
+// `copy_type`: the record type an `OpCopyRecord`'s third operand names, -1 none.
+pub fn copy_type(arg: ir::Node) -> integer {
+  match loop_shape::unspan(arg) {
+    NdInt { n } => n & 16383,
+    _ => -1,
+  }
+}
+
+// `field_on`: the summed offset of the field a scalar getter or setter addresses on `v`, null
+// none.
+pub fn field_on(b: ir::Bundle, args: vector<ir::Node>, v: integer) -> integer {
+  if len(args) < 2 {
+    return null;
+  }
+  off = 0;
+  root = opt_view::view_field(b, args[0]!, args[1]!, off);
+  if root == v && root >= 0 { off } else { null }
+}
+
+// `fnref_param`: the layout key parameter `idx` of every arm of fn-ref site `(d, v)` receives as
+// a tuple, -1 none.
+pub fn fnref_param(sites: vector<opt_vr_layout::VSite>, params: vector<opt_vr_layout::VParam>, d: integer, v: integer, idx: integer) -> integer {
+  for s in sites {
+    if s.caller == d && s.v == v {
+      if len(s.arms) == 0 {
+        return -1;
+      }
+      first = param_key(params, s.arms[0]!, idx);
+      if first < 0 {
+        return -1;
+      }
+      for a in s.arms {
+        if param_key(params, a, idx) != first {
+          return -1;
+        }
+      }
+      return first;
+    }
+  }
+  -1
+}
+
+pub fn param_key(params: vector<opt_vr_layout::VParam>, d: integer, idx: integer) -> integer {
+  for p in params {
+    if p.d == d && p.idx == idx {
+      return p.key;
+    }
+  }
+  -1
+}
+
+// `fnref_handoffs`: how many of a fn-ref call's arguments hand `local` whole to a parameter every
+// arm receives as a tuple.
+pub fn fnref_handoffs(c: opt_vr_shape::Ctx, local: integer, fref: integer, args: vector<ir::Node>) -> integer {
+  n = 0;
+  for a in args {
+    if opt_vr_shape::is_var(a) && opt_vr_shape::var_of(a) == local && fnref_param(c.sites, c.params, c.d, fref, a#index) >= 0 {
+      n += 1;
+    }
+  }
+  n
+}
+
+// `handoffs_and_presence`: the uses of `v` one call accounts that turn on its layout `key` (-1
+// none) — a hand-off to a tuple parameter, and a presence test.  `present`: whether `v` is
+// surely present (asked lazily by the caller, passed in).
+pub fn handoffs_and_presence(b: ir::Bundle, params: vector<opt_vr_layout::VParam>, d: integer, name: text, args: vector<ir::Node>, v: integer, key: integer, present: boolean) -> integer {
+  arg_v0 = len(args) > 0 && opt_vr_shape::is_var(args[0]!) && opt_vr_shape::var_of(args[0]!) == v;
+  nullable = opt_vr_layout::is_nullable_layout(key);
+  uses = if arg_v0 && len(args) == 1 && (name == "OpConvBoolFromRef" || name == "OpRefIsNull") && (nullable || (key >= 0 && present)) { 1 } else { 0 };
+  for p in params {
+    if p.d != d {
+      continue;
+    }
+    i = p.idx;
+    arg_vi = i < len(args) && opt_vr_shape::is_var(args[i]!) && opt_vr_shape::var_of(args[i]!) == v;
+    whole = arg_vi && (if key >= 0 { key == p.key || (!opt_vr_layout::is_nullable_layout(key) && opt_vr_layout::nullable_layout(key) == p.key && present) } else { !opt_vr_layout::is_nullable_layout(p.key) });
+    sub = !nullable && i < len(args) && sub_record_of(b, args[i]!, v) == p.key && p.key >= 0;
+    if whole || sub {
+      uses += 1;
+    }
+  }
+  uses
+}
+
+// `read_context`: the argument at `i` of a call of `d` is one that can only be READ.
+pub fn read_context(b: ir::Bundle, d: integer, i: integer) -> boolean {
+  if d < 0 || d >= len(b.data.definitions) {
+    return false;
+  }
+  def = b.data.definitions[d]!;
+  if VIEW_LEAF_READ_OPS.contains(def.name) {
+    return i == 0;
+  }
+  i < len(def.attributes) && def.attributes[i]!.value_const
+}
+
+// `view_field_reads`: per node number, whether it is an `OpGetField(v, off, _)` at one of `offs`
+// that stands where the value can only be read.
+pub fn view_field_reads(b: ir::Bundle, body: ir::Node, sz: vector<integer>, v: integer, offs: vector<integer>) -> vector<boolean> {
+  out: vector<boolean> = [for _ in sz { false }];
+  if len(offs) == 0 {
+    return out;
+  }
+  vf_walk(b, loop_shape::unspan(body), 0, sz, v, offs, out);
+  out
+}
+
+fn vf_field(b: ir::Bundle, arg: ir::Node, v: integer, offs: vector<integer>) -> boolean {
+  match loop_shape::unspan(arg) {
+    NdCall { def_nr, args } => {
+      if name_of(b, def_nr) != "OpGetField" || len(args) < 2 || !opt_vr_shape::is_var(args[0]!) || opt_vr_shape::var_of(args[0]!) != v {
+        return false;
+      }
+      match loop_shape::unspan(args[1]!) { NdInt { n } => offs.contains(n), _ => false }
+    },
+    _ => false,
+  }
+}
+
+fn vf_walk(b: ir::Bundle, n: ir::Node, num: integer, sz: vector<integer>, v: integer, offs: vector<integer>, out: vector<boolean>) {
+  match n {
+    NdCall { def_nr, args } => {
+      if def_nr >= 0 && def_nr < len(b.data.definitions) {
+        c = num + 1;
+        for a in args {
+          if vf_field(b, a, v, offs) && read_context(b, def_nr, a#index) {
+            out[c] = true;
+          }
+          c += sz[c]!;
+        }
+      }
+    },
+    _ => {},
+  }
+  c2 = num + 1;
+  for k in kids(n) {
+    vf_walk(b, k, c2, sz, v, offs, out);
+    c2 += sz[c2]!;
+  }
+}
+
+// `converted_build_ref` for every variable at once: per variable, whether a converted `Object`
+// build ends in it.
+pub fn converted_build_refs(body: ir::Node, sz: vector<integer>, objects: vector<boolean>, nv: integer) -> vector<boolean> {
+  out: vector<boolean> = [for _ in 0..nv { false }];
+  cbs_walk(loop_shape::unspan(body), 0, sz, objects, out);
+  out
+}
+
+fn cbs_walk(n: ir::Node, num: integer, sz: vector<integer>, objects: vector<boolean>, out: vector<boolean>) {
+  match n {
+    NdBlock { block } => {
+      bl = block[0]!;
+      if bl.name == "Object" && (objects[num] ?? false) && len(bl.operators) > 0 && opt_vr_shape::is_var(opt_vr_shape::last_op(bl.operators)) {
+        w = opt_vr_shape::var_of(opt_vr_shape::last_op(bl.operators));
+        if w >= 0 && w < len(out) {
+          out[w] = true;
+        }
+      }
+    },
+    _ => {},
+  }
+  c = num + 1;
+  for k in kids(n) {
+    cbs_walk(k, c, sz, objects, out);
+    c += sz[c]!;
+  }
+}
+
+// The definition named `key` in `source`, else anywhere; -1 none.
+fn def_in(b: ir::Bundle, key: text, source: integer) -> integer {
+  for d in b.data.definitions {
+    if d.name == key && d.source == source {
+      return d#index;
+    }
+  }
+  for d in b.data.definitions {
+    if d.name == key {
+      return d#index;
+    }
+  }
+  -1
+}
+
+fn drop_hook_nr(b: ir::Bundle, d: integer) -> integer {
+  def = b.data.definitions[d]!;
+  def_in(b, "t_{def.name.size()}{def.name}_OpDrop", def.source)
+}
+
+fn iterator_def(b: ir::Bundle) -> integer {
+  for d in b.data.definitions {
+    if d.name == "iterator" && d.source == 0 {
+      return d#index;
+    }
+  }
+  -1
+}
+
+// `Data::fn_field_record`: the closure record a fn-typed field's assigned lambda carries, when it
+// holds a reference or owns a droppable; -1 none.
+fn fn_field_record(b: ir::Bundle, a: ir::Attribute) -> integer {
+  if !(cgen_types::base(a.typedef[0] ?? ir::TyVoid) is TyFunction) || a.assigned_lambda_d_nr < 0 || a.assigned_lambda_d_nr >= len(b.data.definitions) {
+    return -1;
+  }
+  record = b.data.definitions[a.assigned_lambda_d_nr]!.closure_record;
+  if record < 0 || record >= len(b.data.definitions) {
+    return -1;
+  }
+  holds = false;
+  for c in b.data.definitions[record]!.attributes {
+    match cgen_types::base(c.typedef[0] ?? ir::TyVoid) {
+      TyReference { n: _, dep } => if len(dep) > 0 { holds = true; },
+      _ => {},
+    }
+  }
+  if holds || droppable_walk(b, record, []) { record } else { -1 }
+}
+
+fn droppable_walk(b: ir::Bundle, d: integer, path: vector<integer>) -> boolean {
+  if d < 0 || d >= len(b.data.definitions) || path.contains(d) {
+    return false;
+  }
+  path += [d];
+  if drop_hook_nr(b, d) >= 0 || d == iterator_def(b) {
+    return true;
+  }
+  for a in b.data.definitions[d]!.attributes {
+    if type_droppable(b, a.typedef[0] ?? ir::TyVoid, path) || fn_field_record(b, a) >= 0 {
+      return true;
+    }
+  }
+  for c in b.data.definitions {
+    if c.parent == d && c.def_type == 4 && droppable_walk(b, c#index, path) {
+      return true;
+    }
+  }
+  false
+}
+
+fn type_droppable(b: ir::Bundle, t: ir::TypeT, path: vector<integer>) -> boolean {
+  match t {
+    TyReference { n, dep: _ } => droppable_walk(b, n, path),
+    TyEnum { n, is_ref, dep: _ } => is_ref && droppable_walk(b, n, path),
+    TySorted { n, keys: _, dep: _ } => droppable_walk(b, n, path),
+    TyIndex { n, keys: _, dep: _ } => droppable_walk(b, n, path),
+    TyRadix { n, names: _, dep: _ } => droppable_walk(b, n, path),
+    TyTrie { n, key: _, dep: _ } => droppable_walk(b, n, path),
+    TyHash { n, names: _, dep: _ } => droppable_walk(b, n, path),
+    TyVector { inner, dep: _ } => type_droppable(b, inner, path),
+    TyOptional { inner } => type_droppable(b, inner, path),
+    TyRefVar { inner } => type_droppable(b, inner, path),
+    TyRewritten { inner } => type_droppable(b, inner, path),
+    TyTuple { elems } => {
+      for e in elems {
+        if type_droppable(b, e, path) {
+          return true;
+        }
+      }
+      false
+    },
+    TyIterator { step: _, inner: _ } => true,
+    _ => false,
+  }
+}
+
+// `Data::type_owns_droppable_anywhere`.
+pub fn owns_droppable(b: ir::Bundle, t: ir::TypeT) -> boolean {
+  type_droppable(b, t, [])
+}

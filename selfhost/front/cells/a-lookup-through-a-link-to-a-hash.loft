@@ -1,0 +1,14 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a lookup through a link to a hash reads the collection the link names (`@FR-B-Ref-Uniform`).
+// Prints: 2 12
+
+struct Row { id: integer, tag: text }
+fn hash_append(c: &hash<Row[id]>) { c += [Row { id: 7, tag: "seven" }]; }
+fn tag_of(c: &hash<Row[id]>, k: integer) -> integer { c += [Row { id: 9, tag: "nine" }]; (c[k].id ?? -1) + len(c[k]!.tag) }
+fn main() {
+  h: hash<Row[id]> = [Row { id: 1, tag: "one" }];
+  hash_append(h);
+  println("{len(h)} {tag_of(h, 7)}");
+}

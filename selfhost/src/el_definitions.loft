@@ -21,6 +21,27 @@ use el_cell;
 
 
 // `Parser::parse_file`'s definition loop, over the file's items in order.
+// `Parser::boxed_tuple_return` (@FR-F-Ret, loft#1349): a declared `-> (a, b)` whose members carry
+// a lifetime — a text, a record, a collection, through a `?` — answers the synthetic
+// `__tuple<…>` record instead, so the record delivery applies and every member is copied out.
+// A tuple of plain values, and one with a member not resolved yet, stays the tuple it is.
+pub fn boxed_tuple_return(e: el::El, t: ir::TypeT) -> ir::TypeT {
+  match t {
+    TyTuple { elems } => {
+      concern = false;
+      for m in elems {
+        b = el_types::base(m);
+        if b is TyText || b is TyReference || b is TyVector || b is TyHash || b is TySorted || b is TyIndex || (b is TyEnum && el_types::struct_enum_def(b) >= 0) {
+          concern = true;
+        }
+      }
+      td = if concern { el_types::tuple_def_of(e, elems) } else { -1 };
+      if td < 0 { t } else { ir::TyReference { n: td, dep: [] } }
+    },
+    _ => t
+  }
+}
+
 pub fn elab_file(e: el::El, file: integer) {
   match e.p.nodes[file] {
     SFile { items } => {
@@ -1201,7 +1222,7 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
       e.context = -1;
       return "";
     }
-    rt = t!;
+    rt = boxed_tuple_return(e, t!);
   }
   el_vars::take_over(vars, el::def(e, e.context).variables);
   for so in e.step_over {
@@ -1235,6 +1256,19 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
         // body: a `vector<T>` one has `vector<T>` and `main_vector<T>` defined there (the
         // lexer stands after the body's `{`) where nothing in the first pass made them.  A
         // template's are its instances' to make.
+        // A tuple parameter holding a record or a collection is read through a local of its
+        // own (`__tp_<name>`, the heap member witnessed) — not carried: refused by name.
+        match a.typedef {
+          TyTuple { elems: pe } => {
+            for pm in pe {
+              pb = el_types::base(pm);
+              if pb is TyReference || pb is TyVector || (pb is TyEnum && el_types::struct_enum_def(pb) >= 0) {
+                el::refuse(e, "a tuple parameter with a heap member");
+              }
+            }
+          },
+          _ => {}
+        }
         match a.typedef {
           TyVector { inner } => {
             nm = el_types::elem_name(e, inner);

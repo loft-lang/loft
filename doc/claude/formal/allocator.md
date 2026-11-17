@@ -174,7 +174,13 @@ assertions (the test profile turns them off): `tree_in_order`, `chain`, `check_w
 and `check_parked` re-derive the tree, the block chain, the wilderness and the parked lists
 from the store's bytes after every step of a seeded churn of claims, deletes and resizes.
 
-- `H-FreeFooter` — `a_fake_footer_in_claimed_data_never_merges`.
+- `H-FreeFooter` — `a_fake_footer_in_claimed_data_never_merges` (a footer claimed data
+  spells; since @C154 the claims refuse it before the tree is asked), and the confirmation
+  itself, for the free predecessors the claims let through and no record of the delete knows:
+  `a_backward_merge_leaves_a_parked_predecessor`,
+  `an_exact_delete_leaves_a_lazily_freed_predecessor`,
+  `a_backward_merge_leaves_a_one_word_predecessor` — each fails with its delete's
+  confirmation removed.
 - `H-Exact` — `bump_tail_claims_are_the_tree_paths_layout` (a claim one word short of the
   tail takes exactly its size and leaves a one-word free block), and every claim of the seeded
   churns above, checked against the C's by
@@ -183,8 +189,11 @@ from the store's bytes after every step of a seeded churn of claims, deletes and
   the tree-only allocator's at every step), `a_fresh_store_never_claims_its_wilderness`.
 - `H-Carve` — `a_carve_in_place_takes_the_blocks_the_delete_and_insert_take`.
 - `H-LazyFree` — `a_lazy_delete_is_untracked_and_the_claim_takes_the_tail`,
-  `at_the_growth_bound_one_sweep_ends_the_phase`, `below_the_floor_a_lazy_store_grows_rather_than_sweeps`.
+  `at_the_growth_bound_one_sweep_ends_the_phase`, `below_the_floor_a_lazy_store_grows_rather_than_sweeps`;
+  its backward confirmation by the parked and one-word cells above.
 - `H-ScanIndex` — `the_indexed_scan_takes_the_block_the_walk_takes`.
+- `H-TailGrow` — `a_tail_record_grows_where_it_is` (its position and bytes kept through ten
+  doublings), and the C allocator's churn in `the_c_store_allocator_places_every_record_where_store_does`.
 - `H-ReadSurface` — `a_read_surface_open_writes_nothing_to_its_file`.
 - `H-Park` — `a_parked_block_is_the_next_claim_of_its_size`,
   `a_flush_merges_parked_neighbours_into_one_block`, and

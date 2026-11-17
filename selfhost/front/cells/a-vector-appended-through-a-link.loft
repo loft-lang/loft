@@ -1,0 +1,18 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a vector appended through a link to a vector (`dst += k`) is `OpAppendVector` on the vector the link names.
+// Prints: [0,1,2,2,4]
+
+fn piece(n: integer) -> vector<integer> { [n, n * 2] }
+fn fill(dst: &vector<integer>) {
+  for n in 1..3 {
+    k = piece(n);
+    dst += k;
+  }
+}
+fn main() {
+  v = [0];
+  fill(v);
+  println("{v}");
+}

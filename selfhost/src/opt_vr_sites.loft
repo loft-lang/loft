@@ -1,0 +1,283 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `@FR-R-ValueRecord`'s SITE gate, as `src/opt/value_records/sites.rs`
+// decides it: every admitted call consumed where a record is wanted declines its callee; the
+// fn-ref groups that change their arms' ABI together; the forward site; the tuple-argument
+// forms the gate and the writer share.
+
+use ir;
+use loop_shape;
+use cgen_types;
+use opt_vr_layout;
+use opt_vr_shape;
+use opt_vr_leaves;
+
+pub const POS_TAIL = 0;
+pub const POS_BOUND = 1;
+pub const POS_DISCARD = 2;
+pub const POS_OPERAND = 3;
+
+pub fn forward_tuple_on() -> boolean {
+  (env_variable("LOFT_NO_FORWARD_TUPLE") ?? "0") == "0"
+}
+
+fn param_key(params: vector<opt_vr_layout::VParam>, d: integer, idx: integer) -> integer {
+  opt_vr_leaves::param_key(params, d, idx)
+}
+
+// `close_fnref_groups`: take out every arm of a group one arm of which is out, and every
+// parameter index not every arm takes as a tuple of one record.  Repeated until it ends.
+pub fn close_fnref_groups(sites: vector<opt_vr_layout::VSite>, cand: vector<integer>, params: vector<opt_vr_layout::VParam>) -> vector<opt_vr_layout::VParam> {
+  ps = params;
+  for _ in 0..len(cand) + 2 {
+    out: vector<integer> = [];
+    out_params: vector<integer> = [];
+    for s in sites {
+      rec_out = s.rec < 0;
+      if !rec_out {
+        for a in s.arms {
+          if (cand[a] ?? -1) != s.rec {
+            rec_out = true;
+          }
+        }
+      }
+      if rec_out {
+        for a in s.arms {
+          if (cand[a] ?? -1) >= 0 {
+            out += [a];
+          }
+        }
+      }
+      idxs: vector<integer> = [];
+      for a in s.arms {
+        for p in ps {
+          if p.d == a && !idxs.contains(p.idx) {
+            idxs += [p.idx];
+          }
+        }
+      }
+      for idx in idxs {
+        first = if len(s.arms) > 0 { param_key(ps, s.arms[0]!, idx) } else { -1 };
+        bad = first < 0;
+        for a in s.arms {
+          if param_key(ps, a, idx) != first {
+            bad = true;
+          }
+        }
+        if bad {
+          for a in s.arms {
+            if param_key(ps, a, idx) >= 0 {
+              out_params += [a, idx];
+            }
+          }
+        }
+      }
+    }
+    if len(out) == 0 && len(out_params) == 0 {
+      return ps;
+    }
+    for d in out {
+      cand[d] = -1;
+    }
+    if len(out_params) > 0 {
+      kept: vector<opt_vr_layout::VParam> = [];
+      for p in ps {
+        drop = false;
+        for o in out_params {
+          if o#index % 2 == 0 && o == p.d && out_params[o#index + 1]! == p.idx {
+            drop = true;
+          }
+        }
+        if !drop {
+          kept += [p];
+        }
+      }
+      ps = kept;
+    }
+  }
+  ps
+}
+
+// `forward_site`: is `target = rhs` a forward — a call to an admitted `g` handed `target` as its
+// return buffer, its answer bound back into `target`?  Answers `g`, -1 none.
+pub fn forward_site(b: ir::Bundle, d: integer, target: integer, rhs: ir::Node, admitted: vector<integer>, locals: vector<integer>) -> integer {
+  if !forward_tuple_on() || opt_vr_shape::at(locals, target) >= 0 {
+    return -1;
+  }
+  g = match loop_shape::unspan(rhs) { NdCall { def_nr, args: _ } => def_nr, _ => return -1 };
+  args: vector<ir::Node> = match loop_shape::unspan(rhs) { NdCall { def_nr: _, args } => args, _ => [] };
+  if opt_vr_shape::at(admitted, g) < 0 {
+    return -1;
+  }
+  callee = b.data.definitions[g]!;
+  idx = opt_vr_shape::ret_buffer_attr(callee);
+  if idx < 0 || idx >= len(args) || !opt_vr_shape::is_var(args[idx]!) || opt_vr_shape::var_of(args[idx]!) != target {
+    return -1;
+  }
+  want = opt_vr_layout::plain_record_type(b, if len(callee.returned) > 0 { callee.returned[0]! } else { ir::TyVoid });
+  if want < 0 {
+    return -1;
+  }
+  tt = b.data.definitions[d]!.variables.variables[target]!.type_def[0] ?? ir::TyVoid;
+  if opt_vr_layout::plain_record_type(b, tt) == want { g } else { -1 }
+}
+
+// `tuple_arg_ready`: is `arg`, at a tuple-parameter position of layout `tp`, already a tuple?
+pub fn tuple_arg_ready(arg: ir::Node, tp: integer, admitted: vector<integer>, locals: vector<integer>) -> boolean {
+  match loop_shape::unspan(arg) {
+    NdVar { n } => opt_vr_shape::at(locals, n) == tp,
+    NdCall { def_nr, args: _ } => opt_vr_shape::at(admitted, def_nr) == tp,
+    _ => false,
+  }
+}
+
+// `tuple_arg_form`: how `arg` crosses to a tuple parameter of layout `tp` — 0 as the tuple it
+// is, 1 a dense tuple widened, -1 a record read field by field.
+pub fn tuple_arg_form(c: opt_vr_shape::Ctx, arg: ir::Node, tp: integer) -> integer {
+  if tuple_arg_ready(arg, tp, c.admitted, c.locals) {
+    return 0;
+  }
+  if !opt_vr_layout::is_nullable_layout(tp) {
+    return -1;
+  }
+  dense = opt_vr_layout::layout_record(tp);
+  match loop_shape::unspan(arg) {
+    NdVar { n } => if opt_vr_shape::at(c.locals, n) == dense && opt_vr_shape::local_surely_present(c, n, []) { 1 } else { -1 },
+    NdCall { def_nr, args: _ } => if opt_vr_shape::at(c.admitted, def_nr) == dense && (c.sp[def_nr] ?? false) { 1 } else { -1 },
+    _ => -1,
+  }
+}
+
+fn is_free_op(b: ir::Bundle, d: integer) -> boolean {
+  nm = opt_vr_shape::def_name(b, d);
+  nm == "OpFreeRef" || nm == "OpFreeRefTag" || nm == "OpFreeRecordIn" || nm == "OpFreeRefIfDistinct" || nm == "OpFreeRefOrHandUp" || nm == "OpFreeText"
+}
+
+// `value_position`: where a statement list's value stands — its index (-1 none) — and in `pos`
+// the position it is read at: an operand when frees follow it.
+pub fn value_position(b: ir::Bundle, ops: vector<ir::Node>, pos: &integer) -> integer {
+  at = -1;
+  for i in rev(0..len(ops)) {
+    u = loop_shape::unspan(ops[i]!);
+    cleanup = (u is NdLine) || (match u { NdCall { def_nr, args: _ } => is_free_op(b, def_nr), _ => false });
+    if !cleanup {
+      at = i;
+      break;
+    }
+  }
+  if at >= 0 {
+    for j in at + 1..len(ops) {
+      if !(loop_shape::unspan(ops[j]!) is NdLine) {
+        pos = POS_OPERAND;
+        return at;
+      }
+    }
+  }
+  at
+}
+
+fn decline(declined: vector<boolean>, d: integer) {
+  if d >= 0 && d < len(declined) {
+    declined[d] = true;
+  }
+}
+
+// `site_walk`: every admitted call in `node` at an operand position is declined.
+pub fn site_walk(c: opt_vr_shape::Ctx, node: ir::Node, pos: integer, declined: vector<boolean>) {
+  u = loop_shape::unspan(node);
+  match u {
+    NdCall { def_nr, args } => {
+      if pos == POS_OPERAND && opt_vr_shape::at(c.admitted, def_nr) >= 0 {
+        decline(declined, def_nr);
+      }
+      for a in args {
+        ptp = param_key(c.params, def_nr, a#index);
+        here = if ptp >= 0 && tuple_arg_form(c, a, ptp) >= 0 { POS_BOUND } else { POS_OPERAND };
+        site_walk(c, a, here, declined);
+      }
+    },
+    NdCallRef { var, args } => site_walk_callref(c, var, args, pos, declined),
+    NdTuple { items } => {
+      for a in items {
+        site_walk(c, a, POS_OPERAND, declined);
+      }
+    },
+    NdSet { var, inner } => {
+      if forward_site(c.b, c.d, var, inner, c.admitted, c.locals) >= 0 {
+        match loop_shape::unspan(inner) {
+          NdCall { def_nr: _, args } => {
+            for a in args {
+              site_walk(c, a, POS_OPERAND, declined);
+            }
+          },
+          _ => {},
+        }
+        return;
+      }
+      site_walk(c, inner, if opt_vr_shape::at(c.locals, var) >= 0 { POS_BOUND } else { POS_OPERAND }, declined);
+    },
+    NdBlock { block } => {
+      bl = block[0]!;
+      void = opt_vr_shape::result_void(bl);
+      pv = pos;
+      at = value_position(c.b, bl.operators, pv);
+      for op in bl.operators {
+        site_walk(c, op, if op#index == at && !void { pv } else { POS_DISCARD }, declined);
+      }
+    },
+    NdInsert { items } => {
+      pv = pos;
+      at = value_position(c.b, items, pv);
+      for op in items {
+        site_walk(c, op, if op#index == at { pv } else { POS_DISCARD }, declined);
+      }
+    },
+    NdIf { cond, t, f } => {
+      site_walk(c, cond, POS_OPERAND, declined);
+      site_walk(c, t, pos, declined);
+      site_walk(c, f, pos, declined);
+    },
+    NdReturn { inner } => site_walk(c, inner, if c.own >= 0 { POS_TAIL } else { POS_OPERAND }, declined),
+    NdLoop { block } => {
+      for op in block[0]!.operators {
+        site_walk(c, op, POS_DISCARD, declined);
+      }
+    },
+    NdParallel { arms } => {
+      for a in arms {
+        site_walk(c, a, POS_OPERAND, declined);
+      }
+    },
+    NdDrop { inner } => site_walk(c, inner, POS_DISCARD, declined),
+    NdIter { var: _, create, next, init } => {
+      site_walk(c, create, POS_OPERAND, declined);
+      site_walk(c, next, POS_OPERAND, declined);
+      site_walk(c, init, POS_OPERAND, declined);
+    },
+    NdTuplePut { var: _, idx: _, inner } => site_walk(c, inner, POS_OPERAND, declined),
+    NdYield { inner } => site_walk(c, inner, POS_OPERAND, declined),
+    _ => {},
+  }
+}
+
+// `site_walk_callref`: the site gate over a call through fn-ref `v`.
+fn site_walk_callref(c: opt_vr_shape::Ctx, v: integer, args: vector<ir::Node>, pos: integer, declined: vector<boolean>) {
+  rvr = opt_vr_layout::no_records();
+  rvr.sites = c.sites;
+  if pos == POS_OPERAND && opt_vr_layout::fnref_value(rvr, c.admitted, c.d, v) >= 0 {
+    for s in c.sites {
+      if s.caller == c.d && s.v == v {
+        for a in s.arms {
+          decline(declined, a);
+        }
+      }
+    }
+  }
+  for a in args {
+    ptp = opt_vr_leaves::fnref_param(c.sites, c.params, c.d, v, a#index);
+    here = if ptp >= 0 && tuple_arg_ready(a, ptp, c.admitted, c.locals) { POS_BOUND } else { POS_OPERAND };
+    site_walk(c, a, here, declined);
+  }
+}

@@ -6,6 +6,7 @@
 // (`destination_site`, `destination_level`, `destination_names`) and the `__d` twin's half
 // (`destination`, `ds_decls`, `dest_scalar_set`, `dest_return`).
 
+use cgen_transient;
 use ir;
 use cgen::(Cx);
 use cgen_w::*;
@@ -121,7 +122,7 @@ fn names_block(w: W, bl: ir::Block, names: vector<text>, shapes: vector<text>) -
 // its scalars — and its `ok` arm with the moves gone; each destination filled so far released on
 // a failing path.  The index of the window's last statement, or -1 where `ops[i]` opens none.
 pub fn destination_site(x: Cx, w: W, ops: vector<ir::Node>, i: integer, ind: integer) -> integer {
-  if !opt_destination::enabled() || w.gen_elem != "" {
+  if !opt_destination::enabled() || w.gen_elem != "" || cgen_transient::lean(w) {
     return -1;
   }
   site = opt_destination::site(x.b, ops, i, w.index, x.dest_memo);

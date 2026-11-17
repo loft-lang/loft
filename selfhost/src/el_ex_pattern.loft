@@ -1772,6 +1772,7 @@ pub fn vector_append(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> 
   match el_vars::tp(vars, v) {
     TyVector { inner: i } => { inner = i; },
     TyRefVar { inner: lv } => match lv { TyVector { inner: i } => { inner = i; }, _ => {} },
+    TyOptional { inner: ov } => match ov { TyVector { inner: i } => { inner = i; }, _ => {} },
     _ => {}
   }
   // `parse_append_vector` makes the definitions where a value literal does, at its `]` — not
@@ -1895,6 +1896,12 @@ pub fn first_pass_fields(e: el::El, vars: el_vars::Vars, d: integer, fields: vec
         if el_types::is_collection(at) && e.p.nodes[fe!] is SVecLit {
           match e.p.nodes[fe!] {
             SVecLit { items } => {
+              // The field literal's element temp is minted on this pass too (`unique_elm_var`),
+              // so the variables number as Rust's do — a call through a function value names
+              // its temporary by that number.
+              if len(items) > 0 {
+                el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [] });
+              }
               for it in items {
                 if struct_literal_def(e, it) >= 0 {
                   literal_field_exprs(e, vars, it);
@@ -1907,6 +1914,11 @@ pub fn first_pass_fields(e: el::El, vars: el_vars::Vars, d: integer, fields: vec
           }
         } else {
           el_ex_assign::expression(e, vars, fe!);
+          // A function-valued field's `__fn_ref_tmp` is minted on this pass too
+          // (`fn_ref_slot_dnr`), so the variables number alike.
+          if el_types::base(at) is TyFunction {
+            el_ex_object::fn_number_write(e, vars, ir::NdNull, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }, at);
+          }
         }
       },
       _ => {}
@@ -2361,7 +2373,13 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
       }
       ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }]))];
       for m in parts {
-        ls += [el_ir::cl(e, el_ex_object::tuple_set_op(elems[m#index] ?? ir::TyVoid), [at, ir::NdInt { n: fs[m#index]!.position }, m])];
+        // A record member is copied into its slot of the element (`set_field`).
+        narrow = match elems[m#index] ?? ir::TyVoid { TyInteger { spec: ns } => el_types::narrow_width(ns) > 0, _ => false };
+        if struct_ref(e, elems[m#index] ?? ir::TyVoid) >= 0 || narrow {
+          ls += [el_ex_object::set_field(e, td, m#index, at, m)];
+        } else {
+          ls += [el_ir::cl(e, el_ex_object::tuple_set_op(elems[m#index] ?? ir::TyVoid), [at, ir::NdInt { n: fs[m#index]!.position }, m])];
+        }
       }
       ls += [el_ir::cl(e, "OpFinishRecord", [w, at, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }])];
     }
@@ -2430,8 +2448,7 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
   if in_t is TyVector && len(xs) > 0 && !e.first_pass {
     inner_t = match in_t { TyVector { inner } => inner, _ => ir::TyVoid };
     ivt = el_schema::content_type(e, in_t);
-    // An append (`all += [w]`) numbers its stores otherwise — not carried.
-    if elm < 0 || ivt < 0 || append {
+    if elm < 0 || ivt < 0 {
       el::refuse(e, "a vector element that is not a vector literal, appended or of this element type");
       return refused_build();
     }

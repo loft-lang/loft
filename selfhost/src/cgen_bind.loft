@@ -8,6 +8,7 @@
 //
 // An arm not written yet refuses the function under its name.
 
+use cgen_transient;
 use ir;
 use cgen::(Cx);
 use own;
@@ -399,6 +400,10 @@ pub fn ref_set(x: Cx, w: W, var: integer, value: ir::Node, first: boolean, ind: 
       keeps += ["{r}.store_nr != {held}.store_nr"];
     }
     for a in binds::protectable_ref_args(b, w.defs, value).slots {
+      // `@FR-R-Transient`: an argument held in the arena has no store for the result to share.
+      if a != var && cgen_transient::tr_is(w, a) {
+        continue;
+      }
       test = "{r}.store_nr != {if a == var { held } else { w.names[a]! }}.store_nr";
       // `dedup`: a test equal to the one before it is written once.
       if len(keeps) == 0 || keeps[len(keeps) - 1] != test {

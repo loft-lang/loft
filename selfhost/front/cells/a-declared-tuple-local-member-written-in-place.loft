@@ -1,0 +1,14 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a member of a tuple local declared with its type is written in place where no declared member is narrow.
+// Prints: 11 b 250
+
+fn main() {
+  r: (integer, text) = (1, "a");
+  r.0 = 9;
+  r.0 += 2;
+  r.1 = "b";
+  t: (u8, integer) = (250, 1);
+  println("{r.0} {r.1} {t.0}");
+}

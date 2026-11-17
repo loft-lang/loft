@@ -1,0 +1,19 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a function field given a function-value local is written as that local's projection (`FnRefDnr`, no temporary); given a lambda that captures nothing, through a `__fn_ref_tmp`; a vector local rebound from a call that takes it, with no link to it and outside a loop, is the call bound.
+// Prints: 4 8 2 9
+
+struct P { n: integer }
+struct Op { k: integer, f: fn(integer) -> integer }
+fn dbl(x: integer) -> integer { x * 2 }
+fn extend(v: vector<P>, n: integer) -> vector<P> { r: vector<P> = []; for e in v { r += [e]; } r += [P { n: n }]; r }
+fn main() {
+  g = dbl;
+  o = Op { k: 1, f: g };
+  q = Op { k: 2, f: fn(x: integer) -> integer { x + 3 } };
+  o.f = fn(x: integer) -> integer { x - 1 };
+  v = [P { n: 1 }];
+  v = extend(v, 9);
+  println("{o.f(5)} {q.f(5)} {len(v)} {v[1].n}");
+}

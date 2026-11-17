@@ -3,7 +3,7 @@ Copyright (c) 2026 Jurjen Stellingwerff
 SPDX-License-Identifier: LGPL-3.0-or-later
 -->
 <!-- size-exempt: a dated handoff record, read once (DOC_QUALITY § Maintainer docs 2) -->
-# Handoff 2026-11-16 (afternoon, evening): gate E at 879 of 2168, a fast loop for the long tail
+# Handoff 2026-11-16 (afternoon, evening): gate E at 890 of 2172, a fast loop for the long tail
 
 Branch `tuxedo-pln204-int32`, pushed; PR #2518 (loft3's gather) carries it up to 77024883f
 (819 of 2151) and re-wrote gate E's baseline at ITS suite pin 898bc05 — after it merges, rebase
@@ -114,11 +114,162 @@ because 32 programs met it and its layout is one small table of ops.
 element) admits five to seven; a single refusal's own shape admits one or two.  Rank by the
 programs that meet a family, then read its source lines (`elab_probe.py fam`) before choosing.
 
-**Next**: the other element widths behind `a vector of this element type` (`u32`: `int_raw`
-rows, the element built by `OpNewRecord` + `OpSetInt4Raw`; a wide literal `[9223372036854775806,
-1]`: plain `vector<integer>` at stride 8; `vector<i32?>`), then `a function returning a vector
-from this tail` (57 programs meet it: slice-pattern arms, `q ?? [..]`, a field of a call),
-then the still-refused record tails (`an owned local`, `a borrowing local`, `block ncr`).
+**Night (to 12ca00191): 890 of 2172, 0 differ, the real gate's own figure.**  `u32`, `i32?`
+and wide-literal vectors; a function-valued struct field (`fn_number_write`,
+`fn_ref_field_read`, `fn_call_tmp`).  By formal rule: 101 of the suite's 459 rules agree on
+every program, 165 on some, 193 on none (`rewrites` 55 of 107; closures, interfaces,
+operators, tuples and capabilities none whole).
+
+**A call through a function value prints its temporary's variable NUMBER** (`fn_ref[18](…)`):
+the one place the reports compare the ORDER variables were made in.  A temp Rust mints on the
+first pass and the port only on the second agrees by name and differs there — read Rust's order
+with `LOFT_VAR_TABLE=<fn>` and mint on the first pass too.
+
+**Next: function values**, where the refused programs cluster — a lambda's capture of a
+function (11), of a vector it writes (11: the closure shares it as a read one does; the body's
+`c += [x]` is `OpAppendVector(capture, {Vector …}, 0)` with the push aimed at the capture —
+probe `scratchpad/p/cw1.loft`), of a keyed collection (21), of a tuple or a link; then the 51
+programs whose call through a local is refused only because its lambda was.  loft3 took
+605f3d2f5 as this branch's cut for the next PR and fixed loft#2520 on `tuxedo-pr2518-next`.
+
+**To 6198dab69: 898 of 2175, 0 differ** — a lambda appending to a vector it captures, a whole
+value written through a link (`copy_ref`; nullable scalars, text, enums), a scalar link read
+under `??` and `+`.
+
+**The next rule-sized piece: `boxed_tuple_return`** (35 programs meet "a call returning a heap
+value: TyTuple", 73 "a tuple with a member of this type").  A function answering a tuple with
+a heap member answers a `__tuple<…>` RECORD: its declaration is rewritten (hidden `__retbuf`,
+`-> __tuple<S,integer>`, the definition at the return type's position), its tail is a
+`synthetic_tuple_return` block building into a `__ref_N` (a record member copied into
+`OpGetField(buf, pos, kt)`, a scalar set), and a destructure of the call holds the answer in a
+`__ref_N`, reads a scalar member and COPIES a record member into a work ref the place then
+names.  Rust sites: `Parser::boxed_tuple_return` (definitions.rs 3539, 4751, 8433; vectors.rs
+1896, 2082, 2329; generics.rs 268; control.rs 2415, 5279, 5408; call_args.rs 1220).  The port
+does NOT box the callee today and nothing refuses it — it is hidden only because every caller
+is refused — so port the callee FIRST.  A caller-side draft (the destructure) is kept in
+`scratchpad/boxed-tuple-destructure.patch`; probe `scratchpad/p/tp1.loft`.
+
+**A build reads the sources in its first minutes — every time.**  Twice more this session an
+edit landed while a run's build was under a minute old (a development build at 28 s, the real
+gate's at 35 s); both runs were discarded and repeated.  Check the build's age in ONE command
+and edit in the NEXT, never in the same one.
+
+**A split for a second agent (owner's proposal, 2026-11-17).**  The front end is the slow
+layer: 959 of 2220 by the real gate, about 1,340 distinct refusal texts left, most worth one
+or two programs.  What moves tens of programs is a whole FEATURE ported from the Rust source in
+one go.  Offered to a second agent, each on a branch stacked on this branch's tip and joined
+here (the areas are disjoint by function, not by file — `el_ex_vector.loft` and
+`el_ex_pattern.loft` are edited by both):
+
+| Feature | Refusal it lifts (programs touched) | Where it lives |
+|---|---|---|
+| Range and key reads on sorted / index / spatial: `s[1..3]`, `s[3, 4]`, `for e in s[a..b]` | `an index that is a range, a key list or a limit` (20) | `el_ex_vector::index`, `keyed_slice`; the loop side in `el_ex_match::for_expr` |
+| Slice patterns over a cursor struct: `match c { [Num { v }] => …, [(xs: V)*] => … }` | `a struct match pattern of this form: PSlice` (9, seven of them the only refusal) | `el_ex_pattern` (struct match patterns) |
+| Value structs, struct templates, field modifiers and defaults | `a value struct or a struct template` (44), `a struct field with a modifier, a default or a capture` (45) | `el_definitions`, `el_schema` |
+
+This stream keeps links, tuples, struct-enum places, closures stored in fields and the record
+return rules.  The second kind of work that splits cleanly is READ-ONLY: for one refusal
+family, a ten-line probe, Rust's lowering of it (`defs <img> program <std>`) and the Rust
+function that decides it — that research is most of a port's time.  The loop, the tools and
+the two traps (build age, the gate's 9 GB ceiling) are in the sections below.
+
+**State at 4572be7a1 (2026-11-17, the real gate's own figure): 952 of 2218 agree, 0 differ,
+1266 refused**, 75 own cells; the writer's and runner's baselines stand at main's pin with no
+differing row (074413a7a).  Carried since the rebase: a function field from a local or a
+lambda, byte-vector slices, a `&` link walking child records (`_slot_<name>_N`), store locks,
+an append to a nullable vector local, tuple-typed struct fields (layout, literal, assign,
+member read, copy out; from a local or a call), a vector field of a struct enum from a
+literal, in-place writes to a tuple local's members, narrow members in a vector of tuples.
+What is left is a long tail — a few hundred distinct refusals, most worth one or two
+programs; the larger groups are capturing lambdas stored in fields, range and key reads on
+sorted/index/spatial collections, tuples holding records or vectors, and struct fields of an
+iterator or of a vector of tuples.
+
+**The real gate's memory ceiling.**  The gate's own `--ship` build of the elaborator needs more
+than 6 GB of address space in the C compiler; under `ulimit -v 6000000` it ends as `did not
+build … cc1: out of memory`.  Run the real gate under `ulimit -v 9000000` with `--jobs 5`; a
+development-build corpus run (`LOFT_ELAB_BIN`) still fits 6 GB with six jobs.
+
+**REBASED onto main c34c1d177 (PR #2529 carried the cut 605f3d2f5), 2026-11-17.**  The suite
+pin is main's now (`tests/loft-suite.pin` = b705cdb48; a scratch clone at that pin is the
+`LOFT_SUITE_DIR`).  Gate E's baseline there, the real gate's own figure: **931 of 2209 agree,
+0 differ, 1278 refused** (eebe9df85).  The two rows the union left differing are settled: the
+captured-view row agrees (a `!` subject's `_ncr_N` is minted on the first pass), the
+match-subject cell is refused by name (`a match whose subject is typed only on the second
+pass`: the temp is named for its site as Rust's is, but this port's first pass skips an
+untyped match's arms and Rust's does not).  That refusal also took one agreeing program
+(`coroutines/G-Next/a-generator-resumes-at-the-yield-it-suspended-at`) — narrow it, or better
+read the arms on the first pass.
+
+The writer difference recorded below is CURED on main (loft3 reran the steps on c34c1d177:
+0 differ in all three programs); the writer and runner baselines are being re-written at
+main's pin and can be committed once that chain shows no differing function.
+
+**All layers measured at this tree's suite pin (508580956), 2026-11-17** — into scratch
+baselines, NOT committed: the committed `bgen_survey` / `run_image_survey` baselines are still
+pinned at 38d4877cb and a `--check` refuses to run against them.
+
+| Layer | Reading |
+|---|---|
+| front end (gate E), real gate | 924 of 2187 agree, 0 differ, 1263 refused (b10ad3b02) |
+| writer, plain programs | 9091 of 9093 functions identical, 0 differ; 1316 of 1317 streams |
+| writer, test functions | 5756 of 5758 identical, **2 differ**; 2616 of 2660 streams, 3 differ, 41 natives tables |
+| runner on Rust's code | 1316 of 1317 programs; 3967 of 3978 test functions (7 stopped, 2 fault, 1 noimage) |
+| runner on loft's code | 1315 of 1317 programs; 3966 of 3978 test functions |
+
+**The writer defect to fix before those baselines can be committed.**  `t_4File_lines` and
+`t_4text_char_slice` are written with a frame 16 bytes larger than the image's (first op
+`41 176 0` against `41 160 0`) in three test programs: `E-Left/2503…::test_each_pass_reads_the_
+vector_before_its_write`, `E-Left/an-operand-is-read…::test_every_scalar_type`,
+`E-Null/the-null-pattern…::test_the_float_character_and_boolean_patterns`.  Rust's two images
+are stable across emits.  With `LOFT_NO_TEXT_LEN=1` on both emits `char_slice` agrees; with
+`LOFT_NO_DISCHARGE_INTO=1` `File.lines` agrees — so the writer's mirrors of those two rewrites
+decide differently from Rust's for these library functions in these programs.  Repro: the test
+file with `fn main() { <test>(); }` appended, emitted from the file's own directory with
+`LOFT_NO_WARNINGS=1 LOFT_NO_TEXT_BORROW=1` (`--emit-image`, `--emit-run-image`), then
+`bgen_check <store> <run> --dump t_4File_lines`.  What is measured so far for `File.lines` (the rewrite's own trace: `discharge-into:
+t_4File_lines — 1 read(s) straight into their local`, i.e. `c = self.content() ?? ""` loses
+its `__ncc_1`): the program image holds `__ncc_1` at no slot (65535) and the locals after it
+24 bytes lower (`p` 120, where the rewrite switched off gives `__ncc_1` 120 and `p` 144) — so
+the image IS the rewritten function, and the writer still lays the frame out 16 bytes deeper
+(every stack distance in the first operators reads 176 where the image has 160).  The first operator IS the entry
+`reserve_frame`: 160 in the image, 176 written.  Frame start is 40 (the two arguments and
+the return slot), so Rust reserves to 200 — the end of `e` (192 + 8) — and the writer to 216,
+the stepped end of `_elm_3` (200 + 12), the true extent.  With the rewrite off both reserve
+alike.  Both sides compute the same thing — the largest slot end over the
+placed locals (`Function::frame_hwm`, `bgen.loft` 2879) — so Rust's 200 means `_elm_3` had
+NO slot yet when its entry reserve was written, and took one during code generation; the
+image, dumped afterwards, shows it at 200.  Nothing in the image tells a slot placed up
+front from one placed late, so the writer cannot follow.  Likely a compiler defect (the
+`discharge-into` and `text-len` rewrites leave a local unplaced at entry, against "one
+function-entry reserve covers every local's slot"), harmless at run time if the first set
+reserves for it — confirm in `src/state/codegen.rs` (the first-`Set` helpers) and either fix
+the placement or carry a flag in the image.  The question that was open:
+which variables Rust's entry reserve covers once the rewrite has
+moved the slots down — read the entry reserve in `src/state/codegen.rs` against
+`bgen.loft`'s before changing either; Rust under-reserving there is one possible answer, and
+then it is a compiler defect to file, not a writer one.  A
+scratch tool that prints an image's stack positions is a ten-line loft program over
+`load::load` (the fields are private to `ir`, so it runs in a scratch copy of the package).
+A development build of `bgen_check` needs
+`LD_PRELOAD=libm.so.6`: its `crt` shim is linked without the maths library there
+(`undefined symbol: trunc`) — a build defect of its own, not filed.
+
+**Owner, 2026-11-17: build bigger chunks, test specific things, fewer full runs.**  Several
+ports per batch, each checked by a probe on the interpreter-run elaborator (seconds once
+warm), then ONE development build and corpus run per batch and one real gate per committed
+batch or two.  A batch run shows several differences at once; most are gaps the lifted
+refusal uncovered, not the new ports.
+
+**Owed after the next PR lands (loft3's union on `tuxedo-pr2518-next`, suite pin b2194ff):**
+gate E reads 886 of 2185 there with 2 DIFFER, both variable numbering, committed as `differ`
+rows in that branch's baseline — cure them in the elaborator after rebasing:
+1. `rules/matching/M-Match/a-match-subject-from-a-later-function-keeps-its-own-temp.loft`
+   (loft#2520's cell): Rust mints one more `__work` text temp (`__work_3` where the port has
+   `__work_2`).  Compiler change c10d11b64 names a match subject temp by its SITE (pass 1's
+   number per site; a site pass 1 did not mint at is `_match_subj_late_N`) — mirror it.
+2. `tests/scripts/a-captured-view-of-a-call-result-is-released-once-past-an-early-exit.loft`:
+   the closure build's function type reads `deps { items: [10] }` in Rust, `[9]` in the port.
 
 ## Open, in order
 

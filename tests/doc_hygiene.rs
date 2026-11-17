@@ -306,6 +306,44 @@ fn no_tracked_file_carries_conflict_markers() {
     );
 }
 
+/// The owner's hard ceiling for LOFT source, enforced on the spot (RELEASE.md § File split): a
+/// `.loft` file of the language's own code — the stdlib, the self-hosted compiler, the tools,
+/// the libraries' sources — that passes 5000 lines is split before it lands, into parts of at
+/// most 2500.  Tests and the suite's cells are programs, not modules, and are not counted.  A
+/// file that cannot be split without fallout says so in its header, `@no-split: <why>`, and is
+/// skipped; the Rust sources are split weekly instead (`file-sizes.py --pick 1 --ceiling 5000`).
+#[test]
+fn no_loft_source_file_passes_the_ceiling() {
+    const CEILING: usize = 5000;
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let out = loft::platform::process::harness_command("git")
+        .args(["ls-files", "*.loft"])
+        .current_dir(&root)
+        .output()
+        .expect("git ls-files runs");
+    let mut over = Vec::new();
+    for rel in String::from_utf8_lossy(&out.stdout).lines() {
+        if rel.starts_with("tests/") || rel.contains("/tests/") {
+            continue;
+        }
+        let Ok(text) = fa::read_to_string(root.join(rel)) else {
+            continue;
+        };
+        let lines = text.lines().count();
+        let marked = text.lines().take(40).any(|l| l.contains("@no-split:"));
+        if lines > CEILING && !marked {
+            over.push(format!("  {rel}: {lines} lines"));
+        }
+    }
+    assert!(
+        over.is_empty(),
+        "a loft source file passed the {CEILING}-line ceiling — split it now, into parts of at \
+         most 2500 lines (RELEASE.md § File split), or, when it cannot be split without fallout, \
+         say why in its header with `@no-split: <why>`:\n{}",
+        over.join("\n")
+    );
+}
+
 #[test]
 fn every_new_guard_records_its_control() {
     let baseline_src = fa::read_to_string("tests/falsified.baseline")

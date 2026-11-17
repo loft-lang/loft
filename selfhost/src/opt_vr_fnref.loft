@@ -1,0 +1,293 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — the dispatch ARMS of a fn-ref call as `src/fnref.rs` answers them, with the
+// native generator's Rust spelling of a type (`src/rust_spelling.rs::rust_type`), which is what
+// it compares: `@FR-R-ValueRecord`'s gate declines every arm of a dispatch whose ABI would
+// change, so it asks the arms exactly as the native emitter builds its `match`.
+
+use ir;
+use cgen_types;
+use narrow;
+use binds;
+use bgen_image;
+
+// A `rust_type` context.
+pub const CX_VARIABLE = 0;
+pub const CX_ARGUMENT = 1;
+pub const CX_RESULT = 2;
+pub const CX_REFERENCE = 3;
+
+// One arm of a fn-ref dispatch.
+pub struct Arm {
+  pub d_nr: integer,
+  pub has_closure: boolean,
+}
+
+fn narrow_rust(kind: text) -> text {
+  if kind == "Byte" || kind == "ByteNullable" { "u8" } else if kind == "ShortRaw" || kind == "Short" || kind == "ShortFull" { "u16" } else if kind == "Int4" { "i32" } else if kind == "Int4Raw" || kind == "Int4Full" { "u32" } else { "i64" }
+}
+
+// `data::is_scalar`.
+fn is_scalar(t: ir::TypeT) -> boolean {
+  match cgen_types::base(t) {
+    TyInteger { spec: _ } => true,
+    TyFloat => true,
+    TySingle => true,
+    TyCharacter => true,
+    TyBoolean => true,
+    TyEnum { n: _, is_ref, dep: _ } => !is_ref,
+    _ => false,
+  }
+}
+
+// `native_narrow_int`: the narrow Rust type a value of this range fits unencoded, "" none.
+fn native_narrow_int(s: ir::IntegerSpec) -> text {
+  if s.min >= 0 && s.max <= 255 {
+    "u8"
+  } else if s.min >= 0 && s.max <= 65535 {
+    "u16"
+  } else if s.min >= -128 && s.max <= 127 {
+    "i8"
+  } else if s.min >= -32768 && s.max <= 32767 {
+    "i16"
+  } else {
+    ""
+  }
+}
+
+// `link_base_type`: the Rust type behind a scalar `&τ` pointer.
+fn link_base_type(inner: ir::TypeT) -> text {
+  slot = narrow::local_slot(inner);
+  if slot != null {
+    return narrow_rust(slot!.kind);
+  }
+  rust_type(cgen_types::base(inner), CX_VARIABLE)
+}
+
+// `rust_spelling::rust_type`: the native generator's Rust spelling of type `t` in `context`.
+pub fn rust_type(t: ir::TypeT, context: integer) -> text {
+  if context == CX_REFERENCE {
+    return "&{rust_type(t, CX_ARGUMENT)}";
+  }
+  match t {
+    TyRefVar { inner } => {
+      if is_scalar(inner) {
+        return "*mut {link_base_type(inner)}";
+      }
+      return "*mut {rust_type(inner, CX_VARIABLE)}";
+    },
+    _ => {},
+  }
+  match t {
+    TyInteger { spec } => {
+      if context == CX_RESULT && native_narrow_int(spec) != "" {
+        return native_narrow_int(spec);
+      }
+      "i64"
+    },
+    TyEnum { n: _, is_ref, dep: _ } => if is_ref { "DbRef" } else { "u8" },
+    TyCharacter => "i32",
+    TyNull => "i32",
+    TyText { dep: _ } => if context == CX_VARIABLE { "String" } else if context == CX_ARGUMENT { "&str" } else { "Str" },
+    TyBoolean => "u8",
+    TyFloat => "f64",
+    TySingle => "f32",
+    TyReference { n: _, dep: _ } => "DbRef",
+    TyVector { inner: _, dep: _ } => "DbRef",
+    TySorted { n: _, keys: _, dep: _ } => "DbRef",
+    TyHash { n: _, names: _, dep: _ } => "DbRef",
+    TyRadix { n: _, names: _, dep: _ } => "DbRef",
+    TyTrie { n: _, key: _, dep: _ } => "DbRef",
+    TyIndex { n: _, keys: _, dep: _ } => "DbRef",
+    TyIterator { step: _, inner: _ } => "DbRef",
+    TyRoutine { n: _ } => "u32",
+    TyFunction { args: _, result: _, dep: _, consts: _ } => "(u32, DbRef)",
+    TyUnknown { n: _ } => "??",
+    TyKeys => "&[Key]",
+    TyVoid => "()",
+    TyTuple { elems } => {
+      ec = if context == CX_RESULT { CX_VARIABLE } else { context };
+      parts: vector<text> = [for e in elems { rust_type(e, ec) }];
+      "({parts.join(", ")})"
+    },
+    TyOptional { inner } => if cgen_types::base(inner) is TyInteger { "i64" } else { rust_type(inner, context) },
+    TyRewritten { inner } => rust_type(inner, context),
+    _ => "??",
+  }
+}
+
+// `visible_fnref_attrs`: the attributes a fn-ref call's visible arguments bind, in order.
+fn visible_attrs(d: ir::Definition, user_args: integer) -> vector<ir::Attribute> {
+  out: vector<ir::Attribute> = [];
+  for a in d.attributes {
+    if a.hidden || a.name == "__closure" {
+      continue;
+    }
+    at = a.typedef[0] ?? ir::TyVoid;
+    text_link = match cgen_types::base(at) {
+      TyRefVar { inner } => cgen_types::base(inner) is TyText,
+      _ => false,
+    };
+    if text_link && len(out) >= user_args {
+      continue;
+    }
+    out += [a];
+  }
+  out
+}
+
+fn placeholder_instance(b: ir::Bundle, d: ir::Definition) -> boolean {
+  if binds::split_key_kind(d.name) != 3 {
+    return false;
+  }
+  for a in d.attributes {
+    if bgen_image::mentions_type_var(b, a.typedef[0] ?? ir::TyVoid) {
+      return true;
+    }
+  }
+  false
+}
+
+// `dispatch_arms`: the arms a call through a value of `fn_type` with `n_args` arguments can
+// dispatch to (`reachable` empty: every definition); `ok` false when it is no function type.
+pub fn dispatch_arms(b: ir::Bundle, fn_type: ir::TypeT, n_args: integer, ok: &boolean) -> vector<Arm> {
+  out: vector<Arm> = [];
+  ok = false;
+  params: vector<ir::TypeT> = [];
+  ret = ir::TyVoid;
+  match fn_type {
+    TyFunction { args, result, dep: _, consts: _ } => {
+      params = args;
+      ret = result;
+      ok = true;
+    },
+    _ => return out,
+  }
+  user = if (cgen_types::base(ret) is TyText) && n_args > len(params) { len(params) } else { n_args };
+  ret_rust = rust_type(ret, CX_RESULT);
+  want_rec = match cgen_types::base(ret) { TyReference { n, dep: _ } => n, _ => -1 };
+  for d in b.data.definitions {
+    if d.def_type != 1 || d.name.starts_with("Op") || (d.name.starts_with("n_") && d.name.find("@") != null) || placeholder_instance(b, d) {
+      continue;
+    }
+    has_closure = len(d.attributes) > 0 && d.attributes[len(d.attributes) - 1]!.name == "__closure";
+    vis = visible_attrs(d, user);
+    if len(vis) != user {
+      continue;
+    }
+    same = true;
+    for a in vis {
+      if same && a#index < len(params) && rust_type(a.typedef[0] ?? ir::TyVoid, CX_ARGUMENT) != rust_type(params[a#index]!, CX_ARGUMENT) {
+        same = false;
+      }
+    }
+    if !same {
+      continue;
+    }
+    dret = if len(d.returned) > 0 { d.returned[0]! } else { ir::TyVoid };
+    if rust_type(dret, CX_RESULT) != ret_rust {
+      continue;
+    }
+    got_rec = match cgen_types::base(dret) { TyReference { n, dep: _ } => n, _ => -1 };
+    if want_rec >= 0 && got_rec >= 0 && want_rec != got_rec {
+      continue;
+    }
+    out += [Arm { d_nr: d#index, has_closure: has_closure }];
+  }
+  out
+}
+
+// `parallel_worker_arg`: where a parallel op carries its worker — the argument index (-1 none)
+// and, in `min`, the minimum argument count.
+pub fn parallel_worker_arg(name: text, min: &integer) -> integer {
+  if name == "n_parallel_for" || name == "n_parallel_for_light" || name == "n_parallel_queue" || name == "n_parallel_queue_text" || name == "n_parallel_queue_ref" || name == "n_parallel_queue_narrow" || name == "n_parallel_queue_fn" || name == "n_parallel_discard" {
+    min = 5;
+    return 4;
+  }
+  if name == "n_parallel_fold" {
+    min = 4;
+    return 2;
+  }
+  min = 0;
+  -1
+}
+
+fn is_dbref(t: ir::TypeT) -> boolean {
+  match t {
+    TyReference { n: _, dep: _ } => true,
+    TyVector { inner: _, dep: _ } => true,
+    TySorted { n: _, keys: _, dep: _ } => true,
+    TyIndex { n: _, keys: _, dep: _ } => true,
+    TyHash { n: _, names: _, dep: _ } => true,
+    TyRadix { n: _, names: _, dep: _ } => true,
+    TyTrie { n: _, key: _, dep: _ } => true,
+    TyEnum { n: _, is_ref, dep: _ } => is_ref,
+    _ => false,
+  }
+}
+
+fn upcall_scalar(t: ir::TypeT) -> boolean {
+  match cgen_types::base(t) {
+    TyInteger { spec } => spec.forced_size == 0,
+    TyFloat => true,
+    TyBoolean => true,
+    _ => false,
+  }
+}
+
+// `upcall_carries`: can a call through a value of `fn_type` made in a compiled library reach a
+// callee by calling back into the interpreter?
+pub fn upcall_carries(fn_type: ir::TypeT) -> boolean {
+  match cgen_types::base(fn_type) {
+    TyFunction { args, result, dep: _, consts: _ } => {
+      for p in args {
+        if !(upcall_scalar(p) || (cgen_types::base(p) is TyText) || is_dbref(cgen_types::base(p))) {
+          return false;
+        }
+      }
+      rb = cgen_types::base(result);
+      (rb is TyVoid) || (rb is TyNull) || (rb is TyText) || (rb is TyReference) || (rb is TyVector) || (match rb { TyEnum { n: _, is_ref, dep: _ } => is_ref, _ => false }) || upcall_scalar(rb)
+    },
+    _ => false,
+  }
+}
+
+// `Data::is_store_text_arg`: a store kind's place handed to a `&text` parameter.
+fn store_text_arg(b: ir::Bundle, a: ir::Node) -> boolean {
+  match ir_unspan(a) {
+    NdCall { def_nr, args: _ } => {
+      if def_nr < 0 || def_nr >= len(b.data.definitions) {
+        return false;
+      }
+      def = b.data.definitions[def_nr]!;
+      def.name != "OpCreateStack" && len(def.returned) > 0 && (cgen_types::base(def.returned[0]!) is TyReference)
+    },
+    _ => false,
+  }
+}
+
+fn ir_unspan(n: ir::Node) -> ir::Node {
+  match n {
+    NdSpan { pos: _, inner } => ir_unspan(inner),
+    _ => n,
+  }
+}
+
+// `Data::store_text_mask`: the positions among `params` where a `&text` parameter is handed the
+// store kind, as a bit mask.
+pub fn store_text_mask(b: ir::Bundle, params: vector<ir::TypeT>, args: vector<ir::Node>) -> integer {
+  mask = 0;
+  for p in params {
+    i = p#index;
+    if i >= len(args) || i >= 64 {
+      break;
+    }
+    tl = match cgen_types::base(p) { TyRefVar { inner } => cgen_types::base(inner) is TyText, _ => false };
+    if tl && store_text_arg(b, args[i]!) {
+      mask = mask | (1 << i);
+    }
+  }
+  mask
+}

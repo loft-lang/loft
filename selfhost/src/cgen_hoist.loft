@@ -7,6 +7,7 @@
 // clause — a loop that writes no store holds the header of each vector it indexes, and the
 // element reads, the length and the scalar element writes go through it.
 
+use cgen_transient;
 use ir;
 use cgen_tables;
 use cgen::(Cx);
@@ -17,6 +18,8 @@ use cgen_lazy;
 use opt_below_len;
 use opt_version;
 use cgen_version;
+use cgen_deferred;
+use cgen_apart;
 use opt_length;
 use opt_facts;
 use opt_push;
@@ -79,13 +82,71 @@ pub fn held_vector(x: Cx, w: W, v: ir::Node) -> text {
 // reads, then the push headers of the paths it pushes to.  The loop's caller closes them
 // with `release`, by the two lengths it saved.
 pub fn hold_vectors(x: Cx, w: W, lp: ir::Block, ind: integer) -> opt_hoist::LoopHoist {
-  // Not in a generator, whose locals live in its frame between resumes (`verdict`).
-  if !enabled() || w.gen_elem != "" {
+  // Not in a generator, whose locals live in its frame between resumes (`verdict`), nor in a
+  // transient body or an instance-2 one.
+  if !enabled() || w.gen_elem != "" || cgen_transient::lean(w) || cgen_apart::av_any(w) {
     return opt_hoist::LoopHoist { vectors: [], pushes: [], mint_pushes: [], growth_free: false, sole_push: false, movers: [], scalars: [], declined: true };
   }
   verdict = opt_hoist::hoistable(x.b, x.writes, w.facts, w.index, lp);
   opt_hoist::with_rebound(x.b, x.writes, w.facts, w.index, lp, verdict);
   pending_grown = opt_hoist::with_grown(x.b, x.writes, w.facts, w.index, lp, verdict);
+  // `@FR-R-Apart`: a path rooted at a value held apart names no record, so it takes no header,
+  // base, push header or held scalar.
+  if cgen_apart::any(w) {
+    av: vector<opt_hoist::Held> = [];
+    for h in verdict.vectors {
+      if !cgen_apart::holds(w, h.root) {
+        av += [h];
+      }
+    }
+    verdict.vectors = av;
+    ap: vector<opt_hoist::Held> = [];
+    for h in verdict.pushes {
+      if !cgen_apart::holds(w, h.root) {
+        ap += [h];
+      }
+    }
+    verdict.pushes = ap;
+    am: vector<opt_hoist::Held> = [];
+    for h in verdict.mint_pushes {
+      if !cgen_apart::holds(w, h.root) {
+        am += [h];
+      }
+    }
+    verdict.mint_pushes = am;
+    asc: vector<opt_hoist::Scalar> = [];
+    for sc in verdict.scalars {
+      if !cgen_apart::holds(w, sc.root) {
+        asc += [sc];
+      }
+    }
+    verdict.scalars = asc;
+  }
+  // `@FR-R-DeferredCopy`: a deferred local, and a view derived from one, moves to its copy at a
+  // copy point, so no header is held for a path rooted at either.
+  if len(w.dc) > 0 {
+    kept_v: vector<opt_hoist::Held> = [];
+    for h in verdict.vectors {
+      if !cgen_deferred::root(w, h.root) {
+        kept_v += [h];
+      }
+    }
+    verdict.vectors = kept_v;
+    kept_p: vector<opt_hoist::Held> = [];
+    for h in verdict.pushes {
+      if !cgen_deferred::root(w, h.root) {
+        kept_p += [h];
+      }
+    }
+    verdict.pushes = kept_p;
+    kept_m: vector<opt_hoist::Held> = [];
+    for h in verdict.mint_pushes {
+      if !cgen_deferred::root(w, h.root) {
+        kept_m += [h];
+      }
+    }
+    verdict.mint_pushes = kept_m;
+  }
   // `@FR-R-Scalar`: each record scalar the verdict admits is read once, into a local.
   for sc in verdict.scalars {
     known = false;
@@ -267,7 +328,7 @@ fn push_bits(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, put:
 // pushes onto a path a push header is held for is one call — one room test for the run.
 // Answers the statement after the run, -1 where statement `at` starts none.
 pub fn held_push_run(x: Cx, w: W, ops: vector<ir::Node>, at: integer, end: integer, ind: integer) -> integer {
-  if w.gen_elem != "" || (env_variable("LOFT_NO_HELD_PUSH_RUN") ?? "0") != "0" {
+  if w.gen_elem != "" || cgen_transient::lean(w) || cgen_apart::av_any(w) || (env_variable("LOFT_NO_HELD_PUSH_RUN") ?? "0") != "0" {
     return -1;
   }
   shown: vector<ir::Node> = ops[0..end];
@@ -276,7 +337,7 @@ pub fn held_push_run(x: Cx, w: W, ops: vector<ir::Node>, at: integer, end: integ
     return -1;
   }
   head = push_head(x, w, first.vector);
-  if head < 0 || w.push_heads[head].size != first.size || windowed_path(w, first.path) {
+  if head < 0 || w.push_heads[head].size != first.size || windowed_path(w, first.path) || cgen_apart::holds(w, first.root) || cgen_deferred::root(w, first.root) {
     return -1;
   }
   run: vector<opt_push::Push> = [first];
@@ -402,7 +463,7 @@ pub fn pushed_op(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, 
 // the block indexes and never rebinds, hold its header — a copy of the header its source is
 // held under, or one taken from the view itself.  The frame closes with the block.
 pub fn bind_view_header(x: Cx, w: W, ops: vector<ir::Node>, at: integer, ind: integer) {
-  if w.gen_elem != "" || !enabled() || (env_variable("LOFT_NO_VIEW_HOIST") ?? "0") != "0" {
+  if w.gen_elem != "" || cgen_transient::lean(w) || !enabled() || (env_variable("LOFT_NO_VIEW_HOIST") ?? "0") != "0" {
     return;
   }
   d = opt_hoist::view_def_header(x.b, x.writes, w.index, ops, at, (env_variable("LOFT_NO_WRITE_HOIST") ?? "0") == "0");
@@ -1277,7 +1338,8 @@ pub fn kept_header_arg(x: Cx, w: W, d: integer, args: vector<ir::Node>) -> text 
 // the rebound apart headers and the growth half's — with nothing written; `ok` false where no
 // verdict is asked (a generator, `LOFT_NO_VECTOR_HOIST`).
 pub fn verdict(x: Cx, w: W, lp: ir::Block, ok: &boolean) -> opt_hoist::LoopHoist {
-  ok = enabled() && w.gen_elem == "";
+  // A twin and a region body (`@FR-R-Apart` instance 2) are written with the hoists off.
+  ok = enabled() && w.gen_elem == "" && !cgen_transient::lean(w) && !cgen_apart::av_any(w);
   v = opt_hoist::hoistable(x.b, x.writes, w.facts, w.index, lp);
   if !ok {
     return v;

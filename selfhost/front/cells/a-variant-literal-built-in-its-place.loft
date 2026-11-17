@@ -1,0 +1,21 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a variant literal written into a struct-enum field or vector element is built there (its fields set in place, then its ordinal); a unit variant, a local and a fresh call are copied into the place.
+// Prints: 0 4 9
+
+enum Sh { Dot, Circle { r: integer }, Rect { w: integer, h: integer } }
+struct H { k: integer, e: Sh }
+fn mk(n: integer) -> Sh { Circle { r: n } }
+fn area(s: Sh) -> integer { match s { Dot => 0, Circle { r } => r * r, Rect { w, h } => w * h } }
+fn main() {
+  h = H { k: 1, e: Dot };
+  h.e = Rect { w: 1, h: 7 };
+  v: vector<Sh> = [Circle { r: 1 }, Circle { r: 2 }];
+  c = Circle { r: 4 };
+  v[0] = c;
+  v[1] = mk(3);
+  v[0] = Rect { w: 2, h: 2 };
+  h.e = Dot;
+  println("{area(h.e)} {area(v[0])} {area(v[1])}");
+}

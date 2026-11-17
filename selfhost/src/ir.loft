@@ -449,6 +449,13 @@ struct Bundle {
   sql_plans: vector<ImageSqlPlan>,
   lazy_drivers: vector<ImageLazyDriver>,
   lazy_refusal: text,
+  // `Data::open_world`: an OPEN program (a live tier) takes no whole-program rewrite, so the C
+  // writer's value-record plan is empty (`Cx::value_records`).
+  open_world: boolean,
+  // Each built constant's store as the C unit writes it (`Cx::const_code`): its words, as the
+  // host's own store holds them, and how many.  The loft writer's own builder (`consts.loft`)
+  // lays a store out as the C runtime does, a valid store with other bytes.
+  consts: vector<ImageConst>,
 }
 
 // @FTR-078 — the compiler's whole IR vocabulary written as loft types: 24 `Type` variants,
@@ -456,7 +463,7 @@ struct Bundle {
 // schema for the same graph falls out of it
 // The empty bundle a program image is read into (`load.loft`).
 fn empty_bundle() -> Bundle {
-  Bundle { data: Data { definitions: [], source: 0 }, types: [], cwd: false, c_libraries: [], sidecars: [], upgrades: [], upgrade_types: [], oldest: "", bridge: "", version: "", reflect: "", tls_lines: "", sql_plans: [], lazy_drivers: [], lazy_refusal: "" }
+  Bundle { data: Data { definitions: [], source: 0 }, types: [], cwd: false, c_libraries: [], sidecars: [], upgrades: [], upgrade_types: [], oldest: "", bridge: "", version: "", reflect: "", tls_lines: "", sql_plans: [], lazy_drivers: [], lazy_refusal: "", open_world: false, consts: [] }
 }
 
 // @PLN91 the RUN image (`loft --emit-run-image`): the bytecode the Rust writer produced
@@ -672,4 +679,12 @@ struct ImageSqlCol {
 struct ImageLazyDriver {
   element: text,
   d: integer,
+}
+
+// One built constant of the image (`Bundle::consts`): its definition, its store's word count and
+// its words as the unit spells them (`Nu, Nu, …`).
+struct ImageConst {
+  d: integer,
+  n: integer,
+  words: text,
 }

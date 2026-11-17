@@ -1,0 +1,14 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a vector field of a struct enum written from a literal: a variant literal is built in the element, a unit variant copied into it (`EnumUnitLit`); the field's vector row is laid out with the struct, after the enum's variants.
+// Prints: 2 4 3
+
+struct P { n: integer }
+enum Part { PBase, PRaw { start: integer }, PRef }
+struct Box { items: vector<P>, parts: vector<Part>, k: integer }
+fn mk(n: integer) -> P { P { n: n } }
+fn main() {
+  b = Box { items: [mk(3), mk(4)], parts: [PBase, PRaw { start: 7 }, PRef], k: 1 };
+  println("{len(b.items)} {b.items[1].n} {len(b.parts)}");
+}

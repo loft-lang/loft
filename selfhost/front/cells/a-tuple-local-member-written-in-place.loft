@@ -1,0 +1,14 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a member of a tuple local is written in place: a plain scalar through its operator (`q.0 += 10`, `q.1 *= 2.0`), a scalar or text member assigned whole (`q.0 = 5`, `q.2 = "z"`).
+// Prints: 5 5 z
+
+fn main() {
+  q = (1, 2.5, "a");
+  q.0 += 10;
+  q.1 *= 2.0;
+  q.0 = 5;
+  q.2 = "z";
+  println("{q.0} {q.1} {q.2}");
+}

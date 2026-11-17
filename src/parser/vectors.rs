@@ -3986,14 +3986,23 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             fill = snapshot;
         }
         let var_tp = self.for_type(&in_type);
+        // A `_` loop's counters are its own, as a `for` statement's are: by name, every `_`
+        // comprehension's `_#index` was one variable, and a nested one advanced the outer's.
+        let counter = |p: &mut Self, suffix: &str| {
+            if id == "_" {
+                p.create_unique(suffix, &I32)
+            } else {
+                p.create_var(&format!("{id}#{suffix}"), &I32)
+            }
+        };
         let (iter_var, pre_var) = if super::collections::walks_text(&in_type) {
-            let pos_var = self.create_var(&format!("{id}#next"), &I32);
+            let pos_var = counter(self, "next");
             self.vars.defined(pos_var);
-            let index_var = self.create_var(&format!("{id}#index"), &I32);
+            let index_var = counter(self, "index");
             self.vars.defined(index_var);
             (pos_var, Some(index_var))
         } else {
-            let iv = self.create_var(&format!("{id}#index"), &I32);
+            let iv = counter(self, "index");
             self.vars.defined(iv);
             (iv, None)
         };
@@ -4001,12 +4010,26 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         // and an ended binding its spelling named is given back after the body (loft#2321).
         self.refuse_loop_shadow(&id, &src_id);
         let prior = self.vars.var(&src_id);
-        let for_var = self.create_loop_var(&id, &var_tp);
+        // `_` takes a fresh slot per loop, as a `for` statement's does (`loop_binding`): two
+        // comprehensions over different element types in one function shared one `_`, which
+        // the second retyped under the first — the interpreter read a record through an
+        // integer slot and the C backend refused the function.
+        let for_var = if id == "_" {
+            self.create_unique("_", &var_tp)
+        } else {
+            self.create_loop_var(&id, &var_tp)
+        };
         let spelling = self.ended_spelling(&src_id, prior, for_var);
-        // The body reads the name the program wrote (loft#915).
+        // The body reads the name the program wrote (loft#915); `_` names THIS loop's binding
+        // while its body is parsed, and the outer one again afterwards (loft#762).
         if id != src_id {
             self.vars.set_name(&src_id, for_var);
         }
+        let outer_discard: Option<u16> = if id == "_" && for_var != u16::MAX {
+            self.vars.set_name("_", for_var)
+        } else {
+            None
+        };
         self.vars.defined(for_var);
         self.bind_loop_variable(&iterable_fact, for_var);
         // The binders exist before the filter is parsed: it reads them.
@@ -4095,6 +4118,9 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         let body_pos = *self.lexer.peek_pos();
         let mut body = Value::Null;
         let body_type = self.parse_block("for", &mut body, &body_expected);
+        if let Some(prev) = outer_discard {
+            self.vars.set_name("_", prev);
+        }
         self.expected = saved_expected;
         self.restore_loop_spelling(spelling);
         Self::prepend_destructure(&mut body, destructure_setup, &body_type);

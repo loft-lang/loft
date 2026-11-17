@@ -19,6 +19,7 @@ use cgen_unicode;
 use consts;
 use crt;
 use cgen_store;
+use cgen_apart;
 
 // What the bodies registered (`Cx::copy_types`, `described`, `names_types`, `defaults`,
 // `enum_names`, `key_types`): per type number whether it is in the set.
@@ -27,6 +28,8 @@ pub struct Tables {
   pub described: vector<boolean>,
   pub names: boolean,
   pub defaults: vector<boolean>,
+  // The default of no type (`u16::MAX`: a value-record element an insert fills), its own table.
+  pub default_none: boolean,
   pub enums: vector<boolean>,
   pub keys: vector<boolean>,
   // The types a parse reaches (`Cx::parse_types`), each a row of `loft_ptypes`.
@@ -35,7 +38,7 @@ pub struct Tables {
 
 pub fn new_tables(b: ir::Bundle) -> Tables {
   n = len(b.types);
-  Tables { copy: [for _ in 0..n { false }], described: [for _ in 0..n { false }], names: false, defaults: [for _ in 0..n { false }], enums: [for _ in 0..n { false }], keys: [for _ in 0..n { false }], parse: [for _ in 0..n { false }] }
+  Tables { copy: [for _ in 0..n { false }], described: [for _ in 0..n { false }], names: false, defaults: [for _ in 0..n { false }], default_none: false, enums: [for _ in 0..n { false }], keys: [for _ in 0..n { false }], parse: [for _ in 0..n { false }] }
 }
 
 // `copy_type`: type `tp` and every type it reaches, in the copy table.
@@ -92,6 +95,8 @@ pub fn name_types(x: Cx) {
 pub fn default_name(x: Cx, tp: integer) -> text {
   if tp >= 0 && tp < len(x.b.types) {
     x.tables.defaults[tp] = true;
+  } else if tp == 65535 {
+    x.tables.default_none = true;
   }
   "loft_dflt{tp}"
 }
@@ -265,6 +270,11 @@ pub fn typedefs(x: Cx, names: text) -> text {
     list = if len(bytes) == 0 { "0" } else { [for v in bytes { "{v as integer}" }].join(", ") };
     out += "static const uint8_t loft_dflt{d#index}[{count}] = {{ {list} }};\n";
   }
+  if x.tables.default_none {
+    out += "static const uint8_t loft_dflt65535[1] = {{ 0 }};\n";
+  }
+  // `@FR-R-Apart` instance 2: each record of fixed-length float vectors as its value.
+  out += cgen_apart::value_typedefs(x);
   // The render functions (`show_code`), after the tuple structs `typedefs` writes between.
   // The tuple structs, in the order the unit first named them; a member that is a tuple is
   // numbered by its holder's typedef if nothing named it before.
@@ -364,6 +374,19 @@ fn const_code(x: Cx) -> text {
       continue;
     }
     d = on#index;
+    // The host's own store of the constant, where the image carries it (`Bundle::consts`): the
+    // words the Rust writer prints, its allocator's layout and all.
+    from_image = false;
+    for c in x.b.consts {
+      if c.d == d {
+        out += "static const uint32_t loft_cwords{d}[] = {{ {c.words} }};\nstatic loft_ref loft_const{d};\n";
+        init += "    loft_const{d} = loft_const_store(loft_cwords{d}, {c.n});\n";
+        from_image = true;
+      }
+    }
+    if from_image {
+      continue;
+    }
     store = consts::build_store(x.b, d);
     if store == consts::NULL_STORE {
       continue;

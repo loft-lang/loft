@@ -1,0 +1,17 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a keyed local bound from a record's keyed field, and from an `if` whose arms answer keyed locals, takes its own copy (`OpReplaceKeyed`) and borrows nothing of the source.
+// Prints: 1 2 10
+
+struct E { k: integer, v: integer }
+struct O { h: hash<E[k]>, n: integer }
+fn mk(n: integer) -> hash<E[k]> { r: hash<E[k]> = []; for i in 0..n { r += [E { k: i, v: i * 2 }]; } r }
+fn main() {
+  o = O { h: [E { k: 1, v: 10 }], n: 1 };
+  g = o.h;
+  a = mk(2);
+  b = mk(3);
+  x = if o.n > 0 { a } else { b };
+  println("{len(g)} {len(x)} {g[1].v ?? -1}");
+}

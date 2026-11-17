@@ -1,0 +1,14 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a link to a record LOCAL is the local's slot (`OpCreateStack`), typed as a link borrowing it; its fields are read and written through it as the record's are.
+// Prints: 5 7
+
+struct P { x: integer, s: text }
+fn main() {
+  c = P { x: 1, s: "c" };
+  pc = &c;
+  pc.x = 5;
+  n = pc.x + 2;
+  println("{c.x} {n}");
+}

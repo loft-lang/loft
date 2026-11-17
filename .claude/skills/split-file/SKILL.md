@@ -4,8 +4,12 @@ description: >-
   Split one over-bar source file in the loft repo into files that each hold ONE
   subject, or carve the small subjects out of a file that is mostly one. Use it for the
   release checklist's M-file-split row (the pick from `make file-sizes ARGS="--pick 2"`,
-  one or two files per monthly release), and when asked to "split", "break up" or
-  "carve out" a file. File size is never limited per PR — this is release work. The result is always a PURE MOVE in its own
+  one or two files per monthly release), for the WEEKLY split of a Rust file past the
+  5000-line ceiling (`--pick 1 --ceiling 5000`), for a `.loft` source the moment it passes
+  that ceiling (the doc_hygiene guard fails the PR — split it on the spot, the callers
+  qualifying `<part>::name`), and when asked to "split", "break up" or "carve out" a file.
+  A file a split would harm is marked `@no-split: <why>` in its header instead (in a
+  generated file's GENERATOR). The result is always a PURE MOVE in its own
   commit: no signature, behaviour or comment changes. Not for refactoring — a long function
   found on the way is split only if the split is itself a move; otherwise it keeps or
   gains a `#[expect(clippy::too_many_lines, reason = …)]` and the finding becomes an

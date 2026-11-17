@@ -29,9 +29,88 @@ use el_ex_match;
 use el_ex_vector;
 
 // `Parser::parse_code`: the body of the current definition, its result its declared return.
+// `rewrite_tail_tuple_with_work_ref`: the tail of a function answering a boxed tuple, built
+// into the work ref `w` of the `__tuple<…>` record `td` — through an `if`'s arms and a block's
+// tail; a tuple literal's members, or a tuple local's read member by member, are written at
+// their fields (`synthetic_tuple_return`).  Null for a leaf that is neither, or a member that
+// is no plain scalar, text or record.
+fn boxed_tail_into(e: el::El, vars: el_vars::Vars, n: ir::Node, w: integer, td: integer) -> ir::Node? {
+  owned = ir::TyReference { n: td, dep: [w] };
+  match n {
+    NdSpan { pos, inner } => {
+      r = boxed_tail_into(e, vars, inner, w, td);
+      return if r == null { null } else { ir::NdSpan { pos: pos, inner: r! } };
+    },
+    NdIf { cond, t, f } => {
+      a = boxed_tail_into(e, vars, t, w, td);
+      b = boxed_tail_into(e, vars, f, w, td);
+      return if a == null || b == null { null } else { ir::NdIf { cond: cond, t: a!, f: b! } };
+    },
+    NdBlock { block } => {
+      ab = block[0];
+      if ab.name != "block" || len(ab.operators) == 0 {
+        return null;
+      }
+      r = boxed_tail_into(e, vars, el_ir::last(ab.operators), w, td);
+      if r == null {
+        return null;
+      }
+      ab.operators[len(ab.operators) - 1] = r!;
+      ab.result = [owned];
+      return ir::NdBlock { block: [ab] };
+    },
+    _ => {}
+  }
+  def = el::def(e, td);
+  members: vector<ir::Node> = [];
+  match n {
+    NdTuple { items } => { members = items; },
+    NdVar { n: tv } => {
+      match el_vars::tp(vars, tv) {
+        TyTuple { elems } => {
+          for m in elems {
+            members += [ir::NdTupleGet { var: tv, idx: m#index }];
+          }
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
+  if len(members) == 0 || len(members) != len(def.attributes) {
+    return null;
+  }
+  ops: vector<ir::Node> = [el_ir::v_set(w, ir::NdNull), el_ir::cl(e, "OpDatabase", [ir::NdVar { n: w }, ir::NdInt { n: def.known_type }])];
+  for m in members {
+    full = def.attributes[m#index]!.typedef[0] ?? ir::TyVoid;
+    mt = el_types::base(full);
+    if full is TyOptional || !(el_convert::plain_scalar(mt) || mt is TyText || struct_ref(e, mt) >= 0) {
+      el::refuse(e, "a boxed tuple with a member that is no plain scalar, text or record");
+      return null;
+    }
+    ops += [el_ex_object::set_field(e, td, m#index, ir::NdVar { n: w }, m)];
+  }
+  ops += [ir::NdVar { n: w }];
+  el_ir::v_block(ops, owned, "synthetic_tuple_return")
+}
+
 pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   vars.body = body;
   result = el::def(e, e.context).returned[0];
+  vars.boxed_tail = -1;
+  if match el_types::base(result) { TyReference { n: rn } => starts_with(el::def(e, rn).name, "__tuple<"), _ => false } {
+    match e.p.nodes[body] {
+      SBlock { stmts } => {
+        if len(stmts) > 0 {
+          match e.p.nodes[stmts[-1]!] {
+            SStmt { e: se, semi } => { if !semi && se != null { vars.boxed_tail = se!; } },
+            _ => {}
+          }
+        }
+      },
+      _ => {}
+    }
+  }
   b = el_ex_assign::parse_block(e, vars, body, "return from block", result);
   // `block_result`'s conversion of a `null` tail to the declared result: the type's own null
   // (`Parser::null_value`) — the sentinel of a record or a vector, a scalar's or a text's
@@ -174,7 +253,39 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       _ => {}
     }
   }
-  rb = el_vars::var(vars, "__retbuf");
+  // `rewrite_tail_tuple_with_work_ref`: a function answering a boxed tuple builds its tail's
+  // tuple literal into a work ref of the `__tuple<…>` record (`synthetic_tuple_return`): a
+  // record member copied into its slot, a scalar set.  Any other tail is refused by name.
+  btd = match el_types::base(result) { TyReference { n: bn } => if starts_with(el::def(e, bn).name, "__tuple<") { bn } else { -1 }, _ => -1 };
+  boxed_bad = false;
+  if btd >= 0 {
+    // (Minted on the second pass alone, after the body's own work refs.)
+    bw = if e.first_pass { -1 } else { el_vars::work_ref(vars, ir::TyReference { n: btd, dep: [] }) };
+    match code {
+      NdBlock { block } => {
+        bl = block[0];
+        bdef = el::def(e, btd);
+        if len(bl.operators) == 0 {
+          boxed_bad = true;
+        }
+        if !e.first_pass && !boxed_bad {
+          owned = ir::TyReference { n: btd, dep: [bw] };
+          nt = boxed_tail_into(e, vars, el_ir::last(bl.operators), bw, btd);
+          if nt == null {
+            el::refuse(e, "a boxed tuple answered by something other than a tuple literal: {tail_kind(e, vars, code)}");
+          } else {
+            // A branch tail is answered through a `return` (as Rust's `block_result` has it).
+            bl.operators[len(bl.operators) - 1] = if el_ir::unspan(nt!) is NdIf { el_ir::respan(nt!, ir::NdReturn { inner: el_ir::unspan(nt!) }) } else { nt! };
+            bl.result = [ir::TyReference { n: btd, dep: [] }];
+            code = ir::NdBlock { block: [bl] };
+          }
+        }
+      },
+      _ => {}
+    }
+  }
+  // (A boxed tuple's body is delivered above: none of the record delivery below applies.)
+  rb = if btd >= 0 { -1 } else { el_vars::var(vars, "__retbuf") };
   // A lambda answering a record has no buffer on the first pass (it is reserved between the
   // passes): a parameter at its tail is what the result borrows, by attribute number.
   lambda = starts_with(el::def(e, e.context).name, "n___lambda_");
@@ -464,7 +575,35 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       _ => {}
     }
   }
+  // Two record tails Rust delivers by rules this port does not carry, refused by name: a view
+  // read through a `!` (copied into the buffer, `materialized_view_return`), and a `match`
+  // answering a parameter beside a variant it builds (the body then borrows the parameter).
+  if !e.first_pass && heap_def(result) >= 0 {
+    bt = el_ir::unspan(body_tail(code));
+    if bt is NdCall && under_ncr(bt) {
+      el::refuse(e, "a record tail that views its argument through a `!` read");
+    }
+    match bt {
+      NdIf { cond: _, t: mt, f: mf } => {
+        arm_built = match el_ir::unspan(mt) { NdBlock { block: mb } => mb[0].name == "match_arm", _ => false };
+        param_arm = match el_ir::unspan(mf) { NdVar { n: pv } => vars.vars[pv].argument, _ => false };
+        if arm_built && param_arm {
+          el::refuse(e, "a match tail answering a parameter beside a variant it builds");
+        }
+      },
+      _ => {}
+    }
+  }
   finish_body(e, vars, code)
+}
+
+// Is the place this read chain starts at an `ncr` block (a `!` read)?
+fn under_ncr(n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdCall { args } => len(args) > 0 && under_ncr(args[0]!),
+    NdBlock { block } => block[0].name == "ncr",
+    _ => false
+  }
 }
 
 // The table test of `Parser::work_buffer_candidate` with the definition declines a body can
@@ -1608,6 +1747,25 @@ pub fn literal_backing(vars: el_vars::Vars, v: integer) -> integer {
 // it (`OpClearVector`, the first statement moved into that insert).  Any other tail is refused
 // by name.
 pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, result: ir::TypeT) -> ir::Node {
+  // A literal tail is read against the result's element (`-> vector<u8> { [104, 101] }` holds
+  // bytes): a tail built at another element than the result names is not carried.
+  if !e.first_pass {
+    want = match el_types::base(result) { TyVector { inner: wi } => wi, _ => ir::TyVoid };
+    have = match code { NdBlock { block: cb } => match el_types::base(cb[0].result[0] ?? ir::TyVoid) { TyVector { inner: hi } => hi, _ => ir::TyVoid }, _ => ir::TyVoid };
+    // A record literal answered by a function whose vector is NULLABLE: Rust types its
+    // elements through the `?` otherwise — not carried: refused by name.
+    lit_tail = match code { NdBlock { block: ob } => match ob[0].operators[-1] ?? ir::NdNull { NdBlock { block: ib } => ib[0].name == "Vector", _ => false }, _ => false };
+    if result is TyOptional && lit_tail && el_types::base(want) is TyReference {
+      el::refuse(e, "a literal of records answered by a function whose vector is nullable");
+      return code;
+    }
+    wn = el_types::elem_name(e, want);
+    hn = el_types::elem_name(e, have);
+    if wn != "" && hn != "" && wn != hn {
+      el::refuse(e, "a vector answered at another element than the result names: {hn} for {wn}");
+      return code;
+    }
+  }
   d = e.context;
   // A trailing `return <literal>` is the literal tail it returns: delivered alike.
   if trailing_literal_return(e, vars.body) {
@@ -2079,11 +2237,13 @@ pub fn arm_delivery(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer,
   if !param && !arms {
     return null;
   }
+  // (On both passes: an arm the first pass's syntax did not see as deliverable — a literal of
+  // a record local — still delivers into the buffer on the second.)
+  ret = el::def(e, d).returned[0];
+  if !el_types::deps(ret).contains(ba) {
+    e.b.data.definitions[d].returned = [el_types::with_deps(ret, el_types::deps(ret) + [ba])];
+  }
   if e.first_pass {
-    ret = el::def(e, d).returned[0];
-    if !el_types::deps(ret).contains(ba) {
-      e.b.data.definitions[d].returned = [el_types::with_deps(ret, el_types::deps(ret) + [ba])];
-    }
     return code;
   }
   // A `null` arm of a vector that is not declared nullable is delivered another way (the
@@ -2104,6 +2264,11 @@ pub fn arm_delivery(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer,
     bl.operators[-1] = el_ir::v_block([el_ir::cl(e, "OpClearVector", [b]), el_ir::cl(e, "OpAppendVector", [b, tail, ir::NdInt { n: rec }]), b], own, "borrow_tail_copy_104");
     if result is TyOptional && !((bl.result[0] ?? ir::TyVoid) is TyOptional) {
       bl.result = [ir::TyOptional { inner: bl.result[0] ?? ir::TyVoid }];
+    }
+    // A nullable result's body borrows the parameter its tail reads, as the dense twin's does.
+    troot = match tail { NdVar { n: tn } => tn, _ => place_root(e, tail) };
+    if result is TyOptional && troot >= 0 {
+      bl.result = [ir::TyOptional { inner: el_types::with_deps(el_types::without_deps(el_types::base(result)), [troot]) }];
     }
     return ir::NdBlock { block: [bl] };
   }

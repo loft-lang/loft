@@ -493,7 +493,7 @@ pub(crate) const DBTYPE_LINKED: u32 = 33;
 /// the program declared `#cwd` at `BUNDLE_CWD`.
 pub(crate) const BUNDLE_DATA: u32 = 0;
 pub(crate) const BUNDLE_TYPES: u32 = 32; // right after the inlined 32-byte `Data`
-pub(crate) const BUNDLE_CWD: u32 = 84;
+pub(crate) const BUNDLE_CWD: u32 = 88;
 /// `c_libraries: vector<ImageCLib>` (@PLN91 strand 12): the program's C libraries, for the
 /// loft-written C writer's `#c` bindings.
 pub(crate) const BUNDLE_C_LIBRARIES: u32 = 36;
@@ -513,8 +513,14 @@ pub(crate) const BUNDLE_TLS_LINES: u32 = 68;
 pub(crate) const BUNDLE_SQL_PLANS: u32 = 72;
 pub(crate) const BUNDLE_LAZY_DRIVERS: u32 = 76;
 pub(crate) const BUNDLE_LAZY_REFUSAL: u32 = 80;
+/// `Data::open_world` (@PLN91 strand 12): an open program takes no whole-program rewrite, so
+/// the loft-written C writer plans no value records for it, as `Cx::value_records` plans none.
+pub(crate) const BUNDLE_OPEN_WORLD: u32 = 89;
+/// `consts: vector<ImageConst>` (@PLN91 strand 12): each built constant's store words as the
+/// unit spells them (`c::const_words`), for the loft-written C writer.
+pub(crate) const BUNDLE_CONSTS: u32 = 84;
 /// The bundle root's size in bytes, and its claim in words (see `DATA_ROOT_WORDS`).
-pub(crate) const BUNDLE_STRIDE: u32 = 88;
+pub(crate) const BUNDLE_STRIDE: u32 = 96;
 
 /// `ImageCLib { name, pkg_dir: text, optional: boolean, shim: text, … }` — one `c_libs::CLibrary`
 /// (the shim's sources, one path per line) and what the host resolved for the C writer.
@@ -544,6 +550,11 @@ pub(crate) const IMAGESQLCOL_COLUMN: u32 = 8;
 pub(crate) const IMAGELAZYDRIVER_STRIDE: u32 = 16;
 pub(crate) const IMAGELAZYDRIVER_D: u32 = 0;
 pub(crate) const IMAGELAZYDRIVER_ELEMENT: u32 = 8;
+/// `ImageConst { d, n: integer, words: text }` — one built constant's store.
+pub(crate) const IMAGECONST_STRIDE: u32 = 24;
+pub(crate) const IMAGECONST_D: u32 = 0;
+pub(crate) const IMAGECONST_N: u32 = 8;
+pub(crate) const IMAGECONST_WORDS: u32 = 16;
 pub(crate) const IMAGECLIB_NAME: u32 = 0;
 pub(crate) const IMAGECLIB_PKG_DIR: u32 = 4;
 pub(crate) const IMAGECLIB_SHIM: u32 = 8;
@@ -1913,6 +1924,8 @@ mod tests {
         assert_eq!(pos(ids.bundle, "sql_plans"), BUNDLE_SQL_PLANS);
         assert_eq!(pos(ids.bundle, "lazy_drivers"), BUNDLE_LAZY_DRIVERS);
         assert_eq!(pos(ids.bundle, "lazy_refusal"), BUNDLE_LAZY_REFUSAL);
+        assert_eq!(pos(ids.bundle, "open_world"), BUNDLE_OPEN_WORLD);
+        assert_eq!(pos(ids.bundle, "consts"), BUNDLE_CONSTS);
         assert_eq!(
             u32::from(stores.size(ids.image_sql_plan)),
             IMAGESQLPLAN_STRIDE
@@ -1938,6 +1951,10 @@ mod tests {
             IMAGELAZYDRIVER_STRIDE
         );
         assert_eq!(pos(ids.image_lazy_driver, "d"), IMAGELAZYDRIVER_D);
+        assert_eq!(u32::from(stores.size(ids.image_const)), IMAGECONST_STRIDE);
+        assert_eq!(pos(ids.image_const, "d"), IMAGECONST_D);
+        assert_eq!(pos(ids.image_const, "n"), IMAGECONST_N);
+        assert_eq!(pos(ids.image_const, "words"), IMAGECONST_WORDS);
         assert_eq!(
             pos(ids.image_lazy_driver, "element"),
             IMAGELAZYDRIVER_ELEMENT

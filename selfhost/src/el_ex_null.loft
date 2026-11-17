@@ -31,6 +31,16 @@ use el_ex_vector;
 use el_compare;
 
 pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
+  // `@FR-B-Ref-Uniform`: a link to a scalar place is read as the value it names (`p ?? 0`
+  // on a `p: &integer?`).
+  match x.tp {
+    TyRefVar { inner: li } => {
+      if el_convert::plain_scalar(el_types::base(li)) {
+        return coalesce_with(e, vars, ex(x.code, li), d);
+      }
+    },
+    _ => {}
+  }
   if el_types::is_unknown(x.tp) || el_types::is_unknown(d.tp) {
     // `build_null_coalesce_default` holds a subject that is no local in a `__ncc_N` whatever
     // its type, so a call to a function declared below mints it on the first pass too: it
@@ -560,6 +570,14 @@ pub fn var_attr(e: el::El, vars: el_vars::Vars, var: text, attr: text, arg: inte
       return ex(ir::NdVar { n: c }, ir::TyInteger { spec: i32_spec() });
     }
   }
+  // `d#lock` on a record or vector local reads its store's lock (`n_get_store_lock`).
+  if attr == "lock" && arg == null && tp == null {
+    kv = el_vars::var(vars, var);
+    if kv >= 0 && (e.first_pass || el_types::base(el_vars::tp(vars, kv)) is TyReference || el_types::base(el_vars::tp(vars, kv)) is TyVector) {
+      el_vars::in_use(vars, kv, true);
+      return ex(el_ir::cl(e, "n_get_store_lock", [ir::NdVar { n: kv }]), ir::TyBoolean);
+    }
+  }
   el::refuse(e, "a variable attribute: #{attr}");
   ex(ir::NdNull, ir::TyUnknown { n: 0 })
 }
@@ -665,6 +683,12 @@ pub fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: intege
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   if e.first_pass {
+    // A subject that is no local is held in its `_ncr_N` on this pass too: the variable takes
+    // its number here, before the second pass's stores and closures (a closure's type names
+    // its record's variable by number).
+    if !(el_ir::unspan(x.code) is NdVar) && !(e.p.nodes[pe!] is SName) {
+      el_vars::create_unique(vars, "ncr", b);
+    }
     return ex(ir::NdNull, ncr_type(e, x.code, b));
   }
   // A vector is tested with `OpVectorIsNull` (`handle_present`'s collection arm), held as read.

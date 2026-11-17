@@ -1,0 +1,22 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a struct-enum field written whole from a local, another record's field and a fresh call: the value's record copied into the field's bytes (`OpCopyRecord`), the call's store freed after.
+// Prints: 16 6 25 25
+
+enum Sh { Dot, Circle { r: integer }, Rect { w: integer, h: integer } }
+struct H { k: integer, e: Sh }
+fn mk(n: integer) -> Sh { Circle { r: n } }
+fn area(s: Sh) -> integer { match s { Dot => 0, Circle { r } => r * r, Rect { w, h } => w * h } }
+fn main() {
+  h = H { k: 1, e: Dot };
+  g = H { k: 2, e: Rect { w: 2, h: 3 } };
+  c = Circle { r: 4 };
+  h.e = c;
+  a = area(h.e);
+  h.e = g.e;
+  b = area(h.e);
+  h.e = mk(5);
+  d = area(h.e);
+  println("{a} {b} {d} {area(h.e)}");
+}

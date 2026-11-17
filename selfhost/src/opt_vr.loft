@@ -1,0 +1,479 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `@FR-R-ValueRecord`'s program PLAN, as `src/opt/value_records/mod.rs`'s
+// `value_records(data, stores, false)` decides it for the C writer: the functions whose no-heap
+// record result, and the parameters whose record argument, travel BY VALUE.  Candidates by
+// result type; the fn-ref dispatch arms declined or grouped; then a fixpoint that only removes —
+// the presence carried, the body gate, the site gate, the parameter gate.
+//
+// The view-leaf clause (@PLN164 C5) is carried for the null view (`opt_vr_view`); an exit
+// that fills a view field by an append declines its function.
+
+use ir;
+use loop_shape;
+use cgen_types;
+use el_ir;
+use own;
+use types;
+use opt_writes;
+use opt_vr_layout;
+use opt_vr_fnref;
+use opt_vr_shape;
+use opt_vr_leaves;
+use opt_vr_locals;
+use opt_vr_sites;
+use opt_vr_view;
+use opt_vr_disturb;
+
+fn view_field_on() -> boolean {
+  (env_variable("LOFT_NO_VIEW_FIELD") ?? "0") == "0"
+}
+
+fn kids(n: ir::Node) -> vector<ir::Node> {
+  opt_vr_shape::kids(n)
+}
+
+fn has_tuple_param(d: ir::Definition) -> boolean {
+  for a in d.attributes {
+    if !a.hidden && (cgen_types::base(a.typedef[0] ?? ir::TyVoid) is TyTuple) {
+      return true;
+    }
+  }
+  false
+}
+
+fn has_view_part(vr: opt_vr_layout::ValueRecords, key: integer) -> boolean {
+  at = opt_vr_layout::type_at(vr, key);
+  if at < 0 {
+    return false;
+  }
+  for rt in vr.types[at]!.rts {
+    if opt_vr_layout::is_view_part(rt) {
+      return true;
+    }
+  }
+  false
+}
+
+// The fn-ref scan's findings.
+struct Scan {
+  arms: vector<boolean>,
+  grouped: vector<boolean>,
+  targets: vector<boolean>,
+}
+
+fn scan_fnrefs(b: ir::Bundle, vr: opt_vr_layout::ValueRecords, s: Scan) {
+  for def in b.data.definitions {
+    if len(def.code) == 0 || (def.code[0]! is NdNull) || def.def_type == 9 {
+      continue;
+    }
+    sf_walk(b, vr, def, def#index, loop_shape::unspan(def.code[0]!), s);
+  }
+}
+
+fn sf_walk(b: ir::Bundle, vr: opt_vr_layout::ValueRecords, def: ir::Definition, d: integer, n: ir::Node, s: Scan) {
+  match n {
+    NdFnRef { def_nr, var: _, t: _ } => {
+      if def_nr >= 0 && def_nr < len(b.data.definitions) {
+        s.targets[def_nr] = true;
+      }
+    },
+    NdCallRef { var, args } => {
+      if var < len(def.variables.variables) {
+        vt = def.variables.variables[var]!.type_def[0] ?? ir::TyVoid;
+        ok = false;
+        found = opt_vr_fnref::dispatch_arms(b, vt, len(args), ok);
+        if ok {
+          ds: vector<integer> = [for a in found { a.d_nr }];
+          if site_listed(b, vt, args, found) {
+            rec = match cgen_types::base(vt) {
+              TyFunction { args: _, result, dep: _, consts: _ } => opt_vr_layout::plain_record_type(b, result),
+              _ => -1,
+            };
+            for x in ds {
+              s.grouped[x] = true;
+            }
+            replaced = false;
+            for st in vr.sites {
+              if st.caller == d && st.v == var {
+                vr.sites[st#index].arms = ds;
+                vr.sites[st#index].rec = rec;
+                replaced = true;
+              }
+            }
+            if !replaced {
+              vr.sites += [opt_vr_layout::VSite { caller: d, v: var, arms: ds, rec: rec }];
+            }
+          } else {
+            for x in ds {
+              s.arms[x] = true;
+            }
+          }
+        }
+      }
+    },
+    NdCall { def_nr, args } => {
+      if def_nr >= 0 && def_nr < len(b.data.definitions) {
+        min = 0;
+        i = opt_vr_fnref::parallel_worker_arg(b.data.definitions[def_nr]!.name, min);
+        if i >= 0 && len(args) >= min {
+          match loop_shape::unspan(args[i]!) {
+            NdInt { n: w } => if w >= 0 && w < len(s.arms) { s.arms[w] = true; },
+            _ => {},
+          }
+        }
+      }
+    },
+    _ => {},
+  }
+  for k in kids(n) {
+    sf_walk(b, vr, def, d, k, s);
+  }
+}
+
+// `fnref_site_listed`: is a call through a value of `fn_type` a listed site?
+fn site_listed(b: ir::Bundle, fn_type: ir::TypeT, args: vector<ir::Node>, arms: vector<opt_vr_fnref::Arm>) -> boolean {
+  if !opt_vr_layout::fnref_value_on() || len(arms) == 0 {
+    return false;
+  }
+  for a in arms {
+    if a.has_closure {
+      return false;
+    }
+  }
+  match cgen_types::base(fn_type) {
+    TyFunction { args: params, result, dep: _, consts: _ } => {
+      if opt_vr_fnref::store_text_mask(b, params, args) != 0 {
+        return false;
+      }
+      if opt_vr_layout::plain_record_type(b, result) >= 0 {
+        return true;
+      }
+      for p in params {
+        if opt_vr_layout::plain_record_type(b, p) >= 0 {
+          return true;
+        }
+      }
+      false
+    },
+    _ => false,
+  }
+}
+
+fn count_keys(cand: vector<integer>) -> integer {
+  n = 0;
+  for k in cand {
+    if k >= 0 {
+      n += 1;
+    }
+  }
+  n
+}
+
+fn presence_keys(cand: vector<integer>, params: vector<opt_vr_layout::VParam>) -> integer {
+  n = 0;
+  for k in cand {
+    if opt_vr_layout::is_nullable_layout(k) {
+      n += 1;
+    }
+  }
+  for p in params {
+    if opt_vr_layout::is_nullable_layout(p.key) {
+      n += 1;
+    }
+  }
+  n
+}
+
+fn calls_admitted(n: ir::Node, cand: vector<integer>) -> boolean {
+  match loop_shape::unspan(n) {
+    NdCall { def_nr, args: _ } => if opt_vr_shape::at(cand, def_nr) >= 0 { return true; },
+    _ => {},
+  }
+  for k in kids(n) {
+    if calls_admitted(k, cand) {
+      return true;
+    }
+  }
+  false
+}
+
+fn var_named(f: ir::Function, nm: text) -> integer {
+  for e in f.names {
+    if e.name == nm {
+      return e.nr;
+    }
+  }
+  -1
+}
+
+// `value_records(data, stores, false)`: the program's plan.
+pub fn plan(b: ir::Bundle, w: opt_writes::Writes, ops: own::Ops) -> opt_vr_layout::ValueRecords {
+  vr = opt_vr_layout::no_records();
+  vr.asked = true;
+  n = len(b.data.definitions);
+  vr.fns = [for _ in 0..n { -1 }];
+  vr.sp = [for _ in 0..n { false }];
+  if opt_vr_layout::value_record_disabled() {
+    return vr;
+  }
+  views_ok = view_field_on();
+  // The callee half of `(B-Disturb)` the view leaves read, built once on first need.
+  dmap: vector<opt_vr_disturb::DPlace> = [];
+  dmap_built = false;
+  cand: vector<integer> = [for _ in 0..n { -1 }];
+  for def in b.data.definitions {
+    if def.def_type != 1 || len(def.code) == 0 || (def.code[0]! is NdNull) {
+      continue;
+    }
+    ret = if len(def.returned) > 0 { def.returned[0]! } else { ir::TyVoid };
+    rd = match opt_vr_layout::peel_link(ret) { TyReference { n: r, dep: _ } => r, _ => -1 };
+    if rd < 0 || has_tuple_param(def) {
+      continue;
+    }
+    nullable = ret is TyOptional;
+    if nullable && opt_vr_layout::nullable_value_record_disabled() {
+      continue;
+    }
+    inner = match ret { TyOptional { inner: i2 } => i2, _ => ret };
+    tp = opt_vr_layout::plain_record_type(b, inner);
+    if tp < 0 {
+      continue;
+    }
+    heap = types::owns_heap(b.types, tp);
+    if heap && !views_ok {
+      continue;
+    }
+    if nullable && heap {
+      continue;
+    }
+    if !opt_vr_layout::has_type(vr, tp) && !opt_vr_layout::type_layout(b, rd, tp, views_ok, vr) {
+      continue;
+    }
+    key = tp;
+    if nullable {
+      nkey = opt_vr_layout::nullable_layout(tp);
+      if nkey < 0 {
+        continue;
+      }
+      opt_vr_layout::add_nullable_layout(vr, tp, nkey);
+      key = nkey;
+    }
+    cand[def#index] = key;
+  }
+  opt_vr_layout::tuple_param_candidates(b, w, vr);
+  if count_keys(cand) == 0 && len(vr.params) == 0 {
+    return vr;
+  }
+  s = Scan { arms: [for _ in 0..n { false }], grouped: [for _ in 0..n { false }], targets: [for _ in 0..n { false }] };
+  scan_fnrefs(b, vr, s);
+  for t in s.targets {
+    if t && !s.grouped[t#index]! {
+      s.arms[t#index] = true;
+    }
+  }
+  for a in s.arms {
+    if a {
+      cand[a#index] = -1;
+    }
+  }
+  vr.params = keep_params(vr.params, s.arms, false);
+  vr.params = opt_vr_sites::close_fnref_groups(vr.sites, cand, vr.params);
+  frozen: vector<boolean> = [for a in s.arms { a || s.grouped[a#index]! }];
+  vr.params = keep_params(vr.params, frozen, true);
+  site_owner: vector<boolean> = [for _ in 0..n { false }];
+  for st in vr.sites {
+    site_owner[st.caller] = true;
+  }
+  for _ in 0..n + 2 {
+    before_c = count_keys(cand);
+    before_p = len(vr.params);
+    before_k = presence_keys(cand, vr.params);
+    if !opt_vr_layout::nullable_value_record_disabled() {
+      for _ in 0..n + 2 {
+        sp0 = opt_vr_shape::surely_present_fns(b, ops, cand, vr.params, vr.sites);
+        if !opt_vr_locals::promote_presence(b, vr, cand, frozen, sp0) {
+          break;
+        }
+      }
+    }
+    admitted = [for k in cand { k }];
+    sp = opt_vr_shape::surely_present_fns(b, ops, admitted, vr.params, vr.sites);
+    for k in admitted {
+      if k < 0 {
+        continue;
+      }
+      d = k#index;
+      why = opt_vr_locals::value_body(b, ops, d, vr, admitted, sp);
+      if why == "" && has_view_part(vr, k) {
+        if b.data.definitions[d]!.pub_visible {
+          why = "a view leaf would cross a library API (R-Escape)";
+        } else {
+          vlocals = opt_vr_locals::value_locals_in(b, ops, d, vr, admitted, sp);
+          vbody = b.data.definitions[d]!.code[0]!;
+          vsz = opt_vr_shape::sizes(vbody);
+          vleaves = opt_vr_leaves::collect_leaves(b, vbody, vsz, vlocals, true);
+          vok = false;
+          if !dmap_built {
+            dmap = opt_vr_disturb::params_map(b);
+            dmap_built = true;
+          }
+          plan_d = opt_vr_view::view_leaf_plan(b, ops, dmap, vr, d, vleaves, k, vok);
+          if vok {
+            kept_v: vector<opt_vr_layout::VView> = [];
+            for x in vr.views {
+              if x.d != d {
+                kept_v += [x];
+              }
+            }
+            vr.views = kept_v + plan_d;
+          } else {
+            why = "a heap field is not a view leaf";
+          }
+        }
+      }
+      if why != "" {
+        cand[d] = -1;
+      }
+    }
+    admitted2 = [for k in cand { k }];
+    sp2 = opt_vr_shape::surely_present_fns(b, ops, admitted2, vr.params, vr.sites);
+    declined: vector<boolean> = [for _ in 0..n { false }];
+    declined_params: vector<integer> = [];
+    for cdef in b.data.definitions {
+      caller = cdef#index;
+      if len(cdef.code) == 0 || (cdef.code[0]! is NdNull) {
+        continue;
+      }
+      has_p = opt_vr_layout::has_params(vr, caller);
+      if admitted2[caller]! < 0 && !has_p && !site_owner[caller]! && !calls_admitted(cdef.code[0]!, admitted2) {
+        continue;
+      }
+      locals = opt_vr_locals::value_locals_in(b, ops, caller, vr, admitted2, sp2);
+      own_d = if admitted2[caller]! >= 0 { caller } else { -1 };
+      c = opt_vr_shape::Ctx { b: b, ops: ops, d: caller, admitted: admitted2, params: vr.params, locals: locals, own: own_d, sites: vr.sites, sp: sp2 };
+      opt_vr_sites::site_walk(c, cdef.code[0]!, if own_d >= 0 { opt_vr_sites::POS_TAIL } else { opt_vr_sites::POS_OPERAND }, declined);
+      if len(vr.views) > 0 {
+        opt_vr_view::view_sites_declined(b, dmap, caller, vr.views, admitted2, locals, vr, declined);
+      }
+      if has_p {
+        body = cdef.code[0]!;
+        sz = opt_vr_shape::sizes(body);
+        served = opt_vr_leaves::served_reads(b, body, sz, locals, own_d >= 0);
+        no_objects: vector<boolean> = [for _ in sz { false }];
+        for p in vr.params {
+          if p.d != caller {
+            continue;
+          }
+          pv = if p.idx < len(cdef.attributes) { var_named(cdef.variables, cdef.attributes[p.idx]!.name) } else { -1 };
+          if pv < 0 || !opt_vr_locals::local_uses_ok(c, vr, body, sz, pv, served, opt_vr_locals::view_offs(vr, p.key), false, no_objects, no_objects) {
+            declined_params += [caller, p.idx];
+          }
+        }
+      }
+    }
+    for dd in declined {
+      if dd {
+        cand[dd#index] = -1;
+      }
+    }
+    if len(declined_params) > 0 {
+      kept_p: vector<opt_vr_layout::VParam> = [];
+      for p in vr.params {
+        if !declined_pair(declined_params, p.d, p.idx) {
+          kept_p += [p];
+        }
+      }
+      vr.params = kept_p;
+    }
+    vr.params = opt_vr_sites::close_fnref_groups(vr.sites, cand, vr.params);
+    if count_keys(cand) == before_c && len(vr.params) == before_p && presence_keys(cand, vr.params) == before_k {
+      break;
+    }
+  }
+  vr.sp = opt_vr_shape::surely_present_fns(b, ops, cand, vr.params, vr.sites);
+  vr.fns = cand;
+  kept_views: vector<opt_vr_layout::VView> = [];
+  for x in vr.views {
+    if cand[x.d]! >= 0 {
+      kept_views += [x];
+    }
+  }
+  vr.views = kept_views;
+  vr
+}
+
+fn declined_pair(list: vector<integer>, d: integer, idx: integer) -> boolean {
+  for x in list {
+    if x#index % 2 == 0 && x == d && list[x#index + 1]! == idx {
+      return true;
+    }
+  }
+  false
+}
+
+// The parameters left when those of the functions `out` marks leave — all of them, or (`nullable`)
+// only their nullable ones.
+fn keep_params(params: vector<opt_vr_layout::VParam>, out: vector<boolean>, nullable: boolean) -> vector<opt_vr_layout::VParam> {
+  kept: vector<opt_vr_layout::VParam> = [];
+  for p in params {
+    if out[p.d]! && (!nullable || opt_vr_layout::is_nullable_layout(p.key)) {
+      continue;
+    }
+    kept += [p];
+  }
+  kept
+}
+
+// The plan as lines (`fn <name> <key>`, `param <name> <attribute> <key>`), for comparison with
+// the Rust writer's trace.
+pub fn describe(b: ir::Bundle, vr: opt_vr_layout::ValueRecords) -> vector<text> {
+  out: vector<text> = [];
+  for k in vr.fns {
+    if k >= 0 {
+      out += ["fn {b.data.definitions[k#index]!.name} {k}"];
+    }
+  }
+  for p in vr.params {
+    d = b.data.definitions[p.d]!;
+    out += ["param {d.name} {if p.idx < len(d.attributes) { d.attributes[p.idx]!.name } else { "?" }} {p.key}"];
+  }
+  out
+}
+
+// The plan the C writes from (`Cx::value_records`): the program-wide plan, or an empty one when
+// a fn-ref dispatch would answer a tuple or an arm of a listed dispatch is admitted or takes a
+// tuple parameter — the C does not write that dispatch yet, and takes the plan whole or not at
+// all.
+pub fn c_plan(b: ir::Bundle, w: opt_writes::Writes, ops: own::Ops) -> opt_vr_layout::ValueRecords {
+  // An OPEN program takes no whole-program rewrite (NATIVE.md § Optimisation tiers).
+  if b.open_world {
+    e0 = opt_vr_layout::no_records();
+    e0.asked = true;
+    e0.fns = [for _ in b.data.definitions { -1 }];
+    e0.sp = [for _ in b.data.definitions { false }];
+    return e0;
+  }
+  vr = plan(b, w, ops);
+  fnref = false;
+  for s in vr.sites {
+    if opt_vr_layout::fnref_value(vr, vr.fns, s.caller, s.v) >= 0 {
+      fnref = true;
+    }
+    for a in s.arms {
+      if (vr.fns[a] ?? -1) >= 0 || opt_vr_layout::has_params(vr, a) {
+        fnref = true;
+      }
+    }
+  }
+  if !fnref {
+    return vr;
+  }
+  e = opt_vr_layout::no_records();
+  e.asked = true;
+  e.fns = [for _ in vr.fns { -1 }];
+  e.sp = [for _ in vr.fns { false }];
+  e
+}

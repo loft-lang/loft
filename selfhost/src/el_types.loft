@@ -767,6 +767,26 @@ pub fn tuple_member(t: ir::TypeT) -> text {
   }
 }
 
+// `tuple_spelling` where a member may be a plain struct, named by its definition.
+pub fn tuple_spelling_e(e: el::El, elems: vector<ir::TypeT>, sep: text) -> text {
+  r = "";
+  for t in elems {
+    m = tuple_member(t);
+    if m == "" {
+      m = match t { TyReference { n, dep } => if n >= 0 && len(dep) == 0 && el::def(e, n).def_type == el::DT_STRUCT && !starts_with(el::def(e, n).name, "__") { el::def(e, n).name } else { "" }, _ => "" };
+    }
+    // A narrow integer member is spelled by its range (`integer(0, 255)`).
+    if m == "" {
+      m = match t { TyInteger { spec: ns } => if narrow_width(ns) > 0 { "integer({ns.min}, {ns.max})" } else { "" }, _ => "" };
+    }
+    if m == "" {
+      return "";
+    }
+    r = if t#index == 0 { m } else { "{r}{sep}{m}" };
+  }
+  r
+}
+
 // The members' spellings joined as a tuple names them (`integer,text`), or "" for a member
 // this port does not carry.
 pub fn tuple_spelling(elems: vector<ir::TypeT>, sep: text) -> text {

@@ -177,7 +177,9 @@ pub fn takes_record_buffer(e: el::El, d: integer, rd: integer) -> boolean {
 // Is local `v` a link to a plain scalar (`n: &integer`)?
 pub fn scalar_link(vars: el_vars::Vars, v: integer) -> boolean {
   match el_vars::tp(vars, v) {
-    TyRefVar { inner } => el_convert::plain_scalar(inner),
+    // (A nullable scalar, a plain enum and a nullable text are written whole the same way:
+    // the value converted to the place's type, `null` its null.)
+    TyRefVar { inner } => el_convert::plain_scalar(el_types::base(inner)) || el_convert::plain_enum(el_types::base(inner)) || (inner is TyOptional && el_types::base(inner) is TyText),
     _ => false
   }
 }
@@ -260,7 +262,7 @@ pub fn link_argument(e: el::El, vars: el_vars::Vars, arg: ir::Node, at: ir::Type
   }
   // A vector local is linked as any local is; a keyed collection's link (its appends and
   // lookups through `&`) is not carried yet.
-  if el_types::is_collection(vt) && !(el_types::base(vt) is TyVector) {
+  if el_types::is_collection(vt) && !(el_types::base(vt) is TyVector) && !(el_types::base(vt) is TyHash) && !(el_types::base(vt) is TySorted) && !(el_types::base(vt) is TyIndex) {
     el::refuse(e, "a keyed collection local handed to a `&` parameter");
     return null;
   }
@@ -872,8 +874,9 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
   }
   // The destination's element temp, minted on both passes as the literal path mints it.
   el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [v] });
-  if len(binds) != 1 || body == null || binds[0] == "_" || e.p.nodes[source] is SVecLit {
-    el::refuse(e, "a comprehension over a literal, or with destructuring or `_`");
+  // (A literal source is its value block, walked as a local's vector is.)
+  if len(binds) != 1 || body == null {
+    el::refuse(e, "a comprehension with destructuring or `_`");
     return ex(ir::NdNull, ir::TyVoid);
   }
   src_id = binds[0];
@@ -921,7 +924,16 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
   }
   // A vector walk's counter is `id#index` for a `_` binding too (`_#index`).
   idx = if ranged { rw!.idx } else if sliced { ss!.idx } else { el_ex_pattern::loop_index(vars, id, named: true) };
-  lv = loop_var(vars, src_id, id, if ranged || sliced { elem } else { el_types::with_deps(elem, [vec]) });
+  // (A `_` over a range is carried only where it fills, and Rust's fill mints no `__N` for
+  // it: the walk's variable here is a nameless stand-in that takes no number of that family.)
+  lv = -1;
+  if src_id == "_" && ranged {
+    lv = el_vars::add_variable(vars, "__fill_binding", elem);
+    el_vars::set_defined(vars, lv);
+    vars.loop_vars += [lv];
+  } else {
+    lv = loop_var(vars, src_id, id, if ranged || sliced { elem } else { el_types::with_deps(elem, [vec]) });
+  }
   vars.active_loops += [lv];
   vars.active_values += [if sliced { ir::NdNull } else { x.code }];
   fc = el_ex_pattern::loop_filter(e, vars, filter);
@@ -957,6 +969,11 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
       },
       _ => {}
     }
+  }
+  // A `_` binding is carried where the comprehension fills; any other walk names its element.
+  if src_id == "_" && fill_count < 0 {
+    el::refuse(e, "a comprehension with destructuring or `_`");
+    return ex(ir::NdNull, ir::TyVoid);
   }
   if ranged && fill_count < 0 && (constant_body(e, b.code) || (filter != null && rw!.constant)) {
     el::refuse(e, "a range comprehension that fills or unrolls a constant");
@@ -1350,7 +1367,35 @@ pub fn block_ends_null(n: ir::Node) -> boolean {
   }
 }
 
+// `Function::match_subject` (@FR-M-Match, loft#2520): the temp a `match` reads its subject into,
+// named for its SITE — the first pass's number for the site on both passes; a site the first
+// pass did not mint at (its subject typed only on the second) takes `_match_subj_late_N`.
+pub fn match_subject(e: el::El, vars: el_vars::Vars, t: ir::TypeT) -> integer {
+  key = e.context * 1048576 + vars.match_site;
+  if e.first_pass {
+    v = el_vars::create_unique(vars, "match_subj", t);
+    if vars.match_site >= 0 && !e.subject_sites.contains(key) {
+      e.subject_sites += [key];
+      e.subject_names += [el_vars::name_of(vars, v)];
+    }
+    return v;
+  }
+  for k in e.subject_sites {
+    if k == key && vars.match_site >= 0 {
+      w = el_vars::add_variable(vars, e.subject_names[k#index] ?? "", t);
+      el_vars::set_var_type(vars, w, t);
+      return w;
+    }
+  }
+  // Rust's first pass reads such a match's arms all the same, minting their temporaries; this
+  // port's first pass skips an untyped match, so the arms' work texts number otherwise — not
+  // carried: refused by name (the temp keeps Rust's name).
+  el::refuse(e, "a match whose subject is typed only on the second pass");
+  el_vars::create_unique(vars, "match_subj_late", t)
+}
+
 pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<integer>, node: integer = -1) -> Ex {
+  vars.match_site = subject;
   // A bind's right-hand side (`r = match …`): Rust writes each arm into the destination.
   at_bind = node >= 0 && vars.expect_node == node;
   x = el_ex_assign::expression(e, vars, subject);
@@ -1386,7 +1431,7 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
     // A call answering a view of its arguments keeps what it borrows of them the same way.
     view_call = match el_ir::unspan(x.code) { NdCall { def_nr } => returns_argument_view(el::def(e, def_nr)), _ => false };
     ht = if view_call || match e.p.nodes[subject] { SPostfix { op } => op == "!", _ => false } { st } else { el_types::without_deps(st) };
-    held = el_vars::create_unique(vars, "match_subj", ht);
+    held = match_subject(e, vars, ht);
     el_vars::set_defined(vars, held);
     held_set = el_ir::v_set(held, x.code);
     x = ex(ir::NdVar { n: held }, ht);
@@ -1431,7 +1476,7 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
         _ => {}
       }
     }
-    v = el_vars::create_unique(vars, "match_subj", st);
+    v = match_subject(e, vars, st);
     el_vars::set_defined(vars, v);
   }
   result = ir::TyVoid;
@@ -2172,7 +2217,7 @@ pub fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>
     NdVar { n: xv } => if !(el_types::base(el_vars::tp(vars, xv)) is TyRefVar) && !el_vars::is_compiler_generated(vars, xv) { xv } else { -1 },
     _ => -1
   };
-  sv = if subject_var >= 0 { subject_var } else { el_vars::create_unique(vars, "match_subj", x.tp) };
+  sv = if subject_var >= 0 { subject_var } else { match_subject(e, vars, x.tp) };
   el_vars::set_defined(vars, sv);
   // `@FR-P-Cap-View`: a record element bound by name borrows the subject's backing variable.
   mb = match_borrow_source(e, vars, x.code);

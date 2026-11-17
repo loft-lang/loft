@@ -1430,19 +1430,10 @@ impl<'a> Cx<'a> {
             let Some(r) = self.data.def(d).const_ref else {
                 continue;
             };
-            let store = self.stores.store(&r);
-            let mut n = store.capacity_words();
-            while n > 1 && store.get_u32_raw(n - 1, 0) == 0 && store.get_u32_raw(n - 1, 4) == 0 {
-                n -= 1;
-            }
-            let words: Vec<String> = (0..n)
-                .flat_map(|w| [store.get_u32_raw(w, 0), store.get_u32_raw(w, 4)])
-                .map(|x| format!("{x}u"))
-                .collect();
+            let (n, words) = const_words(self.stores, &r);
             let _ = writeln!(
                 out,
-                "static const uint32_t loft_cwords{d}[] = {{ {} }};\nstatic loft_ref loft_const{d};",
-                words.join(", ")
+                "static const uint32_t loft_cwords{d}[] = {{ {words} }};\nstatic loft_ref loft_const{d};"
             );
             let _ = writeln!(
                 init,
@@ -2527,6 +2518,35 @@ fn c_libraries(data: &Data, ffi_libs: &std::collections::BTreeSet<(String, Strin
 /// (`fetch_defines`, `tls::unit_lines`), and for a lazy binding every keyed collection's SQL plan
 /// (`FnWriter::sql_plan`'s `derive_select` answers) and the lazy drivers
 /// (`Data::lazy_fetch_drivers`).
+/// A constant's store as the unit writes it (`Cx::const_code`): its word count, trailing zero
+/// words left off, and the words as `Nu, Nu, …`.
+#[must_use]
+pub fn const_words(stores: &Stores, r: &crate::keys::DbRef) -> (u32, String) {
+    let store = stores.store(r);
+    let mut n = store.capacity_words();
+    while n > 1 && store.get_u32_raw(n - 1, 0) == 0 && store.get_u32_raw(n - 1, 4) == 0 {
+        n -= 1;
+    }
+    let words: Vec<String> = (0..n)
+        .flat_map(|w| [store.get_u32_raw(w, 0), store.get_u32_raw(w, 4)])
+        .map(|x| format!("{x}u"))
+        .collect();
+    (n, words.join(", "))
+}
+
+/// Every built constant's store (`const_words`), by definition: what the loft-written C writer
+/// prints for it, carried in the program image (`ImageConst`).
+#[must_use]
+pub fn const_facts(data: &Data, stores: &Stores) -> Vec<(u32, u32, String)> {
+    (0..data.definitions())
+        .filter_map(|d| {
+            let r = data.def(d).const_ref?;
+            let (n, words) = const_words(stores, &r);
+            Some((d, n, words))
+        })
+        .collect()
+}
+
 #[must_use]
 pub fn host_facts(data: &Data, stores: &Stores) -> crate::ir_store::HostFacts {
     use crate::database::sql_query::{Mapping, QueryShape, derive_select};
@@ -2551,7 +2571,10 @@ pub fn host_facts(data: &Data, stores: &Stores) -> crate::ir_store::HostFacts {
                 || in_binary_native(data.def(*c).native()) == Some("loft_kernel_http_fetch");
         });
     }
-    let mut facts = crate::ir_store::HostFacts::default();
+    let mut facts = crate::ir_store::HostFacts {
+        consts: const_facts(data, stores),
+        ..crate::ir_store::HostFacts::default()
+    };
     if reflects {
         facts.reflect = reflect::table_of(stores);
     }
@@ -4879,7 +4902,7 @@ pub fn ship_units() {
 /// `--ship` run, an ESP app), which takes full optimisation of its C as written.  A semantics
 /// build splits an over-budget function into parts instead (`(R-CSplit)`, `split::budget`),
 /// so the C compiler's optimiser time stays bounded.
-pub(crate) fn functions_whole() -> bool {
+pub fn functions_whole() -> bool {
     SHIPPED_UNITS.load(std::sync::atomic::Ordering::Relaxed) || ESP_UNIT.with(std::cell::Cell::get)
 }
 

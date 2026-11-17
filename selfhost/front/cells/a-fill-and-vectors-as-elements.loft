@@ -1,0 +1,17 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a `_` binding where a comprehension fills a constant (no `__N` minted for it); a vector a call answers and a vector local appended as ELEMENTS of a vector of vectors, each copied into its element.
+// Prints: [3,3,3,3] 2 7
+
+struct S { id: integer }
+fn mk(n: integer) -> S { S { id: n } }
+fn codes() -> vector<integer> { [1, 2] }
+fn main() {
+  cm = [for _ in 0..4 { 3 }];
+  rows: vector<vector<integer>> = [];
+  rows += [codes()];
+  c = [7];
+  rows += [c];
+  println("{cm} {len(rows)} {rows[1][0]}");
+}

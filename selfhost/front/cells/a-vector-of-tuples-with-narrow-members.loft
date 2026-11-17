@@ -1,0 +1,11 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a vector of tuples with narrow integer members: each member written and read at its width in the element (`OpSetByte`, `OpGetShortRaw`), the rows named by the members' ranges.
+// Prints: 250 65000
+
+fn main() {
+  v: vector<(u8, u16)> = [(1 as u8, 65000 as u16), (250 as u8, 5 as u16)];
+  a = v[1].0;
+  println("{a} {v[0].1}");
+}

@@ -1,0 +1,672 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `@FR-R-ValueRecord`'s value SHAPES, as `src/opt/value_records/mod.rs` and
+// `sites.rs` classify them: which record layout a node's result positions carry
+// (`value_shape`), how two layouts join, which dense leaves widen to a nullable layout, which
+// tuples are surely present, and the layouts each local's binds carry.
+//
+// Node identity: the Rust analysis keys sets by a node's address, always of an UNSPANNED node.
+// Here a node is its pre-order number over the span-contracted tree (`sizes`): the root is 0,
+// and child k of node N is N + 1 + the sizes of children 0..k-1.
+
+use ir;
+use loop_shape;
+use cgen_types;
+use el_ir;
+use own;
+use binds;
+use opt_vr_layout;
+
+// What a walk over one function knows while it classifies value shapes (`ShapeCtx`): per
+// definition the admitted layout key (-1 none), the tuple parameters, per variable this
+// function's value-local key (-1 none), `own` the function itself when it is admitted (-1
+// otherwise), the fn-ref sites, and per definition whether its tuple is surely present.
+pub struct Ctx {
+  pub b: ir::Bundle,
+  pub ops: own::Ops,
+  pub d: integer,
+  pub admitted: vector<integer>,
+  pub params: vector<opt_vr_layout::VParam>,
+  pub locals: vector<integer>,
+  pub own: integer,
+  pub sites: vector<opt_vr_layout::VSite>,
+  pub sp: vector<boolean>,
+}
+
+pub fn def_name(b: ir::Bundle, d: integer) -> text {
+  if d < 0 || d >= len(b.data.definitions) { "" } else { b.data.definitions[d]!.name }
+}
+
+pub fn at(v: vector<integer>, i: integer) -> integer {
+  if i < 0 || i >= len(v) { -1 } else { v[i]! }
+}
+
+pub fn var_of(x: ir::Node) -> integer {
+  match loop_shape::unspan(x) { NdVar { n } => n, _ => -1 }
+}
+
+pub fn is_var(x: ir::Node) -> boolean {
+  loop_shape::unspan(x) is NdVar
+}
+
+// --- Node numbering ----------------------------------------------------------------------------
+
+// The direct children of `n` in the span-contracted tree, each unspanned.
+pub fn kids(n: ir::Node) -> vector<ir::Node> {
+  [for c in el_ir::children(loop_shape::unspan(n)) { loop_shape::unspan(c) }]
+}
+
+// The subtree sizes of `body` in pre-order over the span-contracted tree.
+pub fn sizes(body: ir::Node) -> vector<integer> {
+  out: vector<integer> = [];
+  fill_sizes(loop_shape::unspan(body), out);
+  out
+}
+
+fn fill_sizes(n: ir::Node, out: vector<integer>) -> integer {
+  at_n = len(out);
+  out += [0];
+  total = 1;
+  for c in kids(n) {
+    total += fill_sizes(c, out);
+  }
+  out[at_n] = total;
+  total
+}
+
+// The number of child `k` of node `num` (whose children are `cs`).
+pub fn child_num(sz: vector<integer>, num: integer, k: integer) -> integer {
+  c = num + 1;
+  for _ in 0..k {
+    c += sz[c]!;
+  }
+  c
+}
+
+// --- Blocks the parser names -------------------------------------------------------------------
+
+pub fn block_of(n: ir::Node) -> ir::Block {
+  match loop_shape::unspan(n) {
+    NdBlock { block } => block[0]!,
+    NdLoop { block } => block[0]!,
+    _ => ir::Block { name: "", operators: [], result: [], scope: 0, var_size: 0 },
+  }
+}
+
+pub fn is_block(n: ir::Node) -> boolean {
+  loop_shape::unspan(n) is NdBlock
+}
+
+pub fn last_op(ops: vector<ir::Node>) -> ir::Node {
+  if len(ops) == 0 { ir::NdNull } else { ops[len(ops) - 1]! }
+}
+
+fn result_type(bl: ir::Block) -> ir::TypeT {
+  bl.result[0] ?? ir::TyVoid
+}
+
+pub fn result_void(bl: ir::Block) -> boolean {
+  cgen_types::base(result_type(bl)) is TyVoid
+}
+
+// `object_own_return`: an `Object` block that returns the record it builds — that record's
+// variable, -1 none.
+pub fn object_own_return(bl: ir::Block) -> integer {
+  if bl.name != "Object" {
+    return -1;
+  }
+  deps = own::depend_of(result_type(bl));
+  if len(deps) != 1 || len(bl.operators) == 0 {
+    return -1;
+  }
+  match loop_shape::unspan(last_op(bl.operators)) {
+    NdReturn { inner } => if var_of(inner) == deps[0]! && is_var(inner) { deps[0]! } else { -1 },
+    _ => -1,
+  }
+}
+
+// `mv_block_buffer`: the buffer a `materialized_view_return` block delivers (-1 none), and in
+// `returns` whether the block returns it.
+pub fn mv_block_buffer(bl: ir::Block, returns: &boolean) -> integer {
+  returns = false;
+  if bl.name != "materialized_view_return" && bl.name != "materialized_view_return_armed" {
+    return -1;
+  }
+  if len(bl.operators) == 0 {
+    return -1;
+  }
+  match loop_shape::unspan(last_op(bl.operators)) {
+    NdReturn { inner } => {
+      if !is_var(inner) {
+        return -1;
+      }
+      returns = true;
+      var_of(inner)
+    },
+    NdVar { n } => n,
+    _ => -1,
+  }
+}
+
+// `mv_return_source`: the copy source of a `materialized_view_return` block; `NdNull` none.
+pub fn mv_return_source(b: ir::Bundle, bl: ir::Block) -> ir::Node {
+  ret = false;
+  rb = mv_block_buffer(bl, ret);
+  if rb < 0 {
+    return ir::NdNull;
+  }
+  for op in bl.operators {
+    match loop_shape::unspan(op) {
+      NdCall { def_nr, args } => {
+        if def_name(b, def_nr) == "OpCopyRecord" && len(args) == 3 && is_var(args[1]!) && var_of(args[1]!) == rb {
+          return args[0]!;
+        }
+      },
+      _ => {},
+    }
+  }
+  ir::NdNull
+}
+
+// The copy-source position of a `materialized_view_return` block: the index of its copy among
+// the operators (-1 none); its source is that call's first argument.
+pub fn mv_copy_at(b: ir::Bundle, bl: ir::Block) -> integer {
+  ret = false;
+  rb = mv_block_buffer(bl, ret);
+  if rb < 0 {
+    return -1;
+  }
+  for op in bl.operators {
+    match loop_shape::unspan(op) {
+      NdCall { def_nr, args } => {
+        if def_name(b, def_nr) == "OpCopyRecord" && len(args) == 3 && is_var(args[1]!) && var_of(args[1]!) == rb {
+          return op#index;
+        }
+      },
+      _ => {},
+    }
+  }
+  -1
+}
+
+pub fn has_mv(b: ir::Bundle, bl: ir::Block) -> boolean {
+  !(mv_return_source(b, bl) is NdNull)
+}
+
+// `is_null_record`: the op a `null` record exit lowers to.
+pub fn is_null_record(b: ir::Bundle, d: integer) -> boolean {
+  def_name(b, d) == "OpNullRefSentinel"
+}
+
+// `is_null_sentinel`: `OpNullRefSentinel()`.
+pub fn is_null_sentinel(b: ir::Bundle, v: ir::Node) -> boolean {
+  match loop_shape::unspan(v) {
+    NdCall { def_nr, args } => len(args) == 0 && is_null_record(b, def_nr),
+    _ => false,
+  }
+}
+
+fn var_named(f: ir::Function, nm: text) -> integer {
+  for e in f.names {
+    if e.name == nm {
+      return e.nr;
+    }
+  }
+  -1
+}
+
+// `ret_buffer_attr`: the LAST hidden attribute of a reference or a reference enum, -1 none.
+pub fn ret_buffer_attr(d: ir::Definition) -> integer {
+  found = -1;
+  for a in d.attributes {
+    if a.hidden {
+      heap = match cgen_types::base(a.typedef[0] ?? ir::TyVoid) {
+        TyReference { n: _, dep: _ } => true,
+        TyEnum { n: _, is_ref, dep: _ } => is_ref,
+        _ => false,
+      };
+      if heap {
+        found = a#index;
+      }
+    }
+  }
+  found
+}
+
+// `own_retbuf`: the return-buffer variable of `own`, when it is admitted and has one; -1 none.
+pub fn own_retbuf(b: ir::Bundle, own_d: integer) -> integer {
+  if own_d < 0 {
+    return -1;
+  }
+  def = b.data.definitions[own_d]!;
+  a = ret_buffer_attr(def);
+  if a < 0 {
+    return -1;
+  }
+  var_named(def.variables, def.attributes[a]!.name)
+}
+
+fn var_type(c: Ctx, v: integer) -> ir::TypeT {
+  c.b.data.definitions[c.d]!.variables.variables[v]!.type_def[0] ?? ir::TyVoid
+}
+
+fn is_argument(c: Ctx, v: integer) -> boolean {
+  c.b.data.definitions[c.d]!.variables.variables[v]!.argument
+}
+
+fn returned(b: ir::Bundle, d: integer) -> ir::TypeT {
+  def = b.data.definitions[d]!;
+  if len(def.returned) == 0 { ir::TyVoid } else { def.returned[0]! }
+}
+
+// --- Shapes ------------------------------------------------------------------------------------
+
+// `own_record`: the layout key an admitted body's own leaves must carry, -1 none.
+pub fn own_record(c: Ctx) -> integer {
+  if c.own < 0 {
+    return -1;
+  }
+  k = at(c.admitted, c.own);
+  if k >= 0 {
+    return k;
+  }
+  r = returned(c.b, c.own);
+  nullable = r is TyOptional;
+  inner = match r { TyOptional { inner } => inner, _ => r };
+  tp = opt_vr_layout::plain_record_type(c.b, inner);
+  if tp < 0 {
+    return -1;
+  }
+  if nullable { opt_vr_layout::nullable_layout(tp) } else { tp }
+}
+
+// `join_layout`: the layout two value shapes join to, -1 none.
+pub fn join_layout(a: integer, b: integer) -> integer {
+  if a < 0 || b < 0 {
+    return -1;
+  }
+  if a == b {
+    a
+  } else if opt_vr_layout::layout_record(a) == opt_vr_layout::layout_record(b) {
+    opt_vr_layout::nullable_layout(opt_vr_layout::layout_record(a))
+  } else {
+    -1
+  }
+}
+
+// `value_shape`: the layout key `node`'s result positions carry, -1 when it is no value shape.
+pub fn value_shape(c: Ctx, node: ir::Node) -> integer {
+  u = loop_shape::unspan(node);
+  match u {
+    NdCall { def_nr, args } => {
+      if len(args) == 0 && is_null_record(c.b, def_nr) {
+        if c.own < 0 {
+          return -1;
+        }
+        r = own_record(c);
+        return if opt_vr_layout::is_nullable_layout(r) { r } else { -1 };
+      }
+      at(c.admitted, def_nr)
+    },
+    NdCallRef { var, args: _ } => opt_vr_layout::fnref_value(fnref_vr(c), c.admitted, c.d, var),
+    NdBlock { block } => {
+      bl = block[0]!;
+      if bl.name == "Object" {
+        if c.own < 0 {
+          return -1;
+        }
+        rec = own_record(c);
+        if rec < 0 {
+          return -1;
+        }
+        return if opt_vr_layout::plain_record_type(c.b, result_type(bl)) == opt_vr_layout::layout_record(rec) { rec } else { -1 };
+      }
+      if has_mv(c.b, bl) {
+        if c.own < 0 {
+          return -1;
+        }
+        src = mv_return_source(c.b, bl);
+        ret = false;
+        rb = mv_block_buffer(bl, ret);
+        if !ret && own_retbuf(c.b, c.own) != rb {
+          return -1;
+        }
+        rec = own_record(c);
+        if rec < 0 {
+          return -1;
+        }
+        return if fits(c, src, rec) { rec } else { -1 };
+      }
+      if result_void(bl) || len(bl.operators) == 0 {
+        return -1;
+      }
+      value_shape(c, last_op(bl.operators))
+    },
+    NdIf { cond: _, t, f } => {
+      a = value_shape(c, t);
+      bk = value_shape(c, f);
+      if a < 0 || bk < 0 {
+        return -1;
+      }
+      key = join_layout(a, bk);
+      if key < 0 {
+        return -1;
+      }
+      if a != key && !widens(c, t) {
+        return -1;
+      }
+      if bk != key && !widens(c, f) {
+        return -1;
+      }
+      key
+    },
+    NdInsert { items } => if len(items) == 0 { -1 } else { value_shape(c, last_op(items)) },
+    NdReturn { inner } => value_shape(c, inner),
+    NdVar { n } => {
+      lk = at(c.locals, n);
+      if lk >= 0 {
+        return lk;
+      }
+      if c.own < 0 {
+        return -1;
+      }
+      rec = own_record(c);
+      if rec < 0 {
+        return -1;
+      }
+      v = c.b.data.definitions[c.d]!.variables.variables[n]!;
+      if v.name.starts_with("__lift_") {
+        return -1;
+      }
+      if (!v.argument && !own::is_skip_free(c.b.data.definitions[c.d]!.variables, n)) || rebind_orig(c, n) {
+        return -1;
+      }
+      t = v.type_def[0] ?? ir::TyVoid;
+      optional = t is TyOptional;
+      inner = match t { TyOptional { inner } => inner, _ => t };
+      view = opt_vr_layout::plain_record_type(c.b, inner);
+      if view != opt_vr_layout::layout_record(rec) {
+        return -1;
+      }
+      key = if optional { if opt_vr_layout::is_nullable_layout(rec) { rec } else { -1 } } else { view };
+      if key < 0 {
+        return -1;
+      }
+      // A VIEW by the ownership oracle (`@FR-O-Oracle`).
+      match own::ownership_of(c.b, c.ops, c.d, node) {
+        Borrowed { base: _ } => key,
+        _ => -1,
+      }
+    },
+    _ => -1,
+  }
+}
+
+fn rebind_orig(c: Ctx, v: integer) -> boolean {
+  binds::rebind_orig(c.b.data.definitions[c.d]!.variables, v) != null
+}
+
+// The value-record answer `fnref_value` reads: the sites alone.
+fn fnref_vr(c: Ctx) -> opt_vr_layout::ValueRecords {
+  r = opt_vr_layout::no_records();
+  r.sites = c.sites;
+  r
+}
+
+// `fits`: does `node` stand for layout `key` — carry it, or carry the dense layout of a nullable
+// `key`'s record and widen to it?
+pub fn fits(c: Ctx, node: ir::Node, key: integer) -> boolean {
+  k = value_shape(c, node);
+  k >= 0 && (k == key || (join_layout(k, key) == key && widens(c, node)))
+}
+
+// `widens`: can every leaf under `node` that stands where a nullable tuple is expected deliver
+// one without inventing its presence?
+pub fn widens(c: Ctx, node: ir::Node) -> boolean {
+  u = loop_shape::unspan(node);
+  match u {
+    NdBlock { block } => {
+      bl = block[0]!;
+      if bl.name == "Object" {
+        return true;
+      }
+      if has_mv(c.b, bl) {
+        return widens(c, mv_return_source(c.b, bl));
+      }
+      if !result_void(bl) {
+        return len(bl.operators) == 0 || widens(c, last_op(bl.operators));
+      }
+      true
+    },
+    NdInsert { items } => len(items) == 0 || widens(c, last_op(items)),
+    NdReturn { inner } => widens(c, inner),
+    NdIf { cond: _, t, f } => widens(c, t) && widens(c, f),
+    NdVar { n } => {
+      lk = at(c.locals, n);
+      lk < 0 || opt_vr_layout::is_nullable_layout(lk) || local_surely_present(c, n, [])
+    },
+    NdCall { def_nr, args: _ } => {
+      k = at(c.admitted, def_nr);
+      k < 0 || opt_vr_layout::is_nullable_layout(k) || (c.sp[def_nr] ?? false)
+    },
+    NdCallRef { var: _, args: _ } => {
+      k = value_shape(c, node);
+      k < 0 || opt_vr_layout::is_nullable_layout(k)
+    },
+    _ => true,
+  }
+}
+
+// `surely_present`: is the dense tuple `node` evaluates to built here, or answered by a function
+// whose every result is?
+pub fn surely_present(c: Ctx, node: ir::Node, seen: vector<integer>) -> boolean {
+  u = loop_shape::unspan(node);
+  match u {
+    NdBlock { block } => {
+      bl = block[0]!;
+      if bl.name == "Object" {
+        return true;
+      }
+      if has_mv(c.b, bl) {
+        return surely_present(c, mv_return_source(c.b, bl), seen);
+      }
+      if !result_void(bl) {
+        return len(bl.operators) > 0 && surely_present(c, last_op(bl.operators), seen);
+      }
+      false
+    },
+    NdInsert { items } => len(items) > 0 && surely_present(c, last_op(items), seen),
+    NdReturn { inner } => surely_present(c, inner, seen),
+    NdIf { cond: _, t, f } => surely_present(c, t, seen) && surely_present(c, f, seen),
+    NdCall { def_nr, args: _ } => c.sp[def_nr] ?? false,
+    NdVar { n } => local_surely_present(c, n, seen),
+    _ => false,
+  }
+}
+
+// `local_surely_present`: every bind of `v` is surely present (the declaration's `null` aside),
+// and it has one.  A local met again on its own path is taken as present.
+pub fn local_surely_present(c: Ctx, v: integer, seen: vector<integer>) -> boolean {
+  if seen.contains(v) {
+    return true;
+  }
+  seen += [v];
+  if is_argument(c, v) && own_retbuf(c.b, c.own) != v {
+    return false;
+  }
+  binds = 0;
+  present = true;
+  sp_binds(c, c.b.data.definitions[c.d]!.code[0]!, v, seen, binds, present);
+  binds > 0 && present
+}
+
+fn sp_binds(c: Ctx, n: ir::Node, v: integer, seen: vector<integer>, binds: &integer, present: &boolean) {
+  u = loop_shape::unspan(n);
+  match u {
+    NdSet { var, inner } => {
+      if var == v && !(loop_shape::unspan(inner) is NdNull) {
+        binds += 1;
+        present = present && surely_present(c, inner, seen);
+      }
+    },
+    _ => {},
+  }
+  for k in kids(u) {
+    sp_binds(c, k, v, seen, binds, present);
+  }
+}
+
+// `frame_loop_tail`: is the body's tail `@FR-R-TailSelf`'s frame loop?
+pub fn frame_loop_tail(body: ir::Node) -> boolean {
+  loop_shape::unspan(tail(body)) is NdLoop
+}
+
+// `Value::tail`: the last non-line statement of a block or insert, recursively.
+pub fn tail(n: ir::Node) -> ir::Node {
+  u = loop_shape::unspan(n);
+  ops: vector<ir::Node> = match u {
+    NdBlock { block } => block[0]!.operators,
+    NdInsert { items } => items,
+    _ => return n,
+  };
+  for i in rev(0..len(ops)) {
+    if !(loop_shape::unspan(ops[i]!) is NdLine) {
+      return tail(ops[i]!);
+    }
+  }
+  n
+}
+
+// `surely_present_fns`: the admitted dense functions whose tuple is surely present — the
+// greatest such set, found by removing until nothing leaves.
+pub fn surely_present_fns(b: ir::Bundle, ops: own::Ops, admitted: vector<integer>, params: vector<opt_vr_layout::VParam>, sites: vector<opt_vr_layout::VSite>) -> vector<boolean> {
+  sp: vector<boolean> = [for k in admitted { k >= 0 && !opt_vr_layout::is_nullable_layout(k) }];
+  no_locals: vector<integer> = [];
+  for _ in 0..len(admitted) + 1 {
+    keep: vector<boolean> = [for s in sp { s }];
+    changed = false;
+    for s in sp {
+      if !s {
+        continue;
+      }
+      d = s#index;
+      c = Ctx { b: b, ops: ops, d: d, admitted: admitted, params: params, locals: no_locals, own: d, sites: sites, sp: sp };
+      body = b.data.definitions[d]!.code[0]!;
+      present = frame_loop_tail(body) || surely_present(c, body, []);
+      if present {
+        present = sp_returns(c, body);
+      }
+      if !present {
+        keep[d] = false;
+        changed = true;
+      }
+    }
+    sp = keep;
+    if !changed {
+      break;
+    }
+  }
+  sp
+}
+
+// Every `Object`-own-return or discharged-view block is surely present, and every other
+// `return` (not such a block's own) is.
+fn sp_returns(c: Ctx, n: ir::Node) -> boolean {
+  u = loop_shape::unspan(n);
+  match u {
+    NdBlock { block } => {
+      bl = block[0]!;
+      if object_own_return(bl) >= 0 || has_mv(c.b, bl) {
+        if !surely_present(c, u, []) {
+          return false;
+        }
+        // Its own last statement's `return` is not asked again.
+        for op in bl.operators {
+          if op#index == len(bl.operators) - 1 {
+            for k in kids(op) {
+              if !sp_returns(c, k) {
+                return false;
+              }
+            }
+          } else if !sp_returns(c, op) {
+            return false;
+          }
+        }
+        return true;
+      }
+    },
+    NdReturn { inner } => {
+      if !surely_present(c, inner, []) {
+        return false;
+      }
+    },
+    _ => {},
+  }
+  for k in kids(u) {
+    if !sp_returns(c, k) {
+      return false;
+    }
+  }
+  true
+}
+
+// `bind_shapes`: per local, the layout key its binds carry under `c`'s value locals — -1 once
+// any bind is not a value shape or carries another record; -2 for a local with no bind.
+pub fn bind_shapes(c: Ctx) -> vector<integer> {
+  def = c.b.data.definitions[c.d]!;
+  nv = len(def.variables.variables);
+  shapes: vector<integer> = [for _ in 0..nv { -2 }];
+  null_bound: vector<boolean> = [for _ in 0..nv { false }];
+  unwidened: vector<boolean> = [for _ in 0..nv { false }];
+  bs_walk(c, def.code[0]!, shapes, null_bound, unwidened);
+  for u in unwidened {
+    if u && shapes[u#index]! >= 0 && opt_vr_layout::is_nullable_layout(shapes[u#index]!) {
+      shapes[u#index] = -1;
+    }
+  }
+  own_null = own_record(c);
+  if !opt_vr_layout::is_nullable_layout(own_null) {
+    own_null = -1;
+  }
+  for nb in null_bound {
+    if nb {
+      vi = nb#index;
+      if shapes[vi]! == -2 {
+        shapes[vi] = own_null;
+      }
+      if shapes[vi]! >= 0 && !opt_vr_layout::is_nullable_layout(shapes[vi]!) {
+        shapes[vi] = -1;
+      }
+    }
+  }
+  shapes
+}
+
+fn bs_walk(c: Ctx, n: ir::Node, shapes: vector<integer>, null_bound: vector<boolean>, unwidened: vector<boolean>) {
+  u = loop_shape::unspan(n);
+  match u {
+    NdSet { var, inner } => {
+      if is_null_sentinel(c.b, inner) {
+        null_bound[var] = true;
+      } else if !(loop_shape::unspan(inner) is NdNull) {
+        s = value_shape(c, inner);
+        if s >= 0 && !opt_vr_layout::is_nullable_layout(s) && !widens(c, inner) {
+          unwidened[var] = true;
+        }
+        e = shapes[var]!;
+        shapes[var] = if e == -2 { s } else if e < 0 || s < 0 { -1 } else { join_layout(e, s) };
+      }
+    },
+    _ => {},
+  }
+  for k in kids(u) {
+    bs_walk(c, k, shapes, null_bound, unwidened);
+  }
+}
+
+// The direct children of non-span node `n` as they stand (spans kept), in `kids`' order.
+pub fn raw_kids(n: ir::Node) -> vector<ir::Node> {
+  el_ir::children(n)
+}

@@ -1,0 +1,1347 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `@FR-R-DeferredCopy` as `src/c/body/deferred.rs` writes it: a record local
+// bound by a COPY that the function only reads takes the copy where it could first be observed.
+// The bind takes the source's reference and raises `loft_dcv<x>`; before each statement that may
+// write a store not proven apart from the source's, the copy is taken if the flag is still up.
+//
+// The Rust plan keys binds and statements by node address.  Here a function with an owner
+// witness (`__own_<x>`) has its statements numbered before it is written (`number`, a DC ID
+// span each, `opt_lease::dc_id`), and the plan and the writer key by those IDs: `stmt` hands the
+// ID of the span it unwraps to the statement inside it (`W.dc_pending`).
+
+use cgen_transient;
+use ir;
+use cgen::(Cx);
+use cgen_w::*;
+use cgen_fn;
+use loop_shape;
+use el_ir;
+use own;
+use binds;
+use cgen_types;
+use opt_facts;
+use opt_hoist;
+use opt_lease;
+use opt_writes;
+use opt_non_sentinel;
+
+// One deferred local.
+pub struct DcVar {
+  pub x: integer,
+  pub own: integer,
+  pub derived: vector<integer>,
+  pub tp: integer,
+  pub sources: vector<integer>,
+  pub binds: vector<integer>,
+  pub dead: vector<integer>,
+  // The top-level statements ahead of the first deferred bind: everything inside them is dead.
+  pub early: vector<integer>,
+  pub elem_v: integer,
+  pub elem_size: integer,
+}
+
+fn enabled() -> boolean {
+  (env_variable("LOFT_NO_DEFERRED_COPY") ?? "0") == "0"
+}
+
+fn def_name(b: ir::Bundle, d: integer) -> text {
+  if d < 0 || d >= len(b.data.definitions) { "" } else { b.data.definitions[d]!.name }
+}
+
+fn has_int(v: vector<integer>, x: integer) -> boolean {
+  for y in v {
+    if y == x {
+      return true;
+    }
+  }
+  false
+}
+
+fn var_of(v: ir::Node) -> integer {
+  match loop_shape::unspan(v) { NdVar { n } => n, _ => -1 }
+}
+
+fn vname(f: ir::Function, v: integer) -> text {
+  if v >= 0 && v < len(f.variables) { f.variables[v]!.name } else { "" }
+}
+
+fn tp_of(f: ir::Function, v: integer) -> ir::TypeT {
+  if v >= 0 && v < len(f.variables) { f.variables[v]!.type_def[0] ?? ir::TyVoid } else { ir::TyVoid }
+}
+
+// ---- numbering ----------------------------------------------------------------------------
+
+// Does function `d` hold an owner witness `__own_<x>` beside its `x`?  Only such a function can
+// defer a copy, so only it is numbered.
+fn has_witness(d: ir::Definition) -> boolean {
+  for v in d.variables.variables {
+    if v.name.starts_with("__own_") {
+      want = v.name["__own_".size()..v.name.size()];
+      for u in d.variables.variables {
+        if u.name == want {
+          return true;
+        }
+      }
+    }
+  }
+  false
+}
+
+// Number every statement of function `vd`'s code, once (`Cx.dc_numbered`).
+pub fn number_function(x: Cx, vd: integer) {
+  if !enabled() || vd < 0 || vd >= len(x.b.data.definitions) || x.dc_numbered[vd]! {
+    return;
+  }
+  x.dc_numbered[vd] = true;
+  d = x.b.data.definitions[vd]!;
+  if len(d.code) == 0 || !has_witness(d) {
+    return;
+  }
+  counter = [0];
+  x.b.data.definitions[vd].code = [number(x.b.data.definitions[vd]!.code[0]!, counter)];
+}
+
+fn dc_span(id: integer, inner: ir::Node) -> ir::Node {
+  ir::NdSpan { pos: ir::Position { file: "", line: 0, pos: opt_lease::DC_BASE - id + 1 }, inner: inner }
+}
+
+fn number(v: ir::Node, c: vector<integer>) -> ir::Node {
+  match v {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: number(inner, c) },
+    NdBlock { block } => {
+      bl = block[0];
+      ir::NdBlock { block: [ir::Block { name: bl.name, operators: number_ops(bl.operators, c), result: bl.result, scope: bl.scope, var_size: bl.var_size }] }
+    },
+    NdLoop { block } => {
+      bl = block[0];
+      ir::NdLoop { block: [ir::Block { name: bl.name, operators: number_ops(bl.operators, c), result: bl.result, scope: bl.scope, var_size: bl.var_size }] }
+    },
+    NdCall { def_nr, args } => ir::NdCall { def_nr: def_nr, args: [for a in args { number(a, c) }] },
+    // An `if`'s arms and an `Insert`'s items are written as statements too.
+    NdIf { cond, t, f } => {
+      nc = number(cond, c);
+      ir::NdIf { cond: nc, t: number_one(t, c), f: number_one(f, c) }
+    },
+    NdInsert { items } => ir::NdInsert { items: number_ops(items, c) },
+    _ => {
+      cs = el_ir::children(v);
+      if len(cs) == 0 {
+        return v;
+      }
+      with_children(v, [for ch in cs { number(ch, c) }])
+    },
+  }
+}
+
+fn number_one(v: ir::Node, c: vector<integer>) -> ir::Node {
+  if loop_shape::unspan(v) is NdNull {
+    return v;
+  }
+  c[0] = c[0]! + 1;
+  id = c[0]!;
+  dc_span(id, number(v, c))
+}
+
+fn number_ops(ops: vector<ir::Node>, c: vector<integer>) -> vector<ir::Node> {
+  out: vector<ir::Node> = [];
+  for o in ops {
+    c[0] = c[0]! + 1;
+    id = c[0]!;
+    out += [dc_span(id, number(o, c))];
+  }
+  out
+}
+
+fn with_children(node: ir::Node, cs: vector<ir::Node>) -> ir::Node {
+  match node {
+    NdCallRef { var, args: _ } => ir::NdCallRef { var: var, args: cs },
+    NdInsert { items: _ } => ir::NdInsert { items: cs },
+    NdTuple { items: _ } => ir::NdTuple { items: cs },
+    NdParallel { arms: _ } => ir::NdParallel { arms: cs },
+    NdSet { var, inner: _ } => ir::NdSet { var: var, inner: cs[0]! },
+    NdReturn { inner: _ } => ir::NdReturn { inner: cs[0]! },
+    NdDrop { inner: _ } => ir::NdDrop { inner: cs[0]! },
+    NdYield { inner: _ } => ir::NdYield { inner: cs[0]! },
+    NdTuplePut { var, idx, inner: _ } => ir::NdTuplePut { var: var, idx: idx, inner: cs[0]! },
+    NdIter { var, create: _, next: _, init: _ } => ir::NdIter { var: var, create: cs[0]!, next: cs[1]!, init: cs[2]! },
+    _ => node,
+  }
+}
+
+// A walk over every node with the DC ID of the statement it sits in (`id_walk`'s `f(node, id)`):
+// the ID a node carries itself, else its enclosing statement's.
+struct IdNode {
+  node: ir::Node,
+  id: integer,
+}
+
+fn id_nodes(v: ir::Node, id: integer, out: vector<IdNode>) {
+  match v {
+    NdSpan { pos: _, inner } => {
+      own_id = opt_lease::dc_id(v);
+      id_nodes(inner, if own_id > 0 { own_id } else { id }, out);
+    },
+    _ => {
+      out += [IdNode { node: v, id: id }];
+      for c in el_ir::children(v) {
+        id_nodes(c, id, out);
+      }
+    },
+  }
+}
+
+// ---- the plan (`deferred_plan`) -----------------------------------------------------------
+
+fn trace() -> boolean {
+  (env_variable("LOFT_TRACE_DEFERRED_COPY") ?? "0") != "0"
+}
+
+fn why(x: Cx, w: W, v: integer, what: text) {
+  if trace() {
+    println("deferred-copy: {w.name} {vname(x.b.data.definitions[w.index]!.variables, v)} declined: {what}");
+  }
+}
+
+// The deferred locals of this function and the null-only references, set on `w`.
+pub fn plan(x: Cx, w: W) {
+  if !enabled() || w.gen_elem != "" || cgen_transient::lean(w) || !opt_facts::enabled() {
+    return;
+  }
+  d = x.b.data.definitions[w.index]!;
+  code = d.code[0] ?? ir::NdNull;
+  // A suspended or forked body runs the reads where no copy point stands.
+  odd = [false];
+  opt_non_sentinel::walk(code, fn(n: ir::Node) {
+    match n {
+      NdYield { inner: _ } => { odd[0] = true; },
+      NdParallel { arms: _ } => { odd[0] = true; },
+      NdCallRef { var: _, args: _ } => { odd[0] = true; },
+      _ => {},
+    }
+  });
+  if odd[0]! {
+    return;
+  }
+  count = len(d.variables.variables);
+  for v in 0..count {
+    candidate(x, w, d, code, v);
+  }
+  if len(w.dc) == 0 {
+    return;
+  }
+  w.dc_null_only = [for _ in 0..count { false }];
+  for v in 0..count {
+    vv = d.variables.variables[v]!;
+    if (w.shapes[v] ?? "") == "ref" && !vv.argument && !vv.captured && !vv.lazy_buffer && !w.facts.placed[v]! && v != w.facts.adopted_v && v != w.facts.adopted_vdb && null_only(x.b, code, v) {
+      w.dc_null_only[v] = true;
+    }
+  }
+}
+
+// `whole_value_bind`: `v = src`, a copy of a whole record — the source and the record's type,
+// -1 for none.
+fn whole_value_bind(x: Cx, f: ir::Function, v: integer, rhs: ir::Node, tp: &integer) -> integer {
+  src = var_of(rhs);
+  if src < 0 || !(loop_shape::unspan(rhs) is NdVar) {
+    return -1;
+  }
+  hd = own::heap_def_nr(tp_of(f, v)) ?? return -1;
+  sd = own::record_copy_source(x.b, f, v, src) ?? return -1;
+  if !own::copies_as(x.b, hd, sd) {
+    return -1;
+  }
+  tp = x.b.data.definitions[hd]!.known_type;
+  src
+}
+
+fn candidate(x: Cx, w: W, d: ir::Definition, code: ir::Node, v: integer) {
+  f = d.variables;
+  vv = f.variables[v]!;
+  if (w.shapes[v] ?? "") != "ref" || vv.argument || vv.captured {
+    return;
+  }
+  own_name = "__own_{vv.name}";
+  own = -1;
+  for u in f.variables {
+    if own < 0 && u.name == own_name {
+      own = u#index;
+    }
+  }
+  if own < 0 {
+    return;
+  }
+  hd = own::heap_def_nr(vv.type_def[0] ?? ir::TyVoid) ?? return;
+  tp = x.b.data.definitions[hd]!.known_type;
+  if !remappable(x.b, tp, []) {
+    why(x, w, v, "its type reaches a keyed collection, which the remap does not follow");
+    return;
+  }
+  // The deferrable binds: whole-value copies from a VIEW.
+  nodes: vector<IdNode> = [];
+  id_nodes(code, 0, nodes);
+  bind_ids: vector<integer> = [];
+  sources: vector<integer> = [];
+  srcs: vector<integer> = [];
+  bad = false;
+  for n in nodes {
+    match n.node {
+      NdSet { var, inner } => {
+        if var == v {
+          btp = 0;
+          src = whole_value_bind(x, f, v, inner, btp);
+          if src >= 0 {
+            view = len(own::tp_depend(f, src)) > 0 || f.variables[src]!.argument;
+            t = opt_facts::terminal(x.b, w.facts, src);
+            if t >= 0 && view {
+              bind_ids += [n.id];
+              if !has_int(sources, t) {
+                sources += [t];
+              }
+              if !has_int(srcs, src) {
+                srcs += [src];
+              }
+            } else {
+              bad = true;
+            }
+          }
+        }
+      },
+      _ => {},
+    }
+  }
+  if bad {
+    why(x, w, v, "a copy bind from an owner or an untraceable source");
+    return;
+  }
+  if len(bind_ids) == 0 {
+    return;
+  }
+  // The reference variables derived from it; a text borrowed from it declines.
+  set: vector<boolean> = [for _ in 0..len(f.variables) { false }];
+  set[v] = true;
+  for _ in 0..len(f.variables) + 1 {
+    grew = false;
+    for u in 0..len(f.variables) {
+      if set[u]! {
+        continue;
+      }
+      for dep in own::tp_depend(f, u) {
+        if dep >= 0 && dep < len(set) && set[dep]! && !set[u]! {
+          set[u] = true;
+          grew = true;
+        }
+      }
+    }
+    if !grew {
+      break;
+    }
+  }
+  derived: vector<integer> = [];
+  for s in set {
+    u = s#index;
+    if !s || u == v {
+      continue;
+    }
+    if cgen_types::base(tp_of(f, u)) is TyText {
+      why(x, w, v, "a text is borrowed from it");
+      return;
+    }
+    if (w.shapes[u] ?? "") == "ref" {
+      derived += [u];
+    }
+  }
+  refs: vector<boolean> = [for s in set { false }];
+  refs[v] = true;
+  for u in derived {
+    refs[u] = true;
+  }
+  for r in refs {
+    if r && f.variables[r#index]!.captured {
+      why(x, w, v, "it or a view of it is captured");
+      return;
+    }
+  }
+  if !reads_only(x, f, code, refs, v, own) {
+    why(x, w, v, "it or a view of it is used other than by reading");
+    return;
+  }
+  early: vector<integer> = [];
+  dead = dead_after(code, refs, bind_ids, early);
+  ev = -1;
+  es = 0;
+  dc_elem(x, w, f, code, srcs, ev, es);
+  w.dc += [DcVar { x: v, own: own, derived: derived, tp: tp, sources: sources, binds: bind_ids, dead: dead, early: early, elem_v: ev, elem_size: es }];
+  if trace() {
+    println("deferred-copy: {w.name} {vv.name} deferred ({len(bind_ids)} bind(s), {len(derived)} derived view(s))");
+  }
+}
+
+// `remappable`: every record a value of type `tp` reaches is laid out as `loft_dc_remap` follows.
+fn remappable(b: ir::Bundle, tp: integer, seen: vector<integer>) -> boolean {
+  if tp < 0 || tp >= len(b.types) || has_int(seen, tp) {
+    return true;
+  }
+  seen += [tp];
+  part = b.types[tp]!.parts[0] ?? ir::PtBase;
+  match part {
+    PtStruct { fields } => {
+      for fl in fields {
+        if !remappable(b, fl.content, seen) {
+          return false;
+        }
+      }
+      true
+    },
+    PtEnumValue { value: _, fields } => {
+      for fl in fields {
+        if !remappable(b, fl.content, seen) {
+          return false;
+        }
+      }
+      true
+    },
+    PtEnum { values } => {
+      for e in values {
+        if e.nr != 65535 && !remappable(b, e.nr, seen) {
+          return false;
+        }
+      }
+      true
+    },
+    PtVector { content } => remappable(b, content, seen),
+    PtBase => true,
+    PtByte { start: _, nullable: _ } => true,
+    PtShort { start: _, nullable: _ } => true,
+    PtInt { start: _, nullable: _ } => true,
+    PtShortRaw { start: _, nullable: _ } => true,
+    PtIntRaw { start: _, nullable: _ } => true,
+    _ => false,
+  }
+}
+
+fn read_op(name: text) -> boolean {
+  opt_hoist::scalar_getter(name) || name == "OpGetField" || name == "OpGetVector" || name == "OpGetVectorNullable" || name == "OpLengthVector" || name == "OpVectorIsNull" || name == "OpGetText" || name == "OpConvBoolFromRef" || name == "OpRefIsNull"
+}
+
+fn names_var(b: ir::Bundle, rhs: ir::Node, x: integer) -> boolean {
+  match loop_shape::unspan(rhs) {
+    NdVar { n } => n == x,
+    NdCall { def_nr, args } => def_name(b, def_nr) == "OpRefAlias" && len(args) > 0 && var_of(args[0]!) == x,
+    _ => false,
+  }
+}
+
+fn is_ref(refs: vector<boolean>, v: ir::Node) -> boolean {
+  match loop_shape::unspan(v) { NdVar { n } => refs[n] ?? false, _ => false }
+}
+
+// `reads_only`: every mention of a variable of `refs` is a read.
+fn reads_only(x: Cx, f: ir::Function, code: ir::Node, refs: vector<boolean>, v: integer, own: integer) -> boolean {
+  ro_walk(x, f, code, refs, v, own)
+}
+
+fn copies(x: Cx, f: ir::Function, t: integer, rhs: ir::Node) -> boolean {
+  tp = 0;
+  whole_value_bind(x, f, t, rhs, tp) >= 0
+}
+
+fn ro_walk(x: Cx, f: ir::Function, n: ir::Node, refs: vector<boolean>, v: integer, own: integer) -> boolean {
+  match loop_shape::unspan(n) {
+    NdVar { n: u } => !(refs[u] ?? false),
+    NdSet { var: t, inner } => {
+      if t == own && names_var(x.b, inner, v) {
+        return true;
+      }
+      match loop_shape::unspan(inner) {
+        NdBlock { block } => {
+          ops = block[0].operators;
+          if len(ops) > 0 && is_ref(refs, ops[len(ops) - 1]!) {
+            tail = ops[len(ops) - 1]!;
+            if !((refs[t] ?? false) || copies(x, f, t, tail)) {
+              return false;
+            }
+            for o in ops {
+              if o#index < len(ops) - 1 && !ro_walk(x, f, o, refs, v, own) {
+                return false;
+              }
+            }
+            return true;
+          }
+        },
+        _ => {},
+      }
+      if is_ref(refs, inner) {
+        return (t == own && var_of(inner) == v && (loop_shape::unspan(inner) is NdVar)) || (refs[t] ?? false) || copies(x, f, t, inner);
+      }
+      ro_walk(x, f, inner, refs, v, own)
+    },
+    NdCall { def_nr, args } => {
+      name = def_name(x.b, def_nr);
+      if name == "OpFreeRefIfDistinct" && len(args) > 1 && var_of(args[0]!) == own && var_of(args[1]!) == v {
+        return true;
+      }
+      if name == "OpDistinctStore" {
+        for a in args {
+          if !is_ref(refs, a) && !ro_walk(x, f, a, refs, v, own) {
+            return false;
+          }
+        }
+        return true;
+      }
+      skip_first = read_op(name) && len(args) > 0 && is_ref(refs, args[0]!);
+      for a in args {
+        if !(a#index == 0 && skip_first) && !ro_walk(x, f, a, refs, v, own) {
+          return false;
+        }
+      }
+      true
+    },
+    _ => {
+      for c in el_ir::children(loop_shape::unspan(n)) {
+        if !ro_walk(x, f, c, refs, v, own) {
+          return false;
+        }
+      }
+      true
+    },
+  }
+}
+
+// `null_only`: does `v` hold the null reference at every mention in `code`?
+fn null_only(b: ir::Bundle, code: ir::Node, v: integer) -> boolean {
+  match loop_shape::unspan(code) {
+    NdVar { n } => n != v,
+    NdSet { var: t, inner } => {
+      if t == v {
+        return loop_shape::unspan(inner) is NdNull;
+      }
+      null_only(b, inner, v)
+    },
+    NdCall { def_nr, args } => {
+      name = def_name(b, def_nr);
+      passes = !name.starts_with("Op") || name.starts_with("OpFree");
+      for a in args {
+        if !(passes && var_of(a) == v && (loop_shape::unspan(a) is NdVar)) && !null_only(b, a, v) {
+          return false;
+        }
+      }
+      true
+    },
+    _ => {
+      for c in el_ir::children(loop_shape::unspan(code)) {
+        if !null_only(b, c, v) {
+          return false;
+        }
+      }
+      true
+    },
+  }
+}
+
+fn mentions(n: ir::Node, refs: vector<boolean>) -> boolean {
+  hit = [false];
+  opt_non_sentinel::walk(n, fn(m: ir::Node) {
+    match m {
+      NdVar { n: u } => { if refs[u] ?? false { hit[0] = true; } },
+      _ => {},
+    }
+  });
+  hit[0]!
+}
+
+// `dead_after`: the statements (by DC ID) where no copy point is needed for `refs`.
+fn dead_after(code: ir::Node, refs: vector<boolean>, binds: vector<integer>, early: vector<integer>) -> vector<integer> {
+  out: vector<integer> = [];
+  dead_walk(code, refs, false, out);
+  // Top-level statements ahead of the first deferred bind, everything inside them included.
+  match loop_shape::unspan(code) {
+    NdBlock { block } => {
+      ops = block[0].operators;
+      first = -1;
+      for o in ops {
+        if first < 0 {
+          ids: vector<IdNode> = [];
+          id_nodes(o, opt_lease::dc_id(o), ids);
+          for i in ids {
+            if has_int(binds, i.id) && (i.node is NdSet) {
+              first = o#index;
+            }
+          }
+          if has_int(binds, opt_lease::dc_id(o)) {
+            first = o#index;
+          }
+        }
+      }
+      for o in ops {
+        if o#index < (if first < 0 { 0 } else { first }) {
+          all_ids(o, out);
+          i = opt_lease::dc_id(o);
+          if i > 0 {
+            early += [i];
+          }
+        }
+      }
+    },
+    _ => {},
+  }
+  out
+}
+
+fn all_ids(v: ir::Node, out: vector<integer>) {
+  match v {
+    NdSpan { pos: _, inner } => {
+      i = opt_lease::dc_id(v);
+      if i > 0 && !has_int(out, i) {
+        out += [i];
+      }
+      all_ids(inner, out);
+    },
+    _ => {
+      for c in el_ir::children(v) {
+        all_ids(c, out);
+      }
+    },
+  }
+}
+
+fn dead_walk(n: ir::Node, refs: vector<boolean>, returns: boolean, out: vector<integer>) {
+  node = loop_shape::unspan(n);
+  match node {
+    NdReturn { inner } => dead_inner(inner, refs, true, out),
+    NdBlock { block } => dead_ops(block[0].operators, refs, returns, out),
+    NdLoop { block } => dead_ops(block[0].operators, refs, false, out),
+    _ => {
+      for c in el_ir::children(node) {
+        dead_walk(c, refs, false, out);
+      }
+    },
+  }
+}
+
+fn dead_inner(n: ir::Node, refs: vector<boolean>, returns: boolean, out: vector<integer>) {
+  dead_walk(n, refs, returns, out);
+}
+
+fn dead_ops(ops: vector<ir::Node>, refs: vector<boolean>, ends: boolean, out: vector<integer>) {
+  for op in ops {
+    i = op#index;
+    dead = false;
+    if loop_shape::unspan(op) is NdReturn {
+      dead = !mentions(op, refs);
+    } else {
+      k = -1;
+      for o in ops {
+        if k < 0 && o#index > i && (mentions(o, refs) || (loop_shape::unspan(o) is NdReturn)) {
+          k = o#index;
+        }
+      }
+      dead = if k >= 0 { (loop_shape::unspan(ops[k]!) is NdReturn) && !mentions(ops[k]!, refs) } else { ends };
+    }
+    if dead {
+      id = opt_lease::dc_id(op);
+      if id > 0 && !has_int(out, id) {
+        out += [id];
+      }
+    }
+    dead_walk(op, refs, false, out);
+  }
+}
+
+// `dc_elem`: `(V, element size)` when every one of `srcs` is only ever bound to a whole element
+// of one vector variable `V` that owns its store or is an argument; `ev` -1 otherwise.
+fn dc_elem(x: Cx, w: W, f: ir::Function, code: ir::Node, srcs: vector<integer>, ev: &integer, es: &integer) {
+  ev = -1;
+  fv = -1;
+  fs = 0;
+  for s in srcs {
+    sv = -1;
+    ss = 0;
+    if !elem_source(x.b, f, code, s, 0, sv, ss) {
+      return;
+    }
+    if fv >= 0 && (fv != sv || fs != ss) {
+      return;
+    }
+    fv = sv;
+    fs = ss;
+  }
+  if fv < 0 {
+    return;
+  }
+  owner = f.variables[fv]!.argument;
+  if !owner {
+    owner = true;
+    for dep in own::tp_depend(f, fv) {
+      if dep != fv && !vname(f, dep).starts_with("__vdb") {
+        owner = false;
+      }
+    }
+  }
+  if owner && !f.variables[fv]!.captured && (w.shapes[fv] ?? "") == "ref" && !(cgen_types::base(tp_of(f, fv)) is TyRefVar) {
+    ev = fv;
+    es = fs;
+  }
+}
+
+// `elem_source`: is every bind of `s` a whole element of one vector variable (in `ev`, `es`)?
+fn elem_source(b: ir::Bundle, f: ir::Function, code: ir::Node, s: integer, depth: integer, ev: &integer, es: &integer) -> boolean {
+  found_v = -1;
+  found_s = 0;
+  bad = [false];
+  sets: vector<ir::Node> = [];
+  opt_non_sentinel::walk(code, fn(n: ir::Node) {
+    match n {
+      NdSet { var, inner } => { if var == s { sets += [inner]; } },
+      _ => {},
+    }
+  });
+  for rhs in sets {
+    cv = -1;
+    cs = 0;
+    k = elem_class(b, f, code, rhs, depth, cv, cs);
+    if k < 0 {
+      return false;
+    }
+    if k == 1 {
+      if found_v >= 0 && (found_v != cv || found_s != cs) {
+        return false;
+      }
+      found_v = cv;
+      found_s = cs;
+    }
+  }
+  if found_v < 0 {
+    return false;
+  }
+  ev = found_v;
+  es = found_s;
+  true
+}
+
+// One bind's class: 0 a null, 1 a whole element (`cv`, `cs`), -1 anything else.
+fn elem_class(b: ir::Bundle, f: ir::Function, code: ir::Node, rhs: ir::Node, depth: integer, cv: &integer, cs: &integer) -> integer {
+  match loop_shape::unspan(rhs) {
+    NdNull => 0,
+    NdBlock { block } => {
+      ops = block[0].operators;
+      if len(ops) == 0 {
+        return -1;
+      }
+      r = elem_class(b, f, code, ops[len(ops) - 1]!, depth, cv, cs);
+      r
+    },
+    NdVar { n: t } => {
+      if depth < 3 && t >= 0 && t < len(f.variables) && f.variables[t]!.name.starts_with("_") && !f.variables[t]!.user_named {
+        if elem_source(b, f, code, t, depth + 1, cv, cs) { 1 } else { -1 }
+      } else {
+        -1
+      }
+    },
+    NdCall { def_nr, args } => {
+      name = def_name(b, def_nr);
+      if (name == "OpGetVector" || name == "OpGetVectorNullable") && len(args) == 3 {
+        v = var_of(args[0]!);
+        size = match loop_shape::unspan(args[1]!) { NdInt { n } => n, _ => -1 };
+        if v >= 0 && (loop_shape::unspan(args[0]!) is NdVar) && size >= 0 {
+          cv = v;
+          cs = size;
+          return 1;
+        }
+      }
+      -1
+    },
+    _ => -1,
+  }
+}
+
+// ---- the copy points ----------------------------------------------------------------------
+
+fn field_set(name: text) -> boolean {
+  name == "OpSetEnum" || name == "OpSetBoolean" || name == "OpSetInt" || name == "OpSetCharacter" || name == "OpSetSingle" || name == "OpSetFloat" || name == "OpSetByte" || name == "OpSetByteNullable" || name == "OpSetShort" || name == "OpSetInt4" || name == "OpSetInt4Raw" || name == "OpSetShortRaw" || name == "OpSetText"
+}
+
+// `index_root`: `(V, size, k)` when place `p` is rooted at element `k` of vector variable `V`;
+// -1 in `v` for none.
+fn index_root(b: ir::Bundle, p: ir::Node, v: &integer, size: &integer) -> ir::Node {
+  v = -1;
+  match loop_shape::unspan(p) {
+    NdCall { def_nr, args } => {
+      name = def_name(b, def_nr);
+      if name == "OpGetField" && len(args) > 0 {
+        r = index_root(b, args[0]!, v, size);
+        return r;
+      }
+      if (name == "OpGetVector" || name == "OpGetVectorNullable") && len(args) == 3 {
+        match loop_shape::unspan(args[0]!) {
+          NdVar { n } => {
+            match loop_shape::unspan(args[1]!) {
+              NdInt { n: sz } => {
+                v = n;
+                size = sz;
+                return args[2]!;
+              },
+              _ => return ir::NdNull,
+            }
+          },
+          _ => {
+            r = index_root(b, args[0]!, v, size);
+            return r;
+          },
+        }
+      }
+      ir::NdNull
+    },
+    _ => ir::NdNull,
+  }
+}
+
+// `int_constant`: an integer literal or the negation of one; `ok` false otherwise.
+fn int_constant(b: ir::Bundle, k: ir::Node, ok: &boolean) -> integer {
+  ok = false;
+  match loop_shape::unspan(k) {
+    NdInt { n } => { ok = true; n },
+    NdCall { def_nr, args } => {
+      if def_name(b, def_nr) == "OpMinSingleInt" && len(args) == 1 {
+        match loop_shape::unspan(args[0]!) {
+          NdInt { n } => { ok = true; -n },
+          _ => 0,
+        }
+      } else {
+        0
+      }
+    },
+    _ => 0,
+  }
+}
+
+// `dc_indexed`: the `k` of a write `name` makes through `args` when its one place is rooted at
+// `V[k]` (`dv`'s element vector) and `k` evaluates to the value the write uses; NdNull for none.
+fn dc_indexed(x: Cx, w: W, f: ir::Function, name: text, args: vector<ir::Node>, dv: DcVar, s: ir::Node) -> ir::Node {
+  if dv.elem_v < 0 {
+    return ir::NdNull;
+  }
+  place = if field_set(name) && len(args) > 0 { args[0]! } else if name == "OpCopyRecord" && len(args) == 3 { args[1]! } else { return ir::NdNull };
+  rv = -1;
+  sz = 0;
+  k = index_root(x.b, place, rv, sz);
+  if rv != dv.elem_v || sz != dv.elem_size {
+    return ir::NdNull;
+  }
+  ok = false;
+  n = int_constant(x.b, k, ok);
+  if ok {
+    return ir::NdInt { n: n };
+  }
+  i = var_of(k);
+  if i >= 0 && (loop_shape::unspan(k) is NdVar) && !f.variables[i]!.captured && (cgen_types::base(tp_of(f, i)) is TyInteger) {
+    for u in 0..len(f.variables) {
+      for t in binds::link_targets(f, u) {
+        if t == i {
+          return ir::NdNull;
+        }
+      }
+    }
+    rebinds = [false];
+    opt_non_sentinel::walk(s, fn(m: ir::Node) {
+      match m {
+        NdSet { var, inner: _ } => { if var == i { rebinds[0] = true; } },
+        _ => {},
+      }
+    });
+    if !rebinds[0]! {
+      return k;
+    }
+  }
+  ir::NdNull
+}
+
+// `reaches_pointer`: can a value of type `t` reach a stored pointer?
+fn reaches_pointer(b: ir::Bundle, t: ir::TypeT, seen: vector<integer>) -> boolean {
+  match cgen_types::base(t) {
+    TyInteger { spec: _ } => false,
+    TyBoolean => false,
+    TyFloat => false,
+    TySingle => false,
+    TyCharacter => false,
+    TyText { dep: _ } => false,
+    TyNull => false,
+    TyVoid => false,
+    TyEnum { n, is_ref, dep: _ } => {
+      if !is_ref {
+        return false;
+      }
+      if has_int(seen, n) {
+        return false;
+      }
+      seen += [n];
+      for c in b.data.definitions {
+        if c.parent == n && c.def_type == 4 && record_reaches(b, c#index, seen) {
+          return true;
+        }
+      }
+      false
+    },
+    TyReference { n, dep } => pointer_marker(dep) || record_reaches(b, n, seen),
+    TyVector { inner, dep: _ } => reaches_pointer(b, inner, seen),
+    TyHash { n, names: _, dep: _ } => record_reaches(b, n, seen),
+    TySorted { n, keys: _, dep: _ } => record_reaches(b, n, seen),
+    TyIndex { n, keys: _, dep: _ } => record_reaches(b, n, seen),
+    TyRadix { n, names: _, dep: _ } => record_reaches(b, n, seen),
+    TyTrie { n, key: _, dep: _ } => record_reaches(b, n, seen),
+    TyTuple { elems } => {
+      for e in elems {
+        if reaches_pointer(b, e, seen) {
+          return true;
+        }
+      }
+      false
+    },
+    TyRefVar { inner } => reaches_pointer(b, inner, seen),
+    _ => true,
+  }
+}
+
+fn record_reaches(b: ir::Bundle, d: integer, seen: vector<integer>) -> boolean {
+  if has_int(seen, d) {
+    return false;
+  }
+  seen += [d];
+  if d < 0 || d >= len(b.data.definitions) {
+    return true;
+  }
+  def = b.data.definitions[d]!;
+  if def.def_type != 5 && def.def_type != 4 {
+    return true;
+  }
+  for a in def.attributes {
+    if reaches_pointer(b, a.typedef[0] ?? ir::TyVoid, seen) {
+      return true;
+    }
+  }
+  false
+}
+
+fn pointer_marker(dep: vector<integer>) -> boolean {
+  has_int(dep, 65535)
+}
+
+// `path_root`: the variable a compiler temporary is a place in, when every bind of it is null
+// or a field/element path off one other variable; -1 otherwise.
+fn path_root(b: ir::Bundle, f: ir::Function, code: ir::Node, v: integer) -> integer {
+  vv = f.variables[v]!;
+  if !(vv.name.starts_with("_") && !vv.user_named) || vv.argument {
+    return -1;
+  }
+  found = [-1];
+  bad = [false];
+  opt_non_sentinel::walk(code, fn(n: ir::Node) {
+    match n {
+      NdSet { var, inner } => {
+        if var == v && !(loop_shape::unspan(inner) is NdNull) {
+          r = path_var(b, inner);
+          if r >= 0 && r != v && (found[0]! < 0 || found[0]! == r) {
+            found[0] = r;
+          } else {
+            bad[0] = true;
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  if bad[0]! { -1 } else { found[0]! }
+}
+
+fn path_var(b: ir::Bundle, n: ir::Node) -> integer {
+  match loop_shape::unspan(n) {
+    NdVar { n: r } => r,
+    NdCall { def_nr, args } => {
+      name = def_name(b, def_nr);
+      if (name == "OpGetField" || name == "OpGetVector" || name == "OpGetVectorNullable") && len(args) > 0 {
+        r = path_var(b, args[0]!);
+        return r;
+      }
+      -1
+    },
+    _ => -1,
+  }
+}
+
+fn placed_in(b: ir::Bundle, code: ir::Node, t: integer, host: integer) -> boolean {
+  hit = [false];
+  opt_non_sentinel::walk(code, fn(n: ir::Node) {
+    match n {
+      NdSet { var, inner } => {
+        if var == t {
+          match loop_shape::unspan(inner) {
+            NdCall { def_nr, args } => {
+              if def_name(b, def_nr) == "OpPlaceRecord" && len(args) > 0 && var_of(args[0]!) == host {
+                hit[0] = true;
+              }
+            },
+            _ => {},
+          }
+        }
+      },
+      _ => {},
+    }
+  });
+  hit[0]!
+}
+
+fn own_here(b: ir::Bundle, w: W, v: integer) -> boolean {
+  opt_facts::fresh(b, w.facts, v) || (w.facts.placed[v] ?? false)
+}
+
+// `dc_apart`: is `v` apart from every source of `dv`?
+fn apart(x: Cx, w: W, f: ir::Function, code: ir::Node, v: integer, dv: DcVar, owns: vector<integer>) -> boolean {
+  if has_int(owns, v) || (w.dc_null_only[v] ?? false) || v < 0 || v >= len(f.variables) {
+    return true;
+  }
+  t0 = tp_of(f, v);
+  dbref = match cgen_types::base(t0) {
+    TyReference { n: _, dep: _ } => true,
+    TyVector { inner: _, dep: _ } => true,
+    TySorted { n: _, keys: _, dep: _ } => true,
+    TyIndex { n: _, keys: _, dep: _ } => true,
+    TyHash { n: _, names: _, dep: _ } => true,
+    TyRadix { n: _, names: _, dep: _ } => true,
+    TyTrie { n: _, key: _, dep: _ } => true,
+    TyEnum { n: _, is_ref, dep: _ } => is_ref,
+    TyRefVar { inner: _ } => true,
+    _ => false,
+  };
+  if !dbref {
+    return true;
+  }
+  if reaches_pointer(x.b, t0, []) {
+    return false;
+  }
+  pr = path_root(x.b, f, code, v);
+  wv = if pr >= 0 { pr } else { v };
+  d = x.b.data.definitions[w.index]!;
+  work = opt_hoist::work_buffer_arg(d, v);
+  for t in dv.sources {
+    if t == v {
+      return false;
+    }
+    ok = opt_facts::distinct(x.b, w.facts, t, wv);
+    if !ok {
+      tv = opt_facts::terminal(x.b, w.facts, wv);
+      ok = tv >= 0 && tv != t && own_here(x.b, w, t) && own_here(x.b, w, tv);
+      if !ok && own_here(x.b, w, t) && tv >= 0 {
+        ok = arg_tree(x, d, f, tv);
+      }
+    }
+    if !ok && work && !placed_in(x.b, code, t, v) {
+      ok = true;
+    }
+    if !ok {
+      return false;
+    }
+  }
+  true
+}
+
+fn arg_tree(x: Cx, d: ir::Definition, f: ir::Function, tv: integer) -> boolean {
+  if !f.variables[tv]!.argument {
+    return false;
+  }
+  at = -1;
+  k = 0;
+  for u in f.variables {
+    if u.argument {
+      if u#index == tv {
+        at = k;
+      }
+      k += 1;
+    }
+  }
+  if at < 0 || at >= len(d.attributes) || d.attributes[at]!.hidden {
+    return false;
+  }
+  match cgen_types::base(tp_of(f, tv)) {
+    TyReference { n: _, dep } => !pointer_marker(dep) && !reaches_pointer(x.b, tp_of(f, tv), []),
+    _ => false,
+  }
+}
+
+// `mentions_apart`: every variable `x` mentions is apart (`ok`); a scalar getter's record read
+// passes only a number.
+fn mentions_apart(x: Cx, w: W, f: ir::Function, code: ir::Node, n: ir::Node, dv: DcVar, owns: vector<integer>) -> boolean {
+  match loop_shape::unspan(n) {
+    NdVar { n: v } => apart(x, w, f, code, v, dv, owns),
+    NdCall { def_nr, args } => {
+      if opt_hoist::scalar_getter(def_name(x.b, def_nr)) && len(args) > 0 && (loop_shape::unspan(args[0]!) is NdVar) {
+        for a in args {
+          if a#index > 0 && !mentions_apart(x, w, f, code, a, dv, owns) {
+            return false;
+          }
+        }
+        return true;
+      }
+      for a in args {
+        if !mentions_apart(x, w, f, code, a, dv, owns) {
+          return false;
+        }
+      }
+      true
+    },
+    _ => {
+      for c in el_ir::children(loop_shape::unspan(n)) {
+        if !mentions_apart(x, w, f, code, c, dv, owns) {
+          return false;
+        }
+      }
+      true
+    },
+  }
+}
+
+// `dc_writes_source`: what statement `s` (its probe) asks of `dv` — 0 clear, 1 index (the `k`s
+// in `ks`), 2 flag.
+fn writes_source(x: Cx, w: W, f: ir::Function, code: ir::Node, s: ir::Node, whole: ir::Node, dv: DcVar, ks: vector<ir::Node>) -> integer {
+  owns: vector<integer> = [];
+  for o in w.dc {
+    owns += [o.x, o.own];
+    for dd in o.derived {
+      owns += [dd];
+    }
+  }
+  flag = [false];
+  calls: vector<ir::Node> = [];
+  opt_non_sentinel::walk(s, fn(n: ir::Node) {
+    match n {
+      NdCall { def_nr: _, args: _ } => { calls += [n]; },
+      _ => {},
+    }
+  });
+  for c in calls {
+    if flag[0]! {
+      break;
+    }
+    match c {
+      NdCall { def_nr, args } => {
+        name = def_name(x.b, def_nr);
+        if def_nr < 0 || def_nr >= len(x.b.data.definitions) || read_op(name) || !opt_writes::call_writes_store(x.b, x.writes, def_nr) {
+          continue;
+        }
+        all_apart = true;
+        for a in args {
+          if all_apart && !mentions_apart(x, w, f, code, a, dv, owns) {
+            all_apart = false;
+          }
+        }
+        if all_apart {
+          continue;
+        }
+        k = dc_indexed(x, w, f, name, args, dv, whole);
+        if !(k is NdNull) {
+          ks += [k];
+          continue;
+        }
+        if trace() {
+          println("deferred-copy:   copy point at {name}");
+        }
+        flag[0] = true;
+      },
+      _ => {},
+    }
+  }
+  if flag[0]! { 2 } else if len(ks) == 0 { 0 } else { 1 }
+}
+
+// `dc_before`: before statement `s` (DC ID `id`), take every deferred copy it may disturb the
+// source of.
+pub fn before(x: Cx, w: W, s: ir::Node, id: integer, ind: integer) {
+  if len(w.dc) == 0 {
+    return;
+  }
+  probe = match loop_shape::unspan(s) {
+    NdBlock { block: _ } => return,
+    NdLoop { block: _ } => return,
+    NdInsert { items: _ } => return,
+    NdIf { cond, t: _, f: _ } => cond,
+    _ => loop_shape::unspan(s),
+  };
+  d = x.b.data.definitions[w.index]!;
+  f = d.variables;
+  code = d.code[0] ?? ir::NdNull;
+  due_x: vector<integer> = [];
+  due_ks: vector<vector<ir::Node>> = [];
+  due_flag: vector<boolean> = [];
+  for dv in w.dc {
+    if id > 0 && has_int(dv.dead, id) {
+      continue;
+    }
+    // Inside a top-level statement ahead of the first deferred bind, every node is dead.
+    inside_early = false;
+    for c in w.dc_ctx {
+      if has_int(dv.early, c) {
+        inside_early = true;
+      }
+    }
+    if inside_early {
+      continue;
+    }
+    ks: vector<ir::Node> = [];
+    p = writes_source(x, w, f, code, probe, s, dv, ks);
+    if p == 0 {
+      continue;
+    }
+    due_x += [dv.x];
+    due_ks += [ks];
+    due_flag += [p == 2];
+  }
+  if len(due_x) == 0 {
+    return;
+  }
+  // In variable order.
+  order: vector<integer> = [for i in 0..len(due_x) { i }];
+  for i in 0..len(order) {
+    for j in 0..len(order) - 1 - i {
+      if due_x[order[j]!]! > due_x[order[j + 1]!]! {
+        tmp = order[j]!;
+        order[j] = order[j + 1]!;
+        order[j + 1] = tmp;
+      }
+    }
+  }
+  for oi in order {
+    xv = due_x[oi]!;
+    dv = find(w, xv);
+    moved: vector<integer> = [];
+    for dd in dv.derived {
+      if read_at(x, d, s, id, dv, xv, dd) {
+        moved += [dd];
+      }
+    }
+    if !read_at(x, d, s, id, dv, xv, xv) && len(moved) == 0 {
+      continue;
+    }
+    materialise(x, w, dv, ind, if due_flag[oi]! { [] } else { due_ks[oi]! }, !due_flag[oi]!, moved);
+  }
+}
+
+// Is `v` read at or after statement `s`?  The local counts its views' reads; a view moved on its
+// own counts only its own.
+fn read_at(x: Cx, d: ir::Definition, s: ir::Node, id: integer, dv: DcVar, xv: integer, v: integer) -> boolean {
+  named: vector<boolean> = [for _ in 0..len(d.variables.variables) { false }];
+  named[v] = true;
+  if v == xv {
+    for dd in dv.derived {
+      named[dd] = true;
+    }
+  }
+  if mentions(s, named) {
+    return true;
+  }
+  ra = opt_lease::read_after(x.b, d, id, v, v != xv);
+  if trace() {
+    println("deferred-copy:     {vname(d.variables, v)} after the point: {if ra < 0 { "unreached" } else if ra == 0 { "not read" } else { "read" }} (id {id})");
+  }
+  ra != 0
+}
+
+fn find(w: W, xv: integer) -> DcVar {
+  for dv in w.dc {
+    if dv.x == xv {
+      return dv;
+    }
+  }
+  w.dc[0]!
+}
+
+// `dc_materialise`: the copy point.
+fn materialise(x: Cx, w: W, dv: DcVar, ind: integer, ks: vector<ir::Node>, indexed: boolean, moved: vector<integer>) {
+  name = w.names[dv.x]!;
+  own = w.names[dv.own]!;
+  flag = "loft_dcv{dv.x}";
+  cond = flag;
+  if indexed && dv.elem_v >= 0 {
+    vn = w.names[dv.elem_v]!;
+    tests: vector<text> = [];
+    for k in ks {
+      kc = match loop_shape::unspan(k) { NdVar { n } => "(int64_t) {w.names[n]!}", NdInt { n } => "INT64_C({n})", _ => "0" };
+      tests += ["loft_dc_is_elem({name}, {vn}, {dv.elem_size}, {kc})"];
+    }
+    cond = "{flag} && ({tests.join(" || ")})";
+  }
+  line(w, ind, "if ({cond}) {{");
+  line(w, ind + 1, "loft_ref loft_dcc = loft_ref_null();");
+  line(w, ind + 1, "loft_bind_copy(loft_types, {dv.tp}, &loft_dcc, {name});");
+  for dd in moved {
+    dn = w.names[dd]!;
+    line(w, ind + 1, "{dn} = loft_dc_remap(loft_types, {dv.tp}, {name}, loft_dcc, {dn});");
+  }
+  line(w, ind + 1, "{name} = loft_dcc;");
+  line(w, ind + 1, "{own} = loft_dcc;");
+  line(w, ind + 1, "{flag} = 0;");
+  for r in w.rec_ptrs {
+    if r.var == dv.x || has_int(dv.derived, r.var) {
+      line(w, ind + 1, "{r.pa} = loft_rec_ptr({w.names[r.var]!});");
+    }
+  }
+  line(w, ind, "}}");
+}
+
+// `dc_set`: `Set(var, rhs)` of a deferred local (statement DC ID `id`) or of its witness —
+// written here, true; false for any other statement.
+pub fn set(x: Cx, w: W, id: integer, var: integer, rhs: ir::Node, ind: integer) -> boolean {
+  if len(w.dc) == 0 {
+    return false;
+  }
+  f = x.b.data.definitions[w.index]!.variables;
+  for dv in w.dc {
+    if dv.x == var && id > 0 && has_int(dv.binds, id) {
+      tp = 0;
+      src = whole_value_bind(x, f, var, rhs, tp);
+      if src < 0 {
+        return false;
+      }
+      line(w, ind, "{w.names[var]!} = {w.names[src]!};");
+      line(w, ind, "loft_dcv{var} = 1;");
+      return true;
+    }
+  }
+  for dv in w.dc {
+    if dv.own == var && names_var(x.b, rhs, dv.x) {
+      line(w, ind, "if (!loft_dcv{dv.x}) {w.names[var]!} = {w.names[dv.x]!};");
+      return true;
+    }
+  }
+  false
+}
+
+// `dc_after`: after any other bind of a deferred local, it is a copy or a view in its own right.
+pub fn after(w: W, id: integer, var: integer, ind: integer) {
+  for dv in w.dc {
+    if dv.x == var && !(id > 0 && has_int(dv.binds, id)) {
+      line(w, ind, "loft_dcv{var} = 0;");
+    }
+  }
+}
+
+// `dc_root`: is `v` a deferred local or a view derived from one?
+pub fn root(w: W, v: integer) -> boolean {
+  for dv in w.dc {
+    if dv.x == v || has_int(dv.derived, v) {
+      return true;
+    }
+  }
+  false
+}
+
+// The flags' declarations, in variable order (`FnWriter::write`).
+pub fn declare(w: W) {
+  for v in 0..len(w.names) {
+    for dv in w.dc {
+      if dv.x == v {
+        w.decls += ["uint8_t loft_dcv{v} = 0;"];
+      }
+    }
+  }
+}

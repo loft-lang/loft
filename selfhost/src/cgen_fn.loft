@@ -16,6 +16,10 @@
 use ir;
 use cgen::(Cx, request_twin);
 use binds;
+use opt_apart_value;
+use cgen_transient;
+use cgen_vr;
+use opt_vr_facts;
 use cgen_names;
 use cgen_types;
 use cgen_w::*;
@@ -52,6 +56,7 @@ use loop_shape;
 use opt_non_sentinel;
 use opt_range;
 use cgen_value;
+use narrow;
 use cgen_fnref;
 use cgen_append;
 use cgen_dest;
@@ -59,6 +64,9 @@ use cgen_lazy;
 use cgen_inputs;
 use opt_version;
 use cgen_version;
+use cgen_deferred;
+use cgen_apart;
+use opt_lease;
 use opt_below_len;
 use opt_destination;
 use opt_append_twin;
@@ -391,6 +399,14 @@ fn narrow32(x: Cx, w: W, v: ir::Node, ind: integer) -> E {
 }
 
 fn op_call(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer) -> E {
+  // `@FR-R-Transient`: the operators a transient value changes.
+  if w.tr.any {
+    tr_done = false;
+    tr_e = cgen_transient::tr_op(x, w, name, args, ind, tr_done);
+    if tr_done {
+      return tr_e;
+    }
+  }
   if name == "OpNarrow32" && len(args) == 1 {
     return narrow32(x, w, args[0]!, ind);
   }
@@ -420,6 +436,14 @@ fn op_call(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer) -> E {
     dest_set = cgen_dest::scalar_set(x, w, name, args, ind, into_ds);
     if into_ds {
       return dest_set;
+    }
+  }
+  // `@FR-R-ValueRecord`: the operators a value local, a phantom or a dead buffer changes.
+  if w.vr.any {
+    vr_done = false;
+    vr_e = cgen_vr::vr_op(x, w, name, args, ind, vr_done);
+    if vr_done {
+      return vr_e;
     }
   }
   if len(w.headers) > 0 || len(w.push_heads) > 0 {
@@ -945,6 +969,9 @@ fn ranged_call(x: Cx, w: W, d: integer, args: vector<ir::Node>, inv: boolean) ->
 // twin this site's facts admit.  A callee this writer does not carry is refused by name.
 fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
   // `@FR-R-AppendTwin`: the statement-level site's own call, taken before its arguments are.
+  // `@FR-R-ValueRecord`: the forward mark of this call's own node, taken before its arguments.
+  vr_marked_fwd = w.vr_fwd;
+  w.vr_fwd = -1;
   ap_here = w.ap_site >= 0 && w.ap_site == d;
   if ap_here {
     w.ap_site = -1;
@@ -954,10 +981,25 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
   if ds_here {
     w.ds_site = -1;
   }
+  // `@FR-R-Transient`'s work clause: the lifted bind's own call, likewise.
+  wr_here = w.wr_call >= 0 && w.wr_call == d;
+  if wr_here {
+    w.wr_call = -2;
+  }
   def = x.b.data.definitions[d]!;
   // Every route below is keyed by the callee's name, and only a standard-library definition
   // is answered by one.
   route = cgen_names::runtime_name(x.b, d);
+  if w.tr.any {
+    tr_len_done = false;
+    tr_len = cgen_transient::length(x, w, route, args, ind, tr_len_done);
+    if tr_len_done {
+      if wr_here {
+        w.wr_call = d;
+      }
+      return tr_len;
+    }
+  }
   // The store's memory report names each type by the unit's type-name table.
   if route == "n_store_memory" && len(args) == 0 {
     report = temp(w, "text");
@@ -1040,6 +1082,14 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
       return stored;
     }
   }
+  // The element is the stdlib's `EnvVariable`, sized from this program's table.
+  if route == "n_env_variables" {
+    for t in x.b.types {
+      if t.name == "EnvVariable" {
+        return E { code: "loft_env_variables({t.size})", kind: K_REF };
+      }
+    }
+  }
   if (route.starts_with("n_store_") && !route.starts_with("n_store_upgrade_owed_") && route != "n_store_reclaim") || route == "n_spatial_range" || route == "n_trie_prefix" || route.starts_with("n_parallel_") || route.starts_with("n_keyed_entry_") || route.starts_with("n_struct_") || route.starts_with("t_9character_is_") || route == "n_hash_sorted" || route == "n_hash_unsorted" || route == "n_radix_sorted" || route == "n_env_variables" || (route == "t_6vector_len" && !plain_rules()) || def.native == "n_swap_world" {
     refuse(w, "a call the runtime answers by its name: {if route == "" { def.native } else { route }}");
     return none();
@@ -1052,6 +1102,14 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
     return none();
   }
   ret = if len(def.returned) == 0 { "" } else { cgen_types::ctype(def.returned[0]!) ?? "" };
+  // `@FR-R-ValueRecord`: an admitted callee answers its struct and takes no buffer; a tuple
+  // parameter takes a struct.
+  vr_dropped = -1;
+  vr_key = cgen_vr::callee(x, d, vr_dropped);
+  if vr_key >= 0 {
+    ret = cgen_vr::ctype(x, vr_key);
+  }
+  vr_tps = cgen_vr::tuple_params(x, d);
   if held(ret) == "" || ((is_tuple(ret) || ret == "fn" || ret == "ref") && !plain_rules()) {
     refuse(w, "a call returning shape {ret}");
     return none();
@@ -1127,9 +1185,28 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
       }
     }
   }
+  // `@FR-R-ValueRecord`: each tuple parameter's struct, by pointer where the callee takes it so.
+  vr_ptr = cgen_value::vr_ptr_params(x, d);
+  for tpi in vr_tps {
+    if tpi#index % 2 == 0 && tpi < len(args) {
+      xs[tpi] = cgen_vr::arg(x, w, args[tpi]!, vr_tps[tpi#index + 1]!, ind);
+      if vr_ptr.contains(tpi) {
+        xs[tpi] = cgen_vr::arg_address(x, w, args, tpi, xs[tpi]!, vr_tps[tpi#index + 1]!, ind);
+      }
+      if w.why != "" {
+        return none();
+      }
+    }
+  }
+  // `@FR-R-Transient`: the arguments handed transient values, each a pointer, the call going to
+  // the callee's twin; a result twin takes no return buffer.
+  trc = cgen_transient::call_args(x, w, d, args, xs, ind);
+  if w.why != "" {
+    return none();
+  }
   for a in args {
     i = a#index;
-    if linked[i]! {
+    if linked[i]! || (trc.params >> i) & 1 == 1 || i == trc.dropped || i == vr_dropped || is_tuple_param(vr_tps, i) {
       continue;
     }
     if loop_shape::unspan(a) == NdNull {
@@ -1141,9 +1218,12 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
       xs[i] = fn_value(x, named);
       continue;
     }
+    // Only the arguments this loop writes count (`value_args`' `rest`): a tuple, transient or
+    // dropped argument, a bare null and a function literal are written elsewhere or not at all.
     later_writes = false;
     for j in i + 1..len(args) {
-      if !linked[j]! && loop_shape::unspan(args[j]!) != NdNull && may_write(x.b, args[j]!) {
+      plain_j = !linked[j]! && (trc.params >> j) & 1 == 0 && j != trc.dropped && j != vr_dropped && !is_tuple_param(vr_tps, j) && loop_shape::unspan(args[j]!) != NdNull && !(shapes[j]! == "fn" && function_literal(x.b, args[j]!) >= 0);
+      if plain_j && may_write(x.b, args[j]!) {
         later_writes = true;
       }
     }
@@ -1158,10 +1238,14 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
   }
   w.slice_carriers = w.slice_carriers[0..carriers];
   // An IR tuple the callee takes by pointer (`Cx::vr_ptr_params`): its address.
+  call_dropped = if vr_dropped >= 0 { vr_dropped } else { trc.dropped };
   for i in cgen_value::vr_ptr_params(x, d) {
-    if i < len(xs) {
+    if i < len(xs) && i != call_dropped && !is_tuple_param(vr_tps, i) {
       xs[i] = cgen_value::tuple_arg_address(w, args, i, xs[i]!, shapes[i]!, ind);
     }
+  }
+  if call_dropped >= 0 {
+    xs.remove(call_dropped);
   }
   t = cgen_names::plain(d);
   if places != 0 && (native != "" || len(args) > 63) {
@@ -1171,7 +1255,8 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
   t.places = places;
   // `@FR-R-Header`'s kept-twin clause: a callee handed a vector this body holds a grown
   // header for takes that header by pointer and keeps it current; no refresh follows.
-  if places == 0 && native == "" && len(args) < 64 {
+  tr_named = trc.name != "";
+  if places == 0 && native == "" && len(args) < 64 && !tr_named {
     kh = cgen_hoist::kept_header_arg(x, w, d, args);
     if kh != "" {
       xs += ["&{kh}"];
@@ -1181,7 +1266,10 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
   }
   vflag = "";
   // `@FR-R-Inputs`: a callee whose every header input this body holds takes them.
-  if !t.kh && native == "" && len(args) < 64 {
+  // `@FR-R-Apart` instance 4: an apart value handed over goes to the callee's `__apr` twin, which
+  // takes it as its buffers (`expr` answered them at that argument).
+  apr_call = !tr_named && cgen_apart::twin_call(x, w, d, args);
+  if !t.kh && native == "" && len(args) < 64 && !apr_call && !tr_named {
     taken = false;
     inputs = cgen_inputs::twin_inputs(x, w, d, args, ind, taken);
     if w.why != "" {
@@ -1202,26 +1290,44 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
       }
     }
   }
-  if w.nk_call == d {
+  if w.nk_call == d && !tr_named {
     w.nk_call = -1;
     t.nk = true;
   }
-  if ap_here || cgen_append::handed(x, w, d, args) {
+  if !tr_named && (ap_here || cgen_append::handed(x, w, d, args)) {
     t.ap = true;
   }
-  if ds_here {
+  if ds_here && !tr_named {
     t.ds = true;
   }
-  if native == "" {
-    if len(args) <= 23 {
+  if native == "" && !tr_named {
+    if len(args) <= 23 && !apr_call {
       t.nn = nn_twin_bits(x, w, d, args);
     }
-    t.rg = ranged_call(x, w, d, args, t.inv);
+    t.rg = !apr_call && ranged_call(x, w, d, args, t.inv);
+  }
+  if apr_call {
+    t.apr = true;
   }
   name = if native != "" { native } else { cgen_names::c_name(x.b, x.dups, d) };
-  if !cgen_names::is_plain(t) {
+  if tr_named {
+    name = trc.name;
+  } else if !cgen_names::is_plain(t) {
     request_twin(x, t);
     name = cgen_names::twin_name(x.b, x.dups, t);
+  }
+  // `@FR-R-Transient`'s work clause: the result is read from the caller's buffer.
+  wr = wr_here && cgen_names::is_plain(t) && !tr_named;
+  if wr {
+    w.wr_call = -1;
+    number_pending(x, w);
+    name = work_twin(x, d);
+    if name == "" {
+      refuse(w, "no work twin");
+      return none();
+    }
+  } else if wr_here {
+    w.wr_call = d;
   }
   // `@FR-R-AppendTwin`'s window clause: a twin that takes its caller's window gets one.
   fresh = "";
@@ -1252,11 +1358,22 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
     held_r = temp(w, "ref");
     return E { code: "({fresh} = loft_win_of({buffer_c}, {window}), {held_r} = {code}, loft_win_sync({fresh}), {held_r})", kind: K_REF };
   }
+  // `@FR-R-ValueRecord`: a forward writes the callee's struct into the buffer it was handed.
+  if vr_key >= 0 {
+    fwd_buf = cgen_vr::forward_target(w, vr_marked_fwd, args, vr_dropped);
+    if fwd_buf >= 0 {
+      return cgen_vr::forward(x, w, code, vr_key, fwd_buf, ind);
+    }
+  }
+  if wr {
+    return E { code: code, kind: K_VOID };
+  }
   // `@FR-R-BufferReturn`: a callee that answers its caller's `&text` work buffer fills it
   // through its `__wr` twin, and the call's value is a view of that buffer.
-  if ret == "text" && cgen_names::is_plain(t) && native == "" && (env_variable("LOFT_NO_BUFFER_RETURN") ?? "0") == "0" {
+  if ret == "text" && cgen_names::is_plain(t) && !tr_named && native == "" && (env_variable("LOFT_NO_BUFFER_RETURN") ?? "0") == "0" {
     at = answers_work(x.b, d, true);
     if at >= 0 && at < len(xs) && plain_place(xs[at]!) {
+      number_pending(x, w);
       twin = work_twin(x, d);
       if x.work_twins[d]! == 3 {
         refuse(w, "a work twin that is not carried: {x.why_work}");
@@ -1525,7 +1642,12 @@ fn work_twin(x: Cx, d: integer) -> text {
   def = x.b.data.definitions[d]!;
   at = answers_work(x.b, d, true);
   declined = at < 0;
-  // `plain_params`: a signature the twin does not take.
+  // `plain_params`: a signature the twin does not take — pointer-passed records, a
+  // value-record result, a hidden return buffer, a store text link.
+  vr_drop = -1;
+  if len(cgen_value::vr_ptr_params(x, d)) > 0 || cgen_vr::callee(x, d, vr_drop) >= 0 {
+    declined = true;
+  }
   for a in def.attributes {
     heap = match a.typedef[0]! {
       TyReference { n: _, dep: _ } => true,
@@ -1554,7 +1676,7 @@ fn work_twin(x: Cx, d: integer) -> text {
     x.work_twins[d] = 1;
     return "";
   }
-  written = write_body(x, cgen_names::plain(d), param, false, []);
+  written = write_body(x, cgen_names::plain(d), param, false, [], cgen_transient::no_fn());
   if written.refused != "" {
     x.work_twins[d] = 3;
     x.why_work = written.refused;
@@ -1563,9 +1685,9 @@ fn work_twin(x: Cx, d: integer) -> text {
   // `write_work_twin`: declared and defined with the unit's bodies, as the twin's own
   // `static inline void <name>(<params>)` around the body the writer wrote.
   sig = "static inline void {name}({written.list})";
-  open = written.text.find(" {{\n") ?? 0;
+  // The body as written, never split: `(R-CSplit)` is the frame body's alone (`framed`).
   x.gen_decls += "{sig};\n";
-  x.gen_bodies += "\n{sig}{written.text[open..written.text.size()]}";
+  x.gen_bodies += "\n{sig} {{\n{written.inner}}}\n";
   name
 }
 
@@ -1673,9 +1795,20 @@ fn call_ref(x: Cx, w: W, v: integer, args: vector<ir::Node>, ind: integer) -> E 
   }
   xs: vector<text> = [for _ in 0..len(shapes) { "" }];
   modes: vector<text> = [];
+  // Each parameter's mode: a value (0), a link to a variable (1), a store place (2) — the last
+  // reaches each function through its place twin (`twin_name`).
   for s in shapes {
     i = s#index;
     if links[i]! {
+      pa = place_arg(x, w, args[i]!, params[i]!, ind);
+      if w.why != "" {
+        return none();
+      }
+      if pa != "" {
+        xs[i] = pa;
+        modes += ["{s}:2"];
+        continue;
+      }
       xs[i] = link_arg(x, w, args[i]!, s, true, ind);
       if w.why != "" {
         return none();
@@ -1913,6 +2046,30 @@ fn expr_value(x: Cx, w: W, v: ir::Node, ind: integer) -> E {
     },
     NdCallRef { var, args } => call_ref(x, w, var, args, ind),
     NdVar { n } => {
+      // `@FR-R-Apart` instance 4: an apart value is its buffers — what a twin call takes, and a
+      // C type error anywhere a record was meant.
+      apr_buf = cgen_apart::buf(w, n);
+      if apr_buf != "" {
+        return E { code: apr_buf, kind: K_REF };
+      }
+      // `@FR-R-Apart` instance 3: an apart vector is its inline buffer.
+      if cgen_apart::is_vec(w, n) {
+        return E { code: "loft_apv{n}", kind: K_REF };
+      }
+      // Instance 2: an apart record is its value.
+      av_v = cgen_apart::av_val(w, n);
+      if av_v != "" {
+        return E { code: av_v, kind: K_REF };
+      }
+      // `@FR-R-Transient`: a lifted text reads the text it copies; a transient value read where
+      // a store value is meant refuses the body.
+      if w.tr.any && cgen_transient::lift(x, w, n) {
+        return expr(x, w, w.tr.lift_src[n]!, ind);
+      }
+      if cgen_transient::tr_is(w, n) || (cgen_transient::tr_dead(w, n) && !(w.params[n] ?? false)) {
+        refuse(w, "a transient value read as a store value (`{x.b.data.definitions[w.index]!.variables.variables[n]!.name}`)");
+        return none();
+      }
       shape = w.shapes[n] ?? "";
       if held(shape) == "" || shape == "void" {
         refuse(w, "a variable of shape {shape}");
@@ -1950,14 +2107,47 @@ fn expr_value(x: Cx, w: W, v: ir::Node, ind: integer) -> E {
       // caller's site), for the writer of this call alone.
       saved_kind = w.call_kind;
       saved_site = w.call_site;
+      // `@FR-R-Apart` instance 3: an apart vector's element, push, length or clear.
+      if w.apr.any {
+        apr_done = false;
+        apr_e = cgen_apart::rec_op(x, w, name, args, ind, apr_done);
+        if apr_done {
+          return apr_e;
+        }
+      }
+      if w.apv.any {
+        apart_done = false;
+        apart_e = cgen_apart::vec_op(x, w, name, v, args, ind, apart_done);
+        if apart_done {
+          return apart_e;
+        }
+      }
+      // Instance 2: an element of a record held as a value, its length, its free.
+      if w.av.any {
+        av_done = false;
+        av_e = cgen_apart::av_op(x, w, v, ind, av_done);
+        if av_done {
+          return av_e;
+        }
+      }
       w.call_kind = cgen_version::call_kind(w, v);
       w.call_site = cgen_version::site_of(v);
+      w.vr_fwd = cgen_vr::forward_mark(w, v);
       out = if !name.starts_with("Op") { call(x, w, def_nr, args, ind) } else { op_call(x, w, name, typed_nulls(x.b, def_nr, args), ind) };
       w.call_kind = saved_kind;
       w.call_site = saved_site;
       out
     },
-    NdBlock { block: _ } => compound(x, w, node, ind),
+    NdBlock { block: _ } => {
+      // `@FR-R-Transient`: a text argument copy of a transient text reads that text.
+      if w.tr.any {
+        copied = cgen_transient::text_copy(x, w, node);
+        if !(copied is NdNull) {
+          return expr(x, w, copied, ind);
+        }
+      }
+      compound(x, w, node, ind)
+    },
     NdInsert { items: _ } => compound(x, w, node, ind),
     NdIf { cond: _, t: _, f: _ } => compound(x, w, node, ind),
     NdTuple { items: _ } => compound(x, w, node, ind),
@@ -2157,6 +2347,8 @@ fn null_into(w: W, target: text, shape: text, ind: integer) {
     line(w, ind, "{target} = loft_ref_null();");
   } else if shape == "fn" {
     line(w, ind, "{target} = loft_fn_of(LOFT_NULL);");
+  } else if cgen_transient::is_tr_shape(shape) {
+    line(w, ind, "{target} = 0;");
   } else if shape != "void" {
     refuse(w, "a null of shape {shape}");
   }
@@ -2165,6 +2357,10 @@ fn null_into(w: W, target: text, shape: text, ind: integer) {
 // Write the statements `v` needs and put its value in `target`, of `shape` (`assign`).
 fn assign(x: Cx, w: W, v: ir::Node, target: text, shape: text, ind: integer) {
   if w.why != "" {
+    return;
+  }
+  // `@FR-R-ValueRecord`: a value leaf at a struct position.
+  if w.vr.any && cgen_vr::assign(x, w, v, target, shape, ind) {
     return;
   }
   at = innermost_span(v);
@@ -2514,6 +2710,17 @@ fn stmts_upto(x: Cx, w: W, ops: vector<ir::Node>, end: integer, ind: integer) {
     if cgen_ref::clear_before_mint(x.b, w, ops, o#index, end) {
       continue;
     }
+    // `@FR-R-Apart` instance 2: a construction run builds its value as a whole.
+    if cgen_apart::av_any(w) {
+      av_next = cgen_apart::av_construction(x, w, ops, o#index, end, ind);
+      if av_next >= 0 {
+        for i in o#index..av_next {
+          cgen_hoist::refresh_grown(x, w, ops[i]!, ind);
+        }
+        skip_to = av_next;
+        continue;
+      }
+    }
     if plain_rules() {
       last = cgen_rotate::rotate_site(x, w, ops, o#index, ind);
       if last >= 0 {
@@ -2607,6 +2814,14 @@ fn label(w: W, depth: integer) -> integer {
 // Return `v`'s value, or nothing (`ret_value`).
 fn ret_value(x: Cx, w: W, v: ir::Node, ind: integer) {
   absent = loop_shape::unspan(v) == NdNull;
+  if cgen_transient::is_tr_shape(w.ret) {
+    if absent {
+      refuse(w, "a transient result answered by nothing");
+      return;
+    }
+    cgen_transient::ret(x, w, v, ind);
+    return;
+  }
   if w.ret == "void" {
     // A `__wr` twin answers its caller's buffer: nothing to hand back; a null answer is the
     // null text in that buffer.
@@ -2671,6 +2886,34 @@ fn stmt(x: Cx, w: W, v: ir::Node, ind: integer) {
       }
     }
   }
+  // `@FR-R-DeferredCopy`: a deferred bind takes the source's reference; any statement that may
+  // write a source's store takes the copies it would otherwise disturb first.  A DC span hands
+  // its ID to the statement inside it.
+  dc_at = 0;
+  dc_span = false;
+  if len(w.dc) > 0 && !is_line {
+    dc_span = opt_lease::dc_id(v) > 0 && (match v { NdSpan { pos, inner: _ } => pos.line == 0 && pos.pos <= opt_lease::DC_BASE, _ => false });
+    if dc_span {
+      w.dc_pending = opt_lease::dc_id(v);
+      w.dc_ctx += [w.dc_pending];
+    } else {
+      // A copy a rewrite writes (`no_memo`) is no node of the body, as the Rust writer's
+      // clone is not: no deferred bind, and no statement the liveness pass reaches.
+      dc_at = if w.no_memo > 0 { 0 } else { w.dc_pending };
+      if !(v is NdSpan) {
+        w.dc_pending = 0;
+      }
+      match loop_shape::unspan(v) {
+        NdSet { var, inner } => {
+          if cgen_deferred::set(x, w, dc_at, var, inner, ind) {
+            return;
+          }
+        },
+        _ => {},
+      }
+      cgen_deferred::before(x, w, v, dc_at, ind);
+    }
+  }
   if !is_line && cgen_append::append_site(x, w, v, ind) {
     return;
   }
@@ -2696,6 +2939,16 @@ fn stmt(x: Cx, w: W, v: ir::Node, ind: integer) {
       NdSet { var: set_var, inner: _ } => cgen_hoist::refresh_rebound(w, set_var, ind),
       _ => {},
     }
+  }
+  if w.why == "" && len(w.dc) > 0 && !dc_span {
+    match loop_shape::unspan(v) {
+      NdSet { var: dc_var, inner: _ } => cgen_deferred::after(w, dc_at, dc_var, ind),
+      _ => {},
+    }
+  }
+  if dc_span {
+    w.dc_pending = 0;
+    w.dc_ctx = w.dc_ctx[0..len(w.dc_ctx) - 1];
   }
   // A span is written as the statement it wraps, which refreshes for itself.
   if w.why == "" && !(v is NdSpan) {
@@ -2851,6 +3104,11 @@ fn stmt_kind(x: Cx, w: W, v: ir::Node, ind: integer) {
     NdEnum { ord: _, tp: _ } => {},
     NdText { s: _ } => {},
     NdSpan { pos, inner } => {
+      // `@FR-R-ValueRecord`: a materialised view return, or a build that returns what it builds,
+      // standing as a statement returns its struct.
+      if pos.file == opt_vr_facts::MARK_FILE && w.vr.any && cgen_vr::stmt_leaf(w, v) && cgen_vr::stmt(x, w, v, ind) {
+        return;
+      }
       // A call a marker names (`@FR-R-Version`) is written with its marker in view.
       if pos.line == 0 && (cgen_version::call_kind(w, v) != 0 || cgen_version::site_of(v) > 0) && (loop_shape::unspan(inner) is NdCall) {
         note_site(x, w, inner, ind);
@@ -2893,6 +3151,35 @@ fn stmt_kind(x: Cx, w: W, v: ir::Node, ind: integer) {
       if w.undeclared[var]! {
         return;
       }
+      // `@FR-R-Transient`: a lifted text argument served by the transient text it copies is not
+      // bound at all; a work-buffer result's call fills the buffer, through its `__wr` twin.
+      if w.tr.any && cgen_transient::lift(x, w, var) {
+        w.bound[var] = true;
+        if (loop_shape::unspan(inner) is NdCall) && !w.tr.lift_copy[var]! {
+          w.wr_call = match loop_shape::unspan(inner) { NdCall { def_nr, args: _ } => def_nr, _ => -1 };
+          e = expr(x, w, inner, ind);
+          if w.wr_call != -1 {
+            w.wr_call = -1;
+            refuse(w, "a work-buffer call written without its twin");
+            return;
+          }
+          line(w, ind, "{e.code};");
+          flush(w, ind);
+        }
+        return;
+      }
+      if w.tr.any && cgen_transient::set(x, w, var, inner, ind) {
+        w.bound[var] = true;
+        return;
+      }
+      if cgen_apart::stmt(x, w, v, ind) {
+        return;
+      }
+      // `@FR-R-ValueRecord`: a value local's bind, a dead buffer's.
+      if w.vr.any && cgen_vr::set(x, w, var, inner, ind) {
+        w.bound[var] = true;
+        return;
+      }
       shape = w.shapes[var] ?? "";
       if held(shape) == "" || shape == "void" {
         refuse(w, "a variable of shape {shape}");
@@ -2918,6 +3205,12 @@ fn stmt_kind(x: Cx, w: W, v: ir::Node, ind: integer) {
       // every later read and write of it goes through.
       if w.links[var]! && (!w.params[var]! || link_set_repoints(x.b, w, var, inner)) {
         to = stack_target(x.b, w, inner);
+        if to == "" && shape != "ref" {
+          to = direct_place(x, w, var, inner, ind);
+          if w.why != "" {
+            return;
+          }
+        }
         if to == "" && shape != "ref" && store_place(x.b, inner) {
           refuse(w, "a link to a store place");
           return;
@@ -2975,6 +3268,9 @@ fn stmt_kind(x: Cx, w: W, v: ir::Node, ind: integer) {
       flush(w, ind);
     },
     NdIf { cond, t, f } => {
+      if cgen_apart::stmt(x, w, v, ind) {
+        return;
+      }
       // A fast twin's decided `if`: the arm it takes.
       decided = cgen_version::decided(w, cond);
       if decided >= 0 {
@@ -3008,6 +3304,10 @@ fn stmt_kind(x: Cx, w: W, v: ir::Node, ind: integer) {
     },
     // A generator's `return` ends it: what it returns is done for its effect.
     NdReturn { inner } => {
+      // `@FR-R-Apart` instance 2: a `return` of an apart value.
+      if cgen_apart::av_any(w) && cgen_apart::av_return(x, w, inner, ind) {
+        return;
+      }
       if w.gen_elem != "" {
         stmt(x, w, inner, ind);
         line(w, ind, "goto loft_gen_end;");
@@ -3293,17 +3593,32 @@ pub fn write_function(x: Cx, twin: cgen_names::Twin) -> Written {
   // `@FR-R-Cold`'s loft clause: the ordinary body only, and written again in place where
   // the body did not keep to the plan.
   if cgen_names::is_plain(twin) && plain_rules() && cgen_gen::gen_elem(x.b.data.definitions[twin.d]!) == "" {
-    tried = write_body(x, twin, -1, true, []);
+    // `@FR-R-Transient`: a plain function with a root site is written with it first, and again
+    // without it when the writer declines it.
+    site = cgen_transient::site_plan(x, twin.d);
+    if site.any {
+      with_site = write_body(x, twin, -1, false, [], site);
+      if with_site.refused == "" {
+        return with_site;
+      }
+    }
+    tried = write_body(x, twin, -1, true, [], cgen_transient::no_fn());
     if tried.refused != cgen_cold::COLD_ESCAPED {
       return tried;
     }
   }
-  write_body(x, twin, -1, false, [])
+  write_body(x, twin, -1, false, [], cgen_transient::no_fn())
+}
+
+// `@FR-R-Transient`: the body of definition `d` written with transient facts `tf` — a twin's
+// (its inner body, no frame wrapper) or a site's.
+pub fn write_transient_body(x: Cx, d: integer, tf: cgen_transient::TrFn) -> Written {
+  write_body(x, cgen_names::plain(d), -1, false, [], tf)
 }
 
 // The body of twin `twin` (`FnWriter::write`); with `work_ret` a `__wr` twin's — the body
 // alone, answering nothing, its result the caller's buffer `work_ret`.
-fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean, helper: vector<ColdArm>) -> Written {
+fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean, helper: vector<ColdArm>, tf: cgen_transient::TrFn) -> Written {
   index = twin.d;
   // `@FR-R-Base`'s guard clause: the guarded index slots marked in the code every body of the
   // function is written from (`opt_below_len::mark`).
@@ -3319,12 +3634,29 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   if plain_rules() && len(x.b.data.definitions[index]!.code) > 0 {
     cgen_version::mark_sites(x, index);
   }
+  // `@FR-R-DeferredCopy`: the statements numbered where a copy may be deferred.
+  if plain_rules() {
+    cgen_deferred::number_function(x, index);
+  }
+  // `@FR-R-ValueRecord`: the plan's node-keyed facts marked in the code.
+  cgen_vr::mark(x, index);
   d = x.b.data.definitions[index]!;
   if d.c_symbol != "" || len(d.code) == 0 || d.code[0] == NdNull {
     return Written { text: "", refused: "a function without a loft body" };
   }
   why = "";
   shapes = cgen_types::variable_shapes(d, why) ?? return Written { text: "", refused: why };
+  // The unit numbers a tuple struct when a shape first names it (`Cx::tuple_id` under
+  // `variable_shapes`): the function's own tuples, in variable order, before anything its
+  // body writes — a twin written on the way, a site tried and declined — names another.
+  number_tuples(x, shapes);
+  // `@FR-R-ValueRecord`: the value locals and tuple parameters are structs.
+  cgen_vr::local_shapes(x, index, shapes);
+  number_tuples(x, shapes);
+  // `@FR-R-Transient`: the transient locals are pointers into the arena.
+  if tf.any {
+    cgen_transient::apply_shapes(tf, shapes);
+  }
   // A generator (`write_gen`): its body is the resume function's, written for its effect.
   gen_elem = if work_ret >= 0 || len(helper) > 0 { "" } else { cgen_gen::gen_elem(d) };
   if gen_elem == "void" {
@@ -3334,6 +3666,19 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     return Written { text: "", refused: "a generator handed a store place for a & parameter" };
   }
   ret = if work_ret >= 0 || len(helper) > 0 || gen_elem != "" { "void" } else if len(d.returned) == 0 { "" } else { cgen_types::ctype(d.returned[0]!) ?? "" };
+  // `@FR-R-ValueRecord`: an admitted function returns its record's fields as a struct, and its
+  // signature drops the return buffer.
+  vr_dropped = -1;
+  vr_key = cgen_vr::callee(x, index, vr_dropped);
+  if vr_key >= 0 && work_ret < 0 && len(helper) == 0 && gen_elem == "" && !(tf.any && tf.builds) {
+    ret = cgen_vr::ctype(x, vr_key);
+  } else {
+    vr_dropped = -1;
+  }
+  // `@FR-R-Apart` instance 2: an `__apv` twin answers its value through `loft_apo`.
+  if twin.apv {
+    ret = "void";
+  }
   // `@FR-R-Destination` — a `__d` twin answers its scalar fields as a tuple.
   if twin.ds {
     ds_shape = opt_destination::shape(x.b, index, 0, x.dest_memo);
@@ -3341,6 +3686,10 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
       return Written { text: "", refused: "a __d twin of a function with no destination shape" };
     }
     ret = opt_destination::tuple_shape(ds_shape);
+  }
+  // A transient twin answers its result as the arena pointer it built.
+  if tf.any && tf.builds {
+    ret = tf.ret;
   }
   if held(ret) == "" || ((ret == "ref" || ret == "fn" || is_tuple(ret)) && !plain_rules()) {
     return Written { text: "", refused: "a result of shape {ret}" };
@@ -3352,6 +3701,8 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   is_param: vector<boolean> = [];
   // `@FR-R-ValueRecord`'s pointer clause: the parameters that arrive as `const loft_tupN *`.
   by_ptr = cgen_value::vr_ptr_params(x, index);
+  // `@FR-R-Apart` instance 2: an `__apv` twin's record parameters arrive as values.
+  apv_roles = if twin.apv { cgen_apart::twin_value_roles(x, index) } else { opt_apart_value::no_roles() };
   ordinal = 0;
   for v in d.variables.variables {
     shape = shapes[v#index]!;
@@ -3380,14 +3731,17 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     links += [link];
     is_param += [v.argument];
     if v.argument {
-      params += [if link { "{held(shape)} *{own}" } else if pointed { "const {passed(shape)} *{own}" } else { "{passed(shape)} {own}" }];
+      // `@FR-R-Apart` instance 4: an `__apr` twin takes its apart parameter as the field buffers.
+      apr_param = twin.apr && cgen_apart::twin_at(x, index) == ordinal;
+      apv_t = if twin.apv && apv_roles.any && (apv_roles.apart[v#index] ?? -1) >= 0 { opt_apart_value::ctype(cgen_apart::value_plan(x), apv_roles.apart[v#index]!) } else { "" };
+      params += [if apv_t != "" { "const {apv_t} *loft_avp{v#index}" } else if apr_param { "loft_text *loft_aprp" } else if link { "{held(shape)} *{own}" } else if pointed { "const {passed(shape)} *{own}" } else { "{passed(shape)} {own}" }];
       ordinal += 1;
     }
   }
   if len(params) != len(d.attributes) {
     return Written { text: "", refused: "parameters that do not match their arguments" };
   }
-  if twin.apr || twin.apv {
+  if (twin.apv || twin.apr) && !plain_rules() {
     return Written { text: "", refused: "a twin of a rule that is not carried" };
   }
   // A `__nn` twin: the parameters its caller's arguments prove; a `__rg` twin: its integer
@@ -3418,6 +3772,10 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     shapes: shapes,
     ret: ret,
     body: "",
+    numbered: 0,
+    numbered_temps: 0,
+    why_body: 0,
+    why_temps: 0,
     temps: [],
     why: "",
     cur_line: 0,
@@ -3514,6 +3872,19 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     v_flag: [],
     v_reads: [],
     v_hold: [],
+    dc: [],
+    dc_null_only: [],
+    dc_pending: 0,
+    dc_ctx: [],
+    apv: if plain_rules() && !tf.any { opt_apart_vector::roles(x.b, index) } else { opt_apart_vector::no_roles() },
+    apr: if plain_rules() && !tf.any { cgen_apart::record_roles(x, index, twin.apr) } else { opt_apart_records::no_roles() },
+    tr: tf,
+    wr_call: -1,
+    vr: opt_vr_facts::no_fn(),
+    vr_fwd: -1,
+    av: opt_apart_value::no_roles(),
+    av_twin: false,
+    av_rb: -1,
     loop_call_at: [],
     ap_buf: -1,
     ap_views: [],
@@ -3527,6 +3898,20 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     text_windows: [],
     raw_shapes: [],
   };
+  // `@FR-R-Transient` (`FnWriter::transient`): a result twin's buffer is a local of its own — a
+  // vector result the IR never mints is the twin's from its entry — and a site takes the
+  // frame's arena mark at its entry.
+  if tf.any {
+    if tf.phantom >= 0 {
+      w.params[tf.phantom] = false;
+      if tf.kind[tf.phantom]! == 2 {
+        w.decls += ["{w.names[tf.phantom]!} = (loft_ta_vec *) loft_ta_alloc(sizeof(loft_ta_vec));"];
+      }
+    }
+    if cgen_transient::has_roots(tf) {
+      w.decls += ["loft_ta_mark_t loft_tmf = loft_ta_mark();"];
+    }
+  }
   // `store_links`: a place twin's `&` parameters (`twin.places`, by parameter) and a store
   // instance's text parameters (`n_app@st1`, `parser/store_text.rs`) are store links, and so is every `&` local each bind of which names a field or an element — each a
   // `loft_ref` to the place, read and written through it (`link_access`).
@@ -3587,7 +3972,7 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     w.grown_headers += ["(*khp)"];
   }
   // `@FR-R-RetAdopt`: the result local that is built in the return buffer.
-  if plain_rules() && (env_variable("LOFT_NO_RETBUF_ADOPT") ?? "0") == "0" {
+  if plain_rules() && !tf.any && (env_variable("LOFT_NO_RETBUF_ADOPT") ?? "0") == "0" {
     adopted = opt_adopt::ret_adopt(x.b, index);
     if adopted != null {
       w.adopt_v = adopted.v;
@@ -3601,7 +3986,46 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   if twin.ds {
     cgen_dest::twin_body(x, w);
   }
+  // `@FR-R-Apart` instance 2: the body's roles; an `__apv` twin takes no return buffer and
+  // answers through `loft_apo`.
+  if plain_rules() && !tf.any {
+    cgen_apart::value_setup(x, w, index, twin.apv);
+  }
+  // `@FR-R-ValueRecord` (`FnWriter::new`'s `VrFn::of`): the body's facts — none in a transient
+  // body — and the return buffer the signature dropped, a local nothing binds.
+  if !tf.any {
+    cgen_vr::setup(x, w, index);
+    if w.vr.phantom >= 0 {
+      w.params[w.vr.phantom] = false;
+    }
+  }
+  if vr_dropped >= 0 && !(twin.apv && (binds::hidden_return_buffer_attr(d) ?? -1) == vr_dropped) {
+    params.remove(vr_dropped);
+  }
+  // A result twin takes no return buffer: it answers what it built.
+  if tf.any && tf.phantom >= 0 {
+    pord = 0;
+    for pv in d.variables.variables {
+      if pv.argument && pv#index < tf.phantom {
+        pord += 1;
+      }
+    }
+    params.remove(pord);
+  }
+  if twin.apv {
+    rbi = binds::hidden_return_buffer_attr(d) ?? -1;
+    if rbi >= 0 {
+      params.remove(rbi);
+    }
+    apo_t = cgen_apart::twin_value_ctype(x, index);
+    if apo_t == "" {
+      return Written { text: "", refused: "an __apv twin of no apart type" };
+    }
+    params += ["{apo_t} *loft_apo"];
+  }
   cgen_text::declare_owns(w);
+  cgen_apart::decls(w);
+  cgen_apart::av_decls(x, w);
   // An `__ap` twin's result never adopts the buffer: it is the caller's vector; a `__d` twin's
   // is the caller's element.
   if w.ap_buf >= 0 || twin.ds {
@@ -3637,6 +4061,10 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     }
   }
   if plain_rules() {
+    cgen_deferred::plan(x, w);
+    cgen_deferred::declare(w);
+  }
+  if plain_rules() {
     cgen_recptr::bind_param_ptrs(x, w, code);
   }
   if ret == "void" {
@@ -3647,11 +4075,13 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     ret_value(x, w, empty_stub_default(x.b, d, code) ?? code, 1);
   }
   if w.why != "" {
+    number_refused(x, w);
     return Written { text: "", refused: w.why };
   }
   out = "";
   for v in d.variables.variables {
-    if !v.argument && !w.undeclared[v#index]! {
+    // An apart vector and its companions are no records (`@FR-R-Apart`).
+    if (!v.argument || v#index == w.tr.phantom || v#index == w.vr.phantom) && !w.undeclared[v#index]! && !cgen_apart::holds(w, v#index) {
       shape = shapes[v#index]!;
       if w.store_links[v#index]! {
         out += "    loft_ref {w.raw[v#index]!} = {{ 0xFFFF, 0, 0, 0 }};\n";
@@ -3669,7 +4099,8 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     if t.verify {
       out += "#ifdef LOFT_VERIFY\n";
     }
-    if t.shape == "text" || t.shape == "fn" || is_tuple(t.shape) {
+    plain_temp = t.shape == "int" || t.shape == "int32" || t.shape == "bool" || t.shape == "ref" || t.shape == "enum" || t.shape == "float" || t.shape == "single" || t.shape == "char";
+    if !plain_temp {
       out += "    {held(t.shape)} {t.name} = {initial(t.shape)};\n";
     } else {
       out += "    {held(t.shape)} {t.name};\n";
@@ -3690,7 +4121,7 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
       return Written { text: "", refused: cgen_cold::COLD_ESCAPED };
     }
     for a in w.cold {
-      part = write_body(x, twin, -1, false, [a]);
+      part = write_body(x, twin, -1, false, [a], tf);
       if part.refused != "" {
         return Written { text: "", refused: part.refused };
       }
@@ -3699,7 +4130,7 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   out = cgen_text::park_work_texts(w, d, out);
   // `@FR-R-Tabulate`: a classifier of a byte reads its answer from the table the compiler
   // evaluated when its one parameter is in the table's range, and runs its body otherwise.
-  if len(params) == 1 && params[0].starts_with("int64_t ") && ret == "int" {
+  if len(params) == 1 && params[0].starts_with("int64_t ") && ret == "int" && !tf.builds {
     tab = opt_tabulate::table(x.b, index);
     if len(tab) > 0 {
       entries: vector<text> = [];
@@ -3723,20 +4154,80 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     "static"
   };
   list = if len(params) == 0 { "void" } else { params.join(", ") };
-  // `(R-CSplit)` writes a body over its budget of call sites in parts: not carried.
-  // `(R-CSplit)`: a body over its budget of call sites goes out as a chain of parts for MSVC
-  // and whole for every other compiler.  The parts are not carried: the unit writes the whole
-  // body, which gcc and clang compile from the Rust unit too (`split`), and the bodies layer
-  // still counts it as one this writer does not write.
-  split = cgen_split::over_budget(storage, list, out);
   name = cgen_names::twin_name(x.b, x.dups, twin);
   // The frame wrapper's storage (`function`'s `storage`): inline with its body, the helper
   // marker resolved once the twins are written, or out of line.
   outer = if statements <= 12 || hot_twin { "static inline" } else if statements <= 80 && plain_but_rg(twin) { "static /*loft_hot:{index}*/" } else { "static" };
-  Written { split: split, text: resolve_tuples(x, "{storage} {held(ret)} {name}__fr({list}) {{\n{out}}}\n"), refused: "", name: name, ret: resolve_tuples(x, held(ret)), list: resolve_tuples(x, list), storage: outer }
+  rtext = resolve_tuples(x, "{storage} {held(ret)} {name}__fr({list}) {{\n{out}}}\n");
+  rret = resolve_tuples(x, held(ret));
+  rlist = resolve_tuples(x, list);
+  rinner = resolve_tuples(x, out);
+  // `(R-CSplit)`: a body over its budget of call sites goes out as a chain of parts — for MSVC
+  // alone by default, under `#if defined(_MSC_VER)`, the whole body (out of line, as its parts
+  // are) in the `#else` arm.
+  parts = cgen_split::split_body(outer, rret, "{name}__fr", rlist, rinner);
+  if parts != "" {
+    whole = "{outer} {rret} {name}__fr({rlist}) {{\n{rinner}}}\n";
+    rtext = if cgen_split::everywhere() { parts } else { "#if defined(_MSC_VER)\n{parts}#else\n{whole}#endif\n" };
+  }
+  Written { split: parts != "", text: rtext, refused: "", name: name, ret: rret, list: rlist, storage: outer, inner: rinner }
+}
+
+// `direct_place`: a link of `var`'s kind re-pointed to a store place — a field or an element —
+// whose bytes are the C value itself (an 8-byte integer, a float, a single, a character, a
+// boolean, a plain enum): the address of the place, as `--native` takes it.  An absent place (a
+// null record) is a temporary holding the null, which a write through the link leaves unseen.
+// "" where the place is not one.
+fn direct_place(x: Cx, w: W, var: integer, inner: ir::Node, ind: integer) -> text {
+  match loop_shape::unspan(inner) {
+    NdCall { def_nr, args: _ } => {
+      nm = def_name(x.b, def_nr);
+      if nm != "OpGetVector" && nm != "OpGetField" {
+        return "";
+      }
+    },
+    _ => return "",
+  }
+  vt = x.b.data.definitions[w.index]!.variables.variables[var]!.type_def[0] ?? ir::TyVoid;
+  tp = match cgen_types::base(vt) { TyRefVar { inner: t } => t, _ => return "" };
+  direct = match cgen_types::base(tp) {
+    TyInteger { spec } => narrow::byte_width(spec, tp is TyOptional) >= 8,
+    TyFloat => true,
+    TySingle => true,
+    TyCharacter => true,
+    TyBoolean => true,
+    TyEnum { n: _, is_ref, dep: _ } => !is_ref,
+    _ => false,
+  };
+  if !direct {
+    return "";
+  }
+  c = w.shapes[var]!;
+  absent = temp(w, c);
+  null_into(w, absent, c, ind);
+  e = expr(x, w, inner, ind);
+  "({held(c)} *) loft_place({as_ref(w, e)}, &{absent})"
+}
+
+fn number_tuples(x: Cx, shapes: vector<text>) {
+  for sh in shapes {
+    if is_tuple(sh) {
+      tuple_id(x, sh);
+    }
+  }
 }
 
 // `hot_helper_size`'s mask test: no twin bit but `__rg`'s.
 fn plain_but_rg(t: cgen_names::Twin) -> boolean {
   t.places == 0 && t.nn == 0 && !t.inv && !t.nk && !t.apr && !t.apv && !t.kh && !t.ap && !t.ds && !t.vf
+}
+
+// Is argument `i` one of a call's tuple parameters (`[idx, key, …]`)?
+fn is_tuple_param(tps: vector<integer>, i: integer) -> boolean {
+  for t in tps {
+    if t#index % 2 == 0 && t == i {
+      return true;
+    }
+  }
+  false
 }

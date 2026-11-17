@@ -16,6 +16,8 @@ use opt_non_sentinel;
 use cgen_fn;
 use cgen_ref;
 use cgen_tables;
+use cgen_vr;
+use cgen_apart;
 
 const SCALAR_GETTERS = ["OpGetInt", "OpGetInt4", "OpGetInt4Raw", "OpGetInt4Full", "OpGetShort", "OpGetShortRaw", "OpGetShortFull", "OpGetByte", "OpGetByteNullable", "OpGetSingle", "OpGetFloat", "OpGetBoolean", "OpGetCharacter", "OpGetEnum"];
 
@@ -45,6 +47,31 @@ pub fn vr_ptr_params(x: Cx, d: integer) -> vector<integer> {
   def = x.b.data.definitions[d]!;
   // A definition without a body reads nothing, as `vr_param_read_only` reads a null body.
   body = if len(def.code) == 0 { ir::NdNull } else { def.code[0]! };
+  // An `__apv` twin's call site writes its own arguments: such a function keeps every value
+  // record by value.
+  apv = (cgen_apart::value_plan(x).twin_rec[d] ?? -1) >= 0;
+  if apv {
+    return out;
+  }
+  // `@FR-R-ValueRecord`'s parameters of three or more members the body only reads.
+  args: vector<integer> = [];
+  for av in def.variables.variables {
+    if av.argument {
+      args += [av#index];
+    }
+  }
+  tps = cgen_vr::tuple_params(x, d);
+  for tpi in tps {
+    if tpi#index % 2 != 0 || tpi >= len(args) {
+      continue;
+    }
+    shape = cgen_vr::ctype(x, tps[tpi#index + 1]!);
+    a = args[tpi]!;
+    link = cgen_types::base(def.variables.variables[a]!.type_def[0] ?? ir::TyVoid) is TyRefVar;
+    if is_tuple(shape) && len(tuple_members(shape)) >= 3 && !link && param_read_only(x.b, body, a) {
+      out += [tpi];
+    }
+  }
   i = 0;
   for v in def.variables.variables {
     if !v.argument {
@@ -54,11 +81,12 @@ pub fn vr_ptr_params(x: Cx, d: integer) -> vector<integer> {
       TyTuple { elems } => len(elems) >= 3 && all_scalar(elems),
       _ => false,
     };
-    if wide && param_read_only(x.b, body, v#index) {
+    if wide && !out.contains(i) && param_read_only(x.b, body, v#index) {
       out += [i];
     }
     i += 1;
   }
+  out.sort();
   out
 }
 

@@ -1,0 +1,847 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `@FR-R-Apart` in the C as `src/c/body/apart.rs` writes it.  Instance 3: a
+// `vector<float>` local that never leaves its function (`opt_apart_vector::roles`) is a
+// `loft_apvec` — 64 elements inline, a spill beyond — and its companions emit nothing.
+// Instance 4: a record of record vectors (`opt_apart_records`) is one `loft_text` buffer per
+// field, `loft_apr<v>[k]` (an `__apr` twin's parameter `loft_aprp`), and the store meets it at
+// the copy of an append group (`loft_apart_write_fresh`) or a rotate (`loft_rotate_from_parts`).
+
+use ir;
+use cgen::(Cx);
+use cgen_w::*;
+use cgen_fn;
+use loop_shape;
+use opt_apart_vector;
+use opt_apart_records;
+use opt_apart_value;
+use cgen_types;
+use cgen_names;
+use cgen_tables;
+use cgen_ref;
+use cgen_hoist;
+use opt_length;
+
+fn def_name(b: ir::Bundle, d: integer) -> text {
+  if d < 0 || d >= len(b.data.definitions) { "" } else { b.data.definitions[d]!.name }
+}
+
+// `apr_holds`: is `v` held apart — an apart vector or a companion of one?  A root no store path
+// of the body may plan anything on.
+pub fn holds(w: W, v: integer) -> boolean {
+  (w.apv.any && opt_apart_vector::holds(w.apv, v)) || (w.apr.any && (rec(w, v) >= 0 || elem_owner(w, v) >= 0)) || av_holds(w, v)
+}
+
+// The root variable of a `vector_path` (`root:offs`), -1 for none.
+pub fn path_root(path: text) -> integer {
+  at = path.find(":") ?? return -1;
+  (path[0..at] as integer?) ?? -1
+}
+
+// `apr_any`: does this body hold any value apart?
+pub fn any(w: W) -> boolean {
+  w.apv.any || w.apr.any || av_any(w)
+}
+
+// `apv_vec`: is `v` an apart vector (not a companion)?
+pub fn is_vec(w: W, v: integer) -> boolean {
+  w.apv.any && (w.apv.apart[v] ?? false)
+}
+
+// `apv_decls`: the inline buffers of the apart vectors.
+pub fn decls(w: W) {
+  if w.apr.any {
+    for r in w.apr.vars {
+      if r >= 0 && r#index != w.apr.param {
+        k = w.apr.nf[r#index]!;
+        zero: vector<text> = [for _ in 0..k { "{{ 0, 0, 0 }}" }];
+        w.decls += ["loft_text loft_apr{r#index}[{k}] = {{ {zero.join(", ")} }};"];
+      }
+    }
+    for o in w.apr.elem_owner {
+      if o >= 0 {
+        w.decls += ["size_t loft_apo{o#index} = 0;"];
+      }
+    }
+  }
+  if !w.apv.any {
+    return;
+  }
+  for a in w.apv.apart {
+    if a {
+      w.decls += ["loft_apvec loft_apv{a#index} = {{ 0, {{ 0 }}, {{ 0, 0, 0 }} }};"];
+    }
+  }
+}
+
+// `apv_texts`: their spills, which the epilogue frees with the texts.
+pub fn texts(w: W, out: vector<text>) {
+  if w.apr.any {
+    for r in w.apr.vars {
+      if r >= 0 && r#index != w.apr.param {
+        for i in 0..w.apr.nf[r#index]! {
+          out += ["loft_apr{r#index}[{i}]"];
+        }
+      }
+    }
+  }
+  if !w.apv.any {
+    return;
+  }
+  for a in w.apv.apart {
+    if a {
+      out += ["loft_apv{a#index}.spill"];
+    }
+  }
+}
+
+fn held_arg(w: W, a: ir::Node) -> boolean {
+  match loop_shape::unspan(a) { NdVar { n } => holds(w, n), _ => false }
+}
+
+// `apv_quiet`: a statement of instance 3 that emits nothing of the store's.
+fn quiet(w: W, name: text, args: vector<ir::Node>) -> boolean {
+  if name == "OpPutRef" || name == "OpFreeRefIfDistinct" || name == "OpFreeRef" {
+    if len(args) == 0 {
+      return false;
+    }
+    any_held = false;
+    for a in args {
+      h = held_arg(w, a);
+      if !h && (loop_shape::unspan(a) is NdVar) {
+        return false;
+      }
+      if h {
+        any_held = true;
+      }
+    }
+    return any_held;
+  }
+  if name == "OpPreAllocVector" {
+    return len(args) > 0 && (match loop_shape::unspan(args[0]!) { NdVar { n } => is_vec(w, n), _ => false });
+  }
+  if name == "OpDatabase" || name == "OpDatabaseNP" || name == "OpSetInt4" {
+    return len(args) > 0 && (match loop_shape::unspan(args[0]!) { NdVar { n } => w.apv.companions[n] ?? false, _ => false });
+  }
+  false
+}
+
+// `apv_operator`: instance 3's operators and calls — an element read or write, a push, a
+// length, a clear, a quiet statement.  `done` false for any other.
+pub fn vec_op(x: Cx, w: W, name: text, v: ir::Node, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  done = false;
+  if !w.apv.any {
+    return none();
+  }
+  b = x.b;
+  rv = opt_apart_vector::read(b, v);
+  if rv >= 0 && is_vec(w, rv) {
+    done = true;
+    i = as_int(w, cgen_fn::expr(x, w, opt_apart_vector::read_idx(v), ind));
+    code = if opt_apart_vector::read_nullable(b, v) { "loft_apv_get(&loft_apv{rv}, {i})" } else { "loft_apv_get_at(&loft_apv{rv}, {i}, {cgen_fn::site(w)})" };
+    return E { code: code, kind: K_FLOAT };
+  }
+  wv = opt_apart_vector::write(b, v);
+  if wv >= 0 && is_vec(w, wv) {
+    done = true;
+    pair = [opt_apart_vector::read_idx(v), opt_apart_vector::write_val(v)];
+    i = as_int(w, cgen_fn::arg(x, w, pair, 0, ind));
+    y = as_float(w, cgen_fn::arg(x, w, pair, 1, ind));
+    line(w, ind, "loft_apv_set_at(&loft_apv{wv}, {i}, {y}, {cgen_fn::site(w)});");
+    return E { code: "((void) 0)", kind: K_VOID };
+  }
+  pv = opt_apart_vector::push(b, v);
+  if pv >= 0 && is_vec(w, pv) {
+    done = true;
+    y = as_float(w, cgen_fn::expr(x, w, opt_apart_vector::push_val(v), ind));
+    line(w, ind, "loft_apv_push(&loft_apv{pv}, {y});");
+    return E { code: "((void) 0)", kind: K_VOID };
+  }
+  uv = opt_apart_vector::unary_v(b, v);
+  if uv >= 0 && is_vec(w, uv) {
+    done = true;
+    op = opt_apart_vector::unary_op(b, v);
+    if op == "len" {
+      return E { code: "((int64_t) loft_apv{uv}.n)", kind: K_INT };
+    }
+    if op == "clear" {
+      line(w, ind, "loft_apv_clear(&loft_apv{uv});");
+    }
+    return E { code: "((void) 0)", kind: K_VOID };
+  }
+  if quiet(w, name, args) {
+    done = true;
+    return E { code: "((void) 0)", kind: K_VOID };
+  }
+  none()
+}
+
+// `apv_stmt`: an apart vector's empty init is a clear; a companion's bind is nothing.  Answers
+// whether it wrote `v`.
+pub fn stmt(x: Cx, w: W, v: ir::Node, ind: integer) -> boolean {
+  if w.apr.any && rec_set(x, w, v, ind) {
+    return true;
+  }
+  if vec_stmt(x, w, v, ind) {
+    return true;
+  }
+  match loop_shape::unspan(v) {
+    NdSet { var, inner } => av_set(x, w, var, inner, ind),
+    _ => false,
+  }
+}
+
+fn vec_stmt(x: Cx, w: W, v: ir::Node, ind: integer) -> boolean {
+  if !w.apv.any {
+    return false;
+  }
+  init = opt_length::buffer_init(x.b, v);
+  if len(init) > 0 && is_vec(w, init[0]!) {
+    line(w, ind, "loft_apv_clear(&loft_apv{init[0]!});");
+    return true;
+  }
+  match loop_shape::unspan(v) {
+    NdSet { var, inner: _ } => {
+      if is_vec(w, var) {
+        line(w, ind, "loft_apv_clear(&loft_apv{var});");
+        return true;
+      }
+      w.apv.companions[var] ?? false
+    },
+    _ => false,
+  }
+}
+
+// --- Instance 4 -------------------------------------------------------------------------------
+
+fn at(v: vector<integer>, i: integer) -> integer {
+  if i < 0 || i >= len(v) { -1 } else { v[i]! }
+}
+
+fn rec(w: W, v: integer) -> integer {
+  at(w.apr.vars, v)
+}
+
+fn elem_owner(w: W, v: integer) -> integer {
+  at(w.apr.elem_owner, v)
+}
+
+// The program's plan (`Cx::apr_plan`), asked once.
+fn plan(x: Cx) -> opt_apart_records::Plan {
+  if !x.apr.asked {
+    x.apr = opt_apart_records::plan(x.b);
+  }
+  x.apr
+}
+
+// `FnWriter::apart`: the roles of definition `d`'s body, or — for its twin — the parameter.
+pub fn record_roles(x: Cx, d: integer, twin: boolean) -> opt_apart_records::Roles {
+  opt_apart_records::roles(x.b, plan(x), d, twin)
+}
+
+// The argument index an `__apr` twin of `d` takes its apart parameter at, -1 for none.
+pub fn twin_at(x: Cx, d: integer) -> integer {
+  at(plan(x).twin_at, d)
+}
+
+// `apr_buf`: the buffer array of apart value `v` — the twin's parameter, or the owner's local;
+// "" for none.
+pub fn buf(w: W, v: integer) -> text {
+  if !w.apr.any || rec(w, v) < 0 {
+    return "";
+  }
+  if w.apr.param == v { "loft_aprp" } else { "loft_apr{v}" }
+}
+
+// `apr_twin_call`: does this call of `d` hand an apart value to `d`'s `__apr` twin at the position
+// the plan names?
+pub fn twin_call(x: Cx, w: W, d: integer, args: vector<ir::Node>) -> boolean {
+  if !w.apr.any {
+    return false;
+  }
+  p = plan(x);
+  a = at(p.twin_at, d);
+  if a < 0 || a >= len(args) {
+    return false;
+  }
+  match loop_shape::unspan(args[a]!) {
+    NdVar { n } => rec(w, n) >= 0 && rec(w, n) == p.twin_rec[d]!,
+    _ => false,
+  }
+}
+
+fn layout_of(x: Cx, w: W, v: integer) -> opt_apart_records::Layout {
+  opt_apart_records::layout(plan(x), rec(w, v))
+}
+
+// `apr_field`: the field of apart value `base` at byte offset `off` — its variable, and the field
+// index in `k`; -1 for none.
+fn field_of(x: Cx, w: W, base: ir::Node, off: ir::Node, k: &integer) -> integer {
+  k = -1;
+  fv = match loop_shape::unspan(base) { NdVar { n } => n, _ => -1 };
+  if rec(w, fv) < 0 {
+    return -1;
+  }
+  o = match loop_shape::unspan(off) { NdInt { n } => n, _ => -1 };
+  if o < 0 {
+    return -1;
+  }
+  k = opt_apart_records::field_at(layout_of(x, w, fv), o);
+  if k < 0 { -1 } else { fv }
+}
+
+// `apr_length`: a field's length `len(OpGetField(v, off, _))` of an apart value.
+fn length(x: Cx, w: W, name: text, args: vector<ir::Node>, done: &boolean) -> E {
+  done = false;
+  if (name != "t_6vector_len" && name != "OpLengthVector") || len(args) == 0 {
+    return none();
+  }
+  match loop_shape::unspan(args[0]!) {
+    NdCall { def_nr, args: fa } => {
+      if def_name(x.b, def_nr) != "OpGetField" || len(fa) < 2 {
+        return none();
+      }
+      k = -1;
+      lv = field_of(x, w, fa[0]!, fa[1]!, k);
+      if lv < 0 {
+        return none();
+      }
+      done = true;
+      esize = layout_of(x, w, lv).fields[k]!.esize;
+      E { code: "((int64_t) ({buf(w, lv)}[{k}].len / {esize}u))", kind: K_INT }
+    },
+    _ => none(),
+  }
+}
+
+fn void_e() -> E {
+  E { code: "((void) 0)", kind: K_VOID }
+}
+
+// An owner (not the twin's parameter) as the variable `a` names, -1 for none.
+fn owner_arg(w: W, args: vector<ir::Node>) -> integer {
+  if len(args) == 0 {
+    return -1;
+  }
+  match loop_shape::unspan(args[0]!) {
+    NdVar { n } => if rec(w, n) >= 0 && w.apr.param != n { n } else { -1 },
+    _ => -1,
+  }
+}
+
+// The fields' slots and element sizes of a layout, as C array literals.
+fn slots_c(l: opt_apart_records::Layout) -> text {
+  parts: vector<text> = [for f in l.fields { "{f.off}u" }];
+  "(const uint32_t[]){{ {parts.join(", ")} }}"
+}
+
+fn sizes_c(l: opt_apart_records::Layout) -> text {
+  parts: vector<text> = [for f in l.fields { "{f.esize}u" }];
+  "(const uint32_t[]){{ {parts.join(", ")} }}"
+}
+
+// `apr_operator`: the operators of an owner's life and the boundary — a mint (every field
+// emptied), a field emptied, a push group's finish and the owner's free (nothing), an element's
+// field write (a store into its field's buffer), a field's length, and a twin's copy into an
+// appended element.  `done` false for any other operator.
+pub fn rec_op(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  done = false;
+  le = length(x, w, name, args, done);
+  if done {
+    return le;
+  }
+  ov = owner_arg(w, args);
+  if (name == "OpDatabase" || name == "OpDatabaseNP") && ov >= 0 {
+    done = true;
+    for i in 0..w.apr.nf[ov]! {
+      line(w, ind, "{buf(w, ov)}[{i}].len = 0;");
+    }
+    return void_e();
+  }
+  if name == "OpSetInt4" && ov >= 0 {
+    done = true;
+    k = -1;
+    fv = if len(args) > 1 { field_of(x, w, args[0]!, args[1]!, k) } else { -1 };
+    if fv < 0 {
+      refuse(w, "an apart field emptied at no field");
+      return none();
+    }
+    line(w, ind, "{buf(w, fv)}[{k}].len = 0;");
+    return void_e();
+  }
+  if (name == "OpFinishRecord" || name == "OpFreeRef") && ov >= 0 {
+    done = true;
+    return void_e();
+  }
+  if (name == "OpSetInt" || name == "OpSetFloat" || name == "OpSetBoolean") && len(args) == 3 {
+    elm = match loop_shape::unspan(args[0]!) { NdVar { n } => n, _ => -1 };
+    owner = elem_owner(w, elm);
+    if owner < 0 {
+      return none();
+    }
+    done = true;
+    off = match loop_shape::unspan(args[1]!) { NdInt { n } => n, _ => -1 };
+    if off < 0 {
+      refuse(w, "an element field at no offset");
+      return none();
+    }
+    k = w.apr.elem_field[elm]!;
+    e = cgen_fn::expr(x, w, args[2]!, ind);
+    ty = if name == "OpSetInt" { "int64_t" } else if name == "OpSetFloat" { "double" } else { "uint8_t" };
+    val = if name == "OpSetInt" { as_int(w, e) } else if name == "OpSetFloat" { as_float(w, e) } else { as_bool(w, e) };
+    n = if name == "OpSetBoolean" { 1 } else { 8 };
+    line(w, ind, "{{ {ty} loft_apv = ({ty}) ({val}); memcpy({buf(w, owner)}[{k}].p + loft_apo{elm} + {off}, &loft_apv, {n}); }}");
+    return void_e();
+  }
+  if name == "OpCopyRecord" && len(args) == 3 {
+    src = match loop_shape::unspan(args[0]!) { NdVar { n } => n, _ => -1 };
+    if rec(w, src) < 0 {
+      return none();
+    }
+    done = true;
+    l = layout_of(x, w, src);
+    dst = as_ref(w, cgen_fn::expr(x, w, args[1]!, ind));
+    line(w, ind, "loft_apart_write_fresh({dst}, {buf(w, src)}, {slots_c(l)}, {sizes_c(l)}, {len(l.fields)}); /* @FR-R-Apart boundary */");
+    return void_e();
+  }
+  none()
+}
+
+// `apr_set`: the statements of an owner's life written as statements — its null init, and a push
+// group's element taken in its field's buffer.  Answers whether it wrote `Set(var, x)`.
+fn rec_set(x: Cx, w: W, v: ir::Node, ind: integer) -> boolean {
+  match loop_shape::unspan(v) {
+    NdSet { var, inner } => {
+      rhs = loop_shape::unspan(inner);
+      if rec(w, var) >= 0 {
+        if (rhs is NdNull) && w.apr.param != var {
+          return true;
+        }
+        refuse(w, "an apart record assigned");
+        return true;
+      }
+      owner = elem_owner(w, var);
+      if owner < 0 {
+        return false;
+      }
+      // The element's pre-init: no element yet, and nothing to write.
+      if rhs is NdNull {
+        return true;
+      }
+      is_new = match rhs { NdCall { def_nr, args: _ } => def_name(x.b, def_nr) == "OpNewRecord", _ => false };
+      if !is_new {
+        refuse(w, "an apart element bound to something other than its push");
+        return true;
+      }
+      k = w.apr.elem_field[var]!;
+      esize = layout_of(x, w, owner).fields[k]!.esize;
+      line(w, ind, "loft_apo{var} = loft_apr_push(&{buf(w, owner)}[{k}], {esize}u);");
+      true
+    },
+    _ => false,
+  }
+}
+
+// `apr_rotate`: `@FR-R-HandOver`'s rotate from an apart source — the C call
+// `loft_rotate_from_parts`, or "" when the source is no apart value.
+pub fn rotate(x: Cx, w: W, src: ir::Node, vec: text, size: integer, k: integer, plan_c: text, count: integer) -> text {
+  sv = match loop_shape::unspan(src) { NdVar { n } => n, _ => -1 };
+  if !w.apr.any || rec(w, sv) < 0 {
+    return "";
+  }
+  l = layout_of(x, w, sv);
+  "loft_rotate_from_parts({vec}, {buf(w, sv)}, {slots_c(l)}, {len(l.fields)}, {size}u, INT64_C({k}), {plan_c}, {count})"
+}
+
+// --- Instance 2 -------------------------------------------------------------------------------
+// A record of fixed-length `vector<float>` fields travels as a C struct (`loft_ap_<T>`, one
+// `double[N]` per field) between the functions that only build it, read and write its elements
+// and hand it on, and meets the store once, at a `return` through the function's buffer
+// (`loft_ap_store`).  A TWIN (`<f>__apv`) answers the value through `loft_apo` and takes its
+// record parameters as `const loft_ap_<T> *loft_avp<v>`; an apart variable is the local
+// `loft_av<v>`, a dead one is never declared.  A body holding either is written with its vector
+// hoists off.
+
+// `Cx::ap2_plan`, asked once.
+pub fn value_plan(x: Cx) -> opt_apart_value::ApPlan {
+  if !x.ap2.asked {
+    x.ap2 = opt_apart_value::plan(x.b);
+  }
+  x.ap2
+}
+
+// The roles an `__apv` twin of `d` takes (`any` false: none).
+pub fn twin_value_roles(x: Cx, d: integer) -> opt_apart_value::ApRoles {
+  p = value_plan(x);
+  r = at(p.twin_role, d);
+  if r < 0 { opt_apart_value::no_roles() } else { p.roles[r]! }
+}
+
+// The C struct of `d`'s twin's record, "" for none.
+pub fn twin_value_ctype(x: Cx, d: integer) -> text {
+  p = value_plan(x);
+  opt_apart_value::ctype(p, at(p.twin_rec, d))
+}
+
+// `FnWriter::apart_value`: take the plan's roles for this body — its twin's, or its region's.
+pub fn value_setup(x: Cx, w: W, d: integer, twin: boolean) {
+  p = value_plan(x);
+  r = if twin { at(p.twin_role, d) } else { at(p.region_role, d) };
+  if r < 0 {
+    return;
+  }
+  w.av = p.roles[r]!;
+  w.av_twin = twin;
+  attr = binds::hidden_return_buffer_attr(x.b.data.definitions[d]!) ?? -1;
+  w.av_rb = if attr >= 0 { binds::var_named(x.b.data.definitions[d]!.variables, x.b.data.definitions[d]!.attributes[attr]!.name) } else { -1 };
+}
+
+// `av_any`: does this body hold an instance-2 value (a twin, or a region)?
+pub fn av_any(w: W) -> boolean {
+  w.av_twin || (w.av.any && opt_apart_value::has_apart(w.av))
+}
+
+fn av_rec(w: W, v: integer) -> integer {
+  if !w.av.any { -1 } else { at(w.av.apart, v) }
+}
+
+fn av_dead(w: W, v: integer) -> boolean {
+  w.av.any && v >= 0 && v < len(w.av.dead) && w.av.dead[v]!
+}
+
+// `av_holds`: is `v` an apart or a dead variable of instance 2?
+pub fn av_holds(w: W, v: integer) -> boolean {
+  av_rec(w, v) >= 0 || av_dead(w, v)
+}
+
+fn av_layout(x: Cx, w: W, v: integer) -> opt_apart_value::ApLayout {
+  p = value_plan(x);
+  p.layouts[p.layout_of[av_rec(w, v)]!]!
+}
+
+// Is `v` a twin's record parameter, which arrives as a pointer to its value?
+fn av_param(w: W, v: integer) -> boolean {
+  w.av_twin && v < len(w.params) && w.params[v]! && w.av_rb != v && av_rec(w, v) >= 0
+}
+
+// `av_val`: the value apart variable `v` holds, as a C lvalue; "" for none.
+pub fn av_val(w: W, v: integer) -> text {
+  if av_rec(w, v) < 0 {
+    return "";
+  }
+  if av_param(w, v) { "(*loft_avp{v})" } else { "loft_av{v}" }
+}
+
+fn av_ptr(w: W, v: integer) -> text {
+  if av_param(w, v) { "loft_avp{v}" } else { "&loft_av{v}" }
+}
+
+// `av_decls`: the apart locals, and — in a twin — its return buffer as the null local its other
+// mentions name.
+pub fn av_decls(x: Cx, w: W) {
+  if !w.av.any {
+    return;
+  }
+  p = value_plan(x);
+  for r in w.av.apart {
+    if r >= 0 && !av_param(w, r#index) {
+      t = opt_apart_value::ctype(p, r);
+      if t != "" {
+        w.decls += ["{t} loft_av{r#index};"];
+        line(w, 1, "memset(&loft_av{r#index}, 0, sizeof loft_av{r#index});");
+      }
+    }
+  }
+  if w.av_twin && w.av_rb >= 0 && !av_holds(w, w.av_rb) {
+    w.decls += ["loft_ref {w.names[w.av_rb]!} = {{ 0xFFFF, 0, 0, 0 }};"];
+  }
+}
+
+// `av_construction`: a construction run of an apart variable starting at `ops[i]` (of
+// `ops[..end]`), its value built in a temporary, each element written in the order the program
+// wrote it, then assigned.  Answers the index of the first statement after the run, -1 none.
+pub fn av_construction(x: Cx, w: W, ops: vector<ir::Node>, i: integer, end: integer, ind: integer) -> integer {
+  if !w.av.any || !opt_apart_value::has_apart(w.av) {
+    return -1;
+  }
+  upto: vector<ir::Node> = [];
+  for o in ops {
+    if o#index < end {
+      upto += [o];
+    }
+  }
+  for r in w.av.apart {
+    if r >= 0 {
+      c = opt_apart_value::construction(x.b, av_layout(x, w, r#index), upto, i, r#index);
+      if c.ok {
+        av_construct(x, w, c, av_val(w, c.v), ind);
+        return c.end;
+      }
+    }
+  }
+  -1
+}
+
+// Build construction `c` in a temporary and assign it to `target`.
+fn av_construct(x: Cx, w: W, c: opt_apart_value::Construction, target: text, ind: integer) {
+  t = opt_apart_value::ctype(value_plan(x), av_rec(w, c.v));
+  tmp = "loft_apc{len(w.decls)}";
+  w.decls += ["{t} {tmp};"];
+  line(w, ind, "memset(&{tmp}, 0, sizeof {tmp});");
+  next: vector<integer> = [for _ in av_layout(x, w, c.v).fields { 0 }];
+  for f in c.fields {
+    k = c.copies[f#index]!;
+    if k < 0 {
+      value = cgen_fn::expr(x, w, c.vals[f#index]!, ind);
+      line(w, ind, "{tmp}.f{f}[{next[f]!}] = {as_float(w, value)};");
+      next[f] += 1;
+    } else {
+      for _ in 0..k {
+        line(w, ind, "{tmp}.f{f}[{next[f]!}] = {tmp}.f{f}[{next[f]! - 1}];");
+        next[f] += 1;
+      }
+    }
+  }
+  line(w, ind, "{target} = {tmp};");
+}
+
+// The construction a value block `{ <run of v>; v }` holds, if it is one.
+fn av_construction_block(x: Cx, w: W, v: ir::Node) -> opt_apart_value::Construction {
+  ops: vector<ir::Node> = match loop_shape::unspan(v) {
+    NdBlock { block } => block[0]!.operators,
+    _ => [],
+  };
+  if len(ops) > 0 {
+    for r in w.av.apart {
+      if r >= 0 {
+        c = opt_apart_value::construction(x.b, av_layout(x, w, r#index), ops, 0, r#index);
+        if c.ok && c.end + 1 == len(ops) && (match loop_shape::unspan(ops[c.end]!) { NdVar { n } => n == c.v, _ => false }) {
+          return c;
+        }
+      }
+    }
+  }
+  opt_apart_value::construction(x.b, opt_apart_value::ApLayout { rust: "", rec_tp: -2, vec_tps: [], fields: [] }, [], 0, -1)
+}
+
+// `av_twin_call`: a twin's call `<g>__apv(…, dest)` — a record argument as a pointer to its
+// value, the buffer left out, every other argument (a number) as itself.
+fn av_twin_call(x: Cx, w: W, g: integer, args: vector<ir::Node>, dest: text, ind: integer) {
+  gdef = x.b.data.definitions[g]!;
+  rbi = binds::hidden_return_buffer_attr(gdef) ?? -1;
+  xs: vector<text> = [];
+  for a in args {
+    if a#index == rbi {
+      continue;
+    }
+    u = match loop_shape::unspan(a) { NdVar { n } => n, _ => -1 };
+    if av_rec(w, u) >= 0 {
+      xs += [av_ptr(w, u)];
+      continue;
+    }
+    shape = cgen_types::ctype(peel_link(gdef.attributes[a#index]!.typedef[0] ?? ir::TyVoid)) ?? "";
+    if shape == "" {
+      refuse(w, "a twin's argument of no C shape");
+      return;
+    }
+    e = cgen_fn::arg_with(x, w, a, false, ind);
+    xs += [as_shape(w, e, shape)];
+  }
+  xs += [dest];
+  t = cgen_names::plain(g);
+  t.apv = true;
+  cgen::request_twin(x, t);
+  line(w, ind, "{cgen_names::twin_name(x.b, x.dups, t)}({xs.join(", ")});");
+}
+
+fn peel_link(t: ir::TypeT) -> ir::TypeT {
+  match t {
+    TyRefVar { inner } => inner,
+    _ => t,
+  }
+}
+
+// `av_operator`: an element read or write, a length, a free of apart or dead variables.  `done`
+// false for any other.
+pub fn av_op(x: Cx, w: W, v: ir::Node, ind: integer, done: &boolean) -> E {
+  done = false;
+  if !w.av.any || !opt_apart_value::has_apart(w.av) {
+    return none();
+  }
+  b = x.b;
+  rv = opt_apart_value::read_var(b, v);
+  if av_rec(w, rv) >= 0 {
+    l = av_layout(x, w, rv);
+    f = opt_apart_value::field_at(l, opt_apart_value::elem_off(v));
+    if f >= 0 {
+      done = true;
+      ie = cgen_fn::expr(x, w, opt_apart_value::elem_idx(v), ind);
+      return E { code: "loft_ap_get({av_val(w, rv)}.f{f}, {l.fields[f]!.len}, {as_int(w, ie)})", kind: K_FLOAT };
+    }
+  }
+  wv = opt_apart_value::write_var(b, v);
+  if av_rec(w, wv) >= 0 {
+    l = av_layout(x, w, wv);
+    f = opt_apart_value::field_at(l, opt_apart_value::elem_off(v));
+    if f >= 0 {
+      done = true;
+      pair = [opt_apart_value::elem_idx(v), opt_apart_value::write_val(v)];
+      i = as_int(w, cgen_fn::arg(x, w, pair, 0, ind));
+      y = as_float(w, cgen_fn::arg(x, w, pair, 1, ind));
+      line(w, ind, "loft_ap_set({av_val(w, wv)}.f{f}, {l.fields[f]!.len}, {i}, {y});");
+      return E { code: "((void) 0)", kind: K_VOID };
+    }
+  }
+  lv = opt_apart_value::len_var(b, v);
+  if av_rec(w, lv) >= 0 {
+    l = av_layout(x, w, lv);
+    f = opt_apart_value::field_at(l, opt_apart_value::len_off(v));
+    if f >= 0 {
+      done = true;
+      return E { code: "INT64_C({l.fields[f]!.len})", kind: K_INT };
+    }
+  }
+  match loop_shape::unspan(v) {
+    NdCall { def_nr, args } => {
+      nm = def_name(b, def_nr);
+      if (nm == "OpFreeRef" || nm == "OpFreeRefIfDistinct") && len(args) > 0 {
+        for a in args {
+          if !(match loop_shape::unspan(a) { NdVar { n } => av_holds(w, n), _ => false }) {
+            return none();
+          }
+        }
+        done = true;
+        return E { code: "((void) 0)", kind: K_VOID };
+      }
+      none()
+    },
+    _ => none(),
+  }
+}
+
+// `av_set`: a dead variable's bind is nothing; an apart variable's null init zeroes it, a twin's
+// call fills it, a construction block builds it.  Answers whether it wrote `Set(var, inner)`.
+fn av_set(x: Cx, w: W, var: integer, inner: ir::Node, ind: integer) -> boolean {
+  if !w.av.any || !opt_apart_value::has_apart(w.av) {
+    return false;
+  }
+  if av_dead(w, var) {
+    return true;
+  }
+  val = av_val(w, var);
+  if val == "" {
+    return false;
+  }
+  u = loop_shape::unspan(inner);
+  if u is NdNull {
+    line(w, ind, "memset(&{val}, 0, sizeof {val});");
+    return true;
+  }
+  callee = match u { NdCall { def_nr, args: _ } => def_nr, _ => -1 };
+  if at(value_plan(x).twin_rec, callee) >= 0 {
+    av_twin_call(x, w, callee, call_args(u), av_ptr(w, var), ind);
+    return true;
+  }
+  c = av_construction_block(x, w, inner);
+  if !c.ok {
+    refuse(w, "an apart value bound to something the value form does not serve");
+    return true;
+  }
+  av_construct(x, w, c, val, ind);
+  true
+}
+
+fn call_args(v: ir::Node) -> vector<ir::Node> {
+  match loop_shape::unspan(v) {
+    NdCall { def_nr: _, args } => args,
+    _ => [],
+  }
+}
+
+// `av_return`: a `return` of an apart value — a twin writes it through `loft_apo` and returns; a
+// region writes it into the function's buffer (`loft_ap_store`) and returns the buffer.  Answers
+// whether it wrote `Return(inner)`.
+pub fn av_return(x: Cx, w: W, inner: ir::Node, ind: integer) -> boolean {
+  if !av_any(w) {
+    return false;
+  }
+  p = value_plan(x);
+  u = loop_shape::unspan(inner);
+  uv = match u { NdVar { n } => n, _ => -1 };
+  callee = match u { NdCall { def_nr, args: _ } => def_nr, _ => -1 };
+  rec = -1;
+  kind = 0;
+  c = av_construction_block(x, w, inner);
+  if av_rec(w, uv) >= 0 {
+    rec = av_rec(w, uv);
+  } else if at(p.twin_rec, callee) >= 0 {
+    rec = p.twin_rec[callee]!;
+    kind = 1;
+  } else if c.ok {
+    rec = av_rec(w, c.v);
+    kind = 2;
+  } else {
+    return false;
+  }
+  t = opt_apart_value::ctype(p, rec);
+  if t == "" {
+    refuse(w, "no apart type");
+    return true;
+  }
+  // Where the value lands: through `loft_apo` in a twin, in a temporary in a region.
+  dest = "(*loft_apo)";
+  if !w.av_twin {
+    dest = "loft_avr{len(w.decls)}";
+    w.decls += ["{t} {dest};"];
+  }
+  if kind == 0 {
+    line(w, ind, "{dest} = {av_val(w, uv)};");
+  } else if kind == 1 {
+    av_twin_call(x, w, callee, call_args(u), if w.av_twin { "loft_apo" } else { "&{dest}" }, ind);
+  } else {
+    av_construct(x, w, c, dest, ind);
+  }
+  if w.av_twin {
+    cgen_fn::ret_value(x, w, ir::NdNull, ind);
+    return true;
+  }
+  // The region's boundary: the value written into the buffer with its constructor's steps.
+  if w.av_rb < 0 {
+    refuse(w, "a region returning through no buffer");
+    return true;
+  }
+  l = p.layouts[p.layout_of[rec]!]!;
+  cgen_tables::describe_type(x, l.rec_tp);
+  bytes = cgen_ref::enum_parent_size(x.b, l.rec_tp);
+  offs: vector<text> = [for f in l.fields { "{f.off}u" }];
+  vals: vector<text> = [for f in l.fields { "{dest}.f{f#index}" }];
+  lens: vector<text> = [for f in l.fields { "{f.len}u" }];
+  bn = w.names[w.av_rb]!;
+  line(w, ind, "{bn} = loft_ap_store({bn}, {bytes}, {l.rec_tp}, {len(l.fields)}, (const uint32_t[]){{ {offs.join(", ")} }}, (const double *const[]){{ {vals.join(", ")} }}, (const uint32_t[]){{ {lens.join(", ")} }}); /* @FR-R-Apart boundary */");
+  // The buffer by its own C name: `expr` answers an apart variable's value, and a local promoted
+  // onto the buffer is one.
+  raw_expr(w, bn, "ref");
+  cgen_fn::ret_value(x, w, ir::NdRawExpr { s: bn }, ind);
+  true
+}
+
+// The unit's typedefs of instance 2's types, by their names.
+pub fn value_typedefs(x: Cx) -> text {
+  if !x.ap2.asked {
+    return "";
+  }
+  names: vector<text> = [for l in x.ap2.layouts { l.rust }];
+  names.sort();
+  out = "";
+  for nm in names {
+    for l in x.ap2.layouts {
+      if l.rust == nm {
+        fields: vector<text> = [for f in l.fields { "double f{f#index}[{if f.len > 1 { f.len } else { 1 }}];" }];
+        out += "typedef struct {{ {fields.join(" ")} }} loft_ap_{l.rust};\n";
+      }
+    }
+  }
+  out
+}

@@ -8,6 +8,7 @@
 // S runs, and the suffix-keep callee's `__nk` twin runs the rest of its body; otherwise every
 // statement of the range as written.
 
+use cgen_apart;
 use ir;
 use cgen::(Cx);
 use cgen_w::*;
@@ -34,11 +35,16 @@ pub fn rotate_site(x: Cx, w: W, ops: vector<ir::Node>, at: integer, ind: integer
   w.no_memo += 1;
   vec = as_ref(w, cgen_fn::expr(x, w, site.vector, ind));
   w.no_memo -= 1;
-  src = as_ref(w, cgen_fn::expr(x, w, site.src, ind));
+  // An apart source (`@FR-R-Apart` instance 4) rotates in from its field buffers.
+  rotate = cgen_apart::rotate(x, w, site.src, vec, x.b.types[site.elem_tp].size, site.k, plan_c, len(plan) / 2);
+  if rotate == "" {
+    src = as_ref(w, cgen_fn::expr(x, w, site.src, ind));
+    rotate = "loft_rotate_into({vec}, {src}, {x.b.types[site.elem_tp].size}u, INT64_C({site.k}), {plan_c}, {len(plan) / 2})";
+  }
   if w.why != "" {
     return -1;
   }
-  line(w, ind, "if (loft_rotate_into({vec}, {src}, {x.b.types[site.elem_tp].size}u, INT64_C({site.k}), {plan_c}, {len(plan) / 2})) {{");
+  line(w, ind, "if ({rotate}) {{");
   for s in site.between {
     cgen_fn::stmt(x, w, s, ind + 1);
   }

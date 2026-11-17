@@ -10,11 +10,14 @@
 // Not carried: the held-element address and the text clause (both the vector hoist's), and a
 // remainder that grows a store proved apart (`LOFT_NO_DISTINCT_GROWTH`).
 
+use cgen_vr;
+use cgen_transient;
 use ir;
 use cgen::(Cx);
 use loop_shape;
 use opt_view;
 use cgen_fn;
+use cgen_apart;
 use cgen_hoist;
 use cgen_names;
 use cgen_w::*;
@@ -193,7 +196,7 @@ fn bind(x: Cx, w: W, r: integer, ops: vector<ir::Node>, from: integer, ind: inte
 // `bind_param_ptrs`: a plain-record parameter read or written at least twice takes its
 // address at entry.
 pub fn bind_param_ptrs(x: Cx, w: W, code: ir::Node) {
-  if !enabled() {
+  if !enabled() || cgen_transient::lean(w) {
     return;
   }
   stmts = match loop_shape::unspan(code) {
@@ -202,7 +205,7 @@ pub fn bind_param_ptrs(x: Cx, w: W, code: ir::Node) {
   };
   for p in w.params {
     v = p#index;
-    if !p || (w.shapes[v] ?? "") != "ref" || w.links[v]! || opt_view::scalar_field_uses(x.b, stmts, 0, v) < 2 {
+    if !p || (w.shapes[v] ?? "") != "ref" || cgen_apart::holds(w, v) || w.links[v]! || cgen_vr::vr_local(w, v) >= 0 || opt_view::scalar_field_uses(x.b, stmts, 0, v) < 2 {
       continue;
     }
     if !opt_view::param_view_ok(x.b, x.writes, w.facts, w.index, stmts, v) {
@@ -215,14 +218,14 @@ pub fn bind_param_ptrs(x: Cx, w: W, code: ir::Node) {
 // `bind_record_ptr`: after statement `at` of `ops` binds a plain record view, take its
 // address where the statements up to its last field use allow it.
 pub fn bind_record_ptr(x: Cx, w: W, ops: vector<ir::Node>, at: integer, ind: integer) {
-  if w.gen_elem != "" || !enabled() || len(w.nk_skip) > 0 {
+  if w.gen_elem != "" || cgen_transient::lean(w) || !enabled() || len(w.nk_skip) > 0 {
     return;
   }
   r = match loop_shape::unspan(ops[at]!) {
     NdSet { var, inner: _ } => var,
     _ => return,
   };
-  if (w.shapes[r] ?? "") != "ref" {
+  if cgen_vr::vr_local(w, r) >= 0 || (w.shapes[r] ?? "") != "ref" || cgen_apart::holds(w, r) {
     return;
   }
   for p in w.rec_ptrs {

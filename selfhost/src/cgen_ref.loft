@@ -9,7 +9,10 @@
 // Written with the rules of `cgen_w::PLAIN_SWITCHES` off: what a rule would write in their
 // place is not carried.
 
+use cgen_transient;
 use ir;
+use cgen_deferred;
+use cgen_apart;
 use lower;
 use cgen_tables;
 use cgen_show;
@@ -564,6 +567,34 @@ fn ref_ops_3(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done
     }
     cgen_tables::copy_type(x, tp);
     return E { code: "loft_copy_record_at(loft_types, {tp}, {src}, {dst}, {free}, {cgen_fn::site(w)})", kind: K_VOID };
+  }
+  // `OpEvacuate(holder, fld, home, tp)` (`Stores::evacuate`, `@FR-H-RefHome`): the copy is
+  // placed in the holder's store as `OpPlaceRecord` places one.
+  if name == "OpEvacuate" && count == 4 {
+    fld = cgen_fn::literal(w, args[1], "field") ?? return none();
+    tp = cgen_fn::literal(w, args[3], "type") ?? return none();
+    if tp < 0 || tp >= len(x.b.types) {
+      refuse(w, "a type out of range");
+      return none();
+    }
+    cgen_tables::copy_type(x, tp);
+    size = enum_parent_size(x.b, tp);
+    image = cgen_tables::default_name(x, tp);
+    n = x.b.types[tp].size;
+    foreign = false;
+    hv = loop_shape::var_of(loop_shape::unspan(args[0]));
+    vars = x.b.data.definitions[w.index]!.variables.variables;
+    if hv >= 0 && hv < len(vars) {
+      kt = root_type(x.b, vars[hv]!.type_def);
+      if kt >= 0 {
+        elem = types::root_vector_element(x.b.types, kt);
+        foreign = elem != null && elem! != tp;
+      }
+    }
+    pair = [args[0], args[2]];
+    holder = cgen_fn::arg(x, w, pair, 0, ind);
+    home = cgen_fn::arg(x, w, pair, 1, ind);
+    return E { code: "loft_evacuate(loft_types, {tp}, {as_ref(w, holder)}, {fld}, {as_ref(w, home)}, {size}, {image}, {n}, {if foreign { 1 } else { 0 }})", kind: K_VOID };
   }
   if (name == "OpMoveRecord" || name == "OpMoveField") && count == 3 {
     tp = cgen_fn::literal(w, args[2], "type") ?? return none();
@@ -1180,6 +1211,10 @@ fn ref_ops_5(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done
 fn ref_ops_6(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
   done = true;
   count = len(args);
+  if name == "OpBitNotSingleInt" && count == 1 {
+    v = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "(~{as_int(w, v)})", kind: K_INT };
+  }
   if name == "OpSizeStruct" && count == 2 {
     sz = cgen_fn::literal(w, args[1], "size") ?? return none();
     r = cgen_fn::expr(x, w, args[0], ind);
@@ -1199,20 +1234,25 @@ fn ref_ops_6(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done
   if name == "OpInsertVector" && count == 4 {
     size = cgen_fn::literal(w, args[1], "element size") ?? return none();
     tp = cgen_fn::literal(w, args[3], "element type") ?? return none();
-    if tp < 0 || tp >= len(x.b.types) {
+    // `u16::MAX` names no type — a value-record element, filled by the insert's own writes —
+    // whose default is empty: size 0, not linked.
+    if tp < 0 || (tp >= len(x.b.types) && tp != 65535) {
       refuse(w, "an element type out of range");
       return none();
     }
+    tsize = if tp == 65535 { 0 } else { x.b.types[tp].size };
+    linked = tp != 65535 && x.b.types[tp].linked;
     pair = [args[0], args[2]];
     vec_c = as_ref(w, cgen_fn::arg(x, w, pair, 0, ind));
     at_c = as_int(w, cgen_fn::arg(x, w, pair, 1, ind));
+    image = cgen_tables::default_name(x, tp);
     t = temp(w, "ref");
-    if x.b.types[tp].linked {
-      line(w, ind, "{t} = loft_vec_insert_linked({vec_c}, {x.b.types[tp].size}, {at_c});");
+    if linked {
+      line(w, ind, "{t} = loft_vec_insert_linked({vec_c}, {tsize}, {at_c});");
     } else {
       line(w, ind, "{t} = loft_vec_insert({vec_c}, {size}, {at_c});");
     }
-    line(w, ind, "loft_fill({t}, {cgen_tables::default_name(x, tp)}, {x.b.types[tp].size});");
+    line(w, ind, "loft_fill({t}, {image}, {tsize});");
     return E { code: t, kind: K_REF };
   }
   if name == "OpKeepRange" && count == 4 {
@@ -2350,7 +2390,7 @@ pub fn clear_before_mint(b: ir::Bundle, w: W, ops: vector<ir::Node>, i: integer,
 // held header) is the vector hoist's, which is not carried.
 pub fn reserve_push_run(x: Cx, w: W, ops: vector<ir::Node>, at: integer, end: integer, ind: integer, head: &boolean) -> integer {
   head = false;
-  if w.gen_elem != "" || (env_variable("LOFT_NO_PUSH_RUN_RESERVE") ?? "0") != "0" {
+  if w.gen_elem != "" || cgen_transient::lean(w) || cgen_apart::av_any(w) || (env_variable("LOFT_NO_PUSH_RUN_RESERVE") ?? "0") != "0" {
     return -1;
   }
   shown: vector<ir::Node> = ops[0..end];
@@ -2378,7 +2418,7 @@ pub fn reserve_push_run(x: Cx, w: W, ops: vector<ir::Node>, at: integer, end: in
     next = p.next;
     run_end = next;
   }
-  if count < 2 || !opt_push::known_empty(x.b, shown, at, first.vector) || cgen_hoist::windowed_path(w, first.path) || cgen_hoist::push_head(x, w, first.vector) >= 0 {
+  if count < 2 || !opt_push::known_empty(x.b, shown, at, first.vector) || cgen_apart::holds(w, first.root) || cgen_deferred::root(w, first.root) || cgen_hoist::push_head(x, w, first.vector) >= 0 || cgen_hoist::windowed_path(w, first.path) {
     return -1;
   }
   v = as_ref(w, cgen_fn::expr(x, w, first.vector, ind));
@@ -2409,7 +2449,7 @@ pub fn reserve_push_run(x: Cx, w: W, ops: vector<ir::Node>, at: integer, end: in
 // `hash_reserve` (`@FR-R-PushFill`'s hash clause): a counted loop that files records into one
 // hash reserves the table's room for its trips before it runs.
 pub fn hash_reserve(x: Cx, w: W, lp: ir::Block, ind: integer) {
-  if w.gen_elem != "" || (env_variable("LOFT_NO_PUSH_FILL") ?? "0") != "0" || (env_variable("LOFT_NO_HASH_RESERVE") ?? "0") != "0" {
+  if w.gen_elem != "" || cgen_transient::lean(w) || (env_variable("LOFT_NO_PUSH_FILL") ?? "0") != "0" || (env_variable("LOFT_NO_HASH_RESERVE") ?? "0") != "0" {
     return;
   }
   hf = opt_push::hash_fill_loop(x.b, lp) ?? return;

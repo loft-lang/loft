@@ -28,7 +28,7 @@ PY
 )
 cd "$(dirname "$file")" || exit 2
 env $switches LOFT_TRACE_BODIES=1 "$loft" --emit-c "$out/o.c" "$file" 2> "$out/o.trace"
-env $switches "$loft" --emit-image "$out/o.img" "$file" 2>&1 | head -5
+env $switches "$loft" --native-c --emit-image "$out/o.img" "$file" 2>&1 | head -5
 env $switches "$out/gen/cgen" "$out/o.img" "$out/g.layer" --layer bodies 2>&1 | head -5
 python3 - "$out" "$func" "$lines" <<'PY'
 import sys, difflib

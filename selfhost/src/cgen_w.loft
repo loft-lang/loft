@@ -24,6 +24,12 @@ use opt_append_twin;
 use opt_destination;
 use char_walk;
 use opt_store_text_borrow;
+use cgen_deferred;
+use opt_apart_vector;
+use opt_apart_records;
+use opt_apart_value;
+use cgen_transient;
+use opt_vr_facts;
 use opt_split_table;
 use opt_lazy_split;
 
@@ -214,6 +220,13 @@ struct W {
   shapes: vector<text>,
   ret: text,
   body: text,
+  // How much of `body`, and how many `temps`, have had their tuple structs numbered
+  // (`number_pending`).
+  numbered: integer,
+  numbered_temps: integer,
+  // The body length and temporaries at the first refusal (`refuse`).
+  why_body: integer,
+  why_temps: integer,
   temps: vector<Temp>,
   // The first construct this writer does not carry; "" while everything was.
   why: text,
@@ -400,6 +413,31 @@ struct W {
   v_flag: vector<text>,
   v_reads: vector<text>,
   v_hold: vector<text>,
+  // `@FR-R-DeferredCopy`: the deferred locals, the references null at every mention, and the DC
+  // ID of the span `stmt` is unwrapping, for the statement inside it.
+  dc: vector<cgen_deferred::DcVar>,
+  dc_null_only: vector<boolean>,
+  dc_pending: integer,
+  dc_ctx: vector<integer>,
+  // `@FR-R-Apart` instance 3: the body's apart vectors and their companions.
+  apv: opt_apart_vector::VecRoles,
+  // `@FR-R-Apart` instance 4: the body's apart records, push groups' elements, or its `__apr`
+  // twin's parameter.
+  apr: opt_apart_records::Roles,
+  // `@FR-R-Apart` instance 2: the body's apart and dead variables, whether it is an `__apv`
+  // twin, and its return buffer variable (-1 none).
+  av: opt_apart_value::ApRoles,
+  av_twin: boolean,
+  av_rb: integer,
+  // `@FR-R-Transient`: the body's transient facts — a twin's or a site's (`any` false: none).
+  tr: cgen_transient::TrFn,
+  // `@FR-R-Transient`'s work clause: the callee of the lifted bind being written (-1 none, -2
+  // taken by its call, which has not written it yet).
+  wr_call: integer,
+  // `@FR-R-ValueRecord`'s facts for this body (`value::VrFn`; `any` false: none).
+  vr: opt_vr_facts::VrFn,
+  // The buffer of the forward call `expr` is writing (`vr_forward_target`), -1 none.
+  vr_fwd: integer,
 }
 
 // A function epilogue's place in the body while it is being written (`EPILOGUE_MARK`): a line
@@ -509,6 +547,8 @@ pub struct Written {
   pub storage: text,
   // `(R-CSplit)`: the body is over its budget — written whole, its MSVC parts not carried.
   pub split: boolean,
+  // `@FR-R-Transient`: the body without its frame wrapper, which a transient twin is.
+  pub inner: text,
   // A generator (`write_gen`): `text` is its creator's body; the frame struct and the
   // prototypes, written before the unit's functions, and the resume and release, after them.
   pub generator: boolean,
@@ -519,7 +559,22 @@ pub struct Written {
 fn refuse(w: W, why: text) {
   if w.why == "" {
     w.why = why;
+    // Where the Rust writer stopped (its first `Err`): what it named up to here it numbered.
+    w.why_body = w.body.size();
+    w.why_temps = len(w.temps);
   }
+}
+
+// `number_pending` for a body refused: the tuples it named up to its first refusal.
+pub fn number_refused(x: Cx, w: W) {
+  for t in w.temps {
+    if t#index >= w.numbered_temps && t#index < w.why_temps && is_tuple(t.shape) {
+      tuple_id(x, t.shape);
+    }
+  }
+  n = if w.why_body < w.body.size() { w.why_body } else { w.body.size() };
+  from = if w.numbered < n { w.numbered } else { n };
+  resolve_tuples(x, w.body[from..n]);
 }
 
 fn none() -> E {
@@ -637,6 +692,23 @@ fn tuple_id(x: Cx, shape: text) -> integer {
   len(x.tuples) - 1
 }
 
+// Number the tuple structs the lines written so far name, before a nested body (a twin written
+// on the way) names its own: the unit numbers a tuple when the writer first asks for it
+// (`Cx::tuple_id`), which is as each line is written.
+pub fn number_pending(x: Cx, w: W) {
+  // A temporary's shape is asked as it is made, before the line that writes it.
+  for t in w.temps {
+    if t#index >= w.numbered_temps && is_tuple(t.shape) {
+      tuple_id(x, t.shape);
+    }
+  }
+  w.numbered_temps = len(w.temps);
+  n = w.body.size();
+  from = if w.numbered < n { w.numbered } else { n };
+  resolve_tuples(x, w.body[from..n]);
+  w.numbered = n;
+}
+
 pub fn resolve_tuples(x: Cx, code: text) -> text {
   out = "";
   rest = code;
@@ -677,6 +749,10 @@ fn held(shape: text) -> text {
     "uint32_t"
   } else if shape == "text" {
     "loft_text"
+  } else if shape == "trvec" {
+    "loft_ta_vec *"
+  } else if shape.starts_with("tr") {
+    "lt_{shape[2..shape.size()]} *"
   } else if shape == "ref" {
     "loft_ref"
   } else if shape == "fn" {
@@ -691,8 +767,9 @@ fn held(shape: text) -> text {
 // The rules of the Rust writer this one does not carry yet, each by the switch that turns it
 // off.  A function that holds a record or a vector is written only with every one of them
 // set — the same switches the oracle is then run under — and refused by name otherwise, so
-// what is written is the Rust writer's under the same switches.
-PLAIN_SWITCHES = ["LOFT_NO_VALUE_RECORD", "LOFT_NO_TRANSIENT", "LOFT_NO_DEFERRED_COPY", "LOFT_NO_APART"];
+// what is written is the Rust writer's under the same switches.  Every rule is carried now:
+// the one entry is empty (a constant list needs an element to type it), and names no switch.
+PLAIN_SWITCHES = [""];
 
 // Is every rule of `PLAIN_SWITCHES` switched off?
 pub fn plain_rules() -> boolean {
@@ -703,7 +780,7 @@ pub fn plain_rules() -> boolean {
   // before they leave the list (`cgen_live.sh`'s `CGEN_ON`).
   carried = (env_variable("LOFT_CGEN_ON") ?? "").split(' ');
   for s in PLAIN_SWITCHES {
-    if (env_variable(s) ?? "0") == "0" && s != assumed && !carried.contains(s) {
+    if s != "" && (env_variable(s) ?? "0") == "0" && s != assumed && !carried.contains(s) {
       return false;
     }
   }

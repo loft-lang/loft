@@ -1,0 +1,14 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a function declared `-> (S, integer)` answers the synthetic `__tuple<S,integer>` record (`boxed_tuple_return`): its tail's tuple literal is built into a work ref of that record (`synthetic_tuple_return`), and a destructure of the call holds the answer in a `__ref_N`, reads the scalar member and copies the record member into a work ref the place then names.
+// Prints: 3 4 7 8
+
+struct S { n: integer }
+fn pair(k: integer) -> (S, integer) { (S { n: k }, k + 1) }
+fn main() {
+  t = (S { n: 3 }, 4);
+  a = t.0;
+  (b, c) = pair(7);
+  println("{a.n} {t.1} {b.n} {c}");
+}

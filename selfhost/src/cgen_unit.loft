@@ -10,6 +10,7 @@
 // it: a table the bodies name (the copy table, the defaults, the keys …), a define a reached
 // library needs.
 
+use cgen_transient;
 use ir;
 use cgen::(Cx, new_cx);
 use cgen_w::*;
@@ -380,7 +381,8 @@ fn write_one(x: Cx, t: cgen_names::Twin, p: Pieces, candidates: vector<integer>)
   if wr.storage.starts_with("static /*loft_hot:") {
     candidates += [t.d];
   }
-  x.gen_decls += "{body_storage(wr.storage)} {wr.ret} {wr.name}__fr({wr.list});\n";
+  // A split body keeps the wrapper's storage: its parts are not one unit with it.
+  x.gen_decls += "{if wr.split { wr.storage } else { body_storage(wr.storage) }} {wr.ret} {wr.name}__fr({wr.list});\n";
   p.protos += "{wr.storage} {wr.ret} {wr.name}({wr.list});\n";
   x.gen_bodies += "\n{wr.text}";
   p.bodies += "\n{wr.storage} {wr.ret} {wr.name}({wr.list}) {{\n{wrapper(x, t.d, wr)}}}\n";
@@ -422,6 +424,25 @@ pub fn assemble(b: ir::Bundle, root: integer, head: text, names: text, max_depth
     }
     done += 1;
   }
+  // The dispatchers call place twins too: those are written, and the dispatchers again, until
+  // nothing new is asked.
+  dispatch = cgen_fnval::dispatch_code(x, opt_names::written_functions_from(b, root, drivers));
+  for _ in 0..1000 {
+    if dispatch.refused != "" || done == len(x.twins) {
+      break;
+    }
+    for _ in 0..100000 {
+      if done >= len(x.twins) {
+        break;
+      }
+      why = write_one(x, cgen_names::copy_twin(x.twins[done]!), pieces, candidates);
+      if why != "" {
+        return not_carried(why);
+      }
+      done += 1;
+    }
+    dispatch = cgen_fnval::dispatch_code(x, opt_names::written_functions_from(b, root, drivers));
+  }
   decls = x.gen_decls;
   protos = pieces.protos;
   fr_bodies = x.gen_bodies;
@@ -431,19 +452,21 @@ pub fn assemble(b: ir::Bundle, root: integer, head: text, names: text, max_depth
   if why != "" {
     return not_carried(why);
   }
-  // The dispatchers of the function values, after the prototypes (`dispatch_code`).
-  dispatch = cgen_fnval::dispatch_code(x, opt_names::written_functions_from(b, root, drivers));
+  // The dispatchers of the function values, after the prototypes (`dispatch_code`), written
+  // above with the place twins they ask for.
   if dispatch.refused != "" {
     return not_carried(dispatch.refused);
   }
   // The closure release only where something calls it.
   drops = "";
-  if fr_bodies.find("loft_drop_closure(") != null || bodies.find("loft_drop_closure(") != null || dispatch.code.find("loft_drop_closure(") != null {
+  if fr_bodies.find("loft_drop_closure(") != null || bodies.find("loft_drop_closure(") != null || dispatch.code.find("loft_drop_closure(") != null || x.tr.bodies.find("loft_drop_closure(") != null {
     drops = cgen_fnval::drop_code(x, opt_names::written_functions_from(b, root, drivers));
   }
   // The dispatchers name their signatures' shapes: a tuple among them is numbered there.
   dispatch.code = resolve_tuples(x, dispatch.code);
-  typedefs = cgen_tables::typedefs(x, names);
+  // `@FR-R-Transient`'s structs before the unit's types (a tuple may point at one), its twins'
+  // prototypes after them.
+  typedefs = cgen_transient::typedefs(x) + cgen_tables::typedefs(x, names) + x.tr.protos;
   // The parse table after the type tables it names (`parse_table`, `main_vector_test`).
   if cgen_parse::parses(x) || reaches(b, reached, "n_parse_errors_of") {
     typedefs += cgen_parse::parse_table(x) + cgen_parse::main_vector_test(x);
@@ -455,7 +478,7 @@ pub fn assemble(b: ir::Bundle, root: integer, head: text, names: text, max_depth
     typedefs += b.reflect + reflect_entry();
   }
   hot = hot_helpers(x, candidates);
-  written = "{head}{typedefs}{resolve_hot(decls, candidates, hot)}{resolve_hot(protos, candidates, hot)}{dispatch.code}{drops}{resolve_hot(fr_bodies, candidates, hot)}{resolve_hot(bodies, candidates, hot)}";
+  written = "{head}{typedefs}{resolve_hot(decls, candidates, hot)}{resolve_hot(protos, candidates, hot)}{dispatch.code}{drops}{resolve_hot(fr_bodies, candidates, hot)}{resolve_hot(bodies, candidates, hot)}{x.tr.bodies}";
   if reaches(b, reached, "n_store_bind_lazy") {
     table = lazy_driver_table(x, why);
     if why != "" {

@@ -2,7 +2,7 @@
  "bodies|default|program|corpus": {
   "agree": 1080,
   "differ": 0,
-  "equal": 2706,
+  "equal": 13598,
   "functions": 13598,
   "refused": 0,
   "switches": [
@@ -13,14 +13,10 @@
  "bodies|plain|program|corpus": {
   "agree": 1080,
   "differ": 0,
-  "equal": 13122,
-  "functions": 13564,
+  "equal": 13598,
+  "functions": 13598,
   "refused": 0,
   "switches": [
-   "LOFT_NO_APART",
-   "LOFT_NO_DEFERRED_COPY",
-   "LOFT_NO_TRANSIENT",
-   "LOFT_NO_VALUE_RECORD",
    "LOFT_NO_WARNINGS"
   ],
   "units": 1080
@@ -28,14 +24,10 @@
  "bodies|plain|program|corpus:tests": {
   "agree": 601,
   "differ": 0,
-  "equal": 6545,
-  "functions": 6609,
+  "equal": 6620,
+  "functions": 6620,
   "refused": 0,
   "switches": [
-   "LOFT_NO_APART",
-   "LOFT_NO_DEFERRED_COPY",
-   "LOFT_NO_TRANSIENT",
-   "LOFT_NO_VALUE_RECORD",
    "LOFT_NO_WARNINGS"
   ],
   "units": 601
@@ -43,14 +35,10 @@
  "bodies|plain|program|files:benches.txt": {
   "agree": 61,
   "differ": 0,
-  "equal": 2222,
-  "functions": 2253,
+  "equal": 2241,
+  "functions": 2241,
   "refused": 0,
   "switches": [
-   "LOFT_NO_APART",
-   "LOFT_NO_DEFERRED_COPY",
-   "LOFT_NO_TRANSIENT",
-   "LOFT_NO_VALUE_RECORD",
    "LOFT_NO_WARNINGS"
   ],
   "units": 61

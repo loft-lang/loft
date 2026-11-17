@@ -1,8 +1,8 @@
 diff --git a/src/data.rs b/src/data.rs
-index 2164e6852..689636753 100644
+index 1cda9bbe0..def08be2a 100644
 --- a/src/data.rs
 +++ b/src/data.rs
-@@ -2813,15 +2813,6 @@ impl Type {
+@@ -2826,15 +2826,6 @@ impl Type {
                      && (a_w >= 8 || a.part_min(a_w, a_null) == b.part_min(b_w, b_null))
              }
              (Type::Vector(a, _), Type::Vector(b, _)) => a.same_element_storage(b),
@@ -19,10 +19,10 @@ index 2164e6852..689636753 100644
          }
      }
 diff --git a/src/parser/objects.rs b/src/parser/objects.rs
-index 6faf1ee33..7448caacc 100644
+index 5cf0eb7a4..9bd1f095f 100644
 --- a/src/parser/objects.rs
 +++ b/src/parser/objects.rs
-@@ -8525,15 +8525,6 @@ impl Parser {
+@@ -8656,15 +8656,6 @@ impl Parser {
              // uninitialised.
              if let Type::Vector(ref content, _) = td_base {
                  if !self.first_pass && !matches!(value, Value::Insert(_) | Value::Null) {
@@ -39,18 +39,18 @@ index 6faf1ee33..7448caacc 100644
                          .database
                          .position(self.data.def(td_nr).known_type(), field);
 diff --git a/src/parser/vectors.rs b/src/parser/vectors.rs
-index ec35b6058..945139e44 100644
+index bb0103597..019094195 100644
 --- a/src/parser/vectors.rs
 +++ b/src/parser/vectors.rs
-@@ -4053,7 +4053,6 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+@@ -4115,7 +4115,6 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
          if declared && !nullable_hint {
              self.seed_leaving_value_hint(in_t);
          }
 -        let body_pos = *self.lexer.peek_pos();
          let mut body = Value::Null;
          let body_type = self.parse_block("for", &mut body, &body_expected);
-         self.expected = saved_expected;
-@@ -4069,7 +4068,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+         if let Some(prev) = outer_discard {
+@@ -4134,7 +4133,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
          // leaking it into the vector's element type broke every later
          // `qs[i] ?? …` on the comprehension result (the ncc temp lost its
          // dep chain and stack slot — "Incorrect var __ncc_N[65535]").
@@ -59,7 +59,7 @@ index ec35b6058..945139e44 100644
              *t
          } else {
              body_type
-@@ -4079,7 +4078,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+@@ -4144,7 +4143,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
          // downstream lifetime/codegen reads as an Unknown definition
          // (`control.rs` block_result, `data.rs::def`) and panics.  Report it
          // cleanly and recover with a dense element type so later passes don't crash.
@@ -68,7 +68,7 @@ index ec35b6058..945139e44 100644
              if !self.first_pass {
                  diagnostic!(
                      self.lexer,
-@@ -4088,68 +4087,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+@@ -4153,68 +4152,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                       `for … in …` cannot be empty"
                  );
              }

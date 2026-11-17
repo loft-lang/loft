@@ -806,6 +806,10 @@ pub fn save_data(data: &Data, path: &str) -> std::io::Result<()> {
 /// `BUNDLE_TYPES`.  The whole root is zeroed HERE: `materialize_data_at` clears
 /// only its own `DATA_STRIDE` bytes, and the schema vector's header sits past
 /// them, so an uncleared header is a junk record id on the first push.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one pass over the bundle's sections in their record order — data, schema, then the writer's facts"
+)]
 pub fn materialize_bundle(
     stores: &mut Stores,
     root: DbRef,
@@ -824,6 +828,7 @@ pub fn materialize_bundle(
     materialize_data_at(stores, data_root, data);
     materialize_schema(stores, &Record::new(root), ds::BUNDLE_TYPES, schema);
     Record::new(root).set_field_bool(stores, ds::BUNDLE_CWD, cwd);
+    Record::new(root).set_field_bool(stores, ds::BUNDLE_OPEN_WORLD, data.open_world);
     // @PLN91 strand 12 — the program's C libraries, which the loft-written C writer reads for
     // a `#c` binding; a shim's sources travel one path per line.
     let libs = Record::new(root).field_recvec(ds::BUNDLE_C_LIBRARIES, ds::IMAGECLIB_STRIDE);
@@ -915,6 +920,13 @@ pub fn materialize_bundle(
         r.set_field_str(stores, ds::IMAGELAZYDRIVER_ELEMENT, element);
         r.set_field_int(stores, ds::IMAGELAZYDRIVER_D, i64::from(*d));
     }
+    let consts = rec.field_recvec(ds::BUNDLE_CONSTS, ds::IMAGECONST_STRIDE);
+    for (d, n, words) in &host.consts {
+        let r = consts.push(stores);
+        r.set_field_int(stores, ds::IMAGECONST_D, i64::from(*d));
+        r.set_field_int(stores, ds::IMAGECONST_N, i64::from(*n));
+        r.set_field_str(stores, ds::IMAGECONST_WORDS, words);
+    }
 }
 
 /// What the host resolved for the loft-written C writer beside the IR (@PLN91 strand 12): the
@@ -947,6 +959,8 @@ pub struct HostFacts {
     pub sql_plans: Vec<SqlPlanShape>,
     pub lazy_drivers: Vec<(String, u32)>,
     pub lazy_refusal: String,
+    /// Each built constant's store (`c::const_facts`): definition, word count, words.
+    pub consts: Vec<(u32, u32, String)>,
 }
 
 /// One keyed collection's SQL plan (`ImageSqlPlan`): the equality select, its parameter count
