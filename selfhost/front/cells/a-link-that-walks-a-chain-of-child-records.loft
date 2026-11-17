@@ -1,0 +1,20 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a `&` link to a child record that is written whole later holds the child's slot in `_slot_<name>_N`: the bind reads the child through it, and `cur = cur.next` moves the next child into the slot (`OpMoveChildRec`) and reads it again.
+// Prints: 6
+
+struct N { v: integer, next: N? }
+fn total(n: N) -> integer {
+  k = n.v;
+  cur = &n.next;
+  while cur != null {
+    k += cur.v;
+    cur = cur.next;
+  }
+  k
+}
+fn main() {
+  a = N { v: 1, next: N { v: 2, next: N { v: 3 } } };
+  println("{total(a)}");
+}

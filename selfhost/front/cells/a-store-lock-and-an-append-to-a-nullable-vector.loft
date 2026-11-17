@@ -1,0 +1,21 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: `d#lock` reads and `d#lock = b` sets a record's or a vector's store lock (`n_get_store_lock`, `n_set_store_lock`); an append onto a nullable vector local first builds the empty vector, in a backing of its own, where the local holds null.
+// Prints: true 4 [1,2] [3,4,7]
+
+struct D { n: integer }
+fn opt(k: integer) -> vector<integer>? { if k < 0 { return null; } [k, k + 1] }
+fn main() {
+  d = D { n: 1 };
+  d#lock = true;
+  t = d#lock;
+  d#lock = false;
+  d.n = 4;
+  v = [1, 2];
+  v#lock = true;
+  v#lock = false;
+  b = opt(3);
+  b += [7];
+  println("{t} {d.n} {v} {b}");
+}

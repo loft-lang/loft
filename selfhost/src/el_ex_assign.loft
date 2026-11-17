@@ -2274,6 +2274,14 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
       if op == "=" && (attr == "format" || attr == "next" || attr == "index" || attr == "size") && arg == null && tp == null && fv >= 0 && el_ex_pattern::is_file(e, el_vars::tp(vars, fv)) {
         return el_ex_null::file_attr_set(e, vars, fv, attr, rhs!);
       }
+      // `d#lock = b` (`towards_set`'s `n_get_store_lock` arm): the store's lock is set.
+      if op == "=" && attr == "lock" && arg == null && tp == null && fv >= 0 && !vars.vars[fv].argument && (el_types::base(el_vars::tp(vars, fv)) is TyReference || el_types::base(el_vars::tp(vars, fv)) is TyVector) {
+        lx = expression(e, vars, rhs!);
+        if lx.tp is TyBoolean {
+          el_vars::in_use(vars, fv, true);
+          return ex(el_ir::cl(e, "n_set_store_lock", [ir::NdVar { n: fv }, lx.code]), ir::TyVoid);
+        }
+      }
     },
     _ => {}
   }
@@ -2430,6 +2438,64 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
   if amp_rhs && match e.p.nodes[rhs!] { SUnary { e: o } => o != null && !(e.p.nodes[o!] is SName), _ => false } && !vars.amp_places.contains(v) {
     vars.amp_places += [v];
   }
+  // A link to a CHILD record that is written whole later (`cur = &n.next; … cur = cur.next`):
+  // the bind holds the child's slot in `_slot_<name>_N` and reads the child through it; the
+  // write moves the next child into that slot (`OpMoveChildRec`) and reads it again.  The
+  // first pass records the write; the second pass's bind acts on it.
+  lkey = e.context * 65536 + v;
+  if !amp_rhs && vars.amp_places.contains(v) && e.first_pass && op == "=" && !e.slot_links.contains(lkey) {
+    e.slot_links += [lkey];
+  }
+  if amp_rhs && !e.first_pass && op == "=" && e.slot_links.contains(lkey) {
+    bx = expression(e, vars, rhs!);
+    inner_get = match el_ir::unspan(bx.code) { NdCall { def_nr: bd, args: ba } => if el::def(e, bd).name == "OpRefFromChildRec" && len(ba) == 1 { ba[0]! } else { ir::NdNull }, _ => ir::NdNull };
+    // A link bound again (`cur = &cur.next` in a walk) writes the slot it has.
+    had = -1;
+    for so in vars.slot_of {
+      if so == v {
+        had = vars.slot_vars[so#index] ?? -1;
+      }
+    }
+    if !(inner_get is NdNull) && had >= 0 && el_vars::change_var_type(e, vars, v, bx.tp) {
+      return ex(ir::NdInsert { items: [el_ir::v_set(had, inner_get), el_ir::v_set(v, el_ir::cl(e, "OpRefFromChildRec", [ir::NdVar { n: had }]))] }, ir::TyVoid);
+    }
+    if !(inner_get is NdNull) && el_vars::change_var_type(e, vars, v, bx.tp) {
+      sv = el_vars::create_unique(vars, "slot_{el_vars::name_of(vars, v)}", bx.tp);
+      el_vars::set_defined(vars, sv);
+      el_vars::set_defined(vars, v);
+      vars.slot_vars += [sv];
+      vars.slot_of += [v];
+      return ex(ir::NdInsert { items: [el_ir::v_set(sv, inner_get), el_ir::v_set(v, el_ir::cl(e, "OpRefFromChildRec", [ir::NdVar { n: sv }]))] }, ir::TyVoid);
+    }
+    // (Any other place — a field, an element — is bound as it always is; the bind above read
+    // nothing that mints.)
+  }
+  if !amp_rhs && !e.first_pass && op == "=" && vars.slot_of.contains(v) {
+    wsv = -1;
+    for so in vars.slot_of {
+      if so == v {
+        wsv = vars.slot_vars[so#index] ?? -1;
+      }
+    }
+    // `cur = null` clears the child in its slot (`OpSetChildRec` of the null sentinel).
+    srd = match el_types::base(el_vars::tp(vars, if wsv >= 0 { wsv } else { v })) { TyReference { n: sn } => sn, _ => -1 };
+    if wsv >= 0 && srd >= 0 && e.p.nodes[rhs!] is SNull {
+      return ex(ir::NdInsert { items: [el_ir::cl(e, "OpSetChildRec", [ir::NdVar { n: wsv }, el_ir::cl(e, "OpNullRefSentinel", []), ir::NdInt { n: el::def(e, srd).known_type }]), el_ir::v_set(v, el_ir::cl(e, "OpRefFromChildRec", [ir::NdVar { n: wsv }]))] }, ir::TyVoid);
+    }
+    wx = expression(e, vars, rhs!);
+    winner = match el_ir::unspan(wx.code) { NdCall { def_nr: wd, args: wa } => if el::def(e, wd).name == "OpRefFromChildRec" && len(wa) == 1 { wa[0]! } else { ir::NdNull }, _ => ir::NdNull };
+    wkt = match el_ir::unspan(winner) { NdCall { args: ga } => ga[2] ?? ir::NdNull, _ => ir::NdNull };
+    // A fresh call's record is MOVED into the slot (the known type with its move bit).
+    fresh_call = match el_ir::unspan(wx.code) { NdCall { def_nr: fd } => starts_with(el::def(e, fd).name, "n_"), _ => false };
+    if wsv >= 0 && srd >= 0 && fresh_call && match el_types::base(wx.tp) { TyReference { n: wn } => wn == srd, _ => false } {
+      return ex(ir::NdInsert { items: [el_ir::cl(e, "OpSetChildRec", [ir::NdVar { n: wsv }, wx.code, ir::NdInt { n: el::def(e, srd).known_type + 32768 }]), el_ir::v_set(v, el_ir::cl(e, "OpRefFromChildRec", [ir::NdVar { n: wsv }]))] }, ir::TyVoid);
+    }
+    if wsv >= 0 && !(winner is NdNull) && !(wkt is NdNull) {
+      return ex(ir::NdInsert { items: [el_ir::cl(e, "OpMoveChildRec", [ir::NdVar { n: wsv }, winner, wkt]), el_ir::v_set(v, el_ir::cl(e, "OpRefFromChildRec", [ir::NdVar { n: wsv }]))] }, ir::TyVoid);
+    }
+    el::refuse(e, "a whole-value write through a `&` link to a record place");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
   vb = el_types::base(el_vars::tp(vars, v));
   // `copy_ref` (loft#1376): a literal or a fresh call's record is copied into the place the
   // link names (a call's store given away); a bare record local re-points the link, as a view.
@@ -2448,7 +2514,7 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
       }
     }
   }
-  if !amp_rhs && vars.amp_places.contains(v) && (struct_ref(e, vb) >= 0 || el_convert::struct_enum(vb)) && !(e.p.nodes[rhs!] is SName && struct_ref(e, vb) >= 0) {
+  if !e.first_pass && !amp_rhs && vars.amp_places.contains(v) && (struct_ref(e, vb) >= 0 || el_convert::struct_enum(vb)) && !(e.p.nodes[rhs!] is SName && struct_ref(e, vb) >= 0) {
     el::refuse(e, "a whole-value write through a `&` link to a record place");
     return ex(ir::NdNull, ir::TyVoid);
   }

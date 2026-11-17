@@ -1772,6 +1772,7 @@ pub fn vector_append(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> 
   match el_vars::tp(vars, v) {
     TyVector { inner: i } => { inner = i; },
     TyRefVar { inner: lv } => match lv { TyVector { inner: i } => { inner = i; }, _ => {} },
+    TyOptional { inner: ov } => match ov { TyVector { inner: i } => { inner = i; }, _ => {} },
     _ => {}
   }
   // `parse_append_vector` makes the definitions where a value literal does, at its `]` — not

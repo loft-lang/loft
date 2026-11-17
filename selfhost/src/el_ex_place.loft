@@ -1346,6 +1346,31 @@ pub fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: 
   // A link to a vector (`v: &vector<T>`) appends through the link as the vector would
   // (`@FR-B-Ref-Uniform`).
   linked_vec = match vt { TyRefVar { inner } => inner is TyVector, _ => false };
+  // `absent_append_mint` (`@FR-Col-Insert-Absent`): an append onto a nullable vector LOCAL
+  // builds the empty vector first where the local holds null, in a backing of its own.
+  opt_elem = match vt { TyOptional { inner: oi } => match oi { TyVector { inner: oe } => oe, _ => ir::TyVoid }, _ => ir::TyVoid };
+  if !(opt_elem is TyVoid) && bin == "+" && e.p.nodes[rhs] is SVecLit && !vars.vars[v].argument {
+    el_vars::drop_use(vars, v);
+    if e.first_pass {
+      return el_ex_pattern::vector_append(e, vars, v, rhs);
+    }
+    orows = el_ex_base::vector_rows(e, opt_elem, 0, true);
+    if orows == null || len(vars.active_loops) > 0 || vars.whiles > 0 {
+      el::refuse(e, "an append to a nullable vector local in a loop, or of an element with no row");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    odb = el_vars::work_vec_db(vars, ir::TyReference { n: orows!.main_def, dep: [] });
+    el_vars::depend(vars, v, odb);
+    // (`mark_inline_ref`: the mint is conditional, so the backing is nulled as an inline ref.)
+    el_vars::mark_inline(vars, odb);
+    guard = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [ir::NdVar { n: v }]), ir::NdInsert { items: [
+      el_ir::cl(e, "OpDatabase", [ir::NdVar { n: odb }, ir::NdInt { n: orows!.main_known }]),
+      el_ir::v_set(v, el_ir::cl(e, "OpGetField", [ir::NdVar { n: odb }, ir::NdInt { n: 0 }, ir::NdInt { n: orows!.vec_known }])),
+      el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: odb }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }])
+    ] }, ir::NdNull);
+    ax = el_ex_pattern::vector_append(e, vars, v, rhs);
+    return ex(ir::NdInsert { items: [guard, ax.code] }, ir::TyVoid);
+  }
   if (vt is TyVector || linked_vec) && bin == "+" && e.p.nodes[rhs] is SVecLit {
     el_vars::drop_use(vars, v);
     return el_ex_pattern::vector_append(e, vars, v, rhs);

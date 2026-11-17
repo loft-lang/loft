@@ -1724,6 +1724,13 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
   if !e.first_pass {
     want = match el_types::base(result) { TyVector { inner: wi } => wi, _ => ir::TyVoid };
     have = match code { NdBlock { block: cb } => match el_types::base(cb[0].result[0] ?? ir::TyVoid) { TyVector { inner: hi } => hi, _ => ir::TyVoid }, _ => ir::TyVoid };
+    // A record literal answered by a function whose vector is NULLABLE: Rust types its
+    // elements through the `?` otherwise — not carried: refused by name.
+    lit_tail = match code { NdBlock { block: ob } => match ob[0].operators[-1] ?? ir::NdNull { NdBlock { block: ib } => ib[0].name == "Vector", _ => false }, _ => false };
+    if result is TyOptional && lit_tail && el_types::base(want) is TyReference {
+      el::refuse(e, "a literal of records answered by a function whose vector is nullable");
+      return code;
+    }
     wn = el_types::elem_name(e, want);
     hn = el_types::elem_name(e, have);
     if wn != "" && hn != "" && wn != hn {
@@ -2229,6 +2236,11 @@ pub fn arm_delivery(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer,
     bl.operators[-1] = el_ir::v_block([el_ir::cl(e, "OpClearVector", [b]), el_ir::cl(e, "OpAppendVector", [b, tail, ir::NdInt { n: rec }]), b], own, "borrow_tail_copy_104");
     if result is TyOptional && !((bl.result[0] ?? ir::TyVoid) is TyOptional) {
       bl.result = [ir::TyOptional { inner: bl.result[0] ?? ir::TyVoid }];
+    }
+    // A nullable result's body borrows the parameter its tail reads, as the dense twin's does.
+    troot = match tail { NdVar { n: tn } => tn, _ => place_root(e, tail) };
+    if result is TyOptional && troot >= 0 {
+      bl.result = [ir::TyOptional { inner: el_types::with_deps(el_types::without_deps(el_types::base(result)), [troot]) }];
     }
     return ir::NdBlock { block: [bl] };
   }

@@ -570,6 +570,14 @@ pub fn var_attr(e: el::El, vars: el_vars::Vars, var: text, attr: text, arg: inte
       return ex(ir::NdVar { n: c }, ir::TyInteger { spec: i32_spec() });
     }
   }
+  // `d#lock` on a record or vector local reads its store's lock (`n_get_store_lock`).
+  if attr == "lock" && arg == null && tp == null {
+    kv = el_vars::var(vars, var);
+    if kv >= 0 && (e.first_pass || el_types::base(el_vars::tp(vars, kv)) is TyReference || el_types::base(el_vars::tp(vars, kv)) is TyVector) {
+      el_vars::in_use(vars, kv, true);
+      return ex(el_ir::cl(e, "n_get_store_lock", [ir::NdVar { n: kv }]), ir::TyBoolean);
+    }
+  }
   el::refuse(e, "a variable attribute: #{attr}");
   ex(ir::NdNull, ir::TyUnknown { n: 0 })
 }

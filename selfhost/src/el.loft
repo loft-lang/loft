@@ -108,6 +108,9 @@ pub struct El {
   pub unbacked: vector<integer>,
   // `Function::subject_sites` (loft#2520): each match subject temp the first pass minted, by
   // its site (`context * 1048576 + the subject's syntax node`), and the name it took.
+  // A `&` link to a child record that is later WRITTEN whole (`cur = cur.next`), by
+  // `context * 65536 + the link's variable`: its bind holds the child's slot in a variable.
+  pub slot_links: vector<integer>,
   pub subject_sites: vector<integer>,
   pub subject_names: vector<text>,
   // the functions the program declares whose definition elaboration refused: a call of one is
@@ -195,6 +198,7 @@ pub fn new_el(p: syntax::Syntax, file: text, default: boolean) -> El {
     refused: [],
     refused_at: [],
     unbacked: [],
+    slot_links: [],
     subject_sites: [],
     subject_names: [],
     declined: [],
