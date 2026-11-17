@@ -1063,32 +1063,39 @@ pub fn tail_bind_call(e: el::El, vars: el_vars::Vars, code: ir::Node) -> integer
   }
 }
 
-// The tail local handed to its own bind's call as the buffer.
+// The tail local handed to its own bind's call as the buffer — and to each bind of it that
+// stands directly before that one (`v = f(); v = g(); v`), walking back from the tail.
 pub fn tail_call_into_local(e: el::El, vars: el_vars::Vars, code: ir::Node) -> ir::Node {
   bl = match code { NdBlock { block } => block[0]!, _ => return code };
   v = match el_ir::unspan(bl.operators[-1]) { NdVar { n } => n, _ => return code };
-  at = -1;
-  for o in bl.operators {
-    match el_ir::unspan(o) {
-      NdSet { var, inner: _ } => { if var == v { at = o#index; } },
+  at = len(bl.operators) - 2;
+  while at >= 0 {
+    if el_ir::is_line(bl.operators[at]!) {
+      at -= 1;
+      continue;
+    }
+    done = true;
+    match el_ir::unspan(bl.operators[at]!) {
+      NdSet { var, inner } => {
+        match el_ir::unspan(inner) {
+          NdCall { def_nr, args } => {
+            w = hidden_ref_arg(vars, args);
+            cd = el::def(e, def_nr);
+            if var == v && w >= 0 && cd.name.starts_with("n_") && el_types::base(cd.returned[0] ?? ir::TyVoid) is TyReference {
+              na: vector<ir::Node> = [for a in args { match el_ir::unspan(a) { NdVar { n: an } => if an == w { ir::NdVar { n: v } } else { a }, _ => a } }];
+              bl.operators[at] = el_ir::v_set(var, ir::NdCall { def_nr: def_nr, args: na });
+              done = false;
+            }
+          },
+          _ => {}
+        }
+      },
       _ => {}
     }
-  }
-  if at < 0 {
-    return code;
-  }
-  match el_ir::unspan(bl.operators[at]!) {
-    NdSet { var, inner } => {
-      match el_ir::unspan(inner) {
-        NdCall { def_nr, args } => {
-          w = hidden_ref_arg(vars, args);
-          na: vector<ir::Node> = [for a in args { match el_ir::unspan(a) { NdVar { n: an } => if an == w { ir::NdVar { n: v } } else { a }, _ => a } }];
-          bl.operators[at] = el_ir::v_set(var, ir::NdCall { def_nr: def_nr, args: na });
-        },
-        _ => {}
-      }
-    },
-    _ => {}
+    if done {
+      break;
+    }
+    at -= 1;
   }
   ir::NdBlock { block: [bl] }
 }
