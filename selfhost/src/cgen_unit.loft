@@ -424,6 +424,25 @@ pub fn assemble(b: ir::Bundle, root: integer, head: text, names: text, max_depth
     }
     done += 1;
   }
+  // The dispatchers call place twins too: those are written, and the dispatchers again, until
+  // nothing new is asked.
+  dispatch = cgen_fnval::dispatch_code(x, opt_names::written_functions_from(b, root, drivers));
+  for _ in 0..1000 {
+    if dispatch.refused != "" || done == len(x.twins) {
+      break;
+    }
+    for _ in 0..100000 {
+      if done >= len(x.twins) {
+        break;
+      }
+      why = write_one(x, cgen_names::copy_twin(x.twins[done]!), pieces, candidates);
+      if why != "" {
+        return not_carried(why);
+      }
+      done += 1;
+    }
+    dispatch = cgen_fnval::dispatch_code(x, opt_names::written_functions_from(b, root, drivers));
+  }
   decls = x.gen_decls;
   protos = pieces.protos;
   fr_bodies = x.gen_bodies;
@@ -433,8 +452,8 @@ pub fn assemble(b: ir::Bundle, root: integer, head: text, names: text, max_depth
   if why != "" {
     return not_carried(why);
   }
-  // The dispatchers of the function values, after the prototypes (`dispatch_code`).
-  dispatch = cgen_fnval::dispatch_code(x, opt_names::written_functions_from(b, root, drivers));
+  // The dispatchers of the function values, after the prototypes (`dispatch_code`), written
+  // above with the place twins they ask for.
   if dispatch.refused != "" {
     return not_carried(dispatch.refused);
   }

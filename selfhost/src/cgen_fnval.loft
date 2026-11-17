@@ -11,7 +11,7 @@
 use ir;
 use binds;
 use lower;
-use cgen::(Cx);
+use cgen::(Cx, request_twin);
 use cgen_w::*;
 use cgen_names;
 use cgen_types;
@@ -112,9 +112,10 @@ fn promo_base(t: ir::TypeT) -> ir::TypeT {
 }
 
 // `dispatch_arm`: the arm calling `d`, or why not.
-fn dispatch_arm(x: Cx, d: integer, ret: text, buf: boolean, out: &text) -> text {
+fn dispatch_arm(x: Cx, d: integer, ret: text, buf: boolean, places: vector<boolean>, out: &text) -> text {
   def = x.b.data.definitions[d]!;
   args: vector<text> = [];
+  mask = 0;
   buffers: vector<text> = [];
   visible = 0;
   promo = if len(def.returned) == 0 { ir::TyVoid } else { promo_base(def.returned[0]!) };
@@ -129,6 +130,9 @@ fn dispatch_arm(x: Cx, d: integer, ret: text, buf: boolean, out: &text) -> text 
     if a.name == "__closure" {
       args += ["f.clos"];
     } else if !a.hidden {
+      if places[visible] ?? false {
+        mask = mask | (1 << a#index);
+      }
       args += ["a{visible}"];
       visible += 1;
     } else if (match binds::base(t) { TyRefVar { inner } => binds::base(inner) is TyText, _ => false }) {
@@ -152,7 +156,34 @@ fn dispatch_arm(x: Cx, d: integer, ret: text, buf: boolean, out: &text) -> text 
       return "a function value {def.name} with a hidden {a.name} buffer";
     }
   }
-  call = "{cgen_names::c_name(x.b, x.dups, d)}({args.join(", ")})";
+  // `arm_callee`: a text place reaches the callee's store-text instance; any other place, its
+  // place twin, asked for here.
+  text_bits = 0;
+  for a in def.attributes {
+    if mask & (1 << a#index) != 0 && (match binds::base(a.typedef[0] ?? ir::TyVoid) { TyRefVar { inner } => binds::base(inner) is TyText, _ => false }) {
+      text_bits = text_bits | (1 << a#index);
+    }
+  }
+  callee = d;
+  if text_bits != 0 {
+    callee = -1;
+    want = "{def.name}@st{text_bits}";
+    for o in x.b.data.definitions {
+      if o.name == want && o.source == def.source {
+        callee = o#index;
+      }
+    }
+    if callee < 0 {
+      return "a text place handed to {def.name} through a function value";
+    }
+  }
+  mask = mask ^ (mask & text_bits);
+  arm = cgen_names::plain(callee);
+  arm.places = mask;
+  if mask != 0 {
+    request_twin(x, arm);
+  }
+  call = "{cgen_names::twin_name(x.b, x.dups, arm)}({args.join(", ")})";
   out += "    case INT64_C({d}): {{";
   for w in buffers {
     out += " loft_text {w} = {{ 0, 0, 0 }};";
@@ -220,6 +251,7 @@ fn dispatcher(x: Cx, fns: vector<integer>, key: text, id: integer, buf: boolean,
     }
     out += "\nstatic {held(ret)} loft_call{id}{if buf { "b" } else { "" }}({list.join(", ")}) {{\n    switch (f.d) {{\n";
     want = linked_key(key);
+    places: vector<boolean> = [for p in ps { p.mode == 2 }];
     for v in x.fn_values {
       if !v {
         continue;
@@ -228,10 +260,13 @@ fn dispatcher(x: Cx, fns: vector<integer>, key: text, id: integer, buf: boolean,
       if value_signature(x.b, d) != want {
         continue;
       }
+      if places.contains(true) && !writes(fns, d) {
+        return "a store place handed to a & parameter of {x.b.data.definitions[d]!.name}";
+      }
       if !writes(fns, d) {
         return "a function value {x.b.data.definitions[d]!.name} the unit does not write (a native as a value)";
       }
-      why = dispatch_arm(x, d, ret, buf, out);
+      why = dispatch_arm(x, d, ret, buf, places, out);
       if why != "" {
         return why;
       }

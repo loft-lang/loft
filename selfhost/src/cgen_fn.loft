@@ -1081,6 +1081,14 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
       return stored;
     }
   }
+  // The element is the stdlib's `EnvVariable`, sized from this program's table.
+  if route == "n_env_variables" {
+    for t in x.b.types {
+      if t.name == "EnvVariable" {
+        return E { code: "loft_env_variables({t.size})", kind: K_REF };
+      }
+    }
+  }
   if (route.starts_with("n_store_") && !route.starts_with("n_store_upgrade_owed_") && route != "n_store_reclaim") || route == "n_spatial_range" || route == "n_trie_prefix" || route.starts_with("n_parallel_") || route.starts_with("n_keyed_entry_") || route.starts_with("n_struct_") || route.starts_with("t_9character_is_") || route == "n_hash_sorted" || route == "n_hash_unsorted" || route == "n_radix_sorted" || route == "n_env_variables" || (route == "t_6vector_len" && !plain_rules()) || def.native == "n_swap_world" {
     refuse(w, "a call the runtime answers by its name: {if route == "" { def.native } else { route }}");
     return none();
@@ -1786,9 +1794,20 @@ fn call_ref(x: Cx, w: W, v: integer, args: vector<ir::Node>, ind: integer) -> E 
   }
   xs: vector<text> = [for _ in 0..len(shapes) { "" }];
   modes: vector<text> = [];
+  // Each parameter's mode: a value (0), a link to a variable (1), a store place (2) — the last
+  // reaches each function through its place twin (`twin_name`).
   for s in shapes {
     i = s#index;
     if links[i]! {
+      pa = place_arg(x, w, args[i]!, params[i]!, ind);
+      if w.why != "" {
+        return none();
+      }
+      if pa != "" {
+        xs[i] = pa;
+        modes += ["{s}:2"];
+        continue;
+      }
       xs[i] = link_arg(x, w, args[i]!, s, true, ind);
       if w.why != "" {
         return none();
@@ -2877,7 +2896,9 @@ fn stmt(x: Cx, w: W, v: ir::Node, ind: integer) {
       w.dc_pending = opt_lease::dc_id(v);
       w.dc_ctx += [w.dc_pending];
     } else {
-      dc_at = w.dc_pending;
+      // A copy a rewrite writes (`no_memo`) is no node of the body, as the Rust writer's
+      // clone is not: no deferred bind, and no statement the liveness pass reaches.
+      dc_at = if w.no_memo > 0 { 0 } else { w.dc_pending };
       if !(v is NdSpan) {
         w.dc_pending = 0;
       }
