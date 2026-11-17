@@ -475,7 +475,7 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
     } else if !e.first_pass {
       // A `??` tail viewing parameters alone answers that view (`MergeAttr`), before any
       // delivery is asked of it.
-      ncc_tail = match body_tail(code) { NdBlock { block } => block[0].name == "ncc", _ => false };
+      ncc_tail = match body_tail(code) { NdBlock { block } => block[0].name == "ncc" || block[0].name == "ncr", _ => false };
       built = if ncc_tail { el_ex_null::merge_view_call(e, vars, code) } else { null };
 
       view_answer = built != null;

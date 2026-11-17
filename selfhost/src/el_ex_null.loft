@@ -689,7 +689,14 @@ pub fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: intege
     if !(el_ir::unspan(x.code) is NdVar) && !(e.p.nodes[pe!] is SName) {
       el_vars::create_unique(vars, "ncr", b);
     }
-    return ex(ir::NdNull, ncr_type(e, x.code, b));
+    // A record's `!` is a block typed as what it borrows on this pass too: a tail `t!` answers
+    // a view of the parameter `t` (`MergeAttr`) from the first pass on, so a call of this
+    // function made before its body is done already reads it as handing its argument back.
+    bt1 = ncr_type(e, x.code, b);
+    if record || el_convert::struct_enum(b) {
+      return ex(el_ir::v_block([x.code], bt1, "ncr"), bt1);
+    }
+    return ex(ir::NdNull, bt1);
   }
   // A vector is tested with `OpVectorIsNull` (`handle_present`'s collection arm), held as read.
   vec = b is TyVector;
@@ -2436,9 +2443,10 @@ pub fn merge_view_call(e: el::El, vars: el_vars::Vars, code: ir::Node) -> ir::No
       }
     },
     // A `??` whose join borrows parameters alone (its default's own literal store is no
-    // borrow, `arm_join_type`) answers a view of them too.
+    // borrow, `arm_join_type`) answers a view of them too, and so does a `!` of one (`ncr`:
+    // `m.memo[d]!`, `t!` of a nullable parameter).
     NdBlock { block } => {
-      if block[0].name != "ncc" {
+      if block[0].name != "ncc" && block[0].name != "ncr" {
         return null;
       }
       bl.result = [block[0].result[0] ?? ir::TyVoid];
