@@ -364,10 +364,27 @@ pub fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::T
     return true;
   }
   // `push_deferred_fnref_buffers`: a call through a function value that answers a text is
-  // handed a work buffer made in the instance — not carried: refused by name.
-  if calls_text_fn_value(f, code) {
-    el::refuse(e, "a generic instance calling a function value that answers a text");
-    return false;
+  // handed its work buffers here, where the instance knows the value answers one — each a
+  // `__work_cN` of the instance's own, set empty at the body's head.
+  dv = el_vars::load(f);
+  made: vector<integer> = [];
+  code = defer_fnref_buffers(e, dv, code, made);
+  if len(made) > 0 {
+    f = el_vars::stored(dv);
+    code = match code {
+      NdBlock { block: hb } => {
+        hbl = hb[0]!;
+        heads: vector<ir::Node> = [];
+        for mv in made {
+          heads = [el_ir::v_set(mv, ir::NdText { s: "" })] + heads;
+        }
+        hbl.operators = heads + hbl.operators;
+        ir::NdBlock { block: [hbl] }
+      },
+      _ => code
+    };
+    e.b.data.definitions[d].variables = f;
+    e.b.data.definitions[d].code = [code];
   }
   // `instantiate_nested_generics`: each call of a template in the body is aimed at that
   // template's instance for the argument types it now has — the first argument's own type where
@@ -580,21 +597,47 @@ pub fn lower_tv_blocks(e: el::El, vars: el_vars::Vars, n: ir::Node, bound: ir::T
   }
 }
 
-fn calls_text_fn_value(f: ir::Function, n: ir::Node) -> boolean {
+fn defer_fnref_buffers(e: el::El, vars: el_vars::Vars, n: ir::Node, made: vector<integer>) -> ir::Node {
   match n {
-    NdCallRef { var, args: _ } => {
-      if match el_types::base(f.variables[var]!.type_def[0] ?? ir::TyVoid) { TyFunction { args: _, result } => el_types::base(result) is TyText, _ => false } {
-        return true;
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: defer_fnref_buffers(e, vars, inner, made) },
+    NdCall { def_nr, args } => ir::NdCall { def_nr: def_nr, args: [for a in args { defer_fnref_buffers(e, vars, a, made) }] },
+    NdCallRef { var, args } => {
+      a2: vector<ir::Node> = [for a in args { defer_fnref_buffers(e, vars, a, made) }];
+      match el_types::base(el_vars::tp(vars, var)) {
+        TyFunction { args: params, result } => {
+          k = if len(a2) == len(params) { el_ex_object::fnref_text_buffers(e, len(params), result) } else { 0 };
+          if k > 0 {
+            ws: vector<integer> = [];
+            for _i in 0..k {
+              w = el_vars::caller_text_buf(vars);
+              ws += [w];
+              made += [w];
+            }
+            a2 += el_ex_object::push_fnref_text_buffers(e, ws);
+          }
+        },
+        _ => {}
       }
+      ir::NdCallRef { var: var, args: a2 }
     },
-    _ => {}
+    NdBlock { block } => {
+      bl = block[0]!;
+      bl.operators = [for o in bl.operators { defer_fnref_buffers(e, vars, o, made) }];
+      ir::NdBlock { block: [bl] }
+    },
+    NdLoop { block } => {
+      bl = block[0]!;
+      bl.operators = [for o in bl.operators { defer_fnref_buffers(e, vars, o, made) }];
+      ir::NdLoop { block: [bl] }
+    },
+    NdInsert { items } => ir::NdInsert { items: [for o in items { defer_fnref_buffers(e, vars, o, made) }] },
+    NdSet { var, inner } => ir::NdSet { var: var, inner: defer_fnref_buffers(e, vars, inner, made) },
+    NdReturn { inner } => ir::NdReturn { inner: defer_fnref_buffers(e, vars, inner, made) },
+    NdIf { cond, t, f } => ir::NdIf { cond: defer_fnref_buffers(e, vars, cond, made), t: defer_fnref_buffers(e, vars, t, made), f: defer_fnref_buffers(e, vars, f, made) },
+    NdDrop { inner } => ir::NdDrop { inner: defer_fnref_buffers(e, vars, inner, made) },
+    NdYield { inner } => ir::NdYield { inner: defer_fnref_buffers(e, vars, inner, made) },
+    _ => n
   }
-  for c in el_ir::children(n) {
-    if calls_text_fn_value(f, c) {
-      return true;
-    }
-  }
-  false
 }
 
 // The order form a bound stub stands for (`t_<N><T>_OpLt` → `<`), or "".
@@ -665,7 +708,28 @@ pub fn writes_carried(e: el::El, bound: ir::TypeT) -> boolean {
 pub fn rewrite_vector_writes(e: el::El, vars: el_vars::Vars, n: ir::Node, stale: integer, bound: ir::TypeT) -> ir::Node {
   match n {
     NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: rewrite_vector_writes(e, vars, inner, stale, bound) },
-    NdCall { def_nr, args } => ir::NdCall { def_nr: def_nr, args: [for a in args { rewrite_vector_writes(e, vars, a, stale, bound) }] },
+    NdCall { def_nr, args } => {
+      a2: vector<ir::Node> = [for a in args { rewrite_vector_writes(e, vars, a, stale, bound) }];
+      // `rewrite_indexed_element_write`: `v[i] = x` over the variable — a copy into the element
+      // at the variable's row — is the bound primitive's write into that element.
+      concrete = el_types::without_deps(el_types::base(bound));
+      primitive = !(concrete is TyReference) && !(concrete is TyVector) && !(concrete is TyTuple);
+      if primitive && el::def(e, def_nr).name == "OpCopyRecord" && len(a2) == 3 && match el_ir::unspan(a2[2]!) { NdInt { n: cr } => (cr & 16383) == stale, _ => false } {
+        // (The substitution read the element as the bound value: the write names the element.)
+        dst = el_ir::unspan(a2[1]!);
+        elem = match dst {
+          NdCall { def_nr: dd, args: da } => {
+            dn = el::def(e, dd).name;
+            if dn == "OpGetVector" || dn == "OpGetVectorNullable" { dst } else if len(da) > 0 && match el_ir::unspan(da[0]!) { NdCall { def_nr: id } => el::def(e, id).name == "OpGetVector" || el::def(e, id).name == "OpGetVectorNullable", _ => false } { el_ir::unspan(da[0]!) } else { ir::NdNull }
+          },
+          _ => ir::NdNull
+        };
+        if !(elem is NdNull) {
+          return primitive_setter(e, concrete, elem, a2[0]!);
+        }
+      }
+      ir::NdCall { def_nr: def_nr, args: a2 }
+    },
     NdCallRef { var, args } => ir::NdCallRef { var: var, args: [for a in args { rewrite_vector_writes(e, vars, a, stale, bound) }] },
     NdBlock { block } => {
       bl = block[0]!;

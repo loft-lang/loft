@@ -810,14 +810,16 @@ pub fn text_return(e: el::El, vars: el_vars::Vars, t: ir::TypeT) {
       na.hidden = true;
       e.b.data.definitions[d].attributes += [na];
       wa = len(el::def(e, d).attributes) - 1;
+      // (The result names the buffer from the pass that made it: a spelled lambda keeps that
+      // on the second pass; a short one, whose result is reset to its hint's, does not.)
+      if !dep.contains(wa) {
+        dep += [wa];
+      }
     }
     if wa >= 0 {
       wv = el_vars::add_variable(vars, "__work_ret", stack);
       el_vars::become_argument(vars, wv);
       el_vars::set_var_type(vars, wv, stack);
-      if !dep.contains(wa) {
-        dep += [wa];
-      }
     }
   }
   nt = ir::TyText { dep: dep };
