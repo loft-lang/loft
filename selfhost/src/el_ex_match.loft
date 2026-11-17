@@ -2482,6 +2482,10 @@ pub fn subrule_of(e: el::El, el0: integer) -> integer {
         return -1;
       }
       d = el::def_nr(e, "n_{rule}");
+      // (A rule declared below is not known on the first pass: a placeholder, -2.)
+      if d < 0 && e.first_pass && rule >= "a" && rule <= "zzzz" && el::def_nr(e, rule) < 0 {
+        return -2;
+      }
       if d < 0 {
         return -1;
       }
@@ -2500,7 +2504,7 @@ pub fn subrule_group(e: el::El, el0: integer) -> integer {
         return -1;
       }
       items = match e.p.nodes[seqs[0]!] { PSeq { items: si } => si, _ => [seqs[0]!] };
-      if len(items) == 1 && subrule_of(e, items[0]!) >= 0 { items[0]! } else { -1 }
+      if len(items) == 1 && subrule_of(e, items[0]!) != -1 { items[0]! } else { -1 }
     },
     _ => -1
   }
@@ -2534,9 +2538,25 @@ pub fn cursor_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm
   for step in 0..len(elems) + 1 {
     el0 = if step < len(elems) { elems[step]! } else { -1 };
     rule = if el0 >= 0 { subrule_of(e, el0) } else { -1 };
-    grp = if el0 >= 0 && rule < 0 { subrule_group(e, el0) } else { -1 };
+    grp = if el0 >= 0 && rule == -1 { subrule_group(e, el0) } else { -1 };
     if grp >= 0 {
       rule = subrule_of(e, grp);
+    }
+    // A rule the first pass does not know yet: its name is bound untyped and its segment
+    // variable minted, as the second pass will; nothing is built.
+    if rule == -2 {
+      fwd = match e.p.nodes[if grp >= 0 { grp } else { el0 }] { PCap { name: fwn } => fwn, _ => "" };
+      if grp >= 0 {
+        el_vars::create_unique(vars, "cursor_seg", ir::TyInteger { spec: i32_spec() });
+        pattern_bind(vars, fwd, ir::TyUnknown { n: 0 }, names);
+      } else {
+        pattern_bind(vars, fwd, ir::TyUnknown { n: 0 }, names);
+        el_vars::create_unique(vars, "cursor_seg", ir::TyInteger { spec: i32_spec() });
+      }
+      seg_names = [];
+      seg_pats = [];
+      ruled = true;
+      continue;
     }
     if el0 >= 0 && rule < 0 {
       nm = "";
@@ -2601,10 +2621,21 @@ pub fn cursor_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm
     // end; the group matches either way, and the cursor moves only when the answer is present.
     if grp >= 0 {
       quant = match e.p.nodes[el0] { PGroup { quant: gq } => gq, _ => "" };
-      gsep = match e.p.nodes[el0] { PGroup { sep: gs } => gs != null, _ => false };
-      if quant != "?" && (!int_rule || gsep) {
-        el::refuse(e, "a cursor pattern element that is a rest, a group or a rule: a repeated sub-rule with a separator or answering a record");
+      gsep: integer? = match e.p.nodes[el0] { PGroup { sep: gs } => gs, _ => null };
+      if quant != "?" && !int_rule {
+        el::refuse(e, "a cursor pattern element that is a rest, a group or a rule: a repeated sub-rule answering a record");
         return null;
+      }
+      // The separator between two answers: a variant of the source's element.
+      sep_disc = -1;
+      if gsep != null && quant != "?" {
+        sn = match e.p.nodes[gsep!] { PName { name: spn, member: spm, fields: spf } => if spm == "" && len(spf) == 0 { spn } else { "" }, _ => "" };
+        sa = if sn == "" || sed < 0 { -1 } else { attr_nr(el::def(e, sed), sn) };
+        if sa < 0 {
+          el::refuse(e, "a repetition separator other than a variant");
+          return null;
+        }
+        sep_disc = match el::def(e, sed).attributes[sa].value[0] { NdEnum { ord: so } => so, _ => 0 };
       }
       osg = el_vars::create_unique(vars, "cursor_seg", ir::TyInteger { spec: i32_spec() });
       el_vars::set_defined(vars, osg);
@@ -2645,8 +2676,18 @@ pub fn cursor_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm
         ];
         taken = el_ir::v_if(el_ir::cl(e, "OpConvBoolFromInt", [ir::NdVar { n: rx }]), el_ir::cl(e, "OpLtInt", [ir::NdVar { n: osg }, rnow!]), ir::NdBoolean { b: false });
         vk = ir::NdInt { n: vr.vec_known };
+        // `subrule_separator_step`: after the first answer the separator must stand where the
+        // last one left the cursor, and the rule is tried past it; without one the run ends.
+        set_here = el_ex_object::set_field(e, cur[1]!, cur[2]!, ir::NdVar { n: cur[0]! }, ir::NdVar { n: osg });
+        first_step = set_here;
+        if sep_disc >= 0 {
+          some_taken = el_ir::cl(e, "OpLtInt", [ir::NdInt { n: 0 }, el_ir::cl(e, "OpLengthVector", [ir::NdVar { n: xs }])]);
+          is_sep = el_ir::v_if(el_ir::cl(e, "OpLtInt", [ir::NdVar { n: osg }, ln]), el_ex_pattern::rep_tag(e, elm, sv, ir::NdVar { n: osg }, sep_disc), ir::NdBoolean { b: false });
+          set_past = el_ex_object::set_field(e, cur[1]!, cur[2]!, ir::NdVar { n: cur[0]! }, el_ir::cl(e, "OpAddInt", [ir::NdVar { n: osg }, ir::NdInt { n: 1 }]));
+          first_step = el_ir::v_if(some_taken, el_ir::v_if(is_sep, set_past, ir::NdBreak { n: 0 }), set_here);
+        }
         run = el_ir::v_loop([
-          el_ex_object::set_field(e, cur[1]!, cur[2]!, ir::NdVar { n: cur[0]! }, ir::NdVar { n: osg }),
+          first_step,
           el_ir::v_set(rx, ocall!.code),
           el_ir::v_if(taken, ir::NdNull, ir::NdBreak { n: 0 }),
           el_ir::v_set(relm, el_ir::cl(e, "OpNewRecord", [ir::NdVar { n: xs }, vk, ir::NdInt { n: 65535 }])),
