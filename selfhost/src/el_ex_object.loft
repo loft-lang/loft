@@ -2949,11 +2949,13 @@ pub fn drop_scalar_deps(f: ir::Function) {
 // copy, a materialised view return), a result over the variable in a shape `substitute` does
 // not carry, a call whose target substitution re-resolves (one over the variable, or another
 // generic), a type row the instance would retarget (`retarget_parametric_type_rows`).
-pub fn instance_carried(e: el::El, n: ir::Node, h: integer, row: integer, tv: ir::Function, writes: boolean = false) -> text {
+pub fn instance_carried(e: el::El, n: ir::Node, h: integer, row: integer, tv: ir::Function, writes: boolean = false, lowers: boolean = false) -> text {
   match n {
     NdBlock { block } => {
       bl = block[0]!;
-      if bl.name.starts_with("tv") || bl.name == "yield_copy" || bl.name == "tuple_member_copy" || bl.name == "tuple_member_move" || bl.name == "materialized_view_return" {
+      // (`lowers`: the instance lowers a null check and a default of the variable itself.)
+      lowered = lowers && (bl.name == "tvnullcheck" || bl.name == "tvdefault");
+      if !lowered && bl.name.starts_with("tv") || bl.name == "yield_copy" || bl.name == "tuple_member_copy" || bl.name == "tuple_member_move" || bl.name == "materialized_view_return" {
         return "a `{bl.name}` block";
       }
       if !bare_over(bl.result[0] ?? ir::TyVoid, h) {
@@ -2992,7 +2994,7 @@ pub fn instance_carried(e: el::El, n: ir::Node, h: integer, row: integer, tv: ir
     _ => {}
   }
   for c in el_ir::children(n) {
-    w = instance_carried(e, c, h, row, tv, writes: writes);
+    w = instance_carried(e, c, h, row, tv, writes: writes, lowers: lowers);
     if w != "" {
       return w;
     }

@@ -203,7 +203,7 @@ pub fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::T
     _ => el_ex_vector::append_row(e, el_types::base(bound))
   };
   rows_known = stale_row != el::NO_TYPE && fresh_row >= 0 && fresh_row != el::NO_TYPE;
-  why = el_ex_object::instance_carried(e, tmpl.code[0] ?? ir::NdNull, h, if rows_known { el::NO_TYPE } else { stale_row }, tmpl.variables, writes: writes_carried(e, bound));
+  why = el_ex_object::instance_carried(e, tmpl.code[0] ?? ir::NdNull, h, if rows_known { el::NO_TYPE } else { stale_row }, tmpl.variables, writes: writes_carried(e, bound), lowers: tv_lowered(bound));
   if why != "" {
     el::refuse(e, "a generic body holding {why}");
     return false;
@@ -263,6 +263,13 @@ pub fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::T
     return false;
   }
   code = substitute_code(e, tmpl.code[0] ?? ir::NdNull, h, bound);
+  // `rewrite_generic_type_defaults`: a null check and a default of the variable take the bound
+  // type's (`coalesce_not_null`, `monomorph_default`).
+  if tv_lowered(bound) {
+    tvv = el_vars::load(f);
+    code = lower_tv_blocks(e, tvv, code, bound);
+    f = el_vars::stored(tvv);
+  }
   // `@FR-Op-Order`: an order form over the variable that the bound type answers through its
   // `operator compare` — the stub no method re-resolves — is that compare tested against one
   // `Ordering` variant, as a concrete site lowers it.
@@ -466,6 +473,49 @@ pub fn resolve_content_eq(e: el::El, vars: el_vars::Vars, n: ir::Node, stale: in
     NdTuple { items } => ir::NdTuple { items: [for o in items { resolve_content_eq(e, vars, o, stale, bound, heap) }] },
     NdTuplePut { var, idx, inner } => ir::NdTuplePut { var: var, idx: idx, inner: resolve_content_eq(e, vars, inner, stale, bound, heap) },
     NdYield { inner } => ir::NdYield { inner: resolve_content_eq(e, vars, inner, stale, bound, heap) },
+    _ => n
+  }
+}
+
+// The bindings whose `tvnullcheck` / `tvdefault` blocks this port lowers: a plain scalar or a
+// text, nullable or not.
+pub fn tv_lowered(bound: ir::TypeT) -> boolean {
+  b = el_types::base(bound);
+  el_ex_object::scalar_type(b) && !(b is TyEnum) || b is TyText
+}
+
+pub fn lower_tv_blocks(e: el::El, vars: el_vars::Vars, n: ir::Node, bound: ir::TypeT) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: lower_tv_blocks(e, vars, inner, bound) },
+    NdCall { def_nr, args } => ir::NdCall { def_nr: def_nr, args: [for a in args { lower_tv_blocks(e, vars, a, bound) }] },
+    NdCallRef { var, args } => ir::NdCallRef { var: var, args: [for a in args { lower_tv_blocks(e, vars, a, bound) }] },
+    NdBlock { block } => {
+      bl = block[0]!;
+      ops: vector<ir::Node> = [for o in bl.operators { lower_tv_blocks(e, vars, o, bound) }];
+      b = el_types::base(bound);
+      if bl.name == "tvnullcheck" && len(ops) == 1 {
+        t = present_check(e, vars, ops[0]!, b, false, false);
+        if t != null {
+          return t!;
+        }
+      }
+      if bl.name == "tvdefault" {
+        return el_ex_object::to_default(e, b);
+      }
+      bl.operators = ops;
+      ir::NdBlock { block: [bl] }
+    },
+    NdLoop { block } => {
+      bl = block[0]!;
+      bl.operators = [for o in bl.operators { lower_tv_blocks(e, vars, o, bound) }];
+      ir::NdLoop { block: [bl] }
+    },
+    NdInsert { items } => ir::NdInsert { items: [for o in items { lower_tv_blocks(e, vars, o, bound) }] },
+    NdSet { var, inner } => ir::NdSet { var: var, inner: lower_tv_blocks(e, vars, inner, bound) },
+    NdReturn { inner } => ir::NdReturn { inner: lower_tv_blocks(e, vars, inner, bound) },
+    NdIf { cond, t, f } => ir::NdIf { cond: lower_tv_blocks(e, vars, cond, bound), t: lower_tv_blocks(e, vars, t, bound), f: lower_tv_blocks(e, vars, f, bound) },
+    NdDrop { inner } => ir::NdDrop { inner: lower_tv_blocks(e, vars, inner, bound) },
+    NdYield { inner } => ir::NdYield { inner: lower_tv_blocks(e, vars, inner, bound) },
     _ => n
   }
 }
