@@ -108,16 +108,16 @@ Col-RemoveKeyed	collections	curated	2	2026-11-17	no own directory; two suite cel
 Col-Sorted	collections	curated	1	2026-11-17	no own directory; one suite cell elsewhere cites it
 Col-Spatial	collections	curated	2	2026-11-17	one cell (a spatial axis is an integer, patch)
 Col-Store	collections	curated	2	2026-11-17	one cell (an & keyed parameter derefs at every kind)
-Col-Tag	collections	todo			
-Col-Trie	collections	todo			
-Col-Unordered	collections	todo			
-Col-Vec	collections	todo			
-Slice-Box	collections	todo			
-Slice-Cap	collections	todo			
-Slice-KeyedIter	collections	todo			
+Col-Tag	collections	curated	1	2026-11-17	was Rust-only: a first suite cell — entries held by a view, a stored reference and a group member survive growth through several rebuilds, alike under every hash layout
+Col-Trie	collections	curated	4	2026-11-17	2 cells, gate E splits them (2241 refused, the absent-key ordering agrees)
+Col-Unordered	collections	curated	3	2026-11-17	own dir 2 -> 1: an unordered walk (slot order; a linked table in key order, loft#2453) 2->1
+Col-Vec	collections	curated	2	2026-11-17	own dir 3 -> 2: a vector literal compiles whatever it reaches is declared below (loft#2278, #2340) 2->1; the ordered-and-slices control stays
+Slice-Box	collections	curated	3	2026-11-17	no own directory; two suite cells elsewhere cite it
+Slice-Cap	collections	curated	2	2026-11-17	one cell (a slice cap below zero answers no records, patch)
+Slice-KeyedIter	collections	curated	4	2026-11-17	3 cells: two refusals (spatial, sorted/index ranges are not values) and the keyed-range walk — distinct
 Slice-Open	collections	todo			
-Slice-Value	collections	todo			
-C-Det	concurrency	todo			
+Slice-Value	collections	curated	14	2026-11-17	own dir 9 -> 7: a slice is a fresh vector at every vector position (every position, a concat operand, a method receiver loft#1728) 3->1; the rest agree with gate E or are distinct (negative bound)
+C-Det	concurrency	curated	3	2026-11-17	2 cells: a patch and the par-worker row — nothing to merge
 C-Impure	concurrency	todo			
 C-Order	concurrency	todo			
 C-Par	concurrency	todo			
