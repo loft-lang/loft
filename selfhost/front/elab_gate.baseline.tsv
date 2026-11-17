@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	d19c671356f8624f849fbaf53039c3f6a0b22e75
+suite	4a15b5df0e34320361a50b8108e8c7c07e88c83d
 
-layer	elab	agree	964	of	2212
+layer	elab	agree	964	of	2210
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -38,11 +38,9 @@ elab	refused	loft-suite/rules/binding/B-Copy/a-record-update-copies-its-base-the
 elab	refused	loft-suite/rules/binding/B-Copy/a-struct-enum-value-copies-like-a-struct-at-every-bind-and-widening.loft
 elab	refused	loft-suite/rules/binding/B-Copy/c131-a-cast-to-a-variant-answers-the-variant.loft
 elab	refused	loft-suite/rules/binding/B-Disturb/1373-growing-a-container-ends-the-places-inside-it.loft
-elab	refused	loft-suite/rules/binding/B-Disturb/2161-a-container-named-through-a-field-or-an-element-ends-its-views.loft
-elab	refused	loft-suite/rules/binding/B-Disturb/2161-a-disturbance-ends-only-the-places-inside-its-container.loft
 elab	refused	loft-suite/rules/binding/B-Disturb/2267-a-clear-or-a-method-ends-the-views-into-a-vector.loft
 elab	refused	loft-suite/rules/binding/B-Disturb/2349-a-view-read-only-into-a-callees-argument-is-not-live-across-the-callee.loft
-elab	refused	loft-suite/rules/binding/B-Disturb/2391-a-whole-record-written-into-a-place-ends-the-views-into-what-it-owned.loft
+elab	refused	loft-suite/rules/binding/B-Disturb/a-disturbance-ends-the-places-inside-its-container-and-only-those.loft
 elab	refused	loft-suite/rules/binding/B-Disturb/a-match-payload-view-read-after-its-subject-is-rebound-is-a-copy.loft
 elab	refused	loft-suite/rules/binding/B-Disturb/a-view-bound-in-a-later-match-arm-materialises-across-a-rebind.loft
 elab	refused	loft-suite/rules/binding/B-Disturb/a-view-read-after-a-loop-is-copied-only-where-a-path-disturbed-it.loft
