@@ -1421,10 +1421,44 @@ pub fn argument_element_hint(e: el::El, d: integer, i: integer, node: integer) -
   }
 }
 
+// Is `t` a type variable's placeholder, or a vector over one?
+fn over_type_var(e: el::El, t: ir::TypeT) -> boolean {
+  if el_types::type_var(e, el_types::base(t)) >= 0 {
+    return true;
+  }
+  match el_types::base(t) {
+    TyVector { inner } => over_type_var(e, inner),
+    _ => false
+  }
+}
+
 // An argument read under its hint: a seeded literal built at its element type, any other
 // expression as it reads.
-pub fn hinted_argument(e: el::El, vars: el_vars::Vars, node: integer, elem: ir::TypeT) -> Ex {
+pub fn hinted_argument(e: el::El, vars: el_vars::Vars, node: integer, elem: ir::TypeT, d: integer = -1, i: integer = -1, sofar: vector<ir::TypeT> = []) -> Ex {
   if el_types::is_unknown(elem) {
+    // A `[…]` handed to a TEMPLATE's parameter over a type variable has no element type to be
+    // built at: its element temp keeps the bare reference (`parent_tp` with no content).
+    over_var = d >= 0 && el::def(e, d).def_type == el::DT_GENERIC && i >= 0 && i < len(el::def(e, d).attributes) && over_type_var(e, el::def(e, d).attributes[i]!.typedef[0] ?? ir::TyVoid);
+    if over_var && match e.p.nodes[node] { SVecLit { items } => len(items) > 0, _ => false } {
+      // …unless the arguments before it bound that variable: then it is built at the bound
+      // type's element, as any hinted literal is.
+      pt = el::def(e, d).attributes[i]!.typedef[0] ?? ir::TyVoid;
+      sb = template_binding(e, d, sofar);
+      if sb != null {
+        for bt in sb!.types {
+          pt = substitute(pt, sb!.vars[bt#index] ?? -1, bt);
+        }
+      }
+      match el_types::base(pt) {
+        TyVector { inner: hi } => {
+          if !over_type_var(e, hi) && !el_types::is_unknown(hi) {
+            return el_ex_pattern::vector_value(e, vars, node, elem: hi).x;
+          }
+        },
+        _ => {}
+      }
+      return el_ex_pattern::vector_value(e, vars, node, hinted: false).x;
+    }
     return el_ex_assign::expression(e, vars, node);
   }
   el_ex_pattern::vector_value(e, vars, node, elem: elem).x
@@ -1483,7 +1517,7 @@ pub fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?,
         if el_trace::on() {
           el_trace::state(e, vars, "arg", aat, ae!);
         }
-        x = argument_view(e, vars, hinted_argument(e, vars, ae!, eh));
+        x = argument_view(e, vars, hinted_argument(e, vars, ae!, eh, d: hd, i: a#index, sofar: types));
         vars.lambda_node = -1;
         list += [x.code];
         types += [x.tp];
@@ -2284,7 +2318,7 @@ pub fn method_call_on(e: el::El, vars: el_vars::Vars, at: integer, x: Ex, re: in
         }
         hint_lambda(e, vars, hint_nr, len(list), ae!);
         eh = argument_element_hint(e, hint_nr, len(list), ae!);
-        y = hinted_argument(e, vars, ae!, eh);
+        y = hinted_argument(e, vars, ae!, eh, d: hint_nr, i: len(list), sofar: types);
         built += [eh];
         vars.lambda_node = -1;
         list += [y.code];

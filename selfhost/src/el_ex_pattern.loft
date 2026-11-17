@@ -2464,7 +2464,9 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
   }
   if len(recs) == 0 && len(xs) > 0 && push == "" && struct_ref(e, in_t) >= 0 {
     rd = struct_ref(e, in_t);
-    el_vars::set_var_type(vars, elm, ir::TyReference { n: rd, dep: [v] });
+    if hinted {
+      el_vars::set_var_type(vars, elm, ir::TyReference { n: rd, dep: [v] });
+    }
     at = ir::NdVar { n: elm };
     for x in xs {
       ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }]))];
