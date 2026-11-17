@@ -128,13 +128,26 @@ fn print_target_surface(want: Option<&str>) {
 /// `loft --emit-image <out.store> prog.loft`: close the parsed program as the startup cache
 /// closes it before taking its image, write that image to `out` with its layout sidecar, and
 /// exit without running the program.  Exit 1, naming the path, when it cannot be written.
+/// `c_facts`: the image is the C build's (`--native-c` named), so it carries what the host
+/// resolves for the loft-written C writer (`ir_store::bundle_facts`), as the image `LOFT_CGEN`
+/// is handed does.
 #[cfg(feature = "mmap")]
-fn emit_program_image(p: &mut parser::Parser, ships_live_tier: bool, out: &str) -> ! {
+fn emit_program_image(p: &mut parser::Parser, ships_live_tier: bool, c_facts: bool, out: &str) -> ! {
     if ships_live_tier {
         p.data.open_world = true;
     }
     compile::close_program(&mut p.data, &mut p.database);
-    if let Err(e) = loft::ir_store::save_bundle(&p.data, &p.database, out) {
+    let facts = if c_facts {
+        loft::ir_store::bundle_facts(
+            &p.data,
+            &p.database,
+            loft::c::c_library_facts(&p.data),
+            loft::c::host_facts(&p.data, &p.database),
+        )
+    } else {
+        loft::ir_store::BundleFacts::default()
+    };
+    if let Err(e) = loft::ir_store::save_bundle_with(&p.data, &p.database, out, &facts) {
         eprintln!("loft: cannot write the image to {out}: {e}");
         std::process::exit(1);
     }
@@ -187,7 +200,12 @@ fn emit_parsed_image(_p: &parser::Parser, _out: &str) -> ! {
 
 /// A build without file-backed stores (the browser build) cannot write an image.
 #[cfg(not(feature = "mmap"))]
-fn emit_program_image(_p: &mut parser::Parser, _ships_live_tier: bool, _out: &str) -> ! {
+fn emit_program_image(
+    _p: &mut parser::Parser,
+    _ships_live_tier: bool,
+    _c_facts: bool,
+    _out: &str,
+) -> ! {
     eprintln!("loft: --emit-image needs file-backed stores, which this build leaves out");
     std::process::exit(2);
 }
@@ -10566,7 +10584,7 @@ fn main() {
     // @PLN91 S0.2 — the image the cache above saves, taken at the same point and under the
     // same openness, written to the path the caller named; the program is not run.
     if let Some(out) = &emit_image {
-        emit_program_image(&mut p, ships_live_tier, out);
+        emit_program_image(&mut p, ships_live_tier, native_c_named, out);
     }
     // @PLAN28 debug/validation hook — when `LOFT_DUMP_SNAPSHOT=<path>` is set,
     // write the parsed `Data` as the startup-cache JSON snapshot and exit.

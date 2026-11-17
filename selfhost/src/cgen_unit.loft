@@ -381,7 +381,8 @@ fn write_one(x: Cx, t: cgen_names::Twin, p: Pieces, candidates: vector<integer>)
   if wr.storage.starts_with("static /*loft_hot:") {
     candidates += [t.d];
   }
-  x.gen_decls += "{body_storage(wr.storage)} {wr.ret} {wr.name}__fr({wr.list});\n";
+  // A split body keeps the wrapper's storage: its parts are not one unit with it.
+  x.gen_decls += "{if wr.split { wr.storage } else { body_storage(wr.storage) }} {wr.ret} {wr.name}__fr({wr.list});\n";
   p.protos += "{wr.storage} {wr.ret} {wr.name}({wr.list});\n";
   x.gen_bodies += "\n{wr.text}";
   p.bodies += "\n{wr.storage} {wr.ret} {wr.name}({wr.list}) {{\n{wrapper(x, t.d, wr)}}}\n";

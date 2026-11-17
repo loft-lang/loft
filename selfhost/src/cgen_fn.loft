@@ -1674,9 +1674,9 @@ fn work_twin(x: Cx, d: integer) -> text {
   // `write_work_twin`: declared and defined with the unit's bodies, as the twin's own
   // `static inline void <name>(<params>)` around the body the writer wrote.
   sig = "static inline void {name}({written.list})";
-  open = written.text.find(" {{\n") ?? 0;
+  // The body as written, never split: `(R-CSplit)` is the frame body's alone (`framed`).
   x.gen_decls += "{sig};\n";
-  x.gen_bodies += "\n{sig}{written.text[open..written.text.size()]}";
+  x.gen_bodies += "\n{sig} {{\n{written.inner}}}\n";
   name
 }
 
@@ -4114,17 +4114,23 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     "static"
   };
   list = if len(params) == 0 { "void" } else { params.join(", ") };
-  // `(R-CSplit)` writes a body over its budget of call sites in parts: not carried.
-  // `(R-CSplit)`: a body over its budget of call sites goes out as a chain of parts for MSVC
-  // and whole for every other compiler.  The parts are not carried: the unit writes the whole
-  // body, which gcc and clang compile from the Rust unit too (`split`), and the bodies layer
-  // still counts it as one this writer does not write.
-  split = cgen_split::over_budget(storage, list, out);
   name = cgen_names::twin_name(x.b, x.dups, twin);
   // The frame wrapper's storage (`function`'s `storage`): inline with its body, the helper
   // marker resolved once the twins are written, or out of line.
   outer = if statements <= 12 || hot_twin { "static inline" } else if statements <= 80 && plain_but_rg(twin) { "static /*loft_hot:{index}*/" } else { "static" };
-  Written { split: split, text: resolve_tuples(x, "{storage} {held(ret)} {name}__fr({list}) {{\n{out}}}\n"), refused: "", name: name, ret: resolve_tuples(x, held(ret)), list: resolve_tuples(x, list), storage: outer, inner: resolve_tuples(x, out) }
+  rtext = resolve_tuples(x, "{storage} {held(ret)} {name}__fr({list}) {{\n{out}}}\n");
+  rret = resolve_tuples(x, held(ret));
+  rlist = resolve_tuples(x, list);
+  rinner = resolve_tuples(x, out);
+  // `(R-CSplit)`: a body over its budget of call sites goes out as a chain of parts — for MSVC
+  // alone by default, under `#if defined(_MSC_VER)`, the whole body (out of line, as its parts
+  // are) in the `#else` arm.
+  parts = cgen_split::split_body(outer, rret, "{name}__fr", rlist, rinner);
+  if parts != "" {
+    whole = "{outer} {rret} {name}__fr({rlist}) {{\n{rinner}}}\n";
+    rtext = if cgen_split::everywhere() { parts } else { "#if defined(_MSC_VER)\n{parts}#else\n{whole}#endif\n" };
+  }
+  Written { split: parts != "", text: rtext, refused: "", name: name, ret: rret, list: rlist, storage: outer, inner: rinner }
 }
 
 // `hot_helper_size`'s mask test: no twin bit but `__rg`'s.
