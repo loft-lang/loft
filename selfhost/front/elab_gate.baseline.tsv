@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	e206771e3d4f0b192647057973f75f3f14c2240d
+suite	b7d6b7ad4edab6963cc0bd4519728ef0aede868f
 
-layer	elab	agree	964	of	2203
+layer	elab	agree	964	of	2201
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -56,8 +56,6 @@ elab	refused	loft-suite/rules/binding/B-Ref-Lvalue/167-a-text-link-into-a-store.
 elab	refused	loft-suite/rules/binding/B-Ref-Lvalue/2146-a-nullable-struct-slot-links-to-a-nullable-parameter.loft
 elab	refused	loft-suite/rules/binding/B-Ref-Lvalue/2149-a-struct-enum-place-takes-a-write-through-a-link.loft
 elab	refused	loft-suite/rules/binding/B-Ref-Lvalue/a-generator-parameter-or-local-is-a-place-a-link-names.loft
-elab	refused	loft-suite/rules/binding/B-Ref-Lvalue/a-heap-tuple-member-is-a-place-a-link-names.loft
-elab	refused	loft-suite/rules/binding/B-Ref-Lvalue/a-member-of-a-linked-tuple-is-a-place.loft
 elab	refused	loft-suite/rules/binding/B-Ref-Lvalue/a-stored-tuple-is-a-place-a-link-names.loft
 elab	refused	loft-suite/rules/binding/B-Ref-Lvalue/a-tuple-member-is-a-place-a-link-names.loft
 elab	refused	loft-suite/rules/binding/B-Ref-Lvalue/an-annotated-link-to-a-struct-place-is-its-view.loft
