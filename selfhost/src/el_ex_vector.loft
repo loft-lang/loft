@@ -535,7 +535,8 @@ pub fn slice_block_value(e: el::El, vars: el_vars::Vars, x: Ex) -> Ex? {
 // (`@FR-B-Ref-Uniform`); any other type is answered as it is.
 pub fn linked_vector(t: ir::TypeT) -> ir::TypeT {
   match t {
-    TyRefVar { inner } => match el_types::base(inner) { TyVector { inner: _ } => inner, _ => t },
+    // (A link to a hash, a sorted or an index is looked up as the collection it links.)
+    TyRefVar { inner } => match el_types::base(inner) { TyVector { inner: _ } => inner, TyHash { n: _ } => inner, TySorted { n: _ } => inner, TyIndex { n: _ } => inner, _ => t },
     _ => t
   }
 }

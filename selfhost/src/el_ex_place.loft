@@ -1564,8 +1564,10 @@ pub fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: 
   }
   // `v += w` of two vectors resolves to `OpAppendVector` (`+=` is `Append`), its element row
   // the narrow-aware one every append takes (`append_elem_tp`): `w`'s elements copied in.
-  if bin == "+" && vt is TyVector && el_types::base(x.tp) is TyVector {
-    elem = match vt { TyVector { inner } => inner, _ => ir::TyVoid };
+  // (Through a link — `dst: &vector<T>` — the vector the link names takes the elements.)
+  lvt = match vt { TyRefVar { inner: lvi } => if (lvi is TyVector) { lvi } else { vt }, _ => vt };
+  if bin == "+" && lvt is TyVector && el_types::base(x.tp) is TyVector {
+    elem = match lvt { TyVector { inner } => inner, _ => ir::TyVoid };
     xelem = match el_types::base(x.tp) { TyVector { inner } => inner, _ => ir::TyVoid };
     if !el_types::is_equal(e, elem, xelem) {
       refuse_known(e, x.tp, "a vector appended a vector of another element type: {type_kind(xelem)}");
