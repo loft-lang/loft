@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	6a2042b133aab3fcc136610fc415b059972bab3c
+suite	a887f0b491fc0ad782e41774d5ad75459ac7ac85
 
-layer	elab	agree	1031	of	2152
+layer	elab	agree	1031	of	2151
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -196,9 +196,8 @@ elab	refused	loft-suite/rules/collections/Col-Cons/a-nullable-keyed-collection-c
 elab	refused	loft-suite/rules/collections/Col-Copy/a-vector-field-keeps-its-absence.loft
 elab	refused	loft-suite/rules/collections/Col-Group/1160-a-variant-binding-write-means-the-field-write.loft
 elab	refused	loft-suite/rules/collections/Col-Group/1670-an-insert-writes-the-element-its-layout-holds.loft
-elab	refused	loft-suite/rules/collections/Col-Group/a-group-walk-reaches-through-a-nullable-element-and-drops-a-null-write.loft
 elab	refused	loft-suite/rules/collections/Col-Group/a-groups-members-are-found-by-their-element-type-whatever-the-order-or-the-nullability.loft
-elab	refused	loft-suite/rules/collections/Col-Group/a-null-element-of-a-linked-group-leaves-nothing.loft
+elab	refused	loft-suite/rules/collections/Col-Group/a-null-element-of-a-linked-group-is-in-no-keyed-view.loft
 elab	refused	loft-suite/rules/collections/Col-Group/a-write-through-any-member-of-a-linked-group-reaches-every-member.loft
 elab	refused	loft-suite/rules/collections/Col-Insert-Absent/an-insert-makes-an-absent-collection-present.loft
 elab	refused	loft-suite/rules/collections/Col-Insert-Absent/an-instantiated-collection-replaces-a-repeated-key.loft
