@@ -322,7 +322,7 @@ like a landed write; reading `h.a` back is what settles it.
 
 Group FORMATION no longer depends on declaration order: the pairing test asks the question
 of the PAIR (loft#1158), so `sorted` then `vector` links exactly as `vector` then `sorted`
-does — `1158-a-group-forms-whichever-member-is-declared-first.loft` pins all five keyed kinds
+does — `a-groups-members-are-found-by-their-element-type-whatever-the-order-or-the-nullability.loft` pins all five keyed kinds
 in both orders.
 
 ### Replacing, nulling or removing one element through the vector member (2026-09-05)
