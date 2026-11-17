@@ -256,7 +256,7 @@ stays found by its structure and no key rule is needed.
 as a question about that program's type, not by reopening user `==`.  Decided 2026-10-02 (owner,
 via the @PLN182 P5b question).
 **Guard:** `tests/parse_errors.rs` (`operator_equals_is_refused`),
-`negate-divided-by-and-remainder-are-operator-methods.loft` (structural `==` at a program's type,
+`every-operator-form-reaches-the-definition-that-compiles.loft` (structural `==` at a program's type,
 in a held field and through `Equatable`), `1580` / `1581` (a function named `OpEq` changes
 nothing).
 **Catalogue:** @F37 (operators) · `formal/operators.md` (Op-Eq) · @C91 (every type is
