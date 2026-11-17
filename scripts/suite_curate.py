@@ -665,6 +665,8 @@ def land(rule, chapter_dir, new, olds, message):
             for m in twice.finditer(text):
                 line = text.count("\n", 0, m.start()) + 1
                 print(f"  twice      {os.path.relpath(x, ROOT)}:{line} names {new} twice in a row — reword it")
+        return sorted(os.path.relpath(x, ROOT) for x in touched
+                      if not os.path.abspath(x).startswith(os.path.abspath(suite) + os.sep))
 
     def features():
         # The SET of what the rule's cells reach (the union `plan` counts), so a refusal can name
@@ -718,7 +720,7 @@ def land(rule, chapter_dir, new, olds, message):
               "  a `defect#N` is a `loft#N` the merged header (its first 40 lines) no longer names; an "
               "axis value is a case the merged cell no longer reaches")
         return 1
-    repoint()
+    loft_repointed = repoint()
     trailer = "\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
     _git(["commit", "-q", "-m", message + trailer], suite)
     _git(["push", "-q", "origin", "HEAD:main"], suite)
@@ -754,8 +756,12 @@ def land(rule, chapter_dir, new, olds, message):
     text = re.sub(r"(?m)^suite\t[0-9a-f]{40}$", "suite\t" + head, text)
     open(rows_path, "w", encoding="utf-8").write(text)
     open(os.path.join(ROOT, "tests", "loft-suite.pin"), "w", encoding="utf-8").write(head + "\n")
-    _git(["add", "tests/loft-suite.pin", "selfhost/front/elab_gate.baseline.tsv"], ROOT)
-    _git(["commit", "-q", "-m", f"Suite pin {head[:7]}: {message.splitlines()[0]}" + trailer], ROOT)
+    own_paths = ["tests/loft-suite.pin", "selfhost/front/elab_gate.baseline.tsv"] + loft_repointed
+    _git(["add", "--"] + own_paths, ROOT)
+    # Only this land's own paths: anything else staged meanwhile (a fix staged while a land runs
+    # in the background) is not this commit's — it once rode into a pin commit under its message.
+    _git(["commit", "-q", "-m", f"Suite pin {head[:7]}: {message.splitlines()[0]}" + trailer, "--"]
+         + own_paths, ROOT)
     print(f"landed: suite {head[:7]}, features {len(after)}, gate E {m.group(0).replace(chr(9), ' ')} -> agree {agree}")
     return 0
 
