@@ -162,18 +162,18 @@ F-Escape	formatting	curated	1	2026-11-17	one cell (a patch: a brace escaped by d
 F-FaultSafe	formatting	curated	5	2026-11-17	own dir 3 -> 2: a hole whose value faults or is null renders plain null (fault in any hole + null never reaches to_text, @C142) 2->1; the uncomputable-operand program agrees with gate E
 F-Float-Text	formatting	curated	1	2026-11-17	no own directory; one suite cell elsewhere cites it
 F-Interp	formatting	curated	9	2026-11-17	4 cells: the two refusals cannot share a file (the empty hole is a parse refusal that masks the unknown-name one); a patch and a gate-E-agreeing program
-F-Read-Ref	formatting	todo			
-F-Render	formatting	todo			
-F-Render-Child	formatting	todo			
-F-Render-Fields	formatting	todo			
-F-Render-Ref	formatting	todo			
-F-Render-Refs	formatting	todo			
-F-Spec	formatting	todo			
-F-Spec-Exec	formatting	todo			
-F-Spec-Fill	formatting	todo			
-F-Spec-Radix	formatting	todo			
-F-Spec-Zero	formatting	todo			
-F-Target	formatting	todo			
+F-Read-Ref	formatting	curated	1	2026-11-17	no own directory; cited by suite cells of its chapter (F-Spec / F-Render)
+F-Render	formatting	curated	7	2026-11-17	2 cells, both patches (one patch per file) — kept
+F-Render-Child	formatting	curated	3	2026-11-17	2 cells: gate E splits them
+F-Render-Fields	formatting	curated	3	2026-11-17	2 cells: the json corpus and the null-fields patch — distinct scopes
+F-Render-Ref	formatting	curated	1	2026-11-17	one cell (loft#2268: a reference renders as a pointer and reads back)
+F-Render-Refs	formatting	curated	1	2026-11-17	no own directory; cited by suite cells of its chapter (F-Spec / F-Render)
+F-Spec	formatting	curated	11	2026-11-17	own dir 9 -> 8: the spec on every rendering (loft#1165) + at every renderer's null 2->1; two zero-pad patches (one patch per file) and five gate-E-agreeing programs stay
+F-Spec-Exec	formatting	curated	5	2026-11-17	no own directory; cited by suite cells of its chapter (F-Spec / F-Render)
+F-Spec-Fill	formatting	curated	4	2026-11-17	one cell (loft#2428) plus four suite cells elsewhere cite it
+F-Spec-Radix	formatting	curated	1	2026-11-17	no own directory; cited by suite cells of its chapter (F-Spec / F-Render)
+F-Spec-Zero	formatting	curated	2	2026-11-17	no own directory; cited by suite cells of its chapter (F-Spec / F-Render)
+F-Target	formatting	curated	6	2026-11-17	2 cells: a refusal and the per-hole-kind control — distinct
 F-Target-Kind	formatting	todo			
 F-Target-Pos	formatting	todo			
 F-Target-Spec	formatting	todo			
