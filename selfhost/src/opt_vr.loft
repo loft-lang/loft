@@ -452,9 +452,8 @@ pub fn c_plan(b: ir::Bundle, w: opt_writes::Writes, ops: own::Ops) -> opt_vr_lay
   if b.open_world {
     e0 = opt_vr_layout::no_records();
     e0.asked = true;
-    n0 = len(b.data.definitions);
-    e0.fns = [for _ in 0..n0 { -1 }];
-    e0.sp = [for _ in 0..n0 { false }];
+    e0.fns = [for _ in b.data.definitions { -1 }];
+    e0.sp = [for _ in b.data.definitions { false }];
     return e0;
   }
   vr = plan(b, w, ops);
