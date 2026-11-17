@@ -1,13 +1,15 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// @PLN91 — the scope pass in loft (`src/scopes/`), its first slice: what a function of scalar
-// values needs to run.  Each block gets its scope number in the order the scan phase enters them
-// (`enter_scope`: the body 1, then each nested block as it is reached), and a body that answers a
-// value answers it through a `return` (`returns.rs`).  Each local then gets its live interval
-// (`variables/intervals.rs`) and its frame slot (`variables/slots_v2.rs`).  A local that would
-// need a free — a text, a reference, a collection — is refused by name: the frees are the next
-// slice.
+// @PLN91 — the scope pass in loft (`src/scopes/`), its first slices: what a function of scalar
+// values, texts and references needs to run.  Each block gets its scope number in the order the
+// scan phase enters them (`enter_scope`: the body 1, then each nested block as it is reached), and
+// a body that answers a value answers it through a `return` (`returns.rs`).  The exit sweep frees
+// each block's texts and references where it ends and before a return (`sweep`,
+// doc/claude/plans/91-self-host/scope-frees.md).  Each local then gets its live interval
+// (`variables/intervals.rs`) and its frame slot (`variables/slots_v2.rs`).  What the slices do not
+// carry yet — a collection, a `&` variable, a function answering a text or a reference — is
+// refused by name.
 
 use ir;
 use frame;
@@ -44,6 +46,21 @@ pub fn scope_bundle(b: ir::Bundle) -> vector<text> {
     if !((d.returned[0] ?? ir::TyVoid) is TyVoid) {
       code = tail_return(code);
     }
+    sw = Sweep {
+      ops: ops,
+      returned: d.returned[0] ?? ir::TyVoid,
+      chain: [],
+      entered: [],
+      seen: [for _ in d.variables.variables { false }],
+      loop_at: -1,
+      rets: 0,
+      why: ""
+    };
+    code = sweep_node(code, sw, d.variables);
+    if sw.why != "" {
+      refused += ["{d.name}: {sw.why}"];
+      continue;
+    }
     b.data.definitions[d#index].code = [code];
     iv = intervals(code, d.variables, ops);
     assign_slots(d.variables, iv, range_aliases(code, d.variables, ops), local_start(d.variables));
@@ -64,7 +81,8 @@ fn unsupported(f: ir::Function) -> text {
     t = v.type_def[0] ?? ir::TyVoid;
     if needs_free(t) {
       k = free_kind(t);
-      if !kinds.contains(k) {
+      // The exit sweep carries a text and a reference; the other kinds stay refused.
+      if k != "text" && k != "reference" && !kinds.contains(k) {
         kinds += [k];
       }
     } else if t is TyTuple || t is TyFunction {
@@ -899,4 +917,248 @@ pub fn slots_report(b: ir::Bundle) -> vector<text> {
     }
   }
   out
+}
+
+// The exit sweep (scope-frees.md rules 1-5): each block frees its own text and reference locals
+// where it ends, in the reverse of the order they entered its scope (`free_vars.rs`, the pass's
+// `var_order` popped), and a return first frees every enclosing scope's, innermost first.  It
+// walks the numbered body in the numbering's order, so a local enters where it is first
+// assigned.  What it does not carry it names in `why` and the function is refused.
+struct Sweep {
+  ops: Ops,
+  returned: ir::TypeT,
+  // The scopes of the blocks around the walk, outermost first.
+  chain: vector<integer>,
+  // The locals that need a free, in the order they entered their scope.
+  entered: vector<integer>,
+  seen: vector<boolean>,
+  // Where the innermost loop's scopes start in `chain`, -1 outside a loop.
+  loop_at: integer,
+  // The `__ret_N` locals made so far.
+  rets: integer,
+  why: text
+}
+
+// 1 a text, 2 a reference, 0 nothing to free.
+fn freed(t: ir::TypeT) -> integer {
+  match t {
+    TyOptional { inner } => freed(inner),
+    TyText => 1,
+    TyReference => 2,
+    TyEnum { is_ref } => if is_ref { 2 } else { 0 },
+    _ => 0
+  }
+}
+
+fn enter(s: Sweep, f: ir::Function, v: integer) {
+  if v < 0 || v >= len(s.seen) || s.seen[v] ?? true {
+    return;
+  }
+  s.seen[v] = true;
+  x = f.variables[v]!;
+  if !x.argument && !x.skip_free && freed(x.type_def[0] ?? ir::TyVoid) > 0 {
+    s.entered += [v];
+  }
+}
+
+// The frees of the entered locals whose scope is one of `scopes`, the last entered first.
+fn frees_of(s: Sweep, f: ir::Function, scopes: vector<integer>) -> vector<ir::Node> {
+  out: vector<ir::Node> = [];
+  n = len(s.entered);
+  for k in 0..n {
+    v = s.entered[n - 1 - k]!;
+    if scopes.contains(f.variables[v]!.scope) {
+      op = if freed(f.variables[v]!.type_def[0] ?? ir::TyVoid) == 1 { s.ops.free_text } else { s.ops.free_ref };
+      out += [ir::NdCall { def_nr: op, args: [ir::NdVar { n: v }] }];
+    }
+  }
+  out
+}
+
+fn exits(n: ir::Node) -> boolean {
+  match n {
+    NdSpan { inner } => exits(inner),
+    NdReturn => true,
+    NdBreak => true,
+    NdContinue => true,
+    _ => false
+  }
+}
+
+// A returned value that needs no `__ret_N`: an argument or a constant, which no free touches.
+fn plain(n: ir::Node, f: ir::Function) -> boolean {
+  match n {
+    NdSpan { inner } => plain(inner, f),
+    NdVar { n: v } => f.variables[v]!.argument,
+    NdInt => true,
+    NdBoolean => true,
+    NdFloat => true,
+    NdSingle => true,
+    NdLong => true,
+    NdNull => true,
+    NdEnum => true,
+    _ => false
+  }
+}
+
+fn sweep_block(bl: ir::Block, s: Sweep, f: ir::Function, is_loop: boolean) -> ir::Block {
+  outer = s.chain;
+  outer_loop = s.loop_at;
+  inner: vector<integer> = [for c in outer { c }];
+  if is_loop {
+    s.loop_at = len(inner);
+  }
+  inner += [bl.scope];
+  s.chain = inner;
+  out: vector<ir::Node> = [];
+  for op in bl.operators {
+    for x in sweep_stmt(op, s, f) {
+      out += [x];
+    }
+  }
+  k = len(out);
+  if k == 0 || !exits(out[k - 1]!) {
+    fr = frees_of(s, f, [bl.scope]);
+    if len(fr) > 0 {
+      t = bl.result[0] ?? ir::TyVoid;
+      if t is TyVoid || t is TyNever {
+        for x in fr {
+          out += [x];
+        }
+      } else if s.why == "" {
+        s.why = "a block answering a value with a local to free";
+      }
+    }
+  }
+  s.chain = outer;
+  s.loop_at = outer_loop;
+  bl.operators = out;
+  bl
+}
+
+// A statement, as the operators that replace it: a return becomes its frees and itself.
+fn sweep_stmt(n: ir::Node, s: Sweep, f: ir::Function) -> vector<ir::Node> {
+  match n {
+    NdSpan { pos, inner } => {
+      r = sweep_stmt(inner, s, f);
+      if len(r) > 0 {
+        r[0] = ir::NdSpan { pos: pos, inner: r[0]! };
+      }
+      r
+    },
+    NdReturn { inner } => {
+      v = sweep_node(inner, s, f);
+      fr = frees_of(s, f, s.chain);
+      if len(fr) == 0 {
+        return [ir::NdReturn { inner: v }];
+      }
+      // Handing a text or a reference out past the frees is the buffer delivery and the
+      // conditional free (`OpFreeRefIfDistinct`): the next slice.
+      if needs_free(s.returned) {
+        if s.why == "" {
+          s.why = "a text or a reference returned past a local to free";
+        }
+        return [ir::NdReturn { inner: v }];
+      }
+      out: vector<ir::Node> = [];
+      ret = v;
+      if !plain(v, f) {
+        // The value is bound before the frees run (`free_vars.rs`, `ret_temp_counter`).
+        s.rets += 1;
+        x = temp_variable("__ret_{s.rets}", s.returned, s.chain[len(s.chain) - 1] ?? 1);
+        tmp = len(f.variables);
+        f.variables += [x];
+        s.seen += [true];
+        out += [ir::NdSet { var: tmp, inner: v }];
+        ret = ir::NdVar { n: tmp };
+      }
+      for x in fr {
+        out += [x];
+      }
+      out += [ir::NdReturn { inner: ret }];
+      out
+    },
+    _ => [sweep_node(n, s, f)]
+  }
+}
+
+fn sweep_node(n: ir::Node, s: Sweep, f: ir::Function) -> ir::Node {
+  match n {
+    NdBlock { block } => ir::NdBlock { block: [sweep_block(block[0], s, f, false)] },
+    NdLoop { block } => ir::NdLoop { block: [sweep_block(block[0], s, f, true)] },
+    NdSet { var, inner } => {
+      enter(s, f, var);
+      ir::NdSet { var: var, inner: sweep_node(inner, s, f) }
+    },
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: sweep_node(inner, s, f) },
+    NdIf { cond, t, f: fb } => ir::NdIf { cond: sweep_node(cond, s, f), t: sweep_node(t, s, f), f: sweep_node(fb, s, f) },
+    NdCall { def_nr, args } => ir::NdCall { def_nr: def_nr, args: [for a in args { sweep_node(a, s, f) }] },
+    NdCallRef { var, args } => ir::NdCallRef { var: var, args: [for a in args { sweep_node(a, s, f) }] },
+    NdInsert { items } => ir::NdInsert { items: [for x in items { sweep_node(x, s, f) }] },
+    NdDrop { inner } => ir::NdDrop { inner: sweep_node(inner, s, f) },
+    NdReturn { inner } => {
+      // A return in an expression's place has no statement list to hold its frees.
+      if len(frees_of(s, f, s.chain)) > 0 && s.why == "" {
+        s.why = "a return inside an expression with a local to free";
+      }
+      ir::NdReturn { inner: sweep_node(inner, s, f) }
+    },
+    NdBreak => {
+      if s.loop_at >= 0 && len(frees_of(s, f, [for k in s.loop_at..len(s.chain) { s.chain[k]! }])) > 0 && s.why == "" {
+        s.why = "a break or continue leaving a local to free";
+      }
+      n
+    },
+    NdContinue => {
+      if s.loop_at >= 0 && len(frees_of(s, f, [for k in s.loop_at..len(s.chain) { s.chain[k]! }])) > 0 && s.why == "" {
+        s.why = "a break or continue leaving a local to free";
+      }
+      n
+    },
+    // A generator's yield and a parallel block leave the frame with its locals live: the
+    // frees around them are a later slice.  With nothing to free there is nothing to place.
+    NdYield { inner } => {
+      if len(frees_of(s, f, s.chain)) > 0 && s.why == "" {
+        s.why = "a yield with a local to free";
+      }
+      ir::NdYield { inner: sweep_node(inner, s, f) }
+    },
+    NdParallel => {
+      if len(frees_of(s, f, s.chain)) > 0 && s.why == "" {
+        s.why = "a parallel block with a local to free";
+      }
+      n
+    },
+    _ => n
+  }
+}
+
+// A compiler temporary of type `tp` in `scope`: `el_vars::fresh_variable`'s fields.  Built here
+// because importing `el_vars` pulls the elaborator's modules into this pass in an order the
+// parser refuses (loft#2545); fold back into that one declaration once it is fixed.
+fn temp_variable(name: text, tp: ir::TypeT, scope: integer) -> ir::Variable {
+  ir::Variable {
+    name: name,
+    type_def: [tp],
+    stack_pos: 65535,
+    uses: 1,
+    argument: false,
+    stack_allocated: false,
+    skip_free: false,
+    captured: false,
+    caller_hidden_buf: false,
+    view_elided: false,
+    lazy_buffer: false,
+    deferred_first_bind: false,
+    linked_narrow: false,
+    store_text_link: false,
+    user_named: false,
+    user_appended: false,
+    copy_bound: false,
+    buffer_witnessed: false,
+    value_const: false,
+    owner_witness: 65535,
+    rebind_orig: 65535,
+    scope: scope
+  }
 }

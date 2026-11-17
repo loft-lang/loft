@@ -61,6 +61,26 @@ Of the 8661 definitions whose kinds are only text and reference, those answering
 nothing and holding no closure: about half — **4000 ± 1500 move from unscoped to agree**; the
 differences the gate then shows are the rules' missing cases, each a probe and a rule here.
 
+## Built
+
+**Step 1 + 2 (2026-11-17)** — `sweep` in `scope.loft`: rules 1–5, the block-end frees and the
+return frees with `__ret_N`, for text and reference locals.  Refused by name where the slice
+stops: a text or reference returned past a local to free, a block answering a value with a local
+to free, a break or continue leaving one, a return inside an expression, a yield or parallel
+block with one live.  The six probes match the Rust pass line for line.
+
+Measured at suite fac3652, whole corpus, `--check` against the baseline: 0 definitions that
+agreed stopped agreeing.  Programs agree 14 → 112; definitions agree 15991 → **18452 (+2461)**,
+unscoped 17703 → 11525, differ 1415 → 5132.  The prediction (+4000 ± 1500) missed low: about a
+third of the newly laid-out definitions differ — the rules' missing cases, ranked by the gate:
+`OpFreeRefIfDistinct` where Rust frees a reference that may be the one handed out (245), the
+closure records' drop functions (≈310), the conditional drop hook `t_1H_OpDrop` of a rebound
+record (43), the reference's `OpDatabase` placement (35).  Each is the next probe and rule here.
+
+Two parser defects met on the way: loft#2544 (fixed, an `is` test of a later-declared unit
+variant), loft#2545 (filed: an `if` with a forward call and `[]` arms types void on pass 1 —
+why `temp_variable` restates `el_vars::fresh_variable` rather than importing it).
+
 ## Steps, each measured by the gate
 
 1. Lift the refusal for text and reference locals in functions of the slice; insert the block-end
