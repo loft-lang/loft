@@ -393,6 +393,14 @@ pub fn nullable_enum_for(e: el::El, sd: integer) -> integer {
   el_types::nullable_enum_for(e, sd, el::pos_at(e, len(e.p.src) - 1))
 }
 
+// A `main_vector<T>` wrapper made on the second pass (by a parameter's type) and asked for
+// before the pass ends: laid out now, the wrapper's row then its vector's.
+pub fn fill_wrapper(e: el::El, d: integer) {
+  if d >= 0 && el::def(e, d).known_type == NO_TYPE {
+    fill_database(e, d);
+  }
+}
+
 // `typedef::fill_database` for a plain struct: a schema type under the struct's name, each
 // stored attribute a field of its content type, in declaration order.
 fn fill_database(e: el::El, d: integer) {

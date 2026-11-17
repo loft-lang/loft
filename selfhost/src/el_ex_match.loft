@@ -2622,8 +2622,11 @@ pub fn cursor_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm
     if grp >= 0 {
       quant = match e.p.nodes[el0] { PGroup { quant: gq } => gq, _ => "" };
       gsep: integer? = match e.p.nodes[el0] { PGroup { sep: gs } => gs, _ => null };
-      if quant != "?" && !int_rule {
-        el::refuse(e, "a cursor pattern element that is a rest, a group or a rule: a repeated sub-rule answering a record");
+      // (A record answer the rule owns is copied into the run's vector and freed — a rule
+      // answering a view of its cursor releases by witnesses instead: not carried.)
+      rsd = match rt { TyReference { n: rsn } => if el::def(e, rsn).def_type == el::DT_STRUCT { rsn } else { -1 }, _ => -1 };
+      if quant != "?" && !int_rule && (rsd < 0 || len(el_types::deps(el::def(e, rule).returned[0] ?? ir::TyVoid)) > 0) {
+        el::refuse(e, "a cursor pattern element that is a rest, a group or a rule: a repeated sub-rule answering a view or a value that is no plain record");
         return null;
       }
       // The separator between two answers: a variant of the source's element.
@@ -2647,7 +2650,6 @@ pub fn cursor_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm
       if quant != "?" {
         xs = pattern_bind(vars, rn, ir::TyVector { inner: rt, dep: [] }, names);
         el_vars::set_defined(vars, xs);
-        rows = el_ex_base::vector_rows(e, rt, el0, false);
         if e.first_pass {
           base = osg;
           seg_names = [];
@@ -2655,7 +2657,19 @@ pub fn cursor_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm
           ruled = true;
           continue;
         }
-        el_ex_pattern::vector_of(e, rt);
+        // (`vector_db`, on the second pass only: the first names no vector type here.)
+        rnm = el_types::elem_name(e, rt);
+        rmd = el::def_nr(e, "main_vector<{rnm}>");
+        rvd = el::def_nr(e, "vector<{rnm}>");
+        rows: el_ex_base::VecRows? = null;
+        el_schema::fill_wrapper(e, rmd);
+        rvk = if rmd >= 0 && rsd >= 0 { el_schema::vector_type(e, el::def(e, rsd).known_type) } else { -1 };
+        if rmd >= 0 && rvd >= 0 && rvk >= 0 && el::def(e, rmd).known_type != el_schema::NO_TYPE {
+          rows = el_ex_base::VecRows { main_def: rmd, main_known: el::def(e, rmd).known_type, vec_known: rvk };
+        } else {
+          rows = el_ex_base::vector_rows(e, rt, el0, false);
+          el_ex_pattern::vector_of(e, rt);
+        }
         rnow = el_ex_base::field_get(e, cur[1]!, cur[2]!, ir::NdVar { n: cur[0]! });
         if rows == null || ocall == null || rnow == null {
           el::refuse(e, "a cursor sub-rule that is not called with the cursor alone");
@@ -2672,10 +2686,16 @@ pub fn cursor_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm
           el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: vr.main_known }]),
           el_ir::v_set(xs, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: vr.vec_known }])),
           el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }]),
-          el_ir::v_set(rx, el_ir::cl(e, "OpConvIntFromNull", []))
+          el_ir::v_set(rx, if int_rule { el_ir::cl(e, "OpConvIntFromNull", []) } else { el_ir::cl(e, "OpNullRefSentinel", []) })
         ];
-        taken = el_ir::v_if(el_ir::cl(e, "OpConvBoolFromInt", [ir::NdVar { n: rx }]), el_ir::cl(e, "OpLtInt", [ir::NdVar { n: osg }, rnow!]), ir::NdBoolean { b: false });
+        rpresent = if int_rule { el_ir::cl(e, "OpConvBoolFromInt", [ir::NdVar { n: rx }]) } else { el_ir::cl(e, "OpNeRef", [ir::NdVar { n: rx }, el_ir::cl(e, "OpNullRefSentinel", [])]) };
+        taken = el_ir::v_if(rpresent, el_ir::cl(e, "OpLtInt", [ir::NdVar { n: osg }, rnow!]), ir::NdBoolean { b: false });
         vk = ir::NdInt { n: vr.vec_known };
+        // An owned record answer: freed where the run stops, copied into its element as a
+        // source the copy frees.
+        stop = if int_rule { ir::NdBreak { n: 0 } } else { ir::NdInsert { items: [el_ir::cl(e, "OpFreeRefIfDistinct", [ir::NdVar { n: rx }, el_ir::cl(e, "OpNullRefSentinel", [])]), ir::NdBreak { n: 0 }] } };
+        rk = if rsd >= 0 { el::def(e, rsd).known_type } else { 0 };
+        store = if int_rule { el_ir::cl(e, "OpSetInt", [ir::NdVar { n: relm }, ir::NdInt { n: 0 }, ir::NdVar { n: rx }]) } else { el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: rx }, el_ir::cl(e, "OpGetField", [ir::NdVar { n: relm }, ir::NdInt { n: 0 }, ir::NdInt { n: rk }]), ir::NdInt { n: rk + 32768 }]) };
         // `subrule_separator_step`: after the first answer the separator must stand where the
         // last one left the cursor, and the rule is tried past it; without one the run ends.
         set_here = el_ex_object::set_field(e, cur[1]!, cur[2]!, ir::NdVar { n: cur[0]! }, ir::NdVar { n: osg });
@@ -2689,9 +2709,9 @@ pub fn cursor_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm
         run = el_ir::v_loop([
           first_step,
           el_ir::v_set(rx, ocall!.code),
-          el_ir::v_if(taken, ir::NdNull, ir::NdBreak { n: 0 }),
+          el_ir::v_if(taken, ir::NdNull, stop),
           el_ir::v_set(relm, el_ir::cl(e, "OpNewRecord", [ir::NdVar { n: xs }, vk, ir::NdInt { n: 65535 }])),
-          el_ir::cl(e, "OpSetInt", [ir::NdVar { n: relm }, ir::NdInt { n: 0 }, ir::NdVar { n: rx }]),
+          store,
           el_ir::cl(e, "OpFinishRecord", [ir::NdVar { n: xs }, ir::NdVar { n: relm }, vk, ir::NdInt { n: 65535 }]),
           el_ir::v_set(osg, rnow!)
         ], "sub-rule run");
