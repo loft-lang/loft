@@ -326,7 +326,7 @@ fn no_loft_source_file_passes_the_ceiling() {
         if rel.starts_with("tests/") || rel.contains("/tests/") {
             continue;
         }
-        let Ok(text) = std::fs::read_to_string(root.join(rel)) else {
+        let Ok(text) = fa::read_to_string(root.join(rel)) else {
             continue;
         };
         let lines = text.lines().count();
