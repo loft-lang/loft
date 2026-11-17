@@ -1715,7 +1715,9 @@ pub fn vector_buffer_call(e: el::El, vars: el_vars::Vars, d: integer, list: vect
   inner = match bt { TyVector { inner } => inner, _ => ir::TyVoid };
   ret = el::def(e, d).returned[0];
   for i in el_types::deps(el_types::base(ret)) {
-    if i < visible {
+    // (Asked on the second pass: the first sees a callee's pass-1 borrow of a parameter its
+    // own second pass replaces by the buffer, `q ?? [literal]`.)
+    if i < visible && !e.first_pass {
       el::refuse(e, "a call whose vector result borrows a parameter");
       return null;
     }

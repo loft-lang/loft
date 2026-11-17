@@ -343,7 +343,47 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   }
   // A lambda's vector literal tail is copied into its late buffer (`one_buffer_vec_copy`): the
   // buffer is reserved between the passes, so nothing was renamed onto the literal.
-  if lambda && !e.first_pass && rb >= 0 && el_types::base(result) is TyVector && !(result is TyOptional) {
+  // A lambda handing back a whole vector parameter, or `q ?? [literal]` over a nullable one:
+  // the first pass (no buffer yet) merges the parameter into the result (`MergeAttr`), which
+  // types the late buffer; the second delivers into that buffer as a function does, and the
+  // result then borrows the buffer alone.
+  lam_param = -1;
+  if lambda && el_types::base(result) is TyVector && !(result is TyOptional) {
+    lts = tail_syntax(e, vars.body);
+    lam_param = coalesce_param_tail(e, vars, lts);
+    if lam_param < 0 && lts >= 0 {
+      match e.p.nodes[lts] {
+        SName { name: ln, member: lm } => {
+          lv = el_vars::var(vars, ln);
+          if lm == "" && lv >= 0 && vars.vars[lv]!.argument && !hidden_param(e, vars, lv) && (el_vars::tp(vars, lv) is TyVector) {
+            lam_param = lv;
+          }
+        },
+        _ => {}
+      }
+    }
+  }
+  if lam_param >= 0 && e.first_pass {
+    lpa = attr_nr(el::def(e, e.context), el_vars::name_of(vars, lam_param));
+    lr = el::def(e, e.context).returned[0];
+    if lpa >= 0 && !el_types::deps(lr).contains(lpa) {
+      e.b.data.definitions[e.context].returned = [el_types::with_deps(lr, el_types::deps(lr) + [lpa])];
+    }
+  }
+  lam_done = false;
+  if lam_param >= 0 && !e.first_pass && rb >= 0 {
+    lba = attr_nr(el::def(e, e.context), "__retbuf");
+    ld = if lba >= 0 { arm_delivery(e, vars, code, rb, result, lba) } else { null };
+    if ld != null {
+      code = ld!;
+      // (Read into a local first: the element read views the list the assignment replaces.)
+      lret = el::def(e, e.context).returned[0] ?? ir::TyVoid;
+      lnew = el_types::with_deps(lret, [lba]);
+      e.b.data.definitions[e.context].returned = [lnew];
+      lam_done = true;
+    }
+  }
+  if lambda && !lam_done && !e.first_pass && rb >= 0 && el_types::base(result) is TyVector && !(result is TyOptional) {
     code = lambda_vector_copy(e, code, rb, result);
   }
   // `MaterializeView` for a lambda's tail that reads a capture (`return_views_a_capture`): the
@@ -2599,10 +2639,12 @@ pub fn arm_delivery(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer,
   if !(result is TyOptional) {
     cq = coalesce_param_tail(e, vars, tail_syntax(e, vars.body));
     if cq >= 0 {
-      cret = el::def(e, d).returned[0];
-      if !el_types::deps(cret).contains(ba) {
-        e.b.data.definitions[d].returned = [el_types::with_deps(cret, el_types::deps(cret) + [ba])];
-      }
+      // The first pass merges the parameter (`MergeAttr`) — what a function parsed before this
+      // one's second pass reads — and the second, the tail copied, borrows the buffer alone.
+      cret = el::def(e, d).returned[0] ?? ir::TyVoid;
+      cqa = attr_nr(el::def(e, d), el_vars::name_of(vars, cq));
+      cnew = el_types::with_deps(cret, if e.first_pass { [cqa] } else { [ba] });
+      e.b.data.definitions[d].returned = [cnew];
       if e.first_pass {
         return code;
       }
