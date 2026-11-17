@@ -2242,6 +2242,11 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
   // built apart, `__ref_p2_N`) is numbered ahead of the vector's `__vdb_N`.
   struct_items = !e.first_pass && len(borrows) == 0 && len([for it in items if (e.p.nodes[it] is SStructLit) { it }]) > 0;
   late_store = !append && !vars.vars[v].argument && !value && (has_store || fresh_entry || struct_items);
+  // …and only that: an item that is no literal mints its copy's work ref where it is written,
+  // after the store.  So the literals' fields are read first, then the store is minted, then
+  // the items are written in order.
+  fields_first = late_store && struct_items && !(has_store || fresh_entry);
+  early_store: vector<ir::Node> = [];
   // `vector_db_init`'s rebind arm (@PLN87 P2.4): a vector parameter rebound whole by a literal
   // takes a fresh backing of its own — skip-free and nulled where first used, the exit's free of
   // the parameter releasing it — after any earlier rebind's backing is freed (`OpFreeRefIfDistinct`
@@ -2296,6 +2301,35 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
       el_vars::set_var_type(vars, elm, ir::TyReference { n: rd, dep: [v] });
     }
     order: vector<integer> = if mixed { rec_at } else { recs };
+    pre_ops: vector<ir::Node> = [];
+    pre_at: vector<integer> = [];
+    pre_n: vector<integer> = [];
+    if fields_first {
+      for it in order {
+        if it < 0 {
+          pre_at += [-1];
+          pre_n += [0];
+          continue;
+        }
+        pfields: vector<integer> = [];
+        match e.p.nodes[it] {
+          SStructLit { fields: pfs } => { pfields = pfs; },
+          _ => {}
+        }
+        pid = struct_literal_def(e, it);
+        if pid < 0 {
+          pid = variant_literal_def(e, it);
+        }
+        pfl = el_ex_place::object_fields(e, vars, elm, pid, pfields);
+        if pfl == null {
+          return refused_build();
+        }
+        pre_at += [len(pre_ops)];
+        pre_n += [len(pfl!)];
+        pre_ops += pfl!;
+      }
+      early_store = literal_store(e, vars, v, r);
+    }
     for it in order {
       // An item that is no literal (`build_vector_list`'s record arm): copied into its element.
       if it < 0 {
@@ -2317,7 +2351,15 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
       if id < 0 {
         id = variant_literal_def(e, it);
       }
-      fl = el_ex_place::object_fields(e, vars, elm, id, fields);
+      fl: vector<ir::Node>? = null;
+      if fields_first {
+        pa = pre_at[it#index] ?? -1;
+        if pa >= 0 {
+          fl = [for k in pa..pa + (pre_n[it#index] ?? 0) { pre_ops[k]! }];
+        }
+      } else {
+        fl = el_ex_place::object_fields(e, vars, elm, id, fields);
+      }
       if fl == null {
         return refused_build();
       }
@@ -2476,7 +2518,7 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
     }
   }
   if late_store {
-    ls = staged + literal_store(e, vars, v, r) + ls[len(staged)..];
+    ls = staged + (if fields_first && len(early_store) > 0 { early_store } else { literal_store(e, vars, v, r) }) + ls[len(staged)..];
     if fresh_entry && elm >= 0 {
       el_vars::depend(vars, elm, el_types::deps(el_vars::tp(vars, v))[0] ?? v);
     }
