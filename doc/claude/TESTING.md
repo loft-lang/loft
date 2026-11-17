@@ -547,6 +547,54 @@ writing ~20 large files during a routine `cargo test` run.
 
 ---
 
+## Curating the suite — every rule, thoroughly
+
+The suite grew one cell per defect, so a rule's tests are often many, scattered over chapters,
+the attic and `tests/scripts/`, and overlapping.  The goal is a **small set per rule that still
+covers it totally**, reached by a pass over EVERY defined rule, steadily, with the position
+recorded: `index/suite_curation.tsv` holds one row per rule (all of them, from
+`rule_tags.py list`), and `scripts/suite_curate.py` works it.
+
+```bash
+scripts/suite_curate.py status            # how far, per state and chapter
+scripts/suite_curate.py next 3            # the next rules, in the fixed order (chapter, rule)
+scripts/suite_curate.py plan <rule>       # its cells, what they cover, a proposed core
+scripts/suite_curate.py related <rule> '<regex>'   # every test home's programs for the construct,
+                                          #   cited or not, and the code sites that enforce it
+scripts/suite_curate.py done <rule> '<note>'       # record it, after the commit
+```
+
+**"Covers totally"** is measured, never assumed: every composition-axis value the rule's cells
+reach today (`rule_axes.tsv`, `matrix_axes.census`) and every defect a cell names stays covered.
+`plan` proposes the fewest cells that keep all of it.
+
+**A rule's pass is thorough, not mechanical:**
+
+1. **Read the rule** in `formal/` — its clauses, its examples, its deviation history — and write
+   down what a complete test of it must show: each clause, each axis value the chapter names,
+   each defect it has had.
+2. **Gather every test of it**, wherever it lives: `plan` for the citing cells, `related` with a
+   regex written from the rule's construct for the rest (other chapters, the suite's attic,
+   `tests/scripts/`, `tests/docs/`, Rust `code!` tests, the libraries).  Read each one.
+3. **Decide the set**: keep the best-matching cells; where the coverage is scattered over many
+   small files, write a better cell that states the rule's clauses as cases, with hand-computed
+   values (the `loft-test` skill); add a case for every clause or axis value nothing reaches.
+4. **Retire with proof only**: a cell with a `@falsified-by` patch goes once a kept cell
+   re-scores `falsified` against that patch (`scripts/falsify.sh <cell> --patch <patch>`); one
+   without moves its cases into a kept cell instead.  Cases are never silently lost.  An attic
+   program the new set covers leaves the attic the same way.
+5. **Verify** the rule's cells on both backends (`make suite ARGS="@FR-<rule> --mode both-c"`),
+   falsify every new cell (`make falsify`), and run the whole suite memory-capped before the suite
+   commit.  A probe that turns up a defect is fixed (CLAUDE.md § Bug-filing policy) — the pass is
+   also a bug hunt.
+6. **Record**: `done <rule> '<what was kept, written, retired>'` in the loft commit that pins
+   the suite commit.
+
+A rule no cell names is marked `needs-cell` and gets its first guard from the rule-led walk
+(`rule_tags.py worklist`, [STABILITY_METHOD.md § The rule-led walk](STABILITY_METHOD.md)).
+
+---
+
 ## `tests/docs/` — end-to-end loft files
 
 **Purpose: user documentation.** Each file produces one HTML page via `@NAME`/`@TITLE` headers and `//`-comment prose. They are also valid runnable loft programs, so `dir` both regenerates HTML docs and validates the language features shown in each page.

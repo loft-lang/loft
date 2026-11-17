@@ -88,6 +88,9 @@ dist/
 # admitted in every sandbox, so the list IS the review, and
 # `the_ungated_stdlib_surface_is_the_reviewed_list` compares against it.
 !/index/stdlib_ungated.txt
+# The suite-curation ledger is committed: it RECORDS which rules a thorough pass has finished
+# (scripts/suite_curate.py, TESTING.md § Curating the suite), which nothing can regenerate.
+!/index/suite_curation.tsv
 # loft#680: the per-target builtin surface is committed for the same reason —
 # `make ci`'s drift guard compares against it, `loft targets` embeds it, and a
 # consumer reading it should not have to run a wasm build to get an answer.

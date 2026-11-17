@@ -1,0 +1,307 @@
+#!/usr/bin/env python3
+# Copyright (c) 2026 Jurjen Stellingwerff
+# SPDX-License-Identifier: LGPL-3.0-or-later
+"""Work through every formal rule's suite cells, one rule at a time, towards a small set that
+still covers the rule totally — and record which rules are done.
+
+    scripts/suite_curate.py status            # how far: rules done, per state and chapter
+    scripts/suite_curate.py next [N]          # the next N rules in the fixed order (default 3)
+    scripts/suite_curate.py plan <rule>       # one rule's evidence and the proposed core
+    scripts/suite_curate.py related <rule> <regex>   # every test home's programs matching the rule's
+                                              # construct, and the code sites that enforce it
+    scripts/suite_curate.py done <rule> [note]   # record the rule as curated (after the commit)
+    scripts/suite_curate.py init              # (re)write the ledger's rows for every defined rule
+
+THE LEDGER is `index/suite_curation.tsv`: one row per defined rule (`rule_tags.py list`, all of
+them — not only the cited ones), with its state, the cell count when it was done, and a note.
+States: `todo`; `curated` (the rule's cells are its core, each one needed); `needs-cell` (no cell
+names the rule: it goes to the rule-led walk's queue, `rule_tags.py worklist`).
+
+WHAT "COVERS THE RULE TOTALLY" MEANS HERE — the features a rule's cells reach today, which the
+core must keep, every one:
+  * each composition-axis value the cells reach, over the axes the rule's chapter quantifies
+    over (`rule_axes.tsv`, measured by `matrix_axes.census`, as `rule_depth.py` reads them);
+  * each defect a cell names (its file name's issue number, a `loft#N` in its header): a past
+    defect stays guarded by some cell.
+`plan` picks the core greedily — the cell adding the most features not yet held, ties to the
+shorter file — and lists every other cell with the route that would retire it:
+  * `patch` — the cell has a `@falsified-by` patch receipt: re-score the core against that patch
+    (`scripts/falsify.sh <core cell> --patch <patch>`); a core cell that reads `falsified`
+    proves the defect is still caught, and the cell may go;
+  * `fold`  — no patch receipt: its cases are not proven covered, so they MOVE into a core cell
+    (its `test_*` functions), never vanish;
+  * `keep`  — it reaches a feature no core cell does (then it IS core; listed for completeness).
+A rule is `done` only after the suite passes on both backends with the curated cells and every
+`patch` route was re-scored; the note says what was retired or folded.
+
+THE ORDER is fixed — chapter, then rule, alphabetically — so a pass over the 642 rules is
+complete by construction and its position is one row.  A rule with one cell or none is quick
+(confirm, or mark `needs-cell`); the effort sits in the ~60 rules with eight cells or more.
+"""
+import collections
+import datetime
+import os
+import re
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(ROOT, "scripts"))
+import matrix_axes  # noqa: E402
+import rule_depth  # noqa: E402
+import rule_tags  # noqa: E402
+
+LEDGER = os.path.join(ROOT, "index", "suite_curation.tsv")
+HEADER = "# rule\tchapter\tstate\tcells\tdate\tnote\n"
+ISSUE_STEM = re.compile(r"^(\d{3,4})-")
+ISSUE = re.compile(r"loft#(\d+)")
+PATCH = re.compile(r"@falsified-by:\s*tests/falsified/(\S+\.patch)")
+
+
+def defined():
+    """Every defined rule and its chapter, `rule_tags.py list`'s set."""
+    return {t: rule_depth.chapter_of(files) for t, files in rule_tags.defined_rules().items()}
+
+
+def read_ledger():
+    rows = {}
+    if os.path.exists(LEDGER):
+        for line in open(LEDGER, encoding="utf-8"):
+            if line.startswith("#") or not line.strip():
+                continue
+            f = line.rstrip("\n").split("\t")
+            f += [""] * (6 - len(f))
+            rows[f[0]] = f
+    return rows
+
+
+def write_ledger(rows):
+    with open(LEDGER, "w", encoding="utf-8") as out:
+        out.write("# The suite-curation pass over every formal rule (scripts/suite_curate.py; "
+                  "TESTING.md § Curating the suite).\n")
+        out.write(HEADER)
+        for key in order(rows):
+            out.write("\t".join(rows[key]) + "\n")
+
+
+def order(rows):
+    return sorted(rows, key=lambda t: (rows[t][1], t))
+
+
+def cells_of(tag):
+    """The cells (and other guard files) that cite `@FR-<tag>`."""
+    guard = rule_tags.guard_citations()
+    return sorted({f for f, _ in guard.get(tag, [])})
+
+
+def features(path, axes):
+    """What one cell contributes to its rule's coverage: axis values and defects named."""
+    full = rule_depth.abs_path(path)
+    text = rule_depth.read(full)
+    out = set()
+    if path.endswith(rule_depth.LOFT_CELL):
+        try:
+            census = matrix_axes.census(full)
+        except OSError:
+            census = {}
+        for a in axes:
+            out |= {f"{a}={v}" for v in census.get(a, set())}
+    m = ISSUE_STEM.match(os.path.basename(path))
+    if m:
+        out.add(f"defect#{m.group(1)}")
+    header = "\n".join(text.split("\n")[:40])
+    out |= {f"defect#{n}" for n in ISSUE.findall(header)}
+    return out, text
+
+
+def plan(tag):
+    chapters = defined()
+    if tag not in chapters:
+        print(f"no rule @FR-{tag}")
+        return 1
+    ch = chapters[tag]
+    axes = rule_depth.chapter_axes().get(ch, [])
+    cells = cells_of(tag)
+    print(f"@FR-{tag} ({ch}) — {len(cells)} citing file(s); axes measured: "
+          f"{', '.join(axes) or 'none for this chapter'}")
+    if not cells:
+        print("  no cell names it: mark `needs-cell` (the rule-led walk adds its first guard)")
+        return 0
+    feats, texts = {}, {}
+    for c in cells:
+        feats[c], texts[c] = features(c, axes)
+    want = set().union(*feats.values())
+    core, held = [], set()
+    while held != want:
+        best = max(cells, key=lambda c: (len(feats[c] - held), -len(texts[c])))
+        if not feats[best] - held:
+            break
+        core.append(best)
+        held |= feats[best]
+    # A cell that adds nothing (no axis value, no defect) still guards SOMETHING the measured
+    # features cannot see — its own cases.  It is never silently dropped: it takes a route.
+    print(f"  features the cells reach today: {len(want)}  ({sum(1 for f in want if f.startswith('defect'))} "
+          f"defects, {sum(1 for f in want if not f.startswith('defect'))} axis values)")
+    print(f"  core: {len(core)} of {len(cells)} cell(s) hold every feature")
+    for c in core:
+        print(f"    core   {rel(c)}  (+{len(feats[c])})")
+    rest = [c for c in cells if c not in core]
+    for c in rest:
+        m = PATCH.search(texts[c])
+        route = f"patch  tests/falsified/{m.group(1)}" if m else "fold   (no patch receipt)"
+        print(f"    {route:<46} {rel(c)}")
+    if rest:
+        print("\n  Retire a `patch` cell only after a core cell re-scores falsified against its patch;\n"
+              "  fold a `fold` cell's test_* functions into a core cell.  Then run the rule's cells on\n"
+              f"  both backends (make suite ARGS=\"@FR-{tag} --mode both-c\") and record it: done {tag} <note>.")
+    return 0
+
+
+def test_homes():
+    """Every place a loft test lives, beyond the rule's own citing cells: the suite's other
+    chapters and its attic (the inherited corpus no rule claims yet), this tree's scripts and
+    docs, the Rust tests' embedded programs, and the libraries' own test suites."""
+    suite = os.environ.get("LOFT_SUITE_DIR") or os.path.join(os.path.dirname(ROOT), "loft-suite")
+    homes = [os.path.join(suite, "rules"), os.path.join(suite, "attic"),
+             os.path.join(ROOT, "tests", "scripts"), os.path.join(ROOT, "tests", "docs"),
+             os.path.join(ROOT, "tests")]
+    for d in sorted(os.listdir(os.path.dirname(ROOT))):
+        if d.startswith("loft-libs-"):
+            homes.append(os.path.join(os.path.dirname(ROOT), d))
+    return homes
+
+
+def related(tag, pattern):
+    """The lead list for a thorough pass: programs anywhere that match the rule's construct
+    (`pattern`, a regex the curator writes from reading the rule), whether or not they cite it,
+    and the code sites that enforce it.  A lead, not a verdict: read each before it counts."""
+    rx = re.compile(pattern)
+    cited = {os.path.normpath(rule_depth.abs_path(c)) for c in cells_of(tag)}
+    hits = collections.defaultdict(list)
+    for home in test_homes():
+        for dirpath, _dirs, files in os.walk(home):
+            if "/target" in dirpath or "/.git" in dirpath or "/native-auto" in dirpath:
+                continue
+            for name in files:
+                if not name.endswith((".loft", ".rs")):
+                    continue
+                path = os.path.normpath(os.path.join(dirpath, name))
+                if home.endswith(os.sep + "tests") and not name.endswith(".rs"):
+                    continue
+                try:
+                    lines = open(path, encoding="utf-8", errors="replace").read().split("\n")
+                except OSError:
+                    continue
+                for i, line in enumerate(lines, 1):
+                    if rx.search(line) and not line.lstrip().startswith("//"):
+                        hits[path].append(i)
+    print(f"@FR-{tag}: {len(cells_of(tag))} citing file(s); /{pattern}/ matches "
+          f"{len(hits)} file(s) across every test home")
+    for path in sorted(hits, key=lambda p: (p in cited, rel(p))):
+        mark = "cites" if path in cited else "     "
+        lines = hits[path]
+        print(f"  {mark} {rel(path)}:{lines[0]}" + (f"  (+{len(lines) - 1})" if len(lines) > 1 else ""))
+    sites = rule_tags.citations_in([rule_tags.SRC, rule_tags.DEFAULT], rule_tags.CITE_EXTS).get(tag, [])
+    print(f"\n  enforcing sites ({len(sites)}):")
+    for f, n in sorted(sites)[:40]:
+        print(f"    {os.path.relpath(rule_depth.abs_path(f), ROOT)}:{n}")
+    return 0
+
+
+def rel(p):
+    """A cell's place: `suite:rules/<chapter>/<rule>/<file>` for the language suite, else the
+    path under this tree."""
+    full = os.path.normpath(rule_depth.abs_path(p))
+    suite = os.environ.get("LOFT_SUITE_DIR") or os.path.join(os.path.dirname(ROOT), "loft-suite")
+    suite = os.path.normpath(os.path.abspath(suite))
+    if full.startswith(suite + os.sep):
+        return "suite:" + os.path.relpath(full, suite)
+    return os.path.relpath(full, ROOT)
+
+
+def init():
+    rows = read_ledger()
+    chapters = defined()
+    added = 0
+    for tag, ch in chapters.items():
+        if tag not in rows:
+            rows[tag] = [tag, ch, "todo", "", "", ""]
+            added += 1
+    gone = [t for t in rows if t not in chapters]
+    for t in gone:
+        del rows[t]
+    write_ledger(rows)
+    print(f"ledger: {len(rows)} rules ({added} added, {len(gone)} no longer defined)")
+    return 0
+
+
+def status():
+    rows = read_ledger()
+    if not rows:
+        print("no ledger yet: scripts/suite_curate.py init")
+        return 1
+    by_state = collections.Counter(r[2] for r in rows.values())
+    done = len(rows) - by_state.get("todo", 0)
+    print(f"{done} of {len(rows)} rules worked through — " +
+          ", ".join(f"{n} {s}" for s, n in sorted(by_state.items())))
+    per = collections.defaultdict(lambda: [0, 0])
+    for r in rows.values():
+        per[r[1]][1] += 1
+        if r[2] != "todo":
+            per[r[1]][0] += 1
+    for ch, (d, n) in sorted(per.items()):
+        if 0 < d < n:
+            print(f"  {ch:<14} {d}/{n}")
+    nxt = [t for t in order(rows) if rows[t][2] == "todo"][:1]
+    if nxt:
+        print(f"next: @FR-{nxt[0]} ({rows[nxt[0]][1]})")
+    return 0
+
+
+def nxt(n):
+    rows = read_ledger()
+    todo = [t for t in order(rows) if rows[t][2] == "todo"][:n]
+    for t in todo:
+        print(f"@FR-{t:<28} {rows[t][1]:<14} {len(cells_of(t))} cell(s)")
+    return 0
+
+
+def done(tag, note):
+    rows = read_ledger()
+    if tag not in rows:
+        print(f"no ledger row for {tag} (init first)")
+        return 1
+    n = len(cells_of(tag))
+    rows[tag][2] = "needs-cell" if n == 0 else "curated"
+    rows[tag][3] = str(n)
+    rows[tag][4] = datetime.date.today().isoformat()
+    rows[tag][5] = note.replace("\t", " ")
+    write_ledger(rows)
+    print(f"@FR-{tag}: {rows[tag][2]} with {n} cell(s)")
+    return 0
+
+
+def main():
+    a = sys.argv[1:]
+    if not a or a[0] in ("-h", "--help"):
+        print(__doc__)
+        return 0
+    cmd = a[0]
+    tag = a[1].removeprefix("@FR-") if len(a) > 1 else ""
+    if cmd == "init":
+        return init()
+    if cmd == "status":
+        return status()
+    if cmd == "next":
+        return nxt(int(a[1]) if len(a) > 1 else 3)
+    if cmd == "plan" and tag:
+        return plan(tag)
+    if cmd == "related" and tag and len(a) > 2:
+        return related(tag, a[2])
+    if cmd == "done" and tag:
+        return done(tag, " ".join(a[2:]))
+    print(__doc__)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())
