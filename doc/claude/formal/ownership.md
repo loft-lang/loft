@@ -591,7 +591,7 @@ widening answers wrong on `--native` (`D-own-38`).
 > therefore NOT measured by them: a fn-ref whose TARGET cannot be resolved — a fn-typed
 > parameter or field — which is loft#1327 and reads `Owned` at every site that frees on the
 > oracle; a `&` binding as an arm (it keeps the alias it had — a struct-`Enum` variable arm
-> copies as a struct's does, `loft-suite/rules/binding/B-Copy/a-struct-enum-whole-value-bind-copies-like-a-struct.loft`);
+> copies as a struct's does, `loft-suite/rules/binding/B-Copy/a-struct-enum-value-copies-like-a-struct-at-every-bind-and-widening.loft`);
 > and the `--native` release of a displaced store on a fn-ref re-bind of a USER local, which
 > is loft#1328 and which the `??` hoist sidesteps by releasing in the IR.
 
