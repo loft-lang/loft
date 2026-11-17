@@ -51,7 +51,12 @@ impl Parser {
             let d = *d as usize;
             if d < self.data.definitions.len()
                 && self.data.definitions[d].def_type == DefType::Struct
-                && self.data.definitions[d].attributes.is_empty()
+                // A placeholder is told by having no fields — or by being one of this generic's
+                // header variables, which a REFUSED `fn m<T>(self: T)` (loft#1539) leaves with a
+                // method hung on it: the placeholder is shared by every `T`, so a later `x.size()`
+                // on another generic's `T` read "Unknown field T#4.size", the key and not the name.
+                && (self.data.definitions[d].attributes.is_empty()
+                    || self.is_header_type_var(d as u32))
                 && self.context != u32::MAX
                 && self.data.definitions[self.context as usize].def_type == DefType::Generic
             {
