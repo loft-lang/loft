@@ -248,20 +248,20 @@ G-Sat	interfaces	curated	9	2026-11-17	3 cells, all patches (one per file)
 G-Sat-Eq	interfaces	curated	3	2026-11-17	3 cells: a patch, a refused control and an agreeing program — distinct
 G-Scope	interfaces	curated	3	2026-11-17	no own directory; cited by suite cells of its chapter
 G-Select	interfaces	curated	4	2026-11-17	2 cells: the ranking control and the refusal
-G-Type	interfaces	todo			
-I-Comp	iteration	todo			
-I-Done	iteration	todo			
-I-Empty	iteration	todo			
-I-Filter	iteration	todo			
-I-For	iteration	todo			
-I-Index	iteration	todo			
-I-Map	iteration	todo			
-I-Next	iteration	todo			
-I-NullSrc	iteration	todo			
-I-Range	iteration	todo			
-I-RangeFrom	iteration	todo			
-I-RangeIncl	iteration	todo			
-I-RangeNull	iteration	todo			
+G-Type	interfaces	curated	6	2026-11-17	own dir 3 -> 2: the twin in every use + the qualified variant 2->1; the compound-field patch stays
+I-Comp	iteration	curated	16	2026-11-17	own dir 9 -> 8: loft#2335 (@catches kept) + loft#2446 2->1; three patches (one per file) and distinct clauses (2344 slice bounds, 2345 rev, fresh records, two discards) stay
+I-Done	iteration	curated	1	2026-11-17	no own directory; cited by suite cells of the iteration chapter
+I-Empty	iteration	curated	1	2026-11-17	one cell
+I-Filter	iteration	curated	1	2026-11-17	no own directory; cited by suite cells of the iteration chapter
+I-For	iteration	curated	16	2026-11-17	own dir 11 -> 9: loft#2415 + #2415b 2->1; the link-parameter walk (length, rev, removal) 2->1; patches and distinct clauses stay
+I-Index	iteration	curated	1	2026-11-17	own dir 2 -> 1: x#index is where x was read (vector cursor + slice and rev)
+I-Map	iteration	curated	1	2026-11-17	one cell (map/filter/reduce are their comprehensions)
+I-Next	iteration	curated	2	2026-11-17	no own directory; cited by suite cells of the iteration chapter
+I-NullSrc	iteration	curated	3	2026-11-17	own dir 4 -> 3: the discharged null source + absent collection 2->1; two gate-E-agreeing programs stay
+I-Range	iteration	curated	9	2026-11-17	no own directory; cited by suite cells of the iteration chapter
+I-RangeFrom	iteration	curated	2	2026-11-17	2 cells: a patch and loft#2275 — distinct clauses
+I-RangeIncl	iteration	curated	1	2026-11-17	one cell (a patch)
+I-RangeNull	iteration	curated	3	2026-11-17	own dir 3 -> 2: loft#2036 + the null bound in every form 2->1; the written-null refusal stays
 I-Reduce	iteration	todo			
 I-Text	iteration	todo			
 L-Align	layout	todo			
