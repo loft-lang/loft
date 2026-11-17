@@ -1974,6 +1974,23 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
     SVecLit { items: its } => { items = its; },
     _ => {}
   }
+  // `[x; n]` (`parse_multiply`): the last item is the template, built as any item, and its
+  // count follows it (`Value::Return(count)`), lowered after the items to one
+  // `OpAppendCopy(v, count, <vector type>)`; it counts as an item for the room reserved.
+  rep_n = -1;
+  if len(items) > 0 {
+    match e.p.nodes[items[-1]!] {
+      SRepeat { e: re, n: rn } => {
+        if re == null {
+          el::refuse(e, "a repeated vector item");
+          return refused_build();
+        }
+        items[len(items) - 1] = re!;
+        rep_n = rn;
+      },
+      _ => {}
+    }
+  }
   // An empty `[]` into a local returns before `unique_elm_var`; otherwise the element local is
   // `Reference(type_def_nr(parent_tp.content()))` borrowing the destination, and a bind's
   // `parent_tp` carries the destination's deps but no content — definition 0, a bind and an
@@ -2196,6 +2213,20 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
     conv += [ex(cx, in_t)];
   }
   xs = conv;
+  // The repeat's count, read after its template (`parse_multiply`): a number.
+  rep_code: ir::Node? = null;
+  if rep_n >= 0 {
+    cx = el_ex_assign::expression(e, vars, rep_n);
+    if !(el_types::base(cx.tp) is TyInteger) && !(e.first_pass && el_types::is_unknown(cx.tp)) {
+      el::refuse(e, "a repeat count of this type: {type_kind(cx.tp)}");
+      return refused_build();
+    }
+    if in_t is TyVector {
+      el::refuse(e, "a repeated vector item of vectors");
+      return refused_build();
+    }
+    rep_code = cx.code;
+  }
   // `(I-Comp)` (`literal_reads_dest`): an item that reads the vector it is appended to sees the
   // vector as the statement began.  For scalar items on a plain local, whose calls are all
   // primitives or `#pure`, each such item is evaluated into a `_build_val_N` before anything
@@ -2338,7 +2369,7 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
       el::refuse(e, "a vector literal of record items");
       return refused_build();
     }
-    ls += [el_ir::cl(e, "OpPreAllocVector", [w, ir::NdInt { n: len(xs) }, ir::NdInt { n: size }])];
+    ls += [el_ir::cl(e, "OpPreAllocVector", [w, ir::NdInt { n: len(xs) + (if rep_code != null { 1 } else { 0 }) }, ir::NdInt { n: size }])];
   }
   push = push_op(in_t);
   if len(recs) > 0 {
@@ -2597,6 +2628,21 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
       ls += [elem_write(e, in_t, at, x.code)];
       ls += [el_ir::cl(e, "OpFinishRecord", [w, at, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }])];
     }
+  }
+  if rep_code != null {
+    // The copy names the element's own `vector<…>` row (`vector_of`): a narrow integer's
+    // (`vector<i32>`), where the store is the plain `vector<integer>`.
+    rk = r.vec_known;
+    match in_t {
+      TyInteger { spec } => if el_types::int4(spec) || el_types::uint4(spec) || el_types::narrow_width(spec) > 0 {
+        ct = el_schema::content_type(e, in_t);
+        if ct >= 0 {
+          rk = el_schema::vector_type(e, ct);
+        }
+      },
+      _ => {}
+    }
+    ls += [el_ir::cl(e, "OpAppendCopy", [w, rep_code!, ir::NdInt { n: rk }])];
   }
   if late_store {
     ls = staged + (if fields_first && len(early_store) > 0 { early_store } else { literal_store(e, vars, v, r) }) + ls[len(staged)..];

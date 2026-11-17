@@ -1432,7 +1432,9 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
     }
     return ex(joined, jt);
   }
-  if !e.first_pass && !el_types::is_equal(e, t.tp, f.tp) {
+  // (`text?` beside `text` is no difference: the text join below is the `N-Join` of the two.)
+  text_pair = el_types::base(t.tp) is TyText && el_types::base(f.tp) is TyText;
+  if !e.first_pass && !el_types::is_equal(e, t.tp, f.tp) && !text_pair {
     el::refuse(e, "`if` arms of different types: {type_kind(t.tp)}, {type_kind(f.tp)}");
   }
   // A read of a text variable borrows it (`parse_var`'s `depending`), so an arm that answers one
