@@ -1,0 +1,15 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a generic that builds a vector of its type variable is instantiated at an integer, a text and a record: the store wrapper is the bound element's, and the element write the template lowered against the placeholder takes the bound type's shape (reserved at its size, made at its row, written by its setter).
+// Prints: [7] ["x"] 3
+
+struct P { n: integer }
+fn wrap<T>(v: T) -> vector<T> { [v] }
+fn main() {
+  a = wrap(7);
+  b = wrap("x");
+  p = P { n: 3 };
+  c = wrap(p);
+  println("{a} {b} {c[0].n}");
+}

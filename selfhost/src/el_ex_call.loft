@@ -184,7 +184,9 @@ pub fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::T
     if t is TyFunction && type_mentions(t, h) && !e.first_pass {
       el_schema::int_store(e, 0, false);
     }
-    if !bare_over(t, h) || (t is TyFunction && !v.argument) || wrapper {
+    // (A wrapper is re-derived below, `instance_vector_wrapper`, where the bound element is
+    // one a vector write is rewritten for.)
+    if !bare_over(t, h) || (t is TyFunction && !v.argument) || (wrapper && !writes_carried(e, bound)) {
       el::refuse(e, "a generic local over the type variable in another shape or of a function type");
       return false;
     }
@@ -201,7 +203,7 @@ pub fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::T
     _ => el_ex_vector::append_row(e, el_types::base(bound))
   };
   rows_known = stale_row != el::NO_TYPE && fresh_row >= 0 && fresh_row != el::NO_TYPE;
-  why = el_ex_object::instance_carried(e, tmpl.code[0] ?? ir::NdNull, h, if rows_known { el::NO_TYPE } else { stale_row }, tmpl.variables);
+  why = el_ex_object::instance_carried(e, tmpl.code[0] ?? ir::NdNull, h, if rows_known { el::NO_TYPE } else { stale_row }, tmpl.variables, writes: writes_carried(e, bound));
   if why != "" {
     el::refuse(e, "a generic body holding {why}");
     return false;
@@ -209,8 +211,24 @@ pub fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::T
   // A table of the instance's own: the template's is the template's, and stays as it is.
   tv = tmpl.variables;
   f = ir::Function { name: tv.name, file: tv.file, variables: [], names: [], inline_refs: tv.inline_refs };
+  // `instance_vector_wrapper`: a vector backing's wrapper over the variable (`main_vector<T>`)
+  // is the bound element's own wrapper in the instance; its row replaces the template's.
+  wrap_rows: vector<integer> = [];
   for v in tv.variables {
     t = el_ex_object::substitute_var(v.type_def[0] ?? ir::TyVoid, h, bound);
+    wd = match el_types::base(v.type_def[0] ?? ir::TyVoid) { TyReference { n: wn } => if el::def(e, wn).name.starts_with("main_vector<") && type_mentions(el::def(e, wn).attributes[0]!.typedef[0] ?? ir::TyVoid, h) { wn } else { -1 }, _ => -1 };
+    if wd >= 0 {
+      welem = match el_types::base(substitute(el::def(e, wd).attributes[0]!.typedef[0] ?? ir::TyVoid, h, bound)) { TyVector { inner: wi } => wi, _ => ir::TyVoid };
+      wr = vector_rows(e, el_types::without_deps(welem), 0, true);
+      if wr == null {
+        el::refuse(e, "a generic local over the type variable in another shape or of a function type");
+        return false;
+      }
+      t = el_types::with_deps(ir::TyReference { n: wr!.main_def, dep: [] }, el_types::deps(v.type_def[0] ?? ir::TyVoid));
+      if el::def(e, wd).known_type != el::NO_TYPE {
+        wrap_rows += [el::def(e, wd).known_type, wr!.main_known];
+      }
+    }
     c = v;
     c.type_def = [t];
     f.variables += [c];
@@ -247,8 +265,31 @@ pub fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::T
     code = resolve_content_eq(e, iv, code, stale_row, bound, heap_bound);
     f = el_vars::stored(iv);
   }
+  // `rewrite_generic_vector_writes`: each parametric element write takes the bound type's shape.
+  if rows_known && writes_carried(e, bound) {
+    wv = el_vars::load(f);
+    code = rewrite_vector_writes(e, wv, code, stale_row, bound);
+    f = el_vars::stored(wv);
+  }
   if rows_known && stale_row != fresh_row {
     code = retarget_rows(e, code, stale_row, fresh_row);
+  }
+  for wk in wrap_rows {
+    if wk#index % 2 == 0 && wk != (wrap_rows[wk#index + 1] ?? wk) {
+      code = retarget_rows(e, code, wk, wrap_rows[wk#index + 1] ?? wk);
+    }
+  }
+  // (An instance answering a vector answers it bare: its body's block names no store, as a
+  // function's delivered vector result does not.)
+  if el_types::base(el::def(e, d).returned[0] ?? ir::TyVoid) is TyVector {
+    code = match code {
+      NdBlock { block: ob } => {
+        obl = ob[0]!;
+        obl.result = [el_types::without_deps(obl.result[0] ?? ir::TyVoid)];
+        ir::NdBlock { block: [obl] }
+      },
+      _ => code
+    };
   }
   // `strip_scalar_instance_rebinds`: a parameter the template rebinds keeps an entry witness of
   // the caller's store; one that became a scalar has no store, so the witness and its stash go.
@@ -387,6 +428,148 @@ pub fn resolve_content_eq(e: el::El, vars: el_vars::Vars, n: ir::Node, stale: in
     NdYield { inner } => ir::NdYield { inner: resolve_content_eq(e, vars, inner, stale, bound, heap) },
     _ => n
   }
+}
+
+// `is_rewritable_append_target`: the bound types a parametric vector write is rewritten for —
+// a plain scalar, a text, a plain enum, a record or a vector.
+pub fn writes_carried(e: el::El, bound: ir::TypeT) -> boolean {
+  b = el_types::base(bound);
+  if bound is TyOptional {
+    return false;
+  }
+  plain_enum = match b { TyEnum { n: _, is_ref } => !is_ref, _ => false };
+  // (A one-byte or four-byte integer element has a write of its own — not carried.)
+  odd_int = match b { TyInteger { spec } => el_types::narrow_width(spec) == 1 || el_types::int4(spec), _ => false };
+  if odd_int {
+    return false;
+  }
+  el_ex_object::scalar_type(b) || b is TyText || plain_enum || (b is TyReference && struct_ref(e, b) >= 0) || b is TyVector
+}
+
+// `rewrite_vector_write_triplets`: `Set(elm, OpNewRecord(out, t, MAX)); OpCopyRecord(src, elm,
+// row of T); OpFinishRecord(out, elm, t, MAX)` — the element write a template lowers against
+// its variable's placeholder — becomes the bound type's: the element reserved at its size
+// (`OpPreAllocVector`), made at the bound vector's row, written by the bound type's setter (a
+// record copied at its own row, a vector's handle zeroed then copied), finished at that row.
+pub fn rewrite_vector_writes(e: el::El, vars: el_vars::Vars, n: ir::Node, stale: integer, bound: ir::TypeT) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: rewrite_vector_writes(e, vars, inner, stale, bound) },
+    NdCall { def_nr, args } => ir::NdCall { def_nr: def_nr, args: [for a in args { rewrite_vector_writes(e, vars, a, stale, bound) }] },
+    NdCallRef { var, args } => ir::NdCallRef { var: var, args: [for a in args { rewrite_vector_writes(e, vars, a, stale, bound) }] },
+    NdBlock { block } => {
+      bl = block[0]!;
+      bl.operators = write_triplets(e, vars, [for o in bl.operators { rewrite_vector_writes(e, vars, o, stale, bound) }], stale, bound);
+      ir::NdBlock { block: [bl] }
+    },
+    NdLoop { block } => {
+      bl = block[0]!;
+      bl.operators = write_triplets(e, vars, [for o in bl.operators { rewrite_vector_writes(e, vars, o, stale, bound) }], stale, bound);
+      ir::NdLoop { block: [bl] }
+    },
+    NdInsert { items } => ir::NdInsert { items: write_triplets(e, vars, [for o in items { rewrite_vector_writes(e, vars, o, stale, bound) }], stale, bound) },
+    NdSet { var, inner } => ir::NdSet { var: var, inner: rewrite_vector_writes(e, vars, inner, stale, bound) },
+    NdReturn { inner } => ir::NdReturn { inner: rewrite_vector_writes(e, vars, inner, stale, bound) },
+    NdIf { cond, t, f } => ir::NdIf { cond: rewrite_vector_writes(e, vars, cond, stale, bound), t: rewrite_vector_writes(e, vars, t, stale, bound), f: rewrite_vector_writes(e, vars, f, stale, bound) },
+    NdDrop { inner } => ir::NdDrop { inner: rewrite_vector_writes(e, vars, inner, stale, bound) },
+    NdYield { inner } => ir::NdYield { inner: rewrite_vector_writes(e, vars, inner, stale, bound) },
+    _ => n
+  }
+}
+
+// `primitive_setter_call`: the write of a primitive element at offset 0 of its record.
+fn primitive_setter(e: el::El, t: ir::TypeT, at: ir::Node, src: ir::Node) -> ir::Node {
+  zero = ir::NdInt { n: 0 };
+  match t {
+    TyInteger { spec } => {
+      if el_types::narrow_width(spec) == 2 || el_types::uint4(spec) {
+        return el_ex_pattern::elem_write(e, t, at, src);
+      }
+      el_ir::cl(e, "OpSetInt", [at, zero, src])
+    },
+    TyFloat => el_ir::cl(e, "OpSetFloat", [at, zero, src]),
+    TySingle => el_ir::cl(e, "OpSetSingle", [at, zero, src]),
+    TyBoolean => el_ir::cl(e, "OpSetByte", [at, zero, zero, el_ir::v_if(src, ir::NdInt { n: 1 }, zero)]),
+    TyCharacter => el_ir::cl(e, "OpSetCharacter", [at, zero, src]),
+    TyFunction { args: _ } => el_ir::cl(e, "OpSetInt4", [at, zero, src]),
+    TyEnum { n: _ } => el_ir::cl(e, "OpSetEnum", [at, zero, src]),
+    _ => el_ir::cl(e, "OpSetText", [at, zero, src])
+  }
+}
+
+fn write_triplets(e: el::El, vars: el_vars::Vars, ops: vector<ir::Node>, stale: integer, bound: ir::TypeT) -> vector<ir::Node> {
+  out: vector<ir::Node> = [];
+  concrete = el_types::without_deps(el_types::base(bound));
+  skip = 0;
+  for op in ops {
+    if skip > 0 {
+      skip -= 1;
+      continue;
+    }
+    i = op#index;
+    elm = -1;
+    outv = -1;
+    match el_ir::unspan(op) {
+      NdSet { var: sv, inner: si } => {
+        match el_ir::unspan(si) {
+          NdCall { def_nr: nd, args: na } => {
+            if el::def(e, nd).name == "OpNewRecord" && len(na) == 3 {
+              elm = sv;
+              outv = match el_ir::unspan(na[0]!) { NdVar { n: ov } => ov, _ => -1 };
+            }
+          },
+          _ => {}
+        }
+      },
+      _ => {}
+    }
+    src = ir::NdNull;
+    matched = false;
+    if elm >= 0 && outv >= 0 && i + 2 < len(ops) {
+      match el_ir::unspan(ops[i + 1]!) {
+        NdCall { def_nr: cd, args: ca } => {
+          if el::def(e, cd).name == "OpCopyRecord" && len(ca) == 3 && el_ir::unspan(ca[1]!) == ir::NdVar { n: elm } {
+            row = match el_ir::unspan(ca[2]!) { NdInt { n: r } => r & 16383, _ => -1 };
+            fin = match el_ir::unspan(ops[i + 2]!) { NdCall { def_nr: fd, args: fa } => el::def(e, fd).name == "OpFinishRecord" && len(fa) == 4 && el_ir::unspan(fa[1]!) == ir::NdVar { n: elm }, _ => false };
+            if row == stale && fin {
+              src = ca[0]!;
+              matched = true;
+            }
+          }
+        },
+        _ => {}
+      }
+    }
+    if !matched {
+      out += [op];
+      continue;
+    }
+    content = el_schema::content_type(e, concrete);
+    vec_tp = if content < 0 { -1 } else { el_schema::vector_type(e, content) };
+    size = if content < 0 { -1 } else { e.b.types[content]!.size };
+    if vec_tp < 0 || size < 0 {
+      out += [op];
+      continue;
+    }
+    w = ir::NdVar { n: outv };
+    at = ir::NdVar { n: elm };
+    el_vars::set_var_type(vars, elm, match concrete {
+      TyVector { inner: ci } => ir::TyVector { inner: ci, dep: [outv] },
+      _ => ir::TyReference { n: type_def_nr(e, concrete), dep: [outv] }
+    });
+    out += [el_ir::cl(e, "OpPreAllocVector", [w, ir::NdInt { n: 1 }, ir::NdInt { n: size }])];
+    out += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: vec_tp }, ir::NdInt { n: 65535 }]))];
+    if concrete is TyVector {
+      out += [el_ir::cl(e, "OpSetInt4", [at, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }])];
+      out += [el_ir::cl(e, "OpCopyRecord", [src, at, ir::NdInt { n: content }])];
+    } else if concrete is TyReference {
+      out += [el_ir::cl(e, "OpCopyRecord", [src, at, ir::NdInt { n: el::def(e, type_def_nr(e, concrete)).known_type }])];
+    } else {
+      out += [primitive_setter(e, concrete, at, src)];
+    }
+    out += [el_ir::cl(e, "OpFinishRecord", [w, at, ir::NdInt { n: vec_tp }, ir::NdInt { n: 65535 }])];
+    skip = 2;
+  }
+  out
 }
 
 // `retarget_parametric_type_rows`' rewrite: every `tp` / `…_tp` argument of an operator in `n`

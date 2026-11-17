@@ -2273,6 +2273,11 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
     if in_t is TyVector {
       size = 4;
     }
+    // (A type variable's element is reserved as the handle its placeholder is: twelve bytes;
+    // each instance reserves its own element beside it.)
+    if el_types::type_var(e, el_types::base(in_t)) >= 0 {
+      size = 12;
+    }
     if size < 0 {
       el::refuse(e, "a vector literal of record items");
       return refused_build();

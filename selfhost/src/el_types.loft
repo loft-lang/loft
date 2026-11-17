@@ -238,7 +238,9 @@ pub fn elem_name(e: el::El, t: ir::TypeT) -> text {
     TyFloat => "float",
     TySingle => "single",
     TyCharacter => "character",
-    TyReference { n } => if el::def(e, n).def_type == el::DT_STRUCT { el::def(e, n).name } else { "" },
+    // (A type variable's placeholder is registered as `__typevar_<name>`: its vector definitions
+    // are the ones the library — or the first template over it — made under that name.)
+    TyReference { n } => if el::def(e, n).def_type == el::DT_STRUCT { if type_var(e, t) >= 0 { "__typevar_{el::def(e, n).name}" } else { el::def(e, n).name } } else { "" },
     // (A tagged `__nullable<S>` — a `vector<S?>` element — is named as the enum it is.)
     TyEnum { n } => el::def(e, n).name,
     // A nullable struct enum is named as its enum with the `?` (`Type::name`): its elements are

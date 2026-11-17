@@ -2947,7 +2947,7 @@ pub fn drop_scalar_deps(f: ir::Function) {
 // copy, a materialised view return), a result over the variable in a shape `substitute` does
 // not carry, a call whose target substitution re-resolves (one over the variable, or another
 // generic), a type row the instance would retarget (`retarget_parametric_type_rows`).
-pub fn instance_carried(e: el::El, n: ir::Node, h: integer, row: integer, tv: ir::Function) -> text {
+pub fn instance_carried(e: el::El, n: ir::Node, h: integer, row: integer, tv: ir::Function, writes: boolean = false) -> text {
   match n {
     NdBlock { block } => {
       bl = block[0]!;
@@ -2967,7 +2967,9 @@ pub fn instance_carried(e: el::El, n: ir::Node, h: integer, row: integer, tv: ir
       // rewritten per instance (`rewrite_generic_vector_writes`,
       // `retarget_parametric_vector_format`, P239): not carried.
       w = cd.name;
-      if (w == "OpNewRecord" || w == "OpFinishRecord" || w == "OpCopyRecord" || w == "OpAppendVector" || w == "OpPreAllocVector" || w == "OpFormatDatabase" || w == "OpFormatStackDatabase" || w == "OpConvBoolFromRef") && el_ex_call::reads_over(n, tv, h) {
+      // (`writes`: the instance rewrites a vector write's triplet itself.)
+      triplet = w == "OpNewRecord" || w == "OpFinishRecord" || w == "OpCopyRecord" || w == "OpPreAllocVector";
+      if !(writes && triplet) && (w == "OpNewRecord" || w == "OpFinishRecord" || w == "OpCopyRecord" || w == "OpAppendVector" || w == "OpPreAllocVector" || w == "OpFormatDatabase" || w == "OpFormatStackDatabase" || w == "OpConvBoolFromRef") && el_ex_call::reads_over(n, tv, h) {
         return "a `{w}` over the variable";
       }
       stub = stub_call(e, def_nr, h);
@@ -2987,7 +2989,7 @@ pub fn instance_carried(e: el::El, n: ir::Node, h: integer, row: integer, tv: ir
     _ => {}
   }
   for c in el_ir::children(n) {
-    w = instance_carried(e, c, h, row, tv);
+    w = instance_carried(e, c, h, row, tv, writes: writes);
     if w != "" {
       return w;
     }
