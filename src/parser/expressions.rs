@@ -4505,8 +4505,10 @@ use a separate collection or add after the loop"
         // what no grammar of loft allows).
         if self.preset_rhs.is_none() && self.operand_absent() {
             diagnostic!(self.lexer, Level::Error, "Expected a value after `{op}`");
-            // A stray `?` (`k = ? 4`) is read past, as at a binary operator (loft#2543).
-            if !self.lexer.has_token("?") {
+            // A stray `?` (`k = ? 4`) is read past, and a binary operator (`k = or true`)
+            // parses on with its left side absent, so the line is refused once (loft#2543);
+            // only a closer ends the value here.
+            if !self.lexer.has_token("?") && self.peek_binary_operator().is_none() {
                 *code = Value::Null;
                 return Type::Void;
             }
