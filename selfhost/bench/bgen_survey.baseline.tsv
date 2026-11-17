@@ -3,18 +3,18 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	38d4877cb4a76aae39bb2c82206558ba5327ca35
+suite	b705cdb48d7d8f4e3838e2eb570de60ce345bab5
 
-layer	functions	agree	8997	of	8999
+layer	functions	agree	9176	of	9178
 functions	unwritten	n_main
 functions	unwritten	n_report
 
-layer	functions-tests	agree	5559	of	5559
+layer	functions-tests	agree	5836	of	5836
 
-layer	streams	agree	1305	of	1306
+layer	streams	agree	1328	of	1329
 streams	unwritten	tests/scripts/store_handoff_residency.loft
 
-layer	streams-tests	agree	2562	of	2603
+layer	streams-tests	agree	2649	of	2690
 streams-tests	natives	loft-suite/rules/formatting/F-Desugar/every-kind-renders-through-one-sink.loft::test_a_character_an_enum_a_struct_and_a_vector
 streams-tests	natives	loft-suite/rules/formatting/F-Desugar/every-kind-renders-through-one-sink.loft::test_a_null_of_each_kind
 streams-tests	natives	loft-suite/rules/formatting/F-Desugar/every-kind-renders-through-one-sink.loft::test_floats_render_the_shortest_round_trip

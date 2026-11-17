@@ -3,12 +3,12 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	38d4877cb4a76aae39bb2c82206558ba5327ca35
+suite	b705cdb48d7d8f4e3838e2eb570de60ce345bab5
 
-layer	image	agree	1306	of	1307
+layer	image	agree	1328	of	1329
 image	stores	tests/scripts/store_iter_scratch.loft
 
-layer	image-functions	agree	3900	of	3911
+layer	image-functions	agree	4009	of	4020
 image-functions	noimage	loft-suite/rules/calls/F-Package/f_package_relay_lib.loft::test_the_relay_reads_the_package
 image-functions	stopped	loft-suite/rules/closures/L-FnRef/1658-a-native-called-through-a-function-value-runs.loft::test_many_calls_keep_the_stack
 image-functions	stopped	loft-suite/rules/closures/L-FnRef/1658-a-native-called-through-a-function-value-runs.loft::test_one_call_each
@@ -21,11 +21,11 @@ image-functions	fault	tests/scripts/1044-par-element-view-borrows-its-vector.lof
 image-functions	fault	tests/scripts/945-stdlib-worked-examples.loft::test_json_builders_compose_and_serialise
 image-functions	stores	tests/scripts/store_iter_scratch.loft
 
-layer	written	agree	1306	of	1308
+layer	written	agree	1327	of	1329
 written	unwritten	tests/scripts/store_handoff_residency.loft
 written	stores	tests/scripts/store_iter_scratch.loft
 
-layer	written-functions	agree	3900	of	3912
+layer	written-functions	agree	4008	of	4020
 written-functions	noimage	loft-suite/rules/calls/F-Package/f_package_relay_lib.loft::test_the_relay_reads_the_package
 written-functions	stopped	loft-suite/rules/closures/L-FnRef/1658-a-native-called-through-a-function-value-runs.loft::test_many_calls_keep_the_stack
 written-functions	stopped	loft-suite/rules/closures/L-FnRef/1658-a-native-called-through-a-function-value-runs.loft::test_one_call_each
