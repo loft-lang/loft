@@ -3120,6 +3120,22 @@ impl Parser {
                 // too and where the constant can be named. By the time a paste
                 // reaches here the useful line is already behind us, so there is no
                 // second policy at the use site — one home for the rule.
+                // loft#2530 — …and never pasted.  A constant the declaration refused for
+                // carrying a slot (`NAMES = ["a", "b"][0..0]`, an iterator over a literal's
+                // temporaries) would bring slot numbers of its own declaration into this
+                // function, whose table they do not index: the walk after the parse panicked
+                // before the declaration's refusal was ever printed.
+                let mut carries_a_slot = false;
+                let accounted = crate::parser::definitions::visit_constant_vars(
+                    &mut const_code.clone(),
+                    &mut |_| carries_a_slot = true,
+                );
+                // The constant keeps its declared type, so the use reports nothing more: the
+                // declaration's refusal is the one error, and it stops the build.
+                if !self.first_pass && (carries_a_slot || !accounted) {
+                    *code = Value::Null;
+                    return const_tp;
+                }
                 *code = const_code;
                 return const_tp;
             }
