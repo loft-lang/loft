@@ -122,7 +122,6 @@
 44-nested-match.loft
 45-field-iter.loft
 46-caveats.loft
-48b-spatial-slice.loft
 48-generics.loft
 49-init-fields.loft
 501-map-filter-literal-receiver.loft

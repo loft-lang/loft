@@ -115,7 +115,7 @@ Col-Vec	collections	curated	2	2026-11-17	own dir 3 -> 2: a vector literal compil
 Slice-Box	collections	curated	3	2026-11-17	no own directory; two suite cells elsewhere cite it
 Slice-Cap	collections	curated	2	2026-11-17	one cell (a slice cap below zero answers no records, patch)
 Slice-KeyedIter	collections	curated	4	2026-11-17	3 cells: two refusals (spatial, sorted/index ranges are not values) and the keyed-range walk — distinct
-Slice-Open	collections	todo			
+Slice-Open	collections	curated	1	2026-11-17	was guarded only by loft's tests/scripts/48b-spatial-slice.loft: moved into the suite as its cell (box, open walk, cap; which records from every origin), conformance receipt
 Slice-Value	collections	curated	14	2026-11-17	own dir 9 -> 7: a slice is a fresh vector at every vector position (every position, a concat operand, a method receiver loft#1728) 3->1; the rest agree with gate E or are distinct (negative bound)
 C-Det	concurrency	curated	3	2026-11-17	2 cells: a patch and the par-worker row — nothing to merge
 C-Impure	concurrency	todo			
