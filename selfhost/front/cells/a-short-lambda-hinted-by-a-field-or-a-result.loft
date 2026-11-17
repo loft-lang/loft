@@ -1,0 +1,15 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a short lambda takes the `fn(…)` its position expects: a declared local's type, a function-valued field's type in a struct literal, and the result type of the function that answers it.
+// Prints: 5 4 10
+
+struct LFH { g: fn(integer) -> integer, n: integer }
+fn make() -> fn(integer) -> integer { |x| { x * 2 } }
+fn main() {
+  t = 4;
+  gt: fn() -> integer = || { t + 1 };
+  h = LFH { g: |x| { x + 3 }, n: 1 };
+  m = make();
+  println("{gt()} {h.g(1)} {m(5)}");
+}

@@ -634,6 +634,10 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
         } else if vars.expect_node == n {
           hint = el_types::base(vars.expect);
         }
+        // A short lambda a function answers takes that function's declared result as its hint.
+        if !(hint is TyFunction) && e.context >= 0 && el_types::base(el::def(e, e.context).returned[0] ?? ir::TyVoid) is TyFunction {
+          hint = el_types::base(el::def(e, e.context).returned[0] ?? ir::TyVoid);
+        }
         if !(hint is TyFunction) {
           el::refuse(e, "a short lambda (`|…|`) with no `fn(…)` its position expects");
           return ex(ir::NdNull, ir::TyUnknown { n: 0 });

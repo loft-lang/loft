@@ -2521,6 +2521,11 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
         // `far`'s record), as `parse_object` consumes `amp_pending` at the field: the value is the
         // operand.
         amp_operand = match e.p.nodes[fe!] { SUnary { op, e: ue } => if op == "&" { ue } else { null }, _ => null };
+        // A short lambda given to a function-valued field takes the field's `fn(…)` as its hint.
+        if el_types::base(at) is TyFunction && e.p.nodes[fe!] is SLambda {
+          vars.lambda_node = fe!;
+          vars.lambda_hint = el_types::base(at);
+        }
         x = el_ex_assign::expression(e, vars, if el_types::is_pointer(at) && amp_operand != null { amp_operand! } else { fe! });
         fc: ir::Node? = null;
         if el_types::is_pointer(at) {
