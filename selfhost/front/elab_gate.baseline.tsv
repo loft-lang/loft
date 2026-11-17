@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	f719b1b66c834333c0d1e9cb0fc70c3755ce02fb
+suite	871d01796f7b9f039572f5c7dc72e7ee732ffc15
 
-layer	elab	agree	1031	of	2140
+layer	elab	agree	1031	of	2139
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -230,8 +230,7 @@ elab	refused	loft-suite/rules/coroutines/G-Hold/a-generator-held-in-a-field-or-a
 elab	refused	loft-suite/rules/coroutines/G-Hold/a-handle-read-out-of-a-member-is-a-view-of-its-frame.loft
 elab	refused	loft-suite/rules/coroutines/G-Next/a-generator-resumes-at-the-yield-it-suspended-at.loft
 elab	refused	loft-suite/rules/coroutines/G-Next/a-record-yielded-from-a-loop-is-handed-over-lazily.loft
-elab	refused	loft-suite/rules/coroutines/G-Own/2420-a-yielded-link-yields-its-value.loft
-elab	refused	loft-suite/rules/coroutines/G-Own/a-link-in-a-generator-names-its-parameter.loft
+elab	refused	loft-suite/rules/coroutines/G-Own/a-link-in-a-generator-is-a-link-and-yielding-it-yields-its-value.loft
 elab	refused	loft-suite/rules/coroutines/G-Own/what-an-advance-produces-is-the-consumers.loft
 elab	refused	loft-suite/rules/coroutines/G-Yield/a-generator-keeps-its-links-tuples-and-text-copies-across-a-yield.loft
 elab	refused	loft-suite/rules/coroutines/G-Yield/a-generator-yields-a-calls-tuple-result.loft
