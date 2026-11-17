@@ -2953,7 +2953,7 @@ fn plain_child_literal(vars: el_vars::Vars, n: ir::Node, w: integer) -> boolean 
 // gives its store away is copied in and that store freed (the type's 32768 bit).  A read of
 // another child (the move), a call answering a view of its argument (the write-back) and any
 // other value are refused by name.
-pub fn out_of_line_set(e: el::El, vars: el_vars::Vars, field: ir::Node, kt: integer, sd: integer, fe: integer) -> ir::Node? {
+pub fn out_of_line_set(e: el::El, vars: el_vars::Vars, field: ir::Node, kt: integer, sd: integer, fe: integer, init: boolean = false) -> ir::Node? {
   k = ir::NdInt { n: kt };
   if e.p.nodes[fe] is SNull {
     return el_ir::cl(e, "OpSetChildRec", [field, el_ir::cl(e, "OpNullRefSentinel", []), k]);
@@ -2976,8 +2976,12 @@ pub fn out_of_line_set(e: el::El, vars: el_vars::Vars, field: ir::Node, kt: inte
       if vars.demote_var == place_root(e, field) {
         return ir::NdInsert { items: [] };
       }
-      el::refuse(e, "an out-of-line field given the record it lies in (the demote)");
-      return null;
+      // (A literal's field is the demote; a plain write `n.next = n` sets the child as any
+      // local's record is set.)
+      if init {
+        el::refuse(e, "an out-of-line field given the record it lies in (the demote)");
+        return null;
+      }
     }
     if same && xc is NdVar {
       return el_ir::cl(e, "OpSetChildRec", [field, x.code, k]);
@@ -3101,7 +3105,7 @@ fn out_of_line_init(e: el::El, vars: el_vars::Vars, r: ir::Node, d: integer, a: 
   fk = child_field(e, d, a, r, 0);
   sd = el_schema::out_of_line_content(e, el::def(e, d).attributes[a]!.typedef[0]);
   kt = match fk[1]! { NdInt { n } => n, _ => 65535 };
-  out_of_line_set(e, vars, fk[0]!, kt, sd, fe)
+  out_of_line_set(e, vars, fk[0]!, kt, sd, fe, init: true)
 }
 
 // `object_init` for one omitted field at `base` bytes into the record `r`: a plain field its
