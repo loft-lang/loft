@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	f53cd44362988a023b0d2384d47835c86a39a085
+suite	6c2d106210d30d7629b45c34c1f7cb9838459cb4
 
-layer	elab	agree	1031	of	2125
+layer	elab	agree	1031	of	2124
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -281,9 +281,8 @@ elab	refused	loft-suite/rules/heap/H-FreeNull/freeing-null-releases-nothing-on-e
 elab	refused	loft-suite/rules/heap/H-Handle/a-file-field-takes-an-append-as-a-file-local-does.loft
 elab	refused	loft-suite/rules/heap/H-Index/1669-a-negative-index-removes-from-the-end-at-either-layout.loft
 elab	refused	loft-suite/rules/heap/H-LongRef/1974-a-nested-vector-of-a-linked-type-appends-to-its-element.loft
-elab	refused	loft-suite/rules/heap/H-LongRef/2163-a-reference-taken-in-an-append-names-the-destinations-record.loft
-elab	refused	loft-suite/rules/heap/H-LongRef/2163-an-append-through-a-reference-parameter-names-its-callers-record.loft
 elab	refused	loft-suite/rules/heap/H-LongRef/2500-a-loop-over-a-linked-struct-enum-vector-reads-each-element.loft
+elab	refused	loft-suite/rules/heap/H-LongRef/a-reference-taken-in-an-append-names-the-destinations-record-through-a-parameter-too.loft
 elab	refused	loft-suite/rules/heap/H-LongRef/a-stored-reference-into-a-keyed-collection-holds-while-it-grows.loft
 elab	refused	loft-suite/rules/heap/H-Materialise/1693-a-disturbed-struct-enum-view-is-materialised-on-both-backends.loft
 elab	refused	loft-suite/rules/heap/H-Move/1591-a-coalesce-chain-that-holds-its-destination-releases-once.loft
