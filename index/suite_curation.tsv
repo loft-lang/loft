@@ -11,7 +11,7 @@ H-TailGrow	allocator	curated	2	2026-11-17	a_tail_record_grows_where_it_is + C ch
 H-Wilderness	allocator	curated	2	2026-11-17	oracle vs the tree-only allocator + fresh-store test; mutation 'equal size prefers the wilderness' caught
 B-Copy	binding	curated	92	2026-11-17	own dir 37 -> 23 cells by clause (record update 6->1, struct-enum 2->1, place-embedding 2->1, value branch + choice joins 6->1, compound values 2->1); 5 pending receipts measured by their cure switches; 139-drop-cascade moved to H-Drop; 2334 kept apart (gate E agrees with it); features 94 kept
 B-Disturb	binding	curated	46	2026-11-17	own dir 15 -> 10: overwrite + its control + whole-record write 3->1, growth + clear/method 2->1, callee-argument + loop liveness 2->1, later-arm + payload match views 2->1; the pending receipt measured; the removal cell gained a middle-element case that can fail (it could not) and a switch receipt; the six cells gate E agrees with stay apart (merging them needs a gate E run on the result)
-B-OutOfLine	binding	todo			
+B-OutOfLine	binding	curated	13	2026-11-17	8 small cells, one clause each, verdicts mixed: no merge. Switch sweep (194 LOFT_NO_*): only LOFT_NO_OUT_OF_LINE / LOFT_NO_SEVERAL_VARS move them, both by refusing the program, so no clause-specific receipt exists; the null-write view case gained a reallocation so a stale view would fail
 B-Ref-Alias	binding	todo			
 B-Ref-AnnotationOnly	binding	todo			
 B-Ref-Intro	binding	todo			
