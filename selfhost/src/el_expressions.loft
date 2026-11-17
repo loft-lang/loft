@@ -2220,11 +2220,32 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
     }
   }
   ba = attr_nr(el::def(e, d), "__retbuf");
+  // The buffer renamed onto the one local an `if` tail's arms answer beside literals: each
+  // literal is delivered into that local, which the other arm answers as it stands.
+  if ba < 0 && !e.first_pass && !(result is TyOptional) {
+    al = tail_arm_local(e, vars, tail_syntax(e, vars.body));
+    abl = match code { NdBlock { block } => block[0], _ => return code };
+    atail = if len(abl.operators) > 0 { el_ir::unspan(abl.operators[-1]) } else { ir::NdNull };
+    arec = element_content(e, match el_types::base(result) { TyVector { inner } => inner, _ => ir::TyVoid });
+    if al >= 0 && vars.vars[al]!.argument && hidden_param(e, vars, al) && atail is NdIf && arec >= 0 && !bound_from_call(code, al) {
+      abl.operators[-1] = deliver_arms(e, atail, al, arec);
+      abl.result = [el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb])];
+      return ir::NdBlock { block: [abl] };
+    }
+  }
   if ba < 0 {
     if !e.first_pass {
       el::refuse(e, "a function returning a vector whose buffer is renamed");
     }
     return code;
+  }
+  // The first pass of that tail: the local takes the buffer (`Rename`) where it is built once.
+  if e.first_pass && !(result is TyOptional) {
+    al1 = tail_arm_local(e, vars, tail_syntax(e, vars.body));
+    if al1 >= 0 && !vars.vars[al1]!.argument && child_allocs(e, vars, code, al1) < 2 && !bound_to_branch(code, al1) && !bound_from_call(code, al1) && !appends_call_in_loop(e, vars.body, el_vars::name_of(vars, al1), false) {
+      rename_onto(e, vars, rb, al1);
+      return code;
+    }
   }
   // A whole vector parameter at the tail is copied into the buffer (`copy_borrow_tail_into_
   // retbuf`); an `if` whose arms are literals (or, for `τ?`, nulls) delivers each literal into
@@ -2377,6 +2398,12 @@ pub fn lambda_vector_copy(e: el::El, code: ir::Node, rb: integer, result: ir::Ty
   }
   lit = match el_ir::unspan(bl.operators[-1]) { NdBlock { block } => literal_backing_store(block[0]) >= 0, _ => false };
   if !lit {
+    // A branch tail or a whole vector handed back is delivered into the lambda's buffer too
+    // (`materialize_vector_arms_into`, `borrow_tail_copy`), the buffer's own type borrowing it:
+    // not carried for a lambda, refused by name.
+    if el_ir::unspan(bl.operators[-1]) is NdIf || el_ir::unspan(bl.operators[-1]) is NdVar {
+      el::refuse(e, "a lambda returning a vector from a branch or a variable");
+    }
     return code;
   }
   elem = match el_types::base(result) { TyVector { inner } => inner, _ => ir::TyVoid };
@@ -2566,6 +2593,44 @@ pub fn arm_delivery(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer,
     }
     return code;
   }
+  // `q ?? [literal]` over a nullable vector parameter (`materialize_vector_arms_into` over the
+  // `??`'s branch): each arm is delivered into the buffer — the parameter copied in, the literal
+  // appended — and both release the literal's `_vec_N`; the body borrows the parameter.
+  if !(result is TyOptional) {
+    cq = coalesce_param_tail(e, vars, tail_syntax(e, vars.body));
+    if cq >= 0 {
+      cret = el::def(e, d).returned[0];
+      if !el_types::deps(cret).contains(ba) {
+        e.b.data.definitions[d].returned = [el_types::with_deps(cret, el_types::deps(cret) + [ba])];
+      }
+      if e.first_pass {
+        return code;
+      }
+      crec = element_content(e, match el_types::base(result) { TyVector { inner } => inner, _ => ir::TyVoid });
+      match tail {
+        NdIf { cond, t, f } => {
+          match f {
+            NdBlock { block: fb } => {
+              lb = fb[0];
+              lv = if lb.name == "Vector" && len(lb.operators) > 0 { match el_ir::unspan(lb.operators[-1]!) { NdVar { n: vn } => vn, _ => -1 } } else { -1 };
+              if lv >= 0 && crec >= 0 && el_ir::unspan(t) == ir::NdVar { n: cq } {
+                b0 = ir::NdVar { n: rb };
+                lb.operators[-1] = ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [b0]), el_ir::cl(e, "OpAppendVector", [b0, ir::NdVar { n: lv }, ir::NdInt { n: crec }]), el_ir::cl(e, "OpFreeRef", [ir::NdVar { n: lv }]), b0] };
+                ta = ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [b0]), el_ir::cl(e, "OpAppendVector", [b0, t, ir::NdInt { n: crec }]), el_ir::cl(e, "OpFreeRef", [ir::NdVar { n: lv }]), b0] };
+                bl.operators[-1] = ir::NdIf { cond: cond, t: ta, f: ir::NdBlock { block: [lb] } };
+                bl.result = [el_types::with_deps(el_types::without_deps(el_types::base(result)), [cq])];
+                return ir::NdBlock { block: [bl] };
+              }
+            },
+            _ => {}
+          }
+        },
+        _ => {}
+      }
+      el::refuse(e, "a vector `??` tail of a parameter and a literal in another shape");
+      return code;
+    }
+  }
   param = match tail { NdVar { n } => vars.vars[n]!.argument && !hidden_param(e, vars, n) && el_types::base(el_vars::tp(vars, n)) is TyVector, _ => false };
   // A vector field of a parameter is copied in as a whole vector parameter is.
   if !param && calls(e, tail, "OpGetField") {
@@ -2629,6 +2694,29 @@ pub fn arm_delivery(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer,
   answered = el_types::with_deps(el_types::without_deps(el_types::base(result)), borrowed);
   bl.result = [if result is TyOptional { ir::TyOptional { inner: answered } } else { answered }];
   ir::NdBlock { block: [bl] }
+}
+
+// The body's tail (by its syntax) as `q ?? [items]`, `q` a visible `vector<T>?` parameter and
+// the literal non-empty: the parameter, else -1.
+fn coalesce_param_tail(e: el::El, vars: el_vars::Vars, n: integer) -> integer {
+  if n < 0 {
+    return -1;
+  }
+  match e.p.nodes[n] {
+    SBin { op, l, r } => {
+      if op != "??" || !match e.p.nodes[r] { SVecLit { items } => len(items) > 0 && !(e.p.nodes[items[-1]!] is SRepeat), _ => false } {
+        return -1;
+      }
+      match e.p.nodes[l] {
+        SName { name, member } => {
+          v = el_vars::var(vars, name);
+          if member == "" && v >= 0 && vars.vars[v]!.argument && !hidden_param(e, vars, v) && el_vars::tp(vars, v) is TyOptional && (el_types::base(el_vars::tp(vars, v)) is TyVector) { v } else { -1 }
+        },
+        _ => -1
+      }
+    },
+    _ => -1
+  }
 }
 
 // The store of the one literal arm of the `if` at `n` when every other arm halts, else -1.
@@ -2824,13 +2912,51 @@ pub fn deliver_arms(e: el::El, n: ir::Node, rb: integer, rec: integer) -> ir::No
       bl.operators[-1] = deliver_arms(e, bl.operators[-1]!, rb, rec);
       ir::NdBlock { block: [bl] }
     },
-    // A parameter an arm answers is copied into the buffer; it keeps its own store.
-    NdVar { n: _ } => ir::NdInsert { items: [
+    // A parameter an arm answers is copied into the buffer; it keeps its own store.  The
+    // buffer itself (the local it was renamed onto) is the answer as it stands.
+    NdVar { n: av } => if av == rb { n } else { ir::NdInsert { items: [
       el_ir::cl(e, "OpClearVector", [ir::NdVar { n: rb }]),
       el_ir::cl(e, "OpAppendVector", [ir::NdVar { n: rb }, n, ir::NdInt { n: rec }]),
       ir::NdVar { n: rb }
-    ] },
+    ] } },
     _ => n
+  }
+}
+
+// An `if` tail (by its syntax) whose arms are non-empty vector literals and ONE vector local of
+// the body's own — or, on the second pass, the hidden buffer that local became: the local, else
+// -1.  `ref_return` renames the buffer onto it (`Rename`), and each literal arm is delivered
+// into it (`materialize_vector_arms_into`).
+pub fn tail_arm_local(e: el::El, vars: el_vars::Vars, n: integer) -> integer {
+  if n < 0 {
+    return -1;
+  }
+  match e.p.nodes[n] {
+    SIf { cond: _, then, other } => {
+      if other == null {
+        return -1;
+      }
+      a = arm_local(e, vars, then);
+      b = arm_local(e, vars, other!);
+      if a == -1 || b == -1 || a >= 0 && b >= 0 && a != b { -1 } else if a >= 0 { a } else { b }
+    },
+    _ => -1
+  }
+}
+
+// One arm of `tail_arm_local`: the local it answers, -2 for a literal, -1 for anything else.
+fn arm_local(e: el::El, vars: el_vars::Vars, n: integer) -> integer {
+  t = match e.p.nodes[n] { SBlock { stmts } => if len(stmts) == 1 { tail_syntax(e, n) } else { -1 }, _ => -1 };
+  if t < 0 {
+    return -1;
+  }
+  match e.p.nodes[t] {
+    SVecLit { items } => if len(items) > 0 && !(e.p.nodes[items[-1]!] is SRepeat) { -2 } else { -1 },
+    SName { name, member } => {
+      v = el_vars::var(vars, name);
+      if member == "" && v >= 0 && !starts_with(name, "_") && el_types::base(el_vars::tp(vars, v)) is TyVector && !(el_vars::tp(vars, v) is TyOptional) && (!vars.vars[v]!.argument || hidden_param(e, vars, v)) { v } else { -1 }
+    },
+    _ => -1
   }
 }
 

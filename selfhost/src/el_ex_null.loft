@@ -1504,7 +1504,7 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
     // At a function's tail an arm answering a visible vector parameter is delivered into the
     // return buffer (`vector_return`'s `arm_delivery`).
     fres = el::def(e, e.context).returned[0] ?? ir::TyVoid;
-    delivered = fres is TyVector && el_expressions::tail_if(e, vars, then) && param_or_no_var(e, vars, t.code) && param_or_no_var(e, vars, f.code);
+    delivered = fres is TyVector && el_expressions::tail_if(e, vars, then) && (param_or_no_var(e, vars, t.code) && param_or_no_var(e, vars, f.code) || el_expressions::tail_arm_local(e, vars, el_expressions::tail_syntax(e, vars.body)) >= 0);
     if (arm_answers_var(t.code) || arm_answers_var(f.code)) && expected is TyVoid && !delivered {
       el::refuse(e, "a vector `if` an arm of which answers a variable");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
