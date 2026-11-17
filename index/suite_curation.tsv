@@ -318,20 +318,20 @@ P-Rule	matching	curated	4	2026-11-18	4 cells of distinct clauses (arm order, rea
 P-Seq	matching	curated	6	2026-11-18	one cell (a patch)
 P-Whole	matching	curated	3	2026-11-18	no own directory; cited by suite cells of the matching chapter
 WF-Pure	matching	curated	2	2026-11-18	had no cell and no citation: a first suite cell (printing and clock-reading sub-rules refused, a pure one admitted) and a citation at match_fields' purity check
-WF-Term	matching	todo			
-E-And	operational	todo			
-E-Asgn	operational	todo			
-E-Asgn-Compound	operational	todo			
-E-Asgn-Discharge	operational	todo			
-E-Coalesce	operational	todo			
-E-Concat	operational	todo			
-E-Default	operational	todo			
-E-Eq	operational	todo			
-E-Eq-Key	operational	todo			
-E-IfT	operational	todo			
-E-Left	operational	todo			
-E-Null	operational	todo			
-E-NullArg	operational	todo			
+WF-Term	matching	curated	2	2026-11-18	no own directory; one suite cell elsewhere cites it
+E-And	operational	curated	3	2026-11-18	2 cells, both gate-E-agreeing
+E-Asgn	operational	curated	6	2026-11-18	4 cells: two patches, a refusal, an agreeing program
+E-Asgn-Compound	operational	curated	10	2026-11-18	6 cells: four patches (one per file), loft#2426 and an agreeing program
+E-Asgn-Discharge	operational	curated	5	2026-11-18	own dir 3 -> 2: loft#1212's two refusals 2->1; the compound-through-a-discharge program stays
+E-Coalesce	operational	curated	1	2026-11-18	own dir 2 -> 1: nested-container default + loft#2300 local consumed in place
+E-Concat	operational	curated	2	2026-11-18	2 cells: loft#2046's program and its refusal
+E-Default	operational	curated	1	2026-11-18	one cell
+E-Eq	operational	curated	23	2026-11-18	13 cells: patches (one per file), agreeing programs, and refused programs of distinct clauses (2062, 2500, the else-if discharge, identity) — the identity program and its refusal cannot share a file
+E-Eq-Key	operational	curated	1	2026-11-18	one cell
+E-IfT	operational	curated	1	2026-11-18	one cell
+E-Left	operational	curated	11	2026-11-18	own dir 5 -> 4: loft#2451 + the literal/format/compound operands 2->1; the patch and two agreeing programs stay
+E-Null	operational	curated	3	2026-11-18	one cell
+E-NullArg	operational	curated	11	2026-11-18	3 cells: two patches and the uniform-comparison program
 E-Op	operational	todo			
 E-Op-IntDivMod	operational	todo			
 E-Or	operational	todo			
