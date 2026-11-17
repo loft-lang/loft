@@ -347,12 +347,12 @@ The real defects the checker found first:
    `for … { g = fn() {..a..}; a = [i] }` the declaration's backing still named the record's
    capture, and the frame's end freed both.  Let-go point 5 hands the backing's store to a record
    whose live cascade frees it (`LOFT_NO_STAYING_RECORD_TAKES_BACKING`); suite cell
-   L-CapKeep/a-staying-record-rebuilt-in-one-pass-frees-its-capture-once.  L-Apply's three
+   L-CapKeep/each-run-of-a-build-in-a-loop-is-its-own-record-and-a-kept-closure-keeps-its-pass.  L-Apply's three
    findings and 2357's `after_local` / `after_in_frame` were this.
 13. **A pass-scoped fn-ref beside a kept one freed its record twice** — a second loop keeping a
    fn-ref gates the frame (`closure_keep`), and the pass-scoped fn-ref then released its confined
    record too (`LOFT_NO_CONFINED_RECORD_STAND_DOWN`); suite cell
-   L-CapKeep/a-pass-scoped-fn-ref-beside-a-kept-one-frees-its-record-once.  L-CapRebind
+   L-CapKeep/each-run-of-a-build-in-a-loop-is-its-own-record-and-a-kept-closure-keeps-its-pass.  L-CapRebind
    vector's findings were this and 12.
 14. **A call rebind in a loop refilled the vector a closure captured** — `a = mkv(i)` after the
    build answered the value assigned after it: silent-wrong, both backends.  The call's buffer is

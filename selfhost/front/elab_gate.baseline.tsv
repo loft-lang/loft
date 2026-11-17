@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	c28f079e053d550fb6ee68943049c672ba18cb32
+suite	e6ba65d70c7db0abc23aa1908074277ba736d516
 
-layer	elab	agree	1031	of	2172
+layer	elab	agree	1031	of	2169
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -156,13 +156,10 @@ elab	refused	loft-suite/rules/closures/L-CapHeap/1715-a-null-that-arrived-as-a-v
 elab	refused	loft-suite/rules/closures/L-CapHeap/1725-a-reassigned-join-capture-keeps-the-store-its-record-holds.loft
 elab	refused	loft-suite/rules/closures/L-CapHeap/a-captured-heap-parameter-is-shared-with-the-caller-both-ways.loft
 elab	refused	loft-suite/rules/closures/L-CapHeap/a-lambda-reads-its-captures-inside-a-comprehension-and-leaves-them-alive.loft
-elab	refused	loft-suite/rules/closures/L-CapKeep/1636-a-closure-kept-from-a-loop-pass-keeps-that-pass.loft
 elab	refused	loft-suite/rules/closures/L-CapKeep/2272-a-fn-ref-bound-in-every-arm-keeps-the-arm-that-ran.loft
 elab	refused	loft-suite/rules/closures/L-CapKeep/2273-a-fn-ref-copied-out-of-a-field-is-a-copy.loft
-elab	refused	loft-suite/rules/closures/L-CapKeep/2357-a-capture-re-assigned-in-its-loop-keeps-the-store-its-build-named.loft
 elab	refused	loft-suite/rules/closures/L-CapKeep/2512-a-lambda-the-callee-hands-back-is-released-once.loft
-elab	refused	loft-suite/rules/closures/L-CapKeep/a-pass-scoped-fn-ref-beside-a-kept-one-frees-its-record-once.loft
-elab	refused	loft-suite/rules/closures/L-CapKeep/a-staying-record-rebuilt-in-one-pass-frees-its-capture-once.loft
+elab	refused	loft-suite/rules/closures/L-CapKeep/each-run-of-a-build-in-a-loop-is-its-own-record-and-a-kept-closure-keeps-its-pass.loft
 elab	refused	loft-suite/rules/closures/L-CapOne/2281-the-record-that-leaves-on-this-run-owns-the-capture.loft
 elab	refused	loft-suite/rules/closures/L-CapOwn/1606-a-closure-releases-what-it-captured-once-hooks-first.loft
 elab	refused	loft-suite/rules/closures/L-CapOwn/1609-a-closure-that-leaves-its-frame-runs-its-captures-hooks.loft
