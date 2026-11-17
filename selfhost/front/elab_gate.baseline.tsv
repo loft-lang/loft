@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	ad76762df88a83900ec342d028a9469c66dbddfa
+suite	4f06dc9d7ad04b352893ef53e09e8615e32dcbda
 
-layer	elab	agree	1031	of	2104
+layer	elab	agree	1031	of	2102
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -357,9 +357,7 @@ elab	refused	loft-suite/rules/layout/L-Narrow-Linked/stack-trace-reflection-deco
 elab	refused	loft-suite/rules/layout/L-Narrow-Spare/1634-a-narrow-types-default-is-the-same-at-every-frame-boundary.loft
 elab	refused	loft-suite/rules/layout/L-Narrow/1437-an-unsigned-four-byte-slot-decodes-unsigned.loft
 elab	refused	loft-suite/rules/layout/L-Narrow/a-stored-tuple-member-is-written-in-its-own-width.loft
-elab	refused	loft-suite/rules/layout/L-Null-Tag/1138-an-absent-nullable-struct-stays-absent-across-a-call.loft
-elab	refused	loft-suite/rules/layout/L-Null-Tag/1139-a-returned-tuple-with-a-nullable-member-round-trips.loft
-elab	refused	loft-suite/rules/layout/L-Null-Tag/1198-a-nullable-source-is-tagged-into-its-slot.loft
+elab	refused	loft-suite/rules/layout/L-Null-Tag/a-nullable-struct-is-tagged-into-its-slot-and-stays-absent-across-a-call.loft
 elab	refused	loft-suite/rules/layout/L-Null-Tag/a-pattern-binds-a-nullable-record-field-through-its-tag.loft
 elab	refused	loft-suite/rules/layout/L-Null-Text/1795-an-absent-text-has-no-characters.loft
 elab	refused	loft-suite/rules/layout/L-Null-Which/1367-a-tagged-projection-bound-to-a-local-is-the-pointer.loft
