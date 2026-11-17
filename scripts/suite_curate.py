@@ -741,7 +741,14 @@ def done(tag, note):
     if tag not in rows:
         print(f"no ledger row for {tag} (init first)")
         return 1
-    n = len(cells_of(tag))
+    cells = cells_of(tag)
+    n = len(cells)
+    in_suite = [c for c in cells if c.startswith("suite:") or "/rules/" in c or c.startswith("rules/")]
+    if n and not in_suite:
+        # Guarded only outside the language suite (a Rust test, a source comment): the owner's
+        # rule is a first suite cell from the formal text, or a note that says why none can be.
+        print(f"  note  no SUITE cell cites @FR-{tag} ({n} citing file(s), none a cell): write its "
+              "first cell from the formal text, or say in the note why a program cannot observe it")
     rows[tag][2] = "needs-cell" if n == 0 else "curated"
     rows[tag][3] = str(n)
     rows[tag][4] = datetime.date.today().isoformat()
