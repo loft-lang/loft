@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	243477774e7fc0892e48bee417fea1426631d496
+suite	3718acc398776ef2349499f0183fea8baa9a6798
 
-layer	elab	agree	1031	of	2099
+layer	elab	agree	1031	of	2098
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -362,12 +362,11 @@ elab	refused	loft-suite/rules/layout/L-Null-Text/1795-an-absent-text-has-no-char
 elab	refused	loft-suite/rules/layout/L-Null-Which/1367-a-tagged-projection-bound-to-a-local-is-the-pointer.loft
 elab	refused	loft-suite/rules/layout/L-Null-Which/2443-a-struct-enum-element-read-off-a-call-borrows-the-vector.loft
 elab	refused	loft-suite/rules/layout/L-Null-Which/a-multi-pattern-arm-binds-a-nullable-field-of-each-variant.loft
-elab	refused	loft-suite/rules/layout/L-Null/1143-a-returned-nullable-keyed-parameter-is-still-the-callers.loft
-elab	refused	loft-suite/rules/layout/L-Null/1150-a-keyed-return-that-can-be-absent-hands-back-what-it-built.loft
 elab	refused	loft-suite/rules/layout/L-Null/1422-a-nullable-return-source-owns-its-store.loft
 elab	refused	loft-suite/rules/layout/L-Null/1782-an-omitted-nullable-struct-enum-field-is-absent.loft
 elab	refused	loft-suite/rules/layout/L-Null/a-nested-block-that-binds-the-buffer-from-a-call-delivers-into-it.loft
 elab	refused	loft-suite/rules/layout/L-Null/a-nullable-is-laid-out-and-owned-like-its-dense-twin.loft
+elab	refused	loft-suite/rules/layout/L-Null/a-nullable-keyed-collection-crosses-a-call-as-its-dense-twin.loft
 elab	refused	loft-suite/rules/layout/L-Null/a-nullable-pointer-or-handle-keeps-its-representation-and-its-sentinel.loft
 elab	refused	loft-suite/rules/layout/L-Null/bind-copies-or-views-the-whole-boundary.loft
 elab	refused	loft-suite/rules/layout/L-OutOfLine/a-field-that-would-contain-its-host-is-a-child.loft
