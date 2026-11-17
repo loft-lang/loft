@@ -330,7 +330,6 @@ deviation; guards
 `loft-suite/rules/heap/H-Removed/a-cleared-vector-releases-the-records-a-reference-named.loft`,
 `loft-suite/rules/heap/H-RefHome/a-stored-reference-cannot-outlive-the-record-it-names.loft`,
 `loft-suite/rules/heap/H-RefHome/a-record-a-stored-reference-names-lives-as-long-as-its-holder-however-it-was-built.loft`,
-`loft-suite/rules/heap/H-RefHome/a-record-a-stored-reference-names-lives-as-long-as-its-holder-however-it-was-built.loft`,
 `loft-suite/rules/heap/H-RefHome/a-stored-reference-its-record-outlives-reads-it.loft` and
 `loft-suite/rules/heap/H-Stride/1670-a-vector-operation-walks-the-stride-its-layout-has.loft`.
 **Catalogue:** reads @C125 · binding.md B-Disturb · `bench/portal/analysis/worklist.md` § 4 (`mesh_to_floats`)

@@ -210,18 +210,18 @@ H-Lease	heap	curated	6	2026-11-17	no own directory; cited by suite cells of the 
 H-LongRef	heap	curated	9	2026-11-17	own dir 6 -> 5: loft#2163's two cells 2->1; the patch, loft#2500, the keyed-collection hold and the agreeing program stay (distinct clauses)
 H-Materialise	heap	curated	14	2026-11-17	4 cells: two patches and two gate-E-agreeing programs
 H-Move	heap	curated	24	2026-11-17	12 cells: eleven patches (one per file) and the moved-local control
-H-NewRec	heap	todo			
-H-Read	heap	todo			
-H-ReadNull	heap	todo			
-H-Ref	heap	todo			
-H-RefElem	heap	todo			
-H-RefHome	heap	todo			
-H-RefNull	heap	todo			
-H-RefSet	heap	todo			
-H-RefVal	heap	todo			
-H-Removed	heap	todo			
-H-RootExtent	heap	todo			
-H-ShortRef	heap	todo			
+H-NewRec	heap	curated	3	2026-11-17	one cell (a recursive enum builds its vector children in one literal)
+H-Read	heap	curated	1	2026-11-17	no own directory; cited by suite cells of the heap chapter
+H-ReadNull	heap	curated	2	2026-11-17	one cell
+H-Ref	heap	curated	2	2026-11-17	no own directory; cited by suite cells of the heap chapter
+H-RefElem	heap	curated	1	2026-11-17	one cell (a patch refusal: loft#1972)
+H-RefHome	heap	curated	9	2026-11-17	own dir 6 -> 4: a record a stored reference names lives as long as its holder, however built (the patch, the literal-argument call result, the holder's store) 3->1; the generic recursive enum, the outlive refusal and the reads-it program stay
+H-RefNull	heap	curated	2	2026-11-17	no own directory; cited by suite cells of the heap chapter
+H-RefSet	heap	curated	3	2026-11-17	no own directory; cited by suite cells of the heap chapter
+H-RefVal	heap	curated	2	2026-11-17	2 cells: a patch control and a gate-E-agreeing program
+H-Removed	heap	curated	8	2026-11-17	2 cells, both patches (one per file)
+H-RootExtent	heap	curated	3	2026-11-17	one cell
+H-ShortRef	heap	curated	4	2026-11-17	2 cells, both gate-E-agreeing
 H-Sound	heap	todo			
 H-Spent	heap	todo			
 H-Stride	heap	todo			
