@@ -398,23 +398,47 @@ pub fn fn_number_write(e: el::El, vars: el_vars::Vars, r: ir::Node, pos: ir::Nod
 // `emit_tuple_set_ops`: a tuple field written member by member, each at the field's position
 // plus its own in the `__tuple<…>` struct.  Null where the value is no tuple of the field's
 // shape, or a member is no plain scalar or text.
-pub fn tuple_field_set(e: el::El, elems: vector<ir::TypeT>, r: ir::Node, base: integer, val: ir::Node, vt: ir::TypeT, name: text) -> ir::Node? {
+pub fn tuple_field_set(e: el::El, vars: el_vars::Vars, elems: vector<ir::TypeT>, r: ir::Node, base: integer, val: ir::Node, vt: ir::TypeT, name: text) -> ir::Node? {
   td = el_types::tuple_def_of(e, elems);
   items = match el_ir::unspan(val) { NdTuple { items: vi } => vi, _ => [] };
   vts = match vt { TyTuple { elems: ve } => ve, _ => [] };
+  ops: vector<ir::Node> = [];
+  // A tuple LOCAL gives its members (`x.0`); any other tuple value — a call's — is held in a
+  // work ref first, named on both passes.
+  if len(items) == 0 && len(vts) == len(elems) {
+    tv = match el_ir::unspan(val) { NdVar { n: lv } => lv, _ => -1 };
+    if tv < 0 && el_ir::unspan(val) is NdCall {
+      tv = el_vars::work_ref(vars, el_types::with_deps(vt, []));
+      ops += [el_ir::v_set(tv, val)];
+    }
+    if tv >= 0 {
+      for m in elems {
+        items += [ir::NdTupleGet { var: tv, idx: m#index }];
+      }
+    }
+  }
+  if e.first_pass {
+    return ir::NdNull;
+  }
   if td < 0 || len(items) != len(elems) || len(vts) != len(elems) {
     return null;
   }
-  ops: vector<ir::Node> = [];
   for m in elems {
     mt = el_types::base(m);
     ht = el_types::base(vts[m#index]!);
     fits = (mt is TyInteger && ht is TyInteger) || (mt is TyText && ht is TyText) || (mt is TyBoolean && ht is TyBoolean) || (mt is TyFloat && ht is TyFloat) || (mt is TySingle && ht is TySingle) || (mt is TyCharacter && ht is TyCharacter);
+    item = items[m#index]!;
+    // `@FR-C-Tuple` over `@FR-C-Num`: an integer member widens into a float one.
+    plain_int = match ht { TyInteger { spec: hs } => hs.forced_size == 0 && el_types::narrow_width(hs) == 0, _ => false };
+    if mt is TyFloat && plain_int {
+      item = el_ir::cl(e, "OpConvFloatFromInt", [item]);
+      fits = true;
+    }
     if !fits {
       return null;
     }
     ta = el::def(e, td).attributes[m#index]!;
-    ops += [write_at(e, ta, r, ir::NdInt { n: base + field_position(e, td, ta.name) }, items[m#index]!)];
+    ops += [write_at(e, ta, r, ir::NdInt { n: base + field_position(e, td, ta.name) }, item)];
   }
   el_ir::v_block(ops, ir::TyVoid, name)
 }

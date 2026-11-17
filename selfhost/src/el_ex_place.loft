@@ -155,14 +155,14 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
   tuple_reads = match el_ir::unspan(p.code) { NdTuple { items: ti } => ti, _ => [] };
   if len(tuple_reads) > 0 && p.tp is TyTuple {
     tx = el_ex_assign::expression(e, vars, rhs);
-    if e.first_pass {
-      return ex(ir::NdNull, ir::TyVoid);
-    }
     first = match el_ir::unspan(tuple_reads[0]!) { NdCall { args: fa } => fa, _ => [] };
     fpos = match el_ir::unspan(first[1] ?? ir::NdNull) { NdInt { n: fp } => fp, _ => -1 };
     tw: ir::Node? = null;
     if op == "=" && fpos >= 0 {
-      tw = el_ex_object::tuple_field_set(e, match p.tp { TyTuple { elems: pe } => pe, _ => [] }, first[0]!, fpos, tx.code, tx.tp, "tuple_field_set_via_assign");
+      tw = el_ex_object::tuple_field_set(e, vars, match p.tp { TyTuple { elems: pe } => pe, _ => [] }, first[0]!, fpos, tx.code, tx.tp, "tuple_field_set_via_assign");
+    }
+    if e.first_pass {
+      return ex(ir::NdNull, ir::TyVoid);
     }
     if tw == null {
       el::refuse(e, "a tuple field given something other than a tuple of plain scalars and texts");
@@ -2457,14 +2457,14 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
           continue;
         } else if el_types::base(at) is TyTuple {
           // A tuple field is set member by member (`tuple_field_set`).
-          if e.first_pass {
-            found += [fname];
-            continue;
-          }
-          ts = el_ex_object::tuple_field_set(e, match el_types::base(at) { TyTuple { elems: te } => te, _ => [] }, r, field_position(e, d, fname), x.code, x.tp, "tuple_field_set");
+          ts = el_ex_object::tuple_field_set(e, vars, match el_types::base(at) { TyTuple { elems: te } => te, _ => [] }, r, field_position(e, d, fname), x.code, x.tp, "tuple_field_set");
           if ts == null {
             el::refuse(e, "a tuple field given something other than a tuple of plain scalars and texts");
             return null;
+          }
+          if e.first_pass {
+            found += [fname];
+            continue;
           }
           list += [ts!];
           found += [fname];
