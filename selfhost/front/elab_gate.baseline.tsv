@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	58aac622890e934c3f5b3237d30958cbf3af5244
+suite	b3b624f563a7494daccd520e9a620c72d71bc549
 
-layer	elab	agree	1031	of	2178
+layer	elab	agree	1031	of	2177
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -166,17 +166,16 @@ elab	refused	loft-suite/rules/closures/L-CapKeep/2512-a-lambda-the-callee-hands-
 elab	refused	loft-suite/rules/closures/L-CapKeep/a-pass-scoped-fn-ref-beside-a-kept-one-frees-its-record-once.loft
 elab	refused	loft-suite/rules/closures/L-CapKeep/a-staying-record-rebuilt-in-one-pass-frees-its-capture-once.loft
 elab	refused	loft-suite/rules/closures/L-CapOne/2281-the-record-that-leaves-on-this-run-owns-the-capture.loft
-elab	refused	loft-suite/rules/closures/L-CapOwn/1474-a-branch-of-lambdas-delivers-the-arm-that-ran.loft
 elab	refused	loft-suite/rules/closures/L-CapOwn/1477-an-explicit-return-of-a-lambda-keeps-its-capture.loft
 elab	refused	loft-suite/rules/closures/L-CapOwn/1606-a-closure-releases-what-it-captured-once-hooks-first.loft
 elab	refused	loft-suite/rules/closures/L-CapOwn/1609-a-closure-that-leaves-its-frame-runs-its-captures-hooks.loft
 elab	refused	loft-suite/rules/closures/L-CapOwn/1610-a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft
-elab	refused	loft-suite/rules/closures/L-CapOwn/2131-a-closure-over-a-value-branch-local-owns-only-the-arm-that-ran.loft
 elab	refused	loft-suite/rules/closures/L-CapOwn/2154-a-leaving-closure-over-an-element-view-keeps-the-vectors-store.loft
 elab	refused	loft-suite/rules/closures/L-CapOwn/2282-a-frame-answering-text-releases-the-closure-it-holds.loft
 elab	refused	loft-suite/rules/closures/L-CapOwn/2284-overwriting-a-fn-field-leaves-the-frames-captures-to-the-frame.loft
 elab	refused	loft-suite/rules/closures/L-CapOwn/2504-a-capture-relayed-by-a-nested-lambda-stays-its-owners.loft
 elab	refused	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft
+elab	refused	loft-suite/rules/closures/L-CapOwn/a-closure-over-a-branch-owns-only-the-arm-that-ran.loft
 elab	refused	loft-suite/rules/closures/L-CapOwn/a-leaving-closure-releases-each-kind-of-capture-once.loft
 elab	refused	loft-suite/rules/closures/L-CapOwn/a-rebind-releases-the-closure-record-it-displaces-whatever-replaces-it.loft
 elab	refused	loft-suite/rules/closures/L-CapOwn/a-rebuild-in-a-loop-keeps-the-capture-it-takes-again.loft
