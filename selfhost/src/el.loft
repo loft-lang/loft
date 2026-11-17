@@ -234,6 +234,13 @@ pub struct RefusedIn {
 }
 
 pub fn refuse(el: El, what: text) {
+  // `LOFT_ELAB_SKIP=<text>`: a measurement switch — a refusal starting with that text is not
+  // recorded, so a run shows whether the code built beside it already agrees with Rust's (a
+  // guard gone stale) or what still differs.  Never set for a gate.
+  skip = env_variable("LOFT_ELAB_SKIP") ?? "";
+  if len(skip) > 0 && starts_with(what, skip) {
+    return;
+  }
   // By function first: the definition being elaborated (`""` outside one), once per text.
   fname = if el.context >= 0 && el.context < len(el.b.data.definitions) { el.b.data.definitions[el.context].name } else { "" };
   known = false;

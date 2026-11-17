@@ -1884,6 +1884,10 @@ pub fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text,
     db = el_types::base(declared!);
     c = if db is TyVector || el_convert::struct_enum(db) { el_convert::null_of(e, ir::TyReference { n: 0, dep: [] }) } else { el_convert::null_of(e, el_types::without_deps(db)) };
   }
+  // The first pass's value is the second pass's to convert where its type is still settling.
+  if c == null && e.first_pass {
+    c = x.code;
+  }
   if c == null {
     refuse_known(e, x.tp, "a value its declared type converts: {type_kind(x.tp)} to {type_kind(declared!)}");
     return ex(ir::NdNull, ir::TyVoid);
