@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	343bcbdfb7a5d632f2e8516e5704c402e4b299d2
+suite	b476b7a4c949050fd35a6a88933662f7286fc5fd
 
-layer	elab	agree	964	of	2183
+layer	elab	agree	964	of	2182
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -110,8 +110,7 @@ elab	refused	loft-suite/rules/calls/F-Default/a-default-reads-the-earlier-argume
 elab	refused	loft-suite/rules/calls/F-OneBody/2318-a-library-function-under-a-runtime-natives-name-leaves-the-runtimes-call.loft
 elab	refused	loft-suite/rules/calls/F-Package/a-package-reads-as-pub-in-its-own-directory-and-passes-nothing-on.loft
 elab	refused	loft-suite/rules/calls/F-Package/f_package_relay_lib.loft
-elab	refused	loft-suite/rules/calls/F-ParamHeap/1415-a-null-arm-source-that-views-a-parameter.loft
-elab	refused	loft-suite/rules/calls/F-ParamHeap/2137-a-coalesce-argument-shares-the-place-it-chose.loft
+elab	refused	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft
 elab	refused	loft-suite/rules/calls/F-ParamRebind/a-whole-write-through-a-link-to-a-plain-parameter-rebinds-the-callees-name-only.loft
 elab	refused	loft-suite/rules/calls/F-ParamRef/a-slot-parameter-writes-the-field-it-is-handed.loft
 elab	refused	loft-suite/rules/calls/F-ParamScalar/a-compound-write-to-a-tuple-parameters-member-is-the-callees-copy.loft
