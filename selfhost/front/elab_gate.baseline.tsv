@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	3bf71c100e5ca3835df13fdac3ee6c440232f8c4
+suite	b4f84789d7d894f28649024a6e488971eeed5257
 
-layer	elab	agree	1031	of	2112
+layer	elab	agree	1031	of	2111
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -331,9 +331,8 @@ elab	refused	loft-suite/rules/interfaces/G-Sat/1818-a-bound-is-satisfied-only-by
 elab	refused	loft-suite/rules/interfaces/G-Select/a-generic-ranks-below-a-concrete-match.loft
 elab	refused	loft-suite/rules/interfaces/G-Type/a-compound-on-a-generic-structs-field-writes-that-field-once.loft
 elab	refused	loft-suite/rules/interfaces/G-Type/a-template-instance-is-its-hand-written-twin-its-variants-included.loft
-elab	refused	loft-suite/rules/iteration/I-Comp/2335-a-literal-whose-item-reads-its-destination-through-a-call-reads-what-it-held.loft
 elab	refused	loft-suite/rules/iteration/I-Comp/2345-a-comprehension-over-rev-stops-at-the-first-element.loft
-elab	refused	loft-suite/rules/iteration/I-Comp/2446-a-concatenation-reading-its-destination-in-a-loop-reads-what-it-held.loft
+elab	refused	loft-suite/rules/iteration/I-Comp/a-build-that-reads-its-destination-reads-what-it-held.loft
 elab	refused	loft-suite/rules/iteration/I-Comp/a-comprehension-builds-fresh-records.loft
 elab	refused	loft-suite/rules/iteration/I-Comp/a-comprehension-destructures-its-element.loft
 elab	refused	loft-suite/rules/iteration/I-Comp/a-comprehension-yields-a-scalar-tuple-element-whole.loft
