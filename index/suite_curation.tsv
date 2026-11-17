@@ -74,10 +74,10 @@ L-CapHeap	closures	curated	17	2026-11-17	own dir 7 -> 5: a lambda reads its capt
 L-CapKeep	closures	curated	7	2026-11-17	own dir 8 -> 5: each run of a build in a loop is its own record, a kept closure keeps its pass (loft#1636 + three) 4->1; 2272, 2273, 2512 and the agreeing cell are distinct
 L-CapOne	closures	curated	5	2026-11-17	2 cells, gate E splits them (2281 refused, 2363 agrees) — nothing to merge
 L-CapOwn	closures	curated	29	2026-11-17	own dir 23 -> 15: a closure confined to a loop pass borrows (loft#2505, #2524, #2514) 3->1; a rebind releases the displaced record (loft#2155 + the plain-lambda rebind) 2->1; a closure over a branch owns the arm that ran (loft#1473/#1474, #2131) 2->1; a leaving closure takes its captures (each kind, loft#1477, #2154, #2282) 4->1; the rest are patches, gate-E-agreeing or distinct (the nested relay, the rebuild in a loop)
-L-CapRebind	closures	todo			
-L-CapRef	closures	todo			
-L-CapScalar	closures	todo			
-L-CapWrite	closures	todo			
+L-CapRebind	closures	curated	3	2026-11-17	own dir 5 -> 1: a rebind of a captured local leaves the record its build's store (loft#1862 patch, #2459, call rebind in a loop, call-buffer rotation, release by whoever keeps it) 5->1, @catches LOFT_NO_OWNER_WITNESS kept and shown
+L-CapRef	closures	curated	4	2026-11-17	own dir 4 -> 2: a captured & parameter shares its heap pointee and copies its scalar 3->1; the write refusal stays
+L-CapScalar	closures	curated	6	2026-11-17	one cell (a captured scalar keeps its type and its moment)
+L-CapWrite	closures	curated	5	2026-11-17	own dir 6 -> 4: a captured text a closure writes (loft#2286, #2297, #2350) 3->1; the narrow boxing cell, the two-closure refusal and the shared struct field stay
 L-Escape	closures	todo			
 L-Fn	closures	todo			
 L-FnAbsent	closures	todo			
