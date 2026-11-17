@@ -181,8 +181,14 @@ t_4File_lines — 1 read(s) straight into their local`, i.e. `c = self.content()
 its `__ncc_1`): the program image holds `__ncc_1` at no slot (65535) and the locals after it
 24 bytes lower (`p` 120, where the rewrite switched off gives `__ncc_1` 120 and `p` 144) — so
 the image IS the rewritten function, and the writer still lays the frame out 16 bytes deeper
-(every stack distance in the first operators reads 176 where the image has 160).  Not yet
-read: where `bgen.loft` takes a function's starting depth from, which is the next step; a
+(every stack distance in the first operators reads 176 where the image has 160).  The first operator IS the entry
+`reserve_frame`: 160 in the image, 176 written.  Frame start is 40 (the two arguments and
+the return slot), so Rust reserves to 200 — the end of `e` (192 + 8) — and the writer to 216,
+the stepped end of `_elm_3` (200 + 12), the true extent.  With the rewrite off both reserve
+alike.  So the question is which variables Rust's entry reserve covers once the rewrite has
+moved the slots down — read the entry reserve in `src/state/codegen.rs` against
+`bgen.loft`'s before changing either; Rust under-reserving there is one possible answer, and
+then it is a compiler defect to file, not a writer one.  A
 scratch tool that prints an image's stack positions is a ten-line loft program over
 `load::load` (the fields are private to `ir`, so it runs in a scratch copy of the package).
 A development build of `bgen_check` needs
