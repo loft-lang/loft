@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	3be8f8e9f479fa58bce694aa2a16cfb314b7c395
+suite	56dbb75824f9b8cb4e15abc4400b32cb42ecad2c
 
-layer	elab	agree	964	of	2207
+layer	elab	agree	964	of	2205
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -46,11 +46,9 @@ elab	refused	loft-suite/rules/binding/B-OutOfLine/a-view-into-an-inline-nullable
 elab	refused	loft-suite/rules/binding/B-OutOfLine/a-write-copies-into-the-host.loft
 elab	refused	loft-suite/rules/binding/B-OutOfLine/an-unlink-moves-and-a-literal-is-built-in-its-child.loft
 elab	refused	loft-suite/rules/binding/B-Ref-Alias/1433-a-keyed-alias-is-a-link-not-a-copy.loft
-elab	refused	loft-suite/rules/binding/B-Ref-Alias/2136-one-place-handed-to-two-ref-parameters-is-one-place.loft
-elab	refused	loft-suite/rules/binding/B-Ref-Alias/2136-one-place-through-a-fn-ref-or-a-method-is-one-place.loft
-elab	refused	loft-suite/rules/binding/B-Ref-Alias/2424-a-link-to-a-ref-vector-parameter-shares-its-handle.loft
 elab	refused	loft-suite/rules/binding/B-Ref-Alias/a-link-composes-with-tuples-repoints-and-ref-params.loft
 elab	refused	loft-suite/rules/binding/B-Ref-Alias/a-null-written-to-a-collection-reaches-every-name-for-it.loft
+elab	refused	loft-suite/rules/binding/B-Ref-Alias/one-place-named-through-ref-parameters-and-links-is-one-place.loft
 elab	refused	loft-suite/rules/binding/B-Ref-Intro/1372-a-reference-links-a-nullable-slot.loft
 elab	refused	loft-suite/rules/binding/B-Ref-Intro/1443-a-closure-written-through-a-fn-parameter-link.loft
 elab	refused	loft-suite/rules/binding/B-Ref-Intro/1454-a-fn-local-carries-a-reference-link.loft
