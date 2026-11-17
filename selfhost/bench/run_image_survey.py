@@ -84,6 +84,9 @@ def one(f, loft, runner, tmp, env, timeout, written=False, test=None, libargs=()
         # would share it with every other test function run at once from one directory — the
         # test functions of one file race on it (both the interpreter's run and the runner's).
         prog = os.path.join(job_tmp, stem + ".loft")
+        # Its modules (`use a_lib;` beside the test file) are found where the file is: the source
+        # directory is a library directory of the wrapper.
+        libargs = (*libargs, "--lib", os.path.dirname(f))
         with open(prog, "w", encoding="utf-8") as fh:
             fh.write(open(f, encoding="utf-8", errors="replace").read() + f"\n\nfn main() {{\n  {test}();\n}}\n")
         f = prog
