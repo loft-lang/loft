@@ -198,18 +198,18 @@ H-Drop-Not	heap	curated	7	2026-11-17	no own directory; cited by suite cells of t
 H-Elide	heap	curated	2	2026-11-17	no own directory; cited by suite cells of the heap chapter
 H-Free	heap	curated	16	2026-11-17	own dir 19 -> 14: a call frees what it made for an argument 3->1; an early exit frees what the frame owns 3->1; each pass frees its copied answer 2->1; the gate-E-agreeing programs, the patch and the distinct refused cells stay
 H-FreeAll	heap	curated	5	2026-11-17	no own directory; cited by suite cells of the heap chapter
-H-FreeAny	heap	todo			
-H-FreeNull	heap	todo			
-H-FreeStack	heap	todo			
-H-FreeTwice	heap	todo			
-H-Handle	heap	todo			
-H-Handle-Copy	heap	todo			
-H-Index	heap	todo			
-H-KeepRoom	heap	todo			
-H-Lease	heap	todo			
-H-LongRef	heap	todo			
-H-Materialise	heap	todo			
-H-Move	heap	todo			
+H-FreeAny	heap	curated	2	2026-11-17	no own directory; cited by suite cells of the heap chapter
+H-FreeNull	heap	curated	3	2026-11-17	own dir 2 -> 1: freeing null releases nothing on every path (the null heap value + loft#2417)
+H-FreeStack	heap	curated	2	2026-11-17	no own directory; cited by suite cells of the heap chapter
+H-FreeTwice	heap	curated	16	2026-11-17	no own directory; cited by suite cells of the heap chapter
+H-Handle	heap	curated	6	2026-11-17	5 cells: two patches, two gate-E-agreeing programs and the refused field-append — distinct
+H-Handle-Copy	heap	curated	2	2026-11-17	no own directory; cited by suite cells of the heap chapter
+H-Index	heap	curated	8	2026-11-17	one cell (a patch: loft#1669)
+H-KeepRoom	heap	curated	3	2026-11-17	no own directory; cited by suite cells of the heap chapter
+H-Lease	heap	curated	6	2026-11-17	no own directory; cited by suite cells of the heap chapter
+H-LongRef	heap	curated	9	2026-11-17	own dir 6 -> 5: loft#2163's two cells 2->1; the patch, loft#2500, the keyed-collection hold and the agreeing program stay (distinct clauses)
+H-Materialise	heap	curated	14	2026-11-17	4 cells: two patches and two gate-E-agreeing programs
+H-Move	heap	curated	24	2026-11-17	12 cells: eleven patches (one per file) and the moved-local control
 H-NewRec	heap	todo			
 H-Read	heap	todo			
 H-ReadNull	heap	todo			
