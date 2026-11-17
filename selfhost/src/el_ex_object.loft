@@ -402,8 +402,22 @@ pub fn to_default(e: el::El, t: ir::TypeT) -> ir::Node {
     TyFloat => ir::NdFloat { f: 0.0 },
     TyCharacter => ir::NdInt { n: 0 },
     TyText { dep: _ } => ir::NdText { s: "" },
+    // A nullable number or plain enum is absent: its type's own null.
+    TyOptional { inner } => {
+      // (An absent plain enum is ordinal 0 of its store type.)
+      en = match inner { TyEnum { n: en0, is_ref } => if is_ref { -1 } else { en0 }, _ => -1 };
+      if en >= 0 {
+        return ir::NdEnum { ord: 0, tp: el::def(e, en).known_type };
+      }
+      nl = if inner is TyInteger || inner is TyFloat || inner is TySingle { el_convert::null_of(e, inner) } else { null };
+      if nl == null {
+        el::refuse(e, "an omitted field of this type: a nullable {type_kind(inner)}");
+        return ir::NdNull;
+      }
+      nl!
+    },
     _ => {
-      el::refuse(e, "an omitted field of this type");
+      el::refuse(e, "an omitted field of this type: {type_kind(t)}");
       ir::NdNull
     }
   }
