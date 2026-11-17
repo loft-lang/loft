@@ -154,6 +154,11 @@ edit landed while a run's build was under a minute old (a development build at 2
 gate's at 35 s); both runs were discarded and repeated.  Check the build's age in ONE command
 and edit in the NEXT, never in the same one.
 
+**The real gate's memory ceiling.**  The gate's own `--ship` build of the elaborator needs more
+than 6 GB of address space in the C compiler; under `ulimit -v 6000000` it ends as `did not
+build … cc1: out of memory`.  Run the real gate under `ulimit -v 9000000` with `--jobs 5`; a
+development-build corpus run (`LOFT_ELAB_BIN`) still fits 6 GB with six jobs.
+
 **REBASED onto main c34c1d177 (PR #2529 carried the cut 605f3d2f5), 2026-11-17.**  The suite
 pin is main's now (`tests/loft-suite.pin` = b705cdb48; a scratch clone at that pin is the
 `LOFT_SUITE_DIR`).  Gate E's baseline there, the real gate's own figure: **931 of 2209 agree,
