@@ -96,7 +96,9 @@ fn bound_refused(e: el::El, bound: ir::TypeT) -> text {
   struct_enum = match bound { TyEnum { n: _, is_ref } => is_ref, _ => false };
   // A vector of plain scalars or texts is bound as the collection it is.
   scalar_vec = match bound { TyVector { inner: vi } => el_ex_object::scalar_type(vi) || vi is TyText || struct_ref(e, vi) >= 0, _ => false };
-  if !(el_ex_object::scalar_type(bound) || bound is TyText || record || plain_enum || struct_enum || scalar_vec) || (bound is TyOptional && !nullable_scalar) || el_dispatch::identity(e, bound) == "" {
+  // A tuple of plain scalars is bound as the value it is.
+  scalar_tuple = match bound { TyTuple { elems: te } => len(te) > 0 && len([for m in te if !el_ex_object::scalar_type(m) || el_types::base(m) is TyText || (m is TyOptional) { m }]) == 0, _ => false };
+  if !(el_ex_object::scalar_type(bound) || bound is TyText || record || plain_enum || struct_enum || scalar_vec || scalar_tuple) || (bound is TyOptional && !nullable_scalar) || el_dispatch::identity(e, bound) == "" {
     // A reference says which definition kind it names: a struct-enum variant, a tuple's or a
     // nullable's synthetic record, a type variable not yet bound.
     kind = match bound { TyReference { n } => "TyReference of a {def_kind(el::def(e, n))}", _ => type_kind(bound) };
@@ -171,7 +173,16 @@ pub fn instantiate(e: el::El, g: integer, types: vector<ir::TypeT>) -> integer {
   el::set_returned(e, d, rt);
   // `rewrite_vector_write_triplets` registers `vector<T>`'s row on the first fill, at the call.
   for bt in b!.types {
+    // (`is_rewritable_vector_element_target`: a primitive, a record or a tuple — not a vector
+    // or a struct enum, whose element write is never rewritten.)
+    if el_types::base(bt) is TyVector || el_types::struct_enum_def(bt) >= 0 {
+      continue;
+    }
     el_schema::vector_type(e, el::def(e, type_def_nr(e, el_types::base(bt))).known_type);
+    // (A tuple's record is laid out here, after that row: the instance reads its members by it.)
+    if el_types::base(bt) is TyTuple {
+      el_schema::content_type(e, el_types::without_deps(el_types::base(bt)));
+    }
   }
   // `stale_monomorphs`: a template whose second-pass body is not read yet (declared below the
   // call) is filled once the pass is through (`rebuild_stale_monomorphs`).
@@ -234,6 +245,8 @@ pub fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::T
   fresh_row = match el_types::base(bound) {
     TyReference { n: frd } => el::def(e, frd).known_type,
     TyEnum { n: fed } => el::def(e, fed).known_type,
+    // (A tuple is its `__tuple<…>` record's row.)
+    TyTuple { elems: fte } => if el_types::tuple_def_of(e, [for m in fte { el_types::without_deps(m) }]) < 0 { -1 } else { el::def(e, el_types::tuple_def_of(e, [for m in fte { el_types::without_deps(m) }])).known_type },
     // (A vector is its own row: what a content comparison walks it by.)
     TyVector { inner: _ } => el_schema::content_type(e, el_types::without_deps(el_types::base(bound))),
     _ => el_ex_vector::append_row(e, el_types::base(bound))
@@ -507,7 +520,11 @@ pub fn resolve_content_eq(e: el::El, vars: el_vars::Vars, n: ir::Node, stale: in
       nm = el::def(e, def_nr).name;
       a2: vector<ir::Node> = [for a in args { resolve_content_eq(e, vars, a, stale, bound, heap) }];
       if (nm == "OpEqContent" || nm == "OpNeContent") && len(a2) == 3 && a2[2]! == ir::NdInt { n: stale } {
-        eq = if heap { el_ir::cl(e, "OpEqContent", [a2[0]!, a2[1]!, a2[2]!]) } else {
+        eq = if heap { el_ir::cl(e, "OpEqContent", [a2[0]!, a2[1]!, a2[2]!]) } else if el_types::base(bound) is TyTuple {
+          // (A tuple compares member by member, as its concrete `==` does.)
+          tx = el_compare::tuple_compare(e, vars, "==", [a2[0]!, a2[1]!], [bound, bound]);
+          if tx != null && tx!.tp is TyBoolean { tx!.code } else { ir::NdNull }
+        } else {
           x = call_op(e, vars, "==", [a2[0]!, a2[1]!], [bound, bound]);
           if x.tp is TyBoolean && !(x.code is NdNull) { x.code } else { ir::NdNull }
         };
@@ -1358,6 +1375,16 @@ pub fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::N
     if e.first_pass {
       p = el_ex_object::predict_template_return(e, d, types);
       return ex(ir::NdNull, p ?? ir::TyUnknown { n: 0 });
+    }
+    // A tuple argument that binds a variable has its `__tuple<…>` record made here, where the
+    // call's statement ends (`ensure_tuple_defs`): the instance is named and laid out by it.
+    if vars.call_tok >= 0 {
+      for ty in types {
+        match el_types::base(ty) {
+          TyTuple { elems: tel } => { el_types::tuple_def(e, [for m in tel { el_types::without_deps(m) }], el::pos_at(e, el_ex_object::past_call(e, vars.call_tok))); },
+          _ => {}
+        }
+      }
     }
     inst = instance_for(e, d, types);
     if inst < 0 {

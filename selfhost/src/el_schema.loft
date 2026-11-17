@@ -967,7 +967,9 @@ fn narrow_part(e: el::El, name: text, part: ir::DbParts, size: integer) -> integ
 // `Stores::vector`: the store type `vector<name of content>`, made at the end of the table the
 // first time it is asked for — a 4-byte handle, complex.
 pub fn vector_type(e: el::El, content: integer) -> integer {
-  name = "vector<{e.b.types[content].name}>";
+  // (A content with no store type yet — a tuple's record ahead of its layout — is the bare
+  // `vector` row, as `Stores::vector` names it.)
+  name = if content < 0 || content >= len(e.b.types) { "vector" } else { "vector<{e.b.types[content].name}>" };
   t = schema_type(e, name);
   if t >= 0 {
     return t;

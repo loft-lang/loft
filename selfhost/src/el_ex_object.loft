@@ -1450,6 +1450,29 @@ pub fn argument_element_hint(e: el::El, d: integer, i: integer, node: integer) -
   }
 }
 
+// The token after the `)` that closes the call starting at token `from` (the parser's peek once
+// the call is read).
+pub fn past_call(e: el::El, from: integer) -> integer {
+  at = from;
+  while at < len(e.p.src) && !(e.p.src[at] is LParen) {
+    at += 1;
+  }
+  depth = 0;
+  while at < len(e.p.src) {
+    t = e.p.src[at];
+    if t is LParen {
+      depth += 1;
+    } else if t is RParen {
+      depth -= 1;
+      if depth == 0 {
+        return at + 1;
+      }
+    }
+    at += 1;
+  }
+  at
+}
+
 // Is `t` a type variable's placeholder, or a vector over one?
 fn over_type_var(e: el::El, t: ir::TypeT) -> boolean {
   if el_types::type_var(e, el_types::base(t)) >= 0 {
@@ -1547,6 +1570,14 @@ pub fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?,
           el_trace::state(e, vars, "arg", aat, ae!);
         }
         x = argument_view(e, vars, hinted_argument(e, vars, ae!, eh, d: hd, i: a#index, sofar: types));
+        // A tuple handed to a TEMPLATE has its `__tuple<…>` record made where the call's
+        // statement ends (`ensure_tuple_defs`): the instance is keyed and laid out by it.
+        if !e.first_pass && hd >= 0 && el::def(e, hd).def_type == el::DT_GENERIC {
+          match el_types::base(x.tp) {
+            TyTuple { elems: tel } => { el_types::tuple_def(e, [for m in tel { el_types::without_deps(m) }], el::pos_at(e, past_call(e, at))); },
+            _ => {}
+          }
+        }
         vars.lambda_node = -1;
         list += [x.code];
         types += [x.tp];
@@ -1627,6 +1658,7 @@ pub fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?,
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   vars.call_at = at;
+  vars.call_tok = at;
   r = el_ex_call::call_args(e, vars, d, list, types);
   vars.call_at = -2;
   if r == null {
@@ -2390,6 +2422,7 @@ pub fn method_call_on(e: el::El, vars: el_vars::Vars, at: integer, x: Ex, re: in
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   vars.call_at = at;
+  vars.call_tok = at;
   r = el_ex_call::call_args(e, vars, d, list, types);
   vars.call_at = -2;
   if r == null {

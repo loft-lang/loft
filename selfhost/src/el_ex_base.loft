@@ -1289,7 +1289,8 @@ pub fn type_def_nr(e: el::El, t: ir::TypeT) -> integer {
     // A tuple is named by its synthetic `__tuple<…>` record, where the shape has one.
     TyTuple { elems } => {
       td = el_types::tuple_def_of(e, elems);
-      if td < 0 {
+      // (The record is made on the second pass, where a call needs it.)
+      if td < 0 && !e.first_pass {
         el::refuse(e, "a call whose first argument is a collection, a tuple or a function: {type_kind(t)}");
       }
       td

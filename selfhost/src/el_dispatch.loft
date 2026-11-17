@@ -43,6 +43,11 @@ pub fn identity(e: el::El, t: ir::TypeT) -> text {
     TyText { dep: _ } => "text",
     TyReference { n } => if el_types::type_var(e, t) < 0 && (el::def(e, n).def_type == el::DT_STRUCT || el::def(e, n).def_type == el::DT_ENUM_VALUE) { declared(e, n) } else { "" },
     TyEnum { n } => declared(e, n),
+    // A tuple is spelled as the `__tuple<…>` record it is stored as, where one is made.
+    TyTuple { elems } => {
+      td = el_types::tuple_def_of(e, [for m in elems { el_types::without_deps(m) }]);
+      if td < 0 { "" } else { el::def(e, td).name }
+    },
     TyVector { inner } => {
       sp = if el_types::is_unknown(inner) { "" } else { identity(e, inner) };
       if sp == "" { "" } else { "vector<{sp}>" }
