@@ -222,18 +222,18 @@ H-RefVal	heap	curated	2	2026-11-17	2 cells: a patch control and a gate-E-agreein
 H-Removed	heap	curated	8	2026-11-17	2 cells, both patches (one per file)
 H-RootExtent	heap	curated	3	2026-11-17	one cell
 H-ShortRef	heap	curated	4	2026-11-17	2 cells, both gate-E-agreeing
-H-Sound	heap	todo			
-H-Spent	heap	todo			
-H-Stride	heap	todo			
-H-SwapIn	heap	todo			
-H-SwapKeyed	heap	todo			
-H-SwapRebind	heap	todo			
-H-TextReplace	heap	todo			
-H-View	heap	todo			
-H-View-Drop	heap	todo			
-H-Write	heap	todo			
-H-Write-Else	heap	todo			
-H-WriteLocked	heap	todo			
+H-Sound	heap	curated	2	2026-11-17	one cell
+H-Spent	heap	curated	29	2026-11-17	2 refusal cells kept apart: loft#2283's expectations quote line numbers a merge would shift
+H-Stride	heap	curated	7	2026-11-17	3 cells: two patches and a gate-E-agreeing program
+H-SwapIn	heap	curated	6	2026-11-17	own dir 2 -> 1: the store-only-when-given-up patch + the answers-what-the-copy-answers program
+H-SwapKeyed	heap	curated	2	2026-11-17	own dir 2 -> 1: the exchange patch + the keyed rebind beside every other name
+H-SwapRebind	heap	curated	9	2026-11-17	no own directory; cited by suite cells of the heap chapter
+H-TextReplace	heap	curated	2	2026-11-17	own dir 3 -> 2: loft#1876 (patch) + loft#2310 2->1; loft#1873's patch stays (one per file)
+H-View	heap	curated	5	2026-11-17	2 cells: the loft#1985 patch and the projection program — distinct clauses
+H-View-Drop	heap	curated	4	2026-11-17	own dir 4 -> 3: the two refusals 2->1 (15 expectations, both @catches kept); the two gate-E-agreeing programs stay
+H-Write	heap	curated	1	2026-11-17	no own directory; cited by suite cells of the heap chapter
+H-Write-Else	heap	curated	6	2026-11-17	one cell (a patch)
+H-WriteLocked	heap	curated	7	2026-11-17	one cell
 H-WriteLocked-Whole	heap	todo			
 H-WriteNull	heap	todo			
 H-WriteOOB	heap	todo			
