@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	b705cdb48d7d8f4e3838e2eb570de60ce345bab5
 
-layer	elab	agree	952	of	2218
+layer	elab	agree	956	of	2218
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -673,7 +673,6 @@ elab	refused	loft-suite/rules/ownership/O-Move/a-keyed-collection-returned-borro
 elab	refused	loft-suite/rules/ownership/O-Move/a-member-of-a-tuple-argument-handed-back-is-the-callers.loft
 elab	refused	loft-suite/rules/ownership/O-NoDiverge/1328-a-fn-ref-rebind-frees-the-store-it-displaces.loft
 elab	refused	loft-suite/rules/ownership/O-NoDiverge/1329-a-fn-ref-vector-rebind-frees-the-store-it-displaces.loft
-elab	refused	loft-suite/rules/ownership/O-NoDiverge/1620-a-narrow-fields-bias-is-four-bytes-wide.loft
 elab	refused	loft-suite/rules/ownership/O-NoDiverge/2452-a-returned-join-of-two-nullable-fields-is-a-whole-copy.loft
 elab	refused	loft-suite/rules/ownership/O-NoDiverge/a-copy-at-a-bind-is-the-same-copy-on-both-backends.loft
 elab	refused	loft-suite/rules/ownership/O-One-Kind/a-removed-temporary-store-answers-as-the-store-it-stands-for.loft
@@ -1189,7 +1188,6 @@ elab	refused	tests/scripts/a-limit-narrowing-cure-compiles-as-printed.loft
 elab	refused	tests/scripts/a-literal-bodied-function-is-a-constant.loft
 elab	refused	tests/scripts/a-literal-takes-a-dead-vector-into-its-store.loft
 elab	refused	tests/scripts/a-local-built-for-the-returned-literal-is-built-in-its-buffers-store.loft
-elab	refused	tests/scripts/a-local-float-vector-lives-in-an-inline-buffer.loft
 elab	refused	tests/scripts/a-lookup-a-get-or-insert-repeats-is-made-once.loft
 elab	refused	tests/scripts/a-loop-holds-its-header-across-a-text-write.loft
 elab	refused	tests/scripts/a-loop-that-returns-from-inside-keeps-its-holders.loft
@@ -1217,7 +1215,6 @@ elab	refused	tests/scripts/a-rebind-hands-the-displaced-store-to-the-call.loft
 elab	refused	tests/scripts/a-record-built-into-a-callers-slot-needs-no-prefill.loft
 elab	refused	tests/scripts/a-record-read-by-index-from-a-held-vector-is-addressed-off-its-base.loft
 elab	refused	tests/scripts/a-repeated-element-fills-in-one-block.loft
-elab	refused	tests/scripts/a-result-read-in-place-is-a-caller-buffer.loft
 elab	refused	tests/scripts/a-returned-field-of-an-owned-local-hands-its-store-over.loft
 elab	refused	tests/scripts/a-slice-appended-to-a-place-is-sliced-into-it.loft
 elab	refused	tests/scripts/a-slice-handed-to-a-const-parameter-needs-no-store-of-its-own.loft
@@ -1231,7 +1228,6 @@ elab	refused	tests/scripts/a-value-read-and-dropped-is-built-outside-the-store.l
 elab	refused	tests/scripts/a-variant-exit-builds-into-the-callers-buffer.loft
 elab	refused	tests/scripts/a-vector-of-unsigned-four-byte-integers-sorts-by-value.loft
 elab	refused	tests/scripts/a-vector-prepended-to-is-rebuilt-in-place.loft
-elab	refused	tests/scripts/a-while-counter-steps-plain-below-its-bound.loft
 elab	refused	tests/scripts/a-width32-file-keeps-its-arithmetic-in-32-bits.loft
 elab	refused	tests/scripts/a-window-walk-guards-its-bounds-once-and-calls-plain-helpers.loft
 elab	refused	tests/scripts/a-write-no-path-reads-after-is-a-lost-write.loft
