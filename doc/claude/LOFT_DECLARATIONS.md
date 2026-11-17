@@ -153,7 +153,7 @@ names read the same length; a `&` keyed PARAMETER appends through to the caller'
 the same way. A keyed collection is already a store handle, so the `&`-free spelling reaches
 the caller's collection too — the two spellings differ only in whether the bind copies, and
 for a keyed collection neither does. Guards: `loft-suite/rules/binding/B-Ref-Alias/1433-a-keyed-alias-is-a-link-not-a-copy.loft`
-(the alias, every kind, both names read) and `loft-suite/rules/binding/B-Ref-Uniform/1445-a-keyed-parameter-appends-through-its-link.loft`
+(the alias, every kind, both names read) and `loft-suite/rules/binding/B-Ref-Uniform/a-link-to-a-collection-is-used-as-the-collection-is-at-every-kind.loft`
 (the parameter). Everything else on this page — `insert` / `reverse` / `sort` / `reserve` and
 the generics over `vector<T>` (`sum`, `min_of`, `max_of`) — goes through a `&` as stated.
 

@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	b7d6b7ad4edab6963cc0bd4519728ef0aede868f
+suite	fb633ae4d6e4eecb292260ff0913280286389fd9
 
-layer	elab	agree	964	of	2201
+layer	elab	agree	964	of	2200
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -61,13 +61,12 @@ elab	refused	loft-suite/rules/binding/B-Ref-Lvalue/a-tuple-member-is-a-place-a-l
 elab	refused	loft-suite/rules/binding/B-Ref-Lvalue/an-annotated-link-to-a-struct-place-is-its-view.loft
 elab	refused	loft-suite/rules/binding/B-Ref-Repoint/a-link-re-points-to-any-place-and-keeps-each-alive.loft
 elab	refused	loft-suite/rules/binding/B-Ref-StoredRef/a-reference-field-of-a-struct-enum-is-repointed-by-assignment.loft
-elab	refused	loft-suite/rules/binding/B-Ref-Uniform/1445-a-keyed-parameter-appends-through-its-link.loft
-elab	refused	loft-suite/rules/binding/B-Ref-Uniform/1445b-a-collection-is-read-through-an-amp-link-at-every-kind.loft
 elab	refused	loft-suite/rules/binding/B-Ref-Uniform/1463-a-closure-written-through-a-link-lands-on-a-capturing-slot.loft
 elab	refused	loft-suite/rules/binding/B-Ref-Uniform/167-a-linked-narrow-local-holds-its-field-encoding.loft
 elab	refused	loft-suite/rules/binding/B-Ref-Uniform/1673-a-tuple-link-is-read-and-written-whole-like-a-tuple.loft
 elab	refused	loft-suite/rules/binding/B-Ref-Uniform/2144-a-null-test-through-a-link-asks-the-referents-question.loft
 elab	refused	loft-suite/rules/binding/B-Ref-Uniform/a-default-fallback-through-a-link-discharges-its-referent.loft
+elab	refused	loft-suite/rules/binding/B-Ref-Uniform/a-link-to-a-collection-is-used-as-the-collection-is-at-every-kind.loft
 elab	refused	loft-suite/rules/binding/B-Ref-Uniform/a-reference-parameter-reaches-the-whole-surface.loft
 elab	refused	loft-suite/rules/binding/B-Ref-Write/1371-a-whole-value-write-through-an-amp-link-reaches-the-source.loft
 elab	refused	loft-suite/rules/binding/B-Ref-Write/1376-a-whole-value-write-through-a-link-to-a-place-reaches-the-place.loft
