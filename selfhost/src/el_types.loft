@@ -775,6 +775,10 @@ pub fn tuple_spelling_e(e: el::El, elems: vector<ir::TypeT>, sep: text) -> text 
     if m == "" {
       m = match t { TyReference { n, dep } => if n >= 0 && len(dep) == 0 && el::def(e, n).def_type == el::DT_STRUCT && !starts_with(el::def(e, n).name, "__") { el::def(e, n).name } else { "" }, _ => "" };
     }
+    // A narrow integer member is spelled by its range (`integer(0, 255)`).
+    if m == "" {
+      m = match t { TyInteger { spec: ns } => if narrow_width(ns) > 0 { "integer({ns.min}, {ns.max})" } else { "" }, _ => "" };
+    }
     if m == "" {
       return "";
     }

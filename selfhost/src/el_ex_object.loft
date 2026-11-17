@@ -1663,9 +1663,23 @@ pub fn store_else(e: el::El, vars: el_vars::Vars, code: ir::Node, orelse: intege
       }
       return code;
     }
+
   }
   if e.first_pass {
     return code;
+  }
+  // A COMPOUND write to a vector element holds the element's place first (`__place_N`), read
+  // by the value and written through — not carried: refused by name.
+  if has_target && calls(e, target, "OpGetVector") {
+    for ws in write_steps {
+      wargs = match el_ir::unspan(steps[ws]!) { NdCall { args: wa } => wa, _ => [] };
+      for wa1 in wargs {
+        if wa1#index != (write_args[ws#index] ?? -1) && call_under(e, wa1, "OpGetVector") {
+          el::refuse(e, "a store `else` on a compound write to a vector element");
+          return code;
+        }
+      }
+    }
   }
   // The groups put in front of a step: (step, order, statements); the target's first.
   pre_at: vector<integer> = [];
@@ -1724,6 +1738,24 @@ pub fn store_else(e: el::El, vars: el_vars::Vars, code: ir::Node, orelse: intege
 }
 
 // `write_target_arg`: which argument of a write op names the place it writes, or -1.
+// Does `n`, a chain of calls, hold a call of `name` anywhere among its arguments?
+fn call_under(e: el::El, n: ir::Node, name: text) -> boolean {
+  match el_ir::unspan(n) {
+    NdCall { def_nr, args } => {
+      if el::def(e, def_nr).name == name {
+        return true;
+      }
+      for a in args {
+        if call_under(e, a, name) {
+          return true;
+        }
+      }
+      false
+    },
+    _ => false
+  }
+}
+
 pub fn write_target_arg(name: text) -> integer {
   if name == "OpCopyRecord" {
     return 1;

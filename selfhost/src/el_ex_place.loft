@@ -172,6 +172,13 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
   }
   vars.last_place = [el_ir::unspan(p.code)];
   note_key_write(e, vars, p.code);
+  // A compound write to a narrow field of a keyed collection's record is range-checked at the
+  // field's full width there (no null reserved) — not carried: refused by name.
+  keyed_narrow = match el_ir::unspan(p.code) { NdCall { def_nr: kd, args: ka } => (el::def(e, kd).name == "OpGetByte" || starts_with(el::def(e, kd).name, "OpGetShort")) && len(ka) > 0 && calls(e, el_ir::unspan(ka[0]!), "OpGetRecord"), _ => false };
+  if op != "=" && keyed_narrow && !e.first_pass {
+    el::refuse(e, "a compound write to a narrow field of a keyed record");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
   if op == "=" && replaces_walked_source(e, vars, place_root(e, el_ir::unspan(p.code))) {
     el::refuse(e, "a write that replaces a vector a loop walks (the walk takes a copy)");
     return ex(ir::NdNull, ir::TyVoid);
@@ -1273,6 +1280,8 @@ pub fn place_read(e: el::El, read: ir::Node) -> text {
 
 pub fn place_write(e: el::El, read: ir::Node, val: ir::Node) -> ir::Node? {
   match read {
+    // A member of a tuple local is written in place (`q.0 = 5`).
+    NdTupleGet { var: tv, idx: ti } => { return ir::NdTuplePut { var: tv, idx: ti, inner: val }; },
     NdCall { def_nr, args } => {
       nm = el::def(e, def_nr).name;
       if !starts_with(nm, "OpGet") || len(args) < 2 {

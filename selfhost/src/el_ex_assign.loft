@@ -1403,6 +1403,19 @@ pub fn tuple_get(e: el::El, vars: el_vars::Vars, te: integer?, index: integer) -
         rroot = place_root(e, x.code);
         return ex(el_ir::cl(e, "OpGetField", [x.code, ir::NdInt { n: field_position(e, td, "_{index}") }, ir::NdInt { n: el::def(e, rsd).known_type }]), el_types::with_deps(mt, if rroot >= 0 { [rroot] } else { [] }));
       }
+      // A narrow member of an element is read at its width (`OpGetByte`, `OpGetShortRaw`).
+      if td >= 0 && elem_read && index >= 0 && index < len(ee) && match mt { TyInteger { spec: nsp } => el_types::narrow_width(nsp) > 0, _ => false } {
+        nw = el_vars::work_ref(vars, ir::TyReference { n: td, dep: [] });
+        vars.vars[nw].skip_free = true;
+        el_vars::unregister_work_ref(vars, nw);
+        if e.first_pass {
+          return ex(ir::NdNull, mt);
+        }
+        ng = field_get(e, td, index, x.code);
+        if ng != null {
+          return ex(ng!, mt);
+        }
+      }
       if td >= 0 && elem_read && index >= 0 && index < len(ee) && (mt is TyText || (el_convert::plain_scalar(mt) && read_op(mt) != "" && match mt { TyInteger { spec } => spec.forced_size == 0 && el_types::narrow_width(spec) == 0, _ => true })) {
         // Rust holds the element in a work ref here (the unbox it then drops): the name is
         // taken on both passes, so later buffers number past it.
@@ -2312,6 +2325,46 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
   }
   if e.p.nodes[target] is SMember || e.p.nodes[target] is SIndex {
     return el_ex_place::place_assignment(e, vars, op, target, rhs!);
+  }
+  // A member of a tuple LOCAL written in place (`q.0 = 5`, `q.1 *= 2.0`): a plain scalar member
+  // through its operator, a text member assigned whole.  A text member's `+=` builds through
+  // work texts of its own and a parameter's tuple through its `__tp_` shadow — not carried.
+  match e.p.nodes[target] {
+    STupleGet { e: tse, index: tix } => {
+      tvar = match e.p.nodes[tse ?? 0] { SName { name: tn, member: tm } => if tse != null && tm == "" { el_vars::var(vars, tn) } else { -1 }, _ => -1 };
+      members = if tvar >= 0 { match el_vars::tp(vars, tvar) { TyTuple { elems: tel } => tel, _ => [] } } else { [] };
+      // (A local declared with its type may hold a narrow member, range-checked on a write —
+      // not carried: refused by name.)
+      if tvar >= 0 && vars.annotated.contains(tvar) && !e.first_pass {
+        el::refuse(e, "a write to a member of a tuple local declared with its type");
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      if tvar >= 0 && !vars.vars[tvar].argument && tix >= 0 && tix < len(members) {
+        mt = members[tix]!;
+        tx = expression(e, vars, rhs!);
+        if e.first_pass {
+          return ex(ir::NdNull, ir::TyVoid);
+        }
+        el_vars::in_use(vars, tvar, true);
+        if op == "=" && (el_convert::plain_scalar(mt) || mt is TyText) {
+          sv = stored(e, vars, tx, mt);
+          if sv != null {
+            return ex(ir::NdTuplePut { var: tvar, idx: tix, inner: el_convert::guard_range(e, sv!, mt, tx.tp, false) }, ir::TyVoid);
+          }
+        }
+        if op != "=" && el_convert::plain_scalar(mt) {
+          cx = call_op(e, vars, op[..-1], [ir::NdTupleGet { var: tvar, idx: tix }, tx.code], [mt, tx.tp]);
+          if !el_types::is_unknown(cx.tp) {
+            // (`guard_declared_range`: a narrow member takes its default outside its range.)
+            return ex(ir::NdTuplePut { var: tvar, idx: tix, inner: el_convert::guard_range(e, cx.code, mt, ir::TyInteger { spec: i32_spec() }, false) }, ir::TyVoid);
+          }
+          return ex(ir::NdNull, ir::TyVoid);
+        }
+        el::refuse(e, "a write to a tuple member that is no plain scalar, or a text member appended");
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+    },
+    _ => {}
   }
   // `f#format = F`, `f#next = n`, `f#index = n`, `f#size = n` (`call_to_set_op`'s file arms).
   match e.p.nodes[target] {
