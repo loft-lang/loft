@@ -2714,8 +2714,10 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
     v = el_vars::promote_text_param(vars, v);
   }
   // A vector local rebound from a call that takes that local is staged through a
-  // `__refvec_rhs_N` (cleared, then refilled) — not carried: refused by name.
-  if !e.first_pass && el_types::base(el_vars::tp(vars, v)) is TyVector && len(el_types::deps(el_vars::tp(vars, v))) > 0 && match el_ir::unspan(x.code) { NdCall { def_nr: rc } => starts_with(el::def(e, rc).name, "n_") && el_ir::reads_var(x.code, v), _ => false } {
+  // `__refvec_rhs_N` (cleared, then refilled) where a link names it, and rotates its buffers
+  // inside a loop (`OpPutRef`) — neither carried: refused by name.  The plain rebind is the
+  // call bound as any other.
+  if !e.first_pass && (vars.amp_vectors.contains(v) || len(vars.active_loops) > 0 || vars.whiles > 0) && el_types::base(el_vars::tp(vars, v)) is TyVector && len(el_types::deps(el_vars::tp(vars, v))) > 0 && match el_ir::unspan(x.code) { NdCall { def_nr: rc } => starts_with(el::def(e, rc).name, "n_") && el_ir::reads_var(x.code, v), _ => false } {
     el::refuse(e, "a vector local rebound from a call that takes it");
     return ex(ir::NdNull, ir::TyVoid);
   }

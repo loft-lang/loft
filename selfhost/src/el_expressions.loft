@@ -1719,6 +1719,18 @@ pub fn literal_backing(vars: el_vars::Vars, v: integer) -> integer {
 // it (`OpClearVector`, the first statement moved into that insert).  Any other tail is refused
 // by name.
 pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, result: ir::TypeT) -> ir::Node {
+  // A literal tail is read against the result's element (`-> vector<u8> { [104, 101] }` holds
+  // bytes): a tail built at another element than the result names is not carried.
+  if !e.first_pass {
+    want = match el_types::base(result) { TyVector { inner: wi } => wi, _ => ir::TyVoid };
+    have = match code { NdBlock { block: cb } => match el_types::base(cb[0].result[0] ?? ir::TyVoid) { TyVector { inner: hi } => hi, _ => ir::TyVoid }, _ => ir::TyVoid };
+    wn = el_types::elem_name(e, want);
+    hn = el_types::elem_name(e, have);
+    if wn != "" && hn != "" && wn != hn {
+      el::refuse(e, "a vector answered at another element than the result names: {hn} for {wn}");
+      return code;
+    }
+  }
   d = e.context;
   // A trailing `return <literal>` is the literal tail it returns: delivered alike.
   if trailing_literal_return(e, vars.body) {

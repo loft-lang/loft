@@ -164,7 +164,7 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
       el::refuse(e, "a compound write to a function-valued field");
       return ex(ir::NdNull, ir::TyVoid);
     }
-    fw = el_ex_object::fn_number_write(e, vars, fargs[0]!, fargs[1]!, if e.first_pass { ir::NdInt { n: 0 } } else { fx.code }, p.tp);
+    fw = el_ex_object::fn_number_write(e, vars, fargs[0]!, fargs[1]!, if e.first_pass && !(el_ir::unspan(fx.code) is NdVar) { ir::NdInt { n: 0 } } else { fx.code }, p.tp);
     if fw == null {
       el::refuse(e, "a function-valued field given something other than a named function");
       return ex(ir::NdNull, ir::TyVoid);
@@ -2396,7 +2396,8 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
         } else if el_types::base(at) is TyFunction {
           // A function-valued field given a named function (`fn_number_write`).
           if e.first_pass {
-            el_ex_object::fn_number_write(e, vars, r, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }, at);
+            // (A function-value local mints no temporary: only a named function or a lambda does.)
+            el_ex_object::fn_number_write(e, vars, r, ir::NdInt { n: 0 }, if el_ir::unspan(x.code) is NdVar { x.code } else { ir::NdInt { n: 0 } }, at);
             found += [fname];
             continue;
           }

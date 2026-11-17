@@ -428,6 +428,10 @@ pub fn slice_copy(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> ir::Node
   nm = el_types::elem_name(e, elem);
   rows = vector_rows(e, elem, 0, true);
   rec = if nm == "" { -1 } else { el_schema::schema_type(e, nm) };
+  // (A narrow element is laid out as its width's row — `byte`, `short_raw<…>` — not by its name.)
+  if rec < 0 && is_scalar(elem) {
+    rec = el_schema::content_type(e, elem);
+  }
   if rows == null || rec < 0 || lov < 0 || hiv < 0 {
     el::refuse(e, "a vector slice of this element type: {type_kind(elem)}");
     return null;
@@ -461,7 +465,8 @@ pub fn slice_copy(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> ir::Node
     viewed = el_types::with_deps(elem, [root]);
     el_vars::set_var_type(vars, se, viewed);
     el_vars::set_defined(vars, se);
-    el_vars::set_var_type(vars, v, ir::TyVector { inner: viewed, dep: [db] });
+    // (A DECLARED local keeps the element its declaration names: `s: vector<text> = big[0..2]`.)
+    el_vars::set_var_type(vars, v, ir::TyVector { inner: if vars.annotated.contains(v) { elem } else { viewed }, dep: [db] });
     el_vars::set_var_type(vars, elm_v, ir::TyReference { n: if rsd >= 0 { rsd } else { 0 }, dep: [db] });
     at = ir::NdVar { n: elm_v };
     write = if rsd >= 0 { el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: se }, el_ir::cl(e, "OpGetField", [at, ir::NdInt { n: 0 }, ir::NdInt { n: rec }]), ir::NdInt { n: rec }]) } else { el_ir::cl(e, "OpSetText", [at, ir::NdInt { n: 0 }, ir::NdVar { n: se }]) };

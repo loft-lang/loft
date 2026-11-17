@@ -376,6 +376,16 @@ pub fn to_default(e: el::El, t: ir::TypeT) -> ir::Node {
 // `__fn_ref_tmp` first, so the write is that variable's projection (`FnRefDnr`).  Null for a
 // value that is no bare function name (a local, a lambda, a call: not carried).
 pub fn fn_number_write(e: el::El, vars: el_vars::Vars, r: ir::Node, pos: ir::Node, val: ir::Node, ft: ir::TypeT) -> ir::Node? {
+  // A function-value LOCAL is written as its own projection (`fn_ref_slot_dnr`'s variable arm).
+  match el_ir::unspan(val) {
+    NdVar { n: fv } => {
+      if el_types::base(el_vars::tp(vars, fv)) is TyFunction && len(el_types::deps(el_vars::tp(vars, fv))) == 0 {
+        return el_ir::cl(e, "OpSetInt4", [r, pos, ir::NdFnRefDnr { n: fv }]);
+      }
+      return null;
+    },
+    _ => {}
+  }
   if !(el_ir::unspan(val) is NdInt) {
     return null;
   }
