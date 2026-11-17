@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	159f159edf9589cb5cf951dbb04f12b2cf36ebd8
+suite	2d5272bad6a5ef3f000b8ad0e8faf0f0e135ce6d
 
-layer	elab	agree	964	of	2216
+layer	elab	agree	964	of	2213
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -30,11 +30,8 @@ elab	refused	loft-suite/rules/binding/B-Copy/1686-a-local-bound-from-a-vector-co
 elab	refused	loft-suite/rules/binding/B-Copy/1752-a-coalesce-over-a-whole-local-copies.loft
 elab	refused	loft-suite/rules/binding/B-Copy/2521-a-place-assigned-a-literal-that-embeds-its-own-old-value-keeps-that-value.loft
 elab	refused	loft-suite/rules/binding/B-Copy/a-binding-from-a-value-branch-copies-the-arm-it-takes.loft
-elab	refused	loft-suite/rules/binding/B-Copy/a-choice-over-a-coalesce-into-a-view-binds-it-as-a-view.loft
-elab	refused	loft-suite/rules/binding/B-Copy/a-choice-that-hands-a-local-over-whole-copies-it.loft
 elab	refused	loft-suite/rules/binding/B-Copy/a-copy-crossed-with-tuples-slices-and-concatenation.loft
 elab	refused	loft-suite/rules/binding/B-Copy/a-deferred-copy-keeps-the-value-it-was-bound-to-whatever-the-source-does.loft
-elab	refused	loft-suite/rules/binding/B-Copy/a-first-bind-from-a-choice-over-a-coalesce-copies-its-temporary.loft
 elab	refused	loft-suite/rules/binding/B-Copy/a-keyed-local-rebound-from-a-call-that-reads-it-keeps-its-records.loft
 elab	refused	loft-suite/rules/binding/B-Copy/a-projection-into-a-kept-local-in-a-loop-is-a-copy.loft
 elab	refused	loft-suite/rules/binding/B-Copy/a-re-bind-of-a-whole-local-copies-in-every-spelling.loft
