@@ -22,8 +22,9 @@
 //!   states this one directly: under **Stdlib API**, "a new optional parameter" is additive.
 //!
 //! Everything else stays strict, and both of those carve narrowly: an added FIELD breaks
-//! (a literal construction must supply it), and a parameter that is required, or optional but
-//! inserted before an existing one, breaks (it re-binds every positional call).
+//! (a whole-record read — JSON, printing, a reflection walk — now carries it), and a parameter
+//! that is required, or optional but inserted before an existing one, breaks (it re-binds
+//! every positional call).
 //!
 //! Tier-aware, via **sealed inlining.** A consumer can neither name nor construct a *sealed*
 //! type (only read a value's fields through a public signature that returns it), so a sealed
@@ -264,21 +265,25 @@ fn split_signature(sig: &str) -> Option<(Vec<String>, String)> {
 /// * an added **field** is NOT, because it changes what a whole-record read answers:
 ///   `{s:j}` gains a key, and so does any reflection walk.
 ///
-/// ⚠ That last one is NOT "a literal must now supply it", which this comment used to say and
-/// which is false for **every** field in loft, not merely a defaulted one: a struct literal
-/// may omit anything. Measured — `S { }` compiles, and each omitted field takes its declared
-/// default or its type's zero. The reason matters because it is what a reader checks the
-/// verdict against, and checking against the false one leads to the conclusion that a
-/// defaulted field is additive (loft#1192, closed on this measurement).
+/// ⚠ That last one is NOT "a literal must now supply it", which this comment and the message
+/// below used to say and which is false for **every** field in loft, not merely a defaulted
+/// one: a struct literal may omit anything. Measured — `S { }` compiles, and each omitted
+/// field takes its declared default or its type's zero. The reason matters because it is what
+/// a reader checks the verdict against, and checking against the false one leads to the
+/// conclusion that a defaulted field is additive (loft#1192, closed on this measurement).
+/// Nor does `pub` change it: a private field is written too (@C140 — "printing, JSON and
+/// placement still carry every field"), so a type whose fields are all private breaks the
+/// same way.
 ///
-/// The rules do not settle it cleanly, which is why the verdict stays where it is rather
-/// than moving on one reading. [COMPATIBILITY.md § Per-surface](../doc/claude/COMPATIBILITY.md)
-/// has two rows that point opposite ways for this exact change: under **Stdlib API** a
-/// *"different result for the same inputs"* is a regression, and the serialised form is
-/// different; under **On-disk + wire**, *"new optional fields with defaults"* is additive.
-/// Moving the verdict is a design decision about which surface a loft struct is, not a fix.
-/// Contrast the PARAMETER case, where one rule said "a new optional parameter" is additive
-/// with nothing against it — that one was unambiguous, and [`signature_break`] follows it.
+/// Where the verdict comes from: [LIBRARY_AUTHORING.md § 3](../doc/claude/LIBRARY_AUTHORING.md)
+/// splits the change into the two declared levels — what a release WRITES (the whole-record
+/// read above) is `api_compatible_with`, its record layout is `data_compatible_with`
+/// (reported beside this, by `schema_sidecar::classify`).  The **On-disk + wire** row of
+/// [COMPATIBILITY.md § Per-surface](../doc/claude/COMPATIBILITY.md) — *"new optional fields
+/// with defaults"* are additive — is the READ side of the same change: an old document parses
+/// into the new type, the default filling the gap.  It stays true; it is the write side that
+/// moved.  Contrast the PARAMETER case, where one rule said "a new optional parameter" is
+/// additive with nothing against it, and [`signature_break`] follows it.
 ///
 /// Anything whose shape this cannot parse falls back to "changed", so an unrecognised
 /// rendering is reported rather than waved through — the conservative direction for a check
@@ -297,18 +302,35 @@ fn aggregate_break(old_sig: &str, new_sig: &str) -> Option<String> {
             Some(_) => {}
         }
     }
-    for (name, ty) in &new_m {
-        if ty != "fn" && !old_m.iter().any(|(n, _)| n == name) {
-            reasons.push(format!(
-                "added field `{name}` (a literal construction must supply it)"
-            ));
-        }
+    let added: Vec<&str> = new_m
+        .iter()
+        .filter(|(name, ty)| ty != "fn" && !old_m.iter().any(|(n, _)| n == name))
+        .map(|(name, _)| name.as_str())
+        .collect();
+    if !added.is_empty() {
+        reasons.push(added_fields_reason(&added));
     }
     if reasons.is_empty() {
         None
     } else {
-        Some(reasons.join(", "))
+        // `;` between reasons: a list of added fields carries commas of its own.
+        Some(reasons.join("; "))
     }
+}
+
+/// The reason added fields break, said once for all of them: what a whole-record read of the
+/// type writes now carries them (see [`aggregate_break`] for why that, and not construction).
+fn added_fields_reason(added: &[&str]) -> String {
+    let quoted: Vec<String> = added.iter().map(|n| format!("`{n}`")).collect();
+    let (noun, list, pronoun) = match quoted.as_slice() {
+        [one] => ("field", one.clone(), "it"),
+        [init @ .., last] => ("fields", format!("{} and {last}", init.join(", ")), "them"),
+        [] => ("fields", String::new(), "them"),
+    };
+    format!(
+        "added {noun} {list}: a whole-record read (JSON, printing, a reflection walk) now \
+         carries {pronoun}"
+    )
 }
 
 /// A signature without its `pub ` field markers, and the fields that carried one, in order.
@@ -348,13 +370,39 @@ fn members_of(sig: &str) -> Option<Vec<(String, String)>> {
     if inner.trim().is_empty() {
         return Some(Vec::new());
     }
-    inner
-        .split(',')
+    top_level_parts(inner)
+        .into_iter()
         .map(|part| {
             let (n, t) = part.split_once(':')?;
             Some((n.trim().to_string(), t.trim().to_string()))
         })
         .collect()
+}
+
+/// `inner` cut at the commas between members only: a member's TYPE can hold commas of its own
+/// — `hash<Mark[bx, by]>`, and a sealed type inlined into it as `{ bx: integer, … }` — and
+/// cutting there reported a key field of an inner type as a field of the outer one.  Depth
+/// counts every bracket pair; the `>` of a fn type's `->` closes nothing.
+fn top_level_parts(inner: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0;
+    let mut prev = ' ';
+    for (i, c) in inner.char_indices() {
+        match c {
+            '<' | '(' | '[' | '{' => depth += 1,
+            '>' if prev == '-' => {}
+            '>' | ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                parts.push(&inner[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+        prev = c;
+    }
+    parts.push(&inner[start..]);
+    parts
 }
 
 /// The PUBLIC members of a surface, each with sealed types inlined into its signature (so a
@@ -435,6 +483,90 @@ mod tests {
     }
     fn is_break(v: &Verdict) -> bool {
         matches!(v, Verdict::Break(_))
+    }
+
+    /// The reason an added field breaks is what a whole-record read writes, not construction:
+    /// a loft literal may omit any field (loft#1192).  The message says so, once for all the
+    /// fields a type gained, and a type whose fields are all private still breaks (@C140:
+    /// printing and JSON carry every field) — `tile_world` 0.14.0's `World`.
+    #[test]
+    fn an_added_field_is_reported_as_what_a_whole_record_read_writes() {
+        let reason = |old: &str, new: &str| match diff(
+            &[pubm("World", "struct", old)],
+            &[pubm("World", "struct", new)],
+        ) {
+            Verdict::Break(why) => why.join(" | "),
+            Verdict::Superset => panic!("an added field must break: {old} -> {new}"),
+        };
+        let one = reason(
+            "{ chunks: integer }",
+            "{ chunks: integer, changes: integer }",
+        );
+        assert_eq!(
+            one,
+            "changed struct `World` — added field `changes`: a whole-record read (JSON, \
+             printing, a reflection walk) now carries it"
+        );
+        let three = reason(
+            "{ chunks: integer }",
+            "{ chunks: integer, changes: integer, kinds_at: integer, marks: text }",
+        );
+        assert!(
+            three.ends_with(
+                "added fields `changes`, `kinds_at` and `marks`: a whole-record read (JSON, \
+                 printing, a reflection walk) now carries them"
+            ),
+            "{three}"
+        );
+        let mixed = reason(
+            "{ chunks: integer, old: text }",
+            "{ chunks: text, new: integer }",
+        );
+        assert_eq!(
+            mixed,
+            "changed struct `World` — `chunks` changed type; removed `old`; added field `new`: \
+             a whole-record read (JSON, printing, a reflection walk) now carries it"
+        );
+        for text in [&one, &three, &mixed] {
+            assert!(
+                !text.contains("literal"),
+                "the false reason is back: {text}"
+            );
+        }
+        // A field whose type holds commas of its own — a keyed collection of a sealed record,
+        // inlined as its shape — is ONE field: its inner record's keys are not reported.
+        let keyed = match diff(
+            &[
+                sealed(
+                    "Mark",
+                    "struct",
+                    "{ at: integer, bx: integer, by: integer }",
+                ),
+                pubm("World", "struct", "{ chunks: integer }"),
+            ],
+            &[
+                sealed(
+                    "Mark",
+                    "struct",
+                    "{ at: integer, bx: integer, by: integer }",
+                ),
+                pubm(
+                    "World",
+                    "struct",
+                    "{ chunks: integer, marks: hash<Mark[bx, by]>, cb: fn(integer, text) -> boolean }",
+                ),
+            ],
+        ) {
+            Verdict::Break(why) => why.join(" | "),
+            Verdict::Superset => panic!("added fields must break"),
+        };
+        assert!(
+            keyed.contains("added fields `marks` and `cb`:"),
+            "the inner record's keys are not fields of World: {keyed}"
+        );
+        // A `pub` field added beside private ones is reported the same way.
+        let public = reason("{ chunks: integer }", "{ chunks: integer, pub n: integer }");
+        assert!(public.contains("added field `n`:"), "{public}");
     }
 
     /// @C140 — a field gaining `pub` is additive, losing it breaks its readers; the marker

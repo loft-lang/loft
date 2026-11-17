@@ -256,11 +256,14 @@ textual change to a struct's member list as a break. Wired to block, a purely ad
 would have failed CI.
 
 Fixed with a finer rule than "additions are free", because that is also wrong: an added
-**method** is additive, but an added **field** is not — a consumer writing `Server { … }` must
-now supply it. Both directions proven rather than argued: adding a field reports
-*"added field `extra_field` (a literal construction must supply it)"*, removing a method that
-exists in the baseline reports *"removed method `Server.broadcast`"*, and adding a method
-reports drop-in. An unparseable member list still reports "shape changed" — the conservative
+**method** is additive, but an added **field** is not — a whole-record read of the type (JSON,
+printing, a reflection walk) now carries it, which is the `api_compatible_with` level
+([LIBRARY_AUTHORING.md § 3](../../LIBRARY_AUTHORING.md#3-pre-release-checklist)).  The reason
+first written here, that a consumer writing `Server { … }` must now supply the field, is false:
+a loft literal may omit any field (loft#1192), and the message that repeated it now names the
+whole-record read.  Both directions proven rather than argued: adding a field reports a break,
+removing a method that exists in the baseline reports *"removed method `Server.broadcast`"*,
+and adding a method reports drop-in. An unparseable member list still reports "shape changed" — the conservative
 direction for a check whose value is that a silent break is impossible.
 
 **Result after the fix: 9 comparable packages, 0 breaks, 17 with only one release installed.**
