@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	1373baadc2ac0f0dd18540f94b1d601060919808
+suite	c51324a2735e2e0205996ae3e0dfcb6dbc7a030a
 
-layer	elab	agree	1031	of	2160
+layer	elab	agree	1031	of	2156
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -189,12 +189,8 @@ elab	refused	loft-suite/rules/closures/L-FnRef/2190-a-function-of-exactly-a-fn-t
 elab	refused	loft-suite/rules/collections/Col-Assign/a-keyed-assignment-places-its-record-under-the-subscript.loft
 elab	refused	loft-suite/rules/collections/Col-Axis/a-biased-narrow-key-finds-every-record-its-iteration-yields.loft
 elab	refused	loft-suite/rules/collections/Col-Bucket/135-reserve-hash.loft
-elab	refused	loft-suite/rules/collections/Col-Concat/2387-a-concatenation-into-its-own-operand-keeps-every-operands-value.loft
-elab	refused	loft-suite/rules/collections/Col-Concat/2399-a-concatenation-onto-a-view-leaves-the-viewed-vector-alone.loft
 elab	refused	loft-suite/rules/collections/Col-Concat/2406-a-literal-after-a-site-only-the-second-pass-builds-keeps-its-elements.loft
-elab	refused	loft-suite/rules/collections/Col-Concat/a-concat-is-a-value-in-every-expression-position.loft
-elab	refused	loft-suite/rules/collections/Col-Concat/a-concat-led-by-a-slice-of-its-destination-frees-the-slice.loft
-elab	refused	loft-suite/rules/collections/Col-Concat/a-concat-of-a-local-at-a-functions-end-keeps-the-locals-elements.loft
+elab	refused	loft-suite/rules/collections/Col-Concat/a-concatenation-is-a-new-vector-and-neither-operand-changes-wherever-it-stands.loft
 elab	refused	loft-suite/rules/collections/Col-Cons/2409-an-empty-literal-arm-keeps-its-type-past-a-call-in-the-test.loft
 elab	refused	loft-suite/rules/collections/Col-Cons/a-nullable-keyed-collection-can-hold-a-value.loft
 elab	refused	loft-suite/rules/collections/Col-Copy/a-vector-field-keeps-its-absence.loft
