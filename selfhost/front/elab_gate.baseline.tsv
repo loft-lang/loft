@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	83adcdb4719dca766b76e56367da4ec9b79bb53a
+suite	172c9e1e3a95d97389b63c9288131932d60b341b
 
-layer	elab	agree	1031	of	2119
+layer	elab	agree	1031	of	2117
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -328,9 +328,7 @@ elab	refused	loft-suite/rules/interfaces/G-Mono/a-tuple-callback-of-a-generic-an
 elab	refused	loft-suite/rules/interfaces/G-Mono/a-tuple-element-read-inside-a-generic-is-its-tuple.loft
 elab	refused	loft-suite/rules/interfaces/G-Mono/filter-and-map-inside-a-generic-copy-at-their-element.loft
 elab	refused	loft-suite/rules/interfaces/G-Mono/sizeof-inside-a-generic-is-its-instances-size.loft
-elab	refused	loft-suite/rules/interfaces/G-Regular/2171-a-self-referencing-generic-enum-compiles-on-its-own.loft
-elab	refused	loft-suite/rules/interfaces/G-Regular/a-generic-over-a-regular-enum-binds-its-own-field.loft
-elab	refused	loft-suite/rules/interfaces/G-Regular/a-template-names-itself-at-its-own-variables.loft
+elab	refused	loft-suite/rules/interfaces/G-Regular/a-template-that-names-itself-at-its-own-variables-compiles-on-its-own.loft
 elab	refused	loft-suite/rules/interfaces/G-Sat-Eq/an-equatable-bound-compares-content-in-the-monomorph.loft
 elab	refused	loft-suite/rules/interfaces/G-Sat-Eq/c91-every-type-is-equatable.loft
 elab	refused	loft-suite/rules/interfaces/G-Sat/1818-a-bound-is-satisfied-only-by-a-member-that-takes-its-parameters.loft
