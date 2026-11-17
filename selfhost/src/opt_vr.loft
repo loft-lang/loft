@@ -448,6 +448,15 @@ pub fn describe(b: ir::Bundle, vr: opt_vr_layout::ValueRecords) -> vector<text> 
 // tuple parameter — the C does not write that dispatch yet, and takes the plan whole or not at
 // all.
 pub fn c_plan(b: ir::Bundle, w: opt_writes::Writes, ops: own::Ops) -> opt_vr_layout::ValueRecords {
+  // An OPEN program takes no whole-program rewrite (NATIVE.md § Optimisation tiers).
+  if b.open_world {
+    e0 = opt_vr_layout::no_records();
+    e0.asked = true;
+    n0 = len(b.data.definitions);
+    e0.fns = [for _ in 0..n0 { -1 }];
+    e0.sp = [for _ in 0..n0 { false }];
+    return e0;
+  }
   vr = plan(b, w, ops);
   fnref = false;
   for s in vr.sites {

@@ -824,6 +824,7 @@ pub fn materialize_bundle(
     materialize_data_at(stores, data_root, data);
     materialize_schema(stores, &Record::new(root), ds::BUNDLE_TYPES, schema);
     Record::new(root).set_field_bool(stores, ds::BUNDLE_CWD, cwd);
+    Record::new(root).set_field_bool(stores, ds::BUNDLE_OPEN_WORLD, data.open_world);
     // @PLN91 strand 12 — the program's C libraries, which the loft-written C writer reads for
     // a `#c` binding; a shim's sources travel one path per line.
     let libs = Record::new(root).field_recvec(ds::BUNDLE_C_LIBRARIES, ds::IMAGECLIB_STRIDE);
