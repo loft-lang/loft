@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	f6514777d5be091dc13473811e3bf26cfb7d368a
+suite	fac3652dc1b37371599d8511c95e1683ff5a73ed
 
-layer	elab	agree	1031	of	2190
+layer	elab	agree	1031	of	2188
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -120,11 +120,9 @@ elab	refused	loft-suite/rules/calls/F-ParamText/a-text-parameter-is-the-argument
 elab	refused	loft-suite/rules/calls/F-ParamTuple/a-by-value-tuple-parameter-is-the-callees-own-value.loft
 elab	refused	loft-suite/rules/calls/F-Rec/a-method-on-an-integer-literal-is-a-call.loft
 elab	refused	loft-suite/rules/calls/F-Rec/a-recursive-call-gets-its-own-frame.loft
-elab	refused	loft-suite/rules/calls/F-Recv/1427-a-nullable-receiver-implements-its-variant.loft
-elab	refused	loft-suite/rules/calls/F-Recv/1432-a-nullable-receiver-overload-resolves-in-either-order.loft
 elab	refused	loft-suite/rules/calls/F-Recv/1817-an-operator-reaches-every-overload-of-its-second-operand.loft
 elab	refused	loft-suite/rules/calls/F-Recv/1826-an-operator-reaches-a-template-member-as-its-call-does.loft
-elab	refused	loft-suite/rules/calls/F-Recv/a-nullable-narrow-receiver-reaches-its-nullable-twin.loft
+elab	refused	loft-suite/rules/calls/F-Recv/a-call-reaches-the-method-spelled-for-its-receivers-nullability.loft
 elab	refused	loft-suite/rules/calls/F-Recv/a-short-lambda-takes-its-type-from-every-callee-spelling.loft
 elab	refused	loft-suite/rules/calls/F-Ret/1337-a-view-of-a-local-returned-through-a-nullable-return-is-copied.loft
 elab	refused	loft-suite/rules/calls/F-Ret/1345-a-nullable-vector-return-of-a-projection-is-copied.loft
