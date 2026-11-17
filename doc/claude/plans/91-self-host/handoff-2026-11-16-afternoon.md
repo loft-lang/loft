@@ -154,6 +154,18 @@ edit landed while a run's build was under a minute old (a development build at 2
 gate's at 35 s); both runs were discarded and repeated.  Check the build's age in ONE command
 and edit in the NEXT, never in the same one.
 
+**State at 4572be7a1 (2026-11-17, the real gate's own figure): 952 of 2218 agree, 0 differ,
+1266 refused**, 75 own cells; the writer's and runner's baselines stand at main's pin with no
+differing row (074413a7a).  Carried since the rebase: a function field from a local or a
+lambda, byte-vector slices, a `&` link walking child records (`_slot_<name>_N`), store locks,
+an append to a nullable vector local, tuple-typed struct fields (layout, literal, assign,
+member read, copy out; from a local or a call), a vector field of a struct enum from a
+literal, in-place writes to a tuple local's members, narrow members in a vector of tuples.
+What is left is a long tail — a few hundred distinct refusals, most worth one or two
+programs; the larger groups are capturing lambdas stored in fields, range and key reads on
+sorted/index/spatial collections, tuples holding records or vectors, and struct fields of an
+iterator or of a vector of tuples.
+
 **The real gate's memory ceiling.**  The gate's own `--ship` build of the elaborator needs more
 than 6 GB of address space in the C compiler; under `ulimit -v 6000000` it ends as `did not
 build … cc1: out of memory`.  Run the real gate under `ulimit -v 9000000` with `--jobs 5`; a
