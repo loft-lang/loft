@@ -45,7 +45,7 @@ straight-line path, an `OpFreeRef(S)` followed by a DEREFERENCE of any (transiti
 prints `⚠ UAF: \`arg\` is read AFTER \`OpFreeRef(__vdb_1)\` …`. Run it:
 
 ```
-loft introspect --show-ownership tests/scripts/35m-mid-slice-repetition.loft   # ⚠ UAF fires
+loft introspect --show-ownership tests/scripts/a-repetition-runs-mid-slice-and-over-a-cursor.loft   # ⚠ UAF fires
 ```
 
 Boundary (verified): fires on 35m + the minimal repro + the nested-match variant; SILENT on the
@@ -74,7 +74,7 @@ different root (35c stays silent — its free is correctly placed).
 
 Owns two failing scripts — **NOT the same root** (a 2026-07-19 finding, see the Static gate
 below; the earlier "same root" claim is retracted):
-- `tests/scripts/35m-mid-slice-repetition.loft` — `get_vector: use-after-free on store N`. THIS
+- `tests/scripts/a-repetition-runs-mid-slice-and-over-a-cursor.loft` — `get_vector: use-after-free on store N`. THIS
   plan's bug: a free-before-dependent-read (the group's `__vdb_1` freed before `arg[0]` deref).
 - `tests/scripts/35c-rest-capture.loft` — `sub-class A (enum + captured field + rest): null`. A
   DIFFERENT root (return-source freed before return), FIXED separately — see the 35c fix in the

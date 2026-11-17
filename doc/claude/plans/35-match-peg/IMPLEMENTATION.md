@@ -65,7 +65,7 @@ repetition/cursor scripts unchanged on both backends, and a vector introspect sh
 trailing `(V)*` consumes the maximal run and LEAVES any non-V tail), a fixed tail after the group is
 REJECTED on a cursor (its "end" is the source end, meaningless for a prefix), and the cursor is
 advanced to the run end (or to `len` when a `..rest` consumed the remainder), with the PC5 `farthest`
-high-water update mirrored. Guard: `tests/scripts/35t-cursor-repetition.loft` (prefix-stop, run at
+high-water update mirrored. Guard: `tests/scripts/a-repetition-runs-mid-slice-and-over-a-cursor.loft` (prefix-stop, run at
 `pos > 0` with value check, `*`/`+`, `..rest`, a driver loop, sub-rule tail form; cross-mode +
 leak-checked).
 
@@ -139,7 +139,7 @@ Head bare-names bind before the group; head sub-patterns/literals bind inline. S
 `SepSpec` — a variant TAG `(Comma)` OR a LEXEME literal `(",")` — via `sep_match_cond`, so a
 comma-separated token grammar needs no dedicated separator variant. Non-literal tail elements
 (bind / variant sub-pattern) now land in slice 3; a fixed tail + `..rest` together stays deferred. Guard
-`tests/scripts/35m-mid-slice-repetition.loft` (bracketed lists, function calls, callee-name bind,
+`tests/scripts/a-repetition-runs-mid-slice-and-over-a-cursor.loft` (bracketed lists, function calls, callee-name bind,
 value-by-index, `+`; cross-mode + leak-checked).
 
 **Phase 5 — DONE (optional), both backends.** `(a)?` = degenerate alternation `(a | ε)`: the
@@ -968,7 +968,7 @@ statement grammar), `tests/parse_errors.rs::{lexeme_missing, unknown_field_annot
   (rejected with a diagnostic).
 - ~~**Mid-slice repetition** (a non-empty head before the group)~~ — **DONE** (the parser-combinator
   keystone `[ Ident { name }, "(", (arg: Ident)*(","), ")" ]`; a repetition may sit between a fixed head
-  and a fixed literal/lexeme tail). Guard `tests/scripts/35m-mid-slice-repetition.loft`.
+  and a fixed literal/lexeme tail). Guard `tests/scripts/a-repetition-runs-mid-slice-and-over-a-cursor.loft`.
 - **§3a step 6 fold hook** (associativity fold direction) — waits on the PC layer that uses it.
 
 *(6.2 separator `*(Sep)` — DONE, see above.)*
