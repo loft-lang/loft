@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	f82de5af3917db129f7b9e79fd65fdbd919f302f
+suite	d2373eb81cba2968d077b690523349906a05825d
 
-layer	elab	agree	964	of	2190
+layer	elab	agree	964	of	2187
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -96,11 +96,8 @@ elab	refused	loft-suite/rules/binding/Const-Value/a-link-a-view-and-a-discharge-
 elab	refused	loft-suite/rules/binding/Const-Value/a-value-const-scalar-local-can-be-declared.loft
 elab	refused	loft-suite/rules/binding/P-Cap-Fresh/a-rest-and-a-repetition-are-fresh-stores.loft
 elab	refused	loft-suite/rules/binding/P-Cap-Fresh/a-rest-is-fresh-and-a-bind-of-it-is-a-copy-of-its-own.loft
-elab	refused	loft-suite/rules/binding/P-Cap-View/2353-a-plain-struct-arms-field-capture-is-a-view-and-is-not-freed-under-its-reader.loft
-elab	refused	loft-suite/rules/binding/P-Cap-View/2457-a-slice-pattern-capture-materialises-when-its-subject-is-disturbed.loft
-elab	refused	loft-suite/rules/binding/P-Cap-View/a-capture-is-a-view-on-b-views-terms.loft
-elab	refused	loft-suite/rules/binding/P-Cap-View/a-capture-of-an-interior-place-writes-the-subject.loft
 elab	refused	loft-suite/rules/binding/P-Cap-View/a-pattern-capture-is-a-view-and-a-rest-is-fresh.loft
+elab	refused	loft-suite/rules/binding/P-Cap-View/a-pattern-capture-is-a-view-of-the-subjects-place-on-b-views-terms.loft
 elab	refused	loft-suite/rules/calls/F-Args/insert-takes-its-arguments-before-the-vector-grows.loft
 elab	refused	loft-suite/rules/calls/F-Block/1722-a-block-value-keeps-the-null-its-branch-yields.loft
 elab	refused	loft-suite/rules/calls/F-Block/a-block-yields-a-call-on-a-reference-to-any-place.loft
