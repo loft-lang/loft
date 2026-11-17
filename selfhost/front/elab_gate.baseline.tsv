@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	6c2d106210d30d7629b45c34c1f7cb9838459cb4
+suite	6460593e243dad62cb36862d13dce6bcd27cd28a
 
-layer	elab	agree	1031	of	2124
+layer	elab	agree	1031	of	2122
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -288,10 +288,8 @@ elab	refused	loft-suite/rules/heap/H-Materialise/1693-a-disturbed-struct-enum-vi
 elab	refused	loft-suite/rules/heap/H-Move/1591-a-coalesce-chain-that-holds-its-destination-releases-once.loft
 elab	refused	loft-suite/rules/heap/H-Move/1623-a-returned-join-binding-hands-out-its-arms-temps.loft
 elab	refused	loft-suite/rules/heap/H-Move/a-moved-local-is-spent-only-on-the-path-that-moved-it.loft
-elab	refused	loft-suite/rules/heap/H-RefHome/a-call-result-in-a-literal-argument-lives-as-long-as-its-holder.loft
 elab	refused	loft-suite/rules/heap/H-RefHome/a-generic-recursive-enum-links-its-nodes-through-locals.loft
-elab	refused	loft-suite/rules/heap/H-RefHome/a-record-a-stored-reference-names-lives-as-long-as-its-holder.loft
-elab	refused	loft-suite/rules/heap/H-RefHome/a-record-built-for-a-stored-reference-lives-in-its-holders-store.loft
+elab	refused	loft-suite/rules/heap/H-RefHome/a-record-a-stored-reference-names-lives-as-long-as-its-holder-however-it-was-built.loft
 elab	refused	loft-suite/rules/heap/H-RefHome/a-stored-reference-its-record-outlives-reads-it.loft
 elab	refused	loft-suite/rules/heap/H-Removed/a-cleared-vector-releases-the-records-a-reference-named.loft
 elab	refused	loft-suite/rules/heap/H-RootExtent/a-vector-stores-extent-is-its-collection-through-swaps-and-placements.loft
