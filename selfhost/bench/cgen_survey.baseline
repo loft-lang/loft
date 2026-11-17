@@ -24,7 +24,7 @@
  "bodies|plain|program|corpus:tests": {
   "agree": 601,
   "differ": 0,
-  "equal": 6619,
+  "equal": 6620,
   "functions": 6620,
   "refused": 0,
   "switches": [

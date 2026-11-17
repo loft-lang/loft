@@ -56,6 +56,7 @@ use loop_shape;
 use opt_non_sentinel;
 use opt_range;
 use cgen_value;
+use narrow;
 use cgen_fnref;
 use cgen_append;
 use cgen_dest;
@@ -3204,6 +3205,12 @@ fn stmt_kind(x: Cx, w: W, v: ir::Node, ind: integer) {
       // every later read and write of it goes through.
       if w.links[var]! && (!w.params[var]! || link_set_repoints(x.b, w, var, inner)) {
         to = stack_target(x.b, w, inner);
+        if to == "" && shape != "ref" {
+          to = direct_place(x, w, var, inner, ind);
+          if w.why != "" {
+            return;
+          }
+        }
         if to == "" && shape != "ref" && store_place(x.b, inner) {
           refuse(w, "a link to a store place");
           return;
@@ -4164,6 +4171,42 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     rtext = if cgen_split::everywhere() { parts } else { "#if defined(_MSC_VER)\n{parts}#else\n{whole}#endif\n" };
   }
   Written { split: parts != "", text: rtext, refused: "", name: name, ret: rret, list: rlist, storage: outer, inner: rinner }
+}
+
+// `direct_place`: a link of `var`'s kind re-pointed to a store place — a field or an element —
+// whose bytes are the C value itself (an 8-byte integer, a float, a single, a character, a
+// boolean, a plain enum): the address of the place, as `--native` takes it.  An absent place (a
+// null record) is a temporary holding the null, which a write through the link leaves unseen.
+// "" where the place is not one.
+fn direct_place(x: Cx, w: W, var: integer, inner: ir::Node, ind: integer) -> text {
+  match loop_shape::unspan(inner) {
+    NdCall { def_nr, args: _ } => {
+      nm = def_name(x.b, def_nr);
+      if nm != "OpGetVector" && nm != "OpGetField" {
+        return "";
+      }
+    },
+    _ => return "",
+  }
+  vt = x.b.data.definitions[w.index]!.variables.variables[var]!.type_def[0] ?? ir::TyVoid;
+  tp = match cgen_types::base(vt) { TyRefVar { inner: t } => t, _ => return "" };
+  direct = match cgen_types::base(tp) {
+    TyInteger { spec } => narrow::byte_width(spec, tp is TyOptional) >= 8,
+    TyFloat => true,
+    TySingle => true,
+    TyCharacter => true,
+    TyBoolean => true,
+    TyEnum { n: _, is_ref, dep: _ } => !is_ref,
+    _ => false,
+  };
+  if !direct {
+    return "";
+  }
+  c = w.shapes[var]!;
+  absent = temp(w, c);
+  null_into(w, absent, c, ind);
+  e = expr(x, w, inner, ind);
+  "({held(c)} *) loft_place({as_ref(w, e)}, &{absent})"
 }
 
 fn number_tuples(x: Cx, shapes: vector<text>) {
