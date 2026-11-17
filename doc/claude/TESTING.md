@@ -590,6 +590,11 @@ reach today (`rule_axes.tsv`, `matrix_axes.census`) and every defect a cell name
    cell the self-hosted elaborator agrees with (no row in `selfhost/front/elab_gate.baseline.tsv`)
    is never merged into one it refuses — the merged file is refused whole, and the gate loses a
    program it handled (its agree count must not fall).
+   A cell with no receipt, or `@falsified-at: none`, is asked whether it CAN fail: try the cure
+   switches that touch its rule (`src/keys.rs`), and when none moves it, read whether its values
+   can tell the right answer from the stale one at all — a view of the LAST element across a
+   removal reads the right value from the slot's leftover bytes, where a MIDDLE element reads
+   the neighbour that shifted in.  A case that can fail is added, and its switch receipt recorded.
 5. **Verify** the rule's cells on both backends (`make suite ARGS="@FR-<rule> --mode both-c"`),
    falsify every new cell (`make falsify`), and run the whole suite memory-capped before the suite
    commit.  A probe that turns up a defect is fixed (CLAUDE.md § Bug-filing policy) — the pass is
