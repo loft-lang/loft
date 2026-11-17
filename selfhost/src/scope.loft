@@ -31,6 +31,13 @@ pub fn scope_bundle(b: ir::Bundle) -> vector<text> {
       refused += ["{d.name}: {why}"];
       continue;
     }
+    // Every argument lives in scope 0, the frame's, which no exit frees (`phase.rs`: the
+    // arguments' scope is set before the scan); a return buffer is one.
+    for v in d.variables.variables {
+      if v.argument {
+        d.variables.variables[v#index].scope = 0;
+      }
+    }
     n = Numbering { next: 1 };
     seen: vector<boolean> = [for _ in d.variables.variables { false }];
     code = number(d.code[0]!, n, 0, d.variables, seen);
