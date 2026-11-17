@@ -245,8 +245,14 @@ pub fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::T
       f.variables[v#index].type_def = [el_types::without_deps(v.type_def[0] ?? ir::TyVoid)];
     }
   }
+  join_bind = false;
   if textual || record {
     why2 = text_instance_carried(e, g, tmpl, f, code_of(tmpl), h, textual);
+    // (`bind_monomorph_join_return` carries a record's branch answer with a bare parameter arm.)
+    if why2 == "a branch answer with a bare parameter arm" && record {
+      join_bind = true;
+      why2 = "";
+    }
     if why2 != "" {
       el::refuse(e, "a generic instance at {if textual { "text" } else { "a record" }} whose body holds {why2}");
       return false;
@@ -332,6 +338,34 @@ pub fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::T
   // `derive_monomorph_return_deps`: a text or record result every return of which is a bare
   // parameter borrows that parameter, by its attribute number (`-> text["x"]`, `-> P["x"]`).
   rt = el_types::base(el::def(e, d).returned[0] ?? ir::TyVoid);
+  // `bind_monomorph_join_return` (loft#1387, `@FR-F-Ret`): a record instance whose tail is a
+  // value branch over parameters binds it to a fresh `___ret_join_N` — the bind copies each arm
+  // (`@FR-B-Copy`) — and answers that local; the result borrows nothing.
+  if join_bind {
+    k = 1;
+    for v in f.variables {
+      if v.name.starts_with("___ret_join_") {
+        k += 1;
+      }
+    }
+    tmp = len(f.variables);
+    f.variables += [el_vars::fresh_variable("___ret_join_{k}", el::def(e, d).returned[0] ?? ir::TyVoid)];
+    f.names += [ir::NameNr { name: "___ret_join_{k}", nr: tmp }];
+    match code {
+      NdBlock { block } => {
+        bl = block[0];
+        last = bl.operators[-1] ?? ir::NdNull;
+        wrapped = el_ir::unspan(last) is NdReturn;
+        branch = match el_ir::unspan(last) { NdReturn { inner: ri } => ri, _ => el_ir::unspan(last) };
+        bl.operators[-1] = el_ir::respan(last, el_ir::v_set(tmp, branch));
+        bl.operators += [if wrapped { ir::NdReturn { inner: ir::NdVar { n: tmp } } } else { ir::NdVar { n: tmp } }];
+        e.b.data.definitions[d].code = [ir::NdBlock { block: [bl] }];
+      },
+      _ => {}
+    }
+    e.b.data.definitions[d].variables = f;
+    return true;
+  }
   // `copy_param_returns_of_fresh_instance`: a record parameter the body reassigns is no view
   // of the argument, so the result borrows nothing and the tail hands back a copy,
   // `{ ___ret_param_N = p; ___ret_param_N }`.
