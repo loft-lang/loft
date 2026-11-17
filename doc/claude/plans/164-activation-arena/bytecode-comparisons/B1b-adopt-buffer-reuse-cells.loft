@@ -23,9 +23,18 @@ fn alloc_canvas(w: integer, h: integer, fill: integer) -> Canvas {
 }
 
 // r1 — plan 51 cluster 3 (D-own-43's own cell): a literal, then a rebind from a call.
+// The rebind directly before the tail is handed the return buffer (the tail local's handover),
+// so the call writes the caller's buffer itself; `_apart` puts a statement between the rebind
+// and the tail, which keeps the promoted buffer, its entry witness and the in-place copy.
 fn render_lit_then_call(p: Q) -> Canvas {
   cv = Canvas { data: [], w: 1 };
   cv = alloc_canvas(4, 5, p.tag);
+  cv
+}
+fn render_lit_then_call_apart(p: Q) -> Canvas {
+  cv = Canvas { data: [], w: 1 };
+  cv = alloc_canvas(4, 5, p.tag);
+  if len(cv.data) == 0 { cv.w = 0; }
   cv
 }
 fn r1() {
@@ -33,10 +42,12 @@ fn r1() {
   for i in 0..6 {
     p = Q { tag: i };
     cv_c = render_lit_then_call(p);
+    cv_a = render_lit_then_call_apart(p);
     assert(cv_c.w == 4 && len(cv_c.data) == 5 && cv_c.data[0]? == i, "r1 {i} {cv_c.w} {len(cv_c.data)}");
-    s += cv_c.data[4]?;
+    assert(cv_a.w == 4 && len(cv_a.data) == 5 && cv_a.data[0]? == i, "r1 apart {i} {cv_a.w} {len(cv_a.data)}");
+    s += cv_c.data[4]? + cv_a.data[4]?;
   }
-  assert(s == 15, "r1 {s}");
+  assert(s == 30, "r1 {s}");
   println("r1 {s}");
 }
 

@@ -96,9 +96,17 @@ fn alloc_canvas(w: integer, h: integer, fill: integer) -> Canvas {
   for _i in 0..h { cv.data += [fill]; }
   cv
 }
+// The rebind directly before the tail is handed the return buffer (the tail local's handover);
+// `_apart` puts a statement between the rebind and the tail and keeps the in-place copy.
 fn render_lit_then_call(p: Q) -> Canvas {
   cv = Canvas { data: [], w: 1 };
   cv = alloc_canvas(4, 5, p.tag);
+  cv
+}
+fn render_lit_then_call_apart(p: Q) -> Canvas {
+  cv = Canvas { data: [], w: 1 };
+  cv = alloc_canvas(4, 5, p.tag);
+  if len(cv.data) == 0 { cv.w = 0; }
   cv
 }
 fn render_direct(q: Q) -> Canvas { cv = alloc_canvas(7, 9, q.tag * 2); cv }
@@ -108,12 +116,14 @@ fn c6() {
     p = Q { tag: i };
     q = Q { tag: i + 100 };
     cv_c = render_lit_then_call(p);
+    cv_a = render_lit_then_call_apart(p);
     cv_d = render_direct(q);
     assert(cv_c.w == 4 && len(cv_c.data) == 5 && cv_c.data[0]? == i, "c6 c {i} {cv_c.w} {len(cv_c.data)}");
+    assert(cv_a.w == 4 && len(cv_a.data) == 5 && cv_a.data[0]? == i, "c6 a {i} {cv_a.w} {len(cv_a.data)}");
     assert(cv_d.w == 7 && len(cv_d.data) == 9 && cv_d.data[0]? == (i + 100) * 2, "c6 d {i} {cv_d.w}");
-    s += cv_c.data[4]? + cv_d.data[8]?;
+    s += cv_c.data[4]? + cv_a.data[4]? + cv_d.data[8]?;
   }
-  assert(s == 15 + 6 * 200 + 30, "c6 {s}");
+  assert(s == 15 + 15 + 6 * 200 + 30, "c6 {s}");
   println("c6 {s}");
 }
 
