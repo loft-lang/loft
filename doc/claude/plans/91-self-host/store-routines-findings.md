@@ -357,12 +357,12 @@ The real defects the checker found first:
 14. **A call rebind in a loop refilled the vector a closure captured** — `a = mkv(i)` after the
    build answered the value assigned after it: silent-wrong, both backends.  The call's buffer is
    a backing the rebind detaches (`LOFT_NO_CALL_BUFFER_REBIND_DETACH`); suite cell
-   L-CapRebind/a-call-rebind-in-a-loop-leaves-the-record-its-build-time-vector.  Not a lifetime
+   L-CapRebind/a-rebind-of-a-captured-local-leaves-the-record-the-store-its-build-named.  Not a lifetime
    fault, so the records cannot report it; found by the over-reach probe beside 12.
 15. **A capture rotated through call buffers was freed under a buffer** — `v = bump(v)` with a
    kept closure: a use after free on the C backend at three passes.  Such a capture is the
    buffers' to release (`LOFT_NO_ROTATED_CAPTURE_LEFT_TO_BUFFERS`); suite cell
-   L-CapRebind/a-capture-rotated-through-call-buffers-is-the-buffers-to-release.
+   L-CapRebind/a-rebind-of-a-captured-local-leaves-the-record-the-store-its-build-named.
 
 16. **A closure re-bound to a plain lambda leaked the record it displaced** — a fn-ref holding a
    frame-built record, re-bound on a branch to a lambda that captures nothing, then returned: the

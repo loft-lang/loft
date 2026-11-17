@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	e6ba65d70c7db0abc23aa1908074277ba736d516
+suite	4122b0d9bcd2fb64785bf881c23aea33f1324a9c
 
-layer	elab	agree	1031	of	2169
+layer	elab	agree	1031	of	2165
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -171,11 +171,7 @@ elab	refused	loft-suite/rules/closures/L-CapOwn/a-closure-over-a-branch-owns-onl
 elab	refused	loft-suite/rules/closures/L-CapOwn/a-closure-that-leaves-its-frame-takes-its-captures-with-it-and-releases-each-once.loft
 elab	refused	loft-suite/rules/closures/L-CapOwn/a-rebind-releases-the-closure-record-it-displaces-whatever-replaces-it.loft
 elab	refused	loft-suite/rules/closures/L-CapOwn/a-rebuild-in-a-loop-keeps-the-capture-it-takes-again.loft
-elab	refused	loft-suite/rules/closures/L-CapRebind/a-call-rebind-in-a-loop-leaves-the-record-its-build-time-vector.loft
-elab	refused	loft-suite/rules/closures/L-CapRebind/a-capture-rotated-through-call-buffers-is-the-buffers-to-release.loft
-elab	refused	loft-suite/rules/closures/L-CapRebind/a-captured-keyed-local-keeps-its-store-through-every-rebind.loft
-elab	refused	loft-suite/rules/closures/L-CapRebind/a-captured-vector-local-keeps-its-store-through-every-rebind.loft
-elab	refused	loft-suite/rules/closures/L-CapRebind/a-rebound-capture-is-released-once-by-whoever-keeps-it.loft
+elab	refused	loft-suite/rules/closures/L-CapRebind/a-rebind-of-a-captured-local-leaves-the-record-the-store-its-build-named.loft
 elab	refused	loft-suite/rules/closures/L-CapRef/a-captured-ref-parameter-shares-a-record-and-copies-a-scalar.loft
 elab	refused	loft-suite/rules/closures/L-CapRef/a-captured-ref-parameter-shares-its-heap-pointee-and-copies-its-scalar.loft
 elab	refused	loft-suite/rules/closures/L-CapRef/a-closure-replacing-a-captured-ref-record-reaches-the-caller.loft
