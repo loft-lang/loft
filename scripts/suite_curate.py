@@ -331,7 +331,7 @@ def merge(target, intro_file, cells):
             head = [re.sub(r"\b" + re.escape(o) + r"\b", nw, l) if re.match(r"^// @EXPECT_", l) else l
                     for l in head]
         mm = re.search(r"(?ms)^fn main\(\) \{\n(.*?)^\}\n", code)
-        if mm and all(re.fullmatch(r'\s*(test_[a-z_0-9]+\(\);|println\("[^"{}]*"\);)?\s*', l)
+        if mm and all(re.fullmatch(r'\s*(test_[a-z_0-9]+\(\);|print(ln)?\("[^"{}]*"\);)?\s*', l)
                       for l in mm.group(1).split("\n")):
             # A `main` that only calls the file's own tests (and perhaps prints a fixed line): in
             # a merged file the tests run themselves, so it would run each twice.
