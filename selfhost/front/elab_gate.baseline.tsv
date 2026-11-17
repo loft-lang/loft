@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	c91de0bc2d81bb74f392a4719be7ce8239d1975f
+suite	6b2bd8911adb38c5d599b0368354a19ef4313921
 
-layer	elab	agree	1031	of	2135
+layer	elab	agree	1031	of	2134
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -250,8 +250,7 @@ elab	refused	loft-suite/rules/formatting/F-Spec/a-format-spec-tunes-what-every-v
 elab	refused	loft-suite/rules/formatting/F-Target-Kind/a-nullable-hole-into-a-non-null-parameter-warns.loft
 elab	refused	loft-suite/rules/formatting/F-Target-Pos/every-position-with-an-expected-type-builds-the-target.loft
 elab	refused	loft-suite/rules/formatting/F-Target/each-hole-kind-calls-its-own-method.loft
-elab	refused	loft-suite/rules/grammar/G-Amp-Infix/a-vector-of-and-results-compares-by-value.loft
-elab	refused	loft-suite/rules/grammar/G-Amp-Infix/a-vector-of-and-results-is-a-plain-integer-vector.loft
+elab	refused	loft-suite/rules/grammar/G-Amp-Infix/a-vector-of-and-results-is-a-plain-integer-vector-compared-by-value.loft
 elab	refused	loft-suite/rules/grammar/G-Amp-Prefix/a-prefix-amp-binds-a-link.loft
 elab	refused	loft-suite/rules/grammar/G-Pat-Prec/an-alternation-branch-may-capture-the-element-it-matched.loft
 elab	refused	loft-suite/rules/heap/H-Alloc/an-omitted-field-is-written-to-its-default-in-a-reused-block.loft
