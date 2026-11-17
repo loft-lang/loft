@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	3718acc398776ef2349499f0183fea8baa9a6798
+suite	0e23645aacd4985be500969e31db9676989eef42
 
-layer	elab	agree	1031	of	2098
+layer	elab	agree	1031	of	2097
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -370,8 +370,7 @@ elab	refused	loft-suite/rules/layout/L-Null/a-nullable-keyed-collection-crosses-
 elab	refused	loft-suite/rules/layout/L-Null/a-nullable-pointer-or-handle-keeps-its-representation-and-its-sentinel.loft
 elab	refused	loft-suite/rules/layout/L-Null/bind-copies-or-views-the-whole-boundary.loft
 elab	refused	loft-suite/rules/layout/L-OutOfLine/a-field-that-would-contain-its-host-is-a-child.loft
-elab	refused	loft-suite/rules/layout/L-OutOfLine/a-par-worker-returns-a-tree.loft
-elab	refused	loft-suite/rules/layout/L-OutOfLine/a-worker-returns-a-tree-into-a-fresh-destination.loft
+elab	refused	loft-suite/rules/layout/L-OutOfLine/a-par-worker-returns-a-tree-whole-into-a-fresh-destination.loft
 elab	refused	loft-suite/rules/layout/L-Sound/2174-an-image-without-its-sidecar-is-refused.loft
 elab	refused	loft-suite/rules/layout/L-Struct/1718-a-virtual-field-has-no-slot-on-native.loft
 elab	refused	loft-suite/rules/layout/L-Total/every-type-has-one-layout-whichever-spelling-asks.loft
