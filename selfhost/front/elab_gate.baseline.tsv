@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	fac3652dc1b37371599d8511c95e1683ff5a73ed
 
-layer	elab	agree	1057	of	2191
+layer	elab	agree	1059	of	2191
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -690,7 +690,6 @@ elab	refused	loft-suite/rules/rewrites/R-ValueRecord/1992-a-record-returned-from
 elab	refused	loft-suite/rules/rewrites/R-ValueRecord/a-small-record-copied-into-a-return-local-is-freed-on-native.loft
 elab	refused	loft-suite/rules/rewrites/R-ViewReturn/a-found-entry-is-read-where-it-lies.loft
 elab	refused	loft-suite/rules/rewrites/R-ZeroCount/a-zero-count-test-reads-the-byte-count-over-every-spelling-of-absence.loft
-elab	refused	loft-suite/rules/structures/S-Digest/a-narrow-key-digests-its-decoded-value.loft
 elab	refused	loft-suite/rules/structures/S-Hash/a-linked-table-finds-by-its-keys-across-chunks-and-walks-in-key-order.loft
 elab	refused	loft-suite/rules/structures/S-Paged/a-paged-range-read-gates-first-and-searches-the-sorted.loft
 elab	refused	loft-suite/rules/structures/S-TreeKey/a-spatial-walk-is-the-morton-order-of-the-decoded-axes.loft
@@ -1113,7 +1112,6 @@ elab	refused	tests/scripts/an-index-walk-steps-from-its-hint-only-while-it-holds
 elab	refused	tests/scripts/an-operand-is-copied-only-when-a-later-operand-can-write-it.loft
 elab	refused	tests/scripts/elem-first-a-paired-temp-lives-in-its-elements-store.loft
 elab	refused	tests/scripts/generic-typevar-name-usable.loft
-elab	refused	tests/scripts/golden-images-paged.loft
 elab	refused	tests/scripts/golden-images-whole.loft
 elab	refused	tests/scripts/link-safe-oracle.loft
 elab	refused	tests/scripts/link-widen-baseline.loft
@@ -1141,7 +1139,7 @@ elab	refused	tests/scripts/store_persist_size_710.loft
 elab	refused	tests/scripts/store_rebuild_b1.loft
 elab	refused	tests/scripts/the-reference-safety-traps-are-what-it-catalogues.loft
 
-layer	elab-functions	agree	15564	of	28071
+layer	elab-functions	agree	15542	of	28046
 elab-functions	agree	lib/code.loft::Block
 elab-functions	agree	lib/code.loft::Boolean
 elab-functions	agree	lib/code.loft::Call
@@ -10568,12 +10566,6 @@ elab-functions	agree	loft-suite/rules/rewrites/R-ZeroCount/a-zero-count-test-rea
 elab-functions	agree	loft-suite/rules/rewrites/R-ZeroCount/a-zero-count-test-reads-the-byte-count-over-every-spelling-of-absence.loft::H
 elab-functions	agree	loft-suite/rules/rewrites/R-ZeroCount/a-zero-count-test-reads-the-byte-count-over-every-spelling-of-absence.loft::n_code
 elab-functions	agree	loft-suite/rules/rewrites/R-ZeroCount/a-zero-count-test-reads-the-byte-count-over-every-spelling-of-absence.loft::n_test_a_present_text_counts_characters
-elab-functions	agree	loft-suite/rules/structures/S-Digest/a-narrow-key-digests-its-decoded-value.loft::(schema)
-elab-functions	agree	loft-suite/rules/structures/S-Digest/a-narrow-key-digests-its-decoded-value.loft::A
-elab-functions	agree	loft-suite/rules/structures/S-Digest/a-narrow-key-digests-its-decoded-value.loft::B
-elab-functions	agree	loft-suite/rules/structures/S-Digest/a-narrow-key-digests-its-decoded-value.loft::Far
-elab-functions	agree	loft-suite/rules/structures/S-Digest/a-narrow-key-digests-its-decoded-value.loft::Lim
-elab-functions	agree	loft-suite/rules/structures/S-Digest/a-narrow-key-digests-its-decoded-value.loft::n_test_a_biased_two_byte_negative_key
 elab-functions	agree	loft-suite/rules/structures/S-Hash/a-linked-table-finds-by-its-keys-across-chunks-and-walks-in-key-order.loft::(schema)
 elab-functions	agree	loft-suite/rules/structures/S-Hash/a-linked-table-finds-by-its-keys-across-chunks-and-walks-in-key-order.loft::F
 elab-functions	agree	loft-suite/rules/structures/S-Hash/a-linked-table-finds-by-its-keys-across-chunks-and-walks-in-key-order.loft::G
@@ -16308,23 +16300,6 @@ elab-functions	agree	tests/scripts/generic-typevar-name-usable.loft::main_vector
 elab-functions	agree	tests/scripts/generic-typevar-name-usable.loft::n_main
 elab-functions	agree	tests/scripts/generic-typevar-name-usable.loft::vector<T>
 elab-functions	agree	tests/scripts/generic-typevar-name-usable.loft::vector<U>
-elab-functions	agree	tests/scripts/golden-images-paged.loft::(schema)
-elab-functions	agree	tests/scripts/golden-images-paged.loft::GNarrow
-elab-functions	agree	tests/scripts/golden-images-paged.loft::GPin
-elab-functions	agree	tests/scripts/golden-images-paged.loft::GRec
-elab-functions	agree	tests/scripts/golden-images-paged.loft::GText
-elab-functions	agree	tests/scripts/golden-images-paged.loft::GWord
-elab-functions	agree	tests/scripts/golden-images-paged.loft::__const_n_sets
-elab-functions	agree	tests/scripts/golden-images-paged.loft::n_check_hash
-elab-functions	agree	tests/scripts/golden-images-paged.loft::n_img
-elab-functions	agree	tests/scripts/golden-images-paged.loft::n_main
-elab-functions	agree	tests/scripts/golden-images-paged.loft::n_prefix
-elab-functions	agree	tests/scripts/golden-images-paged.loft::n_sets
-elab-functions	agree	tests/scripts/golden-images-paged.loft::n_test_a_sorted_range
-elab-functions	agree	tests/scripts/golden-images-paged.loft::n_test_a_spatial_box
-elab-functions	agree	tests/scripts/golden-images-paged.loft::n_test_a_text_keyed_hash
-elab-functions	agree	tests/scripts/golden-images-paged.loft::n_test_a_trie_prefix
-elab-functions	agree	tests/scripts/golden-images-paged.loft::n_test_the_hash_layouts
 elab-functions	agree	tests/scripts/golden-images-whole.loft::(schema)
 elab-functions	agree	tests/scripts/golden-images-whole.loft::GInner
 elab-functions	agree	tests/scripts/golden-images-whole.loft::GKind
@@ -16343,6 +16318,7 @@ elab-functions	agree	tests/scripts/golden-images-whole.loft::n_img
 elab-functions	agree	tests/scripts/golden-images-whole.loft::n_main
 elab-functions	agree	tests/scripts/golden-images-whole.loft::n_rec_ok
 elab-functions	agree	tests/scripts/golden-images-whole.loft::n_sets
+elab-functions	agree	tests/scripts/golden-images-whole.loft::n_test_a_narrow_keyed_hash
 elab-functions	agree	tests/scripts/golden-images-whole.loft::n_test_a_sorted
 elab-functions	agree	tests/scripts/golden-images-whole.loft::n_test_a_spatial
 elab-functions	agree	tests/scripts/golden-images-whole.loft::n_test_a_text_index
