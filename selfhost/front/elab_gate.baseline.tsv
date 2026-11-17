@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	2d5272bad6a5ef3f000b8ad0e8faf0f0e135ce6d
+suite	a63e778054196468804d5a75abf8d847f5162a73
 
-layer	elab	agree	964	of	2213
+layer	elab	agree	964	of	2212
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -23,14 +23,13 @@ elab	refused	lib/process/tests/lines.loft
 elab	refused	lib/process/tests/run.loft
 elab	refused	lib/process/tests/start.loft
 elab	refused	loft-suite/rules/binding/B-Copy/1319-a-nullable-whole-value-bind-copies-like-its-dense-twin.loft
-elab	refused	loft-suite/rules/binding/B-Copy/1325-a-whole-tuple-bind-copies-on-native-too.loft
 elab	refused	loft-suite/rules/binding/B-Copy/1472-a-materialised-value-struct-view-keeps-its-absence.loft
 elab	refused	loft-suite/rules/binding/B-Copy/1612-a-coalesce-chain-copies-the-operand-it-chooses.loft
 elab	refused	loft-suite/rules/binding/B-Copy/1686-a-local-bound-from-a-vector-constant-copies-it.loft
 elab	refused	loft-suite/rules/binding/B-Copy/1752-a-coalesce-over-a-whole-local-copies.loft
 elab	refused	loft-suite/rules/binding/B-Copy/2521-a-place-assigned-a-literal-that-embeds-its-own-old-value-keeps-that-value.loft
 elab	refused	loft-suite/rules/binding/B-Copy/a-binding-from-a-value-branch-copies-the-arm-it-takes.loft
-elab	refused	loft-suite/rules/binding/B-Copy/a-copy-crossed-with-tuples-slices-and-concatenation.loft
+elab	refused	loft-suite/rules/binding/B-Copy/a-copy-of-a-compound-value-copies-every-member.loft
 elab	refused	loft-suite/rules/binding/B-Copy/a-deferred-copy-keeps-the-value-it-was-bound-to-whatever-the-source-does.loft
 elab	refused	loft-suite/rules/binding/B-Copy/a-keyed-local-rebound-from-a-call-that-reads-it-keeps-its-records.loft
 elab	refused	loft-suite/rules/binding/B-Copy/a-projection-into-a-kept-local-in-a-loop-is-a-copy.loft
