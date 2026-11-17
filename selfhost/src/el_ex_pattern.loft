@@ -2446,8 +2446,7 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
   if in_t is TyVector && len(xs) > 0 && !e.first_pass {
     inner_t = match in_t { TyVector { inner } => inner, _ => ir::TyVoid };
     ivt = el_schema::content_type(e, in_t);
-    // An append (`all += [w]`) numbers its stores otherwise — not carried.
-    if elm < 0 || ivt < 0 || append {
+    if elm < 0 || ivt < 0 {
       el::refuse(e, "a vector element that is not a vector literal, appended or of this element type");
       return refused_build();
     }

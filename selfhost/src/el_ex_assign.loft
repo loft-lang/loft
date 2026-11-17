@@ -1202,7 +1202,11 @@ pub fn tuple_lit(e: el::El, vars: el_vars::Vars, elems: vector<integer>) -> Ex {
     vec_lit = x.tp is TyVector && e.p.nodes[n] is SVecLit && (e.first_pass || match el_ir::unspan(x.code) { NdBlock { block: vb } => vb[0].name == "Vector", _ => false });
     // A tuple of plain values as a member (`((1, 2), 3)`) is held as the tuple it is.
     plain_inner = match x.tp { TyTuple { elems: ie } => len([for it in ie if !is_scalar(it) { it }]) == 0 && len(ie) > 0, _ => false };
-    if !(is_scalar(x.tp) || x.tp is TyText || nullable_scalar || vec_lit || boxed_rec || plain_inner) {
+    // A record a call answers fresh is held as that call (`(mk(11), 2)`), the tuple its owner.
+    // (Not carried: a tuple holding a call's record is moved and released by rules of its own
+    // — `tuple_member_move` — so the member stays refused by name.)
+    call_rec = false;
+    if !(is_scalar(x.tp) || x.tp is TyText || nullable_scalar || vec_lit || boxed_rec || plain_inner || call_rec) {
       el::refuse(e, "a tuple with a member of this type: {type_kind(x.tp)}");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
     }
@@ -2708,6 +2712,12 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
   }
   if el_ex_place::promotes_text_param(e, vars, v) {
     v = el_vars::promote_text_param(vars, v);
+  }
+  // A vector local rebound from a call that takes that local is staged through a
+  // `__refvec_rhs_N` (cleared, then refilled) — not carried: refused by name.
+  if !e.first_pass && el_types::base(el_vars::tp(vars, v)) is TyVector && len(el_types::deps(el_vars::tp(vars, v))) > 0 && match el_ir::unspan(x.code) { NdCall { def_nr: rc } => starts_with(el::def(e, rc).name, "n_") && el_ir::reads_var(x.code, v), _ => false } {
+    el::refuse(e, "a vector local rebound from a call that takes it");
+    return ex(ir::NdNull, ir::TyVoid);
   }
   // A call's vector bound to a local a closure shares rotates the call's buffer afterwards
   // (`OpPutRef`, loft#1447's collection half): not carried.

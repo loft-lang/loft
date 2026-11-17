@@ -875,7 +875,7 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
   // The destination's element temp, minted on both passes as the literal path mints it.
   el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [v] });
   // (A literal source is its value block, walked as a local's vector is.)
-  if len(binds) != 1 || body == null || binds[0] == "_" {
+  if len(binds) != 1 || body == null {
     el::refuse(e, "a comprehension with destructuring or `_`");
     return ex(ir::NdNull, ir::TyVoid);
   }
@@ -924,7 +924,16 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
   }
   // A vector walk's counter is `id#index` for a `_` binding too (`_#index`).
   idx = if ranged { rw!.idx } else if sliced { ss!.idx } else { el_ex_pattern::loop_index(vars, id, named: true) };
-  lv = loop_var(vars, src_id, id, if ranged || sliced { elem } else { el_types::with_deps(elem, [vec]) });
+  // (A `_` over a range is carried only where it fills, and Rust's fill mints no `__N` for
+  // it: the walk's variable here is a nameless stand-in that takes no number of that family.)
+  lv = -1;
+  if src_id == "_" && ranged {
+    lv = el_vars::add_variable(vars, "__fill_binding", elem);
+    el_vars::set_defined(vars, lv);
+    vars.loop_vars += [lv];
+  } else {
+    lv = loop_var(vars, src_id, id, if ranged || sliced { elem } else { el_types::with_deps(elem, [vec]) });
+  }
   vars.active_loops += [lv];
   vars.active_values += [if sliced { ir::NdNull } else { x.code }];
   fc = el_ex_pattern::loop_filter(e, vars, filter);
@@ -960,6 +969,11 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
       },
       _ => {}
     }
+  }
+  // A `_` binding is carried where the comprehension fills; any other walk names its element.
+  if src_id == "_" && fill_count < 0 {
+    el::refuse(e, "a comprehension with destructuring or `_`");
+    return ex(ir::NdNull, ir::TyVoid);
   }
   if ranged && fill_count < 0 && (constant_body(e, b.code) || (filter != null && rw!.constant)) {
     el::refuse(e, "a range comprehension that fills or unrolls a constant");
