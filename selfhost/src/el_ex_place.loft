@@ -314,6 +314,30 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
   // A pointer field's `&` annotates the store itself (`l.to = &x` sets `x`'s record), as a struct
   // literal's field does: the value is the operand.
   amp_operand = match e.p.nodes[rhs] { SUnary { op: aop, e: ue } => if aop == "&" { ue } else { null }, _ => null };
+  // A variant literal written into a struct-enum field or element is built there: its fields
+  // set in place, its `enum` field the variant's ordinal.
+  lit_sed = el_types::struct_enum_def(el_types::base(p.tp));
+  unqualify_literal(e, rhs);
+  if op == "=" && lit_sed >= 0 && !(p.tp is TyOptional) && calls(e, el_ir::unspan(p.code), "OpGetField") && el_ex_pattern::variant_literal(e, rhs) {
+    lfs: vector<integer> = [];
+    lvd = -1;
+    match e.p.nodes[rhs] {
+      SStructLit { name: ln, fields: lf } => { lfs = lf; lvd = el::def_nr(e, ln); },
+      _ => {}
+    }
+    lroot = place_root(e, el_ir::unspan(p.code));
+    if lvd >= 0 && el::def(e, lvd).parent == lit_sed && lroot >= 0 {
+      if e.first_pass {
+        el_ex_pattern::first_pass_fields(e, vars, lvd, lfs);
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      lbody = fields_at(e, vars, lroot, el_ir::unspan(p.code), lvd, lfs);
+      if lbody == null {
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      return ex(ir::NdInsert { items: lbody! }, ir::TyVoid);
+    }
+  }
   x = el_ex_assign::expression(e, vars, if op == "=" && calls(e, el_ir::unspan(p.code), "OpGetDbRef") && amp_operand != null { amp_operand! } else { rhs });
   pt = p.tp;
   // `o.v += w` of two vectors appends `w`'s elements into the place (`OpAppendVector`, the
@@ -503,6 +527,22 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
   }
   if op == "=" && struct_ref(e, el_types::base(pt)) >= 0 {
     return record_place_write(e, vars, el_ir::unspan(p.code), el_types::base(pt), x);
+  }
+  // `copy_ref` for a struct-enum FIELD written whole (`h.e = c`, `h.e = g.e`, `h.e = mk(5)`):
+  // the value's record copied into the field's bytes, a fresh call's store freed after.  A
+  // literal is built in the field and a nullable or unit value has rules of its own — not
+  // carried here.
+  sed = el_types::struct_enum_def(el_types::base(pt));
+  if op == "=" && sed >= 0 && !(pt is TyOptional) && !(x.tp is TyOptional) && (el_types::struct_enum_def(el_types::base(x.tp)) == sed || match el_types::base(x.tp) { TyReference { n: vn } => vn >= 0 && el::def(e, vn).def_type == el::DT_ENUM_VALUE && el::def(e, vn).parent == sed, _ => false }) && calls(e, el_ir::unspan(p.code), "OpGetField") {
+    xc = el_ir::unspan(x.code);
+    plain_src = xc is NdVar || calls(e, xc, "OpGetField") || match xc { NdBlock { block: ub } => ub[0].name == "EnumUnitLit", _ => false };
+    fresh = match xc { NdCall { def_nr: xd } => starts_with(el::def(e, xd).name, "n_") && !el_ir::is_null(el::def(e, xd).code[0] ?? ir::NdNull) && !returns_argument_view(el::def(e, xd)), _ => false };
+    if plain_src || fresh {
+      if e.first_pass {
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      return ex(el_ir::cl(e, "OpCopyRecord", [x.code, el_ir::unspan(p.code), ir::NdInt { n: el::def(e, sed).known_type + (if fresh { 32768 } else { 0 }) }]), ir::TyVoid);
+    }
   }
   v = stored(e, vars, x, pt);
   if v == null {
@@ -1373,6 +1413,12 @@ pub fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: 
   el_vars::in_use(vars, v, true);
   vt = el_vars::tp(vars, v);
   bin = op[..-1];
+  // A text payload a `match` bound is mirrored back into its subject on a write
+  // (`text_mirror`) — not carried: refused by name.
+  if !e.first_pass && vt is TyText && starts_with(el_vars::name_of(vars, v), "_mv_") {
+    el::refuse(e, "a write to a text payload a match bound");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
   // A link to a vector (`v: &vector<T>`) appends through the link as the vector would
   // (`@FR-B-Ref-Uniform`).
   linked_vec = match vt { TyRefVar { inner } => inner is TyVector, _ => false };

@@ -174,6 +174,12 @@ pub fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: 
         SStructLit { name: vn, fields: vf } => { vfs = vf; vd = el::def_nr(e, vn); },
         _ => {}
       }
+      // (`record_fields_placeable`: a variant holding a collection is built apart and copied
+      // into the element — not carried: refused by name.)
+      if vd < 0 || !el_ex_match::fields_placeable(e, vd, 0) {
+        el::refuse(e, "a variant literal holding a collection as a vector field's item");
+        return null;
+      }
       el_vars::set_var_type(vars, elm, ir::TyReference { n: sen, dep: el_types::deps(el_vars::tp(vars, elm)) });
       if e.first_pass {
         el_ex_pattern::first_pass_fields(e, vars, vd, vfs);
