@@ -2335,8 +2335,8 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
       members = if tvar >= 0 { match el_vars::tp(vars, tvar) { TyTuple { elems: tel } => tel, _ => [] } } else { [] };
       // (A local declared with its type may hold a narrow member, range-checked on a write —
       // not carried: refused by name.)
-      if tvar >= 0 && vars.annotated.contains(tvar) && !e.first_pass {
-        el::refuse(e, "a write to a member of a tuple local declared with its type");
+      if tvar >= 0 && vars.narrow_tuples.contains(tvar) && !e.first_pass {
+        el::refuse(e, "a write to a member of a tuple local declared with a narrow member");
         return ex(ir::NdNull, ir::TyVoid);
       }
       if tvar >= 0 && !vars.vars[tvar].argument && tix >= 0 && tix < len(members) {

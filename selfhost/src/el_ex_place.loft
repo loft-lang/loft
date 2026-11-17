@@ -1651,6 +1651,16 @@ pub fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text,
   if !vars.annotated.contains(v) {
     vars.annotated += [v];
   }
+  match declared! {
+    TyTuple { elems: dte } => {
+      for dm in dte {
+        if match el_types::base(dm) { TyInteger { spec: ds } => el_types::narrow_width(ds) > 0 || ds.forced_size != 0, _ => !el_ex_call::scalar(el_types::base(dm)) && !(el_types::base(dm) is TyText) } && !vars.narrow_tuples.contains(v) {
+          vars.narrow_tuples += [v];
+        }
+      }
+    },
+    _ => {}
+  }
   // A declared vector filled by a comprehension has its definitions made where the right side
   // starts, after the `=` (`change_var_type` on the declaration), before the comprehension is read.
   match e.p.nodes[rhs!] {
@@ -2418,6 +2428,30 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
               }
             },
             _ => {}
+          }
+          // (A variant holding a vector of its own enum — a recursive one — is built apart, in a
+          // work ref, and copied into the field: not carried, refused by name.)
+          recursive = false;
+          if vd >= 0 && el::def(e, vd).def_type == el::DT_ENUM_VALUE && el::def(e, vd).parent == sed {
+            for va in el::def(e, vd).attributes {
+              if match el_types::base(va.typedef[0] ?? ir::TyVoid) { TyVector { inner: vi } => el_types::struct_enum_def(vi) == sed, _ => false } {
+                // …given a literal with items (a local or an empty literal is written in place).
+                for sf in sub {
+                  match e.p.nodes[sf] {
+                    SFieldInit { name: sfn, e: sfe } => {
+                      if sfn == va.name && sfe != null && match e.p.nodes[sfe!] { SVecLit { items: svi } => len(svi) > 0, _ => false } {
+                        recursive = true;
+                      }
+                    },
+                    _ => {}
+                  }
+                }
+              }
+            }
+          }
+          if recursive {
+            el::refuse(e, "a struct-enum field given a variant literal whose vector of its own enum is a literal with items");
+            return null;
           }
           if vd < 0 || el::def(e, vd).def_type != el::DT_ENUM_VALUE || el::def(e, vd).parent != sed {
             // Any other value: the field's tag zeroed, then a value of the enum copied into the
