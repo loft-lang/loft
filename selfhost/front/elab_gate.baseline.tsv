@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	b705cdb48d7d8f4e3838e2eb570de60ce345bab5
 
-layer	elab	agree	958	of	2220
+layer	elab	agree	959	of	2220
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -410,7 +410,6 @@ elab	refused	loft-suite/rules/heap/H-Move/1591-a-coalesce-chain-that-holds-its-d
 elab	refused	loft-suite/rules/heap/H-Move/1623-a-returned-join-binding-hands-out-its-arms-temps.loft
 elab	refused	loft-suite/rules/heap/H-Move/1645-a-tuple-rebound-or-moved-in-an-arm-releases-each-member-once.loft
 elab	refused	loft-suite/rules/heap/H-Move/a-moved-local-is-spent-only-on-the-path-that-moved-it.loft
-elab	refused	loft-suite/rules/heap/H-NewRec/a-recursive-enum-builds-its-vector-children-in-one-literal.loft
 elab	refused	loft-suite/rules/heap/H-RefHome/a-call-result-in-a-literal-argument-lives-as-long-as-its-holder.loft
 elab	refused	loft-suite/rules/heap/H-RefHome/a-generic-recursive-enum-links-its-nodes-through-locals.loft
 elab	refused	loft-suite/rules/heap/H-RefHome/a-record-a-stored-reference-names-lives-as-long-as-its-holder.loft
