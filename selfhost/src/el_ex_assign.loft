@@ -1830,6 +1830,15 @@ pub fn unit_variant(e: el::El, vars: el_vars::Vars, en: integer, vd: integer) ->
   ex(el_ir::v_block(list, ir::TyEnum { n: en, is_ref: true, dep: [w] }, "EnumUnitLit"), ret)
 }
 
+// The local an `if` arm answers — a block whose one operator is a bare variable — or -1.
+fn keyed_arm_local(n: ir::Node) -> integer {
+  match el_ir::unspan(n) {
+    NdBlock { block } => if block[0].name == "block" && len(block[0].operators) == 1 { match el_ir::unspan(block[0].operators[0]) { NdVar { n: v } => v, _ => -1 } } else { -1 },
+    NdVar { n: v } => v,
+    _ => -1
+  }
+}
+
 // `collection_bind_source`'s copy verdicts for a vector source: a bare variable, or a one-level
 // field read off a record local that owns its store.
 // `Parser::lower_vec_copy_bind` for a dense local `v` given a copy of the vector place `x`: the
@@ -2772,6 +2781,35 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
           el_vars::drop_use(vars, v);
           kt = el_schema::keyed_type(e, el_types::base(kcur));
           return ex(ir::NdInsert { items: [el_ir::v_set(v, ir::NdNull), el_ir::cl(e, "OpReplaceKeyed", [x.code, ir::NdVar { n: v }, ir::NdInt { n: kt + 32768 }])] }, ir::TyVoid);
+        }
+        // A keyed FIELD of a record (through its fields): the field's collection replaced
+        // into the local, which is its own copy.
+        // A NESTED projection (`m.inn.h`, a field of an element) is a view of its root instead
+        // (`@FR-B-View-Depth`): bound as the read, borrowing the root.
+        direct = match el_ir::unspan(x.code) { NdCall { args: ga } => len(ga) > 0 && el_ir::unspan(ga[0]) is NdVar, _ => false };
+        if el::def(e, cd).name == "OpGetField" && place_root(e, el_ir::unspan(x.code)) >= 0 && !direct {
+          el_vars::drop_use(vars, v);
+          el_vars::set_var_type(vars, v, el_types::with_deps(el_vars::tp(vars, v), [place_root(e, el_ir::unspan(x.code))]));
+          return ex(el_ir::v_set(v, x.code), ir::TyVoid);
+        }
+        if el::def(e, cd).name == "OpGetField" && place_root(e, el_ir::unspan(x.code)) >= 0 {
+          el_vars::drop_use(vars, v);
+          // (The local holds its own copy: it borrows nothing of the source.)
+          el_vars::set_var_type(vars, v, el_types::with_deps(el_vars::tp(vars, v), []));
+          kt = el_schema::keyed_type(e, el_types::base(kcur));
+          return ex(ir::NdInsert { items: [el_ir::v_set(v, ir::NdNull), el_ir::cl(e, "OpReplaceKeyed", [x.code, ir::NdVar { n: v }, ir::NdInt { n: kt }])] }, ir::TyVoid);
+        }
+        el::refuse(e, "a keyed local bound from something other than a local");
+        return ex(ir::NdNull, ir::TyVoid);
+      },
+      // An `if` whose arms each answer a keyed local: whichever it answers is replaced in.
+      NdIf { cond: _, t: kt_arm, f: kf_arm } => {
+        if keyed_arm_local(kt_arm) >= 0 && keyed_arm_local(kf_arm) >= 0 {
+          el_vars::drop_use(vars, v);
+          // (The local holds its own copy: it borrows nothing of the source.)
+          el_vars::set_var_type(vars, v, el_types::with_deps(el_vars::tp(vars, v), []));
+          kt = el_schema::keyed_type(e, el_types::base(kcur));
+          return ex(ir::NdInsert { items: [el_ir::v_set(v, ir::NdNull), el_ir::cl(e, "OpReplaceKeyed", [x.code, ir::NdVar { n: v }, ir::NdInt { n: kt }])] }, ir::TyVoid);
         }
         el::refuse(e, "a keyed local bound from something other than a local");
         return ex(ir::NdNull, ir::TyVoid);

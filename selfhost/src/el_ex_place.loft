@@ -1356,6 +1356,45 @@ pub fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: 
     el_vars::drop_use(vars, v);
     return ex(ir::NdInsert { items: ops! }, ir::TyVoid);
   }
+  // A slice of a plain scalar vector appended to a vector local is that range appended
+  // (`OpSliceVector`), after the slice's own preamble.
+  if vt is TyVector && bin == "+" && el_ex_vector::slice_target(e, rhs) == rhs && is_scalar(match vt { TyVector { inner: vi } => vi, _ => ir::TyVoid }) {
+    outer_slice = vars.slice_node;
+    vars.slice_node = rhs;
+    sx = el_ex_assign::expression(e, vars, rhs);
+    vars.slice_node = outer_slice;
+    selem = match sx.tp { TyIterator { step } => step, _ => ir::TyVoid };
+    if e.first_pass {
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    sinit = ir::NdNull;
+    ssubj = ir::NdNull;
+    match sx.code { NdIter { create, init: ii } => { ssubj = create; sinit = ii; }, _ => {} }
+    slo = -1;
+    shi = -1;
+    match sinit {
+      NdInsert { items } => {
+        for st in items {
+          match st {
+            NdSet { var } => {
+              if starts_with(el_vars::name_of(vars, var), "_slice_lo") { slo = var; }
+              if starts_with(el_vars::name_of(vars, var), "_slice_hi") { shi = var; }
+            },
+            _ => {}
+          }
+        }
+      },
+      _ => {}
+    }
+    snm = el_types::elem_name(e, selem);
+    srec = if snm == "" { -1 } else { el_schema::schema_type(e, snm) };
+    if slo < 0 || shi < 0 || srec < 0 || !is_scalar(selem) {
+      el::refuse(e, "a slice appended to a vector of this element type: {type_kind(selem)}");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    el_vars::drop_use(vars, v);
+    return ex(ir::NdInsert { items: [sinit, el_ir::cl(e, "OpSliceVector", [ir::NdVar { n: v }, ssubj, ir::NdVar { n: slo }, ir::NdVar { n: shi }, ir::NdInt { n: srec }])] }, ir::TyVoid);
+  }
   outer_into = vars.read_into;
   vars.read_into = leftmost(e, rhs);
   x = el_ex_assign::expression(e, vars, rhs);

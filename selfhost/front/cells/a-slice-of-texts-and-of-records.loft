@@ -1,0 +1,18 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a slice of a text or a record vector local: bound to a local it is materialised element by element (`Slice materialise`: each element read whole, made through the local and written in — the elements borrowing the sliced vector), and a `for` walks the record elements as views; beside the plain scalar's `OpSliceView`.
+// Prints: ["b","c"] 2 y 5 [2,3]
+
+struct R { s: text, n: integer }
+fn main() {
+  t = ["a", "b", "c"];
+  u = t[1..];
+  rs = [R { s: "x", n: 1 }, R { s: "y", n: 2 }, R { s: "z", n: 3 }];
+  w = rs[..-1];
+  k = 0;
+  for r in rs[1..] { k += r.n; }
+  i = [1, 2, 3];
+  j = i[1..];
+  println("{u} {len(w)} {w[1].s} {k} {j}");
+}
