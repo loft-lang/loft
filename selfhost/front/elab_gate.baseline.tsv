@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	65f264988d5fa023950577744b6d60bf3b236061
+suite	343a8a4933892d3765e73f118672068b0c40d794
 
-layer	elab	agree	1031	of	2110
+layer	elab	agree	1031	of	2109
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -341,9 +341,8 @@ elab	refused	loft-suite/rules/iteration/I-Comp/two-discard-comprehensions-each-b
 elab	refused	loft-suite/rules/iteration/I-Empty/an-empty-source-runs-no-round.loft
 elab	refused	loft-suite/rules/iteration/I-For/1695-a-loop-over-a-collection-field-walks-the-value-it-started-with.loft
 elab	refused	loft-suite/rules/iteration/I-For/a-for-ends-where-its-source-ends-and-a-format-for-walks-what-a-statement-walks.loft
-elab	refused	loft-suite/rules/iteration/I-For/a-reverse-walk-and-a-removal-through-a-link-parameter.loft
 elab	refused	loft-suite/rules/iteration/I-For/a-reverse-walk-over-a-local-filled-by-a-later-function.loft
-elab	refused	loft-suite/rules/iteration/I-For/a-walk-through-a-link-parameter-ends-at-its-length.loft
+elab	refused	loft-suite/rules/iteration/I-For/a-walk-over-a-link-parameter-is-a-walk-over-the-vector.loft
 elab	refused	loft-suite/rules/iteration/I-For/a-write-the-loop-leaves-right-after-is-not-reported.loft
 elab	refused	loft-suite/rules/iteration/I-Index/an-index-is-the-cursor-position-in-the-walked-source.loft
 elab	refused	loft-suite/rules/iteration/I-Index/x-index-of-a-slice-walk-is-the-position-in-the-vector.loft
