@@ -224,7 +224,7 @@ arguments (loft#916 — the suite form is a DIRECTORY, which only became nameabl
   compiler rebuild invalidates bundles.  `BUILD_ID` (git HEAD) alone does not
   change across uncommitted edits; the mtime addition closes that gap.
 
-**A manifest validates only the image it was written with** (`@FR-S-Pair`, loft#2532).  Its
+**A manifest validates only the image it was written with** (`@FR-S-Pair`).  Its
 `bfid` line is the identity of that image (`cache::file_identity`: length, birth time, inode —
 read off the writer's temp file before the rename; the modification time is the eviction clock
 `touch_now` moves, so it is no identity), and a warm load whose image is another is a miss.

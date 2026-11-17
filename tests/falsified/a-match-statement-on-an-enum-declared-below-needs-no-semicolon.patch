@@ -1,8 +1,7 @@
-diff --git b/src/parser/control.rs a/src/parser/control.rs
-index f3c800430..0fbf8978a 100644
---- b/src/parser/control.rs
-+++ a/src/parser/control.rs
-@@ -7094,12 +7094,9 @@ impl Parser {
+diff --git a/src/parser/match_expr.rs b/src/parser/match_expr.rs
+--- a/src/parser/match_expr.rs
++++ b/src/parser/match_expr.rs
+@@ -1308,12 +1308,9 @@ impl Parser {
              }
          }
  

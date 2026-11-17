@@ -1,6 +1,6 @@
-diff --git a/src/parser/control.rs b/src/parser/control.rs
---- a/src/parser/control.rs
-+++ b/src/parser/control.rs
+diff --git a/src/parser/match_captures.rs b/src/parser/match_captures.rs
+--- a/src/parser/match_captures.rs
++++ b/src/parser/match_captures.rs
 @@ -9284,14 +9284,6 @@ impl Parser {
              .map(|(_, pointer)| pointer)
              .or_else(|| self.forward_field_type(elm_tp));
@@ -29,6 +29,9 @@ diff --git a/src/parser/control.rs b/src/parser/control.rs
              }
          }
          self.lexer.revert(save);
+diff --git a/src/parser/match_fields.rs b/src/parser/match_fields.rs
+--- a/src/parser/match_fields.rs
++++ b/src/parser/match_fields.rs
 @@ -12145,30 +12133,6 @@ impl Parser {
              self.expression(&mut hi);
              return (Value::Boolean(false), Type::Boolean);
@@ -88,6 +91,9 @@ diff --git a/src/parser/control.rs b/src/parser/control.rs
                  } else {
                      // Bare identifier without `@` — wildcard binding (binds subject to name).
                      let bind_nr = self.pattern_binding(&id, subject_type);
+diff --git a/src/parser/match_sequences.rs b/src/parser/match_sequences.rs
+--- a/src/parser/match_sequences.rs
++++ b/src/parser/match_sequences.rs
 @@ -14659,18 +14617,6 @@ impl Parser {
              }
              let elem_type = elem_type.clone();

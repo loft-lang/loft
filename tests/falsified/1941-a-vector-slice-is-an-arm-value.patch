@@ -1,8 +1,7 @@
 diff --git a/src/parser/control.rs b/src/parser/control.rs
-index 6af4be7f9..a7431904a 100644
 --- a/src/parser/control.rs
 +++ b/src/parser/control.rs
-@@ -6043,14 +6043,6 @@ impl Parser {
+@@ -6315,14 +6315,6 @@ impl Parser {
          // already an error and synthesises a `null` else for recovery; the DN1 widening below must
          // NOT treat that synthesised null as a nullable branch (it would add a spurious `τ?`).
          let had_else = self.lexer.has_token("else");
@@ -17,7 +16,10 @@ index 6af4be7f9..a7431904a 100644
          // Where the else arm starts: a tuple arm pair that does not join is reported there.
          let else_pos = *self.lexer.pos();
          if had_else {
-@@ -7650,56 +7642,6 @@ impl Parser {
+diff --git a/src/parser/match_expr.rs b/src/parser/match_expr.rs
+--- a/src/parser/match_expr.rs
++++ b/src/parser/match_expr.rs
+@@ -1364,56 +1364,6 @@ impl Parser {
  
      /// The type a match arm is expected to answer in: what the arms have agreed on so
      /// far, or `Unknown` while nothing is settled yet.
@@ -25,7 +27,7 @@ index 6af4be7f9..a7431904a 100644
 -    /// vector a bind would make of it ([`Parser::iterator_as_vector`]), so its siblings join a
 -    /// vector rather than the iterator the slice is lowered from (loft#1941).  Any other arm is
 -    /// returned as it is.
--    fn slice_arm_as_vector(&mut self, code: &mut Value, tp: Type) -> Type {
+-    pub(super) fn slice_arm_as_vector(&mut self, code: &mut Value, tp: Type) -> Type {
 -        if let Type::Iterator(elm, _) = tp.base()
 -            && Self::slice_shaped(code)
 -        {
@@ -71,10 +73,10 @@ index 6af4be7f9..a7431904a 100644
 -        }
 -    }
 -
-     fn match_arm_expected(&self, result_type: &Type) -> Type {
+     pub(super) fn match_arm_expected(&self, result_type: &Type) -> Type {
          if result_type.is_unknown()
              || Self::match_result_unsettled(result_type)
-@@ -7754,9 +7696,6 @@ impl Parser {
+@@ -1468,9 +1418,6 @@ impl Parser {
          } else {
              tp
          };
