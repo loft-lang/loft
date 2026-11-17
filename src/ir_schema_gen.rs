@@ -993,6 +993,7 @@ pub fn register_ir_schema(db: &mut Stores) -> IrSchemaIds {
     let vec_lazy_drivers = db.vector(t118);
     db.field(t112, "lazy_drivers", vec_lazy_drivers);
     db.field(t112, "lazy_refusal", t5);
+    db.field(t112, "open_world", t4);
     let t144 = db.vector(t111);
     let _ = t144; // may be unused
     let t145 = db.vector(t113);

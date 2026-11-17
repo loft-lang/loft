@@ -449,6 +449,9 @@ struct Bundle {
   sql_plans: vector<ImageSqlPlan>,
   lazy_drivers: vector<ImageLazyDriver>,
   lazy_refusal: text,
+  // `Data::open_world`: an OPEN program (a live tier) takes no whole-program rewrite, so the C
+  // writer's value-record plan is empty (`Cx::value_records`).
+  open_world: boolean,
 }
 
 // @FTR-078 — the compiler's whole IR vocabulary written as loft types: 24 `Type` variants,
@@ -456,7 +459,7 @@ struct Bundle {
 // schema for the same graph falls out of it
 // The empty bundle a program image is read into (`load.loft`).
 fn empty_bundle() -> Bundle {
-  Bundle { data: Data { definitions: [], source: 0 }, types: [], cwd: false, c_libraries: [], sidecars: [], upgrades: [], upgrade_types: [], oldest: "", bridge: "", version: "", reflect: "", tls_lines: "", sql_plans: [], lazy_drivers: [], lazy_refusal: "" }
+  Bundle { data: Data { definitions: [], source: 0 }, types: [], cwd: false, c_libraries: [], sidecars: [], upgrades: [], upgrade_types: [], oldest: "", bridge: "", version: "", reflect: "", tls_lines: "", sql_plans: [], lazy_drivers: [], lazy_refusal: "", open_world: false }
 }
 
 // @PLN91 the RUN image (`loft --emit-run-image`): the bytecode the Rust writer produced

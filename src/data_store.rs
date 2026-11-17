@@ -513,6 +513,9 @@ pub(crate) const BUNDLE_TLS_LINES: u32 = 68;
 pub(crate) const BUNDLE_SQL_PLANS: u32 = 72;
 pub(crate) const BUNDLE_LAZY_DRIVERS: u32 = 76;
 pub(crate) const BUNDLE_LAZY_REFUSAL: u32 = 80;
+/// `Data::open_world` (@PLN91 strand 12): an open program takes no whole-program rewrite, so
+/// the loft-written C writer plans no value records for it, as `Cx::value_records` plans none.
+pub(crate) const BUNDLE_OPEN_WORLD: u32 = 85;
 /// The bundle root's size in bytes, and its claim in words (see `DATA_ROOT_WORDS`).
 pub(crate) const BUNDLE_STRIDE: u32 = 88;
 
@@ -1913,6 +1916,7 @@ mod tests {
         assert_eq!(pos(ids.bundle, "sql_plans"), BUNDLE_SQL_PLANS);
         assert_eq!(pos(ids.bundle, "lazy_drivers"), BUNDLE_LAZY_DRIVERS);
         assert_eq!(pos(ids.bundle, "lazy_refusal"), BUNDLE_LAZY_REFUSAL);
+        assert_eq!(pos(ids.bundle, "open_world"), BUNDLE_OPEN_WORLD);
         assert_eq!(
             u32::from(stores.size(ids.image_sql_plan)),
             IMAGESQLPLAN_STRIDE
