@@ -1266,4 +1266,4 @@ elab	refused	tests/scripts/store_paged_enum_field.loft
 elab	refused	tests/scripts/store_persist_size_710.loft
 elab	refused	tests/scripts/store_rebuild_b1.loft
 elab	refused	tests/scripts/the-reference-safety-traps-are-what-it-catalogues.loft
-elab	refused	tests/scripts/two-discard-comprehensions-each-bind-their-own-variable.loft
+elab	refused	loft-suite/rules/iteration/I-Comp/two-discard-comprehensions-each-bind-their-own-variable.loft
