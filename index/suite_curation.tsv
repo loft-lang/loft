@@ -35,12 +35,12 @@ Const-ConstructExempt	binding	curated	1	2026-11-17	no own directory: Const-Value
 Const-Foreign	binding	curated	5	2026-11-17	own dir 5 -> 4: the link-append and struct-view refusals 2->1 over one producer, with the value field write, value append and link element write added; the mapped-vector cell writes in the temp dir (seven leftovers had piled up; 24 tracked loft_*.tmp files untracked suite-wide)
 Const-ScalarCollapse	binding	curated	2	2026-11-17	no own directory: Const-Value's scalar-local cell (patch) cites it
 Const-Value	binding	curated	7	2026-11-17	own dir 6 -> 4: the refusals through a discharge (loft#1211), a link/view/loop variable/discharge target and every append route 3->1, all 21 expectations proven alone; the read-as-the-value cell, copy-out and the scalar-local patch cell stay
-Const-VirtualReject	binding	todo			
-P-Cap-Fresh	binding	todo			
-P-Cap-View	binding	todo			
-F-Args	calls	todo			
-F-Arity	calls	todo			
-F-Block	calls	todo			
+Const-VirtualReject	binding	curated	2	2026-11-17	was Rust-only: a first suite cell refuses const on a virtual field at the binding and the value position — writing it found loft#2538 (the value position accepted in silence), fixed; patch receipt
+P-Cap-Fresh	binding	curated	2	2026-11-17	own dir 2 -> 1: freshness against the subject and the copy a bind of a rest takes 2->1
+P-Cap-View	binding	curated	3	2026-11-17	own dir 5 -> 2: the capture-is-a-view clause (loft#2353, #2457, the B-View and H-View crossings) 4->1; the patch cell (a capture beside a fresh rest) stays
+F-Args	calls	curated	3	2026-11-17	one cell (insert takes its arguments before the vector grows, patch); two citing cells elsewhere
+F-Arity	calls	curated	3	2026-11-17	was Rust-only: two suite cells, split on the compile pass a refusal is met in (past the parameters / short of a required one or a generic past its); writing them found loft#2537 (a refused call typed null to the code after it), fixed; patch receipts
+F-Block	calls	curated	12	2026-11-17	8 files, no merge: the two block-yields-a-call-on-a-reference cells are one clause but gate E splits them (refused / agree); 1722 (patch, the null path) and the tail-match cell with its fixture library (frees across a package boundary) are distinct clauses; 1382/2456 statement-position cells agree; 1386 the value-position refusal
 F-Call	calls	todo			
 F-Default	calls	todo			
 F-Default-Field	calls	todo			
