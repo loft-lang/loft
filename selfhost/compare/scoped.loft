@@ -1,0 +1,25 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `scoped <parsed image> <std image>` — the loft scope pass's side of the scope gate: a program's
+// image BEFORE the scope pass (`LOFT_EMIT_PARSED`), laid out by `scope::scope_bundle`, and its
+// program definitions reported as `defs <image> program <std image>` reports the Rust image AFTER
+// it (`--emit-image`).  A function the pass cannot lay out is named on an `unscoped:` row.
+use load;
+use report;
+use el;
+use scope;
+
+fn main() {
+  a = arguments();
+  b = load::load(a[0] ?? "");
+  std = load::load(a[1] ?? "");
+  if b == null || std == null {
+    eprintln("usage: scoped <parsed image> <std image>");
+    exit(2);
+  }
+  for r in scope::scope_bundle(b!) {
+    println("unscoped: {r}");
+  }
+  print(report::defs_report(b!, el::std_count(std!)));
+}
