@@ -449,18 +449,32 @@ def _break_one(text, fn):
     when the test has none of its own, in the code of its section (from the end of the previous
     test function to this one — a helper it calls).  None when there is none to break."""
     a = text.index("fn " + fn + "(")
-    b = text.index("\n}\n", a)
-    rx = re.compile(r'assert\((.*?)==\s*("[^"]*"|-?\d+)')
-    m, lo = rx.search(text[a:b]), a
-    if not m:
+    b = text.find("\n}\n", a)
+    b = len(text) if b < 0 else b                  # the file's last test may end the file
+    # The expectation spellings: `assert(… == <literal>`, `assert_eq(<got>, <literal>…`, and a
+    # `check("<name>", <got>, <want>)` helper, whose want may be an expression (`r * 10 + 2`).
+    forms = [re.compile(r'assert\((.*?)==\s*("[^"]*"|-?\d+)'),
+             re.compile(r'assert_eq\(([^,]*),\s*("[^"]*"|-?\d+)\s*[,)]'),
+             re.compile(r'\b(?:check|ok)\(("[^"]*",\s*[^,]+),\s*([^;\n]+)\);')]
+
+    def first(lo, hi):
+        hits = [(m.start(2), m.end(2), m.group(2)) for rx in forms for m in [rx.search(text, lo, hi)] if m]
+        return min(hits) if hits else None
+    hit = first(a, b)
+    if not hit:
         prev = [x.start() for x in re.finditer(r"(?m)^fn test_", text) if x.start() < a]
-        lo = text.index("\n}\n", prev[-1]) if prev else next(x.start() for x in re.finditer(r"(?m)^[^/\n]", text))
-        m = rx.search(text[lo:a])
-        if not m:
+        lo = text.find("\n}\n", prev[-1]) if prev else next(x.start() for x in re.finditer(r"(?m)^[^/\n]", text))
+        hit = first(max(lo, 0), a)
+        if not hit:
             return None
-    v = m.group(2)
-    nv = ('"X' + v[1:]) if v.startswith('"') else str(int(v) + 1)
-    return text[:lo + m.start(2)] + nv + text[lo + m.end(2):]
+    s, e, v = hit
+    if v.startswith('"'):
+        nv = '"X' + v[1:]
+    elif re.fullmatch(r"-?\d+", v.strip()):
+        nv = str(int(v) + 1)
+    else:
+        nv = f"({v}) + 1"
+    return text[:s] + nv + text[e:]
 
 
 def vacuity(cells):
