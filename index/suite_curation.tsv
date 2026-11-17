@@ -16,9 +16,9 @@ B-Ref-Alias	binding	curated	15	2026-11-17	own dir 7 -> 5: two ref parameters + o
 B-Ref-AnnotationOnly	binding	curated	6	2026-11-17	every listed position refused (G-Amp-Prefix's cell holds the full list and cites this rule); the own cell is the unary-operator defect (!&a -&n ~&n) with its patch receipt over 6 expectations — its 3 positions duplicated in G-Amp-Prefix stay, since removing them changes the receipt's channel for ~9 lines; the reference-field cell is B-Ref-StoredRef's context. No change.
 B-Ref-Intro	binding	curated	6	2026-11-17	own dir 5 -> 3: the &fn(...) family — write through a parameter, local bind, read and call (loft#1443, #1454, #1455) — 3->1, one duplicated control kept once; the nullable-slot cell (loft#1372) and the place-not-a-temporary refusal (gate E agrees) stay apart
 B-Ref-Lvalue	binding	curated	17	2026-11-17	own dir 10 -> 8: the tuple-member family joins its patch cell (heap member loft#2263, member through a &(...) link); the other seven are distinct places each with a patch receipt (text field/element, text into a store, nullable slot, struct-enum place, generator parameter, struct view, stored tuple)
-B-Ref-NotTarget	binding	todo			
-B-Ref-Read	binding	todo			
-B-Ref-Repoint	binding	todo			
+B-Ref-NotTarget	binding	curated	2	2026-11-17	no own directory: `&x = 3` is refused in G-Amp-Prefix's refusal cell and in B-Ref-AnnotationOnly's (with its patch receipt), both citing this rule
+B-Ref-Read	binding	curated	3	2026-11-17	one conformance cell, every case writes the source after the bind and reads through the link (a copying link fails each); I-Text and B-Ref-Lvalue's text-into-a-store cell cite it too. No change.
+B-Ref-Repoint	binding	curated	7	2026-11-17	4 own cells, distinct clauses: the basic re-point (hand-measured falsification of the pre-fix build), the text link's kind (patch), a write before a re-point (loft#2425), and the any-place conformance cell (its writes after a re-point tell a re-point from a write-through). Three are agreed by gate E, so no merge this round.
 B-Ref-Reshape	binding	todo			
 B-Ref-StoredRef	binding	todo			
 B-Ref-Uniform	binding	todo			

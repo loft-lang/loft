@@ -289,7 +289,9 @@ def merge(target, intro_file, cells):
     for k, cell in enumerate(cells):
         lines = open(cell, encoding="utf-8").read().split("\n")
         i = next(j for j, l in enumerate(lines) if l and not l.startswith("//"))
-        head = lines[2:i]
+        # The license lines by their content, not their position: a cell written without them
+        # would otherwise lose the first two lines of its description.
+        head = [l for l in lines[:i] if "Copyright (c)" not in l and "SPDX-License-Identifier" not in l]
         while head and head[0].strip() in ("//", ""):
             head.pop(0)
         while head and head[-1].strip() in ("//", ""):
