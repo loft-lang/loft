@@ -80,14 +80,14 @@ L-CapScalar	closures	curated	6	2026-11-17	one cell (a captured scalar keeps its 
 L-CapWrite	closures	curated	5	2026-11-17	own dir 6 -> 4: a captured text a closure writes (loft#2286, #2297, #2350) 3->1; the narrow boxing cell, the two-closure refusal and the shared struct field stay
 L-Escape	closures	curated	12	2026-11-17	own dir 8 -> 7: a closure escapes in a struct and keeps its captures (loft#1867 + the parameter/callee escape) 2->1; three patches, the 2492 refusal/admission pair and the element refusal stay
 L-Fn	closures	curated	4	2026-11-17	3 cells: two patches and the capture-what-the-body-names control — nothing to merge
-L-FnAbsent	closures	todo			
-L-FnRef	closures	todo			
-Col-Assign	collections	todo			
-Col-Axis	collections	todo			
-Col-Bucket	collections	todo			
-Col-Capacity	collections	todo			
-Col-Concat	collections	todo			
-Col-Cons	collections	todo			
+L-FnAbsent	closures	curated	5	2026-11-17	2 cells, both patches (102 expected errors, 1642 absent fn answers null) — nothing to merge
+L-FnRef	closures	curated	3	2026-11-17	3 cells: a patch, the fn-type conversion (loft#2190, refused) and the keyed dispatch control (agrees) — nothing to merge
+Col-Assign	collections	curated	2	2026-11-17	2 cells: loft#2470 (agrees) and the keyed-assignment patch — nothing to merge
+Col-Axis	collections	curated	4	2026-11-17	one cell (a biased narrow key finds every record its iteration yields)
+Col-Bucket	collections	curated	5	2026-11-17	2 cells, gate E splits them (135 reserve-hash refused, pln110 size-hash agrees)
+Col-Capacity	collections	curated	5	2026-11-17	no own directory: its citing cells live under other collection rules
+Col-Concat	collections	curated	5	2026-11-17	own dir 6 -> 2: a concatenation is a new vector and neither operand changes (every position, loft#2387, #2399, a slice of its destination with @catches LOFT_NO_SELF_SLICE_DEPS kept, a function-end local) 5->1; 2406 (a second-pass literal) stays
+Col-Cons	collections	curated	4	2026-11-17	3 cells: 2407 (agrees), 2409 and the nullable keyed collection — distinct clauses
 Col-Copy	collections	todo			
 Col-Group	collections	todo			
 Col-Group-Dup	collections	todo			

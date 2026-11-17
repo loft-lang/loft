@@ -346,15 +346,17 @@ def merge(target, intro_file, cells):
         # to an earlier section's is the SAME item (two cells of one directory each declaring the
         # host function its `[sandbox]` policy names): it is dropped, not renamed — a rename would
         # move it out of the policy that names it.
+        shared_vars = set()               # the variants of an enum dropped as identical
         for n in top:
             if (n in taken_top or n in taken_var) and not n.startswith("test_"):
                 mine = decl_text(code, n)
                 if mine is not None and mine == decls_seen.get(n):
+                    shared_vars |= declared(mine)[1]
                     code = code.replace(mine, "", 1)
                     print(f"  {stem}: dropped {n} — identical to an earlier section's")
                     continue
                 ren[n] = (px.upper() + n) if n[0].isupper() else (px + "_" + n)
-        for v in var:
+        for v in var - shared_vars:
             if v in taken_var or v in taken_top:
                 ren[v] = px.upper() + v
         for o, nw in sorted(ren.items(), key=lambda x: -len(x[0])):
