@@ -304,20 +304,20 @@ P-Anchor	matching	curated	2	2026-11-17	one cell
 P-Atomic	matching	curated	4	2026-11-17	no own directory; cited by suite cells of the matching chapter
 P-Cap	matching	curated	12	2026-11-17	own dir 4 -> 3: group capture + loft#2325 optional group 2->1; two patches stay
 P-Cursor	matching	curated	2	2026-11-17	2 cells, both gate-E-agreeing
-P-Guard	matching	todo			
-P-IterBound	matching	todo			
-P-Multi	matching	todo			
-P-Opt	matching	todo			
-P-Point	matching	todo			
-P-Range	matching	todo			
-P-Rep	matching	todo			
-P-Rep-Scalar	matching	todo			
-P-Rest	matching	todo			
-P-Revert	matching	todo			
-P-Rule	matching	todo			
-P-Seq	matching	todo			
-P-Whole	matching	todo			
-WF-Pure	matching	todo			
+P-Guard	matching	curated	7	2026-11-18	2 cells: an agreeing program and the C162 refused cell
+P-IterBound	matching	curated	1	2026-11-18	one cell
+P-Multi	matching	curated	10	2026-11-18	own dir 5 -> 4: variant or-pattern (patch) + slice or-pattern (loft#2107) 2->1; struct/tuple patches and the 35e program stay
+P-Opt	matching	curated	6	2026-11-18	2 cells: loft#2048's program and its refusal
+P-Point	matching	curated	11	2026-11-18	7 cells: five patches and two of distinct clauses
+P-Range	matching	curated	2	2026-11-18	one cell
+P-Rep	matching	curated	10	2026-11-18	own dir 4 -> 3: mid-slice + cursor repetition 2->1; two agreeing programs stay
+P-Rep-Scalar	matching	curated	4	2026-11-18	2 cells: a patch and the greedy-run control
+P-Rest	matching	curated	11	2026-11-18	own dir 5 -> 3: fresh rest anywhere (35c) 2->1; named rest with room after (patch + loft#1419) 2->1; the binding-arm cell stays
+P-Revert	matching	curated	2	2026-11-18	one cell
+P-Rule	matching	curated	4	2026-11-18	4 cells of distinct clauses (arm order, reading between fixed elements, repetition, releasing answers)
+P-Seq	matching	curated	6	2026-11-18	one cell (a patch)
+P-Whole	matching	curated	3	2026-11-18	no own directory; cited by suite cells of the matching chapter
+WF-Pure	matching	curated	2	2026-11-18	had no cell and no citation: a first suite cell (printing and clock-reading sub-rules refused, a pure one admitted) and a citation at match_fields' purity check
 WF-Term	matching	todo			
 E-And	operational	todo			
 E-Asgn	operational	todo			
