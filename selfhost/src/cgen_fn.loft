@@ -1311,6 +1311,7 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
   wr = wr_here && cgen_names::is_plain(t) && !tr_named;
   if wr {
     w.wr_call = -1;
+    number_pending(x, w);
     name = work_twin(x, d);
     if name == "" {
       refuse(w, "no work twin");
@@ -1363,6 +1364,7 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
   if ret == "text" && cgen_names::is_plain(t) && !tr_named && native == "" && (env_variable("LOFT_NO_BUFFER_RETURN") ?? "0") == "0" {
     at = answers_work(x.b, d, true);
     if at >= 0 && at < len(xs) && plain_place(xs[at]!) {
+      number_pending(x, w);
       twin = work_twin(x, d);
       if x.work_twins[d]! == 3 {
         refuse(w, "a work twin that is not carried: {x.why_work}");
@@ -3616,8 +3618,13 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   }
   why = "";
   shapes = cgen_types::variable_shapes(d, why) ?? return Written { text: "", refused: why };
+  // The unit numbers a tuple struct when a shape first names it (`Cx::tuple_id` under
+  // `variable_shapes`): the function's own tuples, in variable order, before anything its
+  // body writes — a twin written on the way, a site tried and declined — names another.
+  number_tuples(x, shapes);
   // `@FR-R-ValueRecord`: the value locals and tuple parameters are structs.
   cgen_vr::local_shapes(x, index, shapes);
+  number_tuples(x, shapes);
   // `@FR-R-Transient`: the transient locals are pointers into the arena.
   if tf.any {
     cgen_transient::apply_shapes(tf, shapes);
@@ -3737,6 +3744,10 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     shapes: shapes,
     ret: ret,
     body: "",
+    numbered: 0,
+    numbered_temps: 0,
+    why_body: 0,
+    why_temps: 0,
     temps: [],
     why: "",
     cur_line: 0,
@@ -4036,6 +4047,7 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     ret_value(x, w, empty_stub_default(x.b, d, code) ?? code, 1);
   }
   if w.why != "" {
+    number_refused(x, w);
     return Written { text: "", refused: w.why };
   }
   out = "";
@@ -4131,6 +4143,14 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     rtext = if cgen_split::everywhere() { parts } else { "#if defined(_MSC_VER)\n{parts}#else\n{whole}#endif\n" };
   }
   Written { split: parts != "", text: rtext, refused: "", name: name, ret: rret, list: rlist, storage: outer, inner: rinner }
+}
+
+fn number_tuples(x: Cx, shapes: vector<text>) {
+  for sh in shapes {
+    if is_tuple(sh) {
+      tuple_id(x, sh);
+    }
+  }
 }
 
 // `hot_helper_size`'s mask test: no twin bit but `__rg`'s.

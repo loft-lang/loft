@@ -402,13 +402,13 @@ fn lazy_native(x: Cx, w: W, route: text, args: vector<ir::Node>, ind: integer, d
     return bind_lazy(x, w, args, ind);
   }
   if route == "n_store_lazy_error" && len(args) == 1 {
-    return E { code: "loft_lazy_error({as_ref(w, cgen_fn::arg(x, w, args, 0, ind))})", kind: K_VIEW };
+    return E { code: "loft_lazy_error({as_ref(w, cgen_fn::expr(x, w, args[0]!, ind))})", kind: K_VIEW };
   }
   if route == "n_store_lazy_faults" && len(args) == 1 {
-    return E { code: "loft_lazy_faults({as_ref(w, cgen_fn::arg(x, w, args, 0, ind))})", kind: K_INT };
+    return E { code: "loft_lazy_faults({as_ref(w, cgen_fn::expr(x, w, args[0]!, ind))})", kind: K_INT };
   }
   if route == "n_store_lazy_clear" && len(args) == 1 {
-    return E { code: "loft_lazy_clear({as_ref(w, cgen_fn::arg(x, w, args, 0, ind))})", kind: K_BOOL };
+    return E { code: "loft_lazy_clear({as_ref(w, cgen_fn::expr(x, w, args[0]!, ind))})", kind: K_BOOL };
   }
   if route == "n_store_lazy_fail" && len(args) == 2 {
     r = as_ref(w, cgen_fn::arg(x, w, args, 0, ind));

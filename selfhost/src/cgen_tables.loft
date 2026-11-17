@@ -367,6 +367,19 @@ fn const_code(x: Cx) -> text {
       continue;
     }
     d = on#index;
+    // The host's own store of the constant, where the image carries it (`Bundle::consts`): the
+    // words the Rust writer prints, its allocator's layout and all.
+    from_image = false;
+    for c in x.b.consts {
+      if c.d == d {
+        out += "static const uint32_t loft_cwords{d}[] = {{ {c.words} }};\nstatic loft_ref loft_const{d};\n";
+        init += "    loft_const{d} = loft_const_store(loft_cwords{d}, {c.n});\n";
+        from_image = true;
+      }
+    }
+    if from_image {
+      continue;
+    }
     store = consts::build_store(x.b, d);
     if store == consts::NULL_STORE {
       continue;

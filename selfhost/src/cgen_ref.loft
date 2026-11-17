@@ -568,6 +568,34 @@ fn ref_ops_3(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done
     cgen_tables::copy_type(x, tp);
     return E { code: "loft_copy_record_at(loft_types, {tp}, {src}, {dst}, {free}, {cgen_fn::site(w)})", kind: K_VOID };
   }
+  // `OpEvacuate(holder, fld, home, tp)` (`Stores::evacuate`, `@FR-H-RefHome`): the copy is
+  // placed in the holder's store as `OpPlaceRecord` places one.
+  if name == "OpEvacuate" && count == 4 {
+    fld = cgen_fn::literal(w, args[1], "field") ?? return none();
+    tp = cgen_fn::literal(w, args[3], "type") ?? return none();
+    if tp < 0 || tp >= len(x.b.types) {
+      refuse(w, "a type out of range");
+      return none();
+    }
+    cgen_tables::copy_type(x, tp);
+    size = enum_parent_size(x.b, tp);
+    image = cgen_tables::default_name(x, tp);
+    n = x.b.types[tp].size;
+    foreign = false;
+    hv = loop_shape::var_of(loop_shape::unspan(args[0]));
+    vars = x.b.data.definitions[w.index]!.variables.variables;
+    if hv >= 0 && hv < len(vars) {
+      kt = root_type(x.b, vars[hv]!.type_def);
+      if kt >= 0 {
+        elem = types::root_vector_element(x.b.types, kt);
+        foreign = elem != null && elem! != tp;
+      }
+    }
+    pair = [args[0], args[2]];
+    holder = cgen_fn::arg(x, w, pair, 0, ind);
+    home = cgen_fn::arg(x, w, pair, 1, ind);
+    return E { code: "loft_evacuate(loft_types, {tp}, {as_ref(w, holder)}, {fld}, {as_ref(w, home)}, {size}, {image}, {n}, {if foreign { 1 } else { 0 }})", kind: K_VOID };
+  }
   if (name == "OpMoveRecord" || name == "OpMoveField") && count == 3 {
     tp = cgen_fn::literal(w, args[2], "type") ?? return none();
     pair = [args[0], args[1]];
@@ -1183,6 +1211,10 @@ fn ref_ops_5(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done
 fn ref_ops_6(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
   done = true;
   count = len(args);
+  if name == "OpBitNotSingleInt" && count == 1 {
+    v = cgen_fn::expr(x, w, args[0], ind);
+    return E { code: "(~{as_int(w, v)})", kind: K_INT };
+  }
   if name == "OpSizeStruct" && count == 2 {
     sz = cgen_fn::literal(w, args[1], "size") ?? return none();
     r = cgen_fn::expr(x, w, args[0], ind);

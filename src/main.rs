@@ -138,12 +138,18 @@ fn emit_program_image(p: &mut parser::Parser, ships_live_tier: bool, c_facts: bo
     }
     compile::close_program(&mut p.data, &mut p.database);
     let facts = if c_facts {
-        loft::ir_store::bundle_facts(
+        let mut facts = loft::ir_store::bundle_facts(
             &p.data,
             &p.database,
             loft::c::c_library_facts(&p.data),
             loft::c::host_facts(&p.data, &p.database),
-        )
+        );
+        // The constants are built by the compile, which an image does not run: they are built
+        // here as the image's own reader builds them (`ir_read::image_round_trip`).
+        if let Ok((data, stores)) = loft::ir_read::image_round_trip(&p.data, &p.database) {
+            facts.host.consts = loft::c::const_facts(&data, &stores);
+        }
+        facts
     } else {
         loft::ir_store::BundleFacts::default()
     };
