@@ -290,20 +290,20 @@ L-Upgrade-Routine	layout	curated	1	2026-11-17	a store image across programs and 
 L-Upgrade-Source	layout	curated	1	2026-11-17	a store image across programs and releases (a manifest's version and data_compatible_with, an upgrade routine, a project baseline): one suite program cannot stage both writer and reader; guarded by tests/store_upgrade.rs
 M-Bool	matching	curated	1	2026-11-17	no own directory; cited by a suite cell of its chapter
 M-Exhaust	matching	curated	5	2026-11-17	own dir 3 -> 2: the two missing-variant refusals 2->1; loft#2390 stays
-M-Expr	matching	todo			
-M-Fixed	matching	todo			
-M-Match	matching	todo			
-M-Once	matching	todo			
-M-Sep	matching	todo			
-M-Total	matching	todo			
-M-Unit	matching	todo			
-M-Variant	matching	todo			
-M-Wild	matching	todo			
-P-Alt	matching	todo			
-P-Anchor	matching	todo			
-P-Atomic	matching	todo			
-P-Cap	matching	todo			
-P-Cursor	matching	todo			
+M-Expr	matching	curated	1	2026-11-17	no own directory; cited by suite cells of the matching chapter
+M-Fixed	matching	curated	4	2026-11-17	2 cells: the refusal and its admitted control
+M-Match	matching	curated	5	2026-11-17	own dir 5 -> 4: the later-function subject pair (pattern kinds + own temp, @catches kept) 2->1; patches and the long if-chain program stay
+M-Once	matching	curated	2	2026-11-17	one cell
+M-Sep	matching	curated	2	2026-11-17	one cell (loft#2325)
+M-Total	matching	curated	12	2026-11-17	own dir 6 -> 5: guarded unit arm + slice arms 2->1; the not-a-variant refusal (another clause) and agreeing programs stay
+M-Unit	matching	curated	8	2026-11-17	one cell (a patch refusal)
+M-Variant	matching	curated	6	2026-11-17	4 cells: loft#1778, loft#2326, the agreeing capture and the nullable-slot payload — distinct clauses
+M-Wild	matching	curated	3	2026-11-17	one cell (loft#2170)
+P-Alt	matching	curated	10	2026-11-17	4 cells: two agreeing programs and two patches
+P-Anchor	matching	curated	2	2026-11-17	one cell
+P-Atomic	matching	curated	4	2026-11-17	no own directory; cited by suite cells of the matching chapter
+P-Cap	matching	curated	12	2026-11-17	own dir 4 -> 3: group capture + loft#2325 optional group 2->1; two patches stay
+P-Cursor	matching	curated	2	2026-11-17	2 cells, both gate-E-agreeing
 P-Guard	matching	todo			
 P-IterBound	matching	todo			
 P-Multi	matching	todo			
