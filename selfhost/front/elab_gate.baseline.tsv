@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	fac3652dc1b37371599d8511c95e1683ff5a73ed
 
-layer	elab	agree	1047	of	2190
+layer	elab	agree	1049	of	2190
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -41,7 +41,6 @@ elab	refused	loft-suite/rules/binding/B-Disturb/a-disturbance-ends-the-places-in
 elab	refused	loft-suite/rules/binding/B-Disturb/a-view-is-copied-only-where-it-is-live-across-a-disturbance.loft
 elab	refused	loft-suite/rules/binding/B-Disturb/a-view-out-of-a-match-arm-materialises-across-a-rebind-of-its-subject.loft
 elab	refused	loft-suite/rules/binding/B-Disturb/growing-or-emptying-a-vector-ends-the-places-inside-it.loft
-elab	refused	loft-suite/rules/binding/B-OutOfLine/a-tree-written-back-by-recursion-costs-one-record-per-level.loft
 elab	refused	loft-suite/rules/binding/B-OutOfLine/a-view-into-an-inline-nullable-field-across-its-write.loft
 elab	refused	loft-suite/rules/binding/B-OutOfLine/an-unlink-moves-and-a-literal-is-built-in-its-child.loft
 elab	refused	loft-suite/rules/binding/B-Ref-Alias/1433-a-keyed-alias-is-a-link-not-a-copy.loft
@@ -179,7 +178,6 @@ elab	refused	loft-suite/rules/closures/L-CapOwn/2282-a-frame-answering-text-rele
 elab	refused	loft-suite/rules/closures/L-CapOwn/2504-a-capture-relayed-by-a-nested-lambda-stays-its-owners.loft
 elab	refused	loft-suite/rules/closures/L-CapOwn/2505-a-lambda-in-a-loop-handed-on-by-its-callee-borrows-what-it-captured.loft
 elab	refused	loft-suite/rules/closures/L-CapOwn/2514-a-closure-a-callee-hands-back-in-a-loop-is-released-once.loft
-elab	refused	loft-suite/rules/closures/L-CapOwn/2524-a-closure-built-in-a-loop-borrows-the-outer-store-it-captures.loft
 elab	refused	loft-suite/rules/closures/L-CapOwn/a-closure-rebound-to-a-plain-lambda-releases-the-record-it-displaced.loft
 elab	refused	loft-suite/rules/closures/L-CapOwn/a-leaving-closure-releases-each-kind-of-capture-once.loft
 elab	refused	loft-suite/rules/closures/L-CapOwn/a-rebuild-in-a-loop-keeps-the-capture-it-takes-again.loft
@@ -1150,7 +1148,7 @@ elab	refused	tests/scripts/store_persist_size_710.loft
 elab	refused	tests/scripts/store_rebuild_b1.loft
 elab	refused	tests/scripts/the-reference-safety-traps-are-what-it-catalogues.loft
 
-layer	elab-functions	agree	15744	of	28277
+layer	elab-functions	agree	15717	of	28238
 elab-functions	agree	lib/code.loft::Block
 elab-functions	agree	lib/code.loft::Boolean
 elab-functions	agree	lib/code.loft::Call
@@ -1904,16 +1902,6 @@ elab-functions	agree	loft-suite/rules/binding/B-Disturb/growing-or-emptying-a-ve
 elab-functions	agree	loft-suite/rules/binding/B-Disturb/growing-or-emptying-a-vector-ends-the-places-inside-it.loft::vector<S2S>
 elab-functions	agree	loft-suite/rules/binding/B-Disturb/growing-or-emptying-a-vector-ends-the-places-inside-it.loft::vector<S>
 elab-functions	agree	loft-suite/rules/binding/B-Disturb/growing-or-emptying-a-vector-ends-the-places-inside-it.loft::vector<vector<integer>>
-elab-functions	agree	loft-suite/rules/binding/B-OutOfLine/a-tree-written-back-by-recursion-costs-one-record-per-level.loft::(schema)
-elab-functions	agree	loft-suite/rules/binding/B-OutOfLine/a-tree-written-back-by-recursion-costs-one-record-per-level.loft::Tree
-elab-functions	agree	loft-suite/rules/binding/B-OutOfLine/a-tree-written-back-by-recursion-costs-one-record-per-level.loft::n_key
-elab-functions	agree	loft-suite/rules/binding/B-OutOfLine/a-tree-written-back-by-recursion-costs-one-record-per-level.loft::n_min_key
-elab-functions	agree	loft-suite/rules/binding/B-OutOfLine/a-tree-written-back-by-recursion-costs-one-record-per-level.loft::n_remove
-elab-functions	agree	loft-suite/rules/binding/B-OutOfLine/a-tree-written-back-by-recursion-costs-one-record-per-level.loft::n_show
-elab-functions	agree	loft-suite/rules/binding/B-OutOfLine/a-tree-written-back-by-recursion-costs-one-record-per-level.loft::n_size
-elab-functions	agree	loft-suite/rules/binding/B-OutOfLine/a-tree-written-back-by-recursion-costs-one-record-per-level.loft::n_test_a_large_tree_in_linear_time
-elab-functions	agree	loft-suite/rules/binding/B-OutOfLine/a-tree-written-back-by-recursion-costs-one-record-per-level.loft::n_test_a_small_tree
-elab-functions	agree	loft-suite/rules/binding/B-OutOfLine/a-tree-written-back-by-recursion-costs-one-record-per-level.loft::n_walk
 elab-functions	agree	loft-suite/rules/binding/B-OutOfLine/a-view-into-an-inline-nullable-field-across-its-write.loft::(schema)
 elab-functions	agree	loft-suite/rules/binding/B-OutOfLine/a-view-into-an-inline-nullable-field-across-its-write.loft::Host
 elab-functions	agree	loft-suite/rules/binding/B-OutOfLine/a-view-into-an-inline-nullable-field-across-its-write.loft::N
@@ -2309,6 +2297,7 @@ elab-functions	agree	loft-suite/rules/binding/B-Scope/2523-a-closure-after-a-blo
 elab-functions	agree	loft-suite/rules/binding/B-Scope/2523-a-closure-after-a-block-cannot-reach-the-blocks-local.loft::Memo
 elab-functions	agree	loft-suite/rules/binding/B-Scope/2523-a-closure-after-a-block-cannot-reach-the-blocks-local.loft::n_each
 elab-functions	agree	loft-suite/rules/binding/B-Scope/2523-a-closure-after-a-block-cannot-reach-the-blocks-local.loft::n_memo
+elab-functions	agree	loft-suite/rules/binding/B-Scope/2523-a-closure-after-a-block-cannot-reach-the-blocks-local.loft::n_of
 elab-functions	agree	loft-suite/rules/binding/B-Scope/a-loop-name-a-destructure-reuses-compiles.loft::(schema)
 elab-functions	agree	loft-suite/rules/binding/B-Scope/a-loop-name-a-destructure-reuses-compiles.loft::__tuple<float,float>
 elab-functions	agree	loft-suite/rules/binding/B-Scope/a-loop-name-a-destructure-reuses-compiles.loft::__tuple<integer,integer>
@@ -2342,8 +2331,10 @@ elab-functions	agree	loft-suite/rules/binding/B-Scope/a-name-spelled-after-its-b
 elab-functions	agree	loft-suite/rules/binding/B-Scope/a-name-spelled-after-its-bindings-scope-ended-is-a-new-binding.loft::main_vector<S3A>
 elab-functions	agree	loft-suite/rules/binding/B-Scope/a-name-spelled-after-its-bindings-scope-ended-is-a-new-binding.loft::main_vector<character>
 elab-functions	agree	loft-suite/rules/binding/B-Scope/a-name-spelled-after-its-bindings-scope-ended-is-a-new-binding.loft::n___lambda_test_a_bind_after_its_block_ended_is_a_new_binding_at_any_type_0
+elab-functions	agree	loft-suite/rules/binding/B-Scope/a-name-spelled-after-its-bindings-scope-ended-is-a-new-binding.loft::n_add_fields
 elab-functions	agree	loft-suite/rules/binding/B-Scope/a-name-spelled-after-its-bindings-scope-ended-is-a-new-binding.loft::n_arms_same
 elab-functions	agree	loft-suite/rules/binding/B-Scope/a-name-spelled-after-its-bindings-scope-ended-is-a-new-binding.loft::n_declared
+elab-functions	agree	loft-suite/rules/binding/B-Scope/a-name-spelled-after-its-bindings-scope-ended-is-a-new-binding.loft::n_def
 elab-functions	agree	loft-suite/rules/binding/B-Scope/a-name-spelled-after-its-bindings-scope-ended-is-a-new-binding.loft::n_fin
 elab-functions	agree	loft-suite/rules/binding/B-Scope/a-name-spelled-after-its-bindings-scope-ended-is-a-new-binding.loft::n_forward
 elab-functions	agree	loft-suite/rules/binding/B-Scope/a-name-spelled-after-its-bindings-scope-ended-is-a-new-binding.loft::n_ident
@@ -3033,6 +3024,7 @@ elab-functions	agree	loft-suite/rules/calls/F-Ret/2515-a-record-enum-element-of-
 elab-functions	agree	loft-suite/rules/calls/F-Ret/2515-a-record-enum-element-of-a-calls-result-is-returned-fresh.loft::main_vector<D>
 elab-functions	agree	loft-suite/rules/calls/F-Ret/2515-a-record-enum-element-of-a-calls-result-is-returned-fresh.loft::main_vector<P>
 elab-functions	agree	loft-suite/rules/calls/F-Ret/2515-a-record-enum-element-of-a-calls-result-is-returned-fresh.loft::main_vector<T>
+elab-functions	agree	loft-suite/rules/calls/F-Ret/2515-a-record-enum-element-of-a-calls-result-is-returned-fresh.loft::n_def
 elab-functions	agree	loft-suite/rules/calls/F-Ret/2515-a-record-enum-element-of-a-calls-result-is-returned-fresh.loft::n_mk
 elab-functions	agree	loft-suite/rules/calls/F-Ret/2515-a-record-enum-element-of-a-calls-result-is-returned-fresh.loft::n_n_of
 elab-functions	agree	loft-suite/rules/calls/F-Ret/2515-a-record-enum-element-of-a-calls-result-is-returned-fresh.loft::n_test_a_coalesced_element_and_its_default
@@ -3180,11 +3172,13 @@ elab-functions	agree	loft-suite/rules/calls/F-Return/a-function-answers-the-valu
 elab-functions	agree	loft-suite/rules/calls/F-Return/a-function-answers-the-value-its-return-or-its-tail-names.loft::n_label
 elab-functions	agree	loft-suite/rules/calls/F-Return/a-function-answers-the-value-its-return-or-its-tail-names.loft::n_nr
 elab-functions	agree	loft-suite/rules/calls/F-Return/a-function-answers-the-value-its-return-or-its-tail-names.loft::n_nv
+elab-functions	agree	loft-suite/rules/calls/F-Return/a-function-answers-the-value-its-return-or-its-tail-names.loft::n_rec_tail
 elab-functions	agree	loft-suite/rules/calls/F-Return/a-function-answers-the-value-its-return-or-its-tail-names.loft::n_same
 elab-functions	agree	loft-suite/rules/calls/F-Return/a-function-answers-the-value-its-return-or-its-tail-names.loft::n_test_the_returns_from_a_block
 elab-functions	agree	loft-suite/rules/calls/F-Return/a-function-answers-the-value-its-return-or-its-tail-names.loft::n_test_the_returns_from_a_block_discarded
 elab-functions	agree	loft-suite/rules/calls/F-Return/a-function-answers-the-value-its-return-or-its-tail-names.loft::n_test_the_tail_control
 elab-functions	agree	loft-suite/rules/calls/F-Return/a-function-answers-the-value-its-return-or-its-tail-names.loft::n_text_if
+elab-functions	agree	loft-suite/rules/calls/F-Return/a-function-answers-the-value-its-return-or-its-tail-names.loft::n_view
 elab-functions	agree	loft-suite/rules/calls/F-Return/a-function-answers-the-value-its-return-or-its-tail-names.loft::vector<D>
 elab-functions	agree	loft-suite/rules/calls/F-Surface/2331-a-librarys-own-function-below-its-call-wins-over-the-stdlib.loft::(schema)
 elab-functions	agree	loft-suite/rules/calls/F-Surface/2331-a-librarys-own-function-below-its-call-wins-over-the-stdlib.loft::Pt2331
@@ -3982,32 +3976,6 @@ elab-functions	agree	loft-suite/rules/closures/L-CapOwn/2514-a-closure-a-callee-
 elab-functions	agree	loft-suite/rules/closures/L-CapOwn/2514-a-closure-a-callee-hands-back-in-a-loop-is-released-once.loft::n_pass2514
 elab-functions	agree	loft-suite/rules/closures/L-CapOwn/2514-a-closure-a-callee-hands-back-in-a-loop-is-released-once.loft::n_test_bound_first_in_a_loop
 elab-functions	agree	loft-suite/rules/closures/L-CapOwn/2514-a-closure-a-callee-hands-back-in-a-loop-is-released-once.loft::n_test_inline_in_a_loop
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/2524-a-closure-built-in-a-loop-borrows-the-outer-store-it-captures.loft::(schema)
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/2524-a-closure-built-in-a-loop-borrows-the-outer-store-it-captures.loft::In
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/2524-a-closure-built-in-a-loop-borrows-the-outer-store-it-captures.loft::Memo
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/2524-a-closure-built-in-a-loop-borrows-the-outer-store-it-captures.loft::__closure_test_a_loop_local_call_result_beside_it_0
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/2524-a-closure-built-in-a-loop-borrows-the-outer-store-it-captures.loft::__closure_test_a_loop_local_literal_beside_it_0
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/2524-a-closure-built-in-a-loop-borrows-the-outer-store-it-captures.loft::__closure_test_a_loop_local_scalar_beside_it_0
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/2524-a-closure-built-in-a-loop-borrows-the-outer-store-it-captures.loft::__closure_test_built_in_an_if_0
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/2524-a-closure-built-in-a-loop-borrows-the-outer-store-it-captures.loft::__closure_test_only_the_outer_store_0
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/2524-a-closure-built-in-a-loop-borrows-the-outer-store-it-captures.loft::main_vector<In>
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/2524-a-closure-built-in-a-loop-borrows-the-outer-store-it-captures.loft::n___lambda_test_a_loop_local_call_result_beside_it_0
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/2524-a-closure-built-in-a-loop-borrows-the-outer-store-it-captures.loft::n___lambda_test_a_loop_local_literal_beside_it_0
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/2524-a-closure-built-in-a-loop-borrows-the-outer-store-it-captures.loft::n___lambda_test_a_loop_local_scalar_beside_it_0
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/2524-a-closure-built-in-a-loop-borrows-the-outer-store-it-captures.loft::n___lambda_test_built_in_an_if_0
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/2524-a-closure-built-in-a-loop-borrows-the-outer-store-it-captures.loft::n___lambda_test_only_the_outer_store_0
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/2524-a-closure-built-in-a-loop-borrows-the-outer-store-it-captures.loft::n_each
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/2524-a-closure-built-in-a-loop-borrows-the-outer-store-it-captures.loft::n_main
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/2524-a-closure-built-in-a-loop-borrows-the-outer-store-it-captures.loft::n_test_a_loop_local_literal_beside_it
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/2524-a-closure-built-in-a-loop-borrows-the-outer-store-it-captures.loft::n_test_a_loop_local_scalar_beside_it
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/2524-a-closure-built-in-a-loop-borrows-the-outer-store-it-captures.loft::n_test_built_in_an_if
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/2524-a-closure-built-in-a-loop-borrows-the-outer-store-it-captures.loft::n_test_only_the_outer_store
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/2524-a-closure-built-in-a-loop-borrows-the-outer-store-it-captures.loft::t_31__closure_test_built_in_an_if_0_OpDropAll
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/2524-a-closure-built-in-a-loop-borrows-the-outer-store-it-captures.loft::t_37__closure_test_only_the_outer_store_0_OpDropAll
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/2524-a-closure-built-in-a-loop-borrows-the-outer-store-it-captures.loft::t_46__closure_test_a_loop_local_scalar_beside_it_0_OpDropAll
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/2524-a-closure-built-in-a-loop-borrows-the-outer-store-it-captures.loft::t_47__closure_test_a_loop_local_literal_beside_it_0_OpDropAll
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/2524-a-closure-built-in-a-loop-borrows-the-outer-store-it-captures.loft::t_51__closure_test_a_loop_local_call_result_beside_it_0_OpDropAll
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/2524-a-closure-built-in-a-loop-borrows-the-outer-store-it-captures.loft::vector<In>
 elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-rebound-to-a-plain-lambda-releases-the-record-it-displaced.loft::(schema)
 elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-rebound-to-a-plain-lambda-releases-the-record-it-displaced.loft::H
 elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-rebound-to-a-plain-lambda-releases-the-record-it-displaced.loft::__closure_hooked_0
@@ -8785,6 +8753,7 @@ elab-functions	agree	loft-suite/rules/ownership/O-Complete/2382-an-early-return-
 elab-functions	agree	loft-suite/rules/ownership/O-Complete/2382-an-early-return-releases-a-lifted-argument-of-its-block.loft::n_fresh
 elab-functions	agree	loft-suite/rules/ownership/O-Complete/2382-an-early-return-releases-a-lifted-argument-of-its-block.loft::n_rec_if
 elab-functions	agree	loft-suite/rules/ownership/O-Complete/2382-an-early-return-releases-a-lifted-argument-of-its-block.loft::n_tagged
+elab-functions	agree	loft-suite/rules/ownership/O-Complete/2382-an-early-return-releases-a-lifted-argument-of-its-block.loft::n_view
 elab-functions	agree	loft-suite/rules/ownership/O-Complete/2384-a-record-copied-into-its-buffer-releases-the-buffer-when-the-arm-returns-early.loft::D
 elab-functions	agree	loft-suite/rules/ownership/O-Complete/2384-a-record-copied-into-its-buffer-releases-the-buffer-when-the-arm-returns-early.loft::S
 elab-functions	agree	loft-suite/rules/ownership/O-Complete/2384-a-record-copied-into-its-buffer-releases-the-buffer-when-the-arm-returns-early.loft::SName
@@ -8900,10 +8869,12 @@ elab-functions	agree	loft-suite/rules/ownership/O-Deps/2376-an-element-read-off-
 elab-functions	agree	loft-suite/rules/ownership/O-Deps/2376-an-element-read-off-a-borrowing-calls-field-names-no-callee-dep.loft::n_main
 elab-functions	agree	loft-suite/rules/ownership/O-Deps/2376-an-element-read-off-a-borrowing-calls-field-names-no-callee-dep.loft::n_mk
 elab-functions	agree	loft-suite/rules/ownership/O-Deps/2376-an-element-read-off-a-borrowing-calls-field-names-no-callee-dep.loft::n_mkh
+elab-functions	agree	loft-suite/rules/ownership/O-Deps/2376-an-element-read-off-a-borrowing-calls-field-names-no-callee-dep.loft::n_test_controls
 elab-functions	agree	loft-suite/rules/ownership/O-Deps/2376-an-element-read-off-a-borrowing-calls-field-names-no-callee-dep.loft::n_test_operand_and_loop
 elab-functions	agree	loft-suite/rules/ownership/O-Deps/2376-an-element-read-off-a-borrowing-calls-field-names-no-callee-dep.loft::n_test_other_bases
 elab-functions	agree	loft-suite/rules/ownership/O-Deps/2376-an-element-read-off-a-borrowing-calls-field-names-no-callee-dep.loft::n_test_returned
 elab-functions	agree	loft-suite/rules/ownership/O-Deps/2376-an-element-read-off-a-borrowing-calls-field-names-no-callee-dep.loft::n_total
+elab-functions	agree	loft-suite/rules/ownership/O-Deps/2376-an-element-read-off-a-borrowing-calls-field-names-no-callee-dep.loft::n_view
 elab-functions	agree	loft-suite/rules/ownership/O-Deps/2376-an-element-read-off-a-borrowing-calls-field-names-no-callee-dep.loft::vector<A>
 elab-functions	agree	loft-suite/rules/ownership/O-Deps/2376-an-element-read-off-a-borrowing-calls-field-names-no-callee-dep.loft::vector<D>
 elab-functions	agree	loft-suite/rules/ownership/O-Derived/1683-a-field-hoisted-out-of-a-literal-is-a-view-and-is-never-freed.loft::(schema)
