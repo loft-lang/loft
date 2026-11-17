@@ -276,20 +276,20 @@ L-Null	layout	curated	33	2026-11-17	own dir 14 -> 10: dense-twin trio (incl. lof
 L-Null-Tag	layout	curated	10	2026-11-17	own dir 4 -> 2: loft#1138+#1139+#1198 3->1; the pattern patch stays
 L-Null-Text	layout	curated	4	2026-11-17	one cell (a patch)
 L-Null-Which	layout	curated	7	2026-11-17	4 cells: a patch, an agreeing program, loft#1367 (@catches) and loft#2443 — distinct clauses
-L-OutOfLine	layout	todo			
-L-Ref	layout	todo			
-L-Ref-Slot	layout	todo			
-L-Release	layout	todo			
-L-Scalar	layout	todo			
-L-Sound	layout	todo			
-L-Struct	layout	todo			
-L-Total	layout	todo			
-L-Tuple	layout	todo			
-L-Upgrade-Old	layout	todo			
-L-Upgrade-Routine	layout	todo			
-L-Upgrade-Source	layout	todo			
-M-Bool	matching	todo			
-M-Exhaust	matching	todo			
+L-OutOfLine	layout	curated	17	2026-11-17	own dir 6 -> 5: the par worker returning a tree, whole and into a fresh destination 2->1 (@C159); the host-child, keyed, image and binary-io cells stay
+L-Ref	layout	curated	6	2026-11-17	3 cells, all gate-E-agreeing
+L-Ref-Slot	layout	curated	2	2026-11-17	a store image across programs and releases (a manifest's version and data_compatible_with, an upgrade routine, a project baseline): one suite program cannot stage both writer and reader; guarded by tests/store_upgrade.rs
+L-Release	layout	curated	1	2026-11-17	a store image across programs and releases (a manifest's version and data_compatible_with, an upgrade routine, a project baseline): one suite program cannot stage both writer and reader; guarded by tests/store_upgrade.rs
+L-Scalar	layout	curated	1	2026-11-17	one cell
+L-Sound	layout	curated	5	2026-11-17	was without a suite cell: loft's tests/scripts/2174 moved in as its cell (two vacuous ?? asserts fixed there and in 2172 + 158-push-window)
+L-Struct	layout	curated	6	2026-11-17	3 cells: a patch and two agreeing programs
+L-Total	layout	curated	5	2026-11-17	5 cells: four agreeing programs and the one-layout program
+L-Tuple	layout	curated	6	2026-11-17	own dir 3 -> 1: padded record (patch) + written positions + descending alignment 3->1
+L-Upgrade-Old	layout	curated	1	2026-11-17	a store image across programs and releases (a manifest's version and data_compatible_with, an upgrade routine, a project baseline): one suite program cannot stage both writer and reader; guarded by tests/store_upgrade.rs
+L-Upgrade-Routine	layout	curated	1	2026-11-17	a store image across programs and releases (a manifest's version and data_compatible_with, an upgrade routine, a project baseline): one suite program cannot stage both writer and reader; guarded by tests/store_upgrade.rs
+L-Upgrade-Source	layout	curated	1	2026-11-17	a store image across programs and releases (a manifest's version and data_compatible_with, an upgrade routine, a project baseline): one suite program cannot stage both writer and reader; guarded by tests/store_upgrade.rs
+M-Bool	matching	curated	1	2026-11-17	no own directory; cited by a suite cell of its chapter
+M-Exhaust	matching	curated	5	2026-11-17	own dir 3 -> 2: the two missing-variant refusals 2->1; loft#2390 stays
 M-Expr	matching	todo			
 M-Fixed	matching	todo			
 M-Match	matching	todo			
