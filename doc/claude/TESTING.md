@@ -586,7 +586,10 @@ reach today (`rule_axes.tsv`, `matrix_axes.census`) and every defect a cell name
    case verbatim, each receipt as its own labelled block (a file holds ONE patch receipt, so a
    patch-receipt cell merges only once a kept cell re-scores against its patch), and every
    defect the merged headers named: `plan`'s feature count before and after must be equal — a
-   header reworded in the merge drops a `loft#N` silently.
+   header reworded in the merge drops a `loft#N` silently.  And gate E's verdicts must agree: a
+   cell the self-hosted elaborator agrees with (no row in `selfhost/front/elab_gate.baseline.tsv`)
+   is never merged into one it refuses — the merged file is refused whole, and the gate loses a
+   program it handled (its agree count must not fall).
 5. **Verify** the rule's cells on both backends (`make suite ARGS="@FR-<rule> --mode both-c"`),
    falsify every new cell (`make falsify`), and run the whole suite memory-capped before the suite
    commit.  A probe that turns up a defect is fixed (CLAUDE.md § Bug-filing policy) — the pass is
