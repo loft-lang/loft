@@ -2238,7 +2238,10 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
     }
   }
   fresh_entry = !e.first_pass && !append && !value && !vars.vars[v].argument && self_only && e.unbacked.contains(e.context * 65536 + v);
-  late_store = !append && !vars.vars[v].argument && !value && (has_store || fresh_entry);
+  // A struct-literal item is built before the store is minted too: what it mints (a record
+  // built apart, `__ref_p2_N`) is numbered ahead of the vector's `__vdb_N`.
+  struct_items = !e.first_pass && len(borrows) == 0 && len([for it in items if (e.p.nodes[it] is SStructLit) { it }]) > 0;
+  late_store = !append && !vars.vars[v].argument && !value && (has_store || fresh_entry || struct_items);
   // `vector_db_init`'s rebind arm (@PLN87 P2.4): a vector parameter rebound whole by a literal
   // takes a fresh backing of its own — skip-free and nulled where first used, the exit's free of
   // the parameter releasing it — after any earlier rebind's backing is freed (`OpFreeRefIfDistinct`

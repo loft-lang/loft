@@ -547,9 +547,21 @@ pub fn closure_field_write(e: el::El, vars: el_vars::Vars, hd: integer, fname: t
     }
   }
   vars.vars[w].skip_free = true;
-  nw = fn_number_write(e, vars, r, ir::NdInt { n: pos }, ir::NdInt { n: ld }, ft);
+  // (The temporary is typed as the lambda's own function type — the closure block's, which
+  // lists a text answer's hidden `&text` buffer — not as the field's.)
+  nw = fn_number_write(e, vars, r, ir::NdInt { n: pos }, ir::NdInt { n: ld }, bl.result[0] ?? ft);
   if nw == null {
     return null;
+  }
+  // (The first pass minted the temporary at the field's type: it takes the lambda's here.)
+  match nw! {
+    NdBlock { block: nb } => {
+      match el_ir::unspan(nb[0].operators[0] ?? ir::NdNull) {
+        NdSet { var: tv2 } => { el_vars::set_var_type(vars, tv2, el_types::with_deps(el_types::base(bl.result[0] ?? ft), [])); },
+        _ => {}
+      }
+    },
+    _ => {}
   }
   ops += [nw!];
   el_ir::v_block(ops, ir::TyVoid, "fn_ref_field_set")
