@@ -179,6 +179,9 @@ def main():
     ap.add_argument("--which", help="list the programs a refusal starting with this text blocks alone")
     ap.add_argument("--details", type=int, default=3, help="details listed per refusal family")
     ap.add_argument("--check", metavar="BASELINE", help="exit 1 on a drop against BASELINE or any differ")
+    ap.add_argument("--functions-against", metavar="BASELINE",
+                    help="list the definitions BASELINE's `elab-functions` block pins that no longer agree, "
+                         "with any tools and at any pin (a development cycle's early warning); exit 1 if any")
     ap.add_argument("--write-baseline", metavar="BASELINE", help="write the `elab` block of BASELINE")
     o = ap.parse_args()
     if (o.check or o.write_baseline) and (o.files or o.part):
@@ -334,8 +337,8 @@ def main():
     fn_agree = {k: "agree" for k, v in fn_results.items() if v == "agree"}
     if o.write_baseline:
         baseline.write(o.write_baseline, pin, "elab-functions", len(fn_agree), len(fn_results), fn_agree)
-    if o.check:
-        fb = baseline.read(o.check).get("elab-functions")
+    if o.check or o.functions_against:
+        fb = baseline.read(o.check or o.functions_against).get("elab-functions")
         if fb is None:
             print("the baseline has no `elab-functions` block: write it with --write-baseline")
         else:
@@ -352,7 +355,7 @@ def main():
         fails, repins = baseline.check("elab", baseline.read(o.check), tot["agree"], total, results)
         baseline.report("elab", o.check, fails, repins)
         sys.exit(0)
-    if o.write_baseline:
+    if o.write_baseline or o.functions_against:
         sys.exit(0)
     sys.exit(0 if tot["agree"] == total else 1)
 
