@@ -255,6 +255,20 @@ system `strip` over a linked dylib; on one holding `ring`'s objects (every TLS p
 the string table misaligned and the linker refused to link against it (`ld: mis-aligned LINKEDIT
 string pool`).  The linker drops debug symbols itself instead (`cache::NATIVE_LINK_RECIPE`).
 
+## macOS: window tests beside the screen in use
+
+A library's window tests (`GRAPHICS_TEST_WINDOW=1`) open real windows, centred on the screen
+that holds the keyboard, and take the keyboard.  On a Mac somebody is working on, load
+`scripts/mac_windows_aside.c` into the run: its windows then open on the other screen and the
+keyboard stays where it was.  No library is changed.
+
+```bash
+cc -dynamiclib -o /tmp/aside.dylib scripts/mac_windows_aside.c
+DYLD_INSERT_LIBRARIES=/tmp/aside.dylib GRAPHICS_TEST_WINDOW=1 loft --tests tests
+```
+
+A whole-screen window is not moved, and a Mac with one screen shows the windows where it did.
+
 ## Occasional valgrind pass (Linux)
 
 The loft codebase has a large `unsafe` surface in `src/store.rs`,
