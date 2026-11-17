@@ -735,7 +735,7 @@ pub fn yield_expr(e: el::El, vars: el_vars::Vars, from: boolean, ye: integer?) -
     refuse_known(e, x.tp, "a yielded value its element type converts: {type_kind(x.tp)} to {type_kind(step)}");
     return ex(ir::NdNull, ir::TyVoid);
   }
-  if step is TyReference {
+  if step is TyReference || el_types::struct_enum_def(step) >= 0 {
     owned = yield_owned_record(e, vars, v!, x.tp, step);
     if owned == null {
       return ex(ir::NdNull, ir::TyVoid);
@@ -783,6 +783,34 @@ pub fn yield_from(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
 pub fn yield_owned_record(e: el::El, vars: el_vars::Vars, v: ir::Node, tp: ir::TypeT, step: ir::TypeT) -> ir::Node? {
   if yield_is_fresh(e, vars, v, tp) {
     return v;
+  }
+  // (A struct enum's existing value is copied the same way, under the enum's own type; each
+  // variant's fields are held to the same test.)
+  sen = el_types::struct_enum_def(step);
+  if sen >= 0 {
+    for va in el::def(e, sen).attributes {
+      vd = el::variant_of(e, sen, va.name);
+      if vd < 0 {
+        continue;
+      }
+      for fa in el::def(e, vd).attributes {
+        fat = fa.typedef[0] ?? ir::TyVoid;
+        if !el_convert::plain_scalar(fat) && !(fat is TyText) && !fa.constant {
+          el::refuse(e, "a yield of an existing record that holds something other than plain scalars and texts");
+          return null;
+        }
+      }
+    }
+    if tp is TyOptional {
+      el::refuse(e, "a yield of an existing nullable record");
+      return null;
+    }
+    ekt = el::def(e, sen).known_type;
+    et = ir::TyEnum { n: sen, is_ref: true, dep: [] };
+    eo = el_vars::work_ref_p2(vars, et);
+    ek = ir::NdInt { n: ekt };
+    efill = el_ir::v_block([el_ir::cl(e, "OpDatabase", [ir::NdVar { n: eo }, ek]), el_ir::cl(e, "OpCopyRecord", [v, ir::NdVar { n: eo }, ek])], ir::TyVoid, "yield_copy_fill");
+    return el_ir::v_block([el_ir::v_set(eo, ir::NdNull), efill, ir::NdVar { n: eo }], ir::TyEnum { n: sen, is_ref: true, dep: [eo] }, "yield_copy");
   }
   rd = struct_ref(e, step);
   for a in el::def(e, rd).attributes {
@@ -1724,6 +1752,9 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
   if st is TyTuple {
     return tuple_match(e, vars, x, arms, at_bind);
   }
+  if st is TyIterator {
+    return stream_match(e, vars, x, arms, node);
+  }
   if !scalar_subject && !enum_subject && sd < 0 {
     if !el_types::is_unknown(st) {
       el::refuse(e, "a match on this type: {type_kind(st)}");
@@ -2468,6 +2499,114 @@ pub fn arm_block_deps(n: ir::Node) -> vector<integer> {
 // the chain; arms that cover every length (`[]` and `[x, ..rest]`) do too, the last arm the
 // chain's end.  A guard, alternatives, a literal or any other element pattern, a record result
 // and another element type are refused by name.
+// `Parser::materialise_stream` + `parse_vector_match`: a match over an ITERATOR pulls the whole
+// stream into a buffer vector of its own (`_stream_buf_N`, bounded by `max_lookahead`), then
+// matches the buffer as a vector.  Carried for a plain integer element; any other is refused.
+pub fn stream_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>, node: integer) -> Ex {
+  void = ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  elem = match el_types::base(x.tp) { TyIterator { step } => step, _ => ir::TyVoid };
+  plain_int = match elem { TyInteger { spec } => el_types::narrow_width(spec) == 0 && spec.forced_size == 0, _ => false };
+  at = if node >= 0 { match e.p.nodes[node] { SMatch { at: ma } => ma, _ => -1 } } else { -1 };
+  nm = el_types::elem_name(e, elem);
+  md = if nm == "" { -1 } else { el::def_nr(e, "main_vector<{nm}>") };
+  ops = next_operands(elem);
+  // (A struct enum's element is copied into the buffer as a source the copy frees.)
+  sen = el_types::struct_enum_def(elem);
+  rec_enum = sen >= 0 && !(elem is TyOptional);
+  if !(plain_int || rec_enum) || at < 0 || (plain_int && md < 0) || len(ops) == 0 {
+    el::refuse(e, "a match over an iterator of this element type: {type_kind(elem)}");
+    return void;
+  }
+  int_t = ir::TyInteger { spec: i32_spec() };
+  buf = el_vars::create_unique(vars, "stream_buf", ir::TyVector { inner: elem, dep: [] });
+  el_vars::set_defined(vars, buf);
+  gen = el_vars::create_unique(vars, "stream_gen", x.tp);
+  el_vars::set_defined(vars, gen);
+  done = el_vars::create_unique(vars, "stream_done", ir::TyBoolean);
+  el_vars::set_defined(vars, done);
+  xv = el_vars::create_unique(vars, "stream_x", elem);
+  el_vars::set_defined(vars, xv);
+  elm = el_vars::create_unique(vars, "stream_elm", ir::TyReference { n: el_ex_base::type_def_nr(e, elem), dep: [] });
+  el_vars::set_defined(vars, elm);
+  cnt = el_vars::create_unique(vars, "stream_n", int_t);
+  el_vars::set_defined(vars, cnt);
+  setup: vector<ir::Node> = [];
+  // (The buffer's vector type is named where the match's body opens — past its `{`.)
+  if !e.first_pass && rec_enum && nm != "" && md < 0 {
+    open_at = at;
+    depth = 0;
+    while open_at < len(e.p.src) {
+      if e.p.src[open_at] is LParen {
+        depth += 1;
+      } else if e.p.src[open_at] is RParen {
+        depth -= 1;
+      } else if e.p.src[open_at] is LBrace && depth == 0 {
+        break;
+      }
+      open_at += 1;
+    }
+    el_schema::make_vector_def(e, elem, nm, el::pos_at(e, open_at), true);
+    md = el::def_nr(e, "main_vector<{nm}>");
+  }
+  if !e.first_pass {
+    // (The second pass names the vector's rows: a wrapper made this pass is laid out now,
+    // its row then its vector's.)
+    rows: el_ex_base::VecRows? = null;
+    if rec_enum && md >= 0 {
+      el_schema::fill_wrapper(e, md);
+      svk = el_schema::vector_type(e, el::def(e, sen).known_type);
+      if el::def(e, md).known_type != el_schema::NO_TYPE && svk >= 0 {
+        rows = el_ex_base::VecRows { main_def: md, main_known: el::def(e, md).known_type, vec_known: svk };
+      }
+    } else {
+      rows = el_ex_base::vector_rows(e, elem, node, false);
+    }
+    if rows == null {
+      el::refuse(e, "a match over an iterator of this element type: {type_kind(elem)}");
+      return void;
+    }
+    r = rows!;
+    db = el_vars::work_vec_db(vars, ir::TyReference { n: r.main_def, dep: [] });
+    el_vars::set_var_type(vars, buf, ir::TyVector { inner: elem, dep: [db] });
+    vk = ir::NdInt { n: r.vec_known };
+    pos = el::pos_at(e, at);
+    append = el_ir::v_block([
+      el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [ir::NdVar { n: buf }, vk, ir::NdInt { n: 65535 }])),
+      if rec_enum { el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: xv }, el_ir::cl(e, "OpGetField", [ir::NdVar { n: elm }, ir::NdInt { n: 0 }, ir::NdInt { n: el::def(e, sen).known_type }]), ir::NdInt { n: el::def(e, sen).known_type + 32768 }]) } else { el_ir::cl(e, "OpSetInt", [ir::NdVar { n: elm }, ir::NdInt { n: 0 }, ir::NdVar { n: xv }]) },
+      el_ir::cl(e, "OpFinishRecord", [ir::NdVar { n: buf }, ir::NdVar { n: elm }, vk, ir::NdInt { n: 65535 }])
+    ], ir::TyVoid, "stream append");
+    stop = el_ir::cl(e, "n_panic", [ir::NdText { s: "a `match` over an iterator read more than 1000000 elements (max_lookahead) — the source may be endless; bound it, or raise LOFT_MAX_LOOKAHEAD" }, ir::NdText { s: pos.file }, ir::NdInt { n: pos.line }]);
+    bounded = el_ir::v_block([
+      el_ir::v_set(cnt, el_ir::cl(e, "OpAddInt", [ir::NdVar { n: cnt }, ir::NdInt { n: 1 }])),
+      el_ir::v_if(el_ir::cl(e, "OpLtInt", [ir::NdInt { n: 1000000 }, ir::NdVar { n: cnt }]), stop, ir::NdNull),
+      append
+    ], ir::TyVoid, "stream bounded append");
+    setup = [
+      el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: r.main_known }]),
+      el_ir::v_set(buf, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, vk])),
+      el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }]),
+      el_ir::v_set(gen, x.code),
+      el_ir::v_set(done, ir::NdBoolean { b: false }),
+      el_ir::v_set(cnt, ir::NdInt { n: 0 }),
+      el_ir::v_loop([
+        el_ir::v_if(ir::NdVar { n: done }, ir::NdBreak { n: 0 }, ir::NdNull),
+        el_ir::v_set(xv, el_ir::cl(e, "OpCoroutineNext", [ir::NdVar { n: gen }] + ops)),
+        el_ir::v_if(el_ir::cl(e, "OpCoroutineExhausted", [ir::NdVar { n: gen }]), el_ir::v_set(done, ir::NdBoolean { b: true }), bounded)
+      ], "stream pull")
+    ];
+  }
+  m = vector_match(e, vars, ex(ir::NdVar { n: buf }, el_vars::tp(vars, buf)), arms);
+  if e.first_pass {
+    return m;
+  }
+  // (A text answer is delivered through an accumulator around the whole match: not carried.)
+  if el_types::base(m.tp) is TyText {
+    el::refuse(e, "a match over an iterator answering a text");
+    return void;
+  }
+  ex(el_ir::v_block(setup + [m.code], m.tp, "stream match"), m.tp)
+}
+
 // `Parser::cursor_shape`: a struct with a non-constant vector field (the first is the source)
 // and a non-constant integer field named `pos` is a cursor — [struct, source attribute, `pos`
 // attribute], or empty.
