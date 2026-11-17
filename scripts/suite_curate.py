@@ -459,7 +459,8 @@ def _break_one(text, fn):
     b = len(text) if b < 0 else b                  # the file's last test may end the file
     # The expectation spellings: `assert(… == <literal>`, `assert_eq(<got>, <literal>…`, and a
     # `check("<name>", <got>, <want>)` helper, whose want may be an expression (`r * 10 + 2`).
-    forms = [re.compile(r'assert\((.*?)==\s*("[^"]*"|-?\d+)'),
+    # A literal is a text, a number, or a flat non-empty vector literal (`[4, 2, 0]`).
+    forms = [re.compile(r'assert\((.*?)==\s*("[^"]*"|-?\d+|\[[^\[\]\n]+\])'),
              re.compile(r'assert_eq\(([^,]*),\s*("[^"]*"|-?\d+)\s*[,)]'),
              re.compile(r'\b(?:check|ok)\(("[^"]*",\s*[^,]+),\s*([^;\n]+)\);')]
 
@@ -474,7 +475,12 @@ def _break_one(text, fn):
         if not hit:
             return None
     s, e, v = hit
-    if v.startswith('"'):
+    if v.startswith("["):
+        # Its last element once more: the length differs, and the element keeps its type.
+        inner = v[1:-1].rstrip()
+        last = re.search(r'("[^"]*"|[^,]+)$', inner).group(1).strip()
+        nv = "[" + inner + ", " + last + "]"
+    elif v.startswith('"'):
         nv = '"X' + v[1:]
     elif re.fullmatch(r"-?\d+", v.strip()):
         nv = str(int(v) + 1)
