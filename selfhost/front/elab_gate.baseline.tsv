@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	b705cdb48d7d8f4e3838e2eb570de60ce345bab5
 
-layer	elab	agree	931	of	2209
+layer	elab	agree	938	of	2211
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -312,7 +312,6 @@ elab	refused	loft-suite/rules/collections/Col-Vec/2340-a-literal-nested-in-a-fie
 elab	refused	loft-suite/rules/collections/Col-Vec/a-vector-is-ordered-and-alone-slices-into-a-value.loft
 elab	refused	loft-suite/rules/collections/Slice-KeyedIter/a-keyed-range-walks-its-key-interval-in-declared-order.loft
 elab	refused	loft-suite/rules/collections/Slice-Value/1728-a-slice-is-a-vector-as-a-methods-receiver.loft
-elab	refused	loft-suite/rules/collections/Slice-Value/a-byte-range-text-takes-the-slices-bounds.loft
 elab	refused	loft-suite/rules/collections/Slice-Value/a-negative-slice-bound-counts-from-the-end.loft
 elab	refused	loft-suite/rules/collections/Slice-Value/a-slice-in-a-concat-is-a-copy-of-its-range.loft
 elab	refused	loft-suite/rules/collections/Slice-Value/a-slice-is-a-fresh-value-at-every-vector-position.loft
@@ -712,7 +711,6 @@ elab	refused	loft-suite/rules/ownership/O-Witness/a-captured-local-reassigned-af
 elab	refused	loft-suite/rules/ownership/O-Witness/a-captured-local-rebuilt-in-a-loop-keeps-the-store-it-still-names.loft
 elab	refused	loft-suite/rules/ownership/O-Witness/a-discharged-projection-rebound-from-a-call-is-witnessed.loft
 elab	refused	loft-suite/rules/ownership/O-Witness/a-mixed-local-viewing-a-tuple-member-releases-through-its-witness.loft
-elab	refused	loft-suite/rules/rewrites/R-Alias/a-versioned-loop-sees-its-adopted-buffer.loft
 elab	refused	loft-suite/rules/rewrites/R-AppendTwin/a-call-result-appended-is-built-in-the-destination.loft
 elab	refused	loft-suite/rules/rewrites/R-AppendTwin/an-append-twin-runs-a-builder-whose-leaves-are-inlined.loft
 elab	refused	loft-suite/rules/rewrites/R-Base/158-a-base-survives-a-growth-of-another-store.loft
@@ -789,7 +787,6 @@ elab	refused	loft-suite/rules/rewrites/R-RefillBuffer/a-refilled-store-takes-eve
 elab	refused	loft-suite/rules/rewrites/R-RefillBuffer/a-refilled-vector-filled-with-one-scalar-is-overwritten-only-at-its-own-length.loft
 elab	refused	loft-suite/rules/rewrites/R-RetAdopt/a-vector-built-in-the-return-buffer-is-the-vector-the-caller-reads.loft
 elab	refused	loft-suite/rules/rewrites/R-SameRead/a-slice-match-reads-its-subject-once.loft
-elab	refused	loft-suite/rules/rewrites/R-SliceArg/a-slice-argument-shares-no-carrier-with-the-slice-in-use-beside-it.loft
 elab	refused	loft-suite/rules/rewrites/R-SliceArg/a-slice-handed-to-a-const-parameter-is-the-fresh-clamped-value.loft
 elab	refused	loft-suite/rules/rewrites/R-SliceBorrow/a-slice-that-escapes-or-outlives-its-source-keeps-the-bytes-it-was-cut-from.loft
 elab	refused	loft-suite/rules/rewrites/R-SliceInto/a-slice-appended-into-a-place-is-the-fresh-clamped-value.loft
@@ -1230,7 +1227,6 @@ elab	refused	tests/scripts/a-repeated-element-fills-in-one-block.loft
 elab	refused	tests/scripts/a-result-read-in-place-is-a-caller-buffer.loft
 elab	refused	tests/scripts/a-returned-field-of-an-owned-local-hands-its-store-over.loft
 elab	refused	tests/scripts/a-slice-appended-to-a-place-is-sliced-into-it.loft
-elab	refused	tests/scripts/a-slice-bound-before-its-local-is-emptied-holds-the-slice.loft
 elab	refused	tests/scripts/a-slice-handed-to-a-const-parameter-needs-no-store-of-its-own.loft
 elab	refused	tests/scripts/a-tail-recursive-small-record-function-is-a-loop.loft
 elab	refused	tests/scripts/a-text-block-whose-tail-is-its-own-local-releases-it.loft
@@ -1240,7 +1236,6 @@ elab	refused	tests/scripts/a-tuple-parameter-is-declined-only-where-its-record-c
 elab	refused	tests/scripts/a-type-named-above-its-pub-declaration-is-published.loft
 elab	refused	tests/scripts/a-value-read-and-dropped-is-built-outside-the-store.loft
 elab	refused	tests/scripts/a-variant-exit-builds-into-the-callers-buffer.loft
-elab	refused	tests/scripts/a-vector-copied-element-by-element-is-one-append.loft
 elab	refused	tests/scripts/a-vector-of-unsigned-four-byte-integers-sorts-by-value.loft
 elab	refused	tests/scripts/a-vector-prepended-to-is-rebuilt-in-place.loft
 elab	refused	tests/scripts/a-while-counter-steps-plain-below-its-bound.loft
