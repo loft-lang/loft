@@ -1081,7 +1081,10 @@ pub fn tail_call_into_local(e: el::El, vars: el_vars::Vars, code: ir::Node) -> i
           NdCall { def_nr, args } => {
             w = hidden_ref_arg(vars, args);
             cd = el::def(e, def_nr);
-            if var == v && w >= 0 && cd.name.starts_with("n_") && el_types::base(cd.returned[0] ?? ir::TyVoid) is TyReference {
+            // (loft#2536: not where the call's own arguments read the local — it would build
+            // into the record it reads; the walk back ends there.)
+            reads_local = len([for a in args if !(el_ir::unspan(a) == ir::NdVar { n: w }) && el_ir::reads_var(a, v) { 1 }]) > 0;
+            if var == v && w >= 0 && !reads_local && cd.name.starts_with("n_") && el_types::base(cd.returned[0] ?? ir::TyVoid) is TyReference {
               na: vector<ir::Node> = [for a in args { match el_ir::unspan(a) { NdVar { n: an } => if an == w { ir::NdVar { n: v } } else { a }, _ => a } }];
               bl.operators[at] = el_ir::v_set(var, ir::NdCall { def_nr: def_nr, args: na });
               done = false;

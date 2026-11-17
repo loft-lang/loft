@@ -369,7 +369,16 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
       return ex(ir::NdInsert { items: lbody! }, ir::TyVoid);
     }
   }
+  // (A keyed entry's value is read knowing the collection it goes into: a literal's field
+  // that reads it is staged where the field is read.)
+  outer_self = vars.self_read;
+  outer_stage = vars.self_stage;
+  vars.self_stage = [];
+  vars.self_read = match el_ir::unspan(p.code) { NdCall { def_nr: kd, args: ka } => if op == "=" && el::def(e, kd).name == "OpGetRecord" && len(ka) > 0 { place_root(e, el_ir::unspan(ka[0]!)) } else { -1 }, _ => -1 };
   x = el_ex_assign::expression(e, vars, if op == "=" && calls(e, el_ir::unspan(p.code), "OpGetDbRef") && amp_operand != null { amp_operand! } else { rhs });
+  keyed_stage = vars.self_stage;
+  vars.self_read = outer_self;
+  vars.self_stage = outer_stage;
   pt = p.tp;
   // `o.v += w` of two vectors appends `w`'s elements into the place (`OpAppendVector`, the
   // element's row), as a local's `v += w` does.
@@ -461,9 +470,13 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
     coll_f = match gs { NdCall { args } => if len(args) >= 3 && calls(e, el_ir::unspan(args[0] ?? ir::NdNull), "OpGetField") { args[0] ?? ir::NdNull } else { ir::NdNull }, _ => ir::NdNull };
     froot = if coll_f is NdNull { -1 } else { place_root(e, el_ir::unspan(coll_f)) };
     if coll_v < 0 && froot >= 0 {
-      if el_ir::reads_var(x.code, froot) {
-        el::refuse(e, "a keyed write whose value reads its collection");
-        return ex(ir::NdNull, ir::TyVoid);
+      if el_ir::reads_var(x.code, froot) || len(keyed_stage) > 0 {
+        fstaged = stage_self_reads(e, vars, x.code, froot, keyed_stage);
+        if fstaged == null {
+          el::refuse(e, "a keyed write whose value reads its collection");
+          return ex(ir::NdNull, ir::TyVoid);
+        }
+        x = ex(fstaged!, x.tp);
       }
       match gs {
         NdCall { args } => {
@@ -478,9 +491,13 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
     }
     // A value that reads the collection it is written into is staged first (R-KeyedEntry's
     // subscript clause): not carried.
-    if el_ir::reads_var(x.code, coll_v) {
-      el::refuse(e, "a keyed write whose value reads its collection");
-      return ex(ir::NdNull, ir::TyVoid);
+    if el_ir::reads_var(x.code, coll_v) || len(keyed_stage) > 0 {
+      staged = stage_self_reads(e, vars, x.code, coll_v, keyed_stage);
+      if staged == null {
+        el::refuse(e, "a keyed write whose value reads its collection");
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      x = ex(staged!, x.tp);
     }
     match gs {
       NdCall { args } => {
@@ -2306,6 +2323,31 @@ pub fn nested_literal(e: el::El, vars: el_vars::Vars, v: integer, at: ir::TypeT,
   }
 }
 
+// R-KeyedEntry's subscript clause for a value that reads the collection it is written into: a
+// record READ from the collection (`h[5] = h[3]`) is written as it is; a literal whose integer
+// fields read it has each such value staged in a work variable ahead of the record's build.
+// Any other value is not carried (null).
+pub fn stage_self_reads(e: el::El, vars: el_vars::Vars, code: ir::Node, coll: integer, staged: vector<ir::Node>) -> ir::Node? {
+  match el_ir::unspan(code) {
+    NdCall { def_nr, args: _ } => if el::def(e, def_nr).name == "OpGetRecord" { code } else { null },
+    NdBlock { block } => {
+      bl = block[0]!;
+      if bl.name != "Object" {
+        return null;
+      }
+      // What still reads the collection after the staging is a value not carried.
+      for o in bl.operators {
+        if el_ir::reads_var(o, coll) {
+          return null;
+        }
+      }
+      bl.operators = staged + bl.operators;
+      ir::NdBlock { block: [bl] }
+    },
+    _ => null
+  }
+}
+
 // A literal's fields written into the record at `r` (the local `v`, or a place inside it): each
 // written vector field's handle zeroed, each written field set in literal order, and — on the
 // second pass — each omitted field its type's default, in declaration order (`object_init`).
@@ -2640,6 +2682,13 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
         if fc == null {
           refuse_known(e, x.tp, "a field value its type converts: {display_type_name(e, x.tp)} to {display_type_name(e, at)}");
           return null;
+        }
+        // R-KeyedEntry: an integer field value that reads the collection its record is written
+        // into is staged in a work variable, where the field is read.
+        if !e.first_pass && vars.self_read >= 0 && at is TyInteger && el_ir::reads_var(fc!, vars.self_read) {
+          sw = el_vars::work_ref(vars, ir::TyInteger { spec: i32_spec() });
+          vars.self_stage += [el_ir::v_set(sw, fc!)];
+          fc = ir::NdVar { n: sw };
         }
         list += [el_ex_object::set_field(e, d, a, r, fc!)];
         found += [fname];
