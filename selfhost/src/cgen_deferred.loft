@@ -1143,6 +1143,9 @@ fn writes_source(x: Cx, w: W, f: ir::Function, code: ir::Node, s: ir::Node, whol
           ks += [k];
           continue;
         }
+        if trace() {
+          println("deferred-copy:   copy point at {name}");
+        }
         flag[0] = true;
       },
       _ => {},
@@ -1236,7 +1239,11 @@ fn read_at(x: Cx, d: ir::Definition, s: ir::Node, id: integer, dv: DcVar, xv: in
   if mentions(s, named) {
     return true;
   }
-  opt_lease::read_after(x.b, d, id, v, v != xv) != 0
+  ra = opt_lease::read_after(x.b, d, id, v, v != xv);
+  if trace() {
+    println("deferred-copy:     {vname(d.variables, v)} after the point: {if ra < 0 { "unreached" } else if ra == 0 { "not read" } else { "read" }} (id {id})");
+  }
+  ra != 0
 }
 
 fn find(w: W, xv: integer) -> DcVar {

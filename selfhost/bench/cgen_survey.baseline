@@ -22,9 +22,9 @@
   "units": 1080
  },
  "bodies|plain|program|corpus:tests": {
-  "agree": 600,
-  "differ": 2,
-  "equal": 6615,
+  "agree": 601,
+  "differ": 0,
+  "equal": 6619,
   "functions": 6620,
   "refused": 0,
   "switches": [

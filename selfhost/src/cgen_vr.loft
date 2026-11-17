@@ -651,7 +651,10 @@ fn object(x: Cx, w: W, bl: ir::Block, exit: integer, target: text, c: text, ind:
   members = tuple_members(c);
   parts: vector<text> = [for _ in 0..n { "" }];
   for i in fill {
+    // `vr_object_slots` takes each field's value as a clone: written as a copy (`no_memo`).
+    w.no_memo += 1;
     e = cgen_fn::expr(x, w, slots[i]!, ind);
+    w.no_memo -= 1;
     tv = temp(w, members[i]!);
     line(w, ind, "{tv} = {as_shape(w, e, members[i]!)};");
     parts[i] = tv;
