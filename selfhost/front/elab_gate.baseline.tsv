@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	0487e337a4e6b809578f5d37afd4372b281b478b
+suite	ea97da7df5dc79a2dfad1eecb65b016b89dcf9ad
 
-layer	elab	agree	1031	of	2149
+layer	elab	agree	1031	of	2148
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -215,8 +215,7 @@ elab	refused	loft-suite/rules/collections/Col-RemoveDense/a-removal-through-a-re
 elab	refused	loft-suite/rules/collections/Col-Store/1445b-an-amp-keyed-parameter-derefs-at-every-kind.loft
 elab	refused	loft-suite/rules/collections/Col-Trie/2241-a-key-ending-in-nul-bytes-is-its-own-key.loft
 elab	refused	loft-suite/rules/collections/Col-Unordered/an-unordered-walk-visits-every-entry-once-a-table-in-slot-order-a-linked-one-in-key-order.loft
-elab	refused	loft-suite/rules/collections/Col-Vec/2278-a-repeat-count-from-a-function-declared-below.loft
-elab	refused	loft-suite/rules/collections/Col-Vec/2340-a-literal-nested-in-a-field-literal-of-a-forward-holder.loft
+elab	refused	loft-suite/rules/collections/Col-Vec/a-vector-literal-compiles-whatever-it-reaches-is-declared-below.loft
 elab	refused	loft-suite/rules/collections/Slice-KeyedIter/a-keyed-range-walks-its-key-interval-in-declared-order.loft
 elab	refused	loft-suite/rules/collections/Slice-Value/1728-a-slice-is-a-vector-as-a-methods-receiver.loft
 elab	refused	loft-suite/rules/collections/Slice-Value/a-negative-slice-bound-counts-from-the-end.loft
