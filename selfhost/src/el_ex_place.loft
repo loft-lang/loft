@@ -3115,6 +3115,20 @@ pub fn contains_struct(e: el::El, d: integer, host: integer, depth: integer) -> 
 // into the field through its buffer), a slice, a nullable source and any other value are refused
 // by name.
 pub fn field_vector_copy(e: el::El, vars: el_vars::Vars, r: ir::Node, d: integer, fname: text, inner: ir::TypeT, n: integer) -> vector<ir::Node>? {
+  // A comprehension fills the field in place (`parse_vector_for` with `is_field`): its pushes
+  // go to the field's place, with no store and no local of its own.
+  if e.p.nodes[n] is SComprehension {
+    fa = attr_nr(el::def(e, d), fname);
+    fp = if fa >= 0 { el_ex_base::field_get(e, d, fa, r) } else { null };
+    if fp == null {
+      el::refuse(e, "a comprehension into a field that is not read as a place");
+      return null;
+    }
+    vars.comp_place = [fp!];
+    c = el_ex_match::comprehension_into(e, vars, -1, n, declared: inner);
+    vars.comp_place = [];
+    return match c.code { NdInsert { items } => items, _ => [] };
+  }
   x = el_ex_assign::expression(e, vars, n);
   if e.first_pass {
     return [];

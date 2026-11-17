@@ -873,7 +873,11 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
     _ => {}
   }
   // The destination's element temp, minted on both passes as the literal path mints it.
-  el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [v] });
+  el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: if v >= 0 { [v] } else { [] } });
+  // A field's comprehension pushes into the field's place: no store of its own, no local.
+  place = vars.comp_place;
+  vars.comp_place = [];
+  dest = if len(place) > 0 { place[0]! } else { ir::NdVar { n: v } };
   // (A literal source is its value block, walked as a local's vector is.)
   if len(binds) != 1 || body == null {
     el::refuse(e, "a comprehension with destructuring or `_`");
@@ -956,7 +960,7 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
   // Any other fill (a value position's "Const fill comprehension" block, a start that is not
   // zero) and every unroll are refused by name.
   fill_count = -1;
-  if ranged && filter == null && constant_body(e, b.code) && !starts_with(el_vars::name_of(vars, v), "_") {
+  if ranged && filter == null && constant_body(e, b.code) && (v < 0 || !starts_with(el_vars::name_of(vars, v), "_")) {
     match e.p.nodes[source] {
       SRange { lo, hi, inclusive } => {
         zero = lo != null && match e.p.nodes[lo!] { SInt { v: lv0 } => lv0 == 0, _ => false };
@@ -978,7 +982,7 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
     el::refuse(e, "a comprehension of this element type: {type_kind(in_t)}");
     return ex(ir::NdNull, ir::TyVoid);
   }
-  if !el_vars::change_var_type(e, vars, v, ir::TyVector { inner: in_t, dep: [] }) {
+  if v >= 0 && !el_vars::change_var_type(e, vars, v, ir::TyVector { inner: in_t, dep: [] }) {
     el::refuse(e, "a local that changes type: {retype_note(e, vars)}");
     return ex(ir::NdNull, ir::TyVoid);
   }
@@ -989,7 +993,7 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
     return ex(ir::NdNull, ir::TyVoid);
   }
   el_ex_pattern::vector_of(e, in_t);
-  if len(el_types::deps(el_vars::tp(vars, v))) > 0 || vars.vars[v].argument {
+  if v >= 0 && (len(el_types::deps(el_vars::tp(vars, v))) > 0 || vars.vars[v].argument) {
     el::refuse(e, "a comprehension into a local that has a store");
     return ex(ir::NdNull, ir::TyVoid);
   }
@@ -1007,15 +1011,18 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
   if fc != null {
     steps += [fc!];
   }
-  steps += [el_ir::v_set(comp, b.code), el_ir::cl(e, push, el_ex_pattern::push_args(e, vars, in_t, ir::NdVar { n: v }, ir::NdVar { n: comp }))];
+  steps += [el_ir::v_set(comp, b.code), el_ir::cl(e, push, el_ex_pattern::push_args(e, vars, in_t, dest, ir::NdVar { n: comp }))];
   r = rows!;
-  db = el_vars::work_vec_db(vars, ir::TyReference { n: r.main_def, dep: [] });
-  el_vars::depend(vars, v, db);
-  items: vector<ir::Node> = [
-    el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: r.main_known }]),
-    el_ir::v_set(v, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: r.vec_known }])),
-    el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }])
-  ];
+  items: vector<ir::Node> = [];
+  if v >= 0 {
+    db = el_vars::work_vec_db(vars, ir::TyReference { n: r.main_def, dep: [] });
+    el_vars::depend(vars, v, db);
+    items = [
+      el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: r.main_known }]),
+      el_ir::v_set(v, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: r.vec_known }])),
+      el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }])
+    ];
+  }
   if fill_count >= 0 {
     value = ir::NdNull;
     match b.code {
@@ -1029,10 +1036,13 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
       _ => { value = el_ir::unspan(b.code); }
     }
     count = el_ex_assign::expression(e, vars, fill_count);
+    // (A field's fill makes no room first.)
+    if v >= 0 {
+      items += [el_ir::cl(e, "OpPreAllocVector", [dest, ir::NdInt { n: 2 }, ir::NdInt { n: elem_size(in_t) }])];
+    }
     items += [
-      el_ir::cl(e, "OpPreAllocVector", [ir::NdVar { n: v }, ir::NdInt { n: 2 }, ir::NdInt { n: elem_size(in_t) }]),
-      el_ir::cl(e, push, el_ex_pattern::push_args(e, vars, in_t, ir::NdVar { n: v }, value)),
-      el_ir::cl(e, "OpAppendCopy", [ir::NdVar { n: v }, count.code, ir::NdInt { n: r.vec_known }])
+      el_ir::cl(e, push, el_ex_pattern::push_args(e, vars, in_t, dest, value)),
+      el_ir::cl(e, "OpAppendCopy", [dest, count.code, ir::NdInt { n: r.vec_known }])
     ];
     return ex(ir::NdInsert { items: items }, ir::TyVoid);
   }

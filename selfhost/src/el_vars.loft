@@ -209,6 +209,8 @@ pub struct Vars {
   // `match_cursor`: the cursor a cursor match's patterns advance — [cursor variable, its
   // struct, the `pos` attribute, the entry position's variable]; empty outside one.
   pub cursor: vector<integer> = [],
+  // The place a comprehension pushes into where it fills a FIELD (one node), else empty.
+  pub comp_place: vector<ir::Node> = [],
   // The node whose tuple FIELD read is taken member by member (`x.f.0`, `x.f = …`): no copy.
   pub tuple_raw: integer = -1,
   // The capturing lambda `closure_value` read last, and the body node it was read at.
