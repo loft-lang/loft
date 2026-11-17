@@ -4789,8 +4789,15 @@ impl Parser {
         //     not the call: fall back to redirecting cv's single top-level
         //     defining call instead of returning (else its `__ref_N` buffer is
         //     allocated, orphaned, and leaks one store per call).
+        //     The penultimate STATEMENT: a line marker between the call and the tail is no
+        //     statement (step 6 below skips it the same way).  Read as one, the bind and the
+        //     tail on two lines (`v = mk(u);` / `v`) declined the collapse that the same two
+        //     statements on one line take — a lowering decided by a newline.
+        let Some(pen) = (0..last).rev().find(|&k| !matches!(l[k], Value::Line(_))) else {
+            return;
+        };
         let penultimate_is_set_cv_call = matches!(
-            l[last - 1].unspan(),
+            l[pen].unspan(),
             Value::Set(slot, rhs) if *slot == cv && matches!(rhs.unspan(), Value::Call(_, _))
         );
         if !penultimate_is_set_cv_call {
@@ -4798,7 +4805,7 @@ impl Parser {
             self.suppress_collapsed_workrefs(l, collapsed);
             return;
         }
-        let prev = l[last - 1].unspan_mut();
+        let prev = l[pen].unspan_mut();
         let Value::Set(slot, rhs) = prev else { return };
         if *slot != cv {
             return;
@@ -4853,7 +4860,7 @@ impl Parser {
         //     conditional Sets to cv interact with paired_witness in
         //     ways that a blanket "substitute every Set(cv, Call)"
         //     doesn't handle correctly).
-        let mut idx = last - 1;
+        let mut idx = pen;
         while idx > 0 {
             idx -= 1;
             if matches!(l[idx], Value::Line(_)) {
