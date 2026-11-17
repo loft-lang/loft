@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	db8cf5cb011273a9b8ce1aa636d2c4e254f73f6e
+suite	a914e9e0ba7b120f20af6fd28833837d4da144d6
 
-layer	elab	agree	1031	of	2127
+layer	elab	agree	1031	of	2126
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -268,8 +268,7 @@ elab	refused	loft-suite/rules/heap/H-Drop/1594-a-tuple-member-is-released-once.l
 elab	refused	loft-suite/rules/heap/H-Drop/1596-a-vector-rebound-from-a-call-result-releases-it.loft
 elab	refused	loft-suite/rules/heap/H-Drop/1597-a-vector-of-vectors-releases-its-inner-elements.loft
 elab	refused	loft-suite/rules/heap/H-Drop/2436-a-programs-vector-of-a-library-droppable-is-released-once.loft
-elab	refused	loft-suite/rules/heap/H-Drop/a-match-arm-member-beside-a-null-arm-is-released-once.loft
-elab	refused	loft-suite/rules/heap/H-Drop/a-record-built-for-an-element-of-a-field-literal-is-released-once.loft
+elab	refused	loft-suite/rules/heap/H-Drop/a-record-a-value-branch-or-a-field-literal-builds-is-released-once.loft
 elab	refused	loft-suite/rules/heap/H-Free/2526-a-text-match-arm-that-may-return-keeps-its-value.loft
 elab	refused	loft-suite/rules/heap/H-Free/a-call-frees-the-record-it-made-for-an-argument-however-it-was-built.loft
 elab	refused	loft-suite/rules/heap/H-Free/a-discharged-call-answer-is-owned-by-its-binding.loft
