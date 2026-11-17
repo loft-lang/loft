@@ -355,6 +355,12 @@ pub fn for_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     }
     x = lit.x;
   } else {
+    if !rev && par == null {
+      fkr = key_range(e, vars, source);
+      if fkr != null {
+        return key_range_for(e, vars, h, fkr!);
+      }
+    }
     outer_slice = vars.slice_node;
     vars.slice_node = el_ex_vector::slice_target(e, source);
     x = el_ex_assign::expression(e, vars, source);
@@ -863,6 +869,169 @@ pub fn comprehension_value(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
 
 // `declared`: the element a declared local gives it (`v: vector<u8> = [for …]`), which the
 // items are stored at, where the body would answer a wider one.
+// A key range of a sorted or an index held in a local (`s[lo..hi]`, `s[lo..=hi]`, either end
+// open): its iterator `_iter_N`, started by `OpIterate(c, on, arg, keys, n, from…, n, to…)`
+// and stepped by `OpStep` — the record, or the null sentinel past the range.
+pub struct KeyRange {
+  pub iter: integer,
+  pub start: ir::Node,
+  pub coll: ir::Node,
+  pub on: integer,
+  pub arg: integer,
+  pub elem: ir::TypeT,
+  // A walk of the WHOLE collection: `x#iter_state` and `x#index`, started with no bounds.
+  pub whole: boolean = false,
+  pub idx: integer = -1
+}
+
+// A comprehension's source that is a local sorted or index, walked whole.
+pub fn key_whole(e: el::El, vars: el_vars::Vars, n: integer) -> KeyRange? {
+  cv = match e.p.nodes[n] { SName { name, member } => if member == "" { el_vars::var(vars, name) } else { -1 }, _ => -1 };
+  if cv < 0 {
+    return null;
+  }
+  ct = el_types::base(el_vars::tp(vars, cv));
+  if !(ct is TySorted || ct is TyIndex) {
+    return null;
+  }
+  el_d = el_types::keyed_elem(ct);
+  elem = el_types::with_deps(ir::TyReference { n: el_d, dep: [] }, el_types::deps(ct) + [cv]);
+  if e.first_pass {
+    return KeyRange { iter: -1, start: ir::NdNull, coll: ir::NdVar { n: cv }, on: 0, arg: 0, elem: elem, whole: true };
+  }
+  known = el_schema::keyed_type(e, ct);
+  on = 130;
+  arg = 4;
+  match ct {
+    TyIndex { n: _ } => { on = 129; arg = known; },
+    _ => {
+      if (e.b.types[known]!.parts[0] ?? ir::PtBase) is PtOrdered {
+        on = 131;
+      } else {
+        arg = e.b.types[el::def(e, el_d).known_type]!.size;
+      }
+    }
+  }
+  start = el_ir::cl(e, "OpIterate", [ir::NdVar { n: cv }, ir::NdInt { n: on }, ir::NdInt { n: arg }, ir::NdKeys { keys: el_schema::key_descriptors(e, known) }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }]);
+  KeyRange { iter: -1, start: start, coll: ir::NdVar { n: cv }, on: on, arg: arg, elem: elem, whole: true }
+}
+
+// Is `n` a range index of a local that is a sorted or an index, by its syntax and the local's type?
+pub fn key_range_local(e: el::El, vars: el_vars::Vars, n: integer) -> integer {
+  match e.p.nodes[n] {
+    SIndex { e: ie, range, limit, spatial } => {
+      if !range || ie == null || limit != null || spatial {
+        return -1;
+      }
+      cv = match e.p.nodes[ie!] { SName { name, member } => if member == "" { el_vars::var(vars, name) } else { -1 }, _ => -1 };
+      if cv < 0 {
+        return -1;
+      }
+      ct = el_types::base(el_vars::tp(vars, cv));
+      if (ct is TySorted || ct is TyIndex) { cv } else { -1 }
+    },
+    _ => -1
+  }
+}
+
+pub fn key_range_syntax(e: el::El, n: integer) -> boolean {
+  match e.p.nodes[n] { SIndex { range } => range, _ => false }
+}
+
+pub fn key_range(e: el::El, vars: el_vars::Vars, n: integer) -> KeyRange? {
+  cv = key_range_local(e, vars, n);
+  if cv < 0 {
+    return null;
+  }
+  lo: vector<integer> = [];
+  hi: vector<integer> = [];
+  inclusive = false;
+  match e.p.nodes[n] {
+    SIndex { keys, hi: h, inclusive: inc } => { lo = keys; hi = h; inclusive = inc; },
+    _ => {}
+  }
+  ct = el_types::base(el_vars::tp(vars, cv));
+  el_d = el_types::keyed_elem(ct);
+  elem = el_types::with_deps(ir::TyReference { n: el_d, dep: [] }, el_types::deps(ct) + [cv]);
+  if len(lo) > 1 || len(hi) > 1 {
+    el::refuse(e, "a key range over more than one key");
+    return null;
+  }
+  from: vector<ir::Node> = [];
+  for k in lo {
+    kx = el_ex_assign::expression(e, vars, k);
+    if !e.first_pass && !(el_types::base(kx.tp) is TyInteger) {
+      el::refuse(e, "a key range whose bound is not an integer: {type_kind(kx.tp)}");
+      return null;
+    }
+    from += [kx.code];
+  }
+  it = el_vars::create_unique(vars, "iter", ir::TyInteger { spec: i32_spec() });
+  el_vars::set_defined(vars, it);
+  to: vector<ir::Node> = [];
+  for k in hi {
+    kx = el_ex_assign::expression(e, vars, k);
+    if !e.first_pass && !(el_types::base(kx.tp) is TyInteger) {
+      el::refuse(e, "a key range whose bound is not an integer: {type_kind(kx.tp)}");
+      return null;
+    }
+    to += [kx.code];
+  }
+  if e.first_pass {
+    return KeyRange { iter: it, start: ir::NdNull, coll: ir::NdVar { n: cv }, on: 0, arg: 0, elem: elem };
+  }
+  known = el_schema::keyed_type(e, ct);
+  on = 2;
+  arg = 4;
+  match ct {
+    TyIndex { n: _ } => { on = 1; arg = known; },
+    _ => {
+      if (e.b.types[known]!.parts[0] ?? ir::PtBase) is PtOrdered {
+        on = 3;
+      } else {
+        arg = e.b.types[el::def(e, el_d).known_type]!.size;
+      }
+    }
+  }
+  if inclusive {
+    on += 128;
+  }
+  args: vector<ir::Node> = [ir::NdVar { n: cv }, ir::NdInt { n: on }, ir::NdInt { n: arg }, ir::NdKeys { keys: el_schema::key_descriptors(e, known) }, ir::NdInt { n: len(from) }];
+  args += from;
+  args += [ir::NdInt { n: len(to) }];
+  args += to;
+  KeyRange { iter: it, start: el_ir::cl(e, "OpIterate", args), coll: ir::NdVar { n: cv }, on: on, arg: arg, elem: elem }
+}
+
+pub fn key_range_step(e: el::El, kr: KeyRange) -> ir::Node {
+  el_ir::v_block([el_ir::cl(e, "OpStep", [ir::NdVar { n: kr.iter }, kr.coll, ir::NdInt { n: kr.on }, ir::NdInt { n: kr.arg }])], kr.elem, "Iterate keys")
+}
+
+// `for x in s[lo..hi]`: the key range's iterator started, then each record until the sentinel.
+pub fn key_range_for(e: el::El, vars: el_vars::Vars, h: ForHead, kr: KeyRange) -> Ex {
+  lv = loop_var(vars, h.src_id, h.id, kr.elem);
+  vars.active_loops += [lv];
+  vars.active_values += [ir::NdNull];
+  fc = el_ex_pattern::loop_filter(e, vars, h.filter);
+  b = el_ex_assign::parse_block(e, vars, h.body, "for", ir::TyVoid);
+  cnt = el_vars::pop_loop(vars);
+  vars.active_values = vars.active_values[..-1];
+  if cnt >= 0 {
+    el::refuse(e, "a key range walk whose body asks its loop's `#count` or `#first`");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  if e.first_pass {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  done = el_ir::v_if(el_ir::cl(e, "OpEqRef", [ir::NdVar { n: lv }, el_ir::cl(e, "OpNullRefSentinel", [])]), el_ir::v_block([ir::NdBreak { n: 0 }], ir::TyVoid, "break"), ir::NdNull);
+  steps: vector<ir::Node> = [el_ir::v_set(lv, key_range_step(e, kr)), done];
+  if fc != null {
+    steps += [fc!];
+  }
+  steps += [b.code];
+  ex(el_ir::v_block([el_ir::v_set(kr.iter, kr.start), el_ir::v_loop(steps, "For loop")], ir::TyVoid, "For block"), ir::TyVoid)
+}
+
 // The rows of a field's place (`OpGetField(r, pos, row)`): only the vector's row is known.
 fn field_rows(place: ir::Node) -> el_ex_base::VecRows? {
   match el_ir::unspan(place) {
@@ -913,18 +1082,28 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
     if src_id == "_" {
       el_vars::create_unique(vars, "index", elem);
     }
-  } else {
+  }
+  // A key range of a sorted or an index (`s[lo..hi]`) is walked by its own iterator.
+  kr: KeyRange? = if ranged { null } else { key_range(e, vars, source) ?? key_whole(e, vars, source) };
+  keyed = kr != null;
+  if !ranged && !keyed {
+    if len(e.refused) > 0 && key_range_syntax(e, source) {
+      return ex(ir::NdNull, ir::TyVoid);
+    }
     outer_slice = vars.slice_node;
     vars.slice_node = el_ex_vector::slice_target(e, source);
     x = el_ex_assign::expression(e, vars, source);
     vars.slice_node = outer_slice;
   }
-  sliced = x.code is NdIter;
+  if keyed {
+    elem = kr!.elem;
+  }
+  sliced = !keyed && x.code is NdIter;
   ss: el_ex_vector::SliceStart? = null;
   if sliced {
     ss = el_ex_vector::slice_start(vars, x, id);
     elem = ss!.elem;
-  } else if !ranged {
+  } else if !ranged && !keyed {
     in_type = el_types::base(x.tp);
     if !(in_type is TyVector) || x.tp is TyOptional {
       if !el_types::is_unknown(x.tp) {
@@ -943,12 +1122,17 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
     elem = match in_type { TyVector { inner } => inner, _ => ir::TyUnknown { n: 0 } };
   }
   // A vector walk's counter is `id#index` for a `_` binding too (`_#index`).
-  idx = if ranged { rw!.idx } else if sliced { ss!.idx } else { el_ex_pattern::loop_index(vars, if src_id == "_" { "_" } else { id }) };
+  idx = if ranged { rw!.idx } else if sliced { ss!.idx } else if keyed && !kr!.whole { -1 } else { el_ex_pattern::loop_index(vars, if src_id == "_" { "_" } else { id }) };
+  if keyed && kr!.whole {
+    wst = el_vars::add_variable(vars, "{if src_id == "_" { el_vars::name_of(vars, idx) } else { id }}#iter_state", ir::TyInteger { spec: i32_spec() });
+    el_vars::set_defined(vars, wst);
+    kr = KeyRange { iter: wst, start: kr!.start, coll: kr!.coll, on: kr!.on, arg: kr!.arg, elem: kr!.elem, whole: true, idx: idx };
+  }
   // (A `_` binds its own fresh `___N` in a comprehension as in a loop, a fill included: the
   // number is taken although the fill names no walk.)
-  lv = loop_var(vars, src_id, if src_id == "_" { "_" } else { id }, if ranged || sliced { elem } else { el_types::with_deps(elem, [vec]) });
+  lv = loop_var(vars, src_id, if src_id == "_" { "_" } else { id }, if ranged || sliced || keyed { elem } else { el_types::with_deps(elem, [vec]) });
   vars.active_loops += [lv];
-  vars.active_values += [if sliced { ir::NdNull } else { x.code }];
+  vars.active_values += [if sliced || keyed { ir::NdNull } else { x.code }];
   fc = el_ex_pattern::loop_filter(e, vars, filter);
   b = el_ex_assign::parse_block(e, vars, body!, "for", ir::TyUnknown { n: 0 });
   cnt = el_vars::pop_loop(vars);
@@ -1019,7 +1203,9 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
     el::refuse(e, "a comprehension into a local that has a store");
     return ex(ir::NdNull, ir::TyVoid);
   }
-  nx: ir::Node? = if ranged { el_ir::v_block(rw!.steps, elem, "Iter range") } else if sliced { el_ex_vector::slice_read(e, vars, ss!) } else { vector_step(e, vec, idx, elem) };
+  nx: ir::Node? = if keyed && kr!.whole {
+    el_ir::v_block([el_ir::v_set(idx, el_ir::cl(e, "OpAddInt", [ir::NdVar { n: idx }, ir::NdInt { n: 1 }])), el_ir::cl(e, "OpStep", [ir::NdVar { n: kr!.iter }, kr!.coll, ir::NdInt { n: kr!.on }, ir::NdInt { n: kr!.arg }])], elem, "sorted iter next")
+  } else if keyed { key_range_step(e, kr!) } else if ranged { el_ir::v_block(rw!.steps, elem, "Iter range") } else if sliced { el_ex_vector::slice_read(e, vars, ss!) } else { vector_step(e, vec, idx, elem) };
   if nx == null || rows == null {
     el::refuse(e, "a comprehension over a vector of records");
     return ex(ir::NdNull, ir::TyVoid);
@@ -1027,7 +1213,9 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
   // (A fill runs no loop and mints no `_comp_N`.)
   comp = if fill_count >= 0 { -1 } else { el_vars::create_unique(vars, "comp", if in_t is TyText { b.tp } else { rec_t }) };
   steps: vector<ir::Node> = [el_ir::v_set(lv, nx!)];
-  if !ranged && !sliced {
+  if keyed {
+    steps += [el_ir::v_if(el_ir::cl(e, "OpEqRef", [ir::NdVar { n: lv }, el_ir::cl(e, "OpNullRefSentinel", [])]), el_ir::v_block([ir::NdBreak { n: 0 }], ir::TyVoid, "break"), ir::NdNull)];
+  } else if !ranged && !sliced {
     steps += [vector_past_end(e, vec, idx)];
   }
   if fc != null {
@@ -1117,7 +1305,7 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
     items += [ir::NdInsert { items: el_ex_pattern::range_init(rw!) }, el_ir::v_loop(steps, "For comprehension")];
     return ex(ir::NdInsert { items: items }, ir::TyVoid);
   }
-  items += if ranged { el_ex_pattern::range_init(rw!) } else if sliced { match ss!.init { NdInsert { items: si } => si, _ => [] } } else { [el_ir::v_set(vec, x.code), el_ir::v_set(idx, ir::NdInt { n: -1 })] };
+  items += if keyed && kr!.whole { [el_ir::v_set(kr!.iter, kr!.start), el_ir::v_set(idx, ir::NdInt { n: -1 })] } else if keyed { [el_ir::v_set(kr!.iter, kr!.start)] } else if ranged { el_ex_pattern::range_init(rw!) } else if sliced { match ss!.init { NdInsert { items: si } => si, _ => [] } } else { [el_ir::v_set(vec, x.code), el_ir::v_set(idx, ir::NdInt { n: -1 })] };
   items += [el_ir::v_loop(steps, "For comprehension")];
   ex(ir::NdInsert { items: items }, ir::TyVoid)
 }
