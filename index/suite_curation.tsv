@@ -9,55 +9,55 @@ H-ReadSurface	allocator	curated	2	2026-11-17	a_read_surface_open_writes_nothing_
 H-ScanIndex	allocator	curated	1	2026-11-17	the_indexed_scan_takes_the_block_the_walk_takes (seeded oracle vs the chain walk); mutation 'skip exact fit' caught
 H-TailGrow	allocator	curated	2	2026-11-17	a_tail_record_grows_where_it_is + C churn; LOFT_NO_TAIL_GROW=1 caught; conformance list lacked it (added)
 H-Wilderness	allocator	curated	2	2026-11-17	oracle vs the tree-only allocator + fresh-store test; mutation 'equal size prefers the wilderness' caught
-B-Copy	binding	todo			
-B-Disturb	binding	todo			
-B-OutOfLine	binding	todo			
-B-Ref-Alias	binding	todo			
-B-Ref-AnnotationOnly	binding	todo			
-B-Ref-Intro	binding	todo			
-B-Ref-Lvalue	binding	todo			
-B-Ref-NotTarget	binding	todo			
-B-Ref-Read	binding	todo			
-B-Ref-Repoint	binding	todo			
-B-Ref-Reshape	binding	todo			
-B-Ref-StoredRef	binding	todo			
-B-Ref-Uniform	binding	todo			
-B-Ref-Write	binding	todo			
-B-RefType	binding	todo			
-B-RefType-OfVar	binding	todo			
-B-Scope	binding	todo			
-B-View	binding	todo			
-B-View-Base	binding	todo			
-B-View-Depth	binding	todo			
-Const-Bind	binding	todo			
-Const-Compose	binding	todo			
-Const-ConstructExempt	binding	todo			
-Const-Foreign	binding	todo			
-Const-ScalarCollapse	binding	todo			
-Const-Value	binding	todo			
-Const-VirtualReject	binding	todo			
-P-Cap-Fresh	binding	todo			
-P-Cap-View	binding	todo			
-F-Args	calls	todo			
-F-Arity	calls	todo			
-F-Block	calls	todo			
-F-Call	calls	todo			
-F-Default	calls	todo			
-F-Default-Field	calls	todo			
-F-Drop	calls	todo			
-F-OneBody	calls	todo			
-F-Package	calls	todo			
-F-ParamGrow	calls	todo			
-F-ParamHeap	calls	todo			
-F-ParamRebind	calls	todo			
-F-ParamRef	calls	todo			
-F-ParamScalar	calls	todo			
-F-ParamText	calls	todo			
-F-ParamTuple	calls	todo			
-F-Rec	calls	todo			
-F-Recv	calls	todo			
+B-Copy	binding	curated	92	2026-11-17	own dir 37 -> 23 cells by clause (record update 6->1, struct-enum 2->1, place-embedding 2->1, value branch + choice joins 6->1, compound values 2->1); 5 pending receipts measured by their cure switches; 139-drop-cascade moved to H-Drop; 2334 kept apart (gate E agrees with it); features 94 kept
+B-Disturb	binding	curated	46	2026-11-17	own dir 15 -> 10: overwrite + its control + whole-record write 3->1, growth + clear/method 2->1, callee-argument + loop liveness 2->1, later-arm + payload match views 2->1; the pending receipt measured; the removal cell gained a middle-element case that can fail (it could not) and a switch receipt; the six cells gate E agrees with stay apart (merging them needs a gate E run on the result)
+B-OutOfLine	binding	curated	13	2026-11-17	8 small cells, one clause each, verdicts mixed: no merge. Switch sweep (194 LOFT_NO_*): only LOFT_NO_OUT_OF_LINE / LOFT_NO_SEVERAL_VARS move them, both by refusing the program, so no clause-specific receipt exists; the null-write view case gained a reallocation so a stale view would fail
+B-Ref-Alias	binding	curated	15	2026-11-17	own dir 7 -> 5: two ref parameters + other call forms + link to a ref vector parameter 3->1 (loft#2136, #2150, #2424); the receipt-less crossing cell is moved only by LOFT_NO_SEVERAL_VARS (a refusal) but its values tell a link from a copy; keyed alias, null-to-collection (patch), 2195 (gate E agrees) stay apart
+B-Ref-AnnotationOnly	binding	curated	6	2026-11-17	every listed position refused (G-Amp-Prefix's cell holds the full list and cites this rule); the own cell is the unary-operator defect (!&a -&n ~&n) with its patch receipt over 6 expectations — its 3 positions duplicated in G-Amp-Prefix stay, since removing them changes the receipt's channel for ~9 lines; the reference-field cell is B-Ref-StoredRef's context. No change.
+B-Ref-Intro	binding	curated	6	2026-11-17	own dir 5 -> 3: the &fn(...) family — write through a parameter, local bind, read and call (loft#1443, #1454, #1455) — 3->1, one duplicated control kept once; the nullable-slot cell (loft#1372) and the place-not-a-temporary refusal (gate E agrees) stay apart
+B-Ref-Lvalue	binding	curated	17	2026-11-17	own dir 10 -> 8: the tuple-member family joins its patch cell (heap member loft#2263, member through a &(...) link); the other seven are distinct places each with a patch receipt (text field/element, text into a store, nullable slot, struct-enum place, generator parameter, struct view, stored tuple)
+B-Ref-NotTarget	binding	curated	2	2026-11-17	no own directory: `&x = 3` is refused in G-Amp-Prefix's refusal cell and in B-Ref-AnnotationOnly's (with its patch receipt), both citing this rule
+B-Ref-Read	binding	curated	3	2026-11-17	one conformance cell, every case writes the source after the bind and reads through the link (a copying link fails each); I-Text and B-Ref-Lvalue's text-into-a-store cell cite it too. No change.
+B-Ref-Repoint	binding	curated	7	2026-11-17	4 own cells, distinct clauses: the basic re-point (hand-measured falsification of the pre-fix build), the text link's kind (patch), a write before a re-point (loft#2425), and the any-place conformance cell (its writes after a re-point tell a re-point from a write-through). Three are agreed by gate E, so no merge this round.
+B-Ref-Reshape	binding	curated	14	2026-11-17	own dir 18 -> 9: the field/element-container refusals (loft#2161) 5->1, the vector grow/remove/clear/method refusals (loft#2267) 4->1, the overwrite refusals (loft#2391) 2->1; each expectation proven checked (corrupting it fails the file); refusal files are not gate E programs (the Rust front end refuses them), so no count moved. The keyed-link (patch), the 167 pair and the dead-at-the-disturbance / view-would-survive controls stay.
+B-Ref-StoredRef	binding	curated	8	2026-11-17	own dir 7 -> 6: the inline-field refusal by assignment and in a literal (loft#2166) 2->1; the positive 2166 cell, the temporary's reference field (loft#2369), the prefix-link pair and the struct-enum repoint stay
+B-Ref-Uniform	binding	curated	24	2026-11-17	own dir 8 -> 7: the collection link at every kind — write side (loft#1445) and read side — 2->1; five patch cells stay apart
+B-Ref-Write	binding	curated	20	2026-11-17	own dir 12 -> 10: the whole-value write through a link to a local / place / out-of-line field (loft#1371, #1376, #2433) 3->1; 2455 is the same clause but gate E agrees with it; four patch cells, the both-kinds refusal and three distinct clauses stay
+B-RefType	binding	curated	1	2026-11-17	one control cell (INERT receipt, honest: it pins values that already held); every function writes through its links after binding and reads the places after, so a copying link fails it
+B-RefType-OfVar	binding	curated	3	2026-11-17	no own directory: B-RefType's control cell cites and moves it (a variable or parameter of type &τ is a live link for its whole life)
+B-Scope	binding	curated	32	2026-11-17	own dir 27 -> 21: the name-after-its-scope-ended clause (loft#1700, #2411, #2332, #2321, #2330 and the sibling-loop body local) 6->1; pln125-b-drop moved to H-Drop (a drop runs where its free runs) with a conformance receipt; the rest are one patch receipt each, pairs gate E splits (1955/1955b, 1700b/2523) or distinct clauses
+B-View	binding	curated	56	2026-11-17	own dir 8 -> 5: the materialise clause through a payload binding / nullable local / discharged local / discharged element (loft#1664, #2362, #2447, #2404) 4->1; 1184 is that clause too but keeps its name (two compiler comments cite it, three patches carry those lines); 1665 (own patch), 2489 (gate E agrees) and the write-back cell (the only suite guard of its values + warning) stay; 51 citing files live under other rules
+B-View-Base	binding	curated	6	2026-11-17	no own directory: 6 citing cells under B-View, B-Copy and B-Disturb hold it
+B-View-Depth	binding	curated	7	2026-11-17	2 cells, distinct: the keyed/vector nested projection (patch, gate E agrees) and the tuple-copies control (gate E refuses) — nothing to merge
+Const-Bind	binding	curated	3	2026-11-17	no own directory: Const-Value's copy-out cell cites it; the Rust twin a_binding_const_field_rebind_is_refused holds the rebind refusal
+Const-Compose	binding	curated	2	2026-11-17	was Rust-only (tests/issues.rs a_composed_const_field_refuses_*): a first suite cell refuses a rebind, an append, an element write, a nested field write and a text append, each expectation proven by corrupting it alone
+Const-ConstructExempt	binding	curated	1	2026-11-17	no own directory: Const-Value's scalar-local cell (patch) cites it
+Const-Foreign	binding	curated	5	2026-11-17	own dir 5 -> 4: the link-append and struct-view refusals 2->1 over one producer, with the value field write, value append and link element write added; the mapped-vector cell writes in the temp dir (seven leftovers had piled up; 24 tracked loft_*.tmp files untracked suite-wide)
+Const-ScalarCollapse	binding	curated	2	2026-11-17	no own directory: Const-Value's scalar-local cell (patch) cites it
+Const-Value	binding	curated	7	2026-11-17	own dir 6 -> 4: the refusals through a discharge (loft#1211), a link/view/loop variable/discharge target and every append route 3->1, all 21 expectations proven alone; the read-as-the-value cell, copy-out and the scalar-local patch cell stay
+Const-VirtualReject	binding	curated	2	2026-11-17	was Rust-only: a first suite cell refuses const on a virtual field at the binding and the value position — writing it found loft#2538 (the value position accepted in silence), fixed; patch receipt
+P-Cap-Fresh	binding	curated	2	2026-11-17	own dir 2 -> 1: freshness against the subject and the copy a bind of a rest takes 2->1
+P-Cap-View	binding	curated	3	2026-11-17	own dir 5 -> 2: the capture-is-a-view clause (loft#2353, #2457, the B-View and H-View crossings) 4->1; the patch cell (a capture beside a fresh rest) stays
+F-Args	calls	curated	3	2026-11-17	one cell (insert takes its arguments before the vector grows, patch); two citing cells elsewhere
+F-Arity	calls	curated	3	2026-11-17	was Rust-only: two suite cells, split on the compile pass a refusal is met in (past the parameters / short of a required one or a generic past its); writing them found loft#2537 (a refused call typed null to the code after it), fixed; patch receipts
+F-Block	calls	curated	12	2026-11-17	8 files, no merge: the two block-yields-a-call-on-a-reference cells are one clause but gate E splits them (refused / agree); 1722 (patch, the null path) and the tail-match cell with its fixture library (frees across a package boundary) are distinct clauses; 1382/2456 statement-position cells agree; 1386 the value-position refusal
+F-Call	calls	curated	5	2026-11-17	own dir 2 -> 1: the frame frees exactly what it owns — loft#1935 (patch) and the conformance cell — 2->1
+F-Default	calls	curated	3	2026-11-17	own dir 4 -> 3: D-call-26's well-formed default (the match default over records, patch; the unit variant, loft#2410) 2->1; 1758 and the earlier-arguments cell (both patches) stay
+F-Default-Field	calls	curated	1	2026-11-17	one cell (a field default reads the record it fills)
+F-Drop	calls	curated	2	2026-11-17	one own cell (a dropped tuple-answering call runs for its effect) plus one citing cell elsewhere
+F-OneBody	calls	curated	5	2026-11-17	one cell (loft#2318) and the c97 runtime fixture library another cell imports
+F-Package	calls	curated	7	2026-11-17	one cell and its two fixture libraries (core, relay)
+F-ParamGrow	calls	curated	2	2026-11-17	one own cell (loft#1251, a heap parameter is shared not copied) plus one citing cell elsewhere
+F-ParamHeap	calls	curated	11	2026-11-17	own dir 2 -> 1: loft#2137 (patch) and loft#1415 — a heap argument shares the caller's store and nothing in the frame releases it — 2->1
+F-ParamRebind	calls	curated	8	2026-11-17	own dir 3 -> 2: the whole write through a link to a plain parameter (the re-pointing walk, the written record) 2->1; the rebind built apart (gate E agrees) stays
+F-ParamRef	calls	curated	9	2026-11-17	2 cells, gate E splits them (the slot parameter, refused; the whole-value write through a ref parameter, agrees)
+F-ParamScalar	calls	curated	5	2026-11-17	4 cells, all patch receipts (one per file) — nothing to merge
+F-ParamText	calls	curated	3	2026-11-17	own dir 3 -> 2: a text parameter is the argument's value and the callee's own (loft#2203, #2422/#2423) 2->1; the conformance cell (gate E agrees) stays
+F-ParamTuple	calls	curated	1	2026-11-17	one cell (a by-value tuple parameter is the callee's own value)
+F-Rec	calls	curated	4	2026-11-17	3 cells: two patches and a gate-E-agreeing conformance cell — nothing to merge
+F-Recv	calls	curated	12	2026-11-17	own dir 10 -> 8: a call reaches the method spelled for its receiver's nullability (loft#1427, #1432, the narrow/wide crossing) 3->1, all seven warning expectations proven alone; the rest are patches or gate-E-agreeing
 F-Ret	calls	todo			
-F-Return	calls	todo			
+F-Return	calls	curated	1	2026-11-17	own dir 2 -> 1: what a function answers (loft#1347, #2383) 2->1, plus a real discarded-return case where the dropped main's test calls had been the rule's only discarded context
 F-Surface	calls	todo			
 F-Visible	calls	todo			
 Cap-Call	capabilities	todo			

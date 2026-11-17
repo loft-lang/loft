@@ -506,7 +506,7 @@ was mutated in silence and the caller saw the new value, on both backends, with 
 (loft#1211). One home answers what a discharge was applied to for both questions, so which
 place a discharged TARGET was reading and which binding a write THROUGH one reaches cannot
 drift apart; verified both backends —
-`loft-suite/rules/binding/Const-Value/1211-a-const-binding-holds-through-an-interior-discharge.loft`,
+`loft-suite/rules/binding/Const-Value/a-value-const-binding-refuses-a-write-whatever-name-or-route-reaches-it-refused.loft` (its interior-discharge section),
 `loft-suite/attic/scripts/1211b-a-place-behind-an-interior-discharge-is-written.loft`.
 
 ---

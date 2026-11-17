@@ -77,6 +77,7 @@ scripts/pr_watch.py	--help
 scripts/profile.sh	--help
 scripts/profile_corpus.sh	--help
 scripts/pub_migrate.py	--help
+scripts/receipts_after_split.py	--help
 scripts/receipts_ci.py	--help
 scripts/reference-review.py	--help
 scripts/registry-sign.sh	--help
@@ -147,3 +148,5 @@ tools/audience-demo/run-demo.sh	--help
 tools/indexer/fix_broken_links.py	--help
 tools/indexer/migrate.py	--help
 tools/indexer/rewrite_links.py	--help
+scripts/suite_cells.py	--help
+scripts/suite_pin.py	--help

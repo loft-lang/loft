@@ -75,7 +75,8 @@ whole-file run and `make falsify` both report `n/n` on a build that produces one
 measured on a guard whose four interesting cells all failed correctly when run alone.
 Until that is closed, the by-hand check is: split the cells out, run each against the
 build the guard was written for AND against this one, and record the two answers per cell
-in `@falsified-at`. `const-binds-through-every-append-route.loft` carries that table.
+in `@falsified-at`. The every-append-route section of
+`a-value-const-binding-refuses-a-write-whatever-name-or-route-reaches-it-refused.loft` carries that table.
 
 ⚠ **Read the chapter's MODEL before its claims.** Chapter 17 said a library name needs
 its `libname::` prefix, and every section after that inherited it: the struct section

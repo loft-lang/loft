@@ -369,7 +369,16 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
       return ex(ir::NdInsert { items: lbody! }, ir::TyVoid);
     }
   }
+  // (A keyed entry's value is read knowing the collection it goes into: a literal's field
+  // that reads it is staged where the field is read.)
+  outer_self = vars.self_read;
+  outer_stage = vars.self_stage;
+  vars.self_stage = [];
+  vars.self_read = match el_ir::unspan(p.code) { NdCall { def_nr: kd, args: ka } => if op == "=" && el::def(e, kd).name == "OpGetRecord" && len(ka) > 0 { place_root(e, el_ir::unspan(ka[0]!)) } else { -1 }, _ => -1 };
   x = el_ex_assign::expression(e, vars, if op == "=" && calls(e, el_ir::unspan(p.code), "OpGetDbRef") && amp_operand != null { amp_operand! } else { rhs });
+  keyed_stage = vars.self_stage;
+  vars.self_read = outer_self;
+  vars.self_stage = outer_stage;
   pt = p.tp;
   // `o.v += w` of two vectors appends `w`'s elements into the place (`OpAppendVector`, the
   // element's row), as a local's `v += w` does.
@@ -461,9 +470,13 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
     coll_f = match gs { NdCall { args } => if len(args) >= 3 && calls(e, el_ir::unspan(args[0] ?? ir::NdNull), "OpGetField") { args[0] ?? ir::NdNull } else { ir::NdNull }, _ => ir::NdNull };
     froot = if coll_f is NdNull { -1 } else { place_root(e, el_ir::unspan(coll_f)) };
     if coll_v < 0 && froot >= 0 {
-      if el_ir::reads_var(x.code, froot) {
-        el::refuse(e, "a keyed write whose value reads its collection");
-        return ex(ir::NdNull, ir::TyVoid);
+      if el_ir::reads_var(x.code, froot) || len(keyed_stage) > 0 {
+        fstaged = stage_self_reads(e, vars, x.code, froot, keyed_stage);
+        if fstaged == null {
+          el::refuse(e, "a keyed write whose value reads its collection");
+          return ex(ir::NdNull, ir::TyVoid);
+        }
+        x = ex(fstaged!, x.tp);
       }
       match gs {
         NdCall { args } => {
@@ -478,9 +491,13 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
     }
     // A value that reads the collection it is written into is staged first (R-KeyedEntry's
     // subscript clause): not carried.
-    if el_ir::reads_var(x.code, coll_v) {
-      el::refuse(e, "a keyed write whose value reads its collection");
-      return ex(ir::NdNull, ir::TyVoid);
+    if el_ir::reads_var(x.code, coll_v) || len(keyed_stage) > 0 {
+      staged = stage_self_reads(e, vars, x.code, coll_v, keyed_stage);
+      if staged == null {
+        el::refuse(e, "a keyed write whose value reads its collection");
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      x = ex(staged!, x.tp);
     }
     match gs {
       NdCall { args } => {
@@ -1081,6 +1098,14 @@ pub fn record_def(t: ir::TypeT) -> integer {
 // struct literal item a record made through the owning struct's field (`OpNewRecord(r, struct,
 // field)`, its value or fields, `OpFinishRecord`) — a keyed collection indexes it there.
 pub fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
+  // (An append that pushes names the field's vector row on the first pass, ahead of the struct
+  // that holds it — as a literal that fills the field does.)
+  if e.first_pass && match e.p.nodes[n] { SVecLit { items: ai } => len(ai) > 0, _ => false } {
+    match el_types::base(p.tp) {
+      TyVector { inner: avi } => { el_schema::pushed_vector_row(e, avi); },
+      _ => {}
+    }
+  }
   place = el_ir::unspan(p.code);
   // The record holding the field — a local, or itself a field or an element of one — and the
   // variable at its root, which the items' record borrows.
@@ -2298,12 +2323,67 @@ pub fn nested_literal(e: el::El, vars: el_vars::Vars, v: integer, at: ir::TypeT,
   }
 }
 
+// Does a vector literal's item hold an index expression whose subject mentions `name`?
+pub fn indexes_name(e: el::El, n: integer, name: text) -> boolean {
+  match e.p.nodes[n] {
+    SVecLit { items } => {
+      for it in items {
+        if indexes_name(e, it, name) {
+          return true;
+        }
+      }
+      false
+    },
+    SIndex { e: ie } => ie != null && el_ex_assign::mentions_name(e, ie!, name),
+    SBin { l, r } => indexes_name(e, l, name) || indexes_name(e, r, name),
+    SParen { e: pe } => pe != null && indexes_name(e, pe!, name),
+    _ => false
+  }
+}
+
+// R-KeyedEntry's subscript clause for a value that reads the collection it is written into: a
+// record READ from the collection (`h[5] = h[3]`) is written as it is; a literal whose integer
+// fields read it has each such value staged in a work variable ahead of the record's build.
+// Any other value is not carried (null).
+pub fn stage_self_reads(e: el::El, vars: el_vars::Vars, code: ir::Node, coll: integer, staged: vector<ir::Node>) -> ir::Node? {
+  match el_ir::unspan(code) {
+    NdCall { def_nr, args: _ } => if el::def(e, def_nr).name == "OpGetRecord" { code } else { null },
+    NdBlock { block } => {
+      bl = block[0]!;
+      if bl.name != "Object" {
+        return null;
+      }
+      // What still reads the collection after the staging is a value not carried.
+      for o in bl.operators {
+        if el_ir::reads_var(o, coll) {
+          return null;
+        }
+      }
+      bl.operators = staged + bl.operators;
+      ir::NdBlock { block: [bl] }
+    },
+    _ => null
+  }
+}
+
 // A literal's fields written into the record at `r` (the local `v`, or a place inside it): each
 // written vector field's handle zeroed, each written field set in literal order, and — on the
 // second pass — each omitted field its type's default, in declaration order (`object_init`).
 pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: integer, fields: vector<integer>) -> vector<ir::Node>? {
   def = el::def(e, d);
   list: vector<ir::Node> = [];
+  // `@FR-B-View` × `@FR-B-Disturb`: a field given a local that VIEWS the record this literal
+  // rebuilds (`w = Outer { inner: a }` after `a = w.inner`) has the value staged in a work
+  // ref before the record is remade — not carried: refused by name.
+  if !e.first_pass && v >= 0 {
+    for fi in fields {
+      fv = match e.p.nodes[fi] { SFieldInit { e: fe0 } => if fe0 == null { -1 } else { match e.p.nodes[fe0!] { SName { name: sn, member: sm } => if sm == "" { el_vars::var(vars, sn) } else { -1 }, _ => -1 } }, _ => -1 };
+      if fv >= 0 && fv != v && el_types::deps(el_vars::tp(vars, fv)).contains(v) {
+        el::refuse(e, "a literal rebuilding a record that a field's value views (the value is staged first)");
+        return null;
+      }
+    }
+  }
   // loft#924 — a linked collection group's headers are zeroed as one block, in offset order,
   // before any member is filled: an insert through one member indexes the record into all.  A
   // member the literal names is not carried yet (`group_fills`, the bulk-fill maintenance).
@@ -2326,6 +2406,18 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
           }
         },
         _ => {}
+      }
+    }
+  }
+  // A literal REBUILDING the local `v` whose vector-field literal reads an element of one of
+  // `v`'s own vectors (`s = Bx { v: [s.v[0] + 10] }`) has that literal staged in a store of
+  // its own first — not carried: refused by name.
+  if !e.first_pass && v >= 0 {
+    for fi in fields {
+      own_read = match e.p.nodes[fi] { SFieldInit { e: fe1 } => fe1 != null && e.p.nodes[fe1!] is SVecLit && el_ex_assign::mentions_name(e, fe1!, el_vars::name_of(vars, v)) && indexes_name(e, fe1!, el_vars::name_of(vars, v)), _ => false };
+      if own_read {
+        el::refuse(e, "a literal rebuilding a record whose vector field reads an element of that record's vector");
+        return null;
       }
     }
   }
@@ -2621,6 +2713,13 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
           refuse_known(e, x.tp, "a field value its type converts: {display_type_name(e, x.tp)} to {display_type_name(e, at)}");
           return null;
         }
+        // R-KeyedEntry: an integer field value that reads the collection its record is written
+        // into is staged in a work variable, where the field is read.
+        if !e.first_pass && vars.self_read >= 0 && at is TyInteger && el_ir::reads_var(fc!, vars.self_read) {
+          sw = el_vars::work_ref(vars, ir::TyInteger { spec: i32_spec() });
+          vars.self_stage += [el_ir::v_set(sw, fc!)];
+          fc = ir::NdVar { n: sw };
+        }
         list += [el_ex_object::set_field(e, d, a, r, fc!)];
         found += [fname];
       },
@@ -2792,6 +2891,9 @@ pub fn nullable_some_literal(e: el::El, vars: el_vars::Vars, syn: integer, node:
   sd = nullable_payload(e, syn);
   fields = match e.p.nodes[node] { SStructLit { fields: lf } => lf, _ => [] };
   if e.first_pass {
+    // (The literal's fields are read on the first pass as any literal's are: a format's work
+    // text is minted there, ahead of the second pass's own temporaries.)
+    el_ex_pattern::first_pass_fields(e, vars, sd, fields);
     return ir::NdInsert { items: [] };
   }
   some_kt = el::def(e, some_d).known_type;
@@ -3115,6 +3217,23 @@ pub fn contains_struct(e: el::El, d: integer, host: integer, depth: integer) -> 
 // into the field through its buffer), a slice, a nullable source and any other value are refused
 // by name.
 pub fn field_vector_copy(e: el::El, vars: el_vars::Vars, r: ir::Node, d: integer, fname: text, inner: ir::TypeT, n: integer) -> vector<ir::Node>? {
+  // A comprehension fills the field in place (`parse_vector_for` with `is_field`): its pushes
+  // go to the field's place, with no store and no local of its own.
+  if e.p.nodes[n] is SComprehension {
+    fa = attr_nr(el::def(e, d), fname);
+    // (The field's place is read on the second pass only: the first has no layout to read it
+    // from, and asking would lay the field's row out ahead of its record.)
+    fp: ir::Node? = if e.first_pass { ir::NdNull } else if fa >= 0 { el_ex_base::field_get(e, d, fa, r) } else { null };
+    if fp == null {
+      el::refuse(e, "a comprehension into a field that is not read as a place");
+      return null;
+    }
+    vars.comp_place = [fp!];
+    c = el_ex_match::comprehension_into(e, vars, -1, n, declared: inner);
+    vars.comp_place = [];
+    // (The build is one inserted group, as the comprehension answers it.)
+    return match c.code { NdInsert { items } => if len(items) == 0 { [] } else { [c.code] }, _ => [] };
+  }
   x = el_ex_assign::expression(e, vars, n);
   if e.first_pass {
     return [];

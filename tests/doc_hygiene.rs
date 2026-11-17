@@ -3972,3 +3972,139 @@ fn the_outlier_report_reproduces_the_hand_count() {
         "{text}"
     );
 }
+
+/// The `permissions:` blocks of a workflow, as (indent of the `permissions:` line, scope → level)
+/// with level 0 none, 1 read, 2 write.  `read-all` / `write-all` spell every scope.
+fn permission_blocks(yaml: &str) -> Vec<(usize, Vec<(String, u8)>)> {
+    let level = |s: &str| match s {
+        "write" => 2,
+        "read" => 1,
+        _ => 0,
+    };
+    let lines: Vec<&str> = yaml.lines().collect();
+    let mut out = Vec::new();
+    for (i, line) in lines.iter().enumerate() {
+        let indent = line.len() - line.trim_start().len();
+        let body = line.trim();
+        let Some(rest) = body.strip_prefix("permissions:") else {
+            continue;
+        };
+        let rest = rest.split('#').next().unwrap_or("").trim();
+        if !rest.is_empty() {
+            let all = match rest {
+                "write-all" => 2,
+                "read-all" => 1,
+                _ => 0,
+            };
+            out.push((indent, vec![("*".to_string(), all)]));
+            continue;
+        }
+        let mut scopes = Vec::new();
+        for next in &lines[i + 1..] {
+            let t = next.trim();
+            if t.is_empty() || t.starts_with('#') {
+                continue;
+            }
+            if next.len() - next.trim_start().len() <= indent {
+                break;
+            }
+            if let Some((k, v)) = t.split('#').next().unwrap_or("").split_once(':') {
+                scopes.push((k.trim().to_string(), level(v.trim())));
+            }
+        }
+        out.push((indent, scopes));
+    }
+    out
+}
+
+/// A workflow called with `uses: ./.github/workflows/<callee>.yml` may not ask for more than its
+/// calling job grants — GitHub checks that at STARTUP, for every job of the callee, skipped or
+/// not, and a violation ends the whole run in `startup_failure` before one job runs (the weekly
+/// release gate did so twice: `miri.yml` asked for `actions: write`, then for `statuses: write`).
+/// The grant is the calling job's own `permissions:` block, else the caller's top-level one; a
+/// caller with neither runs on the repository default and is not judged here.
+#[test]
+fn a_called_workflow_asks_for_no_more_than_its_caller_grants() {
+    let dir = ".github/workflows";
+    let mut wrong = Vec::new();
+    let mut files: Vec<String> = fa::read_dir(dir)
+        .expect("read .github/workflows")
+        .iter()
+        .filter_map(|e| fa::file_name(e.os_spelling()))
+        .filter(|n| n.ends_with(".yml"))
+        .collect();
+    files.sort();
+    for name in files {
+        let caller = fa::read_to_string(format!("{dir}/{name}")).expect("read a workflow");
+        let lines: Vec<&str> = caller.lines().collect();
+        let top: Vec<(String, u8)> = permission_blocks(&caller)
+            .into_iter()
+            .find(|(indent, _)| *indent == 0)
+            .map(|(_, s)| s)
+            .unwrap_or_default();
+        for (i, line) in lines.iter().enumerate() {
+            let Some(callee) = line
+                .trim()
+                .strip_prefix("uses: ./.github/workflows/")
+                .map(str::trim)
+            else {
+                continue;
+            };
+            // The calling job: from its `<id>:` line at indent 2 to the next one.
+            let start = (0..i)
+                .rev()
+                .find(|&j| {
+                    lines[j].starts_with("  ")
+                        && !lines[j].starts_with("   ")
+                        && lines[j].trim_end().ends_with(':')
+                })
+                .unwrap_or(0);
+            let end = (i + 1..lines.len())
+                .find(|&j| {
+                    lines[j].starts_with("  ")
+                        && !lines[j].starts_with("   ")
+                        && !lines[j].trim().is_empty()
+                        && !lines[j].trim().starts_with('#')
+                })
+                .unwrap_or(lines.len());
+            let job = lines[start..end].join("\n");
+            let grant = permission_blocks(&job)
+                .into_iter()
+                .next()
+                .map(|(_, s)| s)
+                .unwrap_or_else(|| top.clone());
+            if grant.is_empty() && !caller.contains("\npermissions:") {
+                continue;
+            }
+            let granted = |scope: &str| {
+                grant
+                    .iter()
+                    .filter(|(k, _)| k == scope || k == "*")
+                    .map(|(_, l)| *l)
+                    .max()
+                    .unwrap_or(0)
+            };
+            let callee_text = fa::read_to_string(format!("{dir}/{callee}"))
+                .unwrap_or_else(|_| panic!("{name} calls {callee}, which does not exist"));
+            for (_, scopes) in permission_blocks(&callee_text) {
+                for (scope, want) in scopes {
+                    if scope != "*" && want > granted(&scope) {
+                        wrong.push(format!(
+                            "{name} grants `{scope}: {}` to {callee}, which asks for `{scope}: {}`",
+                            ["none", "read", "write"][granted(&scope) as usize],
+                            ["none", "read", "write"][want as usize]
+                        ));
+                    }
+                }
+            }
+        }
+    }
+    wrong.sort();
+    wrong.dedup();
+    assert!(
+        wrong.is_empty(),
+        "a called workflow asks for more than its caller grants — GitHub ends the caller's run in \
+         startup_failure; grant the scope in the caller's `permissions:`:\n  {}",
+        wrong.join("\n  ")
+    );
+}

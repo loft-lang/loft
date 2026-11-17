@@ -77,14 +77,15 @@ concurrency:
 # `nightly-status` (PR-only, so skipped too), `actions: read` is the daily digest.
 permissions:
   contents: read
-  # `write`, not `read`: a called workflow may not ask for more than its caller grants, and
-  # GitHub checks that at STARTUP for every job, skipped or not.  miri.yml's red-steps digest
-  # asks for `actions: write` (it hands its run to the tracked-issue digest) and skips itself
-  # on a gate run (`inputs.from_gate`) — with `read` here every gate run since that job landed
-  # ended in `startup_failure` before a single job ran.
+  # A called workflow may not ask for more than its caller grants, and GitHub checks that at
+  # STARTUP for every job, skipped or not: a missing scope ends the gate in `startup_failure`
+  # before a single job runs.  miri.yml's red-steps digest asks for `actions: write` and its
+  # PR-head report for `statuses: write`, both skipped on a gate run (`inputs.from_gate`).
+  # doc_hygiene's a_called_workflow_asks_for_no_more_than_its_caller_grants keeps this whole.
   actions: write
   issues: write
   pull-requests: write
+  statuses: write
 
 env:
   # @PLN184 D1 — Python decodes files as UTF-8 on every runner (Windows defaults to cp1252).

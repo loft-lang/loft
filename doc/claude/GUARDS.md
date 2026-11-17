@@ -681,7 +681,8 @@ Each is one rule; the measured incident behind it is in
   with that A/B (loft#1418, loft#1421, loft#1422).
 - **A guard must not assert what it does not own.**  Take such a cell out and name its issue in
   the header; asserting today's broken answer freezes it into the contract
-  (`1415-a-null-arm-source-that-views-a-parameter.loft`).
+  (the section on a null-arm view of a parameter in
+  `loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft`).
 - **A reverted change is a MEASUREMENT.**  Record the channel that failed it and the cure that
   looked right and was not; "did not work" tells the next person nothing.
 - **Turn the suspect off before reading the IR a fourth time.**  A coherent explanation read three

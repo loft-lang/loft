@@ -1,7 +1,6 @@
-diff --git a/src/parser/control.rs b/src/parser/control.rs
-index 07f65a620..3b8ddda9e 100644
---- a/src/parser/control.rs
-+++ b/src/parser/control.rs
+diff --git a/src/parser/match_sequences.rs b/src/parser/match_sequences.rs
+--- a/src/parser/match_sequences.rs
++++ b/src/parser/match_sequences.rs
 @@ -12327,7 +12327,7 @@ impl Parser {
          let alternatives = self.parse_pattern_alternatives(
              first_names,

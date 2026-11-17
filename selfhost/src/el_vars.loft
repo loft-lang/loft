@@ -206,6 +206,15 @@ pub struct Vars {
   pub boxed_tuple_at: integer = -1,
   // The subject node of the `match` being read: its temp is named for this site.
   pub match_site: integer = -1,
+  // `match_cursor`: the cursor a cursor match's patterns advance — [cursor variable, its
+  // struct, the `pos` attribute, the entry position's variable]; empty outside one.
+  pub cursor: vector<integer> = [],
+  // The place a comprehension pushes into where it fills a FIELD (one node), else empty.
+  pub comp_place: vector<ir::Node> = [],
+  // A keyed write's collection root while its value is read (-1 outside one), and the field
+  // values staged ahead of the value's record because they read that collection.
+  pub self_read: integer = -1,
+  pub self_stage: vector<ir::Node> = [],
   // The node whose tuple FIELD read is taken member by member (`x.f.0`, `x.f = …`): no copy.
   pub tuple_raw: integer = -1,
   // The capturing lambda `closure_value` read last, and the body node it was read at.

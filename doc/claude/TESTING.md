@@ -561,6 +561,15 @@ scripts/suite_curate.py next 3            # the next rules, in the fixed order (
 scripts/suite_curate.py plan <rule>       # its cells, what they cover, a proposed core
 scripts/suite_curate.py related <rule> '<regex>'   # every test home's programs for the construct,
                                           #   cited or not, and the code sites that enforce it
+scripts/suite_curate.py merge <new> <intro> <cell>…  # one clause's cells into one (gate E must agree)
+scripts/suite_curate.py verify <cell>…    # interpreter + C, leak-checked and strict + poison
+scripts/suite_curate.py vacuity <cell>…   # break one expectation per test, and corrupt each
+                                          #   @EXPECT_ERROR / @EXPECT_WARNING alone: each must fail
+scripts/suite_curate.py switches <cell>…  # which LOFT_NO_* cure switches move each cell (receipts)
+scripts/suite_curate.py land <rule> <chapter/dir> <new> <msg-file | msg text> <old>…
+                                          # retire merged cells: refuses on unstaged or foreign
+                                          #   staged changes and on a lost feature (named); then
+                                          #   repoints every reference, commits, gate E rows, pin
 scripts/suite_curate.py done <rule> '<note>'       # record it, after the commit
 ```
 
@@ -586,7 +595,15 @@ reach today (`rule_axes.tsv`, `matrix_axes.census`) and every defect a cell name
    case verbatim, each receipt as its own labelled block (a file holds ONE patch receipt, so a
    patch-receipt cell merges only once a kept cell re-scores against its patch), and every
    defect the merged headers named: `plan`'s feature count before and after must be equal — a
-   header reworded in the merge drops a `loft#N` silently.
+   header reworded in the merge drops a `loft#N` silently.  And gate E's verdicts must agree: a
+   cell the self-hosted elaborator agrees with (no row in `selfhost/front/elab_gate.baseline.tsv`)
+   is never merged into one it refuses — the merged file is refused whole, and the gate loses a
+   program it handled (its agree count must not fall).
+   A cell with no receipt, or `@falsified-at: none`, is asked whether it CAN fail: try the cure
+   switches that touch its rule (`src/keys.rs`), and when none moves it, read whether its values
+   can tell the right answer from the stale one at all — a view of the LAST element across a
+   removal reads the right value from the slot's leftover bytes, where a MIDDLE element reads
+   the neighbour that shifted in.  A case that can fail is added, and its switch receipt recorded.
 5. **Verify** the rule's cells on both backends (`make suite ARGS="@FR-<rule> --mode both-c"`),
    falsify every new cell (`make falsify`), and run the whole suite memory-capped before the suite
    commit.  A probe that turns up a defect is fixed (CLAUDE.md § Bug-filing policy) — the pass is
@@ -602,6 +619,10 @@ cure again to prove it fails.
 
 A rule no cell names is marked `needs-cell` and gets its first guard from the rule-led walk
 (`rule_tags.py worklist`, [STABILITY_METHOD.md § The rule-led walk](STABILITY_METHOD.md)).
+A rule guarded only by Rust tests gets its first suite cell when the walk reaches it — in ledger
+order, since a cell-less rule is mostly one that never broke — written from the formal text,
+every clause, not copied from the Rust twins; each expectation is shown met only by its own
+refusal (corrupt it alone).
 
 ---
 

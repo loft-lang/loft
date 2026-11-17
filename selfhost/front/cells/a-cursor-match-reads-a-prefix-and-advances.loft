@@ -1,0 +1,18 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a match on a cursor (a struct with a vector source and an integer `pos`) reads
+// its patterns as prefixes from the entry position; the arm that wins advances the cursor, and
+// a rule answering a record or null is typed nullable.
+// Prints: 4 true 1
+
+enum Tok { Id { x: integer }, LP { x: integer } }
+struct Cur { src: vector<Tok>, pos: integer }
+struct N { v: integer }
+fn ident(c: Cur) -> N? { match c { [ Id { x } ] => N { v: x }, _ => null } }
+fn main() {
+  c = Cur { src: [Id { x: 4 }, LP { x: 1 }], pos: 0 };
+  a = ident(c);
+  b = ident(c);
+  println("{a.v} {b == null} {c.pos}");
+}

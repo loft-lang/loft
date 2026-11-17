@@ -53,6 +53,18 @@ tree), `SQUASHED` (a squash on the base lists it as a `* <subject>` line), `WIP`
 (a pending commit and a later one that exactly inverts it — the self-reverting run below, skipped
 whole), else `NEW`, or `PARTIAL` when only some of its files are here.
 
+A source NOT on the base (a pre-squash branch) is cut first at its **squash point**: the
+newest of its commits that a squash on the base lists, read from every squash since the branch
+left the base.  A squash carries the branch's tree, so every commit up to that point is in —
+`SQUASHED` when a squash lists it, `CARRIED` when it does not (a WIP checkpoint, a commit the
+squash's body left out) — and the ladder classifies only the commits after it.  Without the cut,
+a long branch stopped at its oldest WIP checkpoint and skipped everything after it.
+
+The suite-backed checks of `verify` and `after.py` read the suite the tree PINS:
+`scripts/suite_pin.py` keeps an explicit `LOFT_SUITE_DIR`, else takes `../loft-suite` when it is
+at the pin, else a cached worktree at the pin (`.git/loft-suite-pin`) — so a sibling checkout on
+another commit cannot hide a guard (index hygiene's "decision has no guard").
+
 `HERE` is measured on this tree as it stands, so a commit that reads as here is picked all the
 same when an earlier pending commit of its source changes one of its files.  A partial revert
 is the case: this tree never had what it removes, and skipping it leaves the reverted change

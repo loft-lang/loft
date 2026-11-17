@@ -265,6 +265,23 @@ def cmd_survey(args):
             rows = []
             wip = None
             pending = {}
+            if not on_base:
+                # A PRE-SQUASH branch: a squash on the base carried its TREE as of some commit,
+                # so every commit up to the newest one a squash lists is in — however the base
+                # rewrote those lines since, and whatever WIP checkpoint sits among them (it was
+                # finished before the squash took it).  Read every squash since the branch left
+                # the base, not the last 40, and classify only the commits after that point.
+                fork = git("merge-base", base, sha).strip()
+                carried = squashed | {l[2:].strip() for l in git(
+                    "log", "--format=%b", f"{fork}..{base}").splitlines() if l.startswith("* ")}
+                subjects = git("log", "--reverse", "--format=%s", f"{head}..{sha}").splitlines()
+                point = max((i for i, s in enumerate(subjects) if s in carried or s in ours),
+                            default=-1)
+                for c, s in zip(commits[:point + 1], subjects[:point + 1]):
+                    rows.append({"sha": c, "subject": s, "files": 0,
+                                 "class": "SQUASHED" if s in carried else
+                                 "SUBJECT" if s in ours else "CARRIED"})
+                commits = commits[point + 1:]
             for c in commits:
                 if wip:
                     rows.append({"sha": c, "subject": git("log", "-1", "--format=%s", c).strip(),
@@ -296,7 +313,7 @@ def cmd_survey(args):
 def print_plan(plan, verbose=False):
     marks = {"NEW": "pick", "PARTIAL": "pick", "HERE": "skip", "DUP": "skip", "DERIVED": "skip",
              "MERGE": "skip", "SUBJECT": "skip", "SQUASHED": "skip", "WIP": "stop",
-             "AFTER-WIP": "skip", "UNDONE-PAIR": "skip"}
+             "AFTER-WIP": "skip", "UNDONE-PAIR": "skip", "CARRIED": "skip"}
     for s in plan["sources"]:
         counts = {}
         for r in s["commits"]:
@@ -730,6 +747,11 @@ def rederive_message(plan, moved):
 
 def cmd_verify(args):
     registry = load_registry()
+    # The suite-backed checks (receipts, index hygiene's decision guards) read the suite this
+    # tree PINS, never a sibling checkout on another commit.
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import suite_pin
+    suite_pin.ensure()
     failed = []
     for name, cmd in registry["verify"]:
         t0 = datetime.datetime.now()

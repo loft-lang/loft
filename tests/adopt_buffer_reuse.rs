@@ -104,11 +104,20 @@ const OFF: &[(&str, &str)] = &[("LOFT_NO_ADOPT_BUFFER_REUSE", "1")];
 fn the_entry_witness_guards_the_promoted_buffer() {
     let ir = introspect(&[]);
     // The rebind of a promoted buffer (D-own-43): the snapshot, and the interpreter's
-    // displaced free guarded by it, ahead of the call.
-    let r1 = section(&ir, "n_render_lit_then_call");
+    // displaced free guarded by it, ahead of the call — where the rebind does not stand
+    // directly before the tail (`_apart`).  Directly before it, the tail local is handed the
+    // return buffer: the call writes `cv`, the caller's buffer, itself.
+    let lit = section(&ir, "n_render_lit_then_call");
+    assert!(
+        lit.contains(
+            "cv(0):ref(Canvas) = n_alloc_canvas(4i32, 5i32, OpGetInt(p(0), 0i32), cv(0));"
+        ),
+        "render_lit_then_call: the rebind before the tail is handed the return buffer"
+    );
+    let r1 = section(&ir, "n_render_lit_then_call_apart");
     assert!(
         r1.contains("__rbw_cv(0):ref(Canvas)[\"__rbw_cv\"] = OpRefAlias(cv(0));"),
-        "render_lit_then_call: the entry witness is minted"
+        "render_lit_then_call_apart: the entry witness is minted"
     );
     // Two spellings of the same guard: one witness (`FreeRefIfDistinct`) or, since the
     // hidden buffer of the call became a witness too (`@FR-O-Buffer`, the pooled-buffer
@@ -120,13 +129,13 @@ fn the_entry_witness_guards_the_promoted_buffer() {
     .into_iter()
     .flatten()
     .min()
-    .expect("render_lit_then_call: the rebind's displaced free is guarded");
+    .expect("render_lit_then_call_apart: the rebind's displaced free is guarded");
     let call = r1
         .find("fn=n_alloc_canvas)")
-        .expect("render_lit_then_call calls alloc_canvas");
+        .expect("render_lit_then_call_apart calls alloc_canvas");
     assert!(
         free < call,
-        "render_lit_then_call: the guarded free precedes the call"
+        "render_lit_then_call_apart: the guarded free precedes the call"
     );
     // A literal exit beside a chain writes the buffer the chain renamed (B2 unit 1 over a
     // chain), so it answers the caller's store and frees nothing ...
@@ -369,7 +378,11 @@ fn the_store_census_drops() {
         // The entry witness is minted with the pool off too, so a promoted buffer's rebind
         // frees what it displaces there: 22 fewer unpooled on the interpreter, the rest
         // unchanged.
-        (211, 309, 118, 244),
+        // loft#2535 hands the tail local the return buffer whatever the line breaks: r1's
+        // `render_lit_then_call` rebind writes the caller's buffer itself, and the
+        // `render_lit_then_call_apart` twin keeps the promoted-buffer path under test; together
+        // 211/309/118/244 → 176/279/107/238.
+        (176, 279, 107, 238),
         "mints (interpret on, off, native on, off)"
     );
 }

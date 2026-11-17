@@ -1616,6 +1616,17 @@ pub fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::N
           NdVar { n: av } => { if !ds.contains(av) { ds += [av]; } },
           // (Of such a value's borrows a `τ?` result still keeps the user's own locals — a
           // `c ?? Rec {..}` argument lends `c` — and drops the compiler's stores.)
+          // (A literal built for the argument is transient: the callee copies what it answers
+          // out of it into the buffer, so the result borrows nothing through it.)
+          NdBlock { block: lb } => {
+            if !(lb[0].name == "Object" || lb[0].name == "EnumUnitLit") {
+              for x in el_types::deps(types[i] ?? ir::TyVoid) {
+                if !ds.contains(x) && (!(ret is TyOptional) || !starts_with(el_vars::name_of(vars, x), "__")) {
+                  ds += [x];
+                }
+              }
+            }
+          },
           _ => {
             for x in el_types::deps(types[i] ?? ir::TyVoid) {
               if !ds.contains(x) && (!(ret is TyOptional) || !starts_with(el_vars::name_of(vars, x), "__")) {
@@ -1655,6 +1666,12 @@ pub fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::N
     for i in el_types::deps(rb) {
       at = def.attributes[i];
       if record && at != null && at!.hidden {
+        continue;
+      }
+      // (A literal built for the argument is transient: the callee copies what it answers out
+      // of it, so the result borrows nothing through it.)
+      transient = match el_ir::unspan(list[i] ?? ir::NdNull) { NdBlock { block: tb } => tb[0].name == "Object" || tb[0].name == "EnumUnitLit", _ => false };
+      if record && transient {
         continue;
       }
       for x in el_types::deps(types[i] ?? ir::TyVoid) {
@@ -2751,6 +2768,14 @@ pub fn nullable_getter(e: el::El, code: ir::Node) -> ir::Node {
   match el_ir::unspan(code) {
     NdCall { def_nr, args } => {
       gn = el::def(e, def_nr).name;
+      // (A struct enum's element is read through its record field: the getter under it.)
+      if gn == "OpGetField" && len(args) == 3 {
+        under = match el_ir::unspan(args[0]!) { NdCall { def_nr: ud, args: _ } => el::def(e, ud).name, _ => "" };
+        if under == "OpGetVector" || under == "OpVectorRef" {
+          return el_ir::cl(e, "OpGetField", [nullable_getter(e, args[0]!), args[1]!, args[2]!]);
+        }
+        return code;
+      }
       if gn == "OpGetVector" || gn == "OpVectorRef" { el_ir::cl(e, "{gn}Nullable", args) } else { code }
     },
     _ => code

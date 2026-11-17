@@ -863,7 +863,7 @@ moved out, or a static fact deciding which copy owns, leaves the programmer gues
 structure still works.  Refusing the copy leaves no guess: a program that compiles has one
 structure per lease (DESIGN_DECISIONS.md @C121; the earlier rule is in heap-history.md).
 
-**Conformance.** `loft-suite/rules/binding/B-Copy/139-drop-cascade.loft` (the cascade),
+**Conformance.** `loft-suite/rules/heap/H-Drop/139-drop-cascade.loft` (the cascade),
 `a-whole-value-copy-of-a-droppable-releases-once.loft` (a whole-value copy), and
 `1362-a-rebind-releases-the-droppable-it-displaces.loft` (the reassignment), identical on both
 backends.  `(H-Copy-Refuse)` and `(H-Spent)` are compile-time errors (`D-heap-8`), `(H-Copy-Lease)`
@@ -972,7 +972,7 @@ The rules are checkable directly, and every check is a program both backends mus
   in a reused slot.  The nightly `native-poison` job sweeps the `--native` corpus the same way.
 - **A disturbed view materialises (`H-Materialise`)** — a removal, a re-key, a reassignment and
   a GROWTH of the container while the view is live take the copy step, in this frame
-  (`loft-suite/rules/binding/B-Disturb/1373-growing-a-container-ends-the-places-inside-it.loft`) and one frame
+  (`loft-suite/rules/binding/B-Disturb/growing-or-emptying-a-vector-ends-the-places-inside-it.loft`) and one frame
   down (`tests/scripts/164-callee-disturb.loft`, every cell paired with its inline twin).
 - **Null/OOB continue (`H-ReadNull` / `H-Index`)** — reading a field of `nullref`, or `v[i]`
   with `i ≥ len(v)`, is **null** and the program continues; it never halts (operational.md

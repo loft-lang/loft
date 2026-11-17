@@ -9,6 +9,14 @@ still covers the rule totally — and record which rules are done.
     scripts/suite_curate.py plan <rule>       # one rule's evidence and the proposed core
     scripts/suite_curate.py related <rule> <regex>   # every test home's programs matching the rule's
                                               # construct, and the code sites that enforce it
+    scripts/suite_curate.py merge <target> <intro> <cell>…   # one clause's cells into one, every
+                                              # case and receipt kept (gate E verdicts must agree)
+    scripts/suite_curate.py verify <cell>…       # interpreter + C, leak-checked and strict + poison
+    scripts/suite_curate.py vacuity <cell>…      # break one expectation per test: exactly it fails?
+    scripts/suite_curate.py switches <cell>…     # which LOFT_NO_* cure switches move each cell
+    scripts/suite_curate.py land <rule> <chapter/dir> <new> <msg-file|text> <old>…  # retire merged
+                                              # cells: checks (a lost feature named), repoints every
+                                              # reference, suite commit, gate E rows, pin
     scripts/suite_curate.py done <rule> [note]   # record the rule as curated (after the commit)
     scripts/suite_curate.py init              # (re)write the ledger's rows for every defined rule
 
@@ -45,6 +53,8 @@ import collections
 import datetime
 import os
 import re
+import shutil
+import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -116,6 +126,7 @@ def features(path, axes):
     return out, text
 
 
+features_of = features  # land() names its own `features`
 def plan(tag):
     chapters = defined()
     if tag not in chapters:
@@ -218,6 +229,386 @@ def related(tag, pattern):
     return 0
 
 
+GATE_E = os.path.join(ROOT, "selfhost", "front", "elab_gate.baseline.tsv")
+
+
+def gate_e_verdict(cell):
+    """Gate E's verdict on a suite cell: its baseline row's, or `agree` when it has none (the
+    baseline lists only the programs the self-hosted elaborator does not agree with yet)."""
+    suite = os.path.normpath(os.environ.get("LOFT_SUITE_DIR") or os.path.join(os.path.dirname(ROOT), "loft-suite"))
+    item = "loft-suite/" + os.path.relpath(os.path.normpath(os.path.abspath(cell)), suite)
+    for line in open(GATE_E, encoding="utf-8"):
+        f = line.rstrip("\n").split("\t")
+        if len(f) == 3 and f[2] == item:
+            return f[1]
+    return "agree"
+
+
+def merge(target, intro_file, cells):
+    """Merge suite cells of ONE clause into `target`, every case and receipt kept: each cell's
+    header (license lines off) is a section of its own, its code follows verbatim, a `main`
+    becomes `test_<the cell's name>`, and a top-level name or enum variant that another section
+    already declares takes a per-section prefix (whole word, strings included, so a printed
+    variant and its expected text change together).  Refused when gate E's verdicts differ: the
+    merged file is refused whole if any part is, and the gate would lose a program it handled.
+    Writes `target` only; retiring the cells, gate E's rows and the pin are the caller's."""
+    verdicts = {c: gate_e_verdict(c) for c in cells}
+    if len(set(verdicts.values())) > 1:
+        print("gate E's verdicts differ — not merged:")
+        for c, v in verdicts.items():
+            print(f"  {v:<8} {os.path.basename(c)}")
+        return 1
+    intro = open(intro_file, encoding="utf-8").read().rstrip("\n").split("\n")
+
+    def declared(code):
+        top = set(re.findall(r"^(?:pub )?(?:fn|struct|enum|value struct|type) ([A-Za-z_0-9]+)", code, re.M))
+        variants = set()
+        for m in re.finditer(r"^enum [A-Za-z_0-9]+(?:<[^>]*>)?\s*\{", code, re.M):
+            # The enum's body, brace-matched: a variant may carry a braced payload.
+            depth, j = 1, m.end()
+            while j < len(code) and depth:
+                depth += {"{": 1, "}": -1}.get(code[j], 0)
+                j += 1
+            body = code[m.end():j - 1]
+            depth, cur, parts = 0, "", []
+            for ch in body:
+                if ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                elif ch == "," and depth == 0:
+                    parts.append(cur)
+                    cur = ""
+                elif depth == 0:
+                    cur += ch
+            parts.append(cur)
+            variants |= {x.strip().split()[0] for x in parts if x.strip() and x.strip()[0].isupper()}
+        return top, variants
+
+    taken_top, taken_var = set(), set()
+    tests_seen = {}
+    heads, codes = [], []
+    for k, cell in enumerate(cells):
+        lines = open(cell, encoding="utf-8").read().split("\n")
+        i = next(j for j, l in enumerate(lines) if l and not l.startswith("//"))
+        # The license lines by their content, not their position: a cell written without them
+        # would otherwise lose the first two lines of its description.
+        head = [l for l in lines[:i] if "Copyright (c)" not in l and "SPDX-License-Identifier" not in l]
+        while head and head[0].strip() in ("//", ""):
+            head.pop(0)
+        while head and head[-1].strip() in ("//", ""):
+            head.pop()
+        # A receipt label written ABOVE its receipt reads, in a merged file, as a label of the
+        # previous section's receipt (the receipt check attaches a label to the receipt it
+        # follows); move such labels to just after this section's first receipt block.
+        first = next((j for j, l in enumerate(head) if "@falsified-at:" in l or "@falsified-by:" in l), None)
+        if first is not None:
+            early = [j for j in range(first) if re.match(r"^// (CHANNEL|ARMED|WITNESS|HOLDS):", head[j])]
+            if early:
+                moved = ["//   " + head[j][3:] for j in early]
+                end = first + 1
+                while end < len(head) and (head[end].startswith("//   ") or "@falsified-by:" in head[end]):
+                    end += 1
+                keep = [l for j, l in enumerate(head) if j not in early]
+                end -= len(early)
+                head = keep[:end] + moved + keep[end:]
+        code = "\n".join(lines[i:]).strip() + "\n"
+        stem = os.path.basename(cell)[:-5]
+        top, var = declared(code)
+        px = "s" + str(k + 1)
+        ren = {}
+        # Enum variants and type names share one namespace (a struct `A` beside a variant `A` is
+        # refused), so each set clashes with both.
+        for n in top:
+            if (n in taken_top or n in taken_var) and not n.startswith("test_"):
+                ren[n] = (px.upper() + n) if n[0].isupper() else (px + "_" + n)
+        for v in var:
+            if v in taken_var or v in taken_top:
+                ren[v] = px.upper() + v
+        for o, nw in sorted(ren.items(), key=lambda x: -len(x[0])):
+            code = re.sub(r"\b" + re.escape(o) + r"\b", nw, code)
+            # An expectation in the header quotes the diagnostic, which names the renamed thing.
+            head = [re.sub(r"\b" + re.escape(o) + r"\b", nw, l) if re.match(r"^// @EXPECT_", l) else l
+                    for l in head]
+        mm = re.search(r"(?ms)^fn main\(\) \{\n(.*?)^\}\n", code)
+        if mm and all(re.fullmatch(r'\s*(test_[a-z_0-9]+\(\);|println\("[^"{}]*"\);)?\s*', l)
+                      for l in mm.group(1).split("\n")):
+            # A `main` that only calls the file's own tests (and perhaps prints a fixed line): in
+            # a merged file the tests run themselves, so it would run each twice.
+            code = code[:mm.start()] + code[mm.end():].lstrip("\n")
+            print(f"  {stem}: dropped its main (it only called the tests)")
+        elif "fn main()" in code:
+            tname = "test_" + re.sub(r"[^a-z0-9_]", "_", re.sub(r"^[0-9]+-", "", stem).replace("-", "_"))[:70]
+            code = code.replace("fn main()", f"fn {tname}()", 1)
+        for t in re.findall(r"^fn (test_[a-z_0-9]+)", code, re.M):
+            if t not in taken_top:
+                continue
+            m = re.search(r"(?ms)^fn " + re.escape(t) + r"\(.*?^\}\n", code)
+            if m and m.group(0) == tests_seen.get(t):
+                # The same test, word for word, in an earlier section: a duplicated control.
+                code = code[:m.start()] + code[m.end():].lstrip("\n")
+                print(f"  {stem}: dropped {t} — identical to an earlier section's")
+            else:
+                code = re.sub(r"(?m)^fn " + re.escape(t) + r"\(", f"fn test_{px}_{t[5:]}(", code, count=1)
+                print(f"  {stem}: renamed {t} -> test_{px}_{t[5:]} (same name, another body)")
+        for m in re.finditer(r"(?ms)^fn (test_[a-z_0-9]+)\(.*?^\}\n", code):
+            tests_seen.setdefault(m.group(1), m.group(0))
+        t2, v2 = declared(code)
+        taken_top |= t2
+        taken_var |= v2
+        if ren:
+            print(f"  {stem}: renamed {ren}")
+        heads.append(f"// ── {stem} ──\n//\n" + "\n".join(head))
+        codes.append(code)
+    out = "\n".join(intro) + "\n//\n" + "\n//\n".join(heads) + "\n\n" + "\n".join(codes)
+    open(target, "w", encoding="utf-8").write(out)
+    print(f"merged {len(cells)} cell(s) into {os.path.basename(target)} (gate E: {next(iter(verdicts.values()))})")
+    return 0
+
+
+# ---------------------------------------------------------------- the per-cell instruments
+
+def loft_bin():
+    """The loft binary the instruments run: `$LOFT`, else this tree's debug build."""
+    return os.environ.get("LOFT") or os.path.join(ROOT, "target", "debug", "loft")
+
+
+def run_cell(cell, mode, env=None):
+    """`loft --tests <mode> <cell>` — (exit code, the result line).  The program cache is off
+    (a cached image once answered for the wrong build), and the cell's `.loft/` cache beside it
+    is removed afterwards so it never reads as a reference or reaches a commit."""
+    e = dict(os.environ, LOFT_NO_CACHE="1", **(env or {}))
+    r = subprocess.run([loft_bin(), "--tests", mode, cell], env=e, capture_output=True, text=True,
+                       timeout=int(os.environ.get("CURATE_TIMEOUT", "600")))
+    shutil.rmtree(os.path.join(os.path.dirname(cell), ".loft"), ignore_errors=True)
+    line = next((l for l in r.stdout.splitlines() + r.stderr.splitlines() if "test result" in l), "")
+    return r.returncode, line.strip()
+
+
+ARMINGS = {"leak": {"LOFT_LEAK_CHECK": "1"}, "strict": {"LOFT_STRICT_STORES": "1", "LOFT_POISON": "1"}}
+
+
+def verify(cells):
+    """Each cell on the interpreter and C, under the suite's own arming (the leak check) and the
+    one a `@catches` file gets (strict stores + poison)."""
+    bad = 0
+    for c in cells:
+        for arm, env in ARMINGS.items():
+            for mode in ("--interpret", "--native-c"):
+                code, line = run_cell(c, mode, env)
+                bad += code != 0
+                print(f"{'ok  ' if code == 0 else 'FAIL'} {arm:<6} {mode:<12} {os.path.basename(c)}  {line[:60]}")
+    return 1 if bad else 0
+
+
+def _break_one(text, fn):
+    """The cell with ONE expectation of test `fn` broken: the first `== <literal>` in its body, or,
+    when the test has none of its own, in the code of its section (from the end of the previous
+    test function to this one — a helper it calls).  None when there is none to break."""
+    a = text.index("fn " + fn + "(")
+    b = text.index("\n}\n", a)
+    rx = re.compile(r'assert\((.*?)==\s*("[^"]*"|-?\d+)')
+    m, lo = rx.search(text[a:b]), a
+    if not m:
+        prev = [x.start() for x in re.finditer(r"(?m)^fn test_", text) if x.start() < a]
+        lo = text.index("\n}\n", prev[-1]) if prev else next(x.start() for x in re.finditer(r"(?m)^[^/\n]", text))
+        m = rx.search(text[lo:a])
+        if not m:
+            return None
+    v = m.group(2)
+    nv = ('"X' + v[1:]) if v.startswith('"') else str(int(v) + 1)
+    return text[:lo + m.start(2)] + nv + text[lo + m.end(2):]
+
+
+def vacuity(cells):
+    """Can each test fail?  Break one expectation per test and require exactly that one test to
+    fail — a test no broken expectation moves proves nothing (TESTING.md § Curating the suite)."""
+    bad = 0
+    for c in cells:
+        text = open(c, encoding="utf-8").read()
+        # A refusal cell: corrupt each expectation in turn — the file must then fail, or that
+        # expectation is credited by nothing it names.
+        for k, m in enumerate(re.finditer(r"(?m)^// @EXPECT_(?:ERROR|WARNING): ", text)):
+            probe = os.path.join(os.path.dirname(c), ".curate-vacuity.loft")
+            open(probe, "w", encoding="utf-8").write(text[:m.end()] + "XQZ-never-said " + text[m.end():])
+            try:
+                code, line = run_cell(probe, "--interpret")
+            finally:
+                os.remove(probe)
+            bad += code == 0
+            print(f"{'ok  ' if code != 0 else 'VAC '} {os.path.basename(c)} expectation {k + 1}  {line[:50]}")
+        tests = re.findall(r"(?m)^fn (test_[a-z_0-9]+)", text) or (["main"] if "fn main()" in text else [])
+        if "@EXPECT_ERROR" in text:
+            continue
+        for t in tests:
+            broken = _break_one(text, t) if t != "main" else None
+            if broken is None:
+                print(f"?    {os.path.basename(c)}::{t} — no `==` expectation to break; read it by hand")
+                continue
+            probe = os.path.join(os.path.dirname(c), ".curate-vacuity.loft")
+            open(probe, "w", encoding="utf-8").write(broken)
+            try:
+                code, line = run_cell(probe, "--interpret")
+            finally:
+                os.remove(probe)
+            one = re.search(r"\b1 failed\b", line) is not None
+            bad += not one
+            print(f"{'ok  ' if one else 'VAC '} {os.path.basename(c)}::{t}  {line[:50]}")
+    return 1 if bad else 0
+
+
+def cure_switches():
+    text = open(os.path.join(ROOT, "src", "keys.rs"), encoding="utf-8").read()
+    return sorted(set(re.findall(r'env_set\("(LOFT_NO_[A-Z0-9_]+)"\)', text)))
+
+
+def switches(cells):
+    """Which cure switches make each cell fail: the interpreter over every `LOFT_NO_*` switch, then
+    C for a cell the interpreter sweep left unmoved.  A switch that moves a cell is its receipt;
+    a cell no switch moves is asked whether it CAN fail (TESTING.md § Curating the suite)."""
+    sw = cure_switches()
+    for c in cells:
+        if run_cell(c, "--interpret", ARMINGS["leak"])[0] != 0:
+            print(f"{os.path.basename(c)}: fails with every cure ON — fix it first")
+            continue
+        hit = [s for s in sw if run_cell(c, "--interpret", {**ARMINGS["leak"], s: "1"})[0] != 0]
+        if not hit:
+            hit = ["C:" + s for s in sw if run_cell(c, "--native-c", {**ARMINGS["leak"], s: "1"})[0] != 0]
+        print(f"{os.path.basename(c)}: {' '.join(hit) if hit else 'NONE — no cure switch moves it'}")
+    return 0
+
+
+def _git(args, cwd, check=True):
+    r = subprocess.run(["git"] + args, cwd=cwd, capture_output=True, text=True)
+    if check and r.returncode:
+        raise SystemExit(f"git {' '.join(args)}: {r.stderr.strip()}")
+    return r.stdout
+
+
+def land(rule, chapter_dir, new, olds, message):
+    """Retire `olds` (cell stems under rules/<chapter_dir>/) for the merged cell `new`: refuse while
+    anything still names a retired cell; require the rule's feature count unchanged; commit and push
+    the suite; replace gate E's rows (one row for the merged cell, or none when gate E agreed);
+    re-pin loft's suite pin; commit loft.  Every step is the one the curation pass ran by hand."""
+    suite = os.path.normpath(os.environ.get("LOFT_SUITE_DIR") or os.path.join(os.path.dirname(ROOT), "loft-suite"))
+    d = os.path.join(suite, "rules", chapter_dir)
+    skip = re.compile(r"/\.loft/|history|CHANGELOG|census-data|handoff|/" + re.escape(new) + r"\.loft$|" +
+                      "|".join("/" + re.escape(o) + r"\.loft$" for o in olds))
+    def repoint():
+        # Every reference to a retired cell names the merged cell instead.  A merge keeps its
+        # cells in one rule directory, so the repoint is the stem alone, matched as a whole name;
+        # a patch receipt's file keeps the retired cell's name (`tests/falsified/<stem>.patch`,
+        # which the merged cell's receipt names by that path), so a `.patch` name is no
+        # reference.  It runs only once nothing can refuse any more — a refused land must leave no
+        # staged edit behind for another commit to carry.  Each rewritten file is staged in its
+        # own repository and listed: read the list, a sentence may want rewording.
+        for o in olds:
+            named = re.compile(r"(?<![A-Za-z0-9_-])" + re.escape(o) + r"(?![A-Za-z0-9_-]|\.patch)")
+            for base in (os.path.join(suite, "rules"), os.path.join(ROOT, "doc"), os.path.join(ROOT, "tests"),
+                         os.path.join(ROOT, "scripts"), os.path.join(ROOT, "src")):
+                r = subprocess.run(["grep", "-rlF", o, base], capture_output=True, text=True)
+                for x in r.stdout.split():
+                    if skip.search(x):
+                        continue
+                    text = open(x, encoding="utf-8", errors="replace").read()
+                    if not named.search(text):
+                        continue
+                    open(x, "w", encoding="utf-8").write(named.sub(new, text))
+                    repo = suite if os.path.abspath(x).startswith(os.path.abspath(suite) + os.sep) else ROOT
+                    _git(["add", os.path.relpath(x, repo)], repo)
+                    print(f"  repointed  {o} -> {new}  in {os.path.relpath(x, repo)}")
+
+    def features():
+        # The SET of what the rule's cells reach (the union `plan` counts), so a refusal can name
+        # what a merge lost instead of only that the count moved.
+        axes = rule_depth.chapter_axes().get(defined().get(rule, ""), [])
+        got = set()
+        for c in cells_of(rule):
+            got |= features_of(c, axes)[0]
+        return got
+    def restore():
+        # Put the retired cells back exactly as committed (they were removed by this run, so the
+        # committed text is all there is), so a refused land can simply be run again.
+        _git(["restore", "--staged", "--worktree", "--source=HEAD", "--"] + [o + ".loft" for o in olds], d)
+    if any(not os.path.exists(os.path.join(d, o + ".loft")) for o in olds):
+        restore()                           # an earlier refused run removed them
+    # Before anything changes: an edit made after its file was staged would miss the commit and
+    # pass every check that reads the working tree (a moved cell committed without the citation
+    # added after the `git mv`), and anything staged that is not this land's would be committed
+    # under its message (another rule's refused land once rode in that way).
+    if subprocess.run(["git", "diff", "--quiet"], cwd=suite).returncode != 0:
+        print("the suite has unstaged changes — stage or drop them first:")
+        print(_git(["diff", "--stat"], suite))
+        return 1
+    def only_repoints(path):
+        # A file an EARLIER, refused run of this land repointed is staged with nothing but
+        # retired-name → merged-name swaps: every removed line, so rewritten, is its added twin.
+        diff = _git(["diff", "--cached", "-U0", "--", path], suite).split("\n")
+        minus = [l[1:] for l in diff if l.startswith("-") and not l.startswith("---")]
+        plus = [l[1:] for l in diff if l.startswith("+") and not l.startswith("+++")]
+        swap = lambda l: re.sub(r"(?<![A-Za-z0-9_-])(" + "|".join(map(re.escape, olds)) +
+                                r")(?![A-Za-z0-9_-]|\.patch)", new, l)
+        return bool(minus) and [swap(l) for l in minus] == plus
+    mine = {os.path.join("rules", chapter_dir, n + ".loft") for n in [new, *olds]}
+    others = [p for p in _git(["diff", "--cached", "--name-only"], suite).split()
+              if p not in mine and not only_repoints(p)]
+    if others:
+        print("the suite has staged changes that are not this land's — commit or unstage them first:")
+        print("  " + "\n  ".join(others))
+        return 1
+    before = features()
+    _git(["rm", "-q"] + [o + ".loft" for o in olds], d)
+    _git(["add", new + ".loft"], d)
+    after = features()
+    if before != after:
+        restore()
+        print(f"the rule's features moved {len(before)} -> {len(after)}: "
+              f"lost {sorted(before - after) or 'nothing'}, gained {sorted(after - before) or 'nothing'}\n"
+              "  a `defect#N` is a `loft#N` the merged header (its first 40 lines) no longer names; an "
+              "axis value is a case the merged cell no longer reaches")
+        return 1
+    repoint()
+    trailer = "\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+    _git(["commit", "-q", "-m", message + trailer], suite)
+    _git(["push", "-q", "origin", "HEAD:main"], suite)
+    head = _git(["rev-parse", "HEAD"], suite).strip()
+    rows_path = GATE_E
+    lines = open(rows_path, encoding="utf-8").read().split("\n")
+    ends = tuple(f"/{chapter_dir}/{o}.loft" for o in olds)
+    rows = [l for l in lines if l.endswith(ends)]
+    if rows and len(rows) != len(olds):
+        raise SystemExit(f"gate E lists {len(rows)} of {len(olds)} retired cells — the verdicts differed")
+    lines = [l for l in lines if l not in rows]
+    # The merged cell may keep one input's name (a patch receipt is tied to it): then it was a
+    # program of the corpus already, its own row (if any) stays, and every retired cell leaves.
+    existed = subprocess.run(["git", "cat-file", "-e", f"HEAD~1:rules/{chapter_dir}/{new}.loft"],
+                             cwd=suite, capture_output=True).returncode == 0
+    gone = len(olds) if existed else len(olds) - 1
+    # A refusal file (a file-level `@EXPECT_ERROR`) is a program the Rust front end refuses, and
+    # gate E counts only the programs it accepts ("N the Rust front end refuses" stand apart), so
+    # retiring refusal cells moves none of its counts.
+    new_text = open(os.path.join(d, new + ".loft"), encoding="utf-8").read()
+    if not rows and re.search(r"(?m)^// @EXPECT_ERROR: ", new_text) and "fn main()" not in new_text.split("@EXPECT_ERROR")[0]:
+        gone = 0
+    own = f"loft-suite/rules/{chapter_dir}/{new}.loft"
+    if rows and not any(l.endswith("\t" + own) for l in lines):
+        verdict = rows[0].split("\t")[1]
+        row = f"elab\t{verdict}\t{own}"
+        idx = [i for i, l in enumerate(lines) if l.startswith("elab\t")]
+        lines.insert(next((i for i in idx if lines[i].split("\t", 2)[2] > row.split("\t", 2)[2]), idx[-1] + 1), row)
+    text = "\n".join(lines)
+    m = re.search(r"agree\t(\d+)\tof\t(\d+)", text)
+    agree = int(m.group(1)) - (0 if rows else gone)
+    text = text.replace(m.group(0), f"agree\t{agree}\tof\t{int(m.group(2)) - gone}")
+    text = re.sub(r"(?m)^suite\t[0-9a-f]{40}$", "suite\t" + head, text)
+    open(rows_path, "w", encoding="utf-8").write(text)
+    open(os.path.join(ROOT, "tests", "loft-suite.pin"), "w", encoding="utf-8").write(head + "\n")
+    _git(["add", "tests/loft-suite.pin", "selfhost/front/elab_gate.baseline.tsv"], ROOT)
+    _git(["commit", "-q", "-m", f"Suite pin {head[:7]}: {message.splitlines()[0]}" + trailer], ROOT)
+    print(f"landed: suite {head[:7]}, features {len(after)}, gate E {m.group(0).replace(chr(9), ' ')} -> agree {agree}")
+    return 0
+
+
 def rel(p):
     """A cell's place: `suite:rules/<chapter>/<rule>/<file>` for the language suite, else the
     path under this tree."""
@@ -306,6 +697,18 @@ def main():
         return nxt(int(a[1]) if len(a) > 1 else 3)
     if cmd == "plan" and tag:
         return plan(tag)
+    if cmd == "verify" and len(a) > 1:
+        return verify(a[1:])
+    if cmd == "vacuity" and len(a) > 1:
+        return vacuity(a[1:])
+    if cmd == "switches" and len(a) > 1:
+        return switches(a[1:])
+    if cmd == "land" and len(a) > 5:
+        # land <rule> <chapter/rule-dir> <new-stem> <message-file | message text> <old-stem>…
+        msg = open(a[4], encoding="utf-8").read() if os.path.isfile(a[4]) else a[4]
+        return land(a[1].removeprefix("@FR-"), a[2], a[3], a[5:], msg.strip())
+    if cmd == "merge" and len(a) > 4:
+        return merge(a[1], a[2], a[3:])
     if cmd == "related" and tag and len(a) > 2:
         return related(tag, a[2])
     if cmd == "done" and tag:
