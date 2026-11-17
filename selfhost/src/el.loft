@@ -106,6 +106,10 @@ pub struct El {
   // Rust's first pass builds that literal in the local, which then names only itself, so the
   // second pass finds it holding no backing (`vector_needs_db`).
   pub unbacked: vector<integer>,
+  // `Function::subject_sites` (loft#2520): each match subject temp the first pass minted, by
+  // its site (`context * 1048576 + the subject's syntax node`), and the name it took.
+  pub subject_sites: vector<integer>,
+  pub subject_names: vector<text>,
   // the functions the program declares whose definition elaboration refused: a call of one is
   // not refused again, as a call of an unknown function
   pub declined: vector<text>,
@@ -191,6 +195,8 @@ pub fn new_el(p: syntax::Syntax, file: text, default: boolean) -> El {
     refused: [],
     refused_at: [],
     unbacked: [],
+    subject_sites: [],
+    subject_names: [],
     declined: [],
     lines: [],
     type_vars: [],

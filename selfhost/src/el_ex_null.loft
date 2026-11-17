@@ -675,6 +675,12 @@ pub fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: intege
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   if e.first_pass {
+    // A subject that is no local is held in its `_ncr_N` on this pass too: the variable takes
+    // its number here, before the second pass's stores and closures (a closure's type names
+    // its record's variable by number).
+    if !(el_ir::unspan(x.code) is NdVar) && !(e.p.nodes[pe!] is SName) {
+      el_vars::create_unique(vars, "ncr", b);
+    }
     return ex(ir::NdNull, ncr_type(e, x.code, b));
   }
   // A vector is tested with `OpVectorIsNull` (`handle_present`'s collection arm), held as read.

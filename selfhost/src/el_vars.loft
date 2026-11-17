@@ -204,6 +204,8 @@ pub struct Vars {
   pub dn4_coalesce: boolean = false,
   // A destructure's right-hand call may answer a BOXED tuple (`boxed_tuple_return`): its record.
   pub boxed_tuple_at: integer = -1,
+  // The subject node of the `match` being read: its temp is named for this site.
+  pub match_site: integer = -1,
   // The tuple literal at the tail of a function answering a boxed tuple: its members are
   // written into the record, so a text member may be any value.
   pub boxed_tail: integer = -1,
