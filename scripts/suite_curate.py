@@ -574,8 +574,13 @@ def land(rule, chapter_dir, new, olds, message):
                     text = open(x, encoding="utf-8", errors="replace").read()
                     if not named.search(text):
                         continue
-                    open(x, "w", encoding="utf-8").write(named.sub(new, text))
                     repo = suite if os.path.abspath(x).startswith(os.path.abspath(suite) + os.sep) else ROOT
+                    # An UNTRACKED file is another merge still in progress: staged here it would
+                    # be committed under this land's message.  Its own land repoints it.
+                    if subprocess.run(["git", "ls-files", "--error-unmatch", os.path.relpath(x, repo)],
+                                      cwd=repo, capture_output=True).returncode != 0:
+                        continue
+                    open(x, "w", encoding="utf-8").write(named.sub(new, text))
                     _git(["add", os.path.relpath(x, repo)], repo)
                     print(f"  repointed  {o} -> {new}  in {os.path.relpath(x, repo)}")
 
@@ -623,6 +628,9 @@ def land(rule, chapter_dir, new, olds, message):
     after = features()
     if before != after:
         restore()
+        # Unstage the new cell too: left staged, it reads as another land's change and blocks
+        # the next one (the cell itself stays in the working tree, to be fixed and landed again).
+        _git(["restore", "--staged", "--", new + ".loft"], d)
         print(f"the rule's features moved {len(before)} -> {len(after)}: "
               f"lost {sorted(before - after) or 'nothing'}, gained {sorted(after - before) or 'nothing'}\n"
               "  a `defect#N` is a `loft#N` the merged header (its first 40 lines) no longer names; an "

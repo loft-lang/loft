@@ -88,16 +88,16 @@ Col-Bucket	collections	curated	5	2026-11-17	2 cells, gate E splits them (135 res
 Col-Capacity	collections	curated	5	2026-11-17	no own directory: its citing cells live under other collection rules
 Col-Concat	collections	curated	5	2026-11-17	own dir 6 -> 2: a concatenation is a new vector and neither operand changes (every position, loft#2387, #2399, a slice of its destination with @catches LOFT_NO_SELF_SLICE_DEPS kept, a function-end local) 5->1; 2406 (a second-pass literal) stays
 Col-Cons	collections	curated	4	2026-11-17	3 cells: 2407 (agrees), 2409 and the nullable keyed collection — distinct clauses
-Col-Copy	collections	todo			
-Col-Group	collections	todo			
-Col-Group-Dup	collections	todo			
-Col-Hash	collections	todo			
-Col-Index	collections	todo			
-Col-Inline	collections	todo			
-Col-Insert	collections	todo			
-Col-Insert-Absent	collections	todo			
-Col-Key	collections	todo			
-Col-Layouts	collections	todo			
+Col-Copy	collections	curated	2	2026-11-17	one cell (a vector field keeps its absence, patch)
+Col-Group	collections	curated	18	2026-11-17	own dir 10 -> 5: a write through any member reaches every member (loft#1152, #901, the element write) 3->1; a null element is in no keyed view (loft#1374/#1367 seam) 2->1; members found by element type whatever the order or ? (loft#1158 + the nullable keyed member) 2->1; two patches and 1226 (gate E agrees) stay
+Col-Group-Dup	collections	curated	4	2026-11-17	2 cells, both gate-E-agreeing: merging them would lower the agree count — kept
+Col-Hash	collections	curated	4	2026-11-17	one cell (a keyed collection without a key is refused, patch)
+Col-Index	collections	curated	3	2026-11-17	one cell (an index holds every record past tree depth thirty)
+Col-Inline	collections	needs-cell	0	2026-11-17	no own directory: its citing cells live under other rules
+Col-Insert	collections	curated	11	2026-11-17	5 cells: three patches, the push-spelling refusal and 1159 — distinct
+Col-Insert-Absent	collections	curated	4	2026-11-17	2 cells of different clauses (an insert makes an absent collection present; an instantiated collection replaces a repeated key)
+Col-Key	collections	curated	2	2026-11-17	2 cells: a patch and a refusal patch — nothing to merge
+Col-Layouts	collections	curated	1	2026-11-17	no own directory: its citing cells live under other rules
 Col-Len	collections	todo			
 Col-Lookup	collections	todo			
 Col-Order	collections	todo			
