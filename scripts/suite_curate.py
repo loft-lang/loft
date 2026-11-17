@@ -549,7 +549,9 @@ def land(rule, chapter_dir, new, olds, message):
     re-pin loft's suite pin; commit loft.  Every step is the one the curation pass ran by hand."""
     suite = os.path.normpath(os.environ.get("LOFT_SUITE_DIR") or os.path.join(os.path.dirname(ROOT), "loft-suite"))
     d = os.path.join(suite, "rules", chapter_dir)
-    skip = re.compile(r"/\.loft/|history|CHANGELOG|census-data|handoff|/" + re.escape(new) + r"\.loft$|" +
+    # Recorded material keeps the names it was written with: history, changelogs, censuses,
+    # handoffs, and fixtures — a captured CI log a test parses is a record, not a reference.
+    skip = re.compile(r"/\.loft/|history|CHANGELOG|census-data|handoff|/fixtures/|\.log$|/" + re.escape(new) + r"\.loft$|" +
                       "|".join("/" + re.escape(o) + r"\.loft$" for o in olds))
     def repoint():
         # Every reference to a retired cell names the merged cell instead.  A merge keeps its

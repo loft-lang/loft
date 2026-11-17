@@ -69,10 +69,10 @@ Cap-Set	capabilities	curated	3	2026-11-17	own dir 4 -> 3: the locked-parameter o
 Cap-Trusted	capabilities	curated	3	2026-11-17	2 cells: the refusal and the not-descended control — nothing to merge
 Cap-Write	capabilities	curated	6	2026-11-17	2 cells: the refusal and the granted-write control (gate E splits them) — nothing to merge
 L-Apply	closures	curated	6	2026-11-17	6 cells: four patches, and two refused cells of different clauses (argument order + frame drop; a text closure call appended) — nothing to merge
-L-CapBox	closures	todo			
-L-CapHeap	closures	todo			
-L-CapKeep	closures	todo			
-L-CapOne	closures	todo			
+L-CapBox	closures	curated	2	2026-11-17	one cell (a captured narrow scalar is refused what its type refuses)
+L-CapHeap	closures	curated	17	2026-11-17	own dir 7 -> 5: a lambda reads its captures inside a comprehension and leaves them alive 3->1; the rest are a patch, gate-E-agreeing or distinct
+L-CapKeep	closures	curated	7	2026-11-17	own dir 8 -> 5: each run of a build in a loop is its own record, a kept closure keeps its pass (loft#1636 + three) 4->1; 2272, 2273, 2512 and the agreeing cell are distinct
+L-CapOne	closures	curated	5	2026-11-17	2 cells, gate E splits them (2281 refused, 2363 agrees) — nothing to merge
 L-CapOwn	closures	curated	29	2026-11-17	own dir 23 -> 15: a closure confined to a loop pass borrows (loft#2505, #2524, #2514) 3->1; a rebind releases the displaced record (loft#2155 + the plain-lambda rebind) 2->1; a closure over a branch owns the arm that ran (loft#1473/#1474, #2131) 2->1; a leaving closure takes its captures (each kind, loft#1477, #2154, #2282) 4->1; the rest are patches, gate-E-agreeing or distinct (the nested relay, the rebuild in a loop)
 L-CapRebind	closures	todo			
 L-CapRef	closures	todo			

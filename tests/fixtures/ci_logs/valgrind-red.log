@@ -33,7 +33,7 @@
 2026-09-27T10:49:43.3790897Z interp	tests/scripts/93-vector-advanced.loft	77	2	0	23.816012696
 2026-09-27T10:49:43.3791358Z interp	tests/scripts/164-adopt-buffer-reuse.loft	77	2	0	22.849540587
 2026-09-27T10:49:43.3792012Z interp	tests/scripts/1610-a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft	77	2	0	20.932099840
-2026-09-27T10:49:43.3792782Z interp	tests/scripts/each-run-of-a-build-in-a-loop-is-its-own-record-and-a-kept-closure-keeps-its-pass.loft	77	2	0	22.081173611
+2026-09-27T10:49:43.3792782Z interp	tests/scripts/1636-a-closure-kept-from-a-loop-pass-keeps-that-pass.loft	77	2	0	22.081173611
 2026-09-27T10:49:43.3793717Z interp	tests/scripts/a-keyed-local-bound-through-a-match-frees-the-arm-that-ran.loft::test_the_if_chain_of_the_same_arms_is_the_reference	77	2	0	25.278770926
 2026-09-27T10:49:43.3794815Z interp	tests/scripts/a-keyed-local-bound-through-a-match-frees-the-arm-that-ran.loft::test_a_two_arm_match_frees_the_arm_that_ran	77	2	0	24.386654943
 2026-09-27T10:49:43.3795909Z interp	tests/scripts/a-keyed-local-bound-through-a-match-frees-the-arm-that-ran.loft::test_a_three_arm_match_frees_the_arm_that_ran	77	2	0	25.826351888
