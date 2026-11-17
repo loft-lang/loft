@@ -1192,8 +1192,13 @@ pub(crate) fn loft_written_unit(
             ),
         )
         .map_err(|e| format!("the program image could not be written: {e}"))?;
-        let out = Spawn::new(Program::os(&generator))
-            .args([&image, &unit, &runtime])
+        // `(R-CSplit)` runs in a semantics build alone: a unit that keeps its functions whole
+        // (`c::functions_whole`, a shipped artefact) tells the generator so.
+        let mut spawn = Spawn::new(Program::os(&generator)).args([&image, &unit, &runtime]);
+        if loft::c::functions_whole() {
+            spawn = spawn.env("LOFT_NO_C_SPLIT", "1");
+        }
+        let out = spawn
             .run(&[])
             .map_err(|e| format!("the C generator {generator} did not start: {e}"))?;
         if !out.status.success() {

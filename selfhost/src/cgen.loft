@@ -436,8 +436,9 @@ fn body_line(cx: Cx, t: cgen_names::Twin) -> text {
   if wr.refused != "" {
     return "[refused]\t{name}\t{wr.refused}\n";
   }
+  // A body written in parts is traced as such (`trace_body`): the unit layer compares it.
   if wr.split {
-    return "[refused]\t{name}\ta body the writer splits\n";
+    return "[bodies]\t{name}\t(split)\n";
   }
   // A generator has no frame wrapper, so no body the Rust writer traces.
   if wr.generator {

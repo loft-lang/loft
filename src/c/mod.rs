@@ -4879,7 +4879,7 @@ pub fn ship_units() {
 /// `--ship` run, an ESP app), which takes full optimisation of its C as written.  A semantics
 /// build splits an over-budget function into parts instead (`(R-CSplit)`, `split::budget`),
 /// so the C compiler's optimiser time stays bounded.
-pub(crate) fn functions_whole() -> bool {
+pub fn functions_whole() -> bool {
     SHIPPED_UNITS.load(std::sync::atomic::Ordering::Relaxed) || ESP_UNIT.with(std::cell::Cell::get)
 }
 
