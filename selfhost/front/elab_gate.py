@@ -224,7 +224,10 @@ def main():
     if any(prebuilt) and (o.check or o.write_baseline):
         sys.exit("--check and --write-baseline build their own tools: unset LOFT_ELAB_DEFS / LOFT_ELAB_BIN")
     # The two builds are one C compile each: side by side, the gate waits for the longer only.
-    with cf.ThreadPoolExecutor(2) as ex:
+    # `LOFT_ELAB_BUILD_JOBS=1`: build the two tools one after the other.  Side by side they halve
+    # the wait, and double the peak memory: on a runner of 7 GB the elaborator's optimised C
+    # compile (above 5 GB in cc1) ran out of memory beside the other one.
+    with cf.ThreadPoolExecutor(int(os.environ.get("LOFT_ELAB_BUILD_JOBS", "2"))) as ex:
         fd = None if prebuilt[0] else ex.submit(build, loft, os.path.join(sh, "compare", "defs.loft"), os.path.join(tmp, "defs"), env)
         fe = None if prebuilt[1] else ex.submit(build, loft, os.path.join(sh, "front", "elab.loft"), os.path.join(tmp, "elab"), env)
         defs = prebuilt[0] or fd.result()
