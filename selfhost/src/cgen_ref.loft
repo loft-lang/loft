@@ -926,7 +926,8 @@ fn ref_ops_4(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done
     kname = cgen_tables::keys_name(x, tp);
     kc = if kind == "hash" { "LOFT_KEYED_HASH" } else if kind == "sorted" { "LOFT_KEYED_SORTED" } else if kind == "index" { "LOFT_KEYED_INDEX" } else if kind == "ordered" { "LOFT_KEYED_ORDERED" } else if kind == "spatial" { "LOFT_KEYED_SPATIAL" } else { "LOFT_KEYED_TRIE" };
     flinked = if x.b.types[elem]!.linked { 1 } else { 0 };
-    return E { code: "loft_fill_keyed(loft_types, {elem}, {place}, {src}, {kc}, {kname}, {len(x.b.types[tp]!.keys)}, {flinked}, {if raw & 32768 != 0 { 1 } else { 0 }}, {group})", kind: K_VOID };
+    keyed_src = if (cgen_fn::literal(w, args[3], "type") ?? 0) & 32768 != 0 { 1 } else { 0 };
+    return E { code: "loft_fill_keyed(loft_types, {elem}, {place}, {src}, {kc}, {kname}, {len(x.b.types[tp]!.keys)}, {flinked}, {if raw & 32768 != 0 { 1 } else { 0 }}, {group}, {keyed_src})", kind: K_VOID };
   }
   // `OpRemove(state, data, on, tp)` (`e#remove` in a walk, `walk_remove`): the element the
   // walk visited last leaves the collection, and the walk goes on with the one after it.
@@ -2482,7 +2483,8 @@ pub fn mint_complete(b: ir::Bundle, w: W, tp: integer) -> boolean {
 // — `data` itself (`fld` 65535) or its vector field — with the element type left in `w.elem`.
 // A keyed collection and a linked group are not carried.
 fn vector_place(x: Cx, w: W, data: ir::Node, ptp_node: ir::Node, fld_node: ir::Node, ind: integer) -> text {
-  ptp = cgen_fn::literal(w, ptp_node, "type") ?? return "";
+  // The top bit is `OpFillKeyed`'s keyed-source flag, never part of a type number.
+  ptp = (cgen_fn::literal(w, ptp_node, "type") ?? return "") & 32767;
   fld = cgen_fn::literal(w, fld_node, "field") ?? return "";
   if ptp < 0 || ptp >= len(x.b.types) {
     refuse(w, "a type out of range");

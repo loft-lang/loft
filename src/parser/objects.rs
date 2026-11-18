@@ -7323,12 +7323,13 @@ impl Parser {
             // out from under the member that holds them (measured on the loft#889 shape,
             // where only `LOFT_POISON=1` shows the read landing on freed bytes).
             let fills = std::mem::take(&mut sinks.group_fills);
+            let skip: std::collections::HashSet<u16> = sinks
+                .filled_collections
+                .iter()
+                .map(|f| self.field_position(td_nr, f))
+                .collect();
+            self.group_keyed_member_writes(&mut list, code, td_nr, &skip);
             if !fills.is_empty() {
-                let skip: std::collections::HashSet<u16> = sinks
-                    .filled_collections
-                    .iter()
-                    .map(|f| self.field_position(td_nr, f))
-                    .collect();
                 let parent_ty = Type::Reference(td_nr, crate::data::Deps::none());
                 for to in &fills {
                     let ops = self.keyed_sibling_view_fills(to, &parent_ty, &skip);
@@ -7969,6 +7970,63 @@ impl Parser {
         // collections and always were.
         groups.retain(|(_, m)| m.len() >= 2 && m.iter().any(|x| x.keyed));
         groups
+    }
+
+    /// loft#2563 — a whole KEYED value a literal (or a field default) writes into a member
+    /// of a linked group reaches the group's other members (`@FR-Col-Group`): the member's
+    /// `OpReplaceKeyed` becomes the group's fill ([`Parser::keyed_group_fill`]).
+    ///
+    /// Only where that member is the one the literal gives records to.  A literal filling
+    /// several members hands each its own records, and those members are left as written —
+    /// the rule the vector member's fill follows (`skip`, loft#1266), and the shape
+    /// `linked-group-double-fill` advises on.  Run once the body is read, because which
+    /// members the literal fills is not known before.
+    fn group_keyed_member_writes(
+        &mut self,
+        list: &mut [Value],
+        code: &Value,
+        td_nr: u32,
+        filled: &HashSet<u16>,
+    ) {
+        if self.first_pass {
+            return;
+        }
+        let struct_tp = self.data.def(td_nr).known_type();
+        let replace = self.data.def_nr("OpReplaceKeyed");
+        let get_field = self.data.def_nr("OpGetField");
+        let parent_ty = Type::Reference(td_nr, crate::data::Deps::none());
+        for op in list.iter_mut() {
+            let Value::Call(d, args) = op.unspan() else {
+                continue;
+            };
+            if *d != replace || args.len() != 3 {
+                continue;
+            }
+            let (Value::Call(g, fa), Value::Int(tp_val)) = (args[1].unspan(), args[2].unspan())
+            else {
+                continue;
+            };
+            if *g != get_field || fa.len() < 2 || *fa[0].unspan() != *code.unspan() {
+                continue;
+            }
+            let Value::Int(off) = fa[1].unspan() else {
+                continue;
+            };
+            let off = *off as u16;
+            let members = self.database.keyed_group_members(struct_tp, off);
+            if members.is_empty()
+                || members
+                    .iter()
+                    .any(|(o, _, _)| *o != off && filled.contains(o))
+            {
+                continue;
+            }
+            let kt = (*tp_val & 0x7FFF) as u16;
+            let (to, src, tp_val) = (args[1].clone(), args[0].clone(), *tp_val);
+            if let Some(fill) = self.keyed_group_fill(&to, &parent_ty, kt, tp_val, &src) {
+                *op = fill;
+            }
+        }
     }
 
     /// Advise when ONE literal fills two members of a linked collection group (loft#926).
@@ -8812,18 +8870,12 @@ impl Parser {
                 // `group_primed` zeroed the whole linked group's), so there is nothing in
                 // the destination to replace.
                 if crate::parser::vectors::is_keyed(exp_tp) {
-                    // loft#2563 — a member of a linked group takes the keyed value through
-                    // the fill, which reaches every member; the field is new, so no clear.
-                    let parent_ty = Type::Reference(td_nr, crate::data::Deps::none());
-                    let write =
-                        match self.keyed_group_fill(&field_ref, &parent_ty, kt, tp_val, value) {
-                            Some(fill) => fill,
-                            None => self.cl(
-                                "OpReplaceKeyed",
-                                &[value.clone(), field_ref, Value::Int(tp_val)],
-                            ),
-                        };
-                    list.push(write);
+                    // A member of a linked group is rewritten to the group's fill once the
+                    // whole body is read (`group_keyed_member_writes`).
+                    list.push(self.cl(
+                        "OpReplaceKeyed",
+                        &[value.clone(), field_ref, Value::Int(tp_val)],
+                    ));
                 } else {
                     let parent_ty = Type::Reference(td_nr, crate::data::Deps::none());
                     let (parent, parent_tp_id, field_nr) =

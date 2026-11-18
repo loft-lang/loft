@@ -1813,15 +1813,6 @@ impl Parser {
                     "OpGetField",
                     &[ref_code, pos_val, Value::Int(i32::from(kt))],
                 );
-                // loft#2563 — a keyed value into a member of a linked group goes through
-                // the fill, which reaches every member of the group.
-                let parent_ty = Type::Reference(d_nr, crate::data::Deps::none());
-                if !self.value_is_plain_vector(&val_code)
-                    && let Some(fill) =
-                        self.keyed_group_fill(&field_ref, &parent_ty, kt, tp_val, &val_code)
-                {
-                    return fill;
-                }
                 self.keyed_member_write(field_ref, val_code, kt, tp_val)
             }
             Type::Vector(_, _)
