@@ -386,13 +386,13 @@ Path-Name	paths	curated	4	2026-11-18	first cell, from the formal text: every ban
 Path-Refuse	paths	curated	3	2026-11-18	first cell: each operation's own failure answer for a refused path; found and fixed loft#2556 (delete / move answered NotFound)
 Path-Sep	paths	curated	3	2026-11-18	first cell: either separator handed in names the same file; every path handed out uses / with no trailing separator
 Path-Utf8	paths	curated	4	2026-11-18	its two cells agree with gate E and stay; the non-UTF-8 names loft cannot create are held by tests/windows_rules.rs
-Perf-Cure	performance	todo			
-Perf-Gap	performance	todo			
-Perf-Like	performance	todo			
-Perf-Order	performance	todo			
-Perf-Teach	performance	todo			
-Perf-Twin	performance	todo			
-Perf-Weight	performance	todo			
+Perf-Cure	performance	structural	0	2026-11-18	a rule of which cure is admissible (engine first, a native rewrite recorded as an edge case); process, no program observes it
+Perf-Gap	performance	structural	0	2026-11-18	a rule of routing a twin's advantage to the language as a missing abstraction; process, no program observes it
+Perf-Like	performance	structural	0	2026-11-18	a rule of the benchmark harness: lanes are compared only on one output hash over a fixed workload (the bench routines' hash check); no loft program observes it
+Perf-Order	performance	structural	0	2026-11-18	a rule of the optimisation order (the IR first, operators after, from broad evidence); process, no program observes it
+Perf-Teach	performance	structural	0	2026-11-18	a rule of when a loft rewrite for speed is admissible (only behind a named advice); process, no program observes it
+Perf-Twin	performance	structural	0	2026-11-18	a rule of what is measured: a twin is written when a hit is suspected; process, no program observes it
+Perf-Weight	performance	structural	0	2026-11-18	a release measurement against reference twins on the C ship lane (the perf portal, the release checklist); no loft program observes it
 R-Alias	rewrites	todo			
 R-Apart	rewrites	todo			
 R-AppendTwin	rewrites	todo			
