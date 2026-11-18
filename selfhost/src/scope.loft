@@ -995,18 +995,15 @@ fn exits(n: ir::Node) -> boolean {
   }
 }
 
-// A returned value that needs no `__ret_N`: an argument or a constant, which no free touches.
+// A returned value that goes back as it stands, after the frees: a variable, `null` or a text
+// literal, as written — not under a span (`free_vars.rs`: `Value::Null | Value::Var(_) |
+// Value::Text(_)` on the scanned expression).  Anything else, a constant included, is bound to
+// `__ret_N` before the frees run.
 fn plain(n: ir::Node, f: ir::Function) -> boolean {
   match n {
-    NdSpan { inner } => plain(inner, f),
-    NdVar { n: v } => f.variables[v]!.argument,
-    NdInt => true,
-    NdBoolean => true,
-    NdFloat => true,
-    NdSingle => true,
-    NdLong => true,
+    NdVar => true,
     NdNull => true,
-    NdEnum => true,
+    NdText => true,
     _ => false
   }
 }
