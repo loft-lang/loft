@@ -2479,6 +2479,62 @@ pub fn materialised_return(e: el::El, vars: el_vars::Vars, v: Ex, w: integer, re
       return ex(ir::NdReturn { inner: chosen }, ir::TyNever);
     }
   }
+  // `MaterializeView` for a `??` (or `x?`) whose subject views a store of this frame
+  // (`return_views_local`: `return c.hexes[i]?` under `for c in …`): copied arm by arm into a
+  // work ref the buffer is renamed onto — the held subject behind its null test, the default
+  // whole (`materialize_return_into`).
+  match x {
+    NdBlock { block: nb } => {
+      views = false;
+      for dd in el_types::deps(v.tp) {
+        if dd >= 0 && dd < len(vars.vars) && !vars.vars[dd].argument {
+          views = true;
+        }
+      }
+      // A subject that views a local which itself views another (`c` of `for c in …`) takes
+      // the work ref (`return_views_local`); one read off a local that OWNS its record is no
+      // such view, and the buffer is bound and takes the copy itself (`Bind`, no work ref).
+      deep = false;
+      for dd in el_types::deps(v.tp) {
+        if dd >= 0 && dd < len(vars.vars) && !vars.vars[dd].argument && el_expressions::views_local(vars, dd) {
+          deep = true;
+        }
+      }
+      if nb[0].name == "ncc" && views && el_types::base(result) is TyReference && !(result is TyOptional) {
+        nw = -1;
+        if deep {
+          nw = el_vars::work_ref(vars, el_types::without_deps(el_types::base(result)));
+          if unrenamed && !el_expressions::buffer_bound(e) {
+            rename_onto(e, vars, rb, nw);
+          } else if e.first_pass {
+            el_vars::unregister_work_ref(vars, nw);
+          }
+        } else if unrenamed {
+          bba = attr_nr(el::def(e, d), "__retbuf");
+          bret = el::def(e, d).returned[0];
+          if bba >= 0 && !el_types::deps(bret).contains(bba) {
+            e.b.data.definitions[d].returned = [el_types::with_deps(bret, el_types::deps(bret) + [bba])];
+          }
+        }
+        if e.first_pass {
+          return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
+        }
+        nbuf = return_buffer(e, vars);
+        if nw >= 0 && nw != nbuf {
+          el_vars::unregister_work_ref(vars, nw);
+        }
+        ntd = heap_def(el_types::base(result));
+        nowned = el_types::with_deps(el_types::without_deps(el_types::base(result)), [nbuf]);
+        ncopy = if nbuf >= 0 && ntd >= 0 { el_expressions::copy_arms(e, vars, v.code, nbuf, ntd, nowned) } else { null };
+        if ncopy != null {
+          return ex(ir::NdReturn { inner: ncopy! }, ir::TyNever);
+        }
+        el::refuse(e, "a `return` of a `??` over a view of a local, copied from a source read once");
+        return ex(ir::NdNull, ir::TyNever);
+      }
+    },
+    _ => {}
+  }
   null
 }
 
