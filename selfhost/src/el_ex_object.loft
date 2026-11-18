@@ -1664,6 +1664,33 @@ pub fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?,
       _ => {}
     }
   }
+  // loft#1147 (`parse_call`): `assert_eq` / `assert_ne` take the CALLER's position — an empty
+  // label where none is given, then the call's file and line — and are ordinary calls of the
+  // standard library's generic from there.
+  if source < 0 && (name == "assert_eq" || name == "assert_ne") && (len(list) == 2 || len(list) == 3) && el::def_nr(e, "n_{name}") >= 0 {
+    apos = el::pos_at(e, after_paren(e, at));
+    // (An instance at a narrow integer width registers that width's `vector<…>` row where the
+    // instance is made: not carried, refused by name.)
+    for nt in types[..2] {
+      match el_types::base(nt) {
+        TyInteger { spec: ns } => {
+          if el_types::int4(ns) || el_types::uint4(ns) || el_types::narrow_width(ns) > 0 || ns.forced_size != 0 {
+            el::refuse(e, "an `assert_eq` at a narrow integer width (its instance's vector rows)");
+            return ex(ir::NdNull, ir::TyVoid);
+          }
+        },
+        _ => {}
+      }
+    }
+    if len(list) == 2 {
+      list += [ir::NdText { s: "" }];
+      types += [ir::TyText { dep: [] }];
+    }
+    list += [ir::NdText { s: apos.file }];
+    types += [ir::TyText { dep: [] }];
+    list += [ir::NdInt { n: apos.line }];
+    types += [ir::TyInteger { spec: wide_spec() }];
+  }
   // `parse_call_diagnostic` for the log calls: the message (or an empty one) with the call's
   // file and line, where the program declares no function of that name.
   if source < 0 && (name == "log_info" || name == "log_warn" || name == "log_error" || name == "log_fatal") {
