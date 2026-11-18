@@ -262,6 +262,11 @@ def merge(target, intro_file, cells):
         for c, v in verdicts.items():
             print(f"  {v:<8} {os.path.basename(c)}")
         return 1
+    # Programs the self-hosted elaborator agrees with are its measured progress: two of them made
+    # one lowers the agree count, which a merge never does (TESTING.md § Curating the suite, 4).
+    if len(cells) > 1 and set(verdicts.values()) == {"agree"}:
+        print("gate E agrees with every one of these — merging them lowers its agree count; not merged")
+        return 1
     intro = open(intro_file, encoding="utf-8").read().rstrip("\n").split("\n")
 
     def declared(code):
