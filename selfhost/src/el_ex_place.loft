@@ -1284,7 +1284,10 @@ pub fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
               // value built here — a nested construction — is not carried.)
               wpt = el::def(e, wd).attributes[2];
               staged_kind = wpt != null && (el_ex_call::scalar(el_types::base(wpt!.typedef[0] ?? ir::TyVoid)) || el_types::base(wpt!.typedef[0] ?? ir::TyVoid) is TyText);
-              if !starts_with(el::def(e, wd).name, "OpSet") || len(wa) != 3 || (!staged_kind && !(el_ir::unspan(wa[2]!) is NdVar)) {
+              // (Only a nested record CONSTRUCTION moves ahead of the mint, which is not
+              // carried; any other record or collection value is a view and keeps its place.)
+              built_here = match el_ir::unspan(wa[2]!) { NdBlock { block: cb } => cb[0].name == "Object" || cb[0].name == "EnumUnitLit" || cb[0].name == "Vector", _ => false };
+              if !starts_with(el::def(e, wd).name, "OpSet") || len(wa) != 3 || (!staged_kind && built_here) {
                 plain_values = false;
               }
             },
@@ -1301,8 +1304,11 @@ pub fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
       writes: vector<ir::Node> = [for op in fl! if op#index >= 2 { op }];
       if reads_rec || reads_fld {
         if reads_fld {
-          rows = vector_rows(e, inner, 0, true);
-          row = el_ex_vector::append_row(e, inner);
+          // (Asked only where the element's vector type is declared already: `vector_rows`
+          // would declare it here, at a place Rust does not.)
+          known_elem = el_types::elem_name(e, inner) != "" && el::def_nr(e, "main_vector<{el_types::elem_name(e, inner)}>") >= 0;
+          rows = if known_elem { vector_rows(e, inner, 0, true) } else { null };
+          row = if known_elem { el_ex_vector::append_row(e, inner) } else { -1 };
           if rows == null || row < 0 {
             el::refuse(e, "a field append whose item reads the field: of this element type");
             return ex(ir::NdNull, ir::TyVoid);
