@@ -552,6 +552,8 @@ fn apart_mint(
         }
         return None;
     }
+    // @decline-owed: a group with a mention of the vector beyond its fresh element — a read, a
+    //   view of it or of an element — and a mint the scalar clause's admission refuses
     crate::rewrite_census::fired("R-PushRec/apart", 1);
     Some((target.path, target.vector))
 }
@@ -1220,6 +1222,9 @@ pub fn hoistable(
             });
         }
         out.vectors.retain(|(q, _)| !mover(q));
+        // @decline-owed: a mint group outside a loop `(R-InPlace)` admits, and a target that is
+        //   neither a bare plain-vector variable nor a plain vector field of a plain record
+        //   over a pure path
         crate::rewrite_census::fired("R-Mint", mints.len());
         out.pushes = pushes;
         out.mint_pushes = mint_fused

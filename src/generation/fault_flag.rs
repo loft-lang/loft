@@ -475,6 +475,9 @@ impl Output<'_> {
             .iter()
             .map(|v| format!("var_{}", sanitize(variables.name(*v))))
             .collect();
+        // @decline-owed: a `for` statement holding a node outside the admitted set (a store
+        //   write, a call that is no stateless operator, a `Set` of a local whose address is
+        //   taken), and one with no discharge on a recurrence
         crate::rewrite_census::fired("R-FaultFlag", 1);
         writeln!(w, "{{ //@FR-R-FaultFlag")?;
         self.indent(w)?;

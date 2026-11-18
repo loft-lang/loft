@@ -807,6 +807,8 @@ fn emit_flat_copy(
         tp_val,
     )?;
     write!(ctx.w, " }} }}")?;
+    // @decline-owed: a record type that owns heap, a copy that gives its source up, and a
+    //   traced or checked copy, each of which takes the full path
     crate::rewrite_census::fired("R-FlatCopy", 1);
     Ok(())
 }

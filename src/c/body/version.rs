@@ -640,6 +640,10 @@ impl FnWriter<'_> {
         }
         if let [(f0, l0), (f1, l1)] = ends.as_slice() {
             guard.push(format!("loft_vg_area({f0}, {l0}, {f1}, {l1}, {MIN_TRIPS})"));
+            // @decline-owed: a call outside an innermost counted loop, a callee that is no
+            //   leaf's held-inputs twin, an argument neither invariant nor invariant plus a
+            //   literal multiple of the counter, a range under eight values, and a precondition
+            //   that fails at either end (decided at run time)
             crate::rewrite_census::fired("R-Version/nest", 1);
         }
         // The corners of the box over the loops some argument moves with: a linear value takes

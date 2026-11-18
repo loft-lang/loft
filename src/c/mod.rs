@@ -2728,6 +2728,8 @@ fn unit_defines(
         out.push_str("#define LOFT_NO_LOCKS 1\n");
         // The unit is the site: credited to the C writer, no function.
         let _census_unit = crate::rewrite_census::InBody::enter("c", "");
+        // @decline-owed: a unit that reaches a lock source — `#lock = …`, a mapped file or a
+        //   constant store — keeps the locked-write discard
         crate::rewrite_census::fired("R-NoLocks", 1);
     }
     // `@FR-R-NoThreads`: the runtime keeps its store table, frames and pools thread-local
@@ -2749,6 +2751,8 @@ fn unit_defines(
     {
         out.push_str("#define LOFT_NO_THREADS 1\n");
         let _census_unit = crate::rewrite_census::InBody::enter("c", "");
+        // @decline-owed: a unit that runs a `par` loop on threads or reaches an engine kernel
+        //   keeps its thread-locals
         crate::rewrite_census::fired("R-NoThreads", 1);
     }
     // The JSON reader (`loft_json.h`) is compiled in for a unit that reads JSON: the JsonValue
@@ -3297,6 +3301,7 @@ fn resolve_hot_helpers(cx: &Cx, protos: &str, bodies: &str) -> (String, String) 
             .iter()
             .filter(|d| hot.contains(d))
             .count();
+        // @decline-owed: a function the C writes in more than twelve statements
         crate::rewrite_census::fired("R-Inline/helper", inlined);
     }
     let resolve = |text: &str| -> String {
@@ -3580,6 +3585,9 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
             .write()
         {
             Ok(b) => {
+                // @decline-owed: a value some use would store — a field set, an append, a keyed
+                //   insert, a return that escapes the unit — and a producer that pushes into
+                //   its own vector field or whose roots' lives overlap
                 crate::rewrite_census::fired("R-Transient", 1);
                 Some(b)
             }

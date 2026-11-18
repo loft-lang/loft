@@ -1252,6 +1252,9 @@ impl Output<'_> {
                     && crate::keys::text_clear_enabled()
                     && matches!(to.unspan(), Value::Text(t) if t.is_empty())
                 {
+                    // @decline-owed: a first bind, a text parameter passed by value, a
+                    //   generator field and a narrow-encoded local, each of which keeps the
+                    //   fresh `String`
                     crate::rewrite_census::fired("R-TextClear", 1);
                     return write!(w, "unsafe {{ (*var_{name}).clear() }}");
                 }
@@ -2081,6 +2084,9 @@ impl Output<'_> {
                 }
             };
             if crate::keys::swap_rebind_enabled() {
+                // @decline-owed: a rebind whose source is a store an argument names, one a fn-
+                //   ref call borrowed, or a pooled buffer, and a destination that is not its
+                //   store's root (each keeps the reset and the copy)
                 crate::rewrite_census::fired("H-SwapRebind", 1);
             }
             let mut copy = copy_with(&tp_with_free);
@@ -2123,6 +2129,10 @@ impl Output<'_> {
             let rebind = match self.rebind_buffer.take() {
                 Some((v, buf, rbw)) if v == var && !witnessed && !variables.is_view_elided(var) => {
                     self.rebind_buffer_used = true;
+                    // @decline-owed: a rebind whose call does not answer a fresh store through
+                    //   a hidden buffer only it names; at run time, a null result, one that is
+                    //   the local's own store, a local that held none, and a buffer holding
+                    //   another store (each falls back to the exchange)
                     crate::rewrite_census::fired("R-RebindBuffer", 1);
                     let entry = rbw
                         .map(|r| format!(" && _dst.store_nr != {r}.store_nr"))

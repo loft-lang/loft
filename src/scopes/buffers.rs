@@ -300,6 +300,9 @@ pub(super) fn reuse_record_buffers(
         }
     }
     let frees = free_ops(data);
+    // @decline-owed: a type whose heap is not text only; a callee that does not build its
+    //   result as one record literal into its own buffer on every exit; a buffer named beyond
+    //   its pool plumbing
     crate::rewrite_census::fired("R-Reuse", eager.len() + lazy.len());
     // A buffer minted at entry is live at every call, and the first release finds the
     // record the mint just prefilled: nothing to walk.  The releases go in before the mints

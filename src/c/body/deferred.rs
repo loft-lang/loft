@@ -652,6 +652,8 @@ impl FnWriter<'_> {
                         format!("loft_dc_is_elem({name}, {vn}, {size}, {kc})")
                     })
                     .collect();
+                // @decline-owed: a copied local the function writes, and one whose source is no
+                //   view
                 crate::rewrite_census::fired("R-DeferredCopy/index", 1);
                 format!("{flag} && ({})", tests.join(" || "))
             }

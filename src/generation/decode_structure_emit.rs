@@ -480,6 +480,9 @@ impl Output<'_> {
                         .join(", ")
                 )
             };
+            // @decline-owed: a field whose source bytes are written, handed out by `&` or
+            //   released between the record's construction and the field's last read, or that
+            //   fails another of the rule's `ALL of` conditions
             crate::rewrite_census::fired("R-DecodeView/structure", 1);
             write!(
                 w,

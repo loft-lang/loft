@@ -3927,6 +3927,8 @@ use #count instead"
             Box::new(Value::Null),
         );
         if !self.first_pass {
+            // @decline-owed: a literal of seventeen or more items, a `rev(…)` around it, a
+            //   `par` walk, a `[v; n]` repeat, and a text, record or tuple item
             crate::rewrite_census::fired("R-LiteralWalk", 1);
         }
         Some(Type::Iterator(Box::new(elem), Box::new(Type::Null)))

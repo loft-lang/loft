@@ -102,6 +102,9 @@ fn substitute(v: &mut Value, cx: &mut Cx) {
                 _ => None,
             };
             if admitted && let Some(b) = buffer {
+                // @decline-owed: a function that reads a parameter or whose body is not one
+                //   literal over literals; and a bind of the constant that is written, rebound
+                //   or handed to a writing parameter, which takes its own copy
                 crate::rewrite_census::fired("R-Const", 1);
                 if crate::keys::trace_const() {
                     eprintln!(

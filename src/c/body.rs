@@ -1357,6 +1357,8 @@ impl<'a> FnWriter<'a> {
             );
             n += 1;
         }
+        // @decline-owed: a work text that is a store link, and one whose declaration is not
+        //   written exactly once in the function
         crate::rewrite_census::fired("R-WorkPark", n);
         out
     }
@@ -1707,6 +1709,9 @@ impl<'a> FnWriter<'a> {
                     self.line(ind, &format!("{name} = {};", as_int(e)?));
                     self.line(ind, &format!("{name}_set = 1;"));
                     self.hoisted_memos.insert(name.clone());
+                    // @decline-owed: a chain the loop rebinds an operand of, or lets one escape
+                    //   (a by-reference or fn-ref argument, a tuple destination, an iterator
+                    //   variable)
                     crate::rewrite_census::fired("R-Invariant/hoist", 1);
                 }
                 let memo = std::rc::Rc::new((name, ch.chain));
@@ -1824,6 +1829,9 @@ impl<'a> FnWriter<'a> {
                 "loft_ph {h} = {{ {{ 0xFFFF, 0, 0, 0 }}, 0, 0, 0, 0 }};"
             ));
             self.line(ind, &format!("{h} = loft_ph_of({}, {size});", as_ref(e)?));
+            // @decline-owed: a loop with a store write that is no in-place set and no push of a
+            //   fusable scalar kind to a pure path, and a pushed path another holder could
+            //   alias (`(R-Alias)`)
             crate::rewrite_census::fired("R-Push", 1);
             if based {
                 crate::rewrite_census::fired("R-Push/sole", 1);
@@ -2792,6 +2800,8 @@ impl<'a> FnWriter<'a> {
                 let size = Self::literal(size, "element size")?;
                 if let Some(i) = self.counter_index(idx, &h) {
                     let proof = self.held_proof(v, &h);
+                    // @decline-owed: a loop that grows a store — a push or a mint, through a
+                    //   push header or not — keeps its headers without the base address
                     crate::rewrite_census::fired("R-Base/counter", 1);
                     return Ok(Some(E::new(
                         format!("({proof}, loft_vh_at_ref({h}, {size}, {i}))"),
@@ -5219,6 +5229,8 @@ impl<'a> FnWriter<'a> {
             self.line(ind, &format!("loft_park_take(&{slot}, &{var});"));
         }
         if !parked.is_empty() {
+            // @decline-owed: a function value whose call answers no record, and a target that
+            //   takes no hidden record buffer (it is passed null as before)
             crate::rewrite_census::fired("R-FnRefBuffer/frame", parked.len());
         }
         self.loop_stmt_inner(b, ind)?;
@@ -6373,6 +6385,9 @@ impl<'a> FnWriter<'a> {
                 u32::from(tab.separator)
             ),
         );
+        // @decline-owed: a separator that is no character constant or is the null character; a
+        //   target that is no plain local bound once; a mention of it the table cannot answer,
+        //   or one outside the binding block or ahead of the bind
         crate::rewrite_census::fired("R-SplitTable", 1);
         self.flush(ind);
         Ok(())
@@ -7250,6 +7265,8 @@ impl<'a> FnWriter<'a> {
         self.cx.name_types();
         let buf = self.var(a.buf);
         let clear = if self.clear_releases_nothing(&Value::Var(a.buf)) {
+            // @decline-owed: a clear whose vector shape or element type the release arm's gate
+            //   does not cover: elements that own no heap take the plain length reset
             crate::rewrite_census::fired("H-ClearRelease/plain", 1);
             format!("loft_vec_clear({buf})")
         } else {
@@ -7427,6 +7444,9 @@ impl<'a> FnWriter<'a> {
                     && w != target
                 {
                     self.line(ind, &format!("loft_text_move(&{target}, &{w});"));
+                    // @decline-owed: a callee with a return that is not its `&text` work buffer
+                    //   or the null text, and a call whose view is read outside its statement
+                    //   or beside another write of the buffer
                     crate::rewrite_census::fired("R-BufferReturn/bind", 1);
                     return Ok(());
                 }

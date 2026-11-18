@@ -1152,6 +1152,8 @@ pub fn rewrite_program(data: &mut Data) -> usize {
             total += n;
         }
     }
+    // @decline-owed: a statement with a call that is no pure operator, and discharge blocks
+    //   whose read, conversion test or default differ
     crate::rewrite_census::fired("R-SameRead", total);
     total
 }

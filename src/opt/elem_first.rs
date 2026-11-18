@@ -163,6 +163,9 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
                 eprintln!("[ir-elem-first] fn={} pair {dest}", data.def(d).name());
             }
         }
+        // @decline-owed: a vector consumed more than once or other than as a record-literal
+        //   field of an append; a declaration or append that is not top-level in the same
+        //   statement list (the rule's gates)
         crate::rewrite_census::fired("R-ElemFirst", n);
         total += n;
     }

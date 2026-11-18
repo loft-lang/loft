@@ -134,6 +134,10 @@ impl Output<'_> {
     ) -> std::io::Result<()> {
         let group = self.plan.sw.producers[&pd].groups[&addr(&operators[vnr])].clone();
         let fields = self.plan.sw.twins[k].1.clone();
+        // @decline-owed: a result vector named beyond its buffer plumbing, appends and return;
+        //   a field the body reads that some append leaves unset or that is no integer, float,
+        //   single or text; a body that names the vector, index or element other than as a
+        //   field read, or leaves the walk; a producer or body that is not quiet
         crate::rewrite_census::fired("R-StreamWalk", 1);
         self.indent(w)?;
         writeln!(w, "{{ //@FR-R-StreamWalk yield")?;

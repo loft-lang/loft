@@ -221,6 +221,9 @@ fn guarded(r: Rebuild, original: Vec<Value>, cx: &Cx) -> Value {
         Form::Keep { lo, hi } => (lo, hi),
         Form::Prepend { g } => return prepended(r.place, g, r.elem_tp, r.t, original, cx),
     };
+    // @decline-owed: a temporary not declared `[]` or filled by more than appends of the
+    //   place's own elements in non-decreasing index order; an append that could write a slot
+    //   before its old value is read; the place written or viewed before the bind
     crate::rewrite_census::fired("R-Compact", 1);
     if crate::keys::trace_compact() {
         eprintln!(

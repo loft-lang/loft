@@ -412,6 +412,8 @@ impl<'a> FnWriter<'a> {
                 &mut *self.cx.gen_bodies.borrow_mut(),
                 format_args!("\n{sig} {{\n{body}}}\n"),
             );
+            // @decline-owed: an early exit whose arm names a local the helper cannot be handed, and a
+            //   helper the function does not call (`COLD_ESCAPED`)
             crate::rewrite_census::fired("R-Cold/loft", 1);
         }
         Ok(())

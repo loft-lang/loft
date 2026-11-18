@@ -995,6 +995,9 @@ impl Output<'_> {
                     writeln!(w)?;
                     self.indent(w)?;
                     write!(w, "}}")?;
+                    // @decline-owed: a moving holder beside a root that is not exclusive — a
+                    //   parameter beside a return buffer the caller offered, a `&` link, a
+                    //   view, a captured local
                     crate::rewrite_census::fired("R-Alias/versioned", 1);
                 } else {
                     self.in_distinct_copy = true;
@@ -1665,6 +1668,8 @@ impl Output<'_> {
         )
         .and_then(|rec| self.plan.value_records.types.get(&rec))
         .map(|t| t.fields.clone());
+        // @decline-owed: a dispatch group with an arm `(R-ValueRecord)` declines, which keeps
+        //   the record form for every arm of that signature
         crate::rewrite_census::fired("R-FnRefValue", usize::from(value_fields.is_some()));
         let heap_return = value_fields.is_none()
             && matches!(
@@ -1932,6 +1937,9 @@ impl Output<'_> {
                             Some(i) => lent[i].1 += 1,
                             None => lent.push((tp, 1)),
                         }
+                        // @decline-owed: a vector local whose element is no scalar, and one
+                        //   with a mention — its own or an alias's — that is no in-place vector
+                        //   operator (it is returned, stored, handed on or rebound)
                         crate::rewrite_census::fired("R-WorkBuffer/lent", 1);
                         synthetic.push(Value::RawExpr(format!(
                             "__fwb.lend({}, {k}_u32)",
@@ -3525,6 +3533,9 @@ impl Output<'_> {
                 self.data.def(self.def_nr).name()
             );
         }
+        // @decline-owed: a dying vector read between its death and the build, one whose owner
+        //   is not its only holder, a death that does not precede the build on every path, and
+        //   a build that is not from empty in the same store
         crate::rewrite_census::fired("R-HandOver/rotate", 1);
         Ok(())
     }
@@ -3698,6 +3709,8 @@ impl Output<'_> {
         )?;
         self.indent(w)?;
         writeln!(w, "}}")?;
+        // @decline-owed: a literal assigned to a place the rule's forms do not cover (not an
+        //   element or a field of an existing record), which builds the temporary and copies
         crate::rewrite_census::fired("R-InPlaceLiteral/keyed", 1);
         Ok(())
     }
@@ -4723,6 +4736,9 @@ impl Output<'_> {
                         rl.size, rl.count
                     )?;
                     self.indent += 1;
+                    // @decline-owed: a return buffer with a mint that heads no covering literal
+                    //   group, and a type that is not refillable (a field owning heap other
+                    //   than a vector of heap-free elements)
                     crate::rewrite_census::fired("R-RefillBuffer", 1);
                     Some((rl, first, second))
                 } else {

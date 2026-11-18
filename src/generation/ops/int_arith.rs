@@ -295,6 +295,7 @@ impl OpEmitter for IntArithEmitter {
         if !ctx.output.switches.nn_fast_disabled
             && let Some(sym) = literal_divisor_form(ctx.def_fn.name(), args)
         {
+            // @decline-owed: a literal divisor of 0 or -1, which keeps the guarded template
             crate::rewrite_census::fired("R-LitDiv", 1);
             write!(ctx.w, "{{ let _d = (")?;
             ctx.emit(&args[0])?;

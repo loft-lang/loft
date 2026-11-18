@@ -318,6 +318,9 @@ fn proven_params(data: &Data) -> std::rc::Rc<HashMap<u32, Vec<bool>>> {
     let mut assumed = as_flags(&shape, &proven);
     RETURNS.with(|m| m.borrow_mut().clear());
     assumed.retain(|_, f| f.iter().any(|x| *x));
+    // @decline-owed: a function taken as a value or never called directly, a parameter the body
+    //   rebinds or lends, and a parameter one call site passes an argument the proof does not
+    //   accept
     crate::rewrite_census::fired(
         "R-NonSentinelParam",
         assumed
@@ -612,6 +615,7 @@ fn greatest_integer_locals(
             break;
         }
     }
+    // @decline-owed: an inclusive range whose end is not a literal below the type's maximum
     crate::rewrite_census::fired("R-Counter/probe", assumed.len());
 }
 

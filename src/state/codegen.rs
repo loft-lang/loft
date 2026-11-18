@@ -161,6 +161,8 @@ impl State {
             BIND_FN_START.with(|s| s.set(self.code_pos));
         }
         // `@FR-R-LoopSlot`: the loop variables this frame places in their range index's slot.
+        // @decline-owed: a loop variable written by more than its iterator's one `Set` or taken
+        //   by address, and a body that writes the hidden index or takes its address
         crate::rewrite_census::fired("R-LoopSlot", super::slot_aliases(data, def_nr).len());
         let logging =
             !crate::file_access::is_stdlib_source(data.def(def_nr).position().file.as_str());
@@ -1220,6 +1222,9 @@ impl State {
                         eprintln!("start-step: {} {} {verdict}", f.name, f.name(lv));
                     }
                     if holds {
+                        // @decline-owed: a range loop that does not rotate, and one where a
+                        //   statement after the iterator names `next` or `i#index` (unless the
+                        //   loop variable shares the index's slot)
                         crate::rewrite_census::fired("R-StartStep", 1);
                         s
                     } else {
@@ -1228,6 +1233,7 @@ impl State {
                 }
                 None => r,
             };
+            // @decline-owed: a loop whose first statement carries no exit test keeps its layout
             crate::rewrite_census::fired("R-Rotate", 1);
             return self.gen_rotated_loop(lp, &r, stack);
         }
@@ -1807,6 +1813,9 @@ impl State {
         if !bound {
             return None;
         }
+        // @decline-owed: a borrow return; a buffer delivered from more than one local or
+        //   serving anything else; a result local rebound, captured or not bound once from its
+        //   own witness
         crate::rewrite_census::fired("R-RetAdopt", 1);
         Some(a)
     }
@@ -1942,7 +1951,13 @@ impl State {
                 .collect()
         };
         let slices = marked.iter().filter(|v| store.slices.contains(v)).count();
+        // @decline-owed: a walk whose body reads the element other than as a text value,
+        //   writes, links or captures it, or — over a vector — writes a store
         crate::rewrite_census::fired("R-TextBorrow", marked.len());
+        // @decline-owed: a text local with a binding that is no value slice of a plain text
+        //   parameter or of a borrowing local, and one mentioned other than as a text value
+        //   read: a rebind to a built text, an append, a link, a `&text` argument, a tuple, a
+        //   store, a return, a capture or a yield
         crate::rewrite_census::fired("R-SliceBorrow", slices);
         for v in marked {
             data.def_mut(def_nr).variables.mark_text_view(v);
@@ -4436,6 +4451,8 @@ impl State {
             && let (Ok(n), Ok(sz)) = (u32::try_from(*n), u32::try_from(*sz))
             && n == crate::vector::grown_elems(1, sz)
         {
+            // @decline-owed: a reservation of any count but the append's own first claim, which
+            //   decides the first block and is kept
             crate::rewrite_census::fired("R-FirstClaim", 1);
             return Type::Void;
         }
@@ -5123,6 +5140,8 @@ impl State {
         }
         let code_step = self.code_pos;
         self.code_add(0i32); // temp step
+        // @decline-owed: an integer operator with an operand that is neither a frame local nor
+        //   a literal, and a position the fused forms do not cover
         crate::rewrite_census::fired("R-Fuse/text", 1);
         Some(code_step)
     }

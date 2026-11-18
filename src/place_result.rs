@@ -190,6 +190,9 @@ fn admitted(data: &Data, d_nr: u32, code: &Value, ops: &Ops, mode: Mode) -> Vec<
         match admit(data, d_nr, top, idx, *v, *fn_nr, args, ops, mode) {
             Ok(plan) => {
                 if mode != Mode::Preview {
+                    // @decline-owed: a base that two parameters, or a parameter and the return
+                    //   buffer, could share; a chain that forks or leaves the table; any growth
+                    //   under `LOFT_NO_DISTINCT_GROWTH`
                     crate::rewrite_census::fired("R-Place", 1);
                 }
                 if crate::keys::trace_place() {

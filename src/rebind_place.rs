@@ -168,6 +168,9 @@ fn visit(v: &mut Value, data: &Data, d_nr: u32, facts: &Facts, pos: &mut usize) 
                 .any(|a| matches!(a.unspan(), Value::Var(v) if *v == x));
             match admit(data, d_nr, here, x, f, args, facts) {
                 Ok(b) => {
+                    // @decline-owed: a target that is a parameter, a view, a link, a witnessed
+                    //   local or a nullable that may be absent; another argument that reaches
+                    //   its store; a view of it live across the call
                     crate::rewrite_census::fired("R-Rebind", 1);
                     if crate::keys::trace_rebind() {
                         eprintln!(

@@ -3166,6 +3166,8 @@ impl Output<'_> {
         let g = parts.concat();
         self.indent(w)?;
         writeln!(w, "{g}")?;
+        // @decline-owed: a loop whose admitted operators the static proof already covers, and a
+        //   chain or index the guard's leaves cannot bound
         crate::rewrite_census::fired("R-GuardedChain", 1);
         crate::rewrite_census::fired("R-GuardedChain/operators", admitted.len());
         if self.chain_trace {
@@ -3272,6 +3274,10 @@ impl Output<'_> {
         let Some(hdr) = self.active_vec_header(&f.path).map(str::to_owned) else {
             return Ok(false);
         };
+        // @decline-owed: a loop whose body is more than one in-place scalar set at field 0 of a
+        //   held plain scalar vector, an index that is not the loop variable or an invariant
+        //   plus it, a value or bound that is not invariant; at run time, an index outside [0,
+        //   len) or an empty range runs the per-element loop
         crate::rewrite_census::fired("R-Fill", 1);
         let variables = self.data.def(self.def_nr).variables();
         let idx = format!("var_{}", sanitize(variables.name(f.index_var)));
@@ -4604,6 +4610,9 @@ impl Output<'_> {
             "let mut {name} = codegen_runtime::FileCursor::<{check}>::hold(cell, {operand});"
         )?;
         self.indent(w)?;
+        // @decline-owed: a loop naming another variable that can hold a `File`, a mention of
+        //   the file that is no typed read's operand, and a loop with a call through a function
+        //   value, a function value built, a `yield` or a parallel body
         crate::rewrite_census::fired("R-FileHold", 1);
         self.file_holds.push((f, name));
         Ok(true)
@@ -4782,6 +4791,8 @@ impl Output<'_> {
         }
         self.vec_headers.push(HashMap::from([(path, name)]));
         self.vec_bases.push(bases);
+        // @decline-owed: a view whose remaining block fails `(R-InPlace)`, rebinds the view, or
+        //   never indexes it
         crate::rewrite_census::fired("R-View", 1);
         Ok(true)
     }
@@ -5788,6 +5799,9 @@ impl Output<'_> {
         frame.insert(path, name);
         self.mint_push_headers.push(frame);
         self.group_ends.push((block, end));
+        // @decline-owed: a mint group whose path already holds a push header, a mint
+        //   `(R-PushRec)` does not admit, and a statement inside the group the header admission
+        //   refuses (the vector rebound, minted or reserved outside the count)
         crate::rewrite_census::fired("R-GroupPush", 1);
         Ok(())
     }
@@ -12105,7 +12119,11 @@ extern crate loft;"
                     && !self.switches.leaf_chain_disabled
                     && self.is_frameless_chain(def_nr);
                 let leaf = plain_leaf || chain_leaf;
+                // @decline-owed: a function that calls a user function or a fn-ref keeps its
+                //   frame
                 crate::rewrite_census::fired("R-Leaf", usize::from(plain_leaf));
+                // @decline-owed: a call tree that reaches a native user-level callee, a cycle,
+                //   a fn-ref call, a `parallel` or a yield; and every tier but the lean one
                 crate::rewrite_census::fired("R-LeafChain", usize::from(chain_leaf));
                 // @PLN157 — a leaf carries no fn-ref buffer guard either: it calls no
                 // user function and no fn-ref, so it can neither push a buffer nor sit
@@ -12122,6 +12140,9 @@ extern crate loft;"
                 let guard_free = leaf
                     || (!self.switches.guard_free_disabled
                         && self.guard_free.is_guard_free(self.data, def_nr));
+                // @decline-owed: a function whose call graph reaches a fn-ref call, a
+                //   `parallel`, a `yield`, an `OpFreeRefOrHandUp`, or a bodiless callee that is
+                //   a user's native or takes a fn-ref
                 crate::rewrite_census::fired("R-GuardFree", usize::from(guard_free && !leaf));
                 let fnref_guard = if guard_free {
                     String::new()

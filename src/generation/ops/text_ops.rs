@@ -203,6 +203,8 @@ pub(crate) fn fold_compare_on() -> bool {
 impl OpEmitter for FoldCompareEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
         if let Some(site) = ctx.output.fold_compare_site(args) {
+            // @decline-owed: a fold with another mention: a bind read elsewhere, a return, a
+            //   link, a capture, or an operator that does not read it as a text value
             crate::rewrite_census::fired("R-FoldCompare", 1);
             if std::env::var_os("LOFT_TRACE_FOLD_COMPARE").is_some() {
                 eprintln!(

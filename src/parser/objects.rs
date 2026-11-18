@@ -3979,6 +3979,8 @@ impl Parser {
             parts.insert(0, lit);
         }
         if !self.first_pass {
+            // @decline-owed: a hole that reads the appended text itself, a part that is no
+            //   format-family write on the work text, and a target that is no text variable
             crate::rewrite_census::fired("R-FormatAppend", 1);
         }
         if traced {

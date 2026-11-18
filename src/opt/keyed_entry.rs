@@ -490,6 +490,9 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
                 data.def(d).name()
             );
         }
+        // @decline-owed: a hash whose key is not one integer-width part, two to four integer
+        //   parts, or one text that is the record's only heap; a record with other heap; a
+        //   literal that leaves a field unwritten; a record a linked group holds
         crate::rewrite_census::fired("R-KeyedEntry", n);
         crate::rewrite_census::fired("R-KeyedEntry/subscript", subscripts);
         total += n + subscripts;

@@ -1262,9 +1262,19 @@ pub fn rewrite_program(data: &mut Data) -> usize {
             crate::scopes::assign_function_slots(data, caller);
         }
     }
+    // @decline-owed: a callee that is no scalar leaf: a non-scalar or nullable parameter, local
+    //   or result; a body node beyond assignments, operators, `if` and blocks; no final
+    //   `return`; more than 120 nodes
     crate::rewrite_census::fired("R-InlineLeaf", calls);
+    // @decline-owed: a mask whose operand `(R-Range)` cannot place in `0 ..= m`, and a nullable
+    //   division whose dividend is not ranged or whose divisor is not a finite non-zero literal
     crate::rewrite_census::fired("R-MaskRange", masks);
+    // @decline-owed: a last assignment whose local the result reads more than once, or not as
+    //   the first thing it evaluates
     crate::rewrite_census::fired("R-SingleUse", singles);
+    // @decline-owed: a scale whose divisor is not a finite non-zero literal under 2^1021, whose
+    //   factor is no power of two of at least 2, or whose folded divisor is inexact or
+    //   subnormal
     crate::rewrite_census::fired("R-ScaleFold", scales);
     calls
 }

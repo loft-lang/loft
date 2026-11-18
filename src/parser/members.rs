@@ -521,6 +521,8 @@ impl Parser {
         let mut absent_ops = vec![v_set(fresh, new_child)];
         absent_ops.extend(writes.iter().map(|w| swap(w, fresh)));
         let is_null = self.cl("OpRefIsNull", &[Value::Var(r)]);
+        // @decline-owed: a literal whose out-of-line field is not the whole old value of its
+        //   own destination, or that has more than one such field
         crate::rewrite_census::fired("R-Demote/place", 1);
         Some(v_block(
             vec![
@@ -590,6 +592,8 @@ impl Parser {
             return None;
         }
         let src = self.child_chain_of(field, val)?;
+        // @decline-owed: a whole write into an out-of-line field whose value is not a chain of
+        //   child reads rooted at that field's own child, which keeps the copying set
         crate::rewrite_census::fired("R-MoveChild", 1);
         Some(self.cl("OpMoveChildRec", &[field.clone(), src, Value::Int(kt)]))
     }

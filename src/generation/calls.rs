@@ -225,6 +225,9 @@ impl Output<'_> {
         if !self.ap_requests.contains(&key) {
             self.ap_requests.push(key);
         }
+        // @decline-owed: a loop that names the buffer or a view of it other than as an append's
+        //   destination (a read, a length, a rebind, a fn-ref call through it), or that can
+        //   leave by a `return` or a jump past itself; a callee with no window twin
         crate::rewrite_census::fired("R-AppendTwin", 1);
         true
     }
@@ -241,6 +244,9 @@ impl Output<'_> {
             if !self.dest_requests.contains(&key) {
                 self.dest_requests.push(key);
             }
+            // @decline-owed: a call whose result is consumed other than by moving its one heap
+            //   field into a fresh element and reading its scalars; a heap field that is not at
+            //   offset 0
             crate::rewrite_census::fired("R-Destination", 1);
         }
         dest
@@ -267,6 +273,9 @@ impl Output<'_> {
         if !self.vr_requests.contains(&key) {
             self.vr_requests.push(key);
         }
+        // @decline-owed: a function that writes a store it did not mint, or that fails another
+        //   of the twin's conditions (the rule's `ALL of` list); a call site that cannot take
+        //   the (address, owned) pair
         crate::rewrite_census::fired("R-ViewReturn", 1);
         let flag = self.vr_flag_pending.take().unwrap_or_default();
         write!(w, "{{ let __vr = {}__vr(cell", self.fn_ident(def_fn))?;
@@ -334,6 +343,9 @@ impl Output<'_> {
         } else {
             None
         };
+        // @decline-owed: a callee `(R-Callee)` does not admit, a parameter it rebinds, a field
+        //   its own write set reaches, and a caller loop that does not hold the argument's
+        //   value
         crate::rewrite_census::fired("R-Inputs", usize::from(twin_args.is_some()));
         // @PLN164 E-1 — a FORWARD (`hoist::forward_site`): the call's value is the buffer it
         // was handed, with the tuple written into it as the callee's record form would have.
@@ -527,6 +539,8 @@ impl Output<'_> {
         // (`(R-RefillBuffer)`) — and any emission of it that does not mints over the live
         // buffer, which clears its store — so neither a twin nor the release is owed.
         if self.refill_text.vectors.contains(&(vals.as_ptr() as usize)) {
+            // @decline-owed: a result buffer that is no pooled call buffer, and a callee with
+            //   no refill twin (`(R-Reuse)`'s conditions on its type and its exits)
             crate::rewrite_census::fired("R-RefillText", 1);
             return Ok((false, false));
         }

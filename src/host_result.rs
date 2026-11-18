@@ -97,6 +97,9 @@ pub fn rewrite_program(data: &mut Data) -> usize {
                 crate::scopes::compute_function_intervals(data, d_nr);
                 crate::scopes::assign_function_slots(data, d_nr);
                 let _census = crate::rewrite_census::InBody::enter("ir", data.def(d_nr).name());
+                // @decline-owed: a write-back whose callee answers something other than its
+                //   argument or its return buffer on some return, or uses that buffer as more
+                //   than a buffer
                 crate::rewrite_census::fired("R-HostStore", 1);
                 total += 1;
             }

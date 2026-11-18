@@ -314,6 +314,9 @@ fn rewrite_in(
             if let Value::Block(fb) = block.operators[k].unspan_mut() {
                 let dropped = rewrite_for(data, ops, vars, fb, Some(alias), fname);
                 if local {
+                    // @decline-owed: a body that can resize the vector or assign the counter
+                    //   (`(R-ForwardWalk)`'s body check), and a scalar element, whose `?` also
+                    //   discharges a null value
                     crate::rewrite_census::fired("R-InRange/length-local", dropped);
                 }
                 n += dropped;

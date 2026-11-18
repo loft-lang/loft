@@ -834,6 +834,9 @@ impl OpEmitter for NewRecordEmitter {
             if args.len() == 3
                 && let Some((pos, elem, size)) = field_append(ctx.output, &args[1], &args[2])
             {
+                // @decline-owed: a mint group in a loop `(R-PushRec)` admits or under a push
+                //   header, a parent that is no struct, and a field that is no plain vector or
+                //   that a sibling collection shares
                 crate::rewrite_census::fired("R-FieldAppend", 1);
                 write!(ctx.w, "stores.field_vector_append::<{}>(&(", !no_prefill)?;
                 ctx.emit(&args[0])?;
@@ -1037,6 +1040,9 @@ impl OpEmitter for KeepRangeEmitter {
         let tp_lit = ctx
             .output
             .type_lit_u16(u16::try_from(*tp).unwrap_or(u16::MAX));
+        // @no-decline: a keep-range refreshes the push header its path holds; a path that holds
+        //   none has nothing to refresh and is no site (the gate rules decide what may hold
+        //   one)
         crate::rewrite_census::fired("R-Refresh", 1);
         let verify = verify(ctx);
         write!(ctx.w, "{{ let _kl: i64 = (")?;

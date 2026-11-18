@@ -64,6 +64,9 @@ impl Output<'_> {
             return None;
         }
         if !vecs.is_empty() {
+            // @decline-owed: a value observed as a store value before its boundary, and a shape
+            //   outside the rule's instances (for the float-vector record: a field that is no
+            //   fixed-length `vector<float>`)
             crate::rewrite_census::fired("R-Apart/vector", vecs.apart.len());
         }
         if !recs.is_empty() && !self.apr_twin {

@@ -179,6 +179,9 @@ impl super::Output<'_> {
         if !self.rg_emitted.contains(&key) && !self.rg_requests.contains(&key) {
             self.rg_requests.push(key);
         }
+        // @decline-owed: a block with no hoisted integer field or guard variable, a field the
+        //   loop writes, a variable the block assigns or the function lends by reference, and a
+        //   copy that gains nothing (the gain test)
         crate::rewrite_census::fired("R-RangedCall", 1);
         true
     }
