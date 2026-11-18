@@ -66,7 +66,13 @@ pub fn fn_end(e: el::El, vars: el_vars::Vars, d: integer) {
   def = el::def(e, d);
   f = el_vars::stored(vars);
   head = "state {if e.first_pass { 1 } else { 2 }} {def.position.line}:{def.position.pos} fn-end {def.name}";
-  eprintln("{head} ret={report::type_show_in(e.b, f, def.returned[0] ?? ir::TyVoid)}");
+  // `LOFT_STATE_TRACE_CONTROL`: the gate's positive control (`elab_gate.py --pass1`) — the first
+  // pass's result is printed as a type no function has, so the comparison must read a differ.
+  if e.first_pass && len(env_variable("LOFT_STATE_TRACE_CONTROL")) > 0 {
+    eprintln("{head} ret=(control)");
+  } else {
+    eprintln("{head} ret={report::type_show_in(e.b, f, def.returned[0] ?? ir::TyVoid)}");
+  }
   for v in f.variables {
     eprintln("{head} var {v#index} {v.name}={report::type_show_in(e.b, f, v.type_def[0] ?? ir::TyVoid)}");
   }

@@ -94,6 +94,53 @@ def sections(lines):
     return out
 
 
+FN_END = re.compile(r"^state 1 \d+:\d+ fn-end (.+?) (?:ret=|var \d+ )")
+
+# `--pass1` (elaborator-instruments.md § 1): each program's first-pass verdict by function,
+# filled by `one` when the state trace is on: path -> {function: (verdict, first differing
+# line of each side)}.
+PASS1 = {}
+
+
+def pass1_sections(stderr):
+    """The FIRST pass's state lines by function: {name: its lines}.  A function's lines are the
+    ones up to and including its `fn-end` group; a lambda's `fn-end` therefore also closes the
+    lines its enclosing function printed before it — the comparison is of both sides cut alike,
+    so a difference is still found, under the lambda's name.  Lines after the last `fn-end`
+    are `(top)`."""
+    out, cur, name = {}, [], None
+    for l in stderr.splitlines():
+        if not l.startswith("state 1 "):
+            continue
+        m = FN_END.match(l)
+        if name is not None and (m is None or m.group(1) != name):
+            out.setdefault(name, []).extend(cur)
+            cur, name = [], None
+        cur.append(l)
+        if m:
+            name = m.group(1)
+    if cur:
+        out.setdefault(name if name is not None else "(top)", []).extend(cur)
+    return out
+
+
+def pass1_verdicts(rust, port, compared):
+    """`pass1-agree` or `pass1-differ` for each function of `compared` (None: every function
+    either side printed), with the first differing line of each side."""
+    a, b = pass1_sections(rust), pass1_sections(port)
+    out = {}
+    for name in sorted(set(a) | set(b)):
+        if compared is not None and name not in compared:
+            continue
+        x, y = a.get(name, []), b.get(name, [])
+        if x == y:
+            out[name] = ("pass1-agree", "", "")
+            continue
+        k = next((i for i, (p, q) in enumerate(zip(x, y)) if p != q), min(len(x), len(y)))
+        out[name] = ("pass1-differ", x[k] if k < len(x) else "(no line)", y[k] if k < len(y) else "(no line)")
+    return out
+
+
 def by_function(want, mine, refused_in, program_refused):
     """Each definition's verdict (front-end-instruments.md item 2): `agree` (its section is
     Rust's), `refused` (a refusal was met in it), `beside` (it differs, holds no refusal of its
@@ -143,6 +190,7 @@ def one(loft, defs, elab, std, path, tmp, env, i):
             if os.path.exists(f):
                 os.remove(f)
     lines = m.stdout.splitlines()
+    rust_err = r.stderr.decode("utf-8", "replace") if env.get("LOFT_STATE_TRACE") else ""
     refused = [l[len("refused: "):] for l in lines if l.startswith("refused: ")]
     # `refused-in: <function>\t<line>\t<text>`: each refusal with the function it was met in.
     refused_in = {l[len("refused-in: "):].split("\t")[0] for l in lines if l.startswith("refused-in: ")}
@@ -167,6 +215,13 @@ def one(loft, defs, elab, std, path, tmp, env, i):
                             "emptied" if len(b) <= 3 < len(a) else
                             f"{abs(len(a) - len(b))} lines")
     fns = {k: (v, shapes.get(k, "")) for k, v in fns.items()}
+    if env.get("LOFT_STATE_TRACE"):
+        # The first pass is compared where the image is: every function of a program that
+        # agrees, the agreeing functions of a refused one; a differing program's is not.
+        if not refused and mine == want:
+            PASS1[path] = pass1_verdicts(rust_err, m.stderr, None)
+        elif refused:
+            PASS1[path] = pass1_verdicts(rust_err, m.stderr, {k for k, (v, _) in fns.items() if v == "agree"})
     if refused:
         return "refused", refused, fns
     if mine == want:
@@ -194,6 +249,11 @@ def main():
                     help="list the definitions BASELINE's `elab-functions` block pins that no longer agree, "
                          "with any tools and at any pin (a development cycle's early warning); exit 1 if any")
     ap.add_argument("--write-baseline", metavar="BASELINE", help="write the `elab` block of BASELINE")
+    ap.add_argument("--pass1", action="store_true",
+                    help="also compare the FIRST pass (the state trace's `state 1` lines) of every "
+                         "function whose image agrees: `pass1-agree` / `pass1-differ`, ranked by the "
+                         "kind of the first differing line; with --write-baseline / --check the "
+                         "`elab-pass1` block pins the functions that agree")
     o = ap.parse_args()
     if (o.check or o.write_baseline) and (o.files or o.part):
         sys.exit("--check and --write-baseline read the whole corpus: drop the files and --part")
@@ -254,8 +314,10 @@ def main():
     # a refused one followed by its refusals, so a grep names the programs a family blocks.
     verdicts = []
     results = {}          # machine-free program name -> verdict, the Rust-refused left out
+    # The trace is asked of the programs' runs only: the tools' own builds stay silent.
+    penv = dict(env, LOFT_STATE_TRACE="1") if o.pass1 else env
     with cf.ThreadPoolExecutor(o.jobs) as ex:
-        futs = {ex.submit(one, loft, defs, elab, std, f, tmp, env, i): (part, f)
+        futs = {ex.submit(one, loft, defs, elab, std, f, tmp, penv, i): (part, f)
                 for i, (part, f) in enumerate(todo)}
         for fut in cf.as_completed(futs):
             part, f = futs[fut]
@@ -349,6 +411,54 @@ def main():
         print(f"WHICH {k} {os.path.relpath(f, os.path.dirname(root))}")
     for f, d in sorted(differs)[:o.show]:
         print(f"DIFFER {os.path.relpath(f, os.path.dirname(root))}\n  {d}")
+    pass1 = {}            # machine-free `program::function` -> pass1 verdict
+    if o.pass1:
+        kinds, example = collections.Counter(), {}
+        programs = collections.Counter()
+        for path, fns1 in PASS1.items():
+            prog = baseline.name_of(path, root, suite)
+            programs["pass1-differ" if any(v == "pass1-differ" for v, _, _ in fns1.values()) else "pass1-agree"] += 1
+            for fname, (v, rust_line, port_line) in fns1.items():
+                pass1[f"{prog}::{fname}"] = v
+                if v == "pass1-differ":
+                    # The kind of the first differing line: its point, and for `fn-end` which fact.
+                    shown = rust_line if rust_line != "(no line)" else port_line
+                    w = shown.split(" ")
+                    kind = w[3] if len(w) > 3 else "(no line)"
+                    if kind == "fn-end":
+                        kind += " ret" if " ret=" in shown else " var"
+                    kinds[kind] += 1
+                    example.setdefault(kind, (prog, fname, rust_line, port_line))
+        pv = collections.Counter(pass1.values())
+        print(f"pass 1: {pv['pass1-agree']} of {len(pass1)} functions agree, {pv['pass1-differ']} differ; "
+              f"by program {programs['pass1-agree']} of {sum(programs.values())} agree")
+        for kind, n in kinds.most_common():
+            prog, fname, rust_line, port_line = example[kind]
+            print(f"  {n:5}  first differing at `{kind}`   e.g. {prog}::{fname}\n"
+                  f"             rust: {rust_line[:150]}\n             port: {port_line[:150]}")
+        # `LOFT_ELAB_PASS1=<file>`: each compared function's first-pass verdict and, where it
+        # differs, the first differing line of each side.
+        if os.environ.get("LOFT_ELAB_PASS1"):
+            with open(os.environ["LOFT_ELAB_PASS1"], "w", encoding="utf-8") as fh:
+                for path, fns1 in sorted(PASS1.items()):
+                    prog = baseline.name_of(path, root, suite)
+                    for fname, (v, rust_line, port_line) in sorted(fns1.items()):
+                        fh.write(f"{v}\t{prog}::{fname}\t{rust_line}\t{port_line}\n")
+        # The positive control: the layer must be able to fail.  One function that agrees is
+        # read again with the port's trace told to answer a wrong result on the first pass
+        # (`LOFT_STATE_TRACE_CONTROL`, `el_trace::fn_end`); it must read `pass1-differ`.
+        control = next((p for p, f in sorted(PASS1.items())
+                        if f and all(v == "pass1-agree" for v, _, _ in f.values())), None)
+        if control is None:
+            print("pass 1: no program agrees whole, so the positive control did not run")
+        else:
+            before = dict(PASS1[control])
+            one(loft, defs, elab, std, control, tmp, dict(penv, LOFT_STATE_TRACE_CONTROL="1"), 10 ** 6)
+            caught = any(v == "pass1-differ" for v, _, _ in PASS1[control].values())
+            PASS1[control] = before
+            if not caught:
+                sys.exit(f"pass 1: the positive control read pass1-agree on {control}: the layer cannot fail")
+            print(f"pass 1: positive control caught ({os.path.relpath(control, os.path.dirname(root))})")
     # `LOFT_ELAB_KEEP=1` keeps the built elaborator and the standard image for single runs.
     if not os.environ.get("LOFT_ELAB_KEEP"):
         shutil.rmtree(tmp, ignore_errors=True)
@@ -367,6 +477,23 @@ def main():
                 print(f"FUNCTION DROP\t{k}\t{fn_results[k]}")
             if lost:
                 print(f"elab-functions: {len(lost)} function(s) that agreed no longer agree")
+                sys.exit(1)
+    # The first-pass layer is a RATCHET: it pins the functions whose first pass agrees, names
+    # each one that stopped (`PASS1 DROP`), and fails only when fewer agree than were pinned —
+    # a `pass1-differ` that was never pinned is the worklist, not a failure.
+    p1_agree = {k: "agree" for k, v in pass1.items() if v == "pass1-agree"}
+    if o.pass1 and o.write_baseline:
+        baseline.write(o.write_baseline, pin, "elab-pass1", len(p1_agree), len(pass1), p1_agree)
+    if o.pass1 and (o.check or o.functions_against):
+        pb = baseline.read(o.check or o.functions_against).get("elab-pass1")
+        if pb is None:
+            print("the baseline has no `elab-pass1` block: write it with --pass1 --write-baseline")
+        else:
+            lost = sorted(k for k in pb[2] if pass1.get(k) == "pass1-differ")
+            for k in lost[:40]:
+                print(f"PASS1 DROP\t{k}")
+            if len(p1_agree) < pb[0]:
+                print(f"elab-pass1: {len(p1_agree)} functions agree on the first pass, {pb[0]} were pinned")
                 sys.exit(1)
     if o.write_baseline:
         baseline.write(o.write_baseline, pin, "elab", tot["agree"], total,

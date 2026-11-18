@@ -63,7 +63,7 @@ jobs:
           # the tools unoptimised; the verdicts do not change with the build.
           free -g | sed -n 2p
           LOFT_ELAB_BUILD_JOBS=1 LOFT_ELAB_TOOL_BUILD=${{ inputs.tools || 'ship' }} LOFT_ELAB_VERDICTS=target/elab-verdicts.tsv \
-            python3 selfhost/front/elab_gate.py --jobs 4 --plan \
+            python3 selfhost/front/elab_gate.py --jobs 4 --plan --pass1 \
             --write-baseline selfhost/front/elab_gate.baseline.tsv | tee target/elab-gate.txt
           git diff --stat -- selfhost/front/elab_gate.baseline.tsv
       - name: Upload the baseline and the verdicts
