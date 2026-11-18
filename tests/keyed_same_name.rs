@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 //! Two libraries that each declare a struct of one NAME, with other fields, each key their own
-//! collections: a `hash<Nm[k]>`, a `sorted<Nm[n]>` and an `index<Nm[n]>`, as a local and as a
-//! struct field, answer the library's own records whichever library is loaded first.
+//! collections: a `hash<Nm[k]>`, a `sorted<Nm[n]>`, an `index<Nm[n]>`, a `trie<Nm[w]>` and a
+//! `spatial<Pt[x, y]>`, as a local and as a struct field, answer the library's own records whichever library is loaded first.
 //!
 //! The schema registers the second library's struct source-qualified, and its collections
 //! with it; `StoreTypeOf::keyed_type` looked a collection up by the element's DEFINITION name
@@ -14,7 +14,10 @@
 //!   CHANNEL: value (the printed line against the hand-computed one), on both backends.
 //!   ARMED: nothing to arm.
 //!   WITNESS: loaded second, `rb` answers `-1 110 77 …` and `-1 55 66` (its hash reads miss);
-//!   loaded second, `ra` answers `miss s10 i7 …` and `miss f5 f6`.
+//!   loaded second, `ra` answers `miss s10 i7 …` and `miss f5 f6`.  The trie and spatial cells
+//!   were scored on installed main (6ee97714d), which holds the defect: loaded second, `tb`
+//!   answers `-1 0/0 3 -1 0/0 3 | -1 -1` — every lookup and every range walk misses, the
+//!   lengths hold.
 //!   HOLDS: each library alone answers its line on both trees.
 
 const RA: &str = r#"#package
@@ -73,16 +76,63 @@ fn have_cc() -> bool {
         .is_ok_and(|o| o.status.success())
 }
 
-#[test]
-fn each_library_keys_its_own_struct_of_a_shared_name() {
-    let dir = std::env::temp_dir().join(format!("loft-keyed-same-name-{}", std::process::id()));
+const TA: &str = r#"#package
+struct Nm { w: text, v: text }
+struct Pt { x: integer, y: integer, n: integer, v: text }
+struct Box { t: trie<Nm[w]>, s: spatial<Pt[x, y]> }
+fn walk(t: trie<Nm[w]>, pre: text) -> text { o = ""; for e in t[pre..] { o += e.v; } o }
+fn inbox(s: spatial<Pt[x, y]>) -> text { c = 0; sum = 0; for p in s[(0, 0)..(7, 7)] { c += 1; sum += p.n; } "{c}/{sum}" }
+pub fn a_local() -> text {
+  t: trie<Nm[w]> = [Nm { w: "apple", v: "va" }, Nm { w: "apex", v: "vx" }, Nm { w: "bob", v: "vb" }];
+  s: spatial<Pt[x, y]> = [Pt { x: 1, y: 2, n: 10, v: "p12" }, Pt { x: 5, y: 6, n: 20, v: "p56" }, Pt { x: 9, y: 9, n: 40, v: "p99" }];
+  "{t["apex"].v ?? "miss"} {walk(t, "ap")} {len(t)} {s[5, 6].v ?? "miss"} {inbox(s)} {len(s)}"
+}
+pub fn a_field() -> text {
+  b = Box { t: [Nm { w: "cat", v: "fc" }], s: [Pt { x: 3, y: 4, n: 7, v: "f34" }] };
+  "{b.t["cat"].v ?? "miss"} {b.s[3, 4].v ?? "miss"}"
+}
+"#;
+
+const TB: &str = r#"#package
+struct Nm { v: integer, w: text }
+struct Pt { n: integer, y: integer, x: integer }
+struct Box { t: trie<Nm[w]>, s: spatial<Pt[x, y]> }
+fn walk(t: trie<Nm[w]>, pre: text) -> text { c = 0; sum = 0; for e in t[pre..] { c += 1; sum += e.v; } "{c}/{sum}" }
+fn inbox(s: spatial<Pt[x, y]>) -> text { c = 0; sum = 0; for p in s[(0, 0)..(7, 7)] { c += 1; sum += p.n; } "{c}/{sum}" }
+pub fn b_local() -> text {
+  t: trie<Nm[w]> = [Nm { v: 1, w: "apple" }, Nm { v: 2, w: "apex" }, Nm { v: 4, w: "bob" }];
+  s: spatial<Pt[x, y]> = [Pt { n: 100, y: 2, x: 1 }, Pt { n: 200, y: 6, x: 5 }, Pt { n: 400, y: 9, x: 9 }];
+  "{t["apex"].v ?? -1} {walk(t, "ap")} {len(t)} {s[5, 6].n ?? -1} {inbox(s)} {len(s)}"
+}
+pub fn b_field() -> text {
+  b = Box { t: [Nm { v: 8, w: "cat" }], s: [Pt { n: 70, y: 4, x: 3 }] };
+  "{b.t["cat"].v ?? -1} {b.s[3, 4].n ?? -1}"
+}
+"#;
+
+/// What `ta` answers: `t["apex"]`, the `ap` prefix walk in key order, the trie's length, the
+/// point at (5, 6), the count and sum of the points in the box (0, 0)..(7, 7), the length;
+/// then an exact read of each through a struct's fields.
+const TRIE_A: &str = "vx vxva 3 p56 2/30 3 | fc f34";
+/// What `tb` answers: the same reads over its own layouts (the prefix walk as count/sum).
+const TRIE_B: &str = "2 2/3 3 200 2/300 3 | 8 70";
+
+/// `first` and `second` as libraries `a` and `b`, loaded in both orders on both backends: the
+/// line `call` prints is `want` each time.
+fn both_orders(tag: &str, libs: [(&str, &str); 2], call: &str, want: &str) {
+    let dir = std::env::temp_dir().join(format!("loft-keyed-{tag}-{}", std::process::id()));
     let lib = dir.join("lib");
     loft::file_access::create_dir_all(&lib).unwrap();
-    loft::file_access::write(lib.join("ra.loft"), RA).unwrap();
-    loft::file_access::write(lib.join("rb.loft"), RB).unwrap();
-    for (name, uses) in [("ab", "use ra;\nuse rb;\n"), ("ba", "use rb;\nuse ra;\n")] {
+    for (name, src) in libs {
+        loft::file_access::write(lib.join(format!("{name}.loft")), src).unwrap();
+    }
+    let (a, b) = (libs[0].0, libs[1].0);
+    for (name, uses) in [
+        ("ab", format!("use {a};\nuse {b};\n")),
+        ("ba", format!("use {b};\nuse {a};\n")),
+    ] {
         let prog = dir.join(format!("{name}.loft"));
-        loft::file_access::write(&prog, format!("{uses}{CALL}")).unwrap();
+        loft::file_access::write(&prog, format!("{uses}{call}")).unwrap();
         for mode in ["--interpret", "--native-c"] {
             if mode == "--native-c" && !have_cc() {
                 continue;
@@ -97,13 +147,34 @@ fn each_library_keys_its_own_struct_of_a_shared_name() {
             let err = String::from_utf8_lossy(&o.stderr);
             assert_eq!(
                 String::from_utf8_lossy(&o.stdout),
-                format!("{A} | {B}\n"),
-                "{name} {mode}: {err}"
+                format!("{want}\n"),
+                "{tag} {name} {mode}: {err}"
             );
             assert!(
                 o.status.success() && !err.contains("stores not freed"),
-                "{name} {mode}: {err}"
+                "{tag} {name} {mode}: {err}"
             );
         }
     }
+}
+
+#[test]
+fn each_library_keys_its_own_struct_of_a_shared_name() {
+    both_orders(
+        "same-name",
+        [("ra", RA), ("rb", RB)],
+        CALL,
+        &format!("{A} | {B}"),
+    );
+}
+
+#[test]
+fn a_trie_and_a_spatial_key_their_own_struct_of_a_shared_name() {
+    let call = "fn main() { println(\"{ta::a_local()} | {ta::a_field()} | {tb::b_local()} | {tb::b_field()}\"); }\n";
+    both_orders(
+        "trie-spatial",
+        [("ta", TA), ("tb", TB)],
+        call,
+        &format!("{TRIE_A} | {TRIE_B}"),
+    );
 }
