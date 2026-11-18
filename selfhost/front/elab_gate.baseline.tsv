@@ -949,7 +949,7 @@ elab	refused	tests/scripts/store_paged_enum_field.loft
 elab	refused	tests/scripts/store_rebuild_b1.loft
 elab	refused	tests/scripts/the-reference-safety-traps-are-what-it-catalogues.loft
 
-layer	elab-functions	agree	15182	of	27738
+layer	elab-functions	agree	15183	of	27738
 elab-functions	agree	lib/code.loft::Block
 elab-functions	agree	lib/code.loft::Boolean
 elab-functions	agree	lib/code.loft::Call
@@ -6626,6 +6626,7 @@ elab-functions	agree	loft-suite/rules/iteration/I-NullSrc/a-discharged-null-sour
 elab-functions	agree	loft-suite/rules/iteration/I-NullSrc/a-discharged-null-source-runs-no-round-whatever-it-is.loft::n_maybe
 elab-functions	agree	loft-suite/rules/iteration/I-NullSrc/a-discharged-null-source-runs-no-round-whatever-it-is.loft::n_test_a_comprehension_and_a_par_over_a_null_source
 elab-functions	agree	loft-suite/rules/iteration/I-NullSrc/a-discharged-null-source-runs-no-round-whatever-it-is.loft::n_test_a_discharged_null_local_runs_no_round
+elab-functions	agree	loft-suite/rules/iteration/I-NullSrc/a-discharged-null-source-runs-no-round-whatever-it-is.loft::n_test_an_absent_chain_link_runs_no_round
 elab-functions	agree	loft-suite/rules/iteration/I-NullSrc/a-discharged-null-source-runs-no-round-whatever-it-is.loft::vector<S>
 elab-functions	agree	loft-suite/rules/iteration/I-RangeFrom/2275-a-narrow-range-stays-inside-its-type.loft::n_test_a_bounded_range_holds_both_bounds
 elab-functions	agree	loft-suite/rules/iteration/I-RangeFrom/2275-a-narrow-range-stays-inside-its-type.loft::n_test_an_open_range_stops_at_its_types_maximum
@@ -16133,7 +16134,7 @@ elab-functions	agree	tests/scripts/the-reference-safety-traps-are-what-it-catalo
 elab-functions	agree	tests/scripts/the-reference-safety-traps-are-what-it-catalogues.loft::vector<SafetyRow>
 elab-functions	agree	tests/scripts/the-reference-safety-traps-are-what-it-catalogues.loft::vector<integer(0, 255)>
 
-layer	elab-pass1	agree	10818	of	15997
+layer	elab-pass1	agree	10818	of	15998
 elab-pass1	agree	lib/code.loft::t_4Code_get_type
 elab-pass1	agree	lib/code.loft::t_4Code_set_type
 elab-pass1	agree	lib/docs.loft::n_demo
