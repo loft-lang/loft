@@ -105,3 +105,10 @@ holder's initialiser before the loop: `_slice_elm_1: text["__ref_p2_1"] = "";` t
 local `vector<vector<integer>["__ref_1"]>["__vdb_1"]` (the element type borrows the first
 call's buffer), the port `vector<vector<integer>>["__vdb_1"]`.  No corpus program agrees
 through it today, so the gate does not show it; a literal of locals or of literals agrees.
+
+Judged: an accident nothing observes.  The elements are copies (`OpCopyRecord` into each new
+element), so the borrow the type claims is not real, and a claimed borrow can only hold a free
+back.  [probes/vector-literal-of-calls.loft](probes/vector-literal-of-calls.loft) reads the
+literal after the buffers are reused, returns it out of the frame, rebuilds it in a loop and
+appends to it and to an element: every value is right and no store is left, on both backends.
+So the port may carry the dep to agree, or refuse the shape; it is not a defect to wait for.
