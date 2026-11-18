@@ -18,7 +18,7 @@ on:
         description: "how the gate's two tools are built: dev (unoptimised) or ship (optimised)"
         type: choice
         options: [dev, ship]
-        default: dev
+        default: ship
   push:
     branches: [elab-gate]
 
@@ -57,12 +57,12 @@ jobs:
           ulimit -v 9000000
           # The gate's exit, not `tee`'s: a gate that did not run (a build out of memory) fails.
           set -o pipefail
-          # One tool build at a time, and a development build on a push: the elaborator's
-          # optimised compile ran out of memory here (5.5 GB in cc1) before `(R-CTail)`
-          # shortened its largest functions; the verdicts do not change with the build.  A
-          # dispatch with `tools: ship` measures whether the optimised build fits again.
+          # One tool build at a time, optimised: with `(R-CTail)` the elaborator's optimised
+          # compile fits the runner again (run 44280298745: 15 GB runner, the whole gate in 15
+          # minutes against 27 for the development build).  A dispatch with `tools: dev` builds
+          # the tools unoptimised; the verdicts do not change with the build.
           free -g | sed -n 2p
-          LOFT_ELAB_BUILD_JOBS=1 LOFT_ELAB_TOOL_BUILD=${{ inputs.tools || 'dev' }} LOFT_ELAB_VERDICTS=target/elab-verdicts.tsv \
+          LOFT_ELAB_BUILD_JOBS=1 LOFT_ELAB_TOOL_BUILD=${{ inputs.tools || 'ship' }} LOFT_ELAB_VERDICTS=target/elab-verdicts.tsv \
             python3 selfhost/front/elab_gate.py --jobs 4 --plan \
             --write-baseline selfhost/front/elab_gate.baseline.tsv | tee target/elab-gate.txt
           git diff --stat -- selfhost/front/elab_gate.baseline.tsv
