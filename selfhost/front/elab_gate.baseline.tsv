@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	be55620c9793c98d01df24d63b9ace03f3efbec1
 
-layer	elab	agree	1127	of	2085
+layer	elab	agree	1131	of	2085
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -437,7 +437,6 @@ elab	refused	loft-suite/rules/operators/Op-Std/a-fn-named-for-an-operator-is-an-
 elab	refused	loft-suite/rules/ownership/O-Borrow/2338-a-view-through-a-match-capture-outlives-the-match.loft
 elab	refused	loft-suite/rules/ownership/O-Buffer/1618-a-returned-nullable-vector-local-is-delivered.loft
 elab	refused	loft-suite/rules/ownership/O-Buffer/1624-a-captured-default-arm-is-delivered-into-the-buffer.loft
-elab	refused	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft
 elab	refused	loft-suite/rules/ownership/O-Buffer/a-local-renamed-onto-the-buffer-keeps-its-value-when-returned-as-a-view.loft
 elab	refused	loft-suite/rules/ownership/O-Buffer/a-return-buffer-is-the-callers-through-every-hand-on.loft
 elab	refused	loft-suite/rules/ownership/O-Complete/1142-a-keyed-return-through-a-join-frees-the-arm-that-did-not-run.loft
@@ -556,9 +555,7 @@ elab	refused	loft-suite/rules/rewrites/R-SliceInto/a-slice-appended-into-a-place
 elab	refused	loft-suite/rules/rewrites/R-SplitTable/a-split-bound-to-a-name-answers-the-vector-it-never-builds.loft
 elab	refused	loft-suite/rules/rewrites/R-TailSelf/a-result-held-in-a-store-is-delivered-as-the-call-would.loft
 elab	refused	loft-suite/rules/rewrites/R-TailSelf/a-tail-self-call-the-frame-cannot-jump-warns.loft
-elab	refused	loft-suite/rules/rewrites/R-ValueLocal/158-a-callees-own-buffer-is-a-fresh-record.loft
 elab	refused	loft-suite/rules/rewrites/R-ValueLocal/a-lifted-call-passes-a-value-record-parameter-as-its-tuple.loft
-elab	refused	loft-suite/rules/rewrites/R-ValueRecord/157-value-chain.loft
 elab	refused	loft-suite/rules/rewrites/R-ValueRecord/158-a-seven-field-record-returns-by-value.loft
 elab	refused	loft-suite/rules/rewrites/R-ValueRecord/1992-a-record-returned-from-a-branch-that-holds-a-match-compiles.loft
 elab	refused	loft-suite/rules/rewrites/R-ValueRecord/a-small-record-copied-into-a-return-local-is-freed-on-native.loft
@@ -922,7 +919,6 @@ elab	refused	tests/scripts/a-placed-call-copies-an-answer-from-elsewhere.loft
 elab	refused	tests/scripts/a-plain-vector-append-without-a-header-lands-in-its-slot.loft
 elab	refused	tests/scripts/a-pooled-buffers-vectors-are-emptied-in-place.loft
 elab	refused	tests/scripts/a-qualified-name-reaches-what-a-library-publishes.loft
-elab	refused	tests/scripts/a-read-only-record-copy-is-a-view.loft
 elab	refused	tests/scripts/a-record-built-into-a-callers-slot-needs-no-prefill.loft
 elab	refused	tests/scripts/a-record-read-by-index-from-a-held-vector-is-addressed-off-its-base.loft
 elab	refused	tests/scripts/a-repeated-element-fills-in-one-block.loft
@@ -965,7 +961,7 @@ elab	refused	tests/scripts/store_paged_enum_field.loft
 elab	refused	tests/scripts/store_rebuild_b1.loft
 elab	refused	tests/scripts/the-reference-safety-traps-are-what-it-catalogues.loft
 
-layer	elab-functions	agree	15490	of	28136
+layer	elab-functions	agree	15362	of	27987
 elab-functions	agree	lib/code.loft::Block
 elab-functions	agree	lib/code.loft::Boolean
 elab-functions	agree	lib/code.loft::Call
@@ -5955,6 +5951,7 @@ elab-functions	agree	loft-suite/rules/heap/H-RefHome/a-record-a-stored-reference
 elab-functions	agree	loft-suite/rules/heap/H-RefHome/a-record-a-stored-reference-names-lives-as-long-as-its-holder-however-it-was-built.loft::n_argument_alloc
 elab-functions	agree	loft-suite/rules/heap/H-RefHome/a-record-a-stored-reference-names-lives-as-long-as-its-holder-however-it-was-built.loft::n_bound
 elab-functions	agree	loft-suite/rules/heap/H-RefHome/a-record-a-stored-reference-names-lives-as-long-as-its-holder-however-it-was-built.loft::n_copy_out_after_a_write
+elab-functions	agree	loft-suite/rules/heap/H-RefHome/a-record-a-stored-reference-names-lives-as-long-as-its-holder-however-it-was-built.loft::n_copy_out_assigned
 elab-functions	agree	loft-suite/rules/heap/H-RefHome/a-record-a-stored-reference-names-lives-as-long-as-its-holder-however-it-was-built.loft::n_copy_out_cleared
 elab-functions	agree	loft-suite/rules/heap/H-RefHome/a-record-a-stored-reference-names-lives-as-long-as-its-holder-however-it-was-built.loft::n_copy_out_element
 elab-functions	agree	loft-suite/rules/heap/H-RefHome/a-record-a-stored-reference-names-lives-as-long-as-its-holder-however-it-was-built.loft::n_copy_out_hash
@@ -8273,75 +8270,6 @@ elab-functions	agree	loft-suite/rules/ownership/O-Buffer/1618-a-returned-nullabl
 elab-functions	agree	loft-suite/rules/ownership/O-Buffer/1624-a-captured-default-arm-is-delivered-into-the-buffer.loft::main_vector<vector<integer>>
 elab-functions	agree	loft-suite/rules/ownership/O-Buffer/1624-a-captured-default-arm-is-delivered-into-the-buffer.loft::n_ok
 elab-functions	agree	loft-suite/rules/ownership/O-Buffer/1624-a-captured-default-arm-is-delivered-into-the-buffer.loft::vector<vector<integer>>
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::(schema)
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::Bag
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::Canvas
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::Card
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::Dot
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::H
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::Line
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::Mk
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::Q
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::Sc
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::Shape
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::Sk
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_add_to
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_alloc_canvas
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_chain_card
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_find_at
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_gather
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_grow_c
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_lit_canvas
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_lit_card
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_loc_card
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_main
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_mark_at
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_md
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_mk_card
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_mk_line
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_no_mk
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_outer
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_pick
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r1
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r10
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r11
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r12
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r13
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r14
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r15
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r16
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r16f
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r18
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r18f
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r19
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r2
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r20
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r21
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r22
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r23
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r24
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r25
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r26
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r27
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r3
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r4
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r5
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r5f
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r6
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r6f
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r7
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r7f
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r8
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r8f
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r9
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_sc_fail
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_scan_a
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_scan_b
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_scan_mk
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_scene_at
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_via_chain
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_via_lit
-elab-functions	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_via_loc
 elab-functions	agree	loft-suite/rules/ownership/O-Buffer/a-local-renamed-onto-the-buffer-keeps-its-value-when-returned-as-a-view.loft::(schema)
 elab-functions	agree	loft-suite/rules/ownership/O-Buffer/a-local-renamed-onto-the-buffer-keeps-its-value-when-returned-as-a-view.loft::Borrowed
 elab-functions	agree	loft-suite/rules/ownership/O-Buffer/a-local-renamed-onto-the-buffer-keeps-its-value-when-returned-as-a-view.loft::NotYet
@@ -9751,6 +9679,7 @@ elab-functions	agree	loft-suite/rules/rewrites/R-HostStore/a-result-built-in-its
 elab-functions	agree	loft-suite/rules/rewrites/R-HostStore/a-result-built-in-its-hosts-store-is-adopted-and-released-once.loft::n_test_a_literal_adopts_its_childrens_results_built_in_its_store
 elab-functions	agree	loft-suite/rules/rewrites/R-HostStore/a-result-built-in-its-hosts-store-is-adopted-and-released-once.loft::n_test_a_recursion_answering_its_own_results_keeps_adopts_and_releases_them
 elab-functions	agree	loft-suite/rules/rewrites/R-HostStore/a-result-built-in-its-hosts-store-is-adopted-and-released-once.loft::n_tsum
+elab-functions	agree	loft-suite/rules/rewrites/R-HostStore/a-result-built-in-its-hosts-store-is-adopted-and-released-once.loft::n_twice
 elab-functions	agree	loft-suite/rules/rewrites/R-HostStore/a-result-built-in-its-hosts-store-is-adopted-and-released-once.loft::n_twos
 elab-functions	agree	loft-suite/rules/rewrites/R-HostStore/a-result-built-in-its-hosts-store-is-adopted-and-released-once.loft::n_via_local
 elab-functions	agree	loft-suite/rules/rewrites/R-HostStore/a-result-built-in-its-hosts-store-is-adopted-and-released-once.loft::n_zeros
@@ -10170,22 +10099,6 @@ elab-functions	agree	loft-suite/rules/rewrites/R-TailSelf/a-tail-self-call-the-f
 elab-functions	agree	loft-suite/rules/rewrites/R-TailSelf/a-tail-self-call-the-frame-cannot-jump-warns.loft::n_literal_arg
 elab-functions	agree	loft-suite/rules/rewrites/R-TailSelf/a-tail-self-call-the-frame-cannot-jump-warns.loft::n_rebound
 elab-functions	agree	loft-suite/rules/rewrites/R-TailSelf/a-tail-self-call-the-frame-cannot-jump-warns.loft::n_swap
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueLocal/158-a-callees-own-buffer-is-a-fresh-record.loft::(schema)
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueLocal/158-a-callees-own-buffer-is-a-fresh-record.loft::Body
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueLocal/158-a-callees-own-buffer-is-a-fresh-record.loft::Vec3
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueLocal/158-a-callees-own-buffer-is-a-fresh-record.loft::main_vector<Vec3>
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueLocal/158-a-callees-own-buffer-is-a-fresh-record.loft::n_far
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueLocal/158-a-callees-own-buffer-is-a-fresh-record.loft::n_hold
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueLocal/158-a-callees-own-buffer-is-a-fresh-record.loft::n_hold2
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueLocal/158-a-callees-own-buffer-is-a-fresh-record.loft::n_main
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueLocal/158-a-callees-own-buffer-is-a-fresh-record.loft::n_mid
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueLocal/158-a-callees-own-buffer-is-a-fresh-record.loft::n_nudge
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueLocal/158-a-callees-own-buffer-is-a-fresh-record.loft::n_poke
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueLocal/158-a-callees-own-buffer-is-a-fresh-record.loft::n_poke2
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueLocal/158-a-callees-own-buffer-is-a-fresh-record.loft::n_poke3
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueLocal/158-a-callees-own-buffer-is-a-fresh-record.loft::n_sum3
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueLocal/158-a-callees-own-buffer-is-a-fresh-record.loft::n_vec3
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueLocal/158-a-callees-own-buffer-is-a-fresh-record.loft::vector<Vec3>
 elab-functions	agree	loft-suite/rules/rewrites/R-ValueLocal/a-lifted-call-passes-a-value-record-parameter-as-its-tuple.loft::(schema)
 elab-functions	agree	loft-suite/rules/rewrites/R-ValueLocal/a-lifted-call-passes-a-value-record-parameter-as-its-tuple.loft::Ar
 elab-functions	agree	loft-suite/rules/rewrites/R-ValueLocal/a-lifted-call-passes-a-value-record-parameter-as-its-tuple.loft::M
@@ -10201,42 +10114,6 @@ elab-functions	agree	loft-suite/rules/rewrites/R-ValueLocal/a-lifted-call-passes
 elab-functions	agree	loft-suite/rules/rewrites/R-ValueLocal/a-lifted-call-passes-a-value-record-parameter-as-its-tuple.loft::t_1M_neg
 elab-functions	agree	loft-suite/rules/rewrites/R-ValueLocal/a-lifted-call-passes-a-value-record-parameter-as-its-tuple.loft::t_6T#6#g1_neg
 elab-functions	agree	loft-suite/rules/rewrites/R-ValueLocal/a-lifted-call-passes-a-value-record-parameter-as-its-tuple.loft::t_6T#6#g2_mul
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueRecord/157-value-chain.loft::(schema)
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueRecord/157-value-chain.loft::ColourPair
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueRecord/157-value-chain.loft::Scan
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueRecord/157-value-chain.loft::Scan3
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueRecord/157-value-chain.loft::n_at
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueRecord/157-value-chain.loft::n_at_width
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueRecord/157-value-chain.loft::n_bump
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueRecord/157-value-chain.loft::n_count_down
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueRecord/157-value-chain.loft::n_find_eq
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueRecord/157-value-chain.loft::n_fwd7
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueRecord/157-value-chain.loft::n_hi
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueRecord/157-value-chain.loft::n_hit
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueRecord/157-value-chain.loft::n_is_digit
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueRecord/157-value-chain.loft::n_lo
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueRecord/157-value-chain.loft::n_main
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueRecord/157-value-chain.loft::n_mk6
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueRecord/157-value-chain.loft::n_mk7
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueRecord/157-value-chain.loft::n_n1
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueRecord/157-value-chain.loft::n_n2
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueRecord/157-value-chain.loft::n_n3
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueRecord/157-value-chain.loft::n_n4
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueRecord/157-value-chain.loft::n_n5
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueRecord/157-value-chain.loft::n_n6
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueRecord/157-value-chain.loft::n_n7
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueRecord/157-value-chain.loft::n_n8
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueRecord/157-value-chain.loft::n_n9
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueRecord/157-value-chain.loft::n_pick
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueRecord/157-value-chain.loft::n_read_colour_pair
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueRecord/157-value-chain.loft::n_read_num8
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueRecord/157-value-chain.loft::n_read_rgb_at
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueRecord/157-value-chain.loft::n_read_uint
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueRecord/157-value-chain.loft::n_rgba
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueRecord/157-value-chain.loft::n_scan3_fail
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueRecord/157-value-chain.loft::n_scan_fail
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueRecord/157-value-chain.loft::n_sum7
-elab-functions	agree	loft-suite/rules/rewrites/R-ValueRecord/157-value-chain.loft::n_via_obj
 elab-functions	agree	loft-suite/rules/rewrites/R-ValueRecord/158-a-seven-field-record-returns-by-value.loft::Chunk
 elab-functions	agree	loft-suite/rules/rewrites/R-ValueRecord/158-a-seven-field-record-returns-by-value.loft::Hex
 elab-functions	agree	loft-suite/rules/rewrites/R-ValueRecord/1992-a-record-returned-from-a-branch-that-holds-a-match-compiles.loft::(schema)
@@ -11309,6 +11186,7 @@ elab-functions	agree	loft-suite/rules/types/N-Store/1997-a-copy-of-a-dense-slot-
 elab-functions	agree	loft-suite/rules/types/N-Store/1997-a-copy-of-a-dense-slot-that-holds-null-is-null.loft::n_c5
 elab-functions	agree	loft-suite/rules/types/N-Store/1997-a-copy-of-a-dense-slot-that-holds-null-is-null.loft::n_c6
 elab-functions	agree	loft-suite/rules/types/N-Store/1997-a-copy-of-a-dense-slot-that-holds-null-is-null.loft::n_c8
+elab-functions	agree	loft-suite/rules/types/N-Store/1997-a-copy-of-a-dense-slot-that-holds-null-is-null.loft::n_c9
 elab-functions	agree	loft-suite/rules/types/N-Store/1997-a-copy-of-a-dense-slot-that-holds-null-is-null.loft::n_h1
 elab-functions	agree	loft-suite/rules/types/N-Store/1997-a-copy-of-a-dense-slot-that-holds-null-is-null.loft::n_i1
 elab-functions	agree	loft-suite/rules/types/N-Store/1997-a-copy-of-a-dense-slot-that-holds-null-is-null.loft::n_i2
@@ -12314,6 +12192,7 @@ elab-functions	agree	tests/scripts/1200-a-nullable-record-local-frees-what-it-di
 elab-functions	agree	tests/scripts/1200-a-nullable-record-local-frees-what-it-displaces.loft::n_build_an_enum_from_a_literal_only
 elab-functions	agree	tests/scripts/1200-a-nullable-record-local-frees-what-it-displaces.loft::n_build_and_return
 elab-functions	agree	tests/scripts/1200-a-nullable-record-local-frees-what-it-displaces.loft::n_build_from_a_literal_only
+elab-functions	agree	tests/scripts/1200-a-nullable-record-local-frees-what-it-displaces.loft::n_build_from_a_literal_then_reassign
 elab-functions	agree	tests/scripts/1200-a-nullable-record-local-frees-what-it-displaces.loft::n_main
 elab-functions	agree	tests/scripts/1200-a-nullable-record-local-frees-what-it-displaces.loft::n_mk
 elab-functions	agree	tests/scripts/1200-a-nullable-record-local-frees-what-it-displaces.loft::n_mk_dense
@@ -13639,6 +13518,7 @@ elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::n_mk_mix
 elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::n_mk_ret
 elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::n_mk_t
 elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::n_render_direct
+elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::n_render_lit_then_call
 elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::n_via
 elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::vector<Node>
 elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::vector<float>
@@ -13777,6 +13657,7 @@ elab-functions	agree	tests/scripts/164-forward-tuple.loft::main_vector<Mark>
 elab-functions	agree	tests/scripts/164-forward-tuple.loft::main_vector<Op>
 elab-functions	agree	tests/scripts/164-forward-tuple.loft::main_vector<Pt>
 elab-functions	agree	tests/scripts/164-forward-tuple.loft::main_vector<Sz>
+elab-functions	agree	tests/scripts/164-forward-tuple.loft::n_fp
 elab-functions	agree	tests/scripts/164-forward-tuple.loft::n_fr
 elab-functions	agree	tests/scripts/164-forward-tuple.loft::n_fr_outer
 elab-functions	agree	tests/scripts/164-forward-tuple.loft::n_fz
@@ -14959,6 +14840,7 @@ elab-functions	agree	tests/scripts/a-builder-rebinds-into-its-own-return-buffer.
 elab-functions	agree	tests/scripts/a-builder-rebinds-into-its-own-return-buffer.loft::n_empty
 elab-functions	agree	tests/scripts/a-builder-rebinds-into-its-own-return-buffer.loft::n_from
 elab-functions	agree	tests/scripts/a-builder-rebinds-into-its-own-return-buffer.loft::n_grow_all
+elab-functions	agree	tests/scripts/a-builder-rebinds-into-its-own-return-buffer.loft::n_held
 elab-functions	agree	tests/scripts/a-builder-rebinds-into-its-own-return-buffer.loft::n_merge
 elab-functions	agree	tests/scripts/a-builder-rebinds-into-its-own-return-buffer.loft::n_psum
 elab-functions	agree	tests/scripts/a-builder-rebinds-into-its-own-return-buffer.loft::n_shift
@@ -15723,21 +15605,6 @@ elab-functions	agree	tests/scripts/a-qualified-name-reaches-what-a-library-publi
 elab-functions	agree	tests/scripts/a-qualified-name-reaches-what-a-library-publishes.loft::n_pub_total
 elab-functions	agree	tests/scripts/a-qualified-name-reaches-what-a-library-publishes.loft::n_takes
 elab-functions	agree	tests/scripts/a-qualified-name-reaches-what-a-library-publishes.loft::n_test_the_library_still_reaches_its_private_half
-elab-functions	agree	tests/scripts/a-read-only-record-copy-is-a-view.loft::(schema)
-elab-functions	agree	tests/scripts/a-read-only-record-copy-is-a-view.loft::C
-elab-functions	agree	tests/scripts/a-read-only-record-copy-is-a-view.loft::main_vector<C>
-elab-functions	agree	tests/scripts/a-read-only-record-copy-is-a-view.loft::n_bump
-elab-functions	agree	tests/scripts/a-read-only-record-copy-is-a-view.loft::n_k1
-elab-functions	agree	tests/scripts/a-read-only-record-copy-is-a-view.loft::n_k10
-elab-functions	agree	tests/scripts/a-read-only-record-copy-is-a-view.loft::n_k11
-elab-functions	agree	tests/scripts/a-read-only-record-copy-is-a-view.loft::n_k2
-elab-functions	agree	tests/scripts/a-read-only-record-copy-is-a-view.loft::n_k3
-elab-functions	agree	tests/scripts/a-read-only-record-copy-is-a-view.loft::n_k4
-elab-functions	agree	tests/scripts/a-read-only-record-copy-is-a-view.loft::n_k5
-elab-functions	agree	tests/scripts/a-read-only-record-copy-is-a-view.loft::n_k6
-elab-functions	agree	tests/scripts/a-read-only-record-copy-is-a-view.loft::n_k8
-elab-functions	agree	tests/scripts/a-read-only-record-copy-is-a-view.loft::n_main
-elab-functions	agree	tests/scripts/a-read-only-record-copy-is-a-view.loft::vector<C>
 elab-functions	agree	tests/scripts/a-record-built-into-a-callers-slot-needs-no-prefill.loft::(schema)
 elab-functions	agree	tests/scripts/a-record-built-into-a-callers-slot-needs-no-prefill.loft::B
 elab-functions	agree	tests/scripts/a-record-built-into-a-callers-slot-needs-no-prefill.loft::R
@@ -15747,6 +15614,7 @@ elab-functions	agree	tests/scripts/a-record-built-into-a-callers-slot-needs-no-p
 elab-functions	agree	tests/scripts/a-record-built-into-a-callers-slot-needs-no-prefill.loft::n_c2
 elab-functions	agree	tests/scripts/a-record-built-into-a-callers-slot-needs-no-prefill.loft::n_c3
 elab-functions	agree	tests/scripts/a-record-built-into-a-callers-slot-needs-no-prefill.loft::n_main
+elab-functions	agree	tests/scripts/a-record-built-into-a-callers-slot-needs-no-prefill.loft::n_pick
 elab-functions	agree	tests/scripts/a-record-built-into-a-callers-slot-needs-no-prefill.loft::n_rect_of
 elab-functions	agree	tests/scripts/a-record-built-into-a-callers-slot-needs-no-prefill.loft::n_show
 elab-functions	agree	tests/scripts/a-record-built-into-a-callers-slot-needs-no-prefill.loft::vector<B>
@@ -16457,7 +16325,7 @@ elab-functions	agree	tests/scripts/the-reference-safety-traps-are-what-it-catalo
 elab-functions	agree	tests/scripts/the-reference-safety-traps-are-what-it-catalogues.loft::vector<SafetyRow>
 elab-functions	agree	tests/scripts/the-reference-safety-traps-are-what-it-catalogues.loft::vector<integer(0, 255)>
 
-layer	elab-pass1	agree	8864	of	15911
+layer	elab-pass1	agree	8882	of	15932
 elab-pass1	agree	lib/code.loft::t_4Code_get_type
 elab-pass1	agree	lib/code.loft::t_4Code_set_type
 elab-pass1	agree	lib/docs.loft::n_demo
@@ -20065,22 +19933,26 @@ elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/1618-a-returned-nullable-ve
 elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/1624-a-captured-default-arm-is-delivered-into-the-buffer.loft::n_ok
 elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_add_to
 elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_alloc_canvas
+elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_card_lit_then_call
 elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_chain_card
 elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_find_at
 elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_gather
 elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_grow_c
 elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_loc_card
+elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_loopy
 elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_main
 elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_md
 elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_mk_card
 elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_mk_line
 elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_outer
 elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_pick
+elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_pick_other
 elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r1
 elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r12
 elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r13
 elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r14
 elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r15
+elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r15f
 elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r16
 elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r16f
 elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r18
@@ -20088,15 +19960,21 @@ elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft
 elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r2
 elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r20
 elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r27
+elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r2f
+elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r3f
 elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r4
+elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r4f
 elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r5
 elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r5f
 elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r6
 elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r6f
 elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r8
 elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_r8f
+elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_rec
+elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_render_lit_then_call
 elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_scan_a
 elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_scan_mk
+elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_shape_lit_then_call
 elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_via_chain
 elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_via_lit
 elab-pass1	agree	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft::n_via_loc
@@ -21612,6 +21490,7 @@ elab-pass1	agree	loft-suite/rules/rewrites/R-ValueLocal/158-a-callees-own-buffer
 elab-pass1	agree	loft-suite/rules/rewrites/R-ValueLocal/158-a-callees-own-buffer-is-a-fresh-record.loft::n_poke
 elab-pass1	agree	loft-suite/rules/rewrites/R-ValueLocal/158-a-callees-own-buffer-is-a-fresh-record.loft::n_poke2
 elab-pass1	agree	loft-suite/rules/rewrites/R-ValueLocal/158-a-callees-own-buffer-is-a-fresh-record.loft::n_poke3
+elab-pass1	agree	loft-suite/rules/rewrites/R-ValueLocal/158-a-callees-own-buffer-is-a-fresh-record.loft::n_step
 elab-pass1	agree	loft-suite/rules/rewrites/R-ValueLocal/158-a-callees-own-buffer-is-a-fresh-record.loft::n_sum3
 elab-pass1	agree	loft-suite/rules/rewrites/R-ValueLocal/a-lifted-call-passes-a-value-record-parameter-as-its-tuple.loft::n_mul_of
 elab-pass1	agree	loft-suite/rules/rewrites/R-ValueLocal/a-lifted-call-passes-a-value-record-parameter-as-its-tuple.loft::n_neg_of
@@ -21643,6 +21522,7 @@ elab-pass1	agree	loft-suite/rules/rewrites/R-ValueRecord/157-value-chain.loft::n
 elab-pass1	agree	loft-suite/rules/rewrites/R-ValueRecord/157-value-chain.loft::n_at_width
 elab-pass1	agree	loft-suite/rules/rewrites/R-ValueRecord/157-value-chain.loft::n_find_eq
 elab-pass1	agree	loft-suite/rules/rewrites/R-ValueRecord/157-value-chain.loft::n_is_digit
+elab-pass1	agree	loft-suite/rules/rewrites/R-ValueRecord/157-value-chain.loft::n_keep6
 elab-pass1	agree	loft-suite/rules/rewrites/R-ValueRecord/157-value-chain.loft::n_main
 elab-pass1	agree	loft-suite/rules/rewrites/R-ValueRecord/157-value-chain.loft::n_n1
 elab-pass1	agree	loft-suite/rules/rewrites/R-ValueRecord/157-value-chain.loft::n_n2
@@ -22299,6 +22179,7 @@ elab-pass1	agree	loft-suite/rules/types/N-Store/1997-a-copy-of-a-dense-slot-that
 elab-pass1	agree	loft-suite/rules/types/N-Store/1997-a-copy-of-a-dense-slot-that-holds-null-is-null.loft::n_c4
 elab-pass1	agree	loft-suite/rules/types/N-Store/1997-a-copy-of-a-dense-slot-that-holds-null-is-null.loft::n_c5
 elab-pass1	agree	loft-suite/rules/types/N-Store/1997-a-copy-of-a-dense-slot-that-holds-null-is-null.loft::n_c6
+elab-pass1	agree	loft-suite/rules/types/N-Store/1997-a-copy-of-a-dense-slot-that-holds-null-is-null.loft::n_c9
 elab-pass1	agree	loft-suite/rules/types/N-Store/1997-a-copy-of-a-dense-slot-that-holds-null-is-null.loft::n_h1
 elab-pass1	agree	loft-suite/rules/types/N-Store/1997-a-copy-of-a-dense-slot-that-holds-null-is-null.loft::n_i2
 elab-pass1	agree	loft-suite/rules/types/N-Store/1997-a-copy-of-a-dense-slot-that-holds-null-is-null.loft::n_pass
@@ -22836,6 +22717,7 @@ elab-pass1	agree	tests/scripts/1190-an-inline-value-copy-has-no-advice.loft::n_t
 elab-pass1	agree	tests/scripts/1200-a-nullable-record-local-frees-what-it-displaces.loft::n_build_an_enum_from_a_literal_only
 elab-pass1	agree	tests/scripts/1200-a-nullable-record-local-frees-what-it-displaces.loft::n_build_and_return
 elab-pass1	agree	tests/scripts/1200-a-nullable-record-local-frees-what-it-displaces.loft::n_build_from_a_literal_only
+elab-pass1	agree	tests/scripts/1200-a-nullable-record-local-frees-what-it-displaces.loft::n_build_from_a_literal_then_reassign
 elab-pass1	agree	tests/scripts/1200-a-nullable-record-local-frees-what-it-displaces.loft::n_main
 elab-pass1	agree	tests/scripts/1200-a-nullable-record-local-frees-what-it-displaces.loft::n_mk_text
 elab-pass1	agree	tests/scripts/1200-a-nullable-record-local-frees-what-it-displaces.loft::n_test_a_callee_that_actually_withholds_a_value
@@ -23473,6 +23355,7 @@ elab-pass1	agree	tests/scripts/164-adopt-first-bind.loft::n_mk_mix
 elab-pass1	agree	tests/scripts/164-adopt-first-bind.loft::n_mk_ret
 elab-pass1	agree	tests/scripts/164-adopt-first-bind.loft::n_mk_t
 elab-pass1	agree	tests/scripts/164-adopt-first-bind.loft::n_render_direct
+elab-pass1	agree	tests/scripts/164-adopt-first-bind.loft::n_render_lit_then_call
 elab-pass1	agree	tests/scripts/164-adopt-first-bind.loft::n_via
 elab-pass1	agree	tests/scripts/164-buffer-is-the-place.loft::n_a1
 elab-pass1	agree	tests/scripts/164-buffer-is-the-place.loft::n_a3
@@ -24195,6 +24078,7 @@ elab-pass1	agree	tests/scripts/a-buffered-file-read-moves-the-cursor-it-would-ha
 elab-pass1	agree	tests/scripts/a-builder-rebinds-into-its-own-return-buffer.loft::n_build
 elab-pass1	agree	tests/scripts/a-builder-rebinds-into-its-own-return-buffer.loft::n_from
 elab-pass1	agree	tests/scripts/a-builder-rebinds-into-its-own-return-buffer.loft::n_grow_all
+elab-pass1	agree	tests/scripts/a-builder-rebinds-into-its-own-return-buffer.loft::n_held
 elab-pass1	agree	tests/scripts/a-builder-rebinds-into-its-own-return-buffer.loft::n_psum
 elab-pass1	agree	tests/scripts/a-builder-rebinds-into-its-own-return-buffer.loft::n_twice
 elab-pass1	agree	tests/scripts/a-builder-rebinds-into-its-own-return-buffer.loft::n_viewed
@@ -24789,6 +24673,7 @@ elab-pass1	agree	tests/scripts/a-read-only-record-copy-is-a-view.loft::n_k3
 elab-pass1	agree	tests/scripts/a-read-only-record-copy-is-a-view.loft::n_k4
 elab-pass1	agree	tests/scripts/a-read-only-record-copy-is-a-view.loft::n_k5
 elab-pass1	agree	tests/scripts/a-read-only-record-copy-is-a-view.loft::n_k6
+elab-pass1	agree	tests/scripts/a-read-only-record-copy-is-a-view.loft::n_k7
 elab-pass1	agree	tests/scripts/a-read-only-record-copy-is-a-view.loft::n_k8
 elab-pass1	agree	tests/scripts/a-rebind-exchanges-into-a-destination-it-does-not-reset.loft::n_bag
 elab-pass1	agree	tests/scripts/a-rebind-exchanges-into-a-destination-it-does-not-reset.loft::n_grow
@@ -24852,6 +24737,7 @@ elab-pass1	agree	tests/scripts/a-rebound-literal-local-copies-a-call-answering-a
 elab-pass1	agree	tests/scripts/a-rebound-literal-local-copies-a-call-answering-an-argument.loft::n_reads_itself
 elab-pass1	agree	tests/scripts/a-rebound-literal-local-copies-a-call-answering-an-argument.loft::n_through_a_fn_ref
 elab-pass1	agree	tests/scripts/a-record-built-into-a-callers-slot-needs-no-prefill.loft::n_main
+elab-pass1	agree	tests/scripts/a-record-built-into-a-callers-slot-needs-no-prefill.loft::n_pick
 elab-pass1	agree	tests/scripts/a-record-built-into-a-callers-slot-needs-no-prefill.loft::n_rect_of
 elab-pass1	agree	tests/scripts/a-record-built-into-a-callers-slot-needs-no-prefill.loft::n_show
 elab-pass1	agree	tests/scripts/a-record-element-its-loop-proves-in-range-reads-plainly.loft::n_another_vector
