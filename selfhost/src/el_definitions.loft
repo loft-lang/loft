@@ -568,7 +568,15 @@ fn parse_fields(e: el::El, d: integer, fields: vector<integer>) {
         fi = field_init_node(e, mods);
         dv: ir::Node? = null;
         if fi != null {
-          dv = field_default_value(e, fi!, t!);
+          // `parse_stored_default`: a vector literal is no default a construction site can
+          // replay, so it is hoisted into a function of its own, `n___dflt_<Struct>_<field>`,
+          // minted here on the first pass and re-read into it on the second; the stored default
+          // is the call (`default_value_fn`).  A template's field is not hoisted.
+          if e.p.nodes[fi!] is SVecLit && t! is TyVector && len(e.type_vars) == 0 {
+            dv = hoisted_default(e, "__dflt_{el::def(e, d).name}_{fname}", tn!, fi!);
+          } else {
+            dv = field_default_value(e, fi!, t!);
+          }
           if dv == null {
             continue;
           }
@@ -641,6 +649,36 @@ fn field_init_node(e: el::El, mods: vector<integer>) -> integer? {
     SFieldType { init } => init,
     _ => null
   }
+}
+
+// `default_value_fn`: the default at syntax node `init` as the body of a function `name` that
+// answers the type at `tn` — a definition of its own, parsed as any function's body is (its tail
+// delivered through its hidden buffer).  Answers the call that stands for the default.
+fn hoisted_default(e: el::El, name: text, tn: integer, init: integer) -> ir::Node? {
+  at = match e.p.nodes[init] { SVecLit { at: va } => va, _ => el_ex_null::node_start(e, init) };
+  // (The default is no statement of a block in Rust, so it carries no line marker: the
+  // synthetic statement stands at token 0, which gives none.)
+  e.p.nodes += [SStmt { at: 0, e: init, semi: false, orelse: null }];
+  stmt = len(e.p.nodes) - 1;
+  e.p.nodes += [SBlock { at: 0, stmts: [stmt], end: 0 }];
+  body = len(e.p.nodes) - 1;
+  ctx = e.context;
+  tvs = e.type_vars;
+  e.type_vars = [];
+  // (No statement inside it opens a new line: the line counter stands past every line while
+  // the body is read.)
+  line = e.line;
+  e.line = 1073741824;
+  key = parse_function(e, at, name, [], tn, body);
+  e.line = line;
+  e.context = ctx;
+  e.type_vars = tvs;
+  d = if key == "" { -1 } else { el::def_nr(e, key) };
+  if d < 0 {
+    el::refuse(e, "a field default hoisted into a function that could not be made");
+    return null;
+  }
+  ir::NdCall { def_nr: d, args: [] }
 }
 
 // `parse_stored_default`: a field's `= value` read in the struct's context, with no frame of its
@@ -1195,7 +1233,10 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
   after = at;
   // A short lambda answers the hint's result, unless that names nothing (loft#945).
   rt: ir::TypeT = if !(hint is TyFunction) || el_types::is_unknown(hint_ret) { ir::TyVoid } else { hint_ret };
-  if ret != null {
+  if starts_with(name, "__dflt_") {
+    // A hoisted default has no signature in the source: its definition stands where the lexer
+    // stood past the default's first token (`default_value_fn`), which is `at`.
+  } else if ret != null {
     // `-> T` (or `-> const T`, a function or a tuple type): the lexer stood on the `->`, which a
     // `const` stands between.
     back = if ret_const { 2 } else { 1 };
@@ -1432,7 +1473,8 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
     if len(params) == 0 && len(tvars) == 0 && ends_in_repeat_literal(e, body!) {
       el::refuse(e, "a function of no parameters whose body ends in a repeat literal (its pass-1 constant twin)");
     }
-    if e.first_pass && len(params) == 0 && len(tvars) == 0 && sole_vector_literal(e, body!) && const_twin_ok(e, e.context, body!) {
+    // (A hoisted default is an internal function, `Definition::is_internal`: it gets no twin.)
+    if e.first_pass && len(params) == 0 && len(tvars) == 0 && !starts_with(name, "__dflt_") && sole_vector_literal(e, body!) && const_twin_ok(e, e.context, body!) {
       cd = el::add_def(e, "__const_{el::def(e, e.context).name}", el::def(e, e.context).position, el::DT_CONSTANT);
       e.b.data.definitions[cd].returned = el::def(e, e.context).returned;
       e.b.data.definitions[cd].synthetic = "literal_const";
