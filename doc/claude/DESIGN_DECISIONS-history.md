@@ -5131,3 +5131,27 @@ reaches its definitions, its imports and the stdlib); the first pass leaves a na
 untyped, so the construct takes its type from its other arms and the target holds it on the
 second pass; `match_result_unsettled` counts an untyped arm as unsettled, as an `if` already did.
 
+## C168 — Where a function is declared changes nothing a program can observe; its internal numbers may differ
+
+**Question.** A caller whose callee is declared further down the file is lowered with its hidden
+stores declared in another order than the same caller with the callee above it (and a keyed
+local bound from such a callee in another form).  Should the Rust front end be made independent
+of the callee's position?
+
+**Evaluation (2026-11-18).** The cause: pass 1 mints a call's hidden buffer only when it knows
+the callee's result; for a later function pass 2 mints it, after every literal's backing, and
+the frame declares its work refs by variable number.  A change that places such a buffer where
+pass 1 would have numbered it was built: 18 of 19 callers in an above/below matrix then lower
+the same either way (2 before).  Over the corpus it moved 222 functions in 131 programs, each a
+pure reorder of `= null` declarations.  Nothing observable moved with it: values are equal in
+both orders on both backends, and release hooks run in the same order with the callee above or
+below (four callers holding a literal and one or two call results of a droppable type).  The
+loft front end already follows today's numbering, so 28 programs it agrees on would have
+differed until it changed too.
+
+**Ruling.** The owner: drop the change; keep track of the observable side of reordering; raw
+definition ids do not have to be order independent.
+
+**Built.** The guard alone — one body per caller with its callees above and below, asserting the
+value and the release trace of each.  Not built: the numbering change.
+
