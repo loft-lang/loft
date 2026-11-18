@@ -2,7 +2,7 @@
 
 What to mirror for `<vector>[lo..hi]` where the port refuses "a slice of a vector that is no
 local of plain scalars".  The probe is [probes/vector-slice.loft](probes/vector-slice.loft):
-25 cases, every value hand-computed, clean on the interpreter (also under `LOFT_POISON=1`) and
+26 cases, every value hand-computed, clean on the interpreter (also under `LOFT_POISON=1`) and
 the C backend.
 
 ## What is already carried, and the three gaps
@@ -74,6 +74,12 @@ the only difference:
 The result borrows the RECORD LOCAL through its elements: `s: vector<ref(R)["b"]>["__vdb_1"]`.
 As an argument (`len(b.rs[1..4])`) the loop stands inside the `iter_vec` block, after the
 inner preamble, and writes into `___iter_vec_1`.
+
+Where the slice is the FIRST place a vector of those records is written (`field_first_bind`:
+the field is filled by appends, no `vector<Q>` stands in a signature or a literal before it),
+Rust creates the `vector<Q>` and `main_vector<Q>` types at the slice's bind.  Where a type is
+created is an internal number (@C168), nothing a program observes: the port may follow it or
+refuse the shape by name.
 
 ## 3. Elements that are vectors
 
