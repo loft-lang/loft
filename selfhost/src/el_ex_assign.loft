@@ -2388,6 +2388,22 @@ pub fn noted_bind(e: el::El, vars: el_vars::Vars, x: Ex) -> Ex {
 // the first pass, found again on the second — the right side is read, the local takes the
 // value's type (`change_var`) and the statement is the `Set` (`towards_set`), typed void.
 pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: text, target: integer, rhs: integer?) -> Ex {
+  // The literal a plain bind's value chain starts with is built as a receiver (`recv_literal`).
+  if op == "=" && rhs != null && e.p.nodes[target] is SName {
+    root = rhs!;
+    more = true;
+    while more {
+      more = false;
+      match e.p.nodes[root] {
+        SMember { e: me } => { if me != null { root = me!; more = true; } },
+        SIndex { e: ie } => { if ie != null { root = ie!; more = true; } },
+        _ => {}
+      }
+    }
+    if root != rhs! && e.p.nodes[root] is SVecLit {
+      vars.recv_literal = root;
+    }
+  }
   if rhs != null {
     el_ex_place::unqualify_literal(e, rhs!);
   }
