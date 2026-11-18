@@ -1708,9 +1708,9 @@ pub fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?,
   }
   // `parse_map` / `parse_filter` / `parse_reduce` in the call spelling (`map(v, f)`): built in
   // place as the method spelling is, where the program declares none of its own.
-  if source < 0 && len(types) > 0 && el_types::base(first) is TyVector && !(first is TyOptional) && el_dispatch::own_set(e, name) < 0 && el::def_nr(e, "n_{name}") < 0 {
+  if source < 0 && len(types) > 0 && el_types::base(first) is TyVector && !(first is TyOptional) && !open_types(e, types) && el_dispatch::own_set(e, name) < 0 && el::def_nr(e, "n_{name}") < 0 {
     if name == "map" && len(list) == 2 && el_types::base(types[1]!) is TyFunction {
-      return el_ex_match::map_call(e, vars, list, types);
+      return el_ex_match::map_call(e, vars, at, list, types);
     }
     if name == "filter" && len(list) == 2 && el_types::base(types[1]!) is TyFunction {
       return el_ex_match::filter_call(e, vars, list, types);
@@ -2604,16 +2604,16 @@ pub fn method_call_on(e: el::El, vars: el_vars::Vars, at: integer, x: Ex, re: in
     return sort_call(e, list, types);
   }
   // `parse_map`: a vector's `map` is built in place, where the program declares none of its own.
-  if name == "map" && len(list) == 2 && el_types::base(x.tp) is TyVector && !(x.tp is TyOptional) && el_types::base(types[1]!) is TyFunction && el_dispatch::own_set(e, name) < 0 && el::def_nr(e, "n_map") < 0 {
-    return el_ex_match::map_call(e, vars, list, types);
+  if name == "map" && len(list) == 2 && el_types::base(x.tp) is TyVector && !(x.tp is TyOptional) && el_types::base(types[1]!) is TyFunction && !open_types(e, types) && el_dispatch::own_set(e, name) < 0 && el::def_nr(e, "n_map") < 0 {
+    return el_ex_match::map_call(e, vars, at, list, types);
   }
   // `parse_filter`, `parse_reduce`: built in place as well.
-  if name == "filter" && len(list) == 2 && el_types::base(x.tp) is TyVector && !(x.tp is TyOptional) && el_types::base(types[1]!) is TyFunction && el_dispatch::own_set(e, name) < 0 && el::def_nr(e, "n_filter") < 0 {
+  if name == "filter" && len(list) == 2 && el_types::base(x.tp) is TyVector && !(x.tp is TyOptional) && el_types::base(types[1]!) is TyFunction && !open_types(e, types) && el_dispatch::own_set(e, name) < 0 && el::def_nr(e, "n_filter") < 0 {
     return el_ex_match::filter_call(e, vars, list, types);
   }
   // (`reduce` through a function VALUE is a call of the standard library's generic: only a
   // function the call names directly is folded in place.)
-  if name == "reduce" && len(list) == 3 && el_types::base(x.tp) is TyVector && !(x.tp is TyOptional) && el_types::base(types[2]!) is TyFunction && (e.first_pass || el_ir::unspan(list[2]!) is NdInt) && el_dispatch::own_set(e, name) < 0 && el::def_nr(e, "n_reduce") < 0 {
+  if name == "reduce" && len(list) == 3 && el_types::base(x.tp) is TyVector && !(x.tp is TyOptional) && el_types::base(types[2]!) is TyFunction && (e.first_pass || el_ir::unspan(list[2]!) is NdInt) && !open_types(e, types) && el_dispatch::own_set(e, name) < 0 && el::def_nr(e, "n_reduce") < 0 {
     return el_ex_match::reduce_call(e, vars, list, types);
   }
   // A method name that is an overload set reaches the member its argument types select, the
@@ -3336,4 +3336,15 @@ pub fn instance_carried(e: el::El, n: ir::Node, h: integer, row: integer, tv: ir
     }
   }
   ""
+}
+
+// Whether an argument's type still names a type variable: inside a generic's template `map`,
+// `filter` and `reduce` are the standard library's generic call, not built in place.
+fn open_types(e: el::El, types: vector<ir::TypeT>) -> boolean {
+  for t in types {
+    if el_definitions::mentions_type_var(e, t) {
+      return true;
+    }
+  }
+  false
 }
