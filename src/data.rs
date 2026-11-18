@@ -1815,6 +1815,14 @@ impl Type {
         }
     }
 
+    /// `@FR-N-Shape` — the NULLABILITY question, spelled once: is this `τ?` as written?  A
+    /// shape question peels ([`Self::base`]); a site that asks this one is asking about the
+    /// bit, not the shape.
+    #[must_use]
+    pub fn is_optional(&self) -> bool {
+        matches!(self, Type::Optional(_))
+    }
+
     /// @PLN25 — the base type with any `Optional` wrapper removed (the agnostic peel).
     pub fn base(&self) -> &Type {
         self.peel_optional().0

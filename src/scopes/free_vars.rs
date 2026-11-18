@@ -1689,18 +1689,18 @@ fn renumber_text_buffer(
 fn hooks_follow_returned_frees(ls: &mut [Value], ret: u16, data: &Data) {
     /// Is `n` the scope-end hook of `w` (`if OpConvBoolFromRef(w) <cascade>(w)`), bare or
     /// under the guards the sweep wraps it in?
-    fn hook_of(n: &Value, w: u16, live: u32) -> bool {
-        match n.unspan() {
-            Value::If(c, t, e) => {
-                if let Value::Call(d, a) = c.unspan()
+    fn hook_of(node: &Value, var: u16, live: u32) -> bool {
+        let names = |args: &[Value]| matches!(args.first().map(Value::unspan), Some(Value::Var(x)) if *x == var);
+        match node.unspan() {
+            Value::If(cond, then, other) => {
+                if let Value::Call(d, args) = cond.unspan()
                     && *d == live
-                    && matches!(a.first().map(Value::unspan), Some(Value::Var(x)) if *x == w)
+                    && names(args)
                 {
-                    return matches!(t.unspan(), Value::Call(_, ha)
-                        if matches!(ha.first().map(Value::unspan), Some(Value::Var(x)) if *x == w));
+                    return matches!(then.unspan(), Value::Call(_, hook_args) if names(hook_args));
                 }
-                (matches!(e.unspan(), Value::Null) && hook_of(t, w, live))
-                    || (matches!(t.unspan(), Value::Null) && hook_of(e, w, live))
+                (matches!(other.unspan(), Value::Null) && hook_of(then, var, live))
+                    || (matches!(then.unspan(), Value::Null) && hook_of(other, var, live))
             }
             _ => false,
         }

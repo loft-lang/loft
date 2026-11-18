@@ -6465,7 +6465,7 @@ impl Parser {
                 // `m` as void on pass 1 — then refused its vector on pass 2.
                 if self.block_tail_empty_literal
                     && true_type == Type::Unknown(0)
-                    && matches!(false_type, Type::Void)
+                    && false_type == Type::Void
                 {
                     false_type = Type::Unknown(0);
                 }

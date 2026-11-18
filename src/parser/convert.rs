@@ -187,8 +187,8 @@ impl Parser {
         // omitted field's default is, `objects.rs`).  Stored as the plain null, it read back as no
         // variant at all: `kind()` answered "JUnknown" and a `match` on `JNull` fell through.  A
         // `JsonValue?` place keeps its null (D-Opt).
-        if matches!(is_type, Type::Null)
-            && !matches!(should, Type::Optional(_))
+        if *is_type == Type::Null
+            && !should.is_optional()
             && let Type::Enum(e, true, _) = should.base()
             && self.data.def(*e).name == "JsonValue"
         {

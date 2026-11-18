@@ -1809,7 +1809,7 @@ impl Parser {
             && self.is_null_source(val)
             && let Type::Enum(syn, true, _) = f_type.base()
             && !self.data.def(*syn).name.starts_with("__nullable<")
-            && !(self.data.def(*syn).name == "JsonValue" && !matches!(f_type, Type::Optional(_)))
+            && (self.data.def(*syn).name != "JsonValue" || f_type.is_optional())
             && let Some((base, fld)) = self.inline_slot_word(to)
         {
             return self.cl("OpSetInt4", &[base, fld, Value::Int(0)]);

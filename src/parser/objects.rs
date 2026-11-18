@@ -8594,7 +8594,7 @@ impl Parser {
             && self.is_null_source(value)
             && let Type::Enum(syn, true, _) = &td_base
             && !self.data.def(*syn).name.starts_with("__nullable<")
-            && !(self.data.def(*syn).name == "JsonValue" && !matches!(td, Type::Optional(_)))
+            && (self.data.def(*syn).name != "JsonValue" || td.is_optional())
         {
             let item_pos = i32::from(
                 self.database
