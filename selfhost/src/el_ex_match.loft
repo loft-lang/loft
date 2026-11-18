@@ -2132,10 +2132,16 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
     }
     chain = fb!;
   }
+  // The first arm that answers: a never arm AFTER it is read against the join so far and its
+  // block typed as the result; one before every answering arm stays `never` (C-Never/2444).
+  first_answer = len(out);
+  for a in out {
+    if !(a.tp is TyNever) && first_answer == len(out) {
+      first_answer = a#index;
+    }
+  }
   for a in rev(out) {
-    // A scalar match's arm that never finishes (`_ => { return 0 }`) beside arms that answer
-    // takes the result's type, as an `if`'s arm does (`true_type = false_type`).
-    ac = if scalar_subject && a.tp is TyNever && !(result is TyNever) && !(result is TyVoid) && a.code is NdBlock { el_ex_null::block_typed(a.code, result) } else { a.code };
+    ac = if a#index > first_answer && a.tp is TyNever && !(result is TyNever) && !(result is TyVoid) && a.code is NdBlock { el_ex_null::block_typed(a.code, result) } else { a.code };
     if a.cond == null {
       chain = ac;
     } else {

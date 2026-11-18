@@ -1901,6 +1901,37 @@ pub fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
     // else in the body.
     renamed = match el_ir::unspan(v.code) { NdVar { n } => hidden_param(e, vars, n), _ => false };
     if el_types::base(result) is TyVector && !(result is TyOptional) && (e.first_pass || vector_buffer(e, vars) >= 0 || renamed) {
+      // `return q ?? [literal]` over a nullable vector parameter (`parse_return`'s `clear +
+      // append + Return(buf)` over the `??`'s whole branch): the first pass merges the parameter
+      // into the result, the second borrows the buffer alone.
+      rcq = el_expressions::coalesce_param_tail(e, vars, x!);
+      if rcq >= 0 {
+        rd = e.context;
+        rret = el::def(e, rd).returned[0] ?? ir::TyVoid;
+        rqa = attr_nr(el::def(e, rd), el_vars::name_of(vars, rcq));
+        rba = attr_nr(el::def(e, rd), "__retbuf");
+        if e.first_pass {
+          rn1 = el_types::with_deps(rret, [rqa]);
+          e.b.data.definitions[rd].returned = [rn1];
+          return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
+        }
+        qbuf = vector_buffer(e, vars);
+        qrow = el_ex_vector::append_row(e, match el_types::base(result) { TyVector { inner } => inner, _ => ir::TyVoid });
+        if qbuf >= 0 && rba >= 0 && qrow >= 0 && el_vars::name_of(vars, qbuf) == "__retbuf" {
+          rn2 = el_types::with_deps(rret, [rba]);
+          e.b.data.definitions[rd].returned = [rn2];
+          qb = ir::NdVar { n: qbuf };
+          pre: vector<ir::Node> = [];
+          last = v.code;
+          match el_ir::unspan(v.code) {
+            NdInsert { items: qi } => { if len(qi) > 0 { pre = qi[..-1]; last = qi[-1]!; } },
+            _ => {}
+          }
+          return ex(ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [qb])] + pre + [el_ir::cl(e, "OpAppendVector", [qb, last, ir::NdInt { n: qrow }]), ir::NdReturn { inner: qb }] }, ir::TyNever);
+        }
+        el::refuse(e, "a `return` of a vector `??` where the buffer was renamed");
+        return ex(ir::NdNull, ir::TyNever);
+      }
       // A fresh literal is returned as it is; the tail's delivery copies it into the buffer.  The
       // first pass builds no literal block yet: the syntax says what it is.
       if e.first_pass && (e.p.nodes[x!] is SVecLit || e.p.nodes[x!] is SComprehension) {

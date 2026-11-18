@@ -2373,6 +2373,11 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
   if null_sentinel_tail(e, code) {
     return code;
   }
+  // A body ending in a `return` that delivered into the buffer itself (`return q ?? […]`:
+  // clear, append, `return __retbuf`) has nothing left to deliver.
+  if el_types::deps(ret).contains(ba) && match tail { NdInsert { items: ti } => len(ti) > 0 && el_ir::unspan(ti[-1]!) == ir::NdReturn { inner: ir::NdVar { n: rb } }, NdReturn { inner: tri } => el_ir::unspan(tri) == ir::NdVar { n: rb } && len(bl.operators) > 1 && calls(e, el_ir::unspan(bl.operators[-2]!), "OpAppendVector"), _ => false } {
+    return code;
+  }
   if len(bl.operators) == 0 || !el_types::deps(ret).contains(ba) {
     el::refuse(e, "a function returning a vector from this tail: {tail_kind(e, vars, code)}");
     return code;
@@ -2740,7 +2745,7 @@ pub fn arm_delivery(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer,
 
 // The body's tail (by its syntax) as `q ?? [items]`, `q` a visible `vector<T>?` parameter and
 // the literal non-empty: the parameter, else -1.
-fn coalesce_param_tail(e: el::El, vars: el_vars::Vars, n: integer) -> integer {
+pub fn coalesce_param_tail(e: el::El, vars: el_vars::Vars, n: integer) -> integer {
   if n < 0 {
     return -1;
   }
