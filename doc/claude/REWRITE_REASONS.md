@@ -20,6 +20,11 @@ checker inside the compiler.  The rules themselves are
 
 ## What is decided
 
+- **Logging first, at the first grief.**  A rewrite that gives trouble — a wrong answer, a
+  slow routine it should have covered, a refusal nobody can explain — gets its refusals
+  reported BEFORE it is debugged or changed, when it does not report them yet.  The rules are
+  not all wired up front and nobody is asked to unify them; the logging a rule has must be
+  solid, and a rule that has none earns it the day it costs time.
 - **No self-check.**  The compiler has no mode in which it verifies its own analyses while a
   program runs.  A layer that validates the analyses adds complexity to check complexity.
 - **Logging is the assurance.**  A decision is trusted because it can be read from outside:
@@ -117,16 +122,17 @@ for a reader choosing what to wire; the complete list is the deciding function.
 
 ## To implement
 
-In this order.  Each step keeps every rewrite's behaviour: the rewrite census shows the same
-admissions before and after, and the code emitted for the bench programs is byte-identical.
+Each step keeps every rewrite's behaviour: the rewrite census shows the same admissions
+before and after, and the code emitted for the bench programs is byte-identical.
 
-1. **Wire the rules whose gate already names its failing clause.**  Many admission functions
-   return a reason string or call a local decline helper for their trace.  Each needs one
-   `declined` call where that reason is consumed, and its `@decline-owed` marker removed.
-2. **Wire the rules whose gate answers `None` or `false`.**  The gate returns the clause
-   that failed, and its one caller reports it.  Taken by yield: first the rules whose
-   refusals sit in routines over their performance bar ([PERFORMANCE.md](PERFORMANCE.md)).
-3. **The per-function listing.**  `LOFT_DECLINE_CENSUS_FN=<file>` writes one line per
+1. **The per-function listing**, next.  It serves the rules that report today.
+2. **A rule that owes is wired when it gives grief** (§ What is decided), not in a sweep.
+   Where its gate already names its failing test — a reason string, a local decline helper
+   for its trace — that is one `declined` call where the reason is consumed.  Where the gate
+   answers `None` or `false`, the gate returns the test that failed and its one caller
+   reports it.  Its `@decline-owed` marker goes, or is cut down to the gates still silent.
+
+**The per-function listing.**  `LOFT_DECLINE_CENSUS_FN=<file>` writes one line per
    function, rule and test with a count, as `LOFT_REWRITE_CENSUS_FN` does for admissions,
    limited to one function when a name is given.  It names no site: a loop or a local has a
    name, a decision inside an expression has none, and tracking positions through a tree the
