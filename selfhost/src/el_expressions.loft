@@ -475,7 +475,8 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   // onto, or into the buffer itself where no rename applies (`materialize_view_return`).
   mat_tail = false;
   mv_tail = projects_into_local(e, vars, raw_tail(code), false, result is TyOptional) || reads_stored_reference(e, raw_tail(code), [])
-    || (len(el_types::deps(b.tp)) == 0 && tail_is_join(raw_tail(code)) && projects_into_local(e, vars, raw_tail(code), true, true));
+    || (len(el_types::deps(b.tp)) == 0 && tail_is_join(raw_tail(code)) && projects_into_local(e, vars, raw_tail(code), true, true))
+    || (len(el_types::deps(b.tp)) > 0 && tail_is_join(raw_tail(code)) && bind_leaves(e, vars, raw_tail(code)) > 0 && ls_views_local(e, vars, el_types::deps(b.tp)));
   // (A body that ends in a `return` statement delivered its value there, `record_return`.)
   expr_tail = tail_syntax(e, vars.body) >= 0 && !(e.p.nodes[tail_syntax(e, vars.body)] is SJump);
   if rb >= 0 && !lambda && expr_tail && record_result(result) && mv_tail {
@@ -786,7 +787,7 @@ fn read_root(e: el::El, n: ir::Node) -> ir::Node {
 // The leaves of a join tail the copy leg takes: the number that read into a local or an inline
 // call's result; -1 where a leaf is anything but such a read, a record literal or null — a
 // bare local or a call could be the buffer itself (`Rename`), which is another delivery.
-fn bind_leaves(e: el::El, vars: el_vars::Vars, n: ir::Node) -> integer {
+pub fn bind_leaves(e: el::El, vars: el_vars::Vars, n: ir::Node) -> integer {
   x = el_ir::unspan(n);
   match x {
     NdIf { cond: _, t, f } => {
@@ -821,6 +822,27 @@ fn bind_leaves(e: el::El, vars: el_vars::Vars, n: ir::Node) -> integer {
   }
 }
 
+// The copy leg for a `return` of such a join: the value copied arm by arm into the buffer (the
+// first pass binds the buffer and answers the value as it is); null where not carried.
+pub fn bind_value(e: el::El, vars: el_vars::Vars, value: ir::Node, result: ir::TypeT) -> ir::Node? {
+  d = e.context;
+  td = heap_def(el_types::base(result));
+  buf = el_ex_null::return_buffer(e, vars);
+  if td < 0 || buf < 0 {
+    return null;
+  }
+  ba = attr_nr(el::def(e, d), el_vars::name_of(vars, buf));
+  ret = el::def(e, d).returned[0];
+  if ba >= 0 && !el_types::deps(ret).contains(ba) {
+    e.b.data.definitions[d].returned = [el_types::with_deps(ret, el_types::deps(ret) + [ba])];
+  }
+  if e.first_pass {
+    return value;
+  }
+  owned = el_types::with_deps(el_types::without_deps(el_types::base(result)), [buf]);
+  copy_arms(e, vars, value, buf, td, owned)
+}
+
 // The copy leg itself: null where the copy is of a shape not carried.
 fn bind_tail(e: el::El, vars: el_vars::Vars, code: ir::Node, result: ir::TypeT) -> ir::Node? {
   bl = match code { NdBlock { block } => block[0], _ => return null };
@@ -848,6 +870,37 @@ fn bind_tail(e: el::El, vars: el_vars::Vars, code: ir::Node, result: ir::TypeT) 
   }
   bl.operators[-1] = if el_ir::unspan(last) is NdReturn { el_ir::respan(last, ir::NdReturn { inner: copied! }) } else { copied! };
   ir::NdBlock { block: [bl] }
+}
+
+// `Parser::return_views_local`: does a variable of `ls` — or one it borrows, through the
+// parameters — borrow something that is no parameter of the function?  Such a value views a
+// store this frame frees (`w[i].a` over a local vector, a loop's element), and its copy takes a
+// work ref; a read off a local that OWNS its record (no borrow at all) does not.
+pub fn ls_views_local(e: el::El, vars: el_vars::Vars, ls: vector<integer>) -> boolean {
+  work: vector<integer> = [for x in ls { x }];
+  at = 0;
+  while at < len(work) {
+    v = work[at]!;
+    at += 1;
+    if v < 0 || v >= len(vars.vars) {
+      continue;
+    }
+    // (A vector local borrows its own `__vdb_N` store from Rust's first pass on; this port mints
+    // that store on the second, so on the first a vector local with no borrow yet stands for it.)
+    if e.first_pass && !vars.vars[v].argument && el_types::base(el_vars::tp(vars, v)) is TyVector && len(el_types::deps(el_vars::tp(vars, v))) == 0 {
+      return true;
+    }
+    for d in el_types::deps(el_vars::tp(vars, v)) {
+      if d < 0 || d >= len(vars.vars) || work.contains(d) {
+        continue;
+      }
+      if attr_nr(el::def(e, e.context), el_vars::name_of(vars, d)) < 0 {
+        return true;
+      }
+      work += [d];
+    }
+  }
+  false
 }
 
 // `Parser::return_tail_is_join`: an `if` at the tail, through blocks.
