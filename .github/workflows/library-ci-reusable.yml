@@ -194,7 +194,9 @@ jobs:
 
       # `MALLOC_PERTURB_` on the three test steps below: glibc overwrites memory as it is freed,
       # so a C shim that reads a record it has released fails here, where the stale bytes
-      # would otherwise still read as the record and the test would pass.
+      # would otherwise still read as the record and the test would pass.  The thread cache
+      # is switched off with it (`glibc.malloc.tcache_count=0`): a small block freed into
+      # that cache is not overwritten.
       # A library's OWN CI denies warnings on its own code by default (a package may
       # opt out with a `.allow_warnings` file in its dir) — distinct from the loft-side
       # revalidate-libs gate, which tolerates warnings (a new loft warning must not fail
@@ -228,6 +230,7 @@ jobs:
           LOFT_STORE_GUARD: 1
           GRAPHICS_TEST_MUST_DRAW: ${{ hashFiles(format('{0}/.x11_window', matrix.package)) != '' && '1' || '0' }}
           MALLOC_PERTURB_: 165
+          GLIBC_TUNABLES: glibc.malloc.tcache_count=0
         run: |
           set -o pipefail
           loft --interpret --tests tests 2>&1 | tee "$RUNNER_TEMP/interpret.log" && exit 0
@@ -249,6 +252,7 @@ jobs:
           LOFT_STORE_GUARD: 1
           GRAPHICS_TEST_MUST_DRAW: ${{ hashFiles(format('{0}/.x11_window', matrix.package)) != '' && '1' || '0' }}
           MALLOC_PERTURB_: 165
+          GLIBC_TUNABLES: glibc.malloc.tcache_count=0
         run: |
           set -o pipefail
           LOFT_TIMEOUT=240 loft --native --tests tests 2>&1 | tee "$RUNNER_TEMP/native.log" && exit 0
@@ -273,6 +277,7 @@ jobs:
           LOFT_STORE_GUARD: 1
           GRAPHICS_TEST_MUST_DRAW: ${{ hashFiles(format('{0}/.x11_window', matrix.package)) != '' && '1' || '0' }}
           MALLOC_PERTURB_: 165
+          GLIBC_TUNABLES: glibc.malloc.tcache_count=0
         run: |
           set -o pipefail
           LOFT_TIMEOUT=240 loft --native-c --tests tests 2>&1 | tee "$RUNNER_TEMP/native-c.log" && exit 0
