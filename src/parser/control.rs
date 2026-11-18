@@ -10987,12 +10987,18 @@ impl Parser {
             || crate::use_analysis::is_projection_op(&self.data, d)
     }
 
-    /// Is a return copy's source PROVEN present: a literal, or a local that
-    /// [`Self::record_local_may_be_absent`] clears — bare, or as the value of a block that
-    /// holds nothing else (a branch arm's `{ code }`)?
+    /// Is a return copy's source PROVEN present: a literal, a local that
+    /// [`Self::record_local_may_be_absent`] clears, or an inline field path rooted at such a
+    /// local — bare, or as the value of a block that holds nothing else (a branch arm's
+    /// `{ code }`)?  Everything else may be absent: an element, a keyed entry, a child record,
+    /// a call's answer, and whatever is read off one.
     fn copy_source_is_present(&self, src: &Value) -> bool {
         match src.unspan() {
             Value::Var(v) => !self.record_local_may_be_absent(*v),
+            // An inline FIELD of a record that is there is there (`e.value` of a loop's `e`).
+            Value::Call(d, args) if *d == self.data.def_nr("OpGetField") && args.len() == 3 => {
+                self.copy_source_is_present(&args[0])
+            }
             Value::Block(bl) if bl.name == "Object" => true,
             Value::Block(bl) if bl.operators.len() == 1 => {
                 self.copy_source_is_present(&bl.operators[0])
