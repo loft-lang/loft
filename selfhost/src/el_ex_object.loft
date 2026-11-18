@@ -2094,6 +2094,14 @@ pub fn store_else(e: el::El, vars: el_vars::Vars, code: ir::Node, orelse: intege
   has_target = false;
   write_steps: vector<integer> = [];
   write_args: vector<integer> = [];
+  // An APPEND is a store too (`is_append_op`): its target is the collection it claims in,
+  // bound in `_store_target_N` before the claim.  That form is not carried yet.
+  for st in steps {
+    if append_step(e, st) {
+      el::refuse(e, "a store `else` on an append");
+      return code;
+    }
+  }
   for st in steps {
     match el_ir::unspan(st) {
       NdCall { def_nr, args } => {
@@ -3347,4 +3355,18 @@ fn open_types(e: el::El, types: vector<ir::TypeT>) -> boolean {
     }
   }
   false
+}
+
+
+// `Parser::is_append_op` over one step: a claim in, a push onto or a filing into a collection,
+// called directly or bound (`_elm = OpNewRecord(…)`).
+fn append_step(e: el::El, st: ir::Node) -> boolean {
+  match el_ir::unspan(st) {
+    NdSet { var: _, inner } => append_step(e, inner),
+    NdCall { def_nr, args: _ } => {
+      nm = el::def(e, def_nr).name;
+      nm.starts_with("OpPush") || nm == "OpNewRecord" || nm == "OpFinishRecord" || nm == "OpAppendVector" || nm == "OpAppendCopy" || nm == "n_keyed_entry_ints" || nm == "n_keyed_entry_text"
+    },
+    _ => false
+  }
 }
