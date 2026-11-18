@@ -2723,6 +2723,22 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
   // before any member is filled: an insert through one member indexes the record into all.  A
   // member the literal names is not carried yet (`group_fills`, the bulk-fill maintenance).
   group: vector<integer> = if e.first_pass { [] } else { linked_offsets(e, d) };
+  // `group_fills`: the vector members filled in bulk; `filled_collections`: every collection
+  // field the literal hands records (anything but `[]`).
+  bulk: vector<integer> = [];
+  handed: vector<integer> = [];
+  for fi in fields {
+    match e.p.nodes[fi] {
+      SFieldInit { name: hname, e: he } => {
+        ha = attr_nr(def, hname);
+        hempty = match e.p.nodes[he ?? 0] { SVecLit { items: hi } => len(hi) == 0, _ => false };
+        if !e.first_pass && he != null && ha >= 0 && !hempty && el_types::is_collection(el_types::base(def.attributes[ha]!.typedef[0] ?? ir::TyVoid)) {
+          handed += [field_position(e, d, hname)];
+        }
+      },
+      _ => {}
+    }
+  }
   for off in group {
     list += [el_ir::cl(e, "OpSetInt4", [r, ir::NdInt { n: off }, ir::NdInt { n: 0 }])];
   }
@@ -2735,7 +2751,10 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
           // group's; a keyed member's bulk fill is not carried.)
           fa_nr = attr_nr(def, fname);
           vec_member = fa_nr >= 0 && el_types::base(def.attributes[fa_nr]!.typedef[0] ?? ir::TyVoid) is TyVector;
-          if group.contains(field_position(e, d, fname)) && !empty && !vec_member {
+          // A keyed member given a LITERAL is built through the record, element by element,
+          // as a keyed field outside a group is; any other value stays refused.
+          keyed_literal = fe != null && e.p.nodes[fe ?? 0] is SVecLit;
+          if group.contains(field_position(e, d, fname)) && !empty && !vec_member && !keyed_literal {
             el::refuse(e, "a literal that fills a member of a linked collection group");
             return null;
           }
@@ -2803,6 +2822,10 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
                 return null;
               }
               list += c!;
+              // A group's vector member filled in bulk owes the other members an index.
+              if group.contains(field_position(e, d, fname)) {
+                bulk += [field_position(e, d, fname)];
+              }
               found += [fname];
               continue;
             }
@@ -3106,6 +3129,36 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
       }
       for op in defaults! {
         list += [op];
+      }
+    }
+    // `keyed_sibling_view_fills` (loft#1266): after the whole body, one `OpIndexGroup` per
+    // OTHER member of a bulk-filled vector member's group that the literal did not fill itself.
+    gfs = el_schema::struct_fields(e, def.known_type);
+    for boff in bulk {
+      me = -1;
+      for gf in gfs {
+        if gf.position == boff {
+          me = gf#index;
+        }
+      }
+      if me < 0 {
+        continue;
+      }
+      nrs: vector<integer> = [me];
+      for o in gfs[me]!.other_indexes {
+        if o != el_schema::NO_TYPE && !nrs.contains(o) {
+          nrs += [o];
+        }
+      }
+      nrs.sort();
+      to_tp = ir::NdInt { n: gfs[me]!.content };
+      to = el_ir::cl(e, "OpGetField", [r, ir::NdInt { n: boff }, to_tp]);
+      for nr in nrs {
+        mf = gfs[nr]!;
+        if mf.position == boff || handed.contains(mf.position) {
+          continue;
+        }
+        list += [el_ir::cl(e, "OpIndexGroup", [to, el_ir::cl(e, "OpGetField", [r, ir::NdInt { n: mf.position }, to_tp]), ir::NdInt { n: mf.content }, ir::NdInt { n: def.known_type }, ir::NdInt { n: me }])];
       }
     }
   }
