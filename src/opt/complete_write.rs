@@ -80,6 +80,8 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
         total += fact.locals.len() + fact.mints.len();
         {
             let _census = crate::rewrite_census::InBody::enter("ir", &def.name);
+            // @decline-owed: a mint whose literal group leaves a field unwritten, and a local
+            //   or type with one mint that does (`opt::ret_adopt::complete_writes`)
             crate::rewrite_census::fired("R-CompleteWrite", fact.locals.len() + fact.mints.len());
         }
         def.no_prefill = fact;

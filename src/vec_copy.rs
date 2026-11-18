@@ -384,6 +384,11 @@ pub(crate) fn shared_element_type(
 }
 
 fn decline(cx: &Cx, t: u16, why: &str) {
+    if crate::rewrite_census::declines_wanted() {
+        let def = cx.data.def(cx.d_nr);
+        let site = format!("{}:{}", def.name(), def.variables().name(t));
+        crate::rewrite_census::declined("R-VecCopy", &site, why);
+    }
     if crate::keys::trace_vec_copy() {
         eprintln!(
             "[vec-copy] fn={} t={} keeps its loop: {why}",

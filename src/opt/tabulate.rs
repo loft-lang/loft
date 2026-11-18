@@ -43,6 +43,7 @@ pub fn table(data: &Data, d: u32) -> Option<Vec<i64>> {
     }
     let def = data.def(d);
     let decline = |why: &str| -> Option<Vec<i64>> {
+        crate::rewrite_census::declined("R-Tabulate", def.name(), why);
         if trace() {
             eprintln!("tabulate: {} declined — {why}", def.name());
         }

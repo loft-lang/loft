@@ -77,6 +77,8 @@ pub fn rewrite(data: &mut Data, d_nr: u32) {
     replace_loops(&mut code, &whole, &ops, &mut fired);
     data.definitions[d_nr as usize].code = code;
     if fired > 0 {
+        // @decline-owed: a sum loop whose body holds more than `acc = acc + v[i]`, and one whose
+        //   loop variables are named elsewhere in the function (`reduction`)
         crate::rewrite_census::fired("R-BoundedNest/kernel", fired);
     }
 }

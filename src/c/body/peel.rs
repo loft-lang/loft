@@ -259,6 +259,8 @@ impl FnWriter<'_> {
         for m in labels {
             self.line(ind, &format!("brk_{m}:;"));
         }
+        // @decline-owed: more than `MAX_TRIPS` trips, a bound or a start that is no constant, and a
+        //   body with an inner loop, a yield or a `par`
         crate::rewrite_census::fired("R-Peel", 1);
         Ok(())
     }

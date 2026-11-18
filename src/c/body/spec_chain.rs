@@ -150,6 +150,8 @@ impl FnWriter<'_> {
         self.line(ind, "} else {");
         self.line(ind + 1, &format!("{name} = {};", vals[root]));
         self.line(ind, "}");
+        // @decline-owed: a chain outside a loop, a single operator over two operands, a chain
+        //   `(R-Range)` proves plain whole, and one inside a guarded loop's copy
         crate::rewrite_census::fired("R-SpecChain", 1);
         Ok(true)
     }

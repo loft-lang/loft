@@ -76,6 +76,8 @@ pub fn rewrite(data: &mut Data, d_nr: u32) {
         }
     }
     data.definitions[d_nr as usize].code = code;
+    // @decline-owed: a literal local named elsewhere, a field write that is no scalar setter,
+    //   and a value that is not simple (it may read a record the element's mint moves)
     crate::rewrite_census::fired("R-LiteralAppend", fired);
 }
 

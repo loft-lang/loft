@@ -197,6 +197,8 @@ fn loops_in(
                         names.join(", ")
                     );
                 }
+                // @decline-owed: a text that borrows from another or escapes the function, and a function
+                //   that yields or runs arms in parallel
                 crate::rewrite_census::fired("R-TextLen", texts.len());
                 if let Value::Loop(bl) = list[i].unspan_mut() {
                     statements(&mut bl.operators, data, ops, &memo);

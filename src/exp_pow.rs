@@ -104,5 +104,7 @@ pub fn rewrite_program(data: &mut Data) {
         });
         data.definitions[d_nr].code = code;
     }
+    // @no-decline: the shape is `pow(E, x)` itself; every site of it is folded, and a `pow` of
+    //   another base is not a site of this rule
     crate::rewrite_census::fired("R-ExpPow", fired);
 }

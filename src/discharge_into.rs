@@ -180,6 +180,8 @@ pub fn rewrite_program(data: &mut Data) -> usize {
             total += n;
         }
     }
+    // @decline-owed: a discharge whose local is read by the read or the default, and one
+    //   whose temporary is used beyond its assignment, test, move and free (`rewrite_in`)
     crate::rewrite_census::fired("R-DischargeInto", total);
     total
 }

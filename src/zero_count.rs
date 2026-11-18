@@ -107,5 +107,7 @@ pub fn rewrite_program(data: &mut Data) {
         });
         data.definitions[d_nr].code = code;
     }
+    // @no-decline: the shape is a character count compared at the zero boundary; every such
+    //   comparison is folded, and one against another number asks for the character count
     crate::rewrite_census::fired("R-ZeroCount", fired);
 }

@@ -52,10 +52,13 @@ pub fn rewrite(data: &mut Data, d_nr: u32) {
         let vars = data.def(d_nr).variables();
         find(&code, &mut |ops| match admit(ops, &code, data, vars, rb) {
             Ok(site) => sites.push(site),
-            Err(Some(why)) if trace => {
-                eprintln!("forward-result: {} declines — {why}", data.def(d_nr).name());
+            Err(Some(why)) => {
+                crate::rewrite_census::declined("R-ForwardResult", data.def(d_nr).name(), &why);
+                if trace {
+                    eprintln!("forward-result: {} declines — {why}", data.def(d_nr).name());
+                }
             }
-            Err(_) => {}
+            Err(None) => {}
         });
     }
     // A local is judged across ALL its sites: the arms of one `match` bind one `buf`.  Outside
@@ -69,6 +72,14 @@ pub fn rewrite(data: &mut Data, d_nr: u32) {
         let vars = data.def(d_nr).variables();
         let inside: usize = group.iter().map(|s| s.inside).sum();
         if mentions(&code, local) != inside + count_null_sets(&code, local) {
+            if crate::rewrite_census::declines_wanted() {
+                let site = format!("{}:{}", data.def(d_nr).name(), vars.name(local));
+                crate::rewrite_census::declined(
+                    "R-ForwardResult",
+                    &site,
+                    "the local is named outside its arms",
+                );
+            }
             if trace {
                 eprintln!(
                     "forward-result: {} declines — `{}` is named outside its arms",

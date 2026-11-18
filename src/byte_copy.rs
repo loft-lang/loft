@@ -365,6 +365,11 @@ fn guarded(c: Copy, original: Value, tp: i32, cx: &Cx) -> Value {
 }
 
 fn decline(cx: &Cx, buf: u16, why: &str) {
+    if crate::rewrite_census::declines_wanted() {
+        let def = cx.data.def(cx.d_nr);
+        let site = format!("{}:{}", def.name(), def.variables().name(buf));
+        crate::rewrite_census::declined("R-ByteCopy", &site, why);
+    }
     if crate::keys::trace_byte_copy() {
         eprintln!(
             "[byte-copy] fn={} buf={} keeps its loop: {why}",

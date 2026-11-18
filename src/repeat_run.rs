@@ -208,6 +208,8 @@ fn visit(v: &mut Value, cx: &Cx, tps: &[(Value, i32)]) {
             let Some(&(_, tp)) = tps.iter().find(|(t, _)| *t == target) else {
                 continue;
             };
+            // @decline-owed: a run under four pushes, an element narrower than four bytes, a computed
+            //   value or target, and a target whose vector type the function does not name
             crate::rewrite_census::fired("R-RepeatRun", 1);
             if crate::keys::trace_repeat_run() {
                 eprintln!(

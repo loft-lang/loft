@@ -110,5 +110,7 @@ pub fn rewrite_program(data: &mut Data) {
         }
         data.definitions[d_nr].code = code;
     }
+    // @decline-owed: a view bound outside the body's own statement list, and one whose view or
+    //   buffer is assigned, re-pointed or freed after the bind (`disturbed`)
     crate::rewrite_census::fired("R-SelfReplace", fired);
 }

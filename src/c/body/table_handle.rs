@@ -130,6 +130,8 @@ impl FnWriter<'_> {
         }
         let h = format!("hh{}", self.decls.len() + 1);
         self.decls.push(format!("loft_hh {h} = LOFT_HH_NONE;"));
+        // @decline-owed: a place named by one covered keyed operation outside every loop
+        //   keeps the plain call (`places`: two operations, or one in a loop)
         crate::rewrite_census::fired("R-TableHandle", 1);
         self.table_names.insert(path, h.clone());
         Some(h)

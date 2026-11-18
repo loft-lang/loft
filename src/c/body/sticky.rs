@@ -78,6 +78,8 @@ impl FnWriter<'_> {
             }
         }
         if !out.is_empty() {
+            // @decline-owed: a local the loop writes other than by its own `acc = acc ± e`, and a loop a
+            //   `break` or `continue` leaves past its own exit
             crate::rewrite_census::fired("R-StickySum", out.len());
         }
         out

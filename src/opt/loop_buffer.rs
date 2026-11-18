@@ -123,6 +123,8 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
                 );
             }
         }
+        // @decline-owed: a function that yields or calls a generator, and a buffer another rule
+        //   owns (`opt::buffer_owner`)
         crate::rewrite_census::fired("R-LoopBuffer", done.len());
         total += done.len();
     }
