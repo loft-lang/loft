@@ -888,7 +888,8 @@ impl Parser {
             }
             // @C168: declared by variable number, which follows where a callee stands in the
             // file (its buffer is numbered on pass 2 when it is declared below).  Allowed: the
-            // order of these hidden stores is nothing a program observes.
+            // order of these hidden stores is nothing a program observes.  Guard:
+            // `tests/scripts/a-callee-declared-below-its-caller-changes-nothing-a-program-can-see.loft`.
             for r in self.vars.work_references() {
                 if crate::env_once!(std::env::var("LOFT_TRACE_PREAMBLE").is_ok()) {
                     eprintln!(
