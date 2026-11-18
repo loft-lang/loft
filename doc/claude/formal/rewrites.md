@@ -8348,7 +8348,7 @@ analysis both read, `src/opt/append_twin.rs`.
 **BUILT** (`src/opt/append_twin.rs`, the call path in `calls.rs`, the twin's hooks in
 `emit.rs` / `text.rs`, and on the C `src/c/body.rs`; `LOFT_NO_APPEND_TWIN`,
 `LOFT_TRACE_APPEND_TWIN`; guard
-`loft-suite/rules/rewrites/R-AppendTwin/a-call-result-appended-is-built-in-the-destination.loft`).
+`loft-suite/rules/rewrites/R-AppendTwin/a-call-result-appended-is-built-in-the-destination-by-its-twin.loft`).
 
 ### An append twin writes through its caller's window
 
