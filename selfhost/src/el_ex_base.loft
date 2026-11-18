@@ -878,7 +878,7 @@ pub fn field_path(e: el::El, n: ir::Node) -> boolean {
 }
 
 // An element read (`OpGetVector`) of a variable or of a field path: `rs[0]` under `rs[0].items`.
-fn element_of_path(e: el::El, n: ir::Node) -> boolean {
+pub fn element_of_path(e: el::El, n: ir::Node) -> boolean {
   match n {
     NdCall { def_nr, args } => {
       nm = el::def(e, def_nr).name;
