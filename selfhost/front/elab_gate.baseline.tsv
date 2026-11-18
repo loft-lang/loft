@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	a57c6acbbcf95cec78a70389ecc276a8b817bad7
+suite	c79b692df575975a2372445fd709f1dfcbf04521
 
-layer	elab	agree	1031	of	2051
+layer	elab	agree	1031	of	2049
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -663,9 +663,7 @@ elab	refused	loft-suite/rules/types/N-Join/153-n-join-a-bare-null-widens-an-infe
 elab	refused	loft-suite/rules/types/N-Join/153-n-join-an-inferred-local-widens-to-nullable.loft
 elab	refused	loft-suite/rules/types/N-Join/2305-a-text-match-arm-calling-a-function-declared-below-builds-natively.loft
 elab	refused	loft-suite/rules/types/N-Join/2339-a-binding-arm-answering-a-null-block-takes-the-joins-null.loft
-elab	refused	loft-suite/rules/types/N-Match/1417-a-null-arm-matches-a-heap-subject.loft
-elab	refused	loft-suite/rules/types/N-Match/2230-a-null-arm-matches-a-plain-enum-subject.loft
-elab	refused	loft-suite/rules/types/N-Match/2427-a-nullable-collection-is-matched-like-any-nullable.loft
+elab	refused	loft-suite/rules/types/N-Match/a-null-arm-matches-a-null-subject-of-any-kind.loft
 elab	refused	loft-suite/rules/types/N-Opt/1471-a-value-struct-is-nullable-through-its-tag.loft
 elab	refused	loft-suite/rules/types/N-Opt/has-null-is-owed-by-every-rule-that-constructs-an-optional.loft
 elab	refused	loft-suite/rules/types/N-Reserve/1249-a-nullable-narrow-sentinel-is-not-a-value.loft
