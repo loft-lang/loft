@@ -70,4 +70,6 @@ Read the patterns first; the rows are the evidence.
 | 11-18 | f5a9ca6a4 | ? | The route coverage line ("3 of 31") is in every cycle report and has not moved a decision | left out of the report unless it changes |
 | 11-18 | — | + | The owner's split for a try: the check is automatic; a CLEAN result is acknowledged automatically, one with issues goes back only with the tester's analysis of what is wrong | built: `try.sh` classifies (checked on four tries already run: two clean, the panic, the two drops), the poller answers a clean one and holds the other |
 | 11-18 | — | ? | The tester held a try's "issues" answer back until its analysis was written: minutes in which the porter cannot know whether to build on the change | the owner's measure — the porter's free working time: the status is automatic in both cases, the analysis only adds to it, and nothing is waited for |
+| 11-18 | — | + | The hand-off used as meant: the porter posted a try, ran its own corpus check beside it and went on to the next topic | — |
+| 11-18 | — | + | The owner's reason for the split, stated: the check is automatic; the ANALYSIS of what comes up can be done by either session, so the tester does it — the porter keeps both its session context and its time for porting | an analysis goes as far as the cause and a proposed repair, not findings left to interpret |
 
