@@ -66,6 +66,12 @@ the source is ZEROED so the next turn's clear and the callee's refill find an em
 tmp`) a deep copy — with it off, `y` is given up to `x`, the stores exchanged.  It is the first
 bisect step for a wrong or emptied vector after such a rebind; `LOFT_TRACE_PLACE=1` names each
 decision (`[take-local]`).
+**`LOFT_NO_KEYED_FIELD_RETURN_COPY=1`** (`@FR-F-Ret`, parse time, BOTH backends) returns a keyed
+collection that is a field of a local record as the place it is — with it off
+(`Parser::keyed_local_field_copy_out`), the field is copied into a local that owns its store
+before the record is released.  The bisect step for a keyed result that reads wrong or a store
+freed twice after such a return; the store records report the switched build
+(`store-use-after-end`).
 **`LOFT_NO_ENDED_CAPTURE_SCOPE=1`** (`@FR-B-Scope`, parse time, BOTH backends) offers a lambda
 the locals whose block ended before it, so a closure written after a loop shares the loop body's
 local — with it off (`Parser::enter_capture_scope`), such a name does not exist in the lambda:

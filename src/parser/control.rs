@@ -3244,7 +3244,7 @@ impl Parser {
     /// A keyed return hands its store up, which is right for a collection built in a local
     /// of its own.  A field of a local record owns no store: the value is a place inside the
     /// record's, and the record is freed on the way out, so the caller copied from — and then
-    /// released — a store already gone (`@FR-H-UseAfterFree`; the C backend counted the second
+    /// released — a store already gone (`@FR-F-Ret`; the C backend counted the second
     /// release).  The copy is the one a block value takes for the same tail
     /// ([`Parser::materialize_collection_value`], loft#1494): a local that owns its store.
     ///
@@ -3253,7 +3253,11 @@ impl Parser {
     /// rooted at a local, and one read out of a call's result, whose record the frame
     /// releases as well.  The walk is [`Self::materialize_view_arms`]'s, so an `if` arm that
     /// answers the field is reached, and each leaf is copied on the path that runs it.
+    /// `LOFT_NO_KEYED_FIELD_RETURN_COPY=1` returns the field as it stands.
     fn keyed_local_field_copy_out(&mut self, tail: &mut Value, t: &Type) -> Option<Vec<u16>> {
+        if crate::env_once!(std::env::var_os("LOFT_NO_KEYED_FIELD_RETURN_COPY").is_some()) {
+            return None;
+        }
         let mut roots = Vec::new();
         self.keyed_field_leaves_copy_out(tail, &t.without_deps(), &mut roots);
         if roots.is_empty() {

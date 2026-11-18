@@ -3769,6 +3769,8 @@ use a separate collection or add after the loop"
     /// read where it stands; every other source is copied into a temp of its own first —
     /// what `__p154_rhs` does for a vector field (`@FR-H-CopySelf`).
     fn staged_keyed_field_source(&mut self, val: &Value, src_tp: &Type) -> (Vec<Value>, Value) {
+        // @FR-O-Proxy asks copy — an aliasing question: a dep-free local is read in place,
+        // every other source is copied first; neither arm frees.
         if matches!(val.unspan(), Value::Var(v) if self.vars.tp(*v).depend().is_empty()) {
             return (Vec::new(), val.clone());
         }
