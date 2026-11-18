@@ -363,7 +363,7 @@ Op-Std	operators	curated	5	2026-11-18	core; the stdlib-type refusal; 2554 OpNot/
 O-Borrow	ownership	curated	12	2026-11-18	own cell for every view kind (field, element, parameter field, & link; moved by LOFT_NO_SEVERAL_VARS) beside 2338; the B-Ref, R-CopyView, R-LoopRecord, R-Const cells are their rules'
 O-Borrow-Scalar	ownership	curated	3	2026-11-18	its own link-to-a-link patch cell and B-Ref-Write's patch cell stay; B-Ref-Lvalue's cell is the core
 O-Buffer	ownership	curated	25	2026-11-18	merged three gate-E-refused hand-on cells (null answer, rebound every pass, self tail call) into one; the every-arm cell agrees in gate E and stays; patch cells kept; R-Switch and tests/scripts cells are theirs
-O-Complete	ownership	todo			
+O-Complete	ownership	curated	33	2026-11-18	two merges (2467's branch and comprehension; the join-sources and fn-ref-delivery cells); 2384 and the coalesce-fallback read are distinct cases; the B-Copy, F-ParamRebind, H-Drop, H-Sound, O-Buffer, O-Latest and O-ViewField cells are theirs
 O-Deps	ownership	curated	3	2026-11-18	three cores, three shapes: a fn-ref return, an element off a borrowing call's field, a nullable element binding
 O-Derived	ownership	curated	4	2026-11-18	four cores, each a distinct case: a recursive join's argument, an inline rebuild's carried record, every-path frees, a hoisted field view
 O-Detach	ownership	todo			
