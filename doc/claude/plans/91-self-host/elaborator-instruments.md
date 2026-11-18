@@ -194,6 +194,11 @@ position.  Five of the six groups are in:
 - the match entry: `parse_match`, then `parse_cursor_match`, `parse_scalar_match`,
   `parse_vector_match` or `parse_tuple_match`.
 
+Added on the porting agent's request: `classify_reference_delivery=<verdict>` at the record
+return selector's two call sites — `Rename(<work refs by name>)`, `MaterializeView`,
+`ForwardCopy`, `BuildIntoBuffer(<work ref>,<buffer>)`, `AsIs` — the step before
+`classify_ret_promotion`'s, which had cost about six probe builds to read by hand.
+
 Two changes to the design.  A handler that is a function of its own prints at its ENTRY, not in
 the dispatching `match`: that match has guarded and multi-line arms, the entry says the same
 thing, and the change stays one line per handler.  And `parse_method`'s built-in arms are NOT

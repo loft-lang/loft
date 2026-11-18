@@ -3170,6 +3170,7 @@ impl Parser {
                 // SHARED"* this arm is what enforces for a record return (loft#1202,
                 // `formal/closures.md` D-clo-17).
                 let delivery = self.classify_reference_delivery(&t.base().depend(), l, context);
+                self.state_route_delivery(&delivery);
                 self.dispatch_reference_delivery(delivery, td, l);
                 if context == "return from block" {
                     self.literal_exits_into_buffer(l);
@@ -3491,6 +3492,30 @@ impl Parser {
             }
             Delivery::AsIs => false,
         }
+    }
+
+    /// `LOFT_STATE_TRACE`'s `route` line for the selector's verdict at a record return site:
+    /// `classify_reference_delivery=<verdict>`, a rename's work refs and a build's two
+    /// variables by NAME — the step before `classify_ret_promotion`'s.
+    fn state_route_delivery(&self, d: &RefDelivery) {
+        if !self.state_trace_on() {
+            return;
+        }
+        let shown = match d {
+            RefDelivery::Rename(ws) => {
+                let names: Vec<&str> = ws.iter().map(|w| self.vars.name(*w)).collect();
+                format!("Rename({})", names.join(","))
+            }
+            RefDelivery::MaterializeView => "MaterializeView".to_string(),
+            RefDelivery::ForwardCopy => "ForwardCopy".to_string(),
+            RefDelivery::BuildIntoBuffer { work_ref, buf_var } => format!(
+                "BuildIntoBuffer({},{})",
+                self.vars.name(*work_ref),
+                self.vars.name(*buf_var)
+            ),
+            RefDelivery::AsIs => "AsIs".to_string(),
+        };
+        self.state_route(&format!("classify_reference_delivery={shown}"));
     }
 
     /// @PLN85 D-own-1 — the SELECTOR for a `Type::Reference` (struct) return: read
@@ -8559,6 +8584,7 @@ impl Parser {
             let l = &mut bl.operators;
             let delivery =
                 self.classify_reference_delivery(&ret.base().depend(), l, "return from block");
+            self.state_route_delivery(&delivery);
             if matches!(delivery, RefDelivery::BuildIntoBuffer { .. }) {
                 self.dispatch_reference_delivery(delivery, td, l);
             }

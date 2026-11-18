@@ -958,7 +958,7 @@ elab	refused	tests/scripts/store_paged_enum_field.loft
 elab	refused	tests/scripts/store_rebuild_b1.loft
 elab	refused	tests/scripts/the-reference-safety-traps-are-what-it-catalogues.loft
 
-layer	elab-functions	agree	15315	of	27921
+layer	elab-functions	agree	15321	of	27921
 elab-functions	agree	lib/code.loft::Block
 elab-functions	agree	lib/code.loft::Boolean
 elab-functions	agree	lib/code.loft::Call
@@ -2822,6 +2822,7 @@ elab-functions	agree	loft-suite/rules/calls/F-Ret/a-nullable-return-hands-out-a-
 elab-functions	agree	loft-suite/rules/calls/F-Ret/a-nullable-return-hands-out-a-fresh-owned-value-as-its-dense-twin-does.loft::main_vector<Pair>
 elab-functions	agree	loft-suite/rules/calls/F-Ret/a-nullable-return-hands-out-a-fresh-owned-value-as-its-dense-twin-does.loft::main_vector<RfS>
 elab-functions	agree	loft-suite/rules/calls/F-Ret/a-nullable-return-hands-out-a-fresh-owned-value-as-its-dense-twin-does.loft::main_vector<vector<integer>>
+elab-functions	agree	loft-suite/rules/calls/F-Ret/a-nullable-return-hands-out-a-fresh-owned-value-as-its-dense-twin-does.loft::n_arm_dense
 elab-functions	agree	loft-suite/rules/calls/F-Ret/a-nullable-return-hands-out-a-fresh-owned-value-as-its-dense-twin-does.loft::n_arm_or_literal
 elab-functions	agree	loft-suite/rules/calls/F-Ret/a-nullable-return-hands-out-a-fresh-owned-value-as-its-dense-twin-does.loft::n_arm_or_null
 elab-functions	agree	loft-suite/rules/calls/F-Ret/a-nullable-return-hands-out-a-fresh-owned-value-as-its-dense-twin-does.loft::n_element_view
@@ -2915,10 +2916,12 @@ elab-functions	agree	loft-suite/rules/calls/F-Ret/a-part-of-a-calls-result-retur
 elab-functions	agree	loft-suite/rules/calls/F-Ret/a-part-of-a-calls-result-returned-is-the-callers-own-copy.loft::main_vector<T>
 elab-functions	agree	loft-suite/rules/calls/F-Ret/a-part-of-a-calls-result-returned-is-the-callers-own-copy.loft::n_decode
 elab-functions	agree	loft-suite/rules/calls/F-Ret/a-part-of-a-calls-result-returned-is-the-callers-own-copy.loft::n_def
+elab-functions	agree	loft-suite/rules/calls/F-Ret/a-part-of-a-calls-result-returned-is-the-callers-own-copy.loft::n_early
 elab-functions	agree	loft-suite/rules/calls/F-Ret/a-part-of-a-calls-result-returned-is-the-callers-own-copy.loft::n_field
 elab-functions	agree	loft-suite/rules/calls/F-Ret/a-part-of-a-calls-result-returned-is-the-callers-own-copy.loft::n_filler
 elab-functions	agree	loft-suite/rules/calls/F-Ret/a-part-of-a-calls-result-returned-is-the-callers-own-copy.loft::n_matched
 elab-functions	agree	loft-suite/rules/calls/F-Ret/a-part-of-a-calls-result-returned-is-the-callers-own-copy.loft::n_mint
+elab-functions	agree	loft-suite/rules/calls/F-Ret/a-part-of-a-calls-result-returned-is-the-callers-own-copy.loft::n_mixed
 elab-functions	agree	loft-suite/rules/calls/F-Ret/a-part-of-a-calls-result-returned-is-the-callers-own-copy.loft::n_mk
 elab-functions	agree	loft-suite/rules/calls/F-Ret/a-part-of-a-calls-result-returned-is-the-callers-own-copy.loft::n_n_of
 elab-functions	agree	loft-suite/rules/calls/F-Ret/a-part-of-a-calls-result-returned-is-the-callers-own-copy.loft::n_s2_mk
@@ -9406,6 +9409,7 @@ elab-functions	agree	loft-suite/rules/rewrites/R-DecodeView/a-decoded-view-answe
 elab-functions	agree	loft-suite/rules/rewrites/R-DecodeView/a-decoded-view-answers-what-its-copy-would-across-every-rule-it-meets.loft::n___lambda_test_a_captured_text_0
 elab-functions	agree	loft-suite/rules/rewrites/R-DecodeView/a-decoded-view-answers-what-its-copy-would-across-every-rule-it-meets.loft::n_frame3
 elab-functions	agree	loft-suite/rules/rewrites/R-DecodeView/a-decoded-view-answers-what-its-copy-would-across-every-rule-it-meets.loft::n_get
+elab-functions	agree	loft-suite/rules/rewrites/R-DecodeView/a-decoded-view-answers-what-its-copy-would-across-every-rule-it-meets.loft::n_keep
 elab-functions	agree	loft-suite/rules/rewrites/R-DecodeView/a-decoded-view-answers-what-its-copy-would-across-every-rule-it-meets.loft::n_measure
 elab-functions	agree	loft-suite/rules/rewrites/R-DecodeView/a-decoded-view-answers-what-its-copy-would-across-every-rule-it-meets.loft::n_s2_dec
 elab-functions	agree	loft-suite/rules/rewrites/R-DecodeView/a-decoded-view-answers-what-its-copy-would-across-every-rule-it-meets.loft::n_s2_get
@@ -10122,6 +10126,7 @@ elab-functions	agree	loft-suite/rules/rewrites/R-ViewReturn/a-found-entry-is-rea
 elab-functions	agree	loft-suite/rules/rewrites/R-ViewReturn/a-found-entry-is-read-where-it-lies.loft::Val
 elab-functions	agree	loft-suite/rules/rewrites/R-ViewReturn/a-found-entry-is-read-where-it-lies.loft::main_vector<Entry>
 elab-functions	agree	loft-suite/rules/rewrites/R-ViewReturn/a-found-entry-is-read-where-it-lies.loft::n_doc
+elab-functions	agree	loft-suite/rules/rewrites/R-ViewReturn/a-found-entry-is-read-where-it-lies.loft::n_get
 elab-functions	agree	loft-suite/rules/rewrites/R-ViewReturn/a-found-entry-is-read-where-it-lies.loft::n_is_none
 elab-functions	agree	loft-suite/rules/rewrites/R-ViewReturn/a-found-entry-is-read-where-it-lies.loft::n_live_records
 elab-functions	agree	loft-suite/rules/rewrites/R-ViewReturn/a-found-entry-is-read-where-it-lies.loft::n_main
@@ -11195,6 +11200,7 @@ elab-functions	agree	loft-suite/rules/types/N-Store/2006-a-returned-field-of-a-r
 elab-functions	agree	loft-suite/rules/types/N-Store/2006-a-returned-field-of-a-record-that-is-null-is-null.loft::n_a12s
 elab-functions	agree	loft-suite/rules/types/N-Store/2006-a-returned-field-of-a-record-that-is-null-is-null.loft::n_a13
 elab-functions	agree	loft-suite/rules/types/N-Store/2006-a-returned-field-of-a-record-that-is-null-is-null.loft::n_a14
+elab-functions	agree	loft-suite/rules/types/N-Store/2006-a-returned-field-of-a-record-that-is-null-is-null.loft::n_a15
 elab-functions	agree	loft-suite/rules/types/N-Store/2006-a-returned-field-of-a-record-that-is-null-is-null.loft::n_a2
 elab-functions	agree	loft-suite/rules/types/N-Store/2006-a-returned-field-of-a-record-that-is-null-is-null.loft::n_a3
 elab-functions	agree	loft-suite/rules/types/N-Store/2006-a-returned-field-of-a-record-that-is-null-is-null.loft::n_a4
@@ -16275,7 +16281,7 @@ elab-functions	agree	tests/scripts/the-reference-safety-traps-are-what-it-catalo
 elab-functions	agree	tests/scripts/the-reference-safety-traps-are-what-it-catalogues.loft::vector<SafetyRow>
 elab-functions	agree	tests/scripts/the-reference-safety-traps-are-what-it-catalogues.loft::vector<integer(0, 255)>
 
-layer	elab-pass1	agree	10779	of	15951
+layer	elab-pass1	agree	10783	of	15957
 elab-pass1	agree	lib/code.loft::t_4Code_get_type
 elab-pass1	agree	lib/code.loft::t_4Code_set_type
 elab-pass1	agree	lib/docs.loft::n_demo
@@ -17377,6 +17383,7 @@ elab-pass1	agree	loft-suite/rules/calls/F-Ret/a-part-of-a-calls-result-returned-
 elab-pass1	agree	loft-suite/rules/calls/F-Ret/a-part-of-a-calls-result-returned-is-the-callers-own-copy.loft::n_field
 elab-pass1	agree	loft-suite/rules/calls/F-Ret/a-part-of-a-calls-result-returned-is-the-callers-own-copy.loft::n_matched
 elab-pass1	agree	loft-suite/rules/calls/F-Ret/a-part-of-a-calls-result-returned-is-the-callers-own-copy.loft::n_mint
+elab-pass1	agree	loft-suite/rules/calls/F-Ret/a-part-of-a-calls-result-returned-is-the-callers-own-copy.loft::n_mixed
 elab-pass1	agree	loft-suite/rules/calls/F-Ret/a-part-of-a-calls-result-returned-is-the-callers-own-copy.loft::n_n_of
 elab-pass1	agree	loft-suite/rules/calls/F-Ret/a-part-of-a-calls-result-returned-is-the-callers-own-copy.loft::n_s3_def
 elab-pass1	agree	loft-suite/rules/calls/F-Ret/a-part-of-a-calls-result-returned-is-the-callers-own-copy.loft::n_same
@@ -21440,6 +21447,7 @@ elab-pass1	agree	loft-suite/rules/rewrites/R-DeadResult/a-result-read-through-so
 elab-pass1	agree	loft-suite/rules/rewrites/R-DeadResult/a-result-read-through-some-fields-answers-what-the-whole-call-does.loft::n_test_a_recursion_read_through_one_field
 elab-pass1	agree	loft-suite/rules/rewrites/R-DeadResult/a-result-read-through-some-fields-answers-what-the-whole-call-does.loft::n_test_an_effect_is_kept_when_its_field_is_not_read
 elab-pass1	agree	loft-suite/rules/rewrites/R-DeadResult/a-result-read-through-some-fields-answers-what-the-whole-call-does.loft::n_test_only_a_status_field_is_read
+elab-pass1	agree	loft-suite/rules/rewrites/R-DecodeView/a-decoded-view-answers-what-its-copy-would-across-every-rule-it-meets.loft::n_keep
 elab-pass1	agree	loft-suite/rules/rewrites/R-DecodeView/a-decoded-view-answers-what-its-copy-would-across-every-rule-it-meets.loft::n_measure
 elab-pass1	agree	loft-suite/rules/rewrites/R-DecodeView/a-decoded-view-answers-what-its-copy-would-across-every-rule-it-meets.loft::n_s2_dec
 elab-pass1	agree	loft-suite/rules/rewrites/R-DecodeView/a-decoded-view-answers-what-its-copy-would-across-every-rule-it-meets.loft::n_s3_dec
@@ -22730,6 +22738,7 @@ elab-pass1	agree	loft-suite/rules/rewrites/R-View/a-view-header-holds-only-while
 elab-pass1	agree	loft-suite/rules/rewrites/R-View/a-view-header-holds-only-while-the-remainder-writes-in-place.loft::n_test_a_second_view_writes_what_the_first_reads
 elab-pass1	agree	loft-suite/rules/rewrites/R-View/a-view-header-holds-only-while-the-remainder-writes-in-place.loft::n_test_sets_through_either_name_in_straight_line
 elab-pass1	agree	loft-suite/rules/rewrites/R-View/a-view-header-holds-only-while-the-remainder-writes-in-place.loft::n_test_sets_through_the_viewed_path_in_a_loop
+elab-pass1	agree	loft-suite/rules/rewrites/R-ViewReturn/a-found-entry-is-read-where-it-lies.loft::n_get
 elab-pass1	agree	loft-suite/rules/rewrites/R-ViewReturn/a-found-entry-is-read-where-it-lies.loft::n_is_none
 elab-pass1	agree	loft-suite/rules/rewrites/R-ViewReturn/a-found-entry-is-read-where-it-lies.loft::n_live_records
 elab-pass1	agree	loft-suite/rules/rewrites/R-ViewReturn/a-found-entry-is-read-where-it-lies.loft::n_main
@@ -23364,6 +23373,7 @@ elab-pass1	agree	loft-suite/rules/types/N-Store/2006-a-returned-field-of-a-recor
 elab-pass1	agree	loft-suite/rules/types/N-Store/2006-a-returned-field-of-a-record-that-is-null-is-null.loft::n_a12s
 elab-pass1	agree	loft-suite/rules/types/N-Store/2006-a-returned-field-of-a-record-that-is-null-is-null.loft::n_a13
 elab-pass1	agree	loft-suite/rules/types/N-Store/2006-a-returned-field-of-a-record-that-is-null-is-null.loft::n_a14
+elab-pass1	agree	loft-suite/rules/types/N-Store/2006-a-returned-field-of-a-record-that-is-null-is-null.loft::n_a15
 elab-pass1	agree	loft-suite/rules/types/N-Store/2006-a-returned-field-of-a-record-that-is-null-is-null.loft::n_a2
 elab-pass1	agree	loft-suite/rules/types/N-Store/2006-a-returned-field-of-a-record-that-is-null-is-null.loft::n_a3
 elab-pass1	agree	loft-suite/rules/types/N-Store/2006-a-returned-field-of-a-record-that-is-null-is-null.loft::n_a4
