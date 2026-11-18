@@ -2090,9 +2090,11 @@ impl Parser {
             .iter()
             .any(|t| self.lexer.peek_token(t))
             || self.lexer.peek().has == crate::lexer::LexItem::None
+            // The binary operators that also START a value: a negation, a `&` link, a closure
+            // `|x| …` — and `|| …`, a closure with no parameters.
             || self
                 .peek_binary_operator()
-                .is_some_and(|(_, op)| !matches!(op, "-" | "&" | "|"))
+                .is_some_and(|(_, op)| !matches!(op, "-" | "&" | "|" | "||"))
     }
 
     /// @PLN188 — the binary operator the next token is, and its level in `OPERATORS`, by one
