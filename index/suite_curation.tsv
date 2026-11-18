@@ -152,7 +152,7 @@ Fact-Direction	facts	curated	1	2026-11-17	had no guard: a first suite cell (writ
 Fact-Engine	facts	curated	1	2026-11-17	structural (one routine, one answer per compilation, every writer reads it): not observable by one program beyond the writers agreeing; the Fact-Direction cell exercises its answers; Rust sites in src/opt/facts.rs
 Fact-Kind	facts	structural	0	2026-11-17	what a kind declares (domain, direction, key, flow, cycle scope): no program observes the declaration; its kinds' answers are exercised by the Fact-Direction and Fact-Twin cells
 Fact-One	facts	structural	0	2026-11-17	no rewrite walks a callee itself: a property of the compiler's code, not of a program's answers; D-fact-1 OPEN
-Fact-Oracle	facts	needs-cell	0	2026-11-17	unbuilt: LOFT_FACT_VERIFY is read nowhere in src/ — recorded as D-fact-4 (OPEN, @PLN211 Arc C step 2); no program can guard a missing switch
+Fact-Oracle	facts	structural	0	2026-11-18	a process rule: a kind owes its run-time check when its reach is widened, with that change; no kind has been widened under it, so no program observes it yet
 Fact-Reach	facts	structural	0	2026-11-17	the depth and cycle parameters of a query: no program observes them; the cycle answer is exercised by the Fact-Direction cell's mutual recursion
 Fact-ReachMin	facts	structural	0	2026-11-17	a rewrite asks the smallest reach, a widening measured by make rewrite-census: a process rule, not a program's answer
 Fact-Relational	facts	curated	1	2026-11-17	a first suite cell: an accessor's bound answers by its own test inside, outside and below zero (negative counts from the end); the accessor inlining clause is PROPOSED

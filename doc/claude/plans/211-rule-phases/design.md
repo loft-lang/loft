@@ -428,9 +428,10 @@ kept.  Left as layout: hex_field `trace`, and hex_terrain `terrain_hydrology` +3
 selection scans are identical C outside the guarded copy, which only enlarges the function.
 
 **`(Fact-Oracle)` itself** — the interpreter checking a MUST `entry` fact on entry and a MAY
-`writes` summary as a superset of what the call did — is built with step 2, under
-`LOFT_FACT_VERIFY=1`, so a widened reach has a run-time falsifier on the interpreter as the C's
-verify form gives one on the C.
+`writes` summary as a superset of what the call did, under `LOFT_FACT_VERIFY=1` — is built per
+kind, with the change that widens that kind's reach (the rule as `formal/facts.md` states it),
+so a widened reach has a run-time falsifier on the interpreter as the C's verify form gives
+one on the C.
 
 ## Arc D — widening the rules we have
 

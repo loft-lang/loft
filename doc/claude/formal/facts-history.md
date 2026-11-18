@@ -23,3 +23,15 @@ The record companion of [facts.md](facts.md): closed deviation entries and what 
   (`c::RG_BIT`) and guarded copies.  The C's census: `R-RangedCall` 0 → 705.  Not as a kind of
   `facts(kind, reach)` (that is D-fact-1's handle), and `__rg` keyed by the C's own mask bit,
   not a `Fact-Twin` registry (D-fact-3).
+
+### D-fact-4 — CLOSED 2026-11-18 (@PLN211) — no kind has its run-time falsifier
+- **Violated:** `Fact-Oracle` as it then read ("every kind has a falsifier that runs the
+  program"), and through it `Fact-ReachMin`'s guard.
+- **Where:** `LOFT_FACT_VERIFY` was read nowhere in `src/`; the interpreter checked no `entry`
+  fact on entry, no result fact at return and no `writes` / `mints` summary against the call.
+- **Closed by a change of the rule, not by code** (owner): a standing falsifier for every kind
+  asks for the whole fact engine first — five of the nine kinds are kinds of the routine, some
+  answers depend on the asker, and the `writes` fact is keyed by record type where a run sees
+  a store.  The rule now asks a kind for its check when its reach is widened, with the
+  widening.  The suite ledger records `Fact-Oracle` as a process rule with no cell.
+
