@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	fac3652dc1b37371599d8511c95e1683ff5a73ed
 
-layer	elab	agree	1072	of	2191
+layer	elab	agree	1073	of	2191
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -1017,7 +1017,6 @@ elab	refused	tests/scripts/978-branch-join-carries-both-arms-borrows.loft
 elab	refused	tests/scripts/980-variant-field-answers-its-own-variant.loft
 elab	refused	tests/scripts/981-split-ownership-return.loft
 elab	refused	tests/scripts/987-par-empty-body-discard.loft
-elab	refused	tests/scripts/992-match-tail-with-return-arm.loft
 elab	refused	tests/scripts/a-builder-rebinds-into-its-own-return-buffer.loft
 elab	refused	tests/scripts/a-byte-range-of-a-vector-copied-one-at-a-time-is-one-append.loft
 elab	refused	tests/scripts/a-call-text-moves-into-its-local.loft
@@ -1126,7 +1125,7 @@ elab	refused	tests/scripts/store_persist_size_710.loft
 elab	refused	tests/scripts/store_rebuild_b1.loft
 elab	refused	tests/scripts/the-reference-safety-traps-are-what-it-catalogues.loft
 
-layer	elab-functions	agree	15447	of	27816
+layer	elab-functions	agree	15435	of	27798
 elab-functions	agree	lib/code.loft::Block
 elab-functions	agree	lib/code.loft::Boolean
 elab-functions	agree	lib/code.loft::Call
@@ -1848,6 +1847,7 @@ elab-functions	agree	loft-suite/rules/binding/B-Disturb/a-view-out-of-a-match-ar
 elab-functions	agree	loft-suite/rules/binding/B-Disturb/a-view-out-of-a-match-arm-materialises-across-a-rebind-of-its-subject.loft::n_two
 elab-functions	agree	loft-suite/rules/binding/B-Disturb/a-view-out-of-a-match-arm-materialises-across-a-rebind-of-its-subject.loft::n_unspan
 elab-functions	agree	loft-suite/rules/binding/B-Disturb/a-view-out-of-a-match-arm-materialises-across-a-rebind-of-its-subject.loft::n_used_after
+elab-functions	agree	loft-suite/rules/binding/B-Disturb/a-view-out-of-a-match-arm-materialises-across-a-rebind-of-its-subject.loft::n_walk_first_arm
 elab-functions	agree	loft-suite/rules/binding/B-Disturb/a-view-out-of-a-match-arm-materialises-across-a-rebind-of-its-subject.loft::n_walk_later_arm
 elab-functions	agree	loft-suite/rules/binding/B-Disturb/a-view-out-of-a-match-arm-materialises-across-a-rebind-of-its-subject.loft::vector<Blk>
 elab-functions	agree	loft-suite/rules/binding/B-Disturb/a-view-out-of-a-match-arm-materialises-across-a-rebind-of-its-subject.loft::vector<N>
@@ -7714,7 +7714,10 @@ elab-functions	agree	loft-suite/rules/matching/M-Exhaust/2390-a-match-whose-ever
 elab-functions	agree	loft-suite/rules/matching/M-Exhaust/2390-a-match-whose-every-arm-returns-answers-on-every-backend.loft::P
 elab-functions	agree	loft-suite/rules/matching/M-Exhaust/2390-a-match-whose-every-arm-returns-answers-on-every-backend.loft::Three
 elab-functions	agree	loft-suite/rules/matching/M-Exhaust/2390-a-match-whose-every-arm-returns-answers-on-every-backend.loft::Two
+elab-functions	agree	loft-suite/rules/matching/M-Exhaust/2390-a-match-whose-every-arm-returns-answers-on-every-backend.loft::n_as_float
+elab-functions	agree	loft-suite/rules/matching/M-Exhaust/2390-a-match-whose-every-arm-returns-answers-on-every-backend.loft::n_as_int
 elab-functions	agree	loft-suite/rules/matching/M-Exhaust/2390-a-match-whose-every-arm-returns-answers-on-every-backend.loft::n_main
+elab-functions	agree	loft-suite/rules/matching/M-Exhaust/2390-a-match-whose-every-arm-returns-answers-on-every-backend.loft::n_returned
 elab-functions	agree	loft-suite/rules/matching/M-Match/a-match-over-a-later-function-reads-every-pattern-kind.loft::n_later_int
 elab-functions	agree	loft-suite/rules/matching/M-Match/a-match-over-a-later-function-reads-every-pattern-kind.loft::n_later_text
 elab-functions	agree	loft-suite/rules/matching/M-Match/a-match-over-a-later-function-reads-every-pattern-kind.loft::n_later_vec
@@ -15101,22 +15104,6 @@ elab-functions	agree	tests/scripts/987-par-empty-body-discard.loft::n_test_987_q
 elab-functions	agree	tests/scripts/987-par-empty-body-discard.loft::vector<__tuple<integer,integer,integer>>
 elab-functions	agree	tests/scripts/987-par-empty-body-discard.loft::vector<__tuple<integer,integer>>
 elab-functions	agree	tests/scripts/987-par-empty-body-discard.loft::vector<__tuple<text,integer>>
-elab-functions	agree	tests/scripts/992-match-tail-with-return-arm.loft::(schema)
-elab-functions	agree	tests/scripts/992-match-tail-with-return-arm.loft::I992Box
-elab-functions	agree	tests/scripts/992-match-tail-with-return-arm.loft::I992Kind
-elab-functions	agree	tests/scripts/992-match-tail-with-return-arm.loft::Keep
-elab-functions	agree	tests/scripts/992-match-tail-with-return-arm.loft::Leave
-elab-functions	agree	tests/scripts/992-match-tail-with-return-arm.loft::n_i992_make
-elab-functions	agree	tests/scripts/992-match-tail-with-return-arm.loft::n_test_992_break_and_continue_controls
-elab-functions	agree	tests/scripts/992-match-tail-with-return-arm.loft::n_test_992_nested_match
-elab-functions	agree	tests/scripts/992-match-tail-with-return-arm.loft::n_test_992_return_in_every_arm
-elab-functions	agree	tests/scripts/992-match-tail-with-return-arm.loft::n_test_992_statement_after_the_match_control
-elab-functions	agree	tests/scripts/992-match-tail-with-return-arm.loft::n_test_992_taken_return_arm
-elab-functions	agree	tests/scripts/992-match-tail-with-return-arm.loft::n_test_992_text_local_survives_the_arm
-elab-functions	agree	tests/scripts/992-match-tail-with-return-arm.loft::n_test_992_three_arms
-elab-functions	agree	tests/scripts/992-match-tail-with-return-arm.loft::n_test_992_two_locals
-elab-functions	agree	tests/scripts/992-match-tail-with-return-arm.loft::n_test_992_untaken_return_arm
-elab-functions	agree	tests/scripts/992-match-tail-with-return-arm.loft::n_test_992_value_returning_function_control
 elab-functions	agree	tests/scripts/a-builder-rebinds-into-its-own-return-buffer.loft::(schema)
 elab-functions	agree	tests/scripts/a-builder-rebinds-into-its-own-return-buffer.loft::Doc
 elab-functions	agree	tests/scripts/a-builder-rebinds-into-its-own-return-buffer.loft::Pt
