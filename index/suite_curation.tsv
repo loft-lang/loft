@@ -378,9 +378,9 @@ O-Override	ownership	curated	8	2026-11-18	its two refused cells are distinct cas
 O-Owner	ownership	curated	17	2026-11-18	its refused cells are distinct cases (native results, a mapped lambda, a fn-ref keyed collection); the B-Ref-Write, O-Latest, R-MoveLast and R-Rebind cells are theirs
 O-Proxy	ownership	curated	16	2026-11-18	merged 1257 and the vector-parameter rebind (a vector taken from another variable leaves its source); every core a distinct case; O-Override, O-Move and tests/scripts cells are theirs
 O-SliceView	ownership	curated	1	2026-11-18	first cell, from the formal text: the source's, holder's and lifetime's halves and the plain case each read what the copy holds; two cure switches move it
-O-Unknown	ownership	todo			
-O-ViewField	ownership	todo			
-O-Witness	ownership	todo			
+O-Unknown	ownership	curated	3	2026-11-18	three cores, three distinct cases; kept
+O-ViewField	ownership	curated	12	2026-11-18	gate E agrees with every own cell, so none merges; each a distinct site case (a disturbed container, an exported result, every exit path, a taking site); the fixture lib is no cell; O-One-Kind's and tests/scripts cells are theirs
+O-Witness	ownership	curated	27	2026-11-18	its two own fold candidates agree with gate E and stay; the refused cores are distinct cases; B-Copy's and R-DeferredCopy's cells are theirs
 Path-Case	paths	todo			
 Path-Name	paths	todo			
 Path-Refuse	paths	todo			
