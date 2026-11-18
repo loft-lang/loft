@@ -1,7 +1,7 @@
-diff --git b/src/parser/control.rs a/src/parser/control.rs
-index 32f63d913..6c5e2babe 100644
---- b/src/parser/control.rs
-+++ a/src/parser/control.rs
+diff --git a/src/parser/control.rs b/src/parser/control.rs
+index b83f9c4e3..d98a1eed7 100644
+--- a/src/parser/control.rs
++++ b/src/parser/control.rs
 @@ -6458,17 +6458,6 @@ impl Parser {
                      self.parse_block("else", &mut false_code, &Self::arm_expectation(&true_type));
                  false_fact = std::mem::take(&mut self.operand_fact);
@@ -13,7 +13,7 @@ index 32f63d913..6c5e2babe 100644
 -                // `m` as void on pass 1 — then refused its vector on pass 2.
 -                if self.block_tail_empty_literal
 -                    && true_type == Type::Unknown(0)
--                    && matches!(false_type, Type::Void)
+-                    && false_type == Type::Void
 -                {
 -                    false_type = Type::Unknown(0);
 -                }
