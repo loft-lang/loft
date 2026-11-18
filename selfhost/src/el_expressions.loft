@@ -605,7 +605,10 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
           match el_ir::unspan(el_ir::last(bl.operators)) {
             NdVar { n: tv } => {
               if tv != buf && heap_def(el_vars::tp(vars, tv)) >= 0 {
-                copy = if views_local(vars, tv) { el_ex_null::copy_into_buffer(e, vars, el_ir::last(bl.operators), tv, buf, result) } else { null };
+                // (`RetPromotion::Bind` for a named local: it keeps its own store and is copied
+                // into the buffer at the return — one that views a local, and one that owns
+                // its record, alike.  A parameter at the tail merges its borrow: not carried.)
+                copy = if !vars.vars[tv].argument { el_ex_null::copy_into_buffer(e, vars, el_ir::last(bl.operators), tv, buf, result) } else { null };
                 if copy == null {
                   el::refuse(e, "a record tail other than the local the return buffer was renamed onto");
                 } else {
