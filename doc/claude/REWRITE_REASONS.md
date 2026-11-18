@@ -35,6 +35,12 @@ checker inside the compiler.  The rules themselves are
   refusals and refused NOTHING; the recorded snapshot carries them as rows of 0.  Either the
   body lacks the shape or the rule is dead, and a name on those lists is the cue to find out
   which.
+- **A rule can be retired on what the census shows — eventually, and not in a hurry.**  Few
+  rewrites and few refusals says the shape hardly occurs in the body; few rewrites and many
+  refusals says the shape occurs and the rule misses it, the place a broader rule would take
+  over.  Neither is a reason to remove a rule now: the count is of sites, not of time (the
+  performance portal weighs that), and it is of the programs measured.  It is the evidence a
+  removal is argued from when one is proposed.
 - **The census runs every writer.**  It reads the C writer and the rustc one while that
   exists (`rewrite_census.WRITERS`, the one list), and takes the larger count where both
   report: a rule the parser or the scope pass decides counts the same under each.  A rule
