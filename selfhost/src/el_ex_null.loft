@@ -650,6 +650,15 @@ pub fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: intege
       vt = el_types::without_deps(b);
       return coalesce_with(e, vars, x, ex(el_ex_pattern::empty_literal_to(e, vars, vt, borrows: el_ex_call::view_borrows(e, vars, x)), vt));
     }
+    // A plain enum defaults to its first-declared variant (`build_default`'s enum arm, D-Enum).
+    match b {
+      TyEnum { n: pen, is_ref: per } => {
+        if !per && pen >= 0 {
+          return coalesce_with(e, vars, x, ex(ir::NdEnum { ord: 1, tp: el::def(e, pen).known_type }, b));
+        }
+      },
+      _ => {}
+    }
     if !el_convert::plain_scalar(b) {
       el::refuse(e, "a `?` default of this type: {type_kind(b)}");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
