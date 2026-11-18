@@ -1642,6 +1642,9 @@ fn branch_yields_null(e: el::El, n: ir::Node) -> boolean {
 // behind a null test where the value may be absent and can be read again.  Null where a leaf
 // needs its source bound first (`bind_return_source`): not carried.
 fn copy_arms(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, td: integer, owned: ir::TypeT) -> ir::Node? {
+  if el_trace::on() {
+    el_trace::route(e, "materialize_return_into");
+  }
   if branch_yields_null(e, n) || branch_has_nullable_leaf(e, vars, n) {
     match n {
       NdSpan { pos, inner } => {
