@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	be55620c9793c98d01df24d63b9ace03f3efbec1
 
-layer	elab	agree	1134	of	2085
+layer	elab	agree	1137	of	2085
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -535,7 +535,6 @@ elab	refused	loft-suite/rules/rewrites/R-InPlaceLiteral/an-in-place-literal-answ
 elab	refused	loft-suite/rules/rewrites/R-Inputs/a-field-path-twin-input-is-stale-after-every-write-that-reaches-it.loft
 elab	refused	loft-suite/rules/rewrites/R-KeyedEntry/a-keyed-insert-writes-the-entry-its-key-names.loft
 elab	refused	loft-suite/rules/rewrites/R-LitHoist/a-literal-of-a-const-records-fields-is-built-once-only-while-no-name-writes-it.loft
-elab	refused	loft-suite/rules/rewrites/R-Mint/a-minted-element-evicts-no-hoisted-scalar-and-an-alias-write-does.loft
 elab	refused	loft-suite/rules/rewrites/R-MoveLast/2192-a-local-copied-into-two-literals-is-moved-only-at-its-last.loft
 elab	refused	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft
 elab	refused	loft-suite/rules/rewrites/R-Prefill/164-prefill-image.loft
@@ -550,7 +549,6 @@ elab	refused	loft-suite/rules/rewrites/R-SameRead/a-slice-match-reads-its-subjec
 elab	refused	loft-suite/rules/rewrites/R-SliceArg/a-slice-handed-to-a-const-parameter-is-the-fresh-clamped-value.loft
 elab	refused	loft-suite/rules/rewrites/R-SliceBorrow/a-slice-that-escapes-or-outlives-its-source-keeps-the-bytes-it-was-cut-from.loft
 elab	refused	loft-suite/rules/rewrites/R-SliceInto/a-slice-appended-into-a-place-is-the-fresh-clamped-value-its-bounds-read-first.loft
-elab	refused	loft-suite/rules/rewrites/R-SplitTable/a-split-bound-to-a-name-answers-the-vector-it-never-builds.loft
 elab	refused	loft-suite/rules/rewrites/R-TailSelf/a-result-held-in-a-store-is-delivered-as-the-call-would.loft
 elab	refused	loft-suite/rules/rewrites/R-TailSelf/a-tail-self-call-the-frame-cannot-jump-warns.loft
 elab	refused	loft-suite/rules/rewrites/R-ValueLocal/a-lifted-call-passes-a-value-record-parameter-as-its-tuple.loft
@@ -885,7 +883,6 @@ elab	refused	tests/scripts/a-generic-body-writes-a-narrow-element-as-its-vector-
 elab	refused	tests/scripts/a-guarded-row-fill-writes-what-its-guard-admits.loft
 elab	refused	tests/scripts/a-hash-walked-in-a-format-string-is-in-key-order.loft
 elab	refused	tests/scripts/a-hash-walked-unordered-repeats-its-order.loft
-elab	refused	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft
 elab	refused	tests/scripts/a-keyed-bind-from-a-call-on-a-vector-literal-compiles-natively.loft
 elab	refused	tests/scripts/a-keyed-insert-stages-its-values-before-the-entry-is-found.loft
 elab	refused	tests/scripts/a-leaf-early-exit-is-decided-toward-its-access.loft
@@ -958,7 +955,7 @@ elab	refused	tests/scripts/store_paged_enum_field.loft
 elab	refused	tests/scripts/store_rebuild_b1.loft
 elab	refused	tests/scripts/the-reference-safety-traps-are-what-it-catalogues.loft
 
-layer	elab-functions	agree	15322	of	27921
+layer	elab-functions	agree	15258	of	27854
 elab-functions	agree	lib/code.loft::Block
 elab-functions	agree	lib/code.loft::Boolean
 elab-functions	agree	lib/code.loft::Call
@@ -6000,7 +5997,6 @@ elab-functions	agree	loft-suite/rules/heap/H-RefHome/a-stored-reference-its-reco
 elab-functions	agree	loft-suite/rules/heap/H-RefHome/a-stored-reference-its-record-outlives-reads-it.loft::P
 elab-functions	agree	loft-suite/rules/heap/H-RefHome/a-stored-reference-its-record-outlives-reads-it.loft::main_vector<H>
 elab-functions	agree	loft-suite/rules/heap/H-RefHome/a-stored-reference-its-record-outlives-reads-it.loft::main_vector<P>
-elab-functions	agree	loft-suite/rules/heap/H-RefHome/a-stored-reference-its-record-outlives-reads-it.loft::n_admitted
 elab-functions	agree	loft-suite/rules/heap/H-RefHome/a-stored-reference-its-record-outlives-reads-it.loft::n_link
 elab-functions	agree	loft-suite/rules/heap/H-RefHome/a-stored-reference-its-record-outlives-reads-it.loft::n_literal_into_a_null_holder
 elab-functions	agree	loft-suite/rules/heap/H-RefHome/a-stored-reference-its-record-outlives-reads-it.loft::n_literal_repoints
@@ -9858,19 +9854,6 @@ elab-functions	agree	loft-suite/rules/rewrites/R-LitHoist/a-literal-of-a-const-r
 elab-functions	agree	loft-suite/rules/rewrites/R-LitHoist/a-literal-of-a-const-records-fields-is-built-once-only-while-no-name-writes-it.loft::n_test_a_const_parameters_fields_build_once
 elab-functions	agree	loft-suite/rules/rewrites/R-LitHoist/a-literal-of-a-const-records-fields-is-built-once-only-while-no-name-writes-it.loft::n_with_const
 elab-functions	agree	loft-suite/rules/rewrites/R-LitHoist/a-literal-of-a-const-records-fields-is-built-once-only-while-no-name-writes-it.loft::n_with_plain
-elab-functions	agree	loft-suite/rules/rewrites/R-Mint/a-minted-element-evicts-no-hoisted-scalar-and-an-alias-write-does.loft::(schema)
-elab-functions	agree	loft-suite/rules/rewrites/R-Mint/a-minted-element-evicts-no-hoisted-scalar-and-an-alias-write-does.loft::H
-elab-functions	agree	loft-suite/rules/rewrites/R-Mint/a-minted-element-evicts-no-hoisted-scalar-and-an-alias-write-does.loft::P
-elab-functions	agree	loft-suite/rules/rewrites/R-Mint/a-minted-element-evicts-no-hoisted-scalar-and-an-alias-write-does.loft::main_vector<P>
-elab-functions	agree	loft-suite/rules/rewrites/R-Mint/a-minted-element-evicts-no-hoisted-scalar-and-an-alias-write-does.loft::n_build
-elab-functions	agree	loft-suite/rules/rewrites/R-Mint/a-minted-element-evicts-no-hoisted-scalar-and-an-alias-write-does.loft::n_main
-elab-functions	agree	loft-suite/rules/rewrites/R-Mint/a-minted-element-evicts-no-hoisted-scalar-and-an-alias-write-does.loft::n_mk
-elab-functions	agree	loft-suite/rules/rewrites/R-Mint/a-minted-element-evicts-no-hoisted-scalar-and-an-alias-write-does.loft::n_sum_a
-elab-functions	agree	loft-suite/rules/rewrites/R-Mint/a-minted-element-evicts-no-hoisted-scalar-and-an-alias-write-does.loft::n_sum_b
-elab-functions	agree	loft-suite/rules/rewrites/R-Mint/a-minted-element-evicts-no-hoisted-scalar-and-an-alias-write-does.loft::n_test_a_builder_delivered_into_the_element_beside_an_alias_write
-elab-functions	agree	loft-suite/rules/rewrites/R-Mint/a-minted-element-evicts-no-hoisted-scalar-and-an-alias-write-does.loft::n_test_a_parameter_field_beside_fresh_mints
-elab-functions	agree	loft-suite/rules/rewrites/R-Mint/a-minted-element-evicts-no-hoisted-scalar-and-an-alias-write-does.loft::n_test_an_alias_write_beside_the_mints_evicts
-elab-functions	agree	loft-suite/rules/rewrites/R-Mint/a-minted-element-evicts-no-hoisted-scalar-and-an-alias-write-does.loft::vector<P>
 elab-functions	agree	loft-suite/rules/rewrites/R-MoveLast/2192-a-local-copied-into-two-literals-is-moved-only-at-its-last.loft::(schema)
 elab-functions	agree	loft-suite/rules/rewrites/R-MoveLast/2192-a-local-copied-into-two-literals-is-moved-only-at-its-last.loft::Img
 elab-functions	agree	loft-suite/rules/rewrites/R-MoveLast/2192-a-local-copied-into-two-literals-is-moved-only-at-its-last.loft::Img2
@@ -10032,25 +10015,13 @@ elab-functions	agree	loft-suite/rules/rewrites/R-SliceInto/a-slice-appended-into
 elab-functions	agree	loft-suite/rules/rewrites/R-SliceInto/a-slice-appended-into-a-place-is-the-fresh-clamped-value-its-bounds-read-first.loft::n_digits
 elab-functions	agree	loft-suite/rules/rewrites/R-SliceInto/a-slice-appended-into-a-place-is-the-fresh-clamped-value-its-bounds-read-first.loft::n_src
 elab-functions	agree	loft-suite/rules/rewrites/R-SliceInto/a-slice-appended-into-a-place-is-the-fresh-clamped-value-its-bounds-read-first.loft::n_test_appends_of_every_bound_shape
+elab-functions	agree	loft-suite/rules/rewrites/R-SliceInto/a-slice-appended-into-a-place-is-the-fresh-clamped-value-its-bounds-read-first.loft::n_tick
 elab-functions	agree	loft-suite/rules/rewrites/R-SliceInto/a-slice-appended-into-a-place-is-the-fresh-clamped-value-its-bounds-read-first.loft::n_total_of
 elab-functions	agree	loft-suite/rules/rewrites/R-SliceInto/a-slice-appended-into-a-place-is-the-fresh-clamped-value-its-bounds-read-first.loft::vector<R>
 elab-functions	agree	loft-suite/rules/rewrites/R-SliceInto/a-slice-appended-into-a-place-is-the-fresh-clamped-value-its-bounds-read-first.loft::vector<boolean>
 elab-functions	agree	loft-suite/rules/rewrites/R-SliceInto/a-slice-appended-into-a-place-is-the-fresh-clamped-value-its-bounds-read-first.loft::vector<character>
 elab-functions	agree	loft-suite/rules/rewrites/R-SliceInto/a-slice-appended-into-a-place-is-the-fresh-clamped-value-its-bounds-read-first.loft::vector<float>
 elab-functions	agree	loft-suite/rules/rewrites/R-SliceInto/a-slice-appended-into-a-place-is-the-fresh-clamped-value-its-bounds-read-first.loft::vector<integer(0, 255)>
-elab-functions	agree	loft-suite/rules/rewrites/R-SplitTable/a-split-bound-to-a-name-answers-the-vector-it-never-builds.loft::n_count
-elab-functions	agree	loft-suite/rules/rewrites/R-SplitTable/a-split-bound-to-a-name-answers-the-vector-it-never-builds.loft::n_dec
-elab-functions	agree	loft-suite/rules/rewrites/R-SplitTable/a-split-bound-to-a-name-answers-the-vector-it-never-builds.loft::n_idx
-elab-functions	agree	loft-suite/rules/rewrites/R-SplitTable/a-split-bound-to-a-name-answers-the-vector-it-never-builds.loft::n_late
-elab-functions	agree	loft-suite/rules/rewrites/R-SplitTable/a-split-bound-to-a-name-answers-the-vector-it-never-builds.loft::n_main
-elab-functions	agree	loft-suite/rules/rewrites/R-SplitTable/a-split-bound-to-a-name-answers-the-vector-it-never-builds.loft::n_mb2
-elab-functions	agree	loft-suite/rules/rewrites/R-SplitTable/a-split-bound-to-a-name-answers-the-vector-it-never-builds.loft::n_mb3
-elab-functions	agree	loft-suite/rules/rewrites/R-SplitTable/a-split-bound-to-a-name-answers-the-vector-it-never-builds.loft::n_once
-elab-functions	agree	loft-suite/rules/rewrites/R-SplitTable/a-split-bound-to-a-name-answers-the-vector-it-never-builds.loft::n_probe
-elab-functions	agree	loft-suite/rules/rewrites/R-SplitTable/a-split-bound-to-a-name-answers-the-vector-it-never-builds.loft::n_rows
-elab-functions	agree	loft-suite/rules/rewrites/R-SplitTable/a-split-bound-to-a-name-answers-the-vector-it-never-builds.loft::n_rv
-elab-functions	agree	loft-suite/rules/rewrites/R-SplitTable/a-split-bound-to-a-name-answers-the-vector-it-never-builds.loft::n_shape
-elab-functions	agree	loft-suite/rules/rewrites/R-SplitTable/a-split-bound-to-a-name-answers-the-vector-it-never-builds.loft::n_zip
 elab-functions	agree	loft-suite/rules/rewrites/R-TailSelf/a-result-held-in-a-store-is-delivered-as-the-call-would.loft::(schema)
 elab-functions	agree	loft-suite/rules/rewrites/R-TailSelf/a-result-held-in-a-store-is-delivered-as-the-call-would.loft::Pt
 elab-functions	agree	loft-suite/rules/rewrites/R-TailSelf/a-result-held-in-a-store-is-delivered-as-the-call-would.loft::VsN
@@ -10518,6 +10489,7 @@ elab-functions	agree	loft-suite/rules/types/D-Opt/an-enum-fields-default-is-a-ch
 elab-functions	agree	loft-suite/rules/types/D-Opt/an-enum-fields-default-is-a-choice-the-declaration-makes.loft::n_none
 elab-functions	agree	loft-suite/rules/types/D-Opt/an-enum-fields-default-is-a-choice-the-declaration-makes.loft::n_test_a_declared_variant_is_taken
 elab-functions	agree	loft-suite/rules/types/D-Opt/an-enum-fields-default-is-a-choice-the-declaration-makes.loft::n_test_an_optional_enum_field_defaults_to_null
+elab-functions	agree	loft-suite/rules/types/D-Opt/an-enum-fields-default-is-a-choice-the-declaration-makes.loft::n_test_an_optional_enum_local_discharges_to_its_first_variant
 elab-functions	agree	loft-suite/rules/types/D-Rec/a-second-variant-default-builds-in-a-store-of-its-own.loft::P
 elab-functions	agree	loft-suite/rules/types/D-Rec/a-second-variant-default-builds-in-a-store-of-its-own.loft::Ty
 elab-functions	agree	loft-suite/rules/types/D-Rec/a-second-variant-default-builds-in-a-store-of-its-own.loft::TyInt
@@ -13143,6 +13115,7 @@ elab-functions	agree	tests/scripts/158-field-mint.loft::n_f10
 elab-functions	agree	tests/scripts/158-field-mint.loft::n_f11
 elab-functions	agree	tests/scripts/158-field-mint.loft::n_f12
 elab-functions	agree	tests/scripts/158-field-mint.loft::n_f13
+elab-functions	agree	tests/scripts/158-field-mint.loft::n_f17
 elab-functions	agree	tests/scripts/158-field-mint.loft::n_f18
 elab-functions	agree	tests/scripts/158-field-mint.loft::n_f2
 elab-functions	agree	tests/scripts/158-field-mint.loft::n_f20
@@ -15113,50 +15086,9 @@ elab-functions	agree	tests/scripts/a-hash-walked-unordered-repeats-its-order.lof
 elab-functions	agree	tests/scripts/a-hash-walked-unordered-repeats-its-order.loft::n_filled
 elab-functions	agree	tests/scripts/a-hash-walked-unordered-repeats-its-order.loft::n_filled_t
 elab-functions	agree	tests/scripts/a-hash-walked-unordered-repeats-its-order.loft::n_ordered
-elab-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::(schema)
-elab-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::Ck
-elab-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::Hx
-elab-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::Mp
-elab-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::Us
-elab-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::Wd
-elab-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::main_vector<Ck>
-elab-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::main_vector<Hx>
-elab-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::n_add_one
-elab-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::n_bump
-elab-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::n_deep
-elab-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::n_ensure
-elab-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::n_fill_loop
-elab-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::n_g1
-elab-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::n_g10
-elab-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::n_g2
-elab-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::n_g3
-elab-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::n_g4
-elab-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::n_g5
-elab-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::n_g6
-elab-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::n_g7
-elab-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::n_g8
-elab-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::n_g9
-elab-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::n_get
-elab-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::n_grow_and_count
-elab-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::n_log
-elab-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::n_main
-elab-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::n_mk
-elab-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::n_nested
-elab-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::n_put
-elab-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::n_reset
-elab-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::n_reset_then
-elab-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::n_run
-elab-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::n_step
-elab-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::n_total
-elab-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::n_twice
-elab-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::n_via_view
-elab-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::n_view_then
-elab-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::vector<Ck>
-elab-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::vector<Hx>
 elab-functions	agree	tests/scripts/a-keyed-bind-from-a-call-on-a-vector-literal-compiles-natively.loft::(schema)
 elab-functions	agree	tests/scripts/a-keyed-bind-from-a-call-on-a-vector-literal-compiles-natively.loft::W
 elab-functions	agree	tests/scripts/a-keyed-bind-from-a-call-on-a-vector-literal-compiles-natively.loft::n_mkset
-elab-functions	agree	tests/scripts/a-keyed-insert-stages-its-values-before-the-entry-is-found.loft::(schema)
 elab-functions	agree	tests/scripts/a-keyed-insert-stages-its-values-before-the-entry-is-found.loft::Dark
 elab-functions	agree	tests/scripts/a-keyed-insert-stages-its-values-before-the-entry-is-found.loft::Holder
 elab-functions	agree	tests/scripts/a-keyed-insert-stages-its-values-before-the-entry-is-found.loft::Light
@@ -15826,6 +15758,7 @@ elab-functions	agree	tests/scripts/an-append-twin-writes-through-its-callers-win
 elab-functions	agree	tests/scripts/an-append-twin-writes-through-its-callers-window.loft::main_vector<Item>
 elab-functions	agree	tests/scripts/an-append-twin-writes-through-its-callers-window.loft::main_vector<integer(0, 255)>
 elab-functions	agree	tests/scripts/an-append-twin-writes-through-its-callers-window.loft::n_bsum
+elab-functions	agree	tests/scripts/an-append-twin-writes-through-its-callers-window.loft::n_enc_len
 elab-functions	agree	tests/scripts/an-append-twin-writes-through-its-callers-window.loft::n_hd
 elab-functions	agree	tests/scripts/an-append-twin-writes-through-its-callers-window.loft::n_texts
 elab-functions	agree	tests/scripts/an-append-twin-writes-through-its-callers-window.loft::vector<Item>
@@ -16282,7 +16215,7 @@ elab-functions	agree	tests/scripts/the-reference-safety-traps-are-what-it-catalo
 elab-functions	agree	tests/scripts/the-reference-safety-traps-are-what-it-catalogues.loft::vector<SafetyRow>
 elab-functions	agree	tests/scripts/the-reference-safety-traps-are-what-it-catalogues.loft::vector<integer(0, 255)>
 
-layer	elab-pass1	agree	10783	of	15958
+layer	elab-pass1	agree	10786	of	15966
 elab-pass1	agree	lib/code.loft::t_4Code_get_type
 elab-pass1	agree	lib/code.loft::t_4Code_set_type
 elab-pass1	agree	lib/docs.loft::n_demo
@@ -22383,6 +22316,7 @@ elab-pass1	agree	loft-suite/rules/rewrites/R-SliceBorrow/a-slice-that-escapes-or
 elab-pass1	agree	loft-suite/rules/rewrites/R-SliceBorrow/a-slice-that-escapes-or-outlives-its-source-keeps-the-bytes-it-was-cut-from.loft::n_walk
 elab-pass1	agree	loft-suite/rules/rewrites/R-SliceInto/a-slice-appended-into-a-place-is-the-fresh-clamped-value-its-bounds-read-first.loft::n_digits
 elab-pass1	agree	loft-suite/rules/rewrites/R-SliceInto/a-slice-appended-into-a-place-is-the-fresh-clamped-value-its-bounds-read-first.loft::n_test_appends_of_every_bound_shape
+elab-pass1	agree	loft-suite/rules/rewrites/R-SliceInto/a-slice-appended-into-a-place-is-the-fresh-clamped-value-its-bounds-read-first.loft::n_tick
 elab-pass1	agree	loft-suite/rules/rewrites/R-SliceInto/a-slice-appended-into-a-place-is-the-fresh-clamped-value-its-bounds-read-first.loft::n_total_of
 elab-pass1	agree	loft-suite/rules/rewrites/R-SpecChain/a-checked-integer-chain-runs-plain-and-falls-back-on-any-null.loft::n_drift
 elab-pass1	agree	loft-suite/rules/rewrites/R-SpecChain/a-checked-integer-chain-runs-plain-and-falls-back-on-any-null.loft::n_main
@@ -22395,6 +22329,7 @@ elab-pass1	agree	loft-suite/rules/rewrites/R-SpecChain/a-speculated-chain-answer
 elab-pass1	agree	loft-suite/rules/rewrites/R-SpecChain/a-speculated-chain-answers-the-checked-chain-beside-counters-ranges-guards-and-memos.loft::n_test_a_guarded_and_memoised_subchain
 elab-pass1	agree	loft-suite/rules/rewrites/R-SpecChain/a-speculated-chain-answers-the-checked-chain-beside-counters-ranges-guards-and-memos.loft::n_test_counters_inside_the_chain
 elab-pass1	agree	loft-suite/rules/rewrites/R-SplitTable/a-split-bound-to-a-name-answers-the-vector-it-never-builds.loft::n_count
+elab-pass1	agree	loft-suite/rules/rewrites/R-SplitTable/a-split-bound-to-a-name-answers-the-vector-it-never-builds.loft::n_src
 elab-pass1	agree	loft-suite/rules/rewrites/R-StackBase/a-stack-that-grows-mid-call-keeps-every-frame.loft::n_bump
 elab-pass1	agree	loft-suite/rules/rewrites/R-StackBase/a-stack-that-grows-mid-call-keeps-every-frame.loft::n_deep
 elab-pass1	agree	loft-suite/rules/rewrites/R-StackBase/a-stack-that-grows-mid-call-keeps-every-frame.loft::n_deep_ref
@@ -22940,6 +22875,7 @@ elab-pass1	agree	loft-suite/rules/types/D-NoEnumF/a-variant-cast-takes-the-defau
 elab-pass1	agree	loft-suite/rules/types/D-Opt/an-enum-fields-default-is-a-choice-the-declaration-makes.loft::n_none
 elab-pass1	agree	loft-suite/rules/types/D-Opt/an-enum-fields-default-is-a-choice-the-declaration-makes.loft::n_test_a_declared_variant_is_taken
 elab-pass1	agree	loft-suite/rules/types/D-Opt/an-enum-fields-default-is-a-choice-the-declaration-makes.loft::n_test_an_optional_enum_field_defaults_to_null
+elab-pass1	agree	loft-suite/rules/types/D-Opt/an-enum-fields-default-is-a-choice-the-declaration-makes.loft::n_test_an_optional_enum_local_discharges_to_its_first_variant
 elab-pass1	agree	loft-suite/rules/types/D-Scalar/1254-an-empty-stub-returns-its-types-default.loft::n_empty_float
 elab-pass1	agree	loft-suite/rules/types/D-Scalar/1254-an-empty-stub-returns-its-types-default.loft::n_empty_int
 elab-pass1	agree	loft-suite/rules/types/D-Scalar/1254-an-empty-stub-returns-its-types-default.loft::n_empty_struct
