@@ -117,11 +117,6 @@ pub fn rewrite(data: &mut Data, database: &Stores, d_nr: u32) {
     let fired = cx.fired;
     data.definitions[d_nr as usize].code = code;
     if fired > 0 {
-        // @decline-owed: a root that is a parameter, a hidden buffer, never freed, nullable or
-        //   no dep-empty record local; a source that is an element, or a view local with a bind
-        //   that is no field of its one root; a returned record that owns no heap; an exit
-        //   block that holds anything but binds and buffer guards before the copy or anything
-        //   but frees after it, or that does not free the root
         crate::rewrite_census::fired("R-ReturnField", fired);
     }
 }
@@ -185,6 +180,12 @@ impl Cx<'_> {
                     return;
                 }
                 Err(why) => {
+                    crate::rewrite_census::declined_in(
+                        "R-ReturnField",
+                        self.name,
+                        &bl.scope.to_string(),
+                        why,
+                    );
                     if crate::keys::trace_place() {
                         eprintln!("[return-field] fn={}: DECLINED — {why}", self.name);
                     }
@@ -209,6 +210,10 @@ impl Cx<'_> {
                     bl.operators.push(Value::Block(Box::new(exit)));
                 }
                 Err(why) => {
+                    if crate::rewrite_census::declines_wanted() {
+                        let site = format!("{}:tested {}", self.name, bl.scope);
+                        crate::rewrite_census::declined("R-ReturnField", &site, why);
+                    }
                     if crate::keys::trace_place() {
                         eprintln!(
                             "[return-field] fn={}: DECLINED (presence-tested) — {why}",

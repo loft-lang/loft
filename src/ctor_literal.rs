@@ -682,6 +682,17 @@ fn admitted_sites(
             } else {
                 None
             };
+            if let Some(w) = why
+                && crate::rewrite_census::declines_wanted()
+            {
+                let caller_def = data.def(caller);
+                let site = format!(
+                    "{}:{}",
+                    caller_def.name(),
+                    caller_def.variables().name(site.target)
+                );
+                crate::rewrite_census::declined("R-CtorLiteral", &site, w);
+            }
             match why {
                 None => ok_sites.push((site.target, site.buf)),
                 Some(w) if trace() => eprintln!(
@@ -755,12 +766,6 @@ pub fn rewrite_program(data: &mut Data, stores: &crate::database::Stores) -> usi
         crate::scopes::assign_function_slots(data, caller);
         total += done.len();
     }
-    // @decline-owed: a callee whose body is more than its buffer's mint and one covering
-    //   literal group; a target assigned more than once, nullable, captured, a parameter or no
-    //   plain record local; an argument that reads the target or is more than operators, a
-    //   vector literal or a vector variable; a record of scalars; a return buffer used
-    //   elsewhere; in a loop, a target that is no loop record; a caller holding a `yield` or
-    //   `par`; an `open_world` or entry-observing program
     crate::rewrite_census::fired("R-CtorLiteral", total);
     total
 }
@@ -898,6 +903,11 @@ fn rewrite_in(walk: &mut Walk, node: &mut Value, in_loop: bool) {
                 i += n;
             }
             Err(why) => {
+                crate::rewrite_census::declined(
+                    "R-CtorLiteral",
+                    &format!("{}:{i}", walk.caller),
+                    why,
+                );
                 walk.declined.push(format!(
                     "{} kept a call in {}: {why}",
                     ctor.name, walk.caller

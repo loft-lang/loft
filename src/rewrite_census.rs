@@ -200,6 +200,14 @@ pub fn declined(rule: &'static str, site: &str, why: &'static str) {
     }
 }
 
+/// [`declined`] for a site named by its function and a local, loop or block of it.  The key
+/// is built only where a census is being written.
+pub fn declined_in(rule: &'static str, function: &str, site: &str, why: &'static str) {
+    if declines_wanted() {
+        declined(rule, &format!("{function}:{site}"), why);
+    }
+}
+
 /// Rewrite `rule` admitted `site` — the same site key a `declined` of the rule would carry,
 /// counted once however many copies of it are emitted, so the decline census can set the
 /// two against each other.  `fired` is still called beside it: that count is the rewrite

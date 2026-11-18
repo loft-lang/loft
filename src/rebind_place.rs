@@ -168,13 +168,6 @@ fn visit(v: &mut Value, data: &Data, d_nr: u32, facts: &Facts, pos: &mut usize) 
                 .any(|a| matches!(a.unspan(), Value::Var(v) if *v == x));
             match admit(data, d_nr, here, x, f, args, facts) {
                 Ok(b) => {
-                    // @decline-owed: a target that is a parameter (the frame's own return
-                    //   buffer excepted), a compiler temp, nullable, no dense record, a view,
-                    //   view-elided or witnessed; a target handed in twice or by reference;
-                    //   another argument that reaches its store; a view of it read across the
-                    //   call; a callee that is recursive, a lambda, bodiless or
-                    //   buffer-promoted, or whose exit is unsafe once buffer and parameter are
-                    //   one
                     crate::rewrite_census::fired("R-Rebind", 1);
                     if crate::keys::trace_rebind() {
                         eprintln!(
@@ -187,6 +180,12 @@ fn visit(v: &mut Value, data: &Data, d_nr: u32, facts: &Facts, pos: &mut usize) 
                     args[b] = Value::Var(x);
                 }
                 Err(reason) => {
+                    // Only `x = f(.., x, ..)` is the rule's pattern: another bind is no refusal.
+                    if candidate && crate::rewrite_census::declines_wanted() {
+                        let def = data.def(d_nr);
+                        let site = format!("{}:{}", def.name(), def.variables().name(x));
+                        crate::rewrite_census::declined("R-Rebind", &site, reason);
+                    }
                     if candidate && crate::keys::trace_rebind() {
                         eprintln!(
                             "[rebind] fn={} x={} callee={} DECLINED: {reason}",

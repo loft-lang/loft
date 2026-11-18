@@ -74,6 +74,15 @@ REPORTED = {
     "R-ForwardWalk": ("a forward walk counted once", "partial"),
     "R-ForwardResult": ("a result delivered into the caller's buffer", "partial"),
     "R-MoveLast": ("a local's last use moved, not copied", "partial"),
+    "R-CopyView": ("a record local bound by a copy of a view, kept as a view", "partial"),
+    "R-CopyView/walk": ("a walk of a copied record read through its source", "partial"),
+    "R-ExitVector": ("a local vector moved into the return buffer's literal", "partial"),
+    "R-ExitVector/record": ("a record local built in the return buffer", "partial"),
+    "R-HostStore": ("a result built in its host's store", "partial"),
+    "R-ReturnField": ("a returned field answered as its local's own store", "partial"),
+    "R-Rebind": ("`x = f(x, …)` handing the callee x's own record", "partial"),
+    "R-CtorLiteral": ("a constructor call replaced by its literal", "partial"),
+    "R-Place": ("a call's result built in the place it is stored to", "partial"),
 }
 # A rule's labels are the validation clauses of its statement (REWRITE_REASONS.md): a rule that
 # passes this many is describing sites, not clauses.  `(R-Range)` uses twelve today.

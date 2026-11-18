@@ -97,16 +97,14 @@ pub fn rewrite_program(data: &mut Data) -> usize {
                 crate::scopes::compute_function_intervals(data, d_nr);
                 crate::scopes::assign_function_slots(data, d_nr);
                 let _census = crate::rewrite_census::InBody::enter("ir", data.def(d_nr).name());
-                // @decline-owed: a self-recursive function with a call to itself not bound to a
-                //   local with a work ref of its own, a result handed to such a call, bound
-                //   twice on a path or in a loop, or used other than read by a plain-valued
-                //   function, adopted, answered or freed; an answer that is no result or
-                //   literal; a write-back or literal field whose callee answers other than its
-                //   argument or buffer, or uses the buffer as more than a buffer
                 crate::rewrite_census::fired("R-HostStore", 1);
                 total += 1;
             }
             Err(why) => {
+                // A function with no call to itself is not this clause's pattern: no refusal.
+                if why != NO_SELF_CALL {
+                    crate::rewrite_census::declined("R-HostStore", data.def(d_nr).name(), why);
+                }
                 if trace && why != NO_SELF_CALL {
                     eprintln!(
                         "[host-store] result clause: {} declined — {why}",
