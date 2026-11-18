@@ -14,6 +14,7 @@
 use ir;
 use frame;
 use lower;
+use scope_wrapper;
 
 // The scope pass over every function of the program; a refusal names its function and reason.
 pub fn scope_bundle(b: ir::Bundle) -> vector<text> {
@@ -61,6 +62,8 @@ pub fn scope_bundle(b: ir::Bundle) -> vector<text> {
       refused += ["{d.name}: {sw.why}"];
       continue;
     }
+    // Last, as the Rust pass runs it: a one-op standard-library wrapper's call is its op.
+    code = scope_wrapper::rewrite(b, code);
     b.data.definitions[d#index].code = [code];
     iv = intervals(code, d.variables, ops);
     assign_slots(d.variables, iv, range_aliases(code, d.variables, ops), local_start(d.variables));

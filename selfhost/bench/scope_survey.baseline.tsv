@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	fac3652dc1b37371599d8511c95e1683ff5a73ed
 
-layer	scope	agree	109	of	2190
+layer	scope	agree	118	of	2191
 scope	differ	lib/audience_crystal/src/audience_crystal.loft
 scope	unscoped	lib/audience_crystal/tests/01-editor-helpers.loft
 scope	unscoped	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -37,12 +37,12 @@ scope	unscoped	loft-suite/rules/binding/B-Copy/2521-a-place-assigned-a-literal-t
 scope	unscoped	loft-suite/rules/binding/B-Copy/a-binding-from-a-value-branch-copies-the-arm-it-takes.loft
 scope	unscoped	loft-suite/rules/binding/B-Copy/a-copy-of-a-compound-value-copies-every-member.loft
 scope	unscoped	loft-suite/rules/binding/B-Copy/a-deferred-copy-keeps-the-value-it-was-bound-to-whatever-the-source-does.loft
-scope	differ	loft-suite/rules/binding/B-Copy/a-keyed-local-rebound-from-a-call-that-reads-it-keeps-its-records.loft
+scope	unscoped	loft-suite/rules/binding/B-Copy/a-keyed-local-rebound-from-a-call-that-reads-it-keeps-its-records.loft
 scope	unscoped	loft-suite/rules/binding/B-Copy/a-parameter-copy-the-owner-witness-names-is-released-by-the-caller-only.loft
 scope	unscoped	loft-suite/rules/binding/B-Copy/a-projection-into-a-kept-local-in-a-loop-is-a-copy.loft
 scope	unscoped	loft-suite/rules/binding/B-Copy/a-re-bind-of-a-whole-local-copies-in-every-spelling.loft
 scope	differ	loft-suite/rules/binding/B-Copy/a-record-reassigned-from-a-value-branch-copies-the-chosen-arm.loft
-scope	differ	loft-suite/rules/binding/B-Copy/a-record-update-copies-its-base-then-writes-the-named-fields.loft
+scope	unscoped	loft-suite/rules/binding/B-Copy/a-record-update-copies-its-base-then-writes-the-named-fields.loft
 scope	unscoped	loft-suite/rules/binding/B-Copy/a-struct-enum-value-copies-like-a-struct-at-every-bind-and-widening.loft
 scope	unscoped	loft-suite/rules/binding/B-Copy/c131-a-cast-to-a-variant-answers-the-variant.loft
 scope	unscoped	loft-suite/rules/binding/B-Disturb/2037-a-collection-rebound-from-a-call-ends-its-views.loft
@@ -137,7 +137,7 @@ scope	differ	loft-suite/rules/binding/Const-Value/a-link-a-view-and-a-discharge-
 scope	unscoped	loft-suite/rules/binding/Const-Value/a-value-const-scalar-local-can-be-declared.loft
 scope	unscoped	loft-suite/rules/binding/P-Cap-Fresh/a-rest-or-a-repetition-is-a-fresh-store-and-deeply-so.loft
 scope	unscoped	loft-suite/rules/binding/P-Cap-View/a-pattern-capture-is-a-view-and-a-rest-is-fresh.loft
-scope	differ	loft-suite/rules/binding/P-Cap-View/a-pattern-capture-is-a-view-of-the-subjects-place-on-b-views-terms.loft
+scope	unscoped	loft-suite/rules/binding/P-Cap-View/a-pattern-capture-is-a-view-of-the-subjects-place-on-b-views-terms.loft
 scope	unscoped	loft-suite/rules/calls/F-Args/insert-takes-its-arguments-before-the-vector-grows.loft
 scope	unscoped	loft-suite/rules/calls/F-Block/1722-a-block-value-keeps-the-null-its-branch-yields.loft
 scope	unscoped	loft-suite/rules/calls/F-Block/2456-a-statement-match-whose-arm-assigns-its-vector-capture-is-a-statement.loft
@@ -150,12 +150,12 @@ scope	unscoped	loft-suite/rules/calls/F-Default-Field/a-field-default-reads-the-
 scope	differ	loft-suite/rules/calls/F-Default/1758-a-text-tuple-default-answers-what-its-argument-would.loft
 scope	unscoped	loft-suite/rules/calls/F-Default/a-default-is-well-formed-wherever-the-same-argument-is.loft
 scope	unscoped	loft-suite/rules/calls/F-Default/a-default-reads-the-earlier-arguments-of-its-call.loft
-scope	differ	loft-suite/rules/calls/F-Drop/a-dropped-call-answering-a-tuple-runs-for-its-effect.loft
+scope	unscoped	loft-suite/rules/calls/F-Drop/a-dropped-call-answering-a-tuple-runs-for-its-effect.loft
 scope	unscoped	loft-suite/rules/calls/F-OneBody/2318-a-library-function-under-a-runtime-natives-name-leaves-the-runtimes-call.loft
 scope	unscoped	loft-suite/rules/calls/F-Package/a-package-reads-as-pub-in-its-own-directory-and-passes-nothing-on.loft
 scope	unscoped	loft-suite/rules/calls/F-Package/f_package_core_lib.loft
 scope	unscoped	loft-suite/rules/calls/F-Package/f_package_relay_lib.loft
-scope	differ	loft-suite/rules/calls/F-ParamGrow/1251-a-heap-parameter-is-shared-not-copied.loft
+scope	unscoped	loft-suite/rules/calls/F-ParamGrow/1251-a-heap-parameter-is-shared-not-copied.loft
 scope	unscoped	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft
 scope	unscoped	loft-suite/rules/calls/F-ParamRebind/a-rebind-built-apart-leaves-the-callers-store.loft
 scope	unscoped	loft-suite/rules/calls/F-ParamRebind/a-whole-write-through-a-link-to-a-plain-parameter-rebinds-the-callees-name-only.loft
@@ -285,16 +285,16 @@ scope	unscoped	loft-suite/rules/collections/Col-Bucket/135-reserve-hash.loft
 scope	unscoped	loft-suite/rules/collections/Col-Bucket/pln110-size-hash.loft
 scope	unscoped	loft-suite/rules/collections/Col-Concat/2387-a-concatenation-into-its-own-operand-keeps-every-operands-value.loft
 scope	unscoped	loft-suite/rules/collections/Col-Concat/2399-a-concatenation-onto-a-view-leaves-the-viewed-vector-alone.loft
-scope	differ	loft-suite/rules/collections/Col-Concat/2406-a-literal-after-a-site-only-the-second-pass-builds-keeps-its-elements.loft
+scope	unscoped	loft-suite/rules/collections/Col-Concat/2406-a-literal-after-a-site-only-the-second-pass-builds-keeps-its-elements.loft
 scope	unscoped	loft-suite/rules/collections/Col-Concat/a-concat-is-a-value-in-every-expression-position.loft
 scope	unscoped	loft-suite/rules/collections/Col-Concat/a-concat-led-by-a-slice-of-its-destination-frees-the-slice.loft
 scope	unscoped	loft-suite/rules/collections/Col-Concat/a-concat-of-a-local-at-a-functions-end-keeps-the-locals-elements.loft
 scope	unscoped	loft-suite/rules/collections/Col-Cons/2407-an-empty-literal-arm-takes-its-element-from-the-other-arm.loft
 scope	unscoped	loft-suite/rules/collections/Col-Cons/2409-an-empty-literal-arm-keeps-its-type-past-a-call-in-the-test.loft
 scope	unscoped	loft-suite/rules/collections/Col-Cons/a-nullable-keyed-collection-can-hold-a-value.loft
-scope	differ	loft-suite/rules/collections/Col-Copy/a-vector-field-keeps-its-absence.loft
+scope	unscoped	loft-suite/rules/collections/Col-Copy/a-vector-field-keeps-its-absence.loft
 scope	unscoped	loft-suite/rules/collections/Col-Group-Dup/2257-every-displaced-record-leaves-a-group-of-many-members.loft
-scope	differ	loft-suite/rules/collections/Col-Group-Dup/2257-every-displaced-record-leaves-a-group-of-twenty-four-members.loft
+scope	unscoped	loft-suite/rules/collections/Col-Group-Dup/2257-every-displaced-record-leaves-a-group-of-twenty-four-members.loft
 scope	unscoped	loft-suite/rules/collections/Col-Group/1152-a-vector-value-into-a-group-reaches-every-member.loft
 scope	unscoped	loft-suite/rules/collections/Col-Group/1158-a-group-forms-whichever-member-is-declared-first.loft
 scope	unscoped	loft-suite/rules/collections/Col-Group/1160-a-variant-binding-write-means-the-field-write.loft
@@ -314,7 +314,7 @@ scope	unscoped	loft-suite/rules/collections/Col-Insert/1914-a-trie-key-names-one
 scope	unscoped	loft-suite/rules/collections/Col-Insert/a-repeated-hash-key-takes-the-bucket-it-displaces.loft
 scope	unscoped	loft-suite/rules/collections/Col-Key/a-key-field-is-an-immutable-value.loft
 scope	unscoped	loft-suite/rules/collections/Col-Len/1915-an-index-answers-len-in-both-spellings.loft
-scope	differ	loft-suite/rules/collections/Col-Len/an-absent-keyed-field-is-empty-to-every-reader.loft
+scope	unscoped	loft-suite/rules/collections/Col-Len/an-absent-keyed-field-is-empty-to-every-reader.loft
 scope	unscoped	loft-suite/rules/collections/Col-Lookup/1450b-a-keyed-point-lookup-is-nullable-on-a-dense-receiver.loft
 scope	unscoped	loft-suite/rules/collections/Col-Lookup/a-missed-lookup-discharges-and-propagates-at-every-kind.loft
 scope	unscoped	loft-suite/rules/collections/Col-Order/a-collection-iterates-in-the-order-its-kind-defines.loft
@@ -349,12 +349,12 @@ scope	unscoped	loft-suite/rules/concurrency/C-Det/a-function-returning-par-worke
 scope	differ	loft-suite/rules/concurrency/C-Impure/1918b-a-par-worker-may-write-a-copy-of-its-input.loft
 scope	differ	loft-suite/rules/concurrency/C-Order/a-par-loop-consumes-results-in-its-sources-order.loft
 scope	unscoped	loft-suite/rules/concurrency/C-Order/a-par-walk-keeps-every-kinds-order-but-a-hashs.loft
-scope	differ	loft-suite/rules/coroutines/G-Arg-Rebind/2067-a-caller-rebind-after-a-generator-call-is-not-seen.loft
+scope	unscoped	loft-suite/rules/coroutines/G-Arg-Rebind/2067-a-caller-rebind-after-a-generator-call-is-not-seen.loft
 scope	unscoped	loft-suite/rules/coroutines/G-Arg-Rebind/a-re-minted-buffer-leaves-the-frame-its-value.loft
-scope	differ	loft-suite/rules/coroutines/G-Arg-Share/a-mutation-of-a-shared-argument-is-seen-at-the-next-advance.loft
+scope	unscoped	loft-suite/rules/coroutines/G-Arg-Share/a-mutation-of-a-shared-argument-is-seen-at-the-next-advance.loft
 scope	unscoped	loft-suite/rules/coroutines/G-Call/2059-a-lambda-generator-in-every-position.loft
 scope	differ	loft-suite/rules/coroutines/G-Call/a-lambda-returning-an-iterator-is-a-generator.loft
-scope	differ	loft-suite/rules/coroutines/G-Call/calling-a-generator-binds-its-arguments-and-runs-nothing.loft
+scope	unscoped	loft-suite/rules/coroutines/G-Call/calling-a-generator-binds-its-arguments-and-runs-nothing.loft
 scope	unscoped	loft-suite/rules/coroutines/G-Delegate/a-delegation-beside-a-loop-compiles.loft
 scope	differ	loft-suite/rules/coroutines/G-Delegate/a-delegation-to-an-empty-or-spent-generator-forwards-nothing.loft
 scope	unscoped	loft-suite/rules/coroutines/G-For/a-for-and-an-explicit-next-share-one-cursor.loft
@@ -387,7 +387,7 @@ scope	unscoped	loft-suite/rules/coroutines/G-Yield/a-yield-widens-like-a-return.
 scope	differ	loft-suite/rules/coroutines/G-Yield/a-yielded-value-converts-into-its-element-type.loft
 scope	differ	loft-suite/rules/coroutines/G-YieldDepth/a-delegated-frame-keeps-its-helpers-and-locals.loft
 scope	unscoped	loft-suite/rules/dispatch/D-Rank/a-bounded-template-takes-the-call-its-bound-admits.loft
-scope	differ	loft-suite/rules/dispatch/D-Rank/a-generic-member-ranks-below-every-non-converting-match.loft
+scope	unscoped	loft-suite/rules/dispatch/D-Rank/a-generic-member-ranks-below-every-non-converting-match.loft
 scope	unscoped	loft-suite/rules/dispatch/Disp-Applicable/a-null-literal-reaches-the-nullable-member.loft
 scope	unscoped	loft-suite/rules/dispatch/Disp-Applicable/a-nullable-argument-reaches-its-nullable-member-in-a-wider-set.loft
 scope	unscoped	loft-suite/rules/dispatch/Disp-Applicable/a-set-member-takes-every-argument-its-lone-twin-takes.loft
@@ -402,7 +402,7 @@ scope	differ	loft-suite/rules/dispatch/Disp-Hint/a-lone-definition-and-a-receive
 scope	differ	loft-suite/rules/dispatch/Disp-Hint/a-nullable-receiver-split-keeps-the-hint-of-each-spelling.loft
 scope	differ	loft-suite/rules/dispatch/Disp-Hint/a-qualified-call-takes-its-hint-from-the-package-it-names.loft
 scope	differ	loft-suite/rules/dispatch/Disp-Hint/disp_hint_fixture_lib.loft
-scope	differ	loft-suite/rules/dispatch/Disp-Key/a-member-is-keyed-by-its-full-parameter-spelling.loft
+scope	unscoped	loft-suite/rules/dispatch/Disp-Key/a-member-is-keyed-by-its-full-parameter-spelling.loft
 scope	unscoped	loft-suite/rules/dispatch/Disp-Key/one-consumer-member-of-another-spelling-joins-a-library-set.loft
 scope	unscoped	loft-suite/rules/dispatch/Disp-Key/three-consumer-members-of-other-spellings-join-a-library-set.loft
 scope	differ	loft-suite/rules/dispatch/Disp-Match-Equiv/a-set-with-a-resolving-member-and-its-match-agree-on-every-tuple.loft
@@ -432,7 +432,7 @@ scope	unscoped	loft-suite/rules/formatting/F-Spec/a-spec-meets-every-renderer-an
 scope	unscoped	loft-suite/rules/formatting/F-Target-Kind/a-nullable-hole-into-a-non-null-parameter-warns.loft
 scope	differ	loft-suite/rules/formatting/F-Target-Pos/2064-every-position-with-an-expected-type-builds-the-target.loft
 scope	unscoped	loft-suite/rules/formatting/F-Target-Pos/an-annotated-binding-and-a-field-build-the-target.loft
-scope	differ	loft-suite/rules/formatting/F-Target-Pos/an-argument-inside-a-hole-targets-its-parameter.loft
+scope	unscoped	loft-suite/rules/formatting/F-Target-Pos/an-argument-inside-a-hole-targets-its-parameter.loft
 scope	unscoped	loft-suite/rules/formatting/F-Target/each-hole-kind-calls-its-own-method.loft
 scope	unscoped	loft-suite/rules/grammar/G-Amp-Disambig/position-tells-the-two-amps-apart.loft
 scope	unscoped	loft-suite/rules/grammar/G-Amp-Infix/a-vector-of-and-results-compares-by-value.loft
@@ -480,19 +480,19 @@ scope	unscoped	loft-suite/rules/heap/H-Drop/a-hook-runs-once-on-every-path-out-o
 scope	unscoped	loft-suite/rules/heap/H-Drop/a-match-arm-member-beside-a-null-arm-is-released-once.loft
 scope	unscoped	loft-suite/rules/heap/H-Drop/a-record-built-for-an-element-of-a-field-literal-is-released-once.loft
 scope	unscoped	loft-suite/rules/heap/H-Drop/a-return-that-hands-out-one-local-releases-the-others-once.loft
-scope	differ	loft-suite/rules/heap/H-Drop/hdrop_2436_lib.loft
+scope	unscoped	loft-suite/rules/heap/H-Drop/hdrop_2436_lib.loft
 scope	differ	loft-suite/rules/heap/H-Drop/two-structures-are-two-leases-and-a-byte-move-is-neither.loft
 scope	unscoped	loft-suite/rules/heap/H-Free/2477-a-rebind-that-reads-a-lifts-view-frees-the-store-once.loft
 scope	unscoped	loft-suite/rules/heap/H-Free/2481-an-unwrapped-element-a-function-answers-is-freed-each-call.loft
 scope	unscoped	loft-suite/rules/heap/H-Free/2526-a-text-match-arm-that-may-return-keeps-its-value.loft
 scope	unscoped	loft-suite/rules/heap/H-Free/a-branch-that-views-a-lifted-call-is-freed-by-the-lift-alone.loft
-scope	differ	loft-suite/rules/heap/H-Free/a-call-taking-a-block-argument-frees-the-record-it-made.loft
+scope	unscoped	loft-suite/rules/heap/H-Free/a-call-taking-a-block-argument-frees-the-record-it-made.loft
 scope	unscoped	loft-suite/rules/heap/H-Free/a-call-taking-a-join-arm-call-frees-the-store-it-made.loft
 scope	unscoped	loft-suite/rules/heap/H-Free/a-call-taking-a-scalar-vector-built-inline-frees-the-record-it-made.loft
 scope	differ	loft-suite/rules/heap/H-Free/a-captured-view-of-a-call-result-is-released-once-past-an-early-exit.loft
 scope	unscoped	loft-suite/rules/heap/H-Free/a-comprehension-releases-each-call-it-copies-whatever-its-layout.loft
-scope	differ	loft-suite/rules/heap/H-Free/a-discharge-read-in-place-frees-its-copy.loft
-scope	differ	loft-suite/rules/heap/H-Free/a-discharged-call-answer-is-owned-by-its-binding.loft
+scope	unscoped	loft-suite/rules/heap/H-Free/a-discharge-read-in-place-frees-its-copy.loft
+scope	unscoped	loft-suite/rules/heap/H-Free/a-discharged-call-answer-is-owned-by-its-binding.loft
 scope	unscoped	loft-suite/rules/heap/H-Free/a-literal-field-read-before-its-element-is-rewritten-is-a-view.loft
 scope	unscoped	loft-suite/rules/heap/H-Free/a-local-bound-in-each-pass-frees-each-copied-answer.loft
 scope	unscoped	loft-suite/rules/heap/H-Free/a-returned-arm-that-may-leave-early-frees-the-record-it-made.loft
@@ -567,7 +567,7 @@ scope	differ	loft-suite/rules/heap/H-WriteOOB/a-write-to-an-absent-element-lands
 scope	unscoped	loft-suite/rules/interfaces/G-Check/an-unused-bound-constrains-nothing.loft
 scope	differ	loft-suite/rules/interfaces/G-Gen-Scope/a-type-variable-reserves-no-name.loft
 scope	differ	loft-suite/rules/interfaces/G-Gen-Scope/typevar-placeholder-not-visible.loft
-scope	differ	loft-suite/rules/interfaces/G-Gen/an-unbounded-variable-moves-values-and-a-bound-adds-methods.loft
+scope	unscoped	loft-suite/rules/interfaces/G-Gen/an-unbounded-variable-moves-values-and-a-bound-adds-methods.loft
 scope	unscoped	loft-suite/rules/interfaces/G-Iface/an-interface-is-a-set-of-signatures-a-generic-calls.loft
 scope	differ	loft-suite/rules/interfaces/G-Key/1622-a-drop-cascade-key-names-the-variants-enum.loft
 scope	differ	loft-suite/rules/interfaces/G-Key/2435-two-modules-types-of-one-name-key-two-instances.loft
@@ -586,7 +586,7 @@ scope	unscoped	loft-suite/rules/interfaces/G-Mono/2343-a-generic-two-modules-ins
 scope	differ	loft-suite/rules/interfaces/G-Mono/a-generic-at-a-keyed-collection-builds-its-empty-and-copies-its-bind.loft
 scope	unscoped	loft-suite/rules/interfaces/G-Mono/a-generic-format-hole-renders-as-its-instance-type.loft
 scope	differ	loft-suite/rules/interfaces/G-Mono/a-generic-hands-up-its-callbacks-pure-value-tuple.loft
-scope	differ	loft-suite/rules/interfaces/G-Mono/a-generic-nullable-result-at-a-tuple-answers-on-every-path.loft
+scope	unscoped	loft-suite/rules/interfaces/G-Mono/a-generic-nullable-result-at-a-tuple-answers-on-every-path.loft
 scope	differ	loft-suite/rules/interfaces/G-Mono/a-generic-over-a-vector-of-tuples-of-its-type-variables.loft
 scope	unscoped	loft-suite/rules/interfaces/G-Mono/a-generic-record-parameter-reassigns-like-its-twin.loft
 scope	unscoped	loft-suite/rules/interfaces/G-Mono/a-generic-reserves-at-its-elements-width.loft
@@ -602,7 +602,7 @@ scope	unscoped	loft-suite/rules/interfaces/G-Regular/a-template-names-itself-at-
 scope	unscoped	loft-suite/rules/interfaces/G-Sat-Eq/an-equatable-bound-compares-content-in-the-monomorph.loft
 scope	unscoped	loft-suite/rules/interfaces/G-Sat-Eq/c91-every-type-is-equatable.loft
 scope	differ	loft-suite/rules/interfaces/G-Sat/1818-a-bound-is-satisfied-only-by-a-member-that-takes-its-parameters.loft
-scope	differ	loft-suite/rules/interfaces/G-Select/a-generic-ranks-below-a-concrete-match.loft
+scope	unscoped	loft-suite/rules/interfaces/G-Select/a-generic-ranks-below-a-concrete-match.loft
 scope	unscoped	loft-suite/rules/interfaces/G-Type/a-compound-on-a-generic-structs-field-writes-that-field-once.loft
 scope	unscoped	loft-suite/rules/interfaces/G-Type/a-qualified-variant-of-a-generic-enum-belongs-to-the-targets-instance.loft
 scope	differ	loft-suite/rules/interfaces/G-Type/a-template-instance-is-its-hand-written-twin-in-every-use.loft
@@ -739,9 +739,9 @@ scope	unscoped	loft-suite/rules/matching/P-Rep/35n-field-projection.loft
 scope	unscoped	loft-suite/rules/matching/P-Rep/35o-tail-elements.loft
 scope	unscoped	loft-suite/rules/matching/P-Rep/35t-cursor-repetition.loft
 scope	unscoped	loft-suite/rules/matching/P-Rest/1419-a-fixed-pattern-after-a-rest-is-a-tail-element.loft
-scope	differ	loft-suite/rules/matching/P-Rest/35c-rest-capture.loft
+scope	unscoped	loft-suite/rules/matching/P-Rest/35c-rest-capture.loft
 scope	unscoped	loft-suite/rules/matching/P-Rest/a-binding-arm-answering-the-subject-leaves-the-callers-vector.loft
-scope	differ	loft-suite/rules/matching/P-Rest/a-named-rest-leaves-room-for-the-elements-after-it.loft
+scope	unscoped	loft-suite/rules/matching/P-Rest/a-named-rest-leaves-room-for-the-elements-after-it.loft
 scope	unscoped	loft-suite/rules/matching/P-Rest/a-rest-is-fresh-wherever-it-stands.loft
 scope	unscoped	loft-suite/rules/matching/P-Revert/a-reverted-alternative-drops-the-bindings-it-wrote.loft
 scope	unscoped	loft-suite/rules/matching/P-Rule/a-rule-runs-only-in-the-arm-tried-in-arm-order.loft
@@ -860,7 +860,7 @@ scope	unscoped	loft-suite/rules/ownership/O-Detach/2327-a-value-block-frees-afte
 scope	unscoped	loft-suite/rules/ownership/O-Detach/2397-a-literal-reads-its-field-under-another-name.loft
 scope	unscoped	loft-suite/rules/ownership/O-Detach/2402-a-chain-into-a-field-reads-the-field-before-its-build.loft
 scope	unscoped	loft-suite/rules/ownership/O-Detach/a-build-reads-its-destination-through-an-element-or-a-capture.loft
-scope	differ	loft-suite/rules/ownership/O-Detach/a-heap-parameter-rebound-to-itself-keeps-its-value.loft
+scope	unscoped	loft-suite/rules/ownership/O-Detach/a-heap-parameter-rebound-to-itself-keeps-its-value.loft
 scope	unscoped	loft-suite/rules/ownership/O-Detach/a-rebind-from-a-view-of-a-capture-keeps-the-old-store-until-it-is-read.loft
 scope	unscoped	loft-suite/rules/ownership/O-Detach/a-rebound-parameter-is-read-through-its-views-before-it-is-detached.loft
 scope	unscoped	loft-suite/rules/ownership/O-Detach/a-vector-literal-reads-what-its-destination-held.loft
@@ -1010,8 +1010,7 @@ scope	unscoped	loft-suite/rules/rewrites/R-ElemFirst/an-element-built-in-place-h
 scope	unscoped	loft-suite/rules/rewrites/R-ElementPath/an-element-read-in-range-answers-what-the-full-path-answers.loft
 scope	unscoped	loft-suite/rules/rewrites/R-Escape/a-switch-a-b-compares-what-a-program-computes-never-its-representation.loft
 scope	unscoped	loft-suite/rules/rewrites/R-ExitVector/a-local-vector-moved-into-the-exit-literal-keeps-every-element.loft
-scope	differ	loft-suite/rules/rewrites/R-ExpPow/e-raised-to-a-power-is-the-exponential.loft
-scope	differ	loft-suite/rules/rewrites/R-ExpPow/the-exponent-read-from-a-container-and-a-base-one-bit-off-e-is-still-a-power.loft
+scope	unscoped	loft-suite/rules/rewrites/R-ExpPow/the-exponent-read-from-a-container-and-a-base-one-bit-off-e-is-still-a-power.loft
 scope	unscoped	loft-suite/rules/rewrites/R-FieldAppend/a-plain-append-beside-a-destination-call-lands-in-its-own-slot.loft
 scope	unscoped	loft-suite/rules/rewrites/R-FieldAppend/a-straight-line-append-to-a-record-field-is-its-own-slot-for-every-element-shape.loft
 scope	unscoped	loft-suite/rules/rewrites/R-FileHold/a-held-cursor-decodes-every-typed-width-and-gives-the-record-back.loft
@@ -1026,13 +1025,13 @@ scope	differ	loft-suite/rules/rewrites/R-FnRefValue/a-fn-ref-dispatch-answers-th
 scope	unscoped	loft-suite/rules/rewrites/R-FoldCompare/a-text-predicate-over-a-case-fold-builds-no-fold.loft
 scope	unscoped	loft-suite/rules/rewrites/R-FormatAppend/an-appended-format-goes-into-its-destination-unless-a-hole-reads-it.loft
 scope	unscoped	loft-suite/rules/rewrites/R-ForwardResult/a-returned-local-built-by-a-call-holds-the-header-and-the-appended-payload.loft
-scope	differ	loft-suite/rules/rewrites/R-ForwardWalk/a-walk-over-a-field-the-body-cannot-resize-is-counted.loft
-scope	differ	loft-suite/rules/rewrites/R-ForwardWalk/a-walk-over-a-scalar-field-keeps-its-length-read-where-the-body-can-resize-it.loft
+scope	unscoped	loft-suite/rules/rewrites/R-ForwardWalk/a-walk-over-a-field-the-body-cannot-resize-is-counted.loft
+scope	unscoped	loft-suite/rules/rewrites/R-ForwardWalk/a-walk-over-a-scalar-field-keeps-its-length-read-where-the-body-can-resize-it.loft
 scope	differ	loft-suite/rules/rewrites/R-Fuse/an-integer-operator-over-locals-runs-as-one-op.loft
 scope	unscoped	loft-suite/rules/rewrites/R-GroupPush/a-literal-group-that-outgrows-its-reservation-refreshes-its-header.loft
 scope	differ	loft-suite/rules/rewrites/R-GuardFree/a-recursion-without-a-fn-ref-registrant-leaks-and-answers-nothing-wrong.loft
 scope	differ	loft-suite/rules/rewrites/R-GuardedChain/a-loop-calling-only-versioned-functions-runs-a-plain-copy-of-their-fast-twins.loft
-scope	differ	loft-suite/rules/rewrites/R-HandOver/a-rotated-window-of-apart-records-keeps-every-entry-it-should.loft
+scope	unscoped	loft-suite/rules/rewrites/R-HandOver/a-rotated-window-of-apart-records-keeps-every-entry-it-should.loft
 scope	unscoped	loft-suite/rules/rewrites/R-HandOver/a-window-of-scalar-vectors-rotates-and-one-that-owns-more-keeps-its-appends.loft
 scope	unscoped	loft-suite/rules/rewrites/R-Header/2454-a-vector-parameter-sees-its-callers-growth-of-the-same-vector.loft
 scope	unscoped	loft-suite/rules/rewrites/R-Header/a-parameter-header-is-held-only-where-the-placed-buffer-is-apart.loft
@@ -1048,7 +1047,7 @@ scope	unscoped	loft-suite/rules/rewrites/R-InPlaceLiteral/1571-a-literal-written
 scope	unscoped	loft-suite/rules/rewrites/R-InPlaceLiteral/1834-a-user-name-starting-with-an-underscore-is-the-users.loft
 scope	differ	loft-suite/rules/rewrites/R-InPlaceLiteral/a-keyed-literal-is-written-into-its-slot.loft
 scope	unscoped	loft-suite/rules/rewrites/R-InPlaceLiteral/a-literal-assigned-to-a-reference-field-repoints-it.loft
-scope	differ	loft-suite/rules/rewrites/R-InPlaceLiteral/a-literal-reading-its-places-own-collection-keeps-it.loft
+scope	unscoped	loft-suite/rules/rewrites/R-InPlaceLiteral/a-literal-reading-its-places-own-collection-keeps-it.loft
 scope	unscoped	loft-suite/rules/rewrites/R-InPlaceLiteral/a-local-that-views-another-store-on-one-path-is-not-rebuilt-in-place.loft
 scope	unscoped	loft-suite/rules/rewrites/R-InPlaceLiteral/a-variant-rebuilt-in-place-reads-its-collection-member-through-a-view.loft
 scope	unscoped	loft-suite/rules/rewrites/R-InPlaceLiteral/an-in-place-literal-and-a-transient-read-of-its-place-answer-what-the-copies-would.loft
@@ -1073,7 +1072,7 @@ scope	differ	loft-suite/rules/rewrites/R-LoopRecord/a-kept-loop-record-is-fresh-
 scope	unscoped	loft-suite/rules/rewrites/R-Mint/a-minted-element-evicts-no-hoisted-scalar-and-an-alias-write-does.loft
 scope	differ	loft-suite/rules/rewrites/R-MoveChild/a-link-set-to-its-own-childs-child-leaves-the-rest-of-the-chain.loft
 scope	unscoped	loft-suite/rules/rewrites/R-MoveLast/2148-a-view-stored-at-its-last-use-is-copied-not-moved.loft
-scope	differ	loft-suite/rules/rewrites/R-MoveLast/2192-a-local-copied-into-two-literals-is-moved-only-at-its-last.loft
+scope	unscoped	loft-suite/rules/rewrites/R-MoveLast/2192-a-local-copied-into-two-literals-is-moved-only-at-its-last.loft
 scope	unscoped	loft-suite/rules/rewrites/R-MoveLast/2445-a-field-built-from-a-view-of-itself-keeps-the-copy.loft
 scope	unscoped	loft-suite/rules/rewrites/R-MoveLast/a-field-store-lands-in-the-record-bound-at-the-store.loft
 scope	unscoped	loft-suite/rules/rewrites/R-MoveLast/a-literal-host-keeps-the-copy-where-a-reference-names-into-the-vector.loft
@@ -1101,7 +1100,7 @@ scope	unscoped	loft-suite/rules/rewrites/R-PushFill/a-counted-loop-pushing-to-se
 scope	differ	loft-suite/rules/rewrites/R-PushFill/a-loop-pushing-characters-holds-its-text-in-a-window.loft
 scope	unscoped	loft-suite/rules/rewrites/R-PushFill/a-loop-pushing-one-invariant-into-each-of-several-vectors-is-a-fill-each.loft
 scope	unscoped	loft-suite/rules/rewrites/R-PushFill/a-nested-comprehension-pushes-each-row-through-a-window.loft
-scope	differ	loft-suite/rules/rewrites/R-PushFill/a-push-window-opens-only-where-no-reader-needs-the-length-written-back.loft
+scope	unscoped	loft-suite/rules/rewrites/R-PushFill/a-push-window-opens-only-where-no-reader-needs-the-length-written-back.loft
 scope	unscoped	loft-suite/rules/rewrites/R-PushFill/a-repeated-literal-is-one-fill-of-its-copies.loft
 scope	unscoped	loft-suite/rules/rewrites/R-PushFill/a-straight-line-run-of-byte-appends-is-one-window.loft
 scope	unscoped	loft-suite/rules/rewrites/R-PushFill/a-vector-pushed-from-a-branch-or-an-inner-loop-pushes-through-one-window.loft
@@ -1131,14 +1130,14 @@ scope	unscoped	loft-suite/rules/rewrites/R-RecPtr/a-view-address-is-the-places-f
 scope	unscoped	loft-suite/rules/rewrites/R-RecPtr/a-view-keeps-its-address-across-a-helper-that-grows-another-store.loft
 scope	differ	loft-suite/rules/rewrites/R-RefillBuffer/a-buffer-of-text-records-is-refilled-where-it-is.loft
 scope	unscoped	loft-suite/rules/rewrites/R-RefillBuffer/a-live-buffer-is-refilled-where-it-is.loft
-scope	differ	loft-suite/rules/rewrites/R-RefillBuffer/a-refilled-store-takes-every-field-a-complete-literal-names.loft
+scope	unscoped	loft-suite/rules/rewrites/R-RefillBuffer/a-refilled-store-takes-every-field-a-complete-literal-names.loft
 scope	unscoped	loft-suite/rules/rewrites/R-RefillBuffer/a-refilled-vector-filled-with-one-scalar-is-overwritten-only-at-its-own-length.loft
 scope	unscoped	loft-suite/rules/rewrites/R-RefillBuffer/a-store-a-rebind-hands-back-is-refilled-by-the-next-call.loft
 scope	differ	loft-suite/rules/rewrites/R-RefillText/a-kept-elements-text-write-blocks-the-mint-hoist-and-reads-stay-right.loft
 scope	differ	loft-suite/rules/rewrites/R-RefillText/a-pooled-buffers-texts-are-refilled-and-every-result-reads-its-own.loft
 scope	unscoped	loft-suite/rules/rewrites/R-Refresh/1014-keep-range-refresh.loft
 scope	unscoped	loft-suite/rules/rewrites/R-Refresh/a-hoisted-scalar-is-evicted-by-the-type-and-offset-a-write-reaches.loft
-scope	differ	loft-suite/rules/rewrites/R-Refresh/a-push-writes-its-length-back-for-a-reader-inside-the-loop.loft
+scope	unscoped	loft-suite/rules/rewrites/R-Refresh/a-push-writes-its-length-back-for-a-reader-inside-the-loop.loft
 scope	unscoped	loft-suite/rules/rewrites/R-RepeatRun/a-spelled-out-run-of-one-constant-builds-the-same-vector.loft
 scope	unscoped	loft-suite/rules/rewrites/R-RetAdopt/a-vector-built-in-the-return-buffer-is-the-vector-the-caller-reads.loft
 scope	unscoped	loft-suite/rules/rewrites/R-ReturnField/a-returned-field-handed-over-on-a-path-that-made-the-call.loft
@@ -1161,7 +1160,7 @@ scope	unscoped	loft-suite/rules/rewrites/R-SliceInto/a-slice-appended-into-a-pla
 scope	unscoped	loft-suite/rules/rewrites/R-SliceInto/a-slice-appended-to-any-scalar-vector-in-any-place-reads-its-bounds-first.loft
 scope	differ	loft-suite/rules/rewrites/R-SpecChain/a-checked-integer-chain-runs-plain-and-falls-back-on-any-null.loft
 scope	differ	loft-suite/rules/rewrites/R-SpecChain/a-speculated-chain-answers-the-checked-chain-beside-counters-ranges-guards-and-memos.loft
-scope	differ	loft-suite/rules/rewrites/R-SplitTable/a-split-bound-to-a-name-answers-the-vector-it-never-builds.loft
+scope	unscoped	loft-suite/rules/rewrites/R-SplitTable/a-split-bound-to-a-name-answers-the-vector-it-never-builds.loft
 scope	differ	loft-suite/rules/rewrites/R-StackBase/a-stack-that-grows-mid-call-keeps-every-frame.loft
 scope	unscoped	loft-suite/rules/rewrites/R-StackBase/a-text-worker-deep-call-keeps-its-work-buffer.loft
 scope	unscoped	loft-suite/rules/rewrites/R-StartStep/a-computed-start-steps-one-counter-and-iterates-every-integer-once.loft
@@ -1173,7 +1172,7 @@ scope	unscoped	loft-suite/rules/rewrites/R-Switch/a-buffer-rewrite-answers-what-
 scope	unscoped	loft-suite/rules/rewrites/R-Switch/a-buffer-rewrite-answers-what-its-switched-off-form-answers.loft
 scope	unscoped	loft-suite/rules/rewrites/R-TailSelf/2403-a-tail-call-through-an-unwrapped-part-is-a-jump.loft
 scope	unscoped	loft-suite/rules/rewrites/R-TailSelf/a-frame-that-owns-a-store-is-released-before-the-jump.loft
-scope	differ	loft-suite/rules/rewrites/R-TailSelf/a-parameter-passed-through-is-the-pointer-the-call-binds.loft
+scope	unscoped	loft-suite/rules/rewrites/R-TailSelf/a-parameter-passed-through-is-the-pointer-the-call-binds.loft
 scope	unscoped	loft-suite/rules/rewrites/R-TailSelf/a-result-held-in-a-store-is-delivered-as-the-call-would.loft
 scope	unscoped	loft-suite/rules/rewrites/R-TailSelf/a-tail-self-call-keeps-the-shared-parameter-and-every-other-call-recurses.loft
 scope	differ	loft-suite/rules/rewrites/R-TailSelf/a-tail-self-call-loops-with-the-callers-stores-borrowed.loft
@@ -1289,12 +1288,12 @@ scope	unscoped	loft-suite/rules/types/I-Sub/an-integer-widens-implicitly-and-nar
 scope	unscoped	loft-suite/rules/types/I-Widen/an-arm-join-widens-whichever-arm-comes-first.loft
 scope	differ	loft-suite/rules/types/N-Cast/2186-a-checked-variant-cast-answers-null-on-a-miss.loft
 scope	differ	loft-suite/rules/types/N-Cast/2186-a-checked-variant-cast-into-a-non-null-destination-warns.loft
-scope	differ	loft-suite/rules/types/N-Cast/a-checked-cast-carries-a-domain-miss-and-a-join-carries-the-cast.loft
+scope	unscoped	loft-suite/rules/types/N-Cast/a-checked-cast-carries-a-domain-miss-and-a-join-carries-the-cast.loft
 scope	unscoped	loft-suite/rules/types/N-Chain/1450d-a-projection-chain-discharges-once-at-its-tail.loft
 scope	unscoped	loft-suite/rules/types/N-Chain/a-chain-feeds-arithmetic-and-defaults-once-at-its-tail.loft
 scope	differ	loft-suite/rules/types/N-Coal/019-a-halting-call-is-a-coalesce-default.loft
 scope	unscoped	loft-suite/rules/types/N-Coal/1425-a-nested-tuple-finds-its-own-null-sentinel.loft
-scope	differ	loft-suite/rules/types/N-Coal/2302-a-default-after-a-field-operand-is-not-reported-redundant.loft
+scope	unscoped	loft-suite/rules/types/N-Coal/2302-a-default-after-a-field-operand-is-not-reported-redundant.loft
 scope	unscoped	loft-suite/rules/types/N-Coal/a-coalesce-proves-the-union-of-its-subject-and-default.loft
 scope	differ	loft-suite/rules/types/N-Coal/a-null-can-leave-the-loop-through-a-coalesce.loft
 scope	unscoped	loft-suite/rules/types/N-Coal/a-spatial-or-trie-call-result-outlives-its-coalesce.loft
@@ -1306,26 +1305,25 @@ scope	differ	loft-suite/rules/types/N-Decl/a-comprehension-takes-its-declared-el
 scope	unscoped	loft-suite/rules/types/N-Decl/a-destructured-float-name-widens-an-integer.loft
 scope	unscoped	loft-suite/rules/types/N-Decl/a-destructured-name-keeps-its-declared-type.loft
 scope	unscoped	loft-suite/rules/types/N-Decl/a-null-test-on-an-inline-nullable-struct-narrows-it.loft
-scope	differ	loft-suite/rules/types/N-Decl/a-vector-literal-argument-takes-its-parameters-nullable-element.loft
+scope	unscoped	loft-suite/rules/types/N-Decl/a-vector-literal-argument-takes-its-parameters-nullable-element.loft
 scope	unscoped	loft-suite/rules/types/N-Dense/a-vectors-elements-are-what-its-type-says.loft
 scope	differ	loft-suite/rules/types/N-Div/2449-a-compound-divide-is-typed-like-its-written-out-form.loft
 scope	differ	loft-suite/rules/types/N-Domain/1450-a-projection-is-not-more-non-null-than-its-receiver.loft
-scope	differ	loft-suite/rules/types/N-Domain/1450e-the-last-element-idiom-is-a-trusted-index.loft
-scope	differ	loft-suite/rules/types/N-Domain/1450f-a-bounds-guard-is-read-in-both-its-spellings.loft
-scope	differ	loft-suite/rules/types/N-Domain/1450h-the-math-guard-is-read-in-every-spelling.loft
+scope	unscoped	loft-suite/rules/types/N-Domain/1450e-the-last-element-idiom-is-a-trusted-index.loft
+scope	unscoped	loft-suite/rules/types/N-Domain/1450f-a-bounds-guard-is-read-in-both-its-spellings.loft
+scope	unscoped	loft-suite/rules/types/N-Domain/1450h-the-math-guard-is-read-in-every-spelling.loft
 scope	differ	loft-suite/rules/types/N-Domain/1471-an-out-of-range-value-struct-read-is-absent-not-a-zero.loft
 scope	unscoped	loft-suite/rules/types/N-Domain/1478-a-text-tuple-member-fits-its-owned-slot.loft
-scope	differ	loft-suite/rules/types/N-Domain/153-n-domain-partial-op-is-nullable.loft
-scope	differ	loft-suite/rules/types/N-Guard/2303-a-null-guard-proves-its-variable-present-on-both-passes.loft
+scope	unscoped	loft-suite/rules/types/N-Guard/2303-a-null-guard-proves-its-variable-present-on-both-passes.loft
 scope	differ	loft-suite/rules/types/N-Guard/a-for-range-proves-its-end-and-counter-non-zero.loft
 scope	differ	loft-suite/rules/types/N-Guard/a-guard-discharges-what-a-domain-and-a-cast-would-owe.loft
-scope	differ	loft-suite/rules/types/N-Guard/a-guard-on-an-or-of-tests-proves-each-false-after-it.loft
+scope	unscoped	loft-suite/rules/types/N-Guard/a-guard-on-an-or-of-tests-proves-each-false-after-it.loft
 scope	differ	loft-suite/rules/types/N-Guard/a-match-arms-guard-proves-its-facts-in-the-arm.loft
-scope	differ	loft-suite/rules/types/N-Guard/an-and-of-tests-proves-each-where-it-holds.loft
-scope	differ	loft-suite/rules/types/N-Guard/the-right-operand-of-and-reads-with-the-left-operands-facts.loft
+scope	unscoped	loft-suite/rules/types/N-Guard/an-and-of-tests-proves-each-where-it-holds.loft
+scope	unscoped	loft-suite/rules/types/N-Guard/the-right-operand-of-and-reads-with-the-left-operands-facts.loft
 scope	differ	loft-suite/rules/types/N-Idem/1771-a-nullable-type-argument-collapses-t-optional.loft
 scope	differ	loft-suite/rules/types/N-Index/a-length-local-and-a-loop-counter-read-non-null.loft
-scope	differ	loft-suite/rules/types/N-Index/a-length-local-the-vector-outgrew-is-not-trusted-warns.loft
+scope	unscoped	loft-suite/rules/types/N-Index/a-length-local-the-vector-outgrew-is-not-trusted-warns.loft
 scope	unscoped	loft-suite/rules/types/N-Index/a-plain-variable-index-stored-undischarged-warns.loft
 scope	unscoped	loft-suite/rules/types/N-Index/an-index-trusted-by-contract-reads-non-null.loft
 scope	unscoped	loft-suite/rules/types/N-Intro/2341-an-arm-that-returns-beside-a-null-arm-still-runs.loft
@@ -1357,7 +1355,7 @@ scope	unscoped	loft-suite/rules/types/N-Road/every-shape-takes-the-same-road-in-
 scope	differ	loft-suite/rules/types/N-Shape/1489-a-capture-is-bound-and-returned-as-a-whole-value.loft
 scope	unscoped	loft-suite/rules/types/N-Shape/1493-a-branch-arm-yielding-a-locals-field-delivers-a-copy.loft
 scope	differ	loft-suite/rules/types/N-Shape/1616-a-text-local-promoted-to-the-return-buffer-keeps-its-question-mark.loft
-scope	differ	loft-suite/rules/types/N-Shape/1739-a-null-inner-vector-element-is-absent-on-every-route.loft
+scope	unscoped	loft-suite/rules/types/N-Shape/1739-a-null-inner-vector-element-is-absent-on-every-route.loft
 scope	unscoped	loft-suite/rules/types/N-Shape/1836-a-keyed-or-nullable-text-link-writes-through-on-both-backends.loft
 scope	unscoped	loft-suite/rules/types/N-Shape/1836-a-link-to-a-nullable-vector-writes-through.loft
 scope	differ	loft-suite/rules/types/N-Shape/1948-a-par-worker-may-answer-null.loft
@@ -1390,10 +1388,10 @@ scope	differ	loft-suite/rules/types/N-Store/2006-a-returned-field-of-a-record-th
 scope	differ	loft-suite/rules/types/N-Store/a-null-slice-bound-reads-null.loft
 scope	unscoped	loft-suite/rules/types/N-Store/a-null-variant-handle-written-into-a-nullable-slot-clears-it.loft
 scope	differ	loft-suite/rules/types/N-Store/a-nullable-store-names-the-construction-for-its-source.loft
-scope	differ	loft-suite/rules/types/N-Store/len-of-a-nullable-collection-warns-and-counts-an-absent-one-as-zero.loft
+scope	unscoped	loft-suite/rules/types/N-Store/len-of-a-nullable-collection-warns-and-counts-an-absent-one-as-zero.loft
 scope	unscoped	loft-suite/rules/types/P-Alt-Diff/an-absent-tuple-capture-of-an-alternative-is-the-all-null-tuple.loft
 scope	unscoped	loft-suite/rules/types/P-Alt-Same/the-pattern-capture-and-range-rules-answer-what-they-state.loft
-scope	differ	loft-suite/rules/types/P-Cap-Ty/a-pattern-capture-takes-the-type-its-pattern-matched.loft
+scope	unscoped	loft-suite/rules/types/P-Cap-Ty/a-pattern-capture-takes-the-type-its-pattern-matched.loft
 scope	unscoped	loft-suite/rules/types/P-Opt-Ty/a-full-width-narrow-capture-keeps-its-top-value.loft
 scope	unscoped	loft-suite/rules/types/P-Opt-Ty/an-optional-capture-is-the-nullable-of-its-field-type.loft
 scope	unscoped	loft-suite/rules/types/P-Opt-Ty/an-optional-tuple-capture-is-the-in-flight-absent-tuple.loft
@@ -1411,6 +1409,7 @@ scope	unscoped	loft-suite/rules/types/T-Syn/type-name-of-a-generic-instance-name
 scope	differ	selfhost/front/cells/a-bang-on-a-struct-enum-and-a-literal-reading-its-local.loft
 scope	unscoped	selfhost/front/cells/a-boxed-tuple-return-destructured.loft
 scope	unscoped	selfhost/front/cells/a-boxed-tuple-with-a-text-member.loft
+scope	unscoped	selfhost/front/cells/a-branch-of-a-parameter-and-an-owned-local-renames-the-buffer-onto-the-local.loft
 scope	differ	selfhost/front/cells/a-capturing-lambda-stored-in-a-field.loft
 scope	unscoped	selfhost/front/cells/a-comprehension-over-a-literal.loft
 scope	unscoped	selfhost/front/cells/a-constant-fill-comprehension.loft
@@ -1444,7 +1443,7 @@ scope	differ	selfhost/front/cells/a-nullable-text-function-returns-early.loft
 scope	unscoped	selfhost/front/cells/a-place-handed-to-a-reference-parameter.loft
 scope	unscoped	selfhost/front/cells/a-prefix-not-on-a-record-or-a-struct-enum.loft
 scope	unscoped	selfhost/front/cells/a-record-branch-tail-copied-whole-or-arm-by-arm.loft
-scope	differ	selfhost/front/cells/a-record-if-tail-of-views-and-calls.loft
+scope	unscoped	selfhost/front/cells/a-record-if-tail-of-views-and-calls.loft
 scope	unscoped	selfhost/front/cells/a-record-member-of-a-boxed-tuple.loft
 scope	unscoped	selfhost/front/cells/a-record-written-into-a-nullable-field.loft
 scope	unscoped	selfhost/front/cells/a-record-written-into-an-element-or-a-field.loft
@@ -1488,7 +1487,6 @@ scope	unscoped	selfhost/front/cells/a-vector-of-nullable-records.loft
 scope	unscoped	selfhost/front/cells/a-vector-of-tuples-with-narrow-members.loft
 scope	unscoped	selfhost/front/cells/a-vector-of-u32.loft
 scope	unscoped	selfhost/front/cells/a-vector-of-wide-literals.loft
-scope	differ	selfhost/front/cells/a-vector-parameter-of-records-nothing-else-defines.loft
 scope	unscoped	selfhost/front/cells/a-vector-parameter-rebound-from-a-vector-then-grown.loft
 scope	unscoped	selfhost/front/cells/a-vector-parameter-rebound-from-a-vector.loft
 scope	unscoped	selfhost/front/cells/an-append-through-a-link-to-a-hash.loft
@@ -1501,8 +1499,6 @@ scope	unscoped	selfhost/front/cells/tuples-across-calls-and-vector-elements.loft
 scope	unscoped	tests/docs/00-general.loft
 scope	differ	tests/docs/01-keywords.loft
 scope	unscoped	tests/docs/02-text.loft
-scope	differ	tests/docs/03-integer.loft
-scope	differ	tests/docs/05-float.loft
 scope	differ	tests/docs/06-function.loft
 scope	unscoped	tests/docs/07-vector.loft
 scope	unscoped	tests/docs/08-struct.loft
@@ -1524,10 +1520,8 @@ scope	differ	tests/docs/27-coroutines.loft
 scope	unscoped	tests/docs/28-tuples.loft
 scope	unscoped	tests/docs/29-match.loft
 scope	unscoped	tests/docs/30-formatting.loft
-scope	differ	tests/docs/31-ref-forward.loft
+scope	unscoped	tests/docs/31-ref-forward.loft
 scope	unscoped	tests/docs/38-call-it-yourself.loft
-scope	differ	tests/scripts/01-integers.loft
-scope	differ	tests/scripts/02-floats.loft
 scope	unscoped	tests/scripts/03-text.loft
 scope	differ	tests/scripts/05-enums.loft
 scope	unscoped	tests/scripts/06-structs.loft
@@ -1582,7 +1576,7 @@ scope	unscoped	tests/scripts/1338-an-early-text-return-is-delivered-through-the-
 scope	unscoped	tests/scripts/1339-the-parser-is-not-charged-for-a-prelude-that-never-existed.loft
 scope	unscoped	tests/scripts/134-persist-copy-key-order.loft
 scope	unscoped	tests/scripts/134-persist-copy-query.loft
-scope	differ	tests/scripts/134-trie-paged-layout.loft
+scope	unscoped	tests/scripts/134-trie-paged-layout.loft
 scope	unscoped	tests/scripts/1340-the-emitter-records-where-each-block-opens.loft
 scope	unscoped	tests/scripts/1343-a-boolean-match-with-both-arms-is-exhaustive.loft
 scope	differ	tests/scripts/1357-every-text-buffer-a-frame-mints-is-released.loft
@@ -1591,7 +1585,7 @@ scope	unscoped	tests/scripts/136-persist-copy-morton-order.loft
 scope	unscoped	tests/scripts/138-vector-of-vector-single.loft
 scope	unscoped	tests/scripts/14-formatting.loft
 scope	unscoped	tests/scripts/1416-a-value-enum-element-may-be-absent.loft
-scope	differ	tests/scripts/1434-a-diagnostic-spells-a-keyed-type-as-the-source-does.loft
+scope	unscoped	tests/scripts/1434-a-diagnostic-spells-a-keyed-type-as-the-source-does.loft
 scope	unscoped	tests/scripts/146-keyed-rekey-through-view.loft
 scope	unscoped	tests/scripts/1468-a-nullable-call-result-binds-without-an-ownerless-copy.loft
 scope	unscoped	tests/scripts/148-view-liveness-across-reshape.loft
@@ -1621,7 +1615,7 @@ scope	unscoped	tests/scripts/157-mint-hoist.loft
 scope	unscoped	tests/scripts/157-move-append.loft
 scope	differ	tests/scripts/157-next-counter.loft
 scope	unscoped	tests/scripts/157-null-buffer-hoist.loft
-scope	differ	tests/scripts/157-push-hoist.loft
+scope	unscoped	tests/scripts/157-push-hoist.loft
 scope	differ	tests/scripts/157-range-arith.loft
 scope	unscoped	tests/scripts/157-record-ptr.loft
 scope	unscoped	tests/scripts/157-record-push.loft
@@ -1630,14 +1624,14 @@ scope	unscoped	tests/scripts/157-retbuf-adopt.loft
 scope	unscoped	tests/scripts/157-selfread-literal.loft
 scope	unscoped	tests/scripts/157-store-reset.loft
 scope	unscoped	tests/scripts/157-twin-base.loft
-scope	differ	tests/scripts/157-vector-param-inputs.loft
+scope	unscoped	tests/scripts/157-vector-param-inputs.loft
 scope	differ	tests/scripts/157-write-hoist.loft
-scope	differ	tests/scripts/158-apart-records.loft
+scope	unscoped	tests/scripts/158-apart-records.loft
 scope	differ	tests/scripts/158-bounded-sum.loft
 scope	differ	tests/scripts/158-char-walk.loft
 scope	unscoped	tests/scripts/158-copy-in-place.loft
 scope	unscoped	tests/scripts/158-enum-record.loft
-scope	differ	tests/scripts/158-field-mint.loft
+scope	unscoped	tests/scripts/158-field-mint.loft
 scope	differ	tests/scripts/158-guard-free.loft
 scope	unscoped	tests/scripts/158-heap-discharge-buffer.loft
 scope	unscoped	tests/scripts/158-iteration-base.loft
@@ -1648,7 +1642,7 @@ scope	unscoped	tests/scripts/158-leaving-free.loft
 scope	unscoped	tests/scripts/158-mint-window.loft
 scope	unscoped	tests/scripts/158-nested-field.loft
 scope	unscoped	tests/scripts/158-push-run.loft
-scope	differ	tests/scripts/158-push-window.loft
+scope	unscoped	tests/scripts/158-push-window.loft
 scope	unscoped	tests/scripts/158-record-window.loft
 scope	unscoped	tests/scripts/158-rotate.loft
 scope	unscoped	tests/scripts/158-scalar-file-read.loft
@@ -1663,7 +1657,7 @@ scope	unscoped	tests/scripts/164-a-chain-of-chains-adopts-its-callees-answer.lof
 scope	unscoped	tests/scripts/164-a-literal-exit-writes-its-chains-buffer.loft
 scope	unscoped	tests/scripts/164-adopt-first-bind.loft
 scope	unscoped	tests/scripts/164-buffer-is-the-place.loft
-scope	differ	tests/scripts/164-callee-disturb.loft
+scope	unscoped	tests/scripts/164-callee-disturb.loft
 scope	differ	tests/scripts/164-element-place.loft
 scope	unscoped	tests/scripts/164-forward-tuple.loft
 scope	unscoped	tests/scripts/164-in-place-literal.loft
@@ -1677,7 +1671,6 @@ scope	differ	tests/scripts/174-foreign-view.loft
 scope	unscoped	tests/scripts/174-slice-copy.loft
 scope	unscoped	tests/scripts/177-reclaim-early-return.loft
 scope	unscoped	tests/scripts/1796-a-constant-a-nullable-narrow-slot-cannot-hold-is-refused.loft
-scope	differ	tests/scripts/18-math-functions.loft
 scope	unscoped	tests/scripts/184-nested-narrow-int-vector.loft
 scope	unscoped	tests/scripts/1864-a-copy-written-through-its-own-view-is-a-lost-write.loft
 scope	unscoped	tests/scripts/188-issue-248-xpkg-ctor-inline-arg.loft
@@ -1824,7 +1817,7 @@ scope	unscoped	tests/scripts/889-collection-through-a-call-s-field.loft
 scope	unscoped	tests/scripts/89-sizeof.loft
 scope	unscoped	tests/scripts/890-consumed-lift-double-free.loft
 scope	unscoped	tests/scripts/899-unbound-file-read-only-vector.loft
-scope	differ	tests/scripts/899-unbound-file-read-temp.loft
+scope	unscoped	tests/scripts/899-unbound-file-read-temp.loft
 scope	differ	tests/scripts/915-loop-variable-per-loop.loft
 scope	unscoped	tests/scripts/923-nullable-vector-element-schema.loft
 scope	unscoped	tests/scripts/927-trie-spatial-linked-group.loft
@@ -1859,7 +1852,7 @@ scope	unscoped	tests/scripts/a-compound-keyed-insert-writes-the-entry-its-key-na
 scope	unscoped	tests/scripts/a-comprehension-element-goes-straight-into-its-push.loft
 scope	unscoped	tests/scripts/a-comprehension-over-a-keyed-collection-walks-its-snapshot.loft
 scope	differ	tests/scripts/a-computed-range-start-steps-one-counter.loft
-scope	differ	tests/scripts/a-copied-group-indexes-its-own-records.loft
+scope	unscoped	tests/scripts/a-copied-group-indexes-its-own-records.loft
 scope	unscoped	tests/scripts/a-count-a-run-of-statements-repeats-is-made-once.loft
 scope	unscoped	tests/scripts/a-counted-loop-pushing-one-value-is-one-fill.loft
 scope	differ	tests/scripts/a-counted-loop-variable-shares-its-index-slot.loft
@@ -1881,14 +1874,14 @@ scope	differ	tests/scripts/a-format-bound-text-is-a-view-of-its-work-text-on-c.l
 scope	unscoped	tests/scripts/a-frame-never-pushes-past-the-room-its-entry-made.loft
 scope	unscoped	tests/scripts/a-fresh-copy-into-a-minted-slot-needs-no-prefill.loft
 scope	unscoped	tests/scripts/a-function-of-many-record-temporaries-compiles-in-seconds.loft
-scope	differ	tests/scripts/a-function-reads-its-vector-parameter-through-one-header.loft
+scope	unscoped	tests/scripts/a-function-reads-its-vector-parameter-through-one-header.loft
 scope	differ	tests/scripts/a-function-value-fills-its-callers-record.loft
 scope	unscoped	tests/scripts/a-generator-yields-a-tuple-with-a-text-member-on-both-backends.loft
 scope	differ	tests/scripts/a-generic-body-writes-a-narrow-element-as-its-vector-reads-it.loft
 scope	differ	tests/scripts/a-grid-index-inside-its-rows-and-stride-is-read-plainly.loft
 scope	differ	tests/scripts/a-guard-on-a-multi-pattern-arm-holds-for-the-pattern-that-matched.loft
 scope	differ	tests/scripts/a-guarded-row-fill-writes-what-its-guard-admits.loft
-scope	differ	tests/scripts/a-hash-of-plain-entries-copies-whole.loft
+scope	unscoped	tests/scripts/a-hash-of-plain-entries-copies-whole.loft
 scope	unscoped	tests/scripts/a-hash-table-has-a-power-of-two-bucket-count.loft
 scope	unscoped	tests/scripts/a-hash-walk-is-in-key-order-across-widths-and-removals.loft
 scope	unscoped	tests/scripts/a-hash-walked-in-a-format-string-is-in-key-order.loft
@@ -1926,13 +1919,13 @@ scope	unscoped	tests/scripts/a-loop-reads-and-cuts-its-pushed-vector-through-the
 scope	differ	tests/scripts/a-loop-record-is-kept-across-its-whole-nest.loft
 scope	differ	tests/scripts/a-loop-record-kept-in-the-ir-reads-as-a-fresh-record.loft
 scope	differ	tests/scripts/a-loop-tests-at-its-bottom.loft
-scope	differ	tests/scripts/a-loop-that-returns-from-inside-keeps-its-holders.loft
+scope	unscoped	tests/scripts/a-loop-that-returns-from-inside-keeps-its-holders.loft
 scope	unscoped	tests/scripts/a-loop-whose-one-growth-is-its-push-writes-through-the-record.loft
 scope	unscoped	tests/scripts/a-match-binding-borrows-its-text-while-the-stores-differ.loft
 scope	unscoped	tests/scripts/a-module-names-its-importers-type-from-a-private-function.loft
 scope	differ	tests/scripts/a-name-only-some-listed-patterns-bind-is-nullable.loft
 scope	differ	tests/scripts/a-narrow-element-of-a-held-vector-is-read-through-its-base.loft
-scope	differ	tests/scripts/a-narrow-element-write-leaves-record-hoists-in-place.loft
+scope	unscoped	tests/scripts/a-narrow-element-write-leaves-record-hoists-in-place.loft
 scope	unscoped	tests/scripts/a-narrow-integer-widens-into-any-superset.loft
 scope	unscoped	tests/scripts/a-narrow-slot-is-checked-wherever-a-value-reaches-it.loft
 scope	differ	tests/scripts/a-non-escaping-vector-local-is-a-caller-buffer.loft
@@ -1947,7 +1940,7 @@ scope	unscoped	tests/scripts/a-peeled-loop-leaves-its-trip-by-break-or-continue.
 scope	unscoped	tests/scripts/a-placed-call-copies-an-answer-from-elsewhere.loft
 scope	unscoped	tests/scripts/a-plain-vector-append-without-a-header-lands-in-its-slot.loft
 scope	differ	tests/scripts/a-pooled-buffers-texts-are-refilled-in-their-slots.loft
-scope	differ	tests/scripts/a-pooled-buffers-vectors-are-emptied-in-place.loft
+scope	unscoped	tests/scripts/a-pooled-buffers-vectors-are-emptied-in-place.loft
 scope	unscoped	tests/scripts/a-program-cannot-tell-which-platform-it-runs-on.loft
 scope	differ	tests/scripts/a-pure-call-made-twice-is-computed-once.loft
 scope	unscoped	tests/scripts/a-push-fill-stores-each-element-kind.loft
@@ -1980,7 +1973,7 @@ scope	unscoped	tests/scripts/a-scalar-file-read-is-a-write-of-the-file-record-on
 scope	differ	tests/scripts/a-short-counted-loop-is-written-once-per-trip.loft
 scope	differ	tests/scripts/a-slice-appended-to-a-place-is-sliced-into-it.loft
 scope	unscoped	tests/scripts/a-slice-bound-before-its-local-is-emptied-holds-the-slice.loft
-scope	differ	tests/scripts/a-slice-handed-to-a-const-parameter-needs-no-store-of-its-own.loft
+scope	unscoped	tests/scripts/a-slice-handed-to-a-const-parameter-needs-no-store-of-its-own.loft
 scope	unscoped	tests/scripts/a-stdlib-one-op-wrapper-is-its-op.loft
 scope	differ	tests/scripts/a-store-holds-every-hash-layout-side-by-side.loft
 scope	unscoped	tests/scripts/a-tail-recursive-small-record-function-is-a-loop.loft
@@ -2017,8 +2010,8 @@ scope	unscoped	tests/scripts/a-view-taken-through-a-local-that-copies-on-a-later
 scope	unscoped	tests/scripts/a-walk-borrows-its-word-in-the-versioned-copy.loft
 scope	unscoped	tests/scripts/a-walk-of-a-built-vector-streams-its-elements.loft
 scope	unscoped	tests/scripts/a-walk-of-a-scalar-literal-builds-no-vector.loft
-scope	differ	tests/scripts/a-walk-the-body-cannot-resize-is-a-counted-loop.loft
-scope	differ	tests/scripts/a-while-counter-steps-plain-below-its-bound.loft
+scope	unscoped	tests/scripts/a-walk-the-body-cannot-resize-is-a-counted-loop.loft
+scope	unscoped	tests/scripts/a-while-counter-steps-plain-below-its-bound.loft
 scope	differ	tests/scripts/a-width32-file-keeps-its-arithmetic-in-32-bits.loft
 scope	unscoped	tests/scripts/a-window-walk-guards-its-bounds-once-and-calls-plain-helpers.loft
 scope	unscoped	tests/scripts/a-wrapper-placed-in-a-one-field-buffer-survives-its-clear.loft
@@ -2028,18 +2021,18 @@ scope	differ	tests/scripts/an-append-loop-keeps-one-window.loft
 scope	unscoped	tests/scripts/an-append-twin-writes-through-its-callers-window.loft
 scope	unscoped	tests/scripts/an-appended-call-result-arrives-from-every-exit.loft
 scope	unscoped	tests/scripts/an-appended-source-is-built-as-often-as-the-append-runs.loft
-scope	differ	tests/scripts/an-appending-leaf-is-inlined-into-its-callers-loop.loft
+scope	unscoped	tests/scripts/an-appending-leaf-is-inlined-into-its-callers-loop.loft
 scope	unscoped	tests/scripts/an-arrived-absence-keeps-a-tuples-text-frees.loft
 scope	differ	tests/scripts/an-early-exit-that-builds-a-text-is-written-as-a-cold-helper.loft
 scope	unscoped	tests/scripts/an-element-at-a-range-counter-is-read-in-range.loft
 scope	unscoped	tests/scripts/an-element-is-built-in-place-by-its-call-and-in-either-arm.loft
-scope	differ	tests/scripts/an-index-a-passed-test-keeps-below-the-length-is-read-in-range.loft
+scope	unscoped	tests/scripts/an-index-a-passed-test-keeps-below-the-length-is-read-in-range.loft
 scope	unscoped	tests/scripts/an-index-walk-steps-from-its-hint-only-while-it-holds.loft
 scope	differ	tests/scripts/an-operand-is-copied-only-when-a-later-operand-can-write-it.loft
 scope	unscoped	tests/scripts/elem-first-a-paired-temp-lives-in-its-elements-store.loft
 scope	differ	tests/scripts/generic-typevar-name-usable.loft
 scope	unscoped	tests/scripts/golden-images-paged.loft
-scope	differ	tests/scripts/golden-images-whole.loft
+scope	unscoped	tests/scripts/golden-images-whole.loft
 scope	unscoped	tests/scripts/h11-file-seek-and-position.loft
 scope	unscoped	tests/scripts/link-obs-oracle.loft
 scope	unscoped	tests/scripts/link-safe-oracle.loft
@@ -2083,12 +2076,11 @@ scope	unscoped	tests/scripts/store_persist_sorted.loft
 scope	differ	tests/scripts/store_rebuild_b1.loft
 scope	unscoped	tests/scripts/tail-capture-lifted-arg.loft
 scope	unscoped	tests/scripts/the-reference-file-writes-the-widths-it-lists.loft
-scope	differ	tests/scripts/the-reference-float-boundary-is-where-it-says.loft
 scope	unscoped	tests/scripts/the-reference-safety-traps-are-what-it-catalogues.loft
 scope	differ	tests/scripts/the-variable-limit-arrives-before-the-frame-cap.loft
 scope	unscoped	tests/scripts/two-vectors-pushed-in-lockstep-share-a-length-local.loft
 
-layer	scope-functions	agree	17614	of	35109
+layer	scope-functions	agree	17789	of	35114
 scope-functions	agree	lib/audience_crystal/src/audience_crystal.loft::BRANCH_LEN_BASE
 scope-functions	agree	lib/audience_crystal/src/audience_crystal.loft::BRANCH_SPACING
 scope-functions	agree	lib/audience_crystal/src/audience_crystal.loft::CONNECT_TICKS
@@ -2127,6 +2119,7 @@ scope-functions	agree	lib/audience_crystal/src/audience_crystal.loft::n_hex_dist
 scope-functions	agree	lib/audience_crystal/src/audience_crystal.loft::n_iround
 scope-functions	agree	lib/audience_crystal/src/audience_crystal.loft::n_is_hex_nbr
 scope-functions	agree	lib/audience_crystal/src/audience_crystal.loft::n_on_same_hex_axis
+scope-functions	agree	lib/audience_crystal/src/audience_crystal.loft::n_pick_segment_color
 scope-functions	agree	lib/audience_crystal/src/audience_crystal.loft::vector<SegMesh>
 scope-functions	agree	lib/audience_crystal/src/audience_crystal.loft::vector<boolean>
 scope-functions	agree	lib/audience_crystal/src/audience_crystal.loft::vector<float>
@@ -2303,6 +2296,8 @@ scope-functions	agree	lib/process/src/process.loft::Process
 scope-functions	agree	lib/process/src/process.loft::Run
 scope-functions	agree	lib/process/src/process.loft::n_process_run
 scope-functions	agree	lib/process/src/process.loft::n_word
+scope-functions	agree	lib/process/src/process.loft::t_7Command_at_word_start
+scope-functions	agree	lib/process/src/process.loft::t_7Command_drop_word
 scope-functions	agree	lib/process/src/process.loft::t_7Command_hole_boolean
 scope-functions	agree	lib/process/src/process.loft::t_7Command_hole_flag
 scope-functions	agree	lib/process/src/process.loft::t_7Command_hole_float
@@ -2480,6 +2475,7 @@ scope-functions	agree	loft-suite/rules/binding/B-Copy/a-deferred-copy-keeps-the-
 scope-functions	agree	loft-suite/rules/binding/B-Copy/a-deferred-copy-keeps-the-value-it-was-bound-to-whatever-the-source-does.loft::vector<boolean>
 scope-functions	agree	loft-suite/rules/binding/B-Copy/a-keyed-local-rebound-from-a-call-that-reads-it-keeps-its-records.loft::Box
 scope-functions	agree	loft-suite/rules/binding/B-Copy/a-keyed-local-rebound-from-a-call-that-reads-it-keeps-its-records.loft::Rec
+scope-functions	agree	loft-suite/rules/binding/B-Copy/a-keyed-local-rebound-from-a-call-that-reads-it-keeps-its-records.loft::n_other
 scope-functions	agree	loft-suite/rules/binding/B-Copy/a-parameter-copy-the-owner-witness-names-is-released-by-the-caller-only.loft::WpH
 scope-functions	agree	loft-suite/rules/binding/B-Copy/a-parameter-copy-the-owner-witness-names-is-released-by-the-caller-only.loft::WpS
 scope-functions	agree	loft-suite/rules/binding/B-Copy/a-parameter-copy-the-owner-witness-names-is-released-by-the-caller-only.loft::WpSS
@@ -2529,6 +2525,7 @@ scope-functions	agree	loft-suite/rules/binding/B-Copy/a-record-update-copies-its
 scope-functions	agree	loft-suite/rules/binding/B-Copy/a-record-update-copies-its-base-then-writes-the-named-fields.loft::VuNum
 scope-functions	agree	loft-suite/rules/binding/B-Copy/a-record-update-copies-its-base-then-writes-the-named-fields.loft::VuOther
 scope-functions	agree	loft-suite/rules/binding/B-Copy/a-record-update-copies-its-base-then-writes-the-named-fields.loft::VuTok
+scope-functions	agree	loft-suite/rules/binding/B-Copy/a-record-update-copies-its-base-then-writes-the-named-fields.loft::n_count
 scope-functions	agree	loft-suite/rules/binding/B-Copy/a-record-update-copies-its-base-then-writes-the-named-fields.loft::n_first_a
 scope-functions	agree	loft-suite/rules/binding/B-Copy/a-record-update-copies-its-base-then-writes-the-named-fields.loft::n_outer_total
 scope-functions	agree	loft-suite/rules/binding/B-Copy/a-record-update-copies-its-base-then-writes-the-named-fields.loft::n_show
@@ -3316,6 +3313,7 @@ scope-functions	agree	loft-suite/rules/binding/P-Cap-View/a-pattern-capture-is-a
 scope-functions	agree	loft-suite/rules/binding/P-Cap-View/a-pattern-capture-is-a-view-of-the-subjects-place-on-b-views-terms.loft::W
 scope-functions	agree	loft-suite/rules/binding/P-Cap-View/a-pattern-capture-is-a-view-of-the-subjects-place-on-b-views-terms.loft::n_check
 scope-functions	agree	loft-suite/rules/binding/P-Cap-View/a-pattern-capture-is-a-view-of-the-subjects-place-on-b-views-terms.loft::n_e_scalar
+scope-functions	agree	loft-suite/rules/binding/P-Cap-View/a-pattern-capture-is-a-view-of-the-subjects-place-on-b-views-terms.loft::n_intact
 scope-functions	agree	loft-suite/rules/binding/P-Cap-View/a-pattern-capture-is-a-view-of-the-subjects-place-on-b-views-terms.loft::n_t_value
 scope-functions	agree	loft-suite/rules/binding/P-Cap-View/a-pattern-capture-is-a-view-of-the-subjects-place-on-b-views-terms.loft::vector<N>
 scope-functions	agree	loft-suite/rules/binding/P-Cap-View/a-pattern-capture-is-a-view-of-the-subjects-place-on-b-views-terms.loft::vector<Pt>
@@ -3429,6 +3427,7 @@ scope-functions	agree	loft-suite/rules/calls/F-Default/a-default-reads-the-earli
 scope-functions	agree	loft-suite/rules/calls/F-Default/a-default-reads-the-earlier-arguments-of-its-call.loft::n_t_second
 scope-functions	agree	loft-suite/rules/calls/F-Default/a-default-reads-the-earlier-arguments-of-its-call.loft::n_t_text
 scope-functions	agree	loft-suite/rules/calls/F-Default/a-default-reads-the-earlier-arguments-of-its-call.loft::n_test_a_tuple_default_reads_the_arguments_of_its_own_call
+scope-functions	agree	loft-suite/rules/calls/F-Drop/a-dropped-call-answering-a-tuple-runs-for-its-effect.loft::n_turn
 scope-functions	agree	loft-suite/rules/calls/F-Package/a-package-reads-as-pub-in-its-own-directory-and-passes-nothing-on.loft::n_main
 scope-functions	agree	loft-suite/rules/calls/F-Package/f_package_core_lib.loft::Box
 scope-functions	agree	loft-suite/rules/calls/F-Package/f_package_core_lib.loft::n_inner
@@ -3438,6 +3437,7 @@ scope-functions	agree	loft-suite/rules/calls/F-ParamGrow/1251-a-heap-parameter-i
 scope-functions	agree	loft-suite/rules/calls/F-ParamGrow/1251-a-heap-parameter-is-shared-not-copied.loft::It1251
 scope-functions	agree	loft-suite/rules/calls/F-ParamGrow/1251-a-heap-parameter-is-shared-not-copied.loft::K1251
 scope-functions	agree	loft-suite/rules/calls/F-ParamGrow/1251-a-heap-parameter-is-shared-not-copied.loft::__const_n_make1251
+scope-functions	agree	loft-suite/rules/calls/F-ParamGrow/1251-a-heap-parameter-is-shared-not-copied.loft::n_plain_clear
 scope-functions	agree	loft-suite/rules/calls/F-ParamGrow/1251-a-heap-parameter-is-shared-not-copied.loft::n_plain_elem
 scope-functions	agree	loft-suite/rules/calls/F-ParamGrow/1251-a-heap-parameter-is-shared-not-copied.loft::n_plain_remove
 scope-functions	agree	loft-suite/rules/calls/F-ParamGrow/1251-a-heap-parameter-is-shared-not-copied.loft::vector<It1251>
@@ -3522,6 +3522,7 @@ scope-functions	agree	loft-suite/rules/calls/F-ParamText/a-text-parameter-is-the
 scope-functions	agree	loft-suite/rules/calls/F-ParamText/a-text-parameter-is-the-arguments-value-at-the-call-and-the-callees-own.loft::n_bang
 scope-functions	agree	loft-suite/rules/calls/F-ParamText/a-text-parameter-is-the-arguments-value-at-the-call-and-the-callees-own.loft::n_c10
 scope-functions	agree	loft-suite/rules/calls/F-ParamText/a-text-parameter-is-the-arguments-value-at-the-call-and-the-callees-own.loft::n_later2203
+scope-functions	agree	loft-suite/rules/calls/F-ParamText/a-text-parameter-is-the-arguments-value-at-the-call-and-the-callees-own.loft::n_reads_only2203
 scope-functions	agree	loft-suite/rules/calls/F-ParamText/a-text-parameter-is-the-arguments-value-at-the-call-and-the-callees-own.loft::n_same_vector2203
 scope-functions	agree	loft-suite/rules/calls/F-ParamText/a-text-parameter-is-the-arguments-value-at-the-call-and-the-callees-own.loft::n_set2203
 scope-functions	agree	loft-suite/rules/calls/F-ParamText/a-text-parameter-is-the-arguments-value-at-the-call-and-the-callees-own.loft::n_set2203@st1
@@ -3658,6 +3659,7 @@ scope-functions	agree	loft-suite/rules/calls/F-Recv/a-call-reaches-the-method-sp
 scope-functions	agree	loft-suite/rules/calls/F-Recv/a-call-reaches-the-method-spelled-for-its-receivers-nullability.loft::t_3Sq3_ar3
 scope-functions	agree	loft-suite/rules/calls/F-Recv/a-call-reaches-the-method-spelled-for-its-receivers-nullability.loft::t_3Wb?_label
 scope-functions	agree	loft-suite/rules/calls/F-Recv/a-call-reaches-the-method-spelled-for-its-receivers-nullability.loft::t_4Note_plen
+scope-functions	agree	loft-suite/rules/calls/F-Recv/a-call-reaches-the-method-spelled-for-its-receivers-nullability.loft::t_4Nums_plen
 scope-functions	agree	loft-suite/rules/calls/F-Recv/a-call-reaches-the-method-spelled-for-its-receivers-nullability.loft::t_4S11?_ar11
 scope-functions	agree	loft-suite/rules/calls/F-Recv/a-call-reaches-the-method-spelled-for-its-receivers-nullability.loft::t_4Sh11_ar11
 scope-functions	agree	loft-suite/rules/calls/F-Recv/a-call-reaches-the-method-spelled-for-its-receivers-nullability.loft::t_4Tag?_plen
@@ -4137,6 +4139,7 @@ scope-functions	agree	loft-suite/rules/closures/L-CapHeap/a-captured-heap-parame
 scope-functions	agree	loft-suite/rules/closures/L-CapHeap/a-captured-heap-parameter-is-shared-with-the-caller-both-ways.loft::__closure_after_capture_0
 scope-functions	agree	loft-suite/rules/closures/L-CapHeap/a-captured-heap-parameter-is-shared-with-the-caller-both-ways.loft::__closure_from_inside_0
 scope-functions	agree	loft-suite/rules/closures/L-CapHeap/a-captured-heap-parameter-is-shared-with-the-caller-both-ways.loft::__closure_per_pass_0
+scope-functions	agree	loft-suite/rules/closures/L-CapHeap/a-captured-heap-parameter-is-shared-with-the-caller-both-ways.loft::n_test_a_record_parameter
 scope-functions	agree	loft-suite/rules/closures/L-CapHeap/a-captured-heap-parameter-is-shared-with-the-caller-both-ways.loft::vector<S>
 scope-functions	agree	loft-suite/rules/closures/L-CapHeap/a-lambda-comprehension-over-a-capture-leaves-the-capture-alive.loft::P
 scope-functions	agree	loft-suite/rules/closures/L-CapHeap/a-lambda-comprehension-over-a-capture-leaves-the-capture-alive.loft::__closure_test_a_second_lambda_over_the_same_capture_0
@@ -5564,6 +5567,7 @@ scope-functions	agree	loft-suite/rules/collections/Col-Concat/2406-a-literal-aft
 scope-functions	agree	loft-suite/rules/collections/Col-Concat/2406-a-literal-after-a-site-only-the-second-pass-builds-keeps-its-elements.loft::Hold
 scope-functions	agree	loft-suite/rules/collections/Col-Concat/2406-a-literal-after-a-site-only-the-second-pass-builds-keeps-its-elements.loft::HoldT
 scope-functions	agree	loft-suite/rules/collections/Col-Concat/2406-a-literal-after-a-site-only-the-second-pass-builds-keeps-its-elements.loft::P
+scope-functions	agree	loft-suite/rules/collections/Col-Concat/2406-a-literal-after-a-site-only-the-second-pass-builds-keeps-its-elements.loft::n_blk
 scope-functions	agree	loft-suite/rules/collections/Col-Concat/2406-a-literal-after-a-site-only-the-second-pass-builds-keeps-its-elements.loft::vector<P>
 scope-functions	agree	loft-suite/rules/collections/Col-Concat/a-concat-is-a-value-in-every-expression-position.loft::E
 scope-functions	agree	loft-suite/rules/collections/Col-Concat/a-concat-is-a-value-in-every-expression-position.loft::E1
@@ -5593,6 +5597,7 @@ scope-functions	agree	loft-suite/rules/collections/Col-Cons/a-nullable-keyed-col
 scope-functions	agree	loft-suite/rules/collections/Col-Copy/a-vector-field-keeps-its-absence.loft::Box
 scope-functions	agree	loft-suite/rules/collections/Col-Copy/a-vector-field-keeps-its-absence.loft::One
 scope-functions	agree	loft-suite/rules/collections/Col-Copy/a-vector-field-keeps-its-absence.loft::Rv
+scope-functions	agree	loft-suite/rules/collections/Col-Copy/a-vector-field-keeps-its-absence.loft::n_n
 scope-functions	agree	loft-suite/rules/collections/Col-Copy/a-vector-field-keeps-its-absence.loft::n_nothing
 scope-functions	agree	loft-suite/rules/collections/Col-Copy/a-vector-field-keeps-its-absence.loft::n_test_a_clear_makes_an_absent_field_empty
 scope-functions	agree	loft-suite/rules/collections/Col-Copy/a-vector-field-keeps-its-absence.loft::vector<Rv>
@@ -5605,6 +5610,8 @@ scope-functions	agree	loft-suite/rules/collections/Col-Group-Dup/2257-every-disp
 scope-functions	agree	loft-suite/rules/collections/Col-Group-Dup/2257-every-displaced-record-leaves-a-group-of-twenty-four-members.loft::Grp24
 scope-functions	agree	loft-suite/rules/collections/Col-Group-Dup/2257-every-displaced-record-leaves-a-group-of-twenty-four-members.loft::n_key24
 scope-functions	agree	loft-suite/rules/collections/Col-Group-Dup/2257-every-displaced-record-leaves-a-group-of-twenty-four-members.loft::n_main
+scope-functions	agree	loft-suite/rules/collections/Col-Group-Dup/2257-every-displaced-record-leaves-a-group-of-twenty-four-members.loft::n_members_hold_the_last_alone_a
+scope-functions	agree	loft-suite/rules/collections/Col-Group-Dup/2257-every-displaced-record-leaves-a-group-of-twenty-four-members.loft::n_members_hold_the_last_alone_b
 scope-functions	agree	loft-suite/rules/collections/Col-Group/1152-a-vector-value-into-a-group-reaches-every-member.loft::Cg1152A
 scope-functions	agree	loft-suite/rules/collections/Col-Group/1152-a-vector-value-into-a-group-reaches-every-member.loft::Cg1152E
 scope-functions	agree	loft-suite/rules/collections/Col-Group/1152-a-vector-value-into-a-group-reaches-every-member.loft::Cg1152H
@@ -6013,7 +6020,11 @@ scope-functions	agree	loft-suite/rules/collections/Col-Len/an-absent-keyed-field
 scope-functions	agree	loft-suite/rules/collections/Col-Len/an-absent-keyed-field-is-empty-to-every-reader.loft::RS
 scope-functions	agree	loft-suite/rules/collections/Col-Len/an-absent-keyed-field-is-empty-to-every-reader.loft::Row
 scope-functions	agree	loft-suite/rules/collections/Col-Len/an-absent-keyed-field-is-empty-to-every-reader.loft::Wrd
+scope-functions	agree	loft-suite/rules/collections/Col-Len/an-absent-keyed-field-is-empty-to-every-reader.loft::n_n_h
 scope-functions	agree	loft-suite/rules/collections/Col-Len/an-absent-keyed-field-is-empty-to-every-reader.loft::n_n_i
+scope-functions	agree	loft-suite/rules/collections/Col-Len/an-absent-keyed-field-is-empty-to-every-reader.loft::n_n_p
+scope-functions	agree	loft-suite/rules/collections/Col-Len/an-absent-keyed-field-is-empty-to-every-reader.loft::n_n_s
+scope-functions	agree	loft-suite/rules/collections/Col-Len/an-absent-keyed-field-is-empty-to-every-reader.loft::n_n_t
 scope-functions	agree	loft-suite/rules/collections/Col-Lookup/1450b-a-keyed-point-lookup-is-nullable-on-a-dense-receiver.loft::Dd1450
 scope-functions	agree	loft-suite/rules/collections/Col-Lookup/1450b-a-keyed-point-lookup-is-nullable-on-a-dense-receiver.loft::E1450
 scope-functions	agree	loft-suite/rules/collections/Col-Lookup/1450b-a-keyed-point-lookup-is-nullable-on-a-dense-receiver.loft::Hh1450
@@ -6163,6 +6174,8 @@ scope-functions	agree	loft-suite/rules/coroutines/G-Arg-Rebind/2067-a-caller-reb
 scope-functions	agree	loft-suite/rules/coroutines/G-Arg-Rebind/2067-a-caller-rebind-after-a-generator-call-is-not-seen.loft::Log
 scope-functions	agree	loft-suite/rules/coroutines/G-Arg-Rebind/2067-a-caller-rebind-after-a-generator-call-is-not-seen.loft::n_bump
 scope-functions	agree	loft-suite/rules/coroutines/G-Arg-Rebind/2067-a-caller-rebind-after-a-generator-call-is-not-seen.loft::n_first
+scope-functions	agree	loft-suite/rules/coroutines/G-Arg-Rebind/2067-a-caller-rebind-after-a-generator-call-is-not-seen.loft::n_grow
+scope-functions	agree	loft-suite/rules/coroutines/G-Arg-Rebind/2067-a-caller-rebind-after-a-generator-call-is-not-seen.loft::n_keys
 scope-functions	agree	loft-suite/rules/coroutines/G-Arg-Rebind/2067-a-caller-rebind-after-a-generator-call-is-not-seen.loft::n_three
 scope-functions	agree	loft-suite/rules/coroutines/G-Arg-Rebind/2067-a-caller-rebind-after-a-generator-call-is-not-seen.loft::t_6Holder_OpDropAll
 scope-functions	agree	loft-suite/rules/coroutines/G-Arg-Rebind/a-re-minted-buffer-leaves-the-frame-its-value.loft::R
@@ -6170,6 +6183,7 @@ scope-functions	agree	loft-suite/rules/coroutines/G-Arg-Rebind/a-re-minted-buffe
 scope-functions	agree	loft-suite/rules/coroutines/G-Arg-Share/a-mutation-of-a-shared-argument-is-seen-at-the-next-advance.loft::Log
 scope-functions	agree	loft-suite/rules/coroutines/G-Arg-Share/a-mutation-of-a-shared-argument-is-seen-at-the-next-advance.loft::n_bumps
 scope-functions	agree	loft-suite/rules/coroutines/G-Arg-Share/a-mutation-of-a-shared-argument-is-seen-at-the-next-advance.loft::n_firsts
+scope-functions	agree	loft-suite/rules/coroutines/G-Arg-Share/a-mutation-of-a-shared-argument-is-seen-at-the-next-advance.loft::n_lens
 scope-functions	agree	loft-suite/rules/coroutines/G-Call/2059-a-lambda-generator-in-every-position.loft::H
 scope-functions	agree	loft-suite/rules/coroutines/G-Call/2059-a-lambda-generator-in-every-position.loft::P
 scope-functions	agree	loft-suite/rules/coroutines/G-Call/2059-a-lambda-generator-in-every-position.loft::__closure_mk_0
@@ -6198,6 +6212,7 @@ scope-functions	agree	loft-suite/rules/coroutines/G-Call/a-lambda-returning-an-i
 scope-functions	agree	loft-suite/rules/coroutines/G-Call/calling-a-generator-binds-its-arguments-and-runs-nothing.loft::Log
 scope-functions	agree	loft-suite/rules/coroutines/G-Call/calling-a-generator-binds-its-arguments-and-runs-nothing.loft::n_bump
 scope-functions	agree	loft-suite/rules/coroutines/G-Call/calling-a-generator-binds-its-arguments-and-runs-nothing.loft::n_count_from
+scope-functions	agree	loft-suite/rules/coroutines/G-Call/calling-a-generator-binds-its-arguments-and-runs-nothing.loft::n_grow
 scope-functions	agree	loft-suite/rules/coroutines/G-Call/calling-a-generator-binds-its-arguments-and-runs-nothing.loft::n_held
 scope-functions	agree	loft-suite/rules/coroutines/G-Call/calling-a-generator-binds-its-arguments-and-runs-nothing.loft::n_none
 scope-functions	agree	loft-suite/rules/coroutines/G-Delegate/a-delegation-beside-a-loop-compiles.loft::n_dl_two
@@ -6377,6 +6392,7 @@ scope-functions	agree	loft-suite/rules/dispatch/D-Rank/a-generic-member-ranks-be
 scope-functions	agree	loft-suite/rules/dispatch/D-Rank/a-generic-member-ranks-below-every-non-converting-match.loft::__iface_874#1_tag
 scope-functions	agree	loft-suite/rules/dispatch/D-Rank/a-generic-member-ranks-below-every-non-converting-match.loft::f_10$0:RTagged_rh
 scope-functions	agree	loft-suite/rules/dispatch/D-Rank/a-generic-member-ranks-below-every-non-converting-match.loft::f_10vector<$0>_rv
+scope-functions	agree	loft-suite/rules/dispatch/D-Rank/a-generic-member-ranks-below-every-non-converting-match.loft::f_12vector<text>_rv
 scope-functions	agree	loft-suite/rules/dispatch/D-Rank/a-generic-member-ranks-below-every-non-converting-match.loft::f_2$0_rg
 scope-functions	agree	loft-suite/rules/dispatch/D-Rank/a-generic-member-ranks-below-every-non-converting-match.loft::f_2$0_rh
 scope-functions	agree	loft-suite/rules/dispatch/D-Rank/a-generic-member-ranks-below-every-non-converting-match.loft::f_2$0_rq
@@ -6570,6 +6586,7 @@ scope-functions	agree	loft-suite/rules/dispatch/Disp-Hint/a-lone-definition-and-
 scope-functions	agree	loft-suite/rules/dispatch/Disp-Hint/a-lone-definition-and-a-receiver-split-set-keep-their-hint.loft::n___lambda_test_a_receiver_split_set_hints_its_arguments_1
 scope-functions	agree	loft-suite/rules/dispatch/Disp-Hint/a-lone-definition-and-a-receiver-split-set-keep-their-hint.loft::n_main
 scope-functions	agree	loft-suite/rules/dispatch/Disp-Hint/a-lone-definition-and-a-receiver-split-set-keep-their-hint.loft::n_one
+scope-functions	agree	loft-suite/rules/dispatch/Disp-Hint/a-lone-definition-and-a-receiver-split-set-keep-their-hint.loft::n_onev
 scope-functions	agree	loft-suite/rules/dispatch/Disp-Hint/a-lone-definition-and-a-receiver-split-set-keep-their-hint.loft::n_test_a_receiver_split_set_hints_its_arguments
 scope-functions	agree	loft-suite/rules/dispatch/Disp-Hint/a-lone-definition-and-a-receiver-split-set-keep-their-hint.loft::t_2HP_sl
 scope-functions	agree	loft-suite/rules/dispatch/Disp-Hint/a-lone-definition-and-a-receiver-split-set-keep-their-hint.loft::t_2HP_sw
@@ -6585,13 +6602,20 @@ scope-functions	agree	loft-suite/rules/dispatch/Disp-Hint/a-nullable-receiver-sp
 scope-functions	agree	loft-suite/rules/dispatch/Disp-Hint/a-nullable-receiver-split-keeps-the-hint-of-each-spelling.loft::t_2HP_sw
 scope-functions	agree	loft-suite/rules/dispatch/Disp-Hint/a-qualified-call-takes-its-hint-from-the-package-it-names.loft::DhRow
 scope-functions	agree	loft-suite/rules/dispatch/Disp-Hint/a-qualified-call-takes-its-hint-from-the-package-it-names.loft::n_dh_apply
+scope-functions	agree	loft-suite/rules/dispatch/Disp-Hint/a-qualified-call-takes-its-hint-from-the-package-it-names.loft::n_dh_count
 scope-functions	agree	loft-suite/rules/dispatch/Disp-Hint/a-qualified-call-takes-its-hint-from-the-package-it-names.loft::n_main
 scope-functions	agree	loft-suite/rules/dispatch/Disp-Hint/a-qualified-call-takes-its-hint-from-the-package-it-names.loft::n_test_a_lambda_reads_the_packages_parameter
 scope-functions	agree	loft-suite/rules/dispatch/Disp-Hint/a-qualified-call-takes-its-hint-from-the-package-it-names.loft::vector<DhRow>
 scope-functions	agree	loft-suite/rules/dispatch/Disp-Hint/disp_hint_fixture_lib.loft::n_dh_apply
+scope-functions	agree	loft-suite/rules/dispatch/Disp-Hint/disp_hint_fixture_lib.loft::n_dh_count
 scope-functions	agree	loft-suite/rules/dispatch/Disp-Key/a-consumer-method-of-another-spelling-joins-a-library-method-set.loft::n_main
 scope-functions	agree	loft-suite/rules/dispatch/Disp-Key/a-consumer-method-of-another-spelling-joins-a-library-method-set.loft::n_test_a_consumer_method_joins_the_librarys_method_set
 scope-functions	agree	loft-suite/rules/dispatch/Disp-Key/a-member-is-keyed-by-its-full-parameter-spelling.loft::KPt
+scope-functions	agree	loft-suite/rules/dispatch/Disp-Key/a-member-is-keyed-by-its-full-parameter-spelling.loft::f_11vector<KPt>_kh
+scope-functions	agree	loft-suite/rules/dispatch/Disp-Key/a-member-is-keyed-by-its-full-parameter-spelling.loft::f_11vector<KPt>_kv
+scope-functions	agree	loft-suite/rules/dispatch/Disp-Key/a-member-is-keyed-by-its-full-parameter-spelling.loft::f_12vector<text>_kv
+scope-functions	agree	loft-suite/rules/dispatch/Disp-Key/a-member-is-keyed-by-its-full-parameter-spelling.loft::f_15hash<KPt,["x"]>_kh
+scope-functions	agree	loft-suite/rules/dispatch/Disp-Key/a-member-is-keyed-by-its-full-parameter-spelling.loft::f_15vector<integer>_kv
 scope-functions	agree	loft-suite/rules/dispatch/Disp-Key/a-member-is-keyed-by-its-full-parameter-spelling.loft::f_3KPt_kn
 scope-functions	agree	loft-suite/rules/dispatch/Disp-Key/a-member-is-keyed-by-its-full-parameter-spelling.loft::f_4text_kc
 scope-functions	agree	loft-suite/rules/dispatch/Disp-Key/a-member-is-keyed-by-its-full-parameter-spelling.loft::f_7integer_ki
@@ -6603,6 +6627,7 @@ scope-functions	agree	loft-suite/rules/dispatch/Disp-Key/a-member-is-keyed-by-it
 scope-functions	agree	loft-suite/rules/dispatch/Disp-Key/a-member-is-keyed-by-its-full-parameter-spelling.loft::ki
 scope-functions	agree	loft-suite/rules/dispatch/Disp-Key/a-member-is-keyed-by-its-full-parameter-spelling.loft::km
 scope-functions	agree	loft-suite/rules/dispatch/Disp-Key/a-member-is-keyed-by-its-full-parameter-spelling.loft::kn
+scope-functions	agree	loft-suite/rules/dispatch/Disp-Key/a-member-is-keyed-by-its-full-parameter-spelling.loft::kv
 scope-functions	agree	loft-suite/rules/dispatch/Disp-Key/a-member-is-keyed-by-its-full-parameter-spelling.loft::kw
 scope-functions	agree	loft-suite/rules/dispatch/Disp-Key/a-member-is-keyed-by-its-full-parameter-spelling.loft::n_main
 scope-functions	agree	loft-suite/rules/dispatch/Disp-Key/a-member-is-keyed-by-its-full-parameter-spelling.loft::n_test_a_method_set_is_keyed_past_its_receiver
@@ -6943,6 +6968,7 @@ scope-functions	agree	loft-suite/rules/formatting/F-Target-Pos/an-annotated-bind
 scope-functions	agree	loft-suite/rules/formatting/F-Target-Pos/an-annotated-binding-and-a-field-build-the-target.loft::Q
 scope-functions	agree	loft-suite/rules/formatting/F-Target-Pos/an-annotated-binding-and-a-field-build-the-target.loft::n_test_an_unannotated_binding_is_text
 scope-functions	agree	loft-suite/rules/formatting/F-Target-Pos/an-argument-inside-a-hole-targets-its-parameter.loft::Q
+scope-functions	agree	loft-suite/rules/formatting/F-Target-Pos/an-argument-inside-a-hole-targets-its-parameter.loft::n_take
 scope-functions	agree	loft-suite/rules/formatting/F-Target/each-hole-kind-calls-its-own-method.loft::High
 scope-functions	agree	loft-suite/rules/formatting/F-Target/each-hole-kind-calls-its-own-method.loft::Level
 scope-functions	agree	loft-suite/rules/formatting/F-Target/each-hole-kind-calls-its-own-method.loft::Low
@@ -7352,6 +7378,7 @@ scope-functions	agree	loft-suite/rules/heap/H-Drop/a-return-that-hands-out-one-l
 scope-functions	agree	loft-suite/rules/heap/H-Drop/a-return-that-hands-out-one-local-releases-the-others-once.loft::t_3JrT_OpDrop
 scope-functions	agree	loft-suite/rules/heap/H-Drop/hdrop_2436_lib.loft::H
 scope-functions	agree	loft-suite/rules/heap/H-Drop/hdrop_2436_lib.loft::Pair
+scope-functions	agree	loft-suite/rules/heap/H-Drop/hdrop_2436_lib.loft::n_pairs_len
 scope-functions	agree	loft-suite/rules/heap/H-Drop/hdrop_2436_lib.loft::n_test_the_library_releases_its_own_vector_once
 scope-functions	agree	loft-suite/rules/heap/H-Drop/hdrop_2436_lib.loft::n_trace_path
 scope-functions	agree	loft-suite/rules/heap/H-Drop/hdrop_2436_lib.loft::t_1H_OpDrop
@@ -7414,6 +7441,7 @@ scope-functions	agree	loft-suite/rules/heap/H-Free/a-call-taking-a-block-argumen
 scope-functions	agree	loft-suite/rules/heap/H-Free/a-call-taking-a-block-argument-frees-the-record-it-made.loft::NdNull
 scope-functions	agree	loft-suite/rules/heap/H-Free/a-call-taking-a-block-argument-frees-the-record-it-made.loft::NdSpan
 scope-functions	agree	loft-suite/rules/heap/H-Free/a-call-taking-a-block-argument-frees-the-record-it-made.loft::Node
+scope-functions	agree	loft-suite/rules/heap/H-Free/a-call-taking-a-block-argument-frees-the-record-it-made.loft::n_first
 scope-functions	agree	loft-suite/rules/heap/H-Free/a-call-taking-a-block-argument-frees-the-record-it-made.loft::vector<Bl>
 scope-functions	agree	loft-suite/rules/heap/H-Free/a-call-taking-a-block-argument-frees-the-record-it-made.loft::vector<Node>
 scope-functions	agree	loft-suite/rules/heap/H-Free/a-call-taking-a-join-arm-call-frees-the-store-it-made.loft::Ex
@@ -7455,6 +7483,7 @@ scope-functions	agree	loft-suite/rules/heap/H-Free/a-comprehension-releases-each
 scope-functions	agree	loft-suite/rules/heap/H-Free/a-comprehension-releases-each-call-it-copies-whatever-its-layout.loft::vector<T>
 scope-functions	agree	loft-suite/rules/heap/H-Free/a-discharge-read-in-place-frees-its-copy.loft::Bundle
 scope-functions	agree	loft-suite/rules/heap/H-Free/a-discharge-read-in-place-frees-its-copy.loft::Sc
+scope-functions	agree	loft-suite/rules/heap/H-Free/a-discharge-read-in-place-frees-its-copy.loft::n_schema
 scope-functions	agree	loft-suite/rules/heap/H-Free/a-discharge-read-in-place-frees-its-copy.loft::n_show
 scope-functions	agree	loft-suite/rules/heap/H-Free/a-discharge-read-in-place-frees-its-copy.loft::vector<Sc>
 scope-functions	agree	loft-suite/rules/heap/H-Free/a-discharged-call-answer-is-owned-by-its-binding.loft::Bundle
@@ -7467,6 +7496,7 @@ scope-functions	agree	loft-suite/rules/heap/H-Free/a-discharged-call-answer-is-o
 scope-functions	agree	loft-suite/rules/heap/H-Free/a-discharged-call-answer-is-owned-by-its-binding.loft::TT
 scope-functions	agree	loft-suite/rules/heap/H-Free/a-discharged-call-answer-is-owned-by-its-binding.loft::TV
 scope-functions	agree	loft-suite/rules/heap/H-Free/a-discharged-call-answer-is-owned-by-its-binding.loft::Ty
+scope-functions	agree	loft-suite/rules/heap/H-Free/a-discharged-call-answer-is-owned-by-its-binding.loft::n_schema
 scope-functions	agree	loft-suite/rules/heap/H-Free/a-discharged-call-answer-is-owned-by-its-binding.loft::n_show
 scope-functions	agree	loft-suite/rules/heap/H-Free/a-discharged-call-answer-is-owned-by-its-binding.loft::vector<Sc>
 scope-functions	agree	loft-suite/rules/heap/H-Free/a-discharged-call-answer-is-owned-by-its-binding.loft::vector<T>
@@ -8138,6 +8168,7 @@ scope-functions	agree	loft-suite/rules/interfaces/G-Gen/an-unbounded-variable-mo
 scope-functions	agree	loft-suite/rules/interfaces/G-Gen/an-unbounded-variable-moves-values-and-a-bound-adds-methods.loft::__iface_874#1_size
 scope-functions	agree	loft-suite/rules/interfaces/G-Gen/an-unbounded-variable-moves-values-and-a-bound-adds-methods.loft::__iface_876#1_label
 scope-functions	agree	loft-suite/rules/interfaces/G-Gen/an-unbounded-variable-moves-values-and-a-bound-adds-methods.loft::i_2Sq_t_6vector_second
+scope-functions	agree	loft-suite/rules/interfaces/G-Gen/an-unbounded-variable-moves-values-and-a-bound-adds-methods.loft::i_4text_n_keep
 scope-functions	agree	loft-suite/rules/interfaces/G-Gen/an-unbounded-variable-moves-values-and-a-bound-adds-methods.loft::i_4text_n_pick
 scope-functions	agree	loft-suite/rules/interfaces/G-Gen/an-unbounded-variable-moves-values-and-a-bound-adds-methods.loft::i_4text_t_6vector_second
 scope-functions	agree	loft-suite/rules/interfaces/G-Gen/an-unbounded-variable-moves-values-and-a-bound-adds-methods.loft::i_7integer_n_pick
@@ -8385,7 +8416,9 @@ scope-functions	agree	loft-suite/rules/interfaces/G-Mono/a-generic-hands-up-its-
 scope-functions	agree	loft-suite/rules/interfaces/G-Mono/a-generic-nullable-result-at-a-tuple-answers-on-every-path.loft::Pt
 scope-functions	agree	loft-suite/rules/interfaces/G-Mono/a-generic-nullable-result-at-a-tuple-answers-on-every-path.loft::i_21__tuple<integer,text>_n_g4
 scope-functions	agree	loft-suite/rules/interfaces/G-Mono/a-generic-nullable-result-at-a-tuple-answers-on-every-path.loft::i_21__tuple<integer,text>_n_g6
+scope-functions	agree	loft-suite/rules/interfaces/G-Mono/a-generic-nullable-result-at-a-tuple-answers-on-every-path.loft::i_21__tuple<integer,text>_n_gn
 scope-functions	agree	loft-suite/rules/interfaces/G-Mono/a-generic-nullable-result-at-a-tuple-answers-on-every-path.loft::i_24__tuple<integer,integer>_n_g4
+scope-functions	agree	loft-suite/rules/interfaces/G-Mono/a-generic-nullable-result-at-a-tuple-answers-on-every-path.loft::i_24__tuple<integer,integer>_n_gn
 scope-functions	agree	loft-suite/rules/interfaces/G-Mono/a-generic-nullable-result-at-a-tuple-answers-on-every-path.loft::n_g4
 scope-functions	agree	loft-suite/rules/interfaces/G-Mono/a-generic-nullable-result-at-a-tuple-answers-on-every-path.loft::n_g6
 scope-functions	agree	loft-suite/rules/interfaces/G-Mono/a-generic-nullable-result-at-a-tuple-answers-on-every-path.loft::n_gl
@@ -8481,6 +8514,7 @@ scope-functions	agree	loft-suite/rules/interfaces/G-Mono/a-spec-part-only-some-i
 scope-functions	agree	loft-suite/rules/interfaces/G-Mono/a-spec-part-only-some-instances-execute-renders-on-those.loft::n_pr
 scope-functions	agree	loft-suite/rules/interfaces/G-Mono/a-spec-part-only-some-instances-execute-renders-on-those.loft::t_6T#6#g1_to_text
 scope-functions	agree	loft-suite/rules/interfaces/G-Mono/a-tuple-callback-of-a-generic-answers-the-boxed-record.loft::S
+scope-functions	agree	loft-suite/rules/interfaces/G-Mono/a-tuple-callback-of-a-generic-answers-the-boxed-record.loft::i_9integer#S_n_last
 scope-functions	agree	loft-suite/rules/interfaces/G-Mono/a-tuple-callback-of-a-generic-answers-the-boxed-record.loft::n___lambda_test_the_controls_0
 scope-functions	agree	loft-suite/rules/interfaces/G-Mono/a-tuple-callback-of-a-generic-answers-the-boxed-record.loft::n___lambda_test_the_controls_1
 scope-functions	agree	loft-suite/rules/interfaces/G-Mono/a-tuple-callback-of-a-generic-answers-the-boxed-record.loft::n___lambda_test_the_controls_2
@@ -8513,6 +8547,7 @@ scope-functions	agree	loft-suite/rules/interfaces/G-Mono/filter-and-map-inside-a
 scope-functions	agree	loft-suite/rules/interfaces/G-Mono/filter-and-map-inside-a-generic-copy-at-their-element.loft::n___lambda_test_filter_at_each_element_3
 scope-functions	agree	loft-suite/rules/interfaces/G-Mono/filter-and-map-inside-a-generic-copy-at-their-element.loft::n___lambda_test_filter_at_each_element_4
 scope-functions	agree	loft-suite/rules/interfaces/G-Mono/filter-and-map-inside-a-generic-copy-at-their-element.loft::n___lambda_test_filter_at_each_element_5
+scope-functions	agree	loft-suite/rules/interfaces/G-Mono/filter-and-map-inside-a-generic-copy-at-their-element.loft::n___lambda_test_filter_at_each_element_6
 scope-functions	agree	loft-suite/rules/interfaces/G-Mono/filter-and-map-inside-a-generic-copy-at-their-element.loft::n___lambda_test_filter_at_each_element_7
 scope-functions	agree	loft-suite/rules/interfaces/G-Mono/filter-and-map-inside-a-generic-copy-at-their-element.loft::n___lambda_test_map_at_each_element_1
 scope-functions	agree	loft-suite/rules/interfaces/G-Mono/filter-and-map-inside-a-generic-copy-at-their-element.loft::n_conv
@@ -8691,6 +8726,7 @@ scope-functions	agree	loft-suite/rules/interfaces/G-Select/a-generic-ranks-below
 scope-functions	agree	loft-suite/rules/interfaces/G-Select/a-generic-ranks-below-a-concrete-match.loft::f_10vector<$0>_kind
 scope-functions	agree	loft-suite/rules/interfaces/G-Select/a-generic-ranks-below-a-concrete-match.loft::f_12$0:Printable_widen
 scope-functions	agree	loft-suite/rules/interfaces/G-Select/a-generic-ranks-below-a-concrete-match.loft::f_14$0:Named+Sized_show
+scope-functions	agree	loft-suite/rules/interfaces/G-Select/a-generic-ranks-below-a-concrete-match.loft::f_15vector<integer>_first
 scope-functions	agree	loft-suite/rules/interfaces/G-Select/a-generic-ranks-below-a-concrete-match.loft::f_2$0_kind
 scope-functions	agree	loft-suite/rules/interfaces/G-Select/a-generic-ranks-below-a-concrete-match.loft::f_7integer_widen
 scope-functions	agree	loft-suite/rules/interfaces/G-Select/a-generic-ranks-below-a-concrete-match.loft::f_8$0:Named_show
@@ -9829,6 +9865,7 @@ scope-functions	agree	loft-suite/rules/matching/M-Variant/2326-a-capture-named-l
 scope-functions	agree	loft-suite/rules/matching/M-Variant/2326-a-capture-named-like-a-function-binds-whatever-the-declaration-order.loft::n_bc_match
 scope-functions	agree	loft-suite/rules/matching/M-Variant/2326-a-capture-named-like-a-function-binds-whatever-the-declaration-order.loft::n_bc_rename
 scope-functions	agree	loft-suite/rules/matching/M-Variant/2326-a-capture-named-like-a-function-binds-whatever-the-declaration-order.loft::n_bc_wild
+scope-functions	agree	loft-suite/rules/matching/M-Variant/2326-a-capture-named-like-a-function-binds-whatever-the-declaration-order.loft::n_limit
 scope-functions	agree	loft-suite/rules/matching/M-Variant/2326-a-capture-named-like-a-function-binds-whatever-the-declaration-order.loft::vector<BcE>
 scope-functions	agree	loft-suite/rules/matching/M-Variant/a-capture-over-a-subject-pass-one-cannot-type-keeps-its-fields-narrow-type.loft::B
 scope-functions	agree	loft-suite/rules/matching/M-Variant/a-capture-over-a-subject-pass-one-cannot-type-keeps-its-fields-narrow-type.loft::Bytes
@@ -10184,6 +10221,8 @@ scope-functions	agree	loft-suite/rules/matching/P-Rest/35c-rest-capture.loft::Ot
 scope-functions	agree	loft-suite/rules/matching/P-Rest/35c-rest-capture.loft::P
 scope-functions	agree	loft-suite/rules/matching/P-Rest/35c-rest-capture.loft::Stmt
 scope-functions	agree	loft-suite/rules/matching/P-Rest/35c-rest-capture.loft::Tok
+scope-functions	agree	loft-suite/rules/matching/P-Rest/35c-rest-capture.loft::n_joinlen
+scope-functions	agree	loft-suite/rules/matching/P-Rest/35c-rest-capture.loft::n_ntoks
 scope-functions	agree	loft-suite/rules/matching/P-Rest/35c-rest-capture.loft::vector<P>
 scope-functions	agree	loft-suite/rules/matching/P-Rest/35c-rest-capture.loft::vector<Tok>
 scope-functions	agree	loft-suite/rules/matching/P-Rest/a-binding-arm-answering-the-subject-leaves-the-callers-vector.loft::P
@@ -10194,6 +10233,7 @@ scope-functions	agree	loft-suite/rules/matching/P-Rest/a-named-rest-leaves-room-
 scope-functions	agree	loft-suite/rules/matching/P-Rest/a-named-rest-leaves-room-for-the-elements-after-it.loft::Tok
 scope-functions	agree	loft-suite/rules/matching/P-Rest/a-named-rest-leaves-room-for-the-elements-after-it.loft::n_gap
 scope-functions	agree	loft-suite/rules/matching/P-Rest/a-named-rest-leaves-room-for-the-elements-after-it.loft::n_main
+scope-functions	agree	loft-suite/rules/matching/P-Rest/a-named-rest-leaves-room-for-the-elements-after-it.loft::n_ntoks
 scope-functions	agree	loft-suite/rules/matching/P-Rest/a-named-rest-leaves-room-for-the-elements-after-it.loft::vector<P>
 scope-functions	agree	loft-suite/rules/matching/P-Rest/a-named-rest-leaves-room-for-the-elements-after-it.loft::vector<Tok>
 scope-functions	agree	loft-suite/rules/matching/P-Rest/a-rest-is-fresh-wherever-it-stands.loft::O
@@ -10479,7 +10519,10 @@ scope-functions	agree	loft-suite/rules/operational/E-Left/1987-an-earlier-operan
 scope-functions	agree	loft-suite/rules/operational/E-Left/1987-an-earlier-operand-is-evaluated-before-a-lifted-call.loft::n_main
 scope-functions	agree	loft-suite/rules/operational/E-Left/1987-an-earlier-operand-is-evaluated-before-a-lifted-call.loft::n_ord_bump
 scope-functions	agree	loft-suite/rules/operational/E-Left/1987-an-earlier-operand-is-evaluated-before-a-lifted-call.loft::n_ord_fill
+scope-functions	agree	loft-suite/rules/operational/E-Left/1987-an-earlier-operand-is-evaluated-before-a-lifted-call.loft::n_ord_join
+scope-functions	agree	loft-suite/rules/operational/E-Left/1987-an-earlier-operand-is-evaluated-before-a-lifted-call.loft::n_ord_pair
 scope-functions	agree	loft-suite/rules/operational/E-Left/1987-an-earlier-operand-is-evaluated-before-a-lifted-call.loft::n_ord_set
+scope-functions	agree	loft-suite/rules/operational/E-Left/1987-an-earlier-operand-is-evaluated-before-a-lifted-call.loft::n_ord_three
 scope-functions	agree	loft-suite/rules/operational/E-Left/1987-an-earlier-operand-is-evaluated-before-a-lifted-call.loft::n_ord_weigh
 scope-functions	agree	loft-suite/rules/operational/E-Left/1987-an-earlier-operand-is-evaluated-before-a-lifted-call.loft::vector<OrdMade>
 scope-functions	agree	loft-suite/rules/operational/E-Left/2451-a-record-assigned-into-an-element-lands-where-the-place-was-when-it-ran.loft::It
@@ -10489,6 +10532,7 @@ scope-functions	agree	loft-suite/rules/operational/E-Left/2451-a-record-assigned
 scope-functions	agree	loft-suite/rules/operational/E-Left/2451-a-record-assigned-into-an-element-lands-where-the-place-was-when-it-ran.loft::vector<O>
 scope-functions	agree	loft-suite/rules/operational/E-Left/2503-a-vector-is-read-before-an-index-that-writes-it.loft::P2503
 scope-functions	agree	loft-suite/rules/operational/E-Left/2503-a-vector-is-read-before-an-index-that-writes-it.loft::n_bump2503
+scope-functions	agree	loft-suite/rules/operational/E-Left/2503-a-vector-is-read-before-an-index-that-writes-it.loft::n_peek2503
 scope-functions	agree	loft-suite/rules/operational/E-Left/2503-a-vector-is-read-before-an-index-that-writes-it.loft::n_plain_poke2503
 scope-functions	agree	loft-suite/rules/operational/E-Left/2503-a-vector-is-read-before-an-index-that-writes-it.loft::n_poke2503
 scope-functions	agree	loft-suite/rules/operational/E-Left/2503-a-vector-is-read-before-an-index-that-writes-it.loft::vector<P2503>
@@ -11173,6 +11217,7 @@ scope-functions	agree	loft-suite/rules/ownership/O-Detach/a-heap-parameter-rebou
 scope-functions	agree	loft-suite/rules/ownership/O-Detach/a-heap-parameter-rebound-to-itself-keeps-its-value.loft::n_f1
 scope-functions	agree	loft-suite/rules/ownership/O-Detach/a-heap-parameter-rebound-to-itself-keeps-its-value.loft::n_f4
 scope-functions	agree	loft-suite/rules/ownership/O-Detach/a-heap-parameter-rebound-to-itself-keeps-its-value.loft::n_f5
+scope-functions	agree	loft-suite/rules/ownership/O-Detach/a-heap-parameter-rebound-to-itself-keeps-its-value.loft::n_f7
 scope-functions	agree	loft-suite/rules/ownership/O-Detach/a-rebind-from-a-view-of-a-capture-keeps-the-old-store-until-it-is-read.loft::Blk
 scope-functions	agree	loft-suite/rules/ownership/O-Detach/a-rebind-from-a-view-of-a-capture-keeps-the-old-store-until-it-is-read.loft::Ex
 scope-functions	agree	loft-suite/rules/ownership/O-Detach/a-rebind-from-a-view-of-a-capture-keeps-the-old-store-until-it-is-read.loft::NdBlock
@@ -12132,8 +12177,11 @@ scope-functions	agree	loft-suite/rules/rewrites/R-ExitVector/a-local-vector-move
 scope-functions	agree	loft-suite/rules/rewrites/R-ExitVector/a-local-vector-moved-into-the-exit-literal-keeps-every-element.loft::Tree
 scope-functions	agree	loft-suite/rules/rewrites/R-ExitVector/a-local-vector-moved-into-the-exit-literal-keeps-every-element.loft::vector<Tree>
 scope-functions	agree	loft-suite/rules/rewrites/R-ExpPow/e-raised-to-a-power-is-the-exponential.loft::n_absent
+scope-functions	agree	loft-suite/rules/rewrites/R-ExpPow/e-raised-to-a-power-is-the-exponential.loft::n_e_lit
+scope-functions	agree	loft-suite/rules/rewrites/R-ExpPow/e-raised-to-a-power-is-the-exponential.loft::n_main
 scope-functions	agree	loft-suite/rules/rewrites/R-ExpPow/the-exponent-read-from-a-container-and-a-base-one-bit-off-e-is-still-a-power.loft::Rate
 scope-functions	agree	loft-suite/rules/rewrites/R-ExpPow/the-exponent-read-from-a-container-and-a-base-one-bit-off-e-is-still-a-power.loft::n_from_field
+scope-functions	agree	loft-suite/rules/rewrites/R-ExpPow/the-exponent-read-from-a-container-and-a-base-one-bit-off-e-is-still-a-power.loft::n_near_e
 scope-functions	agree	loft-suite/rules/rewrites/R-ExpPow/the-exponent-read-from-a-container-and-a-base-one-bit-off-e-is-still-a-power.loft::n_neg_e
 scope-functions	agree	loft-suite/rules/rewrites/R-ExpPow/the-exponent-read-from-a-container-and-a-base-one-bit-off-e-is-still-a-power.loft::vector<float>
 scope-functions	agree	loft-suite/rules/rewrites/R-FieldAppend/a-plain-append-beside-a-destination-call-lands-in-its-own-slot.loft::Dv
@@ -12241,10 +12289,12 @@ scope-functions	agree	loft-suite/rules/rewrites/R-ForwardResult/a-returned-local
 scope-functions	agree	loft-suite/rules/rewrites/R-ForwardWalk/a-walk-over-a-field-the-body-cannot-resize-is-counted.loft::Cell
 scope-functions	agree	loft-suite/rules/rewrites/R-ForwardWalk/a-walk-over-a-field-the-body-cannot-resize-is-counted.loft::Ck
 scope-functions	agree	loft-suite/rules/rewrites/R-ForwardWalk/a-walk-over-a-field-the-body-cannot-resize-is-counted.loft::W
+scope-functions	agree	loft-suite/rules/rewrites/R-ForwardWalk/a-walk-over-a-field-the-body-cannot-resize-is-counted.loft::n_wipe
 scope-functions	agree	loft-suite/rules/rewrites/R-ForwardWalk/a-walk-over-a-field-the-body-cannot-resize-is-counted.loft::vector<Ck>
 scope-functions	agree	loft-suite/rules/rewrites/R-ForwardWalk/a-walk-over-a-scalar-field-keeps-its-length-read-where-the-body-can-resize-it.loft::Bag
 scope-functions	agree	loft-suite/rules/rewrites/R-ForwardWalk/a-walk-over-a-scalar-field-keeps-its-length-read-where-the-body-can-resize-it.loft::Dims
 scope-functions	agree	loft-suite/rules/rewrites/R-ForwardWalk/a-walk-over-a-scalar-field-keeps-its-length-read-where-the-body-can-resize-it.loft::Pair
+scope-functions	agree	loft-suite/rules/rewrites/R-ForwardWalk/a-walk-over-a-scalar-field-keeps-its-length-read-where-the-body-can-resize-it.loft::n_trim
 scope-functions	agree	loft-suite/rules/rewrites/R-ForwardWalk/a-walk-over-a-scalar-field-keeps-its-length-read-where-the-body-can-resize-it.loft::vector<float>
 scope-functions	agree	loft-suite/rules/rewrites/R-Fuse/an-integer-operator-over-locals-runs-as-one-op.loft::n_arith
 scope-functions	agree	loft-suite/rules/rewrites/R-Fuse/an-integer-operator-over-locals-runs-as-one-op.loft::n_branch
@@ -12270,6 +12320,7 @@ scope-functions	agree	loft-suite/rules/rewrites/R-GuardFree/a-recursion-without-
 scope-functions	agree	loft-suite/rules/rewrites/R-GuardFree/a-recursion-without-a-fn-ref-registrant-leaks-and-answers-nothing-wrong.loft::n_digits
 scope-functions	agree	loft-suite/rules/rewrites/R-GuardFree/a-recursion-without-a-fn-ref-registrant-leaks-and-answers-nothing-wrong.loft::n_hanoi
 scope-functions	agree	loft-suite/rules/rewrites/R-GuardFree/a-recursion-without-a-fn-ref-registrant-leaks-and-answers-nothing-wrong.loft::n_mid
+scope-functions	agree	loft-suite/rules/rewrites/R-GuardFree/a-recursion-without-a-fn-ref-registrant-leaks-and-answers-nothing-wrong.loft::n_through
 scope-functions	agree	loft-suite/rules/rewrites/R-GuardFree/a-recursion-without-a-fn-ref-registrant-leaks-and-answers-nothing-wrong.loft::n_top
 scope-functions	agree	loft-suite/rules/rewrites/R-GuardedChain/a-loop-calling-only-versioned-functions-runs-a-plain-copy-of-their-fast-twins.loft::Grid
 scope-functions	agree	loft-suite/rules/rewrites/R-HandOver/a-rotated-window-of-apart-records-keeps-every-entry-it-should.loft::E
@@ -12277,6 +12328,7 @@ scope-functions	agree	loft-suite/rules/rewrites/R-HandOver/a-rotated-window-of-a
 scope-functions	agree	loft-suite/rules/rewrites/R-HandOver/a-rotated-window-of-apart-records-keeps-every-entry-it-should.loft::N
 scope-functions	agree	loft-suite/rules/rewrites/R-HandOver/a-rotated-window-of-apart-records-keeps-every-entry-it-should.loft::P
 scope-functions	agree	loft-suite/rules/rewrites/R-HandOver/a-rotated-window-of-apart-records-keeps-every-entry-it-should.loft::T
+scope-functions	agree	loft-suite/rules/rewrites/R-HandOver/a-rotated-window-of-apart-records-keeps-every-entry-it-should.loft::n_noop
 scope-functions	agree	loft-suite/rules/rewrites/R-HandOver/a-rotated-window-of-apart-records-keeps-every-entry-it-should.loft::vector<E>
 scope-functions	agree	loft-suite/rules/rewrites/R-HandOver/a-rotated-window-of-apart-records-keeps-every-entry-it-should.loft::vector<M>
 scope-functions	agree	loft-suite/rules/rewrites/R-HandOver/a-rotated-window-of-apart-records-keeps-every-entry-it-should.loft::vector<N>
@@ -12386,6 +12438,7 @@ scope-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/a-literal-readi
 scope-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/a-literal-reading-its-places-own-collection-keeps-it.loft::K
 scope-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/a-literal-reading-its-places-own-collection-keeps-it.loft::R2
 scope-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/a-literal-reading-its-places-own-collection-keeps-it.loft::S
+scope-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/a-literal-reading-its-places-own-collection-keeps-it.loft::n_cnt
 scope-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/a-literal-reading-its-places-own-collection-keeps-it.loft::n_main
 scope-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/a-literal-reading-its-places-own-collection-keeps-it.loft::vector<C>
 scope-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/a-literal-reading-its-places-own-collection-keeps-it.loft::vector<H>
@@ -12416,6 +12469,7 @@ scope-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/an-in-place-lit
 scope-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/an-in-place-literal-answers-the-same-with-its-switches-off.loft::vector<R>
 scope-functions	agree	loft-suite/rules/rewrites/R-InRange/a-record-read-at-a-proven-index-answers-the-element-and-the-rest-keep-their-fallback.loft::Doc
 scope-functions	agree	loft-suite/rules/rewrites/R-InRange/a-record-read-at-a-proven-index-answers-the-element-and-the-rest-keep-their-fallback.loft::P
+scope-functions	agree	loft-suite/rules/rewrites/R-InRange/a-record-read-at-a-proven-index-answers-the-element-and-the-rest-keep-their-fallback.loft::n_wipe
 scope-functions	agree	loft-suite/rules/rewrites/R-InRange/a-record-read-at-a-proven-index-answers-the-element-and-the-rest-keep-their-fallback.loft::vector<P>
 scope-functions	agree	loft-suite/rules/rewrites/R-InlineLeaf/a-leaf-called-with-calls-assignments-and-limits-answers-what-the-call-answers.loft::Acc
 scope-functions	agree	loft-suite/rules/rewrites/R-InlineLeaf/a-leaf-called-with-calls-assignments-and-limits-answers-what-the-call-answers.loft::Box
@@ -12585,6 +12639,7 @@ scope-functions	agree	loft-suite/rules/rewrites/R-MoveLast/2192-a-local-copied-i
 scope-functions	agree	loft-suite/rules/rewrites/R-MoveLast/2192-a-local-copied-into-two-literals-is-moved-only-at-its-last.loft::Img2
 scope-functions	agree	loft-suite/rules/rewrites/R-MoveLast/2192-a-local-copied-into-two-literals-is-moved-only-at-its-last.loft::Px
 scope-functions	agree	loft-suite/rules/rewrites/R-MoveLast/2192-a-local-copied-into-two-literals-is-moved-only-at-its-last.loft::n_main
+scope-functions	agree	loft-suite/rules/rewrites/R-MoveLast/2192-a-local-copied-into-two-literals-is-moved-only-at-its-last.loft::t_3Img_len_self
 scope-functions	agree	loft-suite/rules/rewrites/R-MoveLast/2192-a-local-copied-into-two-literals-is-moved-only-at-its-last.loft::vector<Px>
 scope-functions	agree	loft-suite/rules/rewrites/R-MoveLast/2445-a-field-built-from-a-view-of-itself-keeps-the-copy.loft::E
 scope-functions	agree	loft-suite/rules/rewrites/R-MoveLast/2445-a-field-built-from-a-view-of-itself-keeps-the-copy.loft::EB
@@ -12752,6 +12807,8 @@ scope-functions	agree	loft-suite/rules/rewrites/R-PushFill/a-loop-pushing-charac
 scope-functions	agree	loft-suite/rules/rewrites/R-PushFill/a-loop-pushing-characters-holds-its-text-in-a-window.loft::n_peek
 scope-functions	agree	loft-suite/rules/rewrites/R-PushFill/a-loop-pushing-one-invariant-into-each-of-several-vectors-is-a-fill-each.loft::vector<float>
 scope-functions	agree	loft-suite/rules/rewrites/R-PushFill/a-nested-comprehension-pushes-each-row-through-a-window.loft::vector<vector<integer>>
+scope-functions	agree	loft-suite/rules/rewrites/R-PushFill/a-push-window-opens-only-where-no-reader-needs-the-length-written-back.loft::n_count
+scope-functions	agree	loft-suite/rules/rewrites/R-PushFill/a-push-window-opens-only-where-no-reader-needs-the-length-written-back.loft::n_flen
 scope-functions	agree	loft-suite/rules/rewrites/R-PushFill/a-push-window-opens-only-where-no-reader-needs-the-length-written-back.loft::n_main
 scope-functions	agree	loft-suite/rules/rewrites/R-PushFill/a-push-window-opens-only-where-no-reader-needs-the-length-written-back.loft::vector<float>
 scope-functions	agree	loft-suite/rules/rewrites/R-PushFill/a-repeated-literal-is-one-fill-of-its-copies.loft::Mat
@@ -12928,6 +12985,7 @@ scope-functions	agree	loft-suite/rules/rewrites/R-RefillBuffer/a-refilled-store-
 scope-functions	agree	loft-suite/rules/rewrites/R-RefillBuffer/a-refilled-store-takes-every-field-a-complete-literal-names.loft::n_main
 scope-functions	agree	loft-suite/rules/rewrites/R-RefillBuffer/a-refilled-store-takes-every-field-a-complete-literal-names.loft::n_odd
 scope-functions	agree	loft-suite/rules/rewrites/R-RefillBuffer/a-refilled-store-takes-every-field-a-complete-literal-names.loft::n_pick
+scope-functions	agree	loft-suite/rules/rewrites/R-RefillBuffer/a-refilled-store-takes-every-field-a-complete-literal-names.loft::n_show
 scope-functions	agree	loft-suite/rules/rewrites/R-RefillBuffer/a-refilled-store-takes-every-field-a-complete-literal-names.loft::n_test_a_complete_literal_overwrites_the_kept_store
 scope-functions	agree	loft-suite/rules/rewrites/R-RefillBuffer/a-refilled-store-takes-every-field-a-complete-literal-names.loft::n_test_omitted_defaults_are_written_too
 scope-functions	agree	loft-suite/rules/rewrites/R-RefillBuffer/a-refilled-vector-filled-with-one-scalar-is-overwritten-only-at-its-own-length.loft::F
@@ -12954,7 +13012,11 @@ scope-functions	agree	loft-suite/rules/rewrites/R-Refresh/a-hoisted-scalar-is-ev
 scope-functions	agree	loft-suite/rules/rewrites/R-Refresh/a-hoisted-scalar-is-evicted-by-the-type-and-offset-a-write-reaches.loft::n_main
 scope-functions	agree	loft-suite/rules/rewrites/R-Refresh/a-hoisted-scalar-is-evicted-by-the-type-and-offset-a-write-reaches.loft::vector<A>
 scope-functions	agree	loft-suite/rules/rewrites/R-Refresh/a-hoisted-scalar-is-evicted-by-the-type-and-offset-a-write-reaches.loft::vector<Vertex>
+scope-functions	agree	loft-suite/rules/rewrites/R-Refresh/a-push-writes-its-length-back-for-a-reader-inside-the-loop.loft::n_chars
+scope-functions	agree	loft-suite/rules/rewrites/R-Refresh/a-push-writes-its-length-back-for-a-reader-inside-the-loop.loft::n_count
+scope-functions	agree	loft-suite/rules/rewrites/R-Refresh/a-push-writes-its-length-back-for-a-reader-inside-the-loop.loft::n_last
 scope-functions	agree	loft-suite/rules/rewrites/R-Refresh/a-push-writes-its-length-back-for-a-reader-inside-the-loop.loft::n_main
+scope-functions	agree	loft-suite/rules/rewrites/R-Refresh/a-push-writes-its-length-back-for-a-reader-inside-the-loop.loft::n_mid
 scope-functions	agree	loft-suite/rules/rewrites/R-Refresh/a-push-writes-its-length-back-for-a-reader-inside-the-loop.loft::vector<character>
 scope-functions	agree	loft-suite/rules/rewrites/R-Refresh/a-push-writes-its-length-back-for-a-reader-inside-the-loop.loft::vector<float>
 scope-functions	agree	loft-suite/rules/rewrites/R-RepeatRun/a-spelled-out-run-of-one-constant-builds-the-same-vector.loft::Buf
@@ -13043,6 +13105,7 @@ scope-functions	agree	loft-suite/rules/rewrites/R-SpecChain/a-checked-integer-ch
 scope-functions	agree	loft-suite/rules/rewrites/R-SpecChain/a-checked-integer-chain-runs-plain-and-falls-back-on-any-null.loft::n_main
 scope-functions	agree	loft-suite/rules/rewrites/R-SpecChain/a-speculated-chain-answers-the-checked-chain-beside-counters-ranges-guards-and-memos.loft::n_test_a_guarded_and_memoised_subchain
 scope-functions	agree	loft-suite/rules/rewrites/R-SpecChain/a-speculated-chain-answers-the-checked-chain-beside-counters-ranges-guards-and-memos.loft::n_test_counters_inside_the_chain
+scope-functions	agree	loft-suite/rules/rewrites/R-SplitTable/a-split-bound-to-a-name-answers-the-vector-it-never-builds.loft::n_count
 scope-functions	agree	loft-suite/rules/rewrites/R-StackBase/a-stack-that-grows-mid-call-keeps-every-frame.loft::n_bump
 scope-functions	agree	loft-suite/rules/rewrites/R-StackBase/a-stack-that-grows-mid-call-keeps-every-frame.loft::n_deep_ref
 scope-functions	agree	loft-suite/rules/rewrites/R-StackBase/a-stack-that-grows-mid-call-keeps-every-frame.loft::n_label
@@ -13080,9 +13143,11 @@ scope-functions	agree	loft-suite/rules/rewrites/R-TailSelf/a-frame-that-owns-a-s
 scope-functions	agree	loft-suite/rules/rewrites/R-TailSelf/a-frame-that-owns-a-store-is-released-before-the-jump.loft::n_work_text
 scope-functions	agree	loft-suite/rules/rewrites/R-TailSelf/a-parameter-passed-through-is-the-pointer-the-call-binds.loft::Rec
 scope-functions	agree	loft-suite/rules/rewrites/R-TailSelf/a-parameter-passed-through-is-the-pointer-the-call-binds.loft::n_count_nodes
+scope-functions	agree	loft-suite/rules/rewrites/R-TailSelf/a-parameter-passed-through-is-the-pointer-the-call-binds.loft::n_deep_vec
 scope-functions	agree	loft-suite/rules/rewrites/R-TailSelf/a-parameter-passed-through-is-the-pointer-the-call-binds.loft::n_pass_text
 scope-functions	agree	loft-suite/rules/rewrites/R-TailSelf/a-parameter-passed-through-is-the-pointer-the-call-binds.loft::n_ref_pass
 scope-functions	agree	loft-suite/rules/rewrites/R-TailSelf/a-parameter-passed-through-is-the-pointer-the-call-binds.loft::n_swap_pair
+scope-functions	agree	loft-suite/rules/rewrites/R-TailSelf/a-parameter-passed-through-is-the-pointer-the-call-binds.loft::n_walk_vec
 scope-functions	agree	loft-suite/rules/rewrites/R-TailSelf/a-result-held-in-a-store-is-delivered-as-the-call-would.loft::Pt
 scope-functions	agree	loft-suite/rules/rewrites/R-TailSelf/a-result-held-in-a-store-is-delivered-as-the-call-would.loft::VsN
 scope-functions	agree	loft-suite/rules/rewrites/R-TailSelf/a-result-held-in-a-store-is-delivered-as-the-call-would.loft::i_7integer_n_same
@@ -13154,6 +13219,7 @@ scope-functions	agree	loft-suite/rules/rewrites/R-Transient/a-transient-is-mater
 scope-functions	agree	loft-suite/rules/rewrites/R-Transient/a-transient-is-materialised-at-every-use-that-keeps-it.loft::Pt
 scope-functions	agree	loft-suite/rules/rewrites/R-Transient/a-transient-is-materialised-at-every-use-that-keeps-it.loft::Tag
 scope-functions	agree	loft-suite/rules/rewrites/R-Transient/a-transient-is-materialised-at-every-use-that-keeps-it.loft::__closure_captured_0
+scope-functions	agree	loft-suite/rules/rewrites/R-Transient/a-transient-is-materialised-at-every-use-that-keeps-it.loft::n_test_every_keeping_use
 scope-functions	agree	loft-suite/rules/rewrites/R-Transient/a-transient-is-materialised-at-every-use-that-keeps-it.loft::n_test_read_only_uses
 scope-functions	agree	loft-suite/rules/rewrites/R-Transient/a-transient-is-materialised-at-every-use-that-keeps-it.loft::vector<Pt>
 scope-functions	agree	loft-suite/rules/rewrites/R-Transient/a-transient-is-materialised-at-every-use-that-keeps-it.loft::vector<Tag>
@@ -13352,11 +13418,14 @@ scope-functions	agree	loft-suite/rules/rewrites/R-WorkerLean/a-par-worker-runs-o
 scope-functions	agree	loft-suite/rules/rewrites/R-WorkerLean/a-par-worker-runs-on-the-lean-loop.loft::vector<Item>
 scope-functions	agree	loft-suite/rules/rewrites/R-Wrapper/a-stdlib-one-op-wrapper-answers-what-its-op-answers.loft::Bag
 scope-functions	agree	loft-suite/rules/rewrites/R-Wrapper/a-stdlib-one-op-wrapper-answers-what-its-op-answers.loft::Item
+scope-functions	agree	loft-suite/rules/rewrites/R-Wrapper/a-stdlib-one-op-wrapper-answers-what-its-op-answers.loft::n_roots
 scope-functions	agree	loft-suite/rules/rewrites/R-Wrapper/a-stdlib-one-op-wrapper-answers-what-its-op-answers.loft::vector<Item>
 scope-functions	agree	loft-suite/rules/rewrites/R-ZeroCount/a-zero-count-test-reads-the-byte-count-in-a-loop-over-a-computed-text.loft::W
 scope-functions	agree	loft-suite/rules/rewrites/R-ZeroCount/a-zero-count-test-reads-the-byte-count-in-a-loop-over-a-computed-text.loft::n_blank
 scope-functions	agree	loft-suite/rules/rewrites/R-ZeroCount/a-zero-count-test-reads-the-byte-count-in-a-loop-over-a-computed-text.loft::n_bounds
 scope-functions	agree	loft-suite/rules/rewrites/R-ZeroCount/a-zero-count-test-reads-the-byte-count-in-a-loop-over-a-computed-text.loft::n_orelse
+scope-functions	agree	loft-suite/rules/rewrites/R-ZeroCount/a-zero-count-test-reads-the-byte-count-in-a-loop-over-a-computed-text.loft::n_tcode
+scope-functions	agree	loft-suite/rules/rewrites/R-ZeroCount/a-zero-count-test-reads-the-byte-count-in-a-loop-over-a-computed-text.loft::n_vcode
 scope-functions	agree	loft-suite/rules/rewrites/R-ZeroCount/a-zero-count-test-reads-the-byte-count-in-a-loop-over-a-computed-text.loft::vector<W>
 scope-functions	agree	loft-suite/rules/rewrites/R-ZeroCount/a-zero-count-test-reads-the-byte-count-over-every-spelling-of-absence.loft::H
 scope-functions	agree	loft-suite/rules/rewrites/R-ZeroCount/a-zero-count-test-reads-the-byte-count-over-every-spelling-of-absence.loft::n_code
@@ -13802,6 +13871,7 @@ scope-functions	agree	loft-suite/rules/types/N-Cast/a-checked-cast-carries-a-dom
 scope-functions	agree	loft-suite/rules/types/N-Cast/a-checked-cast-carries-a-domain-miss-and-a-join-carries-the-cast.loft::Some
 scope-functions	agree	loft-suite/rules/types/N-Cast/a-checked-cast-carries-a-domain-miss-and-a-join-carries-the-cast.loft::__nullable<H>
 scope-functions	agree	loft-suite/rules/types/N-Cast/a-checked-cast-carries-a-domain-miss-and-a-join-carries-the-cast.loft::n_dbl
+scope-functions	agree	loft-suite/rules/types/N-Cast/a-checked-cast-carries-a-domain-miss-and-a-join-carries-the-cast.loft::n_test_div_domain
 scope-functions	agree	loft-suite/rules/types/N-Chain/1450d-a-projection-chain-discharges-once-at-its-tail.loft::Leaf1450d
 scope-functions	agree	loft-suite/rules/types/N-Chain/1450d-a-projection-chain-discharges-once-at-its-tail.loft::Mid1450d
 scope-functions	agree	loft-suite/rules/types/N-Chain/1450d-a-projection-chain-discharges-once-at-its-tail.loft::Null
@@ -13826,6 +13896,7 @@ scope-functions	agree	loft-suite/rules/types/N-Coal/019-a-halting-call-is-a-coal
 scope-functions	agree	loft-suite/rules/types/N-Coal/1425-a-nested-tuple-finds-its-own-null-sentinel.loft::i_4text_n_assert_eq
 scope-functions	agree	loft-suite/rules/types/N-Coal/1425-a-nested-tuple-finds-its-own-null-sentinel.loft::vector<__tuple<integer,integer>>
 scope-functions	agree	loft-suite/rules/types/N-Coal/2302-a-default-after-a-field-operand-is-not-reported-redundant.loft::Bag
+scope-functions	agree	loft-suite/rules/types/N-Coal/2302-a-default-after-a-field-operand-is-not-reported-redundant.loft::n_h
 scope-functions	agree	loft-suite/rules/types/N-Coal/a-coalesce-proves-the-union-of-its-subject-and-default.loft::n_main
 scope-functions	agree	loft-suite/rules/types/N-Coal/a-null-can-leave-the-loop-through-a-coalesce.loft::Part
 scope-functions	agree	loft-suite/rules/types/N-Coal/a-null-can-leave-the-loop-through-a-coalesce.loft::n_labelled_as_arm
@@ -13892,6 +13963,8 @@ scope-functions	agree	loft-suite/rules/types/N-Decl/a-vector-literal-argument-ta
 scope-functions	agree	loft-suite/rules/types/N-Decl/a-vector-literal-argument-takes-its-parameters-nullable-element.loft::P
 scope-functions	agree	loft-suite/rules/types/N-Decl/a-vector-literal-argument-takes-its-parameters-nullable-element.loft::Some
 scope-functions	agree	loft-suite/rules/types/N-Decl/a-vector-literal-argument-takes-its-parameters-nullable-element.loft::__nullable<P>
+scope-functions	agree	loft-suite/rules/types/N-Decl/a-vector-literal-argument-takes-its-parameters-nullable-element.loft::n_fi
+scope-functions	agree	loft-suite/rules/types/N-Decl/a-vector-literal-argument-takes-its-parameters-nullable-element.loft::t_1P_fm
 scope-functions	agree	loft-suite/rules/types/N-Decl/a-vector-literal-argument-takes-its-parameters-nullable-element.loft::vector<__nullable<P>>
 scope-functions	agree	loft-suite/rules/types/N-Decl/a-vector-literal-argument-takes-its-parameters-nullable-element.loft::vector<integer?>
 scope-functions	agree	loft-suite/rules/types/N-Decl/a-vector-literal-argument-takes-its-parameters-nullable-element.loft::vector<text?>
@@ -13913,14 +13986,23 @@ scope-functions	agree	loft-suite/rules/types/N-Domain/1450-a-projection-is-not-m
 scope-functions	agree	loft-suite/rules/types/N-Domain/1450-a-projection-is-not-more-non-null-than-its-receiver.loft::n_untrusted_index_1450
 scope-functions	agree	loft-suite/rules/types/N-Domain/1450-a-projection-is-not-more-non-null-than-its-receiver.loft::vector<It1450>
 scope-functions	agree	loft-suite/rules/types/N-Domain/1450e-the-last-element-idiom-is-a-trusted-index.loft::Holder1450e
+scope-functions	agree	loft-suite/rules/types/N-Domain/1450e-the-last-element-idiom-is-a-trusted-index.loft::n_last_of
 scope-functions	agree	loft-suite/rules/types/N-Domain/1450f-a-bounds-guard-is-read-in-both-its-spellings.loft::Holder1450f
+scope-functions	agree	loft-suite/rules/types/N-Domain/1450f-a-bounds-guard-is-read-in-both-its-spellings.loft::n_cast_through_guard
+scope-functions	agree	loft-suite/rules/types/N-Domain/1450f-a-bounds-guard-is-read-in-both-its-spellings.loft::n_early_field
+scope-functions	agree	loft-suite/rules/types/N-Domain/1450f-a-bounds-guard-is-read-in-both-its-spellings.loft::n_early_full
+scope-functions	agree	loft-suite/rules/types/N-Domain/1450f-a-bounds-guard-is-read-in-both-its-spellings.loft::n_early_simple
+scope-functions	agree	loft-suite/rules/types/N-Domain/1450f-a-bounds-guard-is-read-in-both-its-spellings.loft::n_positive
 scope-functions	agree	loft-suite/rules/types/N-Domain/1450g-the-divisor-guard-is-read-in-every-spelling.loft::n_cast_through_guard
 scope-functions	agree	loft-suite/rules/types/N-Domain/1450g-the-divisor-guard-is-read-in-every-spelling.loft::n_early
 scope-functions	agree	loft-suite/rules/types/N-Domain/1450g-the-divisor-guard-is-read-in-every-spelling.loft::n_main
 scope-functions	agree	loft-suite/rules/types/N-Domain/1450g-the-divisor-guard-is-read-in-every-spelling.loft::n_positive
 scope-functions	agree	loft-suite/rules/types/N-Domain/1450h-the-math-guard-is-read-in-every-spelling.loft::n_divisor_control
 scope-functions	agree	loft-suite/rules/types/N-Domain/1450h-the-math-guard-is-read-in-every-spelling.loft::n_guard_clause_ln
+scope-functions	agree	loft-suite/rules/types/N-Domain/1450h-the-math-guard-is-read-in-every-spelling.loft::n_guard_clause_sqrt
 scope-functions	agree	loft-suite/rules/types/N-Domain/1450h-the-math-guard-is-read-in-every-spelling.loft::n_guard_positive_ln
+scope-functions	agree	loft-suite/rules/types/N-Domain/1450h-the-math-guard-is-read-in-every-spelling.loft::n_guard_positive_sqrt
+scope-functions	agree	loft-suite/rules/types/N-Domain/1450h-the-math-guard-is-read-in-every-spelling.loft::n_index_control
 scope-functions	agree	loft-suite/rules/types/N-Domain/1471-an-out-of-range-value-struct-read-is-absent-not-a-zero.loft::Bag71
 scope-functions	agree	loft-suite/rules/types/N-Domain/1471-an-out-of-range-value-struct-read-is-absent-not-a-zero.loft::F71
 scope-functions	agree	loft-suite/rules/types/N-Domain/1471-an-out-of-range-value-struct-read-is-absent-not-a-zero.loft::Keyed71
@@ -13935,6 +14017,7 @@ scope-functions	agree	loft-suite/rules/types/N-Domain/1478-a-text-tuple-member-f
 scope-functions	agree	loft-suite/rules/types/N-Domain/1478-a-text-tuple-member-fits-its-owned-slot.loft::vector<__tuple<integer,integer>>
 scope-functions	agree	loft-suite/rules/types/N-Domain/1478-a-text-tuple-member-fits-its-owned-slot.loft::vector<__tuple<integer,text>>
 scope-functions	agree	loft-suite/rules/types/N-Domain/1478-a-text-tuple-member-fits-its-owned-slot.loft::vector<__tuple<text,text>>
+scope-functions	agree	loft-suite/rules/types/N-Domain/153-n-domain-partial-op-is-nullable.loft::n_f
 scope-functions	agree	loft-suite/rules/types/N-Domain/153-n-domain-partial-op-is-nullable.loft::n_main
 scope-functions	agree	loft-suite/rules/types/N-Guard/2303-a-null-guard-proves-its-variable-present-on-both-passes.loft::Borrowed
 scope-functions	agree	loft-suite/rules/types/N-Guard/2303-a-null-guard-proves-its-variable-present-on-both-passes.loft::Owned
@@ -13951,14 +14034,18 @@ scope-functions	agree	loft-suite/rules/types/N-Guard/2303-a-null-guard-proves-it
 scope-functions	agree	loft-suite/rules/types/N-Guard/2303-a-null-guard-proves-its-variable-present-on-both-passes.loft::n_use_p
 scope-functions	agree	loft-suite/rules/types/N-Guard/2303-a-null-guard-proves-its-variable-present-on-both-passes.loft::n_use_q
 scope-functions	agree	loft-suite/rules/types/N-Guard/2303-a-null-guard-proves-its-variable-present-on-both-passes.loft::n_use_s
+scope-functions	agree	loft-suite/rules/types/N-Guard/2303-a-null-guard-proves-its-variable-present-on-both-passes.loft::n_use_v
 scope-functions	agree	loft-suite/rules/types/N-Guard/a-for-range-proves-its-end-and-counter-non-zero.loft::n_main
 scope-functions	agree	loft-suite/rules/types/N-Guard/a-guard-discharges-what-a-domain-and-a-cast-would-owe.loft::n_as_float
+scope-functions	agree	loft-suite/rules/types/N-Guard/a-guard-discharges-what-a-domain-and-a-cast-would-owe.loft::n_at
 scope-functions	agree	loft-suite/rules/types/N-Guard/a-guard-discharges-what-a-domain-and-a-cast-would-owe.loft::n_div
 scope-functions	agree	loft-suite/rules/types/N-Guard/a-guard-discharges-what-a-domain-and-a-cast-would-owe.loft::n_modulo
 scope-functions	agree	loft-suite/rules/types/N-Guard/a-guard-discharges-what-a-domain-and-a-cast-would-owe.loft::n_parse
+scope-functions	agree	loft-suite/rules/types/N-Guard/a-guard-discharges-what-a-domain-and-a-cast-would-owe.loft::n_root
 scope-functions	agree	loft-suite/rules/types/N-Guard/a-guard-discharges-what-a-domain-and-a-cast-would-owe.loft::n_test_a_cast_of_a_proven_present_value
 scope-functions	agree	loft-suite/rules/types/N-Guard/a-guard-on-an-or-of-tests-proves-each-false-after-it.loft::n_both
 scope-functions	agree	loft-suite/rules/types/N-Guard/a-guard-on-an-or-of-tests-proves-each-false-after-it.loft::n_guarded
+scope-functions	agree	loft-suite/rules/types/N-Guard/a-guard-on-an-or-of-tests-proves-each-false-after-it.loft::n_idx
 scope-functions	agree	loft-suite/rules/types/N-Guard/a-guard-on-an-or-of-tests-proves-each-false-after-it.loft::n_need
 scope-functions	agree	loft-suite/rules/types/N-Guard/a-guard-on-an-or-of-tests-proves-each-false-after-it.loft::n_not_proven
 scope-functions	agree	loft-suite/rules/types/N-Guard/a-guard-on-an-or-of-tests-proves-each-false-after-it.loft::n_unproven
@@ -13970,19 +14057,25 @@ scope-functions	agree	loft-suite/rules/types/N-Guard/a-match-arms-guard-proves-i
 scope-functions	agree	loft-suite/rules/types/N-Guard/a-match-arms-guard-proves-its-facts-in-the-arm.loft::n_after_the_guard
 scope-functions	agree	loft-suite/rules/types/N-Guard/a-match-arms-guard-proves-its-facts-in-the-arm.loft::n_both
 scope-functions	agree	loft-suite/rules/types/N-Guard/a-match-arms-guard-proves-its-facts-in-the-arm.loft::n_divided
+scope-functions	agree	loft-suite/rules/types/N-Guard/a-match-arms-guard-proves-its-facts-in-the-arm.loft::n_indexed
 scope-functions	agree	loft-suite/rules/types/N-Guard/a-match-arms-guard-proves-its-facts-in-the-arm.loft::n_pick
 scope-functions	agree	loft-suite/rules/types/N-Guard/a-match-arms-guard-proves-its-facts-in-the-arm.loft::n_scalar
 scope-functions	agree	loft-suite/rules/types/N-Guard/a-match-arms-guard-proves-its-facts-in-the-arm.loft::n_structure
 scope-functions	agree	loft-suite/rules/types/N-Guard/a-match-arms-guard-proves-its-facts-in-the-arm.loft::n_take
 scope-functions	agree	loft-suite/rules/types/N-Guard/a-match-arms-guard-proves-its-facts-in-the-arm.loft::n_variant
 scope-functions	agree	loft-suite/rules/types/N-Guard/a-match-arms-guard-proves-its-facts-in-the-arm.loft::n_wildcard
+scope-functions	agree	loft-suite/rules/types/N-Guard/an-and-of-tests-proves-each-where-it-holds.loft::n_a_loop_condition
 scope-functions	agree	loft-suite/rules/types/N-Guard/an-and-of-tests-proves-each-where-it-holds.loft::n_beside_another_test
 scope-functions	agree	loft-suite/rules/types/N-Guard/an-and-of-tests-proves-each-where-it-holds.loft::n_both
 scope-functions	agree	loft-suite/rules/types/N-Guard/an-and-of-tests-proves-each-where-it-holds.loft::n_else_of_an_or
 scope-functions	agree	loft-suite/rules/types/N-Guard/an-and-of-tests-proves-each-where-it-holds.loft::n_need
 scope-functions	agree	loft-suite/rules/types/N-Guard/an-and-of-tests-proves-each-where-it-holds.loft::vector<integer?>
 scope-functions	agree	loft-suite/rules/types/N-Guard/the-right-operand-of-and-reads-with-the-left-operands-facts.loft::n_divided
+scope-functions	agree	loft-suite/rules/types/N-Guard/the-right-operand-of-and-reads-with-the-left-operands-facts.loft::n_else_side
+scope-functions	agree	loft-suite/rules/types/N-Guard/the-right-operand-of-and-reads-with-the-left-operands-facts.loft::n_guarded
 scope-functions	agree	loft-suite/rules/types/N-Guard/the-right-operand-of-and-reads-with-the-left-operands-facts.loft::n_loose
+scope-functions	agree	loft-suite/rules/types/N-Idem/1771-a-nullable-type-argument-collapses-t-optional.loft::i_7integer_n_firstd
+scope-functions	agree	loft-suite/rules/types/N-Idem/1771-a-nullable-type-argument-collapses-t-optional.loft::i_8integer?_n_firstd
 scope-functions	agree	loft-suite/rules/types/N-Idem/1771-a-nullable-type-argument-collapses-t-optional.loft::n_firstd
 scope-functions	agree	loft-suite/rules/types/N-Idem/1771-a-nullable-type-argument-collapses-t-optional.loft::vector<float>
 scope-functions	agree	loft-suite/rules/types/N-Idem/1771-a-nullable-type-argument-collapses-t-optional.loft::vector<float?>
@@ -13990,7 +14083,15 @@ scope-functions	agree	loft-suite/rules/types/N-Idem/1771-a-nullable-type-argumen
 scope-functions	agree	loft-suite/rules/types/N-Idem/1771-a-nullable-type-argument-collapses-t-optional.loft::vector<text?>
 scope-functions	agree	loft-suite/rules/types/N-Index/a-length-local-and-a-loop-counter-read-non-null.loft::B
 scope-functions	agree	loft-suite/rules/types/N-Index/a-length-local-and-a-loop-counter-read-non-null.loft::N
+scope-functions	agree	loft-suite/rules/types/N-Index/a-length-local-and-a-loop-counter-read-non-null.loft::n_last_scalar
+scope-functions	agree	loft-suite/rules/types/N-Index/a-length-local-and-a-loop-counter-read-non-null.loft::n_per_turn
+scope-functions	agree	loft-suite/rules/types/N-Index/a-length-local-and-a-loop-counter-read-non-null.loft::n_second_last
 scope-functions	agree	loft-suite/rules/types/N-Index/a-length-local-and-a-loop-counter-read-non-null.loft::vector<N>
+scope-functions	agree	loft-suite/rules/types/N-Index/a-length-local-the-vector-outgrew-is-not-trusted-warns.loft::n_bare
+scope-functions	agree	loft-suite/rules/types/N-Index/a-length-local-the-vector-outgrew-is-not-trusted-warns.loft::n_joined
+scope-functions	agree	loft-suite/rules/types/N-Index/a-length-local-the-vector-outgrew-is-not-trusted-warns.loft::n_other
+scope-functions	agree	loft-suite/rules/types/N-Index/a-length-local-the-vector-outgrew-is-not-trusted-warns.loft::n_reassigned
+scope-functions	agree	loft-suite/rules/types/N-Index/a-length-local-the-vector-outgrew-is-not-trusted-warns.loft::n_shrinks
 scope-functions	agree	loft-suite/rules/types/N-Intro/153-n-intro-has-no-reverse-edge.loft::n_f
 scope-functions	agree	loft-suite/rules/types/N-Intro/153-n-intro-has-no-reverse-edge.loft::n_main
 scope-functions	agree	loft-suite/rules/types/N-Intro/2341-an-arm-that-returns-beside-a-null-arm-still-runs.loft::N
@@ -14286,6 +14387,7 @@ scope-functions	agree	loft-suite/rules/types/N-Shape/1493-a-branch-arm-yielding-
 scope-functions	agree	loft-suite/rules/types/N-Shape/1616-a-text-local-promoted-to-the-return-buffer-keeps-its-question-mark.loft::n_k_link
 scope-functions	agree	loft-suite/rules/types/N-Shape/1616-a-text-local-promoted-to-the-return-buffer-keeps-its-question-mark.loft::n_t_one
 scope-functions	agree	loft-suite/rules/types/N-Shape/1739-a-null-inner-vector-element-is-absent-on-every-route.loft::Holder
+scope-functions	agree	loft-suite/rules/types/N-Shape/1739-a-null-inner-vector-element-is-absent-on-every-route.loft::n_count
 scope-functions	agree	loft-suite/rules/types/N-Shape/1739-a-null-inner-vector-element-is-absent-on-every-route.loft::n_pass
 scope-functions	agree	loft-suite/rules/types/N-Shape/1739-a-null-inner-vector-element-is-absent-on-every-route.loft::vector<single>
 scope-functions	agree	loft-suite/rules/types/N-Shape/1739-a-null-inner-vector-element-is-absent-on-every-route.loft::vector<vector<integer>>
@@ -14362,6 +14464,7 @@ scope-functions	agree	loft-suite/rules/types/N-Shape/a-bounded-generic-at-a-null
 scope-functions	agree	loft-suite/rules/types/N-Shape/a-bounded-generic-at-a-nullable-reaches-its-operator.loft::n_plus
 scope-functions	agree	loft-suite/rules/types/N-Shape/a-bounded-generic-at-a-nullable-reaches-its-operator.loft::n_same
 scope-functions	agree	loft-suite/rules/types/N-Shape/a-bounded-generic-at-a-nullable-reaches-its-operator.loft::n_smaller
+scope-functions	agree	loft-suite/rules/types/N-Shape/a-bounded-generic-at-a-nullable-reaches-its-operator.loft::n_test_equatable_and_addable
 scope-functions	agree	loft-suite/rules/types/N-Shape/a-bounded-generic-at-a-nullable-reaches-its-operator.loft::vector<integer?>
 scope-functions	agree	loft-suite/rules/types/N-Shape/a-generic-builds-a-vector-of-a-nullable-or-a-tuple.loft::n_app
 scope-functions	agree	loft-suite/rules/types/N-Shape/a-generic-builds-a-vector-of-a-nullable-or-a-tuple.loft::n_maybe
@@ -14539,7 +14642,12 @@ scope-functions	agree	loft-suite/rules/types/N-Store/a-nullable-store-names-the-
 scope-functions	agree	loft-suite/rules/types/N-Store/a-nullable-store-names-the-construction-for-its-source.loft::n_maybe
 scope-functions	agree	loft-suite/rules/types/N-Store/len-of-a-nullable-collection-warns-and-counts-an-absent-one-as-zero.loft::E
 scope-functions	agree	loft-suite/rules/types/N-Store/len-of-a-nullable-collection-warns-and-counts-an-absent-one-as-zero.loft::T
+scope-functions	agree	loft-suite/rules/types/N-Store/len-of-a-nullable-collection-warns-and-counts-an-absent-one-as-zero.loft::n_n_hash
 scope-functions	agree	loft-suite/rules/types/N-Store/len-of-a-nullable-collection-warns-and-counts-an-absent-one-as-zero.loft::n_n_index
+scope-functions	agree	loft-suite/rules/types/N-Store/len-of-a-nullable-collection-warns-and-counts-an-absent-one-as-zero.loft::n_n_sorted
+scope-functions	agree	loft-suite/rules/types/N-Store/len-of-a-nullable-collection-warns-and-counts-an-absent-one-as-zero.loft::n_n_spatial
+scope-functions	agree	loft-suite/rules/types/N-Store/len-of-a-nullable-collection-warns-and-counts-an-absent-one-as-zero.loft::n_n_trie
+scope-functions	agree	loft-suite/rules/types/N-Store/len-of-a-nullable-collection-warns-and-counts-an-absent-one-as-zero.loft::n_n_vector
 scope-functions	agree	loft-suite/rules/types/N-Store/len-of-a-nullable-collection-warns-and-counts-an-absent-one-as-zero.loft::vector<E>
 scope-functions	agree	loft-suite/rules/types/P-Alt-Diff/an-absent-tuple-capture-of-an-alternative-is-the-all-null-tuple.loft::AtP
 scope-functions	agree	loft-suite/rules/types/P-Alt-Diff/an-absent-tuple-capture-of-an-alternative-is-the-all-null-tuple.loft::AtQ
@@ -14573,6 +14681,7 @@ scope-functions	agree	loft-suite/rules/types/P-Cap-Ty/a-pattern-capture-takes-th
 scope-functions	agree	loft-suite/rules/types/P-Cap-Ty/a-pattern-capture-takes-the-type-its-pattern-matched.loft::n_k_text
 scope-functions	agree	loft-suite/rules/types/P-Cap-Ty/a-pattern-capture-takes-the-type-its-pattern-matched.loft::n_k_tup
 scope-functions	agree	loft-suite/rules/types/P-Cap-Ty/a-pattern-capture-takes-the-type-its-pattern-matched.loft::n_k_u8
+scope-functions	agree	loft-suite/rules/types/P-Cap-Ty/a-pattern-capture-takes-the-type-its-pattern-matched.loft::n_k_vec
 scope-functions	agree	loft-suite/rules/types/P-Cap-Ty/a-pattern-capture-takes-the-type-its-pattern-matched.loft::vector<Col>
 scope-functions	agree	loft-suite/rules/types/P-Cap-Ty/a-pattern-capture-takes-the-type-its-pattern-matched.loft::vector<Pt>
 scope-functions	agree	loft-suite/rules/types/P-Cap-Ty/a-pattern-capture-takes-the-type-its-pattern-matched.loft::vector<Tok>
@@ -14749,6 +14858,8 @@ scope-functions	agree	selfhost/front/cells/a-bang-on-a-struct-enum-and-a-literal
 scope-functions	agree	selfhost/front/cells/a-bang-on-a-struct-enum-and-a-literal-reading-its-local.loft::B
 scope-functions	agree	selfhost/front/cells/a-bang-on-a-struct-enum-and-a-literal-reading-its-local.loft::E
 scope-functions	agree	selfhost/front/cells/a-boxed-tuple-return-destructured.loft::S
+scope-functions	agree	selfhost/front/cells/a-branch-of-a-parameter-and-an-owned-local-renames-the-buffer-onto-the-local.loft::V3
+scope-functions	agree	selfhost/front/cells/a-branch-of-a-parameter-and-an-owned-local-renames-the-buffer-onto-the-local.loft::Vert
 scope-functions	agree	selfhost/front/cells/a-capturing-lambda-stored-in-a-field.loft::B
 scope-functions	agree	selfhost/front/cells/a-capturing-lambda-stored-in-a-field.loft::H
 scope-functions	agree	selfhost/front/cells/a-capturing-lambda-stored-in-a-field.loft::__closure_main_1
@@ -14864,6 +14975,7 @@ scope-functions	agree	selfhost/front/cells/a-record-if-tail-of-views-and-calls.l
 scope-functions	agree	selfhost/front/cells/a-record-if-tail-of-views-and-calls.loft::S
 scope-functions	agree	selfhost/front/cells/a-record-if-tail-of-views-and-calls.loft::Some
 scope-functions	agree	selfhost/front/cells/a-record-if-tail-of-views-and-calls.loft::__nullable<S>
+scope-functions	agree	selfhost/front/cells/a-record-if-tail-of-views-and-calls.loft::n_fd
 scope-functions	agree	selfhost/front/cells/a-record-if-tail-of-views-and-calls.loft::vector<S>
 scope-functions	agree	selfhost/front/cells/a-record-member-of-a-boxed-tuple.loft::P
 scope-functions	agree	selfhost/front/cells/a-record-written-into-a-nullable-field.loft::Box
@@ -14999,6 +15111,7 @@ scope-functions	agree	selfhost/front/cells/a-vector-of-nullable-records.loft::ve
 scope-functions	agree	selfhost/front/cells/a-vector-of-wide-literals.loft::__const_n_big
 scope-functions	agree	selfhost/front/cells/a-vector-parameter-of-records-nothing-else-defines.loft::Pt
 scope-functions	agree	selfhost/front/cells/a-vector-parameter-of-records-nothing-else-defines.loft::n_main
+scope-functions	agree	selfhost/front/cells/a-vector-parameter-of-records-nothing-else-defines.loft::n_show
 scope-functions	agree	selfhost/front/cells/a-vector-parameter-of-records-nothing-else-defines.loft::vector<Pt>
 scope-functions	agree	selfhost/front/cells/a-vector-parameter-rebound-from-a-vector.loft::Pt
 scope-functions	agree	selfhost/front/cells/a-vector-parameter-rebound-from-a-vector.loft::vector<Pt>
@@ -15012,7 +15125,9 @@ scope-functions	agree	selfhost/front/cells/nested-tuples-and-vectors-of-tuples-w
 scope-functions	agree	selfhost/front/cells/nested-tuples-and-vectors-of-tuples-with-records.loft::vector<__tuple<integer,P>>
 scope-functions	agree	selfhost/front/cells/tuples-across-calls-and-vector-elements.loft::n_total
 scope-functions	agree	selfhost/front/cells/tuples-across-calls-and-vector-elements.loft::vector<__tuple<integer,text>>
+scope-functions	agree	tests/docs/03-integer.loft::n_main
 scope-functions	agree	tests/docs/04-boolean.loft::n_main
+scope-functions	agree	tests/docs/05-float.loft::n_main
 scope-functions	agree	tests/docs/06-function.loft::n___lambda_main_1
 scope-functions	agree	tests/docs/06-function.loft::n___lambda_main_3
 scope-functions	agree	tests/docs/06-function.loft::n_add
@@ -15130,11 +15245,13 @@ scope-functions	agree	tests/docs/25-generics.loft::T#7
 scope-functions	agree	tests/docs/25-generics.loft::T#8
 scope-functions	agree	tests/docs/25-generics.loft::T#9
 scope-functions	agree	tests/docs/25-generics.loft::Tile
+scope-functions	agree	tests/docs/25-generics.loft::f_10Grid<Tile>_show
 scope-functions	agree	tests/docs/25-generics.loft::f_9Grid<T#8>_show
 scope-functions	agree	tests/docs/25-generics.loft::i_4Tile_n_same
 scope-functions	agree	tests/docs/25-generics.loft::i_4text_n_first_element
 scope-functions	agree	tests/docs/25-generics.loft::i_4text_n_gen_min
 scope-functions	agree	tests/docs/25-generics.loft::i_4text_n_identity
+scope-functions	agree	tests/docs/25-generics.loft::i_4text_n_last_element
 scope-functions	agree	tests/docs/25-generics.loft::i_4text_n_same
 scope-functions	agree	tests/docs/25-generics.loft::i_5Money_n_same
 scope-functions	agree	tests/docs/25-generics.loft::i_5float_n_clamped_add
@@ -15149,6 +15266,7 @@ scope-functions	agree	tests/docs/25-generics.loft::i_7integer_n_gen_max
 scope-functions	agree	tests/docs/25-generics.loft::i_7integer_n_gen_min
 scope-functions	agree	tests/docs/25-generics.loft::i_7integer_n_gen_negdiff
 scope-functions	agree	tests/docs/25-generics.loft::i_7integer_n_identity
+scope-functions	agree	tests/docs/25-generics.loft::i_7integer_n_last_element
 scope-functions	agree	tests/docs/25-generics.loft::i_7integer_n_pick_second
 scope-functions	agree	tests/docs/25-generics.loft::i_7integer_n_same
 scope-functions	agree	tests/docs/25-generics.loft::n_clamped_add
@@ -15246,6 +15364,7 @@ scope-functions	agree	tests/docs/30-formatting.loft::vector<Point>
 scope-functions	agree	tests/docs/31-ref-forward.loft::Box
 scope-functions	agree	tests/docs/31-ref-forward.loft::Item
 scope-functions	agree	tests/docs/31-ref-forward.loft::n_bump
+scope-functions	agree	tests/docs/31-ref-forward.loft::n_empty_it
 scope-functions	agree	tests/docs/31-ref-forward.loft::n_forward_replace
 scope-functions	agree	tests/docs/31-ref-forward.loft::n_set_first
 scope-functions	agree	tests/docs/31-ref-forward.loft::vector<Item>
@@ -15261,6 +15380,8 @@ scope-functions	agree	tests/docs/38-call-it-yourself.loft::n_is_prime
 scope-functions	agree	tests/docs/38-call-it-yourself.loft::n_nth_prime
 scope-functions	agree	tests/docs/38-call-it-yourself.loft::n_vowels
 scope-functions	agree	tests/docs/38-call-it-yourself.loft::n_walk_to
+scope-functions	agree	tests/scripts/01-integers.loft::n_main
+scope-functions	agree	tests/scripts/02-floats.loft::n_main
 scope-functions	agree	tests/scripts/03-text.loft::vector<character>
 scope-functions	agree	tests/scripts/04-booleans.loft::n_main
 scope-functions	agree	tests/scripts/05-enums.loft::BA
@@ -15558,6 +15679,7 @@ scope-functions	agree	tests/scripts/1026-generic-discharged-null-return.loft::i_
 scope-functions	agree	tests/scripts/1026-generic-discharged-null-return.loft::i_7integer_n_gm1026
 scope-functions	agree	tests/scripts/1026-generic-discharged-null-return.loft::i_7integer_n_gq1026
 scope-functions	agree	tests/scripts/1026-generic-discharged-null-return.loft::i_7integer_n_guard1026
+scope-functions	agree	tests/scripts/1026-generic-discharged-null-return.loft::i_7integer_n_gv1026
 scope-functions	agree	tests/scripts/1026-generic-discharged-null-return.loft::n_below1026
 scope-functions	agree	tests/scripts/1026-generic-discharged-null-return.loft::n_g1026
 scope-functions	agree	tests/scripts/1026-generic-discharged-null-return.loft::n_gm1026
@@ -15912,6 +16034,7 @@ scope-functions	agree	tests/scripts/134-persist-copy-key-order.loft::n___upgrade
 scope-functions	agree	tests/scripts/134-persist-copy-query.loft::PWord
 scope-functions	agree	tests/scripts/134-trie-paged-layout.loft::PWord
 scope-functions	agree	tests/scripts/134-trie-paged-layout.loft::n___upgrade_drain
+scope-functions	agree	tests/scripts/134-trie-paged-layout.loft::n_report
 scope-functions	agree	tests/scripts/1343-a-boolean-match-with-both-arms-is-exhaustive.loft::n_lo
 scope-functions	agree	tests/scripts/1343-a-boolean-match-with-both-arms-is-exhaustive.loft::n_lo_n
 scope-functions	agree	tests/scripts/1343-a-boolean-match-with-both-arms-is-exhaustive.loft::n_main
@@ -15962,6 +16085,7 @@ scope-functions	agree	tests/scripts/1416-a-value-enum-element-may-be-absent.loft
 scope-functions	agree	tests/scripts/1416-a-value-enum-element-may-be-absent.loft::vector<Color?>
 scope-functions	agree	tests/scripts/1434-a-diagnostic-spells-a-keyed-type-as-the-source-does.loft::It
 scope-functions	agree	tests/scripts/1434-a-diagnostic-spells-a-keyed-type-as-the-source-does.loft::i_4text_n_assert_eq
+scope-functions	agree	tests/scripts/1434-a-diagnostic-spells-a-keyed-type-as-the-source-does.loft::n_take
 scope-functions	agree	tests/scripts/146-keyed-rekey-through-view.loft::Elm
 scope-functions	agree	tests/scripts/146-keyed-rekey-through-view.loft::n_main
 scope-functions	agree	tests/scripts/1468-a-nullable-call-result-binds-without-an-ownerless-copy.loft::S1468
@@ -16040,6 +16164,7 @@ scope-functions	agree	tests/scripts/1550-a-view-of-one-of-several-arguments-is-c
 scope-functions	agree	tests/scripts/1550-a-view-of-one-of-several-arguments-is-copied.loft::n_same_base
 scope-functions	agree	tests/scripts/157-a-constructor-call-builds-its-literal-in-place.loft::Fm
 scope-functions	agree	tests/scripts/157-a-constructor-call-builds-its-literal-in-place.loft::Pt
+scope-functions	agree	tests/scripts/157-a-constructor-call-builds-its-literal-in-place.loft::n_fm_len
 scope-functions	agree	tests/scripts/157-a-constructor-call-builds-its-literal-in-place.loft::n_hn
 scope-functions	agree	tests/scripts/157-a-constructor-call-builds-its-literal-in-place.loft::n_pt_sum
 scope-functions	agree	tests/scripts/157-a-constructor-call-builds-its-literal-in-place.loft::n_three
@@ -16050,6 +16175,7 @@ scope-functions	agree	tests/scripts/157-a-fresh-element-text-keeps-the-loop-hold
 scope-functions	agree	tests/scripts/157-a-loop-record-keeps-its-vectors.loft::Fm
 scope-functions	agree	tests/scripts/157-a-loop-record-keeps-its-vectors.loft::Pd
 scope-functions	agree	tests/scripts/157-a-loop-record-keeps-its-vectors.loft::St
+scope-functions	agree	tests/scripts/157-a-loop-record-keeps-its-vectors.loft::n_fm_len
 scope-functions	agree	tests/scripts/157-a-loop-record-keeps-its-vectors.loft::vector<Fm>
 scope-functions	agree	tests/scripts/157-a-loop-record-keeps-its-vectors.loft::vector<Pd>
 scope-functions	agree	tests/scripts/157-a-read-only-record-local-keeps-the-view.loft::Named
@@ -16161,6 +16287,8 @@ scope-functions	agree	tests/scripts/157-null-buffer-hoist.loft::vector<Hd>
 scope-functions	agree	tests/scripts/157-null-buffer-hoist.loft::vector<Hv>
 scope-functions	agree	tests/scripts/157-push-hoist.loft::Cv
 scope-functions	agree	tests/scripts/157-push-hoist.loft::Lay
+scope-functions	agree	tests/scripts/157-push-hoist.loft::n_count
+scope-functions	agree	tests/scripts/157-push-hoist.loft::n_parameter_field
 scope-functions	agree	tests/scripts/157-push-hoist.loft::vector<Cv>
 scope-functions	agree	tests/scripts/157-push-hoist.loft::vector<boolean>
 scope-functions	agree	tests/scripts/157-push-hoist.loft::vector<character>
@@ -16244,6 +16372,7 @@ scope-functions	agree	tests/scripts/157-vector-param-inputs.loft::H
 scope-functions	agree	tests/scripts/157-vector-param-inputs.loft::Holder
 scope-functions	agree	tests/scripts/157-vector-param-inputs.loft::Smp
 scope-functions	agree	tests/scripts/157-vector-param-inputs.loft::__const_n_mk
+scope-functions	agree	tests/scripts/157-vector-param-inputs.loft::n_cnt
 scope-functions	agree	tests/scripts/157-vector-param-inputs.loft::n_first
 scope-functions	agree	tests/scripts/157-vector-param-inputs.loft::n_flag
 scope-functions	agree	tests/scripts/157-vector-param-inputs.loft::n_fs
@@ -16260,6 +16389,7 @@ scope-functions	agree	tests/scripts/158-apart-records.loft::M
 scope-functions	agree	tests/scripts/158-apart-records.loft::P
 scope-functions	agree	tests/scripts/158-apart-records.loft::T
 scope-functions	agree	tests/scripts/158-apart-records.loft::n_main
+scope-functions	agree	tests/scripts/158-apart-records.loft::n_noop
 scope-functions	agree	tests/scripts/158-apart-records.loft::vector<E>
 scope-functions	agree	tests/scripts/158-apart-records.loft::vector<M>
 scope-functions	agree	tests/scripts/158-apart-records.loft::vector<P>
@@ -16335,6 +16465,7 @@ scope-functions	agree	tests/scripts/158-field-mint.loft::V2
 scope-functions	agree	tests/scripts/158-field-mint.loft::V3
 scope-functions	agree	tests/scripts/158-field-mint.loft::Vertex
 scope-functions	agree	tests/scripts/158-field-mint.loft::W
+scope-functions	agree	tests/scripts/158-field-mint.loft::n_count
 scope-functions	agree	tests/scripts/158-field-mint.loft::n_main
 scope-functions	agree	tests/scripts/158-field-mint.loft::vector<Chunk>
 scope-functions	agree	tests/scripts/158-field-mint.loft::vector<E>
@@ -16358,6 +16489,7 @@ scope-functions	agree	tests/scripts/158-guard-free.loft::n_g7
 scope-functions	agree	tests/scripts/158-guard-free.loft::n_g8
 scope-functions	agree	tests/scripts/158-guard-free.loft::n_main
 scope-functions	agree	tests/scripts/158-guard-free.loft::n_mid
+scope-functions	agree	tests/scripts/158-guard-free.loft::n_through
 scope-functions	agree	tests/scripts/158-guard-free.loft::n_top
 scope-functions	agree	tests/scripts/158-heap-discharge-buffer.loft::Chunk
 scope-functions	agree	tests/scripts/158-heap-discharge-buffer.loft::Hex
@@ -16481,6 +16613,7 @@ scope-functions	agree	tests/scripts/158-push-run.loft::n_main
 scope-functions	agree	tests/scripts/158-push-window.loft::Bag
 scope-functions	agree	tests/scripts/158-push-window.loft::FPt
 scope-functions	agree	tests/scripts/158-push-window.loft::Grid
+scope-functions	agree	tests/scripts/158-push-window.loft::n_d3_last
 scope-functions	agree	tests/scripts/158-push-window.loft::n_f_read
 scope-functions	agree	tests/scripts/158-push-window.loft::n_main
 scope-functions	agree	tests/scripts/158-push-window.loft::n_w10_sq
@@ -16562,6 +16695,7 @@ scope-functions	agree	tests/scripts/159-table-handle.loft::n_empty_it
 scope-functions	agree	tests/scripts/159-table-handle.loft::n_main
 scope-functions	agree	tests/scripts/159-table-handle.loft::n_push
 scope-functions	agree	tests/scripts/159-table-handle.loft::n_reset_chain
+scope-functions	agree	tests/scripts/159-table-handle.loft::n_t6
 scope-functions	agree	tests/scripts/159-table-handle.loft::n_t8
 scope-functions	agree	tests/scripts/160-long-fill.loft::n_l2
 scope-functions	agree	tests/scripts/160-long-fill.loft::n_l3
@@ -16613,6 +16747,7 @@ scope-functions	agree	tests/scripts/164-callee-disturb.loft::n_grow_deep
 scope-functions	agree	tests/scripts/164-callee-disturb.loft::n_pair
 scope-functions	agree	tests/scripts/164-callee-disturb.loft::n_remove_first
 scope-functions	agree	tests/scripts/164-callee-disturb.loft::n_remove_last
+scope-functions	agree	tests/scripts/164-callee-disturb.loft::n_touch_nothing
 scope-functions	agree	tests/scripts/164-callee-disturb.loft::n_write_other_field
 scope-functions	agree	tests/scripts/164-callee-disturb.loft::vector<El>
 scope-functions	agree	tests/scripts/164-element-place.loft::Mark
@@ -16713,6 +16848,7 @@ scope-functions	agree	tests/scripts/1796-a-constant-a-nullable-narrow-slot-canno
 scope-functions	agree	tests/scripts/1796-a-constant-a-nullable-narrow-slot-cannot-hold-is-refused.loft::n_f
 scope-functions	agree	tests/scripts/1796-a-constant-a-nullable-narrow-slot-cannot-hold-is-refused.loft::n_f2
 scope-functions	agree	tests/scripts/1796-a-constant-a-nullable-narrow-slot-cannot-hold-is-refused.loft::n_rt
+scope-functions	agree	tests/scripts/18-math-functions.loft::n_main
 scope-functions	agree	tests/scripts/1800-the-parser-library-reads-while-match-and-lambdas.loft::n_bad
 scope-functions	agree	tests/scripts/1800-the-parser-library-reads-while-match-and-lambdas.loft::n_good
 scope-functions	agree	tests/scripts/1800-the-parser-library-reads-while-match-and-lambdas.loft::n_main
@@ -17814,6 +17950,7 @@ scope-functions	agree	tests/scripts/890-consumed-lift-double-free.loft::n_i890_i
 scope-functions	agree	tests/scripts/899-unbound-file-read-only-vector.loft::vector<single>
 scope-functions	agree	tests/scripts/899-unbound-file-read-temp.loft::B
 scope-functions	agree	tests/scripts/899-unbound-file-read-temp.loft::P
+scope-functions	agree	tests/scripts/899-unbound-file-read-temp.loft::n_r899_take
 scope-functions	agree	tests/scripts/899-unbound-file-read-temp.loft::vector<P>
 scope-functions	agree	tests/scripts/899-unbound-file-read-temp.loft::vector<single>
 scope-functions	agree	tests/scripts/915-loop-variable-per-loop.loft::Aa
@@ -18048,6 +18185,7 @@ scope-functions	agree	tests/scripts/a-call-text-moves-into-its-local.loft::n_tes
 scope-functions	agree	tests/scripts/a-call-text-moves-into-its-local.loft::n_test_two_results_in_one_expression
 scope-functions	agree	tests/scripts/a-call-two-wrappers-share-is-made-once.loft::Box5
 scope-functions	agree	tests/scripts/a-call-two-wrappers-share-is-made-once.loft::Hold
+scope-functions	agree	tests/scripts/a-call-two-wrappers-share-is-made-once.loft::n_c12
 scope-functions	agree	tests/scripts/a-call-two-wrappers-share-is-made-once.loft::n_c3
 scope-functions	agree	tests/scripts/a-call-two-wrappers-share-is-made-once.loft::n_c6
 scope-functions	agree	tests/scripts/a-call-two-wrappers-share-is-made-once.loft::n_c7
@@ -18091,6 +18229,7 @@ scope-functions	agree	tests/scripts/a-copied-group-indexes-its-own-records.loft:
 scope-functions	agree	tests/scripts/a-copied-group-indexes-its-own-records.loft::S
 scope-functions	agree	tests/scripts/a-copied-group-indexes-its-own-records.loft::n_g1
 scope-functions	agree	tests/scripts/a-copied-group-indexes-its-own-records.loft::n_g2
+scope-functions	agree	tests/scripts/a-copied-group-indexes-its-own-records.loft::n_g5
 scope-functions	agree	tests/scripts/a-copied-group-indexes-its-own-records.loft::n_main
 scope-functions	agree	tests/scripts/a-copied-group-indexes-its-own-records.loft::vector<S>
 scope-functions	agree	tests/scripts/a-count-a-run-of-statements-repeats-is-made-once.loft::Box
@@ -18119,6 +18258,7 @@ scope-functions	agree	tests/scripts/a-counted-loop-variable-shares-its-index-slo
 scope-functions	agree	tests/scripts/a-counted-loop-variable-shares-its-index-slot.loft::n_test_written_in_body
 scope-functions	agree	tests/scripts/a-counter-below-a-length-local-is-read-in-range.loft::Pt
 scope-functions	agree	tests/scripts/a-counter-below-a-length-local-is-read-in-range.loft::S
+scope-functions	agree	tests/scripts/a-counter-below-a-length-local-is-read-in-range.loft::n_drop_all
 scope-functions	agree	tests/scripts/a-counter-below-a-length-local-is-read-in-range.loft::vector<Pt>
 scope-functions	agree	tests/scripts/a-counter-wrapped-at-the-length-is-read-in-range.loft::P
 scope-functions	agree	tests/scripts/a-counter-wrapped-at-the-length-is-read-in-range.loft::__const_n_mk
@@ -18233,8 +18373,11 @@ scope-functions	agree	tests/scripts/a-function-of-many-record-temporaries-compil
 scope-functions	agree	tests/scripts/a-function-of-many-record-temporaries-compiles-in-seconds.loft::Vec3
 scope-functions	agree	tests/scripts/a-function-of-many-record-temporaries-compiles-in-seconds.loft::Vertex
 scope-functions	agree	tests/scripts/a-function-of-many-record-temporaries-compiles-in-seconds.loft::vector<Vertex>
+scope-functions	agree	tests/scripts/a-function-reads-its-vector-parameter-through-one-header.loft::n_f1
 scope-functions	agree	tests/scripts/a-function-reads-its-vector-parameter-through-one-header.loft::n_f2
+scope-functions	agree	tests/scripts/a-function-reads-its-vector-parameter-through-one-header.loft::n_f4
 scope-functions	agree	tests/scripts/a-function-reads-its-vector-parameter-through-one-header.loft::n_f5
+scope-functions	agree	tests/scripts/a-function-reads-its-vector-parameter-through-one-header.loft::n_f6
 scope-functions	agree	tests/scripts/a-function-reads-its-vector-parameter-through-one-header.loft::n_f7
 scope-functions	agree	tests/scripts/a-function-value-fills-its-callers-record.loft::Sty
 scope-functions	agree	tests/scripts/a-function-value-fills-its-callers-record.loft::TABLE
@@ -18265,6 +18408,7 @@ scope-functions	agree	tests/scripts/a-guarded-row-fill-writes-what-its-guard-adm
 scope-functions	agree	tests/scripts/a-hash-of-plain-entries-copies-whole.loft::Box
 scope-functions	agree	tests/scripts/a-hash-of-plain-entries-copies-whole.loft::P
 scope-functions	agree	tests/scripts/a-hash-of-plain-entries-copies-whole.loft::n_h2
+scope-functions	agree	tests/scripts/a-hash-of-plain-entries-copies-whole.loft::n_h3
 scope-functions	agree	tests/scripts/a-hash-of-plain-entries-copies-whole.loft::n_main
 scope-functions	agree	tests/scripts/a-hash-table-has-a-power-of-two-bucket-count.loft::E
 scope-functions	agree	tests/scripts/a-hash-table-has-a-power-of-two-bucket-count.loft::T
@@ -18305,7 +18449,9 @@ scope-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-acro
 scope-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::Mp
 scope-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::Us
 scope-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::Wd
+scope-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::n_deep
 scope-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::n_main
+scope-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::n_nested
 scope-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::n_reset
 scope-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::n_step
 scope-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::vector<Ck>
@@ -18390,8 +18536,11 @@ scope-functions	agree	tests/scripts/a-length-bound-reads-the-held-header.loft::v
 scope-functions	agree	tests/scripts/a-library-carries-generic-types-across-the-boundary.loft::Mine
 scope-functions	agree	tests/scripts/a-library-carries-generic-types-across-the-boundary.loft::Wrap
 scope-functions	agree	tests/scripts/a-library-carries-generic-types-across-the-boundary.loft::i_12Mine@gridlib_t_4Grid_at
+scope-functions	agree	tests/scripts/a-library-carries-generic-types-across-the-boundary.loft::i_12Mine@gridlib_t_4Grid_height
+scope-functions	agree	tests/scripts/a-library-carries-generic-types-across-the-boundary.loft::i_12text@gridlib_n_cell_count
 scope-functions	agree	tests/scripts/a-library-carries-generic-types-across-the-boundary.loft::i_12text@gridlib_t_4Grid_at
 scope-functions	agree	tests/scripts/a-library-carries-generic-types-across-the-boundary.loft::i_15integer@gridlib_t_4Grid_at
+scope-functions	agree	tests/scripts/a-library-carries-generic-types-across-the-boundary.loft::i_15integer@gridlib_t_4Grid_height
 scope-functions	agree	tests/scripts/a-library-carries-generic-types-across-the-boundary.loft::i_4Mine_n_first_of
 scope-functions	agree	tests/scripts/a-library-carries-generic-types-across-the-boundary.loft::i_4text_n_first_of
 scope-functions	agree	tests/scripts/a-library-carries-generic-types-across-the-boundary.loft::n_first_of
@@ -18416,6 +18565,7 @@ scope-functions	agree	tests/scripts/a-lifted-call-result-adopts-like-a-named-bin
 scope-functions	agree	tests/scripts/a-lifted-call-result-adopts-like-a-named-bind.loft::Rec
 scope-functions	agree	tests/scripts/a-lifted-call-result-adopts-like-a-named-bind.loft::Wrap
 scope-functions	agree	tests/scripts/a-lifted-call-result-adopts-like-a-named-bind.loft::n_run_all
+scope-functions	agree	tests/scripts/a-lifted-call-result-adopts-like-a-named-bind.loft::n_use_rec
 scope-functions	agree	tests/scripts/a-lifted-call-result-adopts-like-a-named-bind.loft::n_use_two
 scope-functions	agree	tests/scripts/a-lifted-call-result-adopts-like-a-named-bind.loft::n_valid
 scope-functions	agree	tests/scripts/a-lifted-call-result-adopts-like-a-named-bind.loft::vector<Rec>
@@ -18475,6 +18625,7 @@ scope-functions	agree	tests/scripts/a-loop-counts-a-text-length-once.loft::n_pas
 scope-functions	agree	tests/scripts/a-loop-counts-a-text-length-once.loft::n_total_len
 scope-functions	agree	tests/scripts/a-loop-holds-its-header-across-a-text-write.loft::Bag
 scope-functions	agree	tests/scripts/a-loop-holds-its-header-across-a-text-write.loft::Item
+scope-functions	agree	tests/scripts/a-loop-holds-its-header-across-a-text-write.loft::n_reset
 scope-functions	agree	tests/scripts/a-loop-holds-its-header-across-a-text-write.loft::vector<Item>
 scope-functions	agree	tests/scripts/a-loop-holds-its-header-across-a-text-write.loft::vector<text?>
 scope-functions	agree	tests/scripts/a-loop-reads-and-cuts-its-pushed-vector-through-the-header.loft::vector<float>
@@ -18503,6 +18654,7 @@ scope-functions	agree	tests/scripts/a-loop-tests-at-its-bottom.loft::n_test_filt
 scope-functions	agree	tests/scripts/a-loop-tests-at-its-bottom.loft::n_test_inner_continue_and_break
 scope-functions	agree	tests/scripts/a-loop-tests-at-its-bottom.loft::n_test_while
 scope-functions	agree	tests/scripts/a-loop-that-returns-from-inside-keeps-its-holders.loft::Box
+scope-functions	agree	tests/scripts/a-loop-that-returns-from-inside-keeps-its-holders.loft::n_shown
 scope-functions	agree	tests/scripts/a-loop-that-returns-from-inside-keeps-its-holders.loft::n_test_a_break_is_not_an_exit
 scope-functions	agree	tests/scripts/a-loop-whose-one-growth-is-its-push-writes-through-the-record.loft::Pt
 scope-functions	agree	tests/scripts/a-loop-whose-one-growth-is-its-push-writes-through-the-record.loft::Shapes
@@ -18552,6 +18704,7 @@ scope-functions	agree	tests/scripts/a-narrow-element-of-a-held-vector-is-read-th
 scope-functions	agree	tests/scripts/a-narrow-element-write-leaves-record-hoists-in-place.loft::Grid
 scope-functions	agree	tests/scripts/a-narrow-element-write-leaves-record-hoists-in-place.loft::Win
 scope-functions	agree	tests/scripts/a-narrow-element-write-leaves-record-hoists-in-place.loft::n_main
+scope-functions	agree	tests/scripts/a-narrow-element-write-leaves-record-hoists-in-place.loft::n_mark
 scope-functions	agree	tests/scripts/a-narrow-element-write-leaves-record-hoists-in-place.loft::n_win_get
 scope-functions	agree	tests/scripts/a-narrow-element-write-leaves-record-hoists-in-place.loft::vector<boolean>
 scope-functions	agree	tests/scripts/a-narrow-integer-widens-into-any-superset.loft::S
@@ -18681,6 +18834,7 @@ scope-functions	agree	tests/scripts/a-pooled-buffers-vectors-are-emptied-in-plac
 scope-functions	agree	tests/scripts/a-pooled-buffers-vectors-are-emptied-in-place.loft::O
 scope-functions	agree	tests/scripts/a-pooled-buffers-vectors-are-emptied-in-place.loft::P
 scope-functions	agree	tests/scripts/a-pooled-buffers-vectors-are-emptied-in-place.loft::T
+scope-functions	agree	tests/scripts/a-pooled-buffers-vectors-are-emptied-in-place.loft::n_shape
 scope-functions	agree	tests/scripts/a-pooled-buffers-vectors-are-emptied-in-place.loft::vector<P>
 scope-functions	agree	tests/scripts/a-program-cannot-tell-which-platform-it-runs-on.loft::n_test_the_separator_is_a_slash
 scope-functions	agree	tests/scripts/a-pure-call-made-twice-is-computed-once.loft::Head
@@ -18806,6 +18960,7 @@ scope-functions	agree	tests/scripts/a-result-read-in-place-is-a-caller-buffer.lo
 scope-functions	agree	tests/scripts/a-result-read-in-place-is-a-caller-buffer.loft::n_c2
 scope-functions	agree	tests/scripts/a-result-read-in-place-is-a-caller-buffer.loft::n_c3
 scope-functions	agree	tests/scripts/a-result-read-in-place-is-a-caller-buffer.loft::n_c9
+scope-functions	agree	tests/scripts/a-result-read-in-place-is-a-caller-buffer.loft::n_count
 scope-functions	agree	tests/scripts/a-result-read-in-place-is-a-caller-buffer.loft::n_ks
 scope-functions	agree	tests/scripts/a-result-read-in-place-is-a-caller-buffer.loft::vector<Run>
 scope-functions	agree	tests/scripts/a-return-buffer-refills-the-store-a-rebind-released.loft::M
@@ -18870,6 +19025,7 @@ scope-functions	agree	tests/scripts/a-slice-bound-before-its-local-is-emptied-ho
 scope-functions	agree	tests/scripts/a-slice-bound-before-its-local-is-emptied-holds-the-slice.loft::n_main
 scope-functions	agree	tests/scripts/a-slice-handed-to-a-const-parameter-needs-no-store-of-its-own.loft::__const_n_frame
 scope-functions	agree	tests/scripts/a-slice-handed-to-a-const-parameter-needs-no-store-of-its-own.loft::n_keep
+scope-functions	agree	tests/scripts/a-slice-handed-to-a-const-parameter-needs-no-store-of-its-own.loft::n_plain_len
 scope-functions	agree	tests/scripts/a-stdlib-one-op-wrapper-is-its-op.loft::Bag
 scope-functions	agree	tests/scripts/a-stdlib-one-op-wrapper-is-its-op.loft::Tag
 scope-functions	agree	tests/scripts/a-stdlib-one-op-wrapper-is-its-op.loft::vector<Bag>
@@ -19110,8 +19266,11 @@ scope-functions	agree	tests/scripts/a-walk-of-a-scalar-literal-builds-no-vector.
 scope-functions	agree	tests/scripts/a-walk-of-a-scalar-literal-builds-no-vector.loft::vector<character>
 scope-functions	agree	tests/scripts/a-walk-of-a-scalar-literal-builds-no-vector.loft::vector<float>
 scope-functions	agree	tests/scripts/a-walk-the-body-cannot-resize-is-a-counted-loop.loft::P
+scope-functions	agree	tests/scripts/a-walk-the-body-cannot-resize-is-a-counted-loop.loft::n_count_of
 scope-functions	agree	tests/scripts/a-walk-the-body-cannot-resize-is-a-counted-loop.loft::n_main
 scope-functions	agree	tests/scripts/a-walk-the-body-cannot-resize-is-a-counted-loop.loft::vector<P>
+scope-functions	agree	tests/scripts/a-while-counter-steps-plain-below-its-bound.loft::n_c1
+scope-functions	agree	tests/scripts/a-while-counter-steps-plain-below-its-bound.loft::n_c2
 scope-functions	agree	tests/scripts/a-while-counter-steps-plain-below-its-bound.loft::n_c3
 scope-functions	agree	tests/scripts/a-while-counter-steps-plain-below-its-bound.loft::n_c5
 scope-functions	agree	tests/scripts/a-while-counter-steps-plain-below-its-bound.loft::n_c6
@@ -19149,6 +19308,7 @@ scope-functions	agree	tests/scripts/an-appended-call-result-arrives-from-every-e
 scope-functions	agree	tests/scripts/an-appended-source-is-built-as-often-as-the-append-runs.loft::AoBag
 scope-functions	agree	tests/scripts/an-appending-leaf-is-inlined-into-its-callers-loop.loft::Holder
 scope-functions	agree	tests/scripts/an-appending-leaf-is-inlined-into-its-callers-loop.loft::Seg
+scope-functions	agree	tests/scripts/an-appending-leaf-is-inlined-into-its-callers-loop.loft::n_check_emit
 scope-functions	agree	tests/scripts/an-appending-leaf-is-inlined-into-its-callers-loop.loft::n_same
 scope-functions	agree	tests/scripts/an-appending-leaf-is-inlined-into-its-callers-loop.loft::vector<Seg>
 scope-functions	agree	tests/scripts/an-appending-leaf-is-inlined-into-its-callers-loop.loft::vector<boolean>
@@ -19179,6 +19339,7 @@ scope-functions	agree	tests/scripts/an-element-is-built-in-place-by-its-call-and
 scope-functions	agree	tests/scripts/an-element-is-built-in-place-by-its-call-and-in-either-arm.loft::n_main
 scope-functions	agree	tests/scripts/an-element-is-built-in-place-by-its-call-and-in-either-arm.loft::vector<Row>
 scope-functions	agree	tests/scripts/an-index-a-passed-test-keeps-below-the-length-is-read-in-range.loft::P
+scope-functions	agree	tests/scripts/an-index-a-passed-test-keeps-below-the-length-is-read-in-range.loft::n_g7in
 scope-functions	agree	tests/scripts/an-index-a-passed-test-keeps-below-the-length-is-read-in-range.loft::vector<P>
 scope-functions	agree	tests/scripts/an-index-a-passed-test-keeps-below-the-length-is-read-in-range.loft::vector<float>
 scope-functions	agree	tests/scripts/an-index-walk-steps-from-its-hint-only-while-it-holds.loft::Db
@@ -19222,6 +19383,7 @@ scope-functions	agree	tests/scripts/golden-images-whole.loft::__const_n_sets
 scope-functions	agree	tests/scripts/golden-images-whole.loft::n___upgrade_drain
 scope-functions	agree	tests/scripts/golden-images-whole.loft::n_img
 scope-functions	agree	tests/scripts/golden-images-whole.loft::n_main
+scope-functions	agree	tests/scripts/golden-images-whole.loft::n_rec_ok
 scope-functions	agree	tests/scripts/link-obs-oracle.loft::S
 scope-functions	agree	tests/scripts/link-obs-oracle.loft::n_main
 scope-functions	agree	tests/scripts/link-safe-oracle.loft::S
@@ -19309,6 +19471,9 @@ scope-functions	agree	tests/scripts/pln125-c-index.loft::__iface_874#1_count
 scope-functions	agree	tests/scripts/pln125-c-index.loft::__iface_874#2_at
 scope-functions	agree	tests/scripts/pln125-c-index.loft::n_total
 scope-functions	agree	tests/scripts/pln125-c-index.loft::t_4Bits_at
+scope-functions	agree	tests/scripts/pln125-c-index.loft::t_4Bits_count
+scope-functions	agree	tests/scripts/pln125-c-index.loft::t_4Ring_at
+scope-functions	agree	tests/scripts/pln125-c-index.loft::t_4Ring_count
 scope-functions	agree	tests/scripts/pln125-c-index.loft::t_6I#1#g1_count
 scope-functions	agree	tests/scripts/pln125-c-index.loft::t_6I#1#g2_at
 scope-functions	agree	tests/scripts/pln125-c-index.loft::vector<Cell>
@@ -19439,6 +19604,8 @@ scope-functions	agree	tests/scripts/tail-capture-lifted-arg.loft::SlSf
 scope-functions	agree	tests/scripts/tail-capture-lifted-arg.loft::vector<float>
 scope-functions	agree	tests/scripts/the-reference-file-writes-the-widths-it-lists.loft::n_sizeof_agrees_with_what_the_appends_wrote
 scope-functions	agree	tests/scripts/the-reference-float-boundary-is-where-it-says.loft::n_a_coalesce_rescues_the_nulls_and_not_the_infinities
+scope-functions	agree	tests/scripts/the-reference-float-boundary-is-where-it-says.loft::n_the_infinity_rows_are_infinities
+scope-functions	agree	tests/scripts/the-reference-float-boundary-is-where-it-says.loft::n_the_null_rows_are_nulls
 scope-functions	agree	tests/scripts/the-reference-safety-traps-are-what-it-catalogues.loft::SafetyBag
 scope-functions	agree	tests/scripts/the-reference-safety-traps-are-what-it-catalogues.loft::SafetyBool
 scope-functions	agree	tests/scripts/the-reference-safety-traps-are-what-it-catalogues.loft::SafetyRank

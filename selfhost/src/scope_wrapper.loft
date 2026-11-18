@@ -1,0 +1,141 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `@FR-R-Wrapper` as the scope pass applies it last (`src/wrapper_inline.rs`): a call to
+// a standard-library function whose whole body is one native op over its own parameters and
+// constants (`len(v)` is `OpLengthVector(v)`, `pow(a, b)` is `OpPowFloat(a, b)`) is that op, with
+// the caller's arguments in the operand positions.  Admitted where every argument is a LEAF — a
+// variable, a literal, or constant field projections over a variable — and the op answers the
+// wrapper's kind of value; anything else keeps the call.  The wrapper itself is recognised by
+// `opt_split_table::one_op_wrapper` (`ir_shape::one_op_wrapper_call`).
+
+use ir;
+use lower;
+use opt_split_table;
+
+// Every admitted wrapper call of `code`, replaced by its op.
+pub fn rewrite(b: ir::Bundle, code: ir::Node) -> ir::Node {
+  get_field = lower::find(b, "OpGetField") ?? -1;
+  node(b, code, get_field)
+}
+
+fn node(b: ir::Bundle, n: ir::Node, gf: integer) -> ir::Node {
+  match n {
+    NdCall { def_nr, args } => {
+      a = [for x in args { node(b, x, gf) }];
+      call(b, def_nr, a, gf)
+    },
+    NdBlock { block } => {
+      bl = block[0];
+      bl.operators = [for x in bl.operators { node(b, x, gf) }];
+      ir::NdBlock { block: [bl] }
+    },
+    NdLoop { block } => {
+      bl = block[0];
+      bl.operators = [for x in bl.operators { node(b, x, gf) }];
+      ir::NdLoop { block: [bl] }
+    },
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: node(b, inner, gf) },
+    NdSet { var, inner } => ir::NdSet { var: var, inner: node(b, inner, gf) },
+    NdReturn { inner } => ir::NdReturn { inner: node(b, inner, gf) },
+    NdDrop { inner } => ir::NdDrop { inner: node(b, inner, gf) },
+    NdYield { inner } => ir::NdYield { inner: node(b, inner, gf) },
+    NdIf { cond, t, f } => ir::NdIf { cond: node(b, cond, gf), t: node(b, t, gf), f: node(b, f, gf) },
+    NdInsert { items } => ir::NdInsert { items: [for x in items { node(b, x, gf) }] },
+    NdCallRef { var, args } => ir::NdCallRef { var: var, args: [for x in args { node(b, x, gf) }] },
+    NdTuple { items } => ir::NdTuple { items: [for x in items { node(b, x, gf) }] },
+    NdTuplePut { var, idx, inner } => ir::NdTuplePut { var: var, idx: idx, inner: node(b, inner, gf) },
+    NdIter { var, create, next, init } => ir::NdIter { var: var, create: node(b, create, gf), next: node(b, next, gf), init: node(b, init, gf) },
+    NdParallel { arms } => ir::NdParallel { arms: [for x in arms { node(b, x, gf) }] },
+    _ => n
+  }
+}
+
+fn call(b: ir::Bundle, d: integer, args: vector<ir::Node>, gf: integer) -> ir::Node {
+  operands: vector<ir::Node> = [];
+  op = opt_split_table::one_op_wrapper(b, d, operands);
+  if op < 0 {
+    return ir::NdCall { def_nr: d, args: args };
+  }
+  for a in args {
+    if !leaf(a, gf) {
+      return ir::NdCall { def_nr: d, args: args };
+    }
+  }
+  if kind(b.data.definitions[op]!.returned[0] ?? ir::TyVoid) != kind(b.data.definitions[d]!.returned[0] ?? ir::TyVoid) {
+    return ir::NdCall { def_nr: d, args: args };
+  }
+  // The op over the caller's arguments, each operand a parameter position or the body's own
+  // constant (a libm selector).
+  vals: vector<ir::Node> = [];
+  for o in operands {
+    match unspan(o) {
+      NdVar { n: i } => {
+        if i >= len(args) {
+          return ir::NdCall { def_nr: d, args: args };
+        }
+        vals += [args[i]!];
+      },
+      c: _ => { vals += [c]; }
+    }
+  }
+  ir::NdCall { def_nr: op, args: vals }
+}
+
+fn unspan(n: ir::Node) -> ir::Node {
+  match n { NdSpan { inner } => unspan(inner), _ => n }
+}
+
+// A variable, a literal, or constant field projections over a variable: a value that reads the
+// same however often and in whatever order it is read.
+fn leaf(v: ir::Node, gf: integer) -> boolean {
+  match unspan(v) {
+    NdVar => true,
+    NdInt => true,
+    NdLong => true,
+    NdFloat => true,
+    NdSingle => true,
+    NdBoolean => true,
+    NdCall { def_nr, args } => {
+      if def_nr != gf || len(args) != 3 {
+        return false;
+      }
+      inner = unspan(args[0]!);
+      (inner is NdVar || inner is NdCall) && unspan(args[1]!) is NdInt && unspan(args[2]!) is NdInt && leaf(inner, gf)
+    },
+    _ => false
+  }
+}
+
+// The kind of value a type answers, bounds and nullability aside (`same_kind`'s discriminant of
+// the base type).
+fn kind(t: ir::TypeT) -> text {
+  match t {
+    TyOptional { inner } => kind(inner),
+    TyInteger => "integer",
+    TyBoolean => "boolean",
+    TyFloat => "float",
+    TySingle => "single",
+    TyCharacter => "character",
+    TyText => "text",
+    TyEnum => "enum",
+    TyReference => "reference",
+    TyVector => "vector",
+    TyVoid => "void",
+    TyNull => "null",
+    TyNever => "never",
+    TyRefVar => "refvar",
+    TyHash => "hash",
+    TySorted => "sorted",
+    TyIndex => "index",
+    TyRadix => "radix",
+    TyTrie => "trie",
+    TyKeys => "keys",
+    TyIterator => "iterator",
+    TyRoutine => "routine",
+    TyFunction => "function",
+    TyTuple => "tuple",
+    TyRewritten => "rewritten",
+    _ => "unknown"
+  }
+}
