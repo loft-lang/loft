@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	fac3652dc1b37371599d8511c95e1683ff5a73ed
 
-layer	elab	agree	1073	of	2191
+layer	elab	agree	1074	of	2191
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -574,7 +574,6 @@ elab	refused	loft-suite/rules/ownership/O-Latest/a-whole-value-copy-of-a-droppab
 elab	refused	loft-suite/rules/ownership/O-Move/1101-a-projection-bound-to-a-local-then-returned.loft
 elab	refused	loft-suite/rules/ownership/O-Move/1202-a-captured-record-enum-is-not-the-callers-to-take.loft
 elab	refused	loft-suite/rules/ownership/O-Move/1625-an-explicit-return-of-an-element-records-its-borrow.loft
-elab	refused	loft-suite/rules/ownership/O-Move/2385-a-call-with-a-unit-variant-argument-answers-and-releases-its-fresh-record.loft
 elab	refused	loft-suite/rules/ownership/O-Move/a-join-arm-call-that-may-answer-its-argument-frees-it-once.loft
 elab	refused	loft-suite/rules/ownership/O-Move/a-keyed-collection-returned-borrowed-is-the-callers-copy.loft
 elab	refused	loft-suite/rules/ownership/O-Move/a-member-of-a-tuple-argument-handed-back-is-the-callers.loft
@@ -1125,7 +1124,7 @@ elab	refused	tests/scripts/store_persist_size_710.loft
 elab	refused	tests/scripts/store_rebuild_b1.loft
 elab	refused	tests/scripts/the-reference-safety-traps-are-what-it-catalogues.loft
 
-layer	elab-functions	agree	15438	of	27798
+layer	elab-functions	agree	15429	of	27781
 elab-functions	agree	lib/code.loft::Block
 elab-functions	agree	lib/code.loft::Boolean
 elab-functions	agree	lib/code.loft::Call
@@ -9088,20 +9087,6 @@ elab-functions	agree	loft-suite/rules/ownership/O-Move/1625-an-explicit-return-o
 elab-functions	agree	loft-suite/rules/ownership/O-Move/1625-an-explicit-return-of-an-element-records-its-borrow.loft::n_okt
 elab-functions	agree	loft-suite/rules/ownership/O-Move/1625-an-explicit-return-of-an-element-records-its-borrow.loft::vector<vector<integer>>
 elab-functions	agree	loft-suite/rules/ownership/O-Move/1625-an-explicit-return-of-an-element-records-its-borrow.loft::vector<vector<text>>
-elab-functions	agree	loft-suite/rules/ownership/O-Move/2385-a-call-with-a-unit-variant-argument-answers-and-releases-its-fresh-record.loft::(schema)
-elab-functions	agree	loft-suite/rules/ownership/O-Move/2385-a-call-with-a-unit-variant-argument-answers-and-releases-its-fresh-record.loft::N
-elab-functions	agree	loft-suite/rules/ownership/O-Move/2385-a-call-with-a-unit-variant-argument-answers-and-releases-its-fresh-record.loft::NA
-elab-functions	agree	loft-suite/rules/ownership/O-Move/2385-a-call-with-a-unit-variant-argument-answers-and-releases-its-fresh-record.loft::NB
-elab-functions	agree	loft-suite/rules/ownership/O-Move/2385-a-call-with-a-unit-variant-argument-answers-and-releases-its-fresh-record.loft::TInt
-elab-functions	agree	loft-suite/rules/ownership/O-Move/2385-a-call-with-a-unit-variant-argument-answers-and-releases-its-fresh-record.loft::TOpt
-elab-functions	agree	loft-suite/rules/ownership/O-Move/2385-a-call-with-a-unit-variant-argument-answers-and-releases-its-fresh-record.loft::Ty
-elab-functions	agree	loft-suite/rules/ownership/O-Move/2385-a-call-with-a-unit-variant-argument-answers-and-releases-its-fresh-record.loft::n_main
-elab-functions	agree	loft-suite/rules/ownership/O-Move/2385-a-call-with-a-unit-variant-argument-answers-and-releases-its-fresh-record.loft::n_test_a_qualified_unit_variant_argument
-elab-functions	agree	loft-suite/rules/ownership/O-Move/2385-a-call-with-a-unit-variant-argument-answers-and-releases-its-fresh-record.loft::n_test_a_unit_variant_argument
-elab-functions	agree	loft-suite/rules/ownership/O-Move/2385-a-call-with-a-unit-variant-argument-answers-and-releases-its-fresh-record.loft::n_test_a_variant_with_fields
-elab-functions	agree	loft-suite/rules/ownership/O-Move/2385-a-call-with-a-unit-variant-argument-answers-and-releases-its-fresh-record.loft::n_test_the_variant_in_a_local
-elab-functions	agree	loft-suite/rules/ownership/O-Move/2385-a-call-with-a-unit-variant-argument-answers-and-releases-its-fresh-record.loft::n_test_through_a_forwarding_call
-elab-functions	agree	loft-suite/rules/ownership/O-Move/2385-a-call-with-a-unit-variant-argument-answers-and-releases-its-fresh-record.loft::n_weight
 elab-functions	agree	loft-suite/rules/ownership/O-Move/a-join-arm-call-that-may-answer-its-argument-frees-it-once.loft::(schema)
 elab-functions	agree	loft-suite/rules/ownership/O-Move/a-join-arm-call-that-may-answer-its-argument-frees-it-once.loft::B
 elab-functions	agree	loft-suite/rules/ownership/O-Move/a-join-arm-call-that-may-answer-its-argument-frees-it-once.loft::T
@@ -11125,8 +11110,12 @@ elab-functions	agree	loft-suite/rules/types/N-Intro/a-nullable-variant-widens-in
 elab-functions	agree	loft-suite/rules/types/N-Intro/a-nullable-variant-widens-into-its-enums-nullable-slot.loft::n_wider
 elab-functions	agree	loft-suite/rules/types/N-Join/153-n-join-a-bare-null-widens-an-inferred-local.loft::(schema)
 elab-functions	agree	loft-suite/rules/types/N-Join/153-n-join-a-bare-null-widens-an-inferred-local.loft::P
+elab-functions	agree	loft-suite/rules/types/N-Join/153-n-join-a-bare-null-widens-an-inferred-local.loft::n_int_after
 elab-functions	agree	loft-suite/rules/types/N-Join/153-n-join-a-bare-null-widens-an-inferred-local.loft::n_loop_rebuild
 elab-functions	agree	loft-suite/rules/types/N-Join/153-n-join-a-bare-null-widens-an-inferred-local.loft::n_main
+elab-functions	agree	loft-suite/rules/types/N-Join/153-n-join-a-bare-null-widens-an-inferred-local.loft::n_proven
+elab-functions	agree	loft-suite/rules/types/N-Join/153-n-join-a-bare-null-widens-an-inferred-local.loft::n_rec_after
+elab-functions	agree	loft-suite/rules/types/N-Join/153-n-join-a-bare-null-widens-an-inferred-local.loft::n_vec_after
 elab-functions	agree	loft-suite/rules/types/N-Join/153-n-join-a-bare-null-widens-an-inferred-local.loft::n_vec_first
 elab-functions	agree	loft-suite/rules/types/N-Join/153-n-join-an-inferred-local-widens-to-nullable.loft::(schema)
 elab-functions	agree	loft-suite/rules/types/N-Join/153-n-join-an-inferred-local-widens-to-nullable.loft::A
@@ -11247,6 +11236,7 @@ elab-functions	agree	loft-suite/rules/types/N-Road/1989-a-literal-bound-to-a-nul
 elab-functions	agree	loft-suite/rules/types/N-Road/1989-a-literal-bound-to-a-nullable-local-is-built-in-the-local.loft::n_reads_itself
 elab-functions	agree	loft-suite/rules/types/N-Road/1989-a-literal-bound-to-a-nullable-local-is-built-in-the-local.loft::n_rebound
 elab-functions	agree	loft-suite/rules/types/N-Road/1989-a-literal-bound-to-a-nullable-local-is-built-in-the-local.loft::n_rebuilt_each_pass
+elab-functions	agree	loft-suite/rules/types/N-Road/1989-a-literal-bound-to-a-nullable-local-is-built-in-the-local.loft::n_widened
 elab-functions	agree	loft-suite/rules/types/N-Road/1989-a-literal-bound-to-a-nullable-local-is-built-in-the-local.loft::t_20__closure_captured_0_OpDropAll
 elab-functions	agree	loft-suite/rules/types/N-Road/1989-a-literal-bound-to-a-nullable-local-is-built-in-the-local.loft::vector<S>
 elab-functions	agree	loft-suite/rules/types/N-Road/every-shape-takes-the-same-road-in-both-spellings.loft::(schema)
