@@ -2584,9 +2584,7 @@ pub fn materialised_return(e: el::El, vars: el_vars::Vars, v: Ex, w: integer, re
 // to, a scalar element type, and items whose every call is a primitive or `#pure` — a user call
 // could reach the vector, and the order of its effects against the appends is the snapshot's.
 pub fn build_vals_carry(e: el::El, vars: el_vars::Vars, v: integer, in_t: ir::TypeT, xs: vector<Ex>) -> boolean {
-  if vars.vars[v].argument {
-    return false;
-  }
+  // (A parameter is a bare variable destination as a local is.)
   match el_types::base(in_t) {
     TyInteger { spec: _ } => {},
     TyFloat => {},
