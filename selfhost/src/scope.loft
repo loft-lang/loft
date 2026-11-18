@@ -267,11 +267,11 @@ fn tail_return(body: ir::Node) -> ir::Node {
       }
       last = bl.operators[k - 1]!;
       inner = match last { NdSpan { inner } => inner, _ => last };
+      // The return wraps the tail as it stands, its span inside (`insert_free.rs`:
+      // `Return(Box::new(o.clone()))`); a span outside the return prints a level the Rust
+      // image does not have wherever no line marker stands before it (a lambda's body).
       if !(inner is NdReturn) {
-        bl.operators[k - 1] = match last {
-          NdSpan { pos, inner: li } => ir::NdSpan { pos: pos, inner: ir::NdReturn { inner: li } },
-          _ => ir::NdReturn { inner: last }
-        };
+        bl.operators[k - 1] = ir::NdReturn { inner: last };
       }
       ir::NdBlock { block: [bl] }
     },
