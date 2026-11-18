@@ -11665,6 +11665,23 @@ extern crate loft;"
                     fresh_first_binds.push(v);
                 }
             }
+            // A local READ ahead of its first bind — a release the scope pass placed in the
+            // local's own initialiser (`r = if c { f() ?? return … } else { … }`: the early
+            // return's sweep compares a buffer with `r`), or a guard in front of a temporary's
+            // null-init.  The other backends read the frame slot; here the name has no `let`
+            // yet.  Bound null up front as the two kinds above are, and by the same split: a
+            // null-init that follows stays the local's fresh first bind.
+            let mut early_reads: Vec<(u16, bool)> = Vec::new();
+            let mut bound: HashSet<u16> = HashSet::new();
+            collect_reads_before_bind(def.code(), &mut bound, &mut early_reads);
+            for (v, null_first) in early_reads {
+                if bound.contains(&v) && !if_test_sets.contains(&v) {
+                    if_test_sets.push(v);
+                    if null_first {
+                        fresh_first_binds.push(v);
+                    }
+                }
+            }
             for &v in &if_test_sets {
                 if !vars.is_argument(v)
                     && !self.declared.contains(&v)
@@ -13596,6 +13613,28 @@ fn collect_branch_shared_assigned(code: &Value, out: &mut Vec<u16>) {
             }
         }
     });
+}
+
+/// Every local `code` reads before its first `Set`, in evaluation order (a `Set`'s value
+/// runs before it binds), each with whether that first `Set` is a null-init.  `bound` ends as
+/// every local `code` sets: a name read here and absent there is bound by something else.
+fn collect_reads_before_bind(code: &Value, bound: &mut HashSet<u16>, out: &mut Vec<(u16, bool)>) {
+    match code.unspan() {
+        Value::Set(v, rhs) => {
+            collect_reads_before_bind(rhs, bound, out);
+            if bound.insert(*v)
+                && let Some(early) = out.iter_mut().find(|(e, _)| e == v)
+            {
+                early.1 = matches!(rhs.unspan(), Value::Null);
+            }
+        }
+        Value::Var(v) => {
+            if !bound.contains(v) && !out.iter().any(|(e, _)| e == v) {
+                out.push((*v, false));
+            }
+        }
+        other => other.for_each_child(&mut |c| collect_reads_before_bind(c, bound, out)),
+    }
 }
 
 /// Every variable `code` assigns, at any depth.

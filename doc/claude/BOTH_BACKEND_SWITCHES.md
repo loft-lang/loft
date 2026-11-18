@@ -714,7 +714,10 @@ binding takes a deep copy and the copy and the temp each run the type's `OpDrop`
 only views the chain's temp and releases nothing, so `r = f() ?? S { .. }` in a block or a loop
 body runs the literal's hook nowhere.  **`LOFT_NO_RETURNED_HOOK_GUARD=1`** leaves a hook bare
 where the return site made its free conditional on the store not being the one returned, so a
-temp whose record the returned local took runs the hook the caller runs again.  Each is the
+temp whose record the returned local took runs the hook the caller runs again.  **`LOFT_NO_BUFFER_HOOK_SCOPE=1`** lets a call's vector buffer run its hook at the function's
+end over a binding whose own block has ended (`if c { w = mkv(); }`): that binding ran the hook
+at its block's end and emptied the vector, so the second run releases nothing, and it names a
+local outside its block, which the rustc writer cannot compile.  Each is the
 bisect step for a hook that ran twice or not at all out of a `??` chain beside a plain record
 (`loft-suite/rules/heap/H-Drop/2552-a-chain-arm-beside-a-plain-record-runs-each-hook-once.loft`).
 
