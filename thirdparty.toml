@@ -59,8 +59,8 @@ provider = "Windows: the native API (ntdll) and the wait-on-address primitives (
 
 [thirdparty.macos]
 kind     = "system"
-names    = ["Security", "ServiceManagement", "CoreFoundation", "bsm", "iconv"]
-provider = "macOS: the keychain trust store (rustls-native-certs), CoreFoundation, the audit library (nix through zip), libiconv (the libc crate links it on Apple targets)"
+names    = ["Security", "ServiceManagement", "CoreFoundation", "bsm", "iconv", "AppKit", "objc"]
+provider = "macOS: the keychain trust store (rustls-native-certs), CoreFoundation, the audit library (nix through zip), libiconv (the libc crate links it on Apple targets), AppKit and the Objective-C runtime (scripts/mac_windows_aside.c, the test helper that opens a Mac's window tests beside the screen in use)"
 
 [thirdparty.android-ndk]
 kind       = "sdk"
