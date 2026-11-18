@@ -109,7 +109,8 @@ program that stays refused is seen by nothing else before the promotion.
 What the Rust front end does for a topic, read ahead of the port, each with a probe program
 that challenges the rule (one function per case, every value hand-computed, run on both
 backends): [hoisted-defaults.md](hoisted-defaults.md), [record-return.md](record-return.md),
-[keyed-field-write.md](keyed-field-write.md);
+[keyed-field-write.md](keyed-field-write.md),
+[linked-group-literal.md](linked-group-literal.md);
 the probes are in [probes/](probes/).
 
 ## What the trace does not show
