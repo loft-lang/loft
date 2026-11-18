@@ -594,47 +594,47 @@ D-Scalar	types	curated	2	2026-11-18	two suite cells, distinct cases
 D-Text	types	curated	1	2026-11-18	one suite cell
 I-Join	types	curated	9	2026-11-18	its one refused fold's cores agree with gate E; kept
 I-Lit	types	curated	3	2026-11-18	two suite cells, distinct cases
-I-Narrow	types	todo			
-I-Narrow-Opt	types	todo			
-I-Sub	types	todo			
-I-Widen	types	todo			
-N-Arith	types	todo			
-N-Cast	types	todo			
-N-Chain	types	todo			
-N-Chain-Place	types	todo			
-N-Coal	types	todo			
-N-Decl	types	todo			
-N-Default	types	todo			
-N-Dense	types	todo			
-N-Div	types	todo			
-N-Domain	types	todo			
-N-Guard	types	todo			
-N-Idem	types	todo			
-N-Index	types	todo			
-N-Intro	types	todo			
-N-Join	types	todo			
-N-Match	types	todo			
-N-Opt	types	todo			
-N-Parse	types	todo			
-N-Present	types	todo			
-N-Prop	types	todo			
-N-Reserve	types	todo			
-N-Road	types	todo			
-N-Shape	types	todo			
-N-Store	types	todo			
-P-Alt-Diff	types	todo			
-P-Alt-Same	types	todo			
-P-Cap-Ty	types	todo			
-P-Opt-Ty	types	todo			
-P-Rep-Ty	types	todo			
-P-Rest-Ty	types	todo			
-T-Chk	types	todo			
-T-Chk-Lam	types	todo			
-T-Chk-Var	types	todo			
-T-Chk-Vec	types	todo			
-T-Recursive	types	todo			
-T-Sub	types	todo			
-T-Syn	types	todo			
+I-Narrow	types	curated	11	2026-11-18	nine suite cells, distinct cases
+I-Narrow-Opt	types	curated	4	2026-11-18	three suite cells, distinct cases
+I-Sub	types	curated	3	2026-11-18	one suite cell
+I-Widen	types	curated	2	2026-11-18	one suite cell
+N-Arith	types	curated	7	2026-11-18	seven suite cells, distinct cases
+N-Cast	types	curated	15	2026-11-18	merged the two checked-cast-miss cells; the non-null-destination cell carries expectations and stays
+N-Chain	types	curated	4	2026-11-18	four suite cells, distinct cases
+N-Chain-Place	types	curated	1	2026-11-18	one suite cell
+N-Coal	types	curated	11	2026-11-18	nine suite cells, distinct cases
+N-Decl	types	curated	17	2026-11-18	merged the destructured-name pair; the other refused cells are distinct cases (an else-if chain, a constant, a comprehension, an inline nullable narrowing, a literal argument)
+N-Default	types	curated	10	2026-11-18	nine suite cells, distinct cases
+N-Dense	types	curated	2	2026-11-18	two suite cells, distinct cases
+N-Div	types	curated	5	2026-11-18	five suite cells, distinct cases
+N-Domain	types	curated	14	2026-11-18	its two own fold candidates agree with gate E and stay
+N-Guard	types	curated	9	2026-11-18	its six own fold candidates agree with gate E and stay
+N-Idem	types	curated	1	2026-11-18	one suite cell
+N-Index	types	curated	10	2026-11-18	its refused fold's partner carries eight expectations; kept
+N-Intro	types	curated	11	2026-11-18	its own fold candidate agrees with gate E; kept
+N-Join	types	curated	20	2026-11-18	its three own fold candidates agree with gate E and stay
+N-Match	types	curated	3	2026-11-18	merged the three null-arm cells (loft#1417, #2230, #2427 named in the intro)
+N-Opt	types	curated	10	2026-11-18	its two refused cells are distinct cases (a value struct's tag, has-null owed by every construction)
+N-Parse	types	curated	4	2026-11-18	its own fold candidate agrees with gate E; kept
+N-Present	types	curated	4	2026-11-18	its own fold candidate agrees with gate E; kept
+N-Prop	types	curated	7	2026-11-18	seven suite cells, distinct cases
+N-Reserve	types	curated	18	2026-11-18	merged the three narrow-sentinel cells (five issues named in the intro); the fit-testing and spelling cells stay
+N-Road	types	curated	15	2026-11-18	its patch cell stays; the other refused cells are distinct cases
+N-Shape	types	curated	30	2026-11-18	three merges (the 1836 link pair, the 2233/2248 coalesce-tail pair, the three tuple-member release cells); the rest are distinct numbered cases
+N-Store	types	curated	49	2026-11-18	its refused cells carry expectations or patch receipts; each stays
+P-Alt-Diff	types	curated	10	2026-11-18	eight suite cells, distinct cases
+P-Alt-Same	types	curated	8	2026-11-18	seven suite cells, distinct cases
+P-Cap-Ty	types	curated	1	2026-11-18	one suite cell
+P-Opt-Ty	types	curated	5	2026-11-18	its own fold candidate agrees with gate E; kept
+P-Rep-Ty	types	curated	3	2026-11-18	its refused fold's partner carries an expectation; kept
+P-Rest-Ty	types	curated	1	2026-11-18	one suite cell
+T-Chk	types	curated	4	2026-11-18	four suite cells, distinct cases
+T-Chk-Lam	types	curated	2	2026-11-18	its own fold candidate agrees with gate E; kept
+T-Chk-Var	types	curated	1	2026-11-18	one suite cell
+T-Chk-Vec	types	curated	3	2026-11-18	three suite cells, distinct cases
+T-Recursive	types	curated	5	2026-11-18	its own fold candidate agrees with gate E; kept
+T-Sub	types	curated	1	2026-11-18	one suite cell
+T-Syn	types	curated	3	2026-11-18	three suite cells, distinct cases
 W-Call	types	curated	2	2026-11-18	a call crossing between a regime file and a 64-bit file narrows at the receiving side: needs two files, held by tests/width32.rs's library crossings
 W-Count	types	curated	2	2026-11-18	a count is an i32 under the regime: W-Name's cell (len + i32::MAX reads null) and tests/width32.rs
 W-Lit	types	curated	3	2026-11-18	its own cell beside W-Name's, which spells the 64-bit literals the rule names as its cure
