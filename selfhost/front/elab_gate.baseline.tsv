@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	c33720ca0b51492c8d1e101bdb9cbf0e1f0527b0
+suite	08bb37417582c0704c88753b5f47fe08c561347e
 
-layer	elab	agree	1031	of	2067
+layer	elab	agree	1031	of	2066
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -546,11 +546,10 @@ elab	refused	loft-suite/rules/rewrites/R-HostStore/a-literal-adopts-its-children
 elab	refused	loft-suite/rules/rewrites/R-HostStore/a-recursion-answering-its-own-results-keeps-adopts-and-releases-them.loft
 elab	refused	loft-suite/rules/rewrites/R-InPlace/158-link-rebind.loft
 elab	refused	loft-suite/rules/rewrites/R-InPlace/a-link-to-a-plain-record-blocks-no-hoist.loft
-elab	refused	loft-suite/rules/rewrites/R-InPlaceLiteral/1571-a-literal-written-in-place-reads-the-old-record-through-any-view.loft
+elab	refused	loft-suite/rules/rewrites/R-InPlaceLiteral/1571-a-literal-written-in-place-reads-the-old-value-through-any-view.loft
 elab	refused	loft-suite/rules/rewrites/R-InPlaceLiteral/1834-a-user-name-starting-with-an-underscore-is-the-users.loft
 elab	refused	loft-suite/rules/rewrites/R-InPlaceLiteral/a-literal-assigned-to-a-reference-field-repoints-it.loft
 elab	refused	loft-suite/rules/rewrites/R-InPlaceLiteral/a-literal-reading-its-places-own-collection-keeps-it.loft
-elab	refused	loft-suite/rules/rewrites/R-InPlaceLiteral/a-variant-rebuilt-in-place-reads-its-collection-member-through-a-view.loft
 elab	refused	loft-suite/rules/rewrites/R-InPlaceLiteral/an-in-place-literal-and-a-transient-read-of-its-place-answer-what-the-copies-would.loft
 elab	refused	loft-suite/rules/rewrites/R-InPlaceLiteral/an-in-place-literal-answers-the-same-with-its-switches-off.loft
 elab	refused	loft-suite/rules/rewrites/R-Inputs/a-field-path-twin-input-is-stale-after-every-write-that-reaches-it.loft
