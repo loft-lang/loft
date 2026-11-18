@@ -12,9 +12,9 @@ Read the patterns first; the rows are the evidence.
 | pattern | seen | prevention | state |
 |---|---|---|---|
 | A prediction names a program the gate never compares (`@EXPECT_ERROR`, or the Rust front end refuses it) | 3 | each tip's `noimage.txt` (the reason beside each program); `noimage.py <tip> NAME…` checks a prediction's list before a cycle is spent | built |
-| A new port refuses, or drops, functions that agreed (found one tip later) | 2 | a try-gate: the porter names a commit, the tester answers drops and differs before it is promoted | offered |
+| A new port refuses, or drops, functions that agreed (found one tip later) | 3 | a try-gate: the porter names a commit, the tester answers drops and differs before it is promoted | offered |
 | Main moves under the port (a Rust change, new suite programs) and the differ shows only after the rebase | 1 | `maincheck.sh`: when `origin/main` moves and the port does not hold it, the last tip is gated MERGED with main at main's suite pin, in a worktree of its own; one `MAINCHECK` line and a report | built; its full path runs first when main next moves |
-| An instrument's ranking sends the porter to a non-problem | 1 | a new count is read on three examples by the tester before it is reported as a priority | habit |
+| An instrument's ranking, or a count of the tester's, sends the porter to a non-problem | 3 | a new count is read on three examples by the tester before it is reported as a priority | habit |
 | The watcher gates a commit in the middle of a multi-commit push | 1 | the watcher starts a cycle only for a tip that has stood for a minute | built |
 | The tester's commits wait for a gap between cycles, or land mid-cycle | 3 | `sync.sh` (the cycle, its push and the baseline job merge what is on GitHub first) and `land.sh` (the tester's commits replayed onto the branch's tip from its own worktree); the real gate is asked to measure the commit the cycle GATED | built |
 | A Rust decision the port must mirror has no trace line, and is learned by probe builds | 1 | a `route` line at the decision, verdict and names included, added when the porter names the selector | habit: ask each handoff which decision cost probes |
@@ -51,4 +51,6 @@ Read the patterns first; the rows are the evidence.
 | 11-18 | f74d7e42b | ! | The porter's `view_tail` ran on bodies ending in a `return` statement (a spare `__ref_N`); its own corpus listing could not see it, the program being refused elsewhere — `pass1_mint.py` did | the first pass read for refused programs too (built) |
 | 11-18 | eb02bf3c4 | + | The selector's `route` line: "the line I was missing"; predictions now checked against the noimage rule before they are sent | — |
 | 11-18 | dda79c069 | ? | `fn-end … ret=ref(Own)["__retbuf"]` read as "the port misses a bind" for 47 functions; the dep is an ATTRIBUTE number printed through the variable of that number, so a rename and a bind printed alike | the result's deps spelled as attributes (added: `attrs=<n>:<attribute name>`) |
+| 11-18 | 3757d9dce | ! | The reasoned refusal "a field append whose item reads the field: beside a value built in place" caught `own.hs += [H { r: own.items[0] }]`, which the port built correctly before: one function drop (and a schema section beside it) | a try-gate; the porter judged the change not shared, so none was asked — a new REFUSAL is a shared rule too |
+| 11-18 | 3757d9dce | ? | The tester sent four counts tallied over both sides' lines as if they were the Rust side's; withdrawn in the next message | the three-examples habit, applied to the tester's own tallies |
 
