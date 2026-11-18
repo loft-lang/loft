@@ -57,6 +57,46 @@ pub fn value(e: el::El, vars: el_vars::Vars, at: integer, tp: ir::TypeT) {
   eprintln("state {if e.first_pass { 1 } else { 2 }} {p.line}:{p.pos} stmt-end value={report::type_show_in(e.b, el_vars::stored(vars), tp)}");
 }
 
+// The `var` point (`Parser::state_trace_vars`, port-debug-output.md § 1): what the statement read
+// from token `at` did to the function's variable table — `+ <type>` for a variable it created,
+// `<old> -> <new>` for one whose type or deps it changed — found by comparing the table with
+// what this function last printed on this pass.  A statement nested in another prints first, so
+// each change goes to the innermost statement that ended after it.
+pub fn vars(e: el::El, vars: el_vars::Vars, at: integer) {
+  if e.source == el::STD_SOURCE || e.context < 0 {
+    return;
+  }
+  f = el_vars::stored(vars);
+  now: vector<text> = [for v in f.variables { report::type_show_in(e.b, f, v.type_def[0] ?? ir::TyVoid) }];
+  p = el::pos_at(e, at);
+  head = "state {if e.first_pass { 1 } else { 2 }} {p.line}:{p.pos} var {el::def(e, e.context).name}";
+  key = "{e.context}/{if e.first_pass { 1 } else { 2 }}";
+  seen = e.trace_vars[key];
+  // How many variables the last print covered; a table shorter than that is another reading
+  // of the function, compared with nothing.
+  had = if seen == null { 0 } else { len(seen.types) };
+  if had > len(now) {
+    had = 0;
+  }
+  for tp in now {
+    v = tp#index;
+    name = f.variables[v].name;
+    if v >= had {
+      eprintln("{head} {v} {name} + {tp}");
+    } else {
+      old = seen.types[v] ?? "";
+      if old != tp {
+        eprintln("{head} {v} {name} {old} -> {tp}");
+      }
+    }
+  }
+  // Replaced only now: the record just compared with is read until here.
+  if seen != null {
+    e.trace_vars[key] = null;
+  }
+  e.trace_vars += [el::TraceSeen { key: key, types: now }];
+}
+
 // The `fn-end` point (`Parser::state_trace_fn_end`): definition `d`'s result and each variable
 // `vars` holds for it, as this pass leaves them, at the definition's position.
 pub fn fn_end(e: el::El, vars: el_vars::Vars, d: integer) {

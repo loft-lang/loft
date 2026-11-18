@@ -108,6 +108,44 @@ impl Parser {
         );
     }
 
+    /// The `var` point (port-debug-output.md § 1): what the statement read from `at` did to
+    /// the function's variable table — `+ <type>` for a variable it created, `<old> -> <new>`
+    /// for one whose type or deps it changed — found by comparing the table with what this
+    /// function last printed on this pass.  A statement nested in another prints first, so
+    /// each change goes to the innermost statement that ended after it.
+    pub(crate) fn state_trace_vars(&mut self, at: &crate::lexer::Position) {
+        if !self.state_trace_on() || self.context == u32::MAX {
+            return;
+        }
+        let now: Vec<String> = (0..self.vars.count())
+            .map(|v| self.vars.tp(v).show(&self.data, &self.vars))
+            .collect();
+        let head = format!(
+            "state {} {}:{} var {}",
+            if self.first_pass { 1 } else { 2 },
+            at.line,
+            at.pos,
+            self.data.def(self.context).name()
+        );
+        let seen = self
+            .trace_vars
+            .entry((self.context, self.first_pass))
+            .or_default();
+        // A table shorter than the one printed is another reading of the function.
+        if seen.len() > now.len() {
+            seen.clear();
+        }
+        for (v, tp) in now.iter().enumerate() {
+            let name = self.vars.name(v as u16);
+            match seen.get(v) {
+                None => eprintln!("{head} {v} {name} + {tp}"),
+                Some(old) if old != tp => eprintln!("{head} {v} {name} {old} -> {tp}"),
+                Some(_) => {}
+            }
+        }
+        *seen = now;
+    }
+
     /// The `fn-end` point of definition `d`, whose variables `self.vars` still holds: its
     /// result and each variable, as this pass leaves them.
     pub(crate) fn state_trace_fn_end(&self, d: u32) {
