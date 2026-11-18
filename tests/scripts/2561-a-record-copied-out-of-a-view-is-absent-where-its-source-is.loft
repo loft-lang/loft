@@ -6,6 +6,7 @@
 // caller's buffer, and copies only where the source is present.  One function per source
 // shape; each is asked for an element that is there and for one that is not.  `Cell` is the
 // element of keyed collections too, so its vector is an `array<Cell>`, read with `OpVectorRef`.
+// @falsified-at: 0de1794d4 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
 struct Cell { q: integer, r: integer, t: text }
 struct Bag { n: integer, xs: vector<Cell> }
 struct HB { n: integer, h: hash<Cell[q]> }
