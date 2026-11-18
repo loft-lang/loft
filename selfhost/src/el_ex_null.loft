@@ -2489,6 +2489,43 @@ pub fn materialised_return(e: el::El, vars: el_vars::Vars, v: Ex, w: integer, re
       return ex(ir::NdReturn { inner: chosen }, ir::TyNever);
     }
   }
+  // `MaterializeView` for a returned JOIN whose arms read into locals or inline calls' results
+  // (`return if c { src.h } else { JH { … } }`): the work ref is minted on both passes and the
+  // buffer renamed onto it (a struct enum's is bound instead), each arm copied on the second.
+  if x is NdIf && el_expressions::record_result(result) && el::def(e, d).def_type != el::DT_GENERIC && el_expressions::bind_leaves(e, vars, x) > 0 {
+    jenum = el_convert::struct_enum(el_types::base(result));
+    jtd = heap_def(el_types::base(result));
+    // (`return_views_local`: the work ref is minted only where an arm views a store of the
+    // frame; arms read off locals that own their records bind the buffer, no work ref.)
+    jdeep = el_expressions::ls_views_local(e, vars, el_types::deps(v.tp));
+    jw = if jdeep { el_vars::work_ref(vars, if jenum { ir::TyReference { n: jtd, dep: [] } } else { el_types::without_deps(el_types::base(result)) }) } else { -1 };
+    if jdeep && unrenamed && !el_expressions::buffer_bound(e) && !jenum {
+      rename_onto(e, vars, rb, jw);
+    } else {
+      if e.first_pass && jw >= 0 {
+        el_vars::unregister_work_ref(vars, jw);
+      }
+      jba = attr_nr(el::def(e, d), "__retbuf");
+      jret = el::def(e, d).returned[0];
+      if jba >= 0 && !el_types::deps(jret).contains(jba) {
+        e.b.data.definitions[d].returned = [el_types::with_deps(jret, el_types::deps(jret) + [jba])];
+      }
+    }
+    if e.first_pass {
+      return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
+    }
+    jb = return_buffer(e, vars);
+    if jw >= 0 && jw != jb {
+      el_vars::unregister_work_ref(vars, jw);
+    }
+    jowned = el_types::with_deps(el_types::without_deps(el_types::base(result)), [jb]);
+    jcopy = if jb >= 0 && jtd >= 0 { el_expressions::copy_arms(e, vars, v.code, jb, jtd, jowned) } else { null };
+    if jcopy != null {
+      return ex(ir::NdReturn { inner: jcopy! }, ir::TyNever);
+    }
+    el::refuse(e, "a `return` of a join reading into locals, copied from a source read once");
+    return ex(ir::NdNull, ir::TyNever);
+  }
   // `MaterializeView` for a `??` (or `x?`) whose subject views a store of this frame
   // (`return_views_local`: `return c.hexes[i]?` under `for c in …`): copied arm by arm into a
   // work ref the buffer is renamed onto — the held subject behind its null test, the default
@@ -2504,12 +2541,7 @@ pub fn materialised_return(e: el::El, vars: el_vars::Vars, v: Ex, w: integer, re
       // A subject that views a local which itself views another (`c` of `for c in …`) takes
       // the work ref (`return_views_local`); one read off a local that OWNS its record is no
       // such view, and the buffer is bound and takes the copy itself (`Bind`, no work ref).
-      deep = false;
-      for dd in el_types::deps(v.tp) {
-        if dd >= 0 && dd < len(vars.vars) && !vars.vars[dd].argument && el_expressions::views_local(vars, dd) {
-          deep = true;
-        }
-      }
+      deep = el_expressions::ls_views_local(e, vars, el_types::deps(v.tp));
       if nb[0].name == "ncc" && views && el_types::base(result) is TyReference && !(result is TyOptional) {
         nw = -1;
         if deep {
