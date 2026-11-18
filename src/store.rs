@@ -296,7 +296,8 @@ pub enum StoreChange {
 }
 
 /// `LOFT_NO_TOMBSTONE=1` frees a removed record a stored reference named like any other —
-/// the bisect step for a wrong value or a leak at a removal (`@FR-H-Removed`).
+/// the bisect step for a wrong value or a leak at a removal (`@FR-H-Removed`; its bytes are
+/// `@FR-S-Tomb`'s).
 fn tombstones_enabled() -> bool {
     static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *F.get_or_init(|| !std::env::var("LOFT_NO_TOMBSTONE").is_ok_and(|v| v != "0"))
@@ -1831,7 +1832,7 @@ impl Store {
         rec
     }
 
-    /// Claim the space of a record
+    /// Claim the space of a record: a claimed block, `i32 +n` at @0 (`@FR-S-Block`).
     /// # Arguments
     /// * `size` - The requested record size in 8 byte words
     pub fn claim(&mut self, size: u32) -> u32 {
@@ -1988,8 +1989,8 @@ impl Store {
     }
 
     /// `@FR-H-Park` — park the `words`-word block at `rec` (out of `claims` already): a free
-    /// block by its header and footer, so every walk of the store reads it as free, pushed
-    /// on the list for its exact size.
+    /// block by its header and footer (`@FR-S-Park`'s bytes, `@FR-S-Free`'s header and footer),
+    /// so every walk of the store reads it as free, pushed on the list for its exact size.
     fn park_block(&mut self, rec: u32, words: i32) {
         debug_assert!(
             !self.parked.set.contains(rec),
