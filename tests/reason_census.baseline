@@ -15,7 +15,7 @@ R-Cold	1	0	0	owes
 R-Compact	2	0	0	owes
 R-CompleteWrite	1	0	0	owes
 R-Const	2	0	0	owes
-R-CopyView	2	0	0	silent
+R-CopyView	2	2	0	reports
 R-Counter	2	0	0	owes
 R-CtorLiteral	1	2	0	reports
 R-DecodeView	4	0	0	owes
@@ -24,7 +24,7 @@ R-Demote	2	0	0	owes
 R-Destination	2	0	0	owes
 R-DischargeInto	1	0	0	owes
 R-ElemFirst	1	0	0	owes
-R-ExitVector	2	0	0	silent
+R-ExitVector	2	2	0	reports
 R-ExpPow	1	0	0	nothing
 R-FaultFlag	1	0	0	owes
 R-FieldAppend	3	0	0	owes
@@ -71,7 +71,7 @@ R-NoLocks	1	0	0	nothing
 R-NoThreads	1	0	0	nothing
 R-NonSentinelParam	2	0	0	owes
 R-Peel	1	0	0	owes
-R-Place	2	0	0	silent
+R-Place	2	2	0	reports
 R-PureReuse	1	0	0	owes
 R-Push	4	0	0	owes
 R-PushFill	16	4	3	reports
@@ -87,7 +87,7 @@ R-RefillText	3	0	0	owes
 R-Refresh	2	0	0	nothing
 R-RepeatRun	1	0	0	owes
 R-RetAdopt	3	0	0	owes
-R-ReturnField	1	1	0	reports
+R-ReturnField	1	2	0	reports
 R-Reuse	1	0	0	owes
 R-Rotate	1	0	0	owes
 R-SameRead	2	0	0	owes

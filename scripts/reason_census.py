@@ -54,9 +54,9 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "src")
 BASELINE = os.path.join(ROOT, "tests", "reason_census.baseline")
-CALL = re.compile(r"rewrite_census::(fired|declined|admitted)\(\s*([^,)]+)")
+CALL = re.compile(r"rewrite_census::(fired|declined_in|declined|admitted)\(\s*([^,)]+)")
 # The same call after `use crate::rewrite_census::fired;`: bare, its rule a literal.
-BARE = re.compile(r'(?<![A-Za-z0-9_:.])(fired|declined|admitted)\(\s*("[A-Z][A-Za-z]*-[^"]+")')
+BARE = re.compile(r'(?<![A-Za-z0-9_:.])(fired|declined_in|declined|admitted)\(\s*("[A-Z][A-Za-z]*-[^"]+")')
 NOT_COUNTED = re.compile(r"^\| `\((R-[A-Za-z0-9]+)\)` \| not counted — ([a-z]+): (.*?) \|\s*$")
 CONST = re.compile(r'const\s+([A-Z_][A-Z0-9_]*)\s*:\s*&(?:\'static\s+)?str\s*=\s*"([^"]+)"')
 LITERAL = re.compile(r'"([A-Z][A-Za-z]*-[A-Za-z0-9/-]+)"')
@@ -110,7 +110,8 @@ def scan_text(text, path, counts, marks, unread, orphans):
     attached = set()
     calls = sorted(list(CALL.finditer(text)) + list(BARE.finditer(text)), key=lambda m: m.start())
     for m in calls:
-        kind = m.group(1)
+        # `declined_in` is `declined` with the site key built from a function and a local.
+        kind = "declined" if m.group(1) == "declined_in" else m.group(1)
         at = text.count("\n", 0, m.start())
         rule = rule_of(text, m, consts)
         if rule is None:
@@ -232,6 +233,8 @@ fn a() {
     crate::rewrite_census::fired(name_at_run_time, 1);
     use crate::rewrite_census::fired;
     fired("R-Bare", 1);
+    crate::rewrite_census::fired("R-In", 1);
+    crate::rewrite_census::declined_in("R-In", function, local, why);
     not_fired("R-Other", 1);
 }
 '''
@@ -243,7 +246,7 @@ def self_test():
     got = {r: state(c["fired"], c["declined"], marks.get(r)) for r, c in counts.items()}
     want = {"R-Silent": "silent", "R-Const": "reports", "R-Nothing": "nothing",
             "R-NoWhy": "nothing", "R-Both": "reports", "R-Owes": "owes", "R-Twice": "owes",
-            "R-Bare": "silent"}
+            "R-Bare": "silent", "R-In": "reports"}
     faults = marker_faults(counts, marks, orphans)
     owed = marks.get("R-Owes", [("", 0, "", "")])[0][2]
     ok = (got == want and len(unread) == 1 and len(orphans) == 1 and len(faults) == 4
