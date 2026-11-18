@@ -1713,7 +1713,7 @@ pub fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?,
       return el_ex_match::map_call(e, vars, at, list, types);
     }
     if name == "filter" && len(list) == 2 && el_types::base(types[1]!) is TyFunction {
-      return el_ex_match::filter_call(e, vars, list, types);
+      return el_ex_match::filter_call(e, vars, at, list, types);
     }
     if name == "reduce" && len(list) == 3 && el_types::base(types[2]!) is TyFunction && (e.first_pass || el_ir::unspan(list[2]!) is NdInt) {
       return el_ex_match::reduce_call(e, vars, list, types);
@@ -2609,7 +2609,7 @@ pub fn method_call_on(e: el::El, vars: el_vars::Vars, at: integer, x: Ex, re: in
   }
   // `parse_filter`, `parse_reduce`: built in place as well.
   if name == "filter" && len(list) == 2 && el_types::base(x.tp) is TyVector && !(x.tp is TyOptional) && el_types::base(types[1]!) is TyFunction && !open_types(e, types) && el_dispatch::own_set(e, name) < 0 && el::def_nr(e, "n_filter") < 0 {
-    return el_ex_match::filter_call(e, vars, list, types);
+    return el_ex_match::filter_call(e, vars, at, list, types);
   }
   // (`reduce` through a function VALUE is a call of the standard library's generic: only a
   // function the call names directly is folded in place.)
