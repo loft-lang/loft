@@ -209,7 +209,9 @@ make work                                # the open issues that are PICK-UP work
                                          #   and `status:planned` (fix path is a PLAN, measured
                                          #   there).  START HERE to find the next task, and use
                                          #   `ARGS=--count` for the scalar.  A failed query is
-                                         #   exit 2, never an empty list — ISSUE_TRACKING.md
+                                         #   exit 2, never an empty list — ISSUE_TRACKING.md.
+                                         #   This checkout's own claims with no fix pushed are
+                                         #   listed below it: they come FIRST
 make disk-headroom                       # ROOM FOR A GATE: every gate runs this first; by hand
                                          #   when a build says `No space left on device`.  This
                                          #   checkout's scratch only, never a sibling's live run

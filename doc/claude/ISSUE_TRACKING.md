@@ -655,12 +655,17 @@ scripts/claim.py file --title … --body-file … --label …
                                    #   other stream can pick it up in between
 scripts/claim.py release N         # you stopped, or handed it on
 scripts/claim.py check N           # who holds it
+scripts/claim.py mine              # what THIS checkout holds and has pushed no fix for
 ```
 
 - **A claim** is a comment (a body line, for `file`) starting `claim: <host>/<checkout>@<branch>`,
   plus the `in-progress` label.  The earliest unreleased claim holds the issue: two streams that
   claim at once both see it, and the later one withdraws itself.
-- **`make work` skips `in-progress`**, so a claimed issue is never offered as pick-up work.
+- **`make work` skips `in-progress`**, so a claimed issue is never offered as pick-up work —
+  to its claimer either.  So it lists this checkout's own claims with no fix pushed in a
+  section of their own (`claim.py mine`), by `<host>/<checkout>` whatever branch the claim
+  was taken on, and counts the ones other streams hold.  A claim in that section is fixed or
+  released (`release N`); it goes before any unclaimed issue.
 - **The `commit-msg` hook** warns when a `Fixes #N` names an issue another stream holds — the
   last moment a duplicate fix is noticed without anyone remembering to look.  It reports and
   never blocks: a merge legitimately carries another stream's fix forward.

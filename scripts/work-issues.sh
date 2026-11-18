@@ -98,8 +98,20 @@ parked_line=""
 
 if [ "$count_only" = 1 ]; then echo "$n"; exit 0; fi
 
+# A claimed issue is hidden above from everyone, its claimer included: a claim taken and set
+# aside would never come back.  So this checkout's own claims with no fix pushed are listed
+# apart, and the rest are counted (`scripts/claim.py mine`).
+claimed="$(python3 "$(dirname "$0")/claim.py" ${repo:+--repo "$repo"} mine 2>&1)" || {
+    echo "work-issues: cannot ask the tracker for the claims — $claimed" >&2; exit 2; }
+
 if [ "$n" = 0 ]; then
-    echo "work issues: none — every open issue carries a fix, names its plan, or waits for the next release."
+    if [ -n "$claimed" ]; then
+        echo "work issues: none unclaimed."
+        echo
+        printf '%s\n' "$claimed"
+    else
+        echo "work issues: none — every open issue carries a fix, names its plan, or waits for the next release."
+    fi
     [ -z "$parked_line" ] || echo "$parked_line"
     exit 0
 fi
@@ -107,4 +119,5 @@ fi
 echo "work issues: $n (open, minus fixed-pending-merge, status:planned, next-release and in-progress)"
 echo
 printf '%s\n' "$out"
+[ -z "$claimed" ] || { echo; printf '%s\n' "$claimed"; }
 [ -z "$parked_line" ] || { echo; echo "$parked_line"; }
