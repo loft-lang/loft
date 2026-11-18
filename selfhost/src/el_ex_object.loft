@@ -1663,7 +1663,8 @@ pub fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?,
         // argument of its own position.  Any other (an overload set, a parameter already
         // given, a skipped one with no constant default) is refused by name.
         if an != "" {
-          np = if hd >= 0 && source < 0 && el_dispatch::own_set(e, name) < 0 { attr_nr(el::def(e, hd), an) } else { -1 };
+          // (A qualified call names its library's one function of that name.)
+          np = if hd >= 0 && (if source >= 0 { el_dispatch::source_set(e, source, name) < 0 } else { el_dispatch::own_set(e, name) < 0 }) { attr_nr(el::def(e, hd), an) } else { -1 };
           gap_ok = np >= len(list);
           if gap_ok {
             for k in len(list)..np {
