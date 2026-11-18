@@ -69,6 +69,14 @@ A refusal is a MATCH that validation rejected, and
   (1) … (2) … (3) …`), the labels are those clauses.  A gate with many exits behind one
   clause reports that one clause.
 - **One count per site.**  A site counts once, under the first clause that refused it.
+- **A fixed label.**  `declined` takes `&'static str`, so a label cannot be built from a
+  name, a type or a number of the program.  A gate that also has something to say about the
+  site answers `rewrite_census::Refusal { clause, about }`: the census counts `clause`, and a
+  trace of one function prints both.
+- **A bounded vocabulary.**  `make decline-census` prints how many labels each rule uses
+  over the bench programs, and `ARGS=--check-labels` fails a rule that passes `LABEL_CAP`
+  (`scripts/decline_census.py`).  Labels are counted where they are reported, because a gate
+  hands its clause on as a value.
 - **No cost when off.**  The call returns at once unless the census is switched on.
 
 An admission logs no reason.  The reason a rewrite fired is the rule, and the clause it
@@ -100,17 +108,13 @@ for a reader choosing what to wire; the complete list is the deciding function.
 In this order.  Each step keeps every rewrite's behaviour: the rewrite census shows the same
 admissions before and after, and the code emitted for the bench programs is byte-identical.
 
-1. **A label is a fixed string.**  `declined` takes `&'static str` for its label.  The call
-   sites that build their reason with `format!` name the clause instead.
-2. **Cap the vocabulary.**  `make reason-census` counts the distinct labels each rule passes
-   and refuses a rule with more than eight.
-3. **Wire the rules whose gate already names its failing clause.**  Many admission functions
+1. **Wire the rules whose gate already names its failing clause.**  Many admission functions
    return a reason string or call a local decline helper for their trace.  Each needs one
    `declined` call where that reason is consumed, and its `@decline-owed` marker removed.
-4. **Wire the rules whose gate answers `None` or `false`.**  The gate returns the clause
+2. **Wire the rules whose gate answers `None` or `false`.**  The gate returns the clause
    that failed, and its one caller reports it.  Taken by yield: first the rules whose
    refusals sit in routines over their performance bar ([PERFORMANCE.md](PERFORMANCE.md)).
-5. **The per-function listing.**  `LOFT_DECLINE_CENSUS_FN=<file>` writes one line per
+3. **The per-function listing.**  `LOFT_DECLINE_CENSUS_FN=<file>` writes one line per
    function, rule and clause with a count, as `LOFT_REWRITE_CENSUS_FN` does for admissions,
    limited to one function when a name is given.  It names no site: a loop or a local has a
    name, a decision inside an expression has none, and tracking positions through a tree the
@@ -135,7 +139,7 @@ A rule moves from `owes` to `reports` when its marker is removed and its call is
 
 ## What is not built
 
-- **A listing of refused sites inside expressions.**  See step 5: the compiler counts them
+- **A listing of refused sites inside expressions.**  See step 3: the compiler counts them
   and does not try to name them.
 - **A full dump of a decision.**  It would have every gate describe the state it looked at,
   written once per gate and kept in step with it.  The per-rule trace switches give that

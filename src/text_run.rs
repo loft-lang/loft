@@ -452,7 +452,7 @@ fn read_is_assigned(whole: &Value, t: u16, cx: &Cx) -> bool {
     assigned == 1
 }
 
-fn decline(cx: &Cx, t: u16, why: &str) {
+fn decline(cx: &Cx, t: u16, why: &'static str) {
     if crate::rewrite_census::declines_wanted() {
         let def = cx.data.def(cx.d_nr);
         let site = format!("{}:{}", def.name(), def.variables().name(t));

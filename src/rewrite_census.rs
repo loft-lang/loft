@@ -44,7 +44,7 @@ static BY_FN: Mutex<ByFn> = Mutex::new(BTreeMap::new());
 /// The body an admission is being decided for: `(phase, function)`.
 static WHERE: Mutex<Option<(&'static str, String)>> = Mutex::new(None);
 /// `(rule, why) → sites declined for that reason`, kept only when `LOFT_DECLINE_CENSUS` is set.
-static DECLINES: Mutex<BTreeMap<(&'static str, String), u64>> = Mutex::new(BTreeMap::new());
+static DECLINES: Mutex<BTreeMap<(&'static str, &'static str), u64>> = Mutex::new(BTreeMap::new());
 /// The `(rule, site)` pairs already counted: a site asked about twice is one decline.
 static DECLINED_SITES: Mutex<Option<HashSet<(&'static str, String)>>> = Mutex::new(None);
 /// The `(rule, site)` pairs admitted, for the rules that name their sites: `fired` counts
@@ -125,6 +125,52 @@ fn decline_target() -> Option<&'static str> {
         .as_deref()
 }
 
+/// A refused match: the CLAUSE of the rule that failed — a fixed label, the one thing the
+/// census counts — and, for a trace of one function, what at the site it failed on
+/// (`doc/claude/REWRITE_REASONS.md`).  A gate answers `Err(Refusal)`; its caller reports
+/// `clause` to [`declined`] and prints the whole refusal where a trace is on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Refusal {
+    pub clause: &'static str,
+    pub about: String,
+}
+
+impl Refusal {
+    /// The clause alone.
+    #[must_use]
+    pub fn of(clause: &'static str) -> Self {
+        Refusal {
+            clause,
+            about: String::new(),
+        }
+    }
+
+    /// The clause, and the name or value at the site it failed on.
+    #[must_use]
+    pub fn about(clause: &'static str, about: impl Into<String>) -> Self {
+        Refusal {
+            clause,
+            about: about.into(),
+        }
+    }
+}
+
+impl From<&'static str> for Refusal {
+    fn from(clause: &'static str) -> Self {
+        Refusal::of(clause)
+    }
+}
+
+impl std::fmt::Display for Refusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.about.is_empty() {
+            f.write_str(self.clause)
+        } else {
+            write!(f, "{} ({})", self.clause, self.about)
+        }
+    }
+}
+
 /// Is a decline census being written?  A reason that costs work to compute is asked only then.
 pub fn declines_wanted() -> bool {
     PAUSED.load(Ordering::Relaxed) == 0 && decline_target().is_some()
@@ -135,7 +181,7 @@ pub fn declines_wanted() -> bool {
 /// read inside the body being generated (`InBody`), so a loop's scope number, which every
 /// function counts from one, names one loop.  A site one probe refuses and another admits
 /// is in both counts, so a rule's reach reads as a floor.
-pub fn declined(rule: &'static str, site: &str, why: &str) {
+pub fn declined(rule: &'static str, site: &str, why: &'static str) {
     if PAUSED.load(Ordering::Relaxed) > 0 || decline_target().is_none() {
         return;
     }
@@ -150,7 +196,7 @@ pub fn declined(rule: &'static str, site: &str, why: &str) {
         }
     }
     if let Ok(mut d) = DECLINES.lock() {
-        *d.entry((rule, why.to_owned())).or_insert(0) += 1;
+        *d.entry((rule, why)).or_insert(0) += 1;
     }
 }
 

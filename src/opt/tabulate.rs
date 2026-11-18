@@ -42,8 +42,8 @@ pub fn table(data: &Data, d: u32) -> Option<Vec<i64>> {
         return None;
     }
     let def = data.def(d);
-    let decline = |why: &str| -> Option<Vec<i64>> {
-        crate::rewrite_census::declined("R-Tabulate", def.name(), why);
+    let decline = |why: crate::rewrite_census::Refusal| -> Option<Vec<i64>> {
+        crate::rewrite_census::declined("R-Tabulate", def.name(), why.clause);
         if trace() {
             eprintln!("tabulate: {} declined — {why}", def.name());
         }
@@ -72,7 +72,10 @@ pub fn table(data: &Data, d: u32) -> Option<Vec<i64>> {
         }
     });
     if branches < MIN_BRANCHES {
-        return decline(&format!("{branches} branches, under {MIN_BRANCHES}"));
+        return decline(crate::rewrite_census::Refusal::about(
+            "fewer branches than the minimum",
+            format!("{branches} of {MIN_BRANCHES}"),
+        ));
     }
     let ops = Ops::of(data);
     let mut out = Vec::with_capacity(DOMAIN as usize);
@@ -80,7 +83,12 @@ pub fn table(data: &Data, d: u32) -> Option<Vec<i64>> {
         let mut env: HashMap<u16, i64> = HashMap::from([(p, x)]);
         let answer = match eval(&ops, def.code(), &mut env) {
             Some(Out::Int(v) | Out::Return(v)) => v,
-            _ => return decline(&format!("the body does not evaluate at {x}")),
+            _ => {
+                return decline(crate::rewrite_census::Refusal::about(
+                    "the body does not evaluate for every argument",
+                    format!("at {x}"),
+                ));
+            }
         };
         out.push(answer);
     }

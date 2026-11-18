@@ -364,7 +364,7 @@ fn guarded(c: Copy, original: Value, tp: i32, cx: &Cx) -> Value {
     )
 }
 
-fn decline(cx: &Cx, buf: u16, why: &str) {
+fn decline(cx: &Cx, buf: u16, why: &'static str) {
     if crate::rewrite_census::declines_wanted() {
         let def = cx.data.def(cx.d_nr);
         let site = format!("{}:{}", def.name(), def.variables().name(buf));

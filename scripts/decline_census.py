@@ -8,6 +8,7 @@
     scripts/decline_census.py --reasons 8  # more reasons per rule (default 4)
     scripts/decline_census.py --programs   # also the per-program split
     scripts/decline_census.py --record     # ...and keep the run in bench/portal/decline_census.tsv
+    scripts/decline_census.py --check-labels   # fail when a rule reports more labels than LABEL_CAP
     LOFT_BIN=<loft> scripts/decline_census.py
 
 Why
@@ -40,7 +41,6 @@ baseline and nothing fails on it.
 """
 
 import os
-import re
 import subprocess
 import sys
 import tempfile
@@ -63,13 +63,27 @@ REPORTED = {
     "R-Range": ("an integer operator emitted plain because its result provably fits", "complete"),
     "R-RecPtr": ("a held record address for a view", "complete"),
     "R-ValueRecord": ("a record type kept as a value", "partial"),
+    "R-Wrapper": ("a call of a wrapper answered by its inner call", "partial"),
+    "R-SliceArg/range": ("a slice handed as a range of its source", "partial"),
+    "R-SliceInto": ("a slice appended straight into its destination", "partial"),
+    "R-TailSelf": ("a self tail call run as a jump", "partial"),
+    "R-Tabulate": ("a branchy classifier of a byte answered from a table (C)", "partial"),
+    "R-ByteCopy": ("a byte loop run as one copy", "partial"),
+    "R-VecCopy": ("an element loop run as one copy", "partial"),
+    "R-TextRun": ("a run of bytes read as one text", "partial"),
+    "R-ForwardWalk": ("a forward walk counted once", "partial"),
+    "R-ForwardResult": ("a result delivered into the caller's buffer", "partial"),
+    "R-MoveLast": ("a local's last use moved, not copied", "partial"),
 }
+# A rule's labels are the validation clauses of its statement (REWRITE_REASONS.md): a rule that
+# passes this many is describing sites, not clauses.  `(R-Range)` uses twelve today.
+LABEL_CAP = 12
 
 
 def mask(why):
-    """One condition as one row: names in backticks and numbers become `_`."""
-    why = re.sub(r"`[^`]*`", "`_`", why)
-    return re.sub(r"\d+", "_", why)
+    """A label as written: the compiler passes a fixed clause label (`rewrite_census::declined`
+    takes `&'static str`), so there is no name or number of the program in it to mask."""
+    return why
 
 
 def census(loft, prog):
@@ -139,6 +153,16 @@ def report(results, reasons, per_program):
                              f"({len(top) - reasons} more reasons)")
         else:
             lines.append(f"{rule:<28} {a:>8} {'':>8} {'':>6}  not reported")
+    labels = defaultdict(set)
+    for rule, why in by_rule_reason:
+        labels[rule].add(why)
+    over = sorted((len(v), r) for r, v in labels.items() if len(v) > LABEL_CAP)
+    lines.append("")
+    lines.append("labels in use per rule: "
+                 + ", ".join(f"{r} {len(labels[r])}" for r in sorted(labels)))
+    for n, rule in over:
+        lines.append(f"  OVER THE CAP: {rule} reports {n} labels, more than {LABEL_CAP} — "
+                     "a label names a clause of the rule, not a site (REWRITE_REASONS.md)")
     if per_program:
         lines.append("")
         lines.append(f"{'program':<28} {'rule':<28} {'admitted':>8} {'declined':>8}")
@@ -149,7 +173,7 @@ def report(results, reasons, per_program):
             for rule in sorted(set(adm) | set(per)):
                 if rule in REPORTED and (adm.get(rule, 0) or per.get(rule, 0)):
                     lines.append(f"{name:<28} {rule:<28} {adm.get(rule, 0):>8} {per.get(rule, 0):>8}")
-    return "\n".join(lines), admitted, declined, by_rule_reason
+    return "\n".join(lines), admitted, declined, by_rule_reason, bool(over)
 
 
 def record(results, admitted, declined, by_rule_reason):
@@ -188,7 +212,7 @@ def main() -> int:
     with ThreadPoolExecutor(max_workers=4) as pool:
         done = list(pool.map(lambda p: census(loft, p), progs))
     results = [r for r in done if r[1] is not None]
-    text, admitted, declined, by_rule_reason = report(results, reasons, "--programs" in args)
+    text, admitted, declined, by_rule_reason, over = report(results, reasons, "--programs" in args)
     print(text)
     for name, adm, _, err in done:
         if adm is None:
@@ -196,6 +220,8 @@ def main() -> int:
     if "--record" in args:
         record(results, admitted, declined, by_rule_reason)
         print(f"wrote {RECORD.relative_to(ROOT)}")
+    if over and "--check-labels" in args:
+        return 1
     return 0 if len(results) == len(done) else 2
 
 

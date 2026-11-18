@@ -3505,7 +3505,7 @@ impl Output<'_> {
             crate::rewrite_census::declined(
                 "R-PushFill",
                 &format!("{}:{}", self.data.def(self.def_nr).name(), lp.scope),
-                &why,
+                why.clause,
             );
             if std::env::var("LOFT_TRACE_PUSH_FILL").is_ok() {
                 eprintln!(
@@ -3588,7 +3588,7 @@ impl Output<'_> {
             crate::rewrite_census::declined(
                 "R-PushFill",
                 &format!("{}:{}", self.data.def(self.def_nr).name(), lp.scope),
-                &why,
+                why.clause,
             );
             if std::env::var("LOFT_TRACE_PUSH_FILL").is_ok() {
                 eprintln!(
@@ -3685,7 +3685,7 @@ impl Output<'_> {
             crate::rewrite_census::declined(
                 "R-PushFill",
                 &format!("{}:{}", self.data.def(self.def_nr).name(), lp.scope),
-                &why,
+                why.clause,
             );
             if std::env::var("LOFT_TRACE_PUSH_FILL").is_ok() {
                 eprintln!(

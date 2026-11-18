@@ -53,7 +53,11 @@ pub fn rewrite(data: &mut Data, d_nr: u32) {
         find(&code, &mut |ops| match admit(ops, &code, data, vars, rb) {
             Ok(site) => sites.push(site),
             Err(Some(why)) => {
-                crate::rewrite_census::declined("R-ForwardResult", data.def(d_nr).name(), &why);
+                crate::rewrite_census::declined(
+                    "R-ForwardResult",
+                    data.def(d_nr).name(),
+                    why.clause,
+                );
                 if trace {
                     eprintln!("forward-result: {} declines — {why}", data.def(d_nr).name());
                 }
@@ -175,7 +179,7 @@ fn admit(
     data: &Data,
     vars: &Function,
     rb: u16,
-) -> Result<Site, Option<String>> {
+) -> Result<Site, Option<crate::rewrite_census::Refusal>> {
     // The delivery pair, then the bind it delivers.
     let clear = (0..ops.len().saturating_sub(1))
         .find(|&k| {
@@ -201,14 +205,17 @@ fn admit(
         return Err(None);
     };
     let Value::Call(f, args) = rhs.unspan() else {
-        return Err(Some(format!(
-            "`{}` is not bound from a call",
-            vars.name(local)
+        return Err(Some(crate::rewrite_census::Refusal::about(
+            "the local is not bound from a call",
+            vars.name(local),
         )));
     };
     let name = |x: u16| vars.name(x).to_string();
     let Some(Value::Var(h)) = args.last().map(Value::unspan) else {
-        return Err(Some(format!("`{}`'s call takes no buffer", name(local))));
+        return Err(Some(crate::rewrite_census::Refusal::about(
+            "the call takes no buffer",
+            name(local),
+        )));
     };
     let h = *h;
     let callee = data.def(*f);
@@ -217,45 +224,51 @@ fn admit(
         || callee.returns_borrowed_view()
         || !matches!(callee.returned().peel_link(), Type::Vector(_, _))
     {
-        return Err(Some(format!(
-            "`{}` does not deliver into its buffer argument",
-            callee.name()
+        return Err(Some(crate::rewrite_census::Refusal::about(
+            "the callee does not deliver into its buffer argument",
+            callee.name(),
         )));
     }
     if !vars.name(h).starts_with("__ref_") {
-        return Err(Some(format!(
-            "the buffer `{}` is not a hidden one",
-            name(h)
+        return Err(Some(crate::rewrite_census::Refusal::about(
+            "the buffer is not a hidden one",
+            name(h),
         )));
     }
     for x in [local, h] {
         if vars.is_argument(x) || vars.is_captured(x) {
-            return Err(Some(format!("`{}` is a parameter or captured", name(x))));
+            return Err(Some(crate::rewrite_census::Refusal::about(
+                "the local or its buffer is a parameter or captured",
+                name(x),
+            )));
         }
     }
     if !matches!(vars.tp(local).peel_link(), Type::Vector(_, _)) {
-        return Err(Some(format!("`{}` is not a vector", name(local))));
+        return Err(Some(crate::rewrite_census::Refusal::about(
+            "the local is not a vector",
+            name(local),
+        )));
     }
     if args[..args.len() - 1].iter().any(|a| mentions(a, rb) > 0)
         || ops[bind + 1..clear].iter().any(|o| mentions(o, rb) > 0)
     {
-        return Err(Some(
-            "the return buffer is named before its delivery".into(),
-        ));
+        return Err(Some(crate::rewrite_census::Refusal::of(
+            "the return buffer is named before its delivery",
+        )));
     }
     if ops[bind + 1..clear]
         .iter()
         .any(|o| o.any_node(&mut |c| matches!(c, Value::Set(y, _) if *y == local)))
     {
-        return Err(Some(format!(
-            "`{}` is rebound before its delivery",
-            name(local)
+        return Err(Some(crate::rewrite_census::Refusal::about(
+            "the local is rebound before its delivery",
+            name(local),
         )));
     }
     if ops[clear + 2..].iter().any(|o| mentions(o, local) > 0) {
-        return Err(Some(format!(
-            "`{}` is used after its delivery",
-            name(local)
+        return Err(Some(crate::rewrite_census::Refusal::about(
+            "the local is used after its delivery",
+            name(local),
         )));
     }
     let inside: usize = ops[bind..=clear + 1]
@@ -274,9 +287,9 @@ fn admit(
     let allowed = count_null_sets(code, h) + frees + 1 + guard_mentions
         - guard.map_or(0, |g| count_null_sets(&ops[g], h));
     if mentions(code, h) != allowed {
-        return Err(Some(format!(
-            "the buffer `{}` serves more than this call",
-            name(h)
+        return Err(Some(crate::rewrite_census::Refusal::about(
+            "the buffer serves more than this call",
+            name(h),
         )));
     }
     Ok(Site {
