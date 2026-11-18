@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	be55620c9793c98d01df24d63b9ace03f3efbec1
 
-layer	elab	agree	1143	of	2085
+layer	elab	agree	1145	of	2085
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -527,8 +527,6 @@ elab	refused	loft-suite/rules/rewrites/R-InPlaceLiteral/1571-a-literal-written-i
 elab	refused	loft-suite/rules/rewrites/R-InPlaceLiteral/1834-a-user-name-starting-with-an-underscore-is-the-users.loft
 elab	refused	loft-suite/rules/rewrites/R-InPlaceLiteral/a-literal-assigned-to-a-reference-field-repoints-it.loft
 elab	refused	loft-suite/rules/rewrites/R-InPlaceLiteral/a-literal-reading-its-places-own-collection-keeps-it.loft
-elab	refused	loft-suite/rules/rewrites/R-InPlaceLiteral/an-in-place-literal-and-a-transient-read-of-its-place-answer-what-the-copies-would.loft
-elab	refused	loft-suite/rules/rewrites/R-InPlaceLiteral/an-in-place-literal-answers-the-same-with-its-switches-off.loft
 elab	refused	loft-suite/rules/rewrites/R-Inputs/a-field-path-twin-input-is-stale-after-every-write-that-reaches-it.loft
 elab	refused	loft-suite/rules/rewrites/R-KeyedEntry/a-keyed-insert-writes-the-entry-its-key-names.loft
 elab	refused	loft-suite/rules/rewrites/R-LitHoist/a-literal-of-a-const-records-fields-is-built-once-only-while-no-name-writes-it.loft
@@ -949,7 +947,7 @@ elab	refused	tests/scripts/store_paged_enum_field.loft
 elab	refused	tests/scripts/store_rebuild_b1.loft
 elab	refused	tests/scripts/the-reference-safety-traps-are-what-it-catalogues.loft
 
-layer	elab-functions	agree	15183	of	27738
+layer	elab-functions	agree	15183	of	27706
 elab-functions	agree	lib/code.loft::Block
 elab-functions	agree	lib/code.loft::Boolean
 elab-functions	agree	lib/code.loft::Call
@@ -7163,6 +7161,7 @@ elab-functions	agree	loft-suite/rules/layout/L-Null/bind-copies-or-views-the-who
 elab-functions	agree	loft-suite/rules/layout/L-Null/bind-copies-or-views-the-whole-boundary.loft::n_test_scalar_copies
 elab-functions	agree	loft-suite/rules/layout/L-Null/bind-copies-or-views-the-whole-boundary.loft::n_test_struct_field_off_a_borrowed_base_is_a_view
 elab-functions	agree	loft-suite/rules/layout/L-Null/bind-copies-or-views-the-whole-boundary.loft::n_test_struct_field_off_an_owned_base_is_a_view
+elab-functions	agree	loft-suite/rules/layout/L-Null/bind-copies-or-views-the-whole-boundary.loft::n_test_vector_index_read_is_a_view
 elab-functions	agree	loft-suite/rules/layout/L-Null/bind-copies-or-views-the-whole-boundary.loft::n_test_whole_var_struct_copies
 elab-functions	agree	loft-suite/rules/layout/L-Null/bind-copies-or-views-the-whole-boundary.loft::n_test_whole_var_struct_enum_copies
 elab-functions	agree	loft-suite/rules/layout/L-Null/bind-copies-or-views-the-whole-boundary.loft::n_test_whole_var_vector_copies
@@ -9659,14 +9658,28 @@ elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/1571-a-literal-w
 elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/1571-a-literal-written-in-place-reads-the-old-value-through-any-view.loft::main_vector<Pt>
 elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/1571-a-literal-written-in-place-reads-the-old-value-through-any-view.loft::main_vector<Px>
 elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/1571-a-literal-written-in-place-reads-the-old-value-through-any-view.loft::main_vector<Wr>
+elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/1571-a-literal-written-in-place-reads-the-old-value-through-any-view.loft::n_c1
 elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/1571-a-literal-written-in-place-reads-the-old-value-through-any-view.loft::n_c2
 elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/1571-a-literal-written-in-place-reads-the-old-value-through-any-view.loft::n_c3
 elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/1571-a-literal-written-in-place-reads-the-old-value-through-any-view.loft::n_c3_sw
+elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/1571-a-literal-written-in-place-reads-the-old-value-through-any-view.loft::n_g1
 elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/1571-a-literal-written-in-place-reads-the-old-value-through-any-view.loft::n_g10
+elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/1571-a-literal-written-in-place-reads-the-old-value-through-any-view.loft::n_g10_sw
+elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/1571-a-literal-written-in-place-reads-the-old-value-through-any-view.loft::n_g11
+elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/1571-a-literal-written-in-place-reads-the-old-value-through-any-view.loft::n_g12
+elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/1571-a-literal-written-in-place-reads-the-old-value-through-any-view.loft::n_g14
 elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/1571-a-literal-written-in-place-reads-the-old-value-through-any-view.loft::n_g14_mk
+elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/1571-a-literal-written-in-place-reads-the-old-value-through-any-view.loft::n_g15
+elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/1571-a-literal-written-in-place-reads-the-old-value-through-any-view.loft::n_g16
+elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/1571-a-literal-written-in-place-reads-the-old-value-through-any-view.loft::n_g2
 elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/1571-a-literal-written-in-place-reads-the-old-value-through-any-view.loft::n_g4
+elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/1571-a-literal-written-in-place-reads-the-old-value-through-any-view.loft::n_g4_sw
 elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/1571-a-literal-written-in-place-reads-the-old-value-through-any-view.loft::n_g5
+elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/1571-a-literal-written-in-place-reads-the-old-value-through-any-view.loft::n_g5_sw
 elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/1571-a-literal-written-in-place-reads-the-old-value-through-any-view.loft::n_g6
+elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/1571-a-literal-written-in-place-reads-the-old-value-through-any-view.loft::n_g6_sw
+elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/1571-a-literal-written-in-place-reads-the-old-value-through-any-view.loft::n_g7
+elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/1571-a-literal-written-in-place-reads-the-old-value-through-any-view.loft::n_g9
 elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/1571-a-literal-written-in-place-reads-the-old-value-through-any-view.loft::n_ok
 elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/1571-a-literal-written-in-place-reads-the-old-value-through-any-view.loft::n_pts
 elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/1571-a-literal-written-in-place-reads-the-old-value-through-any-view.loft::n_shown
@@ -9727,33 +9740,11 @@ elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/a-literal-readin
 elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/a-literal-reading-its-places-own-collection-keeps-it.loft::main_vector<S>
 elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/a-literal-reading-its-places-own-collection-keeps-it.loft::n_cnt
 elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/a-literal-reading-its-places-own-collection-keeps-it.loft::n_main
+elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/a-literal-reading-its-places-own-collection-keeps-it.loft::n_test_a_field_swaps_its_scalars
+elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/a-literal-reading-its-places-own-collection-keeps-it.loft::n_test_a_scalar_element_swaps_through_its_place
 elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/a-literal-reading-its-places-own-collection-keeps-it.loft::vector<C>
 elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/a-literal-reading-its-places-own-collection-keeps-it.loft::vector<H>
 elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/a-literal-reading-its-places-own-collection-keeps-it.loft::vector<S>
-elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/an-in-place-literal-and-a-transient-read-of-its-place-answer-what-the-copies-would.loft::(schema)
-elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/an-in-place-literal-and-a-transient-read-of-its-place-answer-what-the-copies-would.loft::O
-elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/an-in-place-literal-and-a-transient-read-of-its-place-answer-what-the-copies-would.loft::Pt
-elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/an-in-place-literal-and-a-transient-read-of-its-place-answer-what-the-copies-would.loft::R
-elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/an-in-place-literal-and-a-transient-read-of-its-place-answer-what-the-copies-would.loft::main_vector<Pt>
-elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/an-in-place-literal-and-a-transient-read-of-its-place-answer-what-the-copies-would.loft::main_vector<R>
-elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/an-in-place-literal-and-a-transient-read-of-its-place-answer-what-the-copies-would.loft::n_mk
-elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/an-in-place-literal-and-a-transient-read-of-its-place-answer-what-the-copies-would.loft::n_partial
-elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/an-in-place-literal-and-a-transient-read-of-its-place-answer-what-the-copies-would.loft::n_test_a_literal_written_into_its_place_reads_the_old_value_first
-elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/an-in-place-literal-and-a-transient-read-of-its-place-answer-what-the-copies-would.loft::n_test_a_transient_built_from_the_written_place
-elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/an-in-place-literal-and-a-transient-read-of-its-place-answer-what-the-copies-would.loft::vector<Pt>
-elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/an-in-place-literal-and-a-transient-read-of-its-place-answer-what-the-copies-would.loft::vector<R>
-elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/an-in-place-literal-answers-the-same-with-its-switches-off.loft::(schema)
-elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/an-in-place-literal-answers-the-same-with-its-switches-off.loft::O
-elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/an-in-place-literal-answers-the-same-with-its-switches-off.loft::Pt
-elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/an-in-place-literal-answers-the-same-with-its-switches-off.loft::R
-elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/an-in-place-literal-answers-the-same-with-its-switches-off.loft::main_vector<Pt>
-elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/an-in-place-literal-answers-the-same-with-its-switches-off.loft::main_vector<R>
-elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/an-in-place-literal-answers-the-same-with-its-switches-off.loft::n_mk
-elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/an-in-place-literal-answers-the-same-with-its-switches-off.loft::n_partial
-elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/an-in-place-literal-answers-the-same-with-its-switches-off.loft::n_test_a_literal_written_into_its_place_reads_the_old_value_first
-elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/an-in-place-literal-answers-the-same-with-its-switches-off.loft::n_test_a_transient_built_from_the_written_place
-elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/an-in-place-literal-answers-the-same-with-its-switches-off.loft::vector<Pt>
-elab-functions	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/an-in-place-literal-answers-the-same-with-its-switches-off.loft::vector<R>
 elab-functions	agree	loft-suite/rules/rewrites/R-Inputs/a-field-path-twin-input-is-stale-after-every-write-that-reaches-it.loft::(schema)
 elab-functions	agree	loft-suite/rules/rewrites/R-Inputs/a-field-path-twin-input-is-stale-after-every-write-that-reaches-it.loft::Atlas
 elab-functions	agree	loft-suite/rules/rewrites/R-Inputs/a-field-path-twin-input-is-stale-after-every-write-that-reaches-it.loft::Canvas
@@ -13586,11 +13577,15 @@ elab-functions	agree	tests/scripts/164-in-place-literal.loft::main_vector<Hp>
 elab-functions	agree	tests/scripts/164-in-place-literal.loft::main_vector<Vf>
 elab-functions	agree	tests/scripts/164-in-place-literal.loft::n_bump
 elab-functions	agree	tests/scripts/164-in-place-literal.loft::n_cell
+elab-functions	agree	tests/scripts/164-in-place-literal.loft::n_f_call
+elab-functions	agree	tests/scripts/164-in-place-literal.loft::n_f_container
 elab-functions	agree	tests/scripts/164-in-place-literal.loft::n_f_empty
 elab-functions	agree	tests/scripts/164-in-place-literal.loft::n_f_keyed
 elab-functions	agree	tests/scripts/164-in-place-literal.loft::n_f_nested
 elab-functions	agree	tests/scripts/164-in-place-literal.loft::n_f_nullable
 elab-functions	agree	tests/scripts/164-in-place-literal.loft::n_f_partial
+elab-functions	agree	tests/scripts/164-in-place-literal.loft::n_f_same
+elab-functions	agree	tests/scripts/164-in-place-literal.loft::n_f_swap
 elab-functions	agree	tests/scripts/164-in-place-literal.loft::n_f_vec_partial
 elab-functions	agree	tests/scripts/164-in-place-literal.loft::n_geta
 elab-functions	agree	tests/scripts/164-in-place-literal.loft::n_main
@@ -14416,6 +14411,7 @@ elab-functions	agree	tests/scripts/59-locks.loft::n_test_const_param_readable
 elab-functions	agree	tests/scripts/59-locks.loft::n_test_get_store_lock_function
 elab-functions	agree	tests/scripts/59-locks.loft::n_test_lock_attribute
 elab-functions	agree	tests/scripts/59-locks.loft::t_8LCounter_lk_read
+elab-functions	agree	tests/scripts/624-nested-narrow-width.loft::n_fmt_nest
 elab-functions	agree	tests/scripts/682-closure-capture-borrow.loft::C682Cell
 elab-functions	agree	tests/scripts/682-closure-capture-borrow.loft::C682Chunk
 elab-functions	agree	tests/scripts/682-closure-capture-borrow.loft::C682Db
@@ -14547,6 +14543,7 @@ elab-functions	agree	tests/scripts/882-keyed-element-read-borrows-its-container.
 elab-functions	agree	tests/scripts/882-keyed-element-read-borrows-its-container.loft::n_i882_s1
 elab-functions	agree	tests/scripts/882-keyed-element-read-borrows-its-container.loft::n_i882_t1
 elab-functions	agree	tests/scripts/882-keyed-element-read-borrows-its-container.loft::n_i882_vec
+elab-functions	agree	tests/scripts/882-keyed-element-read-borrows-its-container.loft::n_i882_vector
 elab-functions	agree	tests/scripts/882-keyed-element-read-borrows-its-container.loft::n_main
 elab-functions	agree	tests/scripts/882-keyed-element-read-borrows-its-container.loft::vector<I882Vec>
 elab-functions	agree	tests/scripts/889-collection-through-a-call-s-field.loft::(schema)
@@ -14557,6 +14554,7 @@ elab-functions	agree	tests/scripts/889-collection-through-a-call-s-field.loft::I
 elab-functions	agree	tests/scripts/889-collection-through-a-call-s-field.loft::main_vector<I889Cell>
 elab-functions	agree	tests/scripts/889-collection-through-a-call-s-field.loft::n_i889_bound
 elab-functions	agree	tests/scripts/889-collection-through-a-call-s-field.loft::n_i889_collection
+elab-functions	agree	tests/scripts/889-collection-through-a-call-s-field.loft::n_i889_direct_vec
 elab-functions	agree	tests/scripts/889-collection-through-a-call-s-field.loft::n_i889_hash
 elab-functions	agree	tests/scripts/889-collection-through-a-call-s-field.loft::n_i889_index
 elab-functions	agree	tests/scripts/889-collection-through-a-call-s-field.loft::n_i889_is
@@ -16134,7 +16132,7 @@ elab-functions	agree	tests/scripts/the-reference-safety-traps-are-what-it-catalo
 elab-functions	agree	tests/scripts/the-reference-safety-traps-are-what-it-catalogues.loft::vector<SafetyRow>
 elab-functions	agree	tests/scripts/the-reference-safety-traps-are-what-it-catalogues.loft::vector<integer(0, 255)>
 
-layer	elab-pass1	agree	10818	of	15998
+layer	elab-pass1	agree	10833	of	16030
 elab-pass1	agree	lib/code.loft::t_4Code_get_type
 elab-pass1	agree	lib/code.loft::t_4Code_set_type
 elab-pass1	agree	lib/docs.loft::n_demo
@@ -21574,6 +21572,10 @@ elab-pass1	agree	loft-suite/rules/rewrites/R-InPlace/a-link-is-rebound-and-hoist
 elab-pass1	agree	loft-suite/rules/rewrites/R-InPlace/a-link-is-rebound-and-hoisted-around-as-its-place-allows.loft::n_link_view
 elab-pass1	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/1571-a-literal-written-in-place-reads-the-old-value-through-any-view.loft::n_c3_sw
 elab-pass1	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/1571-a-literal-written-in-place-reads-the-old-value-through-any-view.loft::n_g10
+elab-pass1	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/1571-a-literal-written-in-place-reads-the-old-value-through-any-view.loft::n_g10_sw
+elab-pass1	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/1571-a-literal-written-in-place-reads-the-old-value-through-any-view.loft::n_g4_sw
+elab-pass1	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/1571-a-literal-written-in-place-reads-the-old-value-through-any-view.loft::n_g5_sw
+elab-pass1	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/1571-a-literal-written-in-place-reads-the-old-value-through-any-view.loft::n_g6_sw
 elab-pass1	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/1571-a-literal-written-in-place-reads-the-old-value-through-any-view.loft::n_ok
 elab-pass1	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/1571-a-literal-written-in-place-reads-the-old-value-through-any-view.loft::n_pts
 elab-pass1	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/1571-a-literal-written-in-place-reads-the-old-value-through-any-view.loft::n_shown
@@ -21601,13 +21603,20 @@ elab-pass1	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/a-literal-assigned-t
 elab-pass1	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/a-literal-assigned-to-a-reference-field-repoints-it.loft::n_test_a_reference_to_its_holders_own_field_is_repointed
 elab-pass1	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/a-literal-reading-its-places-own-collection-keeps-it.loft::n_cnt
 elab-pass1	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/a-literal-reading-its-places-own-collection-keeps-it.loft::n_main
+elab-pass1	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/a-literal-reading-its-places-own-collection-keeps-it.loft::n_test_a_field_swaps_its_scalars
 elab-pass1	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/a-local-that-views-another-store-on-one-path-is-not-rebuilt-in-place.loft::n_demoted
 elab-pass1	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/a-local-that-views-another-store-on-one-path-is-not-rebuilt-in-place.loft::n_in_loop
 elab-pass1	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/a-local-that-views-another-store-on-one-path-is-not-rebuilt-in-place.loft::n_rebuilt
 elab-pass1	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/a-local-that-views-another-store-on-one-path-is-not-rebuilt-in-place.loft::n_show
 elab-pass1	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/a-local-that-views-another-store-on-one-path-is-not-rebuilt-in-place.loft::n_view_last
+elab-pass1	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/an-in-place-literal-and-a-transient-read-of-its-place-answer-what-the-copies-would.loft::n_each
 elab-pass1	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/an-in-place-literal-and-a-transient-read-of-its-place-answer-what-the-copies-would.loft::n_partial
+elab-pass1	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/an-in-place-literal-and-a-transient-read-of-its-place-answer-what-the-copies-would.loft::n_reset
+elab-pass1	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/an-in-place-literal-and-a-transient-read-of-its-place-answer-what-the-copies-would.loft::n_rotate_then_read
+elab-pass1	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/an-in-place-literal-answers-the-same-with-its-switches-off.loft::n_each
 elab-pass1	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/an-in-place-literal-answers-the-same-with-its-switches-off.loft::n_partial
+elab-pass1	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/an-in-place-literal-answers-the-same-with-its-switches-off.loft::n_reset
+elab-pass1	agree	loft-suite/rules/rewrites/R-InPlaceLiteral/an-in-place-literal-answers-the-same-with-its-switches-off.loft::n_rotate_then_read
 elab-pass1	agree	loft-suite/rules/rewrites/R-InRange/a-record-read-at-a-proven-index-answers-the-element-and-the-rest-keep-their-fallback.loft::n_cleared
 elab-pass1	agree	loft-suite/rules/rewrites/R-InRange/a-record-read-at-a-proven-index-answers-the-element-and-the-rest-keep-their-fallback.loft::n_emptied
 elab-pass1	agree	loft-suite/rules/rewrites/R-InRange/a-record-read-at-a-proven-index-answers-the-element-and-the-rest-keep-their-fallback.loft::n_field
@@ -24699,11 +24708,15 @@ elab-pass1	agree	tests/scripts/164-forward-tuple.loft::n_ok
 elab-pass1	agree	tests/scripts/164-forward-tuple.loft::n_totp
 elab-pass1	agree	tests/scripts/164-in-place-literal.loft::n_bump
 elab-pass1	agree	tests/scripts/164-in-place-literal.loft::n_cell
+elab-pass1	agree	tests/scripts/164-in-place-literal.loft::n_f_call
+elab-pass1	agree	tests/scripts/164-in-place-literal.loft::n_f_container
 elab-pass1	agree	tests/scripts/164-in-place-literal.loft::n_f_empty
 elab-pass1	agree	tests/scripts/164-in-place-literal.loft::n_f_keyed
 elab-pass1	agree	tests/scripts/164-in-place-literal.loft::n_f_nested
 elab-pass1	agree	tests/scripts/164-in-place-literal.loft::n_f_nullable
 elab-pass1	agree	tests/scripts/164-in-place-literal.loft::n_f_partial
+elab-pass1	agree	tests/scripts/164-in-place-literal.loft::n_f_same
+elab-pass1	agree	tests/scripts/164-in-place-literal.loft::n_f_swap
 elab-pass1	agree	tests/scripts/164-in-place-literal.loft::n_f_vec_partial
 elab-pass1	agree	tests/scripts/164-in-place-literal.loft::n_geta
 elab-pass1	agree	tests/scripts/164-in-place-literal.loft::n_tot
