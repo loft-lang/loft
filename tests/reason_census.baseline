@@ -1,122 +1,122 @@
 # Per rewrite rule: the call sites in src/ that report it fired, why it refused a
-# site, and which site it admitted (scripts/reason_census.py; --check: a reason is
-# never lost).  rule<TAB>fired<TAB>declined<TAB>admitted
-R-Alias	2	0	0
-R-Apart	7	0	0
-R-AppendTwin	4	0	0
-R-Base	7	0	0
-R-BoundAppend	1	0	0
-R-BoundedNest	1	0	0
-R-BufferReturn	2	0	0
-R-ByteCopy	1	0	0
-R-Callee	1	0	0
-R-Cold	1	0	0
-R-Compact	2	0	0
-R-CompleteWrite	1	0	0
-R-Const	2	0	0
-R-CopyView	2	0	0
-R-Counter	2	0	0
-R-CtorLiteral	1	0	0
-R-DecodeView	4	0	0
-R-DeferredCopy	3	0	0
-R-Demote	2	0	0
-R-Destination	2	0	0
-R-DischargeInto	1	0	0
-R-ElemFirst	1	0	0
-R-ExitVector	2	0	0
-R-ExpPow	1	0	0
-R-FaultFlag	1	0	0
-R-FieldAppend	3	0	0
-R-FileHold	2	0	0
-R-Fill	4	0	0
-R-FirstClaim	1	0	0
-R-FlatCopy	2	0	0
-R-FnRefBuffer	2	0	0
-R-FnRefValue	1	0	0
-R-FoldCompare	1	0	0
-R-FormatAppend	2	0	0
-R-ForwardResult	1	0	0
-R-ForwardWalk	1	0	0
-R-Fuse	7	0	0
-R-GroupPush	1	0	0
-R-GuardFree	2	0	0
-R-GuardedChain	5	0	0
-R-HandOver	2	0	0
-R-Header	11	2	0
-R-HostStore	2	0	0
-R-InPlaceLiteral	4	0	0
-R-InRange	3	0	0
-R-Inline	2	0	0
-R-InlineLeaf	1	0	0
-R-Inputs	3	0	0
-R-Invariant	2	0	0
-R-KeyedEntry	2	0	0
-R-Leaf	1	0	0
-R-LeafChain	1	0	0
-R-LitDiv	1	0	0
-R-LiteralAppend	1	0	0
-R-LiteralWalk	1	0	0
-R-LoopBuffer	1	0	0
-R-LoopRecord	2	0	0
-R-LoopSlot	1	0	0
-R-MaskRange	1	0	0
-R-Mint	1	0	0
-R-MoveChild	1	0	0
-R-MoveLast	4	0	0
-R-NoLocks	1	0	0
-R-NoThreads	1	0	0
-R-NonSentinelParam	2	0	0
-R-Peel	1	0	0
-R-Place	2	0	0
-R-PureReuse	1	0	0
-R-Push	3	0	0
-R-PushFill	16	4	3
-R-PushRec	2	0	0
-R-Range	4	1	1
-R-RangedCall	3	0	0
-R-Rebind	1	0	0
-R-RebindBuffer	1	0	0
-R-RecPtr	9	1	1
-R-RefParam	1	0	0
-R-RefillBuffer	2	0	0
-R-RefillText	3	0	0
-R-Refresh	2	0	0
-R-RepeatRun	1	0	0
-R-RetAdopt	1	0	0
-R-ReturnField	1	0	0
-R-Reuse	1	0	0
-R-Rotate	1	0	0
-R-SameRead	2	0	0
-R-ScaleFold	1	0	0
-R-SelfReplace	1	0	0
-R-SingleUse	2	0	0
-R-SliceArg	2	1	0
-R-SliceBorrow	1	0	0
-R-SliceInto	2	1	0
-R-SpecChain	1	0	0
-R-SplitTable	1	0	0
-R-StartStep	1	0	0
-R-StickySum	1	0	0
-R-StreamWalk	1	0	0
-R-TableHandle	1	0	0
-R-Tabulate	1	0	0
-R-TailSelf	1	1	0
-R-TextBorrow	3	0	0
-R-TextClear	2	0	0
-R-TextLen	1	0	0
-R-TextRun	1	0	0
-R-Transient	1	0	0
-R-TypedKeyed	7	0	0
-R-TypedRead	4	0	0
-R-ValueLocal	2	0	0
-R-ValueRecord	5	4	0
-R-VecCopy	1	0	0
-R-Version	2	0	0
-R-View	2	0	0
-R-ViewReturn	1	0	0
-R-WorkBuffer	4	0	0
-R-WorkPark	1	0	0
-R-Wrapper	1	1	0
-R-ZeroCount	1	0	0
-H-ClearRelease	2	0	0
-H-SwapRebind	2	0	0
+# site, and which site it admitted, and its state (scripts/reason_census.py;
+# --check: a rule never falls silent).  rule<TAB>fired<TAB>declined<TAB>admitted<TAB>state
+R-Alias	2	0	0	silent
+R-Apart	7	0	0	silent
+R-AppendTwin	4	0	0	silent
+R-Base	7	0	0	silent
+R-BoundAppend	1	0	0	silent
+R-BoundedNest	1	0	0	silent
+R-BufferReturn	2	0	0	silent
+R-ByteCopy	1	0	0	silent
+R-Callee	1	0	0	silent
+R-Cold	1	0	0	silent
+R-Compact	2	0	0	silent
+R-CompleteWrite	1	0	0	silent
+R-Const	2	0	0	silent
+R-CopyView	2	0	0	silent
+R-Counter	2	0	0	silent
+R-CtorLiteral	1	0	0	silent
+R-DecodeView	4	0	0	silent
+R-DeferredCopy	3	0	0	silent
+R-Demote	2	0	0	silent
+R-Destination	2	0	0	silent
+R-DischargeInto	1	0	0	silent
+R-ElemFirst	1	0	0	silent
+R-ExitVector	2	0	0	silent
+R-ExpPow	1	0	0	silent
+R-FaultFlag	1	0	0	silent
+R-FieldAppend	3	0	0	silent
+R-FileHold	2	0	0	silent
+R-Fill	4	0	0	silent
+R-FirstClaim	1	0	0	silent
+R-FlatCopy	2	0	0	silent
+R-FnRefBuffer	2	0	0	silent
+R-FnRefValue	1	0	0	silent
+R-FoldCompare	1	0	0	silent
+R-FormatAppend	2	0	0	silent
+R-ForwardResult	1	0	0	silent
+R-ForwardWalk	1	0	0	silent
+R-Fuse	7	0	0	silent
+R-GroupPush	1	0	0	silent
+R-GuardFree	2	0	0	silent
+R-GuardedChain	5	0	0	silent
+R-HandOver	2	0	0	silent
+R-Header	11	2	0	reports
+R-HostStore	2	0	0	silent
+R-InPlaceLiteral	4	0	0	silent
+R-InRange	3	0	0	silent
+R-Inline	2	0	0	silent
+R-InlineLeaf	1	0	0	silent
+R-Inputs	3	0	0	silent
+R-Invariant	2	0	0	silent
+R-KeyedEntry	2	0	0	silent
+R-Leaf	1	0	0	silent
+R-LeafChain	1	0	0	silent
+R-LitDiv	1	0	0	silent
+R-LiteralAppend	1	0	0	silent
+R-LiteralWalk	1	0	0	silent
+R-LoopBuffer	1	0	0	silent
+R-LoopRecord	2	0	0	silent
+R-LoopSlot	1	0	0	silent
+R-MaskRange	1	0	0	silent
+R-Mint	1	0	0	silent
+R-MoveChild	1	0	0	silent
+R-MoveLast	4	0	0	silent
+R-NoLocks	1	0	0	silent
+R-NoThreads	1	0	0	silent
+R-NonSentinelParam	2	0	0	silent
+R-Peel	1	0	0	silent
+R-Place	2	0	0	silent
+R-PureReuse	1	0	0	silent
+R-Push	3	0	0	silent
+R-PushFill	16	4	3	reports
+R-PushRec	2	0	0	silent
+R-Range	4	1	1	reports
+R-RangedCall	3	0	0	silent
+R-Rebind	1	0	0	silent
+R-RebindBuffer	1	0	0	silent
+R-RecPtr	9	1	1	reports
+R-RefParam	1	0	0	silent
+R-RefillBuffer	2	0	0	silent
+R-RefillText	3	0	0	silent
+R-Refresh	2	0	0	silent
+R-RepeatRun	1	0	0	silent
+R-RetAdopt	1	0	0	silent
+R-ReturnField	1	0	0	silent
+R-Reuse	1	0	0	silent
+R-Rotate	1	0	0	silent
+R-SameRead	2	0	0	silent
+R-ScaleFold	1	0	0	silent
+R-SelfReplace	1	0	0	silent
+R-SingleUse	2	0	0	silent
+R-SliceArg	2	1	0	reports
+R-SliceBorrow	1	0	0	silent
+R-SliceInto	2	1	0	reports
+R-SpecChain	1	0	0	silent
+R-SplitTable	1	0	0	silent
+R-StartStep	1	0	0	silent
+R-StickySum	1	0	0	silent
+R-StreamWalk	1	0	0	silent
+R-TableHandle	1	0	0	silent
+R-Tabulate	1	0	0	silent
+R-TailSelf	1	1	0	reports
+R-TextBorrow	3	0	0	silent
+R-TextClear	2	0	0	silent
+R-TextLen	1	0	0	silent
+R-TextRun	1	0	0	silent
+R-Transient	1	0	0	silent
+R-TypedKeyed	7	0	0	silent
+R-TypedRead	4	0	0	silent
+R-ValueLocal	2	0	0	silent
+R-ValueRecord	5	4	0	reports
+R-VecCopy	1	0	0	silent
+R-Version	2	0	0	silent
+R-View	2	0	0	silent
+R-ViewReturn	1	0	0	silent
+R-WorkBuffer	4	0	0	silent
+R-WorkPark	1	0	0	silent
+R-Wrapper	1	1	0	reports
+R-ZeroCount	1	0	0	silent
+H-ClearRelease	2	0	0	silent
+H-SwapRebind	2	0	0	silent

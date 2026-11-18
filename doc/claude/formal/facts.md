@@ -202,7 +202,10 @@ has its own `LOFT_NO_*` switch, and the census counts where it fires by rule and
 rewrite says why it refused a site through `rewrite_census::declined(rule, site, why)`
 (`LOFT_DECLINE_CENSUS`, `make decline-census`), and only some rules call it.  `make
 reason-census` counts, per rule, the sites in the source that report a refusal's reason and an
-admitted site; `tests/reason_census.baseline` is its baseline, and a rule never loses one.
+admitted site, and tells three states apart: a rule that reports, one that states it has
+nothing to report (`// @no-decline: <why>` above its `fired` call — a rewrite that cannot
+refuse), and one that is silent.  `tests/reason_census.baseline` is its baseline, and a rule
+never falls silent.
 
 ## Relations
 
