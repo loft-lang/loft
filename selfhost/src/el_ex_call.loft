@@ -3054,7 +3054,7 @@ pub fn chain_ends_in_call(vars: el_vars::Vars, n: ir::Node) -> boolean {
 // What a `??` subject that is a field's view borrows — the deps its default literal is built
 // against (`build_null_coalesce_default`'s hint) — or none for any other subject.
 pub fn view_borrows(e: el::El, vars: el_vars::Vars, x: Ex) -> vector<integer> {
-  if el_types::base(x.tp) is TyVector && !(x.code is NdVar) && (copies_whole_vector(e, vars, x.code) || field_path(e, x.code)) {
+  if el_types::base(x.tp) is TyVector && !(x.code is NdVar) && (copies_whole_vector(e, vars, x.code) || field_path(e, x.code) || element_of_path(e, el_ir::unspan(x.code))) {
     return el_types::deps(x.tp);
   }
   []

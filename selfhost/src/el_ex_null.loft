@@ -106,7 +106,10 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
     // A field of an owned record is held in a `__ncc_N` viewing it, the "ncc" block answering
     // it where present and the default where not; a bind copies the view (`vec_arm_verdict`).
     // (So is a field path of any depth rooted at a variable — a nested field, a loop element's.)
-    if !(x.code is NdVar) && !el_ex_call::buffered_loft_call(e, x.code) && (copies_whole_vector(e, vars, x.code) || field_path(e, x.code)) {
+    // A vector that is itself an ELEMENT (`vs[0] ?? []`) is read out of its slot through the
+    // nullable getter (`OpGetField(OpGetVectorNullable(vs, …), 0, <vector's type>)`).
+    elem_subject = element_of_path(e, el_ir::unspan(x.code)) && element_place_type(e, lhs) >= 0;
+    if !(x.code is NdVar) && !el_ex_call::buffered_loft_call(e, x.code) && (copies_whole_vector(e, vars, x.code) || field_path(e, x.code) || elem_subject) {
       // The default's buffer borrows the record too: a work ref nulled at the head.
       if !e.first_pass {
         el_ex_call::borrowed_literal_buffer(vars, d.code);
@@ -120,7 +123,8 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
       h = ir::NdVar { n: held };
       present = el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpVectorIsNull", [h])]);
       // (An element read on the way to the field answers its absence: the nullable getter.)
-      return ex(el_ir::v_block([el_ir::v_set(held, nullable_arith(e, x.code, true)), el_ir::v_if(present, h, d.code)], lhs, "ncc"), lhs);
+      read = if elem_subject { el_ir::cl(e, "OpGetField", [nullable_arith(e, el_ir::unspan(x.code), false), ir::NdInt { n: 0 }, ir::NdInt { n: element_place_type(e, lhs) }]) } else { nullable_arith(e, x.code, true) };
+      return ex(el_ir::v_block([el_ir::v_set(held, read), el_ir::v_if(present, h, d.code)], lhs, "ncc"), lhs);
     }
     // A native call answers a fresh vector: held in a `__ncc_N` of its own type (nulled before
     // its statement), the result borrowing the holder.
