@@ -51,13 +51,13 @@ R-Inline	2	0	0	nothing
 R-InlineLeaf	1	0	0	owes
 R-Inputs	3	0	0	owes
 R-Invariant	3	0	0	owes
-R-KeyedEntry	2	0	0	owes
+R-KeyedEntry	2	1	0	partly
 R-LazySplit	2	2	0	reports
 R-Leaf	1	0	0	nothing
 R-LeafChain	1	0	0	owes
 R-LitDiv	1	0	0	owes
 R-LitHoist	1	0	0	owes
-R-LiteralAppend	1	0	0	owes
+R-LiteralAppend	1	1	0	partly
 R-LiteralWalk	1	0	0	owes
 R-LoopBuffer	1	1	0	partly
 R-LoopRecord	2	1	0	reports

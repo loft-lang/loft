@@ -48,7 +48,18 @@ pub fn rewrite(data: &mut Data, d_nr: u32) {
                 }
             }
         });
-        sites.retain(|&(l, len)| mentions(&code, l) == len_mentions(len));
+        sites.retain(|&(l, len)| {
+            let alone = mentions(&code, l) == len_mentions(len);
+            if !alone {
+                crate::rewrite_census::declined_in(
+                    "R-LiteralAppend",
+                    data.def(d_nr).name(),
+                    vars.name(l),
+                    "the literal's local is named outside its run",
+                );
+            }
+            alone
+        });
     }
     let mut fired = 0usize;
     for (l, _) in &sites {
@@ -76,11 +87,11 @@ pub fn rewrite(data: &mut Data, d_nr: u32) {
         }
     }
     data.definitions[d_nr as usize].code = code;
-    // @decline-owed: a literal local named outside its run, or one that is a parameter,
-    //   captured or nullable; a field write that is no scalar setter; a value that is not
+    // @decline-owed: a literal local that is a parameter, captured or nullable; a field
+    //   write that is no scalar setter; a value that is not
     //   simple (it may read a record the element's mint moves) or that names the element or the
     //   vector; a run whose mint, writes, element mint, copy, finish and free are not
-    //   consecutive statements (`admit`)
+    //   consecutive statements (`admit`).  A local named outside its run reports
     crate::rewrite_census::fired("R-LiteralAppend", fired);
 }
 

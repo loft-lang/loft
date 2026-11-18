@@ -104,6 +104,8 @@ REPORTED = {
     "R-Transient": ("a value built and dropped in one function, held off the store (C)", "partial"),
     "R-DeferredCopy": ("a record copy put off until a write needs it (C)", "partial"),
     "R-Peel": ("a short counted loop unrolled (C)", "partial"),
+    "R-KeyedEntry": ("a keyed insert written into its entry", "partial"),
+    "R-LiteralAppend": ("an appended literal built in its element", "partial"),
     "R-Cold/loft": ("a text-building `if` arm outlined as a cold function (C)", "partial"),
     "R-Apart/vector": ("a scalar vector held apart from the store", "partial"),
     "R-Version": ("a leaf's fast twin called from a counted loop (C)", "partial"),
