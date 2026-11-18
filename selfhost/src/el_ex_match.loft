@@ -3473,11 +3473,16 @@ pub fn filter_call(e: el::El, vars: el_vars::Vars, list: vector<ir::Node>, types
   answers_bool = match el_types::base(types[1]!) { TyFunction { args: _, result } => result is TyBoolean, _ => false };
   nm = el_types::elem_name(e, in_elem);
   push = el_ex_pattern::push_op(in_elem);
-  if d < 0 || !answers_bool {
+  if !answers_bool {
     el::refuse(e, "a `filter` through a function value");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
-  if len(el::def(e, d).attributes) != 1 || !el_convert::plain_scalar(in_elem) || push == "" || nm == "" || el::def_nr(e, "main_vector<{nm}>") < 0 {
+  // (A predicate VALUE is held in `_filter_fn_N` first, as `map`'s function is.)
+  fv = if d < 0 { el_vars::create_unique(vars, "filter_fn", types[1]!) } else { -1 };
+  if fv >= 0 {
+    el_vars::set_defined(vars, fv);
+  }
+  if d >= 0 && len(el::def(e, d).attributes) != 1 || !el_convert::plain_scalar(in_elem) || push == "" || nm == "" || el::def_nr(e, "main_vector<{nm}>") < 0 {
     el::refuse(e, "a `filter` of an element that is no plain scalar, or by a function with hidden parameters");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
@@ -3504,11 +3509,12 @@ pub fn filter_call(e: el::El, vars: el_vars::Vars, list: vector<ir::Node>, types
   steps: vector<ir::Node> = [
     el_ir::v_set(elm_v, nx!),
     vector_past_end(e, mv, idx),
-    el_ir::v_if(ir::NdCall { def_nr: d, args: [ir::NdVar { n: elm_v }] }, ir::NdNull, ir::NdContinue { n: 0 }),
+    el_ir::v_if(if fv >= 0 { ir::NdCallRef { var: fv, args: [ir::NdVar { n: elm_v }] } } else { ir::NdCall { def_nr: d, args: [ir::NdVar { n: elm_v }] } }, ir::NdNull, ir::NdContinue { n: 0 }),
     el_ir::v_set(comp, ir::NdVar { n: elm_v }),
     el_ir::cl(e, push, el_ex_pattern::push_args(e, vars, in_elem, w, ir::NdVar { n: comp }))
   ];
-  ops += [el_ir::v_set(mv, list[0]!), el_ir::v_set(idx, ir::NdInt { n: -1 }), el_ir::v_loop(steps, "For comprehension"), w];
+  fill = if fv >= 0 { ir::NdInsert { items: [el_ir::v_set(mv, list[0]!), el_ir::v_set(fv, list[1]!)] } } else { el_ir::v_set(mv, list[0]!) };
+  ops += [fill, el_ir::v_set(idx, ir::NdInt { n: -1 }), el_ir::v_loop(steps, "For comprehension"), w];
   bt = el_vars::tp(vars, res);
   ex(el_ir::v_block(ops, bt, "Vector comprehension"), bt)
 }
