@@ -2154,7 +2154,8 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
     pe = el_expressions::variant_parent(e, in_t);
     if pe >= 0 {
       for x in xs {
-        if el_expressions::variant_parent(e, x.tp) == pe && !el_types::is_equal(e, in_t, x.tp) {
+        // (A later item typed as the enum itself — a unit variant, a value of it — joins too.)
+        if (el_expressions::variant_parent(e, x.tp) == pe || el_types::struct_enum_def(x.tp) == pe && !(x.tp is TyOptional)) && !el_types::is_equal(e, in_t, x.tp) {
           in_t = ir::TyEnum { n: pe, is_ref: true, dep: [] };
         }
       }
