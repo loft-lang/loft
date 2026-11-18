@@ -408,22 +408,22 @@ R-CodeBase	rewrites	structural	1	2026-11-18	the interpreter's cached bytecode ba
 R-Cold	rewrites	curated	4	2026-11-18	its own cell, two tests/scripts programs and c_emit's Rust guard
 R-Compact	rewrites	curated	6	2026-11-18	cited by H-CopySelf, H-Drop and H-ClearRelease cells and its Rust guard
 R-CompleteWrite	rewrites	curated	12	2026-11-18	its two own fold candidates agree with gate E and stay
-R-Const	rewrites	todo			
-R-CopyView	rewrites	todo			
-R-Counter	rewrites	todo			
-R-CtorLiteral	rewrites	todo			
-R-DeadResult	rewrites	todo			
-R-DecodeView	rewrites	todo			
-R-DeferredCopy	rewrites	todo			
-R-Demote	rewrites	todo			
-R-Destination	rewrites	todo			
-R-DischargeInto	rewrites	todo			
-R-DispatchPublish	rewrites	todo			
-R-DispatchStop	rewrites	todo			
-R-ElemFirst	rewrites	todo			
-R-ElementPath	rewrites	todo			
-R-Escape	rewrites	todo			
-R-ExitVector	rewrites	todo			
+R-Const	rewrites	curated	7	2026-11-18	its own fold candidate agrees with gate E; every cell a distinct case
+R-CopyView	rewrites	curated	10	2026-11-18	merged the two refused list-walk cells; the link-bind, cursor and read-only-copy cells agree with gate E and stay
+R-Counter	rewrites	curated	10	2026-11-18	five suite cells and Rust guards, distinct cases
+R-CtorLiteral	rewrites	curated	4	2026-11-18	its two own fold candidates agree with gate E and stay
+R-DeadResult	rewrites	curated	1	2026-11-18	first cell, from the formal text: a status field, a loop-decided field, a recursion, a kept effect — each beside the whole reading
+R-DecodeView	rewrites	curated	5	2026-11-18	merged its four crossings (ByteCopy, TextRun, Escape, Callee) into one cell; all refused, all conformance
+R-DeferredCopy	rewrites	curated	4	2026-11-18	its two own fold candidates agree with gate E and stay
+R-Demote	rewrites	curated	6	2026-11-18	merged the two front-push cells (a record's, a variant's); the B-Copy crossing is the core
+R-Destination	rewrites	curated	2	2026-11-18	two suite cells, distinct cases
+R-DischargeInto	rewrites	curated	5	2026-11-18	its one own fold candidate agrees with gate E; kept
+R-DispatchPublish	rewrites	structural	1	2026-11-18	the interpreter's dispatch-loop mechanism (the crash report's position, the one stop flag): what it ends or names is held by the error, coroutine and concurrency cells; the mechanism is guarded by tests/dispatch_publish.rs and tests/dispatch_stop.rs
+R-DispatchStop	rewrites	structural	2	2026-11-18	the interpreter's dispatch-loop mechanism (the crash report's position, the one stop flag): what it ends or names is held by the error, coroutine and concurrency cells; the mechanism is guarded by tests/dispatch_publish.rs and tests/dispatch_stop.rs
+R-ElemFirst	rewrites	curated	11	2026-11-18	merged the two refused row-in-its-element cells; the merged cell re-scored falsified against the core's patch; the others agree with gate E
+R-ElementPath	rewrites	curated	2	2026-11-18	one suite cell beside its Rust guard
+R-Escape	rewrites	curated	9	2026-11-18	seven suite cells, distinct cases
+R-ExitVector	rewrites	curated	1	2026-11-18	one suite cell
 R-ExpPow	rewrites	todo			
 R-FastTable	rewrites	todo			
 R-FaultFlag	rewrites	todo			
