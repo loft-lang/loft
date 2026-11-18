@@ -958,7 +958,7 @@ elab	refused	tests/scripts/store_paged_enum_field.loft
 elab	refused	tests/scripts/store_rebuild_b1.loft
 elab	refused	tests/scripts/the-reference-safety-traps-are-what-it-catalogues.loft
 
-layer	elab-functions	agree	15321	of	27921
+layer	elab-functions	agree	15322	of	27921
 elab-functions	agree	lib/code.loft::Block
 elab-functions	agree	lib/code.loft::Boolean
 elab-functions	agree	lib/code.loft::Call
@@ -11212,6 +11212,7 @@ elab-functions	agree	loft-suite/rules/types/N-Store/2006-a-returned-field-of-a-r
 elab-functions	agree	loft-suite/rules/types/N-Store/2006-a-returned-field-of-a-record-that-is-null-is-null.loft::n_b4
 elab-functions	agree	loft-suite/rules/types/N-Store/2006-a-returned-field-of-a-record-that-is-null-is-null.loft::n_b5
 elab-functions	agree	loft-suite/rules/types/N-Store/2006-a-returned-field-of-a-record-that-is-null-is-null.loft::n_b7
+elab-functions	agree	loft-suite/rules/types/N-Store/2006-a-returned-field-of-a-record-that-is-null-is-null.loft::n_b9
 elab-functions	agree	loft-suite/rules/types/N-Store/2006-a-returned-field-of-a-record-that-is-null-is-null.loft::n_cnt_o
 elab-functions	agree	loft-suite/rules/types/N-Store/2006-a-returned-field-of-a-record-that-is-null-is-null.loft::n_mk
 elab-functions	agree	loft-suite/rules/types/N-Store/2006-a-returned-field-of-a-record-that-is-null-is-null.loft::n_next
@@ -16281,7 +16282,7 @@ elab-functions	agree	tests/scripts/the-reference-safety-traps-are-what-it-catalo
 elab-functions	agree	tests/scripts/the-reference-safety-traps-are-what-it-catalogues.loft::vector<SafetyRow>
 elab-functions	agree	tests/scripts/the-reference-safety-traps-are-what-it-catalogues.loft::vector<integer(0, 255)>
 
-layer	elab-pass1	agree	10783	of	15957
+layer	elab-pass1	agree	10783	of	15958
 elab-pass1	agree	lib/code.loft::t_4Code_get_type
 elab-pass1	agree	lib/code.loft::t_4Code_set_type
 elab-pass1	agree	lib/docs.loft::n_demo
