@@ -254,6 +254,25 @@ a hot function its registers — every call builds the frame struct and makes tw
   asserts that the default build splits and a `--ship` unit holds no part.  The plan and
   its measurements are [@PLN212](https://github.com/loft-lang/plans/issues/212).
 
+## An exit's releases are written once (`(R-CTail)`)
+
+Every `return` of a function releases what the function still owns, so written at each exit
+a body grows as exits × owned locals instead of with its source.  `src/c/tail.rs` reads the
+finished body and keeps one copy of each release tail two exits share: an exit whose last
+eight or more release statements are, text for text, the end of a tail already written keeps
+its own statements that differ and jumps into the written one (`goto loft_rt<n>`), its
+result in the function's one slot `loft_rv`.  Each exit runs the statements it ran before, in
+the same order, so no answer, free or leak changes; the rule and its premises are
+`(R-CTail)` in [formal/rewrites.md](formal/rewrites.md).
+
+- **Where it runs:** every tier and every C compiler; the parts of `(R-CSplit)` keep each
+  exit as written.
+- **What it does not share:** tails that differ in the middle (one exit frees a local another
+  does not own yet) share only the end after the difference.
+- **Switches:** `LOFT_NO_C_TAIL=1` turns it off (the bisect step); `LOFT_TRACE_C_TAIL=1`
+  names each function it shortened.
+- **Guard:** `tests/c_tail.rs`.
+
 ## The model
 
 The C runtime's stores are the standard of [STORE_MODEL.md](STORE_MODEL.md) (@PLN206): one
