@@ -339,6 +339,7 @@ Networked runs: `LOFT_NET_PROFILE` (PERFORMANCE.md § LOFT_NET_PROFILE).
 [LOFT_TEST.md](doc/claude/LOFT_TEST.md) · [DEBUG.md](doc/claude/DEBUG.md) · [CAVEATS.md](doc/claude/CAVEATS.md) · bisect switches:
 [NATIVE_SWITCHES.md](doc/claude/NATIVE_SWITCHES.md) / [BOTH_BACKEND_SWITCHES.md](doc/claude/BOTH_BACKEND_SWITCHES.md) ·
 [PROFILING.md](doc/claude/PROFILING.md) · [PERFORMANCE.md](doc/claude/PERFORMANCE.md) / [PROFILE_ORACLE.md](doc/claude/PROFILE_ORACLE.md) ·
+[REWRITE_REASONS.md](doc/claude/REWRITE_REASONS.md) which rewrites say why, and what is owed ·
 [INTERPRETER_PERFORMANCE.md](doc/claude/INTERPRETER_PERFORMANCE.md) · [PERF_PORTAL.md](doc/claude/PERF_PORTAL.md) (generated) ·
 [KERNELS.md](doc/claude/KERNELS.md) the Rust stand-ins register · [CI_BUDGET.md](doc/claude/CI_BUDGET.md) what runs when.
 

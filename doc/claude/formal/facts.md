@@ -206,7 +206,8 @@ admitted site, and tells four states apart: a rule that reports, one that states
 nothing to report (`// @no-decline: <why>` above its `fired` call — a rewrite that cannot
 refuse), one that was read and refuses on conditions it does not report yet
 (`// @decline-owed: <the conditions>`), and one nobody has read.
-`tests/reason_census.baseline` is its baseline, and a rule never falls silent.
+`tests/reason_census.baseline` is its baseline, and a rule never falls silent.  What a refusal
+logs, and what is still to wire: [REWRITE_REASONS.md](../REWRITE_REASONS.md).
 
 ## Relations
 
