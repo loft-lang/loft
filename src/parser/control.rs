@@ -10911,9 +10911,22 @@ impl Parser {
         }
         // A branch ARM wraps its read in a block (`if c { f(x)[i] } else { null }`): the block
         // is a view of what its deps name, read once into a handle as a lifted container is.
+        //
+        // Only where the arm's value IS a read.  An arm that answers a call's own result
+        // (`{ …; fresh(v) }`) owns that store, and the deps on its block are the JOIN's — the
+        // other arm's view — so bound as a view here the result was released by nobody
+        // (`@FR-O-Complete`).
+        fn arm_tail(v: &Value) -> &Value {
+            match v.unspan() {
+                Value::Block(bl) => bl.operators.last().map_or(v, arm_tail),
+                Value::Insert(ops) => ops.last().map_or(v, arm_tail),
+                _ => v,
+            }
+        }
         if let Value::Block(bl) = src.unspan()
             && !bl.result.depend().is_empty()
             && !Self::copy_source_is_a_literal(src)
+            && read(self, arm_tail(src))
         {
             let tp = Type::Optional(Box::new(Type::Reference(
                 td,
