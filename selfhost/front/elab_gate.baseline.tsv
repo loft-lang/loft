@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	ab5d0564eb80dce84cbfff91bb00513afb5d039f
+suite	7ffb8a18e50d93ff1e1e35c10369cf4874bc645d
 
-layer	elab	agree	1031	of	2070
+layer	elab	agree	1031	of	2069
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -533,8 +533,7 @@ elab	refused	loft-suite/rules/rewrites/R-Demote/a-front-push-moves-the-old-node-
 elab	refused	loft-suite/rules/rewrites/R-Destination/a-call-result-moved-into-an-element-is-built-there.loft
 elab	refused	loft-suite/rules/rewrites/R-ElemFirst/a-row-is-built-in-its-element-filling-its-own-vector.loft
 elab	refused	loft-suite/rules/rewrites/R-ElementPath/an-element-read-in-range-answers-what-the-full-path-answers.loft
-elab	refused	loft-suite/rules/rewrites/R-FieldAppend/a-plain-append-beside-a-destination-call-lands-in-its-own-slot.loft
-elab	refused	loft-suite/rules/rewrites/R-FieldAppend/a-straight-line-append-to-a-record-field-is-its-own-slot-for-every-element-shape.loft
+elab	refused	loft-suite/rules/rewrites/R-FieldAppend/an-append-to-a-record-field-lands-in-its-own-slot.loft
 elab	refused	loft-suite/rules/rewrites/R-Fill/a-fill-writes-every-element-at-every-length-and-offset.loft
 elab	refused	loft-suite/rules/rewrites/R-Fill/a-fill-writes-through-the-header-its-loop-holds.loft
 elab	refused	loft-suite/rules/rewrites/R-FnRefValue/a-fn-ref-dispatch-answers-the-tuple-its-arms-answer.loft
