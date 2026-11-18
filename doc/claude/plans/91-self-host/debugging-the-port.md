@@ -95,7 +95,12 @@ first-pass drop — is acknowledged automatically as a comment `result <commit>`
 promote.  One with ISSUES gets the same automatic line ("do not promote this one yet"), and the
 tester's analysis follows as a message: each definition that stopped agreeing with the refusal
 and source line that caught it, each differ with the first differing line of both sides.
-Neither is waited for: post, go on to the next item, read the answer at a natural break.  Nothing is pushed to a branch.  Use it for a change that adds or
+Neither is waited for: post, go on to the next item, read the answer at a natural break.
+Either answer lists what the change MOVED — the programs that newly agree, and for each program
+that lost a refusal and is still refused, the refusals left — so a listing of the refusals over
+the corpus before promoting is not needed.  A lifted program that DIFFERS (a neighbouring shape
+the refusal had hidden) comes back analysed: what Rust decides there, and whether it is carried
+or wants a refusal by name.  Nothing is pushed to a branch.  Use it for a change that adds or
 widens a refusal, or changes a rule many functions share: a definition that agreed inside a
 program that stays refused is seen by nothing else before the promotion.
 
