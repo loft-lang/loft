@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	4d4a3b78a0f21989520a4570bd4e14079c3895c5
+suite	400a3c3af6936c96256a87b8fd02470f7451b666
 
-layer	elab	agree	1031	of	2056
+layer	elab	agree	1031	of	2055
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -681,8 +681,7 @@ elab	refused	loft-suite/rules/types/N-Shape/1489-a-capture-is-bound-and-returned
 elab	refused	loft-suite/rules/types/N-Shape/1493-a-branch-arm-yielding-a-locals-field-delivers-a-copy.loft
 elab	refused	loft-suite/rules/types/N-Shape/1616-a-text-local-promoted-to-the-return-buffer-keeps-its-question-mark.loft
 elab	refused	loft-suite/rules/types/N-Shape/1739-a-null-inner-vector-element-is-absent-on-every-route.loft
-elab	refused	loft-suite/rules/types/N-Shape/1836-a-keyed-or-nullable-text-link-writes-through-on-both-backends.loft
-elab	refused	loft-suite/rules/types/N-Shape/1836-a-link-to-a-nullable-vector-writes-through.loft
+elab	refused	loft-suite/rules/types/N-Shape/1836-a-link-to-a-nullable-place-writes-through.loft
 elab	refused	loft-suite/rules/types/N-Shape/1948-a-par-worker-may-answer-null.loft
 elab	refused	loft-suite/rules/types/N-Shape/1981-a-format-spec-on-a-nullable-value-reaches-its-hook.loft
 elab	refused	loft-suite/rules/types/N-Shape/2233-a-coalesce-tail-delivers-into-the-callers-buffer.loft
