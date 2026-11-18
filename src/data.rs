@@ -9225,7 +9225,7 @@ impl Data {
         let name = fn_name.strip_prefix("n_").unwrap_or(fn_name);
         let at = &self.def(winner).position;
         // …and an operator function the stdlib keeps under its own `Op…` name (`OpNot`).
-        if (self.def(winner).name.starts_with("n_") || crate::parser::is_op(&self.def(winner).name))
+        if (self.def(winner).name.starts_with("n_") || self.def(winner).is_operator())
             && crate::file_access::is_stdlib_source(at.file.as_str())
             && !crate::file_access::is_stdlib_source(lexer.pos().file.as_str())
         {
@@ -9893,7 +9893,7 @@ impl Data {
             && !(is_self
                 && self.source != STD_SOURCE
                 && self.def(o_nr).source == STD_SOURCE
-                && crate::parser::is_op(fn_name))
+                && self.def(o_nr).is_operator())
         {
             let text = self.redefinition_text(lexer, o_nr, fn_name);
             diagnostic!(lexer, Level::Error, "{text}");
