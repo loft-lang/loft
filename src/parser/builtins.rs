@@ -794,6 +794,7 @@ impl Parser {
         list: &[Value],
         types: &[Type],
     ) -> Type {
+        self.state_route("parse_parallel_for");
         let ref_d_nr = self.data.def_nr("reference");
         let result_ref_type = Type::Reference(ref_d_nr, crate::data::Deps::none());
         if self.first_pass {
@@ -955,6 +956,7 @@ impl Parser {
         list: &[Value],
         types: &[Type],
     ) -> Type {
+        self.state_route("parse_par_fold");
         let int_tp = Type::Integer(crate::data::IntegerSpec::wide());
         if self.first_pass {
             return int_tp;

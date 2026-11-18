@@ -73,9 +73,25 @@ impl Parser {
 
     /// Is the trace asked for, for the source being read?  The standard library is the image
     /// the elaborator loads, never a parse it repeats.
-    fn state_trace_on(&self) -> bool {
+    pub(crate) fn state_trace_on(&self) -> bool {
         crate::env_once!(std::env::var_os("LOFT_STATE_TRACE").is_some())
             && self.data.source != crate::data::STD_SOURCE
+    }
+
+    /// The `route` point (elaborator-instruments.md § 2): the front end took the special route
+    /// `handler` for the construct at the lexer's position — a handler's name, or
+    /// `<function>=<verdict>` where one function decides between routes.
+    pub(crate) fn state_route(&self, handler: &str) {
+        if !self.state_trace_on() {
+            return;
+        }
+        let pos = self.lexer.pos();
+        eprintln!(
+            "state {} {}:{} route {handler}",
+            if self.first_pass { 1 } else { 2 },
+            pos.line,
+            pos.pos
+        );
     }
 
     /// The `stmt-end` point: the type `tp` the statement read from `at` answered.

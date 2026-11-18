@@ -94,6 +94,12 @@ def sections(lines):
     return out
 
 
+ROUTE = re.compile(r"^state (\d) (\d+):(\d+) (route|refuse) (.*)$")
+
+# The Rust front end's `route` lines by program (elaborator-instruments.md § 2), filled by
+# `one` when the state trace is on: path -> [(pass, line, col, handler)].
+ROUTES = {}
+
 FN_END = re.compile(r"^state 1 \d+:\d+ fn-end (.+?) (?:ret=|var \d+ )")
 
 # `--pass1` (elaborator-instruments.md § 1): each program's first-pass verdict by function,
@@ -110,7 +116,9 @@ def pass1_sections(stderr):
     are `(top)`."""
     out, cur, name = {}, [], None
     for l in stderr.splitlines():
-        if not l.startswith("state 1 "):
+        # `route` and `refuse` say which code ran, not what a pass left: they are joined by
+        # line (`ROUTES`), never compared line for line.
+        if not l.startswith("state 1 ") or ROUTE.match(l):
             continue
         m = FN_END.match(l)
         if name is not None and (m is None or m.group(1) != name):
@@ -216,6 +224,8 @@ def one(loft, defs, elab, std, path, tmp, env, i):
                             f"{abs(len(a) - len(b))} lines")
     fns = {k: (v, shapes.get(k, "")) for k, v in fns.items()}
     if env.get("LOFT_STATE_TRACE"):
+        ROUTES[path] = [m2.groups()[:3] + (m2.group(5),) for m2 in map(ROUTE.match, rust_err.splitlines())
+                        if m2 and m2.group(4) == "route"]
         # The first pass is compared where the image is: every function of a program that
         # agrees, the agreeing functions of a refused one; a differing program's is not.
         if not refused and mine == want:
@@ -444,6 +454,14 @@ def main():
                     prog = baseline.name_of(path, root, suite)
                     for fname, (v, rust_line, port_line) in sorted(fns1.items()):
                         fh.write(f"{v}\t{prog}::{fname}\t{rust_line}\t{port_line}\n")
+        # `LOFT_ELAB_ROUTES=<file>`: every `route` line of the Rust front end, as
+        # `program<TAB>pass<TAB>line<TAB>col<TAB>handler` — what the where-list joins a
+        # refusal's line to.
+        if os.environ.get("LOFT_ELAB_ROUTES"):
+            with open(os.environ["LOFT_ELAB_ROUTES"], "w", encoding="utf-8") as fh:
+                for path, rs in sorted(ROUTES.items()):
+                    for ps, ln, col, handler in rs:
+                        fh.write(f"{path}\t{ps}\t{ln}\t{col}\t{handler}\n")
         # The positive control: the layer must be able to fail.  One function that agrees is
         # read again with the port's trace told to answer a wrong result on the first pass
         # (`LOFT_STATE_TRACE_CONTROL`, `el_trace::fn_end`); it must read `pass1-differ`.

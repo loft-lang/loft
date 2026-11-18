@@ -169,6 +169,53 @@ and the definition-level ranking gains a column "Rust route" (the handler most s
 family share).  A family whose sites share one handler is one port; a family spread over many
 handlers is a symptom name and wants splitting.
 
+### Built — step 3, the `route` point in Rust, `refuse` in the port, and the join
+
+`Parser::state_route(handler)` prints `state <pass> <line>:<col> route <handler>` at the lexer's
+position.  Five of the six groups are in:
+
+- the special-form calls: `parse_parallel_for`, `parse_par_fold`, `parse_map`, `parse_filter`,
+  `parse_reduce`, `parse_sort`, `parse_insert`, `parse_reverse`, `parse_reserve`, `parse_any`,
+  `parse_all`, `parse_count_if`, and the arms written in place as `call:<name>` (`assert` and
+  the log family, `deliver`, `expose` / `release`, `type_of`, `field_value`, `clear`, `next`,
+  `exhausted`, `type_name`, `typedef`);
+- the generic path: `try_generic_instantiation` (only where it found a template),
+  `bind_monomorph_join_return`;
+- the return path: `materialize_return_into=whole` / `=arms`, `classify_ret_promotion=<verdict>`;
+- the literal paths: `parse_object`, `parse_vector`, `parse_multiply` (where it answers);
+- the match entry: `parse_match`, then `parse_cursor_match`, `parse_scalar_match`,
+  `parse_vector_match` or `parse_tuple_match`.
+
+Two changes to the design.  A handler that is a function of its own prints at its ENTRY, not in
+the dispatching `match`: that match has guarded and multi-line arms, the entry says the same
+thing, and the change stays one line per handler.  And `parse_method`'s built-in arms are NOT
+in: a method call is selected by `select_method_def` over an overload set, not by a `match` of
+named arms, so there is no dispatch to mark; it is the group to add when a refusal family
+shows no route at its sites.
+
+The port: `el::refuse` prints `state <pass> <line>:0 refuse <text>` (it knows the line, not the
+column).  `route` and `refuse` lines are left out of the first-pass comparison and of
+`state_diff.py`: they say which code ran, not what a pass left, and the port's own `route`
+lines come a path at a time (step 4).
+
+The join: under `--pass1` the gate keeps Rust's route lines (`LOFT_ELAB_ROUTES=<file>`:
+`program, pass, line, col, handler`); the tester's `where.py` prints them under each refusal
+site and names the handlers a family's sites share, and `deflevel.py` carries the same as its
+"Rust route" column.
+
+Whole corpus at f260caf9b: 88474 route lines; the verdicts and the first-pass counts are
+unchanged (1121 of 2085; 8854 of 15866).  By handler: `parse_object` 37232, `parse_vector`
+36109, `classify_ret_promotion` 4851, `parse_match` 3394, `materialize_return_into` 1869,
+`try_generic_instantiation` 1626, `parse_vector_match` 856, `bind_monomorph_join_return` 783,
+`call:next` 508, `parse_scalar_match` 490, `parse_insert` 127, `parse_map` 112.  First joins:
+"a slice pattern element of this form" — all 52 sites under `parse_vector_match` (one handler,
+one port); "a record literal written into a field or an element" — `parse_object` 62,
+`parse_vector` 15; "an operator with no builtin candidate" — `parse_object` 13,
+`bind_monomorph_join_return` 6, `parse_match` 2 over 55 sites (a symptom name); the
+definition-level families "a struct field of this type", "a value struct or a struct template"
+and "a `&` parameter of a tuple" have no route at their sites: a declaration's route is the
+next group to mark.
+
 ## 3. How much is ported — route coverage over the corpus
 
 No new mechanism: count the `route` lines.
