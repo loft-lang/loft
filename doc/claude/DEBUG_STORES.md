@@ -35,7 +35,9 @@ default-ON — `LOFT_NO_CACHE` disables; and already OFF for a binary under
 `target/{debug,release}/`, so on a from-source loft the bundle is not one of
 your variables — STARTUP_CACHE.md § Which loft am I measuring), the stdlib bundle
 (`LOFT_STDLIB_CACHE`), `target/` build artefacts, and an installed
-`$(which loft)` on `PATH`.
+`$(which loft)` on `PATH`.  Set `LOFT_NO_CACHE=1` on a probe, never exported into a test
+run: `c_emit`'s `a_backend_finds_the_layers_header_wherever_the_two_are_installed` asserts
+that a mode's second run starts from the cache, and fails under it.
 
 This is not hypothetical: the native duplicate-type-mint fault
 ([plans/native-type-mint](plans/native-type-mint/README.md)) was recorded as
