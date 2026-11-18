@@ -495,7 +495,10 @@ fn fill_database(e: el::El, d: integer) {
       };
     }
     if c < 0 {
-      el::refuse(e, "a struct field of this type");
+      // (Named by its kind — the variant's name — so the refusal's sites group by type.)
+      shown = "{ft}";
+      cut = shown.find(" ") ?? len(shown);
+      el::refuse(e, "a struct field of this type: {shown[..cut]}");
       return;
     }
     f = field(e, s, a.name, c);
