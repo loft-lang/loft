@@ -440,24 +440,24 @@ R-ForwardResult	rewrites	curated	1	2026-11-18	one suite cell
 R-ForwardWalk	rewrites	curated	5	2026-11-18	merged the two refused field-walk cells into one
 R-FrameHeadroom	rewrites	structural	2	2026-11-18	when the interpreter's stack store grows: no program observes it beyond deep recursion running, which the calls chapter's cells hold; guarded by its Rust tests
 R-Fuse	rewrites	curated	2	2026-11-18	one suite cell beside its Rust guard
-R-GroupPush	rewrites	todo			
-R-GuardFree	rewrites	todo			
-R-GuardedChain	rewrites	todo			
-R-HandOver	rewrites	todo			
-R-Header	rewrites	todo			
-R-HostStore	rewrites	todo			
-R-HotInline	rewrites	todo			
-R-InPlace	rewrites	todo			
-R-InPlaceLiteral	rewrites	todo			
-R-InRange	rewrites	todo			
-R-Inline	rewrites	todo			
-R-InlineLeaf	rewrites	todo			
-R-Inputs	rewrites	todo			
-R-Invariant	rewrites	todo			
-R-KeyList	rewrites	todo			
-R-KeyedEntry	rewrites	todo			
-R-LazySplit	rewrites	todo			
-R-Leaf	rewrites	todo			
+R-GroupPush	rewrites	curated	88	2026-11-18	one suite cell beside its 87 Rust guards
+R-GuardFree	rewrites	curated	4	2026-11-18	its one own cell is refused and has no refused partner; kept
+R-GuardedChain	rewrites	curated	20	2026-11-18	its own fold candidate agrees with gate E; kept
+R-HandOver	rewrites	curated	4	2026-11-18	its refused fold's core agrees with gate E; both stay
+R-Header	rewrites	curated	108	2026-11-18	its three own fold candidates agree with gate E; kept
+R-HostStore	rewrites	curated	2	2026-11-18	merged the refused literal-adopts and recursion-adopts cells; the field-build core agrees with gate E and stays
+R-HotInline	rewrites	structural	0	2026-11-18	the interpreter runs #hot operators inline in its lean loop: the same templates, no observable difference; guarded by the fill generator's tests
+R-InPlace	rewrites	curated	19	2026-11-18	merged its two refused link cells into one
+R-InPlaceLiteral	rewrites	curated	18	2026-11-18	merged the variant view into 1571 (re-scored falsified against its patch); the switches-off cell carries a file-level @ARMED and stays; the others are distinct cases
+R-InRange	rewrites	curated	8	2026-11-18	its own fold candidate agrees with gate E; kept
+R-Inline	rewrites	structural	1	2026-11-18	the C writer's static-inline hint for small functions: the rule says it changes no observable behaviour; guarded by c_emit's tests
+R-InlineLeaf	rewrites	curated	8	2026-11-18	two suite cells beside its Rust guards
+R-Inputs	rewrites	curated	11	2026-11-18	its own fold candidate agrees with gate E; kept
+R-Invariant	rewrites	curated	4	2026-11-18	three suite cells, distinct cases
+R-KeyList	rewrites	structural	1	2026-11-18	the interpreter caches a keyed type's key contents: lookups answer the same, as the collections cells hold; guarded by its Rust tests
+R-KeyedEntry	rewrites	curated	10	2026-11-18	its two own fold candidates agree with gate E and stay
+R-LazySplit	rewrites	curated	6	2026-11-18	its own fold candidate agrees with gate E; kept
+R-Leaf	rewrites	structural	0	2026-11-18	a leaf function pushes no shadow frame: by construction it cannot reach stack_trace, assert or panic, so nothing can observe the omission
 R-LeafChain	rewrites	todo			
 R-LitDiv	rewrites	todo			
 R-LitHoist	rewrites	todo			
