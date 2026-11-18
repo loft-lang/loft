@@ -156,6 +156,19 @@ fn projected_locals(data: &Data, d_nr: u32) -> HashSet<u16> {
     out
 }
 
+/// The answers of [`admit`] that say the statement is not this rule's pattern at all: they
+/// are traced and not counted as refusals.
+const NOT_THE_PATTERN: [&str; 4] = [
+    NOT_A_RECORD,
+    NOT_A_FUNCTION,
+    NO_LOFT_BODY,
+    NO_BUFFER_ARGUMENT,
+];
+const NOT_A_RECORD: &str = "the local is not a dense record";
+const NOT_A_FUNCTION: &str = "the callee is not a function";
+const NO_LOFT_BODY: &str = "the callee has no loft body";
+const NO_BUFFER_ARGUMENT: &str = "the call carries no buffer argument";
+
 fn visit(v: &mut Value, data: &Data, d_nr: u32, facts: &Facts, pos: &mut usize) {
     let here = *pos;
     *pos += 1;
@@ -180,8 +193,13 @@ fn visit(v: &mut Value, data: &Data, d_nr: u32, facts: &Facts, pos: &mut usize) 
                     args[b] = Value::Var(x);
                 }
                 Err(reason) => {
-                    // Only `x = f(.., x, ..)` is the rule's pattern: another bind is no refusal.
-                    if candidate && crate::rewrite_census::declines_wanted() {
+                    // Only `x = f(.., x, ..)` over a record local and a loft callee that
+                    // answers through a buffer is the rule's pattern: another bind, and a
+                    // call of an operator or a native, is no refusal.
+                    if candidate
+                        && !NOT_THE_PATTERN.contains(&reason)
+                        && crate::rewrite_census::declines_wanted()
+                    {
                         let def = data.def(d_nr);
                         let site = format!("{}:{}", def.name(), def.variables().name(x));
                         crate::rewrite_census::declined("R-Rebind", &site, reason);
@@ -233,7 +251,7 @@ fn admit(
         return Err("the local is nullable");
     }
     let Type::Reference(td, _) = func.tp(local).base() else {
-        return Err("the local is not a dense record");
+        return Err(NOT_A_RECORD);
     };
     let td = *td;
     // `@FR-O-Owner` — the local must OWN the store the callee is about to write.  A plain
@@ -339,11 +357,11 @@ fn admit_callee(
         return Err("a recursive call");
     }
     if data.def_type(callee_nr) != DefType::Function {
-        return Err("the callee is not a function");
+        return Err(NOT_A_FUNCTION);
     }
     let callee = data.def(callee_nr);
     if *callee.code() == Value::Null || !callee.rust().is_empty() || !callee.native().is_empty() {
-        return Err("the callee has no loft body");
+        return Err(NO_LOFT_BODY);
     }
     if callee.name().contains("__lambda") {
         return Err("the callee is a lambda");
@@ -355,7 +373,7 @@ fn admit_callee(
         return Err("the callee's buffer was promoted onto a local");
     }
     if args.len() <= buf_idx {
-        return Err("the call carries no buffer argument");
+        return Err(NO_BUFFER_ARGUMENT);
     }
     let func: &Function = data.def(d_nr).variables();
     let Value::Var(buf) = args[buf_idx].unspan() else {
