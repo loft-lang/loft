@@ -1791,6 +1791,9 @@ pub fn vector_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decla
 // `elem`: the element type a hint names (a `??` default's subject), else unknown.
 // The definitions a hinted literal makes are made at its `]`.
 pub fn vector_value(e: el::El, vars: el_vars::Vars, n: integer, hinted: boolean = true, borrows: vector<integer> = [], elem: ir::TypeT = ir::TyUnknown { n: 0 }) -> Built {
+  if el_trace::on() {
+    el_trace::route(e, "parse_vector");
+  }
   // A literal that starts a bind's chain (`t = [..].map(f)`, `a = [10, 20][1]`): the first pass
   // of Rust builds it into the bound local — the element temp minted — and renames the build
   // onto a fresh accumulator once it meets the `.` or `[` (`parse_vector`'s receiver rename).
@@ -1989,6 +1992,9 @@ pub fn first_pass_fields(e: el::El, vars: el_vars::Vars, d: integer, fields: vec
 // The one build behind the three literal forms: into a local (`vector_into`), in value position
 // (`value`, `vector_value`) and appended to a local that has its store (`append`, `vector_append`).
 pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared: ir::TypeT, append: boolean = false, value: boolean = false, hinted: boolean = true, at_close: boolean = false, borrows: vector<integer> = [], typed: boolean = false, elm_made: integer = -1) -> Built {
+  if el_trace::on() {
+    el_trace::route(e, "parse_vector");
+  }
   items: vector<integer> = [];
   match e.p.nodes[n] {
     SVecLit { items: its } => { items = its; },
@@ -2004,6 +2010,9 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
         if re == null {
           el::refuse(e, "a repeated vector item");
           return refused_build();
+        }
+        if el_trace::on() {
+          el_trace::route(e, "parse_multiply");
         }
         items[len(items) - 1] = re!;
         rep_n = rn;

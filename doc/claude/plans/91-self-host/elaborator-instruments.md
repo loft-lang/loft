@@ -258,6 +258,39 @@ callers, the port's `instantiate` is one of several.  Not marked yet, each with 
 in step 3's list: the literal paths, the return path, `bind_monomorph_join_return`,
 `parse_scalar_match`, and the in-place call arms (`next`, `any`, `all`, `count_if`, …).
 
+### Built — step 4, the remaining mirrors that are one place in the port
+
+Marked where the port has ONE function or branch for the Rust handler: `parse_object` at
+`el_ex_object::object_expr`; `parse_vector` at `el_ex_pattern::vector_value` and
+`vector_build`; `parse_multiply` at `vector_build`'s `SRepeat` arm; `parse_scalar_match` at
+`match_expr`'s scalar-or-enum branch; `call:next` / `call:exhausted` at `call_expression`'s
+iterator branch; `bind_monomorph_join_return` at `fill_instance`'s `join_bind`;
+`materialize_return_into` at `el_expressions::copy_arms` (the per-arm verdict only).
+
+Whole corpus (programs: Rust takes it / carried; sites: Rust / both / port only):
+
+| handler | programs | carried | sites | both | port only |
+|---|---|---|---|---|---|
+| `parse_scalar_match` | 101 | 96 | 482 | 469 | 140 |
+| `call:exhausted` | 7 | 7 | 18 | 18 | 0 |
+| `call:next` | 22 | 13 | 458 | 248 | 0 |
+| `parse_vector` | 1608 | 644 | 29897 | 17941 | 311 |
+| `parse_object` | 1635 | 234 | 25332 | 7681 | 1463 |
+| `bind_monomorph_join_return` | 147 | 4 | 640 | 14 | 0 |
+| `materialize_return_into` | 145 | 0 | 760 | 27 | 29 |
+
+The headline is 2 of 30 (`parse_reverse`, `call:exhausted`).  What the numbers say about the
+MARKS rather than the port: `parse_scalar_match`'s 140 port-only sites are plain-enum subjects
+the port takes through its scalar branch and Rust elsewhere; a struct literal reaches the port
+through more functions than `object_expr` (1463 port-only against 7681 shared: nested and
+field-position literals), and a vector literal through more than the two marked; an instance's
+join bind is filled where the instance is made, not on the line of the call Rust prints at; the
+whole-copy leg of `materialize_return_into` has no single function.  Not marked, because the
+port has no mirror to mark — it refuses, or takes the ordinary call: `classify_ret_promotion`
+(its verdict is spread over the port's rename and bind paths), `parse_any`, `parse_all`,
+`parse_count_if`, `parse_par_fold`, `parse_parallel_for`, and the in-place arms `field_value`,
+`type_of`, `type_name`, `typedef`, `expose`, `deliver`, `assert`, `clear`.
+
 ## 3. How much is ported — route coverage over the corpus
 
 No new mechanism: count the `route` lines.
