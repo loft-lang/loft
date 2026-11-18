@@ -7692,7 +7692,7 @@ range proof cannot bound a walk counter whose end it re-reads).  Admitted, the s
 counted loop the local form gets: hex_world `get_cell` on the ship lane 3.23× → 1.73× (clang),
 2.84× → 2.03× (gcc-16).  It declined at first on the routine's hidden `Cell` result buffer, a
 record parameter; the scalar-only exemption, shared with `(R-InRange)`, is what admits it.
-Guard `loft-suite/rules/rewrites/R-ForwardWalk/a-walk-over-a-field-the-body-cannot-resize-is-counted.loft`.
+Guard `loft-suite/rules/rewrites/R-ForwardWalk/a-walk-over-a-field-reads-its-length-where-the-body-can-change-it.loft`.
 
 ### A record element its loop proves in range is read plainly
 
