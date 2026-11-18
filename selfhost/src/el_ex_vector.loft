@@ -209,9 +209,16 @@ pub fn vector_slice(e: el::El, vars: el_vars::Vars, x: Ex, lo: vector<integer>, 
   place = sv < 0 && el_ex_match::getter_place(e, x.code);
   // A text or a plain record element is carried for a slice of a LOCAL: its walk reads the
   // element whole, its bind materialises element by element (`Slice materialise`).
-  heap_elem = sv >= 0 && (elem is TyText || (struct_ref(e, elem) >= 0 && !(elem is TyOptional) && el::def(e, struct_ref(e, elem)).def_type == el::DT_STRUCT && !starts_with(el::def(e, struct_ref(e, elem)).name, "__")));
+  // (A FIELD of records is the same loop, the field read written out again as the subject.)
+  heap_elem = (sv >= 0 || (place && !(elem is TyText))) && (elem is TyText || (struct_ref(e, elem) >= 0 && !(elem is TyOptional) && el::def(e, struct_ref(e, elem)).def_type == el::DT_STRUCT && !starts_with(el::def(e, struct_ref(e, elem)).name, "__")));
   if (sv < 0 && !place) || x.tp is TyOptional || !(is_scalar(elem) || heap_elem) {
     el::refuse(e, "a slice of a vector that is no local of plain scalars");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  // (Rust declares `vector<R>` where a slice is the first to put `R` in a vector of its own;
+  // where that falls is not carried for a field's records.)
+  if e.first_pass && place && heap_elem && el::def_nr(e, "main_vector<{el_types::elem_name(e, elem)}>") < 0 {
+    el::refuse(e, "a slice of a field of records that is the first vector of them");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   subj = if sv >= 0 { ir::NdVar { n: sv } } else { el_ir::unspan(x.code) };
