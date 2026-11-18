@@ -7,6 +7,35 @@ the last column: a cause that shows twice becomes a change to the loop.
 
 Read the patterns first; the rows are the evidence.
 
+## What the testing side is for
+
+The measure of everything below is the porting agent's free working time — its session context
+and its clock, both kept for porting.  A port of this kind cannot be split over two writers: the
+rules interact (a variable's mint order, a shared helper, what a refusal covers), and two
+sessions writing the elaborator would each break what the other stands on.  What CAN run beside
+it is everything that only reads the port: running the checks, reading results, reading the
+Rust front end, preparing the next topic.  So the testing side never edits the port's logic,
+and answers three questions for the porter:
+
+| question | answered by | rule |
+|---|---|---|
+| is this working? | the try-gate's status, and the cycle report after a promotion | automatic in both cases (clean, or issues); the porter posts and goes on, and waits for nothing |
+| what is wrong with it? | the tester's analysis, when a try or a cycle shows issues | the check is automatic, the ANALYSIS is not — and since either session could do it, the tester does |
+| what to do next? | one topic, already analysed, with two one-line alternates | the porter takes the first by habit, so the order is the tester's responsibility; the alternates carry real numbers and the true reason each ranks lower, so the reasoning can be seen and challenged |
+
+How an analysis is written:
+
+- It ends at WHAT TO CODE — the Rust decision the port does not mirror, where in the port it
+  belongs, the cases it must cover and those it must leave alone — and never at code.  Writing
+  it is the easy part and the porter's, who holds the surrounding code in context.
+- It states facts about Rust and about the tip that was measured, not about the porter's
+  working copy.
+- Only conclusions that are certain are sent.  An open case is probed until it is settled, not
+  listed as open; how the conclusion was reached stays out of the message.
+- A count, and an explanation of a count, is measured before it is sent, and read on three
+  examples first.
+- The porter's own handoff is read before an order is proposed: it holds the cost side.
+
 ## Patterns, and what the loop does about each
 
 | pattern | seen | prevention | state |
@@ -18,6 +47,8 @@ Read the patterns first; the rows are the evidence.
 | The watcher gates a commit in the middle of a multi-commit push | 1 | the watcher starts a cycle only for a tip that has stood for a minute | built |
 | The tester's commits wait for a gap between cycles, or land mid-cycle | 3 | `sync.sh` (the cycle, its push and the baseline job merge what is on GitHub first) and `land.sh` (the tester's commits replayed onto the branch's tip from its own worktree); the real gate is asked to measure the commit the cycle GATED | built |
 | A Rust decision the port must mirror has no trace line, and is learned by probe builds | 1 | a `route` line at the decision, verdict and names included, added when the porter names the selector | habit: ask each handoff which decision cost probes |
+| The tester proposes an order without the porter's cost side | 1 | the porter's handoff is read first | habit |
+| An analysis carries open cases, or a line composed and not copied | 2 | probe until settled; copy the trace's line | habit |
 | A tool hands the porter raw output to wait for and read | 1 | every porter-facing tool posts and returns; the answer is the tester's analysis in a message | rule, from the owner |
 | The porter keeps a script of its own for something the loop has | 1 | each new tool is announced with a ready command for the porter's current tip | habit |
 
@@ -72,4 +103,11 @@ Read the patterns first; the rows are the evidence.
 | 11-18 | — | ? | The tester held a try's "issues" answer back until its analysis was written: minutes in which the porter cannot know whether to build on the change | the owner's measure — the porter's free working time: the status is automatic in both cases, the analysis only adds to it, and nothing is waited for |
 | 11-18 | — | + | The hand-off used as meant: the porter posted a try, ran its own corpus check beside it and went on to the next topic | — |
 | 11-18 | — | + | The owner's reason for the split, stated: the check is automatic; the ANALYSIS of what comes up can be done by either session, so the tester does it — the porter keeps both its session context and its time for porting | an analysis goes as far as WHAT to code — the Rust decision the port does not mirror, where it belongs in the port, the cases it must cover and those it must leave alone — and not to the code, which is the easy part and the porter's |
+| 11-18 | b8ad5ed2c | + | The first "next topic" sent analysed to what-to-code (the staging clause of an in-place literal): "exact" — both named programs agreed on the first build; "saves me a probe-and-read round per item; keep sending it" | — |
+| 11-18 | f44e5f731 | ? | That topic was the wrong FIRST pick: the porter's own handoff already listed larger items with their Rust side worked out, and the tester had not read it before ranking | the porter's handoff is read before an order is proposed |
+| 11-18 | f44e5f731 | ? | The tester's first table for the record-tail item showed 13 functions with no Rust decision line: a function's TAIL routes print with the lexer on the next item's first token (`<next line>:3`), so they had been given to the wrong function.  Caught against Rust's own return trace before it was sent | a tail's routes are attributed up to the next top-level item's first token; a table is checked against a second instrument before it is sent |
+| 11-18 | f44e5f731 | ? | The tester spelled Rust's first-pass result line wrongly in an analysis (`["__ref_K"]` for `["__retbuf"] attrs=N:__ref_K`); corrected in the next message | a line the porter will compare against is copied from the trace, not composed |
+| 11-18 | f44e5f731 | ? | An analysis ended with five cases "not probed"; two of them, once probed, contradicted what the Rust comments suggested (a default reading `$` and building a value is not refused; an empty-vector default in a generic struct is not hoisted) | probe until settled, then send the conclusions only |
+| 11-18 | b8ad5ed2c | + | Four tries, all clean, each acknowledged without the tester; the porter ran its own corpus check beside each and went on to the next topic | — |
+| 11-18 | b8ad5ed2c | ? | The porter still ran its own corpus listing before each promotion: the try's answer gave a COUNT of newly agreeing programs, not their names, nor what still blocks the programs a change was meant to lift | the answer lists what the change moved (`try_moves.py`): the programs that newly agree, and per program that lost a refusal, what is left; a lifted program that differs comes back analysed |
 
