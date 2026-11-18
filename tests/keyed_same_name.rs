@@ -178,3 +178,46 @@ fn a_trie_and_a_spatial_key_their_own_struct_of_a_shared_name() {
         &format!("{TRIE_A} | {TRIE_B}"),
     );
 }
+
+const WA: &str = r#"#package
+struct Nm { k: text, v: text }
+fn mk(x: integer) -> hash<Nm[k]> {
+  h: hash<Nm[k]> = [];
+  for i in 0..x { h += [Nm { k: "k{i}", v: "a{x}{i}" }]; }
+  h
+}
+pub fn a_par() -> text {
+  o = "";
+  for x in [2, 3] par(r = mk(x), 2) { o += "{len(r)}:{r["k1"].v ?? "miss"};"; }
+  o
+}
+"#;
+
+const WB: &str = r#"#package
+struct Nm { v: integer, pad: integer, k: text }
+fn mk(x: integer) -> hash<Nm[k]> {
+  h: hash<Nm[k]> = [];
+  for i in 0..x { h += [Nm { v: x * 10 + i, pad: 7, k: "k{i}" }]; }
+  h
+}
+pub fn b_par() -> text {
+  o = "";
+  for x in [2, 3] par(r = mk(x), 2) { o += "{len(r)}:{r["k1"].v ?? -1};"; }
+  o
+}
+"#;
+
+/// A `par` worker that answers its library's own `hash<Nm[k]>`: each result's length and its
+/// `k1` entry.  The worker's result is sized by the same lookup (`heap_ref_kt` in the rustc
+/// writer), which was scored by hand on `--native-rust` as well: main answers `2:-1;3:-1;`
+/// for the library loaded second on all three backends.
+#[test]
+fn a_par_worker_answers_its_own_keyed_struct_of_a_shared_name() {
+    let call = "fn main() { println(\"{wa::a_par()} | {wb::b_par()}\"); }\n";
+    both_orders(
+        "par",
+        [("wa", WA), ("wb", WB)],
+        call,
+        "2:a21;3:a31; | 2:21;3:31;",
+    );
+}
