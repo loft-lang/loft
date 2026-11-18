@@ -474,7 +474,7 @@ Each is one rule; the measured incident behind it is in
   - *Quantum*: a fixture smaller than the unit being measured (a page, a block, a tick) reports
     the fixture's size, not the code's behaviour (@PLN146 F2: a 19 KB pack in a 64 KiB page).
   - *Count vs identity*: two entries and two entries naming ONE record have the same length.
-    Assert a key sum or a real lookup as well (`901-linked-group-fill.loft`, `1159-…`).
+    Assert a key sum or a real lookup as well (`a-write-through-any-member-of-a-linked-group-reaches-every-member.loft`, `1159-…`).
 - **A CONSTANT index is trusted by contract**, so `v[9]`, `v[k]` under `for k in …` or behind
   `if i < len(v)` read NON-NULL and never produce the `τ?` a nullability cell means to test.
   Index through a variable the compiler cannot prove in range; the receipt is the cell compiling.
@@ -681,7 +681,8 @@ Each is one rule; the measured incident behind it is in
   with that A/B (loft#1418, loft#1421, loft#1422).
 - **A guard must not assert what it does not own.**  Take such a cell out and name its issue in
   the header; asserting today's broken answer freezes it into the contract
-  (`1415-a-null-arm-source-that-views-a-parameter.loft`).
+  (the section on a null-arm view of a parameter in
+  `loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft`).
 - **A reverted change is a MEASUREMENT.**  Record the channel that failed it and the cure that
   looked right and was not; "did not work" tells the next person nothing.
 - **Turn the suspect off before reading the IR a fourth time.**  A coherent explanation read three

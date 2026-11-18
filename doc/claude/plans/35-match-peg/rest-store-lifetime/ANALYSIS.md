@@ -46,7 +46,7 @@ directly keeps the borrow-dep, so the free-analysis never frees it (interp: no c
 and native emits a borrow, not an owned copy (no leak). One change fixes BOTH backends for
 scalar/text/struct/large-struct/struct-enum (matrix reuse rows all `ok ok | ok ok`).
 Guards: `tests/scripts/35d-slice-enum-reuse.loft` (direct `v[lo..hi]`, fails on `main`) +
-the reuse asserts in `35c-rest-capture.loft`.
+the reuse asserts in `a-rest-is-a-fresh-capture-wherever-it-stands.loft`.
 
 **Separate pre-existing crash the axis also surfaced:** `vector<vector<T>>` slicing
 (`v[lo..hi]`) SIGSEGVs on `main` (both `..rest` and the direct slice) — a distinct nested-

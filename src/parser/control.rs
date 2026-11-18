@@ -4789,8 +4789,15 @@ impl Parser {
         //     not the call: fall back to redirecting cv's single top-level
         //     defining call instead of returning (else its `__ref_N` buffer is
         //     allocated, orphaned, and leaks one store per call).
+        //     The penultimate STATEMENT: a line marker between the call and the tail is no
+        //     statement (step 6 below skips it the same way).  Read as one, the bind and the
+        //     tail on two lines (`v = mk(u);` / `v`) declined the collapse that the same two
+        //     statements on one line take — a lowering decided by a newline.
+        let Some(pen) = (0..last).rev().find(|&k| !matches!(l[k], Value::Line(_))) else {
+            return;
+        };
         let penultimate_is_set_cv_call = matches!(
-            l[last - 1].unspan(),
+            l[pen].unspan(),
             Value::Set(slot, rhs) if *slot == cv && matches!(rhs.unspan(), Value::Call(_, _))
         );
         if !penultimate_is_set_cv_call {
@@ -4798,7 +4805,7 @@ impl Parser {
             self.suppress_collapsed_workrefs(l, collapsed);
             return;
         }
-        let prev = l[last - 1].unspan_mut();
+        let prev = l[pen].unspan_mut();
         let Value::Set(slot, rhs) = prev else { return };
         if *slot != cv {
             return;
@@ -4823,6 +4830,12 @@ impl Parser {
             _ => return,
         };
         if work_ref == cv {
+            return;
+        }
+        // (4b) The call must not READ `cv`: handed `cv` as its buffer, the callee builds its
+        //      answer into the very record it reads its argument from (`cv = grow(cv, 2); cv`
+        //      answered a half-overwritten record, silently, on both backends).
+        if Self::args_read_var(args, i, cv) {
             return;
         }
         let nm = self.vars.name(work_ref);
@@ -4853,7 +4866,7 @@ impl Parser {
         //     conditional Sets to cv interact with paired_witness in
         //     ways that a blanket "substitute every Set(cv, Call)"
         //     doesn't handle correctly).
-        let mut idx = last - 1;
+        let mut idx = pen;
         while idx > 0 {
             idx -= 1;
             if matches!(l[idx], Value::Line(_)) {
@@ -4901,6 +4914,10 @@ impl Parser {
             if !enm.starts_with("__ref_") && !enm.starts_with("__rref_") {
                 break;
             }
+            // (4b) as above: an earlier call that reads `cv` must not build into it.
+            if Self::args_read_var(eargs, ei, cv) {
+                break;
+            }
             for a in eargs.iter_mut() {
                 Self::substitute_work_ref(a, ework_ref, cv);
             }
@@ -4908,6 +4925,22 @@ impl Parser {
         }
 
         self.suppress_collapsed_workrefs(l, collapsed_refs);
+    }
+
+    /// Does a call READ `cv` — any argument but the return buffer at `buf` naming it?  Handed
+    /// `cv` as its buffer, such a call would build its answer into the record it reads.
+    fn args_read_var(args: &[Value], buf: usize, cv: u16) -> bool {
+        args.iter().enumerate().any(|(k, a)| {
+            let mut reads = false;
+            if k != buf {
+                a.walk(&mut |n| {
+                    if matches!(n.unspan(), Value::Var(x) if *x == cv) {
+                        reads = true;
+                    }
+                });
+            }
+            reads
+        })
     }
 
     /// A work-ref collapsed onto `cv` (its inner call now delivers into `cv`
@@ -6425,6 +6458,17 @@ impl Parser {
                     self.parse_block("else", &mut false_code, &Self::arm_expectation(&true_type));
                 false_fact = std::mem::take(&mut self.operand_fact);
                 false_is_null_literal = self.block_tail_null_literal;
+                // loft#2545 — an empty literal `[]` beside a then arm of no type yet (on pass 1 a
+                // forward callee) names no type either: it answers `Unknown`, as the same `[]`
+                // does as a THEN arm (`true_is_empty_literal`).  Parsed against `Unknown` it came
+                // back `void`, the `if` adopted it, and `m = if … { mk(t) } else { [] }` bound
+                // `m` as void on pass 1 — then refused its vector on pass 2.
+                if self.block_tail_empty_literal
+                    && true_type == Type::Unknown(0)
+                    && false_type == Type::Void
+                {
+                    false_type = Type::Unknown(0);
+                }
                 // loft#2066 — a NAMED-width sibling expects nothing of this arm
                 // (`arm_expectation`), so a bare `null` here takes the sibling's typed null, as
                 // it did when the sibling was its expectation: native reads an untyped one as 0.
@@ -6740,7 +6784,7 @@ impl Parser {
                     // capture list is still in the stream, and left there it was read as the
                     // body and reported as `Expect token ;` (loft#1790).  Step over it by its
                     // shape; pass 2 knows the enum and binds it for real.
-                    if let Some(mut aliases) = self.bind_forward_capture_list() {
+                    if let Some(mut aliases) = self.bind_forward_capture_list(true) {
                         self.is_capture_aliases.append(&mut aliases);
                     }
                 }
@@ -12657,6 +12701,29 @@ impl Parser {
                 self.deliver_mid_vector_walk(elm, n, buf_var);
                 self.deliver_mid_vector_walk(elm, e, buf_var);
             }
+            // A `return` inside an EXPRESSION — a bind's value (`h = { if c { return []; } … }`,
+            // `h = x ?? return []`), a call's or a tuple's operand — leaves the function as one
+            // in a statement does, and delivers the same way.  Skipped, its literal's store went
+            // back as the frame's own and nothing released it (loft#2555).
+            // `LOFT_NO_NESTED_RETURN_DELIVERY=1` stops at statements again.
+            Value::Set(_, val)
+                if !crate::env_once!(
+                    std::env::var_os("LOFT_NO_NESTED_RETURN_DELIVERY").is_some()
+                ) =>
+            {
+                self.deliver_mid_vector_walk(elm, val, buf_var);
+            }
+            Value::Call(_, args) | Value::Tuple(args)
+                if !crate::env_once!(
+                    std::env::var_os("LOFT_NO_NESTED_RETURN_DELIVERY").is_some()
+                ) =>
+            {
+                for a in args {
+                    self.deliver_mid_vector_walk(elm, a, buf_var);
+                }
+            }
+            // Every other node is a leaf (a variable, a constant) or holds no expression a
+            // `return` can sit in, so it has no exit to deliver.
             _ => {}
         }
     }

@@ -252,6 +252,9 @@ pub fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::T
     TyVector { inner: _ } => el_schema::content_type(e, el_types::without_deps(el_types::base(bound))),
     _ => el_ex_vector::append_row(e, el_types::base(bound))
   };
+  // (An instance at a narrow integer width has that width's `vector<…>` row made with it, as a
+  // parameter of that type has, `int4_rows`.)
+  int4_rows(e, el_types::base(bound));
   rows_known = stale_row != el::NO_TYPE && fresh_row >= 0 && fresh_row != el::NO_TYPE;
   why = el_ex_object::instance_carried(e, tmpl.code[0] ?? ir::NdNull, h, if rows_known { el::NO_TYPE } else { stale_row }, tmpl.variables, writes: writes_carried(e, bound), lowers: tv_lowered(bound));
   if why != "" {
@@ -299,7 +302,10 @@ pub fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::T
   if textual || record {
     why2 = text_instance_carried(e, g, tmpl, f, code_of(tmpl), h, textual);
     // (`bind_monomorph_join_return` carries a record's branch answer with a bare parameter arm.)
-    if why2 == "a branch answer with a bare parameter arm" && record {
+    // (`is_borrowing_branch`: two or more distinct parameters; `is_borrowed_and_minted_branch`:
+    // a parameter beside a local or a call, no view.  One parameter alone in the arms takes
+    // `copy_returned_params` per arm instead: not carried for a branch, so it stays refused.)
+    if why2 == "a branch answer with a bare parameter arm" && record && join_shape(e, f, code_of(tmpl)) {
       join_bind = true;
       why2 = "";
     }
@@ -1184,6 +1190,30 @@ pub fn branch_join_answer(f: ir::Function, code: ir::Node) -> text {
   ""
 }
 
+// Does the body's branch tail take `bind_monomorph_join_return`?
+fn join_shape(e: el::El, f: ir::Function, code: ir::Node) -> boolean {
+  ops = match code { NdBlock { block } => block[0].operators, _ => [] };
+  tail = el_ir::unspan(el_ir::last(ops));
+  inner = match tail { NdReturn { inner: i } => el_ir::unspan(i), _ => tail };
+  params: vector<integer> = [];
+  marks: vector<integer> = [0, 0];
+  join_leaves(e, f, inner, params, marks);
+  len(params) > 1 || len(params) == 1 && marks[0] == 1 && marks[1] == 0
+}
+
+// The leaves of a branch: the distinct parameters into `params`; `marks[0]` set by a minted leaf
+// (a local, a call of a function), `marks[1]` by a view (a call of an operator).
+fn join_leaves(e: el::El, f: ir::Function, n: ir::Node, params: vector<integer>, marks: vector<integer>) {
+  match n {
+    NdSpan { inner } => join_leaves(e, f, inner, params, marks),
+    NdIf { t, f: el } => { join_leaves(e, f, t, params, marks); join_leaves(e, f, el, params, marks); },
+    NdBlock { block } => { if len(block[0].operators) > 0 { join_leaves(e, f, block[0].operators[-1]!, params, marks); } },
+    NdVar { n: v } => { if f.variables[v]!.argument { if !params.contains(v) { params += [v]; } } else { marks[0] = 1; } },
+    NdCall { def_nr } => { if starts_with(el::def(e, def_nr).name, "Op") { marks[1] = 1; } else { marks[0] = 1; } },
+    _ => {}
+  }
+}
+
 pub fn bare_param_leaf(f: ir::Function, n: ir::Node) -> boolean {
   match n {
     NdSpan { inner } => bare_param_leaf(f, inner),
@@ -1616,6 +1646,17 @@ pub fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::N
           NdVar { n: av } => { if !ds.contains(av) { ds += [av]; } },
           // (Of such a value's borrows a `τ?` result still keeps the user's own locals — a
           // `c ?? Rec {..}` argument lends `c` — and drops the compiler's stores.)
+          // (A literal built for the argument is transient: the callee copies what it answers
+          // out of it into the buffer, so the result borrows nothing through it.)
+          NdBlock { block: lb } => {
+            if !(lb[0].name == "Object" || lb[0].name == "EnumUnitLit") {
+              for x in el_types::deps(types[i] ?? ir::TyVoid) {
+                if !ds.contains(x) && (!(ret is TyOptional) || !starts_with(el_vars::name_of(vars, x), "__")) {
+                  ds += [x];
+                }
+              }
+            }
+          },
           _ => {
             for x in el_types::deps(types[i] ?? ir::TyVoid) {
               if !ds.contains(x) && (!(ret is TyOptional) || !starts_with(el_vars::name_of(vars, x), "__")) {
@@ -1655,6 +1696,12 @@ pub fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::N
     for i in el_types::deps(rb) {
       at = def.attributes[i];
       if record && at != null && at!.hidden {
+        continue;
+      }
+      // (A literal built for the argument is transient: the callee copies what it answers out
+      // of it, so the result borrows nothing through it.)
+      transient = match el_ir::unspan(list[i] ?? ir::NdNull) { NdBlock { block: tb } => tb[0].name == "Object" || tb[0].name == "EnumUnitLit", _ => false };
+      if record && transient {
         continue;
       }
       for x in el_types::deps(types[i] ?? ir::TyVoid) {
@@ -1698,7 +1745,9 @@ pub fn vector_buffer_call(e: el::El, vars: el_vars::Vars, d: integer, list: vect
   inner = match bt { TyVector { inner } => inner, _ => ir::TyVoid };
   ret = el::def(e, d).returned[0];
   for i in el_types::deps(el_types::base(ret)) {
-    if i < visible {
+    // (Asked on the second pass: the first sees a callee's pass-1 borrow of a parameter its
+    // own second pass replaces by the buffer, `q ?? [literal]`.)
+    if i < visible && !e.first_pass {
       el::refuse(e, "a call whose vector result borrows a parameter");
       return null;
     }
@@ -2713,14 +2762,18 @@ pub fn coalesce_jump(e: el::El, vars: el_vars::Vars, x: Ex, j: Ex) -> Ex {
   b = el_types::base(x.tp);
   record = struct_ref(e, b) >= 0 && !starts_with(el::def(e, struct_ref(e, b)).name, "__tuple<");
   vec = b is TyVector;
-  if !record && !vec && !el_convert::plain_scalar(b) {
+  // A text is tested by its own truth (`OpConvBoolFromText`), held as read.
+  txt = b is TyText;
+  // A struct enum is tested by its own null test (`null_test`'s enum arm), as `!` tests it.
+  senum = el_convert::struct_enum(b);
+  if !record && !vec && !txt && !senum && !el_convert::plain_scalar(b) {
     el::refuse(e, "a `??` that returns, breaks or continues, over this type: {display_type_name(e, b)}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   if e.first_pass {
     return ex(ir::NdNull, el_ex_null::ncr_type(e, x.code, b));
   }
-  code = if record { nullable_getter(e, x.code) } else if vec { x.code } else { nullable_arith(e, x.code, true) };
+  code = if record || senum { nullable_getter(e, x.code) } else if vec || txt { x.code } else { nullable_arith(e, x.code, true) };
   held = -1;
   subject = code;
   match code {
@@ -2731,6 +2784,10 @@ pub fn coalesce_jump(e: el::El, vars: el_vars::Vars, x: Ex, j: Ex) -> Ex {
     }
   }
   check = present_check(e, vars, subject, b, record, vec);
+  if senum {
+    absent = el_ex_null::enum_null_test(e, vars, subject, b);
+    check = if absent == null { null } else { el_ir::cl(e, "OpNot", [absent!]) };
+  }
   if check == null {
     el::refuse(e, "a `??` that returns, breaks or continues, over this type: {display_type_name(e, b)}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -2751,6 +2808,14 @@ pub fn nullable_getter(e: el::El, code: ir::Node) -> ir::Node {
   match el_ir::unspan(code) {
     NdCall { def_nr, args } => {
       gn = el::def(e, def_nr).name;
+      // (A struct enum's element is read through its record field: the getter under it.)
+      if gn == "OpGetField" && len(args) == 3 {
+        under = match el_ir::unspan(args[0]!) { NdCall { def_nr: ud, args: _ } => el::def(e, ud).name, _ => "" };
+        if under == "OpGetVector" || under == "OpVectorRef" {
+          return el_ir::cl(e, "OpGetField", [nullable_getter(e, args[0]!), args[1]!, args[2]!]);
+        }
+        return code;
+      }
       if gn == "OpGetVector" || gn == "OpVectorRef" { el_ir::cl(e, "{gn}Nullable", args) } else { code }
     },
     _ => code
@@ -2768,6 +2833,9 @@ pub fn present_check(e: el::El, vars: el_vars::Vars, subject: ir::Node, b: ir::T
   }
   if vec {
     return el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpVectorIsNull", [subject])]);
+  }
+  if b is TyText {
+    return el_ir::cl(e, "OpConvBoolFromText", [subject]);
   }
   el_convert::convert_admitting(e, vars, subject, b, ir::TyBoolean)
 }
@@ -2799,6 +2867,11 @@ pub fn coalesce(e: el::El, vars: el_vars::Vars, l: integer, r: integer) -> Ex {
     x = rx!;
   }
   if e.p.nodes[r] is SJump {
+    // (A struct-enum local read first into a bind's destination borrows nothing either, as a
+    // plain struct's above.)
+    if l == vars.read_into && x.code is NdVar && el_convert::struct_enum(el_types::base(x.tp)) {
+      x.tp = el_types::with_deps(x.tp, []);
+    }
     return coalesce_jump(e, vars, x, el_ex_assign::expression(e, vars, r));
   }
   // A field's view as the subject: its literal default is built against the subject's type,
@@ -2831,6 +2904,10 @@ pub fn coalesce(e: el::El, vars: el_vars::Vars, l: integer, r: integer) -> Ex {
   }
   // A default that halts (`?? panic("…")`) runs where the subject is absent, as a jump does.
   if (d.tp is TyVoid || d.tp is TyNever) && (e.first_pass || el_ex_null::ends_in_halt(e, d.code)) && !(x.tp is TyVoid) {
+    // (A struct-enum local read first into a bind's destination borrows nothing, as at a jump.)
+    if l == vars.read_into && x.code is NdVar && el_convert::struct_enum(el_types::base(x.tp)) {
+      x.tp = el_types::with_deps(x.tp, []);
+    }
     return coalesce_jump(e, vars, x, d);
   }
   el_ex_null::coalesce_with(e, vars, x, d)

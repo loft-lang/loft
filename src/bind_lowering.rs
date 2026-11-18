@@ -1215,6 +1215,16 @@ pub(crate) fn choice_var_arm(
                     && function.tp(*w).base().heap_def_nr().is_some()
                     // A `??`'s temp (`__ncc_N`) owns the store its subject answered, freed
                     // where the `??` runs again and at the exit: a whole variable here too.
+                    // A `?? return` chain's temp (`_ncr_N`) that took an OWNED answer is no
+                    // variable to copy from: the value moves to the binding (`@FR-O-Move`),
+                    // which views the temp where the temp releases it (`Scopes::lift_viewers`).
+                    // Joined on, the bind deep-copied it and the copy and the temp each ran the
+                    // type's `OpDrop` (loft#2552).  One that VIEWS what a projection reads keeps
+                    // its deps and is copied from, as any view is.
+                    // `LOFT_NO_NCR_ARM_MOVE=1` joins on it again.
+                    && (!function.name(*w).starts_with("_ncr_")
+                        || !function.tp(*w).depend().is_empty()
+                        || crate::env_once!(std::env::var_os("LOFT_NO_NCR_ARM_MOVE").is_some()))
                     && (!function.name(*w).starts_with("__")
                         || (function.name(*w).starts_with("__ncc_")
                             && !crate::keys::ncc_choice_join_off())) =>

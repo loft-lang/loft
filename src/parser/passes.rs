@@ -635,7 +635,14 @@ impl Parser {
                 continue;
             }
             crate::typedef::lay_out_late(&mut self.data, &mut self.database, inst);
-            let target = Type::Reference(inst, crate::data::Deps::none());
+            crate::typedef::lay_out_late_enum(&mut self.data, &mut self.database, inst);
+            // An enum instance is spelled as its enum is (@PLN165 D8), as a type position
+            // spells it: named as a record, the body's variant was refused against it
+            // (loft#2547, `fn mk() -> B<integer> { Bc { .. } }` above `enum B<T>`).
+            let target = match self.data.def(inst).returned().base() {
+                Type::Enum(e, mixed, _) => Type::Enum(*e, *mixed, crate::data::Deps::none()),
+                _ => Type::Reference(inst, crate::data::Deps::none()),
+            };
             let ret = self.data.def(f).returned().clone();
             if let Some(t) = Data::rewrite_type_opt(&ret, stub, &target) {
                 self.data.definitions[f as usize].returned = t;
@@ -931,8 +938,16 @@ impl Parser {
             // below, `x: Box<Q>` above `struct Q`.  `instance_def` refuses an unresolved
             // argument for `tuple_def`'s two reasons (the name and the layout are both
             // derived from it) and has its append shape: name-keyed, idempotent, at the end.
-            let lazy_struct_instance =
-                matches!(dt, DefType::Struct) && self.data.def(d as u32).instance_of != u32::MAX;
+            // …and of a generic ENUM, with the variants minted beside it: an instance named
+            // above its template's declaration is a forward stub on pass 1 (loft#2547), as the
+            // struct's is.
+            let def = self.data.def(d as u32);
+            let lazy_struct_instance = (matches!(dt, DefType::Struct | DefType::Enum)
+                && def.instance_of != u32::MAX)
+                || (matches!(dt, DefType::EnumValue)
+                    && def.parent != u32::MAX
+                    && def.parent as usize >= pass1_attr_counts.len()
+                    && self.data.def(def.parent).instance_of != u32::MAX);
             // The eighth: a DESTRUCTURING `par` loop's worker wrapper,
             // `__par_destructure_w_<line>_<col>_<worker>` — pass-2-only by design (pass 1
             // answers with the user's worker; `parse_destructure_par_worker` mints the wrapper

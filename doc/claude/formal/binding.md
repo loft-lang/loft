@@ -674,4 +674,5 @@ check at all. Both appended into the CALLER on both backends while the parameter
 `const`. It is asked once now, ahead of the route dispatch, because whether a write is
 allowed is a property of the BINDING and never of the route that lowers it —
 `Parser::guard_const_write`, called from `parse_assign_op_inner`. The crossing the oracle
-was missing is `loft-suite/rules/binding/Const-Value/const-binds-through-every-append-route.loft`.
+was missing is the every-append-route section of
+`loft-suite/rules/binding/Const-Value/a-value-const-binding-refuses-a-write-whatever-name-or-route-reaches-it-refused.loft`.

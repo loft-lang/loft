@@ -402,8 +402,22 @@ pub fn to_default(e: el::El, t: ir::TypeT) -> ir::Node {
     TyFloat => ir::NdFloat { f: 0.0 },
     TyCharacter => ir::NdInt { n: 0 },
     TyText { dep: _ } => ir::NdText { s: "" },
+    // A nullable number or plain enum is absent: its type's own null.
+    TyOptional { inner } => {
+      // (An absent plain enum is ordinal 0 of its store type.)
+      en = match inner { TyEnum { n: en0, is_ref } => if is_ref { -1 } else { en0 }, _ => -1 };
+      if en >= 0 {
+        return ir::NdEnum { ord: 0, tp: el::def(e, en).known_type };
+      }
+      nl = if inner is TyInteger || inner is TyFloat || inner is TySingle { el_convert::null_of(e, inner) } else { null };
+      if nl == null {
+        el::refuse(e, "an omitted field of this type: a nullable {type_kind(inner)}");
+        return ir::NdNull;
+      }
+      nl!
+    },
     _ => {
-      el::refuse(e, "an omitted field of this type");
+      el::refuse(e, "an omitted field of this type: {type_kind(t)}");
       ir::NdNull
     }
   }
@@ -440,6 +454,59 @@ pub fn closure_lambda_at(e: el::El, vars: el_vars::Vars, n: integer) -> integer 
   }
 }
 
+// `(B-View)` for a function value read off a split field and BOUND or RETURNED (`g = h.f`):
+// the closure record the field holds is copied (`OpCopyClosure(<the child>, <its record>)`),
+// so the value names a record of its own and borrows nothing.  Any other value as it is.
+pub fn copied_field_closure(e: el::El, vars: el_vars::Vars, x: Ex) -> Ex {
+  if e.first_pass {
+    return x;
+  }
+  match el_ir::unspan(x.code) {
+    NdBlock { block } => {
+      bl = block[0]!;
+      if bl.name != "fn_ref_field_read" || len(bl.operators) != 2 {
+        return x;
+      }
+      match el_ir::unspan(bl.operators[1]!) {
+        NdCall { def_nr, args } => {
+          if el::def(e, def_nr).name != "OpRefFromChildRec" || len(args) != 1 {
+            return x;
+          }
+          // The field's closure record: the host's attribute four bytes before the child.
+          rk = -1;
+          match el_ir::unspan(args[0]!) {
+            NdCall { def_nr: _, args: ga } => {
+              host = ga[0] ?? ir::NdNull;
+              pos = match ga[1] ?? ir::NdNull { NdInt { n: gp } => gp, _ => -1 };
+              hd = el_ex_place::record_place_def(e, vars, el_ir::unspan(host));
+              if hd >= 0 && pos >= 4 {
+                for at in el::def(e, hd).attributes {
+                  if el_types::base(at.typedef[0] ?? ir::TyVoid) is TyFunction && field_position(e, hd, at.name) == pos - 4 && at.assigned_lambda_d_nr != el::NONE && at.assigned_lambda_d_nr >= 0 {
+                    cr = el::def(e, at.assigned_lambda_d_nr).closure_record;
+                    if cr != el::NONE && cr >= 0 {
+                      rk = el::def(e, cr).known_type;
+                    }
+                  }
+                }
+              }
+            },
+            _ => {}
+          }
+          if rk < 0 {
+            return x;
+          }
+          bl.operators[1] = el_ir::cl(e, "OpCopyClosure", [bl.operators[1]!, ir::NdInt { n: rk }]);
+          bt = el_types::with_deps(x.tp, []);
+          bl.result = [bt];
+          ex(ir::NdBlock { block: [bl] }, bt)
+        },
+        _ => x
+      }
+    },
+    _ => x
+  }
+}
+
 // `emit_fn_ref_field_write`'s capturing arm (`@FR-L-Escape`, `@FR-L-CapOwn`): a capturing lambda
 // stored in field `fname` of host struct `hd`.  The first pass records the lambda on the
 // attribute (`assigned_lambda_d_nr`), which splits the field's layout into the function's number
@@ -468,7 +535,8 @@ pub fn closure_field_write(e: el::El, vars: el_vars::Vars, hd: integer, fname: t
   bl = match el_ir::unspan(val) { NdBlock { block } => block[0], _ => return null };
   first_ld = el::def(e, hd).attributes[a]!.assigned_lambda_d_nr;
   if bl.name != "fn_ref_with_closure" || rd < 0 || first_ld == el::NONE || first_ld < 0 || el::def(e, first_ld).closure_record != rd {
-    el::refuse(e, "a capturing lambda stored in a field whose closure record is not the field's");
+    why_rec = if bl.name != "fn_ref_with_closure" { "a value block {bl.name}" } else if rd < 0 { "a lambda with no closure record" } else if first_ld == el::NONE || first_ld < 0 { "no lambda recorded for the field" } else { "another record" };
+    el::refuse(e, "a capturing lambda stored in a field whose closure record is not the field's: {why_rec}");
     return null;
   }
   w = match el_ir::unspan(el_ir::last(bl.operators)) { NdFnRef { def_nr: _, var: fw } => fw, _ => -1 };
@@ -748,6 +816,17 @@ pub fn member(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: t
   if re == null {
     el::refuse(e, "a method call: {name}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  // `Enum.Variant` (`parse_var`'s type arm): a unit variant qualified by its enum is the
+  // variant itself, where the qualifier is no local and names the enum that holds it.
+  if !call {
+    qn = match e.p.nodes[re!] { SName { name: en, member: em } => if em == "" && el_vars::var(vars, en) < 0 { en } else { "" }, _ => "" };
+    // (A struct enum's only: a plain enum's qualified value keeps the path it had, which
+    // wraps it in its position.)
+    qd = if qn != "" { el::def_nr(e, qn) } else { -1 };
+    if qd >= 0 && el_ex_place::qualified_variant(e, qn, name) != "" && (el::def(e, qd).returned[0] ?? ir::TyVoid) == ir::TyEnum { n: qd, is_ref: true, dep: [] } {
+      return el_ex_assign::global_name(e, vars, -1, name);
+    }
   }
   // `T.parse(text)` on a struct, a record variant or a struct enum (`parse_var`'s type arm).
   if call && name == "parse" {
@@ -1584,6 +1663,20 @@ pub fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?,
       },
       _ => {}
     }
+  }
+  // loft#1147 (`parse_call`): `assert_eq` / `assert_ne` take the CALLER's position — an empty
+  // label where none is given, then the call's file and line — and are ordinary calls of the
+  // standard library's generic from there.
+  if source < 0 && (name == "assert_eq" || name == "assert_ne") && (len(list) == 2 || len(list) == 3) && el::def_nr(e, "n_{name}") >= 0 {
+    apos = el::pos_at(e, after_paren(e, at));
+    if len(list) == 2 {
+      list += [ir::NdText { s: "" }];
+      types += [ir::TyText { dep: [] }];
+    }
+    list += [ir::NdText { s: apos.file }];
+    types += [ir::TyText { dep: [] }];
+    list += [ir::NdInt { n: apos.line }];
+    types += [ir::TyInteger { spec: wide_spec() }];
   }
   // `parse_call_diagnostic` for the log calls: the message (or an empty one) with the call's
   // file and line, where the program declares no function of that name.

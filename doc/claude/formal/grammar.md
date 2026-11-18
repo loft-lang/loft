@@ -52,7 +52,10 @@ SPDX-License-Identifier: LGPL-3.0-or-later
   (G-Prec)   for binary operators, level N binds tighter than level N-1.  Parsing is
              precedence-climbing: `parse_operators(p)` reads an operand, then takes each
              operator at a level >= p with its right operand parsed one level tighter, so a
-             higher level groups deeper.
+             higher level groups deeper.  Where an operand is required — after an operator
+             or an assignment's `=` — and the next token cannot open one (a separator, a
+             closer, the end, a binary-only operator, a postfix `?`), the line is refused
+             once, naming the token before the gap: `k = or true` is no `null or true`.
   (G-Assoc)  binary levels are LEFT-associative, EXCEPT `**` (power = RIGHT-assoc), `??`
              (default-fallback = RIGHT-assoc) and the comparison level 3 (NON-associative —
              chaining is rejected):

@@ -59,6 +59,9 @@ def one(src: Path, libs: list) -> tuple:
         code, _, err = run([a, "install", apk], 120)
         if code != 0:
             return False, "install: " + err.decode(errors="replace").strip()[-200:]
+    # The program's stderr goes to logcat (tag `loft-stderr`, loft_android_main.c), not to a
+    # file: clear the log so a failure can quote what THIS run said.
+    run([a, "logcat", "-c"], 30)
     run([a, "shell", "am", "start", "-W", "-n", f"{pkg}/android.app.NativeActivity"], 60)
     t0 = time.monotonic()
     sent = not lines
@@ -73,12 +76,18 @@ def one(src: Path, libs: list) -> tuple:
             break
         time.sleep(0.3)
     out = read_file(a, pkg, "loft-stdout.txt")
+    # What the program wrote to stderr, and what the platform said about the app (a library
+    # that failed to load, a crash) — the failure line is the only place a runner shows it.
+    _, log, _ = run([a, "logcat", "-d", "-v", "brief", "-s", "loft-stderr:*", "AndroidRuntime:E",
+                     "linker:*", "DEBUG:*", "libc:F"], 30)
+    said = "\n      ".join(log.decode(errors="replace").strip().splitlines()[-12:])
+    said = f"\n    stderr and platform log:\n      {said}" if said else ""
     run([a, "shell", "am", "force-stop", pkg], 30)
     run([a, "uninstall", pkg], 60)
     if not status:
-        return False, f"no exit status within {RUN_LIMIT} s; stdout so far: {out[-200:]!r}"
+        return False, f"no exit status within {RUN_LIMIT} s; stdout so far: {out[-200:]!r}{said}"
     if status != b"0" or out != expected:
-        return False, f"exit {status.decode()}, stdout {out!r}, expected {expected!r}"
+        return False, f"exit {status.decode()}, stdout {out!r}, expected {expected!r}{said}"
     return True, ""
 
 

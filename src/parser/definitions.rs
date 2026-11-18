@@ -7595,6 +7595,11 @@ impl Parser {
             return;
         }
         if self.data.def(on_d).attributes()[idx].constant {
+            // `const v: const T virtual(…)` is one mistake: `parse_field` has said it at the
+            // value position (loft#2538).
+            if self.data.def(on_d).attributes()[idx].value_const {
+                return;
+            }
             diagnostic!(
                 self.lexer,
                 Level::Error,
@@ -7788,6 +7793,16 @@ impl Parser {
             self.data.definitions[d_nr as usize].attributes[a].fact = field_fact;
             if is_computed {
                 self.data.definitions[d_nr as usize].attributes[a].constant = true;
+                // @FR-Const-VirtualReject (loft#2538) — `const` at the VALUE position
+                // (`v: const T virtual(…)`) is as redundant as at the binding position, which
+                // `mark_const_field` refuses: a computed field has nothing to freeze on either axis.
+                if value_const {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "`const virtual(…)` is redundant — a virtual field is already computed and read-only; drop `const`"
+                    );
+                }
             }
             if is_init {
                 self.data.definitions[d_nr as usize].attributes[a].init = true;

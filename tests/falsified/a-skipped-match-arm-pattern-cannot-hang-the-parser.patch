@@ -1,7 +1,6 @@
-diff --git a/src/parser/control.rs b/src/parser/control.rs
-index 6af4be7f9..26cd75b4b 100644
---- a/src/parser/control.rs
-+++ b/src/parser/control.rs
+diff --git a/src/parser/match_expr.rs b/src/parser/match_expr.rs
+--- a/src/parser/match_expr.rs
++++ b/src/parser/match_expr.rs
 @@ -6979,10 +6979,8 @@ impl Parser {
                          self.data.def(e_nr).name()
                      );

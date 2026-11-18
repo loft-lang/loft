@@ -139,7 +139,7 @@ MISS, so an element write on a non-null `vector<u8>` presents its target as `u8?
 `expressions::target_holds_null` separates them; until it existed, every seam-level fix spent
 the sentinel on slots that had never reserved one — measured, in published `hex_field`.
 
-Guards: `tests/scripts/1249-a-nullable-narrow-sentinel-is-not-a-value.loft` (the sweep, with
+Guards: `tests/scripts/a-nullable-narrow-value-spends-its-top-code-on-null-in-every-place.loft` (the sweep, with
 both rejected cures as cells) and `tests/scripts/25-narrow-nullable-field-sentinel-collision.loft`
 (this item's own file, an `@EXPECT_FAIL` that is now a positive guard).
 

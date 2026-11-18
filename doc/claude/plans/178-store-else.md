@@ -33,7 +33,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 | 5 | Docs | LOFT.md, CAVEATS, DIAGNOSTICS (`narrow-fallback`'s cure is now `else`), CHANGELOG |
 
 Found and fixed on the way: a record copied into no place leaked its given-up source on both
-backends (`tests/scripts/a-record-copied-into-no-place-gives-its-source-back.loft`).
+backends (`tests/scripts/a-write-to-a-place-that-names-nothing-lands-nowhere.loft`).
 
 The open questions closed as: the lock fault runs the arm in both run modes (the target is
 nulled before the write); the log line is `write_dropped`; wasm runs the reference program

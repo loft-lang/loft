@@ -39,9 +39,9 @@ was never judged.
 
 ## Guards
 
-- `tests/scripts/a-record-built-for-a-stored-reference-lives-in-its-holders-store.loft` — the
+- `tests/scripts/a-record-a-stored-reference-names-lives-as-long-as-its-holder-however-it-was-built.loft` — the
   placements and copy-outs (29 cells, both backends).
 - `tests/scripts/a-stored-reference-cannot-outlive-the-record-it-names.loft` — the shapes still
   refused.
-- `tests/scripts/a-record-a-stored-reference-names-lives-as-long-as-its-holder.loft` — the
+- `tests/scripts/a-record-a-stored-reference-names-lives-as-long-as-its-holder-however-it-was-built.loft` — the
   moved-out home.

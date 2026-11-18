@@ -133,11 +133,18 @@ fn native_binds_the_minted_store_directly() {
         c1.contains("var___ref_1 = OpDatabase(cell,var___ref_1"),
         "c1: the literal-returning callee's buffer keeps its pool"
     );
-    // The destination that IS a return buffer keeps the in-place copy (plan 51 cluster 3).
+    // The destination that IS a return buffer keeps the in-place copy (plan 51 cluster 3) —
+    // where the rebind does not stand directly before the tail.  Directly before it, the tail
+    // local is handed the return buffer, so the call writes the caller's buffer itself.
+    let apart = fn_body(&rust, "n_render_lit_then_call_apart");
+    assert!(
+        copies_into(apart, "cv"),
+        "render_lit_then_call_apart: the promoted buffer local still copies its rebind in place"
+    );
     let lit = fn_body(&rust, "n_render_lit_then_call");
     assert!(
-        copies_into(lit, "cv"),
-        "render_lit_then_call: the promoted buffer local still copies its rebind in place"
+        lit.contains("var_cv = n_alloc_canvas(cell, 4_i64, 5_i64,") && !copies_into(lit, "cv"),
+        "render_lit_then_call: the rebind before the tail is handed the return buffer (no copy)"
     );
     let _ = fa::remove_file(&out);
 }
@@ -220,6 +227,10 @@ fn the_store_census_drops_by_one_per_adopting_bind() {
     // the first bind does (`@FR-O-Move`, `bind_lowering::re_bind`): 94 → 80 in the ON arm,
     // the OFF arm unchanged since its switch turns every adopt off;
     // `LOFT_NO_REBIND_ADOPTS_MINTED=1` gives back 94/144.
+    // loft#2535 hands the tail local the return buffer whatever the line breaks, so c6's
+    // `render_lit_then_call` rebind writes the caller's buffer itself: 80/144 → 62/126.  Its twin
+    // `render_lit_then_call_apart`, added to keep the promoted-buffer path under test, adds its
+    // own share: 62/126 → 86/156.
     let (i_on, i_off) = (
         store_mints("--interpret", &[]),
         store_mints("--interpret", OFF),
@@ -228,7 +239,7 @@ fn the_store_census_drops_by_one_per_adopting_bind() {
         i_on < i_off,
         "interpret: {i_on} mints with adoption, {i_off} without"
     );
-    assert_eq!((i_on, i_off), (80, 144), "interpret mints (on, off)");
+    assert_eq!((i_on, i_off), (86, 156), "interpret mints (on, off)");
     let (n_on, n_off) = (
         store_mints("--native-rust", &[]),
         store_mints("--native-rust", OFF),
@@ -241,5 +252,6 @@ fn the_store_census_drops_by_one_per_adopting_bind() {
     // (`call_bind_taken`): its copy-or-adopt's copy store goes, 5 fewer in the ON arm and 7 in
     // the OFF one (that arm's switch turns the first-bind adopt off, not this);
     // `LOFT_NATIVE_OWN_CALL_BIND=1` gives back 66/109.
-    assert_eq!((n_on, n_off), (61, 102), "native mints (on, off)");
+    // loft#2535's handover and the `_apart` twin together: 61/102 → 67/114.
+    assert_eq!((n_on, n_off), (67, 114), "native mints (on, off)");
 }

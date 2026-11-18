@@ -1,8 +1,7 @@
-diff --git b/src/parser/control.rs a/src/parser/control.rs
-index 10ed2fd05..85661bf64 100644
---- b/src/parser/control.rs
-+++ a/src/parser/control.rs
-@@ -7616,15 +7616,6 @@ impl Parser {
+diff --git a/src/parser/match_captures.rs b/src/parser/match_captures.rs
+--- a/src/parser/match_captures.rs
++++ b/src/parser/match_captures.rs
+@@ -710,15 +710,6 @@ impl Parser {
          step: i32,
          bindings: &mut Vec<Value>,
      ) {
@@ -18,7 +17,7 @@ index 10ed2fd05..85661bf64 100644
          let lo_slot = self.create_unique("rest_lo", &I32);
          let hi_slot = self.create_unique("rest_hi", &I32);
          let idx = self.create_unique("rest_idx", &I32);
-@@ -7741,9 +7732,6 @@ impl Parser {
+@@ -835,9 +826,6 @@ impl Parser {
          step: i32,
          bindings: &mut Vec<Value>,
      ) {

@@ -95,7 +95,7 @@ arguments already in hand.  The compiler either replays the default's expression
 (substituting the call's own arguments for the earlier parameters) or lowers it into a small
 function that takes them — which one is an implementation choice, and neither may change the
 answer.  Guarded by `loft-suite/rules/calls/F-Default/a-default-reads-the-earlier-arguments-of-its-call.loft` (the
-values) and `a-match-default-over-records-compiles.loft` (a lowered default well-formed where its
+values) and `a-default-is-well-formed-wherever-the-same-argument-is.loft` (a lowered default well-formed where its
 argument is), and `1758-a-text-tuple-default-answers-what-its-argument-would.loft` (a lowered default
 returning a lifetime-bearing tuple is boxed like a declared one and unboxed where it becomes the
 argument, `@FR-F-Ret`).
@@ -341,7 +341,7 @@ five lines above it (loft#1427). One home answers it: `Data::receiver_def_nr`.
 *Anchors:* `Data::receiver_def_nr` (`src/data.rs`), its three readers in
 `src/parser/definitions.rs` (`enum_fn`, `enum_numbers`, `refuse_uncovered_variants`) and
 `one_implementation_per_variant`, which keeps a variant's DENSE overload where both are
-declared — the one a direct call takes; `loft-suite/rules/calls/F-Recv/1427-a-nullable-receiver-implements-its-variant.loft`,
+declared — the one a direct call takes; `loft-suite/rules/calls/F-Recv/a-call-reaches-the-method-spelled-for-its-receivers-nullability.loft`,
 `1427b-…`, and the refusal half in `tests/parse_errors.rs`
 (`nullable_receiver_implements_its_variant`), which fails on the extra report a `.loft` guard
 cannot see.
@@ -549,7 +549,7 @@ measurement that closed it — is the companion [calls-history.md](calls-history
   `loft-suite/attic/scripts/1290-a-heap-parameter-rebind-is-local-in-every-spelling.loft`, with a FIELD
   write (`F-ParamHeap`), a `&` parameter (`F-ParamRef`) and a plain LOCAL as the controls.
   The VECTOR kind's `p = other` spelling was in neither oracle and answered wrong until
-  2026-09-05 (D-call-14): `loft-suite/rules/ownership/O-Proxy/a-vector-parameter-reassigned-from-a-variable-rebinds-locally.loft`
+  2026-09-05 (D-call-14): `loft-suite/rules/ownership/O-Proxy/a-vector-taken-from-another-variable-leaves-its-source.loft`
   crosses it with a returned rebind, a rebind through a value branch, a double one, a loop and a
   read ahead of the rebind, with the mutate-through, a self arm and a `&` parameter as the
   controls.  The COLLECTION half is
@@ -591,7 +591,7 @@ measurement that closed it — is the companion [calls-history.md](calls-history
   materialisation is what keeps the refusal (loft#1303).
 - **Return independence (`F-Ret`)** — `a = mk(); a[0]=99; b = mk()` leaves `b[0]==1`.  The
   NULLABLE record return, which has no delivery buffer, is pinned apart in
-  `loft-suite/rules/calls/F-Ret/1337-a-view-of-a-local-returned-through-a-nullable-return-is-copied.loft`:
+  `loft-suite/rules/calls/F-Ret/a-nullable-return-hands-out-a-fresh-owned-value-as-its-dense-twin-does.loft`:
   a walker's local rebound through its own reference field, a projection inside an `if` arm
   beside a `null` and beside a literal, the walk that ends at null, eight nullable controls
   and the two dense twins — each read after a filler allocation, both backends

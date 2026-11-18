@@ -19364,6 +19364,108 @@ a_function_returning_foreign_data_must_say_const:2:33",
     .warning("Variable w is never read at a_function_returning_foreign_data_must_say_const:3:16");
 }
 
+/// loft#2536 — a function that rebinds its tail local from a call READING it
+/// (`cv = grow(cv, 2); cv`) answers the call's result.  The return-buffer handover gave the
+/// callee `cv` as its buffer, so it built into the record it read: `1 2 1 0`, not `5 4 1 4`.
+#[test]
+fn a_call_reading_the_local_it_rebinds_answers_its_result() {
+    code!(
+        "struct Canvas { data: vector<integer>, w: integer }
+fn grow(c: const Canvas, extra: integer) -> Canvas {
+  g = Canvas { data: [], w: c.w + 1 };
+  for x in c.data { g.data += [x]; }
+  for _k in 0..extra { g.data += [c.w]; }
+  g
+}
+fn mk(t: integer) -> Canvas { Canvas { data: [t, t], w: t + 3 } }
+fn one(t: integer) -> Canvas { cv = mk(t); cv = grow(cv, 2); cv }
+fn two(t: integer) -> Canvas {
+  cv = mk(t);
+  cv = grow(cv, 2);
+  cv
+}
+fn sig(c: Canvas) -> integer { c.w * 1000 + len(c.data) * 100 + (c.data[0] ?? 9) * 10 + (c.data[3] ?? 9) }
+fn run() -> integer { sig(one(1)) * 10000 + sig(two(1)) }"
+    )
+    .expr("run()")
+    .result(Value::Long(54_145_414));
+}
+
+/// loft#2544 — an `is` test of a unit variant whose enum is declared further down, followed by
+/// a one-name body and `else`, is the body, not a capture list: only a body stands before an
+/// `else`.  Pass 1 cannot see the enum, read `{ b }` as a capture list by its shape and
+/// refused the program with `Expect token {`.
+#[test]
+fn a_forward_unit_variant_test_reads_a_one_name_body_before_else() {
+    code!(
+        "fn pick(a: Later, b: integer, c: integer) -> integer {
+  v = if a.k is KA { b } else { c };
+  v
+}
+fn chain(a: Later, b: integer, c: integer) -> integer {
+  if a.k is KA { b } else if a.k is KB { c } else { 9 }
+}
+enum K { KA, KB, KC }
+struct Later { k: K }
+fn run() -> integer {
+  pick(Later { k: KA }, 1, 2) * 10000 + pick(Later { k: KB }, 1, 2) * 1000
+    + chain(Later { k: KA }, 3, 4) * 100 + chain(Later { k: KB }, 3, 4) * 10 + chain(Later { k: KC }, 3, 4)
+}"
+    )
+    .expr("run()")
+    .result(Value::Long(12_349));
+}
+
+/// `@FR-Const-Foreign` — asking whether a body's tail is foreign data follows each local's
+/// assignments once.  Locals assigned from each other form a cycle (`y = n; x = y; y = x; y`),
+/// and following it again and again overflowed the compiler's stack: a crash on a valid program.
+#[test]
+fn locals_assigned_from_each_other_are_followed_once() {
+    code!(
+        "fn two(n: integer) -> integer { y = n; x = y; y = x; y }
+fn three(n: integer) -> integer { y = n; x = y; z = x; y = z; y }
+fn run() -> integer { two(3) * 10 + three(7) }"
+    )
+    .expr("run()")
+    .result(Value::Int(37));
+}
+
+/// `@FR-Const-Foreign` — followed once, a local still brings every assignment it has: foreign
+/// data reaching the tail only through the OTHER local of a cycle is still refused.
+#[test]
+fn foreign_data_through_a_cycle_of_locals_is_still_refused() {
+    code!(
+        "fn h(n: const integer) -> const integer { n }
+fn g(n: integer) -> integer { y = n; x = h(n); y = x; x = y; y }"
+    )
+    .warning(
+        "Parameter 'n' is const but is never modified; 'const' has no effect on an unmodified \
+primitive parameter at foreign_data_through_a_cycle_of_locals_is_still_refused:1:9",
+    )
+    .warning("Dead assignment — 'y' is overwritten before being read at foreign_data_through_a_cycle_of_locals_is_still_refused:2:37")
+    .error(
+        "Cannot modify 'x': it holds read-only data the program does not own (a mapped file or a \
+library's buffer) — copy it first (`w = x`, a bind copies) and write the copy at foreign_data_through_a_cycle_of_locals_is_still_refused:2:43",
+    )
+    .error(
+        "Cannot modify 'x': it holds read-only data the program does not own (a mapped file or a \
+library's buffer) — copy it first (`w = x`, a bind copies) and write the copy at foreign_data_through_a_cycle_of_locals_is_still_refused:2:60",
+    )
+    // the tail `y` reaches `h(n)` only through `x`, across the cycle
+    .error(
+        "'g' returns read-only data the program does not own (a mapped file or a library's \
+buffer) as a writable `integer` — declare it `-> const integer`, or return a copy at foreign_data_through_a_cycle_of_locals_is_still_refused:2:65",
+    );
+}
+
+/// A failed call leaves the destination's own name as the value (`y = y`), the shape of a
+/// cycle: an unknown function whose answer is the tail is reported, not a crash.
+#[test]
+fn an_unknown_function_bound_and_answered_is_reported() {
+    code!("fn pp() -> integer { y = swap(pr(3.0)); y }")
+        .error("Unknown function pr at an_unknown_function_bound_and_answered_is_reported:1:31");
+}
+
 /// `@FR-Const-Foreign` — the cure: a bind copies (`w = v`) into a writable value, and a `const`
 /// parameter reads the original; the original is untouched.
 #[test]

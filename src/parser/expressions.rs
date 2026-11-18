@@ -4505,8 +4505,13 @@ use a separate collection or add after the loop"
         // what no grammar of loft allows).
         if self.preset_rhs.is_none() && self.operand_absent() {
             diagnostic!(self.lexer, Level::Error, "Expected a value after `{op}`");
-            *code = Value::Null;
-            return Type::Void;
+            // A stray `?` (`k = ? 4`) is read past, and a binary operator (`k = or true`)
+            // parses on with its left side absent, so the line is refused once (loft#2543);
+            // only a closer ends the value here.
+            if !self.lexer.has_token("?") && self.peek_binary_operator().is_none() {
+                *code = Value::Null;
+                return Type::Void;
+            }
         }
         // @FR-N-Decl — an assignment's TARGET is a PLACE, not a value read, so a flow
         // narrowing has nothing to say about it: the proof describes what the slot currently
@@ -9671,22 +9676,36 @@ use a separate collection or add after the loop"
     /// bound to such a value — the coalesce's temp.  Anything else is the program's own: a
     /// copy, a literal, a computed value.
     fn value_is_foreign(&self, v: &Value, scope: &[Value]) -> bool {
+        self.value_is_foreign_from(v, scope, &mut Vec::new())
+    }
+
+    /// [`Self::value_is_foreign`] with the locals already asked: a local's assignments are
+    /// followed once.  Locals that are assigned from each other (`y = n; x = y; y = x; y`)
+    /// form a cycle, and following it again and again overflowed the stack — a crash of the
+    /// compiler on a valid program.  Asked once, a local still contributes every assignment it
+    /// has, so the answer is the same wherever the walk ended before.
+    fn value_is_foreign_from(&self, v: &Value, scope: &[Value], asked: &mut Vec<u16>) -> bool {
         match v.unspan() {
             Value::Call(d, _) => {
                 (*d as usize) < self.data.definitions.len() && self.data.def(*d).returned_const
             }
             Value::If(_, a, b) => {
-                self.value_is_foreign(a, scope) || self.value_is_foreign(b, scope)
+                self.value_is_foreign_from(a, scope, asked)
+                    || self.value_is_foreign_from(b, scope, asked)
             }
             Value::Block(b) => b
                 .operators
                 .last()
-                .is_some_and(|t| self.value_is_foreign(t, &b.operators)),
+                .is_some_and(|t| self.value_is_foreign_from(t, &b.operators, asked)),
             Value::Var(x) => {
+                if asked.contains(x) {
+                    return false;
+                }
+                asked.push(*x);
                 self.foreign_bound.contains(&(self.context, *x))
                     || scope.iter().any(|op| {
                         matches!(op.unspan(), Value::Set(y, rhs)
-                            if y == x && self.value_is_foreign(rhs, scope))
+                            if y == x && self.value_is_foreign_from(rhs, scope, asked))
                     })
             }
             _ => false,

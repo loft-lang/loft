@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>scene3d API — Loft, a programming language for small browser games</title>
+  <meta name="description" content="The public API of the loft library scene3d — every function, struct and enum it exports, with its documentation.">
+<link rel="canonical" href="https://loft-lang.org/loft/lib-scene3d-api.html">
+<meta property="og:title" content="scene3d API — Loft, a programming language for small browser games">
+<meta property="og:description" content="The public API of the loft library scene3d — every function, struct and enum it exports, with its documentation.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://loft-lang.org/loft/lib-scene3d-api.html">
+<meta property="og:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<meta property="og:site_name" content="Loft">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="scene3d API — Loft, a programming language for small browser games">
+<meta name="twitter:description" content="The public API of the loft library scene3d — every function, struct and enum it exports, with its documentation.">
+<meta name="twitter:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<link rel="stylesheet" href="style.css">
+<style>.playground-link{display:inline-block;margin:0.3em 0 0.8em;padding:4px 12px;background:#2563eb;color:#fff;border-radius:4px;text-decoration:none;font-size:0.85em}.playground-link:hover{filter:brightness(1.15)}@media print{.playground-link{display:none}}</style>
+</head>
+<body>
+<nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <a href="https://loft-lang.org/blog/">Blog</a> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
+<h1>scene3d API</h1>
+<article>
+<p><a href="lib-scene3d.html">← scene3d</a> · version 0.6.0</p>
+<p class="lib-legend">23 public items, in source order. Generated from the registry index, which re-derives them from the package source at publish time — so a signature here is the one that version actually ships.</p>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Scene</span> { into: <span class="ty"><a href="stdlib-types.html">integer</a></span>, sky: <span class="ty"><a href="stdlib-types.html">integer</a></span>, land: gpu::<span class="en">Pipeline</span>, values: gpu::<span class="en">Block</span>, atlas: gpu::<span class="en">Texture</span>, lights: gpu::<span class="en">Texture</span>, torch_map: gpu::<span class="en">Texture</span>, reach_atlas: gpu::<span class="en">Texture</span>, torch_ids: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;, reaches: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt;&gt;, glows: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;, colours: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;, pictures: <span class="ty"><a href="stdlib-types.html">integer</a></span>, slots: <span class="ty">hash</span>&lt;<span class="en">Slot</span>[key]&gt;, faces: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt;&gt;, buffers: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;gpu::<span class="en">Buffer</span>&gt;, counts: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;, walls: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;&gt;, solids: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;&gt;, bounds: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;&gt;, hidden: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;, actors: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt;, keep: <span class="ty"><a href="stdlib-types.html">integer</a></span>, cards: gpu::<span class="en">Buffer</span>, card_count: <span class="ty"><a href="stdlib-types.html">integer</a></span>, over: gpu::<span class="en">Pipeline</span>, over_quad: gpu::<span class="en">Buffer</span>, over_picture: gpu::<span class="en">Texture</span>, over_on: <span class="ty"><a href="stdlib-types.html">boolean</a></span>, backdrop: gpu::<span class="en">Texture</span>?, back_quad: gpu::<span class="en">Buffer</span>?, free: <span class="ty"><a href="stdlib-types.html">boolean</a></span>, view: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;, eye: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;, right_x: <span class="ty"><a href="stdlib-types.html">float</a></span>, right_z: <span class="ty"><a href="stdlib-types.html">float</a></span>, cam_x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, cam_y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, width: <span class="ty"><a href="stdlib-types.html">integer</a></span>, height: <span class="ty"><a href="stdlib-types.html">integer</a></span> }</code></pre>
+<p>A scene on a device: its pictures, its tiles, the cells' light, this frame's actors and the camera.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">new_scene</span>(dev: const gpu::<span class="en">Device</span>, into: <span class="ty"><a href="stdlib-types.html">integer</a></span>, sky: <span class="ty"><a href="stdlib-types.html">i64</a></span>) -&gt; <span class="en">Scene</span>?</code></pre>
+<p>A scene for passes into <code>into</code> (<code>gpu::INTO_WINDOW</code>, <code>gpu::INTO_COLOUR_DEPTH</code> for a target with depth), <code>sky</code> (0xAARRGGBB) where nothing is, on a screen the size of the device's window.  Null on a device whose backend this library has no shader source for.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">resize</span>(self: <span class="en">Scene</span>, width: <span class="ty"><a href="stdlib-types.html">integer</a></span>, height: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
+<p>The screen's size: what the fixed camera shows (a cell <code>WIDE</code> of these across) and the overlay is laid out on.  In a window of another size the screen is drawn as large as fits, in its own shape, in the middle, with black beside it: a view made for 800 x 480 fills a whole-screen window so, showing what it showed.  A pass into a target (<code>draw_into</code>) covers the whole target.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">placed</span>(self: const <span class="en">Scene</span>, wide: <span class="ty"><a href="stdlib-types.html">integer</a></span>, high: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
+<p>Where the screen lies in a window <code>wide</code> x <code>high</code>: its left, its bottom, its width and its height in the window's pixels.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">screen_point</span>(self: const <span class="en">Scene</span>, wide: <span class="ty"><a href="stdlib-types.html">integer</a></span>, high: <span class="ty"><a href="stdlib-types.html">integer</a></span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
+<p>The screen's pixel under the window's pixel (x, y), both from the top-left: where a pointer is on the screen.  It lies outside 0 .. width, 0 .. height when the pointer is beside it.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">add_picture</span>(self: <span class="en">Scene</span>, texels: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">i32</a></span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<p>A picture, 16 x 16 RGB565 texels row by row (NONE where it is clear): its number, for a face or an actor; -1 when the texels are too few or the scene holds no more.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">set_tile</span>(self: <span class="en">Scene</span>, dev: const gpu::<span class="en">Device</span>, key: <span class="ty"><a href="stdlib-types.html">integer</a></span>, d: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt;)</code></pre>
+<p>Tile <code>key</code>'s faces, in place of the ones it had (none: it is empty).  Faces follow one another in <code>d</code>: the picture, the group it is hidden with (-1: none), its corners n, where its light comes from (the cell x, y, its layer, and a factor; layer NO_LIGHT: its corners' own), then n times x, y, z, u, v, light — u and v 0 .. 1 over the picture, light 0 .. 1.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">drop_tile</span>(self: <span class="en">Scene</span>, key: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
+<p>Tile <code>key</code> gone.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">tiles</span>(self: const <span class="en">Scene</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<p>How many tiles hold faces now.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">set_light</span>(self: <span class="en">Scene</span>, d: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt;)</code></pre>
+<p>The light of cells as data: <code>d</code> is the layer, the box's corner (x0, y0), its width and height, then each cell's light (0 .. 1) row by row.  The faces lit from those cells are lit by it from the next frame; no face is given again.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">offers_torches</span>(self: const <span class="en">Scene</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
+<p>Whether this implementation lights torches of their own: it does.  One that does not is given the cells' light with the torches in it.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">set_torch_reach</span>(self: <span class="en">Scene</span>, d: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
+<p>A torch's reach: <code>d</code> is its id, the layer, the box's corner (x0, y0), its width and height (15 cells at most each way), then the light it gives each cell of the box (0 .. 1) row by row, 0 where it does not reach.  Given when the torch is new, has moved, or burns otherwise; walls stop it where the reach says so.  False, and nothing kept, when the box is too large or the scene holds its 64 torches already.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">drop_torch</span>(self: <span class="en">Scene</span>, id: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
+<p>Torch <code>id</code> gone: its light with it.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">set_torches</span>(self: <span class="en">Scene</span>, d: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt;)</code></pre>
+<p>This frame's torches, nine numbers each in <code>d</code>: its id, its place (x, y, z as a face's corners), the shade it starts at, its glow (0 .. 1: how brightly it burns now, a flicker eased), and its colour (red, green, blue, 0 .. 1).  A torch whose reach was given and that is not named burns dark this frame; one named with no reach given is not drawn.  A flicker is these numbers alone: nothing else is given again.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">torches</span>(self: const <span class="en">Scene</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span></code></pre>
+<p>How many torches' reaches the scene holds.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">set_actors</span>(self: <span class="en">Scene</span>, d: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">single</a></span>&gt;, keep_seen: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
+<p>This frame's actors, eleven numbers each in <code>d</code>: an id, the picture, the bottom middle (x, y, z) of the picture as it stands unturned, its size in cells, its light, how far it is turned (degrees clockwise as the camera sees it), the point of the picture it turns about (u, v: 0 .. 1 across and down) and whether it is mirrored (1) or not (0).  A card stands upright and faces the camera: for the fixed camera in the plane it looks at, for the free one turned about its foot so its width lies across the view.  The actor <code>keep_seen</code> is never hidden: the wall groups between the camera and its card are cut away, and shown again when they no longer are (-1: none).</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">hidden_groups</span>(self: const <span class="en">Scene</span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;</code></pre>
+<p>The groups hidden now: the walls cut away between the camera and the actor never hidden.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">set_overlay</span>(self: <span class="en">Scene</span>, dev: const gpu::<span class="en">Device</span>, px: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">i32</a></span>&gt;, w: <span class="ty"><a href="stdlib-types.html">integer</a></span>, h: <span class="ty"><a href="stdlib-types.html">integer</a></span>, scale: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
+<p>A picture over everything — the status line, talk bubbles — <code>w</code> x <code>h</code> RGB565 values row by row, NONE where it is clear, each drawn <code>scale</code> x <code>scale</code> from the screen's top-left.  One with too few values takes it away.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">offers_free_camera</span>(self: const <span class="en">Scene</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span></code></pre>
+<p>Whether this implementation offers a free camera: it does.  One on a CPU offers the fixed camera only, so a view asks before it chooses.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">free_camera</span>(self: <span class="en">Scene</span>, eye: (<span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>), at: (<span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>), field: <span class="ty"><a href="stdlib-types.html">float</a></span>)</code></pre>
+<p>The free camera: an eye, a point looked at, and a field of view in degrees, in perspective. The cards turn to face it, and the walls between the eye and the actor never hidden are cut away, whichever of the camera and the actors is given first.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">fixed_camera</span>(self: <span class="en">Scene</span>, px: <span class="ty"><a href="stdlib-types.html">integer</a></span>, py: <span class="ty"><a href="stdlib-types.html">integer</a></span>)</code></pre>
+<p>The fixed camera, from the south: the screen's top-left at world pixel (px, py), where cell (x, z) on layer y lies at (x * WIDE, z * DEEP - y * TALL).</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">draw</span>(self: <span class="en">Scene</span>, dev: gpu::<span class="en">Device</span>)</code></pre>
+<p>Draw the scene into the window: a pass of its own, cleared to the sky.  Where the window is not the screen's size (<code>resize</code>), the screen is drawn as large as fits in the middle of it and the rest is black.</p>
+</div>
+<div class="item">
+<pre><code><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">draw_into</span>(self: <span class="en">Scene</span>, dev: gpu::<span class="en">Device</span>, target: const gpu::<span class="en">Target</span>)</code></pre>
+<p>Draw the scene into <code>target</code> (made for the kind the scene was made for).</p>
+</div>
+
+  </article>
+<script src="search-index.js"></script>
+<script src="search.js"></script>
+<script>
+(function(){
+var m={"Keywords":"keywords","Texts":"texts","Integers":"integers","Boolean":"boolean","Float":"float","Functions":"functions","Vector":"vector","Structs":"structs","Enums":"enums","Sorted":"sorted","Index":"index","Hash":"hash","File":"file","Lexer":"lexer","Parser":"parser","Libraries":"libraries","Store Locks":"store_locks","Parallel execution":"parallel_execution","Logging":"logging","Time":"time","Safety":"safety","JSON":"json","Generics":"generics","Closures":"closures","Coroutines":"coroutines","Tuples":"tuples","Match":"match","Formatting":"formatting"};
+var h=document.querySelector('h1');
+if(!h)return;
+var key=m[h.textContent];
+if(!key)return;
+var a=document.createElement('a');
+a.className='playground-link';
+a.href='playground.html?example='+key;
+a.textContent='\u25B6 Try in Playground';
+h.parentNode.insertBefore(a,h.nextSibling);
+})();
+</script>
+</body>
+</html>

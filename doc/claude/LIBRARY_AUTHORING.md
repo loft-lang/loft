@@ -376,6 +376,19 @@ have](WASM.md)).  An exemption is right where the unbuildable
 part IS the package — the TLS in `server` / `web` / `ssh` — not
 where it is a device the package merely touches.
 
+`.macos_window` is the third marker, and it ADDS a run instead of
+removing one: a package whose tests need a Mac's display (a Metal
+backend, and the OpenGL one it is measured against) puts one at
+the package root, with the reason as its contents.  On Linux such
+a test finds no Mac and returns at once — green, having measured
+nothing — so the library CI runs the marked packages' suites a
+second time on a macOS runner, windows on (`GRAPHICS_TEST_WINDOW=1`),
+on the interpreter and the C backend.  That runner is a virtual
+machine: its Metal is a paravirtual GPU and its OpenGL is Apple's
+software renderer, which rounds colours its own way; a test that
+compares the two asks `gpu_gl::renderer()` which one it measures
+against.
+
 **Your warning count moves even when you don't touch the code** —
 loft keeps adding deprecations (`not null`, the `&`-parameter
 lint, null-flow), so a package that was clean at publish time

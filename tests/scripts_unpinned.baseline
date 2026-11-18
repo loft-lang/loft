@@ -19,7 +19,6 @@ tests/scripts/2112-a-parallel-arm-stops-at-its-own-frame.loft
 tests/scripts/2168-a-unit-variant-test-before-a-block-parses.loft
 tests/scripts/2172-a-paged-lookup-decodes-a-narrow-key-as-the-store-does.loft
 tests/scripts/2173-an-image-and-its-sidecar-are-written-together.loft
-tests/scripts/2174-an-image-without-its-sidecar-is-refused.loft
 tests/scripts/2177-a-malformed-image-answers-every-paged-load.loft
 tests/scripts/2178-a-paged-load-relocates-an-enum-variants-payload.loft
 tests/scripts/2206-a-generic-match-returning-its-parameter-is-lifted-inline.loft

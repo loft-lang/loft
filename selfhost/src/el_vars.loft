@@ -206,6 +206,19 @@ pub struct Vars {
   pub boxed_tuple_at: integer = -1,
   // The subject node of the `match` being read: its temp is named for this site.
   pub match_site: integer = -1,
+  // `match_cursor`: the cursor a cursor match's patterns advance — [cursor variable, its
+  // struct, the `pos` attribute, the entry position's variable]; empty outside one.
+  pub cursor: vector<integer> = [],
+  // The place a comprehension pushes into where it fills a FIELD (one node), else empty.
+  pub comp_place: vector<ir::Node> = [],
+  // A keyed write's collection root while its value is read (-1 outside one), and the field
+  // values staged ahead of the value's record because they read that collection.
+  // A record literal being written into a place (one node), and what it stages ahead of its
+  // field writes — the place's old record snapshot where a field reads it.
+  pub lit_place: vector<ir::Node> = [],
+  pub lit_stage: vector<ir::Node> = [],
+  pub self_read: integer = -1,
+  pub self_stage: vector<ir::Node> = [],
   // The node whose tuple FIELD read is taken member by member (`x.f.0`, `x.f = …`): no copy.
   pub tuple_raw: integer = -1,
   // The capturing lambda `closure_value` read last, and the body node it was read at.
@@ -256,6 +269,8 @@ pub struct Vars {
   pub read_into: integer = -1,
   // Parsing the value of a plain local's `=` (`Parser::in_bind_rhs`).
   pub bind_rhs: boolean = false,
+  // Set while `rename_ret_buffer` judges a pass-1 match tail's arms (`arms_rename_candidate`).
+  pub match_tail: boolean = false,
   // `mark_pass2_rebuilt`: the locals a second-pass call bind already re-derived the borrows of.
   pub rebuilt: vector<integer>,
   // The element type the context gives the vector literal at node `lit_hint_node` (an
@@ -563,6 +578,25 @@ fn change_var_type_core(e: el::El, v: Vars, nr: integer, t: ir::TypeT) -> boolea
   if is_unknown(cur) {
     set_type(v, nr, t);
     return true;
+  }
+  // `(N-Join)`: a bare `null` written to a local typed `τ` — a plain scalar, a text, a struct —
+  // widens the local to `τ?` (on the first pass, which types every bind of it on the second).
+  // A vector takes a store of its own there and a parameter warns (`@FR-N-Store`): not this arm.
+  if t is TyNull && !v.vars[nr].argument {
+    widen = match cur {
+      TyInteger { spec: _ } => true,
+      TyFloat => true,
+      TySingle => true,
+      TyBoolean => true,
+      TyCharacter => true,
+      TyText { dep: _ } => true,
+      TyReference { n: rn } => rn > 0 && e.b.data.definitions[rn].def_type == el::DT_STRUCT,
+      _ => false
+    };
+    if widen {
+      set_type(v, nr, ir::TyOptional { inner: cur });
+      return true;
+    }
   }
   // A declared `τ?` takes a `τ` or a null, borrowing what the value borrows.
   match cur {
@@ -1056,7 +1090,7 @@ pub fn depend(v: Vars, nr: integer, on: integer) {
 }
 
 // The variable's type replaced.
-fn set_type(v: Vars, nr: integer, t: ir::TypeT) {
+pub fn set_type(v: Vars, nr: integer, t: ir::TypeT) {
   v.vars[nr].type_def = [t];
 }
 

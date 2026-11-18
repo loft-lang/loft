@@ -665,6 +665,7 @@ impl Scopes<'_> {
                     *op = Value::Call(free_if, vec![Value::Var(*w), Value::Var(ret_var)]);
                 }
             }
+            hooks_follow_returned_frees(&mut ls, ret_var, data);
         }
         // The B5-L3 wrap (Set(__ret_N, expr); free ops; Return(Var(__ret_N)))
         // must not fire when `expr` is already a `Return` or contains one
@@ -733,6 +734,7 @@ impl Scopes<'_> {
                         *op = Value::Call(free_distinct, vec![Value::Var(*w), Value::Var(tmp)]);
                     }
                 }
+                hooks_follow_returned_frees(&mut ls, tmp, data);
             }
             result.append(&mut ls);
             for &src in &null_arm_record_sources {
@@ -993,6 +995,7 @@ impl Scopes<'_> {
                     *op = Value::Call(free_if, vec![Value::Var(*w), Value::Var(tmp)]);
                 }
             }
+            hooks_follow_returned_frees(&mut ls, tmp, data);
             let mut result = Vec::with_capacity(ls.len() + 2);
             result.extend(self.bind_return_temp(tmp, expr, function, data));
             result.append(&mut ls);
@@ -1675,4 +1678,55 @@ fn renumber_text_buffer(
         })
         .collect();
     Some(tp.with_deps(&Deps::frame(frame)))
+}
+
+/// `@FR-H-Drop` — a release is its hook AND its free, and a return site that makes the free
+/// of `w` conditional on `w` not naming the returned store (`OpFreeRefIfDistinct(w, ret)`)
+/// makes the hook just ahead of it conditional the same way: the value left with the caller,
+/// whose owner runs the hook.  Left bare, a temporary whose record the returned local took
+/// (`r = if c { f() ?? return d } else { .. }; r`) ran the type's `OpDrop` here and the
+/// caller ran it again (loft#2552).  `LOFT_NO_RETURNED_HOOK_GUARD=1` leaves it bare.
+fn hooks_follow_returned_frees(ls: &mut [Value], ret: u16, data: &Data) {
+    /// Is `n` the scope-end hook of `w` (`if OpConvBoolFromRef(w) <cascade>(w)`), bare or
+    /// under the guards the sweep wraps it in?
+    fn hook_of(node: &Value, var: u16, live: u32) -> bool {
+        let names = |args: &[Value]| matches!(args.first().map(Value::unspan), Some(Value::Var(x)) if *x == var);
+        match node.unspan() {
+            Value::If(cond, then, other) => {
+                if let Value::Call(d, args) = cond.unspan()
+                    && *d == live
+                    && names(args)
+                {
+                    return matches!(then.unspan(), Value::Call(_, hook_args) if names(hook_args));
+                }
+                (matches!(other.unspan(), Value::Null) && hook_of(then, var, live))
+                    || (matches!(then.unspan(), Value::Null) && hook_of(other, var, live))
+            }
+            _ => false,
+        }
+    }
+    if crate::env_once!(std::env::var_os("LOFT_NO_RETURNED_HOOK_GUARD").is_some()) {
+        return;
+    }
+    let free_if = data.def_nr("OpFreeRefIfDistinct");
+    let live = data.def_nr("OpConvBoolFromRef");
+    let distinct = data.def_nr("OpDistinctStore");
+    for i in 1..ls.len() {
+        if let Value::Call(d, args) = &ls[i]
+            && *d == free_if
+            && let [a0, a1] = args.as_slice()
+            && let (Value::Var(w), Value::Var(r)) = (a0.unspan(), a1.unspan())
+            && *r == ret
+            && *w != ret
+            && hook_of(&ls[i - 1], *w, live)
+        {
+            let w = *w;
+            let hook = std::mem::replace(&mut ls[i - 1], Value::Null);
+            ls[i - 1] = v_if(
+                Value::Call(distinct, vec![Value::Var(w), Value::Var(ret)]),
+                hook,
+                Value::Null,
+            );
+        }
+    }
 }

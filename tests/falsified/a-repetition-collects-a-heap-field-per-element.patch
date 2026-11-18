@@ -1,8 +1,7 @@
-diff --git b/src/parser/control.rs a/src/parser/control.rs
-index 8ad2e4f5a..75edc37dd 100644
---- b/src/parser/control.rs
-+++ a/src/parser/control.rs
-@@ -8019,10 +8019,10 @@ impl Parser {
+diff --git a/src/parser/match_captures.rs b/src/parser/match_captures.rs
+--- a/src/parser/match_captures.rs
++++ b/src/parser/match_captures.rs
+@@ -814,10 +814,10 @@ impl Parser {
      /// @PLN35 slice 2 — collect a per-iteration FIELD projection from a struct-enum repetition
      /// run `( V { field } )*`.  Like `materialize_named_rest`, but the per-element read projects
      /// `variant.field` (`get_field`) instead of the whole element, so the result is a fresh
@@ -16,8 +15,8 @@ index 8ad2e4f5a..75edc37dd 100644
 +    /// dep is needed and `materialize_iterator` deep-copies it into the projection's own store.
      /// Reads `v[lo..hi]` with `step` (2 for a separated run `(V)*(Sep)`).
      #[allow(clippy::too_many_arguments)]
-     fn materialize_field_projection(
-@@ -8087,13 +8087,7 @@ impl Parser {
+     pub(super) fn materialize_field_projection(
+@@ -882,13 +882,7 @@ impl Parser {
              Box::new(next),
              Box::new(Value::Null),
          );
@@ -32,7 +31,7 @@ index 8ad2e4f5a..75edc37dd 100644
          self.materialize_iterator(
              &mut mat,
              &iter_tp,
-@@ -8102,12 +8096,6 @@ impl Parser {
+@@ -897,12 +891,6 @@ impl Parser {
              proj_var,
              "=",
          );
@@ -45,7 +44,10 @@ index 8ad2e4f5a..75edc37dd 100644
          bindings.push(mat);
      }
  
-@@ -8410,9 +8398,9 @@ impl Parser {
+diff --git a/src/parser/match_repetition.rs b/src/parser/match_repetition.rs
+--- a/src/parser/match_repetition.rs
++++ b/src/parser/match_repetition.rs
+@@ -82,9 +82,9 @@ impl Parser {
              0
          };
          // @PLN35 slice 2 — `( V { field, … } )*` captures a per-iteration FIELD PROJECTION: each
@@ -58,7 +60,7 @@ index 8ad2e4f5a..75edc37dd 100644
          let mut field_caps: Vec<(String, usize, Type)> = Vec::new();
          if self.lexer.has_token("{") {
              if valid {
-@@ -8426,9 +8414,26 @@ impl Parser {
+@@ -98,9 +98,26 @@ impl Parser {
                              .map(|(i, a)| (i + 1, a.typedef.clone()))
                      };
                      match found {
@@ -86,7 +88,7 @@ index 8ad2e4f5a..75edc37dd 100644
                          None if !self.first_pass => {
                              diagnostic!(
                                  self.lexer,
-@@ -8436,7 +8441,7 @@ impl Parser {
+@@ -108,7 +125,7 @@ impl Parser {
                                  "`{fname}` is not a field of {real}"
                              );
                          }

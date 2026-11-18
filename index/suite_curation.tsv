@@ -9,636 +9,636 @@ H-ReadSurface	allocator	curated	2	2026-11-17	a_read_surface_open_writes_nothing_
 H-ScanIndex	allocator	curated	1	2026-11-17	the_indexed_scan_takes_the_block_the_walk_takes (seeded oracle vs the chain walk); mutation 'skip exact fit' caught
 H-TailGrow	allocator	curated	2	2026-11-17	a_tail_record_grows_where_it_is + C churn; LOFT_NO_TAIL_GROW=1 caught; conformance list lacked it (added)
 H-Wilderness	allocator	curated	2	2026-11-17	oracle vs the tree-only allocator + fresh-store test; mutation 'equal size prefers the wilderness' caught
-B-Copy	binding	todo			
-B-Disturb	binding	todo			
-B-OutOfLine	binding	todo			
-B-Ref-Alias	binding	todo			
-B-Ref-AnnotationOnly	binding	todo			
-B-Ref-Intro	binding	todo			
-B-Ref-Lvalue	binding	todo			
-B-Ref-NotTarget	binding	todo			
-B-Ref-Read	binding	todo			
-B-Ref-Repoint	binding	todo			
-B-Ref-Reshape	binding	todo			
-B-Ref-StoredRef	binding	todo			
-B-Ref-Uniform	binding	todo			
-B-Ref-Write	binding	todo			
-B-RefType	binding	todo			
-B-RefType-OfVar	binding	todo			
-B-Scope	binding	todo			
-B-View	binding	todo			
-B-View-Base	binding	todo			
-B-View-Depth	binding	todo			
-Const-Bind	binding	todo			
-Const-Compose	binding	todo			
-Const-ConstructExempt	binding	todo			
-Const-Foreign	binding	todo			
-Const-ScalarCollapse	binding	todo			
-Const-Value	binding	todo			
-Const-VirtualReject	binding	todo			
-P-Cap-Fresh	binding	todo			
-P-Cap-View	binding	todo			
-F-Args	calls	todo			
-F-Arity	calls	todo			
-F-Block	calls	todo			
-F-Call	calls	todo			
-F-Default	calls	todo			
-F-Default-Field	calls	todo			
-F-Drop	calls	todo			
-F-OneBody	calls	todo			
-F-Package	calls	todo			
-F-ParamGrow	calls	todo			
-F-ParamHeap	calls	todo			
-F-ParamRebind	calls	todo			
-F-ParamRef	calls	todo			
-F-ParamScalar	calls	todo			
-F-ParamText	calls	todo			
-F-ParamTuple	calls	todo			
-F-Rec	calls	todo			
-F-Recv	calls	todo			
-F-Ret	calls	todo			
-F-Return	calls	todo			
-F-Surface	calls	todo			
-F-Visible	calls	todo			
-Cap-Call	capabilities	todo			
-Cap-Deny	capabilities	todo			
-Cap-Own	capabilities	todo			
-Cap-Read	capabilities	todo			
-Cap-Safe	capabilities	todo			
-Cap-Set	capabilities	todo			
-Cap-Trusted	capabilities	todo			
-Cap-Write	capabilities	todo			
-L-Apply	closures	todo			
-L-CapBox	closures	todo			
-L-CapHeap	closures	todo			
-L-CapKeep	closures	todo			
-L-CapOne	closures	todo			
-L-CapOwn	closures	todo			
-L-CapRebind	closures	todo			
-L-CapRef	closures	todo			
-L-CapScalar	closures	todo			
-L-CapWrite	closures	todo			
-L-Escape	closures	todo			
-L-Fn	closures	todo			
-L-FnAbsent	closures	todo			
-L-FnRef	closures	todo			
-Col-Assign	collections	todo			
-Col-Axis	collections	todo			
-Col-Bucket	collections	todo			
-Col-Capacity	collections	todo			
-Col-Concat	collections	todo			
-Col-Cons	collections	todo			
-Col-Copy	collections	todo			
-Col-Group	collections	todo			
-Col-Group-Dup	collections	todo			
-Col-Hash	collections	todo			
-Col-Index	collections	todo			
-Col-Inline	collections	todo			
-Col-Insert	collections	todo			
-Col-Insert-Absent	collections	todo			
-Col-Key	collections	todo			
-Col-Layouts	collections	todo			
-Col-Len	collections	todo			
-Col-Lookup	collections	todo			
-Col-Order	collections	todo			
-Col-Order-Sign	collections	todo			
-Col-Remove	collections	todo			
-Col-RemoveDense	collections	todo			
-Col-RemoveKeyed	collections	todo			
-Col-Sorted	collections	todo			
-Col-Spatial	collections	todo			
-Col-Store	collections	todo			
-Col-Tag	collections	todo			
-Col-Trie	collections	todo			
-Col-Unordered	collections	todo			
-Col-Vec	collections	todo			
-Slice-Box	collections	todo			
-Slice-Cap	collections	todo			
-Slice-KeyedIter	collections	todo			
-Slice-Open	collections	todo			
-Slice-Value	collections	todo			
-C-Det	concurrency	todo			
-C-Impure	concurrency	todo			
-C-Order	concurrency	todo			
-C-Par	concurrency	todo			
-G-Arg-Rebind	coroutines	todo			
-G-Arg-Share	coroutines	todo			
-G-Call	coroutines	todo			
-G-Delegate	coroutines	todo			
-G-Done	coroutines	todo			
-G-For	coroutines	todo			
-G-Hold	coroutines	todo			
-G-Next	coroutines	todo			
-G-NoRefParam	coroutines	todo			
-G-Own	coroutines	todo			
-G-Return	coroutines	todo			
-G-Yield	coroutines	todo			
-G-YieldDepth	coroutines	todo			
-D-Rank	dispatch	todo			
-Disp-Ambiguous	dispatch	todo			
-Disp-Applicable	dispatch	todo			
-Disp-Closed	dispatch	todo			
-Disp-Dynamic	dispatch	todo			
-Disp-Exhaustive	dispatch	todo			
-Disp-Hint	dispatch	todo			
-Disp-Key	dispatch	todo			
-Disp-Match-Equiv	dispatch	todo			
-Disp-Return	dispatch	todo			
-Disp-Select	dispatch	todo			
-Disp-Specific	dispatch	todo			
-Disp-Trigger	dispatch	todo			
-Disp-World	dispatch	todo			
-Fact-Direction	facts	todo			
-Fact-Engine	facts	todo			
-Fact-Kind	facts	todo			
-Fact-One	facts	todo			
-Fact-Oracle	facts	todo			
-Fact-Reach	facts	todo			
-Fact-ReachMin	facts	todo			
-Fact-Relational	facts	todo			
-Fact-Twin	facts	todo			
-F-Desugar	formatting	todo			
-F-Escape	formatting	todo			
-F-FaultSafe	formatting	todo			
-F-Float-Text	formatting	todo			
-F-Interp	formatting	todo			
-F-Read-Ref	formatting	todo			
-F-Render	formatting	todo			
-F-Render-Child	formatting	todo			
-F-Render-Fields	formatting	todo			
-F-Render-Ref	formatting	todo			
-F-Render-Refs	formatting	todo			
-F-Spec	formatting	todo			
-F-Spec-Exec	formatting	todo			
-F-Spec-Fill	formatting	todo			
-F-Spec-Radix	formatting	todo			
-F-Spec-Zero	formatting	todo			
-F-Target	formatting	todo			
-F-Target-Kind	formatting	todo			
-F-Target-Pos	formatting	todo			
-F-Target-Spec	formatting	todo			
-G-Amp-Disambig	grammar	todo			
-G-Amp-Infix	grammar	todo			
-G-Amp-Prefix	grammar	todo			
-G-Assoc	grammar	todo			
-G-Lex-Coal	grammar	todo			
-G-Pat-Group	grammar	todo			
-G-Pat-Prec	grammar	todo			
-G-Post-Default	grammar	todo			
-G-Prec	grammar	todo			
-H-Alloc	heap	todo			
-H-Claim	heap	todo			
-H-ClearRelease	heap	todo			
-H-Copy	heap	todo			
-H-Copy-Lease	heap	todo			
-H-Copy-Refuse	heap	todo			
-H-CopySelf	heap	todo			
-H-Drop	heap	todo			
-H-Drop-Not	heap	todo			
-H-Elide	heap	todo			
-H-Free	heap	todo			
-H-FreeAll	heap	todo			
-H-FreeAny	heap	todo			
-H-FreeNull	heap	todo			
-H-FreeStack	heap	todo			
-H-FreeTwice	heap	todo			
-H-Handle	heap	todo			
-H-Handle-Copy	heap	todo			
-H-Index	heap	todo			
-H-KeepRoom	heap	todo			
-H-Lease	heap	todo			
-H-LongRef	heap	todo			
-H-Materialise	heap	todo			
-H-Move	heap	todo			
-H-NewRec	heap	todo			
-H-Read	heap	todo			
-H-ReadNull	heap	todo			
-H-Ref	heap	todo			
-H-RefElem	heap	todo			
-H-RefHome	heap	todo			
-H-RefNull	heap	todo			
-H-RefSet	heap	todo			
-H-RefVal	heap	todo			
-H-Removed	heap	todo			
-H-RootExtent	heap	todo			
-H-ShortRef	heap	todo			
-H-Sound	heap	todo			
-H-Spent	heap	todo			
-H-Stride	heap	todo			
-H-SwapIn	heap	todo			
-H-SwapKeyed	heap	todo			
-H-SwapRebind	heap	todo			
-H-TextReplace	heap	todo			
-H-View	heap	todo			
-H-View-Drop	heap	todo			
-H-Write	heap	todo			
-H-Write-Else	heap	todo			
-H-WriteLocked	heap	todo			
-H-WriteLocked-Whole	heap	todo			
-H-WriteNull	heap	todo			
-H-WriteOOB	heap	todo			
-G-Check	interfaces	todo			
-G-Gen	interfaces	todo			
-G-Gen-Scope	interfaces	todo			
-G-Iface	interfaces	todo			
-G-Key	interfaces	todo			
-G-Mono	interfaces	todo			
-G-Regular	interfaces	todo			
-G-Sat	interfaces	todo			
-G-Sat-Eq	interfaces	todo			
-G-Scope	interfaces	todo			
-G-Select	interfaces	todo			
-G-Type	interfaces	todo			
-I-Comp	iteration	todo			
-I-Done	iteration	todo			
-I-Empty	iteration	todo			
-I-Filter	iteration	todo			
-I-For	iteration	todo			
-I-Index	iteration	todo			
-I-Map	iteration	todo			
-I-Next	iteration	todo			
-I-NullSrc	iteration	todo			
-I-Range	iteration	todo			
-I-RangeFrom	iteration	todo			
-I-RangeIncl	iteration	todo			
-I-RangeNull	iteration	todo			
-I-Reduce	iteration	todo			
-I-Text	iteration	todo			
-L-Align	layout	todo			
-L-Enum	layout	todo			
-L-Narrow	layout	todo			
-L-Narrow-Alias	layout	todo			
-L-Narrow-Decode	layout	todo			
-L-Narrow-Enc	layout	todo			
-L-Narrow-Linked	layout	todo			
-L-Narrow-Spare	layout	todo			
-L-Null	layout	todo			
-L-Null-Tag	layout	todo			
-L-Null-Text	layout	todo			
-L-Null-Which	layout	todo			
-L-OutOfLine	layout	todo			
-L-Ref	layout	todo			
-L-Ref-Slot	layout	todo			
-L-Release	layout	todo			
-L-Scalar	layout	todo			
-L-Sound	layout	todo			
-L-Struct	layout	todo			
-L-Total	layout	todo			
-L-Tuple	layout	todo			
-L-Upgrade-Old	layout	todo			
-L-Upgrade-Routine	layout	todo			
-L-Upgrade-Source	layout	todo			
-M-Bool	matching	todo			
-M-Exhaust	matching	todo			
-M-Expr	matching	todo			
-M-Fixed	matching	todo			
-M-Match	matching	todo			
-M-Once	matching	todo			
-M-Sep	matching	todo			
-M-Total	matching	todo			
-M-Unit	matching	todo			
-M-Variant	matching	todo			
-M-Wild	matching	todo			
-P-Alt	matching	todo			
-P-Anchor	matching	todo			
-P-Atomic	matching	todo			
-P-Cap	matching	todo			
-P-Cursor	matching	todo			
-P-Guard	matching	todo			
-P-IterBound	matching	todo			
-P-Multi	matching	todo			
-P-Opt	matching	todo			
-P-Point	matching	todo			
-P-Range	matching	todo			
-P-Rep	matching	todo			
-P-Rep-Scalar	matching	todo			
-P-Rest	matching	todo			
-P-Revert	matching	todo			
-P-Rule	matching	todo			
-P-Seq	matching	todo			
-P-Whole	matching	todo			
-WF-Pure	matching	todo			
-WF-Term	matching	todo			
-E-And	operational	todo			
-E-Asgn	operational	todo			
-E-Asgn-Compound	operational	todo			
-E-Asgn-Discharge	operational	todo			
-E-Coalesce	operational	todo			
-E-Concat	operational	todo			
-E-Default	operational	todo			
-E-Eq	operational	todo			
-E-Eq-Key	operational	todo			
-E-IfT	operational	todo			
-E-Left	operational	todo			
-E-Null	operational	todo			
-E-NullArg	operational	todo			
-E-Op	operational	todo			
-E-Op-IntDivMod	operational	todo			
-E-Or	operational	todo			
-E-Report	operational	todo			
-E-Seq	operational	todo			
-E-Truthy	operational	todo			
-E-Truthy-1	operational	todo			
-E-Uncomp	operational	todo			
-E-Uncomp-NN	operational	todo			
-E-Uncomp-Seen	operational	todo			
-E-Val	operational	todo			
-E-Var	operational	todo			
-Op-Back	operators	todo			
-Op-Bound	operators	todo			
-Op-Compound	operators	todo			
-Op-Conv	operators	todo			
-Op-Def	operators	todo			
-Op-Eq	operators	todo			
-Op-Fold	operators	todo			
-Op-Home	operators	todo			
-Op-Iface	operators	todo			
-Op-Left	operators	todo			
-Op-Mark	operators	todo			
-Op-Name	operators	todo			
-Op-Order	operators	todo			
-Op-Result	operators	todo			
-Op-Shape	operators	todo			
-Op-Std	operators	todo			
-O-Borrow	ownership	todo			
-O-Borrow-Scalar	ownership	todo			
-O-Buffer	ownership	todo			
-O-Complete	ownership	todo			
-O-Deps	ownership	todo			
-O-Derived	ownership	todo			
-O-Detach	ownership	todo			
-O-Latest	ownership	todo			
-O-LazyBuffer	ownership	todo			
-O-Move	ownership	todo			
-O-NoDiverge	ownership	todo			
-O-One-Kind	ownership	todo			
-O-Opaque	ownership	todo			
-O-Oracle	ownership	todo			
-O-Override	ownership	todo			
-O-Owner	ownership	todo			
-O-Proxy	ownership	todo			
-O-SliceView	ownership	todo			
-O-Unknown	ownership	todo			
-O-ViewField	ownership	todo			
-O-Witness	ownership	todo			
-Path-Case	paths	todo			
-Path-Name	paths	todo			
-Path-Refuse	paths	todo			
-Path-Sep	paths	todo			
-Path-Utf8	paths	todo			
-Perf-Cure	performance	todo			
-Perf-Gap	performance	todo			
-Perf-Like	performance	todo			
-Perf-Order	performance	todo			
-Perf-Teach	performance	todo			
-Perf-Twin	performance	todo			
-Perf-Weight	performance	todo			
-R-Alias	rewrites	todo			
-R-Apart	rewrites	todo			
-R-AppendTwin	rewrites	todo			
-R-Base	rewrites	todo			
-R-BoundAppend	rewrites	todo			
-R-BoundedNest	rewrites	todo			
-R-BufferReturn	rewrites	todo			
-R-ByteCopy	rewrites	todo			
-R-CallLine	rewrites	todo			
-R-Callee	rewrites	todo			
-R-CharWalk	rewrites	todo			
-R-CodeBase	rewrites	todo			
-R-Cold	rewrites	todo			
-R-Compact	rewrites	todo			
-R-CompleteWrite	rewrites	todo			
-R-Const	rewrites	todo			
-R-CopyView	rewrites	todo			
-R-Counter	rewrites	todo			
-R-CtorLiteral	rewrites	todo			
-R-DeadResult	rewrites	todo			
-R-DecodeView	rewrites	todo			
-R-DeferredCopy	rewrites	todo			
-R-Demote	rewrites	todo			
-R-Destination	rewrites	todo			
-R-DischargeInto	rewrites	todo			
-R-DispatchPublish	rewrites	todo			
-R-DispatchStop	rewrites	todo			
-R-ElemFirst	rewrites	todo			
-R-ElementPath	rewrites	todo			
-R-Escape	rewrites	todo			
-R-ExitVector	rewrites	todo			
-R-ExpPow	rewrites	todo			
-R-FastTable	rewrites	todo			
-R-FaultFlag	rewrites	todo			
-R-FieldAppend	rewrites	todo			
-R-FileHold	rewrites	todo			
-R-Fill	rewrites	todo			
-R-FirstClaim	rewrites	todo			
-R-FlatCopy	rewrites	todo			
-R-FnRefBuffer	rewrites	todo			
-R-FnRefValue	rewrites	todo			
-R-FoldCompare	rewrites	todo			
-R-FormatAppend	rewrites	todo			
-R-ForwardResult	rewrites	todo			
-R-ForwardWalk	rewrites	todo			
-R-FrameHeadroom	rewrites	todo			
-R-Fuse	rewrites	todo			
-R-GroupPush	rewrites	todo			
-R-GuardFree	rewrites	todo			
-R-GuardedChain	rewrites	todo			
-R-HandOver	rewrites	todo			
-R-Header	rewrites	todo			
-R-HostStore	rewrites	todo			
-R-HotInline	rewrites	todo			
-R-InPlace	rewrites	todo			
-R-InPlaceLiteral	rewrites	todo			
-R-InRange	rewrites	todo			
-R-Inline	rewrites	todo			
-R-InlineLeaf	rewrites	todo			
-R-Inputs	rewrites	todo			
-R-Invariant	rewrites	todo			
-R-KeyList	rewrites	todo			
-R-KeyedEntry	rewrites	todo			
-R-LazySplit	rewrites	todo			
-R-Leaf	rewrites	todo			
-R-LeafChain	rewrites	todo			
-R-LitDiv	rewrites	todo			
-R-LitHoist	rewrites	todo			
-R-LiteralAppend	rewrites	todo			
-R-LiteralWalk	rewrites	todo			
-R-LoopBuffer	rewrites	todo			
-R-LoopRecord	rewrites	todo			
-R-LoopSlot	rewrites	todo			
-R-MaskRange	rewrites	todo			
-R-Mint	rewrites	todo			
-R-MoveAppend	rewrites	todo			
-R-MoveChild	rewrites	todo			
-R-MoveLast	rewrites	todo			
-R-NoLocks	rewrites	todo			
-R-NoThreads	rewrites	todo			
-R-NonSentinelParam	rewrites	todo			
-R-OpPriority	rewrites	todo			
-R-OperandSpan	rewrites	todo			
-R-PathRelease	rewrites	todo			
-R-Peel	rewrites	todo			
-R-Phase	rewrites	todo			
-R-Place	rewrites	todo			
-R-Prefill	rewrites	todo			
-R-PureReuse	rewrites	todo			
-R-Push	rewrites	todo			
-R-PushFill	rewrites	todo			
-R-PushRec	rewrites	todo			
-R-Range	rewrites	todo			
-R-RangedCall	rewrites	todo			
-R-Rebind	rewrites	todo			
-R-RebindBuffer	rewrites	todo			
-R-RecPtr	rewrites	todo			
-R-RefParam	rewrites	todo			
-R-RefillBuffer	rewrites	todo			
-R-RefillText	rewrites	todo			
-R-Refresh	rewrites	todo			
-R-RegisterTable	rewrites	todo			
-R-RepeatRun	rewrites	todo			
-R-RetAdopt	rewrites	todo			
-R-ReturnField	rewrites	todo			
-R-Reuse	rewrites	todo			
-R-Rotate	rewrites	todo			
-R-SameRead	rewrites	todo			
-R-Scalar	rewrites	todo			
-R-ScaleFold	rewrites	todo			
-R-SelfReplace	rewrites	todo			
-R-SharedCall	rewrites	todo			
-R-SingleUse	rewrites	todo			
-R-SliceArg	rewrites	todo			
-R-SliceBorrow	rewrites	todo			
-R-SliceInto	rewrites	todo			
-R-SpecChain	rewrites	todo			
-R-SplitTable	rewrites	todo			
-R-StackBase	rewrites	todo			
-R-StartStep	rewrites	todo			
-R-State	rewrites	todo			
-R-StickySum	rewrites	todo			
-R-StreamWalk	rewrites	todo			
-R-Switch	rewrites	todo			
-R-TableHandle	rewrites	todo			
-R-Tabulate	rewrites	todo			
-R-TailSelf	rewrites	todo			
-R-TextBorrow	rewrites	todo			
-R-TextClear	rewrites	todo			
-R-TextLen	rewrites	todo			
-R-TextRun	rewrites	todo			
-R-Transient	rewrites	todo			
-R-TypedKeyed	rewrites	todo			
-R-TypedRead	rewrites	todo			
-R-ValueLocal	rewrites	todo			
-R-ValueRecord	rewrites	todo			
-R-VecCopy	rewrites	todo			
-R-Version	rewrites	todo			
-R-View	rewrites	todo			
-R-ViewReturn	rewrites	todo			
-R-WorkBuffer	rewrites	todo			
-R-WorkPark	rewrites	todo			
-R-WorkView	rewrites	todo			
-R-WorkerLean	rewrites	todo			
-R-Wrapper	rewrites	todo			
-R-ZeroCount	rewrites	todo			
-S-Arena	structures	todo			
-S-Block	structures	todo			
-S-Derived	structures	todo			
-S-Digest	structures	todo			
-S-Format	structures	todo			
-S-Frame	structures	todo			
-S-Free	structures	todo			
-S-Gate	structures	todo			
-S-Hash	structures	todo			
-S-Image	structures	todo			
-S-Index	structures	todo			
-S-Inline	structures	todo			
-S-Live	structures	todo			
-S-Mapped	structures	todo			
-S-Paged	structures	todo			
-S-Paged-Same	structures	todo			
-S-Pair	structures	todo			
-S-Park	structures	todo			
-S-Probe	structures	todo			
-S-Side	structures	todo			
-S-Sidecar	structures	todo			
-S-Tomb	structures	todo			
-S-Tree	structures	todo			
-S-TreeKey	structures	todo			
-S-Vector	structures	todo			
-T-Absent	tuples	todo			
-T-Cons	tuples	todo			
-T-Destr	tuples	todo			
-T-Paren	tuples	todo			
-T-Proj	tuples	todo			
-T-Record	tuples	todo			
-T-Ref	tuples	todo			
-T-Ref-El	tuples	todo			
-T-Ref-Rep	tuples	todo			
-T-Ref-Src	tuples	todo			
-T-Ret	tuples	todo			
-C-Int	types	todo			
-C-Never	types	todo			
-C-Num	types	todo			
-C-Only	types	todo			
-C-Ref	types	todo			
-C-Refl	types	todo			
-C-Tuple	types	todo			
-C-Var	types	todo			
-D-Coll	types	todo			
-D-Enum	types	todo			
-D-Json	types	todo			
-D-NoEnumF	types	todo			
-D-NoRef	types	todo			
-D-Opt	types	todo			
-D-Rec	types	todo			
-D-Scalar	types	todo			
-D-Text	types	todo			
-I-Join	types	todo			
-I-Lit	types	todo			
-I-Narrow	types	todo			
-I-Narrow-Opt	types	todo			
-I-Sub	types	todo			
-I-Widen	types	todo			
-N-Arith	types	todo			
-N-Cast	types	todo			
-N-Chain	types	todo			
-N-Chain-Place	types	todo			
-N-Coal	types	todo			
-N-Decl	types	todo			
-N-Default	types	todo			
-N-Dense	types	todo			
-N-Div	types	todo			
-N-Domain	types	todo			
-N-Guard	types	todo			
-N-Idem	types	todo			
-N-Index	types	todo			
-N-Intro	types	todo			
-N-Join	types	todo			
-N-Match	types	todo			
-N-Opt	types	todo			
-N-Parse	types	todo			
-N-Present	types	todo			
-N-Prop	types	todo			
-N-Reserve	types	todo			
-N-Road	types	todo			
-N-Shape	types	todo			
-N-Store	types	todo			
-P-Alt-Diff	types	todo			
-P-Alt-Same	types	todo			
-P-Cap-Ty	types	todo			
-P-Opt-Ty	types	todo			
-P-Rep-Ty	types	todo			
-P-Rest-Ty	types	todo			
-T-Chk	types	todo			
-T-Chk-Lam	types	todo			
-T-Chk-Var	types	todo			
-T-Chk-Vec	types	todo			
-T-Recursive	types	todo			
-T-Sub	types	todo			
-T-Syn	types	todo			
-W-Call	types	todo			
-W-Count	types	todo			
-W-Lit	types	todo			
-W-Name	types	todo			
-W-Op	types	todo			
-W-Regime	types	todo			
-W-Store	types	todo			
+B-Copy	binding	curated	92	2026-11-17	own dir 37 -> 23 cells by clause (record update 6->1, struct-enum 2->1, place-embedding 2->1, value branch + choice joins 6->1, compound values 2->1); 5 pending receipts measured by their cure switches; 139-drop-cascade moved to H-Drop; 2334 kept apart (gate E agrees with it); features 94 kept
+B-Disturb	binding	curated	46	2026-11-17	own dir 15 -> 10: overwrite + its control + whole-record write 3->1, growth + clear/method 2->1, callee-argument + loop liveness 2->1, later-arm + payload match views 2->1; the pending receipt measured; the removal cell gained a middle-element case that can fail (it could not) and a switch receipt; the six cells gate E agrees with stay apart (merging them needs a gate E run on the result)
+B-OutOfLine	binding	curated	13	2026-11-17	8 small cells, one clause each, verdicts mixed: no merge. Switch sweep (194 LOFT_NO_*): only LOFT_NO_OUT_OF_LINE / LOFT_NO_SEVERAL_VARS move them, both by refusing the program, so no clause-specific receipt exists; the null-write view case gained a reallocation so a stale view would fail
+B-Ref-Alias	binding	curated	15	2026-11-17	own dir 7 -> 5: two ref parameters + other call forms + link to a ref vector parameter 3->1 (loft#2136, #2150, #2424); the receipt-less crossing cell is moved only by LOFT_NO_SEVERAL_VARS (a refusal) but its values tell a link from a copy; keyed alias, null-to-collection (patch), 2195 (gate E agrees) stay apart
+B-Ref-AnnotationOnly	binding	curated	6	2026-11-17	every listed position refused (G-Amp-Prefix's cell holds the full list and cites this rule); the own cell is the unary-operator defect (!&a -&n ~&n) with its patch receipt over 6 expectations — its 3 positions duplicated in G-Amp-Prefix stay, since removing them changes the receipt's channel for ~9 lines; the reference-field cell is B-Ref-StoredRef's context. No change.
+B-Ref-Intro	binding	curated	6	2026-11-17	own dir 5 -> 3: the &fn(...) family — write through a parameter, local bind, read and call (loft#1443, #1454, #1455) — 3->1, one duplicated control kept once; the nullable-slot cell (loft#1372) and the place-not-a-temporary refusal (gate E agrees) stay apart
+B-Ref-Lvalue	binding	curated	17	2026-11-17	own dir 10 -> 8: the tuple-member family joins its patch cell (heap member loft#2263, member through a &(...) link); the other seven are distinct places each with a patch receipt (text field/element, text into a store, nullable slot, struct-enum place, generator parameter, struct view, stored tuple)
+B-Ref-NotTarget	binding	curated	2	2026-11-17	no own directory: `&x = 3` is refused in G-Amp-Prefix's refusal cell and in B-Ref-AnnotationOnly's (with its patch receipt), both citing this rule
+B-Ref-Read	binding	curated	3	2026-11-17	one conformance cell, every case writes the source after the bind and reads through the link (a copying link fails each); I-Text and B-Ref-Lvalue's text-into-a-store cell cite it too. No change.
+B-Ref-Repoint	binding	curated	7	2026-11-17	4 own cells, distinct clauses: the basic re-point (hand-measured falsification of the pre-fix build), the text link's kind (patch), a write before a re-point (loft#2425), and the any-place conformance cell (its writes after a re-point tell a re-point from a write-through). Three are agreed by gate E, so no merge this round.
+B-Ref-Reshape	binding	curated	14	2026-11-17	own dir 18 -> 9: the field/element-container refusals (loft#2161) 5->1, the vector grow/remove/clear/method refusals (loft#2267) 4->1, the overwrite refusals (loft#2391) 2->1; each expectation proven checked (corrupting it fails the file); refusal files are not gate E programs (the Rust front end refuses them), so no count moved. The keyed-link (patch), the 167 pair and the dead-at-the-disturbance / view-would-survive controls stay.
+B-Ref-StoredRef	binding	curated	8	2026-11-17	own dir 7 -> 6: the inline-field refusal by assignment and in a literal (loft#2166) 2->1; the positive 2166 cell, the temporary's reference field (loft#2369), the prefix-link pair and the struct-enum repoint stay
+B-Ref-Uniform	binding	curated	24	2026-11-17	own dir 8 -> 7: the collection link at every kind — write side (loft#1445) and read side — 2->1; five patch cells stay apart
+B-Ref-Write	binding	curated	20	2026-11-17	own dir 12 -> 10: the whole-value write through a link to a local / place / out-of-line field (loft#1371, #1376, #2433) 3->1; 2455 is the same clause but gate E agrees with it; four patch cells, the both-kinds refusal and three distinct clauses stay
+B-RefType	binding	curated	1	2026-11-17	one control cell (INERT receipt, honest: it pins values that already held); every function writes through its links after binding and reads the places after, so a copying link fails it
+B-RefType-OfVar	binding	curated	3	2026-11-17	no own directory: B-RefType's control cell cites and moves it (a variable or parameter of type &τ is a live link for its whole life)
+B-Scope	binding	curated	32	2026-11-17	own dir 27 -> 21: the name-after-its-scope-ended clause (loft#1700, #2411, #2332, #2321, #2330 and the sibling-loop body local) 6->1; pln125-b-drop moved to H-Drop (a drop runs where its free runs) with a conformance receipt; the rest are one patch receipt each, pairs gate E splits (1955/1955b, 1700b/2523) or distinct clauses
+B-View	binding	curated	56	2026-11-17	own dir 8 -> 5: the materialise clause through a payload binding / nullable local / discharged local / discharged element (loft#1664, #2362, #2447, #2404) 4->1; 1184 is that clause too but keeps its name (two compiler comments cite it, three patches carry those lines); 1665 (own patch), 2489 (gate E agrees) and the write-back cell (the only suite guard of its values + warning) stay; 51 citing files live under other rules
+B-View-Base	binding	curated	6	2026-11-17	no own directory: 6 citing cells under B-View, B-Copy and B-Disturb hold it
+B-View-Depth	binding	curated	7	2026-11-17	2 cells, distinct: the keyed/vector nested projection (patch, gate E agrees) and the tuple-copies control (gate E refuses) — nothing to merge
+Const-Bind	binding	curated	3	2026-11-17	no own directory: Const-Value's copy-out cell cites it; the Rust twin a_binding_const_field_rebind_is_refused holds the rebind refusal
+Const-Compose	binding	curated	2	2026-11-17	was Rust-only (tests/issues.rs a_composed_const_field_refuses_*): a first suite cell refuses a rebind, an append, an element write, a nested field write and a text append, each expectation proven by corrupting it alone
+Const-ConstructExempt	binding	curated	1	2026-11-17	no own directory: Const-Value's scalar-local cell (patch) cites it
+Const-Foreign	binding	curated	5	2026-11-17	own dir 5 -> 4: the link-append and struct-view refusals 2->1 over one producer, with the value field write, value append and link element write added; the mapped-vector cell writes in the temp dir (seven leftovers had piled up; 24 tracked loft_*.tmp files untracked suite-wide)
+Const-ScalarCollapse	binding	curated	2	2026-11-17	no own directory: Const-Value's scalar-local cell (patch) cites it
+Const-Value	binding	curated	7	2026-11-17	own dir 6 -> 4: the refusals through a discharge (loft#1211), a link/view/loop variable/discharge target and every append route 3->1, all 21 expectations proven alone; the read-as-the-value cell, copy-out and the scalar-local patch cell stay
+Const-VirtualReject	binding	curated	2	2026-11-17	was Rust-only: a first suite cell refuses const on a virtual field at the binding and the value position — writing it found loft#2538 (the value position accepted in silence), fixed; patch receipt
+P-Cap-Fresh	binding	curated	2	2026-11-17	own dir 2 -> 1: freshness against the subject and the copy a bind of a rest takes 2->1
+P-Cap-View	binding	curated	3	2026-11-17	own dir 5 -> 2: the capture-is-a-view clause (loft#2353, #2457, the B-View and H-View crossings) 4->1; the patch cell (a capture beside a fresh rest) stays
+F-Args	calls	curated	3	2026-11-17	one cell (insert takes its arguments before the vector grows, patch); two citing cells elsewhere
+F-Arity	calls	curated	3	2026-11-17	was Rust-only: two suite cells, split on the compile pass a refusal is met in (past the parameters / short of a required one or a generic past its); writing them found loft#2537 (a refused call typed null to the code after it), fixed; patch receipts
+F-Block	calls	curated	12	2026-11-17	8 files, no merge: the two block-yields-a-call-on-a-reference cells are one clause but gate E splits them (refused / agree); 1722 (patch, the null path) and the tail-match cell with its fixture library (frees across a package boundary) are distinct clauses; 1382/2456 statement-position cells agree; 1386 the value-position refusal
+F-Call	calls	curated	5	2026-11-17	own dir 2 -> 1: the frame frees exactly what it owns — loft#1935 (patch) and the conformance cell — 2->1
+F-Default	calls	curated	3	2026-11-17	own dir 4 -> 3: D-call-26's well-formed default (the match default over records, patch; the unit variant, loft#2410) 2->1; 1758 and the earlier-arguments cell (both patches) stay
+F-Default-Field	calls	curated	1	2026-11-17	one cell (a field default reads the record it fills)
+F-Drop	calls	curated	2	2026-11-17	one own cell (a dropped tuple-answering call runs for its effect) plus one citing cell elsewhere
+F-OneBody	calls	curated	5	2026-11-17	one cell (loft#2318) and the c97 runtime fixture library another cell imports
+F-Package	calls	curated	7	2026-11-17	one cell and its two fixture libraries (core, relay)
+F-ParamGrow	calls	curated	2	2026-11-17	one own cell (loft#1251, a heap parameter is shared not copied) plus one citing cell elsewhere
+F-ParamHeap	calls	curated	11	2026-11-17	own dir 2 -> 1: loft#2137 (patch) and loft#1415 — a heap argument shares the caller's store and nothing in the frame releases it — 2->1
+F-ParamRebind	calls	curated	8	2026-11-17	own dir 3 -> 2: the whole write through a link to a plain parameter (the re-pointing walk, the written record) 2->1; the rebind built apart (gate E agrees) stays
+F-ParamRef	calls	curated	9	2026-11-17	2 cells, gate E splits them (the slot parameter, refused; the whole-value write through a ref parameter, agrees)
+F-ParamScalar	calls	curated	5	2026-11-17	4 cells, all patch receipts (one per file) — nothing to merge
+F-ParamText	calls	curated	3	2026-11-17	own dir 3 -> 2: a text parameter is the argument's value and the callee's own (loft#2203, #2422/#2423) 2->1; the conformance cell (gate E agrees) stays
+F-ParamTuple	calls	curated	1	2026-11-17	one cell (a by-value tuple parameter is the callee's own value)
+F-Rec	calls	curated	4	2026-11-17	3 cells: two patches and a gate-E-agreeing conformance cell — nothing to merge
+F-Recv	calls	curated	12	2026-11-17	own dir 10 -> 8: a call reaches the method spelled for its receiver's nullability (loft#1427, #1432, the narrow/wide crossing) 3->1, all seven warning expectations proven alone; the rest are patches or gate-E-agreeing
+F-Ret	calls	curated	43	2026-11-17	own dir 25 -> 18: nullable returns as fresh as their dense twins (loft#1337, #1345 + the N-Road crossing) 3->1; a part of a call's result returned (loft#2289, #2443, #2515, its @catches kept and shown to hold) 3->1; a returned parameter (loft#1884, #2179) 2->1; a returned stored reference (loft#1977, #2511) 2->1; a text match tail (wrapper, declaration order) 2->1; the rest are distinct clauses, patches or gate-E-agreeing
+F-Return	calls	curated	1	2026-11-17	own dir 2 -> 1: what a function answers (loft#1347, #2383) 2->1, plus a real discarded-return case where the dropped main's test calls had been the rule's only discarded context
+F-Surface	calls	curated	19	2026-11-17	own dir 9 -> 8: the non-pub method refusals (qualifier, own record) 2->1; the function refusal stays apart (an earlier pass masks the method refusals); package-share refusal, the pub-either-spelling cell, 2331 and the two fixture libraries stay
+F-Visible	calls	curated	5	2026-11-17	was Rust-only (tests/pub_visibility.rs): a fixture library, a positive cell (name-only named/passed/stored, pub fields, all-pub struct built, pub enum variants), a six-refusal cell (patch receipt) and the invisible-type cell (a pass earlier); writing them found loft#2541 and #2542, fixed
+Cap-Call	capabilities	curated	10	2026-11-17	2 cells, the refusal and the admission (gate E splits them) — nothing to merge
+Cap-Deny	capabilities	curated	10	2026-11-17	3 cells, distinct clauses (an unadmitted construct, an undeclared group, a designated helper) — nothing to merge
+Cap-Own	capabilities	curated	7	2026-11-17	3 cells: two refusals of different clauses (a gated call on own data, a parameter as host data) and the free write — nothing to merge
+Cap-Read	capabilities	curated	2	2026-11-17	own dir 3 -> 2: the private-field refusals, every read and equality, 2->1 (a stale 'equality not refused yet' line corrected); the free-read cell stays
+Cap-Safe	capabilities	curated	2	2026-11-17	2 cells: the gated stdlib refusal and the ungated control (gate E agrees with both, distinct) — nothing to merge
+Cap-Set	capabilities	curated	3	2026-11-17	own dir 4 -> 3: the locked-parameter override refusals 2->1 (host fn spawn kept once, under the policy's name); the admitted twins stay
+Cap-Trusted	capabilities	curated	3	2026-11-17	2 cells: the refusal and the not-descended control — nothing to merge
+Cap-Write	capabilities	curated	6	2026-11-17	2 cells: the refusal and the granted-write control (gate E splits them) — nothing to merge
+L-Apply	closures	curated	6	2026-11-17	6 cells: four patches, and two refused cells of different clauses (argument order + frame drop; a text closure call appended) — nothing to merge
+L-CapBox	closures	curated	2	2026-11-17	one cell (a captured narrow scalar is refused what its type refuses)
+L-CapHeap	closures	curated	17	2026-11-17	own dir 7 -> 5: a lambda reads its captures inside a comprehension and leaves them alive 3->1; the rest are a patch, gate-E-agreeing or distinct
+L-CapKeep	closures	curated	7	2026-11-17	own dir 8 -> 5: each run of a build in a loop is its own record, a kept closure keeps its pass (loft#1636 + three) 4->1; 2272, 2273, 2512 and the agreeing cell are distinct
+L-CapOne	closures	curated	5	2026-11-17	2 cells, gate E splits them (2281 refused, 2363 agrees) — nothing to merge
+L-CapOwn	closures	curated	29	2026-11-17	own dir 23 -> 15: a closure confined to a loop pass borrows (loft#2505, #2524, #2514) 3->1; a rebind releases the displaced record (loft#2155 + the plain-lambda rebind) 2->1; a closure over a branch owns the arm that ran (loft#1473/#1474, #2131) 2->1; a leaving closure takes its captures (each kind, loft#1477, #2154, #2282) 4->1; the rest are patches, gate-E-agreeing or distinct (the nested relay, the rebuild in a loop)
+L-CapRebind	closures	curated	3	2026-11-17	own dir 5 -> 1: a rebind of a captured local leaves the record its build's store (loft#1862 patch, #2459, call rebind in a loop, call-buffer rotation, release by whoever keeps it) 5->1, @catches LOFT_NO_OWNER_WITNESS kept and shown
+L-CapRef	closures	curated	4	2026-11-17	own dir 4 -> 2: a captured & parameter shares its heap pointee and copies its scalar 3->1; the write refusal stays
+L-CapScalar	closures	curated	6	2026-11-17	one cell (a captured scalar keeps its type and its moment)
+L-CapWrite	closures	curated	5	2026-11-17	own dir 6 -> 4: a captured text a closure writes (loft#2286, #2297, #2350) 3->1; the narrow boxing cell, the two-closure refusal and the shared struct field stay
+L-Escape	closures	curated	12	2026-11-17	own dir 8 -> 7: a closure escapes in a struct and keeps its captures (loft#1867 + the parameter/callee escape) 2->1; three patches, the 2492 refusal/admission pair and the element refusal stay
+L-Fn	closures	curated	4	2026-11-17	3 cells: two patches and the capture-what-the-body-names control — nothing to merge
+L-FnAbsent	closures	curated	5	2026-11-17	2 cells, both patches (102 expected errors, 1642 absent fn answers null) — nothing to merge
+L-FnRef	closures	curated	3	2026-11-17	3 cells: a patch, the fn-type conversion (loft#2190, refused) and the keyed dispatch control (agrees) — nothing to merge
+Col-Assign	collections	curated	2	2026-11-17	2 cells: loft#2470 (agrees) and the keyed-assignment patch — nothing to merge
+Col-Axis	collections	curated	4	2026-11-17	one cell (a biased narrow key finds every record its iteration yields)
+Col-Bucket	collections	curated	5	2026-11-17	2 cells, gate E splits them (135 reserve-hash refused, pln110 size-hash agrees)
+Col-Capacity	collections	curated	5	2026-11-17	a representation rule a loft program cannot read (no capacity builtin): guarded by src/vector.rs capacity_policy_tests and tests/reset_capacity.rs; no suite cell can observe room
+Col-Concat	collections	curated	5	2026-11-17	own dir 6 -> 2: a concatenation is a new vector and neither operand changes (every position, loft#2387, #2399, a slice of its destination with @catches LOFT_NO_SELF_SLICE_DEPS kept, a function-end local) 5->1; 2406 (a second-pass literal) stays
+Col-Cons	collections	curated	4	2026-11-17	3 cells: 2407 (agrees), 2409 and the nullable keyed collection — distinct clauses
+Col-Copy	collections	curated	2	2026-11-17	one cell (a vector field keeps its absence, patch)
+Col-Group	collections	curated	18	2026-11-17	own dir 10 -> 5: a write through any member reaches every member (loft#1152, #901, the element write) 3->1; a null element is in no keyed view (loft#1374/#1367 seam) 2->1; members found by element type whatever the order or ? (loft#1158 + the nullable keyed member) 2->1; two patches and 1226 (gate E agrees) stay
+Col-Group-Dup	collections	curated	4	2026-11-17	2 cells, both gate-E-agreeing: merging them would lower the agree count — kept
+Col-Hash	collections	curated	4	2026-11-17	one cell (a keyed collection without a key is refused, patch)
+Col-Index	collections	curated	3	2026-11-17	one cell (an index holds every record past tree depth thirty)
+Col-Inline	collections	curated	1	2026-11-17	was Rust-only: a first suite cell — a removing walk sees every entry once over an admitted and a non-admitted type, and a view reads its entry across removals, alike under every hash layout
+Col-Insert	collections	curated	11	2026-11-17	5 cells: three patches, the push-spelling refusal and 1159 — distinct
+Col-Insert-Absent	collections	curated	4	2026-11-17	2 cells of different clauses (an insert makes an absent collection present; an instantiated collection replaces a repeated key)
+Col-Key	collections	curated	2	2026-11-17	2 cells: a patch and a refusal patch — nothing to merge
+Col-Layouts	collections	curated	2	2026-11-17	was Rust-only (tests/store_persist_loft.rs): the Col-Inline cell cites it and is checked under LOFT_NO_HASH_TAG and LOFT_NO_HASH_INLINE (a value never depends on the layout; switch-ab reruns the suite under both)
+Col-Len	collections	curated	7	2026-11-17	3 cells: two patches and the length-member refusal — nothing to merge
+Col-Lookup	collections	curated	5	2026-11-17	own dir 2 -> 1: a keyed lookup is nullable (loft#1450) and a miss discharges and propagates at every kind 2->1
+Col-Order	collections	curated	13	2026-11-17	5 cells: four agree with gate E (merging them would lower its agree count) and one refused — kept
+Col-Order-Sign	collections	curated	1	2026-11-17	no own directory; one suite cell elsewhere cites it
+Col-Remove	collections	curated	4	2026-11-17	one cell (each of the four spellings deletes one element)
+Col-RemoveDense	collections	curated	5	2026-11-17	2 cells: a patch and the reference-parameter removal — distinct
+Col-RemoveKeyed	collections	curated	2	2026-11-17	no own directory; two suite cells elsewhere cite it
+Col-Sorted	collections	curated	1	2026-11-17	no own directory; one suite cell elsewhere cites it
+Col-Spatial	collections	curated	2	2026-11-17	one cell (a spatial axis is an integer, patch)
+Col-Store	collections	curated	2	2026-11-17	one cell (an & keyed parameter derefs at every kind)
+Col-Tag	collections	curated	1	2026-11-17	was Rust-only: a first suite cell — entries held by a view, a stored reference and a group member survive growth through several rebuilds, alike under every hash layout
+Col-Trie	collections	curated	4	2026-11-17	2 cells, gate E splits them (2241 refused, the absent-key ordering agrees)
+Col-Unordered	collections	curated	3	2026-11-17	own dir 2 -> 1: an unordered walk (slot order; a linked table in key order, loft#2453) 2->1
+Col-Vec	collections	curated	2	2026-11-17	own dir 3 -> 2: a vector literal compiles whatever it reaches is declared below (loft#2278, #2340) 2->1; the ordered-and-slices control stays
+Slice-Box	collections	curated	3	2026-11-17	no own directory; two suite cells elsewhere cite it
+Slice-Cap	collections	curated	2	2026-11-17	one cell (a slice cap below zero answers no records, patch)
+Slice-KeyedIter	collections	curated	4	2026-11-17	3 cells: two refusals (spatial, sorted/index ranges are not values) and the keyed-range walk — distinct
+Slice-Open	collections	curated	1	2026-11-17	was guarded only by loft's tests/scripts/48b-spatial-slice.loft: moved into the suite as its cell (box, open walk, cap; which records from every origin), conformance receipt
+Slice-Value	collections	curated	14	2026-11-17	own dir 9 -> 7: a slice is a fresh vector at every vector position (every position, a concat operand, a method receiver loft#1728) 3->1; the rest agree with gate E or are distinct (negative bound)
+C-Det	concurrency	curated	3	2026-11-17	2 cells: a patch and the par-worker row — nothing to merge
+C-Impure	concurrency	curated	2	2026-11-17	2 cells, both patches (the view-write refusal and its copy twin)
+C-Order	concurrency	curated	1	2026-11-17	own dir 2 -> 1: a par loop keeps its source's order (consumed results, every kind's walk) 2->1
+C-Par	concurrency	curated	2	2026-11-17	no own directory; two suite cells elsewhere cite it
+G-Arg-Rebind	coroutines	curated	2	2026-11-17	2 cells, gate E splits them (2067 refused, the re-minted buffer agrees)
+G-Arg-Share	coroutines	curated	2	2026-11-17	one cell (a shared argument's mutation is seen at the next advance)
+G-Call	coroutines	curated	8	2026-11-17	own dir 3 -> 2: a lambda that yields or returns an iterator is a generator in every position (loft#2059 + the iterator lambda) 2->1; the binds-and-runs-nothing control agrees
+G-Delegate	coroutines	curated	6	2026-11-17	2 cells, both agree with gate E (merging them would lower its agree count)
+G-Done	coroutines	curated	5	2026-11-17	no own directory; five suite cells elsewhere cite it
+G-For	coroutines	curated	3	2026-11-17	3 cells: two agree with gate E, one refused (owned heap values) — nothing to merge
+G-Hold	coroutines	curated	6	2026-11-17	own dir 10 -> 5: a moved generator is not read again (loft#2043 x4 refusals) 4->1; a generator held in a field or element is released once by its holder (loft#1585, moved-in, overwritten) 3->1; the keyed patch, the handle cells stay
+G-Next	coroutines	curated	12	2026-11-17	4 cells: a patch, a gate-E-agreeing delegation prefix, and two refused cells of different clauses (resume point, lazy handover)
+G-NoRefParam	coroutines	curated	2	2026-11-17	2 cells: the cursor control and the reference-parameter refusal (both agree with gate E)
+G-Own	coroutines	curated	5	2026-11-17	own dir 7 -> 4: what an advance produces is the consumer's (loft#1589 + handover + lambda copy) 3->1; a link in a generator yields its value (loft#2420/#2421 + the parameter link) 2->1; the droppable pair stays
+G-Return	coroutines	curated	2	2026-11-17	2 cells: the tail-value refusal and the break control
+G-Yield	coroutines	curated	13	2026-11-17	7 cells: five patches and two of different clauses
+G-YieldDepth	coroutines	curated	2	2026-11-17	2 cells: the delegated-frame control and the yield-outside refusal
+D-Rank	dispatch	curated	4	2026-11-17	4 cells, all gate-E-agreeing (one refusal) — merging would lower the agree count
+Disp-Ambiguous	dispatch	curated	6	2026-11-17	own dir 4 -> 1: four ambiguity refusals in one file, each expectation proven alone
+Disp-Applicable	dispatch	curated	6	2026-11-17	3 cells, all gate-E-agreeing — kept
+Disp-Closed	dispatch	curated	1	2026-11-17	one cell (a static call is typed by the member it selects)
+Disp-Dynamic	dispatch	curated	11	2026-11-17	own dir 7 -> 6: the two missing-variant refusals 2->1; five gate-E-agreeing programs stay
+Disp-Exhaustive	dispatch	curated	3	2026-11-17	own dir 4 -> 2: three refusals (no member takes, nullable enum, uncovered pair) 3->1; the covered-call program agrees with gate E
+Disp-Hint	dispatch	curated	7	2026-11-17	own dir 7 -> 6 (incl. fixture): literal-width + untyped-lambda refusals 2->1; the says-only-the-refusal cell stays apart (one diagnostic alone is its property)
+Disp-Key	dispatch	curated	11	2026-11-17	own dir 9 -> 8 (incl. fixture): the two redefinition refusals 2->1; the gate-E-agreeing programs stay
+Disp-Match-Equiv	dispatch	curated	1	2026-11-17	one cell (a set and its match agree on every tuple)
+Disp-Return	dispatch	curated	4	2026-11-17	own dir 3 -> 2: the two return-type refusals 2->1; the agreeing program stays
+Disp-Select	dispatch	curated	9	2026-11-17	one cell (the unique most specific member in any declaration order)
+Disp-Specific	dispatch	curated	16	2026-11-17	8 cells: six gate-E-agreeing programs and two refusals of different clauses (not applicable / ambiguous) — kept
+Disp-Trigger	dispatch	curated	2	2026-11-17	needs packages in reach (declared deps, --lib, LOFT_LIB, the catalogue): guarded by tests/builder_trigger.rs; the F-Surface suite cell cites it
+Disp-World	dispatch	curated	1	2026-11-17	needs a live world (LOFT_LIVE_RELOAD=1, a set growing between reloads): no single suite program can reach it; guarded by tests/live_world.rs
+Fact-Direction	facts	curated	1	2026-11-17	had no guard: a first suite cell (writes through a function value and a recursion cycle, an effectful call not shared, a null remainder) — the new facts chapter
+Fact-Engine	facts	curated	1	2026-11-17	structural (one routine, one answer per compilation, every writer reads it): not observable by one program beyond the writers agreeing; the Fact-Direction cell exercises its answers; Rust sites in src/opt/facts.rs
+Fact-Kind	facts	structural	0	2026-11-17	what a kind declares (domain, direction, key, flow, cycle scope): no program observes the declaration; its kinds' answers are exercised by the Fact-Direction and Fact-Twin cells
+Fact-One	facts	structural	0	2026-11-17	no rewrite walks a callee itself: a property of the compiler's code, not of a program's answers; D-fact-1 OPEN
+Fact-Oracle	facts	needs-cell	0	2026-11-17	unbuilt: LOFT_FACT_VERIFY is read nowhere in src/ — recorded as D-fact-4 (OPEN, @PLN211 Arc C step 2); no program can guard a missing switch
+Fact-Reach	facts	structural	0	2026-11-17	the depth and cycle parameters of a query: no program observes them; the cycle answer is exercised by the Fact-Direction cell's mutual recursion
+Fact-ReachMin	facts	structural	0	2026-11-17	a rewrite asks the smallest reach, a widening measured by make rewrite-census: a process rule, not a program's answer
+Fact-Relational	facts	curated	1	2026-11-17	a first suite cell: an accessor's bound answers by its own test inside, outside and below zero (negative counts from the end); the accessor inlining clause is PROPOSED
+Fact-Twin	facts	curated	1	2026-11-17	a first suite cell: a twin chain from proving and non-proving sites (C: __rg twins vs general bodies), values alike with NN twins on and off; tests/twin_base.rs + tests/scripts/157-twin-base.loft (read by path) guard R-Base's twin
+F-Desugar	formatting	curated	3	2026-11-17	2 cells, both agree with gate E
+F-Escape	formatting	curated	1	2026-11-17	one cell (a patch: a brace escaped by doubling in every position)
+F-FaultSafe	formatting	curated	5	2026-11-17	own dir 3 -> 2: a hole whose value faults or is null renders plain null (fault in any hole + null never reaches to_text, @C142) 2->1; the uncomputable-operand program agrees with gate E
+F-Float-Text	formatting	curated	1	2026-11-17	no own directory; one suite cell elsewhere cites it
+F-Interp	formatting	curated	9	2026-11-17	4 cells: the two refusals cannot share a file (the empty hole is a parse refusal that masks the unknown-name one); a patch and a gate-E-agreeing program
+F-Read-Ref	formatting	curated	1	2026-11-17	no own directory; cited by suite cells of its chapter (F-Spec / F-Render)
+F-Render	formatting	curated	7	2026-11-17	2 cells, both patches (one patch per file) — kept
+F-Render-Child	formatting	curated	3	2026-11-17	2 cells: gate E splits them
+F-Render-Fields	formatting	curated	3	2026-11-17	2 cells: the json corpus and the null-fields patch — distinct scopes
+F-Render-Ref	formatting	curated	1	2026-11-17	one cell (loft#2268: a reference renders as a pointer and reads back)
+F-Render-Refs	formatting	curated	1	2026-11-17	no own directory; cited by suite cells of its chapter (F-Spec / F-Render)
+F-Spec	formatting	curated	11	2026-11-17	own dir 9 -> 8: the spec on every rendering (loft#1165) + at every renderer's null 2->1; two zero-pad patches (one patch per file) and five gate-E-agreeing programs stay
+F-Spec-Exec	formatting	curated	5	2026-11-17	no own directory; cited by suite cells of its chapter (F-Spec / F-Render)
+F-Spec-Fill	formatting	curated	4	2026-11-17	one cell (loft#2428) plus four suite cells elsewhere cite it
+F-Spec-Radix	formatting	curated	1	2026-11-17	no own directory; cited by suite cells of its chapter (F-Spec / F-Render)
+F-Spec-Zero	formatting	curated	2	2026-11-17	no own directory; cited by suite cells of its chapter (F-Spec / F-Render)
+F-Target	formatting	curated	6	2026-11-17	2 cells: a refusal and the per-hole-kind control — distinct
+F-Target-Kind	formatting	curated	4	2026-11-17	3 cells: the two refusals and the nullable-hole warning — not merged this pass
+F-Target-Pos	formatting	curated	2	2026-11-17	own dir 3 -> 1: every position with an expected type builds the target (loft#2064, binding/field, call in a hole)
+F-Target-Spec	formatting	curated	2	2026-11-17	no own directory; cited by suite cells of its chapter
+G-Amp-Disambig	grammar	curated	3	2026-11-17	2 cells, both gate-E-agreeing (a refusal and the position control)
+G-Amp-Infix	grammar	curated	5	2026-11-17	own dir 4 -> 3: the vector of & results (plain integer vector + compared by value) 2->1; the refusal and the level-six control agree with gate E
+G-Amp-Prefix	grammar	curated	4	2026-11-17	2 cells: gate E splits them
+G-Assoc	grammar	curated	1	2026-11-17	no own directory; cited by suite cells of its chapter
+G-Lex-Coal	grammar	curated	2	2026-11-17	a first suite cell: a coalesce is one token whatever the spacing (spaced/unspaced, integer and float defaults); a third ? is refused (G-Prec cell, loft#2543)
+G-Pat-Group	grammar	curated	2	2026-11-17	2 cells, both patches (one patch per file)
+G-Pat-Prec	grammar	curated	1	2026-11-17	one cell (a patch)
+G-Post-Default	grammar	curated	3	2026-11-17	no own directory; cited by suite cells of its chapter
+G-Prec	grammar	curated	3	2026-11-17	a first own cell: an absent operand is refused once, naming the token before it (loft#2543, patch receipt); other cells of the chapter cite it
+H-Alloc	heap	curated	8	2026-11-17	one cell (an omitted field written to its default in a reused block)
+H-Claim	heap	curated	10	2026-11-17	4 cells: three patches (one per file) and a gate-E-agreeing control
+H-ClearRelease	heap	curated	19	2026-11-17	3 cells: two patches and a refused program of another clause
+H-Copy	heap	curated	7	2026-11-17	no own directory; cited by suite cells of the heap chapter
+H-Copy-Lease	heap	curated	7	2026-11-17	4 cells, all gate-E-agreeing — merging would lower the agree count
+H-Copy-Refuse	heap	curated	31	2026-11-17	own dir 30 -> 28: three non-patch refusals into one (16 expectations, each proven alone); 25 patch refusals keep one patch per file
+H-CopySelf	heap	curated	2	2026-11-17	own dir 3 -> 1: a value delivered onto or from inside its own place keeps its value (loft#1916, #2391, the rewrites crossing — now with a receipt)
+H-Drop	heap	curated	35	2026-11-17	own dir 22 -> 21: the branch-arm member and field-literal element released once 2->1; patches (one per file), loft#2436 (two definitions of one name, with its fixture) and the agreeing programs stay
+H-Drop-Not	heap	curated	7	2026-11-17	no own directory; cited by suite cells of the heap chapter
+H-Elide	heap	curated	2	2026-11-17	no own directory; cited by suite cells of the heap chapter
+H-Free	heap	curated	16	2026-11-17	own dir 19 -> 14: a call frees what it made for an argument 3->1; an early exit frees what the frame owns 3->1; each pass frees its copied answer 2->1; the gate-E-agreeing programs, the patch and the distinct refused cells stay
+H-FreeAll	heap	curated	5	2026-11-17	no own directory; cited by suite cells of the heap chapter
+H-FreeAny	heap	curated	2	2026-11-17	no own directory; cited by suite cells of the heap chapter
+H-FreeNull	heap	curated	3	2026-11-17	own dir 2 -> 1: freeing null releases nothing on every path (the null heap value + loft#2417)
+H-FreeStack	heap	curated	2	2026-11-17	no own directory; cited by suite cells of the heap chapter
+H-FreeTwice	heap	curated	16	2026-11-17	no own directory; cited by suite cells of the heap chapter
+H-Handle	heap	curated	6	2026-11-17	5 cells: two patches, two gate-E-agreeing programs and the refused field-append — distinct
+H-Handle-Copy	heap	curated	2	2026-11-17	no own directory; cited by suite cells of the heap chapter
+H-Index	heap	curated	8	2026-11-17	one cell (a patch: loft#1669)
+H-KeepRoom	heap	curated	3	2026-11-17	no own directory; cited by suite cells of the heap chapter
+H-Lease	heap	curated	6	2026-11-17	no own directory; cited by suite cells of the heap chapter
+H-LongRef	heap	curated	9	2026-11-17	own dir 6 -> 5: loft#2163's two cells 2->1; the patch, loft#2500, the keyed-collection hold and the agreeing program stay (distinct clauses)
+H-Materialise	heap	curated	14	2026-11-17	4 cells: two patches and two gate-E-agreeing programs
+H-Move	heap	curated	24	2026-11-17	12 cells: eleven patches (one per file) and the moved-local control
+H-NewRec	heap	curated	3	2026-11-17	one cell (a recursive enum builds its vector children in one literal)
+H-Read	heap	curated	1	2026-11-17	no own directory; cited by suite cells of the heap chapter
+H-ReadNull	heap	curated	2	2026-11-17	one cell
+H-Ref	heap	curated	2	2026-11-17	no own directory; cited by suite cells of the heap chapter
+H-RefElem	heap	curated	1	2026-11-17	one cell (a patch refusal: loft#1972)
+H-RefHome	heap	curated	9	2026-11-17	own dir 6 -> 4: a record a stored reference names lives as long as its holder, however built (the patch, the literal-argument call result, the holder's store) 3->1; the generic recursive enum, the outlive refusal and the reads-it program stay
+H-RefNull	heap	curated	2	2026-11-17	no own directory; cited by suite cells of the heap chapter
+H-RefSet	heap	curated	3	2026-11-17	no own directory; cited by suite cells of the heap chapter
+H-RefVal	heap	curated	2	2026-11-17	2 cells: a patch control and a gate-E-agreeing program
+H-Removed	heap	curated	8	2026-11-17	2 cells, both patches (one per file)
+H-RootExtent	heap	curated	3	2026-11-17	one cell
+H-ShortRef	heap	curated	4	2026-11-17	2 cells, both gate-E-agreeing
+H-Sound	heap	curated	2	2026-11-17	one cell
+H-Spent	heap	curated	29	2026-11-17	2 refusal cells kept apart: loft#2283's expectations quote line numbers a merge would shift
+H-Stride	heap	curated	7	2026-11-17	3 cells: two patches and a gate-E-agreeing program
+H-SwapIn	heap	curated	6	2026-11-17	own dir 2 -> 1: the store-only-when-given-up patch + the answers-what-the-copy-answers program
+H-SwapKeyed	heap	curated	2	2026-11-17	own dir 2 -> 1: the exchange patch + the keyed rebind beside every other name
+H-SwapRebind	heap	curated	9	2026-11-17	no own directory; cited by suite cells of the heap chapter
+H-TextReplace	heap	curated	2	2026-11-17	own dir 3 -> 2: loft#1876 (patch) + loft#2310 2->1; loft#1873's patch stays (one per file)
+H-View	heap	curated	5	2026-11-17	2 cells: the loft#1985 patch and the projection program — distinct clauses
+H-View-Drop	heap	curated	4	2026-11-17	own dir 4 -> 3: the two refusals 2->1 (15 expectations, both @catches kept); the two gate-E-agreeing programs stay
+H-Write	heap	curated	1	2026-11-17	no own directory; cited by suite cells of the heap chapter
+H-Write-Else	heap	curated	6	2026-11-17	one cell (a patch)
+H-WriteLocked	heap	curated	7	2026-11-17	one cell
+H-WriteLocked-Whole	heap	curated	1	2026-11-17	was cell-less: a first suite cell — a guarded text replace and append on a locked record are discarded whole; the keyed filing halts (loft#2549, filed)
+H-WriteNull	heap	curated	5	2026-11-17	no own directory; cited by suite cells of its chapter
+H-WriteOOB	heap	curated	5	2026-11-17	own dir 2 -> 1: a write to a place that names nothing lands nowhere (absent element incl. loft#1378 + record copied into no place, the patch)
+G-Check	interfaces	curated	7	2026-11-17	2 cells, both gate-E-agreeing
+G-Gen	interfaces	curated	6	2026-11-17	own dir 4 -> 2: three refusals in one file, the guard of loft#2548 (fixed: T#4 in a message) with its patch receipt; the unbounded-moves control stays
+G-Gen-Scope	interfaces	curated	3	2026-11-17	own dir 2 -> 1: a type variable is a name only inside its definition (patch + default-file placeholder)
+G-Iface	interfaces	curated	5	2026-11-17	3 cells: the refusal pair cannot share a file (one is a syntax error that masks the other); the control
+G-Key	interfaces	curated	9	2026-11-17	9 files: loft#2435's cells with their five fixture libraries and the loft#1622 patch — kept
+G-Mono	interfaces	curated	38	2026-11-17	own dir 25 -> 23: loft#1383+#1418 (per width) 2->1; the tuple-callback pair 2->1; patches keep one per file
+G-Regular	interfaces	curated	3	2026-11-17	own dir 4 -> 3: three self-naming template cells 2171/regular-enum/names-itself 3->1 (+loft#2058); merging exposed loft#2546 (fixed, its own patch cell 2546-…); the irregular refusal stays; forward generic enum crash loft#2547 filed
+G-Sat	interfaces	curated	9	2026-11-17	3 cells, all patches (one per file)
+G-Sat-Eq	interfaces	curated	3	2026-11-17	3 cells: a patch, a refused control and an agreeing program — distinct
+G-Scope	interfaces	curated	3	2026-11-17	no own directory; cited by suite cells of its chapter
+G-Select	interfaces	curated	4	2026-11-17	2 cells: the ranking control and the refusal
+G-Type	interfaces	curated	6	2026-11-17	own dir 3 -> 2: the twin in every use + the qualified variant 2->1; the compound-field patch stays
+I-Comp	iteration	curated	16	2026-11-17	own dir 9 -> 8: loft#2335 (@catches kept) + loft#2446 2->1; three patches (one per file) and distinct clauses (2344 slice bounds, 2345 rev, fresh records, two discards) stay
+I-Done	iteration	curated	1	2026-11-17	no own directory; cited by suite cells of the iteration chapter
+I-Empty	iteration	curated	1	2026-11-17	one cell
+I-Filter	iteration	curated	1	2026-11-17	no own directory; cited by suite cells of the iteration chapter
+I-For	iteration	curated	16	2026-11-17	own dir 11 -> 9: loft#2415 + #2415b 2->1; the link-parameter walk (length, rev, removal) 2->1; patches and distinct clauses stay
+I-Index	iteration	curated	1	2026-11-17	own dir 2 -> 1: x#index is where x was read (vector cursor + slice and rev)
+I-Map	iteration	curated	1	2026-11-17	one cell (map/filter/reduce are their comprehensions)
+I-Next	iteration	curated	2	2026-11-17	no own directory; cited by suite cells of the iteration chapter
+I-NullSrc	iteration	curated	3	2026-11-17	own dir 4 -> 3: the discharged null source + absent collection 2->1; two gate-E-agreeing programs stay
+I-Range	iteration	curated	9	2026-11-17	no own directory; cited by suite cells of the iteration chapter
+I-RangeFrom	iteration	curated	2	2026-11-17	2 cells: a patch and loft#2275 — distinct clauses
+I-RangeIncl	iteration	curated	1	2026-11-17	one cell (a patch)
+I-RangeNull	iteration	curated	3	2026-11-17	own dir 3 -> 2: loft#2036 + the null bound in every form 2->1; the written-null refusal stays
+I-Reduce	iteration	curated	1	2026-11-17	no own directory; cited by suite cells of its chapter
+I-Text	iteration	curated	5	2026-11-17	one cell (a patch)
+L-Align	layout	curated	12	2026-11-17	2 cells, both patches
+L-Enum	layout	curated	2	2026-11-17	own dir 3 -> 2: one byte / tag word + 254 variants 2->1; the 255th refusal stays
+L-Narrow	layout	curated	3	2026-11-17	3 cells: an agreeing program, loft#1437 and a patch — distinct
+L-Narrow-Alias	layout	curated	2	2026-11-17	one cell (a patch refusal)
+L-Narrow-Decode	layout	curated	7	2026-11-17	one cell (a patch)
+L-Narrow-Enc	layout	curated	4	2026-11-17	no own directory; cited by suite cells of its chapter
+L-Narrow-Linked	layout	curated	1	2026-11-17	own dir 2 -> 1: link + stack-trace reflection (loft#2072, #2073)
+L-Narrow-Spare	layout	curated	5	2026-11-17	2 cells: gate E splits them
+L-Null	layout	curated	33	2026-11-17	own dir 14 -> 10: dense-twin trio (incl. loft#1004) 3->1; keyed crossing loft#1143+#1150 (+#1142) 2->1; pointer/handle sentinel loft#1316+#1421 2->1; the patch, agreeing programs and distinct clauses stay
+L-Null-Tag	layout	curated	10	2026-11-17	own dir 4 -> 2: loft#1138+#1139+#1198 3->1; the pattern patch stays
+L-Null-Text	layout	curated	4	2026-11-17	one cell (a patch)
+L-Null-Which	layout	curated	7	2026-11-17	4 cells: a patch, an agreeing program, loft#1367 (@catches) and loft#2443 — distinct clauses
+L-OutOfLine	layout	curated	17	2026-11-17	own dir 6 -> 5: the par worker returning a tree, whole and into a fresh destination 2->1 (@C159); the host-child, keyed, image and binary-io cells stay
+L-Ref	layout	curated	6	2026-11-17	3 cells, all gate-E-agreeing
+L-Ref-Slot	layout	curated	2	2026-11-17	a store image across programs and releases (a manifest's version and data_compatible_with, an upgrade routine, a project baseline): one suite program cannot stage both writer and reader; guarded by tests/store_upgrade.rs
+L-Release	layout	curated	1	2026-11-17	a store image across programs and releases (a manifest's version and data_compatible_with, an upgrade routine, a project baseline): one suite program cannot stage both writer and reader; guarded by tests/store_upgrade.rs
+L-Scalar	layout	curated	1	2026-11-17	one cell
+L-Sound	layout	curated	5	2026-11-17	was without a suite cell: loft's tests/scripts/2174 moved in as its cell (two vacuous ?? asserts fixed there and in 2172 + 158-push-window)
+L-Struct	layout	curated	6	2026-11-17	3 cells: a patch and two agreeing programs
+L-Total	layout	curated	5	2026-11-17	5 cells: four agreeing programs and the one-layout program
+L-Tuple	layout	curated	6	2026-11-17	own dir 3 -> 1: padded record (patch) + written positions + descending alignment 3->1
+L-Upgrade-Old	layout	curated	1	2026-11-17	a store image across programs and releases (a manifest's version and data_compatible_with, an upgrade routine, a project baseline): one suite program cannot stage both writer and reader; guarded by tests/store_upgrade.rs
+L-Upgrade-Routine	layout	curated	1	2026-11-17	a store image across programs and releases (a manifest's version and data_compatible_with, an upgrade routine, a project baseline): one suite program cannot stage both writer and reader; guarded by tests/store_upgrade.rs
+L-Upgrade-Source	layout	curated	1	2026-11-17	a store image across programs and releases (a manifest's version and data_compatible_with, an upgrade routine, a project baseline): one suite program cannot stage both writer and reader; guarded by tests/store_upgrade.rs
+M-Bool	matching	curated	1	2026-11-17	no own directory; cited by a suite cell of its chapter
+M-Exhaust	matching	curated	5	2026-11-17	own dir 3 -> 2: the two missing-variant refusals 2->1; loft#2390 stays
+M-Expr	matching	curated	1	2026-11-17	no own directory; cited by suite cells of the matching chapter
+M-Fixed	matching	curated	4	2026-11-17	2 cells: the refusal and its admitted control
+M-Match	matching	curated	5	2026-11-17	own dir 5 -> 4: the later-function subject pair (pattern kinds + own temp, @catches kept) 2->1; patches and the long if-chain program stay
+M-Once	matching	curated	2	2026-11-17	one cell
+M-Sep	matching	curated	2	2026-11-17	one cell (loft#2325)
+M-Total	matching	curated	12	2026-11-17	own dir 6 -> 5: guarded unit arm + slice arms 2->1; the not-a-variant refusal (another clause) and agreeing programs stay
+M-Unit	matching	curated	8	2026-11-17	one cell (a patch refusal)
+M-Variant	matching	curated	6	2026-11-17	4 cells: loft#1778, loft#2326, the agreeing capture and the nullable-slot payload — distinct clauses
+M-Wild	matching	curated	3	2026-11-17	one cell (loft#2170)
+P-Alt	matching	curated	10	2026-11-17	4 cells: two agreeing programs and two patches
+P-Anchor	matching	curated	2	2026-11-17	one cell
+P-Atomic	matching	curated	4	2026-11-17	no own directory; cited by suite cells of the matching chapter
+P-Cap	matching	curated	12	2026-11-17	own dir 4 -> 3: group capture + loft#2325 optional group 2->1; two patches stay
+P-Cursor	matching	curated	2	2026-11-17	2 cells, both gate-E-agreeing
+P-Guard	matching	curated	7	2026-11-18	2 cells: an agreeing program and the C162 refused cell
+P-IterBound	matching	curated	1	2026-11-18	one cell
+P-Multi	matching	curated	10	2026-11-18	own dir 5 -> 4: variant or-pattern (patch) + slice or-pattern (loft#2107) 2->1; struct/tuple patches and the 35e program stay
+P-Opt	matching	curated	6	2026-11-18	2 cells: loft#2048's program and its refusal
+P-Point	matching	curated	11	2026-11-18	7 cells: five patches and two of distinct clauses
+P-Range	matching	curated	2	2026-11-18	one cell
+P-Rep	matching	curated	10	2026-11-18	own dir 4 -> 3: mid-slice + cursor repetition 2->1; two agreeing programs stay
+P-Rep-Scalar	matching	curated	4	2026-11-18	2 cells: a patch and the greedy-run control
+P-Rest	matching	curated	11	2026-11-18	own dir 5 -> 3: fresh rest anywhere (35c) 2->1; named rest with room after (patch + loft#1419) 2->1; the binding-arm cell stays
+P-Revert	matching	curated	2	2026-11-18	one cell
+P-Rule	matching	curated	4	2026-11-18	4 cells of distinct clauses (arm order, reading between fixed elements, repetition, releasing answers)
+P-Seq	matching	curated	6	2026-11-18	one cell (a patch)
+P-Whole	matching	curated	3	2026-11-18	no own directory; cited by suite cells of the matching chapter
+WF-Pure	matching	curated	2	2026-11-18	had no cell and no citation: a first suite cell (printing and clock-reading sub-rules refused, a pure one admitted) and a citation at match_fields' purity check
+WF-Term	matching	curated	2	2026-11-18	no own directory; one suite cell elsewhere cites it
+E-And	operational	curated	3	2026-11-18	2 cells, both gate-E-agreeing
+E-Asgn	operational	curated	6	2026-11-18	4 cells: two patches, a refusal, an agreeing program
+E-Asgn-Compound	operational	curated	10	2026-11-18	6 cells: four patches (one per file), loft#2426 and an agreeing program
+E-Asgn-Discharge	operational	curated	5	2026-11-18	own dir 3 -> 2: loft#1212's two refusals 2->1; the compound-through-a-discharge program stays
+E-Coalesce	operational	curated	1	2026-11-18	own dir 2 -> 1: nested-container default + loft#2300 local consumed in place
+E-Concat	operational	curated	2	2026-11-18	2 cells: loft#2046's program and its refusal
+E-Default	operational	curated	1	2026-11-18	one cell
+E-Eq	operational	curated	23	2026-11-18	13 cells: patches (one per file), agreeing programs, and refused programs of distinct clauses (2062, 2500, the else-if discharge, identity) — the identity program and its refusal cannot share a file
+E-Eq-Key	operational	curated	1	2026-11-18	one cell
+E-IfT	operational	curated	1	2026-11-18	one cell
+E-Left	operational	curated	11	2026-11-18	own dir 5 -> 4: loft#2451 + the literal/format/compound operands 2->1; the patch and two agreeing programs stay
+E-Null	operational	curated	3	2026-11-18	one cell
+E-NullArg	operational	curated	11	2026-11-18	3 cells: two patches and the uniform-comparison program
+E-Op	operational	curated	5	2026-11-18	one cell
+E-Op-IntDivMod	operational	curated	3	2026-11-18	2 cells, both gate-E-agreeing
+E-Or	operational	curated	2	2026-11-18	one cell
+E-Report	operational	curated	7	2026-11-18	one cell
+E-Seq	operational	curated	3	2026-11-18	2 cells: gate E splits them
+E-Truthy	operational	curated	5	2026-11-18	2 cells: the loft#1919 patch and the definite-boolean program — distinct clauses
+E-Truthy-1	operational	curated	3	2026-11-18	one cell (a patch)
+E-Uncomp	operational	curated	9	2026-11-18	one cell (loft#1246)
+E-Uncomp-NN	operational	curated	7	2026-11-18	3 cells, all gate-E-agreeing
+E-Uncomp-Seen	operational	curated	1	2026-11-18	one cell
+E-Val	operational	curated	1	2026-11-18	no own directory; cited by suite cells of its chapter
+E-Var	operational	curated	1	2026-11-18	one cell
+Op-Back	operators	curated	7	2026-11-18	own dir 3 -> 2: the table rows + the operator methods 2->1; the patch stays
+Op-Bound	operators	curated	6	2026-11-18	no own directory; cited by suite cells of its chapter
+Op-Compound	operators	curated	2	2026-11-18	first cell of its own: %=, /=, += of a user operator, place read once; Op-Back's cell holds the rest
+Op-Conv	operators	curated	7	2026-11-18	merged: one cell per clause, every feature kept
+Op-Def	operators	curated	5	2026-11-18	merged: one cell per clause, every feature kept
+Op-Eq	operators	curated	4	2026-11-18	kept apart: the core; the inner-type crossing with E-Eq (gate E refuses it, the core agrees); the refusal file
+Op-Fold	operators	curated	2	2026-11-18	core; the plain to_text format refusal (new); the for twin is Op-Mark's 1950
+Op-Home	operators	curated	9	2026-11-18	merged: one cell per clause, every feature kept
+Op-Iface	operators	curated	2	2026-11-18	first cell of its own: a plain to_text does not meet Printable, one diagnostic (2553); fn members are G-Iface's
+Op-Left	operators	curated	5	2026-11-18	kept apart: the core is refused by gate E, the commuting cell agrees; left-to-right once in Op-Back's and Op-Order's cells
+Op-Mark	operators	curated	4	2026-11-18	the 1950 refusal and its 1950b patch cell; the Op-Conv refusal is that rule's
+Op-Name	operators	curated	1	2026-11-18	one cell: method, bare call and form answer alike
+Op-Order	operators	curated	2	2026-11-18	two cores: the generic le from the bound's lt, and every order form from one compare
+Op-Result	operators	curated	3	2026-11-18	cores are E-Asgn-Compound 1819 and F-Recv 1817 (nullable operand warned); Op-Back's patch cell
+Op-Shape	operators	curated	3	2026-11-18	first cell of its own: every arity and the to_text / next shapes; Op-Def's cell holds compare and self
+Op-Std	operators	curated	5	2026-11-18	core; the stdlib-type refusal; 2554 OpNot/OpNe warn (new); the retired-name refusals and the [] interface refusal (new)
+O-Borrow	ownership	curated	12	2026-11-18	own cell for every view kind (field, element, parameter field, & link; moved by LOFT_NO_SEVERAL_VARS) beside 2338; the B-Ref, R-CopyView, R-LoopRecord, R-Const cells are their rules'
+O-Borrow-Scalar	ownership	curated	3	2026-11-18	its own link-to-a-link patch cell and B-Ref-Write's patch cell stay; B-Ref-Lvalue's cell is the core
+O-Buffer	ownership	curated	25	2026-11-18	merged three gate-E-refused hand-on cells (null answer, rebound every pass, self tail call) into one; the every-arm cell agrees in gate E and stays; patch cells kept; R-Switch and tests/scripts cells are theirs
+O-Complete	ownership	curated	34	2026-11-18	one merge (2467's branch and comprehension, gate E refused); the join-sources and fn-ref-delivery cells stay two — gate E agrees with both, and a merge never lowers its agree count; 2384 and the coalesce-fallback read are distinct cases; the B-Copy, F-ParamRebind, H-Drop, H-Sound, O-Buffer, O-Latest and O-ViewField cells are theirs
+O-Deps	ownership	curated	3	2026-11-18	three cores, three shapes: a fn-ref return, an element off a borrowing call's field, a nullable element binding
+O-Derived	ownership	curated	4	2026-11-18	four cores, each a distinct case: a recursive join's argument, an inline rebuild's carried record, every-path frees, a hoisted field view
+O-Detach	ownership	curated	14	2026-11-18	merged three refused view-read cells into one; 1312 (gate E agrees) and the numbered issue cores stay; the patch cell stays; L-CapRebind, L-CapHeap, O-Witness and tests/scripts cells are theirs
+O-Latest	ownership	curated	27	2026-11-18	merged the two refused rebound-vector cells; the latest-assignment and tail-call cells stay apart (gate E agrees with both); numbered cores stay; B-Copy, L-CapHeap and H-Drop cells are theirs
+O-LazyBuffer	ownership	curated	8	2026-11-18	1647 (refused) and the null-sentinel path cell (gate E agrees) stay apart; mint-on-first-use and no-call paths held with R-Rebind's and R-ReturnField's cells
+O-Move	ownership	curated	27	2026-11-18	its own fold candidate agrees with gate E, its refused cores cannot take it; every core a distinct case; P-Rule, O-ViewField, R-Switch and tests/scripts cells are theirs
+O-NoDiverge	ownership	curated	23	2026-11-18	merged 1328 and 1329 (a fn-ref rebind, record and vector); the bind-copy cell gets its switch receipt; F-Ret, O-Latest, R-WorkBuffer and tests/scripts cells are theirs
+O-One-Kind	ownership	curated	2	2026-11-18	one cell walks every store-removing rewrite the rule lists (value record, call into its field, literal into an element, in-place literal)
+O-Opaque	ownership	curated	5	2026-11-18	its two own cells both agree with gate E and stay; the O-Move, R-Place and O-Unknown cores are theirs
+O-Oracle	ownership	curated	9	2026-11-18	its cells agree with gate E and are distinct cases (2471 a tuple argument's heap member); kept
+O-Override	ownership	curated	8	2026-11-18	its two refused cells are distinct cases; the fold candidate is O-Witness's
+O-Owner	ownership	curated	17	2026-11-18	its refused cells are distinct cases (native results, a mapped lambda, a fn-ref keyed collection); the B-Ref-Write, O-Latest, R-MoveLast and R-Rebind cells are theirs
+O-Proxy	ownership	curated	16	2026-11-18	merged 1257 and the vector-parameter rebind (a vector taken from another variable leaves its source); every core a distinct case; O-Override, O-Move and tests/scripts cells are theirs
+O-SliceView	ownership	curated	1	2026-11-18	first cell, from the formal text: the source's, holder's and lifetime's halves and the plain case each read what the copy holds; two cure switches move it
+O-Unknown	ownership	curated	3	2026-11-18	three cores, three distinct cases; kept
+O-ViewField	ownership	curated	12	2026-11-18	gate E agrees with every own cell, so none merges; each a distinct site case (a disturbed container, an exported result, every exit path, a taking site); the fixture lib is no cell; O-One-Kind's and tests/scripts cells are theirs
+O-Witness	ownership	curated	27	2026-11-18	its two own fold candidates agree with gate E and stay; the refused cores are distinct cases; B-Copy's and R-DeferredCopy's cells are theirs
+Path-Case	paths	curated	5	2026-11-18	first cell: a second spelling refused for reading, writing, deleting and moving, the first file untouched (loft#2556's receipt)
+Path-Name	paths	curated	4	2026-11-18	first cell, from the formal text: every banned character, every device name in any case and with an extension, a trailing dot or space — and the look-alikes that are names (a comma, console.txt, COM10)
+Path-Refuse	paths	curated	3	2026-11-18	first cell: each operation's own failure answer for a refused path; found and fixed loft#2556 (delete / move answered NotFound)
+Path-Sep	paths	curated	3	2026-11-18	first cell: either separator handed in names the same file; every path handed out uses / with no trailing separator
+Path-Utf8	paths	curated	4	2026-11-18	its two cells agree with gate E and stay; the non-UTF-8 names loft cannot create are held by tests/windows_rules.rs
+Perf-Cure	performance	structural	0	2026-11-18	a rule of which cure is admissible (engine first, a native rewrite recorded as an edge case); process, no program observes it
+Perf-Gap	performance	structural	0	2026-11-18	a rule of routing a twin's advantage to the language as a missing abstraction; process, no program observes it
+Perf-Like	performance	structural	0	2026-11-18	a rule of the benchmark harness: lanes are compared only on one output hash over a fixed workload (the bench routines' hash check); no loft program observes it
+Perf-Order	performance	structural	0	2026-11-18	a rule of the optimisation order (the IR first, operators after, from broad evidence); process, no program observes it
+Perf-Teach	performance	structural	0	2026-11-18	a rule of when a loft rewrite for speed is admissible (only behind a named advice); process, no program observes it
+Perf-Twin	performance	structural	0	2026-11-18	a rule of what is measured: a twin is written when a hit is suspected; process, no program observes it
+Perf-Weight	performance	structural	0	2026-11-18	a release measurement against reference twins on the C ship lane (the perf portal, the release checklist); no loft program observes it
+R-Alias	rewrites	curated	32	2026-11-18	gate E agrees with every own cell, so none merges; four fold candidates are distinct versioning cases
+R-Apart	rewrites	curated	38	2026-11-18	its one own fold candidate agrees with gate E; every cell a distinct case
+R-AppendTwin	rewrites	curated	14	2026-11-18	merged the two refused cells (a call result built by its twin, a builder with inlined leaves); the work-buffer cell agrees with gate E and stays
+R-Base	rewrites	curated	115	2026-11-18	its refused fold's only refused partner is a patch cell; the cores agree with gate E; patch cells kept
+R-BoundAppend	rewrites	curated	3	2026-11-18	its own cell and the tests/scripts program; the Rust twin in tests/bound_append.rs
+R-BoundedNest	rewrites	curated	6	2026-11-18	its own core and fold agree with gate E and stay; a tests/scripts program and the Rust guard beside them
+R-BufferReturn	rewrites	curated	3	2026-11-18	first cell, from the formal text: two sites in one statement, one site bound every pass, recursion, the null text, a concatenation (moved by LOFT_NO_SEVERAL_VARS)
+R-ByteCopy	rewrites	curated	5	2026-11-18	cited by R-DecodeView's and R-TextRun's cells and a tests/scripts program; no cell of its own is owed beside them
+R-CallLine	rewrites	curated	1	2026-11-18	one own cell (1753, the frame line of the call that entered it)
+R-Callee	rewrites	curated	11	2026-11-18	cited by the R-DecodeView, R-Place and R-Const cells and a tests/scripts program
+R-CharWalk	rewrites	curated	68	2026-11-18	its one own fold candidate agrees with gate E; 68 citing cells, distinct cases
+R-CodeBase	rewrites	structural	1	2026-11-18	the interpreter's cached bytecode base: observable only by a REPL or a live reload, which the suite runner does not run; guarded by tests/code_base.rs
+R-Cold	rewrites	curated	4	2026-11-18	its own cell, two tests/scripts programs and c_emit's Rust guard
+R-Compact	rewrites	curated	6	2026-11-18	cited by H-CopySelf, H-Drop and H-ClearRelease cells and its Rust guard
+R-CompleteWrite	rewrites	curated	12	2026-11-18	its two own fold candidates agree with gate E and stay
+R-Const	rewrites	curated	7	2026-11-18	its own fold candidate agrees with gate E; every cell a distinct case
+R-CopyView	rewrites	curated	10	2026-11-18	merged the two refused list-walk cells; the link-bind, cursor and read-only-copy cells agree with gate E and stay
+R-Counter	rewrites	curated	10	2026-11-18	five suite cells and Rust guards, distinct cases
+R-CtorLiteral	rewrites	curated	4	2026-11-18	its two own fold candidates agree with gate E and stay
+R-DeadResult	rewrites	curated	1	2026-11-18	first cell, from the formal text: a status field, a loop-decided field, a recursion, a kept effect — each beside the whole reading
+R-DecodeView	rewrites	curated	5	2026-11-18	merged its four crossings (ByteCopy, TextRun, Escape, Callee) into one cell; all refused, all conformance
+R-DeferredCopy	rewrites	curated	4	2026-11-18	its two own fold candidates agree with gate E and stay
+R-Demote	rewrites	curated	6	2026-11-18	merged the two front-push cells (a record's, a variant's); the B-Copy crossing is the core
+R-Destination	rewrites	curated	2	2026-11-18	two suite cells, distinct cases
+R-DischargeInto	rewrites	curated	5	2026-11-18	its one own fold candidate agrees with gate E; kept
+R-DispatchPublish	rewrites	structural	1	2026-11-18	the interpreter's dispatch-loop mechanism (the crash report's position, the one stop flag): what it ends or names is held by the error, coroutine and concurrency cells; the mechanism is guarded by tests/dispatch_publish.rs and tests/dispatch_stop.rs
+R-DispatchStop	rewrites	structural	2	2026-11-18	the interpreter's dispatch-loop mechanism (the crash report's position, the one stop flag): what it ends or names is held by the error, coroutine and concurrency cells; the mechanism is guarded by tests/dispatch_publish.rs and tests/dispatch_stop.rs
+R-ElemFirst	rewrites	curated	11	2026-11-18	merged the two refused row-in-its-element cells; the merged cell re-scored falsified against the core's patch; the others agree with gate E
+R-ElementPath	rewrites	curated	2	2026-11-18	one suite cell beside its Rust guard
+R-Escape	rewrites	curated	9	2026-11-18	seven suite cells, distinct cases
+R-ExitVector	rewrites	curated	1	2026-11-18	one suite cell
+R-ExpPow	rewrites	curated	2	2026-11-18	two suite cells, distinct cases
+R-FastTable	rewrites	structural	3	2026-11-18	the interpreter's two operator tables, chosen once per run by the stack mode: no program observes which table runs; guarded by the fill generator's own tests
+R-FaultFlag	rewrites	curated	18	2026-11-18	first suite cell, from the formal text: a discharge that never meets a null, nulls mid-loop, a default reading the recurrence, an overflow, an unrolled constant range; the seventeen Rust guards beside it
+R-FieldAppend	rewrites	curated	7	2026-11-18	merged the two refused field-append cells into one
+R-FileHold	rewrites	curated	5	2026-11-18	its own fold candidate agrees with gate E; kept
+R-Fill	rewrites	curated	10	2026-11-18	merged the two refused fill cells; the in-place-set and counters cells agree with gate E and stay
+R-FirstClaim	rewrites	structural	1	2026-11-18	how many elements a vector's first block claims (the store layout): no loft program observes the claim; guarded by its Rust test
+R-FlatCopy	rewrites	curated	3	2026-11-18	its own fold candidate agrees with gate E; kept
+R-FnRefBuffer	rewrites	curated	2	2026-11-18	one suite cell beside its Rust guard
+R-FnRefValue	rewrites	curated	1	2026-11-18	one suite cell
+R-FoldCompare	rewrites	curated	2	2026-11-18	one suite cell beside its Rust guard
+R-FormatAppend	rewrites	curated	4	2026-11-18	its own fold candidate agrees with gate E; kept
+R-ForwardResult	rewrites	curated	1	2026-11-18	one suite cell
+R-ForwardWalk	rewrites	curated	5	2026-11-18	merged the two refused field-walk cells into one
+R-FrameHeadroom	rewrites	structural	2	2026-11-18	when the interpreter's stack store grows: no program observes it beyond deep recursion running, which the calls chapter's cells hold; guarded by its Rust tests
+R-Fuse	rewrites	curated	2	2026-11-18	one suite cell beside its Rust guard
+R-GroupPush	rewrites	curated	88	2026-11-18	one suite cell beside its 87 Rust guards
+R-GuardFree	rewrites	curated	4	2026-11-18	its one own cell is refused and has no refused partner; kept
+R-GuardedChain	rewrites	curated	20	2026-11-18	its own fold candidate agrees with gate E; kept
+R-HandOver	rewrites	curated	4	2026-11-18	its refused fold's core agrees with gate E; both stay
+R-Header	rewrites	curated	108	2026-11-18	its three own fold candidates agree with gate E; kept
+R-HostStore	rewrites	curated	2	2026-11-18	merged the refused literal-adopts and recursion-adopts cells; the field-build core agrees with gate E and stays
+R-HotInline	rewrites	structural	0	2026-11-18	the interpreter runs #hot operators inline in its lean loop: the same templates, no observable difference; guarded by the fill generator's tests
+R-InPlace	rewrites	curated	19	2026-11-18	merged its two refused link cells into one
+R-InPlaceLiteral	rewrites	curated	18	2026-11-18	merged the variant view into 1571 (re-scored falsified against its patch); the switches-off cell carries a file-level @ARMED and stays; the others are distinct cases
+R-InRange	rewrites	curated	8	2026-11-18	its own fold candidate agrees with gate E; kept
+R-Inline	rewrites	structural	1	2026-11-18	the C writer's static-inline hint for small functions: the rule says it changes no observable behaviour; guarded by c_emit's tests
+R-InlineLeaf	rewrites	curated	8	2026-11-18	two suite cells beside its Rust guards
+R-Inputs	rewrites	curated	11	2026-11-18	its own fold candidate agrees with gate E; kept
+R-Invariant	rewrites	curated	4	2026-11-18	three suite cells, distinct cases
+R-KeyList	rewrites	structural	1	2026-11-18	the interpreter caches a keyed type's key contents: lookups answer the same, as the collections cells hold; guarded by its Rust tests
+R-KeyedEntry	rewrites	curated	10	2026-11-18	its two own fold candidates agree with gate E and stay
+R-LazySplit	rewrites	curated	6	2026-11-18	its own fold candidate agrees with gate E; kept
+R-Leaf	rewrites	structural	0	2026-11-18	a leaf function pushes no shadow frame: by construction it cannot reach stack_trace, assert or panic, so nothing can observe the omission
+R-LeafChain	rewrites	structural	1	2026-11-18	a frameless call tree is emitted as a leaf: no program observes the missing frames (as R-Leaf); guarded by its Rust test
+R-LitDiv	rewrites	curated	4	2026-11-18	two suite cells, distinct cases
+R-LitHoist	rewrites	curated	4	2026-11-18	two suite cells, distinct cases
+R-LiteralAppend	rewrites	curated	1	2026-11-18	one suite cell
+R-LiteralWalk	rewrites	curated	3	2026-11-18	its own fold candidate agrees with gate E; kept
+R-LoopBuffer	rewrites	curated	8	2026-11-18	its two own fold candidates agree with gate E and stay
+R-LoopRecord	rewrites	curated	11	2026-11-18	its two own fold candidates agree with gate E and stay
+R-LoopSlot	rewrites	curated	3	2026-11-18	two suite cells, distinct cases
+R-MaskRange	rewrites	curated	4	2026-11-18	its own fold candidate agrees with gate E; kept
+R-Mint	rewrites	curated	15	2026-11-18	its one own cell is refused and has no refused partner; kept
+R-MoveAppend	rewrites	curated	1	2026-11-18	first cell, from the formal text: the admitted shape and three it declines (a read after, two appends, a nested loop), moved by LOFT_NO_SEVERAL_VARS
+R-MoveChild	rewrites	curated	1	2026-11-18	one suite cell
+R-MoveLast	rewrites	curated	13	2026-11-18	its own fold candidate agrees with gate E; kept
+R-NoLocks	rewrites	structural	1	2026-11-18	a C unit with no lock source compiles without the locked-write discard: the rule says nothing observable changes; guarded by c_emit's tests
+R-NoThreads	rewrites	curated	3	2026-11-18	its two refused cells are a unit with a par loop and one without: merged, the without-threads unit would gain the par loop; both stay
+R-NonSentinelParam	rewrites	curated	2	2026-11-18	two suite cells, distinct cases
+R-OpPriority	rewrites	structural	1	2026-11-18	opcodes numbered hot, normal, cold: a slot number no program observes; guarded by the fill generator
+R-OperandSpan	rewrites	structural	0	2026-11-18	an operator's fixed-width operands bounds-checked once: the same reads, no program observes it; guarded by the fill generator
+R-PathRelease	rewrites	structural	0	2026-11-18	not built; and by its own text observably nothing (the release of a null is a no-op on both backends)
+R-Peel	rewrites	curated	3	2026-11-18	first cell, from the formal text: continue, break, a seeded start, a return from inside, a peeled inner loop (moved by LOFT_NO_SEVERAL_VARS)
+R-Phase	rewrites	structural	0	2026-11-18	a rule about which phase applies each rewrite; enforced by make rewrite-census and bench/portal/rule_phases.tsv, no program observes it
+R-Place	rewrites	curated	24	2026-11-18	its one refused fold (164-place-result) has only a patch cell as refused partner; the rest agree with gate E
+R-Prefill	rewrites	curated	2	2026-11-18	one suite cell beside its Rust guard
+R-PureReuse	rewrites	curated	6	2026-11-18	one suite cell beside its Rust guards
+R-Push	rewrites	curated	10	2026-11-18	its two own fold candidates agree with gate E and stay
+R-PushFill	rewrites	curated	64	2026-11-18	merged the two several-vector cells; the nested-comprehension cell's refused partner is a patch cell; the rest agree with gate E
+R-PushRec	rewrites	curated	13	2026-11-18	its one refused cell's partner agrees with gate E; both stay
+R-Range	rewrites	curated	24	2026-11-18	its one refused fold's cores agree with gate E; kept
+R-RangedCall	rewrites	curated	6	2026-11-18	its own fold candidate agrees with gate E; kept
+R-Rebind	rewrites	curated	9	2026-11-18	its one refused fold's core agrees with gate E; kept
+R-RebindBuffer	rewrites	curated	5	2026-11-18	one suite cell beside its Rust guards
+R-RecPtr	rewrites	curated	226	2026-11-18	its six own fold candidates agree with gate E; 14 suite cells and the Rust guards, distinct cases
+R-RefParam	rewrites	structural	0	2026-11-18	the C writer copies a reference parameter into a local field by field: the same program, no observable change; guarded by c_emit's tests
+R-RefillBuffer	rewrites	curated	30	2026-11-18	its two own fold candidates agree with gate E and stay
+R-RefillText	rewrites	curated	10	2026-11-18	its own fold candidate agrees with gate E; kept
+R-Refresh	rewrites	curated	8	2026-11-18	its own fold candidate agrees with gate E; kept
+R-RegisterTable	rewrites	structural	0	2026-11-18	the interpreter's register-passing operator table: State is in step after every operator, so nothing observes it; guarded by the fill generator
+R-RepeatRun	rewrites	curated	3	2026-11-18	one suite cell beside its Rust guards
+R-RetAdopt	rewrites	curated	7	2026-11-18	two suite cells, distinct cases
+R-ReturnField	rewrites	curated	5	2026-11-18	its own fold candidate agrees with gate E; kept
+R-Reuse	rewrites	curated	12	2026-11-18	six suite cells, distinct cases
+R-Rotate	rewrites	curated	3	2026-11-18	two suite cells, distinct cases
+R-SameRead	rewrites	curated	10	2026-11-18	its three own fold candidates agree with gate E and stay
+R-Scalar	rewrites	curated	7	2026-11-18	its three own fold candidates agree with gate E and stay
+R-ScaleFold	rewrites	curated	3	2026-11-18	its own fold candidate agrees with gate E; kept
+R-SelfReplace	rewrites	curated	3	2026-11-18	one suite cell beside its Rust guards
+R-SharedCall	rewrites	curated	1	2026-11-18	first cell, from the formal text: a pure pair, a pair with an effect, a scalar and a record field written between (moved by LOFT_NO_SEVERAL_VARS)
+R-SingleUse	rewrites	curated	5	2026-11-18	one suite cell beside its Rust guards
+R-SliceArg	rewrites	curated	4	2026-11-18	its one refused fold's partner agrees with gate E; both stay
+R-SliceBorrow	rewrites	curated	4	2026-11-18	two suite cells, distinct cases
+R-SliceInto	rewrites	curated	3	2026-11-18	merged the two refused slice-into-a-place cells into one
+R-SpecChain	rewrites	curated	2	2026-11-18	two suite cells, distinct cases
+R-SplitTable	rewrites	curated	6	2026-11-18	two suite cells beside its Rust guards
+R-StackBase	rewrites	curated	4	2026-11-18	two suite cells beside its Rust guards
+R-StartStep	rewrites	curated	5	2026-11-18	its own fold candidate agrees with gate E; kept
+R-State	rewrites	curated	4	2026-11-18	four suite cells, distinct cases
+R-StickySum	rewrites	curated	2	2026-11-18	two suite cells, distinct cases
+R-StreamWalk	rewrites	curated	2	2026-11-18	held by tests/scripts/a-walk-of-a-built-vector-streams-its-elements.loft and tests/stream_walk.rs; no suite cell is owed beside them
+R-Switch	rewrites	curated	10	2026-11-18	its own fold candidate agrees with gate E; kept
+R-TableHandle	rewrites	curated	2	2026-11-18	held by tests/scripts/159-table-handle.loft (every reshaping path, hand-measured receipts) and tests/table_handle.rs
+R-Tabulate	rewrites	curated	1	2026-11-18	held by tests/scripts/a-byte-classifier-reads-its-table.loft
+R-TailSelf	rewrites	curated	17	2026-11-18	its refused fold is the warning cell and its refused core another clause; kept
+R-TextBorrow	rewrites	curated	26	2026-11-18	its three own fold candidates agree with gate E and stay
+R-TextClear	rewrites	structural	0	2026-11-18	x = "" empties a text in place, keeping its capacity: by the rule's own text only the capacity differs, which no program can observe
+R-TextLen	rewrites	curated	2	2026-11-18	its own fold candidate agrees with gate E; kept
+R-TextRun	rewrites	curated	4	2026-11-18	its own fold candidate agrees with gate E; kept
+R-Transient	rewrites	curated	10	2026-11-18	its two own fold candidates agree with gate E and stay
+R-TypedKeyed	rewrites	curated	8	2026-11-18	its one refused cell's partner agrees with gate E; both stay
+R-TypedRead	rewrites	curated	4	2026-11-18	its own fold candidate agrees with gate E; kept
+R-ValueLocal	rewrites	curated	11	2026-11-18	its two own fold candidates agree with gate E and stay
+R-ValueRecord	rewrites	curated	38	2026-11-18	its refused 157-value-chain's sibling agrees with gate E and the refused cores are other clauses; the patch cell stays
+R-VecCopy	rewrites	curated	3	2026-11-18	its own fold candidate agrees with gate E; kept
+R-Version	rewrites	curated	8	2026-11-18	its two own fold candidates agree with gate E and stay
+R-View	rewrites	curated	3	2026-11-18	its own fold candidate agrees with gate E; kept
+R-ViewReturn	rewrites	curated	1	2026-11-18	one suite cell
+R-WorkBuffer	rewrites	curated	18	2026-11-18	its four own fold candidates agree with gate E and stay
+R-WorkPark	rewrites	structural	0	2026-11-18	the C parks a frame's work texts between calls: a taken text is empty as a fresh one is, so nothing observes it beyond right texts, which the text cells hold
+R-WorkView	rewrites	curated	1	2026-11-18	first cell, from the formal text: a second format, a format on some paths, a loop rebind, a call between (moved by LOFT_NO_SEVERAL_VARS)
+R-WorkerLean	rewrites	curated	1	2026-11-18	one suite cell
+R-Wrapper	rewrites	curated	3	2026-11-18	one suite cell beside its Rust guards
+R-ZeroCount	rewrites	curated	3	2026-11-18	its one refused fold's partner agrees with gate E; both stay
+S-Arena	structures	curated	2	2026-11-18	one suite cell; the paged golden images and its Rust guards
+S-Block	structures	structural	0	2026-11-18	a claimed block's header bytes (i32 +n): no loft program observes them; written by Store::claim, which now cites it; the allocator rules' Rust tests guard the bytes
+S-Derived	structures	structural	0	2026-11-18	what a reader may rely on beyond the chain: a reader's contract, held by the image programs that read back what was written
+S-Digest	structures	curated	4	2026-11-18	its one own cell is refused with no refused partner; the paged golden images and src/keys.rs beside it
+S-Format	structures	curated	4	2026-11-18	held by tests/store_upgrade.rs and the image programs (2237 key order, 2241 token-1 trie, golden-images-whole)
+S-Frame	structures	structural	0	2026-11-18	an image's signature and frame words: Store and the paged reader refuse a file without them; guarded by their Rust tests
+S-Free	structures	structural	0	2026-11-18	a free block's header and footer bytes: no program observes them; written by the allocator (park_block cites it), guarded by its Rust tests
+S-Gate	structures	curated	6	2026-11-18	two suite cells; html_page_store, lazy_source_not_an_image and store_persist_loft's Rust guards, and golden-images-whole
+S-Hash	structures	curated	4	2026-11-18	its refused fold has no refused partner; the whole and paged golden images beside it
+S-Image	structures	structural	0	2026-11-18	store_persist_copy writes a rebuilt copy: its bytes are no program's to see beyond the round trip the image programs hold
+S-Index	structures	curated	1	2026-11-18	held by golden-images-whole and src/btree.rs
+S-Inline	structures	curated	1	2026-11-18	held by golden-images-paged and src/hash.rs
+S-Live	structures	structural	0	2026-11-18	a store's buffer is the file layout: the bytes, observable to no program but through the image round trips the image programs hold
+S-Mapped	structures	structural	1	2026-11-18	a mapped store's chain over the whole file: the C and Rust mapped stores, guarded by c_emit's and store.rs's tests
+S-Paged	structures	curated	3	2026-11-18	its refused fold has no refused partner; the paged image programs (2172, 2177, 2178, golden-images-paged) beside it
+S-Paged-Same	structures	curated	4	2026-11-18	its own fold candidate agrees with gate E; the paged image programs beside it
+S-Pair	structures	curated	4	2026-11-18	held by tests/scripts/2173-an-image-and-its-sidecar-are-written-together.loft and arc_e_program_cache's Rust guard
+S-Park	structures	structural	0	2026-11-18	a parked block's bytes: no program observes them; Store::park_block cites it, guarded by the allocator's Rust tests
+S-Probe	structures	curated	1	2026-11-18	held by golden-images-paged and src/hash.rs
+S-Side	structures	structural	0	2026-11-18	what the runtime keeps beside a buffer and re-derives on open: no program observes the sets, only that an opened image reads as written, which the image programs hold
+S-Sidecar	structures	structural	0	2026-11-18	the sidecar file's line format: written and read by src/schema_sidecar.rs (which cites it); a program sees it only through S-Gate's refusals, which their cells hold
+S-Tomb	structures	structural	0	2026-11-18	a tombstone's bytes: no program observes them; tombstones_enabled cites it beside H-Removed, whose cells hold what a removal answers
+S-Tree	structures	curated	2	2026-11-18	held by the paged and whole golden images and src/radix_tree.rs
+S-TreeKey	structures	curated	3	2026-11-18	its own cells (narrow axes, the walk order) beside the paged golden images
+S-Vector	structures	curated	3	2026-11-18	its own cell and S-Paged's beside golden-images-whole
+T-Absent	tuples	curated	8	2026-11-18	merged the operator-split pair (an element read's discharge, an absent member's null in arithmetic); the declared-type and in-flight cells carry file-level annotations and stay
+T-Cons	tuples	curated	14	2026-11-18	thirteen suite cells, distinct cases
+T-Destr	tuples	curated	3	2026-11-18	three suite cells, distinct cases
+T-Paren	tuples	curated	1	2026-11-18	one suite cell
+T-Proj	tuples	curated	2	2026-11-18	two suite cells, distinct cases
+T-Record	tuples	curated	11	2026-11-18	merged the narrow and text member cells; the link cell is the core, the patch cells stay
+T-Ref	tuples	curated	2	2026-11-18	two suite cells, distinct cases
+T-Ref-El	tuples	curated	2	2026-11-18	two suite cells, distinct cases
+T-Ref-Rep	tuples	curated	6	2026-11-18	five suite cells, distinct cases
+T-Ref-Src	tuples	curated	3	2026-11-18	three suite cells, distinct cases
+T-Ret	tuples	curated	3	2026-11-18	three suite cells, distinct cases
+C-Int	types	curated	14	2026-11-18	thirteen suite cells, distinct cases
+C-Never	types	curated	10	2026-11-18	eight suite cells, distinct cases
+C-Num	types	curated	6	2026-11-18	six suite cells, distinct cases
+C-Only	types	curated	4	2026-11-18	its own fold candidate agrees with gate E; kept
+C-Ref	types	curated	5	2026-11-18	three suite cells, distinct cases
+C-Refl	types	curated	2	2026-11-18	two suite cells, distinct cases
+C-Tuple	types	curated	4	2026-11-18	four suite cells, distinct cases
+C-Var	types	curated	15	2026-11-18	merged the tuple-member typing cells (three) and the variant-takes-its-enum cells (two); patch cells and the numbered cores stay
+D-Coll	types	curated	1	2026-11-18	one suite cell
+D-Enum	types	curated	3	2026-11-18	three suite cells, distinct cases
+D-Json	types	curated	1	2026-11-18	first cell, from the formal text: an omitted field, a parse, a literal and appended element, a literal field, an assigned element and field — found and fixed loft#2557
+D-NoEnumF	types	curated	9	2026-11-18	its refused fold's only refused partner carries file-level expectations; kept
+D-NoRef	types	curated	2	2026-11-18	one suite cell
+D-Opt	types	curated	3	2026-11-18	two suite cells, distinct cases
+D-Rec	types	curated	4	2026-11-18	its one refused cell has no refused partner; kept
+D-Scalar	types	curated	2	2026-11-18	two suite cells, distinct cases
+D-Text	types	curated	1	2026-11-18	one suite cell
+I-Join	types	curated	9	2026-11-18	its one refused fold's cores agree with gate E; kept
+I-Lit	types	curated	3	2026-11-18	two suite cells, distinct cases
+I-Narrow	types	curated	11	2026-11-18	nine suite cells, distinct cases
+I-Narrow-Opt	types	curated	4	2026-11-18	three suite cells, distinct cases
+I-Sub	types	curated	3	2026-11-18	one suite cell
+I-Widen	types	curated	2	2026-11-18	one suite cell
+N-Arith	types	curated	7	2026-11-18	seven suite cells, distinct cases
+N-Cast	types	curated	15	2026-11-18	merged the two checked-cast-miss cells; the non-null-destination cell carries expectations and stays
+N-Chain	types	curated	4	2026-11-18	four suite cells, distinct cases
+N-Chain-Place	types	curated	1	2026-11-18	one suite cell
+N-Coal	types	curated	11	2026-11-18	nine suite cells, distinct cases
+N-Decl	types	curated	17	2026-11-18	merged the destructured-name pair; the other refused cells are distinct cases (an else-if chain, a constant, a comprehension, an inline nullable narrowing, a literal argument)
+N-Default	types	curated	10	2026-11-18	nine suite cells, distinct cases
+N-Dense	types	curated	2	2026-11-18	two suite cells, distinct cases
+N-Div	types	curated	5	2026-11-18	five suite cells, distinct cases
+N-Domain	types	curated	14	2026-11-18	its two own fold candidates agree with gate E and stay
+N-Guard	types	curated	9	2026-11-18	its six own fold candidates agree with gate E and stay
+N-Idem	types	curated	1	2026-11-18	one suite cell
+N-Index	types	curated	10	2026-11-18	its refused fold's partner carries eight expectations; kept
+N-Intro	types	curated	11	2026-11-18	its own fold candidate agrees with gate E; kept
+N-Join	types	curated	20	2026-11-18	its three own fold candidates agree with gate E and stay
+N-Match	types	curated	3	2026-11-18	merged the three null-arm cells (loft#1417, #2230, #2427 named in the intro)
+N-Opt	types	curated	10	2026-11-18	its two refused cells are distinct cases (a value struct's tag, has-null owed by every construction)
+N-Parse	types	curated	4	2026-11-18	its own fold candidate agrees with gate E; kept
+N-Present	types	curated	4	2026-11-18	its own fold candidate agrees with gate E; kept
+N-Prop	types	curated	7	2026-11-18	seven suite cells, distinct cases
+N-Reserve	types	curated	18	2026-11-18	merged the three narrow-sentinel cells (five issues named in the intro); the fit-testing and spelling cells stay
+N-Road	types	curated	15	2026-11-18	its patch cell stays; the other refused cells are distinct cases
+N-Shape	types	curated	30	2026-11-18	three merges (the 1836 link pair, the 2233/2248 coalesce-tail pair, the three tuple-member release cells); the rest are distinct numbered cases
+N-Store	types	curated	49	2026-11-18	its refused cells carry expectations or patch receipts; each stays
+P-Alt-Diff	types	curated	10	2026-11-18	eight suite cells, distinct cases
+P-Alt-Same	types	curated	8	2026-11-18	seven suite cells, distinct cases
+P-Cap-Ty	types	curated	1	2026-11-18	one suite cell
+P-Opt-Ty	types	curated	5	2026-11-18	its own fold candidate agrees with gate E; kept
+P-Rep-Ty	types	curated	3	2026-11-18	its refused fold's partner carries an expectation; kept
+P-Rest-Ty	types	curated	1	2026-11-18	one suite cell
+T-Chk	types	curated	4	2026-11-18	four suite cells, distinct cases
+T-Chk-Lam	types	curated	2	2026-11-18	its own fold candidate agrees with gate E; kept
+T-Chk-Var	types	curated	1	2026-11-18	one suite cell
+T-Chk-Vec	types	curated	3	2026-11-18	three suite cells, distinct cases
+T-Recursive	types	curated	5	2026-11-18	its own fold candidate agrees with gate E; kept
+T-Sub	types	curated	1	2026-11-18	one suite cell
+T-Syn	types	curated	3	2026-11-18	three suite cells, distinct cases
+W-Call	types	curated	2	2026-11-18	a call crossing between a regime file and a 64-bit file narrows at the receiving side: needs two files, held by tests/width32.rs's library crossings
+W-Count	types	curated	2	2026-11-18	a count is an i32 under the regime: W-Name's cell (len + i32::MAX reads null) and tests/width32.rs
+W-Lit	types	curated	3	2026-11-18	its own cell beside W-Name's, which spells the 64-bit literals the rule names as its cure
+W-Name	types	curated	2	2026-11-18	first cell, from the formal text: integer is 32 bits and i64 64, float is single and f64 double, with W-Lit's 64-bit spellings (moved by LOFT_NO_SEVERAL_VARS)
+W-Op	types	curated	3	2026-11-18	its own cell; its fold candidate agrees with gate E
+W-Regime	types	curated	2	2026-11-18	#width 32 as the first line puts a file under: held by W-Name's, W-Op's and W-Lit's cells and tests/width32.rs's whole-program and library switches
+W-Store	types	curated	1	2026-11-18	a 64-bit field stored into a regime file's i32 slot is narrowed: needs a 64-bit file, held by tests/width32.rs (a_64_bit_field_stored_in_a_32_bit_slot_is_narrowed)

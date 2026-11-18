@@ -41,7 +41,7 @@ fn test_a_signed_byte_key() {
   for key in [-100, -1, 100] {
     l: hash<B[k]> = [];
     got = store_load_key(l, p, key);
-    assert(got && l[key ?? 0].v ?? 0 == h[key ?? 0].v ?? -1, "byte -100..100 key {key}: loaded {got}");
+    assert(got && (l[key ?? 0].v ?? 0) == (h[key ?? 0].v ?? -1), "byte -100..100 key {key}: loaded {got}");
   }
   a: hash<B[k]> = [];
   assert(!store_load_key(a, p, 5) && len(a) == 0, "byte key 5 is absent");
@@ -55,7 +55,7 @@ fn test_an_unsigned_byte_key_past_127() {
   for key in [0, 127, 128, 250] {
     l: hash<U[k]> = [];
     got = store_load_key(l, p, key);
-    assert(got && l[key ?? 0].v ?? 0 == h[key ?? 0].v ?? -1, "byte 0..250 key {key}: loaded {got}");
+    assert(got && (l[key ?? 0].v ?? 0) == (h[key ?? 0].v ?? -1), "byte 0..250 key {key}: loaded {got}");
   }
   a: hash<U[k]> = [];
   assert(!store_load_key(a, p, 5) && len(a) == 0, "byte key 5 is absent");
@@ -69,7 +69,7 @@ fn test_two_byte_keys() {
   for key in [-20000, 0, 20000] {
     l: hash<S[k]> = [];
     got = store_load_key(l, p, key);
-    assert(got && l[key ?? 0].v ?? 0 == s[key ?? 0].v ?? -1, "short -20000..20000 key {key}: loaded {got}");
+    assert(got && (l[key ?? 0].v ?? 0) == (s[key ?? 0].v ?? -1), "short -20000..20000 key {key}: loaded {got}");
   }
   a: hash<S[k]> = [];
   assert(!store_load_key(a, p, 5) && len(a) == 0, "short key 5 is absent");
@@ -83,7 +83,7 @@ fn test_a_two_byte_key_past_32767() {
   for key in [-30000, 33000] {
     l: hash<F[k]> = [];
     got = store_load_key(l, q, key);
-    assert(got && l[key ?? 0].v ?? 0 == f[key ?? 0].v ?? -1, "short -30000..35000 key {key}: loaded {got}");
+    assert(got && (l[key ?? 0].v ?? 0) == (f[key ?? 0].v ?? -1), "short -30000..35000 key {key}: loaded {got}");
   }
   done(q);
 }
@@ -95,7 +95,7 @@ fn test_a_two_byte_key_past_65535() {
   for key in [5000, 70000] {
     l: hash<Z[k]> = [];
     got = store_load_key(l, r, key);
-    assert(got && l[key ?? 5000].v ?? 0 == z[key ?? 5000].v ?? -1, "short 5000..70000 key {key}: loaded {got}");
+    assert(got && (l[key ?? 5000].v ?? 0) == (z[key ?? 5000].v ?? -1), "short 5000..70000 key {key}: loaded {got}");
   }
   a: hash<Z[k]> = [];
   assert(!store_load_key(a, r, 5) && len(a) == 0, "short key 5 is absent");
@@ -109,7 +109,7 @@ fn test_a_four_byte_key() {
   for key in [-2000000000, 7] {
     l: hash<W[k]> = [];
     got = store_load_key(l, p, key);
-    assert(got && l[key ?? 0].v ?? 0 == h[key ?? 0].v ?? -1, "int key {key}: loaded {got}");
+    assert(got && (l[key ?? 0].v ?? 0) == (h[key ?? 0].v ?? -1), "int key {key}: loaded {got}");
   }
   a: hash<W[k]> = [];
   assert(!store_load_key(a, p, 5) && len(a) == 0, "int key 5 is absent");

@@ -1374,7 +1374,16 @@ impl Parser {
         }
         let mut actual = self.process_call_args(d_nr, list, types, &mut all_types, report, arg_pos);
         if actual.is_empty() && !types.is_empty() {
-            return Type::Null;
+            // `Null` is how an unreported overload trial says "no match".  A REPORTED refusal
+            // (`@FR-F-Arity`'s "Too many parameters") has said what is wrong; the call keeps its
+            // callee's type, so the code after it is checked against what the call would answer
+            // — never against a `null` the program does not contain ("Unknown type null" on
+            // `rec(1, 2).x`, a null-store warning on `r = gen(8, 1)`; loft#2537).
+            return if report {
+                self.data.def(d_nr).returned().clone()
+            } else {
+                Type::Null
+            };
         }
         // @PLN86 §7.2 (F7) — gate an OVERRIDE of a `…#default`-locked parameter BEFORE
         // defaults fill the gaps: at this point a parameter slot is non-`Null` exactly

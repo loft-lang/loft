@@ -194,7 +194,7 @@ is decided.
 
 Nothing stays open from the questions: Q11's `_by` functions shipped with
 `tests/scripts/a-key-function-sorts-and-picks-by-any-ordered-key.loft`; Q13 shipped as P5b with
-`tests/scripts/negate-divided-by-and-remainder-are-operator-methods.loft` (an `operator times`
+`tests/scripts/every-operator-form-reaches-the-definition-that-compiles.loft` (an `operator times`
 member drives `a * b` in a generic body: each `operator` member mints the symbolic member it
 stands for, which the monomorph lowers); Q14 (Op-Key) is dropped with `operator equals` (@C134).
 

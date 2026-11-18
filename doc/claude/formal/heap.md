@@ -195,9 +195,13 @@ index becomes `nullref` plus a recoverable fault rather than a silent read.
                    at any step of the place's path, a value the slot cannot hold
                    ((E-Uncomp-NN), a narrow non-nullable slot), or a write (H-WriteLocked)
                    discards.  A write that landed never runs B, whatever it wrote (a stored
-                   null is a landed write).  `else` belongs to the nearest statement that can
-                   take one: in `x = if c { 1 } else { 2 }` it is the `if`'s.  A store in
-                   CONDITION position (`if place = v`) is refused, naming the cure.
+                   null is a landed write).  An APPEND is such a store, its place the
+                   collection (`c += [v]`, `c += other`, a keyed filing `h += [E { … }]`): a
+                   locked or absent collection takes nothing — no claim, no filing, the
+                   collection unchanged (H-WriteLocked-Whole) — and B runs.  `else` belongs to
+                   the nearest statement that can take one: in `x = if c { 1 } else { 2 }` it is
+                   the `if`'s.  A store in CONDITION position (`if place = v`) is refused,
+                   naming the cure.
   (H-TextReplace)  an ASSIGNMENT to a text field (`o.s = t`, `v[i].s = t`, `o.s += t`)
                    releases the text the slot held, or writes `t` over its block when `t`
                    fits, once no borrow of that text is live.  A record LITERAL's write is
@@ -210,7 +214,7 @@ index becomes `nullref` plus a recoverable fault rather than a silent read.
 side). Both are the SAME test at the same place: an out-of-range index produces `nullref`, and
 every typed setter refuses to resolve a store for it, so `v[9] = x` on a three-element vector
 and `absent.f = x` through a keyed miss take the identical step
-(`loft-suite/rules/heap/H-WriteOOB/a-write-to-an-absent-element-lands-nowhere.loft`). A write to a **locked** store — the author's `#lock`, a constant, bytes the program does
+(`loft-suite/rules/heap/H-WriteOOB/a-write-to-a-place-that-names-nothing-lands-nowhere.loft`). A write to a **locked** store — the author's `#lock`, a constant, bytes the program does
 not own (`file_map`) — is refused, never silently applied: a development run halts with the
 report, a production run logs it and discards it, so the program continues on the old bytes.
 Discarding is a property of every write route, not of the op that started it: the value
@@ -863,7 +867,7 @@ moved out, or a static fact deciding which copy owns, leaves the programmer gues
 structure still works.  Refusing the copy leaves no guess: a program that compiles has one
 structure per lease (DESIGN_DECISIONS.md @C121; the earlier rule is in heap-history.md).
 
-**Conformance.** `loft-suite/rules/binding/B-Copy/139-drop-cascade.loft` (the cascade),
+**Conformance.** `loft-suite/rules/heap/H-Drop/139-drop-cascade.loft` (the cascade),
 `a-whole-value-copy-of-a-droppable-releases-once.loft` (a whole-value copy), and
 `1362-a-rebind-releases-the-droppable-it-displaces.loft` (the reassignment), identical on both
 backends.  `(H-Copy-Refuse)` and `(H-Spent)` are compile-time errors (`D-heap-8`), `(H-Copy-Lease)`
@@ -972,7 +976,7 @@ The rules are checkable directly, and every check is a program both backends mus
   in a reused slot.  The nightly `native-poison` job sweeps the `--native` corpus the same way.
 - **A disturbed view materialises (`H-Materialise`)** — a removal, a re-key, a reassignment and
   a GROWTH of the container while the view is live take the copy step, in this frame
-  (`loft-suite/rules/binding/B-Disturb/1373-growing-a-container-ends-the-places-inside-it.loft`) and one frame
+  (`loft-suite/rules/binding/B-Disturb/growing-or-emptying-a-vector-ends-the-places-inside-it.loft`) and one frame
   down (`tests/scripts/164-callee-disturb.loft`, every cell paired with its inline twin).
 - **Null/OOB continue (`H-ReadNull` / `H-Index`)** — reading a field of `nullref`, or `v[i]`
   with `i ≥ len(v)`, is **null** and the program continues; it never halts (operational.md
@@ -985,7 +989,7 @@ The rules are checkable directly, and every check is a program both backends mus
   `h[7].f = x` change nothing (value, length, neighbours), a literal written there is
   released, and a negative `i ∈ [-len, -1]` LANDS at the element from the end; identical on
   both backends and on every native fast path —
-  `loft-suite/rules/heap/H-WriteOOB/a-write-to-an-absent-element-lands-nowhere.loft`.
+  `loft-suite/rules/heap/H-WriteOOB/a-write-to-a-place-that-names-nothing-lands-nowhere.loft`.
 - **Parameter-root write escapes, local-root write does not (`H-Write` / `H-Copy`)** —
   `fn f(v: vector<integer>) { v[0] = 99 }` mutates the caller's vector (`orig[0] == 99`);
   binding first, `fn f(v) { c = v; c[0] = 99 }`, does not (`orig[0] == 1`). This IS the

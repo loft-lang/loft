@@ -19,11 +19,12 @@ on:
 permissions:
   contents: read
 
-# One gate at a time and at most one waiting: a newer push replaces a WAITING run (whose baseline
-# the newer one supersedes) but never cancels the run in progress, so every started run finishes
-# even while commits arrive faster than a run takes.
+# One gate at a time and at most one waiting PER BRANCH: a newer push replaces a WAITING run of
+# the same branch (whose baseline the newer one supersedes) but never cancels the run in progress.
+# The group is per branch: one stream's push must never replace another stream's waiting run (a
+# PR's measurement of its joined tree, dispatched on its own branch, was replaced this way).
 concurrency:
-  group: elab-gate
+  group: elab-gate-${{ github.ref }}
   cancel-in-progress: false
 
 env:
@@ -48,7 +49,11 @@ jobs:
         run: |
           # The elaborator's optimised build needs more than 6 GB of address space in cc1.
           ulimit -v 9000000
-          LOFT_ELAB_VERDICTS=target/elab-verdicts.tsv \
+          # The gate's exit, not `tee`'s: a gate that did not run (a build out of memory) fails.
+          set -o pipefail
+          # One tool build at a time, and a development build: the elaborator's optimised compile
+          # (above 5.5 GB in cc1) no longer fits the runner's 7 GB; the verdicts do not change.
+          LOFT_ELAB_BUILD_JOBS=1 LOFT_ELAB_TOOL_BUILD=dev LOFT_ELAB_VERDICTS=target/elab-verdicts.tsv \
             python3 selfhost/front/elab_gate.py --jobs 4 --plan \
             --write-baseline selfhost/front/elab_gate.baseline.tsv | tee target/elab-gate.txt
           git diff --stat -- selfhost/front/elab_gate.baseline.tsv

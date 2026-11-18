@@ -67,7 +67,7 @@ fn d12() { h: vector<Hd> = [Hd { a: 1, tags: [1] }, Hd { a: 2, tags: [2, 3] }]; 
 // default, so the discharge arm has no growth of its own to block the loop.  Until @PLN158
 // P1 the all-scalar condition kept the loop blocked and hid the alias question; now the
 // loop holds `h`'s header and the LINK clause keeps `g.tags` out (`g` links to `e`, which
-// the body rebinds — `158-link-rebind.loft`).  g follows e: 5 + 2 + 0 (absent, empty
+// the body rebinds — `a-link-is-rebound-and-hoisted-around-as-its-place-allows.loft`).  g follows e: 5 + 2 + 0 (absent, empty
 // tags) = 7; a header for (g, tags) taken at loop entry would read h[0]'s tag three
 // times: 15.
 fn d13() { h: vector<Hv> = [Hv { a: 1, tags: [5] }, Hv { a: 2, tags: [2, 3] }]; e = h[0]?; g = &e; s = 0; for i in 0..3 { e = h[i]?; s += g.tags[0] ?? 0; } println("d13 {s}"); }

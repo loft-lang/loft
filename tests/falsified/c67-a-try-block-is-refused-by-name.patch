@@ -1,8 +1,7 @@
 diff --git a/src/parser/control.rs b/src/parser/control.rs
-index 054f896f2..27761a0ca 100644
 --- a/src/parser/control.rs
 +++ b/src/parser/control.rs
-@@ -872,41 +872,6 @@ impl Parser {
+@@ -889,41 +889,6 @@ impl Parser {
                  .starts_with("n___lambda_")
      }
  
@@ -20,7 +19,7 @@ index 054f896f2..27761a0ca 100644
 -    }
 -
 -    /// Skip one `{ … }` block, nested braces included, when the parser is at its `{`.
--    fn skip_braced_block(&mut self) {
+-    pub(super) fn skip_braced_block(&mut self) {
 -        if !self.lexer.peek_token("{") {
 -            return;
 -        }
@@ -44,7 +43,7 @@ index 054f896f2..27761a0ca 100644
      pub(crate) fn parse_block(&mut self, context: &str, val: &mut Value, result: &Type) -> Type {
          // loft#1540 — an arm handed its SIBLING's function type converts with that type's
          // `const` parameters set aside: the join is the parameters BOTH arms declare `const`
-@@ -1105,35 +1070,6 @@ impl Parser {
+@@ -1122,35 +1087,6 @@ impl Parser {
                  break;
              }
              self.state_trace("stmt");

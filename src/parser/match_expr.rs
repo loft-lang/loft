@@ -350,7 +350,9 @@ impl Parser {
         let mut hoisted_bindings: Vec<Value> = Vec::new();
 
         loop {
-            if self.lexer.peek_token("}") {
+            // The end of the file ends the arms too: an arm that consumed nothing there would
+            // be read again for ever.
+            if self.lexer.peek_token("}") || matches!(self.lexer.peek().has, LexItem::None) {
                 break;
             }
             // @PLN25 — a `null` pattern arm on a nullable inline enum element
@@ -692,7 +694,7 @@ impl Parser {
                 // anything else (`=>`, `:`, a literal), and hung the parser.  A subject whose
                 // enum pass 1 cannot see yet still binds its captures for the body.
                 let forward = if self.first_pass && e_nr == u32::MAX {
-                    self.bind_forward_capture_list()
+                    self.bind_forward_capture_list(false)
                 } else {
                     None
                 };

@@ -1,0 +1,144 @@
+diff --git b/src/data.rs a/src/data.rs
+index 5dc82e343..1cda9bbe0 100644
+--- b/src/data.rs
++++ a/src/data.rs
+@@ -11854,95 +11854,35 @@ impl Data {
+         })
+     }
+ 
+-    /// The open instances the template `g` names in its parameters, its return and its
+-    /// variables — an open tuple (loft#1868) written as a tuple type or held as its record, an
+-    /// open struct or enum instance (`A<T>`) — and, transitively, those named in their
+-    /// arguments (`Box<Inner<T>>` names `Inner<T>`, which must close first) and in their
+-    /// fields and variant payloads (`w.i` of a `Wrap<T>` is an `Inner<T>` the body reads
+-    /// though no signature names it).  A type variable's placeholder is shared between
+-    /// templates, so these, and only these, are what a binding of `g`'s variables closes
+-    /// (loft#2546).
+-    /// Is the open instance `d` a type template's SELF-REFERENCE — `B<T>` inside
+-    /// `enum B<T> { … vector<B<T>> }`, minted at `B`'s own variables — of a template other than
+-    /// `g`?  Its arguments mention the shared placeholder, so a binding of `g`'s variables
+-    /// would close it into a `B<integer>` nothing asked for, minted on pass 2 after layout
+-    /// (loft#2546).  `g`'s own self-reference, and one `g` names, are `g`'s to close.
+-    fn is_foreign_self_reference(&self, d: u32, g: u32) -> bool {
+-        let x = self.definitions[d as usize].instance_of;
+-        if x == u32::MAX || x == g || self.definitions.get(x as usize).is_none() {
+-            return false;
+-        }
+-        let mut found = false;
+-        let mut look = |t: &Type| {
+-            t.any_node(&mut |n| {
+-                if let Type::Reference(r, _) | Type::Enum(r, _, _) = n.base()
+-                    && *r == d
+-                {
+-                    found = true;
+-                }
+-                false
+-            });
+-        };
+-        for a in &self.definitions[x as usize].attributes {
+-            look(&a.typedef);
+-        }
+-        for v in self.children_of(x) {
+-            for a in &self.definitions[v as usize].attributes {
+-                look(&a.typedef);
+-            }
+-        }
+-        found
+-    }
+-
+-    fn open_instances_named_by(&self, g: u32) -> Vec<u32> {
++    /// The open tuples (loft#1868) the template `g` names in its parameters, its return and
++    /// its variables — written as a tuple type or held as its record.
++    fn open_tuples_named_by(&self, g: u32) -> Vec<u32> {
+         let Some(def) = self.definitions.get(g as usize) else {
+             return Vec::new();
+         };
+         let vars = &def.variables;
+-        let mut types: Vec<Type> = def.attributes.iter().map(|a| a.typedef.clone()).collect();
+-        types.push(def.returned.clone());
+-        types.extend((0..vars.count()).map(|v| vars.tp(v).clone()));
++        let mut types: Vec<&Type> = def.attributes.iter().map(|a| &a.typedef).collect();
++        types.push(&def.returned);
++        types.extend((0..vars.count()).map(|v| vars.tp(v)));
+         let mut out: Vec<u32> = Vec::new();
+-        let mut walked = 0;
+-        loop {
+-            for tp in &types {
+-                tp.any_node(&mut |t| {
+-                    let d = match t.base() {
+-                        Type::Reference(r, _) | Type::Enum(r, _, _) => *r,
+-                        tuple @ Type::Tuple(_) => self.type_def_nr(tuple),
+-                        _ => u32::MAX,
+-                    };
+-                    if d != u32::MAX && self.is_open_instance(d) && !out.contains(&d) {
+-                        out.push(d);
+-                    }
+-                    false
+-                });
+-            }
+-            if walked == out.len() {
+-                return out;
+-            }
+-            types = Vec::new();
+-            for &d in &out[walked..] {
+-                let def = &self.definitions[d as usize];
+-                types.extend(def.instance_args.iter().cloned());
+-                for a in &def.attributes {
+-                    types.push(a.typedef.clone());
+-                    // An enum instance lists its variants; their payload fields are theirs.
+-                    if let Type::Enum(v, _, _) | Type::Reference(v, _) = a.typedef.base()
+-                        && *v != d
+-                        && matches!(self.def_type(*v), DefType::EnumValue)
+-                    {
+-                        types.extend(
+-                            self.definitions[*v as usize]
+-                                .attributes
+-                                .iter()
+-                                .map(|f| f.typedef.clone()),
+-                        );
+-                    }
++        for tp in types {
++            tp.any_node(&mut |t| {
++                let d = match t.base() {
++                    Type::Reference(r, _) => *r,
++                    tuple @ Type::Tuple(_) => self.type_def_nr(tuple),
++                    _ => u32::MAX,
++                };
++                if d != u32::MAX
++                    && self.is_tuple_def(d)
++                    && self.is_open_instance(d)
++                    && !out.contains(&d)
++                {
++                    out.push(d);
+                 }
+-            }
+-            walked = out.len();
++                false
++            });
+         }
++        out
+     }
+ 
+     /// The instance an OPEN instance `open` closes to at the arguments `args`: its template's
+@@ -12055,15 +11995,13 @@ impl Data {
+         template: u32,
+     ) -> Vec<(u32, Type)> {
+         let mut pairs: Vec<(u32, Type)> = Vec::new();
+-        // A type variable's placeholder is shared between templates: another template's
+-        // `(T?, integer)`, or its own self-reference `B<T>` (`enum B<T> { … vector<B<T>> }`),
+-        // mentions this one's `T` too and would close as well — minting tuples, the
+-        // `__nullable<S>` a member `S?` stores as, and `B<integer>` that nothing asked for, on
+-        // pass 2 after layout (the last panicked as "Adding a value to a non enum type",
+-        // loft#2546).  Only the open instances this template's own types name are closed.
+-        let own = self.open_instances_named_by(template);
++        // An open TUPLE is anonymous, so another template's `(T?, integer)` shares its
++        // placeholder with this one's `T` and would close too — minting tuples, and the
++        // `__nullable<S>` a member `S?` stores as, that nothing asked for (on pass 2, which
++        // H5 refuses).  Only the open tuples this template's own types name are closed.
++        let own_tuples = self.open_tuples_named_by(template);
+         for d in 0..self.definitions() {
+-            if (!own.contains(&d) && (self.is_tuple_def(d) || self.is_foreign_self_reference(d, template)))
++            if (self.is_tuple_def(d) && !own_tuples.contains(&d))
+                 || !self.is_open_instance(d)
+                 || !bindings.iter().any(|(h, _)| {
+                     self.definitions[d as usize]

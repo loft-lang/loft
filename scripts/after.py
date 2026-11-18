@@ -175,17 +175,12 @@ def without_known_red(expr):
 
 
 def suite_note():
-    """Say when the language suite the checks read is not the commit the tree pins: a guard
-    that lives only in the newer suite is then invisible to the receipts and the hygiene."""
-    pin = (ROOT / "tests" / "loft-suite.pin").read_text(encoding="utf-8").strip()
-    suite = Path(os.environ.get("LOFT_SUITE_DIR") or ROOT.parent / "loft-suite")
-    if not suite.is_absolute():
-        suite = ROOT / suite
-    head = subprocess.run(["git", "-C", str(suite), "rev-parse", "HEAD"],
-                          capture_output=True, text=True).stdout.strip()
-    if head != pin:
-        print(f"  note  the suite at {suite} is {head[:9] or 'missing'}, the pin is {pin[:9]}: "
-              "point LOFT_SUITE_DIR at a checkout of the pin, or suite-backed checks read the wrong cells")
+    """Point the suite-backed checks at the suite this tree PINS (scripts/suite_pin.py): a
+    sibling checkout on another commit hides a guard that lives only in the pinned suite from
+    the receipts and the hygiene.  An explicit LOFT_SUITE_DIR is kept, with a note."""
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import suite_pin
+    suite_pin.ensure()
 
 
 # The paths a step provably never reads.  Read off what each one compiles or runs: `build.rs`
@@ -404,12 +399,13 @@ def main():
         print("nothing changed — nothing to run")
         return 0
     steps, runner = plan(args.mode, paths, base, want_tests, pr=args.pr, fresh=args.fresh)
+    # Before the cache is read: a cached pass is keyed on LOFT_SUITE_DIR, which this sets.
+    suite_note()
     cache = {} if args.fresh else load_json(CACHE)
     for s in steps:
         s.cached = passed_at(s, cache)
         if s.cached:
             s.ok = True
-    suite_note()
     if known_red() and want_tests:
         print(f"  note  kept out as this box's known reds ({STATE / 'known-red'}): {', '.join(known_red())}")
     if args.dry_run:

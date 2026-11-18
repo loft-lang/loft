@@ -1,0 +1,34 @@
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index 70ebe3670..32f63d913 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -12701,29 +12701,6 @@ impl Parser {
+                 self.deliver_mid_vector_walk(elm, n, buf_var);
+                 self.deliver_mid_vector_walk(elm, e, buf_var);
+             }
+-            // A `return` inside an EXPRESSION — a bind's value (`h = { if c { return []; } … }`,
+-            // `h = x ?? return []`), a call's or a tuple's operand — leaves the function as one
+-            // in a statement does, and delivers the same way.  Skipped, its literal's store went
+-            // back as the frame's own and nothing released it (loft#2555).
+-            // `LOFT_NO_NESTED_RETURN_DELIVERY=1` stops at statements again.
+-            Value::Set(_, val)
+-                if !crate::env_once!(
+-                    std::env::var_os("LOFT_NO_NESTED_RETURN_DELIVERY").is_some()
+-                ) =>
+-            {
+-                self.deliver_mid_vector_walk(elm, val, buf_var);
+-            }
+-            Value::Call(_, args) | Value::Tuple(args)
+-                if !crate::env_once!(
+-                    std::env::var_os("LOFT_NO_NESTED_RETURN_DELIVERY").is_some()
+-                ) =>
+-            {
+-                for a in args {
+-                    self.deliver_mid_vector_walk(elm, a, buf_var);
+-                }
+-            }
+-            // Every other node is a leaf (a variable, a constant) or holds no expression a
+-            // `return` can sit in, so it has no exit to deliver.
+             _ => {}
+         }
+     }

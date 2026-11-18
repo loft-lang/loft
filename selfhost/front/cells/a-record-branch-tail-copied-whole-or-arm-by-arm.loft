@@ -1,0 +1,23 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a record result answered by an `if` whose arms are a literal and a local viewing
+// a parameter is copied WHOLE into the return buffer (the literal built in a work ref of its
+// own); one with an arm that is a user call (a source that may be absent) is copied ARM BY ARM.
+// Prints: 3 7 9 3
+
+enum Nd { NdInt { n: integer }, NdBlock { block: vector<Bl> } }
+struct Bl { name: text, ops: vector<Nd> }
+fn ident(n: Nd) -> Nd { n }
+fn whole(body: Nd, k: integer) -> Nd {
+  code = body;
+  if k > 5 { NdInt { n: k } } else { code }
+}
+fn per_arm(body: Nd, k: integer) -> Nd {
+  code = body;
+  if k > 8 { NdInt { n: k } } else if k > 2 { ident(body) } else { code }
+}
+fn v(n: Nd) -> integer { match n { NdInt { n } => n, _ => -1 } }
+fn main() {
+  println("{v(whole(NdInt { n: 3 }, 1))} {v(whole(NdInt { n: 3 }, 7))} {v(per_arm(NdInt { n: 3 }, 9))} {v(per_arm(NdInt { n: 3 }, 1))}");
+}

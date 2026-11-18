@@ -192,7 +192,7 @@ fn emit_program_run_image(_state: &State, _data: &loft::data::Data, _out: &str) 
 }
 
 /// `LOFT_EMIT_PARSED=<out>`: write the image of the program as the parser left it, before the
-/// scope pass, and exit without running it.  Exit 1, naming the path, when it cannot be written.
+/// scope pass, and exit without running it (`LOFT_EMIT_SCOPED`: as the scope pass left it).  Exit 1, naming the path, when it cannot be written.
 #[cfg(feature = "mmap")]
 fn emit_parsed_image(p: &parser::Parser, out: &str) -> ! {
     if let Err(e) = loft::ir_store::save_bundle(&p.data, &p.database, out) {
@@ -205,7 +205,9 @@ fn emit_parsed_image(p: &parser::Parser, out: &str) -> ! {
 /// A build without file-backed stores cannot write an image.
 #[cfg(not(feature = "mmap"))]
 fn emit_parsed_image(_p: &parser::Parser, _out: &str) -> ! {
-    eprintln!("loft: LOFT_EMIT_PARSED needs file-backed stores, which this build leaves out");
+    eprintln!(
+        "loft: LOFT_EMIT_PARSED and LOFT_EMIT_SCOPED need file-backed stores, which this build leaves out"
+    );
     std::process::exit(1);
 }
 
@@ -10125,6 +10127,14 @@ fn main() {
     if p.diagnostics.level() < Level::Error {
         let t = std::time::Instant::now();
         scopes::check(&mut p.data, &mut p.database);
+        // @PLN91 — `LOFT_EMIT_SCOPED=<out.store>`: the image right AFTER the scope pass, before
+        // the IR passes and the program's close: the oracle the scope pass written in loft
+        // (`selfhost/src/scope.loft`) is compared against, definition by definition.
+        if let Some(out) = std::env::var_os("LOFT_EMIT_SCOPED")
+            && p.diagnostics.level() < Level::Error
+        {
+            emit_parsed_image(&p, &out.to_string_lossy());
+        }
         // The front-end bench's falsifier (bench/frontend): a harness that cannot see a
         // slowdown it was handed measures nothing.  Read only under LOFT_TIMING.
         if std::env::var_os("LOFT_TIMING").is_some()

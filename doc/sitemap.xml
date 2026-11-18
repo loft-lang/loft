@@ -90,9 +90,24 @@
   <url><loc>https://loft-lang.org/loft/lib-gpu-api.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-gpu-src.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-gpu.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/lib-gpu_gl-api.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/lib-gpu_gl-src.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/lib-gpu_gl.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/lib-gpu_host-api.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/lib-gpu_host-src.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/lib-gpu_host.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/lib-gpu_metal-api.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/lib-gpu_metal-src.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/lib-gpu_metal.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-gpu_paint-api.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-gpu_paint-src.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-gpu_paint.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/lib-gpu_record-api.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/lib-gpu_record-src.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/lib-gpu_record.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/lib-gpu_vulkan-api.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/lib-gpu_vulkan-src.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/lib-gpu_vulkan.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-graphics-api.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-graphics-guide.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-graphics-src.html</loc></url>
@@ -195,6 +210,9 @@
   <url><loc>https://loft-lang.org/loft/lib-regex-guide.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-regex-src.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-regex.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/lib-scene3d-api.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/lib-scene3d-src.html</loc></url>
+  <url><loc>https://loft-lang.org/loft/lib-scene3d.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-screen-api.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-screen-src.html</loc></url>
   <url><loc>https://loft-lang.org/loft/lib-screen.html</loc></url>

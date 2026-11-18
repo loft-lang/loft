@@ -123,7 +123,15 @@ impl Parser {
     /// function value, and `limit + 1` was refused on pass 1, where pass 2 would have known
     /// better (loft#2326).  A `_` binds nothing.  Answers the names re-pointed and what each
     /// named before, for the caller's end of scope to restore.
-    pub(super) fn bind_forward_capture_list(&mut self) -> Option<Vec<(String, Option<u16>)>> {
+    ///
+    /// `in_is_test`: in an `is` test, braces followed by `else` were the BODY — only a body stands
+    /// before an `else` — though a unit variant's body can have a capture list's shape
+    /// (`if a.k is KA { b } else { c }`, loft#2544).  Any other follower keeps the capture
+    /// reading, so a misused capture list still meets pass 2's own message.
+    pub(super) fn bind_forward_capture_list(
+        &mut self,
+        in_is_test: bool,
+    ) -> Option<Vec<(String, Option<u16>)>> {
         if !self.lexer.peek_token("{") {
             return None;
         }
@@ -154,6 +162,10 @@ impl Parser {
                 self.lexer.revert(link);
                 return None;
             }
+        }
+        if in_is_test && self.lexer.peek_token("else") {
+            self.lexer.revert(link);
+            return None;
         }
         let mut aliases = Vec::new();
         for name in binds {
@@ -454,6 +466,10 @@ impl Parser {
                     depth += 1;
                     self.lexer.cont();
                 }
+                // A closing bracket at depth 0 is the enclosing match's own: the arm has no
+                // `=>` (a malformed body), and skipping past it ran the skip to the end of the
+                // file, where the arm loop never met its `}` again and spun.
+                LexItem::Token(t) if depth == 0 && (*t == "]" || *t == ")" || *t == "}") => break,
                 LexItem::Token(t) if *t == "]" || *t == ")" || *t == "}" => {
                     depth -= 1;
                     self.lexer.cont();

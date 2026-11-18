@@ -971,7 +971,7 @@ not take it: two paths, and a `??` value.  Each vector ends as one fill would le
 `doc_read` on the ship lane: gcc-16 2.79× → 2.22×, clang 3.12× → 2.27×.  Census
 `R-PushFill/several`; switch `LOFT_NO_FILL_LOOP` (with the one-push form); site
 `fill_loop::several_fill`; guard
-`loft-suite/rules/rewrites/R-PushFill/a-loop-pushing-one-invariant-into-each-of-several-vectors-is-a-fill-each.loft`.
+`loft-suite/rules/rewrites/R-PushFill/a-loop-pushing-to-several-vectors-fills-each-on-its-own.loft`.
 
 **The text clause, in words.**  `parse`'s reset loop of `arguments` (`while ri <
 self.results.len() { self.results[ri] = null; ri += 1 }`) read its length and resolved its
@@ -1744,7 +1744,7 @@ the body repoints every path rooted at `g`, and `g` counts as rebound (`hoist::r
 closes the set over links, `hoist::rebinds_root` answers the single-root form for a view's
 header, a record's address and a mint group's path).  Measured before it: `g.tags`' header
 hoisted across `e = h[i]`, native read `h[0]`'s tags on every pass (15 for 16, every
-switch on or off); cells `loft-suite/rules/rewrites/R-InPlace/158-link-rebind.loft` l1–l7.
+switch on or off); cells `loft-suite/rules/rewrites/R-InPlace/a-link-is-rebound-and-hoisted-around-as-its-place-allows.loft` l1–l7.
 **The hidden-buffer allowance** (@PLN157 § V-ad): the allow-list also admits
 `OpDatabase`/`OpDatabaseNP` into a null-discharge buffer — the hidden `__ref_p2_N` that
 `e = tbl[i]?` mints an ABSENT record element into — whatever the record holds.  The
@@ -5558,7 +5558,7 @@ Sites: `opt::frame_calls::GuardFree` (`registers_buffers`, `is_guard_free`), the
                  answer by number, and the answer's store is freed only where it is not the
                  node's (`OpFreeRefIfDistinct`, a fallback copy).  The recursion then builds
                  the whole tree in the store its first caller names.  22_expr `expr_build`
-                 9.07× → 0.66× Rust; guard `…/R-HostStore/a-literal-adopts-its-childrens-results-built-in-its-store.loft`.
+                 9.07× → 0.66× Rust; guard `…/R-HostStore/a-result-built-in-its-hosts-store-is-adopted-and-released-once.loft`.
                  RESULT CLAUSE: a function whose every answer is a literal it builds or the
                  result of a call to itself — `simplify`: `a = simplify(l)`, `b =
                  simplify(r)`, then `b`, `a`, a node over both or a fresh literal — and whose
@@ -5580,7 +5580,7 @@ Sites: `opt::frame_calls::GuardFree` (`registers_buffers`, `is_guard_free`), the
                  one bind adopts the callee's record (`deferred_first_bind`).  Decided on the
                  function's own settled IR, its frame laid out again
                  (`host_result::rewrite_program`).  22_expr `expr_simplify` 11.7× → 1.04× Rust;
-                 `LOFT_NO_HOST_RESULT=1`; guard `…/R-HostStore/a-recursion-answering-its-own-results-keeps-adopts-and-releases-them.loft`.
+                 `LOFT_NO_HOST_RESULT=1`; guard `…/R-HostStore/a-result-built-in-its-hosts-store-is-adopted-and-released-once.loft`.
 
   (R-MoveChild)  a whole write into an out-of-line field whose value is a chain of child reads
                  rooted at the field's OWN child — `h.f = h.f.g`, `cur = cur.left` through a
@@ -6103,7 +6103,7 @@ other, a null end and a parse result's root taking `loft_copy_record`.
                  enum, and the variant's fields and tag are written into the zeroed
                  record.  21_tree `enum_list` (with (R-CopyView)'s walk over its
                  `match`): 5167× → 0.83× Rust; guard
-                 `loft-suite/rules/rewrites/R-Demote/a-variant-pushed-at-the-front-moves-the-old-record-whole.loft`.  Decided in the parser (the
+                 `loft-suite/rules/rewrites/R-Demote/a-front-push-moves-the-old-node-whole-a-records-or-a-variants.loft`.  Decided in the parser (the
                  local form when the literal is parsed, the place form at the
                  out-of-line write); `LOFT_NO_DEMOTE=1` restores the copy.  The move is
                  one op, `OpDemoteRec`: one child record claimed in the destination's store,
@@ -6309,7 +6309,7 @@ answered here rather than decided in the code.
                  `list_ops` 4.1× → 0.61× (with (R-NoThreads) and the one-op (R-Demote)).
                  `LOFT_NO_COPY_VIEW_WALK=1`; guards
                  `loft-suite/rules/rewrites/R-CopyView/a-cursor-that-only-walks-is-a-view.loft`,
-                 `…/a-match-walk-over-an-enum-list-is-a-view.loft`.
+                 `…/a-walk-over-a-list-is-a-view-of-the-list-it-was-bound-to.loft`.
   (R-ValueLocal) a plain local bound from a call R-ValueRecord admits — the result a
                  no-heap record of at most eight scalars, nested or flat — carries the
                  record's fields as its TUPLE in the binding frame too, where every use
@@ -7692,7 +7692,7 @@ range proof cannot bound a walk counter whose end it re-reads).  Admitted, the s
 counted loop the local form gets: hex_world `get_cell` on the ship lane 3.23× → 1.73× (clang),
 2.84× → 2.03× (gcc-16).  It declined at first on the routine's hidden `Cell` result buffer, a
 record parameter; the scalar-only exemption, shared with `(R-InRange)`, is what admits it.
-Guard `loft-suite/rules/rewrites/R-ForwardWalk/a-walk-over-a-field-the-body-cannot-resize-is-counted.loft`.
+Guard `loft-suite/rules/rewrites/R-ForwardWalk/a-walk-over-a-field-reads-its-length-where-the-body-can-change-it.loft`.
 
 ### A record element its loop proves in range is read plainly
 
@@ -8348,7 +8348,7 @@ analysis both read, `src/opt/append_twin.rs`.
 **BUILT** (`src/opt/append_twin.rs`, the call path in `calls.rs`, the twin's hooks in
 `emit.rs` / `text.rs`, and on the C `src/c/body.rs`; `LOFT_NO_APPEND_TWIN`,
 `LOFT_TRACE_APPEND_TWIN`; guard
-`loft-suite/rules/rewrites/R-AppendTwin/a-call-result-appended-is-built-in-the-destination.loft`).
+`loft-suite/rules/rewrites/R-AppendTwin/a-call-result-appended-is-built-in-the-destination-by-its-twin.loft`).
 
 ### An append twin writes through its caller's window
 

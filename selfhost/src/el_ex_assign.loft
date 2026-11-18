@@ -1251,7 +1251,12 @@ pub fn tuple_lit(e: el::El, vars: el_vars::Vars, elems: vector<integer>) -> Ex {
     // A record a call answers fresh is held as that call (`(mk(11), 2)`), the tuple its owner.
     // (Not carried: a tuple holding a call's record is moved and released by rules of its own
     // — `tuple_member_move` — so the member stays refused by name.)
-    call_rec = false;
+    call_rec = x.tp is TyReference && match el_ir::unspan(x.code) { NdCall { def_nr: cd, args: _ } => el::def(e, cd).name.starts_with("n_"), _ => false };
+    if call_rec {
+      items += [x.code];
+      tps += [el_types::without_deps(x.tp)];
+      continue;
+    }
     if !(is_scalar(x.tp) || x.tp is TyText || nullable_scalar || vec_lit || boxed_rec || plain_inner || call_rec) {
       el::refuse(e, "a tuple with a member of this type: {type_kind(x.tp)}");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -1282,6 +1287,61 @@ pub fn tuple_lit(e: el::El, vars: el_vars::Vars, elems: vector<integer>) -> Ex {
     }
     items += [x.code];
     tps += [x.tp];
+  }
+  ex(ir::NdTuple { items: items }, ir::TyTuple { elems: tps })
+}
+
+// `Parser::tuple_whole_bind_copy`: `u = t` over a tuple with a heap member is the tuple of
+// `t`'s members, each heap member an owned copy on the second pass (`tuple_member_owned_copy`,
+// its block named "tuple_member_move"): a record into a store of its own, a text that borrows
+// a place into a work text, a vector into a `_tupcopy_N`.  A struct-enum member is refused.
+pub fn tuple_whole_bind_copy(e: el::El, vars: el_vars::Vars, src: integer, elems: vector<ir::TypeT>) -> Ex? {
+  items: vector<ir::Node> = [];
+  tps: vector<ir::TypeT> = [];
+  i = 0;
+  for t in elems {
+    m = ir::NdTupleGet { var: src, idx: i };
+    i += 1;
+    b = el_types::base(t);
+    if is_scalar(b) || e.first_pass {
+      if !is_scalar(b) && !(b is TyText) && !(b is TyReference) && !(b is TyVector) {
+        el::refuse(e, "a tuple bound whole with a member of this type: {type_kind(b)}");
+        return null;
+      }
+      items += [m];
+      tps += [t];
+      continue;
+    }
+    if b is TyText {
+      borrows = len([for d in el_types::deps(t) if d < len(vars.vars) && !vars.vars[d].argument && !vars.vars[d].name.starts_with("__work_") { d }]) > 0;
+      if !borrows {
+        items += [m];
+        tps += [t];
+        continue;
+      }
+      w = el_vars::work_text_p2(vars);
+      owned = ir::TyText { dep: [w] };
+      items += [el_ir::v_block([el_ir::v_set(w, m), ir::NdVar { n: w }], owned, "tuple_member_move")];
+      tps += [owned];
+      continue;
+    }
+    if !(b is TyReference) && !(b is TyVector) {
+      el::refuse(e, "a tuple bound whole with a member of this type: {type_kind(b)}");
+      return null;
+    }
+    c = tuple_member_copy(e, vars, ex(m, el_types::without_deps(t)));
+    if c == null {
+      return null;
+    }
+    match c!.code {
+      NdBlock { block } => {
+        bl = block[0]!;
+        bl.name = "tuple_member_move";
+        items += [ir::NdBlock { block: [bl] }];
+      },
+      _ => { items += [c!.code]; }
+    }
+    tps += [c!.tp];
   }
   ex(ir::NdTuple { items: items }, ir::TyTuple { elems: tps })
 }
@@ -2792,6 +2852,53 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
       _ => {}
     }
   }
+  // `(N-Join)` for a vector local: `v = null` gives it a fresh backing marked absent
+  // (`vector_db_init`'s absent form: the length word -1) and widens the local to `vector<T>?`.
+  if e.p.nodes[rhs!] is SNull && !link && !vars.vars[v].argument && !el_vars::is_compiler_generated(vars, v) {
+    match el_vars::tp(vars, v) {
+      TyVector { inner: nvi } => {
+        if e.first_pass {
+          el_vars::set_type(vars, v, ir::TyOptional { inner: el_vars::tp(vars, v) });
+          e.null_widened += [e.context * 65536 + v];
+          return ex(ir::NdNull, ir::TyVoid);
+        }
+        el::refuse(e, "a `null` written to a vector local the first pass did not widen");
+        return ex(ir::NdNull, ir::TyVoid);
+      },
+      TyOptional { inner: noi } => {
+        match noi {
+          TyVector { inner: nvi } => {
+            if !e.first_pass && e.null_widened.contains(e.context * 65536 + v) {
+              nr = vector_rows(e, nvi, rhs!, true);
+              if nr == null {
+                return ex(ir::NdNull, ir::TyVoid);
+              }
+              nops = el_ex_pattern::literal_store(e, vars, v, nr!);
+              nops[len(nops) - 1] = el_ir::cl(e, "OpSetInt4", [match nops[0]! { NdCall { args: na } => na[0]!, _ => ir::NdNull }, ir::NdInt { n: 0 }, ir::NdInt { n: -1 }]);
+              return ex(ir::NdInsert { items: nops }, ir::TyVoid);
+            }
+          },
+          _ => {}
+        }
+      },
+      _ => {}
+    }
+  }
+  // A keyed local rebound by a literal with items starts over as its declaration does
+  // (`h = null`, then each item a record made through it): the literal takes the local's type.
+  kcur = el_vars::tp(vars, v);
+  // (A hash, a sorted or an index only: a `vector<T>` in the linked layout is cleared and
+  // refilled in its own store, as any vector.)
+  if e.p.nodes[rhs!] is SVecLit && (kcur is TyHash || kcur is TySorted || kcur is TyIndex) && !vars.vars[v].argument && !link {
+    kops = el_ex_vector::keyed_items(e, vars, v, rhs!);
+    if kops == null {
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    el_vars::drop_use(vars, v);
+    klist: vector<ir::Node> = [el_ir::v_set(v, ir::NdNull)];
+    klist += kops!;
+    return ex(ir::NdInsert { items: klist }, ir::TyVoid);
+  }
   if e.p.nodes[rhs!] is SVecLit {
     return el_ex_pattern::vector_into(e, vars, v, rhs!, ir::TyUnknown { n: 0 });
   }
@@ -2885,6 +2992,27 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
       return ex(ir::NdNull, ir::TyVoid);
     }
     x = rx!;
+  }
+  // A function value read off a field and bound takes a copy of the field's closure record.
+  if op == "=" {
+    x = el_ex_object::copied_field_closure(e, vars, x);
+    // (On the first pass too the bound value borrows nothing: the local is typed by it.)
+    if e.first_pass && el_types::base(x.tp) is TyFunction && e.p.nodes[rhs!] is SMember && match e.p.nodes[rhs!] { SMember { call } => !call, _ => false } {
+      x = ex(x.code, el_types::with_deps(x.tp, []));
+    }
+  }
+  // A tuple local holding a heap member, bound whole, is copied member by member
+  // (`tuple_whole_bind_copy`).
+  if op == "=" {
+    wsrc = match el_ir::unspan(x.code) { NdVar { n: wv } => wv, _ => -1 };
+    wel: vector<ir::TypeT> = if wsrc >= 0 { match el_vars::tp(vars, wsrc) { TyTuple { elems: we0 } => we0, _ => [] } } else { [] };
+    if len([for m in wel if !is_scalar(el_types::base(m)) { m }]) > 0 {
+      wx = tuple_whole_bind_copy(e, vars, wsrc, wel);
+      if wx == null {
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      x = wx!;
+    }
   }
   // `@FR-B-Scope`, loft#1700: a bind after the name's block ended, at a type its old binding
   // refuses or that differs from it only in absence, is a new binding with a variable of its
@@ -3209,7 +3337,12 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
   if !e.first_pass {
     slot = el_vars::tp(vars, v);
     g = el_convert::guard_discharge(e, vars, x.code, slot);
-    x.code = g ?? el_convert::guard_range(e, x.code, slot, el_convert::guard_source(vars, x.code, x.tp), slot is TyOptional);
+    // (`@FR-P-Opt-Ty`: an optional group's capture of a narrow field keeps the field's whole
+    // range beside its null; a local bound to it takes that type, so nothing is guarded.)
+    capture_bind = match el_ir::unspan(x.code) { NdVar { n: cbv } => el_vars::name_of(vars, cbv).starts_with("_mv_") && el_types::is_same(slot, x.tp), _ => false };
+    if !capture_bind {
+      x.code = g ?? el_convert::guard_range(e, x.code, slot, el_convert::guard_source(vars, x.code, x.tp), slot is TyOptional);
+    }
   }
   // A bare `null` written to a `τ?` local is stored as `convert_store` stores it: a record,
   // collection or struct enum's reference sentinel, a scalar's or a text's own null

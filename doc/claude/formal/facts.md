@@ -13,7 +13,7 @@ header verdict's callee clause, …) reads it from ONE generic routine.  This ch
 that routine computes, which way each fact may err, how far it follows calls, and how a fact
 proven at a call site specialises the callee.
 
-**OPEN: 2** — the register at the end.  The rewrites themselves stay in `rewrites.md`; this
+**OPEN: 3** — the register at the end.  The rewrites themselves stay in `rewrites.md`; this
 chapter is the fact source they cite.
 
 ## The routine
@@ -249,3 +249,14 @@ Closed entries: [facts-history.md](facts-history.md).
   named bits and 24 parameter bits left, guarded by a compile-time assert.
 - **Removal:** a key of (function, assumptions) and one registry, the existing twins re-keyed
   with their emission unchanged — designed in `plans/211-rule-phases/design.md` § D-fact-3.
+
+### D-fact-4 (OPEN, @PLN211) — no kind has its run-time falsifier
+- **Violates:** `Fact-Oracle`, and through it `Fact-ReachMin`'s guard
+- **Where:** `LOFT_FACT_VERIFY` is read nowhere in `src/`; the interpreter checks no `entry`
+  fact on entry, no result fact at return and no `writes` / `mints` summary against the call
+- **Effect:** a widened reach is guarded only by the rewrite census and the language suite's
+  values (the `Fact-Direction` cell: a fact the routine cannot establish costs a rewrite, never a
+  value); a fact the routine gets WRONG is caught only where a program's answer moves.
+- **Removal:** the interpreter's checks under `LOFT_FACT_VERIFY=1`, built with @PLN211 Arc C
+  step 2 (`plans/211-rule-phases/design.md` § `(Fact-Oracle)` itself), each failed check naming
+  the function, the kind, the reach and the fact.

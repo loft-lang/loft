@@ -1,0 +1,34 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: an untyped `v = []` leaves the local depending on itself on the first pass, so a
+// literal bound to it is built in a store minted after its items and its element borrows that
+// store; a typed `v: vector<T> = []` in a sibling block does not, and the element borrows the
+// local.  The mark only grows: a later literal does not take it back.
+// Prints: 1 2
+
+enum Nd { NdInt { n: integer }, NdSet { v: integer } }
+fn typed(xs: vector<integer>) -> integer {
+  t = 0;
+  if len(xs) > 0 {
+    ops: vector<Nd> = [NdInt { n: 1 }];
+    t += len(ops);
+  }
+  if len(xs) > 1 {
+    ops: vector<Nd> = [];
+    t += len(ops);
+  }
+  t
+}
+fn untyped(xs: vector<integer>) -> integer {
+  t = 0;
+  for p in xs {
+    ops: vector<Nd> = [NdInt { n: p }];
+    t += len(ops);
+    ops = [];
+  }
+  t
+}
+fn main() {
+  println("{typed([1, 2])} {untyped([1, 2])}");
+}

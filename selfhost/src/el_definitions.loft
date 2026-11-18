@@ -500,7 +500,9 @@ fn claim_declared_type_names(e: el::El, items: vector<integer>) {
 }
 
 fn parse_struct(e: el::El, at: integer, value: boolean, name: text, tvars: vector<integer>, fields: vector<integer>) {
-  if value || len(tvars) > 0 {
+  // (A `value struct` is a struct as any other in the parsed image: its register treatment is
+  // a later pass's.)
+  if len(tvars) > 0 {
     el::refuse(e, "a value struct or a struct template");
     return;
   }
@@ -523,6 +525,9 @@ fn parse_struct(e: el::El, at: integer, value: boolean, name: text, tvars: vecto
   if d < 0 {
     return;
   }
+  if value && !e.value_structs.contains(d) {
+    e.value_structs += [d];
+  }
   parse_fields(e, d, fields);
 }
 
@@ -536,7 +541,9 @@ fn parse_fields(e: el::El, d: integer, fields: vector<integer>) {
     match e.p.nodes[f] {
       SFieldDecl { public, lexeme, fixed, name: fname, mods } => {
         tn = field_type_node(e, mods);
-        if lexeme || fixed || tn == null {
+        // (A `const` field is an attribute as any other in the image: the constness is a check
+        // on the writes, which a program that has an image passed.)
+        if lexeme || tn == null {
           el::refuse(e, "a struct field with a modifier, a default or a capture");
           continue;
         }
@@ -990,6 +997,28 @@ struct Argument {
 }
 
 // A block whose one statement is a vector literal.
+// Does the body's last statement answer a vector literal whose last item is a repeat (`[x; n]`)?
+fn ends_in_repeat_literal(e: el::El, body: integer) -> boolean {
+  stmts = match e.p.nodes[body] { SBlock { stmts: ss } => ss, _ => [] };
+  if len(stmts) == 0 {
+    return false;
+  }
+  x = match e.p.nodes[stmts[-1]!] { SStmt { e: se } => se ?? -1, _ => -1 };
+  if x >= 0 {
+    match e.p.nodes[x] {
+      SJump { kind, e: r } => { if kind == "return" { x = r ?? -1; } },
+      _ => {}
+    }
+  }
+  if x < 0 {
+    return false;
+  }
+  match e.p.nodes[x] {
+    SVecLit { items } => len(items) > 0 && e.p.nodes[items[-1]!] is SRepeat,
+    _ => false
+  }
+}
+
 fn sole_vector_literal(e: el::El, body: integer) -> boolean {
   lit = sole_literal_node(e, body);
   lit >= 0 && e.p.nodes[lit] is SVecLit
@@ -1166,6 +1195,15 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
     match e.p.nodes[body ?? 0] {
       SBlock { at: bat } => { after = bat; },
       _ => {}
+    }
+  } else {
+    // A declaration with no result and no body (`fn kernel_stop();`): the lexer stands on its `;`.
+    si = at;
+    while si < len(e.p.src) && !(e.p.src[si] is Semi) && !(e.p.src[si] is LBrace) {
+      si += 1;
+    }
+    if si < len(e.p.src) && e.p.src[si] is Semi {
+      after = si;
     }
   }
   // `@FR-Disp-Key`: a definition of a name that is (or now becomes) an overload set is keyed by
@@ -1373,6 +1411,13 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
     // whole body is one vector literal of constants, answering a plain vector through its
     // buffer, gets a constant twin `__const_<name>` with its result — what a read of a call of
     // it is later answered from (`const_fn::rewrite`).
+    // Rust's pass-1 test reads the IR, where a call of a function declared below is still
+    // `null`: a body ending in a repeat literal (`k = three(); [7; k]`) gets a twin the second
+    // pass then finds no constant, its definition kept.  That pass-1 view is not carried:
+    // refused by name, so no later definition is numbered one lower.
+    if len(params) == 0 && len(tvars) == 0 && ends_in_repeat_literal(e, body!) {
+      el::refuse(e, "a function of no parameters whose body ends in a repeat literal (its pass-1 constant twin)");
+    }
     if e.first_pass && len(params) == 0 && len(tvars) == 0 && sole_vector_literal(e, body!) && const_twin_ok(e, e.context, body!) {
       cd = el::add_def(e, "__const_{el::def(e, e.context).name}", el::def(e, e.context).position, el::DT_CONSTANT);
       e.b.data.definitions[cd].returned = el::def(e, e.context).returned;

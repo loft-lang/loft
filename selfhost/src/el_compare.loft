@@ -30,6 +30,18 @@ pub fn tuple_compare(e: el::El, vars: el_vars::Vars, op: text, list: vector<ir::
     el::refuse(e, "a comparison of a stored tuple");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
+  // A record member is held uncopied in a compared operand (`___cmp_l_N`), a literal built
+  // straight into it: not carried.
+  for ot in types {
+    rec_member = match el_types::base(ot) { TyTuple { elems: oe } => len([for m in oe if (el_types::base(m) is TyReference) { m }]) > 0, _ => false };
+    if rec_member {
+      if e.first_pass {
+        return ex(ir::NdNull, ir::TyBoolean);
+      }
+      el::refuse(e, "a tuple comparison with a record member");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+  }
   le = tuple_elements(types[0]!);
   re = tuple_elements(types[1]!);
   if le == null || re == null {

@@ -29,6 +29,7 @@ documentation and tooling above code.  Everything needed to work on loft is in t
   [Common pitfalls](#common-pitfalls) · [Remote CI](#remote-ci)
 - [GitHub Issues and Releases — Hard Limits](#github-issues-and-releases--hard-limits)
 - [Closed-by-Decision Register](#closed-by-decision-register)
+- [Agent permissions — what runs without asking](#agent-permissions--what-runs-without-asking)
 - Elsewhere: joining branches — [JOINING.md](JOINING.md); does a change break a shipped
   library — [REVALIDATE_LIBS.md](REVALIDATE_LIBS.md); adding a bytecode operator —
   [INTERMEDIATE.md § Adding an operator](INTERMEDIATE.md#adding-an-operator)
@@ -627,6 +628,27 @@ When declining a proposal, strike it (`~~…~~`) in its source doc and append a 
 DESIGN_DECISIONS.md entry.
 
 ---
+
+## Agent permissions — what runs without asking
+
+The owner is often away from the screen, and a permission prompt with nobody there stalls the
+whole loop.  So the commands the work repeats are allow-listed in the checkout's
+`.claude/settings.local.json` (personal, per checkout) and `.claude/settings.json` (git-ignored
+here), and an agent writes its commands in exactly those spellings.  The set is a TRIAL: it is
+kept while it is enough for regular work, and what still prompts is evaluated with the owner
+when it proves short — an agent never widens it on its own.
+
+| tier | commands | status |
+|---|---|---|
+| safe — no new code runs, local or on the agent's own branches, undoable | `git add` / `commit` / `mv` / `rm` / `fetch` / `cherry-pick`, `git rebase -q --onto origin/main …`, `git push -q [--force-with-lease \| -u] origin tuxedo-*`, `cargo fmt [--check]`, `mkdir -p`; read-only `gh run watch`, `git apply [--3way] --check`, `make -s work`, `gh label list`, `scripts/wait_for.sh` | allowed |
+| more or less safe — runs this repo's own code | `cargo build` / `test` / `clippy`, `target/{debug,release}/loft`, `python3 scripts/*`, `scripts/*`, `make -s …`, `gh workflow run`, `gh run rerun` | offered, not granted — to be evaluated |
+| keep asking — arbitrary, irreversible or seen by others | inline `python3 -` / `-c`, `sed -i`, `rm -rf`, `kill`, `chmod`, `systemd-run` (it wraps any command), `gh pr create` / `merge`, `gh issue create` / `edit` / `close` / `comment`, a push to any branch but the agent's own | not allowed |
+
+What keeps the prompts down besides the list: files are edited with the editor tool, never with an
+inline `python3` snippet or `sed -i` (the two largest prompt sources measured); the repository's
+tools run as committed scripts; and the language suite's `main` push, though permitted by
+policy, cannot be allow-listed as `git push -q origin HEAD:main` — the same spelling in loft's own
+checkout would push loft's `main` — so it asks until it is spelled with the suite's path.
 
 ## See also
 

@@ -1,0 +1,16 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a comprehension over `_` binds its own `___N` and counters, as a loop does — a
+// range walk that calls, a vector walk, and a `for _` statement after them (its counter numbered
+// past theirs).
+// Prints: [4,4,4,2,2] [1,1]
+
+fn f() -> integer { 4 }
+fn main() {
+  v = [3, 4];
+  a = [for _ in 0..3 { f() }];
+  b = [for _ in v { 1 }];
+  for _ in 0..2 { a += [2]; }
+  println("{a} {b}");
+}
