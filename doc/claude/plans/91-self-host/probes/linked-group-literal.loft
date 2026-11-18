@@ -1,0 +1,54 @@
+// A challenge for a struct literal that fills a member of a LINKED COLLECTION GROUP (@PLN91).
+// Two or more collections of one record type in one struct are one group (@FR-Col-Group): they
+// hold the SAME records, each member a route to them.  One function per case, one axis each;
+// every function answers a hand-computed value.
+//   one member a literal, the other empty:     lit_hash_empty_vec, lit_vec_empty_hash
+//   ... the filled member written second:      empty_first
+//   every member omitted, filled afterwards:   all_omitted
+//   one member a literal, the other omitted:   lit_one_omitted
+//   three members, the middle one filled:      three_members
+//   two keyed members, one filled:             two_keyed
+//   the vector member filled from a local:     from_local_vec
+//   ... from a call:                           vec_from_call, vec_from_call_alone
+//   a non-collection field between members:    scalar_between
+//   NOT a group (the control): two structs:    control_two_structs
+// Not a case here: a KEYED member given a keyed VALUE (a call, a local) — the Rust front end
+// leaves the group's other members empty there (a defect of its own).
+struct E { k: integer, v: integer }
+struct VH { rows: vector<E>, by_k: hash<E[k]> }
+struct HV { by_k: hash<E[k]>, rows: vector<E> }
+struct VHS { rows: vector<E>, by_k: hash<E[k]>, ord: sorted<E[k]> }
+struct HS { by_k: hash<E[k]>, ord: sorted<E[k]> }
+struct Mid { rows: vector<E>, n: integer, by_k: hash<E[k]>, t: text }
+struct OnlyV { rows: vector<E> }
+struct OnlyH { by_k: hash<E[k]> }
+fn val(e: E?) -> integer { if e == null { -1 } else { e.v } }
+
+fn lit_hash_empty_vec() -> integer { b = VH { rows: [], by_k: [E { k: 1, v: 10 }, E { k: 2, v: 20 }] }; len(b.rows) * 100 + val(b.by_k[2]) }
+fn lit_vec_empty_hash() -> integer { b = VH { rows: [E { k: 1, v: 10 }, E { k: 2, v: 20 }], by_k: [] }; len(b.rows) * 100 + val(b.by_k[2]) }
+fn empty_first() -> integer { b = HV { by_k: [], rows: [E { k: 3, v: 30 }] }; len(b.rows) * 100 + val(b.by_k[3]) }
+fn all_omitted() -> integer { b = VH {}; b.rows += [E { k: 4, v: 40 }]; len(b.rows) * 100 + val(b.by_k[4]) }
+fn lit_one_omitted() -> integer { b = VH { by_k: [E { k: 5, v: 50 }] }; len(b.rows) * 100 + val(b.by_k[5]) }
+fn three_members() -> integer { b = VHS { rows: [], by_k: [E { k: 2, v: 20 }, E { k: 1, v: 10 }], ord: [] }; len(b.rows) * 100 + val(b.by_k[1]) + val(b.ord[2]) }
+fn two_keyed() -> integer { b = HS { by_k: [E { k: 6, v: 60 }], ord: [] }; val(b.by_k[6]) + val(b.ord[6]) }
+fn from_local_vec() -> integer { v: vector<E> = [E { k: 7, v: 70 }, E { k: 8, v: 80 }]; b = VH { rows: v, by_k: [] }; len(b.rows) * 100 + val(b.by_k[8]) + len(v) }
+fn scalar_between() -> integer { b = Mid { rows: [], n: 3, by_k: [E { k: 9, v: 90 }], t: "x" }; len(b.rows) * 100 + val(b.by_k[9]) + b.n + len(b.t) }
+fn mk_v(n: integer) -> vector<E> { v: vector<E> = []; for i in 0..n { v += [E { k: i + 1, v: (i + 1) * 10 }]; } v }
+fn vec_from_call() -> integer { b = VH { rows: mk_v(3), by_k: [] }; len(b.rows) * 100 + val(b.by_k[3]) }
+fn vec_from_call_alone() -> integer { b = VH { rows: mk_v(3) }; len(b.rows) * 100 + val(b.by_k[2]) }
+fn control_two_structs() -> integer { a = OnlyV { rows: [E { k: 1, v: 10 }] }; b = OnlyH { by_k: [E { k: 2, v: 20 }] }; len(a.rows) * 100 + val(b.by_k[2]) + val(b.by_k[1]) }
+
+fn main() {
+  assert(lit_hash_empty_vec() == 220, "lit_hash_empty_vec");
+  assert(lit_vec_empty_hash() == 220, "lit_vec_empty_hash");
+  assert(empty_first() == 130, "empty_first");
+  assert(all_omitted() == 140, "all_omitted");
+  assert(lit_one_omitted() == 150, "lit_one_omitted");
+  assert(three_members() == 230, "three_members");
+  assert(two_keyed() == 120, "two_keyed");
+  assert(from_local_vec() == 282, "from_local_vec");
+  assert(scalar_between() == 194, "scalar_between");
+  assert(vec_from_call() == 330, "vec_from_call");
+  assert(vec_from_call_alone() == 320, "vec_from_call_alone");
+  assert(control_two_structs() == 119, "control_two_structs");
+}

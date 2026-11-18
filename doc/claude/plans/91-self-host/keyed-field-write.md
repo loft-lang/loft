@@ -49,4 +49,4 @@ because `=` replaces; in a literal there is nothing to clear.
 ## Leave alone
 
 Two collections of one record type in ONE struct are a linked group (`@FR-Col-Group`): a
-literal that fills two of them is its own rule, with its own refusal in the port.
+literal that fills a member is its own rule — [linked-group-literal.md](linked-group-literal.md).
