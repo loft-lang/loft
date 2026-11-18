@@ -3,7 +3,7 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	c3d6b1f61ee27c65b68a727ebb85a786756f364f
+suite	d9dee4fa6380e171008660c311534d57babca4b6
 
 layer	elab	agree	1031	of	2078
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
