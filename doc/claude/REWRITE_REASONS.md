@@ -119,8 +119,10 @@ admissions before and after, and the code emitted for the bench programs is byte
    The function on a line is the one the RULE names for that decision.  A rule that works
    across functions — one that inlines a callee into its caller, one that writes a twin —
    may name the caller, the callee or the twin, so one refusal can stand under different
-   functions in different rules.  A rule that has the source line at hand may add it to its
-   line; none is required to find one, and the label itself stays a fixed string.
+   functions in different rules.  A rule about a call may add the CALLEE, and a rule that
+   has the source line at hand may add it: two optional columns beside the label, there to
+   give enough context to write the right probe.  None is required to find either, and the
+   label itself stays a fixed string.
    The listing holds COUNTS, never a verdict for a function: one function can match a rule
    at one place and be refused at another, and its inlined copies can go either way in
    different callers.  Read beside the admissions of `LOFT_REWRITE_CENSUS_FN`, a function
