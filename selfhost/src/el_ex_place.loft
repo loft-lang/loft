@@ -2992,6 +2992,16 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
           vars.self_stage += [el_ir::v_set(sw, fc!)];
           fc = ir::NdVar { n: sw };
         }
+        // `@FR-R-InPlaceLiteral`'s staging (`parse_object`'s field loop, `reads_place`): a scalar
+        // or text initialiser of a literal written into a field or an element that reads the
+        // place's root — or a local viewing its store — is evaluated into a `__ref_N` of the
+        // value's type ahead of the first field write.  A read of the root through an
+        // `OpGetField` at another field's offset than the destination's is spared.
+        if !e.first_pass && len(vars.lit_place) == 1 && (el_ex_call::scalar(el_types::base(at)) || el_types::base(at) is TyText) && literal_place_read(e, vars, fc!, v, vars.lit_place[0]!) {
+          lw = el_vars::work_ref(vars, x.tp);
+          vars.lit_stage += [el_ir::v_set(lw, fc!)];
+          fc = ir::NdVar { n: lw };
+        }
         list += [el_ex_object::set_field(e, d, a, r, fc!)];
         found += [fname];
       },
@@ -3023,6 +3033,49 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
     }
   }
   list
+}
+
+// `reads_place(value, root, off)`: does `value` read the destination's root variable — every
+// occurrence not spared as `OpGetField(root, <another offset>, …)` where the destination is a
+// field of the root — or a local that views the root's store?
+fn literal_place_read(e: el::El, vars: el_vars::Vars, value: ir::Node, root: integer, place: ir::Node) -> boolean {
+  for w in el_expressions::store_viewers(vars, root) {
+    if w != root && el_ir::reads_var(value, w) {
+      return true;
+    }
+  }
+  off = match el_ir::unspan(place) {
+    NdCall { def_nr, args } => if el::def(e, def_nr).name == "OpGetField" && len(args) == 3 && el_ir::unspan(args[0]!) == ir::NdVar { n: root } { match el_ir::unspan(args[1]!) { NdInt { n: po } => po, _ => -1 } } else { -1 },
+    _ => -1
+  };
+  unspared_reads(e, value, root, off) > 0
+}
+
+fn unspared_reads(e: el::El, n: ir::Node, root: integer, off: integer) -> integer {
+  match n {
+    NdSpan { inner } => unspared_reads(e, inner, root, off),
+    NdVar { n: x } => if x == root { 1 } else { 0 },
+    NdCall { def_nr, args } => {
+      if off >= 0 && el::def(e, def_nr).name == "OpGetField" && len(args) == 3 && el_ir::unspan(args[0]!) == ir::NdVar { n: root } {
+        spared = match el_ir::unspan(args[1]!) { NdInt { n: fo } => fo != off, _ => false };
+        if spared {
+          return 0;
+        }
+      }
+      c = 0;
+      for a in args {
+        c += unspared_reads(e, a, root, off);
+      }
+      c
+    },
+    _ => {
+      c = 0;
+      for ch in el_ir::children(n) {
+        c += unspared_reads(e, ch, root, off);
+      }
+      c
+    }
+  }
 }
 
 // `linked_group_offsets`: the offsets of a struct's collection fields that belong to a linked
