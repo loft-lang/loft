@@ -584,8 +584,21 @@ fn tuple_field_copy(e: el::El, vars: el_vars::Vars, n: integer, r: Ex) -> Ex {
   ex(ir::NdTuple { items: out }, ir::TyTuple { elems: tps })
 }
 
-// `Parser::expression`: one expression node.
+// `Parser::expression`: one expression node.  `e.at` names its first token while it is
+// elaborated — what a refusal or a route met inside it reports — and the enclosing node's again
+// after it.
 pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
+  outer = e.at;
+  // The node's leftmost token where `node_start` knows the shape (a call's callee, a binary's
+  // left operand); the node's own token otherwise (a `match`, an `if`, a literal start there).
+  first = el_ex_null::node_start(e, n);
+  e.at = if first > 0 { first } else { e.p.nodes[n].at };
+  x = expression_node(e, vars, n);
+  e.at = outer;
+  x
+}
+
+fn expression_node(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
   vars.site = n;
   match e.p.nodes[n] {
     SInt { v } => ex(ir::NdInt { n: v }, ir::TyInteger { spec: i32_spec() }),
