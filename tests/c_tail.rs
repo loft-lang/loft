@@ -7,9 +7,15 @@
 //! every store each way.  The trace shows the functions the cell is about really were
 //! shortened, so the cell does not pass by staying as written.
 //!
-//! @falsified-at: PENDING — scored by hand against two defects planted in `src/c/tail.rs`.
+//! @falsified-at: 89ba8bd2a — scored by hand against two defects planted in `src/c/tail.rs`.
 //!   CHANNEL: value (the cell's own assertions) and leak (`stores not freed`), on `--native-c`.
 //!   ARMED: nothing to arm: the pass runs by default.
+//!   WITNESS: (a) a shared end's label put one statement late (`at.push(first + k + 1)`), so a
+//!   jump skips the first shared release: the cell answers and then reports `2 stores not
+//!   freed at program exit: kt=100 P×2`.  (b) an exit's own statements not written
+//!   (`&exit.stmts[..0]`), so it jumps without its own releases or its read of the result: the
+//!   cell prints nothing and exits 1.
+//!   HOLDS: the interpreter run and the `LOFT_NO_C_TAIL=1` run pass on both planted trees.
 
 fn loft_bin() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"))
