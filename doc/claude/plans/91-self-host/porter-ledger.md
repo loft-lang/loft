@@ -49,4 +49,6 @@ Read the patterns first; the rows are the evidence.
 | 11-18 | 0320e32d1 | + | `noimage.txt`: the porter saw before predicting that the one program its probe lifted carries `@EXPECT_ERROR` | — |
 | 11-18 | 0320e32d1 | ? | Rust's return selector (`classify_reference_delivery` → `ref_return`) had no instrument: about six probe builds to learn its verdict per return site | a `route` line for the selector's verdict (added: `classify_reference_delivery=<verdict>`, a rename's work refs by name) |
 | 11-18 | f74d7e42b | ! | The porter's `view_tail` ran on bodies ending in a `return` statement (a spare `__ref_N`); its own corpus listing could not see it, the program being refused elsewhere — `pass1_mint.py` did | the first pass read for refused programs too (built) |
+| 11-18 | eb02bf3c4 | + | The selector's `route` line: "the line I was missing"; predictions now checked against the noimage rule before they are sent | — |
+| 11-18 | dda79c069 | ? | `fn-end … ret=ref(Own)["__retbuf"]` read as "the port misses a bind" for 47 functions; the dep is an ATTRIBUTE number printed through the variable of that number, so a rename and a bind printed alike | the result's deps spelled as attributes (added: `attrs=<n>:<attribute name>`) |
 

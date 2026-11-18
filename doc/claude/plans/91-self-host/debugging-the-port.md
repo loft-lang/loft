@@ -38,7 +38,7 @@ reads `:5`.
 | `arg` | before a call's argument is read | the same channels, for the argument |
 | `stmt-end` | after the statement | `value=<type>`: what its expression answered |
 | `var` | after `stmt-end` | what the statement did to the variable table: `<fn> <nr> <name> + <type>` created, `<fn> <nr> <name> <old> -> <new>` retyped |
-| `fn-end` | when the function's body is done | `<fn> ret=<type>`, then `<fn> var <nr> <name>=<type>` for every variable in number order |
+| `fn-end` | when the function's body is done | `<fn> ret=<type>` (with `attrs=<n>:<attribute name>,…` where the result has deps: they number the definition's ATTRIBUTES, while the type spells the variable of that number — `["__retbuf"] attrs=1:cv` is a buffer renamed after `cv`, `attrs=1:__retbuf` one that was bound), then `<fn> var <nr> <name>=<type>` for every variable in number order |
 | `route` | where a special path is taken | the Rust handler's name (`parse_map`, `materialize_return_into=whole`); the port prints the same name at its mirror |
 | `refuse` | where the port gives up | the refusal's text (the port only) |
 
