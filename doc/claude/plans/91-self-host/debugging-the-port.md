@@ -87,11 +87,12 @@ lingers between sites, the port carries the hint per node.  The gate does not co
 
 ## Before promoting: the try-gate
 
-`scripts/try_gate.sh` asks the testing side to gate the work in a checkout — committed or not —
-before it is promoted: it posts the change as a `git bundle` in a comment on the mailbox issue
-(loft#2560, closed and locked on purpose), waits, and prints the answer: the gate line against
-the base tip, the verdicts that change, the definitions that agreed and no longer do, every
-differ.  About ten minutes; nothing is pushed to a branch.  Use it for a change that adds or
+`scripts/try_gate.sh` HANDS the work in a checkout — committed or not — to the testing side
+before it is promoted, and returns at once: the change goes as a `git bundle` in a comment on
+the mailbox issue (loft#2560, closed and locked on purpose).  The testing side gates it and
+sends its analysis as a message — what stopped agreeing and why, each differ reduced to its
+line and cause — while the porting side works on something else; a tool one waits on and
+reads the raw output of would be the gate run at one remove.  Nothing is pushed to a branch.  Use it for a change that adds or
 widens a refusal, or changes a rule many functions share: a definition that agreed inside a
 program that stays refused is seen by nothing else before the promotion.
 

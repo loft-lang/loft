@@ -4,14 +4,15 @@
 #
 # The try-gate (@PLN91): ask the testing side to gate a change BEFORE it is promoted.
 #
-#   scripts/try_gate.sh            # the work in this checkout, committed or not; waits for the answer
-#   scripts/try_gate.sh --no-wait  # post and return
+#   scripts/try_gate.sh            # hand over the work in this checkout, committed or not, and go on
+#   scripts/try_gate.sh --wait     # stay until the gate has run (its line only; the analysis is a message)
 #   scripts/try_gate.sh --base REV # on another base than the last promoted tip
 #
 # It posts ONE comment on the mailbox issue (loft#2560): the change as a `git bundle` on the
-# base tip, in text.  Nothing is pushed to any branch.  The answer comes back as a comment
-# `result <commit>` — the gate line against the base, the verdicts that change, the definitions
-# that agreed and no longer do, every differ — and is printed here.
+# base tip, in text.  Nothing is pushed to any branch.  This is a HAND-OFF, not a tool to wait
+# on: the testing side gates the change and sends its ANALYSIS as a message — what stopped
+# agreeing and why, each differ reduced to its line and cause — while you work on something
+# else.  The issue only gets a receipt (`result <commit>` and the gate line).
 #
 # Uncommitted work is tried as it stands (tracked files; an untracked file is named and left
 # out — `git add` it first).  The base must be a tip the tester has gated: by default the tip of
@@ -21,10 +22,11 @@ set -euo pipefail
 ISSUE=2560
 REPO=loft-lang/loft
 LINE=${LOFT_TRY_LINE:-origin/tuxedo-pln204-int32}   # the promoted line
-wait=1
+wait=0
 base=""
 while [ $# -gt 0 ]; do
   case "$1" in
+    --wait) wait=1 ;;
     --no-wait) wait=0 ;;
     --base) base=$2; shift ;;
     -h|--help) sed -n '5,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
@@ -64,10 +66,11 @@ body=$(printf 'try %s on %s\n\n%s file(s) changed: %s\n\n```bundle\n%s\n```\n' \
   "$head" "$base" "$(git diff --name-only "$base" "$head" | wc -l)" \
   "$(git diff --name-only "$base" "$head" | head -8 | tr '\n' ' ')" "$payload")
 url=$(gh issue comment "$ISSUE" --repo "$REPO" --body "$body")
-echo "try_gate: asked for $short on $(git rev-parse --short "$base") ($size characters) — $url"
+echo "try_gate: handed over $short on $(git rev-parse --short "$base") ($size characters) — $url"
+echo "try_gate: carry on; the tester's analysis arrives as a message in about ten minutes"
 [ "$wait" = 1 ] || exit 0
 
-echo "try_gate: waiting for the answer (about ten minutes; Ctrl-C leaves the request in place)…"
+echo "try_gate: waiting for the receipt (about ten minutes; Ctrl-C leaves the request in place)…"
 for _ in $(seq 1 120); do
   sleep 30
   answer=$(gh api "repos/$REPO/issues/$ISSUE/comments?per_page=30&sort=created&direction=desc" \
