@@ -389,6 +389,25 @@ software renderer, which rounds colours its own way; a test that
 compares the two asks `gpu_gl::renderer()` which one it measures
 against.
 
+`.x11_window` is its Linux twin: a package whose tests draw into an
+X11 window puts one at the package root, with the reason as its
+contents.  A runner has no display, so such a test returns at once
+there; a marked package's job gets an X server that draws in memory
+(Xvfb) with Mesa's software OpenGL and Vulkan (llvmpipe, lavapipe)
+before its tests run.
+
+Both markers also set `GRAPHICS_TEST_MUST_DRAW=1` on the package's
+own test steps, so a test that returns where it finds no display
+can FAIL there instead: its `display()` helper asserts that it can
+draw when the run says it must.  A test of a backend the machine
+does not have (Metal on Linux) asks for the backend first and
+still returns.  The macOS job runs the interpreter a second time
+under Metal's validation (`MTL_DEBUG_LAYER=1`), which stops the
+program at a call Metal's rules refuse.  What neither runner has
+is a GPU of its own: a comparison that is exact on one is checked
+by hand before a release, by the script the package's repository
+keeps for it (`gpu_on_a_mac.sh` in loft-libs-graphics).
+
 **Your warning count moves even when you don't touch the code** —
 loft keeps adding deprecations (`not null`, the `&`-parameter
 lint, null-flow), so a package that was clean at publish time

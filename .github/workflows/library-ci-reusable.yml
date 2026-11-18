@@ -166,6 +166,32 @@ jobs:
             echo "no build-deps declared by this package or its deps"
           fi
 
+      # ── A display, for a package whose tests draw into an X11 window ────────
+      #
+      # A runner has no display, and a test that draws returns at once where it finds none:
+      # green, and nothing measured.  A package whose tests draw on Linux puts a `.x11_window`
+      # file at its root, with the REASON as its contents.  It gets an X server that draws in
+      # memory (Xvfb) and Mesa's software OpenGL and Vulkan (llvmpipe, lavapipe) for every
+      # step below, and its own three test steps run with `GRAPHICS_TEST_MUST_DRAW=1`: a test
+      # that still finds nothing to draw on then FAILS, where it otherwise returns.
+      - name: A display — ${{ matrix.package }}
+        if: hashFiles(format('{0}/.x11_window', matrix.package)) != ''
+        run: |
+          timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y \
+            xvfb libgl1-mesa-dri libglx-mesa0 libegl1 libgles2 mesa-vulkan-drivers libvulkan1 \
+            libx11-6 libxtst6
+          Xvfb :99 -screen 0 1920x1200x24 -nolisten tcp > "$RUNNER_TEMP/xvfb.log" 2>&1 &
+          for _ in $(seq 50); do [ -S /tmp/.X11-unix/X99 ] && break; sleep 0.2; done
+          if [ ! -S /tmp/.X11-unix/X99 ]; then
+            echo "Xvfb did not start:"; cat "$RUNNER_TEMP/xvfb.log"; exit 1
+          fi
+          echo "DISPLAY=:99" >> "$GITHUB_ENV"
+          {
+            echo "### \`${{ matrix.package }}\` draws into an X11 window"
+            echo
+            cat "${{ matrix.package }}/.x11_window"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       # A library's OWN CI denies warnings on its own code by default (a package may
       # opt out with a `.allow_warnings` file in its dir) — distinct from the loft-side
       # revalidate-libs gate, which tolerates warnings (a new loft warning must not fail
@@ -197,6 +223,7 @@ jobs:
         env:
           LOFT_DENY_WARNINGS: ${{ hashFiles(format('{0}/.allow_warnings', matrix.package)) != '' && '0' || '1' }}
           LOFT_STORE_GUARD: 1
+          GRAPHICS_TEST_MUST_DRAW: ${{ hashFiles(format('{0}/.x11_window', matrix.package)) != '' && '1' || '0' }}
         run: |
           set -o pipefail
           loft --interpret --tests tests 2>&1 | tee "$RUNNER_TEMP/interpret.log" && exit 0
@@ -216,6 +243,7 @@ jobs:
         env:
           LOFT_DENY_WARNINGS: ${{ hashFiles(format('{0}/.allow_warnings', matrix.package)) != '' && '0' || '1' }}
           LOFT_STORE_GUARD: 1
+          GRAPHICS_TEST_MUST_DRAW: ${{ hashFiles(format('{0}/.x11_window', matrix.package)) != '' && '1' || '0' }}
         run: |
           set -o pipefail
           LOFT_TIMEOUT=240 loft --native --tests tests 2>&1 | tee "$RUNNER_TEMP/native.log" && exit 0
@@ -238,6 +266,7 @@ jobs:
         env:
           LOFT_DENY_WARNINGS: ${{ hashFiles(format('{0}/.allow_warnings', matrix.package)) != '' && '0' || '1' }}
           LOFT_STORE_GUARD: 1
+          GRAPHICS_TEST_MUST_DRAW: ${{ hashFiles(format('{0}/.x11_window', matrix.package)) != '' && '1' || '0' }}
         run: |
           set -o pipefail
           LOFT_TIMEOUT=240 loft --native-c --tests tests 2>&1 | tee "$RUNNER_TEMP/native-c.log" && exit 0
@@ -579,6 +608,10 @@ jobs:
   # with windows on (`GRAPHICS_TEST_WINDOW=1`), on the interpreter and the C backend.  The
   # runner is a virtual machine: Metal is a paravirtual GPU and OpenGL is Apple's software
   # renderer, which a test that compares the two has to allow for (`gpu_gl::renderer()`).
+  # `GRAPHICS_TEST_MUST_DRAW=1` makes a test that finds no window fail, where it otherwise
+  # returns; the last step repeats the interpreter's run under Metal's own validation
+  # (`MTL_DEBUG_LAYER=1`), which stops the program at a call Metal's rules refuse, whatever the
+  # picture shows.
   #
   # Its own two jobs: a repo with no marked package spends no macOS time.
   macos-window-packages:
@@ -656,6 +689,7 @@ jobs:
         env:
           LOFT_DENY_WARNINGS: ${{ hashFiles(format('{0}/.allow_warnings', matrix.package)) != '' && '0' || '1' }}
           GRAPHICS_TEST_WINDOW: 1
+          GRAPHICS_TEST_MUST_DRAW: 1
         run: |
           set -o pipefail
           LOFT_TIMEOUT=600 loft --interpret --tests tests 2>&1 | tee "$RUNNER_TEMP/interpret.log" && exit 0
@@ -675,6 +709,7 @@ jobs:
         env:
           LOFT_DENY_WARNINGS: ${{ hashFiles(format('{0}/.allow_warnings', matrix.package)) != '' && '0' || '1' }}
           GRAPHICS_TEST_WINDOW: 1
+          GRAPHICS_TEST_MUST_DRAW: 1
         run: |
           set -o pipefail
           LOFT_TIMEOUT=600 loft --native-c --tests tests 2>&1 | tee "$RUNNER_TEMP/native-c.log" && exit 0
@@ -684,6 +719,27 @@ jobs:
             echo
             echo '```'
             grep -E '^[[:space:]]*(FAIL|Warning\[|error)' "$RUNNER_TEMP/native-c.log" | head -40 \
+              || echo "(no FAIL/Warning line — see the job log)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $status
+
+      - name: Interpret, Metal's validation — ${{ matrix.package }}
+        working-directory: ${{ matrix.package }}
+        env:
+          LOFT_DENY_WARNINGS: ${{ hashFiles(format('{0}/.allow_warnings', matrix.package)) != '' && '0' || '1' }}
+          GRAPHICS_TEST_WINDOW: 1
+          GRAPHICS_TEST_MUST_DRAW: 1
+          MTL_DEBUG_LAYER: 1
+        run: |
+          set -o pipefail
+          LOFT_TIMEOUT=600 loft --interpret --tests tests 2>&1 | tee "$RUNNER_TEMP/validation.log" && exit 0
+          status=$?
+          {
+            echo "### ❌ \`${{ matrix.package }}\` — Metal's validation, macOS"
+            echo
+            echo '```'
+            grep -E '^[[:space:]]*(FAIL|Warning\[|error)' "$RUNNER_TEMP/validation.log" | head -40 \
               || echo "(no FAIL/Warning line — see the job log)"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
