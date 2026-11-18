@@ -32,14 +32,22 @@ next from the programs one refusal from agreeing (`kr-tools/try_moves.py`, the t
 
 ## Open with the owner
 
-**"A vector local bound from a later-declared function's vector result"** (2 programs alone, 1
-with one other) is an accident of Rust's pass order, not a rule: `own_fresh_binds` reads a
-callee's result type as the pass meets it, so the same function emits its two frame owners in
-another ORDER when its callee is declared below it.  The port decides it order-free and
-refuses the programs by name (`el_refhome.loft`).  Put to the owner: make Rust order-free
-(recommended), have the port copy the dependence, or leave it refused.  No page or probe is
-prepared until that is decided; the reduction is two functions calling `above()` / `below()`
-after `p = [9]`.
+**"A vector local bound from a later-declared function's vector result"** (6 programs meet
+the refusal).  Measured, and the earlier reading here was wrong: the port does NOT decide this
+order-free.  It tracks declaration order and already reproduces the order of the frame-top
+declarations where a callee is declared below its caller (a call's buffer is then numbered on
+the second pass, after every `__vdb_N`).  The refusal is the port's own conservative one, by
+name; the functions it covers differ from their callee-above twins in that order alone.
+
+A Rust change that makes the order independent of the callee's position was built and NOT
+landed (`kr-tools/order-free/` on the tester's box: the patch, the above/below matrix, the
+corpus diff).  It makes 18 of 19 matrix callers lower the same either way and moves 222
+functions in 131 programs, each a pure reorder of `= null` lines — but 28 programs the port
+agrees on today would differ until the port drops its own tracking.  Nothing observable
+depends on the order: drop hooks run in the same order with the callee above or below, on
+both backends.  Separate and not looked into: a KEYED local bound from a later-declared
+function is `h = n_ch(3)` where the callee-above twin is `h = null; OpReplaceKeyed(n_ch(3), h,
+kt + 32768)`.
 
 ## Today's Rust-side work
 
