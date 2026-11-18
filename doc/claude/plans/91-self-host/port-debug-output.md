@@ -117,6 +117,15 @@ elab_trace.py PROG [--fn NAME] [--var NAME] [--pass 1|2] [--points stmt,var,…]
 
 `state_diff.py` stays the comparison; this is the reader.
 
+### Built — § 3
+
+`selfhost/front/elab_trace.py` as designed, with `--defs` beside `--elab` and `--std` for the
+report writer `--ir` asks of the Rust side.  `--fn main` finds `n_main`; a function's lines are
+cut as the gate cuts them, a `var` line going to the function it names.  `--side diff` is a
+unified diff of the two filtered traces, in which Rust's `route` lines and the port's stand
+beside each other.  Tried on the probes of this plan: `--var p` prints the four lines of the
+variable's history; `--ir r1 --side diff` reads "the two sides agree".
+
 ## 4. The self-check — an instrument that went silent
 
 Every `--pass1` gate run already reads one agreeing program again for its positive control.
