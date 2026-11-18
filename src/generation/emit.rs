@@ -1942,12 +1942,6 @@ impl Output<'_> {
                             Some(i) => lent[i].1 += 1,
                             None => lent.push((tp, 1)),
                         }
-                        // @decline-owed: a fn-ref call whose frame lends no buffer; a vector
-                        //   local whose element is no scalar; a mention, its own or an alias's,
-                        //   that is no in-place vector operator — a whole copy, a hand-off, a
-                        //   tuple, a capture; a second assignment; a declaration inside a loop;
-                        //   a function that is an entry point, a hook, a lambda, a generic
-                        //   instance, has its address taken, or suspends or forks
                         crate::rewrite_census::fired("R-WorkBuffer/lent", 1);
                         synthetic.push(Value::RawExpr(format!(
                             "__fwb.lend({}, {k}_u32)",

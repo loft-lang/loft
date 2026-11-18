@@ -1960,11 +1960,6 @@ impl State {
                 .collect()
         };
         let slices = marked.iter().filter(|v| store.slices.contains(v)).count();
-        // @decline-owed: a walk whose body reads the element other than as a text value,
-        //   rebinds, links, captures or returns it, or — over a vector — may write a store; a
-        //   function that yields; a `?`/`??` temp or store-read local whose block writes a
-        //   store the frame did not mint, calls a writing callee or a fn-ref, or forks; in the
-        //   interpreter, a tested borrow and a work text bound from a call
         crate::rewrite_census::fired("R-TextBorrow", marked.len());
         // @decline-owed: a text local with a binding that is no value slice of a plain text
         //   parameter or of a borrowing local, and one mentioned other than as a text value

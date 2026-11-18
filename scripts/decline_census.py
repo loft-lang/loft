@@ -83,6 +83,13 @@ REPORTED = {
     "R-Rebind": ("`x = f(x, …)` handing the callee x's own record", "partial"),
     "R-CtorLiteral": ("a constructor call replaced by its literal", "partial"),
     "R-Place": ("a call's result built in the place it is stored to", "partial"),
+    "R-InRange": ("a record element read inside its range, never null", "partial"),
+    "R-LazySplit": ("a split walked piece by piece, no vector built", "partial"),
+    "R-TextBorrow": ("a walked text element borrowed, not copied", "partial"),
+    "R-WorkBuffer": ("a callee's vector local lent by its caller", "partial"),
+    "R-WorkBuffer/onward": ("a work buffer handed on to a further callee", "partial"),
+    "R-LoopRecord": ("a loop's record local kept across the passes", "partial"),
+    "R-ValueLocal": ("a small record local or parameter carried as scalars", "partial"),
 }
 # A rule's labels are the validation clauses of its statement (REWRITE_REASONS.md): a rule that
 # passes this many is describing sites, not clauses.  `(R-Range)` uses twelve today.

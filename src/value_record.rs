@@ -698,11 +698,6 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
     }
     laps.lap("vr_rewrite");
     crate::rewrite_census::fired("R-ValueRecord", w.cands.len());
-    // @decline-owed: a tuple parameter of a public function, a fn-ref arm or a function no loft
-    //   code calls, a captured one, or one written, returned, freed or rebound; a local with a
-    //   mention that is no field read, constant-offset scalar write, hand-on, bind or free; a
-    //   bind buffer shared, written, guarded or aliased; a read, hand-on or copy of another
-    //   layout; a local another variable depends on
     crate::rewrite_census::fired("R-ValueLocal", w.params.len());
     let mut touched: Vec<u32> = touched.into_iter().collect();
     touched.sort_unstable();
@@ -1895,6 +1890,9 @@ fn plan_function(data: &Data, w: &World, f: u32, tuple: bool) -> (Plan, Verdict)
         if why.is_none() {
             plan.carriers.insert(p, record);
         } else {
+            if let Some(why) = why {
+                crate::rewrite_census::declined_in("R-ValueLocal", def.name(), vars.name(p), why);
+            }
             if let Some(why) = why
                 && trace()
             {
@@ -1997,6 +1995,9 @@ fn plan_function(data: &Data, w: &World, f: u32, tuple: bool) -> (Plan, Verdict)
         } else {
             None
         };
+        if let Some(why) = why {
+            crate::rewrite_census::declined_in("R-ValueLocal", def.name(), vars.name(l), why);
+        }
         if let Some(why) = why
             && trace()
         {

@@ -2575,11 +2575,6 @@ impl Output<'_> {
         //   plain struct, is rebound, or whose element's wrapper name finds a generic template;
         //   a hidden buffer that serves anything else, a second paired loop included
         fired("R-MoveAppend", self.move_pairs.len());
-        // @decline-owed: a function that yields; a separator that is no character constant or
-        //   is the null character; a loop that is not the parser's plain forward walk of the
-        //   bound vector (the bind, the index seed and the loop closing the block, a plain
-        //   element read, an end on the length); a split result mentioned beyond that element
-        //   read and length test or bound twice (a `rev`, a vector bound to a name)
         fired("R-LazySplit", self.lazy_splits.len());
         fired("R-SplitTable", self.split_tables.len());
         fired("R-TextBorrow", self.borrowed_text_locals.len());

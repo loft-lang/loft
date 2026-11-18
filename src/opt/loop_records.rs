@@ -764,6 +764,7 @@ pub fn loop_records(data: &Data, stores: &Stores, def_nr: u32) -> LoopRecords {
                 out.recs.insert(v, rec);
             }
             Some(why) => {
+                crate::rewrite_census::declined_in("R-LoopRecord", def.name(), vars.name(v), why);
                 if trace {
                     eprintln!(
                         "[loop-record] {}: {} declines: {why}",
