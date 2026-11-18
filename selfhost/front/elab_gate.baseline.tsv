@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	65a87e53bd7d90971cc06e9616d086c792089f66
+suite	cd9f0c52482320076cfc8d180493a82939ca12e3
 
-layer	elab	agree	1031	of	2073
+layer	elab	agree	1031	of	2072
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -530,8 +530,7 @@ elab	refused	loft-suite/rules/rewrites/R-CopyView/a-match-walk-over-an-enum-list
 elab	refused	loft-suite/rules/rewrites/R-CopyView/a-walk-over-a-list-the-demote-grows-reads-the-list-it-was-bound-to.loft
 elab	refused	loft-suite/rules/rewrites/R-DecodeView/a-decoded-view-answers-what-its-copy-would-across-every-rule-it-meets.loft
 elab	refused	loft-suite/rules/rewrites/R-Demote/a-demoted-node-answers-what-the-copy-would-for-copies-and-every-cycle.loft
-elab	refused	loft-suite/rules/rewrites/R-Demote/a-front-push-moves-the-old-node-and-keeps-what-it-owns.loft
-elab	refused	loft-suite/rules/rewrites/R-Demote/a-variant-pushed-at-the-front-moves-the-old-record-whole.loft
+elab	refused	loft-suite/rules/rewrites/R-Demote/a-front-push-moves-the-old-node-whole-a-records-or-a-variants.loft
 elab	refused	loft-suite/rules/rewrites/R-Destination/a-call-result-moved-into-an-element-is-built-there.loft
 elab	refused	loft-suite/rules/rewrites/R-ElemFirst/a-comprehension-row-is-built-in-its-element.loft
 elab	refused	loft-suite/rules/rewrites/R-ElemFirst/a-row-built-in-its-element-fills-its-own-vector-and-no-window-on-the-outer.loft

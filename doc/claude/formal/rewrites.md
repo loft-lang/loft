@@ -6103,7 +6103,7 @@ other, a null end and a parse result's root taking `loft_copy_record`.
                  enum, and the variant's fields and tag are written into the zeroed
                  record.  21_tree `enum_list` (with (R-CopyView)'s walk over its
                  `match`): 5167× → 0.83× Rust; guard
-                 `loft-suite/rules/rewrites/R-Demote/a-variant-pushed-at-the-front-moves-the-old-record-whole.loft`.  Decided in the parser (the
+                 `loft-suite/rules/rewrites/R-Demote/a-front-push-moves-the-old-node-whole-a-records-or-a-variants.loft`.  Decided in the parser (the
                  local form when the literal is parsed, the place form at the
                  out-of-line write); `LOFT_NO_DEMOTE=1` restores the copy.  The move is
                  one op, `OpDemoteRec`: one child record claimed in the destination's store,
