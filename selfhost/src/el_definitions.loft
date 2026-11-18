@@ -1793,10 +1793,8 @@ fn fn_key(e: el::El, name: text, arguments: vector<Argument>) -> text {
   }
   // The standard library's types come with the image, their members included; a library's
   // take the program's methods as its own types do.
-  if td.source != e.source && td.source == el::STD_SOURCE {
-    el::refuse(e, "a method on a type the program does not declare");
-    return "";
-  }
+  // (A standard type — `integer`, `text`, `vector` — takes the program's method as the
+  // program's own types do: `t_7integer_double`, the member on the type's definition.)
   sig = if t is TyOptional { "{td.name}?" } else { td.name };
   "t_{len(sig)}{sig}_{name}"
 }
@@ -1835,6 +1833,12 @@ fn add_fn(e: el::El, key: text, name: text, arguments: vector<Argument>, pos: ir
       for a in el::def(e, tn).attributes {
         if a.name == name {
           slot = match a.typedef[0] ?? ir::TyVoid { TyRoutine { n } => n, _ => -1 };
+          // A standard type read out of the program's image already carries the member Rust
+          // gave it, naming the definition about to be made here: it stands as it is.
+          if slot >= len(e.b.data.definitions) {
+            tn = -1;
+            break;
+          }
           // An overload of the slot's method (`Disp-Key`): the slot keeps the incumbent, the
           // set carries both.
           if el_dispatch::own_set(e, name) >= 0 && slot >= 0 && el::def(e, slot).name != key {
