@@ -3925,6 +3925,7 @@ impl Parser {
         self.parse_rust();
         self.check_drop_signature();
         self.data.op_code(self.context);
+        self.state_trace_fn_end(self.context);
         self.data.definitions[self.context as usize]
             .variables
             .append(&mut self.vars);
@@ -8486,6 +8487,7 @@ impl Parser {
         let pos = *self.lexer.pos();
         let tail = self.block_result("return from block", &result, &tp, &mut ops, &pos);
         self.finish_body(v_block(ops, tail, "block"), Type::Void);
+        self.state_trace_fn_end(d_nr);
         self.data.definitions[d_nr as usize]
             .variables
             .append(&mut self.vars);

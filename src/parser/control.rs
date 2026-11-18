@@ -1122,6 +1122,7 @@ impl Parser {
                 break;
             }
             self.state_trace("stmt");
+            let stmt_at = *self.lexer.pos();
             // @C67 — loft has no `try { … } catch { … }`, and was refusing it as a bare
             // "Expect token ;" that named neither the decision nor the spelling to use.  Said
             // by name, then both blocks are skipped so nothing cascades.  Only `try` directly
@@ -1322,6 +1323,7 @@ impl Parser {
             let pending_before = self.pending_arm_mismatch.take();
             t = self.expression(&mut n);
             last_fact = std::mem::take(&mut self.operand_fact); // @PLN187
+            self.state_trace_value(&stmt_at, &t);
             // `@FR-H-Write-Else` — an `else` left over after a whole statement can only be a
             // store's failure arm: an `if` or a value-`if` has already consumed its own.
             if self.lexer.peek_token("else") {

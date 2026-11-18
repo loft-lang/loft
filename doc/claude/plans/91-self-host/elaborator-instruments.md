@@ -77,6 +77,34 @@ a real type shows at the statement that made it.
 Expected first reading: many `pass1-differ` rows on agreeing programs.  That list, grouped
 by channel and shape, is the port's worklist of pass-order windows, replacing guesses.
 
+### Built — step 1, the two channels on both sides
+
+`fn-end` is as designed, on both sides: Rust prints it where a function's variables are handed
+to its definition (`Parser::state_trace_fn_end`, four sites: `parse_function`, the two lambda
+forms and `default_value_fn`), the port where `parse_function` stores them
+(`el_trace::fn_end`), a lambda included.  Types are in the IR dump's spelling on both sides
+(`Type::show`; `report::type_show_in`).
+
+`value=` is a point of its own, `stmt-end value=<type>`, at the position its `stmt` line has
+and printed after the statement — not a channel on `stmt`.  The type is not known where `stmt`
+is printed, and holding that line back until the statement is read would reorder it against
+the points of the statements nested inside it.
+
+With the switch off nothing is printed and nothing else changed: gate E's verdicts on a sample
+of 150 corpus programs are the ones of tip c62b395bb.
+
+First reading, on 140 agreeing programs of that sample (`state 1` lines only): 30 agree, 110
+differ.  By the kind of the FIRST differing line: 54 `stmt-end` (a dep the port has not derived
+yet, `text["__work_1"]` against `text`), 24 `arg` and 16 `stmt` (`expected=` set in Rust and
+not in the port — the two points that existed before), 14 `fn-end … var` (a variable minted in
+another order or under another name, `e` against `e#iter_state`), 2 `fn-end … ret`
+(`vector<integer>` against `vector<integer>["__retbuf"]`).
+
+A differ the corpus does not hold, met while trying the trace: a `map` over a vector LITERAL
+bound to a local (`t = ["a"].map(shout)` beside a later lambda) mints `_elm_1` and `_vec_1` in
+the other order, on both passes; the image differs (`vector<text["_elm_1"]>` against
+`vector<text["_vec_1"]>`).
+
 ## 2. Rust's route, joined to the refusal — the `route` point
 
 **Rust side.**  One line when the front end takes a special route for a construct:

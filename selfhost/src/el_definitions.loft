@@ -18,6 +18,7 @@ use el_ex_assign;
 use el_dispatch;
 use el_schema;
 use el_cell;
+use el_trace;
 
 
 // `Parser::parse_file`'s definition loop, over the file's items in order.
@@ -1444,6 +1445,9 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
     for s in el_vars::minted_parameters(vars) {
       e.step_over += [el::StepOver { d: e.context, name: el_vars::name_of(vars, s.nr), site: s.site }];
     }
+  }
+  if el_trace::on() {
+    el_trace::fn_end(e, vars, e.context);
   }
   e.b.data.definitions[e.context].variables = el_vars::stored(vars);
   if len(annots) > 0 && !apply_annotations(e, e.context, annots) {

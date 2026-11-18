@@ -10,6 +10,7 @@ use ir;
 use el;
 use el_vars;
 use el_types;
+use report;
 
 // Is the trace asked for?
 pub fn on() -> boolean {
@@ -44,6 +45,31 @@ pub fn state(e: el::El, vars: el_vars::Vars, point: text, at: integer, node: int
     line += " cur_type_vars={[for t in e.type_vars { t.spelling }].join(",")}";
   }
   eprintln(line);
+}
+
+// The `stmt-end` point (`Parser::state_trace_value`): the type the statement read from token
+// `at` answered, in the IR dump's spelling, deps by variable name.
+pub fn value(e: el::El, vars: el_vars::Vars, at: integer, tp: ir::TypeT) {
+  if e.source == el::STD_SOURCE {
+    return;
+  }
+  p = el::pos_at(e, at);
+  eprintln("state {if e.first_pass { 1 } else { 2 }} {p.line}:{p.pos} stmt-end value={report::type_show_in(e.b, el_vars::stored(vars), tp)}");
+}
+
+// The `fn-end` point (`Parser::state_trace_fn_end`): definition `d`'s result and each variable
+// `vars` holds for it, as this pass leaves them, at the definition's position.
+pub fn fn_end(e: el::El, vars: el_vars::Vars, d: integer) {
+  if e.source == el::STD_SOURCE {
+    return;
+  }
+  def = el::def(e, d);
+  f = el_vars::stored(vars);
+  head = "state {if e.first_pass { 1 } else { 2 }} {def.position.line}:{def.position.pos} fn-end {def.name}";
+  eprintln("{head} ret={report::type_show_in(e.b, f, def.returned[0] ?? ir::TyVoid)}");
+  for v in f.variables {
+    eprintln("{head} var {v#index} {v.name}={report::type_show_in(e.b, f, v.type_def[0] ?? ir::TyVoid)}");
+  }
 }
 
 // `Parser::trace_shape`: a type's shape and the definitions it names, no deps.

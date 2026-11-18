@@ -1974,6 +1974,7 @@ or build a local and use that."
         self.parse_code();
         self.closure_param = outer_closure_param;
         self.data.op_code(d_nr);
+        self.state_trace_fn_end(d_nr);
         self.data.definitions[d_nr as usize]
             .variables
             .append(&mut self.vars);
@@ -2421,6 +2422,7 @@ or build a local and use that."
         }
         self.closure_param = outer_closure_param;
         self.data.op_code(d_nr);
+        self.state_trace_fn_end(d_nr);
         self.data.definitions[d_nr as usize]
             .variables
             .append(&mut self.vars);
