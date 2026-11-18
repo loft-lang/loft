@@ -789,7 +789,7 @@ fn projects_into_local(e: el::El, vars: el_vars::Vars, n: ir::Node, every_arm: b
 fn read_root(e: el::El, n: ir::Node) -> ir::Node {
   x = el_ir::unspan(n);
   match x {
-    NdCall { def_nr, args } => if len(args) > 0 && starts_with(el::def(e, def_nr).name, "OpGet") { read_root(e, args[0]!) } else { x },
+    NdCall { def_nr, args } => if record_read(e, x) { read_root(e, args[0]!) } else { x },
     _ => x
   }
 }
@@ -1898,47 +1898,54 @@ pub fn copy_arms(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, td: i
     }
   }
   x = el_ir::unspan(n);
-  reads = match x { NdCall { def_nr, args } => len(args) > 0 && starts_with(el::def(e, def_nr).name, "OpGet"), _ => false };
   user = el_ex_place::any_user_call(e, [x]);
-  // `bind_return_source`: a source that may be absent cannot be read again to test it where a
-  // user call is in it.  One whose ROOT is that call binds it first (`_ret_root_N = f(x)`); a
-  // user call elsewhere on the path (`_ret_src_N`) is not carried.
+  // `bind_return_source` (loft#2006, loft#2561): a source with a user call in it cannot be read
+  // again to test it, so it is read ONCE first — a read path whose root is that call binds the
+  // call (`_ret_root_N`); a read path rooted at a variable or at a lifted container, and a
+  // branch arm's block that views something, are read whole into a `τ?` handle (`_ret_src_N`).
   src = n;
   binds: vector<ir::Node> = [];
-  if reads && user {
-    if el::def(e, e.context).def_type == el::DT_GENERIC {
-      return null;
-    }
-    root = read_root(e, x);
-    rt = match root {
-      NdCall { def_nr } => if !starts_with(el::def(e, def_nr).name, "Op") && heap_def(el::def(e, def_nr).returned[0] ?? ir::TyVoid) >= 0 { el::def(e, def_nr).returned[0] ?? ir::TyVoid } else { ir::TyVoid },
-      _ => ir::TyVoid
-    };
-    pr = el_ex_assign::projection_root(e, x);
-    if rt != ir::TyVoid && pr != null && el_ir::unspan(pr!) == root {
-      rr = el_vars::create_unique(vars, "_ret_root", el_types::without_deps(el_types::base(rt)));
-      binds = [el_ir::v_set(rr, root)];
-      src = el_ex_assign::replace_projection_root(e, x, ir::NdVar { n: rr });
-      x = el_ir::unspan(src);
-      user = el_ex_place::any_user_call(e, [x]);
-      if user {
+  if user && el::def(e, e.context).def_type != el::DT_GENERIC {
+    block_deps = match x { NdBlock { block: xb } => el_types::deps(xb[0].result[0] ?? ir::TyVoid), _ => [] };
+    if x is NdBlock && len(block_deps) > 0 && !source_is_literal(x) {
+      hv = el_vars::create_unique(vars, "_ret_src", ir::TyOptional { inner: ir::TyReference { n: td, dep: block_deps } });
+      binds = [el_ir::v_set(hv, x)];
+      src = ir::NdVar { n: hv };
+    } else if record_read(e, x) {
+      root = read_root(e, x);
+      root_deps = match root { NdBlock { block: rb2 } => el_types::deps(rb2[0].result[0] ?? ir::TyVoid), _ => [] };
+      rt = match root {
+        NdCall { def_nr } => if !starts_with(el::def(e, def_nr).name, "Op") && heap_def(el::def(e, def_nr).returned[0] ?? ir::TyVoid) >= 0 { el::def(e, def_nr).returned[0] ?? ir::TyVoid } else { ir::TyVoid },
+        _ => ir::TyVoid
+      };
+      pr = el_ex_assign::projection_root(e, x);
+      if rt != ir::TyVoid && pr != null && el_ir::unspan(pr!) == root {
+        rr = el_vars::create_unique(vars, "_ret_root", el_types::without_deps(el_types::base(rt)));
+        binds = [el_ir::v_set(rr, root)];
+        src = el_ex_assign::replace_projection_root(e, x, ir::NdVar { n: rr });
+      } else if rt != ir::TyVoid {
+        // (A read the two root finders do not agree on: not carried.)
         return null;
+      } else {
+        handle_deps = match root { NdVar { n: rv } => [rv], _ => root_deps };
+        if root is NdVar || len(root_deps) > 0 {
+          hv = el_vars::create_unique(vars, "_ret_src", ir::TyOptional { inner: ir::TyReference { n: td, dep: handle_deps } });
+          binds = [el_ir::v_set(hv, x)];
+          src = ir::NdVar { n: hv };
+        }
       }
-    } else if root is NdVar || root is NdCall {
-      // A user call elsewhere on the path (`w[next(c)].a`, `_ret_src_N`), or a root call of
-      // another kind: not carried.
-      return null;
     }
-    // Any other root (an inline container's block) is copied bare: nothing binds it, and a
-    // source with a user call in it is not tested.
   }
+  x = el_ir::unspan(src);
+  user = el_ex_place::any_user_call(e, [x]);
   kt = ir::NdInt { n: el::def(e, td).known_type };
   b = ir::NdVar { n: rb };
   copy = el_ir::v_block([el_ir::v_set(rb, ir::NdNull), el_ir::cl(e, "OpDatabase", [b, kt]), el_ir::cl(e, "OpCopyRecord", [src, b, kt]), b], owned, "materialized_view_return");
+  // The copy is bare only where its source is PROVEN present (`copy_source_is_present`); any
+  // other source with no user call in it is tested by reading it again.
   guard = match x {
     NdVar { n: v } => record_may_be_absent(vars, v, []),
-    NdCall { def_nr: _ } => !user && copy_source_may_be_absent(e, vars, x),
-    _ => false
+    _ => !user && !source_is_present(e, vars, x)
   };
   if guard {
     copy = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [if (x is NdVar) { x } else { src }]), el_ir::cl(e, "OpNullRefSentinel", []), copy);
@@ -1948,6 +1955,36 @@ pub fn copy_arms(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, td: i
   }
   copy
 }
+
+// `Parser::is_record_read`: a read of a record out of a place — `OpGet…`, or a projection.
+fn record_read(e: el::El, n: ir::Node) -> boolean {
+  match n {
+    NdCall { def_nr, args } => len(args) > 0 && (starts_with(el::def(e, def_nr).name, "OpGet") || projection_op(el::def(e, def_nr).name)),
+    _ => false
+  }
+}
+
+// `Parser::copy_source_is_a_literal`: a record literal, through the blocks it is the tail of.
+fn source_is_literal(n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdBlock { block } => block[0].name == "Object" || (len(block[0].operators) > 0 && source_is_literal(el_ir::last(block[0].operators))),
+    NdInsert { items } => len(items) > 0 && source_is_literal(items[-1]!),
+    _ => false
+  }
+}
+
+// `Parser::copy_source_is_present`: a literal, a local that cannot be absent, an inline field
+// path rooted at one — bare, or as the one value of a block.
+fn source_is_present(e: el::El, vars: el_vars::Vars, n: ir::Node) -> boolean {
+  x = el_ir::unspan(n);
+  match x {
+    NdVar { n: v } => !record_may_be_absent(vars, v, []),
+    NdCall { def_nr, args } => el::def(e, def_nr).name == "OpGetField" && len(args) == 3 && source_is_present(e, vars, args[0]!),
+    NdBlock { block } => block[0].name == "Object" || (len(block[0].operators) == 1 && source_is_present(e, vars, block[0].operators[0]!)) || source_is_literal(x),
+    _ => source_is_literal(x)
+  }
+}
+
 
 // `branch_has_nullable_leaf`: does a branch end, on some path, in a source that may be absent —
 // a record local that may hold nothing, a field path rooted at one, a read, a user call?  A
