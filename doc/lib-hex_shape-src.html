@@ -23,8 +23,8 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <a href="https://loft-lang.org/blog/">Blog</a> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>hex_shape source</h1>
 <article>
-<p><a href="lib-hex_shape.html">← hex_shape</a> · <a href="lib-hex_shape-api.html">API reference</a> · version 0.1.8</p>
-<p class="lib-legend">6 file(s), 2988 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<p><a href="lib-hex_shape.html">← hex_shape</a> · <a href="lib-hex_shape-api.html">API reference</a> · version 0.1.9</p>
+<p class="lib-legend">6 file(s), 3132 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
 <table class="lib-table">
@@ -42,17 +42,21 @@
 <tr><td><code>box_sin</code> <span class="search-kind">fn</span></td><td><a href="#src-hexbox-loft-L76">76</a></td><td>—</td><td><a href="#src-hexbox-loft-L125">125</a></td></tr>
 <tr><td><code>box_orbit</code> <span class="search-kind">fn</span></td><td><a href="#src-hexbox-loft-L89">89</a></td><td><a href="#tests-02-worked-examples-loft-L409">HXS-006</a></td><td><a href="#tests-01-hex-shape-loft-L33">33</a> <a href="#tests-01-hex-shape-loft-L34">34</a> <a href="#tests-01-hex-shape-loft-L35">35</a> <a href="#tests-02-worked-examples-loft-L433">433</a> <a href="#tests-02-worked-examples-loft-L437">437</a></td></tr>
 <tr><td><code>Box</code> <span class="search-kind">struct</span></td><td><a href="#src-hexbox-loft-L93">93</a></td><td>—</td><td><a href="#src-hexbox-loft-L107">107</a> <a href="#src-hexbox-loft-L108">108</a> <a href="#src-hexbox-loft-L114">114</a> <a href="#src-hexbox-loft-L116">116</a> <a href="#src-hexbox-loft-L118">118</a> <a href="#src-hexbox-loft-L123">123</a> … (7 total)</td></tr>
-<tr><td><code>box_new</code> <span class="search-kind">fn</span></td><td><a href="#src-hexbox-loft-L106">106</a></td><td>—</td><td><a href="#tests-01-hex-shape-loft-L12">12</a> <a href="#tests-01-hex-shape-loft-L26">26</a> <a href="#tests-02-worked-examples-loft-L105">105</a> <a href="#tests-02-worked-examples-loft-L429">429</a> <a href="#tests-02-worked-examples-loft-L465">465</a></td></tr>
+<tr><td><code>box_new</code> <span class="search-kind">fn</span></td><td><a href="#src-hexbox-loft-L106">106</a></td><td>—</td><td><a href="#tests-01-hex-shape-loft-L12">12</a> <a href="#tests-01-hex-shape-loft-L26">26</a> <a href="#tests-01-hex-shape-loft-L511">511</a> <a href="#tests-02-worked-examples-loft-L105">105</a> <a href="#tests-02-worked-examples-loft-L429">429</a> <a href="#tests-02-worked-examples-loft-L465">465</a></td></tr>
 <tr><td><code>box_hw</code> <span class="search-kind">fn</span></td><td><a href="#src-hexbox-loft-L114">114</a></td><td>—</td><td><a href="#src-hexbox-loft-L145">145</a> <a href="#tests-01-hex-shape-loft-L13">13</a> <a href="#tests-02-worked-examples-loft-L106">106</a></td></tr>
 <tr><td><code>box_hd</code> <span class="search-kind">fn</span></td><td><a href="#src-hexbox-loft-L116">116</a></td><td>—</td><td><a href="#src-hexbox-loft-L146">146</a></td></tr>
 <tr><td><code>box_to_local</code> <span class="search-kind">fn</span></td><td><a href="#src-hexbox-loft-L123">123</a></td><td>—</td><td><a href="#src-hexbox-loft-L150">150</a></td></tr>
-<tr><td><code>box_fill</code> <span class="search-kind">fn</span></td><td><a href="#src-hexbox-loft-L144">144</a></td><td><a href="#tests-02-worked-examples-loft-L409">HXS-006</a></td><td><a href="#tests-02-worked-examples-loft-L431">431</a> <a href="#tests-02-worked-examples-loft-L467">467</a></td></tr>
-<tr><td><code>box_ring_out</code> <span class="search-kind">fn</span></td><td><a href="#src-hexbox-loft-L172">172</a></td><td><a href="#tests-02-worked-examples-loft-L448">HXS-007</a></td><td><a href="#tests-02-worked-examples-loft-L471">471</a></td></tr>
-<tr><td><code>box_ring_in</code> <span class="search-kind">fn</span></td><td><a href="#src-hexbox-loft-L196">196</a></td><td><a href="#tests-02-worked-examples-loft-L448">HXS-007</a></td><td><a href="#tests-02-worked-examples-loft-L494">494</a></td></tr>
-<tr><td><code>flood_outside</code> <span class="search-kind">fn</span></td><td><a href="#src-hexbox-loft-L223">223</a></td><td><a href="#tests-02-worked-examples-loft-L448">HXS-007</a></td><td><a href="#tests-02-worked-examples-loft-L476">476</a> <a href="#tests-02-worked-examples-loft-L488">488</a></td></tr>
-<tr><td><code>leak_count</code> <span class="search-kind">fn</span></td><td><a href="#src-hexbox-loft-L262">262</a></td><td><a href="#tests-02-worked-examples-loft-L448">HXS-007</a></td><td><a href="#tests-02-worked-examples-loft-L473">473</a> <a href="#tests-02-worked-examples-loft-L477">477</a> <a href="#tests-02-worked-examples-loft-L489">489</a> <a href="#tests-02-worked-examples-loft-L490">490</a> <a href="#tests-02-worked-examples-loft-L496">496</a></td></tr>
-<tr><td><code>line_hexes</code> <span class="search-kind">fn</span></td><td><a href="#src-hexbox-loft-L283">283</a></td><td><a href="#tests-02-worked-examples-loft-L448">HXS-007</a></td><td><a href="#tests-02-worked-examples-loft-L502">502</a></td></tr>
-<tr><td><code>set_connected</code> <span class="search-kind">fn</span></td><td><a href="#src-hexbox-loft-L314">314</a></td><td><a href="#tests-02-worked-examples-loft-L448">HXS-007</a></td><td><a href="#tests-02-worked-examples-loft-L478">478</a> <a href="#tests-02-worked-examples-loft-L484">484</a> <a href="#tests-02-worked-examples-loft-L504">504</a></td></tr>
+<tr><td><code>box_fill</code> <span class="search-kind">fn</span></td><td><a href="#src-hexbox-loft-L144">144</a></td><td><a href="#tests-02-worked-examples-loft-L409">HXS-006</a></td><td><a href="#tests-01-hex-shape-loft-L511">511</a> <a href="#tests-01-hex-shape-loft-L524">524</a> <a href="#tests-02-worked-examples-loft-L431">431</a> <a href="#tests-02-worked-examples-loft-L467">467</a></td></tr>
+<tr><td><code>BoxPart</code> <span class="search-kind">struct</span></td><td><a href="#src-hexbox-loft-L175">175</a></td><td>—</td><td><a href="#src-hexbox-loft-L183">183</a> <a href="#src-hexbox-loft-L184">184</a> <a href="#src-hexbox-loft-L198">198</a> <a href="#src-hexbox-loft-L227">227</a></td></tr>
+<tr><td><code>box_part</code> <span class="search-kind">fn</span></td><td><a href="#src-hexbox-loft-L183">183</a></td><td>—</td><td><a href="#tests-01-hex-shape-loft-L513">513</a> <a href="#tests-01-hex-shape-loft-L531">531</a> <a href="#tests-01-hex-shape-loft-L536">536</a> <a href="#tests-01-hex-shape-loft-L538">538</a> <a href="#tests-01-hex-shape-loft-L549">549</a></td></tr>
+<tr><td><code>parts_fill</code> <span class="search-kind">fn</span></td><td><a href="#src-hexbox-loft-L197">197</a></td><td>—</td><td><a href="#tests-01-hex-shape-loft-L513">513</a> <a href="#tests-01-hex-shape-loft-L534">534</a> <a href="#tests-01-hex-shape-loft-L536">536</a> <a href="#tests-01-hex-shape-loft-L538">538</a> <a href="#tests-01-hex-shape-loft-L549">549</a> <a href="#tests-01-hex-shape-loft-L552">552</a></td></tr>
+<tr><td><code>parts_reach</code> <span class="search-kind">fn</span></td><td><a href="#src-hexbox-loft-L227">227</a></td><td>—</td><td><a href="#tests-01-hex-shape-loft-L562">562</a></td></tr>
+<tr><td><code>box_ring_out</code> <span class="search-kind">fn</span></td><td><a href="#src-hexbox-loft-L251">251</a></td><td><a href="#tests-02-worked-examples-loft-L448">HXS-007</a></td><td><a href="#tests-02-worked-examples-loft-L471">471</a></td></tr>
+<tr><td><code>box_ring_in</code> <span class="search-kind">fn</span></td><td><a href="#src-hexbox-loft-L275">275</a></td><td><a href="#tests-02-worked-examples-loft-L448">HXS-007</a></td><td><a href="#tests-02-worked-examples-loft-L494">494</a></td></tr>
+<tr><td><code>flood_outside</code> <span class="search-kind">fn</span></td><td><a href="#src-hexbox-loft-L302">302</a></td><td><a href="#tests-02-worked-examples-loft-L448">HXS-007</a></td><td><a href="#tests-02-worked-examples-loft-L476">476</a> <a href="#tests-02-worked-examples-loft-L488">488</a></td></tr>
+<tr><td><code>leak_count</code> <span class="search-kind">fn</span></td><td><a href="#src-hexbox-loft-L341">341</a></td><td><a href="#tests-02-worked-examples-loft-L448">HXS-007</a></td><td><a href="#tests-02-worked-examples-loft-L473">473</a> <a href="#tests-02-worked-examples-loft-L477">477</a> <a href="#tests-02-worked-examples-loft-L489">489</a> <a href="#tests-02-worked-examples-loft-L490">490</a> <a href="#tests-02-worked-examples-loft-L496">496</a></td></tr>
+<tr><td><code>line_hexes</code> <span class="search-kind">fn</span></td><td><a href="#src-hexbox-loft-L362">362</a></td><td><a href="#tests-02-worked-examples-loft-L448">HXS-007</a></td><td><a href="#tests-02-worked-examples-loft-L502">502</a></td></tr>
+<tr><td><code>set_connected</code> <span class="search-kind">fn</span></td><td><a href="#src-hexbox-loft-L393">393</a></td><td><a href="#tests-02-worked-examples-loft-L448">HXS-007</a></td><td><a href="#tests-02-worked-examples-loft-L478">478</a> <a href="#tests-02-worked-examples-loft-L484">484</a> <a href="#tests-02-worked-examples-loft-L504">504</a></td></tr>
 <tr><td><code>WALL_W</code> <span class="search-kind">const</span></td><td><a href="#src-hexwall-loft-L32">32</a></td><td>—</td><td><a href="#tests-02-worked-examples-loft-L209">209</a> <a href="#tests-02-worked-examples-loft-L210">210</a></td></tr>
 <tr><td><code>D24</code> <span class="search-kind">const</span></td><td><a href="#src-hexwall-loft-L34">34</a></td><td>—</td><td><a href="#src-hexwall-loft-L112">112</a> <a href="#src-hexwall-loft-L121">121</a> <a href="#src-hexwall-loft-L131">131</a> <a href="#src-hexwall-loft-L152">152</a> <a href="#src-hexwall-loft-L955">955</a> <a href="#src-hexwall-loft-L1017">1017</a></td></tr>
 <tr><td><code>Wall</code> <span class="search-kind">struct</span></td><td><a href="#src-hexwall-loft-L38">38</a></td><td>—</td><td><a href="#src-hexwall-loft-L138">138</a> <a href="#src-hexwall-loft-L144">144</a> <a href="#src-hexwall-loft-L179">179</a> <a href="#src-hexwall-loft-L184">184</a> <a href="#src-hexwall-loft-L212">212</a> <a href="#src-hexwall-loft-L322">322</a> … (12 total)</td></tr>
@@ -504,196 +508,275 @@
 <span id="src-hexbox-loft-L157">  n</span>
 <span id="src-hexbox-loft-L158">}</span>
 <span id="src-hexbox-loft-L159"></span>
-<span id="src-hexbox-loft-L160"><span class="cm">// ── THE THICK WALL — a castle, not a cottage ───────────────────────────────</span></span>
+<span id="src-hexbox-loft-L160"><span class="cm">// ── A PLAN OF SEVERAL RECTANGLES, FILLED EXACTLY ───────────────────────────</span></span>
 <span id="src-hexbox-loft-L161"><span class="cm">//</span></span>
-<span id="src-hexbox-loft-L162"><span class="cm">// A cottage wall is an EDGE: it costs no floor, and 27 cells of house stay 27 cells of</span></span>
-<span id="src-hexbox-loft-L163"><span class="cm">// house. A castle wall is different in kind — it is GROUND, wide enough to stand and walk</span></span>
-<span id="src-hexbox-loft-L164"><span class="cm">// on, with an inside and an outside. So it is a ring of whole CELLS, and the only question</span></span>
-<span id="src-hexbox-loft-L165"><span class="cm">// is which side of the selection it takes.</span></span>
+<span id="src-hexbox-loft-L162"><span class="cm">// A house is seldom one box: an L, a T, a hall with wings.  A `BoxPart` is one rectangle of such</span></span>
+<span id="src-hexbox-loft-L163"><span class="cm">// a plan in the plan's own frame, in HALF hex steps: u from `bp_u0` to `bp_u1` along the plan's</span></span>
+<span id="src-hexbox-loft-L164"><span class="cm">// heading, v from `bp_v0` to `bp_v1` along the heading three steps on.  The box</span></span>
+<span id="src-hexbox-loft-L165"><span class="cm">// `box_new(.., w, d, ..)` is the one part `box_part(-w, -d, w, d)`.</span></span>
 <span id="src-hexbox-loft-L166"><span class="cm">//</span></span>
-<span id="src-hexbox-loft-L167"><span class="cm">// `box_ring_out` puts it OUTSIDE: the user's selection is the courtyard, untouched, and the</span></span>
-<span id="src-hexbox-loft-L168"><span class="cm">// wall is the ring of cells around it. This is the one that matches the editor's gesture —</span></span>
-<span id="src-hexbox-loft-L169"><span class="cm">// what you select is what you get to keep.</span></span>
-<span id="src-hexbox-loft-L170"><span class="cm">//</span></span>
-<span id="src-hexbox-loft-L171"><span class="cm">// Example: @HXS-007</span></span>
-<span id="src-hexbox-loft-L172"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">box_ring_out</span>(cells: <span class="en">HexSet</span>, ring: <span class="en">HexSet</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-hexbox-loft-L173">  n = <span class="nm">0</span>;</span>
-<span id="src-hexbox-loft-L174">  <span class="kw">for</span> rr <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(cells)..<span class="fn-call">hexset_r0</span>(cells) + <span class="fn-call">hexset_h</span>(cells) {</span>
-<span id="src-hexbox-loft-L175">    <span class="kw">for</span> rq <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(cells)..<span class="fn-call">hexset_q0</span>(cells) + <span class="fn-call">hexset_w</span>(cells) {</span>
-<span id="src-hexbox-loft-L176">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(cells, rq, rr) {</span>
-<span id="src-hexbox-loft-L177">        <span class="kw">for</span> rd <span class="kw">in</span> <span class="nm">0..6</span> {</span>
-<span id="src-hexbox-loft-L178">          nq = <span class="fn-call">nb_q</span>(rq, rr, rd);</span>
-<span id="src-hexbox-loft-L179">          nr = <span class="fn-call">nb_r</span>(rq, rr, rd);</span>
-<span id="src-hexbox-loft-L180">          <span class="kw">if</span> !<span class="fn-call">hexset_get</span>(cells, nq, nr) &amp;&amp; !<span class="fn-call">hexset_get</span>(ring, nq, nr) {</span>
-<span id="src-hexbox-loft-L181">            <span class="fn-call">hexset_set</span>(ring, nq, nr, <span class="kw">true</span>);</span>
-<span id="src-hexbox-loft-L182">            n = n + <span class="nm">1</span>;</span>
-<span id="src-hexbox-loft-L183">          }</span>
-<span id="src-hexbox-loft-L184">        }</span>
-<span id="src-hexbox-loft-L185">      }</span>
-<span id="src-hexbox-loft-L186">    }</span>
-<span id="src-hexbox-loft-L187">  }</span>
-<span id="src-hexbox-loft-L188">  n</span>
-<span id="src-hexbox-loft-L189">}</span>
-<span id="src-hexbox-loft-L190"></span>
-<span id="src-hexbox-loft-L191"><span class="cm">// `box_ring_in` takes it from INSIDE instead: the outermost layer of the selection becomes</span></span>
-<span id="src-hexbox-loft-L192"><span class="cm">// wall and the courtyard shrinks. Same ring, opposite side — a town wall drawn to a</span></span>
-<span id="src-hexbox-loft-L193"><span class="cm">// surveyed outer boundary wants this one.</span></span>
-<span id="src-hexbox-loft-L194"><span class="cm">//</span></span>
-<span id="src-hexbox-loft-L195"><span class="cm">// Example: @HXS-007</span></span>
-<span id="src-hexbox-loft-L196"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">box_ring_in</span>(cells: <span class="en">HexSet</span>, ring: <span class="en">HexSet</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-hexbox-loft-L197">  n = <span class="nm">0</span>;</span>
-<span id="src-hexbox-loft-L198">  <span class="kw">for</span> ir <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(cells)..<span class="fn-call">hexset_r0</span>(cells) + <span class="fn-call">hexset_h</span>(cells) {</span>
-<span id="src-hexbox-loft-L199">    <span class="kw">for</span> iq <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(cells)..<span class="fn-call">hexset_q0</span>(cells) + <span class="fn-call">hexset_w</span>(cells) {</span>
-<span id="src-hexbox-loft-L200">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(cells, iq, ir) {</span>
-<span id="src-hexbox-loft-L201">        edge = <span class="kw">false</span>;</span>
-<span id="src-hexbox-loft-L202">        <span class="kw">for</span> id <span class="kw">in</span> <span class="nm">0..6</span> {</span>
-<span id="src-hexbox-loft-L203">          <span class="kw">if</span> !<span class="fn-call">hexset_get</span>(cells, <span class="fn-call">nb_q</span>(iq, ir, id), <span class="fn-call">nb_r</span>(iq, ir, id)) { edge = <span class="kw">true</span>; }</span>
-<span id="src-hexbox-loft-L204">        }</span>
-<span id="src-hexbox-loft-L205">        <span class="kw">if</span> edge { <span class="fn-call">hexset_set</span>(ring, iq, ir, <span class="kw">true</span>); n = n + <span class="nm">1</span>; }</span>
-<span id="src-hexbox-loft-L206">      }</span>
-<span id="src-hexbox-loft-L207">    }</span>
-<span id="src-hexbox-loft-L208">  }</span>
-<span id="src-hexbox-loft-L209">  n</span>
-<span id="src-hexbox-loft-L210">}</span>
-<span id="src-hexbox-loft-L211"></span>
-<span id="src-hexbox-loft-L212"><span class="cm">// ── DOES THE WALL HOLD? ────────────────────────────────────────────────────</span></span>
-<span id="src-hexbox-loft-L213"><span class="cm">//</span></span>
-<span id="src-hexbox-loft-L214"><span class="cm">// A ring that looks closed and is not is the exact defect `SPEC` I3's control names — "2</span></span>
-<span id="src-hexbox-loft-L215"><span class="cm">// components, 0 enclosed, yet still 12/12 equivariant". For a thick wall the honest test is</span></span>
-<span id="src-hexbox-loft-L216"><span class="cm">// not to count cells but to try to WALK IN: flood the outside and see whether it reaches the</span></span>
-<span id="src-hexbox-loft-L217"><span class="cm">// courtyard. One hole and it does.</span></span>
-<span id="src-hexbox-loft-L218"><span class="cm">//</span></span>
-<span id="src-hexbox-loft-L219"><span class="cm">// Relaxation rather than a queue: the region is a box, so sweeping until nothing changes</span></span>
-<span id="src-hexbox-loft-L220"><span class="cm">// terminates in at most its perimeter in passes, and it needs no auxiliary storage.</span></span>
-<span id="src-hexbox-loft-L221"><span class="cm">//</span></span>
-<span id="src-hexbox-loft-L222"><span class="cm">// Example: @HXS-007</span></span>
-<span id="src-hexbox-loft-L223"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">flood_outside</span>(wall: <span class="en">HexSet</span>, out: <span class="en">HexSet</span>) {</span>
-<span id="src-hexbox-loft-L224">  q0 = <span class="fn-call">hexset_q0</span>(out);</span>
-<span id="src-hexbox-loft-L225">  r0 = <span class="fn-call">hexset_r0</span>(out);</span>
-<span id="src-hexbox-loft-L226">  w = <span class="fn-call">hexset_w</span>(out);</span>
-<span id="src-hexbox-loft-L227">  h = <span class="fn-call">hexset_h</span>(out);</span>
-<span id="src-hexbox-loft-L228">  <span class="cm">// seed: the whole border of the window, minus any wall on it</span></span>
-<span id="src-hexbox-loft-L229">  <span class="kw">for</span> sq <span class="kw">in</span> q0..q0 + w {</span>
-<span id="src-hexbox-loft-L230">    <span class="kw">if</span> !<span class="fn-call">hexset_get</span>(wall, sq, r0) { <span class="fn-call">hexset_set</span>(out, sq, r0, <span class="kw">true</span>); }</span>
-<span id="src-hexbox-loft-L231">    <span class="kw">if</span> !<span class="fn-call">hexset_get</span>(wall, sq, r0 + h - <span class="nm">1</span>) { <span class="fn-call">hexset_set</span>(out, sq, r0 + h - <span class="nm">1</span>, <span class="kw">true</span>); }</span>
-<span id="src-hexbox-loft-L232">  }</span>
-<span id="src-hexbox-loft-L233">  <span class="kw">for</span> sr <span class="kw">in</span> r0..r0 + h {</span>
-<span id="src-hexbox-loft-L234">    <span class="kw">if</span> !<span class="fn-call">hexset_get</span>(wall, q0, sr) { <span class="fn-call">hexset_set</span>(out, q0, sr, <span class="kw">true</span>); }</span>
-<span id="src-hexbox-loft-L235">    <span class="kw">if</span> !<span class="fn-call">hexset_get</span>(wall, q0 + w - <span class="nm">1</span>, sr) { <span class="fn-call">hexset_set</span>(out, q0 + w - <span class="nm">1</span>, sr, <span class="kw">true</span>); }</span>
-<span id="src-hexbox-loft-L236">  }</span>
-<span id="src-hexbox-loft-L237">  changed = <span class="kw">true</span>;</span>
-<span id="src-hexbox-loft-L238">  while changed {</span>
-<span id="src-hexbox-loft-L239">    changed = <span class="kw">false</span>;</span>
-<span id="src-hexbox-loft-L240">    <span class="kw">for</span> fr <span class="kw">in</span> r0..r0 + h {</span>
-<span id="src-hexbox-loft-L241">      <span class="kw">for</span> fq <span class="kw">in</span> q0..q0 + w {</span>
-<span id="src-hexbox-loft-L242">        <span class="kw">if</span> <span class="fn-call">hexset_get</span>(out, fq, fr) {</span>
-<span id="src-hexbox-loft-L243">          <span class="kw">for</span> fd <span class="kw">in</span> <span class="nm">0..6</span> {</span>
-<span id="src-hexbox-loft-L244">            nq = <span class="fn-call">nb_q</span>(fq, fr, fd);</span>
-<span id="src-hexbox-loft-L245">            nr = <span class="fn-call">nb_r</span>(fq, fr, fd);</span>
-<span id="src-hexbox-loft-L246">            <span class="kw">if</span> nq &gt;= q0 &amp;&amp; nq &lt; q0 + w &amp;&amp; nr &gt;= r0 &amp;&amp; nr &lt; r0 + h {</span>
-<span id="src-hexbox-loft-L247">              <span class="kw">if</span> !<span class="fn-call">hexset_get</span>(wall, nq, nr) &amp;&amp; !<span class="fn-call">hexset_get</span>(out, nq, nr) {</span>
-<span id="src-hexbox-loft-L248">                <span class="fn-call">hexset_set</span>(out, nq, nr, <span class="kw">true</span>);</span>
-<span id="src-hexbox-loft-L249">                changed = <span class="kw">true</span>;</span>
-<span id="src-hexbox-loft-L250">              }</span>
-<span id="src-hexbox-loft-L251">            }</span>
-<span id="src-hexbox-loft-L252">          }</span>
-<span id="src-hexbox-loft-L253">        }</span>
-<span id="src-hexbox-loft-L254">      }</span>
-<span id="src-hexbox-loft-L255">    }</span>
-<span id="src-hexbox-loft-L256">  }</span>
-<span id="src-hexbox-loft-L257">}</span>
-<span id="src-hexbox-loft-L258"></span>
-<span id="src-hexbox-loft-L259"><span class="cm">// How many cells of `inner` the outside flood reached. Zero means the wall holds.</span></span>
-<span id="src-hexbox-loft-L260"><span class="cm">//</span></span>
-<span id="src-hexbox-loft-L261"><span class="cm">// Example: @HXS-007</span></span>
-<span id="src-hexbox-loft-L262"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">leak_count</span>(inner: <span class="en">HexSet</span>, out: <span class="en">HexSet</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-hexbox-loft-L263">  n = <span class="nm">0</span>;</span>
-<span id="src-hexbox-loft-L264">  <span class="kw">for</span> lr <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(inner)..<span class="fn-call">hexset_r0</span>(inner) + <span class="fn-call">hexset_h</span>(inner) {</span>
-<span id="src-hexbox-loft-L265">    <span class="kw">for</span> lq <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(inner)..<span class="fn-call">hexset_q0</span>(inner) + <span class="fn-call">hexset_w</span>(inner) {</span>
-<span id="src-hexbox-loft-L266">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(inner, lq, lr) &amp;&amp; <span class="fn-call">hexset_get</span>(out, lq, lr) { n = n + <span class="nm">1</span>; }</span>
-<span id="src-hexbox-loft-L267">    }</span>
-<span id="src-hexbox-loft-L268">  }</span>
-<span id="src-hexbox-loft-L269">  n</span>
-<span id="src-hexbox-loft-L270">}</span>
-<span id="src-hexbox-loft-L271"></span>
-<span id="src-hexbox-loft-L272"><span class="cm">// ── A THICK LINE — the town wall that is not a box ─────────────────────────</span></span>
+<span id="src-hexbox-loft-L167"><span class="cm">// The fill is `box_fill`'s rule — a cell is in when its CENTRE lies in a rectangle, the rim</span></span>
+<span id="src-hexbox-loft-L168"><span class="cm">// counted in — decided without a float.  Along an even heading a centre's distance, scaled, is a</span></span>
+<span id="src-hexbox-loft-L169"><span class="cm">// whole number and so is a plan line; along an odd heading the line is a whole number times</span></span>
+<span id="src-hexbox-loft-L170"><span class="cm">// sqrt(3), and the comparison is `sign_root3`.  A rectangle's two axes are never of one kind (the</span></span>
+<span id="src-hexbox-loft-L171"><span class="cm">// heading three steps on has the other parity), so each part takes one test of each.  No epsilon:</span></span>
+<span id="src-hexbox-loft-L172"><span class="cm">// where `box_fill` adds 1e-9 so a column on the rim is not lost to the last bit, here the rim is</span></span>
+<span id="src-hexbox-loft-L173"><span class="cm">// an equality of integers.  `parts_fill` of one part and `box_fill` give the same cells; the</span></span>
+<span id="src-hexbox-loft-L174"><span class="cm">// tests sweep that.</span></span>
+<span id="src-hexbox-loft-L175"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">BoxPart</span> {</span>
+<span id="src-hexbox-loft-L176">  <span class="kw">pub</span> bp_u0: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-hexbox-loft-L177">  <span class="kw">pub</span> bp_v0: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-hexbox-loft-L178">  <span class="kw">pub</span> bp_u1: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-hexbox-loft-L179">  <span class="kw">pub</span> bp_v1: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-hexbox-loft-L180">}</span>
+<span id="src-hexbox-loft-L181"></span>
+<span id="src-hexbox-loft-L182"><span class="cm">// One rectangle of a plan, in half hex steps of the plan's frame.</span></span>
+<span id="src-hexbox-loft-L183"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">box_part</span>(u0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, v0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, u1: <span class="ty"><a href="stdlib-types.html">integer</a></span>, v1: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">BoxPart</span> {</span>
+<span id="src-hexbox-loft-L184">  <span class="en">BoxPart</span> { bp_u0: u0, bp_v0: v0, bp_u1: u1, bp_v1: v1 }</span>
+<span id="src-hexbox-loft-L185">}</span>
+<span id="src-hexbox-loft-L186"></span>
+<span id="src-hexbox-loft-L187"><span class="cm">// Is coordinate `p` — along heading `head`, scaled by 8 times that heading's step length —</span></span>
+<span id="src-hexbox-loft-L188"><span class="cm">// between the plan lines `lo` and `hi` half steps out, the lines counted in?</span></span>
+<span id="src-hexbox-loft-L189"><span class="kw">fn</span> <span class="fn-call">part_within</span>(head: <span class="ty"><a href="stdlib-types.html">integer</a></span>, p: <span class="ty"><a href="stdlib-types.html">integer</a></span>, lo: <span class="ty"><a href="stdlib-types.html">integer</a></span>, hi: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-hexbox-loft-L190">  <span class="kw">if</span> <span class="fn-call">head_is_edge</span>(head) { <span class="kw">return</span> p &gt;= <span class="nm">12</span> * lo &amp;&amp; p &lt;= <span class="nm">12</span> * hi; }</span>
+<span id="src-hexbox-loft-L191">  <span class="fn-call">sign_root3</span>(p, -<span class="nm">12</span> * lo) &gt;= <span class="nm">0</span> &amp;&amp; <span class="fn-call">sign_root3</span>(p, -<span class="nm">12</span> * hi) &lt;= <span class="nm">0</span></span>
+<span id="src-hexbox-loft-L192">}</span>
+<span id="src-hexbox-loft-L193"></span>
+<span id="src-hexbox-loft-L194"><span class="cm">// Mark in `cells` every cell whose centre lies in one of `parts`, the plan's origin on cell</span></span>
+<span id="src-hexbox-loft-L195"><span class="cm">// (cq, cr), its u along heading `rot` (0..11, thirty degrees a step), u flipped when `mir`.</span></span>
+<span id="src-hexbox-loft-L196"><span class="cm">// Answers how many it marked.</span></span>
+<span id="src-hexbox-loft-L197"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">parts_fill</span>(cq: <span class="ty"><a href="stdlib-types.html">integer</a></span>, cr: <span class="ty"><a href="stdlib-types.html">integer</a></span>, rot: <span class="ty"><a href="stdlib-types.html">integer</a></span>, mir: <span class="ty"><a href="stdlib-types.html">boolean</a></span>,</span>
+<span id="src-hexbox-loft-L198">                  parts: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">BoxPart</span>&gt;, cells: <span class="en">HexSet</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-hexbox-loft-L199">  us = <span class="fn-call">head_step</span>(rot);</span>
+<span id="src-hexbox-loft-L200">  vs = <span class="fn-call">head_step</span>(rot + <span class="nm">3</span>);</span>
+<span id="src-hexbox-loft-L201">  ck = <span class="fn-call">lattice_k</span>(cq, cr);</span>
+<span id="src-hexbox-loft-L202">  cm = <span class="fn-call">lattice_m</span>(cq, cr);</span>
+<span id="src-hexbox-loft-L203">  n = <span class="nm">0</span>;</span>
+<span id="src-hexbox-loft-L204">  <span class="kw">for</span> fr <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(cells)..<span class="fn-call">hexset_r0</span>(cells) + <span class="fn-call">hexset_h</span>(cells) {</span>
+<span id="src-hexbox-loft-L205">    <span class="kw">for</span> fq <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(cells)..<span class="fn-call">hexset_q0</span>(cells) + <span class="fn-call">hexset_w</span>(cells) {</span>
+<span id="src-hexbox-loft-L206">      pk = <span class="nm">2</span> * (<span class="fn-call">lattice_k</span>(fq, fr) - ck);</span>
+<span id="src-hexbox-loft-L207">      pm = <span class="nm">2</span> * (<span class="fn-call">lattice_m</span>(fq, fr) - cm);</span>
+<span id="src-hexbox-loft-L208">      u = <span class="fn-call">vec_dot_4</span>(pk, pm, us.<span class="nm">0</span>, us.<span class="nm">1</span>);</span>
+<span id="src-hexbox-loft-L209">      <span class="kw">if</span> mir { u = <span class="nm">0</span> - u; }</span>
+<span id="src-hexbox-loft-L210">      v = <span class="fn-call">vec_dot_4</span>(pk, pm, vs.<span class="nm">0</span>, vs.<span class="nm">1</span>);</span>
+<span id="src-hexbox-loft-L211">      inside = <span class="kw">false</span>;</span>
+<span id="src-hexbox-loft-L212">      <span class="kw">for</span> pi <span class="kw">in</span> <span class="nm">0..l</span><span class="fn-call">en</span>(parts) {</span>
+<span id="src-hexbox-loft-L213">        pt = parts[pi]!;</span>
+<span id="src-hexbox-loft-L214">        <span class="kw">if</span> <span class="fn-call">part_within</span>(rot, u, pt.bp_u0, pt.bp_u1) &amp;&amp; <span class="fn-call">part_within</span>(rot + <span class="nm">3</span>, v, pt.bp_v0, pt.bp_v1) { inside = <span class="kw">true</span>; }</span>
+<span id="src-hexbox-loft-L215">      }</span>
+<span id="src-hexbox-loft-L216">      <span class="kw">if</span> inside {</span>
+<span id="src-hexbox-loft-L217">        <span class="fn-call">hexset_set</span>(cells, fq, fr, <span class="kw">true</span>);</span>
+<span id="src-hexbox-loft-L218">        n = n + <span class="nm">1</span>;</span>
+<span id="src-hexbox-loft-L219">      }</span>
+<span id="src-hexbox-loft-L220">    }</span>
+<span id="src-hexbox-loft-L221">  }</span>
+<span id="src-hexbox-loft-L222">  n</span>
+<span id="src-hexbox-loft-L223">}</span>
+<span id="src-hexbox-loft-L224"></span>
+<span id="src-hexbox-loft-L225"><span class="cm">// How far from the plan's origin, in cells, a window must reach to hold the plan at any</span></span>
+<span id="src-hexbox-loft-L226"><span class="cm">// rotation: its furthest line in half steps, and a margin.</span></span>
+<span id="src-hexbox-loft-L227"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">parts_reach</span>(parts: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">BoxPart</span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-hexbox-loft-L228">  r = <span class="nm">0</span>;</span>
+<span id="src-hexbox-loft-L229">  <span class="kw">for</span> pi <span class="kw">in</span> <span class="nm">0..l</span><span class="fn-call">en</span>(parts) {</span>
+<span id="src-hexbox-loft-L230">    pt = parts[pi]!;</span>
+<span id="src-hexbox-loft-L231">    <span class="kw">for</span> c <span class="kw">in</span> [pt.bp_u0, pt.bp_u1, pt.bp_v0, pt.bp_v1] {</span>
+<span id="src-hexbox-loft-L232">      a = <span class="kw">if</span> c &lt; <span class="nm">0</span> { <span class="nm">0</span> - c } <span class="kw">else</span> { c };</span>
+<span id="src-hexbox-loft-L233">      <span class="kw">if</span> a &gt; r { r = a; }</span>
+<span id="src-hexbox-loft-L234">    }</span>
+<span id="src-hexbox-loft-L235">  }</span>
+<span id="src-hexbox-loft-L236">  r + <span class="nm">3</span></span>
+<span id="src-hexbox-loft-L237">}</span>
+<span id="src-hexbox-loft-L238"></span>
+<span id="src-hexbox-loft-L239"><span class="cm">// ── THE THICK WALL — a castle, not a cottage ───────────────────────────────</span></span>
+<span id="src-hexbox-loft-L240"><span class="cm">//</span></span>
+<span id="src-hexbox-loft-L241"><span class="cm">// A cottage wall is an EDGE: it costs no floor, and 27 cells of house stay 27 cells of</span></span>
+<span id="src-hexbox-loft-L242"><span class="cm">// house. A castle wall is different in kind — it is GROUND, wide enough to stand and walk</span></span>
+<span id="src-hexbox-loft-L243"><span class="cm">// on, with an inside and an outside. So it is a ring of whole CELLS, and the only question</span></span>
+<span id="src-hexbox-loft-L244"><span class="cm">// is which side of the selection it takes.</span></span>
+<span id="src-hexbox-loft-L245"><span class="cm">//</span></span>
+<span id="src-hexbox-loft-L246"><span class="cm">// `box_ring_out` puts it OUTSIDE: the user's selection is the courtyard, untouched, and the</span></span>
+<span id="src-hexbox-loft-L247"><span class="cm">// wall is the ring of cells around it. This is the one that matches the editor's gesture —</span></span>
+<span id="src-hexbox-loft-L248"><span class="cm">// what you select is what you get to keep.</span></span>
+<span id="src-hexbox-loft-L249"><span class="cm">//</span></span>
+<span id="src-hexbox-loft-L250"><span class="cm">// Example: @HXS-007</span></span>
+<span id="src-hexbox-loft-L251"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">box_ring_out</span>(cells: <span class="en">HexSet</span>, ring: <span class="en">HexSet</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-hexbox-loft-L252">  n = <span class="nm">0</span>;</span>
+<span id="src-hexbox-loft-L253">  <span class="kw">for</span> rr <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(cells)..<span class="fn-call">hexset_r0</span>(cells) + <span class="fn-call">hexset_h</span>(cells) {</span>
+<span id="src-hexbox-loft-L254">    <span class="kw">for</span> rq <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(cells)..<span class="fn-call">hexset_q0</span>(cells) + <span class="fn-call">hexset_w</span>(cells) {</span>
+<span id="src-hexbox-loft-L255">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(cells, rq, rr) {</span>
+<span id="src-hexbox-loft-L256">        <span class="kw">for</span> rd <span class="kw">in</span> <span class="nm">0..6</span> {</span>
+<span id="src-hexbox-loft-L257">          nq = <span class="fn-call">nb_q</span>(rq, rr, rd);</span>
+<span id="src-hexbox-loft-L258">          nr = <span class="fn-call">nb_r</span>(rq, rr, rd);</span>
+<span id="src-hexbox-loft-L259">          <span class="kw">if</span> !<span class="fn-call">hexset_get</span>(cells, nq, nr) &amp;&amp; !<span class="fn-call">hexset_get</span>(ring, nq, nr) {</span>
+<span id="src-hexbox-loft-L260">            <span class="fn-call">hexset_set</span>(ring, nq, nr, <span class="kw">true</span>);</span>
+<span id="src-hexbox-loft-L261">            n = n + <span class="nm">1</span>;</span>
+<span id="src-hexbox-loft-L262">          }</span>
+<span id="src-hexbox-loft-L263">        }</span>
+<span id="src-hexbox-loft-L264">      }</span>
+<span id="src-hexbox-loft-L265">    }</span>
+<span id="src-hexbox-loft-L266">  }</span>
+<span id="src-hexbox-loft-L267">  n</span>
+<span id="src-hexbox-loft-L268">}</span>
+<span id="src-hexbox-loft-L269"></span>
+<span id="src-hexbox-loft-L270"><span class="cm">// `box_ring_in` takes it from INSIDE instead: the outermost layer of the selection becomes</span></span>
+<span id="src-hexbox-loft-L271"><span class="cm">// wall and the courtyard shrinks. Same ring, opposite side — a town wall drawn to a</span></span>
+<span id="src-hexbox-loft-L272"><span class="cm">// surveyed outer boundary wants this one.</span></span>
 <span id="src-hexbox-loft-L273"><span class="cm">//</span></span>
-<span id="src-hexbox-loft-L274"><span class="cm">// Same wall, no enclosure: a run of cells one hex wide, for a curtain wall or a rampart.</span></span>
-<span id="src-hexbox-loft-L275"><span class="cm">// The cells are those the segment passes THROUGH — a hex is on the line iff the segment</span></span>
-<span id="src-hexbox-loft-L276"><span class="cm">// enters it — so the chain is connected by construction and exactly one cell wide.</span></span>
-<span id="src-hexbox-loft-L277"><span class="cm">//</span></span>
-<span id="src-hexbox-loft-L278"><span class="cm">// Stepping is by a third of a cell, which cannot skip one: consecutive samples are 0.577 wu</span></span>
-<span id="src-hexbox-loft-L279"><span class="cm">// apart at most while a hex is 1.732 wu across, so every cell the segment crosses is</span></span>
-<span id="src-hexbox-loft-L280"><span class="cm">// sampled at least twice.</span></span>
-<span id="src-hexbox-loft-L281"><span class="cm">//</span></span>
-<span id="src-hexbox-loft-L282"><span class="cm">// Example: @HXS-007</span></span>
-<span id="src-hexbox-loft-L283"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">line_hexes</span>(x0: <span class="ty"><a href="stdlib-types.html">float</a></span>, y0: <span class="ty"><a href="stdlib-types.html">float</a></span>, x1: <span class="ty"><a href="stdlib-types.html">float</a></span>, y1: <span class="ty"><a href="stdlib-types.html">float</a></span>, cells: <span class="en">HexSet</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-hexbox-loft-L284">  dx = x1 - x0;</span>
-<span id="src-hexbox-loft-L285">  dy = y1 - y0;</span>
-<span id="src-hexbox-loft-L286">  ln = <span class="bi"><a href="stdlib-math.html">sqrt</a></span>(dx * dx + dy * dy) ?? <span class="nm">0.0</span>;</span>
-<span id="src-hexbox-loft-L287">  steps = ((ln * <span class="nm">3.0</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>) + <span class="nm">1</span>;</span>
-<span id="src-hexbox-loft-L288">  <span class="cm">// `/` is FALLIBLE in loft, so `t` below types as `float?`.  `steps` is `(..) + 1` on a</span></span>
-<span id="src-hexbox-loft-L289">  <span class="cm">// non-negative `sqrt`, so it is at least 1 and the divide cannot fail — but a null `t` taken as</span></span>
-<span id="src-hexbox-loft-L290">  <span class="cm">// `0.0` would put EVERY sample on the start point, laying a one-cell stub where a wall was asked</span></span>
-<span id="src-hexbox-loft-L291">  <span class="cm">// for and returning a plausible count for it.  Refuse instead: 0 cells is visible to the caller,</span></span>
-<span id="src-hexbox-loft-L292">  <span class="cm">// a collapsed wall is not.  The `?? 0.0` below is unreachable past this guard.</span></span>
-<span id="src-hexbox-loft-L293">  <span class="kw">if</span> steps &lt; <span class="nm">1</span> { <span class="kw">return</span> <span class="nm">0</span>; }</span>
-<span id="src-hexbox-loft-L294">  n = <span class="nm">0</span>;</span>
-<span id="src-hexbox-loft-L295">  <span class="kw">for</span> si <span class="kw">in</span> <span class="nm">0..</span>steps + <span class="nm">1</span> {</span>
-<span id="src-hexbox-loft-L296">    t = (si <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) / (steps <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) ?? <span class="nm">0.0</span>;</span>
-<span id="src-hexbox-loft-L297">    (hq, hr) = <span class="fn-call">px_to_hex</span>(x0 + dx * t, y0 + dy * t);</span>
-<span id="src-hexbox-loft-L298">    <span class="kw">if</span> !<span class="fn-call">hexset_get</span>(cells, hq, hr) {</span>
-<span id="src-hexbox-loft-L299">      <span class="fn-call">hexset_set</span>(cells, hq, hr, <span class="kw">true</span>);</span>
-<span id="src-hexbox-loft-L300">      n = n + <span class="nm">1</span>;</span>
-<span id="src-hexbox-loft-L301">    }</span>
-<span id="src-hexbox-loft-L302">  }</span>
-<span id="src-hexbox-loft-L303">  n</span>
-<span id="src-hexbox-loft-L304">}</span>
-<span id="src-hexbox-loft-L305"></span>
-<span id="src-hexbox-loft-L306"><span class="cm">// Is every cell of the set reachable from every other, stepping only within the set?</span></span>
-<span id="src-hexbox-loft-L307"><span class="cm">// A wall with a gap is not a wall; this is what makes "one hex wide" mean a CHAIN.</span></span>
-<span id="src-hexbox-loft-L308"><span class="cm">//</span></span>
-<span id="src-hexbox-loft-L309"><span class="cm">// CONNECTED IS NOT CLOSED.  A ring with one cell taken out is still one connected chain, so</span></span>
-<span id="src-hexbox-loft-L310"><span class="cm">// this answers true on a wall you can walk straight through.  For an ENCLOSURE the verdict is</span></span>
-<span id="src-hexbox-loft-L311"><span class="cm">// `flood_outside` + `leak_count`; this one is the contract for an open run.</span></span>
-<span id="src-hexbox-loft-L312"><span class="cm">//</span></span>
-<span id="src-hexbox-loft-L313"><span class="cm">// Example: @HXS-007</span></span>
-<span id="src-hexbox-loft-L314"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">set_connected</span>(cells: <span class="en">HexSet</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
-<span id="src-hexbox-loft-L315">  seedq = <span class="nm">0</span>;</span>
-<span id="src-hexbox-loft-L316">  seedr = <span class="nm">0</span>;</span>
-<span id="src-hexbox-loft-L317">  found = <span class="kw">false</span>;</span>
-<span id="src-hexbox-loft-L318">  total = <span class="nm">0</span>;</span>
-<span id="src-hexbox-loft-L319">  <span class="kw">for</span> cr <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(cells)..<span class="fn-call">hexset_r0</span>(cells) + <span class="fn-call">hexset_h</span>(cells) {</span>
-<span id="src-hexbox-loft-L320">    <span class="kw">for</span> cq <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(cells)..<span class="fn-call">hexset_q0</span>(cells) + <span class="fn-call">hexset_w</span>(cells) {</span>
-<span id="src-hexbox-loft-L321">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(cells, cq, cr) {</span>
-<span id="src-hexbox-loft-L322">        total = total + <span class="nm">1</span>;</span>
-<span id="src-hexbox-loft-L323">        <span class="kw">if</span> !found { seedq = cq; seedr = cr; found = <span class="kw">true</span>; }</span>
-<span id="src-hexbox-loft-L324">      }</span>
-<span id="src-hexbox-loft-L325">    }</span>
-<span id="src-hexbox-loft-L326">  }</span>
-<span id="src-hexbox-loft-L327">  <span class="kw">if</span> !found { <span class="kw">return</span> <span class="kw">false</span>; }</span>
-<span id="src-hexbox-loft-L328">  reach = <span class="fn-call">hexset_chunk</span>(<span class="fn-call">hexset_q0</span>(cells), <span class="fn-call">hexset_r0</span>(cells), <span class="fn-call">hexset_w</span>(cells), <span class="fn-call">hexset_h</span>(cells));</span>
-<span id="src-hexbox-loft-L329">  <span class="fn-call">hexset_set</span>(reach, seedq, seedr, <span class="kw">true</span>);</span>
-<span id="src-hexbox-loft-L330">  changed = <span class="kw">true</span>;</span>
-<span id="src-hexbox-loft-L331">  while changed {</span>
-<span id="src-hexbox-loft-L332">    changed = <span class="kw">false</span>;</span>
-<span id="src-hexbox-loft-L333">    <span class="kw">for</span> rr <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(cells)..<span class="fn-call">hexset_r0</span>(cells) + <span class="fn-call">hexset_h</span>(cells) {</span>
-<span id="src-hexbox-loft-L334">      <span class="kw">for</span> rq <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(cells)..<span class="fn-call">hexset_q0</span>(cells) + <span class="fn-call">hexset_w</span>(cells) {</span>
-<span id="src-hexbox-loft-L335">        <span class="kw">if</span> <span class="fn-call">hexset_get</span>(reach, rq, rr) {</span>
-<span id="src-hexbox-loft-L336">          <span class="kw">for</span> rd <span class="kw">in</span> <span class="nm">0..6</span> {</span>
-<span id="src-hexbox-loft-L337">            nq = <span class="fn-call">nb_q</span>(rq, rr, rd);</span>
-<span id="src-hexbox-loft-L338">            nr = <span class="fn-call">nb_r</span>(rq, rr, rd);</span>
-<span id="src-hexbox-loft-L339">            <span class="kw">if</span> <span class="fn-call">hexset_get</span>(cells, nq, nr) &amp;&amp; !<span class="fn-call">hexset_get</span>(reach, nq, nr) {</span>
-<span id="src-hexbox-loft-L340">              <span class="fn-call">hexset_set</span>(reach, nq, nr, <span class="kw">true</span>);</span>
-<span id="src-hexbox-loft-L341">              changed = <span class="kw">true</span>;</span>
-<span id="src-hexbox-loft-L342">            }</span>
-<span id="src-hexbox-loft-L343">          }</span>
-<span id="src-hexbox-loft-L344">        }</span>
-<span id="src-hexbox-loft-L345">      }</span>
+<span id="src-hexbox-loft-L274"><span class="cm">// Example: @HXS-007</span></span>
+<span id="src-hexbox-loft-L275"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">box_ring_in</span>(cells: <span class="en">HexSet</span>, ring: <span class="en">HexSet</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-hexbox-loft-L276">  n = <span class="nm">0</span>;</span>
+<span id="src-hexbox-loft-L277">  <span class="kw">for</span> ir <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(cells)..<span class="fn-call">hexset_r0</span>(cells) + <span class="fn-call">hexset_h</span>(cells) {</span>
+<span id="src-hexbox-loft-L278">    <span class="kw">for</span> iq <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(cells)..<span class="fn-call">hexset_q0</span>(cells) + <span class="fn-call">hexset_w</span>(cells) {</span>
+<span id="src-hexbox-loft-L279">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(cells, iq, ir) {</span>
+<span id="src-hexbox-loft-L280">        edge = <span class="kw">false</span>;</span>
+<span id="src-hexbox-loft-L281">        <span class="kw">for</span> id <span class="kw">in</span> <span class="nm">0..6</span> {</span>
+<span id="src-hexbox-loft-L282">          <span class="kw">if</span> !<span class="fn-call">hexset_get</span>(cells, <span class="fn-call">nb_q</span>(iq, ir, id), <span class="fn-call">nb_r</span>(iq, ir, id)) { edge = <span class="kw">true</span>; }</span>
+<span id="src-hexbox-loft-L283">        }</span>
+<span id="src-hexbox-loft-L284">        <span class="kw">if</span> edge { <span class="fn-call">hexset_set</span>(ring, iq, ir, <span class="kw">true</span>); n = n + <span class="nm">1</span>; }</span>
+<span id="src-hexbox-loft-L285">      }</span>
+<span id="src-hexbox-loft-L286">    }</span>
+<span id="src-hexbox-loft-L287">  }</span>
+<span id="src-hexbox-loft-L288">  n</span>
+<span id="src-hexbox-loft-L289">}</span>
+<span id="src-hexbox-loft-L290"></span>
+<span id="src-hexbox-loft-L291"><span class="cm">// ── DOES THE WALL HOLD? ────────────────────────────────────────────────────</span></span>
+<span id="src-hexbox-loft-L292"><span class="cm">//</span></span>
+<span id="src-hexbox-loft-L293"><span class="cm">// A ring that looks closed and is not is the exact defect `SPEC` I3's control names — "2</span></span>
+<span id="src-hexbox-loft-L294"><span class="cm">// components, 0 enclosed, yet still 12/12 equivariant". For a thick wall the honest test is</span></span>
+<span id="src-hexbox-loft-L295"><span class="cm">// not to count cells but to try to WALK IN: flood the outside and see whether it reaches the</span></span>
+<span id="src-hexbox-loft-L296"><span class="cm">// courtyard. One hole and it does.</span></span>
+<span id="src-hexbox-loft-L297"><span class="cm">//</span></span>
+<span id="src-hexbox-loft-L298"><span class="cm">// Relaxation rather than a queue: the region is a box, so sweeping until nothing changes</span></span>
+<span id="src-hexbox-loft-L299"><span class="cm">// terminates in at most its perimeter in passes, and it needs no auxiliary storage.</span></span>
+<span id="src-hexbox-loft-L300"><span class="cm">//</span></span>
+<span id="src-hexbox-loft-L301"><span class="cm">// Example: @HXS-007</span></span>
+<span id="src-hexbox-loft-L302"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">flood_outside</span>(wall: <span class="en">HexSet</span>, out: <span class="en">HexSet</span>) {</span>
+<span id="src-hexbox-loft-L303">  q0 = <span class="fn-call">hexset_q0</span>(out);</span>
+<span id="src-hexbox-loft-L304">  r0 = <span class="fn-call">hexset_r0</span>(out);</span>
+<span id="src-hexbox-loft-L305">  w = <span class="fn-call">hexset_w</span>(out);</span>
+<span id="src-hexbox-loft-L306">  h = <span class="fn-call">hexset_h</span>(out);</span>
+<span id="src-hexbox-loft-L307">  <span class="cm">// seed: the whole border of the window, minus any wall on it</span></span>
+<span id="src-hexbox-loft-L308">  <span class="kw">for</span> sq <span class="kw">in</span> q0..q0 + w {</span>
+<span id="src-hexbox-loft-L309">    <span class="kw">if</span> !<span class="fn-call">hexset_get</span>(wall, sq, r0) { <span class="fn-call">hexset_set</span>(out, sq, r0, <span class="kw">true</span>); }</span>
+<span id="src-hexbox-loft-L310">    <span class="kw">if</span> !<span class="fn-call">hexset_get</span>(wall, sq, r0 + h - <span class="nm">1</span>) { <span class="fn-call">hexset_set</span>(out, sq, r0 + h - <span class="nm">1</span>, <span class="kw">true</span>); }</span>
+<span id="src-hexbox-loft-L311">  }</span>
+<span id="src-hexbox-loft-L312">  <span class="kw">for</span> sr <span class="kw">in</span> r0..r0 + h {</span>
+<span id="src-hexbox-loft-L313">    <span class="kw">if</span> !<span class="fn-call">hexset_get</span>(wall, q0, sr) { <span class="fn-call">hexset_set</span>(out, q0, sr, <span class="kw">true</span>); }</span>
+<span id="src-hexbox-loft-L314">    <span class="kw">if</span> !<span class="fn-call">hexset_get</span>(wall, q0 + w - <span class="nm">1</span>, sr) { <span class="fn-call">hexset_set</span>(out, q0 + w - <span class="nm">1</span>, sr, <span class="kw">true</span>); }</span>
+<span id="src-hexbox-loft-L315">  }</span>
+<span id="src-hexbox-loft-L316">  changed = <span class="kw">true</span>;</span>
+<span id="src-hexbox-loft-L317">  while changed {</span>
+<span id="src-hexbox-loft-L318">    changed = <span class="kw">false</span>;</span>
+<span id="src-hexbox-loft-L319">    <span class="kw">for</span> fr <span class="kw">in</span> r0..r0 + h {</span>
+<span id="src-hexbox-loft-L320">      <span class="kw">for</span> fq <span class="kw">in</span> q0..q0 + w {</span>
+<span id="src-hexbox-loft-L321">        <span class="kw">if</span> <span class="fn-call">hexset_get</span>(out, fq, fr) {</span>
+<span id="src-hexbox-loft-L322">          <span class="kw">for</span> fd <span class="kw">in</span> <span class="nm">0..6</span> {</span>
+<span id="src-hexbox-loft-L323">            nq = <span class="fn-call">nb_q</span>(fq, fr, fd);</span>
+<span id="src-hexbox-loft-L324">            nr = <span class="fn-call">nb_r</span>(fq, fr, fd);</span>
+<span id="src-hexbox-loft-L325">            <span class="kw">if</span> nq &gt;= q0 &amp;&amp; nq &lt; q0 + w &amp;&amp; nr &gt;= r0 &amp;&amp; nr &lt; r0 + h {</span>
+<span id="src-hexbox-loft-L326">              <span class="kw">if</span> !<span class="fn-call">hexset_get</span>(wall, nq, nr) &amp;&amp; !<span class="fn-call">hexset_get</span>(out, nq, nr) {</span>
+<span id="src-hexbox-loft-L327">                <span class="fn-call">hexset_set</span>(out, nq, nr, <span class="kw">true</span>);</span>
+<span id="src-hexbox-loft-L328">                changed = <span class="kw">true</span>;</span>
+<span id="src-hexbox-loft-L329">              }</span>
+<span id="src-hexbox-loft-L330">            }</span>
+<span id="src-hexbox-loft-L331">          }</span>
+<span id="src-hexbox-loft-L332">        }</span>
+<span id="src-hexbox-loft-L333">      }</span>
+<span id="src-hexbox-loft-L334">    }</span>
+<span id="src-hexbox-loft-L335">  }</span>
+<span id="src-hexbox-loft-L336">}</span>
+<span id="src-hexbox-loft-L337"></span>
+<span id="src-hexbox-loft-L338"><span class="cm">// How many cells of `inner` the outside flood reached. Zero means the wall holds.</span></span>
+<span id="src-hexbox-loft-L339"><span class="cm">//</span></span>
+<span id="src-hexbox-loft-L340"><span class="cm">// Example: @HXS-007</span></span>
+<span id="src-hexbox-loft-L341"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">leak_count</span>(inner: <span class="en">HexSet</span>, out: <span class="en">HexSet</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-hexbox-loft-L342">  n = <span class="nm">0</span>;</span>
+<span id="src-hexbox-loft-L343">  <span class="kw">for</span> lr <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(inner)..<span class="fn-call">hexset_r0</span>(inner) + <span class="fn-call">hexset_h</span>(inner) {</span>
+<span id="src-hexbox-loft-L344">    <span class="kw">for</span> lq <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(inner)..<span class="fn-call">hexset_q0</span>(inner) + <span class="fn-call">hexset_w</span>(inner) {</span>
+<span id="src-hexbox-loft-L345">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(inner, lq, lr) &amp;&amp; <span class="fn-call">hexset_get</span>(out, lq, lr) { n = n + <span class="nm">1</span>; }</span>
 <span id="src-hexbox-loft-L346">    }</span>
 <span id="src-hexbox-loft-L347">  }</span>
-<span id="src-hexbox-loft-L348">  <span class="fn-call">hexset_count</span>(reach) == total</span>
+<span id="src-hexbox-loft-L348">  n</span>
 <span id="src-hexbox-loft-L349">}</span>
+<span id="src-hexbox-loft-L350"></span>
+<span id="src-hexbox-loft-L351"><span class="cm">// ── A THICK LINE — the town wall that is not a box ─────────────────────────</span></span>
+<span id="src-hexbox-loft-L352"><span class="cm">//</span></span>
+<span id="src-hexbox-loft-L353"><span class="cm">// Same wall, no enclosure: a run of cells one hex wide, for a curtain wall or a rampart.</span></span>
+<span id="src-hexbox-loft-L354"><span class="cm">// The cells are those the segment passes THROUGH — a hex is on the line iff the segment</span></span>
+<span id="src-hexbox-loft-L355"><span class="cm">// enters it — so the chain is connected by construction and exactly one cell wide.</span></span>
+<span id="src-hexbox-loft-L356"><span class="cm">//</span></span>
+<span id="src-hexbox-loft-L357"><span class="cm">// Stepping is by a third of a cell, which cannot skip one: consecutive samples are 0.577 wu</span></span>
+<span id="src-hexbox-loft-L358"><span class="cm">// apart at most while a hex is 1.732 wu across, so every cell the segment crosses is</span></span>
+<span id="src-hexbox-loft-L359"><span class="cm">// sampled at least twice.</span></span>
+<span id="src-hexbox-loft-L360"><span class="cm">//</span></span>
+<span id="src-hexbox-loft-L361"><span class="cm">// Example: @HXS-007</span></span>
+<span id="src-hexbox-loft-L362"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">line_hexes</span>(x0: <span class="ty"><a href="stdlib-types.html">float</a></span>, y0: <span class="ty"><a href="stdlib-types.html">float</a></span>, x1: <span class="ty"><a href="stdlib-types.html">float</a></span>, y1: <span class="ty"><a href="stdlib-types.html">float</a></span>, cells: <span class="en">HexSet</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-hexbox-loft-L363">  dx = x1 - x0;</span>
+<span id="src-hexbox-loft-L364">  dy = y1 - y0;</span>
+<span id="src-hexbox-loft-L365">  ln = <span class="bi"><a href="stdlib-math.html">sqrt</a></span>(dx * dx + dy * dy) ?? <span class="nm">0.0</span>;</span>
+<span id="src-hexbox-loft-L366">  steps = ((ln * <span class="nm">3.0</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>) + <span class="nm">1</span>;</span>
+<span id="src-hexbox-loft-L367">  <span class="cm">// `/` is FALLIBLE in loft, so `t` below types as `float?`.  `steps` is `(..) + 1` on a</span></span>
+<span id="src-hexbox-loft-L368">  <span class="cm">// non-negative `sqrt`, so it is at least 1 and the divide cannot fail — but a null `t` taken as</span></span>
+<span id="src-hexbox-loft-L369">  <span class="cm">// `0.0` would put EVERY sample on the start point, laying a one-cell stub where a wall was asked</span></span>
+<span id="src-hexbox-loft-L370">  <span class="cm">// for and returning a plausible count for it.  Refuse instead: 0 cells is visible to the caller,</span></span>
+<span id="src-hexbox-loft-L371">  <span class="cm">// a collapsed wall is not.  The `?? 0.0` below is unreachable past this guard.</span></span>
+<span id="src-hexbox-loft-L372">  <span class="kw">if</span> steps &lt; <span class="nm">1</span> { <span class="kw">return</span> <span class="nm">0</span>; }</span>
+<span id="src-hexbox-loft-L373">  n = <span class="nm">0</span>;</span>
+<span id="src-hexbox-loft-L374">  <span class="kw">for</span> si <span class="kw">in</span> <span class="nm">0..</span>steps + <span class="nm">1</span> {</span>
+<span id="src-hexbox-loft-L375">    t = (si <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) / (steps <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) ?? <span class="nm">0.0</span>;</span>
+<span id="src-hexbox-loft-L376">    (hq, hr) = <span class="fn-call">px_to_hex</span>(x0 + dx * t, y0 + dy * t);</span>
+<span id="src-hexbox-loft-L377">    <span class="kw">if</span> !<span class="fn-call">hexset_get</span>(cells, hq, hr) {</span>
+<span id="src-hexbox-loft-L378">      <span class="fn-call">hexset_set</span>(cells, hq, hr, <span class="kw">true</span>);</span>
+<span id="src-hexbox-loft-L379">      n = n + <span class="nm">1</span>;</span>
+<span id="src-hexbox-loft-L380">    }</span>
+<span id="src-hexbox-loft-L381">  }</span>
+<span id="src-hexbox-loft-L382">  n</span>
+<span id="src-hexbox-loft-L383">}</span>
+<span id="src-hexbox-loft-L384"></span>
+<span id="src-hexbox-loft-L385"><span class="cm">// Is every cell of the set reachable from every other, stepping only within the set?</span></span>
+<span id="src-hexbox-loft-L386"><span class="cm">// A wall with a gap is not a wall; this is what makes "one hex wide" mean a CHAIN.</span></span>
+<span id="src-hexbox-loft-L387"><span class="cm">//</span></span>
+<span id="src-hexbox-loft-L388"><span class="cm">// CONNECTED IS NOT CLOSED.  A ring with one cell taken out is still one connected chain, so</span></span>
+<span id="src-hexbox-loft-L389"><span class="cm">// this answers true on a wall you can walk straight through.  For an ENCLOSURE the verdict is</span></span>
+<span id="src-hexbox-loft-L390"><span class="cm">// `flood_outside` + `leak_count`; this one is the contract for an open run.</span></span>
+<span id="src-hexbox-loft-L391"><span class="cm">//</span></span>
+<span id="src-hexbox-loft-L392"><span class="cm">// Example: @HXS-007</span></span>
+<span id="src-hexbox-loft-L393"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">set_connected</span>(cells: <span class="en">HexSet</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-hexbox-loft-L394">  seedq = <span class="nm">0</span>;</span>
+<span id="src-hexbox-loft-L395">  seedr = <span class="nm">0</span>;</span>
+<span id="src-hexbox-loft-L396">  found = <span class="kw">false</span>;</span>
+<span id="src-hexbox-loft-L397">  total = <span class="nm">0</span>;</span>
+<span id="src-hexbox-loft-L398">  <span class="kw">for</span> cr <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(cells)..<span class="fn-call">hexset_r0</span>(cells) + <span class="fn-call">hexset_h</span>(cells) {</span>
+<span id="src-hexbox-loft-L399">    <span class="kw">for</span> cq <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(cells)..<span class="fn-call">hexset_q0</span>(cells) + <span class="fn-call">hexset_w</span>(cells) {</span>
+<span id="src-hexbox-loft-L400">      <span class="kw">if</span> <span class="fn-call">hexset_get</span>(cells, cq, cr) {</span>
+<span id="src-hexbox-loft-L401">        total = total + <span class="nm">1</span>;</span>
+<span id="src-hexbox-loft-L402">        <span class="kw">if</span> !found { seedq = cq; seedr = cr; found = <span class="kw">true</span>; }</span>
+<span id="src-hexbox-loft-L403">      }</span>
+<span id="src-hexbox-loft-L404">    }</span>
+<span id="src-hexbox-loft-L405">  }</span>
+<span id="src-hexbox-loft-L406">  <span class="kw">if</span> !found { <span class="kw">return</span> <span class="kw">false</span>; }</span>
+<span id="src-hexbox-loft-L407">  reach = <span class="fn-call">hexset_chunk</span>(<span class="fn-call">hexset_q0</span>(cells), <span class="fn-call">hexset_r0</span>(cells), <span class="fn-call">hexset_w</span>(cells), <span class="fn-call">hexset_h</span>(cells));</span>
+<span id="src-hexbox-loft-L408">  <span class="fn-call">hexset_set</span>(reach, seedq, seedr, <span class="kw">true</span>);</span>
+<span id="src-hexbox-loft-L409">  changed = <span class="kw">true</span>;</span>
+<span id="src-hexbox-loft-L410">  while changed {</span>
+<span id="src-hexbox-loft-L411">    changed = <span class="kw">false</span>;</span>
+<span id="src-hexbox-loft-L412">    <span class="kw">for</span> rr <span class="kw">in</span> <span class="fn-call">hexset_r0</span>(cells)..<span class="fn-call">hexset_r0</span>(cells) + <span class="fn-call">hexset_h</span>(cells) {</span>
+<span id="src-hexbox-loft-L413">      <span class="kw">for</span> rq <span class="kw">in</span> <span class="fn-call">hexset_q0</span>(cells)..<span class="fn-call">hexset_q0</span>(cells) + <span class="fn-call">hexset_w</span>(cells) {</span>
+<span id="src-hexbox-loft-L414">        <span class="kw">if</span> <span class="fn-call">hexset_get</span>(reach, rq, rr) {</span>
+<span id="src-hexbox-loft-L415">          <span class="kw">for</span> rd <span class="kw">in</span> <span class="nm">0..6</span> {</span>
+<span id="src-hexbox-loft-L416">            nq = <span class="fn-call">nb_q</span>(rq, rr, rd);</span>
+<span id="src-hexbox-loft-L417">            nr = <span class="fn-call">nb_r</span>(rq, rr, rd);</span>
+<span id="src-hexbox-loft-L418">            <span class="kw">if</span> <span class="fn-call">hexset_get</span>(cells, nq, nr) &amp;&amp; !<span class="fn-call">hexset_get</span>(reach, nq, nr) {</span>
+<span id="src-hexbox-loft-L419">              <span class="fn-call">hexset_set</span>(reach, nq, nr, <span class="kw">true</span>);</span>
+<span id="src-hexbox-loft-L420">              changed = <span class="kw">true</span>;</span>
+<span id="src-hexbox-loft-L421">            }</span>
+<span id="src-hexbox-loft-L422">          }</span>
+<span id="src-hexbox-loft-L423">        }</span>
+<span id="src-hexbox-loft-L424">      }</span>
+<span id="src-hexbox-loft-L425">    }</span>
+<span id="src-hexbox-loft-L426">  }</span>
+<span id="src-hexbox-loft-L427">  <span class="fn-call">hexset_count</span>(reach) == total</span>
+<span id="src-hexbox-loft-L428">}</span>
 </code></pre>
 <h2 id="src-hexwall-loft">src/hexwall.loft</h2>
 <pre class="src"><code><span id="src-hexwall-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
@@ -2405,6 +2488,71 @@
 <span id="tests-01-hex-shape-loft-L496"><span class="cm">// assumed: the same sabotage against the suite as it stood one commit earlier gives **27</span></span>
 <span id="tests-01-hex-shape-loft-L497"><span class="cm">// passed**. Nothing else here reads `wc_x` or `wc_y`, so a chain whose vertices were in the</span></span>
 <span id="tests-01-hex-shape-loft-L498"><span class="cm">// right order at the wrong places was a green suite.</span></span>
+<span id="tests-01-hex-shape-loft-L499"></span>
+<span id="tests-01-hex-shape-loft-L500"><span class="cm">// A plan of one rectangle, filled exactly, is `box_fill`'s cells: every size from 1 x 1 to 9 x 9</span></span>
+<span id="tests-01-hex-shape-loft-L501"><span class="cm">// hex steps, all 12 rotations, mirrored and not, on an even and on an odd row.</span></span>
+<span id="tests-01-hex-shape-loft-L502"><span class="kw">fn</span> <span class="fn-call">test_parts_fill_of_one_part_is_box_fill</span>() {</span>
+<span id="tests-01-hex-shape-loft-L503">  differ = <span class="nm">0</span>;</span>
+<span id="tests-01-hex-shape-loft-L504">  cases = <span class="nm">0</span>;</span>
+<span id="tests-01-hex-shape-loft-L505">  <span class="kw">for</span> w <span class="kw">in</span> <span class="nm">1..10</span> {</span>
+<span id="tests-01-hex-shape-loft-L506">    <span class="kw">for</span> d <span class="kw">in</span> <span class="nm">1..10</span> {</span>
+<span id="tests-01-hex-shape-loft-L507">      <span class="kw">for</span> rot <span class="kw">in</span> <span class="nm">0..12</span> {</span>
+<span id="tests-01-hex-shape-loft-L508">        <span class="kw">for</span> mir <span class="kw">in</span> <span class="nm">0..2</span> {</span>
+<span id="tests-01-hex-shape-loft-L509">          <span class="kw">for</span> row <span class="kw">in</span> <span class="nm">0..2</span> {</span>
+<span id="tests-01-hex-shape-loft-L510">            want = <span class="fn-call">hexset_chunk</span>(-<span class="nm">16</span>, -<span class="nm">16</span>, <span class="nm">33</span>, <span class="nm">33</span>);</span>
+<span id="tests-01-hex-shape-loft-L511">            <span class="fn-call">box_fill</span>(<span class="fn-call">box_new</span>(<span class="nm">0</span>, row, w, d, rot, mir == <span class="nm">1</span>), want);</span>
+<span id="tests-01-hex-shape-loft-L512">            got = <span class="fn-call">hexset_chunk</span>(-<span class="nm">16</span>, -<span class="nm">16</span>, <span class="nm">33</span>, <span class="nm">33</span>);</span>
+<span id="tests-01-hex-shape-loft-L513">            n = <span class="fn-call">parts_fill</span>(<span class="nm">0</span>, row, rot, mir == <span class="nm">1</span>, [<span class="fn-call">box_part</span>(<span class="nm">0</span> - w, <span class="nm">0</span> - d, w, d)], got);</span>
+<span id="tests-01-hex-shape-loft-L514">            cases = cases + <span class="nm">1</span>;</span>
+<span id="tests-01-hex-shape-loft-L515">            same = n == <span class="fn-call">hexset_count</span>(want);</span>
+<span id="tests-01-hex-shape-loft-L516">            <span class="kw">for</span> r <span class="kw">in</span> -<span class="nm">16..17</span> { <span class="kw">for</span> q <span class="kw">in</span> -<span class="nm">16..17</span> { <span class="kw">if</span> <span class="fn-call">hexset_get</span>(want, q, r) != <span class="fn-call">hexset_get</span>(got, q, r) { same = <span class="kw">false</span>; } } }</span>
+<span id="tests-01-hex-shape-loft-L517">            <span class="kw">if</span> !same { differ = differ + <span class="nm">1</span>; }</span>
+<span id="tests-01-hex-shape-loft-L518">          }</span>
+<span id="tests-01-hex-shape-loft-L519">        }</span>
+<span id="tests-01-hex-shape-loft-L520">      }</span>
+<span id="tests-01-hex-shape-loft-L521">    }</span>
+<span id="tests-01-hex-shape-loft-L522">  }</span>
+<span id="tests-01-hex-shape-loft-L523">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(cases == <span class="nm">3888</span>, <span class="st">"every case tried: {cases}"</span>);</span>
+<span id="tests-01-hex-shape-loft-L524">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(differ == <span class="nm">0</span>, <span class="st">"{differ} of {cases} boxes: the exact fill is not box_fill's cells"</span>);</span>
+<span id="tests-01-hex-shape-loft-L525">}</span>
+<span id="tests-01-hex-shape-loft-L526"></span>
+<span id="tests-01-hex-shape-loft-L527"><span class="cm">// An L: its cells are the cells of its two rectangles, each filled alone; a part given twice or</span></span>
+<span id="tests-01-hex-shape-loft-L528"><span class="cm">// lying inside another adds nothing; and a 60-degree turn of the plan is the lattice's own turn</span></span>
+<span id="tests-01-hex-shape-loft-L529"><span class="cm">// of its cells (`cell_rot`), at every rotation.</span></span>
+<span id="tests-01-hex-shape-loft-L530"><span class="kw">fn</span> <span class="fn-call">test_parts_fill_an_ell</span>() {</span>
+<span id="tests-01-hex-shape-loft-L531">  ell = [<span class="fn-call">box_part</span>(-<span class="nm">5</span>, -<span class="nm">3</span>, <span class="nm">5</span>, <span class="nm">3</span>), <span class="fn-call">box_part</span>(-<span class="nm">5</span>, <span class="nm">3</span>, -<span class="nm">1</span>, <span class="nm">7</span>)];</span>
+<span id="tests-01-hex-shape-loft-L532">  <span class="kw">for</span> rot <span class="kw">in</span> <span class="nm">0..12</span> {</span>
+<span id="tests-01-hex-shape-loft-L533">    both = <span class="fn-call">hexset_chunk</span>(-<span class="nm">16</span>, -<span class="nm">16</span>, <span class="nm">33</span>, <span class="nm">33</span>);</span>
+<span id="tests-01-hex-shape-loft-L534">    n = <span class="fn-call">parts_fill</span>(<span class="nm">0</span>, <span class="nm">0</span>, rot, <span class="kw">false</span>, ell, both);</span>
+<span id="tests-01-hex-shape-loft-L535">    a = <span class="fn-call">hexset_chunk</span>(-<span class="nm">16</span>, -<span class="nm">16</span>, <span class="nm">33</span>, <span class="nm">33</span>);</span>
+<span id="tests-01-hex-shape-loft-L536">    <span class="fn-call">parts_fill</span>(<span class="nm">0</span>, <span class="nm">0</span>, rot, <span class="kw">false</span>, [<span class="fn-call">box_part</span>(-<span class="nm">5</span>, -<span class="nm">3</span>, <span class="nm">5</span>, <span class="nm">3</span>)], a);</span>
+<span id="tests-01-hex-shape-loft-L537">    b = <span class="fn-call">hexset_chunk</span>(-<span class="nm">16</span>, -<span class="nm">16</span>, <span class="nm">33</span>, <span class="nm">33</span>);</span>
+<span id="tests-01-hex-shape-loft-L538">    <span class="fn-call">parts_fill</span>(<span class="nm">0</span>, <span class="nm">0</span>, rot, <span class="kw">false</span>, [<span class="fn-call">box_part</span>(-<span class="nm">5</span>, <span class="nm">3</span>, -<span class="nm">1</span>, <span class="nm">7</span>)], b);</span>
+<span id="tests-01-hex-shape-loft-L539">    union = <span class="nm">0</span>;</span>
+<span id="tests-01-hex-shape-loft-L540">    <span class="kw">for</span> r <span class="kw">in</span> -<span class="nm">16..17</span> {</span>
+<span id="tests-01-hex-shape-loft-L541">      <span class="kw">for</span> q <span class="kw">in</span> -<span class="nm">16..17</span> {</span>
+<span id="tests-01-hex-shape-loft-L542">        in_either = <span class="fn-call">hexset_get</span>(a, q, r) || <span class="fn-call">hexset_get</span>(b, q, r);</span>
+<span id="tests-01-hex-shape-loft-L543">        <span class="kw">if</span> in_either { union = union + <span class="nm">1</span>; }</span>
+<span id="tests-01-hex-shape-loft-L544">        <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">hexset_get</span>(both, q, r) == in_either, <span class="st">"rot {rot}: the L is its two rectangles"</span>);</span>
+<span id="tests-01-hex-shape-loft-L545">      }</span>
+<span id="tests-01-hex-shape-loft-L546">    }</span>
+<span id="tests-01-hex-shape-loft-L547">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(n == union &amp;&amp; n &gt; <span class="fn-call">hexset_count</span>(a), <span class="st">"rot {rot}: {n} cells, the wing adding some"</span>);</span>
+<span id="tests-01-hex-shape-loft-L548">    again = <span class="fn-call">hexset_chunk</span>(-<span class="nm">16</span>, -<span class="nm">16</span>, <span class="nm">33</span>, <span class="nm">33</span>);</span>
+<span id="tests-01-hex-shape-loft-L549">    m = <span class="fn-call">parts_fill</span>(<span class="nm">0</span>, <span class="nm">0</span>, rot, <span class="kw">false</span>, [<span class="fn-call">box_part</span>(-<span class="nm">5</span>, -<span class="nm">3</span>, <span class="nm">5</span>, <span class="nm">3</span>), <span class="fn-call">box_part</span>(-<span class="nm">5</span>, <span class="nm">3</span>, -<span class="nm">1</span>, <span class="nm">7</span>), <span class="fn-call">box_part</span>(-<span class="nm">5</span>, -<span class="nm">3</span>, <span class="nm">5</span>, <span class="nm">3</span>), <span class="fn-call">box_part</span>(-<span class="nm">2</span>, -<span class="nm">1</span>, <span class="nm">2</span>, <span class="nm">1</span>)], again);</span>
+<span id="tests-01-hex-shape-loft-L550">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(m == n, <span class="st">"rot {rot}: a part twice, a part inside another: the same {n} cells, got {m}"</span>);</span>
+<span id="tests-01-hex-shape-loft-L551">    turned = <span class="fn-call">hexset_chunk</span>(-<span class="nm">16</span>, -<span class="nm">16</span>, <span class="nm">33</span>, <span class="nm">33</span>);</span>
+<span id="tests-01-hex-shape-loft-L552">    <span class="fn-call">parts_fill</span>(<span class="nm">0</span>, <span class="nm">0</span>, rot + <span class="nm">2</span>, <span class="kw">false</span>, ell, turned);</span>
+<span id="tests-01-hex-shape-loft-L553">    <span class="kw">for</span> r <span class="kw">in</span> -<span class="nm">16..17</span> {</span>
+<span id="tests-01-hex-shape-loft-L554">      <span class="kw">for</span> q <span class="kw">in</span> -<span class="nm">16..17</span> {</span>
+<span id="tests-01-hex-shape-loft-L555">        <span class="kw">if</span> !<span class="fn-call">hexset_get</span>(both, q, r) { <span class="kw">continue</span>; }</span>
+<span id="tests-01-hex-shape-loft-L556">        (tq, tr) = <span class="fn-call">cell_rot</span>(q, r, <span class="nm">1</span>);</span>
+<span id="tests-01-hex-shape-loft-L557">        <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">hexset_get</span>(turned, tq, tr), <span class="st">"rot {rot}: turned 60 degrees, cell for cell"</span>);</span>
+<span id="tests-01-hex-shape-loft-L558">      }</span>
+<span id="tests-01-hex-shape-loft-L559">    }</span>
+<span id="tests-01-hex-shape-loft-L560">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">hexset_count</span>(turned) == n, <span class="st">"rot {rot}: and no cell more"</span>);</span>
+<span id="tests-01-hex-shape-loft-L561">  }</span>
+<span id="tests-01-hex-shape-loft-L562">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">parts_reach</span>(ell) == <span class="nm">10</span>, <span class="st">"the L reaches 7 half steps, and 3: {parts_reach(ell)}"</span>);</span>
+<span id="tests-01-hex-shape-loft-L563">}</span>
 </code></pre>
 <h2 id="tests-02-worked-examples-loft">tests/02-worked-examples.loft</h2>
 <pre class="src"><code><span id="tests-02-worked-examples-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
