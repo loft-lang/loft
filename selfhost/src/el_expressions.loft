@@ -485,6 +485,17 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       mat_tail = true;
     }
   }
+  // `ref_return`'s copy leg (`RetPromotion::Bind`) for a join that names locals none of which
+  // can be the buffer: every arm reads into a local or an inline call's result, builds a
+  // literal, or is null.  The buffer joins the result's borrows on both passes and each arm is
+  // copied into it on the second (`materialize_return_into`), no work ref minted.
+  if rb >= 0 && !lambda && expr_tail && !mat_tail && record_result(result) && len(el_types::deps(b.tp)) > 0 && tail_is_join(raw_tail(code)) && bind_leaves(e, vars, raw_tail(code)) > 0 && el::def(e, e.context).def_type != el::DT_GENERIC {
+    bjoin = bind_tail(e, vars, code, result);
+    if bjoin != null {
+      code = bjoin!;
+      mat_tail = true;
+    }
+  }
   if rb >= 0 && e.first_pass && !mat_tail && el_ex_null::merge_view_call(e, vars, code) == null {
     rename_ret_buffer(e, vars, code, rb);
   }
@@ -770,6 +781,73 @@ fn read_root(e: el::El, n: ir::Node) -> ir::Node {
     NdCall { def_nr, args } => if len(args) > 0 && starts_with(el::def(e, def_nr).name, "OpGet") { read_root(e, args[0]!) } else { x },
     _ => x
   }
+}
+
+// The leaves of a join tail the copy leg takes: the number that read into a local or an inline
+// call's result; -1 where a leaf is anything but such a read, a record literal or null — a
+// bare local or a call could be the buffer itself (`Rename`), which is another delivery.
+fn bind_leaves(e: el::El, vars: el_vars::Vars, n: ir::Node) -> integer {
+  x = el_ir::unspan(n);
+  match x {
+    NdIf { cond: _, t, f } => {
+      a = bind_leaves(e, vars, t);
+      b = bind_leaves(e, vars, f);
+      if a < 0 || b < 0 { -1 } else { a + b }
+    },
+    NdNull => 0,
+    // (A branch tail answered through a `return` is the same join.)
+    NdReturn { inner } => if el_ir::unspan(inner) is NdIf { bind_leaves(e, vars, inner) } else { -1 },
+    NdBlock { block } => {
+      if block[0].name == "Object" || block[0].name == "EnumUnitLit" {
+        return 0;
+      }
+      if block[0].name != "block" || len(block[0].operators) == 0 {
+        return -1;
+      }
+      for op in block[0].operators {
+        if el_ir::unspan(op) is NdReturn {
+          return -1;
+        }
+      }
+      bind_leaves(e, vars, el_ir::last(block[0].operators))
+    },
+    NdCall { def_nr, args } => {
+      if len(args) == 0 && el::def(e, def_nr).name == "OpNullRefSentinel" {
+        return 0;
+      }
+      if projects_into_local(e, vars, x, false, false) { 1 } else { -1 }
+    },
+    _ => -1
+  }
+}
+
+// The copy leg itself: null where the copy is of a shape not carried.
+fn bind_tail(e: el::El, vars: el_vars::Vars, code: ir::Node, result: ir::TypeT) -> ir::Node? {
+  bl = match code { NdBlock { block } => block[0], _ => return null };
+  d = e.context;
+  td = heap_def(el_types::base(result));
+  buf = el_ex_null::return_buffer(e, vars);
+  if td < 0 || buf < 0 || len(bl.operators) == 0 {
+    return null;
+  }
+  ba = attr_nr(el::def(e, d), el_vars::name_of(vars, buf));
+  ret = el::def(e, d).returned[0];
+  if ba >= 0 && !el_types::deps(ret).contains(ba) {
+    e.b.data.definitions[d].returned = [el_types::with_deps(ret, el_types::deps(ret) + [ba])];
+  }
+  if e.first_pass {
+    return code;
+  }
+  owned = el_types::with_deps(el_types::without_deps(el_types::base(result)), [buf]);
+  last = el_ir::last(bl.operators);
+  value = match el_ir::unspan(last) { NdReturn { inner } => inner, _ => last };
+  copied = copy_arms(e, vars, value, buf, td, owned);
+  if copied == null {
+    el::refuse(e, "a record join reading into locals, copied from a source read once");
+    return code;
+  }
+  bl.operators[-1] = if el_ir::unspan(last) is NdReturn { el_ir::respan(last, ir::NdReturn { inner: copied! }) } else { copied! };
+  ir::NdBlock { block: [bl] }
 }
 
 // `Parser::return_tail_is_join`: an `if` at the tail, through blocks.
