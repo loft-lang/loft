@@ -7,6 +7,9 @@
 //   the site:                       given_first (given fields before defaulted ones), two_sites
 //   a parameter default:            par_scalar, par_vec, par_reads_earlier, par_given
 //   a generic struct:               gen_shared (one function for every instance), gen_vec_empty
+//   the types a default mints:      first_vec (the field is the first to put `Fresh` in a vector:
+//                                   `vector<Fresh>` and `main_vector<Fresh>` are numbered before the
+//                                   function), again_vec (the types exist: nothing but the function)
 enum Kind { Small, Big }
 struct In { a: integer, t: text }
 struct K { name: text, v: integer }
@@ -31,6 +34,9 @@ struct C2 { n: integer, k: Kind = if $.n > 10 { Big } else { Small } }
 struct C3 { n: integer, xs: vector<integer> = [$.n, $.n + 1] }
 struct D1 { n: integer, xs: vector<integer> = [9], s: text = "w{1 + 1}", inn: In = In { a: 3, t: "d" } }
 struct G<T> { item: T, more: vector<T> = [], tag: text = "g{1 + 1}" }
+struct Fresh { a: integer }
+struct F1 { n: integer, fs: vector<Fresh> = [] }
+struct F2 { n: integer, gs: vector<Fresh> = [Fresh { a: 6 }] }
 
 fn scalar_call() -> integer { r = A1 { n: 1 }; r.c }
 fn scalar_dollar() -> integer { r = A2 { n: 4 }; r.d }
@@ -58,6 +64,8 @@ fn grow(a: integer, v: vector<integer> = [a, a + 1], t: text = "p{a}") -> intege
 fn par_reads_earlier() -> integer { x = 5; grow(x) }
 fn par_given() -> integer { x = 5; grow(x * 2, [1, 2]) }
 fn gen_shared() -> integer { g = G { item: 3 }; h = G { item: "s" }; len(g.tag) + len(h.tag) }
+fn first_vec() -> integer { r = F1 { n: 1 }; len(r.fs) }
+fn again_vec() -> integer { r = F2 { n: 1 }; r.gs[0].a }
 fn gen_vec_empty() -> integer { g = G { item: 3 }; h = G { item: "s" }; len(g.more) + len(h.more) }
 
 fn main() {
@@ -85,4 +93,6 @@ fn main() {
   assert(par_given() == 15, "par_given");
   assert(gen_shared() == 4, "gen_shared");
   assert(gen_vec_empty() == 0, "gen_vec_empty");
+  assert(first_vec() == 0, "first_vec");
+  assert(again_vec() == 6, "again_vec");
 }
