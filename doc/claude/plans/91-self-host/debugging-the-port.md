@@ -104,6 +104,13 @@ or wants a refusal by name.  Nothing is pushed to a branch.  Use it for a change
 widens a refusal, or changes a rule many functions share: a definition that agreed inside a
 program that stays refused is seen by nothing else before the promotion.
 
+## Prepared topics
+
+What the Rust front end does for a topic, read ahead of the port, each with a probe program
+that challenges the rule (one function per case, every value hand-computed, run on both
+backends): [hoisted-defaults.md](hoisted-defaults.md), [record-return.md](record-return.md);
+the probes are in [probes/](probes/).
+
 ## What the trace does not show
 
 - Nothing below a statement: an operator's or a sub-expression's type is in the IR
