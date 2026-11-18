@@ -322,7 +322,7 @@ The real defects the checker found first:
    another: the scope-end free `OpFreeRefIfDistinct(x, q)` (loft#1257's join witness) ran while
    `x` still named its literal backing, which freed it too.  Latent on main, both backends.  The
    scope-end free takes the rebind's view-temp guard (`LOFT_NO_VIEW_TEMP_SCOPE_END_GUARD`); suite
-   cell O-Latest/a-vector-local-a-forwarding-fn-ref-may-rebind-is-released-once.
+   cell O-Latest/a-rebound-vector-local-releases-the-store-it-leaves-once.
 8. **A binding arm answering the subject freed the caller's vector** —
    `match v { [h, ..t] => t, whole => whole }` delivered `whole` into the return buffer and freed
    its dependency, the parameter `v`.  Latent on main, both backends, every element type.  The

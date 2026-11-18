@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	06396be0ea7f39cf873524aa7498f79900aba853
+suite	aad26829673a05bb663690a01623a3931e42ebc8
 
-layer	elab	agree	1031	of	2080
+layer	elab	agree	1031	of	2079
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -478,8 +478,7 @@ elab	refused	loft-suite/rules/ownership/O-Detach/a-vector-literal-reads-what-its
 elab	refused	loft-suite/rules/ownership/O-Latest/1323-every-arm-of-a-value-branch-has-its-own-binding.loft
 elab	refused	loft-suite/rules/ownership/O-Latest/1324-a-reassigned-capture-suppresses-the-store-the-record-holds.loft
 elab	refused	loft-suite/rules/ownership/O-Latest/1447b-a-captured-keyed-local-rebinds-into-a-fresh-store.loft
-elab	refused	loft-suite/rules/ownership/O-Latest/a-captured-vector-from-a-call-frees-the-store-its-rebind-leaves.loft
-elab	refused	loft-suite/rules/ownership/O-Latest/a-vector-local-a-forwarding-fn-ref-may-rebind-is-released-once.loft
+elab	refused	loft-suite/rules/ownership/O-Latest/a-rebound-vector-local-releases-the-store-it-leaves-once.loft
 elab	refused	loft-suite/rules/ownership/O-Latest/a-whole-value-copy-of-a-droppable-releases-once.loft
 elab	refused	loft-suite/rules/ownership/O-LazyBuffer/1647-a-moved-call-result-is-released-once.loft
 elab	refused	loft-suite/rules/ownership/O-Move/1101-a-projection-bound-to-a-local-then-returned.loft
