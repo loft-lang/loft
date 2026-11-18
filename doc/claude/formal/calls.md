@@ -549,7 +549,7 @@ measurement that closed it — is the companion [calls-history.md](calls-history
   `loft-suite/attic/scripts/1290-a-heap-parameter-rebind-is-local-in-every-spelling.loft`, with a FIELD
   write (`F-ParamHeap`), a `&` parameter (`F-ParamRef`) and a plain LOCAL as the controls.
   The VECTOR kind's `p = other` spelling was in neither oracle and answered wrong until
-  2026-09-05 (D-call-14): `loft-suite/rules/ownership/O-Proxy/a-vector-parameter-reassigned-from-a-variable-rebinds-locally.loft`
+  2026-09-05 (D-call-14): `loft-suite/rules/ownership/O-Proxy/a-vector-taken-from-another-variable-leaves-its-source.loft`
   crosses it with a returned rebind, a rebind through a value branch, a double one, a loop and a
   read ahead of the rebind, with the mutate-through, a self arm and a `&` parameter as the
   controls.  The COLLECTION half is

@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	d9dee4fa6380e171008660c311534d57babca4b6
+suite	5b53ce8470c1727432a430b7559dfe25a3f208bb
 
-layer	elab	agree	1031	of	2078
+layer	elab	agree	1031	of	2077
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -503,12 +503,11 @@ elab	refused	loft-suite/rules/ownership/O-Owner/2258-a-keyed-collection-from-a-f
 elab	refused	loft-suite/rules/ownership/O-Owner/a-borrowing-vector-local-owns-a-fresh-native-result.loft
 elab	refused	loft-suite/rules/ownership/O-Owner/a-returned-vector-bound-from-a-native-call-frees-it.loft
 elab	refused	loft-suite/rules/ownership/O-Owner/a-slice-of-a-fresh-native-result-frees-it.loft
-elab	refused	loft-suite/rules/ownership/O-Proxy/1257-a-lifted-collection-return-does-not-empty-its-source.loft
 elab	refused	loft-suite/rules/ownership/O-Proxy/1320-a-branch-joined-binding-frees-the-arm-that-minted.loft
 elab	refused	loft-suite/rules/ownership/O-Proxy/1456-a-key-write-through-a-nullable-collections-view-materialises.loft
 elab	refused	loft-suite/rules/ownership/O-Proxy/2314-a-vector-bound-from-an-owned-match-subject-is-copied-out.loft
 elab	refused	loft-suite/rules/ownership/O-Proxy/a-literal-after-a-map-keeps-its-first-element.loft
-elab	refused	loft-suite/rules/ownership/O-Proxy/a-vector-parameter-reassigned-from-a-variable-rebinds-locally.loft
+elab	refused	loft-suite/rules/ownership/O-Proxy/a-vector-taken-from-another-variable-leaves-its-source.loft
 elab	refused	loft-suite/rules/ownership/O-Proxy/an-is-payload-binding-borrows-its-subject-like-its-match-twin.loft
 elab	refused	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft
 elab	refused	loft-suite/rules/ownership/O-Witness/1446-a-capture-reassigned-after-the-build-is-freed-by-store-identity.loft
