@@ -2590,6 +2590,10 @@ pub fn method_call_on(e: el::El, vars: el_vars::Vars, at: integer, x: Ex, re: in
   if name == "sort" && sorts_itself(types) {
     return sort_call(e, list, types);
   }
+  // `parse_map`: a vector's `map` is built in place, where the program declares none of its own.
+  if name == "map" && len(list) == 2 && el_types::base(x.tp) is TyVector && !(x.tp is TyOptional) && el_types::base(types[1]!) is TyFunction && el_dispatch::own_set(e, name) < 0 && el::def_nr(e, "n_map") < 0 {
+    return el_ex_match::map_call(e, vars, list, types);
+  }
   // A method name that is an overload set reaches the member its argument types select, the
   // receiver first (`x.m(a)` is `m(x, a)`, `F-Recv`).
   mset = el_dispatch::own_set(e, name);

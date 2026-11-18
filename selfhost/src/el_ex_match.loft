@@ -3389,3 +3389,59 @@ fn halting_call_syntax(e: el::El, n: integer) -> boolean {
 fn arm_settles(result: ir::TypeT, arm: ir::TypeT) -> boolean {
   unsettled(result) && !(el_types::base(arm) is TyNever && (el_types::is_unknown(el_types::base(result)) && !(el_types::base(result) is TyVoid) || el_types::base(result) is TyNull))
 }
+
+// `Parser::parse_map` — `v.map(f)` / `map(v, f)` is no call: it is built in place as a
+// comprehension over the vector (`build_comprehension_code`), each element handed to `f` and the
+// answer pushed onto a fresh vector.  Carried for a vector of plain scalars mapped by a function
+// the call names directly (a function's name, a lambda that captures nothing) to a plain
+// scalar; a function value, a record or text element and a callee with hidden parameters are
+// refused by name.  The first pass answers the result's type alone, as Rust's does.
+pub fn map_call(e: el::El, vars: el_vars::Vars, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex {
+  in_elem = match el_types::base(types[0]!) { TyVector { inner } => inner, _ => ir::TyVoid };
+  out = match el_types::base(types[1]!) { TyFunction { args: _, result } => result, _ => ir::TyUnknown { n: 0 } };
+  if e.first_pass {
+    rt1 = if !el_types::is_unknown(out) && !(out is TyVoid) { out } else { in_elem };
+    return ex(ir::NdNull, ir::TyVector { inner: el_types::without_deps(rt1), dep: [] });
+  }
+  d = match el_ir::unspan(list[1]!) { NdInt { n } => n, _ => -1 };
+  if d < 0 || el_types::is_unknown(out) || out is TyVoid {
+    el::refuse(e, "a `map` through a function value");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  nm = el_types::elem_name(e, out);
+  push = el_ex_pattern::push_op(out);
+  if len(el::def(e, d).attributes) != 1 || !el_convert::plain_scalar(in_elem) || !el_convert::plain_scalar(out) || push == "" || nm == "" || el::def_nr(e, "main_vector<{nm}>") < 0 {
+    el::refuse(e, "a `map` over or to an element that is no plain scalar, or by a function with hidden parameters");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  int_t = ir::TyInteger { spec: i32_spec() };
+  mv = el_vars::create_unique(vars, "map_vec", types[0]!);
+  el_vars::set_defined(vars, mv);
+  idx = el_vars::create_unique(vars, "map_idx", int_t);
+  el_vars::set_defined(vars, idx);
+  elm_v = el_vars::create_unique(vars, "map_elm", in_elem);
+  el_vars::set_defined(vars, elm_v);
+  rt = ir::TyVector { inner: el_types::without_deps(out), dep: [] };
+  res = el_vars::create_unique(vars, "map_result", rt);
+  el_vars::set_defined(vars, res);
+  el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [res] });
+  rows = el_ex_base::vector_rows(e, out, 0, true);
+  nx = vector_step(e, mv, idx, in_elem);
+  if rows == null || nx == null {
+    el::refuse(e, "a `map` over or to an element that is no plain scalar, or by a function with hidden parameters");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  ops = el_ex_pattern::literal_store(e, vars, res, rows!);
+  comp = el_vars::create_unique(vars, "comp", out);
+  el_vars::set_defined(vars, comp);
+  w = ir::NdVar { n: res };
+  steps: vector<ir::Node> = [
+    el_ir::v_set(elm_v, nx!),
+    vector_past_end(e, mv, idx),
+    el_ir::v_set(comp, ir::NdCall { def_nr: d, args: [ir::NdVar { n: elm_v }] }),
+    el_ir::cl(e, push, el_ex_pattern::push_args(e, vars, out, w, ir::NdVar { n: comp }))
+  ];
+  ops += [el_ir::v_set(mv, list[0]!), el_ir::v_set(idx, ir::NdInt { n: -1 }), el_ir::v_loop(steps, "For comprehension"), w];
+  bt = el_vars::tp(vars, res);
+  ex(el_ir::v_block(ops, bt, "Vector comprehension"), bt)
+}
