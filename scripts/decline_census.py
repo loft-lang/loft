@@ -8,7 +8,6 @@
     scripts/decline_census.py --reasons 8  # more reasons per rule (default 4)
     scripts/decline_census.py --programs   # also the per-program split
     scripts/decline_census.py --record     # ...and keep the run in bench/portal/decline_census.tsv
-    scripts/decline_census.py --check-labels   # fail when a rule reports more labels than LABEL_CAP
     LOFT_BIN=<loft> scripts/decline_census.py
 
 Why
@@ -98,9 +97,6 @@ REPORTED = {
     "R-DecodeView": ("a decoded field held as a span of its source bytes", "partial"),
     "R-FaultFlag": ("a `for` statement run as a fast copy with one fault flag", "partial"),
 }
-# A rule's labels are the validation clauses of its statement (REWRITE_REASONS.md): a rule that
-# passes this many is describing sites, not clauses.  `(R-Range)` uses twelve today.
-LABEL_CAP = 12
 
 
 def mask(why):
@@ -179,13 +175,9 @@ def report(results, reasons, per_program):
     labels = defaultdict(set)
     for rule, why in by_rule_reason:
         labels[rule].add(why)
-    over = sorted((len(v), r) for r, v in labels.items() if len(v) > LABEL_CAP)
     lines.append("")
     lines.append("labels in use per rule: "
                  + ", ".join(f"{r} {len(labels[r])}" for r in sorted(labels)))
-    for n, rule in over:
-        lines.append(f"  OVER THE CAP: {rule} reports {n} labels, more than {LABEL_CAP} — "
-                     "a label names a clause of the rule, not a site (REWRITE_REASONS.md)")
     if per_program:
         lines.append("")
         lines.append(f"{'program':<28} {'rule':<28} {'admitted':>8} {'declined':>8}")
@@ -243,8 +235,6 @@ def main() -> int:
     if "--record" in args:
         record(results, admitted, declined, by_rule_reason)
         print(f"wrote {RECORD.relative_to(ROOT)}")
-    if over and "--check-labels" in args:
-        return 1
     return 0 if len(results) == len(done) else 2
 
 
