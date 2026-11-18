@@ -2388,6 +2388,19 @@ pub fn noted_bind(e: el::El, vars: el_vars::Vars, x: Ex) -> Ex {
 // the first pass, found again on the second — the right side is read, the local takes the
 // value's type (`change_var`) and the statement is the `Set` (`towards_set`), typed void.
 pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: text, target: integer, rhs: integer?) -> Ex {
+  // A compound assignment to a field of a `?` read (`v[0]?.k += x`): Rust binds the place once
+  // (`__place_N`) and reads and writes through it — not carried.
+  if op != "=" && rhs != null {
+    match e.p.nodes[target] {
+      SMember { e: cme, call } => {
+        if !call && cme != null && match e.p.nodes[cme!] { SPostfix { op: cpo } => cpo == "?", _ => false } {
+          el::refuse(e, "a compound assignment to a field of a `?` read");
+          return ex(ir::NdNull, ir::TyVoid);
+        }
+      },
+      _ => {}
+    }
+  }
   // The literal a plain bind's value chain starts with is built as a receiver (`recv_literal`).
   if op == "=" && rhs != null && e.p.nodes[target] is SName {
     root = rhs!;

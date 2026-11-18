@@ -476,7 +476,9 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   mat_tail = false;
   mv_tail = projects_into_local(e, vars, raw_tail(code), false, result is TyOptional) || reads_stored_reference(e, raw_tail(code), [])
     || (len(el_types::deps(b.tp)) == 0 && tail_is_join(raw_tail(code)) && projects_into_local(e, vars, raw_tail(code), true, true));
-  if rb >= 0 && !lambda && record_result(result) && mv_tail {
+  // (A body that ends in a `return` statement delivered its value there, `record_return`.)
+  expr_tail = tail_syntax(e, vars.body) >= 0 && !(e.p.nodes[tail_syntax(e, vars.body)] is SJump);
+  if rb >= 0 && !lambda && expr_tail && record_result(result) && mv_tail {
     mt = view_tail(e, vars, code, rb, result);
     if mt != null {
       code = mt!;

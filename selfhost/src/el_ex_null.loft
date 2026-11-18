@@ -2318,7 +2318,9 @@ pub fn owned_arms(e: el::El, vars: el_vars::Vars, n: ir::Node) -> boolean {
     NdBlock { block } => len(block[0].operators) > 0 && owned_arms(e, vars, block[0].operators[-1]!),
     // A local the first pass renamed the buffer onto is a hidden parameter on the second.
     NdVar { n: v } => (!vars.vars[v].argument || hidden_param(e, vars, v)) && heap_def(el_vars::tp(vars, v)) >= 0,
-    NdCall { def_nr, args } => !returns_argument_view(el::def(e, def_nr)) && hidden_ref_arg(vars, args) >= 0,
+    // (A `null` arm answers the sentinel and owns nothing: `return if c { d } else { null }`.)
+    NdNull => true,
+    NdCall { def_nr, args } => (len(args) == 0 && el::def(e, def_nr).name == "OpNullRefSentinel") || (!returns_argument_view(el::def(e, def_nr)) && hidden_ref_arg(vars, args) >= 0),
     _ => false
   }
 }
@@ -2327,7 +2329,8 @@ pub fn owned_arms(e: el::El, vars: el_vars::Vars, n: ir::Node) -> boolean {
 pub fn first_arm_ref(vars: el_vars::Vars, n: ir::Node) -> integer {
   match n {
     NdSpan { inner } => first_arm_ref(vars, inner),
-    NdIf { cond: _, t, f: _ } => first_arm_ref(vars, t),
+    // (The first arm that answers a record: a `null` arm names none.)
+    NdIf { cond: _, t, f } => if first_arm_ref(vars, t) >= 0 { first_arm_ref(vars, t) } else { first_arm_ref(vars, f) },
     NdBlock { block } => if len(block[0].operators) > 0 { first_arm_ref(vars, block[0].operators[-1]!) } else { -1 },
     NdVar { n: v } => v,
     NdCall { def_nr: _, args } => hidden_ref_arg(vars, args),
@@ -2373,18 +2376,46 @@ pub fn materialised_return(e: el::El, vars: el_vars::Vars, v: Ex, w: integer, re
   if lv >= 0 && el_expressions::views_local(vars, lv) {
     // A struct ENUM keeps `__retbuf` in Rust where a struct renames it onto the copy's work ref
     // — the clause of `classify_ret_promotion_inner` that decides it is not ported: refused.
+    // A struct ENUM keeps `__retbuf` where a struct renames it onto the copy's work ref: a work
+    // ref typed as a record cannot be the enum's buffer (`wrong_shape_for_buffer`), so the work
+    // ref is minted, substituted out, and the buffer itself takes the copy (`Bind`).
     if el_convert::struct_enum(el_types::base(result)) {
-      el::refuse(e, "a returned view of a local, answered as a struct enum");
-      return null;
+      if !unrenamed {
+        el::refuse(e, "a returned view of a local, answered as a struct enum");
+        return null;
+      }
+      ew = el_vars::work_ref(vars, ir::TyReference { n: heap_def(el_types::base(result)), dep: [] });
+      el_vars::unregister_work_ref(vars, ew);
+      if e.first_pass {
+        eba = attr_nr(el::def(e, d), "__retbuf");
+        eret = el::def(e, d).returned[0];
+        if eba >= 0 && !el_types::deps(eret).contains(eba) {
+          e.b.data.definitions[d].returned = [el_types::with_deps(eret, el_types::deps(eret) + [eba])];
+        }
+        return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
+      }
+      ecopy = copy_into_buffer(e, vars, x, lv, rb, result);
+      if ecopy == null {
+        el::refuse(e, "a returned view of a local, answered as a struct enum");
+        return null;
+      }
+      return ex(ir::NdReturn { inner: ecopy! }, ir::TyNever);
     }
+    // (`materialize_view_return` mints its work ref at every such exit, on both passes; one
+    // that is not renamed onto the buffer is substituted out.)
+    mw = el_vars::work_ref(vars, el_types::without_deps(el_types::base(result)));
     if e.first_pass {
       if unrenamed && !el_expressions::buffer_bound(e) {
-        mw = el_vars::work_ref(vars, el_types::without_deps(el_types::base(result)));
         rename_onto(e, vars, rb, mw);
+      } else {
+        el_vars::unregister_work_ref(vars, mw);
       }
       return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
     }
     vb = return_buffer(e, vars);
+    if mw != vb {
+      el_vars::unregister_work_ref(vars, mw);
+    }
     if vb >= 0 && !unrenamed {
       vcopy = copy_into_buffer(e, vars, x, lv, vb, result);
       if vcopy != null {
@@ -2399,20 +2430,26 @@ pub fn materialised_return(e: el::El, vars: el_vars::Vars, v: Ex, w: integer, re
   if w < 0 && x is NdCall && heap_def(el_types::base(result)) >= 0 && (proot >= 0 && !vars.vars[proot].argument || el_ex_assign::call_rooted(e, vars, x)) {
     src = x;
     pre: vector<ir::Node> = [];
-    if proot < 0 {
+    // (`bind_return_source` runs on the second pass alone: `_ret_root_N` is minted there.)
+    if proot < 0 && !e.first_pass {
       root_call = el_ir::unspan(el_ex_assign::projection_root(e, x) ?? ir::NdNull);
       rr = el_vars::create_unique(vars, "_ret_root", el_types::without_deps(el_types::base(match root_call { NdCall { def_nr } => el::def(e, def_nr).returned[0] ?? ir::TyVoid, _ => ir::TyVoid })));
       pre = [el_ir::v_set(rr, root_call)];
       src = el_ex_assign::replace_projection_root(e, x, ir::NdVar { n: rr });
     }
+    pw = el_vars::work_ref(vars, el_types::without_deps(el_types::base(result)));
     if e.first_pass {
       if unrenamed && !el_expressions::buffer_bound(e) {
-        mw = el_vars::work_ref(vars, el_types::without_deps(el_types::base(result)));
-        rename_onto(e, vars, rb, mw);
+        rename_onto(e, vars, rb, pw);
+      } else {
+        el_vars::unregister_work_ref(vars, pw);
       }
       return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
     }
     mb = return_buffer(e, vars);
+    if pw != mb {
+      el_vars::unregister_work_ref(vars, pw);
+    }
     td = heap_def(el_types::base(result));
     if mb >= 0 && !unrenamed {
       kt = ir::NdInt { n: el::def(e, td).known_type };
