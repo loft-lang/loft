@@ -7,7 +7,7 @@
 //! every store each way.  The trace shows the functions the cell is about really were
 //! shortened, so the cell does not pass by staying as written.
 //!
-//! @falsified-at: 89ba8bd2a — scored by hand against two defects planted in `src/c/tail.rs`.
+//! @falsified-at: d66006112 — scored by hand against two defects planted in `src/c/tail.rs`.
 //!   CHANNEL: value (the cell's own assertions) and leak (`stores not freed`), on `--native-c`.
 //!   ARMED: nothing to arm: the pass runs by default.
 //!   WITNESS: (a) a shared end's label put one statement late (`at.push(first + k + 1)`), so a
