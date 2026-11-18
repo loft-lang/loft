@@ -3715,6 +3715,139 @@ use a separate collection or add after the loop"
         (to.clone(), kt, u16::MAX)
     }
 
+    /// loft#2563 — the write of a whole KEYED value `src` into the keyed struct field `to`
+    /// when that field is a member of a linked group; `None` for any other destination,
+    /// which keeps its `OpReplaceKeyed`.
+    ///
+    /// `OpReplaceKeyed` is handed the member's place and type and nothing of the group, so
+    /// its copy filled the one member and left the others out of step (`@FR-Col-Group`): a
+    /// vector member read length 0 beside lookups that answered.  `OpFillKeyed` files each
+    /// record through `record_finish`, which is the route that keeps a group's members
+    /// agreeing, and `FILL_KEYED_SOURCE` tells it the source is keyed.  The caller emits the
+    /// group clear in front when the write REPLACES (`=`); a literal's field is new.
+    pub(crate) fn keyed_group_fill(
+        &mut self,
+        to: &Value,
+        parent_tp: &Type,
+        kt: u16,
+        tp_val: i32,
+        src: &Value,
+    ) -> Option<Value> {
+        let (struct_tp, byte_off) = self.field_site(to, parent_tp)?;
+        if self
+            .database
+            .keyed_group_members(struct_tp, byte_off)
+            .is_empty()
+        {
+            return None;
+        }
+        let (parent, parent_tp_id, field_nr) = self.fill_keyed_site(to, parent_tp, kt);
+        if field_nr == u16::MAX {
+            return None;
+        }
+        let flagged = i32::from(parent_tp_id | crate::database::FILL_KEYED_SOURCE);
+        Some(self.cl(
+            "OpFillKeyed",
+            &[
+                parent,
+                src.clone(),
+                // No source-free bit: the scope pass releases a call's result itself.
+                Value::Int(tp_val & 0x7FFF),
+                Value::Int(flagged),
+                Value::Int(i32::from(field_nr)),
+            ],
+        ))
+    }
+
+    /// The source of a whole-collection write into a keyed struct field, read BEFORE the
+    /// destination is cleared: the ops that stage it, and the value the fill then reads.
+    ///
+    /// `=` replaces, so the clear comes first — and a source that reads the destination
+    /// (`x.by_k = keep(x, 6)`, a projection of the group itself) was evaluated after it, over
+    /// a collection already emptied: the write answered nothing, in silence.  Only an OWNED
+    /// local is provably independent of the destination (a borrow shows in its deps) and is
+    /// read where it stands; every other source is copied into a temp of its own first —
+    /// what `__p154_rhs` does for a vector field (`@FR-H-CopySelf`).
+    fn staged_keyed_field_source(&mut self, val: &Value, src_tp: &Type) -> (Vec<Value>, Value) {
+        if matches!(val.unspan(), Value::Var(v) if self.vars.tp(*v).depend().is_empty()) {
+            return (Vec::new(), val.clone());
+        }
+        if let Type::Vector(elm, _) = src_tp.base() {
+            let elm = (**elm).clone();
+            let rec_tp = Value::Int(self.append_elem_tp(&elm));
+            let tmp_tp = Type::Vector(Box::new(elm), Deps::none());
+            let tmp = self.vars.unique("_kfill_rhs", &tmp_tp, &mut self.lexer);
+            let fill = self.cl("OpAppendVector", &[Value::Var(tmp), val.clone(), rec_tp]);
+            return (vec![v_set(tmp, Value::Null), fill], Value::Var(tmp));
+        }
+        let Some(kt) = self.keyed_type_id(src_tp) else {
+            return (Vec::new(), val.clone());
+        };
+        let tmp = self
+            .vars
+            .unique("_kfill_rhs", src_tp.base(), &mut self.lexer);
+        for d in self.vars.tp(tmp).depend() {
+            self.vars.make_independent(tmp, d);
+        }
+        let tp_val = if self.call_gives_away_its_store(val) {
+            i32::from(kt) | 0x8000
+        } else {
+            i32::from(kt)
+        };
+        let copy = self.cl(
+            "OpReplaceKeyed",
+            &[val.clone(), Value::Var(tmp), Value::Int(tp_val)],
+        );
+        (vec![v_set(tmp, Value::Null), copy], Value::Var(tmp))
+    }
+
+    /// The whole of `field = <collection value>` for a keyed struct field that is filled
+    /// record by record: the source staged, the group-aware clear, then the fill.
+    pub(crate) fn keyed_field_replace(
+        &mut self,
+        to: &Value,
+        parent_tp: &Type,
+        kt: u16,
+        tp_val: i32,
+        val: &Value,
+        src_tp: &Type,
+    ) -> Option<Value> {
+        let keyed = crate::parser::vectors::is_keyed(src_tp);
+        if keyed {
+            // Outside a linked group a keyed value keeps its `OpReplaceKeyed`.
+            self.keyed_group_fill(to, parent_tp, kt, tp_val, val)?;
+            if *to.unspan() == *val.unspan() {
+                // A member assigned to itself keeps what it holds.
+                return Some(Value::Insert(Vec::new()));
+            }
+        }
+        let (mut ops, src) = self.staged_keyed_field_source(val, src_tp);
+        // A staged source is the temp's to release; one read in place keeps its bit.
+        let tp_val = if ops.is_empty() {
+            tp_val
+        } else {
+            tp_val & 0x7FFF
+        };
+        let fill = if keyed {
+            self.keyed_group_fill(to, parent_tp, kt, tp_val, &src)?
+        } else {
+            let (parent, parent_tp_id, field_nr) = self.fill_keyed_site(to, parent_tp, kt);
+            self.cl(
+                "OpFillKeyed",
+                &[
+                    parent,
+                    src,
+                    Value::Int(tp_val),
+                    Value::Int(i32::from(parent_tp_id)),
+                    Value::Int(i32::from(field_nr)),
+                ],
+            )
+        };
+        ops.extend(self.keyed_group_clear(to, kt, parent_tp));
+        ops.push(fill);
+        Some(Value::Insert(ops))
+    }
+
     fn field_at(to: &Value, off: u16) -> Value {
         let mut out = to.unspan().clone();
         if let Value::Call(_, args) = &mut out

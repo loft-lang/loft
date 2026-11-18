@@ -8812,10 +8812,18 @@ impl Parser {
                 // `group_primed` zeroed the whole linked group's), so there is nothing in
                 // the destination to replace.
                 if crate::parser::vectors::is_keyed(exp_tp) {
-                    list.push(self.cl(
-                        "OpReplaceKeyed",
-                        &[value.clone(), field_ref, Value::Int(tp_val)],
-                    ));
+                    // loft#2563 — a member of a linked group takes the keyed value through
+                    // the fill, which reaches every member; the field is new, so no clear.
+                    let parent_ty = Type::Reference(td_nr, crate::data::Deps::none());
+                    let write =
+                        match self.keyed_group_fill(&field_ref, &parent_ty, kt, tp_val, value) {
+                            Some(fill) => fill,
+                            None => self.cl(
+                                "OpReplaceKeyed",
+                                &[value.clone(), field_ref, Value::Int(tp_val)],
+                            ),
+                        };
+                    list.push(write);
                 } else {
                     let parent_ty = Type::Reference(td_nr, crate::data::Deps::none());
                     let (parent, parent_tp_id, field_nr) =

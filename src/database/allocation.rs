@@ -24,6 +24,12 @@ use crate::vector;
 /// schema is bounded well under 0x8000, which is what makes the top bit free.
 pub const CLEAR_KEYED_VIEW: u16 = 0x8000;
 
+/// `OpFillKeyed`'s `parent_tp` operand sets this bit when the source is a KEYED collection
+/// of the destination's own type rather than a plain vector (loft#2563), so its records are
+/// listed by the module that owns its layout.  A flag bit for the reason
+/// [`CLEAR_KEYED_VIEW`] is one: the op's arity and every emitter stay unchanged.
+pub const FILL_KEYED_SOURCE: u16 = 0x8000;
+
 /// The `limit` a range slice's lowering passes when the program wrote no `:n` — the
 /// spatial `xs[(x,y)..]` and the trie `t[pre..]`.  `i64::MAX` rather than a negative
 /// flag, because a cap of that size means "uncapped" whoever writes it.
