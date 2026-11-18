@@ -181,6 +181,21 @@ impl Parser {
         should: &Type,
         ctx: StoreCtx,
     ) -> bool {
+        // `@FR-D-Json` — `JsonValue` is the one enum with a stated zero: a `null` stored into a
+        // dense `JsonValue` place — an element of a literal or an appended one, an element or a
+        // field assigned, a field of a literal — holds `JNull`, built as the literal is (as an
+        // omitted field's default is, `objects.rs`).  Stored as the plain null, it read back as no
+        // variant at all: `kind()` answered "JUnknown" and a `match` on `JNull` fell through.  A
+        // `JsonValue?` place keeps its null (D-Opt).
+        if matches!(is_type, Type::Null)
+            && !matches!(should, Type::Optional(_))
+            && let Type::Enum(e, true, _) = should.base()
+            && self.data.def(*e).name == "JsonValue"
+        {
+            let e = *e;
+            self.emit_variant_value(e, "JNull", code);
+            return true;
+        }
         self.store_ctx.push(ctx);
         let accepted = self.convert(code, is_type, should);
         self.store_ctx.pop();

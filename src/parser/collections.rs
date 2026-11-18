@@ -1803,10 +1803,13 @@ impl Parser {
         // field stayed present and `b.s = null` was silently a no-op.
         // `base()`, because a nullable field arrives as `Optional(Enum(…))` — the same
         // peel this whole family needs (loft#1065).
+        // A DENSE `JsonValue` slot is the one exception: its null is `JNull` (`@FR-D-Json`), which
+        // the store face builds.
         if op == "="
             && self.is_null_source(val)
             && let Type::Enum(syn, true, _) = f_type.base()
             && !self.data.def(*syn).name.starts_with("__nullable<")
+            && !(self.data.def(*syn).name == "JsonValue" && !matches!(f_type, Type::Optional(_)))
             && let Some((base, fld)) = self.inline_slot_word(to)
         {
             return self.cl("OpSetInt4", &[base, fld, Value::Int(0)]);

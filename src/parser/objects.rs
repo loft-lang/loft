@@ -8581,10 +8581,13 @@ impl Parser {
         // is spelled in four bytes.  Nothing observed it, because the null TEST for the
         // type was refused — so the write had never been right and could not be seen.
         // Write the pointer directly, the same shape and the same reason as the arm above.
+        // A DENSE `JsonValue` field is the one exception: its null is `JNull` (`@FR-D-Json`), which
+        // the store face builds.
         if !self.first_pass
             && self.is_null_source(value)
             && let Type::Enum(syn, true, _) = &td_base
             && !self.data.def(*syn).name.starts_with("__nullable<")
+            && !(self.data.def(*syn).name == "JsonValue" && !matches!(td, Type::Optional(_)))
         {
             let item_pos = i32::from(
                 self.database
