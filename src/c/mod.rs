@@ -27,6 +27,7 @@ mod parse;
 mod reflect;
 mod show;
 mod split;
+mod tail;
 mod tidy;
 pub(crate) mod tls;
 mod unicode;
@@ -4843,6 +4844,13 @@ fn framed(
     );
     let whole = format!("{body_storage} {} {fr}({params}) {{\n{body}}}\n", held(ret));
     trace_body(name, parts.is_some(), &whole);
+    // `@FR-R-CTail`: the whole body's shared release tails are written once.  The parts keep
+    // every exit's own statements (a part cannot jump into another), and the body trace above
+    // shows the body before this pass, as the body comparisons read it.
+    let whole = match tail::merge(name, &held(ret), body) {
+        Some(body) => format!("{body_storage} {} {fr}({params}) {{\n{body}}}\n", held(ret)),
+        None => whole,
+    };
     let text = match parts {
         Some(parts) if split::everywhere() => parts,
         Some(parts) => format!("#if defined(_MSC_VER)\n{parts}#else\n{whole}#endif\n"),
