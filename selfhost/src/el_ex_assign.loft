@@ -2098,6 +2098,25 @@ pub fn vec_copy_bind(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> Ex {
   // replace.  A hidden or compiler-made parameter is a buffer filled in place: refused.
   param = vars.vars[v].argument;
   opt_param = param && el_vars::tp(vars, v) is TyOptional;
+  // A local the first pass renamed the return buffer onto (`v = x.c; v`) is that buffer on the
+  // second: the caller's store is emptied and refilled where the local is bound, no store of
+  // its own minted (`OpClearVector`, `OpAppendVector`).
+  // (From a FIELD's read: a copy of another vector local keeps its own store in Rust, the
+  // buffer filled at the tail — not carried.)
+  if !e.first_pass && field_read && param && hidden_param(e, vars, v) && !el_vars::is_compiler_generated(vars, v) && !(x.tp is TyOptional) && !(el_vars::tp(vars, v) is TyOptional) {
+    bnm = el_types::elem_name(e, elm);
+    brec = match el_types::base(elm) {
+      TyReference { n } => el::def(e, n).known_type,
+      _ => if bnm == "" { -1 } else { el_schema::schema_type(e, bnm) }
+    };
+    if bnm != "" && brec >= 0 && el::def_nr(e, "main_vector<{bnm}>") >= 0 {
+      el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [v] });
+      return ex(ir::NdInsert { items: [
+        el_ir::cl(e, "OpClearVector", [ir::NdVar { n: v }]),
+        el_ir::cl(e, "OpAppendVector", [ir::NdVar { n: v }, x.code, ir::NdInt { n: brec }])
+      ] }, ir::TyVoid);
+    }
+  }
   if x.tp is TyOptional || (el_vars::tp(vars, v) is TyOptional && !param) || (param && (hidden_param(e, vars, v) || el_vars::is_compiler_generated(vars, v))) {
     el::refuse(e, "a whole-vector copy bind of a nullable vector or into a buffer parameter");
     return ex(ir::NdNull, ir::TyVoid);
