@@ -665,7 +665,9 @@ scripts/claim.py mine              # what THIS checkout holds and has pushed no 
   to its claimer either.  So it lists this checkout's own claims with no fix pushed in a
   section of their own (`claim.py mine`), by `<host>/<checkout>` whatever branch the claim
   was taken on, and counts the ones other streams hold.  A claim in that section is fixed or
-  released (`release N`); it goes before any unclaimed issue.
+  released (`release N`); it goes before any unclaimed issue, is not carried overnight, and
+  the section is empty before a handoff note is written or a PR is opened
+  ([DEVELOPMENT.md § Opening a PR is the owner's call](DEVELOPMENT.md#opening-a-pr-is-the-owners-call)).
 - **The `commit-msg` hook** warns when a `Fixes #N` names an issue another stream holds — the
   last moment a duplicate fix is noticed without anyone remembering to look.  It reports and
   never blocks: a merge legitimately carries another stream's fix forward.
