@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	32fc729f8b4f2003c18cc70b0dc8c2133d00bb47
+suite	a57c6acbbcf95cec78a70389ecc276a8b817bad7
 
-layer	elab	agree	1031	of	2052
+layer	elab	agree	1031	of	2051
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -634,9 +634,8 @@ elab	refused	loft-suite/rules/types/I-Join/2066-two-named-widths-join-to-their-u
 elab	refused	loft-suite/rules/types/I-Lit/arms-and-nullable-parameter-defaults-meet-a-narrow-slot.loft
 elab	refused	loft-suite/rules/types/I-Narrow-Opt/a-nullable-narrow-field-default-may-call-a-later-function.loft
 elab	refused	loft-suite/rules/types/I-Widen/an-arm-join-widens-whichever-arm-comes-first.loft
-elab	refused	loft-suite/rules/types/N-Cast/2186-a-checked-variant-cast-answers-null-on-a-miss.loft
 elab	refused	loft-suite/rules/types/N-Cast/2186-a-checked-variant-cast-into-a-non-null-destination-warns.loft
-elab	refused	loft-suite/rules/types/N-Cast/a-checked-cast-carries-a-domain-miss-and-a-join-carries-the-cast.loft
+elab	refused	loft-suite/rules/types/N-Cast/a-checked-cast-answers-null-on-a-miss-and-a-join-carries-it.loft
 elab	refused	loft-suite/rules/types/N-Chain/1450d-a-projection-chain-discharges-once-at-its-tail.loft
 elab	refused	loft-suite/rules/types/N-Coal/019-a-halting-call-is-a-coalesce-default.loft
 elab	refused	loft-suite/rules/types/N-Coal/1425-a-nested-tuple-finds-its-own-null-sentinel.loft
