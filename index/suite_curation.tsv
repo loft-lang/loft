@@ -558,12 +558,12 @@ S-Paged-Same	structures	curated	4	2026-11-18	its own fold candidate agrees with 
 S-Pair	structures	curated	4	2026-11-18	held by tests/scripts/2173-an-image-and-its-sidecar-are-written-together.loft and arc_e_program_cache's Rust guard
 S-Park	structures	structural	0	2026-11-18	a parked block's bytes: no program observes them; Store::park_block cites it, guarded by the allocator's Rust tests
 S-Probe	structures	curated	1	2026-11-18	held by golden-images-paged and src/hash.rs
-S-Side	structures	todo			
-S-Sidecar	structures	todo			
-S-Tomb	structures	todo			
-S-Tree	structures	todo			
-S-TreeKey	structures	todo			
-S-Vector	structures	todo			
+S-Side	structures	structural	0	2026-11-18	what the runtime keeps beside a buffer and re-derives on open: no program observes the sets, only that an opened image reads as written, which the image programs hold
+S-Sidecar	structures	structural	0	2026-11-18	the sidecar file's line format: written and read by src/schema_sidecar.rs (which cites it); a program sees it only through S-Gate's refusals, which their cells hold
+S-Tomb	structures	structural	0	2026-11-18	a tombstone's bytes: no program observes them; tombstones_enabled cites it beside H-Removed, whose cells hold what a removal answers
+S-Tree	structures	curated	2	2026-11-18	held by the paged and whole golden images and src/radix_tree.rs
+S-TreeKey	structures	curated	3	2026-11-18	its own cells (narrow axes, the walk order) beside the paged golden images
+S-Vector	structures	curated	3	2026-11-18	its own cell and S-Paged's beside golden-images-whole
 T-Absent	tuples	todo			
 T-Cons	tuples	todo			
 T-Destr	tuples	todo			
