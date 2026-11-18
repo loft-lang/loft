@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	08bb37417582c0704c88753b5f47fe08c561347e
+suite	61b68326a3541879529b4538498f6209badabec5
 
-layer	elab	agree	1031	of	2066
+layer	elab	agree	1031	of	2065
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -544,8 +544,7 @@ elab	refused	loft-suite/rules/rewrites/R-HandOver/a-window-of-scalar-vectors-rot
 elab	refused	loft-suite/rules/rewrites/R-Header/a-vector-the-loop-rebinds-is-read-through-the-header-of-what-it-names-now.loft
 elab	refused	loft-suite/rules/rewrites/R-HostStore/a-literal-adopts-its-childrens-results-built-in-its-store.loft
 elab	refused	loft-suite/rules/rewrites/R-HostStore/a-recursion-answering-its-own-results-keeps-adopts-and-releases-them.loft
-elab	refused	loft-suite/rules/rewrites/R-InPlace/158-link-rebind.loft
-elab	refused	loft-suite/rules/rewrites/R-InPlace/a-link-to-a-plain-record-blocks-no-hoist.loft
+elab	refused	loft-suite/rules/rewrites/R-InPlace/a-link-is-rebound-and-hoisted-around-as-its-place-allows.loft
 elab	refused	loft-suite/rules/rewrites/R-InPlaceLiteral/1571-a-literal-written-in-place-reads-the-old-value-through-any-view.loft
 elab	refused	loft-suite/rules/rewrites/R-InPlaceLiteral/1834-a-user-name-starting-with-an-underscore-is-the-users.loft
 elab	refused	loft-suite/rules/rewrites/R-InPlaceLiteral/a-literal-assigned-to-a-reference-field-repoints-it.loft

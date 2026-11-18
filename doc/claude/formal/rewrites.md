@@ -1744,7 +1744,7 @@ the body repoints every path rooted at `g`, and `g` counts as rebound (`hoist::r
 closes the set over links, `hoist::rebinds_root` answers the single-root form for a view's
 header, a record's address and a mint group's path).  Measured before it: `g.tags`' header
 hoisted across `e = h[i]`, native read `h[0]`'s tags on every pass (15 for 16, every
-switch on or off); cells `loft-suite/rules/rewrites/R-InPlace/158-link-rebind.loft` l1–l7.
+switch on or off); cells `loft-suite/rules/rewrites/R-InPlace/a-link-is-rebound-and-hoisted-around-as-its-place-allows.loft` l1–l7.
 **The hidden-buffer allowance** (@PLN157 § V-ad): the allow-list also admits
 `OpDatabase`/`OpDatabaseNP` into a null-discharge buffer — the hidden `__ref_p2_N` that
 `e = tbl[i]?` mints an ABSENT record element into — whatever the record holds.  The
