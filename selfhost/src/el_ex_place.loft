@@ -3023,7 +3023,7 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
         el::refuse(e, "an omitted member of a linked collection group with a declared default");
         return null;
       }
-      defaults = field_default(e, d, a#index, r, 0);
+      defaults = field_default(e, vars, d, a#index, r, 0);
       if defaults == null {
         return null;
       }
@@ -3447,11 +3447,34 @@ fn out_of_line_init(e: el::El, vars: el_vars::Vars, r: ir::Node, d: integer, a: 
 // `object_init` for one omitted field at `base` bytes into the record `r`: a plain field its
 // type's default; a vector field its handle zeroed (twice: the prime, then the default's own
 // write); a struct field each of ITS fields' defaults, inline at its offset.
-pub fn field_default(e: el::El, d: integer, a: integer, r: ir::Node, base: integer) -> vector<ir::Node>? {
+pub fn field_default(e: el::El, vars: el_vars::Vars, d: integer, a: integer, r: ir::Node, base: integer) -> vector<ir::Node>? {
   def = el::def(e, d);
   at = def.attributes[a]!;
   pos = base + field_position(e, d, at.name);
   ft = at.typedef[0];
+  // A hoisted vector default (`n___dflt_<Struct>_<field>`): the field's handle primed, then the
+  // function's answer appended — the function handed a `__ref_N` of the vector's type as its
+  // buffer, minted here, on the second pass.
+  match el_ir::unspan(at.value[0] ?? ir::NdNull) {
+    NdCall { def_nr: hd, args: _ } => {
+      if starts_with(el::def(e, hd).name, "n___dflt_") {
+        hin = match ft { TyVector { inner } => inner, _ => ir::TyVoid };
+        hnm = el_types::elem_name(e, hin);
+        hvt = if hnm == "" { -1 } else { el_schema::schema_type(e, "vector<{hnm}>") };
+        hrow = el_ex_vector::append_row(e, hin);
+        if hvt < 0 || hrow < 0 {
+          el::refuse(e, "a hoisted field default of this type: {type_kind(ft)}");
+          return null;
+        }
+        hw = el_vars::work_ref(vars, el_types::without_deps(ft));
+        return [
+          el_ir::cl(e, "OpSetInt4", [r, ir::NdInt { n: pos }, ir::NdInt { n: 0 }]),
+          el_ir::cl(e, "OpAppendVector", [el_ir::cl(e, "OpGetField", [r, ir::NdInt { n: pos }, ir::NdInt { n: hvt }]), ir::NdCall { def_nr: hd, args: [ir::NdVar { n: hw }] }, ir::NdInt { n: hrow }])
+        ];
+      }
+    },
+    _ => {}
+  }
   // An omitted out-of-line field holds no child: `OpSetChildRec` of the null sentinel.
   if el_schema::out_of_line(e, d, a) {
     fk = child_field(e, d, a, r, base);
@@ -3502,7 +3525,7 @@ pub fn field_default(e: el::El, d: integer, a: integer, r: ir::Node, base: integ
         if fa.constant {
           continue;
         }
-        sub = field_default(e, fd, fa#index, r, pos);
+        sub = field_default(e, vars, fd, fa#index, r, pos);
         if sub == null {
           return null;
         }

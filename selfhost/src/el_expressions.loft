@@ -2810,6 +2810,14 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
   literal = (lit >= 0 && (e.p.nodes[lit] is SVecLit || e.p.nodes[lit] is SComprehension)) || trailing_literal_return(e, vars.body);
   bl = match code { NdBlock { block } => block[0], _ => return code };
   tail = if len(bl.operators) > 0 { el_ir::unspan(bl.operators[-1]) } else { ir::NdNull };
+  // An untyped `[]` at the tail of a vector-returning body is that vector's empty literal, built
+  // in a store of its own as a literal with items is (`convert` of the tail to the result).
+  if lit >= 0 && match e.p.nodes[lit] { SVecLit { items: lvi } => len(lvi) == 0, _ => false } && len(bl.operators) > 0 && !(tail is NdBlock) {
+    et = el_ex_pattern::empty_literal_to(e, vars, el_types::without_deps(el_types::base(result)));
+    bl.operators[-1] = el_ir::respan(bl.operators[-1], et);
+    tail = et;
+    code = ir::NdBlock { block: [bl] };
+  }
   // A local built in two or more steps, counted on the first pass (`child_allocs` reads that
   // pass's code); the second acts on the borrow the first declared.
   local = match tail { NdVar { n } => if !vars.vars[n].argument && el_vars::tp(vars, n) is TyVector && (!e.first_pass || child_allocs(e, vars, code, n) >= 2) { n } else { -1 }, _ => -1 };
