@@ -2123,7 +2123,8 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
   // The result's null is the fallback only where no arm always matches (`has_wildcard`); a
   // function type's is the empty fn-ref.
   ends_wild = len(out) > 0 && out[len(out) - 1]!.cond == null;
-  if !ends_wild && !(rbase is TyVoid) && !(rbase is TyNull) {
+  // (A match whose every arm leaves — `never` — falls back to a bare `null`, as a void one.)
+  if !ends_wild && !(rbase is TyVoid) && !(rbase is TyNull) && !(rbase is TyNever) {
     fb = match_fallback(e, rbase);
     if fb == null {
       el::refuse(e, "a match whose result has no null: {type_kind(result)}");
@@ -2132,10 +2133,13 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
     chain = fb!;
   }
   for a in rev(out) {
+    // A scalar match's arm that never finishes (`_ => { return 0 }`) beside arms that answer
+    // takes the result's type, as an `if`'s arm does (`true_type = false_type`).
+    ac = if scalar_subject && a.tp is TyNever && !(result is TyNever) && !(result is TyVoid) && a.code is NdBlock { el_ex_null::block_typed(a.code, result) } else { a.code };
     if a.cond == null {
-      chain = a.code;
+      chain = ac;
     } else {
-      chain = el_ir::v_if(a.cond!, a.code, chain);
+      chain = el_ir::v_if(a.cond!, ac, chain);
     }
   }
   // `@FR-C-Never` (loft#2499): a match never finishes only when EVERY arm does not — beside an
@@ -2444,7 +2448,7 @@ pub fn struct_match(e: el::El, vars: el_vars::Vars, x: Ex, pd: integer, arms: ve
       out[a#index].code = widen_bare_fn_ref(a.code, rbase);
     }
   }
-  if !(rbase is TyVoid) && !(rbase is TyNull) && (out[-1] ?? SMArm { guard: null, code: ir::NdNull }).guard != null {
+  if !(rbase is TyVoid) && !(rbase is TyNull) && !(rbase is TyNever) && (out[-1] ?? SMArm { guard: null, code: ir::NdNull }).guard != null {
     fb = match_fallback(e, rbase);
     if fb == null {
       el::refuse(e, "a match whose result has no null: {type_kind(result)}");
