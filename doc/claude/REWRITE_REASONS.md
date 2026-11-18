@@ -148,6 +148,24 @@ shows everything of the functions it matches.  It reads `LOFT_REWRITE_CENSUS_FN`
   give enough context to write the right probe.  Added for a rule when its listing proves
   too thin.
 
+### Two lines left as they are
+
+Both are accurate and are the largest lines of a listing after `(R-Range)`'s.  Neither is
+changed until its rule gives grief.
+
+- **`(R-LeafChain)`: one combined reason, under almost every function.**  A function that
+  calls another and is not frameless counts once, as "its call tree reaches a framed callee,
+  a cycle, a fn ref, a parallel or a yield".  It stays because the listing compared between
+  two builds names the function that lost the rewrite.  It is noise only in the overview
+  with no name.  The viewer hides no rule.  What would improve it: the recursive test
+  (`frameless_chain_from`) answering WHICH cause applied; and, if the overview is read
+  often, counting only a function whose own body is clean and that a callee blocks.
+- **`(R-RecPtr)`: "no fusable field read or write of the view".**  The gate's first test
+  after its walk (`hoist::NO_FUSABLE_USE`).  It covers a view nobody reads through, which is
+  no match, and a view read only in ways the address cannot serve, which is a refusal; the
+  one reason does not tell them apart, and how the count divides is not measured.  Splitting
+  it is a second check in that gate.  Measure the division before touching it.
+
 ## Wiring a rule that owes
 
 A rule that owes is wired when it gives grief (§ What is decided), not in a sweep, and the
