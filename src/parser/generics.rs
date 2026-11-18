@@ -977,6 +977,14 @@ impl Parser {
             concrete,
             new_returned,
         );
+        // I6: the concrete type satisfies every declared bound — judged BEFORE the body is
+        // parsed for it.  An unsatisfied instance's body only repeats the mistake the bound
+        // names (`"{x}"` refused for the plain `to_text` that fails `Printable`), so it is left
+        // unfilled and the bound's diagnostic is the one the program gets.  `d_nr` is still
+        // the answer, so the call reports no "unknown function"; parsing halts on the error.
+        if !self.check_satisfaction(g_nr, &var_bindings, &bindings[var_bindings.len()..]) {
+            return d_nr;
+        }
         self.fill_monomorph_body(d_nr, new_code, &tmpl_vars, &bindings);
         self.derive_monomorph_return_deps(d_nr, g_nr);
         // loft#1023 — a template declared BELOW its caller has not had its pass-2 body
@@ -1001,13 +1009,6 @@ impl Parser {
         // nothing was promoted: a second hidden buffer would move the ABI.
         if self.data.def(d_nr).text_work_buffers() == 0 {
             self.promote_monomorph_text_return(d_nr);
-        }
-        // I6: verify the concrete type satisfies every declared bound.
-        // Emit a diagnostic and return u32::MAX if any required method is missing.
-        if !self.check_satisfaction(g_nr, &var_bindings, &bindings[var_bindings.len()..]) {
-            // Return d_nr (not u32::MAX) so `call` doesn't emit a redundant
-            // "Unknown function" error — the satisfaction error is sufficient.
-            // The function won't execute because parsing will halt on errors.
         }
         self.warn_instance_tail(d_nr, g_nr, &bindings);
         d_nr
