@@ -700,6 +700,13 @@ keeps the view.  Beside them,
 where every arm of that chain is owned, since an arm that views a place the program can still
 reach owes the destination a copy the written-out `Set` cannot make — and is the bisect step for a
 double release, a leak or an aliased record out of a branch with a `??` chain in one of its arms.
+The destination of such a branch VIEWS each arm's chain temp (`@FR-H-FreeTwice`,
+default-ON, scope pass, both backends): a `?? d` chain written out whole leaves the
+destination's dependency on its `__ncc_N`, and a `?? return` chain's `_ncr_N`, released at an
+outer scope, makes the destination's drop and free run only where it names another store.
+**`LOFT_NO_CHAIN_ARM_VIEW=1`** reads the destination as an owner beside the temp again, and is
+the bisect step for a record released twice out of `r = if c { f() ?? d } else { … }`
+(`loft-suite/rules/heap/H-FreeTwice/2550-a-coalesce-arm-of-a-bound-branch-is-released-once.loft`).
 
 **A nested literal is written into its field (@PLN164 C6, `@FR-R-InPlaceLiteral`, default-ON,
 both backends, parse time):** `sc.ops += [Op { paint: Paint { … } }]` writes `Paint`'s fields

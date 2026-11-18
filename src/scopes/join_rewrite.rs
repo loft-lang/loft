@@ -29,7 +29,10 @@ pub(super) fn branch_tail_vars(node: &Value) -> Vec<u16> {
             // from none of them.  Read through, its `__ncc_N` came back as a source the binding
             // copied, `make_independent` dropped the binding's dep on it, and the binding and the
             // temp each freed the one record (loft#2550: `r = if c { f() ?? d } else { … }`).
-            Value::Block(bl) if bl.name == "ncc" => {}
+            // `LOFT_NO_CHAIN_ARM_VIEW=1` reads through it again, the loft#2550 defect.
+            Value::Block(bl)
+                if bl.name == "ncc"
+                    && !crate::env_once!(std::env::var_os("LOFT_NO_CHAIN_ARM_VIEW").is_some()) => {}
             Value::Block(bl) => {
                 if let Some(last) = bl.operators.last() {
                     walk(last, out);

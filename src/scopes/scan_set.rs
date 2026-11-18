@@ -1781,7 +1781,20 @@ impl Scopes<'_> {
         // binding views it on that path, as it views a hoisted lift — its hook and free run only
         // where it names none of them (loft#2550, `r = if c { f() ?? return } else { g() ??
         // return }`, released by the temp and again by `r`).
-        if Self::is_value_branch(value) {
+        // Only an ARM's chain: a chain bound by itself (`t = f()!`, `t = f() ?? return`) hands its
+        // temp's record to the binding and releases the temp nowhere, so a guard on it would
+        // release nothing.  `LOFT_NO_CHAIN_ARM_VIEW=1` leaves it out, the loft#2550 defect.
+        fn ends_in_if(v: &Value) -> bool {
+            match v.unspan() {
+                Value::If(..) => true,
+                Value::Block(bl) => bl.operators.last().is_some_and(ends_in_if),
+                Value::Insert(ops) => ops.last().is_some_and(ends_in_if),
+                _ => false,
+            }
+        }
+        if ends_in_if(value)
+            && !crate::env_once!(std::env::var_os("LOFT_NO_CHAIN_ARM_VIEW").is_some())
+        {
             for t in branch_tail_vars(value) {
                 if t != v
                     && function.name(t).starts_with("_ncr_")
