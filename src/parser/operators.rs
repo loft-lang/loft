@@ -2443,7 +2443,10 @@ impl Parser {
             // `3 + ;` — an operator with nothing on its right.  Reported here, by name, where
             // the right operand is missing; left to run on, the operator's call was built with
             // one argument and refused as "missing argument for parameter 'v2' of `OpAddInt`".
-            if !operator.is_empty() && self.operand_absent() {
+            // `a + +b` keeps its own diagnostic ("'++' is not a valid operator"), written
+            // just below where the second `+` is consumed.
+            let double_plus = operator == "+" && self.lexer.peek_token("+");
+            if !operator.is_empty() && !double_plus && self.operand_absent() {
                 diagnostic!(
                     self.lexer,
                     Level::Error,
