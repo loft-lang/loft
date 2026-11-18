@@ -564,17 +564,17 @@ S-Tomb	structures	structural	0	2026-11-18	a tombstone's bytes: no program observ
 S-Tree	structures	curated	2	2026-11-18	held by the paged and whole golden images and src/radix_tree.rs
 S-TreeKey	structures	curated	3	2026-11-18	its own cells (narrow axes, the walk order) beside the paged golden images
 S-Vector	structures	curated	3	2026-11-18	its own cell and S-Paged's beside golden-images-whole
-T-Absent	tuples	todo			
-T-Cons	tuples	todo			
-T-Destr	tuples	todo			
-T-Paren	tuples	todo			
-T-Proj	tuples	todo			
-T-Record	tuples	todo			
-T-Ref	tuples	todo			
-T-Ref-El	tuples	todo			
-T-Ref-Rep	tuples	todo			
-T-Ref-Src	tuples	todo			
-T-Ret	tuples	todo			
+T-Absent	tuples	curated	8	2026-11-18	merged the operator-split pair (an element read's discharge, an absent member's null in arithmetic); the declared-type and in-flight cells carry file-level annotations and stay
+T-Cons	tuples	curated	14	2026-11-18	thirteen suite cells, distinct cases
+T-Destr	tuples	curated	3	2026-11-18	three suite cells, distinct cases
+T-Paren	tuples	curated	1	2026-11-18	one suite cell
+T-Proj	tuples	curated	2	2026-11-18	two suite cells, distinct cases
+T-Record	tuples	curated	11	2026-11-18	merged the narrow and text member cells; the link cell is the core, the patch cells stay
+T-Ref	tuples	curated	2	2026-11-18	two suite cells, distinct cases
+T-Ref-El	tuples	curated	2	2026-11-18	two suite cells, distinct cases
+T-Ref-Rep	tuples	curated	6	2026-11-18	five suite cells, distinct cases
+T-Ref-Src	tuples	curated	3	2026-11-18	three suite cells, distinct cases
+T-Ret	tuples	curated	3	2026-11-18	three suite cells, distinct cases
 C-Int	types	todo			
 C-Never	types	todo			
 C-Num	types	todo			
