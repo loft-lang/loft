@@ -646,7 +646,10 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
             _ => {}
           }
         }
-        bl.result = [el_types::with_deps(el_types::without_deps(result), [rb])];
+        // (A hoisted default's body is typed by the buffer as it is named now, not by the
+        // retired placeholder: `default_value_fn` types it after the delivery.)
+        brb = if starts_with(el::def(e, e.context).name, "n___dflt_") && el_ex_null::return_buffer(e, vars) >= 0 { el_ex_null::return_buffer(e, vars) } else { rb };
+        bl.result = [el_types::with_deps(el_types::without_deps(result), [brb])];
         code = ir::NdBlock { block: [bl] };
       },
       _ => {}
@@ -715,6 +718,11 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       },
       _ => {}
     }
+  }
+  // A hoisted default's record body is typed by its buffer as that variable is named now
+  // (`default_value_fn` types the block after the delivery), not in attribute numbering.
+  if !e.first_pass && starts_with(el::def(e, e.context).name, "n___dflt_") && el_types::base(result) is TyReference && el_ex_null::return_buffer(e, vars) >= 0 && attr_nr(el::def(e, e.context), "__retbuf") < 0 {
+    code = el_ex_null::block_typed(code, el_types::with_deps(el_types::without_deps(result), [el_ex_null::return_buffer(e, vars)]));
   }
   fin = finish_body(e, vars, code);
   // A `-> E?` body (a struct enum) borrows the visible parameters an early `return` merged,

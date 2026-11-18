@@ -3457,6 +3457,22 @@ pub fn field_default(e: el::El, vars: el_vars::Vars, d: integer, a: integer, r: 
   // buffer, minted here, on the second pass.
   match el_ir::unspan(at.value[0] ?? ir::NdNull) {
     NdCall { def_nr: hd, args: _ } => {
+      // A text: the call itself, handed its work text as any text-answering call is.
+      if starts_with(el::def(e, hd).name, "n___dflt_") && ft is TyText && base == 0 {
+        tc = el_ex_call::call_args(e, vars, hd, [], []);
+        if tc == null {
+          el::refuse(e, "a hoisted field default of this type: {type_kind(ft)}");
+          return null;
+        }
+        return [el_ex_object::set_field(e, d, a, r, tc!.code)];
+      }
+      // A plain struct: the function's answer copied into the field, the function handed a
+      // `__ref_N` of the struct's type.
+      if starts_with(el::def(e, hd).name, "n___dflt_") && ft is TyReference {
+        rkt = el::def(e, match ft { TyReference { n: rsd } => rsd, _ => 0 }).known_type;
+        rw = el_vars::work_ref(vars, el_types::without_deps(ft));
+        return [el_ir::cl(e, "OpCopyRecord", [ir::NdCall { def_nr: hd, args: [ir::NdVar { n: rw }] }, el_ir::cl(e, "OpGetField", [r, ir::NdInt { n: pos }, ir::NdInt { n: rkt }]), ir::NdInt { n: rkt }])];
+      }
       if starts_with(el::def(e, hd).name, "n___dflt_") {
         hin = match ft { TyVector { inner } => inner, _ => ir::TyVoid };
         hnm = el_types::elem_name(e, hin);
