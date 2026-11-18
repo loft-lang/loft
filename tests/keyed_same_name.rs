@@ -10,7 +10,7 @@
 //! and so found the first library's, whose key layout is another struct's: every hash lookup
 //! of the second library missed, on both backends, with no diagnostic.
 //!
-//! @falsified-at: PENDING — the tree before the fix in `src/type_schema.rs`.
+//! @falsified-at: 4338b7a7a — by hand: `keyed_type` naming the element by its definition again.
 //!   CHANNEL: value (the printed line against the hand-computed one), on both backends.
 //!   ARMED: nothing to arm.
 //!   WITNESS: loaded second, `rb` answers `-1 110 77 …` and `-1 55 66` (its hash reads miss);
