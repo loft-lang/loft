@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	fac3652dc1b37371599d8511c95e1683ff5a73ed
 
-layer	elab	agree	1068	of	2191
+layer	elab	agree	1069	of	2191
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -574,7 +574,6 @@ elab	refused	loft-suite/rules/ownership/O-Latest/a-vector-local-a-forwarding-fn-
 elab	refused	loft-suite/rules/ownership/O-Latest/a-whole-value-copy-of-a-droppable-releases-once.loft
 elab	refused	loft-suite/rules/ownership/O-Move/1101-a-projection-bound-to-a-local-then-returned.loft
 elab	refused	loft-suite/rules/ownership/O-Move/1202-a-captured-record-enum-is-not-the-callers-to-take.loft
-elab	refused	loft-suite/rules/ownership/O-Move/1327-an-opaque-fn-ref-return-may-be-its-argument.loft
 elab	refused	loft-suite/rules/ownership/O-Move/1625-an-explicit-return-of-an-element-records-its-borrow.loft
 elab	refused	loft-suite/rules/ownership/O-Move/2385-a-call-with-a-unit-variant-argument-answers-and-releases-its-fresh-record.loft
 elab	refused	loft-suite/rules/ownership/O-Move/a-join-arm-call-that-may-answer-its-argument-frees-it-once.loft
@@ -1130,7 +1129,7 @@ elab	refused	tests/scripts/store_persist_size_710.loft
 elab	refused	tests/scripts/store_rebuild_b1.loft
 elab	refused	tests/scripts/the-reference-safety-traps-are-what-it-catalogues.loft
 
-layer	elab-functions	agree	15481	of	27913
+layer	elab-functions	agree	15514	of	27898
 elab-functions	agree	lib/code.loft::Block
 elab-functions	agree	lib/code.loft::Boolean
 elab-functions	agree	lib/code.loft::Call
@@ -8965,15 +8964,23 @@ elab-functions	agree	loft-suite/rules/ownership/O-Latest/1323-every-arm-of-a-val
 elab-functions	agree	loft-suite/rules/ownership/O-Latest/1323-every-arm-of-a-value-branch-has-its-own-binding.loft::K1323
 elab-functions	agree	loft-suite/rules/ownership/O-Latest/1323-every-arm-of-a-value-branch-has-its-own-binding.loft::P1323
 elab-functions	agree	loft-suite/rules/ownership/O-Latest/1323-every-arm-of-a-value-branch-has-its-own-binding.loft::main_vector<vector<integer>>
+elab-functions	agree	loft-suite/rules/ownership/O-Latest/1323-every-arm-of-a-value-branch-has-its-own-binding.loft::n___lambda_test_a_base_reassigned_after_the_bind_0
+elab-functions	agree	loft-suite/rules/ownership/O-Latest/1323-every-arm-of-a-value-branch-has-its-own-binding.loft::n___lambda_test_a_base_reminted_while_the_borrower_is_live_0
 elab-functions	agree	loft-suite/rules/ownership/O-Latest/1323-every-arm-of-a-value-branch-has-its-own-binding.loft::n___lambda_test_a_closure_mint_arm_beside_a_join_arm_is_freed_0
+elab-functions	agree	loft-suite/rules/ownership/O-Latest/1323-every-arm-of-a-value-branch-has-its-own-binding.loft::n___lambda_test_a_closure_mint_arm_beside_a_join_arm_is_freed_1
 elab-functions	agree	loft-suite/rules/ownership/O-Latest/1323-every-arm-of-a-value-branch-has-its-own-binding.loft::n___lambda_test_a_closure_mint_arm_beside_a_variable_arm_is_freed_0
 elab-functions	agree	loft-suite/rules/ownership/O-Latest/1323-every-arm-of-a-value-branch-has-its-own-binding.loft::n___lambda_test_a_closure_mint_arm_beside_a_variable_arm_is_freed_1
 elab-functions	agree	loft-suite/rules/ownership/O-Latest/1323-every-arm-of-a-value-branch-has-its-own-binding.loft::n___lambda_test_a_coalesce_hoist_owns_a_call_subject_0
 elab-functions	agree	loft-suite/rules/ownership/O-Latest/1323-every-arm-of-a-value-branch-has-its-own-binding.loft::n___lambda_test_a_coalesce_hoist_owns_a_call_subject_1
+elab-functions	agree	loft-suite/rules/ownership/O-Latest/1323-every-arm-of-a-value-branch-has-its-own-binding.loft::n___lambda_test_a_declared_local_re_bound_from_a_join_in_a_loop_0
+elab-functions	agree	loft-suite/rules/ownership/O-Latest/1323-every-arm-of-a-value-branch-has-its-own-binding.loft::n___lambda_test_a_forwarding_closure_arm_is_witnessed_by_the_declared_dep_0
+elab-functions	agree	loft-suite/rules/ownership/O-Latest/1323-every-arm-of-a-value-branch-has-its-own-binding.loft::n___lambda_test_a_local_bound_at_two_sites_from_two_bases_0
 elab-functions	agree	loft-suite/rules/ownership/O-Latest/1323-every-arm-of-a-value-branch-has-its-own-binding.loft::n_d1323
 elab-functions	agree	loft-suite/rules/ownership/O-Latest/1323-every-arm-of-a-value-branch-has-its-own-binding.loft::n_get_items1323
 elab-functions	agree	loft-suite/rules/ownership/O-Latest/1323-every-arm-of-a-value-branch-has-its-own-binding.loft::n_mk1323
 elab-functions	agree	loft-suite/rules/ownership/O-Latest/1323-every-arm-of-a-value-branch-has-its-own-binding.loft::n_mk_v1323
+elab-functions	agree	loft-suite/rules/ownership/O-Latest/1323-every-arm-of-a-value-branch-has-its-own-binding.loft::n_test_a_base_reminted_while_the_borrower_is_live
+elab-functions	agree	loft-suite/rules/ownership/O-Latest/1323-every-arm-of-a-value-branch-has-its-own-binding.loft::n_test_a_closure_mint_arm_beside_a_join_arm_is_freed
 elab-functions	agree	loft-suite/rules/ownership/O-Latest/1323-every-arm-of-a-value-branch-has-its-own-binding.loft::n_test_a_coalesce_hoist_owns_a_call_subject
 elab-functions	agree	loft-suite/rules/ownership/O-Latest/1323-every-arm-of-a-value-branch-has-its-own-binding.loft::n_test_a_declared_local_re_bound_from_a_join_in_a_loop
 elab-functions	agree	loft-suite/rules/ownership/O-Latest/1323-every-arm-of-a-value-branch-has-its-own-binding.loft::n_test_a_local_bound_at_two_sites_from_two_bases
@@ -9007,6 +9014,7 @@ elab-functions	agree	loft-suite/rules/ownership/O-Latest/a-captured-vector-from-
 elab-functions	agree	loft-suite/rules/ownership/O-Latest/a-captured-vector-from-a-call-frees-the-store-its-rebind-leaves.loft::t_22__closure_every_pass_0_OpDropAll
 elab-functions	agree	loft-suite/rules/ownership/O-Latest/a-captured-vector-from-a-call-frees-the-store-its-rebind-leaves.loft::t_24__closure_self_reading_0_OpDropAll
 elab-functions	agree	loft-suite/rules/ownership/O-Latest/a-vector-local-a-forwarding-fn-ref-may-rebind-is-released-once.loft::P
+elab-functions	agree	loft-suite/rules/ownership/O-Latest/a-vector-local-a-forwarding-fn-ref-may-rebind-is-released-once.loft::n___lambda_run_0
 elab-functions	agree	loft-suite/rules/ownership/O-Latest/a-whole-value-copy-of-a-droppable-releases-once.loft::(schema)
 elab-functions	agree	loft-suite/rules/ownership/O-Latest/a-whole-value-copy-of-a-droppable-releases-once.loft::DcH
 elab-functions	agree	loft-suite/rules/ownership/O-Latest/a-whole-value-copy-of-a-droppable-releases-once.loft::DcNone
@@ -9064,18 +9072,21 @@ elab-functions	agree	loft-suite/rules/ownership/O-Move/1202-a-captured-record-en
 elab-functions	agree	loft-suite/rules/ownership/O-Move/1202-a-captured-record-enum-is-not-the-callers-to-take.loft::Shape
 elab-functions	agree	loft-suite/rules/ownership/O-Move/1202-a-captured-record-enum-is-not-the-callers-to-take.loft::Square
 elab-functions	agree	loft-suite/rules/ownership/O-Move/1202-a-captured-record-enum-is-not-the-callers-to-take.loft::n_se_make
-elab-functions	agree	loft-suite/rules/ownership/O-Move/1327-an-opaque-fn-ref-return-may-be-its-argument.loft::n_branch1327
-elab-functions	agree	loft-suite/rules/ownership/O-Move/1327-an-opaque-fn-ref-return-may-be-its-argument.loft::n_dense1327
-elab-functions	agree	loft-suite/rules/ownership/O-Move/1327-an-opaque-fn-ref-return-may-be-its-argument.loft::n_named1327
-elab-functions	agree	loft-suite/rules/ownership/O-Move/1327-an-opaque-fn-ref-return-may-be-its-argument.loft::n_plain1327
-elab-functions	agree	loft-suite/rules/ownership/O-Move/1327-an-opaque-fn-ref-return-may-be-its-argument.loft::n_test_a_branch_over_the_same_opaque_target
-elab-functions	agree	loft-suite/rules/ownership/O-Move/1327-an-opaque-fn-ref-return-may-be-its-argument.loft::n_test_a_closure_through_a_parameter_does_not_free_the_callers_vector
-elab-functions	agree	loft-suite/rules/ownership/O-Move/1327-an-opaque-fn-ref-return-may-be-its-argument.loft::n_test_the_dense_parameter_spelling
-elab-functions	agree	loft-suite/rules/ownership/O-Move/1327-an-opaque-fn-ref-return-may-be-its-argument.loft::n_test_the_mint_arm_costs_no_store_per_call
 elab-functions	agree	loft-suite/rules/ownership/O-Move/1625-an-explicit-return-of-an-element-records-its-borrow.loft::(schema)
 elab-functions	agree	loft-suite/rules/ownership/O-Move/1625-an-explicit-return-of-an-element-records-its-borrow.loft::Box1625
 elab-functions	agree	loft-suite/rules/ownership/O-Move/1625-an-explicit-return-of-an-element-records-its-borrow.loft::main_vector<vector<integer>>
 elab-functions	agree	loft-suite/rules/ownership/O-Move/1625-an-explicit-return-of-an-element-records-its-borrow.loft::main_vector<vector<text>>
+elab-functions	agree	loft-suite/rules/ownership/O-Move/1625-an-explicit-return-of-an-element-records-its-borrow.loft::n___lambda_c10_0
+elab-functions	agree	loft-suite/rules/ownership/O-Move/1625-an-explicit-return-of-an-element-records-its-borrow.loft::n___lambda_c11_0
+elab-functions	agree	loft-suite/rules/ownership/O-Move/1625-an-explicit-return-of-an-element-records-its-borrow.loft::n___lambda_c12_0
+elab-functions	agree	loft-suite/rules/ownership/O-Move/1625-an-explicit-return-of-an-element-records-its-borrow.loft::n___lambda_c1_0
+elab-functions	agree	loft-suite/rules/ownership/O-Move/1625-an-explicit-return-of-an-element-records-its-borrow.loft::n___lambda_c2_0
+elab-functions	agree	loft-suite/rules/ownership/O-Move/1625-an-explicit-return-of-an-element-records-its-borrow.loft::n___lambda_c3_0
+elab-functions	agree	loft-suite/rules/ownership/O-Move/1625-an-explicit-return-of-an-element-records-its-borrow.loft::n___lambda_c4_0
+elab-functions	agree	loft-suite/rules/ownership/O-Move/1625-an-explicit-return-of-an-element-records-its-borrow.loft::n___lambda_c5_0
+elab-functions	agree	loft-suite/rules/ownership/O-Move/1625-an-explicit-return-of-an-element-records-its-borrow.loft::n___lambda_c8_0
+elab-functions	agree	loft-suite/rules/ownership/O-Move/1625-an-explicit-return-of-an-element-records-its-borrow.loft::n___lambda_c9_0
+elab-functions	agree	loft-suite/rules/ownership/O-Move/1625-an-explicit-return-of-an-element-records-its-borrow.loft::n___lambda_k1_0
 elab-functions	agree	loft-suite/rules/ownership/O-Move/1625-an-explicit-return-of-an-element-records-its-borrow.loft::n_c10
 elab-functions	agree	loft-suite/rules/ownership/O-Move/1625-an-explicit-return-of-an-element-records-its-borrow.loft::n_k1
 elab-functions	agree	loft-suite/rules/ownership/O-Move/1625-an-explicit-return-of-an-element-records-its-borrow.loft::n_main
@@ -9189,6 +9200,18 @@ elab-functions	agree	loft-suite/rules/ownership/O-One-Kind/a-removed-temporary-s
 elab-functions	agree	loft-suite/rules/ownership/O-Oracle/1318-a-call-shaped-argument-names-the-store-a-fn-ref-may-hand-back.loft::Bx1318
 elab-functions	agree	loft-suite/rules/ownership/O-Oracle/1318-a-call-shaped-argument-names-the-store-a-fn-ref-may-hand-back.loft::Rk1318
 elab-functions	agree	loft-suite/rules/ownership/O-Oracle/1318-a-call-shaped-argument-names-the-store-a-fn-ref-may-hand-back.loft::main_vector<vector<integer>>
+elab-functions	agree	loft-suite/rules/ownership/O-Oracle/1318-a-call-shaped-argument-names-the-store-a-fn-ref-may-hand-back.loft::n___lambda_test_a_branch_arm_context_is_unmoved_0
+elab-functions	agree	loft-suite/rules/ownership/O-Oracle/1318-a-call-shaped-argument-names-the-store-a-fn-ref-may-hand-back.loft::n___lambda_test_a_call_shaped_argument_leaves_the_callers_vector_intact_0
+elab-functions	agree	loft-suite/rules/ownership/O-Oracle/1318-a-call-shaped-argument-names-the-store-a-fn-ref-may-hand-back.loft::n___lambda_test_a_delivery_buffer_is_a_nameable_base_0
+elab-functions	agree	loft-suite/rules/ownership/O-Oracle/1318-a-call-shaped-argument-names-the-store-a-fn-ref-may-hand-back.loft::n___lambda_test_a_field_read_argument_is_the_control_for_the_spelling_axis_0
+elab-functions	agree	loft-suite/rules/ownership/O-Oracle/1318-a-call-shaped-argument-names-the-store-a-fn-ref-may-hand-back.loft::n___lambda_test_a_hash_lookup_argument_roots_at_the_hash_0
+elab-functions	agree	loft-suite/rules/ownership/O-Oracle/1318-a-call-shaped-argument-names-the-store-a-fn-ref-may-hand-back.loft::n___lambda_test_a_loop_is_not_required_0
+elab-functions	agree	loft-suite/rules/ownership/O-Oracle/1318-a-call-shaped-argument-names-the-store-a-fn-ref-may-hand-back.loft::n___lambda_test_a_minting_argument_is_still_adopted_0
+elab-functions	agree	loft-suite/rules/ownership/O-Oracle/1318-a-call-shaped-argument-names-the-store-a-fn-ref-may-hand-back.loft::n___lambda_test_a_nullable_element_read_reaches_the_oracle_0
+elab-functions	agree	loft-suite/rules/ownership/O-Oracle/1318-a-call-shaped-argument-names-the-store-a-fn-ref-may-hand-back.loft::n___lambda_test_a_sorted_lookup_argument_roots_at_the_collection_0
+elab-functions	agree	loft-suite/rules/ownership/O-Oracle/1318-a-call-shaped-argument-names-the-store-a-fn-ref-may-hand-back.loft::n___lambda_test_an_index_lookup_argument_roots_at_the_collection_0
+elab-functions	agree	loft-suite/rules/ownership/O-Oracle/1318-a-call-shaped-argument-names-the-store-a-fn-ref-may-hand-back.loft::n___lambda_test_both_arms_alternate_over_one_call_site_0
+elab-functions	agree	loft-suite/rules/ownership/O-Oracle/1318-a-call-shaped-argument-names-the-store-a-fn-ref-may-hand-back.loft::n___lambda_test_the_mint_arm_still_costs_no_store_per_call_0
 elab-functions	agree	loft-suite/rules/ownership/O-Oracle/1318-a-call-shaped-argument-names-the-store-a-fn-ref-may-hand-back.loft::n_copy1318
 elab-functions	agree	loft-suite/rules/ownership/O-Oracle/1318-a-call-shaped-argument-names-the-store-a-fn-ref-may-hand-back.loft::n_dflt1318
 elab-functions	agree	loft-suite/rules/ownership/O-Oracle/1318-a-call-shaped-argument-names-the-store-a-fn-ref-may-hand-back.loft::n_mint1318
@@ -9247,6 +9270,10 @@ elab-functions	agree	loft-suite/rules/ownership/O-Owner/a-returned-vector-bound-
 elab-functions	agree	loft-suite/rules/ownership/O-Owner/a-returned-vector-bound-from-a-native-call-frees-it.loft::n_inplace
 elab-functions	agree	loft-suite/rules/ownership/O-Owner/a-returned-vector-bound-from-a-native-call-frees-it.loft::n_main
 elab-functions	agree	loft-suite/rules/ownership/O-Owner/a-slice-of-a-fresh-native-result-frees-it.loft::n_mk
+elab-functions	agree	loft-suite/rules/ownership/O-Proxy/1257-a-lifted-collection-return-does-not-empty-its-source.loft::n___lambda_test_an_inline_closure_vector_return_in_a_loop_leaves_its_source_intact_0
+elab-functions	agree	loft-suite/rules/ownership/O-Proxy/1257-a-lifted-collection-return-does-not-empty-its-source.loft::n___lambda_test_the_mint_arm_still_answers_and_this_cell_is_the_trade_0
+elab-functions	agree	loft-suite/rules/ownership/O-Proxy/1257-a-lifted-collection-return-does-not-empty-its-source.loft::n___lambda_test_the_spellings_one_axis_away_are_unmoved_0
+elab-functions	agree	loft-suite/rules/ownership/O-Proxy/1257-a-lifted-collection-return-does-not-empty-its-source.loft::n___lambda_test_the_spellings_one_axis_away_are_unmoved_1
 elab-functions	agree	loft-suite/rules/ownership/O-Proxy/1257-a-lifted-collection-return-does-not-empty-its-source.loft::n_g1257
 elab-functions	agree	loft-suite/rules/ownership/O-Proxy/1257-a-lifted-collection-return-does-not-empty-its-source.loft::n_main
 elab-functions	agree	loft-suite/rules/ownership/O-Proxy/1257-a-lifted-collection-return-does-not-empty-its-source.loft::n_named1257
@@ -9254,8 +9281,11 @@ elab-functions	agree	loft-suite/rules/ownership/O-Proxy/1257-a-lifted-collection
 elab-functions	agree	loft-suite/rules/ownership/O-Proxy/1257-a-lifted-collection-return-does-not-empty-its-source.loft::n_test_the_mint_arm_still_answers_and_this_cell_is_the_trade
 elab-functions	agree	loft-suite/rules/ownership/O-Proxy/1320-a-branch-joined-binding-frees-the-arm-that-minted.loft::K1320
 elab-functions	agree	loft-suite/rules/ownership/O-Proxy/1320-a-branch-joined-binding-frees-the-arm-that-minted.loft::P1320
+elab-functions	agree	loft-suite/rules/ownership/O-Proxy/1320-a-branch-joined-binding-frees-the-arm-that-minted.loft::n___lambda_test_a_match_arm_is_the_same_branch_0
 elab-functions	agree	loft-suite/rules/ownership/O-Proxy/1320-a-branch-joined-binding-frees-the-arm-that-minted.loft::n___lambda_test_a_record_branch_owns_through_the_bound_spelling_0
+elab-functions	agree	loft-suite/rules/ownership/O-Proxy/1320-a-branch-joined-binding-frees-the-arm-that-minted.loft::n___lambda_test_the_mint_arm_of_a_vector_branch_is_freed_per_evaluation_0
 elab-functions	agree	loft-suite/rules/ownership/O-Proxy/1320-a-branch-joined-binding-frees-the-arm-that-minted.loft::n_test_a_record_branch_owns_through_the_bound_spelling
+elab-functions	agree	loft-suite/rules/ownership/O-Proxy/1320-a-branch-joined-binding-frees-the-arm-that-minted.loft::n_test_the_mint_arm_of_a_vector_branch_is_freed_per_evaluation
 elab-functions	agree	loft-suite/rules/ownership/O-Proxy/1456-a-key-write-through-a-nullable-collections-view-materialises.loft::Elm1456
 elab-functions	agree	loft-suite/rules/ownership/O-Proxy/2314-a-vector-bound-from-an-owned-match-subject-is-copied-out.loft::(schema)
 elab-functions	agree	loft-suite/rules/ownership/O-Proxy/2314-a-vector-bound-from-an-owned-match-subject-is-copied-out.loft::Call
@@ -12782,7 +12812,9 @@ elab-functions	agree	tests/scripts/132-vector-elemset-inline-literal-uaf.loft::n
 elab-functions	agree	tests/scripts/132-vector-elemset-inline-literal-uaf.loft::n_test_p313_struct_call_elem_set
 elab-functions	agree	tests/scripts/132-vector-elemset-inline-literal-uaf.loft::vector<Cont>
 elab-functions	agree	tests/scripts/1322-a-default-arm-mint-is-freed-once.loft::Rw1322
+elab-functions	agree	tests/scripts/1322-a-default-arm-mint-is-freed-once.loft::n___lambda_test_a_default_arm_mint_answers_and_is_freed_once_0
 elab-functions	agree	tests/scripts/1322-a-default-arm-mint-is-freed-once.loft::n___lambda_test_an_empty_default_answers_empty_0
+elab-functions	agree	tests/scripts/1322-a-default-arm-mint-is-freed-once.loft::n___lambda_test_the_borrow_arm_is_unmoved_0
 elab-functions	agree	tests/scripts/1322-a-default-arm-mint-is-freed-once.loft::n_test_a_default_arm_mint_answers_and_is_freed_once
 elab-functions	agree	tests/scripts/1322-a-default-arm-mint-is-freed-once.loft::n_test_a_keyed_default_arm
 elab-functions	agree	tests/scripts/1322-a-default-arm-mint-is-freed-once.loft::n_test_an_empty_default_answers_empty
