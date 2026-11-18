@@ -670,6 +670,20 @@ fn hoists_default(e: el::El, init: integer, t: ir::TypeT) -> boolean {
   }
 }
 
+// Does the syntax under `n` spell one of `names` as a bare name?
+fn names_any(e: el::El, n: integer, names: vector<text>) -> boolean {
+  match e.p.nodes[n] {
+    SName { name: nm, member } => { if member == "" && names.contains(nm) { return true; } },
+    _ => {}
+  }
+  for c in el_length::children(e, n) {
+    if names_any(e, c, names) {
+      return true;
+    }
+  }
+  false
+}
+
 fn reads_dollar(e: el::El, n: integer) -> boolean {
   if e.p.nodes[n] is SDollar {
     return true;
@@ -1285,7 +1299,14 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
         }
         dv = ir::NdNull;
         if init != null {
-          d = param_default(e, init!, t!);
+          // A default that builds a value is hoisted (`n___dflt_<fn>_<param>`), minted here —
+          // before the function it belongs to — where it reads none of the earlier parameters
+          // (those it would take as arguments of its own: not carried).
+          d = if tp != null && !amp && len(tvars) == 0 && len(e.type_vars) == 0 && !starts_with(name, "__") && hoists_default(e, init!, t!) && !names_any(e, init!, [for ea in arguments { ea.name }]) {
+            hoisted_default(e, "__dflt_{name}_{an}", tp!, init!)
+          } else {
+            param_default(e, init!, t!)
+          };
           if d == null {
             return "";
           }
