@@ -46,7 +46,11 @@ def build(loft, src, out, env):
     os.makedirs(out, exist_ok=True)
     # The tools' own build is bounded by the build's limit, not by the per-program one: an
     # optimised build of the elaborator takes minutes on a loaded box.
-    b = subprocess.run([loft, "--native-c", "--ship", "--out", out, src],
+    # `LOFT_ELAB_TOOL_BUILD=dev`: a development build of the tools.  The verdicts are the same;
+    # the optimised (`--ship`) compile of the elaborator needs more than 5.5 GB in cc1, which a
+    # 7 GB CI runner no longer holds (runs 44227446673, 44231429943, 44233220732).
+    ship = [] if os.environ.get("LOFT_ELAB_TOOL_BUILD") == "dev" else ["--ship"]
+    b = subprocess.run([loft, "--native-c", *ship, "--out", out, src],
                        env=dict(env, LOFT_TIMEOUT=str(BUILD_SECONDS)),
                        capture_output=True, text=True, timeout=BUILD_SECONDS + 60)
     exe = os.path.join(out, os.path.splitext(os.path.basename(src))[0])
