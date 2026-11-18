@@ -3415,7 +3415,7 @@ pub fn map_call(e: el::El, vars: el_vars::Vars, list: vector<ir::Node>, types: v
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   int_t = ir::TyInteger { spec: i32_spec() };
-  mv = el_vars::create_unique(vars, "map_vec", types[0]!);
+  mv = el_vars::create_unique(vars, "map_vec", walked_type(list[0]!, types[0]!));
   el_vars::set_defined(vars, mv);
   idx = el_vars::create_unique(vars, "map_idx", int_t);
   el_vars::set_defined(vars, idx);
@@ -3444,4 +3444,104 @@ pub fn map_call(e: el::El, vars: el_vars::Vars, list: vector<ir::Node>, types: v
   ops += [el_ir::v_set(mv, list[0]!), el_ir::v_set(idx, ir::NdInt { n: -1 }), el_ir::v_loop(steps, "For comprehension"), w];
   bt = el_vars::tp(vars, res);
   ex(el_ir::v_block(ops, bt, "Vector comprehension"), bt)
+}
+
+// The type of the hoisted copy a `map` / `filter` / `reduce` walks: the source's, borrowing the
+// source itself where it is a local (`depending` replaces the deps).
+fn walked_type(src: ir::Node, t: ir::TypeT) -> ir::TypeT {
+  match el_ir::unspan(src) {
+    NdVar { n } => el_types::with_deps(el_types::base(t), [n]),
+    _ => t
+  }
+}
+
+// `Parser::parse_filter`: as `map_call`, the element kept where the predicate holds
+// (`if pred(elm) null else continue`), then pushed as it is.
+pub fn filter_call(e: el::El, vars: el_vars::Vars, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex {
+  in_elem = match el_types::base(types[0]!) { TyVector { inner } => inner, _ => ir::TyVoid };
+  if e.first_pass {
+    return ex(ir::NdNull, ir::TyVector { inner: el_types::without_deps(in_elem), dep: [] });
+  }
+  d = match el_ir::unspan(list[1]!) { NdInt { n } => n, _ => -1 };
+  answers_bool = match el_types::base(types[1]!) { TyFunction { args: _, result } => result is TyBoolean, _ => false };
+  nm = el_types::elem_name(e, in_elem);
+  push = el_ex_pattern::push_op(in_elem);
+  if d < 0 || !answers_bool {
+    el::refuse(e, "a `filter` through a function value");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  if len(el::def(e, d).attributes) != 1 || !el_convert::plain_scalar(in_elem) || push == "" || nm == "" || el::def_nr(e, "main_vector<{nm}>") < 0 {
+    el::refuse(e, "a `filter` of an element that is no plain scalar, or by a function with hidden parameters");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  int_t = ir::TyInteger { spec: i32_spec() };
+  mv = el_vars::create_unique(vars, "filter_vec", walked_type(list[0]!, types[0]!));
+  el_vars::set_defined(vars, mv);
+  idx = el_vars::create_unique(vars, "filter_idx", int_t);
+  el_vars::set_defined(vars, idx);
+  elm_v = el_vars::create_unique(vars, "filter_elm", in_elem);
+  el_vars::set_defined(vars, elm_v);
+  res = el_vars::create_unique(vars, "filter_result", ir::TyVector { inner: el_types::without_deps(in_elem), dep: [] });
+  el_vars::set_defined(vars, res);
+  el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [res] });
+  rows = el_ex_base::vector_rows(e, in_elem, 0, true);
+  nx = vector_step(e, mv, idx, in_elem);
+  if rows == null || nx == null {
+    el::refuse(e, "a `filter` of an element that is no plain scalar, or by a function with hidden parameters");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  ops = el_ex_pattern::literal_store(e, vars, res, rows!);
+  comp = el_vars::create_unique(vars, "comp", in_elem);
+  el_vars::set_defined(vars, comp);
+  w = ir::NdVar { n: res };
+  steps: vector<ir::Node> = [
+    el_ir::v_set(elm_v, nx!),
+    vector_past_end(e, mv, idx),
+    el_ir::v_if(ir::NdCall { def_nr: d, args: [ir::NdVar { n: elm_v }] }, ir::NdNull, ir::NdContinue { n: 0 }),
+    el_ir::v_set(comp, ir::NdVar { n: elm_v }),
+    el_ir::cl(e, push, el_ex_pattern::push_args(e, vars, in_elem, w, ir::NdVar { n: comp }))
+  ];
+  ops += [el_ir::v_set(mv, list[0]!), el_ir::v_set(idx, ir::NdInt { n: -1 }), el_ir::v_loop(steps, "For comprehension"), w];
+  bt = el_vars::tp(vars, res);
+  ex(el_ir::v_block(ops, bt, "Vector comprehension"), bt)
+}
+
+// `Parser::parse_reduce`: `v.reduce(init, f)` folds in place — the accumulator set to `init`,
+// then `acc = f(acc, elm)` for each element — in a "reduce" block answering it.
+pub fn reduce_call(e: el::El, vars: el_vars::Vars, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex {
+  in_elem = match el_types::base(types[0]!) { TyVector { inner } => inner, _ => ir::TyVoid };
+  out = match el_types::base(types[2]!) { TyFunction { args: _, result } => result, _ => ir::TyUnknown { n: 0 } };
+  if e.first_pass {
+    return ex(ir::NdNull, if el_types::is_unknown(out) || out is TyVoid { el_types::without_deps(types[1]!) } else { el_types::without_deps(out) });
+  }
+  d = match el_ir::unspan(list[2]!) { NdInt { n } => n, _ => -1 };
+  if d < 0 || el_types::is_unknown(out) {
+    el::refuse(e, "a `reduce` through a function value");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  if len(el::def(e, d).attributes) != 2 || !el_convert::plain_scalar(in_elem) || !el_convert::plain_scalar(out) || !el_types::is_equal(e, el_types::base(types[1]!), el_types::base(out)) {
+    el::refuse(e, "a `reduce` over or to a value that is no plain scalar, or by a function with hidden parameters");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  int_t = ir::TyInteger { spec: i32_spec() };
+  acc = el_vars::create_unique(vars, "reduce_acc", el_types::without_deps(out));
+  el_vars::set_defined(vars, acc);
+  mv = el_vars::create_unique(vars, "reduce_vec", walked_type(list[0]!, types[0]!));
+  el_vars::set_defined(vars, mv);
+  idx = el_vars::create_unique(vars, "reduce_idx", int_t);
+  el_vars::set_defined(vars, idx);
+  elm_v = el_vars::create_unique(vars, "reduce_elm", in_elem);
+  el_vars::set_defined(vars, elm_v);
+  nx = vector_step(e, mv, idx, in_elem);
+  if nx == null {
+    el::refuse(e, "a `reduce` over or to a value that is no plain scalar, or by a function with hidden parameters");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  steps: vector<ir::Node> = [
+    el_ir::v_set(elm_v, nx!),
+    ir::NdInsert { items: [vector_past_end(e, mv, idx)] },
+    el_ir::v_set(acc, ir::NdCall { def_nr: d, args: [ir::NdVar { n: acc }, ir::NdVar { n: elm_v }] })
+  ];
+  bt = el_types::without_deps(out);
+  ex(el_ir::v_block([el_ir::v_set(acc, list[1]!), el_ir::v_set(mv, list[0]!), el_ir::v_set(idx, ir::NdInt { n: -1 }), el_ir::v_loop(steps, "reduce loop"), ir::NdVar { n: acc }], bt, "reduce"), bt)
 }
