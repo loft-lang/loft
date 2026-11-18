@@ -3332,6 +3332,21 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
       _ => {}
     }
   }
+  // `own_fresh_bind_sites`: a vector local that borrows a store, bound to a call whose vector
+  // answer borrows nothing (a native's fresh vector), is given a work-ref owner by a rewrite
+  // of the finished body — not carried: refused by name.
+  if !e.first_pass && !vars.vars[v].argument && el_types::base(el_vars::tp(vars, v)) is TyVector && len(el_types::deps(el_vars::tp(vars, v))) > 0 {
+    match el_ir::unspan(x.code) {
+      NdCall { def_nr: fbd, args: fba } => {
+        fbr = el::def(e, fbd).returned[0] ?? ir::TyVoid;
+        if el_types::base(fbr) is TyVector && len(el_types::deps(fbr)) == 0 && !starts_with(el::def(e, fbd).name, "Op") && hidden_ref_arg(vars, fba) < 0 {
+          el::refuse(e, "a borrowing vector local bound to a call's fresh vector");
+          return ex(ir::NdNull, ir::TyVoid);
+        }
+      },
+      _ => {}
+    }
+  }
   el_vars::drop_use(vars, v);
   match el_ir::unspan(x.code) {
     NdCall { args } => {
