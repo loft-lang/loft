@@ -1669,19 +1669,6 @@ pub fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?,
   // standard library's generic from there.
   if source < 0 && (name == "assert_eq" || name == "assert_ne") && (len(list) == 2 || len(list) == 3) && el::def_nr(e, "n_{name}") >= 0 {
     apos = el::pos_at(e, after_paren(e, at));
-    // (An instance at a narrow integer width registers that width's `vector<…>` row where the
-    // instance is made: not carried, refused by name.)
-    for nt in types[..2] {
-      match el_types::base(nt) {
-        TyInteger { spec: ns } => {
-          if el_types::int4(ns) || el_types::uint4(ns) || el_types::narrow_width(ns) > 0 || ns.forced_size != 0 {
-            el::refuse(e, "an `assert_eq` at a narrow integer width (its instance's vector rows)");
-            return ex(ir::NdNull, ir::TyVoid);
-          }
-        },
-        _ => {}
-      }
-    }
     if len(list) == 2 {
       list += [ir::NdText { s: "" }];
       types += [ir::TyText { dep: [] }];

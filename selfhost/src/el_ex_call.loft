@@ -252,6 +252,9 @@ pub fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::T
     TyVector { inner: _ } => el_schema::content_type(e, el_types::without_deps(el_types::base(bound))),
     _ => el_ex_vector::append_row(e, el_types::base(bound))
   };
+  // (An instance at a narrow integer width has that width's `vector<…>` row made with it, as a
+  // parameter of that type has, `int4_rows`.)
+  int4_rows(e, el_types::base(bound));
   rows_known = stale_row != el::NO_TYPE && fresh_row >= 0 && fresh_row != el::NO_TYPE;
   why = el_ex_object::instance_carried(e, tmpl.code[0] ?? ir::NdNull, h, if rows_known { el::NO_TYPE } else { stale_row }, tmpl.variables, writes: writes_carried(e, bound), lowers: tv_lowered(bound));
   if why != "" {
