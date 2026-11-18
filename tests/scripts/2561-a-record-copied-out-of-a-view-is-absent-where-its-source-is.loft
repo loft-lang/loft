@@ -7,6 +7,11 @@
 // shape; each is asked for an element that is there and for one that is not.  `Cell` is the
 // element of keyed collections too, so its vector is an `array<Cell>`, read with `OpVectorRef`.
 // @falsified-at: 0de1794d4 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the value — an assertion fails on the control and passes here.
+//   WITNESS: on the control `call_vec(9)` answers a present record whose fields are zero
+//   (`say` prints "0/null"), where the file says "null"; the first assertion of `main` fails.
+//   HOLDS: leak, panic, free-refusal and expectations are equal on BOTH trees; every `hit`
+//   half of each assertion (an element that is there reads "17/t1") passes on both.
 struct Cell { q: integer, r: integer, t: text }
 struct Bag { n: integer, xs: vector<Cell> }
 struct HB { n: integer, h: hash<Cell[q]> }
