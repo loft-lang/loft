@@ -640,12 +640,6 @@ impl FnWriter<'_> {
         }
         if let [(f0, l0), (f1, l1)] = ends.as_slice() {
             guard.push(format!("loft_vg_area({f0}, {l0}, {f1}, {l1}, {MIN_TRIPS})"));
-            // @decline-owed: a loop that is not counted, holds more than one inner loop, yields
-            //   or forks, steps a counter outside its iterator, or ends on neither a literal
-            //   nor an unwritten variable; a callee that is no leaf's held-inputs twin; an
-            //   input not held as a scalar; an argument not `X ± i` with `X` invariant; no
-            //   argument moving with the counter; at run time, under eight values or a
-            //   precondition failing at an end
             crate::rewrite_census::fired("R-Version/nest", 1);
         }
         // The corners of the box over the loops some argument moves with: a linear value takes
@@ -731,7 +725,13 @@ impl FnWriter<'_> {
         (read.as_slice() == inputs).then(|| flag.clone())
     }
 
-    fn version_decline(&self, d: u32, why: &str) -> Option<(String, Vec<String>)> {
+    fn version_decline(&self, d: u32, why: &'static str) -> Option<(String, Vec<String>)> {
+        crate::rewrite_census::declined_in(
+            "R-Version",
+            &self.cx.data.def(self.d).original_name(),
+            &self.cx.data.def(d).original_name(),
+            why,
+        );
         if crate::opt::version::trace() {
             eprintln!(
                 "[version] {} call of {} declined: {why}",

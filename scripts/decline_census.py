@@ -90,6 +90,12 @@ REPORTED = {
     "R-WorkBuffer/onward": ("a work buffer handed on to a further callee", "partial"),
     "R-LoopRecord": ("a loop's record local kept across the passes", "partial"),
     "R-ValueLocal": ("a small record local or parameter carried as scalars", "partial"),
+    "R-Reuse": ("a call's hidden record buffer pooled across calls", "partial"),
+    "R-AppendTwin": ("an appended call building straight into its destination", "partial"),
+    "R-ViewReturn": ("a returned view answered by address, no buffer minted", "partial"),
+    "R-Apart/records": ("a vector of records held apart from the store", "partial"),
+    "R-Version": ("a leaf's fast twin called from a counted loop (C)", "partial"),
+    "R-DecodeView": ("a decoded field held as a span of its source bytes", "partial"),
 }
 # A rule's labels are the validation clauses of its statement (REWRITE_REASONS.md): a rule that
 # passes this many is describing sites, not clauses.  `(R-Range)` uses twelve today.

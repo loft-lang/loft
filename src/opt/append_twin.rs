@@ -360,7 +360,13 @@ pub fn call_site<'a>(
     if !matches!(args.get(at).map(Value::unspan), Some(Value::Var(_))) {
         return None;
     }
-    let decline = |why: &str| {
+    let decline = |why: &'static str| {
+        crate::rewrite_census::declined_in(
+            "R-AppendTwin",
+            data.def(d_nr).name(),
+            data.def(*callee).name(),
+            why,
+        );
         if trace() {
             eprintln!(
                 "append-twin: {} += {}(…) declined — {why}",

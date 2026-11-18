@@ -2,8 +2,8 @@
 # site, and which site it admitted, and its state (scripts/reason_census.py;
 # --check: a rule never falls silent).  rule<TAB>fired<TAB>declined<TAB>admitted<TAB>state
 R-Alias	2	0	0	owes
-R-Apart	7	0	0	owes
-R-AppendTwin	4	0	0	owes
+R-Apart	7	2	0	reports
+R-AppendTwin	4	1	0	reports
 R-Base	9	0	0	owes
 R-BoundAppend	1	0	0	owes
 R-BoundedNest	2	0	0	owes
@@ -18,7 +18,7 @@ R-Const	2	0	0	owes
 R-CopyView	2	2	0	reports
 R-Counter	2	0	0	owes
 R-CtorLiteral	1	2	0	reports
-R-DecodeView	4	0	0	owes
+R-DecodeView	4	1	0	reports
 R-DeferredCopy	3	0	0	owes
 R-Demote	2	0	0	owes
 R-Destination	2	0	0	owes
@@ -88,7 +88,7 @@ R-Refresh	2	0	0	nothing
 R-RepeatRun	1	0	0	owes
 R-RetAdopt	3	0	0	owes
 R-ReturnField	1	2	0	reports
-R-Reuse	1	0	0	owes
+R-Reuse	1	1	0	reports
 R-Rotate	1	0	0	owes
 R-SameRead	2	0	0	owes
 R-Scalar	2	0	0	owes
@@ -116,9 +116,9 @@ R-TypedRead	4	0	0	owes
 R-ValueLocal	3	2	0	reports
 R-ValueRecord	5	4	0	reports
 R-VecCopy	1	1	0	reports
-R-Version	2	0	0	owes
+R-Version	2	1	0	reports
 R-View	2	0	0	owes
-R-ViewReturn	1	0	0	owes
+R-ViewReturn	1	1	0	reports
 R-WorkBuffer	4	2	0	reports
 R-WorkPark	1	0	0	owes
 R-Wrapper	1	1	0	reports

@@ -225,12 +225,6 @@ impl Output<'_> {
         if !self.ap_requests.contains(&key) {
             self.ap_requests.push(key);
         }
-        // @decline-owed: a destination that is no vector path or is a parameter other than a
-        //   lent work buffer; an argument that reaches the destination; a callee that observes
-        //   its buffer (a length, an index, a walk, a free, an insert, a clear after its first
-        //   write, the buffer as an ordinary argument) or has an exit answering another store
-        //   (`eligible`); for the loop window, a loop that names the buffer elsewhere or can
-        //   leave early
         crate::rewrite_census::fired("R-AppendTwin", 1);
         true
     }
@@ -279,11 +273,6 @@ impl Output<'_> {
         if !self.vr_requests.contains(&key) {
             self.vr_requests.push(key);
         }
-        // @decline-owed: a function that writes a store it did not mint, calls a user function,
-        //   or names its buffer outside its materialised exits; a call argument that is no
-        //   variable or read; a window after the call that writes a store, calls a user
-        //   function, or reads the result other than through a copying getter; a result
-        //   variable bound more than once or named outside that window
         crate::rewrite_census::fired("R-ViewReturn", 1);
         let flag = self.vr_flag_pending.take().unwrap_or_default();
         write!(w, "{{ let __vr = {}__vr(cell", self.fn_ident(def_fn))?;

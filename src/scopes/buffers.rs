@@ -170,7 +170,13 @@ pub(super) fn reuse_record_buffers(
     if trace {
         crate::loft_eprintln!("[pool] {} candidates {:?}", data.def(fn_nr).name(), guarded);
     }
-    let decline = |av: u16, why: &str| {
+    let decline = |av: u16, why: &'static str| {
+        crate::rewrite_census::declined_in(
+            "R-Reuse",
+            data.def(fn_nr).name(),
+            function.name(av),
+            why,
+        );
         if trace {
             crate::loft_eprintln!(
                 "[pool] {} {}: {why}",
@@ -300,11 +306,6 @@ pub(super) fn reuse_record_buffers(
         }
     }
     let frees = free_ops(data);
-    // @decline-owed: a hidden buffer with no guarded result local, carrying a dep, or of no
-    //   record type; one handed to more than one call, or whose callee mints the store its
-    //   result adopts; a result local assigned more than once (unless its rebind keeps what it
-    //   displaces), handed to a `&` parameter that can rebind it, carrying an owner witness, or
-    //   freed without asking the buffer
     crate::rewrite_census::fired("R-Reuse", eager.len() + lazy.len());
     // A buffer minted at entry is live at every call, and the first release finds the
     // record the mint just prefilled: nothing to walk.  The releases go in before the mints
