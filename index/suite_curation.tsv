@@ -476,24 +476,24 @@ R-NoThreads	rewrites	curated	3	2026-11-18	its two refused cells are a unit with 
 R-NonSentinelParam	rewrites	curated	2	2026-11-18	two suite cells, distinct cases
 R-OpPriority	rewrites	structural	1	2026-11-18	opcodes numbered hot, normal, cold: a slot number no program observes; guarded by the fill generator
 R-OperandSpan	rewrites	structural	0	2026-11-18	an operator's fixed-width operands bounds-checked once: the same reads, no program observes it; guarded by the fill generator
-R-PathRelease	rewrites	todo			
-R-Peel	rewrites	todo			
-R-Phase	rewrites	todo			
-R-Place	rewrites	todo			
-R-Prefill	rewrites	todo			
-R-PureReuse	rewrites	todo			
-R-Push	rewrites	todo			
-R-PushFill	rewrites	todo			
-R-PushRec	rewrites	todo			
-R-Range	rewrites	todo			
-R-RangedCall	rewrites	todo			
-R-Rebind	rewrites	todo			
-R-RebindBuffer	rewrites	todo			
-R-RecPtr	rewrites	todo			
-R-RefParam	rewrites	todo			
-R-RefillBuffer	rewrites	todo			
-R-RefillText	rewrites	todo			
-R-Refresh	rewrites	todo			
+R-PathRelease	rewrites	structural	0	2026-11-18	not built; and by its own text observably nothing (the release of a null is a no-op on both backends)
+R-Peel	rewrites	curated	3	2026-11-18	first cell, from the formal text: continue, break, a seeded start, a return from inside, a peeled inner loop (moved by LOFT_NO_SEVERAL_VARS)
+R-Phase	rewrites	structural	0	2026-11-18	a rule about which phase applies each rewrite; enforced by make rewrite-census and bench/portal/rule_phases.tsv, no program observes it
+R-Place	rewrites	curated	24	2026-11-18	its one refused fold (164-place-result) has only a patch cell as refused partner; the rest agree with gate E
+R-Prefill	rewrites	curated	2	2026-11-18	one suite cell beside its Rust guard
+R-PureReuse	rewrites	curated	6	2026-11-18	one suite cell beside its Rust guards
+R-Push	rewrites	curated	10	2026-11-18	its two own fold candidates agree with gate E and stay
+R-PushFill	rewrites	curated	64	2026-11-18	merged the two several-vector cells; the nested-comprehension cell's refused partner is a patch cell; the rest agree with gate E
+R-PushRec	rewrites	curated	13	2026-11-18	its one refused cell's partner agrees with gate E; both stay
+R-Range	rewrites	curated	24	2026-11-18	its one refused fold's cores agree with gate E; kept
+R-RangedCall	rewrites	curated	6	2026-11-18	its own fold candidate agrees with gate E; kept
+R-Rebind	rewrites	curated	9	2026-11-18	its one refused fold's core agrees with gate E; kept
+R-RebindBuffer	rewrites	curated	5	2026-11-18	one suite cell beside its Rust guards
+R-RecPtr	rewrites	curated	226	2026-11-18	its six own fold candidates agree with gate E; 14 suite cells and the Rust guards, distinct cases
+R-RefParam	rewrites	structural	0	2026-11-18	the C writer copies a reference parameter into a local field by field: the same program, no observable change; guarded by c_emit's tests
+R-RefillBuffer	rewrites	curated	30	2026-11-18	its two own fold candidates agree with gate E and stay
+R-RefillText	rewrites	curated	10	2026-11-18	its own fold candidate agrees with gate E; kept
+R-Refresh	rewrites	curated	8	2026-11-18	its own fold candidate agrees with gate E; kept
 R-RegisterTable	rewrites	todo			
 R-RepeatRun	rewrites	todo			
 R-RetAdopt	rewrites	todo			
