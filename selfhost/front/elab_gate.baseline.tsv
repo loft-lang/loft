@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	77b483b79c8c5c346c338567a6e342c05c972f4c
+suite	4d4a3b78a0f21989520a4570bd4e14079c3895c5
 
-layer	elab	agree	1031	of	2057
+layer	elab	agree	1031	of	2056
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -647,8 +647,7 @@ elab	refused	loft-suite/rules/types/N-Coal/a-spatial-or-trie-call-result-outlive
 elab	refused	loft-suite/rules/types/N-Decl/1380-an-else-if-chain-answers-in-its-first-arms-type.loft
 elab	refused	loft-suite/rules/types/N-Decl/2240-a-constant-holds-its-declared-type.loft
 elab	refused	loft-suite/rules/types/N-Decl/a-comprehension-takes-its-declared-element-type.loft
-elab	refused	loft-suite/rules/types/N-Decl/a-destructured-float-name-widens-an-integer.loft
-elab	refused	loft-suite/rules/types/N-Decl/a-destructured-name-keeps-its-declared-type.loft
+elab	refused	loft-suite/rules/types/N-Decl/a-destructured-name-takes-its-declared-type.loft
 elab	refused	loft-suite/rules/types/N-Decl/a-null-test-on-an-inline-nullable-struct-narrows-it.loft
 elab	refused	loft-suite/rules/types/N-Decl/a-vector-literal-argument-takes-its-parameters-nullable-element.loft
 elab	refused	loft-suite/rules/types/N-Domain/1450-a-projection-is-not-more-non-null-than-its-receiver.loft
