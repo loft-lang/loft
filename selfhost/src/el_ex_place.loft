@@ -592,6 +592,22 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
       return ex(el_ir::cl(e, "OpCopyRecord", [x.code, el_ir::unspan(p.code), ir::NdInt { n: el::def(e, sed).known_type + (if fresh { 32768 } else { 0 }) }]), ir::TyVoid);
     }
   }
+  // A keyed FIELD written whole from a keyed value (`b.h = h`, `b.h = mk_h(3)`): replaced in,
+  // which removes what the field held.  (A vector into it — cleared, then filled — needs the
+  // record's own type and the field's index: not carried.)
+  if op == "=" && keyed_kind(pt) && !(pt is TyOptional) && calls(e, el_ir::unspan(p.code), "OpGetField") {
+    if e.first_pass {
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    kplace = el_ir::unspan(p.code);
+    kbit = keyed_source(e, x, el_types::base(pt));
+    knr = match kplace { NdCall { args: ka } => match ka[2] ?? ir::NdNull { NdInt { n: kn } => kn, _ => -1 }, _ => -1 };
+    if kbit >= 0 && knr >= 0 {
+      return ex(el_ir::cl(e, "OpReplaceKeyed", [x.code, kplace, ir::NdInt { n: knr + kbit }]), ir::TyVoid);
+    }
+    refuse_known(e, x.tp, "a place assignment its type converts: {type_kind(x.tp)} to {type_kind(pt)}");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
   v = stored(e, vars, x, pt);
   if v == null {
     refuse_known(e, x.tp, "a place assignment its type converts: {type_kind(x.tp)} to {type_kind(pt)}");
@@ -2665,6 +2681,41 @@ pub fn stage_self_reads(e: el::El, vars: el_vars::Vars, code: ir::Node, coll: in
 // A literal's fields written into the record at `r` (the local `v`, or a place inside it): each
 // written vector field's handle zeroed, each written field set in literal order, and — on the
 // second pass — each omitted field its type's default, in declaration order (`object_init`).
+// A keyed value written into a keyed place of type `to`: 0 for a place (a local, a parameter,
+// a field read — deep-copied), 32768 for a fresh call that gives away its store
+// (`call_gives_away_its_store`; a record or collection argument is bracketed against its
+// store's free while the call runs, which is not carried), -1 for anything else.
+fn keyed_source(e: el::El, x: Ex, to: ir::TypeT) -> integer {
+  xb = el_types::base(x.tp);
+  if !keyed_kind(xb) || x.tp is TyOptional || type_kind(xb) != type_kind(to) || el_types::keyed_elem(xb) != el_types::keyed_elem(to) {
+    return -1;
+  }
+  xc = el_ir::unspan(x.code);
+  if xc is NdVar || calls(e, xc, "OpGetField") {
+    return 0;
+  }
+  match xc {
+    NdCall { def_nr: cd } => {
+      for ca in el::def(e, cd).attributes {
+        cb = el_types::base(ca.typedef[0] ?? ir::TyVoid);
+        if !(is_scalar(cb) || cb is TyText) {
+          return -1;
+        }
+      }
+      if el_ex_match::gives_away_its_store(e, x.code) && len(el_types::deps(x.tp)) == 0 { 32768 } else { -1 }
+    },
+    _ => -1
+  }
+}
+
+// Is `t` a plain vector of the records `elem` names?
+fn vector_of(e: el::El, t: ir::TypeT, elem: integer) -> boolean {
+  match el_types::base(t) {
+    TyVector { inner } => !(t is TyOptional) && struct_ref(e, el_types::base(inner)) == elem,
+    _ => false
+  }
+}
+
 pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: integer, fields: vector<integer>) -> vector<ir::Node>? {
   def = el::def(e, d);
   list: vector<ir::Node> = [];
@@ -2672,6 +2723,22 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
   // before any member is filled: an insert through one member indexes the record into all.  A
   // member the literal names is not carried yet (`group_fills`, the bulk-fill maintenance).
   group: vector<integer> = if e.first_pass { [] } else { linked_offsets(e, d) };
+  // `group_fills`: the vector members filled in bulk; `filled_collections`: every collection
+  // field the literal hands records (anything but `[]`).
+  bulk: vector<integer> = [];
+  handed: vector<integer> = [];
+  for fi in fields {
+    match e.p.nodes[fi] {
+      SFieldInit { name: hname, e: he } => {
+        ha = attr_nr(def, hname);
+        hempty = match e.p.nodes[he ?? 0] { SVecLit { items: hi } => len(hi) == 0, _ => false };
+        if !e.first_pass && he != null && ha >= 0 && !hempty && el_types::is_collection(el_types::base(def.attributes[ha]!.typedef[0] ?? ir::TyVoid)) {
+          handed += [field_position(e, d, hname)];
+        }
+      },
+      _ => {}
+    }
+  }
   for off in group {
     list += [el_ir::cl(e, "OpSetInt4", [r, ir::NdInt { n: off }, ir::NdInt { n: 0 }])];
   }
@@ -2684,7 +2751,10 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
           // group's; a keyed member's bulk fill is not carried.)
           fa_nr = attr_nr(def, fname);
           vec_member = fa_nr >= 0 && el_types::base(def.attributes[fa_nr]!.typedef[0] ?? ir::TyVoid) is TyVector;
-          if group.contains(field_position(e, d, fname)) && !empty && !vec_member {
+          // A keyed member given a LITERAL is built through the record, element by element,
+          // as a keyed field outside a group is; any other value stays refused.
+          keyed_literal = fe != null && e.p.nodes[fe ?? 0] is SVecLit;
+          if group.contains(field_position(e, d, fname)) && !empty && !vec_member && !keyed_literal {
             el::refuse(e, "a literal that fills a member of a linked collection group");
             return null;
           }
@@ -2752,6 +2822,10 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
                 return null;
               }
               list += c!;
+              // A group's vector member filled in bulk owes the other members an index.
+              if group.contains(field_position(e, d, fname)) {
+                bulk += [field_position(e, d, fname)];
+              }
               found += [fname];
               continue;
             }
@@ -2782,6 +2856,32 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
           list += [ir::NdInsert { items: built! }];
           found += [fname];
           continue;
+        }
+        // A keyed field given a keyed VALUE or a plain vector (`set_field_check`'s keyed arm):
+        // the header zeroed in the field's written position, then the value replaced in — a
+        // place deep-copied, a fresh call's store given away (the type's 32768 bit) — or the
+        // vector's elements filled in.
+        if kd >= 0 && !(at is TyOptional) && !group.contains(field_position(e, d, fname)) {
+          kx = el_ex_assign::expression(e, vars, fe!);
+          if e.first_pass {
+            found += [fname];
+            continue;
+          }
+          kpos = ir::NdInt { n: field_position(e, d, fname) };
+          knr = el_schema::keyed_type(e, el_types::base(at));
+          kbit = keyed_source(e, kx, el_types::base(at));
+          if kbit >= 0 {
+            list += [el_ir::cl(e, "OpSetInt4", [r, kpos, ir::NdInt { n: 0 }]), el_ir::cl(e, "OpReplaceKeyed", [kx.code, el_ir::cl(e, "OpGetField", [r, kpos, ir::NdInt { n: knr }]), ir::NdInt { n: knr + kbit }])];
+            found += [fname];
+            continue;
+          }
+          if vector_of(e, kx.tp, kd) {
+            list += [el_ir::cl(e, "OpSetInt4", [r, kpos, ir::NdInt { n: 0 }]), el_ir::cl(e, "OpFillKeyed", [r, kx.code, ir::NdInt { n: knr }, ir::NdInt { n: def.known_type }, ir::NdInt { n: a }])];
+            found += [fname];
+            continue;
+          }
+          refuse_known(e, kx.tp, "a keyed field written from something other than a place, a fresh call or a vector: {type_kind(kx.tp)}");
+          return null;
         }
         // A struct-enum field (`enum-big`): its four-byte header zeroed where the literal names
         // it, and a variant literal built straight into the field's place.  Any other value
@@ -3029,6 +3129,36 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
       }
       for op in defaults! {
         list += [op];
+      }
+    }
+    // `keyed_sibling_view_fills` (loft#1266): after the whole body, one `OpIndexGroup` per
+    // OTHER member of a bulk-filled vector member's group that the literal did not fill itself.
+    gfs = el_schema::struct_fields(e, def.known_type);
+    for boff in bulk {
+      me = -1;
+      for gf in gfs {
+        if gf.position == boff {
+          me = gf#index;
+        }
+      }
+      if me < 0 {
+        continue;
+      }
+      nrs: vector<integer> = [me];
+      for o in gfs[me]!.other_indexes {
+        if o != el_schema::NO_TYPE && !nrs.contains(o) {
+          nrs += [o];
+        }
+      }
+      nrs.sort();
+      to_tp = ir::NdInt { n: gfs[me]!.content };
+      to = el_ir::cl(e, "OpGetField", [r, ir::NdInt { n: boff }, to_tp]);
+      for nr in nrs {
+        mf = gfs[nr]!;
+        if mf.position == boff || handed.contains(mf.position) {
+          continue;
+        }
+        list += [el_ir::cl(e, "OpIndexGroup", [to, el_ir::cl(e, "OpGetField", [r, ir::NdInt { n: mf.position }, to_tp]), ir::NdInt { n: mf.content }, ir::NdInt { n: def.known_type }, ir::NdInt { n: me }])];
       }
     }
   }

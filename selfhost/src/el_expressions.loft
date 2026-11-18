@@ -897,7 +897,8 @@ pub fn ls_views_local(e: el::El, vars: el_vars::Vars, ls: vector<integer>) -> bo
     }
     // (A vector local borrows its own `__vdb_N` store from Rust's first pass on; this port mints
     // that store on the second, so on the first a vector local with no borrow yet stands for it.)
-    if e.first_pass && !vars.vars[v].argument && el_types::base(el_vars::tp(vars, v)) is TyVector && len(el_types::deps(el_vars::tp(vars, v))) == 0 {
+    // (A keyed local bound from a call's collection likewise.)
+    if e.first_pass && !vars.vars[v].argument && (el_types::base(el_vars::tp(vars, v)) is TyVector || el_ex_base::keyed_kind(el_types::base(el_vars::tp(vars, v)))) && len(el_types::deps(el_vars::tp(vars, v))) == 0 {
       return true;
     }
     for d in el_types::deps(el_vars::tp(vars, v)) {
