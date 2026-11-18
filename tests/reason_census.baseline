@@ -12,9 +12,9 @@ R-ByteCopy	1	1	0	reports
 R-Callee	1	0	0	owes
 R-CharWalk	2	0	0	owes
 R-Cold	1	0	0	owes
-R-Compact	2	0	0	owes
+R-Compact	2	1	0	reports
 R-CompleteWrite	1	0	0	owes
-R-Const	2	0	0	owes
+R-Const	2	1	0	reports
 R-CopyView	2	2	0	reports
 R-Counter	2	0	0	owes
 R-CtorLiteral	1	2	0	partly
@@ -59,7 +59,7 @@ R-LitDiv	1	0	0	owes
 R-LitHoist	1	0	0	owes
 R-LiteralAppend	1	0	0	owes
 R-LiteralWalk	1	0	0	owes
-R-LoopBuffer	1	0	0	owes
+R-LoopBuffer	1	1	0	partly
 R-LoopRecord	2	1	0	reports
 R-LoopSlot	1	0	0	owes
 R-MaskRange	1	0	0	owes

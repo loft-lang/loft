@@ -102,12 +102,6 @@ fn substitute(v: &mut Value, cx: &mut Cx) {
                 _ => None,
             };
             if admitted && let Some(b) = buffer {
-                // @decline-owed: a function with a parameter beside its hidden return buffer, a
-                //   method, a generic instance, a nullable or non-vector result, an element
-                //   type the constant store cannot hold, or a literal with a part known only at
-                //   run time; a call whose result is not only read — written, appended to,
-                //   rebound, returned, stored, taken by `&` or a fn ref, handed to a user call
-                //   — keeps the call and its own copy
                 crate::rewrite_census::fired("R-Const", 1);
                 if crate::keys::trace_const() {
                     eprintln!(
@@ -121,16 +115,22 @@ fn substitute(v: &mut Value, cx: &mut Cx) {
                 cx.buffers.insert(b);
                 return;
             }
+            let why = if buffer.is_none() {
+                "the call does not take its one hidden buffer"
+            } else {
+                "the result reaches a position that is not a read"
+            };
+            crate::rewrite_census::declined_in(
+                "R-Const",
+                cx.data.def(cx.d_nr).name(),
+                cx.data.def(f).name(),
+                why,
+            );
             if crate::keys::trace_const() {
                 eprintln!(
-                    "[const] fn={} callee={} DECLINED: {}",
+                    "[const] fn={} callee={} DECLINED: {why}",
                     cx.data.def(cx.d_nr).name(),
                     cx.data.def(f).name(),
-                    if buffer.is_none() {
-                        "the call does not take its one hidden buffer"
-                    } else {
-                        "the result reaches a position that is not a read"
-                    }
                 );
             }
         }

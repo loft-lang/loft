@@ -182,12 +182,15 @@ fn visit_list(ls: &mut Vec<Value>, cx: &mut Cx) {
                     match at {
                         Some(j) if mentions(cx.whole, rhs) == 4 => Some(j),
                         _ => {
-                            let why = format!(
-                                "the snapshot's free is not the one statement after the rebuild that names it (free found: {}, mentions: {})",
-                                at.is_some(),
-                                mentions(cx.whole, rhs)
+                            let why = crate::rewrite_census::Refusal::about(
+                                "the snapshot's free is not the one statement after the rebuild that names it",
+                                format!(
+                                    "free found: {}, mentions: {}",
+                                    at.is_some(),
+                                    mentions(cx.whole, rhs)
+                                ),
                             );
-                            trace_decline(cx, r.t, &why);
+                            trace_decline(cx, r.t, why);
                             visit(&mut ls[i], cx);
                             i += 1;
                             continue;
@@ -221,11 +224,6 @@ fn guarded(r: Rebuild, original: Vec<Value>, cx: &Cx) -> Value {
         Form::Keep { lo, hi } => (lo, hi),
         Form::Prepend { g } => return prepended(r.place, g, r.elem_tp, r.t, original, cx),
     };
-    // @decline-owed: a rebuild that is not a counted `for i in a..b` whose body appends exactly
-    //   the `?`-discharged record element `V[i]`; a bound that is no literal, variable or the
-    //   place's length; a temporary named outside the rebuild; a place that is no variable or
-    //   field path; a prepended value that is no local or roots the place; at run time, a range
-    //   outside `0 <= lo <= hi <= len(V)` runs the statements as written
     crate::rewrite_census::fired("R-Compact", 1);
     if crate::keys::trace_compact() {
         eprintln!(
@@ -671,7 +669,14 @@ fn match_prepend(s: &[(usize, &Value)], cx: &Cx) -> Option<Rebuild> {
     })
 }
 
-fn trace_decline(cx: &Cx, t: u16, why: &str) {
+fn trace_decline(cx: &Cx, t: u16, why: impl Into<crate::rewrite_census::Refusal>) {
+    let why: crate::rewrite_census::Refusal = why.into();
+    crate::rewrite_census::declined_in(
+        "R-Compact",
+        cx.data.def(cx.d_nr).name(),
+        cx.data.def(cx.d_nr).variables().name(t),
+        why.clause,
+    );
     if crate::keys::trace_compact() {
         eprintln!(
             "[compact] fn={} t={} DECLINED: {why}",
