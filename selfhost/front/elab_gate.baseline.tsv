@@ -1125,7 +1125,7 @@ elab	refused	tests/scripts/store_persist_size_710.loft
 elab	refused	tests/scripts/store_rebuild_b1.loft
 elab	refused	tests/scripts/the-reference-safety-traps-are-what-it-catalogues.loft
 
-layer	elab-functions	agree	15435	of	27798
+layer	elab-functions	agree	15438	of	27798
 elab-functions	agree	lib/code.loft::Block
 elab-functions	agree	lib/code.loft::Boolean
 elab-functions	agree	lib/code.loft::Call
@@ -1420,6 +1420,7 @@ elab-functions	agree	loft-suite/rules/binding/B-Copy/1319-a-nullable-whole-value
 elab-functions	agree	loft-suite/rules/binding/B-Copy/1319-a-nullable-whole-value-bind-copies-like-its-dense-twin.loft::B19S
 elab-functions	agree	loft-suite/rules/binding/B-Copy/1319-a-nullable-whole-value-bind-copies-like-its-dense-twin.loft::n_b19_a_nullable_struct_bind_copies
 elab-functions	agree	loft-suite/rules/binding/B-Copy/1319-a-nullable-whole-value-bind-copies-like-its-dense-twin.loft::n_b19_answers_a_struct
+elab-functions	agree	loft-suite/rules/binding/B-Copy/1319-a-nullable-whole-value-bind-copies-like-its-dense-twin.loft::n_b19_takes_a_vector
 elab-functions	agree	loft-suite/rules/binding/B-Copy/1612-a-coalesce-chain-copies-the-operand-it-chooses.loft::(schema)
 elab-functions	agree	loft-suite/rules/binding/B-Copy/1612-a-coalesce-chain-copies-the-operand-it-chooses.loft::Box1612
 elab-functions	agree	loft-suite/rules/binding/B-Copy/1612-a-coalesce-chain-copies-the-operand-it-chooses.loft::Dh
@@ -9079,8 +9080,10 @@ elab-functions	agree	loft-suite/rules/ownership/O-Move/1625-an-explicit-return-o
 elab-functions	agree	loft-suite/rules/ownership/O-Move/1625-an-explicit-return-of-an-element-records-its-borrow.loft::n___lambda_c9_0
 elab-functions	agree	loft-suite/rules/ownership/O-Move/1625-an-explicit-return-of-an-element-records-its-borrow.loft::n___lambda_k1_0
 elab-functions	agree	loft-suite/rules/ownership/O-Move/1625-an-explicit-return-of-an-element-records-its-borrow.loft::n_c10
+elab-functions	agree	loft-suite/rules/ownership/O-Move/1625-an-explicit-return-of-an-element-records-its-borrow.loft::n_c6
 elab-functions	agree	loft-suite/rules/ownership/O-Move/1625-an-explicit-return-of-an-element-records-its-borrow.loft::n_k1
 elab-functions	agree	loft-suite/rules/ownership/O-Move/1625-an-explicit-return-of-an-element-records-its-borrow.loft::n_main
+elab-functions	agree	loft-suite/rules/ownership/O-Move/1625-an-explicit-return-of-an-element-records-its-borrow.loft::n_named
 elab-functions	agree	loft-suite/rules/ownership/O-Move/1625-an-explicit-return-of-an-element-records-its-borrow.loft::n_ok
 elab-functions	agree	loft-suite/rules/ownership/O-Move/1625-an-explicit-return-of-an-element-records-its-borrow.loft::n_okt
 elab-functions	agree	loft-suite/rules/ownership/O-Move/1625-an-explicit-return-of-an-element-records-its-borrow.loft::vector<vector<integer>>
