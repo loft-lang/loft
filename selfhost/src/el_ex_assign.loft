@@ -2852,6 +2852,19 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
       _ => {}
     }
   }
+  // A keyed local rebound by a literal with items starts over as its declaration does
+  // (`h = null`, then each item a record made through it): the literal takes the local's type.
+  kcur = el_vars::tp(vars, v);
+  if e.p.nodes[rhs!] is SVecLit && keyed_kind(kcur) && !(kcur is TyOptional) && !vars.vars[v].argument && !link {
+    kops = el_ex_vector::keyed_items(e, vars, v, rhs!);
+    if kops == null {
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    el_vars::drop_use(vars, v);
+    klist: vector<ir::Node> = [el_ir::v_set(v, ir::NdNull)];
+    klist += kops!;
+    return ex(ir::NdInsert { items: klist }, ir::TyVoid);
+  }
   if e.p.nodes[rhs!] is SVecLit {
     return el_ex_pattern::vector_into(e, vars, v, rhs!, ir::TyUnknown { n: 0 });
   }

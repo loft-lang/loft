@@ -135,13 +135,29 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   // `OpConv…FromNull` (a text then delivered through its hidden buffer, `el_tret`).
   if !e.first_pass && b.tp is TyNull && !(result is TyVoid) && !el_types::is_unknown(result) {
     rbase = el_types::base(result);
-    nl = if rbase is TyVector { el_convert::null_of(e, ir::TyReference { n: 0, dep: [] }) } else { el_convert::null_of(e, rbase) };
+    // (A struct enum's null is the reference sentinel too, its block the declared `E?`.)
+    senum_null = el_types::struct_enum_def(result) >= 0;
+    nl = if rbase is TyVector || senum_null { el_convert::null_of(e, ir::TyReference { n: 0, dep: [] }) } else { el_convert::null_of(e, rbase) };
     if nl == null {
       el::refuse(e, "a `null` answered at the tail of a function of this type: {type_kind(rbase)}");
     } else {
       // A scalar's null is a value of the declared `τ?` (the block is typed so); a record's or
       // a vector's is its base type's sentinel.
-      tt = if el_convert::sentinel_value(rbase) || el_convert::plain_enum(rbase) { el_types::without_deps(result) } else { el_types::without_deps(rbase) };
+      tt = if el_convert::sentinel_value(rbase) || el_convert::plain_enum(rbase) || senum_null { el_types::without_deps(result) } else { el_types::without_deps(rbase) };
+      // (A struct enum's block borrows the visible parameters an early `return` merged.)
+      if senum_null {
+        pd: vector<integer> = [];
+        for ra in el_types::deps(el::def(e, e.context).returned[0] ?? ir::TyVoid) {
+          rat = el::def(e, e.context).attributes[ra];
+          if rat != null && !rat!.hidden {
+            pv = el_vars::var(vars, rat!.name);
+            if pv >= 0 {
+              pd += [pv];
+            }
+          }
+        }
+        tt = el_types::with_deps(tt, pd);
+      }
       fixed = el_ex_null::retail(b.code, nl, tt);
       if fixed != null {
         b = ex(fixed!, tt);

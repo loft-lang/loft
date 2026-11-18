@@ -1874,7 +1874,7 @@ pub fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
       vars.expect_node = -1;
     }
     // A struct enum is a record as well: a variant is built into the buffer as a struct is.
-    if el_types::base(result) is TyReference || (el_types::struct_enum_def(result) >= 0 && !(result is TyOptional)) {
+    if el_types::base(result) is TyReference || (el_types::struct_enum_def(result) >= 0 && !(result is TyOptional)) || (el_types::struct_enum_def(result) >= 0 && !(v.tp is TyNull)) {
       return record_return(e, vars, v, result);
     }
     // `return null` from a `vector<T>?` or a struct-enum `E?` function answers the reference
