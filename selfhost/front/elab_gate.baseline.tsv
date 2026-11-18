@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	c17318e560936cc13f9ea048779a7c57ad2fd760
+suite	cd4de97822d0f0375e46ab36b510d2af0c945dca
 
-layer	elab	agree	1031	of	2085
+layer	elab	agree	1031	of	2083
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -451,9 +451,7 @@ elab	refused	loft-suite/rules/ownership/O-Buffer/1618-a-returned-nullable-vector
 elab	refused	loft-suite/rules/ownership/O-Buffer/1624-a-captured-default-arm-is-delivered-into-the-buffer.loft
 elab	refused	loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft
 elab	refused	loft-suite/rules/ownership/O-Buffer/a-local-renamed-onto-the-buffer-keeps-its-value-when-returned-as-a-view.loft
-elab	refused	loft-suite/rules/ownership/O-Buffer/a-null-answer-into-a-promoted-buffer-keeps-the-callers-store.loft
-elab	refused	loft-suite/rules/ownership/O-Buffer/a-record-rebound-from-one-buffer-every-pass-frees-it-once.loft
-elab	refused	loft-suite/rules/ownership/O-Buffer/a-self-tail-call-forwards-its-return-buffer.loft
+elab	refused	loft-suite/rules/ownership/O-Buffer/a-return-buffer-is-the-callers-through-every-hand-on.loft
 elab	refused	loft-suite/rules/ownership/O-Complete/1142-a-keyed-return-through-a-join-frees-the-arm-that-did-not-run.loft
 elab	refused	loft-suite/rules/ownership/O-Complete/1599-a-returned-vector-rebound-by-a-call-in-a-loop-frees-its-stores.loft
 elab	refused	loft-suite/rules/ownership/O-Complete/2382-an-early-return-releases-a-lifted-argument-of-its-block.loft
