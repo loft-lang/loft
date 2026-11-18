@@ -1,7 +1,7 @@
-diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
+diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
 index 5fbdb6fa6..3bbd341d8 100644
---- b/src/parser/expressions.rs
-+++ a/src/parser/expressions.rs
+--- a/src/parser/expressions.rs
++++ b/src/parser/expressions.rs
 @@ -4505,13 +4505,8 @@ use a separate collection or add after the loop"
          // what no grammar of loft allows).
          if self.preset_rhs.is_none() && self.operand_absent() {
@@ -18,11 +18,11 @@ index 5fbdb6fa6..3bbd341d8 100644
          }
          // @FR-N-Decl — an assignment's TARGET is a PLACE, not a value read, so a flow
          // narrowing has nothing to say about it: the proof describes what the slot currently
-diff --git b/src/parser/operators.rs a/src/parser/operators.rs
-index d66750fb4..e3fc61d1f 100644
---- b/src/parser/operators.rs
-+++ a/src/parser/operators.rs
-@@ -2074,25 +2074,19 @@ impl Parser {
+diff --git a/src/parser/operators.rs b/src/parser/operators.rs
+index a0ea8bbd1..cb9ebd419 100644
+--- a/src/parser/operators.rs
++++ b/src/parser/operators.rs
+@@ -2074,27 +2074,19 @@ impl Parser {
          }
      }
  
@@ -46,13 +46,15 @@ index d66750fb4..e3fc61d1f 100644
              .iter()
              .any(|t| self.lexer.peek_token(t))
              || self.lexer.peek().has == crate::lexer::LexItem::None
+-            // The binary operators that also START a value: a negation, a `&` link, a closure
+-            // `|x| …` — and `|| …`, a closure with no parameters.
 -            || self
 -                .peek_binary_operator()
--                .is_some_and(|(_, op)| !matches!(op, "-" | "&" | "|"))
+-                .is_some_and(|(_, op)| !matches!(op, "-" | "&" | "|" | "||"))
      }
  
      /// @PLN188 — the binary operator the next token is, and its level in `OPERATORS`, by one
-@@ -2447,13 +2441,9 @@ impl Parser {
+@@ -2449,13 +2441,9 @@ impl Parser {
                      Level::Error,
                      "Expected a value after `{operator}`"
                  );

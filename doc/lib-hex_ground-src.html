@@ -1,0 +1,847 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>hex_ground source — Loft, a programming language for small browser games</title>
+  <meta name="description" content="The loft source of the hex_ground library — every file it ships, highlighted, with each public item linked to its definition, its worked example and its call sites.">
+<link rel="canonical" href="https://loft-lang.org/loft/lib-hex_ground-src.html">
+<meta property="og:title" content="hex_ground source — Loft, a programming language for small browser games">
+<meta property="og:description" content="The loft source of the hex_ground library — every file it ships, highlighted, with each public item linked to its definition, its worked example and its call sites.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://loft-lang.org/loft/lib-hex_ground-src.html">
+<meta property="og:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<meta property="og:site_name" content="Loft">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="hex_ground source — Loft, a programming language for small browser games">
+<meta name="twitter:description" content="The loft source of the hex_ground library — every file it ships, highlighted, with each public item linked to its definition, its worked example and its call sites.">
+<meta name="twitter:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<link rel="stylesheet" href="style.css">
+<style>.playground-link{display:inline-block;margin:0.3em 0 0.8em;padding:4px 12px;background:#2563eb;color:#fff;border-radius:4px;text-decoration:none;font-size:0.85em}.playground-link:hover{filter:brightness(1.15)}@media print{.playground-link{display:none}}</style>
+</head>
+<body>
+<nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <a href="https://loft-lang.org/blog/">Blog</a> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
+<h1>hex_ground source</h1>
+<article>
+<p><a href="lib-hex_ground.html">← hex_ground</a> · <a href="lib-hex_ground-api.html">API reference</a> · version 0.1.1</p>
+<p class="lib-legend">2 file(s), 768 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<h2 id="items">Public items</h2>
+<p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
+<table class="lib-table">
+<tr><th>Item</th><th>Defined</th><th>Worked example</th><th>Call sites</th></tr>
+<tr><td><code>Ground</code> <span class="search-kind">struct</span></td><td><a href="#src-hex-ground-loft-L34">34</a></td><td>—</td><td><a href="#src-hex-ground-loft-L46">46</a> <a href="#src-hex-ground-loft-L49">49</a> <a href="#src-hex-ground-loft-L155">155</a> <a href="#src-hex-ground-loft-L167">167</a> <a href="#src-hex-ground-loft-L183">183</a> <a href="#src-hex-ground-loft-L192">192</a> … (12 total)</td></tr>
+<tr><td><code>ground_new</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-ground-loft-L46">46</a></td><td>—</td><td><a href="#tests-01-hex-ground-loft-L22">22</a> <a href="#tests-01-hex-ground-loft-L62">62</a> <a href="#tests-01-hex-ground-loft-L72">72</a> <a href="#tests-01-hex-ground-loft-L84">84</a> <a href="#tests-01-hex-ground-loft-L109">109</a> <a href="#tests-01-hex-ground-loft-L166">166</a> … (10 total)</td></tr>
+<tr><td><code>ground_unit</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-ground-loft-L54">54</a></td><td>—</td><td><a href="#src-hex-ground-loft-L193">193</a> <a href="#src-hex-ground-loft-L266">266</a> <a href="#tests-01-hex-ground-loft-L42">42</a> <a href="#tests-01-hex-ground-loft-L121">121</a></td></tr>
+<tr><td><code>ground_centre</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-ground-loft-L57">57</a></td><td>—</td><td><a href="#src-hex-ground-loft-L70">70</a> <a href="#src-hex-ground-loft-L158">158</a> <a href="#src-hex-ground-loft-L170">170</a> <a href="#src-hex-ground-loft-L206">206</a> <a href="#src-hex-ground-loft-L338">338</a> <a href="#src-hex-ground-loft-L427">427</a> … (17 total)</td></tr>
+<tr><td><code>ground_cell_near</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-ground-loft-L62">62</a></td><td>—</td><td><a href="#src-hex-ground-loft-L426">426</a> <a href="#src-hex-ground-loft-L483">483</a> <a href="#tests-01-hex-ground-loft-L33">33</a></td></tr>
+<tr><td><code>GroundMeasures</code> <span class="search-kind">struct</span></td><td><a href="#src-hex-ground-loft-L85">85</a></td><td>—</td><td><a href="#src-hex-ground-loft-L93">93</a> <a href="#src-hex-ground-loft-L94">94</a> <a href="#src-hex-ground-loft-L127">127</a> <a href="#src-hex-ground-loft-L155">155</a> <a href="#src-hex-ground-loft-L183">183</a> <a href="#src-hex-ground-loft-L192">192</a> … (7 total)</td></tr>
+<tr><td><code>ground_measures</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-ground-loft-L93">93</a></td><td>—</td><td><a href="#tests-01-hex-ground-loft-L52">52</a> <a href="#tests-01-hex-ground-loft-L94">94</a> <a href="#tests-01-hex-ground-loft-L111">111</a> <a href="#tests-01-hex-ground-loft-L171">171</a></td></tr>
+<tr><td><code>GroundSteps</code> <span class="search-kind">struct</span></td><td><a href="#src-hex-ground-loft-L101">101</a></td><td>—</td><td><a href="#src-hex-ground-loft-L111">111</a> <a href="#src-hex-ground-loft-L127">127</a> <a href="#src-hex-ground-loft-L155">155</a> <a href="#tests-01-hex-ground-loft-L51">51</a></td></tr>
+<tr><td><code>steps_level</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-ground-loft-L111">111</a></td><td>—</td><td><a href="#src-hex-ground-loft-L134">134</a> <a href="#src-hex-ground-loft-L138">138</a></td></tr>
+<tr><td><code>terrace_height</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-ground-loft-L127">127</a></td><td>—</td><td><a href="#src-hex-ground-loft-L159">159</a> <a href="#tests-01-hex-ground-loft-L53">53</a> <a href="#tests-01-hex-ground-loft-L54">54</a> <a href="#tests-01-hex-ground-loft-L55">55</a> <a href="#tests-01-hex-ground-loft-L58">58</a> <a href="#tests-01-hex-ground-loft-L65">65</a></td></tr>
+<tr><td><code>ground_terraces</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-ground-loft-L155">155</a></td><td>—</td><td><a href="#tests-01-hex-ground-loft-L63">63</a></td></tr>
+<tr><td><code>ground_hill</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-ground-loft-L167">167</a></td><td>—</td><td><a href="#tests-01-hex-ground-loft-L74">74</a> <a href="#tests-01-hex-ground-loft-L184">184</a> <a href="#tests-01-hex-ground-loft-L185">185</a></td></tr>
+<tr><td><code>ground_seat</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-ground-loft-L183">183</a></td><td>—</td><td><a href="#tests-01-hex-ground-loft-L95">95</a></td></tr>
+<tr><td><code>ground_dig</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-ground-loft-L192">192</a></td><td>—</td><td><a href="#tests-01-hex-ground-loft-L112">112</a></td></tr>
+<tr><td><code>sides_distance</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-ground-loft-L216">216</a></td><td>—</td><td><a href="#src-hex-ground-loft-L207">207</a> <a href="#tests-01-hex-ground-loft-L128">128</a></td></tr>
+<tr><td><code>GroundCliff</code> <span class="search-kind">struct</span></td><td><a href="#src-hex-ground-loft-L244">244</a></td><td>—</td><td><a href="#src-hex-ground-loft-L265">265</a> <a href="#src-hex-ground-loft-L267">267</a> <a href="#src-hex-ground-loft-L294">294</a></td></tr>
+<tr><td><code>GroundBox</code> <span class="search-kind">struct</span></td><td><a href="#src-hex-ground-loft-L253">253</a></td><td>—</td><td><a href="#src-hex-ground-loft-L265">265</a> <a href="#src-hex-ground-loft-L306">306</a> <a href="#src-hex-ground-loft-L325">325</a> <a href="#src-hex-ground-loft-L334">334</a> <a href="#tests-01-hex-ground-loft-L146">146</a> <a href="#tests-01-hex-ground-loft-L156">156</a> … (8 total)</td></tr>
+<tr><td><code>ground_cliffs</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-ground-loft-L264">264</a></td><td>—</td><td><a href="#tests-01-hex-ground-loft-L147">147</a> <a href="#tests-01-hex-ground-loft-L158">158</a> <a href="#tests-01-hex-ground-loft-L164">164</a></td></tr>
+<tr><td><code>ground_box_distance</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-ground-loft-L325">325</a></td><td>—</td><td><a href="#src-hex-ground-loft-L341">341</a> <a href="#tests-01-hex-ground-loft-L175">175</a></td></tr>
+<tr><td><code>ground_sharpen</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-ground-loft-L334">334</a></td><td>—</td><td><a href="#tests-01-hex-ground-loft-L171">171</a></td></tr>
+<tr><td><code>ground_corner_height</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-ground-loft-L367">367</a></td><td>—</td><td><a href="#src-hex-ground-loft-L448">448</a> <a href="#src-hex-ground-loft-L449">449</a> <a href="#tests-01-hex-ground-loft-L210">210</a> <a href="#tests-01-hex-ground-loft-L231">231</a> <a href="#tests-01-hex-ground-loft-L232">232</a></td></tr>
+<tr><td><code>ground_height_at</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-ground-loft-L425">425</a></td><td>—</td><td><a href="#tests-01-hex-ground-loft-L189">189</a> <a href="#tests-01-hex-ground-loft-L213">213</a> <a href="#tests-01-hex-ground-loft-L218">218</a> <a href="#tests-01-hex-ground-loft-L219">219</a> <a href="#tests-01-hex-ground-loft-L227">227</a> <a href="#tests-01-hex-ground-loft-L257">257</a></td></tr>
+<tr><td><code>ground_height_on</code> <span class="search-kind">fn</span></td><td><a href="#src-hex-ground-loft-L481">481</a></td><td>—</td><td><a href="#tests-01-hex-ground-loft-L253">253</a> <a href="#tests-01-hex-ground-loft-L254">254</a></td></tr>
+</table>
+<h2 id="src-hex-ground-loft">src/hex_ground.loft</h2>
+<pre class="src"><code><span id="src-hex-ground-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
+<span id="src-hex-ground-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
+<span id="src-hex-ground-loft-L3"><span class="cm">// hex_ground — THE GROUND STRUCTURES STAND ON: A HEIGHT AND A SURFACE KIND PER CELL, AND THE</span></span>
+<span id="src-hex-ground-loft-L4"><span class="cm">// ROUTINES THAT SHAPE IT.</span></span>
+<span id="src-hex-ground-loft-L5"><span class="cm">//</span></span>
+<span id="src-hex-ground-loft-L6"><span class="cm">// `hex_terrain` GENERATES land: an overland lattice, hydrology, rivers, a kernel blend sampled</span></span>
+<span id="src-hex-ground-loft-L7"><span class="cm">// anywhere.  This is the other thing — the ground of one PLACE, authored: a town's terraces, the</span></span>
+<span id="src-hex-ground-loft-L8"><span class="cm">// hill a house stands on, the bed a stream runs in, the cliff behind the market.  It is</span></span>
+<span id="src-hex-ground-loft-L9"><span class="cm">// `hex_field`'s `Heights` and `Labels` over a window of cells, and five ways to shape them:</span></span>
+<span id="src-hex-ground-loft-L10"><span class="cm">//</span></span>
+<span id="src-hex-ground-loft-L11"><span class="cm">//   ground_terraces   a stepped height map (levels on a square grid) made smooth: each step up</span></span>
+<span id="src-hex-ground-loft-L12"><span class="cm">//                     a slope across where its front stood, the flat tops left flat</span></span>
+<span id="src-hex-ground-loft-L13"><span class="cm">//   ground_hill       a round hill, a cosine from its top to its foot</span></span>
+<span id="src-hex-ground-loft-L14"><span class="cm">//   ground_seat       a structure seated: its footprint level, the ground round it blended back</span></span>
+<span id="src-hex-ground-loft-L15"><span class="cm">//   ground_dig        a structure dug in (a stream's bed), its bank along its STRAIGHT sides</span></span>
+<span id="src-hex-ground-loft-L16"><span class="cm">//   ground_cliffs /   where a front must not slope: the straight sides of the cells of a level</span></span>
+<span id="src-hex-ground-loft-L17"><span class="cm">//   ground_sharpen    and up, as cliffs, and the ground stood at its level's height beside them</span></span>
+<span id="src-hex-ground-loft-L18"><span class="cm">//</span></span>
+<span id="src-hex-ground-loft-L19"><span class="cm">// The straight sides are `hex_draw::cells_outlines`' — the same lines a road's edge or a house's</span></span>
+<span id="src-hex-ground-loft-L20"><span class="cm">// wall is drawn along — so a bank and a cliff run straight, not along the cells' zigzag.</span></span>
+<span id="src-hex-ground-loft-L21"><span class="cm">//</span></span>
+<span id="src-hex-ground-loft-L22"><span class="cm">// UNITS.  A ground carries its `step`: the distance between two neighbouring cell centres in</span></span>
+<span id="src-hex-ground-loft-L23"><span class="cm">// the caller's unit, the unit heights are in too.  sqrt(3) is the lattice's own world unit; 1.5</span></span>
+<span id="src-hex-ground-loft-L24"><span class="cm">// is a ground in metres where a hex step is 1.5 m.  A centre is then at (k * step/2,</span></span>
+<span id="src-hex-ground-loft-L25"><span class="cm">// m * step*sqrt(3)/6) for doubled coordinates (k, m), y growing north.</span></span>
+<span id="src-hex-ground-loft-L26"><span class="cm">//</span></span>
+<span id="src-hex-ground-loft-L27"><span class="cm">// From tile-world-game (its hexterrain.loft), whose rules these routines keep and cite by tag</span></span>
+<span id="src-hex-ground-loft-L28"><span class="cm">// (the HG rules of its `formal/hex-houses.md`).</span></span>
+<span id="src-hex-ground-loft-L29"><span class="kw">use</span> hex_field::*;</span>
+<span id="src-hex-ground-loft-L30"><span class="kw">use</span> hex_draw::*;</span>
+<span id="src-hex-ground-loft-L31"><span class="kw">use</span> hex_place::*;</span>
+<span id="src-hex-ground-loft-L32"></span>
+<span id="src-hex-ground-loft-L33"><span class="cm">// The ground over a window of cells: a height and a surface kind per cell, and its `step`.</span></span>
+<span id="src-hex-ground-loft-L34"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Ground</span> {</span>
+<span id="src-hex-ground-loft-L35">  <span class="kw">pub</span> gr_heights: <span class="en">Heights</span>,</span>
+<span id="src-hex-ground-loft-L36">  <span class="kw">pub</span> gr_kinds:   <span class="en">Labels</span>,</span>
+<span id="src-hex-ground-loft-L37">  <span class="kw">pub</span> gr_q0:      <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-hex-ground-loft-L38">  <span class="kw">pub</span> gr_r0:      <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-hex-ground-loft-L39">  <span class="kw">pub</span> gr_w:       <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-hex-ground-loft-L40">  <span class="kw">pub</span> gr_h:       <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-hex-ground-loft-L41">  <span class="kw">pub</span> gr_step:    <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-hex-ground-loft-L42">}</span>
+<span id="src-hex-ground-loft-L43"></span>
+<span id="src-hex-ground-loft-L44"><span class="cm">// @FR-HG-Surface: a height and a surface kind per cell</span></span>
+<span id="src-hex-ground-loft-L45"><span class="cm">// Flat ground at height 0 over the window, every cell of surface `kind`, centres `step` apart.</span></span>
+<span id="src-hex-ground-loft-L46"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">ground_new</span>(q0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, w: <span class="ty"><a href="stdlib-types.html">integer</a></span>, h: <span class="ty"><a href="stdlib-types.html">integer</a></span>, step: <span class="ty"><a href="stdlib-types.html">float</a></span>, kind: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">Ground</span> {</span>
+<span id="src-hex-ground-loft-L47">  kinds = <span class="fn-call">labels_new</span>(q0, r0, w, h);</span>
+<span id="src-hex-ground-loft-L48">  <span class="kw">for</span> r <span class="kw">in</span> r0..r0 + h { <span class="kw">for</span> q <span class="kw">in</span> q0..q0 + w { <span class="fn-call">label_set</span>(kinds, q, r, kind); } }</span>
+<span id="src-hex-ground-loft-L49">  <span class="en">Ground</span> { gr_heights: <span class="fn-call">heights_new</span>(q0, r0, w, h), gr_kinds: kinds, gr_q0: q0, gr_r0: r0, gr_w: w, gr_h: h, gr_step: step }</span>
+<span id="src-hex-ground-loft-L50">}</span>
+<span id="src-hex-ground-loft-L51"></span>
+<span id="src-hex-ground-loft-L52"><span class="cm">// The ground's unit per lattice world unit (a hex's circumradius): what a point of</span></span>
+<span id="src-hex-ground-loft-L53"><span class="cm">// `hex_draw`'s outlines is multiplied by to lie on the ground.</span></span>
+<span id="src-hex-ground-loft-L54"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">ground_unit</span>(step: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> { <span class="nm">2.0</span> * (step * <span class="nm">0.28867513459481287</span>) }</span>
+<span id="src-hex-ground-loft-L55"></span>
+<span id="src-hex-ground-loft-L56"><span class="cm">// A cell's centre, in a ground's unit.</span></span>
+<span id="src-hex-ground-loft-L57"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">ground_centre</span>(step: <span class="ty"><a href="stdlib-types.html">float</a></span>, q: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
+<span id="src-hex-ground-loft-L58">  ((<span class="fn-call">lattice_k</span>(q, r) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * (step * <span class="nm">0.5</span>), (<span class="fn-call">lattice_m</span>(q, r) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * (step * <span class="nm">0.28867513459481287</span>))</span>
+<span id="src-hex-ground-loft-L59">}</span>
+<span id="src-hex-ground-loft-L60"></span>
+<span id="src-hex-ground-loft-L61"><span class="cm">// The cell whose centre is nearest (x, y), in a ground's unit.</span></span>
+<span id="src-hex-ground-loft-L62"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">ground_cell_near</span>(step: <span class="ty"><a href="stdlib-types.html">float</a></span>, x: <span class="ty"><a href="stdlib-types.html">float</a></span>, y: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; (<span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-hex-ground-loft-L63">  r = <span class="bi"><a href="stdlib-math.html">round</a></span>((y / (<span class="nm">3.0</span> * (step * <span class="nm">0.28867513459481287</span>))) ?? <span class="nm">0.0</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-hex-ground-loft-L64">  q = <span class="bi"><a href="stdlib-math.html">round</a></span>(((((x / (step * <span class="nm">0.5</span>)) ?? <span class="nm">0.0</span>)) - ((r &amp; <span class="nm">1</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>)) * <span class="nm">0.5</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-hex-ground-loft-L65">  best_q = q;</span>
+<span id="src-hex-ground-loft-L66">  best_r = r;</span>
+<span id="src-hex-ground-loft-L67">  best = -<span class="nm">1.0</span>;</span>
+<span id="src-hex-ground-loft-L68">  <span class="kw">for</span> dr <span class="kw">in</span> -<span class="nm">1..2</span> {</span>
+<span id="src-hex-ground-loft-L69">    <span class="kw">for</span> dq <span class="kw">in</span> -<span class="nm">1..2</span> {</span>
+<span id="src-hex-ground-loft-L70">      (cx, cy) = <span class="fn-call">ground_centre</span>(step, q + dq, r + dr);</span>
+<span id="src-hex-ground-loft-L71">      d = (cx - x) * (cx - x) + (cy - y) * (cy - y);</span>
+<span id="src-hex-ground-loft-L72">      <span class="kw">if</span> best &lt; <span class="nm">0.0</span> || d &lt; best {</span>
+<span id="src-hex-ground-loft-L73">        best = d;</span>
+<span id="src-hex-ground-loft-L74">        best_q = q + dq;</span>
+<span id="src-hex-ground-loft-L75">        best_r = r + dr;</span>
+<span id="src-hex-ground-loft-L76">      }</span>
+<span id="src-hex-ground-loft-L77">    }</span>
+<span id="src-hex-ground-loft-L78">  }</span>
+<span id="src-hex-ground-loft-L79">  (best_q, best_r)</span>
+<span id="src-hex-ground-loft-L80">}</span>
+<span id="src-hex-ground-loft-L81"></span>
+<span id="src-hex-ground-loft-L82"><span class="cm">// The ground's measurements, in its unit: a storey (the height between two levels), how wide a</span></span>
+<span id="src-hex-ground-loft-L83"><span class="cm">// hillside is between two terraces, how wide a bank, and how far round a seated structure the</span></span>
+<span id="src-hex-ground-loft-L84"><span class="cm">// ground blends back to its own height.</span></span>
+<span id="src-hex-ground-loft-L85"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">GroundMeasures</span> {</span>
+<span id="src-hex-ground-loft-L86">  <span class="kw">pub</span> gm_storey:   <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-hex-ground-loft-L87">  <span class="kw">pub</span> gm_hillside: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-hex-ground-loft-L88">  <span class="kw">pub</span> gm_bank:     <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-hex-ground-loft-L89">  <span class="kw">pub</span> gm_blend:    <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-hex-ground-loft-L90">}</span>
+<span id="src-hex-ground-loft-L91"></span>
+<span id="src-hex-ground-loft-L92"><span class="cm">// The four measurements.</span></span>
+<span id="src-hex-ground-loft-L93"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">ground_measures</span>(storey: <span class="ty"><a href="stdlib-types.html">float</a></span>, hillside: <span class="ty"><a href="stdlib-types.html">float</a></span>, bank: <span class="ty"><a href="stdlib-types.html">float</a></span>, blend: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="en">GroundMeasures</span> {</span>
+<span id="src-hex-ground-loft-L94">  <span class="en">GroundMeasures</span> { gm_storey: storey, gm_hillside: hillside, gm_bank: bank, gm_blend: blend }</span>
+<span id="src-hex-ground-loft-L95">}</span>
+<span id="src-hex-ground-loft-L96"></span>
+<span id="src-hex-ground-loft-L97"><span class="cm">// ── terraces made smooth ────────────────────────────────────────────────────</span></span>
+<span id="src-hex-ground-loft-L98"></span>
+<span id="src-hex-ground-loft-L99"><span class="cm">// A stepped height map on a square grid: a level per square (`level[j * nx + i]`), squares</span></span>
+<span id="src-hex-ground-loft-L100"><span class="cm">// `size` units a side, square (0, 0) with its south-west corner at (x0, y0), j growing north.</span></span>
+<span id="src-hex-ground-loft-L101"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">GroundSteps</span> {</span>
+<span id="src-hex-ground-loft-L102">  <span class="kw">pub</span> gs_x0:    <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-hex-ground-loft-L103">  <span class="kw">pub</span> gs_y0:    <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-hex-ground-loft-L104">  <span class="kw">pub</span> gs_size:  <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-hex-ground-loft-L105">  <span class="kw">pub</span> gs_nx:    <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-hex-ground-loft-L106">  <span class="kw">pub</span> gs_ny:    <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-hex-ground-loft-L107">  <span class="kw">pub</span> gs_level: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;,</span>
+<span id="src-hex-ground-loft-L108">}</span>
+<span id="src-hex-ground-loft-L109"></span>
+<span id="src-hex-ground-loft-L110"><span class="cm">// The level of square (i, j), the nearest square's beyond the map.</span></span>
+<span id="src-hex-ground-loft-L111"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">steps_level</span>(s: const <span class="en">GroundSteps</span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>, j: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-hex-ground-loft-L112">  ci = <span class="kw">if</span> i &lt; <span class="nm">0</span> { <span class="nm">0</span> } <span class="kw">else</span> <span class="kw">if</span> i &gt;= s.gs_nx { s.gs_nx - <span class="nm">1</span> } <span class="kw">else</span> { i };</span>
+<span id="src-hex-ground-loft-L113">  cj = <span class="kw">if</span> j &lt; <span class="nm">0</span> { <span class="nm">0</span> } <span class="kw">else</span> <span class="kw">if</span> j &gt;= s.gs_ny { s.gs_ny - <span class="nm">1</span> } <span class="kw">else</span> { j };</span>
+<span id="src-hex-ground-loft-L114">  s.gs_level[cj * s.gs_nx + ci] ?? <span class="nm">0</span></span>
+<span id="src-hex-ground-loft-L115">}</span>
+<span id="src-hex-ground-loft-L116"></span>
+<span id="src-hex-ground-loft-L117"><span class="kw">fn</span> <span class="fn-call">ground_smooth</span>(t: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="src-hex-ground-loft-L118">  c = <span class="kw">if</span> t &lt; <span class="nm">0.0</span> { <span class="nm">0.0</span> } <span class="kw">else</span> <span class="kw">if</span> t &gt; <span class="nm">1.0</span> { <span class="nm">1.0</span> } <span class="kw">else</span> { t };</span>
+<span id="src-hex-ground-loft-L119">  c * c * (<span class="nm">3.0</span> - <span class="nm">2.0</span> * c)</span>
+<span id="src-hex-ground-loft-L120">}</span>
+<span id="src-hex-ground-loft-L121"></span>
+<span id="src-hex-ground-loft-L122"><span class="cm">// @FR-HG-Terrace: each step up a smooth slope across its edge; the flat tops stay flat</span></span>
+<span id="src-hex-ground-loft-L123"><span class="cm">// The smooth height at (x, y) units of the stepped map `s`: its lowest level's height, and for</span></span>
+<span id="src-hex-ground-loft-L124"><span class="cm">// every step up a smooth rise of a storey across the step's edge, `hillside` wide and centred on</span></span>
+<span id="src-hex-ground-loft-L125"><span class="cm">// it (a step up from below level 0, a stream's bank, `bank` wide).  Away from the edges the</span></span>
+<span id="src-hex-ground-loft-L126"><span class="cm">// terraces stay flat at their storeys; across one, the ground climbs a storey without a cliff.</span></span>
+<span id="src-hex-ground-loft-L127"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">terrace_height</span>(s: const <span class="en">GroundSteps</span>, x: <span class="ty"><a href="stdlib-types.html">float</a></span>, y: <span class="ty"><a href="stdlib-types.html">float</a></span>, m: const <span class="en">GroundMeasures</span>, lo: <span class="ty"><a href="stdlib-types.html">integer</a></span>, hi: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="src-hex-ground-loft-L128">  i = <span class="bi"><a href="stdlib-math.html">floor</a></span>((x - s.gs_x0) / s.gs_size ?? <span class="nm">0.0</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-hex-ground-loft-L129">  j = <span class="bi"><a href="stdlib-math.html">floor</a></span>((y - s.gs_y0) / s.gs_size ?? <span class="nm">0.0</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-hex-ground-loft-L130">  h = (lo <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * m.gm_storey;</span>
+<span id="src-hex-ground-loft-L131">  <span class="kw">for</span> step <span class="kw">in</span> lo + <span class="nm">1..</span>hi + <span class="nm">1</span> {</span>
+<span id="src-hex-ground-loft-L132">    wide = <span class="kw">if</span> step &lt;= <span class="nm">0</span> { m.gm_bank } <span class="kw">else</span> { m.gm_hillside };</span>
+<span id="src-hex-ground-loft-L133">    reach = (<span class="bi"><a href="stdlib-math.html">ceil</a></span>((wide * <span class="nm">0.5</span>) / s.gs_size ?? <span class="nm">1.0</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>) + <span class="nm">1</span>;</span>
+<span id="src-hex-ground-loft-L134">    inside = <span class="fn-call">steps_level</span>(s, i, j) &gt;= step;</span>
+<span id="src-hex-ground-loft-L135">    near = wide;</span>
+<span id="src-hex-ground-loft-L136">    <span class="kw">for</span> dj <span class="kw">in</span> -reach..reach + <span class="nm">1</span> {</span>
+<span id="src-hex-ground-loft-L137">      <span class="kw">for</span> di <span class="kw">in</span> -reach..reach + <span class="nm">1</span> {</span>
+<span id="src-hex-ground-loft-L138">        <span class="kw">if</span> (<span class="fn-call">steps_level</span>(s, i + di, j + dj) &gt;= step) == inside { <span class="kw">continue</span>; }</span>
+<span id="src-hex-ground-loft-L139">        <span class="cm">// the distance from (x, y) to square (i + di, j + dj)</span></span>
+<span id="src-hex-ground-loft-L140">        ax = s.gs_x0 + ((i + di) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * s.gs_size;</span>
+<span id="src-hex-ground-loft-L141">        ay = s.gs_y0 + ((j + dj) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * s.gs_size;</span>
+<span id="src-hex-ground-loft-L142">        dx = <span class="kw">if</span> x &lt; ax { ax - x } <span class="kw">else</span> <span class="kw">if</span> x &gt; ax + s.gs_size { x - ax - s.gs_size } <span class="kw">else</span> { <span class="nm">0.0</span> };</span>
+<span id="src-hex-ground-loft-L143">        dy = <span class="kw">if</span> y &lt; ay { ay - y } <span class="kw">else</span> <span class="kw">if</span> y &gt; ay + s.gs_size { y - ay - s.gs_size } <span class="kw">else</span> { <span class="nm">0.0</span> };</span>
+<span id="src-hex-ground-loft-L144">        d = <span class="bi"><a href="stdlib-math.html">sqrt</a></span>(dx * dx + dy * dy);</span>
+<span id="src-hex-ground-loft-L145">        <span class="kw">if</span> d &lt; near { near = d; }</span>
+<span id="src-hex-ground-loft-L146">      }</span>
+<span id="src-hex-ground-loft-L147">    }</span>
+<span id="src-hex-ground-loft-L148">    signed = <span class="kw">if</span> inside { near } <span class="kw">else</span> { -near };</span>
+<span id="src-hex-ground-loft-L149">    h += m.gm_storey * <span class="fn-call">ground_smooth</span>(((signed + wide * <span class="nm">0.5</span>) / wide) ?? <span class="nm">0.0</span>);</span>
+<span id="src-hex-ground-loft-L150">  }</span>
+<span id="src-hex-ground-loft-L151">  h</span>
+<span id="src-hex-ground-loft-L152">}</span>
+<span id="src-hex-ground-loft-L153"></span>
+<span id="src-hex-ground-loft-L154"><span class="cm">// Every cell of the ground at the smooth height of the stepped map.</span></span>
+<span id="src-hex-ground-loft-L155"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">ground_terraces</span>(g: <span class="en">Ground</span>, s: const <span class="en">GroundSteps</span>, m: const <span class="en">GroundMeasures</span>, lo: <span class="ty"><a href="stdlib-types.html">integer</a></span>, hi: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-hex-ground-loft-L156">  <span class="kw">for</span> r <span class="kw">in</span> g.gr_r0..g.gr_r0 + g.gr_h {</span>
+<span id="src-hex-ground-loft-L157">    <span class="kw">for</span> q <span class="kw">in</span> g.gr_q0..g.gr_q0 + g.gr_w {</span>
+<span id="src-hex-ground-loft-L158">      (x, y) = <span class="fn-call">ground_centre</span>(g.gr_step, q, r);</span>
+<span id="src-hex-ground-loft-L159">      <span class="fn-call">height_set</span>(g.gr_heights, q, r, <span class="fn-call">terrace_height</span>(s, x, y, m, lo, hi));</span>
+<span id="src-hex-ground-loft-L160">    }</span>
+<span id="src-hex-ground-loft-L161">  }</span>
+<span id="src-hex-ground-loft-L162">}</span>
+<span id="src-hex-ground-loft-L163"></span>
+<span id="src-hex-ground-loft-L164"><span class="cm">// @FR-HG-Hill: a smooth round hill</span></span>
+<span id="src-hex-ground-loft-L165"><span class="cm">// A round hill `height` units high, `radius` units across from its top at (x, y) to its foot:</span></span>
+<span id="src-hex-ground-loft-L166"><span class="cm">// added to the ground, its sides a cosine, level at the top and at the foot.</span></span>
+<span id="src-hex-ground-loft-L167"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">ground_hill</span>(g: <span class="en">Ground</span>, x: <span class="ty"><a href="stdlib-types.html">float</a></span>, y: <span class="ty"><a href="stdlib-types.html">float</a></span>, radius: <span class="ty"><a href="stdlib-types.html">float</a></span>, height: <span class="ty"><a href="stdlib-types.html">float</a></span>) {</span>
+<span id="src-hex-ground-loft-L168">  <span class="kw">for</span> r <span class="kw">in</span> g.gr_r0..g.gr_r0 + g.gr_h {</span>
+<span id="src-hex-ground-loft-L169">    <span class="kw">for</span> q <span class="kw">in</span> g.gr_q0..g.gr_q0 + g.gr_w {</span>
+<span id="src-hex-ground-loft-L170">      (cx, cy) = <span class="fn-call">ground_centre</span>(g.gr_step, q, r);</span>
+<span id="src-hex-ground-loft-L171">      d = <span class="bi"><a href="stdlib-math.html">sqrt</a></span>((cx - x) * (cx - x) + (cy - y) * (cy - y));</span>
+<span id="src-hex-ground-loft-L172">      <span class="kw">if</span> d &gt;= radius { <span class="kw">continue</span>; }</span>
+<span id="src-hex-ground-loft-L173">      bump = height * <span class="nm">0.5</span> * (<span class="nm">1.0</span> + <span class="bi"><a href="stdlib-math.html">cos</a></span>((<span class="en"><a href="stdlib-math.html">PI</a></span> * d / radius) ?? <span class="nm">0.0</span>));</span>
+<span id="src-hex-ground-loft-L174">      <span class="fn-call">height_set</span>(g.gr_heights, q, r, <span class="fn-call">height_get</span>(g.gr_heights, q, r) + bump);</span>
+<span id="src-hex-ground-loft-L175">    }</span>
+<span id="src-hex-ground-loft-L176">  }</span>
+<span id="src-hex-ground-loft-L177">}</span>
+<span id="src-hex-ground-loft-L178"></span>
+<span id="src-hex-ground-loft-L179"><span class="cm">// @FR-HG-Seat: a structure's footprint level, the ground round it blended back</span></span>
+<span id="src-hex-ground-loft-L180"><span class="cm">// Seat a structure on the ground: its cells at height `z`, and the ground round it blended from</span></span>
+<span id="src-hex-ground-loft-L181"><span class="cm">// that height back to its own over `m.gm_blend` from the footprint's edge (`hex_place::seat_blend`).</span></span>
+<span id="src-hex-ground-loft-L182"><span class="cm">// Answers the lowest the ground was under the footprint, where its walls go down to.</span></span>
+<span id="src-hex-ground-loft-L183"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">ground_seat</span>(g: <span class="en">Ground</span>, cells: <span class="en">HexSet</span>, z: <span class="ty"><a href="stdlib-types.html">float</a></span>, m: const <span class="en">GroundMeasures</span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="src-hex-ground-loft-L184">  <span class="fn-call">seat_blend</span>(cells, g.gr_heights, z, m.gm_blend, g.gr_step)</span>
+<span id="src-hex-ground-loft-L185">}</span>
+<span id="src-hex-ground-loft-L186"></span>
+<span id="src-hex-ground-loft-L187"><span class="cm">// @FR-HG-Dig: a structure dug in, its bank centred on its straight sides</span></span>
+<span id="src-hex-ground-loft-L188"><span class="cm">// Dig a structure into the ground (a stream's bed): the ground inside its sides `depth` units</span></span>
+<span id="src-hex-ground-loft-L189"><span class="cm">// lower, across a bank `m.gm_bank` wide centred on its sides (`hex_draw::cells_outlines`, the same straight</span></span>
+<span id="src-hex-ground-loft-L190"><span class="cm">// sides the view draws its edge along), shaped by a smoothstep.  So the bank runs along the sides,</span></span>
+<span id="src-hex-ground-loft-L191"><span class="cm">// not along the cells' zigzag or the square map's staircase.</span></span>
+<span id="src-hex-ground-loft-L192"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">ground_dig</span>(g: <span class="en">Ground</span>, cells: <span class="en">HexSet</span>, depth: <span class="ty"><a href="stdlib-types.html">float</a></span>, m: const <span class="en">GroundMeasures</span>) {</span>
+<span id="src-hex-ground-loft-L193">  unit = <span class="fn-call">ground_unit</span>(g.gr_step);</span>
+<span id="src-hex-ground-loft-L194">  sides: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;(<span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>)&gt; = [];</span>
+<span id="src-hex-ground-loft-L195">  <span class="kw">for</span> o <span class="kw">in</span> <span class="fn-call">cells_outlines</span>(cells, <span class="nm">0</span>) {</span>
+<span id="src-hex-ground-loft-L196">    n = <span class="bi"><a href="stdlib-text.html">len</a></span>(o.co_corners);</span>
+<span id="src-hex-ground-loft-L197">    <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..</span>n {</span>
+<span id="src-hex-ground-loft-L198">      (x1, y1) = o.co_corners[(i + n - <span class="nm">1</span>) % n ?? <span class="nm">0</span>] ?? (<span class="nm">0.0</span>, <span class="nm">0.0</span>);</span>
+<span id="src-hex-ground-loft-L199">      (x2, y2) = o.co_corners[i] ?? (<span class="nm">0.0</span>, <span class="nm">0.0</span>);</span>
+<span id="src-hex-ground-loft-L200">      sides += [(x1 * unit, y1 * unit, x2 * unit, y2 * unit)];</span>
+<span id="src-hex-ground-loft-L201">    }</span>
+<span id="src-hex-ground-loft-L202">  }</span>
+<span id="src-hex-ground-loft-L203">  <span class="kw">if</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(sides) == <span class="nm">0</span> { <span class="kw">return</span>; }</span>
+<span id="src-hex-ground-loft-L204">  <span class="kw">for</span> r <span class="kw">in</span> g.gr_r0..g.gr_r0 + g.gr_h {</span>
+<span id="src-hex-ground-loft-L205">    <span class="kw">for</span> q <span class="kw">in</span> g.gr_q0..g.gr_q0 + g.gr_w {</span>
+<span id="src-hex-ground-loft-L206">      (x, y) = <span class="fn-call">ground_centre</span>(g.gr_step, q, r);</span>
+<span id="src-hex-ground-loft-L207">      d = <span class="fn-call">sides_distance</span>(sides, x, y);</span>
+<span id="src-hex-ground-loft-L208">      z = <span class="fn-call">height_get</span>(g.gr_heights, q, r);</span>
+<span id="src-hex-ground-loft-L209">      <span class="fn-call">height_set</span>(g.gr_heights, q, r, z - depth * <span class="fn-call">ground_smooth</span>((d + m.gm_bank * <span class="nm">0.5</span>) / m.gm_bank ?? <span class="nm">0.0</span>));</span>
+<span id="src-hex-ground-loft-L210">    }</span>
+<span id="src-hex-ground-loft-L211">  }</span>
+<span id="src-hex-ground-loft-L212">}</span>
+<span id="src-hex-ground-loft-L213"></span>
+<span id="src-hex-ground-loft-L214"><span class="cm">// How far (x, y) lies from the nearest of the sides, positive inside them (counted over all their</span></span>
+<span id="src-hex-ground-loft-L215"><span class="cm">// loops), negative outside.</span></span>
+<span id="src-hex-ground-loft-L216"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">sides_distance</span>(sides: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;(<span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>)&gt;, x: <span class="ty"><a href="stdlib-types.html">float</a></span>, y: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="src-hex-ground-loft-L217">  inside = <span class="kw">false</span>;</span>
+<span id="src-hex-ground-loft-L218">  near = <span class="nm">1000000.0</span>;</span>
+<span id="src-hex-ground-loft-L219">  <span class="kw">for</span> sd <span class="kw">in</span> sides {</span>
+<span id="src-hex-ground-loft-L220">    (x1, y1, x2, y2) = sd;</span>
+<span id="src-hex-ground-loft-L221">    <span class="kw">if</span> (y1 &gt; y) != (y2 &gt; y) {</span>
+<span id="src-hex-ground-loft-L222">      cx = x1 + (y - y1) * (x2 - x1) / (y2 - y1) ?? x1;</span>
+<span id="src-hex-ground-loft-L223">      <span class="kw">if</span> x &lt; cx { inside = !inside; }</span>
+<span id="src-hex-ground-loft-L224">    }</span>
+<span id="src-hex-ground-loft-L225">    dx = x2 - x1;</span>
+<span id="src-hex-ground-loft-L226">    dy = y2 - y1;</span>
+<span id="src-hex-ground-loft-L227">    l2 = dx * dx + dy * dy;</span>
+<span id="src-hex-ground-loft-L228">    t = <span class="kw">if</span> l2 &gt; <span class="nm">0.0</span> { ((x - x1) * dx + (y - y1) * dy) / l2 ?? <span class="nm">0.0</span> } <span class="kw">else</span> { <span class="nm">0.0</span> };</span>
+<span id="src-hex-ground-loft-L229">    <span class="kw">if</span> t &lt; <span class="nm">0.0</span> { t = <span class="nm">0.0</span>; }</span>
+<span id="src-hex-ground-loft-L230">    <span class="kw">if</span> t &gt; <span class="nm">1.0</span> { t = <span class="nm">1.0</span>; }</span>
+<span id="src-hex-ground-loft-L231">    ex = x - x1 - t * dx;</span>
+<span id="src-hex-ground-loft-L232">    ey = y - y1 - t * dy;</span>
+<span id="src-hex-ground-loft-L233">    e = ex * ex + ey * ey;</span>
+<span id="src-hex-ground-loft-L234">    <span class="kw">if</span> e &lt; near { near = e; }</span>
+<span id="src-hex-ground-loft-L235">  }</span>
+<span id="src-hex-ground-loft-L236">  far = <span class="bi"><a href="stdlib-math.html">sqrt</a></span>(near) ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-ground-loft-L237">  <span class="kw">if</span> inside { far } <span class="kw">else</span> { -far }</span>
+<span id="src-hex-ground-loft-L238">}</span>
+<span id="src-hex-ground-loft-L239"></span>
+<span id="src-hex-ground-loft-L240"><span class="cm">// ── cliffs ──────────────────────────────────────────────────────────────────</span></span>
+<span id="src-hex-ground-loft-L241"></span>
+<span id="src-hex-ground-loft-L242"><span class="cm">// A stretch of cliff (the ground's unit): a straight side of the ground of `level` and up, walked with that</span></span>
+<span id="src-hex-ground-loft-L243"><span class="cm">// ground on its left from (ax, ay) to (bx, by); the ground drops a storey across it.</span></span>
+<span id="src-hex-ground-loft-L244"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">GroundCliff</span> {</span>
+<span id="src-hex-ground-loft-L245">  <span class="kw">pub</span> gc_level: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-hex-ground-loft-L246">  <span class="kw">pub</span> gc_ax:    <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-hex-ground-loft-L247">  <span class="kw">pub</span> gc_ay:    <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-hex-ground-loft-L248">  <span class="kw">pub</span> gc_bx:    <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-hex-ground-loft-L249">  <span class="kw">pub</span> gc_by:    <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-hex-ground-loft-L250">}</span>
+<span id="src-hex-ground-loft-L251"></span>
+<span id="src-hex-ground-loft-L252"><span class="cm">// An area where fronts are cliffs, in units: x0 .. x1 east, y0 .. y1 north.</span></span>
+<span id="src-hex-ground-loft-L253"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">GroundBox</span> {</span>
+<span id="src-hex-ground-loft-L254">  <span class="kw">pub</span> gb_x0: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-hex-ground-loft-L255">  <span class="kw">pub</span> gb_y0: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-hex-ground-loft-L256">  <span class="kw">pub</span> gb_x1: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-hex-ground-loft-L257">  <span class="kw">pub</span> gb_y1: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
+<span id="src-hex-ground-loft-L258">}</span>
+<span id="src-hex-ground-loft-L259"></span>
+<span id="src-hex-ground-loft-L260"><span class="cm">// @FR-HG-Cliff: a cliff where the ground steps a level within a cliff area, along its straight sides</span></span>
+<span id="src-hex-ground-loft-L261"><span class="cm">// The cliffs of ground whose cells stand at `levels` (lo .. hi): for each level, the straight</span></span>
+<span id="src-hex-ground-loft-L262"><span class="cm">// sides of the cells at it and above (`hex_draw::cells_outlines`), the stretches of them inside the</span></span>
+<span id="src-hex-ground-loft-L263"><span class="cm">// cliff areas.  Elsewhere the fronts slope.</span></span>
+<span id="src-hex-ground-loft-L264"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">ground_cliffs</span>(levels: <span class="en">Labels</span>, q0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, w: <span class="ty"><a href="stdlib-types.html">integer</a></span>, h: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-hex-ground-loft-L265">                     lo: <span class="ty"><a href="stdlib-types.html">integer</a></span>, hi: <span class="ty"><a href="stdlib-types.html">integer</a></span>, areas: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">GroundBox</span>&gt;, step: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">GroundCliff</span>&gt; {</span>
+<span id="src-hex-ground-loft-L266">  unit = <span class="fn-call">ground_unit</span>(step);</span>
+<span id="src-hex-ground-loft-L267">  out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">GroundCliff</span>&gt; = [];</span>
+<span id="src-hex-ground-loft-L268">  <span class="kw">if</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(areas) == <span class="nm">0</span> { <span class="kw">return</span> out; }</span>
+<span id="src-hex-ground-loft-L269">  <span class="kw">for</span> level <span class="kw">in</span> lo + <span class="nm">1..</span>hi + <span class="nm">1</span> {</span>
+<span id="src-hex-ground-loft-L270">    cells = <span class="fn-call">hexset_chunk</span>(q0, r0, w, h);</span>
+<span id="src-hex-ground-loft-L271">    any = <span class="kw">false</span>;</span>
+<span id="src-hex-ground-loft-L272">    <span class="kw">for</span> r <span class="kw">in</span> r0..r0 + h {</span>
+<span id="src-hex-ground-loft-L273">      <span class="kw">for</span> q <span class="kw">in</span> q0..q0 + w {</span>
+<span id="src-hex-ground-loft-L274">        <span class="kw">if</span> <span class="fn-call">label_get</span>(levels, q, r) &gt;= level {</span>
+<span id="src-hex-ground-loft-L275">          <span class="fn-call">hexset_set</span>(cells, q, r, <span class="kw">true</span>);</span>
+<span id="src-hex-ground-loft-L276">          any = <span class="kw">true</span>;</span>
+<span id="src-hex-ground-loft-L277">        }</span>
+<span id="src-hex-ground-loft-L278">      }</span>
+<span id="src-hex-ground-loft-L279">    }</span>
+<span id="src-hex-ground-loft-L280">    <span class="kw">if</span> !any { <span class="kw">continue</span>; }</span>
+<span id="src-hex-ground-loft-L281">    <span class="kw">for</span> o <span class="kw">in</span> <span class="fn-call">cells_outlines</span>(cells, <span class="nm">0</span>) {</span>
+<span id="src-hex-ground-loft-L282">      n = <span class="bi"><a href="stdlib-text.html">len</a></span>(o.co_corners);</span>
+<span id="src-hex-ground-loft-L283">      <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..</span>n {</span>
+<span id="src-hex-ground-loft-L284">        (x1, y1) = o.co_corners[(i + n - <span class="nm">1</span>) % n ?? <span class="nm">0</span>] ?? (<span class="nm">0.0</span>, <span class="nm">0.0</span>);</span>
+<span id="src-hex-ground-loft-L285">        (x2, y2) = o.co_corners[i] ?? (<span class="nm">0.0</span>, <span class="nm">0.0</span>);</span>
+<span id="src-hex-ground-loft-L286">        <span class="kw">for</span> a <span class="kw">in</span> areas {</span>
+<span id="src-hex-ground-loft-L287">          c = <span class="fn-call">box_clip</span>(x1 * unit, y1 * unit, x2 * unit, y2 * unit, a);</span>
+<span id="src-hex-ground-loft-L288">          <span class="kw">if</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(c) == <span class="nm">4</span> {</span>
+<span id="src-hex-ground-loft-L289">            ax = c[<span class="nm">0</span>] ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-ground-loft-L290">            ay = c[<span class="nm">1</span>] ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-ground-loft-L291">            bx = c[<span class="nm">2</span>] ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-ground-loft-L292">            by = c[<span class="nm">3</span>] ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-ground-loft-L293">            <span class="kw">if</span> (bx - ax) * (bx - ax) + (by - ay) * (by - ay) &gt; <span class="nm">0.0001</span> {</span>
+<span id="src-hex-ground-loft-L294">              out += [<span class="en">GroundCliff</span> { gc_level: level, gc_ax: ax, gc_ay: ay, gc_bx: bx, gc_by: by }];</span>
+<span id="src-hex-ground-loft-L295">            }</span>
+<span id="src-hex-ground-loft-L296">          }</span>
+<span id="src-hex-ground-loft-L297">        }</span>
+<span id="src-hex-ground-loft-L298">      }</span>
+<span id="src-hex-ground-loft-L299">    }</span>
+<span id="src-hex-ground-loft-L300">  }</span>
+<span id="src-hex-ground-loft-L301">  out</span>
+<span id="src-hex-ground-loft-L302">}</span>
+<span id="src-hex-ground-loft-L303"></span>
+<span id="src-hex-ground-loft-L304"><span class="cm">// The part of the segment from (ax, ay) to (bx, by) inside the box, as [ax, ay, bx, by]; empty</span></span>
+<span id="src-hex-ground-loft-L305"><span class="cm">// when it misses.</span></span>
+<span id="src-hex-ground-loft-L306"><span class="kw">fn</span> <span class="fn-call">box_clip</span>(ax: <span class="ty"><a href="stdlib-types.html">float</a></span>, ay: <span class="ty"><a href="stdlib-types.html">float</a></span>, bx: <span class="ty"><a href="stdlib-types.html">float</a></span>, by: <span class="ty"><a href="stdlib-types.html">float</a></span>, b: const <span class="en">GroundBox</span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt; {</span>
+<span id="src-hex-ground-loft-L307">  t0 = <span class="nm">0.0</span>;</span>
+<span id="src-hex-ground-loft-L308">  t1 = <span class="nm">1.0</span>;</span>
+<span id="src-hex-ground-loft-L309">  dx = bx - ax;</span>
+<span id="src-hex-ground-loft-L310">  dy = by - ay;</span>
+<span id="src-hex-ground-loft-L311">  <span class="kw">for</span> e <span class="kw">in</span> [(-dx, ax - b.gb_x0), (dx, b.gb_x1 - ax), (-dy, ay - b.gb_y0), (dy, b.gb_y1 - ay)] {</span>
+<span id="src-hex-ground-loft-L312">    (p, qv) = e;</span>
+<span id="src-hex-ground-loft-L313">    <span class="kw">if</span> p == <span class="nm">0.0</span> {</span>
+<span id="src-hex-ground-loft-L314">      <span class="kw">if</span> qv &lt; <span class="nm">0.0</span> { <span class="kw">return</span> []; }</span>
+<span id="src-hex-ground-loft-L315">      <span class="kw">continue</span>;</span>
+<span id="src-hex-ground-loft-L316">    }</span>
+<span id="src-hex-ground-loft-L317">    t = (qv / p) ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-ground-loft-L318">    <span class="kw">if</span> p &lt; <span class="nm">0.0</span> { <span class="kw">if</span> t &gt; t0 { t0 = t; } } <span class="kw">else</span> { <span class="kw">if</span> t &lt; t1 { t1 = t; } }</span>
+<span id="src-hex-ground-loft-L319">  }</span>
+<span id="src-hex-ground-loft-L320">  <span class="kw">if</span> t0 &gt;= t1 { <span class="kw">return</span> []; }</span>
+<span id="src-hex-ground-loft-L321">  [ax + dx * t0, ay + dy * t0, ax + dx * t1, ay + dy * t1]</span>
+<span id="src-hex-ground-loft-L322">}</span>
+<span id="src-hex-ground-loft-L323"></span>
+<span id="src-hex-ground-loft-L324"><span class="cm">// How far (x, y) lies outside the box (0 inside).</span></span>
+<span id="src-hex-ground-loft-L325"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">ground_box_distance</span>(b: const <span class="en">GroundBox</span>, x: <span class="ty"><a href="stdlib-types.html">float</a></span>, y: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="src-hex-ground-loft-L326">  dx = <span class="kw">if</span> x &lt; b.gb_x0 { b.gb_x0 - x } <span class="kw">else</span> <span class="kw">if</span> x &gt; b.gb_x1 { x - b.gb_x1 } <span class="kw">else</span> { <span class="nm">0.0</span> };</span>
+<span id="src-hex-ground-loft-L327">  dy = <span class="kw">if</span> y &lt; b.gb_y0 { b.gb_y0 - y } <span class="kw">else</span> <span class="kw">if</span> y &gt; b.gb_y1 { y - b.gb_y1 } <span class="kw">else</span> { <span class="nm">0.0</span> };</span>
+<span id="src-hex-ground-loft-L328">  <span class="bi"><a href="stdlib-math.html">sqrt</a></span>(dx * dx + dy * dy)</span>
+<span id="src-hex-ground-loft-L329">}</span>
+<span id="src-hex-ground-loft-L330"></span>
+<span id="src-hex-ground-loft-L331"><span class="cm">// Make the ground's fronts sharp in the cliff areas: each cell at its level's height, `sharp`</span></span>
+<span id="src-hex-ground-loft-L332"><span class="cm">// (its level's storey), within them, the smooth ground it has beyond `m.gm_blend` from them, blended</span></span>
+<span id="src-hex-ground-loft-L333"><span class="cm">// between.</span></span>
+<span id="src-hex-ground-loft-L334"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">ground_sharpen</span>(g: <span class="en">Ground</span>, sharp: <span class="en">Heights</span>, areas: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">GroundBox</span>&gt;, m: const <span class="en">GroundMeasures</span>) {</span>
+<span id="src-hex-ground-loft-L335">  <span class="kw">if</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(areas) == <span class="nm">0</span> { <span class="kw">return</span>; }</span>
+<span id="src-hex-ground-loft-L336">  <span class="kw">for</span> r <span class="kw">in</span> g.gr_r0..g.gr_r0 + g.gr_h {</span>
+<span id="src-hex-ground-loft-L337">    <span class="kw">for</span> q <span class="kw">in</span> g.gr_q0..g.gr_q0 + g.gr_w {</span>
+<span id="src-hex-ground-loft-L338">      (x, y) = <span class="fn-call">ground_centre</span>(g.gr_step, q, r);</span>
+<span id="src-hex-ground-loft-L339">      d = <span class="nm">1000000.0</span>;</span>
+<span id="src-hex-ground-loft-L340">      <span class="kw">for</span> a <span class="kw">in</span> areas {</span>
+<span id="src-hex-ground-loft-L341">        e = <span class="fn-call">ground_box_distance</span>(a, x, y);</span>
+<span id="src-hex-ground-loft-L342">        <span class="kw">if</span> e &lt; d { d = e; }</span>
+<span id="src-hex-ground-loft-L343">      }</span>
+<span id="src-hex-ground-loft-L344">      <span class="kw">if</span> d &gt;= m.gm_blend { <span class="kw">continue</span>; }</span>
+<span id="src-hex-ground-loft-L345">      t = <span class="fn-call">ground_smooth</span>(d / m.gm_blend ?? <span class="nm">1.0</span>);</span>
+<span id="src-hex-ground-loft-L346">      z = <span class="fn-call">height_get</span>(g.gr_heights, q, r);</span>
+<span id="src-hex-ground-loft-L347">      zs = <span class="fn-call">height_get</span>(sharp, q, r);</span>
+<span id="src-hex-ground-loft-L348">      <span class="fn-call">height_set</span>(g.gr_heights, q, r, zs + (z - zs) * t);</span>
+<span id="src-hex-ground-loft-L349">    }</span>
+<span id="src-hex-ground-loft-L350">  }</span>
+<span id="src-hex-ground-loft-L351">}</span>
+<span id="src-hex-ground-loft-L352"></span>
+<span id="src-hex-ground-loft-L353"><span class="cm">// ── THE GROUND READ: A SMOOTH SURFACE THROUGH THE CELLS ────────────────────</span></span>
+<span id="src-hex-ground-loft-L354"><span class="cm">//</span></span>
+<span id="src-hex-ground-loft-L355"><span class="cm">// The cells hold one height each; the ground they stand for is smooth.  It is read as it is</span></span>
+<span id="src-hex-ground-loft-L356"><span class="cm">// drawn: each cell a fan of six triangles from its centre, each corner of the fan at the MEAN</span></span>
+<span id="src-hex-ground-loft-L357"><span class="cm">// height of the cells round it.  A corner is shared by three cells, so the three fans agree</span></span>
+<span id="src-hex-ground-loft-L358"><span class="cm">// there and the surface has no crack — along a fan's rim, between two cells, both read the line</span></span>
+<span id="src-hex-ground-loft-L359"><span class="cm">// between the same two corner heights.</span></span>
+<span id="src-hex-ground-loft-L360"><span class="cm">//</span></span>
+<span id="src-hex-ground-loft-L361"><span class="cm">// A corner on the window's rim has fewer than three cells in the window; it takes the mean of</span></span>
+<span id="src-hex-ground-loft-L362"><span class="cm">// those it has, and a corner none of whose cells are in the window reads 0.</span></span>
+<span id="src-hex-ground-loft-L363"></span>
+<span id="src-hex-ground-loft-L364"><span class="cm">// @FR-HG-Surface: a corner's height is the mean of the cells round it</span></span>
+<span id="src-hex-ground-loft-L365"><span class="cm">// The height of the corner at doubled coordinates (k, m): the mean of the cells round it that</span></span>
+<span id="src-hex-ground-loft-L366"><span class="cm">// the ground's window holds, 0 when it holds none.  (k, m) must be a corner of the lattice.</span></span>
+<span id="src-hex-ground-loft-L367"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">ground_corner_height</span>(g: const <span class="en">Ground</span>, k: <span class="ty"><a href="stdlib-types.html">integer</a></span>, m: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="src-hex-ground-loft-L368">  <span class="cm">// the three cells whose corner this is, each a corner offset back from it; those the window</span></span>
+<span id="src-hex-ground-loft-L369">  <span class="cm">// holds are kept in row order, then along the row, so the sum is taken in one order whoever</span></span>
+<span id="src-hex-ground-loft-L370">  <span class="cm">// asks (no list is built: this is asked six times a cell when a ground is drawn)</span></span>
+<span id="src-hex-ground-loft-L371">  n = <span class="nm">0</span>;</span>
+<span id="src-hex-ground-loft-L372">  qa = <span class="nm">0</span>;</span>
+<span id="src-hex-ground-loft-L373">  ra = <span class="nm">0</span>;</span>
+<span id="src-hex-ground-loft-L374">  qb = <span class="nm">0</span>;</span>
+<span id="src-hex-ground-loft-L375">  rb = <span class="nm">0</span>;</span>
+<span id="src-hex-ground-loft-L376">  qc = <span class="nm">0</span>;</span>
+<span id="src-hex-ground-loft-L377">  rc = <span class="nm">0</span>;</span>
+<span id="src-hex-ground-loft-L378">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..6</span> {</span>
+<span id="src-hex-ground-loft-L379">    ck = k - <span class="fn-call">corner_k</span>(i);</span>
+<span id="src-hex-ground-loft-L380">    cm = m - <span class="fn-call">corner_m</span>(i);</span>
+<span id="src-hex-ground-loft-L381">    <span class="kw">if</span> ((cm % <span class="nm">3</span>) + <span class="nm">3</span>) % <span class="nm">3</span> != <span class="nm">0</span> { <span class="kw">continue</span>; }</span>
+<span id="src-hex-ground-loft-L382">    (q, r) = <span class="fn-call">lattice_to_cell</span>(ck, cm);</span>
+<span id="src-hex-ground-loft-L383">    <span class="kw">if</span> <span class="fn-call">lattice_k</span>(q, r) != ck || <span class="fn-call">lattice_m</span>(q, r) != cm { <span class="kw">continue</span>; }</span>
+<span id="src-hex-ground-loft-L384">    <span class="kw">if</span> q &lt; g.gr_q0 || q &gt;= g.gr_q0 + g.gr_w || r &lt; g.gr_r0 || r &gt;= g.gr_r0 + g.gr_h { <span class="kw">continue</span>; }</span>
+<span id="src-hex-ground-loft-L385">    <span class="kw">if</span> n == <span class="nm">0</span> {</span>
+<span id="src-hex-ground-loft-L386">      qa = q;</span>
+<span id="src-hex-ground-loft-L387">      ra = r;</span>
+<span id="src-hex-ground-loft-L388">    } <span class="kw">else</span> <span class="kw">if</span> n == <span class="nm">1</span> {</span>
+<span id="src-hex-ground-loft-L389">      <span class="kw">if</span> r &lt; ra || (r == ra &amp;&amp; q &lt; qa) {</span>
+<span id="src-hex-ground-loft-L390">        qb = qa;</span>
+<span id="src-hex-ground-loft-L391">        rb = ra;</span>
+<span id="src-hex-ground-loft-L392">        qa = q;</span>
+<span id="src-hex-ground-loft-L393">        ra = r;</span>
+<span id="src-hex-ground-loft-L394">      } <span class="kw">else</span> {</span>
+<span id="src-hex-ground-loft-L395">        qb = q;</span>
+<span id="src-hex-ground-loft-L396">        rb = r;</span>
+<span id="src-hex-ground-loft-L397">      }</span>
+<span id="src-hex-ground-loft-L398">    } <span class="kw">else</span> <span class="kw">if</span> r &lt; ra || (r == ra &amp;&amp; q &lt; qa) {</span>
+<span id="src-hex-ground-loft-L399">      qc = qb;</span>
+<span id="src-hex-ground-loft-L400">      rc = rb;</span>
+<span id="src-hex-ground-loft-L401">      qb = qa;</span>
+<span id="src-hex-ground-loft-L402">      rb = ra;</span>
+<span id="src-hex-ground-loft-L403">      qa = q;</span>
+<span id="src-hex-ground-loft-L404">      ra = r;</span>
+<span id="src-hex-ground-loft-L405">    } <span class="kw">else</span> <span class="kw">if</span> r &lt; rb || (r == rb &amp;&amp; q &lt; qb) {</span>
+<span id="src-hex-ground-loft-L406">      qc = qb;</span>
+<span id="src-hex-ground-loft-L407">      rc = rb;</span>
+<span id="src-hex-ground-loft-L408">      qb = q;</span>
+<span id="src-hex-ground-loft-L409">      rb = r;</span>
+<span id="src-hex-ground-loft-L410">    } <span class="kw">else</span> {</span>
+<span id="src-hex-ground-loft-L411">      qc = q;</span>
+<span id="src-hex-ground-loft-L412">      rc = r;</span>
+<span id="src-hex-ground-loft-L413">    }</span>
+<span id="src-hex-ground-loft-L414">    n += <span class="nm">1</span>;</span>
+<span id="src-hex-ground-loft-L415">  }</span>
+<span id="src-hex-ground-loft-L416">  <span class="kw">if</span> n == <span class="nm">0</span> { <span class="kw">return</span> <span class="nm">0.0</span>; }</span>
+<span id="src-hex-ground-loft-L417">  sum = <span class="fn-call">height_get</span>(g.gr_heights, qa, ra);</span>
+<span id="src-hex-ground-loft-L418">  <span class="kw">if</span> n &gt; <span class="nm">1</span> { sum += <span class="fn-call">height_get</span>(g.gr_heights, qb, rb); }</span>
+<span id="src-hex-ground-loft-L419">  <span class="kw">if</span> n &gt; <span class="nm">2</span> { sum += <span class="fn-call">height_get</span>(g.gr_heights, qc, rc); }</span>
+<span id="src-hex-ground-loft-L420">  (sum / (n <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>)) ?? <span class="nm">0.0</span></span>
+<span id="src-hex-ground-loft-L421">}</span>
+<span id="src-hex-ground-loft-L422"></span>
+<span id="src-hex-ground-loft-L423"><span class="cm">// The ground's height at (x, y), in its unit, as it is drawn: within the triangle of its cell's</span></span>
+<span id="src-hex-ground-loft-L424"><span class="cm">// fan that holds the point, between the cell's centre and two of its corners.</span></span>
+<span id="src-hex-ground-loft-L425"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">ground_height_at</span>(g: const <span class="en">Ground</span>, x: <span class="ty"><a href="stdlib-types.html">float</a></span>, y: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="src-hex-ground-loft-L426">  (q, r) = <span class="fn-call">ground_cell_near</span>(g.gr_step, x, y);</span>
+<span id="src-hex-ground-loft-L427">  (cx, cy) = <span class="fn-call">ground_centre</span>(g.gr_step, q, r);</span>
+<span id="src-hex-ground-loft-L428">  k = <span class="fn-call">lattice_k</span>(q, r);</span>
+<span id="src-hex-ground-loft-L429">  m = <span class="fn-call">lattice_m</span>(q, r);</span>
+<span id="src-hex-ground-loft-L430">  <span class="cm">// the corner the point lies past, going round anticlockwise from corner 0 (north): corner j</span></span>
+<span id="src-hex-ground-loft-L431">  <span class="cm">// sits at 90 + 60 j degrees</span></span>
+<span id="src-hex-ground-loft-L432">  a = <span class="fn-call"><a href="stdlib-math.html">atan2</a></span>(y - cy, x - cx) * <span class="nm">180.0</span> / <span class="en"><a href="stdlib-math.html">PI</a></span>;</span>
+<span id="src-hex-ground-loft-L433">  j0 = (((<span class="bi"><a href="stdlib-math.html">floor</a></span>((a - <span class="nm">90.0</span>) / <span class="nm">60.0</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>) % <span class="nm">6</span>) + <span class="nm">6</span>) % <span class="nm">6</span> ?? <span class="nm">0</span>;</span>
+<span id="src-hex-ground-loft-L434">  j1 = (j0 + <span class="nm">1</span>) % <span class="nm">6</span> ?? <span class="nm">0</span>;</span>
+<span id="src-hex-ground-loft-L435">  kx = g.gr_step * <span class="nm">0.5</span>;</span>
+<span id="src-hex-ground-loft-L436">  my = g.gr_step * <span class="nm">0.28867513459481287</span>;</span>
+<span id="src-hex-ground-loft-L437">  ax = (<span class="fn-call">corner_k</span>(j0) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * kx;</span>
+<span id="src-hex-ground-loft-L438">  ay = (<span class="fn-call">corner_m</span>(j0) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * my;</span>
+<span id="src-hex-ground-loft-L439">  bx = (<span class="fn-call">corner_k</span>(j1) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * kx;</span>
+<span id="src-hex-ground-loft-L440">  by = (<span class="fn-call">corner_m</span>(j1) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * my;</span>
+<span id="src-hex-ground-loft-L441">  <span class="cm">// barycentric in the triangle (centre, a, b)</span></span>
+<span id="src-hex-ground-loft-L442">  px = x - cx;</span>
+<span id="src-hex-ground-loft-L443">  py = y - cy;</span>
+<span id="src-hex-ground-loft-L444">  det = ax * by - ay * bx;</span>
+<span id="src-hex-ground-loft-L445">  wa = ((px * by - py * bx) / det) ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-ground-loft-L446">  wb = ((ax * py - ay * px) / det) ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-ground-loft-L447">  wc = <span class="nm">1.0</span> - wa - wb;</span>
+<span id="src-hex-ground-loft-L448">  wc * <span class="fn-call">height_get</span>(g.gr_heights, q, r) + wa * <span class="fn-call">ground_corner_height</span>(g, k + <span class="fn-call">corner_k</span>(j0), m + <span class="fn-call">corner_m</span>(j0))</span>
+<span id="src-hex-ground-loft-L449">    + wb * <span class="fn-call">ground_corner_height</span>(g, k + <span class="fn-call">corner_k</span>(j1), m + <span class="fn-call">corner_m</span>(j1))</span>
+<span id="src-hex-ground-loft-L450">}</span>
+<span id="src-hex-ground-loft-L451"></span>
+<span id="src-hex-ground-loft-L452"><span class="cm">// A cell's level: `levels`' label within the ground's window, 0 beyond it.</span></span>
+<span id="src-hex-ground-loft-L453"><span class="kw">fn</span> <span class="fn-call">ground_level</span>(g: const <span class="en">Ground</span>, levels: const <span class="en">Labels</span>, q: <span class="ty"><a href="stdlib-types.html">integer</a></span>, r: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-hex-ground-loft-L454">  <span class="kw">if</span> q &lt; g.gr_q0 || q &gt;= g.gr_q0 + g.gr_w || r &lt; g.gr_r0 || r &gt;= g.gr_r0 + g.gr_h { <span class="kw">return</span> <span class="nm">0</span>; }</span>
+<span id="src-hex-ground-loft-L455">  <span class="fn-call">label_get</span>(levels, q, r)</span>
+<span id="src-hex-ground-loft-L456">}</span>
+<span id="src-hex-ground-loft-L457"></span>
+<span id="src-hex-ground-loft-L458"><span class="cm">// Corner (k, m), the j-th of a cell, as the mean of the cells round it on one side of the cliff</span></span>
+<span id="src-hex-ground-loft-L459"><span class="cm">// of `level`: the cells lie away from it along corner offsets j, j + 2 and j + 4.</span></span>
+<span id="src-hex-ground-loft-L460"><span class="kw">fn</span> <span class="fn-call">corner_on_side</span>(g: const <span class="en">Ground</span>, levels: const <span class="en">Labels</span>, k: <span class="ty"><a href="stdlib-types.html">integer</a></span>, m: <span class="ty"><a href="stdlib-types.html">integer</a></span>, j: <span class="ty"><a href="stdlib-types.html">integer</a></span>, level: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
+<span id="src-hex-ground-loft-L461">                  high: <span class="ty"><a href="stdlib-types.html">boolean</a></span>, own: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="src-hex-ground-loft-L462">  sum = <span class="nm">0.0</span>;</span>
+<span id="src-hex-ground-loft-L463">  n = <span class="nm">0</span>;</span>
+<span id="src-hex-ground-loft-L464">  <span class="kw">for</span> t <span class="kw">in</span> <span class="nm">0..3</span> {</span>
+<span id="src-hex-ground-loft-L465">    i = (j + <span class="nm">2</span> * t) % <span class="nm">6</span> ?? <span class="nm">0</span>;</span>
+<span id="src-hex-ground-loft-L466">    (q, r) = <span class="fn-call">lattice_to_cell</span>(k - <span class="fn-call">corner_k</span>(i), m - <span class="fn-call">corner_m</span>(i));</span>
+<span id="src-hex-ground-loft-L467">    <span class="kw">if</span> (<span class="fn-call">ground_level</span>(g, levels, q, r) &gt;= level) == high {</span>
+<span id="src-hex-ground-loft-L468">      sum += <span class="fn-call">height_get</span>(g.gr_heights, q, r);</span>
+<span id="src-hex-ground-loft-L469">      n += <span class="nm">1</span>;</span>
+<span id="src-hex-ground-loft-L470">    }</span>
+<span id="src-hex-ground-loft-L471">  }</span>
+<span id="src-hex-ground-loft-L472">  <span class="kw">if</span> n == <span class="nm">0</span> { own } <span class="kw">else</span> { (sum / (n <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>)) ?? own }</span>
+<span id="src-hex-ground-loft-L473">}</span>
+<span id="src-hex-ground-loft-L474"></span>
+<span id="src-hex-ground-loft-L475"><span class="cm">// @FR-HG-Cliff: either side of a cliff its own surface, from the cells on that side only</span></span>
+<span id="src-hex-ground-loft-L476"><span class="cm">// The ground's height at (x, y) on one side of a cliff of `level`: on its high side (`high`, the</span></span>
+<span id="src-hex-ground-loft-L477"><span class="cm">// cells of `level` and up, by `levels`) or its low one.  Each corner is the mean of the cells</span></span>
+<span id="src-hex-ground-loft-L478"><span class="cm">// round it on that side only, so the ground does not slope down the cliff.  A corner with no</span></span>
+<span id="src-hex-ground-loft-L479"><span class="cm">// cell on that side, or the centre of a cell on the other, takes that side's own height: its</span></span>
+<span id="src-hex-ground-loft-L480"><span class="cm">// level times `storey`.</span></span>
+<span id="src-hex-ground-loft-L481"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">ground_height_on</span>(g: const <span class="en">Ground</span>, levels: const <span class="en">Labels</span>, x: <span class="ty"><a href="stdlib-types.html">float</a></span>, y: <span class="ty"><a href="stdlib-types.html">float</a></span>, level: <span class="ty"><a href="stdlib-types.html">integer</a></span>, high: <span class="ty"><a href="stdlib-types.html">boolean</a></span>,</span>
+<span id="src-hex-ground-loft-L482">                        storey: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="src-hex-ground-loft-L483">  (q, r) = <span class="fn-call">ground_cell_near</span>(g.gr_step, x, y);</span>
+<span id="src-hex-ground-loft-L484">  (cx, cy) = <span class="fn-call">ground_centre</span>(g.gr_step, q, r);</span>
+<span id="src-hex-ground-loft-L485">  k = <span class="fn-call">lattice_k</span>(q, r);</span>
+<span id="src-hex-ground-loft-L486">  m = <span class="fn-call">lattice_m</span>(q, r);</span>
+<span id="src-hex-ground-loft-L487">  a = <span class="fn-call"><a href="stdlib-math.html">atan2</a></span>(y - cy, x - cx) * <span class="nm">180.0</span> / <span class="en"><a href="stdlib-math.html">PI</a></span>;</span>
+<span id="src-hex-ground-loft-L488">  j0 = (((<span class="bi"><a href="stdlib-math.html">floor</a></span>((a - <span class="nm">90.0</span>) / <span class="nm">60.0</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>) % <span class="nm">6</span>) + <span class="nm">6</span>) % <span class="nm">6</span> ?? <span class="nm">0</span>;</span>
+<span id="src-hex-ground-loft-L489">  j1 = (j0 + <span class="nm">1</span>) % <span class="nm">6</span> ?? <span class="nm">0</span>;</span>
+<span id="src-hex-ground-loft-L490">  own = (<span class="kw">if</span> high { level } <span class="kw">else</span> { level - <span class="nm">1</span> } <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * storey;</span>
+<span id="src-hex-ground-loft-L491">  hc = <span class="kw">if</span> (<span class="fn-call">ground_level</span>(g, levels, q, r) &gt;= level) == high { <span class="fn-call">height_get</span>(g.gr_heights, q, r) } <span class="kw">else</span> { own };</span>
+<span id="src-hex-ground-loft-L492">  ha = <span class="fn-call">corner_on_side</span>(g, levels, k + <span class="fn-call">corner_k</span>(j0), m + <span class="fn-call">corner_m</span>(j0), j0, level, high, own);</span>
+<span id="src-hex-ground-loft-L493">  hb = <span class="fn-call">corner_on_side</span>(g, levels, k + <span class="fn-call">corner_k</span>(j1), m + <span class="fn-call">corner_m</span>(j1), j1, level, high, own);</span>
+<span id="src-hex-ground-loft-L494">  kx = g.gr_step * <span class="nm">0.5</span>;</span>
+<span id="src-hex-ground-loft-L495">  my = g.gr_step * <span class="nm">0.28867513459481287</span>;</span>
+<span id="src-hex-ground-loft-L496">  ax = (<span class="fn-call">corner_k</span>(j0) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * kx;</span>
+<span id="src-hex-ground-loft-L497">  ay = (<span class="fn-call">corner_m</span>(j0) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * my;</span>
+<span id="src-hex-ground-loft-L498">  bx = (<span class="fn-call">corner_k</span>(j1) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * kx;</span>
+<span id="src-hex-ground-loft-L499">  by = (<span class="fn-call">corner_m</span>(j1) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * my;</span>
+<span id="src-hex-ground-loft-L500">  px = x - cx;</span>
+<span id="src-hex-ground-loft-L501">  py = y - cy;</span>
+<span id="src-hex-ground-loft-L502">  det = ax * by - ay * bx;</span>
+<span id="src-hex-ground-loft-L503">  wa = ((px * by - py * bx) / det) ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-ground-loft-L504">  wb = ((ax * py - ay * px) / det) ?? <span class="nm">0.0</span>;</span>
+<span id="src-hex-ground-loft-L505">  (<span class="nm">1.0</span> - wa - wb) * hc + wa * ha + wb * hb</span>
+<span id="src-hex-ground-loft-L506">}</span>
+</code></pre>
+<h2 id="tests-01-hex-ground-loft">tests/01-hex-ground.loft</h2>
+<pre class="src"><code><span id="tests-01-hex-ground-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
+<span id="tests-01-hex-ground-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
+<span id="tests-01-hex-ground-loft-L3"><span class="cm">// hex_ground — the conformance tests: the ground of a place, shaped by terraces, a hill, a seat,</span></span>
+<span id="tests-01-hex-ground-loft-L4"><span class="cm">// a dig and cliffs.  Contract only; the consumer's check is tile-world-game's town, which</span></span>
+<span id="tests-01-hex-ground-loft-L5"><span class="cm">// regenerates byte for byte from these routines.</span></span>
+<span id="tests-01-hex-ground-loft-L6"><span class="kw">use</span> hex_ground::*;</span>
+<span id="tests-01-hex-ground-loft-L7"><span class="kw">use</span> hex_field::*;</span>
+<span id="tests-01-hex-ground-loft-L8"><span class="kw">use</span> hex_form::*;</span>
+<span id="tests-01-hex-ground-loft-L9"><span class="kw">use</span> hex_draw::*;</span>
+<span id="tests-01-hex-ground-loft-L10"></span>
+<span id="tests-01-hex-ground-loft-L11"><span class="cm">// A box of cells about (0, 0), w by d hex steps.</span></span>
+<span id="tests-01-hex-ground-loft-L12"><span class="kw">fn</span> <span class="fn-call">box</span>(w: <span class="ty"><a href="stdlib-types.html">integer</a></span>, d: <span class="ty"><a href="stdlib-types.html">integer</a></span>, reach: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">HexSet</span> {</span>
+<span id="tests-01-hex-ground-loft-L13">  cells = <span class="fn-call">hexset_chunk</span>(<span class="nm">0</span> - reach, <span class="nm">0</span> - reach, <span class="nm">2</span> * reach + <span class="nm">1</span>, <span class="nm">2</span> * reach + <span class="nm">1</span>);</span>
+<span id="tests-01-hex-ground-loft-L14">  types = <span class="fn-call">labels_new</span>(<span class="nm">0</span> - reach, <span class="nm">0</span> - reach, <span class="nm">2</span> * reach + <span class="nm">1</span>, <span class="nm">2</span> * reach + <span class="nm">1</span>);</span>
+<span id="tests-01-hex-ground-loft-L15">  <span class="fn-call">draw_floor</span>(<span class="fn-call">plan_new</span>(<span class="nm">0</span>, <span class="nm">0</span>, w, d, <span class="nm">0</span>, <span class="kw">false</span>), cells, types, <span class="nm">1</span>);</span>
+<span id="tests-01-hex-ground-loft-L16">  cells</span>
+<span id="tests-01-hex-ground-loft-L17">}</span>
+<span id="tests-01-hex-ground-loft-L18"></span>
+<span id="tests-01-hex-ground-loft-L19"><span class="kw">fn</span> <span class="fn-call">near</span>(a: <span class="ty"><a href="stdlib-types.html">float</a></span>, b: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> { a - b &lt; <span class="nm">0.000000001</span> &amp;&amp; b - a &lt; <span class="nm">0.000000001</span> }</span>
+<span id="tests-01-hex-ground-loft-L20"></span>
+<span id="tests-01-hex-ground-loft-L21"><span class="kw">fn</span> <span class="fn-call">main</span>() {</span>
+<span id="tests-01-hex-ground-loft-L22">  g = <span class="fn-call">ground_new</span>(-<span class="nm">4</span>, -<span class="nm">4</span>, <span class="nm">9</span>, <span class="nm">9</span>, <span class="nm">1.5</span>, <span class="nm">3</span>);</span>
+<span id="tests-01-hex-ground-loft-L23">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">height_get</span>(g.gr_heights, <span class="nm">0</span>, <span class="nm">0</span>) == <span class="nm">0.0</span> &amp;&amp; <span class="fn-call">label_get</span>(g.gr_kinds, <span class="nm">2</span>, -<span class="nm">3</span>) == <span class="nm">3</span>, <span class="st">"flat ground of one kind"</span>);</span>
+<span id="tests-01-hex-ground-loft-L24">}</span>
+<span id="tests-01-hex-ground-loft-L25"></span>
+<span id="tests-01-hex-ground-loft-L26"><span class="cm">// A centre and the cell nearest it are inverse, at a step of 1.5 (metres) and of sqrt(3) (the</span></span>
+<span id="tests-01-hex-ground-loft-L27"><span class="cm">// lattice's world unit, where it is `hex_form::cell_x` / `cell_y` and `hex_field::hex_at`).</span></span>
+<span id="tests-01-hex-ground-loft-L28"><span class="kw">fn</span> <span class="fn-call">test_a_centre_and_its_cell</span>() {</span>
+<span id="tests-01-hex-ground-loft-L29">  <span class="kw">for</span> step <span class="kw">in</span> [<span class="nm">1.5</span>, <span class="nm">1.7320508075688772</span>] {</span>
+<span id="tests-01-hex-ground-loft-L30">    <span class="kw">for</span> r <span class="kw">in</span> -<span class="nm">9..10</span> {</span>
+<span id="tests-01-hex-ground-loft-L31">      <span class="kw">for</span> q <span class="kw">in</span> -<span class="nm">9..10</span> {</span>
+<span id="tests-01-hex-ground-loft-L32">        (x, y) = <span class="fn-call">ground_centre</span>(step, q, r);</span>
+<span id="tests-01-hex-ground-loft-L33">        (cq, cr) = <span class="fn-call">ground_cell_near</span>(step, x + <span class="nm">0.2</span>, y - <span class="nm">0.2</span>);</span>
+<span id="tests-01-hex-ground-loft-L34">        <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(cq == q &amp;&amp; cr == r, <span class="st">"step {step}: the cell near {q},{r}'s centre is it"</span>);</span>
+<span id="tests-01-hex-ground-loft-L35">      }</span>
+<span id="tests-01-hex-ground-loft-L36">    }</span>
+<span id="tests-01-hex-ground-loft-L37">  }</span>
+<span id="tests-01-hex-ground-loft-L38">  (x, y) = <span class="fn-call">ground_centre</span>(<span class="nm">1.7320508075688772</span>, <span class="nm">5</span>, <span class="nm">3</span>);</span>
+<span id="tests-01-hex-ground-loft-L39">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">near</span>(x, <span class="fn-call">cell_x</span>(<span class="nm">5</span>, <span class="nm">3</span>)) &amp;&amp; <span class="fn-call">near</span>(y, <span class="fn-call">cell_y</span>(<span class="nm">5</span>, <span class="nm">3</span>)), <span class="st">"at sqrt(3) a centre is the lattice's own"</span>);</span>
+<span id="tests-01-hex-ground-loft-L40">  (mx, my) = <span class="fn-call">ground_centre</span>(<span class="nm">1.5</span>, <span class="nm">5</span>, <span class="nm">3</span>);</span>
+<span id="tests-01-hex-ground-loft-L41">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(mx == <span class="nm">8.25</span> &amp;&amp; <span class="fn-call">near</span>(my, <span class="nm">9.0</span> * <span class="nm">0.4330127018922193</span>), <span class="st">"at 1.5 a centre is 0.75 a doubled k: {mx} {my}"</span>);</span>
+<span id="tests-01-hex-ground-loft-L42">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">near</span>(<span class="fn-call">ground_unit</span>(<span class="nm">1.5</span>), <span class="nm">0.8660254037844386</span>) &amp;&amp; <span class="fn-call">near</span>(<span class="fn-call">ground_unit</span>(<span class="nm">1.7320508075688772</span>), <span class="nm">1.0</span>), <span class="st">"the unit per world unit"</span>);</span>
+<span id="tests-01-hex-ground-loft-L43">}</span>
+<span id="tests-01-hex-ground-loft-L44"></span>
+<span id="tests-01-hex-ground-loft-L45"><span class="cm">// Terraces: a map of two levels, the upper one east of x = 0.  Far up the terrace the ground is a</span></span>
+<span id="tests-01-hex-ground-loft-L46"><span class="cm">// storey high, far below it is 0, on the step's edge half way, and it only climbs between</span></span>
+<span id="tests-01-hex-ground-loft-L47"><span class="cm">// (@FR-HG-Terrace); the flat tops stay flat.</span></span>
+<span id="tests-01-hex-ground-loft-L48"><span class="kw">fn</span> <span class="fn-call">test_terraces_are_smooth_and_their_tops_flat</span>() {</span>
+<span id="tests-01-hex-ground-loft-L49">  level: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
+<span id="tests-01-hex-ground-loft-L50">  <span class="kw">for</span> _j <span class="kw">in</span> <span class="nm">0..20</span> { <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..20</span> { level += [<span class="kw">if</span> i &gt;= <span class="nm">10</span> { <span class="nm">1</span> } <span class="kw">else</span> { <span class="nm">0</span> }]; } }</span>
+<span id="tests-01-hex-ground-loft-L51">  s = <span class="en">GroundSteps</span> { gs_x0: -<span class="nm">15.0</span>, gs_y0: -<span class="nm">15.0</span>, gs_size: <span class="nm">1.5</span>, gs_nx: <span class="nm">20</span>, gs_ny: <span class="nm">20</span>, gs_level: level };</span>
+<span id="tests-01-hex-ground-loft-L52">  m = <span class="fn-call">ground_measures</span>(<span class="nm">2.6</span>, <span class="nm">6.0</span>, <span class="nm">2.5</span>, <span class="nm">2.5</span>);</span>
+<span id="tests-01-hex-ground-loft-L53">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">near</span>(<span class="fn-call">terrace_height</span>(s, <span class="nm">8.0</span>, <span class="nm">0.0</span>, m, <span class="nm">0</span>, <span class="nm">1</span>), <span class="nm">2.6</span>), <span class="st">"well up the terrace: a storey"</span>);</span>
+<span id="tests-01-hex-ground-loft-L54">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">near</span>(<span class="fn-call">terrace_height</span>(s, -<span class="nm">8.0</span>, <span class="nm">0.0</span>, m, <span class="nm">0</span>, <span class="nm">1</span>), <span class="nm">0.0</span>), <span class="st">"well below it: 0"</span>);</span>
+<span id="tests-01-hex-ground-loft-L55">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">near</span>(<span class="fn-call">terrace_height</span>(s, <span class="nm">0.0</span>, <span class="nm">0.0</span>, m, <span class="nm">0</span>, <span class="nm">1</span>), <span class="nm">1.3</span>), <span class="st">"on the step's edge: half a storey, {terrace_height(s, 0.0, 0.0, m, 0, 1)}"</span>);</span>
+<span id="tests-01-hex-ground-loft-L56">  last = -<span class="nm">1.0</span>;</span>
+<span id="tests-01-hex-ground-loft-L57">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..81</span> {</span>
+<span id="tests-01-hex-ground-loft-L58">    h = <span class="fn-call">terrace_height</span>(s, -<span class="nm">4.0</span> + (i <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.1</span>, <span class="nm">0.0</span>, m, <span class="nm">0</span>, <span class="nm">1</span>);</span>
+<span id="tests-01-hex-ground-loft-L59">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(h &gt;= last, <span class="st">"it only climbs going east"</span>);</span>
+<span id="tests-01-hex-ground-loft-L60">    last = h;</span>
+<span id="tests-01-hex-ground-loft-L61">  }</span>
+<span id="tests-01-hex-ground-loft-L62">  g = <span class="fn-call">ground_new</span>(-<span class="nm">12</span>, -<span class="nm">12</span>, <span class="nm">25</span>, <span class="nm">25</span>, <span class="nm">1.5</span>, <span class="nm">0</span>);</span>
+<span id="tests-01-hex-ground-loft-L63">  <span class="fn-call">ground_terraces</span>(g, s, m, <span class="nm">0</span>, <span class="nm">1</span>);</span>
+<span id="tests-01-hex-ground-loft-L64">  (x, y) = <span class="fn-call">ground_centre</span>(<span class="nm">1.5</span>, <span class="nm">6</span>, <span class="nm">0</span>);</span>
+<span id="tests-01-hex-ground-loft-L65">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">height_get</span>(g.gr_heights, <span class="nm">6</span>, <span class="nm">0</span>) == <span class="fn-call">terrace_height</span>(s, x, y, m, <span class="nm">0</span>, <span class="nm">1</span>), <span class="st">"each cell at its centre's height"</span>);</span>
+<span id="tests-01-hex-ground-loft-L66">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">near</span>(<span class="fn-call">height_get</span>(g.gr_heights, <span class="nm">6</span>, <span class="nm">0</span>), <span class="nm">2.6</span>) &amp;&amp; <span class="fn-call">near</span>(<span class="fn-call">height_get</span>(g.gr_heights, <span class="nm">7</span>, <span class="nm">3</span>), <span class="nm">2.6</span>), <span class="st">"the top flat"</span>);</span>
+<span id="tests-01-hex-ground-loft-L67">}</span>
+<span id="tests-01-hex-ground-loft-L68"></span>
+<span id="tests-01-hex-ground-loft-L69"><span class="cm">// A hill: its height at its top, half of it half way down, nothing at its foot and beyond</span></span>
+<span id="tests-01-hex-ground-loft-L70"><span class="cm">// (@FR-HG-Hill); added to the ground that is there.</span></span>
+<span id="tests-01-hex-ground-loft-L71"><span class="kw">fn</span> <span class="fn-call">test_a_hill_is_a_cosine</span>() {</span>
+<span id="tests-01-hex-ground-loft-L72">  g = <span class="fn-call">ground_new</span>(-<span class="nm">12</span>, -<span class="nm">12</span>, <span class="nm">25</span>, <span class="nm">25</span>, <span class="nm">1.5</span>, <span class="nm">0</span>);</span>
+<span id="tests-01-hex-ground-loft-L73">  <span class="kw">for</span> r <span class="kw">in</span> -<span class="nm">12..13</span> { <span class="kw">for</span> q <span class="kw">in</span> -<span class="nm">12..13</span> { <span class="fn-call">height_set</span>(g.gr_heights, q, r, <span class="nm">1.0</span>); } }</span>
+<span id="tests-01-hex-ground-loft-L74">  <span class="fn-call">ground_hill</span>(g, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">6.0</span>, <span class="nm">4.0</span>);</span>
+<span id="tests-01-hex-ground-loft-L75">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">near</span>(<span class="fn-call">height_get</span>(g.gr_heights, <span class="nm">0</span>, <span class="nm">0</span>), <span class="nm">5.0</span>), <span class="st">"its top: the ground's 1 and its 4"</span>);</span>
+<span id="tests-01-hex-ground-loft-L76">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">near</span>(<span class="fn-call">height_get</span>(g.gr_heights, <span class="nm">2</span>, <span class="nm">0</span>), <span class="nm">3.0</span>), <span class="st">"3 from the top of a hill 6 across: half, {height_get(g.gr_heights, 2, 0)}"</span>);</span>
+<span id="tests-01-hex-ground-loft-L77">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">near</span>(<span class="fn-call">height_get</span>(g.gr_heights, <span class="nm">4</span>, <span class="nm">0</span>), <span class="nm">1.0</span>) &amp;&amp; <span class="fn-call">near</span>(<span class="fn-call">height_get</span>(g.gr_heights, <span class="nm">8</span>, <span class="nm">5</span>), <span class="nm">1.0</span>), <span class="st">"its foot and beyond: the ground's own"</span>);</span>
+<span id="tests-01-hex-ground-loft-L78">}</span>
+<span id="tests-01-hex-ground-loft-L79"></span>
+<span id="tests-01-hex-ground-loft-L80"><span class="cm">// A structure seated on a slope: its footprint level at its floor, the lowest the ground was</span></span>
+<span id="tests-01-hex-ground-loft-L81"><span class="cm">// under it answered, the ground far off untouched and the ground beside it between the two</span></span>
+<span id="tests-01-hex-ground-loft-L82"><span class="cm">// (@FR-HG-Seat).</span></span>
+<span id="tests-01-hex-ground-loft-L83"><span class="kw">fn</span> <span class="fn-call">test_a_seat_levels_the_footprint_and_blends</span>() {</span>
+<span id="tests-01-hex-ground-loft-L84">  g = <span class="fn-call">ground_new</span>(-<span class="nm">20</span>, -<span class="nm">20</span>, <span class="nm">41</span>, <span class="nm">41</span>, <span class="nm">1.5</span>, <span class="nm">0</span>);</span>
+<span id="tests-01-hex-ground-loft-L85">  <span class="kw">for</span> r <span class="kw">in</span> -<span class="nm">20..21</span> {</span>
+<span id="tests-01-hex-ground-loft-L86">    <span class="kw">for</span> q <span class="kw">in</span> -<span class="nm">20..21</span> {</span>
+<span id="tests-01-hex-ground-loft-L87">      (x, _y) = <span class="fn-call">ground_centre</span>(<span class="nm">1.5</span>, q, r);</span>
+<span id="tests-01-hex-ground-loft-L88">      <span class="fn-call">height_set</span>(g.gr_heights, q, r, <span class="nm">0.2</span> * x);</span>
+<span id="tests-01-hex-ground-loft-L89">    }</span>
+<span id="tests-01-hex-ground-loft-L90">  }</span>
+<span id="tests-01-hex-ground-loft-L91">  cells = <span class="fn-call">box</span>(<span class="nm">5</span>, <span class="nm">4</span>, <span class="nm">20</span>);</span>
+<span id="tests-01-hex-ground-loft-L92">  lowest = <span class="nm">1000.0</span>;</span>
+<span id="tests-01-hex-ground-loft-L93">  <span class="kw">for</span> r <span class="kw">in</span> -<span class="nm">20..21</span> { <span class="kw">for</span> q <span class="kw">in</span> -<span class="nm">20..21</span> { <span class="kw">if</span> <span class="fn-call">hexset_get</span>(cells, q, r) &amp;&amp; <span class="fn-call">height_get</span>(g.gr_heights, q, r) &lt; lowest { lowest = <span class="fn-call">height_get</span>(g.gr_heights, q, r); } } }</span>
+<span id="tests-01-hex-ground-loft-L94">  m = <span class="fn-call">ground_measures</span>(<span class="nm">2.6</span>, <span class="nm">6.0</span>, <span class="nm">2.5</span>, <span class="nm">2.5</span>);</span>
+<span id="tests-01-hex-ground-loft-L95">  low = <span class="fn-call">ground_seat</span>(g, cells, <span class="nm">3.0</span>, m);</span>
+<span id="tests-01-hex-ground-loft-L96">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(low == lowest &amp;&amp; low &lt; <span class="nm">0.0</span>, <span class="st">"the lowest the ground was under it: {low}"</span>);</span>
+<span id="tests-01-hex-ground-loft-L97">  <span class="kw">for</span> r <span class="kw">in</span> -<span class="nm">20..21</span> { <span class="kw">for</span> q <span class="kw">in</span> -<span class="nm">20..21</span> { <span class="kw">if</span> <span class="fn-call">hexset_get</span>(cells, q, r) { <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">height_get</span>(g.gr_heights, q, r) == <span class="nm">3.0</span>, <span class="st">"the footprint at its floor"</span>); } } }</span>
+<span id="tests-01-hex-ground-loft-L98">  (fx, _fy) = <span class="fn-call">ground_centre</span>(<span class="nm">1.5</span>, <span class="nm">12</span>, <span class="nm">0</span>);</span>
+<span id="tests-01-hex-ground-loft-L99">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">near</span>(<span class="fn-call">height_get</span>(g.gr_heights, <span class="nm">12</span>, <span class="nm">0</span>), <span class="nm">0.2</span> * fx), <span class="st">"far off: the ground's own"</span>);</span>
+<span id="tests-01-hex-ground-loft-L100">  (bx, _by) = <span class="fn-call">ground_centre</span>(<span class="nm">1.5</span>, <span class="nm">4</span>, <span class="nm">0</span>);</span>
+<span id="tests-01-hex-ground-loft-L101">  beside = <span class="fn-call">height_get</span>(g.gr_heights, <span class="nm">4</span>, <span class="nm">0</span>);</span>
+<span id="tests-01-hex-ground-loft-L102">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="fn-call">hexset_get</span>(cells, <span class="nm">4</span>, <span class="nm">0</span>) &amp;&amp; beside &lt; <span class="nm">3.0</span> &amp;&amp; beside &gt; <span class="nm">0.2</span> * bx, <span class="st">"beside it: between its floor and the slope, {beside}"</span>);</span>
+<span id="tests-01-hex-ground-loft-L103">}</span>
+<span id="tests-01-hex-ground-loft-L104"></span>
+<span id="tests-01-hex-ground-loft-L105"><span class="cm">// A bed dug: well inside its straight sides the ground lies `depth` lower, well outside it is</span></span>
+<span id="tests-01-hex-ground-loft-L106"><span class="cm">// untouched, and across a side it is half way down (@FR-HG-Dig) — the bank on the straight side,</span></span>
+<span id="tests-01-hex-ground-loft-L107"><span class="cm">// which `sides_distance` measures from.</span></span>
+<span id="tests-01-hex-ground-loft-L108"><span class="kw">fn</span> <span class="fn-call">test_a_dig_follows_the_straight_sides</span>() {</span>
+<span id="tests-01-hex-ground-loft-L109">  g = <span class="fn-call">ground_new</span>(-<span class="nm">24</span>, -<span class="nm">24</span>, <span class="nm">49</span>, <span class="nm">49</span>, <span class="nm">1.5</span>, <span class="nm">0</span>);</span>
+<span id="tests-01-hex-ground-loft-L110">  cells = <span class="fn-call">box</span>(<span class="nm">12</span>, <span class="nm">6</span>, <span class="nm">24</span>);</span>
+<span id="tests-01-hex-ground-loft-L111">  m = <span class="fn-call">ground_measures</span>(<span class="nm">2.6</span>, <span class="nm">6.0</span>, <span class="nm">2.0</span>, <span class="nm">2.5</span>);</span>
+<span id="tests-01-hex-ground-loft-L112">  <span class="fn-call">ground_dig</span>(g, cells, <span class="nm">2.0</span>, m);</span>
+<span id="tests-01-hex-ground-loft-L113">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">near</span>(<span class="fn-call">height_get</span>(g.gr_heights, <span class="nm">0</span>, <span class="nm">0</span>), -<span class="nm">2.0</span>), <span class="st">"its middle: the depth down, {height_get(g.gr_heights, 0, 0)}"</span>);</span>
+<span id="tests-01-hex-ground-loft-L114">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">near</span>(<span class="fn-call">height_get</span>(g.gr_heights, <span class="nm">0</span>, <span class="nm">12</span>), <span class="nm">0.0</span>) &amp;&amp; <span class="fn-call">near</span>(<span class="fn-call">height_get</span>(g.gr_heights, <span class="nm">16</span>, <span class="nm">0</span>), <span class="nm">0.0</span>), <span class="st">"well outside: untouched"</span>);</span>
+<span id="tests-01-hex-ground-loft-L115">  sides: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;(<span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>, <span class="ty"><a href="stdlib-types.html">float</a></span>)&gt; = [];</span>
+<span id="tests-01-hex-ground-loft-L116">  <span class="kw">for</span> o <span class="kw">in</span> <span class="fn-call">cells_outlines</span>(cells, <span class="nm">0</span>) {</span>
+<span id="tests-01-hex-ground-loft-L117">    n = <span class="bi"><a href="stdlib-text.html">len</a></span>(o.co_corners);</span>
+<span id="tests-01-hex-ground-loft-L118">    <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..</span>n {</span>
+<span id="tests-01-hex-ground-loft-L119">      a = o.co_corners[(i + n - <span class="nm">1</span>) % n ?? <span class="nm">0</span>] ?? (<span class="nm">0.0</span>, <span class="nm">0.0</span>);</span>
+<span id="tests-01-hex-ground-loft-L120">      b = o.co_corners[i] ?? (<span class="nm">0.0</span>, <span class="nm">0.0</span>);</span>
+<span id="tests-01-hex-ground-loft-L121">      sides += [(a.<span class="nm">0</span> * <span class="fn-call">ground_unit</span>(<span class="nm">1.5</span>), a.<span class="nm">1</span> * <span class="fn-call">ground_unit</span>(<span class="nm">1.5</span>), b.<span class="nm">0</span> * <span class="fn-call">ground_unit</span>(<span class="nm">1.5</span>), b.<span class="nm">1</span> * <span class="fn-call">ground_unit</span>(<span class="nm">1.5</span>))];</span>
+<span id="tests-01-hex-ground-loft-L122">    }</span>
+<span id="tests-01-hex-ground-loft-L123">  }</span>
+<span id="tests-01-hex-ground-loft-L124">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(sides) == <span class="nm">4</span>, <span class="st">"a box's four straight sides"</span>);</span>
+<span id="tests-01-hex-ground-loft-L125">  <span class="kw">for</span> r <span class="kw">in</span> -<span class="nm">24..25</span> {</span>
+<span id="tests-01-hex-ground-loft-L126">    <span class="kw">for</span> q <span class="kw">in</span> -<span class="nm">24..25</span> {</span>
+<span id="tests-01-hex-ground-loft-L127">      (x, y) = <span class="fn-call">ground_centre</span>(<span class="nm">1.5</span>, q, r);</span>
+<span id="tests-01-hex-ground-loft-L128">      d = <span class="fn-call">sides_distance</span>(sides, x, y);</span>
+<span id="tests-01-hex-ground-loft-L129">      z = <span class="fn-call">height_get</span>(g.gr_heights, q, r);</span>
+<span id="tests-01-hex-ground-loft-L130">      <span class="kw">if</span> d &gt; <span class="nm">1.0</span> { <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">near</span>(z, -<span class="nm">2.0</span>), <span class="st">"a bank's half inside its sides: the bed"</span>); }</span>
+<span id="tests-01-hex-ground-loft-L131">      <span class="kw">if</span> d &lt; -<span class="nm">1.0</span> { <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">near</span>(z, <span class="nm">0.0</span>), <span class="st">"a bank's half outside them: the ground"</span>); }</span>
+<span id="tests-01-hex-ground-loft-L132">      <span class="kw">if</span> d &gt; -<span class="nm">1.0</span> &amp;&amp; d &lt; <span class="nm">1.0</span> { <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(z &lt; <span class="nm">0.000000001</span> &amp;&amp; z &gt; -<span class="nm">2.000000001</span>, <span class="st">"on the bank: between"</span>); }</span>
+<span id="tests-01-hex-ground-loft-L133">      <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">hexset_get</span>(cells, q, r) == (d &gt; <span class="nm">0.0</span>), <span class="st">"inside the sides is the bed's cells"</span>);</span>
+<span id="tests-01-hex-ground-loft-L134">    }</span>
+<span id="tests-01-hex-ground-loft-L135">  }</span>
+<span id="tests-01-hex-ground-loft-L136">}</span>
+<span id="tests-01-hex-ground-loft-L137"></span>
+<span id="tests-01-hex-ground-loft-L138"><span class="cm">// Cliffs: a terrace a level up, a box of 12 by 6 hex steps.  With the whole of it a cliff area,</span></span>
+<span id="tests-01-hex-ground-loft-L139"><span class="cm">// its four straight sides come back as cliffs of level 1, the ground on their left; clipped to</span></span>
+<span id="tests-01-hex-ground-loft-L140"><span class="cm">// its east half, less of them; with no area, none (@FR-HG-Cliff).  And the ground made sharp:</span></span>
+<span id="tests-01-hex-ground-loft-L141"><span class="cm">// in the area each cell at its level's height, beyond the blend untouched.</span></span>
+<span id="tests-01-hex-ground-loft-L142"><span class="kw">fn</span> <span class="fn-call">test_cliffs_run_along_the_straight_sides</span>() {</span>
+<span id="tests-01-hex-ground-loft-L143">  cells = <span class="fn-call">box</span>(<span class="nm">12</span>, <span class="nm">6</span>, <span class="nm">24</span>);</span>
+<span id="tests-01-hex-ground-loft-L144">  levels = <span class="fn-call">labels_new</span>(-<span class="nm">24</span>, -<span class="nm">24</span>, <span class="nm">49</span>, <span class="nm">49</span>);</span>
+<span id="tests-01-hex-ground-loft-L145">  <span class="kw">for</span> r <span class="kw">in</span> -<span class="nm">24..25</span> { <span class="kw">for</span> q <span class="kw">in</span> -<span class="nm">24..25</span> { <span class="fn-call">label_set</span>(levels, q, r, <span class="kw">if</span> <span class="fn-call">hexset_get</span>(cells, q, r) { <span class="nm">1</span> } <span class="kw">else</span> { <span class="nm">0</span> }); } }</span>
+<span id="tests-01-hex-ground-loft-L146">  all = [<span class="en">GroundBox</span> { gb_x0: -<span class="nm">100.0</span>, gb_y0: -<span class="nm">100.0</span>, gb_x1: <span class="nm">100.0</span>, gb_y1: <span class="nm">100.0</span> }];</span>
+<span id="tests-01-hex-ground-loft-L147">  cs = <span class="fn-call">ground_cliffs</span>(levels, -<span class="nm">24</span>, -<span class="nm">24</span>, <span class="nm">49</span>, <span class="nm">49</span>, <span class="nm">0</span>, <span class="nm">1</span>, all, <span class="nm">1.5</span>);</span>
+<span id="tests-01-hex-ground-loft-L148">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(cs) == <span class="nm">4</span>, <span class="st">"four cliffs round the terrace, got {len(cs)}"</span>);</span>
+<span id="tests-01-hex-ground-loft-L149">  total = <span class="nm">0.0</span>;</span>
+<span id="tests-01-hex-ground-loft-L150">  <span class="kw">for</span> c <span class="kw">in</span> cs {</span>
+<span id="tests-01-hex-ground-loft-L151">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(c.gc_level == <span class="nm">1</span>, <span class="st">"each the cliff of level 1"</span>);</span>
+<span id="tests-01-hex-ground-loft-L152">    <span class="cm">// the terrace's middle on its left</span></span>
+<span id="tests-01-hex-ground-loft-L153">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>((c.gc_bx - c.gc_ax) * (<span class="nm">0.0</span> - c.gc_ay) - (c.gc_by - c.gc_ay) * (<span class="nm">0.0</span> - c.gc_ax) &gt; <span class="nm">0.0</span>, <span class="st">"the higher ground on its left"</span>);</span>
+<span id="tests-01-hex-ground-loft-L154">    total += <span class="bi"><a href="stdlib-math.html">sqrt</a></span>((c.gc_bx - c.gc_ax) * (c.gc_bx - c.gc_ax) + (c.gc_by - c.gc_ay) * (c.gc_by - c.gc_ay)) ?? <span class="nm">0.0</span>;</span>
+<span id="tests-01-hex-ground-loft-L155">  }</span>
+<span id="tests-01-hex-ground-loft-L156">  east = [<span class="en">GroundBox</span> { gb_x0: <span class="nm">0.0</span>, gb_y0: -<span class="nm">100.0</span>, gb_x1: <span class="nm">100.0</span>, gb_y1: <span class="nm">100.0</span> }];</span>
+<span id="tests-01-hex-ground-loft-L157">  half = <span class="nm">0.0</span>;</span>
+<span id="tests-01-hex-ground-loft-L158">  <span class="kw">for</span> c <span class="kw">in</span> <span class="fn-call">ground_cliffs</span>(levels, -<span class="nm">24</span>, -<span class="nm">24</span>, <span class="nm">49</span>, <span class="nm">49</span>, <span class="nm">0</span>, <span class="nm">1</span>, east, <span class="nm">1.5</span>) {</span>
+<span id="tests-01-hex-ground-loft-L159">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(c.gc_ax &gt;= -<span class="nm">0.000000001</span> &amp;&amp; c.gc_bx &gt;= -<span class="nm">0.000000001</span>, <span class="st">"clipped to the area"</span>);</span>
+<span id="tests-01-hex-ground-loft-L160">    half += <span class="bi"><a href="stdlib-math.html">sqrt</a></span>((c.gc_bx - c.gc_ax) * (c.gc_bx - c.gc_ax) + (c.gc_by - c.gc_ay) * (c.gc_by - c.gc_ay)) ?? <span class="nm">0.0</span>;</span>
+<span id="tests-01-hex-ground-loft-L161">  }</span>
+<span id="tests-01-hex-ground-loft-L162">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">near</span>(half, total * <span class="nm">0.5</span>), <span class="st">"the east half of a terrace about 0: half its cliffs, {half} of {total}"</span>);</span>
+<span id="tests-01-hex-ground-loft-L163">  none: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">GroundBox</span>&gt; = [];</span>
+<span id="tests-01-hex-ground-loft-L164">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(<span class="fn-call">ground_cliffs</span>(levels, -<span class="nm">24</span>, -<span class="nm">24</span>, <span class="nm">49</span>, <span class="nm">49</span>, <span class="nm">0</span>, <span class="nm">1</span>, none, <span class="nm">1.5</span>)) == <span class="nm">0</span>, <span class="st">"no cliff area, no cliff"</span>);</span>
+<span id="tests-01-hex-ground-loft-L165"></span>
+<span id="tests-01-hex-ground-loft-L166">  g = <span class="fn-call">ground_new</span>(-<span class="nm">24</span>, -<span class="nm">24</span>, <span class="nm">49</span>, <span class="nm">49</span>, <span class="nm">1.5</span>, <span class="nm">0</span>);</span>
+<span id="tests-01-hex-ground-loft-L167">  <span class="kw">for</span> r <span class="kw">in</span> -<span class="nm">24..25</span> { <span class="kw">for</span> q <span class="kw">in</span> -<span class="nm">24..25</span> { <span class="fn-call">height_set</span>(g.gr_heights, q, r, <span class="nm">0.7</span>); } }</span>
+<span id="tests-01-hex-ground-loft-L168">  sharp = <span class="fn-call">heights_new</span>(-<span class="nm">24</span>, -<span class="nm">24</span>, <span class="nm">49</span>, <span class="nm">49</span>);</span>
+<span id="tests-01-hex-ground-loft-L169">  <span class="kw">for</span> r <span class="kw">in</span> -<span class="nm">24..25</span> { <span class="kw">for</span> q <span class="kw">in</span> -<span class="nm">24..25</span> { <span class="fn-call">height_set</span>(sharp, q, r, <span class="nm">2.6</span> * (<span class="fn-call">label_get</span>(levels, q, r) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>)); } }</span>
+<span id="tests-01-hex-ground-loft-L170">  area = [<span class="en">GroundBox</span> { gb_x0: -<span class="nm">6.0</span>, gb_y0: -<span class="nm">6.0</span>, gb_x1: <span class="nm">6.0</span>, gb_y1: <span class="nm">6.0</span> }];</span>
+<span id="tests-01-hex-ground-loft-L171">  <span class="fn-call">ground_sharpen</span>(g, sharp, area, <span class="fn-call">ground_measures</span>(<span class="nm">2.6</span>, <span class="nm">6.0</span>, <span class="nm">2.5</span>, <span class="nm">2.5</span>));</span>
+<span id="tests-01-hex-ground-loft-L172">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">near</span>(<span class="fn-call">height_get</span>(g.gr_heights, <span class="nm">0</span>, <span class="nm">0</span>), <span class="nm">2.6</span>), <span class="st">"in the area, on the terrace: its level's height"</span>);</span>
+<span id="tests-01-hex-ground-loft-L173">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">near</span>(<span class="fn-call">height_get</span>(g.gr_heights, <span class="nm">12</span>, <span class="nm">0</span>), <span class="nm">0.7</span>) &amp;&amp; <span class="fn-call">near</span>(<span class="fn-call">height_get</span>(g.gr_heights, <span class="nm">0</span>, <span class="nm">10</span>), <span class="nm">0.7</span>), <span class="st">"beyond the blend: the ground it had"</span>);</span>
+<span id="tests-01-hex-ground-loft-L174">  (ex, ey) = <span class="fn-call">ground_centre</span>(<span class="nm">1.5</span>, <span class="nm">5</span>, <span class="nm">0</span>);</span>
+<span id="tests-01-hex-ground-loft-L175">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">ground_box_distance</span>(area[<span class="nm">0</span>]!, ex, ey) &gt; <span class="nm">0.0</span> &amp;&amp; <span class="fn-call">height_get</span>(g.gr_heights, <span class="nm">5</span>, <span class="nm">0</span>) &gt; <span class="nm">0.7</span> &amp;&amp; <span class="fn-call">height_get</span>(g.gr_heights, <span class="nm">5</span>, <span class="nm">0</span>) &lt; <span class="nm">2.6</span>,</span>
+<span id="tests-01-hex-ground-loft-L176">         <span class="st">"just outside the area: blended between, {height_get(g.gr_heights, 5, 0)}"</span>);</span>
+<span id="tests-01-hex-ground-loft-L177">}</span>
+<span id="tests-01-hex-ground-loft-L178"></span>
+<span id="tests-01-hex-ground-loft-L179"><span class="cm">// The ground read as a smooth surface: at a cell's centre its own height; at a corner the mean</span></span>
+<span id="tests-01-hex-ground-loft-L180"><span class="cm">// of the three cells round it; along the rim between two cells the same height from either</span></span>
+<span id="tests-01-hex-ground-loft-L181"><span class="cm">// side, so the fans leave no crack; and flat ground reads flat everywhere (@FR-HG-Surface).</span></span>
+<span id="tests-01-hex-ground-loft-L182"><span class="kw">fn</span> <span class="fn-call">test_the_ground_reads_as_one_smooth_surface</span>() {</span>
+<span id="tests-01-hex-ground-loft-L183">  g = <span class="fn-call">ground_new</span>(-<span class="nm">10</span>, -<span class="nm">10</span>, <span class="nm">21</span>, <span class="nm">21</span>, <span class="nm">1.5</span>, <span class="nm">0</span>);</span>
+<span id="tests-01-hex-ground-loft-L184">  <span class="fn-call">ground_hill</span>(g, <span class="nm">1.0</span>, -<span class="nm">2.0</span>, <span class="nm">11.0</span>, <span class="nm">5.0</span>);</span>
+<span id="tests-01-hex-ground-loft-L185">  <span class="fn-call">ground_hill</span>(g, -<span class="nm">6.0</span>, <span class="nm">4.0</span>, <span class="nm">5.0</span>, -<span class="nm">2.0</span>);</span>
+<span id="tests-01-hex-ground-loft-L186">  <span class="kw">for</span> r <span class="kw">in</span> -<span class="nm">6..7</span> {</span>
+<span id="tests-01-hex-ground-loft-L187">    <span class="kw">for</span> q <span class="kw">in</span> -<span class="nm">6..7</span> {</span>
+<span id="tests-01-hex-ground-loft-L188">      (cx, cy) = <span class="fn-call">ground_centre</span>(<span class="nm">1.5</span>, q, r);</span>
+<span id="tests-01-hex-ground-loft-L189">      <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">near</span>(<span class="fn-call">ground_height_at</span>(g, cx, cy), <span class="fn-call">height_get</span>(g.gr_heights, q, r)), <span class="st">"at {q},{r}'s centre: its height"</span>);</span>
+<span id="tests-01-hex-ground-loft-L190">      k = <span class="fn-call">lattice_k</span>(q, r);</span>
+<span id="tests-01-hex-ground-loft-L191">      m = <span class="fn-call">lattice_m</span>(q, r);</span>
+<span id="tests-01-hex-ground-loft-L192">      <span class="kw">for</span> j <span class="kw">in</span> <span class="nm">0..6</span> {</span>
+<span id="tests-01-hex-ground-loft-L193">        <span class="cm">// corner j, and the three cells round it: this one and its neighbours across the two edges at j</span></span>
+<span id="tests-01-hex-ground-loft-L194">        ck = k + <span class="fn-call">corner_k</span>(j);</span>
+<span id="tests-01-hex-ground-loft-L195">        cm = m + <span class="fn-call">corner_m</span>(j);</span>
+<span id="tests-01-hex-ground-loft-L196">        sum = <span class="nm">0.0</span>;</span>
+<span id="tests-01-hex-ground-loft-L197">        cells = <span class="nm">0</span>;</span>
+<span id="tests-01-hex-ground-loft-L198">        <span class="kw">for</span> rr <span class="kw">in</span> r - <span class="nm">1..</span>r + <span class="nm">2</span> {</span>
+<span id="tests-01-hex-ground-loft-L199">          <span class="kw">for</span> qq <span class="kw">in</span> q - <span class="nm">1..</span>q + <span class="nm">2</span> {</span>
+<span id="tests-01-hex-ground-loft-L200">            dk = ck - <span class="fn-call">lattice_k</span>(qq, rr);</span>
+<span id="tests-01-hex-ground-loft-L201">            dm = cm - <span class="fn-call">lattice_m</span>(qq, rr);</span>
+<span id="tests-01-hex-ground-loft-L202">            <span class="kw">if</span> <span class="nm">3</span> * dk * dk + dm * dm == <span class="nm">4</span> {</span>
+<span id="tests-01-hex-ground-loft-L203">              sum += <span class="fn-call">height_get</span>(g.gr_heights, qq, rr);</span>
+<span id="tests-01-hex-ground-loft-L204">              cells += <span class="nm">1</span>;</span>
+<span id="tests-01-hex-ground-loft-L205">            }</span>
+<span id="tests-01-hex-ground-loft-L206">          }</span>
+<span id="tests-01-hex-ground-loft-L207">        }</span>
+<span id="tests-01-hex-ground-loft-L208">        <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(cells == <span class="nm">3</span>, <span class="st">"a corner has three cells round it, got {cells}"</span>);</span>
+<span id="tests-01-hex-ground-loft-L209">        want = sum / <span class="nm">3.0</span> ?? <span class="nm">0.0</span>;</span>
+<span id="tests-01-hex-ground-loft-L210">        <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">near</span>(<span class="fn-call">ground_corner_height</span>(g, ck, cm), want), <span class="st">"corner {j} of {q},{r}: the mean of its three cells"</span>);</span>
+<span id="tests-01-hex-ground-loft-L211">        x = (ck <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.75</span>;</span>
+<span id="tests-01-hex-ground-loft-L212">        y = (cm <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.4330127018922193</span>;</span>
+<span id="tests-01-hex-ground-loft-L213">        <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">near</span>(<span class="fn-call">ground_height_at</span>(g, x, y), want), <span class="st">"and the surface passes through it"</span>);</span>
+<span id="tests-01-hex-ground-loft-L214">        <span class="cm">// the middle of the rim to the next corner, read a hair inside this cell and a hair beyond it</span></span>
+<span id="tests-01-hex-ground-loft-L215">        j1 = (j + <span class="nm">1</span>) % <span class="nm">6</span> ?? <span class="nm">0</span>;</span>
+<span id="tests-01-hex-ground-loft-L216">        mx = cx + ((<span class="fn-call">corner_k</span>(j) + <span class="fn-call">corner_k</span>(j1)) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.375</span>;</span>
+<span id="tests-01-hex-ground-loft-L217">        my = cy + ((<span class="fn-call">corner_m</span>(j) + <span class="fn-call">corner_m</span>(j1)) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.21650635094610965</span>;</span>
+<span id="tests-01-hex-ground-loft-L218">        inner = <span class="fn-call">ground_height_at</span>(g, cx + (mx - cx) * <span class="nm">0.999999</span>, cy + (my - cy) * <span class="nm">0.999999</span>);</span>
+<span id="tests-01-hex-ground-loft-L219">        outer = <span class="fn-call">ground_height_at</span>(g, cx + (mx - cx) * <span class="nm">1.000001</span>, cy + (my - cy) * <span class="nm">1.000001</span>);</span>
+<span id="tests-01-hex-ground-loft-L220">        <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(inner - outer &lt; <span class="nm">0.00001</span> &amp;&amp; outer - inner &lt; <span class="nm">0.00001</span>, <span class="st">"the rim of {q},{r} past corner {j}: no crack ({inner}, {outer})"</span>);</span>
+<span id="tests-01-hex-ground-loft-L221">      }</span>
+<span id="tests-01-hex-ground-loft-L222">    }</span>
+<span id="tests-01-hex-ground-loft-L223">  }</span>
+<span id="tests-01-hex-ground-loft-L224">  flat = <span class="fn-call">ground_new</span>(-<span class="nm">6</span>, -<span class="nm">6</span>, <span class="nm">13</span>, <span class="nm">13</span>, <span class="nm">1.7320508075688772</span>, <span class="nm">0</span>);</span>
+<span id="tests-01-hex-ground-loft-L225">  <span class="kw">for</span> r <span class="kw">in</span> -<span class="nm">6..7</span> { <span class="kw">for</span> q <span class="kw">in</span> -<span class="nm">6..7</span> { <span class="fn-call">height_set</span>(flat.gr_heights, q, r, <span class="nm">4.25</span>); } }</span>
+<span id="tests-01-hex-ground-loft-L226">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..40</span> {</span>
+<span id="tests-01-hex-ground-loft-L227">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">near</span>(<span class="fn-call">ground_height_at</span>(flat, -<span class="nm">3.0</span> + (i <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.17</span>, <span class="nm">2.0</span> - (i <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.11</span>), <span class="nm">4.25</span>), <span class="st">"flat ground reads flat, at any step"</span>);</span>
+<span id="tests-01-hex-ground-loft-L228">  }</span>
+<span id="tests-01-hex-ground-loft-L229">  rim = <span class="fn-call">ground_new</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">3</span>, <span class="nm">3</span>, <span class="nm">1.5</span>, <span class="nm">0</span>);</span>
+<span id="tests-01-hex-ground-loft-L230">  <span class="kw">for</span> r <span class="kw">in</span> <span class="nm">0..3</span> { <span class="kw">for</span> q <span class="kw">in</span> <span class="nm">0..3</span> { <span class="fn-call">height_set</span>(rim.gr_heights, q, r, <span class="nm">6.0</span>); } }</span>
+<span id="tests-01-hex-ground-loft-L231">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">near</span>(<span class="fn-call">ground_corner_height</span>(rim, <span class="fn-call">lattice_k</span>(<span class="nm">0</span>, <span class="nm">0</span>) + <span class="fn-call">corner_k</span>(<span class="nm">3</span>), <span class="fn-call">lattice_m</span>(<span class="nm">0</span>, <span class="nm">0</span>) + <span class="fn-call">corner_m</span>(<span class="nm">3</span>)), <span class="nm">6.0</span>), <span class="st">"a corner on the rim: the mean of the cells it has"</span>);</span>
+<span id="tests-01-hex-ground-loft-L232">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">ground_corner_height</span>(rim, <span class="fn-call">lattice_k</span>(<span class="nm">9</span>, <span class="nm">9</span>) + <span class="fn-call">corner_k</span>(<span class="nm">0</span>), <span class="fn-call">lattice_m</span>(<span class="nm">9</span>, <span class="nm">9</span>) + <span class="fn-call">corner_m</span>(<span class="nm">0</span>)) == <span class="nm">0.0</span>, <span class="st">"a corner beyond the window: 0"</span>);</span>
+<span id="tests-01-hex-ground-loft-L233">}</span>
+<span id="tests-01-hex-ground-loft-L234"></span>
+<span id="tests-01-hex-ground-loft-L235"><span class="cm">// Either side of a cliff its own surface: a terrace a storey up, its ground at 2.6 and the</span></span>
+<span id="tests-01-hex-ground-loft-L236"><span class="cm">// ground below at 0.  Read as one surface the ground would slope between them; read on the</span></span>
+<span id="tests-01-hex-ground-loft-L237"><span class="cm">// cliff's high side it is 2.6 right up to the edge, on its low side 0 (@FR-HG-Cliff).</span></span>
+<span id="tests-01-hex-ground-loft-L238"><span class="kw">fn</span> <span class="fn-call">test_either_side_of_a_cliff_its_own_surface</span>() {</span>
+<span id="tests-01-hex-ground-loft-L239">  cells = <span class="fn-call">box</span>(<span class="nm">12</span>, <span class="nm">6</span>, <span class="nm">24</span>);</span>
+<span id="tests-01-hex-ground-loft-L240">  g = <span class="fn-call">ground_new</span>(-<span class="nm">24</span>, -<span class="nm">24</span>, <span class="nm">49</span>, <span class="nm">49</span>, <span class="nm">1.5</span>, <span class="nm">0</span>);</span>
+<span id="tests-01-hex-ground-loft-L241">  levels = <span class="fn-call">labels_new</span>(-<span class="nm">24</span>, -<span class="nm">24</span>, <span class="nm">49</span>, <span class="nm">49</span>);</span>
+<span id="tests-01-hex-ground-loft-L242">  <span class="kw">for</span> r <span class="kw">in</span> -<span class="nm">24..25</span> {</span>
+<span id="tests-01-hex-ground-loft-L243">    <span class="kw">for</span> q <span class="kw">in</span> -<span class="nm">24..25</span> {</span>
+<span id="tests-01-hex-ground-loft-L244">      up = <span class="fn-call">hexset_get</span>(cells, q, r);</span>
+<span id="tests-01-hex-ground-loft-L245">      <span class="fn-call">label_set</span>(levels, q, r, <span class="kw">if</span> up { <span class="nm">1</span> } <span class="kw">else</span> { <span class="nm">0</span> });</span>
+<span id="tests-01-hex-ground-loft-L246">      <span class="fn-call">height_set</span>(g.gr_heights, q, r, <span class="kw">if</span> up { <span class="nm">2.6</span> } <span class="kw">else</span> { <span class="nm">0.0</span> });</span>
+<span id="tests-01-hex-ground-loft-L247">    }</span>
+<span id="tests-01-hex-ground-loft-L248">  }</span>
+<span id="tests-01-hex-ground-loft-L249">  sloped = <span class="nm">0</span>;</span>
+<span id="tests-01-hex-ground-loft-L250">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..120</span> {</span>
+<span id="tests-01-hex-ground-loft-L251">    x = -<span class="nm">12.0</span> + (i <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) * <span class="nm">0.2</span>;</span>
+<span id="tests-01-hex-ground-loft-L252">    <span class="kw">for</span> y <span class="kw">in</span> [<span class="nm">0.0</span>, <span class="nm">1.1</span>, -<span class="nm">2.3</span>] {</span>
+<span id="tests-01-hex-ground-loft-L253">      hi = <span class="fn-call">ground_height_on</span>(g, levels, x, y, <span class="nm">1</span>, <span class="kw">true</span>, <span class="nm">2.6</span>);</span>
+<span id="tests-01-hex-ground-loft-L254">      lo = <span class="fn-call">ground_height_on</span>(g, levels, x, y, <span class="nm">1</span>, <span class="kw">false</span>, <span class="nm">2.6</span>);</span>
+<span id="tests-01-hex-ground-loft-L255">      <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">near</span>(hi, <span class="nm">2.6</span>), <span class="st">"the high side at {x},{y}: the terrace's height, {hi}"</span>);</span>
+<span id="tests-01-hex-ground-loft-L256">      <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">near</span>(lo, <span class="nm">0.0</span>), <span class="st">"the low side at {x},{y}: the ground below, {lo}"</span>);</span>
+<span id="tests-01-hex-ground-loft-L257">      one = <span class="fn-call">ground_height_at</span>(g, x, y);</span>
+<span id="tests-01-hex-ground-loft-L258">      <span class="kw">if</span> one &gt; <span class="nm">0.1</span> &amp;&amp; one &lt; <span class="nm">2.5</span> { sloped += <span class="nm">1</span>; }</span>
+<span id="tests-01-hex-ground-loft-L259">    }</span>
+<span id="tests-01-hex-ground-loft-L260">  }</span>
+<span id="tests-01-hex-ground-loft-L261">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(sloped &gt; <span class="nm">0</span>, <span class="st">"read as one surface, the ground slopes across the edge"</span>);</span>
+<span id="tests-01-hex-ground-loft-L262">}</span>
+</code></pre>
+
+  </article>
+<script src="search-index.js"></script>
+<script src="search.js"></script>
+<script>
+(function(){
+var m={"Keywords":"keywords","Texts":"texts","Integers":"integers","Boolean":"boolean","Float":"float","Functions":"functions","Vector":"vector","Structs":"structs","Enums":"enums","Sorted":"sorted","Index":"index","Hash":"hash","File":"file","Lexer":"lexer","Parser":"parser","Libraries":"libraries","Store Locks":"store_locks","Parallel execution":"parallel_execution","Logging":"logging","Time":"time","Safety":"safety","JSON":"json","Generics":"generics","Closures":"closures","Coroutines":"coroutines","Tuples":"tuples","Match":"match","Formatting":"formatting"};
+var h=document.querySelector('h1');
+if(!h)return;
+var key=m[h.textContent];
+if(!key)return;
+var a=document.createElement('a');
+a.className='playground-link';
+a.href='playground.html?example='+key;
+a.textContent='\u25B6 Try in Playground';
+h.parentNode.insertBefore(a,h.nextSibling);
+})();
+</script>
+</body>
+</html>
