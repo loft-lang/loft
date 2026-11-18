@@ -783,7 +783,10 @@ fn param_default(e: el::El, init: integer, pt: ir::TypeT) -> ir::Node? {
     NdEnum { ord: _ } => plain_enum,
     _ => false
   };
-  if !constant || len(vars.vars) > 0 {
+  // `default_replayable_in_place`: arithmetic and calls over literals are replayed at each call
+  // site as they stand — a plain scalar's expression that names no variable and builds nothing.
+  replayed = el_convert::plain_scalar(el_types::base(x.tp)) && !(x.tp is TyOptional) && flat_expression(el_ir::unspan(x.code));
+  if !(constant || replayed) || len(vars.vars) > 0 {
     el::refuse(e, "a parameter default other than a constant");
     return null;
   }
@@ -799,6 +802,27 @@ fn param_default(e: el::El, init: integer, pt: ir::TypeT) -> ir::Node? {
     el::refuse(e, "a parameter default its parameter's type does not take");
   }
   c
+}
+
+// A value of literals and calls alone: no block, no branch, no variable.
+fn flat_expression(n: ir::Node) -> boolean {
+  match n {
+    NdInt { n: _ } => true,
+    NdLong { n: _ } => true,
+    NdFloat { f: _ } => true,
+    NdSingle { f: _ } => true,
+    NdBoolean { b: _ } => true,
+    NdSpan { inner } => flat_expression(inner),
+    NdCall { def_nr: _, args } => {
+      for a in args {
+        if !flat_expression(a) {
+          return false;
+        }
+      }
+      true
+    },
+    _ => false
+  }
 }
 
 // `Parser::parse_constant`, `const NAME = value;`: a definition of its own (`DefType::Constant`),
