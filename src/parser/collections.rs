@@ -6792,6 +6792,7 @@ use #count instead"
     #[expect(clippy::too_many_lines, reason = "inherited")]
     // @F24 — higher-order functions (map / filter / reduce)
     pub(crate) fn parse_map(&mut self, val: &mut Value, list: &[Value], types: &[Type]) -> Type {
+        self.state_route("parse_map");
         let placeholder = Type::Vector(Box::new(Type::Unknown(0)), crate::data::Deps::none());
         // On first pass, return the concrete output vector type derived from the function's
         // return type so that downstream variables (e.g. `r = map(...)`) get the right type
@@ -7100,6 +7101,7 @@ use #count instead"
     }
 
     pub(crate) fn parse_filter(&mut self, val: &mut Value, list: &[Value], types: &[Type]) -> Type {
+        self.state_route("parse_filter");
         let placeholder = Type::Vector(Box::new(Type::Unknown(0)), crate::data::Deps::none());
         // On first pass, return the concrete output type from the input vector's element type.
         if self.first_pass {
@@ -7693,6 +7695,7 @@ use #count instead"
     /// Emits `OpSortVector(v, db_tp)` which sorts in-place at runtime, dispatching
     /// on the database element type.
     pub(crate) fn parse_sort(&mut self, val: &mut Value, list: &[Value], types: &[Type]) -> Type {
+        self.state_route("parse_sort");
         if self.first_pass {
             return Type::Void;
         }
@@ -7737,6 +7740,7 @@ use #count instead"
         types: &[Type],
         arg_pos: &[crate::lexer::Position],
     ) -> Type {
+        self.state_route("parse_insert");
         if self.first_pass {
             return Type::Void;
         }
@@ -7952,6 +7956,7 @@ use #count instead"
         list: &[Value],
         types: &[Type],
     ) -> Type {
+        self.state_route("parse_reserve");
         if self.first_pass {
             return Type::Void;
         }
@@ -8019,6 +8024,7 @@ use #count instead"
         list: &[Value],
         types: &[Type],
     ) -> Type {
+        self.state_route("parse_reverse");
         if self.first_pass {
             return Type::Void;
         }
@@ -8219,6 +8225,7 @@ use #count instead"
 
     /// `any(vec, pred)` — true if pred returns true for any element.
     pub(crate) fn parse_any(&mut self, val: &mut Value, list: &[Value], types: &[Type]) -> Type {
+        self.state_route("parse_any");
         if self.first_pass {
             return Type::Boolean;
         }
@@ -8261,6 +8268,7 @@ use #count instead"
 
     /// `all(vec, pred)` — true if pred returns true for every element.
     pub(crate) fn parse_all(&mut self, val: &mut Value, list: &[Value], types: &[Type]) -> Type {
+        self.state_route("parse_all");
         if self.first_pass {
             return Type::Boolean;
         }
@@ -8309,6 +8317,7 @@ use #count instead"
         list: &[Value],
         types: &[Type],
     ) -> Type {
+        self.state_route("parse_count_if");
         if self.first_pass {
             return I32.clone();
         }

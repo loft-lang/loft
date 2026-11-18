@@ -7857,6 +7857,7 @@ impl Parser {
     /// belongs to the function the code lands in, and minting it here gives it that
     /// function's own slot.
     pub(crate) fn bind_monomorph_join_return(&mut self, d_nr: u32) {
+        self.state_route("bind_monomorph_join_return");
         let ret = self.data.def(d_nr).returned().clone();
         if !matches!(ret.base(), Type::Reference(_, _) | Type::Enum(_, true, _)) {
             return;
@@ -10521,6 +10522,7 @@ impl Parser {
             }
             && !crate::env_once!(std::env::var_os("LOFT_NO_RET_ARM_COPY").is_some());
         if leaving_branch || self.arms_yield_null(tail) || self.branch_has_nullable_leaf(tail) {
+            self.state_route("materialize_return_into=arms");
             match tail {
                 Value::Span(b) => self.materialize_return_into(td, &mut b.1, w),
                 Value::If(_, t, f) => {
@@ -10546,6 +10548,7 @@ impl Parser {
             }
             return;
         }
+        self.state_route("materialize_return_into=whole");
         let kt = self.data.def(td).known_type();
         let copy_d = self.data.def_nr("OpCopyRecord");
         let mut orig = std::mem::replace(tail, Value::Null);
@@ -12889,6 +12892,9 @@ impl Parser {
         ctx: &RetPromoCtx,
     ) -> RetPromotion {
         let verdict = self.classify_ret_promotion_inner(v, transitive, body, dep, ctx);
+        if self.state_trace_on() {
+            self.state_route(&format!("classify_ret_promotion={verdict:?}"));
+        }
         if crate::keys::trace_ret_promotion() {
             eprintln!(
                 "[retpromo] fn={} v={} name={} pass={} vl={}/{} deps={:?} site={:?} ret={:?} plain={} buf={:?} => {verdict:?}",
@@ -15313,6 +15319,8 @@ impl Parser {
             // code), so `@val` is the record DbRef on both backends (no OpCreateStack
             // slot indirection) — one #rust body ⇒ interpret == native.
             "deliver" if types.len() == 2 => {
+                self.state_route("call:deliver");
+                self.state_route("call:assert");
                 if self.first_pass {
                     return Type::Void;
                 }
@@ -15332,6 +15340,7 @@ impl Parser {
             // @PLN105 Phase 3 — expose(tag, value) / release(tag, value): the long-lived deliver
             // + its unpin. Lowered like `deliver`, filling `db_tp` from the value's static type.
             "expose" | "release" if types.len() == 2 => {
+                self.state_route("call:expose");
                 if self.first_pass {
                     return Type::Void;
                 }
@@ -15363,6 +15372,7 @@ impl Parser {
             // one operation loft's ownership model gets wrong most easily. The
             // contract is C's `sizeof`, and it is stated in the doc comment.
             "type_of" if types.len() == 1 => {
+                self.state_route("call:type_of");
                 if self.first_pass {
                     // First pass still needs the RESULT type, so an enclosing
                     // `t = type_of(v)` infers `TypeInfo` on both passes and the
@@ -15407,6 +15417,7 @@ impl Parser {
             // `type_of`, the argument IS evaluated — the value is what is being
             // read.
             "field_value" if types.len() == 2 => {
+                self.state_route("call:field_value");
                 let fv = self.data.def_nr("ValueInfo");
                 // Every refusal below still answers `ValueInfo`. The error is
                 // already reported, and handing back `Unknown` would cascade a
@@ -15507,6 +15518,7 @@ impl Parser {
                     && matches!(types[0].peel_link().base(), Type::Vector(_, _))
                     && let Some(ops) = self.vector_clear_lowering(&list[0], &types[0]) =>
             {
+                self.state_route("call:clear");
                 *val = Value::Insert(ops);
                 return Type::Void;
             }
@@ -15517,6 +15529,7 @@ impl Parser {
             "all" => return self.parse_all(val, list, types),
             "count_if" => return self.parse_count_if(val, list, types),
             "next" if types.len() == 1 => {
+                self.state_route("call:next");
                 // CO1.6a: next(gen) — advance a coroutine iterator.
                 // Encode value_size as second parameter so codegen can emit it.
                 // @P327 — same encoding as the for-loop's `iterator()` path
@@ -15600,6 +15613,7 @@ impl Parser {
             }
             // A nullable iterator is one too: a null handle answers true (`coroutine_exhausted`).
             "exhausted" if types.len() == 1 && matches!(types[0].base(), Type::Iterator(_, _)) => {
+                self.state_route("call:exhausted");
                 // CO1.3c: exhausted(gen) on a coroutine iterator.
                 let op = self.data.def_nr("OpCoroutineExhausted");
                 *val = Value::Call(op, list.to_vec());
@@ -15610,12 +15624,14 @@ impl Parser {
             // definitions takes `x`: the special form answers for the argument's type, as it
             // does when nothing is declared.  The argument is not evaluated — `type_of`'s rule.
             "type_name" if types.len() == 1 => {
+                self.state_route("call:type_name");
                 if !self.first_pass {
                     *val = Value::Text(self.data.display_type_name(&types[0]));
                 }
                 return Type::Text(Deps::none());
             }
             "typedef" if types.len() == 1 => {
+                self.state_route("call:typedef");
                 let tp = self.data.def(self.data.type_def_nr(&types[0])).known_type();
                 *val = Value::Int(i32::from(tp));
                 return Type::Integer(IntegerSpec {
@@ -16084,6 +16100,7 @@ impl Parser {
 
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_reduce(&mut self, val: &mut Value, list: &[Value], types: &[Type]) -> Type {
+        self.state_route("parse_reduce");
         if self.first_pass {
             // The accumulator is the fold's first parameter (loft#1959); the initial value
             // answers only when the fold does not say.

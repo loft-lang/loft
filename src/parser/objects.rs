@@ -6795,6 +6795,7 @@ impl Parser {
     /// values are parsed without passing through `expression`, so a literal nested in a field
     /// counts here.
     pub(crate) fn parse_object(&mut self, td_nr: u32, code: &mut Value) -> Type {
+        self.state_route("parse_object");
         if !self.enter_depth() {
             return Type::Unknown(0);
         }

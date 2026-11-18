@@ -252,6 +252,11 @@ pub fn refuse(el: El, what: text) {
   if len(skip) > 0 && starts_with(what, skip) {
     return;
   }
+  // `LOFT_STATE_TRACE` (elaborator-instruments.md § 2): every refusal as a state line at the
+  // line it is met on, beside the Rust front end's `route` lines there.
+  if len(env_variable("LOFT_STATE_TRACE")) > 0 && el.source != STD_SOURCE {
+    eprintln("state {if el.first_pass { 1 } else { 2 }} {if el.decl_line > el.line { el.decl_line } else { el.line }}:0 refuse {what}");
+  }
   // By function first: the definition being elaborated (`""` outside one), once per text.
   fname = if el.context >= 0 && el.context < len(el.b.data.definitions) { el.b.data.definitions[el.context].name } else { "" };
   known = false;

@@ -170,6 +170,7 @@ impl Parser {
         reason = "the match construct in one pass: the subject's shape picks the arm grammar, and every arm's pattern, guard, body and type join read the same arm list and lexer position"
     )]
     fn parse_match_inner(&mut self, code: &mut Value) -> Type {
+        self.state_route("parse_match");
         // One charge for the whole construct — arm count is not complexity (a 12-arm flat
         // dispatch reads straight down); its arms deepen via `parse_block("match_arm")`.
         if !self.first_pass {
