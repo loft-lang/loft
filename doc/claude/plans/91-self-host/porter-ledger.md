@@ -36,6 +36,18 @@ How an analysis is written:
   examples first.
 - The porter's own handoff is read before an order is proposed: it holds the cost side.
 
+Preventing a problem is worth more than finding it sooner.  Three routines:
+
+- **A prepared topic comes with its probe already run both ways.**  On the Rust front end, on
+  both backends, before the porter sees it: a probe that fails there has found a defect the
+  port would otherwise mirror faithfully.  And on the port's current build: the message says
+  which cases fail today and at which line, so each costs one build and no search.
+- **A Rust change in an area the port mirrors is announced before it lands**, with the
+  functions whose report changes and the new form, so the port follows in the same cycle.
+- **A program left one refusal from agreeing is looked at ahead of the porter.**  A try or a
+  cycle that moves a program there names what the porter reaches for next; that refusal is
+  prepared — analysis and probe — before it is asked for.
+
 ## Patterns, and what the loop does about each
 
 | pattern | seen | prevention | state |
@@ -110,4 +122,7 @@ How an analysis is written:
 | 11-18 | f44e5f731 | ? | An analysis ended with five cases "not probed"; two of them, once probed, contradicted what the Rust comments suggested (a default reading `$` and building a value is not refused; an empty-vector default in a generic struct is not hoisted) | probe until settled, then send the conclusions only |
 | 11-18 | b8ad5ed2c | + | Four tries, all clean, each acknowledged without the tester; the porter ran its own corpus check beside each and went on to the next topic | — |
 | 11-18 | b8ad5ed2c | ? | The porter still ran its own corpus listing before each promotion: the try's answer gave a COUNT of newly agreeing programs, not their names, nor what still blocks the programs a change was meant to lift | the answer lists what the change moved (`try_moves.py`): the programs that newly agree, and per program that lost a refusal, what is left; a lifted program that differs comes back analysed |
+| 11-18 | 5db484adb | + | The probe per topic: `record-tail-default.loft` agreed whole after "one build per remaining case instead of a corpus hunt"; the porter's corpus listing is gone, replaced by "what it moved" | — |
+| 11-18 | 5db484adb | + | A probe run on the Rust front end before it was sent found a silent wrong answer there (loft#2561: a `-> S?` result read out of a held store is an empty record where its source is absent) — which the port would have mirrored | the first routine above |
+| 11-18 | 075b8a290 | ! | A try was answered against an older tip (its own base's cycle had not finished), reporting the base's gains as the change's; and a hand-run try shared the worktree with the mailbox's | a try waits until its base is gated and names the tip it compared against; tries take a lock |
 
