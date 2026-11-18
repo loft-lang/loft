@@ -871,7 +871,22 @@ pub fn field_path(e: el::El, n: ir::Node) -> boolean {
         return false;
       }
       inner = el_ir::unspan(args[0]!);
-      inner is NdVar || field_path(e, inner)
+      inner is NdVar || field_path(e, inner) || element_of_path(e, inner)
+    },
+    _ => false
+  }
+}
+
+// An element read (`OpGetVector`) of a variable or of a field path: `rs[0]` under `rs[0].items`.
+fn element_of_path(e: el::El, n: ir::Node) -> boolean {
+  match n {
+    NdCall { def_nr, args } => {
+      nm = el::def(e, def_nr).name;
+      if (nm != "OpGetVector" && nm != "OpGetVectorNullable") || len(args) != 3 {
+        return false;
+      }
+      base = el_ir::unspan(args[0]!);
+      base is NdVar || field_path(e, base)
     },
     _ => false
   }
