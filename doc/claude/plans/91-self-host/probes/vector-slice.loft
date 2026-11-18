@@ -3,7 +3,8 @@
 //   the subject is a local of plain scalars (carried):  local_bind, local_walk, local_arg, local_len, local_append,
 //                                                       local_recs_bind (records)
 //   ... a fresh NATIVE call's result:                   native_bind
-//   ... a field of a local record:                      field_bind (scalars), field_recs_bind, field_recs_len
+//   ... a field of a local record:                      field_bind (scalars), field_recs_bind, field_recs_len,
+//                                                       field_first_bind (no vector<Q> is written before the slice)
 //   ... a parameter:                                    param_bind
 //   ... an element of a vector of vectors:              elem_walk
 //   the element is itself a vector:                     nested_bind
@@ -12,6 +13,8 @@
 //   the slice is a COPY:                                copy_local, copy_field
 struct R { k: integer, v: integer }
 struct Cnt { n: integer }
+struct Q { k: integer, v: integer }
+struct QBox { n: integer, qs: vector<Q> }
 struct Box { n: integer, xs: vector<integer>, rs: vector<R> }
 
 fn nums(n: integer) -> vector<integer> { v: vector<integer> = []; for i in 0..n { v += [(i + 1) * 10]; } v }
@@ -20,6 +23,7 @@ fn counted(c: Cnt) -> vector<integer> { c.n += 1; v: vector<integer> = []; for i
 fn total(v: vector<integer>) -> integer { t = 0; for x in v { t += x; } t }
 fn box(n: integer) -> Box { Box { n: n, xs: nums(n), rs: recs(n) } }
 
+fn qbox(n: integer) -> QBox { b = QBox { n: n }; for i in 0..n { b.qs += [Q { k: i + 1, v: (i + 1) * 100 }]; } b }
 fn local_bind() -> integer { v = nums(5); s = v[1..3]; total(s) + len(s) }
 fn local_walk() -> integer { v = nums(5); t = 0; for x in v[1..4] { t += x; } t }
 fn local_arg() -> integer { v = nums(5); total(v[1..4]) }
@@ -34,6 +38,7 @@ fn call_append() -> integer { y = [7]; y += nums(5)[3..5]; total(y) + len(y) }
 fn native_bind() -> integer { c = "xx-a-bb-ccc-yy".split('-')[1..4]; len(c) * 100 + len(c[2]) }
 fn field_bind() -> integer { b = box(5); s = b.xs[2..4]; total(s) + len(s) }
 fn field_recs_bind() -> integer { b = box(4); s = b.rs[1..3]; s[0].v + s[1].k + len(s) }
+fn field_first_bind() -> integer { b = qbox(4); s = b.qs[1..3]; s[0].v + s[1].k + len(s) }
 fn field_recs_len() -> integer { b = box(4); len(b.rs[1..4]) }
 fn param(v: vector<integer>) -> integer { s = v[..2]; total(s) + len(s) }
 fn param_bind() -> integer { param(nums(5)) }
@@ -62,6 +67,7 @@ fn main() {
   assert(native_bind() == 303, "native_bind");
   assert(field_bind() == 72, "field_bind");
   assert(field_recs_bind() == 205, "field_recs_bind");
+  assert(field_first_bind() == 205, "field_first_bind");
   assert(field_recs_len() == 3, "field_recs_len");
   assert(param_bind() == 32, "param_bind");
   assert(elem_walk() == 90, "elem_walk");
