@@ -18,6 +18,7 @@ Read the patterns first; the rows are the evidence.
 | The watcher gates a commit in the middle of a multi-commit push | 1 | the watcher starts a cycle only for a tip that has stood for a minute | built |
 | The tester's commits wait for a gap between cycles, or land mid-cycle | 3 | `sync.sh` (the cycle, its push and the baseline job merge what is on GitHub first) and `land.sh` (the tester's commits replayed onto the branch's tip from its own worktree); the real gate is asked to measure the commit the cycle GATED | built |
 | A Rust decision the port must mirror has no trace line, and is learned by probe builds | 1 | a `route` line at the decision, verdict and names included, added when the porter names the selector | habit: ask each handoff which decision cost probes |
+| A tool hands the porter raw output to wait for and read | 1 | every porter-facing tool posts and returns; the answer is the tester's analysis in a message | rule, from the owner |
 | The porter keeps a script of its own for something the loop has | 1 | each new tool is announced with a ready command for the porter's current tip | habit |
 
 ## The rows
@@ -63,4 +64,5 @@ Read the patterns first; the rows are the evidence.
 | 11-18 | 62b87dbe7 | + | The `_vec_N` / `__ncc_N` "parted at" rows were "the answer": the default literal's buffer minted first on pass 1, and the vector `??` over a nested field (backed out earlier) went in; 26 of the 28 functions fixed at that statement, no first-pass drop from a shared change | — |
 | 11-18 | 62b87dbe7 | ? | The porter will not run `try_gate.sh` unasked: it publishes a comment under the owner's account, which only the owner can grant; the tester's own instruction from the owner does not carry to another session | the owner's word to the porter's session (put to the owner; the porter's handoff records it) |
 | 11-18 | 62b87dbe7 | ? | The tester explained a count with "about half", unmeasured, and corrected it one message later (22 of the 28 were refused functions, outside the headline) — the fourth withdrawn figure of the day | no explanation of a count is sent before the command that measures it has run |
+| 11-18 | — | ? | The try-gate as first built waited and printed the gate's raw output: the porter running the gate at one remove, and still reading it | the owner's rule: a hand-off pays only if the tester ANALYSES and the porter works on meanwhile — `try_gate.sh` returns at once, the issue gets a receipt, the analysis is a message |
 
