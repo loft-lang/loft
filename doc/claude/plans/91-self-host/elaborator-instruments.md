@@ -268,6 +268,36 @@ No new mechanism: count the `route` lines.
   exercises are carried in every program that takes them".
 - Sorted by "refused" it is the ranking of what to port next, in Rust's own terms.
 
+### Built — step 5, route coverage
+
+Under `--pass1` the gate prints the headline and the ranking, and writes the whole table where
+`LOFT_ELAB_ROUTE_COVERAGE=<file>` asks (the tester keeps it per tip as `route_coverage.tsv`;
+`routes.tsv` there is the raw lines of step 3).  One row per Rust handler, a verdict handler
+(`materialize_return_into=whole`) under its function's name:
+
+- `programs`: where Rust takes it; `carried`: the port takes its mirror at EVERY site Rust
+  does in that program; `refusing`: at some site it does not and refuses on that line;
+  `missing`: neither;
+- `sites`, `both`, `refused`, `neither`, `port only`: the same by site (program, pass, line).
+
+First reading at fcdbe9378 + 727c7bc75: **1 of 30 routes the corpus exercises are carried in
+every program that takes them** (`parse_reverse`, 6 of 6).  Next closest: `parse_match` 375 of
+399 programs, `parse_vector_match` 69 of 77, `parse_cursor_match` 11 of 12, `parse_tuple_match`
+11 of 14, `parse_map` 12 of 17, `parse_filter` 9 of 12, `parse_insert` 6 of 8, `parse_reserve`
+6 of 7, `parse_reduce` 5 of 6, `try_generic_instantiation` 59 of 145.
+
+How to read a zero: a handler the port does not MARK yet reads as carried nowhere.  That is
+the case for the eighteen handlers step 4 left (`parse_vector` 1608 programs, `parse_object`
+1635, `classify_ret_promotion` 673, `bind_monomorph_join_return` 147,
+`materialize_return_into` 145, `parse_scalar_match` 101, the in-place call arms), so their
+`refusing` column — the programs where the port refuses on a line Rust takes the route on — is
+the part that already means something: `parse_vector` 433, `parse_object` 409,
+`classify_ret_promotion` 125, `bind_monomorph_join_return` 64, `materialize_return_into` 40,
+`parse_scalar_match` 21.  Among the marked handlers the ranking by `refusing` is
+`try_generic_instantiation` 17, `parse_match` 4, `parse_vector_match` 4, `parse_tuple_match` 3,
+`parse_map` 2.  The headline moves as the port marks its paths (step 4's remaining groups) and
+as refusals lift.
+
 ## What is deliberately not built
 
 - No trace inside expressions below the statement (per operator): the image already
