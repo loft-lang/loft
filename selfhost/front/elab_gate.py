@@ -95,6 +95,9 @@ def sections(lines):
 
 
 HANDED = re.compile(r"^state \d \d+:\d+ (stmt|arg)( |$)")
+# `var` lines say which STATEMENT changed a function's variable table (port-debug-output.md
+# § 1): they locate a difference `fn-end` reports and are not part of the verdict.
+VAR = re.compile(r"^state \d \d+:\d+ var ")
 ROUTE = re.compile(r"^state (\d) (\d+):(\d+) (route|refuse) (.*)$")
 
 # The `route` lines of both sides and the port's `refuse` lines by program
@@ -126,7 +129,7 @@ def pass1_sections(stderr):
         # keeps `expected` as one field that lingers between sites and the port carries the
         # hint per node, so those lines differ by modelling; the layer compares what a pass
         # LEFT (`stmt-end`, `fn-end`).  `state_diff.py` still shows them.
-        if HANDED.match(l):
+        if HANDED.match(l) or VAR.match(l):
             continue
         m = FN_END.match(l)
         if name is not None and (m is None or m.group(1) != name):
@@ -137,6 +140,28 @@ def pass1_sections(stderr):
             name = m.group(1)
     if cur:
         out.setdefault(name if name is not None else "(top)", []).extend(cur)
+    return out
+
+
+# Where a function's two variable tables PARTED on the first pass (port-debug-output.md § 1):
+# path -> {function: (the first differing `var` line of the Rust side, of the port)}.
+PASS1_AT = {}
+
+
+def pass1_parted(rust, port, names):
+    """For each function of `names`, the first `state 1 … var <function> …` line the two sides
+    do not share, as (rust line, port line); a function whose `var` lines agree is left out."""
+    def lines(stderr):
+        return [l for l in stderr.splitlines() if l.startswith("state 1 ") and VAR.match(l)]
+    a, b = lines(rust), lines(port)
+    out = {}
+    for name in names:
+        mark = f" var {name} "
+        x, y = [l for l in a if mark in l], [l for l in b if mark in l]
+        if x == y:
+            continue
+        k = next((i for i, (p, q) in enumerate(zip(x, y)) if p != q), min(len(x), len(y)))
+        out[name] = (x[k] if k < len(x) else "(no line)", y[k] if k < len(y) else "(no line)")
     return out
 
 
@@ -243,6 +268,9 @@ def one(loft, defs, elab, std, path, tmp, env, i):
             PASS1[path] = pass1_verdicts(rust_err, m.stderr, None)
         elif refused:
             PASS1[path] = pass1_verdicts(rust_err, m.stderr, {k for k, (v, _) in fns.items() if v == "agree"})
+        if path in PASS1:
+            PASS1_AT[path] = pass1_parted(rust_err, m.stderr,
+                                          [k for k, (v, _, _) in PASS1[path].items() if v == "pass1-differ"])
     if refused:
         return "refused", refused, fns
     if mine == want:
@@ -458,13 +486,16 @@ def main():
             print(f"  {n:5}  first differing at `{kind}`   e.g. {prog}::{fname}\n"
                   f"             rust: {rust_line[:150]}\n             port: {port_line[:150]}")
         # `LOFT_ELAB_PASS1=<file>`: each compared function's first-pass verdict and, where it
-        # differs, the first differing line of each side.
+        # differs, the first differing line of each side, then the first differing `var` line of
+        # each side (the statement where the variable tables parted; empty where they agree).
         if os.environ.get("LOFT_ELAB_PASS1"):
             with open(os.environ["LOFT_ELAB_PASS1"], "w", encoding="utf-8") as fh:
                 for path, fns1 in sorted(PASS1.items()):
                     prog = baseline.name_of(path, root, suite)
                     for fname, (v, rust_line, port_line) in sorted(fns1.items()):
-                        fh.write(f"{v}\t{prog}::{fname}\t{rust_line}\t{port_line}\n")
+                        # and the statement where the two variable tables parted, if they did
+                        at = PASS1_AT.get(path, {}).get(fname, ("", ""))
+                        fh.write(f"{v}\t{prog}::{fname}\t{rust_line}\t{port_line}\t{at[0]}\t{at[1]}\n")
         # `LOFT_ELAB_ROUTES=<file>`: every `route` line of both sides and every `refuse` line of
         # the port, as `program<TAB>side<TAB>pass<TAB>line<TAB>col<TAB>text` — what the
         # where-list joins a refusal's line to, and what route coverage counts.
