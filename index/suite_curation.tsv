@@ -514,28 +514,28 @@ R-SplitTable	rewrites	curated	6	2026-11-18	two suite cells beside its Rust guard
 R-StackBase	rewrites	curated	4	2026-11-18	two suite cells beside its Rust guards
 R-StartStep	rewrites	curated	5	2026-11-18	its own fold candidate agrees with gate E; kept
 R-State	rewrites	curated	4	2026-11-18	four suite cells, distinct cases
-R-StickySum	rewrites	todo			
-R-StreamWalk	rewrites	todo			
-R-Switch	rewrites	todo			
-R-TableHandle	rewrites	todo			
-R-Tabulate	rewrites	todo			
-R-TailSelf	rewrites	todo			
-R-TextBorrow	rewrites	todo			
-R-TextClear	rewrites	todo			
-R-TextLen	rewrites	todo			
-R-TextRun	rewrites	todo			
-R-Transient	rewrites	todo			
-R-TypedKeyed	rewrites	todo			
-R-TypedRead	rewrites	todo			
-R-ValueLocal	rewrites	todo			
-R-ValueRecord	rewrites	todo			
-R-VecCopy	rewrites	todo			
-R-Version	rewrites	todo			
-R-View	rewrites	todo			
-R-ViewReturn	rewrites	todo			
-R-WorkBuffer	rewrites	todo			
-R-WorkPark	rewrites	todo			
-R-WorkView	rewrites	todo			
+R-StickySum	rewrites	curated	2	2026-11-18	two suite cells, distinct cases
+R-StreamWalk	rewrites	curated	2	2026-11-18	held by tests/scripts/a-walk-of-a-built-vector-streams-its-elements.loft and tests/stream_walk.rs; no suite cell is owed beside them
+R-Switch	rewrites	curated	10	2026-11-18	its own fold candidate agrees with gate E; kept
+R-TableHandle	rewrites	curated	2	2026-11-18	held by tests/scripts/159-table-handle.loft (every reshaping path, hand-measured receipts) and tests/table_handle.rs
+R-Tabulate	rewrites	curated	1	2026-11-18	held by tests/scripts/a-byte-classifier-reads-its-table.loft
+R-TailSelf	rewrites	curated	17	2026-11-18	its refused fold is the warning cell and its refused core another clause; kept
+R-TextBorrow	rewrites	curated	26	2026-11-18	its three own fold candidates agree with gate E and stay
+R-TextClear	rewrites	structural	0	2026-11-18	x = "" empties a text in place, keeping its capacity: by the rule's own text only the capacity differs, which no program can observe
+R-TextLen	rewrites	curated	2	2026-11-18	its own fold candidate agrees with gate E; kept
+R-TextRun	rewrites	curated	4	2026-11-18	its own fold candidate agrees with gate E; kept
+R-Transient	rewrites	curated	10	2026-11-18	its two own fold candidates agree with gate E and stay
+R-TypedKeyed	rewrites	curated	8	2026-11-18	its one refused cell's partner agrees with gate E; both stay
+R-TypedRead	rewrites	curated	4	2026-11-18	its own fold candidate agrees with gate E; kept
+R-ValueLocal	rewrites	curated	11	2026-11-18	its two own fold candidates agree with gate E and stay
+R-ValueRecord	rewrites	curated	38	2026-11-18	its refused 157-value-chain's sibling agrees with gate E and the refused cores are other clauses; the patch cell stays
+R-VecCopy	rewrites	curated	3	2026-11-18	its own fold candidate agrees with gate E; kept
+R-Version	rewrites	curated	8	2026-11-18	its two own fold candidates agree with gate E and stay
+R-View	rewrites	curated	3	2026-11-18	its own fold candidate agrees with gate E; kept
+R-ViewReturn	rewrites	curated	1	2026-11-18	one suite cell
+R-WorkBuffer	rewrites	curated	18	2026-11-18	its four own fold candidates agree with gate E and stay
+R-WorkPark	rewrites	structural	0	2026-11-18	the C parks a frame's work texts between calls: a taken text is empty as a fresh one is, so nothing observes it beyond right texts, which the text cells hold
+R-WorkView	rewrites	curated	1	2026-11-18	first cell, from the formal text: a second format, a format on some paths, a loop rebind, a call between (moved by LOFT_NO_SEVERAL_VARS)
 R-WorkerLean	rewrites	todo			
 R-Wrapper	rewrites	todo			
 R-ZeroCount	rewrites	todo			
