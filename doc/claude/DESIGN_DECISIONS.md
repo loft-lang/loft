@@ -91,6 +91,7 @@ which entries nothing verifies, `./scripts/idx decision:C<n>` shows one.
 - [C161](DESIGN_DECISIONS_SYNTAX.md#c161--a-capture-of-a-pattern-group-binds-the-sub-slice-the-group-matched) — a capture of a pattern group binds the sub-slice the group matched
 - [C162](DESIGN_DECISIONS_SYNTAX.md#c162--a-guard-on-a-multi-pattern-arm-is-asked-of-each-listed-pattern-that-matches) — a guard on a multi-pattern arm is asked of each listed pattern that matches
 - [C163](DESIGN_DECISIONS_SYNTAX.md#c163--a-null-written-into-a-dense-slot-is-the-slot-types-default) — a null written into a dense slot is the slot type's default
+- [C168](DESIGN_DECISIONS_SYNTAX.md#c168--where-a-function-is-declared-changes-nothing-a-program-can-observe-its-internal-numbers-may-differ) — where a function is declared changes nothing a program can observe; its internal numbers may differ
 
 ## Collections — [DESIGN_DECISIONS_COLLECTIONS.md](DESIGN_DECISIONS_COLLECTIONS.md)
 

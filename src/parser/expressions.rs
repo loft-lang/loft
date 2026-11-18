@@ -886,6 +886,9 @@ impl Parser {
                 let seed = self.promoted_arg_seed(ls, shadow, original);
                 ls.insert(0, seed);
             }
+            // @C168: declared by variable number, which follows where a callee stands in the
+            // file (its buffer is numbered on pass 2 when it is declared below).  Allowed: the
+            // order of these hidden stores is nothing a program observes.
             for r in self.vars.work_references() {
                 if crate::env_once!(std::env::var("LOFT_TRACE_PREAMBLE").is_ok()) {
                     eprintln!(

@@ -1,0 +1,61 @@
+// A challenge for a KEYED collection given as a struct literal's field (@PLN91): one function
+// per case, one axis each; every function answers a hand-computed value.
+//   the value is a fresh call's result:   hash_call, sorted_call, index_call
+//   ... a local:                          hash_local (the field is a COPY: the local does not see a later append)
+//   ... a parameter:                      hash_param (a copy: the caller's collection is unchanged)
+//   ... another record's field:           hash_field (a copy)
+//   ... a keyed literal:                  hash_literal
+//   ... nothing (the field is omitted):   hash_omitted
+//   the field's position:                 hash_last, hash_first (other fields before / after)
+//   the value is a plain VECTOR:          hash_from_vector, hash_from_vector_local
+//   the same as a whole ASSIGNMENT:       assign_call, assign_local, assign_vector
+//   the plain-vector twin of the first:   vec_call
+struct E { k: integer, v: integer }
+struct HBox { n: integer, h: hash<E[k]> }
+struct SBox { n: integer, s: sorted<E[k]> }
+struct IBox { n: integer, ix: index<E[k]> }
+struct First { h: hash<E[k]>, n: integer, t: text }
+struct VBox { n: integer, xs: vector<E> }
+
+fn mk_h(n: integer) -> hash<E[k]> { h: hash<E[k]> = []; for i in 0..n { h += [E { k: i + 1, v: (i + 1) * 10 }]; } h }
+fn mk_s(n: integer) -> sorted<E[k]> { s: sorted<E[k]> = []; for i in 0..n { s += [E { k: i + 1, v: (i + 1) * 10 }]; } s }
+fn mk_i(n: integer) -> index<E[k]> { ix: index<E[k]> = []; for i in 0..n { ix += [E { k: i + 1, v: (i + 1) * 10 }]; } ix }
+fn mk_v(n: integer) -> vector<E> { v: vector<E> = []; for i in 0..n { v += [E { k: i + 1, v: (i + 1) * 10 }]; } v }
+fn val(e: E?) -> integer { if e == null { -1 } else { e.v } }
+
+fn hash_call() -> integer { b = HBox { n: 1, h: mk_h(3) }; val(b.h[2]) + b.n }
+fn sorted_call() -> integer { b = SBox { n: 1, s: mk_s(3) }; val(b.s[3]) + b.n }
+fn index_call() -> integer { b = IBox { n: 1, ix: mk_i(3) }; val(b.ix[1]) + b.n }
+fn hash_local() -> integer { h = mk_h(3); b = HBox { n: 1, h: h }; b.h += [E { k: 9, v: 90 }]; val(b.h[9]) + val(h[9]) + val(h[2]) }
+fn fill(h: hash<E[k]>) -> integer { b = HBox { n: 2, h: h }; b.h += [E { k: 8, v: 80 }]; val(b.h[8]) + val(b.h[1]) }
+fn hash_param() -> integer { h = mk_h(2); r = fill(h); r * 1000 + val(h[8]) + val(h[1]) }
+fn hash_field() -> integer { a = HBox { n: 1, h: mk_h(3) }; b = HBox { n: 2, h: a.h }; b.h += [E { k: 7, v: 70 }]; val(b.h[7]) + val(a.h[7]) + val(a.h[3]) }
+fn hash_literal() -> integer { b = HBox { n: 1, h: [E { k: 5, v: 50 }, E { k: 6, v: 60 }] }; val(b.h[6]) + val(b.h[5]) }
+fn hash_omitted() -> integer { b = HBox { n: 4 }; b.h += [E { k: 1, v: 11 }]; val(b.h[1]) + val(b.h[2]) + b.n }
+fn hash_last() -> integer { b = HBox { n: 6, h: mk_h(2) }; b.n + val(b.h[2]) }
+fn hash_first() -> integer { b = First { h: mk_h(2), n: 6, t: "tx" }; b.n + val(b.h[2]) + len(b.t) }
+fn hash_from_vector() -> integer { b = HBox { n: 1, h: mk_v(3) }; val(b.h[3]) + val(b.h[1]) }
+fn hash_from_vector_local() -> integer { v = mk_v(2); b = HBox { n: 1, h: v }; val(b.h[2]) + len(v) }
+fn assign_call() -> integer { b = HBox { n: 1, h: mk_h(1) }; b.h = mk_h(3); val(b.h[3]) + val(b.h[1]) }
+fn assign_local() -> integer { h = mk_h(2); b = HBox { n: 1 }; b.h = h; b.h += [E { k: 9, v: 90 }]; val(b.h[9]) + val(h[9]) + val(h[2]) }
+fn assign_vector() -> integer { b = HBox { n: 1, h: mk_h(1) }; b.h = mk_v(3); val(b.h[3]) + val(b.h[2]) }
+fn vec_call() -> integer { b = VBox { n: 1, xs: mk_v(3) }; b.xs[1].v + b.n }
+
+fn main() {
+  assert(hash_call() == 21, "hash_call");
+  assert(sorted_call() == 31, "sorted_call");
+  assert(index_call() == 11, "index_call");
+  assert(hash_local() == 109, "hash_local");
+  assert(hash_param() == 90009, "hash_param");
+  assert(hash_field() == 99, "hash_field");
+  assert(hash_literal() == 110, "hash_literal");
+  assert(hash_omitted() == 14, "hash_omitted");
+  assert(hash_last() == 26, "hash_last");
+  assert(hash_first() == 28, "hash_first");
+  assert(hash_from_vector() == 40, "hash_from_vector");
+  assert(hash_from_vector_local() == 22, "hash_from_vector_local");
+  assert(assign_call() == 40, "assign_call");
+  assert(assign_local() == 109, "assign_local");
+  assert(assign_vector() == 50, "assign_vector");
+  assert(vec_call() == 21, "vec_call");
+}
