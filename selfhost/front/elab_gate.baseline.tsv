@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	c79b692df575975a2372445fd709f1dfcbf04521
+suite	f3a8e11827c9bcac3f946aff09382334b27e5c60
 
-layer	elab	agree	1031	of	2049
+layer	elab	agree	1031	of	2047
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -666,11 +666,9 @@ elab	refused	loft-suite/rules/types/N-Join/2339-a-binding-arm-answering-a-null-b
 elab	refused	loft-suite/rules/types/N-Match/a-null-arm-matches-a-null-subject-of-any-kind.loft
 elab	refused	loft-suite/rules/types/N-Opt/1471-a-value-struct-is-nullable-through-its-tag.loft
 elab	refused	loft-suite/rules/types/N-Opt/has-null-is-owed-by-every-rule-that-constructs-an-optional.loft
-elab	refused	loft-suite/rules/types/N-Reserve/1249-a-nullable-narrow-sentinel-is-not-a-value.loft
 elab	refused	loft-suite/rules/types/N-Reserve/152-a-store-that-does-not-fit-is-testable-where-it-happened.loft
 elab	refused	loft-suite/rules/types/N-Reserve/152-the-fallback-and-failure-spellings-that-already-work.loft
-elab	refused	loft-suite/rules/types/N-Reserve/1692-a-loop-variable-reads-a-nullable-narrow-element-as-null.loft
-elab	refused	loft-suite/rules/types/N-Reserve/a-nullable-narrow-tuple-member-spends-its-top-code-in-every-place.loft
+elab	refused	loft-suite/rules/types/N-Reserve/a-nullable-narrow-value-spends-its-top-code-on-null-in-every-place.loft
 elab	refused	loft-suite/rules/types/N-Road/1934-a-nullable-record-return-takes-its-dense-twins-buffer.loft
 elab	refused	loft-suite/rules/types/N-Road/1989-a-literal-bound-to-a-nullable-local-is-built-in-the-local.loft
 elab	refused	loft-suite/rules/types/N-Road/every-shape-takes-the-same-road-in-both-spellings.loft
