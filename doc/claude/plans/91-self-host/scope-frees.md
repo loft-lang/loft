@@ -81,6 +81,28 @@ Two parser defects met on the way: loft#2544 (fixed, an `is` test of a later-dec
 variant), loft#2545 (filed: an `if` with a forward call and `[]` arms types void on pass 1 —
 why `temp_variable` restates `el_vars::fresh_variable` rather than importing it).
 
+**Step 3, the front layer (2026-11-17)** — the measurement the scope gate cannot make: a
+differing definition is a ranking there, not a failure.  With the sweep, 14 programs that it laid
+out ran to "a store was freed twice".  The cause was a reference the COMPILER made — an
+argument's lifted copy (`__ref_pN_M`, allocated by `args.rs` with `OpDatabase`), a work ref, an
+element, a coalesce temporary — whose store is handed on by passes this slice does not carry:
+N-Store/1413's `fresh(v: &S?) { v = S { n: 7 } }` hands its record to the caller's place, and Rust
+emits no free for it.  The slice now lays out only a reference the program names
+(`user_named`); a compiler-made one is refused by name and comes back with the rule that gives
+and hands on its store (`owner_handover.rs`).  Cost on the gate: 838 definitions that agreed
+(18452 → 17614).  Front layer at fac3652: **3 → 50 of 1291 programs run from the loft front end
+alone**, no double free; the two faults left are IR passes after the scope pass, which the front
+layer does not run (R-ExpPow's `e` raised to a power rewritten to `exp`, R-TailSelf's tail call).
+
+**Step 4, rules met on the gate's ranking (2026-11-18)**:
+- `@FR-R-Wrapper` (`scope_wrapper.loft`, `wrapper_inline.rs`, run last): a one-op standard-library
+  wrapper's call is its op — `len(v)` is `OpLengthVector(v)`.  Definitions 17614 → 17789.
+- An `Insert` statement is spliced into its block (`convert.rs`), so a range `for`'s hoisted bounds
+  stand in the block.  Definitions 17789 → **18084**, programs agree **129 of 2191**.
+
+The ranking now leads with the closure records' drop functions (≈280), closure-record reads
+(≈165) and a text return buffer's tail, which Rust keeps as an `Insert` (38).
+
 ## Steps, each measured by the gate
 
 1. Lift the refusal for text and reference locals in functions of the slice; insert the block-end
