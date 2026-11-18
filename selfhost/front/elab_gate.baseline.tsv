@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	be55620c9793c98d01df24d63b9ace03f3efbec1
 
-layer	elab	agree	1137	of	2085
+layer	elab	agree	1140	of	2085
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -595,7 +595,6 @@ elab	refused	loft-suite/rules/types/C-Var/sibling-variants-join-to-their-enum.lo
 elab	refused	loft-suite/rules/types/D-Json/2557-a-jsonvalue-given-no-value-holds-jnull-wherever-the-null-is-written.loft
 elab	refused	loft-suite/rules/types/D-NoEnumF/a-checked-parse-answers-null-for-an-enum-field-it-cannot-fill.loft
 elab	refused	loft-suite/rules/types/D-NoEnumF/a-variant-cast-takes-the-default-its-fields-choose.loft
-elab	refused	loft-suite/rules/types/D-Opt/an-enum-fields-default-is-a-choice-the-declaration-makes.loft
 elab	refused	loft-suite/rules/types/D-Rec/a-second-variant-default-builds-in-a-store-of-its-own.loft
 elab	refused	loft-suite/rules/types/D-Scalar/1254-an-empty-stub-returns-its-types-default.loft
 elab	refused	loft-suite/rules/types/I-Join/2066-two-named-widths-join-to-their-union.loft
@@ -847,7 +846,6 @@ elab	refused	tests/scripts/802-lazy-refusal-visible.loft
 elab	refused	tests/scripts/81-iterator-protocol.loft
 elab	refused	tests/scripts/845-generic-format.loft
 elab	refused	tests/scripts/85-temp-subject-borrow-return-uaf.loft
-elab	refused	tests/scripts/85-tier1-local-source-matrix.loft
 elab	refused	tests/scripts/850-cross-package-method-name-collision.loft
 elab	refused	tests/scripts/850b-collision-import-order.loft
 elab	refused	tests/scripts/850c-two-packages-one-enum-name.loft
@@ -941,7 +939,6 @@ elab	refused	tests/scripts/an-operand-is-copied-only-when-a-later-operand-can-wr
 elab	refused	tests/scripts/elem-first-a-paired-temp-lives-in-its-elements-store.loft
 elab	refused	tests/scripts/generic-typevar-name-usable.loft
 elab	refused	tests/scripts/link-safe-oracle.loft
-elab	refused	tests/scripts/link-widen-baseline.loft
 elab	refused	tests/scripts/pln105-expose-iterate.loft
 elab	refused	tests/scripts/pln125-a2c-companion.loft
 elab	refused	tests/scripts/pln133-optional-unify.loft
@@ -955,7 +952,7 @@ elab	refused	tests/scripts/store_paged_enum_field.loft
 elab	refused	tests/scripts/store_rebuild_b1.loft
 elab	refused	tests/scripts/the-reference-safety-traps-are-what-it-catalogues.loft
 
-layer	elab-functions	agree	15258	of	27854
+layer	elab-functions	agree	15240	of	27820
 elab-functions	agree	lib/code.loft::Block
 elab-functions	agree	lib/code.loft::Boolean
 elab-functions	agree	lib/code.loft::Call
@@ -5113,11 +5110,15 @@ elab-functions	agree	loft-suite/rules/heap/H-Alloc/an-omitted-field-is-written-t
 elab-functions	agree	loft-suite/rules/heap/H-Alloc/an-omitted-field-is-written-to-its-default-in-a-reused-block.loft::Sq
 elab-functions	agree	loft-suite/rules/heap/H-Alloc/an-omitted-field-is-written-to-its-default-in-a-reused-block.loft::main_vector<P>
 elab-functions	agree	loft-suite/rules/heap/H-Alloc/an-omitted-field-is-written-to-its-default-in-a-reused-block.loft::main_vector<Sh>
+elab-functions	agree	loft-suite/rules/heap/H-Alloc/an-omitted-field-is-written-to-its-default-in-a-reused-block.loft::n_part
 elab-functions	agree	loft-suite/rules/heap/H-Alloc/an-omitted-field-is-written-to-its-default-in-a-reused-block.loft::n_show
 elab-functions	agree	loft-suite/rules/heap/H-Alloc/an-omitted-field-is-written-to-its-default-in-a-reused-block.loft::n_test_a_call_alternating_full_and_partial_results
 elab-functions	agree	loft-suite/rules/heap/H-Alloc/an-omitted-field-is-written-to-its-default-in-a-reused-block.loft::n_test_a_call_result_read_in_place_alternating
+elab-functions	agree	loft-suite/rules/heap/H-Alloc/an-omitted-field-is-written-to-its-default-in-a-reused-block.loft::n_test_a_fresh_record_omitting_fields
 elab-functions	agree	loft-suite/rules/heap/H-Alloc/an-omitted-field-is-written-to-its-default-in-a-reused-block.loft::n_test_a_zeroed_repetition
+elab-functions	agree	loft-suite/rules/heap/H-Alloc/an-omitted-field-is-written-to-its-default-in-a-reused-block.loft::n_test_an_element_removed_and_appended_again
 elab-functions	agree	loft-suite/rules/heap/H-Alloc/an-omitted-field-is-written-to-its-default-in-a-reused-block.loft::n_test_an_inline_field_overwritten_by_a_partial_literal
+elab-functions	agree	loft-suite/rules/heap/H-Alloc/an-omitted-field-is-written-to-its-default-in-a-reused-block.loft::n_test_full_and_partial_literals_alternating_in_a_loop
 elab-functions	agree	loft-suite/rules/heap/H-Alloc/an-omitted-field-is-written-to-its-default-in-a-reused-block.loft::vector<P>
 elab-functions	agree	loft-suite/rules/heap/H-Alloc/an-omitted-field-is-written-to-its-default-in-a-reused-block.loft::vector<Sh>
 elab-functions	agree	loft-suite/rules/heap/H-Claim/1995-a-parsed-record-has-every-field-written.loft::(schema)
@@ -5997,6 +5998,7 @@ elab-functions	agree	loft-suite/rules/heap/H-RefHome/a-stored-reference-its-reco
 elab-functions	agree	loft-suite/rules/heap/H-RefHome/a-stored-reference-its-record-outlives-reads-it.loft::P
 elab-functions	agree	loft-suite/rules/heap/H-RefHome/a-stored-reference-its-record-outlives-reads-it.loft::main_vector<H>
 elab-functions	agree	loft-suite/rules/heap/H-RefHome/a-stored-reference-its-record-outlives-reads-it.loft::main_vector<P>
+elab-functions	agree	loft-suite/rules/heap/H-RefHome/a-stored-reference-its-record-outlives-reads-it.loft::n_admitted
 elab-functions	agree	loft-suite/rules/heap/H-RefHome/a-stored-reference-its-record-outlives-reads-it.loft::n_link
 elab-functions	agree	loft-suite/rules/heap/H-RefHome/a-stored-reference-its-record-outlives-reads-it.loft::n_literal_into_a_null_holder
 elab-functions	agree	loft-suite/rules/heap/H-RefHome/a-stored-reference-its-record-outlives-reads-it.loft::n_literal_repoints
@@ -8688,6 +8690,7 @@ elab-functions	agree	loft-suite/rules/ownership/O-Move/1101-a-projection-bound-t
 elab-functions	agree	loft-suite/rules/ownership/O-Move/1101-a-projection-bound-to-a-local-then-returned.loft::n_test_the_explicit_return_spelling_leaks_nothing
 elab-functions	agree	loft-suite/rules/ownership/O-Move/1101-a-projection-bound-to-a-local-then-returned.loft::n_test_the_inline_call_projection_returns_explicitly_too
 elab-functions	agree	loft-suite/rules/ownership/O-Move/1101-a-projection-bound-to-a-local-then-returned.loft::n_test_the_record_view_return_is_untouched
+elab-functions	agree	loft-suite/rules/ownership/O-Move/1101-a-projection-bound-to-a-local-then-returned.loft::n_tuple_bind
 elab-functions	agree	loft-suite/rules/ownership/O-Move/1101-a-projection-bound-to-a-local-then-returned.loft::vector<vector<integer>>
 elab-functions	agree	loft-suite/rules/ownership/O-Move/1202-a-captured-record-enum-is-not-the-callers-to-take.loft::Circle
 elab-functions	agree	loft-suite/rules/ownership/O-Move/1202-a-captured-record-enum-is-not-the-callers-to-take.loft::Holder
@@ -9907,6 +9910,7 @@ elab-functions	agree	loft-suite/rules/rewrites/R-Prefill/164-prefill-image.loft:
 elab-functions	agree	loft-suite/rules/rewrites/R-Prefill/164-prefill-image.loft::main_vector<Mix>
 elab-functions	agree	loft-suite/rules/rewrites/R-Prefill/164-prefill-image.loft::main_vector<Shape>
 elab-functions	agree	loft-suite/rules/rewrites/R-Prefill/164-prefill-image.loft::n_c11
+elab-functions	agree	loft-suite/rules/rewrites/R-Prefill/164-prefill-image.loft::n_c4
 elab-functions	agree	loft-suite/rules/rewrites/R-Prefill/164-prefill-image.loft::n_c5
 elab-functions	agree	loft-suite/rules/rewrites/R-Prefill/164-prefill-image.loft::n_check_mix
 elab-functions	agree	loft-suite/rules/rewrites/R-Prefill/164-prefill-image.loft::n_main
@@ -10479,17 +10483,6 @@ elab-functions	agree	loft-suite/rules/types/D-NoEnumF/a-variant-cast-takes-the-d
 elab-functions	agree	loft-suite/rules/types/D-NoEnumF/a-variant-cast-takes-the-default-its-fields-choose.loft::NcSh
 elab-functions	agree	loft-suite/rules/types/D-NoEnumF/a-variant-cast-takes-the-default-its-fields-choose.loft::Red
 elab-functions	agree	loft-suite/rules/types/D-NoEnumF/a-variant-cast-takes-the-default-its-fields-choose.loft::n_main
-elab-functions	agree	loft-suite/rules/types/D-Opt/an-enum-fields-default-is-a-choice-the-declaration-makes.loft::(schema)
-elab-functions	agree	loft-suite/rules/types/D-Opt/an-enum-fields-default-is-a-choice-the-declaration-makes.loft::C
-elab-functions	agree	loft-suite/rules/types/D-Opt/an-enum-fields-default-is-a-choice-the-declaration-makes.loft::Chosen
-elab-functions	agree	loft-suite/rules/types/D-Opt/an-enum-fields-default-is-a-choice-the-declaration-makes.loft::Green
-elab-functions	agree	loft-suite/rules/types/D-Opt/an-enum-fields-default-is-a-choice-the-declaration-makes.loft::Maybe
-elab-functions	agree	loft-suite/rules/types/D-Opt/an-enum-fields-default-is-a-choice-the-declaration-makes.loft::Plain
-elab-functions	agree	loft-suite/rules/types/D-Opt/an-enum-fields-default-is-a-choice-the-declaration-makes.loft::Red
-elab-functions	agree	loft-suite/rules/types/D-Opt/an-enum-fields-default-is-a-choice-the-declaration-makes.loft::n_none
-elab-functions	agree	loft-suite/rules/types/D-Opt/an-enum-fields-default-is-a-choice-the-declaration-makes.loft::n_test_a_declared_variant_is_taken
-elab-functions	agree	loft-suite/rules/types/D-Opt/an-enum-fields-default-is-a-choice-the-declaration-makes.loft::n_test_an_optional_enum_field_defaults_to_null
-elab-functions	agree	loft-suite/rules/types/D-Opt/an-enum-fields-default-is-a-choice-the-declaration-makes.loft::n_test_an_optional_enum_local_discharges_to_its_first_variant
 elab-functions	agree	loft-suite/rules/types/D-Rec/a-second-variant-default-builds-in-a-store-of-its-own.loft::P
 elab-functions	agree	loft-suite/rules/types/D-Rec/a-second-variant-default-builds-in-a-store-of-its-own.loft::Ty
 elab-functions	agree	loft-suite/rules/types/D-Rec/a-second-variant-default-builds-in-a-store-of-its-own.loft::TyInt
@@ -14594,18 +14587,6 @@ elab-functions	agree	tests/scripts/85-temp-subject-borrow-return-uaf.loft::E
 elab-functions	agree	tests/scripts/85-temp-subject-borrow-return-uaf.loft::Empty
 elab-functions	agree	tests/scripts/85-temp-subject-borrow-return-uaf.loft::Filled
 elab-functions	agree	tests/scripts/85-temp-subject-borrow-return-uaf.loft::n_g
-elab-functions	agree	tests/scripts/85-tier1-local-source-matrix.loft::(schema)
-elab-functions	agree	tests/scripts/85-tier1-local-source-matrix.loft::G
-elab-functions	agree	tests/scripts/85-tier1-local-source-matrix.loft::n_bump
-elab-functions	agree	tests/scripts/85-tier1-local-source-matrix.loft::n_callee_mut
-elab-functions	agree	tests/scripts/85-tier1-local-source-matrix.loft::n_d1_write_v
-elab-functions	agree	tests/scripts/85-tier1-local-source-matrix.loft::n_d2_mut_src
-elab-functions	agree	tests/scripts/85-tier1-local-source-matrix.loft::n_in_loop
-elab-functions	agree	tests/scripts/85-tier1-local-source-matrix.loft::n_main
-elab-functions	agree	tests/scripts/85-tier1-local-source-matrix.loft::n_rebind
-elab-functions	agree	tests/scripts/85-tier1-local-source-matrix.loft::n_ro_local
-elab-functions	agree	tests/scripts/85-tier1-local-source-matrix.loft::n_ro_local_elem
-elab-functions	agree	tests/scripts/85-tier1-local-source-matrix.loft::n_ro_local_sum
 elab-functions	agree	tests/scripts/882-keyed-element-read-borrows-its-container.loft::I882H1
 elab-functions	agree	tests/scripts/882-keyed-element-read-borrows-its-container.loft::I882H2
 elab-functions	agree	tests/scripts/882-keyed-element-read-borrows-its-container.loft::I882H3
@@ -15089,6 +15070,7 @@ elab-functions	agree	tests/scripts/a-hash-walked-unordered-repeats-its-order.lof
 elab-functions	agree	tests/scripts/a-keyed-bind-from-a-call-on-a-vector-literal-compiles-natively.loft::(schema)
 elab-functions	agree	tests/scripts/a-keyed-bind-from-a-call-on-a-vector-literal-compiles-natively.loft::W
 elab-functions	agree	tests/scripts/a-keyed-bind-from-a-call-on-a-vector-literal-compiles-natively.loft::n_mkset
+elab-functions	agree	tests/scripts/a-keyed-insert-stages-its-values-before-the-entry-is-found.loft::(schema)
 elab-functions	agree	tests/scripts/a-keyed-insert-stages-its-values-before-the-entry-is-found.loft::Dark
 elab-functions	agree	tests/scripts/a-keyed-insert-stages-its-values-before-the-entry-is-found.loft::Holder
 elab-functions	agree	tests/scripts/a-keyed-insert-stages-its-values-before-the-entry-is-found.loft::Light
@@ -15845,10 +15827,7 @@ elab-functions	agree	tests/scripts/link-safe-oracle.loft::n_main
 elab-functions	agree	tests/scripts/link-safe-oracle.loft::n_s1_safe
 elab-functions	agree	tests/scripts/link-safe-oracle.loft::n_s2_source_dead
 elab-functions	agree	tests/scripts/link-safe-oracle.loft::n_s3_source_reassigned
-elab-functions	agree	tests/scripts/link-widen-baseline.loft::(schema)
-elab-functions	agree	tests/scripts/link-widen-baseline.loft::S
-elab-functions	agree	tests/scripts/link-widen-baseline.loft::n_main
-elab-functions	agree	tests/scripts/link-widen-baseline.loft::n_s2_source_dead
+elab-functions	agree	tests/scripts/link-safe-oracle.loft::n_s4_escape
 elab-functions	agree	tests/scripts/pln105-expose-iterate.loft::(schema)
 elab-functions	agree	tests/scripts/pln105-expose-iterate.loft::Tile
 elab-functions	agree	tests/scripts/pln105-expose-iterate.loft::n_first_over
@@ -16215,7 +16194,7 @@ elab-functions	agree	tests/scripts/the-reference-safety-traps-are-what-it-catalo
 elab-functions	agree	tests/scripts/the-reference-safety-traps-are-what-it-catalogues.loft::vector<SafetyRow>
 elab-functions	agree	tests/scripts/the-reference-safety-traps-are-what-it-catalogues.loft::vector<integer(0, 255)>
 
-layer	elab-pass1	agree	10786	of	15966
+layer	elab-pass1	agree	10791	of	15977
 elab-pass1	agree	lib/code.loft::t_4Code_get_type
 elab-pass1	agree	lib/code.loft::t_4Code_set_type
 elab-pass1	agree	lib/docs.loft::n_demo
@@ -18655,6 +18634,7 @@ elab-pass1	agree	loft-suite/rules/grammar/G-Pat-Group/a-parenthesised-range-patt
 elab-pass1	agree	loft-suite/rules/heap/H-Alloc/an-omitted-field-is-written-to-its-default-in-a-reused-block.loft::n_show
 elab-pass1	agree	loft-suite/rules/heap/H-Alloc/an-omitted-field-is-written-to-its-default-in-a-reused-block.loft::n_test_a_call_alternating_full_and_partial_results
 elab-pass1	agree	loft-suite/rules/heap/H-Alloc/an-omitted-field-is-written-to-its-default-in-a-reused-block.loft::n_test_a_call_result_read_in_place_alternating
+elab-pass1	agree	loft-suite/rules/heap/H-Alloc/an-omitted-field-is-written-to-its-default-in-a-reused-block.loft::n_test_a_fresh_record_omitting_fields
 elab-pass1	agree	loft-suite/rules/heap/H-Alloc/an-omitted-field-is-written-to-its-default-in-a-reused-block.loft::n_test_a_zeroed_repetition
 elab-pass1	agree	loft-suite/rules/heap/H-Alloc/an-omitted-field-is-written-to-its-default-in-a-reused-block.loft::n_test_an_inline_field_overwritten_by_a_partial_literal
 elab-pass1	agree	loft-suite/rules/heap/H-Claim/1995-a-parsed-record-has-every-field-written.loft::n_a_bare_tag_answers_the_payloads_defaults
@@ -22874,6 +22854,7 @@ elab-pass1	agree	loft-suite/rules/types/D-NoEnumF/a-checked-parse-answers-null-f
 elab-pass1	agree	loft-suite/rules/types/D-NoEnumF/a-variant-cast-takes-the-default-its-fields-choose.loft::n_main
 elab-pass1	agree	loft-suite/rules/types/D-Opt/an-enum-fields-default-is-a-choice-the-declaration-makes.loft::n_none
 elab-pass1	agree	loft-suite/rules/types/D-Opt/an-enum-fields-default-is-a-choice-the-declaration-makes.loft::n_test_a_declared_variant_is_taken
+elab-pass1	agree	loft-suite/rules/types/D-Opt/an-enum-fields-default-is-a-choice-the-declaration-makes.loft::n_test_a_record_default_fills_each_field
 elab-pass1	agree	loft-suite/rules/types/D-Opt/an-enum-fields-default-is-a-choice-the-declaration-makes.loft::n_test_an_optional_enum_field_defaults_to_null
 elab-pass1	agree	loft-suite/rules/types/D-Opt/an-enum-fields-default-is-a-choice-the-declaration-makes.loft::n_test_an_optional_enum_local_discharges_to_its_first_variant
 elab-pass1	agree	loft-suite/rules/types/D-Scalar/1254-an-empty-stub-returns-its-types-default.loft::n_empty_float
@@ -25373,6 +25354,7 @@ elab-pass1	agree	tests/scripts/85-tier1-local-source-matrix.loft::n_bump
 elab-pass1	agree	tests/scripts/85-tier1-local-source-matrix.loft::n_callee_mut
 elab-pass1	agree	tests/scripts/85-tier1-local-source-matrix.loft::n_d1_write_v
 elab-pass1	agree	tests/scripts/85-tier1-local-source-matrix.loft::n_d2_mut_src
+elab-pass1	agree	tests/scripts/85-tier1-local-source-matrix.loft::n_d3_escape
 elab-pass1	agree	tests/scripts/85-tier1-local-source-matrix.loft::n_in_loop
 elab-pass1	agree	tests/scripts/85-tier1-local-source-matrix.loft::n_main
 elab-pass1	agree	tests/scripts/85-tier1-local-source-matrix.loft::n_rebind
@@ -26927,7 +26909,9 @@ elab-pass1	agree	tests/scripts/link-safe-oracle.loft::n_main
 elab-pass1	agree	tests/scripts/link-safe-oracle.loft::n_s1_safe
 elab-pass1	agree	tests/scripts/link-safe-oracle.loft::n_s2_source_dead
 elab-pass1	agree	tests/scripts/link-safe-oracle.loft::n_s3_source_reassigned
+elab-pass1	agree	tests/scripts/link-safe-oracle.loft::n_s4_escape
 elab-pass1	agree	tests/scripts/link-widen-baseline.loft::n_s2_source_dead
+elab-pass1	agree	tests/scripts/link-widen-baseline.loft::n_s4_escape
 elab-pass1	agree	tests/scripts/one-file-handle-reads-and-writes-and-a-short-read-is-null.loft::n_main
 elab-pass1	agree	tests/scripts/one-file-handle-reads-and-writes-and-a-short-read-is-null.loft::n_scratch
 elab-pass1	agree	tests/scripts/pln102-const-out-of-range.loft::n_test
