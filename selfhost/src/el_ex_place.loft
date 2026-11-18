@@ -1286,9 +1286,14 @@ pub fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
               staged_kind = wpt != null && (el_ex_call::scalar(el_types::base(wpt!.typedef[0] ?? ir::TyVoid)) || el_types::base(wpt!.typedef[0] ?? ir::TyVoid) is TyText);
               // (Only a nested record CONSTRUCTION moves ahead of the mint, which is not
               // carried; any other record or collection value is a view and keeps its place.)
-              built_here = match el_ir::unspan(wa[2]!) { NdBlock { block: cb } => cb[0].name == "Object" || cb[0].name == "EnumUnitLit" || cb[0].name == "Vector", _ => false };
-              if !starts_with(el::def(e, wd).name, "OpSet") || len(wa) != 3 || (!staged_kind && built_here) {
+              // (A write of another arity — a vector field's append — is no plain value.)
+              if !starts_with(el::def(e, wd).name, "OpSet") || len(wa) != 3 {
                 plain_values = false;
+              } else {
+                built_here = match el_ir::unspan(wa[2]!) { NdBlock { block: cb } => cb[0].name == "Object" || cb[0].name == "EnumUnitLit" || cb[0].name == "Vector", _ => false };
+                if !staged_kind && built_here {
+                  plain_values = false;
+                }
               }
             },
             _ => { plain_values = false; }
