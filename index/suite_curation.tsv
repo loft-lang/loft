@@ -361,11 +361,11 @@ Op-Result	operators	curated	3	2026-11-18	cores are E-Asgn-Compound 1819 and F-Re
 Op-Shape	operators	curated	3	2026-11-18	first cell of its own: every arity and the to_text / next shapes; Op-Def's cell holds compare and self
 Op-Std	operators	curated	5	2026-11-18	core; the stdlib-type refusal; 2554 OpNot/OpNe warn (new); the retired-name refusals and the [] interface refusal (new)
 O-Borrow	ownership	curated	12	2026-11-18	own cell for every view kind (field, element, parameter field, & link; moved by LOFT_NO_SEVERAL_VARS) beside 2338; the B-Ref, R-CopyView, R-LoopRecord, R-Const cells are their rules'
-O-Borrow-Scalar	ownership	todo			
+O-Borrow-Scalar	ownership	curated	3	2026-11-18	its own link-to-a-link patch cell and B-Ref-Write's patch cell stay; B-Ref-Lvalue's cell is the core
 O-Buffer	ownership	todo			
 O-Complete	ownership	todo			
-O-Deps	ownership	todo			
-O-Derived	ownership	todo			
+O-Deps	ownership	curated	3	2026-11-18	three cores, three shapes: a fn-ref return, an element off a borrowing call's field, a nullable element binding
+O-Derived	ownership	curated	4	2026-11-18	four cores, each a distinct case: a recursive join's argument, an inline rebuild's carried record, every-path frees, a hoisted field view
 O-Detach	ownership	todo			
 O-Latest	ownership	todo			
 O-LazyBuffer	ownership	todo			
