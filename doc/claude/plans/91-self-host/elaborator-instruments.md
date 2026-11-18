@@ -105,6 +105,30 @@ bound to a local (`t = ["a"].map(shout)` beside a later lambda) mints `_elm_1` a
 the other order, on both passes; the image differs (`vector<text["_elm_1"]>` against
 `vector<text["_vec_1"]>`).
 
+### Built — step 2, the `--pass1` layer
+
+`elab_gate.py --pass1` compares the `state 1` lines by FUNCTION: every function of a program
+that agrees, the agreeing functions of a refused one.  A function's lines are those up to and
+including its `fn-end` group, so a lambda's `fn-end` also closes what its enclosing function
+printed before it; both sides are cut alike, and a difference there is reported under the
+lambda's name.  The report ranks the kind of the first differing line with one example each;
+`LOFT_ELAB_PASS1=<file>` writes every function's verdict and both lines.
+
+The baseline block `elab-pass1` pins the functions that agree (`--pass1 --write-baseline`).  It
+is a ratchet: a pinned function that differs is named (`PASS1 DROP`, also under
+`--functions-against`), and the check fails only when fewer functions agree than were pinned.
+
+The positive control runs in every `--pass1` run, not as a separate cell: one program whose
+first pass agrees is read again with `LOFT_STATE_TRACE_CONTROL=1`, under which the port prints
+`ret=(control)` on the first pass; the layer must read `pass1-differ` or the gate stops with
+"the layer cannot fail".
+
+Whole corpus at loft30-gate 5c83f4c82 (suite be55620c), 68 s with built tools: **8854 of 15866
+functions agree on the first pass**, 7012 differ; by program 602 of 2085.  First differing
+line: 2480 `stmt-end`, 2154 `arg`, 1236 `fn-end var`, 1038 `stmt`, 104 `fn-end ret`.  The two
+points that existed before (`arg`, `stmt`: an `expected=` the port does not set on its first
+pass) hold 3192 of the 7012.
+
 ## 2. Rust's route, joined to the refusal — the `route` point
 
 **Rust side.**  One line when the front end takes a special route for a construct:
