@@ -265,12 +265,9 @@ fn split_signature(sig: &str) -> Option<(Vec<String>, String)> {
 /// * an added **field** is NOT, because it changes what a whole-record read answers:
 ///   `{s:j}` gains a key, and so does any reflection walk.
 ///
-/// ⚠ That last one is NOT "a literal must now supply it", which this comment and the message
-/// below used to say and which is false for **every** field in loft, not merely a defaulted
-/// one: a struct literal may omit anything. Measured — `S { }` compiles, and each omitted
-/// field takes its declared default or its type's zero. The reason matters because it is what
-/// a reader checks the verdict against, and checking against the false one leads to the
-/// conclusion that a defaulted field is additive (loft#1192, closed on this measurement).
+/// ⚠ The reason is NOT "a literal must now supply it": a struct literal may omit any field
+/// (`S { }` compiles, each omitted field taking its declared default or its type's zero), so
+/// that reason would make a defaulted field additive, and it is not (loft#1192).
 /// Nor does `pub` change it: a private field is written too (@C140 — "printing, JSON and
 /// placement still carry every field"), so a type whose fields are all private breaks the
 /// same way.
