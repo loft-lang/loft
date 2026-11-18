@@ -24,7 +24,9 @@ sys.path.insert(0, os.path.join(ROOT, "selfhost", "front"))
 import baseline  # noqa: E402
 import elab_gate  # noqa: E402  the corpus, `@ARGS` libraries and tool builds are gate E's
 
-HEAD = re.compile(r"^#\d+ (\S+) type=\d+ .*\bsource=(\d+)\b")
+# A generic instance's name holds spaces (`i_21integer(-128, 127)s1?_n_set_from`): the name runs
+# to the first ` type=`, so no instance is folded into the definition before it.
+HEAD = re.compile(r"^#\d+ (.+?) type=\d+ .*\bsource=(\d+)\b")
 
 
 def own_definitions(lines):
