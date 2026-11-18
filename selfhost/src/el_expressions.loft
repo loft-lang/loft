@@ -492,7 +492,7 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   // can be the buffer: every arm reads into a local or an inline call's result, builds a
   // literal, or is null.  The buffer joins the result's borrows on both passes and each arm is
   // copied into it on the second (`materialize_return_into`), no work ref minted.
-  if rb >= 0 && !lambda && expr_tail && !mat_tail && record_result(result) && len(el_types::deps(b.tp)) > 0 && tail_is_join(raw_tail(code)) && bind_leaves(e, vars, raw_tail(code)) > 0 && el::def(e, e.context).def_type != el::DT_GENERIC {
+  if rb >= 0 && !lambda && expr_tail && !mat_tail && record_result(result) && len(el_types::deps(b.tp)) > 0 && ((tail_is_join(raw_tail(code)) && bind_leaves(e, vars, raw_tail(code)) > 0) || coalesce_bind_tail(e, vars, code, b.tp, result)) && el::def(e, e.context).def_type != el::DT_GENERIC {
     bjoin = bind_tail(e, vars, code, result);
     if bjoin != null {
       code = bjoin!;
@@ -916,7 +916,25 @@ fn coalesce_view_tail(e: el::El, vars: el_vars::Vars, code: ir::Node, body_tp: i
     return false;
   }
   block = match el_ir::unspan(raw_tail(code)) { NdBlock { block: nb } => nb[0].name == "ncc", _ => false };
-  (e.first_pass || block) && ls_views_local(e, vars, el_types::deps(body_tp))
+  (e.first_pass || block) && (ls_views_local(e, vars, el_types::deps(body_tp)) || reads_call_temp(e, vars, ts, body_tp))
+}
+
+// The subject of a `??` read out of an inline call's result through its fields
+// (`outer(3).o_bag.b_vec[2] ?? …`): on the second pass it borrows the work ref the call's record
+// was copied into; on the first, where this port has typed no borrow yet, the syntax says so.
+fn reads_call_temp(e: el::El, vars: el_vars::Vars, ts: integer, body_tp: ir::TypeT) -> boolean {
+  for d in el_types::deps(body_tp) {
+    if d >= 0 && d < len(vars.vars) && !vars.vars[d].argument && starts_with(el_vars::name_of(vars, d), "__ref_") {
+      return true;
+    }
+  }
+  if !e.first_pass || len(el_types::deps(body_tp)) > 0 {
+    return false;
+  }
+  match e.p.nodes[ts] {
+    SBin { l } => e.p.nodes[leftmost(e, l)] is SCall,
+    _ => false
+  }
 }
 
 // A struct-enum tail that is a local viewing a store of the frame (`code = b.code; code`):
@@ -930,6 +948,25 @@ fn enum_view_local_tail(e: el::El, vars: el_vars::Vars, code: ir::Node, result: 
     NdVar { n: v } => !vars.vars[v].argument && ls_views_local(e, vars, [v]),
     _ => false
   }
+}
+
+// The same tail read off a local that OWNS its record (`b = hbag(3); b.b_hash[2] ?? Cell { … }`):
+// no view of the frame beyond that local, so no work ref — the buffer is bound and both arms
+// are copied into it (`Rename` → `Bind`, the copy leg).
+fn coalesce_bind_tail(e: el::El, vars: el_vars::Vars, code: ir::Node, body_tp: ir::TypeT, result: ir::TypeT) -> boolean {
+  ts = tail_syntax(e, vars.body);
+  coalesce = ts >= 0 && match e.p.nodes[ts] { SBin { op } => op == "??", _ => false };
+  if !coalesce || !(el_types::base(result) is TyReference) || result is TyOptional {
+    return false;
+  }
+  block = match el_ir::unspan(raw_tail(code)) { NdBlock { block: nb } => nb[0].name == "ncc", _ => false };
+  local = false;
+  for d in el_types::deps(body_tp) {
+    if d >= 0 && d < len(vars.vars) && !vars.vars[d].argument {
+      local = true;
+    }
+  }
+  (e.first_pass || block) && local && !ls_views_local(e, vars, el_types::deps(body_tp)) && !reads_call_temp(e, vars, ts, body_tp)
 }
 
 // `Parser::return_tail_is_join`: an `if` at the tail, through blocks.
