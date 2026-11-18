@@ -9224,7 +9224,8 @@ impl Data {
     fn redefinition_text(&self, lexer: &Lexer, winner: u32, fn_name: &str) -> String {
         let name = fn_name.strip_prefix("n_").unwrap_or(fn_name);
         let at = &self.def(winner).position;
-        if self.def(winner).name.starts_with("n_")
+        // …and an operator function the stdlib keeps under its own `Op…` name (`OpNot`).
+        if (self.def(winner).name.starts_with("n_") || crate::parser::is_op(&self.def(winner).name))
             && crate::file_access::is_stdlib_source(at.file.as_str())
             && !crate::file_access::is_stdlib_source(lexer.pos().file.as_str())
         {
@@ -9885,6 +9886,14 @@ impl Data {
             );
         } else if o_nr != u32::MAX
             && (self.def(o_nr).def_type != DefType::Dynamic || carried_spelling)
+            // `@FR-Op-Std` — a program's `self` method spelled for an operator the stdlib
+            // implements as a free function (`fn OpNot(self: D)` beside `OpNot(v1: boolean)`)
+            // is an ordinary method under its own key, said where it is written by the
+            // retired-operator warning; it takes no name of the stdlib's.
+            && !(is_self
+                && self.source != STD_SOURCE
+                && self.def(o_nr).source == STD_SOURCE
+                && crate::parser::is_op(fn_name))
         {
             let text = self.redefinition_text(lexer, o_nr, fn_name);
             diagnostic!(lexer, Level::Error, "{text}");
