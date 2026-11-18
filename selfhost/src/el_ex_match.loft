@@ -1950,7 +1950,7 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
         if !unsettled(result) && sibling_variants(e, b.tp, result) && !el_types::is_equal(e, el_types::base(b.tp), el_types::base(result)) {
           // Two variants of one enum join to the enum, borrowing nothing (`@FR-C-Var`).
           result = ir::TyEnum { n: struct_enum_of(e, el_types::base(b.tp)), is_ref: true, dep: [] };
-        } else if unsettled(result) {
+        } else if arm_settles(result, b.tp) {
           // An arm's dep on a store it mints itself (a literal's work ref) is no borrow of the
           // join (`arm_join_type`).
           result = if el_types::base(b.tp) is TyReference { el_types::with_deps(b.tp, outside_deps(e, b.code, el_types::deps(b.tp))) } else { b.tp };
@@ -2236,7 +2236,7 @@ pub fn tuple_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>,
         }
         expected = if unsettled(result) { ir::TyUnknown { n: 0 } } else { el_ex_null::arm_expectation(result) };
         b = el_ex_pattern::arm_body(e, vars, body, expected);
-        if unsettled(result) {
+        if arm_settles(result, b.tp) {
           result = b.tp;
         }
         result = join_fn_arm(result, b);
@@ -2404,7 +2404,7 @@ pub fn struct_match(e: el::El, vars: el_vars::Vars, x: Ex, pd: integer, arms: ve
         facts = el_ex_call::assume_guard(e, vars, ug);
         b = el_ex_pattern::arm_body(e, vars, body, expected);
         forget_facts(vars, facts);
-        if unsettled(result) {
+        if arm_settles(result, b.tp) {
           result = b.tp;
         }
         result = join_fn_arm(result, b);
@@ -2777,7 +2777,7 @@ pub fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>
           el::refuse(e, "a vector match arm that halts");
           return void;
         }
-        if unsettled(result) {
+        if arm_settles(result, b.tp) {
           result = b.tp;
         }
         result = join_fn_arm(result, b);
@@ -3363,4 +3363,10 @@ fn halting_call_syntax(e: el::El, n: integer) -> boolean {
     SCall { f } => if f == null { false } else { match e.p.nodes[f!] { SName { name, member } => name == "panic" && member == "", _ => false } },
     _ => false
   }
+}
+
+// `arm_settles_match`: an arm settles a result no arm has settled yet — except a never arm
+// beside one the first pass could not type (or a `null`), which leaves it for the arms after.
+fn arm_settles(result: ir::TypeT, arm: ir::TypeT) -> boolean {
+  unsettled(result) && !(el_types::base(arm) is TyNever && (el_types::is_unknown(el_types::base(result)) && !(el_types::base(result) is TyVoid) || el_types::base(result) is TyNull))
 }
