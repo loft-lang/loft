@@ -424,22 +424,22 @@ R-ElemFirst	rewrites	curated	11	2026-11-18	merged the two refused row-in-its-ele
 R-ElementPath	rewrites	curated	2	2026-11-18	one suite cell beside its Rust guard
 R-Escape	rewrites	curated	9	2026-11-18	seven suite cells, distinct cases
 R-ExitVector	rewrites	curated	1	2026-11-18	one suite cell
-R-ExpPow	rewrites	todo			
-R-FastTable	rewrites	todo			
-R-FaultFlag	rewrites	todo			
-R-FieldAppend	rewrites	todo			
-R-FileHold	rewrites	todo			
-R-Fill	rewrites	todo			
-R-FirstClaim	rewrites	todo			
-R-FlatCopy	rewrites	todo			
-R-FnRefBuffer	rewrites	todo			
-R-FnRefValue	rewrites	todo			
-R-FoldCompare	rewrites	todo			
-R-FormatAppend	rewrites	todo			
-R-ForwardResult	rewrites	todo			
-R-ForwardWalk	rewrites	todo			
-R-FrameHeadroom	rewrites	todo			
-R-Fuse	rewrites	todo			
+R-ExpPow	rewrites	curated	2	2026-11-18	two suite cells, distinct cases
+R-FastTable	rewrites	structural	3	2026-11-18	the interpreter's two operator tables, chosen once per run by the stack mode: no program observes which table runs; guarded by the fill generator's own tests
+R-FaultFlag	rewrites	curated	18	2026-11-18	first suite cell, from the formal text: a discharge that never meets a null, nulls mid-loop, a default reading the recurrence, an overflow, an unrolled constant range; the seventeen Rust guards beside it
+R-FieldAppend	rewrites	curated	7	2026-11-18	merged the two refused field-append cells into one
+R-FileHold	rewrites	curated	5	2026-11-18	its own fold candidate agrees with gate E; kept
+R-Fill	rewrites	curated	10	2026-11-18	merged the two refused fill cells; the in-place-set and counters cells agree with gate E and stay
+R-FirstClaim	rewrites	structural	1	2026-11-18	how many elements a vector's first block claims (the store layout): no loft program observes the claim; guarded by its Rust test
+R-FlatCopy	rewrites	curated	3	2026-11-18	its own fold candidate agrees with gate E; kept
+R-FnRefBuffer	rewrites	curated	2	2026-11-18	one suite cell beside its Rust guard
+R-FnRefValue	rewrites	curated	1	2026-11-18	one suite cell
+R-FoldCompare	rewrites	curated	2	2026-11-18	one suite cell beside its Rust guard
+R-FormatAppend	rewrites	curated	4	2026-11-18	its own fold candidate agrees with gate E; kept
+R-ForwardResult	rewrites	curated	1	2026-11-18	one suite cell
+R-ForwardWalk	rewrites	curated	5	2026-11-18	merged the two refused field-walk cells into one
+R-FrameHeadroom	rewrites	structural	2	2026-11-18	when the interpreter's stack store grows: no program observes it beyond deep recursion running, which the calls chapter's cells hold; guarded by its Rust tests
+R-Fuse	rewrites	curated	2	2026-11-18	one suite cell beside its Rust guard
 R-GroupPush	rewrites	todo			
 R-GuardFree	rewrites	todo			
 R-GuardedChain	rewrites	todo			
