@@ -5403,6 +5403,10 @@ use a separate collection or add after the loop"
         let expect = link_tuple.as_ref().unwrap_or(f_type);
         let prev_bind_rhs =
             std::mem::replace(&mut self.in_bind_rhs, op == "=" && var_nr != u16::MAX);
+        let prev_append_dest = std::mem::replace(
+            &mut self.append_dest,
+            if op == "+=" { var_nr } else { u16::MAX },
+        );
         // The right-hand side's first token: where a diagnostic about the stored value goes
         // when the value carries no span of its own (a local read).  A preset value was parsed
         // elsewhere and has none here.
@@ -5416,9 +5420,14 @@ use a separate collection or add after the loop"
             self.parse_operators(expect, code, &mut parent_tp, 0)
         };
         self.in_bind_rhs = prev_bind_rhs;
+        self.append_dest = prev_append_dest;
         // A right-hand side that reported its own error answers `void` because it failed:
         // that error is the one mistake, so the bind below adds none.
         let rhs_failed = self.lexer.diagnostics().error_count() > errors_before_rhs;
+        // @C168: a bind whose value pass 1 cannot type yet (see `append_leaves_untyped`).
+        if self.first_pass && op == "=" && var_nr != u16::MAX && s_type.is_unknown() {
+            self.vars.mark_untyped_bind(var_nr);
+        }
         // A value that answers nothing has nothing to bind.  Admitted, `s = f()` of a function
         // with no result left `s` a `void` local, and each later read misfired far from the
         // cause: `s + 1` reported `Expect token ;`, `"{s + 1}"` five syntax errors.  Named here,
@@ -7721,7 +7730,13 @@ use a separate collection or add after the loop"
             }
             _ => s_type,
         };
-        if !compound_keeps_place && !text_appends_rendering {
+        // @C168: a compound assignment (`h += …`, `x *= …`) changes what its target holds and
+        // never says what KIND of thing it is; where pass 1 could not type the target's bind (a
+        // function declared further down), the operand must not type it in the bind's place —
+        // `h = mk(); h += [R { … }]` made `h` a `vector<R>` on pass 1, and pass 2 refused the
+        // hash, sorted or index the function answers as a type change.
+        let leaves_untyped = op != "=" && self.untyped_on_pass1(var_nr);
+        if !compound_keeps_place && !text_appends_rendering && !leaves_untyped {
             self.change_var(to, &s_type);
         }
         // @PLN110 3a — track `n = len(s)` so `for i in 0..n` keeps the strict-index
