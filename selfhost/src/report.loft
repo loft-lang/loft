@@ -338,6 +338,11 @@ fn type_show(b: ir::Bundle, f: ir::Function, ts: vector<ir::TypeT>) -> text {
   type_show_one(b, f, ts[0]!)
 }
 
+// `Type::show` of one type against the variables `f` holds: the state trace's spelling.
+pub fn type_show_in(b: ir::Bundle, f: ir::Function, t: ir::TypeT) -> text {
+  type_show_one(b, f, t)
+}
+
 fn type_show_one(b: ir::Bundle, f: ir::Function, t: ir::TypeT) -> text {
   match t {
     TyRefVar { inner } => "&{type_show_one(b, f, inner)}",
