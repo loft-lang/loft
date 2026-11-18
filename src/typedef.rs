@@ -1198,6 +1198,33 @@ pub(crate) fn register_and_lay_out_synth(data: &mut Data, database: &mut Stores,
     database.lay_out_synth(enum_kt, some_kt);
 }
 
+/// Register and lay out an ENUM first minted on pass 2 — an instance of a generic enum
+/// declared below its first use (loft#2547) — the enum twin of [`lay_out_late`]: the in-order
+/// registration (`actual_types_deferred`) and layout (`fill_all`) ran before it existed, and
+/// code that reads its variants' fields is parsed right after.  The enum row first, then each
+/// variant with fields (whose `fill_database` links it into that row), then their sizes.
+/// Nothing for an enum already registered.
+pub(crate) fn lay_out_late_enum(data: &mut Data, database: &mut Stores, d: u32) {
+    if data.def(d).known_type != u16::MAX || data.def_type(d) != DefType::Enum {
+        return;
+    }
+    register_enum_db(data, database, d);
+    let variants: Vec<u32> = data.children_of(d).collect();
+    for &v in &variants {
+        if data.def_type(v) == DefType::EnumValue
+            && data.attributes(v) > 0
+            && data.def(v).known_type == u16::MAX
+            && !layout_blocked(data, v, &mut Vec::new())
+        {
+            fill_database(data, database, v);
+        }
+    }
+    for &v in &variants {
+        database.lay_out_record(data.def(v).known_type);
+    }
+    database.lay_out_record(data.def(d).known_type);
+}
+
 /// A free DB structure name for an enum VARIANT whose bare and source-qualified
 /// names are both taken — `<parent enum's DB name>::<variant>`.
 ///

@@ -9099,7 +9099,7 @@ pub enum FileResult {
 }
 ```
 
-Result of a filesystem-mutating operation (delete, move, mkdir). Use ok() to get a simple boolean, or match on specific variants for detailed error handling.  Every variant can actually be produced: Ok on success, NotFound for a missing / out-of-project path, PermissionDenied when the OS refuses access, IsDirectory when a file op targets a directory (e.g. deleting a directory with delete()), NotEmpty when rmdir() is given a directory that still holds entries, and Other for anything else. (--native and --interpret classify from the OS error; the wasm host reports only Ok / Other, and NotFound still comes from the loft-level existence check.)
+Result of a filesystem-mutating operation (delete, move, mkdir). Use ok() to get a simple boolean, or match on specific variants for detailed error handling.  Every variant can actually be produced: Ok on success, NotFound for a missing / out-of-project path (a REFUSED one is Other), PermissionDenied when the OS refuses access, IsDirectory when a file op targets a directory (e.g. deleting a directory with delete()), NotEmpty when rmdir() is given a directory that still holds entries, and Other for anything else. (--native and --interpret classify from the OS error; the wasm host reports only Ok / Other, and NotFound still comes from the loft-level existence check.)
 
 ```rust
 pub fn ok(self: FileResult) -> boolean
@@ -9152,7 +9152,7 @@ The separator of a loft path: '/' on every platform.  A path a program hands lof
 pub fn file(path: text) -> File fs#read
 ```
 
-Use as the entry point for all file I/O. A relative path resolves against the program's own directory (or against the working directory under `\#cwd`), so `../data.txt` names the file above the script — the same file an absolute path would name, and it answers the same either way. A path means the same on every platform: `/` and `\\` both separate; a name no platform could hold (`a:b`, `q?`, `aux.txt`, a trailing dot or space) is refused everywhere; a name means its exact spelling, so `B.txt` beside `b.txt` is refused. A refused path answers like a missing one, and is logged once.
+Use as the entry point for all file I/O. A relative path resolves against the program's own directory (or against the working directory under `\#cwd`), so `../data.txt` names the file above the script — the same file an absolute path would name, and it answers the same either way. A path means the same on every platform: `/` and `\\` both separate; a name no platform could hold (`a:b`, `q?`, `aux.txt`, a trailing dot or space) is refused everywhere; a name means its exact spelling, so `B.txt` beside `b.txt` is refused. A refused path reads like a missing one (`exists` false, `content` null); a write, delete, move or mkdir of one answers FileResult.Other; it is logged once.
 
 ```rust
 pub fn exists(path: text) -> boolean fs#read
@@ -9170,7 +9170,7 @@ Method form: f = file("path"); if f.exists() { .. } Also callable as exists(file
 pub fn delete(path: text) -> FileResult fs#update
 ```
 
-Use to remove a file after processing or as a cleanup step. Returns FileResult.Ok on success and FileResult.NotFound when the file did not exist.  A path outside the project is deleted like any other; withhold the `fs` capability in a `\[sandbox\]` profile to prevent that.
+Use to remove a file after processing or as a cleanup step. Returns FileResult.Ok on success, FileResult.NotFound when the file did not exist, and FileResult.Other for a refused path.  A path outside the project is deleted like any other; withhold the `fs` capability in a `\[sandbox\]` profile to prevent that.
 
 ```rust
 pub fn move(from: text, to: text) -> FileResult fs#update

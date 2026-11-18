@@ -242,7 +242,14 @@ jobs:
               name=$(sed -n 's/^ *name *= *"\(.*\)".*/\1/p' "$dir/loft.toml" | head -1)
               name=${name:-$dir}
               echo "::group::$name"
-              ( cd "$dir" && loft install >/dev/null 2>&1 ) || true
+              # An install that cannot resolve leaves the package on its OLD lock, and the tests
+              # then fail on what that lock holds (a deprecated release, a library before its
+              # fix) — reported as "tests fail on loft main" with the cure out of sight.  Its
+              # own message names the cure ("raise the constraint"), so it is the red's line.
+              if ! ( cd "$dir" && loft install > "/tmp/$name.install.log" 2>&1 ); then
+                echo "::error title=$name: loft install could not resolve — the tests below run on the old lock::$(grep -A3 -E 'could not resolve' "/tmp/$name.install.log" | tr '\n' ' ' | cut -c1-600)"
+                cat "/tmp/$name.install.log"
+              fi
               # The matrix `libs` patterns, expanded inside the package dir.
               libargs=$(cd "$dir" && for d in ${{ matrix.libs }}; do [ -d "$d" ] && printf -- '--lib %s ' "$d"; done)
               # dryopea's runner writes into tests/actual/; a fresh clone has none.

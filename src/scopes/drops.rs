@@ -77,6 +77,31 @@ impl Scopes<'_> {
         self.scope_end_drop(function, v, data)
     }
 
+    /// `@FR-H-FreeTwice` — wraps a release of `v` so it runs only where `v` names the store of
+    /// none of the temporaries it views (`Scopes::lift_viewers`), each of which releases its
+    /// own.  One home for every release leg of the sweep: a guard can only REFUSE a release,
+    /// and each store it refuses is one the viewed temporary releases.
+    pub(super) fn lift_viewer_guard(&self, v: u16, data: &Data) -> impl Fn(Value) -> Value {
+        let distinct = data.def_nr("OpDistinctStore");
+        let viewed: Vec<u16> = self
+            .lift_viewers
+            .get(&v)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|&l| l != v)
+            .collect();
+        move |inner: Value| {
+            viewed.iter().fold(inner, |inner, &l| {
+                v_if(
+                    Value::Call(distinct, vec![Value::Var(v), Value::Var(l)]),
+                    inner,
+                    Value::Null,
+                )
+            })
+        }
+    }
+
     /// [`Self::displaced_drop`] for a statement-level `OpDatabase(v, tp)` that REBUILDS a
     /// local's record in place.  A construction of a local not yet in scope displaces
     /// nothing; one of a local already in scope is asked the owner question — a first

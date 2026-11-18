@@ -1,0 +1,132 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The front layer (@PLN91, front-end-instruments.md item 1): run a program from the loft FRONT
+// END's own definitions.  `run_front <run image> <program.loft> <program image> <std image>`
+// elaborates the program as gate E does (`elab.loft`), over the library of `<program image>`
+// (`loft --emit-image`, the image AFTER the scope pass: the library's functions as the writer
+// reads them), scopes the program's own functions with the loft scope pass (`scope.loft`), hands
+// the bundle to the bytecode writer in loft and runs it on the loft runner — one process, no
+// serialisation — over `<run image>`'s other tables, as `run_image_run.loft` does with
+// `LOFT_RUN_PROGRAM`.  The program's output is its own.
+//
+// Where it stops it writes one line on standard error and exits:
+//   2  an image does not load or the program does not parse
+//   4  `refused: …`   the elaborator refuses a construct
+//   5  `unscoped: …`  the scope pass lays out no frame for a function (a local needing a free)
+//   3  `stopped: not carried…`  the writer or the runner does not carry an operator
+//   1  `stopped: …`   a fault
+#cwd
+use lex;
+use syntax;
+use el;
+use el_definitions;
+use el_expressions;
+use el_ex_call;
+use load;
+use el_buffers;
+use el_tret;
+use el_drop;
+use el_upgrade;
+use el_refhome;
+use ir;
+use scope;
+use state;
+use fill_run;
+use crt;
+use bgen_image;
+use native_table;
+use front_bundle;
+
+fn main() {
+  a = arguments();
+  run_path = a[0] ?? "";
+  f = a[1] ?? "";
+  image = a[2] ?? "";
+  std_image = a[3] ?? "";
+  img = load::load_run(run_path);
+  base = load::load(image);
+  std = load::load(std_image);
+  if img == null || base == null || std == null {
+    eprintln("stopped: an image does not load ({run_path}, {image}, {std_image})");
+    exit(2);
+  }
+  upto = el::std_count(std!);
+  types_upto = el::type_count(std!);
+  // `elab.loft`'s `program`, keeping the bundle instead of printing its report: the library is
+  // the image's first `upto` definitions and `types_upto` types (as the scope pass and the
+  // writer read them), the program's definitions and types are the elaborator's, and every
+  // other part of the image (constants, sidecars, host facts) is kept as it holds it.  (`ir`'s
+  // `Bundle` is not public here: its type stays inferred, and `front_bundle` grafts it.)
+  src = file(f).content() ?? "";
+  p = syntax::prepare(lex::lex(src));
+  tree = syntax::parse_file(p);
+  if tree == null {
+    eprintln("stopped: {f} does not parse");
+    exit(2);
+  }
+  e = el::new_el(p, f, false);
+  for ln in src.split('\n') {
+    e.lines += [ln];
+  }
+  el::load_base(e, base!, upto, types_upto);
+  e.source = el::MAIN_SOURCE;
+  e.first_pass = true;
+  e.line = 0;
+  el::reset_uses(e);
+  el_definitions::elab_file(e, tree ?? 0);
+  el_definitions::resolve_adopted_stubs(e);
+  el_definitions::reserve_late_return_buffers(e);
+  e.first_pass = false;
+  e.line = 0;
+  el::reset_uses(e);
+  el_definitions::elab_file(e, tree ?? 0);
+  el_ex_call::rebuild_stale(e);
+  el_tret::promote_text_returns(e);
+  el_buffers::promote_work_buffers(e);
+  el_refhome::check_stored_reference_homes(e);
+  el_refhome::check_later_fresh_binds(e);
+  el_drop::synth_copy_cascades(e);
+  el_upgrade::synth_upgrade_drain(e);
+  el_drop::synth_drop_cascades(e);
+  if len(e.refused) > 0 {
+    for r in e.refused {
+      eprintln("refused: {r}");
+    }
+    exit(4);
+  }
+  b = front_bundle::graft(base!, e.b);
+  // `LOFT_FRONT_VARS=1`: each program function's locals as the scope pass receives them, with
+  // the flags it reads — what gate E's report does not print.
+  if env_variable("LOFT_FRONT_VARS") == "1" {
+    front_bundle::dump_vars(b);
+  }
+  // The scope pass over the program's own functions: what it does not lay out yet is no run.
+  sr = scope::scope_bundle(b);
+  if len(sr) > 0 {
+    for r in sr {
+      eprintln("unscoped: {r}");
+    }
+    exit(5);
+  }
+  img!.natives = native_table::of(b);
+  st = bgen_image::stream(b, img!.natives);
+  if st.why != "" {
+    eprintln("stopped: not carried by the bytecode writer in loft: {st.why}");
+    exit(3);
+  }
+  bgen_image::tables(b, img!);
+  img!.gens = bgen_image::gens(b);
+  img!.fnrefs = bgen_image::fnrefs(b);
+  img!.code = st.code;
+  img!.starts = st.starts;
+  // Relative paths resolve against the working directory: run from the program's directory.
+  crt::fs_anchor(false);
+  s = state::new_state(img!, 1 << 16);
+  ok = fill_run::run_main(img!, s);
+  if !ok {
+    eprintln("stopped: {s.fault}");
+    exit(if s.fault.starts_with("not carried") { 3 } else { 1 });
+  }
+  crt::stack_free(s.stk);
+}

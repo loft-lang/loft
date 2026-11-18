@@ -1,0 +1,52 @@
+diff --git b/src/parser/visibility.rs a/src/parser/visibility.rs
+index 1eb7f4a22..1637c31cc 100644
+--- b/src/parser/visibility.rs
++++ a/src/parser/visibility.rs
+@@ -106,15 +106,6 @@ impl Parser {
+         // carries a width, and a library's template its library).
+         let shown = Type::Reference(d_nr, crate::data::Deps::none()).source_name(&self.data);
+         let (why, fix) = match (kind, attr) {
+-            // A struct literal with a private field is refused once, by the literal itself: the
+-            // type is name-only (`refuse_building_a_name_only_type`) or the `literal` arm names
+-            // the field.  A variant literal has no such refusal when its enum is `pub`, so its
+-            // fields keep theirs; the census trace keeps every site.
+-            ("literal-field", Some(a))
+-                if !a.pub_field && !trace && !matches!(def.def_type, DefType::EnumValue) =>
+-            {
+-                return;
+-            }
+             ("field" | "literal-field" | "pattern-field" | "key", Some(a)) if !a.pub_field => (
+                 format!("field `{}` of `{shown}` is not `pub` in `{lib}`", a.name),
+                 format!("declare it `pub {}` in `{lib}`", a.name),
+@@ -149,24 +140,13 @@ impl Parser {
+                     ),
+                 )
+             }
+-            ("variant", _) if !owner.pub_visible => {
+-                // `E.V` reaches here with the ENUM's definition and the variant's attribute
+-                // index, the bare `V` with the variant's own definition: name the variant either
+-                // way (it once read "`VeMood` is a variant of `VeMood`").
+-                let variant =
+-                    if !matches!(def.def_type, DefType::EnumValue) && f_nr < def.attributes.len() {
+-                        def.attributes[f_nr].name.clone()
+-                    } else {
+-                        def.name.clone()
+-                    };
+-                (
+-                    format!(
+-                        "`{variant}` is a variant of `{}`, which is not `pub` in `{lib}`",
+-                        owner.name
+-                    ),
+-                    format!("declare `pub enum {}` in `{lib}`", owner.name),
+-                )
+-            }
++            ("variant", _) if !owner.pub_visible => (
++                format!(
++                    "`{}` is a variant of `{}`, which is not `pub` in `{lib}`",
++                    def.name, owner.name
++                ),
++                format!("declare `pub enum {}` in `{lib}`", owner.name),
++            ),
+             _ => return,
+         };
+         if trace {

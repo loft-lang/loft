@@ -609,7 +609,9 @@ reach today (`rule_axes.tsv`, `matrix_axes.census`) and every defect a cell name
    commit.  A probe that turns up a defect is fixed (CLAUDE.md § Bug-filing policy) — the pass is
    also a bug hunt.
 6. **Record**: `done <rule> '<what was kept, written, retired>'` in the loft commit that pins
-   the suite commit.
+   the suite commit.  Every pin move moves the `suite <sha>` line of
+   `selfhost/front/elab_gate.baseline.tsv` with it — gate E's `--check` refuses a baseline
+   written against another suite commit; `land` does both, a pin made by hand must too.
 
 A rule guarded by Rust unit tests instead — a heap layout or an image's bytes, which no loft
 program observes (the allocator chapter) — is weighed the same way, by breaking it: each clause's
@@ -622,7 +624,10 @@ A rule no cell names is marked `needs-cell` and gets its first guard from the ru
 A rule guarded only by Rust tests gets its first suite cell when the walk reaches it — in ledger
 order, since a cell-less rule is mostly one that never broke — written from the formal text,
 every clause, not copied from the Rust twins; each expectation is shown met only by its own
-refusal (corrupt it alone).
+refusal (corrupt it alone).  A rule about how the compiler is organised — one routine, what an
+analysis declares, how a query's reach is chosen — that no program can observe is recorded
+`done <rule> --structural <why>`, the reason naming what exercises its answers instead; a rule
+the code does not keep at all is a deviation entry in its chapter, not a cell.
 
 ---
 

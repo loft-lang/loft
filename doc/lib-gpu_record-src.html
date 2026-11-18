@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gpu_record source — Loft, a programming language for small browser games</title>
+  <meta name="description" content="The loft source of the gpu_record library — every file it ships, highlighted, with each public item linked to its definition, its worked example and its call sites.">
+<link rel="canonical" href="https://loft-lang.org/loft/lib-gpu_record-src.html">
+<meta property="og:title" content="gpu_record source — Loft, a programming language for small browser games">
+<meta property="og:description" content="The loft source of the gpu_record library — every file it ships, highlighted, with each public item linked to its definition, its worked example and its call sites.">
+<meta property="og:type" content="article">
+<meta property="og:url" content="https://loft-lang.org/loft/lib-gpu_record-src.html">
+<meta property="og:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<meta property="og:site_name" content="Loft">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="gpu_record source — Loft, a programming language for small browser games">
+<meta name="twitter:description" content="The loft source of the gpu_record library — every file it ships, highlighted, with each public item linked to its definition, its worked example and its call sites.">
+<meta name="twitter:image" content="https://loft-lang.org/loft/images/hero-brick-buster.png">
+<link rel="stylesheet" href="style.css">
+<style>.playground-link{display:inline-block;margin:0.3em 0 0.8em;padding:4px 12px;background:#2563eb;color:#fff;border-radius:4px;text-decoration:none;font-size:0.85em}.playground-link:hover{filter:brightness(1.15)}@media print{.playground-link{display:none}}</style>
+</head>
+<body>
+<nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <a href="https://loft-lang.org/blog/">Blog</a> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
+<h1>gpu_record source</h1>
+<article>
+<p><a href="lib-gpu_record.html">← gpu_record</a> · <a href="lib-gpu_record-api.html">API reference</a> · version 0.2.0</p>
+<p class="lib-legend">3 file(s), 399 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<h2 id="items">Public items</h2>
+<p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
+<table class="lib-table">
+<tr><th>Item</th><th>Defined</th><th>Worked example</th><th>Call sites</th></tr>
+<tr><td><code>table</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-record-loft-L27">27</a></td><td>—</td><td><a href="#tests-frame-loft-L47">47</a> <a href="#tests-frame-loft-L277">277</a> <a href="#tests-frame-loft-L314">314</a> <a href="#tests-width32-loft-L13">13</a> <a href="#tests-width32-loft-L14">14</a> <a href="#tests-width32-loft-L15">15</a></td></tr>
+<tr><td><code>log</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-record-loft-L32">32</a></td><td>—</td><td><a href="#tests-frame-loft-L86">86</a> <a href="#tests-frame-loft-L141">141</a> <a href="#tests-frame-loft-L148">148</a> <a href="#tests-frame-loft-L159">159</a> <a href="#tests-frame-loft-L207">207</a> <a href="#tests-frame-loft-L248">248</a> … (9 total)</td></tr>
+<tr><td><code>reset</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-record-loft-L37">37</a></td><td>—</td><td><a href="#tests-frame-loft-L46">46</a> <a href="#tests-frame-loft-L313">313</a> <a href="#tests-width32-loft-L12">12</a></td></tr>
+<tr><td><code>live</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-record-loft-L42">42</a></td><td>—</td><td><a href="#tests-frame-loft-L230">230</a> <a href="#tests-frame-loft-L239">239</a> <a href="#tests-frame-loft-L247">247</a></td></tr>
+<tr><td><code>refuse_source</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-record-loft-L49">49</a></td><td>—</td><td><a href="#tests-frame-loft-L269">269</a> <a href="#tests-frame-loft-L273">273</a></td></tr>
+</table>
+<h2 id="src-gpu-record-loft">src/gpu_record.loft</h2>
+<pre class="src"><code><span id="src-gpu-record-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
+<span id="src-gpu-record-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
+<span id="src-gpu-record-loft-L3"><span class="cm">//</span></span>
+<span id="src-gpu-record-loft-L4"><span class="cm">// A GPU backend that draws nothing and writes down every call it receives.</span></span>
+<span id="src-gpu-record-loft-L5"><span class="cm">//</span></span>
+<span id="src-gpu-record-loft-L6"><span class="cm">//   gpu_record::reset();</span></span>
+<span id="src-gpu-record-loft-L7"><span class="cm">//   dev = gpu::open(gpu_record::table(), 64, 48, "test") ?? return;</span></span>
+<span id="src-gpu-record-loft-L8"><span class="cm">//   …the program's drawing…</span></span>
+<span id="src-gpu-record-loft-L9"><span class="cm">//   assert(gpu_record::log() == EXPECTED);</span></span>
+<span id="src-gpu-record-loft-L10"><span class="cm">//</span></span>
+<span id="src-gpu-record-loft-L11"><span class="cm">// It needs no display, so a program's drawing is tested on any machine: the log names each</span></span>
+<span id="src-gpu-record-loft-L12"><span class="cm">// pipeline, pass and draw in order, with handles numbered from 1 as they are made.  A program</span></span>
+<span id="src-gpu-record-loft-L13"><span class="cm">// gives it sources under the tag "record"; their text is not read.</span></span>
+<span id="src-gpu-record-loft-L14"></span>
+<span id="src-gpu-record-loft-L15"><span class="kw">fn</span> <span class="fn-call">rec_table</span>() -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-gpu-record-loft-L16">#c <span class="st">"rec_table"</span> <span class="st">"int64_t()"</span></span>
+<span id="src-gpu-record-loft-L17"><span class="kw">fn</span> <span class="fn-call">rec_log</span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
+<span id="src-gpu-record-loft-L18">#c <span class="st">"rec_log"</span> <span class="st">"const char*()"</span></span>
+<span id="src-gpu-record-loft-L19"><span class="kw">fn</span> <span class="fn-call">rec_reset</span>();</span>
+<span id="src-gpu-record-loft-L20">#c <span class="st">"rec_reset"</span> <span class="st">"void()"</span></span>
+<span id="src-gpu-record-loft-L21"><span class="kw">fn</span> <span class="fn-call">rec_live</span>() -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-gpu-record-loft-L22">#c <span class="st">"rec_live"</span> <span class="st">"int64_t()"</span></span>
+<span id="src-gpu-record-loft-L23"><span class="kw">fn</span> <span class="fn-call">rec_refuse_source</span>(on: <span class="ty"><a href="stdlib-types.html">integer</a></span>);</span>
+<span id="src-gpu-record-loft-L24">#c <span class="st">"rec_refuse_source"</span> <span class="st">"void(int64_t)"</span></span>
+<span id="src-gpu-record-loft-L25"></span>
+<span id="src-gpu-record-loft-L26"><span class="cm">// This backend's table, for `gpu::open`.  It is there on every machine.</span></span>
+<span id="src-gpu-record-loft-L27"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">table</span>() -&gt; <span class="ty"><a href="stdlib-types.html">i64</a></span> {</span>
+<span id="src-gpu-record-loft-L28">  <span class="fn-call">rec_table</span>()</span>
+<span id="src-gpu-record-loft-L29">}</span>
+<span id="src-gpu-record-loft-L30"></span>
+<span id="src-gpu-record-loft-L31"><span class="cm">// Every call received since the last `reset`, one line each.</span></span>
+<span id="src-gpu-record-loft-L32"><span class="kw">pub</span> <span class="kw">fn</span> <span class="bi"><a href="stdlib-math.html">log</a></span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-gpu-record-loft-L33">  <span class="fn-call">rec_log</span>()</span>
+<span id="src-gpu-record-loft-L34">}</span>
+<span id="src-gpu-record-loft-L35"></span>
+<span id="src-gpu-record-loft-L36"><span class="cm">// Forget the log and every object, number handles from 1 again, and take sources again.</span></span>
+<span id="src-gpu-record-loft-L37"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">reset</span>() {</span>
+<span id="src-gpu-record-loft-L38">  <span class="fn-call">rec_reset</span>();</span>
+<span id="src-gpu-record-loft-L39">}</span>
+<span id="src-gpu-record-loft-L40"></span>
+<span id="src-gpu-record-loft-L41"><span class="cm">// How many buffers, textures, targets and pipelines are held now: 0 once their owners died.</span></span>
+<span id="src-gpu-record-loft-L42"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">live</span>() -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-gpu-record-loft-L43">  <span class="fn-call">rec_live</span>()</span>
+<span id="src-gpu-record-loft-L44">}</span>
+<span id="src-gpu-record-loft-L45"></span>
+<span id="src-gpu-record-loft-L46"><span class="cm">// Refuse (or take again) a pipeline whose shader arrives as text — what a machine that compiles</span></span>
+<span id="src-gpu-record-loft-L47"><span class="cm">// no shader while a program runs does.  A source with empty text passes: it stands for a shader</span></span>
+<span id="src-gpu-record-loft-L48"><span class="cm">// compiled ahead.</span></span>
+<span id="src-gpu-record-loft-L49"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">refuse_source</span>(on: <span class="ty"><a href="stdlib-types.html">boolean</a></span>) {</span>
+<span id="src-gpu-record-loft-L50">  <span class="fn-call">rec_refuse_source</span>(<span class="kw">if</span> on { <span class="nm">1</span> } <span class="kw">else</span> { <span class="nm">0</span> });</span>
+<span id="src-gpu-record-loft-L51">}</span>
+</code></pre>
+<h2 id="tests-frame-loft">tests/frame.loft</h2>
+<pre class="src"><code><span id="tests-frame-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
+<span id="tests-frame-loft-L2"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
+<span id="tests-frame-loft-L3"><span class="cm">//</span></span>
+<span id="tests-frame-loft-L4"><span class="cm">// A scripted frame through `gpu`, read back from the recording backend.  Every expected log is</span></span>
+<span id="tests-frame-loft-L5"><span class="cm">// written by hand from the calls above it: handles count from 1 in the order they are made, and</span></span>
+<span id="tests-frame-loft-L6"><span class="cm">// a block's offsets are gpu's layout (a matrix 16 floats, an `F4` on a multiple of 4).</span></span>
+<span id="tests-frame-loft-L7"><span class="kw">use</span> gpu;</span>
+<span id="tests-frame-loft-L8"><span class="kw">use</span> gpu_record;</span>
+<span id="tests-frame-loft-L9"></span>
+<span id="tests-frame-loft-L10"><span class="cm">// Three inputs per vertex; a block of a matrix, a vector, a float and a vector; one texture.</span></span>
+<span id="tests-frame-loft-L11"><span class="kw">fn</span> <span class="fn-call">view</span>() -&gt; gpu::<span class="en">Program</span> {</span>
+<span id="tests-frame-loft-L12">  gpu::<span class="en">Program</span> {</span>
+<span id="tests-frame-loft-L13">    vertex: [gpu::<span class="en">F3</span>, gpu::<span class="en">F3</span>, gpu::<span class="en">F2</span>],</span>
+<span id="tests-frame-loft-L14">    instance: [],</span>
+<span id="tests-frame-loft-L15">    block: [gpu::<span class="en">MAT4</span>, gpu::<span class="en">F4</span>, gpu::<span class="en">F1</span>, gpu::<span class="en">F4</span>],</span>
+<span id="tests-frame-loft-L16">    textures: <span class="nm">1</span>,</span>
+<span id="tests-frame-loft-L17">    sources: [gpu::<span class="fn-call">source</span>(<span class="st">"other"</span>, <span class="st">"not"</span>, <span class="st">"these"</span>), gpu::<span class="fn-call">source</span>(<span class="st">"record"</span>, <span class="st">"v"</span>, <span class="st">"f"</span>)],</span>
+<span id="tests-frame-loft-L18">  }</span>
+<span id="tests-frame-loft-L19">}</span>
+<span id="tests-frame-loft-L20"></span>
+<span id="tests-frame-loft-L21"><span class="cm">// One input per vertex and two per copy; a block of one pair; no texture.</span></span>
+<span id="tests-frame-loft-L22"><span class="kw">fn</span> <span class="fn-call">copies</span>() -&gt; gpu::<span class="en">Program</span> {</span>
+<span id="tests-frame-loft-L23">  gpu::<span class="en">Program</span> {</span>
+<span id="tests-frame-loft-L24">    vertex: [gpu::<span class="en">F3</span>],</span>
+<span id="tests-frame-loft-L25">    instance: [gpu::<span class="en">F4</span>, gpu::<span class="en">F2</span>],</span>
+<span id="tests-frame-loft-L26">    block: [gpu::<span class="en">F2</span>],</span>
+<span id="tests-frame-loft-L27">    textures: <span class="nm">0</span>,</span>
+<span id="tests-frame-loft-L28">    sources: [gpu::<span class="fn-call">source</span>(<span class="st">"record"</span>, <span class="st">"v"</span>, <span class="st">"f"</span>)],</span>
+<span id="tests-frame-loft-L29">  }</span>
+<span id="tests-frame-loft-L30">}</span>
+<span id="tests-frame-loft-L31"></span>
+<span id="tests-frame-loft-L32"><span class="cm">// A log: each line with its newline.</span></span>
+<span id="tests-frame-loft-L33"><span class="kw">fn</span> <span class="fn-call"><a href="stdlib-file-system.html">lines</a></span>(of: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">text</a></span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="tests-frame-loft-L34">  out = <span class="st">""</span>;</span>
+<span id="tests-frame-loft-L35">  <span class="kw">for</span> l <span class="kw">in</span> of { out += <span class="st">"{l}\n"</span>; }</span>
+<span id="tests-frame-loft-L36">  out</span>
+<span id="tests-frame-loft-L37">}</span>
+<span id="tests-frame-loft-L38"></span>
+<span id="tests-frame-loft-L39"><span class="kw">fn</span> <span class="fn-call">matrix</span>(first: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt; {</span>
+<span id="tests-frame-loft-L40">  m: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt; = [<span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..16</span> { <span class="nm">0.0</span> }];</span>
+<span id="tests-frame-loft-L41">  m[<span class="nm">0</span>] = first;</span>
+<span id="tests-frame-loft-L42">  m</span>
+<span id="tests-frame-loft-L43">}</span>
+<span id="tests-frame-loft-L44"></span>
+<span id="tests-frame-loft-L45"><span class="kw">fn</span> <span class="fn-call">open</span>() -&gt; gpu::<span class="en">Device</span> {</span>
+<span id="tests-frame-loft-L46">  gpu_record::<span class="fn-call">reset</span>();</span>
+<span id="tests-frame-loft-L47">  gpu::<span class="fn-call">open</span>(gpu_record::<span class="fn-call">table</span>(), <span class="nm">64</span>, <span class="nm">48</span>, <span class="st">"frame"</span>)!</span>
+<span id="tests-frame-loft-L48">}</span>
+<span id="tests-frame-loft-L49"></span>
+<span id="tests-frame-loft-L50"><span class="kw">fn</span> <span class="fn-call">frame_log</span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="tests-frame-loft-L51">  <span class="fn-call"><a href="stdlib-file-system.html">lines</a></span>([</span>
+<span id="tests-frame-loft-L52">    <span class="st">"open 1 64x48 \"</span>frame\<span class="st">""</span>,</span>
+<span id="tests-frame-loft-L53">    <span class="st">"pipeline 2 vertex 3 3 2 instance block 16x1@0 4x1@16 1x1@20 4x1@24 size 28 textures 1"</span>,</span>
+<span id="tests-frame-loft-L54">    <span class="st">"  state shape 0 depth 2 blend 0 cull 0 into 0"</span>,</span>
+<span id="tests-frame-loft-L55">    <span class="st">"texture 3 8x8 colour"</span>,</span>
+<span id="tests-frame-loft-L56">    <span class="st">"texture_nearest 3 on"</span>,</span>
+<span id="tests-frame-loft-L57">    <span class="st">"buffer 4 floats 16"</span>,</span>
+<span id="tests-frame-loft-L58">    <span class="st">"begin 0 clear ff102030"</span>,</span>
+<span id="tests-frame-loft-L59">    <span class="st">"  bind 2"</span>,</span>
+<span id="tests-frame-loft-L60">    <span class="st">"  uniforms floats 28 first 2.000 last 7.500"</span>,</span>
+<span id="tests-frame-loft-L61">    <span class="st">"  sample 0 texture 3"</span>,</span>
+<span id="tests-frame-loft-L62">    <span class="st">"  vertices 4"</span>,</span>
+<span id="tests-frame-loft-L63">    <span class="st">"  draw from 0 count 2 copies 0"</span>,</span>
+<span id="tests-frame-loft-L64">    <span class="st">"end"</span>,</span>
+<span id="tests-frame-loft-L65">    <span class="st">"present"</span>,</span>
+<span id="tests-frame-loft-L66">  ])</span>
+<span id="tests-frame-loft-L67">}</span>
+<span id="tests-frame-loft-L68"></span>
+<span id="tests-frame-loft-L69"><span class="kw">fn</span> <span class="fn-call">test_a_frame_arrives_at_the_backend_call_for_call</span>() {</span>
+<span id="tests-frame-loft-L70">  dev = <span class="fn-call">open</span>();</span>
+<span id="tests-frame-loft-L71">  pipe = dev.<span class="fn-call">pipeline</span>(<span class="fn-call">view</span>(), gpu::<span class="en">State</span> { depth: gpu::<span class="en">DEPTH_TEST_WRITE</span> })!;</span>
+<span id="tests-frame-loft-L72">  atlas = dev.<span class="fn-call">texture</span>(<span class="nm">8</span>, <span class="nm">8</span>);</span>
+<span id="tests-frame-loft-L73">  atlas.<span class="fn-call">nearest</span>(<span class="kw">true</span>);</span>
+<span id="tests-frame-loft-L74">  mesh = dev.<span class="fn-call">buffer</span>([<span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..16</span> { <span class="nm">0.0f</span> }]);</span>
+<span id="tests-frame-loft-L75">  u = pipe.<span class="fn-call">block</span>();</span>
+<span id="tests-frame-loft-L76">  u.<span class="fn-call">mat4</span>(<span class="nm">0</span>, <span class="fn-call">matrix</span>(<span class="nm">2.0</span>));</span>
+<span id="tests-frame-loft-L77">  u.<span class="fn-call">f4</span>(<span class="nm">3</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">7.5</span>);</span>
+<span id="tests-frame-loft-L78">  dev.<span class="fn-call">begin_window</span>(gpu::<span class="en">CLEAR</span>, <span class="nm">0xFF102030</span>);</span>
+<span id="tests-frame-loft-L79">  dev.<span class="fn-call">bind</span>(pipe);</span>
+<span id="tests-frame-loft-L80">  dev.<span class="fn-call">uniforms</span>(u);</span>
+<span id="tests-frame-loft-L81">  dev.<span class="fn-call">sample</span>(<span class="nm">0</span>, atlas);</span>
+<span id="tests-frame-loft-L82">  dev.<span class="fn-call">vertices</span>(mesh);</span>
+<span id="tests-frame-loft-L83">  dev.<span class="fn-call">draw</span>(<span class="nm">0</span>, <span class="nm">2</span>);</span>
+<span id="tests-frame-loft-L84">  dev.<span class="fn-call">end</span>();</span>
+<span id="tests-frame-loft-L85">  dev.<span class="fn-call">present</span>();</span>
+<span id="tests-frame-loft-L86">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(gpu_record::<span class="bi"><a href="stdlib-math.html">log</a></span>() == <span class="fn-call">frame_log</span>(), <span class="st">"the frame's record:\n{gpu_record::log()}"</span>);</span>
+<span id="tests-frame-loft-L87">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(dev.<span class="fn-call">refusals</span>()) == <span class="nm">0</span>, <span class="st">"nothing refused: {dev.refusals()}"</span>);</span>
+<span id="tests-frame-loft-L88">}</span>
+<span id="tests-frame-loft-L89"></span>
+<span id="tests-frame-loft-L90"><span class="kw">fn</span> <span class="fn-call">copies_log</span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="tests-frame-loft-L91">  <span class="fn-call"><a href="stdlib-file-system.html">lines</a></span>([</span>
+<span id="tests-frame-loft-L92">    <span class="st">"open 1 64x48 \"</span>frame\<span class="st">""</span>,</span>
+<span id="tests-frame-loft-L93">    <span class="st">"pipeline 2 vertex 3 instance 4 2 block 2x1@0 size 4 textures 0"</span>,</span>
+<span id="tests-frame-loft-L94">    <span class="st">"  state shape 0 depth 0 blend 12 cull 1 into 1"</span>,</span>
+<span id="tests-frame-loft-L95">    <span class="st">"texture 3 32x16 colour"</span>,</span>
+<span id="tests-frame-loft-L96">    <span class="st">"target 4 colour 3 depth 0"</span>,</span>
+<span id="tests-frame-loft-L97">    <span class="st">"buffer 5 floats 9"</span>,</span>
+<span id="tests-frame-loft-L98">    <span class="st">"buffer 6 floats 24"</span>,</span>
+<span id="tests-frame-loft-L99">    <span class="st">"index_buffer 7 count 3"</span>,</span>
+<span id="tests-frame-loft-L100">    <span class="st">"begin 4 keep"</span>,</span>
+<span id="tests-frame-loft-L101">    <span class="st">"  viewport 0,0 32x16"</span>,</span>
+<span id="tests-frame-loft-L102">    <span class="st">"  bind 2"</span>,</span>
+<span id="tests-frame-loft-L103">    <span class="st">"  uniforms floats 4 first 32.000 last 0.000"</span>,</span>
+<span id="tests-frame-loft-L104">    <span class="st">"  vertices 5"</span>,</span>
+<span id="tests-frame-loft-L105">    <span class="st">"  instances 6 from 12"</span>,</span>
+<span id="tests-frame-loft-L106">    <span class="st">"  scissor 2,3 10x5"</span>,</span>
+<span id="tests-frame-loft-L107">    <span class="st">"  draw from 0 count 3 copies 2"</span>,</span>
+<span id="tests-frame-loft-L108">    <span class="st">"  scissor off"</span>,</span>
+<span id="tests-frame-loft-L109">    <span class="st">"  indices 7"</span>,</span>
+<span id="tests-frame-loft-L110">    <span class="st">"  draw from 0 count 3 indexed copies 0"</span>,</span>
+<span id="tests-frame-loft-L111">    <span class="st">"end"</span>,</span>
+<span id="tests-frame-loft-L112">    <span class="st">"buffer_update 6 floats 12"</span>,</span>
+<span id="tests-frame-loft-L113">  ])</span>
+<span id="tests-frame-loft-L114">}</span>
+<span id="tests-frame-loft-L115"></span>
+<span id="tests-frame-loft-L116"><span class="kw">fn</span> <span class="fn-call">test_copies_indices_a_target_and_a_scissor_arrive_too</span>() {</span>
+<span id="tests-frame-loft-L117">  dev = <span class="fn-call">open</span>();</span>
+<span id="tests-frame-loft-L118">  <span class="cm">// blend(ONE, ONE_MINUS_SRC_ALPHA) is 1 + 8 * 1 + 3</span></span>
+<span id="tests-frame-loft-L119">  state = gpu::<span class="en">State</span> { blend: gpu::<span class="fn-call">blend</span>(gpu::<span class="en">ONE</span>, gpu::<span class="en">ONE_MINUS_SRC_ALPHA</span>), cull: gpu::<span class="en">CULL_BACK</span>, into: gpu::<span class="en">INTO_COLOUR</span> };</span>
+<span id="tests-frame-loft-L120">  pipe = dev.<span class="fn-call">pipeline</span>(<span class="fn-call">copies</span>(), state)!;</span>
+<span id="tests-frame-loft-L121">  scene = dev.<span class="fn-call">texture</span>(<span class="nm">32</span>, <span class="nm">16</span>);</span>
+<span id="tests-frame-loft-L122">  target = dev.<span class="fn-call">colour_target</span>(scene);</span>
+<span id="tests-frame-loft-L123">  mesh = dev.<span class="fn-call">buffer</span>([<span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..9</span> { <span class="nm">0.0f</span> }]);</span>
+<span id="tests-frame-loft-L124">  per_copy = dev.<span class="fn-call">buffer</span>([<span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..24</span> { <span class="nm">0.0f</span> }]);</span>
+<span id="tests-frame-loft-L125">  order = dev.<span class="fn-call">index_buffer</span>([<span class="nm">0</span>, <span class="nm">1</span>, <span class="nm">2</span>]);</span>
+<span id="tests-frame-loft-L126">  u = pipe.<span class="fn-call">block</span>();</span>
+<span id="tests-frame-loft-L127">  u.<span class="fn-call">f2</span>(<span class="nm">0</span>, <span class="nm">32.0</span>, <span class="nm">16.0</span>);</span>
+<span id="tests-frame-loft-L128">  dev.<span class="fn-call">begin</span>(target, gpu::<span class="en">KEEP</span>, <span class="nm">0</span>);</span>
+<span id="tests-frame-loft-L129">  dev.<span class="fn-call">viewport</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">32</span>, <span class="nm">16</span>);</span>
+<span id="tests-frame-loft-L130">  dev.<span class="fn-call">bind</span>(pipe);</span>
+<span id="tests-frame-loft-L131">  dev.<span class="fn-call">uniforms</span>(u);</span>
+<span id="tests-frame-loft-L132">  dev.<span class="fn-call">vertices</span>(mesh);</span>
+<span id="tests-frame-loft-L133">  dev.<span class="fn-call">instances</span>(per_copy, <span class="nm">12</span>);</span>
+<span id="tests-frame-loft-L134">  dev.<span class="fn-call">scissor</span>(<span class="nm">2</span>, <span class="nm">3</span>, <span class="nm">10</span>, <span class="nm">5</span>);</span>
+<span id="tests-frame-loft-L135">  dev.<span class="fn-call">draw_copies</span>(<span class="nm">3</span>, <span class="nm">2</span>);</span>
+<span id="tests-frame-loft-L136">  dev.<span class="fn-call">no_scissor</span>();</span>
+<span id="tests-frame-loft-L137">  dev.<span class="fn-call">indices</span>(order);</span>
+<span id="tests-frame-loft-L138">  dev.<span class="fn-call">draw_indexed</span>(<span class="nm">3</span>);</span>
+<span id="tests-frame-loft-L139">  dev.<span class="fn-call">end</span>();</span>
+<span id="tests-frame-loft-L140">  per_copy.<span class="fn-call">update</span>([<span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..12</span> { <span class="nm">0.0f</span> }]);</span>
+<span id="tests-frame-loft-L141">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(gpu_record::<span class="bi"><a href="stdlib-math.html">log</a></span>() == <span class="fn-call">copies_log</span>(), <span class="st">"the record:\n{gpu_record::log()}"</span>);</span>
+<span id="tests-frame-loft-L142">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(dev.<span class="fn-call">refusals</span>()) == <span class="nm">0</span>, <span class="st">"nothing refused: {dev.refusals()}"</span>);</span>
+<span id="tests-frame-loft-L143">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(per_copy.<span class="fn-call">floats</span>() == <span class="nm">12</span> &amp;&amp; order.<span class="fn-call">count</span>() == <span class="nm">3</span>, <span class="st">"the lengths follow the data"</span>);</span>
+<span id="tests-frame-loft-L144">}</span>
+<span id="tests-frame-loft-L145"></span>
+<span id="tests-frame-loft-L146"><span class="cm">// What the backend saw after `open`: nothing, when every call was refused.</span></span>
+<span id="tests-frame-loft-L147"><span class="kw">fn</span> <span class="fn-call">after_open</span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="tests-frame-loft-L148">  gpu_record::<span class="bi"><a href="stdlib-math.html">log</a></span>()[<span class="bi"><a href="stdlib-text.html">len</a></span>(<span class="st">"open 1 64x48 \"</span>frame\<span class="st">"\n"</span>)..]</span>
+<span id="tests-frame-loft-L149">}</span>
+<span id="tests-frame-loft-L150"></span>
+<span id="tests-frame-loft-L151"><span class="kw">fn</span> <span class="fn-call">test_a_call_that_breaks_the_rule_never_reaches_the_backend</span>() {</span>
+<span id="tests-frame-loft-L152">  dev = <span class="fn-call">open</span>();</span>
+<span id="tests-frame-loft-L153">  mesh = dev.<span class="fn-call">buffer</span>([<span class="nm">0.0f</span>, <span class="nm">0.0f</span>, <span class="nm">0.0f</span>]);</span>
+<span id="tests-frame-loft-L154">  atlas = dev.<span class="fn-call">texture</span>(<span class="nm">8</span>, <span class="nm">8</span>);</span>
+<span id="tests-frame-loft-L155">  pipe = dev.<span class="fn-call">pipeline</span>(<span class="fn-call">view</span>(), gpu::<span class="en">State</span> {})!;</span>
+<span id="tests-frame-loft-L156">  into_colour = dev.<span class="fn-call">pipeline</span>(<span class="fn-call">view</span>(), gpu::<span class="en">State</span> { into: gpu::<span class="en">INTO_COLOUR</span> })!;</span>
+<span id="tests-frame-loft-L157">  other = dev.<span class="fn-call">pipeline</span>(<span class="fn-call">copies</span>(), gpu::<span class="en">State</span> {})!;</span>
+<span id="tests-frame-loft-L158">  u = pipe.<span class="fn-call">block</span>();</span>
+<span id="tests-frame-loft-L159">  made = gpu_record::<span class="bi"><a href="stdlib-math.html">log</a></span>();</span>
+<span id="tests-frame-loft-L160"></span>
+<span id="tests-frame-loft-L161">  dev.<span class="fn-call">draw</span>(<span class="nm">0</span>, <span class="nm">3</span>); <span class="cm">// outside a pass</span></span>
+<span id="tests-frame-loft-L162">  dev.<span class="fn-call">bind</span>(pipe); <span class="cm">// outside a pass</span></span>
+<span id="tests-frame-loft-L163">  dev.<span class="fn-call">end</span>(); <span class="cm">// no pass to end</span></span>
+<span id="tests-frame-loft-L164">  dev.<span class="fn-call">begin_window</span>(gpu::<span class="en">KEEP</span>, <span class="nm">0</span>);</span>
+<span id="tests-frame-loft-L165">  dev.<span class="fn-call">begin_window</span>(gpu::<span class="en">KEEP</span>, <span class="nm">0</span>); <span class="cm">// a pass inside a pass</span></span>
+<span id="tests-frame-loft-L166">  dev.<span class="fn-call">present</span>(); <span class="cm">// inside a pass</span></span>
+<span id="tests-frame-loft-L167">  dev.<span class="fn-call">vertices</span>(mesh); <span class="cm">// no pipeline yet</span></span>
+<span id="tests-frame-loft-L168">  dev.<span class="fn-call">bind</span>(into_colour); <span class="cm">// built for a texture, this pass draws into the window</span></span>
+<span id="tests-frame-loft-L169">  dev.<span class="fn-call">bind</span>(pipe);</span>
+<span id="tests-frame-loft-L170">  dev.<span class="fn-call">draw</span>(<span class="nm">0</span>, <span class="nm">3</span>); <span class="cm">// no vertices</span></span>
+<span id="tests-frame-loft-L171">  dev.<span class="fn-call">vertices</span>(mesh);</span>
+<span id="tests-frame-loft-L172">  dev.<span class="fn-call">draw</span>(<span class="nm">0</span>, <span class="nm">3</span>); <span class="cm">// no block</span></span>
+<span id="tests-frame-loft-L173">  dev.<span class="fn-call">uniforms</span>(other.<span class="fn-call">block</span>()); <span class="cm">// another pipeline's block</span></span>
+<span id="tests-frame-loft-L174">  dev.<span class="fn-call">uniforms</span>(u);</span>
+<span id="tests-frame-loft-L175">  dev.<span class="fn-call">draw</span>(<span class="nm">0</span>, <span class="nm">3</span>); <span class="cm">// texture slot 0 empty</span></span>
+<span id="tests-frame-loft-L176">  dev.<span class="fn-call">sample</span>(<span class="nm">1</span>, atlas); <span class="cm">// the pipeline has one slot</span></span>
+<span id="tests-frame-loft-L177">  dev.<span class="fn-call">instances</span>(mesh, <span class="nm">0</span>); <span class="cm">// the pipeline reads nothing per copy</span></span>
+<span id="tests-frame-loft-L178">  dev.<span class="fn-call">sample</span>(<span class="nm">0</span>, atlas);</span>
+<span id="tests-frame-loft-L179">  dev.<span class="fn-call">draw_indexed</span>(<span class="nm">3</span>); <span class="cm">// no indices</span></span>
+<span id="tests-frame-loft-L180">  u.<span class="fn-call">f2</span>(<span class="nm">1</span>, <span class="nm">1.0</span>, <span class="nm">2.0</span>); <span class="cm">// field 1 is an F4</span></span>
+<span id="tests-frame-loft-L181">  dev.<span class="fn-call">uniforms</span>(u); <span class="cm">// a marked block</span></span>
+<span id="tests-frame-loft-L182">  dev.<span class="fn-call">bind</span>(pipe); <span class="cm">// a second bind forgets the first one's block</span></span>
+<span id="tests-frame-loft-L183">  dev.<span class="fn-call">vertices</span>(mesh);</span>
+<span id="tests-frame-loft-L184">  dev.<span class="fn-call">sample</span>(<span class="nm">0</span>, atlas);</span>
+<span id="tests-frame-loft-L185">  dev.<span class="fn-call">draw</span>(<span class="nm">0</span>, <span class="nm">3</span>); <span class="cm">// no block since the bind</span></span>
+<span id="tests-frame-loft-L186">  dev.<span class="fn-call">end</span>();</span>
+<span id="tests-frame-loft-L187"></span>
+<span id="tests-frame-loft-L188">  want = [</span>
+<span id="tests-frame-loft-L189">    <span class="st">"draw: outside a pass"</span>, <span class="st">"bind: outside a pass"</span>, <span class="st">"end: outside a pass"</span>,</span>
+<span id="tests-frame-loft-L190">    <span class="st">"begin: the pass before it has not ended"</span>, <span class="st">"present: a pass has not ended"</span>,</span>
+<span id="tests-frame-loft-L191">    <span class="st">"vertices: no pipeline is bound in this pass"</span>,</span>
+<span id="tests-frame-loft-L192">    <span class="st">"bind: the pipeline was built for another kind of target than this pass draws into"</span>,</span>
+<span id="tests-frame-loft-L193">    <span class="st">"draw: no vertices were given since the pipeline was bound"</span>,</span>
+<span id="tests-frame-loft-L194">    <span class="st">"draw: the pipeline's block was not given since it was bound"</span>,</span>
+<span id="tests-frame-loft-L195">    <span class="st">"uniforms: the block is another pipeline's"</span>,</span>
+<span id="tests-frame-loft-L196">    <span class="st">"draw: a texture slot of the pipeline was not given since it was bound"</span>,</span>
+<span id="tests-frame-loft-L197">    <span class="st">"sample: the pipeline has no texture slot 1"</span>,</span>
+<span id="tests-frame-loft-L198">    <span class="st">"instances: the pipeline declares no input per copy"</span>,</span>
+<span id="tests-frame-loft-L199">    <span class="st">"draw_indexed: no indices were given since the pipeline was bound"</span>,</span>
+<span id="tests-frame-loft-L200">    <span class="st">"uniforms: a field of the block was set as another kind than it was declared"</span>,</span>
+<span id="tests-frame-loft-L201">    <span class="st">"draw: the pipeline's block was not given since it was bound"</span>,</span>
+<span id="tests-frame-loft-L202">  ];</span>
+<span id="tests-frame-loft-L203">  got = dev.<span class="fn-call">refusals</span>();</span>
+<span id="tests-frame-loft-L204">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(got) == <span class="bi"><a href="stdlib-text.html">len</a></span>(want), <span class="st">"{len(want)} refusals, got {len(got)}: {got}"</span>);</span>
+<span id="tests-frame-loft-L205">  <span class="kw">for</span> w <span class="kw">in</span> want { <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>((got[w#<span class="ty">index</span>] ?? <span class="st">""</span>) == w, <span class="st">"refusal {w#index}: {got[w#index] ?? "</span><span class="st">"}"</span>); }</span>
+<span id="tests-frame-loft-L206">  <span class="cm">// Of the 26 calls only the pass, the binds and what was given to a bound pipeline arrived: no draw.</span></span>
+<span id="tests-frame-loft-L207">  seen = gpu_record::<span class="bi"><a href="stdlib-math.html">log</a></span>()[<span class="bi"><a href="stdlib-text.html">len</a></span>(made)..];</span>
+<span id="tests-frame-loft-L208">  expect = <span class="fn-call"><a href="stdlib-file-system.html">lines</a></span>([</span>
+<span id="tests-frame-loft-L209">    <span class="st">"begin 0 keep"</span>,</span>
+<span id="tests-frame-loft-L210">    <span class="st">"  bind 4"</span>,</span>
+<span id="tests-frame-loft-L211">    <span class="st">"  vertices 2"</span>,</span>
+<span id="tests-frame-loft-L212">    <span class="st">"  uniforms floats 28 first 0.000 last 0.000"</span>,</span>
+<span id="tests-frame-loft-L213">    <span class="st">"  sample 0 texture 3"</span>,</span>
+<span id="tests-frame-loft-L214">    <span class="st">"  bind 4"</span>,</span>
+<span id="tests-frame-loft-L215">    <span class="st">"  vertices 2"</span>,</span>
+<span id="tests-frame-loft-L216">    <span class="st">"  sample 0 texture 3"</span>,</span>
+<span id="tests-frame-loft-L217">    <span class="st">"end"</span>,</span>
+<span id="tests-frame-loft-L218">  ]);</span>
+<span id="tests-frame-loft-L219">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(seen == expect, <span class="st">"what arrived:\n{seen}"</span>);</span>
+<span id="tests-frame-loft-L220">}</span>
+<span id="tests-frame-loft-L221"></span>
+<span id="tests-frame-loft-L222"><span class="kw">fn</span> <span class="fn-call">make_and_drop</span>(dev: const gpu::<span class="en">Device</span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="tests-frame-loft-L223">  mesh = dev.<span class="fn-call">buffer</span>([<span class="nm">0.0f</span>]);</span>
+<span id="tests-frame-loft-L224">  order = dev.<span class="fn-call">index_buffer</span>([<span class="nm">0</span>]);</span>
+<span id="tests-frame-loft-L225">  colour = dev.<span class="fn-call">texture</span>(<span class="nm">4</span>, <span class="nm">4</span>);</span>
+<span id="tests-frame-loft-L226">  depth = dev.<span class="fn-call">depth_texture</span>(<span class="nm">4</span>, <span class="nm">4</span>);</span>
+<span id="tests-frame-loft-L227">  target = dev.<span class="fn-call">target</span>(colour, depth);</span>
+<span id="tests-frame-loft-L228">  pipe = dev.<span class="fn-call">pipeline</span>(<span class="fn-call">copies</span>(), gpu::<span class="en">State</span> {})!;</span>
+<span id="tests-frame-loft-L229">  <span class="cm">// six objects are held while their owners live</span></span>
+<span id="tests-frame-loft-L230">  held = gpu_record::<span class="fn-call">live</span>();</span>
+<span id="tests-frame-loft-L231">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(mesh.<span class="fn-call">floats</span>() == <span class="nm">1</span> &amp;&amp; order.<span class="fn-call">count</span>() == <span class="nm">1</span> &amp;&amp; colour.<span class="fn-call">width</span>() == <span class="nm">4</span>, <span class="st">"the objects are used"</span>);</span>
+<span id="tests-frame-loft-L232">  held</span>
+<span id="tests-frame-loft-L233">}</span>
+<span id="tests-frame-loft-L234"></span>
+<span id="tests-frame-loft-L235"><span class="kw">fn</span> <span class="fn-call">test_every_object_is_released_when_its_owner_dies</span>() {</span>
+<span id="tests-frame-loft-L236">  dev = <span class="fn-call">open</span>();</span>
+<span id="tests-frame-loft-L237">  held = <span class="fn-call">make_and_drop</span>(dev);</span>
+<span id="tests-frame-loft-L238">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(held == <span class="nm">6</span>, <span class="st">"six objects held inside, got {held}"</span>);</span>
+<span id="tests-frame-loft-L239">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(gpu_record::<span class="fn-call">live</span>() == <span class="nm">0</span>, <span class="st">"none held after their owners died, got {gpu_record::live()}"</span>);</span>
+<span id="tests-frame-loft-L240">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(<span class="fn-call">after_open</span>()) &gt; <span class="nm">0</span>, <span class="st">"the backend saw them made and released"</span>);</span>
+<span id="tests-frame-loft-L241">}</span>
+<span id="tests-frame-loft-L242"></span>
+<span id="tests-frame-loft-L243"><span class="kw">fn</span> <span class="fn-call">test_an_object_outliving_its_device_dies_quietly</span>() {</span>
+<span id="tests-frame-loft-L244">  dev = <span class="fn-call">open</span>();</span>
+<span id="tests-frame-loft-L245">  mesh = dev.<span class="fn-call">buffer</span>([<span class="nm">0.0f</span>]);</span>
+<span id="tests-frame-loft-L246">  dev.<span class="fn-call">close</span>();</span>
+<span id="tests-frame-loft-L247">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(gpu_record::<span class="fn-call">live</span>() == <span class="nm">0</span>, <span class="st">"closing the device freed its buffer"</span>);</span>
+<span id="tests-frame-loft-L248">  closed = gpu_record::<span class="bi"><a href="stdlib-math.html">log</a></span>();</span>
+<span id="tests-frame-loft-L249">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(closed.<span class="fn-call"><a href="stdlib-path-helpers.html">ends_with</a></span>(<span class="st">"close 1\n"</span>), <span class="st">"the close is the last line:\n{closed}"</span>);</span>
+<span id="tests-frame-loft-L250">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(mesh.<span class="fn-call">floats</span>() == <span class="nm">1</span>, <span class="st">"the buffer's own record stays readable"</span>);</span>
+<span id="tests-frame-loft-L251">}</span>
+<span id="tests-frame-loft-L252"></span>
+<span id="tests-frame-loft-L253"><span class="kw">fn</span> <span class="fn-call">test_a_program_without_this_backends_source_builds_no_pipeline</span>() {</span>
+<span id="tests-frame-loft-L254">  dev = <span class="fn-call">open</span>();</span>
+<span id="tests-frame-loft-L255">  p = gpu::<span class="en">Program</span> { vertex: [gpu::<span class="en">F3</span>], instance: [], block: [], textures: <span class="nm">0</span>, sources: [gpu::<span class="fn-call">source</span>(<span class="st">"other"</span>, <span class="st">"v"</span>, <span class="st">"f"</span>)] };</span>
+<span id="tests-frame-loft-L256">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(dev.<span class="fn-call">pipeline</span>(p, gpu::<span class="en">State</span> {}) == <span class="kw">null</span>, <span class="st">"no source tagged for this backend"</span>);</span>
+<span id="tests-frame-loft-L257">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">after_open</span>() == <span class="st">""</span>, <span class="st">"the backend was not asked:\n{after_open()}"</span>);</span>
+<span id="tests-frame-loft-L258">}</span>
+<span id="tests-frame-loft-L259"></span>
+<span id="tests-frame-loft-L260"><span class="kw">fn</span> <span class="fn-call">test_a_block_with_a_three_float_field_builds_no_pipeline</span>() {</span>
+<span id="tests-frame-loft-L261">  dev = <span class="fn-call">open</span>();</span>
+<span id="tests-frame-loft-L262">  p = gpu::<span class="en">Program</span> { vertex: [gpu::<span class="en">F3</span>], instance: [], block: [gpu::<span class="en">F3</span>], textures: <span class="nm">0</span>, sources: [gpu::<span class="fn-call">source</span>(<span class="st">"record"</span>, <span class="st">"v"</span>, <span class="st">"f"</span>)] };</span>
+<span id="tests-frame-loft-L263">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(dev.<span class="fn-call">pipeline</span>(p, gpu::<span class="en">State</span> {}) == <span class="kw">null</span>, <span class="st">"a block takes no F3"</span>);</span>
+<span id="tests-frame-loft-L264">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">after_open</span>() == <span class="st">""</span>, <span class="st">"the backend was not asked:\n{after_open()}"</span>);</span>
+<span id="tests-frame-loft-L265">}</span>
+<span id="tests-frame-loft-L266"></span>
+<span id="tests-frame-loft-L267"><span class="kw">fn</span> <span class="fn-call">test_a_backend_that_compiles_nothing_refuses_a_source_and_takes_a_blob</span>() {</span>
+<span id="tests-frame-loft-L268">  dev = <span class="fn-call">open</span>();</span>
+<span id="tests-frame-loft-L269">  gpu_record::<span class="fn-call">refuse_source</span>(<span class="kw">true</span>);</span>
+<span id="tests-frame-loft-L270">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(dev.<span class="fn-call">pipeline</span>(<span class="fn-call">copies</span>(), gpu::<span class="en">State</span> {}) == <span class="kw">null</span>, <span class="st">"source text is refused in this mode"</span>);</span>
+<span id="tests-frame-loft-L271">  ahead = gpu::<span class="en">Program</span> { vertex: [gpu::<span class="en">F3</span>], instance: [], block: [], textures: <span class="nm">0</span>, sources: [gpu::<span class="fn-call">source</span>(<span class="st">"record"</span>, <span class="st">""</span>, <span class="st">""</span>)] };</span>
+<span id="tests-frame-loft-L272">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(dev.<span class="fn-call">pipeline</span>(ahead, gpu::<span class="en">State</span> {}) != <span class="kw">null</span>, <span class="st">"a shader compiled ahead passes"</span>);</span>
+<span id="tests-frame-loft-L273">  gpu_record::<span class="fn-call">refuse_source</span>(<span class="kw">false</span>);</span>
+<span id="tests-frame-loft-L274">}</span>
+<span id="tests-frame-loft-L275"></span>
+<span id="tests-frame-loft-L276"><span class="kw">fn</span> <span class="fn-call">test_no_table_opens_no_device</span>() {</span>
+<span id="tests-frame-loft-L277">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(gpu::<span class="fn-call">open</span>(<span class="nm">0</span>, <span class="nm">64</span>, <span class="nm">48</span>, <span class="st">"none"</span>) == <span class="kw">null</span>, <span class="st">"a backend whose stack is absent answers table 0"</span>);</span>
+<span id="tests-frame-loft-L278">}</span>
+<span id="tests-frame-loft-L279"></span>
+<span id="tests-frame-loft-L280"><span class="kw">fn</span> <span class="fn-call">test_input_a_small_machines_pixels_and_a_targets_pixels_reach_the_backend</span>() {</span>
+<span id="tests-frame-loft-L281">  dev = <span class="fn-call">open</span>();</span>
+<span id="tests-frame-loft-L282">  <span class="cm">// the recording backend has no keys, no pointer and no events: each answers nothing</span></span>
+<span id="tests-frame-loft-L283">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!dev.<span class="fn-call">key_down</span>(<span class="nm">65</span>) &amp;&amp; dev.<span class="fn-call">pointer_x</span>() == <span class="nm">0</span> &amp;&amp; dev.<span class="fn-call">pointer_y</span>() == <span class="nm">0</span> &amp;&amp; dev.<span class="fn-call">buttons</span>() == <span class="nm">0</span>, <span class="st">"no input"</span>);</span>
+<span id="tests-frame-loft-L284">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(dev.<span class="fn-call">typed</span>()) == <span class="nm">0</span> &amp;&amp; <span class="bi"><a href="stdlib-text.html">len</a></span>(dev.<span class="fn-call">events</span>()) == <span class="nm">0</span>, <span class="st">"no text, no events"</span>);</span>
+<span id="tests-frame-loft-L285">  held = dev.<span class="fn-call"><a href="stdlib-json-reading-values.html">keys</a></span>();</span>
+<span id="tests-frame-loft-L286">  down = <span class="nm">0</span>;</span>
+<span id="tests-frame-loft-L287">  <span class="kw">for</span> k <span class="kw">in</span> held { <span class="kw">if</span> k { down += <span class="nm">1</span>; } }</span>
+<span id="tests-frame-loft-L288">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(held) == <span class="nm">256</span> &amp;&amp; down == <span class="nm">0</span>, <span class="st">"256 flags, none down: {len(held)} {down}"</span>);</span>
+<span id="tests-frame-loft-L289">  t = dev.<span class="fn-call">texture</span>(<span class="nm">2</span>, <span class="nm">1</span>);</span>
+<span id="tests-frame-loft-L290">  <span class="cm">// 63488 is five bits of red (f800), 2016 six of green</span></span>
+<span id="tests-frame-loft-L291">  t.<span class="fn-call">put_rgb565</span>(<span class="nm">0</span>, <span class="nm">0</span>, [<span class="nm">63488</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>, <span class="nm">2016</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>], <span class="nm">2</span>, <span class="nm">1</span>);</span>
+<span id="tests-frame-loft-L292">  t.<span class="fn-call">put_rgb565</span>(<span class="nm">0</span>, <span class="nm">0</span>, [<span class="nm">63488</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>], <span class="nm">2</span>, <span class="nm">1</span>); <span class="cm">// too few values: not sent</span></span>
+<span id="tests-frame-loft-L293">  target = dev.<span class="fn-call">colour_target</span>(t);</span>
+<span id="tests-frame-loft-L294">  got = dev.<span class="fn-call">capture_of</span>(target);</span>
+<span id="tests-frame-loft-L295">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(got) == <span class="nm">2</span>, <span class="st">"a target's capture is its own size, got {len(got)}"</span>);</span>
+<span id="tests-frame-loft-L296">  deep = dev.<span class="fn-call">depth_target</span>(dev.<span class="fn-call">depth_texture</span>(<span class="nm">4</span>, <span class="nm">4</span>));</span>
+<span id="tests-frame-loft-L297">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(dev.<span class="fn-call">capture_of</span>(deep)) == <span class="nm">0</span>, <span class="st">"a target with no colour has no pixels to read"</span>);</span>
+<span id="tests-frame-loft-L298">  whole = dev.<span class="fn-call">capture</span>();</span>
+<span id="tests-frame-loft-L299">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(whole) == <span class="nm">64</span> * <span class="nm">48</span>, <span class="st">"the window's capture is the window's size"</span>);</span>
+<span id="tests-frame-loft-L300">  want = <span class="fn-call"><a href="stdlib-file-system.html">lines</a></span>([</span>
+<span id="tests-frame-loft-L301">    <span class="st">"texture 2 2x1 colour"</span>,</span>
+<span id="tests-frame-loft-L302">    <span class="st">"texture_put565 2 at 0,0 2x1 first f800"</span>,</span>
+<span id="tests-frame-loft-L303">    <span class="st">"target 3 colour 2 depth 0"</span>,</span>
+<span id="tests-frame-loft-L304">    <span class="st">"capture 3 pixels 2"</span>,</span>
+<span id="tests-frame-loft-L305">    <span class="st">"texture 4 4x4 depth"</span>,</span>
+<span id="tests-frame-loft-L306">    <span class="st">"target 5 colour 0 depth 4"</span>,</span>
+<span id="tests-frame-loft-L307">    <span class="st">"capture 0 pixels 3072"</span>,</span>
+<span id="tests-frame-loft-L308">  ]);</span>
+<span id="tests-frame-loft-L309">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">after_open</span>().<span class="fn-call"><a href="stdlib-path-helpers.html">starts_with</a></span>(want), <span class="st">"what arrived:\n{after_open()}"</span>);</span>
+<span id="tests-frame-loft-L310">}</span>
+<span id="tests-frame-loft-L311"></span>
+<span id="tests-frame-loft-L312"><span class="kw">fn</span> <span class="fn-call">test_a_window_over_the_whole_screen_is_asked_for_as_one</span>() {</span>
+<span id="tests-frame-loft-L313">  gpu_record::<span class="fn-call">reset</span>();</span>
+<span id="tests-frame-loft-L314">  dev = gpu::<span class="fn-call">open_fullscreen</span>(gpu_record::<span class="fn-call">table</span>(), <span class="st">"whole"</span>) ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"no device"</span>);</span>
+<span id="tests-frame-loft-L315">  <span class="cm">// no size is asked: the backend gives the screen's</span></span>
+<span id="tests-frame-loft-L316">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(gpu_record::<span class="bi"><a href="stdlib-math.html">log</a></span>() == <span class="st">"open 1 0x0 \"</span>whole\<span class="st">" fullscreen\n"</span>, <span class="st">"what the backend was asked:\n{gpu_record::log()}"</span>);</span>
+<span id="tests-frame-loft-L317">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(dev.<span class="fn-call">poll</span>(), <span class="st">"it is open"</span>);</span>
+<span id="tests-frame-loft-L318">}</span>
+</code></pre>
+<h2 id="tests-width32-loft">tests/width32.loft</h2>
+<pre class="src"><code><span id="tests-width32-loft-L1">#width <span class="nm">32</span></span>
+<span id="tests-width32-loft-L2"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
+<span id="tests-width32-loft-L3"><span class="cm">// SPDX-License-Identifier: LGPL-3.0-or-later</span></span>
+<span id="tests-width32-loft-L4"><span class="cm">//</span></span>
+<span id="tests-width32-loft-L5"><span class="cm">// A 32-bit program (`#width 32`, as a small machine runs loft) draws through `gpu`.  Here a</span></span>
+<span id="tests-width32-loft-L6"><span class="cm">// plain `integer` holds 32 bits, and a backend's table is an address and a colour is</span></span>
+<span id="tests-width32-loft-L7"><span class="cm">// 0xAARRGGBB, neither of which fits: both cross as `i64`, whole.</span></span>
+<span id="tests-width32-loft-L8"><span class="kw">use</span> gpu;</span>
+<span id="tests-width32-loft-L9"><span class="kw">use</span> gpu_record;</span>
+<span id="tests-width32-loft-L10"></span>
+<span id="tests-width32-loft-L11"><span class="kw">fn</span> <span class="fn-call">test_a_32_bit_program_opens_a_device_and_clears_to_its_colour</span>() {</span>
+<span id="tests-width32-loft-L12">  gpu_record::<span class="fn-call">reset</span>();</span>
+<span id="tests-width32-loft-L13">  table = gpu_record::<span class="fn-call">table</span>();</span>
+<span id="tests-width32-loft-L14">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(table != <span class="nm">0l</span>, <span class="st">"the table arrives whole, not as null"</span>);</span>
+<span id="tests-width32-loft-L15">  dev = gpu::<span class="fn-call">open</span>(table, <span class="nm">64</span>, <span class="nm">48</span>, <span class="st">"w32"</span>) ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"no device from a 32-bit program"</span>);</span>
+<span id="tests-width32-loft-L16">  mesh = dev.<span class="fn-call">buffer</span>([<span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>]);</span>
+<span id="tests-width32-loft-L17">  p = gpu::<span class="en">Program</span> { vertex: [gpu::<span class="en">F3</span>], instance: [], block: [gpu::<span class="en">F2</span>], textures: <span class="nm">0</span>, sources: [gpu::<span class="fn-call">source</span>(<span class="st">"record"</span>, <span class="st">""</span>, <span class="st">""</span>)] };</span>
+<span id="tests-width32-loft-L18">  pipe = dev.<span class="fn-call">pipeline</span>(p, gpu::<span class="en">State</span> {}) ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"no pipeline"</span>);</span>
+<span id="tests-width32-loft-L19">  u = pipe.<span class="fn-call">block</span>();</span>
+<span id="tests-width32-loft-L20">  u.<span class="fn-call">f2</span>(<span class="nm">0</span>, <span class="nm">3.0</span>, <span class="nm">4.0</span>);</span>
+<span id="tests-width32-loft-L21">  dev.<span class="fn-call">begin_window</span>(gpu::<span class="en">CLEAR</span>, <span class="nm">0xFF102030l</span>);</span>
+<span id="tests-width32-loft-L22">  dev.<span class="fn-call">bind</span>(pipe);</span>
+<span id="tests-width32-loft-L23">  dev.<span class="fn-call">uniforms</span>(u);</span>
+<span id="tests-width32-loft-L24">  dev.<span class="fn-call">vertices</span>(mesh);</span>
+<span id="tests-width32-loft-L25">  dev.<span class="fn-call">draw</span>(<span class="nm">0</span>, <span class="nm">1</span>);</span>
+<span id="tests-width32-loft-L26">  dev.<span class="fn-call">end</span>();</span>
+<span id="tests-width32-loft-L27">  <span class="bi"><a href="stdlib-math.html">log</a></span> = gpu_record::<span class="bi"><a href="stdlib-math.html">log</a></span>();</span>
+<span id="tests-width32-loft-L28">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-math.html">log</a></span>.<span class="fn-call"><a href="stdlib-path-helpers.html">ends_with</a></span>(<span class="st">"begin 0 clear ff102030\n  bind 3\n  uniforms floats 4 first 3.000 last 0.000\n  vertices 2\n  draw from 0 count 1 copies 0\nend\n"</span>), <span class="st">"the frame, its colour whole:\n{log}"</span>);</span>
+<span id="tests-width32-loft-L29">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(dev.<span class="fn-call">refusals</span>()) == <span class="nm">0</span>, <span class="st">"nothing refused: {dev.refusals()}"</span>);</span>
+<span id="tests-width32-loft-L30">}</span>
+</code></pre>
+
+  </article>
+<script src="search-index.js"></script>
+<script src="search.js"></script>
+<script>
+(function(){
+var m={"Keywords":"keywords","Texts":"texts","Integers":"integers","Boolean":"boolean","Float":"float","Functions":"functions","Vector":"vector","Structs":"structs","Enums":"enums","Sorted":"sorted","Index":"index","Hash":"hash","File":"file","Lexer":"lexer","Parser":"parser","Libraries":"libraries","Store Locks":"store_locks","Parallel execution":"parallel_execution","Logging":"logging","Time":"time","Safety":"safety","JSON":"json","Generics":"generics","Closures":"closures","Coroutines":"coroutines","Tuples":"tuples","Match":"match","Formatting":"formatting"};
+var h=document.querySelector('h1');
+if(!h)return;
+var key=m[h.textContent];
+if(!key)return;
+var a=document.createElement('a');
+a.className='playground-link';
+a.href='playground.html?example='+key;
+a.textContent='\u25B6 Try in Playground';
+h.parentNode.insertBefore(a,h.nextSibling);
+})();
+</script>
+</body>
+</html>

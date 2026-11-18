@@ -2213,7 +2213,7 @@ impl Stores {
     /// `@FR-H-WriteOOB` — the fast path's own test admits only `0 <= index < len`, so a
     /// negative index (which names an element from the END, `@FR-H-Index`) and an absent one
     /// are BOTH the cold path's to decide; the fast path never writes what the twin would
-    /// not.  The guard is `loft-suite/rules/heap/H-WriteOOB/a-write-to-an-absent-element-lands-nowhere.loft`.
+    /// not.  The guard is `loft-suite/rules/heap/H-WriteOOB/a-write-to-a-place-that-names-nothing-lands-nowhere.loft`.
     ///
     /// # Panics
     ///

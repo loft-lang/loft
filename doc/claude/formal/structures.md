@@ -403,7 +403,7 @@ computes differently from the resident store becomes a lookup that silently answ
   the interpreter's and native's, `tests/c_emit.rs` `the_paged_loaders_read_every_backends_image`.
 - **`S-Pair`** — `tests/scripts/2173-an-image-and-its-sidecar-are-written-together.loft`.
 - **`S-Gate`, an image with no sidecar** —
-  `tests/scripts/2174-an-image-without-its-sidecar-is-refused.loft` (whole, untrusted and paged
+  `loft-suite/rules/layout/L-Sound/2174-an-image-without-its-sidecar-is-refused.loft` (whole, untrusted and paged
   loaders refused; the pair loads), and `dschema_lifecycle_beside_a_store` (`Bare`).
 - **Every rule, across releases** — the GOLDEN IMAGES: `tests/golden/images/<set>/`, one image
   and sidecar per structure and per hash layout, written once by `scripts/golden_images.sh` (it

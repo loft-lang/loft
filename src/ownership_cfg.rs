@@ -1140,6 +1140,7 @@ pub fn oracle_free_checks(data: &Data) {
         }
         if over {
             total_reds += run_over_free_check(name, &body, data, d_nr, &free_ops);
+            total_reds += run_chain_release_check(name, &body, data, d_nr, &free_ops);
         }
         if over {
             total_reds += run_override_check(name, &body, data, d_nr);
@@ -1659,6 +1660,116 @@ fn run_over_free_check(
             && !func.is_skip_free(v)
         {
             eprintln!("RED {name}: free-of-borrowed {} (v{v}) dep={dep:?}", nm(v));
+            reds += 1;
+        }
+    }
+    reds
+}
+
+/// Check E — a `??` chain's temp released twice (`@FR-H-FreeTwice`, loft#2550).  A binding whose
+/// value hands back a chain's own temp — `r = <chain>`, or a branch of chains, whose tail through
+/// blocks and `if` arms is a `__ncc_N` / `_ncr_N` — names the store that temp holds.  When BOTH are
+/// freed, the one store is released twice, unless the bind copied it (two stores) or a guard
+/// proves the two distinct where the binding is released (`if OpDistinctStore(v, t) …`, or
+/// `OpFreeRefIfDistinct(v, t)`).  A temp that is never freed has handed its record to the binding
+/// (the statement `r = f() ?? return`), which is the one release — so the temp must be freed too.
+///
+/// The fallback: a tail that is not a chain temp names no store this check reasons about, and
+/// adds nothing — the other checks keep their own questions.
+fn run_chain_release_check(
+    name: &str,
+    body: &Value,
+    data: &Data,
+    d_nr: u32,
+    free_ops: &[u32],
+) -> usize {
+    fn chain_tails(n: &Value, out: &mut Vec<u16>, func: &crate::variables::Function) {
+        match n.unspan() {
+            Value::Var(x) => {
+                let nm = func.name(*x);
+                if (nm.starts_with("__ncc_") || nm.starts_with("_ncr_")) && !out.contains(x) {
+                    out.push(*x);
+                }
+            }
+            Value::If(_, t, f) => {
+                chain_tails(t, out, func);
+                chain_tails(f, out, func);
+            }
+            // A chain's own block yields its value BEFORE the cleanup the scope pass appends
+            // (a displaced record's drop and free), so its last operator is not its value: every
+            // operator is read, and only a chain temp in a tail position counts.
+            Value::Block(bl) if bl.name == "ncc" || bl.name == "ncr" => {
+                for op in &bl.operators {
+                    if matches!(op.unspan(), Value::If(..) | Value::Var(_)) {
+                        chain_tails(op, out, func);
+                    }
+                }
+            }
+            Value::Block(bl) => {
+                if let Some(last) = bl.operators.last() {
+                    chain_tails(last, out, func);
+                }
+            }
+            Value::Insert(ops) => {
+                if let Some(last) = ops.last() {
+                    chain_tails(last, out, func);
+                }
+            }
+            _ => {}
+        }
+    }
+    let func = &data.def(d_nr).variables;
+    let freed: BTreeSet<u16> = collect_free_targets(body, free_ops).into_iter().collect();
+    let distinct = data.def_nr("OpDistinctStore");
+    let if_distinct = data.def_nr("OpFreeRefIfDistinct");
+    let pair = |args: &[Value]| match (
+        args.first().map(Value::unspan),
+        args.get(1).map(Value::unspan),
+    ) {
+        (Some(Value::Var(a)), Some(Value::Var(b))) => Some((*a, *b)),
+        _ => None,
+    };
+    let mut guarded: BTreeSet<(u16, u16)> = BTreeSet::new();
+    let mut binds: Vec<(u16, u16)> = Vec::new();
+    body.walk(&mut |n| match n.unspan() {
+        Value::If(cond, _, _) => {
+            if let Value::Call(d, args) = cond.unspan()
+                && *d == distinct
+                && let Some(p) = pair(args)
+            {
+                guarded.insert(p);
+            }
+        }
+        Value::Call(d, args) if *d == if_distinct => {
+            if let Some(p) = pair(args) {
+                guarded.insert(p);
+            }
+        }
+        // A bare `v = t` is a whole-value bind the emitters may COPY (`bind_copies`), two
+        // stores: only a chain block or a branch of them hands `t`'s own store over.
+        Value::Set(v, rhs) if !matches!(rhs.unspan(), Value::Var(_)) => {
+            let mut tails = Vec::new();
+            chain_tails(rhs, &mut tails, func);
+            for t in tails {
+                if t != *v && !binds.contains(&(*v, t)) {
+                    binds.push((*v, t));
+                }
+            }
+        }
+        _ => {}
+    });
+    let mut reds = 0;
+    for (v, t) in binds {
+        if freed.contains(&v)
+            && freed.contains(&t)
+            && !guarded.contains(&(v, t))
+            && !guarded.contains(&(t, v))
+        {
+            eprintln!(
+                "RED {name}: chain-temp-released-twice {} (v{v}) and {} (v{t})",
+                func.name(v),
+                func.name(t)
+            );
             reds += 1;
         }
     }

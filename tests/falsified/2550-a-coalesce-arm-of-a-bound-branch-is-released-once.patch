@@ -1,0 +1,117 @@
+diff --git b/src/scopes/get_free_vars.rs a/src/scopes/get_free_vars.rs
+index 2f732b230..9a93cd0e0 100644
+--- b/src/scopes/get_free_vars.rs
++++ a/src/scopes/get_free_vars.rs
+@@ -1003,37 +1003,30 @@ impl Scopes<'_> {
+                         // The type's scope-end hook, immediately BEFORE the free that ends
+                         // the value's life — unless `v` is a buffer whose witness already
+                         // ran it.
++                        if !is_buffer
++                            && let Some(hook) = unless_moved(v, self.scope_end_hook(function, v, data, arm_dropped))
++                        {
++                            ls.push(hook);
++                        }
+                         // `@FR-H-FreeTwice` — where a branch arm left `v` naming a hoisted
+-                        // lift's store (`Scopes::lift_viewers`), that lift releases it — its hook
+-                        // and its free: `v`'s own hook and free run only where `v` names none of
+-                        // them.  An extra guard can only REFUSE a release, and each store it
+-                        // refuses is one the lift releases.  The hook is guarded with the free:
+-                        // left bare it ran the type's drop on a record the lift had already
+-                        // freed (loft#2550, `r = if c { f() ?? return } else { … }`).
++                        // lift's store (`Scopes::lift_viewers`), that lift releases it: the free
++                        // runs only where `v` names none of them.  An extra guard can only
++                        // REFUSE a free, and each store it refuses is one the lift frees.
+                         let distinct = data.def_nr("OpDistinctStore");
+-                        let viewed: Vec<u16> = self
++                        let free = self
+                             .lift_viewers
+                             .get(&v)
+                             .into_iter()
+                             .flatten()
+-                            .copied()
+-                            .filter(|&l| l != v)
+-                            .collect();
+-                        let guard = |inner: Value| {
+-                            viewed.iter().fold(inner, |inner, &l| {
++                            .filter(|&&l| l != v)
++                            .fold(call("OpFreeRef", v, data), |inner, &l| {
+                                 v_if(
+                                     Value::Call(distinct, vec![Value::Var(v), Value::Var(l)]),
+                                     inner,
+                                     Value::Null,
+                                 )
+-                            })
+-                        };
+-                        if !is_buffer
+-                            && let Some(hook) = unless_moved(v, self.scope_end_hook(function, v, data, arm_dropped))
+-                        {
+-                            ls.push(guard(hook));
+-                        }
+-                        ls.push(guard(call("OpFreeRef", v, data)));
++                            });
++                        ls.push(free);
+                     }
+                 }
+             }
+diff --git b/src/scopes/join_rewrite.rs a/src/scopes/join_rewrite.rs
+index 57f4f6023..2b50ac051 100644
+--- b/src/scopes/join_rewrite.rs
++++ a/src/scopes/join_rewrite.rs
+@@ -24,15 +24,6 @@ pub(super) fn branch_tail_vars(node: &Value) -> Vec<u16> {
+             }
+             // Written out as its call, which hands off no local.
+             Value::Block(bl) if bl.name == crate::parser::Parser::JOIN_ARM_OWNER => {}
+-            // A `??` chain's block is written out WHOLE (`sink_set_into_arms`, loft#1612): the
+-            // binding views the chain's own temps, as the statement `b = e ?? d` does, and copies
+-            // from none of them.  Read through, its `__ncc_N` came back as a source the binding
+-            // copied, `make_independent` dropped the binding's dep on it, and the binding and the
+-            // temp each freed the one record (loft#2550: `r = if c { f() ?? d } else { … }`).
+-            // `LOFT_NO_CHAIN_ARM_VIEW=1` reads through it again, the loft#2550 defect.
+-            Value::Block(bl)
+-                if bl.name == "ncc"
+-                    && !crate::env_once!(std::env::var_os("LOFT_NO_CHAIN_ARM_VIEW").is_some()) => {}
+             Value::Block(bl) => {
+                 if let Some(last) = bl.operators.last() {
+                     walk(last, out);
+diff --git b/src/scopes/scan_set.rs a/src/scopes/scan_set.rs
+index 496976f58..7fe7edabb 100644
+--- b/src/scopes/scan_set.rs
++++ a/src/scopes/scan_set.rs
+@@ -1775,36 +1775,7 @@ impl Scopes<'_> {
+         let scanned = self.scan(value, function, data);
+         // `@FR-H-FreeTwice` — an arm of the value that reads a projection out of a lifted call
+         // result leaves `v` naming that lift's store, which the lift's own free releases.
+-        let mut viewed = std::mem::replace(&mut self.value_hoists, outer_hoists);
+-        // `@FR-H-FreeTwice` — a BRANCH whose arm is a `?? return` chain hands the binding the
+-        // chain's `_ncr_N` temp, which the scan keeps at an outer scope and releases there: the
+-        // binding views it on that path, as it views a hoisted lift — its hook and free run only
+-        // where it names none of them (loft#2550, `r = if c { f() ?? return } else { g() ??
+-        // return }`, released by the temp and again by `r`).
+-        // Only an ARM's chain: a chain bound by itself (`t = f()!`, `t = f() ?? return`) hands its
+-        // temp's record to the binding and releases the temp nowhere, so a guard on it would
+-        // release nothing.  `LOFT_NO_CHAIN_ARM_VIEW=1` leaves it out, the loft#2550 defect.
+-        fn ends_in_if(v: &Value) -> bool {
+-            match v.unspan() {
+-                Value::If(..) => true,
+-                Value::Block(bl) => bl.operators.last().is_some_and(ends_in_if),
+-                Value::Insert(ops) => ops.last().is_some_and(ends_in_if),
+-                _ => false,
+-            }
+-        }
+-        if ends_in_if(value)
+-            && !crate::env_once!(std::env::var_os("LOFT_NO_CHAIN_ARM_VIEW").is_some())
+-        {
+-            for t in branch_tail_vars(value) {
+-                if t != v
+-                    && function.name(t).starts_with("_ncr_")
+-                    && self.var_scope.contains_key(&t)
+-                    && !viewed.contains(&t)
+-                {
+-                    viewed.push(t);
+-                }
+-            }
+-        }
++        let viewed = std::mem::replace(&mut self.value_hoists, outer_hoists);
+         self.note_lift_viewers(v, &viewed);
+         self.prefix_released.truncate(prefix_from);
+         if first_binding {

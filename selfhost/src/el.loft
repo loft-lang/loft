@@ -102,10 +102,18 @@ pub struct El {
   pub refused: vector<text>,
   // the source line each refusal was first met on (`LOFT_ELAB_WHERE`), pairwise
   pub refused_at: vector<integer>,
+  // every refusal with the function it was met in (front-end-instruments.md item 2): gate E's
+  // verdict by FUNCTION, where `refused` above keeps each text once for the program
+  pub refused_in: vector<RefusedIn>,
   // The vector locals whose last first-pass literal bind was `[]` (`function * 65536 + local`):
   // Rust's first pass builds that literal in the local, which then names only itself, so the
   // second pass finds it holding no backing (`vector_needs_db`).
   pub unbacked: vector<integer>,
+  // The vector locals a bare `null` widened to `vector<T>?` on the first pass
+  // (`context * 65536 + variable`): the second gives each such write its absent backing.
+  pub null_widened: vector<integer>,
+  // The definitions declared `value struct`: a comparison of two is spelled field by field.
+  pub value_structs: vector<integer>,
   // `Function::subject_sites` (loft#2520): each match subject temp the first pass minted, by
   // its site (`context * 1048576 + the subject's syntax node`), and the name it took.
   // A `&` link to a child record that is later WRITTEN whole (`cur = cur.next`), by
@@ -197,7 +205,10 @@ pub fn new_el(p: syntax::Syntax, file: text, default: boolean) -> El {
     line: 0,
     refused: [],
     refused_at: [],
+    refused_in: [],
     unbacked: [],
+    null_widened: [],
+    value_structs: [],
     slot_links: [],
     subject_sites: [],
     subject_names: [],
@@ -222,7 +233,32 @@ pub fn new_el(p: syntax::Syntax, file: text, default: boolean) -> El {
 }
 
 // What elaboration does not carry yet: recorded once, so the gate names the construct.
+// A refusal and the definition it was met in (`El::refused_in`).
+pub struct RefusedIn {
+  pub what: text,
+  pub fname: text,
+  pub line: integer
+}
+
 pub fn refuse(el: El, what: text) {
+  // `LOFT_ELAB_SKIP=<text>`: a measurement switch — a refusal starting with that text is not
+  // recorded, so a run shows whether the code built beside it already agrees with Rust's (a
+  // guard gone stale) or what still differs.  Never set for a gate.
+  skip = env_variable("LOFT_ELAB_SKIP") ?? "";
+  if len(skip) > 0 && starts_with(what, skip) {
+    return;
+  }
+  // By function first: the definition being elaborated (`""` outside one), once per text.
+  fname = if el.context >= 0 && el.context < len(el.b.data.definitions) { el.b.data.definitions[el.context].name } else { "" };
+  known = false;
+  for ri in el.refused_in {
+    if ri.what == what && ri.fname == fname {
+      known = true;
+    }
+  }
+  if !known {
+    el.refused_in += [RefusedIn { what: what, fname: fname, line: el.line }];
+  }
   for r in el.refused {
     if r == what {
       return;

@@ -19,7 +19,7 @@ The position is gated by a committed baseline (`elab_gate.baseline.tsv` beside t
 does not agree yet, with its verdict.  `--check` fails on a drop and on any `differ` (an image
 that is not Rust's), listed or not; both need the whole corpus and the suite at the pin.
 """
-import argparse, collections, concurrent.futures as cf, glob, os, shutil, subprocess, sys, tempfile
+import argparse, collections, concurrent.futures as cf, glob, os, re, shutil, subprocess, sys, tempfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bench"))
 import baseline  # noqa: E402  one baseline format for every survey
@@ -46,7 +46,11 @@ def build(loft, src, out, env):
     os.makedirs(out, exist_ok=True)
     # The tools' own build is bounded by the build's limit, not by the per-program one: an
     # optimised build of the elaborator takes minutes on a loaded box.
-    b = subprocess.run([loft, "--native-c", "--ship", "--out", out, src],
+    # `LOFT_ELAB_TOOL_BUILD=dev`: a development build of the tools.  The verdicts are the same;
+    # the optimised (`--ship`) compile of the elaborator needs more than 5.5 GB in cc1, which a
+    # 7 GB CI runner no longer holds (runs 44227446673, 44231429943, 44233220732).
+    ship = [] if os.environ.get("LOFT_ELAB_TOOL_BUILD") == "dev" else ["--ship"]
+    b = subprocess.run([loft, "--native-c", *ship, "--out", out, src],
                        env=dict(env, LOFT_TIMEOUT=str(BUILD_SECONDS)),
                        capture_output=True, text=True, timeout=BUILD_SECONDS + 60)
     exe = os.path.join(out, os.path.splitext(os.path.basename(src))[0])
@@ -68,6 +72,46 @@ def lib_dirs(text):
     return out
 
 
+# A generic instance's name holds spaces (`i_21integer(-128, 127)s1?_n_set_from`): the name runs
+# to the first ` type=`, so no instance is folded into the definition before it.
+HEAD = re.compile(r"^#\d+ (.+?) type=\d")
+
+
+def sections(lines):
+    """A report by definition: {name: its lines} (a definition's header and body), the schema's
+    rows (`NNN:…` and their fields) as one `(schema)` section, anything before the first
+    definition as `(head)`.  A name met twice keeps both, the second as `name#2`."""
+    out, key, seen = {}, "(head)", {}
+    for l in lines:
+        m = HEAD.match(l)
+        if m:
+            name = m.group(1)
+            seen[name] = seen.get(name, 0) + 1
+            key = name if seen[name] == 1 else f"{name}#{seen[name]}"
+        elif re.match(r"^\d+:", l):
+            key = "(schema)"
+        out.setdefault(key, []).append(l)
+    return out
+
+
+def by_function(want, mine, refused_in, program_refused):
+    """Each definition's verdict (front-end-instruments.md item 2): `agree` (its section is
+    Rust's), `refused` (a refusal was met in it), `beside` (it differs, holds no refusal of its
+    own, in a program that holds one), `differ` (it differs in a program that holds none)."""
+    w, m = sections(want), sections(mine)
+    out = {}
+    for name in sorted(set(w) | set(m)):
+        if name == "(head)":
+            continue
+        if name.split("#")[0] in refused_in:
+            out[name] = "refused"
+        elif w.get(name) == m.get(name):
+            out[name] = "agree"
+        else:
+            out[name] = "beside" if program_refused else "differ"
+    return out, w, m
+
+
 def one(loft, defs, elab, std, path, tmp, env, i):
     """(verdict, detail): `agree`, `noimage` (the Rust front end refuses it, or the program
     says it expects a refusal), `differ` (the
@@ -76,7 +120,7 @@ def one(loft, defs, elab, std, path, tmp, env, i):
     with open(path, encoding="utf-8", errors="replace") as fh:
         text = fh.read()
     if "@EXPECT_ERROR" in text:
-        return "noimage", ""
+        return "noimage", "", {}
     # The `--lib` directories the program's `@ARGS` line names, as the script runner passes them
     # (relative to the repository root): to the Rust front end on its command line, to the
     # elaborator as `LOFT_ELAB_LIB`.
@@ -87,32 +131,51 @@ def one(loft, defs, elab, std, path, tmp, env, i):
         r = subprocess.run([loft] + lib_args + [path], env=dict(env, LOFT_EMIT_PARSED=img),
                            capture_output=True, timeout=180)
         if r.returncode != 0 or not os.path.exists(img):
-            return "noimage", ""
+            return "noimage", "", {}
         o = subprocess.run([defs, img, "program", std], env=env, capture_output=True, text=True,
                            errors="replace", timeout=300)
         m = subprocess.run([elab, img, path, std], env=env, capture_output=True, text=True,
                            errors="replace", timeout=300)
     except subprocess.TimeoutExpired:
-        return "differ", "timed out"
+        return "differ", "timed out", {}
     finally:
         for f in (img, img + ".dschema"):
             if os.path.exists(f):
                 os.remove(f)
     lines = m.stdout.splitlines()
     refused = [l[len("refused: "):] for l in lines if l.startswith("refused: ")]
-    mine = [l for l in lines if not l.startswith("refused: ")]
+    # `refused-in: <function>\t<line>\t<text>`: each refusal with the function it was met in.
+    refused_in = {l[len("refused-in: "):].split("\t")[0] for l in lines if l.startswith("refused-in: ")}
+    # `LOFT_ELAB_WHERE_FILE=<file>`: every refusal with the function and source line it was met
+    # at, `program\tfunction\tline\ttext` — where a family fires, for porting from the corpus.
+    if os.environ.get("LOFT_ELAB_WHERE_FILE"):
+        with open(os.environ["LOFT_ELAB_WHERE_FILE"], "a", encoding="utf-8") as fh:
+            fh.write("".join(f"{path}\t{l[len('refused-in: '):]}\n" for l in lines if l.startswith("refused-in: ")))
+    mine = [l for l in lines if not l.startswith("refused: ") and not l.startswith("refused-in: ")]
     if m.returncode != 0 and not refused:
-        return "differ", f"elab exited {m.returncode}: {m.stderr.strip()[-300:]}"
-    if refused:
-        return "refused", refused
+        return "differ", f"elab exited {m.returncode}: {m.stderr.strip()[-300:]}", {}
     want = o.stdout.splitlines()
+    fns, w, mn = by_function(want, mine, refused_in, bool(refused))
+    # A `beside` function's shape, for the worklist: whether it differs in numbers only, and
+    # whether the port's section is (nearly) empty — a function a refusal elsewhere emptied.
+    shapes = {}
+    for name, v in fns.items():
+        if v == "beside":
+            a, b = w.get(name, []), mn.get(name, [])
+            digits = lambda xs: [re.sub(r"\d+", "N", x) for x in xs]
+            shapes[name] = ("numbers" if digits(a) == digits(b) else
+                            "emptied" if len(b) <= 3 < len(a) else
+                            f"{abs(len(a) - len(b))} lines")
+    fns = {k: (v, shapes.get(k, "")) for k, v in fns.items()}
+    if refused:
+        return "refused", refused, fns
     if mine == want:
-        return "agree", ""
+        return "agree", "", fns
     for k, (a, b) in enumerate(zip(want, mine)):
         if a != b:
             head = next((x for x in reversed(want[:k + 1]) if x.startswith("#")), "")
-            return "differ", f"{head}\n    oracle: {a}\n    loft:   {b}"
-    return "differ", f"oracle {len(want)} lines, loft {len(mine)}"
+            return "differ", f"{head}\n    oracle: {a}\n    loft:   {b}", fns
+    return "differ", f"oracle {len(want)} lines, loft {len(mine)}", fns
 
 
 def main():
@@ -127,6 +190,9 @@ def main():
     ap.add_argument("--which", help="list the programs a refusal starting with this text blocks alone")
     ap.add_argument("--details", type=int, default=3, help="details listed per refusal family")
     ap.add_argument("--check", metavar="BASELINE", help="exit 1 on a drop against BASELINE or any differ")
+    ap.add_argument("--functions-against", metavar="BASELINE",
+                    help="list the definitions BASELINE's `elab-functions` block pins that no longer agree, "
+                         "with any tools and at any pin (a development cycle's early warning); exit 1 if any")
     ap.add_argument("--write-baseline", metavar="BASELINE", help="write the `elab` block of BASELINE")
     o = ap.parse_args()
     if (o.check or o.write_baseline) and (o.files or o.part):
@@ -164,12 +230,19 @@ def main():
     if any(prebuilt) and (o.check or o.write_baseline):
         sys.exit("--check and --write-baseline build their own tools: unset LOFT_ELAB_DEFS / LOFT_ELAB_BIN")
     # The two builds are one C compile each: side by side, the gate waits for the longer only.
-    with cf.ThreadPoolExecutor(2) as ex:
+    # `LOFT_ELAB_BUILD_JOBS=1`: build the two tools one after the other.  Side by side they halve
+    # the wait, and double the peak memory: on a runner of 7 GB the elaborator's optimised C
+    # compile (above 5 GB in cc1) ran out of memory beside the other one.
+    with cf.ThreadPoolExecutor(int(os.environ.get("LOFT_ELAB_BUILD_JOBS", "2"))) as ex:
         fd = None if prebuilt[0] else ex.submit(build, loft, os.path.join(sh, "compare", "defs.loft"), os.path.join(tmp, "defs"), env)
         fe = None if prebuilt[1] else ex.submit(build, loft, os.path.join(sh, "front", "elab.loft"), os.path.join(tmp, "elab"), env)
         defs = prebuilt[0] or fd.result()
         elab = prebuilt[1] or fe.result()
     per = collections.defaultdict(collections.Counter)
+    # Verdicts by FUNCTION (front-end-instruments.md item 2): `program::function` -> verdict,
+    # and the `beside` worklist (shape, program, function).
+    fn_results = {}
+    beside = []
     reasons = collections.Counter()
     families = collections.Counter()
     # The families that alone stand between a program and its comparison: what to port next.
@@ -186,7 +259,14 @@ def main():
                 for i, (part, f) in enumerate(todo)}
         for fut in cf.as_completed(futs):
             part, f = futs[fut]
-            verdict, detail = fut.result()
+            verdict, detail, fns = fut.result()
+            # By function only where it adds to the program's verdict: a refused program (a program
+            # that agrees pins all its definitions through the `elab` block already).
+            if verdict == "refused":
+                for fname, (fv, shape) in fns.items():
+                    fn_results[baseline.name_of(f, root, suite) + "::" + fname] = fv
+                    if fv == "beside":
+                        beside.append((shape, baseline.name_of(f, root, suite), fname))
             per[part][verdict] += 1
             if verdict != "noimage":
                 results[baseline.name_of(f, root, suite)] = verdict
@@ -204,6 +284,12 @@ def main():
                     alone.update(set(detail) if len(set(detail)) == 1 else fams)
             elif verdict == "differ":
                 differs.append((f, detail))
+    # `LOFT_ELAB_FN_VERDICTS=<file>`: each definition of a refused program and its verdict, one
+    # `program::definition\tverdict` per line — what a skip sweep compares function by function.
+    if os.environ.get("LOFT_ELAB_FN_VERDICTS"):
+        with open(os.environ["LOFT_ELAB_FN_VERDICTS"], "w", encoding="utf-8") as fh:
+            shape_of = {f"{prog}::{fname}": shape for shape, prog, fname in beside}
+            fh.write("".join(f"{k}\t{v}\t{shape_of.get(k, '')}\n" for k, v in sorted(fn_results.items())))
     if os.environ.get("LOFT_ELAB_VERDICTS"):
         with open(os.environ["LOFT_ELAB_VERDICTS"], "w", encoding="utf-8") as fh:
             fh.write("\n".join(sorted(verdicts)) + "\n")
@@ -213,6 +299,19 @@ def main():
     n = total = sum(tot.values()) - tot["noimage"]
     print(f"{tot['agree']} of {n} programs agree; {tot['refused']} refused, {tot['differ']} differ"
           + (f"; {tot['noimage']} the Rust front end refuses" if tot["noimage"] else ""))
+    fv = collections.Counter(fn_results.values())
+    print(f"definitions of refused programs: {fv['agree']} of {len(fn_results)} agree; {fv['refused']} "
+          f"refused, {fv['beside']} beside a refusal")
+    if beside:
+        # The shape of a `beside` definition: numbers only and emptied are what a refusal
+        # elsewhere does to it (noise); the rest differ by lines, bucketed by how many.
+        def bucket(s):
+            if not s[0].isdigit():
+                return s
+            n = int(s.split(" ")[0])
+            return "1-2 lines" if n <= 2 else "3-10 lines" if n <= 10 else "more lines"
+        sh = collections.Counter(bucket(s) for s, _, _ in beside)
+        print("  beside, by shape: " + ", ".join(f"{n} {k}" for k, n in sh.most_common()))
     for part in parts:
         c = per[part]
         print(f"  {part:8} {c['agree']} of {sum(c.values()) - c['noimage']}")
@@ -253,6 +352,22 @@ def main():
     # `LOFT_ELAB_KEEP=1` keeps the built elaborator and the standard image for single runs.
     if not os.environ.get("LOFT_ELAB_KEEP"):
         shutil.rmtree(tmp, ignore_errors=True)
+    # The function layer pins only what AGREES: its rows are the agreeing functions, and a check
+    # fails when one of them stops agreeing — a refused or `beside` function never fails.
+    fn_agree = {k: "agree" for k, v in fn_results.items() if v == "agree"}
+    if o.write_baseline:
+        baseline.write(o.write_baseline, pin, "elab-functions", len(fn_agree), len(fn_results), fn_agree)
+    if o.check or o.functions_against:
+        fb = baseline.read(o.check or o.functions_against).get("elab-functions")
+        if fb is None:
+            print("the baseline has no `elab-functions` block: write it with --write-baseline")
+        else:
+            lost = sorted(k for k in fb[2] if k in fn_results and fn_results[k] != "agree")
+            for k in lost[:40]:
+                print(f"FUNCTION DROP\t{k}\t{fn_results[k]}")
+            if lost:
+                print(f"elab-functions: {len(lost)} function(s) that agreed no longer agree")
+                sys.exit(1)
     if o.write_baseline:
         baseline.write(o.write_baseline, pin, "elab", tot["agree"], total,
                        {k: v for k, v in results.items() if v != "agree"})
@@ -260,7 +375,7 @@ def main():
         fails, repins = baseline.check("elab", baseline.read(o.check), tot["agree"], total, results)
         baseline.report("elab", o.check, fails, repins)
         sys.exit(0)
-    if o.write_baseline:
+    if o.write_baseline or o.functions_against:
         sys.exit(0)
     sys.exit(0 if tot["agree"] == total else 1)
 

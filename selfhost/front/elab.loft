@@ -100,6 +100,11 @@ fn program(image: text, f: text, std_image: text) {
   for r in e.refused {
     println("refused: {r}");
   }
+  // Every refusal with the function it was met in and its line (front-end-instruments.md item
+  // 2): what gate E's verdict by function reads.  Not part of the report it compares.
+  for ri in e.refused_in {
+    println("refused-in: {ri.fname}\t{ri.line}\t{ri.what}");
+  }
   // `LOFT_ELAB_WHERE=1`: the line each refusal was first met on, beside the report.
   if env_variable("LOFT_ELAB_WHERE") == "1" {
     for r in e.refused {

@@ -6655,6 +6655,13 @@ impl Parser {
                 }
                 return;
             }
+            // An ENUM instance is registered as an enum and laid out through its variants;
+            // handed to `fill_database` it took a record's row, and the end of the pass then
+            // stamped its variants onto a type that is no enum (loft#2547).
+            if self.data.def_type(inst) == crate::data::DefType::Enum {
+                crate::typedef::lay_out_late_enum(&mut self.data, &mut self.database, inst);
+                return;
+            }
             crate::typedef::fill_database(&mut self.data, &mut self.database, inst);
             self.database
                 .lay_out_record(self.data.def(inst).known_type());
@@ -8581,10 +8588,13 @@ impl Parser {
         // is spelled in four bytes.  Nothing observed it, because the null TEST for the
         // type was refused — so the write had never been right and could not be seen.
         // Write the pointer directly, the same shape and the same reason as the arm above.
+        // A DENSE `JsonValue` field is the one exception: its null is `JNull` (`@FR-D-Json`), which
+        // the store face builds.
         if !self.first_pass
             && self.is_null_source(value)
             && let Type::Enum(syn, true, _) = &td_base
             && !self.data.def(*syn).name.starts_with("__nullable<")
+            && (self.data.def(*syn).name != "JsonValue" || td.is_optional())
         {
             let item_pos = i32::from(
                 self.database

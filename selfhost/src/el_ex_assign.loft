@@ -2852,6 +2852,53 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
       _ => {}
     }
   }
+  // `(N-Join)` for a vector local: `v = null` gives it a fresh backing marked absent
+  // (`vector_db_init`'s absent form: the length word -1) and widens the local to `vector<T>?`.
+  if e.p.nodes[rhs!] is SNull && !link && !vars.vars[v].argument && !el_vars::is_compiler_generated(vars, v) {
+    match el_vars::tp(vars, v) {
+      TyVector { inner: nvi } => {
+        if e.first_pass {
+          el_vars::set_type(vars, v, ir::TyOptional { inner: el_vars::tp(vars, v) });
+          e.null_widened += [e.context * 65536 + v];
+          return ex(ir::NdNull, ir::TyVoid);
+        }
+        el::refuse(e, "a `null` written to a vector local the first pass did not widen");
+        return ex(ir::NdNull, ir::TyVoid);
+      },
+      TyOptional { inner: noi } => {
+        match noi {
+          TyVector { inner: nvi } => {
+            if !e.first_pass && e.null_widened.contains(e.context * 65536 + v) {
+              nr = vector_rows(e, nvi, rhs!, true);
+              if nr == null {
+                return ex(ir::NdNull, ir::TyVoid);
+              }
+              nops = el_ex_pattern::literal_store(e, vars, v, nr!);
+              nops[len(nops) - 1] = el_ir::cl(e, "OpSetInt4", [match nops[0]! { NdCall { args: na } => na[0]!, _ => ir::NdNull }, ir::NdInt { n: 0 }, ir::NdInt { n: -1 }]);
+              return ex(ir::NdInsert { items: nops }, ir::TyVoid);
+            }
+          },
+          _ => {}
+        }
+      },
+      _ => {}
+    }
+  }
+  // A keyed local rebound by a literal with items starts over as its declaration does
+  // (`h = null`, then each item a record made through it): the literal takes the local's type.
+  kcur = el_vars::tp(vars, v);
+  // (A hash, a sorted or an index only: a `vector<T>` in the linked layout is cleared and
+  // refilled in its own store, as any vector.)
+  if e.p.nodes[rhs!] is SVecLit && (kcur is TyHash || kcur is TySorted || kcur is TyIndex) && !vars.vars[v].argument && !link {
+    kops = el_ex_vector::keyed_items(e, vars, v, rhs!);
+    if kops == null {
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    el_vars::drop_use(vars, v);
+    klist: vector<ir::Node> = [el_ir::v_set(v, ir::NdNull)];
+    klist += kops!;
+    return ex(ir::NdInsert { items: klist }, ir::TyVoid);
+  }
   if e.p.nodes[rhs!] is SVecLit {
     return el_ex_pattern::vector_into(e, vars, v, rhs!, ir::TyUnknown { n: 0 });
   }
@@ -2945,6 +2992,14 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
       return ex(ir::NdNull, ir::TyVoid);
     }
     x = rx!;
+  }
+  // A function value read off a field and bound takes a copy of the field's closure record.
+  if op == "=" {
+    x = el_ex_object::copied_field_closure(e, vars, x);
+    // (On the first pass too the bound value borrows nothing: the local is typed by it.)
+    if e.first_pass && el_types::base(x.tp) is TyFunction && e.p.nodes[rhs!] is SMember && match e.p.nodes[rhs!] { SMember { call } => !call, _ => false } {
+      x = ex(x.code, el_types::with_deps(x.tp, []));
+    }
   }
   // A tuple local holding a heap member, bound whole, is copied member by member
   // (`tuple_whole_bind_copy`).

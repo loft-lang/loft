@@ -791,6 +791,11 @@ pub fn keyed_slice(e: el::El, vars: el_vars::Vars, x: Ex, lo: vector<integer>, h
       kt = if a < 0 { ir::TyUnknown { n: 0 } } else { el::def(e, el_d).attributes[a]!.typedef[0] };
       kx = el_ex_assign::expression(e, vars, k);
       v = stored(e, vars, kx, kt);
+      // The first pass's key is not converted where its type is still settling (a `??` of a
+      // narrow key): its code is the second pass's to build, and only that pass refuses.
+      if v == null && e.first_pass {
+        v = kx.code;
+      }
       if v == null {
         refuse_known(e, kx.tp, "a key its field's type converts: {type_kind(kx.tp)} to {type_kind(kt)}");
         return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -840,6 +845,10 @@ pub fn keyed_index(e: el::El, vars: el_vars::Vars, at: integer, x: Ex, keys: vec
     }
     kx = el_ex_assign::expression(e, vars, k);
     v = stored(e, vars, kx, kt);
+    // (As above: the first pass's key is the second pass's to convert.)
+    if v == null && e.first_pass {
+      v = kx.code;
+    }
     if v == null {
       refuse_known(e, kx.tp, "a key its field's type converts: {type_kind(kx.tp)} to {type_kind(kt)}");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });

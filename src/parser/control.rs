@@ -6458,6 +6458,17 @@ impl Parser {
                     self.parse_block("else", &mut false_code, &Self::arm_expectation(&true_type));
                 false_fact = std::mem::take(&mut self.operand_fact);
                 false_is_null_literal = self.block_tail_null_literal;
+                // loft#2545 — an empty literal `[]` beside a then arm of no type yet (on pass 1 a
+                // forward callee) names no type either: it answers `Unknown`, as the same `[]`
+                // does as a THEN arm (`true_is_empty_literal`).  Parsed against `Unknown` it came
+                // back `void`, the `if` adopted it, and `m = if … { mk(t) } else { [] }` bound
+                // `m` as void on pass 1 — then refused its vector on pass 2.
+                if self.block_tail_empty_literal
+                    && true_type == Type::Unknown(0)
+                    && false_type == Type::Void
+                {
+                    false_type = Type::Unknown(0);
+                }
                 // loft#2066 — a NAMED-width sibling expects nothing of this arm
                 // (`arm_expectation`), so a bare `null` here takes the sibling's typed null, as
                 // it did when the sibling was its expectation: native reads an untyped one as 0.
@@ -6773,7 +6784,7 @@ impl Parser {
                     // capture list is still in the stream, and left there it was read as the
                     // body and reported as `Expect token ;` (loft#1790).  Step over it by its
                     // shape; pass 2 knows the enum and binds it for real.
-                    if let Some(mut aliases) = self.bind_forward_capture_list() {
+                    if let Some(mut aliases) = self.bind_forward_capture_list(true) {
                         self.is_capture_aliases.append(&mut aliases);
                     }
                 }
@@ -12690,6 +12701,29 @@ impl Parser {
                 self.deliver_mid_vector_walk(elm, n, buf_var);
                 self.deliver_mid_vector_walk(elm, e, buf_var);
             }
+            // A `return` inside an EXPRESSION — a bind's value (`h = { if c { return []; } … }`,
+            // `h = x ?? return []`), a call's or a tuple's operand — leaves the function as one
+            // in a statement does, and delivers the same way.  Skipped, its literal's store went
+            // back as the frame's own and nothing released it (loft#2555).
+            // `LOFT_NO_NESTED_RETURN_DELIVERY=1` stops at statements again.
+            Value::Set(_, val)
+                if !crate::env_once!(
+                    std::env::var_os("LOFT_NO_NESTED_RETURN_DELIVERY").is_some()
+                ) =>
+            {
+                self.deliver_mid_vector_walk(elm, val, buf_var);
+            }
+            Value::Call(_, args) | Value::Tuple(args)
+                if !crate::env_once!(
+                    std::env::var_os("LOFT_NO_NESTED_RETURN_DELIVERY").is_some()
+                ) =>
+            {
+                for a in args {
+                    self.deliver_mid_vector_walk(elm, a, buf_var);
+                }
+            }
+            // Every other node is a leaf (a variable, a constant) or holds no expression a
+            // `return` can sit in, so it has no exit to deliver.
             _ => {}
         }
     }

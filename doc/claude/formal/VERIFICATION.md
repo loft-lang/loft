@@ -104,7 +104,7 @@ plan for the new rules — the oracle already guards each *area*; this drives it
   `a-record-local-reassigned-after-a-literal-build-releases-what-it-displaces` (the reassignment
   and scope-end clauses, 20 cells, all green since loft#1517 closed),
   `a-copy-of-a-tuple-with-a-droppable-member-releases-once` and
-  `a-tuple-member-releases-once-beside-any-neighbour` (the copy clause through a container),
+  `a-tuple-member-releases-once-whatever-it-is-declared-and-beside` (the copy clause through a container),
   `1510-a-mixed-own-view-locals-record-hooks-once` (the witness's own releases),
   `a-shared-destination-releases-the-arm-that-did-not-run` and
   `a-branch-arm-releases-the-source-the-other-arm-took` (the copy clause per path).*
@@ -235,7 +235,7 @@ not yet graduated to that oracle. Design + phase↔rule map:
   slice (D-F1 whole-consume); `..rest` binds the sub-slice by value AND length, leak-clean, and
   fixed elements MAY follow it (`t`), so `[a, ..mid, z]` leaves `mid` empty on a 2-element subject
   and does not match a 1-element one. *Pin: P2, plus
-  `loft-suite/rules/matching/P-Rest/a-named-rest-leaves-room-for-the-elements-after-it.loft` (D-match-3).*
+  `loft-suite/rules/matching/P-Rest/a-named-rest-leaves-room-for-the-fixed-elements-after-it.loft` (D-match-3).*
 - ☐ **P-Multi** — a multi-pattern arm binds from the first matching shape; both backends. *Pin: P3.*
 - ☐ **P-Alt / P-Atomic** — ordered choice takes the first match; a partial-then-failed alternative
   leaves the cursor reset (the next element still matches); different-name captures ⟹ `τ?`. *Pin: P4.*

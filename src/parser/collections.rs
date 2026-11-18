@@ -1346,7 +1346,7 @@ impl Parser {
     /// [`Self::group_elem_write`] wraps the copy with.  Measured — the in-place write left
     /// `by_k` holding the record under the hash of its OLD key (`by_k[11]` null with
     /// `len(by_k)` still 2), which is loft#900's defect returning by another road and is what
-    /// `a-group-element-written-through-the-vector-member-reaches-every-member` catches.
+    /// `a-write-through-any-member-of-a-linked-group-reaches-every-member` catches.
     ///
     /// Asked over BOTH element spellings, unlike [`Self::vector_group_elem_site`], which serves
     /// a site that only ever sees `OpVectorRef`: an admission test that recognised one spelling
@@ -1803,10 +1803,13 @@ impl Parser {
         // field stayed present and `b.s = null` was silently a no-op.
         // `base()`, because a nullable field arrives as `Optional(Enum(…))` — the same
         // peel this whole family needs (loft#1065).
+        // A DENSE `JsonValue` slot is the one exception: its null is `JNull` (`@FR-D-Json`), which
+        // the store face builds.
         if op == "="
             && self.is_null_source(val)
             && let Type::Enum(syn, true, _) = f_type.base()
             && !self.data.def(*syn).name.starts_with("__nullable<")
+            && (self.data.def(*syn).name != "JsonValue" || f_type.is_optional())
             && let Some((base, fld)) = self.inline_slot_word(to)
         {
             return self.cl("OpSetInt4", &[base, fld, Value::Int(0)]);

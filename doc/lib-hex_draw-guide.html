@@ -24,6 +24,7 @@
 <h1>hex_draw guide</h1>
 <article>
 <p><a href="lib-hex_draw.html">← hex_draw</a> · <a href="lib-hex_draw-api.html">API reference</a> · <a href="lib-hex_draw-src.html">source</a></p>
+<h2>Draw a small house into the field — floor, walls, a door — and read one wall back as a single flat surface.</h2>
 <p><code>hex_draw</code> turns a <code>Plan</code> (a rectangle on the hex lattice: a centre cell, a width and depth in hex steps, one of six rotations and a mirror) into the layers a building is stored as: FLOOR cells, WALL edges, OPENINGS on those edges and a ROOF height field.  And it reads a wall back: the edges of one side average to one exact flat surface, which is what a renderer draws and a game collides with.</p>
 <p>It is not the storage and not the plan.  <code>hex_field</code> holds the cells, edges and heights (<code>HexSet</code>, <code>EdgeSet</code>, <code>Labels</code>, <code>Heights</code>); <code>hex_form</code> owns <code>Plan</code> and the side runs.  Reach for <code>hex_draw</code> to draw a building into those, or to recover a wall's surface from them.</p>
 <pre><code><span class="kw">use</span> hex_draw::*;
@@ -92,6 +93,100 @@
 <li><code>tests/02-worked-examples.loft</code> — <code>@HXD-001</code> … <code>@HXD-007</code>: one quad, not a strip; why exactness is a zero cross product; the mitered corner; a door is a material; counting wall edges in all six directions; a feature indexed by its exact <code>t</code>; and the gable roof.</li>
 <li><code>draw_roof</code> writes a roof height field into a <code>Heights</code>; <code>surface_quad</code> gives the mitered quad a renderer draws.</li>
 </ul>
+<h2>Draw the straight walls of a structure you know only by its cells, put a door on one, and outline a courtyard.</h2>
+<p>The first guide draws a house from a <code>Plan</code>: you say where the rectangle is, and the library fills it, walls it and reads each side's surface back.  This one starts where that ends.  A structure is handed to you as CELLS — an L somebody selected, a house an editor turned by 30 degrees, a road — and nobody says which rectangle it came from, or at what angle.  The walls are still there to be read: <code>cells_built</code> reads them off the cells alone.</p>
+<p>What comes back is the same <code>WallSurface</code> the first guide met, one per straight wall, so everything that reads a surface (<code>surface_heading</code>, <code>surface_mean_x</code>, <code>surface_meet</code>) reads these too.</p>
+<pre><code><span class="kw">use</span> hex_draw::*;
+<span class="kw">use</span> hex_form::*;
+<span class="kw">use</span> hex_field::*;</code></pre>
+<p>An L as cells: a body 10 hex steps by 6 and a wing 4 by 4 on one end of its far side.  Built with two <code>Plan</code>s only to have something to draw — from here on nothing remembers them.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">an_ell</span>() -&gt; <span class="en">HexSet</span> {
+  cells = <span class="fn-call">hexset_chunk</span>(-<span class="nm">24</span>, -<span class="nm">24</span>, <span class="nm">49</span>, <span class="nm">49</span>);
+  types = <span class="fn-call">labels_new</span>(-<span class="nm">24</span>, -<span class="nm">24</span>, <span class="nm">49</span>, <span class="nm">49</span>);
+  <span class="fn-call">draw_floor</span>(<span class="fn-call">plan_new</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">10</span>, <span class="nm">6</span>, <span class="nm">0</span>, <span class="kw">false</span>), cells, types, <span class="nm">1</span>);
+  <span class="fn-call">draw_floor</span>(<span class="fn-call">plan_new</span>(-<span class="nm">3</span>, <span class="nm">5</span>, <span class="nm">4</span>, <span class="nm">4</span>, <span class="nm">0</span>, <span class="kw">false</span>), cells, types, <span class="nm">1</span>);
+  cells
+}</code></pre>
+<pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {
+  cells = <span class="fn-call">an_ell</span>();
+  house = <span class="fn-call">cells_built</span>(cells, <span class="nm">7</span>);          <span class="cm">// 7: the material its thin walls are marked with</span>
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"cells {hexset_count(cells)}, boundary edges {len(house.cw_boundary)}, walls {len(house.cw_walls)}"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(house.cw_walls) == <span class="nm">6</span>, <span class="st">"an L has six walls"</span>);</code></pre>
+<p>Every section below is a function, and <code>main</code> calls each one: a section nothing calls still compiles, but its assertions never run.</p>
+<pre><code>  <span class="fn-call">what_came_back</span>();
+  <span class="fn-call">a_door_at_a_point</span>();
+  <span class="fn-call">a_courtyard</span>();
+}</code></pre>
+<p>That prints:</p>
+<pre><code>  cells 91, boundary edges 82, walls 6
+</code></pre>
+<h2 id="what-came-back">What came back</h2>
+<p>A <code>CellWalls</code>: the cells, their thin walls as an <code>EdgeSet</code> (<code>cw_edges</code>, what <code>draw_walls</code> would have marked), the boundary in walking order with the structure on its left (<code>cw_boundary</code>), the boundary cut into runs — one per straight wall (<code>cw_runs</code>, indices into the boundary) — a surface per run (<code>cw_walls</code>) and the corners (<code>cw_corners</code>: corner <code>i</code> is where wall <code>i</code> meets wall <code>i + 1</code>).</p>
+<p>Each wall runs exactly along one of the twelve headings, and each is square to the next: that is a zero dot product in integers, not a float within a tolerance.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">what_came_back</span>() {
+  house = <span class="fn-call">cells_built</span>(<span class="fn-call">an_ell</span>(), <span class="nm">7</span>);
+  n = <span class="bi"><a href="stdlib-text.html">len</a></span>(house.cw_walls);
+  edges = <span class="nm">0</span>;
+  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..</span>n {
+    w = house.cw_walls[i]!;
+    nx = house.cw_walls[(i + <span class="nm">1</span>) % n ?? <span class="nm">0</span>]!;
+    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">surface_heading</span>(w) &gt;= <span class="nm">0</span>, <span class="st">"wall {i} runs along a heading"</span>);
+    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">vec_dot_4</span>(w.ws_dk, w.ws_dm, nx.ws_dk, nx.ws_dm) == <span class="nm">0</span>, <span class="st">"wall {i} is square to the next"</span>);
+    edges += <span class="bi"><a href="stdlib-text.html">len</a></span>(house.cw_runs[i]!);
+  }
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(edges == <span class="bi"><a href="stdlib-text.html">len</a></span>(house.cw_boundary), <span class="st">"every boundary edge is in exactly one wall's run"</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"headings: {[for w in house.cw_walls { surface_heading(w) }]}"</span>);
+}</code></pre>
+<p>That prints the six headings in order round the L, in twelfths of a turn — 0 is east, 3 north, 6 west, 9 south; the fourth and fifth walls are the notch where the wing ends:</p>
+<pre><code>  headings: [0,3,6,3,6,9]
+</code></pre>
+<p>⚠ A wall from cells is not always the line <code>surface_of</code> gives for the same side of a <code>Plan</code>.  Along an even heading the two agree exactly.  Along an odd heading <code>surface_of</code> averages every edge of the side, the corner's with them, and <code>cells_wall</code> reads the line off the slanted connectors and outvotes the corner's: a few hundredths of a unit apart.  Use one or the other for a structure, not both.</p>
+<p>⚠ Some cells show no direction.  A hex and its six neighbours are the same seven cells at every angle, so <code>cells_axes</code> answers -1 and <code>cells_built</code> falls back on its <code>hint</code> (a heading; 0 when you give none).  A structure that small is better kept as an object with a rotation of its own.</p>
+<h2 id="a-door-at-a-point">A door at a point</h2>
+<p>On a wall drawn from cells an opening is a KIND, a POINT and a WIDTH.  You give the point; <code>cells_place_opening</code> finds the nearest wall, keeps the opening clear of the wall's corners and marks the wall edges under it with the kind (<code>OPEN_DOOR</code>, <code>OPEN_WINDOW</code>) — a material on the edges, never a gap, so the wall stays one wall.  <code>cells_openings</code> reads the marks back as centres on the walls' lines and spans of each kind's width.</p>
+<p>The walls do not depend on the marks.  Build them once and place as many openings as you like on them.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">a_door_at_a_point</span>() {
+  cells = <span class="fn-call">an_ell</span>();
+  house = <span class="fn-call">cells_built</span>(cells, <span class="nm">7</span>);
+  marks = <span class="fn-call">cells_no_marks</span>(cells);
+  sizes = <span class="fn-call">opening_sizes</span>(<span class="nm">1.0</span>, <span class="nm">1.0</span>, <span class="nm">0.866</span>);          <span class="cm">// a door's width, a window's, the corner clearance</span></code></pre>
+<p>a door in the middle of the first wall, a window a third of the way along the second</p>
+<pre><code>  a = house.cw_corners[<span class="bi"><a href="stdlib-text.html">len</a></span>(house.cw_corners) - <span class="nm">1</span>] ?? (<span class="nm">0.0</span>, <span class="nm">0.0</span>);
+  b = house.cw_corners[<span class="nm">0</span>] ?? (<span class="nm">0.0</span>, <span class="nm">0.0</span>);
+  c = house.cw_corners[<span class="nm">1</span>] ?? (<span class="nm">0.0</span>, <span class="nm">0.0</span>);
+  <span class="fn-call">cells_place_opening</span>(house, marks, <span class="en">OPEN_DOOR</span>, (a.<span class="nm">0</span> + b.<span class="nm">0</span>) * <span class="nm">0.5</span>, (a.<span class="nm">1</span> + b.<span class="nm">1</span>) * <span class="nm">0.5</span>, sizes);
+  <span class="fn-call">cells_place_opening</span>(house, marks, <span class="en">OPEN_WINDOW</span>, b.<span class="nm">0</span> + (c.<span class="nm">0</span> - b.<span class="nm">0</span>) / <span class="nm">3.0</span>, b.<span class="nm">1</span> + (c.<span class="nm">1</span> - b.<span class="nm">1</span>) / <span class="nm">3.0</span>, sizes);
+  found = <span class="fn-call">cells_openings</span>(house.cw_boundary, house.cw_runs, house.cw_walls, marks, sizes);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(found) == <span class="nm">2</span>, <span class="st">"two openings read back"</span>);
+  <span class="kw">for</span> o <span class="kw">in</span> found {
+    wide = <span class="bi"><a href="stdlib-math.html">sqrt</a></span>((o.op_bx - o.op_ax) * (o.op_bx - o.op_ax) + (o.op_by - o.op_ay) * (o.op_by - o.op_ay)) ?? <span class="nm">0.0</span>;
+    <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"kind {o.op_kind} on wall {o.op_wall}, over {len(o.op_edges)} edges, {wide:.3} wide"</span>);
+  }
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(found[<span class="nm">0</span>]!.op_kind == <span class="en">OPEN_DOOR</span> &amp;&amp; found[<span class="nm">0</span>]!.op_wall == <span class="nm">0</span>, <span class="st">"the door on wall 0"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(found[<span class="nm">1</span>]!.op_kind == <span class="en">OPEN_WINDOW</span> &amp;&amp; found[<span class="nm">1</span>]!.op_wall == <span class="nm">1</span>, <span class="st">"the window on wall 1"</span>);
+}</code></pre>
+<p>That prints:</p>
+<pre><code>  kind 1 on wall 0, over 2 edges, 1.000 wide
+  kind 2 on wall 1, over 2 edges, 1.000 wide
+</code></pre>
+<p>The width drawn is the kind's, whatever the wall, and the edges marked are those whose midpoints fall under it: along an even heading they lie 0.87 apart, along an odd one 0.75, so the same door covers different edges on different walls.  The span is what to draw; that is what lets one door mesh fit every wall at every angle.</p>
+<h2 id="a-courtyard">A courtyard</h2>
+<p><code>cells_built</code> is for a structure of one piece without a hole.  <code>cells_outlines</code> takes anything: it answers one <code>CellOutline</code> per loop of the boundary — the outside of each piece, and one round each hole — every loop walked with its cells on the left, so a courtyard's is walked the other way round.</p>
+<p>It is also what draws a road's edge, a stream's bank or a cliff: cells inside and out like any structure, the walls having no height.  For those it knows two things a house's outline never needs: where two walls in a row run the same way a short STEP joins them, and a stretch that keeps to a heading off the loop's two axes for six edges or more is a wall of its own, slanted.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">a_courtyard</span>() {
+  cells = <span class="fn-call">hexset_chunk</span>(-<span class="nm">24</span>, -<span class="nm">24</span>, <span class="nm">49</span>, <span class="nm">49</span>);
+  types = <span class="fn-call">labels_new</span>(-<span class="nm">24</span>, -<span class="nm">24</span>, <span class="nm">49</span>, <span class="nm">49</span>);
+  <span class="fn-call">draw_floor</span>(<span class="fn-call">plan_new</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">12</span>, <span class="nm">10</span>, <span class="nm">0</span>, <span class="kw">false</span>), cells, types, <span class="nm">1</span>);
+  court = <span class="fn-call">hexset_chunk</span>(-<span class="nm">24</span>, -<span class="nm">24</span>, <span class="nm">49</span>, <span class="nm">49</span>);
+  <span class="fn-call">draw_floor</span>(<span class="fn-call">plan_new</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">5</span>, <span class="nm">4</span>, <span class="nm">0</span>, <span class="kw">false</span>), court, types, <span class="nm">1</span>);
+  <span class="kw">for</span> r <span class="kw">in</span> -<span class="nm">24..25</span> { <span class="kw">for</span> q <span class="kw">in</span> -<span class="nm">24..25</span> { <span class="kw">if</span> <span class="fn-call">hexset_get</span>(court, q, r) { <span class="fn-call">hexset_set</span>(cells, q, r, <span class="kw">false</span>); } } }
+  loops = <span class="fn-call">cells_outlines</span>(cells, <span class="nm">0</span>);
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"loops {len(loops)}, walls {len(loops[0]!.co_walls)} and {len(loops[1]!.co_walls)}"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(loops) == <span class="nm">2</span> &amp;&amp; <span class="bi"><a href="stdlib-text.html">len</a></span>(loops[<span class="nm">0</span>]!.co_walls) == <span class="nm">4</span> &amp;&amp; <span class="bi"><a href="stdlib-text.html">len</a></span>(loops[<span class="nm">1</span>]!.co_walls) == <span class="nm">4</span>, <span class="st">"the hall's outline and the court's"</span>);
+}</code></pre>
+<p>That prints:</p>
+<pre><code>  loops 2, walls 4 and 4
+</code></pre>
 
   </article>
 <script src="search-index.js"></script>

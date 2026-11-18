@@ -24,6 +24,15 @@ pub(super) fn branch_tail_vars(node: &Value) -> Vec<u16> {
             }
             // Written out as its call, which hands off no local.
             Value::Block(bl) if bl.name == crate::parser::Parser::JOIN_ARM_OWNER => {}
+            // A `??` chain's block is written out WHOLE (`sink_set_into_arms`, loft#1612): the
+            // binding views the chain's own temps, as the statement `b = e ?? d` does, and copies
+            // from none of them.  Read through, its `__ncc_N` came back as a source the binding
+            // copied, `make_independent` dropped the binding's dep on it, and the binding and the
+            // temp each freed the one record (loft#2550: `r = if c { f() ?? d } else { … }`).
+            // `LOFT_NO_CHAIN_ARM_VIEW=1` reads through it again, the loft#2550 defect.
+            Value::Block(bl)
+                if bl.name == "ncc"
+                    && !crate::env_once!(std::env::var_os("LOFT_NO_CHAIN_ARM_VIEW").is_some()) => {}
             Value::Block(bl) => {
                 if let Some(last) = bl.operators.last() {
                     walk(last, out);

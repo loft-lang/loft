@@ -405,6 +405,13 @@ impl Stores {
     /// `@C145`, `@FR-H-LongRef` — a linked element claims a record of its own here, so a
     /// reference to it keeps its place while the collection around it grows or re-sorts.
     pub fn record_new(&mut self, data: &DbRef, parent_tp: u16, field: u16) -> DbRef {
+        // `@FR-H-WriteNull` — an append through a record that names nothing claims nothing: it
+        // answers the null it was given, so the element's field writes and `record_finish` skip.
+        // A plain vector already did (`vector_append` tests it); a keyed one reached the hash
+        // and indexed `stores[u16::MAX]` on the interpreter (`ds[9].hs += [E { … }]`).
+        if data.is_null() {
+            return *data;
+        }
         // @PLN101 Slice 0 — count every heap record allocation (the cost value structs remove).
         self.records_created += 1;
         // @PLN157 § V-k — the commonest shape, `v += [x]` on a plain vector: `field` is
@@ -604,6 +611,12 @@ impl Stores {
         key_pos: u32,
         key: i64,
     ) -> DbRef {
+        // `@FR-H-WriteNull` — a filing through a record that names nothing lands nowhere: the
+        // null record, which the field writes after it skip (`ds[9].hs += [E { … }]`).  The null
+        // passed in is answered as it came, so a REPORTED one (a guard's arm owns it) stays so.
+        if data.is_null() {
+            return *data;
+        }
         if key_pos != u32::MAX && self.live_scratches.is_empty() && !keys::keyed_verify() {
             let d = DbRef {
                 store_nr: data.store_nr,
@@ -670,6 +683,12 @@ impl Stores {
         field: u16,
         key: &[i64; 4],
     ) -> DbRef {
+        // `@FR-H-WriteNull` — through a record that names nothing, the null record (loft#2549's
+        // guarded filing redirects a locked collection to it too).  Without this the interpreter
+        // indexed `stores[u16::MAX]`; the C backend already answered null.
+        if data.is_null() {
+            return *data;
+        }
         let n = self.types[self.sub_record_type(parent_tp, field) as usize]
             .keys
             .len()
@@ -711,6 +730,10 @@ impl Stores {
         field: u16,
         key: &str,
     ) -> DbRef {
+        // `@FR-H-WriteNull` — through a record that names nothing, the null record.
+        if data.is_null() {
+            return *data;
+        }
         let tp = self.sub_record_type(parent_tp, field);
         let d = self.field_ref(data, parent_tp, field);
         if !self.live_scratches.iter().any(|(source, _)| *source == d)
@@ -746,6 +769,10 @@ impl Stores {
     When the implementation is not yet written
     */
     pub fn record_finish(&mut self, data: &DbRef, rec: &DbRef, parent_tp: u16, field: u16) {
+        // `@FR-H-WriteNull` — the twin of `record_new`'s: nothing was claimed, nothing is filed.
+        if data.is_null() {
+            return;
+        }
         // @PLN157 § V-k — the twin of `record_new`'s short path: a plain vector's finish is
         // the length bump and nothing else (no siblings to link, no key to place).
         if field == u16::MAX && matches!(self.types[parent_tp as usize].parts, Parts::Vector(_)) {
@@ -2722,6 +2749,11 @@ impl Stores {
     /// When the source's byte length does not fit a store claim.
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub fn vector_add(&mut self, db: &DbRef, o_db: &DbRef, known: u16) {
+        // `@FR-H-WriteNull` — an append onto a vector that names nothing lands nowhere
+        // (`ds[9].xs += ys`, or a guarded append whose store is locked, loft#2549).
+        if db.is_null() {
+            return;
+        }
         // `LOFT_TRACE_VADD=1` prints one line per vector concat/append-copy
         // with the resolved stride — the instrument that settled the nested
         // `a += b` stride bug (rows strode by the 4-byte field-slot size

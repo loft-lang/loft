@@ -322,7 +322,7 @@ everywhere; or a target that faults on an unaligned load runs the interpreter.  
 **Holds at:** `@C138` — `calc::calculate_positions` (the size rounding), `Stores::validate_all_layouts`
 (the compile-time check), `data::element_storage_offsets` (the restated tuple view);
 the rule `(L-Align)` in [formal/layout.md](formal/layout.md); guards `tests/layout_alignment.rs`,
-`loft-suite/rules/layout/L-Tuple/a-record-is-padded-to-its-alignment.loft` and the unit test
+`loft-suite/rules/layout/L-Tuple/a-stored-tuple-is-a-record-packed-like-a-struct-keeping-its-written-positions.loft` and the unit test
 `validate_all_layouts_reports_a_misaligned_field`.
 **Catalogue:** `formal/layout.md` `(L-Struct)` `(L-Tuple)` `(L-Ref)` `(L-Sound)` · LOFT_DATA.md
 § Sizeof

@@ -23,21 +23,27 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <a href="https://loft-lang.org/blog/">Blog</a> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>screen source</h1>
 <article>
-<p><a href="lib-screen.html">← screen</a> · <a href="lib-screen-api.html">API reference</a> · version 0.1.1</p>
-<p class="lib-legend">2 file(s), 139 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<p><a href="lib-screen.html">← screen</a> · <a href="lib-screen-api.html">API reference</a> · version 0.2.1</p>
+<p class="lib-legend">2 file(s), 189 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
 <table class="lib-table">
 <tr><th>Item</th><th>Defined</th><th>Worked example</th><th>Call sites</th></tr>
-<tr><td><code>open</code> <span class="search-kind">fn</span></td><td><a href="#src-screen-loft-L41">41</a></td><td>—</td><td><a href="#tests-scale-loft-L15">15</a> <a href="#tests-scale-loft-L25">25</a> <a href="#tests-scale-loft-L33">33</a> <a href="#tests-scale-loft-L43">43</a> <a href="#tests-scale-loft-L48">48</a></td></tr>
-<tr><td><code>show</code> <span class="search-kind">fn</span></td><td><a href="#src-screen-loft-L48">48</a></td><td>—</td><td><a href="#tests-scale-loft-L18">18</a> <a href="#tests-scale-loft-L35">35</a> <a href="#tests-scale-loft-L45">45</a></td></tr>
-<tr><td><code>poll</code> <span class="search-kind">fn</span></td><td><a href="#src-screen-loft-L54">54</a></td><td>—</td><td><a href="#tests-scale-loft-L25">25</a></td></tr>
-<tr><td><code>has_keys</code> <span class="search-kind">fn</span></td><td><a href="#src-screen-loft-L59">59</a></td><td>—</td><td><a href="#tests-scale-loft-L24">24</a></td></tr>
-<tr><td><code>keys</code> <span class="search-kind">fn</span></td><td><a href="#src-screen-loft-L66">66</a></td><td>—</td><td><a href="#tests-scale-loft-L24">24</a></td></tr>
-<tr><td><code>shown</code> <span class="search-kind">fn</span></td><td><a href="#src-screen-loft-L74">74</a></td><td>—</td><td><a href="#tests-scale-loft-L19">19</a> <a href="#tests-scale-loft-L20">20</a> <a href="#tests-scale-loft-L21">21</a> <a href="#tests-scale-loft-L22">22</a> <a href="#tests-scale-loft-L23">23</a> <a href="#tests-scale-loft-L27">27</a> … (9 total)</td></tr>
-<tr><td><code>width</code> <span class="search-kind">fn</span></td><td><a href="#src-screen-loft-L79">79</a></td><td>—</td><td><a href="#src-screen-loft-L17">17</a> <a href="#src-screen-loft-L21">21</a> <a href="#src-screen-loft-L41">41</a> <a href="#src-screen-loft-L43">43</a> <a href="#src-screen-loft-L48">48</a> <a href="#src-screen-loft-L49">49</a> … (7 total)</td></tr>
-<tr><td><code>height</code> <span class="search-kind">fn</span></td><td><a href="#src-screen-loft-L83">83</a></td><td>—</td><td><a href="#src-screen-loft-L17">17</a> <a href="#src-screen-loft-L21">21</a> <a href="#src-screen-loft-L41">41</a> <a href="#src-screen-loft-L43">43</a> <a href="#src-screen-loft-L48">48</a> <a href="#src-screen-loft-L49">49</a> … (7 total)</td></tr>
-<tr><td><code>close</code> <span class="search-kind">fn</span></td><td><a href="#src-screen-loft-L88">88</a></td><td>—</td><td><a href="#tests-scale-loft-L26">26</a> <a href="#tests-scale-loft-L38">38</a> <a href="#tests-scale-loft-L47">47</a></td></tr>
+<tr><td><code>open</code> <span class="search-kind">fn</span></td><td><a href="#src-screen-loft-L51">51</a></td><td>—</td><td><a href="#tests-scale-loft-L15">15</a> <a href="#tests-scale-loft-L25">25</a> <a href="#tests-scale-loft-L33">33</a> <a href="#tests-scale-loft-L43">43</a> <a href="#tests-scale-loft-L48">48</a></td></tr>
+<tr><td><code>show</code> <span class="search-kind">fn</span></td><td><a href="#src-screen-loft-L60">60</a></td><td>—</td><td><a href="#tests-scale-loft-L18">18</a> <a href="#tests-scale-loft-L35">35</a> <a href="#tests-scale-loft-L45">45</a></td></tr>
+<tr><td><code>poll</code> <span class="search-kind">fn</span></td><td><a href="#src-screen-loft-L66">66</a></td><td>—</td><td><a href="#tests-scale-loft-L25">25</a></td></tr>
+<tr><td><code>has_keys</code> <span class="search-kind">fn</span></td><td><a href="#src-screen-loft-L71">71</a></td><td>—</td><td><a href="#tests-scale-loft-L24">24</a></td></tr>
+<tr><td><code>program_keys</code> <span class="search-kind">fn</span></td><td><a href="#src-screen-loft-L80">80</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>keys</code> <span class="search-kind">fn</span></td><td><a href="#src-screen-loft-L87">87</a></td><td>—</td><td><a href="#tests-scale-loft-L24">24</a></td></tr>
+<tr><td><code>shown</code> <span class="search-kind">fn</span></td><td><a href="#src-screen-loft-L95">95</a></td><td>—</td><td><a href="#tests-scale-loft-L19">19</a> <a href="#tests-scale-loft-L20">20</a> <a href="#tests-scale-loft-L21">21</a> <a href="#tests-scale-loft-L22">22</a> <a href="#tests-scale-loft-L23">23</a> <a href="#tests-scale-loft-L27">27</a> … (9 total)</td></tr>
+<tr><td><code>width</code> <span class="search-kind">fn</span></td><td><a href="#src-screen-loft-L100">100</a></td><td>—</td><td><a href="#src-screen-loft-L17">17</a> <a href="#src-screen-loft-L21">21</a> <a href="#src-screen-loft-L51">51</a> <a href="#src-screen-loft-L53">53</a> <a href="#src-screen-loft-L60">60</a> <a href="#src-screen-loft-L61">61</a> … (7 total)</td></tr>
+<tr><td><code>height</code> <span class="search-kind">fn</span></td><td><a href="#src-screen-loft-L104">104</a></td><td>—</td><td><a href="#src-screen-loft-L17">17</a> <a href="#src-screen-loft-L21">21</a> <a href="#src-screen-loft-L51">51</a> <a href="#src-screen-loft-L53">53</a> <a href="#src-screen-loft-L60">60</a> <a href="#src-screen-loft-L61">61</a> … (7 total)</td></tr>
+<tr><td><code>close</code> <span class="search-kind">fn</span></td><td><a href="#src-screen-loft-L109">109</a></td><td>—</td><td><a href="#tests-scale-loft-L26">26</a> <a href="#tests-scale-loft-L38">38</a> <a href="#tests-scale-loft-L47">47</a></td></tr>
+<tr><td><code>has_pointer</code> <span class="search-kind">fn</span></td><td><a href="#src-screen-loft-L115">115</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>pointer</code> <span class="search-kind">fn</span></td><td><a href="#src-screen-loft-L120">120</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>buttons</code> <span class="search-kind">fn</span></td><td><a href="#src-screen-loft-L125">125</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>wheel</code> <span class="search-kind">fn</span></td><td><a href="#src-screen-loft-L130">130</a></td><td>—</td><td>none in this package</td></tr>
+<tr><td><code>typed</code> <span class="search-kind">fn</span></td><td><a href="#src-screen-loft-L136">136</a></td><td>—</td><td>none in this package</td></tr>
 </table>
 <h2 id="src-screen-loft">src/screen.loft</h2>
 <pre class="src"><code><span id="src-screen-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
@@ -74,62 +80,112 @@
 <span id="src-screen-loft-L32">#c <span class="st">"sc_width"</span> <span class="st">"int64_t(void)"</span></span>
 <span id="src-screen-loft-L33"><span class="kw">fn</span> <span class="fn-call">sc_height</span>() -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
 <span id="src-screen-loft-L34">#c <span class="st">"sc_height"</span> <span class="st">"int64_t(void)"</span></span>
-<span id="src-screen-loft-L35"></span>
-<span id="src-screen-loft-L36"><span class="cm">/// Open the screen for frames of `width` by `height` pixels, each shown as a `scale` by</span></span>
-<span id="src-screen-loft-L37"><span class="cm">/// `scale` block.  On a desktop that is a window of that size titled `title`; on a device it is</span></span>
-<span id="src-screen-loft-L38"><span class="cm">/// the whole display, the frame centred.  `offscreen` keeps only the scaled image in memory —</span></span>
-<span id="src-screen-loft-L39"><span class="cm">/// for tests, and for a machine with no screen.  False where this machine has no screen (no</span></span>
-<span id="src-screen-loft-L40"><span class="cm">/// display, a browser build).  Opening again closes the screen that was open.</span></span>
-<span id="src-screen-loft-L41"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">open</span>(width: <span class="ty"><a href="stdlib-types.html">integer</a></span>, height: <span class="ty"><a href="stdlib-types.html">integer</a></span>, scale: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">1</span>, title: <span class="ty"><a href="stdlib-types.html">text</a></span> = <span class="st">"loft"</span>,</span>
-<span id="src-screen-loft-L42">            offscreen: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
-<span id="src-screen-loft-L43">  <span class="fn-call">sc_open</span>(width, height, scale, <span class="kw">if</span> offscreen { <span class="nm">1</span> } <span class="kw">else</span> { <span class="nm">0</span> }, title) != <span class="nm">0</span></span>
-<span id="src-screen-loft-L44">}</span>
-<span id="src-screen-loft-L45"></span>
-<span id="src-screen-loft-L46"><span class="cm">/// Show a frame: `width * height` RGB565 values, row by row, as `tiles::pixels` answers them.</span></span>
-<span id="src-screen-loft-L47"><span class="cm">/// A frame with fewer values than that shows nothing.</span></span>
-<span id="src-screen-loft-L48"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">show</span>(pixels: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">i32</a></span>&gt;, width: <span class="ty"><a href="stdlib-types.html">integer</a></span>, height: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
-<span id="src-screen-loft-L49">  <span class="fn-call">sc_show</span>(pixels, width, height);</span>
-<span id="src-screen-loft-L50">}</span>
-<span id="src-screen-loft-L51"></span>
-<span id="src-screen-loft-L52"><span class="cm">/// Take what happened since the last call — keys, the window being closed — waiting up to</span></span>
-<span id="src-screen-loft-L53"><span class="cm">/// `wait_ms` milliseconds for something to happen.  False once the window was closed.</span></span>
-<span id="src-screen-loft-L54"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">poll</span>(wait_ms: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
-<span id="src-screen-loft-L55">  <span class="fn-call">sc_poll</span>(wait_ms) != <span class="nm">0</span></span>
-<span id="src-screen-loft-L56">}</span>
-<span id="src-screen-loft-L57"></span>
-<span id="src-screen-loft-L58"><span class="cm">/// Does this screen have keys of its own (a desktop window)?  A device's keys are `input`'s.</span></span>
-<span id="src-screen-loft-L59"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">has_keys</span>() -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
-<span id="src-screen-loft-L60">  <span class="fn-call">sc_has_keys</span>() != <span class="nm">0</span></span>
-<span id="src-screen-loft-L61">}</span>
-<span id="src-screen-loft-L62"></span>
-<span id="src-screen-loft-L63"><span class="cm">/// Which of the window's keys are down, by graphics' key codes (`KEY_W` = 119, `KEY_UP` =</span></span>
-<span id="src-screen-loft-L64"><span class="cm">/// 128, ...): 256 flags, the form `input::input_tick_from_state` takes.  All false where the</span></span>
-<span id="src-screen-loft-L65"><span class="cm">/// screen has no keys.</span></span>
-<span id="src-screen-loft-L66"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-json-reading-values.html">keys</a></span>() -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">boolean</a></span>&gt; {</span>
-<span id="src-screen-loft-L67">  out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">boolean</a></span>&gt; = [];</span>
-<span id="src-screen-loft-L68">  <span class="kw">for</span> k <span class="kw">in</span> <span class="nm">0..256</span> { out += [<span class="fn-call">sc_key</span>(k) != <span class="nm">0</span>]; }</span>
-<span id="src-screen-loft-L69">  out</span>
-<span id="src-screen-loft-L70">}</span>
-<span id="src-screen-loft-L71"></span>
-<span id="src-screen-loft-L72"><span class="cm">/// The RGB565 value shown at screen pixel (x, y), or -1 outside the screen — what a test</span></span>
-<span id="src-screen-loft-L73"><span class="cm">/// reads back.</span></span>
-<span id="src-screen-loft-L74"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">shown</span>(x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-screen-loft-L75">  <span class="fn-call">sc_shown</span>(x, y)</span>
-<span id="src-screen-loft-L76">}</span>
-<span id="src-screen-loft-L77"></span>
-<span id="src-screen-loft-L78"><span class="cm">/// The size of the screen in pixels: the window's, or the device's display turned landscape.</span></span>
-<span id="src-screen-loft-L79"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">width</span>() -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-screen-loft-L80">  <span class="fn-call">sc_width</span>()</span>
-<span id="src-screen-loft-L81">}</span>
-<span id="src-screen-loft-L82"></span>
-<span id="src-screen-loft-L83"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">height</span>() -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-screen-loft-L84">  <span class="fn-call">sc_height</span>()</span>
-<span id="src-screen-loft-L85">}</span>
-<span id="src-screen-loft-L86"></span>
-<span id="src-screen-loft-L87"><span class="cm">/// Close the screen.</span></span>
-<span id="src-screen-loft-L88"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">close</span>() {</span>
-<span id="src-screen-loft-L89">  <span class="fn-call">sc_close</span>();</span>
-<span id="src-screen-loft-L90">}</span>
+<span id="src-screen-loft-L35"><span class="kw">fn</span> <span class="fn-call">sc_pointer</span>(which: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-screen-loft-L36">#c <span class="st">"sc_pointer"</span> <span class="st">"int64_t(int64_t)"</span></span>
+<span id="src-screen-loft-L37"><span class="kw">fn</span> <span class="fn-call">sc_text</span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span>;</span>
+<span id="src-screen-loft-L38">#c <span class="st">"sc_text"</span> <span class="st">"const char*(void)"</span></span>
+<span id="src-screen-loft-L39"><span class="kw">fn</span> <span class="fn-call">sc_text_taken</span>();</span>
+<span id="src-screen-loft-L40">#c <span class="st">"sc_text_taken"</span> <span class="st">"void(void)"</span></span>
+<span id="src-screen-loft-L41"><span class="kw">fn</span> <span class="fn-call">sc_program_keys</span>() -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-screen-loft-L42">#c <span class="st">"sc_program_keys"</span> <span class="st">"int64_t(void)"</span></span>
+<span id="src-screen-loft-L43"></span>
+<span id="src-screen-loft-L44"><span class="cm">/// Open the screen for frames of `width` by `height` pixels, each shown as a `scale` by</span></span>
+<span id="src-screen-loft-L45"><span class="cm">/// `scale` block.  On a desktop that is a window of that size titled `title`; on a device it is</span></span>
+<span id="src-screen-loft-L46"><span class="cm">/// the whole display, the frame centred.  `fill` asks for the whole display where there is a</span></span>
+<span id="src-screen-loft-L47"><span class="cm">/// choice: in a page the canvas fills the window and follows it when it is resized (read</span></span>
+<span id="src-screen-loft-L48"><span class="cm">/// `width()` and `height()` each frame to draw at its size).  `offscreen` keeps only the scaled</span></span>
+<span id="src-screen-loft-L49"><span class="cm">/// image in memory — for tests, and for a machine with no screen.  False where this machine has</span></span>
+<span id="src-screen-loft-L50"><span class="cm">/// no screen (no display).  Opening again closes the screen that was open.</span></span>
+<span id="src-screen-loft-L51"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">open</span>(width: <span class="ty"><a href="stdlib-types.html">integer</a></span>, height: <span class="ty"><a href="stdlib-types.html">integer</a></span>, scale: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">1</span>, title: <span class="ty"><a href="stdlib-types.html">text</a></span> = <span class="st">"loft"</span>,</span>
+<span id="src-screen-loft-L52">            offscreen: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>, fill: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-screen-loft-L53">  <span class="fn-call">sc_open</span>(width, height, scale, <span class="kw">if</span> offscreen { <span class="nm">1</span> } <span class="kw">else</span> <span class="kw">if</span> fill { <span class="nm">2</span> } <span class="kw">else</span> { <span class="nm">0</span> }, title) != <span class="nm">0</span></span>
+<span id="src-screen-loft-L54">}</span>
+<span id="src-screen-loft-L55"></span>
+<span id="src-screen-loft-L56"><span class="cm">/// Show a frame: `width * height` RGB565 values, row by row, as `tiles::pixels` answers them.</span></span>
+<span id="src-screen-loft-L57"><span class="cm">/// It is shown at the scale `open` asked for, or the largest whole scale that fits: a frame of</span></span>
+<span id="src-screen-loft-L58"><span class="cm">/// the screen's own size (`width()` x `height()`, drawn at the screen's resolution) is shown as</span></span>
+<span id="src-screen-loft-L59"><span class="cm">/// it is.  A frame with fewer values than that shows nothing.</span></span>
+<span id="src-screen-loft-L60"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">show</span>(pixels: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">i32</a></span>&gt;, width: <span class="ty"><a href="stdlib-types.html">integer</a></span>, height: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-screen-loft-L61">  <span class="fn-call">sc_show</span>(pixels, width, height);</span>
+<span id="src-screen-loft-L62">}</span>
+<span id="src-screen-loft-L63"></span>
+<span id="src-screen-loft-L64"><span class="cm">/// Take what happened since the last call — keys, the window being closed — waiting up to</span></span>
+<span id="src-screen-loft-L65"><span class="cm">/// `wait_ms` milliseconds for something to happen.  False once the window was closed.</span></span>
+<span id="src-screen-loft-L66"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">poll</span>(wait_ms: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-screen-loft-L67">  <span class="fn-call">sc_poll</span>(wait_ms) != <span class="nm">0</span></span>
+<span id="src-screen-loft-L68">}</span>
+<span id="src-screen-loft-L69"></span>
+<span id="src-screen-loft-L70"><span class="cm">/// Does this screen have keys of its own (a desktop window)?  A device's keys are `input`'s.</span></span>
+<span id="src-screen-loft-L71"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">has_keys</span>() -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-screen-loft-L72">  <span class="fn-call">sc_has_keys</span>() != <span class="nm">0</span></span>
+<span id="src-screen-loft-L73">}</span>
+<span id="src-screen-loft-L74"></span>
+<span id="src-screen-loft-L75"><span class="cm">/// True where the keys this screen reads are the program's, whichever of its windows is in</span></span>
+<span id="src-screen-loft-L76"><span class="cm">/// front (macOS: one event queue for the application).  False where every window has its own</span></span>
+<span id="src-screen-loft-L77"><span class="cm">/// (X11): a second window in front then takes the keys, and this screen reads none.  A game</span></span>
+<span id="src-screen-loft-L78"><span class="cm">/// that opens a second window — a GPU view beside its frame — asks this before it relies on</span></span>
+<span id="src-screen-loft-L79"><span class="cm">/// `keys()` while that window is in front.</span></span>
+<span id="src-screen-loft-L80"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">program_keys</span>() -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-screen-loft-L81">  <span class="fn-call">sc_program_keys</span>() != <span class="nm">0</span></span>
+<span id="src-screen-loft-L82">}</span>
+<span id="src-screen-loft-L83"></span>
+<span id="src-screen-loft-L84"><span class="cm">/// Which of the window's keys are down, by graphics' key codes (`KEY_W` = 119, `KEY_UP` =</span></span>
+<span id="src-screen-loft-L85"><span class="cm">/// 128, ...): 256 flags, the form `input::input_tick_from_state` takes.  All false where the</span></span>
+<span id="src-screen-loft-L86"><span class="cm">/// screen has no keys.</span></span>
+<span id="src-screen-loft-L87"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-json-reading-values.html">keys</a></span>() -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">boolean</a></span>&gt; {</span>
+<span id="src-screen-loft-L88">  out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">boolean</a></span>&gt; = [];</span>
+<span id="src-screen-loft-L89">  <span class="kw">for</span> k <span class="kw">in</span> <span class="nm">0..256</span> { out += [<span class="fn-call">sc_key</span>(k) != <span class="nm">0</span>]; }</span>
+<span id="src-screen-loft-L90">  out</span>
+<span id="src-screen-loft-L91">}</span>
+<span id="src-screen-loft-L92"></span>
+<span id="src-screen-loft-L93"><span class="cm">/// The RGB565 value shown at screen pixel (x, y), or -1 outside the screen — what a test</span></span>
+<span id="src-screen-loft-L94"><span class="cm">/// reads back.</span></span>
+<span id="src-screen-loft-L95"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">shown</span>(x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-screen-loft-L96">  <span class="fn-call">sc_shown</span>(x, y)</span>
+<span id="src-screen-loft-L97">}</span>
+<span id="src-screen-loft-L98"></span>
+<span id="src-screen-loft-L99"><span class="cm">/// The size of the screen in pixels: the window's, or the device's display turned landscape.</span></span>
+<span id="src-screen-loft-L100"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">width</span>() -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-screen-loft-L101">  <span class="fn-call">sc_width</span>()</span>
+<span id="src-screen-loft-L102">}</span>
+<span id="src-screen-loft-L103"></span>
+<span id="src-screen-loft-L104"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">height</span>() -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-screen-loft-L105">  <span class="fn-call">sc_height</span>()</span>
+<span id="src-screen-loft-L106">}</span>
+<span id="src-screen-loft-L107"></span>
+<span id="src-screen-loft-L108"><span class="cm">/// Close the screen.</span></span>
+<span id="src-screen-loft-L109"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">close</span>() {</span>
+<span id="src-screen-loft-L110">  <span class="fn-call">sc_close</span>();</span>
+<span id="src-screen-loft-L111">}</span>
+<span id="src-screen-loft-L112"></span>
+<span id="src-screen-loft-L113"><span class="cm">/// Whether this screen has a pointer: a desktop window's mouse, a page's mouse or touch.  The</span></span>
+<span id="src-screen-loft-L114"><span class="cm">/// Tanmatsu has none — a program for it works from the keyboard alone.</span></span>
+<span id="src-screen-loft-L115"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">has_pointer</span>() -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-screen-loft-L116">  <span class="fn-call">sc_pointer</span>(<span class="nm">4</span>) != <span class="nm">0</span></span>
+<span id="src-screen-loft-L117">}</span>
+<span id="src-screen-loft-L118"></span>
+<span id="src-screen-loft-L119"><span class="cm">/// Where the pointer is, in the screen's pixels (`width()` x `height()`), as `poll` last saw it.</span></span>
+<span id="src-screen-loft-L120"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">pointer</span>() -&gt; (<span class="ty"><a href="stdlib-types.html">integer</a></span>, <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-screen-loft-L121">  (<span class="fn-call">sc_pointer</span>(<span class="nm">0</span>), <span class="fn-call">sc_pointer</span>(<span class="nm">1</span>))</span>
+<span id="src-screen-loft-L122">}</span>
+<span id="src-screen-loft-L123"></span>
+<span id="src-screen-loft-L124"><span class="cm">/// The pointer's buttons held down: 1 the left, 2 the right, 4 the middle, added together.</span></span>
+<span id="src-screen-loft-L125"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">buttons</span>() -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-screen-loft-L126">  <span class="fn-call">sc_pointer</span>(<span class="nm">2</span>)</span>
+<span id="src-screen-loft-L127">}</span>
+<span id="src-screen-loft-L128"></span>
+<span id="src-screen-loft-L129"><span class="cm">/// The wheel's notches since this was last asked (up is positive).</span></span>
+<span id="src-screen-loft-L130"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">wheel</span>() -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-screen-loft-L131">  <span class="fn-call">sc_pointer</span>(<span class="nm">3</span>)</span>
+<span id="src-screen-loft-L132">}</span>
+<span id="src-screen-loft-L133"></span>
+<span id="src-screen-loft-L134"><span class="cm">/// The text typed since this was last asked — what the keys wrote, with the keyboard's layout</span></span>
+<span id="src-screen-loft-L135"><span class="cm">/// and shift applied, as opposed to which keys are down.</span></span>
+<span id="src-screen-loft-L136"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">typed</span>() -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {</span>
+<span id="src-screen-loft-L137">  t = <span class="st">"{sc_text()}"</span>;</span>
+<span id="src-screen-loft-L138">  <span class="fn-call">sc_text_taken</span>();</span>
+<span id="src-screen-loft-L139">  t</span>
+<span id="src-screen-loft-L140">}</span>
 </code></pre>
 <h2 id="tests-scale-loft">tests/scale.loft</h2>
 <pre class="src"><code><span id="tests-scale-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>

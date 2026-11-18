@@ -1775,7 +1775,36 @@ impl Scopes<'_> {
         let scanned = self.scan(value, function, data);
         // `@FR-H-FreeTwice` — an arm of the value that reads a projection out of a lifted call
         // result leaves `v` naming that lift's store, which the lift's own free releases.
-        let viewed = std::mem::replace(&mut self.value_hoists, outer_hoists);
+        let mut viewed = std::mem::replace(&mut self.value_hoists, outer_hoists);
+        // `@FR-H-FreeTwice` — a BRANCH whose arm is a `?? return` chain hands the binding the
+        // chain's `_ncr_N` temp, which the scan keeps at an outer scope and releases there: the
+        // binding views it on that path, as it views a hoisted lift — its hook and free run only
+        // where it names none of them (loft#2550, `r = if c { f() ?? return } else { g() ??
+        // return }`, released by the temp and again by `r`).
+        // Only an ARM's chain: a chain bound by itself (`t = f()!`, `t = f() ?? return`) hands its
+        // temp's record to the binding and releases the temp nowhere, so a guard on it would
+        // release nothing.  `LOFT_NO_CHAIN_ARM_VIEW=1` leaves it out, the loft#2550 defect.
+        fn ends_in_if(v: &Value) -> bool {
+            match v.unspan() {
+                Value::If(..) => true,
+                Value::Block(bl) => bl.operators.last().is_some_and(ends_in_if),
+                Value::Insert(ops) => ops.last().is_some_and(ends_in_if),
+                _ => false,
+            }
+        }
+        if ends_in_if(value)
+            && !crate::env_once!(std::env::var_os("LOFT_NO_CHAIN_ARM_VIEW").is_some())
+        {
+            for t in branch_tail_vars(value) {
+                if t != v
+                    && function.name(t).starts_with("_ncr_")
+                    && self.var_scope.contains_key(&t)
+                    && !viewed.contains(&t)
+                {
+                    viewed.push(t);
+                }
+            }
+        }
         self.note_lift_viewers(v, &viewed);
         self.prefix_released.truncate(prefix_from);
         if first_binding {

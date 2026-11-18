@@ -322,7 +322,7 @@ like a landed write; reading `h.a` back is what settles it.
 
 Group FORMATION no longer depends on declaration order: the pairing test asks the question
 of the PAIR (loft#1158), so `sorted` then `vector` links exactly as `vector` then `sorted`
-does — `1158-a-group-forms-whichever-member-is-declared-first.loft` pins all five keyed kinds
+does — `a-groups-members-are-found-by-their-element-type-whatever-the-order-or-the-nullability.loft` pins all five keyed kinds
 in both orders.
 
 ### Replacing, nulling or removing one element through the vector member (2026-09-05)
@@ -355,7 +355,7 @@ under a `vector<R?>`) resolve through `holder_type`, which reads the field type 
 h: hash<E[k]> }`) is open — loft#1375: each vector links to the hash and never to the other,
 so `h` holds the union and each vector only its own entries.
 
-Guard: `a-group-element-written-through-the-vector-member-reaches-every-member.loft` (19
+Guard: `a-write-through-any-member-of-a-linked-group-reaches-every-member.loft` (19
 rows: replace by literal / by local / by a sibling element, null write, a record into a null
 slot, `remove` at the first and last index and out of range, in a loop, through a parameter,
 one nesting level down and under a `vector<R?>`, a variant holder, four keyed members

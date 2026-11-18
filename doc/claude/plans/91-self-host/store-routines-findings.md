@@ -54,8 +54,8 @@ the suite now reads 0 under strict stores on the interpreter and C.
 
 | Case | Cause | State |
 |---|---|---|
-| `R-HostStore/a-recursion-answering-its-own-results-keeps-adopts-and-releases-them.loft` (interpreter) | the adopted result's let-go freed the host store | fixed; cell armed with strict stores |
-| `R-Demote/a-front-push-moves-the-old-node-and-keeps-what-it-owns.loft` (interpreter, C, native) | a link walk over a plain parameter released the caller's list | fixed; cell armed; new cell `F-ParamRebind/a-link-to-a-plain-parameter-walks-…` |
+| `R-HostStore/a-result-built-in-its-hosts-store-is-adopted-and-released-once.loft` (interpreter) | the adopted result's let-go freed the host store | fixed; cell armed with strict stores |
+| `R-Demote/a-front-push-moves-the-old-node-whole-a-records-or-a-variants.loft` (interpreter, C, native) | a link walk over a plain parameter released the caller's list | fixed; cell armed; new cell `F-ParamRebind/a-link-to-a-plain-parameter-walks-…` |
 | `O-NoDiverge/1328-…`, `O-NoDiverge/1329-…`, `O-Proxy/1320-…` | not a UAF: each cell lowers the store ceiling (`@STORE_LIMIT: 1310`), and strict stores never reuses a store number, so the run exhausts the table; run without the ceiling they are clean on both backends | not a defect |
 
 **Coverage after the fixes** (2026-11-11, the suite at `8778c1e` plus this arc's cells): no use
@@ -322,7 +322,7 @@ The real defects the checker found first:
    another: the scope-end free `OpFreeRefIfDistinct(x, q)` (loft#1257's join witness) ran while
    `x` still named its literal backing, which freed it too.  Latent on main, both backends.  The
    scope-end free takes the rebind's view-temp guard (`LOFT_NO_VIEW_TEMP_SCOPE_END_GUARD`); suite
-   cell O-Latest/a-vector-local-a-forwarding-fn-ref-may-rebind-is-released-once.
+   cell O-Latest/a-rebound-vector-local-releases-the-store-it-leaves-once.
 8. **A binding arm answering the subject freed the caller's vector** —
    `match v { [h, ..t] => t, whole => whole }` delivered `whole` into the return buffer and freed
    its dependency, the parameter `v`.  Latent on main, both backends, every element type.  The
@@ -347,29 +347,29 @@ The real defects the checker found first:
    `for … { g = fn() {..a..}; a = [i] }` the declaration's backing still named the record's
    capture, and the frame's end freed both.  Let-go point 5 hands the backing's store to a record
    whose live cascade frees it (`LOFT_NO_STAYING_RECORD_TAKES_BACKING`); suite cell
-   L-CapKeep/a-staying-record-rebuilt-in-one-pass-frees-its-capture-once.  L-Apply's three
+   L-CapKeep/each-run-of-a-build-in-a-loop-is-its-own-record-and-a-kept-closure-keeps-its-pass.  L-Apply's three
    findings and 2357's `after_local` / `after_in_frame` were this.
 13. **A pass-scoped fn-ref beside a kept one freed its record twice** — a second loop keeping a
    fn-ref gates the frame (`closure_keep`), and the pass-scoped fn-ref then released its confined
    record too (`LOFT_NO_CONFINED_RECORD_STAND_DOWN`); suite cell
-   L-CapKeep/a-pass-scoped-fn-ref-beside-a-kept-one-frees-its-record-once.  L-CapRebind
+   L-CapKeep/each-run-of-a-build-in-a-loop-is-its-own-record-and-a-kept-closure-keeps-its-pass.  L-CapRebind
    vector's findings were this and 12.
 14. **A call rebind in a loop refilled the vector a closure captured** — `a = mkv(i)` after the
    build answered the value assigned after it: silent-wrong, both backends.  The call's buffer is
    a backing the rebind detaches (`LOFT_NO_CALL_BUFFER_REBIND_DETACH`); suite cell
-   L-CapRebind/a-call-rebind-in-a-loop-leaves-the-record-its-build-time-vector.  Not a lifetime
+   L-CapRebind/a-rebind-of-a-captured-local-leaves-the-record-the-store-its-build-named.  Not a lifetime
    fault, so the records cannot report it; found by the over-reach probe beside 12.
 15. **A capture rotated through call buffers was freed under a buffer** — `v = bump(v)` with a
    kept closure: a use after free on the C backend at three passes.  Such a capture is the
    buffers' to release (`LOFT_NO_ROTATED_CAPTURE_LEFT_TO_BUFFERS`); suite cell
-   L-CapRebind/a-capture-rotated-through-call-buffers-is-the-buffers-to-release.
+   L-CapRebind/a-rebind-of-a-captured-local-leaves-the-record-the-store-its-build-named.
 
 16. **A closure re-bound to a plain lambda leaked the record it displaced** — a fn-ref holding a
    frame-built record, re-bound on a branch to a lambda that captures nothing, then returned: the
    frame took the record as leaving on every run, so the re-bound run released neither the record
    nor its captures, and skipped their hooks; both backends.  Such a frame is decided by store
    identity (`LOFT_NO_PLAIN_REBIND_KEEP`); suite cell
-   L-CapOwn/a-closure-rebound-to-a-plain-lambda-releases-the-record-it-displaced.  Found probing
+   L-CapOwn/a-rebind-releases-the-closure-record-it-displaces-whatever-replaces-it.  Found probing
    L-CapOne/2281's `lv` with the closure built on one branch only.
 
 **A loop finding is re-run at 0, 1, 2 and 3 passes before it is called false.**  A suite cell's

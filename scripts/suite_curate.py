@@ -18,12 +18,16 @@ still covers the rule totally — and record which rules are done.
                                               # cells: checks (a lost feature named), repoints every
                                               # reference, suite commit, gate E rows, pin
     scripts/suite_curate.py done <rule> [note]   # record the rule as curated (after the commit)
+    scripts/suite_curate.py done <rule> --structural <why>   # a rule no program can observe
     scripts/suite_curate.py init              # (re)write the ledger's rows for every defined rule
 
 THE LEDGER is `index/suite_curation.tsv`: one row per defined rule (`rule_tags.py list`, all of
 them — not only the cited ones), with its state, the cell count when it was done, and a note.
 States: `todo`; `curated` (the rule's cells are its core, each one needed); `needs-cell` (no cell
-names the rule: it goes to the rule-led walk's queue, `rule_tags.py worklist`).
+names the rule: it goes to the rule-led walk's queue, `rule_tags.py worklist`); `structural` (a
+rule about how the compiler is organised — one routine, what a kind declares, how a reach is
+chosen — that no program can observe: no cell can guard it, and the note says why and what
+exercises its answers instead).
 
 WHAT "COVERS THE RULE TOTALLY" MEANS HERE — the features a rule's cells reach today, which the
 core must keep, every one:
@@ -258,10 +262,19 @@ def merge(target, intro_file, cells):
         for c, v in verdicts.items():
             print(f"  {v:<8} {os.path.basename(c)}")
         return 1
+    # Programs the self-hosted elaborator agrees with are its measured progress: two of them made
+    # one lowers the agree count, which a merge never does (TESTING.md § Curating the suite, 4).
+    if len(cells) > 1 and set(verdicts.values()) == {"agree"}:
+        print("gate E agrees with every one of these — merging them lowers its agree count; not merged")
+        return 1
     intro = open(intro_file, encoding="utf-8").read().rstrip("\n").split("\n")
 
     def declared(code):
-        top = set(re.findall(r"^(?:pub )?(?:fn|struct|enum|value struct|type) ([A-Za-z_0-9]+)", code, re.M))
+        # A method (`fn OpDrop(self: T)`, `fn len(self: T)`) is keyed by its `self` type, so two
+        # sections' methods of one name on two types never clash, and renaming one (`S2OpDrop`)
+        # breaks it; if its type clashes, the type's rename carries it.  Only free names count.
+        top = set(re.findall(r"^(?:pub )?(?:struct|enum|value struct|type) ([A-Za-z_0-9]+)", code, re.M))
+        top |= set(re.findall(r"^(?:pub )?fn ([A-Za-z_0-9]+)\s*(?:<[^>]*>)?\(\s*(?!self\b)", code, re.M))
         variants = set()
         for m in re.finditer(r"^enum [A-Za-z_0-9]+(?:<[^>]*>)?\s*\{", code, re.M):
             # The enum's body, brace-matched: a variant may carry a braced payload.
@@ -286,7 +299,53 @@ def merge(target, intro_file, cells):
         return top, variants
 
     taken_top, taken_var = set(), set()
-    tests_seen = {}
+    tests_seen, decls_seen, methods_seen = {}, {}, set()
+
+    def method_texts(code):
+        # Each top-level method's whole text (`fn name(self: T …) { … }`, and an operator written
+        # as one: `pub operator next(self: T) …`), brace-matched.
+        out = []
+        for m in re.finditer(r"(?m)^(?:pub )?(?:fn|operator) [A-Za-z_0-9]+\s*(?:<[^>]*>)?\(\s*self\b", code):
+            i = m.end()
+            while i < len(code) and code[i] not in "{;":
+                i += 1
+            if i < len(code) and code[i] == "{":
+                depth = 0
+                while i < len(code):
+                    depth += {"{": 1, "}": -1}.get(code[i], 0)
+                    i += 1
+                    if depth == 0:
+                        break
+            else:
+                i += 1
+            if i < len(code) and code[i] == "\n":
+                i += 1
+            out.append(code[m.start():i])
+        return out
+
+    def decl_text(code, name):
+        # A top-level declaration's whole text: from its line to its brace-matched end (or the
+        # `;` of a body-less one), with its newline.
+        m = re.search(r"(?m)^(?:pub )?(?:fn|struct|enum|value struct|type) " + re.escape(name) + r"\b", code)
+        if not m:
+            return None
+        i = m.end()
+        while i < len(code) and code[i] not in "{;":
+            i += 1
+        if i >= len(code):
+            return None
+        if code[i] == "{":
+            depth = 0
+            while i < len(code):
+                depth += {"{": 1, "}": -1}.get(code[i], 0)
+                i += 1
+                if depth == 0:
+                    break
+        else:
+            i += 1
+        if i < len(code) and code[i] == "\n":
+            i += 1
+        return code[m.start():i]
     heads, codes = [], []
     for k, cell in enumerate(cells):
         lines = open(cell, encoding="utf-8").read().split("\n")
@@ -318,20 +377,65 @@ def merge(target, intro_file, cells):
         px = "s" + str(k + 1)
         ren = {}
         # Enum variants and type names share one namespace (a struct `A` beside a variant `A` is
-        # refused), so each set clashes with both.
-        for n in top:
-            if (n in taken_top or n in taken_var) and not n.startswith("test_"):
-                ren[n] = (px.upper() + n) if n[0].isupper() else (px + "_" + n)
-        for v in var:
-            if v in taken_var or v in taken_top:
-                ren[v] = px.upper() + v
+        # refused), so each set clashes with both.  A clashing declaration identical, word for word,
+        # to an earlier section's is the SAME item (two cells of one directory each declaring the
+        # host function its `[sandbox]` policy names): it is dropped, not renamed — a rename would
+        # move it out of the policy that names it.
+        # "Identical" is judged AFTER this section's other renames: `fn mk() -> Node { NdInt … }`
+        # reads the same in two sections, yet in the second `Node` and `NdInt` are renamed, so it
+        # is another function — dropped as a duplicate, its callers reached the first section's
+        # and were refused.  Dropping one declaration un-renames its names (and its variants), so
+        # another may become identical: decided to a fixpoint.
+        def rename_of(n):
+            return (px.upper() + n) if n[0].isupper() else (px + "_" + n)
+
+        def apply(text, rmap):
+            for o, nw in sorted(rmap.items(), key=lambda x: -len(x[0])):
+                text = re.sub(r"\b" + re.escape(o) + r"\b", nw, text)
+            return text
+        clash = {n for n in top if (n in taken_top or n in taken_var) and not n.startswith("test_")}
+        dropped, shared_vars = set(), set()   # identical items, and the variants of a dropped enum
+        while True:
+            vren = {v: px.upper() + v for v in var - shared_vars if v in taken_var or v in taken_top}
+            tren = {n: rename_of(n) for n in clash - dropped}
+            more = False
+            for n in sorted(clash - dropped):
+                mine = decl_text(code, n)
+                if mine is None or n not in decls_seen:
+                    continue
+                own = declared(mine)[1] | {n}
+                others = {k: v for k, v in {**tren, **vren}.items() if k not in own}
+                if apply(mine, others) == decls_seen[n]:
+                    dropped.add(n)
+                    shared_vars |= declared(mine)[1]
+                    more = True
+            if not more:
+                break
+        for n in sorted(dropped):
+            code = code.replace(decl_text(code, n), "", 1)
+            print(f"  {stem}: dropped {n} — identical to an earlier section's")
+        ren.update(tren)
+        ren.update(vren)
         for o, nw in sorted(ren.items(), key=lambda x: -len(x[0])):
-            code = re.sub(r"\b" + re.escape(o) + r"\b", nw, code)
-            # An expectation in the header quotes the diagnostic, which names the renamed thing.
-            head = [re.sub(r"\b" + re.escape(o) + r"\b", nw, l) if re.match(r"^// @EXPECT_", l) else l
-                    for l in head]
+            # An expectation — in the header or beside its function — quotes the diagnostic, which
+            # names the renamed thing as CODE, against a backtick, a quote or a bracket (`grow(…)`,
+            # (AFire, u8)).  A word with a space on both sides is the sentence's own: `cannot grow
+            # `v`` keeps its verb when a function `grow` is renamed.
+            in_expect = re.compile(r"\b" + re.escape(o) + r"\b(?<! " + re.escape(o) + r"(?= ))")
+            plain = re.compile(r"\b" + re.escape(o) + r"\b")
+            code = "\n".join(in_expect.sub(nw, l) if l.startswith("// @EXPECT_") else plain.sub(nw, l)
+                             for l in code.split("\n"))
+            head = [in_expect.sub(nw, l) if l.startswith("// @EXPECT_") else l for l in head]
+        # A method word for word an earlier section's (after the renames) is the same method of a
+        # type both declare identically — the type was dropped above, so it goes too, or the type
+        # would have two (`fn OpDrop(self: H)` twice is a redefinition).
+        for mt in method_texts(code):
+            if mt in methods_seen:
+                code = code.replace(mt, "", 1)
+                print(f"  {stem}: dropped {mt.split('(')[0].split()[-1]}({mt.split('(')[1].split(')')[0]}) — identical to an earlier section's")
+        methods_seen.update(method_texts(code))
         mm = re.search(r"(?ms)^fn main\(\) \{\n(.*?)^\}\n", code)
-        if mm and all(re.fullmatch(r'\s*(test_[a-z_0-9]+\(\);|println\("[^"{}]*"\);)?\s*', l)
+        if mm and all(re.fullmatch(r'\s*(test_[a-z_0-9]+\(\);|print(ln)?\("[^"{}]*"\);)?\s*', l)
                       for l in mm.group(1).split("\n")):
             # A `main` that only calls the file's own tests (and perhaps prints a fixed line): in
             # a merged file the tests run themselves, so it would run each twice.
@@ -353,6 +457,10 @@ def merge(target, intro_file, cells):
                 print(f"  {stem}: renamed {t} -> test_{px}_{t[5:]} (same name, another body)")
         for m in re.finditer(r"(?ms)^fn (test_[a-z_0-9]+)\(.*?^\}\n", code):
             tests_seen.setdefault(m.group(1), m.group(0))
+        for n in declared(code)[0]:
+            t = decl_text(code, n)
+            if t is not None:
+                decls_seen.setdefault(n, t)
         t2, v2 = declared(code)
         taken_top |= t2
         taken_var |= v2
@@ -360,7 +468,14 @@ def merge(target, intro_file, cells):
             print(f"  {stem}: renamed {ren}")
         heads.append(f"// ── {stem} ──\n//\n" + "\n".join(head))
         codes.append(code)
-    out = "\n".join(intro) + "\n//\n" + "\n//\n".join(heads) + "\n\n" + "\n".join(codes)
+    # `use` statements must stand before every definition: lift each section's, once each.
+    uses = []
+    for k, c in enumerate(codes):
+        mine = re.findall(r"(?m)^(?:pub )?use [^;\n]+;[ \t]*\n", c)
+        uses += [u for u in mine if u not in uses]
+        codes[k] = re.sub(r"(?m)^(?:pub )?use [^;\n]+;[ \t]*\n", "", c)
+    out = ("\n".join(intro) + "\n//\n" + "\n//\n".join(heads) + "\n\n" + "".join(uses)
+           + ("\n" if uses else "") + "\n".join(codes))
     open(target, "w", encoding="utf-8").write(out)
     print(f"merged {len(cells)} cell(s) into {os.path.basename(target)} (gate E: {next(iter(verdicts.values()))})")
     return 0
@@ -406,18 +521,38 @@ def _break_one(text, fn):
     when the test has none of its own, in the code of its section (from the end of the previous
     test function to this one — a helper it calls).  None when there is none to break."""
     a = text.index("fn " + fn + "(")
-    b = text.index("\n}\n", a)
-    rx = re.compile(r'assert\((.*?)==\s*("[^"]*"|-?\d+)')
-    m, lo = rx.search(text[a:b]), a
-    if not m:
+    b = text.find("\n}\n", a)
+    b = len(text) if b < 0 else b                  # the file's last test may end the file
+    # The expectation spellings: `assert(… == <literal>`, `assert_eq(<got>, <literal>…`, and a
+    # `check("<name>", <got>, <want>)` helper, whose want may be an expression (`r * 10 + 2`).
+    # A literal is a text, a number, or a flat non-empty vector literal (`[4, 2, 0]`).
+    forms = [re.compile(r'assert\((.*?)==\s*("[^"]*"|-?\d+|\[[^\[\]\n]+\])'),
+             re.compile(r'assert_eq\(([^,]*),\s*("[^"]*"|-?\d+)\s*[,)]'),
+             re.compile(r'\b(?:check|ok)\(("[^"]*",\s*[^,]+),\s*([^;\n]+)\);')]
+
+    def first(lo, hi):
+        hits = [(m.start(2), m.end(2), m.group(2)) for rx in forms for m in [rx.search(text, lo, hi)] if m]
+        return min(hits) if hits else None
+    hit = first(a, b)
+    if not hit:
         prev = [x.start() for x in re.finditer(r"(?m)^fn test_", text) if x.start() < a]
-        lo = text.index("\n}\n", prev[-1]) if prev else next(x.start() for x in re.finditer(r"(?m)^[^/\n]", text))
-        m = rx.search(text[lo:a])
-        if not m:
+        lo = text.find("\n}\n", prev[-1]) if prev else next(x.start() for x in re.finditer(r"(?m)^[^/\n]", text))
+        hit = first(max(lo, 0), a)
+        if not hit:
             return None
-    v = m.group(2)
-    nv = ('"X' + v[1:]) if v.startswith('"') else str(int(v) + 1)
-    return text[:lo + m.start(2)] + nv + text[lo + m.end(2):]
+    s, e, v = hit
+    if v.startswith("["):
+        # Its last element once more: the length differs, and the element keeps its type.
+        inner = v[1:-1].rstrip()
+        last = re.search(r'("[^"]*"|[^,]+)$', inner).group(1).strip()
+        nv = "[" + inner + ", " + last + "]"
+    elif v.startswith('"'):
+        nv = '"X' + v[1:]
+    elif re.fullmatch(r"-?\d+", v.strip()):
+        nv = str(int(v) + 1)
+    else:
+        nv = f"({v}) + 1"
+    return text[:s] + nv + text[e:]
 
 
 def vacuity(cells):
@@ -492,7 +627,9 @@ def land(rule, chapter_dir, new, olds, message):
     re-pin loft's suite pin; commit loft.  Every step is the one the curation pass ran by hand."""
     suite = os.path.normpath(os.environ.get("LOFT_SUITE_DIR") or os.path.join(os.path.dirname(ROOT), "loft-suite"))
     d = os.path.join(suite, "rules", chapter_dir)
-    skip = re.compile(r"/\.loft/|history|CHANGELOG|census-data|handoff|/" + re.escape(new) + r"\.loft$|" +
+    # Recorded material keeps the names it was written with: history, changelogs, censuses,
+    # handoffs, and fixtures — a captured CI log a test parses is a record, not a reference.
+    skip = re.compile(r"/\.loft/|history|CHANGELOG|census-data|handoff|/fixtures/|\.log$|/" + re.escape(new) + r"\.loft$|" +
                       "|".join("/" + re.escape(o) + r"\.loft$" for o in olds))
     def repoint():
         # Every reference to a retired cell names the merged cell instead.  A merge keeps its
@@ -501,7 +638,12 @@ def land(rule, chapter_dir, new, olds, message):
         # which the merged cell's receipt names by that path), so a `.patch` name is no
         # reference.  It runs only once nothing can refuse any more — a refused land must leave no
         # staged edit behind for another commit to carry.  Each rewritten file is staged in its
-        # own repository and listed: read the list, a sentence may want rewording.
+        # own repository and listed: read the list, a sentence may want rewording.  Two retired
+        # cells cited side by side (`A and B`) become the merged cell named twice in a row; that
+        # is reported, not rewritten — the sentence around it decides the rewording.
+        touched = set()
+        twice = re.compile(re.escape(new) + r"(?:\.loft)?`?\s*(?:and|or|,|·|/)?\s*`?[\w./-]*?"
+                           + re.escape(new))
         for o in olds:
             named = re.compile(r"(?<![A-Za-z0-9_-])" + re.escape(o) + r"(?![A-Za-z0-9_-]|\.patch)")
             for base in (os.path.join(suite, "rules"), os.path.join(ROOT, "doc"), os.path.join(ROOT, "tests"),
@@ -513,10 +655,23 @@ def land(rule, chapter_dir, new, olds, message):
                     text = open(x, encoding="utf-8", errors="replace").read()
                     if not named.search(text):
                         continue
-                    open(x, "w", encoding="utf-8").write(named.sub(new, text))
                     repo = suite if os.path.abspath(x).startswith(os.path.abspath(suite) + os.sep) else ROOT
+                    # An UNTRACKED file is another merge still in progress: staged here it would
+                    # be committed under this land's message.  Its own land repoints it.
+                    if subprocess.run(["git", "ls-files", "--error-unmatch", os.path.relpath(x, repo)],
+                                      cwd=repo, capture_output=True).returncode != 0:
+                        continue
+                    open(x, "w", encoding="utf-8").write(named.sub(new, text))
                     _git(["add", os.path.relpath(x, repo)], repo)
+                    touched.add(x)
                     print(f"  repointed  {o} -> {new}  in {os.path.relpath(x, repo)}")
+        for x in sorted(touched):
+            text = open(x, encoding="utf-8", errors="replace").read()
+            for m in twice.finditer(text):
+                line = text.count("\n", 0, m.start()) + 1
+                print(f"  twice      {os.path.relpath(x, ROOT)}:{line} names {new} twice in a row — reword it")
+        return sorted(os.path.relpath(x, ROOT) for x in touched
+                      if not os.path.abspath(x).startswith(os.path.abspath(suite) + os.sep))
 
     def features():
         # The SET of what the rule's cells reach (the union `plan` counts), so a refusal can name
@@ -562,12 +717,15 @@ def land(rule, chapter_dir, new, olds, message):
     after = features()
     if before != after:
         restore()
+        # Unstage the new cell too: left staged, it reads as another land's change and blocks
+        # the next one (the cell itself stays in the working tree, to be fixed and landed again).
+        _git(["restore", "--staged", "--", new + ".loft"], d)
         print(f"the rule's features moved {len(before)} -> {len(after)}: "
               f"lost {sorted(before - after) or 'nothing'}, gained {sorted(after - before) or 'nothing'}\n"
               "  a `defect#N` is a `loft#N` the merged header (its first 40 lines) no longer names; an "
               "axis value is a case the merged cell no longer reaches")
         return 1
-    repoint()
+    loft_repointed = repoint()
     trailer = "\n\nCo-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
     _git(["commit", "-q", "-m", message + trailer], suite)
     _git(["push", "-q", "origin", "HEAD:main"], suite)
@@ -603,8 +761,12 @@ def land(rule, chapter_dir, new, olds, message):
     text = re.sub(r"(?m)^suite\t[0-9a-f]{40}$", "suite\t" + head, text)
     open(rows_path, "w", encoding="utf-8").write(text)
     open(os.path.join(ROOT, "tests", "loft-suite.pin"), "w", encoding="utf-8").write(head + "\n")
-    _git(["add", "tests/loft-suite.pin", "selfhost/front/elab_gate.baseline.tsv"], ROOT)
-    _git(["commit", "-q", "-m", f"Suite pin {head[:7]}: {message.splitlines()[0]}" + trailer], ROOT)
+    own_paths = ["tests/loft-suite.pin", "selfhost/front/elab_gate.baseline.tsv"] + loft_repointed
+    _git(["add", "--"] + own_paths, ROOT)
+    # Only this land's own paths: anything else staged meanwhile (a fix staged while a land runs
+    # in the background) is not this commit's — it once rode into a pin commit under its message.
+    _git(["commit", "-q", "-m", f"Suite pin {head[:7]}: {message.splitlines()[0]}" + trailer, "--"]
+         + own_paths, ROOT)
     print(f"landed: suite {head[:7]}, features {len(after)}, gate E {m.group(0).replace(chr(9), ' ')} -> agree {agree}")
     return 0
 
@@ -667,13 +829,23 @@ def nxt(n):
     return 0
 
 
-def done(tag, note):
+def done(tag, note, structural=False):
     rows = read_ledger()
     if tag not in rows:
         print(f"no ledger row for {tag} (init first)")
         return 1
-    n = len(cells_of(tag))
-    rows[tag][2] = "needs-cell" if n == 0 else "curated"
+    cells = cells_of(tag)
+    n = len(cells)
+    in_suite = [c for c in cells if c.startswith("suite:") or "/rules/" in c or c.startswith("rules/")]
+    if structural and not note.strip():
+        print(f"@FR-{tag}: --structural needs the reason no program can observe the rule")
+        return 1
+    if n and not in_suite and not structural:
+        # Guarded only outside the language suite (a Rust test, a source comment): the owner's
+        # rule is a first suite cell from the formal text, or a note that says why none can be.
+        print(f"  note  no SUITE cell cites @FR-{tag} ({n} citing file(s), none a cell): write its "
+              "first cell from the formal text, or say in the note why a program cannot observe it")
+    rows[tag][2] = "structural" if structural else "needs-cell" if n == 0 else "curated"
     rows[tag][3] = str(n)
     rows[tag][4] = datetime.date.today().isoformat()
     rows[tag][5] = note.replace("\t", " ")
@@ -712,6 +884,8 @@ def main():
     if cmd == "related" and tag and len(a) > 2:
         return related(tag, a[2])
     if cmd == "done" and tag:
+        if len(a) > 2 and a[2] == "--structural":
+            return done(tag, " ".join(a[3:]), structural=True)
         return done(tag, " ".join(a[2:]))
     print(__doc__)
     return 2

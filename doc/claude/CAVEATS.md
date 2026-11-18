@@ -481,7 +481,7 @@ for the full operation set (construct/append/iterate/`len()`/range slices).
 `::spatial_rejects_more_than_three_axes` (the old `spatial_not_implemented*`
 tests no longer exist).  Guard scripts:
 `loft-suite/attic/scripts/48-spatial-construct-free.loft`,
-`tests/scripts/48b-spatial-slice.loft`.
+`loft-suite/rules/collections/Slice-Open/a-spatial-slice-answers-the-records-its-form-names-from-every-origin.loft`.
 
 ### ~~P344~~ — a reused loop-variable name must keep a consistent type
 **Fixed (loft#915).** Two `for` loops in one function may reuse a name at

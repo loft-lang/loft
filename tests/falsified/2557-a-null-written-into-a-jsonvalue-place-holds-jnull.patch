@@ -1,0 +1,62 @@
+diff --git b/src/parser/collections.rs a/src/parser/collections.rs
+index 02470adba..995137a03 100644
+--- b/src/parser/collections.rs
++++ a/src/parser/collections.rs
+@@ -1803,13 +1803,10 @@ impl Parser {
+         // field stayed present and `b.s = null` was silently a no-op.
+         // `base()`, because a nullable field arrives as `Optional(Enum(…))` — the same
+         // peel this whole family needs (loft#1065).
+-        // A DENSE `JsonValue` slot is the one exception: its null is `JNull` (`@FR-D-Json`), which
+-        // the store face builds.
+         if op == "="
+             && self.is_null_source(val)
+             && let Type::Enum(syn, true, _) = f_type.base()
+             && !self.data.def(*syn).name.starts_with("__nullable<")
+-            && !(self.data.def(*syn).name == "JsonValue" && !matches!(f_type, Type::Optional(_)))
+             && let Some((base, fld)) = self.inline_slot_word(to)
+         {
+             return self.cl("OpSetInt4", &[base, fld, Value::Int(0)]);
+diff --git b/src/parser/convert.rs a/src/parser/convert.rs
+index 8958c7c72..660abdae5 100644
+--- b/src/parser/convert.rs
++++ a/src/parser/convert.rs
+@@ -181,21 +181,6 @@ impl Parser {
+         should: &Type,
+         ctx: StoreCtx,
+     ) -> bool {
+-        // `@FR-D-Json` — `JsonValue` is the one enum with a stated zero: a `null` stored into a
+-        // dense `JsonValue` place — an element of a literal or an appended one, an element or a
+-        // field assigned, a field of a literal — holds `JNull`, built as the literal is (as an
+-        // omitted field's default is, `objects.rs`).  Stored as the plain null, it read back as no
+-        // variant at all: `kind()` answered "JUnknown" and a `match` on `JNull` fell through.  A
+-        // `JsonValue?` place keeps its null (D-Opt).
+-        if matches!(is_type, Type::Null)
+-            && !matches!(should, Type::Optional(_))
+-            && let Type::Enum(e, true, _) = should.base()
+-            && self.data.def(*e).name == "JsonValue"
+-        {
+-            let e = *e;
+-            self.emit_variant_value(e, "JNull", code);
+-            return true;
+-        }
+         self.store_ctx.push(ctx);
+         let accepted = self.convert(code, is_type, should);
+         self.store_ctx.pop();
+diff --git b/src/parser/objects.rs a/src/parser/objects.rs
+index 04b68bf4e..5cf0eb7a4 100644
+--- b/src/parser/objects.rs
++++ a/src/parser/objects.rs
+@@ -8581,13 +8581,10 @@ impl Parser {
+         // is spelled in four bytes.  Nothing observed it, because the null TEST for the
+         // type was refused — so the write had never been right and could not be seen.
+         // Write the pointer directly, the same shape and the same reason as the arm above.
+-        // A DENSE `JsonValue` field is the one exception: its null is `JNull` (`@FR-D-Json`), which
+-        // the store face builds.
+         if !self.first_pass
+             && self.is_null_source(value)
+             && let Type::Enum(syn, true, _) = &td_base
+             && !self.data.def(*syn).name.starts_with("__nullable<")
+-            && !(self.data.def(*syn).name == "JsonValue" && !matches!(td, Type::Optional(_)))
+         {
+             let item_pos = i32::from(
+                 self.database

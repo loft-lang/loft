@@ -55,7 +55,7 @@ emitted code).
 2026-10-05 (loft#1867, loft#1877) — [record](DESIGN_DECISIONS-history.md#c75--closure-carrying-struct-values-are-frame-bound).
 **Holds at:** `OpChildRec` (`Parser::emit_fn_ref_field_write`), `Parser::cascade_fn_fields`,
 `capture_adoption::claimed_into_delivered`;
-`loft-suite/rules/closures/L-Escape/1867-a-returned-struct-keeps-its-closure-capture.loft`, `tests/issues.rs::issue_1867_*`.
+`loft-suite/rules/closures/L-Escape/a-closure-escapes-in-a-struct-and-keeps-its-captures.loft`, `tests/issues.rs::issue_1867_*`.
 **Catalogue:** @F22 (closures & lambdas).
 
 ## C77 — Binding ownership: heap aliases by default; `&` binds a live reference
@@ -329,8 +329,7 @@ deviation; guards
 `loft-suite/rules/heap/H-Removed/a-stored-reference-to-a-removed-record-reads-null.loft`,
 `loft-suite/rules/heap/H-Removed/a-cleared-vector-releases-the-records-a-reference-named.loft`,
 `loft-suite/rules/heap/H-RefHome/a-stored-reference-cannot-outlive-the-record-it-names.loft`,
-`loft-suite/rules/heap/H-RefHome/a-record-a-stored-reference-names-lives-as-long-as-its-holder.loft`,
-`loft-suite/rules/heap/H-RefHome/a-record-built-for-a-stored-reference-lives-in-its-holders-store.loft`,
+`loft-suite/rules/heap/H-RefHome/a-record-a-stored-reference-names-lives-as-long-as-its-holder-however-it-was-built.loft`,
 `loft-suite/rules/heap/H-RefHome/a-stored-reference-its-record-outlives-reads-it.loft` and
 `loft-suite/rules/heap/H-Stride/1670-a-vector-operation-walks-the-stride-its-layout-has.loft`.
 **Catalogue:** reads @C125 · binding.md B-Disturb · `bench/portal/analysis/worklist.md` § 4 (`mesh_to_floats`)

@@ -288,9 +288,9 @@ install:
 	@# One file per NAME, the newest: a classic `deps/` left beside a per-unit tree lists a
 	@# crate twice, `cp` refuses to overwrite what it just created, and the install stopped
 	@# here with the new standard library in place and the old binary still installed.
-	@scripts/cargo_dep_files.sh target/install-lib/release '*.rlib' | xargs -r ls -t | awk -F/ '!seen[$$NF]++' | xargs -r $(SUDO) cp -t $(PREFIX)/share/loft/deps/
+	@scripts/cargo_dep_files.sh target/install-lib/release '*.rlib' | xargs -r ls -t | awk -F/ '!seen[$$NF]++' | xargs -r -I{} $(SUDO) cp {} $(PREFIX)/share/loft/deps/
 	@if [ -n "$$(scripts/cargo_dep_files.sh target/install-lib/release '*.so')" ]; then \
-		scripts/cargo_dep_files.sh target/install-lib/release '*.so' | xargs -r ls -t | awk -F/ '!seen[$$NF]++' | xargs -r $(SUDO) cp -t $(PREFIX)/share/loft/deps/ || { \
+		scripts/cargo_dep_files.sh target/install-lib/release '*.so' | xargs -r ls -t | awk -F/ '!seen[$$NF]++' | xargs -r -I{} $(SUDO) cp {} $(PREFIX)/share/loft/deps/ || { \
 			echo "ERROR: failed to install dependency .so files (rights?)."; exit 1; }; \
 	fi
 	@# Proc-macro deps (e.g. displaydoc) are host dylibs — `.dylib` on macOS,
@@ -298,7 +298,7 @@ install:
 	@# so omitting the macOS `.dylib` broke every library native build with
 	@# E0463 "can't find crate for displaydoc" (see plans/user-local-install).
 	@if [ -n "$$(scripts/cargo_dep_files.sh target/install-lib/release '*.dylib')" ]; then \
-		scripts/cargo_dep_files.sh target/install-lib/release '*.dylib' | xargs -r ls -t | awk -F/ '!seen[$$NF]++' | xargs -r $(SUDO) cp -t $(PREFIX)/share/loft/deps/ || { \
+		scripts/cargo_dep_files.sh target/install-lib/release '*.dylib' | xargs -r ls -t | awk -F/ '!seen[$$NF]++' | xargs -r -I{} $(SUDO) cp {} $(PREFIX)/share/loft/deps/ || { \
 			echo "ERROR: failed to install dependency .dylib files (rights?)."; exit 1; }; \
 	fi
 	@if [ -n "$(NATIVE_ONLY)" ]; then \

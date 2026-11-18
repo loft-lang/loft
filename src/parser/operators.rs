@@ -2074,19 +2074,27 @@ impl Parser {
         }
     }
 
-    /// Is the next token one that cannot begin a value — a separator, a closer, or the
-    /// end of the input?  Asked where a value is REQUIRED (the right of an operator or of
-    /// an assignment), so a missing one is named instead of read as nothing.
+    /// Is the next token one that cannot begin a value — a separator, a closer, the end of
+    /// the input, a binary-only operator or the postfix `?`?  Asked where a value is REQUIRED
+    /// (the right of an operator or of an assignment), so a missing one is named instead of
+    /// read as nothing: `k = or true` once compiled to `null or true` (loft#2543), and
+    /// `n * * 4` was refused as a missing argument of `OpMulInt`.  Of the binary operators
+    /// only `-` (negation), `&` (a link) and `|` (a lambda) also open an operand.
     pub(crate) fn operand_absent(&mut self) -> bool {
         // After a fatal lexing error (an unterminated string) the input ends where the
         // error is, so a missing value there is that error's echo, not a second fault.
         if self.lexer.diagnostics().level() == Level::Fatal {
             return false;
         }
-        [";", "}", ")", "]", ","]
+        [";", "}", ")", "]", ",", "?"]
             .iter()
             .any(|t| self.lexer.peek_token(t))
             || self.lexer.peek().has == crate::lexer::LexItem::None
+            // The binary operators that also START a value: a negation, a `&` link, a closure
+            // `|x| …` — and `|| …`, a closure with no parameters.
+            || self
+                .peek_binary_operator()
+                .is_some_and(|(_, op)| !matches!(op, "-" | "&" | "|" | "||"))
     }
 
     /// @PLN188 — the binary operator the next token is, and its level in `OPERATORS`, by one
@@ -2435,15 +2443,22 @@ impl Parser {
             // `3 + ;` — an operator with nothing on its right.  Reported here, by name, where
             // the right operand is missing; left to run on, the operator's call was built with
             // one argument and refused as "missing argument for parameter 'v2' of `OpAddInt`".
-            if !operator.is_empty() && self.operand_absent() {
+            // `a + +b` keeps its own diagnostic ("'++' is not a valid operator"), written
+            // just below where the second `+` is consumed.
+            let double_plus = operator == "+" && self.lexer.peek_token("+");
+            if !operator.is_empty() && !double_plus && self.operand_absent() {
                 diagnostic!(
                     self.lexer,
                     Level::Error,
                     "Expected a value after `{operator}`"
                 );
-                *code = Value::Null;
-                current_type = Type::Unknown(0);
-                continue;
+                // A stray `?` (`n ??? 4`) is read past, so the operand after it parses and
+                // the line is refused once rather than again at its `;`.
+                if !self.lexer.has_token("?") {
+                    *code = Value::Null;
+                    current_type = Type::Unknown(0);
+                    continue;
+                }
             }
             if operator.is_empty() {
                 // `expr is VariantName` — variant check at comparison precedence.
@@ -4220,42 +4235,40 @@ impl Parser {
 
     /// `lhs ?? return ret_expr` — emit the block that returns early when `lhs`
     /// is null and otherwise evaluates to `lhs`.
+    ///
+    /// The return is the statement `return ret_expr` (`@FR-C-Never`): [`Self::parse_return`]
+    /// parses it, so the value is typed against the function's return type and delivered as
+    /// every return is — `[]` built and copied into the caller's buffer, a record into its
+    /// return buffer, a bare `return` the type's null.  A copy of the parse that stopped at
+    /// the typing handed a `-> vector` function's caller a buffer nothing had written, which
+    /// read the previous call's vector (loft#2551).
+    /// A bare `?? return` in a function with a value answers the return type's null — the one
+    /// spelling the statement `return;` refuses there, kept for it.
     fn build_null_coalesce_return(&mut self, code: &mut Value, ctp: &mut Type, lhs_type: &Type) {
-        // Parse the optional return expression, coercing to the function's
-        // declared return type.  Empty `return` in a non-void function
-        // produces the typed null sentinel.
-        let mut ret_val = Value::Null;
+        let mut ret_stmt = Value::Null;
         let r_type = self.data.def(self.context).returned().clone();
-        if self.control_value_follows() {
+        if self.control_value_follows() && r_type == Type::Void {
+            // In a function with no value, `x ?? return f()` runs the void call and leaves —
+            // the one place a `return` is followed by an expression there, which published
+            // libraries write (`dev = open(..) ?? return assert(false, "no device")`).  The
+            // statement's parse refuses any expression after `return` in such a function.
             let ret_pos = *self.lexer.peek_pos();
+            let mut ret_val = Value::Null;
             let t = self.expression(&mut ret_val);
-            // @FR-N-Store: `lhs ?? return ret` returns `ret` into the caller's non-null return
-            // slot — the store face asks; a bare `null` return takes the sentinel path below
-            // and is asked at the site.
-            if t == Type::Null {
-                self.n_store_violation(&t, &r_type, "the return value", Some(&ret_pos));
-                // The written `null` is the return type's null, as `parse_return` makes it:
-                // left a bare `Value::Null`, the bytecode returned a value nothing had pushed.
-                if !self.first_pass {
-                    ret_val = self.null_value(&r_type);
-                }
-            }
-            if t != Type::Null
-                && !self.convert_store(
-                    &mut ret_val,
-                    &t,
-                    &r_type,
-                    "the return value",
-                    Some(&ret_pos),
-                )
-                && !self.first_pass
-            {
+            if t != Type::Void && !self.first_pass {
                 self.validate_convert("return", &t, &r_type, &ret_pos);
             }
-        } else if r_type != Type::Void && !self.first_pass {
-            ret_val = self.null_value(&r_type);
+            ret_stmt = Value::Return(Box::new(ret_val));
+        } else if self.control_value_follows() {
+            self.parse_return(&mut ret_stmt);
+        } else {
+            let ret_val = if r_type != Type::Void && !self.first_pass {
+                self.null_value(&r_type)
+            } else {
+                Value::Null
+            };
+            ret_stmt = Value::Return(Box::new(ret_val));
         }
-        let ret_stmt = Value::Return(Box::new(ret_val));
         self.null_coalesce_exit(code, ctp, lhs_type, ret_stmt);
     }
 

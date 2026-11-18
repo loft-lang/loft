@@ -32,7 +32,7 @@ pass on one stack and fail on another.
 | The same block WITH `vec3` fields has two layouts | Measured, same probes: a `float` after a `vec3` sits at byte 12 on GL and at 16 on Metal, and every later field moves with it |
 | Every caller's row below can be written with no stack named | Written out below; the code that proves it is L2's |
 | Vulkan lays the block out as GL does (both std140) | Assumed; V1 measures it |
-| A backend can turn the layer's clip space (y up, depth −1 to 1) and its bottom-left origin into its own | Assumed; M1 (depth), M2's render-to-texture step (the row order of a target) |
+| A backend can turn the layer's clip space (y up, depth −1 to 1) and its bottom-left origin into its own | Measured (2026-11-17, `gpu_metal`): the depth, a viewport's and a scissor's rows, and a target's row order, each compared with `gpu_gl` byte for byte |
 | One pipeline per (program, state, target shape) is few enough to build ahead | Counted for the callers here: 18 pipelines in all (§ The callers) |
 
 ## The objects

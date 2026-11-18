@@ -511,7 +511,7 @@ STDLIB.md:281. sorted-slice design: [../plans/38-sorted-slice/](../plans/38-sort
 > yielded eventually, each once, which is what makes `break` the intended way to stop.
 *Anchors:* fields.rs:688-696,:1558 (parse_spatial_slice); default/01_code.loft:1176
 (`spatial_range`); STDLIB.md:272-281; DATABASE.md:668-674; radix_db.rs:238 (superset comment);
-tests/scripts/48b-spatial-slice.loft (the asserted box/open/cap slices). CAVEATS.md:593 (spatial op set).
+loft-suite/rules/collections/Slice-Open/a-spatial-slice-answers-the-records-its-form-names-from-every-origin.loft (the asserted box/open/cap slices). CAVEATS.md:593 (spatial op set).
 
 ### 1.8 Storage & whole-value copy — `Col-Store` / `Col-Copy` (cross-link [heap.md](heap.md))
 
@@ -728,16 +728,16 @@ insert) and `Stores::link_record_siblings` (its sibling half alone, `OpLinkRecor
 record leaving, and the element-level writes through the vector member);
 `Stores::insert_keyed_copy` (`src/database/search.rs`, the one keyed insert both the
 point write and the bulk fill take); DATABASE.md § Clearing one member of a linked group;
-loft-suite/rules/collections/Col-Group/a-group-element-written-through-the-vector-member-reaches-every-member.loft;
+loft-suite/rules/collections/Col-Group/a-write-through-any-member-of-a-linked-group-reaches-every-member.loft;
 loft-suite/attic/scripts/a-keyed-view-joins-a-nullable-element-vector.loft;
 loft-suite/attic/scripts/a-collection-group-does-not-depend-on-declaration-order.loft;
-loft-suite/rules/collections/Col-Group/1158-a-group-forms-whichever-member-is-declared-first.loft;
-loft-suite/rules/collections/Col-Group/1152-a-vector-value-into-a-group-reaches-every-member.loft;
+loft-suite/rules/collections/Col-Group/a-groups-members-are-found-by-their-element-type-whatever-the-order-or-the-nullability.loft;
+loft-suite/rules/collections/Col-Group/a-write-through-any-member-of-a-linked-group-reaches-every-member.loft;
 loft-suite/rules/collections/Col-Insert/1159-a-keyed-collection-filled-from-a-vector-value.loft;
-loft-suite/rules/collections/Col-Group/a-nullable-keyed-member-joins-its-group.loft;
+loft-suite/rules/collections/Col-Group/a-groups-members-are-found-by-their-element-type-whatever-the-order-or-the-nullability.loft;
 loft-suite/rules/collections/Col-Group/1160-a-variant-binding-write-means-the-field-write.loft;
 tests/scripts/927-trie-spatial-linked-group.loft;
-loft-suite/rules/collections/Col-Group/901-linked-group-fill.loft.
+loft-suite/rules/collections/Col-Group/a-write-through-any-member-of-a-linked-group-reaches-every-member.loft.
 
 ---
 
@@ -786,7 +786,7 @@ VERIFICATION.md (one ☐ row per rule, both-backends + leak + driver-agreement):
 - `Slice-Value` clamp + freshness (vector + text) + the subject evaluated exactly ONCE.
 - `Slice-KeyedIter` value-position REJECT (driver-agreement) + iterate-in-key-order.
 - `Slice-Box/Open/Cap` — exact box membership (`800-spatial-box-containment.loft`), the outward walk
-  and `:n` from every origin (`48b-spatial-slice.loft`), and a cap below one answering none
+  and `:n` from every origin (`a-spatial-slice-answers-the-records-its-form-names-from-every-origin.loft`), and a cap below one answering none
   (`a-slice-cap-below-zero-answers-no-records.loft`).
 - `Col-Lookup` nullable (absent key ⟹ null, discharge required) — pinned by
   `loft-suite/attic/scripts/1120-one-null-question-for-a-collection.loft`, which scores `??`, `== null` and the
@@ -805,7 +805,7 @@ VERIFICATION.md (one ☐ row per rule, both-backends + leak + driver-agreement):
    **ANSWERED 2026-08-19 (loft#1002): exactly n when the collection holds n, from any origin.**
    The cap bounds the WALK, and the walk is outward from the query rather than onward from it, so
    the count no longer depends on where the query lands. Pinned in
-   `tests/scripts/48b-spatial-slice.loft`, which sweeps the origin along the curve (the axis the
+   `loft-suite/rules/collections/Slice-Open/a-spatial-slice-answers-the-records-its-form-names-from-every-origin.loft`, which sweeps the origin along the curve (the axis the
    count-only cells above cannot see) and asserts WHICH records each origin answers, with the
    euclidean distances each expectation follows from. The superset interaction is `Slice-Box`'s
    only — the open forms do not filter, they order.

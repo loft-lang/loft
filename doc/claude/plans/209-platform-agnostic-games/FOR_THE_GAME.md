@@ -528,3 +528,93 @@ expression is `a + b` with `a` a local vector answered only `b`'s elements (inte
 backend, no message).  `return a + b;` and `c = a + b; c` are right.  It is cured on this
 branch (`src/parser/vectors.rs`); until a loft with the cure is the one in use, write one of
 those two.
+
+## This stream's note: the game through the engine, and the whole screen (2026-11-16, the game at cecc5b9)
+
+**The owner, today:** no 2D game on the desktop — only the 3D version, of both the demo world
+and the town; and it should play over the whole screen, showing no more than it shows now.
+
+**What was validated**, the game at `cecc5b9` with the libraries' `main`, on a Mac:
+
+| What draws | Through the engine? |
+|---|---|
+| The fixed view (`fixedview.loft`) | Yes: `scene3d` on `gpu` and `gpu_gl`, or `raster3d` |
+| The first-person view (`render3d.loft`) | No: `graphics` 0.12 directly, its own shader and meshes |
+| The 2D game | `tiles` and `screen`; it is still the program's host — `main` opens its window first, reads its keys and runs the loop on `screen::poll`, and the 3D view is a second window |
+
+- `tools/fixedshot.loft orbury OUT "s d d" change night gpu`: the CPU's and the GPU's picture
+  differed in 7,209 pixels by more than one step, where the contract records 27 from Linux.
+  The cause was `scene3d`'s, on a Mac's GPU: a pixel on a texel's edge took the texel after
+  it.  Cured in `scene3d` 0.4.1 (loft-libs-graphics#95, merged): **24**.
+- Not validated: the town on the new rules (`on_field`) in the fixed view — the tool plays the
+  square map — and anything of `render3d`'s.
+
+**The whole screen** (loft-libs-graphics#96, `gpu` 0.3.0 and `scene3d` 0.5.0):
+
+- `gpu::open_fullscreen(table, title)` opens a window over the whole screen.
+- `scene.resize(800, 480)` stays the screen's size; `draw` then shows it as large as fits, in
+  the middle, black beside it.  Before, a `resize` to another size than the window stretched.
+- In `fixedview.loft` that is two changes, tried here in a scratch copy and played for a few
+  seconds: `new_scene` opens with `gpu::open_fullscreen` (a window of the view's size where
+  that does not open), and `screen_size` answers the view's own 800 x 480 on a GPU too.
+- A pointer's place on the screen: `scene.screen_point(dev.width(), dev.height(), x, y)`.
+
+**What "only 3D" asks of the game**, and of this stream:
+
+- The game's: `main` without the 2D window — the loop, the keys and the frame on the device
+  (`dev.poll()`, `dev.keys()`), the credits and the editor drawn in 3D or left out.
+- This stream's: the host package (one value: where keys are read, what draws, how the frame
+  is shown), so `main` names neither `screen` nor `gpu_gl`; and, when the hex town's meshes
+  are to go through the engine, what `scene3d` must take beyond tiles of faces.  Say which
+  comes first.
+
+## This stream's note: the first-person view on the town's ground (2026-11-16, the game at cecc5b9)
+
+**The owner, after the note above:** it is the first-person view that is wanted, in the demo
+world and in the town.
+
+Tried in a scratch copy of the game, on a Mac, as a shipped program; the changes are
+`first-person-whole-screen.patch` beside this file (four files, against `cecc5b9`), for the
+game's agent to take, change or replace:
+
+- **The demo world** already plays in first person over the whole screen
+  (`graphics::open_fullscreen`).  `TW_VIEW=first` starts in it (`render3d::start`).
+- **The town on the new rules** fell back to the 2D map out on the ground: `main` draws the
+  view only `!game.on_field`.  In the patch the view draws there too (`render3d::shows`): the
+  eye where `fplay` has the body, over `hexscene::height_at`, the hex version's meshes as they
+  are.  Nobody stands on the ground yet, so no cards are drawn there.
+- **Steering on the ground** is the view's (`steer_field`): left and right turn the view,
+  forward walks the way it looks, back the other way with the view kept.  The game walks by
+  `g.steer_x`, `g.steer_y` in place of the four compass keys while `g.field_steer`
+  (`update_field`).
+- **Measured**, with test-only switches the patch carries (`TW_GRAB`, `TW_GRAB_AT`,
+  `TW_TURN`, `TW_AUTO`): from the start at (45, -90) looking north, forward for 270 frames
+  brings the body to y = -63.2, back for 170 to y = -97.0 with the view unchanged, and a
+  turn turns only the view.  Frames looked at: the town's houses, roads and roofs.
+- **Not tried:** a real key (the runs were scripted), in at a house's door and out again in
+  first person, the night, a page.
+
+The whole-screen change to `fixedview.loft` from the note above is in the same patch.
+
+**Tried again on the game at `a7d8080`** (no title screen, the game starts in the fixed 3D
+view): the patch beside this file is now against that commit.  `TW_VIEW=first` starts in the
+first-person view in place of the fixed one.  The same three runs give the same answers: the
+demo world drawn, the town's ground drawn, forward for 270 frames from (45, -90) to y = -63.2.
+The 2D window (`screen`) still opens and is still the loop's host; out on a field the fixed
+view still shows the flat picture, the first-person view the ground.
+
+**Without the 2D window** (the owner: "remove the 2d window"; the patch, against `a7d8080`):
+with `TW_VIEW` unset or `first`, `main` opens the first-person view's window first and, where
+it opens, no other (`solo`).  The loop then runs on that window (`render3d::poll`), the keys
+are its own (`render3d::window_keys`, never the key that switches the view off), and nothing
+of `screen` is called: no pointer, no typed text, no flat frame shown.  `TW_VIEW=fixed` or
+`flat`, or a machine where the view's window does not open, opens the 2D window as before.
+
+- Run scripted on a Mac: the demo world and a walk in the town give the frames and the
+  numbers they gave with the 2D window.
+- **Not tried: a real key.**  The view's window was read through `screen`'s program-wide keys
+  until now; that its own `key_down` answers on a Mac is untested.
+- What has no picture this way: the editor, and a field whose place has no hex version (the
+  game goes on, the window shows its last frame).  The hearts and the note are drawn on the
+  game's surface, which nothing shows: they want drawing in the view.
+
