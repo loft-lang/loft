@@ -104,7 +104,7 @@ plan for the new rules — the oracle already guards each *area*; this drives it
   `a-record-local-reassigned-after-a-literal-build-releases-what-it-displaces` (the reassignment
   and scope-end clauses, 20 cells, all green since loft#1517 closed),
   `a-copy-of-a-tuple-with-a-droppable-member-releases-once` and
-  `a-tuple-member-releases-once-beside-any-neighbour` (the copy clause through a container),
+  `a-tuple-member-releases-once-whatever-it-is-declared-and-beside` (the copy clause through a container),
   `1510-a-mixed-own-view-locals-record-hooks-once` (the witness's own releases),
   `a-shared-destination-releases-the-arm-that-did-not-run` and
   `a-branch-arm-releases-the-source-the-other-arm-took` (the copy clause per path).*

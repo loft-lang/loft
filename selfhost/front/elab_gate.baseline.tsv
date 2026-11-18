@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	b8306c997d58ba2f8fb64d309e07e6d0670063aa
+suite	32fc729f8b4f2003c18cc70b0dc8c2133d00bb47
 
-layer	elab	agree	1031	of	2054
+layer	elab	agree	1031	of	2052
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -688,10 +688,8 @@ elab	refused	loft-suite/rules/types/N-Shape/2233-a-coalesce-tail-delivers-into-t
 elab	refused	loft-suite/rules/types/N-Shape/2317-a-destination-passed-text-native-fills-a-nullable-text-local.loft
 elab	refused	loft-suite/rules/types/N-Shape/a-bounded-generic-at-a-nullable-reaches-its-operator.loft
 elab	refused	loft-suite/rules/types/N-Shape/a-generic-builds-a-vector-of-a-nullable-or-a-tuple.loft
-elab	refused	loft-suite/rules/types/N-Shape/a-nested-tuple-copy-releases-each-member-once.loft
 elab	refused	loft-suite/rules/types/N-Shape/a-nullable-vector-local-at-the-tail-keeps-its-writes.loft
-elab	refused	loft-suite/rules/types/N-Shape/a-tuple-member-declared-nullable-releases-once.loft
-elab	refused	loft-suite/rules/types/N-Shape/a-tuple-member-releases-once-beside-any-neighbour.loft
+elab	refused	loft-suite/rules/types/N-Shape/a-tuple-member-releases-once-whatever-it-is-declared-and-beside.loft
 elab	refused	loft-suite/rules/types/N-Shape/an-append-after-a-fn-ref-call-releases-its-backing.loft
 elab	refused	loft-suite/rules/types/N-Store/1100-a-nullable-call-arm-in-a-non-null-text-return.loft
 elab	refused	loft-suite/rules/types/N-Store/153-n-store-a-bare-null-into-a-declared-local-warns.loft
