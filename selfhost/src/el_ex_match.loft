@@ -1642,8 +1642,17 @@ pub fn getter_place(e: el::El, n: ir::Node) -> boolean {
     match at {
       NdVar { n: _ } => { return true; },
       NdCall { def_nr, args } => {
-        if !starts_with(el::def(e, def_nr).name, "OpGet") || len(args) == 0 {
+        // `is_place`: a field or an element read whose other operands are constants or
+        // variables — an index that is itself a read (`cur.src[cur.pos]`) is no place.
+        gn = el::def(e, def_nr).name;
+        if !(gn == "OpGetField" || starts_with(gn, "OpGetVector")) || len(args) == 0 {
           return false;
+        }
+        for a in args[1..] {
+          ua = el_ir::unspan(a);
+          if !(ua is NdInt || ua is NdLong || ua is NdVar) {
+            return false;
+          }
         }
         at = el_ir::unspan(args[0]!);
       },
@@ -1734,6 +1743,11 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
     // the held subject — not carried: refused by name.)
     if match e.p.nodes[subject] { SBin { op, r: br } => op == "??" && (e.p.nodes[br] is SJump || halting_call_syntax(e, br)), _ => false } && el_types::base(el::def(e, e.context).returned[0] ?? ir::TyVoid) is TyText {
       el::refuse(e, "a match in a text function over a `??` subject that halts or jumps");
+    }
+    // (A read that is no place — an element at an index that is itself a read — is held typed
+    // as the subject is: its borrow kept, never nullable.)
+    if match el_ir::unspan(x.code) { NdCall { def_nr: hd } => starts_with(el::def(e, hd).name, "OpGet"), _ => false } {
+      ht = el_types::base(st);
     }
     held = match_subject(e, vars, ht);
     el_vars::set_defined(vars, held);
@@ -2686,6 +2700,11 @@ pub fn cursor_match(e: el::El, vars: el_vars::Vars, x: Ex, cs: vector<integer>, 
   vars.cursor = [cv, cd, cs[2]!, posv];
   m = vector_match(e, vars, ex(ir::NdVar { n: srcv }, vt), arms);
   vars.cursor = outer;
+  // A text answer bound to a local is written into it arm by arm (`text_branch_into`, the
+  // local set to "" first): not carried for a cursor match, refused by name.
+  if !e.first_pass && vars.bind_rhs && el_types::base(m.tp) is TyText {
+    el::refuse(e, "a cursor match answering a text bound to a local");
+  }
   ex(el_ir::v_block(setup + [m.code], m.tp, "cursor match"), m.tp)
 }
 

@@ -536,7 +536,9 @@ fn parse_fields(e: el::El, d: integer, fields: vector<integer>) {
     match e.p.nodes[f] {
       SFieldDecl { public, lexeme, fixed, name: fname, mods } => {
         tn = field_type_node(e, mods);
-        if lexeme || fixed || tn == null {
+        // (A `const` field is an attribute as any other in the image: the constness is a check
+        // on the writes, which a program that has an image passed.)
+        if lexeme || tn == null {
           el::refuse(e, "a struct field with a modifier, a default or a capture");
           continue;
         }
@@ -1188,6 +1190,15 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
     match e.p.nodes[body ?? 0] {
       SBlock { at: bat } => { after = bat; },
       _ => {}
+    }
+  } else {
+    // A declaration with no result and no body (`fn kernel_stop();`): the lexer stands on its `;`.
+    si = at;
+    while si < len(e.p.src) && !(e.p.src[si] is Semi) && !(e.p.src[si] is LBrace) {
+      si += 1;
+    }
+    if si < len(e.p.src) && e.p.src[si] is Semi {
+      after = si;
     }
   }
   // `@FR-Disp-Key`: a definition of a name that is (or now becomes) an overload set is keyed by

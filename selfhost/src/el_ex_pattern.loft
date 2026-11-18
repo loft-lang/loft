@@ -1413,7 +1413,17 @@ pub fn range_walk(e: el::El, vars: el_vars::Vars, id: text, source: integer) -> 
     guard: vector<ir::Node> = [];
     s_null = el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpConvBoolFromInt", [ir::NdVar { n: rs }])]);
     if hc != null {
-      guard += [el_ir::v_if(s_null, el_ir::v_set(rs, ir::NdInt { n: hc! + if incl { 1 } else { 0 } }), ir::NdNull)];
+      // (`lit`: a start typed wider than `i32` takes the bound as a long literal.)
+      past = hc! + if incl { 1 } else { 0 };
+      wide_start = match el_types::base(l.tp) { TyInteger { spec: ls } => ls.max > 2147483647, _ => false };
+      // (Measured, not derived: a start that is a local bound from an `if` of integer literals
+      // is typed wide by Rust's first pass — `lo = if c { 10 } else { 0 }; for l in lo..11` —
+      // where one bound from a parameter or from arithmetic is not.)
+      match e.p.nodes[lo_n!] {
+        SName { name: sn, member: sm } => { if sm == "" && branch_bound_anywhere(e, vars.body, sn, 0) { wide_start = true; } },
+        _ => {}
+      }
+      guard += [el_ir::v_if(s_null, el_ir::v_set(rs, if wide_start { ir::NdLong { n: past } } else { ir::NdInt { n: past } }), ir::NdNull)];
     } else {
       empty = el_ir::v_block([el_ir::v_set(rs, ir::NdInt { n: 1 }), el_ir::v_set(re, ir::NdInt { n: 0 })], ir::TyVoid, "empty range");
       guard += [el_ir::v_if(s_null, empty, ir::NdNull)];
@@ -2821,4 +2831,21 @@ pub fn is_file(e: el::El, t: ir::TypeT) -> boolean {
     TyReference { n } => el::def(e, n).name == "File" && el::def(e, n).source == el::STD_SOURCE,
     _ => false
   }
+}
+
+// `branch_bound_syntax` asked of every block under `n`: is `name` bound to an `if` or a `match`
+// in a statement of the body or of any block inside it?
+fn branch_bound_anywhere(e: el::El, n: integer, name: text, depth: integer) -> boolean {
+  if n < 0 || depth > 64 {
+    return false;
+  }
+  if e.p.nodes[n] is SBlock && el_expressions::branch_bound_syntax(e, n, name) {
+    return true;
+  }
+  for c in el_length::children(e, n) {
+    if branch_bound_anywhere(e, c, name, depth + 1) {
+      return true;
+    }
+  }
+  false
 }
