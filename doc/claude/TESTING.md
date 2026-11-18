@@ -609,7 +609,9 @@ reach today (`rule_axes.tsv`, `matrix_axes.census`) and every defect a cell name
    commit.  A probe that turns up a defect is fixed (CLAUDE.md § Bug-filing policy) — the pass is
    also a bug hunt.
 6. **Record**: `done <rule> '<what was kept, written, retired>'` in the loft commit that pins
-   the suite commit.
+   the suite commit.  Every pin move moves the `suite <sha>` line of
+   `selfhost/front/elab_gate.baseline.tsv` with it — gate E's `--check` refuses a baseline
+   written against another suite commit; `land` does both, a pin made by hand must too.
 
 A rule guarded by Rust unit tests instead — a heap layout or an image's bytes, which no loft
 program observes (the allocator chapter) — is weighed the same way, by breaking it: each clause's
