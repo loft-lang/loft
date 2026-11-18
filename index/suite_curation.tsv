@@ -381,11 +381,11 @@ O-SliceView	ownership	curated	1	2026-11-18	first cell, from the formal text: the
 O-Unknown	ownership	curated	3	2026-11-18	three cores, three distinct cases; kept
 O-ViewField	ownership	curated	12	2026-11-18	gate E agrees with every own cell, so none merges; each a distinct site case (a disturbed container, an exported result, every exit path, a taking site); the fixture lib is no cell; O-One-Kind's and tests/scripts cells are theirs
 O-Witness	ownership	curated	27	2026-11-18	its two own fold candidates agree with gate E and stay; the refused cores are distinct cases; B-Copy's and R-DeferredCopy's cells are theirs
-Path-Case	paths	todo			
-Path-Name	paths	todo			
-Path-Refuse	paths	todo			
-Path-Sep	paths	todo			
-Path-Utf8	paths	todo			
+Path-Case	paths	curated	5	2026-11-18	first cell: a second spelling refused for reading, writing, deleting and moving, the first file untouched (loft#2556's receipt)
+Path-Name	paths	curated	4	2026-11-18	first cell, from the formal text: every banned character, every device name in any case and with an extension, a trailing dot or space — and the look-alikes that are names (a comma, console.txt, COM10)
+Path-Refuse	paths	curated	3	2026-11-18	first cell: each operation's own failure answer for a refused path; found and fixed loft#2556 (delete / move answered NotFound)
+Path-Sep	paths	curated	3	2026-11-18	first cell: either separator handed in names the same file; every path handed out uses / with no trailing separator
+Path-Utf8	paths	curated	4	2026-11-18	its two cells agree with gate E and stay; the non-UTF-8 names loft cannot create are held by tests/windows_rules.rs
 Perf-Cure	performance	todo			
 Perf-Gap	performance	todo			
 Perf-Like	performance	todo			
