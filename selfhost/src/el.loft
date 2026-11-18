@@ -111,6 +111,9 @@ pub struct El {
   pub unbacked: vector<integer>,
   // The vector locals a bare `null` widened to `vector<T>?` on the first pass
   // (`context * 65536 + variable`): the second gives each such write its absent backing.
+  // The line of the top-level declaration being read: what a refusal met outside any statement
+  // (a struct's field, a signature) reports, so the gate's site list names its line.
+  pub decl_line: integer,
   pub null_widened: vector<integer>,
   // The definitions declared `value struct`: a comparison of two is spelled field by field.
   pub value_structs: vector<integer>,
@@ -207,6 +210,7 @@ pub fn new_el(p: syntax::Syntax, file: text, default: boolean) -> El {
     refused_at: [],
     refused_in: [],
     unbacked: [],
+    decl_line: 0,
     null_widened: [],
     value_structs: [],
     slot_links: [],
@@ -257,7 +261,7 @@ pub fn refuse(el: El, what: text) {
     }
   }
   if !known {
-    el.refused_in += [RefusedIn { what: what, fname: fname, line: el.line }];
+    el.refused_in += [RefusedIn { what: what, fname: fname, line: if el.decl_line > el.line { el.decl_line } else { el.line } }];
   }
   for r in el.refused {
     if r == what {
