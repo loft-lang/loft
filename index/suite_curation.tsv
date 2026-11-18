@@ -360,7 +360,7 @@ Op-Order	operators	curated	2	2026-11-18	two cores: the generic le from the bound
 Op-Result	operators	curated	3	2026-11-18	cores are E-Asgn-Compound 1819 and F-Recv 1817 (nullable operand warned); Op-Back's patch cell
 Op-Shape	operators	curated	3	2026-11-18	first cell of its own: every arity and the to_text / next shapes; Op-Def's cell holds compare and self
 Op-Std	operators	curated	5	2026-11-18	core; the stdlib-type refusal; 2554 OpNot/OpNe warn (new); the retired-name refusals and the [] interface refusal (new)
-O-Borrow	ownership	todo			
+O-Borrow	ownership	curated	12	2026-11-18	own cell for every view kind (field, element, parameter field, & link; moved by LOFT_NO_SEVERAL_VARS) beside 2338; the B-Ref, R-CopyView, R-LoopRecord, R-Const cells are their rules'
 O-Borrow-Scalar	ownership	todo			
 O-Buffer	ownership	todo			
 O-Complete	ownership	todo			
