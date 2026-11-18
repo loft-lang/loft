@@ -216,6 +216,48 @@ definition-level families "a struct field of this type", "a value struct or a st
 and "a `&` parameter of a tuple" have no route at their sites: a declaration's route is the
 next group to mark.
 
+### Built — step 4, the port's `route` lines for three groups (by the tester)
+
+`el_trace::route(e, name)` prints `state <pass> <line>:0 route <handler>`: the port knows the
+line being read, not the column a Rust handler stands at, so the two sides are joined by
+program, pass, LINE and handler.  Marked at the entry of the port's mirror:
+
+| Rust handler | port function |
+|---|---|
+| `parse_map`, `parse_filter`, `parse_reduce` | `el_ex_match::map_call`, `filter_call`, `reduce_call` |
+| `parse_sort`, `parse_insert`, `parse_reverse`, `parse_reserve` | `el_ex_object::sort_call`, `insert_call`, `reverse_call`, `reserve_call` |
+| `parse_match` | `el_ex_match::match_expr` |
+| `parse_tuple_match`, `parse_cursor_match` | `tuple_match`, `cursor_match` |
+| `parse_vector_match` | `vector_match`, `stream_match` |
+| `try_generic_instantiation` | `el_ex_call::instantiate` |
+
+The gate's routes file now holds both sides and the port's refusals
+(`program, side, pass, line, col, text`, side `rust` / `port` / `refuse`).  Whole corpus, the
+sites Rust takes a handler at — both: the port takes it on that line; refused: it does not,
+and refuses on that line; neither: no line of the port's there:
+
+| handler | Rust | both | refused | neither | port only |
+|---|---|---|---|---|---|
+| `parse_match` | 3376 | 3313 | 8 | 55 | 0 |
+| `try_generic_instantiation` | 1279 | 628 | 40 | 611 | 63 |
+| `parse_vector_match` | 854 | 814 | 30 | 10 | 0 |
+| `parse_insert` | 127 | 122 | 0 | 5 | 0 |
+| `parse_map` | 108 | 94 | 6 | 8 | 2 |
+| `parse_cursor_match` | 106 | 102 | 0 | 4 | 0 |
+| `parse_tuple_match` | 64 | 58 | 6 | 0 | 0 |
+| `parse_reverse` | 56 | 56 | 0 | 0 | 0 |
+| `parse_filter` | 50 | 44 | 0 | 6 | 0 |
+| `parse_reserve` | 49 | 42 | 0 | 7 | 2 |
+| `parse_reduce` | 31 | 27 | 3 | 1 | 1 |
+| `parse_sort` | 30 | 26 | 0 | 4 | 0 |
+
+`neither` mixes two things the line join cannot tell apart yet: a call spread over lines (Rust
+prints where its arguments END, the port where the statement is) and a path of the port's not
+marked.  `try_generic_instantiation`'s 611 is the second kind: Rust instantiates from three
+callers, the port's `instantiate` is one of several.  Not marked yet, each with its Rust count
+in step 3's list: the literal paths, the return path, `bind_monomorph_join_return`,
+`parse_scalar_match`, and the in-place call arms (`next`, `any`, `all`, `count_if`, …).
+
 ## 3. How much is ported — route coverage over the corpus
 
 No new mechanism: count the `route` lines.

@@ -127,6 +127,9 @@ pub fn fill_all(e: el::El, d: integer, g: integer, hs: vector<integer>, bounds: 
 // `fill_instance`, at once or — for a template declared below the call — after the pass.
 // -1, refused by name, for a binding or a signature shape this port does not carry.
 pub fn instantiate(e: el::El, g: integer, types: vector<ir::TypeT>) -> integer {
+  if el_trace::on() {
+    el_trace::route(e, "try_generic_instantiation");
+  }
   tmpl = el::def(e, g);
   b = el_ex_object::template_binding(e, g, types);
   if b == null {
