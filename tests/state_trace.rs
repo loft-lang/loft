@@ -7,7 +7,7 @@
 //! switch off.  The loft-written elaborator prints the same lines; gate E compares the two and
 //! checks on every run that neither side went silent (elab_gate.py `--pass1`).
 //!
-//! @falsified-at: PENDING-SHA — by the run that wrote this test.
+//! @falsified-at: 3ed9890ff — by the run that wrote this test.
 //!   CHANNEL: the trace on stderr, line for line.
 //!   ARMED: LOFT_STATE_TRACE=1 (set by the test).
 //!   WITNESS: with one line of the expected list missing (the `route classify_ret_promotion`
