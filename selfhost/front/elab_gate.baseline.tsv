@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	aad26829673a05bb663690a01623a3931e42ebc8
+suite	c3d6b1f61ee27c65b68a727ebb85a786756f364f
 
-layer	elab	agree	1031	of	2079
+layer	elab	agree	1031	of	2078
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -489,8 +489,7 @@ elab	refused	loft-suite/rules/ownership/O-Move/2385-a-call-with-a-unit-variant-a
 elab	refused	loft-suite/rules/ownership/O-Move/a-join-arm-call-that-may-answer-its-argument-frees-it-once.loft
 elab	refused	loft-suite/rules/ownership/O-Move/a-keyed-collection-returned-borrowed-is-the-callers-copy.loft
 elab	refused	loft-suite/rules/ownership/O-Move/a-member-of-a-tuple-argument-handed-back-is-the-callers.loft
-elab	refused	loft-suite/rules/ownership/O-NoDiverge/1328-a-fn-ref-rebind-frees-the-store-it-displaces.loft
-elab	refused	loft-suite/rules/ownership/O-NoDiverge/1329-a-fn-ref-vector-rebind-frees-the-store-it-displaces.loft
+elab	refused	loft-suite/rules/ownership/O-NoDiverge/1328-a-fn-ref-rebind-frees-the-store-it-displaces-a-records-or-a-vectors.loft
 elab	refused	loft-suite/rules/ownership/O-NoDiverge/2452-a-returned-join-of-two-nullable-fields-is-a-whole-copy.loft
 elab	refused	loft-suite/rules/ownership/O-NoDiverge/a-copy-at-a-bind-is-the-same-copy-on-both-backends.loft
 elab	refused	loft-suite/rules/ownership/O-One-Kind/a-removed-temporary-store-answers-as-the-store-it-stands-for.loft

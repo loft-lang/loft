@@ -771,7 +771,7 @@ analysis directly (the certifier sidesteps it).
   loft#1328)** — `x = m(i)` in a loop over a fn-ref `m` completes at 70 000 iterations on both
   backends, at a nullable reference, a dense one and a keyed collection, with the direct-call
   spelling and a destination-reading callee as controls. Guard
-  `loft-suite/rules/ownership/O-NoDiverge/1328-a-fn-ref-rebind-frees-the-store-it-displaces.loft`, 6 cells.
+  `loft-suite/rules/ownership/O-NoDiverge/1328-a-fn-ref-rebind-frees-the-store-it-displaces-a-records-or-a-vectors.loft`, 6 cells.
   ⚠ The exit-leak gate cannot see this class: the frame frees everything, so a 1000-iteration
   cell reports no leak on either backend and the defect is entirely in the PEAK. The 65 535-store
   table is what turns that watermark into an accept/reject split — the channel a guard can
@@ -788,7 +788,7 @@ analysis directly (the certifier sidesteps it).
   walk saw two definition numbers and returned "names TWO targets", the answer reserved for a
   slot two lambdas were assigned to. A capture is a payload, not a candidate; the target is
   what the right-hand side YIELDS. Guard
-  `loft-suite/rules/ownership/O-NoDiverge/1329-a-fn-ref-vector-rebind-frees-the-store-it-displaces.loft`, 8 cells, 5 of
+  `loft-suite/rules/ownership/O-NoDiverge/1328-a-fn-ref-rebind-frees-the-store-it-displaces-a-records-or-a-vectors.loft`, 8 cells, 5 of
   which fail on `a8c0b74d`; the other 3 are its controls.
   ⚠ The NULLABLE spelling could not be measured at all until a third reader was fixed: a
   lambda declaring `-> vector<τ>?` aborted the compiler on the H5 two-pass contract, because
