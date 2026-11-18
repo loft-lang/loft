@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	b63787459d2f62e75a46d1c4f16129dbcecfe1cb
+suite	65fa35fcf150b5485550b6fc4f7b3a6ed1ce91d3
 
-layer	elab	agree	1031	of	2058
+layer	elab	agree	1031	of	2057
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -621,10 +621,9 @@ elab	refused	loft-suite/rules/types/C-Refl/a-vector-element-of-one-range-meets-e
 elab	refused	loft-suite/rules/types/C-Tuple/a-heap-tuple-returned-from-a-call-widens-its-members.loft
 elab	refused	loft-suite/rules/types/C-Tuple/a-tuple-converts-member-by-member.loft
 elab	refused	loft-suite/rules/types/C-Var/2315-a-variant-or-null-arm-joins-an-optional-enum-result-over-any-subject.loft
-elab	refused	loft-suite/rules/types/C-Var/a-bare-variant-takes-the-enum-that-owns-it.loft
 elab	refused	loft-suite/rules/types/C-Var/a-tuple-member-is-typed-by-its-declaration-a-variant-one-included.loft
 elab	refused	loft-suite/rules/types/C-Var/a-variant-is-more-specific-than-its-enum.loft
-elab	refused	loft-suite/rules/types/C-Var/a-variant-reaches-a-nullable-enum-slot-in-one-step.loft
+elab	refused	loft-suite/rules/types/C-Var/a-variant-takes-the-enum-that-owns-it-and-reaches-its-slot-in-one-step.loft
 elab	refused	loft-suite/rules/types/C-Var/sibling-variants-join-to-their-enum.loft
 elab	refused	loft-suite/rules/types/D-NoEnumF/a-checked-parse-answers-null-for-an-enum-field-it-cannot-fill.loft
 elab	refused	loft-suite/rules/types/D-NoEnumF/a-variant-cast-takes-the-default-its-fields-choose.loft
