@@ -94,6 +94,7 @@ def sections(lines):
     return out
 
 
+HANDED = re.compile(r"^state \d \d+:\d+ (stmt|arg)( |$)")
 ROUTE = re.compile(r"^state (\d) (\d+):(\d+) (route|refuse) (.*)$")
 
 # The `route` lines of both sides and the port's `refuse` lines by program
@@ -120,6 +121,12 @@ def pass1_sections(stderr):
         # `route` and `refuse` say which code ran, not what a pass left: they are joined by
         # line (`ROUTES`), never compared line for line.
         if not l.startswith("state 1 ") or ROUTE.match(l):
+            continue
+        # `stmt` and `arg` say what a point was HANDED (`expected=`, the assign target).  Rust
+        # keeps `expected` as one field that lingers between sites and the port carries the
+        # hint per node, so those lines differ by modelling; the layer compares what a pass
+        # LEFT (`stmt-end`, `fn-end`).  `state_diff.py` still shows them.
+        if HANDED.match(l):
             continue
         m = FN_END.match(l)
         if name is not None and (m is None or m.group(1) != name):
