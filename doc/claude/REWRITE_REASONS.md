@@ -116,6 +116,11 @@ admissions before and after, and the code emitted for the bench programs is byte
    name, a decision inside an expression has none, and tracking positions through a tree the
    compiler is rewriting is a tracer that would have to be exactly right.  The site key stays
    what it is, a means to count a site once.
+   The function on a line is the one the RULE names for that decision.  A rule that works
+   across functions — one that inlines a callee into its caller, one that writes a twin —
+   may name the caller, the callee or the twin, so one refusal can stand under different
+   functions in different rules.  A rule that has the source line at hand may add it to its
+   line; none is required to find one, and the label itself stays a fixed string.
 
 A rule moves from `owes` to `reports` when its marker is removed and its call is in;
 `--check` refuses both at once, so the `owes` count only falls.
