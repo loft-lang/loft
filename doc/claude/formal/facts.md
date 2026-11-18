@@ -196,10 +196,12 @@ This is the concern of the backends answering alike, asked of the analyses: it s
 program settles it.  A cell, a library and a consumer can each show a fact WRONG; none shows
 the facts right, so the evidence is what runs on loft and it grows with every program that does.
 A layer that validates the analyses adds complexity to check complexity; what makes a decision
-checkable is that it can be READ from outside.  Today the census counts each answer by rule and
-by function (`LOFT_REWRITE_CENSUS`, `LOFT_REWRITE_CENSUS_FN`) and each rewrite names what made
-it decline (`LOFT_TRACE_HOIST_DECLINE` and its siblings); the answer itself — function, kind,
-reach, fact — is not logged yet.
+checkable is that it can be READ from outside.  The EFFECT of every rewrite already can: each
+has its own `LOFT_NO_*` switch, and the census counts where it fires by rule and by function
+(`LOFT_REWRITE_CENSUS`, `LOFT_REWRITE_CENSUS_FN`).  What is not complete is the REASON: a
+rewrite says why it refused a site through `rewrite_census::declined(rule, site, why)`
+(`LOFT_DECLINE_CENSUS`, `make decline-census`, which lists the rules that report), and only
+some rules call it.
 
 ## Relations
 
