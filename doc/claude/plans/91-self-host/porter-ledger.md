@@ -68,4 +68,5 @@ Read the patterns first; the rows are the evidence.
 | 11-18 | f5a9ca6a4 | + | The first real try (3d6a82573): handed over, analysed by the tester, promoted with its outcome already known — the owner gave the porter the word to use it | — |
 | 11-18 | f5a9ca6a4 | ? | The porter's wanted shape for a try's answer: (1) one line, clean or not; (2) each definition that stopped agreeing, with the refusal text and source line that caught it; (3) each differ with the first differing line of both sides — nothing else unless one is non-empty.  The first analysis was longer than that | the three-part answer, from the next try |
 | 11-18 | f5a9ca6a4 | ? | The route coverage line ("3 of 31") is in every cycle report and has not moved a decision | left out of the report unless it changes |
+| 11-18 | — | + | The owner's split for a try: the check is automatic; a CLEAN result is acknowledged automatically, one with issues goes back only with the tester's analysis of what is wrong | built: `try.sh` classifies (checked on four tries already run: two clean, the panic, the two drops), the poller answers a clean one and holds the other |
 
