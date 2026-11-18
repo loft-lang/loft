@@ -122,8 +122,8 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
                 );
             }
         }
-        // @decline-owed: a loop local that is no plain no-heap record minted by a literal
-        //   inside the loop (the admission in `opt::loop_record`)
+        // @decline-owed: a function that yields or calls a generator, and a loop local that is
+        //   no plain no-heap record minted by a literal inside the loop (`opt::loop_records`)
         crate::rewrite_census::fired("R-LoopRecord", n - refill);
         crate::rewrite_census::fired("R-LoopRecord/refill", refill);
         total += n;

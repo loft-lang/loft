@@ -3709,8 +3709,9 @@ impl Output<'_> {
         )?;
         self.indent(w)?;
         writeln!(w, "}}")?;
-        // @decline-owed: a literal assigned to a place the rule's forms do not cover (not an
-        //   element or a field of an existing record), which builds the temporary and copies
+        // @decline-owed: a place that is no element or field of an existing record, and an
+        //   element place whose base is not repeatable or whose index is neither a literal nor a
+        //   bare variable (it would be evaluated once per field write)
         crate::rewrite_census::fired("R-InPlaceLiteral/keyed", 1);
         Ok(())
     }

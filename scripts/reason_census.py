@@ -37,6 +37,11 @@ Four states per rule that fires, because a zero alone cannot tell them apart:
 above no `fired` call, one on a rule that also calls `declined`, and both markers on one rule
 are each refused by `--check`.
 
+A rule that reports to NO census is read from the formal chapter, which says why in its
+phase table (`formal/rewrites.md`: `not counted — <kind>: <why>`, the kinds `executor`,
+`runtime`, `condition`, `meta` and `unbuilt`); one the table does not explain is listed as
+unexplained and refused by `--check`.
+
 A rule's name is the first argument: a literal, or a `const … : &str` of the same file.  A
 clause (`R-PushFill/loop`) counts under its rule.  A call whose rule this cannot read is
 listed, never guessed.
@@ -50,6 +55,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "src")
 BASELINE = os.path.join(ROOT, "tests", "reason_census.baseline")
 CALL = re.compile(r"rewrite_census::(fired|declined|admitted)\(\s*([^,)]+)")
+# The same call after `use crate::rewrite_census::fired;`: bare, its rule a literal.
+BARE = re.compile(r'(?<![A-Za-z0-9_:.])(fired|declined|admitted)\(\s*("[A-Z][A-Za-z]*-[^"]+")')
+NOT_COUNTED = re.compile(r"^\| `\((R-[A-Za-z0-9]+)\)` \| not counted — ([a-z]+): (.*?) \|\s*$")
 CONST = re.compile(r'const\s+([A-Z_][A-Z0-9_]*)\s*:\s*&(?:\'static\s+)?str\s*=\s*"([^"]+)"')
 LITERAL = re.compile(r'"([A-Z][A-Za-z]*-[A-Za-z0-9/-]+)"')
 MARK = re.compile(r"//\s*@(no-decline|decline-owed):[ \t]*(.*)")
@@ -100,7 +108,8 @@ def scan_text(text, path, counts, marks, unread, orphans):
     consts = dict(CONST.findall(text))
     lines = text.split("\n")
     attached = set()
-    for m in CALL.finditer(text):
+    calls = sorted(list(CALL.finditer(text)) + list(BARE.finditer(text)), key=lambda m: m.start())
+    for m in calls:
         kind = m.group(1)
         at = text.count("\n", 0, m.start())
         rule = rule_of(text, m, consts)
@@ -130,6 +139,18 @@ def scan():
                 text = fh.read()
             scan_text(text, os.path.relpath(path, ROOT), counts, marks, unread, orphans)
     return counts, marks, unread, orphans
+
+
+def not_counted():
+    """`{rule: (kind, why)}` — the rules the formal chapter's phase table says no census counts."""
+    out = {}
+    path = os.path.join(ROOT, "doc", "claude", "formal", "rewrites.md")
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            m = NOT_COUNTED.match(line)
+            if m:
+                out[m.group(1)] = (m.group(2), m.group(3))
+    return out
 
 
 def state(fired, declined, marked):
@@ -209,6 +230,9 @@ fn a() {
     // @no-decline: above nothing
     let x = 1;
     crate::rewrite_census::fired(name_at_run_time, 1);
+    use crate::rewrite_census::fired;
+    fired("R-Bare", 1);
+    not_fired("R-Other", 1);
 }
 '''
 
@@ -218,7 +242,8 @@ def self_test():
     scan_text(SAMPLE, "sample.rs", counts, marks, unread, orphans)
     got = {r: state(c["fired"], c["declined"], marks.get(r)) for r, c in counts.items()}
     want = {"R-Silent": "silent", "R-Const": "reports", "R-Nothing": "nothing",
-            "R-NoWhy": "nothing", "R-Both": "reports", "R-Owes": "owes", "R-Twice": "owes"}
+            "R-NoWhy": "nothing", "R-Both": "reports", "R-Owes": "owes", "R-Twice": "owes",
+            "R-Bare": "silent"}
     faults = marker_faults(counts, marks, orphans)
     owed = marks.get("R-Owes", [("", 0, "", "")])[0][2]
     ok = (got == want and len(unread) == 1 and len(orphans) == 1 and len(faults) == 4
@@ -246,6 +271,12 @@ def main():
     counts, marks, unread, orphans = scan()
     table = list(rows(defined, counts, marks))
     faults = marker_faults(counts, marks, orphans)
+    uncounted = not_counted()
+    quiet_rules = [r for r, f, d, a, known, _ in table if known and not (f or d or a)]
+    for r in quiet_rules:
+        if r not in uncounted:
+            faults.append(f"{r}: reports to no census and formal/rewrites.md's phase table "
+                          "does not say why (`not counted — <kind>: <why>`)")
     if "--record" in args:
         with open(BASELINE, "w", encoding="utf-8", newline="\n") as fh:
             fh.write("# Per rewrite rule: the call sites in src/ that report it fired, why it refused a\n")
@@ -291,10 +322,16 @@ def main():
             continue
         label = "refuses on" if owes else "nothing to report"
         print(f"  {rule}: {label} — {why or '(no reason given)'}  [{path}:{line}]")
-    quiet = sum(1 for r in table if r[4] and not (r[1] or r[2] or r[3]))
+    kinds = {}
+    for r in quiet_rules:
+        kind, why = uncounted.get(r, ("unexplained", ""))
+        kinds[kind] = kinds.get(kind, 0) + 1
+        if not only_missing and not only_owed:
+            print(f"{r:<24} {'-':>5} {'-':>15} {'-':>14}  not counted — {kind}: {why}")
     print()
+    split = ", ".join(f"{n} {k}" for k, n in sorted(kinds.items()))
     print(f"{len(defined)} rewrite rules defined; {len(fires)} report where they fire, "
-          f"{quiet} report to no census")
+          f"{len(quiet_rules)} are counted by no census ({split})")
     print(f"of the {len(fires)}: {len(by_state['reports'])} report why they refuse a site, "
           f"{len(by_state['nothing'])} state they have nothing to report, "
           f"{len(by_state['owes'])} owe their reasons, {len(by_state['silent'])} are unread")

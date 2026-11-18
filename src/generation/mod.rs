@@ -2558,16 +2558,28 @@ impl Output<'_> {
     /// the census (`crate::rewrite_census`): one count per site each plan will rewrite.
     fn census_plans(&self) {
         use crate::rewrite_census::fired;
+        // @decline-owed: a loop-body literal whose element owns heap, or with a part that is
+        //   not invariant: not a literal, a pure scalar operator, a by-value scalar parameter
+        //   never reassigned, or a scalar read of a value-const record parameter
         fired(
             "R-LitHoist",
             self.invariant_lits.wrapped.len() + self.invariant_lits.flat.len(),
         );
         fired("R-ValueLocal", self.value_record_locals.len());
+        // @decline-owed: a call that answers a borrowed view; a loop variable read after its
+        //   append, appended twice or under a further loop; a target that is no owned local
+        //   plain vector of a plain struct or is rebound; a hidden buffer that serves anything
+        //   else
         fired("R-MoveAppend", self.move_pairs.len());
+        // @decline-owed: a separator that is no character constant or is the null character; a
+        //   split result read by more than the loop's element read and length test (a `rev`, a
+        //   vector bound to a name)
         fired("R-LazySplit", self.lazy_splits.len());
         fired("R-SplitTable", self.split_tables.len());
         fired("R-TextBorrow", self.borrowed_text_locals.len());
         fired("R-SliceBorrow", self.slice_borrow_count);
+        // @decline-owed: a walk whose text is no text variable; at run time a byte that is not
+        //   ASCII, or is NUL, takes the full step
         fired("R-CharWalk", self.char_walks.len());
         fired("R-RetAdopt", usize::from(self.ret_adopt.is_some()));
     }
@@ -4561,6 +4573,9 @@ impl Output<'_> {
             fired("R-Header", frame.len());
             fired("R-Base", base_frame.len());
             fired("R-BoundedNest", bound_frame.len());
+            // @decline-owed: a scalar field the body's write set reaches — an in-place set of
+            //   that field, an admitted callee's writes, a return-buffer writer's whole record
+            //   type — and a record variable the body rebinds
             fired("R-Scalar", scalar_frame.len());
             fired("R-Invariant", invariant_frame.len());
             fired("R-Push", push_frame.len());

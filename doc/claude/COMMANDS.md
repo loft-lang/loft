@@ -123,7 +123,9 @@ make reason-census                       # WHICH REWRITES SAY WHY: per R- rule, 
                                          #   (unread).  `--missing` the silent rules, `--owed` the
                                          #   owing ones, `--check` against
                                          #   `tests/reason_census.baseline` (a rule never falls
-                                         #   silent; a marker needs its text), `--self-test`
+                                         #   silent; a marker needs its text), `--self-test`.  A
+                                         #   rule no census counts reads its reason from
+                                         #   formal/rewrites.md's phase table (`not counted — …`)
 make decline-census                      # HOW FAR EACH REWRITE REACHES: per R- rule, the sites it
                                          #   admitted against the sites it REFUSED, the refusals
                                          #   ranked by reason — a routine over its bar is a shape a
