@@ -34,8 +34,21 @@ Two more triggers: pass 2 hoists whatever pass 1 minted, and pass 1 hoists a che
 | reads `$` AND builds a value | `t_<LEN><Struct>___dflt_<Struct>_<field>` | `self: <Struct>` first, then the row's hidden one | as the row |
 | a parameter default reading EARLIER parameters | `n___dflt_<fn>_<param>` | those parameters first, then the row's hidden one | as the row |
 
-- Minted on PASS 1 where the default stands, and numbered there: a field's directly after its
-  struct, a parameter's BEFORE the function it belongs to.
+- Minted on PASS 1 where the default stands, and numbered there: a field's after its struct,
+  a parameter's BEFORE the function it belongs to.
+- **The default is parsed twice on pass 1**: in place first, then — where it must be hoisted —
+  reverted and parsed again inside the function (two `route parse_vector` lines at the literal,
+  then the function's `fn-end`).  The first parse is dropped as a value, but the DEFINITIONS it
+  minted stay, numbered BEFORE the function, at the literal's position:
+
+  | default | minted in place, in this order | then |
+  |---|---|---|
+  | `xs: vector<E> = […]`, `E` not in a vector before | `vector<E>` (`type=6 parent=<E>`), `main_vector<E>` (`type=5`, `source=0`) | `n___dflt_…` |
+  | the same where an earlier site put `E` in a vector | nothing | `n___dflt_…` |
+  | a tuple the field is the first to name | `__tuple<…>` (`source=0`) | `n___dflt_…` |
+  | a keyed collection (`hash<E[k]> = [E {…}]`) | nothing | `n___dflt_…` |
+
+  Every definition number and every `known=` after the field follows from this.
 - Pass 2 finds it under either key (`n_…` or the receiver's `t_…`).
 - In a generic struct there is ONE definition for every instance.  An empty-vector default
   there (`more: vector<T> = []`) is not hoisted: the site writes only the header.
