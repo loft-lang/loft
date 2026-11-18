@@ -1228,6 +1228,7 @@
 17_consumer_moros_dryopea	-	c	R-BoundedNest/kernel	1
 17_consumer_moros_dryopea	-	c	R-BufferReturn	2
 17_consumer_moros_dryopea	-	c	R-BufferReturn/bind	1
+17_consumer_moros_dryopea	-	c	R-CTail	1
 17_consumer_moros_dryopea	-	c	R-Compact	2
 17_consumer_moros_dryopea	-	c	R-CompleteWrite	49
 17_consumer_moros_dryopea	-	c	R-Counter	342
@@ -1365,6 +1366,7 @@
 18_consumer_crawler	-	c	R-BoundedNest/kernel	1
 18_consumer_crawler	-	c	R-BufferReturn	2
 18_consumer_crawler	-	c	R-BufferReturn/bind	2
+18_consumer_crawler	-	c	R-CTail	3
 18_consumer_crawler	-	c	R-Callee	2
 18_consumer_crawler	-	c	R-CharWalk	3
 18_consumer_crawler	-	c	R-CompleteWrite	21
@@ -1758,6 +1760,7 @@
 22_expr	-	c	R-BoundedNest/kernel	1
 22_expr	-	c	R-BufferReturn	9
 22_expr	-	c	R-BufferReturn/bind	1
+22_expr	-	c	R-CTail	1
 22_expr	-	c	R-CharWalk	1
 22_expr	-	c	R-CompleteWrite	5
 22_expr	-	c	R-Counter	12
@@ -1902,6 +1905,7 @@ arguments	401c30426	c	R-Alias/versioned	1
 arguments	401c30426	c	R-Base	6
 arguments	401c30426	c	R-Base/counter	15
 arguments	401c30426	c	R-BoundedNest/kernel	1
+arguments	401c30426	c	R-CTail	4
 arguments	401c30426	c	R-CharWalk	2
 arguments	401c30426	c	R-CompleteWrite	10
 arguments	401c30426	c	R-Counter	64
@@ -2005,6 +2009,7 @@ assets	ca791ae33+shapes@0.5.4	c	R-Base	35
 assets	ca791ae33+shapes@0.5.4	c	R-Base/counter	3
 assets	ca791ae33+shapes@0.5.4	c	R-Base/guard	1
 assets	ca791ae33+shapes@0.5.4	c	R-BoundedNest/kernel	1
+assets	ca791ae33+shapes@0.5.4	c	R-CTail	1
 assets	ca791ae33+shapes@0.5.4	c	R-CompleteWrite	29
 assets	ca791ae33+shapes@0.5.4	c	R-Const	1
 assets	ca791ae33+shapes@0.5.4	c	R-Const/fn	1
@@ -2136,6 +2141,7 @@ cbor	401c30426	c	R-Base/guard	1
 cbor	401c30426	c	R-BoundAppend	1
 cbor	401c30426	c	R-BoundedNest/kernel	1
 cbor	401c30426	c	R-ByteCopy	2
+cbor	401c30426	c	R-CTail	11
 cbor	401c30426	c	R-CompleteWrite	31
 cbor	401c30426	c	R-Counter	287
 cbor	401c30426	c	R-Destination	9
@@ -2279,6 +2285,7 @@ crypto	401c30426	c	R-Base/guard	5
 crypto	401c30426	c	R-BoundedNest/kernel	1
 crypto	401c30426	c	R-BufferReturn	11
 crypto	401c30426	c	R-BufferReturn/bind	6
+crypto	401c30426	c	R-CTail	1
 crypto	401c30426	c	R-CompleteWrite	23
 crypto	401c30426	c	R-Counter	91
 crypto	401c30426	c	R-DischargeInto	1
@@ -2392,6 +2399,7 @@ drawing	73c2212b6+glb@0.1.8+mesh3d@0.1.5	c	R-Base/length-local	1
 drawing	73c2212b6+glb@0.1.8+mesh3d@0.1.5	c	R-BoundedNest/kernel	1
 drawing	73c2212b6+glb@0.1.8+mesh3d@0.1.5	c	R-BufferReturn	4
 drawing	73c2212b6+glb@0.1.8+mesh3d@0.1.5	c	R-BufferReturn/bind	2
+drawing	73c2212b6+glb@0.1.8+mesh3d@0.1.5	c	R-CTail	5
 drawing	73c2212b6+glb@0.1.8+mesh3d@0.1.5	c	R-Callee	5
 drawing	73c2212b6+glb@0.1.8+mesh3d@0.1.5	c	R-CharWalk	1
 drawing	73c2212b6+glb@0.1.8+mesh3d@0.1.5	c	R-CompleteWrite	253
@@ -2779,6 +2787,7 @@ glb	ca791ae33	c	R-Base/guard	1
 glb	ca791ae33	c	R-BoundedNest/kernel	1
 glb	ca791ae33	c	R-BufferReturn	11
 glb	ca791ae33	c	R-BufferReturn/bind	7
+glb	ca791ae33	c	R-CTail	3
 glb	ca791ae33	c	R-CompleteWrite	51
 glb	ca791ae33	c	R-Counter	245
 glb	ca791ae33	c	R-DischargeInto	1
@@ -3195,6 +3204,7 @@ hex_body	ecc2b2e31	c	R-Base/guard	1
 hex_body	ecc2b2e31	c	R-BoundedNest/kernel	1
 hex_body	ecc2b2e31	c	R-BufferReturn	31
 hex_body	ecc2b2e31	c	R-BufferReturn/bind	3
+hex_body	ecc2b2e31	c	R-CTail	4
 hex_body	ecc2b2e31	c	R-CharWalk	1
 hex_body	ecc2b2e31	c	R-CompleteWrite	15
 hex_body	ecc2b2e31	c	R-Counter	193
@@ -3891,6 +3901,7 @@ hex_form	ecc2b2e31	c	R-Base/length-local	4
 hex_form	ecc2b2e31	c	R-BoundedNest/kernel	1
 hex_form	ecc2b2e31	c	R-BufferReturn	13
 hex_form	ecc2b2e31	c	R-BufferReturn/bind	3
+hex_form	ecc2b2e31	c	R-CTail	1
 hex_form	ecc2b2e31	c	R-Callee	1
 hex_form	ecc2b2e31	c	R-CharWalk	1
 hex_form	ecc2b2e31	c	R-CompleteWrite	56
@@ -5038,6 +5049,7 @@ hex_world	ecc2b2e31	rust	R-ZeroCount	8
 html	dd260f04c	c	R-Base	1
 html	dd260f04c	c	R-BoundedNest/kernel	1
 html	dd260f04c	c	R-BufferReturn	8
+html	dd260f04c	c	R-CTail	1
 html	dd260f04c	c	R-CharWalk	1
 html	dd260f04c	c	R-CompleteWrite	6
 html	dd260f04c	c	R-Counter	24
@@ -5108,6 +5120,7 @@ markdown	dd260f04c	c	R-Base/guard	1
 markdown	dd260f04c	c	R-BoundedNest/kernel	1
 markdown	dd260f04c	c	R-BufferReturn	128
 markdown	dd260f04c	c	R-BufferReturn/bind	62
+markdown	dd260f04c	c	R-CTail	12
 markdown	dd260f04c	c	R-CharWalk	7
 markdown	dd260f04c	c	R-CompleteWrite	7
 markdown	dd260f04c	c	R-Counter	128
@@ -5319,6 +5332,7 @@ pluginabi	66fabda16+cbor@0.1.13+crypto@0.4.3	c	R-BoundedNest/kernel	1
 pluginabi	66fabda16+cbor@0.1.13+crypto@0.4.3	c	R-BufferReturn	14
 pluginabi	66fabda16+cbor@0.1.13+crypto@0.4.3	c	R-BufferReturn/bind	5
 pluginabi	66fabda16+cbor@0.1.13+crypto@0.4.3	c	R-ByteCopy	2
+pluginabi	66fabda16+cbor@0.1.13+crypto@0.4.3	c	R-CTail	15
 pluginabi	66fabda16+cbor@0.1.13+crypto@0.4.3	c	R-CompleteWrite	49
 pluginabi	66fabda16+cbor@0.1.13+crypto@0.4.3	c	R-Counter	262
 pluginabi	66fabda16+cbor@0.1.13+crypto@0.4.3	c	R-Destination	9
@@ -5965,6 +5979,7 @@ text2d	73c2212b6+glb@0.1.8+mesh3d@0.1.5	c	R-Base/guard	1
 text2d	73c2212b6+glb@0.1.8+mesh3d@0.1.5	c	R-BoundedNest/kernel	1
 text2d	73c2212b6+glb@0.1.8+mesh3d@0.1.5	c	R-BufferReturn	8
 text2d	73c2212b6+glb@0.1.8+mesh3d@0.1.5	c	R-BufferReturn/bind	1
+text2d	73c2212b6+glb@0.1.8+mesh3d@0.1.5	c	R-CTail	3
 text2d	73c2212b6+glb@0.1.8+mesh3d@0.1.5	c	R-Callee	2
 text2d	73c2212b6+glb@0.1.8+mesh3d@0.1.5	c	R-CharWalk	9
 text2d	73c2212b6+glb@0.1.8+mesh3d@0.1.5	c	R-CompleteWrite	151
@@ -6414,6 +6429,7 @@ zttext	401c30426	c	R-Base/guard	7
 zttext	401c30426	c	R-BoundedNest/kernel	1
 zttext	401c30426	c	R-BufferReturn	7
 zttext	401c30426	c	R-BufferReturn/bind	5
+zttext	401c30426	c	R-CTail	1
 zttext	401c30426	c	R-CharWalk	5
 zttext	401c30426	c	R-Compact/prepend	1
 zttext	401c30426	c	R-CompleteWrite	158

@@ -183,7 +183,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-BoundedNest)` | `R-BoundedNest` native · `/kernel` ir |
 | `(R-BufferReturn)` | `R-BufferReturn` c · `/bind` c |
 | `(R-ByteCopy)` | `R-ByteCopy` ir |
-| `(R-CTail)` | not counted (`rule_tags.py phases --check` names it) |
+| `(R-CTail)` | `R-CTail` c |
 | `(R-CallLine)` | not counted — executor: a frame's line derived from its call position |
 | `(R-Callee)` | `R-Callee` c, native |
 | `(R-CharWalk)` | `R-CharWalk` c, native |
