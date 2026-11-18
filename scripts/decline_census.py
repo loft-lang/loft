@@ -239,8 +239,8 @@ def silent_rules(admitted, declined):
     `declined` call) and refused nothing.  Either the body lacks the shape, or the rule is
     dead; the census cannot tell which, and says so by naming them."""
     counts, _, _, _ = reason_census.scan()
-    seen_fired = {r.split("/")[0] for r, n in admitted.items() if n} | set(k for k, n in admitted.items() if n)
-    seen_declined = {r.split("/")[0] for r, n in declined.items() if n} | set(k for k, n in declined.items() if n)
+    seen_fired = {x for r, n in admitted.items() if n for x in (r, family(r))}
+    seen_declined = {x for r, n in declined.items() if n for x in (r, family(r))}
     never_fired = sorted(r for r, c in counts.items() if c["fired"] and r not in seen_fired)
     never_refused = sorted(r for r, c in counts.items() if c["declined"] and r not in seen_declined)
     return never_fired, never_refused
