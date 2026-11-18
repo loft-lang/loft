@@ -251,8 +251,8 @@ each emitted unit checked for the hand form's shape — `loft_demote_rec`, `loft
 | 2 | `(R-MoveChild)` | `LOFT_NO_MOVE_CHILD` | `binding/B-OutOfLine/an-unlink-moves-and-a-literal-is-built-in-its-child` |
 | 3 | `(R-InPlaceLiteral)` out-of-line clause | `LOFT_NO_CHILD_LITERAL` | the same cell |
 | 5, write-back half | `(R-HostStore)` | `LOFT_NO_HOST_STORE` | `rewrites/R-HostStore/a-recursion-builds-its-result-in-the-field-it-is-written-to` |
-| 5, callee half (no drop) | `(R-HostStore)` literal clause, `(R-Place)` branch exits, `(R-InPlaceLiteral)` variant clause | `LOFT_NO_HOST_STORE`, `LOFT_NO_VARIANT_INPLACE` | `rewrites/R-HostStore/a-literal-adopts-its-childrens-results-built-in-its-store` |
-| 5, the release by record | `(R-HostStore)` result clause | `LOFT_NO_HOST_RESULT` | `rewrites/R-HostStore/a-recursion-answering-its-own-results-keeps-adopts-and-releases-them` |
+| 5, callee half (no drop) | `(R-HostStore)` literal clause, `(R-Place)` branch exits, `(R-InPlaceLiteral)` variant clause | `LOFT_NO_HOST_STORE`, `LOFT_NO_VARIANT_INPLACE` | `rewrites/R-HostStore/a-result-built-in-its-hosts-store-is-adopted-and-released-once` |
+| 5, the release by record | `(R-HostStore)` result clause | `LOFT_NO_HOST_RESULT` | `rewrites/R-HostStore/a-result-built-in-its-hosts-store-is-adopted-and-released-once` |
 | 4, variant clause | `(R-Demote)` variant clause | `LOFT_NO_DEMOTE` | `rewrites/R-Demote/a-front-push-moves-the-old-node-whole-a-records-or-a-variants` |
 | 1, `match` payload | `(R-CopyView)` walk clause, step locals | `LOFT_NO_COPY_VIEW_WALK` | `rewrites/R-CopyView/a-walk-over-a-list-is-a-view-of-the-list-it-was-bound-to` |
 

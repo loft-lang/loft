@@ -5558,7 +5558,7 @@ Sites: `opt::frame_calls::GuardFree` (`registers_buffers`, `is_guard_free`), the
                  answer by number, and the answer's store is freed only where it is not the
                  node's (`OpFreeRefIfDistinct`, a fallback copy).  The recursion then builds
                  the whole tree in the store its first caller names.  22_expr `expr_build`
-                 9.07× → 0.66× Rust; guard `…/R-HostStore/a-literal-adopts-its-childrens-results-built-in-its-store.loft`.
+                 9.07× → 0.66× Rust; guard `…/R-HostStore/a-result-built-in-its-hosts-store-is-adopted-and-released-once.loft`.
                  RESULT CLAUSE: a function whose every answer is a literal it builds or the
                  result of a call to itself — `simplify`: `a = simplify(l)`, `b =
                  simplify(r)`, then `b`, `a`, a node over both or a fresh literal — and whose
@@ -5580,7 +5580,7 @@ Sites: `opt::frame_calls::GuardFree` (`registers_buffers`, `is_guard_free`), the
                  one bind adopts the callee's record (`deferred_first_bind`).  Decided on the
                  function's own settled IR, its frame laid out again
                  (`host_result::rewrite_program`).  22_expr `expr_simplify` 11.7× → 1.04× Rust;
-                 `LOFT_NO_HOST_RESULT=1`; guard `…/R-HostStore/a-recursion-answering-its-own-results-keeps-adopts-and-releases-them.loft`.
+                 `LOFT_NO_HOST_RESULT=1`; guard `…/R-HostStore/a-result-built-in-its-hosts-store-is-adopted-and-released-once.loft`.
 
   (R-MoveChild)  a whole write into an out-of-line field whose value is a chain of child reads
                  rooted at the field's OWN child — `h.f = h.f.g`, `cur = cur.left` through a
