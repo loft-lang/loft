@@ -39,15 +39,16 @@ declarations where a callee is declared below its caller (a call's buffer is the
 the second pass, after every `__vdb_N`).  The refusal is the port's own conservative one, by
 name; the functions it covers differ from their callee-above twins in that order alone.
 
-A Rust change that makes the order independent of the callee's position was built and NOT
-landed (`kr-tools/order-free/` on the tester's box: the patch, the above/below matrix, the
-corpus diff).  It makes 18 of 19 matrix callers lower the same either way and moves 222
-functions in 131 programs, each a pure reorder of `= null` lines — but 28 programs the port
-agrees on today would differ until the port drops its own tracking.  Nothing observable
-depends on the order: drop hooks run in the same order with the callee above or below, on
-both backends.  Separate and not looked into: a KEYED local bound from a later-declared
-function is `h = n_ch(3)` where the callee-above twin is `h = null; OpReplaceKeyed(n_ch(3), h,
-kt + 32768)`.
+**Ruled (owner, 2026-11-18): the Rust front end stays as it is** — @C168: where a function is
+declared changes nothing a program can observe, and its internal numbers may differ.  A change
+that made the numbering independent of position was built, measured (222 functions in 131
+programs, each a pure reorder; 28 programs the port agrees on would have differed) and
+dropped.  The observable half is guarded:
+`tests/scripts/a-callee-declared-below-its-caller-changes-nothing-a-program-can-see.loft`
+(values and release traces, callees above and below).  The matrix and the corpus-diff tools are
+in `kr-tools/order-free/`.  So the port's refusal is the port's to narrow: it already produces
+the order.  Separate and not looked into: a KEYED local bound from a later-declared function is
+`h = n_ch(3)` where the callee-above twin is `h = null; OpReplaceKeyed(n_ch(3), h, kt + 32768)`.
 
 ## Today's Rust-side work
 
