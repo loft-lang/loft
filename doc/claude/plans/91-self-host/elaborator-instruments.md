@@ -169,6 +169,14 @@ and the definition-level ranking gains a column "Rust route" (the handler most s
 family share).  A family whose sites share one handler is one port; a family spread over many
 handlers is a symptom name and wants splitting.
 
+### Changed — the `--pass1` layer compares what a pass LEFT only
+
+The porting agent read the `arg` / `stmt` differences (3192 of 7012): Rust keeps `expected` as
+ONE parser field that lingers from site to site, the port carries the hint per node, so those
+lines differ by how the two are modelled, not by a decision.  The layer therefore compares
+`stmt-end` and `fn-end` only; the trace still prints `stmt` and `arg`, and `state_diff.py`
+still shows them.  The `elab-pass1` block is re-pinned by the next gate run.
+
 ### Built — step 3, the `route` point in Rust, `refuse` in the port, and the join
 
 `Parser::state_route(handler)` prints `state <pass> <line>:<col> route <handler>` at the lexer's
