@@ -1003,30 +1003,37 @@ impl Scopes<'_> {
                         // The type's scope-end hook, immediately BEFORE the free that ends
                         // the value's life — unless `v` is a buffer whose witness already
                         // ran it.
-                        if !is_buffer
-                            && let Some(hook) = unless_moved(v, self.scope_end_hook(function, v, data, arm_dropped))
-                        {
-                            ls.push(hook);
-                        }
                         // `@FR-H-FreeTwice` — where a branch arm left `v` naming a hoisted
-                        // lift's store (`Scopes::lift_viewers`), that lift releases it: the free
-                        // runs only where `v` names none of them.  An extra guard can only
-                        // REFUSE a free, and each store it refuses is one the lift frees.
+                        // lift's store (`Scopes::lift_viewers`), that lift releases it — its hook
+                        // and its free: `v`'s own hook and free run only where `v` names none of
+                        // them.  An extra guard can only REFUSE a release, and each store it
+                        // refuses is one the lift releases.  The hook is guarded with the free:
+                        // left bare it ran the type's drop on a record the lift had already
+                        // freed (loft#2550, `r = if c { f() ?? return } else { … }`).
                         let distinct = data.def_nr("OpDistinctStore");
-                        let free = self
+                        let viewed: Vec<u16> = self
                             .lift_viewers
                             .get(&v)
                             .into_iter()
                             .flatten()
-                            .filter(|&&l| l != v)
-                            .fold(call("OpFreeRef", v, data), |inner, &l| {
+                            .copied()
+                            .filter(|&l| l != v)
+                            .collect();
+                        let guard = |inner: Value| {
+                            viewed.iter().fold(inner, |inner, &l| {
                                 v_if(
                                     Value::Call(distinct, vec![Value::Var(v), Value::Var(l)]),
                                     inner,
                                     Value::Null,
                                 )
-                            });
-                        ls.push(free);
+                            })
+                        };
+                        if !is_buffer
+                            && let Some(hook) = unless_moved(v, self.scope_end_hook(function, v, data, arm_dropped))
+                        {
+                            ls.push(guard(hook));
+                        }
+                        ls.push(guard(call("OpFreeRef", v, data)));
                     }
                 }
             }
