@@ -863,6 +863,20 @@ pub fn leftmost(e: el::El, n: integer) -> integer {
   }
 }
 
+// Is `n` a read of a field of a field … of a variable (`OpGetField` all the way down)?
+pub fn field_path(e: el::El, n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdCall { def_nr, args } => {
+      if el::def(e, def_nr).name != "OpGetField" || len(args) != 3 {
+        return false;
+      }
+      inner = el_ir::unspan(args[0]!);
+      inner is NdVar || field_path(e, inner)
+    },
+    _ => false
+  }
+}
+
 pub fn copies_whole_vector(e: el::El, vars: el_vars::Vars, code: ir::Node) -> boolean {
   match el_ir::unspan(code) {
     NdVar { n: _ } => true,

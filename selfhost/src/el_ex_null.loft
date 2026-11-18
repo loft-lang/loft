@@ -105,7 +105,8 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
     // where present and the default where not.  Any other subject is refused by name.
     // A field of an owned record is held in a `__ncc_N` viewing it, the "ncc" block answering
     // it where present and the default where not; a bind copies the view (`vec_arm_verdict`).
-    if !(x.code is NdVar) && !el_ex_call::buffered_loft_call(e, x.code) && copies_whole_vector(e, vars, x.code) {
+    // (So is a field path of any depth rooted at a variable — a nested field, a loop element's.)
+    if !(x.code is NdVar) && !el_ex_call::buffered_loft_call(e, x.code) && (copies_whole_vector(e, vars, x.code) || field_path(e, x.code)) {
       // The default's buffer borrows the record too: a work ref nulled at the head.
       if !e.first_pass {
         el_ex_call::borrowed_literal_buffer(vars, d.code);
