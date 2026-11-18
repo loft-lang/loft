@@ -458,24 +458,24 @@ R-KeyList	rewrites	structural	1	2026-11-18	the interpreter caches a keyed type's
 R-KeyedEntry	rewrites	curated	10	2026-11-18	its two own fold candidates agree with gate E and stay
 R-LazySplit	rewrites	curated	6	2026-11-18	its own fold candidate agrees with gate E; kept
 R-Leaf	rewrites	structural	0	2026-11-18	a leaf function pushes no shadow frame: by construction it cannot reach stack_trace, assert or panic, so nothing can observe the omission
-R-LeafChain	rewrites	todo			
-R-LitDiv	rewrites	todo			
-R-LitHoist	rewrites	todo			
-R-LiteralAppend	rewrites	todo			
-R-LiteralWalk	rewrites	todo			
-R-LoopBuffer	rewrites	todo			
-R-LoopRecord	rewrites	todo			
-R-LoopSlot	rewrites	todo			
-R-MaskRange	rewrites	todo			
-R-Mint	rewrites	todo			
-R-MoveAppend	rewrites	todo			
-R-MoveChild	rewrites	todo			
-R-MoveLast	rewrites	todo			
-R-NoLocks	rewrites	todo			
-R-NoThreads	rewrites	todo			
-R-NonSentinelParam	rewrites	todo			
-R-OpPriority	rewrites	todo			
-R-OperandSpan	rewrites	todo			
+R-LeafChain	rewrites	structural	1	2026-11-18	a frameless call tree is emitted as a leaf: no program observes the missing frames (as R-Leaf); guarded by its Rust test
+R-LitDiv	rewrites	curated	4	2026-11-18	two suite cells, distinct cases
+R-LitHoist	rewrites	curated	4	2026-11-18	two suite cells, distinct cases
+R-LiteralAppend	rewrites	curated	1	2026-11-18	one suite cell
+R-LiteralWalk	rewrites	curated	3	2026-11-18	its own fold candidate agrees with gate E; kept
+R-LoopBuffer	rewrites	curated	8	2026-11-18	its two own fold candidates agree with gate E and stay
+R-LoopRecord	rewrites	curated	11	2026-11-18	its two own fold candidates agree with gate E and stay
+R-LoopSlot	rewrites	curated	3	2026-11-18	two suite cells, distinct cases
+R-MaskRange	rewrites	curated	4	2026-11-18	its own fold candidate agrees with gate E; kept
+R-Mint	rewrites	curated	15	2026-11-18	its one own cell is refused and has no refused partner; kept
+R-MoveAppend	rewrites	curated	1	2026-11-18	first cell, from the formal text: the admitted shape and three it declines (a read after, two appends, a nested loop), moved by LOFT_NO_SEVERAL_VARS
+R-MoveChild	rewrites	curated	1	2026-11-18	one suite cell
+R-MoveLast	rewrites	curated	13	2026-11-18	its own fold candidate agrees with gate E; kept
+R-NoLocks	rewrites	structural	1	2026-11-18	a C unit with no lock source compiles without the locked-write discard: the rule says nothing observable changes; guarded by c_emit's tests
+R-NoThreads	rewrites	curated	3	2026-11-18	its two refused cells are a unit with a par loop and one without: merged, the without-threads unit would gain the par loop; both stay
+R-NonSentinelParam	rewrites	curated	2	2026-11-18	two suite cells, distinct cases
+R-OpPriority	rewrites	structural	1	2026-11-18	opcodes numbered hot, normal, cold: a slot number no program observes; guarded by the fill generator
+R-OperandSpan	rewrites	structural	0	2026-11-18	an operator's fixed-width operands bounds-checked once: the same reads, no program observes it; guarded by the fill generator
 R-PathRelease	rewrites	todo			
 R-Peel	rewrites	todo			
 R-Phase	rewrites	todo			
