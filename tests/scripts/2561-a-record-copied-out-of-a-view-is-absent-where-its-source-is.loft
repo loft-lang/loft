@@ -1,0 +1,82 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A record copied out of a view is absent where its source is (@FR-N-Road, loft#2561).
+// A function whose `-> S?` result is read out of a store the function holds copies it into the
+// caller's buffer, and copies only where the source is present.  One function per source
+// shape; each is asked for an element that is there and for one that is not.  `Cell` is the
+// element of keyed collections too, so its vector is an `array<Cell>`, read with `OpVectorRef`.
+struct Cell { q: integer, r: integer, t: text }
+struct Bag { n: integer, xs: vector<Cell> }
+struct HB { n: integer, h: hash<Cell[q]> }
+struct SB { n: integer, s: sorted<Cell[q]> }
+struct IB { n: integer, ix: index<Cell[q]> }
+struct Outer { o: Bag }
+struct Wrap { w: Cell, n: integer }
+enum Shape { Dot, Box { side: integer } }
+fn mkc(i: integer) -> Cell { Cell { q: i + 40, r: i * 10 + 7, t: "t{i}" } }
+fn cells(n: integer) -> vector<Cell> { v: vector<Cell> = []; for i in 0..n { v += [mkc(i)]; } v }
+fn bag(n: integer) -> Bag { b = Bag { n: n }; for i in 0..n { b.xs += [mkc(i)]; } b }
+fn hb(n: integer) -> HB { b = HB { n: n }; for i in 0..n { b.h += [mkc(i)]; } b }
+fn sb(n: integer) -> SB { b = SB { n: n }; for i in 0..n { b.s += [mkc(i)]; } b }
+fn ib(n: integer) -> IB { b = IB { n: n }; for i in 0..n { b.ix += [mkc(i)]; } b }
+fn outer(n: integer) -> Outer { Outer { o: bag(n) } }
+fn wraps(n: integer) -> vector<Wrap> { v: vector<Wrap> = []; for i in 0..n { v += [Wrap { w: mkc(i), n: i }]; } v }
+fn shapes(n: integer) -> vector<Shape> { v: vector<Shape> = []; for i in 0..n { v += [Box { side: i + 3 }]; } v }
+
+fn call_vec(i: integer) -> Cell? { cells(3)[i] }
+fn local_vec(i: integer) -> Cell? { v = cells(3); v[i] }
+fn local_const(k: integer) -> Cell? { v = cells(3); if k == 1 { v[1] } else { v[9] } }
+fn param_vec(v: vector<Cell>, i: integer) -> Cell? { v[i] }
+fn call_field(i: integer) -> Cell? { bag(3).xs[i] }
+fn local_field(i: integer) -> Cell? { b = bag(3); b.xs[i] }
+fn nested(i: integer) -> Cell? { outer(3).o.xs[i] }
+fn call_hash(k: integer) -> Cell? { hb(3).h[k] }
+fn local_hash(k: integer) -> Cell? { b = hb(3); b.h[k] }
+fn call_sorted(k: integer) -> Cell? { sb(3).s[k] }
+fn local_sorted(k: integer) -> Cell? { b = sb(3); b.s[k] }
+fn call_index(k: integer) -> Cell? { ib(3).ix[k] }
+fn local_index(k: integer) -> Cell? { b = ib(3); b.ix[k] }
+fn mid_local(i: integer) -> Cell? { v = cells(3); if i >= 0 { return v[i]; } null }
+fn mid_call(i: integer) -> Cell? { if i >= 0 { return cells(3)[i]; } null }
+fn arm_local(i: integer) -> Cell? { v = cells(3); if i >= 0 { v[i] } else { null } }
+fn arm_call(i: integer) -> Cell? { if i >= 0 { cells(3)[i] } else { null } }
+fn bound_first(i: integer) -> Cell? { v = cells(3); c = v[i]; c }
+fn field_bound(i: integer) -> Cell? { b = bag(3); x = b.xs; x[i] }
+fn inner_of_element(i: integer) -> Cell? { v = wraps(3); v[i].w }
+fn inner_of_call(i: integer) -> Cell? { wraps(3)[i].w }
+fn enum_local(i: integer) -> Shape? { v = shapes(3); v[i] }
+fn enum_call(i: integer) -> Shape? { shapes(3)[i] }
+
+fn say(c: Cell?) -> text { if c == null { "null" } else { "{c.r}/{c.t}" } }
+fn side(s: Shape?) -> integer { match s { Box { side } => side, Dot => 0, null => -1 } }
+
+fn main() {
+  assert(say(call_vec(1)) == "17/t1" && say(call_vec(9)) == "null", "call_vec");
+  assert(say(local_vec(1)) == "17/t1" && say(local_vec(9)) == "null", "local_vec");
+  assert(say(local_const(1)) == "17/t1" && say(local_const(0)) == "null", "local_const");
+  assert(say(param_vec(cells(3), 1)) == "17/t1" && say(param_vec(cells(3), 9)) == "null", "param_vec");
+  assert(say(call_field(1)) == "17/t1" && say(call_field(9)) == "null", "call_field");
+  assert(say(local_field(1)) == "17/t1" && say(local_field(9)) == "null", "local_field");
+  assert(say(nested(1)) == "17/t1" && say(nested(9)) == "null", "nested");
+  assert(say(call_hash(41)) == "17/t1" && say(call_hash(99)) == "null", "call_hash");
+  assert(say(local_hash(41)) == "17/t1" && say(local_hash(99)) == "null", "local_hash");
+  assert(say(call_sorted(41)) == "17/t1" && say(call_sorted(99)) == "null", "call_sorted");
+  assert(say(local_sorted(41)) == "17/t1" && say(local_sorted(99)) == "null", "local_sorted");
+  assert(say(call_index(41)) == "17/t1" && say(call_index(99)) == "null", "call_index");
+  assert(say(local_index(41)) == "17/t1" && say(local_index(99)) == "null", "local_index");
+  assert(say(mid_local(1)) == "17/t1" && say(mid_local(9)) == "null", "mid_local");
+  assert(say(mid_call(1)) == "17/t1" && say(mid_call(9)) == "null", "mid_call");
+  assert(say(arm_local(1)) == "17/t1" && say(arm_local(9)) == "null", "arm_local");
+  assert(say(arm_call(1)) == "17/t1" && say(arm_call(9)) == "null", "arm_call");
+  assert(say(bound_first(1)) == "17/t1" && say(bound_first(9)) == "null", "bound_first");
+  assert(say(field_bound(1)) == "17/t1" && say(field_bound(9)) == "null", "field_bound");
+  assert(say(inner_of_element(1)) == "17/t1" && say(inner_of_element(9)) == "null", "inner_of_element");
+  assert(say(inner_of_call(1)) == "17/t1" && say(inner_of_call(9)) == "null", "inner_of_call");
+  assert(side(enum_local(1)) == 4 && side(enum_local(9)) == -1, "enum_local");
+  assert(side(enum_call(1)) == 4 && side(enum_call(9)) == -1, "enum_call");
+  // the same answers on a second and a third call: a buffer the first call filled is not reused
+  n = 0;
+  for _ in 0..3 { if call_vec(9) != null || local_field(9) != null || nested(9) != null { n += 1; } }
+  assert(n == 0, "repeat");
+}
