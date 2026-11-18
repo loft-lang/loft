@@ -1312,6 +1312,25 @@ pub fn plus_run(e: el::El, vars: el_vars::Vars, at: integer, l: integer, r: inte
     }
     return vector_concat(e, vars, dest, a, parts);
   }
+  // A nullable text on the left PROPAGATES (`text? + …`, @PLN25): the concatenation is built
+  // into a fresh work text off the left where it is present, and is the null text where it is
+  // not.  A local is read twice; any other left operand is bound first (`_nlhs_N`).
+  if a.tp is TyOptional && el_types::base(a.tp) is TyText {
+    parts: vector<Ex> = [];
+    for n in rights {
+      parts += [el_ex_assign::expression(e, vars, n)];
+    }
+    plain = ir::TyText { dep: [] };
+    if el_ir::unspan(a.code) is NdVar {
+      cat = append_text(e, vars, ex(a.code, plain), parts);
+      return ex(el_ir::v_if(el_ir::cl(e, "OpConvBoolFromText", [a.code]), cat.code, el_ir::cl(e, "OpConvTextFromNull", [])), ir::TyOptional { inner: cat.tp });
+    }
+    tmp = el_vars::create_unique(vars, "_nlhs", a.tp);
+    held = ir::NdVar { n: tmp };
+    cat = append_text(e, vars, ex(held, plain), parts);
+    opt = ir::TyOptional { inner: cat.tp };
+    return ex(el_ir::v_block([el_ir::v_set(tmp, a.code), el_ir::v_if(el_ir::cl(e, "OpConvBoolFromText", [held]), cat.code, el_ir::cl(e, "OpConvTextFromNull", []))], opt, "nullable_concat"), opt);
+  }
   if a.tp is TyCharacter {
     el::refuse(e, "a concatenation that starts with a character");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });

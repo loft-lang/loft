@@ -646,7 +646,7 @@ pub fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: intege
     }
     // A vector of scalars defaults to `[]` (`build_default`'s collection arm): `x?` is
     // `x ?? []`.  A vector of records registers its default's types where Rust does not yet.
-    if b is TyVector && el_convert::plain_scalar(match b { TyVector { inner } => inner, _ => ir::TyVoid }) {
+    if b is TyVector && match b { TyVector { inner } => el_convert::plain_scalar(inner) || el_types::base(inner) is TyText && !(inner is TyOptional), _ => false } {
       vt = el_types::without_deps(b);
       return coalesce_with(e, vars, x, ex(el_ex_pattern::empty_literal_to(e, vars, vt, borrows: el_ex_call::view_borrows(e, vars, x)), vt));
     }
@@ -678,7 +678,9 @@ pub fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: intege
   if record {
     // Any record subject — a local, a slot, a call's answer, a field or an element — is tested
     // where it stands or held in an `_ncr_N` first (below), as `handle_present`'s record arm does.
-  } else if !el_convert::plain_scalar(b) && !(b is TyVector) && !el_convert::struct_enum(b) {
+  } else if !el_convert::plain_scalar(b) && !(b is TyVector) && !(b is TyText) && !el_convert::struct_enum(b) {
+    // (A text is tested by its own truth, `OpConvBoolFromText`, its read made nullable as a
+    // scalar's is.)
     el::refuse(e, "a `!` on this type: {type_kind(b)}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
@@ -1197,6 +1199,13 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
   // the second resolves it to the bound's stub.
   if !(e.first_pass && generic_holder(e, c.tp) >= 0) {
     cc = el_ex_pattern::condition(e, c);
+    // A struct enum local is present by its own null test (`coalesce_not_null`'s enum arm).
+    if cc == null && el_convert::struct_enum(el_types::base(c.tp)) && el_ir::unspan(c.code) is NdVar {
+      absent = enum_null_test(e, vars, c.code, el_types::base(c.tp));
+      if absent != null {
+        cc = ex(el_ir::cl(e, "OpNot", [absent!]), ir::TyBoolean);
+      }
+    }
     if cc == null {
       el::refuse(e, "an `if` condition that is not a boolean: {type_kind(c.tp)}");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -1262,6 +1271,18 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
   } else {
     el_ex_assign::parse_block(e, vars, other!, "else", if then_empty || null_then || t.tp is TyNever { ir::TyUnknown { n: 0 } } else { arm_expectation(t.tp) })
   };
+  // `@FR-C-Never`: an `else` block that leaves is still a block read against the then arm
+  // (`parse_block`'s `result`), and is typed as that expectation; the arm itself never finishes.
+  if f.tp is TyNever && !null_then && !then_empty && !(e.p.nodes[other!] is SIf) && !(t.tp is TyNever) && !(t.tp is TyVoid) && !el_types::is_unknown(arm_expectation(t.tp)) {
+    match f.code {
+      NdBlock { block } => {
+        if (block[0].result[0] ?? ir::TyVoid) is TyNever {
+          f = ex(block_typed(f.code, arm_expectation(t.tp)), ir::TyNever);
+        }
+      },
+      _ => {}
+    }
+  }
   if null_then {
     nv = el_convert::null_of(e, f.tp);
     if f.tp is TyNull || f.tp is TyNever || nv == null {
@@ -1456,6 +1477,14 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
         deps += [x];
       }
     }
+    // An arm answering the holder of a `!` read (`_ncr_N`) borrows what the read's subject
+    // does in Rust, not the holder: not carried.
+    for x in deps {
+      if starts_with(el_vars::name_of(vars, x), "_ncr_") {
+        el::refuse(e, "a text `if` whose arm answers a `!` read held in a local");
+        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+      }
+    }
     if len(deps) > 0 {
       return ex(el_ir::v_if(c.code, borrowing_arm(t.code, td), borrowing_arm(f.code, fd)), el_types::with_deps(t.tp, deps));
     }
@@ -1624,7 +1653,9 @@ pub fn arm_typed(arm: ir::Node, deps: vector<integer>) -> ir::Node {
 pub fn text_arm_deps(e: el::El, vars: el_vars::Vars, arm: ir::Node) -> vector<integer> {
   match arm {
     NdSpan { inner } => text_arm_deps(e, vars, inner),
-    NdBlock { block } => if len(block[0].operators) > 0 { text_arm_deps(e, vars, block[0].operators[-1]) } else { [] },
+    // (A `!` read held in its `_ncr_N` borrows what the block is typed with — its subject's
+    // borrows — not the holder.)
+    NdBlock { block } => if block[0].name == "ncr" { el_types::deps(block[0].result[0] ?? ir::TyVoid) } else if len(block[0].operators) > 0 { text_arm_deps(e, vars, block[0].operators[-1]) } else { [] },
     NdIf { cond: _, t, f } => {
       ds = text_arm_deps(e, vars, t);
       for x in text_arm_deps(e, vars, f) {
@@ -1774,6 +1805,10 @@ pub fn arm_expectation(t: ir::TypeT) -> ir::TypeT {
 // `?? return`'s `ncr`) or a `match` holding its subject, whose selecting `if` is its tail, delivered per arm into `c` — the
 // coalesce block keeping its preamble and answering nothing.  Null for any other value.
 pub fn text_branch_into(c: integer, code: ir::Node) -> ir::Node? {
+  // An arm that leaves answers no value (`arm_yields_text`): the branch is bound whole.
+  if arm_leaves(code) {
+    return null;
+  }
   match code {
     NdIf { cond: _ } => text_arms_into(c, code),
     NdBlock { block } => {
@@ -1790,6 +1825,20 @@ pub fn text_branch_into(c: integer, code: ir::Node) -> ir::Node? {
       ir::NdBlock { block: [bl] }
     },
     _ => null
+  }
+}
+
+// Does some arm of this branch end in a `return`, a `break` or a `continue`?
+fn arm_leaves(n: ir::Node) -> boolean {
+  match n {
+    NdSpan { inner } => arm_leaves(inner),
+    NdReturn { inner: _ } => true,
+    NdBreak { n: _ } => true,
+    NdContinue { n: _ } => true,
+    NdBlock { block } => len(block[0].operators) > 0 && arm_leaves(block[0].operators[-1]!),
+    NdInsert { items } => len(items) > 0 && arm_leaves(items[-1]!),
+    NdIf { cond: _, t, f } => arm_leaves(t) || arm_leaves(f),
+    _ => false
   }
 }
 
@@ -1873,6 +1922,20 @@ pub fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
     }
     v = if hinted && el_ex_place::vec_lit_len(e, x!) == 0 && el_types::base(result) is TyVector {
       vt = el_types::without_deps(el_types::base(result));
+      // The vector's definitions are made where a value literal makes them, at its `]`, when
+      // nothing named the type before.
+      match vt {
+        TyVector { inner: rin } => {
+          rnm = el_types::elem_name(e, rin);
+          if rnm != "" && el::def_nr(e, "main_vector<{rnm}>") < 0 {
+            match e.p.nodes[x!] {
+              SVecLit { at: rat } => { el_schema::make_vector_def(e, rin, rnm, el::pos_at(e, closing_bracket(e, rat)), true); },
+              _ => {}
+            }
+          }
+        },
+        _ => {}
+      }
       ex(el_ex_pattern::empty_literal_to(e, vars, vt), vt)
     } else {
       el_ex_assign::expression(e, vars, x!)
