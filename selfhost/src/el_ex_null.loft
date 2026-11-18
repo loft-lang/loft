@@ -119,7 +119,8 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
       }
       h = ir::NdVar { n: held };
       present = el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpVectorIsNull", [h])]);
-      return ex(el_ir::v_block([el_ir::v_set(held, x.code), el_ir::v_if(present, h, d.code)], lhs, "ncc"), lhs);
+      // (An element read on the way to the field answers its absence: the nullable getter.)
+      return ex(el_ir::v_block([el_ir::v_set(held, nullable_arith(e, x.code, true)), el_ir::v_if(present, h, d.code)], lhs, "ncc"), lhs);
     }
     // A native call answers a fresh vector: held in a `__ncc_N` of its own type (nulled before
     // its statement), the result borrowing the holder.
