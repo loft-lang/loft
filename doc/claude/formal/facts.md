@@ -175,24 +175,23 @@ budget one number.
 ```
 
 ```
-  (Fact-Oracle)  a kind owes a falsifier that runs the program when its REACH IS
-                 WIDENED, and the widening lands with it: under `LOFT_FACT_VERIFY=1` the
-                 interpreter checks that kind's facts as the program runs — a MUST `entry`
-                 fact on entry, a MUST result fact at return, a MAY `writes` / `mints`
-                 summary as a superset of what the call actually wrote and minted — and a
-                 test injects one wrong fact of the kind, which the check must report.  A
-                 failed check names the function, the kind, the reach and the fact.  A
-                 kind at its present reach owes none: the census and the suite's values
+  (Fact-Oracle)  a fact is falsified by PROGRAMS, never by a checker inside the
+                 compiler: there is no switch under which loft verifies its own facts as a
+                 program runs.  The change that widens a kind's reach lands with (a) a suite
+                 cell whose rewrite fires only at the new reach — the census shows it
+                 firing — with hand-computed values that hold on both backends and equally
+                 with the rewrite's own `LOFT_NO_*` switch set, and (b) the published
+                 libraries and the dogfood programs re-validated on that change.  A kind at
+                 its present reach owes nothing more: the census and the suite's values
                  guard it.
 ```
 
 **In words.**  The census is the parallel run that makes moving an analysis safe (the old walk
-and the routine admit the same sites, or the move is not done); the oracle is what makes a
-widened reach safe, since the census can only count what is admitted, not whether it was right.
-The check is owed per kind and at the widening, because that is where a new answer can be
-wrong: a kind nobody widens keeps the answers its rewrites were measured with.  No kind has a
-check yet (`LOFT_FACT_VERIFY` is read nowhere in `src/`); the first widening of a reach builds
-the switch with its kind's check.
+and the routine admit the same sites, or the move is not done); it counts what is admitted, not
+whether it was right.  Whether it was right is asked of real programs: a cell that reaches the
+widened answer and is compared with the rewrite off, and every library and consumer that
+already runs on loft.  A run-time self-check would be a second implementation of every fact,
+owed its own proof, and the far end of it is a flag that makes the compiler behave correctly.
 
 ## Relations
 

@@ -32,6 +32,9 @@ The record companion of [facts.md](facts.md): closed deviation entries and what 
 - **Closed by a change of the rule, not by code** (owner): a standing falsifier for every kind
   asks for the whole fact engine first — five of the nine kinds are kinds of the routine, some
   answers depend on the asker, and the `writes` fact is keyed by record type where a run sees
-  a store.  The rule now asks a kind for its check when its reach is widened, with the
-  widening.  The suite ledger records `Fact-Oracle` as a process rule with no cell.
+  a store.  And a run-time self-check is refused outright (owner): validation is the suite,
+  the dogfood programs and the libraries, never a flag under which the compiler checks
+  itself.  The rule now asks a widened reach for a suite cell compared with the rewrite's
+  switch off, and for the libraries and consumers re-validated.  The suite ledger records
+  `Fact-Oracle` as a process rule with no cell of its own.
 
