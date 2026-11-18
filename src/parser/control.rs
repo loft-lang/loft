@@ -10608,8 +10608,7 @@ impl Parser {
             // absent missed both.  The re-read is safe only where no user call is in it; a
             // source with one was bound above.  Guard:
             // `tests/scripts/2561-a-record-copied-out-of-a-view-is-absent-where-its-source-is.loft`.
-            Value::Var(_) => None,
-            _ if !self.ir_has_user_call(&orig) && !Self::copy_source_is_a_literal(&orig) => {
+            _ if !self.ir_has_user_call(&orig) && !self.copy_source_is_present(&orig) => {
                 Some(orig.clone())
             }
             _ => None,
@@ -10916,6 +10915,20 @@ impl Parser {
     fn is_record_read(&self, d: u32) -> bool {
         self.data.def(d).name().starts_with("OpGet")
             || crate::use_analysis::is_projection_op(&self.data, d)
+    }
+
+    /// Is a return copy's source PROVEN present: a literal, or a local that
+    /// [`Self::record_local_may_be_absent`] clears — bare, or as the value of a block that
+    /// holds nothing else (a branch arm's `{ code }`)?
+    fn copy_source_is_present(&self, src: &Value) -> bool {
+        match src.unspan() {
+            Value::Var(v) => !self.record_local_may_be_absent(*v),
+            Value::Block(bl) if bl.name == "Object" => true,
+            Value::Block(bl) if bl.operators.len() == 1 => {
+                self.copy_source_is_present(&bl.operators[0])
+            }
+            _ => Self::copy_source_is_a_literal(src),
+        }
     }
 
     /// Is a return copy's source a record LITERAL — the one source that cannot be absent?
