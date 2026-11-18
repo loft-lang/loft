@@ -609,7 +609,12 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
                 // into the buffer at the return — one that views a local, and one that owns
                 // its record, alike.  A parameter at the tail merges its borrow: not carried.)
                 copy = if !vars.vars[tv].argument { el_ex_null::copy_into_buffer(e, vars, el_ir::last(bl.operators), tv, buf, result) } else { null };
-                if copy == null {
+                // A visible parameter the first pass merged into the result (`MergeAttr`) is
+                // handed back as it is: the result borrows it beside the buffer.
+                tpa = if vars.vars[tv].argument { attr_nr(el::def(e, e.context), el_vars::name_of(vars, tv)) } else { -1 };
+                merged = tpa >= 0 && !el::def(e, e.context).attributes[tpa].hidden && el_types::deps(el::def(e, e.context).returned[0] ?? ir::TyVoid).contains(tpa);
+                if merged {
+                } else if copy == null {
                   el::refuse(e, "a record tail other than the local the return buffer was renamed onto");
                 } else {
                   bl.operators[-1] = copy!;
