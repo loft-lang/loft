@@ -635,10 +635,10 @@ T-Chk-Vec	types	todo
 T-Recursive	types	todo			
 T-Sub	types	todo			
 T-Syn	types	todo			
-W-Call	types	todo			
-W-Count	types	todo			
-W-Lit	types	todo			
-W-Name	types	todo			
-W-Op	types	todo			
-W-Regime	types	todo			
-W-Store	types	todo			
+W-Call	types	curated	2	2026-11-18	a call crossing between a regime file and a 64-bit file narrows at the receiving side: needs two files, held by tests/width32.rs's library crossings
+W-Count	types	curated	2	2026-11-18	a count is an i32 under the regime: W-Name's cell (len + i32::MAX reads null) and tests/width32.rs
+W-Lit	types	curated	3	2026-11-18	its own cell beside W-Name's, which spells the 64-bit literals the rule names as its cure
+W-Name	types	curated	2	2026-11-18	first cell, from the formal text: integer is 32 bits and i64 64, float is single and f64 double, with W-Lit's 64-bit spellings (moved by LOFT_NO_SEVERAL_VARS)
+W-Op	types	curated	3	2026-11-18	its own cell; its fold candidate agrees with gate E
+W-Regime	types	curated	2	2026-11-18	#width 32 as the first line puts a file under: held by W-Name's, W-Op's and W-Lit's cells and tests/width32.rs's whole-program and library switches
+W-Store	types	curated	1	2026-11-18	a 64-bit field stored into a regime file's i32 slot is narrowed: needs a 64-bit file, held by tests/width32.rs (a_64_bit_field_stored_in_a_32_bit_slot_is_narrowed)
