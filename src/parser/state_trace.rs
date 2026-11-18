@@ -160,7 +160,24 @@ impl Parser {
             def.position().pos,
             def.name()
         );
-        eprintln!("{head} ret={}", def.returned().show(&self.data, &self.vars));
+        // A result's deps number ATTRIBUTES of the definition, while the type's own spelling
+        // names the VARIABLE of that number: `attrs=<n>:<attribute name>` says which attribute
+        // each is, so a buffer renamed after a local reads apart from one that was bound.
+        let attrs: Vec<String> = def
+            .returned()
+            .depend()
+            .iter()
+            .map(|n| match def.attributes().get(*n as usize) {
+                Some(a) => format!("{n}:{}", a.name),
+                None => format!("{n}:#"),
+            })
+            .collect();
+        let shown = def.returned().show(&self.data, &self.vars);
+        if attrs.is_empty() {
+            eprintln!("{head} ret={shown}");
+        } else {
+            eprintln!("{head} ret={shown} attrs={}", attrs.join(","));
+        }
         for v in 0..self.vars.count() {
             eprintln!(
                 "{head} var {v} {}={}",

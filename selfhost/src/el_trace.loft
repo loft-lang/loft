@@ -111,7 +111,20 @@ pub fn fn_end(e: el::El, vars: el_vars::Vars, d: integer) {
   if e.first_pass && len(env_variable("LOFT_STATE_TRACE_CONTROL")) > 0 {
     eprintln("{head} ret=(control)");
   } else {
-    eprintln("{head} ret={report::type_show_in(e.b, f, def.returned[0] ?? ir::TyVoid)}");
+    // A result's deps number ATTRIBUTES of the definition, while the type's own spelling names
+    // the VARIABLE of that number: `attrs=<n>:<attribute name>` says which attribute each is.
+    rt = def.returned[0] ?? ir::TyVoid;
+    attrs: vector<text> = [];
+    for n in el_types::deps(rt) {
+      a = def.attributes[n];
+      attrs += [if a == null { "{n}:#" } else { "{n}:{a.name}" }];
+    }
+    shown = report::type_show_in(e.b, f, rt);
+    if len(attrs) == 0 {
+      eprintln("{head} ret={shown}");
+    } else {
+      eprintln("{head} ret={shown} attrs={attrs.join(",")}");
+    }
   }
   for v in f.variables {
     eprintln("{head} var {v#index} {v.name}={report::type_show_in(e.b, f, v.type_def[0] ?? ir::TyVoid)}");
