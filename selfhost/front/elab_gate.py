@@ -143,6 +143,18 @@ def pass1_sections(stderr):
     return out
 
 
+# The points each side printed for a program (port-debug-output.md § 4): path -> (the Rust
+# front end's set, the elaborator's), read by the self-check on the positive control's program.
+POINT = re.compile(r"^state \d \d+:\d+ (\S+)")
+SEEN_POINTS = {}
+# What both sides print for any function with a statement in it.
+ALWAYS = ("stmt", "stmt-end", "var", "fn-end")
+
+# The first pass of the functions a refusal is met in: path -> {function: (verdict, rust line,
+# port line, parted rust, parted port)}.  Reported apart (`LOFT_ELAB_PASS1_REFUSED`), never
+# counted or pinned.
+PASS1_REFUSED = {}
+
 # Where a function's two variable tables PARTED on the first pass (port-debug-output.md § 1):
 # path -> {function: (the first differing `var` line of the Rust side, of the port)}.
 PASS1_AT = {}
@@ -271,6 +283,15 @@ def one(loft, defs, elab, std, path, tmp, env, i):
         if path in PASS1:
             PASS1_AT[path] = pass1_parted(rust_err, m.stderr,
                                           [k for k, (v, _, _) in PASS1[path].items() if v == "pass1-differ"])
+        SEEN_POINTS[path] = tuple({m2.group(1) for m2 in map(POINT.match, t.splitlines()) if m2}
+                                  for t in (rust_err, m.stderr))
+        # The functions a refusal is met in are outside the verdict (their image is not
+        # compared), but their first pass can be read all the same: a refused function whose
+        # first pass agrees needs a second-pass lowering only.
+        if refused:
+            rf = pass1_verdicts(rust_err, m.stderr, {k for k, (v, _) in fns.items() if v == "refused"})
+            at = pass1_parted(rust_err, m.stderr, [k for k, (v, _, _) in rf.items() if v == "pass1-differ"])
+            PASS1_REFUSED[path] = {k: v + at.get(k, ("", "")) for k, v in rf.items()}
     if refused:
         return "refused", refused, fns
     if mine == want:
@@ -496,6 +517,17 @@ def main():
                         # and the statement where the two variable tables parted, if they did
                         at = PASS1_AT.get(path, {}).get(fname, ("", ""))
                         fh.write(f"{v}\t{prog}::{fname}\t{rust_line}\t{port_line}\t{at[0]}\t{at[1]}\n")
+        # `LOFT_ELAB_PASS1_REFUSED=<file>`: the same six columns for the functions a refusal is
+        # met in — which of them agree on the first pass already.
+        if os.environ.get("LOFT_ELAB_PASS1_REFUSED"):
+            with open(os.environ["LOFT_ELAB_PASS1_REFUSED"], "w", encoding="utf-8") as fh:
+                for path, fns1 in sorted(PASS1_REFUSED.items()):
+                    prog = baseline.name_of(path, root, suite)
+                    for fname, row in sorted(fns1.items()):
+                        fh.write(f"{row[0]}\t{prog}::{fname}\t" + "\t".join(row[1:]) + "\n")
+            rv = collections.Counter(r[0] for f in PASS1_REFUSED.values() for r in f.values())
+            print(f"pass 1 of the functions a refusal is met in: {rv['pass1-agree']} of "
+                  f"{sum(rv.values())} agree (not counted above)")
         # `LOFT_ELAB_ROUTES=<file>`: every `route` line of both sides and every `refuse` line of
         # the port, as `program<TAB>side<TAB>pass<TAB>line<TAB>col<TAB>text` — what the
         # where-list joins a refusal's line to, and what route coverage counts.
@@ -558,6 +590,12 @@ def main():
             PASS1[control] = before
             if not caught:
                 sys.exit(f"pass 1: the positive control read pass1-agree on {control}: the layer cannot fail")
+            # The self-check: neither side's instruments went silent on that program.
+            for side, seen in zip(("the Rust front end", "the elaborator"), SEEN_POINTS.get(control, (set(), set()))):
+                gone = [p for p in ALWAYS if p not in seen]
+                if gone:
+                    sys.exit(f"state trace: {side} printed no `{'`, `'.join(gone)}` line for {control}: "
+                             "an instrument went silent")
             print(f"pass 1: positive control caught ({os.path.relpath(control, os.path.dirname(root))})")
     # `LOFT_ELAB_KEEP=1` keeps the built elaborator and the standard image for single runs.
     if not os.environ.get("LOFT_ELAB_KEEP"):

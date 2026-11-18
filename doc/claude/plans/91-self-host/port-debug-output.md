@@ -84,6 +84,21 @@ refusal is about.
 exact one.  The join with Rust's `route` lines stays by line: Rust's column is its lexer's
 position, which is where a construct's handler was ENTERED, not where the construct starts.
 
+### Built — § 2
+
+`El.at`, set and restored by `el_ex_assign::expression` (its body is `expression_node` now):
+the node's leftmost token where `el_ex_null::node_start` knows the shape, the node's own token
+otherwise.  `el::trace_pos` spells it for `el::refuse` and `el_trace::route`, in the
+convention the other state lines use (`el::pos_at`, the Rust lexer's position while that token
+is its peek).
+
+Whole corpus (on f74d7e42b): verdicts and first-pass counts unchanged.  15558 of the 17246
+`refuse` lines and 44837 of the 45005 port `route` lines carry a column; the 1688 refusals
+without one are met outside any expression (a declaration).  The exact line also joins
+better with Rust's routes than the statement's line did: `parse_match` 3342 of 3376 sites on
+both sides (3313 before), `parse_vector_match` 822 of 854 (814), `parse_object` 8036 (7677);
+3 of 30 routes are carried in every program that takes them (2 before).
+
 ## 3. One command — `selfhost/front/elab_trace.py`
 
 ```
@@ -102,6 +117,15 @@ elab_trace.py PROG [--fn NAME] [--var NAME] [--pass 1|2] [--points stmt,var,…]
 
 `state_diff.py` stays the comparison; this is the reader.
 
+### Built — § 3
+
+`selfhost/front/elab_trace.py` as designed, with `--defs` beside `--elab` and `--std` for the
+report writer `--ir` asks of the Rust side.  `--fn main` finds `n_main`; a function's lines are
+cut as the gate cuts them, a `var` line going to the function it names.  `--side diff` is a
+unified diff of the two filtered traces, in which Rust's `route` lines and the port's stand
+beside each other.  Tried on the probes of this plan: `--var p` prints the four lines of the
+variable's history; `--ir r1 --side diff` reads "the two sides agree".
+
 ## 4. The self-check — an instrument that went silent
 
 Every `--pass1` gate run already reads one agreeing program again for its positive control.
@@ -111,10 +135,26 @@ it is expected to print (`stmt`, `stmt-end`, `var`, `fn-end` on both; nothing is
 otherwise.  A Rust test (`tests/state_trace.rs`) pins the Rust side's lines for one small
 program without building any tool.
 
+### Built — § 4
+
+The gate keeps the set of points each side printed per program (`SEEN_POINTS`) and, on the
+positive control's program, stops with "an instrument went silent" naming the side and the
+point when `stmt`, `stmt-end`, `var` or `fn-end` is missing from either.  Tried both ways: it
+passes on a sample, and with a point no side prints added to the required list it stops with
+"the Rust front end printed no `bogus` line for …".  `tests/state_trace.rs` pins the 27 lines
+of one function's first pass on the Rust side — every point kind — and that nothing is
+printed with the switch off; it runs with the `parser` subject.
+
 ## 5. The page
 
 `debugging-the-port.md` beside this file: the questions above, the command for each, how to
 read a line, and what the trace does not show.  DEBUG_TRACE.md points to it.
+
+### Built — § 5
+
+[debugging-the-port.md](debugging-the-port.md): the question table, how to read each point,
+the order of reading a difference against the Rust front end, the gate's corpus outputs, and
+what the trace does not show.  DEBUG_TRACE.md points to it.
 
 ## What is deliberately not built
 

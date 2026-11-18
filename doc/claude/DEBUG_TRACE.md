@@ -5,6 +5,8 @@
 
 LOFT_LOG presets, the struct/database dumps in the trace, and IR / execution-trace inspection of one function.  Part of the debugging guide: [DEBUG.md](DEBUG.md).
 
+The front end's own state, pass by pass — what a statement answered, which statement created or retyped a variable, which special route was taken — is `LOFT_STATE_TRACE=1`, printed alike by the Rust front end and the loft-written elaborator: [plans/91-self-host/debugging-the-port.md](plans/91-self-host/debugging-the-port.md).
+
 ---
 
 ## Preset Guide
