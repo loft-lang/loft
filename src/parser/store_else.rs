@@ -194,7 +194,8 @@ impl Parser {
             let arg = if self.is_append_op(op) {
                 0
             } else if let Some(arg) = self.write_target_arg(op) {
-                if matches!(args.get(arg).map(Value::unspan), Some(Value::Var(v)) if elements.contains(v)) {
+                if matches!(args.get(arg).map(Value::unspan), Some(Value::Var(v)) if elements.contains(v))
+                {
                     continue;
                 }
                 arg

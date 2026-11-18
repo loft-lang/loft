@@ -12063,7 +12063,8 @@ impl Data {
         // loft#2546).  Only the open instances this template's own types name are closed.
         let own = self.open_instances_named_by(template);
         for d in 0..self.definitions() {
-            if (!own.contains(&d) && (self.is_tuple_def(d) || self.is_foreign_self_reference(d, template)))
+            if (!own.contains(&d)
+                && (self.is_tuple_def(d) || self.is_foreign_self_reference(d, template)))
                 || !self.is_open_instance(d)
                 || !bindings.iter().any(|(h, _)| {
                     self.definitions[d as usize]
