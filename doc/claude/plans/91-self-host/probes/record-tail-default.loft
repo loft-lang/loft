@@ -3,6 +3,8 @@
 //   the subject is a fresh call's vector:        call_vec, call_vec_miss
 //   ... a field of a call's record:              call_field, call_nested
 //   ... a local bound from a call:               local_vec, local_hash, local_hash_miss
+//   ... a KEYED local (the buffer is renamed):   keyed_local_hash, keyed_local_sorted, keyed_local_index,
+//                                                keyed_local_miss, keyed_built_here
 //   ... a local built here:                      built_here
 //   ... a local rebound before the tail:         reassigned
 //   ... a PARAMETER's field (nothing to copy):   param_field, param_keyed
@@ -28,6 +30,18 @@ fn call_nested() -> Cell { outer(3).o_bag.b_vec[2] ?? Cell { q: -1, r: -1 } }
 fn local_vec() -> Cell { v = cells(3); v[1] ?? Cell { q: -1, r: -1 } }
 fn local_hash() -> Cell { b = hbag(3); b.b_hash[2] ?? Cell { q: -1, r: -1 } }
 fn local_hash_miss() -> Cell { b = hbag(3); b.b_hash[7] ?? Cell { q: -1, r: -1 } }
+fn mk_h(n: integer) -> hash<Cell[q]> { h: hash<Cell[q]> = []; for i in 0..n { h += [Cell { q: i, r: i * 10 }]; } h }
+fn mk_s(n: integer) -> sorted<Cell[q]> { s: sorted<Cell[q]> = []; for i in 0..n { s += [Cell { q: i, r: i * 10 }]; } s }
+fn mk_i(n: integer) -> index<Cell[q]> { ix: index<Cell[q]> = []; for i in 0..n { ix += [Cell { q: i, r: i * 10 }]; } ix }
+fn keyed_local_hash() -> Cell { v = mk_h(3); v[2] ?? Cell { q: -1, r: -1 } }
+fn keyed_local_sorted() -> Cell { v = mk_s(3); v[1] ?? Cell { q: -1, r: -1 } }
+fn keyed_local_index() -> Cell { v = mk_i(3); v[2] ?? Cell { q: -1, r: -1 } }
+fn keyed_local_miss() -> Cell { v = mk_h(3); v[7] ?? Cell { q: -1, r: -1 } }
+fn keyed_built_here() -> Cell {
+  h: hash<Cell[q]> = [];
+  h += [Cell { q: 5, r: 50 }];
+  h[5] ?? Cell { q: -1, r: -1 }
+}
 fn built_here() -> Cell {
   v: vector<Cell> = [];
   v += [Cell { q: 5, r: 50 }];
@@ -57,6 +71,11 @@ fn main() {
   assert(local_vec().r == 10, "local_vec");
   assert(local_hash().r == 20, "local_hash");
   assert(local_hash_miss().q == -1, "local_hash_miss");
+  assert(keyed_local_hash().r == 20, "keyed_local_hash");
+  assert(keyed_local_sorted().r == 10, "keyed_local_sorted");
+  assert(keyed_local_index().r == 20, "keyed_local_index");
+  assert(keyed_local_miss().q == -1, "keyed_local_miss");
+  assert(keyed_built_here().r == 50, "keyed_built_here");
   assert(built_here().r == 50, "built_here");
   assert(reassigned().r == 30, "reassigned");
   b = bag(3);
