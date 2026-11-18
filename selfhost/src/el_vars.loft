@@ -1090,7 +1090,7 @@ pub fn depend(v: Vars, nr: integer, on: integer) {
 }
 
 // The variable's type replaced.
-fn set_type(v: Vars, nr: integer, t: ir::TypeT) {
+pub fn set_type(v: Vars, nr: integer, t: ir::TypeT) {
   v.vars[nr].type_def = [t];
 }
 

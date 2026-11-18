@@ -671,7 +671,25 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       _ => {}
     }
   }
-  finish_body(e, vars, code)
+  fin = finish_body(e, vars, code);
+  // A `-> E?` body (a struct enum) borrows the visible parameters an early `return` merged,
+  // whatever its tail builds (`return code; … NB { m: k }` is typed `ref(N)["code"]?`).
+  if !e.first_pass && result is TyOptional && el_types::struct_enum_def(result) >= 0 {
+    epd: vector<integer> = [];
+    for era in el_types::deps(el::def(e, e.context).returned[0] ?? ir::TyVoid) {
+      erat = el::def(e, e.context).attributes[era];
+      if erat != null && !erat!.hidden {
+        epv = el_vars::var(vars, erat!.name);
+        if epv >= 0 {
+          epd += [epv];
+        }
+      }
+    }
+    if len(epd) > 0 {
+      return el_ex_null::block_typed(fin, el_types::with_deps(el_types::without_deps(result), epd));
+    }
+  }
+  fin
 }
 
 // Is the place this read chain starts at an `ncr` block (a `!` read)?

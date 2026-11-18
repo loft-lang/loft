@@ -2277,6 +2277,13 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
   // A literal rebinding a local that has a store takes a fresh one, as its first bind did —
   // unless an item reads the local, which Rust stages through `_build_val_N` first.
   has_store = len(el_types::deps(el_vars::tp(vars, v))) > 0 || vars.vars[v].argument;
+  // In the linked layout (a keyed collection over the element exists) a literal rebinding a
+  // local that has its store refills it in place (`OpKeepVectorRange`, `OpClearVector`): not
+  // carried, refused by name.
+  if !append && !value && has_store && !vars.vars[v].argument && !e.first_pass && len(items) > 0 && linked_record(e, held_elem) {
+    el::refuse(e, "a vector literal rebinding a local in the linked layout");
+    return refused_build();
+  }
   if append && !has_store && !value && !vars.vars[v].argument {
     el::refuse(e, "a vector append to a local with no store yet");
     return refused_build();
