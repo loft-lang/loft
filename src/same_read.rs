@@ -1152,8 +1152,12 @@ pub fn rewrite_program(data: &mut Data) -> usize {
             total += n;
         }
     }
-    // @decline-owed: a statement with a call that is no pure operator, and discharge blocks
-    //   whose read, conversion test or default differ
+    // @decline-owed: a statement with an impure call; discharge blocks that differ in read,
+    //   test or default, or sit in an `if` arm; a guard whose arm does not leave or has an
+    //   `else`; a get-or-insert that names the assigned variable; a match with an impure test
+    //   or an element not proved in range; a sequence crossed by a write `bind_sequences`
+    //   cannot see through; at run time, a filed lookup after a refused write or under another
+    //   key
     crate::rewrite_census::fired("R-SameRead", total);
     total
 }

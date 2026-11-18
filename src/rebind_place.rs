@@ -168,9 +168,13 @@ fn visit(v: &mut Value, data: &Data, d_nr: u32, facts: &Facts, pos: &mut usize) 
                 .any(|a| matches!(a.unspan(), Value::Var(v) if *v == x));
             match admit(data, d_nr, here, x, f, args, facts) {
                 Ok(b) => {
-                    // @decline-owed: a target that is a parameter, a view, a link, a witnessed
-                    //   local or a nullable that may be absent; another argument that reaches
-                    //   its store; a view of it live across the call
+                    // @decline-owed: a target that is a parameter (the frame's own return
+                    //   buffer excepted), a compiler temp, nullable, no dense record, a view,
+                    //   view-elided or witnessed; a target handed in twice or by reference;
+                    //   another argument that reaches its store; a view of it read across the
+                    //   call; a callee that is recursive, a lambda, bodiless or
+                    //   buffer-promoted, or whose exit is unsafe once buffer and parameter are
+                    //   one
                     crate::rewrite_census::fired("R-Rebind", 1);
                     if crate::keys::trace_rebind() {
                         eprintln!(

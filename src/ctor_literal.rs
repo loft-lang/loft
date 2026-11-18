@@ -755,9 +755,12 @@ pub fn rewrite_program(data: &mut Data, stores: &crate::database::Stores) -> usi
         crate::scopes::assign_function_slots(data, caller);
         total += done.len();
     }
-    // @decline-owed: a callee whose body is not its buffer's mint and one covering literal
-    //   group; a statement that is not the local's only assignment; a field value the rule's
-    //   forms do not cover
+    // @decline-owed: a callee whose body is more than its buffer's mint and one covering
+    //   literal group; a target assigned more than once, nullable, captured, a parameter or no
+    //   plain record local; an argument that reads the target or is more than operators, a
+    //   vector literal or a vector variable; a record of scalars; a return buffer used
+    //   elsewhere; in a loop, a target that is no loop record; a caller holding a `yield` or
+    //   `par`; an `open_world` or entry-observing program
     crate::rewrite_census::fired("R-CtorLiteral", total);
     total
 }

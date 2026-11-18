@@ -221,9 +221,11 @@ fn guarded(r: Rebuild, original: Vec<Value>, cx: &Cx) -> Value {
         Form::Keep { lo, hi } => (lo, hi),
         Form::Prepend { g } => return prepended(r.place, g, r.elem_tp, r.t, original, cx),
     };
-    // @decline-owed: a temporary not declared `[]` or filled by more than appends of the
-    //   place's own elements in non-decreasing index order; an append that could write a slot
-    //   before its old value is read; the place written or viewed before the bind
+    // @decline-owed: a rebuild that is not a counted `for i in a..b` whose body appends exactly
+    //   the `?`-discharged record element `V[i]`; a bound that is no literal, variable or the
+    //   place's length; a temporary named outside the rebuild; a place that is no variable or
+    //   field path; a prepended value that is no local or roots the place; at run time, a range
+    //   outside `0 <= lo <= hi <= len(V)` runs the statements as written
     crate::rewrite_census::fired("R-Compact", 1);
     if crate::keys::trace_compact() {
         eprintln!(

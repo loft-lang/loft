@@ -104,7 +104,9 @@ pub fn rewrite_program(data: &mut Data) {
         });
         data.definitions[d_nr].code = code;
     }
-    // @no-decline: the shape is `pow(E, x)` itself; every site of it is folded, and a `pow` of
-    //   another base is not a site of this rule
+    // @no-decline: the shape is `pow(E, x)` itself — the operator or the stdlib call, the base
+    //   the constant `E` or a literal with exactly its bits; every site of it in a loft-defined
+    //   body is folded with no further test, and a `pow` of another base is not a site of this
+    //   rule
     crate::rewrite_census::fired("R-ExpPow", fired);
 }

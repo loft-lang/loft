@@ -117,9 +117,11 @@ pub fn rewrite(data: &mut Data, database: &Stores, d_nr: u32) {
     let fired = cx.fired;
     data.definitions[d_nr as usize].code = code;
     if fired > 0 {
-        // @decline-owed: a root that is a parameter, a hidden buffer or a local with deps; a
-        //   view local with a bind that is no field of that one root; an exit that is not the
-        //   last thing naming the root
+        // @decline-owed: a root that is a parameter, a hidden buffer, never freed, nullable or
+        //   no dep-empty record local; a source that is an element, or a view local with a bind
+        //   that is no field of its one root; a returned record that owns no heap; an exit
+        //   block that holds anything but binds and buffer guards before the copy or anything
+        //   but frees after it, or that does not free the root
         crate::rewrite_census::fired("R-ReturnField", fired);
     }
 }

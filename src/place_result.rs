@@ -190,9 +190,12 @@ fn admitted(data: &Data, d_nr: u32, code: &Value, ops: &Ops, mode: Mode) -> Vec<
         match admit(data, d_nr, top, idx, *v, *fn_nr, args, ops, mode) {
             Ok(plan) => {
                 if mode != Mode::Preview {
-                    // @decline-owed: a base that two parameters, or a parameter and the return
-                    //   buffer, could share; a chain that forks or leaves the table; any growth
-                    //   under `LOFT_NO_DISTINCT_GROWTH`
+                    // @decline-owed: a callee that is not loft-defined, answers a nullable,
+                    //   non-record or borrowed result, or does not build a fresh literal into
+                    //   its buffer on every exit; a local that is a parameter, rebound, read
+                    //   after its store or handed to a loft call; an argument that reaches the
+                    //   destination's store; a second destination or host; a destination that
+                    //   is no element appended to a parameter's collection
                     crate::rewrite_census::fired("R-Place", 1);
                 }
                 if crate::keys::trace_place() {

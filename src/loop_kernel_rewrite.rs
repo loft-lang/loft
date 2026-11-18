@@ -77,8 +77,12 @@ pub fn rewrite(data: &mut Data, d_nr: u32) {
     replace_loops(&mut code, &whole, &ops, &mut fired);
     data.definitions[d_nr as usize].code = code;
     if fired > 0 {
-        // @decline-owed: a sum loop whose body holds more than `acc = acc + v[i]`, and one whose
-        //   loop variables are named elsewhere in the function (`reduction`)
+        // @decline-owed: the kernel: a sum loop that is not `for i in 0..len(v)` over a
+        //   variable, whose body holds more than `acc = acc + v[i]`, or whose loop variables
+        //   are named elsewhere (`reduction`); the nest (`hoist::bounded_nest`): an inclusive
+        //   range, a second statement, a term node that is no nest operator or discharged
+        //   integer read, a coroutine body, a read with no held header and bound; at run time,
+        //   a failed guard runs the checked loop
         crate::rewrite_census::fired("R-BoundedNest/kernel", fired);
     }
 }

@@ -203,8 +203,11 @@ fn rewrite_block(
                 Box::new(Value::Call(minus, vec![len_dst, Value::Var(b0)])),
             ),
         );
-        // @decline-owed: a statement between the bind and the append that reads `k` or `dst` other
-        //   than by length, rebinds one or leaves early; a `k` bound twice or named elsewhere
+        // @decline-owed: a statement between the bind and the append that names `k`, `dst` or a
+        //   local depending on `dst` other than as a length operand, rebinds one, leaves early,
+        //   calls a function reference or runs a `par`; a `k` that is a parameter or is named
+        //   outside the bind, those lengths and the append; a `dst` that is no vector variable;
+        //   an append in another block
         crate::rewrite_census::fired("R-BoundAppend", 1);
         if trace {
             crate::loft_eprintln!(

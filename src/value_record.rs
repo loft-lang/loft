@@ -698,9 +698,11 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
     }
     laps.lap("vr_rewrite");
     crate::rewrite_census::fired("R-ValueRecord", w.cands.len());
-    // @decline-owed: a local with a use beyond a field read, a constant-offset scalar write, a
-    //   hand-off to an admitted function or a copy from such a local; and a call
-    //   `(R-ValueRecord)` does not admit
+    // @decline-owed: a tuple parameter of a public function, a fn-ref arm or a function no loft
+    //   code calls, a captured one, or one written, returned, freed or rebound; a local with a
+    //   mention that is no field read, constant-offset scalar write, hand-on, bind or free; a
+    //   bind buffer shared, written, guarded or aliased; a read, hand-on or copy of another
+    //   layout; a local another variable depends on
     crate::rewrite_census::fired("R-ValueLocal", w.params.len());
     let mut touched: Vec<u32> = touched.into_iter().collect();
     touched.sort_unstable();

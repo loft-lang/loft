@@ -161,8 +161,12 @@ pub fn rewrite(data: &mut Data, database: &Stores, d_nr: u32) {
 fn apply(data: &mut Data, d_nr: u32, plans: &[Plan], rb: u16, guard: &Value, ops: &Ops) {
     let mut code = std::mem::replace(&mut data.definitions[d_nr as usize].code, Value::Null);
     for plan in plans {
-        // @decline-owed: a local vector whose wrapper is minted more than once, and one that
-        //   reaches an exit other than inside the literal built into the return buffer
+        // @decline-owed: a local that is rebound, aliased, returned bare, named outside a
+        //   receiver position or after the move in its exit, or that homes stored references; a
+        //   vector copied anywhere but the buffer's literal; a wrapper minted more than once,
+        //   freed nowhere or outside an exit, or named outside its mint, init and length reset;
+        //   for a record local, a second `return`, a type that is no plain struct, or a
+        //   construction that reads a field before writing every one
         crate::rewrite_census::fired("R-ExitVector/record", 1);
         if let Value::Block(bl) = code.unspan_mut() {
             bl.operators[plan.mint] = Value::Insert(vec![

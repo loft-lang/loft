@@ -92,9 +92,12 @@ impl OpEmitter for OpGetRecordEmitter {
             && key_vals.len() == 1
             && matches!(key_types.as_slice(), [k] if matches!(k.unsigned_abs(), 1 | 2 | 8 | 12));
         if typed {
-            // @decline-owed: a keyed read of a collection that is no hash, of a hash with more
-            //   than one key field, or with a key that is no integer width the pre-resolved
-            //   equality lists
+            // @decline-owed: a keyed read of a collection that is no hash; a key that is
+            //   neither one integer width the pre-resolved equality lists, one text, nor two to
+            //   four `integer` / `long` parts; a removal whose lookup is on another collection
+            //   or path, has no single 8-byte integer key, or is lazily bound; at run time, a
+            //   holder with no record, an absent collection and a lazy miss take the general
+            //   entry
             crate::rewrite_census::fired("R-TypedKeyed", 1);
             // An 8-byte integer key's position is a constant the call carries
             // (`OpGetHashLongAt`); the narrow widths keep the general typed entry.

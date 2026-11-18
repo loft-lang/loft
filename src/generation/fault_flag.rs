@@ -475,9 +475,12 @@ impl Output<'_> {
             .iter()
             .map(|v| format!("var_{}", sanitize(variables.name(*v))))
             .collect();
-        // @decline-owed: a `for` statement holding a node outside the admitted set (a store
-        //   write, a call that is no stateless operator, a `Set` of a local whose address is
-        //   taken), and one with no discharge on a recurrence
+        // @decline-owed: a `for` statement with a node outside the admitted set: a `return`, a
+        //   `break` or `continue` that leaves it, an operator whose template touches state, a
+        //   call that is no loft function, takes a hidden or by-reference parameter, recurses,
+        //   raises, or runs more than four calls deep; a write of a non-scalar local declared
+        //   before it or of a local whose address is taken; no fault form, or no discharge on a
+        //   recurrence; a coroutine body
         crate::rewrite_census::fired("R-FaultFlag", 1);
         writeln!(w, "{{ //@FR-R-FaultFlag")?;
         self.indent(w)?;

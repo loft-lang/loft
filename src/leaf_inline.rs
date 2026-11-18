@@ -1262,19 +1262,28 @@ pub fn rewrite_program(data: &mut Data) -> usize {
             crate::scopes::assign_function_slots(data, caller);
         }
     }
-    // @decline-owed: a callee that is no scalar leaf: a non-scalar or nullable parameter, local
-    //   or result; a body node beyond assignments, operators, `if` and blocks; no final
-    //   `return`; more than 120 nodes
+    // @decline-owed: a callee with a non-scalar, nullable or captured variable or result (but a
+    //   tuple of scalars, an appender's record, a reader's file); a body node beyond
+    //   assignments, operators, `if` and blocks; over 120 nodes; a `#c_twin`; a call to itself;
+    //   a caller that yields or runs `parallel`; an `open_world`, entry-observing or profiled
+    //   build; an appender or reader site whose record is no plain variable or whose arguments
+    //   call user code
     crate::rewrite_census::fired("R-InlineLeaf", calls);
-    // @decline-owed: a mask whose operand `(R-Range)` cannot place in `0 ..= m`, and a nullable
-    //   division whose dividend is not ranged or whose divisor is not a finite non-zero literal
+    // @decline-owed: a mask that is no literal `2^k - 1`, or whose other operand `(R-Range)`
+    //   cannot place in `0 ..= m` (a local written through its address carries no range); a
+    //   nullable division whose dividend converts no ranged integer or whose divisor is not a
+    //   finite non-zero float literal; a caller that yields, holds a `par` block or inlined no
+    //   leaf call
     crate::rewrite_census::fired("R-MaskRange", masks);
-    // @decline-owed: a last assignment whose local the result reads more than once, or not as
-    //   the first thing it evaluates
+    // @decline-owed: a last assignment to a local that is not the inlined body's own, or that
+    //   the result reads more than once or not as the first thing it evaluates; for the
+    //   statement clause, a comprehension temporary assigned or read more than once, captured,
+    //   with a value that is impure or no operator call, or read in the next statement after
+    //   something impure
     crate::rewrite_census::fired("R-SingleUse", singles);
-    // @decline-owed: a scale whose divisor is not a finite non-zero literal under 2^1021, whose
-    //   factor is no power of two of at least 2, or whose folded divisor is inexact or
-    //   subnormal
+    // @decline-owed: a scale whose dividend converts no integer, whose divisor is not a finite
+    //   non-zero float literal under 2^1021, whose factor is no literal power of two of at
+    //   least 2, or whose folded divisor is inexact or subnormal
     crate::rewrite_census::fired("R-ScaleFold", scales);
     calls
 }

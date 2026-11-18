@@ -123,7 +123,10 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
                 );
             }
         }
-        // @decline-owed: a function that yields or calls a generator, and a buffer another rule
+        // @decline-owed: a function that yields, calls a generator or holds a `par` block; a
+        //   record that is not exactly one vector of no-heap elements; a null declaration
+        //   inside the loop; a mention outside the mint, its field bind, the literal's zero and
+        //   a free; a field bound to a local that releases the store; a buffer another rule
         //   owns (`opt::buffer_owner`)
         crate::rewrite_census::fired("R-LoopBuffer", done.len());
         total += done.len();

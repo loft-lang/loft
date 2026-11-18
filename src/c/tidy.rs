@@ -444,8 +444,8 @@ fn ref_params_copied(
     for n in &copied {
         let _ = writeln!(head, "    LOFT_REF_IN({n});");
     }
-    // @no-decline: every `loft_ref` parameter the body names is copied in; one it does not name
-    //   has nothing to copy and is no site
+    // @no-decline: every by-value `loft_ref` parameter the body names is copied in; one it does
+    //   not name has nothing to copy and is no site
     crate::rewrite_census::fired("R-RefParam", copied.len());
     (sig, head + &body)
 }

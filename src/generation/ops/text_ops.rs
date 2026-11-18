@@ -203,8 +203,11 @@ pub(crate) fn fold_compare_on() -> bool {
 impl OpEmitter for FoldCompareEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
         if let Some(site) = ctx.output.fold_compare_site(args) {
-            // @decline-owed: a fold with another mention: a bind read elsewhere, a return, a
-            //   link, a capture, or an operator that does not read it as a text value
+            // @decline-owed: a fold that is not the predicate's own operand: a bind to a local,
+            //   a return, a link, a capture, a fold plus a literal, or an operator that does
+            //   not read it as a text value; a fold argument or other operand that holds a
+            //   sequence or a nested call lifted ahead of the statement; at run time, the first
+            //   non-ASCII byte builds the fold as written
             crate::rewrite_census::fired("R-FoldCompare", 1);
             if std::env::var_os("LOFT_TRACE_FOLD_COMPARE").is_some() {
                 eprintln!(

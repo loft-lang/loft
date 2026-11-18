@@ -64,9 +64,12 @@ impl Output<'_> {
             return None;
         }
         if !vecs.is_empty() {
-            // @decline-owed: a value observed as a store value before its boundary, and a shape
-            //   outside the rule's instances (for the float-vector record: a field that is no
-            //   fixed-length `vector<float>`)
+            // @decline-owed: a variable with a mention its gate does not name or a closure
+            //   capture; a body with a `yield` or a parallel block; a record type whose
+            //   constructions disagree on a field's length; a record parameter outside a twin;
+            //   a region that calls no twin; a vector parameter that is no work buffer; a push
+            //   group that leaves an element field unwritten; an owner that reaches no twin
+            //   (`roles_of`, `apart_vector::roles`, `owners_of`)
             crate::rewrite_census::fired("R-Apart/vector", vecs.apart.len());
         }
         if !recs.is_empty() && !self.apr_twin {

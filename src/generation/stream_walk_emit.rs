@@ -137,7 +137,8 @@ impl Output<'_> {
         // @decline-owed: a result vector named beyond its buffer plumbing, appends and return;
         //   a field the body reads that some append leaves unset or that is no integer, float,
         //   single or text; a body that names the vector, index or element other than as a
-        //   field read, or leaves the walk; a producer or body that is not quiet
+        //   field read, or leaves the walk; a producer, body or statement before the walk that
+        //   is not quiet or writes what the call reads; a vector local named outside its walk
         crate::rewrite_census::fired("R-StreamWalk", 1);
         self.indent(w)?;
         writeln!(w, "{{ //@FR-R-StreamWalk yield")?;

@@ -3301,7 +3301,10 @@ fn resolve_hot_helpers(cx: &Cx, protos: &str, bodies: &str) -> (String, String) 
             .iter()
             .filter(|d| hot.contains(d))
             .count();
-        // @decline-owed: a function the C writes in more than twelve statements
+        // @decline-owed: a helper candidate — a plain function of at most 80 statements — that
+        //   no `__inv` twin, no loop calling a twin and no hinted helper calls; a function the
+        //   C writes in more than twelve statements that is neither an `__inv` twin of at most
+        //   64 statements nor such a helper
         crate::rewrite_census::fired("R-Inline/helper", inlined);
     }
     let resolve = |text: &str| -> String {
@@ -3585,8 +3588,12 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
             .write()
         {
             Ok(b) => {
-                // @decline-owed: a value some use would store: a field set, an append, a keyed
-                //   insert, or a return that escapes the unit
+                // @decline-owed: a function written as a specialised twin; a root local bound
+                //   more than once, read outside its bind's block, or alive together with
+                //   another root; a producer whose transient twin cannot be written; and any
+                //   use of the value no transient arm answers — a field set or append that
+                //   would store it, a keyed insert, an escaping return, a computed offset, a
+                //   choice between two transient values
                 crate::rewrite_census::fired("R-Transient", 1);
                 Some(b)
             }

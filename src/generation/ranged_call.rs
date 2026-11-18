@@ -179,9 +179,11 @@ impl super::Output<'_> {
         if !self.rg_emitted.contains(&key) && !self.rg_requests.contains(&key) {
             self.rg_requests.push(key);
         }
-        // @decline-owed: a block with no hoisted integer field or guard variable, a field the
-        //   loop writes, a variable the block assigns or the function lends by reference, and a
-        //   copy that gains nothing (the gain test)
+        // @decline-owed: a call whose callee's ranged variant turns fewer than three operators
+        //   plain, with an integer argument or a twin's scalar input not proven within `[-L,
+        //   L]`, or in a coroutine body; for the guarded copy (`guard_plan`), a `For` block
+        //   with no hoisted integer field or unassigned, unlent range-bound variable, and a
+        //   copy that newly ranges no call or leaves a checked call checked
         crate::rewrite_census::fired("R-RangedCall", 1);
         true
     }

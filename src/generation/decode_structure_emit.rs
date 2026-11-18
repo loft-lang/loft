@@ -480,11 +480,12 @@ impl Output<'_> {
                         .join(", ")
                 )
             };
-            // @decline-owed: any of the rule's five conditions unproved: the source bytes
-            //   written, handed out by `&` or released before the field's last read; the record
-            //   not confined to frames that hold the bytes, or crossing a boundary; the field
-            //   read other than as a value; a text span that would be converted; also a
-            //   recursive type whose twin cannot be closed over the region, and a generator
+            // @decline-owed: a frame mention that is no read, or the frame rebound; a decoded
+            //   value returned from the root, held in a tuple, handed to a native or met by an
+            //   op outside `ALLOWED`; a decoded byte-string field read; an iterator, a fn ref,
+            //   a `yield` or a `par`; a root called from its own region; a span variant minted
+            //   alone; in the structure clause, a position handed on twice (`consumer`); at run
+            //   time, a span that is not UTF-8
             crate::rewrite_census::fired("R-DecodeView/structure", 1);
             write!(
                 w,

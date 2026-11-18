@@ -122,8 +122,11 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
                 );
             }
         }
-        // @decline-owed: a function that yields or calls a generator, and a loop local that is
-        //   no plain no-heap record minted by a literal inside the loop (`opt::loop_records`)
+        // @decline-owed: a function that yields, calls a generator or holds a `par` block; a
+        //   nullable, captured or heap-owning record (the refill clause: vectors of no-heap
+        //   elements under a complete literal); a second binding; a copy to another local; a
+        //   return; a native op beyond a scalar field read, in-place write or free; a callee
+        //   whose return borrows it; a record another rule owns (`opt::buffer_owner`)
         crate::rewrite_census::fired("R-LoopRecord", n - refill);
         crate::rewrite_census::fired("R-LoopRecord/refill", refill);
         total += n;

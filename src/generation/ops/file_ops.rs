@@ -26,9 +26,10 @@ impl OpEmitter for ReadFileEmitter {
         let Some((width, signed)) = typed_read(ctx.output, args) else {
             return DefaultEmitter.emit(ctx, args);
         };
-        // @decline-owed: a read whose type is `boolean`, `character`, text, a float or a
-        //   collection, a count that is not the type's width, and a slot that is not an
-        //   `integer` local
+        // @decline-owed: a read whose type is `boolean`, `character`, text, a `single` or a
+        //   collection, or a `float` outside the C writer's eight-byte read into a float local;
+        //   a count that is no literal of the type's width; and a slot that is not an `integer`
+        //   local
         crate::rewrite_census::fired("R-TypedRead", 1);
         // `@FR-R-FileHold` — inside a loop that holds this file's cursor, the guard reads.
         let guard = match args.first().map(Value::unspan) {

@@ -412,8 +412,12 @@ impl<'a> FnWriter<'a> {
                 &mut *self.cx.gen_bodies.borrow_mut(),
                 format_args!("\n{sig} {{\n{body}}}\n"),
             );
-            // @decline-owed: an early exit whose arm names a local the helper cannot be handed, and a
-            //   helper the function does not call (`COLD_ESCAPED`)
+            // @decline-owed: an arm that returns a computed value or a local not set to a
+            //   literal, has more than one `return`, or holds a loop, `break`, `continue`,
+            //   `yield`, fn ref or `par`; a function holding a fn ref, `par` or `yield`; an arm
+            //   naming a local the body names elsewhere, or sharing one with an earlier arm; a
+            //   signature the helper does not take; a body that names an arm's variable or
+            //   skips its call (`COLD_ESCAPED`)
             crate::rewrite_census::fired("R-Cold/loft", 1);
         }
         Ok(())

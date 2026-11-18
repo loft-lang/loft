@@ -83,9 +83,12 @@ pub fn rewrite(data: &mut Data, d_nr: u32) {
         match admit(&code, vars, data, &frees, t, &shape) {
             Ok(rd) => {
                 apply(&mut code, data, d_nr, &frees, t, &shape, rd);
-                // @decline-owed: a local bound more than once or not from a record view; one
-                //   that is written, rebound, returned, stored, captured or handed to a writing
-                //   parameter; a source whose view closes over more than parameters
+                // @decline-owed: a local that is a parameter, captured, nullable or bound more
+                //   than once; one that is written, returned, stored or handed on, or mentioned
+                //   outside the block that binds it; a source that is nullable, a link, a
+                //   parameter itself, or whose view closes over more than parameters; an
+                //   operation in the live range that can write, move or free a record of the
+                //   source's type
                 crate::rewrite_census::fired("R-CopyView", 1);
                 if trace {
                     eprintln!(

@@ -225,9 +225,12 @@ impl Output<'_> {
         if !self.ap_requests.contains(&key) {
             self.ap_requests.push(key);
         }
-        // @decline-owed: a loop that names the buffer or a view of it other than as an append's
-        //   destination (a read, a length, a rebind, a fn-ref call through it), or that can
-        //   leave by a `return` or a jump past itself
+        // @decline-owed: a destination that is no vector path or is a parameter other than a
+        //   lent work buffer; an argument that reaches the destination; a callee that observes
+        //   its buffer (a length, an index, a walk, a free, an insert, a clear after its first
+        //   write, the buffer as an ordinary argument) or has an exit answering another store
+        //   (`eligible`); for the loop window, a loop that names the buffer elsewhere or can
+        //   leave early
         crate::rewrite_census::fired("R-AppendTwin", 1);
         true
     }
@@ -244,9 +247,12 @@ impl Output<'_> {
             if !self.dest_requests.contains(&key) {
                 self.dest_requests.push(key);
             }
-            // @decline-owed: a call whose result is consumed other than by moving its one heap
-            //   field into a fresh element and reading its scalars; a heap field that is not at
-            //   offset 0
+            // @decline-owed: a callee that is no loft function, answers an iterator, has no
+            //   scalar field or a field that is neither the moved one nor a scalar, a moved
+            //   field off offset 0, or a buffer mention no admitted form accounts for; a caller
+            //   that uses a result outside its window, in the `else` arm, or other than by the
+            //   `ok` test, the one move and scalar reads; a call argument that reaches the
+            //   container
             crate::rewrite_census::fired("R-Destination", 1);
         }
         dest
@@ -345,9 +351,12 @@ impl Output<'_> {
         } else {
             None
         };
-        // @decline-owed: a callee `(R-Callee)` does not admit, a parameter it rebinds, a field
-        //   its own write set reaches, and a caller loop that does not hold the argument's
-        //   value
+        // @decline-owed: a callee `(R-Callee)` does not admit (a store writer that is not
+        //   in-place-only, a template body, a generator, a write set that cannot be typed); a
+        //   parameter it rebinds or a tuple parameter; a field its own write set reaches; a
+        //   call whose enclosing frames do not hold every input of the argument; a call another
+        //   twin form takes (append, kept header, apart, transient); on C, a native C route or
+        //   64 arguments or more
         crate::rewrite_census::fired("R-Inputs", usize::from(twin_args.is_some()));
         // @PLN164 E-1 — a FORWARD (`hoist::forward_site`): the call's value is the buffer it
         // was handed, with the tuple written into it as the callee's record form would have.
@@ -541,8 +550,11 @@ impl Output<'_> {
         // (`(R-RefillBuffer)`) — and any emission of it that does not mints over the live
         // buffer, which clears its store — so neither a twin nor the release is owed.
         if self.refill_text.vectors.contains(&(vals.as_ptr() as usize)) {
-            // @decline-owed: a result buffer that is no pooled call buffer, and a callee with
-            //   no refill twin (`(R-Reuse)`'s conditions on its type and its exits)
+            // @decline-owed: a result buffer that is no pooled call buffer or is named outside
+            //   its pool; a result bound twice or, for texts, not only read; arguments naming
+            //   the buffer or the result; a callee whose result heap is not text only (or, for
+            //   the vector clause, not vectors of plain elements), with an exit that is no
+            //   literal writing every text once, or naming its buffer outside its literals
             crate::rewrite_census::fired("R-RefillText", 1);
             return Ok((false, false));
         }

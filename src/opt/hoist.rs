@@ -552,8 +552,11 @@ fn apart_mint(
         }
         return None;
     }
-    // @decline-owed: a group with a mention of the vector beyond its fresh element — a read, a
-    //   view of it or of an element — and a mint the scalar clause's admission refuses
+    // @decline-owed: under the apart-call clause: a second minted path, a field-path target, a
+    //   body variable that can hold an element and is not fresh this pass, a mention of the
+    //   vector outside its own mint group or a placement host, a function-value call, `par` or
+    //   `yield`; overall: a mint `(R-Mint)` refuses, an element that is no plain struct or
+    //   struct-enum, a path with one group that does not qualify
     crate::rewrite_census::fired("R-PushRec/apart", 1);
     Some((target.path, target.vector))
 }
@@ -1222,9 +1225,12 @@ pub fn hoistable(
             });
         }
         out.vectors.retain(|(q, _)| !mover(q));
-        // @decline-owed: a mint group outside a loop `(R-InPlace)` admits, and a target that is
-        //   neither a bare plain-vector variable nor a plain vector field of a plain record
-        //   over a pure path
+        // @decline-owed: a loop `(R-InPlace)` does not admit; a target that is neither a bare
+        //   plain-vector variable nor a plain vector field of a plain record over a pure path
+        //   (a keyed collection); a root the body rebinds other than to null or an
+        //   emitter-owned buffer's projection; beside another mover or holder, a root that is
+        //   no owned local, return buffer or work-buffer argument; a loop admitted through its
+        //   text sets
         crate::rewrite_census::fired("R-Mint", mints.len());
         out.pushes = pushes;
         out.mint_pushes = mint_fused

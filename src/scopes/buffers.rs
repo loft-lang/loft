@@ -300,9 +300,11 @@ pub(super) fn reuse_record_buffers(
         }
     }
     let frees = free_ops(data);
-    // @decline-owed: a type whose heap is not text only; a callee that does not build its
-    //   result as one record literal into its own buffer on every exit; a buffer named beyond
-    //   its pool plumbing
+    // @decline-owed: a hidden buffer with no guarded result local, carrying a dep, or of no
+    //   record type; one handed to more than one call, or whose callee mints the store its
+    //   result adopts; a result local assigned more than once (unless its rebind keeps what it
+    //   displaces), handed to a `&` parameter that can rebind it, carrying an owner witness, or
+    //   freed without asking the buffer
     crate::rewrite_census::fired("R-Reuse", eager.len() + lazy.len());
     // A buffer minted at entry is live at every call, and the first release finds the
     // record the mint just prefilled: nothing to walk.  The releases go in before the mints

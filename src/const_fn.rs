@@ -102,9 +102,12 @@ fn substitute(v: &mut Value, cx: &mut Cx) {
                 _ => None,
             };
             if admitted && let Some(b) = buffer {
-                // @decline-owed: a function that reads a parameter or whose body is not one
-                //   literal over literals; and a bind of the constant that is written, rebound
-                //   or handed to a writing parameter, which takes its own copy
+                // @decline-owed: a function with a parameter beside its hidden return buffer, a
+                //   method, a generic instance, a nullable or non-vector result, an element
+                //   type the constant store cannot hold, or a literal with a part known only at
+                //   run time; a call whose result is not only read — written, appended to,
+                //   rebound, returned, stored, taken by `&` or a fn ref, handed to a user call
+                //   — keeps the call and its own copy
                 crate::rewrite_census::fired("R-Const", 1);
                 if crate::keys::trace_const() {
                     eprintln!(

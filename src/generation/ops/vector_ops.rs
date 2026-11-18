@@ -1040,9 +1040,9 @@ impl OpEmitter for KeepRangeEmitter {
         let tp_lit = ctx
             .output
             .type_lit_u16(u16::try_from(*tp).unwrap_or(u16::MAX));
-        // @no-decline: a keep-range refreshes the push header its path holds; a path that holds
-        //   none has nothing to refresh and is no site (the gate rules decide what may hold
-        //   one)
+        // @no-decline: a keep-range refreshes the push header its path holds, with no test
+        //   beyond holding one; a path that holds none has nothing to refresh and is no site
+        //   (the gate and alias rules decide what may hold one)
         crate::rewrite_census::fired("R-Refresh", 1);
         let verify = verify(ctx);
         write!(ctx.w, "{{ let _kl: i64 = (")?;

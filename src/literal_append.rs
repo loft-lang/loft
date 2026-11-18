@@ -76,8 +76,11 @@ pub fn rewrite(data: &mut Data, d_nr: u32) {
         }
     }
     data.definitions[d_nr as usize].code = code;
-    // @decline-owed: a literal local named elsewhere, a field write that is no scalar setter,
-    //   and a value that is not simple (it may read a record the element's mint moves)
+    // @decline-owed: a literal local named outside its run, or one that is a parameter,
+    //   captured or nullable; a field write that is no scalar setter; a value that is not
+    //   simple (it may read a record the element's mint moves) or that names the element or the
+    //   vector; a run whose mint, writes, element mint, copy, finish and free are not
+    //   consecutive statements (`admit`)
     crate::rewrite_census::fired("R-LiteralAppend", fired);
 }
 

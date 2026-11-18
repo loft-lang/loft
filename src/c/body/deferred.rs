@@ -652,8 +652,10 @@ impl FnWriter<'_> {
                         format!("loft_dc_is_elem({name}, {vn}, {size}, {kc})")
                     })
                     .collect();
-                // @decline-owed: a copied local the function writes, and one whose source is no
-                //   view
+                // @decline-owed: a local or a view of it that is written, captured or lends a
+                //   text; a copy bind whose source is an owner or untraceable; a type the remap
+                //   does not follow (a keyed collection); a local with no owner witness; a
+                //   function with a `yield`, a parallel body or a call through a function value
                 crate::rewrite_census::fired("R-DeferredCopy/index", 1);
                 format!("{flag} && ({})", tests.join(" || "))
             }
