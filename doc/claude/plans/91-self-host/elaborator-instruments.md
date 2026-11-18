@@ -77,6 +77,58 @@ a real type shows at the statement that made it.
 Expected first reading: many `pass1-differ` rows on agreeing programs.  That list, grouped
 by channel and shape, is the port's worklist of pass-order windows, replacing guesses.
 
+### Built — step 1, the two channels on both sides
+
+`fn-end` is as designed, on both sides: Rust prints it where a function's variables are handed
+to its definition (`Parser::state_trace_fn_end`, four sites: `parse_function`, the two lambda
+forms and `default_value_fn`), the port where `parse_function` stores them
+(`el_trace::fn_end`), a lambda included.  Types are in the IR dump's spelling on both sides
+(`Type::show`; `report::type_show_in`).
+
+`value=` is a point of its own, `stmt-end value=<type>`, at the position its `stmt` line has
+and printed after the statement — not a channel on `stmt`.  The type is not known where `stmt`
+is printed, and holding that line back until the statement is read would reorder it against
+the points of the statements nested inside it.
+
+With the switch off nothing is printed and nothing else changed: gate E's verdicts on a sample
+of 150 corpus programs are the ones of tip c62b395bb.
+
+First reading, on 140 agreeing programs of that sample (`state 1` lines only): 30 agree, 110
+differ.  By the kind of the FIRST differing line: 54 `stmt-end` (a dep the port has not derived
+yet, `text["__work_1"]` against `text`), 24 `arg` and 16 `stmt` (`expected=` set in Rust and
+not in the port — the two points that existed before), 14 `fn-end … var` (a variable minted in
+another order or under another name, `e` against `e#iter_state`), 2 `fn-end … ret`
+(`vector<integer>` against `vector<integer>["__retbuf"]`).
+
+A differ the corpus does not hold, met while trying the trace: a `map` over a vector LITERAL
+bound to a local (`t = ["a"].map(shout)` beside a later lambda) mints `_elm_1` and `_vec_1` in
+the other order, on both passes; the image differs (`vector<text["_elm_1"]>` against
+`vector<text["_vec_1"]>`).
+
+### Built — step 2, the `--pass1` layer
+
+`elab_gate.py --pass1` compares the `state 1` lines by FUNCTION: every function of a program
+that agrees, the agreeing functions of a refused one.  A function's lines are those up to and
+including its `fn-end` group, so a lambda's `fn-end` also closes what its enclosing function
+printed before it; both sides are cut alike, and a difference there is reported under the
+lambda's name.  The report ranks the kind of the first differing line with one example each;
+`LOFT_ELAB_PASS1=<file>` writes every function's verdict and both lines.
+
+The baseline block `elab-pass1` pins the functions that agree (`--pass1 --write-baseline`).  It
+is a ratchet: a pinned function that differs is named (`PASS1 DROP`, also under
+`--functions-against`), and the check fails only when fewer functions agree than were pinned.
+
+The positive control runs in every `--pass1` run, not as a separate cell: one program whose
+first pass agrees is read again with `LOFT_STATE_TRACE_CONTROL=1`, under which the port prints
+`ret=(control)` on the first pass; the layer must read `pass1-differ` or the gate stops with
+"the layer cannot fail".
+
+Whole corpus at loft30-gate 5c83f4c82 (suite be55620c), 68 s with built tools: **8854 of 15866
+functions agree on the first pass**, 7012 differ; by program 602 of 2085.  First differing
+line: 2480 `stmt-end`, 2154 `arg`, 1236 `fn-end var`, 1038 `stmt`, 104 `fn-end ret`.  The two
+points that existed before (`arg`, `stmt`: an `expected=` the port does not set on its first
+pass) hold 3192 of the 7012.
+
 ## 2. Rust's route, joined to the refusal — the `route` point
 
 **Rust side.**  One line when the front end takes a special route for a construct:
@@ -116,6 +168,53 @@ scripts/13-map-filter-reduce:130  refused: a `filter` of an element of this kind
 and the definition-level ranking gains a column "Rust route" (the handler most sites of the
 family share).  A family whose sites share one handler is one port; a family spread over many
 handlers is a symptom name and wants splitting.
+
+### Built — step 3, the `route` point in Rust, `refuse` in the port, and the join
+
+`Parser::state_route(handler)` prints `state <pass> <line>:<col> route <handler>` at the lexer's
+position.  Five of the six groups are in:
+
+- the special-form calls: `parse_parallel_for`, `parse_par_fold`, `parse_map`, `parse_filter`,
+  `parse_reduce`, `parse_sort`, `parse_insert`, `parse_reverse`, `parse_reserve`, `parse_any`,
+  `parse_all`, `parse_count_if`, and the arms written in place as `call:<name>` (`assert` and
+  the log family, `deliver`, `expose` / `release`, `type_of`, `field_value`, `clear`, `next`,
+  `exhausted`, `type_name`, `typedef`);
+- the generic path: `try_generic_instantiation` (only where it found a template),
+  `bind_monomorph_join_return`;
+- the return path: `materialize_return_into=whole` / `=arms`, `classify_ret_promotion=<verdict>`;
+- the literal paths: `parse_object`, `parse_vector`, `parse_multiply` (where it answers);
+- the match entry: `parse_match`, then `parse_cursor_match`, `parse_scalar_match`,
+  `parse_vector_match` or `parse_tuple_match`.
+
+Two changes to the design.  A handler that is a function of its own prints at its ENTRY, not in
+the dispatching `match`: that match has guarded and multi-line arms, the entry says the same
+thing, and the change stays one line per handler.  And `parse_method`'s built-in arms are NOT
+in: a method call is selected by `select_method_def` over an overload set, not by a `match` of
+named arms, so there is no dispatch to mark; it is the group to add when a refusal family
+shows no route at its sites.
+
+The port: `el::refuse` prints `state <pass> <line>:0 refuse <text>` (it knows the line, not the
+column).  `route` and `refuse` lines are left out of the first-pass comparison and of
+`state_diff.py`: they say which code ran, not what a pass left, and the port's own `route`
+lines come a path at a time (step 4).
+
+The join: under `--pass1` the gate keeps Rust's route lines (`LOFT_ELAB_ROUTES=<file>`:
+`program, pass, line, col, handler`); the tester's `where.py` prints them under each refusal
+site and names the handlers a family's sites share, and `deflevel.py` carries the same as its
+"Rust route" column.
+
+Whole corpus at f260caf9b: 88474 route lines; the verdicts and the first-pass counts are
+unchanged (1121 of 2085; 8854 of 15866).  By handler: `parse_object` 37232, `parse_vector`
+36109, `classify_ret_promotion` 4851, `parse_match` 3394, `materialize_return_into` 1869,
+`try_generic_instantiation` 1626, `parse_vector_match` 856, `bind_monomorph_join_return` 783,
+`call:next` 508, `parse_scalar_match` 490, `parse_insert` 127, `parse_map` 112.  First joins:
+"a slice pattern element of this form" — all 52 sites under `parse_vector_match` (one handler,
+one port); "a record literal written into a field or an element" — `parse_object` 62,
+`parse_vector` 15; "an operator with no builtin candidate" — `parse_object` 13,
+`bind_monomorph_join_return` 6, `parse_match` 2 over 55 sites (a symptom name); the
+definition-level families "a struct field of this type", "a value struct or a struct template"
+and "a `&` parameter of a tuple" have no route at their sites: a declaration's route is the
+next group to mark.
 
 ## 3. How much is ported — route coverage over the corpus
 

@@ -1974,6 +1974,7 @@ or build a local and use that."
         self.parse_code();
         self.closure_param = outer_closure_param;
         self.data.op_code(d_nr);
+        self.state_trace_fn_end(d_nr);
         self.data.definitions[d_nr as usize]
             .variables
             .append(&mut self.vars);
@@ -2421,6 +2422,7 @@ or build a local and use that."
         }
         self.closure_param = outer_closure_param;
         self.data.op_code(d_nr);
+        self.state_trace_fn_end(d_nr);
         self.data.definitions[d_nr as usize]
             .variables
             .append(&mut self.vars);
@@ -4815,6 +4817,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         val: &mut Value,
         parent_tp: &Type,
     ) -> Type {
+        self.state_route("parse_vector");
         // A vector literal is one level of depth (`crate::limits`): its elements are parsed
         // without passing through `expression`, so a literal nested in a literal counts here
         // (loft#1962 — 1000 nested levels overflowed the parser's stack).
@@ -5102,6 +5105,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             if self.lexer.has_token(";")
                 && let Some(value) = self.parse_multiply(res)
             {
+                self.state_route("parse_multiply");
                 return Some(value);
             }
             if !self.lexer.has_token(",") {

@@ -1,0 +1,59 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `cgen_tail.loft` answers what `src/c/tail.rs` answers (`@FR-R-CTail`): that
+// module's own unit tests, cell for cell.
+
+use cgen_tail;
+
+fn tail(n: integer) -> text {
+  t = "";
+  for k in 0..n {
+    t += "        loft_free_var(&v{k}_x);\n";
+  }
+  t
+}
+
+fn count(t: text, what: text) -> integer {
+  n = 0;
+  m = what.size();
+  for i in 0..t.size() - m + 1 {
+    if t[i..i + m] == what {
+      n += 1;
+    }
+  }
+  n
+}
+
+fn test_a_shared_tail_is_written_once() {
+  t = tail(10);
+  body = "    if (a) {{\n{t}        t1 = v9_r;\n        loft_text_free(&t7);\n        return t1;\n    }}\n    if (b) {{\n        loft_free_var(&v99_own);\n{t}        t2 = v8_r;\n        loft_text_free(&t7);\n        return t2;\n    }}\n{t}    t3 = v9_r;\n    loft_text_free(&t7);\n    return t3;\n";
+  m = cgen_tail::merge("loft_ref", body);
+  assert(m != "", "merged");
+  // The first exit is written whole and the third shares all of it; the second returns
+  // another value, read mid-tail, so it shares too little and is whole as well.
+  assert(count(m, "loft_free_var(&v0_x);") == 2, "{m}");
+  assert(count(m, "loft_text_free(&t7);") == 2, "{m}");
+  assert(count(m, "return loft_rv;") == 2, "{m}");
+  assert(m.contains("loft_rv = v8_r;") && m.contains("loft_free_var(&v99_own);"), "{m}");
+  assert(m.starts_with("    loft_ref loft_rv;\n"), "{m}");
+  assert(m.contains("\nloft_rt0:\n        loft_free_var(&v0_x);\n") && m.contains("\n    goto loft_rt0;\n"), "{m}");
+}
+
+fn test_a_tail_under_a_braceless_if_or_naming_a_nested_local_stays() {
+  t = tail(10);
+  braceless = "{t}    return;\n    if (a)\n{t}    return;\n";
+  assert(cgen_tail::merge("void", braceless) == "", "braceless");
+  nested = "    {{\n        loft_ref v0_x = q;\n{t}        return;\n    }}\n{t}    return;\n";
+  assert(cgen_tail::merge("void", nested) == "", "nested");
+}
+
+fn test_a_release_of_the_returned_name_keeps_the_exit() {
+  t = tail(10);
+  assert(cgen_tail::merge("loft_ref", "{t}    return v3_x;\n{t}    return v3_x;\n") == "", "writes the result");
+  m = cgen_tail::merge("loft_ref", "{t}    return v77_r;\n{t}    return v77_r;\n");
+  // The second exit shares all of the first, its read of the result included.
+  assert(count(m, "loft_rv = v77_r;") == 1, "{m}");
+  assert(count(m, "loft_free_var(&v0_x);") == 1, "{m}");
+  assert(count(m, "goto loft_rt0;") == 1, "{m}");
+}

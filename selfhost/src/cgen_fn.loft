@@ -29,6 +29,7 @@ use cgen_ref;
 use cgen_bind;
 use cgen_cold;
 use cgen_split;
+use cgen_tail;
 use cgen_recptr;
 use cgen_hoist;
 use own;
@@ -4166,11 +4167,18 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   // alone by default, under `#if defined(_MSC_VER)`, the whole body (out of line, as its parts
   // are) in the `#else` arm.
   parts = cgen_split::split_body(outer, rret, "{name}__fr", rlist, rinner);
+  // `@FR-R-CTail`: the whole body's shared release tails are written once; the parts keep
+  // every exit's own statements, and `inner` stays the body before this pass.
+  merged = cgen_tail::merge(rret, rinner);
+  traced = if merged != "" { rtext } else { "" };
+  if merged != "" {
+    rtext = "{storage} {rret} {name}__fr({rlist}) {{\n{merged}}}\n";
+  }
   if parts != "" {
-    whole = "{outer} {rret} {name}__fr({rlist}) {{\n{rinner}}}\n";
+    whole = "{outer} {rret} {name}__fr({rlist}) {{\n{if merged != "" { merged } else { rinner }}}}\n";
     rtext = if cgen_split::everywhere() { parts } else { "#if defined(_MSC_VER)\n{parts}#else\n{whole}#endif\n" };
   }
-  Written { split: parts != "", text: rtext, refused: "", name: name, ret: rret, list: rlist, storage: outer, inner: rinner }
+  Written { split: parts != "", text: rtext, refused: "", name: name, ret: rret, list: rlist, storage: outer, inner: rinner, traced: traced }
 }
 
 // `direct_place`: a link of `var`'s kind re-pointed to a store place — a field or an element —

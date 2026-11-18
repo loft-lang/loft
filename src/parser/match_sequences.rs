@@ -25,6 +25,7 @@ impl Parser {
         subject_type: &Type,
         code: &mut Value,
     ) -> Type {
+        self.state_route("parse_vector_match");
         let elm_tp = subject_type.content();
         // A subject that is already a VARIABLE is matched as itself.  Through a `_match_subj`
         // alias, every capture was a view of a compiler temporary (`OpGetVector(_match_subj,
@@ -1463,6 +1464,7 @@ impl Parser {
         subject_type: &Type,
         code: &mut Value,
     ) -> Type {
+        self.state_route("parse_tuple_match");
         let Type::Tuple(elem_types) = subject_type.base() else {
             unreachable!("parse_tuple_match called with non-tuple subject")
         };

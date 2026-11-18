@@ -249,6 +249,9 @@ fn block_body(e: el::El, vars: el_vars::Vars, n: integer, context: text, result:
         }
         x = el_ex_object::statement(e, vars, se ?? 0, orelse);
         t = x.tp;
+        if el_trace::on() {
+          el_trace::value(e, vars, at, t);
+        }
         el_ex_call::statement_proofs(e, vars, x.code);
         // `@FR-E-Uncomp-Seen`: a compound step into a dense narrow local (its guard's default a
         // value, not the null) followed by `if !local` fuses with that test (`fuse_fit_test`, a

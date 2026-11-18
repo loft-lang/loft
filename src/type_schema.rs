@@ -69,26 +69,45 @@ impl StoreTypeOf for Stores {
 
     fn keyed_type(&self, data: &Data, tp: &Type) -> u16 {
         let tp = tp.base();
+        // The element is named as the schema REGISTERED it, which is what the mints spell
+        // (`Stores::hash` and its siblings name a type from `types[content].name`): a second
+        // source's struct of a name already taken is registered source-qualified
+        // (`typedef::fill_database`), so its definition name finds the FIRST source's
+        // collection — a `hash<Nm[k]>` read then probed with the other struct's key layout
+        // and every lookup missed, with no diagnostic.  An element not registered yet has no
+        // collection either.
+        let (Type::Hash(d, ..)
+        | Type::Radix(d, ..)
+        | Type::Trie(d, ..)
+        | Type::Sorted(d, ..)
+        | Type::Index(d, ..)) = tp
+        else {
+            return u16::MAX;
+        };
+        let content = data.def(*d).known_type();
+        let Some(element) = self.types.get(content as usize).map(|t| t.name.as_str()) else {
+            return u16::MAX;
+        };
         match tp {
-            Type::Hash(d, key, _) | Type::Radix(d, key, _) => {
+            Type::Hash(_, key, _) | Type::Radix(_, key, _) => {
                 let kind = if matches!(tp, Type::Hash(..)) {
                     "hash"
                 } else {
                     "spatial"
                 };
-                let mut name = format!("{kind}<{}[", data.def(*d).name());
-                self.field_name(data.def(*d).known_type(), key, &mut name);
+                let mut name = format!("{kind}<{element}[");
+                self.field_name(content, key, &mut name);
                 self.name(&name)
             }
-            Type::Trie(d, key, _) => self.name(&format!("trie<{}[{key}]>", data.def(*d).name())),
-            Type::Sorted(d, key, _) => {
-                let r = self.name(&keyed_name("sorted", data.def(*d).name(), key));
+            Type::Trie(_, key, _) => self.name(&format!("trie<{element}[{key}]>")),
+            Type::Sorted(_, key, _) => {
+                let r = self.name(&keyed_name("sorted", element, key));
                 if r != u16::MAX {
                     return r;
                 }
-                self.name(&keyed_name("ordered", data.def(*d).name(), key))
+                self.name(&keyed_name("ordered", element, key))
             }
-            Type::Index(d, key, _) => self.name(&keyed_name("index", data.def(*d).name(), key)),
+            Type::Index(_, key, _) => self.name(&keyed_name("index", element, key)),
             _ => u16::MAX,
         }
     }
