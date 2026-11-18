@@ -135,6 +135,16 @@ it is expected to print (`stmt`, `stmt-end`, `var`, `fn-end` on both; nothing is
 otherwise.  A Rust test (`tests/state_trace.rs`) pins the Rust side's lines for one small
 program without building any tool.
 
+### Built — § 4
+
+The gate keeps the set of points each side printed per program (`SEEN_POINTS`) and, on the
+positive control's program, stops with "an instrument went silent" naming the side and the
+point when `stmt`, `stmt-end`, `var` or `fn-end` is missing from either.  Tried both ways: it
+passes on a sample, and with a point no side prints added to the required list it stops with
+"the Rust front end printed no `bogus` line for …".  `tests/state_trace.rs` pins the 27 lines
+of one function's first pass on the Rust side — every point kind — and that nothing is
+printed with the switch off; it runs with the `parser` subject.
+
 ## 5. The page
 
 `debugging-the-port.md` beside this file: the questions above, the command for each, how to
