@@ -1263,7 +1263,8 @@ pub fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
       // `snapshot_read_destination`: an item reading the field it is appended to is built from
       // a snapshot of the field, its values staged first (`stage_append_fields`) — not carried.
       for op in fl! {
-        if if local { reads_field(op, rec, pos) } else { el_ir::reads_var(op, rec) } {
+        // (A user call handed the record reaches the field through it — `reads_through`.)
+        if if local { reads_field(op, rec, pos) || (el_ir::reads_var(op, rec) && any_user_call(e, [op])) } else { el_ir::reads_var(op, rec) } {
           el::refuse(e, "a field append whose item reads the field");
           return ex(ir::NdNull, ir::TyVoid);
         }
