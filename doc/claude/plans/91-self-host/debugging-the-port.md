@@ -89,10 +89,13 @@ lingers between sites, the port carries the hint per node.  The gate does not co
 
 `scripts/try_gate.sh` HANDS the work in a checkout — committed or not — to the testing side
 before it is promoted, and returns at once: the change goes as a `git bundle` in a comment on
-the mailbox issue (loft#2560, closed and locked on purpose).  The testing side gates it and
-sends its analysis as a message — what stopped agreeing and why, each differ reduced to its
-line and cause — while the porting side works on something else; a tool one waits on and
-reads the raw output of would be the gate run at one remove.  Nothing is pushed to a branch.  Use it for a change that adds or
+the mailbox issue (loft#2560, closed and locked on purpose).  The testing side gates it.
+A CLEAN result — no differ, no program and no definition that agreed and no longer does, no
+first-pass drop — is acknowledged automatically as a comment `result <commit>`: safe to
+promote.  One with ISSUES gets the same automatic line ("do not promote this one yet"), and the
+tester's analysis follows as a message: each definition that stopped agreeing with the refusal
+and source line that caught it, each differ with the first differing line of both sides.
+Neither is waited for: post, go on to the next item, read the answer at a natural break.  Nothing is pushed to a branch.  Use it for a change that adds or
 widens a refusal, or changes a rule many functions share: a definition that agreed inside a
 program that stays refused is seen by nothing else before the promotion.
 
