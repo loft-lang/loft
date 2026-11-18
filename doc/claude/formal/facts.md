@@ -195,6 +195,11 @@ owed its own proof, and the far end of it is a flag that makes the compiler beha
 This is the concern of the backends answering alike, asked of the analyses: it stays, and no
 program settles it.  A cell, a library and a consumer can each show a fact WRONG; none shows
 the facts right, so the evidence is what runs on loft and it grows with every program that does.
+A layer that validates the analyses adds complexity to check complexity; what makes a decision
+checkable is that it can be READ from outside.  Today the census counts each answer by rule and
+by function (`LOFT_REWRITE_CENSUS`, `LOFT_REWRITE_CENSUS_FN`) and each rewrite names what made
+it decline (`LOFT_TRACE_HOIST_DECLINE` and its siblings); the answer itself — function, kind,
+reach, fact — is not logged yet.
 
 ## Relations
 
