@@ -800,8 +800,25 @@ impl Scopes<'_> {
                     // scope — so the witness drops and the buffer never does.  Getting
                     // that backwards is a rollback that runs once for a loop that opened
                     // a transaction on every pass.
+                    //
+                    // Only a witness that RELEASES runs the hook: one that views another
+                    // temporary (`r = f() ?? S { .. }` in a block, `r` viewing the chain's
+                    // `__ncc_N`) is never swept, so the buffer it was paired with keeps its
+                    // own hook — skipped there, the literal's `OpDrop` ran nowhere (loft#2552).
+                    // `LOFT_NO_VIEW_WITNESS_BUFFER_HOOK=1` skips it again.
+                    let view_witness_keeps_hook = !crate::env_once!(
+                        std::env::var_os("LOFT_NO_VIEW_WITNESS_BUFFER_HOOK").is_some()
+                    );
                     let is_buffer = is_work_ref && self.paired_witness.contains_key(&v)
-                        || self.witness_buffer.values().any(|bs| bs.contains(&v));
+                        || self.witness_buffer.iter().any(|(w, bs)| {
+                            bs.contains(&v)
+                                && (!view_witness_keeps_hook
+                                    // @FR-O-Proxy asks free — the witness's own sweep
+                                    // release (`owns` above, where the override is read).
+                                    || function.proxy_says_owned(*w)
+                                    || self.late_owners.contains(w)
+                                    || self.lift_join_witness.contains_key(w))
+                        });
                     if let Some(&jw) = self.lift_join_witness.get(&v) {
                         // loft#1257 — free the lifted collection return only where it is NOT
                         // the caller's own store.  A `Join` is owned on one arm and a borrow
@@ -928,17 +945,23 @@ impl Scopes<'_> {
                         // The FREE is skipped in the adoption case; the DROP is not.
                         // The store surviving into the next iteration is a reuse
                         // optimisation, and the value it held is over either way.
+                        // `@FR-H-FreeTwice` — where an arm left `v` naming a temporary that
+                        // releases its own store (`Scopes::lift_viewers`: a hoisted lift, a
+                        // `?? return` chain's `_ncr_N`), both the hook and the free stand down,
+                        // as in the plain leg below (loft#2552: in a loop body this leg ran
+                        // the hook the chain's temp ran again).
+                        let lv_guard = self.lift_viewer_guard(v, data);
                         if let Some(hook) = unless_moved(v, self.scope_end_hook(function, v, data, arm_dropped)) {
-                            ls.push(hook);
+                            ls.push(lv_guard(hook));
                         }
                         // Several buffers — one per arm of the value branch `v` was bound
                         // from — free only where `v` aliases NONE of them; the single-buffer
                         // case is the one op.
                         if let [buffer] = buffers[..] {
-                            ls.push(Value::Call(
+                            ls.push(lv_guard(Value::Call(
                                 data.def_nr("OpFreeRefIfDistinct"),
                                 vec![Value::Var(v), Value::Var(buffer)],
-                            ));
+                            )));
                         } else {
                             let mut free = call("OpFreeRef", v, data);
                             for &buffer in buffers.iter().rev() {
@@ -951,7 +974,7 @@ impl Scopes<'_> {
                                     Value::Null,
                                 );
                             }
-                            ls.push(free);
+                            ls.push(lv_guard(free));
                         }
                     } else if inject_drop_free() == Some(function.name(v)) {
                         // @PLN94 TEST-ONLY positive control (never set in production; one cached env
@@ -1010,24 +1033,7 @@ impl Scopes<'_> {
                         // refuses is one the lift releases.  The hook is guarded with the free:
                         // left bare it ran the type's drop on a record the lift had already
                         // freed (loft#2550, `r = if c { f() ?? return } else { … }`).
-                        let distinct = data.def_nr("OpDistinctStore");
-                        let viewed: Vec<u16> = self
-                            .lift_viewers
-                            .get(&v)
-                            .into_iter()
-                            .flatten()
-                            .copied()
-                            .filter(|&l| l != v)
-                            .collect();
-                        let guard = |inner: Value| {
-                            viewed.iter().fold(inner, |inner, &l| {
-                                v_if(
-                                    Value::Call(distinct, vec![Value::Var(v), Value::Var(l)]),
-                                    inner,
-                                    Value::Null,
-                                )
-                            })
-                        };
+                        let guard = self.lift_viewer_guard(v, data);
                         if !is_buffer
                             && let Some(hook) = unless_moved(v, self.scope_end_hook(function, v, data, arm_dropped))
                         {

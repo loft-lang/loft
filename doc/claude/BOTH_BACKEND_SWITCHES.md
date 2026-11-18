@@ -707,6 +707,16 @@ outer scope, makes the destination's drop and free run only where it names anoth
 **`LOFT_NO_CHAIN_ARM_VIEW=1`** reads the destination as an owner beside the temp again, and is
 the bisect step for a record released twice out of `r = if c { f() ?? d } else { … }`
 (`loft-suite/rules/heap/H-FreeTwice/2550-a-coalesce-arm-of-a-bound-branch-is-released-once.loft`).
+Three more decide who runs the HOOK of such a value (`@FR-H-Drop`, default-ON, both backends).
+**`LOFT_NO_NCR_ARM_MOVE=1`** joins the bind on a `?? return` chain's `_ncr_N` again, so the
+binding takes a deep copy and the copy and the temp each run the type's `OpDrop`.
+**`LOFT_NO_VIEW_WITNESS_BUFFER_HOOK=1`** lets a literal's buffer skip its hook for a witness that
+only views the chain's temp and releases nothing, so `r = f() ?? S { .. }` in a block or a loop
+body runs the literal's hook nowhere.  **`LOFT_NO_RETURNED_HOOK_GUARD=1`** leaves a hook bare
+where the return site made its free conditional on the store not being the one returned, so a
+temp whose record the returned local took runs the hook the caller runs again.  Each is the
+bisect step for a hook that ran twice or not at all out of a `??` chain beside a plain record
+(`loft-suite/rules/heap/H-Drop/2552-a-chain-arm-beside-a-plain-record-runs-each-hook-once.loft`).
 
 **A nested literal is written into its field (@PLN164 C6, `@FR-R-InPlaceLiteral`, default-ON,
 both backends, parse time):** `sc.ops += [Op { paint: Paint { … } }]` writes `Paint`'s fields
