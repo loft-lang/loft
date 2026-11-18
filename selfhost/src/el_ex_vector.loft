@@ -835,7 +835,16 @@ pub fn keyed_index(e: el::El, vars: el_vars::Vars, at: integer, x: Ex, keys: vec
     el::refuse(e, "a keyed lookup with a partial key");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
-  args: vector<ir::Node> = [x.code, ir::NdInt { n: if e.first_pass { 65535 } else { el_schema::keyed_type(e, ct) } }, ir::NdInt { n: len(names) }];
+  // `container_dep`: a lookup on a loft function's fresh collection binds it to a `__ref_p2_N`
+  // the entry then borrows (`bind_inline_container`, on both passes), as a vector's index does.
+  subject = x.code;
+  lifted = -1;
+  if el_ex_assign::minting_call(e, x.code) {
+    lifted = el_vars::work_ref_p2(vars, x.tp);
+    el_vars::mark_inline(vars, lifted);
+    subject = el_ir::v_block([el_ir::v_set(lifted, x.code), ir::NdVar { n: lifted }], el_types::with_deps(x.tp, [lifted]), "inline_container");
+  }
+  args: vector<ir::Node> = [subject, ir::NdInt { n: if e.first_pass { 65535 } else { el_schema::keyed_type(e, ct) } }, ir::NdInt { n: len(names) }];
   for k in keys {
     a = attr_nr(el::def(e, el_d), names[k#index]!);
     kt = if a < 0 { ir::TyUnknown { n: 0 } } else { el::def(e, el_d).attributes[a]!.typedef[0] };
@@ -863,6 +872,9 @@ pub fn keyed_index(e: el::El, vars: el_vars::Vars, at: integer, x: Ex, keys: vec
   match x.code {
     NdVar { n } => { t = el_types::with_deps(t, [n]); },
     _ => {}
+  }
+  if lifted >= 0 {
+    t = el_types::with_deps(t, [lifted]);
   }
   code = el_ir::cl(e, "OpGetRecord", args);
   if !e.first_pass {
