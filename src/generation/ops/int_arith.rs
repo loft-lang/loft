@@ -293,9 +293,24 @@ impl OpEmitter for IntArithEmitter {
             crate::rewrite_census::declined("R-Range", &format!("{:p}", args.as_ptr()), why);
         }
         if !ctx.output.switches.nn_fast_disabled
+            && matches!(
+                ctx.def_fn.name(),
+                "OpDivIntNullable" | "OpDivInt" | "OpRemIntNullable" | "OpRemInt"
+            )
+            && matches!(
+                args.get(1).map(Value::unspan),
+                Some(Value::Int(0 | -1) | Value::Long(0 | -1))
+            )
+        {
+            crate::rewrite_census::declined(
+                "R-LitDiv",
+                &format!("{:p}", args.as_ptr()),
+                "a literal divisor of 0 or -1",
+            );
+        }
+        if !ctx.output.switches.nn_fast_disabled
             && let Some(sym) = literal_divisor_form(ctx.def_fn.name(), args)
         {
-            // @decline-owed: a literal divisor of 0 or -1, which keeps the guarded template
             crate::rewrite_census::fired("R-LitDiv", 1);
             write!(ctx.w, "{{ let _d = (")?;
             ctx.emit(&args[0])?;

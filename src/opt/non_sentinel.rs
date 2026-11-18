@@ -608,6 +608,11 @@ fn greatest_integer_locals(
         assumed.retain(|nr| {
             let keep = round.get(nr).copied().unwrap_or(true);
             if !keep {
+                crate::rewrite_census::declined(
+                    "R-Counter/probe",
+                    &format!("{:p}:{}", std::ptr::from_ref(code), function.name(*nr)),
+                    "an assignment the proof rejects",
+                );
                 vars.remove(nr);
             }
             keep
@@ -631,6 +636,13 @@ fn seed_range_counters(data: &Data, v: &Value, vars: &mut HashMap<u16, bool>) {
         let bounded = !rc.inclusive
             || matches!(rc.hi.unspan(), Value::Int(k) if *k < i32::MAX)
             || matches!(rc.hi.unspan(), Value::Long(k) if *k < i64::MAX);
+        if !bounded {
+            crate::rewrite_census::declined(
+                "R-Counter",
+                &format!("{:p}", std::ptr::from_ref(lp)),
+                "an inclusive range whose end is not a literal below the type's maximum",
+            );
+        }
         if bounded {
             crate::rewrite_census::fired("R-Counter", 1);
             vars.insert(rc.index, true);

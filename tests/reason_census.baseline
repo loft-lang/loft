@@ -13,10 +13,10 @@ R-Callee	1	0	0	owes
 R-CharWalk	2	0	0	owes
 R-Cold	1	1	0	reports
 R-Compact	2	1	0	reports
-R-CompleteWrite	1	0	0	owes
+R-CompleteWrite	1	2	0	partly
 R-Const	2	1	0	reports
 R-CopyView	2	2	0	reports
-R-Counter	2	0	0	owes
+R-Counter	2	2	0	partly
 R-CtorLiteral	1	2	0	partly
 R-DecodeView	4	1	0	reports
 R-DeferredCopy	3	1	0	reports
@@ -54,8 +54,8 @@ R-Invariant	3	0	0	owes
 R-KeyedEntry	2	1	0	partly
 R-LazySplit	2	2	0	reports
 R-Leaf	1	0	0	nothing
-R-LeafChain	1	0	0	owes
-R-LitDiv	1	0	0	owes
+R-LeafChain	1	1	0	reports
+R-LitDiv	1	1	0	reports
 R-LitHoist	1	0	0	owes
 R-LiteralAppend	1	1	0	partly
 R-LiteralWalk	1	0	0	owes
@@ -72,12 +72,12 @@ R-NoThreads	1	0	0	nothing
 R-NonSentinelParam	2	0	0	owes
 R-Peel	1	1	0	reports
 R-Place	2	2	0	reports
-R-PureReuse	1	0	0	owes
+R-PureReuse	1	1	0	partly
 R-Push	4	0	0	owes
 R-PushFill	16	4	3	reports
 R-PushRec	3	0	0	owes
 R-Range	4	1	1	reports
-R-RangedCall	3	0	0	owes
+R-RangedCall	3	2	0	partly
 R-Rebind	1	1	0	reports
 R-RebindBuffer	1	0	0	owes
 R-RecPtr	9	1	1	reports
@@ -117,7 +117,7 @@ R-ValueLocal	3	2	0	reports
 R-ValueRecord	5	4	0	reports
 R-VecCopy	1	1	0	reports
 R-Version	2	1	0	partly
-R-View	2	0	0	owes
+R-View	2	2	0	partly
 R-ViewReturn	1	1	0	reports
 R-WorkBuffer	4	2	0	reports
 R-WorkPark	1	0	0	owes

@@ -136,6 +136,12 @@ impl super::Output<'_> {
         let facts = self.current_ranges();
         let trace = std::env::var("LOFT_TRACE_RANGED_CALL").is_ok();
         if !self.args_ranged(d, args, &facts, &nn) {
+            crate::rewrite_census::declined_in(
+                "R-RangedCall",
+                self.data.def(self.def_nr).name(),
+                &format!("{:p}", args.as_ptr()),
+                "an integer argument is not proven in range",
+            );
             if trace {
                 let ranges: Vec<Option<Range>> = args
                     .iter()
@@ -161,6 +167,12 @@ impl super::Output<'_> {
                 &inputs.scalars,
                 &facts,
             ) {
+                crate::rewrite_census::declined_in(
+                    "R-RangedCall",
+                    self.data.def(self.def_nr).name(),
+                    &format!("{:p}", args.as_ptr()),
+                    "a scalar input of the twin is not proven in range",
+                );
                 if trace {
                     eprintln!(
                         "ranged-call: {} → {} declines: scalar input {key:?} unranged",

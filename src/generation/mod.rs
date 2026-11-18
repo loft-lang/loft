@@ -12164,12 +12164,21 @@ extern crate loft;"
                     && !self.switches.leaf_chain_disabled
                     && self.is_frameless_chain(def_nr);
                 let leaf = plain_leaf || chain_leaf;
+                if !leaf
+                    && self.lean
+                    && !self.switches.leaf_elide_disabled
+                    && !self.switches.leaf_chain_disabled
+                {
+                    crate::rewrite_census::declined(
+                        "R-LeafChain",
+                        def.name(),
+                        "its call tree reaches a framed callee, a cycle, a fn ref, a parallel or a yield",
+                    );
+                }
                 // @no-decline: match only: the pattern is a function whose body calls no user
                 //   function, fn-ref, `parallel` or `yield`; a function that calls one is not
                 //   the pattern, and no test follows the match
                 crate::rewrite_census::fired("R-Leaf", usize::from(plain_leaf));
-                // @decline-owed: a call tree that reaches a native user-level callee, a cycle,
-                //   a fn-ref call, a `parallel` or a yield; and every tier but the lean one
                 crate::rewrite_census::fired("R-LeafChain", usize::from(chain_leaf));
                 // @PLN157 — a leaf carries no fn-ref buffer guard either: it calls no
                 // user function and no fn-ref, so it can neither push a buffer nor sit

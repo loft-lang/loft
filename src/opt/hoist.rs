@@ -1751,6 +1751,12 @@ pub fn view_def_header(
             )
         })
     }) {
+        crate::rewrite_census::declined_in(
+            "R-View",
+            data.def(def_nr).name(),
+            vars.name(*d),
+            "a statement after the bind blocks a held header",
+        );
         return None;
     }
     let mut rebound = false;
@@ -1770,6 +1776,14 @@ pub fn view_def_header(
             }
             false
         });
+    }
+    if indexed && rebound {
+        crate::rewrite_census::declined_in(
+            "R-View",
+            data.def(def_nr).name(),
+            vars.name(*d),
+            "the view is rebound after its bind",
+        );
     }
     (indexed && !rebound).then_some(*d)
 }
