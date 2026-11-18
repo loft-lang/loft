@@ -1996,6 +1996,9 @@ pub fn size_call(e: el::El, list: vector<ir::Node>, t: ir::TypeT) -> Ex? {
 // instance's (`tvinsert`).  An element that reads the vector it is inserted into is staged
 // first, a vector of vectors appends, a linked group links the record: not carried.
 pub fn insert_call(e: el::El, vars: el_vars::Vars, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex {
+  if el_trace::on() {
+    el_trace::route(e, "parse_insert");
+  }
   if e.first_pass {
     return ex(ir::NdNull, ir::TyVoid);
   }
@@ -2050,6 +2053,9 @@ pub fn vector_insert(e: el::El, vars: el_vars::Vars, vec: ir::Node, index: ir::N
 // element's store size; over a type variable's element the choice is each instance's
 // (`tvreverse`).
 pub fn reverse_call(e: el::El, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex {
+  if el_trace::on() {
+    el_trace::route(e, "parse_reverse");
+  }
   if e.first_pass {
     return ex(ir::NdNull, ir::TyVoid);
   }
@@ -2071,6 +2077,9 @@ pub fn reverse_call(e: el::El, list: vector<ir::Node>, types: vector<ir::TypeT>)
 }
 
 pub fn reserve_call(e: el::El, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex {
+  if el_trace::on() {
+    el_trace::route(e, "parse_reserve");
+  }
   if e.first_pass {
     return ex(ir::NdNull, ir::TyVoid);
   }
@@ -2705,6 +2714,9 @@ pub fn sorts_itself(types: vector<ir::TypeT>) -> boolean {
 // `parse_sort`: `OpSortVector(v, elem)`, sorting in place by the elements' store type; nothing on
 // the first pass.
 pub fn sort_call(e: el::El, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex {
+  if el_trace::on() {
+    el_trace::route(e, "parse_sort");
+  }
   if e.first_pass {
     return ex(ir::NdNull, ir::TyVoid);
   }

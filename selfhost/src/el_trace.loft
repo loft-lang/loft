@@ -78,6 +78,17 @@ pub fn fn_end(e: el::El, vars: el_vars::Vars, d: integer) {
   }
 }
 
+// The `route` point (`Parser::state_route`, elaborator-instruments.md § 2 step 4): the port
+// takes its mirror of the Rust handler `name` for the construct on the line being read.  The
+// port knows the line, not the column a Rust handler stands at, so the column is 0 and the
+// two sides are joined by line and handler.
+pub fn route(e: el::El, name: text) {
+  if e.source == el::STD_SOURCE {
+    return;
+  }
+  eprintln("state {if e.first_pass { 1 } else { 2 }} {if e.decl_line > e.line { e.decl_line } else { e.line }}:0 route {name}");
+}
+
 // `Parser::trace_shape`: a type's shape and the definitions it names, no deps.
 fn shape(e: el::El, t: ir::TypeT) -> text {
   match t {

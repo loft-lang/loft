@@ -216,6 +216,48 @@ definition-level families "a struct field of this type", "a value struct or a st
 and "a `&` parameter of a tuple" have no route at their sites: a declaration's route is the
 next group to mark.
 
+### Built — step 4, the port's `route` lines for three groups (by the tester)
+
+`el_trace::route(e, name)` prints `state <pass> <line>:0 route <handler>`: the port knows the
+line being read, not the column a Rust handler stands at, so the two sides are joined by
+program, pass, LINE and handler.  Marked at the entry of the port's mirror:
+
+| Rust handler | port function |
+|---|---|
+| `parse_map`, `parse_filter`, `parse_reduce` | `el_ex_match::map_call`, `filter_call`, `reduce_call` |
+| `parse_sort`, `parse_insert`, `parse_reverse`, `parse_reserve` | `el_ex_object::sort_call`, `insert_call`, `reverse_call`, `reserve_call` |
+| `parse_match` | `el_ex_match::match_expr` |
+| `parse_tuple_match`, `parse_cursor_match` | `tuple_match`, `cursor_match` |
+| `parse_vector_match` | `vector_match`, `stream_match` |
+| `try_generic_instantiation` | `el_ex_call::instantiate` |
+
+The gate's routes file now holds both sides and the port's refusals
+(`program, side, pass, line, col, text`, side `rust` / `port` / `refuse`).  Whole corpus, the
+sites Rust takes a handler at — both: the port takes it on that line; refused: it does not,
+and refuses on that line; neither: no line of the port's there:
+
+| handler | Rust | both | refused | neither | port only |
+|---|---|---|---|---|---|
+| `parse_match` | 3376 | 3313 | 8 | 55 | 0 |
+| `try_generic_instantiation` | 1279 | 628 | 40 | 611 | 63 |
+| `parse_vector_match` | 854 | 814 | 30 | 10 | 0 |
+| `parse_insert` | 127 | 122 | 0 | 5 | 0 |
+| `parse_map` | 108 | 94 | 6 | 8 | 2 |
+| `parse_cursor_match` | 106 | 102 | 0 | 4 | 0 |
+| `parse_tuple_match` | 64 | 58 | 6 | 0 | 0 |
+| `parse_reverse` | 56 | 56 | 0 | 0 | 0 |
+| `parse_filter` | 50 | 44 | 0 | 6 | 0 |
+| `parse_reserve` | 49 | 42 | 0 | 7 | 2 |
+| `parse_reduce` | 31 | 27 | 3 | 1 | 1 |
+| `parse_sort` | 30 | 26 | 0 | 4 | 0 |
+
+`neither` mixes two things the line join cannot tell apart yet: a call spread over lines (Rust
+prints where its arguments END, the port where the statement is) and a path of the port's not
+marked.  `try_generic_instantiation`'s 611 is the second kind: Rust instantiates from three
+callers, the port's `instantiate` is one of several.  Not marked yet, each with its Rust count
+in step 3's list: the literal paths, the return path, `bind_monomorph_join_return`,
+`parse_scalar_match`, and the in-place call arms (`next`, `any`, `all`, `count_if`, …).
+
 ## 3. How much is ported — route coverage over the corpus
 
 No new mechanism: count the `route` lines.
@@ -225,6 +267,36 @@ No new mechanism: count the `route` lines.
 - The headline the handoff carries beside the agree count: "N of M routes the corpus
   exercises are carried in every program that takes them".
 - Sorted by "refused" it is the ranking of what to port next, in Rust's own terms.
+
+### Built — step 5, route coverage
+
+Under `--pass1` the gate prints the headline and the ranking, and writes the whole table where
+`LOFT_ELAB_ROUTE_COVERAGE=<file>` asks (the tester keeps it per tip as `route_coverage.tsv`;
+`routes.tsv` there is the raw lines of step 3).  One row per Rust handler, a verdict handler
+(`materialize_return_into=whole`) under its function's name:
+
+- `programs`: where Rust takes it; `carried`: the port takes its mirror at EVERY site Rust
+  does in that program; `refusing`: at some site it does not and refuses on that line;
+  `missing`: neither;
+- `sites`, `both`, `refused`, `neither`, `port only`: the same by site (program, pass, line).
+
+First reading at fcdbe9378 + 727c7bc75: **1 of 30 routes the corpus exercises are carried in
+every program that takes them** (`parse_reverse`, 6 of 6).  Next closest: `parse_match` 375 of
+399 programs, `parse_vector_match` 69 of 77, `parse_cursor_match` 11 of 12, `parse_tuple_match`
+11 of 14, `parse_map` 12 of 17, `parse_filter` 9 of 12, `parse_insert` 6 of 8, `parse_reserve`
+6 of 7, `parse_reduce` 5 of 6, `try_generic_instantiation` 59 of 145.
+
+How to read a zero: a handler the port does not MARK yet reads as carried nowhere.  That is
+the case for the eighteen handlers step 4 left (`parse_vector` 1608 programs, `parse_object`
+1635, `classify_ret_promotion` 673, `bind_monomorph_join_return` 147,
+`materialize_return_into` 145, `parse_scalar_match` 101, the in-place call arms), so their
+`refusing` column — the programs where the port refuses on a line Rust takes the route on — is
+the part that already means something: `parse_vector` 433, `parse_object` 409,
+`classify_ret_promotion` 125, `bind_monomorph_join_return` 64, `materialize_return_into` 40,
+`parse_scalar_match` 21.  Among the marked handlers the ranking by `refusing` is
+`try_generic_instantiation` 17, `parse_match` 4, `parse_vector_match` 4, `parse_tuple_match` 3,
+`parse_map` 2.  The headline moves as the port marks its paths (step 4's remaining groups) and
+as refusals lift.
 
 ## What is deliberately not built
 

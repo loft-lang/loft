@@ -1698,6 +1698,9 @@ pub fn match_subject(e: el::El, vars: el_vars::Vars, t: ir::TypeT) -> integer {
 }
 
 pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<integer>, node: integer = -1) -> Ex {
+  if el_trace::on() {
+    el_trace::route(e, "parse_match");
+  }
   vars.match_site = subject;
   // A bind's right-hand side (`r = match …`): Rust writes each arm into the destination.
   at_bind = node >= 0 && vars.expect_node == node;
@@ -2199,6 +2202,9 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
 // arm back, ending in a wildcard arm's code or the result's null.  A guard, alternatives, a
 // binding and any other member pattern are refused by name.
 pub fn tuple_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>, at_bind: boolean) -> Ex {
+  if el_trace::on() {
+    el_trace::route(e, "parse_tuple_match");
+  }
   elems = match el_types::base(x.tp) { TyTuple { elems: es } => es, _ => [] };
   tmp = el_vars::create_unique(vars, "match_tuple", x.tp);
   el_vars::set_defined(vars, tmp);
@@ -2542,6 +2548,9 @@ pub fn arm_block_deps(n: ir::Node) -> vector<integer> {
 // stream into a buffer vector of its own (`_stream_buf_N`, bounded by `max_lookahead`), then
 // matches the buffer as a vector.  Carried for a plain integer element; any other is refused.
 pub fn stream_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>, node: integer) -> Ex {
+  if el_trace::on() {
+    el_trace::route(e, "parse_vector_match");
+  }
   void = ex(ir::NdNull, ir::TyUnknown { n: 0 });
   elem = match el_types::base(x.tp) { TyIterator { step } => step, _ => ir::TyVoid };
   plain_int = match elem { TyInteger { spec } => el_types::narrow_width(spec) == 0 && spec.forced_size == 0, _ => false };
@@ -2678,6 +2687,9 @@ pub fn cursor_shape(e: el::El, t: ir::TypeT) -> vector<integer> {
 // cursor past what it read.  A rest, a repetition, an alternation and a sub-rule are not
 // carried in a cursor pattern.
 pub fn cursor_match(e: el::El, vars: el_vars::Vars, x: Ex, cs: vector<integer>, arms: vector<integer>) -> Ex {
+  if el_trace::on() {
+    el_trace::route(e, "parse_cursor_match");
+  }
   cd = cs[0]!;
   elm = match el::def(e, cd).attributes[cs[1]!].typedef[0] ?? ir::TyVoid { TyVector { inner } => inner, _ => ir::TyVoid };
   copy = !(el_ir::unspan(x.code) is NdVar);
@@ -2709,6 +2721,9 @@ pub fn cursor_match(e: el::El, vars: el_vars::Vars, x: Ex, cs: vector<integer>, 
 }
 
 pub fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>) -> Ex {
+  if el_trace::on() {
+    el_trace::route(e, "parse_vector_match");
+  }
   void = ex(ir::NdNull, ir::TyUnknown { n: 0 });
   elm = match el_types::base(x.tp) { TyVector { inner } => inner, _ => ir::TyVoid };
   narrow = match elm { TyInteger { spec } => el_types::narrow_width(spec) > 0 || spec.forced_size != 0, _ => false };
@@ -3397,6 +3412,9 @@ fn arm_settles(result: ir::TypeT, arm: ir::TypeT) -> boolean {
 // scalar; a function value, a record or text element and a callee with hidden parameters are
 // refused by name.  The first pass answers the result's type alone, as Rust's does.
 pub fn map_call(e: el::El, vars: el_vars::Vars, at: integer, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex {
+  if el_trace::on() {
+    el_trace::route(e, "parse_map");
+  }
   in_elem = match el_types::base(types[0]!) { TyVector { inner } => inner, _ => ir::TyVoid };
   out = match el_types::base(types[1]!) { TyFunction { args: _, result } => result, _ => ir::TyUnknown { n: 0 } };
   if e.first_pass {
@@ -3507,6 +3525,9 @@ fn walked_type(src: ir::Node, t: ir::TypeT) -> ir::TypeT {
 // `Parser::parse_filter`: as `map_call`, the element kept where the predicate holds
 // (`if pred(elm) null else continue`), then pushed as it is.
 pub fn filter_call(e: el::El, vars: el_vars::Vars, at: integer, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex {
+  if el_trace::on() {
+    el_trace::route(e, "parse_filter");
+  }
   in_elem = match el_types::base(types[0]!) { TyVector { inner } => inner, _ => ir::TyVoid };
   if e.first_pass {
     return ex(ir::NdNull, ir::TyVector { inner: el_types::without_deps(in_elem), dep: [] });
@@ -3597,6 +3618,9 @@ pub fn filter_call(e: el::El, vars: el_vars::Vars, at: integer, list: vector<ir:
 // `Parser::parse_reduce`: `v.reduce(init, f)` folds in place — the accumulator set to `init`,
 // then `acc = f(acc, elm)` for each element — in a "reduce" block answering it.
 pub fn reduce_call(e: el::El, vars: el_vars::Vars, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex {
+  if el_trace::on() {
+    el_trace::route(e, "parse_reduce");
+  }
   in_elem = match el_types::base(types[0]!) { TyVector { inner } => inner, _ => ir::TyVoid };
   out = match el_types::base(types[2]!) { TyFunction { args: _, result } => result, _ => ir::TyUnknown { n: 0 } };
   if e.first_pass {
