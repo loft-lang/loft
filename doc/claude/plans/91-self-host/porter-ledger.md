@@ -17,6 +17,7 @@ Read the patterns first; the rows are the evidence.
 | An instrument's ranking sends the porter to a non-problem | 1 | a new count is read on three examples by the tester before it is reported as a priority | habit |
 | The watcher gates a commit in the middle of a multi-commit push | 1 | the watcher starts a cycle only for a tip that has stood for a minute | built |
 | The tester's commits wait for a gap between cycles, or land mid-cycle | 3 | `sync.sh` (the cycle, its push and the baseline job merge what is on GitHub first) and `land.sh` (the tester's commits replayed onto the branch's tip from its own worktree); the real gate is asked to measure the commit the cycle GATED | built |
+| A Rust decision the port must mirror has no trace line, and is learned by probe builds | 1 | a `route` line at the decision, verdict and names included, added when the porter names the selector | habit: ask each handoff which decision cost probes |
 | The porter keeps a script of its own for something the loop has | 1 | each new tool is announced with a ready command for the porter's current tip | habit |
 
 ## The rows
@@ -44,3 +45,8 @@ Read the patterns first; the rows are the evidence.
 | 11-18 | — | ! | The tester's `cgen_tail.loft` did nothing inside the generator: a private struct `Nm` met `cgen_split.loft`'s (loft defect, fixed: a keyed collection is looked up by its element's registered name) | fixed at the cause |
 | 11-18 | — | ! | The cycle script dropped the tester's four commits when the porter's branch was rebased; put back by hand | the carry step's check, to repair with the fetch-and-merge change |
 | 11-18 | 727c7bc75 | ! | The tester landed a commit into the cycle's worktree 48 seconds into a cycle (harmless that time: no Rust in it) | the fetch-and-merge change |
+| 11-18 | 0320e32d1 | + | The porter's own ranking of what helped: (1) the first-pass `fn-end var` rows per function — three mint slips found in one cycle, every delivery since decided from them; (2) "which functions of a family already agree on pass 1"; (3) the verdict line with the predicted names checked | — |
+| 11-18 | 0320e32d1 | + | `noimage.txt`: the porter saw before predicting that the one program its probe lifted carries `@EXPECT_ERROR` | — |
+| 11-18 | 0320e32d1 | ? | Rust's return selector (`classify_reference_delivery` → `ref_return`) had no instrument: about six probe builds to learn its verdict per return site | a `route` line for the selector's verdict (added: `classify_reference_delivery=<verdict>`, a rename's work refs by name) |
+| 11-18 | f74d7e42b | ! | The porter's `view_tail` ran on bodies ending in a `return` statement (a spare `__ref_N`); its own corpus listing could not see it, the program being refused elsewhere — `pass1_mint.py` did | the first pass read for refused programs too (built) |
+
