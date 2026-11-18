@@ -151,3 +151,4 @@ tools/indexer/rewrite_links.py	--help
 scripts/suite_cells.py	--help
 scripts/suite_pin.py	--help
 selfhost/bench/scope_survey.py	--help
+scripts/try_gate.sh	--help

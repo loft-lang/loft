@@ -85,6 +85,16 @@ lingers between sites, the port carries the hint per node.  The gate does not co
 - a positive control and a self-check on every run: the layer must be able to fail, and
   neither side's `stmt`, `stmt-end`, `var`, `fn-end` may be missing.
 
+## Before promoting: the try-gate
+
+`scripts/try_gate.sh` asks the testing side to gate the work in a checkout — committed or not —
+before it is promoted: it posts the change as a `git bundle` in a comment on the mailbox issue
+(loft#2560, closed and locked on purpose), waits, and prints the answer: the gate line against
+the base tip, the verdicts that change, the definitions that agreed and no longer do, every
+differ.  About ten minutes; nothing is pushed to a branch.  Use it for a change that adds or
+widens a refusal, or changes a rule many functions share: a definition that agreed inside a
+program that stays refused is seen by nothing else before the promotion.
+
 ## What the trace does not show
 
 - Nothing below a statement: an operator's or a sub-expression's type is in the IR
