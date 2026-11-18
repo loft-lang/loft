@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	22a6223283eaa410758d8add2bfffe4cf45b16d0
+suite	65a87e53bd7d90971cc06e9616d086c792089f66
 
-layer	elab	agree	1031	of	2076
+layer	elab	agree	1031	of	2073
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -528,10 +528,7 @@ elab	refused	loft-suite/rules/rewrites/R-Const/a-literal-table-is-built-from-its
 elab	refused	loft-suite/rules/rewrites/R-CopyView/2265-a-loop-variable-copy-made-a-view-is-bound-in-the-loop.loft
 elab	refused	loft-suite/rules/rewrites/R-CopyView/a-match-walk-over-an-enum-list-is-a-view.loft
 elab	refused	loft-suite/rules/rewrites/R-CopyView/a-walk-over-a-list-the-demote-grows-reads-the-list-it-was-bound-to.loft
-elab	refused	loft-suite/rules/rewrites/R-DecodeView/a-byte-string-copied-out-of-a-frame-is-the-frames-bytes-at-the-decode.loft
-elab	refused	loft-suite/rules/rewrites/R-DecodeView/a-decoded-text-span-reads-what-the-copy-would-at-every-byte-run.loft
-elab	refused	loft-suite/rules/rewrites/R-DecodeView/a-decoded-value-that-escapes-its-frame-is-built-owned.loft
-elab	refused	loft-suite/rules/rewrites/R-DecodeView/an-in-place-callee-reads-a-decoded-text-where-it-lies.loft
+elab	refused	loft-suite/rules/rewrites/R-DecodeView/a-decoded-view-answers-what-its-copy-would-across-every-rule-it-meets.loft
 elab	refused	loft-suite/rules/rewrites/R-Demote/a-demoted-node-answers-what-the-copy-would-for-copies-and-every-cycle.loft
 elab	refused	loft-suite/rules/rewrites/R-Demote/a-front-push-moves-the-old-node-and-keeps-what-it-owns.loft
 elab	refused	loft-suite/rules/rewrites/R-Demote/a-variant-pushed-at-the-front-moves-the-old-record-whole.loft
