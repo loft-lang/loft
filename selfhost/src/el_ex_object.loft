@@ -1706,6 +1706,19 @@ pub fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?,
   if source < 0 && name == "sort" && sorts_itself(types) {
     return sort_call(e, list, types);
   }
+  // `parse_map` / `parse_filter` / `parse_reduce` in the call spelling (`map(v, f)`): built in
+  // place as the method spelling is, where the program declares none of its own.
+  if source < 0 && len(types) > 0 && el_types::base(first) is TyVector && !(first is TyOptional) && el_dispatch::own_set(e, name) < 0 && el::def_nr(e, "n_{name}") < 0 {
+    if name == "map" && len(list) == 2 && el_types::base(types[1]!) is TyFunction {
+      return el_ex_match::map_call(e, vars, list, types);
+    }
+    if name == "filter" && len(list) == 2 && el_types::base(types[1]!) is TyFunction {
+      return el_ex_match::filter_call(e, vars, list, types);
+    }
+    if name == "reduce" && len(list) == 3 && el_types::base(types[2]!) is TyFunction {
+      return el_ex_match::reduce_call(e, vars, list, types);
+    }
+  }
   if source < 0 && len(types) == 1 && el_types::base(first) is TyIterator && (name == "next" || name == "exhausted") {
     step = match el_types::base(first) { TyIterator { step: st } => st, _ => ir::TyVoid };
     if name == "exhausted" {
