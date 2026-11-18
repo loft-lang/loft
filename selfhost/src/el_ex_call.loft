@@ -2902,7 +2902,10 @@ pub fn coalesce(e: el::El, vars: el_vars::Vars, l: integer, r: integer) -> Ex {
     }
     // Built on the first pass too beside a native call: its buffer is a work ref registered
     // there, in source order.
-    d = ex(if e.first_pass && !fresh_native_call(e, x.code) { ir::NdNull } else { el_ex_pattern::empty_literal_to(e, vars, vt, borrows: view_borrows(e, vars, x)) }, vt);
+    // (Rust's first pass reads the `[]` — its `_vec_N` minted — before it holds the subject in
+    // `__ncc_N`: the literal's buffer is minted here on the first pass too, its code unused.)
+    lit = el_ex_pattern::empty_literal_to(e, vars, vt, borrows: view_borrows(e, vars, x));
+    d = ex(if e.first_pass && !fresh_native_call(e, x.code) { ir::NdNull } else { lit }, vt);
   }
   if el_ex_pattern::is_empty_literal(d.code) {
     el::refuse(e, "a `??` with an empty vector literal as its default");
@@ -3051,7 +3054,7 @@ pub fn chain_ends_in_call(vars: el_vars::Vars, n: ir::Node) -> boolean {
 // What a `??` subject that is a field's view borrows — the deps its default literal is built
 // against (`build_null_coalesce_default`'s hint) — or none for any other subject.
 pub fn view_borrows(e: el::El, vars: el_vars::Vars, x: Ex) -> vector<integer> {
-  if el_types::base(x.tp) is TyVector && !(x.code is NdVar) && copies_whole_vector(e, vars, x.code) {
+  if el_types::base(x.tp) is TyVector && !(x.code is NdVar) && (copies_whole_vector(e, vars, x.code) || field_path(e, x.code)) {
     return el_types::deps(x.tp);
   }
   []
