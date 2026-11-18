@@ -40,6 +40,15 @@ The standing order: stay far enough AHEAD with prepared subjects that the porter
 for one; FIX a defect that blocks the port or that the port would mirror; FILE every other
 defect met on the way, fixed or not.
 
+**A defect is not ported (owner: "make sure you do not reimplement bugs … as long as loft
+gets better for it you can take months").**  The number of agreeing programs is not the goal,
+and no cycle is short enough to justify copying a fault.  So a form the port would mirror is
+JUDGED before it is carried: a rule of the language, or a defect or an accident of the Rust
+front end.  Each prepared page says which, per form.  A defect is fixed in Rust first and the
+port follows the fixed form; until then the port refuses the shape by name.  An accident that
+changes nothing a program can observe (@C168: internal numbers) may be carried.  The tester
+never advises "carry it" for a form it has not judged.
+
 Preventing a problem is worth more than finding it sooner.  Three routines:
 
 - **A prepared topic comes with its probe already run both ways.**  On the Rust front end, on
