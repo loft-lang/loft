@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	cd4de97822d0f0375e46ab36b510d2af0c945dca
+suite	700d1c9937316d165db89d97a53663e00d4a59fe
 
-layer	elab	agree	1031	of	2083
+layer	elab	agree	1031	of	2082
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -458,8 +458,7 @@ elab	refused	loft-suite/rules/ownership/O-Complete/2382-an-early-return-releases
 elab	refused	loft-suite/rules/ownership/O-Complete/2384-a-record-copied-into-its-buffer-releases-the-buffer-when-the-arm-returns-early.loft
 elab	refused	loft-suite/rules/ownership/O-Complete/2386-a-branch-argument-releases-the-record-its-call-arm-answered.loft
 elab	refused	loft-suite/rules/ownership/O-Complete/2408-a-store-rebound-away-on-some-paths-lives-to-its-scope-exit.loft
-elab	refused	loft-suite/rules/ownership/O-Complete/2467-a-branch-of-calls-that-copy-their-answer-owns-what-they-answer.loft
-elab	refused	loft-suite/rules/ownership/O-Complete/2467-a-comprehension-of-a-call-owns-each-answer.loft
+elab	refused	loft-suite/rules/ownership/O-Complete/2467-a-call-that-copies-its-answer-owns-it-wherever-it-is-bound.loft
 elab	refused	loft-suite/rules/ownership/O-Complete/2467-an-enum-join-of-a-call-and-a-view-owns-the-call.loft
 elab	refused	loft-suite/rules/ownership/O-Complete/2488-a-branch-that-can-leave-copies-each-arm-into-the-return-buffer.loft
 elab	refused	loft-suite/rules/ownership/O-Complete/a-closure-over-a-joined-local-reads-the-store-its-run-chose.loft
