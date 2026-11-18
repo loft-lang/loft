@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	be55620c9793c98d01df24d63b9ace03f3efbec1
 
-layer	elab	agree	1140	of	2085
+layer	elab	agree	1141	of	2085
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -114,7 +114,6 @@ elab	refused	loft-suite/rules/calls/F-Rec/a-recursive-call-gets-its-own-frame.lo
 elab	refused	loft-suite/rules/calls/F-Recv/1817-an-operator-reaches-every-overload-of-its-second-operand.loft
 elab	refused	loft-suite/rules/calls/F-Recv/1826-an-operator-reaches-a-template-member-as-its-call-does.loft
 elab	refused	loft-suite/rules/calls/F-Recv/a-call-reaches-the-method-spelled-for-its-receivers-nullability.loft
-elab	refused	loft-suite/rules/calls/F-Recv/a-short-lambda-takes-its-type-from-every-callee-spelling.loft
 elab	refused	loft-suite/rules/calls/F-Ret/1350-a-lifetime-tuple-result-joins-a-tuple-literal.loft
 elab	refused	loft-suite/rules/calls/F-Ret/153-p4-a-nullable-parameter-and-return-deliver-like-their-dense-twins.loft
 elab	refused	loft-suite/rules/calls/F-Ret/1949-a-generic-returning-a-borrowing-call-copies.loft
@@ -952,7 +951,7 @@ elab	refused	tests/scripts/store_paged_enum_field.loft
 elab	refused	tests/scripts/store_rebuild_b1.loft
 elab	refused	tests/scripts/the-reference-safety-traps-are-what-it-catalogues.loft
 
-layer	elab-functions	agree	15240	of	27820
+layer	elab-functions	agree	15229	of	27791
 elab-functions	agree	lib/code.loft::Block
 elab-functions	agree	lib/code.loft::Boolean
 elab-functions	agree	lib/code.loft::Call
@@ -2695,18 +2694,6 @@ elab-functions	agree	loft-suite/rules/calls/F-Recv/a-call-reaches-the-method-spe
 elab-functions	agree	loft-suite/rules/calls/F-Recv/a-call-reaches-the-method-spelled-for-its-receivers-nullability.loft::t_9Dense1432_s2_area
 elab-functions	agree	loft-suite/rules/calls/F-Recv/a-call-reaches-the-method-spelled-for-its-receivers-nullability.loft::t_9Only1432?_s2_area
 elab-functions	agree	loft-suite/rules/calls/F-Recv/a-call-reaches-the-method-spelled-for-its-receivers-nullability.loft::vector<__nullable<Duo1432>>
-elab-functions	agree	loft-suite/rules/calls/F-Recv/a-short-lambda-takes-its-type-from-every-callee-spelling.loft::(schema)
-elab-functions	agree	loft-suite/rules/calls/F-Recv/a-short-lambda-takes-its-type-from-every-callee-spelling.loft::Pt
-elab-functions	agree	loft-suite/rules/calls/F-Recv/a-short-lambda-takes-its-type-from-every-callee-spelling.loft::main_vector<Pt>
-elab-functions	agree	loft-suite/rules/calls/F-Recv/a-short-lambda-takes-its-type-from-every-callee-spelling.loft::n___lambda_test_a_generic_free_call_0
-elab-functions	agree	loft-suite/rules/calls/F-Recv/a-short-lambda-takes-its-type-from-every-callee-spelling.loft::n___lambda_test_a_generic_free_call_1
-elab-functions	agree	loft-suite/rules/calls/F-Recv/a-short-lambda-takes-its-type-from-every-callee-spelling.loft::n___lambda_test_a_generic_free_call_2
-elab-functions	agree	loft-suite/rules/calls/F-Recv/a-short-lambda-takes-its-type-from-every-callee-spelling.loft::n___lambda_test_a_generic_free_call_3
-elab-functions	agree	loft-suite/rules/calls/F-Recv/a-short-lambda-takes-its-type-from-every-callee-spelling.loft::n___lambda_test_a_generic_free_call_4
-elab-functions	agree	loft-suite/rules/calls/F-Recv/a-short-lambda-takes-its-type-from-every-callee-spelling.loft::n_my_map
-elab-functions	agree	loft-suite/rules/calls/F-Recv/a-short-lambda-takes-its-type-from-every-callee-spelling.loft::t_6vector_apply
-elab-functions	agree	loft-suite/rules/calls/F-Recv/a-short-lambda-takes-its-type-from-every-callee-spelling.loft::t_6vector_apply_i
-elab-functions	agree	loft-suite/rules/calls/F-Recv/a-short-lambda-takes-its-type-from-every-callee-spelling.loft::vector<Pt>
 elab-functions	agree	loft-suite/rules/calls/F-Ret/1350-a-lifetime-tuple-result-joins-a-tuple-literal.loft::(schema)
 elab-functions	agree	loft-suite/rules/calls/F-Ret/1350-a-lifetime-tuple-result-joins-a-tuple-literal.loft::Bag
 elab-functions	agree	loft-suite/rules/calls/F-Ret/1350-a-lifetime-tuple-result-joins-a-tuple-literal.loft::__tuple<vector<integer>,text>
@@ -14424,6 +14411,7 @@ elab-functions	agree	tests/scripts/432-untyped-vector-literal-arg.loft::n_s_u32
 elab-functions	agree	tests/scripts/432-untyped-vector-literal-arg.loft::n_s_u8
 elab-functions	agree	tests/scripts/432-untyped-vector-literal-arg.loft::n_test_p432_generic_vector_arg_unaffected
 elab-functions	agree	tests/scripts/432-untyped-vector-literal-arg.loft::n_test_p432_method_arg
+elab-functions	agree	tests/scripts/432-untyped-vector-literal-arg.loft::n_test_p432_named_arg
 elab-functions	agree	tests/scripts/432-untyped-vector-literal-arg.loft::n_test_p432_positional_narrow_widths
 elab-functions	agree	tests/scripts/432-untyped-vector-literal-arg.loft::t_6Holder_take
 elab-functions	agree	tests/scripts/432-untyped-vector-literal-arg.loft::vector<integer(0, 255)>
@@ -16194,7 +16182,7 @@ elab-functions	agree	tests/scripts/the-reference-safety-traps-are-what-it-catalo
 elab-functions	agree	tests/scripts/the-reference-safety-traps-are-what-it-catalogues.loft::vector<SafetyRow>
 elab-functions	agree	tests/scripts/the-reference-safety-traps-are-what-it-catalogues.loft::vector<integer(0, 255)>
 
-layer	elab-pass1	agree	10791	of	15977
+layer	elab-pass1	agree	10804	of	15991
 elab-pass1	agree	lib/code.loft::t_4Code_get_type
 elab-pass1	agree	lib/code.loft::t_4Code_set_type
 elab-pass1	agree	lib/docs.loft::n_demo
@@ -17158,10 +17146,23 @@ elab-pass1	agree	loft-suite/rules/calls/F-Recv/a-method-on-an-enum-answers-a-var
 elab-pass1	agree	loft-suite/rules/calls/F-Recv/a-method-on-an-enum-answers-a-variant-receiver-in-both-spellings.loft::t_3Dot_label
 elab-pass1	agree	loft-suite/rules/calls/F-Recv/a-method-on-an-enum-answers-a-variant-receiver-in-both-spellings.loft::t_5Shape_arity
 elab-pass1	agree	loft-suite/rules/calls/F-Recv/a-method-on-an-enum-answers-a-variant-receiver-in-both-spellings.loft::t_5Shape_label
+elab-pass1	agree	loft-suite/rules/calls/F-Recv/a-short-lambda-takes-its-type-from-every-callee-spelling.loft::n___lambda_test_a_concrete_method_both_spellings_0
+elab-pass1	agree	loft-suite/rules/calls/F-Recv/a-short-lambda-takes-its-type-from-every-callee-spelling.loft::n___lambda_test_a_concrete_method_both_spellings_1
+elab-pass1	agree	loft-suite/rules/calls/F-Recv/a-short-lambda-takes-its-type-from-every-callee-spelling.loft::n___lambda_test_a_concrete_method_both_spellings_2
+elab-pass1	agree	loft-suite/rules/calls/F-Recv/a-short-lambda-takes-its-type-from-every-callee-spelling.loft::n___lambda_test_a_concrete_method_both_spellings_3
 elab-pass1	agree	loft-suite/rules/calls/F-Recv/a-short-lambda-takes-its-type-from-every-callee-spelling.loft::n___lambda_test_a_generic_free_call_0
 elab-pass1	agree	loft-suite/rules/calls/F-Recv/a-short-lambda-takes-its-type-from-every-callee-spelling.loft::n___lambda_test_a_generic_free_call_1
 elab-pass1	agree	loft-suite/rules/calls/F-Recv/a-short-lambda-takes-its-type-from-every-callee-spelling.loft::n___lambda_test_a_generic_free_call_2
 elab-pass1	agree	loft-suite/rules/calls/F-Recv/a-short-lambda-takes-its-type-from-every-callee-spelling.loft::n___lambda_test_a_generic_free_call_3
+elab-pass1	agree	loft-suite/rules/calls/F-Recv/a-short-lambda-takes-its-type-from-every-callee-spelling.loft::n___lambda_test_a_generic_free_call_5
+elab-pass1	agree	loft-suite/rules/calls/F-Recv/a-short-lambda-takes-its-type-from-every-callee-spelling.loft::n___lambda_test_a_generic_free_call_6
+elab-pass1	agree	loft-suite/rules/calls/F-Recv/a-short-lambda-takes-its-type-from-every-callee-spelling.loft::n___lambda_test_a_generic_method_both_spellings_0
+elab-pass1	agree	loft-suite/rules/calls/F-Recv/a-short-lambda-takes-its-type-from-every-callee-spelling.loft::n___lambda_test_a_generic_method_both_spellings_1
+elab-pass1	agree	loft-suite/rules/calls/F-Recv/a-short-lambda-takes-its-type-from-every-callee-spelling.loft::n___lambda_test_a_generic_method_both_spellings_2
+elab-pass1	agree	loft-suite/rules/calls/F-Recv/a-short-lambda-takes-its-type-from-every-callee-spelling.loft::n___lambda_test_a_generic_method_both_spellings_3
+elab-pass1	agree	loft-suite/rules/calls/F-Recv/a-short-lambda-takes-its-type-from-every-callee-spelling.loft::n_test_a_concrete_method_both_spellings
+elab-pass1	agree	loft-suite/rules/calls/F-Recv/a-short-lambda-takes-its-type-from-every-callee-spelling.loft::n_test_a_generic_free_call
+elab-pass1	agree	loft-suite/rules/calls/F-Recv/a-short-lambda-takes-its-type-from-every-callee-spelling.loft::n_test_a_generic_method_both_spellings
 elab-pass1	agree	loft-suite/rules/calls/F-Recv/a-short-lambda-takes-its-type-from-every-callee-spelling.loft::t_6vector_apply
 elab-pass1	agree	loft-suite/rules/calls/F-Recv/a-short-lambda-takes-its-type-from-every-callee-spelling.loft::t_6vector_apply_i
 elab-pass1	agree	loft-suite/rules/calls/F-Ret/1346-a-nullable-record-from-a-call-copies-when-reassigned-or-joined.loft::n___lambda_main_0
