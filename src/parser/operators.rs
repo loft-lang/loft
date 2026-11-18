@@ -4243,10 +4243,22 @@ impl Parser {
     /// spelling the statement `return;` refuses there, kept for it.
     fn build_null_coalesce_return(&mut self, code: &mut Value, ctp: &mut Type, lhs_type: &Type) {
         let mut ret_stmt = Value::Null;
-        if self.control_value_follows() {
+        let r_type = self.data.def(self.context).returned().clone();
+        if self.control_value_follows() && r_type == Type::Void {
+            // In a function with no value, `x ?? return f()` runs the void call and leaves —
+            // the one place a `return` is followed by an expression there, which published
+            // libraries write (`dev = open(..) ?? return assert(false, "no device")`).  The
+            // statement's parse refuses any expression after `return` in such a function.
+            let ret_pos = *self.lexer.peek_pos();
+            let mut ret_val = Value::Null;
+            let t = self.expression(&mut ret_val);
+            if t != Type::Void && !self.first_pass {
+                self.validate_convert("return", &t, &r_type, &ret_pos);
+            }
+            ret_stmt = Value::Return(Box::new(ret_val));
+        } else if self.control_value_follows() {
             self.parse_return(&mut ret_stmt);
         } else {
-            let r_type = self.data.def(self.context).returned().clone();
             let ret_val = if r_type != Type::Void && !self.first_pass {
                 self.null_value(&r_type)
             } else {
