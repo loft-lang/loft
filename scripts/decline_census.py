@@ -54,7 +54,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 RECORD = ROOT / "bench" / "portal" / "decline_census.tsv"
 sys.path.insert(0, str(ROOT / "scripts"))
-from rewrite_census import programs, rust_writer_env, warm_dependencies  # noqa: E402
+import reason_census  # noqa: E402
+from rewrite_census import WRITERS, programs, rust_writer_env, warm_dependencies  # noqa: E402
 
 # The rules whose declines the compiler reports (`rewrite_census::declined` call sites).
 # A rule absent here with admissions present is shown as `not reported`.
@@ -133,34 +134,43 @@ def mask(why):
 
 
 def census(loft, prog):
+    """One program's admissions and refusals over every writer (`rewrite_census.WRITERS`: the C
+    writer, and the rustc one while it exists).  A rule the parser or the scope pass decides
+    counts the same under each, and a writer's own rule counts under that writer alone, so the
+    larger count of the runs is the program's."""
     name, commit, cwd, argv = prog
-    with tempfile.TemporaryDirectory() as tmp:
-        adm, dec, out = (Path(tmp) / f for f in ("adm.tsv", "dec.tsv", "out.rs"))
-        proc = subprocess.run(
-            [loft, "--native-rust", "--native-emit", str(out), "--lean", *argv],
-            cwd=cwd, capture_output=True, text=True, timeout=300,
-            # `--native-emit` must write Rust whatever `LOFT_NATIVE_BACKEND` says (`make ci`
-            # exports it as `c`): the same environment as the rewrite census's runs.
-            env={**rust_writer_env(), "LOFT_NO_NATIVE_LIBS": "1",
-                 "LOFT_REWRITE_CENSUS": str(adm), "LOFT_DECLINE_CENSUS": str(dec)},
-        )
-        if proc.returncode != 0 or not adm.exists():
-            return name, None, None, proc.stderr.strip().splitlines()[-1:] or ["no output"]
-        admitted = {}
-        for line in adm.read_text(encoding="utf-8").splitlines():
-            rule, _, n = line.partition("\t")
-            admitted[rule] = int(n)
-        declined = defaultdict(int)
-        if dec.exists():
-            for line in dec.read_text(encoding="utf-8").splitlines():
+    admitted, declined, errors = defaultdict(int), defaultdict(int), []
+    for writer, (ext, flags) in WRITERS.items():
+        with tempfile.TemporaryDirectory() as tmp:
+            adm, dec, out = (Path(tmp) / f for f in ("adm.tsv", "dec.tsv", "out" + ext))
+            proc = subprocess.run(
+                [loft, *flags(out), *argv],
+                cwd=cwd, capture_output=True, text=True, timeout=300,
+                # Each writer is chosen by its flag, whatever `LOFT_NATIVE_BACKEND` says (`make
+                # ci` exports it as `c`): the same environment as the rewrite census's runs.
+                env={**rust_writer_env(), "LOFT_NO_NATIVE_LIBS": "1",
+                     "LOFT_REWRITE_CENSUS": str(adm), "LOFT_DECLINE_CENSUS": str(dec)},
+            )
+            if proc.returncode != 0 or not adm.exists():
+                errors.append(f"{writer}: " + (proc.stderr.strip().splitlines()[-1:] or ["no output"])[0])
+                continue
+            sites = {}
+            for line in adm.read_text(encoding="utf-8").splitlines():
+                rule, _, n = line.partition("\t")
+                sites[rule] = int(n)
+            for line in dec.read_text(encoding="utf-8").splitlines() if dec.exists() else []:
                 rule, why, n = line.split("\t")
                 if why == "admitted":
                     # The rule names its sites: one per loop or view, comparable with the
                     # declines, where the rewrite census counts every emitted copy.
-                    admitted[rule] = int(n)
+                    sites[rule] = int(n)
                 else:
-                    declined[(rule, mask(why))] += int(n)
-        return name, admitted, dict(declined), None
+                    declined[(rule, mask(why))] = max(declined[(rule, mask(why))], int(n))
+            for rule, n in sites.items():
+                admitted[rule] = max(admitted[rule], n)
+    if not admitted:
+        return name, None, None, errors or ["no output"]
+    return name, dict(admitted), dict(declined), None
 
 
 def family(rule):
@@ -199,6 +209,11 @@ def report(results, reasons, per_program):
                              f"({len(top) - reasons} more reasons)")
         else:
             lines.append(f"{rule:<28} {a:>8} {'':>8} {'':>6}  not reported")
+    quiet = silent_rules(admitted, declined)
+    for title, names in (("fire in NO program of the body", quiet[0]),
+                         ("report their refusals and refused NOTHING", quiet[1])):
+        lines.append("")
+        lines.append(f"{len(names)} rules {title}: " + (", ".join(names) or "none"))
     labels = defaultdict(set)
     for rule, why in by_rule_reason:
         labels[rule].add(why)
@@ -218,6 +233,19 @@ def report(results, reasons, per_program):
     return "\n".join(lines), admitted, declined, by_rule_reason
 
 
+def silent_rules(admitted, declined):
+    """What the body of programs never showed: the rules the source can fire (a `fired` call,
+    `reason_census.scan`) that fired in no program, and the rules that report refusals (a
+    `declined` call) and refused nothing.  Either the body lacks the shape, or the rule is
+    dead; the census cannot tell which, and says so by naming them."""
+    counts, _, _, _ = reason_census.scan()
+    seen_fired = {r.split("/")[0] for r, n in admitted.items() if n} | set(k for k, n in admitted.items() if n)
+    seen_declined = {r.split("/")[0] for r, n in declined.items() if n} | set(k for k, n in declined.items() if n)
+    never_fired = sorted(r for r, c in counts.items() if c["fired"] and r not in seen_fired)
+    never_refused = sorted(r for r, c in counts.items() if c["declined"] and r not in seen_declined)
+    return never_fired, never_refused
+
+
 def record(results, admitted, declined, by_rule_reason):
     head = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--short=9", "HEAD"],
                           capture_output=True, text=True).stdout.strip() or "?"
@@ -225,7 +253,8 @@ def record(results, admitted, declined, by_rule_reason):
         "# The decline census: per rewrite rule, the sites admitted and the sites refused by reason,",
         "# over the bench programs.  Written by `scripts/decline_census.py --record`; a report, not a baseline.",
         f"# commit={head} programs={len(results)}",
-        "# rule <TAB> reason (`admitted` for the admissions; names masked as `_`) <TAB> count",
+        "# rule <TAB> reason (`admitted` for the admissions) <TAB> count; a 0 row is a rule that fired",
+        "# in no program (`admitted`) or reports its refusals and refused nothing (`(no refusal)`)",
     ]
     for rule in sorted(set(admitted) | set(declined)):
         if admitted.get(rule):
@@ -233,6 +262,9 @@ def record(results, admitted, declined, by_rule_reason):
         for (r, why), n in sorted(by_rule_reason.items()):
             if r == rule:
                 lines.append(f"{rule}\t{why}\t{n}")
+    never_fired, never_refused = silent_rules(admitted, declined)
+    lines += [f"{rule}\tadmitted\t0" for rule in never_fired]
+    lines += [f"{rule}\t(no refusal)\t0" for rule in never_refused]
     RECORD.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -243,12 +275,12 @@ def by_function(loft, prog, names):
     the functions and rules that refused something; with names, everything of those."""
     fired = defaultdict(int)
     refused = defaultdict(lambda: defaultdict(int))
-    for writer, flags in (("native", ["--native-rust", "--native-emit"]), ("c", ["--emit-c"])):
+    own_phase = {"rust": "native", "c": "c"}
+    for nth, (writer, (ext, flags)) in enumerate(WRITERS.items()):
         with tempfile.TemporaryDirectory() as tmp:
-            adm, dec, out = (Path(tmp) / f for f in ("adm.tsv", "dec.tsv", "out"))
+            adm, dec, out = (Path(tmp) / f for f in ("adm.tsv", "dec.tsv", "out" + ext))
             proc = subprocess.run(
-                [loft, *flags, str(out), "--lean", prog], capture_output=True, text=True,
-                timeout=300,
+                [loft, *flags(out), prog], capture_output=True, text=True, timeout=300,
                 env={**rust_writer_env(), "LOFT_NO_NATIVE_LIBS": "1",
                      "LOFT_REWRITE_CENSUS_FN": str(adm), "LOFT_DECLINE_CENSUS_FN": str(dec)},
             )
@@ -256,10 +288,10 @@ def by_function(loft, prog, names):
                 print(f"decline_census: the {writer} writer gave no census: "
                       f"{(proc.stderr.strip().splitlines() or ['no output'])[-1]}", file=sys.stderr)
                 continue
-            # The `parse` and `ir` phases run before either writer: counted from one run.
+            # The `parse` and `ir` phases run before any writer: counted from the first run.
             for line in adm.read_text(encoding="utf-8").splitlines():
                 phase, function, rule, n = line.split("\t")
-                if writer == "native" or phase == "c":
+                if nth == 0 or phase == own_phase.get(writer, writer):
                     fired[(function, rule)] += int(n)
             # A test both runs report is one refusal: the larger count of the two.
             for line in dec.read_text(encoding="utf-8").splitlines() if dec.exists() else []:

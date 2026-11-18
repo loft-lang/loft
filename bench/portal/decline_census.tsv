@@ -1,8 +1,10 @@
 # The decline census: per rewrite rule, the sites admitted and the sites refused by reason,
 # over the bench programs.  Written by `scripts/decline_census.py --record`; a report, not a baseline.
-# commit=5d3d6cb0f programs=61
-# rule <TAB> reason (`admitted` for the admissions; names masked as `_`) <TAB> count
-H-SwapRebind	admitted	48
+# commit=757918abc programs=61
+# rule <TAB> reason (`admitted` for the admissions) <TAB> count; a 0 row is a rule that fired
+# in no program (`admitted`) or reports its refusals and refused nothing (`(no refusal)`)
+H-ClearRelease/plain	admitted	467
+H-SwapRebind	admitted	49
 R-Alias/versioned	admitted	140
 R-Apart	admitted	10
 R-Apart	a bind of a value the form cannot hold	115
@@ -11,8 +13,9 @@ R-Apart	a record parameter outside a twin	14
 R-Apart/records	admitted	3
 R-Apart/records	a mention no clause admits	3
 R-Apart/records	assigned	60
-R-Apart/records	handed to a function that is no twin	74
+R-Apart/records	handed to a function that is no twin	91
 R-Apart/records	reaches no twin	13
+R-Apart/records/boundary	admitted	1
 R-Apart/vector	admitted	36
 R-Apart/vector	a bind of a value that is no empty init	37
 R-Apart/vector	a mention the inline buffer does not serve	487
@@ -21,16 +24,28 @@ R-Apart/vector	no push and no read	74
 R-AppendTwin	admitted	35
 R-AppendTwin	the callee observes its buffer	5
 R-AppendTwin	the destination is a parameter	8
-R-Base	admitted	6897
+R-AppendTwin/loop-window	admitted	4
+R-AppendTwin/mint	admitted	5
+R-Base	admitted	6904
+R-Base/counter	admitted	390
+R-Base/grid	admitted	102
+R-Base/guard	admitted	90
+R-Base/length-local	admitted	13
+R-Base/wrap-select	admitted	8
 R-BoundAppend	admitted	2
 R-BoundAppend	a statement between the bind and the append does more than read a length	5
 R-BoundAppend	the result is named outside its bind, those lengths and the append	1
 R-BoundedNest	admitted	20
 R-BoundedNest/kernel	admitted	61
+R-BufferReturn	admitted	263
+R-BufferReturn/bind	admitted	112
 R-ByteCopy	admitted	4
 R-ByteCopy	a bound the guard cannot evaluate twice	1
 R-Callee	admitted	176
 R-CharWalk	admitted	658
+R-Cold/loft	ends without a return	98
+R-Cold/loft	holds a loop, break, continue, yield, fn ref or par	1
+R-Cold/loft	reads a local from outside	1
 R-Compact	admitted	2
 R-Compact/prepend	admitted	1
 R-CompleteWrite	admitted	2421
@@ -46,8 +61,8 @@ R-CopyView	assigned more than once	8
 R-CopyView/walk	admitted	4
 R-CopyView/walk	a parameter or a captured local	4
 R-CopyView/walk	not a walk: a set that is not a bind or a self step	28
-R-Counter	admitted	13962
-R-Counter	an inclusive range whose end is not a literal below the type's maximum	29
+R-Counter	admitted	19714
+R-Counter	an inclusive range whose end is not a literal below the type's maximum	31
 R-CtorLiteral	admitted	11
 R-CtorLiteral	a record of scalars (its call travels as a value record)	9
 R-CtorLiteral	a vector literal's buffer is used elsewhere	1
@@ -56,6 +71,7 @@ R-CtorLiteral	the target is a parameter (the function's own return buffer)	9
 R-CtorLiteral	the target is assigned more than once	166
 R-DecodeView	a decoded value returned out of its frame	5
 R-DecodeView	a read of a decoded byte string	1
+R-DeferredCopy	its type reaches a keyed collection, which the remap does not follow	3
 R-Demote	admitted	4
 R-Demote/place	admitted	1
 R-Destination	admitted	30
@@ -80,15 +96,19 @@ R-FaultFlag	a callee that writes through a hidden or by-reference parameter	31
 R-FaultFlag	a node whose effect is not local to the statement	249
 R-FaultFlag	an operator that raises inside a called function	29
 R-FaultFlag	an operator that touches state outside its operands	274
-R-FieldAppend	admitted	170
-R-FieldAppend/bare	admitted	895
-R-FileHold	admitted	43
-R-Fill	admitted	3
+R-FieldAppend	admitted	185
+R-FieldAppend/bare	admitted	1034
+R-FileHold	admitted	44
+R-Fill	admitted	11
+R-Fill/guarded	admitted	4
 R-FirstClaim	admitted	8
 R-FlatCopy	admitted	110
+R-FnRefBuffer	admitted	3
+R-FnRefBuffer/frame	admitted	3
 R-FnRefValue	admitted	11
 R-FoldCompare	admitted	1
 R-FormatAppend	admitted	346
+R-FormatAppend/c	admitted	7
 R-ForwardResult	admitted	6
 R-ForwardResult	the call takes no buffer	11
 R-ForwardWalk	admitted	389
@@ -103,17 +123,23 @@ R-Fuse/jump	admitted	11598
 R-Fuse/tag	admitted	139
 R-Fuse/text	admitted	2045
 R-GroupPush	admitted	249
-R-GuardFree	admitted	833
+R-GuardFree	admitted	1791
 R-GuardedChain	admitted	1199
 R-GuardedChain/operators	admitted	3617
+R-GuardedChain/versions	admitted	21
 R-HandOver/rotate	admitted	2
-R-Header	admitted	8148
+R-Header	admitted	8163
 R-Header	the loop writes a text and also pushes, mints or reserves	2
-R-Header/apart	admitted	286
-R-Header/apart-param	admitted	47
+R-Header/apart	admitted	364
+R-Header/apart-param	admitted	85
 R-Header/function	admitted	139
+R-Header/grown	admitted	26
+R-Header/grown-held	admitted	4
 R-Header/kept	admitted	3470
-R-Header/kept-twin	admitted	1036
+R-Header/kept-growth	admitted	7
+R-Header/kept-twin	admitted	1042
+R-Header/narrow	admitted	227
+R-Header/rebind	admitted	36
 R-Header/scalars	a statement the write-set walk cannot type	67
 R-Header/text	admitted	5
 R-HostStore	admitted	7
@@ -131,14 +157,17 @@ R-InRange	the vector is handed to an operator that may resize it	6
 R-InRange	the vector is used other than by an element read	1
 R-InRange/length-local	admitted	20
 R-InRange/wrapped	admitted	22
+R-Inline	admitted	684
+R-Inline/helper	admitted	243
 R-InlineLeaf	admitted	2972
 R-Inputs	admitted	10534
 R-Invariant	admitted	4112
+R-Invariant/hoist	admitted	402
 R-KeyedEntry	admitted	17
 R-KeyedEntry	a key or a text field written by another setter	5
 R-KeyedEntry	a statement between the mint and the finish that is no field write of the buffer alone	2
 R-KeyedEntry/subscript	admitted	3
-R-LazySplit	admitted	6
+R-LazySplit	admitted	8
 R-Leaf	admitted	10762
 R-LeafChain	admitted	6295
 R-LeafChain	its call tree reaches a framed callee, a cycle, a fn ref, a parallel or a yield	1616
@@ -168,6 +197,13 @@ R-MoveLast	the source is read other than by the rebind	4
 R-MoveLast	the source's witness is not its own	14
 R-MoveLast/host	admitted	1
 R-MoveLast/local	admitted	2
+R-NoLocks	admitted	55
+R-NoThreads	admitted	59
+R-NonSentinelParam	admitted	1498
+R-NonSentinelParam/twin	admitted	108
+R-Peel	admitted	129
+R-Peel	the body holds a loop, a yield or a parallel block	23
+R-Peel	the unrolled body would pass the size bound	1
 R-Place	admitted	7
 R-Place	a free names the local or the buffer outside the exit pair	3
 R-Place	a free names the local or the buffer outside the turn's end	1
@@ -188,39 +224,46 @@ R-Place	the local or the buffer is named in a shape the rewrite does not model	1
 R-Place	the statement before the bind is not the lazy mint	48
 R-PureReuse	admitted	1
 R-Push	admitted	1468
-R-PushFill	admitted	338
+R-Push/read	admitted	14
+R-Push/sole	admitted	27
+R-PushFill	admitted	340
 R-PushFill	the body can return	2
 R-PushFill	the body names a local that may view the pushed vector	94
 R-PushFill	the body names the pushed vector outside its pushes	15
 R-PushFill	the body writes a store beside its pushes	3
 R-PushFill/fill	admitted	46
 R-PushFill/hash	admitted	3
+R-PushFill/held-run	admitted	5
 R-PushFill/loop	a push stands under a branch	1
 R-PushFill/loop	another write reaches the path	3
 R-PushFill/loop	the body can leave early, or loops	44
 R-PushFill/loop	the loop is not a counted range	29
 R-PushFill/loop	the pushes reach two paths	93
 R-PushFill/record	admitted	65
-R-PushFill/run	admitted	24
+R-PushFill/run	admitted	92
+R-PushFill/run-header	admitted	45
 R-PushFill/several	admitted	10
-R-PushRec	admitted	225
-R-PushRec/apart	admitted	85
-R-Range	admitted	9257
-R-Range	a chain of locals	929
-R-Range	a conversion	976
+R-PushFill/text	admitted	11
+R-PushRec	admitted	226
+R-PushRec/apart	admitted	90
+R-Range	admitted	10646
+R-Range	a chain of locals	928
+R-Range	a conversion	981
 R-Range	a counter whose range has an unranged end	771
-R-Range	a local handed out by reference	172
+R-Range	a local handed out by reference	171
 R-Range	a native call's result	368
-R-Range	a parameter	6142
-R-Range	a record field	1297
-R-Range	a user call's result	2776
+R-Range	a parameter	6139
+R-Range	a record field	1299
+R-Range	a user call's result	2780
 R-Range	a vector element	894
 R-Range	an accumulator stepped by a literal under an unbounded loop	2232
 R-Range	an accumulator stepped by a value	3563
 R-Range	an expression of another shape	420
 R-Range	ranged operands whose result may overflow	108
-R-RangedCall	admitted	871
+R-Range/index	admitted	478
+R-RangedCall	admitted	976
 R-RangedCall	an integer argument is not proven in range	1890
+R-RangedCall/guard	admitted	32
 R-Rebind	admitted	5
 R-Rebind	an exit answers neither the parameter nor the buffer	4
 R-Rebind	the buffer argument is not the caller's work-ref	2
@@ -228,16 +271,21 @@ R-Rebind	the callee has no hidden return buffer	173
 R-Rebind	the callee's buffer was promoted onto a local	17
 R-Rebind	the local is a parameter or a compiler temp	46
 R-Rebind	the local is nullable	1
-R-RecPtr	admitted	1199
+R-RecPtr	admitted	1282
 R-RecPtr	no fusable field read or write of the view	2720
 R-RecPtr	the remainder frees a record before a use of the view	236
 R-RecPtr	the remainder may grow a store	1878
-R-RecPtr	the remainder rebinds the view	201
+R-RecPtr	the remainder rebinds the view	202
+R-RecPtr/held	admitted	200
 R-RecPtr/index	admitted	40
 R-RecPtr/nested	admitted	206
+R-RecPtr/param	admitted	285
+R-RecPtr/text	admitted	40
+R-RefParam	admitted	6075
 R-RefillBuffer	admitted	360
 R-RefillText	admitted	9
 R-Refresh	admitted	16
+R-Refresh/keep-header	admitted	2
 R-RepeatRun	admitted	109
 R-RetAdopt	admitted	484
 R-ReturnField	admitted	1
@@ -252,6 +300,7 @@ R-Reuse	not a record	203
 R-Reuse	not an owned caller buffer	503
 R-Rotate	admitted	4949
 R-SameRead	admitted	21
+R-SameRead/filed	admitted	1
 R-Scalar	admitted	10809
 R-ScaleFold	admitted	2
 R-SelfReplace	admitted	19
@@ -262,8 +311,11 @@ R-SliceBorrow	admitted	22
 R-SliceInto	admitted	2
 R-SliceInto	its value is no slice temporary	4
 R-SliceInto	its value is not the temporary	3
-R-SplitTable	admitted	154
+R-SliceInto/transient	admitted	1
+R-SpecChain	admitted	544
+R-SplitTable	admitted	156
 R-StartStep	admitted	1004
+R-StickySum	admitted	970
 R-StreamWalk	admitted	2
 R-StreamWalk	a statement inside an append	1
 R-StreamWalk	an operator inside an append	2
@@ -271,6 +323,10 @@ R-StreamWalk	mentions the buffer	1
 R-StreamWalk	no vector local in the buffer	28
 R-StreamWalk	not a counted walk	1
 R-StreamWalk	the call is not followed by a walk	1
+R-TableHandle	admitted	5
+R-Tabulate	admitted	4
+R-Tabulate	fewer branches than the minimum	72
+R-Tabulate	the body does not evaluate for every argument	3
 R-TailSelf	admitted	2
 R-TextBorrow	admitted	1825
 R-TextBorrow	the body may write a store	24
@@ -278,10 +334,17 @@ R-TextBorrow/tested	admitted	6
 R-TextClear	admitted	2936
 R-TextLen	admitted	5
 R-TextRun	not declared empty right before its copy	2
+R-Transient	admitted	10
+R-Transient	a root bound more than once	14
+R-Transient	a root read outside its bind's block	49
+R-Transient	a use of the value no transient form answers	38
+R-Transient	its roots live together	78
 R-TypedKeyed	admitted	66
 R-TypedKeyed/compound	admitted	18
+R-TypedKeyed/remove	admitted	4
 R-TypedKeyed/text	admitted	19
 R-TypedRead	admitted	204
+R-TypedRead/float	admitted	2
 R-ValueLocal	admitted	2225
 R-ValueLocal	a bind's buffer: a parameter, and no forward of a tuple	23
 R-ValueLocal	a bind's buffer: another mention	28
@@ -296,6 +359,11 @@ R-ValueRecord	a native op may write an existing record of the type	14
 R-ValueRecord	its record is consumed as an operand at a call site	62
 R-ValueRecord/view	admitted	3
 R-VecCopy	admitted	21
+R-Version	admitted	133
+R-Version	an argument not linear in the counter	22
+R-Version	an input read through its record	12
+R-Version	no argument moves with the counter	8
+R-Version/nest	admitted	44
 R-View	admitted	739
 R-View	a statement after the bind blocks a held header	1701
 R-ViewReturn	admitted	1
@@ -313,6 +381,21 @@ R-WorkBuffer	mentioned outside a vector operator	1
 R-WorkBuffer/onward	admitted	777
 R-WorkBuffer/onward	its callee is on a cycle with this function	20
 R-WorkBuffer/result	admitted	31
+R-WorkPark	admitted	920
 R-Wrapper	admitted	2453
 R-Wrapper	an argument is neither a leaf nor a pure vector path	515
 R-ZeroCount	admitted	532
+R-Cold	admitted	0
+R-DecodeView	admitted	0
+R-DeferredCopy	admitted	0
+R-RebindBuffer	admitted	0
+R-TextRun	admitted	0
+R-Compact	(no refusal)	0
+R-DischargeInto	(no refusal)	0
+R-LazySplit	(no refusal)	0
+R-LitDiv	(no refusal)	0
+R-LiteralAppend	(no refusal)	0
+R-PureReuse	(no refusal)	0
+R-SelfReplace	(no refusal)	0
+R-TailSelf	(no refusal)	0
+R-VecCopy	(no refusal)	0

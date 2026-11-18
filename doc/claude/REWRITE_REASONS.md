@@ -30,6 +30,15 @@ checker inside the compiler.  The rules themselves are
   they are while rules owe: the table is what tells a reader what to expect of a rewrite —
   whether it will say why it refused, in whole, in part or not at all — before they lean on
   it.  A rule never falls back to silent, and each rule wired moves its row.
+- **A rule that does not fire is reported too.**  `make decline-census` ends with the rules
+  the source can fire that fired in NO program of the body, and the rules that report their
+  refusals and refused NOTHING; the recorded snapshot carries them as rows of 0.  Either the
+  body lacks the shape or the rule is dead, and a name on those lists is the cue to find out
+  which.
+- **The census runs every writer.**  It reads the C writer and the rustc one while that
+  exists (`rewrite_census.WRITERS`, the one list), and takes the larger count where both
+  report: a rule the parser or the scope pass decides counts the same under each.  A rule
+  only the rustc writer applies leaves the census with that writer.
 - **No self-check.**  The compiler has no mode in which it verifies its own analyses while a
   program runs.  A layer that validates the analyses adds complexity to check complexity.
 - **Logging is the assurance.**  A decision is trusted because it can be read from outside:

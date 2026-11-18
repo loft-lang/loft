@@ -133,7 +133,9 @@ make decline-census                      # HOW FAR EACH REWRITE REACHES: per R- 
                                          #   matters is the next arc, by yield.  Rules without
                                          #   decline reporting read `not reported`, never covered.
                                          #   A REPORT (`ARGS="--record"` keeps the snapshot); it
-                                         #   also counts the labels each rule uses
+                                         #   also counts the labels each rule uses, and names the
+                                         #   rules that fired in NO program and the reporting
+                                         #   rules that refused NOTHING.  Every writer is run
                                          #   `ARGS="--functions <prog.loft> [name …]"`: one program
                                          #   by FUNCTION — what each rule rewrote there and what
                                          #   each test refused (REWRITE_REASONS.md)
