@@ -10600,9 +10600,15 @@ impl Parser {
             // is pure, so the test re-reads it.
             // So is an element or a keyed entry that is not there, and anything read off one.
             // The re-read is safe only where no user call is in it.
-            Value::Call(_, _)
-                if !self.ir_has_user_call(&orig) && self.copy_source_may_be_absent(&orig) =>
-            {
+            // Every other source is tested unless it is PROVEN present (`@FR-N-Road`): the
+            // question is asked that way round because the two mistakes do not cost the same —
+            // a test too many is one branch, a test too few is an EMPTY record handed up for an
+            // absent value.  An element read has two spellings (`OpGetVector`, `OpVectorRef`)
+            // and a branch arm wraps its read in a block; a list of the shapes that may be
+            // absent missed both.  The re-read is safe only where no user call is in it; a
+            // source with one was bound above.  Guard:
+            // `tests/scripts/2561-a-record-copied-out-of-a-view-is-absent-where-its-source-is.loft`.
+            _ if !self.ir_has_user_call(&orig) && !self.copy_source_is_present(&orig) => {
                 Some(orig.clone())
             }
             _ => None,
@@ -10825,24 +10831,36 @@ impl Parser {
     /// and never in a generic template, whose instance may hold a tuple: nothing is bound
     /// there, and such a source stays a bare copy.
     fn bind_return_source(&mut self, td: u32, src: &mut Value) -> Option<Value> {
-        let read = |p: &Parser, v: &Value| {
-            matches!(v.unspan(), Value::Call(d, args)
-                if !args.is_empty() && p.data.def(*d).name().starts_with("OpGet"))
-        };
+        let read = |p: &Parser, v: &Value| matches!(v.unspan(), Value::Call(d, args) if !args.is_empty() && p.is_record_read(*d));
         if self.first_pass
             || matches!(self.data.def(self.context).def_type(), DefType::Generic)
             || self.data.is_type_var_placeholder(td)
-            || !read(self, src)
             || !self.ir_has_user_call(src)
         {
+            return None;
+        }
+        // A branch ARM wraps its read in a block (`if c { f(x)[i] } else { null }`): the block
+        // is a view of what its deps name, read once into a handle as a lifted container is.
+        if let Value::Block(bl) = src.unspan()
+            && !bl.result.depend().is_empty()
+            && !Self::copy_source_is_a_literal(src)
+        {
+            let tp = Type::Optional(Box::new(Type::Reference(
+                td,
+                Deps::frame(bl.result.depend()),
+            )));
+            let v = self.create_unique("_ret_src", &tp);
+            self.vars.defined(v);
+            let path = std::mem::replace(src, Value::Var(v));
+            return Some(crate::data::v_set(v, path));
+        }
+        if !read(self, src) {
             return None;
         }
         // The root of the read path: the first operand of each read, down to what it reads.
         fn root_of<'a>(p: &Parser, v: &'a Value) -> &'a Value {
             match v.unspan() {
-                Value::Call(d, args)
-                    if !args.is_empty() && p.data.def(*d).name().starts_with("OpGet") =>
-                {
+                Value::Call(d, args) if !args.is_empty() && p.is_record_read(*d) => {
                     root_of(p, &args[0])
                 }
                 other => other,
@@ -10850,9 +10868,7 @@ impl Parser {
         }
         fn replace_root(p: &Parser, v: &mut Value, with: Value) -> Value {
             match v.unspan_mut() {
-                Value::Call(d, args)
-                    if !args.is_empty() && p.data.def(*d).name().starts_with("OpGet") =>
-                {
+                Value::Call(d, args) if !args.is_empty() && p.is_record_read(*d) => {
                     replace_root(p, &mut args[0], with)
                 }
                 other => std::mem::replace(other, with),
@@ -10875,7 +10891,62 @@ impl Parser {
                 let path = std::mem::replace(src, Value::Var(v));
                 Some(crate::data::v_set(v, path))
             }
+            // A LIFTED container (`f(x)[i]`, `f(x).xs[i]`: the call bound to a temporary inside
+            // an `inline_container` or an `inline ref copy` block) is a root of the same kind:
+            // the temporary owns the store, so the path is read once into a handle that views
+            // it, and the copy tests that handle.
+            Value::Block(bl) if !bl.result.depend().is_empty() => {
+                let tp = Type::Optional(Box::new(Type::Reference(
+                    td,
+                    Deps::frame(bl.result.depend()),
+                )));
+                let v = self.create_unique("_ret_src", &tp);
+                self.vars.defined(v);
+                let path = std::mem::replace(src, Value::Var(v));
+                Some(crate::data::v_set(v, path))
+            }
             _ => None,
+        }
+    }
+
+    /// Is `d` a READ of a record out of a place — a field, an element, a keyed entry, a child
+    /// record?  An element read has two spellings (`OpGetVector` with the element's size,
+    /// `OpVectorRef` without), so the question is asked of the notion, not of a name's prefix.
+    fn is_record_read(&self, d: u32) -> bool {
+        self.data.def(d).name().starts_with("OpGet")
+            || crate::use_analysis::is_projection_op(&self.data, d)
+    }
+
+    /// Is a return copy's source PROVEN present: a literal, a local that
+    /// [`Self::record_local_may_be_absent`] clears, or an inline field path rooted at such a
+    /// local — bare, or as the value of a block that holds nothing else (a branch arm's
+    /// `{ code }`)?  Everything else may be absent: an element, a keyed entry, a child record,
+    /// a call's answer, and whatever is read off one.
+    fn copy_source_is_present(&self, src: &Value) -> bool {
+        match src.unspan() {
+            Value::Var(v) => !self.record_local_may_be_absent(*v),
+            // An inline FIELD of a record that is there is there (`e.value` of a loop's `e`).
+            Value::Call(d, args) if *d == self.data.def_nr("OpGetField") && args.len() == 3 => {
+                self.copy_source_is_present(&args[0])
+            }
+            Value::Block(bl) if bl.name == "Object" => true,
+            Value::Block(bl) if bl.operators.len() == 1 => {
+                self.copy_source_is_present(&bl.operators[0])
+            }
+            _ => Self::copy_source_is_a_literal(src),
+        }
+    }
+
+    /// Is a return copy's source a record LITERAL — the one source that cannot be absent?
+    fn copy_source_is_a_literal(src: &Value) -> bool {
+        match src.unspan() {
+            Value::Block(bl) if bl.name == "Object" => true,
+            Value::Block(bl) => bl
+                .operators
+                .last()
+                .is_some_and(Self::copy_source_is_a_literal),
+            Value::Insert(ops) => ops.last().is_some_and(Self::copy_source_is_a_literal),
+            _ => false,
         }
     }
 

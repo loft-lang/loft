@@ -152,3 +152,4 @@ scripts/suite_cells.py	--help
 scripts/suite_pin.py	--help
 selfhost/bench/scope_survey.py	--help
 scripts/try_gate.sh	--help
+selfhost/front/elab_trace.py	--help
