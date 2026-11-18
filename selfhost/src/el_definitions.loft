@@ -67,6 +67,18 @@ pub fn elab_file(e: el::El, file: integer) {
 }
 
 fn top_item(e: el::El, it: integer) {
+  // The declaration's own line, for a refusal met outside any statement.
+  dat = match e.p.nodes[it] {
+    SDirective { at } => at,
+    SAlias { at } => at,
+    SEnum { at } => at,
+    SInterface { at } => at,
+    SFn { at } => at,
+    SStruct { at } => at,
+    SConst { at } => at,
+    _ => -1
+  };
+  e.decl_line = if dat >= 0 { e.p.line[dat] ?? 0 } else { 0 };
   match e.p.nodes[it] {
     // `#width 32` narrows every integer operation of the file (`OpNarrow32`) and its integer
     // fields — not carried; the other directives leave the code as it is.
@@ -268,6 +280,7 @@ fn load_library(e: el::El, id: text, alias: text, f: text) {
     e.lines += [ln];
   }
   e.line = 0;
+  e.decl_line = 0;
   elab_file(e, tree!);
   name_only_types(e, e.source);
   e.p = keep_p;
