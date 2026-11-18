@@ -39,7 +39,7 @@ checker inside the compiler.  The rules themselves are
 | Where does each rewrite fire? | `LOFT_REWRITE_CENSUS`, and per function `LOFT_REWRITE_CENSUS_FN` ([PROFILING.md](PROFILING.md)); `make rewrite-census` | built |
 | How often does each clause refuse, program-wide? | `LOFT_DECLINE_CENSUS`; `make decline-census` | built; few rules report |
 | In one function, what was refused and at which clause? | a per-function listing of refusals | to build |
-| Why did that clause fail at this site? | that rule's own `LOFT_TRACE_*` switch | built per rule, unevenly |
+| Why did that clause fail at this site? | a small loft probe of the case, read with `loft introspect` or the rule's own `LOFT_TRACE_*` switch ([DEBUG_PROBES.md](DEBUG_PROBES.md)) | the way of working |
 
 The effect of a rewrite is also readable by its `LOFT_NO_*` switch
 ([BOTH_BACKEND_SWITCHES.md](BOTH_BACKEND_SWITCHES.md), [NATIVE_SWITCHES.md](NATIVE_SWITCHES.md)):
@@ -118,16 +118,15 @@ admissions before and after, and the code emitted for the bench programs is byte
 A rule moves from `owes` to `reports` when its marker is removed and its call is in;
 `--check` refuses both at once, so the `owes` count only falls.
 
-**OPEN: 1**
-
-- **Finding a rule's trace switch.**  There are over a hundred `LOFT_TRACE_*` switches and
-  no table from rule to switch.  Proposed, only if the search proves a cost:
-  `make reason-census` prints the switch each rule's code reads.
+**OPEN: 0**
 
 ## What is not built
 
 - **A full dump of a decision.**  It would have every gate describe the state it looked at,
   written once per gate and kept in step with it.  The per-rule trace switches give that
   depth where it was needed.
+- **A table from rule to trace switch.**  The clause says where to look, and a probe of the
+  case — a few lines of loft that hold the refused site and nothing else — shows the rest
+  faster than a lookup would.
 - **A reason for an admission.**
 - **A run-time check of the compiler's facts**, under any switch.
