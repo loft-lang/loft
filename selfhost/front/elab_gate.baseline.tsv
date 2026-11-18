@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	2f744a8a46f1afdc2623eafd679b099350d478d4
+suite	af60a0ce4205ab5e5c2731c992ce978507f489af
 
-layer	elab	agree	1031	of	2062
+layer	elab	agree	1031	of	2061
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -591,10 +591,9 @@ elab	refused	loft-suite/rules/structures/S-Hash/a-linked-table-finds-by-its-keys
 elab	refused	loft-suite/rules/structures/S-Paged/a-paged-range-read-gates-first-and-searches-the-sorted.loft
 elab	refused	loft-suite/rules/structures/S-TreeKey/a-spatial-walk-is-the-morton-order-of-the-decoded-axes.loft
 elab	refused	loft-suite/rules/tuples/T-Absent/an-absent-tuple-meets-the-type-its-author-declares.loft
-elab	refused	loft-suite/rules/tuples/T-Absent/an-absent-tuples-member-carries-its-null-into-arithmetic.loft
-elab	refused	loft-suite/rules/tuples/T-Absent/an-element-read-of-a-tuple-discharges-and-a-held-one-does-not.loft
 elab	refused	loft-suite/rules/tuples/T-Absent/an-exhausted-tuple-generator-answers-null-members.loft
 elab	refused	loft-suite/rules/tuples/T-Absent/an-in-flight-tuple-lands-member-by-member.loft
+elab	refused	loft-suite/rules/tuples/T-Absent/the-operators-split-on-an-absent-tuple-and-one-that-is-there.loft
 elab	refused	loft-suite/rules/tuples/T-Cons/1230-a-keyed-tuple-element-owns-a-copy.loft
 elab	refused	loft-suite/rules/tuples/T-Cons/1590-a-tuple-member-string-may-open-a-hole.loft
 elab	refused	loft-suite/rules/tuples/T-Cons/1590-a-tuple-whose-first-member-holds-a-string-binds.loft
