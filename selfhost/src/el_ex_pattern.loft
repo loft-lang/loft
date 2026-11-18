@@ -2496,12 +2496,37 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
       }
       // `(I-Comp)`: a record item whose fields read the vector it is appended to reads it as the
       // statement began — Rust snapshots it first (`_build_src`), not carried: refused by name.
+      // A literal of ONE record item on a local no `&` links to is carried: the vector is copied
+      // into a `_build_src_N` of its own store before anything grows, and the item's reads go
+      // to the copy (`literal_reads_dest`'s snapshot).  The store is minted on the second pass.
       if append && v >= 0 {
+        reads_self = false;
         for op in fl! {
           if op#index >= 2 && el_ir::reads_var(op, v) {
+            reads_self = true;
+          }
+        }
+        if reads_self {
+          linked = false;
+          for lx in vars.vars {
+            if (lx.type_def[0] ?? ir::TyVoid) is TyRefVar {
+              linked = true;
+            }
+          }
+          row = el_ex_vector::append_row(e, in_t);
+          // (An item with a vector literal of its own stages that literal's items first,
+          // `stage_append_fields`: not carried.)
+          if len(order) != 1 || linked || row < 0 || vars.vars[v].argument || holds_vector_literal(e, it) {
             el::refuse(e, "an appended record item that reads the vector it is appended to (a snapshot)");
             return refused_build();
           }
+          src = el_vars::create_unique(vars, "build_src", ir::TyVector { inner: in_t, dep: [] });
+          if !e.first_pass {
+            snap = literal_store(e, vars, src, r);
+            snap += [el_ir::cl(e, "OpAppendVector", [ir::NdVar { n: src }, w, ir::NdInt { n: row }])];
+            ls = snap + ls;
+          }
+          fl = [for op in fl! { if op#index >= 2 { rename_reads(op, v, src) } else { op } }];
         }
       }
       ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }]))];
@@ -2728,6 +2753,16 @@ pub fn is_empty_literal(n: ir::Node) -> boolean {
     NdInsert { items } => len(items) == 1 && (items[0] ?? ir::NdBoolean { b: false }) is NdNull,
     _ => false
   }
+}
+
+// Does the syntax under `n` hold a vector literal?
+fn holds_vector_literal(e: el::El, n: integer) -> boolean {
+  for c in el_length::children(e, n) {
+    if e.p.nodes[c] is SVecLit || holds_vector_literal(e, c) {
+      return true;
+    }
+  }
+  false
 }
 
 // The untyped `[]` converted to vector type `t`: an empty value literal of its element, in a
