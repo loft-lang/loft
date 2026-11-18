@@ -5153,11 +5153,9 @@ impl State {
         }
         let code_step = self.code_pos;
         self.code_add(0i32); // temp step
-        // @decline-owed: an operator the fused ops do not carry; a first operand that is no
-        //   plain integer local, a literal on the left of an arithmetic operator included; a
-        //   second operand that is neither such a local nor an integer literal; a local in a
-        //   narrow linked slot, not stack-allocated, or placed above the op's starting stack
-        //   height
+        // @decline-owed: a matched operator — one the fused ops carry, over plain integer
+        //   locals or a literal — whose local sits in a narrow linked slot, is not
+        //   stack-allocated, or is placed above the stack height the op starts at
         crate::rewrite_census::fired("R-Fuse/text", 1);
         Some(code_step)
     }

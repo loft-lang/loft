@@ -12152,9 +12152,9 @@ extern crate loft;"
                     && !self.switches.leaf_chain_disabled
                     && self.is_frameless_chain(def_nr);
                 let leaf = plain_leaf || chain_leaf;
-                // @decline-owed: a function whose body calls any `n_` function but a store
-                //   bracket or a keyed-entry probe, a free overload, a loft-bodied method or
-                //   generic instance, a fn-ref, a `parallel` or a `yield` keeps its frame
+                // @no-decline: match only: the pattern is a function whose body calls no user
+                //   function, fn-ref, `parallel` or `yield`; a function that calls one is not
+                //   the pattern, and no test follows the match
                 crate::rewrite_census::fired("R-Leaf", usize::from(plain_leaf));
                 // @decline-owed: a call tree that reaches a native user-level callee, a cycle,
                 //   a fn-ref call, a `parallel` or a yield; and every tier but the lean one

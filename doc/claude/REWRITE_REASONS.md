@@ -47,11 +47,24 @@ the program with the rewrite off is the control.
 
 ## What a refusal logs
 
-`rewrite_census::declined(rule, site, label)` (`src/rewrite_census.rs`), called where a site
-that has the rule's SHAPE fails one of its conditions:
+A rule works in two phases:
 
-- **Near misses only.**  The call sits after the shape has matched.  A site that never had
-  the rule's shape is not a refusal: a function that makes a call is no refused leaf.
+1. **Match** — it looks for its pattern in the code.  Code that is not the pattern is not a
+   refusal, and nothing is logged for it: a function without a loop is no refused unrolling,
+   a function that makes a call is no refused leaf.
+2. **Validate** — for a match, it tests whether something around the site makes the rewrite
+   unsafe or pointless there: the vector is also written, the local escapes, the function
+   yields.
+
+A refusal is a MATCH that validation rejected, and
+`rewrite_census::declined(rule, site, label)` (`src/rewrite_census.rs`) is called there:
+
+- **Validation only.**  The label is the validation clause that rejected the match.  A rule
+  with no validation phase has nothing to report (`@no-decline`).
+- **Telling the phases apart in the code.**  An admission function often runs its pattern
+  tests and its safety tests as one list of early exits.  An exit belongs to the match when
+  it asks whether this is the construct the rule is about, and to validation when it asks
+  about anything around it — other uses, aliases, effects, the enclosing function.
 - **One label per clause.**  Where the rule's statement lists its conditions (`when ALL of:
   (1) … (2) … (3) …`), the labels are those clauses.  A gate with many exits behind one
   clause reports that one clause.
@@ -105,14 +118,8 @@ admissions before and after, and the code emitted for the bench programs is byte
 A rule moves from `owes` to `reports` when its marker is removed and its call is in;
 `--check` refuses both at once, so the `owes` count only falls.
 
-**OPEN: 2**
+**OPEN: 1**
 
-- **Rules whose refusal is not a per-site event.**  `R-Fuse` refuses every operator with an
-  operand that is no frame local, `R-Inline` every function over its size bound, `R-Leaf` and
-  `R-LeafChain` every function that makes a call, and `R-NoLocks` / `R-NoThreads` are decided
-  once per unit.  Proposed: `R-Fuse` and `R-Inline` become `nothing to report`, `R-Leaf` and
-  `R-LeafChain` log one line per function, the two unit rules one line per unit.  The owner's
-  call.
 - **Finding a rule's trace switch.**  There are over a hundred `LOFT_TRACE_*` switches and
   no table from rule to switch.  Proposed, only if the search proves a cost:
   `make reason-census` prints the switch each rule's code reads.

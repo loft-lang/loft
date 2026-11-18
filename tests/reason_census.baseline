@@ -47,13 +47,13 @@ R-Header	14	2	0	reports
 R-HostStore	2	0	0	owes
 R-InPlaceLiteral	4	0	0	owes
 R-InRange	3	0	0	owes
-R-Inline	2	0	0	owes
+R-Inline	2	0	0	nothing
 R-InlineLeaf	1	0	0	owes
 R-Inputs	3	0	0	owes
 R-Invariant	3	0	0	owes
 R-KeyedEntry	2	0	0	owes
 R-LazySplit	2	0	0	owes
-R-Leaf	1	0	0	owes
+R-Leaf	1	0	0	nothing
 R-LeafChain	1	0	0	owes
 R-LitDiv	1	0	0	owes
 R-LitHoist	1	0	0	owes
@@ -67,8 +67,8 @@ R-Mint	1	0	0	owes
 R-MoveAppend	1	0	0	owes
 R-MoveChild	1	0	0	owes
 R-MoveLast	4	1	0	reports
-R-NoLocks	1	0	0	owes
-R-NoThreads	1	0	0	owes
+R-NoLocks	1	0	0	nothing
+R-NoThreads	1	0	0	nothing
 R-NonSentinelParam	2	0	0	owes
 R-Peel	1	0	0	owes
 R-Place	2	0	0	owes

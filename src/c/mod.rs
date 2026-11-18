@@ -2728,8 +2728,9 @@ fn unit_defines(
         out.push_str("#define LOFT_NO_LOCKS 1\n");
         // The unit is the site: credited to the C writer, no function.
         let _census_unit = crate::rewrite_census::InBody::enter("c", "");
-        // @decline-owed: a unit that reaches a lock source — `#lock = …`, a mapped file or a
-        //   constant store — keeps the locked-write discard
+        // @no-decline: match only: the pattern is a unit that reaches no lock source (`#lock =
+        //   …`, a mapped file, a constant store); a unit that reaches one is not the pattern,
+        //   and no test follows the match
         crate::rewrite_census::fired("R-NoLocks", 1);
     }
     // `@FR-R-NoThreads`: the runtime keeps its store table, frames and pools thread-local
@@ -2751,8 +2752,9 @@ fn unit_defines(
     {
         out.push_str("#define LOFT_NO_THREADS 1\n");
         let _census_unit = crate::rewrite_census::InBody::enter("c", "");
-        // @decline-owed: a unit that runs a `par` loop on threads or reaches an engine kernel
-        //   keeps its thread-locals
+        // @no-decline: match only: the pattern is a unit that runs no `par` loop on threads and
+        //   reaches no engine kernel; a unit that does is not the pattern, and no test follows
+        //   the match
         crate::rewrite_census::fired("R-NoThreads", 1);
     }
     // The JSON reader (`loft_json.h`) is compiled in for a unit that reads JSON: the JsonValue
@@ -3301,10 +3303,9 @@ fn resolve_hot_helpers(cx: &Cx, protos: &str, bodies: &str) -> (String, String) 
             .iter()
             .filter(|d| hot.contains(d))
             .count();
-        // @decline-owed: a helper candidate — a plain function of at most 80 statements — that
-        //   no `__inv` twin, no loop calling a twin and no hinted helper calls; a function the
-        //   C writes in more than twelve statements that is neither an `__inv` twin of at most
-        //   64 statements nor such a helper
+        // @no-decline: match only: the pattern is a function within the size bound (twelve
+        //   statements, or a twin's or a hinted helper's own bound); a longer function is not
+        //   the pattern, and no test follows the match
         crate::rewrite_census::fired("R-Inline/helper", inlined);
     }
     let resolve = |text: &str| -> String {
