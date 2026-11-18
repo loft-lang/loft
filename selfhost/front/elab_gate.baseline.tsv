@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	8c8e3bb027d96cb4a240ec09e1a76e33022fe2db
+suite	2b4c0c1ccb756e15d9b385521ffa1046d6399290
 
-layer	elab	agree	1031	of	2064
+layer	elab	agree	1031	of	2063
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -560,8 +560,7 @@ elab	refused	loft-suite/rules/rewrites/R-NoThreads/a-unit-without-threads-runs-a
 elab	refused	loft-suite/rules/rewrites/R-Place/164-place-result.loft
 elab	refused	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-in-its-field.loft
 elab	refused	loft-suite/rules/rewrites/R-Prefill/164-prefill-image.loft
-elab	refused	loft-suite/rules/rewrites/R-PushFill/a-counted-loop-pushing-to-several-vectors-reserves-each.loft
-elab	refused	loft-suite/rules/rewrites/R-PushFill/a-loop-pushing-one-invariant-into-each-of-several-vectors-is-a-fill-each.loft
+elab	refused	loft-suite/rules/rewrites/R-PushFill/a-loop-pushing-to-several-vectors-fills-each-on-its-own.loft
 elab	refused	loft-suite/rules/rewrites/R-PushFill/a-nested-comprehension-pushes-each-row-through-a-window.loft
 elab	refused	loft-suite/rules/rewrites/R-PushFill/vectors-built-side-by-side-each-push-through-a-window.loft
 elab	refused	loft-suite/rules/rewrites/R-PushRec/a-record-append-takes-its-growth-before-its-field-writes.loft

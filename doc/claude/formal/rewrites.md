@@ -971,7 +971,7 @@ not take it: two paths, and a `??` value.  Each vector ends as one fill would le
 `doc_read` on the ship lane: gcc-16 2.79× → 2.22×, clang 3.12× → 2.27×.  Census
 `R-PushFill/several`; switch `LOFT_NO_FILL_LOOP` (with the one-push form); site
 `fill_loop::several_fill`; guard
-`loft-suite/rules/rewrites/R-PushFill/a-loop-pushing-one-invariant-into-each-of-several-vectors-is-a-fill-each.loft`.
+`loft-suite/rules/rewrites/R-PushFill/a-loop-pushing-to-several-vectors-fills-each-on-its-own.loft`.
 
 **The text clause, in words.**  `parse`'s reset loop of `arguments` (`while ri <
 self.results.len() { self.results[ri] = null; ri += 1 }`) read its length and resolved its
