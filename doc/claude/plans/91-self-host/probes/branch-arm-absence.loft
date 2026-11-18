@@ -1,0 +1,36 @@
+// Arms of a `-> Cell?` function, beyond "the arm's tail is a read": each asked for an element
+// that is there (17) and one that is not (null), and for the leak the fresh-call arms had.
+struct Cell { q: integer, r: integer }
+enum Nd { NdNum { v: integer }, NdFn { t: vector<Cell> }, NdTwo { a: vector<Cell>, b: vector<Cell> } }
+fn fresh(i: integer) -> Cell { Cell { q: i, r: i + 10 } }
+fn cells(n: integer) -> vector<Cell> { v: vector<Cell> = []; for i in 0..n { v += [Cell { q: i, r: i * 10 + 7 }]; } v }
+fn say(c: Cell?) -> text { if c == null { "null" } else { "{c.r}" } }
+
+// 1 the arm's tail is a read (the cure's own case)
+fn plain(n: Nd, i: integer) -> Cell? { match n { NdFn { t } => t[i], _ => null } }
+// 2 the read sits in an `if` INSIDE the arm
+fn nested_if(n: Nd, i: integer, c: boolean) -> Cell? { match n { NdTwo { a, b } => { if c { a[i] } else { b[i] } }, _ => null } }
+// 3 a statement before the read
+fn stmt_then_read(n: Nd, i: integer) -> Cell? { match n { NdFn { t } => { j = i + 0; t[j] }, _ => null } }
+// 4 a read with a fallback that is itself a read
+fn read_or_read(n: Nd, i: integer) -> Cell? { match n { NdTwo { a, b } => a[i] ?? b[i], _ => null } }
+// 5 a nested match in the arm
+fn nested_match(n: Nd, m: Nd, i: integer) -> Cell? { match n { NdFn { t } => { match m { NdNum { v } => t[i + v], _ => t[i] } }, _ => null } }
+// 6 the join the leak was in: a fresh call beside a read with a fresh fallback
+fn mixed(n: Nd) -> Cell? { match n { NdNum { v } => { if v > 100 { return fresh(1); } fresh(v) }, NdFn { t } => t[0] ?? fresh(22), _ => null } }
+// 7 an `if` chain at the tail, no match
+fn if_chain(v: vector<Cell>, w: vector<Cell>, i: integer) -> Cell? { if i < 0 { null } else if i % 2 == 0 { v[i] } else { w[i] } }
+// 8 a read of a LOCAL collection the function built
+fn local_read(n: integer, i: integer) -> Cell? { v = cells(n); if n > 0 { v[i] } else { null } }
+
+fn main() {
+  f = NdFn { t: cells(2) }; two = NdTwo { a: cells(2), b: cells(3) }; num = NdNum { v: 0 };
+  assert(say(plain(f, 1)) == "17" && say(plain(f, 9)) == "null", "plain {say(plain(f, 1))} {say(plain(f, 9))}");
+  assert(say(nested_if(two, 1, true)) == "17" && say(nested_if(two, 2, true)) == "null" && say(nested_if(two, 2, false)) == "27", "nested_if {say(nested_if(two, 2, true))}");
+  assert(say(stmt_then_read(f, 1)) == "17" && say(stmt_then_read(f, 9)) == "null", "stmt_then_read {say(stmt_then_read(f, 9))}");
+  assert(say(read_or_read(two, 2)) == "27" && say(read_or_read(two, 9)) == "null" && say(read_or_read(two, 1)) == "17", "read_or_read {say(read_or_read(two, 9))}");
+  assert(say(nested_match(f, num, 1)) == "17" && say(nested_match(f, num, 9)) == "null" && say(nested_match(f, f, 9)) == "null", "nested_match {say(nested_match(f, num, 9))}");
+  assert(say(mixed(NdNum { v: 5 })) == "15" && say(mixed(NdNum { v: 500 })) == "11" && say(mixed(f)) == "7" && say(mixed(NdFn { t: [] })) == "32" && say(mixed(two)) == "null", "mixed");
+  assert(say(if_chain(cells(3), cells(3), 2)) == "27" && say(if_chain(cells(3), cells(3), 5)) == "null" && say(if_chain(cells(3), cells(3), -1)) == "null", "if_chain {say(if_chain(cells(3), cells(3), 5))}");
+  assert(say(local_read(2, 1)) == "17" && say(local_read(2, 9)) == "null" && say(local_read(0, 0)) == "null", "local_read {say(local_read(2, 9))}");
+}
