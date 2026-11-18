@@ -6468,10 +6468,15 @@ pub fn fs_rmdir(path: &str) -> i64 {
 /// Delete file `path`.  Returns an `FS_*` code (mapped to `FileResult` by the
 /// `delete` wrapper).  A directory target yields `FS_IS_DIRECTORY`.
 pub fn fs_delete(path: &str) -> i64 {
+    // The host reports one failure code: a path that is not there is `NotFound`, as the OS
+    // error classifies it on the other targets (`@FR-Path-Refuse` keeps `Other` for a refused
+    // path, answered before this by `fs_delete_at`).
     #[cfg(host_fs)]
     {
         if crate::wasm::host_fs_delete(path) == 0 {
             FS_OK
+        } else if !crate::wasm::host_fs_exists(path) {
+            FS_NOT_FOUND
         } else {
             FS_OTHER
         }
@@ -6489,10 +6494,13 @@ pub fn fs_delete(path: &str) -> i64 {
 /// Rename / move `from` to `to`.  Returns an `FS_*` code.
 #[must_use]
 pub fn fs_move(from: &str, to: &str) -> i64 {
+    // A missing source is `NotFound` on every target, as `fs_delete`'s host arm says.
     #[cfg(host_fs)]
     {
         if crate::wasm::host_fs_move(from, to) == 0 {
             FS_OK
+        } else if !crate::wasm::host_fs_exists(from) {
+            FS_NOT_FOUND
         } else {
             FS_OTHER
         }
