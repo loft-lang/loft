@@ -11,12 +11,12 @@ Read the patterns first; the rows are the evidence.
 
 | pattern | seen | prevention | state |
 |---|---|---|---|
-| A prediction names a program the gate never compares (`@EXPECT_ERROR`, or the Rust front end refuses it) | 3 | each tip's `noimage.txt`; the report says which predicted programs are uncomparable BEFORE the cycle ends | to build |
+| A prediction names a program the gate never compares (`@EXPECT_ERROR`, or the Rust front end refuses it) | 3 | each tip's `noimage.txt` (the reason beside each program); `noimage.py <tip> NAME…` checks a prediction's list before a cycle is spent | built |
 | A new port refuses, or drops, functions that agreed (found one tip later) | 2 | a try-gate: the porter names a commit, the tester answers drops and differs before it is promoted | offered |
-| Main moves under the port (a Rust change, new suite programs) and the differ shows only after the rebase | 1 | when `origin/main` or the suite pin moves, gate the porter's last tip against it and report first | to build |
+| Main moves under the port (a Rust change, new suite programs) and the differ shows only after the rebase | 1 | `maincheck.sh`: when `origin/main` moves and the port does not hold it, the last tip is gated MERGED with main at main's suite pin, in a worktree of its own; one `MAINCHECK` line and a report | built; its full path runs first when main next moves |
 | An instrument's ranking sends the porter to a non-problem | 1 | a new count is read on three examples by the tester before it is reported as a priority | habit |
-| The watcher gates a commit in the middle of a multi-commit push | 1 | gate a tip only when the branch has stood still for a minute | to build |
-| The tester's commits wait for a gap between cycles, or land mid-cycle | 3 | the cycle fetches and merges `origin/loft30-gate` itself, so a landing needs no gap | to build |
+| The watcher gates a commit in the middle of a multi-commit push | 1 | the watcher starts a cycle only for a tip that has stood for a minute | built |
+| The tester's commits wait for a gap between cycles, or land mid-cycle | 3 | `sync.sh` (the cycle, its push and the baseline job merge what is on GitHub first) and `land.sh` (the tester's commits replayed onto the branch's tip from its own worktree); the real gate is asked to measure the commit the cycle GATED | built |
 | The porter keeps a script of its own for something the loop has | 1 | each new tool is announced with a ready command for the porter's current tip | habit |
 
 ## The rows
