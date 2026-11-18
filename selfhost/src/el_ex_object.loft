@@ -2594,6 +2594,13 @@ pub fn method_call_on(e: el::El, vars: el_vars::Vars, at: integer, x: Ex, re: in
   if name == "map" && len(list) == 2 && el_types::base(x.tp) is TyVector && !(x.tp is TyOptional) && el_types::base(types[1]!) is TyFunction && el_dispatch::own_set(e, name) < 0 && el::def_nr(e, "n_map") < 0 {
     return el_ex_match::map_call(e, vars, list, types);
   }
+  // `parse_filter`, `parse_reduce`: built in place as well.
+  if name == "filter" && len(list) == 2 && el_types::base(x.tp) is TyVector && !(x.tp is TyOptional) && el_types::base(types[1]!) is TyFunction && el_dispatch::own_set(e, name) < 0 && el::def_nr(e, "n_filter") < 0 {
+    return el_ex_match::filter_call(e, vars, list, types);
+  }
+  if name == "reduce" && len(list) == 3 && el_types::base(x.tp) is TyVector && !(x.tp is TyOptional) && el_types::base(types[2]!) is TyFunction && el_dispatch::own_set(e, name) < 0 && el::def_nr(e, "n_reduce") < 0 {
+    return el_ex_match::reduce_call(e, vars, list, types);
+  }
   // A method name that is an overload set reaches the member its argument types select, the
   // receiver first (`x.m(a)` is `m(x, a)`, `F-Recv`).
   mset = el_dispatch::own_set(e, name);
