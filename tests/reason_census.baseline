@@ -2,7 +2,7 @@
 # site, and which site it admitted, and its state (scripts/reason_census.py;
 # --check: a rule never falls silent).  rule<TAB>fired<TAB>declined<TAB>admitted<TAB>state
 R-Alias	2	0	0	owes
-R-Apart	7	2	0	partly
+R-Apart	7	4	0	reports
 R-AppendTwin	4	1	0	reports
 R-Base	9	0	0	owes
 R-BoundAppend	1	0	0	owes
@@ -44,7 +44,7 @@ R-GuardFree	2	0	0	owes
 R-GuardedChain	5	0	0	owes
 R-HandOver	2	0	0	owes
 R-Header	14	2	0	reports
-R-HostStore	2	1	0	partly
+R-HostStore	2	2	0	partly
 R-InPlaceLiteral	4	0	0	owes
 R-InRange	3	2	0	reports
 R-Inline	2	0	0	nothing

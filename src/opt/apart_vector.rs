@@ -366,6 +366,10 @@ fn candidates(def: &crate::data::Definition) -> HashSet<u16> {
     cand
 }
 
+/// A vector the function keeps in the store, counted under the test that kept it there.
+fn kept_in_store(function: &str, vector: &str, why: &'static str) {
+    crate::rewrite_census::declined_in("R-Apart/vector", function, vector, why);
+}
 /// The apart vectors of `def_nr`'s body, or `None` when it holds none.
 #[must_use]
 pub fn roles(data: &Data, def_nr: u32) -> Option<VecRoles> {
@@ -412,6 +416,7 @@ pub fn roles(data: &Data, def_nr: u32) -> Option<VecRoles> {
         } else {
             None
         };
+        let _ = why.inspect(|w| kept_in_store(def.name(), vars.name(v), w));
         match why {
             None => {
                 held.insert(v);
@@ -440,6 +445,7 @@ pub fn roles(data: &Data, def_nr: u32) -> Option<VecRoles> {
                     || vars.is_argument(c)
                     || companion_loose(data, def.code(), c, &held)
                 {
+                    kept_in_store(def.name(), vars.name(v), "its companion has another use");
                     if trace {
                         eprintln!(
                             "[apart] {} keeps vector {} in the store: its companion {} has another use",

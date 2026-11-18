@@ -62,8 +62,8 @@ pub fn rewrite_program(data: &mut Data, fresh: &[u32]) {
         data.definitions[d_nr as usize].code = code;
         if n > 0 {
             let _census = crate::rewrite_census::InBody::enter("ir", data.def(d_nr).name());
-            // @decline-owed: the write-back gate of this file reports none of its refusals; the
-            //   result gate does (`host_result.rs`)
+            // @decline-owed: the literal-field clause (`literal_clause`) reports none of its
+            //   refusals; the write-back and the result gate do
             crate::rewrite_census::fired("R-HostStore", n);
         }
     }
@@ -125,6 +125,18 @@ fn rewrite(n: &mut Value, data: &Data, ids: &Ids, me: &Me, count: &mut usize) {
         eprintln!(
             "[host-store] write-back {:?}",
             admit_why(&bl.operators, data, ids, me)
+        );
+    }
+    if let Value::Block(bl) = n.unspan()
+        && bl.name == "write_back_call"
+        && crate::rewrite_census::declines_wanted()
+        && admit(&bl.operators, data, ids, me).is_none()
+    {
+        crate::rewrite_census::declined_in(
+            "R-HostStore",
+            data.def(me.d_nr).name(),
+            &bl.scope.to_string(),
+            admit_why(&bl.operators, data, ids, me),
         );
     }
     if let Value::Block(bl) = n.unspan_mut()

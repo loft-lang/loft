@@ -93,6 +93,8 @@ REPORTED = {
     "R-AppendTwin": ("an appended call building straight into its destination", "partial"),
     "R-ViewReturn": ("a returned view answered by address, no buffer minted", "partial"),
     "R-Apart/records": ("a vector of records held apart from the store", "partial"),
+    "R-Apart": ("a record value held apart from the store", "partial"),
+    "R-Apart/vector": ("a scalar vector held apart from the store", "partial"),
     "R-Version": ("a leaf's fast twin called from a counted loop (C)", "partial"),
     "R-DecodeView": ("a decoded field held as a span of its source bytes", "partial"),
     "R-FaultFlag": ("a `for` statement run as a fast copy with one fault flag", "partial"),
