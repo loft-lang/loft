@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	be55620c9793c98d01df24d63b9ace03f3efbec1
 
-layer	elab	agree	1133	of	2085
+layer	elab	agree	1134	of	2085
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -544,7 +544,6 @@ elab	refused	loft-suite/rules/rewrites/R-PushFill/a-nested-comprehension-pushes-
 elab	refused	loft-suite/rules/rewrites/R-PushFill/vectors-built-side-by-side-each-push-through-a-window.loft
 elab	refused	loft-suite/rules/rewrites/R-PushRec/a-record-append-takes-its-growth-before-its-field-writes.loft
 elab	refused	loft-suite/rules/rewrites/R-Range/a-call-that-moves-its-arguments-by-a-literal-steps-them.loft
-elab	refused	loft-suite/rules/rewrites/R-RecPtr/a-value-record-is-copied-through-one-address.loft
 elab	refused	loft-suite/rules/rewrites/R-RefillBuffer/a-live-buffer-is-refilled-where-it-is.loft
 elab	refused	loft-suite/rules/rewrites/R-RetAdopt/a-vector-built-in-the-return-buffer-is-the-vector-the-caller-reads.loft
 elab	refused	loft-suite/rules/rewrites/R-SameRead/a-slice-match-reads-its-subject-once.loft
@@ -959,7 +958,7 @@ elab	refused	tests/scripts/store_paged_enum_field.loft
 elab	refused	tests/scripts/store_rebuild_b1.loft
 elab	refused	tests/scripts/the-reference-safety-traps-are-what-it-catalogues.loft
 
-layer	elab-functions	agree	15324	of	27942
+layer	elab-functions	agree	15315	of	27921
 elab-functions	agree	lib/code.loft::Block
 elab-functions	agree	lib/code.loft::Boolean
 elab-functions	agree	lib/code.loft::Call
@@ -8889,10 +8888,13 @@ elab-functions	agree	loft-suite/rules/ownership/O-Owner/2258-a-keyed-collection-
 elab-functions	agree	loft-suite/rules/ownership/O-Owner/2258-a-keyed-collection-from-a-fn-ref-has-one-owner-per-pass.loft::n_oo_s
 elab-functions	agree	loft-suite/rules/ownership/O-Owner/2258-a-keyed-collection-from-a-fn-ref-has-one-owner-per-pass.loft::n_oo_t
 elab-functions	agree	loft-suite/rules/ownership/O-Owner/2258-a-keyed-collection-from-a-fn-ref-has-one-owner-per-pass.loft::n_test_every_keyed_kind_through_a_fn_ref
+elab-functions	agree	loft-suite/rules/ownership/O-Owner/a-borrowing-vector-local-owns-a-fresh-native-result.loft::n_jv
 elab-functions	agree	loft-suite/rules/ownership/O-Owner/a-borrowing-vector-local-owns-a-fresh-native-result.loft::n_mk
 elab-functions	agree	loft-suite/rules/ownership/O-Owner/a-returned-vector-bound-from-a-native-call-frees-it.loft::n_fwd
 elab-functions	agree	loft-suite/rules/ownership/O-Owner/a-returned-vector-bound-from-a-native-call-frees-it.loft::n_inplace
+elab-functions	agree	loft-suite/rules/ownership/O-Owner/a-returned-vector-bound-from-a-native-call-frees-it.loft::n_jv
 elab-functions	agree	loft-suite/rules/ownership/O-Owner/a-returned-vector-bound-from-a-native-call-frees-it.loft::n_main
+elab-functions	agree	loft-suite/rules/ownership/O-Owner/a-slice-of-a-fresh-native-result-frees-it.loft::n_jv
 elab-functions	agree	loft-suite/rules/ownership/O-Owner/a-slice-of-a-fresh-native-result-frees-it.loft::n_mk
 elab-functions	agree	loft-suite/rules/ownership/O-Proxy/1320-a-branch-joined-binding-frees-the-arm-that-minted.loft::K1320
 elab-functions	agree	loft-suite/rules/ownership/O-Proxy/1320-a-branch-joined-binding-frees-the-arm-that-minted.loft::P1320
@@ -9403,9 +9405,13 @@ elab-functions	agree	loft-suite/rules/rewrites/R-DecodeView/a-decoded-view-answe
 elab-functions	agree	loft-suite/rules/rewrites/R-DecodeView/a-decoded-view-answers-what-its-copy-would-across-every-rule-it-meets.loft::main_vector<integer(0, 255)>
 elab-functions	agree	loft-suite/rules/rewrites/R-DecodeView/a-decoded-view-answers-what-its-copy-would-across-every-rule-it-meets.loft::n___lambda_test_a_captured_text_0
 elab-functions	agree	loft-suite/rules/rewrites/R-DecodeView/a-decoded-view-answers-what-its-copy-would-across-every-rule-it-meets.loft::n_frame3
+elab-functions	agree	loft-suite/rules/rewrites/R-DecodeView/a-decoded-view-answers-what-its-copy-would-across-every-rule-it-meets.loft::n_get
 elab-functions	agree	loft-suite/rules/rewrites/R-DecodeView/a-decoded-view-answers-what-its-copy-would-across-every-rule-it-meets.loft::n_measure
 elab-functions	agree	loft-suite/rules/rewrites/R-DecodeView/a-decoded-view-answers-what-its-copy-would-across-every-rule-it-meets.loft::n_s2_dec
+elab-functions	agree	loft-suite/rules/rewrites/R-DecodeView/a-decoded-view-answers-what-its-copy-would-across-every-rule-it-meets.loft::n_s2_get
 elab-functions	agree	loft-suite/rules/rewrites/R-DecodeView/a-decoded-view-answers-what-its-copy-would-across-every-rule-it-meets.loft::n_s3_dec
+elab-functions	agree	loft-suite/rules/rewrites/R-DecodeView/a-decoded-view-answers-what-its-copy-would-across-every-rule-it-meets.loft::n_s3_get
+elab-functions	agree	loft-suite/rules/rewrites/R-DecodeView/a-decoded-view-answers-what-its-copy-would-across-every-rule-it-meets.loft::n_s4_get
 elab-functions	agree	loft-suite/rules/rewrites/R-DecodeView/a-decoded-view-answers-what-its-copy-would-across-every-rule-it-meets.loft::n_shout
 elab-functions	agree	loft-suite/rules/rewrites/R-DecodeView/a-decoded-view-answers-what-its-copy-would-across-every-rule-it-meets.loft::n_stash
 elab-functions	agree	loft-suite/rules/rewrites/R-DecodeView/a-decoded-view-answers-what-its-copy-would-across-every-rule-it-meets.loft::n_tally
@@ -9978,26 +9984,6 @@ elab-functions	agree	loft-suite/rules/rewrites/R-Range/a-call-that-moves-its-arg
 elab-functions	agree	loft-suite/rules/rewrites/R-Range/a-call-that-moves-its-arguments-by-a-literal-steps-them.loft::n_twice
 elab-functions	agree	loft-suite/rules/rewrites/R-Range/a-call-that-moves-its-arguments-by-a-literal-steps-them.loft::n_up3
 elab-functions	agree	loft-suite/rules/rewrites/R-Range/a-call-that-moves-its-arguments-by-a-literal-steps-them.loft::n_walk
-elab-functions	agree	loft-suite/rules/rewrites/R-RecPtr/a-value-record-is-copied-through-one-address.loft::(schema)
-elab-functions	agree	loft-suite/rules/rewrites/R-RecPtr/a-value-record-is-copied-through-one-address.loft::C
-elab-functions	agree	loft-suite/rules/rewrites/R-RecPtr/a-value-record-is-copied-through-one-address.loft::E
-elab-functions	agree	loft-suite/rules/rewrites/R-RecPtr/a-value-record-is-copied-through-one-address.loft::H
-elab-functions	agree	loft-suite/rules/rewrites/R-RecPtr/a-value-record-is-copied-through-one-address.loft::K
-elab-functions	agree	loft-suite/rules/rewrites/R-RecPtr/a-value-record-is-copied-through-one-address.loft::P
-elab-functions	agree	loft-suite/rules/rewrites/R-RecPtr/a-value-record-is-copied-through-one-address.loft::S
-elab-functions	agree	loft-suite/rules/rewrites/R-RecPtr/a-value-record-is-copied-through-one-address.loft::T
-elab-functions	agree	loft-suite/rules/rewrites/R-RecPtr/a-value-record-is-copied-through-one-address.loft::main_vector<E>
-elab-functions	agree	loft-suite/rules/rewrites/R-RecPtr/a-value-record-is-copied-through-one-address.loft::main_vector<K>
-elab-functions	agree	loft-suite/rules/rewrites/R-RecPtr/a-value-record-is-copied-through-one-address.loft::main_vector<P>
-elab-functions	agree	loft-suite/rules/rewrites/R-RecPtr/a-value-record-is-copied-through-one-address.loft::main_vector<T>
-elab-functions	agree	loft-suite/rules/rewrites/R-RecPtr/a-value-record-is-copied-through-one-address.loft::n_main
-elab-functions	agree	loft-suite/rules/rewrites/R-RecPtr/a-value-record-is-copied-through-one-address.loft::n_mk_c
-elab-functions	agree	loft-suite/rules/rewrites/R-RecPtr/a-value-record-is-copied-through-one-address.loft::n_push_e
-elab-functions	agree	loft-suite/rules/rewrites/R-RecPtr/a-value-record-is-copied-through-one-address.loft::n_put_p
-elab-functions	agree	loft-suite/rules/rewrites/R-RecPtr/a-value-record-is-copied-through-one-address.loft::vector<E>
-elab-functions	agree	loft-suite/rules/rewrites/R-RecPtr/a-value-record-is-copied-through-one-address.loft::vector<K>
-elab-functions	agree	loft-suite/rules/rewrites/R-RecPtr/a-value-record-is-copied-through-one-address.loft::vector<P>
-elab-functions	agree	loft-suite/rules/rewrites/R-RecPtr/a-value-record-is-copied-through-one-address.loft::vector<T>
 elab-functions	agree	loft-suite/rules/rewrites/R-RefillBuffer/a-live-buffer-is-refilled-where-it-is.loft::(schema)
 elab-functions	agree	loft-suite/rules/rewrites/R-RefillBuffer/a-live-buffer-is-refilled-where-it-is.loft::R
 elab-functions	agree	loft-suite/rules/rewrites/R-RefillBuffer/a-live-buffer-is-refilled-where-it-is.loft::main_vector<integer(0, 255)>
@@ -15021,6 +15007,7 @@ elab-functions	agree	tests/scripts/a-decoded-text-is-read-where-it-lies.loft::__
 elab-functions	agree	tests/scripts/a-decoded-text-is-read-where-it-lies.loft::main_vector<Entry>
 elab-functions	agree	tests/scripts/a-decoded-text-is-read-where-it-lies.loft::main_vector<Val>
 elab-functions	agree	tests/scripts/a-decoded-text-is-read-where-it-lies.loft::main_vector<integer(0, 255)>
+elab-functions	agree	tests/scripts/a-decoded-text-is-read-where-it-lies.loft::n_get
 elab-functions	agree	tests/scripts/a-decoded-text-is-read-where-it-lies.loft::vector<Entry>
 elab-functions	agree	tests/scripts/a-decoded-text-is-read-where-it-lies.loft::vector<Val>
 elab-functions	agree	tests/scripts/a-decoded-text-is-read-where-it-lies.loft::vector<integer(0, 255)>
@@ -15041,6 +15028,7 @@ elab-functions	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft:
 elab-functions	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft::main_vector<Val>
 elab-functions	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft::main_vector<integer(0, 255)>
 elab-functions	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft::n_find_in
+elab-functions	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft::n_get
 elab-functions	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft::n_num_of
 elab-functions	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft::n_sum_items
 elab-functions	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft::vector<Entry>
@@ -15141,6 +15129,7 @@ elab-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-acros
 elab-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::n_g7
 elab-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::n_g8
 elab-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::n_g9
+elab-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::n_get
 elab-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::n_grow_and_count
 elab-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::n_log
 elab-functions	agree	tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft::n_main
@@ -15743,6 +15732,7 @@ elab-functions	agree	tests/scripts/a-value-read-and-dropped-is-built-outside-the
 elab-functions	agree	tests/scripts/a-value-read-and-dropped-is-built-outside-the-store.loft::n_decode
 elab-functions	agree	tests/scripts/a-value-read-and-dropped-is-built-outside-the-store.loft::n_pa_decode
 elab-functions	agree	tests/scripts/a-value-read-and-dropped-is-built-outside-the-store.loft::n_pa_decode_ok
+elab-functions	agree	tests/scripts/a-value-read-and-dropped-is-built-outside-the-store.loft::n_pa_get
 elab-functions	agree	tests/scripts/a-value-read-and-dropped-is-built-outside-the-store.loft::n_pa_text
 elab-functions	agree	tests/scripts/a-value-read-and-dropped-is-built-outside-the-store.loft::n_touch
 elab-functions	agree	tests/scripts/a-value-read-and-dropped-is-built-outside-the-store.loft::n_walk
@@ -16285,7 +16275,7 @@ elab-functions	agree	tests/scripts/the-reference-safety-traps-are-what-it-catalo
 elab-functions	agree	tests/scripts/the-reference-safety-traps-are-what-it-catalogues.loft::vector<SafetyRow>
 elab-functions	agree	tests/scripts/the-reference-safety-traps-are-what-it-catalogues.loft::vector<integer(0, 255)>
 
-layer	elab-pass1	agree	10776	of	15939
+layer	elab-pass1	agree	10779	of	15951
 elab-pass1	agree	lib/code.loft::t_4Code_get_type
 elab-pass1	agree	lib/code.loft::t_4Code_set_type
 elab-pass1	agree	lib/docs.loft::n_demo
@@ -20962,8 +20952,11 @@ elab-pass1	agree	loft-suite/rules/ownership/O-Override/a-format-hook-on-a-value-
 elab-pass1	agree	loft-suite/rules/ownership/O-Override/a-format-hook-on-a-value-struct-element-leaves-its-collection.loft::t_1D_to_text
 elab-pass1	agree	loft-suite/rules/ownership/O-Owner/2258-a-keyed-collection-from-a-fn-ref-has-one-owner-per-pass.loft::n_main
 elab-pass1	agree	loft-suite/rules/ownership/O-Owner/2258-a-keyed-collection-from-a-fn-ref-has-one-owner-per-pass.loft::n_test_every_keyed_kind_through_a_fn_ref
+elab-pass1	agree	loft-suite/rules/ownership/O-Owner/a-borrowing-vector-local-owns-a-fresh-native-result.loft::n_jv
 elab-pass1	agree	loft-suite/rules/ownership/O-Owner/a-borrowing-vector-local-owns-a-fresh-native-result.loft::n_mk
 elab-pass1	agree	loft-suite/rules/ownership/O-Owner/a-returned-vector-bound-from-a-native-call-frees-it.loft::n_inplace
+elab-pass1	agree	loft-suite/rules/ownership/O-Owner/a-returned-vector-bound-from-a-native-call-frees-it.loft::n_jv
+elab-pass1	agree	loft-suite/rules/ownership/O-Owner/a-slice-of-a-fresh-native-result-frees-it.loft::n_jv
 elab-pass1	agree	loft-suite/rules/ownership/O-Owner/a-slice-of-a-fresh-native-result-frees-it.loft::n_mk
 elab-pass1	agree	loft-suite/rules/ownership/O-Proxy/1320-a-branch-joined-binding-frees-the-arm-that-minted.loft::n___lambda_test_a_record_branch_owns_through_the_bound_spelling_0
 elab-pass1	agree	loft-suite/rules/ownership/O-Proxy/1320-a-branch-joined-binding-frees-the-arm-that-minted.loft::n_test_a_record_branch_owns_through_the_bound_spelling
