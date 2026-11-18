@@ -367,7 +367,7 @@ O-Complete	ownership	curated	34	2026-11-18	one merge (2467's branch and comprehe
 O-Deps	ownership	curated	3	2026-11-18	three cores, three shapes: a fn-ref return, an element off a borrowing call's field, a nullable element binding
 O-Derived	ownership	curated	4	2026-11-18	four cores, each a distinct case: a recursive join's argument, an inline rebuild's carried record, every-path frees, a hoisted field view
 O-Detach	ownership	curated	14	2026-11-18	merged three refused view-read cells into one; 1312 (gate E agrees) and the numbered issue cores stay; the patch cell stays; L-CapRebind, L-CapHeap, O-Witness and tests/scripts cells are theirs
-O-Latest	ownership	todo			
+O-Latest	ownership	curated	27	2026-11-18	merged the two refused rebound-vector cells; the latest-assignment and tail-call cells stay apart (gate E agrees with both); numbered cores stay; B-Copy, L-CapHeap and H-Drop cells are theirs
 O-LazyBuffer	ownership	todo			
 O-Move	ownership	todo			
 O-NoDiverge	ownership	todo			
