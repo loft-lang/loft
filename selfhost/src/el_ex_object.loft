@@ -1651,20 +1651,47 @@ pub fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?,
   for a in args {
     match e.p.nodes[a] {
       SArg { at: aat, name: an, e: ae } => {
-        if an != "" || ae == null {
+        if ae == null {
           el::refuse(e, "a named argument");
           return ex(ir::NdNull, ir::TyUnknown { n: 0 });
         }
         // `free_call_hint`, asked per argument with the types read so far: its parameter's
         // `fn(…)` types a short lambda argument.  A qualified call asks the library alone.
         hd = if source >= 0 { look(e, source, "n_{name}") } else { el_dispatch::free_call_hint(e, name, types) };
-        hint_lambda(e, vars, hd, a#index, ae!, sofar: types);
-        eh = argument_element_hint(e, hd, a#index, ae!);
+        // A named argument of a function the name alone selects, at or after the position
+        // reached: the parameters it skips take their constant defaults, and it is read as the
+        // argument of its own position.  Any other (an overload set, a parameter already
+        // given, a skipped one with no constant default) is refused by name.
+        if an != "" {
+          np = if hd >= 0 && source < 0 && el_dispatch::own_set(e, name) < 0 { attr_nr(el::def(e, hd), an) } else { -1 };
+          gap_ok = np >= len(list);
+          if gap_ok {
+            for k in len(list)..np {
+              ka = el::def(e, hd).attributes[k];
+              kv = if ka == null { ir::NdNull } else { el_ir::unspan(ka!.value[0] ?? ir::NdNull) };
+              if !(kv is NdInt || kv is NdLong || kv is NdFloat || kv is NdSingle || kv is NdBoolean || kv is NdText) {
+                gap_ok = false;
+              }
+            }
+          }
+          if !gap_ok {
+            el::refuse(e, "a named argument");
+            return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+          }
+          for k in len(list)..np {
+            ka = el::def(e, hd).attributes[k]!;
+            list += [ka.value[0]!];
+            types += [ka.typedef[0] ?? ir::TyVoid];
+            built += [ir::TyUnknown { n: 0 }];
+          }
+        }
+        hint_lambda(e, vars, hd, len(list), ae!, sofar: types);
+        eh = argument_element_hint(e, hd, len(list), ae!);
         built += [eh];
         if el_trace::on() {
           el_trace::state(e, vars, "arg", aat, ae!);
         }
-        x = argument_view(e, vars, hinted_argument(e, vars, ae!, eh, d: hd, i: a#index, sofar: types));
+        x = argument_view(e, vars, hinted_argument(e, vars, ae!, eh, d: hd, i: len(list), sofar: types));
         // A tuple handed to a TEMPLATE has its `__tuple<…>` record made where the call's
         // statement ends (`ensure_tuple_defs`): the instance is keyed and laid out by it.
         if !e.first_pass && hd >= 0 && el::def(e, hd).def_type == el::DT_GENERIC {
