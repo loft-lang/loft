@@ -25,6 +25,10 @@ checker inside the compiler.  The rules themselves are
   reported BEFORE it is debugged or changed, when it does not report them yet.  The rules are
   not all wired up front and nobody is asked to unify them; the logging a rule has must be
   solid, and a rule that has none earns it the day it costs time.
+- **The census stays.**  `make reason-census`, its baseline and its `--check` are kept as
+  they are while rules owe: the table is what tells a reader what to expect of a rewrite —
+  whether it will say why it refused, in whole, in part or not at all — before they lean on
+  it.  A rule never falls back to silent, and each rule wired moves its row.
 - **No self-check.**  The compiler has no mode in which it verifies its own analyses while a
   program runs.  A layer that validates the analyses adds complexity to check complexity.
 - **Logging is the assurance.**  A decision is trusted because it can be read from outside:
