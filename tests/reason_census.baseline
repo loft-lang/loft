@@ -2,7 +2,7 @@
 # site, and which site it admitted, and its state (scripts/reason_census.py;
 # --check: a rule never falls silent).  rule<TAB>fired<TAB>declined<TAB>admitted<TAB>state
 R-Alias	2	0	0	owes
-R-Apart	7	2	0	reports
+R-Apart	7	2	0	partly
 R-AppendTwin	4	1	0	reports
 R-Base	9	0	0	owes
 R-BoundAppend	1	0	0	owes
@@ -17,7 +17,7 @@ R-CompleteWrite	1	0	0	owes
 R-Const	2	0	0	owes
 R-CopyView	2	2	0	reports
 R-Counter	2	0	0	owes
-R-CtorLiteral	1	2	0	reports
+R-CtorLiteral	1	2	0	partly
 R-DecodeView	4	1	0	reports
 R-DeferredCopy	3	0	0	owes
 R-Demote	2	0	0	owes
@@ -26,7 +26,7 @@ R-DischargeInto	1	0	0	owes
 R-ElemFirst	1	0	0	owes
 R-ExitVector	2	2	0	reports
 R-ExpPow	1	0	0	nothing
-R-FaultFlag	1	1	0	reports
+R-FaultFlag	1	1	0	partly
 R-FieldAppend	3	0	0	owes
 R-FileHold	2	0	0	owes
 R-Fill	4	0	0	owes
@@ -44,7 +44,7 @@ R-GuardFree	2	0	0	owes
 R-GuardedChain	5	0	0	owes
 R-HandOver	2	0	0	owes
 R-Header	14	2	0	reports
-R-HostStore	2	1	0	reports
+R-HostStore	2	1	0	partly
 R-InPlaceLiteral	4	0	0	owes
 R-InRange	3	2	0	reports
 R-Inline	2	0	0	nothing
@@ -116,7 +116,7 @@ R-TypedRead	4	0	0	owes
 R-ValueLocal	3	2	0	reports
 R-ValueRecord	5	4	0	reports
 R-VecCopy	1	1	0	reports
-R-Version	2	1	0	reports
+R-Version	2	1	0	partly
 R-View	2	0	0	owes
 R-ViewReturn	1	1	0	reports
 R-WorkBuffer	4	2	0	reports

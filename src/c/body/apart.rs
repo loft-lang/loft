@@ -53,6 +53,8 @@ impl FnWriter<'_> {
     /// Instance 3's roles for this body: its apart `vector<float>` locals and their companions.
     pub(super) fn apart_vectors(&mut self) {
         if let Some(roles) = apart_vector::roles(self.cx.data, self.d) {
+            // @decline-owed: the vector and the value instances (`opt/apart_vector.rs`,
+            //   `lower/apart_value.rs`) report none of their refusals; the records instance does
             crate::rewrite_census::fired("R-Apart/vector", roles.apart.len());
             self.apv = roles;
         }

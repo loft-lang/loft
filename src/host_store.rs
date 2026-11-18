@@ -62,6 +62,8 @@ pub fn rewrite_program(data: &mut Data, fresh: &[u32]) {
         data.definitions[d_nr as usize].code = code;
         if n > 0 {
             let _census = crate::rewrite_census::InBody::enter("ir", data.def(d_nr).name());
+            // @decline-owed: the write-back gate of this file reports none of its refusals; the
+            //   result gate does (`host_result.rs`)
             crate::rewrite_census::fired("R-HostStore", n);
         }
     }

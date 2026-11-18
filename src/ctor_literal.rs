@@ -766,6 +766,8 @@ pub fn rewrite_program(data: &mut Data, stores: &crate::database::Stores) -> usi
         crate::scopes::assign_function_slots(data, caller);
         total += done.len();
     }
+    // @decline-owed: a callee whose body is more than its buffer's mint and one covering
+    //   literal group (`admit`, decided per function); the call site reports
     crate::rewrite_census::fired("R-CtorLiteral", total);
     total
 }

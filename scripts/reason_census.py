@@ -18,9 +18,11 @@ call sites of the three in `src/`, by rule — a property of the source, so it n
 and no program.  An admission carries a site and no reason: the column says where a reason
 could be attached once the call takes one.
 
-Four states per rule that fires, because a zero alone cannot tell them apart:
+Five states per rule that fires, because a zero alone cannot tell them apart:
 
   reports   it calls `declined` somewhere: its refusals are readable;
+  partly    it calls `declined` at some of its gates and carries a `@decline-owed` marker
+            naming the ones that say nothing yet: it stays on the `--owed` worklist;
   nothing   it CANNOT refuse a site, and says so where it fires —
 
                 // @no-decline: fires wherever the shape occurs; no condition to refuse on
@@ -33,9 +35,9 @@ Four states per rule that fires, because a zero alone cannot tell them apart:
             the instrumentation backlog, with its work already named;
   silent    it fires and nobody has classified it: the reading backlog.
 
-`--missing` lists the silent rules, `--owed` the ones that owe.  A marker with no text, one
-above no `fired` call, one on a rule that also calls `declined`, and both markers on one rule
-are each refused by `--check`.
+`--missing` lists the silent rules, `--owed` the ones that owe, in whole or in part.  A marker
+with no text, one above no `fired` call, a `@no-decline` on a rule that also calls `declined`,
+and both markers on one rule are each refused by `--check`.
 
 A rule that reports to NO census is read from the formal chapter, which says why in its
 phase table (`formal/rewrites.md`: `not counted — <kind>: <why>`, the kinds `executor`,
@@ -155,15 +157,16 @@ def not_counted():
 
 
 def state(fired, declined, marked):
-    """`reports`, `nothing` (to report), `owes`, `silent`, or `-` for a rule that does not
-    fire.  `marked` is the rule's marker sites, or a false value."""
+    """`reports`, `partly`, `nothing` (to report), `owes`, `silent`, or `-` for a rule that
+    does not fire.  `marked` is the rule's marker sites, or a false value."""
+    owed = any(kind == "decline-owed" for _, _, _, kind in marked or [])
     if declined:
-        return "reports"
+        return "partly" if owed else "reports"
     if not fired:
         return "-"
     if not marked:
         return "silent"
-    return "owes" if any(kind == "decline-owed" for _, _, _, kind in marked) else "nothing"
+    return "owes" if owed else "nothing"
 
 
 def marker_faults(counts, marks, orphans):
@@ -174,8 +177,8 @@ def marker_faults(counts, marks, orphans):
             if not why:
                 out.append(f"{path}:{line}: `@{kind}` on {rule} gives no reason")
         path, line, _, kind = sites[0]
-        if counts.get(rule, {}).get("declined"):
-            out.append(f"{path}:{line}: {rule} is marked `@{kind}` and also calls `declined`")
+        if counts.get(rule, {}).get("declined") and any(k == "no-decline" for _, _, _, k in sites):
+            out.append(f"{path}:{line}: {rule} is marked `@no-decline` and also calls `declined`")
         if len({k for _, _, _, k in sites}) > 1:
             out.append(f"{path}:{line}: {rule} is marked both `@no-decline` and `@decline-owed`")
     for path, line in orphans:
@@ -236,6 +239,9 @@ fn a() {
     crate::rewrite_census::fired("R-In", 1);
     crate::rewrite_census::declined_in("R-In", function, local, why);
     not_fired("R-Other", 1);
+    // @decline-owed: its second gate
+    crate::rewrite_census::fired("R-Partly", 1);
+    crate::rewrite_census::declined("R-Partly", site, why);
 }
 '''
 
@@ -246,7 +252,7 @@ def self_test():
     got = {r: state(c["fired"], c["declined"], marks.get(r)) for r, c in counts.items()}
     want = {"R-Silent": "silent", "R-Const": "reports", "R-Nothing": "nothing",
             "R-NoWhy": "nothing", "R-Both": "reports", "R-Owes": "owes", "R-Twice": "owes",
-            "R-Bare": "silent", "R-In": "reports"}
+            "R-Bare": "silent", "R-In": "reports", "R-Partly": "partly"}
     faults = marker_faults(counts, marks, orphans)
     owed = marks.get("R-Owes", [("", 0, "", "")])[0][2]
     ok = (got == want and len(unread) == 1 and len(orphans) == 1 and len(faults) == 4
@@ -262,7 +268,7 @@ def self_test():
         for f in faults:
             print("  fault:", f)
         return 1
-    print("reason_census self-test: ok (4 states, 4 refused markers, 1 unread call)")
+    print("reason_census self-test: ok (5 states, 4 refused markers, 1 unread call)")
     return 0
 
 
@@ -295,7 +301,8 @@ def main():
         now = {rule: st for rule, _, _, _, _, st in table}
         lost = [f"{rule}: was `{was}`, now says nothing of its refusals"
                 for rule, was in sorted(base.items())
-                if was in ("reports", "nothing", "owes") and now.get(rule, "-") in ("silent", "-")]
+                if was in ("reports", "partly", "nothing", "owes")
+                and now.get(rule, "-") in ("silent", "-")]
         if lost or faults:
             print("the reason census refuses (scripts/reason_census.py):")
             for l in lost + faults:
@@ -304,7 +311,7 @@ def main():
         return 0
     fires = [r for r in table if r[1] and r[4]]
     by_state = {st: [r for r in fires if r[5] == st]
-                for st in ("reports", "nothing", "owes", "silent")}
+                for st in ("reports", "partly", "nothing", "owes", "silent")}
     with_admit = [r for r in fires if r[3]]
     only_missing = "--missing" in args
     only_owed = "--owed" in args
@@ -312,10 +319,10 @@ def main():
     for rule, f, d, a, known, st in table:
         if not (f or d or a):
             continue
-        if (only_missing and st != "silent") or (only_owed and st != "owes"):
+        if (only_missing and st != "silent") or (only_owed and st not in ("owes", "partly")):
             continue
         shown = {"nothing": "nothing to report", "-": "does not fire",
-                 "owes": "owes its reasons"}.get(st, st)
+                 "owes": "owes its reasons", "partly": "reports in part"}.get(st, st)
         mark = "" if known else "   (a rule of another chapter)"
         print(f"{rule:<24} {f:>5} {d:>15} {a:>14}  {shown}{mark}")
     for rule, sites in sorted(marks.items()):
@@ -323,7 +330,8 @@ def main():
         owes = kind == "decline-owed"
         if only_missing or (only_owed and not owes):
             continue
-        label = "refuses on" if owes else "nothing to report"
+        partly = owes and counts.get(rule, {}).get("declined")
+        label = "still owes" if partly else "refuses on" if owes else "nothing to report"
         print(f"  {rule}: {label} — {why or '(no reason given)'}  [{path}:{line}]")
     kinds = {}
     for r in quiet_rules:
@@ -336,6 +344,7 @@ def main():
     print(f"{len(defined)} rewrite rules defined; {len(fires)} report where they fire, "
           f"{len(quiet_rules)} are counted by no census ({split})")
     print(f"of the {len(fires)}: {len(by_state['reports'])} report why they refuse a site, "
+          f"{len(by_state['partly'])} report in part, "
           f"{len(by_state['nothing'])} state they have nothing to report, "
           f"{len(by_state['owes'])} owe their reasons, {len(by_state['silent'])} are unread")
     print(f"{len(with_admit)} name the site they admit; an admission carries no reason: "

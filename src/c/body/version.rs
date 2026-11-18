@@ -679,6 +679,8 @@ impl FnWriter<'_> {
             guard.push(format!("{pre}({})", vals.join(", ")));
         }
         self.line(ind, &format!("{flag} = {};", guard.join("\n        && ")));
+        // @decline-owed: a callee that is no leaf (`version_callee_decline`) and the nest's
+        //   loop gate; the call's arguments report
         crate::rewrite_census::fired("R-Version", 1);
         if crate::opt::version::trace() {
             eprintln!(

@@ -85,20 +85,26 @@ fired under is in the name it reports (`R-Header/kept`, `R-Apart/records`).
 ## The state of every rule
 
 `make reason-census` (`scripts/reason_census.py`, a scan of `src/`, no build) gives each rule
-one of five states:
+one of six states:
 
 | State | Meaning | Recorded by |
 |---|---|---|
 | reports | it calls `declined` for its refusals | the call |
+| reports in part | some of its gates call `declined`, others say nothing | the call, and `// @decline-owed: <the gates that say nothing>` above a `fired` call |
 | nothing to report | its shape is its whole condition | `// @no-decline: <why>` above its `fired` call |
 | owes | it refuses on conditions it does not report yet | `// @decline-owed: <the conditions>` above its `fired` call |
 | silent | it fires and nobody has read it | nothing; `--missing` lists these |
 | not counted | no census counts it | the phase table in formal/rewrites.md (`not counted — <kind>: <why>`) |
 
-`--owed` lists the rules that owe: the worklist of this page.  `--check` reads
-`tests/reason_census.baseline` and fails when a rule falls back to silent, when a marker has
-no text or stands above no `fired` call, when a rule carries a marker and also reports, and
-when a rule no census counts has no row in the phase table.
+`--owed` lists the rules that owe, in whole or in part: the worklist of this page.  `--check`
+reads `tests/reason_census.baseline` and fails when a rule falls back to silent, when a marker
+has no text or stands above no `fired` call, when a rule marked `@no-decline` also reports,
+and when a rule no census counts has no row in the phase table.
+
+A rule with several gates is wired one gate at a time.  While a gate says nothing, the rule
+keeps a `@decline-owed` marker naming it, and reads `reports in part`; the marker goes with
+the last gate.  The script cannot see a second gate by itself: whoever wires one gate of a
+rule writes the marker for the rest.
 
 An `owes` marker names the main conditions the rule's admission code tests.  It is a summary
 for a reader choosing what to wire; the complete list is the deciding function.
@@ -132,20 +138,16 @@ admissions before and after, and the code emitted for the bench programs is byte
    different callers.  Read beside the admissions of `LOFT_REWRITE_CENSUS_FN`, a function
    shows how many matches a rule rewrote and how many each test rejected, and not which.
 
-A rule moves from `owes` to `reports` when its marker is removed and its call is in;
-`--check` refuses both at once, so the `owes` count only falls.
+A rule moves from `owes` through `reports in part` to `reports`: its first call is in, then
+its marker is removed with the last gate.
 
-**OPEN: 2** — each decides how the remaining rules are wired.
+**OPEN: 1**
 
-- **A rule that reports some of its clauses.**  A rule is `reports` as soon as one of its
-  gates calls `declined`, and its `@decline-owed` marker must go then, so the clauses that
-  do not report are off the worklist (R-HostStore's write-back clause, R-Apart's
-  value and vector instances, R-CtorLiteral's callee side).  Either a rule may carry a marker
-  for what it still owes beside its calls, or it stays `owes` until every clause reports.
 - **A gate that validates before it knows it matched.**  R-FaultFlag walks a `for` statement
   for what it may not hold before it knows the statement holds a fault form at all; it counts
   a refusal only where a fault form was seen first, which misses a statement refused ahead of
-  its first one.  The same order is in other gates still to wire.
+  its first one, and the rule carries a marker for that.  The same order is in other gates
+  still to wire.
 
 ## What is not built
 

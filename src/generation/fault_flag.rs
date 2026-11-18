@@ -525,6 +525,8 @@ impl Output<'_> {
             .iter()
             .map(|v| format!("var_{}", sanitize(variables.name(*v))))
             .collect();
+        // @decline-owed: a statement refused ahead of its first fault form — the walk tests what
+        //   the statement may hold before it knows it holds one, and counts a refusal after
         crate::rewrite_census::fired("R-FaultFlag", 1);
         writeln!(w, "{{ //@FR-R-FaultFlag")?;
         self.indent(w)?;
