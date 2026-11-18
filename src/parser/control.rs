@@ -1324,6 +1324,7 @@ impl Parser {
             t = self.expression(&mut n);
             last_fact = std::mem::take(&mut self.operand_fact); // @PLN187
             self.state_trace_value(&stmt_at, &t);
+            self.state_trace_vars(&stmt_at);
             // `@FR-H-Write-Else` — an `else` left over after a whole statement can only be a
             // store's failure arm: an `if` or a value-`if` has already consumed its own.
             if self.lexer.peek_token("else") {

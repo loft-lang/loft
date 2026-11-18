@@ -114,6 +114,9 @@ pub struct El {
   // The line of the top-level declaration being read: what a refusal met outside any statement
   // (a struct's field, a signature) reports, so the gate's site list names its line.
   pub decl_line: integer,
+  // `Parser::trace_vars` (`LOFT_STATE_TRACE`'s `var` point): per function and pass, the spelled
+  // types of its variables as the trace last printed them.  Empty unless the trace is on.
+  pub trace_vars: hash<TraceSeen[key]>,
   pub null_widened: vector<integer>,
   // The definitions declared `value struct`: a comparison of two is spelled field by field.
   pub value_structs: vector<integer>,
@@ -211,6 +214,7 @@ pub fn new_el(p: syntax::Syntax, file: text, default: boolean) -> El {
     refused_in: [],
     unbacked: [],
     decl_line: 0,
+    trace_vars: [],
     null_widened: [],
     value_structs: [],
     slot_links: [],
@@ -238,6 +242,13 @@ pub fn new_el(p: syntax::Syntax, file: text, default: boolean) -> El {
 
 // What elaboration does not carry yet: recorded once, so the gate names the construct.
 // A refusal and the definition it was met in (`El::refused_in`).
+// One function's variable table on one pass, as the state trace last printed it: `key` is
+// `<definition>/<pass>`, `types` each variable's spelled type in number order.
+pub struct TraceSeen {
+  pub key: text,
+  pub types: vector<text>
+}
+
 pub struct RefusedIn {
   pub what: text,
   pub fname: text,
