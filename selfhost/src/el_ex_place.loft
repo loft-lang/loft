@@ -1725,6 +1725,13 @@ pub fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text,
   if !vars.annotated.contains(v) {
     vars.annotated += [v];
   }
+  // A literal bound to a local declared as a nullable VARIANT (`p: Fireball? = Fireball { … }`)
+  // is built in the local itself in Rust (`parse_object` into the declared slot), where one
+  // declared as the enum's `?` or as the dense variant is built apart: not carried.
+  if declared! is TyOptional && e.p.nodes[rhs!] is SStructLit && match el_types::base(declared!) { TyReference { n: dvn } => el::def(e, dvn).def_type == el::DT_ENUM_VALUE, _ => false } {
+    el::refuse(e, "a literal bound to a local declared as a nullable variant");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
   match declared! {
     TyTuple { elems: dte } => {
       for dm in dte {

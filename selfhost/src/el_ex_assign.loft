@@ -108,16 +108,40 @@ pub fn minting_call(e: el::El, n: ir::Node) -> boolean {
 // a work ref of its own (`materialize_view_return`), so the buffer is no chain's and a literal
 // exit beside it keeps its own store.
 pub fn returns_projection(e: el::El, i: integer) -> boolean {
+  // The body's own tail is such an exit too.
+  match e.p.nodes[i] {
+    SBlock { stmts } => {
+      if len(stmts) > 0 {
+        match e.p.nodes[stmts[-1]] {
+          SStmt { e: se, semi, orelse } => {
+            if se != null && !semi && orelse == null && projection_syntax(e, se!) {
+              return true;
+            }
+          },
+          _ => {}
+        }
+      }
+    },
+    _ => {}
+  }
+  return_of_projection(e, i)
+}
+
+fn projection_syntax(e: el::El, x: integer) -> boolean {
+  match e.p.nodes[x] { SMember { call } => !call, SIndex { range } => !range, _ => false }
+}
+
+fn return_of_projection(e: el::El, i: integer) -> boolean {
   match e.p.nodes[i] {
     SJump { kind, e: x } => {
       if kind == "return" && x != null {
-        return match e.p.nodes[x!] { SMember { call } => !call, SIndex { range } => !range, _ => false };
+        return projection_syntax(e, x!);
       }
     },
     _ => {}
   }
   for c in el_length::children(e, i) {
-    if returns_projection(e, c) {
+    if return_of_projection(e, c) {
       return true;
     }
   }
