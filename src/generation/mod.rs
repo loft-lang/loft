@@ -517,7 +517,7 @@ pub struct Output<'a> {
     pub fault_flag_exact: HashSet<usize>,
     /// `@FR-R-FaultFlag`'s pure-call clause — each function already asked: `None` pure,
     /// `Some(why)` not.
-    pub fault_flag_pure: std::cell::RefCell<HashMap<u32, Option<String>>>,
+    pub fault_flag_pure: std::cell::RefCell<HashMap<u32, Option<crate::rewrite_census::Refusal>>>,
     /// The locals `(R-Place)` built in another record's store ([`hoist::placed_locals`]),
     /// rebuilt per function: never a fresh store for [`hoist::StoreFacts`].
     pub placed_locals: HashSet<u16>,

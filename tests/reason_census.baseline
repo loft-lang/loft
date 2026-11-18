@@ -26,7 +26,7 @@ R-DischargeInto	1	0	0	owes
 R-ElemFirst	1	0	0	owes
 R-ExitVector	2	2	0	reports
 R-ExpPow	1	0	0	nothing
-R-FaultFlag	1	0	0	owes
+R-FaultFlag	1	1	0	reports
 R-FieldAppend	3	0	0	owes
 R-FileHold	2	0	0	owes
 R-Fill	4	0	0	owes

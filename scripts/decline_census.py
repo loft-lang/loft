@@ -96,6 +96,7 @@ REPORTED = {
     "R-Apart/records": ("a vector of records held apart from the store", "partial"),
     "R-Version": ("a leaf's fast twin called from a counted loop (C)", "partial"),
     "R-DecodeView": ("a decoded field held as a span of its source bytes", "partial"),
+    "R-FaultFlag": ("a `for` statement run as a fast copy with one fault flag", "partial"),
 }
 # A rule's labels are the validation clauses of its statement (REWRITE_REASONS.md): a rule that
 # passes this many is describing sites, not clauses.  `(R-Range)` uses twelve today.

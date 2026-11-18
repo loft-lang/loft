@@ -127,7 +127,7 @@ struct Walk<'a> {
     /// The calls followed to reach this body.
     calls: u8,
     /// Each function already asked: `None` pure, `Some(why)` not.
-    pure: &'a RefCell<HashMap<u32, Option<String>>>,
+    pure: &'a RefCell<HashMap<u32, Option<crate::rewrite_census::Refusal>>>,
 }
 
 impl Walk<'_> {
@@ -135,7 +135,7 @@ impl Walk<'_> {
     /// level reaches past them leaves the statement and declines.  The fallback declines: a
     /// node this does not name is one whose effect it has not proven local, and a fast copy's
     /// effect must be undone by restoring locals alone.
-    fn node(&mut self, v: &Value, depth: u16) -> Result<(), String> {
+    fn node(&mut self, v: &Value, depth: u16) -> Result<(), crate::rewrite_census::Refusal> {
         match v.unspan() {
             Value::Null
             | Value::Line(_)
@@ -171,7 +171,9 @@ impl Walk<'_> {
                 if *n < depth {
                     Ok(())
                 } else {
-                    Err("a `break` or `continue` leaves the statement".to_string())
+                    Err(crate::rewrite_census::Refusal::of(
+                        "a `break` or `continue` leaves the statement",
+                    ))
                 }
             }
             Value::If(t, a, b) => {
@@ -190,14 +192,18 @@ impl Walk<'_> {
                 self.all(args, depth)
             }
             Value::Return(e) if self.callee => self.node(e, depth),
-            Value::Return(_) => Err("a `return` leaves the statement".to_string()),
-            _ => Err("a node whose effect is not local to the statement".to_string()),
+            Value::Return(_) => Err(crate::rewrite_census::Refusal::of(
+                "a `return` leaves the statement",
+            )),
+            _ => Err(crate::rewrite_census::Refusal::of(
+                "a node whose effect is not local to the statement",
+            )),
         }
     }
 
     /// A call: a store READ by name, an operator whose template touches nothing but its
     /// operands, or a loft function whose own body passes this walk.
-    fn call(&mut self, d: u32) -> Result<(), String> {
+    fn call(&mut self, d: u32) -> Result<(), crate::rewrite_census::Refusal> {
         let def = self.data.def(d);
         let name = def.name();
         if READS.contains(&name) {
@@ -205,11 +211,17 @@ impl Walk<'_> {
         }
         if !def.rust.is_empty() {
             if touches_state(&def.rust) {
-                return Err(format!("`{name}` touches state outside its operands"));
+                return Err(crate::rewrite_census::Refusal::about(
+                    "an operator that touches state outside its operands",
+                    name,
+                ));
             }
             let raises = def.rust.contains("s.raise_recoverable(");
             if raises && self.callee {
-                return Err(format!("`{name}` raises inside a called function"));
+                return Err(crate::rewrite_census::Refusal::about(
+                    "an operator that raises inside a called function",
+                    name,
+                ));
             }
             if !self.callee && raises {
                 self.fault_forms += 1;
@@ -221,7 +233,10 @@ impl Walk<'_> {
         // program all the same (the C-ABI header declares only body-less natives), so the
         // body is what runs and what is walked.
         if !def.is_loft_defined() {
-            return Err(format!("`{name}` is not a loft function"));
+            return Err(crate::rewrite_census::Refusal::about(
+                "a call that is no loft function",
+                name,
+            ));
         }
         if let Some(known) = self.pure.borrow().get(&d) {
             return match known {
@@ -230,12 +245,19 @@ impl Walk<'_> {
             };
         }
         if self.calls >= CALL_DEPTH {
-            return Err(format!("`{name}` is more than {CALL_DEPTH} calls deep"));
+            return Err(crate::rewrite_census::Refusal::about(
+                "a call deeper than the walk follows",
+                name,
+            ));
         }
         // Provisionally impure, so a recursive call declines instead of looping.
-        self.pure
-            .borrow_mut()
-            .insert(d, Some(format!("`{name}` is recursive")));
+        self.pure.borrow_mut().insert(
+            d,
+            Some(crate::rewrite_census::Refusal::about(
+                "a recursive call",
+                name,
+            )),
+        );
         let verdict = self.callee_body(d);
         let entry = verdict.clone().err();
         self.pure.borrow_mut().insert(d, entry);
@@ -244,16 +266,16 @@ impl Walk<'_> {
 
     /// A called function is pure when it takes no hidden or by-reference parameter (each
     /// writes the caller's state) and its body passes the walk as a callee.
-    fn callee_body(&self, d: u32) -> Result<(), String> {
+    fn callee_body(&self, d: u32) -> Result<(), crate::rewrite_census::Refusal> {
         let def = self.data.def(d);
         let name = def.name();
         for a in def.attributes() {
             // A by-reference parameter, also as `τ?` (`.base()` would peel the `&` away too).
             let (shape, _) = a.typedef.peel_optional();
             if a.hidden || matches!(shape, Type::RefVar(_)) {
-                return Err(format!(
-                    "`{name}` writes through its parameter `{}`",
-                    a.name
+                return Err(crate::rewrite_census::Refusal::about(
+                    "a callee that writes through a hidden or by-reference parameter",
+                    format!("{name}: {}", a.name),
                 ));
             }
         }
@@ -269,12 +291,12 @@ impl Walk<'_> {
             calls: self.calls + 1,
             pure: self.pure,
         };
-        inner
-            .node(def.code(), 0)
-            .map_err(|why| format!("`{name}` is not pure: {why}"))
+        inner.node(def.code(), 0).map_err(|why| {
+            crate::rewrite_census::Refusal::about(why.clause, format!("in {name}: {}", why.about))
+        })
     }
 
-    fn all(&mut self, ops: &[Value], depth: u16) -> Result<(), String> {
+    fn all(&mut self, ops: &[Value], depth: u16) -> Result<(), crate::rewrite_census::Refusal> {
         ops.iter().try_for_each(|o| self.node(o, depth))
     }
 }
@@ -377,7 +399,17 @@ impl Output<'_> {
         }
         let data = self.data;
         let fn_name = data.def(self.def_nr).name();
-        let decline = |why: &str| {
+        // `matched`: the statement holds a fault form, so it is this rule's pattern and a
+        // refusal of it is counted; a `for` with nothing that can fault is not the pattern.
+        let decline = |why: crate::rewrite_census::Refusal, matched: bool| {
+            if matched {
+                crate::rewrite_census::declined_in(
+                    "R-FaultFlag",
+                    fn_name,
+                    &bl.scope.to_string(),
+                    why.clause,
+                );
+            }
             if self.fault_flag_trace {
                 eprintln!("fault-flag: {fn_name} declines a `for`: {why}");
             }
@@ -396,10 +428,14 @@ impl Output<'_> {
             pure: &self.fault_flag_pure,
         };
         if let Err(why) = walk.all(&bl.operators, 0) {
-            return decline(&why);
+            let matched = walk.fault_forms > 0;
+            return decline(why, matched);
         }
         if walk.fault_forms == 0 {
-            return decline("nothing in it can fault");
+            return decline(
+                crate::rewrite_census::Refusal::of("nothing in it can fault"),
+                false,
+            );
         }
         // Profitability: the fast copy pays where a discharge's select sits ON A RECURRENCE —
         // the value it tests depends, through the statement's own assignments, on a local its
@@ -422,7 +458,12 @@ impl Output<'_> {
             }
             targets.iter().any(|t| seen.contains(t))
         }) {
-            return decline("no discharge lies on a recurrence of a local it writes");
+            return decline(
+                crate::rewrite_census::Refusal::of(
+                    "no discharge lies on a recurrence of a local it writes",
+                ),
+                false,
+            );
         }
         let variables = data.def(self.def_nr).variables();
         let mut escaped: HashSet<u16> = HashSet::new();
@@ -434,13 +475,22 @@ impl Output<'_> {
             // into a store, a text) owns nothing.  One declared before is restored by copy, so
             // it must be a scalar.
             if !is_scalar(variables.tp(v)) && self.declared.contains(&v) {
-                return decline(&format!("it writes `{}`, not a scalar", variables.name(v)));
+                return decline(
+                    crate::rewrite_census::Refusal::about(
+                        "it writes a local that is no scalar",
+                        variables.name(v),
+                    ),
+                    true,
+                );
             }
             if escaped.contains(&v) {
-                return decline(&format!(
-                    "`{}` is referenced, not only read",
-                    variables.name(v)
-                ));
+                return decline(
+                    crate::rewrite_census::Refusal::about(
+                        "it writes a local whose address is taken",
+                        variables.name(v),
+                    ),
+                    true,
+                );
             }
             if self.declared.contains(&v) {
                 saved.push(v);
@@ -475,12 +525,6 @@ impl Output<'_> {
             .iter()
             .map(|v| format!("var_{}", sanitize(variables.name(*v))))
             .collect();
-        // @decline-owed: a `for` statement with a node outside the admitted set: a `return`, a
-        //   `break` or `continue` that leaves it, an operator whose template touches state, a
-        //   call that is no loft function, takes a hidden or by-reference parameter, recurses,
-        //   raises, or runs more than four calls deep; a write of a non-scalar local declared
-        //   before it or of a local whose address is taken; no fault form, or no discharge on a
-        //   recurrence; a coroutine body
         crate::rewrite_census::fired("R-FaultFlag", 1);
         writeln!(w, "{{ //@FR-R-FaultFlag")?;
         self.indent(w)?;
