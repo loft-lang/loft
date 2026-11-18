@@ -1048,6 +1048,13 @@ pub fn builtin_op(e: el::El, vars: el_vars::Vars, op: text, a: Ex, b: Ex) -> Ex 
   // through every field — where the struct has no `OpEq` / `OpNe` method of its own.
   if op == "==" || op == "!=" {
     ad = struct_ref(e, el_types::base(a.tp));
+    // (Two values of a `value struct` compare field by field in Rust's image — each field's
+    // own test, a literal operand held in a `___veq_N` — not through `OpEqContent`: not
+    // carried, refused by name.)
+    if ad >= 0 && ad == struct_ref(e, el_types::base(b.tp)) && e.value_structs.contains(ad) && !e.first_pass {
+      el::refuse(e, "a comparison of two value structs (field by field)");
+      return ex(ir::NdNull, ir::TyBoolean);
+    }
     if ad >= 0 && ad == struct_ref(e, el_types::base(b.tp)) && !starts_with(el::def(e, ad).name, "__tuple<") && !has_operator_method(e, ad) {
       return ex(el_ir::cl(e, if op == "==" { "OpEqContent" } else { "OpNeContent" }, [a.code, b.code, ir::NdInt { n: el::def(e, ad).known_type }]), ir::TyBoolean);
     }

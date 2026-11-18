@@ -125,7 +125,9 @@ fn hands_result_buffer(e: el::El, n: ir::Node, vars: el_vars::Vars, in_container
 // `work_buffer_def_decline`: what keeps a definition's locals its own.
 fn def_decline(e: el::El, d: integer, taken: vector<integer>) -> boolean {
   def = el::def(e, d);
-  if def.def_type != el::DT_FUNCTION || def.rust != "" || def.source != e.source || el_ir::is_null(def.code[0] ?? ir::NdNull) {
+  // (Every file of the program, a `use`d one included: only the standard library keeps its
+  // locals as they are.)
+  if def.def_type != el::DT_FUNCTION || def.rust != "" || def.source == 0 || el_ir::is_null(def.code[0] ?? ir::NdNull) {
     return true;
   }
   nm = def.name;

@@ -112,6 +112,8 @@ pub struct El {
   // The vector locals a bare `null` widened to `vector<T>?` on the first pass
   // (`context * 65536 + variable`): the second gives each such write its absent backing.
   pub null_widened: vector<integer>,
+  // The definitions declared `value struct`: a comparison of two is spelled field by field.
+  pub value_structs: vector<integer>,
   // `Function::subject_sites` (loft#2520): each match subject temp the first pass minted, by
   // its site (`context * 1048576 + the subject's syntax node`), and the name it took.
   // A `&` link to a child record that is later WRITTEN whole (`cur = cur.next`), by
@@ -206,6 +208,7 @@ pub fn new_el(p: syntax::Syntax, file: text, default: boolean) -> El {
     refused_in: [],
     unbacked: [],
     null_widened: [],
+    value_structs: [],
     slot_links: [],
     subject_sites: [],
     subject_names: [],

@@ -500,7 +500,9 @@ fn claim_declared_type_names(e: el::El, items: vector<integer>) {
 }
 
 fn parse_struct(e: el::El, at: integer, value: boolean, name: text, tvars: vector<integer>, fields: vector<integer>) {
-  if value || len(tvars) > 0 {
+  // (A `value struct` is a struct as any other in the parsed image: its register treatment is
+  // a later pass's.)
+  if len(tvars) > 0 {
     el::refuse(e, "a value struct or a struct template");
     return;
   }
@@ -522,6 +524,9 @@ fn parse_struct(e: el::El, at: integer, value: boolean, name: text, tvars: vecto
   }
   if d < 0 {
     return;
+  }
+  if value && !e.value_structs.contains(d) {
+    e.value_structs += [d];
   }
   parse_fields(e, d, fields);
 }
