@@ -36,6 +36,10 @@ How an analysis is written:
   examples first.
 - The porter's own handoff is read before an order is proposed: it holds the cost side.
 
+The standing order: stay far enough AHEAD with prepared subjects that the porter never waits
+for one; FIX a defect that blocks the port or that the port would mirror; FILE every other
+defect met on the way, fixed or not.
+
 Preventing a problem is worth more than finding it sooner.  Three routines:
 
 - **A prepared topic comes with its probe already run both ways.**  On the Rust front end, on
