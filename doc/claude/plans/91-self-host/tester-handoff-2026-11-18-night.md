@@ -23,8 +23,10 @@ agreement with the owner.
 3. FILE every other defect found on the way, measured on a fresh main first (`make
    install-main`, then the repro on `~/.local/bin/loft`).
 
-Prepared and unused: [keyed-field-write.md](keyed-field-write.md),
-[linked-group-literal.md](linked-group-literal.md).  The buffer is at its minimum: pick the
+Prepared and unused: [linked-group-literal.md](linked-group-literal.md),
+[vector-slice.md](vector-slice.md).  In use: [keyed-field-write.md](keyed-field-write.md) — its try
+(979ff1cf4) uncovered a keyed local as the subject of a record tail, which keeps `__retbuf`
+where Rust renames the buffer (the `keyed_*` cases of `probes/record-tail-default.loft`).  The buffer is at its minimum: pick the
 next from the programs one refusal from agreeing (`kr-tools/try_moves.py`, the try answers'
 "lost a refusal and still refused" list).
 
