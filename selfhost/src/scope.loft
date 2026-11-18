@@ -1023,7 +1023,16 @@ fn sweep_block(bl: ir::Block, s: Sweep, f: ir::Function, is_loop: boolean) -> ir
   out: vector<ir::Node> = [];
   for op in bl.operators {
     for x in sweep_stmt(op, s, f) {
-      out += [x];
+      // A statement that is an `Insert` is spliced into the block, its items in order
+      // (`convert.rs`: the block's rebuilt operator list); a span around it keeps it whole.
+      match x {
+        NdInsert { items } => {
+          for i in items {
+            out += [i];
+          }
+        },
+        _ => { out += [x]; }
+      }
     }
   }
   k = len(out);
