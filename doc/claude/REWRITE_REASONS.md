@@ -135,7 +135,24 @@ admissions before and after, and the code emitted for the bench programs is byte
 A rule moves from `owes` to `reports` when its marker is removed and its call is in;
 `--check` refuses both at once, so the `owes` count only falls.
 
-**OPEN: 0**
+**OPEN: 3** — each decides how the remaining rules are wired.
+
+- **Is a label the rule's clause or the gate's test?**  A wired rule reports the fixed
+  reason its gate gives, one per TEST ("the local is rebound before its
+  delivery"), which is finer than the clauses of the rule's statement.  Over the bench
+  programs a rule uses 1 to 6 of them, but a gate can hold many more (the place rule's has
+  59), so `LABEL_CAP` bounds nothing for such a rule.  Either the test is the label and the
+  cap goes, or each gate's tests are grouped under the statement's clauses, one mapping per
+  rule.
+- **A rule that reports some of its clauses.**  A rule is `reports` as soon as one of its
+  gates calls `declined`, and its `@decline-owed` marker must go then, so the clauses that
+  do not report are off the worklist (R-HostStore's write-back clause, R-Apart's
+  value and vector instances, R-CtorLiteral's callee side).  Either a rule may carry a marker
+  for what it still owes beside its calls, or it stays `owes` until every clause reports.
+- **A gate that validates before it knows it matched.**  R-FaultFlag walks a `for` statement
+  for what it may not hold before it knows the statement holds a fault form at all; it counts
+  a refusal only where a fault form was seen first, which misses a statement refused ahead of
+  its first one.  The same order is in other gates still to wire.
 
 ## What is not built
 
