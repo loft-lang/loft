@@ -48,7 +48,7 @@ const TWICE_PASS_1: &[&str] = &[
     "state 1 4:6 stmt-end value=vector<integer>[\"out\"]",
     // The return decision is taken when the body ends, with the lexer on the next line.
     "state 1 6:3 route classify_ret_promotion=Rename { buf_attr: 1, chain_site: false }",
-    "state 1 1:32 fn-end n_twice ret=vector<integer>[\"__retbuf\"]",
+    "state 1 1:32 fn-end n_twice ret=vector<integer>[\"__retbuf\"] attrs=1:out",
     "state 1 1:32 fn-end n_twice var 0 v=vector<integer>",
     "state 1 1:32 fn-end n_twice var 1 __retbuf=vector<integer>",
     "state 1 1:32 fn-end n_twice var 2 out=vector<integer>",
