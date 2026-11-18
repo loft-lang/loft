@@ -114,6 +114,11 @@ make rewrite-census                      # which REWRITES still fire where they 
                                          #   and writer, and so does a rule applied by another set of
                                          #   phases (`scripts/rule_phases.py`); seconds, exact, in `make ci`
                                          #   and on the PR.  `-bless` records a deliberate decline
+make reason-census                       # WHICH REWRITES SAY WHY: per R- rule, the source sites
+                                         #   that report why it refused a site and which site it
+                                         #   admitted (a scan of `src/`, no build); `--missing` the
+                                         #   rules that fire and give no reason, `--check` against
+                                         #   `tests/reason_census.baseline` (a rule never loses one)
 make decline-census                      # HOW FAR EACH REWRITE REACHES: per R- rule, the sites it
                                          #   admitted against the sites it REFUSED, the refusals
                                          #   ranked by reason — a routine over its bar is a shape a

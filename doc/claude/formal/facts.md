@@ -200,8 +200,9 @@ checkable is that it can be READ from outside.  The EFFECT of every rewrite alre
 has its own `LOFT_NO_*` switch, and the census counts where it fires by rule and by function
 (`LOFT_REWRITE_CENSUS`, `LOFT_REWRITE_CENSUS_FN`).  What is not complete is the REASON: a
 rewrite says why it refused a site through `rewrite_census::declined(rule, site, why)`
-(`LOFT_DECLINE_CENSUS`, `make decline-census`, which lists the rules that report), and only
-some rules call it.
+(`LOFT_DECLINE_CENSUS`, `make decline-census`), and only some rules call it.  `make
+reason-census` counts, per rule, the sites in the source that report a refusal's reason and an
+admitted site; `tests/reason_census.baseline` is its baseline, and a rule never loses one.
 
 ## Relations
 
