@@ -69,6 +69,12 @@ A refusal is a MATCH that validation rejected, and
   failed ("a local still views the destination after the call"), which is finer than the
   clauses of the rule's statement and says more about the probe to write.  No table maps a
   test to a clause; a reason that reads badly is reworded in the gate.
+- **A gate that validates before it knows it matched undercounts.**  Some gates walk the
+  code once, testing what it may not hold before they know the pattern is there
+  (`(R-FaultFlag)`: a `for` statement is refused at a forbidden node ahead of its first fault
+  form).  Such a gate counts a refusal only once the pattern was seen, so a non-match is
+  never logged and a match refused early is missed.  The gate is not reordered for the log;
+  the rule carries a `@decline-owed` marker naming what is missed.
 - **One count per site.**  A site counts once, under the first test that refused it.
 - **A fixed label.**  `declined` takes `&'static str`, so a label cannot be built from a
   name, a type or a number of the program.  A gate that also has something to say about the
@@ -141,13 +147,7 @@ admissions before and after, and the code emitted for the bench programs is byte
 A rule moves from `owes` through `reports in part` to `reports`: its first call is in, then
 its marker is removed with the last gate.
 
-**OPEN: 1**
-
-- **A gate that validates before it knows it matched.**  R-FaultFlag walks a `for` statement
-  for what it may not hold before it knows the statement holds a fault form at all; it counts
-  a refusal only where a fault form was seen first, which misses a statement refused ahead of
-  its first one, and the rule carries a marker for that.  The same order is in other gates
-  still to wire.
+**OPEN: 0**
 
 ## What is not built
 

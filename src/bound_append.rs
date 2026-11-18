@@ -112,6 +112,14 @@ fn views(data: &Data, f: u32, root: u16) -> Vec<u16> {
     }
 }
 
+const BETWEEN: &str = "a statement between the bind and the append does more than read a length";
+const ELSEWHERE: &str = "the result is named outside its bind, those lengths and the append";
+
+/// A bound call's append the rule matched and left as it was, counted under the test.
+fn refused(data: &Data, f: u32, k: u16, why: &'static str) {
+    let def = data.def(f);
+    crate::rewrite_census::declined_in("R-BoundAppend", def.name(), def.variables().name(k), why);
+}
 /// One rewrite in `ops`, if one is admitted; answers whether it rewrote.  `whole(k)` counts
 /// `k`'s mentions in the whole function as it stood before the pass.
 fn rewrite_block(
@@ -168,11 +176,13 @@ fn rewrite_block(
             .iter()
             .all(|s| only_lengths(s, data, &watched))
         {
+            refused(data, f, k, BETWEEN);
             continue;
         }
         // `k` nowhere else: its bind, its lengths between, the append.
         let here: usize = ops[i..=j].iter().map(|s| mentions(s, k)).sum();
         if here != whole(k) {
+            refused(data, f, k, ELSEWHERE);
             continue;
         }
         let tp = aargs[2].clone();
@@ -203,11 +213,6 @@ fn rewrite_block(
                 Box::new(Value::Call(minus, vec![len_dst, Value::Var(b0)])),
             ),
         );
-        // @decline-owed: a statement between the bind and the append that names `k`, `dst` or a
-        //   local depending on `dst` other than as a length operand, rebinds one, leaves early,
-        //   calls a function reference or runs a `par`; a `k` that is a parameter or is named
-        //   outside the bind, those lengths and the append; a `dst` that is no vector variable;
-        //   an append in another block
         crate::rewrite_census::fired("R-BoundAppend", 1);
         if trace {
             crate::loft_eprintln!(

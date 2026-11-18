@@ -5,7 +5,7 @@ R-Alias	2	0	0	owes
 R-Apart	7	4	0	reports
 R-AppendTwin	4	1	0	reports
 R-Base	9	0	0	owes
-R-BoundAppend	1	0	0	owes
+R-BoundAppend	1	1	0	reports
 R-BoundedNest	2	0	0	owes
 R-BufferReturn	2	0	0	owes
 R-ByteCopy	1	1	0	reports
@@ -22,7 +22,7 @@ R-DecodeView	4	1	0	reports
 R-DeferredCopy	3	0	0	owes
 R-Demote	2	0	0	owes
 R-Destination	2	0	0	owes
-R-DischargeInto	1	0	0	owes
+R-DischargeInto	1	1	0	partly
 R-ElemFirst	1	0	0	owes
 R-ExitVector	2	2	0	reports
 R-ExpPow	1	0	0	nothing
@@ -93,7 +93,7 @@ R-Rotate	1	0	0	owes
 R-SameRead	2	0	0	owes
 R-Scalar	2	0	0	owes
 R-ScaleFold	1	0	0	owes
-R-SelfReplace	1	0	0	owes
+R-SelfReplace	1	1	0	partly
 R-SingleUse	2	0	0	owes
 R-SliceArg	2	1	0	reports
 R-SliceBorrow	3	0	0	owes
