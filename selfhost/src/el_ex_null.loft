@@ -2439,10 +2439,18 @@ pub fn materialised_return(e: el::El, vars: el_vars::Vars, v: Ex, w: integer, re
     }
     pw = el_vars::work_ref(vars, el_types::without_deps(el_types::base(result)));
     if e.first_pass {
-      if unrenamed && !el_expressions::buffer_bound(e) {
+      // (A struct enum's buffer is bound, never renamed: `wrong_shape_for_buffer`.)
+      if unrenamed && !el_expressions::buffer_bound(e) && !el_convert::struct_enum(el_types::base(result)) {
         rename_onto(e, vars, rb, pw);
       } else {
         el_vars::unregister_work_ref(vars, pw);
+        if unrenamed && el_convert::struct_enum(el_types::base(result)) {
+          fba = attr_nr(el::def(e, d), "__retbuf");
+          fret = el::def(e, d).returned[0];
+          if fba >= 0 && !el_types::deps(fret).contains(fba) {
+            e.b.data.definitions[d].returned = [el_types::with_deps(fret, el_types::deps(fret) + [fba])];
+          }
+        }
       }
       return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
     }
@@ -2453,7 +2461,9 @@ pub fn materialised_return(e: el::El, vars: el_vars::Vars, v: Ex, w: integer, re
       if el_convert::struct_enum(el_types::base(result)) {
         lba = attr_nr(el::def(e, d), "__retbuf");
         lret = el::def(e, d).returned[0];
-        e.b.data.definitions[d].returned = [el_types::with_deps(lret, el_types::deps(lret) + [lba])];
+        if !el_types::deps(lret).contains(lba) {
+          e.b.data.definitions[d].returned = [el_types::with_deps(lret, el_types::deps(lret) + [lba])];
+        }
       } else {
         rename_onto(e, vars, rb, pw);
         unrenamed = false;
