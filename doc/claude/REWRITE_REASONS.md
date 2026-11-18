@@ -38,7 +38,7 @@ checker inside the compiler.  The rules themselves are
 |---|---|---|
 | Where does each rewrite fire? | `LOFT_REWRITE_CENSUS`, and per function `LOFT_REWRITE_CENSUS_FN` ([PROFILING.md](PROFILING.md)); `make rewrite-census` | built |
 | How often does each clause refuse, program-wide? | `LOFT_DECLINE_CENSUS`; `make decline-census` | built; few rules report |
-| In one function, what was refused and at which clause? | a per-function listing of refusals | to build |
+| In one function, which rules stopped and at which clause? | a per-function count of refusals by rule and clause | to build |
 | Why did that clause fail at this site? | a small loft probe of the case, read with `loft introspect` or the rule's own `LOFT_TRACE_*` switch ([DEBUG_PROBES.md](DEBUG_PROBES.md)) | the way of working |
 
 The effect of a rewrite is also readable by its `LOFT_NO_*` switch
@@ -111,9 +111,11 @@ admissions before and after, and the code emitted for the bench programs is byte
    that failed, and its one caller reports it.  Taken by yield: first the rules whose
    refusals sit in routines over their performance bar ([PERFORMANCE.md](PERFORMANCE.md)).
 5. **The per-function listing.**  `LOFT_DECLINE_CENSUS_FN=<file>` writes one line per
-   refused site — rule, function, site, clause — as `LOFT_REWRITE_CENSUS_FN` does for
-   admissions, limited to one function when a name is given.  The census already keys each
-   refusal by function and site; it keeps the clause beside them.
+   function, rule and clause with a count, as `LOFT_REWRITE_CENSUS_FN` does for admissions,
+   limited to one function when a name is given.  It names no site: a loop or a local has a
+   name, a decision inside an expression has none, and tracking positions through a tree the
+   compiler is rewriting is a tracer that would have to be exactly right.  The site key stays
+   what it is, a means to count a site once.
 
 A rule moves from `owes` to `reports` when its marker is removed and its call is in;
 `--check` refuses both at once, so the `owes` count only falls.
@@ -122,6 +124,8 @@ A rule moves from `owes` to `reports` when its marker is removed and its call is
 
 ## What is not built
 
+- **A listing of refused sites inside expressions.**  See step 5: the compiler counts them
+  and does not try to name them.
 - **A full dump of a decision.**  It would have every gate describe the state it looked at,
   written once per gate and kept in step with it.  The per-rule trace switches give that
   depth where it was needed.
