@@ -155,8 +155,12 @@ pub fn check_later_fresh_binds(e: el::El) {
     if d.source != el::MAIN_SOURCE || d.def_type != el::DT_FUNCTION {
       continue;
     }
-    if later_fresh_bind(e, d#index, d.variables, d.code[0] ?? ir::NdNull) {
-      el::refuse(e, "a vector local bound from a later-declared function's vector result (own_fresh_binds' pass order)");
+    // (@C168: where a callee is declared moves only the order of the caller's frame-top
+    // declarations, which this port reproduces.  The one shape that needs the callee's
+    // position is a struct-enum result: Rust's first pass renames the buffer onto a local
+    // there.)
+    if el_types::struct_enum_def(d.returned[0] ?? ir::TyVoid) >= 0 && later_fresh_bind(e, d#index, d.variables, d.code[0] ?? ir::NdNull) {
+      el::refuse(e, "a struct-enum local renamed onto the buffer in a function that binds a later-declared function's vector result");
       return;
     }
   }
