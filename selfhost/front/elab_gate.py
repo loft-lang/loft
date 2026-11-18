@@ -466,6 +466,46 @@ def main():
                 for path, rs in sorted(ROUTES.items()):
                     for side, ps, ln, col, text in rs:
                         fh.write(f"{path}\t{side}\t{ps}\t{ln}\t{col}\t{text}\n")
+        # Route coverage (elaborator-instruments.md § 3): per Rust handler, the sites and the
+        # programs where Rust takes it, and what the port does there — takes its mirror on that
+        # line (`both`), refuses on that line (`refused`), or neither.  A verdict handler
+        # (`materialize_return_into=whole`) counts under its function's name.  A program
+        # CARRIES a handler when the port takes it at every site Rust does.
+        cover = {}
+        for path, rs in ROUTES.items():
+            rust_at, port_at, refuse_at = collections.defaultdict(set), collections.defaultdict(set), set()
+            for side, ps, ln, _, text in rs:
+                if side == "refuse":
+                    refuse_at.add((ps, ln))
+                else:
+                    (rust_at if side == "rust" else port_at)[text.split("=")[0]].add((ps, ln))
+            for h in set(rust_at) | set(port_at):
+                c = cover.setdefault(h, collections.Counter())
+                a_, b_ = rust_at[h], port_at[h]
+                c["sites"] += len(a_)
+                c["both"] += len(a_ & b_)
+                c["refused"] += len((a_ - b_) & refuse_at)
+                c["neither"] += len(a_ - b_ - refuse_at)
+                c["port only"] += len(b_ - a_)
+                if a_:
+                    c["programs"] += 1
+                    c["carried" if a_ <= b_ else "refusing" if (a_ - b_) & refuse_at else "missing"] += 1
+        taken = {h: c for h, c in cover.items() if c["programs"]}
+        whole = sum(1 for c in taken.values() if c["carried"] == c["programs"])
+        print(f"routes: {whole} of {len(taken)} routes the corpus exercises are carried in every program that takes them")
+        ranked = sorted(taken, key=lambda h: (-taken[h]["refusing"], -taken[h]["missing"], h))
+        print("  what to port next, by the programs the port refuses a route in "
+              "(programs: Rust takes it / carried / refusing / missing):")
+        for h in ranked[:12]:
+            c = taken[h]
+            print(f"    {h:30} {c['programs']:5} / {c['carried']:5} / {c['refusing']:5} / {c['missing']:5}")
+        # `LOFT_ELAB_ROUTE_COVERAGE=<file>`: the whole table, one row per handler.
+        if os.environ.get("LOFT_ELAB_ROUTE_COVERAGE"):
+            cols = ["programs", "carried", "refusing", "missing", "sites", "both", "refused", "neither", "port only"]
+            with open(os.environ["LOFT_ELAB_ROUTE_COVERAGE"], "w", encoding="utf-8") as fh:
+                fh.write("handler\t" + "\t".join(cols) + "\n")
+                for h in sorted(cover, key=lambda h: (-cover[h]["refusing"], -cover[h]["missing"], h)):
+                    fh.write(h + "\t" + "\t".join(str(cover[h][k]) for k in cols) + "\n")
         # The positive control: the layer must be able to fail.  One function that agrees is
         # read again with the port's trace told to answer a wrong result on the first pass
         # (`LOFT_STATE_TRACE_CONTROL`, `el_trace::fn_end`); it must read `pass1-differ`.
