@@ -214,7 +214,7 @@ pub fn vector_slice(e: el::El, vars: el_vars::Vars, x: Ex, lo: vector<integer>, 
   // subject wherever a local would be: `__ref_N = null; __ref_N = {#inline_container …}`.
   held = -1;
   held_at: vector<ir::Node> = [];
-  if sv < 0 && !place && !(x.tp is TyOptional) && (is_scalar(elem) || plain_record) && el_ex_assign::minting_call(e, x.code) {
+  if sv < 0 && !place && !(x.tp is TyOptional) && (is_scalar(elem) || plain_record || elem is TyText) && (el_ex_assign::minting_call(e, x.code) || el_ex_call::fresh_native_call(e, x.code)) {
     cw = el_vars::work_ref_p2(vars, x.tp);
     el_vars::mark_inline(vars, cw);
     held = el_vars::work_ref(vars, el_types::without_deps(x.tp));
