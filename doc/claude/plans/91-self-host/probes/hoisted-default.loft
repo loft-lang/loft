@@ -1,0 +1,88 @@
+// A challenge for the hoisted default (@PLN91): one function per case, one axis each.
+// Every function answers a hand-computed value; `main` checks them all.
+//   inline (no function is minted): scalar_call, scalar_dollar, enum_unit, text_plain, pair_inline
+//   hoisted, a plain function:      vec_empty, vec_items, vec_text, text_built, rec_literal,
+//                                   rec_call, tuple_built, keyed
+//   hoisted, a method of the record ($ and a built value): text_dollar, enum_if_dollar, vec_dollar
+//   the site:                       given_first (given fields before defaulted ones), two_sites
+//   a parameter default:            par_scalar, par_vec, par_reads_earlier, par_given
+//   a generic struct:               gen_shared (one function for every instance), gen_vec_empty
+enum Kind { Small, Big }
+struct In { a: integer, t: text }
+struct K { name: text, v: integer }
+fn seed() -> integer { 7 }
+fn mk() -> In { In { a: 11, t: "m" } }
+
+struct A1 { n: integer, c: integer = seed() + 1 }
+struct A2 { n: integer, d: integer = $.n * 2 }
+struct A3 { n: integer, k: Kind = Big }
+struct A4 { n: integer, t: text = "plain" }
+struct A5 { n: integer, p: (integer, integer) = (3, 4) }
+struct B1 { n: integer, xs: vector<integer> = [] }
+struct B2 { n: integer, ys: vector<integer> = [1, 2] }
+struct B3 { n: integer, zs: vector<text> = ["a", "bc"] }
+struct B4 { n: integer, s: text = "w{1 + 1}" }
+struct B5 { n: integer, inn: In = In { a: 3, t: "d" } }
+struct B6 { n: integer, o: In = mk() }
+struct B7 { n: integer, tup: (text, integer) = ("w{1 + 1}", 2) }
+struct B8 { n: integer, ks: hash<K[name]> = [K { name: "a", v: 5 }] }
+struct C1 { n: integer, u: text = "n{$.n}" }
+struct C2 { n: integer, k: Kind = if $.n > 10 { Big } else { Small } }
+struct C3 { n: integer, xs: vector<integer> = [$.n, $.n + 1] }
+struct D1 { n: integer, xs: vector<integer> = [9], s: text = "w{1 + 1}", inn: In = In { a: 3, t: "d" } }
+struct G<T> { item: T, more: vector<T> = [], tag: text = "g{1 + 1}" }
+
+fn scalar_call() -> integer { r = A1 { n: 1 }; r.c }
+fn scalar_dollar() -> integer { r = A2 { n: 4 }; r.d }
+fn enum_unit() -> integer { r = A3 { n: 1 }; if r.k == Big { 1 } else { 0 } }
+fn text_plain() -> integer { r = A4 { n: 1 }; len(r.t) }
+fn pair_inline() -> integer { r = A5 { n: 1 }; r.p.0 + r.p.1 }
+fn vec_empty() -> integer { r = B1 { n: 1 }; len(r.xs) }
+fn vec_items() -> integer { r = B2 { n: 1 }; r.ys[0] + r.ys[1] }
+fn vec_text() -> integer { r = B3 { n: 1 }; len(r.zs) + len(r.zs[1]) }
+fn text_built() -> integer { r = B4 { n: 1 }; len(r.s) }
+fn rec_literal() -> integer { r = B5 { n: 1 }; r.inn.a + len(r.inn.t) }
+fn rec_call() -> integer { r = B6 { n: 1 }; r.o.a }
+fn tuple_built() -> integer { r = B7 { n: 1 }; len(r.tup.0) + r.tup.1 }
+fn keyed() -> integer { r = B8 { n: 1 }; r.ks["a"].v ?? 0 }
+fn text_dollar() -> integer { r = C1 { n: 42 }; len(r.u) }
+fn enum_if_dollar() -> integer { r = C2 { n: 20 }; q = C2 { n: 2 }; (if r.k == Big { 10 } else { 0 }) + (if q.k == Small { 1 } else { 0 }) }
+fn vec_dollar() -> integer { r = C3 { n: 4 }; r.xs[0] + r.xs[1] }
+fn given_first() -> integer { r = D1 { n: 20, s: "q" }; len(r.xs) + len(r.s) + r.inn.a }
+fn two_sites() -> integer { a = D1 { n: 1 }; b = D1 { n: 2 }; a.xs[0] + b.xs[0] + len(a.s) + len(b.s) }
+fn par(a: integer, b: integer = seed() * 2) -> integer { a + b }
+fn par_scalar() -> integer { par(1) }
+fn pv(a: integer, v: vector<integer> = []) -> integer { a + len(v) }
+fn par_vec() -> integer { pv(1) + pv(2) }
+fn grow(a: integer, v: vector<integer> = [a, a + 1], t: text = "p{a}") -> integer { a + v[1] + len(t) }
+fn par_reads_earlier() -> integer { x = 5; grow(x) }
+fn par_given() -> integer { x = 5; grow(x * 2, [1, 2]) }
+fn gen_shared() -> integer { g = G { item: 3 }; h = G { item: "s" }; len(g.tag) + len(h.tag) }
+fn gen_vec_empty() -> integer { g = G { item: 3 }; h = G { item: "s" }; len(g.more) + len(h.more) }
+
+fn main() {
+  assert(scalar_call() == 8, "scalar_call");
+  assert(scalar_dollar() == 8, "scalar_dollar");
+  assert(enum_unit() == 1, "enum_unit");
+  assert(text_plain() == 5, "text_plain");
+  assert(pair_inline() == 7, "pair_inline");
+  assert(vec_empty() == 0, "vec_empty");
+  assert(vec_items() == 3, "vec_items");
+  assert(vec_text() == 4, "vec_text");
+  assert(text_built() == 2, "text_built");
+  assert(rec_literal() == 4, "rec_literal");
+  assert(rec_call() == 11, "rec_call");
+  assert(tuple_built() == 4, "tuple_built");
+  assert(keyed() == 5, "keyed");
+  assert(text_dollar() == 3, "text_dollar");
+  assert(enum_if_dollar() == 11, "enum_if_dollar");
+  assert(vec_dollar() == 9, "vec_dollar");
+  assert(given_first() == 5, "given_first");
+  assert(two_sites() == 22, "two_sites");
+  assert(par_scalar() == 15, "par_scalar");
+  assert(par_vec() == 3, "par_vec");
+  assert(par_reads_earlier() == 13, "par_reads_earlier");
+  assert(par_given() == 15, "par_given");
+  assert(gen_shared() == 4, "gen_shared");
+  assert(gen_vec_empty() == 0, "gen_vec_empty");
+}
