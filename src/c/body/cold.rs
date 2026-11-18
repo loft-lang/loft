@@ -195,6 +195,29 @@ impl<'a> FnWriter<'a> {
         );
     }
 
+    /// An arm that builds a text and stays in place: counted under the test that kept it, and
+    /// traced.
+    fn cold_refused(&self, arm: &Value, why: impl Into<crate::rewrite_census::Refusal>) {
+        let why: crate::rewrite_census::Refusal = why.into();
+        if crate::rewrite_census::declines_wanted() {
+            let mut line = 0u32;
+            arm.walk(&mut |n| {
+                if line == 0
+                    && let Value::Line(l) = n
+                {
+                    line = *l;
+                }
+            });
+            crate::rewrite_census::declined_in(
+                "R-Cold/loft",
+                self.cx.data.def(self.d).name(),
+                &line.to_string(),
+                why.clause,
+            );
+        }
+        self.cold_trace(arm, &format!("refused: {why}"));
+    }
+
     /// Does `arm` build a text in a work text — the arms this clause is about?
     fn builds_text(&self, arm: &Value) -> bool {
         let mut hit = false;
@@ -211,11 +234,11 @@ impl<'a> FnWriter<'a> {
     /// Why [`Self::cold_arm`] refuses `arm`, for the trace.
     fn shape_reason(arm: &Value) -> &'static str {
         let Value::Block(block) = arm.unspan() else {
-            return "refused: not a block";
+            return "not a block";
         };
         let last = block.operators.last().map(Value::unspan);
         let Some(Value::Return(ret)) = last else {
-            return "refused: ends without a return";
+            return "ends without a return";
         };
         let mut returns = 0usize;
         let mut other = false;
@@ -231,13 +254,13 @@ impl<'a> FnWriter<'a> {
             _ => {}
         });
         if other {
-            "refused: holds a loop, break, continue, yield, fn ref or par"
+            "holds a loop, break, continue, yield, fn ref or par"
         } else if returns > 1 {
-            "refused: more than one return"
+            "more than one return"
         } else if matches!(ret.unspan(), Value::Var(_)) {
-            "refused: returns a local not set to a literal"
+            "returns a local not set to a literal"
         } else {
-            "refused: returns a computed value"
+            "returns a computed value"
         }
     }
 
@@ -279,10 +302,7 @@ impl<'a> FnWriter<'a> {
         });
         if unnamed {
             for arm in arms.iter().filter(|a| self.builds_text(a)) {
-                self.cold_trace(
-                    arm,
-                    "refused: the function holds a fn ref, par arm or yield",
-                );
+                self.cold_refused(arm, "the function holds a fn ref, par arm or yield");
             }
             return;
         }
@@ -302,7 +322,7 @@ impl<'a> FnWriter<'a> {
         for arm in arms {
             let Some(answer) = self.cold_arm(arm) else {
                 if self.builds_text(arm) {
-                    self.cold_trace(arm, Self::shape_reason(arm));
+                    self.cold_refused(arm, Self::shape_reason(arm));
                 }
                 continue;
             };
@@ -321,9 +341,12 @@ impl<'a> FnWriter<'a> {
                 let released = frees.get(&x).copied().unwrap_or(0)
                     - freed_inside.get(&x).copied().unwrap_or(0);
                 if outside != inits.get(&x).copied().unwrap_or(0) + released {
-                    self.cold_trace(
+                    self.cold_refused(
                         arm,
-                        &format!("refused: reads local {} from outside", self.vars.name(x)),
+                        crate::rewrite_census::Refusal::about(
+                            "reads a local from outside",
+                            self.vars.name(x),
+                        ),
                     );
                     ok = false;
                     break;
@@ -334,7 +357,7 @@ impl<'a> FnWriter<'a> {
             if ok && admitted.iter().all(|(_, o, _)| o.is_disjoint(&own)) {
                 admitted.push((arm, own, answer));
             } else if ok {
-                self.cold_trace(arm, "refused: shares a variable with an earlier arm");
+                self.cold_refused(arm, "shares a variable with an earlier arm");
             }
         }
         if admitted.is_empty() {
@@ -344,7 +367,13 @@ impl<'a> FnWriter<'a> {
             Ok(p) => p,
             Err(why) => {
                 for (arm, _, _) in &admitted {
-                    self.cold_trace(arm, &format!("refused: {why}"));
+                    self.cold_refused(
+                        arm,
+                        crate::rewrite_census::Refusal::about(
+                            "a parameter the outlined function cannot take",
+                            why.as_str(),
+                        ),
+                    );
                 }
                 return;
             }
@@ -412,12 +441,6 @@ impl<'a> FnWriter<'a> {
                 &mut *self.cx.gen_bodies.borrow_mut(),
                 format_args!("\n{sig} {{\n{body}}}\n"),
             );
-            // @decline-owed: an arm that returns a computed value or a local not set to a
-            //   literal, has more than one `return`, or holds a loop, `break`, `continue`,
-            //   `yield`, fn ref or `par`; a function holding a fn ref, `par` or `yield`; an arm
-            //   naming a local the body names elsewhere, or sharing one with an earlier arm; a
-            //   signature the helper does not take; a body that names an arm's variable or
-            //   skips its call (`COLD_ESCAPED`)
             crate::rewrite_census::fired("R-Cold/loft", 1);
         }
         Ok(())

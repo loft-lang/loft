@@ -100,6 +100,8 @@ REPORTED = {
     "R-SelfReplace": ("a buffer replaced by a view of itself, dropped", "partial"),
     "R-DischargeInto": ("a text read discharged straight into its local", "partial"),
     "R-BoundAppend": ("a call's vector appended where it is made", "partial"),
+    "R-StreamWalk": ("a produced vector walked as it is appended", "partial"),
+    "R-Cold/loft": ("a text-building `if` arm outlined as a cold function (C)", "partial"),
     "R-Apart/vector": ("a scalar vector held apart from the store", "partial"),
     "R-Version": ("a leaf's fast twin called from a counted loop (C)", "partial"),
     "R-DecodeView": ("a decoded field held as a span of its source bytes", "partial"),

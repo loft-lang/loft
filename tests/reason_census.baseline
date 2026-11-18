@@ -11,7 +11,7 @@ R-BufferReturn	2	0	0	owes
 R-ByteCopy	1	1	0	reports
 R-Callee	1	0	0	owes
 R-CharWalk	2	0	0	owes
-R-Cold	1	0	0	owes
+R-Cold	1	1	0	reports
 R-Compact	2	1	0	reports
 R-CompleteWrite	1	0	0	owes
 R-Const	2	1	0	reports
@@ -102,7 +102,7 @@ R-SpecChain	1	0	0	owes
 R-SplitTable	2	0	0	owes
 R-StartStep	1	0	0	owes
 R-StickySum	1	0	0	owes
-R-StreamWalk	1	0	0	owes
+R-StreamWalk	1	2	0	reports
 R-TableHandle	1	0	0	owes
 R-Tabulate	1	1	0	reports
 R-TailSelf	1	1	0	reports
