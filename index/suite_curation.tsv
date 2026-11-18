@@ -373,10 +373,10 @@ O-Move	ownership	curated	27	2026-11-18	its own fold candidate agrees with gate E
 O-NoDiverge	ownership	curated	23	2026-11-18	merged 1328 and 1329 (a fn-ref rebind, record and vector); the bind-copy cell gets its switch receipt; F-Ret, O-Latest, R-WorkBuffer and tests/scripts cells are theirs
 O-One-Kind	ownership	curated	2	2026-11-18	one cell walks every store-removing rewrite the rule lists (value record, call into its field, literal into an element, in-place literal)
 O-Opaque	ownership	curated	5	2026-11-18	its two own cells both agree with gate E and stay; the O-Move, R-Place and O-Unknown cores are theirs
-O-Oracle	ownership	todo			
-O-Override	ownership	todo			
-O-Owner	ownership	todo			
-O-Proxy	ownership	todo			
+O-Oracle	ownership	curated	9	2026-11-18	its cells agree with gate E and are distinct cases (2471 a tuple argument's heap member); kept
+O-Override	ownership	curated	8	2026-11-18	its two refused cells are distinct cases; the fold candidate is O-Witness's
+O-Owner	ownership	curated	17	2026-11-18	its refused cells are distinct cases (native results, a mapped lambda, a fn-ref keyed collection); the B-Ref-Write, O-Latest, R-MoveLast and R-Rebind cells are theirs
+O-Proxy	ownership	curated	16	2026-11-18	merged 1257 and the vector-parameter rebind (a vector taken from another variable leaves its source); every core a distinct case; O-Override, O-Move and tests/scripts cells are theirs
 O-SliceView	ownership	todo			
 O-Unknown	ownership	todo			
 O-ViewField	ownership	todo			
