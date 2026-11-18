@@ -393,21 +393,21 @@ Perf-Order	performance	structural	0	2026-11-18	a rule of the optimisation order 
 Perf-Teach	performance	structural	0	2026-11-18	a rule of when a loft rewrite for speed is admissible (only behind a named advice); process, no program observes it
 Perf-Twin	performance	structural	0	2026-11-18	a rule of what is measured: a twin is written when a hit is suspected; process, no program observes it
 Perf-Weight	performance	structural	0	2026-11-18	a release measurement against reference twins on the C ship lane (the perf portal, the release checklist); no loft program observes it
-R-Alias	rewrites	todo			
-R-Apart	rewrites	todo			
-R-AppendTwin	rewrites	todo			
-R-Base	rewrites	todo			
-R-BoundAppend	rewrites	todo			
-R-BoundedNest	rewrites	todo			
-R-BufferReturn	rewrites	todo			
-R-ByteCopy	rewrites	todo			
-R-CallLine	rewrites	todo			
-R-Callee	rewrites	todo			
-R-CharWalk	rewrites	todo			
-R-CodeBase	rewrites	todo			
-R-Cold	rewrites	todo			
-R-Compact	rewrites	todo			
-R-CompleteWrite	rewrites	todo			
+R-Alias	rewrites	curated	32	2026-11-18	gate E agrees with every own cell, so none merges; four fold candidates are distinct versioning cases
+R-Apart	rewrites	curated	38	2026-11-18	its one own fold candidate agrees with gate E; every cell a distinct case
+R-AppendTwin	rewrites	curated	14	2026-11-18	merged the two refused cells (a call result built by its twin, a builder with inlined leaves); the work-buffer cell agrees with gate E and stays
+R-Base	rewrites	curated	115	2026-11-18	its refused fold's only refused partner is a patch cell; the cores agree with gate E; patch cells kept
+R-BoundAppend	rewrites	curated	3	2026-11-18	its own cell and the tests/scripts program; the Rust twin in tests/bound_append.rs
+R-BoundedNest	rewrites	curated	6	2026-11-18	its own core and fold agree with gate E and stay; a tests/scripts program and the Rust guard beside them
+R-BufferReturn	rewrites	curated	3	2026-11-18	first cell, from the formal text: two sites in one statement, one site bound every pass, recursion, the null text, a concatenation (moved by LOFT_NO_SEVERAL_VARS)
+R-ByteCopy	rewrites	curated	5	2026-11-18	cited by R-DecodeView's and R-TextRun's cells and a tests/scripts program; no cell of its own is owed beside them
+R-CallLine	rewrites	curated	1	2026-11-18	one own cell (1753, the frame line of the call that entered it)
+R-Callee	rewrites	curated	11	2026-11-18	cited by the R-DecodeView, R-Place and R-Const cells and a tests/scripts program
+R-CharWalk	rewrites	curated	68	2026-11-18	its one own fold candidate agrees with gate E; 68 citing cells, distinct cases
+R-CodeBase	rewrites	structural	1	2026-11-18	the interpreter's cached bytecode base: observable only by a REPL or a live reload, which the suite runner does not run; guarded by tests/code_base.rs
+R-Cold	rewrites	curated	4	2026-11-18	its own cell, two tests/scripts programs and c_emit's Rust guard
+R-Compact	rewrites	curated	6	2026-11-18	cited by H-CopySelf, H-Drop and H-ClearRelease cells and its Rust guard
+R-CompleteWrite	rewrites	curated	12	2026-11-18	its two own fold candidates agree with gate E and stay
 R-Const	rewrites	todo			
 R-CopyView	rewrites	todo			
 R-Counter	rewrites	todo			
