@@ -6309,7 +6309,7 @@ answered here rather than decided in the code.
                  `list_ops` 4.1× → 0.61× (with (R-NoThreads) and the one-op (R-Demote)).
                  `LOFT_NO_COPY_VIEW_WALK=1`; guards
                  `loft-suite/rules/rewrites/R-CopyView/a-cursor-that-only-walks-is-a-view.loft`,
-                 `…/a-match-walk-over-an-enum-list-is-a-view.loft`.
+                 `…/a-walk-over-a-list-is-a-view-of-the-list-it-was-bound-to.loft`.
   (R-ValueLocal) a plain local bound from a call R-ValueRecord admits — the result a
                  no-heap record of at most eight scalars, nested or flat — carries the
                  record's fields as its TUPLE in the binding frame too, where every use
