@@ -670,7 +670,10 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
               }
             }
           }
-          if extra > 0 && visible {
+          // (A literal tail is built into the buffer and borrows nothing: the body then keeps
+          // the result as the pass met it, whatever an earlier `return` merged.)
+          lit_tail = match body_tail(code) { NdBlock { block: ltb } => ltb[0].name == "Object", _ => false };
+          if extra > 0 && visible && !lit_tail {
             rt0 = now;
           }
         }
@@ -1648,7 +1651,7 @@ fn branch_yields_null(e: el::El, n: ir::Node) -> boolean {
 // value is copied whole (`{ w = null; OpDatabase(w, kt); OpCopyRecord(<value>, w, kt); w }`),
 // behind a null test where the value may be absent and can be read again.  Null where a leaf
 // needs its source bound first (`bind_return_source`): not carried.
-fn copy_arms(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, td: integer, owned: ir::TypeT) -> ir::Node? {
+pub fn copy_arms(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, td: integer, owned: ir::TypeT) -> ir::Node? {
   if el_trace::on() {
     el_trace::route(e, "materialize_return_into");
   }
