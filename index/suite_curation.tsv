@@ -494,26 +494,26 @@ R-RefParam	rewrites	structural	0	2026-11-18	the C writer copies a reference para
 R-RefillBuffer	rewrites	curated	30	2026-11-18	its two own fold candidates agree with gate E and stay
 R-RefillText	rewrites	curated	10	2026-11-18	its own fold candidate agrees with gate E; kept
 R-Refresh	rewrites	curated	8	2026-11-18	its own fold candidate agrees with gate E; kept
-R-RegisterTable	rewrites	todo			
-R-RepeatRun	rewrites	todo			
-R-RetAdopt	rewrites	todo			
-R-ReturnField	rewrites	todo			
-R-Reuse	rewrites	todo			
-R-Rotate	rewrites	todo			
-R-SameRead	rewrites	todo			
-R-Scalar	rewrites	todo			
-R-ScaleFold	rewrites	todo			
-R-SelfReplace	rewrites	todo			
-R-SharedCall	rewrites	todo			
-R-SingleUse	rewrites	todo			
-R-SliceArg	rewrites	todo			
-R-SliceBorrow	rewrites	todo			
-R-SliceInto	rewrites	todo			
-R-SpecChain	rewrites	todo			
-R-SplitTable	rewrites	todo			
-R-StackBase	rewrites	todo			
-R-StartStep	rewrites	todo			
-R-State	rewrites	todo			
+R-RegisterTable	rewrites	structural	0	2026-11-18	the interpreter's register-passing operator table: State is in step after every operator, so nothing observes it; guarded by the fill generator
+R-RepeatRun	rewrites	curated	3	2026-11-18	one suite cell beside its Rust guards
+R-RetAdopt	rewrites	curated	7	2026-11-18	two suite cells, distinct cases
+R-ReturnField	rewrites	curated	5	2026-11-18	its own fold candidate agrees with gate E; kept
+R-Reuse	rewrites	curated	12	2026-11-18	six suite cells, distinct cases
+R-Rotate	rewrites	curated	3	2026-11-18	two suite cells, distinct cases
+R-SameRead	rewrites	curated	10	2026-11-18	its three own fold candidates agree with gate E and stay
+R-Scalar	rewrites	curated	7	2026-11-18	its three own fold candidates agree with gate E and stay
+R-ScaleFold	rewrites	curated	3	2026-11-18	its own fold candidate agrees with gate E; kept
+R-SelfReplace	rewrites	curated	3	2026-11-18	one suite cell beside its Rust guards
+R-SharedCall	rewrites	curated	1	2026-11-18	first cell, from the formal text: a pure pair, a pair with an effect, a scalar and a record field written between (moved by LOFT_NO_SEVERAL_VARS)
+R-SingleUse	rewrites	curated	5	2026-11-18	one suite cell beside its Rust guards
+R-SliceArg	rewrites	curated	4	2026-11-18	its one refused fold's partner agrees with gate E; both stay
+R-SliceBorrow	rewrites	curated	4	2026-11-18	two suite cells, distinct cases
+R-SliceInto	rewrites	curated	3	2026-11-18	merged the two refused slice-into-a-place cells into one
+R-SpecChain	rewrites	curated	2	2026-11-18	two suite cells, distinct cases
+R-SplitTable	rewrites	curated	6	2026-11-18	two suite cells beside its Rust guards
+R-StackBase	rewrites	curated	4	2026-11-18	two suite cells beside its Rust guards
+R-StartStep	rewrites	curated	5	2026-11-18	its own fold candidate agrees with gate E; kept
+R-State	rewrites	curated	4	2026-11-18	four suite cells, distinct cases
 R-StickySum	rewrites	todo			
 R-StreamWalk	rewrites	todo			
 R-Switch	rewrites	todo			
