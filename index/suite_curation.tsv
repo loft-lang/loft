@@ -377,7 +377,7 @@ O-Oracle	ownership	curated	9	2026-11-18	its cells agree with gate E and are dist
 O-Override	ownership	curated	8	2026-11-18	its two refused cells are distinct cases; the fold candidate is O-Witness's
 O-Owner	ownership	curated	17	2026-11-18	its refused cells are distinct cases (native results, a mapped lambda, a fn-ref keyed collection); the B-Ref-Write, O-Latest, R-MoveLast and R-Rebind cells are theirs
 O-Proxy	ownership	curated	16	2026-11-18	merged 1257 and the vector-parameter rebind (a vector taken from another variable leaves its source); every core a distinct case; O-Override, O-Move and tests/scripts cells are theirs
-O-SliceView	ownership	todo			
+O-SliceView	ownership	curated	1	2026-11-18	first cell, from the formal text: the source's, holder's and lifetime's halves and the plain case each read what the copy holds; two cure switches move it
 O-Unknown	ownership	todo			
 O-ViewField	ownership	todo			
 O-Witness	ownership	todo			
