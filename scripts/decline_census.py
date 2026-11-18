@@ -8,6 +8,10 @@
     scripts/decline_census.py --reasons 8  # more reasons per rule (default 4)
     scripts/decline_census.py --programs   # also the per-program split
     scripts/decline_census.py --record     # ...and keep the run in bench/portal/decline_census.tsv
+    scripts/decline_census.py --functions <prog.loft> [name …]
+                                           # one program, by FUNCTION: what each rule rewrote
+                                           # there and what each test refused (all functions,
+                                           # or the named ones; a name matches as a substring)
     LOFT_BIN=<loft> scripts/decline_census.py
 
 Why
@@ -211,7 +215,7 @@ def report(results, reasons, per_program):
             for rule in sorted(set(adm) | set(per)):
                 if rule in REPORTED and (adm.get(rule, 0) or per.get(rule, 0)):
                     lines.append(f"{name:<28} {rule:<28} {adm.get(rule, 0):>8} {per.get(rule, 0):>8}")
-    return "\n".join(lines), admitted, declined, by_rule_reason, bool(over)
+    return "\n".join(lines), admitted, declined, by_rule_reason
 
 
 def record(results, admitted, declined, by_rule_reason):
@@ -232,11 +236,59 @@ def record(results, admitted, declined, by_rule_reason):
     RECORD.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def by_function(loft, prog, names):
+    """One program's rewrites and refusals by function: `LOFT_REWRITE_CENSUS_FN` beside
+    `LOFT_DECLINE_CENSUS_FN`, over both writers.  Counts, never a verdict: a function can
+    match a rule at one place and be refused at another (REWRITE_REASONS.md).  With no name,
+    the functions and rules that refused something; with names, everything of those."""
+    fired = defaultdict(int)
+    refused = defaultdict(lambda: defaultdict(int))
+    for writer, flags in (("native", ["--native-rust", "--native-emit"]), ("c", ["--emit-c"])):
+        with tempfile.TemporaryDirectory() as tmp:
+            adm, dec, out = (Path(tmp) / f for f in ("adm.tsv", "dec.tsv", "out"))
+            proc = subprocess.run(
+                [loft, *flags, str(out), "--lean", prog], capture_output=True, text=True,
+                timeout=300,
+                env={**rust_writer_env(), "LOFT_NO_NATIVE_LIBS": "1",
+                     "LOFT_REWRITE_CENSUS_FN": str(adm), "LOFT_DECLINE_CENSUS_FN": str(dec)},
+            )
+            if not adm.exists():
+                print(f"decline_census: the {writer} writer gave no census: "
+                      f"{(proc.stderr.strip().splitlines() or ['no output'])[-1]}", file=sys.stderr)
+                continue
+            # The `parse` and `ir` phases run before either writer: counted from one run.
+            for line in adm.read_text(encoding="utf-8").splitlines():
+                phase, function, rule, n = line.split("\t")
+                if writer == "native" or phase == "c":
+                    fired[(function, rule)] += int(n)
+            # A test both runs report is one refusal: the larger count of the two.
+            for line in dec.read_text(encoding="utf-8").splitlines() if dec.exists() else []:
+                function, rule, why, n = line.split("\t")
+                at = refused[(function, rule)]
+                at[why] = max(at[why], int(n))
+    last = None
+    for function, rule in sorted(set(fired) | set(refused)):
+        tests = refused.get((function, rule), {})
+        if (names and not any(n in function for n in names)) or (not names and not tests):
+            continue
+        if function != last:
+            print(f"\n{function or '(no function)'}")
+            last = function
+        print(f"  {rule:<26} rewrote {fired.get((function, rule), 0):>4}")
+        for why, n in sorted(tests.items(), key=lambda kv: (-kv[1], kv[0])):
+            print(f"  {'':<26} refused {n:>4}  {why}")
+    return 0
+
+
 def main() -> int:
     args = sys.argv[1:]
     if "--help" in args or "-h" in args:
         print(__doc__.strip())
         return 0
+    if "--functions" in args:
+        at = args.index("--functions")
+        loft = os.environ.get("LOFT_BIN") or str(ROOT / "target" / "release" / "loft")
+        return by_function(loft, args[at + 1], args[at + 2:])
     only = None
     if "--only" in args:
         only = set(args[args.index("--only") + 1].split(","))
@@ -250,7 +302,7 @@ def main() -> int:
     with ThreadPoolExecutor(max_workers=4) as pool:
         done = list(pool.map(lambda p: census(loft, p), progs))
     results = [r for r in done if r[1] is not None]
-    text, admitted, declined, by_rule_reason, over = report(results, reasons, "--programs" in args)
+    text, admitted, declined, by_rule_reason = report(results, reasons, "--programs" in args)
     print(text)
     for name, adm, _, err in done:
         if adm is None:

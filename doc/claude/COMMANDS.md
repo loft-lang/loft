@@ -134,6 +134,9 @@ make decline-census                      # HOW FAR EACH REWRITE REACHES: per R- 
                                          #   decline reporting read `not reported`, never covered.
                                          #   A REPORT (`ARGS="--record"` keeps the snapshot); it
                                          #   also counts the labels each rule uses
+                                         #   `ARGS="--functions <prog.loft> [name …]"`: one program
+                                         #   by FUNCTION — what each rule rewrote there and what
+                                         #   each test refused (REWRITE_REASONS.md)
 make perf-portal                         # WHERE NATIVE STANDS AGAINST RUST, BY CLASS: measures
                                          #   every bench lane here and renders ONE page,
                                          #   doc/claude/PERF_PORTAL.md — a median per mechanism

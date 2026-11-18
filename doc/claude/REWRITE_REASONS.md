@@ -15,7 +15,8 @@ checker inside the compiler.  The rules themselves are
 - [The three levels](#the-three-levels)
 - [What a refusal logs](#what-a-refusal-logs)
 - [The state of every rule](#the-state-of-every-rule)
-- [To implement](#to-implement)
+- [The per-function listing](#the-per-function-listing)
+- [Wiring a rule that owes](#wiring-a-rule-that-owes)
 - [What is not built](#what-is-not-built)
 
 ## What is decided
@@ -47,7 +48,7 @@ checker inside the compiler.  The rules themselves are
 |---|---|---|
 | Where does each rewrite fire? | `LOFT_REWRITE_CENSUS`, and per function `LOFT_REWRITE_CENSUS_FN` ([PROFILING.md](PROFILING.md)); `make rewrite-census` | built |
 | How often does each test refuse, program-wide? | `LOFT_DECLINE_CENSUS`; `make decline-census` | built; few rules report |
-| In one function, which rules stopped and at which test? | a per-function count of refusals by rule and test | to build |
+| In one function, which rules stopped and at which test? | `LOFT_DECLINE_CENSUS_FN`; `make decline-census ARGS="--functions <prog.loft> [name …]"` | built |
 | Why did that test fail at this site? | a small loft probe of the case, read with `loft introspect` or the rule's own `LOFT_TRACE_*` switch ([DEBUG_PROBES.md](DEBUG_PROBES.md)) | the way of working |
 
 The effect of a rewrite is also readable by its `LOFT_NO_*` switch
@@ -124,35 +125,39 @@ rule writes the marker for the rest.
 An `owes` marker names the main conditions the rule's admission code tests.  It is a summary
 for a reader choosing what to wire; the complete list is the deciding function.
 
-## To implement
+## The per-function listing
 
-Each step keeps every rewrite's behaviour: the rewrite census shows the same admissions
-before and after, and the code emitted for the bench programs is byte-identical.
+`make decline-census ARGS="--functions <prog.loft> [name …]"` prints one program by
+function: under each, the rules with what they rewrote there and what each test refused.
+With no name it shows the functions and rules that refused something; a name (a substring)
+shows everything of the functions it matches.  It reads `LOFT_REWRITE_CENSUS_FN` beside
+`LOFT_DECLINE_CENSUS_FN=<file>`, which writes `function<TAB>rule<TAB>test<TAB>count`.
 
-1. **The per-function listing**, next.  It serves the rules that report today.
-2. **A rule that owes is wired when it gives grief** (§ What is decided), not in a sweep.
-   Where its gate already names its failing test — a reason string, a local decline helper
-   for its trace — that is one `declined` call where the reason is consumed.  Where the gate
-   answers `None` or `false`, the gate returns the test that failed and its one caller
-   reports it.  Its `@decline-owed` marker goes, or is cut down to the gates still silent.
+- **No site.**  A loop or a local has a name, a decision inside an expression has none, and
+  tracking positions through a tree the compiler is rewriting is a tracer that would have to
+  be exactly right.  The site key stays what it is, a means to count a site once.
+- **The function is the one the RULE names.**  A rule that works across functions — one that
+  inlines a callee into its caller, one that writes a twin — may name the caller, the callee
+  or the twin, so one refusal can stand under different functions in different rules.  A
+  refusal decided where no function is at hand (`(R-Counter)`) stands under `(no function)`.
+- **Counts, never a verdict.**  One function can match a rule at one place and be refused at
+  another, and its inlined copies can go either way in different callers.  A function shows
+  how many matches a rule rewrote and how many each test rejected, and not which.
+- **Not built: a callee and a line beside the label.**  A rule about a call may add the
+  callee, and a rule with the source line at hand may add it: two optional columns, there to
+  give enough context to write the right probe.  Added for a rule when its listing proves
+  too thin.
 
-**The per-function listing.**  `LOFT_DECLINE_CENSUS_FN=<file>` writes one line per
-   function, rule and test with a count, as `LOFT_REWRITE_CENSUS_FN` does for admissions,
-   limited to one function when a name is given.  It names no site: a loop or a local has a
-   name, a decision inside an expression has none, and tracking positions through a tree the
-   compiler is rewriting is a tracer that would have to be exactly right.  The site key stays
-   what it is, a means to count a site once.
-   The function on a line is the one the RULE names for that decision.  A rule that works
-   across functions — one that inlines a callee into its caller, one that writes a twin —
-   may name the caller, the callee or the twin, so one refusal can stand under different
-   functions in different rules.  A rule about a call may add the CALLEE, and a rule that
-   has the source line at hand may add it: two optional columns beside the label, there to
-   give enough context to write the right probe.  None is required to find either, and the
-   label itself stays a fixed string.
-   The listing holds COUNTS, never a verdict for a function: one function can match a rule
-   at one place and be refused at another, and its inlined copies can go either way in
-   different callers.  Read beside the admissions of `LOFT_REWRITE_CENSUS_FN`, a function
-   shows how many matches a rule rewrote and how many each test rejected, and not which.
+## Wiring a rule that owes
+
+A rule that owes is wired when it gives grief (§ What is decided), not in a sweep, and the
+wiring keeps the rewrite's behaviour: the rewrite census shows the same admissions before
+and after, and the code emitted for the bench programs is byte-identical.  Where its gate
+already names its failing test — a reason string, a local decline helper for its trace —
+that is one `declined` call where the reason is consumed.  Where the gate answers `None` or
+`false`, the minimal form is a call at the exits that are validation, with a fixed reason
+each; the gate is not restructured for it.  Its `@decline-owed` marker goes, or is cut down
+to the tests still silent.
 
 A rule moves from `owes` through `reports in part` to `reports`: its first call is in, then
 its marker is removed with the last gate.
@@ -161,7 +166,7 @@ its marker is removed with the last gate.
 
 ## What is not built
 
-- **A listing of refused sites inside expressions.**  See step 3: the compiler counts them
+- **A listing of refused sites inside expressions.**  See § The per-function listing: the compiler counts them
   and does not try to name them.
 - **A full dump of a decision.**  It would have every gate describe the state it looked at,
   written once per gate and kept in step with it.  The per-rule trace switches give that
