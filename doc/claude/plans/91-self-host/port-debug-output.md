@@ -150,6 +150,12 @@ printed with the switch off; it runs with the `parser` subject.
 `debugging-the-port.md` beside this file: the questions above, the command for each, how to
 read a line, and what the trace does not show.  DEBUG_TRACE.md points to it.
 
+### Built — § 5
+
+[debugging-the-port.md](debugging-the-port.md): the question table, how to read each point,
+the order of reading a difference against the Rust front end, the gate's corpus outputs, and
+what the trace does not show.  DEBUG_TRACE.md points to it.
+
 ## What is deliberately not built
 
 - No hook in `el_vars`'s writers (see § 1); routing the eight direct `type_def` writes through
