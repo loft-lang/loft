@@ -168,7 +168,13 @@ impl FnWriter<'_> {
         let own_name = format!("__own_{}", vars.name(x));
         let own = (0..n).find(|w| vars.name(*w) == own_name)?;
         let tp = data.def(vars.tp(x).base().heap_def_nr()?).known_type();
-        let why = |what: &str| {
+        let why = |what: &'static str| {
+            crate::rewrite_census::declined_in(
+                "R-DeferredCopy",
+                data.def(self.d).name(),
+                vars.name(x),
+                what,
+            );
             if Self::dc_trace() {
                 eprintln!(
                     "deferred-copy: {} {} declined: {what}",
@@ -652,10 +658,6 @@ impl FnWriter<'_> {
                         format!("loft_dc_is_elem({name}, {vn}, {size}, {kc})")
                     })
                     .collect();
-                // @decline-owed: a local or a view of it that is written, captured or lends a
-                //   text; a copy bind whose source is an owner or untraceable; a type the remap
-                //   does not follow (a keyed collection); a local with no owner witness; a
-                //   function with a `yield`, a parallel body or a call through a function value
                 crate::rewrite_census::fired("R-DeferredCopy/index", 1);
                 format!("{flag} && ({})", tests.join(" || "))
             }

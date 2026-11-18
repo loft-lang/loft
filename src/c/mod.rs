@@ -3589,12 +3589,11 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
             .write()
         {
             Ok(b) => {
-                // @decline-owed: a function written as a specialised twin; a root local bound
-                //   more than once, read outside its bind's block, or alive together with
-                //   another root; a producer whose transient twin cannot be written; and any
+                // @decline-owed: a producer whose transient twin cannot be written; and WHICH
                 //   use of the value no transient arm answers — a field set or append that
                 //   would store it, a keyed insert, an escaping return, a computed offset, a
-                //   choice between two transient values
+                //   choice between two transient values: the writer's errors are built text,
+                //   counted under one test.  The roots' tests report
                 crate::rewrite_census::fired("R-Transient", 1);
                 Some(b)
             }

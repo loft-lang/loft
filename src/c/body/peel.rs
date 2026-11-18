@@ -198,7 +198,22 @@ impl FnWriter<'_> {
                 }
             });
         }
-        if refused || steps || nodes.saturating_mul(trips as usize) > MAX_NODES {
+        let why = if refused {
+            Some("the body holds a loop, a yield or a parallel block")
+        } else if steps {
+            Some("the body steps a counter outside its iterator")
+        } else if nodes.saturating_mul(trips as usize) > MAX_NODES {
+            Some("the unrolled body would pass the size bound")
+        } else {
+            None
+        };
+        if let Some(why) = why {
+            crate::rewrite_census::declined_in(
+                "R-Peel",
+                self.cx.data.def(self.d).name(),
+                self.vars.name(counter),
+                why,
+            );
             return None;
         }
         Some(Peel {
@@ -259,10 +274,6 @@ impl FnWriter<'_> {
         for m in labels {
             self.line(ind, &format!("brk_{m}:;"));
         }
-        // @decline-owed: more than `MAX_TRIPS` trips, or none; an inclusive range; a bound or a
-        //   seeded start that is no constant; a body with an inner loop, a yield or a `par`,
-        //   one that assigns a counter, and one whose nodes times the trips pass `MAX_NODES`; a
-        //   loop in a generator's body (`peel_plan`)
         crate::rewrite_census::fired("R-Peel", 1);
         Ok(())
     }

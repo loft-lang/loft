@@ -19,7 +19,7 @@ R-CopyView	2	2	0	reports
 R-Counter	2	0	0	owes
 R-CtorLiteral	1	2	0	partly
 R-DecodeView	4	1	0	reports
-R-DeferredCopy	3	0	0	owes
+R-DeferredCopy	3	1	0	reports
 R-Demote	2	0	0	owes
 R-Destination	2	0	0	owes
 R-DischargeInto	1	1	0	partly
@@ -70,7 +70,7 @@ R-MoveLast	4	1	0	reports
 R-NoLocks	1	0	0	nothing
 R-NoThreads	1	0	0	nothing
 R-NonSentinelParam	2	0	0	owes
-R-Peel	1	0	0	owes
+R-Peel	1	1	0	reports
 R-Place	2	2	0	reports
 R-PureReuse	1	0	0	owes
 R-Push	4	0	0	owes
@@ -110,7 +110,7 @@ R-TextBorrow	5	1	0	reports
 R-TextClear	2	0	0	owes
 R-TextLen	1	0	0	owes
 R-TextRun	1	1	0	reports
-R-Transient	1	0	0	owes
+R-Transient	1	2	0	partly
 R-TypedKeyed	7	0	0	owes
 R-TypedRead	4	0	0	owes
 R-ValueLocal	3	2	0	reports
