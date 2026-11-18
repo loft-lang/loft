@@ -579,6 +579,25 @@ fn change_var_type_core(e: el::El, v: Vars, nr: integer, t: ir::TypeT) -> boolea
     set_type(v, nr, t);
     return true;
   }
+  // `(N-Join)`: a bare `null` written to a local typed `τ` — a plain scalar, a text, a struct —
+  // widens the local to `τ?` (on the first pass, which types every bind of it on the second).
+  // A vector takes a store of its own there and a parameter warns (`@FR-N-Store`): not this arm.
+  if t is TyNull && !v.vars[nr].argument {
+    widen = match cur {
+      TyInteger { spec: _ } => true,
+      TyFloat => true,
+      TySingle => true,
+      TyBoolean => true,
+      TyCharacter => true,
+      TyText { dep: _ } => true,
+      TyReference { n: rn } => rn > 0 && e.b.data.definitions[rn].def_type == el::DT_STRUCT,
+      _ => false
+    };
+    if widen {
+      set_type(v, nr, ir::TyOptional { inner: cur });
+      return true;
+    }
+  }
   // A declared `τ?` takes a `τ` or a null, borrowing what the value borrows.
   match cur {
     TyOptional { inner } => {
