@@ -570,6 +570,125 @@ jobs:
         working-directory: ${{ matrix.package }}
         run: LOFT_TIMEOUT=240 loft test --deps
 
+  # ── What only a Mac's display can test ─────────────────────────────────
+  #
+  # A package whose tests draw into a window on a Mac (a Metal backend, the OpenGL one it is
+  # measured against) puts a `.macos_window` file at its root, with the REASON as its
+  # contents.  On Linux such a test finds no Mac and returns at once, so without this job it
+  # is green and has measured nothing.  The marked packages run their suite on a macOS runner
+  # with windows on (`GRAPHICS_TEST_WINDOW=1`), on the interpreter and the C backend.  The
+  # runner is a virtual machine: Metal is a paravirtual GPU and OpenGL is Apple's software
+  # renderer, which a test that compares the two has to allow for (`gpu_gl::renderer()`).
+  #
+  # Its own two jobs: a repo with no marked package spends no macOS time.
+  macos-window-packages:
+    # @windows-exempt: lists the packages for the macOS job; reads files only
+    runs-on: ubuntu-latest
+    name: packages tested on a Mac's display
+    outputs:
+      list: ${{ steps.list.outputs.list }}
+    steps:
+      - name: Checkout the library
+        uses: actions/checkout@v4
+      - name: The packages with a .macos_window marker
+        id: list
+        run: |
+          list=$(for p in $(echo '${{ inputs.packages }}' | jq -r '.[]'); do
+                   [ -f "$p/.macos_window" ] && echo "$p"
+                 done | jq -R . | jq -sc .)
+          echo "list=$list" >> "$GITHUB_OUTPUT"
+          echo "packages tested on a Mac's display: $list"
+
+  macos-window:
+    # @windows-exempt: macOS only by what it tests (a Mac's display)
+    needs: macos-window-packages
+    if: needs.macos-window-packages.outputs.list != '[]'
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package: ${{ fromJson(needs.macos-window-packages.outputs.list) }}
+    name: ${{ matrix.package }} (macOS, a window)
+    steps:
+      - name: Checkout the library
+        uses: actions/checkout@v4
+
+      - name: Checkout loft
+        uses: actions/checkout@v4
+        with:
+          repository: loft-lang/loft
+          ref: ${{ inputs.loft-ref }}
+          path: loft-src
+          fetch-tags: true
+
+      # As the Linux job's key: loft's COMMIT, never its branch name.
+      - name: Resolve the loft commit (for the cache key)
+        id: loftsha
+        run: echo "sha=$(git -C loft-src rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache cargo + loft build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            loft-src/target
+          key: library-ci-macos-loft-${{ steps.loftsha.outputs.sha }}-${{ hashFiles('loft-src/Cargo.lock') }}
+          restore-keys: |
+            library-ci-macos-loft-${{ steps.loftsha.outputs.sha }}-
+
+      - name: Build loft
+        working-directory: loft-src
+        run: |
+          cargo build --release --lib --bin loft
+          echo "$PWD/target/release" >> "$GITHUB_PATH"
+
+      - name: Why — ${{ matrix.package }}
+        run: |
+          {
+            echo "### \`${{ matrix.package }}\` on a Mac's display"
+            echo
+            cat "${{ matrix.package }}/.macos_window"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Interpret, a window — ${{ matrix.package }}
+        working-directory: ${{ matrix.package }}
+        env:
+          LOFT_DENY_WARNINGS: ${{ hashFiles(format('{0}/.allow_warnings', matrix.package)) != '' && '0' || '1' }}
+          GRAPHICS_TEST_WINDOW: 1
+        run: |
+          set -o pipefail
+          LOFT_TIMEOUT=600 loft --interpret --tests tests 2>&1 | tee "$RUNNER_TEMP/interpret.log" && exit 0
+          status=$?
+          {
+            echo "### ❌ \`${{ matrix.package }}\` — interpret, macOS"
+            echo
+            echo '```'
+            grep -E '^[[:space:]]*(FAIL|Warning\[|error)' "$RUNNER_TEMP/interpret.log" | head -40 \
+              || echo "(no FAIL/Warning line — see the job log)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $status
+
+      - name: Native C, a window — ${{ matrix.package }}
+        working-directory: ${{ matrix.package }}
+        env:
+          LOFT_DENY_WARNINGS: ${{ hashFiles(format('{0}/.allow_warnings', matrix.package)) != '' && '0' || '1' }}
+          GRAPHICS_TEST_WINDOW: 1
+        run: |
+          set -o pipefail
+          LOFT_TIMEOUT=600 loft --native-c --tests tests 2>&1 | tee "$RUNNER_TEMP/native-c.log" && exit 0
+          status=$?
+          {
+            echo "### ❌ \`${{ matrix.package }}\` — C backend, macOS"
+            echo
+            echo '```'
+            grep -E '^[[:space:]]*(FAIL|Warning\[|error)' "$RUNNER_TEMP/native-c.log" | head -40 \
+              || echo "(no FAIL/Warning line — see the job log)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $status
+
   # Does this repo carry work that never reached anyone?  A branch ahead of the default
   # branch with no PR, a PR nobody has touched, or a loft.toml version the registry has
   # never seen.  All three are invisible from inside a package's own test run, and the
