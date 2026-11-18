@@ -152,3 +152,4 @@ scripts/suite_cells.py	--help
 scripts/suite_pin.py	--help
 selfhost/bench/scope_survey.py	--help
 scripts/reason_census.py	--missing
+scripts/try_gate.sh	--help
