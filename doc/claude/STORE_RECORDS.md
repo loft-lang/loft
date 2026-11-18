@@ -165,6 +165,12 @@ A first bind that joins at run time copies what lies in its witness's store and 
 rest, so a store the value names while another variable holds it (a branch arm's call that
 answered into the frame's buffer) has both as holders, and a free through each is a second
 free (`LOFT_RECORDS_NO_JOIN_ADOPT_HELD=1` reads every join as a copy).
+A value whose tail projects a variable `w`, or is `w` itself (a branch arm answering its
+`?? return` chain's `_ncr_N`), where `w` is null before the value and set on no other tail's
+path, makes the bound variable a VIEW of `w`: it names `w`'s store or none `w` may name, so an
+identity test of the two (`if OpDistinctStore(r, _ncr_1)` guarding `r`'s free) decides which
+path it is on (`LOFT_RECORDS_NO_VIEW_PAIRS=1` keeps no views; `LOFT_RECORDS_NO_VAR_TAIL_VIEW=1`
+reads only a projection's root).
 A native is read by its declaration: `-> T[p]` answers a view of parameter `p`, and a public
 native none of whose parameters holds a store answers a store of its own; any other native's
 answer is not followed (`LOFT_RECORDS_NO_NATIVE_ANSWERS=1` follows none).

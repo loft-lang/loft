@@ -60,18 +60,29 @@ impl Run<'_> {
                 {
                     Self::give_back_field_captures(&mut st, *x);
                 }
-                // The bases `x` will be a view pair of: a tail of the value projecting `w`, where
-                // `w` is null before the value runs and no other tail's path sets it — so where
-                // the value is not that projection, `w` is still null.
+                // The bases `x` will be a view pair of: a tail of the value projecting `w`, or
+                // `w` itself (a branch arm answering its `?? return` chain's `_ncr_N`, loft#2550),
+                // where `w` is null before the value runs and no other tail's path sets it — so
+                // where the value is not that tail, `w` is still null.
+                // `LOFT_RECORDS_NO_VAR_TAIL_VIEW=1` reads only a projection's root.
+                let var_tails =
+                    !crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_VAR_TAIL_VIEW").is_some());
                 let view_bases: Vec<u16> = if views_enabled() {
                     let mut tails = Vec::new();
                     value_tails(self.data, val, &mut tails);
                     let mut out = Vec::new();
                     for (i, (_, t)) in tails.iter().enumerate() {
-                        if let Value::Call(op, pargs) = t.unspan()
-                            && crate::use_analysis::is_projection_op(self.data, *op)
-                            && let Some(Value::Var(w)) =
+                        let root = match t.unspan() {
+                            Value::Call(op, pargs)
+                                if crate::use_analysis::is_projection_op(self.data, *op) =>
+                            {
                                 pargs.first().map(|a| Self::projection_root(self.data, a))
+                            }
+                            Value::Var(_) if var_tails => Some(*t),
+                            _ => None,
+                        };
+                        if let Some(Value::Var(w)) = root.map(Value::unspan)
+                            && w != x
                             && Self::pts(&st, *w).iter().all(|p| *p == Pt::Null)
                             && !tails
                                 .iter()
