@@ -408,6 +408,14 @@ is a GPU of its own: a comparison that is exact on one is checked
 by hand before a release, by the script the package's repository
 keeps for it (`gpu_on_a_mac.sh` in loft-libs-graphics).
 
+The Linux test steps overwrite memory as it is freed
+(`MALLOC_PERTURB_`, with glibc's thread cache off so that small
+blocks are covered): a C shim that reads a record it has released
+crashes there, where the stale bytes would otherwise still read as
+the record.  To see the same on a Linux machine, set
+`MALLOC_PERTURB_=165 GLIBC_TUNABLES=glibc.malloc.tcache_count=0`
+on the test run.
+
 **Your warning count moves even when you don't touch the code** —
 loft keeps adding deprecations (`not null`, the `&`-parameter
 lint, null-flow), so a package that was clean at publish time
