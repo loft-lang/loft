@@ -11,8 +11,8 @@
 # It posts ONE comment on the mailbox issue (loft#2560): the change as a `git bundle` on the
 # base tip, in text.  Nothing is pushed to any branch.  This is a HAND-OFF, not a tool to wait
 # on.  A CLEAN result (nothing that agreed is lost) is acknowledged automatically as a comment
-# `result <commit>`: safe to promote.  One with ISSUES is answered only when the testing side
-# has analysed what is wrong — what stopped agreeing and why, each differ at its line.
+# `result <commit>`: safe to promote.  One with ISSUES gets the same automatic line (do not
+# promote this one yet) and the testing side's analysis follows as a message.  Wait for neither.
 #
 # Uncommitted work is tried as it stands (tracked files; an untracked file is named and left
 # out — `git add` it first).  The base must be a tip the tester has gated: by default the tip of
@@ -67,7 +67,7 @@ body=$(printf 'try %s on %s\n\n%s file(s) changed: %s\n\n```bundle\n%s\n```\n' \
   "$(git diff --name-only "$base" "$head" | head -8 | tr '\n' ' ')" "$payload")
 url=$(gh issue comment "$ISSUE" --repo "$REPO" --body "$body")
 echo "try_gate: handed over $short on $(git rev-parse --short "$base") ($size characters) — $url"
-echo "try_gate: carry on; a clean result is acknowledged on the issue in about ten minutes, one with issues comes back analysed"
+echo "try_gate: carry on; the status (clean, or issues) is on the issue in about ten minutes; an analysis follows only for issues"
 [ "$wait" = 1 ] || exit 0
 
 echo "try_gate: waiting for the answer (ten minutes when clean, longer when it needs analysis; Ctrl-C leaves the request in place)…"

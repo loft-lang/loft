@@ -92,9 +92,10 @@ before it is promoted, and returns at once: the change goes as a `git bundle` in
 the mailbox issue (loft#2560, closed and locked on purpose).  The testing side gates it.
 A CLEAN result — no differ, no program and no definition that agreed and no longer does, no
 first-pass drop — is acknowledged automatically as a comment `result <commit>`: safe to
-promote.  One with ISSUES is not answered until the tester has analysed what is wrong: each
-definition that stopped agreeing with the refusal and source line that caught it, each differ
-with the first differing line of both sides.  Nothing is pushed to a branch.  Use it for a change that adds or
+promote.  One with ISSUES gets the same automatic line ("do not promote this one yet"), and the
+tester's analysis follows as a message: each definition that stopped agreeing with the refusal
+and source line that caught it, each differ with the first differing line of both sides.
+Neither is waited for: post, go on to the next item, read the answer at a natural break.  Nothing is pushed to a branch.  Use it for a change that adds or
 widens a refusal, or changes a rule many functions share: a definition that agreed inside a
 program that stays refused is seen by nothing else before the promotion.
 
