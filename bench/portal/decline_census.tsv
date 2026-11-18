@@ -1,83 +1,318 @@
 # The decline census: per rewrite rule, the sites admitted and the sites refused by reason,
 # over the bench programs.  Written by `scripts/decline_census.py --record`; a report, not a baseline.
-# commit=239edd66a programs=19
+# commit=5d3d6cb0f programs=61
 # rule <TAB> reason (`admitted` for the admissions; names masked as `_`) <TAB> count
-R-AliasVersion	admitted	7
-R-Apart/vector	admitted	5
-R-Base	admitted	306
-R-Callee	admitted	4
-R-CharWalk	admitted	196
+H-SwapRebind	admitted	48
+R-Alias/versioned	admitted	140
+R-Apart	admitted	10
+R-Apart	a bind of a value the form cannot hold	115
+R-Apart	a mention the value form does not serve	134
+R-Apart	a record parameter outside a twin	14
+R-Apart/records	admitted	3
+R-Apart/records	a mention no clause admits	3
+R-Apart/records	assigned	60
+R-Apart/records	handed to a function that is no twin	74
+R-Apart/records	reaches no twin	13
+R-Apart/vector	admitted	36
+R-Apart/vector	a bind of a value that is no empty init	37
+R-Apart/vector	a mention the inline buffer does not serve	487
+R-Apart/vector	its companion has another use	26
+R-Apart/vector	no push and no read	74
+R-AppendTwin	admitted	35
+R-AppendTwin	the callee observes its buffer	5
+R-AppendTwin	the destination is a parameter	8
+R-Base	admitted	6897
+R-BoundAppend	admitted	2
+R-BoundAppend	a statement between the bind and the append does more than read a length	5
+R-BoundAppend	the result is named outside its bind, those lengths and the append	1
+R-BoundedNest	admitted	20
+R-BoundedNest/kernel	admitted	61
+R-ByteCopy	admitted	4
+R-ByteCopy	a bound the guard cannot evaluate twice	1
+R-Callee	admitted	176
+R-CharWalk	admitted	658
 R-Compact	admitted	2
-R-CompleteWrite	admitted	264
-R-Counter	admitted	567
-R-CtorLiteral	admitted	4
-R-DischargeInto	admitted	27
-R-ElemFirst	admitted	4
-R-ExitVector	admitted	3
+R-Compact/prepend	admitted	1
+R-CompleteWrite	admitted	2421
+R-CompleteWrite	a literal group leaves a field of the record unwritten	633
+R-CompleteWrite	a mint that heads no statement group of a block or loop	571
+R-Const	admitted	3
+R-Const	the result reaches a position that is not a read	9
+R-Const/fn	admitted	7
+R-CopyView	admitted	8
+R-CopyView	a parameter itself (R-ValueRecord may carry it as a tuple)	18
+R-CopyView	a parameter or a captured local	4
+R-CopyView	assigned more than once	8
+R-CopyView/walk	admitted	4
+R-CopyView/walk	a parameter or a captured local	4
+R-CopyView/walk	not a walk: a set that is not a bind or a self step	28
+R-Counter	admitted	13962
+R-Counter	an inclusive range whose end is not a literal below the type's maximum	29
+R-CtorLiteral	admitted	11
+R-CtorLiteral	a record of scalars (its call travels as a value record)	9
+R-CtorLiteral	a vector literal's buffer is used elsewhere	1
+R-CtorLiteral	the return buffer is used elsewhere	13
+R-CtorLiteral	the target is a parameter (the function's own return buffer)	9
+R-CtorLiteral	the target is assigned more than once	166
+R-DecodeView	a decoded value returned out of its frame	5
+R-DecodeView	a read of a decoded byte string	1
+R-Demote	admitted	4
+R-Demote/place	admitted	1
+R-Destination	admitted	30
+R-DischargeInto	admitted	104
+R-ElemFirst	admitted	8
+R-ExitVector	admitted	463
+R-ExitVector	the local is aliased	2
+R-ExitVector	the local is an argument the op may keep	144
+R-ExitVector	the local is named outside a receiver position	4
+R-ExitVector	the local is rebound	2
+R-ExitVector	the vector is copied somewhere other than the exit literal	3
+R-ExitVector	the wrapper is freed outside an exit	8
 R-ExitVector/record	admitted	2
-R-FieldAppend	admitted	19
-R-FileHold	admitted	1
-R-FlatCopy	admitted	2
-R-FnHeader	admitted	24
-R-FormatAppend	admitted	23
-R-ForwardWalk	admitted	19
-R-GuardFree	admitted	192
-R-GuardedChain	admitted	126
-R-GuardedChain/operators	admitted	465
-R-Header	admitted	326
-R-Header/apart	admitted	16
-R-Header/apart-param	admitted	16
-R-InPlaceLiteral	admitted	8
-R-InRange	admitted	1
-R-InlineLeaf	admitted	291
-R-Inputs	admitted	80
-R-Invariant	admitted	262
-R-KernelSum	admitted	19
-R-KeyedEntry	admitted	4
+R-ExitVector/record	the function has more than its one exit	8
+R-ExitVector/record	the local is named outside a receiver position	1
+R-ExitVector/record	the local is not copied exactly once into a field of the buffer	21
+R-ExpPow	admitted	127
+R-FaultFlag	admitted	7
+R-FaultFlag	a `return` leaves the statement	78
+R-FaultFlag	a call that is no loft function	209
+R-FaultFlag	a callee that writes through a hidden or by-reference parameter	31
+R-FaultFlag	a node whose effect is not local to the statement	249
+R-FaultFlag	an operator that raises inside a called function	29
+R-FaultFlag	an operator that touches state outside its operands	274
+R-FieldAppend	admitted	170
+R-FieldAppend/bare	admitted	895
+R-FileHold	admitted	43
+R-Fill	admitted	3
+R-FirstClaim	admitted	8
+R-FlatCopy	admitted	110
+R-FnRefValue	admitted	11
+R-FoldCompare	admitted	1
+R-FormatAppend	admitted	346
+R-ForwardResult	admitted	6
+R-ForwardResult	the call takes no buffer	11
+R-ForwardWalk	admitted	389
+R-ForwardWalk	a `&` parameter, which may be the same vector	3
+R-ForwardWalk	a vector local that views the record is used in the body	5
+R-ForwardWalk	another record parameter, which may be the same record	26
+R-ForwardWalk	the record is used other than through a field	26
+R-ForwardWalk	the vector is used other than by an element read	4
+R-Fuse	admitted	14975
+R-Fuse/field	admitted	1136
+R-Fuse/jump	admitted	11598
+R-Fuse/tag	admitted	139
+R-Fuse/text	admitted	2045
+R-GroupPush	admitted	249
+R-GuardFree	admitted	833
+R-GuardedChain	admitted	1199
+R-GuardedChain/operators	admitted	3617
+R-HandOver/rotate	admitted	2
+R-Header	admitted	8148
+R-Header	the loop writes a text and also pushes, mints or reserves	2
+R-Header/apart	admitted	286
+R-Header/apart-param	admitted	47
+R-Header/function	admitted	139
+R-Header/kept	admitted	3470
+R-Header/kept-twin	admitted	1036
+R-Header/scalars	a statement the write-set walk cannot type	67
+R-Header/text	admitted	5
+R-HostStore	admitted	7
+R-HostStore	a call to itself that is not bound to a local with a work ref of its own	1
+R-HostStore	a result is handed to a call to itself	2
+R-InPlaceLiteral	admitted	57
+R-InPlaceLiteral/child	admitted	1
+R-InRange	admitted	92
+R-InRange	a `&` parameter, which may be the same vector	3
+R-InRange	a call through a reference, a yield or a par in the body	4
+R-InRange	a vector local that views the record is used in the body	7
+R-InRange	another record parameter, which may be the same record	22
+R-InRange	the record is used other than through a field	2
+R-InRange	the vector is handed to an operator that may resize it	6
+R-InRange	the vector is used other than by an element read	1
+R-InRange/length-local	admitted	20
+R-InRange/wrapped	admitted	22
+R-InlineLeaf	admitted	2972
+R-Inputs	admitted	10534
+R-Invariant	admitted	4112
+R-KeyedEntry	admitted	17
+R-KeyedEntry	a key or a text field written by another setter	5
+R-KeyedEntry	a statement between the mint and the finish that is no field write of the buffer alone	2
 R-KeyedEntry/subscript	admitted	3
-R-LazySplit	admitted	4
-R-Leaf	admitted	2144
-R-LeafChain	admitted	740
-R-LitDiv	admitted	277
+R-LazySplit	admitted	6
+R-Leaf	admitted	10762
+R-LeafChain	admitted	6295
+R-LeafChain	its call tree reaches a framed callee, a cycle, a fn ref, a parallel or a yield	1616
+R-LitDiv	admitted	2752
+R-LitHoist	admitted	1
 R-LiteralAppend	admitted	1
-R-LoopRecord	admitted	2
-R-MaskRange	admitted	5
-R-Mint	admitted	259
-R-Push	admitted	72
-R-PushFill	admitted	30
-R-PushFill	the body names `_`, which may view the pushed vector	5
-R-PushFill	the body names the pushed vector outside its pushes	1
-R-PushFill/loop	the body can leave early, or loops	1
-R-PushFill/loop	the pushes reach two paths	3
-R-PushFill/loop	the step is not `_`	1
-R-PushFill/record	admitted	11
-R-PushRec	admitted	41
-R-Range	admitted	1530
-R-RangedCall	admitted	184
-R-RecPtr	admitted	77
-R-RecPtr	no fusable field read or write of the view	293
-R-RecPtr	the remainder frees a record before a use of the view	21
-R-RecPtr	the remainder may grow a store	180
-R-RecPtr	the remainder rebinds the view	5
-R-RecPtr/index	admitted	2
-R-RefillBuffer	admitted	14
-R-RetAdopt	admitted	60
-R-Reuse	admitted	15
-R-SameRead	admitted	3
-R-Scalar	admitted	69
+R-LiteralWalk	admitted	17
+R-LoopBuffer	admitted	318
+R-LoopBuffer	an inline buffer's companion	10
+R-LoopBuffer	an invariant literal's	2
+R-LoopRecord	admitted	6
+R-LoopRecord	a heap-owning type	37
+R-LoopRecord	a native op takes it otherwise	5
+R-LoopRecord	a second binding	74
+R-LoopRecord	never minted by a literal	1
+R-LoopRecord/refill	admitted	6
+R-LoopSlot	admitted	4165
+R-MaskRange	admitted	49
+R-Mint	admitted	1340
+R-MoveAppend	admitted	1
+R-MoveChild	admitted	2
+R-MoveLast	admitted	9
+R-MoveLast	ADMITTED	2
+R-MoveLast	the source is no local owning its store	1
+R-MoveLast	the source is not minted earlier in the same block	12
+R-MoveLast	the source is read other than by the rebind	4
+R-MoveLast	the source's witness is not its own	14
+R-MoveLast/host	admitted	1
+R-MoveLast/local	admitted	2
+R-Place	admitted	7
+R-Place	a free names the local or the buffer outside the exit pair	3
+R-Place	a free names the local or the buffer outside the turn's end	1
+R-Place	a nested loop in the turn	2
+R-Place	a reference into the local leaves the receiver chain	11
+R-Place	an argument of the call names the buffer or the local	1
+R-Place	no lazy mint before the bind	1
+R-Place	no owning destination	9
+R-Place	the buffer is bound before the call	1
+R-Place	the buffer or the local is named before the call	35
+R-Place	the callee does not build a fresh literal into its buffer on every exit	317
+R-Place	the destination is not an element appended to a parameter's collection	1
+R-Place	the local is read after its move	3
+R-Place	the local is rebound	2
+R-Place	the local is used other than as the receiver of a native read	23
+R-Place	the local or the buffer is handed to a loft-defined call	216
+R-Place	the local or the buffer is named in a shape the rewrite does not model	1
+R-Place	the statement before the bind is not the lazy mint	48
+R-PureReuse	admitted	1
+R-Push	admitted	1468
+R-PushFill	admitted	338
+R-PushFill	the body can return	2
+R-PushFill	the body names a local that may view the pushed vector	94
+R-PushFill	the body names the pushed vector outside its pushes	15
+R-PushFill	the body writes a store beside its pushes	3
+R-PushFill/fill	admitted	46
+R-PushFill/hash	admitted	3
+R-PushFill/loop	a push stands under a branch	1
+R-PushFill/loop	another write reaches the path	3
+R-PushFill/loop	the body can leave early, or loops	44
+R-PushFill/loop	the loop is not a counted range	29
+R-PushFill/loop	the pushes reach two paths	93
+R-PushFill/record	admitted	65
+R-PushFill/run	admitted	24
+R-PushFill/several	admitted	10
+R-PushRec	admitted	225
+R-PushRec/apart	admitted	85
+R-Range	admitted	9257
+R-Range	a chain of locals	929
+R-Range	a conversion	976
+R-Range	a counter whose range has an unranged end	771
+R-Range	a local handed out by reference	172
+R-Range	a native call's result	368
+R-Range	a parameter	6142
+R-Range	a record field	1297
+R-Range	a user call's result	2776
+R-Range	a vector element	894
+R-Range	an accumulator stepped by a literal under an unbounded loop	2232
+R-Range	an accumulator stepped by a value	3563
+R-Range	an expression of another shape	420
+R-Range	ranged operands whose result may overflow	108
+R-RangedCall	admitted	871
+R-RangedCall	an integer argument is not proven in range	1890
+R-Rebind	admitted	5
+R-Rebind	an exit answers neither the parameter nor the buffer	4
+R-Rebind	the buffer argument is not the caller's work-ref	2
+R-Rebind	the callee has no hidden return buffer	173
+R-Rebind	the callee's buffer was promoted onto a local	17
+R-Rebind	the local is a parameter or a compiler temp	46
+R-Rebind	the local is nullable	1
+R-RecPtr	admitted	1199
+R-RecPtr	no fusable field read or write of the view	2720
+R-RecPtr	the remainder frees a record before a use of the view	236
+R-RecPtr	the remainder may grow a store	1878
+R-RecPtr	the remainder rebinds the view	201
+R-RecPtr/index	admitted	40
+R-RecPtr/nested	admitted	206
+R-RefillBuffer	admitted	360
+R-RefillText	admitted	9
+R-Refresh	admitted	16
+R-RepeatRun	admitted	109
+R-RetAdopt	admitted	484
+R-ReturnField	admitted	1
+R-ReturnField	a bind of the source local is not a field of its root	1
+R-ReturnField	the block is too short	26
+R-ReturnField	the root is not an owned record local	1
+R-ReturnField	the source local does not view one local	23
+R-Reuse	admitted	225
+R-Reuse	handed to more than one call	6
+R-Reuse	its result local is assigned more than once	4
+R-Reuse	not a record	203
+R-Reuse	not an owned caller buffer	503
+R-Rotate	admitted	4949
+R-SameRead	admitted	21
+R-Scalar	admitted	10809
 R-ScaleFold	admitted	2
-R-SingleUse	admitted	84
-R-SplitTable	admitted	1
-R-TextBorrow	admitted	247
-R-TextClear	admitted	580
-R-TypedKeyed	admitted	32
-R-TypedRead	admitted	2
-R-ValueLocal	admitted	33
-R-ValueRecord	admitted	22
-R-ValueRecord	its record is consumed as an operand at a call site	3
-R-View	admitted	104
-R-WorkBuffer	admitted	19
-R-WorkBuffer/onward	admitted	12
-R-WorkBuffer/result	admitted	6
-R-Wrapper	admitted	335
-R-ZeroCount	admitted	152
+R-SelfReplace	admitted	19
+R-SingleUse	admitted	494
+R-SliceArg/range	admitted	6
+R-SliceArg/range	its value is no slice temporary	1
+R-SliceBorrow	admitted	22
+R-SliceInto	admitted	2
+R-SliceInto	its value is no slice temporary	4
+R-SliceInto	its value is not the temporary	3
+R-SplitTable	admitted	154
+R-StartStep	admitted	1004
+R-StreamWalk	admitted	2
+R-StreamWalk	a statement inside an append	1
+R-StreamWalk	an operator inside an append	2
+R-StreamWalk	mentions the buffer	1
+R-StreamWalk	no vector local in the buffer	28
+R-StreamWalk	not a counted walk	1
+R-StreamWalk	the call is not followed by a walk	1
+R-TailSelf	admitted	2
+R-TextBorrow	admitted	1825
+R-TextBorrow	the body may write a store	24
+R-TextBorrow/tested	admitted	6
+R-TextClear	admitted	2936
+R-TextLen	admitted	5
+R-TextRun	not declared empty right before its copy	2
+R-TypedKeyed	admitted	66
+R-TypedKeyed/compound	admitted	18
+R-TypedKeyed/text	admitted	19
+R-TypedRead	admitted	204
+R-ValueLocal	admitted	2225
+R-ValueLocal	a bind's buffer: a parameter, and no forward of a tuple	23
+R-ValueLocal	a bind's buffer: another mention	28
+R-ValueLocal	a bind's buffer: witnesses another free	19
+R-ValueLocal	a mention that is no read, hand-on, bind or free	38
+R-ValueLocal	a read or hand-on of another shape	4
+R-ValueLocal	lent to a record parameter it cannot serve	3
+R-ValueLocal	returned by a function that keeps its record	12
+R-ValueRecord	admitted	518
+R-ValueRecord	a callee may write an existing record of the type	6
+R-ValueRecord	a native op may write an existing record of the type	14
+R-ValueRecord	its record is consumed as an operand at a call site	62
+R-ValueRecord/view	admitted	3
+R-VecCopy	admitted	21
+R-View	admitted	739
+R-View	a statement after the bind blocks a held header	1701
+R-ViewReturn	admitted	1
+R-ViewReturn	the callee writes or returns otherwise	71
+R-ViewReturn	the window writes, calls or holds the result	2
+R-WorkBuffer	admitted	312
+R-WorkBuffer	assigned a second time	3
+R-WorkBuffer	bound as a copy of another vector	129
+R-WorkBuffer	copied whole into another place	404
+R-WorkBuffer	declared inside a loop	208
+R-WorkBuffer	declared other than once as `[]`	1
+R-WorkBuffer	handed to a call	92
+R-WorkBuffer	its backing is named elsewhere	8
+R-WorkBuffer	mentioned outside a vector operator	1
+R-WorkBuffer/onward	admitted	777
+R-WorkBuffer/onward	its callee is on a cycle with this function	20
+R-WorkBuffer/result	admitted	31
+R-Wrapper	admitted	2453
+R-Wrapper	an argument is neither a leaf nor a pure vector path	515
+R-ZeroCount	admitted	532
