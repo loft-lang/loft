@@ -9446,7 +9446,9 @@ mod p318_hash_deepcopy {
         let src = stores.database(holder_words);
         // Its index is EMPTY, written so: a fresh store's bytes are whatever the buffer held
         // (only `database_defined` writes every byte), and the teardown below walks this field.
-        stores.store_mut(&src).set_u32_raw(src.rec, src.pos + ix_pos, 0);
+        stores
+            .store_mut(&src)
+            .set_u32_raw(src.rec, src.pos + ix_pos, 0);
         let list_src = DbRef {
             store_nr: src.store_nr,
             rec: src.rec,
