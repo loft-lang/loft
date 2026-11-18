@@ -2638,9 +2638,34 @@ pub fn method_call_on(e: el::El, vars: el_vars::Vars, at: integer, x: Ex, re: in
   for a in args {
     match e.p.nodes[a] {
       SArg { at: aat, name: an, e: ae } => {
-        if an != "" || ae == null {
+        if ae == null {
           el::refuse(e, "a named argument");
           return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+        }
+        // A named argument of a method the name alone selects, as a free call's: at or after
+        // the position reached, the parameters it skips taking their constant defaults.
+        if an != "" {
+          mnp = if hint_nr >= 0 && el_dispatch::own_set(e, name) < 0 { attr_nr(el::def(e, hint_nr), an) } else { -1 };
+          mgap = mnp >= len(list);
+          if mgap {
+            for k in len(list)..mnp {
+              ka = el::def(e, hint_nr).attributes[k];
+              kv = if ka == null { ir::NdNull } else { el_ir::unspan(ka!.value[0] ?? ir::NdNull) };
+              if !(kv is NdInt || kv is NdLong || kv is NdFloat || kv is NdSingle || kv is NdBoolean || kv is NdText) {
+                mgap = false;
+              }
+            }
+          }
+          if !mgap {
+            el::refuse(e, "a named argument");
+            return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+          }
+          for k in len(list)..mnp {
+            ka = el::def(e, hint_nr).attributes[k]!;
+            list += [ka.value[0]!];
+            types += [ka.typedef[0] ?? ir::TyVoid];
+            built += [ir::TyUnknown { n: 0 }];
+          }
         }
         if el_trace::on() {
           el_trace::state(e, vars, "arg", aat, ae!);
