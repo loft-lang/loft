@@ -435,6 +435,9 @@ pub fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::T
   // value branch over parameters binds it to a fresh `___ret_join_N` — the bind copies each arm
   // (`@FR-B-Copy`) — and answers that local; the result borrows nothing.
   if join_bind {
+    if el_trace::on() {
+      el_trace::route(e, "bind_monomorph_join_return");
+    }
     k = 1;
     for v in f.variables {
       if v.name.starts_with("___ret_join_") {

@@ -354,6 +354,9 @@ pub fn update_writes(e: el::El, vars: el_vars::Vars, r: ir::Node, d: integer, fi
 }
 
 pub fn object_expr(e: el::El, vars: el_vars::Vars, name0: text, member0: text, fields: vector<integer>, base: integer?) -> Ex {
+  if el_trace::on() {
+    el_trace::route(e, "parse_object");
+  }
   qv = el_ex_place::qualified_variant(e, name0, member0);
   name = if qv != "" { qv } else { name0 };
   member = if qv != "" { "" } else { member0 };
@@ -1729,6 +1732,9 @@ pub fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?,
     }
   }
   if source < 0 && len(types) == 1 && el_types::base(first) is TyIterator && (name == "next" || name == "exhausted") {
+    if el_trace::on() {
+      el_trace::route(e, "call:{name}");
+    }
     step = match el_types::base(first) { TyIterator { step: st } => st, _ => ir::TyVoid };
     if name == "exhausted" {
       return ex(el_ir::cl(e, "OpCoroutineExhausted", [list[0]]), ir::TyBoolean);
