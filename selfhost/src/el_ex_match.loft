@@ -1533,6 +1533,9 @@ pub fn cast_expr(e: el::El, vars: el_vars::Vars, ae: integer?, tn: integer?) -> 
         if n != null {
           return ex(if e.first_pass { ir::NdNull } else { n! }, to);
         }
+      } else if inner is TyText && x.tp is TyNull {
+        // `null as text?`: the text null.
+        return ex(if e.first_pass { ir::NdNull } else { el_ir::cl(e, "OpConvTextFromNull", []) }, to);
       } else if el_convert::plain_scalar(inner) && src is TyText {
         c = el_convert::cast(e, x.code, src, inner);
         if c != null {
