@@ -9440,9 +9440,13 @@ mod p318_hash_deepcopy {
             unreachable!("holder is a struct")
         };
         let list_pos = u32::from(fields[0].position);
+        let ix_pos = u32::from(fields[1].position);
 
         // Source holder whose Array container has slot0 = a real element, slot1 = 0 (absent).
         let src = stores.database(holder_words);
+        // Its index is EMPTY, written so: a fresh store's bytes are whatever the buffer held
+        // (only `database_defined` writes every byte), and the teardown below walks this field.
+        stores.store_mut(&src).set_u32_raw(src.rec, src.pos + ix_pos, 0);
         let list_src = DbRef {
             store_nr: src.store_nr,
             rec: src.rec,
