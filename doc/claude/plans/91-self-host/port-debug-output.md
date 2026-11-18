@@ -84,6 +84,21 @@ refusal is about.
 exact one.  The join with Rust's `route` lines stays by line: Rust's column is its lexer's
 position, which is where a construct's handler was ENTERED, not where the construct starts.
 
+### Built — § 2
+
+`El.at`, set and restored by `el_ex_assign::expression` (its body is `expression_node` now):
+the node's leftmost token where `el_ex_null::node_start` knows the shape, the node's own token
+otherwise.  `el::trace_pos` spells it for `el::refuse` and `el_trace::route`, in the
+convention the other state lines use (`el::pos_at`, the Rust lexer's position while that token
+is its peek).
+
+Whole corpus (on f74d7e42b): verdicts and first-pass counts unchanged.  15558 of the 17246
+`refuse` lines and 44837 of the 45005 port `route` lines carry a column; the 1688 refusals
+without one are met outside any expression (a declaration).  The exact line also joins
+better with Rust's routes than the statement's line did: `parse_match` 3342 of 3376 sites on
+both sides (3313 before), `parse_vector_match` 822 of 854 (814), `parse_object` 8036 (7677);
+3 of 30 routes are carried in every program that takes them (2 before).
+
 ## 3. One command — `selfhost/front/elab_trace.py`
 
 ```
