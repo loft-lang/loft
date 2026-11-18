@@ -346,20 +346,20 @@ E-Val	operational	curated	1	2026-11-18	no own directory; cited by suite cells of
 E-Var	operational	curated	1	2026-11-18	one cell
 Op-Back	operators	curated	7	2026-11-18	own dir 3 -> 2: the table rows + the operator methods 2->1; the patch stays
 Op-Bound	operators	curated	6	2026-11-18	no own directory; cited by suite cells of its chapter
-Op-Compound	operators	todo			
-Op-Conv	operators	todo			
-Op-Def	operators	todo			
-Op-Eq	operators	todo			
-Op-Fold	operators	todo			
-Op-Home	operators	todo			
-Op-Iface	operators	todo			
-Op-Left	operators	todo			
-Op-Mark	operators	todo			
-Op-Name	operators	todo			
-Op-Order	operators	todo			
-Op-Result	operators	todo			
-Op-Shape	operators	todo			
-Op-Std	operators	todo			
+Op-Compound	operators	curated	2	2026-11-18	first cell of its own: %=, /=, += of a user operator, place read once; Op-Back's cell holds the rest
+Op-Conv	operators	curated	7	2026-11-18	merged: one cell per clause, every feature kept
+Op-Def	operators	curated	5	2026-11-18	merged: one cell per clause, every feature kept
+Op-Eq	operators	curated	4	2026-11-18	kept apart: the core; the inner-type crossing with E-Eq (gate E refuses it, the core agrees); the refusal file
+Op-Fold	operators	curated	2	2026-11-18	core; the plain to_text format refusal (new); the for twin is Op-Mark's 1950
+Op-Home	operators	curated	9	2026-11-18	merged: one cell per clause, every feature kept
+Op-Iface	operators	curated	2	2026-11-18	first cell of its own: a plain to_text does not meet Printable, one diagnostic (2553); fn members are G-Iface's
+Op-Left	operators	curated	5	2026-11-18	kept apart: the core is refused by gate E, the commuting cell agrees; left-to-right once in Op-Back's and Op-Order's cells
+Op-Mark	operators	curated	4	2026-11-18	the 1950 refusal and its 1950b patch cell; the Op-Conv refusal is that rule's
+Op-Name	operators	curated	1	2026-11-18	one cell: method, bare call and form answer alike
+Op-Order	operators	curated	2	2026-11-18	two cores: the generic le from the bound's lt, and every order form from one compare
+Op-Result	operators	curated	3	2026-11-18	cores are E-Asgn-Compound 1819 and F-Recv 1817 (nullable operand warned); Op-Back's patch cell
+Op-Shape	operators	curated	3	2026-11-18	first cell of its own: every arity and the to_text / next shapes; Op-Def's cell holds compare and self
+Op-Std	operators	curated	5	2026-11-18	core; the stdlib-type refusal; 2554 OpNot/OpNe warn (new); the retired-name refusals and the [] interface refusal (new)
 O-Borrow	ownership	todo			
 O-Borrow-Scalar	ownership	todo			
 O-Buffer	ownership	todo			
