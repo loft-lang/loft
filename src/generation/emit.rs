@@ -1939,7 +1939,7 @@ impl Output<'_> {
                         }
                         // @decline-owed: a vector local whose element is no scalar, and one
                         //   with a mention — its own or an alias's — that is no in-place vector
-                        //   operator (it is returned, stored, handed on or rebound)
+                        //   operator
                         crate::rewrite_census::fired("R-WorkBuffer/lent", 1);
                         synthetic.push(Value::RawExpr(format!(
                             "__fwb.lend({}, {k}_u32)",

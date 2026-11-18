@@ -3585,9 +3585,8 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
             .write()
         {
             Ok(b) => {
-                // @decline-owed: a value some use would store — a field set, an append, a keyed
-                //   insert, a return that escapes the unit — and a producer that pushes into
-                //   its own vector field or whose roots' lives overlap
+                // @decline-owed: a value some use would store: a field set, an append, a keyed
+                //   insert, or a return that escapes the unit
                 crate::rewrite_census::fired("R-Transient", 1);
                 Some(b)
             }

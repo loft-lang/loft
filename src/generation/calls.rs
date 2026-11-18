@@ -227,7 +227,7 @@ impl Output<'_> {
         }
         // @decline-owed: a loop that names the buffer or a view of it other than as an append's
         //   destination (a read, a length, a rebind, a fn-ref call through it), or that can
-        //   leave by a `return` or a jump past itself; a callee with no window twin
+        //   leave by a `return` or a jump past itself
         crate::rewrite_census::fired("R-AppendTwin", 1);
         true
     }
@@ -273,9 +273,11 @@ impl Output<'_> {
         if !self.vr_requests.contains(&key) {
             self.vr_requests.push(key);
         }
-        // @decline-owed: a function that writes a store it did not mint, or that fails another
-        //   of the twin's conditions (the rule's `ALL of` list); a call site that cannot take
-        //   the (address, owned) pair
+        // @decline-owed: a function that writes a store it did not mint, calls a user function,
+        //   or names its buffer outside its materialised exits; a call argument that is no
+        //   variable or read; a window after the call that writes a store, calls a user
+        //   function, or reads the result other than through a copying getter; a result
+        //   variable bound more than once or named outside that window
         crate::rewrite_census::fired("R-ViewReturn", 1);
         let flag = self.vr_flag_pending.take().unwrap_or_default();
         write!(w, "{{ let __vr = {}__vr(cell", self.fn_ident(def_fn))?;

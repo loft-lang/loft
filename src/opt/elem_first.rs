@@ -163,9 +163,11 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
                 eprintln!("[ir-elem-first] fn={} pair {dest}", data.def(d).name());
             }
         }
-        // @decline-owed: a vector consumed more than once or other than as a record-literal
-        //   field of an append; a declaration or append that is not top-level in the same
-        //   statement list (the rule's gates)
+        // @decline-owed: a declaration and append that are not top-level statements of one
+        //   block (or the two arms of one `if` it holds); a jump out between them; a naming
+        //   between them that reaches the destination's collection, or a read of a view the
+        //   early mint may move; a temp rebound, or mentioned beyond its build and the one
+        //   copy; a destination that is rebound or whose element is no plain inline struct
         crate::rewrite_census::fired("R-ElemFirst", n);
         total += n;
     }

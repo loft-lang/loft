@@ -927,9 +927,8 @@ fn rewrite(
             shared |= hit.get();
         }
     }
-    // @decline-owed: a function that writes through a parameter, calls a function value or one
-    //   that is not effect-free, yields, or names a native outside the value-only list; and a
-    //   call site whose arguments are not proven unchanged between the two calls
+    // @decline-owed: a function that writes through a parameter, calls a function value or a
+    //   function that is not effect-free, yields, or names a native outside the value-only list
     crate::rewrite_census::fired(
         if shared {
             "R-PureReuse/shared"

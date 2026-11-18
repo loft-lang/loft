@@ -3178,8 +3178,8 @@ impl Output<'_> {
         let g = parts.concat();
         self.indent(w)?;
         writeln!(w, "{g}")?;
-        // @decline-owed: a loop whose admitted operators the static proof already covers, and a
-        //   chain or index the guard's leaves cannot bound
+        // @decline-owed: a loop whose admitted operators the static proof already covers, which
+        //   takes no guard
         crate::rewrite_census::fired("R-GuardedChain", 1);
         crate::rewrite_census::fired("R-GuardedChain/operators", admitted.len());
         if self.chain_trace {

@@ -480,9 +480,11 @@ impl Output<'_> {
                         .join(", ")
                 )
             };
-            // @decline-owed: a field whose source bytes are written, handed out by `&` or
-            //   released between the record's construction and the field's last read, or that
-            //   fails another of the rule's `ALL of` conditions
+            // @decline-owed: any of the rule's five conditions unproved: the source bytes
+            //   written, handed out by `&` or released before the field's last read; the record
+            //   not confined to frames that hold the bytes, or crossing a boundary; the field
+            //   read other than as a value; a text span that would be converted; also a
+            //   recursive type whose twin cannot be closed over the region, and a generator
             crate::rewrite_census::fired("R-DecodeView/structure", 1);
             write!(
                 w,
