@@ -192,6 +192,9 @@ whether it was right.  Whether it was right is asked of real programs: a cell th
 widened answer and is compared with the rewrite off, and every library and consumer that
 already runs on loft.  A run-time self-check would be a second implementation of every fact,
 owed its own proof, and the far end of it is a flag that makes the compiler behave correctly.
+This is the concern of the backends answering alike, asked of the analyses: it stays, and no
+program settles it.  A cell, a library and a consumer can each show a fact WRONG; none shows
+the facts right, so the evidence is what runs on loft and it grows with every program that does.
 
 ## Relations
 
