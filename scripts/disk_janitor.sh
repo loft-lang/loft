@@ -107,7 +107,10 @@ checkouts() {
 # The working directories of every process that is not a shell, an editor or an agent: read
 # once, because one pass over /proc costs a second and there are dozens of checkouts.
 working=()
-# Whether a process named `$1` is one of those.
+# Whether a process named `$1` is one of those: shells, agents, editors and their language
+# servers (rust-analyzer lives in the main checkout for good and never links an artefact), and
+# the short-lived text tools a command line pipes through.  Anything else — cargo, rustc, a
+# test binary, loft, make, python — is work.
 idle_command() {
   case "$1" in
     bash|sh|zsh|dash|fish|claude|node|git|less|vim|nvim|code|tmux|sleep|flock|disk_janitor.sh) return 0;;
@@ -130,14 +133,7 @@ fi
 for p in /proc/[0-9]*; do
   [ -r "$p/comm" ] || continue
   read -r comm < "$p/comm" 2>/dev/null || continue
-  # Shells, agents, editors and their language servers (rust-analyzer lives in the main
-  # checkout for good and never links an artefact), and the short-lived text tools a
-  # command line pipes through.  Anything else — cargo, rustc, a test binary, loft, make,
-  # python — is work.
-  case "$comm" in
-    bash|sh|zsh|dash|fish|claude|node|git|less|vim|nvim|code|tmux|sleep|flock|disk_janitor.sh) continue;;
-    rust-analyzer*|find|readlink|cat|grep|sed|awk|cut|sort|uniq|head|tail|tr|wc|du|df|jq|ps|xargs|tee) continue;;
-  esac
+  idle_command "$comm" && continue
   cwd=$(readlink "$p/cwd" 2>/dev/null) && working+=("$cwd/")
 done
 # Is a build, a test or a run working inside checkout `$1`?
