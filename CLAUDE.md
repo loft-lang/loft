@@ -282,6 +282,11 @@ the formal rules already gave the answer; strained = the fix extended a rule, ch
 surface or needed a design call.  Absence counts as unjudged ([.github/LABELS.md §
 `contract:`](.github/LABELS.md)).  Don't scope-creep the active fix with unrelated bugs.
 
+**Every compiler defect is held against the slot matrix (owner):** with its fix, say
+whether `scripts/slot_matrix.py` reaches it — and if not, add the rows that would (checked to
+FAIL on the build with the defect), or its line and missing axis to the reach ledger
+([ISSUE_TRACKING.md § Every defect is held against the slot matrix](doc/claude/ISSUE_TRACKING.md#every-defect-is-held-against-the-slot-matrix)).
+
 **A store-lifetime defect (leak, double free, use after free, wrong free) is fixed in three
 places (owner):** the compiler, the store records, and the static checker, which must report
 the defect with the cure switched off (`scripts/own_sweep.py --cell <cell>` reads CAUGHT, not

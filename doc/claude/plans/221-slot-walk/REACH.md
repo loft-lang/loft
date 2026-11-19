@@ -94,5 +94,14 @@ The steps are G1 to G9 of [the plan's § Phase ordering](README.md#phase-orderin
 first, then the ad-hoc cell, the calibration of this ledger's 23 `fits-rows` verdicts, and
 the axes the table above leaves open.
 
-The ledger is redone at each release: the new `silent-wrong` issues are judged, and the
-share that `fits-now` is the matrix's reach on defects it was not built from.
+## The standing practice — every new defect is a row or a ledger line
+
+The ledger is not redone in batches.  From here on each compiler defect is held against the
+matrix when it is filed or fixed, by whoever does that: reached, reached with new rows
+(which must fail on the build that has the defect), or a ledger line naming the axis it
+needs.  The rule and its four cases are in
+[ISSUE_TRACKING.md § Every defect is held against the slot matrix](../../ISSUE_TRACKING.md#every-defect-is-held-against-the-slot-matrix).
+
+Two numbers come out of that, read at each release: the share of the cycle's defects the
+matrix reached as it stood (its reach on defects it was not built from), and the axis with
+the most ledger lines, which is the next one to build.
