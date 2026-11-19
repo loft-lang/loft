@@ -1748,8 +1748,7 @@ pub fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::N
   plain_fn = el_types::base(ret) is TyFunction && len([for x in el_types::deps(ret) if x < el_ex_assign::CALLEE_FRAME { x }]) == 0;
   // A tuple of plain scalars travels as a value; one holding a text or a heap member is boxed
   // (`boxed_tuple_return`) — not carried.
-  // (A nullable plain scalar carries no lifetime either: `(integer?, integer)` is a value.)
-  plain_tuple = match ret { TyTuple { elems } => len([for t in elems if !el_convert::plain_scalar(el_types::base(t)) { t }]) == 0, _ => false };
+  plain_tuple = match ret { TyTuple { elems } => len([for t in elems if !el_convert::plain_scalar(t) { t }]) == 0, _ => false };
   // `boxed_tuple_return`: a tuple holding a heap member is answered in a `__tuple<…>` record
   // the caller hands in (a fresh `__ref_N`) — carried where a destructure takes it apart.
   if vars.boxed_tuple_at >= 0 && vars.boxed_tuple_at == vars.call_at && !plain_tuple && !retbuf {

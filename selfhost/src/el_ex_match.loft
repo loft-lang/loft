@@ -1938,7 +1938,6 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
   result = ir::TyVoid;
   out: vector<MArm> = [];
   null_arm = false;
-  tuple_joined = false;
   // `(M-Exhaust)` for a `boolean` (loft#1343): arms naming `true` and `false`, none of them `_`,
   // leave nothing to fall through to — the last arm is the fallback, as a trailing `_` would be.
   named_true = false;
@@ -2061,9 +2060,7 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
             _ => {}
           }
         }
-        // (An open tuple result — a `null` member, loft#1682 — expects nothing of the next arm:
-        // the arms join member by member below.)
-        expected = if unsettled(result) || el_ex_null::open_tuple(result) { ir::TyUnknown { n: 0 } } else { el_ex_null::arm_expectation(result) };
+        expected = if unsettled(result) { ir::TyUnknown { n: 0 } } else { el_ex_null::arm_expectation(result) };
         facts = el_ex_call::assume_guard(e, vars, ug);
         vars.proven += cap_proof;
         b = el_ex_pattern::arm_body(e, vars, body, expected);
@@ -2098,18 +2095,7 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
         if b.tp is TyNull || (!e.first_pass && el_ir::is_null(b.code)) {
           null_arm = true;
         }
-        tuple_open_join = !unsettled(result) && (el_ex_null::open_tuple(result) || el_ex_null::open_tuple(b.tp)) && el_types::base(result) is TyTuple && el_types::base(b.tp) is TyTuple;
-        if tuple_open_join {
-          tj0 = el_ex_null::join_tuple_arms(e, result, b.tp);
-          if tj0 == null {
-            if !e.first_pass {
-              el::refuse(e, "match tuple arms that do not join: {type_kind(b.tp)}");
-            }
-          } else {
-            result = tj0!;
-            tuple_joined = true;
-          }
-        } else if !unsettled(result) && sibling_variants(e, b.tp, result) && !el_types::is_equal(e, el_types::base(b.tp), el_types::base(result)) {
+        if !unsettled(result) && sibling_variants(e, b.tp, result) && !el_types::is_equal(e, el_types::base(b.tp), el_types::base(result)) {
           // Two variants of one enum join to the enum, borrowing nothing (`@FR-C-Var`).
           result = ir::TyEnum { n: struct_enum_of(e, el_types::base(b.tp)), is_ref: true, dep: [] };
         } else if arm_settles(result, b.tp) {
@@ -2190,14 +2176,6 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
         }
       },
       _ => {}
-    }
-  }
-  // `reconvert_null_tuple_arms` (loft#1682): every arm of an open tuple join is converted to the
-  // join it settled on — an earlier arm's `null` member included.
-  if tuple_joined {
-    for oa in out {
-      out[oa#index].code = el_ex_null::convert_arm_tail(e, oa.code, oa.tp, result);
-      out[oa#index].tp = result;
     }
   }
   // A record result with a `null` arm is `τ?` on both passes (`(N-Join)`).

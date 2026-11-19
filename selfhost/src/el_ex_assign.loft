@@ -1323,21 +1323,12 @@ pub fn tuple_lit(e: el::El, vars: el_vars::Vars, elems: vector<integer>) -> Ex {
       tps += [ir::TyNull];
       continue;
     }
-    // Anywhere else a `null` member leaves the tuple OPEN (`(null, integer)`, loft#1682): the
-    // join with a sibling arm names it (`join_tuple_arms`).
-    if x.tp is TyNull {
-      items += [ir::NdNull];
-      tps += [ir::TyNull];
-      continue;
-    }
     // A nullable plain scalar is held as it is: its null is the scalar's own sentinel.
     nullable_scalar = match x.tp { TyOptional { inner } => is_scalar(inner), _ => false };
     // A vector LITERAL member is its value block (`Vector`), the tuple holding the vector.
     vec_lit = x.tp is TyVector && e.p.nodes[n] is SVecLit && (e.first_pass || match el_ir::unspan(x.code) { NdBlock { block: vb } => vb[0].name == "Vector", _ => false });
     // A tuple of plain values as a member (`((1, 2), 3)`) is held as the tuple it is.
-    // (A text member of it was handled where the inner literal was built: `((1, "a1"), 2)`.)
-    // (An inner tuple LITERAL had each of its members built here already: `((a, 1), 2)`.)
-    plain_inner = match x.tp { TyTuple { elems: ie } => len(ie) > 0 && (len([for it in ie if !is_scalar(it) { it }]) == 0 || el_ir::unspan(x.code) is NdTuple), _ => false };
+    plain_inner = match x.tp { TyTuple { elems: ie } => len([for it in ie if !is_scalar(it) { it }]) == 0 && len(ie) > 0, _ => false };
     // A record a call answers fresh is held as that call (`(mk(11), 2)`), the tuple its owner.
     // (Not carried: a tuple holding a call's record is moved and released by rules of its own
     // — `tuple_member_move` — so the member stays refused by name.)
@@ -1381,84 +1372,6 @@ pub fn tuple_lit(e: el::El, vars: el_vars::Vars, elems: vector<integer>) -> Ex {
   ex(ir::NdTuple { items: items }, ir::TyTuple { elems: tps })
 }
 
-fn nested_member_assign(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: integer) -> Ex? {
-  if op != "=" {
-    return null;
-  }
-  tse = match e.p.nodes[target] { STupleGet { e: a } => a ?? -1, _ => -1 };
-  tix = match e.p.nodes[target] { STupleGet { index: b } => b, _ => -1 };
-  if tse < 0 {
-    return null;
-  }
-  rse = match e.p.nodes[tse] { STupleGet { e: a } => a ?? -1, _ => -1 };
-  i0 = match e.p.nodes[tse] { STupleGet { index: b } => b, _ => -1 };
-  if rse < 0 {
-    return null;
-  }
-  root = match e.p.nodes[rse] { SName { name: tn, member: tm } => if tm == "" { el_vars::var(vars, tn) } else { -1 }, _ => -1 };
-  if root < 0 || vars.vars[root].argument {
-    return null;
-  }
-  members = match el_vars::tp(vars, root) { TyTuple { elems } => elems, _ => [] };
-  inner = match members[i0] ?? ir::TyVoid { TyTuple { elems } => elems, _ => [] };
-  if tix < 0 || tix >= len(inner) {
-    return null;
-  }
-  mt = inner[tix]!;
-  if !(el_convert::plain_scalar(mt) || mt is TyText) {
-    return null;
-  }
-  lx = expression(e, vars, target);
-  tx = expression(e, vars, rhs);
-  if e.first_pass {
-    return ex(ir::NdNull, ir::TyVoid);
-  }
-  w = -1;
-  reads: vector<ir::Node> = [];
-  match el_ir::unspan(lx.code) {
-    NdBlock { block } => {
-      lops = block[0].operators;
-      if len(lops) == 2 && el_ir::unspan(lops[1]) is NdTupleGet {
-        match el_ir::unspan(lops[0]) {
-          NdSet { var: lsv } => {
-            w = lsv;
-            reads = [lops[0]];
-          },
-          _ => {}
-        }
-      }
-    },
-    _ => {}
-  }
-  if w < 0 {
-    return null;
-  }
-  el_vars::in_use(vars, root, true);
-  sv = stored(e, vars, tx, mt);
-  if sv == null {
-    return null;
-  }
-  val = el_convert::guard_range(e, sv!, mt, tx.tp, false);
-  pre: vector<ir::Node> = [];
-  if mt is TyText {
-    held = match el_vars::tp(vars, w) { TyTuple { elems } => elems[tix] ?? mt, _ => mt };
-    borrows = len([for d in el_types::deps(held) if d < len(vars.vars) && !vars.vars[d].argument && !vars.vars[d].name.starts_with("__work_") { d }]) > 0;
-    if borrows {
-      wt = el_vars::work_text_p2(vars);
-      pre += [el_ir::v_set(wt, val)];
-      val = ir::NdVar { n: wt };
-    }
-  }
-  ops = reads;
-  ops += [ir::NdTuplePut { var: w, idx: tix, inner: val }, ir::NdTuplePut { var: root, idx: i0, inner: ir::NdVar { n: w } }];
-  write = el_ir::v_block(ops, ir::TyVoid, "nested_tuple_assign");
-  if len(pre) == 0 {
-    return ex(write, ir::TyVoid);
-  }
-  pre += [write];
-  ex(ir::NdInsert { items: pre }, ir::TyVoid)
-}
-
 // `Parser::tuple_whole_bind_copy`: `u = t` over a tuple with a heap member is the tuple of
 // `t`'s members, each heap member an owned copy on the second pass (`tuple_member_owned_copy`,
 // its block named "tuple_member_move"): a record into a store of its own, a text that borrows
@@ -1470,11 +1383,37 @@ pub fn tuple_whole_bind_copy(e: el::El, vars: el_vars::Vars, src: integer, elems
   for t in elems {
     m = ir::NdTupleGet { var: src, idx: i };
     i += 1;
-    c = member_owned_copy(e, vars, src, m, t);
+    b = el_types::base(t);
+    if is_scalar(b) || e.first_pass {
+      if !is_scalar(b) && !(b is TyText) && !(b is TyReference) && !(b is TyVector) {
+        el::refuse(e, "a tuple bound whole with a member of this type: {type_kind(b)}");
+        return null;
+      }
+      items += [m];
+      tps += [t];
+      continue;
+    }
+    if b is TyText {
+      borrows = len([for d in el_types::deps(t) if d < len(vars.vars) && !vars.vars[d].argument && !vars.vars[d].name.starts_with("__work_") { d }]) > 0;
+      if !borrows {
+        items += [m];
+        tps += [t];
+        continue;
+      }
+      w = el_vars::work_text_p2(vars);
+      owned = ir::TyText { dep: [w] };
+      items += [el_ir::v_block([el_ir::v_set(w, m), ir::NdVar { n: w }], owned, "tuple_member_move")];
+      tps += [owned];
+      continue;
+    }
+    if !(b is TyReference) && !(b is TyVector) {
+      el::refuse(e, "a tuple bound whole with a member of this type: {type_kind(b)}");
+      return null;
+    }
+    c = tuple_member_copy(e, vars, ex(m, el_types::without_deps(t)));
     if c == null {
       return null;
     }
-    // `(H-Move)`: a member this bind copied is MOVED into the new tuple, its block named so.
     match c!.code {
       NdBlock { block } => {
         bl = block[0]!;
@@ -1486,63 +1425,6 @@ pub fn tuple_whole_bind_copy(e: el::El, vars: el_vars::Vars, src: integer, elems
     tps += [c!.tp];
   }
   ex(ir::NdTuple { items: items }, ir::TyTuple { elems: tps })
-}
-
-// `tuple_member_owned_copy` for member `m` (of type `t`) read off the tuple local `base`: a
-// scalar, and the first pass, as it is; a text that borrows a place into a work text; a record
-// or vector through `tuple_member_copy`; a tuple with a heap leaf held once in a `_tuphold_N`
-// (borrowing `base`) and each of ITS members copied by this same rule.  A struct enum is
-// refused by name.
-fn member_owned_copy(e: el::El, vars: el_vars::Vars, base: integer, m: ir::Node, t: ir::TypeT) -> Ex? {
-  b = el_types::base(t);
-  if is_scalar(b) || e.first_pass {
-    if !is_scalar(b) && !(b is TyText) && !(b is TyReference) && !(b is TyVector) && !(b is TyTuple) {
-      el::refuse(e, "a tuple bound whole with a member of this type: {type_kind(b)}");
-      return null;
-    }
-    return ex(m, t);
-  }
-  if b is TyText {
-    borrows = len([for d in el_types::deps(t) if d < len(vars.vars) && !vars.vars[d].argument && !vars.vars[d].name.starts_with("__work_") { d }]) > 0;
-    if !borrows {
-      return ex(m, t);
-    }
-    w = el_vars::work_text_p2(vars);
-    owned = ir::TyText { dep: [w] };
-    return ex(el_ir::v_block([el_ir::v_set(w, m), ir::NdVar { n: w }], owned, "tuple_member_copy"), owned);
-  }
-  match b {
-    TyTuple { elems } => {
-      if len([for it in elems if !is_scalar(el_types::base(it)) { it }]) == 0 {
-        return ex(m, t);
-      }
-      // The hold borrows its source (`@FR-O-Borrow`): every member typed as borrowing `base` alone.
-      held: vector<ir::TypeT> = [];
-      for it in elems {
-        held += [el_types::with_deps(it, [base])];
-      }
-      h = el_vars::create_unique(vars, "tuphold", ir::TyTuple { elems: held });
-      el_vars::set_defined(vars, h);
-      items: vector<ir::Node> = [];
-      tps: vector<ir::TypeT> = [];
-      for it in elems {
-        c = member_owned_copy(e, vars, h, ir::NdTupleGet { var: h, idx: it#index }, it);
-        if c == null {
-          return null;
-        }
-        items += [c!.code];
-        tps += [c!.tp];
-      }
-      owned = ir::TyTuple { elems: tps };
-      return ex(el_ir::v_block([el_ir::v_set(h, m), ir::NdTuple { items: items }], owned, "tuple_member_copy"), owned);
-    },
-    _ => {}
-  }
-  if !(b is TyReference) && !(b is TyVector) {
-    el::refuse(e, "a tuple bound whole with a member of this type: {type_kind(b)}");
-    return null;
-  }
-  tuple_member_copy(e, vars, ex(m, el_types::without_deps(t)))
 }
 
 // `tuple_member_copy` for a record or vector local `x`: a record copied into a fresh
@@ -1623,9 +1505,8 @@ pub fn tuple_get(e: el::El, vars: el_vars::Vars, te: integer?, index: integer) -
           if t is TyText {
             t = ir::TyText { dep: [tv] };
           }
-          // A vector member is read as the vector it is, a view of the tuple's local; a tuple
-          // member carries that borrow into each of its members (`(integer, text["a"])`).
-          if t is TyVector || t is TyTuple {
+          // A vector member is read as the vector it is, a view of the tuple's local.
+          if t is TyVector {
             t = el_types::with_deps(t, [tv]);
           }
           return ex(ir::NdTupleGet { var: tv, idx: index }, t);
@@ -1636,7 +1517,7 @@ pub fn tuple_get(e: el::El, vars: el_vars::Vars, te: integer?, index: integer) -
             mt = el::def(e, bd).attributes[index]!.typedef[0] ?? ir::TyVoid;
             // (A record member is read where it lies: a view of the tuple's local.)
             rec = struct_ref(e, mt) >= 0 && el_ex_object::literal_def(e, struct_ref(e, mt)) && !(mt is TyOptional);
-            if !(mt is TyText || el_convert::plain_scalar(mt) || rec || (mt is TyOptional && el_convert::plain_scalar(el_types::base(mt)))) {
+            if !(mt is TyText || el_convert::plain_scalar(mt) || rec) {
               el::refuse(e, "a member of a boxed tuple that is no plain scalar, text or record");
               return ex(ir::NdNull, ir::TyUnknown { n: 0 });
             }
@@ -1661,8 +1542,8 @@ pub fn tuple_get(e: el::El, vars: el_vars::Vars, te: integer?, index: integer) -
       mt = ee[index] ?? ir::TyVoid;
       // A member of a tuple that is itself a tuple's member (`n.0.1`): the inner tuple held in
       // a work ref first (`tuple_tmp`).
-      if el_ir::unspan(x.code) is NdTupleGet && index >= 0 && index < len(ee) && (mt is TyText || is_scalar(mt) || (el_types::base(mt) is TyReference && struct_ref(e, mt) >= 0)) {
-        tw = el_vars::work_ref(vars, x.tp);
+      if el_ir::unspan(x.code) is NdTupleGet && index >= 0 && index < len(ee) && (mt is TyText || is_scalar(mt)) {
+        tw = el_vars::work_ref(vars, el_types::with_deps(x.tp, []));
         return ex(el_ir::v_block([el_ir::v_set(tw, x.code), ir::NdTupleGet { var: tw, idx: index }], mt, "tuple_tmp"), mt);
       }
       // A record member of an element is read where it lies, a view of the vector's local.
@@ -2603,7 +2484,7 @@ fn empty_cast_bind(e: el::El, vars: el_vars::Vars, n: integer, op: text, target:
 }
 
 // Does the syntax under `n` run a call, or discharge a nullable (`x?`)?
-pub fn runs_a_call(e: el::El, n: integer) -> boolean {
+fn runs_a_call(e: el::El, n: integer) -> boolean {
   match e.p.nodes[n] {
     SCall { at: _ } => { return true; },
     SMember { call } => { if call { return true; } },
@@ -2731,14 +2612,6 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
   // A member of a tuple LOCAL written in place (`q.0 = 5`, `q.1 *= 2.0`): a plain scalar member
   // through its operator, a text member assigned whole.  A text member's `+=` builds through
   // work texts of its own and a parameter's tuple through its `__tp_` shadow — not carried.
-  // A member of a tuple member of a tuple local (`b.0.1 = "zz"`, `build_nested_tuple_assign`):
-  // the inner tuple read into its work ref as the read does (`tuple_tmp`), the leaf written
-  // there, the inner tuple written back.  A text leaf the held member types as borrowing the
-  // local is copied into a work text first, the write reading it by name.
-  nested = nested_member_assign(e, vars, op, target, rhs!);
-  if nested != null {
-    return nested!;
-  }
   match e.p.nodes[target] {
     STupleGet { e: tse, index: tix } => {
       tvar = match e.p.nodes[tse ?? 0] { SName { name: tn, member: tm } => if tse != null && tm == "" { el_vars::var(vars, tn) } else { -1 }, _ => -1 };
