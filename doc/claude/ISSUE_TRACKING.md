@@ -443,6 +443,33 @@ Filing is half the loop; closing is the other half.
 - **Don't file a bug you fix in the same change** — the fix + its test ARE the
   record (CLAUDE.md § Bug-filing policy).
 
+### Every defect is held against the slot matrix
+
+A defect found by any means — a port, a walk, a consumer, a fix under way — is also a
+measurement of the slot matrix (`scripts/slot_matrix.py`, @PLN221): either the matrix could
+have found it, or it shows what the matrix cannot see yet.  So whoever files or fixes a
+compiler defect answers one question and writes the answer down with the fix:
+
+1. **Is it one statement whose answer depends on the FORM of an operand?**  Try it:
+   `python3 scripts/slot_matrix.py run --filler all --slot <id>` for the slot it sits in.
+   A cell that fails on the build with the defect means the matrix reaches it; say so in
+   the issue.
+2. **Not reached, and rows would do it** — a slot row, a filler row, an operand type, a
+   prelude helper.  Add them in the same change as the fix, and check the new cell FAILS on
+   the build that has the defect (`slot_matrix.py walk --old <that build>`): a row that
+   never failed proves nothing.
+3. **Not reached, and no row can express it** — it turns on something the tool does not
+   vary (a sequence of statements, two operands, a declaration's shape, …).  Add its line to
+   [the reach ledger](plans/221-slot-walk/reach.tsv) with the axis it names, reusing the
+   wording of an axis already there.  The ledger is what decides the next axis to build.
+4. **Outside** — not about evaluating an operand (a diagnostic, a package, a library): a
+   ledger line saying so, and nothing else.
+
+The defect's own regression test is still owed, as before: the matrix compares a statement
+with its bound-first twin, so it sees only what the operand's form changes, and a defect
+that is wrong for every form needs its expected value written by hand.  The ledger and how
+its verdicts are defined: [plans/221-slot-walk/REACH.md](plans/221-slot-walk/REACH.md).
+
 ## Item lifecycle — the `status:` axis (bugs + enhancements)
 
 Every item carries a `status:*` label = **what it is waiting on**, on one shared
