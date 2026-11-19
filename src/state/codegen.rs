@@ -6060,6 +6060,7 @@ impl State {
         if crate::bind_lowering::lazy_buffer_mints_at(&stack.function, var, value)
             && let Type::Vector(elm_tp, _) = stack.function.tp(var).base().clone()
         {
+            note_bind("mint=1");
             self.gen_owned_vector_store(stack, var, &elm_tp);
             return;
         }
