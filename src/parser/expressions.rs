@@ -9492,7 +9492,29 @@ use a separate collection or add after the loop"
 
     pub(crate) fn addressing_has_effects(&self, v: &Value) -> bool {
         self.ir_has_user_call(v)
-            || v.any_node(&mut |n| matches!(n, Value::Block(_) | Value::Insert(_)))
+            || v.any_node(&mut |n| match n {
+                Value::Block(bl) => bl.operators.iter().any(|op| self.writes(op)),
+                Value::Insert(ops) => ops.iter().any(|op| self.writes(op)),
+                _ => false,
+            })
+    }
+
+    /// Does evaluating `v` WRITE: a `Set` of a variable, or an operator that is not one of the
+    /// reading ones ([`crate::pure_reuse::reads_only`])?  A block that only reads — a generic
+    /// template's captured-variable marker (`tvcapture`: the closure, the name, its
+    /// `OpGetDbRef`) — has no effect to keep to one run, and hoisting it minted a place temp the
+    /// monomorph's lambda never slotted (`n += 1` on a capture, PR #2586's ICE).
+    fn writes(&self, v: &Value) -> bool {
+        v.any_node(&mut |n| match n {
+            Value::Set(..) | Value::CallRef(..) | Value::Yield(_) | Value::Parallel(_) => true,
+            Value::Call(d, _) => {
+                (*d as usize) >= self.data.definitions.len() || {
+                    let name = self.data.def(*d).name();
+                    name.starts_with("Op") && !crate::pure_reuse::reads_only(name)
+                }
+            }
+            _ => false,
+        })
     }
 
     pub(crate) fn ir_has_user_call(&self, v: &Value) -> bool {
