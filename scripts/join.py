@@ -194,6 +194,34 @@ def only_rows(commit, path, registry):
     return bool(changed) and all(re.fullmatch(r"\| \*\*\d+\*\* \|", l.strip()) for l in changed)
 
 
+def merge_made(commit, tip, registry):
+    """The lines a merge's own resolution added — what `git show --remerge-diff` shows beyond
+    the automatic merge — that the source's tip still holds and this tree does not, by file.
+    `apply` picks commits and never merges, so without this a resolution is lost silently
+    (#2574 dropped a guard of tuxedo-pln204-next's 094c59c62).  Derived files are left out:
+    `rederive` measures them again."""
+    out = subprocess.run(["git", "show", "--remerge-diff", "--format=", commit], cwd=ROOT,
+                         capture_output=True, text=True).stdout
+    made = {}
+    for path, body in re.findall(r"^diff --git a/(\S+) b/\S+\n(.*?)(?=^diff --git |\Z)", out,
+                                 flags=re.M | re.S):
+        if is_derived(path, registry):
+            continue
+        added = [l[1:].strip() for l in body.splitlines()
+                 if l.startswith("+") and not l.startswith("+++") and l[1:].strip()
+                 and not l[1:].startswith(("<<<<<<<", "=======", ">>>>>>>"))]
+        if not added:
+            continue
+        here = subprocess.run(["git", "show", f"HEAD:{path}"], cwd=ROOT, capture_output=True,
+                              text=True).stdout
+        there = subprocess.run(["git", "show", f"{tip}:{path}"], cwd=ROOT, capture_output=True,
+                               text=True).stdout
+        missing = [a for a in added if a in there and a not in here]
+        if missing:
+            made[path] = missing
+    return made
+
+
 def classify(commit, registry, index_env, scheduled, pending):
     """One commit's row.  `pending` maps each file a commit already scheduled from this source
     changes to that commit; the caller adds this row's files once its class is final."""
@@ -342,6 +370,7 @@ def print_plan(plan, verbose=False):
                   f"{extra}{done}")
     todo = sum(1 for s in plan["sources"] for r in s["commits"]
                if r["class"] in ("NEW", "PARTIAL") and not r.get("done"))
+
     print(f"\n{todo} commit(s) to pick; `scripts/join.py apply` picks them "
           f"(plan: {plan_path().relative_to(ROOT) if plan_path().is_relative_to(ROOT) else plan_path()})")
 
@@ -503,6 +532,20 @@ def cmd_apply(args):
         save_plan(plan)
     plan["applied_head"] = git("rev-parse", "HEAD").strip()
     save_plan(plan)
+    # A merge's own resolution is in no commit `apply` picks: asked once everything is picked,
+    # so what a later pick carries is already here and only a real loss is reported.
+    lost = [(s, r, merge_made(r["sha"], s["sha"], registry)) for s in plan["sources"]
+            for r in s["commits"] if r["class"] == "MERGE"]
+    lost = [(s, r, m) for s, r, m in lost if m]
+    if lost:
+        for s, r, made in lost:
+            print(f"\nSTOP  {r['sha'][:9]} {r['subject'][:70]}  ({s['name']})\n      its merge "
+                  "resolution added lines the source still has and this joined tree lacks:")
+            for f, lines in made.items():
+                print(f"        {f}: {len(lines)} line(s), first `{lines[0][:90]}`")
+            print(f"      carry them by hand (`git show --remerge-diff {r['sha'][:9]}`), commit, "
+                  "then run `scripts/join.py apply` again.  JOINING.md § Merge resolutions.")
+        return 1
     print("\nall sources applied — next: `scripts/join.py rederive`")
     return 0
 
