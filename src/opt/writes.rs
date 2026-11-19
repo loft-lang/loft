@@ -224,6 +224,12 @@ pub struct HoistTiers {
     /// no vector's record or length but may grow its store, so a reader of the gate that
     /// holds an ADDRESS (a record view's pointer, a push header) must keep declining it.
     pub text_set: bool,
+    /// `(R-RecPtr)`'s holder clause — the reader holds a RECORD'S ADDRESS only, no vector
+    /// header or push handle, so a fixed-width set into any slot is in place for it: emptying
+    /// a collection field (`OpSetInt4(rec, pos, 0)`) changes that vector, never moves a record.
+    /// Set ONLY by the record-pointer verdict; every header reader leaves it off and asks the
+    /// slot (`loop_records::in_place_set`, loft#2569).
+    pub address_only: bool,
 }
 
 /// `@FR-O-LazyBuffer` — the record-buffer pool's mint, which `scopes::reuse_record_buffers`
@@ -910,6 +916,12 @@ pub(crate) fn blocks_header_hoist(
     fresh: &mut HashSet<u16>,
     owned: Option<&HoistOwned>,
 ) -> bool {
+    // The schema an in-place set's slot is read from: the caller's, else the one the walk's
+    // facts carry — a caller that passes none still has its setters judged by their slot.
+    let schema = stores.or(fx.stores);
+    // The sets into a record a sibling statement just created, which stale no header whatever
+    // their slot holds (`loop_records::sets_into_new_records`).
+    let young_sets = crate::opt::loop_records::sets_into_new_records(node, data);
     // `(R-InPlace)`'s exit clause: the releases a `return` runs on its way out, marked as the
     // walk enters their block.
     let mut exit_frees: HashSet<*const Value> = HashSet::new();
@@ -941,7 +953,15 @@ pub(crate) fn blocks_header_hoist(
             let known = (*d as usize) < data.definitions.len();
             let in_place_setter = known
                 && tiers.in_place
-                && (crate::opt::loop_records::in_place_set(data, stores, data.def(*d).name(), args, vars)
+                && (crate::opt::loop_records::in_place_set(data, schema, data.def(*d).name(), args, vars)
+                    || young_sets.contains(&std::ptr::from_ref(n))
+                    || (tiers.address_only && IN_PLACE_SET_OPS.contains(&data.def(*d).name()))
+                    // …and one into an element an EARLIER statement of the loop body minted
+                    // (`@FR-R-Mint`'s fresh window, which persists across the statements).
+                    || (IN_PLACE_SET_OPS.contains(&data.def(*d).name())
+                        && args.first().is_some_and(|t| {
+                            crate::opt::body_writes::fresh_rooted(t, data, fresh)
+                        }))
                     || scalar_file_read(data, data.def(*d).name(), args, vars)
                     || local_stack_ref(data.def(*d).name(), args, vars)
                     || record_stack_ref(stores, data, data.def(*d).name(), args, vars));

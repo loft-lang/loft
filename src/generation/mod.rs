@@ -5761,6 +5761,8 @@ impl Output<'_> {
             rebound_movers: !self.switches.rebound_mover_disabled,
             // Never here: only `hoist::hoistable`'s header verdict admits a text set.
             text_set: false,
+            // Never here: only the record-pointer verdict holds an address alone.
+            address_only: false,
         }
     }
 

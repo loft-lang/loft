@@ -29,6 +29,28 @@ fn h6() -> text { b = VBox { inner: Vf { v: [5, 6], n: 1 } }; over_param(b); "{b
 fn c1() -> text { b = VBox { inner: Vf { v: [5], n: 1 } }; for i in 0..3 { b.inner.n = i; b.inner.v += [i]; } "{b.inner.v} {b.inner.n}" }
 fn c2() -> text { b = VBox { inner: Vf { v: [5], n: 1 } }; for i in 0..3 { e: vector<integer> = []; b.inner = Vf { v: e, n: i }; b.inner.v += [i]; } "{b.inner.v}" }
 
+// A push, the rebuild, then a second push in one pass: the handle must follow the rebuild.
+fn h7(k: integer) -> text { b = VBox { inner: Vf { v: [5], n: 1 } }; for i in 0..k { b.inner.v += [i]; b.inner = Vf { v: [], n: i }; b.inner.v += [i * 19]; } "{b.inner.v} {len(b.inner.v)}" }
+
+// The sets the slot check still admits, each beside a held header: an element of a vector of
+// 4-byte numbers, an element minted into a hash and primed empty, and a record whose scalars a
+// held address reads after its own collection field is primed.
+struct Cell { k: integer, items: vector<integer>, n: integer = 0 }
+struct Grid { cells: hash<Cell[k]>, marks: vector<i32>, out: vector<integer> }
+fn c3(k: integer) -> text { g = Grid { cells: [], marks: [0, 0, 0, 0], out: [] }; for i in 0..k { g.marks[i % 4] = (i * 3) as i32; g.out += [i * 5]; } "{g.marks} {g.out}" }
+fn c4(k: integer) -> text {
+  g = Grid { cells: [], marks: [], out: [] };
+  for i in 0..k {
+    g.cells += [Cell { k: i, items: [], n: i * 2 }];
+    c = g.cells[i];
+    if c != null { c.items += [i * 7, i * 7 + 1]; }
+  }
+  s = 0;
+  for c in g.cells { s += len(c.items) * 100 + c.n; }
+  "{s} {g.cells[2].items}"
+}
+fn c5(k: integer) -> text { c = Cell { k: 1, items: [9, 9], n: 4 }; t = 0; for i in 0..k { c = Cell { k: i, items: [], n: i * 3 }; t += c.k + c.n + len(c.items); c.items += [i]; } "{t} {c.items} {c.n}" }
+
 fn main() {
   assert(h1() == "[2] 2", "h1 the field rebuilt, then pushed: {h1()}");
   assert(h3() == "[2]", "h3 rebuilt by a callee: {h3()}");
@@ -37,4 +59,8 @@ fn main() {
   assert(h6() == "[2]", "h6 the loop over a parameter: {h6()}");
   assert(c1() == "[5,0,1,2] 2", "c1 control, a number field set in place: {c1()}");
   assert(c2() == "[2]", "c2 control, the field given a local: {c2()}");
+  assert(h7(3) == "[38] 1", "h7 push, rebuild, push in one pass: {h7(3)}");
+  assert(c3(6) == "[12,15,6,9] [0,5,10,15,20,25]", "c3 an i32 element set beside a push: {c3(6)}");
+  assert(c4(4) == "812 [14,15]", "c4 hash elements minted and primed: {c4(4)}");
+  assert(c5(4) == "24 [3] 9", "c5 scalars read after the priming: {c5(4)}");
 }

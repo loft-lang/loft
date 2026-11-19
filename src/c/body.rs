@@ -2087,6 +2087,7 @@ impl<'a> FnWriter<'a> {
             heap_push: !sw.heap_record_push_disabled,
             rebound_movers: !sw.rebound_mover_disabled,
             text_set: false,
+            address_only: false,
         };
         let mut cache = std::mem::take(&mut self.hoist_cache);
         let facts = self.store_facts();
