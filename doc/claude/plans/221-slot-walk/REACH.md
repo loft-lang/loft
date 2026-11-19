@@ -41,7 +41,7 @@ tables as they stood on 2026-11-19 and given one verdict.  The ledger is
 
 | Verdict | Issues | Meaning |
 |---|---|---|
-| `fits-now` | 3 | the tables already hold the slot and the filler (loft#2573, loft#2571, loft#2577) |
+| `fits-now` | 3 | the tables already held the slot and the filler (loft#2573, loft#2571, loft#2577) |
 | `fits-rows` | 23 | one statement with one operand form, lacking a slot row (21), a filler row (15), a prelude helper (11) or an operand type (6) |
 | `needs-axis` | 43 | it turns on something the tool did not vary |
 | `outside` | 9 | not about evaluating an operand: a missing warning, a library binding, lexing |
@@ -69,6 +69,29 @@ statement is as wrong with a plain variable as with any other operand, or the bo
 form is itself the failing one.  The matrix compares a statement with its twin, so it sees
 a defect only where the FORM of the operand changes the answer.  A defect that is wrong for
 every form needs an expected value written by hand, which is what a suite cell is for.
+
+## Calibration — how far a judged verdict can be trusted
+
+Five of the 23 `fits-rows` verdicts were written as cells with `slot_matrix.py cell` and run
+on the release of 2026-11-03, the build of 2026-11-18 and the branch.
+
+| Issue | Outcome |
+|---|---|
+| loft#2517 | confirmed: the cell fails on the release and passes after; now the slot `op-concat-tail` |
+| loft#2409 | confirmed the same way; now the slot `ct-if-empty-arm` |
+| loft#2407 | confirmed as a refusal: the release refuses the cell, later builds accept it; now the filler `vint-if-empty` |
+| loft#2470 | not reachable: `e[5] = e[99]` is as wrong with the lookup bound first, so the twin agrees with the defect.  Its reader had said so in the note |
+| loft#2561 | not rows: it turns on the record also being the element of a keyed collection, which is the declaration-shape axis |
+
+Three of five held, and the two that did not were the ones whose notes already carried a
+doubt.  So a `fits-rows` verdict with an unqualified note is a fair guide, and one with a
+caveat should be read as `needs-axis`.  The other 18 are not calibrated.
+
+Writing those five also found two faults in the tool, since fixed — a function declared by
+a cell collided with the same declaration in the next cell, and the collection kind was not
+substituted inside a declaration — and one missing feature, now there: `<BIND>` in a slot's
+declaration marks where the twin binds the operand, which gives a slot inside a function
+its bound-first twin.
 
 ## The two axes this added
 

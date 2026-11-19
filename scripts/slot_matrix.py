@@ -87,6 +87,7 @@ KINDS = (("vector", "vector<P>"), ("sorted", "sorted<P[k]>"),
 KIND_NAMES = re.compile(r"\b(xs|mk|items|tk)\b")
 OUTSIDE_CLASSES = ("none:", "decl:", "unreached:")
 SLOT = "<S>"
+BIND = "<BIND>"
 COUNTER = "<C>"
 
 
@@ -229,6 +230,8 @@ def check(slots, fillers, outside, lex, rules, problems):
             problems.append(f"{where}: count `cond` with runs {s['runs']}")
         if s["rule"] != "-" and s["rule"] not in rules:
             problems.append(f"{where}: rule `{s['rule']}` is not defined in doc/claude/formal/")
+        if s["decl"].count(BIND) > 1 or BIND in s["stmt"]:
+            problems.append(f"{where}: `{BIND}` stands at most once, and in the declaration")
         if (s["stmt"] + s["decl"]).count(SLOT) != 1:
             problems.append(f"{where}: the statement and declaration hold `{SLOT}` "
                             f"{(s['stmt'] + s['decl']).count(SLOT)} times, want once")
@@ -361,7 +364,6 @@ ORDER_NAME = re.compile(r"<S>|(?<![.\w])(%s)(?![\w(])" % "|".join(sorted(ORDER_C
 # A statement with one of these runs an operand conditionally or more than once, so source
 # order is not the order its operands run in; no ORDER cell is made for it.
 ORDER_BARRED = re.compile(r"\b(for|while|if|match|and|or|par|parallel|fn|assert)\b|&&|\|\||\?")
-DECL_NAMES = re.compile(r"\b(give|tail|gen)\b")
 CHUNK = 120
 
 
@@ -416,7 +418,8 @@ def make_cells(slots, fillers, which_filler, which_slot, which_kind, contexts=No
                 expr = f["expr"].replace(COUNTER, "c")
                 put = lambda stmt: wrap.replace("<STMT>", stmt)
                 cell = {"name": where % f["id"], "slot": slot["id"], "frame": frame,
-                        "kind_type": kind_type, "decl": slot["decl"].replace(SLOT, expr),
+                        "kind_type": kind_type,
+                        "decl": slot["decl"].replace(SLOT, expr).replace(BIND, ""),
                         "stmt": put(slot["stmt"].replace(SLOT, expr)), "base": base,
                         "want": 0 if is_var else int(slot["runs"]) * passes, "log": None}
                 out.append(cell)
@@ -424,10 +427,13 @@ def make_cells(slots, fillers, which_filler, which_slot, which_kind, contexts=No
                 # with that local.  A local is evaluated once by construction, so the twin
                 # says what the statement must leave behind.  Only where the operand runs
                 # exactly once and sits in the frame; elsewhere the plain variable says it.
-                if not is_var and slot["count"] == "once" and not slot["decl"]:
+                if not is_var and slot["count"] == "once" and (not slot["decl"] or BIND in slot["decl"]):
                     cell["base"] = cell["name"] + ".twin"
-                    out.append(dict(cell, name=cell["base"], base=cell["base"], want=passes,
-                                    stmt=put(f"t0 = {expr}; " + slot["stmt"].replace(SLOT, "t0"))))
+                    bind = f"t0 = {expr}; "
+                    out.append(dict(
+                        cell, name=cell["base"], base=cell["base"], want=passes,
+                        decl=slot["decl"].replace(BIND, bind).replace(SLOT, "t0"),
+                        stmt=put(("" if slot["decl"] else bind) + slot["stmt"].replace(SLOT, "t0"))))
                 silent = ".calls += 1" in f["expr"] and ".log" not in f["expr"]
                 turn = (None if is_var or silent or slot["decl"] or slot["count"] != "once"
                         else ordered(slot["stmt"]))
@@ -445,10 +451,15 @@ def program(kind_type, cells):
     spans = []
     for n, cell in enumerate(cells):
         fn = f"test_c{n:04d}"
-        rename = lambda t, n=n: DECL_NAMES.sub(lambda m: f"{m.group(1)}_{n}", t)
-        body = frames[cell.get("frame") or next(iter(frames))].replace("KIND", kind_type)
+        # Every function a cell declares is its own: the name gets the cell's number, in
+        # the declaration and where the statement calls it.
+        declared = re.findall(r"\bfn\s+([A-Za-z_]\w*)\s*\(", cell["decl"])
+        rename = lambda t, n=n, d=declared: (
+            re.sub(r"\b(%s)\b" % "|".join(map(re.escape, d)), lambda m: f"{m.group(1)}_{n}", t) if d else t)
+        body = frames[cell.get("frame") or next(iter(frames))]
         part = (body.replace("CELLDECL", rename(cell["decl"])).replace("CELLFN", fn)
-                .replace("CELLSTMT", rename(cell["stmt"])).replace("CELLNAME", cell["name"]))
+                .replace("CELLSTMT", rename(cell["stmt"])).replace("CELLNAME", cell["name"])
+                .replace("KIND", kind_type))
         first = text.count("\n") + 1
         text += part
         spans.append((first, text.count("\n"), fn))

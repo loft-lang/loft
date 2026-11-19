@@ -9,6 +9,9 @@
 #   statement  one statement of `main` in scripts/syntax_slots_prelude.loft; `<S>` is the slot.
 #   declaration  an optional top-level declaration the statement needs; `<S>` may sit there
 #           instead, and then the declaration's parameters are the names a filler may use.
+#           `<BIND>` in it marks where the bound-first twin binds the operand (`t0 = …;`),
+#           which gives a slot inside a declaration its twin; without it the plain variable
+#           is what the cell is compared with.
 # A new operator, keyword or `#` attribute adds a row here, or a line in
 # scripts/syntax_outside.tsv saying why it takes no operand: `slot_matrix.py check` fails
 # until one of the two exists.
@@ -111,6 +114,7 @@ op-gt	operator	E-Left	once	1	int	if j > <S> { s = 1; }
 op-ge	operator	E-Left	once	1	int	if j >= <S> { s = 1; }
 op-eq-text	operator	E-Eq	once	1	text	if <S> == x { s = 1; }
 op-concat	operator	E-Concat	once	1	text	o = x + <S>;
+op-concat-tail	operator	Col-Concat	once	1	vint	q = cat(c, h, vi); s = len(q);	fn cat(c: Ctr, h: Hold, vi: vector<integer>) -> vector<integer> { <BIND> <S> + [9] }
 op-float	operator	E-Left	once	1	float	s = (fl + <S>) as integer;
 op-as	operator	N-Cast	once	1	float	s = <S> as integer;
 op-is	operator	-	once	1	enum	if <S> is Green { s = 1; }
@@ -125,6 +129,7 @@ op-or-word	operator	E-Or	cond	0	bool	if b or <S> { s = 1; }
 ct-if	control	E-IfT	once	1	bool	if <S> { s = 1; } else { s = 2; }
 ct-if-value-taken	control	E-IfT	cond	1	int	s = if b { <S> } else { j };
 ct-if-value-skipped	control	E-IfT	cond	0	int	s = if b { j } else { <S> };
+ct-if-empty-arm	control	E-IfT	once	1	bool	q = tp(c, h, b); s = if q == null { -1 } else { 1 };	fn tp(c: Ctr, h: Hold, b: boolean) -> vector<integer>? { if <S> { [] } else { null } }
 ct-match-subject	control	M-Once	once	1	int	match <S> { 1 => { s = 1; }, _ => { s = 9; } }
 ct-match-enum	control	M-Once	once	1	enum	match <S> { Green => { s = 1; }, _ => { s = 9; } }
 ct-match-arm-taken	control	M-Expr	cond	1	int	s = match i { 1 => <S>, _ => j };

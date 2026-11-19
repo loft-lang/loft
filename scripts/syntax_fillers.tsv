@@ -55,6 +55,7 @@ vint-var	vint	vi
 vint-call	vint	mkv(<C>)
 vint-field	vint	held(<C>, h).v
 vint-slice	vint	mkv(<C>)[0..]
+vint-if-empty	vint	(if yes(<C>, false) { [] } else { [10, 20, 30, 40] })
 enum-var	enum	en
 enum-call	enum	col(<C>)
 enum-field	enum	box(<C>, h).tag
