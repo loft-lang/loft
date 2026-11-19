@@ -3,19 +3,21 @@ Copyright (c) 2026 Jurjen Stellingwerff
 SPDX-License-Identifier: LGPL-3.0-or-later
 -->
 
-# formal/concurrency.md — small-step semantics for `par` (strict)
+# formal/concurrency.md — small-step semantics for `par` and `parallel { }` (strict)
 
 **Catalogue:** @F (threading / `par`), @PLN89 (differential oracle).
 
-> **Rules then deviations** (see [README](README.md)). This is the relation for loft's ONE
-> parallel construct: the `par(b = worker(a), N)` clause on a `for … in` loop. It extends
+> **Rules then deviations** (see [README](README.md)). This is the relation for loft's two
+> parallel constructs: the `par(b = worker(a), N)` clause on a `for … in` loop, and the
+> `parallel { arm; arm }` block (`C-Arms`). It extends
 > [iteration.md](iteration.md) (the loop it decorates) and [heap.md](heap.md) (results are
 > deep-copied into a fresh store). It is the written contract for the "parallel reductions"
 > part operational.md's D-op-1 named unwritten — and the ONE place loft **deliberately gives up
 > execution order**, so its determinism is a *conditional* guarantee that must be stated exactly.
 >
 > There is no other concurrency surface: no shared-memory threads, no locks in user code, no
-> `async`. `par` is a data-parallel map, nothing more.
+> `async`. `par` is a data-parallel map, and a `parallel` block runs whole statements side by
+> side, each on a read-only view of its frame — nothing more.
 
 ## The model in one line
 
@@ -92,6 +94,30 @@ elements in a different order than the sequential, key-ordered `for x in h`. Thi
 sequential — because a hash has no inherent order to preserve. `sorted`/`index` sources keep
 their order.
 
+### The arms of a `parallel` block run at once
+
+```
+  (C-Arms)  parallel { e1; e2; … ; en }
+              ≡  snapshot σ := the enclosing frame and heap at the block's entry ;
+                 run e1 … en AT ONCE, each on its own thread, each against its own copy of σ ;
+                 continue when every ei has ended.        (each ei's value is discarded)
+            where an ei reads σ and writes none of it (assigning an enclosing local, mutating
+            one through a reference and naming a parameter are compile errors), and whatever
+            an ei makes — locals, texts, stores — is its own and is gone when it ends.
+```
+
+**In words.** Each top-level expression of the block is an arm, and every arm is running
+before any arm has to finish: the arms are concurrent, not merely unordered. That is what lets
+arms wait on each other through the outside world — one arm accepting on a socket that another
+arm connects to, one waiting for a file another writes — where an arm run after the one it
+waits for would never see it start. An arm reads the enclosing locals at their values on entry
+and changes none of them, so nothing an arm does is visible to another arm or to the code after
+the block except through the outside world (a file, a socket, the output). Arms that use the
+outside world share it as separate threads do: two arms appending to one file interleave in an
+order the language does not define (`C-Impure`). A build with no threads (ISO C99 alone, WASI,
+a microcontroller) runs the arms in order, so there an arm that waits for a later one waits in
+vain.
+
 ---
 
 ## Deviations
@@ -117,6 +143,10 @@ OPEN: **0**.  The register is [concurrency-history.md](concurrency-history.md); 
 - **Deep-copied struct results (`C-Par` + `H-Copy`)** — `par(b = make(a), N)` where `make`
   returns a struct: each `b` is an independent copy; field access on `b` in the body works and no
   worker store leaks.
+- **Arms at once (`C-Arms`)** — an arm that waits (bounded) for a file a LATER arm writes sees
+  it; a chain of three arms each waiting for the next; arms opening, writing and reading files
+  at the same time; an arm building a `vector<text>`, running a `par` loop or a nested `parallel`
+  block — each result read back through a file, on both backends.
 - **Hash walk order (`C-Order`)** — `for x in h par(…)` may differ in order from `for x in h`,
   and from one run or backend to the next (the bucket walk follows the hash seed); a body that
   depends on it is outside `C-Det`.

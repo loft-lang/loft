@@ -1793,6 +1793,11 @@ static void loft_par_job_run(loft_par_job *j) {
     free(loft_child_jobs);
     loft_child_jobs = 0;
     loft_child_njobs = loft_child_cap = 0;
+    /* Its stack of `par` result buffers, which a `par` loop inside the worker grew (a `parallel`
+     * arm runs any code): every buffer was dropped when its loop ended, the stack stays. */
+    free(loft_par_bufs);
+    loft_par_bufs = 0;
+    loft_npar = loft_par_cap = 0;
 #if defined(LOFT_CALL_CHAIN)
     free(loft_frames);
     loft_frames = 0;
@@ -1828,7 +1833,8 @@ static void loft_par_job_init(loft_par_job *j, loft_par_body body, void *ctx, in
     j->hi = hi;
     j->table = (loft_store_t *) calloc(room, sizeof *j->table);
     if (!j->table) { fputs("loft: out of memory\n", stderr); abort(); }
-    memcpy(j->table, loft_stores, (size_t) loft_nstores * sizeof *j->table);
+    /* A `parallel` block may start before the program made any store: no table to copy. */
+    if (loft_nstores) memcpy(j->table, loft_stores, (size_t) loft_nstores * sizeof *j->table);
     for (i = 0; i < loft_nstores; i++) {
         j->table[i].live = 1;
         j->table[i].pinned = 1;
@@ -1925,7 +1931,7 @@ static void loft_par_run(int64_t n, int64_t threads, loft_par_body body, void *c
     body(ctx, 0, n);
 }
 
-/* `parallel { arm; arm }` (loft#2568): every arm on a thread of its own, the caller waiting
+/* `parallel { arm; arm }` (`@FR-C-Arms`, loft#2568): every arm on a thread of its own, the caller waiting
  * until all have ended.  The arms are run AT ONCE, not in turn, because arms may wait on each
  * other through the outside world — a socket, a file, a pipe — and an arm run after the one
  * it answers never starts.  Each arm is a function of the block's site (`parallel.rs`) that

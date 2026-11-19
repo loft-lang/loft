@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @I68 — Native Rust generator: a second compiled target, C
 
-//! `parallel { arm; arm }` as C (loft#2568): each arm is written as a function of its own and
+//! `parallel { arm; arm }` as C (`@FR-C-Arms`, loft#2568): each arm is written as a function of its own and
 //! the site runs them all on threads at once (`loft_parallel_run`, `loft_keyed.h`), waiting
 //! until every one has ended.  The arms run AT ONCE because they may wait on each other through
 //! the outside world — one arm accepting on a socket the other connects to — and an arm run
