@@ -127,7 +127,7 @@ index 39e9c0f78..56f1dbd5f 100644
                      if is_tail_capture_call {
                          // Close the block opened above; the call is its tail expr.
 diff --git a/src/parser/collections.rs b/src/parser/collections.rs
-index bcad52810..7233fd094 100644
+index f7988f324..7081333c0 100644
 --- a/src/parser/collections.rs
 +++ b/src/parser/collections.rs
 @@ -2557,7 +2557,7 @@ use #count instead"
@@ -161,10 +161,10 @@ index bcad52810..7233fd094 100644
              self.iter_op_count_or_first(code, name, t, false, index_var);
          } else if self.lexer.has_keyword("first") {
 diff --git a/src/parser/control.rs b/src/parser/control.rs
-index 4b29905b1..f886e8b0d 100644
+index ea68f5415..986618aa0 100644
 --- a/src/parser/control.rs
 +++ b/src/parser/control.rs
-@@ -14250,7 +14250,7 @@ impl Parser {
+@@ -14351,7 +14351,7 @@ impl Parser {
          // validate if there is a defined return value
          let mut v = Value::Null;
          let r_type = self.data.def(self.context).returned().clone();
@@ -174,7 +174,7 @@ index 4b29905b1..f886e8b0d 100644
              // used to report `not null` violations at the tuple literal site.
              let expr_start = self.lexer.peek().clone();
 diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
-index 809d3da2f..20596690a 100644
+index d5e30698b..9d9612a3d 100644
 --- a/src/parser/expressions.rs
 +++ b/src/parser/expressions.rs
 @@ -1283,19 +1283,6 @@ impl Parser {
@@ -210,10 +210,10 @@ index 809d3da2f..20596690a 100644
                  let break_tp = self.expression(&mut break_val);
                  let ret_tp = self.data.def(self.context).returned().clone();
 diff --git a/src/parser/operators.rs b/src/parser/operators.rs
-index a5efa0944..f17612377 100644
+index dd8dea3aa..f96cc0d93 100644
 --- a/src/parser/operators.rs
 +++ b/src/parser/operators.rs
-@@ -3786,6 +3786,30 @@ impl Parser {
+@@ -3796,6 +3796,30 @@ impl Parser {
              if matches!(self.data.def(*d).returned(), Type::Optional(_)))
      }
  
@@ -244,7 +244,7 @@ index a5efa0944..f17612377 100644
      /// Desugar `lhs ?? ...` — both the plain-default form and the
      /// `?? return ret_expr` early-return form.  Lifted out of
      /// [`Self::handle_operator`] so each shape has its own focused helper.
-@@ -3942,14 +3966,8 @@ impl Parser {
+@@ -3951,14 +3975,8 @@ impl Parser {
          // `false ?? x` stays `false` (false is not null); `null ?? x` → x.
          if self.lexer.has_token("return") {
              self.build_null_coalesce_return(code, ctp, &lhs_type);
@@ -259,9 +259,9 @@ index a5efa0944..f17612377 100644
 +        } else if self.refuse_coalesce_loop_control() {
 +            // the operand stands as written; the refusal is reported
          } else {
-             self.build_null_coalesce_default(var_tp, code, parent_tp, precedence, ctp, &lhs_type);
+             self.build_null_coalesce_default(var_tp, code, precedence, ctp, &lhs_type);
          }
-@@ -4247,7 +4265,7 @@ impl Parser {
+@@ -4256,7 +4274,7 @@ impl Parser {
      fn build_null_coalesce_return(&mut self, code: &mut Value, ctp: &mut Type, lhs_type: &Type) {
          let mut ret_stmt = Value::Null;
          let r_type = self.data.def(self.context).returned().clone();
@@ -270,7 +270,7 @@ index a5efa0944..f17612377 100644
              // In a function with no value, `x ?? return f()` runs the void call and leaves —
              // the one place a `return` is followed by an expression there, which published
              // libraries write (`dev = open(..) ?? return assert(false, "no device")`).  The
-@@ -4259,7 +4277,7 @@ impl Parser {
+@@ -4268,7 +4286,7 @@ impl Parser {
                  self.validate_convert("return", &t, &r_type, &ret_pos);
              }
              ret_stmt = Value::Return(Box::new(ret_val));
