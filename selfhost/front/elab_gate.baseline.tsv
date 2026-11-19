@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	97f28ac30a01877568a8c76e38ceeae644248c46
 
-layer	elab	agree	1167	of	2091
+layer	elab	agree	1168	of	2091
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -770,7 +770,6 @@ elab	refused	tests/scripts/2001-a-work-buffer-through-a-function-value-is-its-ow
 elab	refused	tests/scripts/2016-a-chain-site-whose-callee-returns-its-parameter-copies-what-it-hands-up.loft
 elab	refused	tests/scripts/2028-both-parse-forms-name-every-mismatch-on-the-record.loft
 elab	refused	tests/scripts/2038-a-slice-first-bind-holds-its-slice-whatever-the-local-is-rebound-to.loft
-elab	refused	tests/scripts/2045-a-local-bound-to-owned-and-borrowed-stores-releases-each-once.loft
 elab	refused	tests/scripts/2097-a-qualified-variant-is-its-own-enums-variant.loft
 elab	refused	tests/scripts/2112-a-parallel-arm-stops-at-its-own-frame.loft
 elab	refused	tests/scripts/2172-a-paged-lookup-decodes-a-narrow-key-as-the-store-does.loft
@@ -931,7 +930,7 @@ elab	refused	tests/scripts/store_load_field_refusal.loft
 elab	refused	tests/scripts/store_paged_enum_field.loft
 elab	refused	tests/scripts/store_rebuild_b1.loft
 
-layer	elab-functions	agree	14726	of	27023
+layer	elab-functions	agree	14696	of	26992
 elab-functions	agree	lib/code.loft::Block
 elab-functions	agree	lib/code.loft::Boolean
 elab-functions	agree	lib/code.loft::Call
@@ -13738,36 +13737,6 @@ elab-functions	agree	tests/scripts/2038-a-slice-first-bind-holds-its-slice-whate
 elab-functions	agree	tests/scripts/2038-a-slice-first-bind-holds-its-slice-whatever-the-local-is-rebound-to.loft::n_s7
 elab-functions	agree	tests/scripts/2038-a-slice-first-bind-holds-its-slice-whatever-the-local-is-rebound-to.loft::n_tsum
 elab-functions	agree	tests/scripts/2038-a-slice-first-bind-holds-its-slice-whatever-the-local-is-rebound-to.loft::vector<P>
-elab-functions	agree	tests/scripts/2045-a-local-bound-to-owned-and-borrowed-stores-releases-each-once.loft::(schema)
-elab-functions	agree	tests/scripts/2045-a-local-bound-to-owned-and-borrowed-stores-releases-each-once.loft::Bt
-elab-functions	agree	tests/scripts/2045-a-local-bound-to-owned-and-borrowed-stores-releases-each-once.loft::Ci
-elab-functions	agree	tests/scripts/2045-a-local-bound-to-owned-and-borrowed-stores-releases-each-once.loft::E
-elab-functions	agree	tests/scripts/2045-a-local-bound-to-owned-and-borrowed-stores-releases-each-once.loft::Hx
-elab-functions	agree	tests/scripts/2045-a-local-bound-to-owned-and-borrowed-stores-releases-each-once.loft::S
-elab-functions	agree	tests/scripts/2045-a-local-bound-to-owned-and-borrowed-stores-releases-each-once.loft::Sh
-elab-functions	agree	tests/scripts/2045-a-local-bound-to-owned-and-borrowed-stores-releases-each-once.loft::Sq
-elab-functions	agree	tests/scripts/2045-a-local-bound-to-owned-and-borrowed-stores-releases-each-once.loft::W
-elab-functions	agree	tests/scripts/2045-a-local-bound-to-owned-and-borrowed-stores-releases-each-once.loft::__const_n_old_hx
-elab-functions	agree	tests/scripts/2045-a-local-bound-to-owned-and-borrowed-stores-releases-each-once.loft::main_vector<E>
-elab-functions	agree	tests/scripts/2045-a-local-bound-to-owned-and-borrowed-stores-releases-each-once.loft::main_vector<Hx>
-elab-functions	agree	tests/scripts/2045-a-local-bound-to-owned-and-borrowed-stores-releases-each-once.loft::n_g1
-elab-functions	agree	tests/scripts/2045-a-local-bound-to-owned-and-borrowed-stores-releases-each-once.loft::n_g2a
-elab-functions	agree	tests/scripts/2045-a-local-bound-to-owned-and-borrowed-stores-releases-each-once.loft::n_g2b
-elab-functions	agree	tests/scripts/2045-a-local-bound-to-owned-and-borrowed-stores-releases-each-once.loft::n_g3
-elab-functions	agree	tests/scripts/2045-a-local-bound-to-owned-and-borrowed-stores-releases-each-once.loft::n_g5
-elab-functions	agree	tests/scripts/2045-a-local-bound-to-owned-and-borrowed-stores-releases-each-once.loft::n_g6
-elab-functions	agree	tests/scripts/2045-a-local-bound-to-owned-and-borrowed-stores-releases-each-once.loft::n_g7
-elab-functions	agree	tests/scripts/2045-a-local-bound-to-owned-and-borrowed-stores-releases-each-once.loft::n_g8
-elab-functions	agree	tests/scripts/2045-a-local-bound-to-owned-and-borrowed-stores-releases-each-once.loft::n_main
-elab-functions	agree	tests/scripts/2045-a-local-bound-to-owned-and-borrowed-stores-releases-each-once.loft::n_maybe
-elab-functions	agree	tests/scripts/2045-a-local-bound-to-owned-and-borrowed-stores-releases-each-once.loft::n_mk
-elab-functions	agree	tests/scripts/2045-a-local-bound-to-owned-and-borrowed-stores-releases-each-once.loft::n_mkw
-elab-functions	agree	tests/scripts/2045-a-local-bound-to-owned-and-borrowed-stores-releases-each-once.loft::n_msh
-elab-functions	agree	tests/scripts/2045-a-local-bound-to-owned-and-borrowed-stores-releases-each-once.loft::n_old_hx
-elab-functions	agree	tests/scripts/2045-a-local-bound-to-owned-and-borrowed-stores-releases-each-once.loft::n_sv
-elab-functions	agree	tests/scripts/2045-a-local-bound-to-owned-and-borrowed-stores-releases-each-once.loft::n_wt
-elab-functions	agree	tests/scripts/2045-a-local-bound-to-owned-and-borrowed-stores-releases-each-once.loft::vector<E>
-elab-functions	agree	tests/scripts/2045-a-local-bound-to-owned-and-borrowed-stores-releases-each-once.loft::vector<Hx>
 elab-functions	agree	tests/scripts/2097-a-qualified-variant-is-its-own-enums-variant.loft::Item
 elab-functions	agree	tests/scripts/2097-a-qualified-variant-is-its-own-enums-variant.loft::NoneA
 elab-functions	agree	tests/scripts/2097-a-qualified-variant-is-its-own-enums-variant.loft::NoneB
@@ -15659,7 +15628,7 @@ elab-functions	agree	tests/scripts/store_rebuild_b1.loft::n_label_of
 elab-functions	agree	tests/scripts/store_rebuild_b1.loft::n_report
 elab-functions	agree	tests/scripts/store_rebuild_b1.loft::n_xs_len
 
-layer	elab-pass1	agree	11013	of	16347
+layer	elab-pass1	agree	11013	of	16348
 elab-pass1	agree	lib/code.loft::t_4Code_get_type
 elab-pass1	agree	lib/code.loft::t_4Code_set_type
 elab-pass1	agree	lib/docs.loft::n_demo
