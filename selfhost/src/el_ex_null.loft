@@ -655,7 +655,19 @@ pub fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: intege
     }
     // A vector of scalars defaults to `[]` (`build_default`'s collection arm): `x?` is
     // `x ?? []`.  A vector of records registers its default's types where Rust does not yet.
-    if b is TyVector && match b { TyVector { inner } => el_convert::plain_scalar(inner) || el_types::base(inner) is TyText && !(inner is TyOptional), _ => false } {
+    // (A vector of NULLABLE records too: Rust's `[]` registers `vector<__nullable<T>>` and
+    // its `main_vector` there, and the default is the same build.)
+    nullable_records = match b { TyVector { inner: nri } => el_ex_base::is_nullable_wrapper(e, nri), _ => false };
+    // (Its two definitions are made by the default's own `[]`, which Rust reads from a
+    // synthetic source: at 1:3.)
+    if nullable_records {
+      nrin = match b { TyVector { inner: nri2 } => nri2, _ => ir::TyVoid };
+      nrnm = el_types::elem_name(e, nrin);
+      if nrnm != "" && el::def_nr(e, "main_vector<{nrnm}>") < 0 {
+        el_schema::make_vector_def(e, nrin, nrnm, ir::Position { file: e.file, line: 1, pos: 3 }, true);
+      }
+    }
+    if b is TyVector && (nullable_records || match b { TyVector { inner } => el_convert::plain_scalar(inner) || el_types::base(inner) is TyText && !(inner is TyOptional), _ => false }) {
       // (loft#2567: the default is a fresh expression — it never takes the subject chain's
       // borrows, and builds a store of its own whatever the subject is.)
       vt = el_types::without_deps(b);
