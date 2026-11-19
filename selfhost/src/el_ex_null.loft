@@ -78,6 +78,9 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
           return ex(ir::NdNull, ir::TyUnknown { n: 0 });
         }
         // Built on both passes: a text tail's accumulator (`do_if_acc`) is decided on the first.
+        // (A text read off a temporary literal borrows nothing: the literal's own store is no
+        // borrow of the holder, nor of the block typed as it.)
+        lhs = el_types::with_deps(lhs, [for hd in el_types::deps(lhs) if !starts_with(el_vars::name_of(vars, hd), "__ref_p2_") { hd }]);
         held = el_vars::create_unique(vars, "_ncc", lhs);
         vars.vars[held].skip_free = true;
         h = ir::NdVar { n: held };
@@ -195,6 +198,23 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   // (`coalesce_not_null`'s `OpVectorIsNull`), the default where not.  Any other keyed subject
   // is refused by name.
   if keyed_kind(lhs) {
+    // A field path (`self.tokens[l].possible ?? []`, a point lookup's field included) is held
+    // in a `__ncc_N` viewing it, as a vector field is; the "ncc" block answers it where present.
+    if !(el_ir::unspan(x.code) is NdVar) && (field_path(e, x.code) || keyed_field_read(e, x.code)) {
+      if !el_types::is_equal(e, el_types::without_deps(lhs), el_types::without_deps(el_types::base(d.tp))) {
+        el::refuse(e, "a keyed `??` default of another type");
+        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+      }
+      kheld = el_vars::create_unique(vars, "_ncc", lhs);
+      vars.vars[kheld].skip_free = true;
+      el_vars::register_work_ref(vars, kheld);
+      if e.first_pass {
+        return ex(ir::NdNull, lhs);
+      }
+      kh = ir::NdVar { n: kheld };
+      kpresent = el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpVectorIsNull", [kh])]);
+      return ex(el_ir::v_block([el_ir::v_set(kheld, nullable_arith(e, x.code, true)), el_ir::v_if(kpresent, kh, d.code)], lhs, "ncc"), lhs);
+    }
     if !(el_ir::unspan(x.code) is NdVar) {
       el::refuse(e, "a keyed `??` on something other than a local");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -1051,6 +1071,53 @@ pub fn content_enum(e: el::El, t: ir::TypeT) -> integer {
   }
 }
 
+// `value_struct_eq` (`@FR-E-Eq`, @C91): two values of one `value struct` compare field by field,
+// in DECLARATION order, each field through its own `==` (a nested value struct recurses here),
+// folded `if acc cmp else false` — the first field alone, no field at all `true`; `!=` is one
+// `OpNot` around the fold.  An operand that runs a call is held once in a `___veq_N` (the fold
+// and the holds in a `value_eq` block); any other is read in place per field.  Null where a
+// field's `==` does not resolve.
+fn value_struct_eq(e: el::El, vars: el_vars::Vars, op: text, ad: integer, a: Ex, b: Ex) -> Ex? {
+  pre: vector<ir::Node> = [];
+  ac = a.code;
+  bc = b.code;
+  if el_ex_place::any_user_call(e, [a.code]) {
+    ha = el_vars::create_unique(vars, "__veq", ir::TyReference { n: ad, dep: [] });
+    pre += [el_ir::v_set(ha, a.code)];
+    ac = ir::NdVar { n: ha };
+  }
+  if el_ex_place::any_user_call(e, [b.code]) {
+    hb = el_vars::create_unique(vars, "__veq", ir::TyReference { n: ad, dep: [] });
+    pre += [el_ir::v_set(hb, b.code)];
+    bc = ir::NdVar { n: hb };
+  }
+  acc: ir::Node? = null;
+  for at in el::def(e, ad).attributes {
+    ft = at.typedef[0] ?? ir::TyVoid;
+    if el_types::base(ft) is TyRoutine {
+      continue;
+    }
+    fa = field_get(e, ad, at#index, ac);
+    fb = field_get(e, ad, at#index, bc);
+    if fa == null || fb == null {
+      return null;
+    }
+    r = builtin_op(e, vars, "==", ex(fa!, ft), ex(fb!, ft));
+    if el_types::is_unknown(r.tp) || r.code is NdNull {
+      return null;
+    }
+    acc = if acc == null { r.code } else { el_ir::v_if(acc!, r.code, ir::NdBoolean { b: false }) };
+  }
+  fold = acc ?? ir::NdBoolean { b: true };
+  if op == "!=" {
+    fold = el_ir::cl(e, "OpNot", [fold]);
+  }
+  if len(pre) > 0 {
+    fold = el_ir::v_block(pre + [fold], ir::TyBoolean, "value_eq");
+  }
+  ex(fold, ir::TyBoolean)
+}
+
 pub fn builtin_op(e: el::El, vars: el_vars::Vars, op: text, a: Ex, b: Ex) -> Ex {
   // `@FR-Op-Back`: on a program's own type `a ⊕ b` is one call of the left operand's
   // `operator` method, its type the method's (`arith_through_operator`).
@@ -1137,8 +1204,12 @@ pub fn builtin_op(e: el::El, vars: el_vars::Vars, op: text, a: Ex, b: Ex) -> Ex 
     // own test, a literal operand held in a `___veq_N` — not through `OpEqContent`: not
     // carried, refused by name.)
     if ad >= 0 && ad == struct_ref(e, el_types::base(b.tp)) && e.value_structs.contains(ad) && !e.first_pass {
-      el::refuse(e, "a comparison of two value structs (field by field)");
-      return ex(ir::NdNull, ir::TyBoolean);
+      vse = value_struct_eq(e, vars, op, ad, a, b);
+      if vse == null {
+        el::refuse(e, "a comparison of two value structs (field by field)");
+        return ex(ir::NdNull, ir::TyBoolean);
+      }
+      return vse!;
     }
     if ad >= 0 && ad == struct_ref(e, el_types::base(b.tp)) && !starts_with(el::def(e, ad).name, "__tuple<") && !has_operator_method(e, ad) {
       return ex(el_ir::cl(e, if op == "==" { "OpEqContent" } else { "OpNeContent" }, [a.code, b.code, ir::NdInt { n: el::def(e, ad).known_type }]), ir::TyBoolean);
@@ -1366,6 +1437,25 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
       _ => {}
     }
   }
+  if null_then && is_nullable_wrapper(e, f.tp) {
+    tslot = f.tp;
+    tpt = ir::TyOptional { inner: ir::TyReference { n: el_ex_place::nullable_payload(e, el_types::struct_enum_def(tslot)), dep: el_types::deps(tslot) } };
+    if e.first_pass {
+      return ex(el_ir::v_if(c.code, t.code, f.code), tpt);
+    }
+    if el_trace::on() {
+      el_trace::route(e, "if_join=null_beside_tagged_slot");
+    }
+    tsl = tag_leaves(e, vars, f.code, tslot, tpt);
+    tnl = retail(el_ir::unspan(t.code), el_ir::cl(e, "OpNullRefSentinel", []), tpt);
+    if tsl != null && tnl != null {
+      return ex(el_ir::v_if(c.code, tnl!, tsl!), tpt);
+    }
+  }
+  // (The first pass may not type the else yet: nothing is refused there.)
+  if null_then && e.first_pass && (el_types::is_unknown(f.tp) || el_convert::null_of(e, f.tp) == null) && !(f.tp is TyNull) && !(f.tp is TyNever) {
+    return ex(el_ir::v_if(c.code, t.code, f.code), if f.tp is TyOptional || el_types::is_unknown(f.tp) { f.tp } else { ir::TyOptional { inner: f.tp } });
+  }
   if null_then {
     nv = el_convert::null_of(e, f.tp);
     if f.tp is TyNull || f.tp is TyNever || nv == null {
@@ -1423,6 +1513,26 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
   // A record arm beside a `null` one: the null arm answers the record's null sentinel, typed as
   // the record, and the join is the record `?` (`if_join`'s `null_value`).
   // A vector arm beside a `null` one alike: its null is the collection sentinel.
+  // `@FR-L-Null-Which` (loft#2572): a tagged `__nullable<S>` arm beside a `null` arm is read
+  // through its tag at its leaves, and the join is the POINTER `S?` — the payload projected
+  // after the join read an absent slot as a record.  The `null` arm answers the sentinel.
+  if (f.tp is TyNull && is_nullable_wrapper(e, t.tp)) || (t.tp is TyNull && is_nullable_wrapper(e, f.tp)) {
+    slot_t = if f.tp is TyNull { t.tp } else { f.tp };
+    pt = ir::TyOptional { inner: ir::TyReference { n: el_ex_place::nullable_payload(e, el_types::struct_enum_def(slot_t)), dep: el_types::deps(slot_t) } };
+    if e.first_pass {
+      return ex(el_ir::v_if(c.code, t.code, f.code), pt);
+    }
+    if el_trace::on() {
+      el_trace::route(e, "if_join=tagged_slot_beside_null");
+    }
+    sl = tag_leaves(e, vars, if f.tp is TyNull { t.code } else { f.code }, slot_t, pt);
+    // (The `null` arm keeps the slot's type where it follows the slot, and takes the pointer's
+    // where it comes first — as Rust prints the two orders.)
+    nl = retail(el_ir::unspan(if f.tp is TyNull { f.code } else { t.code }), el_ir::cl(e, "OpNullRefSentinel", []), if f.tp is TyNull { slot_t } else { pt });
+    if sl != null && nl != null {
+      return ex(if f.tp is TyNull { el_ir::v_if(c.code, sl!, nl!) } else { el_ir::v_if(c.code, nl!, sl!) }, pt);
+    }
+  }
   vector_null = f.tp is TyNull && !(t.tp is TyOptional) && t.tp is TyVector;
   // A struct enum's variant beside a `null` arm joins to the enum `?` (`variant_parent_enum`),
   // its arms typed as the variant.
@@ -2269,6 +2379,7 @@ pub fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -
   }
   w = -1;
   chain = false;
+  own_view = false;
   match x {
     // `declared_in_loop`: a local made inside an open loop (numbered after its variable) is no
     // candidate; one from before the loop is, wherever the `return` stands.
@@ -2285,9 +2396,13 @@ pub fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -
         // (A callee handing back its argument whose argument lends nothing — `id2(g(k))`, a
         // fresh record — answers in its own buffer: `ls` names that buffer, the candidate.)
         vhr = hidden_ref_arg(vars, args);
-        if vhr >= 0 && el_types::deps(v.tp) == [vhr] {
+        // (Its argument a local of the frame — `id2(x)` — `ls` is that local, which the rename
+        // takes instead: not this leg.)
+        vdeps = el_types::deps(v.tp);
+        if vhr >= 0 && (len(vdeps) == 0 || vdeps == [vhr]) {
           w = vhr;
           chain = true;
+          own_view = true;
         }
       }
     },
@@ -2303,8 +2418,20 @@ pub fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -
   if !w_shape_ok && chain {
     return ex(ir::NdReturn { inner: x }, ir::TyNever);
   }
-  if w >= 0 && w_shape_ok && e.first_pass && unrenamed && !el_expressions::buffer_bound(e) && el_expressions::rename_candidate(e, vars, v.code, x) == w {
+  if w >= 0 && w_shape_ok && e.first_pass && unrenamed && !el_expressions::buffer_bound(e) && (own_view || el_expressions::rename_candidate(e, vars, v.code, x) == w) {
     rename_onto(e, vars, rb, w);
+  }
+  // (The argument-view call answering in its own buffer is handed back as it stands: the
+  // buffer it was renamed onto joins the result's borrows, `MergeAttr` on the second pass.)
+  if own_view && w_shape_ok {
+    oa = attr_nr(el::def(e, d), el_vars::name_of(vars, w));
+    if oa >= 0 {
+      ret = el::def(e, d).returned[0];
+      if !el_types::deps(ret).contains(oa) {
+        e.b.data.definitions[d].returned = [el_types::with_deps(ret, el_types::deps(ret) + [oa])];
+      }
+      return ex(ir::NdReturn { inner: x }, ir::TyNever);
+    }
   }
   if w < 0 && e.first_pass && unrenamed && !el_expressions::buffer_bound(e) && branch_value(x) && owned_arms(e, vars, x) && first_arm_ref(vars, x) >= 0 {
     rename_onto(e, vars, rb, first_arm_ref(vars, x));
@@ -2818,6 +2945,7 @@ pub fn merge_view_call(e: el::El, vars: el_vars::Vars, code: ir::Node) -> ir::No
     return null;
   }
   d = e.context;
+  then_tp: ir::TypeT? = null;
   match el_ir::unspan(bl.operators[-1]) {
     NdCall { def_nr } => {
       if !returns_argument_view(el::def(e, def_nr)) {
@@ -2832,6 +2960,16 @@ pub fn merge_view_call(e: el::El, vars: el_vars::Vars, code: ir::Node) -> ir::No
         return null;
       }
       bl.result = [block[0].result[0] ?? ir::TyVoid];
+    },
+    // A branch whose every leaf is a visible parameter or a call handing back a view of its
+    // arguments (`if n == 0 { p } else { again(p, n - 1) }`): `ls` is the parameters, `MergeAttr`.
+    NdIf { cond: _ } => {
+      if !view_leaves(e, vars, el_ir::unspan(bl.operators[-1])) {
+        return null;
+      }
+      // (The merge is the signature's: the body keeps the join's own type — set below, once
+      // the signature has read the join's borrows.)
+      then_tp = view_join_type(e, vars, el_ir::unspan(bl.operators[-1]));
     },
     _ => return null
   }
@@ -2869,7 +3007,96 @@ pub fn merge_view_call(e: el::El, vars: el_vars::Vars, code: ir::Node) -> ir::No
     }
   }
   e.b.data.definitions[d].returned = [el_types::with_deps(ret, kept)];
+  if then_tp != null {
+    bl.result = [then_tp!];
+  }
   ir::NdBlock { block: [bl] }
+}
+
+// `@FR-L-Null-Which`'s leaves: each leaf of `n` (a block's tail, both arms of an `if`) holding
+// a `__nullable<S>` slot of type `slot` read through its tag (`read_through_tag`), each block
+// retyped as the pointer `pt`.  Null where a leaf cannot be read so.
+fn tag_leaves(e: el::El, vars: el_vars::Vars, n: ir::Node, slot: ir::TypeT, pt: ir::TypeT) -> ir::Node? {
+  match n {
+    // (The leaf's span is dropped with the read it was: the tag test stands in its place.)
+    NdSpan { pos: _, inner } => {
+      return tag_leaves(e, vars, inner, slot, pt);
+    },
+    NdBlock { block } => {
+      bl = block[0];
+      if len(bl.operators) == 0 {
+        return null;
+      }
+      r = tag_leaves(e, vars, bl.operators[-1]!, slot, pt);
+      if r == null {
+        return null;
+      }
+      bl.operators[-1] = r!;
+      bl.result = [pt];
+      return ir::NdBlock { block: [bl] };
+    },
+    NdIf { cond, t, f } => {
+      a = tag_leaves(e, vars, t, slot, pt);
+      b = tag_leaves(e, vars, f, slot, pt);
+      return if a == null || b == null { null } else { el_ir::v_if(cond, a!, b!) };
+    },
+    _ => {}
+  }
+  r = el_ex_place::read_through_tag(e, vars, ex(n, slot));
+  if r == null { null } else { r!.code }
+}
+
+// A field read (`OpGetField`) off a keyed point lookup (`OpGetRecord`) or off a field path.
+fn keyed_field_read(e: el::El, n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdCall { def_nr, args } => el::def(e, def_nr).name == "OpGetField" && len(args) == 3 && match el_ir::unspan(args[0]!) {
+      NdCall { def_nr: rd, args: ra } => el::def(e, rd).name == "OpGetRecord" && len(ra) > 0 && (el_ir::unspan(ra[0]!) is NdVar || field_path(e, ra[0]!)),
+      _ => false
+    },
+    _ => false
+  }
+}
+
+// The type a tail `if` of parameter views keeps for the body, where it is not the union of its
+// arms' borrows: beside an else arm ending in a call (`fe(b, a, n - 1)`), the then arm's; a read
+// there (`v[0]`) joins the body's type as it joins the signature (null: keep the join's).
+pub fn view_join_type(e: el::El, vars: el_vars::Vars, n: ir::Node) -> ir::TypeT? {
+  match n {
+    NdIf { cond: _, t, f } => {
+      // (Only the parameter-view merge: the then arm answers a visible parameter.  Arms that
+      // build into the return buffer — `id(g(3))` — keep the return's type.)
+      tt0 = el_ir::unspan(t);
+      tt = match tt0 { NdBlock { block: tb0 } => if len(tb0[0].operators) > 0 { el_ir::unspan(tb0[0].operators[-1]) } else { tt0 }, _ => tt0 };
+      if !(match tt { NdVar { n: tv } => vars.vars[tv].argument && !hidden_param(e, vars, tv), _ => false }) {
+        return null;
+      }
+      et0 = el_ir::unspan(f);
+      et = match et0 { NdBlock { block: eb } => if len(eb[0].operators) > 0 { el_ir::unspan(eb[0].operators[-1]) } else { et0 }, _ => et0 };
+      calls_fn = match et { NdCall { def_nr: ed } => !starts_with(el::def(e, ed).name, "Op"), _ => false };
+      if !calls_fn {
+        return null;
+      }
+      match el_ir::unspan(t) {
+        NdBlock { block: tb } => tb[0].result[0],
+        _ => null
+      }
+    },
+    _ => null
+  }
+}
+
+// Every leaf of `n` — through `if` arms and blocks' tails — a visible parameter or a call that
+// answers a view of its arguments.
+pub fn view_leaves(e: el::El, vars: el_vars::Vars, n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdIf { cond: _, t, f } => view_leaves(e, vars, t) && view_leaves(e, vars, f),
+    NdBlock { block } => len(block[0].operators) > 0 && view_leaves(e, vars, block[0].operators[-1]),
+    NdVar { n: v } => vars.vars[v].argument && attr_nr(el::def(e, e.context), el_vars::name_of(vars, v)) >= 0 && !el::def(e, e.context).attributes[attr_nr(el::def(e, e.context), el_vars::name_of(vars, v))].hidden,
+    // (On the first pass a callee declared below lends the join nothing yet: `ls` is the other
+    // arms' parameters, as Rust's first pass reads it.)
+    NdCall { def_nr } => returns_argument_view(el::def(e, def_nr)) || (e.first_pass && def_nr > e.context && starts_with(el::def(e, def_nr).name, "n_")),
+    _ => false
+  }
 }
 
 // `Parser::return_buffer`: the variable of the function's hidden record return buffer, by
@@ -2963,7 +3190,7 @@ pub fn copy_into_buffer(e: el::El, vars: el_vars::Vars, x: ir::Node, v: integer,
   b = ir::NdVar { n: buf };
   owned = el_types::with_deps(el_types::without_deps(el_types::base(ret)), [buf]);
   copy = el_ir::v_block([el_ir::v_set(buf, ir::NdNull), el_ir::cl(e, "OpDatabase", [b, kt]), el_ir::cl(e, "OpCopyRecord", [x, b, kt]), b], owned, "materialized_view_return");
-  if el_expressions::record_may_be_absent(vars, v, []) {
+  if v != vars.copy_present && el_expressions::record_may_be_absent(vars, v, []) {
     copy = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [ir::NdVar { n: v }]), el_ir::cl(e, "OpNullRefSentinel", []), copy);
   }
   copy

@@ -694,7 +694,11 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
             rt0 = now;
           }
         }
-        bl.result = [if arms_answer { el_types::with_deps(result, ad ?? el_types::deps(result)) } else { rt0 }];
+        // (An `if` of parameter views beside a call arm keeps its then arm's type, whatever the
+        // signature merged: `view_join_type`.)
+        vjl = if len(bl.operators) > 0 { el_ir::unspan(el_ir::last(bl.operators)) } else { ir::NdNull };
+        vjt = if vjl is NdIf && el_ex_null::view_leaves(e, vars, vjl) { el_ex_null::view_join_type(e, vars, vjl) } else { null };
+        bl.result = [if vjt != null { vjt! } else if arms_answer { el_types::with_deps(result, ad ?? el_types::deps(result)) } else { rt0 }];
         code = ir::NdBlock { block: [bl] };
       },
       _ => {}
@@ -1868,6 +1872,26 @@ fn branch_yields_null(e: el::El, n: ir::Node) -> boolean {
 // value is copied whole (`{ w = null; OpDatabase(w, kt); OpCopyRecord(<value>, w, kt); w }`),
 // behind a null test where the value may be absent and can be read again.  Null where a leaf
 // needs its source bound first (`bind_return_source`): not carried.
+// The local a condition proves present: `OpConvBoolFromRef(x)` or `OpNot(OpRefIsNull(x))`; -1.
+pub fn present_tested(e: el::El, c: ir::Node) -> integer {
+  match el_ir::unspan(c) {
+    NdCall { def_nr, args } => {
+      nm = el::def(e, def_nr).name;
+      if nm == "OpConvBoolFromRef" && len(args) == 1 {
+        return match el_ir::unspan(args[0]!) { NdVar { n } => n, _ => -1 };
+      }
+      if nm == "OpNot" && len(args) == 1 {
+        return match el_ir::unspan(args[0]!) {
+          NdCall { def_nr: id, args: ia } => if el::def(e, id).name == "OpRefIsNull" && len(ia) == 1 { match el_ir::unspan(ia[0]!) { NdVar { n } => n, _ => -1 } } else { -1 },
+          _ => -1
+        };
+      }
+      -1
+    },
+    _ => -1
+  }
+}
+
 pub fn copy_arms(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, td: integer, owned: ir::TypeT) -> ir::Node? {
   if el_trace::on() {
     el_trace::route(e, "materialize_return_into");
@@ -1882,7 +1906,17 @@ pub fn copy_arms(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, td: i
         return ir::NdSpan { pos: pos, inner: ci! };
       },
       NdIf { cond, t, f } => {
+        // (`@FR-N-Road`, tested unless proven present: a then arm that IS the local its
+        // condition proved present — `OpConvBoolFromRef(x)`, `OpNot(OpRefIsNull(x))` — is copied
+        // with no absence test.)
+        keep_present = vars.copy_present;
+        pv = present_tested(e, cond);
+        tv = match el_ir::unspan(t) { NdVar { n: tn } => tn, NdBlock { block: tbb } => if len(tbb[0].operators) > 0 { match el_ir::unspan(tbb[0].operators[-1]) { NdVar { n: tbn } => tbn, _ => -1 } } else { -1 }, _ => -1 };
+        if pv >= 0 && pv == tv {
+          vars.copy_present = pv;
+        }
         ct = copy_arms(e, vars, t, rb, td, owned);
+        vars.copy_present = keep_present;
         cf = copy_arms(e, vars, f, rb, td, owned);
         if ct == null || cf == null {
           return null;
@@ -1958,7 +1992,7 @@ pub fn copy_arms(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, td: i
   // The copy is bare only where its source is PROVEN present (`copy_source_is_present`); any
   // other source with no user call in it is tested by reading it again.
   guard = match x {
-    NdVar { n: v } => record_may_be_absent(vars, v, []),
+    NdVar { n: v } => v != vars.copy_present && record_may_be_absent(vars, v, []),
     _ => !user && !source_is_present(e, vars, x)
   };
   if guard {
@@ -2696,6 +2730,33 @@ fn views_a_local(vars: el_vars::Vars, v: integer) -> boolean {
   false
 }
 
+// The variable a slice `match` tail's FIRST arm answers when it is one of that arm's
+// captures (`[_, ..rest] => rest`), or -1.
+pub fn match_tail_capture(vars: el_vars::Vars, n: ir::Node) -> integer {
+  match el_ir::unspan(n) {
+    NdBlock { block } => {
+      bl = block[0];
+      if len(bl.operators) == 0 {
+        return -1;
+      }
+      if bl.name == "vector_match" {
+        return first_arm_var(vars, el_ir::unspan(bl.operators[-1]));
+      }
+      -1
+    },
+    _ => -1
+  }
+}
+
+fn first_arm_var(vars: el_vars::Vars, n: ir::Node) -> integer {
+  match n {
+    NdIf { cond: _, t, f: _ } => first_arm_var(vars, el_ir::unspan(t)),
+    NdBlock { block } => if len(block[0].operators) == 0 { -1 } else { first_arm_var(vars, el_ir::unspan(block[0].operators[-1])) },
+    NdVar { n: v } => if el_vars::name_of(vars, v).contains("#") { v } else { -1 },
+    _ => -1
+  }
+}
+
 pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, result: ir::TypeT) -> ir::Node {
   // A literal tail is read against the result's element (`-> vector<u8> { [104, 101] }` holds
   // bytes): a tail built at another element than the result names is not carried.
@@ -2806,6 +2867,13 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
         el::refuse(e, "a vector `return` before the body's end");
         return code;
       }
+    }
+    // A slice `match` tail renamed onto its first arm's capture on the first pass: the match
+    // built each arm into it (`vector_match`); the body answers it, borrowing the buffer.
+    mtc = match_tail_capture(vars, tail);
+    if mtc >= 0 && hidden_param(e, vars, mtc) {
+      bl.result = [el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb])];
+      return ir::NdBlock { block: [bl] };
     }
     // The buffer renamed onto the tail local on the first pass: the body answers the vector the
     // caller handed in, and opens by clearing it.  A local bound from a call (which Rust hands
@@ -2928,6 +2996,13 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
       // hidden parameter, its binds then refill the caller's vector.
       // A local a loop appends a call's vector to keeps its store and is copied in at the tail
       // (`classify_ret_promotion`'s `Bind`, `var_call_rebound_nested`).
+      // A slice-pattern `match` whose first arm answers its rest capture
+      // (`match v { [_, ..rest] => rest, _ => [] }`): `ls` is that capture, the buffer renamed
+      // onto it (the hidden parameter takes its name, `rest#1`).
+      mcap = match_tail_capture(vars, tail);
+      if mcap >= 0 && attr_nr(el::def(e, d), "__retbuf") >= 0 && !buffer_bound(e) {
+        rename_onto(e, vars, rb, mcap);
+      }
       match tail {
         NdVar { n } => {
           // Rust's `bound_to_vector_join` asks the return's type: the local's may be unknown yet.

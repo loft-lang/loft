@@ -25488,16 +25488,6 @@ elab-pass1	agree	tests/scripts/a-cwd-test-file-anchors-at-the-cwd-on-both-backen
 elab-pass1	agree	tests/scripts/a-cwd-test-file-anchors-at-the-cwd-on-both-backends.loft::n_and_not_against_the_files_own_directory
 elab-pass1	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft::n_num_of
 elab-pass1	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft::n_sum_items
-elab-pass1	agree	tests/scripts/a-default-of-a-method-chain-is-a-collection-of-its-own.loft::n_c1
-elab-pass1	agree	tests/scripts/a-default-of-a-method-chain-is-a-collection-of-its-own.loft::n_c2
-elab-pass1	agree	tests/scripts/a-default-of-a-method-chain-is-a-collection-of-its-own.loft::n_grow
-elab-pass1	agree	tests/scripts/a-default-of-a-method-chain-is-a-collection-of-its-own.loft::n_handed_back
-elab-pass1	agree	tests/scripts/a-default-of-a-method-chain-is-a-collection-of-its-own.loft::n_l3
-elab-pass1	agree	tests/scripts/a-default-of-a-method-chain-is-a-collection-of-its-own.loft::n_main
-elab-pass1	agree	tests/scripts/a-default-of-a-method-chain-is-a-collection-of-its-own.loft::n_r1
-elab-pass1	agree	tests/scripts/a-default-of-a-method-chain-is-a-collection-of-its-own.loft::n_r2
-elab-pass1	agree	tests/scripts/a-default-of-a-method-chain-is-a-collection-of-its-own.loft::n_r4
-elab-pass1	agree	tests/scripts/a-default-of-a-method-chain-is-a-collection-of-its-own.loft::n_r5
 elab-pass1	agree	tests/scripts/a-discharge-buffers-text-set-keeps-the-callers-headers.loft::n_c2
 elab-pass1	agree	tests/scripts/a-discharge-buffers-text-set-keeps-the-callers-headers.loft::n_c4
 elab-pass1	agree	tests/scripts/a-discharge-buffers-text-set-keeps-the-callers-headers.loft::n_frame
