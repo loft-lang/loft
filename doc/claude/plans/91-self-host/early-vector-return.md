@@ -11,14 +11,10 @@ passes, for the field forms. Hand-computed: `a = from_src(Src { vals: [4, 7] }, 
 → `a` is `[4,7,9]` and the source stays `[4,7]`; `proj(5, -1)` → `[5,6]`; the tails `[k]` /
 `[k, k]` → `[3]` / `[2,2]`. The caller always gets its own copy.
 
-**One case waits on a Rust decision (loft#2585): an early `return` of a CONSTANT.** Rust
-hands out the constant's own store (`return OpConstRef(874);`, no buffer), so a caller's
-`b = f(-1); b += [9]` stops with "write to a constant". That raw exit is deliberate: `@FR-R-Place`'s
-foreign-exit clause gives a call into a FIELD the field as its buffer and copies a foreign
-answer at the CALL SITE. The defect is a plain bind, which adopts the answer because the callee
-publishes the fresh one-buffer marker `["??"]`. The fix is being chosen between a copy in the
-callee and a guarded copy at the bind. Until it lands, port the constant exit as Rust emits it
-today (raw `OpConstRef`); the page will say if the callee form changes.
+**The constant case (loft#2585, decided and fixed at loft30-gate c56adea85):** an early
+`return NUMS` now COPIES the constant into the return buffer, as the tail `{ NUMS }` does. The
+raw `OpConstRef` exit is gone, and with it `@FR-R-Place`'s call-site copy for a placed call
+(`c.v = f(-1)` is the bare call into the field now).
 
 ## Rust's form
 
@@ -36,8 +32,13 @@ return wrap(c).inner.v     (a field of a call's record: the holding record copie
         OpCopyRecord(OpGetField(n_wrap(c, __ref_1), 0, 101), __retbuf, 101);
         __retbuf }, 0, 7);
 
-return NUMS          (a constant, an early exit: raw, no buffer, today's Rust form)
-    return OpConstRef(874);
+return NUMS          (a constant, an early exit: copied into the buffer since c56adea85)
+    OpClearVector(__retbuf);
+    OpAppendVector(__retbuf, OpConstRef(874), 0);
+    return __retbuf;
+c.v = f(-1)          (a call placed into a field: the bare call; the old __pans / OpEqRef /
+                      place_copy tail is gone, since no exit answers a foreign store)
+    n_f(OpMinSingleInt(1), __ref_1);
 { NUMS }             (the same constant as the TAIL: copied into the buffer)
     {#one_buffer_vec_copy  OpClearVector(__retbuf); OpAppendVector(__retbuf, OpConstRef(874), 0); __retbuf }
 ```
@@ -51,8 +52,8 @@ in the dump comparison.
 **What to code:** an early `return e` of a vector `e` the function doesn't own goes through
 the same `__retbuf` copy as the tail: clear, `OpAppendVector(__retbuf, e, <elem type>)`, then
 `return __retbuf`. A field of a CALL's record copies the holding record into the buffer and
-reads the field off it (`#inline ref copy`). An early CONSTANT exit is raw
-`return OpConstRef(n)`, as above.
+reads the field off it (`#inline ref copy`). An early CONSTANT exit takes the clear-and-append
+form, as above, and a placed call to such a callee needs no call-site copy.
 
 ## The sites (try 63fb36e57)
 
