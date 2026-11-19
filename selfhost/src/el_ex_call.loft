@@ -2880,7 +2880,9 @@ pub fn present_check(e: el::El, vars: el_vars::Vars, subject: ir::Node, b: ir::T
 // or nullable keeps the result nullable.  A `return`, `break` or `continue` default, arithmetic as
 // the subject and a subject that is not a plain scalar are refused by name.
 pub fn coalesce(e: el::El, vars: el_vars::Vars, l: integer, r: integer) -> Ex {
-  is_bind_coalesce = vars.expect_node >= 0 && match e.p.nodes[vars.expect_node] { SBin { op: cop, l: cl } => cop == "??" && cl == l, _ => false };
+  // (A subject read straight into a bind's destination borrows nothing — `parse_var`'s `into`
+  // arm — so its join is no view and homes no call arm.)
+  is_bind_coalesce = (l == vars.read_into && vars.bind_rhs) || l == vars.item_into || (vars.expect_node >= 0 && match e.p.nodes[vars.expect_node] { SBin { op: cop, l: cl } => cop == "??" && cl == l, _ => false });
   // `e as N ?? d`: the `??` supplies a narrowing cast's fallback, so the cast is checked.
   outer = vars.dn4_coalesce;
   vars.dn4_coalesce = e.p.nodes[l] is SAs;
@@ -3004,8 +3006,10 @@ pub fn record_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   if x.code is NdVar {
     // A VIEW join (`ref(Ms)["g"]`) gives a call default its home (`join-arm-owner`), the call's
     // own buffer reused (`materialise_owned_call`).
+    // (A local's read borrows it — the join a view of it — unless it is read straight into a
+    // bind's destination: then no call arm is homed.)
     rxv = match el_ir::unspan(x.code) { NdVar { n: rx } => rx, _ => -1 };
-    rjt = if len(el_types::deps(lhs)) > 0 { lhs } else { el_types::with_deps(lhs, [rxv]) };
+    rjt = el_types::with_deps(lhs, [rxv]);
     rdc = if !e.first_pass && rxv >= 0 && !vars.coalesce_is_bind { el_ex_null::own_join_arm(e, vars, d.code, rjt) } else { d.code };
     return ex(el_ir::v_if(el_ir::cl(e, "OpConvBoolFromRef", [x.code]), x.code, rdc), if d.tp is TyOptional { ir::TyOptional { inner: lhs } } else { lhs });
   }

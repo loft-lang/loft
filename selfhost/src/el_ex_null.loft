@@ -2392,6 +2392,28 @@ pub fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
             return ex(ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [b]), el_ir::cl(e, "OpAppendVector", [b, v.code, ir::NdInt { n: row }]), ir::NdReturn { inner: b }] }, ir::TyNever);
           }
         },
+        // early-vector-return.md: a field of a PARAMETER (`return s.vals`) is copied into the
+        // buffer where it is returned, as a vector parameter is; a CONSTANT (`return NUMS`)
+        // leaves raw — its own store, today's Rust form (loft#2585, `@FR-R-Place`'s foreign
+        // exit).
+        NdCall { def_nr: rfd, args: rfa } => {
+          rfn = el::def(e, rfd).name;
+          if rfn == "OpConstRef" {
+            return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
+          }
+          froot = place_root(e, el_ir::unspan(v.code));
+          if rfn == "OpGetField" && froot >= 0 && vars.vars[froot].argument && !hidden_param(e, vars, froot) {
+            if e.first_pass {
+              return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
+            }
+            fbuf = vector_buffer(e, vars);
+            frow = el_ex_vector::append_row(e, match el_types::base(result) { TyVector { inner } => inner, _ => ir::TyVoid });
+            if fbuf >= 0 && frow >= 0 {
+              fb = ir::NdVar { n: fbuf };
+              return ex(ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [fb]), el_ir::cl(e, "OpAppendVector", [fb, v.code, ir::NdInt { n: frow }]), ir::NdReturn { inner: fb }] }, ir::TyNever);
+            }
+          }
+        },
         _ => {}
       }
     }

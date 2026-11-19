@@ -301,6 +301,8 @@ pub struct Vars {
   // The `??` being read is a bind's whole right side (`b = x ?? f()`): its join borrows nothing
   // there (`coalesce` strips the subject's read), so no call arm is homed.
   pub coalesce_is_bind: boolean = false,
+  // The leftmost syntax node of a record item a vector literal reads INTO its element, or -1.
+  pub item_into: integer = -1,
   // Set while `rename_ret_buffer` judges a pass-1 match tail's arms (`arms_rename_candidate`).
   pub match_tail: boolean = false,
   // `mark_pass2_rebuilt`: the locals a second-pass call bind already re-derived the borrows of.

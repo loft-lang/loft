@@ -2571,6 +2571,13 @@ pub fn returned_params(e: el::El, vars: el_vars::Vars, ops: vector<ir::Node>, bu
         if len(args) == 3 && el::def(e, def_nr).name == "OpAppendVector" && el_ir::unspan(args[0]) == ir::NdVar { n: buf } {
           match el_ir::unspan(args[1]) {
             NdVar { n } => { if vars.vars[n].argument && !r.contains(n) && (el_types::base(el_vars::tp(vars, n)) is TyVector) { r += [n]; } },
+            // (A field of a parameter, `return s.vals`, borrows the parameter.)
+            NdCall { def_nr: rfd } => {
+              fr = place_root(e, el_ir::unspan(args[1]));
+              if el::def(e, rfd).name == "OpGetField" && fr >= 0 && vars.vars[fr].argument && !r.contains(fr) {
+                r += [fr];
+              }
+            },
             _ => {}
           }
         }
