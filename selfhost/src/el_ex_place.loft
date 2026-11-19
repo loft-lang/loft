@@ -155,7 +155,29 @@ pub fn place_assignment(e: el::El, vars: el_vars::Vars, op: text, target: intege
 fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: integer) -> Ex {
   // The place, read as a value: its code names the record and position the write takes.
   vars.tuple_raw = target;
+  keep_pts = vars.place_tuple_subject;
+  vars.place_tuple_subject = match e.p.nodes[target] { STupleGet { e: pte } => pte ?? -1, _ => -1 };
   p = el_ex_assign::expression(e, vars, target);
+  vars.place_tuple_subject = keep_pts;
+  // A tuple member of an element whose index runs a user call (`v[tick(c)].1 += 5`): the
+  // element is bound ONCE to a `__place_N` view of its `__tuple<…>` record, read and written
+  // through that.
+  if !e.first_pass && op != "=" && e.p.nodes[target] is STupleGet {
+    match el_ir::unspan(p.code) {
+      NdCall { def_nr: tgd, args: tga } => {
+        el0 = el_ir::unspan(tga[0] ?? ir::NdNull);
+        if starts_with(el::def(e, tgd).name, "OpGet") && len(tga) == 2 && calls(e, el0, "OpGetVector") && any_user_call(e, [el0]) && place_root(e, el0) >= 0 {
+          ttd = match el0 { NdCall { args: ea } => match el_types::base(el_vars::tp(vars, place_root(e, el0))) { TyVector { inner: vin } => match vin { TyTuple { elems: tes } => el_types::tuple_def_of(e, tes), _ => -1 }, _ => -1 }, _ => -1 };
+          if ttd >= 0 {
+            f3 = el_vars::create_unique(vars, "_place", ir::TyReference { n: ttd, dep: [place_root(e, el0)] });
+            vars.place_setup = [el_ir::v_set(f3, el0)];
+            p.code = ir::NdCall { def_nr: tgd, args: [ir::NdVar { n: f3 }, tga[1]!] };
+          }
+        }
+      },
+      _ => {}
+    }
+  }
   // `@PLN102 F2` for an ELEMENT of scalars or texts (`w[len(w) - 1] += 5`): where the element's
   // accessor runs a user call it is bound ONCE in a `__place_N` typed as the vector, and the
   // element is read and written through that.
@@ -613,7 +635,7 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
     // A record into a vector's record element is copied into the element (`copy_ref`), whatever
     // the index proves: the place is the element read (`OpGetVector`), a record there or a fault.
     // A literal is written field by field into the element instead: refused below.
-    if op == "=" && !field_place && struct_ref(e, pb) >= 0 && !(x.tp is TyOptional) && struct_ref(e, el_types::base(x.tp)) >= 0 && calls(e, rd_place, "OpGetVector") && !(e.p.nodes[rhs] is SStructLit) {
+    if op == "=" && !field_place && struct_ref(e, pb) >= 0 && !(x.tp is TyOptional) && struct_ref(e, el_types::base(x.tp)) >= 0 && (calls(e, rd_place, "OpGetVector") || calls(e, rd_place, "OpVectorRef")) && !(e.p.nodes[rhs] is SStructLit) {
       return record_place_write(e, vars, rd_place, pb, x);
     }
     el::refuse(e, "an assignment to a nullable place: {if field_place { "a field" } else { "an element" }} of {type_kind(pb)} given {type_kind(x.tp)}{if op == "=" { "" } else { " by {op}" }}");
@@ -696,7 +718,9 @@ pub fn vec_lit_len(e: el::El, n: integer) -> integer {
 // Another record's value and a record holding a closure are refused by name.
 pub fn record_place_write(e: el::El, vars: el_vars::Vars, place: ir::Node, pt: ir::TypeT, x: Ex) -> Ex {
   rd = struct_ref(e, pt);
-  if !(place is NdCall) || !(calls(e, place, "OpGetField") || calls(e, place, "OpGetVector")) {
+  // (An element of a LINKED vector — any keyed collection over the record exists — is read
+  // through `OpVectorRef`: the same place.)
+  if !(place is NdCall) || !(calls(e, place, "OpGetField") || calls(e, place, "OpGetVector") || calls(e, place, "OpVectorRef")) {
     el::refuse(e, "an assignment to a place that is not a plain local: {place_read(e, place)}");
     return ex(ir::NdNull, ir::TyVoid);
   }
@@ -831,11 +855,18 @@ pub fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: i
   // collection field, so Rust builds the record apart (`__ref_p2_N`: the vector field emptied,
   // one push per item, then the other fields) and copies it into the place (`OpCopyRecord`), its
   // first pass leaving the literal's unused `_elm_N` declared (1a-parser.md § Rust accidents).
+  // Since the primed receivers stopped counting as reads (main 21992d3e3), that is only where
+  // an item reads the place itself (`v: [len(b.inner.v)]`): any other field place is built in
+  // place.  An element place (`vs.els[i] = …`) is still built apart.
   apart = false;
+  aroot = place_root(e, place);
+  element_place = calls(e, place, "OpGetVector");
   for fi in fields {
     match e.p.nodes[fi] {
       SFieldInit { e: fe } => {
-        if fe != null && e.p.nodes[fe!] is SVecLit {
+        // (A record item writes its element, a nested write the mask leaves: built apart.)
+        rec_item = match e.p.nodes[fe ?? 0] { SVecLit { items: vits } => fe != null && len([for vi in vits if (e.p.nodes[vi] is SStructLit) { vi }]) > 0, _ => false };
+        if fe != null && e.p.nodes[fe!] is SVecLit && (element_place || rec_item || aroot < 0 || syntax_names(e, fe!, el_vars::name_of(vars, aroot))) {
           apart = true;
         }
       },
@@ -2201,6 +2232,26 @@ pub fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text,
       return ex(el_ir::v_set(v, o.code), ir::TyVoid);
     }
   }
+  // A tuple literal whose vector-literal item meets a KEYED declared member (`(hash<H[k]>,
+  // integer) = ([H {…}], 3)`) is built in a `__kvb_N` accumulator — not carried: refused by
+  // name BEFORE the item is read, which would register the element's vector rows Rust's keyed
+  // route never makes.
+  match el_types::base(declared!) {
+    TyTuple { elems: kde } => {
+      match e.p.nodes[rhs!] {
+        STupleLit { elems: kitems } => {
+          for kd in kde {
+            if keyed_kind(el_types::base(kd)) && kd#index < len(kitems) && e.p.nodes[kitems[kd#index]!] is SVecLit {
+              el::refuse(e, "a keyed tuple member given a vector literal");
+              return ex(ir::NdNull, ir::TyVoid);
+            }
+          }
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
   // A struct literal of the declared struct is built in place in the local, as without the
   // annotation (`parse_object`'s destination hint).
   if e.p.nodes[rhs!] is SStructLit && struct_ref(e, el_types::base(declared!)) >= 0 && struct_literal_def(e, rhs!) == struct_ref(e, el_types::base(declared!)) {
@@ -2429,6 +2480,7 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
   vars.own_buffer_hit = false;
   demote = if e.first_pass { -1 } else { demote_field(e, vars, v, d, fields) };
   vars.demote_var = if demote < 0 { -1 } else { v };
+  allocs_mark = len(vars.allocs);
   list = object_fields(e, vars, v, d, fields);
   vars.demote_var = -1;
   vars.rebuild_attempt = false;
@@ -2446,6 +2498,17 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
   // Asked of the literal's own record only (`Type::Reference(d) | Enum(d, true) if d == td_nr`): a
   // variant literal rebuilding a local of its enum is built in place.
   literal_of_root = root_d >= 0 && root_d == d;
+  // (Such a literal is built apart on the second pass — nothing made through the local — so
+  // the first pass does not count its items as records the local made: `child_allocs`.)
+  fields_call = false;
+  for fc in fields {
+    if el_ex_assign::runs_a_call(e, fc) {
+      fields_call = true;
+    }
+  }
+  if e.first_pass && !el_vars::is_compiler_generated(vars, v) && literal_of_root && el_types::owns_droppable(e, root_d, []) && fields_call && len(vars.allocs) > allocs_mark {
+    vars.allocs = vars.allocs[..allocs_mark];
+  }
   // (A return buffer renamed onto the local — a hidden parameter — is built apart as the
   // local it was is; a parameter the caller passed is refused by name.)
   apart_param = vars.vars[v].argument && !hidden_param(e, vars, v);

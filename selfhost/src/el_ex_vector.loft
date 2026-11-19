@@ -1472,8 +1472,11 @@ pub fn vector_concat(e: el::El, vars: el_vars::Vars, dest: integer, a: Ex, parts
     NdBlock { block } => block[0].name == "iter_vec" || block[0].name == "Vector",
     _ => false
   };
+  // (A place or a call — `h[0]`, `w.v`, `first(h)` — is appended as it stands, like a local:
+  // the concatenation copies, never views.)
   ok_first = fresh || match first {
     NdVar { n } => n != dest,
+    NdCall { def_nr: _ } => dest < 0 || !el_ir::reads_var(first, dest),
     _ => false
   };
   if !e.first_pass && (!ok_first || !is_scalar(elm)) {
