@@ -1,0 +1,20 @@
+diff --git a/src/scopes/args.rs b/src/scopes/args.rs
+--- a/src/scopes/args.rs
++++ b/src/scopes/args.rs
+@@ -833,15 +833,7 @@
+         }
+         if outer_call != u32::MAX && ls.len() == args.len() {
+             self.copy_written_text_operands(outer_call, &mut preamble, &mut ls, function, data);
+-            if !is_place {
+-                self.copy_written_vector_operands(
+-                    outer_call,
+-                    &mut preamble,
+-                    &mut ls,
+-                    function,
+-                    data,
+-                );
+-            }
++            self.copy_written_vector_operands(outer_call, &mut preamble, &mut ls, function, data);
+         }
+         if outer_call != u32::MAX && ls.len() == args.len() {
+             self.keep_viewed_displaced(
