@@ -365,7 +365,14 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
     if e.first_pass {
       return ex(ir::NdNull, ir::TyVoid);
     }
-    if !(el_types::base(x.tp) is TyText) {
+    // Any other value is appended as a concatenation operand (`append_concat_operand`): a
+    // character by `OpAppendCharacter`, behind its null test and the text's presence.
+    appended: vector<ir::Node> = [];
+    if el_types::base(x.tp) is TyText {
+      appended = [el_ir::cl(e, "OpAppendText", [ir::NdVar { n: f }, x.code])];
+    } else if el_types::base(x.tp) is TyCharacter && !(x.tp is TyOptional) {
+      el_ex_vector::concat_operand(e, vars, appended, f, x);
+    } else {
       refuse_known(e, x.tp, "a text field appended a value of this type: {type_kind(x.tp)}");
       return ex(ir::NdNull, ir::TyVoid);
     }
@@ -375,11 +382,7 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
       el::refuse(e, "an assignment to a place that is not a plain local: {place_read(e, place)}");
       return ex(ir::NdNull, ir::TyVoid);
     }
-    return ex(ir::NdInsert { items: [
-      el_ir::v_set(f, p.code),
-      el_ir::cl(e, "OpAppendText", [ir::NdVar { n: f }, x.code]),
-      w!
-    ] }, ir::TyVoid);
+    return ex(ir::NdInsert { items: [el_ir::v_set(f, p.code)] + appended + [w!] }, ir::TyVoid);
   }
   // A pointer field's `&` annotates the store itself (`l.to = &x` sets `x`'s record), as a struct
   // literal's field does: the value is the operand.
@@ -581,9 +584,11 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
         }
       }
     }
-    // A text into a vector's text element replaces it (`OpSetTextReplace`).
-    if op == "=" && pb is TyText && !field_place && el_types::base(x.tp) is TyText {
-      wt = place_write(e, rd_place, x.code);
+    // A text into a vector's text element replaces it (`OpSetTextReplace`); so does one into a
+    // text field of a nullable place (a `text?` field, a field of an `R?` local), a `null` as the
+    // text null.
+    if op == "=" && pb is TyText && (el_types::base(x.tp) is TyText || (field_place && x.tp is TyNull)) {
+      wt = place_write(e, rd_place, if x.tp is TyNull { el_ir::cl(e, "OpConvTextFromNull", []) } else { x.code });
       if wt != null {
         return ex(wt!, ir::TyVoid);
       }
@@ -1541,6 +1546,11 @@ pub fn record_place_def(e: el::El, vars: el_vars::Vars, n: ir::Node) -> integer 
         // an element (`b.items[1].tags += [9]`).
         return match el_types::base(el_ex_vector::linked_vector(place_type(e, vars, args[0]))) { TyVector { inner } => heap_def(inner), _ => -1 };
       }
+      // An element of a LINKED vector (its records shared with a keyed sibling) is read by id:
+      // `OpVectorRef(v, i)`.
+      if nm == "OpVectorRef" && len(args) == 2 {
+        return match el_types::base(el_ex_vector::linked_vector(place_type(e, vars, args[0]))) { TyVector { inner } => heap_def(inner), _ => -1 };
+      }
       -1
     },
     _ => -1
@@ -1555,7 +1565,7 @@ pub fn place_type(e: el::El, vars: el_vars::Vars, n: ir::Node) -> ir::TypeT {
     NdVar { n: v } => match el_vars::tp(vars, v) { TyRefVar { inner } => inner, _ => el_vars::tp(vars, v) },
     NdCall { def_nr, args } => {
       nm = el::def(e, def_nr).name;
-      if nm == "OpGetVector" && len(args) == 3 {
+      if (nm == "OpGetVector" && len(args) == 3) || (nm == "OpVectorRef" && len(args) == 2) {
         return match el_types::base(el_ex_vector::linked_vector(place_type(e, vars, args[0]))) { TyVector { inner } => inner, _ => ir::TyVoid };
       }
       if nm == "OpGetField" && len(args) == 3 {
