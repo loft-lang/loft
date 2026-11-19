@@ -64,6 +64,27 @@ agreeing count is not the goal.  It is in the ledger.
 - `scripts/find_problems.sh --bg` removes the previous run's summary first (88f660f50): the
   file is named for the checkout, and an old one read as the new run's verdict.
 
+## The slot matrix in the tester's inspections (owner, 2026-11-19)
+
+loft30-gate carries @PLN221's `scripts/slot_matrix.py` (merged from tuxedo-pr2438-post at
+53d2de5a8). Use it wherever a judgment is "does this statement hold for every form of its
+operand":
+
+- **Judging a porter subject:** `python3 scripts/slot_matrix.py cell '<stmt, <S> the operand>'
+  --type <int|vint|text|rec|coll|…> --backend both` runs the shape over every filler of that
+  type on the interpreter and C with the count, order, value and leak checks, each against its
+  bind-first twin. A statement may declare its own locals (`tq = (1, "a"); tq.0 += <S>;`). A
+  failing cell is an oracle defect: check `found.md` and loft3's -next before treating it as
+  new, and name it on the subject page as a form NOT to mirror.
+- **Verifying a Rust fix:** `slot_matrix.py gate` (or `gate --family F`) before landing. A fix
+  may only remove baseline lines (`gate --update`, then read the diff). A cell the fix makes
+  pass can expose its twin as NEW (the rd-coal-rec-left twin did).
+- **Another build:** `LOFT=<binary>` points the tool at it, e.g. a peer's -next built in a
+  worktree.
+- **Load:** one gate runs half the cores' worth of C compiles. `cargo test --test slot_matrix`
+  serialises its seven family gates (4e19e802d): run unserialised, they OOM-killed this 14 GiB
+  laptop. Run it alone, or under `systemd-run --user --scope -p MemoryMax=8G`.
+
 ## Peers
 
 - The PORTER: `SendMessage` to `bridge:session_015fP1u2RTCyGqEvFJ5edvkL` (shown as
