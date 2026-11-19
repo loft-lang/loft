@@ -611,7 +611,18 @@ fn expression_node(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     SBool { b } => ex(ir::NdBoolean { b: b }, ir::TyBoolean),
     SNull => ex(ir::NdNull, ir::TyNull),
     SName { name, member } => tuple_field_copy(e, vars, n, name_expression(e, vars, name, member, n == vars.read_into)),
-    SAssign { at, fixed, op, target, e: rhs } => noted_bind(e, vars, assignment(e, vars, at, fixed, op, target, rhs)),
+    SAssign { at, fixed, op, target, e: rhs } => {
+      // `parts = [] as vector<text>` where it first binds the local: the empty literal
+      // declared at that type (a store of its own), as `parts: vector<text> = []` is.
+      cd_name = empty_cast_bind(e, vars, n, op, target, rhs);
+      if cd_name != "" {
+        match e.p.nodes[rhs ?? 0] {
+          SAs { e: ce, tp: ct } => { return noted_bind(e, vars, el_ex_place::declaration(e, vars, fixed, cd_name, ct, ce)); },
+          _ => {}
+        }
+      }
+      noted_bind(e, vars, assignment(e, vars, at, fixed, op, target, rhs))
+    },
     SLet { fixed, name, amp, tfixed, tp, e: rhs } => noted_bind(e, vars, el_ex_place::declaration(e, vars, fixed || amp || tfixed, name, tp, rhs)),
     SCall { at, f, args } => el_ex_object::call_expression(e, vars, at, f, args),
     SString { parts } => el_ex_call::string_expression(e, vars, parts),
@@ -2420,6 +2431,29 @@ pub fn noted_bind(e: el::El, vars: el_vars::Vars, x: Ex) -> Ex {
 // `Parser::parse_assign` for a plain `name = value`: the left side names a local — created on
 // the first pass, found again on the second — the right side is read, the local takes the
 // value's type (`change_var`) and the statement is the `Set` (`towards_set`), typed void.
+// The local an assignment first binds to an empty literal cast to a vector type, or "".
+fn empty_cast_bind(e: el::El, vars: el_vars::Vars, n: integer, op: text, target: integer, rhs: integer?) -> text {
+  if op != "=" || rhs == null {
+    return "";
+  }
+  name = match e.p.nodes[target] { SName { name: tn, member } => if member == "" { tn } else { "" }, _ => "" };
+  empty = match e.p.nodes[rhs!] {
+    SAs { e: ce, tp: ct, checked } => !checked && ct != null && ce != null && match e.p.nodes[ce!] { SVecLit { items } => len(items) == 0, _ => false } && match e.p.nodes[ct!] { STy { name: tyn } => tyn == "vector", _ => false },
+    _ => false
+  };
+  if name == "" || !empty {
+    return "";
+  }
+  if e.cast_decls.contains(n) {
+    return name;
+  }
+  if e.first_pass && vars.names[name] == null {
+    e.cast_decls += [n];
+    return name;
+  }
+  ""
+}
+
 pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: text, target: integer, rhs: integer?) -> Ex {
   // A compound assignment to a field of a `?` read (`v[0]?.k += x`): Rust binds the place once
   // (`__place_N`) and reads and writes through it — not carried.

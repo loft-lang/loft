@@ -653,6 +653,19 @@ pub fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: intege
     // A vector of scalars defaults to `[]` (`build_default`'s collection arm): `x?` is
     // `x ?? []`.  A vector of records registers its default's types where Rust does not yet.
     if b is TyVector && match b { TyVector { inner } => el_convert::plain_scalar(inner) || el_types::base(inner) is TyText && !(inner is TyOptional), _ => false } {
+      // (A METHOD call whose receiver is rooted at a variable — `src.split(',')?`,
+      // `r.nums()?`: Rust's default there has no store of its own, `_vec_N: vector<T> = null`
+      // and a `{#Vector _vec_N}` arm, which loses every append to it.  A defect of the Rust
+      // front end, being fixed there: not mirrored, refused until it builds its store.  A
+      // free call, and a chain rooted at a call or a literal, build `__vdb_N` and are carried.)
+      rooted = match e.p.nodes[pe!] {
+        SMember { e: re, call } => call && re != null && e.p.nodes[el_ex_base::leftmost(e, re!)] is SName,
+        _ => false
+      };
+      if !e.first_pass && rooted && el_ir::unspan(x.code) is NdCall {
+        el::refuse(e, "a `?` discharge of a call's nullable vector");
+        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+      }
       vt = el_types::without_deps(b);
       return coalesce_with(e, vars, x, ex(el_ex_pattern::empty_literal_to(e, vars, vt, borrows: el_ex_call::view_borrows(e, vars, x)), vt));
     }

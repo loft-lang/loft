@@ -2875,7 +2875,8 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
             found += [fname];
             continue;
           }
-          if vector_of(e, kx.tp, kd) {
+          // (A branch of literals is built in keyed stores of its own, `__kvb_N`: not carried.)
+          if vector_of(e, kx.tp, kd) && (el_ir::unspan(kx.code) is NdVar || el_ir::unspan(kx.code) is NdCall) {
             list += [el_ir::cl(e, "OpSetInt4", [r, kpos, ir::NdInt { n: 0 }]), el_ir::cl(e, "OpFillKeyed", [r, kx.code, ir::NdInt { n: knr }, ir::NdInt { n: def.known_type }, ir::NdInt { n: a }])];
             found += [fname];
             continue;
@@ -3725,6 +3726,21 @@ pub fn contains_struct(e: el::El, d: integer, host: integer, depth: integer) -> 
 // emptied (`OpAppendVector`), a copy as a whole-value bind is (`(B-Copy)`).  A call (delivered
 // into the field through its buffer), a slice, a nullable source and any other value are refused
 // by name.
+// Does every arm of the branch `code` ends in answer a vector built in a `__vdb_N` store?
+fn fresh_vector_arms(vars: el_vars::Vars, code: ir::Node) -> boolean {
+  match el_ir::unspan(code) {
+    NdBlock { block } => {
+      if block[0].name == "Vector" {
+        ds = el_types::deps(block[0].result[0] ?? ir::TyVoid);
+        return len(ds) == 1 && starts_with(el_vars::name_of(vars, ds[0]!), "__vdb_");
+      }
+      len(block[0].operators) == 1 && fresh_vector_arms(vars, block[0].operators[0]!)
+    },
+    NdIf { cond: _, t, f } => fresh_vector_arms(vars, t) && fresh_vector_arms(vars, f),
+    _ => false
+  }
+}
+
 pub fn field_vector_copy(e: el::El, vars: el_vars::Vars, r: ir::Node, d: integer, fname: text, inner: ir::TypeT, n: integer) -> vector<ir::Node>? {
   // A comprehension fills the field in place (`parse_vector_for` with `is_field`): its pushes
   // go to the field's place, with no store and no local of its own.
@@ -3743,7 +3759,22 @@ pub fn field_vector_copy(e: el::El, vars: el_vars::Vars, r: ir::Node, d: integer
     // (The build is one inserted group, as the comprehension answers it.)
     return match c.code { NdInsert { items } => if len(items) == 0 { [] } else { [c.code] }, _ => [] };
   }
+  // (`@FR-T-Chk-Vec`: the field's type reaches a branch's arms, so an untyped `[]` arm is
+  // built where it stands.)
+  kept_node = vars.expect_node;
+  kept_tp = vars.expect;
+  branch = match e.p.nodes[n] {
+    SIf { cond: _ } => n,
+    SBlock { stmts } => if len(stmts) == 1 { match e.p.nodes[stmts[0]] { SStmt { e: se, semi, orelse } => if se != null && !semi && orelse == null && e.p.nodes[se!] is SIf { se! } else { -1 }, _ => -1 } } else { -1 },
+    _ => -1
+  };
+  if branch >= 0 {
+    vars.expect_node = branch;
+    vars.expect = ir::TyVector { inner: inner, dep: [] };
+  }
   x = el_ex_assign::expression(e, vars, n);
+  vars.expect_node = kept_node;
+  vars.expect = kept_tp;
   if e.first_pass {
     return [];
   }
@@ -3770,6 +3801,11 @@ pub fn field_vector_copy(e: el::El, vars: el_vars::Vars, r: ir::Node, d: integer
   // (A field path through inline records — `d0.tiles.proto` — is a place as a field of a local
   // is: Rust appends from the path read as written.)
   whole = copies_whole_vector(e, vars, x.code) || (calls(e, x.code, "OpGetField") && el_ex_base::field_path(e, el_ir::unspan(x.code)));
+  // A branch whose arms each build a vector in a store of their own (`{ if c { [] } else
+  // { [2] } }`): appended from whichever it answers.
+  if !whole && (el_ir::unspan(x.code) is NdIf || el_expressions::tail_kind(e, vars, x.code) == "if") && len(el_types::deps(x.tp)) > 0 && fresh_vector_arms(vars, x.code) {
+    whole = true;
+  }
   if x.tp is TyOptional || !(el_types::base(x.tp) is TyVector) || !whole || !el_types::is_equal(e, x.tp, ir::TyVector { inner: inner, dep: [] }) {
     what = if x.tp is TyOptional { "a nullable vector" } else if !(el_types::base(x.tp) is TyVector) { display_type_name(e, x.tp) } else if !copies_whole_vector(e, vars, x.code) { el_expressions::tail_kind(e, vars, x.code) } else { "a vector of {display_type_name(e, x.tp)}" };
     refuse_known(e, x.tp, "a vector field written from something other than a literal or a vector place: {what}");
