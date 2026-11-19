@@ -1729,7 +1729,8 @@ why the header needs no write set while a scalar (R-Scalar) does.  Switch
 `LOFT_NO_WRITE_HOIST`.  Sites: `hoist::IN_PLACE_SET_OPS`,
 `loop_records::in_place_set` and `loop_records::sets_into_new_records` (the slot clause),
 `hoist::blocks_header_hoist`.  Guard:
-`tests/scripts/a-vector-field-rebuilt-in-place-in-a-loop-keeps-its-pushes.loft`.
+`rules/rewrites/R-InPlace/a-vector-field-rebuilt-in-place-in-a-loop-keeps-its-pushes.loft`
+in the language suite.
 **The text clause of (R-Base)**: a TEXT element read —
 `OpGetText(OpGetVector*(P, 4, i), 0)`, a walk's element or an indexed `v[i]` — in a loop
 that holds P's header and element base reads the element's record number through the
