@@ -5,6 +5,10 @@ Plan: [loft-lang/plans#199](https://github.com/loft-lang/plans/issues/199).  The
 a reason, because a value has the same layout in both modes.  Without `rustc`, only a library
 that is not in the registry runs interpreted.
 
+## Status
+
+**PARKED 2026-11-19 (owner).**  Shipped: A0–A4, B1, B2, C0–C2, D1–D3, E1–E3, G0–G3, F1, F3, F4 — every published library compiles whole (`make gate-census`: 56 packages, no decline reason) and `gatefull` is 51 of 51.  Paused: F2, the standing shapes and F-last.  **Trigger:** `LOFT_TRACE_NATIVE_GATE=1` names one of the standing shapes on a real consumer or in a profile; that shape is lifted then, by the procedure in § Standing work of the plan doc.
+
 `LOFT_NO_CACHE=1 LOFT_TRACE_NATIVE_GATE=1 loft script.loft` shows what is left; every step
 below ends with that trace losing a line.
 
