@@ -271,6 +271,28 @@ impl Parser {
             let pick = self.nullable_pick(slot_ref.clone(), slot_ref, payload_pos, struct_kt);
             return pick;
         }
+        // loft#2577 — a slot read off a CALL's answer (`f().0` of a `(S?, …)`) views a store no
+        // variable names: the view's deps were the call's (none), so the scope pass took the
+        // `??` over it for a fresh record of its own and lifted the call into a temporary it
+        // released before the view was read.  The call is bound to a local of this scope
+        // first — the spelling `t = f(); t.0` has — so the slot is a place of that local, the
+        // view names it, and the local releases the answer when its scope ends.
+        // `LOFT_NO_SLOT_CALL_OWNER=1` (STORE_RECORDS.md § The checks): the call stays inline,
+        // as before loft#2577.
+        if !crate::env_once!(std::env::var_os("LOFT_NO_SLOT_CALL_OWNER").is_some())
+            && let Some((call, ret)) = self.slot_call_root(&slot_ref)
+        {
+            let owner = self.create_unique("slot_src", &ret);
+            self.vars.defined(owner);
+            let mut rooted = slot_ref.clone();
+            self.replace_slot_root(&mut rooted, Value::Var(owner));
+            let viewed = Type::Optional(Box::new(Type::Reference(
+                struct_d,
+                crate::data::Deps::frame1(owner),
+            )));
+            let pick = self.nullable_pick(rooted.clone(), rooted, payload_pos, struct_kt);
+            return v_block(vec![v_set(owner, call), pick], viewed, "nullable_slot_read");
+        }
         let named = self.vars.work_refs(src_tp, &mut self.lexer);
         if named == u16::MAX {
             return slot_ref;
@@ -415,6 +437,49 @@ impl Parser {
     /// nothing, so repeating it costs a few instructions.  Everything else is assumed to have
     /// an effect worth keeping to one evaluation — a block that BUILDS a value is the case
     /// that matters, since repeating it mints a second store nothing then frees.
+    /// The CALL a projection chain is rooted in (`OpGetField(f(…), …)`, through further
+    /// projections) and the type the call answers — `None` when the root is anything else or
+    /// the callee is not loft-defined (a native's answer names no store of this frame's).
+    fn slot_call_root(&mut self, v: &Value) -> Option<(Value, Type)> {
+        let Value::Call(d, args) = v.unspan() else {
+            return None;
+        };
+        if !crate::use_analysis::is_projection_op(&self.data, *d) {
+            return None;
+        }
+        let first = args.first()?;
+        if let Value::Call(c, _) = first.unspan()
+            && !crate::use_analysis::is_projection_op(&self.data, *c)
+            && self.data.def(*c).is_loft_defined()
+        {
+            let ret = self.data.def(*c).returned().clone();
+            let ret = self.boxed_tuple_return(ret).without_deps();
+            return matches!(ret.base(), Type::Reference(_, _)).then(|| (first.clone(), ret));
+        }
+        self.slot_call_root(first)
+    }
+
+    /// Replace the call at the root of a projection chain ([`Self::slot_call_root`]) by `with`:
+    /// the same descent, through projections to the first call that is not one.
+    fn replace_slot_root(&self, v: &mut Value, with: Value) {
+        let target = match v {
+            Value::Span(b) => &mut b.1,
+            other => other,
+        };
+        let Value::Call(_, args) = target else {
+            return;
+        };
+        let Some(first) = args.first_mut() else {
+            return;
+        };
+        let projection = matches!(first.unspan(), Value::Call(c, _) if crate::use_analysis::is_projection_op(&self.data, *c));
+        if projection {
+            self.replace_slot_root(first, with);
+        } else {
+            *first = with;
+        }
+    }
+
     pub(super) fn is_repeatable_place(data: &crate::data::Data, v: &Value) -> bool {
         match v.unspan() {
             Value::Var(_) => true,
