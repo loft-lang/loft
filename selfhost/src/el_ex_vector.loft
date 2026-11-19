@@ -665,7 +665,9 @@ pub fn index(e: el::El, vars: el_vars::Vars, at: integer, c: integer?, keys: vec
     x = ex(el_ir::v_block([el_ir::v_set(cw, x.code), ir::NdVar { n: cw }], el_types::with_deps(x.tp, [cw]), "inline_container"), x.tp);
   }
   i = el_ex_assign::expression(e, vars, keys[0]);
-  if !el_types::is_unknown(i.tp) && !(i.tp is TyInteger) {
+  // (A NULLABLE integer indexes as it is — `self.types[in_type]` with `in_type: u16?`: a
+  // null index names no element, as an index past the end does.)
+  if !el_types::is_unknown(i.tp) && !(el_types::base(i.tp) is TyInteger) {
     el::refuse(e, "an index that is not an integer: {type_kind(i.tp)}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
