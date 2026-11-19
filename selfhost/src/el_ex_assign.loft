@@ -2454,6 +2454,22 @@ fn empty_cast_bind(e: el::El, vars: el_vars::Vars, n: integer, op: text, target:
   ""
 }
 
+// Does the syntax under `n` run a call, or discharge a nullable (`x?`)?
+fn runs_a_call(e: el::El, n: integer) -> boolean {
+  match e.p.nodes[n] {
+    SCall { at: _ } => { return true; },
+    SMember { call } => { if call { return true; } },
+    SPostfix { op } => { if op == "?" { return true; } },
+    _ => {}
+  }
+  for c in el_length::children(e, n) {
+    if runs_a_call(e, c) {
+      return true;
+    }
+  }
+  false
+}
+
 // `keep[i]?.k += add`: the whole discharge is held ONCE in a `__place_N` — the element where
 // it is there, the type's default record where it is not (`(N-Default)`: a write through `?`
 // onto an absent place lands in that default, which is dropped) — and the field is read and
@@ -2476,6 +2492,13 @@ fn place_through_discharge(e: el::El, vars: el_vars::Vars, op: text, target: int
   if e.first_pass {
     return ex(ir::NdNull, ir::TyVoid);
   }
+  // (An element the write makes through the place borrows what the place views, not the
+  // place: `_elm_N: ref(Pt)["c"]`.)
+  for pv in vars.vars {
+    if starts_with(pv.name, "_elm_") && el_types::deps(pv.type_def[0] ?? ir::TyVoid) == [pl] {
+      el_vars::set_var_type(vars, pv#index, el_types::with_deps(pv.type_def[0] ?? ir::TyVoid, el_types::deps(s.tp)));
+    }
+  }
   ex(ir::NdInsert { items: [el_ir::v_set(pl, s.code), w.code] }, ir::TyVoid)
 }
 
@@ -2485,13 +2508,14 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
   if op != "=" && rhs != null {
     match e.p.nodes[target] {
       SMember { e: cme, call } => {
-        if !call && cme != null && match e.p.nodes[cme!] { SPostfix { op: cpo } => cpo == "?", _ => false } {
-          // A vector literal appended through it is built through the read itself, with no
-          // place bound: not carried.
-          if e.p.nodes[rhs!] is SVecLit {
-            el::refuse(e, "a compound assignment to a field of a `?` read");
-            return ex(ir::NdNull, ir::TyVoid);
-          }
+        // `@PLN102 F2`, `@FR-E-Asgn-Compound`: the place's addressing reduces EXACTLY ONCE.
+        // Where the record the field is of is reached through a call — an index that calls
+        // (`c.items[len(c.items) - 1].n += 1`), a call's result, a `?` discharge (which mints
+        // its default) — it is bound once in a `__place_N` and the field read and written
+        // through that.
+        // (On the second pass only, as Rust binds it: a first-pass mint would number the
+        // function's later variables one off.)
+        if !e.first_pass && !call && cme != null && runs_a_call(e, cme!) {
           return place_through_discharge(e, vars, op, target, cme!, rhs!);
         }
       },
