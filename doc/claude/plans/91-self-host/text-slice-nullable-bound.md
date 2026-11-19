@@ -20,7 +20,9 @@ DIFFERS (see the second change below).
 
 `text_slice_type` (fields.rs:3302) hands the finished `OpGetTextSub(text, lo, hi)` to the
 general `wrap_null_transparent` (calls.rs:1080) with the argument types `[text, lo_t, hi_t]` and
-the answer `text` WITHOUT deps; pass 1 answers `text?` and wraps nothing.
+the answer `text`.  The slice's TYPE is not that `text?`: `parse_index` keeps the subject's
+`elm_type` and discards `text_slice_type`'s answer, so `y = line[maybe(1)..]` is `text` and
+`__ncc_1` is `text["t"]`.  Only the CODE is wrapped, and only on pass 2.
 
 ```
 t[maybe(1)..maybe(3)]       {#null_transparent:text?
@@ -45,10 +47,9 @@ The consumers need nothing new: `== null`, `??`, `len`, a bind (`rest: text = {#
 
 1. **`text_slice` (el_ex_vector.loft:~170):** drop the refusal; record each bound's type (an
    open bound is `TyInteger`); after `OpGetTextSub` is built (with the inclusive `OpAddInt`
-   already in its bound), when either bound type is `TyOptional`: on pass 1 answer
-   `TyOptional { TyText }` (no deps) and the plain code; on pass 2 call
-   `el_ex_object::null_transparent(e, vars, <the unspanned call>, [x.tp, lo_t, hi_t], TyText{no deps}, <spanned>)`.
-   A slice with no nullable bound keeps today's form and deps.
+   already in its bound), when either bound type is `TyOptional`: on pass 2 wrap the code
+   with `el_ex_object::null_transparent(e, vars, <the unspanned call>, [x.tp, lo_t, hi_t], TyText, <spanned>)`;
+   the slice keeps the subject's `text` type with its borrows on both passes.
 2. **`null_transparent` (el_ex_object.loft:2530), shared with `min`/`max`/`abs`/…:** carry
    `(F-Args)`'s hoist, which it lacks today.  Let `last` = the index of the last `TyOptional`
    argument.  An argument BEFORE `last` that is not `TyOptional` and does not read alike
