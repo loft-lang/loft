@@ -10648,6 +10648,30 @@ impl Parser {
         self.nullable_payload_struct(td).unwrap_or(td)
     }
 
+    /// The local `cond` proves present on the THEN path when that path is the local itself:
+    /// `OpConvBoolFromRef(x)` or `!OpRefIsNull(x)` with a then arm of `x`.
+    fn condition_proves_present(&self, cond: &Value, then: &Value) -> Option<u16> {
+        let Value::Var(x) = then.unspan() else {
+            return None;
+        };
+        let tested = match cond.unspan() {
+            Value::Call(d, args) if args.len() == 1 => match self.data.def(*d).name() {
+                "OpConvBoolFromRef" => args[0].unspan().clone(),
+                "OpNot" => match args[0].unspan() {
+                    Value::Call(n, inner)
+                        if inner.len() == 1 && self.data.def(*n).name() == "OpRefIsNull" =>
+                    {
+                        inner[0].unspan().clone()
+                    }
+                    _ => return None,
+                },
+                _ => return None,
+            },
+            _ => return None,
+        };
+        matches!(tested, Value::Var(t) if t == *x).then_some(*x)
+    }
+
     fn materialize_return_into(&mut self, td: u32, tail: &mut Value, w: u16) {
         let td = self.return_copy_type(td);
         if let Value::Return(inner) = tail {
@@ -10689,8 +10713,16 @@ impl Parser {
             self.state_route("materialize_return_into=arms");
             match tail {
                 Value::Span(b) => self.materialize_return_into(td, &mut b.1, w),
-                Value::If(_, t, f) => {
+                Value::If(c, t, f) => {
+                    // `@FR-N-Road` — a then arm that is the very local the condition tested
+                    // present (a discharge's `if OpConvBoolFromRef(__ncc_N) __ncc_N else …`)
+                    // is proven present there: its copy takes no absence test.  The test it
+                    // had answered the sentinel on a path that cannot run, and that dead
+                    // null arm kept `(R-ValueRecord)` off every `return v[i]?` of a record.
+                    let proven = self.condition_proves_present(c, t);
+                    let outer = std::mem::replace(&mut self.ret_proven_present, proven);
                     self.materialize_return_into(td, t, w);
+                    self.ret_proven_present = outer;
                     self.materialize_return_into(td, f, w);
                 }
                 Value::Block(bl) => {
@@ -10732,6 +10764,8 @@ impl Parser {
         // copy tests every local it is of, whatever the local and the function are typed
         // (`@FR-N-Road`).
         let absent_guard = match orig.unspan() {
+            // Proven present by the branch this copy stands in (`condition_proves_present`).
+            Value::Var(v) if self.ret_proven_present == Some(*v) => None,
             Value::Var(v) if self.record_local_may_be_absent(*v) => Some(Value::Var(*v)),
             // A FIELD of a record that may be absent is absent with it (loft#2006).  The read
             // is pure, so the test re-reads it.

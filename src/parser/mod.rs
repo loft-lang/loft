@@ -1202,6 +1202,10 @@ pub struct Parser {
     /// taken by `keyed_snapshot`, which then builds a hash's snapshot in slot order instead of
     /// key order.  Any other walk ignores it: key order is one of the orders `unordered` allows.
     unordered_iterator: bool,
+    /// `@FR-N-Road` — the local a return copy's enclosing branch has just PROVEN present:
+    /// the present arm of a discharge (`if OpConvBoolFromRef(x) x else …`) copies `x` with
+    /// no absence test of its own (`materialize_return_into`).
+    ret_proven_present: Option<u16>,
     /// D-key-1: true only while parsing the *iterable* of a `for`/comprehension (set with
     /// save/restore around the iterable expression in `parse_in_range`).  A keyed range /
     /// partial-key subscript produces a `for`-only iterator (`Value::Iter`); `parse_key`
@@ -2257,6 +2261,7 @@ impl Parser {
             reverse_iterator: false,
             source_refused: false,
             unordered_iterator: false,
+            ret_proven_present: None,
             iterable_context: false,
             last_range_from: None,
             literal_walk: None,
