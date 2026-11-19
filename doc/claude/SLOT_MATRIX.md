@@ -83,7 +83,7 @@ twin agree and the anchor's hand value was computed from the same misreading.  E
 
 | Run | Cells | Both backends |
 |---|---|---|
-| the PR gate: every cell interpreted, a sample compiled | 6,061, of which about 900 on C | 15 s here |
+| the PR gate: every cell interpreted, a sample compiled | about 6,100, of which about 900 on C | 15 s here; 16 s to 68 s a test on a CI runner |
 | the gate, full (`gate --full`): every cell on both backends | 6,061 | about 100 s here; several times that on a CI runner |
 | four contexts and two frames | about 23,000 | 5 min 33 s |
 | depth two | about 15,000 | 3 min 9 s |

@@ -24,7 +24,9 @@ matrix finds more with every run, and each fix is then checked by cells that alr
    `gate --full` is the whole matrix on both, and is what rewrites the baseline.  The
    full run, the four contexts, the frames and depth two are a nightly leg not yet
    scheduled.  The test had also carried a `#[cfg(unix)]` and a `std::fs` read, which the
-   platform census and Clippy refuse.
+   platform census and Clippy refuse.  With all of that changed the gate is green on
+   Linux: the seven tests pass on the runner in 16 s to 68 s each, with Clippy, the doc
+   hygiene suite, ASan and the stack-alignment sweep.
 2. **G2 — the ad-hoc cell** — **built.**  `slot_matrix.py cell '<statement with <S>>'`
    with `--type T` (every filler of a type) or `--filler EXPR --plain EXPR` runs one shape
    on both backends with all four checks, and prints the table rows the shape would be.
