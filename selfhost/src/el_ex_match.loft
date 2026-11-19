@@ -1464,6 +1464,10 @@ pub fn keyed_for(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex) -> Ex {
   held_fill = ir::NdNull;
   if (ct is TySorted || ct is TyIndex) && el_ex_place::any_user_call(e, [x.code]) {
     held_src = el_vars::create_unique(vars, "vector", ct);
+    // (Typed as this pass's source: a `??` viewing a local borrows it, `["h"]`.)
+    if !e.first_pass {
+      el_vars::set_var_type(vars, held_src, ct);
+    }
     held_fill = el_ir::v_set(held_src, x.code);
     ct = el_types::with_deps(ct, [held_src]);
     x = ex(ir::NdVar { n: held_src }, ct);
@@ -1489,6 +1493,11 @@ pub fn keyed_for(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex) -> Ex {
   idx = el_ex_pattern::loop_index(vars, h.id);
   base = if h.id == "_" { el_vars::name_of(vars, idx) } else { h.id };
   lv = loop_var(vars, h.src_id, h.id, elem);
+  // (A source held on this pass is what the loop's variable borrows, whatever the first pass
+  // walked: `ref(P)["_vector_N"]`.)
+  if !e.first_pass && held_src >= 0 {
+    el_vars::set_var_type(vars, lv, elem);
+  }
   vars.active_loops += [lv];
   vars.active_values += [ir::NdNull];
   fc = el_ex_pattern::loop_filter(e, vars, h.filter);
