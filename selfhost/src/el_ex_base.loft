@@ -2179,7 +2179,11 @@ pub fn vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean) -> 
     el::refuse(e, "a vector of this element type: {type_kind(t)}");
     return null;
   }
-  int4_rows(e, t);
+  // (An empty `[]` of a narrow element numbers nothing yet: its rows come at the first push.)
+  empty_narrow = match e.p.nodes[lit] { SVecLit { items } => len(items) == 0, _ => false } && match t { TyInteger { spec } => el_types::narrow_width(spec) > 0, _ => false };
+  if !empty_narrow {
+    int4_rows(e, t);
+  }
   if el::def_nr(e, "main_vector<{nm}>") < 0 {
     tok = 0;
     match e.p.nodes[lit] {
@@ -2287,12 +2291,15 @@ pub fn tuple_vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolea
 // by `fill_all`.
 pub fn vector_def(e: el::El, t: ir::TypeT, nm: text, lit: integer, declared: boolean) {
   at = closing_bracket(e, lit);
+  // An empty `[]` numbers no narrow element row here: `Data::vector_def` makes definitions only,
+  // and the rows come where the program first pushes into the vector, in that order.
+  empty = at == lit + 1;
   // A declared element type, or an empty `[]`, makes them before the literal is read: the lexer
   // stands after the token before its `[`.
   if at == lit + 1 || declared {
     at = lit - 1;
   }
-  el_schema::make_vector_def(e, t, nm, el::pos_at(e, at), true);
+  el_schema::make_vector_def(e, t, nm, el::pos_at(e, at), true, narrow_early: !empty);
   // A nullable scalar's vector is stored as the scalar's: where the library has no
   // `vector<scalar>` (`float`, `boolean`) its row is made here (`database.vector`).
   bn = el_types::nullable_scalar_elem(e, t);

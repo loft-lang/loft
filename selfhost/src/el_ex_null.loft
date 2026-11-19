@@ -166,14 +166,18 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
       held = el_vars::create_unique(vars, "_ncc", lhs);
       vars.vars[held].skip_free = true;
       ht = el_types::with_deps(el_types::without_deps(lhs), [held]);
+      // (A loft call whose result borrows nothing — not even the buffer it was handed — is a
+      // fresh store as a native's is: `owned_vector` with no deps, the holder nulled before the
+      // statement and the default's buffer a work ref.)
+      fresh = native || len(el_types::deps(lhs)) == 0;
       if e.first_pass {
         // A native call's default: its buffer is a work ref from this pass on.
-        if native {
+        if fresh {
           el_ex_call::borrowed_literal_buffer(vars, d.code);
         }
         return ex(ir::NdNull, ht);
       }
-      if native {
+      if fresh {
         el_vars::register_work_ref(vars, held);
         el_vars::mark_inline(vars, held);
         el_vars::set_var_type(vars, held, el_types::without_deps(lhs));
@@ -731,7 +735,7 @@ pub fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: intege
     // `x ?? []`.  A vector of records registers its default's types where Rust does not yet.
     // (A vector of NULLABLE records too: Rust's `[]` registers `vector<__nullable<T>>` and
     // its `main_vector` there, and the default is the same build.)
-    nullable_records = match b { TyVector { inner: nri } => el_ex_base::is_nullable_wrapper(e, nri), _ => false };
+    nullable_records = match b { TyVector { inner: nri } => el_ex_base::is_nullable_wrapper(e, nri) || (struct_ref(e, nri) >= 0 && !(nri is TyOptional)), _ => false };
     // (Its two definitions are made by the default's own `[]`, which Rust reads from a
     // synthetic source: at 1:3.)
     if nullable_records {
@@ -746,6 +750,18 @@ pub fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: intege
       // borrows, and builds a store of its own whatever the subject is.)
       vt = el_types::without_deps(b);
       return coalesce_with(e, vars, x, ex(el_ex_pattern::empty_literal_to(e, vars, vt, borrows: []), vt));
+    }
+    // A keyed collection defaults to that collection, empty (`build_default`'s collection arm,
+    // as `x ?? []` builds it): a `__kvb_N` of its own, nulled at the head, given its store.
+    if keyed_kind(b) && !(b is TyVector) {
+      kct = el_types::without_deps(b);
+      kvb = el_vars::create_unique(vars, "_kvb", kct);
+      if e.first_pass {
+        return coalesce_with(e, vars, x, ex(ir::NdNull, kct));
+      }
+      el_vars::register_work_ref(vars, kvb);
+      kw = ir::NdVar { n: kvb };
+      return coalesce_with(e, vars, x, ex(el_ir::v_block([el_ir::v_set(kvb, ir::NdNull), el_ir::cl(e, "OpDatabase", [kw, ir::NdInt { n: el_schema::keyed_type(e, kct) }]), kw], kct, "Vector"), kct));
     }
     // A plain enum defaults to its first-declared variant (`build_default`'s enum arm, D-Enum).
     match b {

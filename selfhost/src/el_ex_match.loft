@@ -1451,6 +1451,31 @@ pub fn text_for(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex) -> Ex {
   el_ex_null::counted(e, cnt, ex(el_ir::v_block(init + [el_ir::v_loop(steps, "For loop")], ir::TyVoid, "For block"), ir::TyVoid))
 }
 
+// Does a loop source's code (the second pass's) hold what Rust's first pass already held: a
+// call of a function, or a `__ncc_N` holder?  A `?? []` over a local holds neither there.
+fn held_on_first_pass(e: el::El, vars: el_vars::Vars, n: ir::Node) -> boolean {
+  match n {
+    NdCall { def_nr } => {
+      if !starts_with(el::def(e, def_nr).name, "Op") {
+        return true;
+      }
+    },
+    NdSet { var: hv } => {
+      if starts_with(el_vars::name_of(vars, hv), "__ncc_") {
+        return true;
+      }
+    },
+    NdCallRef { var: _ } => { return true; },
+    _ => {}
+  }
+  for c in el_ir::children(n) {
+    if held_on_first_pass(e, vars, c) {
+      return true;
+    }
+  }
+  false
+}
+
 // `iterator`'s keyed arm: a walk over a hash, sorted or index from its first record
 // (`OpIterate(c, on, arg, keys, 0, 0)` into `x#iter_state`), each step `OpStep` — the record,
 // borrowing what the collection does, or the null sentinel past the last.
@@ -1493,10 +1518,22 @@ pub fn keyed_for(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex) -> Ex {
   idx = el_ex_pattern::loop_index(vars, h.id);
   base = if h.id == "_" { el_vars::name_of(vars, idx) } else { h.id };
   lv = loop_var(vars, h.src_id, h.id, elem);
-  // (A source held on this pass is what the loop's variable borrows, whatever the first pass
-  // walked: `ref(P)["_vector_N"]`.)
+  // (A source held on this pass is what the loop's variable borrows, `ref(P)["_vector_N"]`,
+  // where the first pass held it too.  One the first pass walked unheld — a `?? []` over a
+  // local, whose default holds nothing there — keeps the first pass's borrow
+  // (`loop_variable`: a known type with deps is not replaced).)
   if !e.first_pass && held_src >= 0 {
-    el_vars::set_var_type(vars, lv, elem);
+    cur_lv = el_vars::tp(vars, lv);
+    // (Rust's first pass held it where the source calls a function or holds a `__ncc_N`.)
+    held_before = el_types::is_unknown(cur_lv) || len(el_types::deps(cur_lv)) == 0 || held_on_first_pass(e, vars, held_fill);
+    for d in el_types::deps(cur_lv) {
+      if starts_with(el_vars::name_of(vars, d), "_vector_") {
+        held_before = true;
+      }
+    }
+    if held_before {
+      el_vars::set_var_type(vars, lv, elem);
+    }
   }
   vars.active_loops += [lv];
   vars.active_values += [ir::NdNull];

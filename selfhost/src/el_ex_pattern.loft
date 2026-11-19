@@ -2941,7 +2941,7 @@ pub fn empty_literal_to(e: el::El, vars: el_vars::Vars, t: ir::TypeT, borrows: v
 }
 
 // `vector_db`: a fresh `__vdb_N` store for vector local `v`, the local borrowing it.
-pub fn literal_store(e: el::El, vars: el_vars::Vars, v: integer, r: VecRows, rebind: boolean = false) -> vector<ir::Node> {
+pub fn literal_store(e: el::El, vars: el_vars::Vars, v: integer, r: VecRows, rebind: boolean = false, slot: integer = 0) -> vector<ir::Node> {
   db = el_vars::work_vec_db(vars, ir::TyReference { n: r.main_def, dep: [] });
   if rebind {
     vars.vars[db].skip_free = true;
@@ -2951,7 +2951,7 @@ pub fn literal_store(e: el::El, vars: el_vars::Vars, v: integer, r: VecRows, reb
   [
     el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: r.main_known }]),
     el_ir::v_set(v, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: r.vec_known }])),
-    el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }])
+    el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: slot }])
   ]
 }
 
