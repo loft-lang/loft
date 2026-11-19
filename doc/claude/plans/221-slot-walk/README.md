@@ -162,7 +162,7 @@ the branch that carries both fixes.
 | **C** — the walk, one family per step | each failing cause fixed at the lowering that copies the operand, one named suite cell per cause under its rule, the refused list read | the family's cells, both backends; the named cell fails on the build before the fix (`make falsify`) | Open |
 | **D** — depth two | fillers nested once | the same run at depth two; a cause found here that depth one missed is recorded with the pair that exposed it | Open |
 | **E** — the cells as lockstep input | every generated cell fed to the Rust-against-loft comparison of results and debug layers | a difference in any layer on any cell | Blocked on the port's comparison harness taking generated input |
-| **F** — the gate | depth one in the changed-subject loop and the PR gate, depth two nightly; a baseline of open cells that may only shrink | a new failing cell on a PR; a baseline entry that passes again and was not removed | Open |
+| **F** — the gate | depth one in the PR gate (`tests/slot_matrix.rs`), a baseline of open cells that may only shrink; the wider axes nightly | a new failing cell on a PR; a baseline entry that passes again and was not removed | Shipped for one context and one frame (G1); the nightly leg is open |
 | **G** — reach | the matrix walked back over past defects: `slot_matrix.py walk --old <binary>` against the release before, and the `silent-wrong` issues since it judged in [reach.tsv](reach.tsv); every axis and row it asks for | the time walk: a row added for a past issue must FAIL on the build that had the defect; the share of new issues that `fits-now` at the next release | Running — contexts and frames added; G1 to G9 of § Phase ordering are its steps |
 
 ## Phase ordering
@@ -170,11 +170,14 @@ the branch that carries both fixes.
 The tooling comes before the fixes: a wider matrix finds more with every run, and each
 fix is then checked by cells that already exist.
 
-1. **G1 — the baseline and the gate** (this is phase F, taken first).  A file of the cells
-   known to fail, which may only shrink, so the 39-second run joins the PR gate before the
-   causes are fixed.  *Verify:* a cell that newly fails turns the gate red; a baseline line
-   whose cell passes again and was not removed does too.  The time walk showed three
-   regressions inside two weeks that this would have stopped at their own PR.
+1. **G1 — the baseline and the gate** (this is phase F, taken first) — **built.**
+   `scripts/slot_matrix.baseline` lists the 179 cell lines that do not pass today, and
+   `slot_matrix.py gate` (run by `tests/slot_matrix.rs`, 41 s) fails on a cell that is not
+   ok and not listed, and on a listed cell that passes again; a crash line is marked
+   unstable and may pass.  *Verified:* against the release of 2026-11-03 the gate reports
+   120 new cells and 41 lines to remove.  Still to learn: whether the baseline is the same
+   on Linux.  The four contexts and two frames are not in the gate; they are a nightly
+   candidate at five and a half minutes.
 2. **G2 — the ad-hoc cell.**  `slot_matrix.py cell '<statement with <S>>' --filler '<expr>'`
    runs one shape on both backends with all four checks, and prints the table rows to add
    when it fails.  The agent that meets a defect then adds the row at that moment.

@@ -465,6 +465,10 @@ compiler defect answers one question and writes the answer down with the fix:
 4. **Outside** — not about evaluating an operand (a diagnostic, a package, a library): a
    ledger line saying so, and nothing else.
 
+A fix that makes listed cells pass removes their lines from `scripts/slot_matrix.baseline`
+in the same change (`slot_matrix.py gate --update`, then read the diff): the gate fails on a
+listed cell that passes.
+
 The defect's own regression test is still owed, as before: the matrix compares a statement
 with its bound-first twin, so it sees only what the operand's form changes, and a defect
 that is wrong for every form needs its expected value written by hand.  The ledger and how
