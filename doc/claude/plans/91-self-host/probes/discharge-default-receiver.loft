@@ -1,0 +1,43 @@
+// The `?` discharge of a nullable vector, by the subject's chain (loft#2567).  Rust builds the
+// default `[]` as a fresh expression, so every row takes the `OpDatabase(__vdb_N)` form the free
+// call always had; before the fix the rows whose method receiver has deps (marked R) took a
+// store-less `_vec_N` and were wrong.  The port's rule: the vector default never takes the
+// subject's deps.  Every cell takes the default (its subject answers null) and asserts the
+// default's own value, so the default arm is proven to run.
+struct R { n: integer }
+struct O { v: vector<integer> }
+fn maybe(n: integer) -> vector<integer>? { if n > 0 { [n, n] } else { null } }
+fn maybe_t(s: text) -> vector<text>? { if len(s) > 9 { [s] } else { null } }
+fn nums(self: R) -> vector<integer>? { if self.n > 0 { [self.n] } else { null } }
+fn evens(self: vector<integer>) -> vector<integer>? { if len(self) > 0 { self } else { null } }
+fn pieces(self: text) -> vector<text>? { if len(self) > 9 { [self] } else { null } }
+fn mo(n: integer) -> O? { if n > 0 { O { v: [n] } } else { null } }
+
+fn free_call() -> text { v = maybe(0)?; v += [1]; "{v}" }
+fn free_call_var_arg() -> text { s = "a"; v = maybe_t(s)?; v += ["b"]; "{len(v)}" }
+fn chain_on_call() -> text { v = mo(0).v?; v += [2]; "{v}" }
+fn local_subject() -> text { w: vector<integer>? = null; v = w?; v += [3]; "{v}" }
+fn r_record_receiver() -> text { r = R { n: 0 }; v = r.nums()?; v += [4]; "{v}" }
+fn r_record_coalesce() -> text { r = R { n: 0 }; v = r.nums() ?? [5]; v += [6]; "{v}" }
+fn r_element_receiver() -> text { rs = [R { n: 0 }]; v = rs[0].nums()?; v += [7]; "{v}" }
+fn r_vector_receiver() -> text { src: vector<integer> = []; v = src.evens()?; v += [8]; "{v}" }
+fn r_text_receiver() -> text { src = "a"; v = src.pieces()?; v += ["c"]; "{len(v)}" }
+fn r_field_of_null_local() -> text { o: O? = null; v = o.v?; v += [9]; "{v}" }
+fn r_each_pass() -> text { r = R { n: 0 }; s = ""; for i in 0..3 { v = r.nums()?; v += [i]; s += "{v}"; } s }
+fn r_field_each_pass() -> text { o: O? = null; s = ""; for i in 0..3 { v = o.v?; v += [i]; s += "{v}"; } s }
+
+fn main() {
+  assert(free_call() == "[1]", "free_call {free_call()}");
+  assert(free_call_var_arg() == "1", "free_call_var_arg {free_call_var_arg()}");
+  assert(chain_on_call() == "[2]", "chain_on_call {chain_on_call()}");
+  assert(local_subject() == "[3]", "local_subject {local_subject()}");
+  assert(r_record_receiver() == "[4]", "r_record_receiver {r_record_receiver()}");
+  assert(r_record_coalesce() == "[5,6]", "r_record_coalesce {r_record_coalesce()}");
+  assert(r_element_receiver() == "[7]", "r_element_receiver {r_element_receiver()}");
+  assert(r_vector_receiver() == "[8]", "r_vector_receiver {r_vector_receiver()}");
+  assert(r_text_receiver() == "1", "r_text_receiver {r_text_receiver()}");
+  assert(r_field_of_null_local() == "[9]", "r_field_of_null_local {r_field_of_null_local()}");
+  assert(r_each_pass() == "[0][1][2]", "r_each_pass {r_each_pass()}");
+  assert(r_field_each_pass() == "[0][1][2]", "r_field_each_pass {r_field_each_pass()}");
+  println("ok");
+}
