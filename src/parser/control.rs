@@ -15040,8 +15040,8 @@ impl Parser {
                 )
             };
             let d_nr = self.data.def_nr("n_assert");
-            // loft#2090 — the message is evaluated only when the assertion fails (#873's
-            // promise).  A constant message costs nothing to build and keeps the one call; a
+            // `@FR-E-Assert` (loft#2090) — the message is evaluated only when the assertion
+            // fails (#873's promise).  A constant message costs nothing to build and keeps the one call; a
             // built one (`"element {i} is {x}"`) is formatted on the failing branch alone, and
             // the passing branch hands `n_assert` the condition's own text, which is what a
             // run that lists its passing assertions (the playground's `report_asserts`) shows.

@@ -142,8 +142,8 @@ ct-match-arm-skipped	control	M-Expr	cond	0	int	s = match i { 1 => j, _ => <S> };
 ct-match-guard	control	P-Guard	once	1	bool	s = match en { Green if <S> => 1, _ => 9 };
 ct-return	control	F-Return	once	1	int	s = give(c, h, i, j);	fn give(c: Ctr, h: Hold, i: integer, j: integer) -> integer { return <S>; }
 ct-tail	control	F-Ret	once	1	int	s = tail(c, h, i, j);	fn tail(c: Ctr, h: Hold, i: integer, j: integer) -> integer { <S> }
-ct-assert	control	-	once	1	bool	assert(<S>, "held");
-ct-assert-message	control	-	cond	0	text	assert(b, <S>);
+ct-assert	control	E-Assert	once	1	bool	assert(<S>, "held");
+ct-assert-message	control	E-Assert	cond	0	text	assert(b, <S>);
 ct-yield	control	G-Yield	once	1	int	for n in gen(c, h, i, j) { s += n; }	fn gen(c: Ctr, h: Hold, i: integer, j: integer) -> iterator<integer> { yield <S>; yield j; }
 ct-parallel	control	C-Arms	once	1	int	parallel { add2(<S>, j); add2(i, j); }
 cn-field	construct	-	once	1	int	p2 = P { k: <S>, t: "a" }; s = p2.k;

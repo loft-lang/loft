@@ -71,10 +71,9 @@ things follow for a test:
   the assertion fails — and then it is the message that is reported, not the assertion;
 - a side effect written in the message cannot be relied on to have happened.
 
-Bind what the message shows first (`got = bump(c); assert(got == 5, "got {got}")`).  No
-formal rule states this yet; the slot matrix holds the behaviour (`ct-assert`,
-`ct-assert-message` in `scripts/syntax_slots.tsv`) and
-[plans/221-slot-walk/found.md](plans/221-slot-walk/found.md) lists it for the rules.
+Bind what the message shows first (`got = bump(c); assert(got == 5, "got {got}")`).  The
+rule is `(E-Assert)` in [formal/operational.md](formal/operational.md); the slot matrix
+holds it (`ct-assert`, `ct-assert-message` in `scripts/syntax_slots.tsv`).
 
 ### Backend divergence: the differential check is the instrument
 
