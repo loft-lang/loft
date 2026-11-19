@@ -4725,7 +4725,11 @@ impl Parser {
                 // subject on both backends.  A loft function's result arrives in its caller
                 // buffer (an `inline_container` block, not a bare call) and a discharge
                 // default in its work-ref, and both keep the release.
-                let fresh = matches!(data.unspan(), Value::Call(..))
+                // A PROJECTION is no fresh store, deps or not: `held(c, h).v[1..3]`
+                // reads a field of the call's result, whose `inline_container` keeps the
+                // release, and owning it freed that store a second time (`@FR-H-FreeTwice`).
+                let fresh = matches!(data.unspan(), Value::Call(d, _)
+                        if !crate::use_analysis::is_projection_op(&self.data, *d))
                     && subject_tp.deps_ref().is_none_or(|d| d.is_empty())
                     && !matches!(subject_tp.base(), Type::Text(_));
                 if !fresh {
