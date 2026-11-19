@@ -2157,6 +2157,16 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
     }
   }
   in_t = declared;
+  // (A function value's item that is no local mints its `___fn_ref_tmp_N` on the first pass, as
+  // `fn_number_write` does on the second: Rust's variables persist across passes.)
+  if e.first_pass && el_types::base(in_t) is TyFunction {
+    for x in xs {
+      if !(el_ir::unspan(x.code) is NdVar) {
+        ft1 = el_vars::create_unique(vars, "__fn_ref_tmp", el_types::with_deps(el_types::base(in_t), []));
+        el_vars::set_defined(vars, ft1);
+      }
+    }
+  }
   if el_types::is_unknown(in_t) {
     if len(xs) == 0 && value {
       el::refuse(e, "an empty vector literal in value position");
@@ -2437,7 +2447,8 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
   }
   // A struct enum, nullable or not, is an element of its enum's record (null the zero tag).
   senum = el_ex_match::struct_enum_of(e, match in_t { TyOptional { inner } => inner, _ => in_t });
-  if len(xs) > 0 {
+  // (Function values are made record by record, no pre-allocation.)
+  if len(xs) > 0 && !(el_types::base(in_t) is TyFunction) {
     size = elem_size(in_t);
     if size == -2 && senum >= 0 && len(recs) == 0 {
       size = record_size(e, ir::TyEnum { n: senum, is_ref: true, dep: [] });
@@ -2670,6 +2681,26 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
       match x.code {
         NdInsert { items: steps } => { ls += steps; },
         _ => { ls += [x.code]; }
+      }
+      ls += [el_ir::cl(e, "OpFinishRecord", [w, at, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }])];
+    }
+    xs = [];
+  }
+  // A function value's element is a four-byte record holding the function's definition
+  // number: made through the vector, written as a function-valued field is (`fn_number_write`:
+  // `___fn_ref_tmp_N = <def nr>; OpSetInt4(_elm_N, 0, FnRefDnr(tmp))`), finished.
+  if len(recs) == 0 && len(xs) > 0 && el_types::base(in_t) is TyFunction {
+    at = ir::NdVar { n: elm };
+    for x in xs {
+      ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }]))];
+      fw = el_ex_object::fn_number_write(e, vars, at, ir::NdInt { n: 0 }, x.code, in_t);
+      if fw == null {
+        el::refuse(e, "a vector item of a function type that is no named function or local");
+        return refused_build();
+      }
+      match fw! {
+        NdBlock { block: fwb } => { ls += fwb[0].operators; },
+        _ => { ls += [fw!]; }
       }
       ls += [el_ir::cl(e, "OpFinishRecord", [w, at, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }])];
     }

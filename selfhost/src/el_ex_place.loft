@@ -299,6 +299,23 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
     }
     return ex(ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [el_ir::unspan(p.code)])] }, ir::TyVoid);
   }
+  // A vector literal bound whole to a vector FIELD (`w.a = [S { … }]`, `h.data = [7, 8, 9]`): the
+  // field is emptied where it lies and each item built INTO it — a record or text element made
+  // on the parent record (`OpNewRecord(w, <its type>, <field number>)`), a scalar pushed through
+  // the field read — as an append builds them (vector-field-from-a-literal.md).  A literal that
+  // reads its own record (`snapshot_read_destination`) is not carried here.
+  if op == "=" && p.tp is TyVector && vec_lit_len(e, rhs) > 0 {
+    fplace = el_ir::unspan(p.code);
+    froot = match fplace { NdCall { def_nr: fd, args: fa } => if el::def(e, fd).name == "OpGetField" && len(fa) == 3 { match el_ir::unspan(fa[0]!) { NdVar { n: frv } => frv, _ => -1 } } else { -1 }, _ => -1 };
+    frd = if froot >= 0 { heap_def(match el_vars::tp(vars, froot) { TyRefVar { inner } => inner, _ => el_vars::tp(vars, froot) }) } else { -1 };
+    if froot >= 0 && frd >= 0 && el::def(e, frd).def_type == el::DT_STRUCT && !has_keyed_field(e, frd) && !syntax_names(e, rhs, el_vars::name_of(vars, froot)) {
+      fa2 = field_append(e, vars, p, rhs);
+      if e.first_pass {
+        return fa2;
+      }
+      return ex(ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [fplace]), fa2.code] }, ir::TyVoid);
+    }
+  }
   // An empty literal into a keyed FIELD empties it where it lies: `OpClearKeyed(field, tp)`, the
   // type the field read names (`parse_assign`'s keyed clear).
   if op == "=" && keyed_kind(p.tp) && !(p.tp is TyOptional) && vec_lit_len(e, rhs) == 0 {

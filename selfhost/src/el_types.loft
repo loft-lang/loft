@@ -250,6 +250,8 @@ pub fn elem_name(e: el::El, t: ir::TypeT) -> text {
     TyOptional { inner } => match inner { TyEnum { n, is_ref } => if is_ref && !starts_with(el::def(e, n).name, "__nullable<") { "{el::def(e, n).name}?" } else { "" }, TyInteger { spec: _ } => if elem_name(e, inner) == "integer" { "integer?" } else { "" }, TyFloat => "float?", TyBoolean => "boolean?", TyText { dep: _ } => "text?", _ => "" },
     // A vector of vectors: its element is named as the inner vector's own type.
     TyVector { inner } => if elem_name(e, inner) == "" { "" } else { "vector<{elem_name(e, inner)}>" },
+    // A function value is named as its type is spelled (`fn(integer) -> integer`).
+    TyFunction { args: _ } => key_name(e, t),
     _ => ""
   }
 }

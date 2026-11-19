@@ -78,6 +78,9 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
           return ex(ir::NdNull, ir::TyUnknown { n: 0 });
         }
         // Built on both passes: a text tail's accumulator (`do_if_acc`) is decided on the first.
+        // (A text read off a temporary literal borrows nothing: the literal's own store is no
+        // borrow of the holder, nor of the block typed as it.)
+        lhs = el_types::with_deps(lhs, [for hd in el_types::deps(lhs) if !starts_with(el_vars::name_of(vars, hd), "__ref_p2_") { hd }]);
         held = el_vars::create_unique(vars, "_ncc", lhs);
         vars.vars[held].skip_free = true;
         h = ir::NdVar { n: held };
