@@ -74,6 +74,10 @@ unless `--dynamic` or the program's `#link dynamic` says otherwise
 where nothing is built: with `--interpret`, `--tests`, `--emit-c` (C source only) and an
 `--html --debug` page.
 
+A semantics build may also reshape its C for the compiler's sake: the C backend writes an
+over-budget function as a chain of parts there and never in a shipped unit
+([C_BACKEND.md](C_BACKEND.md) § Large functions are split into parts).
+
 A performance lane measures exactly what a shipped binary gets, and never the semantics
 build — the RUNTIME included: `bench/stats.py` (and through it the portal and `perf-check`)
 runs the binary and runtime pair `scripts/lean_build.sh` builds, `make install`'s feature

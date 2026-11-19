@@ -691,6 +691,15 @@ a cell that loops costs its limit and is named, and cannot hold the leg.
 | **on demand only** | `ci-probe` (where CI time goes) and `gate-probe` (re-runs the debug-assertions sweep and the browser UI gate on a real 4-vCPU runner, each beside a cell proving it can still FAIL). Measurement, never gates, never on a PR; and the focused probes — `linux-probe`, `windows-probe`, `win-cdylib`, `macos-probe` — which answer a few tests on one platform (§ When the local gate is unreliable) | `workflow_dispatch`, or push to the `ci-probe` / `gate-probe` branch |
 | **on demand — the release evidence** | `release-gate` — every row above that is a nightly (`ci.yml` full matrix incl. Windows + round-trip + oracle, `miri.yml` all gates, `revalidate-libs`, `browser-threads`, `repro-build`; `registry-validation` is deliberately not a leg, since the registry is never release-coupled and a package's own defect turned the gate red twice) called as reusable workflows against ONE commit, ending in one `verdict` job that is red if any leg is not `success` — advisory PR jobs included, and a leg red for a reason outside the candidate WAIVED on the record (`make release-checklist ARGS="--waive <leg> --note '…'"`). `make release-gate` dispatches and waits; `make release-checklist` reads the run for HEAD's sha. Never on a PR, never scheduled, never tags (§ The schedule is not a clock) | `workflow_dispatch`, or push to the `release-gate-probe` branch |
 
+### The MSVC sweep's compile limit is kept by the C it is given
+
+The nightly `C backend sweep, msvc` shards give `cl /O1` 120 s per program, four compiles at
+a time, and that limit is not raised.  `cl`'s time grows about with the square of a
+function's size, so the C backend caps the function instead: a semantics build writes a body
+over 300 runtime-call sites as parts ([C_BACKEND.md](C_BACKEND.md) § Large functions are
+split into parts).  A test needs no hand-split `main` for the compiler's sake.  What remains
+per program is the runtime every unit carries, about a second of `cl` time (`@C169`).
+
 ### A test that spawns a pool declares its share
 
 nextest runs `NEXTEST_TEST_THREADS` tests side by side, and a test that sizes an inner pool
