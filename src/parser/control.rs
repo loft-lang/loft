@@ -15603,7 +15603,8 @@ impl Parser {
         let (list, types) = if matches!(
             special,
             "map" | "filter" | "reduce" | "par_fold" | "parallel_for"
-        ) && let Some(Type::Iterator(elm, _)) = types.first().map(Type::base)
+        ) && let Some(first) = types.first()
+            && let Type::Iterator(elm, _) = first.base()
             && list.first().is_some_and(Self::slice_shaped)
         {
             slice_list = list.to_vec();
