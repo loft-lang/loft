@@ -2895,7 +2895,7 @@ pub fn coalesce(e: el::El, vars: el_vars::Vars, l: integer, r: integer) -> Ex {
   // A field's view as the subject: its literal default is built against the subject's type,
   // which names the record it borrows — no store of its own (`build_null_coalesce_default`).
   d = match e.p.nodes[r] {
-    SVecLit { items } => if len(items) > 0 && el_types::base(x.tp) is TyVector { el_ex_pattern::vector_value(e, vars, r, borrows: view_borrows(e, vars, x), elem: match el_types::base(x.tp) { TyVector { inner } => inner, _ => ir::TyUnknown { n: 0 } }).x } else { el_ex_assign::expression(e, vars, r) },
+    SVecLit { items } => if len(items) > 0 && el_types::base(x.tp) is TyVector { el_ex_pattern::vector_value(e, vars, r, borrows: [], elem: match el_types::base(x.tp) { TyVector { inner } => inner, _ => ir::TyUnknown { n: 0 } }).x } else { el_ex_assign::expression(e, vars, r) },
     _ => el_ex_assign::expression(e, vars, r)
   };
   // `build_null_coalesce_default` reads the default against the subject's type: an untyped
@@ -2916,7 +2916,7 @@ pub fn coalesce(e: el::El, vars: el_vars::Vars, l: integer, r: integer) -> Ex {
     // there, in source order.
     // (Rust's first pass reads the `[]` — its `_vec_N` minted — before it holds the subject in
     // `__ncc_N`: the literal's buffer is minted here on the first pass too, its code unused.)
-    lit = el_ex_pattern::empty_literal_to(e, vars, vt, borrows: view_borrows(e, vars, x));
+    lit = el_ex_pattern::empty_literal_to(e, vars, vt, borrows: []);
     d = ex(if e.first_pass && !fresh_native_call(e, x.code) { ir::NdNull } else { lit }, vt);
   }
   if el_ex_pattern::is_empty_literal(d.code) {
