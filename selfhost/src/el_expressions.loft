@@ -617,6 +617,12 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       // Last: an `if` tail whose arms are blocks (a literal, a nullable local) or the sentinel —
       // each arm copied into the buffer (`Bind`), a nullable local's only where present.
       if_copied = false;
+      // A call through a function value (`f(n)`, `fn_ref[…]`) answers a record of no known
+      // buffer: its answer copied into the buffer (`materialized_view_return`).
+      if built == null && body_tail(code) is NdCallRef {
+        built = materialize_whole_tail(e, vars, code, rb, result);
+        if_copied = built != null;
+      }
       if built == null && body_tail(code) is NdIf {
         built = materialize_if_tail(e, vars, code, rb, result);
         if_copied = built != null;
@@ -1671,6 +1677,33 @@ pub fn materialize_if_tail(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: i
     return null;
   }
   bl.operators[-1] = el_ir::respan(el_ir::last(bl.operators), arms!);
+  bl.result = [if result is TyOptional { ir::TyOptional { inner: owned } } else { owned }];
+  rba = attr_nr(el::def(e, e.context), "__retbuf");
+  if rba >= 0 {
+    e.b.data.definitions[e.context].returned = [el_types::with_deps(el::def(e, e.context).returned[0] ?? result, [rba])];
+  }
+  ir::NdBlock { block: [bl] }
+}
+
+// The body's tail copied whole into the buffer, the body typed by it, the result publishing the
+// buffer's attribute; null where the result is no record.
+pub fn materialize_whole_tail(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, result: ir::TypeT) -> ir::Node? {
+  bl = match code { NdBlock { block } => block[0], _ => return null };
+  if len(bl.operators) == 0 || rb < 0 {
+    return null;
+  }
+  td = struct_ref(e, el_types::base(result));
+  if td < 0 {
+    td = el_types::struct_enum_def(el_types::base(result));
+  }
+  if td < 0 {
+    return null;
+  }
+  tail = el_ir::unspan(el_ir::last(bl.operators));
+  kt = ir::NdInt { n: el::def(e, td).known_type };
+  b = ir::NdVar { n: rb };
+  owned = el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb]);
+  bl.operators[-1] = el_ir::respan(el_ir::last(bl.operators), el_ir::v_block([el_ir::v_set(rb, ir::NdNull), el_ir::cl(e, "OpDatabase", [b, kt]), el_ir::cl(e, "OpCopyRecord", [tail, b, kt]), b], owned, "materialized_view_return"));
   bl.result = [if result is TyOptional { ir::TyOptional { inner: owned } } else { owned }];
   rba = attr_nr(el::def(e, e.context), "__retbuf");
   if rba >= 0 {
