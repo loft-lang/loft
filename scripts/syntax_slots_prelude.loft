@@ -2,10 +2,13 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // The fixed world every slot-matrix cell runs in (@PLN221, scripts/slot_matrix.py).
-// The text above the `=== CELL ===` line is written once into a generated program, with
-// `KIND` replaced by the collection type the program is generated for.  The text below it
-// is written once per cell, with `CELLDECL` and `CELLSTMT` replaced by the cell's
+// The text above the first `=== CELL` line is written once into a generated program.  Each
+// `=== CELL <frame> ===` section below it is a FRAME: the function a cell's statement
+// stands in, written once per cell with `CELLDECL` and `CELLSTMT` replaced by the cell's
 // declaration and statement, and `CELLFN` and `CELLNAME` by its function and its name.
+// `KIND` is replaced everywhere by the collection type the program is generated for.
+// The frames differ in where the statement's values come from: `locals` binds them in the
+// function itself, `params` receives every one of them as a parameter.
 //
 // A filler is a call into one of the functions below.  Each one that stands in a slot bumps
 // the counter it is handed and writes `S` into its log, so the cell can say how often and
@@ -67,7 +70,7 @@ fn show_h(h: Hold) -> text {
   for w in h.ws { out += show_w(w); }
   "{out} {h.v} {h.ones}"
 }
-// === CELL ===
+// === CELL locals ===
 CELLDECL
 fn CELLFN() {
   c = Ctr {}; h = hold();
@@ -79,4 +82,20 @@ fn CELLFN() {
   s = 0; o = "";
   CELLSTMT
   println("CELLNAME c={c.calls} log=<{c.log}> | s={s} o={o} i={i} j={j} b={b} nb={nb} x={x} fl={fl} en={en} f={fnv(1)} vi={vi} xs={show(xs)} r={show_w(r)} h={show_h(h)}");
+}
+// === CELL params ===
+CELLDECL
+fn CELLFN_in(c: Ctr, h: Hold, i: integer, j: integer, b: boolean, nb: boolean, x: text, fl: float, en: Col, fnv: fn(integer) -> integer, vi: vector<integer>, xs: KIND, r: W, tk: (KIND, integer)) {
+  s = 0; o = "";
+  CELLSTMT
+  println("CELLNAME c={c.calls} log=<{c.log}> | s={s} o={o} i={i} j={j} b={b} nb={nb} x={x} fl={fl} en={en} f={fnv(1)} vi={vi} xs={show(xs)} r={show_w(r)} h={show_h(h)}");
+}
+fn CELLFN() {
+  c = Ctr {}; h = hold();
+  i = 1; j = 3; b = true; nb = false; x = "abc"; fl = 1.5; en = Green; fnv = inc1;
+  vi = [10, 20, 30, 40];
+  xs = mk(Ctr {});
+  r = W { n: 1, t: "abc", f: 1.5, ok: true, tag: Green, items: [P { k: 1, t: "a" }, P { k: 2, t: "b" }, P { k: 3, t: "c" }] };
+  tk: (KIND, integer) = ([P { k: 1, t: "a" }, P { k: 2, t: "b" }, P { k: 3, t: "c" }], 3);
+  CELLFN_in(c, h, i, j, b, nb, x, fl, en, fnv, vi, xs, r, tk);
 }

@@ -119,7 +119,11 @@ make slot-matrix [ARGS="--filler all"]     # THE SLOT MATRIX (@PLN221): each ope
                                          #   every slot with its plain variable, which validates the
                                          #   register; `--filler all` is the whole matrix,
                                          #   `--backend both` adds the C backend (under a minute)
-                                         #   and `--slot <id>` narrows it to one position.  `scripts/slot_matrix.py
+                                         #   and `--slot <id>` narrows it to one position;
+                                         #   `--context all --frame all` adds a loop, a branch and
+                                         #   parameters (eight times the cells).  `walk --old
+                                         #   <binary>` runs it on an older build beside this one:
+                                         #   what it would have caught, and what has regressed  `scripts/slot_matrix.py
                                          #   list` shows the slots, `check` is the PR gate: new
                                          #   syntax needs a row in `scripts/syntax_slots.tsv`
 make reason-census                       # WHICH REWRITES SAY WHY: per R- rule, the source sites
