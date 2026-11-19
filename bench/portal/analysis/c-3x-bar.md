@@ -37,12 +37,12 @@ bar: their extra over ship is the cost of the guarantees, which is optimised, no
 
 ## What is left, in order
 
-1. **`slope_path_with_undo`** (gcc ship 2.48×, gcc checked 3.03×; clang 2.12× / 2.69×).  Per path step the C runs
-   ≈ 1,053 instructions against Rust's ≈ 434 (four chunk walks, two seven-field hex reads, one
-   write, one 11-field append — the same work; measured 2026-10-29 on `7517d13ad`).  Store
-   addressing inside the map helpers prices at zero; the gap is `loft_rem`'s null test plus the
-   helpers staying out of line (≈ 45 %), the undo push through the store (≈ 20 %), and a
-   remainder not yet attributed — [`top5-memory.md`](top5-memory.md).
+1. **`slope_path_with_undo`** — closed by loft30-gate `0f77cd39e` (`@FR-N-Road`: a return copy
+   of a local its branch just proved present takes no absence test).  `main` had the routine at
+   gcc ship 6.21× / checked 7.41×: `map_get_hex`'s `return gh_c.ck_hexes[idx]?` carried a dead
+   `OpNullRefSentinel` arm that `(R-ValueRecord)` cannot admit, so the hex came back through a
+   store per call.  After: gcc ship 2.29×, checked 3.49×; clang ship 1.83×; `resolve_move` 2.81× →
+   1.35× with it.  Guard: c_emit `a_record_returned_from_a_discharged_view_travels_as_a_struct`.
 2. **`map_json`** (2.78× gcc ship, 2.81× gcc checked; clang ≈ 2.45×).  Generic runtime JSON (`loft_json.h`), not emitted
    code: the lexer `loft_jl_token` 17 %, `loft_pr_struct` 12 %, `loft_jp_validate` 8.4 % (every
    string is validated after the lexer already scanned it — skippable for a string with no
@@ -74,6 +74,15 @@ bar: their extra over ship is the cost of the guarantees, which is optimised, no
   consumer that calls a one-lookup helper in a loop (a handle passed into the callee priced
   −3.2 %).  Evidence: [`hosts-2026-11-09.md`](hosts-2026-11-09.md) § lru_mixed priced to the
   end, and set aside.
+
+- **`char_walk`** (gcc ship 2.69×, gcc checked 2.08×; clang 2.27× / 2.29×) — LAYOUT, not
+  mechanism.  Ship is slower than checked on gcc alone, and `t_chars`' hot ASCII loop is the same
+  C in both builds (temporaries renamed): only the cold non-ASCII step differs (checked add vs
+  wrapping add).  Noted with evidence, not coded around (2026-11-19, loft30-gate `b5d9250ce`).
+- **`sum`** (gcc ship 2.68×) — the cost of the guarantee, not a missing optimisation.  The
+  runtime kernel `loft_vector_sum_int` already runs 1024-element blocks over eight lanes; what
+  remains is the per-element bound test that makes an overflow or a null answer null, which the
+  twin's `iter().sum()` does not do.  Dropping it would change a value after a fault (C120).
 
 ## Measuring
 
