@@ -664,7 +664,21 @@ impl State {
             ValueType::If => self.gen_if(node.if_cond(), node.if_then(), node.if_else(), stack),
             ValueType::Yield => {
                 // CO1.3c: emit the yielded expression, then OpCoroutineYield.
-                let t = self.generate_node(node.yield_inner(), stack, false);
+                // `@FR-G-Yield` — a yielded value the scope pass wrapped with its preamble (`!!
+                // INSERT`: `yield box(c, h).n` lifts the call) leaves its LAST item's value on
+                // the stack, and the yield hands over that many bytes.  The `Insert` arm answers
+                // `Void` for a statement, so sized by it the yield handed over nothing and the
+                // integer stayed on the generator's stack.
+                let inner = node.yield_inner();
+                let t = if inner.kind() == ValueType::Insert {
+                    let mut last = Type::Void;
+                    for op in inner.insert_items().iter() {
+                        last = self.generate_node(op, stack, false);
+                    }
+                    last
+                } else {
+                    self.generate_node(inner, stack, false)
+                };
                 // `(G-Own)`: the consumer owns what it is handed, so the generator forgets the
                 // temps holding it before it suspends — its tail and `free_coroutine` then find
                 // them null.  The value is already on the stack; the writes below leave it there.
