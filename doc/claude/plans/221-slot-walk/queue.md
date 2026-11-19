@@ -18,8 +18,10 @@ matrix finds more with every run, and each fix is then checked by cells that alr
    120 new cells and 41 lines to remove.  The gate is split by slot family
    (`gate --family F`, seven tests): a red test names the family, its output says first
    whether something is BROKEN or only FIXED, the failing cells are folded toward causes,
-   and on GitHub each fold is an annotation on its row of the table.  Still to learn:
-   whether the baseline is the same on Linux.  The four contexts and two frames are not in the gate; they are a nightly
+   and on GitHub each fold is an annotation on its row of the table.  On Linux the gate passed with the same baseline
+   (CI, 3,661 cells), and showed two things this machine had not: the single test took
+   421 s there, over the per-test duration limit, and its `#[cfg(unix)]` broke the
+   platform census — it runs on every platform now.  The four contexts and two frames are not in the gate; they are a nightly
    candidate at five and a half minutes.
 2. **G2 — the ad-hoc cell** — **built.**  `slot_matrix.py cell '<statement with <S>>'`
    with `--type T` (every filler of a type) or `--filler EXPR --plain EXPR` runs one shape
@@ -63,9 +65,15 @@ matrix finds more with every run, and each fix is then checked by cells that alr
    ([REACH.md](REACH.md)).  The prelude had to spell its enum variants qualified to compile
    there.  *Open:* the SAMPLE of about thirty of October's `silent-wrong` issues, to see
    whether the rule walk's findings name an axis November's did not.
-9. **G9 — a probe, before it is planned:** which IR operations the corpus produces and no
-   cell of the matrix does.  If `loft introspect` gives that histogram cheaply, the gaps
-   name missing rows without anyone reading an issue.
+9. **G9 — which IR operations the corpus produces and no cell does** — **measured once.**
+   `loft introspect` over the 3,275 corpus files and over every accepted cell (all
+   contexts and frames, depth two): the corpus uses 267 distinct operations, the cells 106,
+   so 161 were never emitted by the matrix.  The largest gaps were float, `single` and
+   character arithmetic and comparison, narrow integer field reads and writes, boolean
+   and enum pushes, hash and vector removal, `trie` and `spatial`, and files — which is
+   what K2 took its slots from.  The probe is a scratch script, not yet a command; two of
+   its three runs were invalid (a cell's function not reachable from a `main`; a program
+   holding a refused cell), which is the reason to make it one.
 10. **H — a rule for every slot.**  A slot whose `rule` column is `-` is an operand whose
     evaluation count no formal rule states: the `while` condition, a field read, the three
     text reads, `is`, the two `assert` operands, the two record-literal fields
@@ -87,7 +95,7 @@ matrix finds more with every run, and each fix is then checked by cells that alr
 An evaluation of the generator as it stood with G1 to G8 built.  The first two are
 weaknesses in what a green run means; the rest is breadth.
 
-13. **K1 — an anchor** — **built.**  `scripts/syntax_expect.tsv` holds, for 134 of the 135
+13. **K1 — an anchor** — **built.**  `scripts/syntax_expect.tsv` holds, for all but one of the
     slots, the fields the slot's PLAIN statement must leave changed in the prelude's world;
     everything else must stay as the untouched world has it.  Each value was computed by
     hand from the statement and checked against what the compiler answers (`expect
@@ -96,10 +104,14 @@ weaknesses in what a green run means; the rest is breadth.
     strengthened first.  `wr-remove-index` has no row: what `v[i] = null` does to a dense
     vector is a question for arc H.  *Verified:* `op-add-left`'s expectation edited to 5
     fails its plain cell on both backends.
-14. **K2 — breadth of type.**  Of 135 slots 80 take an integer, 2 a float, 2 an enum, 1 a
-    function value; every operator is tried with integers only.  A slot row that names
-    several operand types runs the same statement over float, text and the narrow integer
-    fields.  *Verify:* the IR operations of the corpus that no cell emits (G9) fall.
+14. **K2 — breadth of type** — **begun.**  Forty slots for `float`, `single`, `character`,
+    the narrow integer fields (`u8`, `i16`, `i32`), `boolean` and enum elements, each with a
+    hand-computed anchor; eleven fillers, three of which read a narrow field in every
+    integer slot.  175 slots and 96 fillers now, 4,772 cells in the gate.  It found no new
+    cause: the right side of an element write running before its index (found.md's row 12)
+    holds for every element type.  The statements are written out per type; a slot row
+    that names several types, with a partner and a result variable per type, is the open
+    half.  *Not yet re-measured:* how many more IR operations the cells emit (G9).
 15. **K3 — a failing cell laid open** — **built**, as `slot_matrix.py explain <cell>`.  It
     keeps one program holding the cell, its bound-first twin, its order cell and the plain
     variable; prints each statement; runs the cell alone on both backends with loft's own

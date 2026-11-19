@@ -589,8 +589,8 @@ construction.  The same construct with a call, a lookup or a `?? default` there 
 lowering, and when that lowering mentions the operand twice the program still answers
 right: only a counter inside the operand shows it.  So `scripts/slot_matrix.py` keeps the
 operand positions of the syntax ("slots"), the forms of expression that go into them
-("fillers"), and runs the product on the interpreter and the C backend — 3,661 cells in 40
-seconds, from five tables of a few hundred lines.
+("fillers"), and runs the product on the interpreter and the C backend — 4,772 cells in about a
+minute, from five tables of a few hundred lines.
 
 **What it gives that a hand-written walk does not.**
 
