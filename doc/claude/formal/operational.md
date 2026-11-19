@@ -589,7 +589,7 @@ drift apart; verified both backends —
 
 ## Deviations
 
-**OPEN: 6.**
+**OPEN: 2.**
 - **D-op-23** (loft#2578) — violates `(E-Asgn)`: a write to an element whose index may write
   the vector (`v[f(0)] = x` with `f` a function value, `v[push(v)] = x`) lands in a copy of
   the vector, and the vector is unchanged.
