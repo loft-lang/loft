@@ -4444,6 +4444,7 @@ impl Parser {
         // the local the slot read binds that answer to (`emit_nullable_slot_read`), and its
         // block says so; the declared type, which names no owner, read it as a fresh record.
         // Every type this `??` derives — its temp's, its join's — starts from the view.
+        self.hold_slot_call_owner(code);
         let viewed;
         let lhs_type = match code.unspan() {
             Value::Block(bl)

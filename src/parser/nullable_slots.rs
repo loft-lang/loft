@@ -271,28 +271,6 @@ impl Parser {
             let pick = self.nullable_pick(slot_ref.clone(), slot_ref, payload_pos, struct_kt);
             return pick;
         }
-        // loft#2577 — a slot read off a CALL's answer (`f().0` of a `(S?, …)`) views a store no
-        // variable names: the view's deps were the call's (none), so the scope pass took the
-        // `??` over it for a fresh record of its own and lifted the call into a temporary it
-        // released before the view was read.  The call is bound to a local of this scope
-        // first — the spelling `t = f(); t.0` has — so the slot is a place of that local, the
-        // view names it, and the local releases the answer when its scope ends.
-        // `LOFT_NO_SLOT_CALL_OWNER=1` (STORE_RECORDS.md § The checks): the call stays inline,
-        // as before loft#2577.
-        if !crate::env_once!(std::env::var_os("LOFT_NO_SLOT_CALL_OWNER").is_some())
-            && let Some((call, ret)) = self.slot_call_root(&slot_ref)
-        {
-            let owner = self.create_unique("slot_src", &ret);
-            self.vars.defined(owner);
-            let mut rooted = slot_ref.clone();
-            self.replace_slot_root(&mut rooted, Value::Var(owner));
-            let viewed = Type::Optional(Box::new(Type::Reference(
-                struct_d,
-                crate::data::Deps::frame1(owner),
-            )));
-            let pick = self.nullable_pick(rooted.clone(), rooted, payload_pos, struct_kt);
-            return v_block(vec![v_set(owner, call), pick], viewed, "nullable_slot_read");
-        }
         let named = self.vars.work_refs(src_tp, &mut self.lexer);
         if named == u16::MAX {
             return slot_ref;
@@ -429,6 +407,54 @@ impl Parser {
         );
         let absent = self.cl("OpNullRefSentinel", &[]);
         v_if(present, payload, absent)
+    }
+
+    /// loft#2577 — the left operand of a `??` that reads a nullable slot off a CALL's answer
+    /// (`(f().0 ?? r).n` of an `(S?, …)`) holds that answer in a local of its own first.  The
+    /// read's view names a store no variable owns, so the scope pass, which lifts the call
+    /// into a temporary, released the answer before the `??` read it: the join answered
+    /// another record, or the store was freed twice.  The block `emit_nullable_slot_read`
+    /// made (`{ named = <slot>; <pick named> }`) becomes `{ owner = f(); named = <slot of
+    /// owner>; <pick named> }`, typed as a view of `owner`.  Only the `??` operand: a read that
+    /// is BOUND (`w = f().0`) keeps the lifted temporary, whose release the scope pass guards
+    /// against the bound view, and a block-scoped owner would free the answer under it.
+    /// `LOFT_NO_SLOT_CALL_OWNER=1` (STORE_RECORDS.md § The checks) leaves the
+    /// operand as it was before loft#2577.
+    pub(crate) fn hold_slot_call_owner(&mut self, code: &mut Value) {
+        if crate::env_once!(std::env::var_os("LOFT_NO_SLOT_CALL_OWNER").is_some()) {
+            return;
+        }
+        let block = match code {
+            Value::Span(b) => &mut b.1,
+            other => other,
+        };
+        let Value::Block(bl) = block else {
+            return;
+        };
+        if bl.name != "nullable_slot_read" || bl.operators.len() != 2 {
+            return;
+        }
+        let Value::Set(named, slot_ref) = &bl.operators[0] else {
+            return;
+        };
+        let named = *named;
+        let Some((call, ret)) = self.slot_call_root(slot_ref) else {
+            return;
+        };
+        let mut rooted = (**slot_ref).clone();
+        let owner = self.create_unique("slot_src", &ret);
+        self.vars.defined(owner);
+        self.replace_slot_root(&mut rooted, Value::Var(owner));
+        bl.operators[0] = v_set(named, rooted);
+        bl.operators.insert(0, v_set(owner, call));
+        if let Type::Optional(inner) = &bl.result
+            && let Type::Reference(d, _) = inner.as_ref()
+        {
+            bl.result = Type::Optional(Box::new(Type::Reference(
+                *d,
+                crate::data::Deps::frame1(owner),
+            )));
+        }
     }
 
     /// Is this value free to evaluate TWICE — a variable, or a projection chain rooted at one?
