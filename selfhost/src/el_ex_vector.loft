@@ -671,6 +671,18 @@ pub fn index(e: el::El, vars: el_vars::Vars, at: integer, c: integer?, keys: vec
     el::refuse(e, "an index that is not an integer: {type_kind(i.tp)}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
+  // A function value's element: its four-byte definition number, read as a function-valued
+  // field is (`fn_ref_field_read`: the number, then the reference null beside it).
+  if el_types::base(inner) is TyFunction {
+    fnt = el_types::without_deps(el_types::base(inner));
+    if e.first_pass {
+      return ex(ir::NdNull, fnt);
+    }
+    // (The value borrows the vector it was read from, a local by name; the read block itself
+    // borrows nothing.)
+    fdeps = match el_ir::unspan(x.code) { NdVar { n: fxv } => [fxv], _ => el_types::deps(x.tp) };
+    return ex(el_ir::v_block([el_ir::cl(e, "OpGetInt4", [el_ir::cl(e, "OpGetVector", [x.code, ir::NdInt { n: 4 }, i.code]), ir::NdInt { n: 0 }]), el_ir::cl(e, "OpNullRefSentinel", [])], fnt, "fn_ref_field_read"), el_types::with_deps(fnt, fdeps));
+  }
   // An index not provably in range reads the element as `τ?` (`@FR-N-Index`).
   may_miss = !fits(e, vars, i.code, x.code, false);
   size = elem_size(inner);

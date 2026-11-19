@@ -1453,14 +1453,7 @@ pub fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::N
   // with no default that is hidden or compiler-named (`__…`, a dispatcher's forwarded buffer).
   promoted = n > 0 && (def.attributes[-1].hidden || (starts_with(def.attributes[-1].name, "__") && el_ir::is_null(def.attributes[-1].value[0] ?? ir::NdNull)));
   retbuf = n == len(given) + 1 && promoted && (last_t is TyReference || el_types::struct_enum_def(last_t) >= 0 || (last_t is TyVector && !(def.attributes[-1].work_buffer)));
-  // A pooled work buffer the caller would hand in (`pooled_work_buffer`: one per caller per
-  // content, the same variable at every call) is not carried: refused by name.
-  for wa in def.attributes {
-    if wa#index >= len(given) && wa.work_buffer && !e.first_pass {
-      el::refuse(e, "a call of a function with a pooled work buffer");
-      return null;
-    }
-  }
+
   // `add_defaults`' `&text` arm: each trailing hidden text buffer is a fresh `__work_cN` of
   // the caller's, set empty and handed as a stack reference ("default ref").
   bufs = !retbuf && n > len(given);

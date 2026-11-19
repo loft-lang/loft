@@ -284,8 +284,10 @@ pub fn make_vector_def(e: el::El, t: ir::TypeT, nm: text, pos: ir::Position, typ
       TyEnum { n } => n,
       TyOptional { inner } => match inner { TyEnum { n } => n, TyReference { n } => n, TyInteger { spec: _ } => el::source_nr(e, 0, "integer"), TyFloat => el::source_nr(e, 0, "float"), TyBoolean => el::source_nr(e, 0, "boolean"), TyText { dep: _ } => el::source_nr(e, 0, "text"), _ => -1 },
       TyInteger { spec: _ } => el::source_nr(e, 0, "integer"),
-      // `type_def_nr` of any vector is the library's `vector`.
+      // `type_def_nr` of any vector is the library's `vector`; a function value's is `i32`, the
+      // four-byte number it is stored as.
       TyVector { inner: _ } => el::source_nr(e, 0, "vector"),
+      TyFunction { args: _ } => el::source_nr(e, 0, "i32"),
       _ => el::source_nr(e, 0, nm)
     };
   }

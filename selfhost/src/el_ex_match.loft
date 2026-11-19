@@ -456,6 +456,11 @@ pub fn for_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
   if par != null {
     return el_par::par_for(e, vars, el_par::Walk { src_id: src_id, id: id, x: x, vec: vec, elem: elem, var_tp: var_tp }, par!, body!);
   }
+  // A function value's walk: the loop variable is the function type borrowing the walked vector.
+  fn_walk = el_types::base(elem) is TyFunction && !rev && par == null;
+  if fn_walk {
+    var_tp = el_types::with_deps(el_types::without_deps(el_types::base(elem)), [vec]);
+  }
   // A vector walk's counter is `id#index` for a `_` binding too (`_#index`).
   idx = el_ex_pattern::loop_index(vars, id, named: true);
   lv = loop_var(vars, src_id, id, var_tp);
@@ -479,6 +484,24 @@ pub fn for_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
   vars.active_values = vars.active_values[..-1];
   if e.first_pass || el_types::is_unknown(elem) {
     return ex(ir::NdNull, ir::TyVoid);
+  }
+  // Each element read through `fn_ref_field_read` (its four-byte definition number, then the
+  // reference null Rust's read leaves beside it); the walk ends where the number is not above 0.
+  if fn_walk {
+    ft = el_types::without_deps(el_types::base(elem));
+    fi = ir::NdVar { n: idx };
+    fread = el_ir::v_block([el_ir::cl(e, "OpGetInt4", [el_ir::cl(e, "OpGetVectorNullable", [ir::NdVar { n: vec }, ir::NdInt { n: 4 }, fi]), ir::NdInt { n: 0 }]), el_ir::cl(e, "OpNullRefSentinel", [])], ft, "fn_ref_field_read");
+    fnext = el_ir::v_block([el_ir::v_set(idx, el_ir::cl(e, "OpAddInt", [fi, ir::NdInt { n: 1 }])), fread], ft, "iter next");
+    fbrk = el_ir::v_block([ir::NdBreak { n: 0 }], ir::TyVoid, "break");
+    fend = el_ir::v_if(el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpLtInt", [ir::NdInt { n: 0 }, ir::NdFnRefDnr { n: lv }])]), fbrk, ir::NdNull);
+    fsteps: vector<ir::Node> = [el_ir::v_set(lv, fnext), fend];
+    fsteps += heads;
+    if fc != null {
+      fsteps += [fc!];
+    }
+    fsteps += [b.code];
+    flp = el_ir::v_loop(fsteps, "For loop");
+    return el_ex_null::counted(e, cnt, ex(el_ir::v_block([el_ir::v_set(vec, x.code), el_ir::v_set(idx, ir::NdInt { n: -1 }), flp], ir::TyVoid, "For block"), ir::TyVoid));
   }
   nx = vector_step(e, vec, idx, elem, rev: rev);
   if nx == null {
