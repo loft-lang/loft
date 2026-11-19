@@ -1773,6 +1773,9 @@ impl Parser {
     ///
     /// The emitted IR is equivalent to:
     ///   loop { if !cond { break }; body }
+    ///
+    /// `@FR-I-While`: the condition is reduced before every round, the last one included —
+    /// the desugaring writes it once, inside the loop, and nothing hoists it out.
     pub(crate) fn parse_while(&mut self, code: &mut Value) {
         // @PLN86 3.1 — the `while`'s position, taken before the condition so an
         // unbounded-loop diagnostic points at the `while` itself.

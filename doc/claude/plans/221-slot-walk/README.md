@@ -11,12 +11,14 @@ Tracker: [@PLN221](https://github.com/loft-lang/plans/issues/221).
 
 The generator is built and gating.  `scripts/slot_matrix.py` makes 6,061 cells from five
 tables, runs them on the interpreter and the C backend in a minute, and
-`tests/slot_matrix.rs` holds them against a baseline in seven tests, one a slot family.
+`tests/slot_matrix.rs` holds them against a baseline in seven tests, one a slot family —
+every cell on the interpreter, a sample on the C backend, which costs a tenth of a second a
+cell to compile.
 Built so far: the register with its completeness guard (A), the runner (B), depth two (D),
 the gate (F), the reach arc's two walks back over past defects (G), and of the second queue
 the anchor and the tools for debugging a failing cell.  The thirteen defects it reports are
-handed to the agent that fixes them ([found.md](found.md)).  Open: the rules for the eight
-slots that cite none (H), breadth of operand type, and the rest of [queue.md](queue.md).
+handed to the agent that fixes them ([found.md](found.md)).  Every slot cites a formal rule and has an anchor (H).  Open: the rest of
+[queue.md](queue.md).
 On Linux the baseline holds (the gate passed in CI at 3,661 cells); the seven-test split
 and everything after it have not run there yet.
 
@@ -92,7 +94,7 @@ The matrix is generated; the tables are what is kept and reviewed, never the cel
 | `syntax_slots.tsv` | 191 slots in 7 families | id, family, the rule that states the count, count class, expected runs, operand type, the statement, an optional declaration |
 | `syntax_fillers.tsv` | 96 fillers over 13 types | id, type, the expression; 19 are wrappers, 4 write what the statement works on and go only into `first` slots |
 | `syntax_contexts.tsv` | 4 contexts | id, how often the statement runs, the template around it |
-| `syntax_expect.tsv` | 190 of the 191 slots, a row a kind where the kind changes the answer | the anchor: slot, kind, the fields the plain statement must leave changed |
+| `syntax_expect.tsv` | all 191 slots, a row a kind where the kind changes the answer | the anchor: slot, kind, the fields the plain statement must leave changed |
 | `syntax_outside.tsv` | 38 lexemes | every lexeme in no slot, with why: it takes no operand, it is a declaration, or the matrix cannot reach it yet (12) |
 | `syntax_slots_prelude.loft` | 3 frames | the world a cell runs in, and the functions a filler calls |
 | `slot_matrix.baseline` | 477 lines | the cells that do not pass today; the gate lets it only shrink |
@@ -126,7 +128,8 @@ twin agree and the anchor's hand value was computed from the same misreading.  E
 
 | Run | Cells | Both backends |
 |---|---|---|
-| the gate: every filler, one context, one frame | 6,061 | about 75 s here; 421 s on a CI runner when it was 3,661 cells in one test |
+| the PR gate: every cell interpreted, a sample compiled | 6,061, of which about 900 on C | 15 s here |
+| the gate, full (`gate --full`): every cell on both backends | 6,061 | about 100 s here; 421 s on a CI runner when it was 3,661 cells in one test |
 | four contexts and two frames | about 23,000 | 5 min 33 s |
 | depth two | about 15,000 | 3 min 9 s |
 | depth three, whole | over 60,000 | not run; a sample is planned |
@@ -178,7 +181,7 @@ the branch that carries both fixes.
 | **E** — the cells as lockstep input | every generated cell fed to the Rust-against-loft comparison of results and debug layers | a difference in any layer on any cell | Blocked on the port's comparison harness taking generated input |
 | **F** — the gate | `tests/slot_matrix.rs`: seven tests, one a slot family, against a baseline that may only shrink; the wider axes nightly | a new failing cell on a PR (BROKEN); a baseline entry that passes again and was not removed (FIXED) | Shipped for one context and one frame; the nightly leg is open |
 | **G** — reach | the matrix walked back over past defects: `slot_matrix.py walk --old <binary>` against the release before, and the `silent-wrong` issues since it judged in [reach.tsv](reach.tsv); every axis and row it asks for | the time walk: a row added for a past issue must FAIL on the build that had the defect; the share of new issues that `fits-now` at the next release | Running — both time walks done, contexts, frames and operands that touch the statement added; [queue.md](queue.md) has what is left |
-| **H** — a rule for every slot | the formal text evaluated wherever a slot can cite no rule, or a run raises a question the text does not answer: the rule found and cited, or written | `slot_matrix.py list` names no slot without a rule; `rule_tags.py check` resolves every citation; the slot is the new rule's guard | Running — eight slots left; settled so far: the `??` fallback (`(E-Coalesce)`) and the `assert` message (`(E-Assert)`) |
+| **H** — a rule for every slot | the formal text evaluated wherever a slot can cite no rule, or a run raises a question the text does not answer: the rule found and cited, or written | `slot_matrix.py list` names no slot without a rule; `rule_tags.py check` resolves every citation; the slot is the new rule's guard | Shipped — every slot cites a rule.  Written for it: `(E-Once)`, `(E-Field)`, `(E-Index)`, `(E-Is)`, `(E-Record)`, `(I-While)`, `(E-Assert)`, and the `??` fallback in `(E-Coalesce)`; each cited by the lowering that implements it.  Five open deviations name the defects the matrix reports (loft#2578 to loft#2582) |
 
 ## Phase ordering
 

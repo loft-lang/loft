@@ -10,6 +10,10 @@
 //! or freed twice.  The cells that do not pass today are listed in
 //! `scripts/slot_matrix.baseline`.
 //!
+//! The rules it guards beyond the ones each slot row cites: `@FR-E-Once` (an operand of any
+//! form is reduced once), with `@FR-E-Field`, `@FR-E-Index`, `@FR-E-Is`, `@FR-E-Record`,
+//! `@FR-I-While` and `@FR-E-Assert` for the forms no other rule covered.
+//!
 //! One test per slot FAMILY, so that a red name says where to look and the families run
 //! beside one another.  A test fails for one of two reasons, which its output names first:
 //! `BROKEN` — a cell that is not ok and not in the baseline, which is a change that made an
@@ -19,8 +23,12 @@
 //! No platform gate: the script runs wherever `python3` and a C compiler do, and reads only
 //! what `loft --tests` prints.  Skipped (not failed) where `python3` is unavailable.
 //!
-//! Seven tests and not one for a second reason: on a CI runner the whole matrix as ONE test
-//! took 421 s, past half the per-test limit (`scripts/test_duration_gate.py`).
+//! What these tests run is the whole matrix on the interpreter and a SAMPLE of it on the C
+//! backend: every slot with its plain variable and with the first filler of its type.
+//! Compiling every cell costs about a tenth of a second each, and on a CI runner the whole
+//! matrix on both backends ran past the per-test limit whether it was one test (421 s) or
+//! seven beside one another (four of them at 600 s).  The whole matrix on the C backend is
+//! `slot_matrix.py gate --full`, which is also what rewrites the baseline.
 //!
 //! @falsified-at: hand-measured — with `LOFT` naming the release build of 2026-11-03
 //! (`v2026.11.0`) `gate --family iteration` exits 1 with a `BROKEN` block (the `for` source
@@ -81,7 +89,7 @@ family_gates! {
 #[test]
 fn every_family_of_the_register_has_its_gate() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let register = std::fs::read_to_string(root.join("scripts/syntax_slots.tsv"))
+    let register = loft::file_access::read_to_string(root.join("scripts/syntax_slots.tsv"))
         .expect("scripts/syntax_slots.tsv");
     for line in register
         .lines()

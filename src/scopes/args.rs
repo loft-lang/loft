@@ -922,6 +922,10 @@ impl Scopes<'_> {
     /// there.  An earlier argument that already is such a value stays as it is
     /// ([`Self::reads_no_state`]); one no temp can hold — a heap value, which is passed by
     /// reference and read by the callee — stays too.
+    ///
+    /// `@FR-E-Once`: this is the binding the rule asks for — an operand a lowering must
+    /// move is evaluated into a temp ONCE and the temp is what the call reads; its
+    /// expression is never written a second time.
     fn keep_operand_order(
         &mut self,
         preamble: &mut Vec<Value>,

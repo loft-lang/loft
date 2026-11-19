@@ -262,7 +262,8 @@ What a change owes it:
   what the compiler answers, as a proposal to check and never as the expectation.
 - **A fix** that makes listed cells pass removes their lines from
   `scripts/slot_matrix.baseline` (`slot_matrix.py gate --update`, then read the diff: it
-  must only remove lines).  `tests/slot_matrix.rs` fails on a failing cell that is not listed,
+  must only remove lines; the update is a full run, every cell on both backends, where
+  the tests compile only a sample).  `tests/slot_matrix.rs` fails on a failing cell that is not listed,
   and on a listed cell that passes again; its output says which of the two it is.
 
 `make slot-matrix` runs the rows; `slot_matrix.py cell` and `expr` try a shape without

@@ -106,6 +106,48 @@ operand nothing later can write is read in place: `v[len(v) - 1]` copies nothing
 first bisect step for a wrong answer where one expression both reads and writes a text or a
 vector.  Guards: `loft-suite/rules/operational/E-Left/`.
 
+### An operand is reduced once
+
+```
+  (E-Once)   an operand written once in a form is reduced ONCE per execution of that form,
+             whatever expression it is — a variable, a call, a field or an element read, a
+             `?? d`, an `if`, a block.  A lowering that needs the value in two places (the
+             read and the write of a compound assignment, the start and each step of a
+             walk) binds it once and uses the binding; it never repeats the operand's
+             expression.  Another count holds only where the form's own rule gives one:
+               zero or one    the right operand of `&&` / `||` (E-And, E-Or); a fallback
+                              (E-Coalesce); an assert's message (E-Assert); an arm of an
+                              `if` or a `match` that is not taken
+               once a step    the condition of a `while` (I-While); the filter and the body
+                              of a `for` and of a comprehension (I-Filter, I-Comp)
+  (E-Field)  ⟨e.f, σ⟩         reduce e to a record once, then read its field f.
+  (E-Index)  ⟨e[i], σ⟩ and ⟨e[a..b], σ⟩ over a text
+                              reduce e first, then the index or the bounds left to right,
+                              each once (E-Left); then read the character or the slice.
+  (E-Is)     ⟨e is V, σ⟩      reduce e once; the answer is whether its variant is V.
+  (E-Record) ⟨T { f₁: e₁, …, fₙ: eₙ }, σ⟩
+                              reduce e₁ … eₙ in the order they are WRITTEN, each once, then
+                              build the record; a field left out takes its declared default.
+```
+
+**In words.** However an operand is spelled, it runs once.  That is what a reader assumes of
+`v[next()] += 1` and of `for x in load() { … }`, and it is rustc's answer; it is also where a
+compiler goes wrong without anyone seeing it, because a statement whose operand ran twice
+still gives the right result whenever the operand has no effect of its own.  A plain
+variable is reduced once by construction, so only an operand of another FORM shows the
+fault — which is why the rule is stated over every form, and checked that way.
+
+The exceptions are exactly the operands a form may leave out or repeat by its own rule, and
+each is named above.  Nothing else is an exception: an operand that a lowering needs twice
+is bound (`scopes::args`, where a hoisted operand keeps its place in the order, cites this
+rule).  `(E-Field)`, `(E-Index)`, `(E-Is)` and `(E-Record)` state the count for four forms
+no other rule covered; a record's fields are reduced in the order the literal WRITES them,
+not the order the type declares them.  A collection's own lookups are `(Col-Lookup)`,
+`(N-Index)` and `(Slice-Value)` in their chapters.
+
+*Guard:* the slot matrix — `tests/slot_matrix.rs` over `scripts/syntax_slots.tsv`, which
+puts a counted operand of every form into every operand position, on both backends.
+
 ### Arithmetic — uncomputable yields null (the spreadsheet model)
 
 ```
@@ -544,7 +586,16 @@ drift apart; verified both backends —
 
 ## Deviations
 
-**OPEN: 2.**
+**OPEN: 6.**
+- **D-op-23** (loft#2578) — violates `(E-Asgn)`: a write to an element whose index may write
+  the vector (`v[f(0)] = x` with `f` a function value, `v[push(v)] = x`) lands in a copy of
+  the vector, and the vector is unchanged.
+- **D-op-24** (loft#2580) — violates `(E-Once)`: a collection literal assigned to a field
+  through an element path (`h.ws[e].items = […]`) reduces the path's index once per item.
+- **D-op-25** (loft#2581) — violates `(E-Asgn-Compound)`: a block of one statement and a value
+  as the index of a compound write is reduced twice.
+- **D-op-26** (loft#2582) — violates `(E-Asgn)`: a right side that reads a field of a call's
+  record is reduced before the place's index.
 - **D-op-1** — there is no shared operational semantics — the interpreter is the spec.  Not
   resolvable in a release: two implementations, and nothing links them into one executable
   semantics outside the tests that run both; @PLN89's differential oracle narrows it, and each

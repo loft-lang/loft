@@ -33,7 +33,7 @@ it-range-high	iteration	I-Range	once	1	int	for n in 0..(<S>) { s += 5; }
 it-range-incl-high	iteration	I-RangeIncl	once	1	int	for n in 0..=(<S>) { s += n; }
 it-slice-source	iteration	I-For	once	1	vint	for n in <S>[i..j] { s += n; }
 it-slice-bound	iteration	I-For	once	1	int	for n in vi[<S>..j] { s += n; }
-it-while	iteration	-	step	3	bool	n = 0; while <S> && n < 2 { n += 1; } s = n;
+it-while	iteration	I-While	step	3	bool	n = 0; while <S> && n < 2 { n += 1; } s = n;
 it-index-attr	iteration	I-Index	step	3	int	for p in xs { if p#index == <S> { s += 1; } }
 it-par-source	iteration	C-Par	once	1	vint	for n in <S> par(m = inc1(n), 2) { s += m; }
 wr-var	write	E-Asgn	first	1	int	s = <S>;
@@ -65,8 +65,8 @@ wr-push-path	write	Col-Insert	first	1	int	h.ws[<S>].items += [P { k: 9, t: "z" }
 wr-push-path-two	write	Col-Insert	first	1	int	h.ws[<S>].items += [P { k: 8, t: "y" }, P { k: 9, t: "z" }];
 wr-push-coll	write	Col-Concat	once	1	coll	r.items += <S>;
 wr-push-int	write	Col-Insert	first	1	int	vi += [<S>];
-wr-remove-index	write	Col-Remove	first	1	int	vi[<S>] = null;
-rd-field	read	-	once	1	rec	s = <S>.n;
+wr-remove-index	write	N-Store	first	1	int	vi[<S>] = null;
+rd-field	read	E-Field	once	1	rec	s = <S>.n;
 rd-elem-recv	read	N-Index	once	1	vint	s = <S>[i];
 rd-elem-index	read	N-Index	once	1	int	s = vi[<S>];
 rd-elem-negative	read	N-Index	once	1	int	s = vi[-<S>];
@@ -76,9 +76,9 @@ rd-slice-open-low	read	Slice-Open	once	1	int	q = vi[<S>..]; s = len(q);
 rd-slice-open-high	read	Slice-Open	once	1	int	q = vi[..<S>]; s = len(q);
 rd-key-recv	read	Col-Lookup	once	1	coll	s = <S>[2].k;
 rd-key-key	read	Col-Lookup	once	1	int	s = xs[<S>].k;
-rd-text-recv	read	-	once	1	text	o = "{<S>[i]}";
-rd-text-index	read	-	once	1	int	o = "{x[<S>]}";
-rd-text-slice	read	-	once	1	int	o = x[<S>..];
+rd-text-recv	read	E-Index	once	1	text	o = "{<S>[i]}";
+rd-text-index	read	E-Index	once	1	int	o = "{x[<S>]}";
+rd-text-slice	read	E-Index	once	1	int	o = x[<S>..];
 rd-path-index	read	N-Chain	once	1	int	s = h.ws[<S>].items[0].k;
 rd-default	read	E-Default	once	1	int	s = h.ws[<S>].n?;
 rd-coal-left	read	E-Coalesce	once	1	int	s = h.ws[<S>].n ?? j;
@@ -122,7 +122,7 @@ op-concat	operator	E-Concat	once	1	text	o = x + <S>;
 op-concat-tail	operator	Col-Concat	once	1	vint	q = cat(c, h, vi); s = len(q);	fn cat(c: Ctr, h: Hold, vi: vector<integer>) -> vector<integer> { <BIND> <S> + [9] }
 op-float	operator	E-Left	once	1	float	s = (fl + <S>) as integer;
 op-as	operator	N-Cast	once	1	float	s = <S> as integer;
-op-is	operator	-	once	1	enum	if <S> is Green { s = 1; }
+op-is	operator	E-Is	once	1	enum	if <S> is Green { s = 1; }
 op-and-left	operator	E-And	once	1	bool	if <S> && b { s = 1; }
 op-and-right-taken	operator	E-And	cond	1	bool	if b && <S> { s = 1; }
 op-and-right-skipped	operator	E-And	cond	0	bool	if nb && <S> { s = 1; }
@@ -146,8 +146,8 @@ ct-assert	control	E-Assert	once	1	bool	assert(<S>, "held");
 ct-assert-message	control	E-Assert	cond	0	text	assert(b, <S>);
 ct-yield	control	G-Yield	once	1	int	for n in gen(c, h, i, j) { s += n; }	fn gen(c: Ctr, h: Hold, i: integer, j: integer) -> iterator<integer> { yield <S>; yield j; }
 ct-parallel	control	C-Arms	once	1	int	parallel { add2(<S>, j); add2(i, j); }
-cn-field	construct	-	once	1	int	p2 = P { k: <S>, t: "a" }; s = p2.k;
-cn-field-text	construct	-	once	1	text	p2 = P { k: 1, t: <S> }; o = p2.t;
+cn-field	construct	E-Record	once	1	int	p2 = P { k: <S>, t: "a" }; s = p2.k;
+cn-field-text	construct	E-Record	once	1	text	p2 = P { k: 1, t: <S> }; o = p2.t;
 cn-vector	construct	Col-Cons	once	1	int	q = [i, <S>, j]; s = len(q);
 cn-tuple	construct	T-Cons	once	1	int	tp = (j, <S>); s = tp.1;
 cn-format	construct	F-Interp	once	1	int	o = "{ <S> }";

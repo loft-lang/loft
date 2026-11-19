@@ -2153,7 +2153,8 @@ impl Parser {
         let mut ceiling = OPERATORS.len();
         loop {
             // `is` stands at the comparison level: `level_run` reads it there when no
-            // comparison operator follows.
+            // comparison operator follows.  `@FR-E-Is`: its left operand is the value already
+            // parsed here, reduced once; the variant on the right is a name, not an operand.
             let next = self
                 .peek_binary_operator()
                 .or_else(|| self.lexer.peek_token("is").then_some((3, "is")));
