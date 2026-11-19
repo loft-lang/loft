@@ -104,7 +104,7 @@ operand nothing later can write is read in place: `v[len(v) - 1]` copies nothing
 (`scopes::args::writes_vector` reads a callee's body to tell).  The copy is a READ's: the place
 of a write is a location in the live vector (`E-Asgn`), so `v[f(1)] = 3`, its compound forms, a
 field of the element and an element handed to a record parameter address `v` itself
-(`scopes::args::place_operand`, loft#2578).
+(`scopes::args::place_operand`).
 `LOFT_NO_COPY_WRITTEN_TEXT=1` / `LOFT_NO_COPY_WRITTEN_VECTOR=1` leave the operand in place: the
 first bisect step for a wrong answer where one expression both reads and writes a text or a
 vector.  Guards: `loft-suite/rules/operational/E-Left/`.

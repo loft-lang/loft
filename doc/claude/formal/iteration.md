@@ -210,7 +210,7 @@ case past it (QUALITY-history.md B8i).
 
 ## Deviations
 
-**OPEN: 1.**  The record of the others is in the companion
+**OPEN: 0.**  The record of the others is in the companion
 [iteration-history.md](iteration-history.md).
 
 - **D-iter-17** (loft#2579) — violates `(I-Comp)` and `(E-Once)`: a comprehension over a

@@ -32,6 +32,7 @@ h)` answers `h.ws[0]`, `held(c, h)` answers `h`, `mk(c)` a fresh collection, eac
 | 1 | `vi[fnv(at(c, 0))] = j;`, `vi[poke(c, vi)] = j;`, `vi[grow(c, vi)] = j;` and the `+=` `-=` `*=` `/=` `%=` and `= null` forms | the write is lost: the vector is unchanged.  Any local or parameter vector whose index holds a function-value call, or a call that writes that vector (`poke` writes an element, `grow` appends).  An index that only READS the vector through a call (`ident(c, vi)[0]`) writes correctly | both backends; **new since v2026.11.0** | `run --filler all --slot wr-elem-index --backend both` |
 | 2 | `parallel { add2(at(c, 1), j); add2(i, j); }` | an arm calls a function that writes a record of the enclosing scope: the interpreter's worker panics or the process takes SIGBUS; the C backend runs it and the write lands.  The same write spelled in the arm is refused at compile time | backends differ | `run --filler all --slot ct-parallel --backend both -v` |
 | 3 | `yield box(c, h).n;` in a generator (also a block of two statements as the value) | the interpreter ends with SIGSEGV in `OpAppendText`; the C backend answers right | interpreter | `run --filler int-field --slot ct-yield --backend both -v` |
+| 3b | `fn gen(c: Ctr, h: Hold, i: integer, j: integer, xs: vector<P>) -> iterator<integer> { yield i; yield j; }` walked by `for n in gen(c, h, i, j, xs)` in the cell's frame | a generator with the world's collection of records among its parameters, or the tuple holding one (`tk: (vector<P>, integer)`), ends the interpreter before it yields; with neither it runs, and a `vector<integer>`, a record and a function value as parameters are fine | interpreter | `cell 'for n in gen(<ARGS: c h i j xs>) { s += n; }' --decl 'fn gen(<ENV: c h i j xs>) -> iterator<integer> { yield <S>; yield j; }' --type int` |
 | 4 | `s = (pairw(c).0 ?? r).n;` | loft#2577.  Where the statement's values are locals it is a wrong value on the interpreter and a store freed twice on C; where they are parameters (`--frame params`) it is a store freed twice on both | both | `run --filler nrec-tuple-call --slot rd-coal-rec-left --backend both -v` |
 
 **Cause of 1, measured.**  `scopes::args::copy_written_vector_operands` (the fix of
@@ -89,6 +90,14 @@ of locals, fillers inside fillers, an anchor per slot, and forty slots for `floa
   not in the rows above.  Against the release of 2026-10-01 the walk shows row 12 as the
   last open instance of an order defect that then stood in twelve slots.
 
+What the matrix lists as REFUSED is now only what the language refuses: ten cells, in the
+three entries of § For the rules about a slice and the two `parallel` arms that write a
+variable of the enclosing scope.  Over a hundred earlier refusals were gaps of the tables —
+a function declared by a slot that was not handed the values its fillers name, a slot
+generated for a collection kind it has no meaning in (formatting a keyed collection,
+`#index` over an `index`), a nullable filler in a narrow-integer slot — and are gone; a name
+the cell's world lacks now FAILS the run as a fault of the tables.
+
 Two things that look like defects in a run and are not:
 
 - A writing operand on the right of a compound assignment (`r.n += renum(c, r)`) differs
@@ -110,6 +119,10 @@ Two things that look like defects in a run and are not:
   `ct-assert-message`, and by the lowering in `src/parser/control.rs`.  The change from the
   release of 2026-10-01, which evaluated the message always, was meant (loft#2090);
   `GUARDS.md` still taught the old behaviour and is corrected.
+- **Indexing a slice in place is refused with the wrong words.**  `mkv(c)[0..][i]` — an
+  element of a slice of a call's vector — is refused with "Indexing a non vector — keyed
+  collections (hash/sorted/index/spatial) have no generic-constructor expression", which
+  describes another mistake.  Either the refusal is lifted or it says what it refuses.
 - **`map`, `filter` and `reduce` refuse a slice as their source** (`map(mkv(c)[0..], inc1)`:
   "first argument must be a vector"), while `LOFT_DATA.md` says a slice is a vector wherever
   a vector is expected.  Either the refusal is lifted or that sentence gains its exception.

@@ -21,6 +21,32 @@ exception to contagion and never mentioned truthiness, so a `&&` that answered `
 like the rule being OBEYED rather than a shipped decision (@C73) being broken. An `OPEN: n` is
 only as strong as the rules above it, not only as strong as its oracle.
 
+### D-op-23 — CLOSED (2026-11-19, loft#2578): (E-Asgn) for a write through an element whose index may write the vector
+- Was: `v[f(0)] = x` with `f` a function value, `v[push(v)] = x` and their compound forms wrote
+  into the copy `(E-Left)` takes of an indexed vector for a READ, so the vector was unchanged.
+- Closed by: `scopes::args::place_operand` — the element call that is a write's place (and the
+  `__place_N` a compound binds) addresses the live vector.
+  Guard: `loft-suite/rules/operational/E-Asgn/2578-a-write-through-an-element-addresses-the-live-vector.loft`.
+
+### D-op-24 — CLOSED (2026-11-19, loft#2580, loft#2584): (E-Once) for a collection assigned through an element path
+- Was: `h.ws[e].items = […]` reduced the path's index once per item the literal built.
+- Closed by: the F2 hoist takes `=` of a collection; an index that runs a call is lifted into an
+  integer temp before the right side, and a reading index stays inline where pass 1 saw a right
+  side that writes nothing.
+  Guard: `loft-suite/rules/operational/E-Asgn/2580-a-whole-collection-written-through-a-called-place-addresses-it-once.loft`.
+
+### D-op-25 — CLOSED (2026-11-19, loft#2581): (E-Asgn-Compound) for a block index
+- Was: a block of one statement and a value as the index of a compound write was reduced twice.
+- Closed by: `addressing_has_effects` — a user call or any block in the addressing takes the
+  once-only hoist.
+  Guard: `loft-suite/rules/operational/E-Asgn-Compound/2581-a-compound-write-through-a-block-index-evaluates-the-block-once.loft`.
+
+### D-op-26 — CLOSED (2026-11-19, loft#2582): (E-Asgn) for a right side reading a field of a call's record
+- Was: the lifted record call of the right side ran before the place's index.
+- Closed by: `lift_place_indices` — a place keeps its turn: each index that runs a call becomes a
+  temp, in source order, ahead of the hoist.
+  Guard: `loft-suite/rules/operational/E-Asgn/2582-a-place-keeps-its-turn-before-a-lifted-right-side.loft`.
+
 ### D-op-3 — CLOSED (2026-11-15, loft#2503): (E-Left) for a VECTOR operand read the written vector
 - Was: `v[set(v)]`, with `set(w: &vector<integer>)` replacing the vector, read the NEW vector on
   all three backends (7 for `[1, 2, 3]` replaced by `[7, 8, 9]`) where the rule reads the old one

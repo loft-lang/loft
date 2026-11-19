@@ -1,39 +1,16 @@
-diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
-index b1f0e9c8b..05dae0d07 100644
---- b/src/parser/expressions.rs
-+++ a/src/parser/expressions.rs
-@@ -9417,16 +9417,6 @@ use a separate collection or add after the loop"
-     /// A WRITE is non-idempotent too, call or no call: `w[{c += 1; c}] -= 1` holds no user
-     /// call, and without this arm the block ran for the read and again for the write — the
-     /// value read from `w[2]` landed in `w[1]`, on both backends (loft#1825).
--    /// Does evaluating this place's ADDRESSING twice differ from once (`(E-Asgn-Compound)`: the
--    /// place is addressed exactly once)?  A user call does, and so does a BLOCK anywhere in it:
--    /// a block holds statements, and a field write in one (`vi[{ c.calls += 1; 1 }] += j`) is an
--    /// `OpSet…`, which [`Self::ir_has_user_call`] does not count (loft#2581 — the block ran
--    /// twice in every compound write through such an index).
--    pub(crate) fn addressing_has_effects(&self, v: &Value) -> bool {
--        self.ir_has_user_call(v)
--            || v.any_node(&mut |n| matches!(n, Value::Block(_) | Value::Insert(_)))
--    }
--
-     pub(crate) fn ir_has_user_call(&self, v: &Value) -> bool {
-         match v {
-             Value::Set(_, _) => true,
-@@ -11227,7 +11217,7 @@ use a separate collection or add after the loop"
-                         Value::Call(get_d, gargs)
-                             if self.data.def(*get_d).name.starts_with("OpGet")
-                                 && gargs.len() == 2
--                                && self.addressing_has_effects(&gargs[0]) =>
-+                                && self.ir_has_user_call(&gargs[0]) =>
-                         {
-                             Some((*get_d, gargs[0].clone(), gargs[1].clone(), None))
-                         }
-@@ -11240,7 +11230,7 @@ use a separate collection or add after the loop"
-                         Value::Call(get_d, gargs)
-                             if self.data.def(*get_d).name == "OpGetField"
-                                 && gargs.len() == 3
--                                && self.addressing_has_effects(&gargs[0]) =>
-+                                && self.ir_has_user_call(&gargs[0]) =>
-                         {
-                             Some((
-                                 *get_d,
+diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
+index bf5e7cc30..c5c6ccacb 100644
+--- a/src/parser/expressions.rs
++++ b/src/parser/expressions.rs
+@@ -9492,11 +9492,6 @@ use a separate collection or add after the loop"
+ 
+     pub(crate) fn addressing_has_effects(&self, v: &Value) -> bool {
+         self.ir_has_user_call(v)
+-            || v.any_node(&mut |n| match n {
+-                Value::Block(bl) => bl.operators.iter().any(|op| self.writes(op)),
+-                Value::Insert(ops) => ops.iter().any(|op| self.writes(op)),
+-                _ => false,
+-            })
+     }
+ 
+     /// Does evaluating `v` WRITE: a `Set` of a variable, or an operator that is not one of the

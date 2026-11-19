@@ -1,15 +1,21 @@
-diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
-index 655847a5d..3d6f8b762 100644
---- b/src/parser/expressions.rs
-+++ a/src/parser/expressions.rs
-@@ -8082,13 +8082,8 @@ use a separate collection or add after the loop"
-     /// sub-expression?  Builtin `Op*` accessors/arithmetic are pure given stable
-     /// args and may be re-evaluated freely; a place addressing sub-expression that
-     /// reaches a user call must be bound once (compound-assign place-once, @C92).
--    ///
--    /// A WRITE is non-idempotent too, call or no call: `w[{c += 1; c}] -= 1` holds no user
--    /// call, and without this arm the block ran for the read and again for the write — the
--    /// value read from `w[2]` landed in `w[1]`, on both backends (loft#1825).
+diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
+index bf5e7cc30..0b7b9a243 100644
+--- a/src/parser/expressions.rs
++++ b/src/parser/expressions.rs
+@@ -9492,11 +9492,6 @@ use a separate collection or add after the loop"
+ 
+     pub(crate) fn addressing_has_effects(&self, v: &Value) -> bool {
+         self.ir_has_user_call(v)
+-            || v.any_node(&mut |n| match n {
+-                Value::Block(bl) => bl.operators.iter().any(|op| self.writes(op)),
+-                Value::Insert(ops) => ops.iter().any(|op| self.writes(op)),
+-                _ => false,
+-            })
+     }
+ 
+     /// Does evaluating `v` WRITE: a `Set` of a variable, or an operator that is not one of the
+@@ -9519,7 +9514,6 @@ use a separate collection or add after the loop"
+ 
      pub(crate) fn ir_has_user_call(&self, v: &Value) -> bool {
          match v {
 -            Value::Set(_, _) => true,

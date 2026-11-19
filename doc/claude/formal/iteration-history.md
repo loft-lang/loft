@@ -334,3 +334,10 @@ Opened and closed in the same change; the chapter's `OPEN:` line never carried i
   is built into a buffer of its own that the field's assignment delivers, and a comprehension
   takes its own buffer.  Guard
   the loft-suite cell `rules/ownership/O-Detach/2397-a-literal-reads-its-field-under-another-name.loft`.
+
+* **D-iter-17** *(opened 2026-11-19, CLOSED 2026-11-19; loft#2579)* — `(I-Comp)` / `(E-Once)`:
+  a comprehension over a `sorted` or an `index` source reduced the source once per step, and a
+  loop inside a format string held no source at all; the `for` statement over the same source
+  reduced it once (loft#2573).  **Fix.**  One home, `hold_loop_source`, used by the `for`
+  statement, the comprehension and the format loop.  Guard
+  `loft-suite rules/iteration/I-For/2579-a-comprehension-and-a-format-loop-evaluate-their-source-once.loft`.
