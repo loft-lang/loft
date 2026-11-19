@@ -1488,8 +1488,6 @@ pub fn keyed_for(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex) -> Ex {
   }
   idx = el_ex_pattern::loop_index(vars, h.id);
   base = if h.id == "_" { el_vars::name_of(vars, idx) } else { h.id };
-  state = el_vars::add_variable(vars, "{base}#iter_state", ir::TyInteger { spec: i32_spec() });
-  el_vars::set_defined(vars, state);
   lv = loop_var(vars, h.src_id, h.id, elem);
   vars.active_loops += [lv];
   vars.active_values += [ir::NdNull];
@@ -1500,6 +1498,9 @@ pub fn keyed_for(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex) -> Ex {
   if e.first_pass {
     return ex(ir::NdNull, ir::TyVoid);
   }
+  // (`x#iter_state` is a second-pass mint: numbered after every first-pass variable.)
+  state = el_vars::add_variable(vars, "{base}#iter_state", ir::TyInteger { spec: i32_spec() });
+  el_vars::set_defined(vars, state);
   known = el_schema::keyed_type(e, ct);
   on = 128;
   arg = 4;

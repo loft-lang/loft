@@ -659,7 +659,12 @@ fn expression_node(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     SParen { e: pe } => if pe == null { ex(ir::NdNull, ir::TyUnknown { n: 0 }) } else { expression(e, vars, pe!) },
     SSizeof { kind, tp: st, e: se } => if kind == "sizeof" { sizeof_of(e, vars, st, se) } else if kind == "type_name" { type_name_of(e, vars, st) } else { sizeof_expr(e, vars, kind, st) },
     STupleLit { elems } => tuple_lit(e, vars, elems),
-    STupleGet { e: te, index } => tuple_get(e, vars, te, index),
+    // `wrap_chain`: the member read wrapped in its `.`'s position on the second pass, as a
+    // field read is.
+    STupleGet { at: tat, e: te, index } => {
+      tg = tuple_get(e, vars, te, index);
+      if e.first_pass || tg.code is NdNull || (tg.code is NdSpan) { tg } else { ex(ir::NdSpan { pos: el::pos_at(e, tat), inner: tg.code }, tg.tp) }
+    },
     SIs { e: ie, variant, caps, has_caps } => is_expr(e, vars, ie, variant, caps, has_caps),
     SLambda { at: _ } => lambda_expr(e, vars, n),
     SDestructure { places, e: de } => el_ex_object::destructure_assign(e, vars, places, de),

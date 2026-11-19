@@ -2119,7 +2119,13 @@ pub fn loop_var(vars: el_vars::Vars, src_id: text, id: text, t: ir::TypeT) -> in
     vars.loop_vars += [u];
     return u;
   }
+  // `ended_spelling`: a spelling whose earlier binding has ended names that binding again once
+  // the loop's body is read (`restore_loop_spelling`, in `pop_loop`).
+  prior = el_vars::var(vars, src_id);
   lv = el_vars::loop_variable(vars, id, t);
+  if src_id != "_" && prior >= 0 && prior != lv && el_vars::binding_ended(vars, prior) {
+    vars.loop_spellings += [el_vars::LoopSpelling { lv: lv, name: src_id, prior: prior }];
+  }
   if id != src_id {
     el_vars::set_name(vars, src_id, lv);
   }
