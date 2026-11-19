@@ -1805,6 +1805,19 @@ impl Scopes<'_> {
                 }
             }
         }
+        // loft#2577's owner — a slot read off a call's tuple (`t0 = f().0`) binds the call to a
+        // work ref and answers a view of it (`Parser::emit_nullable_slot_read`): the binding
+        // views that owner as it views a hoisted lift, so its free runs only where it names
+        // another store.
+        if let Value::Block(bl) = value.unspan()
+            && bl.name == "nullable_slot_read"
+        {
+            for d in bl.result.depend() {
+                if d != v && function.name(d).starts_with("__ref_") && !viewed.contains(&d) {
+                    viewed.push(d);
+                }
+            }
+        }
         self.note_lift_viewers(v, &viewed);
         self.prefix_released.truncate(prefix_from);
         if first_binding {
