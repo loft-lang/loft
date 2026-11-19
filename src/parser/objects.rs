@@ -75,16 +75,20 @@ pub(crate) struct FieldSinks {
 /// `_elm = OpNewRecord(<field>, …)`, `OpFinishRecord(<field>, …)`): an item reading the field
 /// itself (`[len(b.inner.v)]`) is the same IR as the receiver and must still count.  A write
 /// nested deeper (a comprehension's loop) is left as it is, which keeps its decline.
+/// Each level is read through its `Span`: a spanned write is the same write, and missing it
+/// would leave its receiver counted as a read, which declines the in-place build.
 fn mask_receiver(v: &mut Value, receiver: &Value) {
-    let Value::Insert(ops) = v else { return };
+    let Value::Insert(ops) = v.unspan_mut() else {
+        return;
+    };
     for op in ops.iter_mut() {
-        let call = match op {
-            Value::Set(_, inner) => inner.as_mut(),
+        let call = match op.unspan_mut() {
+            Value::Set(_, inner) => inner.unspan_mut(),
             other => other,
         };
         if let Value::Call(_, args) = call
             && let Some(first) = args.first_mut()
-            && *first == *receiver
+            && first.unspan() == receiver.unspan()
         {
             *first = Value::Null;
         }
@@ -6255,8 +6259,7 @@ impl Parser {
                     self.reads_place(&items, xv, xoff)
                 } else {
                     self.reads_place(&value, xv, xoff)
-                })
-            {
+                }) {
                 // loft#2521, `@FR-B-Copy` — an OUT-OF-LINE field's value is copied in by its
                 // field write (`OpSetChildRec`), which runs after the writes before it; staged,
                 // the temp is a view of the place those writes overwrite (`e[0] = Wrap { tag:
