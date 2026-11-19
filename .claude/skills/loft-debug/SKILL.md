@@ -46,6 +46,16 @@ switches, [RUN_BOUNDS.md](../../../doc/claude/RUN_BOUNDS.md)):
   (§ The agent debug surface below).
 - *What did the parser resolve at compile time?* `LOFT_TRACE=<category>` (§ Parser tracing
   below).
+- *Does this expression, or this statement, evaluate its operand once, in order, to the
+  right result, in every position?* `python3 scripts/slot_matrix.py expr '<expression, <C>
+  its counter>' --type <type>` tries the expression in every operand position of its type;
+  `cell '<statement, <S> the operand>' --type <type>` tries every form of operand in one
+  statement.  Both use the names of `scripts/syntax_slots_prelude.loft` and run both
+  backends in seconds.
+- *Why does this slot-matrix cell fail?* `python3 scripts/slot_matrix.py explain <cell>` —
+  its program kept, `LOFT_REFREE_FAILS` and `LOFT_LEAK_SITES` on, every differing field with
+  both values, and the IR of the cell diffed against the IR of its bound-first twin: the
+  working form beside the broken one.
 
 ## Method — where it lives
 
