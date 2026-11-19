@@ -1295,6 +1295,34 @@ pub fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
       }
       continue;
     }
+    // A variant literal of a struct-enum element (`self.code += [Integer { v: v }]`) is built
+    // in the new element as a struct literal is, its `enum` field taking the variant's ordinal
+    // (the form a struct literal's vector FIELD has in `el_ex_object::field_vector`).
+    vsen = el_types::struct_enum_def(inner);
+    if vsen >= 0 && elm >= 0 && el_ex_pattern::variant_literal(e, it) {
+      vvfs: vector<integer> = [];
+      vvd = -1;
+      match e.p.nodes[it] {
+        SStructLit { name: vvn, fields: vvf } => { vvfs = vvf; vvd = el::def_nr(e, vvn); },
+        _ => {}
+      }
+      if vvd < 0 {
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      el_vars::set_var_type(vars, elm, ir::TyReference { n: vsen, dep: [rec] });
+      if e.first_pass {
+        el_ex_pattern::first_pass_fields(e, vars, vvd, vvfs);
+        continue;
+      }
+      vvbody = fields_at(e, vars, elm, at, vvd, vvfs);
+      if vvbody == null {
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [r, ir::NdInt { n: pkt }, ir::NdInt { n: fnr }]))];
+      ls += vvbody!;
+      ls += [el_ir::cl(e, "OpFinishRecord", [r, at, ir::NdInt { n: pkt }, ir::NdInt { n: fnr }])];
+      continue;
+    }
     sd = struct_literal_def(e, it);
     if sd >= 0 {
       if !el_types::is_equal(e, inner, ir::TyReference { n: sd, dep: [] }) {
