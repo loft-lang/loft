@@ -210,7 +210,10 @@ A tuple member's free retires every work-ref an assignment made that member's cl
 it still names the store (a loop drops the per-assignment claimant, `tuple_claimants`);
 `LOFT_NO_CLAIMANT_DISARM=1` leaves them naming it.  A claimant is released after the tuple
 whose member it claims (loft#2576); `LOFT_NO_CLAIMANT_ORDER=1` keeps the scope's registration
-order, which released a literal member's `__kvb_N` ahead of its tuple and freed the store twice.  A collection a fn-ref call delivers into
+order, which released a literal member's `__kvb_N` ahead of its tuple and freed the store twice.
+A nullable slot read off a call's answer (`f().0` of a `(S?, …)`) binds the call to a local the
+view names (loft#2577); `LOFT_NO_SLOT_CALL_OWNER=1` leaves the call inline, where its lifted
+temporary was released before the view was read and the `??` over it freed the view as an owner.  A collection a fn-ref call delivers into
 a local that another assignment binds to a view gets a lift temporary as its owner, and the
 local views it (`scan_set`); `LOFT_NO_CALLREF_LIFT=1` makes the local its owner again, whose
 displaced free then releases the view's temporary store.  A nullable value stored into a

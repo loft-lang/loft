@@ -4440,6 +4440,20 @@ impl Parser {
         ctp: &mut Type,
         lhs_type: &Type,
     ) {
+        // loft#2577 — a subject read through a nullable slot off a call's answer is a VIEW of
+        // the local the slot read binds that answer to (`emit_nullable_slot_read`), and its
+        // block says so; the declared type, which names no owner, read it as a fresh record.
+        // Every type this `??` derives — its temp's, its join's — starts from the view.
+        let viewed;
+        let lhs_type = match code.unspan() {
+            Value::Block(bl)
+                if bl.name == "nullable_slot_read" && !bl.result.depend().is_empty() =>
+            {
+                viewed = lhs_type.with_deps_of(&bl.result);
+                &viewed
+            }
+            _ => lhs_type,
+        };
         let mut rhs = Value::Null;
         let rhs_pos = *self.lexer.peek_pos();
         // Thread the LHS BASE type as the default's hint when the context gives
