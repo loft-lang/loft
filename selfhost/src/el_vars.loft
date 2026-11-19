@@ -150,6 +150,12 @@ pub struct Vars {
   pub loop_made: vector<integer>,
   // `ended_spelling`: per open loop, the spelling to give back to its ended binding.
   pub loop_spellings: vector<LoopSpelling>,
+  // The subject node of a tuple member an assignment writes (`v[i].1 += 5`): its element is
+  // read dense there, the write's place.
+  pub place_tuple_subject: integer = -1,
+  // `MemberWalk::only_read`'s answer, approximated: the tuple shadows a body writes a heap
+  // member of (their seed is the copy; any other is the alias).
+  pub heap_member_written: vector<integer>,
   // The loop variables of the open `rev(…)` walks (`on`'s reverse bit, which `#remove` reads).
   pub reversed: vector<integer>,
   // `Iterator::value` of each open loop, beside `active_loops`: the vector a `for` walks, or
@@ -1049,6 +1055,17 @@ pub fn promote_text_param(v: Vars, p: integer) -> integer {
   name = v.vars[p]!.name;
   sh = new_var(v, "__tp_{name}", ir::TyText { dep: [] });
   v.vars[sh].value_const = v.vars[p]!.value_const;
+  set_name(v, name, sh);
+  v.promoted_params += [p];
+  v.promoted_shadows += [sh];
+  sh
+}
+
+// `Parser::promote_written_tuple_param` (`@FR-F-ParamScalar`): a tuple parameter written in the
+// body is the callee's own copy, `__tp_<name>`, seeded at entry; every later use names it.
+pub fn promote_tuple_param(v: Vars, p: integer) -> integer {
+  name = v.vars[p]!.name;
+  sh = new_var(v, "__tp_{name}", el_types::without_deps(tp(v, p)));
   set_name(v, name, sh);
   v.promoted_params += [p];
   v.promoted_shadows += [sh];

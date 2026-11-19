@@ -1315,6 +1315,12 @@ pub fn text_return(e: el::El, vars: el_vars::Vars, t: ir::TypeT) {
       if !e.first_pass && !starts_with(nm, "_") {
         continue;
       }
+      // (loft#2286, loft#1616: on the second pass a pooled `__work_N` is promoted only where the
+      // first pass promoted it — its number follows the pool, not the role — and another
+      // compiler temp only where the first pass published no hidden text buffer.)
+      if !e.first_pass && (starts_with(nm, "__work_") || len([for pa in el::def(e, d).attributes if pa.hidden && ((pa.typedef[0] ?? ir::TyVoid) is TyRefVar) { pa }]) > 0) {
+        continue;
+      }
       na = el::attribute(nm, stack);
       na.hidden = true;
       e.b.data.definitions[d].attributes += [na];
@@ -4314,7 +4320,30 @@ pub fn finish_body(e: el::El, vars: el_vars::Vars, body: ir::Node) -> ir::Node {
       // Each promoted text parameter's shadow is seeded from the parameter, ahead of the work
       // texts (`finish_body`'s `promoted_text_args`).
       for sh in vars.promoted_shadows {
-        ops: vector<ir::Node> = [el_ir::v_set(sh, ir::NdVar { n: vars.promoted_params[sh#index] ?? -1 })];
+        pp = vars.promoted_params[sh#index] ?? -1;
+        seed = el_ir::v_set(sh, ir::NdVar { n: pp });
+        // A tuple shadow is the parameter's copy, member by member: a heap member moved into a
+        // store of its own (`tuple_param_seed`, `tuple_member_move`).
+        match el_vars::tp(vars, pp) {
+          TyTuple { elems: pel } => {
+            pc = el_ex_assign::tuple_whole_bind_copy(e, vars, pp, pel);
+            // (Where no member needed a copy the seed is the plain alias, `__tp_t = t`.)
+            copied = pc != null && match pc!.code { NdTuple { items: pit } => len([for pi in pit if (pi is NdBlock) { pi }]) > 0, _ => true };
+            if pc != null && copied && vars.heap_member_written.contains(sh) {
+              seed = el_ir::v_set(sh, pc!.code);
+              el_vars::set_var_type(vars, sh, pc!.tp);
+            } else if copied {
+              // (Only read: the alias, typed as a view of the parameter's heap members.)
+              vw: vector<ir::TypeT> = [];
+              for pm in pel {
+                vw += [if is_scalar(el_types::base(pm)) || (el_types::base(pm) is TyTuple) { pm } else { el_types::with_deps(pm, [pp]) }];
+              }
+              el_vars::set_var_type(vars, sh, ir::TyTuple { elems: vw });
+            }
+          },
+          _ => {}
+        }
+        ops: vector<ir::Node> = [seed];
         for op in bl.operators {
           ops += [op];
         }

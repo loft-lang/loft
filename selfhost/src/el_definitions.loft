@@ -1433,6 +1433,7 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
       if e.first_pass {
         v = el_vars::add_variable(vars, a.name, a.typedef);
         el_vars::become_argument(vars, v);
+
         if vars.vars[v].uses > 0 {
           el_vars::in_use(vars, v, false);
         }
@@ -1453,7 +1454,9 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
           TyTuple { elems: pe } => {
             for pm in pe {
               pb = el_types::base(pm);
-              if pb is TyReference || pb is TyVector || (pb is TyEnum && el_types::struct_enum_def(pb) >= 0) {
+              // (A vector member is carried: read through the parameter, or copied into the
+              // `__tp_<name>` a write promotes.)
+              if pb is TyReference || (pb is TyEnum && el_types::struct_enum_def(pb) >= 0) {
                 el::refuse(e, "a tuple parameter with a heap member");
               }
             }
@@ -1583,6 +1586,21 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
       e.bodies2 += [e.context];
     }
   }
+    // `tuple_carries_heap`: a tuple parameter holding a collection is read through its own
+    // `__tp_<name>` from the first statement on (made after the parameters, on the first pass).
+    if e.first_pass {
+      for ha in arguments {
+        hv = el_vars::var(vars, ha.name);
+        match ha.typedef {
+          TyTuple { elems: hpe } => {
+            if hv >= 0 && len([for hm in hpe if (el_types::base(hm) is TyVector) { hm }]) > 0 && el_vars::var(vars, "__tp_{ha.name}") < 0 {
+              el_vars::promote_tuple_param(vars, hv);
+            }
+          },
+          _ => {}
+        }
+      }
+    }
   if e.first_pass {
     for s in el_vars::minted_parameters(vars) {
       e.step_over += [el::StepOver { d: e.context, name: el_vars::name_of(vars, s.nr), site: s.site }];

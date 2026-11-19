@@ -1386,6 +1386,14 @@ pub fn tuple_lit(e: el::El, vars: el_vars::Vars, elems: vector<integer>) -> Ex {
   ex(ir::NdTuple { items: items }, ir::TyTuple { elems: tps })
 }
 
+// A chain of tuple members (`w[0].1.1`) whose innermost subject is an index or a field.
+fn tuple_member_chain_of_place(e: el::El, n: integer) -> boolean {
+  match e.p.nodes[n] {
+    STupleGet { e: tpe } => if tpe == null { false } else { match e.p.nodes[tpe!] { STupleGet { e: _ } => tuple_member_chain_of_place(e, tpe!), SIndex { at: _ } => true, SMember { at: _ } => true, _ => false } },
+    _ => false
+  }
+}
+
 fn nested_member_assign(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: integer) -> Ex? {
   if op != "=" {
     return null;
@@ -1603,6 +1611,17 @@ pub fn tuple_get(e: el::El, vars: el_vars::Vars, te: integer?, index: integer) -
   }
   vars.tuple_raw = te!;
   x = expression(e, vars, te!);
+  // The element of a member an assignment writes is its place: read dense (`OpGetVector`).
+  if te! == vars.place_tuple_subject && x.tp is TyOptional && el_types::base(x.tp) is TyTuple {
+    match el_ir::unspan(x.code) {
+      NdCall { def_nr: nd, args: na } => {
+        if el::def(e, nd).name == "OpGetVectorNullable" || el::def(e, nd).name == "OpGetVector" {
+          x = ex(el_ir::cl(e, "OpGetVector", na), el_types::base(x.tp));
+        }
+      },
+      _ => {}
+    }
+  }
   // A member of a tuple FIELD (`x.f.1`): the member's own read.
   match el_ir::unspan(x.code) {
     NdTuple { items: fi } => {
@@ -2730,7 +2749,10 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
     el::refuse(e, "a const binding");
     return ex(ir::NdNull, ir::TyVoid);
   }
-  if e.p.nodes[target] is SMember || e.p.nodes[target] is SIndex {
+  // (A tuple member of a place — `v[1].1 += 3`, `w[0].1.1 += 7` — is the member's field in the
+  // element: a place as any field is.)
+  member_of_place = match e.p.nodes[target] { STupleGet { e: tpe } => tpe != null && !(e.p.nodes[tpe!] is SName) && !(e.p.nodes[tpe!] is STupleGet), _ => false } || tuple_member_chain_of_place(e, target);
+  if e.p.nodes[target] is SMember || e.p.nodes[target] is SIndex || member_of_place {
     return el_ex_place::place_assignment(e, vars, op, target, rhs!);
   }
   // A member of a tuple LOCAL written in place (`q.0 = 5`, `q.1 *= 2.0`): a plain scalar member
@@ -2747,6 +2769,11 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
   match e.p.nodes[target] {
     STupleGet { e: tse, index: tix } => {
       tvar = match e.p.nodes[tse ?? 0] { SName { name: tn, member: tm } => if tse != null && tm == "" { el_vars::var(vars, tn) } else { -1 }, _ => -1 };
+      // A written tuple PARAMETER is the callee's copy (`__tp_<name>`), made where the first pass
+      // meets the write.
+      if e.first_pass && tvar >= 0 && vars.vars[tvar].argument && !hidden_param(e, vars, tvar) && el_types::base(el_vars::tp(vars, tvar)) is TyTuple {
+        tvar = el_vars::promote_tuple_param(vars, tvar);
+      }
       members = if tvar >= 0 { match el_vars::tp(vars, tvar) { TyTuple { elems: tel } => tel, _ => [] } } else { [] };
       // (A local declared with its type may hold a narrow member, range-checked on a write —
       // not carried: refused by name.)
@@ -2756,7 +2783,52 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
       }
       if tvar >= 0 && !vars.vars[tvar].argument && tix >= 0 && tix < len(members) {
         mt = members[tix]!;
+        if !(is_scalar(el_types::base(mt)) || el_types::base(mt) is TyText) && !vars.heap_member_written.contains(tvar) {
+          vars.heap_member_written += [tvar];
+        }
+        // `a.0 += [k]`: the ordinary append over the member (`parse_append_vector`) — a `_vec_N`
+        // naming it, sized, each item pushed, and the member set to it where it was null.
+        app_inner = match el_types::base(mt) { TyVector { inner: ai } => ai, _ => ir::TyVoid };
+        if op == "+=" && !(app_inner is TyVoid) && el_ex_pattern::push_op(app_inner) != "" && match e.p.nodes[rhs!] { SVecLit { items: ais } => len(ais) > 0 && len([for aii in ais if (e.p.nodes[aii] is SRepeat) { aii }]) == 0, _ => false } {
+          aitems = match e.p.nodes[rhs!] { SVecLit { items: ais2 } => ais2, _ => [] };
+          vt2 = el_types::with_deps(el_types::without_deps(el_types::base(mt)), [tvar]);
+          av = el_vars::create_unique(vars, "vec", vt2);
+          el_vars::set_defined(vars, av);
+          axs: vector<Ex> = [];
+          for ai2 in aitems {
+            axs += [expression(e, vars, ai2)];
+          }
+          if e.first_pass {
+            return ex(ir::NdNull, ir::TyVoid);
+          }
+          el_vars::in_use(vars, tvar, true);
+          aat = ir::NdVar { n: av };
+          aops: vector<ir::Node> = [el_ir::v_set(av, ir::NdTupleGet { var: tvar, idx: tix }), el_ir::cl(e, "OpPreAllocVector", [aat, ir::NdInt { n: len(aitems) }, ir::NdInt { n: elem_size(app_inner) }])];
+          for ax in axs {
+            asv = stored(e, vars, ax, app_inner);
+            if asv == null {
+              refuse_known(e, ax.tp, "an item appended to a tuple member of another type: {type_kind(ax.tp)}");
+              return ex(ir::NdNull, ir::TyVoid);
+            }
+            aops += [el_ir::cl(e, el_ex_pattern::push_op(app_inner), el_ex_pattern::push_args(e, vars, app_inner, aat, asv!))];
+          }
+          aops += [el_ir::v_if(el_ir::cl(e, "OpVectorIsNull", [ir::NdTupleGet { var: tvar, idx: tix }]), ir::NdTuplePut { var: tvar, idx: tix, inner: aat }, ir::NdNull), aat];
+          return ex(el_ir::v_block(aops, vt2, "Vector"), ir::TyVoid);
+        }
         tx = expression(e, vars, rhs!);
+        // `q.1 += "b"`: built in a work text of its own — cleared, the member and the value
+        // appended — then stored (each `+=` takes its own `__work_N`).
+        // (Minted on the second pass alone: the first pass's work texts are numbered without it,
+        // and a text tail's buffer promoted there keeps its name.)
+        if op == "+=" && mt is TyText && (el_types::base(tx.tp) is TyText || e.first_pass) {
+          if e.first_pass {
+            return ex(ir::NdNull, ir::TyVoid);
+          }
+          tw = el_vars::work_text(vars);
+          el_vars::in_use(vars, tvar, true);
+          tat = ir::NdVar { n: tw };
+          return ex(ir::NdInsert { items: [el_ir::cl(e, "OpClearText", [tat]), el_ir::cl(e, "OpAppendText", [tat, ir::NdTupleGet { var: tvar, idx: tix }]), el_ir::cl(e, "OpAppendText", [tat, tx.code]), ir::NdTuplePut { var: tvar, idx: tix, inner: tat }] }, ir::TyVoid);
+        }
         if e.first_pass {
           return ex(ir::NdNull, ir::TyVoid);
         }
@@ -2764,7 +2836,27 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
         if op == "=" && (el_convert::plain_scalar(mt) || mt is TyText) {
           sv = stored(e, vars, tx, mt);
           if sv != null {
-            return ex(ir::NdTuplePut { var: tvar, idx: tix, inner: el_convert::guard_range(e, sv!, mt, tx.tp, false) }, ir::TyVoid);
+            put = ir::NdTuplePut { var: tvar, idx: tix, inner: el_convert::guard_range(e, sv!, mt, tx.tp, false) };
+            // `@FR-O-Detach` (`snapshot_tuple_self_read`): a member write whose value reads the
+            // tuple it writes, a tuple with a heap member, reads a snapshot taken first.
+            snap_needed = len([for sm in members if !is_scalar(el_types::base(sm)) { sm }]) > 0 && el_ir::reads_var(sv!, tvar);
+            if snap_needed {
+              sitems: vector<ir::Node> = [];
+              stypes: vector<ir::TypeT> = [];
+              for sm2 in members {
+                sc = member_owned_copy(e, vars, tvar, ir::NdTupleGet { var: tvar, idx: sm2#index }, sm2);
+                if sc == null {
+                  return ex(ir::NdNull, ir::TyVoid);
+                }
+                sitems += [sc!.code];
+                stypes += [sc!.tp];
+              }
+              snap = el_vars::create_unique(vars, "tsnap", ir::TyTuple { elems: stypes });
+              el_vars::set_defined(vars, snap);
+              put = ir::NdTuplePut { var: tvar, idx: tix, inner: rename_reads(el_convert::guard_range(e, sv!, mt, tx.tp, false), tvar, snap) };
+              return ex(ir::NdInsert { items: [el_ir::v_set(snap, ir::NdTuple { items: sitems }), put] }, ir::TyVoid);
+            }
+            return ex(put, ir::TyVoid);
           }
         }
         if op != "=" && el_convert::plain_scalar(mt) {

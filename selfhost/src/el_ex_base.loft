@@ -687,6 +687,7 @@ pub fn rename_var(n: ir::Node, from: integer, to: integer) -> ir::Node {
 pub fn rename_reads(n: ir::Node, from: integer, to: integer) -> ir::Node {
   match n {
     NdVar { n: v } => if v == from { ir::NdVar { n: to } } else { n },
+    NdTupleGet { var: tgv, idx: tgi } => if tgv == from { ir::NdTupleGet { var: to, idx: tgi } } else { n },
     NdCall { def_nr, args } => ir::NdCall { def_nr: def_nr, args: [for x in args { rename_reads(x, from, to) }] },
     NdCallRef { var, args } => ir::NdCallRef { var: var, args: [for x in args { rename_reads(x, from, to) }] },
     NdSet { var, inner } => ir::NdSet { var: var, inner: rename_reads(inner, from, to) },

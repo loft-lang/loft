@@ -155,7 +155,29 @@ pub fn place_assignment(e: el::El, vars: el_vars::Vars, op: text, target: intege
 fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: integer) -> Ex {
   // The place, read as a value: its code names the record and position the write takes.
   vars.tuple_raw = target;
+  keep_pts = vars.place_tuple_subject;
+  vars.place_tuple_subject = match e.p.nodes[target] { STupleGet { e: pte } => pte ?? -1, _ => -1 };
   p = el_ex_assign::expression(e, vars, target);
+  vars.place_tuple_subject = keep_pts;
+  // A tuple member of an element whose index runs a user call (`v[tick(c)].1 += 5`): the
+  // element is bound ONCE to a `__place_N` view of its `__tuple<…>` record, read and written
+  // through that.
+  if !e.first_pass && op != "=" && e.p.nodes[target] is STupleGet {
+    match el_ir::unspan(p.code) {
+      NdCall { def_nr: tgd, args: tga } => {
+        el0 = el_ir::unspan(tga[0] ?? ir::NdNull);
+        if starts_with(el::def(e, tgd).name, "OpGet") && len(tga) == 2 && calls(e, el0, "OpGetVector") && any_user_call(e, [el0]) && place_root(e, el0) >= 0 {
+          ttd = match el0 { NdCall { args: ea } => match el_types::base(el_vars::tp(vars, place_root(e, el0))) { TyVector { inner: vin } => match vin { TyTuple { elems: tes } => el_types::tuple_def_of(e, tes), _ => -1 }, _ => -1 }, _ => -1 };
+          if ttd >= 0 {
+            f3 = el_vars::create_unique(vars, "_place", ir::TyReference { n: ttd, dep: [place_root(e, el0)] });
+            vars.place_setup = [el_ir::v_set(f3, el0)];
+            p.code = ir::NdCall { def_nr: tgd, args: [ir::NdVar { n: f3 }, tga[1]!] };
+          }
+        }
+      },
+      _ => {}
+    }
+  }
   // `@PLN102 F2` for an ELEMENT of scalars or texts (`w[len(w) - 1] += 5`): where the element's
   // accessor runs a user call it is bound ONCE in a `__place_N` typed as the vector, and the
   // element is read and written through that.
