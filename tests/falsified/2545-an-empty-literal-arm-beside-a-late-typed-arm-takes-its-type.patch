@@ -1,11 +1,11 @@
 diff --git a/src/parser/control.rs b/src/parser/control.rs
-index b83f9c4e3..d98a1eed7 100644
 --- a/src/parser/control.rs
 +++ b/src/parser/control.rs
-@@ -6458,17 +6458,6 @@ impl Parser {
-                     self.parse_block("else", &mut false_code, &Self::arm_expectation(&true_type));
-                 false_fact = std::mem::take(&mut self.operand_fact);
-                 false_is_null_literal = self.block_tail_null_literal;
+@@ -6622,17 +6622,6 @@
+                     self.read_arm_through_tag(&mut true_code, &mut true_type);
+                 } else if self.mixed_null_spellings(&false_type, &true_type, true_is_null) {
+                     self.read_arm_through_tag(&mut false_code, &mut false_type);
+-                }
 -                // loft#2545 — an empty literal `[]` beside a then arm of no type yet (on pass 1 a
 -                // forward callee) names no type either: it answers `Unknown`, as the same `[]`
 -                // does as a THEN arm (`true_is_empty_literal`).  Parsed against `Unknown` it came
@@ -16,7 +16,6 @@ index b83f9c4e3..d98a1eed7 100644
 -                    && false_type == Type::Void
 -                {
 -                    false_type = Type::Unknown(0);
--                }
+                 }
                  // loft#2066 — a NAMED-width sibling expects nothing of this arm
                  // (`arm_expectation`), so a bare `null` here takes the sibling's typed null, as
-                 // it did when the sibling was its expectation: native reads an untyped one as 0.

@@ -37,6 +37,45 @@ use crate::diagnostics::{Level, diagnostic_format};
 use crate::parser::{Parser, v_if, v_set};
 
 impl Parser {
+    /// `@FR-N-Default` × `@FR-H-Write-Else`: a place discharged by a record the program builds
+    /// (`k[5]?`, `k[5] ?? Mark {}`) always names a record, so the write always lands — in the
+    /// fallback when the element is absent — and the arm can never run: said, once.  A compound
+    /// store reads the place first, so its target is the `__place_N` temp the parser bound the
+    /// place to among the statement's steps.
+    fn warn_else_never_runs(
+        &mut self,
+        at: &crate::lexer::Position,
+        target: &Value,
+        steps: &[Value],
+    ) {
+        let lands = discharge_always_lands(target)
+            || matches!(target.unspan(), Value::Var(p) if steps.iter().any(|s| {
+                matches!(s.unspan(), Value::Set(q, rhs) if q == p && discharge_always_lands(rhs))
+            }));
+        if !self.first_pass && lands {
+            crate::diagnostic_at!(
+                self.lexer,
+                at,
+                Level::Warning,
+                code = "else-never-runs",
+                "this `else` never runs: the place is discharged with a record (`?` or `?? \
+                 Type {{ … }}`), so the write always lands — in that record when the element \
+                 is absent; drop the discharge to run the arm when the element is absent"
+            );
+            self.lexer.fix_last(crate::diagnostics::Fix {
+                kind: crate::diagnostics::FixKind::Conditional,
+                title: "drop the `?` / `?? Type { … }` from the place".to_string(),
+                condition: Some(
+                    "if the arm should run when the element is absent; otherwise drop the `else`"
+                        .to_string(),
+                ),
+                edit: None,
+                concept: "a store's failure arm",
+                concept_ref: "@F126",
+            });
+        }
+    }
+
     /// The `else { B }` after an assignment statement `n` (the lexer is ON `else`): parse the
     /// arm and rewrite `n` into the lowering above.  A statement that is no store is refused,
     /// naming the cure; the arm is still parsed so the block reads on.
@@ -50,10 +89,11 @@ impl Parser {
         self.vars.clear_write_state();
         self.parse_block("else", &mut arm, &Type::Void);
         self.vars.restore_write_state(&write_state);
-        let mut steps = match std::mem::replace(n, Value::Null) {
-            Value::Insert(list) => list,
-            other => vec![other],
-        };
+        // An `Insert` splices its steps into the statement, so a nested one (a compound store's
+        // once-evaluated `__place` binding in front of an append's own steps, loft#2571) is
+        // the same statement: its steps are read at this level.
+        let mut steps = Vec::new();
+        flatten_inserts(std::mem::replace(n, Value::Null), &mut steps);
         let Some(shape) = self.store_shape(&steps) else {
             if !self.first_pass {
                 crate::diagnostic_at!(
@@ -73,6 +113,7 @@ impl Parser {
         let mut inserts: Vec<(usize, u8, Vec<Value>)> = Vec::new();
         let mut absent: Option<Value> = None;
         if let Some((target, writes)) = shape.target {
+            self.warn_else_never_runs(&at, &target, &steps);
             // The place, bound once: a view of what it names, never freed by this frame.
             let tp = self.store_target_type(&target);
             let wt = self.create_unique("store_target", &tp);
@@ -270,9 +311,39 @@ impl Parser {
         match target.unspan() {
             Value::Var(v) => self.vars.tp(*v).clone(),
             Value::Call(op, _) => self.data.def(*op).returned.clone(),
+            // A place reached through a discharge (`k[5]?.f`, `k[5] ?? d`) is the block that
+            // answers the element or the fallback (loft#2570).
+            Value::Block(bl) => bl.result.clone(),
             _ => Type::Reference(u32::MAX, crate::data::Deps::default()),
         }
     }
+}
+
+/// The steps of a statement, every nested `Insert` spliced in where it stands.
+fn flatten_inserts(v: Value, out: &mut Vec<Value>) {
+    match v {
+        Value::Insert(list) => {
+            for s in list {
+                flatten_inserts(s, out);
+            }
+        }
+        other => out.push(other),
+    }
+}
+
+/// Is `target` a null discharge (`e?`, `e ?? d`: the parser's `ncc` block, whose tail is
+/// `if present { e } else { fallback }`) whose fallback BUILDS a record (an `Object` block)?
+/// Such a place never answers null, so a write through it always takes.  Any other fallback
+/// — a variable, a call, another element — may itself be null, and answers no.
+fn discharge_always_lands(target: &Value) -> bool {
+    let Value::Block(bl) = target.unspan() else {
+        return false;
+    };
+    if bl.name != "ncc" {
+        return false;
+    }
+    matches!(bl.operators.last().map(Value::unspan),
+        Some(Value::If(_, _, fallback)) if matches!(fallback.unspan(), Value::Block(fb) if fb.name == "Object"))
 }
 
 /// The frame variable the target's path starts from: what the bound view borrows.  A path

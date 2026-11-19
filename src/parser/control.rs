@@ -6401,7 +6401,7 @@ impl Parser {
             return false;
         };
         other_is_null
-            || matches!(other, Type::Null)
+            || matches!(other.base(), Type::Null)
             || (self.tagged_pointer_type(other).is_none()
                 && other.without_deps() == pointer.without_deps())
     }

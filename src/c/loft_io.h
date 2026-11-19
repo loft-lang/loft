@@ -1,7 +1,7 @@
 /* ── Files (src/state/io.rs, src/database/io.rs, codegen_runtime.rs's fs_*) ────────────────
  * A `File` record: its size at byte 0, the position of the last read or write at 8, the next one
- * at 16 (null: not set), its path at 24, its handle at 28 (an index into `loft_files`, INT32_MIN
- * for none) and its format at 32 (1 TextFile, 2 LittleEndian, 3 BigEndian, 4 Directory,
+ * at 16 (null: not set), its path at 24, its handle at 28 (an OS descriptor, INT32_MIN for
+ * none: `loft_file_get`) and its format at 32 (1 TextFile, 2 LittleEndian, 3 BigEndian, 4 Directory,
  * 5 NotExists).
  *
  * What a file needs beyond C99 — a path's kind and size, a directory listing, mkdir, rmdir,
@@ -494,20 +494,35 @@ static char *loft_file_path(loft_ref f) {
     return loft_resolve(loft_get_text(f, 24));
 }
 
-/* The open handles a File record's byte 28 indexes (Stores::files), never reused, which of
- * them were opened for reading only (LoftFile::reader), and the resolved path each was opened
- * on (a delete closes this program's own handles on its path where the OS refuses an open
- * file's: `loft_fs_delete`). */
-static FILE **loft_files = 0;
-static uint8_t *loft_files_ro = 0;
-/* Where each handle's stream stands after the last READ through it, -1 when anything else
- * touched it since: a read starting there needs no seek (`loft_read_file`). */
-static int64_t *loft_files_at = 0;
-static char **loft_files_path = 0;
-/* `LoftFile::leases`: the `File` records naming each handle — one at the open, one more per
- * copy; the handle closes when the last of them dies (`@FR-H-Handle`). */
-static uint32_t *loft_files_leases = 0;
-static int32_t loft_nfiles = 0;
+/* A File record's handle (byte 28) is the OS descriptor it reads and writes through, INT32_MIN
+ * while none is open: opened on the record's first read or write, read and written at the
+ * record's own position (`#next`, byte 16, which the record always holds) and closed when the
+ * record goes.  No record shares it — a copy of a record opens its own (`loft_file_lease`) —
+ * and nothing else holds it, so a `par` worker or a `parallel` arm opens and reads files as
+ * the main thread does: there is no table for two threads to grow (loft#2568).  It is opened
+ * read-write where it can be, so a read and a later write go through one descriptor.  On
+ * Windows it is opened shared for deletion, so a `delete` of an open file goes through as on
+ * the other hosts.  A build with no descriptors (`-DLOFT_NO_POSIX`: ISO C alone) keeps no
+ * handle: each read or write opens the path and closes it again. */
+#if defined(LOFT_POSIX) || defined(_WIN32)
+#define LOFT_FD 1
+#endif
+
+#if defined(LOFT_FD) && defined(_WIN32)
+#include <io.h>
+#include <fcntl.h>
+struct _SECURITY_ATTRIBUTES;
+__declspec(dllimport) void *__stdcall CreateFileA(const char *name, unsigned long access, unsigned long share,
+                                                  struct _SECURITY_ATTRIBUTES *security, unsigned long disposition,
+                                                  unsigned long flags, void *templ);
+__declspec(dllimport) int __stdcall CloseHandle(void *handle);
+__declspec(dllimport) unsigned long __stdcall GetLastError(void);
+#elif defined(LOFT_FD)
+#include <fcntl.h>
+#endif
+#if defined(LOFT_FD) && !defined(O_CLOEXEC)
+#define O_CLOEXEC 0
+#endif
 
 /* `file open error: {e}` (state/io.rs, codegen_runtime): the error as Rust's `io::Error` shows
  * a path's — `<path>: <strerror> (os error <n>)` — on stderr. */
@@ -517,108 +532,208 @@ static void loft_file_open_error(const char *path) {
     else fprintf(stderr, "file open error: %s (os error %d)\n", strerror(e), e);
 }
 
-static int32_t loft_file_handle_add(FILE *h, int ro, const char *path) {
-    FILE **n = (FILE **) realloc(loft_files, (size_t) (loft_nfiles + 1) * sizeof *n);
-    uint8_t *r = (uint8_t *) realloc(loft_files_ro, (size_t) (loft_nfiles + 1));
-    int64_t *a = (int64_t *) realloc(loft_files_at, (size_t) (loft_nfiles + 1) * sizeof *a);
-    char **ps = (char **) realloc(loft_files_path, (size_t) (loft_nfiles + 1) * sizeof *ps);
-    uint32_t *ls = (uint32_t *) realloc(loft_files_leases, (size_t) (loft_nfiles + 1) * sizeof *ls);
-    size_t len = strlen(path);
-    char *copy = (char *) malloc(len + 1);
-    if (!n || !r || !a || !ps || !ls || !copy) { fputs("loft: out of memory\n", stderr); abort(); }
-    loft_files_leases = ls;
-    loft_files_leases[loft_nfiles] = 1;
-    memcpy(copy, path, len + 1);
-    loft_files = n;
-    loft_files_ro = r;
-    loft_files_at = a;
-    loft_files_path = ps;
-    loft_files[loft_nfiles] = h;
-    loft_files_ro[loft_nfiles] = (uint8_t) ro;
-    loft_files_at[loft_nfiles] = -1;
-    loft_files_path[loft_nfiles] = copy;
-    return loft_nfiles++;
+/* How a read or write opens the file: an existing one, one made when absent, or one made empty. */
+#define LOFT_OPEN_EXISTING 0
+#define LOFT_OPEN_CREATE 1
+#define LOFT_OPEN_EMPTY 2
+
+#if defined(LOFT_FD)
+typedef int32_t loft_fh;
+
+/* `path` opened as `how` says — read-write, or read-only when an existing file allows no more —
+ * or -1 with errno set. */
+static loft_fh loft_fh_open(const char *path, int how) {
+#if defined(_WIN32)
+    /* GENERIC_READ | GENERIC_WRITE, shared for reading, writing and deletion. */
+    unsigned long disp = how == LOFT_OPEN_EMPTY ? 2ul : how == LOFT_OPEN_CREATE ? 4ul : 3ul;
+    int ro = 0;
+    void *h = CreateFileA(path, 0xC0000000ul, 7ul, 0, disp, 0x80ul, 0);
+    if (h == (void *) (intptr_t) -1 && how == LOFT_OPEN_EXISTING) {
+        h = CreateFileA(path, 0x80000000ul, 7ul, 0, disp, 0x80ul, 0);
+        ro = 1;
+    }
+    if (h == (void *) (intptr_t) -1) {
+        unsigned long e = GetLastError();
+        errno = e == 2 || e == 3 ? ENOENT : e == 5 ? EACCES : EIO;
+        return -1;
+    }
+    int fd = _open_osfhandle((intptr_t) h, _O_BINARY | (ro ? _O_RDONLY : 0));
+    if (fd < 0) CloseHandle(h);
+    return fd;
+#else
+    int flags = O_RDWR | O_CLOEXEC | (how != LOFT_OPEN_EXISTING ? O_CREAT : 0) | (how == LOFT_OPEN_EMPTY ? O_TRUNC : 0);
+    int fd = open(path, flags, 0666);
+    if (fd < 0 && how == LOFT_OPEN_EXISTING && errno != ENOENT) fd = open(path, O_RDONLY | O_CLOEXEC);
+    return fd;
+#endif
 }
 
-/* `Stores::lease_if_file`: a copy of a `File` record names the same handle — one lease more. */
-static void loft_file_lease(loft_ref f) {
+/* Up to `n` bytes at `at` into `buf`: how many came, fewer only at the end or on an error. */
+LOFT_NOIPA static size_t loft_fh_read(loft_fh fd, void *buf, size_t n, int64_t at) {
+    size_t got = 0;
+    while (got < n) {
+#if defined(_WIN32)
+        size_t want = n - got < ((size_t) 1 << 30) ? n - got : (size_t) 1 << 30;
+        int r = _lseeki64(fd, at + (int64_t) got, SEEK_SET) < 0 ? -1 : _read(fd, (char *) buf + got, (unsigned) want);
+#elif defined(ESP_PLATFORM) || defined(__wasi__)
+        int r = lseek(fd, (off_t) (at + (int64_t) got), SEEK_SET) < 0 ? -1 : (int) read(fd, (char *) buf + got, n - got);
+#else
+        ssize_t r = pread(fd, (char *) buf + got, n - got, (off_t) (at + (int64_t) got));
+#endif
+        if (r < 0 && errno == EINTR) continue;
+        if (r <= 0) break;
+        got += (size_t) r;
+    }
+    return got;
+}
+
+/* The `n` bytes of `buf` at `at`: 1 when all were written. */
+LOFT_NOIPA static int loft_fh_write(loft_fh fd, const void *buf, size_t n, int64_t at) {
+    size_t done = 0;
+    while (done < n) {
+#if defined(_WIN32)
+        size_t want = n - done < ((size_t) 1 << 30) ? n - done : (size_t) 1 << 30;
+        int r = _lseeki64(fd, at + (int64_t) done, SEEK_SET) < 0 ? -1 : _write(fd, (const char *) buf + done, (unsigned) want);
+#elif defined(ESP_PLATFORM) || defined(__wasi__)
+        int r = lseek(fd, (off_t) (at + (int64_t) done), SEEK_SET) < 0 ? -1 : (int) write(fd, (const char *) buf + done, n - done);
+#else
+        ssize_t r = pwrite(fd, (const char *) buf + done, n - done, (off_t) (at + (int64_t) done));
+#endif
+        if (r < 0 && errno == EINTR) continue;
+        if (r <= 0) return 0;
+        done += (size_t) r;
+    }
+    return 1;
+}
+
+static int loft_fh_sync(loft_fh fd) {
+#if defined(_WIN32)
+    return _commit(fd) == 0;
+#else
+    return fsync(fd) == 0;
+#endif
+}
+
+static void loft_fh_close(loft_fh fd) {
+#if defined(_WIN32)
+    _close(fd);
+#else
+    close(fd);
+#endif
+}
+
+static int32_t loft_file_fd(loft_ref f) {
     int32_t h;
     memcpy(&h, loft_at(loft_store_of(f), f.rec, f.pos + 28), 4);
-    if (h >= 0 && h < loft_nfiles && loft_files[h]) loft_files_leases[h]++;
+    return h;
+}
+#else
+typedef FILE *loft_fh;
+
+static loft_fh loft_fh_open(const char *path, int how) {
+    FILE *h = how == LOFT_OPEN_EMPTY ? fopen(path, "w+b") : fopen(path, "r+b");
+    if (!h && how == LOFT_OPEN_CREATE) h = fopen(path, "w+b");
+    if (!h && how == LOFT_OPEN_EXISTING) h = fopen(path, "rb");
+    return h;
 }
 
-/* `Stores::release_file_handle`: a `File` record is gone — its lease returned, the handle closed
- * at the last one.  The record is DETACHED (its handle reads null), so a second walk over the
- * same bytes returns nothing twice. */
-static void loft_file_release(loft_ref f) {
-    loft_store_t *s = loft_store_of(f);
-    int32_t h, none = INT32_MIN;
-    memcpy(&h, loft_at(s, f.rec, f.pos + 28), 4);
-    if (h == INT32_MIN) return;
-    memcpy(loft_at(s, f.rec, f.pos + 28), &none, 4);
-    if (h < 0 || h >= loft_nfiles || !loft_files[h]) return;
-    if (loft_files_leases[h] > 0 && --loft_files_leases[h] == 0) {
-        fclose(loft_files[h]);
-        loft_files[h] = 0;
-        loft_files_at[h] = -1;
+static size_t loft_fh_read(loft_fh h, void *buf, size_t n, int64_t at) {
+    return fseek(h, (long) at, SEEK_SET) != 0 ? 0 : fread(buf, 1, n, h);
+}
+
+static int loft_fh_write(loft_fh h, const void *buf, size_t n, int64_t at) {
+    return fseek(h, (long) at, SEEK_SET) == 0 && fwrite(buf, 1, n, h) == n && fflush(h) == 0;
+}
+
+/* No handle is kept: none is open. */
+static int32_t loft_file_fd(loft_ref f) {
+    (void) f;
+    return INT32_MIN;
+}
+#endif
+
+static char *loft_file_path(loft_ref f);
+
+/* `f`'s handle for a read or a write: its open descriptor, else its path opened as `how` says —
+ * kept in the record where a build has descriptors.  0 when it does not open, with `*path` the
+ * path it tried (null when the path is refused) for the caller's message, errno saying why;
+ * the caller frees `*path` and gives the handle back (`loft_file_put`). */
+static int loft_file_get(loft_ref f, int how, loft_fh *h, char **path) {
+    *path = 0;
+#if defined(LOFT_FD)
+    int32_t fd = loft_file_fd(f);
+    if (fd >= 0) {
+        *h = fd;
+        return 1;
     }
+#endif
+    *path = loft_file_path(f);
+    if (!*path) return 0;
+    *h = loft_fh_open(*path, how);
+#if defined(LOFT_FD)
+    if (*h < 0) return 0;
+    memcpy(loft_at(loft_store_of(f), f.rec, f.pos + 28), h, 4);
+#else
+    if (!*h) return 0;
+#endif
+    return 1;
+}
+
+/* The end of one read or write: a build without descriptors closes what it opened for it. */
+static void loft_file_put(loft_fh h) {
+#if defined(LOFT_FD)
+    (void) h;
+#else
+    fclose(h);
+#endif
+}
+
+/* `f` lets go of its descriptor: closed, the record detached (its handle reads none), so a
+ * second walk over the same bytes closes nothing twice. */
+static void loft_file_close(loft_ref f) {
+    int32_t h = loft_file_fd(f), none = INT32_MIN;
+    if (h == INT32_MIN) return;
+    memcpy(loft_at(loft_store_of(f), f.rec, f.pos + 28), &none, 4);
+#if defined(LOFT_FD)
+    if (h >= 0) loft_fh_close(h);
+#endif
+}
+
+/* `Stores::lease_if_file`: a copy of a `File` record — its bytes the original's, descriptor
+ * included — opens its own on first use, at the position it copied. */
+static void loft_file_lease(loft_ref f) {
+    int32_t none = INT32_MIN;
+    memcpy(loft_at(loft_store_of(f), f.rec, f.pos + 28), &none, 4);
+}
+
+/* `Stores::release_file_handle`: a `File` record is gone — its descriptor closed. */
+static void loft_file_release(loft_ref f) {
+    loft_file_close(f);
 }
 
 /* `Stores::release_file_leases`: the store `nr` is being freed — every `File` its records hold,
- * reached from its root through the type the root names, returns its lease.  Walked only when a
- * file was ever opened and the root's type can hold one; the store dies, so the walk is the
- * owned-claims release (its locks no longer matter). */
+ * reached from its root through the type the root names, closes its descriptor.  Walked only
+ * where the root's type can hold one; the store dies, so the walk is the owned-claims release
+ * (its locks no longer matter).  A build without descriptors has none to close. */
 static void loft_remove_claims_mode(const loft_tdesc *T, uint16_t tp, loft_ref r, int borrowed);
 
 static void loft_release_file_leases(uint16_t nr) {
-    if (loft_nfiles == 0 || !loft_T) return;
+#if defined(LOFT_FD)
+    if (!loft_T) return;
     loft_store_t *s = &loft_stores[nr];
     uint16_t tp = s->known;
     if (tp >= loft_T_n || !loft_T[tp].file || s->size < 3 || loft_u32(s, 1, 4) != tp) return;
     loft_ref root = { nr, 1, 8, 0 };
     s->read_only = 0;
     loft_remove_claims_mode(loft_T, tp, root, 0);
+#else
+    (void) nr;
+#endif
 }
 
 static void (*loft_file_lease_hook)(loft_ref f) = loft_file_lease;
 static void (*loft_file_release_hook)(loft_ref f) = loft_file_release;
 static void (*loft_release_file_leases_hook)(uint16_t nr) = loft_release_file_leases;
-
-/* The open handle of `f` and its number (-1 for none), keeping the stream's read position. */
-static FILE *loft_file_reader(loft_ref f, int32_t *nr) {
-    int32_t h;
-    memcpy(&h, loft_at(loft_store_of(f), f.rec, f.pos + 28), 4);
-    *nr = h >= 0 && h < loft_nfiles && loft_files[h] ? h : -1;
-    return *nr >= 0 ? loft_files[h] : 0;
-}
-
-/* The open handle of `f`, for any use but a read: the read position it kept is forgotten, so
- * the next read seeks for real (and C's positioning call between a write and a read is made). */
-static FILE *loft_file_handle(loft_ref f) {
-    int32_t h;
-    FILE *fh = loft_file_reader(f, &h);
-    if (h >= 0) loft_files_at[h] = -1;
-    return fh;
-}
-
-static char *loft_file_path(loft_ref f);
-
-/* LoftFile::writable: before a write, a handle opened for reading becomes a read-write one on
- * the same path; one that cannot stays a reader, and the write fails. */
-static FILE *loft_file_writable(loft_ref f, FILE *h) {
-    int32_t nr;
-    memcpy(&nr, loft_at(loft_store_of(f), f.rec, f.pos + 28), 4);
-    if (!h || nr < 0 || nr >= loft_nfiles || !loft_files_ro[nr]) return h;
-    char *path = loft_file_path(f);
-    FILE *w = path ? fopen(path, "r+b") : 0;
-    free(path);
-    if (!w) return 0;
-    fclose(h);
-    loft_files[nr] = w;
-    loft_files_at[nr] = -1;
-    loft_files_ro[nr] = 0;
-    return w;
-}
 
 static void loft_file_set_long(loft_ref f, uint32_t fld, int64_t v) {
     memcpy(loft_at(loft_store_of(f), f.rec, f.pos + fld), &v, 8);
@@ -737,29 +852,20 @@ static void loft_write_file(loft_ref f, const loft_text *bytes) {
         free(path);
     }
     loft_file_set_long(f, 8, next);
-    FILE *h = loft_file_handle(f);
-    if (!h) {
-        char *path = loft_file_path(f);
-        if (!path) { fputs("file open error: the path is refused\n", stderr); return; }
-        h = fopen(path, "r+b");
-        if (!h) h = fopen(path, "w+b");
-        if (!h) {
-            loft_file_open_error(path);
-            free(path);
-            return;
-        }
-        int32_t nr = loft_file_handle_add(h, 0, path);
+    loft_fh h;
+    char *path;
+    if (!loft_file_get(f, LOFT_OPEN_CREATE, &h, &path)) {
+        if (!path) fputs("file open error: the path is refused\n", stderr);
+        else loft_file_open_error(path);
         free(path);
-        memcpy(loft_at(loft_store_of(f), f.rec, f.pos + 28), &nr, 4);
-        if (format == 5) *loft_at(loft_store_of(f), f.rec, f.pos + 32) = 1;
-    } else if (!(h = loft_file_writable(f, h))) {
-        fputs("file write error\n", stderr);
-        loft_file_set_long(f, 16, next + (int64_t) bytes->len);
         return;
     }
-    fseek(h, (long) next, SEEK_SET);
-    /* Unbuffered, as the interpreter's `write_all` is: another handle on the path reads it. */
-    if (bytes->len && (fwrite(bytes->p, 1, bytes->len, h) != bytes->len || fflush(h) != 0)) fputs("file write error\n", stderr);
+    if (path && format == 5) *loft_at(loft_store_of(f), f.rec, f.pos + 32) = 1;
+    free(path);
+    /* Unbuffered, as the interpreter's `write_all` is: another handle on the path reads it.  A
+     * file only readable fails here, and the position moves on as though it had been written. */
+    if (bytes->len && !loft_fh_write(h, bytes->p, bytes->len, next)) fputs("file write error\n", stderr);
+    loft_file_put(h);
     loft_file_set_long(f, 16, next + (int64_t) bytes->len);
 }
 
@@ -776,38 +882,23 @@ static int64_t loft_read_file_in(loft_ref f, int64_t n, int text, int64_t width,
     int64_t next = loft_file_long(f, 16);
     if (next == LOFT_NULL) next = 0;
     loft_file_set_long(f, 8, next);
-    int32_t nr;
-    FILE *h = loft_file_reader(f, &nr);
-    if (!h) {
-        char *path = loft_file_path(f);
-        h = path ? fopen(path, "rb") : 0;
-        if (!h) {
-            loft_file_open_error(path);
-            free(path);
-            return -1;
-        }
-        nr = loft_file_handle_add(h, 1, path);
+    loft_fh h;
+    char *path;
+    if (!loft_file_get(f, LOFT_OPEN_EXISTING, &h, &path)) {
+        loft_file_open_error(path);
         free(path);
-        memcpy(loft_at(loft_store_of(f), f.rec, f.pos + 28), &nr, 4);
+        return -1;
     }
-    /* A seek to where the stream already is would only drop its buffer, and every read here
-     * would be a system call (`f#read(2)` per element): the runtime's own handle answers such a
-     * seek without asking the OS (`database::loft_file`), and so does this one — by the position
-     * the last read left, since `ftell` asks the OS too.  As there, a byte another handle
-     * changes after this one buffered it is seen at the next refill. */
-    if (loft_files_at[nr] != next) fseek(h, (long) next, SEEK_SET);
+    free(path);
     size_t want = n < 0 ? 0 : (size_t) n;
     *out = buf && want + 1 <= cap ? buf : (uint8_t *) malloc(want + 1);
     if (!*out) { fputs("loft: out of memory\n", stderr); abort(); }
     size_t got = 0;
     if (text || n >= width) {
-        got = fread(*out, 1, want, h);
-        /* The stream moved by what it read, whatever the read answers. */
-        loft_files_at[nr] = ferror(h) ? -1 : next + (int64_t) got;
+        got = loft_fh_read(h, *out, want, next);
         if (!text && got < want) got = 0;
-    } else {
-        loft_files_at[nr] = next;
     }
+    loft_file_put(h);
     loft_file_set_long(f, 16, next + (int64_t) got);
     return (int64_t) got;
 }
@@ -816,13 +907,13 @@ static int64_t loft_read_file(loft_ref f, int64_t n, int text, int64_t width, ui
     return loft_read_file_in(f, n, text, width, 0, 0, out);
 }
 
-/* OpSeekFile: the next read or write starts at `pos` — through the open handle, which the next
- * read or write moves to its own position again, or as the position the first one opens at. */
+/* OpSeekFile (`f#next = pos` writes it, then sets `#next` itself): a record with no handle open
+ * takes `pos` as the position its first read or write opens at, as `State::seek_file` does; one
+ * with a descriptor open has no stream position to move — every read and write starts at the
+ * record's `#next`, which the assignment that follows sets. */
 static void loft_seek_file(loft_ref f, int64_t pos) {
     if (f.store_nr == 0xFFFF || f.rec == 0) return;
-    FILE *h = loft_file_handle(f);
-    if (!h) loft_file_set_long(f, 16, pos);
-    else if (fseek(h, (long) pos, SEEK_SET) != 0) fprintf(stderr, "file seek error: %s\n", strerror(errno));
+    if (loft_file_fd(f) < 0) loft_file_set_long(f, 16, pos);
 }
 
 /* OpSizeFile: the file's size now, or null. */
@@ -838,12 +929,11 @@ static int64_t loft_size_file(loft_ref f) {
 /* OpSyncFile: the written bytes reach the device. */
 static uint8_t loft_sync_file(loft_ref f) {
     if (f.store_nr == 0xFFFF || f.rec == 0) return 0;
-    FILE *h = loft_file_handle(f);
-    if (!h) return 1;
-    if (fflush(h) != 0) return 0;
-#if defined(LOFT_POSIX)
-    return (uint8_t) (fsync(fileno(h)) == 0);
+#if defined(LOFT_FD)
+    int32_t fd = loft_file_fd(f);
+    return (uint8_t) (fd < 0 || loft_fh_sync(fd));
 #else
+    /* Each write closed what it opened: its bytes are the OS's already. */
     return 1;
 #endif
 }
@@ -851,13 +941,8 @@ static uint8_t loft_sync_file(loft_ref f) {
 /* OpTruncateFile: the file is `size` bytes long; an open handle is closed first. */
 static uint8_t loft_truncate_file(loft_ref f, int64_t size) {
     if (f.store_nr == 0xFFFF || f.rec == 0) return 0;
-    int32_t h;
-    memcpy(&h, loft_at(loft_store_of(f), f.rec, f.pos + 28), 4);
-    if (h >= 0 && h < loft_nfiles) {
-        if (loft_files[h]) fclose(loft_files[h]);
-        loft_files[h] = 0;
-        int32_t none = INT32_MIN;
-        memcpy(loft_at(loft_store_of(f), f.rec, f.pos + 28), &none, 4);
+    if (loft_file_fd(f) >= 0) {
+        loft_file_close(f);
         loft_file_set_long(f, 8, LOFT_NULL);
         loft_file_set_long(f, 16, LOFT_NULL);
     }
@@ -920,30 +1005,9 @@ static char *loft_path_key(const char *path) {
     return key;
 }
 
-/* Close this program's own handles on `path`; answers whether there was one.  A later read or
- * write through a closed handle reopens by path, as after a truncate.  The paths compare by
- * `loft_path_key`: the handle holds the path it was opened under and the delete names its own,
- * and a relative `../x` is the same file as `<anchor>/../x` written absolutely. */
-static int loft_close_handles_on(const char *path) {
-    int closed = 0;
-    char *want = loft_path_key(path);
-    for (int32_t i = 0; i < loft_nfiles; i++) {
-        if (!loft_files[i]) continue;
-        char *held = loft_path_key(loft_files_path[i]);
-        if (strcmp(held, want) == 0) {
-            fclose(loft_files[i]);
-            loft_files[i] = 0;
-            closed = 1;
-        }
-        free(held);
-    }
-    free(want);
-    return closed;
-}
-
-/* OpDelete: the file goes; a directory is refused as one.  Windows refuses to delete a file a C
- * stream holds open, where the other backends' handles share deletion: a failed `remove` closes
- * this program's own handles on the path and tries once more, so `delete` answers alike. */
+/* OpDelete: the file goes; a directory is refused as one.  A file this program holds open goes
+ * too: Windows refuses that unless the file was opened shared for deletion, which every handle
+ * here is (`loft_fh_open`). */
 static int64_t loft_fs_delete(loft_str raw) {
     char *path = loft_resolve(raw);
     if (!path) return LOFT_FS_OTHER;
@@ -951,7 +1015,7 @@ static int64_t loft_fs_delete(loft_str raw) {
 #if defined(LOFT_POSIX)
     if (unlink(path) != 0) code = loft_is_dir(path) ? LOFT_FS_IS_DIRECTORY : loft_fs_code(errno);
 #else
-    if (remove(path) != 0 && !(loft_close_handles_on(path) && remove(path) == 0)) {
+    if (remove(path) != 0) {
         /* Windows' CRT reports a directory as a permission error: asked, as POSIX's arm asks. */
         int e = errno;
         code = loft_is_dir(path) ? LOFT_FS_IS_DIRECTORY : loft_fs_code(e);
@@ -966,11 +1030,9 @@ static int64_t loft_fs_move(loft_str from, loft_str to) {
     char *a = loft_resolve(from), *b = loft_resolve(to);
     int64_t code = LOFT_FS_OTHER;
     if (a && b) {
-        /* Windows refuses to move a file a C stream holds open, as it refuses to delete one:
-         * this program's own handles on either path are closed and the move tried once more. */
-        int ok = loft_rename(a, b) == 0;
-        if (!ok && (loft_close_handles_on(a) | loft_close_handles_on(b))) ok = loft_rename(a, b) == 0;
-        code = ok ? LOFT_FS_OK : loft_fs_code(errno);
+        /* A file this program holds open moves too: every handle here is opened shared for
+         * deletion, which on Windows lets the file be renamed (`loft_fh_open`). */
+        code = loft_rename(a, b) == 0 ? LOFT_FS_OK : loft_fs_code(errno);
     }
     free(a);
     free(b);
@@ -1175,9 +1237,8 @@ typedef struct { int64_t next, at, end, last; int32_t nr; int le; } loft_fpos;
 typedef struct { int64_t at, end; } loft_fbuf;
 
 /* The held File's record and the bytes of the file from `at` on: a read is served from here and
- * a miss refills it with one `fread`, as native's handle reads through its buffer.  The stream
- * itself stands at `end` (`loft_files_at`), so a read through the record after the loop seeks
- * to its `#next`. */
+ * a miss refills it with one positional read, as native's handle reads through its buffer.  A
+ * read through the record after the loop reads at its `#next`. */
 typedef struct {
     loft_ref f;
     uint8_t buf[4096];
@@ -1187,17 +1248,10 @@ static loft_fpos loft_fcur_take(loft_fcur *c) {
     loft_fpos p = { 0, 0, 0, 0, -1, 0 };
     if (c->f.store_nr == 0xFFFF || c->f.rec == 0) return p;
     uint8_t format = loft_file_format(c->f);
-    int32_t h;
-    memcpy(&h, loft_at(loft_store_of(c->f), c->f.rec, c->f.pos + 28), 4);
+    int32_t h = loft_file_fd(c->f);
     int64_t next = loft_file_long(c->f, 16);
-    if (h < 0 || h >= loft_nfiles || !loft_files[h] || next == LOFT_NULL
+    if (h < 0 || next == LOFT_NULL
         || (format != 1 && format != 2 && format != 3 && format != 5)) return p;
-    /* A copy of the record may have moved the shared handle: the hold reads from THIS
-     * record's `#next`, and nothing in the loop moves the handle after this. */
-    if (loft_files_at[h] != next) {
-        if (fseek(loft_files[h], (long) next, SEEK_SET) != 0) return p;
-        loft_files_at[h] = next;
-    }
     p.le = format == 2;
     p.last = loft_file_long(c->f, 8);
     p.next = next;
@@ -1207,19 +1261,16 @@ static loft_fpos loft_fcur_take(loft_fcur *c) {
     return p;
 }
 
-/* Refill the cursor's buffer from `next`: the stream is moved there when it stands elsewhere.
- * Answers the bytes the buffer now holds, `[at, end)`. */
+/* Refill the cursor's buffer from `next`.  Answers the bytes the buffer now holds, `[at, end)`.
+ * Only a build with descriptors holds a cursor (`loft_fcur_take`). */
 LOFT_COLD static loft_fbuf loft_fcur_fill(loft_fcur *c, int32_t nr, int64_t next) {
     loft_fbuf sp = { next, next };
-    FILE *h = loft_files[nr];
-    if (loft_files_at[nr] != next && fseek(h, (long) next, SEEK_SET) != 0) {
-        loft_files_at[nr] = -1;
-        return sp;
-    }
-    size_t got = fread(c->buf, 1, sizeof c->buf, h);
-    sp.end = next + (int64_t) got;
-    /* The stream moved by what it read, whatever the read answers. */
-    loft_files_at[nr] = ferror(h) ? -1 : sp.end;
+#if defined(LOFT_FD)
+    sp.end = next + (int64_t) loft_fh_read(nr, c->buf, sizeof c->buf, next);
+#else
+    (void) c;
+    (void) nr;
+#endif
     return sp;
 }
 
@@ -1444,27 +1495,20 @@ static uint8_t loft_write_bytes(loft_str raw, loft_ref v) {
  * the file empty — leaving the position around what it wrote. */
 static uint8_t loft_write_text_raw(loft_ref f, loft_str v) {
     if (f.store_nr == 0xFFFF || f.rec == 0) return 0;
-    FILE *h = loft_file_handle(f);
-    if (!h) {
-        char *path = loft_file_path(f);
-        if (!path) return 0;
-        h = fopen(path, "w+b");
-        if (!h) {
-            fprintf(stderr, "loft: cannot create a file for writing: %s — write skipped\n", strerror(errno));
-            free(path);
-            return 0;
-        }
-        int32_t nr = loft_file_handle_add(h, 0, path);
+    /* A record with no position yet makes its file anew; one a copy carries on where it stood. */
+    int64_t start = loft_file_long(f, 16);
+    loft_fh h;
+    char *path;
+    if (!loft_file_get(f, start == LOFT_NULL ? LOFT_OPEN_EMPTY : LOFT_OPEN_CREATE, &h, &path)) {
+        if (path) fprintf(stderr, "loft: cannot create a file for writing: %s — write skipped\n", strerror(errno));
         free(path);
-        memcpy(loft_at(loft_store_of(f), f.rec, f.pos + 28), &nr, 4);
-    } else if (!(h = loft_file_writable(f, h))) {
         return 0;
     }
-    int64_t next = loft_file_long(f, 16);
-    if (next != LOFT_NULL && fseek(h, (long) next, SEEK_SET) != 0) return 0;
-    long start = ftell(h);
-    if (start < 0) return 0;
-    if (v.len && (fwrite(v.p, 1, v.len, h) != v.len || fflush(h) != 0)) return 0;
+    free(path);
+    if (start == LOFT_NULL) start = 0;
+    int ok = !v.len || loft_fh_write(h, v.p, v.len, start);
+    loft_file_put(h);
+    if (!ok) return 0;
     loft_file_set_long(f, 8, start);
     loft_file_set_long(f, 16, start + (int64_t) v.len);
     return 1;

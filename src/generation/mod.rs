@@ -4214,7 +4214,8 @@ impl Output<'_> {
                 &mut self.hoist_cache,
                 &mut self.scalar_write_cache,
                 (!self.switches.callee_inputs_disabled).then_some(&mut self.input_cache),
-            ),
+            )
+            .with_schema(self.stores),
             tiers,
             Some(&self.hoist_owned),
             (!self.switches.distinct_growth_disabled)
@@ -4838,7 +4839,8 @@ impl Output<'_> {
                 &mut self.hoist_cache,
                 &mut self.scalar_write_cache,
                 Some(&mut self.input_cache),
-            ),
+            )
+            .with_schema(self.stores),
         )
     }
 
@@ -5759,6 +5761,8 @@ impl Output<'_> {
             rebound_movers: !self.switches.rebound_mover_disabled,
             // Never here: only `hoist::hoistable`'s header verdict admits a text set.
             text_set: false,
+            // Never here: only the record-pointer verdict holds an address alone.
+            address_only: false,
         }
     }
 

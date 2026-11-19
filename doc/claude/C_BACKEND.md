@@ -4,7 +4,7 @@
 
 # The C backend
 
-`src/c/` writes a loft program as C99 that `cc` builds into a standalone executable.  It is the
+`src/c/` writes a loft program as C11 that `cc` builds into a standalone executable.  It is the
 second compiled target beside the Rust writer (`src/generation/`), and it exists to prove that
 the compiler's lowering is backend-neutral (@PLN200 B5): it reads the same IR, the same
 analyses (`use_analysis`, `scopes`) and the same store layouts as the bytecode writer, and it
@@ -34,7 +34,7 @@ LOFT_C_LINT=1 loft --native-c p.loft  # compile afresh with -Wall -Wextra instea
                                    #   `par` at zero (Linux, gcc — each compiler warns its own set)
 loft --emit-c out.c prog.loft      # write the C; exit 2 with "does not carry this program
                                    #   yet: <fn>: <why>" for a construct not carried
-cc -std=c99 out.c -o prog -lm && ./prog
+cc -std=c11 out.c -o prog -lm && ./prog
 python3 scripts/c_sweep.py         # every corpus program: C against the interpreter
 python3 scripts/c_sweep.py --asan  # the same, built with AddressSanitizer + UBSan
 python3 scripts/c_sweep.py --poison  # the store poison modes, against the interpreter's
@@ -85,7 +85,7 @@ record the program continues past, the run then exiting 1.  The log file is open
 record; the interpreter opens it at start, so only a program that never logs differs (no empty
 `.loft/log.txt`).
 
-`bench/stats.py`'s `c` lane builds each bench program as C (`-std=c99 -O3`) and requires its
+`bench/stats.py`'s `c` lane builds each bench program as C (`-std=c11 -O3`) and requires its
 result hash to be the Rust twin's — a disagreement fails the run — and reports its time over the
 twin's; `cship` builds it under `LOFT_RELEASE_PASS_PROBE=1`, where the generator writes the
 release-pass probe's forms (`loft_wrap_*` in `loft_rt.h`: the processor's arithmetic with every
@@ -204,8 +204,8 @@ module and the C header and compare every answer and every byte of the store.
 ## The macro modes
 
 `loft_cc.h` gives the emitted C three compile-time modes, and a mode changes speed, never a
-value: `-DLOFT_STRICT` is pure C99 (clean under `-std=c99 -pedantic -Werror`, every macro its
-C99 fallback); the default uses gcc / clang / MSVC extensions where it detects them;
+value: `-DLOFT_STRICT` is pure ISO C11 (clean under `-std=c11 -pedantic -Werror`, every macro
+its standard fallback); the default uses gcc / clang / MSVC extensions where it detects them;
 `-DLOFT_VERIFY` checks every proof the generator relied on again and aborts naming the site.
 Its sites are of three kinds: SAFE HINTS (`LOFT_HOT_INLINE`, `LOFT_LIKELY`, the overflow tests
 `LOFT_ADD_OVF` / `LOFT_SUB_OVF` / `LOFT_MUL_OVF`), PROOF SITES (`LOFT_PROVED`, the
@@ -214,9 +214,16 @@ Its sites are of three kinds: SAFE HINTS (`LOFT_HOT_INLINE`, `LOFT_LIKELY`, the 
 overflow is undefined).  The runtime and the generator write these macros and never a raw
 builtin or attribute.
 
-The OS beyond C99 — a monotonic clock, a path's kind and size, directories, truncate, fsync — is
+The unit's floor is C11, for one feature: `_Thread_local`, which the threads that run `par`
+workers and `parallel` arms keep their runtime state in (`LOFT_TLS`).  The threads themselves
+are the host's — POSIX threads, the Windows CRT's — never C11's optional `<threads.h>`, and
+the runtime uses no `<stdatomic.h>`: what threads share, they only read.  A strict unit
+compiled as C99, which has no thread-local storage, runs on one thread: `par` rows and
+`parallel` arms in order.
+
+The OS beyond ISO C — a monotonic clock, a path's kind and size, directories, truncate, fsync — is
 POSIX where `loft_cc.h` finds the platform to be one (`LOFT_POSIX`).  `-DLOFT_NO_POSIX` builds
-against ISO C99 alone: the clock is `clock()`, a file is what `fopen` opens, a directory is
+against ISO C alone: the clock is `clock()`, a file is what `fopen` opens, a directory is
 never seen, a listing is empty and the directory operations answer `Other`.
 
 One safe hint carries a choice: a not-null test's else — a discharge's null path — opens with
@@ -607,8 +614,7 @@ vector result gets a fresh buffer per row, a record result mints its own; a tupl
 member by member at its `__tuple<…>` record's offsets, a function row is its definition
 number.  `par_fold` is `run_parallel_fold`'s arithmetic: the rows in `min(threads, rows)`
 slices as `parallel_workers` splits them, each folded from `init`, the partials folded from
-`init` in slice order.  On a POSIX or Windows host (not `-DLOFT_STRICT`, `-DLOFT_NO_POSIX` or
-WASI) a site whose worker answers a scalar, a text, nothing, or a struct or struct-enum record
+`init` in slice order.  On a POSIX or Windows host (not `-DLOFT_NO_POSIX` or WASI) a site whose worker answers a scalar, a text, nothing, or a struct or struct-enum record
 runs on threads (`loft_par_run`, plan 203 C4): each worker from a copy of the caller's store
 table, a record row copied after the join into the caller's result store with the claims it
 owns (`loft_par_adopt`), as native's queue copies it.  `LOFT_TRACE_PAR_WORKERS` reports the

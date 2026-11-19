@@ -194,8 +194,8 @@ index becomes `nullref` plus a recoverable fault rather than a silent read.
                    or (H-WriteOOB) at the element, an absent key or a null view at any step of the
                    place's path, a value the slot cannot hold ((E-Uncomp-NN), a narrow non-nullable
                    slot), or a write (H-WriteLocked) discards.  A write that landed never runs B,
-                   whatever it wrote (a stored null is a landed write).  An APPEND is such a store (`c += [v]`, `c += other`,
-                   a keyed `h += [E { … }]`): a locked or absent collection is left unchanged
+                   whatever it wrote (a stored null is a landed write); a place discharged WITH A RECORD (`k[5]?.f`, (N-Default)) always lands, so its B never runs (warned `else-never-runs`).
+                   An APPEND is such a store (`c += [v]`, `c += other`, a keyed `h += [E { … }]`): a locked or absent collection is left unchanged
                    (H-WriteLocked-Whole) and B runs.  `else` belongs to the nearest statement that
                    takes one (the `if`'s in `x = if c { 1 } else { 2 }`); `if place = v` is refused.
   (H-TextReplace)  an ASSIGNMENT to a text field (`o.s = t`, `v[i].s = t`, `o.s += t`)

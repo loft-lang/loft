@@ -307,7 +307,10 @@ no-ops.  Copy a parameter into a local first if an arm needs its value.
 An arm's result is discarded.  When you need the answers back, use `for x in xs par(y =
 f(x), n) { … }`, which delivers each worker's value to the loop body.
 
-Both backends run the arms concurrently (guard `loft-suite/attic/scripts/1054-parallel-block-arms-run.loft`).
+Every arm is running before any has to finish, so arms may wait on each other — a server arm
+and the client arm that talks to it.  Both backends run them so (`@FR-C-Arms`, guard
+`loft-suite/rules/concurrency/C-Arms/2568-parallel-arms-run-at-once.loft`); a build without
+threads (WASI, a microcontroller, a C build without POSIX) runs them in order.
 
 ### Match expressions
 

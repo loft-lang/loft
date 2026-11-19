@@ -19,6 +19,7 @@ mod keyed;
 mod loop_record;
 mod misc;
 mod par;
+mod parallel;
 mod peel;
 mod spec_chain;
 mod sticky;
@@ -451,6 +452,12 @@ pub(crate) struct FnWriter<'a> {
     /// loops read through a held cursor, each with its `loft_fcur` and the index in `loops` of
     /// the loop that holds it.
     file_holds: Vec<(u16, String, usize)>,
+    /// `parallel { … }` (loft#2568, `parallel.rs`): the arms this body runs on threads, each
+    /// a function of its own written once the body's declarations are known.
+    arm_fns: Vec<parallel::ArmFn>,
+    /// Each parameter's declaration as the function's C signature spells it, by variable: what
+    /// an arm that reads one declares it as (`param_decls`).
+    param_decls: std::collections::HashMap<u16, String>,
 }
 
 /// A counted loop a push window is opened for (`FnWriter::window_loop`): the pushed path,
@@ -1002,7 +1009,15 @@ impl<'a> FnWriter<'a> {
             },
             gen_elem: None,
             yields: 0,
+            arm_fns: Vec::new(),
+            param_decls: std::collections::HashMap::new(),
         }
+    }
+
+    /// The parameters' declarations as the signature spells them (`param_decls`).
+    pub(crate) fn param_decls(mut self, decls: std::collections::HashMap<u16, String>) -> Self {
+        self.param_decls = decls;
+        self
     }
 
     /// loft#1254 — a stub with an empty body answers its type's default (`Data::to_default`),
@@ -1304,6 +1319,7 @@ impl<'a> FnWriter<'a> {
         for d in &self.decls {
             let _ = writeln!(out, "    {d}");
         }
+        let arms = (!self.arm_fns.is_empty()).then(|| self.arm_functions(&out));
         let slots: Vec<String> = self.held_texts().iter().map(|t| format!("&{t}")).collect();
         if !slots.is_empty() {
             let _ = writeln!(out, "    LOFT_HOLD({}, {});", slots.len(), slots.join(", "));
@@ -1315,6 +1331,12 @@ impl<'a> FnWriter<'a> {
             let _ = writeln!(out, "{}", super::LINE_RESET);
         }
         self.cold_finish(&out)?;
+        // The arms' functions land only with the body that calls them: a body the writer
+        // declines is written again, and its arms with it.
+        if let Some((decls, bodies)) = arms {
+            self.cx.gen_decls.borrow_mut().push_str(&decls);
+            self.cx.gen_bodies.borrow_mut().push_str(&bodies);
+        }
         Ok((self.park_work_texts(out), statements))
     }
 
@@ -1497,13 +1519,18 @@ impl<'a> FnWriter<'a> {
     /// holds, at the marker's indentation; a `#line` before the marker is repeated before each
     /// free, as `line` writes one before every line it emits.
     fn expand_epilogues(&self) -> String {
-        if !self.body.contains(EPILOGUE_MARK) {
-            return self.body.clone();
+        self.expand_epilogues_in(&self.body)
+    }
+
+    /// [`Self::expand_epilogues`] over `body`: the function's own, or a parallel arm's.
+    fn expand_epilogues_in(&self, body: &str) -> String {
+        if !body.contains(EPILOGUE_MARK) {
+            return body.to_string();
         }
         let texts = self.held_texts();
-        let mut out = String::with_capacity(self.body.len());
+        let mut out = String::with_capacity(body.len());
         let mut last_line_directive: Option<&str> = None;
-        for l in self.body.lines() {
+        for l in body.lines() {
             if l.trim_start() == EPILOGUE_MARK {
                 let indent = &l[..l.len() - l.trim_start().len()];
                 for (i, t) in texts.iter().enumerate() {
@@ -2087,6 +2114,7 @@ impl<'a> FnWriter<'a> {
             heap_push: !sw.heap_record_push_disabled,
             rebound_movers: !sw.rebound_mover_disabled,
             text_set: false,
+            address_only: false,
         };
         let mut cache = std::mem::take(&mut self.hoist_cache);
         let facts = self.store_facts();
@@ -2100,7 +2128,8 @@ impl<'a> FnWriter<'a> {
                 &mut cache,
                 &mut memo.writes,
                 (!sw.callee_inputs_disabled).then_some(&mut memo.inputs),
-            ),
+            )
+            .with_schema(self.cx.stores),
             tiers,
             None,
             facts.as_ref(),
@@ -5902,9 +5931,9 @@ impl<'a> FnWriter<'a> {
             }
             Value::Return(x) => self.ret_value(Some(x), ind),
             Value::Yield(x) => self.gen_yield(x, ind),
-            // `parallel { … }`: the arms run one after another — each arm's effect is the one
-            // its thread has (State's `OpParallelBegin`).
-            Value::Parallel(arms) => arms.iter().try_for_each(|a| self.stmt(a, ind)),
+            // `parallel { … }`: each arm a function of its own, all on threads at once
+            // (loft#2568).
+            Value::Parallel(arms) => self.parallel_block(arms, ind),
             // A dropped branch or block runs as a statement: each arm for its effect, a value
             // arm's value discarded (`@FR-F-Drop`) — where an arm assigns, it has no value to read.
             Value::Drop(x)
@@ -10157,7 +10186,7 @@ impl<'a> FnWriter<'a> {
                 Ok(E::new(format!("((double) {})", as_single(a)?), K::Float))
             }
             // The constants as the shortest literals that round-trip to Rust's own: `M_PI` and
-            // `M_E` are POSIX, and `-std=c99` does not declare them.
+            // `M_E` are POSIX, and `-std=c11` does not declare them.
             ("OpMathPiFloat", []) => Ok(E::new(format!("{:?}", std::f64::consts::PI), K::Float)),
             ("OpMathEFloat", []) => Ok(E::new(format!("{:?}", std::f64::consts::E), K::Float)),
             ("OpMathFuncFloat" | "OpMathFuncSingle", [id, v]) => {

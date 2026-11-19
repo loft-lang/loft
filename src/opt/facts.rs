@@ -58,6 +58,9 @@ pub struct Facts<'m> {
     /// The buffer-only kind's cycle guard, and its memo, which its policy keeps empty.
     buffer_guard: HashSet<u32>,
     pub(crate) buffer_only: HashMap<u32, bool>,
+    /// The schema, where the walk's owner has one: `in_place_set` reads a slot's type from it
+    /// (loft#2569).  Without it an `OpSetInt4` stays a writer.
+    pub(crate) stores: Option<&'m crate::database::Stores>,
 }
 
 /// Where an answer came from — what a kind's memo policy may tell apart.
@@ -122,7 +125,15 @@ impl<'m> Facts<'m> {
             inputs_guard: HashSet::new(),
             buffer_guard: HashSet::new(),
             buffer_only: HashMap::new(),
+            stores: None,
         }
+    }
+
+    /// The same walk, given the schema `in_place_set` reads slot types from.
+    #[must_use]
+    pub fn with_schema(mut self, stores: &'m crate::database::Stores) -> Facts<'m> {
+        self.stores = Some(stores);
+        self
     }
 
     /// A walk over the stores-written memo its owner keeps; the other memos start empty.
@@ -135,6 +146,7 @@ impl<'m> Facts<'m> {
             inputs_guard: HashSet::new(),
             buffer_guard: HashSet::new(),
             buffer_only: HashMap::new(),
+            stores: None,
         }
     }
 
@@ -152,6 +164,7 @@ impl<'m> Facts<'m> {
             inputs_guard: HashSet::new(),
             buffer_guard: HashSet::new(),
             buffer_only: HashMap::new(),
+            stores: None,
         }
     }
 

@@ -1975,17 +1975,27 @@ impl Parser {
         // every scalar field write.
         match name {
             "OpGetInt" => {
-                // f#next = pos: seek the file AND update the stored field.
+                // f#next = pos: seek the file AND update the stored field.  The position is
+                // evaluated ONCE: a seek on a file with no handle open moves `#next` itself, so
+                // `f#next = f#next + n` evaluated twice stepped `n` twice (loft#2568's copy of an
+                // opened record has no handle either).  A literal or a variable reads the same
+                // twice and is left as it is.
                 if args[1] == Value::Int(16)
                     && let Value::Var(v_nr) = &args[0]
                     && self.is_file_var(*v_nr)
                 {
-                    let seek = self.cl("OpSeekFile", &[args[0].clone(), code.clone()]);
-                    let set = self.cl(
-                        "OpSetInt",
-                        &[args[0].clone(), args[1].clone(), code.clone()],
-                    );
-                    return Value::Insert(vec![seek, set]);
+                    let mut steps = Vec::new();
+                    let pos = if matches!(code.unspan(), Value::Int(_) | Value::Var(_)) {
+                        code
+                    } else {
+                        let tmp = self.create_unique("_next", &crate::parser::fit::fit_var_type());
+                        self.vars.defined(tmp);
+                        steps.push(v_set(tmp, code));
+                        Value::Var(tmp)
+                    };
+                    steps.push(self.cl("OpSeekFile", &[args[0].clone(), pos.clone()]));
+                    steps.push(self.cl("OpSetInt", &[args[0].clone(), args[1].clone(), pos]));
+                    return Value::Insert(steps);
                 }
                 self.cl("OpSetInt", &[args[0].clone(), args[1].clone(), code])
             }

@@ -653,6 +653,36 @@ if missing:
     )
     sys.exit(1)
 
+# A published library's range stays in the API line of its floor (@C166), so a floor behind
+# the dependency's declared break holds every install of this release on the old line — which
+# lacks what the newer source calls (loft#2566: ten `hex_*` releases carried `>=0.1` forward
+# past hex_field's break).  Floor each dependency on the release this one was tested against.
+def _pad(v):
+    k = _vkey(v)
+    return k + [0] * (4 - len(k))
+
+
+behind = []
+for dep, rng in sorted((entry.get("deps") or {}).items()):
+    floor = rng.strip()[2:].strip() if rng.strip().startswith(">=") else None
+    dvers = (index["packages"].get(dep) or {}).get("versions") or {}
+    yanked = set((index["packages"].get(dep) or {}).get("yanked") or [])
+    live = [v for v in dvers if v not in yanked and "-" not in v]
+    if not floor or not live:
+        continue
+    newest = max(live, key=_vkey)
+    line = dvers[newest].get("api_compatible_with") or newest
+    if _pad(floor) < _pad(line):
+        behind.append(f"{dep} {rng} (current line from {line}, newest {newest})")
+if behind:
+    print(
+        f"::error::`{name}` {ver}: a dependency floor sits behind that dependency's "
+        f"declared break, so an install holds it on the old line: {'; '.join(behind)}.  "
+        f"Run the package's tests against the current line and floor `[dependencies]` "
+        f"on the release they passed with."
+    )
+    sys.exit(1)
+
 pkg["versions"][ver] = entry
 # Bump the top-level `updated` so it reflects this publish (REGISTRY_SUBMIT.md).
 # Reuse the entry's own `published` UTC stamp — the precise moment this version

@@ -5,8 +5,10 @@
  * compiler.  The runtime and the generator write these macros, never a raw builtin or
  * attribute.  Three compile-time modes; a mode changes speed, never a value:
  *
- *   -DLOFT_STRICT   pure C99, clean under `cc -std=c99 -pedantic -Werror`: every macro is
- *                   its exact C99 fallback.
+ *   -DLOFT_STRICT   pure ISO C11, clean under `cc -std=c11 -pedantic -Werror`: every macro
+ *                   is its exact standard fallback.  The unit's floor is C11 for one feature,
+ *                   `_Thread_local`; threads themselves are the host's (POSIX, Windows), never
+ *                   C11's optional `<threads.h>` or `<stdatomic.h>`.
  *   (default)       gcc / clang / MSVC extensions where detected, the fallback otherwise.
  *   -DLOFT_VERIFY   the default, and every PROOF the generator relied on is checked again:
  *                   a false one aborts naming its site (the C twin of LOFT_HOIST_VERIFY=1).
@@ -18,8 +20,8 @@
 #ifndef LOFT_CC_H
 #define LOFT_CC_H
 
-/* The OS beyond C99 — a monotonic clock, a path's kind, directories, truncate — is POSIX where
- * the platform is one (`LOFT_POSIX`); `-DLOFT_NO_POSIX` builds against ISO C99 alone, where the
+/* The OS beyond ISO C — a monotonic clock, a path's kind, directories, truncate — is POSIX where
+ * the platform is one (`LOFT_POSIX`); `-DLOFT_NO_POSIX` builds against ISO C alone, where the
  * clock is `clock()` and the directory operations answer Other.  The request precedes every
  * system header.  WASI (wasm32-wasi) is POSIX for files, directories and clocks, and has no
  * sockets, `mmap` or `realpath`: those stand under `LOFT_POSIX_HOST`, a POSIX host OS. */
@@ -78,13 +80,18 @@ LOFT_NORETURN void loft_android_exit(int code);
 #define LOFT_EXIT(code) exit(code)
 #endif
 
-/* `par` on threads (@PLN203 C4): POSIX threads on a POSIX host, the CRT's on Windows, none under
- * `-DLOFT_STRICT` (ISO C99 has no thread-local storage), `-DLOFT_NO_POSIX` or WASI, where a
- * `par` loop runs its rows in order — the same answer (@FR-C-Det).  `LOFT_TLS` marks the
- * runtime state each thread keeps its own of; empty without threads. */
-#if !defined(LOFT_STRICT) && !defined(LOFT_NO_THREADS) && (defined(LOFT_POSIX_HOST) || defined(_WIN32))
+/* `par` and `parallel { }` on threads (@PLN203 C4, `@FR-C-Arms`): POSIX threads on a POSIX
+ * host, the CRT's on Windows, none under `-DLOFT_NO_POSIX` or on WASI, where a `par` loop runs
+ * its rows in order — the same answer (@FR-C-Det) — and a `parallel` block its arms in order.
+ * `LOFT_TLS` marks the runtime state each thread keeps its own of: the compiler's spelling of
+ * it, or under `-DLOFT_STRICT` C11's `_Thread_local` — so a strict build compiled as C99, which
+ * has none, runs on one thread.  Empty without threads. */
+#if !defined(LOFT_NO_THREADS) && (defined(LOFT_POSIX_HOST) || defined(_WIN32)) \
+    && (!defined(LOFT_STRICT) || (defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L))
 #define LOFT_THREADS 1
-#if defined(_MSC_VER)
+#if defined(LOFT_STRICT)
+#define LOFT_TLS _Thread_local
+#elif defined(_MSC_VER)
 #define LOFT_TLS __declspec(thread)
 #elif defined(__GNUC__) || defined(__clang__)
 #define LOFT_TLS __thread
@@ -166,6 +173,17 @@ LOFT_NORETURN void loft_android_exit(int code);
 #define LOFT_LIKELY(x) (x)
 #define LOFT_UNLIKELY(x) (x)
 #define LOFT_COLD_PATH() ((void) 0)
+#endif
+/* `LOFT_NOIPA`: a function gcc's interprocedural passes leave alone.  gcc 15's known-bits
+ * propagation (`-fipa-bit-cp`, on at -O2 and up) emptied the positional file read
+ * (`loft_fh_read`, loft_io.h) once every live caller of it was a constant-specialised clone of
+ * `loft_read_file_in`: the read never ran and a file answered empty under `--ship`.  The mark
+ * goes on the leaf I/O functions, which make a system call each time, so it costs nothing;
+ * gcc only, clang neither has nor needs it. */
+#if defined(LOFT_GNU) && !defined(__clang__)
+#define LOFT_NOIPA __attribute__((noipa))
+#else
+#define LOFT_NOIPA
 #endif
 /* `(R-CSplit)`: a function body over the size budget calls its parts with `LOFT_PART_CALL`, which
  * no compiler may inline, so each part is optimised as the size it was cut to.  With no

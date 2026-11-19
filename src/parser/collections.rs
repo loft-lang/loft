@@ -4478,7 +4478,7 @@ use #count instead"
                 in_type = in_type.depending(vec_var);
                 fill = v_set(vec_var, expr);
                 expr = Value::Var(vec_var);
-            } else if matches!(in_type, Type::Sorted(..) | Type::Index(..))
+            } else if matches!(in_type.base(), Type::Sorted(..) | Type::Index(..))
                 && matches!(fill, Value::Null)
                 && self.ir_has_user_call(&expr)
             {

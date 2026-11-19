@@ -96,6 +96,10 @@ the detail, and that place wins if the two ever differ — fix this line, not th
     [COMPATIBILITY.md](COMPATIBILITY.md)
 16. **Call only what loft `origin/main` has**; a new loft symbol moves the `loft` floor in the
     same change.  [LIBRARY_CHECKLIST.md](LIBRARY_CHECKLIST.md) § Structure & packaging
+    The same holds for a dependency: floor it in `[dependencies]` on the release your tests
+    passed with.  An install keeps a published library's range in the API line of its floor
+    (@C166), so `scripts/registry_maintain.sh` refuses a publish whose floor sits behind the
+    dependency's declared break.
 17. **Deprecation is a signal and a fold, never a removal.**  A yank is for a broken or
     vulnerable version, and a `versions` entry is never deleted.
     [COMPATIBILITY.md](COMPATIBILITY.md), [§ 5b](LIBRARY_PUBLISH.md#5b-yank-a-vulnerable-version)

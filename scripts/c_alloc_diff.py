@@ -54,7 +54,7 @@ def c(prog, d):
     # fetches over a URL or pages an image), as c_sweep.py links them.
     with open(src, encoding="utf-8", errors="replace") as f:
         links = re.findall(r"^/\* link: (.*) \*/$", f.read(), re.M)
-    r = subprocess.run(["cc", "-std=c99", "-O1", "-DLOFT_ALLOC_TRACE", src, "-o", exe, "-lm", *links],
+    r = subprocess.run(["cc", "-std=c11", "-O1", "-DLOFT_ALLOC_TRACE", src, "-o", exe, "-lm", *links],
                        capture_output=True, text=True)
     if r.returncode != 0:
         return None, "cc: " + r.stderr[:300]
