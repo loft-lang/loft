@@ -9,12 +9,15 @@ Tracker: [@PLN221](https://github.com/loft-lang/plans/issues/221).
 
 ## Status
 
-Phases A and B are built: the register with its completeness guard, and the runner that
-asserts count, order, value and leak on both backends (`scripts/slot_matrix.py`).  The reach
-arc G is running: the matrix was walked back over the last release and over the 78
-`silent-wrong` issues since it, which added two axes and says what to add next
-([REACH.md](REACH.md)).  Phases C to F are open; the causes the matrix reports today are in
-[built.md](built.md) and REACH.md.
+The generator is built and gating.  `scripts/slot_matrix.py` makes 3,661 cells from five
+tables, runs them on the interpreter and the C backend in 40 seconds, and
+`tests/slot_matrix.rs` holds them against a baseline in seven tests, one a slot family.
+Built so far: the register with its completeness guard (A), the runner (B), depth two (D),
+the gate (F), the reach arc's two walks back over past defects (G), and of the second queue
+the anchor and the tools for debugging a failing cell.  The thirteen defects it reports are
+handed to the agent that fixes them ([found.md](found.md)).  Open: the rules for the ten
+slots that cite none (H), breadth of operand type, and the rest of [queue.md](queue.md).
+Not yet known: whether the gate's baseline is the same on Linux.
 
 ## Goal
 
@@ -61,94 +64,100 @@ may mention it twice.
 - **Slot** — one operand position of one construct: the source of a `for`, the index of an
   element write, the right side of `??`.
 - **Filler** — a form of expression placed in a slot.  A filler is itself a construct, so a
-  slot × filler cell IS a pair of syntax constructs.
-- **Kind** — the type kind of the value in the slot.
-- **Count class** — what the rules say about how often the slot runs: `once`, `cond`
-  (zero or one, decided by another operand), `per-step` (once per iteration).
-- **Twin** — the same statement with every filler first bound to a local, in source order.
-  A local is evaluated once by construction, so the twin supplies the expected value and
-  the expected order without a hand-computed number.
+  slot × filler cell IS a pair of syntax constructs.  Every filler but a type's plain
+  variable bumps a counter once and writes `S` into a log.
+- **Wrapper** — a filler with a hole, generated at depth two around every other filler of
+  the hole's type.
+- **Kind** — the collection type a cell is generated for: `vector`, `sorted`, `index`, `hash`.
+- **Count class** — what the rules say about how often a slot's operand runs: `once`;
+  `first` (once, and before the statement reads anything else); `cond` (zero or one,
+  decided by another operand); `step` (once per iteration).
+- **Twin** — the same statement with the filler first bound to a local.  A local is
+  evaluated once by construction, so the twin says what the statement must leave behind.
+- **Anchor** — the fields a slot's PLAIN statement must leave changed in the prelude's
+  world, computed by hand.  It is what makes a green run more than "cell and twin agree".
+- **Context** — where the statement stands: bare, in a loop, in a branch.
+- **Frame** — where its values come from: locals, parameters, or locals with views bound
+  before the statement and read after it.
+- **Fold** — failing cells gathered toward a cause: a slot that fails with most fillers, a
+  filler that fails in several slots, a wrapper that fails around most fillers.
 
-## The three tables
+## The registers
 
-The matrix is generated from three tables.  They are the artefact that is kept and
-reviewed; the cells are not.
+The matrix is generated; the tables are what is kept and reviewed, never the cells.
 
-**Slots**, by family (the register is `scripts/syntax_slots.tsv`, one row per slot: id,
-construct, statement template, the type the slot takes, count class, the `@FR-` rule that
-states the count):
-
-| Family | Slots | Count |
+| File under `scripts/` | Rows | What it holds |
 |---|---|---|
-| Iteration | `for` source · filtered-`for` source and filter · comprehension source, filter and body · range low and high, exclusive and inclusive · text source · slice source · `while` condition | 12 |
-| Write places | field, element and keyed-record writes (receiver, index, right side) · compound numeric · text append · collection append, one item and several · removal by `= null` · file attributes | 16 |
-| Reads | field of an expression · element (receiver, index) · slices, closed and open · keyed and multi-key lookup · text index and slice · negative index · postfix `?` · `??` left and right | 14 |
-| Calls | argument · method receiver · default and named argument · `&` argument · function-value callee | 6 |
-| Operators | arithmetic · comparison · `&&` and `||` (left, right) · bitwise · `as` · unary | 10 |
-| Control | `if` condition · `if`-expression arms · `match` subject, guard and arm · `return` · `assert` | 8 |
-| Constructors | record field · vector element · tuple member · enum payload · format hole · format width | 6 |
-| Concurrency and generators | `parallel` arm · `par` source · `yield` value | 3 |
+| `syntax_slots.tsv` | 135 slots in 7 families | id, family, the rule that states the count, count class, expected runs, operand type, the statement, an optional declaration |
+| `syntax_fillers.tsv` | 85 fillers over 11 types | id, type, the expression; 19 are wrappers, 4 write what the statement works on and go only into `first` slots |
+| `syntax_contexts.tsv` | 4 contexts | id, how often the statement runs, the template around it |
+| `syntax_expect.tsv` | 134 slots | the anchor: slot, kind, the fields the plain statement must leave changed |
+| `syntax_outside.tsv` | 40 lexemes | every lexeme in no slot, with why: it takes no operand, it is a declaration, or the matrix cannot reach it yet (12) |
+| `syntax_slots_prelude.loft` | 3 frames | the world a cell runs in, and the functions a filler calls |
+| `slot_matrix.baseline` | 282 lines | the cells that do not pass today; the gate lets it only shrink |
 
-This table was the estimate the design started from, about 75 slots.  The register phase A
-wrote has 132: every operator token is its own row, and a slot whose count depends on
-another operand is two rows, one per outcome.
-
-**Fillers** (`scripts/syntax_fillers.tsv`: id, template, result type, the counters it
-bumps): a call · a field of a call's result · an element at a computed index · a keyed
-lookup at a computed key · `E ?? d` · `E?` · a method on a temporary · a slice · a block
-expression · an `if`-expression · a `match`-expression · a function-value call.  Twelve.
-
-**Kinds**: `integer`, `long`, `float`, `single`, `boolean`, `character`, `text`, an enum, a
-record, a nullable record, `vector`, `sorted`, `index`, `hash`, a tuple.  Fifteen; the
-vocabulary is [`matrix_axes.py`](../../../../scripts/matrix_axes.py)'s A1, A5 and A7
-domains, not a second list.
-
-## How many cells
-
-A slot takes only the fillers and kinds that type-check in it.  The pilot measured this:
-ten slots gave 114 cells with four fillers, about eleven a slot.
-
-| Depth | What it crosses | Cells | Interpreter run |
-|---|---|---|---|
-| One | slot × filler × kind | 1,286 measured (1,300–1,600 estimated); 2,868 with twins and order cells | 3 s measured, batched |
-| Two | a filler inside a filler | 8,000–10,000 | a few minutes |
-| Three | one more level | near 60,000 | not planned |
-
-The pilot ran 114 cells in two seconds, one process per cell.  The C backend compiles, so
-there the cells are batched: one program per slot, one function per cell.
-
-**So: every cell is run, and none is stored.**  At these sizes the question "a test for
-each, or only for the ones that fail" has a third answer.  The whole matrix is regenerated
-and run from the three tables on every run; the tables are a few hundred reviewable lines,
-where 1,500 cell files would be unreviewable and would rot.  A NAMED suite cell is written
-only for a distinct cause the matrix found, under the rule it broke — the defect-born cell
-[STABILITY_METHOD.md](../../STABILITY_METHOD.md) already ranks highest.  The estimate for
-those is tens, not hundreds: the pilot's 30 failing cells were four causes.
-
-## What is built
-
-**The defects the matrix reports today, for whoever fixes them: [found.md](found.md)** —
-thirteen folds, each with the command that shows it.  The fixes are another agent's work;
-this plan's own work is the tooling.
-
-Phases A and B, with their measurements and the ten causes the first runs found, are in
-[built.md](built.md).  What the back-walk over past defects added — two axes, the `walk`
-command, the reach ledger — is in [REACH.md](REACH.md).
+The lexicon is read from the lexer's tables and the parser's own lexer calls, so syntax
+added without a slot row or a reason fails `doc_hygiene`.
 
 ## What a cell asserts
 
-Each filler carries its own counter and appends its tag to a trace when it runs.  A cell
-passes when all four hold, on each backend:
+On each backend:
 
-1. **Count** — every filler ran what its slot's count class says.
-2. **Order** — the trace equals the twin's.
-3. **Value** — the result equals the twin's.
-4. **Leak** — `LOFT_STORES=warn` reports nothing.
+1. **Count** — the operand ran as often as its slot says.
+2. **Order** — in an order cell every plain variable of the statement is a call that writes
+   a letter; the letters and the operand's `S` come in source order.  Made only where the
+   operand runs exactly once and nothing in the statement is conditional or repeated.
+3. **Value** — the cell leaves behind what its twin does; where the operand does not run
+   exactly once, what the same statement leaves with a plain variable.
+4. **Leak** — the test runner's `LOFT_LEAK_CHECK` reports nothing, and no store is freed twice.
+5. **Anchor** — the plain cell leaves exactly the fields its slot's row in
+   `syntax_expect.tsv` names, and nothing else changed.
 
-A cell that does not compile is neither a pass nor a failure: it is a REFUSED cell, listed
-with its diagnostic.  A refusal is a claim the rules must back (CLAUDE.md § Debugging
-policy), so the refused list is read once per family, and a slot with no accepted cell at
-all fails the run as vacuous.
+A cell the compiler refuses is REFUSED, listed with its diagnostic, neither a pass nor a
+failure; a slot none of whose cells compile fails as vacuous.  A cell that loops is stopped
+by loft's own `LOFT_TIMEOUT` and named.
+
+**What it cannot see.**  A defect that is wrong for every form of operand, where cell and
+twin agree and the anchor's hand value was computed from the same misreading.  Eight of the
+78 issues walked back were of that kind; they stay hand-written suite cells.
+
+## How big, how long
+
+| Run | Cells | Both backends |
+|---|---|---|
+| the gate: every filler, one context, one frame | 3,661 | 40 s |
+| four contexts and two frames | about 23,000 | 5 min 33 s |
+| depth two | about 15,000 | 3 min 9 s |
+| depth three, whole | over 60,000 | not run; a sample is planned |
+
+The cells of one collection kind run as the test functions of one generated program, so a
+run is a handful of processes a backend.  **Every cell is run and none is stored**: a NAMED
+suite cell is written only for a distinct cause, under the rule it broke.
+
+## The commands
+
+`python3 scripts/slot_matrix.py <command>`; `--bg FILE` before the command runs it in the
+background and ends FILE with a line `scripts/wait_for.sh` waits for.
+
+| Command | What it does |
+|---|---|
+| `check`, `selftest` | the registers are well formed and complete; the check can fail |
+| `list`, `expect` | the slots per family, those without a rule, those without an anchor |
+| `run` | cells, by `--slot`, `--filler`, `--kind`, `--context`, `--frame`, `--depth`, `--backend` |
+| `gate [--family F]` | the matrix against the baseline; `--update` rewrites it |
+| `cell '<statement>'` | one statement tried with every filler of a type |
+| `expr '<expression>'` | one expression tried in every slot of its type and inside every wrapper |
+| `explain <cell>` | one failing cell: its program kept, loft's diagnostics on, its IR diffed with its twin's |
+| `walk --old <binary>` | the matrix on an older compiler beside this one |
+
+## What is built
+
+- **[found.md](found.md)** — the thirteen defects the matrix reports, each with the command
+  that shows it.  The fixes are another agent's work; this plan's own work is the tooling.
+- **[queue.md](queue.md)** — the ordered steps, each with what it built or still owes.
+- **[REACH.md](REACH.md)** — the walks back over two releases and over 78 past issues, the
+  ledger [reach.tsv](reach.tsv), and what they asked the tool for.
+- **[built.md](built.md)** — phases A and B as first built, with their measurements.
 
 ## The pilot
 
@@ -163,11 +172,11 @@ the branch that carries both fixes.
 |---|---|---|---|
 | **A** — the slot register | `syntax_slots.tsv`, `syntax_fillers.tsv`, `syntax_outside.tsv`, each slot citing the rule that states its count | `doc_hygiene`'s `every_lexeme_has_an_operand_slot_or_a_reason`: every lexeme the lexer and the parser know is in a slot or has a reason; `selftest` removes a row, adds a lexeme and misspells a rule, and each must be reported | Shipped — the eleven rule-less counts and the twelve unreached operands are carried into C |
 | **B** — generator and runner | `scripts/slot_matrix.py run --backend both`, `--slot`, `--kind`: the twin, the order trace, the leak channel, the batched run on both backends; `make slot-matrix` | run against a build that has loft#2573: it reports those cells, and none on the fixed build.  Recorded as the tool's `@falsified-at` | Shipped |
-| **C** — the walk, one family per step | each failing cause fixed at the lowering that copies the operand, one named suite cell per cause under its rule, the refused list read | the family's cells, both backends; the named cell fails on the build before the fix (`make falsify`) | Open |
+| **C** — the fixes | each failing cause fixed at the lowering that copies the operand, one named suite cell per cause under its rule | the cause's cells pass and leave the baseline; the named cell fails on the build before the fix (`make falsify`) | Handed off — [found.md](found.md) |
 | **D** — depth two | fillers nested once (`--depth 2`, wrapper rows with a `<I:type>` hole) | `fillers --depth 2`: every composed filler bumps its counter once and gives its type's plain value | Shipped (G4) |
 | **E** — the cells as lockstep input | every generated cell fed to the Rust-against-loft comparison of results and debug layers | a difference in any layer on any cell | Blocked on the port's comparison harness taking generated input |
-| **F** — the gate | depth one in the PR gate (`tests/slot_matrix.rs`), a baseline of open cells that may only shrink; the wider axes nightly | a new failing cell on a PR; a baseline entry that passes again and was not removed | Shipped for one context and one frame (G1); the nightly leg is open |
-| **G** — reach | the matrix walked back over past defects: `slot_matrix.py walk --old <binary>` against the release before, and the `silent-wrong` issues since it judged in [reach.tsv](reach.tsv); every axis and row it asks for | the time walk: a row added for a past issue must FAIL on the build that had the defect; the share of new issues that `fits-now` at the next release | Running — contexts and frames added; G1 to G9 of § Phase ordering are its steps |
+| **F** — the gate | `tests/slot_matrix.rs`: seven tests, one a slot family, against a baseline that may only shrink; the wider axes nightly | a new failing cell on a PR (BROKEN); a baseline entry that passes again and was not removed (FIXED) | Shipped for one context and one frame; the nightly leg is open, and Linux is unverified |
+| **G** — reach | the matrix walked back over past defects: `slot_matrix.py walk --old <binary>` against the release before, and the `silent-wrong` issues since it judged in [reach.tsv](reach.tsv); every axis and row it asks for | the time walk: a row added for a past issue must FAIL on the build that had the defect; the share of new issues that `fits-now` at the next release | Running — both time walks done, contexts, frames and operands that touch the statement added; [queue.md](queue.md) has what is left |
 | **H** — a rule for every slot | the formal text evaluated wherever a slot can cite no rule, or a run raises a question the text does not answer: the rule found and cited, or written | `slot_matrix.py list` names no slot without a rule; `rule_tags.py check` resolves every citation; the slot is the new rule's guard | Open — ten slots; the `??` fallback is settled and written into `(E-Coalesce)` |
 
 ## Phase ordering
@@ -205,17 +214,22 @@ breadth of operand type.  The fixes (C) are handed off through [found.md](found.
 
 ## Documentation
 
-- `STABILITY_METHOD.md` — a section beside § The rule-led walk: what the slot walk is, when
-  to run it, how a new construct adds its row.
-- `TESTING.md` — a new construct or operator adds a slot row (done with phase A); the
-  `loft-test` skill, and where a cause's named cell goes.
-- `COMMANDS.md` — `make slot-matrix` and the script's subcommands (done with phase A).
-- `GUARDS.md` — the completeness guard and the runner's falsification receipt.
-- `formal/operational.md` — the `(E-Left)` sentence on `??` made to agree with
-  `(E-Coalesce)`; the count class of each slot the chapters leave unstated.
-- `formal/binding.md` — the answer to the write through a returned record.
-- `CI_BUDGET.md` — the cost of phase F's two runs.
-- `CHANGELOG.md` — each fixed cause under Bug fixes.
+What this plan changes outside itself, and where each stands.
+
+- `STABILITY_METHOD.md` § The slot matrix — what it is, when to run it, how it sits beside
+  the rule-led walk.  Done.
+- `TESTING.md` § The slot matrix — a new operator or keyword adds a row; the anchor; the
+  gate.  Done.
+- `COMMANDS.md` — `make slot-matrix` and the script's commands.  Done.
+- `GUARDS.md` — the matrix as a guard: what makes its green mean something, and what it
+  cannot see.  Done.
+- `CI_BUDGET.md` — the cost of the gate and of the wider runs.  Done.
+- `ISSUE_TRACKING.md` and `CLAUDE.md` — every defect is held against the matrix.  Done.
+- `formal/operational.md` — the `??` fallback, evaluated only when needed.  Done.  The
+  count of each of the ten slots that cite no rule is arc H.
+- The `loft-test` and `loft-debug` skills — where a slot row goes, and `cell`, `expr` and
+  `explain` as instruments.  Done.
+- `CHANGELOG.md` — each fixed cause under Bug fixes, with its fix.
 
 ## See also
 
