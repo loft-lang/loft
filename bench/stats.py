@@ -91,6 +91,30 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 
 
+def dependency_search_args(lib_dir):
+    """`-L` for every directory rustc searches to resolve loft's dependencies, under either
+    cargo layout — `src/cargo_layout.rs::dependency_dirs`, mirrored: the classic `deps/`, or
+    cargo 1.100's per-unit `build/<crate>/<hash>/out/` (no `deps/` at all, so `-L <lib>/deps`
+    named nothing and rustc said `E0463: can't find crate for sha2`).  A `deps/` beside a
+    per-unit tree whose rlib IS the linked one is an older toolchain's debris (loft#2033)."""
+    classic = os.path.join(lib_dir, "deps")
+    per_unit = []
+    build_root = os.path.join(lib_dir, "build")
+    for c in sorted(os.listdir(build_root)) if os.path.isdir(build_root) else []:
+        cdir = os.path.join(build_root, c)
+        for h in sorted(os.listdir(cdir)) if os.path.isdir(cdir) else []:
+            out = os.path.join(cdir, h, "out")
+            if os.path.isdir(out) and any(f.rsplit(".", 1)[-1].lower() in ("rlib", "so", "dylib", "dll")
+                                          for f in os.listdir(out)):
+                per_unit.append(out)
+    rlib = os.path.join(lib_dir, "libloft.rlib")
+    linked_is_per_unit = os.path.exists(rlib) and any(
+        os.path.exists(os.path.join(d, "libloft.rlib")) and os.path.samefile(os.path.join(d, "libloft.rlib"), rlib)
+        for d in per_unit)
+    dirs = [classic] if (os.path.isdir(classic) and not linked_is_per_unit) or not per_unit else per_unit
+    return [x for d in dirs for x in ("-L", d)]
+
+
 def release_rustc_args():
     """The shipped tier's rustc arguments (`src/native_release_args.txt`, the list loft
     compiles in), then `LOFT_NATIVE_RELEASE_FLAGS` as loft appends it."""
@@ -224,11 +248,13 @@ def build(bench, lanes, loft, lib_dir, ref_flags, times, reserve_gb):
     if "native" in lanes:
         rs = os.path.join(out, "stats_native.rs")
         exe = os.path.join(out, "stats_native")
-        run_checked([loft, "--native-emit", rs, "--lean", "--path", ROOT + "/",
+        # `--native-rust`: these two lanes measure the rustc writer, and `--native-emit` writes
+        # through whichever writer is selected — the C backend by default since the C9 flip.
+        run_checked([loft, "--native-emit", rs, "--native-rust", "--lean", "--path", ROOT + "/",
                      os.path.join(d, "bench.loft")], f"{bench}: loft --native-emit", times,
                     "native-emit", reserve_gb)
         run_checked(["rustc", *release_rustc_args(), "--edition=2024",
-                     "--extern", f"loft={lib_dir}/libloft.rlib", "-L", f"{lib_dir}/deps",
+                     "--extern", f"loft={lib_dir}/libloft.rlib", *dependency_search_args(lib_dir),
                      "-o", exe, rs], f"{bench}: rustc (native lane)", times, "native-rustc",
                     reserve_gb)
         os.remove(rs)
@@ -240,11 +266,11 @@ def build(bench, lanes, loft, lib_dir, ref_flags, times, reserve_gb):
         # still agree with the checked lanes.
         rs = os.path.join(out, "stats_ship.rs")
         exe = os.path.join(out, "stats_ship")
-        run_checked([loft, "--native-emit", rs, "--lean", "--path", ROOT + "/",
+        run_checked([loft, "--native-emit", rs, "--native-rust", "--lean", "--path", ROOT + "/",
                      os.path.join(d, "bench.loft")], f"{bench}: loft --native-emit (ship)", times,
                     "ship-emit", reserve_gb, env=SHIP_ENV)
         run_checked(["rustc", *release_rustc_args(), "--edition=2024",
-                     "--extern", f"loft={lib_dir}/libloft.rlib", "-L", f"{lib_dir}/deps",
+                     "--extern", f"loft={lib_dir}/libloft.rlib", *dependency_search_args(lib_dir),
                      "-o", exe, rs], f"{bench}: rustc (ship lane)", times, "ship-rustc",
                     reserve_gb)
         os.remove(rs)
