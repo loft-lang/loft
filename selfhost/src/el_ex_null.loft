@@ -1989,6 +1989,21 @@ pub fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
     if hinted {
       vars.expect_node = -1;
     }
+    // `convert`'s tagged arm (`@FR-L-Null-Tag`) at a `return`, as at a body's tail: a
+    // `__nullable<S>` value of a `-> S?` function is read through its tag, absence the
+    // reference null sentinel (`return h.a;` with `a: R?`).
+    if !e.first_pass && is_nullable_wrapper(e, v.tp) && result is TyOptional && struct_ref(e, el_types::base(result)) == el_ex_place::nullable_payload(e, el_types::struct_enum_def(v.tp)) {
+      tagged = el_ex_place::read_through_tag(e, vars, v);
+      if tagged == null {
+        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+      }
+      v = tagged!;
+      // (Read where it lies — the record or the sentinel — it is answered as it is: a view
+      // of what the slot's record is a field of.)
+      if el_ir::unspan(v.code) is NdIf {
+        return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
+      }
+    }
     // A struct enum is a record as well: a variant is built into the buffer as a struct is.
     if el_types::base(result) is TyReference || (el_types::struct_enum_def(result) >= 0 && !(result is TyOptional)) || (el_types::struct_enum_def(result) >= 0 && !(v.tp is TyNull)) {
       return record_return(e, vars, v, result);
