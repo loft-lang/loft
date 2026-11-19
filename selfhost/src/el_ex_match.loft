@@ -1597,8 +1597,8 @@ pub fn cast_expr(e: el::El, vars: el_vars::Vars, ae: integer?, tn: integer?) -> 
 // `@C131`, `Parser::cast`'s struct-enum arm: a value of a struct enum cast to one of its own
 // variants is the value where its tag is the variant's and the null reference where it is not,
 // typed as the variant borrowing what the value borrows.  Carried where an `is` test proved the
-// variant (`variant_proven`); a checked `as V?` and an unproven cast (its default fallback, a
-// local's `if s is V { … } else { … }` rewrite) are refused by name.  Null where the cast is no
+// variant (`variant_proven`) and for the checked `as V?` (typed `V?`); an unproven plain cast (its
+// default fallback, a local's `if s is V { … } else { … }` rewrite) is refused by name.  Null where the cast is no
 // variant cast.
 fn variant_cast(e: el::El, vars: el_vars::Vars, x: Ex, to: ir::TypeT) -> Ex? {
   sen = el_types::struct_enum_def(x.tp);
@@ -1606,13 +1606,11 @@ fn variant_cast(e: el::El, vars: el_vars::Vars, x: Ex, to: ir::TypeT) -> Ex? {
   if sen < 0 || vd < 0 || el::def(e, vd).def_type != el::DT_ENUM_VALUE || el::def(e, vd).parent != sen {
     return null;
   }
-  if to is TyOptional {
-    el::refuse(e, "a checked variant cast (`as V?`)");
-    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
-  }
+  // The checked `as V?` is the same test, null on a miss: typed `V?`, nothing to prove.
+  checked = to is TyOptional;
   disc = el_ex_object::variant_ord(e, vd);
   place = el_ir::unspan(x.code);
-  proven = false;
+  proven = checked;
   for pv in vars.proven {
     if pv.disc == disc && el_ex_base::same_expression(pv.place, place) {
       proven = true;
@@ -1623,6 +1621,9 @@ fn variant_cast(e: el::El, vars: el_vars::Vars, x: Ex, to: ir::TypeT) -> Ex? {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   rt = el_types::with_deps(ir::TyReference { n: vd, dep: [] }, el_types::deps(x.tp));
+  if checked {
+    rt = ir::TyOptional { inner: rt };
+  }
   if e.first_pass {
     return ex(ir::NdNull, rt);
   }
@@ -2403,6 +2404,11 @@ pub fn tail_of(n: ir::Node) -> ir::Node {
 pub fn match_fallback(e: el::El, rbase: ir::TypeT) -> ir::Node? {
   if rbase is TyFunction {
     return ir::NdFnRef { def_nr: 0, var: el::NO_TYPE, t: [rbase] };
+  }
+  // (`null_value`: a struct enum's null — a `__nullable<S>` slot's too — is the reference
+  // sentinel.)
+  if el_types::struct_enum_def(rbase) >= 0 {
+    return el_ir::cl(e, "OpNullRefSentinel", []);
   }
   el_convert::null_of(e, rbase)
 }
