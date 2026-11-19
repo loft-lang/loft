@@ -378,7 +378,8 @@ fn block_body(e: el::El, vars: el_vars::Vars, n: integer, context: text, result:
       if tc == null {
         el::refuse(e, "a function's value its declared result converts: {type_kind(t)} to {type_kind(result)}");
       } else {
-        l = l[..-1] + [tc!];
+        // (A conversion that changed nothing keeps the value as it stood, its span with it.)
+        l = l[..-1] + [if el_ir::unspan(tc!) == el_ir::unspan(l[-1] ?? ir::NdNull) { l[-1] ?? tc! } else { tc! }];
         t = result;
         // A narrowing conversion guarded the value inside its cast (`convert` runs
         // `guard_declared_range` before the `dn4cast` it wraps the value in): a second guard

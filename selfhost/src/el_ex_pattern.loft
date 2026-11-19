@@ -2280,7 +2280,36 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
   // grows (@PLN157 § V-w); the staging of a call that may write the vector and the whole-vector
   // snapshot (`_build_src`) are not carried yet.
   staged: vector<ir::Node> = [];
-  if reads_dest {
+  // Route 4 of `snapshot_read_destination` (`stage_literal_parts`), ahead of route 5: a part
+  // that reads the destination through a call that is neither primitive nor `#pure`
+  // (`v += [last(v) + i]`, `g += [a_mk(g[0]?, 50)]`) — every non-constant part of a scalar or
+  // text element is evaluated into a `__ref_N` first, every call part of a record element into
+  // a `__ref_p2_N` (its answer then copied into the new element).
+  scalar_elem = el_convert::plain_scalar(el_types::base(in_t)) || el_types::base(in_t) is TyText;
+  record_elem = struct_ref(e, el_types::base(in_t)) >= 0;
+  route4 = false;
+  if reads_dest && !e.first_pass && (scalar_elem || record_elem) {
+    for x in xs {
+      if el_ir::reads_var(x.code, v) && (!el_ex_null::hoistable(e, x.code) || (record_elem && match el_ir::unspan(x.code) { NdCall { def_nr: rcd } => !starts_with(el::def(e, rcd).name, "Op"), _ => false })) {
+        route4 = true;
+      }
+    }
+  }
+  if route4 {
+    s4: vector<Ex> = [];
+    for x in xs {
+      xc = el_ir::unspan(x.code);
+      constant = xc is NdInt || xc is NdLong || xc is NdFloat || xc is NdSingle || xc is NdBoolean || xc is NdText || xc is NdNull;
+      if constant || (record_elem && !(xc is NdCall)) {
+        s4 += [x];
+        continue;
+      }
+      tmp = if scalar_elem { el_vars::work_ref(vars, in_t) } else { el_vars::work_ref_p2(vars, el_types::without_deps(in_t)) };
+      staged += [el_ir::v_set(tmp, x.code)];
+      s4 += [ex(ir::NdVar { n: tmp }, x.tp)];
+    }
+    xs = s4;
+  } else if reads_dest {
     if !el_ex_null::build_vals_carry(e, vars, v, in_t, xs) {
       el::refuse(e, "an appended item that reads the vector it is appended to, staged or snapshotted");
       return refused_build();

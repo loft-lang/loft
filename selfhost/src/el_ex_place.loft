@@ -825,6 +825,12 @@ pub fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: i
       _ => {}
     }
   }
+  // (Carried where the place is reached through a parameter: elsewhere Rust's head lists the
+  // literal's unused `_elm_N` by when it was registered, not by number — not carried.)
+  if apart && !e.first_pass && !(place_root(e, place) >= 0 && vars.vars[place_root(e, place)].argument) {
+    el::refuse(e, "a record literal written into a field or an element: a vector literal field of a place in a local");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
   if apart {
     if e.first_pass {
       el_ex_pattern::first_pass_fields(e, vars, rd, fields);
@@ -832,10 +838,42 @@ pub fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: i
     }
     // Rust's head, mirrored: the field form declares the vector literal's first-pass `_elm_N`
     // (unused); the element form mints a `__ref_p2_N` before the one it builds in (unused).
+    // (The element form's second buffer appears only where the place is reached through a
+    // parameter and a vector-literal field reads it.)
+    proot = place_root(e, place);
+    reads_place = false;
+    if proot >= 0 && vars.vars[proot].argument {
+      for fi in fields {
+        match e.p.nodes[fi] {
+          SFieldInit { e: rfe } => {
+            if rfe != null && e.p.nodes[rfe!] is SVecLit && syntax_names(e, rfe!, el_vars::name_of(vars, proot)) {
+              reads_place = true;
+            }
+          },
+          _ => {}
+        }
+      }
+    }
     if calls(e, place, "OpGetVector") {
-      el_vars::work_ref_p2(vars, ir::TyReference { n: rd, dep: [] });
+      if reads_place {
+        el_vars::work_ref_p2(vars, ir::TyReference { n: rd, dep: [] });
+      }
     } else {
-      fe = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [] });
+      // (Typed as the literal's element record, `ref(boolean)` — definition 0 — for a scalar.)
+      eld = 0;
+      for fi in fields {
+        match e.p.nodes[fi] {
+          SFieldInit { name: fnm, e: rfe } => {
+            if rfe != null && e.p.nodes[rfe!] is SVecLit {
+              fa = attr_nr(el::def(e, rd), fnm);
+              ftv = if fa >= 0 { el_types::base(el::def(e, rd).attributes[fa].typedef[0] ?? ir::TyVoid) } else { ir::TyVoid };
+              match ftv { TyVector { inner: fin } => { if struct_ref(e, fin) >= 0 { eld = struct_ref(e, fin); } }, _ => {} }
+            }
+          },
+          _ => {}
+        }
+      }
+      fe = el_vars::create_unique(vars, "elm", ir::TyReference { n: eld, dep: [] });
       el_vars::register_work_ref(vars, fe);
     }
     built = el_ex_object::object_fresh(e, vars, rd, fields, ir::TyReference { n: rd, dep: [] });
