@@ -15669,6 +15669,29 @@ impl Parser {
         ) {
             return self.parse_call_diagnostic(val, name, list, types, call_pos);
         }
+        // `@FR-Slice-Value` — the collection a built-in walks (`map`, `filter`, `reduce`,
+        // `par_fold`, `parallel_for`) is a vector-typed position: a vector slice there
+        // (`map(v[1..3], f)`) is the fresh vector a bind makes of it (`iterator_as_vector`, the
+        // one home), where each lowering refused it as "first argument must be a vector".
+        let mut slice_list;
+        let mut slice_types;
+        let (list, types) = if matches!(
+            special,
+            "map" | "filter" | "reduce" | "par_fold" | "parallel_for"
+        ) && let Some(first) = types.first()
+            && let Type::Iterator(elm, _) = first.base()
+            && list.first().is_some_and(Self::slice_shaped)
+        {
+            slice_list = list.to_vec();
+            slice_types = types.to_vec();
+            let want = Type::Vector(elm.clone(), crate::data::Deps::none());
+            if let Some(vec_tp) = self.iterator_as_vector(&mut slice_list[0], &types[0], &want) {
+                slice_types[0] = vec_tp;
+            }
+            (&slice_list[..], &slice_types[..])
+        } else {
+            (list, types)
+        };
         self.check_persist_copy_root(name, list, arg_pos);
         self.note_store_handoff(name, types);
         match special {

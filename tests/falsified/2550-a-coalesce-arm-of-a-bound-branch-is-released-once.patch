@@ -1,8 +1,8 @@
 diff --git a/src/scopes/get_free_vars.rs b/src/scopes/get_free_vars.rs
-index 2c02b5173..78a27e1b2 100644
+index fc5811caa..27aa8a737 100644
 --- a/src/scopes/get_free_vars.rs
 +++ b/src/scopes/get_free_vars.rs
-@@ -1033,7 +1033,6 @@ impl Scopes<'_> {
+@@ -1097,7 +1097,6 @@ impl Scopes<'_> {
                          // refuses is one the lift releases.  The hook is guarded with the free:
                          // left bare it ran the type's drop on a record the lift had already
                          // freed (loft#2550, `r = if c { f() ?? return } else { … }`).
@@ -10,7 +10,7 @@ index 2c02b5173..78a27e1b2 100644
                          // A collection buffer's hook runs over the binding it delivered to
                          // (`delivered_binding`).  A binding whose scope has ended ran that hook
                          // at its own end and emptied the vector (the scope-end clause above), so
-@@ -1051,9 +1050,23 @@ impl Scopes<'_> {
+@@ -1115,9 +1114,23 @@ impl Scopes<'_> {
                              && !binding_ended
                              && let Some(hook) = unless_moved(v, self.scope_end_hook(function, v, data, arm_dropped))
                          {
@@ -57,14 +57,13 @@ index 57f4f6023..2b50ac051 100644
                  if let Some(last) = bl.operators.last() {
                      walk(last, out);
 diff --git a/src/scopes/scan_set.rs b/src/scopes/scan_set.rs
-index 496976f58..7fe7edabb 100644
+index 5a9534896..9f6b36679 100644
 --- a/src/scopes/scan_set.rs
 +++ b/src/scopes/scan_set.rs
-@@ -1775,36 +1775,7 @@ impl Scopes<'_> {
-         let scanned = self.scan(value, function, data);
+@@ -1782,35 +1782,6 @@ impl Scopes<'_> {
          // `@FR-H-FreeTwice` — an arm of the value that reads a projection out of a lifted call
          // result leaves `v` naming that lift's store, which the lift's own free releases.
--        let mut viewed = std::mem::replace(&mut self.value_hoists, outer_hoists);
+         let mut viewed = std::mem::replace(&mut self.value_hoists, outer_hoists);
 -        // `@FR-H-FreeTwice` — a BRANCH whose arm is a `?? return` chain hands the binding the
 -        // chain's `_ncr_N` temp, which the scan keeps at an outer scope and releases there: the
 -        // binding views it on that path, as it views a hoisted lift — its hook and free run only
@@ -94,7 +93,6 @@ index 496976f58..7fe7edabb 100644
 -                }
 -            }
 -        }
-+        let viewed = std::mem::replace(&mut self.value_hoists, outer_hoists);
-         self.note_lift_viewers(v, &viewed);
-         self.prefix_released.truncate(prefix_from);
-         if first_binding {
+         // loft#2577's owner — a slot read off a call's tuple (`t0 = f().0`) binds the call to a
+         // work ref and answers a view of it (`Parser::emit_nullable_slot_read`): the binding
+         // views that owner as it views a hoisted lift, so its free runs only where it names

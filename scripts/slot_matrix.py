@@ -170,6 +170,16 @@ def load_slots(path=SLOTS_TSV):
             continue
         slot = dict(zip(("id", "family", "rule", "count", "runs", "type", "stmt"), cols))
         slot["decl"] = cols[7] if len(cols) == 8 else ""
+        # `type@kind,kind` keeps the slot to the collection kinds it has a meaning in, and
+        # `type!filler,filler` keeps fillers out that are not of the type the statement
+        # needs — so that what the compiler still refuses is a refusal of the language.
+        m = re.fullmatch(r"([\w-]+?)(?:@([\w,]+))?(?:!([\w,()-]+))?", slot["type"])
+        if not m:
+            problems.append(f"{os.path.basename(path)}:{nr}: type `{slot['type']}` is not `type[@kinds][!fillers]`")
+            continue
+        slot["type"] = m.group(1)
+        slot["kinds"] = tuple(m.group(2).split(",")) if m.group(2) else ()
+        slot["without"] = tuple(m.group(3).split(",")) if m.group(3) else ()
         slot["line"] = nr
         slots.append(slot)
     return slots, problems
@@ -270,6 +280,12 @@ def check(slots, fillers, outside, lex, rules, problems):
             problems.append(f"{where}: count `cond` with runs {s['runs']}")
         if s["rule"] != "-" and s["rule"] not in rules:
             problems.append(f"{where}: rule `{s['rule']}` is not defined in doc/claude/formal/")
+        for k in s.get("kinds", ()):
+            if k not in [name for name, _ in KINDS]:
+                problems.append(f"{where}: unknown collection kind `{k}`")
+        for f in s.get("without", ()):
+            if f not in {x["id"] for x in fillers}:
+                problems.append(f"{where}: `!{f}` names no filler")
         if s["decl"].count(BIND) > 1 or BIND in s["stmt"]:
             problems.append(f"{where}: `{BIND}` stands at most once, and in the declaration")
         if (s["stmt"] + s["decl"]).count(SLOT) != 1:
@@ -324,6 +340,31 @@ def load_contexts(path=CONTEXTS_TSV):
             raise SystemExit(f"{os.path.basename(path)}:{nr}: want `id<TAB>passes<TAB>template with one <STMT>`")
         out.append((cols[0], int(cols[1]), cols[2]))
     return out
+
+
+def world_env():
+    """`(parameters, arguments)` of the prelude's world: what a function declared by a slot
+    takes (`<ENV>`) and is called with (`<ARGS>`), read from the `params` frame so that the
+    two cannot drift from the world itself."""
+    text = open(PRELUDE, encoding="utf-8").read()
+    params = re.search(r"^fn CELLFN_in\((.*)\) \{$", text, re.M)
+    args = re.search(r"^\s*CELLFN_in\((.*)\);$", text, re.M)
+    if not params or not args:
+        raise SystemExit("slot_matrix: the prelude's `params` frame no longer declares `CELLFN_in(…)`")
+    return params.group(1), args.group(1)
+
+
+def world_names(text, word, names):
+    """`<ENV>` / `<ARGS>` in a slot's text, as the world's parameters or arguments.
+    `<ENV -tk>` leaves the named ones out and `<ENV: c h i>` keeps only the named ones, for
+    a declaration that cannot take the whole world."""
+    def fill(m):
+        only = set((m.group(1) or "").split())
+        drop = set((m.group(2) or "").replace("-", " ").split())
+        parts = re.split(r",\s*(?=[a-z_0-9]+\b(?::|,|$))", names)
+        name = lambda p: p.split(":")[0].strip()
+        return ", ".join(p for p in parts if name(p) not in drop and (not only or name(p) in only))
+    return re.sub(r"<%s(?:: ([\w ]+))?((?: -\w+)*)>" % word, fill, text)
 
 
 def load_frames():
@@ -508,6 +549,9 @@ def make_cells(slots, fillers, which_filler, which_slot, which_kind, contexts=No
     contexts = contexts or load_contexts()[:1]
     frames = frames or list(load_frames()[1])[:1]
     out, seen_worlds, expect = [], set(), load_expect()
+    env, env_args = world_env()
+    slots = [dict(s, decl=world_names(s["decl"], "ENV", env), stmt=world_names(s["stmt"], "ARGS", env_args))
+             for s in slots]
     fillers = expand(fillers, depth)
     kinded_types = kinded(fillers)
     for slot in slots:
@@ -519,7 +563,7 @@ def make_cells(slots, fillers, which_filler, which_slot, which_kind, contexts=No
                  else KINDS[:1])
         for (kind, kind_type), (ctx, passes, wrap), frame in (
                 (k, c, f) for k in kinds for c in contexts for f in frames):
-            if which_kind and kind != which_kind:
+            if (which_kind and kind != which_kind) or (slot.get("kinds") and kind not in slot["kinds"]):
                 continue
             where = f"{slot['id']}.%s.{kind}" + ("" if (ctx, frame) == (contexts[0][0], frames[0]) and len(contexts) + len(frames) == 2 else f"@{ctx}/{frame}")
             base = where % f"{slot['type']}-var"
@@ -537,6 +581,8 @@ def make_cells(slots, fillers, which_filler, which_slot, which_kind, contexts=No
                 if not is_var and which_filler != "all" and f["id"] != which_filler:
                     continue
                 if f.get("only") == "first" and slot["count"] != "first":
+                    continue
+                if f["id"] in slot.get("without", ()):
                     continue
                 expr = f["expr"].replace(COUNTER, "c")
                 put = lambda stmt: wrap.replace("<STMT>", stmt)
@@ -605,6 +651,7 @@ TIME_LIMIT = {"interp": int(os.environ.get("SLOT_MATRIX_INTERP_SECONDS", "40")),
 # one: a healthy cell answers in milliseconds, and a statement that loops for one form of
 # operand often loops for the next, each costing a whole limit.
 TIGHT_LIMIT = {"interp": 6, "c": 20}
+TABLE_FAULT = re.compile(r"Unknown (variable|function)|Undefined type")
 # What a run cost: per backend, how many programs were run and the seconds they took,
 # summed over the threads that ran them (so more than the wall time).
 SPENT = {"interp": [0, 0.0], "c": [0, 0.0]}
@@ -702,6 +749,10 @@ def verdict(cell, results):
     if got is None:
         return "FAIL", "the cell was not run"
     if got[0] == "REFUSED":
+        # A name the cell's world does not have is a fault of the TABLES, not a refusal of
+        # the language: the cell checks nothing, and listing it would hide that.
+        if TABLE_FAULT.search(got[1]):
+            return "FAIL", f"the tables name something the cell's world lacks: {got[1]}"
         return "REFUSED", got[1]
     if got[0] == "LOST":
         return "FAIL", f"the cell did not finish: {got[1]}"
@@ -779,7 +830,7 @@ def evaluate(cells, backends, on_c=None):
 def channel(why):
     """Which of the four assertions a failure is: count | order | value | leak | crash."""
     for word, name in (("time(s)", "count"), ("in the order", "order"), ("result differs", "value"),
-                       ("the register says", "anchor"),
+                       ("the register says", "anchor"), ("the cell's world lacks", "table"),
                        ("left behind", "leak"), ("freed twice", "leak")):
         if word in why:
             return name

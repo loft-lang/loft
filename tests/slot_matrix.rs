@@ -47,7 +47,9 @@
 static ONE_GATE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn gate(family: &str) {
-    let _one = ONE_GATE_AT_A_TIME.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let _one = ONE_GATE_AT_A_TIME
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let out = match loft::platform::process::harness_command("python3")
         .arg(root.join("scripts/slot_matrix.py"))
