@@ -5,6 +5,10 @@
 #   expression  `<C>` is the counter the cell hands this operand.  Every filler but a type's
 #         `var` bumps that counter exactly ONCE per evaluation, and gives the same value as
 #         the `var` of its type, so a cell and its bound-first twin agree on the answer.
+#   A filler that bumps `calls` itself and writes no log (`int-block-one`: a block of ONE
+#   statement and a value, which is lowered differently from a longer one) gets no ORDER cell.
+#   A filler is a primary expression or stands in parentheses, so that the statement around
+#   it parses the same way as with a variable there.
 # The `var` row of a type is its plain operand: evaluated once by construction, it is what a
 # slot is validated with before any other filler is tried.
 # `python3 scripts/slot_matrix.py check` validates this file; `fillers` runs each row.
@@ -15,15 +19,17 @@ int-elem	int	h.ones[at(<C>, 0)]
 int-coal	int	(h.ws[at(<C>, 9)].n ?? 1)
 int-default	int	h.ws[at(<C>, 0)].n?
 int-method	int	(txz(<C>).len() - 3)
-int-block	int	{ <C>.calls += 1; 1 }
+int-block	int	{ bump(<C>); 1 }
+int-block-write	int	{ <C>.calls += 1; <C>.log += "S"; 1 }
+int-block-one	int	{ <C>.calls += 1; 1 }
 int-if	int	if yes(<C>, true) { 1 } else { 2 }
 int-match	int	match at(<C>, 2) { 2 => 1, _ => 0 }
 int-fnval	int	fnv(at(<C>, 0))
 bool-var	bool	b
 bool-call	bool	yes(<C>, true)
 bool-field	bool	box(<C>, h).ok
-bool-compare	bool	at(<C>, 1) == 1
-bool-not	bool	!yes(<C>, false)
+bool-compare	bool	(at(<C>, 1) == 1)
+bool-not	bool	(!yes(<C>, false))
 bool-if	bool	if yes(<C>, true) { true } else { false }
 text-var	text	x
 text-call	text	tx(<C>)
@@ -31,7 +37,7 @@ text-field	text	box(<C>, h).t
 text-coal	text	(h.ws[at(<C>, 0)].t ?? "")
 text-format	text	"{tx(<C>)}"
 text-slice	text	txz(<C>)[1..]
-text-concat	text	tx(<C>) + ""
+text-concat	text	(tx(<C>) + "")
 float-var	float	fl
 float-call	float	flo(<C>)
 float-field	float	box(<C>, h).f

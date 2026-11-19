@@ -19,9 +19,27 @@ runs the product.
     list       the slots, per family, with the count of each count class.
     fillers    run every filler in a neutral slot: it must bump its counter once and
                give its type's plain value.
-    run        run cells on the interpreter and compare each operand's run count with
-               the slot's `runs` column.  Default: every slot with its plain variable,
-               which validates the register itself.  `--filler all` is the matrix.
+    run        run cells and say which fail.  Default: every slot with its plain variable,
+               which validates the register itself.  `--filler all` is the matrix,
+               `--backend both` adds the C backend, `--slot` and `--kind` narrow it.
+
+What a cell asserts, on each backend:
+    count   the operand ran as often as the slot's `runs` column says;
+    order   (an `.order` cell) with every plain variable of the statement replaced by a
+            call that writes a letter, the letters and the operand's `S` come in source
+            order — made only where the operand runs exactly once and nothing in the
+            statement is conditional or repeated;
+    value   the cell leaves behind what its bound-first twin does (`t0 = <operand>;` and
+            the statement with `t0`), or, where the operand does not run exactly once,
+            what the same statement leaves with a plain variable;
+    leak    the test runner's `LOFT_LEAK_CHECK` reports nothing, and no store is freed twice.
+A cell the compiler refuses is REFUSED, not failed; a slot none of whose cells compile fails
+as vacuous.  The cells of one collection kind run as the test functions of one generated
+program, so the whole matrix is a handful of processes per backend.
+
+@falsified-at: hand-measured — `LOFT=<the release build of 2026-11-18, which has loft#2573>
+slot_matrix.py run --slot it-for --filler all` fails 8 of 36 cells ("the operand ran 5
+time(s), the slot says 1"); the same command on a build with the fix fails none.
 
 The registers: scripts/syntax_slots.tsv, scripts/syntax_fillers.tsv,
 scripts/syntax_outside.tsv, and the world a cell runs in,
@@ -282,38 +300,46 @@ def loft_binary():
     return built if os.path.exists(built) else "loft"
 
 
-def cell_source(prelude, slot, filler, kind_type, name):
-    expr = filler["expr"].replace(COUNTER, "c")
-    src = prelude.replace("KIND", kind_type).replace("CELL", name)
-    src = src.replace("// DECL", slot["decl"].replace(SLOT, expr))
-    return src.replace("// STMT", "  " + slot["stmt"].replace(SLOT, expr))
+# The plain variables of the prelude that an ORDER cell replaces by a call writing a letter.
+ORDER_CALLS = {"i": ("oi(c)", "i"), "j": ("oj(c)", "j"), "b": ("ob(c)", "b"),
+               "nb": ("onb(c)", "n"), "x": ("ox(c)", "x"), "fl": ("ofl(c)", "f"),
+               "en": ("oen(c)", "e")}
+ORDER_NAME = re.compile(r"<S>|(?<![.\w])(%s)(?![\w(])" % "|".join(sorted(ORDER_CALLS, key=len, reverse=True)))
+# A statement with one of these runs an operand conditionally or more than once, so source
+# order is not the order its operands run in; no ORDER cell is made for it.
+ORDER_BARRED = re.compile(r"\b(for|while|if|match|and|or|par|parallel|fn|assert)\b|&&|\|\||\?")
+DECL_NAMES = re.compile(r"\b(give|tail|gen)\b")
+CHUNK = 120
 
 
-def run_cell(job):
-    """Run one cell.  Returns (name, verdict, detail): ok | FAIL | REFUSED."""
-    name, source, want, tmp = job
-    path = os.path.join(tmp, name + ".loft")
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(source)
-    env = dict(os.environ, LOFT_TIMEOUT="120")
-    try:
-        done = subprocess.run([loft_binary(), path], capture_output=True, text=True,
-                              env=env, timeout=180, check=False)
-    except subprocess.TimeoutExpired:
-        return name, "FAIL", "no answer in 180 s"
-    out = done.stdout + done.stderr
-    m = re.search(r"^%s c=(\d+) d=\d+ \| (.*)$" % re.escape(name), out, re.M)
-    if not m:
-        first = next((ln for ln in out.splitlines() if ln.strip()), "no output")
-        return name, "REFUSED", first.replace(tmp + os.sep, "")[:200]
-    got = int(m.group(1))
-    if got != want:
-        return name, "FAIL", f"the operand ran {got} time(s), the slot says {want}"
-    return name, "ok", m.group(2)
+def ordered(stmt):
+    """The statement with every plain variable replaced by its lettered call, and the log
+    source order gives — or None when order says nothing about this statement."""
+    if ORDER_BARRED.search(stmt):
+        return None
+    out, log = [], []
+    for n, part in enumerate(re.split(r'("(?:[^"\\]|\\.)*")', stmt)):
+        if n % 2:                       # a string: its holes are left as they are
+            log.append("S" * part.count(SLOT))
+            out.append(part)
+            continue
+
+        def swap(m):
+            if m.group(0) == SLOT:
+                log.append("S")
+                return SLOT
+            call, letter = ORDER_CALLS[m.group(1)]
+            log.append(letter)
+            return call
+        out.append(ORDER_NAME.sub(swap, part))
+    log = "".join(log)
+    return ("".join(out), log) if len(log) > 1 else None
 
 
-def cells(slots, fillers, which_filler, which_slot, which_kind):
-    prelude = open(PRELUDE, encoding="utf-8").read()
+def make_cells(slots, fillers, which_filler, which_slot, which_kind):
+    """The cells of a run.  A slot's plain-variable cell is always there: it is what the
+    value of every other cell of that slot is compared with."""
+    out = []
     for slot in slots:
         if which_slot and slot["id"] not in which_slot:
             continue
@@ -321,23 +347,193 @@ def cells(slots, fillers, which_filler, which_slot, which_kind):
         for kind, kind_type in kinds:
             if which_kind and kind != which_kind:
                 continue
+            base = f"{slot['id']}.{slot['type']}-var.{kind}"
             for f in fillers:
                 if f["type"] != slot["type"]:
                     continue
                 is_var = f["id"].endswith("-var")
-                if which_filler == "var" and not is_var:
+                if not is_var and which_filler != "all" and f["id"] != which_filler:
                     continue
-                if which_filler not in ("var", "all") and f["id"] != which_filler:
-                    continue
-                name = f"{slot['id']}.{f['id']}.{kind}"
-                want = 0 if is_var else int(slot["runs"])
-                yield name, cell_source(prelude, slot, f, kind_type, name), want, slot["id"]
+                expr = f["expr"].replace(COUNTER, "c")
+                cell = {"name": f"{slot['id']}.{f['id']}.{kind}", "slot": slot["id"],
+                        "kind_type": kind_type, "decl": slot["decl"].replace(SLOT, expr),
+                        "stmt": slot["stmt"].replace(SLOT, expr), "base": base,
+                        "want": 0 if is_var else int(slot["runs"]), "log": None}
+                out.append(cell)
+                # The bound-first twin: the filler bound to a local, then the statement
+                # with that local.  A local is evaluated once by construction, so the twin
+                # says what the statement must leave behind.  Only where the operand runs
+                # exactly once and sits in `main`; elsewhere the plain variable says it.
+                if not is_var and slot["count"] == "once" and not slot["decl"]:
+                    cell["base"] = cell["name"] + ".twin"
+                    out.append(dict(cell, name=cell["base"], base=cell["base"], want=1,
+                                    stmt=f"t0 = {expr}; " + slot["stmt"].replace(SLOT, "t0")))
+                silent = ".calls += 1" in f["expr"] and ".log" not in f["expr"]
+                turn = (None if is_var or silent or slot["decl"] or slot["count"] != "once"
+                        else ordered(slot["stmt"]))
+                if turn:
+                    out.append(dict(cell, name=cell["name"] + ".order",
+                                    stmt=turn[0].replace(SLOT, expr), log=turn[1]))
+    return out
 
 
-def run_jobs(jobs):
+def program(kind_type, cells):
+    """One loft program holding `cells` as test functions; and, per cell, its function name
+    and the lines it occupies."""
+    head, _, body = open(PRELUDE, encoding="utf-8").read().partition("// === CELL ===\n")
+    text = head.replace("KIND", kind_type)
+    spans = []
+    for n, cell in enumerate(cells):
+        fn = f"test_c{n:04d}"
+        rename = lambda t, n=n: DECL_NAMES.sub(lambda m: f"{m.group(1)}_{n}", t)
+        part = (body.replace("CELLDECL", rename(cell["decl"])).replace("CELLFN", fn)
+                .replace("CELLSTMT", rename(cell["stmt"])).replace("CELLNAME", cell["name"]))
+        first = text.count("\n") + 1
+        text += part
+        spans.append((first, text.count("\n"), fn))
+    return text, spans
+
+
+def invoke(backend, path):
+    cmd = [loft_binary()] + (["--native-c"] if backend == "c" else []) + ["--no-warnings", "--tests", path]
+    env = dict(os.environ, LOFT_LEAK_CHECK="1", LOFT_TIMEOUT="900")
+    try:
+        done = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=1200, check=False)
+    except subprocess.TimeoutExpired:
+        return "no answer in 1200 s"
+    return done.stdout + done.stderr
+
+
+def run_program(backend, cells, tmp, tag):
+    """Run `cells` (all of one collection kind) as one program.  Returns, per cell name,
+    ("REFUSED", message) | ("LOST", last output) | ("RAN", count, log, dump, test failure)."""
+    results, pending, turn = {}, list(cells), 0
+    while pending:
+        turn += 1
+        text, spans = program(pending[0]["kind_type"], pending)
+        path = os.path.join(tmp, f"{tag}_{turn}.loft")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+        out = invoke(backend, path)
+        refused = {}
+        for message, line in re.findall(r"^\s*Error(?:\[[\w-]+\])?: (.*) at \S+?:(\d+):\d+\s*$", out, re.M):
+            for cell, (first, last, _) in zip(pending, spans):
+                if first <= int(line) <= last:
+                    refused.setdefault(cell["name"], message)
+        if refused:
+            for name, message in refused.items():
+                results[name] = ("REFUSED", message)
+            pending = [c for c in pending if c["name"] not in refused]
+            continue
+        failed = dict(re.findall(r"^\s*FAIL\s+\S+::(test_c\d+)\s+—\s+(.*)$", out, re.M))
+        lost = []
+        for cell, (_, _, fn) in zip(pending, spans):
+            m = re.search(r"^%s c=(\d+) log=<(.*?)> \| (.*)$" % re.escape(cell["name"]), out, re.M)
+            if m:
+                results[cell["name"]] = ("RAN", int(m.group(1)), m.group(2), m.group(3), failed.get(fn))
+            elif fn in failed:
+                results[cell["name"]] = ("LOST", failed[fn])
+            else:
+                lost.append(cell)
+        if len(lost) == 1 and len(pending) == 1:
+            tail = [ln for ln in out.splitlines() if ln.strip()][-3:]
+            results[lost[0]["name"]] = ("LOST", " / ".join(tail)[:300] or "no output")
+        elif lost:                      # something took the program down: halve to find it
+            half = (len(lost) + 1) // 2
+            for n, part in enumerate((lost[:half], lost[half:])):
+                if part:
+                    results.update(run_program(backend, part, tmp, f"{tag}_{turn}{'ab'[n]}"))
+        break
+    return results
+
+
+def run_backend(backend, cells, tmp):
+    chunks = []
+    for kind_type in sorted({c["kind_type"] for c in cells}):
+        mine = [c for c in cells if c["kind_type"] == kind_type]
+        chunks += [mine[n:n + CHUNK] for n in range(0, len(mine), CHUNK)]
+    results = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(2, (os.cpu_count() or 4) // 2)) as pool:
+        futures = [pool.submit(run_program, backend, chunk, tmp, f"{backend}{n}")
+                   for n, chunk in enumerate(chunks)]
+        for f in futures:
+            results.update(f.result())
+    return results
+
+
+def verdict(cell, results):
+    """(verdict, reason) of one cell on one backend: ok | FAIL | REFUSED."""
+    got = results.get(cell["name"])
+    if got is None:
+        return "FAIL", "the cell was not run"
+    if got[0] == "REFUSED":
+        return "REFUSED", got[1]
+    if got[0] == "LOST":
+        return "FAIL", f"the cell did not finish: {got[1]}"
+    _, count, log, dump, failure = got
+    if count != cell["want"]:
+        return "FAIL", f"the operand ran {count} time(s), the slot says {cell['want']}"
+    if cell["log"] is not None and log != cell["log"]:
+        return "FAIL", f"the operands ran in the order {log}, the source order is {cell['log']}"
+    base = results.get(cell["base"])
+    if base and base[0] == "RAN" and base[3] != dump:
+        how = "its operand bound to a local first" if cell["base"].endswith(".twin") else "a plain variable"
+        return "FAIL", f"the result differs from the same statement with {how}"
+    if failure:
+        return "FAIL", ("a store is left behind: " if "not freed" in failure else "") + failure
+    return "ok", dump
+
+
+def run_matrix(cells, backends, verbose):
+    """Run the cells; print what is not ok.  Returns the number of failing cells and slots."""
     with tempfile.TemporaryDirectory(prefix="slot_matrix.") as tmp:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count() or 4) as pool:
-            return list(pool.map(run_cell, [(n, s, w, tmp) for n, s, w, _ in jobs]))
+        interp = run_backend("interp", cells, tmp)
+        per = {"interp": interp}
+        if "c" in backends:
+            accepted = [c for c in cells if interp.get(c["name"], ("",))[0] != "REFUSED"]
+            per["c"] = run_backend("c", accepted, tmp)
+    tally = {"ok": 0, "FAIL": 0, "REFUSED": 0}
+    accepted_per_slot, causes = {}, {}
+    for cell in cells:
+        accepted_per_slot.setdefault(cell["slot"], 0)
+        lines, worst = [], "ok"
+        for backend in ("interp", "c"):
+            if backend not in per:
+                continue
+            if backend == "c" and worst == "REFUSED":
+                continue
+            v, why = verdict(cell, per[backend])
+            if backend == "c" and v == "REFUSED":
+                v, why = "FAIL", f"only the C backend refuses it: {why}"
+            if v != "ok":
+                lines.append((backend, v, why))
+                worst = v if worst == "ok" or v == "FAIL" else worst
+        tally[worst] += 1
+        if worst != "REFUSED":
+            accepted_per_slot[cell["slot"]] += 1
+        for backend, v, why in lines:
+            if v == "FAIL":
+                causes.setdefault((cell["slot"], re.sub(r"\d+ time", "N time", why)[:90]), []).append(cell["name"])
+            if v == "FAIL" or verbose:
+                print(f"{v:8} {cell['name']} [{backend}]: {why[:200]}")
+        if worst == "ok" and verbose:
+            print(f"ok       {cell['name']}")
+    vacuous = sorted(s for s, n in accepted_per_slot.items() if n == 0)
+    for s in vacuous:
+        print(f"VACUOUS  {s}: no cell of this slot compiled, so it checks nothing")
+    if causes:
+        print("failing cells by slot and reason:")
+        for (slot, why), names in sorted(causes.items()):
+            print(f"  {len(names):4}  {slot}: {why}")
+    orders = sum(1 for c in cells if c["log"] is not None)
+    print(f"slot_matrix: {len(cells)} cells ({orders} check order) on {' and '.join(per)}: "
+          f"{tally['ok']} ok, {tally['FAIL']} failing, {tally['REFUSED']} refused, "
+          f"{len(vacuous)} slot(s) vacuous  [{loft_binary()}]")
+    return tally["FAIL"] + len(vacuous)
+
+
+def backends_of(args):
+    return ("interp", "c") if args.backend == "both" else (args.backend,)
 
 
 def cmd_run(args):
@@ -345,23 +541,8 @@ def cmd_run(args):
     if problems:
         print("\n".join(problems))
         return 1
-    jobs = list(cells(slots, fillers, args.filler, set(args.slot), args.kind))
-    results = run_jobs(jobs)
-    accepted = {}
-    tally = {"ok": 0, "FAIL": 0, "REFUSED": 0}
-    for (name, _, _, slot_id), (_, verdict, detail) in zip(jobs, results):
-        tally[verdict] += 1
-        accepted.setdefault(slot_id, 0)
-        if verdict != "REFUSED":
-            accepted[slot_id] += 1
-        if verdict != "ok" or args.verbose:
-            print(f"{verdict:8} {name}: {detail}")
-    vacuous = sorted(s for s, n in accepted.items() if n == 0)
-    for s in vacuous:
-        print(f"VACUOUS  {s}: no cell of this slot compiled, so it checks nothing")
-    print(f"slot_matrix run: {len(jobs)} cells, {tally['ok']} ok, {tally['FAIL']} failing, "
-          f"{tally['REFUSED']} refused, {len(vacuous)} slot(s) vacuous  [{loft_binary()}]")
-    return 1 if tally["FAIL"] or vacuous else 0
+    cells = make_cells(slots, fillers, args.filler, set(args.slot), args.kind)
+    return 1 if run_matrix(cells, backends_of(args), args.verbose) else 0
 
 
 def cmd_fillers(args):
@@ -370,27 +551,8 @@ def cmd_fillers(args):
     if problems:
         print("\n".join(problems))
         return 1
-    by_id = {s["id"]: s for s in slots}
-    prelude = open(PRELUDE, encoding="utf-8").read()
-    jobs = []
-    for f in fillers:
-        slot = by_id[NEUTRAL[f["type"]]]
-        name = f"filler.{f['id']}"
-        want = 0 if f["id"].endswith("-var") else 1
-        jobs.append((name, cell_source(prelude, slot, f, KINDS[0][1], name), want, f["type"]))
-    results = dict((n, (v, d)) for n, v, d in run_jobs(jobs))
-    bad = 0
-    for f in fillers:
-        verdict, detail = results[f"filler.{f['id']}"]
-        plain = results[f"filler.{f['type']}-var"]
-        if verdict == "ok" and detail != plain[1]:
-            verdict, detail = "FAIL", "it gives another value than its type's variable"
-        if verdict != "ok":
-            bad += 1
-        if verdict != "ok" or args.verbose:
-            print(f"{verdict:8} {f['id']}: {detail[:160]}")
-    print(f"slot_matrix fillers: {len(fillers)} fillers, {bad} not usable  [{loft_binary()}]")
-    return 1 if bad else 0
+    cells = make_cells(slots, fillers, "all", set(NEUTRAL.values()), KINDS[0][0])
+    return 1 if run_matrix(cells, backends_of(args), args.verbose) else 0
 
 
 def main():
@@ -400,10 +562,12 @@ def main():
     sub.add_parser("selftest").set_defaults(fn=cmd_selftest)
     sub.add_parser("list").set_defaults(fn=cmd_list)
     p = sub.add_parser("fillers")
+    p.add_argument("--backend", choices=("interp", "c", "both"), default="interp")
     p.add_argument("-v", "--verbose", action="store_true")
     p.set_defaults(fn=cmd_fillers)
     p = sub.add_parser("run")
     p.add_argument("--filler", default="var", help="`var` (default), `all`, or one filler id")
+    p.add_argument("--backend", choices=("interp", "c", "both"), default="interp")
     p.add_argument("--slot", action="append", default=[], help="one slot id; may repeat")
     p.add_argument("--kind", choices=[k for k, _ in KINDS])
     p.add_argument("-v", "--verbose", action="store_true")

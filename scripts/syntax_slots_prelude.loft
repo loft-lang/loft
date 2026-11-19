@@ -2,30 +2,43 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // The fixed world every slot-matrix cell runs in (@PLN221, scripts/slot_matrix.py).
-// `KIND` is replaced by the collection type the cell is generated for; `// DECL`, `// STMT`
-// and `CELL` by the cell's own declaration, statement and name.  A filler is a call into
-// one of the functions below: each bumps the counter it is handed, so the cell can say how
-// often the operand ran.  The values are chosen so that every filler of a type gives the
-// same answer as that type's plain variable.
+// The text above the `=== CELL ===` line is written once into a generated program, with
+// `KIND` replaced by the collection type the program is generated for.  The text below it
+// is written once per cell, with `CELLDECL` and `CELLSTMT` replaced by the cell's
+// declaration and statement, and `CELLFN` and `CELLNAME` by its function and its name.
+//
+// A filler is a call into one of the functions below.  Each one that stands in a slot bumps
+// the counter it is handed and writes `S` into its log, so the cell can say how often and
+// when the operand ran.  The `o…` functions stand in for the plain variables of a statement
+// when the cell checks ORDER: they write their own letter and count nothing.  The values
+// are chosen so that every filler of a type gives the same answer as that type's variable.
 
 struct P { k: integer, t: text }
 enum Col { Red, Green, Blue }
 struct W { n: integer, t: text, f: float, ok: boolean, tag: Col, items: KIND }
 struct Hold { ws: vector<W>, v: vector<integer>, ones: vector<integer> }
-struct Ctr { calls: integer = 0 }
+struct Ctr { calls: integer = 0, log: text = "" }
 
-fn mk(c: Ctr) -> KIND { c.calls += 1; [P { k: 1, t: "a" }, P { k: 2, t: "b" }, P { k: 3, t: "c" }] }
-fn mkv(c: Ctr) -> vector<integer> { c.calls += 1; [10, 20, 30, 40] }
-fn box(c: Ctr, h: Hold) -> W { c.calls += 1; h.ws[0] }
-fn held(c: Ctr, h: Hold) -> Hold { c.calls += 1; h }
-fn at(c: Ctr, i: integer) -> integer { c.calls += 1; i }
-fn tx(c: Ctr) -> text { c.calls += 1; "abc" }
-fn txz(c: Ctr) -> text { c.calls += 1; "zabc" }
-fn yes(c: Ctr, b: boolean) -> boolean { c.calls += 1; b }
-fn flo(c: Ctr) -> float { c.calls += 1; 1.5 }
-fn col(c: Ctr) -> Col { c.calls += 1; Green }
+fn bump(c: Ctr) { c.calls += 1; c.log += "S"; }
+fn mk(c: Ctr) -> KIND { bump(c); [P { k: 1, t: "a" }, P { k: 2, t: "b" }, P { k: 3, t: "c" }] }
+fn mkv(c: Ctr) -> vector<integer> { bump(c); [10, 20, 30, 40] }
+fn box(c: Ctr, h: Hold) -> W { bump(c); h.ws[0] }
+fn held(c: Ctr, h: Hold) -> Hold { bump(c); h }
+fn at(c: Ctr, i: integer) -> integer { bump(c); i }
+fn tx(c: Ctr) -> text { bump(c); "abc" }
+fn txz(c: Ctr) -> text { bump(c); "zabc" }
+fn yes(c: Ctr, b: boolean) -> boolean { bump(c); b }
+fn flo(c: Ctr) -> float { bump(c); 1.5 }
+fn col(c: Ctr) -> Col { bump(c); Green }
+fn oi(c: Ctr) -> integer { c.log += "i"; 1 }
+fn oj(c: Ctr) -> integer { c.log += "j"; 3 }
+fn ob(c: Ctr) -> boolean { c.log += "b"; true }
+fn onb(c: Ctr) -> boolean { c.log += "n"; false }
+fn ox(c: Ctr) -> text { c.log += "x"; "abc" }
+fn ofl(c: Ctr) -> float { c.log += "f"; 1.5 }
+fn oen(c: Ctr) -> Col { c.log += "e"; Green }
 fn inc1(a: integer) -> integer { a + 1 }
-fn pickfn(c: Ctr) -> fn(integer) -> integer { c.calls += 1; inc1 }
+fn pickfn(c: Ctr) -> fn(integer) -> integer { bump(c); inc1 }
 fn add2(a: integer, b: integer) -> integer { a * 10 + b }
 fn dflt(a: integer, b: integer = 5) -> integer { a * 10 + b }
 fn total(self: W) -> integer { self.n + len(self.items) }
@@ -53,15 +66,15 @@ fn show_h(h: Hold) -> text {
   for w in h.ws { out += show_w(w); }
   "{out} {h.v} {h.ones}"
 }
-// DECL
-
-fn main() {
-  c = Ctr {}; d = Ctr {}; h = hold();
+// === CELL ===
+CELLDECL
+fn CELLFN() {
+  c = Ctr {}; h = hold();
   i = 1; j = 3; b = true; nb = false; x = "abc"; fl = 1.5; en = Green; fnv = inc1;
   vi = [10, 20, 30, 40];
   xs = mk(Ctr {});
   r = W { n: 1, t: "abc", f: 1.5, ok: true, tag: Green, items: [P { k: 1, t: "a" }, P { k: 2, t: "b" }, P { k: 3, t: "c" }] };
   s = 0; o = "";
-// STMT
-  println("CELL c={c.calls} d={d.calls} | s={s} o={o} i={i} j={j} b={b} nb={nb} x={x} fl={fl} en={en} f={fnv(1)} vi={vi} xs={show(xs)} r={show_w(r)} h={show_h(h)}");
+  CELLSTMT
+  println("CELLNAME c={c.calls} log=<{c.log}> | s={s} o={o} i={i} j={j} b={b} nb={nb} x={x} fl={fl} en={en} f={fnv(1)} vi={vi} xs={show(xs)} r={show_w(r)} h={show_h(h)}");
 }
