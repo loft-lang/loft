@@ -225,7 +225,8 @@ pub fn vector_slice(e: el::El, vars: el_vars::Vars, x: Ex, lo: vector<integer>, 
   }
   // (A FIELD of records is the same loop, the field read written out again as the subject.)
   heap_elem = (sv >= 0 || (place && !(elem is TyText))) && (elem is TyText || (struct_ref(e, elem) >= 0 && !(elem is TyOptional) && el::def(e, struct_ref(e, elem)).def_type == el::DT_STRUCT && !starts_with(el::def(e, struct_ref(e, elem)).name, "__")));
-  if (sv < 0 && !place) || x.tp is TyOptional || !(is_scalar(elem) || heap_elem) {
+  nested = sv >= 0 && held < 0 && el_types::base(elem) is TyVector && !(elem is TyOptional);
+  if (sv < 0 && !place) || x.tp is TyOptional || !(is_scalar(elem) || heap_elem || nested) {
     el::refuse(e, "a slice of a vector that is no local of plain scalars");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
@@ -349,7 +350,13 @@ pub fn slice_read(e: el::El, vars: el_vars::Vars, st: SliceStart) -> ir::Node? {
   if record {
     size = record_size(e, st.elem);
   }
-  if hiv < 0 || nxt < 0 || size < 0 || (op == "" && !record) {
+  // An element that is a vector is read through its handle (`OpGetField(…, 0, <its type>)`),
+  // the read typed as the element is — with the element type's own borrow.
+  inner_vt = match el_types::base(st.elem) { TyVector { inner: vin } => if e.first_pass { -1 } else { vector_store(e, vin, el_types::elem_name(e, vin)) }, _ => -1 };
+  if inner_vt >= 0 {
+    size = 4;
+  }
+  if hiv < 0 || nxt < 0 || size < 0 || (op == "" && !record && inner_vt < 0) {
     return null;
   }
   n_v = ir::NdVar { n: nxt };
@@ -361,6 +368,9 @@ pub fn slice_read(e: el::El, vars: el_vars::Vars, st: SliceStart) -> ir::Node? {
   ], ir::TyInteger { spec: i32_spec() }, "Iter range");
   if record {
     return el_ir::v_block([el_ir::cl(e, "OpGetVectorNullable", [st.subj, ir::NdInt { n: size }, step])], el_types::with_deps(st.elem, []), "Vector Index");
+  }
+  if inner_vt >= 0 {
+    return el_ir::v_block([el_ir::cl(e, "OpGetField", [el_ir::cl(e, "OpGetVectorNullable", [st.subj, ir::NdInt { n: size }, step]), ir::NdInt { n: 0 }, ir::NdInt { n: inner_vt }])], st.elem, "Vector Index");
   }
   el_ir::v_block([elem_read(e, st.elem, el_ir::cl(e, "OpGetVectorNullable", [st.subj, ir::NdInt { n: size }, step]))], el_types::with_deps(st.elem, []), "Vector Index")
 }
@@ -467,7 +477,8 @@ pub fn slice_copy(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> ir::Node
   // (`Vector Index`), made through the local and written in — the local's elements, and the
   // element temp, borrowing the vector the slice reads.
   rsd = struct_ref(e, elem);
-  if elem is TyText || rsd >= 0 {
+  vec_elem = el_types::base(elem) is TyVector && !(elem is TyOptional);
+  if elem is TyText || rsd >= 0 || vec_elem {
     idx = -1;
     match init {
       NdInsert { items } => {
@@ -511,9 +522,11 @@ pub fn slice_copy(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> ir::Node
     el_vars::set_defined(vars, se);
     // (A DECLARED local keeps the element its declaration names: `s: vector<text> = big[0..2]`.)
     el_vars::set_var_type(vars, v, ir::TyVector { inner: if vars.annotated.contains(v) { elem } else { viewed }, dep: [db] });
-    el_vars::set_var_type(vars, elm_v, ir::TyReference { n: if rsd >= 0 { rsd } else { 0 }, dep: [db] });
+    el_vars::set_var_type(vars, elm_v, if vec_elem { el_types::with_deps(el_types::without_deps(elem), [db]) } else { ir::TyReference { n: if rsd >= 0 { rsd } else { 0 }, dep: [db] } });
     at = ir::NdVar { n: elm_v };
-    write = if rsd >= 0 { el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: se }, el_ir::cl(e, "OpGetField", [at, ir::NdInt { n: 0 }, ir::NdInt { n: rec }]), ir::NdInt { n: rec }]) } else { el_ir::cl(e, "OpSetText", [at, ir::NdInt { n: 0 }, ir::NdVar { n: se }]) };
+    // (A vector element is copied into the new element itself, typed as the inner vector.)
+    inner_vt = match el_types::base(elem) { TyVector { inner: vin } => vector_store(e, vin, el_types::elem_name(e, vin)), _ => -1 };
+    write = if vec_elem { el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: se }, at, ir::NdInt { n: inner_vt }]) } else if rsd >= 0 { el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: se }, el_ir::cl(e, "OpGetField", [at, ir::NdInt { n: 0 }, ir::NdInt { n: rec }]), ir::NdInt { n: rec }]) } else { el_ir::cl(e, "OpSetText", [at, ir::NdInt { n: 0 }, ir::NdVar { n: se }]) };
     steps = [
       el_ir::v_set(se, read!),
       el_ir::v_set(elm_v, el_ir::cl(e, "OpNewRecord", [ir::NdVar { n: v }, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }])),
