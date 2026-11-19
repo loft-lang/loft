@@ -948,6 +948,11 @@ impl Scopes<'_> {
                     }
                     kept[j] = true;
                     let Some(tp) = Self::operand_value_type(&ls[j], function, data) else {
+                        // A PLACE (`vi[at(c, 2)]` as the write's target) is a reference no temp
+                        // can hold, but its INDEX is a value: evaluated into a temp here, the
+                        // place keeps its turn ahead of the hoisted operations (loft#2582:
+                        // `vi[at(c, 2)] = box(c, h).n` ran the right side's lifted call first).
+                        self.lift_place_indices(&mut ls[j], preamble, function, data);
                         continue;
                     };
                     self.lift_counter += 1;
@@ -1137,6 +1142,47 @@ impl Scopes<'_> {
 
     /// The type of the temp that holds `operand`'s VALUE: a scalar or a text.  `None` for
     /// anything else, which is passed by reference and so has no value to take early.
+    /// `@FR-E-Left` for a PLACE operand: every index of a projection chain (`OpGetVector(v, size,
+    /// i)`, through further projections to the root) that runs a call is evaluated into a temp
+    /// pushed on `preamble`, in source order, and the place reads the temp.  The chain itself
+    /// stays in the operand, so the place is still the one the write addresses.
+    fn lift_place_indices(
+        &mut self,
+        place: &mut Value,
+        preamble: &mut Vec<Value>,
+        function: &mut Function,
+        data: &Data,
+    ) {
+        let target = match place {
+            Value::Span(b) => &mut b.1,
+            other => other,
+        };
+        let Value::Call(d, args) = target else {
+            return;
+        };
+        if !crate::use_analysis::is_projection_op(data, *d) {
+            return;
+        }
+        if let Some(base) = args.first_mut() {
+            self.lift_place_indices(base, preamble, function, data);
+        }
+        for arg in args.iter_mut().skip(1) {
+            let runs_a_call = arg.any_node(&mut |n| {
+                matches!(n, Value::Call(c, _) if !data.def(*c).name().starts_with("Op"))
+                    || matches!(n, Value::CallRef(..))
+            });
+            if !runs_a_call {
+                continue;
+            }
+            let Some(tp) = Self::operand_value_type(arg, function, data) else {
+                continue;
+            };
+            let tmp = self.new_lift_var(function, &tp);
+            let index = std::mem::replace(arg, Value::Var(tmp));
+            preamble.push(v_set(tmp, index));
+        }
+    }
+
     fn operand_value_type(operand: &Value, function: &Function, data: &Data) -> Option<Type> {
         let tp = match operand.unspan() {
             Value::Call(d, _) => data.def(*d).returned().clone(),
