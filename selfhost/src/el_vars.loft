@@ -270,6 +270,9 @@ pub struct Vars {
   // The bind of a compound assignment's place (`__place_N = <accessor>`), to stand ahead of
   // the statement it was lifted out of.
   pub place_setup: vector<ir::Node> = [],
+  // The local the `if` arm being copied out stands in, its condition having proved it present
+  // (`materialize_return_into`'s proven-present copy, `@FR-N-Road`); -1 for none.
+  pub copy_present: integer = -1,
   // The vector literal a first-pass assignment gives a FIELD whose `vector<T>` is not made
   // yet: its build registers no type (the end-of-file pass does).
   pub field_literal: integer = -1,

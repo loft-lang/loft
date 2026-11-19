@@ -3187,7 +3187,7 @@ pub fn copy_into_buffer(e: el::El, vars: el_vars::Vars, x: ir::Node, v: integer,
   b = ir::NdVar { n: buf };
   owned = el_types::with_deps(el_types::without_deps(el_types::base(ret)), [buf]);
   copy = el_ir::v_block([el_ir::v_set(buf, ir::NdNull), el_ir::cl(e, "OpDatabase", [b, kt]), el_ir::cl(e, "OpCopyRecord", [x, b, kt]), b], owned, "materialized_view_return");
-  if el_expressions::record_may_be_absent(vars, v, []) {
+  if v != vars.copy_present && el_expressions::record_may_be_absent(vars, v, []) {
     copy = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [ir::NdVar { n: v }]), el_ir::cl(e, "OpNullRefSentinel", []), copy);
   }
   copy
