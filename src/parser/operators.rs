@@ -2882,7 +2882,7 @@ impl Parser {
             // discharged, now non-null value (`x?.field`).  The lexer's greedy
             // two-char match means `??` never reaches here as two `?` tokens.
             if self.lexer.has_token("?") {
-                self.handle_default_fallback(var_tp, code, parent_tp, &mut t);
+                self.handle_default_fallback(var_tp, code, &mut t);
                 self.check_postfix(&recv, step, false, &Value::Null);
                 self.record_type_trace(&t);
                 continue;
@@ -2894,7 +2894,7 @@ impl Parser {
                     .text_between(&operand_start, &at)
                     .unwrap_or_else(|| "a value".to_string());
                 self.lexer.has_token("!");
-                self.handle_present(var_tp, code, parent_tp, &mut t, &shown, &at);
+                self.handle_present(var_tp, code, &mut t, &shown, &at);
                 self.check_postfix(&recv, step, false, &Value::Null);
                 self.record_type_trace(&t);
                 continue;
@@ -3798,7 +3798,6 @@ impl Parser {
         &mut self,
         var_tp: &Type,
         code: &mut Value,
-        parent_tp: &mut Type,
         precedence: usize,
         ctp: &mut Type,
         op_pos: &Position,
@@ -3951,7 +3950,7 @@ impl Parser {
             self.expression(&mut exit);
             self.null_coalesce_exit(code, ctp, &lhs_type, exit);
         } else {
-            self.build_null_coalesce_default(var_tp, code, parent_tp, precedence, ctp, &lhs_type);
+            self.build_null_coalesce_default(var_tp, code, precedence, ctp, &lhs_type);
         }
         // loft#1003 — the default is parsed, so the deletion now has an end.  Spelling it
         // here is what lets `loft fix` see this fix at all: it reports only fixes carrying
@@ -4412,13 +4411,12 @@ impl Parser {
         &mut self,
         var_tp: &Type,
         code: &mut Value,
-        parent_tp: &mut Type,
         precedence: usize,
         ctp: &mut Type,
         lhs_type: &Type,
     ) {
         let is_postfix = self.pending_default_src.is_some() || self.pending_default_rhs.is_some();
-        self.build_null_coalesce_default_inner(var_tp, code, parent_tp, precedence, ctp, lhs_type);
+        self.build_null_coalesce_default_inner(var_tp, code, precedence, ctp, lhs_type);
         self.last_place_discharge = is_postfix;
     }
 
@@ -4428,7 +4426,6 @@ impl Parser {
         &mut self,
         var_tp: &Type,
         code: &mut Value,
-        parent_tp: &mut Type,
         precedence: usize,
         ctp: &mut Type,
         lhs_type: &Type,
@@ -4480,10 +4477,20 @@ impl Parser {
         // would: a SOURCE (an empty collection `[]`, parsed HERE so its ownership
         // view-model matches the in-context `?? []`), or a PRE-BUILT value (scalars,
         // text, enum, record).
+        // loft#2567, `@FR-N-Default` — the default is an expression of its OWN, not a step of
+        // the subject's chain, so it parses under the parent a fresh expression has (`Null`).
+        // `parent_tp` is the chain's: after `r.nums()` it is the RECEIVER's type, and a `[…]`
+        // literal parsed under it took the receiver's deps (`Deps::frame(parent.depend())`),
+        // so it minted no store of its own — one function-wide `_vec_N` stood in for every
+        // evaluation.  A loop pass then appended to the previous pass's default
+        // (`for i in 0..3 { v = o.v?; v += [i] }` answered `[0][0,1][0,1,2]`), and an owned
+        // subject's `skip_free` below left it a null sentinel no append reached
+        // (`v = r.nums()?; v += [3]` answered `null`), both backends.
+        let mut rhs_parent = Type::Null;
         let rhs_type = if let Some(src) = self.pending_default_src.take() {
             let saved = std::mem::take(&mut self.lexer);
             self.lexer.parse_string(&format!("{src}\n"), "<x?-default>");
-            let t = self.parse_operators(rhs_hint, &mut rhs, parent_tp, precedence + 1);
+            let t = self.parse_operators(rhs_hint, &mut rhs, &mut rhs_parent, precedence + 1);
             self.lexer = saved;
             t
         } else if let Some((pending, pending_tp)) = self.pending_default_rhs.take() {
@@ -4505,7 +4512,7 @@ impl Parser {
             } else {
                 precedence
             };
-            self.parse_operators(rhs_hint, &mut rhs, parent_tp, rhs_precedence)
+            self.parse_operators(rhs_hint, &mut rhs, &mut rhs_parent, rhs_precedence)
         };
         // A default that never returns — `?? exit(1)`, `?? panic("…")` — is the absent case
         // stopping the program, the way `?? return` leaves the function and `?? break` the
@@ -5149,7 +5156,6 @@ impl Parser {
         &mut self,
         var_tp: &Type,
         code: &mut Value,
-        parent_tp: &mut Type,
         ctp: &mut Type,
     ) {
         // The subject of a postfix `?` is read through its tag first, as a `??` subject is:
@@ -5251,14 +5257,7 @@ impl Parser {
             *ctp = base;
             let lhs_type = ctp.clone();
             self.pending_default_src = Some("[]".to_string());
-            self.build_null_coalesce_default(
-                var_tp,
-                code,
-                parent_tp,
-                OPERATORS.len(),
-                ctp,
-                &lhs_type,
-            );
+            self.build_null_coalesce_default(var_tp, code, OPERATORS.len(), ctp, &lhs_type);
             return;
         }
         let Some((default, default_tp)) = self.build_default(&base) else {
@@ -5286,7 +5285,7 @@ impl Parser {
         let lhs_type = ctp.clone();
         self.pending_default_rhs = Some((default, default_tp));
         // The precedence is irrelevant — the right operand is pre-built, never parsed.
-        self.build_null_coalesce_default(var_tp, code, parent_tp, OPERATORS.len(), ctp, &lhs_type);
+        self.build_null_coalesce_default(var_tp, code, OPERATORS.len(), ctp, &lhs_type);
     }
 
     /// `@FR-N-Present`, @C160 — the postfix discharge with no default, `e!`: the value of a present
@@ -5298,7 +5297,6 @@ impl Parser {
         &mut self,
         var_tp: &Type,
         code: &mut Value,
-        parent_tp: &mut Type,
         ctp: &mut Type,
         shown: &str,
         at: &crate::lexer::Position,
@@ -5344,7 +5342,7 @@ impl Parser {
         *ctp = base;
         let lhs_type = ctp.clone();
         self.pending_default_rhs = Some((halt, Type::Void));
-        self.build_null_coalesce_default(var_tp, code, parent_tp, OPERATORS.len(), ctp, &lhs_type);
+        self.build_null_coalesce_default(var_tp, code, OPERATORS.len(), ctp, &lhs_type);
     }
 
     /// The discriminant of `target` when `src as target` casts a struct-enum value to one of
@@ -5676,7 +5674,7 @@ impl Parser {
         }
         // @F2 — ?? null-coalescing operator (incl. `?? return`)
         if operator == "??" {
-            self.handle_null_coalesce(var_tp, code, parent_tp, precedence, ctp, op_pos);
+            self.handle_null_coalesce(var_tp, code, precedence, ctp, op_pos);
         // @F5 — type conversions: explicit `as` cast (+ implicit / format-only OpConv*)
         } else if operator == "as" {
             self.expr_not_null = false;
@@ -6158,7 +6156,7 @@ impl Parser {
                         }
                         let mut defaulted = Type::optional(rt.clone());
                         self.expr_not_null = false;
-                        self.handle_default_fallback(var_tp, code, parent_tp, &mut defaulted);
+                        self.handle_default_fallback(var_tp, code, &mut defaulted);
                         rt = defaulted;
                     }
                 }
@@ -6266,7 +6264,7 @@ impl Parser {
                         } else {
                             let mut defaulted = Type::optional(rt.clone());
                             self.expr_not_null = false;
-                            self.handle_default_fallback(var_tp, code, parent_tp, &mut defaulted);
+                            self.handle_default_fallback(var_tp, code, &mut defaulted);
                             rt = defaulted;
                         }
                     }

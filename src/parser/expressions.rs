@@ -7517,9 +7517,8 @@ use a separate collection or add after the loop"
                     // `Shape`'s first variant, not `Circle`'s zero.  A variant's value is a
                     // `Shape` value, so reading it as `Shape?` changes no representation; the
                     // value keeps its own deps, which say whose store it is to free.
-                    let mut parent = Type::Null;
                     let mut tp = Type::Optional(Box::new(slot_tp.base().with_deps_of(&inner)));
-                    self.handle_default_fallback(slot_tp, code, &mut parent, &mut tp);
+                    self.handle_default_fallback(slot_tp, code, &mut tp);
                     s_type = tp;
                 }
             }
