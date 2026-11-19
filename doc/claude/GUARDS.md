@@ -61,19 +61,21 @@ failure rate.  Sequence the steps deterministically (drive the second event from
 first's callback), exit on a **condition** under a deadline, and **assert the sequencing**
 (`attempts == 2`) — or the test passes for a reader that never re-read at all.
 
-### `assert`'s message runs too
+### `assert`'s message runs only when the assertion fails
 
-`assert(cond, msg)` is an ordinary call, so **both** arguments are evaluated
-([formal/calls.md](formal/calls.md) `F-Args`).  A side-effecting call written in the condition
-and again in the message runs **twice**:
+`assert(cond, msg)` evaluates `cond` once, and `msg` only when `cond` is false: a call
+written in the message does not run for an assertion that holds, on either backend.  (The
+release of 2026-10-01 still evaluated both, as an ordinary call's arguments.)  Two things
+follow for a test:
 
-```loft
-c: vector<integer> = [0];
-assert(bump(c) == 5, "got {bump(c)}");   // c[0] is now 2, not 1
-assert(c[0] == 1, "…ran once");          // fails, and the fix is not here
-```
+- a message that would crash, or that reads something already released, stays hidden until
+  the assertion fails — and then it is the message that is reported, not the assertion;
+- a side effect written in the message cannot be relied on to have happened.
 
-Bind first (`got = bump(c); assert(got == 5, "got {got}")`).
+Bind what the message shows first (`got = bump(c); assert(got == 5, "got {got}")`).  No
+formal rule states this yet; the slot matrix holds the behaviour (`ct-assert`,
+`ct-assert-message` in `scripts/syntax_slots.tsv`) and
+[plans/221-slot-walk/found.md](plans/221-slot-walk/found.md) lists it for the rules.
 
 ### Backend divergence: the differential check is the instrument
 
