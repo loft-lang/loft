@@ -3541,7 +3541,18 @@ pub fn arm_delivery(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer,
   b = ir::NdVar { n: rb };
   if param {
     own = el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb]);
-    bl.operators[-1] = el_ir::v_block([el_ir::cl(e, "OpClearVector", [b]), el_ir::cl(e, "OpAppendVector", [b, tail, ir::NdInt { n: rec }]), b], own, "borrow_tail_copy_104");
+    copy_in = el_ir::v_block([el_ir::cl(e, "OpClearVector", [b]), el_ir::cl(e, "OpAppendVector", [b, tail, ir::NdInt { n: rec }]), b], own, "borrow_tail_copy_104");
+    // A NULLABLE answer is copied where present (loft30-gate e2652f44a): the view held in a
+    // skip-free `_fwd_elm_N`, answered as it is where null.
+    if result is TyOptional {
+      fwd = el_vars::create_unique(vars, "fwd_elm", el_types::without_deps(el_types::base(result)));
+      el_vars::set_defined(vars, fwd);
+      vars.vars[fwd].skip_free = true;
+      fv = ir::NdVar { n: fwd };
+      inner = el_ir::v_block([el_ir::cl(e, "OpClearVector", [b]), el_ir::cl(e, "OpAppendVector", [b, fv, ir::NdInt { n: rec }]), b], own, "borrow_tail_copy_104");
+      copy_in = el_ir::v_block([el_ir::v_set(fwd, tail), el_ir::v_if(el_ir::cl(e, "OpVectorIsNull", [fv]), fv, inner)], own, "borrow_tail_copy_104");
+    }
+    bl.operators[-1] = copy_in;
     if result is TyOptional && !((bl.result[0] ?? ir::TyVoid) is TyOptional) {
       bl.result = [ir::TyOptional { inner: bl.result[0] ?? ir::TyVoid }];
     }
