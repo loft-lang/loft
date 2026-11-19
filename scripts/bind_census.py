@@ -27,6 +27,9 @@ import sys
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
 
+# An arm is its lowering's name and its facts, joined by this separator (not a path).
+ARM_SEP = "/"
+
 WRITER_ENV = {"c": ("--native-c", "LOFT_TRACE_BIND_C"), "native": ("--native", "LOFT_TRACE_BIND_NATIVE")}
 
 
@@ -51,9 +54,9 @@ def rows(path):
                 facts = [
                     w
                     for w in words
-                    if w.startswith(("b2=", "mint=", "srcfree=")) and "/" not in w
+                    if w.startswith(("b2=", "mint=", "srcfree=")) and ARM_SEP not in w
                 ]
-                arm = "/".join([name] + facts)
+                arm = ARM_SEP.join([name] + facts)
                 out[(fn, var)].append((kind, site, arm))
     except OSError:
         pass
@@ -115,8 +118,8 @@ def expected_c(kind, arm):
     """The C arms that agree with interpreter arm `arm`, or None when it is not classified."""
     hit = C_EXPECTED.get((kind, arm))
     if hit is None:
-        parts = arm.split("/")
-        starred = "/".join(["*" if p.startswith("b2=") else p for p in parts])
+        parts = arm.split(ARM_SEP)
+        starred = ARM_SEP.join(["*" if p.startswith("b2=") else p for p in parts])
         hit = C_EXPECTED.get((kind, starred))
     return hit
 
