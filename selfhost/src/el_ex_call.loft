@@ -1655,9 +1655,15 @@ pub fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::N
     vars.vars[buf].caller_hidden_buf = true;
     args = list + [ir::NdVar { n: buf }];
     ds: vector<integer> = [];
-    // (A callee the port refused keeps the first pass's borrows Rust's second pass prunes:
-    // its call lends nothing through them.)
-    refused_callee = len([for ri in e.refused_in if ri.fname == def.name { 1 }]) > 0;
+    // (A callee the port refused whose result borrows its hidden buffer RENAMED onto a local
+    // (`r`, not `__retbuf` or a `__ref_N`) BESIDE a
+    // visible parameter keeps the first pass's borrow that Rust's second pass prunes — the
+    // answer is copied out of the buffer, `ref_return`'s D-own-2 — so its call lends nothing
+    // through them.  One that only views its parameters keeps them, as Rust does.)
+    rdeps = el_types::deps(rp);
+    hidden_dep = len([for hd in rdeps if hd < len(def.attributes) && def.attributes[hd].hidden && !starts_with(def.attributes[hd].name, "__") { 1 }]) > 0;
+    visible_dep = len([for vd in rdeps if vd < len(def.attributes) && !def.attributes[vd].hidden { 1 }]) > 0;
+    refused_callee = hidden_dep && visible_dep && len([for ri in e.refused_in if ri.fname == def.name { 1 }]) > 0;
     // An argument that is a variable is borrowed itself; any other value lends what its own
     // type borrows (a literal its store, `resolve_deps`) — except into a `τ?` result, whose
     // borrows Rust keeps only for variables (1a-parser.md § Rust accidents).

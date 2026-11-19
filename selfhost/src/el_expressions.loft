@@ -697,7 +697,7 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
         // (An `if` of parameter views beside a call arm keeps its then arm's type, whatever the
         // signature merged: `view_join_type`.)
         vjl = if len(bl.operators) > 0 { el_ir::unspan(el_ir::last(bl.operators)) } else { ir::NdNull };
-        vjt = if vjl is NdIf && el_ex_null::view_leaves(e, vars, vjl) { el_ex_null::view_join_type(e, vjl) } else { null };
+        vjt = if vjl is NdIf && el_ex_null::view_leaves(e, vars, vjl) { el_ex_null::view_join_type(e, vars, vjl) } else { null };
         bl.result = [if vjt != null { vjt! } else if arms_answer { el_types::with_deps(result, ad ?? el_types::deps(result)) } else { rt0 }];
         code = ir::NdBlock { block: [bl] };
       },

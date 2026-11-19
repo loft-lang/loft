@@ -2966,7 +2966,7 @@ pub fn merge_view_call(e: el::El, vars: el_vars::Vars, code: ir::Node) -> ir::No
       }
       // (The merge is the signature's: the body keeps the join's own type — set below, once
       // the signature has read the join's borrows.)
-      then_tp = view_join_type(e, el_ir::unspan(bl.operators[-1]));
+      then_tp = view_join_type(e, vars, el_ir::unspan(bl.operators[-1]));
     },
     _ => return null
   }
@@ -3057,11 +3057,18 @@ fn keyed_field_read(e: el::El, n: ir::Node) -> boolean {
 // The type a tail `if` of parameter views keeps for the body, where it is not the union of its
 // arms' borrows: beside an else arm ending in a call (`fe(b, a, n - 1)`), the then arm's; a read
 // there (`v[0]`) joins the body's type as it joins the signature (null: keep the join's).
-pub fn view_join_type(e: el::El, n: ir::Node) -> ir::TypeT? {
+pub fn view_join_type(e: el::El, vars: el_vars::Vars, n: ir::Node) -> ir::TypeT? {
   match n {
     NdIf { cond: _, t, f } => {
-      et = el_ir::unspan(f);
-      match et { NdBlock { block: eb } => { if len(eb[0].operators) > 0 { et = el_ir::unspan(eb[0].operators[-1]); } }, _ => {} }
+      // (Only the parameter-view merge: the then arm answers a visible parameter.  Arms that
+      // build into the return buffer — `id(g(3))` — keep the return's type.)
+      tt0 = el_ir::unspan(t);
+      tt = match tt0 { NdBlock { block: tb0 } => if len(tb0[0].operators) > 0 { el_ir::unspan(tb0[0].operators[-1]) } else { tt0 }, _ => tt0 };
+      if !(match tt { NdVar { n: tv } => vars.vars[tv].argument && !hidden_param(e, vars, tv), _ => false }) {
+        return null;
+      }
+      et0 = el_ir::unspan(f);
+      et = match et0 { NdBlock { block: eb } => if len(eb[0].operators) > 0 { el_ir::unspan(eb[0].operators[-1]) } else { et0 }, _ => et0 };
       calls_fn = match et { NdCall { def_nr: ed } => !starts_with(el::def(e, ed).name, "Op"), _ => false };
       if !calls_fn {
         return null;
