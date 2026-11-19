@@ -61,7 +61,7 @@ OUTSIDE_TSV = os.path.join(HERE, "syntax_outside.tsv")
 PRELUDE = os.path.join(HERE, "syntax_slots_prelude.loft")
 
 COUNTS = ("once", "cond", "step")
-TYPES = ("int", "bool", "text", "float", "rec", "coll", "vint", "enum", "fn")
+TYPES = ("int", "bool", "text", "float", "rec", "coll", "vint", "enum", "fn", "nrec", "nitem")
 FAMILIES = ("iteration", "write", "read", "call", "operator", "control", "construct")
 # The collection kinds a `coll` slot is generated for.  A slot of another type runs in the
 # first one only: the kind changes nothing it reads.
@@ -69,9 +69,11 @@ KINDS = (("vector", "vector<P>"), ("sorted", "sorted<P[k]>"),
          ("index", "index<P[k]>"), ("hash", "hash<P[k]>"))
 # The slot each type's fillers are tried in by `fillers`: one that reads the value and
 # writes nothing else.
+KINDED = ("coll", "nitem")
 NEUTRAL = {"int": "wr-var", "bool": "ct-if", "text": "op-concat", "float": "op-as",
            "rec": "rd-field", "coll": "rd-len", "vint": "it-for-vint",
-           "enum": "ct-match-enum", "fn": "ca-callee"}
+           "enum": "ct-match-enum", "fn": "ca-callee",
+           "nrec": "rd-coal-rec-left", "nitem": "rd-coal-item-left"}
 OUTSIDE_CLASSES = ("none:", "decl:", "unreached:")
 SLOT = "<S>"
 COUNTER = "<C>"
@@ -343,7 +345,7 @@ def make_cells(slots, fillers, which_filler, which_slot, which_kind):
     for slot in slots:
         if which_slot and slot["id"] not in which_slot:
             continue
-        kinds = KINDS if slot["type"] == "coll" else KINDS[:1]
+        kinds = KINDS if slot["type"] in KINDED else KINDS[:1]
         for kind, kind_type in kinds:
             if which_kind and kind != which_kind:
                 continue
@@ -382,6 +384,7 @@ def program(kind_type, cells):
     and the lines it occupies."""
     head, _, body = open(PRELUDE, encoding="utf-8").read().partition("// === CELL ===\n")
     text = head.replace("KIND", kind_type)
+    body = body.replace("KIND", kind_type)
     spans = []
     for n, cell in enumerate(cells):
         fn = f"test_c{n:04d}"

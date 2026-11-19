@@ -61,3 +61,9 @@ enum-field	enum	box(<C>, h).tag
 enum-match	enum	match at(<C>, 2) { 2 => Green, _ => Red }
 fn-var	fn	fnv
 fn-call	fn	pickfn(<C>)
+nrec-var	nrec	h.ws[0]
+nrec-elem	nrec	h.ws[at(<C>, 0)]
+nrec-tuple-call	nrec	pairw(<C>).0
+nitem-var	nitem	xs[2]
+nitem-key	nitem	xs[at(<C>, 2)]
+nitem-tuple-member	nitem	tk.0[at(<C>, 2)]
