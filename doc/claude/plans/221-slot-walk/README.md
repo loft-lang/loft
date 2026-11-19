@@ -127,6 +127,10 @@ those is tens, not hundreds: the pilot's 30 failing cells were four causes.
 
 ## What is built
 
+**The defects the matrix reports today, for whoever fixes them: [found.md](found.md)** —
+thirteen folds, each with the command that shows it.  The fixes are another agent's work;
+this plan's own work is the tooling.
+
 Phases A and B, with their measurements and the ten causes the first runs found, are in
 [built.md](built.md).  What the back-walk over past defects added — two axes, the `walk`
 command, the reach ledger — is in [REACH.md](REACH.md).
@@ -205,8 +209,8 @@ fix is then checked by cells that already exist.
 9. **G9 — a probe, before it is planned:** which IR operations the corpus produces and no
    cell of the matrix does.  If `loft introspect` gives that histogram cheaply, the gaps
    name missing rows without anyone reading an issue.
-10. **C — the fixes**, in the order of [built.md](built.md): the lost write first.  Phase
-    C's families follow the yield: iteration, write places, reads, the rest.
+10. **C — the fixes** are handed off: [found.md](found.md) is the list, the lost write
+    first, and each fix removes its lines from the gate's baseline.
 11. **E — the cells as input to the two-implementation comparison**, when the port's
     harness takes generated programs.
 
