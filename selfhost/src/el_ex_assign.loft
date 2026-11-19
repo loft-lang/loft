@@ -1323,6 +1323,13 @@ pub fn tuple_lit(e: el::El, vars: el_vars::Vars, elems: vector<integer>) -> Ex {
       tps += [ir::TyNull];
       continue;
     }
+    // Anywhere else a `null` member leaves the tuple OPEN (`(null, integer)`, loft#1682): the
+    // join with a sibling arm names it (`join_tuple_arms`).
+    if x.tp is TyNull {
+      items += [ir::NdNull];
+      tps += [ir::TyNull];
+      continue;
+    }
     // A nullable plain scalar is held as it is: its null is the scalar's own sentinel.
     nullable_scalar = match x.tp { TyOptional { inner } => is_scalar(inner), _ => false };
     // A vector LITERAL member is its value block (`Vector`), the tuple holding the vector.
@@ -1629,7 +1636,7 @@ pub fn tuple_get(e: el::El, vars: el_vars::Vars, te: integer?, index: integer) -
             mt = el::def(e, bd).attributes[index]!.typedef[0] ?? ir::TyVoid;
             // (A record member is read where it lies: a view of the tuple's local.)
             rec = struct_ref(e, mt) >= 0 && el_ex_object::literal_def(e, struct_ref(e, mt)) && !(mt is TyOptional);
-            if !(mt is TyText || el_convert::plain_scalar(mt) || rec) {
+            if !(mt is TyText || el_convert::plain_scalar(mt) || rec || (mt is TyOptional && el_convert::plain_scalar(el_types::base(mt)))) {
               el::refuse(e, "a member of a boxed tuple that is no plain scalar, text or record");
               return ex(ir::NdNull, ir::TyUnknown { n: 0 });
             }
