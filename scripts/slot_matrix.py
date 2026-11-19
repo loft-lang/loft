@@ -28,8 +28,11 @@ runs the product.
                It runs the four checks on both backends and prints the table rows the
                shape would be.  The names a statement may use are the prelude's.
     gate       the whole matrix on both backends against scripts/slot_matrix.baseline: a
-               cell that is not ok and not listed fails, and so does a listed cell that now
-               passes.  `--update` rewrites the baseline.  The PR gate (tests/slot_matrix.rs).
+               cell that is not ok and not listed fails (BROKEN), and so does a listed cell
+               that now passes (FIXED).  `--family F` takes one slot family and its lines,
+               which is how tests/slot_matrix.rs splits the PR gate into seven tests;
+               `--update` rewrites the baseline from a whole run.  On GitHub each fold is
+               an annotation on the table row it names.
     walk       the matrix on an OLDER loft binary beside this one (`--old <binary>`): the
                cells that failed then and pass now are what the matrix would have caught,
                the ones that passed then and fail now are regressions.
@@ -780,13 +783,32 @@ def load_baseline(path=BASELINE):
     return stable, unstable
 
 
+def annotate(folds, slots, fillers):
+    """On GitHub, one error annotation per fold, on the table row it names — so a PR shows
+    the failing slot or filler where it is declared."""
+    if not os.environ.get("GITHUB_ACTIONS"):
+        return
+    rows_of = {("slot", x["id"]): ("scripts/syntax_slots.tsv", x["line"]) for x in slots}
+    rows_of.update({("filler", x["id"]): ("scripts/syntax_fillers.tsv", x["line"]) for x in fillers})
+    for fold in folds:
+        m = re.match(r"(slot|filler|wrapper) ([\w-]+)", fold)
+        hit = m and rows_of.get(("filler" if m.group(1) == "wrapper" else m.group(1), m.group(2)))
+        if hit:
+            print(f"::error file={hit[0]},line={hit[1]},title=slot matrix::{fold}")
+
+
 def cmd_gate(args):
     slots, fillers, outside, problems = load_all()
     problems = check(slots, fillers, outside, lexicon(), defined_rules(), problems)
     if problems:
         print("\n".join(problems))
         return 1
-    cells = make_cells(slots, fillers, "all", set(), None)
+    if args.update and args.family:
+        print("slot_matrix gate: `--update` rewrites the whole baseline; run it without `--family`")
+        return 1
+    family = {s["id"]: s["family"] for s in slots}
+    mine = {s["id"] for s in slots if not args.family or s["family"] == args.family}
+    cells = make_cells(slots, fillers, "all", mine, None)
     verdicts = evaluate(cells, ("interp", "c"))
     keys = baseline_keys(cells, verdicts)
     if args.update:
@@ -797,24 +819,41 @@ def cmd_gate(args):
         print(f"slot_matrix gate: baseline rewritten, {len(keys)} line(s)")
         return 0
     stable, unstable = load_baseline()
+    here = lambda key: family.get(key[0].split(".")[0]) == args.family if args.family else True
+    stable = {k for k in stable if here(k)}
+    unstable = {k for k in unstable if here(k)}
     # A crash may also show as another channel on another machine; an unstable line
     # excuses its cell on its backend whatever the channel.
     excused = {(n, b) for n, b, _ in unstable}
     new = sorted(k for k in keys - stable if (k[0], k[1]) not in excused)
     gone = sorted(stable - keys)
-    for name, backend, ch in new:
-        why = next((w for b, v, w in verdicts[name][1] if b == backend and v == "FAIL"), "refused by the compiler")
-        print(f"NEW      {name} [{backend}] ({ch}): {why[:180]}")
-    for name, backend, ch in gone:
-        print(f"PASSES   {name} [{backend}] ({ch}): remove its line from scripts/slot_matrix.baseline")
+    what = f"the `{args.family}` slots" if args.family else "the slot matrix"
+    if not new and not gone:
+        print(f"slot_matrix gate: {what}: {len(cells)} cells, {len(keys)} not ok, all in the baseline  [{loft_binary()}]")
+        return 0
+    # The two findings want opposite actions, so each is said on its own, the one that
+    # means something broke first.
     if new:
-        print("the new cells fold to:")
         only = {n for n, _, _ in new}
-        for line in causes([c for c in cells if c["name"] in only], verdicts, cells):
-            print("  " + line)
-    print(f"slot_matrix gate: {len(cells)} cells, {len(keys)} not ok ({len(stable) + len(unstable)} in the "
-          f"baseline), {len(new)} new, {len(gone)} to remove  [{loft_binary()}]")
-    return 1 if new or gone else 0
+        folds = causes([c for c in cells if c["name"] in only], verdicts, cells)
+        print(f"BROKEN: {len(new)} cell line(s) of {what} fail and are not in the baseline — a change made "
+              f"an operand run more than once, out of order, to another result, or leak.  They fold to:")
+        for fold in folds:
+            print("  " + fold)
+        annotate(folds, slots, fillers)
+        print("the cells:")
+        for name, backend, ch in new:
+            why = next((w for b, v, w in verdicts[name][1] if b == backend and v == "FAIL"), "refused by the compiler")
+            print(f"  NEW      {name} [{backend}] ({ch}): {why[:170]}")
+        print(f"  to see one slot: python3 scripts/slot_matrix.py run --filler all --backend both --slot <id> -v")
+    if gone:
+        print(f"FIXED: {len(gone)} baseline line(s) of {what} pass now.  Nothing is broken: run "
+              f"`python3 scripts/slot_matrix.py gate --update`, read the diff (it must only remove "
+              f"lines), and commit it with the fix.")
+        for name, backend, ch in gone:
+            print(f"  PASSES   {name} [{backend}] ({ch})")
+    print(f"slot_matrix gate: {what}: {len(cells)} cells, {len(new)} new, {len(gone)} to remove  [{loft_binary()}]")
+    return 1
 
 
 def cmd_cell(args):
@@ -964,6 +1003,7 @@ def main():
     p.set_defaults(fn=cmd_cell)
     p = sub.add_parser("gate")
     p.add_argument("--update", action="store_true", help="rewrite the baseline from this run")
+    p.add_argument("--family", choices=FAMILIES, help="only the slots of one family, and their baseline lines")
     p.set_defaults(fn=cmd_gate)
     p = sub.add_parser("walk")
     p.add_argument("--old", required=True, help="the older loft binary")
