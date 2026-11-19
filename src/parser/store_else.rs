@@ -73,6 +73,26 @@ impl Parser {
         let mut inserts: Vec<(usize, u8, Vec<Value>)> = Vec::new();
         let mut absent: Option<Value> = None;
         if let Some((target, writes)) = shape.target {
+            // `@FR-N-Default` × `@FR-H-Write-Else`: a place discharged by a record the program
+            // builds (`k[5]?`, `k[5] ?? Mark {}`) always names a record, so the write always
+            // lands — in the fallback when the element is absent — and the arm can never run.
+            // A compound store reads the place first, so its target is the `__place_N` temp
+            // the parser bound the place to among the statement's steps.
+            let lands = discharge_always_lands(&target)
+                || matches!(target.unspan(), Value::Var(p) if steps.iter().any(|s| {
+                    matches!(s.unspan(), Value::Set(q, rhs) if q == p && discharge_always_lands(rhs))
+                }));
+            if !self.first_pass && lands {
+                crate::diagnostic_at!(
+                    self.lexer,
+                    &at,
+                    Level::Warning,
+                    code = "else-never-runs",
+                    "this `else` never runs: the place is discharged with a record (`?` or `?? \
+                     Type {{ … }}`), so the write always lands — in that record when the element \
+                     is absent; drop the discharge to run the arm when the element is absent"
+                );
+            }
             // The place, bound once: a view of what it names, never freed by this frame.
             let tp = self.store_target_type(&target);
             let wt = self.create_unique("store_target", &tp);
@@ -270,9 +290,27 @@ impl Parser {
         match target.unspan() {
             Value::Var(v) => self.vars.tp(*v).clone(),
             Value::Call(op, _) => self.data.def(*op).returned.clone(),
+            // A place reached through a discharge (`k[5]?.f`, `k[5] ?? d`) is the block that
+            // answers the element or the fallback (loft#2570).
+            Value::Block(bl) => bl.result.clone(),
             _ => Type::Reference(u32::MAX, crate::data::Deps::default()),
         }
     }
+}
+
+/// Is `target` a null discharge (`e?`, `e ?? d`: the parser's `ncc` block, whose tail is
+/// `if present { e } else { fallback }`) whose fallback BUILDS a record (an `Object` block)?
+/// Such a place never answers null, so a write through it always takes.  Any other fallback
+/// — a variable, a call, another element — may itself be null, and answers no.
+fn discharge_always_lands(target: &Value) -> bool {
+    let Value::Block(bl) = target.unspan() else {
+        return false;
+    };
+    if bl.name != "ncc" {
+        return false;
+    }
+    matches!(bl.operators.last().map(Value::unspan),
+        Some(Value::If(_, _, fallback)) if matches!(fallback.unspan(), Value::Block(fb) if fb.name == "Object"))
 }
 
 /// The frame variable the target's path starts from: what the bound view borrows.  A path
