@@ -9422,6 +9422,71 @@ use a separate collection or add after the loop"
     /// a block holds statements, and a field write in one (`vi[{ c.calls += 1; 1 }] += j`) is an
     /// `OpSet…`, which [`Self::ir_has_user_call`] does not count (loft#2581 — the block ran
     /// twice in every compound write through such an index).
+    /// The once-evaluated INDICES of a projection chain (`OpGetVector(v, size, i)` through
+    /// further projections to its root): each index that has an effect
+    /// ([`Self::addressing_has_effects`]) becomes an integer temp, set in source order, and the
+    /// chain reads the temp.  `None` when an effect stands anywhere else — the chain's root, a
+    /// keyed lookup's key — which only the element binding of `@PLN102 F2` keeps to one run.
+    fn lift_index_temps(&mut self, chain: &mut Value) -> Option<Vec<Value>> {
+        let target = match chain {
+            Value::Span(b) => &mut b.1,
+            other => other,
+        };
+        let Value::Call(d, args) = target else {
+            return (!self.addressing_has_effects(target)).then(Vec::new);
+        };
+        let d = *d;
+        if !crate::use_analysis::is_projection_op(&self.data, d) {
+            return (!self.addressing_has_effects(target)).then(Vec::new);
+        }
+        let name = self.data.def(d).name().to_string();
+        let mut sets = self.lift_index_temps(args.first_mut()?)?;
+        for (k, arg) in args.iter_mut().enumerate().skip(1) {
+            if !self.addressing_has_effects(arg) {
+                continue;
+            }
+            if !(name == "OpGetVector" && k == 2) {
+                return None;
+            }
+            let tmp = self.create_unique("_index", &crate::data::I32);
+            self.vars.defined(tmp);
+            let index = std::mem::replace(arg, Value::Var(tmp));
+            sets.push(v_set(tmp, index));
+        }
+        Some(sets)
+    }
+
+    /// Does evaluating `v` only READ: every call an operator that reads its operands
+    /// ([`crate::pure_reuse::reads_only`]), a native declared `#pure`, or a loft function whose
+    /// body calls nothing else (the stdlib's `len` is `OpLengthVector(self)`), and no block,
+    /// write or call through a function value?
+    pub(crate) fn addressing_only_reads(&self, v: &Value) -> bool {
+        let reads = |d: u32| -> bool {
+            let def = self.data.def(d);
+            if crate::pure_reuse::reads_only(def.name())
+                || crate::shared_call::pure_native(&self.data, d)
+            {
+                return true;
+            }
+            !matches!(def.code(), Value::Null)
+                && !def.code().any_node(&mut |n| match n {
+                    Value::Call(c, _) => !crate::pure_reuse::reads_only(self.data.def(*c).name()),
+                    Value::Set(..) | Value::CallRef(..) | Value::Yield(_) => true,
+                    _ => false,
+                })
+        };
+        !v.any_node(&mut |n| match n {
+            Value::Call(d, _) => (*d as usize) >= self.data.definitions.len() || !reads(*d),
+            Value::Set(..)
+            | Value::CallRef(..)
+            | Value::Yield(_)
+            | Value::Insert(_)
+            | Value::Parallel(_) => true,
+            Value::Block(_) => true,
+            _ => false,
+        })
+    }
+
     pub(crate) fn addressing_has_effects(&self, v: &Value) -> bool {
         self.ir_has_user_call(v)
             || v.any_node(&mut |n| matches!(n, Value::Block(_) | Value::Insert(_)))
@@ -11219,10 +11284,15 @@ use a separate collection or add after the loop"
                 // the append), so `h.ws[at(c, 1)].items = [P {…}]` called `at` three times: under
                 // `(E-Asgn)` the place is addressed once, so `=` of a collection takes the hoist
                 // too.  A scalar `=` addresses its place once and keeps it inline.
-                let f2_place = if (op != "="
-                    || crate::parser::vectors::is_collection(f_type.base()))
-                    && !self.first_pass
-                {
+                // An index that only READS (`out[len(out) - 1] = last + pt`) is not hoisted for
+                // `=`: evaluating it again is unobservable unless the right side writes what it
+                // reads, and the inline element read keeps R-Range and R-Wrapper (a temp index
+                // hides the `len - 1` bound from them).  The right side is parsed after this
+                // decision; the case it would settle is loft#2584.
+                let collection_write = op == "="
+                    && crate::parser::vectors::is_collection(f_type.base())
+                    && !self.addressing_only_reads(&to);
+                let f2_place = if (op != "=" || collection_write) && !self.first_pass {
                     match to.unspan() {
                         Value::Call(get_d, gargs)
                             if self.data.def(*get_d).name.starts_with("OpGet")
@@ -11254,60 +11324,83 @@ use a separate collection or add after the loop"
                 } else {
                     None
                 };
-                let mut f2_setup: Option<Value> = None;
+                let mut f2_setup: Vec<Value> = Vec::new();
                 let mut f2_hoisted = false;
                 if let Some((get_d, accessor, offset, field_tp)) = f2_place {
                     // The hoist rewrites `to` to reference a fresh temp, which hides the
                     // ORIGINAL place's const / value-const base from `validate_write` (it walks
                     // the expression). Run the write-legality check on the original place NOW,
                     // and tell parse_assign_op to skip its own (it would re-fire on the rewrite).
-                    self.validate_write(&to, &parent_tp, op);
-                    f2_hoisted = true;
-                    // Hoist the ELEMENT reference and rebuild the field access on it,
-                    // preserving `offset`.  Without this the accessor — and its call — was
-                    // emitted twice, so a divergent index silently read from one element and
-                    // wrote another (the exact @C92 corruption).  The element is a
-                    // `Reference(struct)`; strip the dynamic-index `?` (OOB safety on the
-                    // read, not the slot type) via `base()`.
-                    //
-                    // ONE shape for every offset, including 0.  A separate offset-0 arm used
-                    // to bind the accessor straight into a scalar `RefVar` on the reasoning
-                    // that "the accessor IS a `&element` ref" — true for `w[idx()]`, false for
-                    // a call that RETURNS a struct, where it aliased the callee's source
-                    // instead of the returned copy.  `pick(ps).x += 5` then wrote into
-                    // `ps[0]` while `.y` correctly did not, and native emitted a `_place` it
-                    // never declared.  This arm answers both offsets correctly, so there is
-                    // nothing for a second one to add.
-                    let mut elem_tp = parent_tp.base().clone();
-                    // A TUPLE element is reached as the `__tuple<…>` RECORD the accessor answers
-                    // (`@FR-T-Ref-Rep`: a `vector<(…)>` element is that record), so the place
-                    // binding holds a reference to it.  Typed as the stack tuple, the binding
-                    // held a record reference under a by-value type: the interpreter wrote
-                    // through it by accident of layout and `--native-c` refused the program.
-                    if let Type::Tuple(elems) = elem_tp.base()
-                        && crate::data::ref_tuple_is_record(elems)
-                    {
-                        let elems = elems.clone();
-                        let d = self.data.tuple_def(&mut self.lexer, &elems);
-                        // A VIEW of the container's element, as a struct element's binding is
-                        // (`@FR-B-View`): it borrows the container's root, or the bind would
-                        // copy the element and the write land in the copy.
-                        let root = crate::use_analysis::projection_container_var(
-                            &self.data,
-                            accessor.unspan(),
-                        );
-                        if d != u32::MAX {
-                            elem_tp =
-                                Type::Reference(d, root.map_or_else(Deps::none, Deps::frame1));
+                    // `=` of a collection: its INDICES are evaluated once into temps and the
+                    // place stays the chain it was, addressed afresh by each op that rebuilds it.
+                    // An element reference bound once points into the container's storage, and
+                    // a right side that grows the container moves that storage: the write was
+                    // lost (`out[len(out) - 1] = grow(out)`).  Evaluated into a temp before the
+                    // right side, the index also keeps `(E-Asgn)`'s order, and the element read
+                    // keeps its shape for the rewrites that read it.  A place whose effect is
+                    // not an index (a call at its root, a keyed lookup) keeps the binding.
+                    let lifted = if op == "=" {
+                        let mut chain = accessor.clone();
+                        self.lift_index_temps(&mut chain).map(|sets| (chain, sets))
+                    } else {
+                        None
+                    };
+                    if let Some((chain, sets)) = lifted {
+                        f2_setup = sets;
+                        let mut rebuilt_args = vec![chain, offset];
+                        rebuilt_args.extend(field_tp);
+                        let rebuilt = Value::Call(get_d, rebuilt_args);
+                        to = rebuilt.clone();
+                        *code = rebuilt;
+                    } else {
+                        self.validate_write(&to, &parent_tp, op);
+                        f2_hoisted = true;
+                        // Hoist the ELEMENT reference and rebuild the field access on it,
+                        // preserving `offset`.  Without this the accessor — and its call — was
+                        // emitted twice, so a divergent index silently read from one element and
+                        // wrote another (the exact @C92 corruption).  The element is a
+                        // `Reference(struct)`; strip the dynamic-index `?` (OOB safety on the
+                        // read, not the slot type) via `base()`.
+                        //
+                        // ONE shape for every offset, including 0.  A separate offset-0 arm used
+                        // to bind the accessor straight into a scalar `RefVar` on the reasoning
+                        // that "the accessor IS a `&element` ref" — true for `w[idx()]`, false for
+                        // a call that RETURNS a struct, where it aliased the callee's source
+                        // instead of the returned copy.  `pick(ps).x += 5` then wrote into
+                        // `ps[0]` while `.y` correctly did not, and native emitted a `_place` it
+                        // never declared.  This arm answers both offsets correctly, so there is
+                        // nothing for a second one to add.
+                        let mut elem_tp = parent_tp.base().clone();
+                        // A TUPLE element is reached as the `__tuple<…>` RECORD the accessor answers
+                        // (`@FR-T-Ref-Rep`: a `vector<(…)>` element is that record), so the place
+                        // binding holds a reference to it.  Typed as the stack tuple, the binding
+                        // held a record reference under a by-value type: the interpreter wrote
+                        // through it by accident of layout and `--native-c` refused the program.
+                        if let Type::Tuple(elems) = elem_tp.base()
+                            && crate::data::ref_tuple_is_record(elems)
+                        {
+                            let elems = elems.clone();
+                            let d = self.data.tuple_def(&mut self.lexer, &elems);
+                            // A VIEW of the container's element, as a struct element's binding is
+                            // (`@FR-B-View`): it borrows the container's root, or the bind would
+                            // copy the element and the write land in the copy.
+                            let root = crate::use_analysis::projection_container_var(
+                                &self.data,
+                                accessor.unspan(),
+                            );
+                            if d != u32::MAX {
+                                elem_tp =
+                                    Type::Reference(d, root.map_or_else(Deps::none, Deps::frame1));
+                            }
                         }
+                        let elem_var = self.create_unique("_place", &elem_tp);
+                        f2_setup = vec![v_set(elem_var, accessor)];
+                        let mut rebuilt_args = vec![Value::Var(elem_var), offset];
+                        rebuilt_args.extend(field_tp);
+                        let rebuilt = Value::Call(get_d, rebuilt_args);
+                        to = rebuilt.clone();
+                        *code = rebuilt;
                     }
-                    let elem_var = self.create_unique("_place", &elem_tp);
-                    f2_setup = Some(v_set(elem_var, accessor));
-                    let mut rebuilt_args = vec![Value::Var(elem_var), offset];
-                    rebuilt_args.extend(field_tp);
-                    let rebuilt = Value::Call(get_d, rebuilt_args);
-                    to = rebuilt.clone();
-                    *code = rebuilt;
                 }
                 // loft#1205 — the seed is built HERE, from the place the F2 hoist may just
                 // have rewritten, because it reads the place a second time: once to ask
@@ -11399,9 +11492,10 @@ use a separate collection or add after the loop"
                     *code = Value::Insert(vec![seed, assign]);
                 }
                 // @PLN102 F2 — run the once-evaluated place binding before the compound.
-                if let Some(setup) = f2_setup {
+                if !f2_setup.is_empty() {
                     let assign = std::mem::replace(code, Value::Null);
-                    *code = Value::Insert(vec![setup, assign]);
+                    f2_setup.push(assign);
+                    *code = Value::Insert(f2_setup);
                 }
                 // #673 — a write to a struct-enum `text` payload binding lands in the
                 // binding's own copy of the characters, so mirror it straight back into
