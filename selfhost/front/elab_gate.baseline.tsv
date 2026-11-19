@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	be55620c9793c98d01df24d63b9ace03f3efbec1
 
-layer	elab	agree	1157	of	2087
+layer	elab	agree	1157	of	2088
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -854,6 +854,7 @@ elab	refused	tests/scripts/a-byte-range-of-a-vector-copied-one-at-a-time-is-one-
 elab	refused	tests/scripts/a-call-text-moves-into-its-local.loft
 elab	refused	tests/scripts/a-call-two-wrappers-share-is-made-once.loft
 elab	refused	tests/scripts/a-chain-exit-hands-the-placed-buffer-through.loft
+elab	refused	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft
 elab	refused	tests/scripts/a-comprehension-element-goes-straight-into-its-push.loft
 elab	refused	tests/scripts/a-comprehension-over-a-keyed-collection-walks-its-snapshot.loft
 elab	refused	tests/scripts/a-counted-loop-variable-shares-its-index-slot.loft
@@ -937,7 +938,7 @@ elab	refused	tests/scripts/store_load_field_refusal.loft
 elab	refused	tests/scripts/store_paged_enum_field.loft
 elab	refused	tests/scripts/store_rebuild_b1.loft
 
-layer	elab-functions	agree	14932	of	27232
+layer	elab-functions	agree	14969	of	27270
 elab-functions	agree	lib/code.loft::Block
 elab-functions	agree	lib/code.loft::Boolean
 elab-functions	agree	lib/code.loft::Call
@@ -13349,6 +13350,7 @@ elab-functions	agree	tests/scripts/158-split-table.loft::n_s5
 elab-functions	agree	tests/scripts/158-split-table.loft::n_s6
 elab-functions	agree	tests/scripts/158-split-table.loft::n_s7
 elab-functions	agree	tests/scripts/158-split-table.loft::n_s8
+elab-functions	agree	tests/scripts/158-split-table.loft::n_s9
 elab-functions	agree	tests/scripts/158-split-table.loft::n_second
 elab-functions	agree	tests/scripts/158-split-table.loft::n_shape
 elab-functions	agree	tests/scripts/158-split-table.loft::n_third
@@ -14883,6 +14885,42 @@ elab-functions	agree	tests/scripts/a-chain-exit-hands-the-placed-buffer-through.
 elab-functions	agree	tests/scripts/a-chain-exit-hands-the-placed-buffer-through.loft::vector<Slot>
 elab-functions	agree	tests/scripts/a-chain-exit-hands-the-placed-buffer-through.loft::vector<Val>
 elab-functions	agree	tests/scripts/a-chain-exit-hands-the-placed-buffer-through.loft::vector<integer(0, 255)>
+elab-functions	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::(schema)
+elab-functions	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::R
+elab-functions	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::main_vector<R>
+elab-functions	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::n_a_float
+elab-functions	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::n_a_float_mul
+elab-functions	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::n_a_hash
+elab-functions	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::n_a_index
+elab-functions	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::n_a_set
+elab-functions	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::n_a_sorted
+elab-functions	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::n_a_text
+elab-functions	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::n_a_vec
+elab-functions	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::n_a_walk
+elab-functions	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::n_b_float
+elab-functions	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::n_b_float_mul
+elab-functions	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::n_b_hash
+elab-functions	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::n_b_index
+elab-functions	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::n_b_set
+elab-functions	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::n_b_sorted
+elab-functions	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::n_b_text
+elab-functions	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::n_b_vec
+elab-functions	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::n_b_walk
+elab-functions	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::n_main
+elab-functions	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::n_mkf_a
+elab-functions	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::n_mkf_b
+elab-functions	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::n_mkh_a
+elab-functions	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::n_mkh_b
+elab-functions	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::n_mki_a
+elab-functions	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::n_mki_b
+elab-functions	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::n_mks_a
+elab-functions	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::n_mks_b
+elab-functions	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::n_mkt_a
+elab-functions	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::n_mkt_b
+elab-functions	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::n_mkv_a
+elab-functions	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::n_mkv_b
+elab-functions	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::n_val
+elab-functions	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::vector<R>
 elab-functions	agree	tests/scripts/a-comprehension-element-goes-straight-into-its-push.loft::main_vector<float>
 elab-functions	agree	tests/scripts/a-comprehension-element-goes-straight-into-its-push.loft::n_halves
 elab-functions	agree	tests/scripts/a-comprehension-element-goes-straight-into-its-push.loft::n_squares
@@ -15871,7 +15909,7 @@ elab-functions	agree	tests/scripts/store_rebuild_b1.loft::n_label_of
 elab-functions	agree	tests/scripts/store_rebuild_b1.loft::n_report
 elab-functions	agree	tests/scripts/store_rebuild_b1.loft::n_xs_len
 
-layer	elab-pass1	agree	10972	of	16257
+layer	elab-pass1	agree	10986	of	16290
 elab-pass1	agree	lib/code.loft::t_4Code_get_type
 elab-pass1	agree	lib/code.loft::t_4Code_set_type
 elab-pass1	agree	lib/docs.loft::n_demo
@@ -25456,6 +25494,20 @@ elab-pass1	agree	tests/scripts/a-checked-element-read-answers-from-one-header-re
 elab-pass1	agree	tests/scripts/a-checked-element-read-answers-from-one-header-read.loft::n_main
 elab-pass1	agree	tests/scripts/a-checked-element-read-answers-from-one-header-read.loft::n_name
 elab-pass1	agree	tests/scripts/a-checked-element-read-answers-from-one-header-read.loft::n_reset
+elab-pass1	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::n_a_float
+elab-pass1	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::n_a_float_mul
+elab-pass1	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::n_a_set
+elab-pass1	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::n_a_text
+elab-pass1	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::n_b_float
+elab-pass1	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::n_b_float_mul
+elab-pass1	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::n_b_set
+elab-pass1	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::n_b_text
+elab-pass1	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::n_main
+elab-pass1	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::n_mkf_a
+elab-pass1	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::n_mkf_b
+elab-pass1	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::n_mkt_a
+elab-pass1	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::n_mkt_b
+elab-pass1	agree	tests/scripts/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::n_val
 elab-pass1	agree	tests/scripts/a-compound-keyed-insert-writes-the-entry-its-key-names.loft::n_main
 elab-pass1	agree	tests/scripts/a-comprehension-element-goes-straight-into-its-push.loft::n_halves
 elab-pass1	agree	tests/scripts/a-comprehension-element-goes-straight-into-its-push.loft::n_squares
