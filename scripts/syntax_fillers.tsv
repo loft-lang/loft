@@ -9,6 +9,10 @@
 #   statement and a value, which is lowered differently from a longer one) gets no ORDER cell.
 #   A filler is a primary expression or stands in parentheses, so that the statement around
 #   it parses the same way as with a variable there.
+#   `<I:type>` in an expression is a HOLE: the row is a WRAPPER, generated once for every
+#   other filler of that type (never a variable, never another wrapper) at `--depth 2`.  A
+#   wrapper takes no `<C>` — the filler in its hole does the counting — and gives its own
+#   type's plain value when its hole holds that type's plain value.
 # The `var` row of a type is its plain operand: evaluated once by construction, it is what a
 # slot is validated with before any other filler is tried.
 # `python3 scripts/slot_matrix.py check` validates this file; `fillers` runs each row.
@@ -68,3 +72,21 @@ nrec-tuple-call	nrec	pairw(<C>).0
 nitem-var	nitem	xs[2]
 nitem-key	nitem	xs[at(<C>, 2)]
 nitem-tuple-member	nitem	tk.0[at(<C>, 2)]
+int-of-sum	int	(<I:int> + 0)
+int-of-elem	int	h.ones[<I:int> - 1]
+int-of-arg	int	add2(0, <I:int>)
+int-of-field	int	<I:rec>.n
+int-of-len	int	(len(<I:text>) - 2)
+int-of-if	int	(if <I:bool> { 1 } else { 2 })
+int-of-coal	int	(h.ws[<I:int> + 8].n ?? 1)
+bool-of-compare	bool	(<I:int> == 1)
+bool-of-field	bool	<I:rec>.ok
+bool-of-not	bool	(!(!<I:bool>))
+text-of-field	text	<I:rec>.t
+text-of-concat	text	(<I:text> + "")
+text-of-slice	text	<I:text>[0..]
+rec-of-elem	rec	h.ws[<I:int> - 1]
+rec-of-call	rec	same(<I:rec>)
+coll-of-field	coll	<I:rec>.items
+vint-of-slice	vint	<I:vint>[0..]
+nrec-of-elem	nrec	h.ws[<I:int> - 1]

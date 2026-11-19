@@ -41,6 +41,7 @@ fn ox(c: Ctr) -> text { c.log += "x"; "abc" }
 fn ofl(c: Ctr) -> float { c.log += "f"; 1.5 }
 fn oen(c: Ctr) -> Col { c.log += "e"; Green }
 fn pairw(c: Ctr) -> (W?, integer) { bump(c); (W { n: 1, t: "abc", f: 1.5, ok: true, tag: Green, items: [] }, 3) }
+fn same(w: W) -> W { w }
 fn inc1(a: integer) -> integer { a + 1 }
 fn pickfn(c: Ctr) -> fn(integer) -> integer { bump(c); inc1 }
 fn add2(a: integer, b: integer) -> integer { a * 10 + b }

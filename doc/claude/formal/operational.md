@@ -89,10 +89,12 @@ the in-band model, not a silent one.
 
 **In words.** Operands evaluate left first, then right — so any side effects (a call that
 mutates the store) happen in source order. Both backends must use this order. The **only**
-exception is the short-circuiting logical operators `&&`/`||` (and their `and`/`or` spellings):
-they reduce the left operand, and evaluate the right operand *only* when the left has not
-already decided the result — verified on both backends. Every other binary op (arithmetic,
-comparison, `??`) evaluates both operands under E-Left.
+exceptions are the operators whose left operand can decide the result alone. The
+short-circuiting logical operators `&&`/`||` (and their `and`/`or` spellings) reduce the left
+operand, and evaluate the right operand *only* when the left has not already decided the
+result. `??` does the same ((E-Coalesce) below): its right side is evaluated only when the
+left is null, so a call written there does not run unless it is needed. Every other binary
+op (arithmetic, comparison) evaluates both operands under E-Left.
 
 An operand's value is its CONTENTS.  A text or vector variable that a later operand can write
 is taken into a temp of its own first (`scopes::args::copy_written_text_operands`,
@@ -312,9 +314,18 @@ verified both backends.
 ### `??` — a non-null fallback (no trap mode)
 
 ```
-  (E-Coalesce)   ⟨e ?? d, σ⟩ → ⟨v, σ⟩   if  e → v  with v ≠ null
-                 ⟨e ?? d, σ⟩ → ⟨d, σ⟩   if  e → null
+  (E-Coalesce)   ⟨e ?? d, σ⟩ → ⟨v, σ⟩   if  e → v  with v ≠ null     (d is NOT evaluated)
+                 ⟨e ?? d, σ⟩ → ⟨d, σ⟩   if  e → null                (d is reduced only now)
 ```
+
+**The fallback is evaluated only when it is needed.** `e` is reduced first, once. When it
+answers a value, `d` is not reduced at all: a function call written as the fallback does not
+run, and its effects do not happen. When `e` answers null, `d` is reduced then, once. It is
+what a programmer expects of a default — the cost and the effects of computing one are paid
+only by the case that uses it — and it is what makes `cache[k] ?? compute(k)` usable. Both
+backends agree; the slot matrix holds it with a counted call on the right of a present and of
+an absent left (`rd-coal-right-present`, `rd-coal-right-absent` in
+`scripts/syntax_slots.tsv`).
 
 **In words.** `??` supplies a fallback for a null: `(a * b) ?? 0` is "a*b, or 0 if it couldn't
 compute." There is **no** context-dependent "trap-suppression mode" any more — an op yields

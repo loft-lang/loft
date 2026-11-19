@@ -88,6 +88,7 @@ KIND_NAMES = re.compile(r"\b(xs|mk|items|tk)\b")
 OUTSIDE_CLASSES = ("none:", "decl:", "unreached:")
 SLOT = "<S>"
 BIND = "<BIND>"
+HOLE = re.compile(r"<I:(\w+)>")
 COUNTER = "<C>"
 
 
@@ -99,7 +100,8 @@ def types_of(fillers):
 
 def kinded(fillers):
     """The types whose value depends on the collection kind."""
-    return {f["type"] for f in fillers if KIND_NAMES.search(f["expr"])}
+    found = {f["type"] for f in fillers if KIND_NAMES.search(f["expr"])}
+    return found
 
 
 def neutral(slots, fillers):
@@ -183,7 +185,7 @@ def lexicon():
 def tokens(text, symbols):
     """The lexemes of a template: words, and the longest symbol at each position."""
     out, at = set(), 0
-    text = text.replace(SLOT, " ").replace(COUNTER, " c ")
+    text = HOLE.sub(" ", text.replace(SLOT, " ").replace(COUNTER, " c "))
     while at < len(text):
         m = re.match(r"[A-Za-z_][A-Za-z0-9_]*", text[at:])
         if m:
@@ -242,13 +244,17 @@ def check(slots, fillers, outside, lex, rules, problems):
             problems.append(f"{where}: the id is used twice")
         seen.add(f["id"])
         is_var = f["id"] == f["type"] + "-var"
-        if is_var == (COUNTER in f["expr"]):
+        holes = HOLE.findall(f["expr"])
+        if holes:
+            if len(holes) != 1 or COUNTER in f["expr"] or holes[0] not in types:
+                problems.append(f"{where}: a wrapper has one `<I:type>` hole of a known type and no `{COUNTER}`")
+        elif is_var == (COUNTER in f["expr"]):
             problems.append(f"{where}: a `var` filler takes no `{COUNTER}`, every other one does")
         if f["type"] not in types:
             problems.append(f"{where}: type `{f['type']}` has no `{f['type']}-var` row")
     tried = neutral(slots, fillers)
     for t in types:
-        if sum(1 for f in fillers if f["type"] == t) < 2:
+        if sum(1 for f in fillers if f["type"] == t and not HOLE.search(f["expr"])) < 2:
             problems.append(f"syntax_fillers.tsv: type `{t}` has no filler but its variable")
         if not any(s["type"] == t for s in slots):
             problems.append(f"syntax_fillers.tsv: type `{t}` has fillers and no slot takes it")
@@ -286,6 +292,26 @@ def load_frames():
     """The prelude's head, and its frames by name: the function a cell's statement stands in."""
     parts = re.split(r"^// === CELL (\w+) ===\n", open(PRELUDE, encoding="utf-8").read(), flags=re.M)
     return parts[0], dict(zip(parts[1::2], parts[2::2]))
+
+
+
+def expand(fillers, depth):
+    """The fillers of a run: the plain rows, and at depth two every wrapper once per filler
+    of its hole's type.  A wrapper never fills a wrapper, and a variable fills no hole: the
+    filler in the hole is what counts."""
+    plain = [f for f in fillers if not HOLE.search(f["expr"])]
+    if depth < 2:
+        return plain
+    out = list(plain)
+    for w in fillers:
+        hole = HOLE.search(w["expr"])
+        if not hole:
+            continue
+        for f in plain:
+            if f["type"] == hole.group(1) and not f["id"].endswith("-var"):
+                out.append({"id": f"{w['id']}({f['id']})", "type": w["type"], "line": w["line"],
+                            "expr": w["expr"].replace(hole.group(0), f["expr"])})
+    return out
 
 
 def load_all():
@@ -391,13 +417,14 @@ def ordered(stmt):
     return ("".join(out), log) if len(log) > 1 else None
 
 
-def make_cells(slots, fillers, which_filler, which_slot, which_kind, contexts=None, frames=None):
+def make_cells(slots, fillers, which_filler, which_slot, which_kind, contexts=None, frames=None, depth=1):
     """The cells of a run.  A slot's plain-variable cell is always there: it is what the
     value of every other cell of that slot is compared with.  `contexts` and `frames` are
     the ones to generate for; left out, the first of each."""
     contexts = contexts or load_contexts()[:1]
     frames = frames or list(load_frames()[1])[:1]
     out = []
+    fillers = expand(fillers, depth)
     kinded_types = kinded(fillers)
     for slot in slots:
         if which_slot and slot["id"] not in which_slot:
@@ -633,9 +660,36 @@ def causes(cells, verdicts):
         else:
             for f in fillers:
                 left.setdefault((f, ch), set()).add(slot)
+    # Depth two: a wrapper around a filler that fails the same way in the same slots is
+    # that filler's failure seen again, and a wrapper that fails with most of what stands
+    # in its hole is one cause in the WRAPPER's form.
+    inners = {}
+    for cell in cells:
+        m = re.match(r"[^.]+\.([\w-]+)\(([\w-]+)\)", cell["name"])
+        if m:
+            inners.setdefault(m.group(1), set()).add(m.group(2))
+    wrapped, echoes = {}, {}
+    for (filler, ch), slots in list(left.items()):
+        m = re.fullmatch(r"([\w-]+)\(([\w-]+)\)", filler)
+        if not m:
+            continue
+        if slots <= left.get((m.group(2), ch), set()):
+            echoes[(m.group(2), ch)] = echoes.get((m.group(2), ch), 0) + 1
+            del left[(filler, ch)]
+        else:
+            wrapped.setdefault((m.group(1), ch), {})[m.group(2)] = slots
+    for (wrapper, ch), per in sorted(wrapped.items()):
+        if len(per) * 2 >= len(inners.get(wrapper, per)) and len(per) > 1:
+            slots = set().union(*per.values())
+            for inner in per:
+                del left[(f"{wrapper}({inner})", ch)]
+            left[(f"wrapper {wrapper} around most fillers", ch)] = slots
     for (filler, ch), slots in sorted(left.items()):
         bare = sorted({x.partition("@")[0] for x in slots})
-        text = f"filler {filler}: {len(bare)} slot(s) ({ch}) — " + ", ".join(bare[:6]) + (" …" if len(bare) > 6 else "")
+        seen = echoes.get((filler, ch))
+        label = filler if filler.startswith("wrapper ") else f"filler {filler}"
+        text = (f"{label}: {len(bare)} slot(s) ({ch}) — " + ", ".join(bare[:6]) + (" …" if len(bare) > 6 else "")
+                + (f"  (and inside {seen} wrapper(s))" if seen else ""))
         for x in slots:
             note(text, x)
     out = []
@@ -793,7 +847,7 @@ def cmd_walk(args):
     if problems:
         print("\n".join(problems))
         return 1
-    cells = make_cells(slots, fillers, "all", set(args.slot), args.kind, *axes_of(args))
+    cells = make_cells(slots, fillers, "all", set(args.slot), args.kind, *axes_of(args), depth=args.depth)
     backends = backends_of(args)
     new = evaluate(cells, backends)
     here = loft_binary()
@@ -842,7 +896,7 @@ def cmd_run(args):
     if problems:
         print("\n".join(problems))
         return 1
-    cells = make_cells(slots, fillers, args.filler, set(args.slot), args.kind, *axes_of(args))
+    cells = make_cells(slots, fillers, args.filler, set(args.slot), args.kind, *axes_of(args), depth=args.depth)
     return 1 if run_matrix(cells, backends_of(args), args.verbose) else 0
 
 
@@ -852,7 +906,7 @@ def cmd_fillers(args):
     if problems:
         print("\n".join(problems))
         return 1
-    cells = make_cells(slots, fillers, "all", set(neutral(slots, fillers).values()), KINDS[0][0])
+    cells = make_cells(slots, fillers, "all", set(neutral(slots, fillers).values()), KINDS[0][0], depth=args.depth)
     return 1 if run_matrix(cells, backends_of(args), args.verbose) else 0
 
 
@@ -865,6 +919,7 @@ def main():
     p = sub.add_parser("fillers")
     p.add_argument("--backend", choices=("interp", "c", "both"), default="interp")
     p.add_argument("-v", "--verbose", action="store_true")
+    p.add_argument("--depth", type=int, choices=(1, 2), default=1, help="2 adds every wrapper filler around every other filler")
     p.set_defaults(fn=cmd_fillers)
     p = sub.add_parser("run")
     p.add_argument("--filler", default="var", help="`var` (default), `all`, or one filler id")
@@ -874,6 +929,7 @@ def main():
     p.add_argument("-v", "--verbose", action="store_true")
     p.add_argument("--context", help="where the statement stands: an id of syntax_contexts.tsv, or `all`")
     p.add_argument("--frame", help="where its values come from: a frame of the prelude, or `all`")
+    p.add_argument("--depth", type=int, choices=(1, 2), default=1, help="2 adds every wrapper filler around every other filler")
     p.set_defaults(fn=cmd_run)
     p = sub.add_parser("cell")
     p.add_argument("statement", help="one statement of the prelude's world, `<S>` the operand")
@@ -901,6 +957,7 @@ def main():
     p.add_argument("--kind", choices=[k for k, _ in KINDS])
     p.add_argument("--context", help="where the statement stands: an id of syntax_contexts.tsv, or `all`")
     p.add_argument("--frame", help="where its values come from: a frame of the prelude, or `all`")
+    p.add_argument("--depth", type=int, choices=(1, 2), default=1, help="2 adds every wrapper filler around every other filler")
     p.set_defaults(fn=cmd_walk)
     args = ap.parse_args()
     sys.exit(args.fn(args))
