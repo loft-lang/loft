@@ -42,9 +42,10 @@ the literal's `__vdb_2` and the result's `__vdb_3`. The `_vec_K` counter runs in
 **What to code:** a bind whose right side is `+` over vectors lowers to the three-statement
 fresh-store prologue for the result, then one `OpAppendVector(result, operand, 0)` per operand
 left to right. Each operand is emitted as the expression it is, a place, a call or a literal
-block, with no temp and no copy of its own. The final `0` is the append's element type argument
-for `vector<integer>`; for other elements it is the element's store type, as in the plain-local
-form you already emit.
+block, with no temp and no copy of its own. The append's last argument is the ELEMENT's type number (measured: integer 0, text 5, a record
+`P` its own number, 100 there), the result's store is the element's `main_vector<T>` record
+(`vector<integer>` 20, `vector<text>` 50, `vector<P>` 103) and its `OpGetField` reads at the
+vector's type (7, 44, `vector<P>` 102).
 
 ## The sites (try 0169c36eb)
 
