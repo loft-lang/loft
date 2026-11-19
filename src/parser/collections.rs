@@ -4478,6 +4478,25 @@ use #count instead"
                 in_type = in_type.depending(vec_var);
                 fill = v_set(vec_var, expr);
                 expr = Value::Var(vec_var);
+            } else if matches!(in_type, Type::Sorted(..) | Type::Index(..))
+                && matches!(fill, Value::Null)
+                && self.ir_has_user_call(&expr)
+            {
+                // loft#2573, `@FR-I-For` — the source is evaluated once for an ordered keyed
+                // collection too.  Its walk hands the source to `OpIterate` and to every
+                // `OpStep`, so a source that runs a call (a call answering the collection, a
+                // keyed lookup with a computed key, a `?? []` discharge) ran once per step:
+                // `for p in mk(c)` over three records called `mk` five times.  Held in the loop's
+                // source temp as a vector's is; a variable or a pure projection reads the same
+                // place each step and is left as it is.
+                let src_var = self.create_unique("vector", &in_type);
+                self.vars.set_iteration_source(src_var);
+                if !self.first_pass {
+                    self.vars.set_type(src_var, in_type.clone());
+                }
+                in_type = in_type.depending(src_var);
+                fill = v_set(src_var, expr);
+                expr = Value::Var(src_var);
             }
             // Optional parallel clause: par(result=worker(elem), threads)
             if let LexItem::Identifier(kw) = &self.lexer.peek().has.clone()
