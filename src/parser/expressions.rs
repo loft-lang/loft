@@ -11288,13 +11288,20 @@ use a separate collection or add after the loop"
                 // `(E-Asgn)` the place is addressed once, so `=` of a collection takes the hoist
                 // too.  A scalar `=` addresses its place once and keeps it inline.
                 // An index that only READS (`out[len(out) - 1] = last + pt`) is not hoisted for
-                // `=`: evaluating it again is unobservable unless the right side writes what it
-                // reads, and the inline element read keeps R-Range and R-Wrapper (a temp index
-                // hides the `len - 1` bound from them).  The right side is parsed after this
-                // decision; the case it would settle is loft#2584.
+                // `=` when the right side has no call and no block: evaluating it again is then
+                // unobservable, and the inline element read keeps R-Range and R-Wrapper (a temp
+                // index hides the `len - 1` bound from them).  A right side that may write what
+                // the index reads (`out[len(out) - 1] = grow(out)`) takes the index temp, so the
+                // place is the one `(E-Asgn)` reduced first (loft#2584).  The right side is
+                // parsed after this decision, so the fact is pass 1's (`effect_free_rhs`).
                 let collection_write = op == "="
                     && crate::parser::vectors::is_collection(f_type.base())
-                    && !self.addressing_only_reads(&to);
+                    && !(self.addressing_only_reads(&to)
+                        && self.effect_free_rhs.contains(&(
+                            self.context,
+                            stmt_start_pos.line,
+                            stmt_start_pos.pos,
+                        )));
                 let f2_place = if (op != "=" || collection_write) && !self.first_pass {
                     match to.unspan() {
                         Value::Call(get_d, gargs)
@@ -11470,8 +11477,16 @@ use a separate collection or add after the loop"
                 } else {
                     false
                 };
+                let forms_before = self.lexer.call_forms;
                 let result =
                     self.parse_assign_op(code, op, &f_type, &to, parent_tp, var_nr, f2_hoisted);
+                if self.first_pass && self.lexer.call_forms == forms_before {
+                    self.effect_free_rhs.insert((
+                        self.context,
+                        stmt_start_pos.line,
+                        stmt_start_pos.pos,
+                    ));
+                }
                 self.declaring_const = u16::MAX;
                 if first_bind.is_some() {
                     self.first_bind_targets.pop();

@@ -538,6 +538,14 @@ pub struct Lexer {
     /// belongs here rather than at the scan cursor, which has run on to the next token;
     /// see [`report_pos`](Self::report_pos).
     prev_end: Position,
+    /// loft#2584 — how many CALL and BLOCK forms the parser has consumed: a `(` straight after a
+    /// name, a `)` or a `]`, and every `{`.  Pass 1 compares it before and after a right side
+    /// to learn whether that side calls anything, which its IR cannot say: a call to a name
+    /// declared later in the file leaves no IR on pass 1.  A replayed token counts again,
+    /// which only ever makes a side look effectful.
+    pub call_forms: u32,
+    /// Was the last consumed token a name, a `)` or a `]` — a place a `(` makes a call?
+    after_name: bool,
     /// Where [`to`](Self::to) moved the reporting position away FROM, until the next
     /// token is scanned.
     ///
@@ -853,6 +861,8 @@ impl Default for Lexer {
         Lexer {
             virtual_files: std::collections::HashMap::new(),
             parse_snapshot: std::collections::HashMap::new(),
+            call_forms: 0,
+            after_name: false,
             prev_end: Position {
                 file: crate::lexer::no_file(),
                 line: 0,
@@ -931,6 +941,8 @@ impl Lexer {
         Lexer {
             virtual_files: std::collections::HashMap::new(),
             parse_snapshot: std::collections::HashMap::new(),
+            call_forms: 0,
+            after_name: false,
             prev_end: Position {
                 file: intern_file(filename),
                 line: 0,
@@ -3153,6 +3165,16 @@ impl Lexer {
         // duplicate, so two look-aheads that start at the same position desynced the
         // real parse (guard `link_revert_repeatable_same_region`).
         let at_edge = self.link == self.memory.len();
+        match &self.peek.has {
+            LexItem::Token(t) => {
+                if (*t == "(" && self.after_name) || *t == "{" {
+                    self.call_forms += 1;
+                }
+                self.after_name = *t == ")" || *t == "]";
+            }
+            LexItem::Identifier(_) => self.after_name = true,
+            _ => self.after_name = false,
+        }
         // Where the source the parser has consumed stops, captured before the cursor
         // runs on to the next token — see `report_pos`.
         self.prev_end = self.position;
