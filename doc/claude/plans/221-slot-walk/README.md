@@ -202,9 +202,16 @@ fix is then checked by cells that already exist.
    not in the gate.  What it showed: the two order defects are about an ELEMENT READ or a
    FIELD READ as the operand, whatever stands inside it; the slice of a call's field leaks
    in six slots, not one.
-5. **G5 — a second counted operand**, and a twin that binds every operand in source order.
-   For the seven "two operands interacting" issues; it also replaces the plain-variable
-   order check by a real one.
+5. **G5 — an operand that touches what the statement works on** — **built in part.**
+   Seven fillers answer the statement's own record, vector or collection through a call
+   (`own(c, r)`, `ident(c, vi)`, `idc(c, xs)`), and four WRITE it and answer 1 (`poke`,
+   `grow`, `renum`, `retext`).  A writing filler changes the answer, so it goes only into
+   the twenty slots marked `first`: exactly once, and before the statement reads anything
+   else, where binding first is what the rules say.  It showed the lost element write for
+   every index that writes its vector, not only a function-value call.  *Open:* a twin
+   that binds EVERY operand in source order, with collection operands copied where the
+   rules read them by value, which is what a writing operand in a READ slot needs
+   (loft#2503's own case, `v[set(v)]`).
 6. **G6 — views across the statement.**  The prelude binds views of its values before the
    statement and shows them after it, for the ten "bind, disturb, read" issues.
 7. **G7 — a second prelude**: nullable fields, a struct-enum, a generic, for the seven

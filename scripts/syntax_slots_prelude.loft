@@ -42,6 +42,16 @@ fn ofl(c: Ctr) -> float { c.log += "f"; 1.5 }
 fn oen(c: Ctr) -> Col { c.log += "e"; Green }
 fn pairw(c: Ctr) -> (W?, integer) { bump(c); (W { n: 1, t: "abc", f: 1.5, ok: true, tag: Green, items: [] }, 3) }
 fn same(w: W) -> W { w }
+// The value handed in, answered as it is: a filler built on one of these is the SAME record
+// or vector the statement works on, reached through a call.
+fn own(c: Ctr, w: W) -> W { bump(c); w }
+fn ident(c: Ctr, v: vector<integer>) -> vector<integer> { bump(c); v }
+fn idc(c: Ctr, v: KIND) -> KIND { bump(c); v }
+// An operand that WRITES what the statement works on, and answers 1.
+fn poke(c: Ctr, v: vector<integer>) -> integer { bump(c); v[3] = 44; 1 }
+fn grow(c: Ctr, v: vector<integer>) -> integer { bump(c); v += [50]; 1 }
+fn renum(c: Ctr, w: W) -> integer { bump(c); w.n = 8; 1 }
+fn retext(c: Ctr, w: W) -> integer { bump(c); w.t = "q"; 1 }
 fn inc1(a: integer) -> integer { a + 1 }
 fn pickfn(c: Ctr) -> fn(integer) -> integer { bump(c); inc1 }
 fn add2(a: integer, b: integer) -> integer { a * 10 + b }

@@ -13,6 +13,10 @@
 #   other filler of that type (never a variable, never another wrapper) at `--depth 2`.  A
 #   wrapper takes no `<C>` — the filler in its hole does the counting — and gives its own
 #   type's plain value when its hole holds that type's plain value.
+#   An optional fourth column, `first`, marks a filler that WRITES what the statement works
+#   on.  Such an operand changes the answer, so only the bound-first twin can say what is
+#   right, and only where binding first is what the rules say: the slots whose count is
+#   `first` (scripts/syntax_slots.tsv).  A row with this column goes into those slots only.
 # The `var` row of a type is its plain operand: evaluated once by construction, it is what a
 # slot is validated with before any other filler is tried.
 # `python3 scripts/slot_matrix.py check` validates this file; `fillers` runs each row.
@@ -90,3 +94,14 @@ rec-of-call	rec	same(<I:rec>)
 coll-of-field	coll	<I:rec>.items
 vint-of-slice	vint	<I:vint>[0..]
 nrec-of-elem	nrec	h.ws[<I:int> - 1]
+int-alias	int	(ident(<C>, vi)[0] - 9)
+int-alias-field	int	own(<C>, r).n
+text-alias	text	own(<C>, r).t
+rec-alias	rec	own(<C>, r)
+vint-alias	vint	ident(<C>, vi)
+coll-alias	coll	idc(<C>, xs)
+coll-alias-field	coll	own(<C>, r).items
+int-writes-elem	int	poke(<C>, vi)	first
+int-writes-length	int	grow(<C>, vi)	first
+int-writes-field	int	renum(<C>, r)	first
+int-writes-text	int	retext(<C>, r)	first

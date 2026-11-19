@@ -77,7 +77,8 @@ CONTEXTS_TSV = os.path.join(HERE, "syntax_contexts.tsv")
 PRELUDE = os.path.join(HERE, "syntax_slots_prelude.loft")
 BASELINE = os.path.join(HERE, "slot_matrix.baseline")
 
-COUNTS = ("once", "cond", "step")
+COUNTS = ("once", "first", "cond", "step")
+ONCE = ("once", "first")
 FAMILIES = ("iteration", "write", "read", "call", "operator", "control", "construct")
 # The collection kinds a cell can be generated for.  A slot runs in all of them when a
 # filler of its type reads one of the prelude's kind-dependent names; otherwise the kind
@@ -110,7 +111,7 @@ def neutral(slots, fillers):
     out = {}
     for t in types_of(fillers):
         for s in slots:
-            if s["type"] == t and s["count"] == "once" and not s["decl"] and s["family"] != "write":
+            if s["type"] == t and s["count"] == "once" and not s["decl"]:
                 out[t] = s["id"]
                 break
     return out
@@ -143,10 +144,13 @@ def load_slots(path=SLOTS_TSV):
 def load_fillers(path=FILLERS_TSV):
     fillers, problems = [], []
     for nr, cols in rows(path):
-        if len(cols) != 3:
-            problems.append(f"{os.path.basename(path)}:{nr}: {len(cols)} columns, want 3")
+        if len(cols) not in (3, 4):
+            problems.append(f"{os.path.basename(path)}:{nr}: {len(cols)} columns, want 3 or 4")
             continue
-        fillers.append({"id": cols[0], "type": cols[1], "expr": cols[2], "line": nr})
+        only = cols[3] if len(cols) == 4 else ""
+        if only not in ("", "first"):
+            problems.append(f"{os.path.basename(path)}:{nr}: the fourth column is `first` or absent")
+        fillers.append({"id": cols[0], "type": cols[1], "expr": cols[2], "only": only, "line": nr})
     return fillers, problems
 
 
@@ -226,7 +230,7 @@ def check(slots, fillers, outside, lex, rules, problems):
             problems.append(f"{where}: type `{s['type']}` has no `{s['type']}-var` row in syntax_fillers.tsv")
         if not s["runs"].isdigit():
             problems.append(f"{where}: runs `{s['runs']}` is not a number")
-        elif s["count"] == "once" and s["runs"] != "1":
+        elif s["count"] in ONCE and s["runs"] != "1":
             problems.append(f"{where}: count `once` with runs {s['runs']}")
         elif s["count"] == "cond" and s["runs"] not in ("0", "1"):
             problems.append(f"{where}: count `cond` with runs {s['runs']}")
@@ -310,6 +314,7 @@ def expand(fillers, depth):
         for f in plain:
             if f["type"] == hole.group(1) and not f["id"].endswith("-var"):
                 out.append({"id": f"{w['id']}({f['id']})", "type": w["type"], "line": w["line"],
+                            "only": f.get("only", ""),
                             "expr": w["expr"].replace(hole.group(0), f["expr"])})
     return out
 
@@ -366,7 +371,7 @@ def cmd_list(_args):
     for fam in FAMILIES:
         mine = [s for s in slots if s["family"] == fam]
         by = {c: sum(1 for s in mine if s["count"] == c) for c in COUNTS}
-        print(f"{fam:10} {len(mine):3} slots   once {by['once']:3}  cond {by['cond']:2}  step {by['step']:2}")
+        print(f"{fam:10} {len(mine):3} slots   once {by['once'] + by['first']:3} (first {by['first']:2})  cond {by['cond']:2}  step {by['step']:2}")
     owed = [s["id"] for s in slots if s["rule"] == "-"]
     print(f"{'total':10} {len(slots):3} slots, {len(fillers)} fillers, {len(outside)} lexemes outside")
     print(f"no rule states the count of {len(owed)}: {' '.join(owed)}")
@@ -442,6 +447,8 @@ def make_cells(slots, fillers, which_filler, which_slot, which_kind, contexts=No
                 is_var = f["id"].endswith("-var")
                 if not is_var and which_filler != "all" and f["id"] != which_filler:
                     continue
+                if f.get("only") == "first" and slot["count"] != "first":
+                    continue
                 expr = f["expr"].replace(COUNTER, "c")
                 put = lambda stmt: wrap.replace("<STMT>", stmt)
                 cell = {"name": where % f["id"], "slot": slot["id"], "frame": frame,
@@ -454,7 +461,7 @@ def make_cells(slots, fillers, which_filler, which_slot, which_kind, contexts=No
                 # with that local.  A local is evaluated once by construction, so the twin
                 # says what the statement must leave behind.  Only where the operand runs
                 # exactly once and sits in the frame; elsewhere the plain variable says it.
-                if not is_var and slot["count"] == "once" and (not slot["decl"] or BIND in slot["decl"]):
+                if not is_var and slot["count"] in ONCE and (not slot["decl"] or BIND in slot["decl"]):
                     cell["base"] = cell["name"] + ".twin"
                     bind = f"t0 = {expr}; "
                     out.append(dict(
@@ -462,7 +469,7 @@ def make_cells(slots, fillers, which_filler, which_slot, which_kind, contexts=No
                         decl=slot["decl"].replace(BIND, bind).replace(SLOT, "t0"),
                         stmt=put(("" if slot["decl"] else bind) + slot["stmt"].replace(SLOT, "t0"))))
                 silent = ".calls += 1" in f["expr"] and ".log" not in f["expr"]
-                turn = (None if is_var or silent or slot["decl"] or slot["count"] != "once"
+                turn = (None if is_var or silent or slot["decl"] or slot["count"] not in ONCE
                         else ordered(slot["stmt"]))
                 if turn:
                     out.append(dict(cell, name=cell["name"] + ".order",
@@ -631,16 +638,24 @@ def channel(why):
     return "crash"
 
 
-def causes(cells, verdicts):
+def causes(cells, verdicts, universe=None):
     """The failing cells folded toward causes.  A slot that fails with most of its fillers
     is one cause in the SLOT's lowering; what is left is folded by filler, a form of
     expression that fails in several slots being one cause in how that FORM is lowered."""
     by_slot, by_filler, total_slot = {}, {}, {}
-    for cell in cells:
+
+    def place(cell):
         slot, filler = cell["name"].split(".")[:2]
         spot = re.search(r"@[\w/]+", cell["name"])
-        slot += spot.group(0) if spot else ""
+        return slot + (spot.group(0) if spot else ""), filler
+
+    # "Most of its fillers" is counted over the whole run, also when only some of its
+    # cells are being folded (the gate's new ones, a walk's group).
+    for cell in universe or cells:
+        slot, filler = place(cell)
         total_slot.setdefault(slot, set()).add(filler)
+    for cell in cells:
+        slot, filler = place(cell)
         worst, lines = verdicts[cell["name"]]
         if worst == "FAIL":
             ch = "+".join(sorted({channel(why) for _, v, why in lines if v == "FAIL"}))
@@ -795,7 +810,7 @@ def cmd_gate(args):
     if new:
         print("the new cells fold to:")
         only = {n for n, _, _ in new}
-        for line in causes([c for c in cells if c["name"] in only], verdicts):
+        for line in causes([c for c in cells if c["name"] in only], verdicts, cells):
             print("  " + line)
     print(f"slot_matrix gate: {len(cells)} cells, {len(keys)} not ok ({len(stable) + len(unstable)} in the "
           f"baseline), {len(new)} new, {len(gone)} to remove  [{loft_binary()}]")
@@ -819,8 +834,8 @@ def cmd_cell(args):
                   "`--plain EXPR` (the same value without a counter)")
             return 1
         tp = "adhoc"
-        mine = [{"id": "adhoc-var", "type": tp, "expr": args.plain, "line": 0},
-                {"id": "adhoc-new", "type": tp, "expr": args.filler, "line": 0}]
+        mine = [{"id": "adhoc-var", "type": tp, "expr": args.plain, "only": "", "line": 0},
+                {"id": "adhoc-new", "type": tp, "expr": args.filler, "only": "", "line": 0}]
     elif args.type in types_of(fillers):
         tp = args.type
         mine = [f for f in fillers if f["type"] == tp]
@@ -870,7 +885,7 @@ def cmd_walk(args):
     for title, which in (("fixed since", old), ("new since", new), ("failing on both", new)):
         mine = groups[title]
         print(f"{title}: {len(mine)} cell(s)")
-        for line in causes(mine, which):
+        for line in causes(mine, which, cells):
             print("  " + line)
     print(f"refused by the older build and accepted now: {len(groups['refused then'])} cell(s)")
     print(f"slot_matrix walk: {len(cells)} cells, old [{args.old}], new [{here}]")
