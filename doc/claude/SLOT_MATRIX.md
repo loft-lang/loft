@@ -52,7 +52,7 @@ The matrix is generated; the tables are what is kept and reviewed, never the cel
 | `syntax_expect.tsv` | all 191 slots, a row a kind where the kind changes the answer | the anchor: slot, kind, the fields the plain statement must leave changed |
 | `syntax_outside.tsv` | 38 lexemes | every lexeme in no slot, with why: it takes no operand, it is a declaration, or the matrix cannot reach it yet (12) |
 | `syntax_slots_prelude.loft` | 3 frames | the world a cell runs in, and the functions a filler calls |
-| `slot_matrix.baseline` | 477 lines | the cells that do not pass today; the gate lets it only shrink |
+| `slot_matrix.baseline` | 379 lines | the cells that do not pass today; the gate lets it only shrink |
 
 The lexicon is read from the lexer's tables and the parser's own lexer calls, so syntax
 added without a slot row or a reason fails `doc_hygiene`.
@@ -153,7 +153,12 @@ on an older compiler: what failed then and passes now is what it would have caug
 
 ## Writing a table row
 
-- A **slot** statement uses the names of the prelude's world; `<S>` is the operand.  Where
+- A **slot** statement uses the names of the prelude's world; `<S>` is the operand.  A
+  function the slot declares takes `<ENV>` and is called with `<ARGS>`, the whole world, so
+  that a filler finds its names there; `<ENV: c h i>` keeps only some.  The type column may
+  say `type@kind,kind` (the kinds the slot has a meaning in) and `type!filler` (a filler
+  that is not of the type the statement needs).  The aim is that every cell the compiler
+  refuses is refused by the LANGUAGE: a name the cell's world lacks fails the run.  Where
   a `{` follows the slot the operand stands in parentheses, or a block as the operand is
   read as the statement's body.  A statement's plain result must differ from "nothing
   happened", or its anchor cannot see a lost write.
