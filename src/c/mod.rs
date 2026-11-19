@@ -1522,7 +1522,8 @@ impl Cx<'_> {
                 &mut memo.stores_written,
                 &mut memo.writes,
                 Some(&mut memo.inputs),
-            ),
+            )
+            .with_schema(self.stores),
         )
     }
 

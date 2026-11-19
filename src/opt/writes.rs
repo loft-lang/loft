@@ -941,7 +941,7 @@ pub(crate) fn blocks_header_hoist(
             let known = (*d as usize) < data.definitions.len();
             let in_place_setter = known
                 && tiers.in_place
-                && (IN_PLACE_SET_OPS.contains(&data.def(*d).name())
+                && (crate::opt::loop_records::in_place_set(data, stores, data.def(*d).name(), args, vars)
                     || scalar_file_read(data, data.def(*d).name(), args, vars)
                     || local_stack_ref(data.def(*d).name(), args, vars)
                     || record_stack_ref(stores, data, data.def(*d).name(), args, vars));
@@ -1173,7 +1173,13 @@ impl Kind for InPlaceOnly {
                 let callee = data.def(*op);
                 if matches!(callee.code(), Value::Null) {
                     !(native_op_is_store_free(callee)
-                        || IN_PLACE_SET_OPS.contains(&callee.name())
+                        || crate::opt::loop_records::in_place_set(
+                            data,
+                            fx.stores,
+                            callee.name(),
+                            args,
+                            Some(def.variables()),
+                        )
                         || scalar_file_read(data, callee.name(), args, Some(def.variables()))
                         || scalar_stack_ref(callee.name(), args, Some(def.variables()))
                         || callee_allowance(callee.name(), args, def.variables(), data, owned))

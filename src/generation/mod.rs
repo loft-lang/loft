@@ -4214,7 +4214,8 @@ impl Output<'_> {
                 &mut self.hoist_cache,
                 &mut self.scalar_write_cache,
                 (!self.switches.callee_inputs_disabled).then_some(&mut self.input_cache),
-            ),
+            )
+            .with_schema(self.stores),
             tiers,
             Some(&self.hoist_owned),
             (!self.switches.distinct_growth_disabled)
@@ -4838,7 +4839,8 @@ impl Output<'_> {
                 &mut self.hoist_cache,
                 &mut self.scalar_write_cache,
                 Some(&mut self.input_cache),
-            ),
+            )
+            .with_schema(self.stores),
         )
     }
 

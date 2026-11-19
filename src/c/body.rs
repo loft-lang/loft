@@ -2100,7 +2100,8 @@ impl<'a> FnWriter<'a> {
                 &mut cache,
                 &mut memo.writes,
                 (!sw.callee_inputs_disabled).then_some(&mut memo.inputs),
-            ),
+            )
+            .with_schema(self.cx.stores),
             tiers,
             None,
             facts.as_ref(),

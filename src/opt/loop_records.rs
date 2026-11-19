@@ -36,6 +36,100 @@ pub const IN_PLACE_SET_OPS: [&str; 12] = [
     "OpSetEnum",
 ];
 
+/// `@FR-R-InPlace` — is this call a fixed-width scalar set through an existing address: one of
+/// [`IN_PLACE_SET_OPS`], except an `OpSetInt4` whose slot is no 4-byte number.  The same op
+/// zeroes a COLLECTION field's header in place — a record literal primes `v: []` with
+/// `OpSetInt4(<record>, <pos>, 0)` — which changes that vector's length, so a header or push
+/// handle a loop holds goes stale (loft#2569: `for i in 0..3 { b.inner = Vf { v: [], n: i };
+/// b.inner.v += [i] }` answered `[]` on both compiled backends).  The slot is read from the
+/// receiver's record type; one this cannot type stays a writer, the allow-list's direction.
+pub fn in_place_set(
+    data: &Data,
+    stores: Option<&Stores>,
+    name: &str,
+    args: &[Value],
+    vars: Option<&crate::variables::Function>,
+) -> bool {
+    IN_PLACE_SET_OPS.contains(&name)
+        && (name != "OpSetInt4" || int4_slot_is_number(data, stores, args, vars))
+}
+
+/// Does `OpSetInt4(rec, pos, _)` write a 4-byte NUMBER field (`Parts::Int` / `IntRaw`)?
+fn int4_slot_is_number(
+    data: &Data,
+    stores: Option<&Stores>,
+    args: &[Value],
+    vars: Option<&crate::variables::Function>,
+) -> bool {
+    let Some(st) = stores else { return false };
+    let (Some(rec), Some(Value::Int(pos))) = (
+        args.first().map(Value::unspan),
+        args.get(1).map(Value::unspan),
+    ) else {
+        return false;
+    };
+    let Some(tp) = record_known_type(data, st, rec, vars) else {
+        return false;
+    };
+    let fields = match st.types.get(usize::from(tp)).map(|t| &t.parts) {
+        Some(crate::database::Parts::Struct(f) | crate::database::Parts::EnumValue(_, f)) => f,
+        _ => return false,
+    };
+    fields
+        .iter()
+        .find(|f| i32::from(f.position) == *pos)
+        .is_some_and(|f| {
+            matches!(
+                st.types.get(usize::from(f.content)).map(|t| &t.parts),
+                Some(crate::database::Parts::Int(..) | crate::database::Parts::IntRaw(..))
+            )
+        })
+}
+
+/// The schema type of the record `rec` addresses: a field read names it (`OpGetField`'s
+/// type operand), an element read takes its vector's element, a variable its declared type.
+fn record_known_type(
+    data: &Data,
+    st: &Stores,
+    rec: &Value,
+    vars: Option<&crate::variables::Function>,
+) -> Option<u16> {
+    match rec.unspan() {
+        Value::Var(v) => crate::opt::writes::plain_record_type(data, vars?.tp(*v)),
+        Value::Call(d, a) if (*d as usize) < data.definitions.len() => match data.def(*d).name() {
+            "OpGetField" => match a.get(2).map(Value::unspan) {
+                Some(Value::Int(t)) => u16::try_from(*t).ok(),
+                _ => None,
+            },
+            "OpGetVector" | "OpVectorRef" => match a.first()?.unspan() {
+                Value::Var(x) => {
+                    let Type::Vector(elm, _) = vars?.tp(*x).base() else {
+                        return None;
+                    };
+                    crate::opt::writes::plain_record_type(data, elm)
+                }
+                Value::Call(g, b)
+                    if (*g as usize) < data.definitions.len()
+                        && data.def(*g).name() == "OpGetField" =>
+                {
+                    let Some(Value::Int(t)) = b.get(2).map(Value::unspan) else {
+                        return None;
+                    };
+                    match st.types.get(usize::try_from(*t).ok()?).map(|t| &t.parts) {
+                        Some(
+                            crate::database::Parts::Vector(e) | crate::database::Parts::Array(e),
+                        ) => Some(*e),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            },
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 /// The typed field getters whose value is a plain `Copy` scalar in the emitted Rust — the
 /// reads @PLN157 P4c may hoist.  Each `#rust` template answers its kind's null sentinel at
 /// `rec == 0` and a typed load otherwise, and the prelude evaluates that SAME template
