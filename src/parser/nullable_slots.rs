@@ -282,7 +282,13 @@ impl Parser {
         if !crate::env_once!(std::env::var_os("LOFT_NO_SLOT_CALL_OWNER").is_some())
             && let Some((call, ret)) = self.slot_call_root(&slot_ref)
         {
-            let owner = self.create_unique("slot_src", &ret);
+            // A function-scope work ref, not a local of the read's own block: a binding of the
+            // view (`t0 = f().0`) outlives that block, and a block local released the answer at
+            // the block's end while the binding, its dep gone with the local, freed it again.
+            let owner = self.vars.work_refs(&ret, &mut self.lexer);
+            if owner == u16::MAX {
+                return slot_ref;
+            }
             self.vars.defined(owner);
             let mut rooted = slot_ref.clone();
             self.replace_slot_root(&mut rooted, Value::Var(owner));
