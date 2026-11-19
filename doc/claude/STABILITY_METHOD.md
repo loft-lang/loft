@@ -625,7 +625,7 @@ try one statement or one expression at the moment a shape looks suspicious; `exp
 one failing cell open, with the IR of the cell beside the IR of its twin.  The wider axes —
 a loop and a branch around the statement, parameters in place of locals, fillers inside
 fillers — are minutes, not seconds, and are for a change to a lowering and for the night.
-The plan, the queue and what the walks found: [plans/221-slot-walk](plans/221-slot-walk/README.md).
+The registers, the commands, the gate and the open work: [SLOT_MATRIX.md](SLOT_MATRIX.md).
 
 ---
 

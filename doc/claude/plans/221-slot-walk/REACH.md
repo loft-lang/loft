@@ -51,7 +51,7 @@ The older binary is any build: `git worktree add --detach <dir> <tag>`, then `ca
 
 Every `silent-wrong` issue filed since that release, 78 of them, was read against the
 tables as they stood on 2026-11-19 and given one verdict.  The ledger is
-[reach.tsv](reach.tsv), one row an issue.
+[slot_reach.tsv](../../../../scripts/slot_reach.tsv), one row an issue.
 
 | Verdict | Issues | Meaning |
 |---|---|---|
@@ -125,11 +125,10 @@ bare statement does not show:
 - the member of a call's tuple under `??` is a wrong value where its record is a local and
   a store freed twice where it is a parameter.
 
-## What the walk asks for next
+## What the walk asked for
 
-The steps are G1 to G9 of [the plan's § Phase ordering](README.md#phase-ordering): the gate
-first, then the ad-hoc cell, the calibration of this ledger's 23 `fits-rows` verdicts, and
-the axes the table above leaves open.
+Its steps are G1 to G9 of [queue.md](queue.md), with what each built; what none of them
+finished is a row of [SLOT_MATRIX.md § Open work](../../SLOT_MATRIX.md#open-work).
 
 ## The standing practice — every new defect is a row or a ledger line
 

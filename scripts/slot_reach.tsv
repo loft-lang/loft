@@ -1,7 +1,9 @@
-# The reach ledger of the slot matrix (@PLN221, REACH.md): every silent-wrong issue filed
+# The reach ledger of the slot matrix (doc/claude/SLOT_MATRIX.md § Keeping it honest): every silent-wrong issue filed
 # since the release of 2026-11-03, judged against the matrix as it stood on 2026-11-19.
 # Columns, tab-separated: issue, verdict, slot, filler, missing, channel, note.
-#   verdict  fits-now | fits-rows | needs-axis | outside (REACH.md defines them)
+#   verdict  fits-now (the tables hold the slot and the filler) | fits-rows (a row, a type
+#            or a prelude helper is missing) | needs-axis (it turns on something the tool
+#            does not vary) | outside (not about evaluating an operand)
 #   missing  what the tables or the tool lacked for it
 2577	fits-now	rd-coal-rec-left	nrec-tuple-call	-	value	Garbage on the interpreter, double free on C; the twin (tuple bound first) is right.
 2575	fits-rows	value of `f#next = <S>` on a file with no handle open	int-call	slot row; prelude helper	count	Listed unreached in the register; the prelude needs a file record.
