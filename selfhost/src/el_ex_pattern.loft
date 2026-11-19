@@ -621,9 +621,14 @@ pub fn slice_vector(e: el::El, vars: el_vars::Vars, sv: integer, elm: ir::TypeT,
   // A record element is a view of the subject's element (`Vector Index`'s dep on the vector).
   record = proj == null && sed >= 0;
   fv = el_vars::create_unique(vars, "slice_elm", if record { el_types::with_deps(elm, [sv]) } else { vt_inner });
-  db = el_vars::work_vec_db(vars, ir::TyReference { n: r.main_def, dep: [] });
-  el_vars::depend(vars, rv, db);
-  el_vars::set_var_type(vars, ev, ir::TyReference { n: el::def_nr(e, nm), dep: [db] });
+  // (A rest the return buffer was renamed onto is the caller's vector: cleared and filled in
+  // place, no store of its own.)
+  in_buffer = vars.vars[rv].argument;
+  db = if in_buffer { -1 } else { el_vars::work_vec_db(vars, ir::TyReference { n: r.main_def, dep: [] }) };
+  if !in_buffer {
+    el_vars::depend(vars, rv, db);
+  }
+  el_vars::set_var_type(vars, ev, ir::TyReference { n: el::def_nr(e, nm), dep: [if in_buffer { rv } else { db }] });
   w = ir::NdVar { n: ev };
   body = [
     el_ir::v_set(fv, read),
@@ -637,12 +642,12 @@ pub fn slice_vector(e: el::El, vars: el_vars::Vars, sv: integer, elm: ir::TypeT,
     },
     el_ir::cl(e, "OpFinishRecord", [ir::NdVar { n: rv }, w, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }])
   ];
-  ops: vector<ir::Node> = [
+  ops: vector<ir::Node> = if in_buffer { [el_ir::cl(e, "OpClearVector", [ir::NdVar { n: rv }]), init] } else { [
     el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: r.main_known }]),
     el_ir::v_set(rv, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: r.vec_known }])),
     el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }]),
     init
-  ];
+  ] };
   if vt_inner is TyText {
     ops += [el_ir::v_set(fv, ir::NdText { s: "" })];
   }
