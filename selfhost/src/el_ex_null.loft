@@ -109,7 +109,16 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
     // A vector that is itself an ELEMENT (`vs[0] ?? []`) is read out of its slot through the
     // nullable getter (`OpGetField(OpGetVectorNullable(vs, …), 0, <vector's type>)`).
     elem_subject = element_of_path(e, el_ir::unspan(x.code)) && element_place_type(e, lhs) >= 0;
-    if !(x.code is NdVar) && !el_ex_call::buffered_loft_call(e, x.code) && (copies_whole_vector(e, vars, x.code) || field_path(e, x.code) || elem_subject) {
+    // A field of an element of a LINKED collection (a vector that shares its records with a
+    // keyed sibling holds their ids: the element read is `OpVectorRef(v, i)`): the same hold.
+    linked_field = match el_ir::unspan(x.code) {
+      NdCall { def_nr: lfd, args: lfa } => el::def(e, lfd).name == "OpGetField" && len(lfa) == 3 && match el_ir::unspan(lfa[0]!) {
+        NdCall { def_nr: lrd, args: lra } => el::def(e, lrd).name == "OpVectorRef" && len(lra) == 2 && (el_ir::unspan(lra[0]!) is NdVar || field_path(e, lra[0]!)),
+        _ => false
+      },
+      _ => false
+    };
+    if !(x.code is NdVar) && !el_ex_call::buffered_loft_call(e, x.code) && (copies_whole_vector(e, vars, x.code) || field_path(e, x.code) || elem_subject || linked_field) {
       // The default's buffer borrows the record too: a work ref nulled at the head.
       if !e.first_pass {
         el_ex_call::borrowed_literal_buffer(vars, d.code);
