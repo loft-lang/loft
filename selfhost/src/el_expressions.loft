@@ -570,6 +570,7 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       // into the buffer (`MaterializeView` on the join).
       if built == null {
         built = materialize_join_tail(e, vars, code, rb, result);
+        view_answer = built != null;
       }
       // A `null` tail answers the sentinel and delivers nothing into the buffer.
       if built == null && null_sentinel_tail(e, code) {
@@ -613,9 +614,20 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       if built == null && el_types::struct_enum_def(result) >= 0 && !(result is TyOptional) && match body_tail(code) { NdCall { def_nr: ntd } => starts_with(el::def(e, ntd).name, "n_") && ((el::def(e, ntd).code[0] ?? ir::NdNull) is NdNull), _ => false } {
         built = code;
       }
+      // Last: an `if` tail whose arms are blocks (a literal, a nullable local) or the sentinel —
+      // each arm copied into the buffer (`Bind`), a nullable local's only where present.
+      if_copied = false;
+      if built == null && body_tail(code) is NdIf {
+        built = materialize_if_tail(e, vars, code, rb, result);
+        if_copied = built != null;
+      }
       kind = tail_kind(e, vars, code);
       // A tail already refused is no second refusal.
-      if built != null {
+      if built != null && if_copied {
+        code = built!;
+        // (Copied arm by arm: the body is typed as the buffer, `view_answer`.)
+        view_answer = true;
+      } else if built != null {
         code = built!;
         code = literal_exits_into_buffer(e, vars, code, rb, result);
         if el_types::base(result) is TyReference {
@@ -1640,6 +1652,33 @@ pub fn materialize_match_arms(e: el::El, vars: el_vars::Vars, code: ir::Node, rb
   ir::NdBlock { block: [bl] }
 }
 
+pub fn materialize_if_tail(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, result: ir::TypeT) -> ir::Node? {
+  bl = match code { NdBlock { block } => block[0], _ => return null };
+  if len(bl.operators) == 0 || rb < 0 {
+    return null;
+  }
+  td = struct_ref(e, el_types::base(result));
+  if td < 0 {
+    td = el_types::struct_enum_def(el_types::base(result));
+  }
+  if td < 0 {
+    return null;
+  }
+  kt = el::def(e, td).known_type;
+  owned = el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb]);
+  arms = materialize_arm(e, vars, el_ir::unspan(el_ir::last(bl.operators)), rb, kt, owned, any_block: true);
+  if arms == null {
+    return null;
+  }
+  bl.operators[-1] = el_ir::respan(el_ir::last(bl.operators), arms!);
+  bl.result = [if result is TyOptional { ir::TyOptional { inner: owned } } else { owned }];
+  rba = attr_nr(el::def(e, e.context), "__retbuf");
+  if rba >= 0 {
+    e.b.data.definitions[e.context].returned = [el_types::with_deps(el::def(e, e.context).returned[0] ?? result, [rba])];
+  }
+  ir::NdBlock { block: [bl] }
+}
+
 pub fn materialize_join_tail(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, result: ir::TypeT) -> ir::Node? {
   bl = match code { NdBlock { block } => block[0], _ => return null };
   if len(bl.operators) == 0 || rb < 0 {
@@ -1711,15 +1750,15 @@ fn has_null_arm(n: ir::Node) -> boolean {
   }
 }
 
-fn materialize_arm(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, kt: integer, owned: ir::TypeT) -> ir::Node? {
+fn materialize_arm(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, kt: integer, owned: ir::TypeT, any_block: boolean = false) -> ir::Node? {
   match n {
     NdSpan { pos, inner } => {
-      r = materialize_arm(e, vars, inner, rb, kt, owned);
+      r = materialize_arm(e, vars, inner, rb, kt, owned, any_block);
       return if r == null { null } else { ir::NdSpan { pos: pos, inner: r! } };
     },
     NdIf { cond, t, f } => {
-      a = materialize_arm(e, vars, t, rb, kt, owned);
-      b = materialize_arm(e, vars, f, rb, kt, owned);
+      a = materialize_arm(e, vars, t, rb, kt, owned, any_block);
+      b = materialize_arm(e, vars, f, rb, kt, owned, any_block);
       return if a == null || b == null { null } else { ir::NdIf { cond: cond, t: a!, f: b! } };
     },
     NdCall { def_nr } => { return if el::def(e, def_nr).name == "OpNullRefSentinel" { n } else { null }; },
@@ -1727,15 +1766,24 @@ fn materialize_arm(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, kt:
     NdNull => { return el_ir::cl(e, "OpNullRefSentinel", []); },
     NdBlock { block } => {
       ab = block[0];
-      if len(ab.operators) == 0 || !(el_ir::unspan(el_ir::last(ab.operators)) is NdVar) {
+      if len(ab.operators) == 0 || (!any_block && !(el_ir::unspan(el_ir::last(ab.operators)) is NdVar)) {
         return null;
       }
       b = ir::NdVar { n: rb };
+      // (A whole block copied in is typed without the store its own literal mints.)
+      if any_block && !(el_ir::unspan(el_ir::last(ab.operators)) is NdVar) {
+        ab.result = [el_types::without_deps(ab.result[0] ?? owned)];
+        return el_ir::v_block([el_ir::v_set(rb, ir::NdNull), el_ir::cl(e, "OpDatabase", [b, ir::NdInt { n: kt }]), el_ir::cl(e, "OpCopyRecord", [ir::NdBlock { block: [ab] }, b, ir::NdInt { n: kt }]), b], owned, "materialized_view_return");
+      }
       // A NULLABLE binding is copied where present, inside its block: the sentinel where absent.
       av = match el_ir::unspan(el_ir::last(ab.operators)) { NdVar { n: an } => an, _ => -1 };
       if av >= 0 && el_vars::tp(vars, av) is TyOptional {
         cp = el_ir::v_block([el_ir::v_set(rb, ir::NdNull), el_ir::cl(e, "OpDatabase", [b, ir::NdInt { n: kt }]), el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: av }, b, ir::NdInt { n: kt }]), b], owned, "materialized_view_return");
         ab.operators[-1] = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [ir::NdVar { n: av }]), el_ir::cl(e, "OpNullRefSentinel", []), cp);
+        // (An `if` arm's block answers the buffer; a slice binding's keeps its own type.)
+        if any_block {
+          ab.result = [owned];
+        }
         return ir::NdBlock { block: [ab] };
       }
       return el_ir::v_block([el_ir::v_set(rb, ir::NdNull), el_ir::cl(e, "OpDatabase", [b, ir::NdInt { n: kt }]), el_ir::cl(e, "OpCopyRecord", [n, b, ir::NdInt { n: kt }]), b], owned, "materialized_view_return");
