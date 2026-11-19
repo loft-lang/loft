@@ -1032,6 +1032,14 @@ pub fn arm_body(e: el::El, vars: el_vars::Vars, body: integer?, expected: ir::Ty
   if el_ex_match::sibling_variants(e, x.tp, expected) {
     return x;
   }
+  // A tuple arm whose members join into the expected tuple (`(5, 7)` beside `(integer?,
+  // integer?)`) is no conversion: it stands, and the match joins it (`join_tuple_arms`).
+  if el_types::base(x.tp) is TyTuple && el_types::base(expected) is TyTuple {
+    tj = el_ex_null::join_tuple_arms(e, expected, x.tp);
+    if tj != null && el_types::is_equal(e, tj!, expected) {
+      return x;
+    }
+  }
   c = el_convert::convert_admitting(e, vars, x.code, x.tp, expected);
   if c == null {
     refuse_known(e, x.tp, "a match arm of another type: {type_kind(x.tp)} for {type_kind(expected)}");
