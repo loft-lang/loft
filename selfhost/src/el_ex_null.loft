@@ -118,7 +118,14 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
       },
       _ => false
     };
-    if !(x.code is NdVar) && !el_ex_call::buffered_loft_call(e, x.code) && (copies_whole_vector(e, vars, x.code) || field_path(e, x.code) || elem_subject || linked_field) {
+    // A field read THROUGH a nullable record (`h.a.v` with `a: R?`: the field of the payload
+    // `read_through_tag` picks, an `if` over the slot's tag) is held the same way: it views
+    // what the slot borrows.
+    tag_field = len(el_types::deps(x.tp)) > 0 && match el_ir::unspan(x.code) {
+      NdCall { def_nr: tfd, args: tfa } => el::def(e, tfd).name == "OpGetField" && len(tfa) == 3 && el_ir::unspan(tfa[0]!) is NdIf,
+      _ => false
+    };
+    if !(x.code is NdVar) && !el_ex_call::buffered_loft_call(e, x.code) && (copies_whole_vector(e, vars, x.code) || field_path(e, x.code) || elem_subject || linked_field || tag_field) {
       // The default's buffer borrows the record too: a work ref nulled at the head.
       if !e.first_pass {
         el_ex_call::borrowed_literal_buffer(vars, d.code);
@@ -183,6 +190,25 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
     vt = el_types::without_deps(lhs);
     present = el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpVectorIsNull", [x.code])]);
     return ex(el_ir::v_if(present, x.code, d.code), el_types::with_deps(vt, el_types::deps(lhs)));
+  }
+  // A keyed local (`h ?? []`, `h: hash<E[k]>?`): the collection where it is present
+  // (`coalesce_not_null`'s `OpVectorIsNull`), the default where not.  Any other keyed subject
+  // is refused by name.
+  if keyed_kind(lhs) {
+    if !(el_ir::unspan(x.code) is NdVar) {
+      el::refuse(e, "a keyed `??` on something other than a local");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    if !el_types::is_equal(e, el_types::without_deps(lhs), el_types::without_deps(el_types::base(d.tp))) {
+      el::refuse(e, "a keyed `??` default of another type");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    kt = el_types::with_deps(el_types::without_deps(lhs), el_types::deps(lhs));
+    if e.first_pass {
+      return ex(ir::NdNull, kt);
+    }
+    kp = el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpVectorIsNull", [x.code])]);
+    return ex(el_ir::v_if(kp, x.code, d.code), kt);
   }
   // A plain enum's value is a scalar here: its null is the zero ordinal (`OpConvBoolFromEnum`).
   if !el_convert::plain_scalar(lhs) && !el_convert::plain_enum(lhs) {
