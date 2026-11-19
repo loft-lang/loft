@@ -1383,6 +1383,25 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
       _ => {}
     }
   }
+  if null_then && is_nullable_wrapper(e, f.tp) {
+    tslot = f.tp;
+    tpt = ir::TyOptional { inner: ir::TyReference { n: el_ex_place::nullable_payload(e, el_types::struct_enum_def(tslot)), dep: el_types::deps(tslot) } };
+    if e.first_pass {
+      return ex(el_ir::v_if(c.code, t.code, f.code), tpt);
+    }
+    if el_trace::on() {
+      el_trace::route(e, "if_join=null_beside_tagged_slot");
+    }
+    tsl = tag_leaves(e, vars, f.code, tslot, tpt);
+    tnl = retail(el_ir::unspan(t.code), el_ir::cl(e, "OpNullRefSentinel", []), tpt);
+    if tsl != null && tnl != null {
+      return ex(el_ir::v_if(c.code, tnl!, tsl!), tpt);
+    }
+  }
+  // (The first pass may not type the else yet: nothing is refused there.)
+  if null_then && e.first_pass && (el_types::is_unknown(f.tp) || el_convert::null_of(e, f.tp) == null) && !(f.tp is TyNull) && !(f.tp is TyNever) {
+    return ex(el_ir::v_if(c.code, t.code, f.code), if f.tp is TyOptional || el_types::is_unknown(f.tp) { f.tp } else { ir::TyOptional { inner: f.tp } });
+  }
   if null_then {
     nv = el_convert::null_of(e, f.tp);
     if f.tp is TyNull || f.tp is TyNever || nv == null {
@@ -1440,6 +1459,26 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
   // A record arm beside a `null` one: the null arm answers the record's null sentinel, typed as
   // the record, and the join is the record `?` (`if_join`'s `null_value`).
   // A vector arm beside a `null` one alike: its null is the collection sentinel.
+  // `@FR-L-Null-Which` (loft#2572): a tagged `__nullable<S>` arm beside a `null` arm is read
+  // through its tag at its leaves, and the join is the POINTER `S?` — the payload projected
+  // after the join read an absent slot as a record.  The `null` arm answers the sentinel.
+  if (f.tp is TyNull && is_nullable_wrapper(e, t.tp)) || (t.tp is TyNull && is_nullable_wrapper(e, f.tp)) {
+    slot_t = if f.tp is TyNull { t.tp } else { f.tp };
+    pt = ir::TyOptional { inner: ir::TyReference { n: el_ex_place::nullable_payload(e, el_types::struct_enum_def(slot_t)), dep: el_types::deps(slot_t) } };
+    if e.first_pass {
+      return ex(el_ir::v_if(c.code, t.code, f.code), pt);
+    }
+    if el_trace::on() {
+      el_trace::route(e, "if_join=tagged_slot_beside_null");
+    }
+    sl = tag_leaves(e, vars, if f.tp is TyNull { t.code } else { f.code }, slot_t, pt);
+    // (The `null` arm keeps the slot's type where it follows the slot, and takes the pointer's
+    // where it comes first — as Rust prints the two orders.)
+    nl = retail(el_ir::unspan(if f.tp is TyNull { f.code } else { t.code }), el_ir::cl(e, "OpNullRefSentinel", []), if f.tp is TyNull { slot_t } else { pt });
+    if sl != null && nl != null {
+      return ex(if f.tp is TyNull { el_ir::v_if(c.code, sl!, nl!) } else { el_ir::v_if(c.code, nl!, sl!) }, pt);
+    }
+  }
   vector_null = f.tp is TyNull && !(t.tp is TyOptional) && t.tp is TyVector;
   // A struct enum's variant beside a `null` arm joins to the enum `?` (`variant_parent_enum`),
   // its arms typed as the variant.
@@ -2303,8 +2342,10 @@ pub fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -
         // (A callee handing back its argument whose argument lends nothing — `id2(g(k))`, a
         // fresh record — answers in its own buffer: `ls` names that buffer, the candidate.)
         vhr = hidden_ref_arg(vars, args);
-        vparams = [for dv in el_types::deps(v.tp) if vars.vars[dv].argument { dv }];
-        if vhr >= 0 && len(el_types::deps(v.tp)) > 0 && len(vparams) == 0 {
+        // (Its argument a local of the frame — `id2(x)` — `ls` is that local, which the rename
+        // takes instead: not this leg.)
+        vdeps = el_types::deps(v.tp);
+        if vhr >= 0 && (len(vdeps) == 0 || vdeps == [vhr]) {
           w = vhr;
           chain = true;
           own_view = true;
@@ -2909,6 +2950,39 @@ pub fn merge_view_call(e: el::El, vars: el_vars::Vars, code: ir::Node) -> ir::No
   }
   e.b.data.definitions[d].returned = [el_types::with_deps(ret, kept)];
   ir::NdBlock { block: [bl] }
+}
+
+// `@FR-L-Null-Which`'s leaves: each leaf of `n` (a block's tail, both arms of an `if`) holding
+// a `__nullable<S>` slot of type `slot` read through its tag (`read_through_tag`), each block
+// retyped as the pointer `pt`.  Null where a leaf cannot be read so.
+fn tag_leaves(e: el::El, vars: el_vars::Vars, n: ir::Node, slot: ir::TypeT, pt: ir::TypeT) -> ir::Node? {
+  match n {
+    // (The leaf's span is dropped with the read it was: the tag test stands in its place.)
+    NdSpan { pos: _, inner } => {
+      return tag_leaves(e, vars, inner, slot, pt);
+    },
+    NdBlock { block } => {
+      bl = block[0];
+      if len(bl.operators) == 0 {
+        return null;
+      }
+      r = tag_leaves(e, vars, bl.operators[-1]!, slot, pt);
+      if r == null {
+        return null;
+      }
+      bl.operators[-1] = r!;
+      bl.result = [pt];
+      return ir::NdBlock { block: [bl] };
+    },
+    NdIf { cond, t, f } => {
+      a = tag_leaves(e, vars, t, slot, pt);
+      b = tag_leaves(e, vars, f, slot, pt);
+      return if a == null || b == null { null } else { el_ir::v_if(cond, a!, b!) };
+    },
+    _ => {}
+  }
+  r = el_ex_place::read_through_tag(e, vars, ex(n, slot));
+  if r == null { null } else { r!.code }
 }
 
 // A field read (`OpGetField`) off a keyed point lookup (`OpGetRecord`) or off a field path.
