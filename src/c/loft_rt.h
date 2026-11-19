@@ -6254,36 +6254,38 @@ static inline int64_t loft_web_byte_at(int64_t idx, loft_str t) {
 /* ticks(): microseconds since the program started, monotonic; LOFT_FAKE_TICKS_US pins it. */
 static int64_t loft_start_us = -1;
 
-static int64_t loft_ticks(void) {
-    static int fake_read = 0;
-    static int64_t fake = LOFT_NULL;
-    if (!fake_read) {
-        fake_read = 1;
-        const char *f = getenv("LOFT_FAKE_TICKS_US");
-        if (f && *f) {
-            char *end;
-            long long v = strtoll(f, &end, 10);
-            if (*end == 0) fake = (int64_t) v;
-        }
+/* The pinned clocks (LOFT_FAKE_TICKS_US, LOFT_FAKE_NOW_MS), read once — at `loft_start`, before
+ * any thread runs, so a `par` worker or a `parallel` arm only reads them; a unit with no start
+ * (the runner's shim) reads them at the first call. */
+static int loft_clock_fakes_read = 0;
+static int64_t loft_fake_ticks = LOFT_NULL, loft_fake_now = LOFT_NULL;
+
+static int64_t loft_env_long(const char *name) {
+    const char *f = getenv(name);
+    if (f && *f) {
+        char *end;
+        long long v = strtoll(f, &end, 10);
+        if (*end == 0) return (int64_t) v;
     }
-    if (fake != LOFT_NULL) return fake;
+    return LOFT_NULL;
+}
+
+static void loft_clock_fakes(void) {
+    loft_fake_ticks = loft_env_long("LOFT_FAKE_TICKS_US");
+    loft_fake_now = loft_env_long("LOFT_FAKE_NOW_MS");
+    loft_clock_fakes_read = 1;
+}
+
+static int64_t loft_ticks(void) {
+    if (!loft_clock_fakes_read) loft_clock_fakes();
+    if (loft_fake_ticks != LOFT_NULL) return loft_fake_ticks;
     return loft_now_us() - loft_start_us;
 }
 
 /* now(): milliseconds since the Unix epoch; LOFT_FAKE_NOW_MS pins it. */
 static int64_t loft_now(void) {
-    static int fake_read = 0;
-    static int64_t fake = LOFT_NULL;
-    if (!fake_read) {
-        fake_read = 1;
-        const char *f = getenv("LOFT_FAKE_NOW_MS");
-        if (f && *f) {
-            char *end;
-            long long v = strtoll(f, &end, 10);
-            if (*end == 0) fake = (int64_t) v;
-        }
-    }
-    if (fake != LOFT_NULL) return fake;
+    if (!loft_clock_fakes_read) loft_clock_fakes();
+    if (loft_fake_now != LOFT_NULL) return loft_fake_now;
 #if defined(LOFT_POSIX)
     struct timespec t;
     clock_gettime(CLOCK_REALTIME, &t);
@@ -6912,6 +6914,7 @@ static void loft_start(int argc, char **argv) {
     loft_argc = argc;
     loft_argv = argv;
     loft_start_us = loft_now_us();
+    loft_clock_fakes();
     loft_heap_read_limit();
     loft_seed_keys();
     loft_arm_timeout();

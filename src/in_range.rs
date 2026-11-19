@@ -364,11 +364,15 @@ fn rewrite_for(
                     iter_scope: 0,
                     field: None,
                 };
-                if vars.is_captured(v)
-                    || lp.operators[first_body..]
+                let refused = if vars.is_captured(v) {
+                    Some("a closure captures the vector")
+                } else {
+                    lp.operators[first_body..]
                         .iter()
-                        .any(|o| check_body(data, vars, &w, o).is_err())
-                {
+                        .find_map(|o| check_body(data, vars, &w, o).err())
+                };
+                if let Some(why) = refused {
+                    crate::rewrite_census::declined_in("R-InRange", fname, vars.name(lv), why);
                     return n;
                 }
             }
@@ -376,6 +380,7 @@ fn rewrite_for(
         Src::Field(root, off) => {
             let why = field_decline(data, vars, root, off, idx, lv, &lp.operators[first_body..]);
             if let Some(why) = why {
+                crate::rewrite_census::declined_in("R-InRange", fname, vars.name(lv), why);
                 if trace() {
                     eprintln!("in-range: {fname} {} declined: {why}", vars.name(lv));
                 }

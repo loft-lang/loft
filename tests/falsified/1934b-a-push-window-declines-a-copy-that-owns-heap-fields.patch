@@ -1,12 +1,15 @@
 diff --git a/src/opt/push_window.rs b/src/opt/push_window.rs
+index 2e0bf10b0..ccd4fbb35 100644
 --- a/src/opt/push_window.rs
 +++ b/src/opt/push_window.rs
-@@ -941,9 +941,6 @@
+@@ -1066,11 +1066,6 @@ pub fn mint_window_ok(
              _ => parts.push(n),
          }
      }
 -    if copies_heap_into_fresh(body, &fresh, data, stores) {
--        return Err("a whole-record copy into the element owns heap fields".to_string());
+-        return Err(crate::rewrite_census::Refusal::of(
+-            "a whole-record copy into the element owns heap fields",
+-        ));
 -    }
      let mut parts: Vec<&Value> = Vec::new();
      for s in &body.operators {

@@ -503,6 +503,11 @@ Guard: `tests/scripts/88-imports.loft` (a `use` after a declaration is refused).
 
 ---
 
+A function may be called above the line that declares it, and its position changes nothing a
+program can observe: the values, and the order release hooks run, are those of the caller's own
+locals (@C168; guard `loft-suite/rules/heap/H-Drop/a-callee-declared-below-its-caller-changes-nothing-a-program-can-see.loft`).
+The numbers the compiler gives definitions and hidden stores do follow the position.
+
 ## External function annotations (`#rust`, `#iterator`)
 
 Used only in the standard library (`default/`) to bind loft declarations to Rust

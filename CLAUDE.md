@@ -207,6 +207,12 @@ it must work), before changing a shipped surface's semantics, and whenever the t
 disagree.  An edge the rules cannot express means the RULE wants extending, and an "OPEN: 0" line
 is a claim to re-measure ([formal/README.md § When to reach for this doc](doc/claude/formal/README.md)).
 
+**A rewrite that gives grief gets its logging FIRST (owner).**  Before debugging or changing an
+`R-` rule that answered wrong, missed a routine or refused a site nobody can explain, run
+`make reason-census ARGS=--owed`: if the rule owes its reasons, wire them
+([REWRITE_REASONS.md](doc/claude/REWRITE_REASONS.md)), then read what it says.  No sweep to wire
+every rule, and no checker inside the compiler — the logging a rule has must be solid.
+
 **Load the `engineering-rigor` skill the moment a situation is not diagnosed in ONE pass** —
 before the second round of probes, not after several (owner).  **The same for a FIX: a fix that
 did not work in one go — a red the first attempt left, a regression it caused, a cure that had to
@@ -339,6 +345,7 @@ Networked runs: `LOFT_NET_PROFILE` (PERFORMANCE.md § LOFT_NET_PROFILE).
 [LOFT_TEST.md](doc/claude/LOFT_TEST.md) · [DEBUG.md](doc/claude/DEBUG.md) · [CAVEATS.md](doc/claude/CAVEATS.md) · bisect switches:
 [NATIVE_SWITCHES.md](doc/claude/NATIVE_SWITCHES.md) / [BOTH_BACKEND_SWITCHES.md](doc/claude/BOTH_BACKEND_SWITCHES.md) ·
 [PROFILING.md](doc/claude/PROFILING.md) · [PERFORMANCE.md](doc/claude/PERFORMANCE.md) / [PROFILE_ORACLE.md](doc/claude/PROFILE_ORACLE.md) ·
+[REWRITE_REASONS.md](doc/claude/REWRITE_REASONS.md) which rewrites say why, and what is owed ·
 [INTERPRETER_PERFORMANCE.md](doc/claude/INTERPRETER_PERFORMANCE.md) · [PERF_PORTAL.md](doc/claude/PERF_PORTAL.md) (generated) ·
 [KERNELS.md](doc/claude/KERNELS.md) the Rust stand-ins register · [CI_BUDGET.md](doc/claude/CI_BUDGET.md) what runs when.
 

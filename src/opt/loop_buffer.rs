@@ -123,6 +123,11 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
                 );
             }
         }
+        // @decline-owed: a function that yields, calls a generator or holds a `par` block; a
+        //   record that is not exactly one vector of no-heap elements; a null declaration
+        //   inside the loop; a mention outside the mint, its field bind, the literal's zero and
+        //   a free; a field bound to a local that releases the store.  A buffer another rule
+        //   owns reports (`leave_owned`)
         crate::rewrite_census::fired("R-LoopBuffer", done.len());
         total += done.len();
     }
@@ -142,6 +147,12 @@ fn leave_owned(
         let Some(owner) = owners.get(v) else {
             return true;
         };
+        crate::rewrite_census::declined_in(
+            "R-LoopBuffer",
+            data.def(d).name(),
+            data.def(d).variables().name(*v),
+            owner.why(),
+        );
         if trace() {
             eprintln!(
                 "[ir-loop-buffer] fn={} {} left: {}",

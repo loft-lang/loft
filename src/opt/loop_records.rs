@@ -36,6 +36,217 @@ pub const IN_PLACE_SET_OPS: [&str; 12] = [
     "OpSetEnum",
 ];
 
+/// `@FR-R-InPlace` — is this call a fixed-width scalar set through an existing address: one of
+/// [`IN_PLACE_SET_OPS`], except an `OpSetInt4` whose slot is no 4-byte number.  The same op
+/// zeroes a COLLECTION field's header in place — a record literal primes `v: []` with
+/// `OpSetInt4(<record>, <pos>, 0)` — which changes that vector's length, so a header or push
+/// handle a loop holds goes stale (loft#2569: `for i in 0..3 { b.inner = Vf { v: [], n: i };
+/// b.inner.v += [i] }` answered `[]` on both compiled backends).  The slot is read from the
+/// receiver's record type; one this cannot type stays a writer, the allow-list's direction.
+pub fn in_place_set(
+    data: &Data,
+    stores: Option<&Stores>,
+    name: &str,
+    args: &[Value],
+    vars: Option<&crate::variables::Function>,
+) -> bool {
+    IN_PLACE_SET_OPS.contains(&name)
+        && (name != "OpSetInt4"
+            || int4_slot_is_number(data, stores, args, vars)
+            || buffer_pool_record(args, vars))
+}
+
+/// The setter nodes of `node` whose receiver is a record an EARLIER statement of the same
+/// statement list created — `v = OpNewRecord(…)` (an element minted into any collection),
+/// `v = OpPlaceRecord(…)` (a record placed in a host's store) or `OpDatabase(v, …)` (a store
+/// claimed for `v`, a loop buffer's mint among them) — reached as the variable or through
+/// `OpGetField`.  Such a set writes a record younger than anything a loop derived in its
+/// prelude, so whatever its slot holds — a literal priming `v: []` included — it stales no
+/// header (`@FR-R-InPlace`).  The creation itself is judged by the gate on its own: one the
+/// gate does not admit declines the loop whatever this answers.  Only siblings count: a
+/// creation in one branch never vouches for a set in another, and a later `Set` of the
+/// variable from anything else ends its window.
+#[must_use]
+pub(crate) fn sets_into_new_records(node: &Value, data: &Data) -> HashSet<*const Value> {
+    let mut out = HashSet::new();
+    node.any_node(&mut |n| {
+        let ops: &[Value] = match n.unspan() {
+            Value::Block(bl) | Value::Loop(bl) => &bl.operators,
+            Value::Insert(ls) => ls,
+            _ => return false,
+        };
+        let mut young: HashSet<u16> = HashSet::new();
+        for op in ops {
+            match op.unspan() {
+                Value::Set(v, rhs) => {
+                    if call_named(rhs, data, "OpNewRecord").is_some()
+                        || call_named(rhs, data, "OpPlaceRecord").is_some()
+                    {
+                        young.insert(*v);
+                    } else {
+                        young.remove(v);
+                    }
+                }
+                Value::Call(d, args)
+                    if (*d as usize) < data.definitions.len()
+                        && IN_PLACE_SET_OPS.contains(&data.def(*d).name())
+                        && args.first().is_some_and(|t| {
+                            crate::opt::body_writes::fresh_rooted(t, data, &young)
+                        }) =>
+                {
+                    out.insert(std::ptr::from_ref(op.unspan()));
+                }
+                Value::Call(d, args)
+                    if (*d as usize) < data.definitions.len()
+                        && matches!(data.def(*d).name(), "OpDatabase" | "OpDatabaseNP") =>
+                {
+                    if let Some(Value::Var(v)) = args.first().map(Value::unspan) {
+                        young.insert(*v);
+                    }
+                }
+                _ => {}
+            }
+        }
+        false
+    });
+    out
+}
+
+/// Is the set's receiver a record-buffer pool's own record (`@FR-O-LazyBuffer`)?  The pool's
+/// mint only ever takes a FRESH store from the null sentinel and primes its collection field
+/// right after, so that priming writes a record no header was derived from.
+fn buffer_pool_record(args: &[Value], vars: Option<&crate::variables::Function>) -> bool {
+    matches!(args.first().map(Value::unspan), Some(Value::Var(b))
+        if vars.is_some_and(|vs| *b < vs.count() && vs.is_lazy_buffer(*b)))
+}
+
+/// Does `OpSetInt4(rec, pos, _)` write a 4-byte NUMBER field (`Parts::Int` / `IntRaw`)?
+fn int4_slot_is_number(
+    data: &Data,
+    stores: Option<&Stores>,
+    args: &[Value],
+    vars: Option<&crate::variables::Function>,
+) -> bool {
+    let Some(st) = stores else { return false };
+    let (Some(rec), Some(Value::Int(pos))) = (
+        args.first().map(Value::unspan),
+        args.get(1).map(Value::unspan),
+    ) else {
+        return false;
+    };
+    // An element of a vector of numbers IS the slot: `e.eg_surf[i] = v` on a `vector<i32?>`
+    // writes the element's four bytes, and a number element is no collection header.
+    if scalar_element(data, st, rec, vars) {
+        return *pos == 0;
+    }
+    let Some(tp) = record_known_type(data, st, rec, vars) else {
+        return false;
+    };
+    let fields = match st.types.get(usize::from(tp)).map(|t| &t.parts) {
+        Some(crate::database::Parts::Struct(f) | crate::database::Parts::EnumValue(_, f)) => f,
+        _ => return false,
+    };
+    fields
+        .iter()
+        .find(|f| i32::from(f.position) == *pos)
+        .is_some_and(|f| {
+            matches!(
+                st.types.get(usize::from(f.content)).map(|t| &t.parts),
+                Some(crate::database::Parts::Int(..) | crate::database::Parts::IntRaw(..))
+            )
+        })
+}
+
+/// Is `rec` an element of a vector whose elements are numbers — a `Var` vector of a scalar
+/// type, or a field whose schema type is a vector of `Parts::Int` / `IntRaw`?  Any other
+/// shape answers no and goes on to [`record_known_type`], which only ever declines more.
+fn scalar_element(
+    data: &Data,
+    st: &Stores,
+    rec: &Value,
+    vars: Option<&crate::variables::Function>,
+) -> bool {
+    let Value::Call(op, ops) = rec.unspan() else {
+        return false;
+    };
+    if (*op as usize) >= data.definitions.len()
+        || !matches!(data.def(*op).name(), "OpGetVector" | "OpVectorRef")
+    {
+        return false;
+    }
+    match ops.first().map(Value::unspan) {
+        Some(Value::Var(var)) => vars
+            .is_some_and(|vs| matches!(vs.tp(*var).base(), Type::Vector(elm, _) if is_scalar(elm))),
+        Some(Value::Call(field, field_ops))
+            if (*field as usize) < data.definitions.len()
+                && data.def(*field).name() == "OpGetField" =>
+        {
+            let Some(Value::Int(tp)) = field_ops.get(2).map(Value::unspan) else {
+                return false;
+            };
+            let Some(crate::database::Parts::Vector(elm)) = usize::try_from(*tp)
+                .ok()
+                .and_then(|nr| st.types.get(nr))
+                .map(|ty| &ty.parts)
+            else {
+                return false;
+            };
+            matches!(
+                st.types.get(usize::from(*elm)).map(|ty| &ty.parts),
+                Some(crate::database::Parts::Int(..) | crate::database::Parts::IntRaw(..))
+            )
+        }
+        _ => false,
+    }
+}
+
+/// The schema type of the record `rec` addresses: a field read names it (`OpGetField`'s
+/// type operand), an element read takes its vector's element, a variable its declared type.
+fn record_known_type(
+    data: &Data,
+    st: &Stores,
+    rec: &Value,
+    vars: Option<&crate::variables::Function>,
+) -> Option<u16> {
+    match rec.unspan() {
+        Value::Var(v) => crate::opt::writes::plain_record_type(data, vars?.tp(*v)),
+        Value::Call(op, ops) if (*op as usize) < data.definitions.len() => {
+            match data.def(*op).name() {
+                "OpGetField" => match ops.get(2).map(Value::unspan) {
+                    Some(Value::Int(tp)) => u16::try_from(*tp).ok(),
+                    _ => None,
+                },
+                "OpGetVector" | "OpVectorRef" => match ops.first()?.unspan() {
+                    Value::Var(var) => {
+                        let Type::Vector(elm, _) = vars?.tp(*var).base() else {
+                            return None;
+                        };
+                        crate::opt::writes::plain_record_type(data, elm)
+                    }
+                    Value::Call(field, field_ops)
+                        if (*field as usize) < data.definitions.len()
+                            && data.def(*field).name() == "OpGetField" =>
+                    {
+                        let Some(Value::Int(tp)) = field_ops.get(2).map(Value::unspan) else {
+                            return None;
+                        };
+                        match st.types.get(usize::try_from(*tp).ok()?).map(|ty| &ty.parts) {
+                            Some(
+                                crate::database::Parts::Vector(elm)
+                                | crate::database::Parts::Array(elm),
+                            ) => Some(*elm),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                },
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
 /// The typed field getters whose value is a plain `Copy` scalar in the emitted Rust — the
 /// reads @PLN157 P4c may hoist.  Each `#rust` template answers its kind's null sentinel at
 /// `rec == 0` and a typed load otherwise, and the prelude evaluates that SAME template
@@ -764,6 +975,7 @@ pub fn loop_records(data: &Data, stores: &Stores, def_nr: u32) -> LoopRecords {
                 out.recs.insert(v, rec);
             }
             Some(why) => {
+                crate::rewrite_census::declined_in("R-LoopRecord", def.name(), vars.name(v), why);
                 if trace {
                     eprintln!(
                         "[loop-record] {}: {} declines: {why}",

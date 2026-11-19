@@ -439,7 +439,7 @@ pub(crate) fn outside_mentions(
     Ok(())
 }
 
-fn decline(data: &Data, d_nr: u32, site: Option<&str>, why: &str) {
+fn decline(data: &Data, d_nr: u32, site: Option<&str>, why: &'static str) {
     crate::rewrite_census::declined(RULE, site.unwrap_or("slice"), why);
     if trace() {
         eprintln!(

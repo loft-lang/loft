@@ -616,7 +616,9 @@ fn type_of(e: el::El, n: integer, attach: boolean) -> ir::TypeT? {
         el::refuse(e, "a qualified type the library does not declare before its use");
         return null;
       }
-      if (member != "" && qual < 0) || len(args) > 0 || len(keys) > 0 || len(dl) > 0 || limit != null || not_null || assoc != "" {
+      // (`not null`, deprecated, changes nothing of a type that is no integer: `text not null`
+      // is `text`.)
+      if (member != "" && qual < 0) || len(args) > 0 || len(keys) > 0 || len(dl) > 0 || limit != null || assoc != "" {
         el::refuse(e, "a type with arguments, keys, a limit or a member: {name}");
         return null;
       }

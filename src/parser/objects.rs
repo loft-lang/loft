@@ -69,6 +69,32 @@ pub(crate) struct FieldSinks {
     demote_other: u32,
     demote_field: Option<String>,
 }
+/// The IR of a primed value with the place it is built THROUGH taken out of each write's
+/// receiver slot, so what remains is what its items read.  Only the receiver POSITION is
+/// masked — the first argument of each top-level write (`OpPushInt(<field>, item)`,
+/// `_elm = OpNewRecord(<field>, …)`, `OpFinishRecord(<field>, …)`): an item reading the field
+/// itself (`[len(b.inner.v)]`) is the same IR as the receiver and must still count.  A write
+/// nested deeper (a comprehension's loop) is left as it is, which keeps its decline.
+/// Each level is read through its `Span`: a spanned write is the same write, and missing it
+/// would leave its receiver counted as a read, which declines the in-place build.
+fn mask_receiver(v: &mut Value, receiver: &Value) {
+    let Value::Insert(ops) = v.unspan_mut() else {
+        return;
+    };
+    for op in ops.iter_mut() {
+        let call = match op.unspan_mut() {
+            Value::Set(_, inner) => inner.unspan_mut(),
+            other => other,
+        };
+        if let Value::Call(_, args) = call
+            && let Some(first) = args.first_mut()
+            && first.unspan() == receiver.unspan()
+        {
+            *first = Value::Null;
+        }
+    }
+}
+
 impl Parser {
     /// An abandoned construction's work-refs, marked skip-free so nothing frees what it never
     /// built — on the SECOND pass only.  The marks go by NAME and the names persist from pass 1
@@ -3979,6 +4005,10 @@ impl Parser {
             parts.insert(0, lit);
         }
         if !self.first_pass {
+            // @decline-owed: a hole that reads the appended text itself; a part that is no
+            //   format-family write on the work text (a `for` hole), or that names the work
+            //   text anywhere but as its target; a prefix that is no literal; a target that is
+            //   no text variable (a field or an element)
             crate::rewrite_census::fired("R-FormatAppend", 1);
         }
         if traced {
@@ -5994,6 +6024,9 @@ impl Parser {
             // (the literal writes THROUGH the field) — those must not be
             // hoisted; only pure value expressions (`value` started Null).
             let primed = !matches!(value, Value::Null);
+            // The place a primed value is built THROUGH: every write of the field's own items
+            // takes it as its receiver, which is no read of the old record (see `staged`).
+            let receiver = if primed { value.clone() } else { Value::Null };
             // `{}` is an empty Void BLOCK, not a collection literal — loft's empty
             // collection literal is `[]`.  For a collection field an empty `{}`
             // silently lowered to a 0-byte block that UNDER-FILLED the struct
@@ -6212,9 +6245,21 @@ impl Parser {
             // COLLECTION field is primed: its value is built in the field after every
             // collection header of the place was zeroed, so one that reads the place cannot be
             // staged at all, and the literal declines to the copy road instead.
+            //
+            // A primed value names the place in every write that builds it (`OpPushInt(<the
+            // field>, 7)`), and those receivers were counted as reads: `vb.inner = Vf { v:
+            // [7, 8, 9] }` declined although its items read nothing, built the record apart and
+            // copied it in — and on pass 1, which has no projection road, it had been built in
+            // place, leaving that attempt's `_elm_N` declared and unused.  Only what the ITEMS
+            // read decides, so the receiver is masked first; `[vb.inner.n]` still declines.
             let staged = if let Some((xv, xoff)) = self_read_root
-                && self.reads_place(&value, xv, xoff)
-            {
+                && (if primed {
+                    let mut items = value.clone();
+                    mask_receiver(&mut items, &receiver);
+                    self.reads_place(&items, xv, xoff)
+                } else {
+                    self.reads_place(&value, xv, xoff)
+                }) {
                 // loft#2521, `@FR-B-Copy` — an OUT-OF-LINE field's value is copied in by its
                 // field write (`OpSetChildRec`), which runs after the writes before it; staged,
                 // the temp is a view of the place those writes overwrite (`e[0] = Wrap { tag:
@@ -6795,6 +6840,7 @@ impl Parser {
     /// values are parsed without passing through `expression`, so a literal nested in a field
     /// counts here.
     pub(crate) fn parse_object(&mut self, td_nr: u32, code: &mut Value) -> Type {
+        self.state_route("parse_object");
         if !self.enter_depth() {
             return Type::Unknown(0);
         }
@@ -7319,12 +7365,13 @@ impl Parser {
             // out from under the member that holds them (measured on the loft#889 shape,
             // where only `LOFT_POISON=1` shows the read landing on freed bytes).
             let fills = std::mem::take(&mut sinks.group_fills);
+            let skip: std::collections::HashSet<u16> = sinks
+                .filled_collections
+                .iter()
+                .map(|f| self.field_position(td_nr, f))
+                .collect();
+            self.group_keyed_member_writes(&mut list, code, td_nr, &skip);
             if !fills.is_empty() {
-                let skip: std::collections::HashSet<u16> = sinks
-                    .filled_collections
-                    .iter()
-                    .map(|f| self.field_position(td_nr, f))
-                    .collect();
                 let parent_ty = Type::Reference(td_nr, crate::data::Deps::none());
                 for to in &fills {
                     let ops = self.keyed_sibling_view_fills(to, &parent_ty, &skip);
@@ -7965,6 +8012,63 @@ impl Parser {
         // collections and always were.
         groups.retain(|(_, m)| m.len() >= 2 && m.iter().any(|x| x.keyed));
         groups
+    }
+
+    /// loft#2563 — a whole KEYED value a literal (or a field default) writes into a member
+    /// of a linked group reaches the group's other members (`@FR-Col-Group`): the member's
+    /// `OpReplaceKeyed` becomes the group's fill ([`Parser::keyed_group_fill`]).
+    ///
+    /// Only where that member is the one the literal gives records to.  A literal filling
+    /// several members hands each its own records, and those members are left as written —
+    /// the rule the vector member's fill follows (`skip`, loft#1266), and the shape
+    /// `linked-group-double-fill` advises on.  Run once the body is read, because which
+    /// members the literal fills is not known before.
+    fn group_keyed_member_writes(
+        &mut self,
+        list: &mut [Value],
+        code: &Value,
+        td_nr: u32,
+        filled: &HashSet<u16>,
+    ) {
+        if self.first_pass {
+            return;
+        }
+        let struct_tp = self.data.def(td_nr).known_type();
+        let replace = self.data.def_nr("OpReplaceKeyed");
+        let get_field = self.data.def_nr("OpGetField");
+        let parent_ty = Type::Reference(td_nr, crate::data::Deps::none());
+        for op in list.iter_mut() {
+            let Value::Call(d, args) = op.unspan() else {
+                continue;
+            };
+            if *d != replace || args.len() != 3 {
+                continue;
+            }
+            let (Value::Call(g, fa), Value::Int(tp_val)) = (args[1].unspan(), args[2].unspan())
+            else {
+                continue;
+            };
+            if *g != get_field || fa.len() < 2 || *fa[0].unspan() != *code.unspan() {
+                continue;
+            }
+            let Value::Int(off) = fa[1].unspan() else {
+                continue;
+            };
+            let off = *off as u16;
+            let members = self.database.keyed_group_members(struct_tp, off);
+            if members.is_empty()
+                || members
+                    .iter()
+                    .any(|(o, _, _)| *o != off && filled.contains(o))
+            {
+                continue;
+            }
+            let kt = (*tp_val & 0x7FFF) as u16;
+            let (to, src, tp_val) = (args[1].clone(), args[0].clone(), *tp_val);
+            if let Some(fill) = self.keyed_group_fill(&to, &parent_ty, kt, tp_val, &src) {
+                *op = fill;
+            }
+        }
     }
 
     /// Advise when ONE literal fills two members of a linked collection group (loft#926).
@@ -8808,6 +8912,8 @@ impl Parser {
                 // `group_primed` zeroed the whole linked group's), so there is nothing in
                 // the destination to replace.
                 if crate::parser::vectors::is_keyed(exp_tp) {
+                    // A member of a linked group is rewritten to the group's fill once the
+                    // whole body is read (`group_keyed_member_writes`).
                     list.push(self.cl(
                         "OpReplaceKeyed",
                         &[value.clone(), field_ref, Value::Int(tp_val)],

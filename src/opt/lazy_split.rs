@@ -68,8 +68,17 @@ pub fn lazy_splits(data: &Data, def_nr: u32) -> BTreeMap<u16, LazySplit> {
                         },
                     );
                 }
-                Err(why) if trace && !why.is_empty() => {
-                    eprintln!("[lazy-split] {}: declined — {why}", def.name());
+                // An empty reason is a block that is no split walk at all: no refusal.
+                Err(why) if !why.is_empty() => {
+                    crate::rewrite_census::declined_in(
+                        "R-LazySplit",
+                        def.name(),
+                        &bl.scope.to_string(),
+                        why,
+                    );
+                    if trace {
+                        eprintln!("[lazy-split] {}: declined — {why}", def.name());
+                    }
                 }
                 Err(_) => {}
             }
@@ -94,6 +103,14 @@ pub fn lazy_splits(data: &Data, def_nr: u32) -> BTreeMap<u16, LazySplit> {
             false
         });
         let ok = mentions == 2 && binds == 1;
+        if !ok {
+            crate::rewrite_census::declined_in(
+                "R-LazySplit",
+                def.name(),
+                vars.name(*vec),
+                "the split result is named beyond its walk or bound twice",
+            );
+        }
         if !ok && trace {
             eprintln!(
                 "[lazy-split] {}: declined — {} is mentioned {mentions} times and bound {binds}",

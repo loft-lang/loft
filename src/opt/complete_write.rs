@@ -80,6 +80,11 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
         total += fact.locals.len() + fact.mints.len();
         {
             let _census = crate::rewrite_census::InBody::enter("ir", &def.name);
+            // @decline-owed: a mint whose literal group leaves a field uncovered (an unflagged
+            //   record copy into a heap-owning field, a vector field bound by an append, a
+            //   write narrower than its field); a local or element type with any mint that
+            //   does; a mint that does not head a statement group of a block or loop
+            //   (`opt::ret_adopt::complete_writes`)
             crate::rewrite_census::fired("R-CompleteWrite", fact.locals.len() + fact.mints.len());
         }
         def.no_prefill = fact;

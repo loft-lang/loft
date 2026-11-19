@@ -78,6 +78,11 @@ impl FnWriter<'_> {
             }
         }
         if !out.is_empty() {
+            // @decline-owed: a local that is no integer, or that the loop writes other than by
+            //   its own `acc = acc ± e` or a staged temp written once; one handed out by
+            //   reference; a sum whose every update `(R-Range)` proves plain; a sum an
+            //   enclosing loop took; a loop a `break` or `continue` leaves past its own exit; a
+            //   generator's body; the release-pass probe
             crate::rewrite_census::fired("R-StickySum", out.len());
         }
         out

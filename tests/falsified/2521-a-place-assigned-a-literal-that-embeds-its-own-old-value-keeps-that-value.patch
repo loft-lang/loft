@@ -1,10 +1,10 @@
-diff --git b/src/parser/objects.rs a/src/parser/objects.rs
---- b/src/parser/objects.rs
-+++ a/src/parser/objects.rs
-@@ -6199,23 +6199,7 @@
-             let staged = if let Some((xv, xoff)) = self_read_root
-                 && self.reads_place(&value, xv, xoff)
-             {
+diff --git a/src/parser/objects.rs b/src/parser/objects.rs
+--- a/src/parser/objects.rs
++++ b/src/parser/objects.rs
+@@ -6260,23 +6260,7 @@
+                 } else {
+                     self.reads_place(&value, xv, xoff)
+                 }) {
 -                // loft#2521, `@FR-B-Copy` — an OUT-OF-LINE field's value is copied in by its
 -                // field write (`OpSetChildRec`), which runs after the writes before it; staged,
 -                // the temp is a view of the place those writes overwrite (`e[0] = Wrap { tag:

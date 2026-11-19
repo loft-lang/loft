@@ -19,6 +19,7 @@ mod keyed;
 mod loop_record;
 mod misc;
 mod par;
+mod parallel;
 mod peel;
 mod spec_chain;
 mod sticky;
@@ -451,6 +452,12 @@ pub(crate) struct FnWriter<'a> {
     /// loops read through a held cursor, each with its `loft_fcur` and the index in `loops` of
     /// the loop that holds it.
     file_holds: Vec<(u16, String, usize)>,
+    /// `parallel { … }` (loft#2568, `parallel.rs`): the arms this body runs on threads, each
+    /// a function of its own written once the body's declarations are known.
+    arm_fns: Vec<parallel::ArmFn>,
+    /// Each parameter's declaration as the function's C signature spells it, by variable: what
+    /// an arm that reads one declares it as (`param_decls`).
+    param_decls: std::collections::HashMap<u16, String>,
 }
 
 /// A counted loop a push window is opened for (`FnWriter::window_loop`): the pushed path,
@@ -1002,7 +1009,15 @@ impl<'a> FnWriter<'a> {
             },
             gen_elem: None,
             yields: 0,
+            arm_fns: Vec::new(),
+            param_decls: std::collections::HashMap::new(),
         }
+    }
+
+    /// The parameters' declarations as the signature spells them (`param_decls`).
+    pub(crate) fn param_decls(mut self, decls: std::collections::HashMap<u16, String>) -> Self {
+        self.param_decls = decls;
+        self
     }
 
     /// loft#1254 — a stub with an empty body answers its type's default (`Data::to_default`),
@@ -1304,6 +1319,7 @@ impl<'a> FnWriter<'a> {
         for d in &self.decls {
             let _ = writeln!(out, "    {d}");
         }
+        let arms = (!self.arm_fns.is_empty()).then(|| self.arm_functions(&out));
         let slots: Vec<String> = self.held_texts().iter().map(|t| format!("&{t}")).collect();
         if !slots.is_empty() {
             let _ = writeln!(out, "    LOFT_HOLD({}, {});", slots.len(), slots.join(", "));
@@ -1315,6 +1331,12 @@ impl<'a> FnWriter<'a> {
             let _ = writeln!(out, "{}", super::LINE_RESET);
         }
         self.cold_finish(&out)?;
+        // The arms' functions land only with the body that calls them: a body the writer
+        // declines is written again, and its arms with it.
+        if let Some((decls, bodies)) = arms {
+            self.cx.gen_decls.borrow_mut().push_str(&decls);
+            self.cx.gen_bodies.borrow_mut().push_str(&bodies);
+        }
         Ok((self.park_work_texts(out), statements))
     }
 
@@ -1357,6 +1379,9 @@ impl<'a> FnWriter<'a> {
             );
             n += 1;
         }
+        // @decline-owed: a work text that is a parameter or a store link; one whose declaration
+        //   is not written exactly once in the function; a generator's body; at run time, a
+        //   recursive frame finds its slot empty and takes nothing
         crate::rewrite_census::fired("R-WorkPark", n);
         out
     }
@@ -1494,13 +1519,18 @@ impl<'a> FnWriter<'a> {
     /// holds, at the marker's indentation; a `#line` before the marker is repeated before each
     /// free, as `line` writes one before every line it emits.
     fn expand_epilogues(&self) -> String {
-        if !self.body.contains(EPILOGUE_MARK) {
-            return self.body.clone();
+        self.expand_epilogues_in(&self.body)
+    }
+
+    /// [`Self::expand_epilogues`] over `body`: the function's own, or a parallel arm's.
+    fn expand_epilogues_in(&self, body: &str) -> String {
+        if !body.contains(EPILOGUE_MARK) {
+            return body.to_string();
         }
         let texts = self.held_texts();
-        let mut out = String::with_capacity(self.body.len());
+        let mut out = String::with_capacity(body.len());
         let mut last_line_directive: Option<&str> = None;
-        for l in self.body.lines() {
+        for l in body.lines() {
             if l.trim_start() == EPILOGUE_MARK {
                 let indent = &l[..l.len() - l.trim_start().len()];
                 for (i, t) in texts.iter().enumerate() {
@@ -1707,6 +1737,12 @@ impl<'a> FnWriter<'a> {
                     self.line(ind, &format!("{name} = {};", as_int(e)?));
                     self.line(ind, &format!("{name}_set = 1;"));
                     self.hoisted_memos.insert(name.clone());
+                    // @decline-owed: for the hoist, a chain holding a `Nullable` operator,
+                    //   which stays a first-use memo; for the memo, a chain the loop rebinds an
+                    //   operand of (its counters included) or lets one escape (a by-reference
+                    //   or fn-ref argument, a tuple destination, an iterator variable); a body
+                    //   that yields or runs `parallel`; a chain of literals alone; on C, a
+                    //   generator body and a transient twin
                     crate::rewrite_census::fired("R-Invariant/hoist", 1);
                 }
                 let memo = std::rc::Rc::new((name, ch.chain));
@@ -1824,6 +1860,12 @@ impl<'a> FnWriter<'a> {
                 "loft_ph {h} = {{ {{ 0xFFFF, 0, 0, 0 }}, 0, 0, 0, 0 }};"
             ));
             self.line(ind, &format!("{h} = loft_ph_of({}, {size});", as_ref(e)?));
+            // @decline-owed: a loop with a store write that is no in-place set, fusable scalar
+            //   push to a pure path or admitted mint, or with a fn-ref call, a `yield` or a
+            //   parallel block (`blocks_header_hoist`); a pushed root the body rebinds; beside
+            //   another mover or holder, a pushed root that is no owned local, return buffer or
+            //   work-buffer argument (`(R-Alias)`); a loop admitted through its text sets; a
+            //   path a push window holds
             crate::rewrite_census::fired("R-Push", 1);
             if based {
                 crate::rewrite_census::fired("R-Push/sole", 1);
@@ -2072,6 +2114,7 @@ impl<'a> FnWriter<'a> {
             heap_push: !sw.heap_record_push_disabled,
             rebound_movers: !sw.rebound_mover_disabled,
             text_set: false,
+            address_only: false,
         };
         let mut cache = std::mem::take(&mut self.hoist_cache);
         let facts = self.store_facts();
@@ -2085,7 +2128,8 @@ impl<'a> FnWriter<'a> {
                 &mut cache,
                 &mut memo.writes,
                 (!sw.callee_inputs_disabled).then_some(&mut memo.inputs),
-            ),
+            )
+            .with_schema(self.cx.stores),
             tiers,
             None,
             facts.as_ref(),
@@ -2792,6 +2836,12 @@ impl<'a> FnWriter<'a> {
                 let size = Self::literal(size, "element size")?;
                 if let Some(i) = self.counter_index(idx, &h) {
                     let proof = self.held_proof(v, &h);
+                    // @decline-owed: in a loop that grows a store (a push, a mint through a
+                    //   push header or not, a text set), a held path whose store is not proven
+                    //   apart from every store grown (`StoreFacts::distinct`) keeps its header
+                    //   without the base; a path a push header or a generator's persistent
+                    //   field holds; a fused read whose index is no counter proven inside the
+                    //   held vector
                     crate::rewrite_census::fired("R-Base/counter", 1);
                     return Ok(Some(E::new(
                         format!("({proof}, loft_vh_at_ref({h}, {size}, {i}))"),
@@ -5219,6 +5269,12 @@ impl<'a> FnWriter<'a> {
             self.line(ind, &format!("loft_park_take(&{slot}, &{var});"));
         }
         if !parked.is_empty() {
+            // @decline-owed: a binding that is an argument or carries an owner or entry
+            //   witness; one bound by anything but an unresolved function-value call answering
+            //   a record (or null), with a bind outside a loop or under two outermost loops, or
+            //   with a mention that is no free and no argument of a scalar-answering call or
+            //   getter; a record held apart; a target that takes no hidden record buffer (it is
+            //   passed null)
             crate::rewrite_census::fired("R-FnRefBuffer/frame", parked.len());
         }
         self.loop_stmt_inner(b, ind)?;
@@ -5875,9 +5931,9 @@ impl<'a> FnWriter<'a> {
             }
             Value::Return(x) => self.ret_value(Some(x), ind),
             Value::Yield(x) => self.gen_yield(x, ind),
-            // `parallel { … }`: the arms run one after another — each arm's effect is the one
-            // its thread has (State's `OpParallelBegin`).
-            Value::Parallel(arms) => arms.iter().try_for_each(|a| self.stmt(a, ind)),
+            // `parallel { … }`: each arm a function of its own, all on threads at once
+            // (loft#2568).
+            Value::Parallel(arms) => self.parallel_block(arms, ind),
             // A dropped branch or block runs as a statement: each arm for its effect, a value
             // arm's value discarded (`@FR-F-Drop`) — where an arm assigns, it has no value to read.
             Value::Drop(x)
@@ -6373,6 +6429,11 @@ impl<'a> FnWriter<'a> {
                 u32::from(tab.separator)
             ),
         );
+        // @decline-owed: a function that yields; a separator that is no character constant or
+        //   is the null character; a target that is no plain local `vector<text>` bound once; a
+        //   mention the table cannot answer (anything but a length, an element read or a plain
+        //   walk whose hidden vector is read only that way), or one outside the binding block
+        //   or ahead of the bind
         crate::rewrite_census::fired("R-SplitTable", 1);
         self.flush(ind);
         Ok(())
@@ -7250,6 +7311,10 @@ impl<'a> FnWriter<'a> {
         self.cx.name_types();
         let buf = self.var(a.buf);
         let clear = if self.clear_releases_nothing(&Value::Var(a.buf)) {
+            // @decline-owed: a vector local of scalar elements, and an `OpGetField` vector that
+            //   is a plain vector whose element owns no heap and is not linked
+            //   (`clear_releases_nothing`): each takes the plain length reset; at run time, a
+            //   store whose root is not the one-field vector wrapper keeps the reset
             crate::rewrite_census::fired("H-ClearRelease/plain", 1);
             format!("loft_vec_clear({buf})")
         } else {
@@ -7427,6 +7492,12 @@ impl<'a> FnWriter<'a> {
                     && w != target
                 {
                     self.line(ind, &format!("loft_text_move(&{target}, &{w});"));
+                    // @decline-owed: a callee with more than one `&text` parameter, or a
+                    //   `return` or tail that is not the buffer, a block ending in it or the
+                    //   null text (`answers_work`); a signature the twin does not take
+                    //   (`plain_params`); a buffer argument that is no plain place; a native; a
+                    //   call that takes another twin; for the bind, a buffer that is not the
+                    //   call site's own or is the target itself
                     crate::rewrite_census::fired("R-BufferReturn/bind", 1);
                     return Ok(());
                 }
@@ -10115,7 +10186,7 @@ impl<'a> FnWriter<'a> {
                 Ok(E::new(format!("((double) {})", as_single(a)?), K::Float))
             }
             // The constants as the shortest literals that round-trip to Rust's own: `M_PI` and
-            // `M_E` are POSIX, and `-std=c99` does not declare them.
+            // `M_E` are POSIX, and `-std=c11` does not declare them.
             ("OpMathPiFloat", []) => Ok(E::new(format!("{:?}", std::f64::consts::PI), K::Float)),
             ("OpMathEFloat", []) => Ok(E::new(format!("{:?}", std::f64::consts::E), K::Float)),
             ("OpMathFuncFloat" | "OpMathFuncSingle", [id, v]) => {

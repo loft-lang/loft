@@ -555,29 +555,37 @@ fn callee_admits(e: el::El, d: integer, i: integer) -> boolean {
 // `dead_store_accesses`' decline, read conservatively: `v` named only by its trio and as the
 // destination of writes (`OpSet…`), never read.
 fn dead_store(e: el::El, code: ir::Node, v: integer) -> boolean {
-  reads_of(e, code, v) == 0
+  // `appended_copy` (loft#1840): a local a bind filled by one whole copy, which the program then
+  // appends to — the append's own ops write into it and observe nothing of its content.
+  counts: vector<integer> = [0, 0];
+  el_ex_base::fills(e, code, v, false, counts);
+  reads_of(e, code, v, counts[0]! >= 1 && counts[1]! >= 1) == 0
 }
 
-fn reads_of(e: el::El, n: ir::Node, v: integer) -> integer {
+fn reads_of(e: el::El, n: ir::Node, v: integer, appended_copy: boolean) -> integer {
   match n {
-    NdSpan { inner } => reads_of(e, inner, v),
+    NdSpan { inner } => reads_of(e, inner, v, appended_copy),
     NdVar { n: x } => if x == v { 1 } else { 0 },
-    NdSet { var, inner } => if var == v && el_ex_base::calls(e, inner, "OpGetField") { 0 } else { reads_of(e, inner, v) },
+    NdSet { var, inner } => if var == v && el_ex_base::calls(e, inner, "OpGetField") { 0 } else { reads_of(e, inner, v, appended_copy) },
     NdCall { def_nr, args } => {
       nm = el::def(e, def_nr).name;
+      fill = appended_copy && (nm == "OpAppendVector" || nm == "OpPreAllocVector" || nm == "OpFinishRecord" || nm == "OpNewRecord" || starts_with(nm, "OpPush"));
       c = 0;
       for a in args {
         if a#index == 0 && starts_with(nm, "OpSet") && tracked_db(a, v) {
           continue;
         }
-        c += reads_of(e, a, v);
+        if a#index == 0 && fill && el_ir::unspan(a) == ir::NdVar { n: v } {
+          continue;
+        }
+        c += reads_of(e, a, v, appended_copy);
       }
       c
     },
     _ => {
       c = 0;
       for ch in el_ir::children(n) {
-        c += reads_of(e, ch, v);
+        c += reads_of(e, ch, v, appended_copy);
       }
       c
     }

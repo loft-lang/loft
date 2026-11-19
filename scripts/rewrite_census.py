@@ -261,14 +261,14 @@ def main() -> int:
         phases = rule_phases.aggregate(splits)
         phase_changes = rule_phases.changes(phases, rule_phases.read_table())
     base = read_baseline()
-    drops, notes = [], []
+    drops, notes, unjudged = [], [], []
     for name, commit, writer, counts in results:
         if (name, writer) not in base:
             notes.append(f"{name} ({writer}): no baseline row yet")
             continue
         bcommit, bcounts = base[(name, writer)]
         if bcommit != commit:
-            notes.append(f"{name} ({writer}): the checkout moved ({bcommit} → {commit}), not judged")
+            unjudged.append(f"{name} ({writer}): the checkout moved ({bcommit} → {commit})")
             continue
         # The writer goes after the counts: `perf_check.py` reads the program off
         # "<rule> in <program>:".
@@ -287,6 +287,18 @@ def main() -> int:
             print(f"  note: {n}")
     elif notes:
         print(f"  {len(notes)} rises / new rows (--verbose lists them)")
+    # A row whose checkout is not the one the baseline was measured at is not judged at all: a
+    # drop in it cannot show.  Said on its own line, never folded into the rises above — counted
+    # among them, a run that judged none of the library benches read as a clean pass (a library
+    # checkout on another branch than libs.tsv's, 2026-11-19).  `checkout_libs.sh` brings them in.
+    if unjudged:
+        progs_unjudged = sorted({u.split(" (")[0] for u in unjudged})
+        print(f"  NOT JUDGED: {len(progs_unjudged)} program(s) whose checkout moved since the baseline "
+              f"({', '.join(progs_unjudged[:8])}{', …' if len(progs_unjudged) > 8 else ''}); "
+              "bench/portal/checkout_libs.sh, or --verbose for the commits")
+        if "--verbose" in args:
+            for u in unjudged:
+                print(f"  not judged: {u}")
     for f in failed:
         print(f"  could not census {f}")
     if guarded and not drops and not failed and not phase_changes:

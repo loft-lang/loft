@@ -1,0 +1,82 @@
+// A challenge for a SLICE of a vector (@PLN91): one function per case, one axis each; every
+// function answers a hand-computed value.  `nums(n)` is [10, 20, …, 10n].
+//   the subject is a local of plain scalars (carried):  local_bind, local_walk, local_arg, local_len, local_append,
+//                                                       local_recs_bind (records)
+//   ... a fresh NATIVE call's result:                   native_bind
+//   ... a field of a local record:                      field_bind (scalars), field_recs_bind, field_recs_len,
+//                                                       field_first_bind (no vector<Q> is written before the slice)
+//   ... a parameter:                                    param_bind
+//   ... an element of a vector of vectors:              elem_walk
+//   the element is itself a vector:                     nested_bind
+//   ... a record, of a call's result:                   call_recs_bind
+//   the bounds:                                         open_lo, open_hi, negative, call_once (the subject is read ONCE)
+//   the slice is a COPY:                                copy_local, copy_field
+struct R { k: integer, v: integer }
+struct Cnt { n: integer }
+struct Q { k: integer, v: integer }
+struct QBox { n: integer, qs: vector<Q> }
+struct Box { n: integer, xs: vector<integer>, rs: vector<R> }
+
+fn nums(n: integer) -> vector<integer> { v: vector<integer> = []; for i in 0..n { v += [(i + 1) * 10]; } v }
+fn recs(n: integer) -> vector<R> { v: vector<R> = []; for i in 0..n { v += [R { k: i + 1, v: (i + 1) * 100 }]; } v }
+fn counted(c: Cnt) -> vector<integer> { c.n += 1; v: vector<integer> = []; for i in 0..5 { v += [(i + 1) * 10]; } v }
+fn total(v: vector<integer>) -> integer { t = 0; for x in v { t += x; } t }
+fn box(n: integer) -> Box { Box { n: n, xs: nums(n), rs: recs(n) } }
+
+fn qbox(n: integer) -> QBox { b = QBox { n: n }; for i in 0..n { b.qs += [Q { k: i + 1, v: (i + 1) * 100 }]; } b }
+fn local_bind() -> integer { v = nums(5); s = v[1..3]; total(s) + len(s) }
+fn local_walk() -> integer { v = nums(5); t = 0; for x in v[1..4] { t += x; } t }
+fn local_arg() -> integer { v = nums(5); total(v[1..4]) }
+fn local_len() -> integer { v = nums(5); len(v[1..4]) }
+fn local_append() -> integer { v = nums(5); y = [7]; y += v[3..5]; total(y) + len(y) }
+fn local_recs_bind() -> integer { v = recs(4); s = v[2..4]; s[0].v + s[1].k + len(s) }
+fn call_bind() -> integer { s = nums(5)[1..3]; total(s) + len(s) }
+fn call_walk() -> integer { t = 0; for x in nums(5)[2..5] { t += x; } t }
+fn call_arg() -> integer { total(nums(5)[1..4]) }
+fn call_len() -> integer { len(nums(5)[1..4]) }
+fn call_append() -> integer { y = [7]; y += nums(5)[3..5]; total(y) + len(y) }
+fn native_bind() -> integer { c = "xx-a-bb-ccc-yy".split('-')[1..4]; len(c) * 100 + len(c[2]) }
+fn field_bind() -> integer { b = box(5); s = b.xs[2..4]; total(s) + len(s) }
+fn field_recs_bind() -> integer { b = box(4); s = b.rs[1..3]; s[0].v + s[1].k + len(s) }
+fn field_first_bind() -> integer { b = qbox(4); s = b.qs[1..3]; s[0].v + s[1].k + len(s) }
+fn field_recs_len() -> integer { b = box(4); len(b.rs[1..4]) }
+fn param(v: vector<integer>) -> integer { s = v[..2]; total(s) + len(s) }
+fn param_bind() -> integer { param(nums(5)) }
+fn elem_walk() -> integer { a = nums(2); b = nums(5); vv = [a, b]; t = 0; for x in vv[1][3..] { t += x; } t }
+fn nested_bind() -> integer { t = [nums(1), nums(2), nums(3)]; ts = t[1..3]; total(ts[0]) + total(ts[1]) + len(ts) }
+fn call_recs_bind() -> integer { s = recs(4)[2..4]; s[0].v + s[1].k + len(s) }
+fn open_lo() -> integer { total(nums(5)[..2]) }
+fn open_hi() -> integer { total(nums(5)[3..]) }
+fn negative() -> integer { total(nums(5)[-2..]) }
+fn call_once() -> integer { c = Cnt { n: 0 }; s = counted(c)[1..4]; total(s) * 10 + c.n }
+fn copy_local() -> integer { v = nums(5); s = v[1..3]; s += [1]; v[1] = 7; total(s) + len(v) }
+fn copy_field() -> integer { b = box(5); s = b.xs[0..2]; b.xs[0] = 7; total(s) + b.xs[0] }
+
+fn main() {
+  assert(local_bind() == 52, "local_bind");
+  assert(local_walk() == 90, "local_walk");
+  assert(local_arg() == 90, "local_arg");
+  assert(local_len() == 3, "local_len");
+  assert(local_append() == 100, "local_append");
+  assert(local_recs_bind() == 306, "local_recs_bind");
+  assert(call_bind() == 52, "call_bind");
+  assert(call_walk() == 120, "call_walk");
+  assert(call_arg() == 90, "call_arg");
+  assert(call_len() == 3, "call_len");
+  assert(call_append() == 100, "call_append");
+  assert(native_bind() == 303, "native_bind");
+  assert(field_bind() == 72, "field_bind");
+  assert(field_recs_bind() == 205, "field_recs_bind");
+  assert(field_first_bind() == 205, "field_first_bind");
+  assert(field_recs_len() == 3, "field_recs_len");
+  assert(param_bind() == 32, "param_bind");
+  assert(elem_walk() == 90, "elem_walk");
+  assert(nested_bind() == 92, "nested_bind");
+  assert(call_recs_bind() == 306, "call_recs_bind");
+  assert(open_lo() == 30, "open_lo");
+  assert(open_hi() == 90, "open_hi");
+  assert(negative() == 90, "negative");
+  assert(call_once() == 901, "call_once");
+  assert(copy_local() == 56, "copy_local");
+  assert(copy_field() == 37, "copy_field");
+}

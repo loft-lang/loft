@@ -52,7 +52,19 @@ pub(crate) fn admit_frame(
     params: &[u16],
     d: u32,
 ) -> Result<(), String> {
-    admit_frame_at(vars, result, code, data, params, d).map_err(|(_, why)| why)
+    admit_frame_at(vars, result, code, data, params, d).map_err(|(_, _, why)| why)
+}
+
+/// [`admit_frame`] with the CLAUSE that refused beside its text: what the decline census counts.
+pub(crate) fn admit_frame_clause(
+    vars: &Function,
+    result: &Type,
+    code: &Value,
+    data: &Data,
+    params: &[u16],
+    d: u32,
+) -> Result<(), (&'static str, String)> {
+    admit_frame_at(vars, result, code, data, params, d).map_err(|(_, clause, why)| (clause, why))
 }
 
 /// [`admit_frame`] with WHERE it was refused: the self-call whose argument blocks the jump,
@@ -67,7 +79,7 @@ pub(crate) fn admit_frame_at(
     data: &Data,
     params: &[u16],
     d: u32,
-) -> Result<(), (Option<Position>, String)> {
+) -> Result<(), (Option<Position>, &'static str, String)> {
     // A tuple of such values is delivered by value as each of them is: the IR's value
     // records (`src/value_record.rs`) answer one from a function whose source returns a record.
     let by_value = |t: &Type| is_scalar(t) || crate::data::is_dbref(t.base());
@@ -77,6 +89,7 @@ pub(crate) fn admit_frame_at(
     if !delivered {
         return Err((
             None,
+            "a result the jump cannot deliver",
             format!(
                 "its result is a `{}`, which the jump cannot yet deliver",
                 result.source_name(data)
@@ -87,7 +100,11 @@ pub(crate) fn admit_frame_at(
     // argument (hidden, so not a declared parameter) and the delivery place, not a local.
     for v in 0..vars.count() {
         if matches!(vars.tp(v).base(), Type::RefVar(_)) && !vars.is_argument(v) {
-            return Err((None, format!("local `{}` is a `&` reference", vars.name(v))));
+            return Err((
+                None,
+                "a local that is a `&` reference",
+                format!("local `{}` is a `&` reference", vars.name(v)),
+            ));
         }
     }
     for call in tail_calls(code, d, vars, data) {
@@ -112,6 +129,7 @@ pub(crate) fn admit_frame_at(
             if !crate::data::is_dbref_slot(tp.base()) {
                 return Err((
                     at,
+                    "a text or `&` parameter not passed through as itself",
                     format!(
                         "parameter `{}` (a `{}`) can only be passed through as itself here",
                         vars.name(p),
@@ -122,6 +140,7 @@ pub(crate) fn admit_frame_at(
             if !borrows_from_params(arg, params, code, data) {
                 return Err((
                     at,
+                    "an argument that makes a value the frame would own",
                     format!(
                         "the call's argument for parameter `{}` (a `{}`) makes a value this \
                          frame would have to own — a fresh value, or a local the jump releases \
@@ -146,6 +165,7 @@ pub(crate) fn admit_frame_at(
         if writes_variable(code, p, data) {
             return Err((
                 None,
+                "a parameter rebound in the body",
                 format!(
                     "parameter `{}` (a `{}`) is rebound in the body, so this frame owns its store",
                     vars.name(p),
@@ -163,6 +183,7 @@ pub(crate) fn admit_frame_at(
     if blocked {
         return Err((
             None,
+            "a generator, a `parallel` block or a closure in the body",
             "the body holds a generator, a `parallel` block or a closure".to_string(),
         ));
     }

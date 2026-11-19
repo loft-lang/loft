@@ -166,6 +166,12 @@ impl Parser {
                     }
                 }
                 Err(why) => {
+                    crate::rewrite_census::declined_in(
+                        "R-WorkBuffer/onward",
+                        self.data.def(d).name(),
+                        self.vars.name(r),
+                        why,
+                    );
                     if trace {
                         eprintln!(
                             "[work-buffer] fn={} ref={} stays a local: {why}",
@@ -350,6 +356,12 @@ impl Parser {
                     }
                 }
                 Err(why) => {
+                    crate::rewrite_census::declined_in(
+                        "R-WorkBuffer",
+                        self.data.def(d).name(),
+                        self.vars.name(v),
+                        why,
+                    );
                     if trace {
                         eprintln!(
                             "[work-buffer] fn={} local={} keeps its store: {why}",

@@ -209,9 +209,31 @@ pub fn vector_slice(e: el::El, vars: el_vars::Vars, x: Ex, lo: vector<integer>, 
   place = sv < 0 && el_ex_match::getter_place(e, x.code);
   // A text or a plain record element is carried for a slice of a LOCAL: its walk reads the
   // element whole, its bind materialises element by element (`Slice materialise`).
-  heap_elem = sv >= 0 && (elem is TyText || (struct_ref(e, elem) >= 0 && !(elem is TyOptional) && el::def(e, struct_ref(e, elem)).def_type == el::DT_STRUCT && !starts_with(el::def(e, struct_ref(e, elem)).name, "__")));
-  if (sv < 0 && !place) || x.tp is TyOptional || !(is_scalar(elem) || heap_elem) {
+  plain_record = struct_ref(e, elem) >= 0 && !(elem is TyOptional) && el::def(e, struct_ref(e, elem)).def_type == el::DT_STRUCT && !starts_with(el::def(e, struct_ref(e, elem)).name, "__");
+  // A CALL's result (`nums(5)[1..3]`) is held once in a work ref of its own, which is the
+  // subject wherever a local would be: `__ref_N = null; __ref_N = {#inline_container …}`.
+  held = -1;
+  held_at: vector<ir::Node> = [];
+  if sv < 0 && !place && !(x.tp is TyOptional) && (is_scalar(elem) || plain_record || elem is TyText) && (el_ex_assign::minting_call(e, x.code) || el_ex_call::fresh_native_call(e, x.code)) {
+    cw = el_vars::work_ref_p2(vars, x.tp);
+    el_vars::mark_inline(vars, cw);
+    held = el_vars::work_ref(vars, el_types::without_deps(x.tp));
+    el_vars::mark_inline(vars, held);
+    // (Its `= null` is declared where the statement's other inline work refs are.)
+    held_at = [el_ir::v_set(held, el_ir::v_block([el_ir::v_set(cw, x.code), ir::NdVar { n: cw }], el_types::with_deps(x.tp, [cw]), "inline_container"))];
+    sv = held;
+  }
+  // (A FIELD of records is the same loop, the field read written out again as the subject.)
+  heap_elem = (sv >= 0 || (place && !(elem is TyText))) && (elem is TyText || (struct_ref(e, elem) >= 0 && !(elem is TyOptional) && el::def(e, struct_ref(e, elem)).def_type == el::DT_STRUCT && !starts_with(el::def(e, struct_ref(e, elem)).name, "__")));
+  nested = sv >= 0 && held < 0 && el_types::base(elem) is TyVector && !(elem is TyOptional);
+  if (sv < 0 && !place) || x.tp is TyOptional || !(is_scalar(elem) || heap_elem || nested) {
     el::refuse(e, "a slice of a vector that is no local of plain scalars");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  // (Rust declares `vector<R>` where a slice is the first to put `R` in a vector of its own;
+  // where that falls is not carried for a field's records.)
+  if e.first_pass && place && heap_elem && el::def_nr(e, "main_vector<{el_types::elem_name(e, elem)}>") < 0 {
+    el::refuse(e, "a slice of a field of records that is the first vector of them");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   subj = if sv >= 0 { ir::NdVar { n: sv } } else { el_ir::unspan(x.code) };
@@ -232,7 +254,7 @@ pub fn vector_slice(e: el::El, vars: el_vars::Vars, x: Ex, lo: vector<integer>, 
   lv = el_vars::create_unique(vars, "slice_len", int_t);
   lov = el_vars::create_unique(vars, "slice_lo", int_t);
   hiv = el_vars::create_unique(vars, "slice_hi", int_t);
-  items: vector<ir::Node> = [
+  items: vector<ir::Node> = held_at + [
     el_ir::v_set(lv, el_ir::cl(e, "OpLengthVector", [subj])),
     el_ir::v_set(lov, bounds[0]!),
     el_ir::v_set(lov, slice_clamp(e, lov, lv, false)),
@@ -328,7 +350,13 @@ pub fn slice_read(e: el::El, vars: el_vars::Vars, st: SliceStart) -> ir::Node? {
   if record {
     size = record_size(e, st.elem);
   }
-  if hiv < 0 || nxt < 0 || size < 0 || (op == "" && !record) {
+  // An element that is a vector is read through its handle (`OpGetField(…, 0, <its type>)`),
+  // the read typed as the element is — with the element type's own borrow.
+  inner_vt = match el_types::base(st.elem) { TyVector { inner: vin } => if e.first_pass { -1 } else { vector_store(e, vin, el_types::elem_name(e, vin)) }, _ => -1 };
+  if inner_vt >= 0 {
+    size = 4;
+  }
+  if hiv < 0 || nxt < 0 || size < 0 || (op == "" && !record && inner_vt < 0) {
     return null;
   }
   n_v = ir::NdVar { n: nxt };
@@ -340,6 +368,9 @@ pub fn slice_read(e: el::El, vars: el_vars::Vars, st: SliceStart) -> ir::Node? {
   ], ir::TyInteger { spec: i32_spec() }, "Iter range");
   if record {
     return el_ir::v_block([el_ir::cl(e, "OpGetVectorNullable", [st.subj, ir::NdInt { n: size }, step])], el_types::with_deps(st.elem, []), "Vector Index");
+  }
+  if inner_vt >= 0 {
+    return el_ir::v_block([el_ir::cl(e, "OpGetField", [el_ir::cl(e, "OpGetVectorNullable", [st.subj, ir::NdInt { n: size }, step]), ir::NdInt { n: 0 }, ir::NdInt { n: inner_vt }])], st.elem, "Vector Index");
   }
   el_ir::v_block([elem_read(e, st.elem, el_ir::cl(e, "OpGetVectorNullable", [st.subj, ir::NdInt { n: size }, step]))], el_types::with_deps(st.elem, []), "Vector Index")
 }
@@ -446,7 +477,8 @@ pub fn slice_copy(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> ir::Node
   // (`Vector Index`), made through the local and written in — the local's elements, and the
   // element temp, borrowing the vector the slice reads.
   rsd = struct_ref(e, elem);
-  if elem is TyText || rsd >= 0 {
+  vec_elem = el_types::base(elem) is TyVector && !(elem is TyOptional);
+  if elem is TyText || rsd >= 0 || vec_elem {
     idx = -1;
     match init {
       NdInsert { items } => {
@@ -462,14 +494,39 @@ pub fn slice_copy(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> ir::Node
       el::refuse(e, "a vector slice of this element type: {type_kind(elem)}");
       return null;
     }
+    // (A held call's elements borrow the work ref the call was bound to inside its block.)
+    match init {
+      NdInsert { items: hi_items } => {
+        for hi_item in hi_items {
+          match hi_item {
+            NdSet { var: hv, inner: hin } => {
+              if hv == root {
+                match hin {
+                  NdBlock { block: hb } => {
+                    if hb[0].name == "inline_container" {
+                      match hb[0].operators[0] ?? ir::NdNull { NdSet { var: cwv } => { root = cwv; }, _ => {} }
+                    }
+                  },
+                  _ => {}
+                }
+              }
+            },
+            _ => {}
+          }
+        }
+      },
+      _ => {}
+    }
     viewed = el_types::with_deps(elem, [root]);
     el_vars::set_var_type(vars, se, viewed);
     el_vars::set_defined(vars, se);
     // (A DECLARED local keeps the element its declaration names: `s: vector<text> = big[0..2]`.)
     el_vars::set_var_type(vars, v, ir::TyVector { inner: if vars.annotated.contains(v) { elem } else { viewed }, dep: [db] });
-    el_vars::set_var_type(vars, elm_v, ir::TyReference { n: if rsd >= 0 { rsd } else { 0 }, dep: [db] });
+    el_vars::set_var_type(vars, elm_v, if vec_elem { el_types::with_deps(el_types::without_deps(elem), [db]) } else { ir::TyReference { n: if rsd >= 0 { rsd } else { 0 }, dep: [db] } });
     at = ir::NdVar { n: elm_v };
-    write = if rsd >= 0 { el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: se }, el_ir::cl(e, "OpGetField", [at, ir::NdInt { n: 0 }, ir::NdInt { n: rec }]), ir::NdInt { n: rec }]) } else { el_ir::cl(e, "OpSetText", [at, ir::NdInt { n: 0 }, ir::NdVar { n: se }]) };
+    // (A vector element is copied into the new element itself, typed as the inner vector.)
+    inner_vt = match el_types::base(elem) { TyVector { inner: vin } => vector_store(e, vin, el_types::elem_name(e, vin)), _ => -1 };
+    write = if vec_elem { el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: se }, at, ir::NdInt { n: inner_vt }]) } else if rsd >= 0 { el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: se }, el_ir::cl(e, "OpGetField", [at, ir::NdInt { n: 0 }, ir::NdInt { n: rec }]), ir::NdInt { n: rec }]) } else { el_ir::cl(e, "OpSetText", [at, ir::NdInt { n: 0 }, ir::NdVar { n: se }]) };
     steps = [
       el_ir::v_set(se, read!),
       el_ir::v_set(elm_v, el_ir::cl(e, "OpNewRecord", [ir::NdVar { n: v }, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }])),
@@ -608,7 +665,9 @@ pub fn index(e: el::El, vars: el_vars::Vars, at: integer, c: integer?, keys: vec
     x = ex(el_ir::v_block([el_ir::v_set(cw, x.code), ir::NdVar { n: cw }], el_types::with_deps(x.tp, [cw]), "inline_container"), x.tp);
   }
   i = el_ex_assign::expression(e, vars, keys[0]);
-  if !el_types::is_unknown(i.tp) && !(i.tp is TyInteger) {
+  // (A NULLABLE integer indexes as it is — `self.types[in_type]` with `in_type: u16?`: a
+  // null index names no element, as an index past the end does.)
+  if !el_types::is_unknown(i.tp) && !(el_types::base(i.tp) is TyInteger) {
     el::refuse(e, "an index that is not an integer: {type_kind(i.tp)}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
@@ -835,7 +894,16 @@ pub fn keyed_index(e: el::El, vars: el_vars::Vars, at: integer, x: Ex, keys: vec
     el::refuse(e, "a keyed lookup with a partial key");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
-  args: vector<ir::Node> = [x.code, ir::NdInt { n: if e.first_pass { 65535 } else { el_schema::keyed_type(e, ct) } }, ir::NdInt { n: len(names) }];
+  // `container_dep`: a lookup on a loft function's fresh collection binds it to a `__ref_p2_N`
+  // the entry then borrows (`bind_inline_container`, on both passes), as a vector's index does.
+  subject = x.code;
+  lifted = -1;
+  if el_ex_assign::minting_call(e, x.code) {
+    lifted = el_vars::work_ref_p2(vars, x.tp);
+    el_vars::mark_inline(vars, lifted);
+    subject = el_ir::v_block([el_ir::v_set(lifted, x.code), ir::NdVar { n: lifted }], el_types::with_deps(x.tp, [lifted]), "inline_container");
+  }
+  args: vector<ir::Node> = [subject, ir::NdInt { n: if e.first_pass { 65535 } else { el_schema::keyed_type(e, ct) } }, ir::NdInt { n: len(names) }];
   for k in keys {
     a = attr_nr(el::def(e, el_d), names[k#index]!);
     kt = if a < 0 { ir::TyUnknown { n: 0 } } else { el::def(e, el_d).attributes[a]!.typedef[0] };
@@ -863,6 +931,9 @@ pub fn keyed_index(e: el::El, vars: el_vars::Vars, at: integer, x: Ex, keys: vec
   match x.code {
     NdVar { n } => { t = el_types::with_deps(t, [n]); },
     _ => {}
+  }
+  if lifted >= 0 {
+    t = el_types::with_deps(t, [lifted]);
   }
   code = el_ir::cl(e, "OpGetRecord", args);
   if !e.first_pass {
@@ -1312,6 +1383,25 @@ pub fn plus_run(e: el::El, vars: el_vars::Vars, at: integer, l: integer, r: inte
     }
     return vector_concat(e, vars, dest, a, parts);
   }
+  // A nullable text on the left PROPAGATES (`text? + …`, @PLN25): the concatenation is built
+  // into a fresh work text off the left where it is present, and is the null text where it is
+  // not.  A local is read twice; any other left operand is bound first (`_nlhs_N`).
+  if a.tp is TyOptional && el_types::base(a.tp) is TyText {
+    parts: vector<Ex> = [];
+    for n in rights {
+      parts += [el_ex_assign::expression(e, vars, n)];
+    }
+    plain = ir::TyText { dep: [] };
+    if el_ir::unspan(a.code) is NdVar {
+      cat = append_text(e, vars, ex(a.code, plain), parts);
+      return ex(el_ir::v_if(el_ir::cl(e, "OpConvBoolFromText", [a.code]), cat.code, el_ir::cl(e, "OpConvTextFromNull", [])), ir::TyOptional { inner: cat.tp });
+    }
+    tmp = el_vars::create_unique(vars, "_nlhs", a.tp);
+    held = ir::NdVar { n: tmp };
+    cat = append_text(e, vars, ex(held, plain), parts);
+    opt = ir::TyOptional { inner: cat.tp };
+    return ex(el_ir::v_block([el_ir::v_set(tmp, a.code), el_ir::v_if(el_ir::cl(e, "OpConvBoolFromText", [held]), cat.code, el_ir::cl(e, "OpConvTextFromNull", []))], opt, "nullable_concat"), opt);
+  }
   if a.tp is TyCharacter {
     el::refuse(e, "a concatenation that starts with a character");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -1501,15 +1591,9 @@ pub fn concat_operand(e: el::El, vars: el_vars::Vars, list: vector<ir::Node>, ac
     el::refuse(e, "a nullable concatenation operand");
     return;
   }
-  render: vector<ir::Node> = [];
-  el_ex_call::append_data(e, render, acc, x.code, x.tp);
-  if e.first_pass {
-    for op in render {
-      list += [op];
-    }
-    return;
-  }
-  repeatable = match x.code {
+  // On the second pass an operand that is not repeatable is held first: a scalar in a
+  // `_concat_N` of its own type (a heap operand's work ref is not carried: refused by name).
+  repeatable = e.first_pass || match el_ir::unspan(x.code) {
     NdVar { n: _ } => true,
     NdInt { n: _ } => true,
     NdLong { n: _ } => true,
@@ -1518,7 +1602,21 @@ pub fn concat_operand(e: el::El, vars: el_vars::Vars, list: vector<ir::Node>, ac
     _ => false
   };
   if !repeatable {
-    el::refuse(e, "a concatenation operand bound before its null test");
+    if heap_def(el_types::base(x.tp)) >= 0 || el_types::base(x.tp) is TyVector {
+      el::refuse(e, "a concatenation operand bound before its null test");
+      return;
+    }
+    held = el_vars::create_unique(vars, "concat", el_types::base(x.tp));
+    el_vars::set_defined(vars, held);
+    list += [el_ir::v_set(held, x.code)];
+    x = ex(ir::NdVar { n: held }, el_types::base(x.tp));
+  }
+  render: vector<ir::Node> = [];
+  el_ex_call::append_data(e, render, acc, x.code, x.tp);
+  if e.first_pass {
+    for op in render {
+      list += [op];
+    }
     return;
   }
   is_null = match x.tp {

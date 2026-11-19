@@ -49,8 +49,19 @@ fn disturbed(data: &Data, code: &[Value], v: u16) -> bool {
     })
 }
 
+/// Does a statement of `code` replace the buffer `b` with its view `x`?
+fn replaces(code: &[Value], replace: u32, b: u16, x: u16) -> bool {
+    code.iter().any(|s| {
+        s.any_node(&mut |n| {
+            matches!(n, Value::Call(op, args) if *op == replace
+                && matches!(args.first().map(Value::unspan), Some(Value::Var(d)) if *d == b)
+                && matches!(args.get(1).map(Value::unspan), Some(Value::Var(s)) if *s == x))
+        })
+    })
+}
+
 /// Drop the self-replaces of one body's statement list; answers how many.
-fn drop_in(data: &Data, ops: &mut [Value], replace: u32, field: u32) -> usize {
+fn drop_in(data: &Data, d: u32, ops: &mut [Value], replace: u32, field: u32) -> usize {
     let mut views: Vec<(usize, u16, u16)> = Vec::new();
     for (k, s) in ops.iter().enumerate() {
         if let Value::Set(x, val) = s.unspan()
@@ -66,7 +77,27 @@ fn drop_in(data: &Data, ops: &mut [Value], replace: u32, field: u32) -> usize {
     let mut dropped = 0;
     for (k, x, b) in views {
         let after = &ops[k + 1..];
-        if x == b || disturbed(data, after, x) || disturbed(data, after, b) {
+        if x == b {
+            continue;
+        }
+        let why = if disturbed(data, after, x) {
+            Some("the view is assigned, re-pointed or freed after its bind")
+        } else if disturbed(data, after, b) {
+            Some("the buffer is assigned, re-pointed or freed after the bind")
+        } else {
+            None
+        };
+        if let Some(why) = why {
+            // A view no statement replaces its buffer with is not this rule's pattern.
+            if crate::rewrite_census::declines_wanted() && replaces(after, replace, b, x) {
+                let def = data.def(d);
+                crate::rewrite_census::declined_in(
+                    "R-SelfReplace",
+                    def.name(),
+                    def.variables().name(x),
+                    why,
+                );
+            }
             continue;
         }
         for s in &mut ops[k + 1..] {
@@ -102,7 +133,7 @@ pub fn rewrite_program(data: &mut Data) {
         }
         let mut code = std::mem::replace(&mut data.definitions[d_nr].code, Value::Null);
         if let Value::Block(b) = code.unspan_mut() {
-            let n = drop_in(data, &mut b.operators, replace, field);
+            let n = drop_in(data, d, &mut b.operators, replace, field);
             if n > 0 && trace() {
                 eprintln!("self-replace: {} drops {n}", data.def(d).name());
             }
@@ -110,5 +141,7 @@ pub fn rewrite_program(data: &mut Data) {
         }
         data.definitions[d_nr].code = code;
     }
+    // @decline-owed: a view bound outside the body's own statement list; one whose view or
+    //   buffer is disturbed after the bind reports
     crate::rewrite_census::fired("R-SelfReplace", fired);
 }

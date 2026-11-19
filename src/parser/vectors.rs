@@ -1974,6 +1974,7 @@ or build a local and use that."
         self.parse_code();
         self.closure_param = outer_closure_param;
         self.data.op_code(d_nr);
+        self.state_trace_fn_end(d_nr);
         self.data.definitions[d_nr as usize]
             .variables
             .append(&mut self.vars);
@@ -2421,6 +2422,7 @@ or build a local and use that."
         }
         self.closure_param = outer_closure_param;
         self.data.op_code(d_nr);
+        self.state_trace_fn_end(d_nr);
         self.data.definitions[d_nr as usize]
             .variables
             .append(&mut self.vars);
@@ -4815,6 +4817,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         val: &mut Value,
         parent_tp: &Type,
     ) -> Type {
+        self.state_route("parse_vector");
         // A vector literal is one level of depth (`crate::limits`): its elements are parsed
         // without passing through `expression`, so a literal nested in a literal counts here
         // (loft#1962 — 1000 nested levels overflowed the parser's stack).
@@ -4986,7 +4989,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             return Type::Unknown(0);
         }
         let struct_tp = Type::Vector(Box::new(in_t.clone()), Deps::frame(parent_tp.depend()));
-        if !is_field && !keyed_dest {
+        if !is_field && !keyed_dest && !self.append_leaves_untyped(vec) {
             self.vars
                 .change_var_type(vec, &struct_tp, &self.data, &mut self.lexer);
             self.data.vector_def(&mut self.lexer, &in_t);
@@ -5102,6 +5105,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             if self.lexer.has_token(";")
                 && let Some(value) = self.parse_multiply(res)
             {
+                self.state_route("parse_multiply");
                 return Some(value);
             }
             if !self.lexer.has_token(",") {
@@ -5475,6 +5479,30 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
     /// store, no capacity pre-allocation, no `vector<T>` retype.  Asked in one place so
     /// the build and the type agree — a literal built as a vector under a variable still
     /// typed keyed reads its elements back through the wrong container.
+    /// @C168 — is `vec` a local this list literal is APPENDED to (`h += [R { … }]`) whose
+    /// kind pass 1 cannot know yet (the bind after the parse asks the same of every compound
+    /// assignment, `Parser::parse_assign_op`)?  It was bound before this line, and its type is still
+    /// unknown: its bind called a function declared further down the file.  The literal's
+    /// items say what the collection holds, never whether it is a vector, a hash, a sorted or
+    /// an index — that is the bind's to say, on pass 2.  Typed `vector<R>` here, a keyed local
+    /// was refused on pass 2 as a type change ("from vector<R> to hash<R[k]>") although the
+    /// same body compiles with the function declared above it.
+    ///
+    /// Not so for a local with no bind before the append (the literal is all that types it),
+    /// for a bind's own literal (`h = [R { … }]`), nor on pass 2, where an unknown type is
+    /// final: each keeps the vector it had.
+    pub(crate) fn append_leaves_untyped(&self, vec: u16) -> bool {
+        self.append_dest == vec && self.untyped_on_pass1(vec)
+    }
+
+    /// @C168 — a local pass 1 bound to a value it could not type, and has not typed since.
+    pub(crate) fn untyped_on_pass1(&self, v: u16) -> bool {
+        self.first_pass
+            && v != u16::MAX
+            && self.vars.is_untyped_bind(v)
+            && self.vars.tp(v).is_unknown()
+    }
+
     pub(crate) fn keyed_local(&self, vec: u16) -> bool {
         vec != u16::MAX && is_keyed(self.vars.tp(vec))
     }
@@ -6815,10 +6843,17 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             // borrowed: its type names no frame variable (one would leak into the shared
             // `vector<T>` definition), and a nullable one (`S?`) is the same slot.  A pointer
             // element keeps its marker.
+            //
+            // The same holds for a TEXT element: it is copied into the vector's store, so the
+            // first item's deps describe the item and not the slot.  Kept, a formatted first
+            // item typed the literal as a view of its format buffer (`["a{n}", "b"]` was
+            // `vector<text["__work_1"]>` while `["b", "a{n}"]` was `vector<text>`), so the
+            // element type depended on which item came first.
             *in_t = match t.base() {
                 Type::Reference(_, d) | Type::Enum(_, true, d) if !d.is_pointer_marker() => {
                     t.without_deps()
                 }
+                Type::Text(_) => t.without_deps(),
                 _ => t.clone(),
             };
         }
@@ -9296,7 +9331,12 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         match val.unspan() {
             Value::Var(v) => *v != u16::MAX,
             Value::TupleGet(_, _) => true,
-            Value::Call(d, _) => self.data.def(*d).name().starts_with("OpGet"),
+            // A function's result is a collection that exists too (loft#2563): `d.h += mk()`
+            // slipped past as "constructed on the spot" and emitted no write at all.
+            Value::Call(d, _) => {
+                let name = self.data.def(*d).name();
+                name.starts_with("OpGet") || !name.starts_with("Op")
+            }
             _ => false,
         }
     }

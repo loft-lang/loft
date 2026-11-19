@@ -27,6 +27,7 @@ mod parse;
 mod reflect;
 mod show;
 mod split;
+mod tail;
 mod tidy;
 pub(crate) mod tls;
 mod unicode;
@@ -1521,7 +1522,8 @@ impl Cx<'_> {
                 &mut memo.stores_written,
                 &mut memo.writes,
                 Some(&mut memo.inputs),
-            ),
+            )
+            .with_schema(self.stores),
         )
     }
 
@@ -2728,6 +2730,9 @@ fn unit_defines(
         out.push_str("#define LOFT_NO_LOCKS 1\n");
         // The unit is the site: credited to the C writer, no function.
         let _census_unit = crate::rewrite_census::InBody::enter("c", "");
+        // @no-decline: match only: the pattern is a unit that reaches no lock source (`#lock =
+        //   …`, a mapped file, a constant store); a unit that reaches one is not the pattern,
+        //   and no test follows the match
         crate::rewrite_census::fired("R-NoLocks", 1);
     }
     // `@FR-R-NoThreads`: the runtime keeps its store table, frames and pools thread-local
@@ -2749,6 +2754,9 @@ fn unit_defines(
     {
         out.push_str("#define LOFT_NO_THREADS 1\n");
         let _census_unit = crate::rewrite_census::InBody::enter("c", "");
+        // @no-decline: match only: the pattern is a unit that runs no `par` loop on threads and
+        //   reaches no engine kernel; a unit that does is not the pattern, and no test follows
+        //   the match
         crate::rewrite_census::fired("R-NoThreads", 1);
     }
     // The JSON reader (`loft_json.h`) is compiled in for a unit that reads JSON: the JsonValue
@@ -3112,10 +3120,20 @@ fn anchor(stores: &Stores) -> String {
 pub(crate) fn variable_shapes(
     cx: &Cx,
     vars: &crate::variables::Function,
+    code: &Value,
     args: &[u16],
     body32: bool,
 ) -> Result<Vec<CType>, String> {
     let mut shapes = Vec::with_capacity(vars.count() as usize);
+    // The locals a statement binds.  A `parallel` arm's locals are never scoped (the arm runs
+    // on a frame of its own), so an unscoped local is no proof that nothing binds it.
+    let mut bound = std::collections::HashSet::new();
+    code.any_node(&mut |n| {
+        if let Value::Set(v, _) = n {
+            bound.insert(*v);
+        }
+        false
+    });
     for v in 0..vars.count() {
         // A `&` parameter has its target's shape, passed as a pointer to it.
         let tp = match vars.tp(v).base() {
@@ -3125,7 +3143,8 @@ pub(crate) fn variable_shapes(
         // A name the first pass met before its declaration became a local of no type; the
         // second pass resolved it, so nothing binds it and the scope pass never scoped it.
         // It is declared as a placeholder nothing reads.
-        if tp.is_unknown() && !args.contains(&v) && vars.scope(v) == u16::MAX {
+        if tp.is_unknown() && !args.contains(&v) && vars.scope(v) == u16::MAX && !bound.contains(&v)
+        {
             shapes.push(CType::Int);
             continue;
         }
@@ -3297,6 +3316,9 @@ fn resolve_hot_helpers(cx: &Cx, protos: &str, bodies: &str) -> (String, String) 
             .iter()
             .filter(|d| hot.contains(d))
             .count();
+        // @no-decline: match only: the pattern is a function within the size bound (twelve
+        //   statements, or a twin's or a hinted helper's own bound); a longer function is not
+        //   the pattern, and no test follows the match
         crate::rewrite_census::fired("R-Inline/helper", inlined);
     }
     let resolve = |text: &str| -> String {
@@ -3456,7 +3478,7 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     if args.len() != def.attributes().len() {
         return Err("parameters that do not match their arguments".into());
     }
-    let mut shapes = variable_shapes(cx, vars, &args, data.body_width32(d))?;
+    let mut shapes = variable_shapes(cx, vars, def.code(), &args, data.body_width32(d))?;
     if mask == 0 {
         trace_shapes(cx, d, &shapes);
         trace_counters(cx, d);
@@ -3485,6 +3507,8 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
         )
     };
     let vr_ptr = cx.vr_ptr_params(d);
+    // Each parameter's declaration by variable, for a `parallel` arm that reads one.
+    let mut param_decls = std::collections::HashMap::new();
     let params: Vec<String> = args
         .iter()
         .enumerate()
@@ -3494,7 +3518,7 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
             let c = shapes[a as usize];
             let name = body::var_name(vars.name(a), a);
             let apv_rec = apv.as_ref().and_then(|(_, roles, _)| roles.apart.get(&a));
-            if let Some(t) = apv_rec.and_then(|r| cx.ap2_ctype(*r)) {
+            let decl = if let Some(t) = apv_rec.and_then(|r| cx.ap2_ctype(*r)) {
                 format!("const {t} *loft_avp{a}")
             } else if apr_at == Some(i) {
                 "loft_text *loft_aprp".to_string()
@@ -3506,7 +3530,9 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
                 format!("const {} *{name}", passed(c))
             } else {
                 format!("{} {name}", passed(c))
-            }
+            };
+            param_decls.insert(a, decl.clone());
+            decl
         })
         .collect();
     // An `__inv` twin takes the header of each vector it indexes from its caller, which holds
@@ -3575,11 +3601,17 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
         let mut s = shapes.clone();
         tf.shape(&mut s);
         match body::FnWriter::new(cx, d, s, ret)
+            .param_decls(param_decls.clone())
             .places(places)
             .transient(tf)
             .write()
         {
             Ok(b) => {
+                // @decline-owed: a producer whose transient twin cannot be written; and WHICH
+                //   use of the value no transient arm answers — a field set or append that
+                //   would store it, a keyed insert, an escaping return, a computed offset, a
+                //   choice between two transient values: the writer's errors are built text,
+                //   counted under one test.  The roots' tests report
                 crate::rewrite_census::fired("R-Transient", 1);
                 Some(b)
             }
@@ -3594,6 +3626,7 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     let cold = mask == 0 && places == 0 && inputs.is_empty() && scalar_inputs.is_empty() && !kept;
     let ordinary = |cold: bool, shapes: Vec<CType>, inputs, scalar_inputs| {
         body::FnWriter::new(cx, d, shapes, ret)
+            .param_decls(param_decls.clone())
             .cold_exits(cold)
             .places(places)
             .inputs(inputs)
@@ -4829,6 +4862,13 @@ fn framed(
     );
     let whole = format!("{body_storage} {} {fr}({params}) {{\n{body}}}\n", held(ret));
     trace_body(name, parts.is_some(), &whole);
+    // `@FR-R-CTail`: the whole body's shared release tails are written once.  The parts keep
+    // every exit's own statements (a part cannot jump into another), and the body trace above
+    // shows the body before this pass, as the body comparisons read it.
+    let whole = match tail::merge(name, &held(ret), body) {
+        Some(body) => format!("{body_storage} {} {fr}({params}) {{\n{body}}}\n", held(ret)),
+        None => whole,
+    };
     let text = match parts {
         Some(parts) if split::everywhere() => parts,
         Some(parts) => format!("#if defined(_MSC_VER)\n{parts}#else\n{whole}#endif\n"),

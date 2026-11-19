@@ -90,6 +90,11 @@ pass (both backends) and `parse` for everything earlier.  Summed over the benche
 same split is `bench/portal/rule_phases.tsv`, which `make rewrite-census` keeps
 (`scripts/rule_phases.py` reads it). The per-function totals equal the per-rule census.
 
+**`LOFT_DECLINE_CENSUS_FN=<file>`** is the same split for the REFUSALS of
+`LOFT_DECLINE_CENSUS`: `function<TAB>rule<TAB>test<TAB>count`.  Read the two together with
+`make decline-census ARGS="--functions <prog.loft> [name …]"`
+([REWRITE_REASONS.md](REWRITE_REASONS.md) § The per-function listing).
+
 **`LOFT_OP_NGRAMS=<file>`** (with `LOFT_OP_CENSUS`) counts the runs of two to four operators
 that execute one after the other within a function, keeping only runs whose control operators
 come last — the statically adjacent ones, which a superinstruction can fuse.

@@ -169,7 +169,7 @@ fn plain_place(v: &Value, get_field: u32, read: &mut Vec<u16>) -> bool {
     }
 }
 
-fn decline(data: &Data, d_nr: u32, site: &str, why: &str) {
+fn decline(data: &Data, d_nr: u32, site: &str, why: &'static str) {
     crate::rewrite_census::declined(RULE, site, why);
     if trace() {
         eprintln!(

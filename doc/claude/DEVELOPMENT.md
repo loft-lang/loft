@@ -125,7 +125,11 @@ side-findings filed rather than left implicit.  What must hold BEFORE opening is
 and is the whole list: the head is current on `origin/main`, everything is pushed, the tree is
 clean, derived artefacts are REGENERATED rather than picked (audit rows re-measured,
 `falsified_docs.baseline`, the browser bundle), and each fix in the arc carries the
-verification it owed when it landed.  The measurements behind these rules:
+verification it owed when it landed.  **When asked for a PR, say what it will NOT close**: the
+`make work` output — the unclaimed issues and every claim still held — goes in the answer
+before the PR is opened, so the owner does not have to find a missed ticket in the full issue
+list.  That is a report, not a condition: the owner prefers a clean slate and may still ask
+for the PR with tickets open, and then it is opened as asked.  The measurements behind these rules:
 [DEVELOPMENT-history.md § The branch policy's costs, measured](DEVELOPMENT-history.md#the-branch-policys-costs-measured).
 
 ### The PR cycle

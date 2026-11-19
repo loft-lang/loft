@@ -16,6 +16,17 @@
 //! its default.  A type is printed in a small form of its own (`Self::trace_shape`) that both
 //! sides spell alike — deps left out.  Points: `stmt` (a statement of a block about to be read)
 //! and `arg` (a call's argument about to be read, its hint set).
+//!
+//! Two points say what a pass LEFT rather than what it was handed (elaborator-instruments.md
+//! § 1), in the spelling the IR dump gives a type (`Type::show`: deps by variable name), so a
+//! borrow one side derived and the other did not is a differing line:
+//! - `stmt-end value=<type>` — the type a statement's expression answered, at the position
+//!   its `stmt` line has.  A line of its own, after the statement: the type is not known
+//!   where `stmt` is printed, and holding that line back would reorder it against the points
+//!   of the statements nested inside.
+//! - `fn-end <fn> ret=<type>` and `fn-end <fn> var <nr> <name>=<type>` — a function's result
+//!   and every variable in number order, once per pass where its variables are handed to its
+//!   definition, at the definition's position.  A lambda is a function of its own.
 
 use super::Parser;
 use crate::data::Type;
@@ -58,6 +69,122 @@ impl Parser {
             let _ = write!(line, " cur_type_vars={}", names.join(","));
         }
         eprintln!("{line}");
+    }
+
+    /// Is the trace asked for, for the source being read?  The standard library is the image
+    /// the elaborator loads, never a parse it repeats.
+    pub(crate) fn state_trace_on(&self) -> bool {
+        crate::env_once!(std::env::var_os("LOFT_STATE_TRACE").is_some())
+            && self.data.source != crate::data::STD_SOURCE
+    }
+
+    /// The `route` point (elaborator-instruments.md § 2): the front end took the special route
+    /// `handler` for the construct at the lexer's position — a handler's name, or
+    /// `<function>=<verdict>` where one function decides between routes.
+    pub(crate) fn state_route(&self, handler: &str) {
+        if !self.state_trace_on() {
+            return;
+        }
+        let pos = self.lexer.pos();
+        eprintln!(
+            "state {} {}:{} route {handler}",
+            if self.first_pass { 1 } else { 2 },
+            pos.line,
+            pos.pos
+        );
+    }
+
+    /// The `stmt-end` point: the type `tp` the statement read from `at` answered.
+    pub(crate) fn state_trace_value(&self, at: &crate::lexer::Position, tp: &Type) {
+        if !self.state_trace_on() {
+            return;
+        }
+        eprintln!(
+            "state {} {}:{} stmt-end value={}",
+            if self.first_pass { 1 } else { 2 },
+            at.line,
+            at.pos,
+            tp.show(&self.data, &self.vars)
+        );
+    }
+
+    /// The `var` point (port-debug-output.md § 1): what the statement read from `at` did to
+    /// the function's variable table — `+ <type>` for a variable it created, `<old> -> <new>`
+    /// for one whose type or deps it changed — found by comparing the table with what this
+    /// function last printed on this pass.  A statement nested in another prints first, so
+    /// each change goes to the innermost statement that ended after it.
+    pub(crate) fn state_trace_vars(&mut self, at: &crate::lexer::Position) {
+        if !self.state_trace_on() || self.context == u32::MAX {
+            return;
+        }
+        let now: Vec<String> = (0..self.vars.count())
+            .map(|v| self.vars.tp(v).show(&self.data, &self.vars))
+            .collect();
+        let head = format!(
+            "state {} {}:{} var {}",
+            if self.first_pass { 1 } else { 2 },
+            at.line,
+            at.pos,
+            self.data.def(self.context).name()
+        );
+        let seen = self
+            .trace_vars
+            .entry((self.context, self.first_pass))
+            .or_default();
+        // A table shorter than the one printed is another reading of the function.
+        if seen.len() > now.len() {
+            seen.clear();
+        }
+        for (v, tp) in now.iter().enumerate() {
+            let name = self.vars.name(v as u16);
+            match seen.get(v) {
+                None => eprintln!("{head} {v} {name} + {tp}"),
+                Some(old) if old != tp => eprintln!("{head} {v} {name} {old} -> {tp}"),
+                Some(_) => {}
+            }
+        }
+        *seen = now;
+    }
+
+    /// The `fn-end` point of definition `d`, whose variables `self.vars` still holds: its
+    /// result and each variable, as this pass leaves them.
+    pub(crate) fn state_trace_fn_end(&self, d: u32) {
+        if !self.state_trace_on() {
+            return;
+        }
+        let def = self.data.def(d);
+        let head = format!(
+            "state {} {}:{} fn-end {}",
+            if self.first_pass { 1 } else { 2 },
+            def.position().line,
+            def.position().pos,
+            def.name()
+        );
+        // A result's deps number ATTRIBUTES of the definition, while the type's own spelling
+        // names the VARIABLE of that number: `attrs=<n>:<attribute name>` says which attribute
+        // each is, so a buffer renamed after a local reads apart from one that was bound.
+        let attrs: Vec<String> = def
+            .returned()
+            .depend()
+            .iter()
+            .map(|n| match def.attributes().get(*n as usize) {
+                Some(a) => format!("{n}:{}", a.name),
+                None => format!("{n}:#"),
+            })
+            .collect();
+        let shown = def.returned().show(&self.data, &self.vars);
+        if attrs.is_empty() {
+            eprintln!("{head} ret={shown}");
+        } else {
+            eprintln!("{head} ret={shown} attrs={}", attrs.join(","));
+        }
+        for v in 0..self.vars.count() {
+            eprintln!(
+                "{head} var {v} {}={}",
+                self.vars.name(v),
+                self.vars.tp(v).show(&self.data, &self.vars)
+            );
+        }
     }
 
     /// A type as the trace spells it: the shape and the definitions it names, no deps.

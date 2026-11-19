@@ -598,7 +598,11 @@ impl Parser {
         if g_nr == u32::MAX || self.data.def(g_nr).def_type() != DefType::Generic {
             return u32::MAX;
         }
-        self.instantiate_template(g_nr, name, types)
+        let inst = self.instantiate_template(g_nr, name, types);
+        if inst != u32::MAX {
+            self.state_route("try_generic_instantiation");
+        }
+        inst
     }
 
     /// The instance key before `D-Key` — `t_<LEN><first bound type>_<name>`, the spelling of a

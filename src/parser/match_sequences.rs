@@ -25,6 +25,7 @@ impl Parser {
         subject_type: &Type,
         code: &mut Value,
     ) -> Type {
+        self.state_route("parse_vector_match");
         let elm_tp = subject_type.content();
         // A subject that is already a VARIABLE is matched as itself.  Through a `_match_subj`
         // alias, every capture was a view of a compiler temporary (`OpGetVector(_match_subj,
@@ -361,7 +362,7 @@ impl Parser {
 
         // Build if-else chain from arms
         let has_null_arm = std::mem::replace(&mut self.null_literal_arms, saved_null_arms) > 0;
-        self.type_null_arms(arms.iter_mut().map(|a| &mut a.code), &result_type);
+        self.type_null_arms(arms.iter_mut().map(|a| &mut a.code), &mut result_type);
         let fallback = if exhaustive {
             arms.pop().unwrap().code
         } else {
@@ -1463,6 +1464,7 @@ impl Parser {
         subject_type: &Type,
         code: &mut Value,
     ) -> Type {
+        self.state_route("parse_tuple_match");
         let Type::Tuple(elem_types) = subject_type.base() else {
             unreachable!("parse_tuple_match called with non-tuple subject")
         };
@@ -1703,7 +1705,7 @@ impl Parser {
 
         // Build if-else chain (last arm is fallback / wildcard)
         let has_null_arm = std::mem::replace(&mut self.null_literal_arms, saved_null_arms) > 0;
-        self.type_null_arms(arms.iter_mut().map(|a| &mut a.code), &result_type);
+        self.type_null_arms(arms.iter_mut().map(|a| &mut a.code), &mut result_type);
         let fallback = if has_wildcard {
             arms.pop().unwrap().code
         } else {
@@ -1756,7 +1758,7 @@ impl Parser {
         v: u16,
         subject_type: &Type,
         has_wildcard: bool,
-        result_type: &Type,
+        result_type: &mut Type,
         mut arms: Vec<(Option<Value>, Value, Type, Option<Value>)>,
     ) -> Value {
         // A bare `null` arm value (`false => null`) parses to `Value::Null`, which

@@ -841,6 +841,7 @@ impl Parser {
         code: &mut Value,
         match_pos: &crate::lexer::Position,
     ) -> Type {
+        self.state_route("parse_scalar_match");
         // Store subject in a temp var to avoid re-evaluation.
         let v = self.create_match_subject(subject_type);
         self.vars.defined(v);
@@ -1071,7 +1072,7 @@ impl Parser {
             v,
             subject_type,
             has_wildcard || bool_exhaustive,
-            &result_type,
+            &mut result_type,
             arms,
         );
         // A struct, collection or enum result with a literal `null` arm; the scalar result is
@@ -1176,6 +1177,7 @@ impl Parser {
         elm_tp: &Type,
         code: &mut Value,
     ) -> Type {
+        self.state_route("parse_cursor_match");
         // Use the subject's OWN var as the cursor — a struct is a DbRef, so advancing its `pos`
         // must reach the caller's cursor (same rule the struct-match path follows).  Copy only a
         // non-var subject (a temporary cursor's advance is then moot, which is fine).

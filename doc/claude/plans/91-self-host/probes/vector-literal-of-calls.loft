@@ -1,0 +1,24 @@
+// A challenge for a vector literal whose elements are vector-returning CALLS (@PLN91): is the
+// element type's borrow of the first call's buffer (`vector<vector<integer>["__ref_1"]>`) ever
+// visible?  Five cases, every value hand-computed; clean on both backends, under LOFT_POISON=1,
+// LOFT_STORES=warn and the C leak check.
+fn nums(n: integer) -> vector<integer> { v: vector<integer> = []; for i in 0..n { v += [(i + 1) * 10]; } v }
+fn total(v: vector<integer>) -> integer { t = 0; for x in v { t += x; } t }
+// the literal is read after both calls' buffers could have been reused
+fn read_after() -> integer { vv = [nums(2), nums(5)]; w = nums(7); total(vv[0]) * 1000 + total(vv[1]) + len(w) }
+// returned out of the frame that holds the buffers
+fn mk() -> vector<vector<integer>> { vv = [nums(2), nums(5)]; vv }
+fn returned() -> integer { r = mk(); x = nums(9); total(r[0]) * 1000 + total(r[1]) + len(x) }
+// in a loop: the same call sites run again and clear their buffers
+fn looped() -> integer { t = 0; for i in 0..3 { vv = [nums(i + 1), nums(i + 2)]; t += total(vv[0]) + total(vv[1]); } t }
+// the literal outlives a rebind of what the first call's buffer held
+fn appended() -> integer { vv = [nums(2), nums(5)]; vv += [nums(1)]; vv[0] += [5]; total(vv[0]) * 1000 + total(vv[1]) + total(vv[2]) }
+// the twin with locals, the form the port agrees on
+fn locals() -> integer { a = nums(2); b = nums(5); vv = [a, b]; a += [1]; total(vv[0]) * 1000 + total(vv[1]) + len(a) }
+fn main() {
+  assert(read_after() == 30157, "read_after {read_after()}");
+  assert(returned() == 30159, "returned {returned()}");
+  assert(looped() == 10 + 30 + 30 + 60 + 60 + 100, "looped {looped()}");
+  assert(appended() == 35160, "appended {appended()}");
+  assert(locals() == 30153, "locals {locals()}");
+}

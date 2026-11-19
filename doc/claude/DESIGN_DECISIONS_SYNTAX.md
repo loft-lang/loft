@@ -432,3 +432,25 @@ what to do with it is the default").
 `loft-suite/rules/types/N-Store/1720-a-nullable-written-to-an-enum-text-or-record-slot-is-reported.loft`,
 `…/1720b-a-nullable-written-to-an-element-is-reported.loft` and `tests/heap_nstore.rs`.
 **Catalogue:** `formal/types.md` `(N-Default)`, § Defaults.
+
+## C168 — Where a function is declared changes nothing a program can observe; its internal numbers may differ
+
+**Decision.** A caller means the same whether the function it calls stands above or below it in
+the file: the values it computes and the order its release hooks run are those of its own
+locals.  The numbers the compiler gives definitions, variables and hidden stores are NOT part of
+that: a callee declared further down is typed on the second pass, so its caller's hidden buffer
+is numbered later and the frame declares its hidden stores in another order than its twin's.
+That difference is allowed and is not removed.  **Why.** Only the observable half is a promise to
+the program; making the numbering independent of position was built and measured — it moved 222
+functions for no change in any value or release order, and a second front end that follows the
+numbering would have had to change with it (owner).
+
+**Revisit when.** A value, a diagnostic or a release order is found to depend on a callee's
+position — that is a defect of this decision's first half, not of its second.  Decided
+2026-11-18 (owner: "keep track of the observable side of reordering, raw definition ids do not
+have to be order independent") — [record](DESIGN_DECISIONS-history.md#c168--where-a-function-is-declared-changes-nothing-a-program-can-observe-its-internal-numbers-may-differ).
+**Holds at:** `@C168` — the frame-top declarations in `Parser::parse_code`
+(`src/parser/expressions.rs`); `formal/heap.md` `(H-Drop)`; guard
+`loft-suite/rules/heap/H-Drop/a-callee-declared-below-its-caller-changes-nothing-a-program-can-see.loft`
+and, for a compound assignment to a local bound from a later function,
+`loft-suite/rules/types/N-Join/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft`.

@@ -136,6 +136,12 @@ impl super::Output<'_> {
         let facts = self.current_ranges();
         let trace = std::env::var("LOFT_TRACE_RANGED_CALL").is_ok();
         if !self.args_ranged(d, args, &facts, &nn) {
+            crate::rewrite_census::declined_in(
+                "R-RangedCall",
+                self.data.def(self.def_nr).name(),
+                &format!("{:p}", args.as_ptr()),
+                "an integer argument is not proven in range",
+            );
             if trace {
                 let ranges: Vec<Option<Range>> = args
                     .iter()
@@ -161,6 +167,12 @@ impl super::Output<'_> {
                 &inputs.scalars,
                 &facts,
             ) {
+                crate::rewrite_census::declined_in(
+                    "R-RangedCall",
+                    self.data.def(self.def_nr).name(),
+                    &format!("{:p}", args.as_ptr()),
+                    "a scalar input of the twin is not proven in range",
+                );
                 if trace {
                     eprintln!(
                         "ranged-call: {} → {} declines: scalar input {key:?} unranged",
@@ -179,6 +191,11 @@ impl super::Output<'_> {
         if !self.rg_emitted.contains(&key) && !self.rg_requests.contains(&key) {
             self.rg_requests.push(key);
         }
+        // @decline-owed: a call whose callee's ranged variant turns fewer than three operators
+        //   plain, with an integer argument or a twin's scalar input not proven within `[-L,
+        //   L]`, or in a coroutine body; for the guarded copy (`guard_plan`), a `For` block
+        //   with no hoisted integer field or unassigned, unlent range-bound variable, and a
+        //   copy that newly ranges no call or leaves a checked call checked
         crate::rewrite_census::fired("R-RangedCall", 1);
         true
     }

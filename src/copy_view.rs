@@ -93,6 +93,12 @@ pub fn rewrite(data: &mut Data, d_nr: u32) {
                 }
             }
             Err(why) => {
+                crate::rewrite_census::declined_in(
+                    "R-CopyView",
+                    data.def(d_nr).name(),
+                    vars.name(t),
+                    why,
+                );
                 if trace {
                     eprintln!(
                         "[copy-view] fn={} local={} keeps its copy: {why}",
@@ -880,6 +886,14 @@ fn disturbs_one(call: &Value, vars: &Function, data: &Data, reach: &Reach) -> Op
     disturbs(&shallow, vars, data, reach)
 }
 
+/// The walk clause refused local `t` of `function` at clause `why`: counted, and traced.
+fn walk_declined(function: &str, t: &str, why: &'static str, trace: bool) {
+    crate::rewrite_census::declined_in("R-CopyView/walk", function, t, why);
+    if trace {
+        eprintln!("[copy-view] fn={function} walk {t} keeps its copy: {why}");
+    }
+}
+
 fn walk_clause(code: &mut Value, data: &mut Data, d_nr: u32, frees: &[u32], trace: bool) {
     if !crate::keys::copy_view_walk_enabled() {
         return;
@@ -971,15 +985,7 @@ fn walk_clause(code: &mut Value, data: &mut Data, d_nr: u32, frees: &[u32], trac
                     );
                 }
             }
-            Err(why) => {
-                if trace {
-                    eprintln!(
-                        "[copy-view] fn={} walk {} keeps its copy: {why}",
-                        data.def(d_nr).name(),
-                        vars.name(t)
-                    );
-                }
-            }
+            Err(why) => walk_declined(data.def(d_nr).name(), vars.name(t), why, trace),
         }
     }
 }

@@ -716,6 +716,9 @@ impl Kind for Writes<'_> {
         true
     }
     fn observe(&self, answer: &Self::Fact) {
+        // @decline-owed: a callee with a store write that is no in-place set and no fixed-width
+        //   scalar set of its own return buffer; a body that holds a fn-ref call, a `par` or a
+        //   `yield`; one met while its own verdict is open (a cycle); a native
         crate::rewrite_census::fired("R-Callee", usize::from(answer.is_some()));
     }
     fn body(

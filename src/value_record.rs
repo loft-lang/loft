@@ -1890,6 +1890,9 @@ fn plan_function(data: &Data, w: &World, f: u32, tuple: bool) -> (Plan, Verdict)
         if why.is_none() {
             plan.carriers.insert(p, record);
         } else {
+            if let Some(why) = why {
+                crate::rewrite_census::declined_in("R-ValueLocal", def.name(), vars.name(p), why);
+            }
             if let Some(why) = why
                 && trace()
             {
@@ -1992,6 +1995,9 @@ fn plan_function(data: &Data, w: &World, f: u32, tuple: bool) -> (Plan, Verdict)
         } else {
             None
         };
+        if let Some(why) = why {
+            crate::rewrite_census::declined_in("R-ValueLocal", def.name(), vars.name(l), why);
+        }
         if let Some(why) = why
             && trace()
         {

@@ -154,6 +154,13 @@ impl TrFn {
 
 /// A site the writer could not write transient: the function keeps the store form.
 pub(crate) fn declined(cx: &Cx, d: u32, why: &str) {
+    // The writer's errors are built text; the census counts them under one test, and the
+    // trace below names the use.
+    crate::rewrite_census::declined(
+        "R-Transient",
+        cx.data.def(d).name(),
+        "a use of the value no transient form answers",
+    );
     if trace() {
         eprintln!(
             "[transient] site in {} declined: {why}",
@@ -517,7 +524,8 @@ fn write_twin(cx: &Cx, key: TrKey, name: &str) -> Result<(String, String, Option
     if cx.value_records().fns.contains_key(&key.d) {
         return Err("a value-record result".into());
     }
-    let mut shapes = crate::c::variable_shapes(cx, vars, &args, data.body_width32(key.d))?;
+    let mut shapes =
+        crate::c::variable_shapes(cx, vars, def.code(), &args, data.body_width32(key.d))?;
     let vr_locals = cx.vr_locals(key.d);
     let mut vr_sorted: Vec<(u16, u16)> = vr_locals.iter().map(|(v, k)| (*v, *k)).collect();
     vr_sorted.sort_unstable();
@@ -757,6 +765,7 @@ pub(crate) fn site_plan(cx: &Cx, d: u32) -> Option<TrFn> {
         }
     }
     if let Err(why) = lives(cx, code, &root_vars, &owner) {
+        crate::rewrite_census::declined("R-Transient", def.name(), why);
         if trace() {
             eprintln!("[transient] site in {} declined: {why}", def.name());
         }
@@ -777,7 +786,12 @@ pub(crate) fn site_plan(cx: &Cx, d: u32) -> Option<TrFn> {
 /// no transient value of the frame is still to be read there: each root is bound once, every
 /// read of it — and of a local derived from it — lies inside the block of its bind and after
 /// it, and the roots' spans from bind to last read, in the IR's order, are apart.
-fn lives(cx: &Cx, code: &Value, roots: &[u16], owner: &HashMap<u16, u16>) -> Result<(), String> {
+fn lives(
+    cx: &Cx,
+    code: &Value,
+    roots: &[u16],
+    owner: &HashMap<u16, u16>,
+) -> Result<(), &'static str> {
     struct Walk<'a> {
         cx: &'a Cx<'a>,
         roots: &'a [u16],
@@ -847,12 +861,12 @@ fn lives(cx: &Cx, code: &Value, roots: &[u16], owner: &HashMap<u16, u16>) -> Res
     let mut spans: Vec<(usize, usize)> = Vec::new();
     for r in roots {
         let [(bind, blk)] = w.binds.get(r).map_or(&[][..], Vec::as_slice) else {
-            return Err("a root bound more than once".into());
+            return Err("a root bound more than once");
         };
         let mut last = *bind;
         for (_, at, blocks) in w.reads.iter().filter(|(o, _, _)| o == r) {
             if *at <= *bind || !blocks.contains(blk) {
-                return Err("a root read outside its bind's block".into());
+                return Err("a root read outside its bind's block");
             }
             last = last.max(*at);
         }
@@ -865,7 +879,7 @@ fn lives(cx: &Cx, code: &Value, roots: &[u16], owner: &HashMap<u16, u16>) -> Res
     if apart {
         Ok(())
     } else {
-        Err("its roots live together".into())
+        Err("its roots live together")
     }
 }
 
@@ -954,7 +968,8 @@ impl Cx<'_> {
         {
             return Err("a signature the twin does not take".into());
         }
-        let mut shapes = crate::c::variable_shapes(self, vars, &args, self.data.body_width32(d))?;
+        let mut shapes =
+            crate::c::variable_shapes(self, vars, def.code(), &args, self.data.body_width32(d))?;
         crate::c::value_local_shapes(self, d, &mut shapes);
         let mut params = Vec::new();
         for &a in &args {

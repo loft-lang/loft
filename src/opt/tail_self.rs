@@ -53,7 +53,7 @@
 use crate::data::{Data, DefType, Type, Value, v_block, v_loop, v_set};
 use crate::lexer::Position;
 use crate::tail_frame::{
-    Pos, admit_frame, declared_params, delivery, is_release, last_value, off, ret_pattern,
+    Pos, admit_frame_clause, declared_params, delivery, is_release, last_value, off, ret_pattern,
     tail_calls, two_step, void_tail, writes_place,
 };
 use crate::variables::Function;
@@ -87,7 +87,7 @@ pub fn rewrite_program(data: &mut Data) -> usize {
             continue;
         }
         let name = def.name().to_string();
-        if let Err(why) = admit_frame(
+        if let Err((clause, why)) = admit_frame_clause(
             def.variables(),
             def.returned(),
             def.code(),
@@ -98,7 +98,7 @@ pub fn rewrite_program(data: &mut Data) -> usize {
             if trace() {
                 eprintln!("tail-self: {name} declined: {why}");
             }
-            crate::rewrite_census::declined("R-TailSelf", &name, &why);
+            crate::rewrite_census::declined("R-TailSelf", &name, clause);
             continue;
         }
         let _census_body = crate::rewrite_census::InBody::enter("ir", &name);

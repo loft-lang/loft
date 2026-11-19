@@ -914,10 +914,20 @@ static int loft_rotate_from_parts(loft_ref vec, const loft_text *f, const uint32
  * keyed collection `c` as a deep copy under its own key (`insert_keyed_copy`, the latest of one
  * key winning); a null linked element has no key and stays out.  Every element is resolved
  * before the first insert, which may grow a store they share.  A source the bind gives up is
- * freed. */
+ * freed.  `keyed_src`: the source is a keyed collection of `c`'s own type, and a kind whose
+ * storage is no sequential list (a hash, an index, a spatial, a trie) is listed by its walk. */
 static void loft_fill_keyed(const loft_tdesc *T, uint16_t etp, loft_ref c, loft_ref src, int kind,
-                            const loft_key *keys, int nk, int linked, int free_source, const loft_group *g) {
+                            const loft_key *keys, int nk, int linked, int free_source, const loft_group *g,
+                            int keyed_src) {
     if (src.store_nr == 0xFFFF || src.store_nr >= loft_nstores) return;
+    if (keyed_src && kind != LOFT_KEYED_SORTED && kind != LOFT_KEYED_ORDERED) {
+        uint32_t m = 0;
+        loft_ref *e = loft_keyed_refs(src, kind == LOFT_KEYED_HASH ? 1 : kind == LOFT_KEYED_INDEX ? 2 : 3, keys, nk, &m);
+        for (uint32_t i = 0; i < m; i++) loft_set_keyed(T, etp, c, e[i], kind, keys, nk, 0, 0, 0, g);
+        free(e);
+        if (free_source && src.store_nr != c.store_nr && !loft_free_protected(src)) loft_free_ref(src);
+        return;
+    }
     int64_t len = loft_vec_len(src);
     uint32_t width = linked ? 4u : T[etp].size;
     loft_ref *recs = (loft_ref *) malloc(sizeof(loft_ref) * (size_t) (len > 0 ? len : 1));
@@ -1783,6 +1793,11 @@ static void loft_par_job_run(loft_par_job *j) {
     free(loft_child_jobs);
     loft_child_jobs = 0;
     loft_child_njobs = loft_child_cap = 0;
+    /* Its stack of `par` result buffers, which a `par` loop inside the worker grew (a `parallel`
+     * arm runs any code): every buffer was dropped when its loop ended, the stack stays. */
+    free(loft_par_bufs);
+    loft_par_bufs = 0;
+    loft_npar = loft_par_cap = 0;
 #if defined(LOFT_CALL_CHAIN)
     free(loft_frames);
     loft_frames = 0;
@@ -1795,16 +1810,70 @@ static void loft_par_job_run(loft_par_job *j) {
 }
 
 #if defined(_WIN32)
+typedef void *loft_thread_id;
 static unsigned __stdcall loft_par_thread(void *arg) {
     loft_par_job_run((loft_par_job *) arg);
     return 0;
 }
 #else
+typedef pthread_t loft_thread_id;
 static void *loft_par_thread(void *arg) {
     loft_par_job_run((loft_par_job *) arg);
     return 0;
 }
 #endif
+
+/* A worker's job over rows `lo..hi`: its table a copy of the caller's, made here, before any
+ * thread runs — the caller's own slice may grow its table. */
+static void loft_par_job_init(loft_par_job *j, loft_par_body body, void *ctx, int64_t lo, int64_t hi, int keep) {
+    uint32_t i, room = loft_nstores + 16;
+    j->body = body;
+    j->ctx = ctx;
+    j->lo = lo;
+    j->hi = hi;
+    j->table = (loft_store_t *) calloc(room, sizeof *j->table);
+    if (!j->table) { fputs("loft: out of memory\n", stderr); abort(); }
+    /* A `parallel` block may start before the program made any store: no table to copy. */
+    if (loft_nstores) memcpy(j->table, loft_stores, (size_t) loft_nstores * sizeof *j->table);
+    for (i = 0; i < loft_nstores; i++) {
+        j->table[i].live = 1;
+        j->table[i].pinned = 1;
+    }
+    j->n = room;
+    j->parent_n = loft_nstores;
+    j->keep = keep;
+}
+
+/* Start `j` on a thread of its own.  A thread that cannot start: its rows run here, on this
+ * thread's own table.  Each worker gets LOFT_PAR_STACK bytes of stack, the same on every host:
+ * the platform default is 8 MiB on Linux but 512 KiB on macOS and 1 MiB on Windows, where a
+ * worker a few thousand calls deep ran out (`@FR-R-StackBase`'s deep-call cell). */
+static void loft_par_job_start(loft_par_job *j, loft_thread_id *id) {
+#if defined(_WIN32)
+    *id = (void *) _beginthreadex(0, (unsigned) LOFT_PAR_STACK, loft_par_thread, j, 0, 0);
+    if (!*id) {
+#else
+    pthread_attr_t at;
+    int started;
+    pthread_attr_init(&at);
+    pthread_attr_setstacksize(&at, LOFT_PAR_STACK);
+    started = pthread_create(id, &at, loft_par_thread, j) == 0;
+    pthread_attr_destroy(&at);
+    if (!started) {
+#endif
+        free(j->table);
+        j->table = 0;
+        j->body(j->ctx, j->lo, j->hi);
+    }
+}
+
+static void loft_par_job_join(loft_par_job *j, loft_thread_id id) {
+#if defined(_WIN32)
+    if (j->table) { WaitForSingleObject(id, 0xFFFFFFFFul); CloseHandle(id); }
+#else
+    if (j->table) pthread_join(id, 0);
+#endif
+}
 #endif
 
 /* `adopt` is 0 for a site whose results are values; for a record site it copies each worker's
@@ -1821,61 +1890,15 @@ static void loft_par_run(int64_t n, int64_t threads, loft_par_body body, void *c
         int64_t k;
         loft_par_sharing++;
         loft_par_job *jobs = (loft_par_job *) calloc((size_t) t, sizeof *jobs);
-#if defined(_WIN32)
-        void **ids = (void **) calloc((size_t) t, sizeof *ids);
-#else
-        pthread_t *ids = (pthread_t *) calloc((size_t) t, sizeof *ids);
-#endif
+        loft_thread_id *ids = (loft_thread_id *) calloc((size_t) t, sizeof *ids);
         if (!jobs || !ids) { fputs("loft: out of memory\n", stderr); abort(); }
-        for (k = 1; k < t; k++) {
-            uint32_t i, room = loft_nstores + 16;
-            loft_par_job *j = &jobs[k];
-            j->body = body;
-            j->ctx = ctx;
-            j->lo = k * n / t;
-            j->hi = (k + 1) * n / t;
-            /* Copied here, before any thread runs: the caller's own slice may grow its table. */
-            j->table = (loft_store_t *) calloc(room, sizeof *j->table);
-            if (!j->table) { fputs("loft: out of memory\n", stderr); abort(); }
-            memcpy(j->table, loft_stores, (size_t) loft_nstores * sizeof *j->table);
-            for (i = 0; i < loft_nstores; i++) {
-                j->table[i].live = 1;
-                j->table[i].pinned = 1;
-            }
-            j->n = room;
-            j->parent_n = loft_nstores;
-            j->keep = adopt != 0;
-        }
-        for (k = 1; k < t; k++) {
-            /* A thread that cannot start: its slice runs here, on this thread's own table.  Each
-             * worker gets LOFT_PAR_STACK bytes of stack, the same on every host: the platform
-             * default is 8 MiB on Linux but 512 KiB on macOS and 1 MiB on Windows, where a
-             * worker a few thousand calls deep ran out (`@FR-R-StackBase`'s deep-call cell). */
-#if defined(_WIN32)
-            ids[k] = (void *) _beginthreadex(0, (unsigned) LOFT_PAR_STACK, loft_par_thread, &jobs[k], 0, 0);
-            if (!ids[k]) {
-#else
-            pthread_attr_t at;
-            int started;
-            pthread_attr_init(&at);
-            pthread_attr_setstacksize(&at, LOFT_PAR_STACK);
-            started = pthread_create(&ids[k], &at, loft_par_thread, &jobs[k]) == 0;
-            pthread_attr_destroy(&at);
-            if (!started) {
-#endif
-                free(jobs[k].table);
-                jobs[k].table = 0;
-                body(ctx, jobs[k].lo, jobs[k].hi);
-            }
-        }
+        for (k = 1; k < t; k++)
+            loft_par_job_init(&jobs[k], body, ctx, k * n / t, (k + 1) * n / t, adopt != 0);
+        for (k = 1; k < t; k++)
+            loft_par_job_start(&jobs[k], &ids[k]);
         body(ctx, 0, n / t);
-        for (k = 1; k < t; k++) {
-#if defined(_WIN32)
-            if (jobs[k].table) { WaitForSingleObject(ids[k], 0xFFFFFFFFul); CloseHandle(ids[k]); }
-#else
-            if (jobs[k].table) pthread_join(ids[k], 0);
-#endif
-        }
+        for (k = 1; k < t; k++)
+            loft_par_job_join(&jobs[k], ids[k]);
         loft_par_sharing--;
         /* Each worker's records copied out with its table current, one worker at a time; the
          * result store's entry travels in from the caller's table and back, so a growth of it
@@ -1906,6 +1929,47 @@ static void loft_par_run(int64_t n, int64_t threads, loft_par_body body, void *c
     (void) adopt;
     (void) res;
     body(ctx, 0, n);
+}
+
+/* `parallel { arm; arm }` (`@FR-C-Arms`, loft#2568): every arm on a thread of its own, the caller waiting
+ * until all have ended.  The arms are run AT ONCE, not in turn, because arms may wait on each
+ * other through the outside world — a socket, a file, a pipe — and an arm run after the one
+ * it answers never starts.  Each arm is a function of the block's site (`parallel.rs`) that
+ * takes `pv`, the addresses of the caller's locals the arms read, and copies them in: arms
+ * read the enclosing frame and write none of it (LOFT_CONTROL.md § Parallel blocks).  Each
+ * thread starts from a copy of the caller's store table, as a `par` worker does — the caller's
+ * stores pinned, the arm's own stores past them, destroyed when it ends: an arm's result is
+ * discarded, so nothing is adopted.  Without `LOFT_THREADS` the arms run here, in order. */
+typedef void (*loft_arm_fn)(void *const *loft_pv);
+typedef struct { loft_arm_fn const *fns; void *const *pv; } loft_arms;
+
+static void loft_arms_body(void *vc, int64_t lo, int64_t hi) {
+    loft_arms *a = (loft_arms *) vc;
+    int64_t i;
+    for (i = lo; i < hi; i++) a->fns[i](a->pv);
+}
+
+static void loft_parallel_run(int64_t n, loft_arm_fn const *fns, void *const *pv) {
+    loft_arms a;
+    a.fns = fns;
+    a.pv = pv;
+#if defined(LOFT_THREADS)
+    if (n > 0) {
+        int64_t k;
+        loft_par_job *jobs = (loft_par_job *) calloc((size_t) n, sizeof *jobs);
+        loft_thread_id *ids = (loft_thread_id *) calloc((size_t) n, sizeof *ids);
+        if (!jobs || !ids) { fputs("loft: out of memory\n", stderr); abort(); }
+        loft_par_sharing++;
+        for (k = 0; k < n; k++) loft_par_job_init(&jobs[k], loft_arms_body, &a, k, k + 1, 0);
+        for (k = 0; k < n; k++) loft_par_job_start(&jobs[k], &ids[k]);
+        for (k = 0; k < n; k++) loft_par_job_join(&jobs[k], ids[k]);
+        loft_par_sharing--;
+        free(ids);
+        free(jobs);
+        return;
+    }
+#endif
+    loft_arms_body(&a, 0, n);
 }
 
 /* parallel_buf_get_narrow: a 1-, 2- or 4-byte result, its low bytes extended as `signed` says. */

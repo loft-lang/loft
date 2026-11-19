@@ -117,6 +117,7 @@ Slice-Cap	collections	curated	2	2026-11-17	one cell (a slice cap below zero answ
 Slice-KeyedIter	collections	curated	4	2026-11-17	3 cells: two refusals (spatial, sorted/index ranges are not values) and the keyed-range walk — distinct
 Slice-Open	collections	curated	1	2026-11-17	was guarded only by loft's tests/scripts/48b-spatial-slice.loft: moved into the suite as its cell (box, open walk, cap; which records from every origin), conformance receipt
 Slice-Value	collections	curated	14	2026-11-17	own dir 9 -> 7: a slice is a fresh vector at every vector position (every position, a concat operand, a method receiver loft#1728) 3->1; the rest agree with gate E or are distinct (negative bound)
+C-Arms	concurrency	curated	1	2026-11-19	1 cell: waiting arms, a chain of three, files at once, what an arm builds — one per clause, nothing to merge
 C-Det	concurrency	curated	3	2026-11-17	2 cells: a patch and the par-worker row — nothing to merge
 C-Impure	concurrency	curated	2	2026-11-17	2 cells, both patches (the view-write refusal and its copy twin)
 C-Order	concurrency	curated	1	2026-11-17	own dir 2 -> 1: a par loop keeps its source's order (consumed results, every kind's walk) 2->1
@@ -152,7 +153,7 @@ Fact-Direction	facts	curated	1	2026-11-17	had no guard: a first suite cell (writ
 Fact-Engine	facts	curated	1	2026-11-17	structural (one routine, one answer per compilation, every writer reads it): not observable by one program beyond the writers agreeing; the Fact-Direction cell exercises its answers; Rust sites in src/opt/facts.rs
 Fact-Kind	facts	structural	0	2026-11-17	what a kind declares (domain, direction, key, flow, cycle scope): no program observes the declaration; its kinds' answers are exercised by the Fact-Direction and Fact-Twin cells
 Fact-One	facts	structural	0	2026-11-17	no rewrite walks a callee itself: a property of the compiler's code, not of a program's answers; D-fact-1 OPEN
-Fact-Oracle	facts	needs-cell	0	2026-11-17	unbuilt: LOFT_FACT_VERIFY is read nowhere in src/ — recorded as D-fact-4 (OPEN, @PLN211 Arc C step 2); no program can guard a missing switch
+Fact-Oracle	facts	structural	0	2026-11-18	a process rule: a widened reach lands with a cell compared against its rewrite switch and with the libraries re-validated; the compiler has no self-check, so the rule has no cell of its own
 Fact-Reach	facts	structural	0	2026-11-17	the depth and cycle parameters of a query: no program observes them; the cycle answer is exercised by the Fact-Direction cell's mutual recursion
 Fact-ReachMin	facts	structural	0	2026-11-17	a rewrite asks the smallest reach, a widening measured by make rewrite-census: a process rule, not a program's answer
 Fact-Relational	facts	curated	1	2026-11-17	a first suite cell: an accessor's bound answers by its own test inside, outside and below zero (negative counts from the end); the accessor inlining clause is PROPOSED
@@ -401,6 +402,7 @@ R-BoundAppend	rewrites	curated	3	2026-11-18	its own cell and the tests/scripts p
 R-BoundedNest	rewrites	curated	6	2026-11-18	its own core and fold agree with gate E and stay; a tests/scripts program and the Rust guard beside them
 R-BufferReturn	rewrites	curated	3	2026-11-18	first cell, from the formal text: two sites in one statement, one site bound every pass, recursion, the null text, a concatenation (moved by LOFT_NO_SEVERAL_VARS)
 R-ByteCopy	rewrites	curated	5	2026-11-18	cited by R-DecodeView's and R-TextRun's cells and a tests/scripts program; no cell of its own is owed beside them
+R-CTail	rewrites	todo			
 R-CallLine	rewrites	curated	1	2026-11-18	one own cell (1753, the frame line of the call that entered it)
 R-Callee	rewrites	curated	11	2026-11-18	cited by the R-DecodeView, R-Place and R-Const cells and a tests/scripts program
 R-CharWalk	rewrites	curated	68	2026-11-18	its one own fold candidate agrees with gate E; 68 citing cells, distinct cases

@@ -517,7 +517,7 @@ pub struct Output<'a> {
     pub fault_flag_exact: HashSet<usize>,
     /// `@FR-R-FaultFlag`'s pure-call clause — each function already asked: `None` pure,
     /// `Some(why)` not.
-    pub fault_flag_pure: std::cell::RefCell<HashMap<u32, Option<String>>>,
+    pub fault_flag_pure: std::cell::RefCell<HashMap<u32, Option<crate::rewrite_census::Refusal>>>,
     /// The locals `(R-Place)` built in another record's store ([`hoist::placed_locals`]),
     /// rebuilt per function: never a fresh store for [`hoist::StoreFacts`].
     pub placed_locals: HashSet<u16>,
@@ -2558,16 +2558,31 @@ impl Output<'_> {
     /// the census (`crate::rewrite_census`): one count per site each plan will rewrite.
     fn census_plans(&self) {
         use crate::rewrite_census::fired;
+        // @decline-owed: a function that yields or holds a `par` block; a local set more than
+        //   once or with a heap element; a part that is no literal, pure scalar operator,
+        //   never-reassigned by-value scalar parameter or scalar read of a value-const record
+        //   parameter; a use beyond a `for` bind, `len`, a whole-value bind or its free; an
+        //   alias route to a record the literal reads; two admitted locals sharing a sanitized
+        //   name
         fired(
             "R-LitHoist",
             self.invariant_lits.wrapped.len() + self.invariant_lits.flat.len(),
         );
         fired("R-ValueLocal", self.value_record_locals.len());
+        // @decline-owed: a call that answers a borrowed view, is not loft-defined or re-inits
+        //   its buffer store; a loop variable written again, read after its append, appended
+        //   twice or under a further loop; a target that is no owned local plain vector of a
+        //   plain struct, is rebound, or whose element's wrapper name finds a generic template;
+        //   a hidden buffer that serves anything else, a second paired loop included
         fired("R-MoveAppend", self.move_pairs.len());
         fired("R-LazySplit", self.lazy_splits.len());
         fired("R-SplitTable", self.split_tables.len());
         fired("R-TextBorrow", self.borrowed_text_locals.len());
         fired("R-SliceBorrow", self.slice_borrow_count);
+        // @decline-owed: a walk whose text is no text variable (a call's result is read per
+        //   iteration as written); every walk of a function that holds a `yield`; a loop that
+        //   writes the text keeps its null test per iteration; at run time a byte that is not
+        //   ASCII or is NUL, or an index at the end, takes the full step
         fired("R-CharWalk", self.char_walks.len());
         fired("R-RetAdopt", usize::from(self.ret_adopt.is_some()));
     }
@@ -3166,6 +3181,12 @@ impl Output<'_> {
         let g = parts.concat();
         self.indent(w)?;
         writeln!(w, "{g}")?;
+        // @decline-owed: a loop that is not counted; no chain that bounds (a leaf the loop
+        //   writes or lets escape, a non-integer local, a record scalar no frame hoisted);
+        //   fewer than two admitted operators beyond index offsets, on C beyond those
+        //   `(R-Range)` proves plain; a nested loop's seed or end that is no leaf; a coroutine
+        //   body; a fault-flag fast copy; the release-pass probe; on C, a generator or a char
+        //   walk
         crate::rewrite_census::fired("R-GuardedChain", 1);
         crate::rewrite_census::fired("R-GuardedChain/operators", admitted.len());
         if self.chain_trace {
@@ -3272,6 +3293,10 @@ impl Output<'_> {
         let Some(hdr) = self.active_vec_header(&f.path).map(str::to_owned) else {
             return Ok(false);
         };
+        // @decline-owed: a loop whose body is more than one in-place scalar set at field 0 of a
+        //   held plain scalar vector, an index that is not the loop variable or an invariant
+        //   plus it, a value or bound that is not invariant; at run time, an index outside [0,
+        //   len) or an empty range runs the per-element loop
         crate::rewrite_census::fired("R-Fill", 1);
         let variables = self.data.def(self.def_nr).variables();
         let idx = format!("var_{}", sanitize(variables.name(f.index_var)));
@@ -3475,7 +3500,7 @@ impl Output<'_> {
             crate::rewrite_census::declined(
                 "R-PushFill",
                 &format!("{}:{}", self.data.def(self.def_nr).name(), lp.scope),
-                &why,
+                why.clause,
             );
             if std::env::var("LOFT_TRACE_PUSH_FILL").is_ok() {
                 eprintln!(
@@ -3558,7 +3583,7 @@ impl Output<'_> {
             crate::rewrite_census::declined(
                 "R-PushFill",
                 &format!("{}:{}", self.data.def(self.def_nr).name(), lp.scope),
-                &why,
+                why.clause,
             );
             if std::env::var("LOFT_TRACE_PUSH_FILL").is_ok() {
                 eprintln!(
@@ -3655,7 +3680,7 @@ impl Output<'_> {
             crate::rewrite_census::declined(
                 "R-PushFill",
                 &format!("{}:{}", self.data.def(self.def_nr).name(), lp.scope),
-                &why,
+                why.clause,
             );
             if std::env::var("LOFT_TRACE_PUSH_FILL").is_ok() {
                 eprintln!(
@@ -4189,7 +4214,8 @@ impl Output<'_> {
                 &mut self.hoist_cache,
                 &mut self.scalar_write_cache,
                 (!self.switches.callee_inputs_disabled).then_some(&mut self.input_cache),
-            ),
+            )
+            .with_schema(self.stores),
             tiers,
             Some(&self.hoist_owned),
             (!self.switches.distinct_growth_disabled)
@@ -4555,6 +4581,11 @@ impl Output<'_> {
             fired("R-Header", frame.len());
             fired("R-Base", base_frame.len());
             fired("R-BoundedNest", bound_frame.len());
+            // @decline-owed: a loop the `(R-InPlace)` gate declines; a record variable the body
+            //   rebinds or that is no plain struct; a scalar field the body's write set reaches
+            //   — an in-place set of that field, an admitted callee's writes, a return-buffer
+            //   writer's whole record type; a statement the write-set walk cannot type, which
+            //   empties the loop's candidates
             fired("R-Scalar", scalar_frame.len());
             fired("R-Invariant", invariant_frame.len());
             fired("R-Push", push_frame.len());
@@ -4604,6 +4635,10 @@ impl Output<'_> {
             "let mut {name} = codegen_runtime::FileCursor::<{check}>::hold(cell, {operand});"
         )?;
         self.indent(w)?;
+        // @decline-owed: a loop naming another variable that can hold a `File`, or assigning
+        //   one; a mention of the file that is no typed read's operand; a file that is optional
+        //   or captured; a loop with a call through a function value, a function value or
+        //   iterator built, a `yield`, a parallel body or raw text
         crate::rewrite_census::fired("R-FileHold", 1);
         self.file_holds.push((f, name));
         Ok(true)
@@ -4782,6 +4817,9 @@ impl Output<'_> {
         }
         self.vec_headers.push(HashMap::from([(path, name)]));
         self.vec_bases.push(bases);
+        // @decline-owed: a view bound from a path rooted at itself; a remaining block that
+        //   fails `(R-InPlace)`, rebinds the view, or never indexes it; a view whose header a
+        //   frame already holds; a generator's field; and a split table's walk alias
         crate::rewrite_census::fired("R-View", 1);
         Ok(true)
     }
@@ -4801,7 +4839,8 @@ impl Output<'_> {
                 &mut self.hoist_cache,
                 &mut self.scalar_write_cache,
                 Some(&mut self.input_cache),
-            ),
+            )
+            .with_schema(self.stores),
         )
     }
 
@@ -5722,6 +5761,8 @@ impl Output<'_> {
             rebound_movers: !self.switches.rebound_mover_disabled,
             // Never here: only `hoist::hoistable`'s header verdict admits a text set.
             text_set: false,
+            // Never here: only the record-pointer verdict holds an address alone.
+            address_only: false,
         }
     }
 
@@ -5788,6 +5829,11 @@ impl Output<'_> {
         frame.insert(path, name);
         self.mint_push_headers.push(frame);
         self.group_ends.push((block, end));
+        // @decline-owed: a path that already holds a push header or is a coroutine's persistent
+        //   field; a vector that is no bare-variable plain vector; a count that is no positive
+        //   literal; a mint `(R-PushRec)` does not admit or one past the count; the vector
+        //   rebound; a statement the header admission refuses; a mint, finish or reservation on
+        //   the vector nested in a statement; a group that ends before its n-th finish
         crate::rewrite_census::fired("R-GroupPush", 1);
         Ok(())
     }
@@ -11623,6 +11669,23 @@ extern crate loft;"
                     fresh_first_binds.push(v);
                 }
             }
+            // A local READ ahead of its first bind — a release the scope pass placed in the
+            // local's own initialiser (`r = if c { f() ?? return … } else { … }`: the early
+            // return's sweep compares a buffer with `r`), or a guard in front of a temporary's
+            // null-init.  The other backends read the frame slot; here the name has no `let`
+            // yet.  Bound null up front as the two kinds above are, and by the same split: a
+            // null-init that follows stays the local's fresh first bind.
+            let mut early_reads: Vec<(u16, bool)> = Vec::new();
+            let mut bound: HashSet<u16> = HashSet::new();
+            collect_reads_before_bind(def.code(), &mut bound, &mut early_reads);
+            for (v, null_first) in early_reads {
+                if bound.contains(&v) && !if_test_sets.contains(&v) {
+                    if_test_sets.push(v);
+                    if null_first {
+                        fresh_first_binds.push(v);
+                    }
+                }
+            }
             for &v in &if_test_sets {
                 if !vars.is_argument(v)
                     && !self.declared.contains(&v)
@@ -12105,6 +12168,20 @@ extern crate loft;"
                     && !self.switches.leaf_chain_disabled
                     && self.is_frameless_chain(def_nr);
                 let leaf = plain_leaf || chain_leaf;
+                if !leaf
+                    && self.lean
+                    && !self.switches.leaf_elide_disabled
+                    && !self.switches.leaf_chain_disabled
+                {
+                    crate::rewrite_census::declined(
+                        "R-LeafChain",
+                        def.name(),
+                        "its call tree reaches a framed callee, a cycle, a fn ref, a parallel or a yield",
+                    );
+                }
+                // @no-decline: match only: the pattern is a function whose body calls no user
+                //   function, fn-ref, `parallel` or `yield`; a function that calls one is not
+                //   the pattern, and no test follows the match
                 crate::rewrite_census::fired("R-Leaf", usize::from(plain_leaf));
                 crate::rewrite_census::fired("R-LeafChain", usize::from(chain_leaf));
                 // @PLN157 — a leaf carries no fn-ref buffer guard either: it calls no
@@ -12122,6 +12199,9 @@ extern crate loft;"
                 let guard_free = leaf
                     || (!self.switches.guard_free_disabled
                         && self.guard_free.is_guard_free(self.data, def_nr));
+                // @decline-owed: a function whose call graph reaches a fn-ref call, a
+                //   `parallel`, a `yield`, an `OpFreeRefOrHandUp`, or a bodiless callee that is
+                //   a user's native or takes a fn-ref
                 crate::rewrite_census::fired("R-GuardFree", usize::from(guard_free && !leaf));
                 let fnref_guard = if guard_free {
                     String::new()
@@ -13546,6 +13626,28 @@ fn collect_branch_shared_assigned(code: &Value, out: &mut Vec<u16>) {
             }
         }
     });
+}
+
+/// Every local `code` reads before its first `Set`, in evaluation order (a `Set`'s value
+/// runs before it binds), each with whether that first `Set` is a null-init.  `bound` ends as
+/// every local `code` sets: a name read here and absent there is bound by something else.
+fn collect_reads_before_bind(code: &Value, bound: &mut HashSet<u16>, out: &mut Vec<(u16, bool)>) {
+    match code.unspan() {
+        Value::Set(v, rhs) => {
+            collect_reads_before_bind(rhs, bound, out);
+            if bound.insert(*v)
+                && let Some(early) = out.iter_mut().find(|(e, _)| e == v)
+            {
+                early.1 = matches!(rhs.unspan(), Value::Null);
+            }
+        }
+        Value::Var(v) => {
+            if !bound.contains(v) && !out.iter().any(|(e, _)| e == v) {
+                out.push((*v, false));
+            }
+        }
+        other => other.for_each_child(&mut |c| collect_reads_before_bind(c, bound, out)),
+    }
 }
 
 /// Every variable `code` assigns, at any depth.

@@ -127,6 +127,9 @@ pub fn fill_all(e: el::El, d: integer, g: integer, hs: vector<integer>, bounds: 
 // `fill_instance`, at once or — for a template declared below the call — after the pass.
 // -1, refused by name, for a binding or a signature shape this port does not carry.
 pub fn instantiate(e: el::El, g: integer, types: vector<ir::TypeT>) -> integer {
+  if el_trace::on() {
+    el_trace::route(e, "try_generic_instantiation");
+  }
   tmpl = el::def(e, g);
   b = el_ex_object::template_binding(e, g, types);
   if b == null {
@@ -432,6 +435,9 @@ pub fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::T
   // value branch over parameters binds it to a fresh `___ret_join_N` — the bind copies each arm
   // (`@FR-B-Copy`) — and answers that local; the result borrows nothing.
   if join_bind {
+    if el_trace::on() {
+      el_trace::route(e, "bind_monomorph_join_return");
+    }
     k = 1;
     for v in f.variables {
       if v.name.starts_with("___ret_join_") {
@@ -1489,6 +1495,18 @@ pub fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::N
         if pt == ir::TyRefVar { inner: ir::TyText { dep: [] } } && el_ir::is_null(dv) {
           g2 += [el_expressions::default_text_ref(e, vars)];
           t2 += [pt];
+          continue;
+        }
+        // A hoisted default (`n___dflt_<fn>_<param>`) is called at each site that leaves the
+        // parameter out, handed a buffer of the caller's as any call is.
+        hoisted = match el_ir::unspan(dv) { NdCall { def_nr: hdn, args: hda } => if len(hda) == 0 && starts_with(el::def(e, hdn).name, "n___dflt_") { hdn } else { -1 }, _ => -1 };
+        if hoisted >= 0 && !(pt is TyRefVar) {
+          hc = call_args(e, vars, hoisted, [], []);
+          if hc == null {
+            return null;
+          }
+          g2 += [hc!.code];
+          t2 += [hc!.tp];
           continue;
         }
         if a.hidden || pt is TyRefVar || !default_in_place(e, dv, n) || (el_ir::is_null(dv) && !(pt is TyOptional)) {
@@ -2877,7 +2895,7 @@ pub fn coalesce(e: el::El, vars: el_vars::Vars, l: integer, r: integer) -> Ex {
   // A field's view as the subject: its literal default is built against the subject's type,
   // which names the record it borrows — no store of its own (`build_null_coalesce_default`).
   d = match e.p.nodes[r] {
-    SVecLit { items } => if len(items) > 0 && el_types::base(x.tp) is TyVector { el_ex_pattern::vector_value(e, vars, r, borrows: view_borrows(e, vars, x), elem: match el_types::base(x.tp) { TyVector { inner } => inner, _ => ir::TyUnknown { n: 0 } }).x } else { el_ex_assign::expression(e, vars, r) },
+    SVecLit { items } => if len(items) > 0 && el_types::base(x.tp) is TyVector { el_ex_pattern::vector_value(e, vars, r, borrows: [], elem: match el_types::base(x.tp) { TyVector { inner } => inner, _ => ir::TyUnknown { n: 0 } }).x } else { el_ex_assign::expression(e, vars, r) },
     _ => el_ex_assign::expression(e, vars, r)
   };
   // `build_null_coalesce_default` reads the default against the subject's type: an untyped
@@ -2896,7 +2914,23 @@ pub fn coalesce(e: el::El, vars: el_vars::Vars, l: integer, r: integer) -> Ex {
     }
     // Built on the first pass too beside a native call: its buffer is a work ref registered
     // there, in source order.
-    d = ex(if e.first_pass && !fresh_native_call(e, x.code) { ir::NdNull } else { el_ex_pattern::empty_literal_to(e, vars, vt, borrows: view_borrows(e, vars, x)) }, vt);
+    // (Rust's first pass reads the `[]` — its `_vec_N` minted — before it holds the subject in
+    // `__ncc_N`: the literal's buffer is minted here on the first pass too, its code unused.)
+    lit = el_ex_pattern::empty_literal_to(e, vars, vt, borrows: []);
+    d = ex(if e.first_pass && !fresh_native_call(e, x.code) { ir::NdNull } else { lit }, vt);
+  }
+  // A keyed subject's `[]` is that collection, empty, in a `__kvb_N` of its own (`parse_vector`'s
+  // keyed arm against the subject's type): nulled at the head, given its store.
+  if el_ex_pattern::is_empty_literal(d.code) && keyed_kind(el_types::base(x.tp)) && !(el_types::base(x.tp) is TyVector) {
+    kct = el_types::without_deps(el_types::base(x.tp));
+    kvb = el_vars::create_unique(vars, "_kvb", kct);
+    if e.first_pass {
+      d = ex(ir::NdNull, kct);
+    } else {
+      el_vars::register_work_ref(vars, kvb);
+      kw = ir::NdVar { n: kvb };
+      d = ex(el_ir::v_block([el_ir::v_set(kvb, ir::NdNull), el_ir::cl(e, "OpDatabase", [kw, ir::NdInt { n: el_schema::keyed_type(e, kct) }]), kw], kct, "Vector"), kct);
+    }
   }
   if el_ex_pattern::is_empty_literal(d.code) {
     el::refuse(e, "a `??` with an empty vector literal as its default");
@@ -2949,8 +2983,10 @@ pub fn record_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   // The `if` borrows what its subject's read borrows: nothing where that read was a bind's
   // first (`coalesce` strips it there, `parse_var`'s `into` arm), the local where it is an
   // argument — which lends it to the call's result (`call_dependencies`).
+  // (`(N-Join)`: a default that may itself be absent — `nn ?? y ?? x` over `R?` locals — leaves
+  // the result `R?`.)
   if x.code is NdVar {
-    return ex(el_ir::v_if(el_ir::cl(e, "OpConvBoolFromRef", [x.code]), x.code, d.code), lhs);
+    return ex(el_ir::v_if(el_ir::cl(e, "OpConvBoolFromRef", [x.code]), x.code, d.code), if d.tp is TyOptional { ir::TyOptional { inner: lhs } } else { lhs });
   }
   // Minted on both passes, as the Rust mints it, so it numbers before the second pass's buffers.
   held = el_vars::create_unique(vars, "_ncc", lhs);
@@ -3005,6 +3041,51 @@ pub fn enum_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
     }
     return ex(el_ir::v_if(el_ir::cl(e, "OpNot", [t!]), x.code, d.code), el_types::without_deps(lhs));
   }
+  // A FIELD or an ELEMENT (`b.s ?? …`, `v[i]?`): the slot is read once into a `__ncc_N` that
+  // views its root — the null sentinel where the slot's first word is zero, the record there
+  // otherwise — and the "ncc" block answers it or the default.
+  ux = el_ir::unspan(x.code);
+  root = place_root(e, ux);
+  slot = ir::NdNull;
+  off = ir::NdInt { n: 0 };
+  kt = ir::NdInt { n: if en >= 0 { el::def(e, en).known_type } else { 0 } };
+  match ux {
+    NdCall { def_nr: pd, args: pa } => {
+      pn = el::def(e, pd).name;
+      if pn == "OpGetField" && len(pa) == 3 {
+        slot = pa[0]!;
+        off = pa[1]!;
+        kt = pa[2]!;
+      } else if pn == "OpGetVector" && len(pa) == 3 {
+        slot = ux;
+      }
+    },
+    _ => {}
+  }
+  if root >= 0 && !(slot is NdNull) {
+    pt = el_types::with_deps(el_types::without_deps(lhs), [root]);
+    ph = el_vars::create_unique(vars, "_ncc", pt);
+    vars.vars[ph].skip_free = true;
+    el_vars::register_work_ref(vars, ph);
+    if e.first_pass {
+      return ex(ir::NdNull, pt);
+    }
+    el_vars::set_var_type(vars, ph, pt);
+    hv = ir::NdVar { n: ph };
+    // The subject's TYPE picks the read.  An optional one (`v[i]` at an index nothing proves, a
+    // `Sh?` field) is read through its slot's tag (`read_through_enum_slot`, `(L-Null-Which)`):
+    // the null sentinel where the first word is zero, the record otherwise.  A dense one
+    // (`v[1]`, a range loop's `v[i]`) is read through the nullable twin of its getter
+    // (`rewrite_outer_arith_to_nullable`); its absence is the test around `__ncc_N` alone.
+    plain = el_ir::cl(e, "OpGetField", [slot, off, kt]);
+    read = if x.tp is TyOptional {
+      el_ir::v_if(el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpGetInt4", [slot, off]), ir::NdInt { n: 0 }]), el_ir::cl(e, "OpNullRefSentinel", []), plain)
+    } else {
+      el_ex_base::nullable_arith(e, plain, true)
+    };
+    absent = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [hv]), ir::NdBoolean { b: true }, el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpGetInt4", [hv, ir::NdInt { n: 0 }]), ir::NdInt { n: 0 }]));
+    return ex(el_ir::v_block([el_ir::v_set(ph, read), el_ir::v_if(el_ir::cl(e, "OpNot", [absent]), hv, d.code)], pt, "ncc"), pt);
+  }
   if !match el_ir::unspan(x.code) { NdCall { def_nr } => !starts_with(el::def(e, def_nr).name, "Op"), _ => false } {
     el::refuse(e, "a struct-enum `??` on something other than a local or a loft call: {node_kind(e, x.code)}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -3045,7 +3126,7 @@ pub fn chain_ends_in_call(vars: el_vars::Vars, n: ir::Node) -> boolean {
 // What a `??` subject that is a field's view borrows — the deps its default literal is built
 // against (`build_null_coalesce_default`'s hint) — or none for any other subject.
 pub fn view_borrows(e: el::El, vars: el_vars::Vars, x: Ex) -> vector<integer> {
-  if el_types::base(x.tp) is TyVector && !(x.code is NdVar) && copies_whole_vector(e, vars, x.code) {
+  if el_types::base(x.tp) is TyVector && !(x.code is NdVar) && (copies_whole_vector(e, vars, x.code) || field_path(e, x.code) || element_of_path(e, el_ir::unspan(x.code))) {
     return el_types::deps(x.tp);
   }
   []

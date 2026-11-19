@@ -1122,6 +1122,7 @@ impl Parser {
                 break;
             }
             self.state_trace("stmt");
+            let stmt_at = *self.lexer.pos();
             // @C67 — loft has no `try { … } catch { … }`, and was refusing it as a bare
             // "Expect token ;" that named neither the decision nor the spelling to use.  Said
             // by name, then both blocks are skipped so nothing cascades.  Only `try` directly
@@ -1322,6 +1323,8 @@ impl Parser {
             let pending_before = self.pending_arm_mismatch.take();
             t = self.expression(&mut n);
             last_fact = std::mem::take(&mut self.operand_fact); // @PLN187
+            self.state_trace_value(&stmt_at, &t);
+            self.state_trace_vars(&stmt_at);
             // `@FR-H-Write-Else` — an `else` left over after a whole statement can only be a
             // store's failure arm: an `if` or a value-`if` has already consumed its own.
             if self.lexer.peek_token("else") {
@@ -3167,6 +3170,7 @@ impl Parser {
                 // SHARED"* this arm is what enforces for a record return (loft#1202,
                 // `formal/closures.md` D-clo-17).
                 let delivery = self.classify_reference_delivery(&t.base().depend(), l, context);
+                self.state_route_delivery(&delivery);
                 self.dispatch_reference_delivery(delivery, td, l);
                 if context == "return from block" {
                     self.literal_exits_into_buffer(l);
@@ -3196,7 +3200,10 @@ impl Parser {
                 // -Index · -Spatial · -Trie), so a sixth keyed kind arrives here already
                 // handled instead of joining the four hand-spelled `Type::Vector` lists
                 // this arm sits beside.
-                let ls = t.base().depend();
+                let last = l.len() - 1;
+                let ls = self
+                    .keyed_local_field_copy_out(&mut l[last], t)
+                    .unwrap_or_else(|| t.base().depend());
                 self.ref_return(&ls, l, RetSite::BlockTail);
             } else if let Type::Vector(elm, _) = result.ret_promo_base()
                 && let Some((buf_attr, buf_var)) = self.return_buffer()
@@ -3233,6 +3240,73 @@ impl Parser {
             }
         }
         tp
+    }
+
+    /// loft#2562 — a returned keyed collection that is a FIELD of a local record is copied
+    /// out before the record is released; answers the deps the return then carries.
+    ///
+    /// A keyed return hands its store up, which is right for a collection built in a local
+    /// of its own.  A field of a local record owns no store: the value is a place inside the
+    /// record's, and the record is freed on the way out, so the caller copied from — and then
+    /// released — a store already gone (`@FR-F-Ret`; the C backend counted the second
+    /// release).  The copy is the one a block value takes for the same tail
+    /// ([`Parser::materialize_collection_value`], loft#1494): a local that owns its store.
+    ///
+    /// A place rooted at a PARAMETER is left alone — it is a view of the caller's own
+    /// collection, the borrow `ref_return` records.  Every other field read is copied: one
+    /// rooted at a local, and one read out of a call's result, whose record the frame
+    /// releases as well.  The walk is [`Self::materialize_view_arms`]'s, so an `if` arm that
+    /// answers the field is reached, and each leaf is copied on the path that runs it.
+    /// `LOFT_NO_KEYED_FIELD_RETURN_COPY=1` returns the field as it stands.
+    fn keyed_local_field_copy_out(&mut self, tail: &mut Value, t: &Type) -> Option<Vec<u16>> {
+        if crate::env_once!(std::env::var_os("LOFT_NO_KEYED_FIELD_RETURN_COPY").is_some()) {
+            return None;
+        }
+        let mut roots = Vec::new();
+        self.keyed_field_leaves_copy_out(tail, &t.without_deps(), &mut roots);
+        if roots.is_empty() {
+            return None;
+        }
+        let mut ls = t.base().depend();
+        ls.retain(|d| !roots.contains(d));
+        Some(ls)
+    }
+
+    fn keyed_field_leaves_copy_out(&mut self, tail: &mut Value, t: &Type, roots: &mut Vec<u16>) {
+        match tail {
+            Value::Return(inner) | Value::Drop(inner) => {
+                self.keyed_field_leaves_copy_out(inner, t, roots);
+            }
+            Value::Span(b) => self.keyed_field_leaves_copy_out(&mut b.1, t, roots),
+            Value::If(_, a, b) => {
+                self.keyed_field_leaves_copy_out(a, t, roots);
+                self.keyed_field_leaves_copy_out(b, t, roots);
+            }
+            Value::Block(bl) => {
+                if let Some(last) = bl.operators.last_mut() {
+                    self.keyed_field_leaves_copy_out(last, t, roots);
+                }
+            }
+            Value::Insert(ops) => {
+                if let Some(last) = ops.last_mut() {
+                    self.keyed_field_leaves_copy_out(last, t, roots);
+                }
+            }
+            leaf => {
+                let get_field = self.data.def_nr("OpGetField");
+                if !matches!(leaf, Value::Call(d, _) if *d == get_field) {
+                    return;
+                }
+                let root = match self.field_place(leaf) {
+                    Some((root, _)) if self.vars.is_argument(root) => return,
+                    Some((root, _)) => root,
+                    None => u16::MAX,
+                };
+                if self.materialize_collection_value(leaf, t) != u16::MAX {
+                    roots.push(root);
+                }
+            }
+        }
     }
 
     /// @PLN104 — restore the `a == v` invariant for a promoted text retbuf `tv` (its return
@@ -3488,6 +3562,30 @@ impl Parser {
             }
             Delivery::AsIs => false,
         }
+    }
+
+    /// `LOFT_STATE_TRACE`'s `route` line for the selector's verdict at a record return site:
+    /// `classify_reference_delivery=<verdict>`, a rename's work refs and a build's two
+    /// variables by NAME — the step before `classify_ret_promotion`'s.
+    fn state_route_delivery(&self, d: &RefDelivery) {
+        if !self.state_trace_on() {
+            return;
+        }
+        let shown = match d {
+            RefDelivery::Rename(ws) => {
+                let names: Vec<&str> = ws.iter().map(|w| self.vars.name(*w)).collect();
+                format!("Rename({})", names.join(","))
+            }
+            RefDelivery::MaterializeView => "MaterializeView".to_string(),
+            RefDelivery::ForwardCopy => "ForwardCopy".to_string(),
+            RefDelivery::BuildIntoBuffer { work_ref, buf_var } => format!(
+                "BuildIntoBuffer({},{})",
+                self.vars.name(*work_ref),
+                self.vars.name(*buf_var)
+            ),
+            RefDelivery::AsIs => "AsIs".to_string(),
+        };
+        self.state_route(&format!("classify_reference_delivery={shown}"));
     }
 
     /// @PLN85 D-own-1 — the SELECTOR for a `Type::Reference` (struct) return: read
@@ -6259,6 +6357,55 @@ impl Parser {
         }
     }
 
+    /// `@FR-L-Null-Which` — an arm whose value is a tagged nullable slot, read through its tag at
+    /// its LEAVES (`read_through_tag`): a block's last operator, both arms of a nested `if` (an
+    /// `else if` chain), so a condition is never evaluated twice and only places are re-read.  A
+    /// leaf already in the pointer's spelling (a `null`, a pointer) is left alone.  `tp` becomes
+    /// the pointer type where any leaf moved.
+    pub(super) fn read_arm_through_tag(&mut self, arm: &mut Value, tp: &mut Type) {
+        let slot = tp.clone();
+        let Some((_, pointer)) = self.tagged_pointer_type(&slot) else {
+            return;
+        };
+        self.read_leaves_through_tag(arm, &slot);
+        *tp = pointer;
+    }
+
+    fn read_leaves_through_tag(&mut self, v: &mut Value, slot: &Type) {
+        match v {
+            Value::Block(bl) => {
+                if let Some(last) = bl.operators.last_mut() {
+                    self.read_leaves_through_tag(last, slot);
+                }
+                if let Some((_, pointer)) = self.tagged_pointer_type(&bl.result) {
+                    bl.result = pointer;
+                }
+            }
+            Value::If(_, then_v, else_v) => {
+                self.read_leaves_through_tag(then_v, slot);
+                self.read_leaves_through_tag(else_v, slot);
+            }
+            Value::Null => {}
+            Value::Call(d, _) if self.data.def(*d).name() == "OpNullRefSentinel" => {}
+            other => {
+                let mut t = slot.clone();
+                self.read_through_tag(other, &mut t);
+            }
+        }
+    }
+
+    /// Do the two arm types of a join spell one `S?` two ways — a tagged slot beside the pointer
+    /// or a `null`?  Then the slot arm is read through its tag (`read_arm_through_tag`).
+    fn mixed_null_spellings(&self, slot: &Type, other: &Type, other_is_null: bool) -> bool {
+        let Some((_, pointer)) = self.tagged_pointer_type(slot) else {
+            return false;
+        };
+        other_is_null
+            || matches!(other.base(), Type::Null)
+            || (self.tagged_pointer_type(other).is_none()
+                && other.without_deps() == pointer.without_deps())
+    }
+
     pub(crate) fn parse_if(&mut self, code: &mut Value) -> Type {
         // loft#1382 — take statement position from the caller and CLEAR it, so a value-`if`
         // nested inside a statement one (`if c { v = if d { 1 } else { 2 } }`) does not
@@ -6410,6 +6557,12 @@ impl Parser {
                     Self::arm_expectation(&true_type)
                 };
                 let mut chain_type = self.parse_if_expecting(&mut false_code, &chain_expected);
+                // The same rule for an `else if` chain: its value is the nested `if`.
+                if self.mixed_null_spellings(&true_type, &chain_type, false) {
+                    self.read_arm_through_tag(&mut true_code, &mut true_type);
+                } else if self.mixed_null_spellings(&chain_type, &true_type, true_is_null) {
+                    self.read_arm_through_tag(&mut false_code, &mut chain_type);
+                }
                 if let Some(fit) = self.arm_fits_named_width(&true_type, &false_code, &chain_type) {
                     chain_type = fit;
                 }
@@ -6458,6 +6611,18 @@ impl Parser {
                     self.parse_block("else", &mut false_code, &Self::arm_expectation(&true_type));
                 false_fact = std::mem::take(&mut self.operand_fact);
                 false_is_null_literal = self.block_tail_null_literal;
+                // `@FR-L-Null-Which` — a tagged `__nullable<S>` arm joined with a bare `null` leaves
+                // its slot HERE: the join is a value, and a value of `S?` outside a slot is the
+                // pointer, `nullref` for absence.  Left in the slot's spelling, the `null` arm
+                // answered the pointer sentinel into a join typed as the slot, and the consumer
+                // projected the payload past a tag it never tested: `if k == 0 { h.a } else {
+                // null }` with `h.a` absent answered a default record (`n == 0`), on every backend.
+                // Two slot arms keep the slot's spelling and are read once at the consumer.
+                if self.mixed_null_spellings(&true_type, &false_type, false_is_null_literal) {
+                    self.read_arm_through_tag(&mut true_code, &mut true_type);
+                } else if self.mixed_null_spellings(&false_type, &true_type, true_is_null) {
+                    self.read_arm_through_tag(&mut false_code, &mut false_type);
+                }
                 // loft#2545 — an empty literal `[]` beside a then arm of no type yet (on pass 1 a
                 // forward callee) names no type either: it answers `Unknown`, as the same `[]`
                 // does as a THEN arm (`true_is_empty_literal`).  Parsed against `Unknown` it came
@@ -7855,6 +8020,7 @@ impl Parser {
     /// belongs to the function the code lands in, and minting it here gives it that
     /// function's own slot.
     pub(crate) fn bind_monomorph_join_return(&mut self, d_nr: u32) {
+        self.state_route("bind_monomorph_join_return");
         let ret = self.data.def(d_nr).returned().clone();
         if !matches!(ret.base(), Type::Reference(_, _) | Type::Enum(_, true, _)) {
             return;
@@ -8555,6 +8721,7 @@ impl Parser {
             let l = &mut bl.operators;
             let delivery =
                 self.classify_reference_delivery(&ret.base().depend(), l, "return from block");
+            self.state_route_delivery(&delivery);
             if matches!(delivery, RefDelivery::BuildIntoBuffer { .. }) {
                 self.dispatch_reference_delivery(delivery, td, l);
             }
@@ -10519,6 +10686,7 @@ impl Parser {
             }
             && !crate::env_once!(std::env::var_os("LOFT_NO_RET_ARM_COPY").is_some());
         if leaving_branch || self.arms_yield_null(tail) || self.branch_has_nullable_leaf(tail) {
+            self.state_route("materialize_return_into=arms");
             match tail {
                 Value::Span(b) => self.materialize_return_into(td, &mut b.1, w),
                 Value::If(_, t, f) => {
@@ -10544,6 +10712,7 @@ impl Parser {
             }
             return;
         }
+        self.state_route("materialize_return_into=whole");
         let kt = self.data.def(td).known_type();
         let copy_d = self.data.def_nr("OpCopyRecord");
         let mut orig = std::mem::replace(tail, Value::Null);
@@ -10568,9 +10737,15 @@ impl Parser {
             // is pure, so the test re-reads it.
             // So is an element or a keyed entry that is not there, and anything read off one.
             // The re-read is safe only where no user call is in it.
-            Value::Call(_, _)
-                if !self.ir_has_user_call(&orig) && self.copy_source_may_be_absent(&orig) =>
-            {
+            // Every other source is tested unless it is PROVEN present (`@FR-N-Road`): the
+            // question is asked that way round because the two mistakes do not cost the same —
+            // a test too many is one branch, a test too few is an EMPTY record handed up for an
+            // absent value.  An element read has two spellings (`OpGetVector`, `OpVectorRef`)
+            // and a branch arm wraps its read in a block; a list of the shapes that may be
+            // absent missed both.  The re-read is safe only where no user call is in it; a
+            // source with one was bound above.  Guard:
+            // `tests/scripts/2561-a-record-copied-out-of-a-view-is-absent-where-its-source-is.loft`.
+            _ if !self.ir_has_user_call(&orig) && !self.copy_source_is_present(&orig) => {
                 Some(orig.clone())
             }
             _ => None,
@@ -10793,24 +10968,49 @@ impl Parser {
     /// and never in a generic template, whose instance may hold a tuple: nothing is bound
     /// there, and such a source stays a bare copy.
     fn bind_return_source(&mut self, td: u32, src: &mut Value) -> Option<Value> {
-        let read = |p: &Parser, v: &Value| {
-            matches!(v.unspan(), Value::Call(d, args)
-                if !args.is_empty() && p.data.def(*d).name().starts_with("OpGet"))
-        };
+        let read = |p: &Parser, v: &Value| matches!(v.unspan(), Value::Call(d, args) if !args.is_empty() && p.is_record_read(*d));
         if self.first_pass
             || matches!(self.data.def(self.context).def_type(), DefType::Generic)
             || self.data.is_type_var_placeholder(td)
-            || !read(self, src)
             || !self.ir_has_user_call(src)
         {
+            return None;
+        }
+        // A branch ARM wraps its read in a block (`if c { f(x)[i] } else { null }`): the block
+        // is a view of what its deps name, read once into a handle as a lifted container is.
+        //
+        // Only where the arm's value IS a read.  An arm that answers a call's own result
+        // (`{ …; fresh(v) }`) owns that store, and the deps on its block are the JOIN's — the
+        // other arm's view — so bound as a view here the result was released by nobody
+        // (`@FR-O-Complete`).
+        fn arm_tail(v: &Value) -> &Value {
+            match v.unspan() {
+                Value::Block(bl) => bl.operators.last().map_or(v, arm_tail),
+                Value::Insert(ops) => ops.last().map_or(v, arm_tail),
+                _ => v,
+            }
+        }
+        if let Value::Block(bl) = src.unspan()
+            && !bl.result.depend().is_empty()
+            && !Self::copy_source_is_a_literal(src)
+            && read(self, arm_tail(src))
+        {
+            let tp = Type::Optional(Box::new(Type::Reference(
+                td,
+                Deps::frame(bl.result.depend()),
+            )));
+            let v = self.create_unique("_ret_src", &tp);
+            self.vars.defined(v);
+            let path = std::mem::replace(src, Value::Var(v));
+            return Some(crate::data::v_set(v, path));
+        }
+        if !read(self, src) {
             return None;
         }
         // The root of the read path: the first operand of each read, down to what it reads.
         fn root_of<'a>(p: &Parser, v: &'a Value) -> &'a Value {
             match v.unspan() {
-                Value::Call(d, args)
-                    if !args.is_empty() && p.data.def(*d).name().starts_with("OpGet") =>
-                {
+                Value::Call(d, args) if !args.is_empty() && p.is_record_read(*d) => {
                     root_of(p, &args[0])
                 }
                 other => other,
@@ -10818,9 +11018,7 @@ impl Parser {
         }
         fn replace_root(p: &Parser, v: &mut Value, with: Value) -> Value {
             match v.unspan_mut() {
-                Value::Call(d, args)
-                    if !args.is_empty() && p.data.def(*d).name().starts_with("OpGet") =>
-                {
+                Value::Call(d, args) if !args.is_empty() && p.is_record_read(*d) => {
                     replace_root(p, &mut args[0], with)
                 }
                 other => std::mem::replace(other, with),
@@ -10843,7 +11041,62 @@ impl Parser {
                 let path = std::mem::replace(src, Value::Var(v));
                 Some(crate::data::v_set(v, path))
             }
+            // A LIFTED container (`f(x)[i]`, `f(x).xs[i]`: the call bound to a temporary inside
+            // an `inline_container` or an `inline ref copy` block) is a root of the same kind:
+            // the temporary owns the store, so the path is read once into a handle that views
+            // it, and the copy tests that handle.
+            Value::Block(bl) if !bl.result.depend().is_empty() => {
+                let tp = Type::Optional(Box::new(Type::Reference(
+                    td,
+                    Deps::frame(bl.result.depend()),
+                )));
+                let v = self.create_unique("_ret_src", &tp);
+                self.vars.defined(v);
+                let path = std::mem::replace(src, Value::Var(v));
+                Some(crate::data::v_set(v, path))
+            }
             _ => None,
+        }
+    }
+
+    /// Is `d` a READ of a record out of a place — a field, an element, a keyed entry, a child
+    /// record?  An element read has two spellings (`OpGetVector` with the element's size,
+    /// `OpVectorRef` without), so the question is asked of the notion, not of a name's prefix.
+    fn is_record_read(&self, d: u32) -> bool {
+        self.data.def(d).name().starts_with("OpGet")
+            || crate::use_analysis::is_projection_op(&self.data, d)
+    }
+
+    /// Is a return copy's source PROVEN present: a literal, a local that
+    /// [`Self::record_local_may_be_absent`] clears, or an inline field path rooted at such a
+    /// local — bare, or as the value of a block that holds nothing else (a branch arm's
+    /// `{ code }`)?  Everything else may be absent: an element, a keyed entry, a child record,
+    /// a call's answer, and whatever is read off one.
+    fn copy_source_is_present(&self, src: &Value) -> bool {
+        match src.unspan() {
+            Value::Var(v) => !self.record_local_may_be_absent(*v),
+            // An inline FIELD of a record that is there is there (`e.value` of a loop's `e`).
+            Value::Call(d, args) if *d == self.data.def_nr("OpGetField") && args.len() == 3 => {
+                self.copy_source_is_present(&args[0])
+            }
+            Value::Block(bl) if bl.name == "Object" => true,
+            Value::Block(bl) if bl.operators.len() == 1 => {
+                self.copy_source_is_present(&bl.operators[0])
+            }
+            _ => Self::copy_source_is_a_literal(src),
+        }
+    }
+
+    /// Is a return copy's source a record LITERAL — the one source that cannot be absent?
+    fn copy_source_is_a_literal(src: &Value) -> bool {
+        match src.unspan() {
+            Value::Block(bl) if bl.name == "Object" => true,
+            Value::Block(bl) => bl
+                .operators
+                .last()
+                .is_some_and(Self::copy_source_is_a_literal),
+            Value::Insert(ops) => ops.last().is_some_and(Self::copy_source_is_a_literal),
+            _ => false,
         }
     }
 
@@ -12887,6 +13140,9 @@ impl Parser {
         ctx: &RetPromoCtx,
     ) -> RetPromotion {
         let verdict = self.classify_ret_promotion_inner(v, transitive, body, dep, ctx);
+        if self.state_trace_on() {
+            self.state_route(&format!("classify_ret_promotion={verdict:?}"));
+        }
         if crate::keys::trace_ret_promotion() {
             eprintln!(
                 "[retpromo] fn={} v={} name={} pass={} vl={}/{} deps={:?} site={:?} ret={:?} plain={} buf={:?} => {verdict:?}",
@@ -14373,7 +14629,9 @@ impl Parser {
                     // Same treatment as the tail: hand `ref_return` the returned value's
                     // deps so `MergeAttr` records any borrowed parameter, and let it make
                     // no placement decision (a keyed return is signature-only there).
-                    let ls_own: Vec<u16> = t.depend();
+                    let ls_own: Vec<u16> = self
+                        .keyed_local_field_copy_out(&mut v, &t)
+                        .unwrap_or_else(|| t.depend());
                     self.ref_return(&ls_own, std::slice::from_mut(&mut v), RetSite::MidReturn);
                 } else if let Type::Vector(_, ls) = &t
                     && self.return_buffer().is_some()
@@ -15311,6 +15569,8 @@ impl Parser {
             // code), so `@val` is the record DbRef on both backends (no OpCreateStack
             // slot indirection) — one #rust body ⇒ interpret == native.
             "deliver" if types.len() == 2 => {
+                self.state_route("call:deliver");
+                self.state_route("call:assert");
                 if self.first_pass {
                     return Type::Void;
                 }
@@ -15330,6 +15590,7 @@ impl Parser {
             // @PLN105 Phase 3 — expose(tag, value) / release(tag, value): the long-lived deliver
             // + its unpin. Lowered like `deliver`, filling `db_tp` from the value's static type.
             "expose" | "release" if types.len() == 2 => {
+                self.state_route("call:expose");
                 if self.first_pass {
                     return Type::Void;
                 }
@@ -15361,6 +15622,7 @@ impl Parser {
             // one operation loft's ownership model gets wrong most easily. The
             // contract is C's `sizeof`, and it is stated in the doc comment.
             "type_of" if types.len() == 1 => {
+                self.state_route("call:type_of");
                 if self.first_pass {
                     // First pass still needs the RESULT type, so an enclosing
                     // `t = type_of(v)` infers `TypeInfo` on both passes and the
@@ -15405,6 +15667,7 @@ impl Parser {
             // `type_of`, the argument IS evaluated — the value is what is being
             // read.
             "field_value" if types.len() == 2 => {
+                self.state_route("call:field_value");
                 let fv = self.data.def_nr("ValueInfo");
                 // Every refusal below still answers `ValueInfo`. The error is
                 // already reported, and handing back `Unknown` would cascade a
@@ -15505,6 +15768,7 @@ impl Parser {
                     && matches!(types[0].peel_link().base(), Type::Vector(_, _))
                     && let Some(ops) = self.vector_clear_lowering(&list[0], &types[0]) =>
             {
+                self.state_route("call:clear");
                 *val = Value::Insert(ops);
                 return Type::Void;
             }
@@ -15515,6 +15779,7 @@ impl Parser {
             "all" => return self.parse_all(val, list, types),
             "count_if" => return self.parse_count_if(val, list, types),
             "next" if types.len() == 1 => {
+                self.state_route("call:next");
                 // CO1.6a: next(gen) — advance a coroutine iterator.
                 // Encode value_size as second parameter so codegen can emit it.
                 // @P327 — same encoding as the for-loop's `iterator()` path
@@ -15598,6 +15863,7 @@ impl Parser {
             }
             // A nullable iterator is one too: a null handle answers true (`coroutine_exhausted`).
             "exhausted" if types.len() == 1 && matches!(types[0].base(), Type::Iterator(_, _)) => {
+                self.state_route("call:exhausted");
                 // CO1.3c: exhausted(gen) on a coroutine iterator.
                 let op = self.data.def_nr("OpCoroutineExhausted");
                 *val = Value::Call(op, list.to_vec());
@@ -15608,12 +15874,14 @@ impl Parser {
             // definitions takes `x`: the special form answers for the argument's type, as it
             // does when nothing is declared.  The argument is not evaluated — `type_of`'s rule.
             "type_name" if types.len() == 1 => {
+                self.state_route("call:type_name");
                 if !self.first_pass {
                     *val = Value::Text(self.data.display_type_name(&types[0]));
                 }
                 return Type::Text(Deps::none());
             }
             "typedef" if types.len() == 1 => {
+                self.state_route("call:typedef");
                 let tp = self.data.def(self.data.type_def_nr(&types[0])).known_type();
                 *val = Value::Int(i32::from(tp));
                 return Type::Integer(IntegerSpec {
@@ -16082,6 +16350,7 @@ impl Parser {
 
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_reduce(&mut self, val: &mut Value, list: &[Value], types: &[Type]) -> Type {
+        self.state_route("parse_reduce");
         if self.first_pass {
             // The accumulator is the fold's first parameter (loft#1959); the initial value
             // answers only when the fold does not say.

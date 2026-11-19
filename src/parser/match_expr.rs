@@ -170,6 +170,7 @@ impl Parser {
         reason = "the match construct in one pass: the subject's shape picks the arm grammar, and every arm's pattern, guard, body and type join read the same arm list and lexer position"
     )]
     fn parse_match_inner(&mut self, code: &mut Value) -> Type {
+        self.state_route("parse_match");
         // One charge for the whole construct — arm count is not complexity (a 12-arm flat
         // dispatch reads straight down); its arms deepen via `parse_block("match_arm")`.
         if !self.first_pass {
@@ -1252,7 +1253,7 @@ impl Parser {
                 arms.iter_mut()
                     .filter(|a| !Self::is_placeholder_arm(first_pass, &a.tp))
                     .map(|a| &mut a.code),
-                &result_type,
+                &mut result_type,
             );
             for arm in arms
                 .iter_mut()
@@ -1641,10 +1642,29 @@ impl Parser {
     pub(super) fn type_null_arms<'a>(
         &mut self,
         codes: impl Iterator<Item = &'a mut Value>,
-        result_type: &Type,
+        result_type: &mut Type,
     ) {
         if matches!(result_type.base(), Type::Void | Type::Null) {
             return;
+        }
+        let mut codes: Vec<&'a mut Value> = codes.collect();
+        // `@FR-L-Null-Which` — a tagged `__nullable<S>` arm beside a `null` arm leaves its slot
+        // here, as an `if`'s does (`parse_if_expecting`): the match answers the pointer, so the
+        // `null` arm's sentinel is an absence the consumer can see, not a payload it projects.
+        if self.tagged_pointer_type(result_type).is_some()
+            && codes.iter().any(|c| arm_body_is_null(c))
+        {
+            let mut pointer = None;
+            for code in &mut codes {
+                if !arm_body_is_null(code) {
+                    let mut t = result_type.clone();
+                    self.read_arm_through_tag(code, &mut t);
+                    pointer.get_or_insert(t);
+                }
+            }
+            if let Some(p) = pointer {
+                *result_type = p;
+            }
         }
         let mut typed_null = None;
         for code in codes {

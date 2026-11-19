@@ -1229,6 +1229,13 @@ impl FnWriter<'_> {
             .map_err(|_| "a type number out of range".to_string())?;
         let tp = raw & 0x7FFF;
         let (kind, elem, _) = self.keyed_of(tp)?;
+        // `FILL_KEYED_SOURCE` on the parent type: the source is keyed, of the destination's type.
+        let raw_ptp = Self::literal(ptp, "type")?;
+        let flag = i64::from(crate::database::FILL_KEYED_SOURCE);
+        let keyed_src = i32::from(raw_ptp & flag != 0);
+        let ptp = &Value::Int(
+            i32::try_from(raw_ptp & !flag).map_err(|_| "a type number out of range".to_string())?,
+        );
         let (place, _, coll) = self.record_collection(parent, ptp, fld, ind)?;
         let group = match coll {
             Coll::Keyed(_) => "0".to_string(),
@@ -1255,7 +1262,7 @@ impl FnWriter<'_> {
         let linked = i32::from(self.cx.stores.is_linked(elem));
         Ok(E::new(
             format!(
-                "loft_fill_keyed(loft_types, {elem}, {place}, {src}, {kind}, {keys}, {nk}, {linked}, {}, {group})",
+                "loft_fill_keyed(loft_types, {elem}, {place}, {src}, {kind}, {keys}, {nk}, {linked}, {}, {group}, {keyed_src})",
                 i32::from(raw & 0x8000 != 0)
             ),
             K::Void,

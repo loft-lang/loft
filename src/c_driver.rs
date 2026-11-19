@@ -70,15 +70,14 @@ fn dialect(cc: &str) -> Dialect {
     }
 }
 
-/// gcc-spelled flags as `cl` takes them: C11 is the oldest standard `cl` names and holds C99's
-/// language as the unit uses it; the warning switches become `cl`'s levels; the libraries a
-/// gcc link names (`-lm`, `-pthread`, `-ldl`) are the CRT's own there, and a run path has no
-/// meaning to a PE binary.
+/// gcc-spelled flags as `cl` takes them: the unit's C11 is `/std:c11`; the warning switches
+/// become `cl`'s levels; the libraries a gcc link names (`-lm`, `-pthread`, `-ldl`) are the CRT's
+/// own there, and a run path has no meaning to a PE binary.
 fn msvc_args(gnu: &[String]) -> Vec<String> {
     let mut out = Vec::new();
     for f in gnu {
         let mapped = match f.as_str() {
-            "-std=c99" => "/std:c11",
+            "-std=c11" => "/std:c11",
             "-w" => "/W0",
             "-Wall" => "/W3",
             "-Werror" => "/WX",
@@ -119,7 +118,7 @@ fn cc_spawn(cc: &str) -> Spawn {
 /// poison modes when the environment asks for them as the interpreter's switches do.  Every flag is part of
 /// the cache key, since each one changes the binary.
 fn cc_flags(tier: Tier) -> Vec<String> {
-    let mut flags: Vec<String> = vec!["-std=c99".into()];
+    let mut flags: Vec<String> = vec!["-std=c11".into()];
     match lint() {
         Lint::Off => flags.push("-w".into()),
         Lint::All => flags.extend([
@@ -561,7 +560,7 @@ pub(crate) fn build_wasm(
     let mut cmd = Spawn::new(Program::os(&cc));
     cmd.push_arg(format!("--target={}", tc.triple));
     cmd.push_args([
-        "-std=c99",
+        "-std=c11",
         if ship { "-O3" } else { "-O2" },
         "-w",
         "-D_WASI_EMULATED_PROCESS_CLOCKS",
@@ -911,7 +910,7 @@ fn android_fixed_objects(
             entry.to_string_lossy().into_owned(),
             "-I".into(),
             glue_inc,
-            "-std=c99".into(),
+            "-std=c11".into(),
             "-fPIC".into(),
             "-O2".into(),
             "-w".into(),
@@ -1317,7 +1316,7 @@ mod tests {
         assert_eq!(dialect("C:/VS/bin/Hostx64/x64/CL.EXE"), Dialect::Msvc);
         assert_eq!(dialect("clang-cl.exe"), Dialect::Msvc);
         let gnu: Vec<String> = [
-            "-std=c99",
+            "-std=c11",
             "-w",
             "-O1",
             "-DLOFT_CALL_CHAIN",

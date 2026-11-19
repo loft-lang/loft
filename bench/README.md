@@ -54,7 +54,7 @@ required to agree: a fault wraps there instead of answering null, and a row whos
 differs is marked `ship (hash differs)` and carries no ship ratio.
 
 **The C lanes** measure the C99 backend (@PLN200, [C_BACKEND.md](../doc/claude/C_BACKEND.md))
-against the same Rust twin: `c` builds each program with `loft --emit-c` and `cc -std=c99 -O3`
+against the same Rust twin: `c` builds each program with `loft --emit-c` and `cc -std=c11 -O3`
 (`--cc`, `--c-flags`), every expression's fault check kept, and `cship` builds it under the
 release-pass probe, the C generator's twin of the ship lane.  The checked `c` lane VALIDATES the
 generator: its hash must be the twin's, a row whose hash differs reads `c HASH DIFFERS` and the

@@ -1,11 +1,11 @@
 diff --git a/src/opt/hoist.rs b/src/opt/hoist.rs
-index 0e97f7187..5ff5dedec 100644
+index 91e85584f..2756cb03b 100644
 --- a/src/opt/hoist.rs
 +++ b/src/opt/hoist.rs
-@@ -5798,6 +5798,9 @@ pub fn push_windows_ok(
+@@ -3857,6 +3857,9 @@ pub fn push_windows_ok(
      stores: Option<&Stores>,
      fx: &mut Facts,
- ) -> Result<(), String> {
+ ) -> Result<(), crate::rewrite_census::Refusal> {
 +    if true {
 +        return Ok(());
 +    }

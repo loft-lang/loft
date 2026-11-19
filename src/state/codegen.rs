@@ -161,6 +161,10 @@ impl State {
             BIND_FN_START.with(|s| s.set(self.code_pos));
         }
         // `@FR-R-LoopSlot`: the loop variables this frame places in their range index's slot.
+        // @decline-owed: a loop variable written by more than its iterator's one `Set`, taken
+        //   by address or named other than as a read; a body that writes the hidden index, or
+        //   an index taken by address; a variable or index that is a parameter, differs in type
+        //   from the other or already shares a slot; a frame whose table places the two apart
         crate::rewrite_census::fired("R-LoopSlot", super::slot_aliases(data, def_nr).len());
         let logging =
             !crate::file_access::is_stdlib_source(data.def(def_nr).position().file.as_str());
@@ -1220,6 +1224,11 @@ impl State {
                         eprintln!("start-step: {} {} {verdict}", f.name, f.name(lv));
                     }
                     if holds {
+                        // @decline-owed: a range loop that does not rotate; an inclusive,
+                        //   reverse or filtered range, or one with a literal start; an end that
+                        //   reads `next` or `i#index`; and a loop where a statement after the
+                        //   iterator names `next`, or names `i#index` while the loop variable
+                        //   does not share the index's slot
                         crate::rewrite_census::fired("R-StartStep", 1);
                         s
                     } else {
@@ -1228,6 +1237,10 @@ impl State {
                 }
                 None => r,
             };
+            // @decline-owed: a loop whose first statement is neither an `if c { break }` of its
+            //   own loop with no `else` nor a counted range's iterator block ending in its
+            //   index; an iterator with no such exit test, or with a `continue` or a nested
+            //   loop in a statement beside it
             crate::rewrite_census::fired("R-Rotate", 1);
             return self.gen_rotated_loop(lp, &r, stack);
         }
@@ -1807,6 +1820,11 @@ impl State {
         if !bound {
             return None;
         }
+        // @decline-owed: a return that is no plain vector or is a borrow; a `par` or `yield` in
+        //   the body; a buffer delivered from more than one local, by an append outside its
+        //   `one_buffer_vec_copy` block, or handed to another call; a result local that is a
+        //   parameter, captured, rebound or not bound once from its own witness's field; a
+        //   witness minted twice, rebound or reached by a call beyond its init and frees
         crate::rewrite_census::fired("R-RetAdopt", 1);
         Some(a)
     }
@@ -1943,6 +1961,10 @@ impl State {
         };
         let slices = marked.iter().filter(|v| store.slices.contains(v)).count();
         crate::rewrite_census::fired("R-TextBorrow", marked.len());
+        // @decline-owed: a text local with a binding that is no value slice of a plain text
+        //   parameter or of a borrowing local, and one mentioned other than as a text value
+        //   read: a rebind to a built text, an append, a link, a `&text` argument, a tuple, a
+        //   store, a return, a capture or a yield
         crate::rewrite_census::fired("R-SliceBorrow", slices);
         for v in marked {
             data.def_mut(def_nr).variables.mark_text_view(v);
@@ -4436,6 +4458,9 @@ impl State {
             && let (Ok(n), Ok(sz)) = (u32::try_from(*n), u32::try_from(*sz))
             && n == crate::vector::grown_elems(1, sz)
         {
+            // @decline-owed: a reservation of any count but the append's own first claim, which
+            //   decides the first block and is kept; a reservation over anything but a plain
+            //   variable, or whose count or size is no literal
             crate::rewrite_census::fired("R-FirstClaim", 1);
             return Type::Void;
         }
@@ -5123,6 +5148,9 @@ impl State {
         }
         let code_step = self.code_pos;
         self.code_add(0i32); // temp step
+        // @decline-owed: a matched operator — one the fused ops carry, over plain integer
+        //   locals or a literal — whose local sits in a narrow linked slot, is not
+        //   stack-allocated, or is placed above the stack height the op starts at
         crate::rewrite_census::fired("R-Fuse/text", 1);
         Some(code_step)
     }
