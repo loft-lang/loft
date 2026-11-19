@@ -622,7 +622,17 @@ fn expression_node(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
           _ => {}
         }
       }
-      noted_bind(e, vars, assignment(e, vars, at, fixed, op, target, rhs))
+      ab = assignment(e, vars, at, fixed, op, target, rhs);
+      // `@FR-L-CapRebind` with `@FR-O-Detach`: a whole rebind of a keyed local a live closure
+      // captured — whatever its value's spelling — is preceded by the detach guard.
+      if !e.first_pass && op == "=" {
+        tv = match e.p.nodes[target] { SName { name: tn, member: tm } => if tm == "" { el_vars::var(vars, tn) } else { -1 }, _ => -1 };
+        cg = if tv >= 0 { cap_rebind_guard(e, vars, tv) } else { null };
+        if cg != null {
+          ab = ex(ir::NdInsert { items: [cg!, ab.code] }, ab.tp);
+        }
+      }
+      noted_bind(e, vars, ab)
     },
     SLet { fixed, name, amp, tfixed, tp, e: rhs } => noted_bind(e, vars, el_ex_place::declaration(e, vars, fixed || amp || tfixed, name, tp, rhs)),
     SCall { at, f, args } => el_ex_object::call_expression(e, vars, at, f, args),
@@ -752,7 +762,8 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
         }
         // A record or a vector is shared through a pointer field of the record (`@FR-L-CapHeap`).
         // A nullable record or vector is shared the same way: the pointer may be the null one.
-        heap = record_type(e, ct) || el_types::base(ct) is TyVector;
+        // (A keyed collection the same way: its store's pointer.)
+        heap = record_type(e, ct) || el_types::base(ct) is TyVector || keyed_kind(el_types::base(ct));
         // A nullable plain scalar and a plain enum are captured as the value itself, as a dense
         // scalar is (`closure_attr_type`).
         scalar_cap = el_convert::plain_scalar(el_types::base(ct)) || el_convert::plain_enum(el_types::base(ct)) || (el_types::base(ct) is TyText && !(ct is TyOptional));
@@ -894,8 +905,11 @@ pub fn closure_value(e: el::El, vars: el_vars::Vars, d: integer, rec_nm: text, c
     if cv >= 0 && !vars.captured.contains(cv) {
       vars.captured += [cv];
     }
-    if record_type(e, c.tp) || el_types::base(c.tp) is TyVector {
+    if record_type(e, c.tp) || el_types::base(c.tp) is TyVector || keyed_kind(el_types::base(c.tp)) {
       el_vars::in_use(vars, cv, true);
+      if keyed_kind(el_types::base(c.tp)) {
+        vars.cap_slots += [el_vars::CapSlot { var: cv, clos: w, pos: field_position(e, rd, c.name) }];
+      }
       ops += [el_ir::cl(e, "OpSetDbRef", [ir::NdVar { n: w }, ir::NdInt { n: field_position(e, rd, c.name) }, ir::NdVar { n: cv }])];
       continue;
     }
@@ -939,6 +953,10 @@ pub fn closure_attr_type(e: el::El, t: ir::TypeT) -> ir::TypeT {
   match el_types::base(t) {
     TyReference { n } => ir::TyReference { n: n, dep: [el_types::MARKER] },
     TyVector { inner } => ir::TyReference { n: type_def_nr(e, inner), dep: [el_types::MARKER] },
+    // A keyed collection's field names its element record, as a vector's does.
+    TyHash { n: kh } => ir::TyReference { n: kh, dep: [el_types::MARKER] },
+    TySorted { n: ks } => ir::TyReference { n: ks, dep: [el_types::MARKER] },
+    TyIndex { n: ki } => ir::TyReference { n: ki, dep: [el_types::MARKER] },
     _ => t
   }
 }
@@ -1510,6 +1528,27 @@ fn nested_member_assign(e: el::El, vars: el_vars::Vars, op: text, target: intege
   }
   pre += [write];
   ex(ir::NdInsert { items: pre }, ir::TyVoid)
+}
+
+// The detach guard before a rebind of a keyed local `v` a closure of this pass captured: where
+// the closure record is live and still holds `v`'s store, `v` takes a fresh store of its own
+// (`OpInitRefSentinel` + `OpDatabase`); null for a local no closure captured.
+pub fn cap_rebind_guard(e: el::El, vars: el_vars::Vars, v: integer) -> ir::Node? {
+  kcur = el_vars::tp(vars, v);
+  if !keyed_kind(el_types::base(kcur)) || kcur is TyRefVar {
+    return null;
+  }
+  for cs in vars.cap_slots {
+    if cs.var == v {
+      cw = ir::NdVar { n: cs.clos };
+      dd = el_ir::v_if(el_ir::cl(e, "OpDistinctStore", [el_ir::cl(e, "OpGetDbRef", [cw, ir::NdInt { n: cs.pos }]), ir::NdVar { n: v }]), ir::NdBoolean { b: false }, ir::NdBoolean { b: true });
+      cc = el_ir::v_if(el_ir::cl(e, "OpConvBoolFromRef", [cw]), dd, ir::NdBoolean { b: false });
+      bb = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [cw]), ir::NdBoolean { b: false }, cc);
+      aa = el_ir::v_if(bb, ir::NdBoolean { b: true }, ir::NdBoolean { b: false });
+      return el_ir::v_if(aa, ir::NdInsert { items: [el_ir::cl(e, "OpInitRefSentinel", [ir::NdVar { n: v }]), el_ir::cl(e, "OpDatabase", [ir::NdVar { n: v }, ir::NdInt { n: el_schema::keyed_type(e, el_types::base(kcur)) }])] }, ir::NdNull);
+    }
+  }
+  null
 }
 
 // `Parser::tuple_whole_bind_copy`: `u = t` over a tuple with a heap member is the tuple of
@@ -2189,9 +2228,13 @@ pub fn name_expression(e: el::El, vars: el_vars::Vars, name: text, member: text,
         }
         // A shared record or vector reads as the captured value's own type; a NULLABLE one as
         // its closure-record field, the dense pointer borrowing `__closure` (`closure_capture_read`).
-        if record_type(e, c.tp) || el_types::base(c.tp) is TyVector {
+        if record_type(e, c.tp) || el_types::base(c.tp) is TyVector || keyed_kind(el_types::base(c.tp)) {
           if c.tp is TyOptional {
             return ex(got!, el_types::with_deps(el_types::without_deps(el_types::base(c.tp)), [e.closure_var]));
+          }
+          // (A keyed capture is a view of the closure record: what walks it borrows `__closure`.)
+          if keyed_kind(el_types::base(c.tp)) {
+            return ex(got!, el_types::with_deps(c.tp, [e.closure_var]));
           }
           return ex(got!, c.tp);
         }
@@ -3587,13 +3630,14 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
     el_vars::drop_use(vars, v);
     return ex(ir::NdInsert { items: [] }, ir::TyVoid);
   }
+  kg: vector<ir::Node> = [];
   if !e.first_pass && keyed_kind(kcur) && !(kcur is TyRefVar) && keyed_kind(x.tp) && !(x.code is NdInsert) && !(x.code is NdNull) {
     match el_ir::unspan(x.code) {
       NdVar { n: src } => {
         el_vars::drop_use(vars, v);
         el_vars::make_independent(vars, v, src);
         kt = el_schema::keyed_type(e, el_types::base(kcur));
-        return ex(ir::NdInsert { items: [el_ir::v_set(v, ir::NdNull), el_ir::cl(e, "OpReplaceKeyed", [x.code, ir::NdVar { n: v }, ir::NdInt { n: kt }])] }, ir::TyVoid);
+        return ex(ir::NdInsert { items: kg + [el_ir::v_set(v, ir::NdNull), el_ir::cl(e, "OpReplaceKeyed", [x.code, ir::NdVar { n: v }, ir::NdInt { n: kt }])] }, ir::TyVoid);
       },
       // A call of a loft function answering a collection of its own: replaced into the local
       // the same way, the call's store freed after (the type's 32768 bit).
@@ -3610,7 +3654,7 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
         if plain_args && el_ex_match::gives_away_its_store(e, x.code) && len(el_types::deps(x.tp)) == 0 {
           el_vars::drop_use(vars, v);
           kt = el_schema::keyed_type(e, el_types::base(kcur));
-          return ex(ir::NdInsert { items: [el_ir::v_set(v, ir::NdNull), el_ir::cl(e, "OpReplaceKeyed", [x.code, ir::NdVar { n: v }, ir::NdInt { n: kt + 32768 }])] }, ir::TyVoid);
+          return ex(ir::NdInsert { items: kg + [el_ir::v_set(v, ir::NdNull), el_ir::cl(e, "OpReplaceKeyed", [x.code, ir::NdVar { n: v }, ir::NdInt { n: kt + 32768 }])] }, ir::TyVoid);
         }
         // A keyed FIELD of a record (through its fields): the field's collection replaced
         // into the local, which is its own copy.
@@ -3627,7 +3671,7 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
           // (The local holds its own copy: it borrows nothing of the source.)
           el_vars::set_var_type(vars, v, el_types::with_deps(el_vars::tp(vars, v), []));
           kt = el_schema::keyed_type(e, el_types::base(kcur));
-          return ex(ir::NdInsert { items: [el_ir::v_set(v, ir::NdNull), el_ir::cl(e, "OpReplaceKeyed", [x.code, ir::NdVar { n: v }, ir::NdInt { n: kt }])] }, ir::TyVoid);
+          return ex(ir::NdInsert { items: kg + [el_ir::v_set(v, ir::NdNull), el_ir::cl(e, "OpReplaceKeyed", [x.code, ir::NdVar { n: v }, ir::NdInt { n: kt }])] }, ir::TyVoid);
         }
         el::refuse(e, "a keyed local bound from something other than a local");
         return ex(ir::NdNull, ir::TyVoid);
@@ -3639,7 +3683,7 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
           // (The local holds its own copy: it borrows nothing of the source.)
           el_vars::set_var_type(vars, v, el_types::with_deps(el_vars::tp(vars, v), []));
           kt = el_schema::keyed_type(e, el_types::base(kcur));
-          return ex(ir::NdInsert { items: [el_ir::v_set(v, ir::NdNull), el_ir::cl(e, "OpReplaceKeyed", [x.code, ir::NdVar { n: v }, ir::NdInt { n: kt }])] }, ir::TyVoid);
+          return ex(ir::NdInsert { items: kg + [el_ir::v_set(v, ir::NdNull), el_ir::cl(e, "OpReplaceKeyed", [x.code, ir::NdVar { n: v }, ir::NdInt { n: kt }])] }, ir::TyVoid);
         }
         el::refuse(e, "a keyed local bound from something other than a local");
         return ex(ir::NdNull, ir::TyVoid);

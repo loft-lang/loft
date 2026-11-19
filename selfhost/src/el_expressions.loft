@@ -2907,7 +2907,15 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
         }
         bl = collapsed!;
       }
-      bl.result = [el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb])];
+      // (loft#1625, `borrowed_param_deps` → `ref_return(…, MidReturn)`: a parameter — or a field
+      // of one — an early exit copies into the buffer is still published, after the buffer.)
+      rds = [rb];
+      for rp in returned_params(e, vars, bl.operators, renamed) {
+        if !rds.contains(rp) {
+          rds += [rp];
+        }
+      }
+      bl.result = [el_types::with_deps(el_types::without_deps(el_types::base(result)), rds)];
       bl.operators[0] = ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [ir::NdVar { n: renamed }]), bl.operators[0]] };
       return ir::NdBlock { block: [bl] };
     }
