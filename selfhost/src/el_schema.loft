@@ -1049,21 +1049,6 @@ pub fn array_field_type(e: el::El, t: integer, name: text) -> integer {
   -1
 }
 
-// The store type of field `name` in store type `t` as the schema laid it out, or -1.  A
-// `vector<i32>` FIELD is its narrow `vector<int<…>>` row there, where a local's is the library's
-// `vector<integer>`.
-pub fn field_content(e: el::El, t: integer, name: text) -> integer {
-  if t < 0 || t == NO_TYPE {
-    return -1;
-  }
-  for f in struct_fields(e, t) {
-    if f.name == name {
-      return f.content;
-    }
-  }
-  -1
-}
-
 // `Stores::field_nr`: the number of the field named `name` in store type `t`, or -1.
 pub fn field_nr(e: el::El, t: integer, name: text) -> integer {
   for f in struct_fields(e, t) {
