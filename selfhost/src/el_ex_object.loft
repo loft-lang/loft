@@ -82,6 +82,13 @@ pub fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: 
   pos = field_position(e, d, fname);
   // A keyed field's records are added through the record itself; it has no vector store.
   vk = if keyed { -1 } else { vector_store(e, inner, el_types::elem_name(e, inner)) };
+  // (A `vector<i32>` field is read at the field's own narrow row: `field_content`.)
+  if !keyed && !e.first_pass && match inner { TyInteger { spec: isp } => el_types::int4(isp), _ => false } {
+    fc4 = el_schema::field_content(e, kt, fname);
+    if fc4 >= 0 {
+      vk = fc4;
+    }
+  }
   fnr = el_schema::field_nr(e, kt, fname);
   push = el_ex_pattern::push_op(inner);
   if e.first_pass && elm >= 0 {

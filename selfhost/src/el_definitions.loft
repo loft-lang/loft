@@ -1524,6 +1524,11 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
       seeds = el_cell::flip(e, vars);
     }
     code = el_cell::seed_cells(el_expressions::parse_code(e, vars, body ?? 0), seeds);
+    if e.first_pass {
+      for lm in vars.loop_made {
+        e.loop_made += [e.context * 65536 + lm];
+      }
+    }
     if infers && e.first_pass {
       it = el_types::without_deps(vars.tail_tp[0] ?? ir::TyVoid);
       // (A text answer takes the lambda's hidden `&text` buffer, `__work_ret`, which is made

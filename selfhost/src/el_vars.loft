@@ -139,6 +139,9 @@ pub struct Vars {
   // The `while` loops open: loops of their own in `#break`'s count, which `active_loops` (the
   // `for` loops) does not hold.
   pub whiles: integer = 0,
+  // `Variable::created_in_loop`: the variables made while any loop — a `for` or a `while` — was
+  // open (`new_var`); the first pass's list is kept on `El` (`loop_made`) for the second.
+  pub loop_made: vector<integer>,
   // The loop variables of the open `rev(…)` walks (`on`'s reverse bit, which `#remove` reads).
   pub reversed: vector<integer>,
   // `Iterator::value` of each open loop, beside `active_loops`: the vector a `for` walks, or
@@ -336,6 +339,9 @@ pub fn new_var(v: Vars, name: text, tp: ir::TypeT) -> integer {
   v.vars += [fresh_variable(name, tp)];
   v.defined += [false];
   v.viewed += [[]];
+  if len(v.active_loops) > 0 || v.whiles > 0 {
+    v.loop_made += [nr];
+  }
   nr
 }
 

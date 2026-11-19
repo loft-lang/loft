@@ -613,7 +613,7 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
     // A record into a vector's record element is copied into the element (`copy_ref`), whatever
     // the index proves: the place is the element read (`OpGetVector`), a record there or a fault.
     // A literal is written field by field into the element instead: refused below.
-    if op == "=" && !field_place && struct_ref(e, pb) >= 0 && !(x.tp is TyOptional) && struct_ref(e, el_types::base(x.tp)) >= 0 && calls(e, rd_place, "OpGetVector") && !(e.p.nodes[rhs] is SStructLit) {
+    if op == "=" && !field_place && struct_ref(e, pb) >= 0 && !(x.tp is TyOptional) && struct_ref(e, el_types::base(x.tp)) >= 0 && (calls(e, rd_place, "OpGetVector") || calls(e, rd_place, "OpVectorRef")) && !(e.p.nodes[rhs] is SStructLit) {
       return record_place_write(e, vars, rd_place, pb, x);
     }
     el::refuse(e, "an assignment to a nullable place: {if field_place { "a field" } else { "an element" }} of {type_kind(pb)} given {type_kind(x.tp)}{if op == "=" { "" } else { " by {op}" }}");
@@ -696,7 +696,9 @@ pub fn vec_lit_len(e: el::El, n: integer) -> integer {
 // Another record's value and a record holding a closure are refused by name.
 pub fn record_place_write(e: el::El, vars: el_vars::Vars, place: ir::Node, pt: ir::TypeT, x: Ex) -> Ex {
   rd = struct_ref(e, pt);
-  if !(place is NdCall) || !(calls(e, place, "OpGetField") || calls(e, place, "OpGetVector")) {
+  // (An element of a LINKED vector — any keyed collection over the record exists — is read
+  // through `OpVectorRef`: the same place.)
+  if !(place is NdCall) || !(calls(e, place, "OpGetField") || calls(e, place, "OpGetVector") || calls(e, place, "OpVectorRef")) {
     el::refuse(e, "an assignment to a place that is not a plain local: {place_read(e, place)}");
     return ex(ir::NdNull, ir::TyVoid);
   }

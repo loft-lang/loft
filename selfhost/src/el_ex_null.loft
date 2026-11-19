@@ -477,8 +477,19 @@ pub fn file_attr_set(e: el::El, vars: el_vars::Vars, fv: integer, attr: text, rh
   if attr == "format" {
     return ex(el_ir::cl(e, "OpSetEnum", [f, ir::NdInt { n: field_position(e, fd, "format") }, v]), ir::TyVoid);
   }
+  // (The position is evaluated ONCE, into a `__next_N` — loft#2575: a seek on a file with no
+  // handle moves `#next` itself; a literal or a variable reads the same twice and stands.)
   if attr == "next" {
-    return ex(ir::NdInsert { items: [el_ir::cl(e, "OpSeekFile", [f, v]), el_ir::cl(e, "OpSetInt", [f, ir::NdInt { n: field_position(e, fd, "next") }, v])] }, ir::TyVoid);
+    steps: vector<ir::Node> = [];
+    pos = v;
+    if !(el_ir::unspan(v) is NdInt || el_ir::unspan(v) is NdVar) {
+      tn = el_vars::create_unique(vars, "_next", ir::TyOptional { inner: ir::TyInteger { spec: i32_spec() } });
+      el_vars::set_defined(vars, tn);
+      steps += [el_ir::v_set(tn, v)];
+      pos = ir::NdVar { n: tn };
+    }
+    steps += [el_ir::cl(e, "OpSeekFile", [f, pos]), el_ir::cl(e, "OpSetInt", [f, ir::NdInt { n: field_position(e, fd, "next") }, pos])];
+    return ex(ir::NdInsert { items: steps }, ir::TyVoid);
   }
   if attr == "index" {
     return ex(el_ir::cl(e, "OpSetInt", [f, ir::NdInt { n: field_position(e, fd, "current") }, v]), ir::TyVoid);
@@ -1984,6 +1995,12 @@ pub fn void_arm(n: ir::Node) -> ir::Node {
 }
 
 // A block arm re-typed as `t` (its result), any other node as it is.
+// `declared_in_loop` (`created_in_loop(v) != u16::MAX`): was the variable made while a loop — a
+// `for` or a `while` — was open?  The first pass's answer stands on the second.
+pub fn made_in_loop(e: el::El, vars: el_vars::Vars, v: integer) -> boolean {
+  vars.loop_made.contains(v) || e.loop_made.contains(e.context * 65536 + v)
+}
+
 // `tuple_join_open`: a tuple type with a `null` member, at any depth.
 pub fn open_tuple(t: ir::TypeT) -> boolean {
   match el_types::base(t) {
@@ -2486,7 +2503,7 @@ pub fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -
     // `declared_in_loop`: a local made inside an open loop (numbered after its variable) is no
     // candidate; one from before the loop is, wherever the `return` stands.
     NdVar { n } => {
-      if len(vars.active_loops) == 0 || n < vars.active_loops[0] {
+      if !made_in_loop(e, vars, n) {
         w = n;
       }
     },
@@ -2715,7 +2732,7 @@ pub fn materialised_return(e: el::El, vars: el_vars::Vars, v: Ex, w: integer, re
   // A record local made inside an open loop is no rename candidate (`declared_in_loop`): it is
   // copied into the buffer (`materialize_return_into`), behind its null test.
   // The buffer is bound by it (`RetPromotion::Bind`): no later exit renames it.
-  in_loop = lv >= 0 && len(vars.active_loops) > 0 && lv >= vars.active_loops[0] && !el_expressions::views_local(vars, lv);
+  in_loop = lv >= 0 && (len(vars.active_loops) > 0 || vars.whiles > 0) && made_in_loop(e, vars, lv) && !el_expressions::views_local(vars, lv);
   if in_loop && unrenamed && e.first_pass {
     ba0 = attr_nr(el::def(e, d), "__retbuf");
     ret0 = el::def(e, d).returned[0];
