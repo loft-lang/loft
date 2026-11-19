@@ -124,8 +124,11 @@ make slot-matrix [ARGS="--filler all"]     # THE SLOT MATRIX (@PLN221): each ope
                                          #   parameters (eight times the cells).  `walk --old
                                          #   <binary>` runs it on an older build beside this one:
                                          #   what it would have caught, and what has regressed  `scripts/slot_matrix.py
-                                         #   list` shows the slots, `check` is the PR gate: new
-                                         #   syntax needs a row in `scripts/syntax_slots.tsv`
+                                         #   list` shows the slots.  Two PR gates: `check` (new
+                                         #   syntax needs a row in `scripts/syntax_slots.tsv`) and
+                                         #   `gate` (no cell fails outside
+                                         #   `scripts/slot_matrix.baseline`; `gate --update` after
+                                         #   a fix, then read the diff)
 make reason-census                       # WHICH REWRITES SAY WHY: per R- rule, the source sites
                                          #   that report why it refused a site and which site it
                                          #   admitted (a scan of `src/`, no build), and its state:

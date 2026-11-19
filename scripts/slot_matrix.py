@@ -22,6 +22,9 @@ runs the product.
     run        run cells and say which fail.  Default: every slot with its plain variable,
                which validates the register itself.  `--filler all` is the matrix,
                `--backend both` adds the C backend, `--slot` and `--kind` narrow it.
+    gate       the whole matrix on both backends against scripts/slot_matrix.baseline: a
+               cell that is not ok and not listed fails, and so does a listed cell that now
+               passes.  `--update` rewrites the baseline.  The PR gate (tests/slot_matrix.rs).
     walk       the matrix on an OLDER loft binary beside this one (`--old <binary>`): the
                cells that failed then and pass now are what the matrix would have caught,
                the ones that passed then and fail now are regressions.
@@ -67,6 +70,7 @@ FILLERS_TSV = os.path.join(HERE, "syntax_fillers.tsv")
 OUTSIDE_TSV = os.path.join(HERE, "syntax_outside.tsv")
 CONTEXTS_TSV = os.path.join(HERE, "syntax_contexts.tsv")
 PRELUDE = os.path.join(HERE, "syntax_slots_prelude.loft")
+BASELINE = os.path.join(HERE, "slot_matrix.baseline")
 
 COUNTS = ("once", "cond", "step")
 FAMILIES = ("iteration", "write", "read", "call", "operator", "control", "construct")
@@ -658,6 +662,76 @@ def run_matrix(cells, backends, verbose):
     return report(cells, evaluate(cells, backends), backends, verbose)
 
 
+BASELINE_HEAD = """# The cells of the slot matrix that do not pass today (@PLN221) — the gate's baseline.
+# `python3 scripts/slot_matrix.py gate` runs the matrix (every filler, one context, one
+# frame, both backends) and fails on a cell that is not ok and not listed here, and on a
+# line here whose cell now passes.  So the file only SHRINKS: a fix removes its lines in the
+# same change (`gate --update` rewrites the file; read its diff before committing it), and
+# a new line is a defect being accepted, which wants a reason in the commit.
+# Columns, tab-separated: cell, backend, channel (count | order | value | leak | crash |
+# refused).  A line starting with `~` is UNSTABLE — the cell ends in a crash, which need not
+# repeat on another machine — and is allowed to pass.
+"""
+
+
+def baseline_keys(cells, verdicts):
+    keys = set()
+    for cell in cells:
+        worst, lines = verdicts[cell["name"]]
+        if worst == "REFUSED":
+            keys.add((cell["name"], "-", "refused"))
+        for backend, v, why in lines:
+            if v == "FAIL":
+                keys.add((cell["name"], backend, channel(why)))
+    return keys
+
+
+def load_baseline(path=BASELINE):
+    """(stable keys, unstable keys)."""
+    stable, unstable = set(), set()
+    if os.path.exists(path):
+        for _, cols in rows(path):
+            (unstable if cols[0].startswith("~") else stable).add((cols[0].lstrip("~"), *cols[1:3]))
+    return stable, unstable
+
+
+def cmd_gate(args):
+    slots, fillers, outside, problems = load_all()
+    problems = check(slots, fillers, outside, lexicon(), defined_rules(), problems)
+    if problems:
+        print("\n".join(problems))
+        return 1
+    cells = make_cells(slots, fillers, "all", set(), None)
+    verdicts = evaluate(cells, ("interp", "c"))
+    keys = baseline_keys(cells, verdicts)
+    if args.update:
+        with open(BASELINE, "w", encoding="utf-8") as f:
+            f.write(BASELINE_HEAD)
+            for key in sorted(keys):
+                f.write(("~" if key[2] == "crash" else "") + "\t".join(key) + "\n")
+        print(f"slot_matrix gate: baseline rewritten, {len(keys)} line(s)")
+        return 0
+    stable, unstable = load_baseline()
+    # A crash may also show as another channel on another machine; an unstable line
+    # excuses its cell on its backend whatever the channel.
+    excused = {(n, b) for n, b, _ in unstable}
+    new = sorted(k for k in keys - stable if (k[0], k[1]) not in excused)
+    gone = sorted(stable - keys)
+    for name, backend, ch in new:
+        why = next((w for b, v, w in verdicts[name][1] if b == backend and v == "FAIL"), "refused by the compiler")
+        print(f"NEW      {name} [{backend}] ({ch}): {why[:180]}")
+    for name, backend, ch in gone:
+        print(f"PASSES   {name} [{backend}] ({ch}): remove its line from scripts/slot_matrix.baseline")
+    if new:
+        print("the new cells fold to:")
+        only = {n for n, _, _ in new}
+        for line in causes([c for c in cells if c["name"] in only], verdicts):
+            print("  " + line)
+    print(f"slot_matrix gate: {len(cells)} cells, {len(keys)} not ok ({len(stable) + len(unstable)} in the "
+          f"baseline), {len(new)} new, {len(gone)} to remove  [{loft_binary()}]")
+    return 1 if new or gone else 0
+
+
 def cmd_walk(args):
     """The matrix on an OLDER build beside this one: what it would have caught."""
     slots, fillers, _, problems = load_all()
@@ -746,6 +820,9 @@ def main():
     p.add_argument("--context", help="where the statement stands: an id of syntax_contexts.tsv, or `all`")
     p.add_argument("--frame", help="where its values come from: a frame of the prelude, or `all`")
     p.set_defaults(fn=cmd_run)
+    p = sub.add_parser("gate")
+    p.add_argument("--update", action="store_true", help="rewrite the baseline from this run")
+    p.set_defaults(fn=cmd_gate)
     p = sub.add_parser("walk")
     p.add_argument("--old", required=True, help="the older loft binary")
     p.add_argument("--backend", choices=("interp", "c", "both"), default="interp")
