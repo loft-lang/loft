@@ -22,6 +22,11 @@ runs the product.
     run        run cells and say which fail.  Default: every slot with its plain variable,
                which validates the register itself.  `--filler all` is the matrix,
                `--backend both` adds the C backend, `--slot` and `--kind` narrow it.
+    cell       one shape tried at once, without touching a table:
+                   cell 'for p in <S> { s += p.k; }' --type coll
+                   cell 's = <S> + j;' --filler 'at(<C>, 1)' --plain i
+               It runs the four checks on both backends and prints the table rows the
+               shape would be.  The names a statement may use are the prelude's.
     gate       the whole matrix on both backends against scripts/slot_matrix.baseline: a
                cell that is not ok and not listed fails, and so does a listed cell that now
                passes.  `--update` rewrites the baseline.  The PR gate (tests/slot_matrix.rs).
@@ -732,6 +737,45 @@ def cmd_gate(args):
     return 1 if new or gone else 0
 
 
+def cmd_cell(args):
+    """One shape, tried at once: a statement with `<S>`, and the operand forms to put in."""
+    slots, fillers, _, problems = load_all()
+    if problems:
+        print("\n".join(problems))
+        return 1
+    stmt, decl = args.statement, args.decl or ""
+    if (stmt + decl).count(SLOT) != 1:
+        print(f"slot_matrix cell: the statement and declaration must hold `{SLOT}` exactly once")
+        return 1
+    mine = []
+    if args.filler:
+        if args.type or not args.plain:
+            print("slot_matrix cell: give `--type T` (every filler of a type), or `--filler EXPR` with "
+                  "`--plain EXPR` (the same value without a counter)")
+            return 1
+        tp = "adhoc"
+        mine = [{"id": "adhoc-var", "type": tp, "expr": args.plain, "line": 0},
+                {"id": "adhoc-new", "type": tp, "expr": args.filler, "line": 0}]
+    elif args.type in types_of(fillers):
+        tp = args.type
+        mine = [f for f in fillers if f["type"] == tp]
+    else:
+        print(f"slot_matrix cell: `--type` is one of {' '.join(types_of(fillers))}")
+        return 1
+    slot = {"id": args.id, "family": args.family, "rule": args.rule, "count": args.count,
+            "runs": str(args.runs), "type": tp, "stmt": stmt, "decl": decl, "line": 0}
+    cells = make_cells([slot], mine, "all", set(), args.kind, *axes_of(args))
+    backends = backends_of(args)
+    failed = report(cells, evaluate(cells, backends), backends, True)
+    print("the rows, should this shape join the tables:")
+    print("  syntax_slots.tsv:   " + "\t".join(
+        [slot["id"], slot["family"], slot["rule"], slot["count"], slot["runs"], tp, stmt] + ([decl] if decl else [])))
+    if args.filler:
+        print(f"  syntax_fillers.tsv: <type>-<form>\t<type>\t{args.filler}    (and the slot's type "
+              f"in place of `adhoc`; its plain variable is `{args.plain}`)")
+    return 1 if failed else 0
+
+
 def cmd_walk(args):
     """The matrix on an OLDER build beside this one: what it would have caught."""
     slots, fillers, _, problems = load_all()
@@ -820,6 +864,22 @@ def main():
     p.add_argument("--context", help="where the statement stands: an id of syntax_contexts.tsv, or `all`")
     p.add_argument("--frame", help="where its values come from: a frame of the prelude, or `all`")
     p.set_defaults(fn=cmd_run)
+    p = sub.add_parser("cell")
+    p.add_argument("statement", help="one statement of the prelude's world, `<S>` the operand")
+    p.add_argument("--type", help="try every filler of this operand type")
+    p.add_argument("--filler", help="or: one expression to try, `<C>` its counter")
+    p.add_argument("--plain", help="with --filler: the same value with no counter (a variable)")
+    p.add_argument("--decl", help="a top-level declaration the statement needs")
+    p.add_argument("--count", choices=COUNTS, default="once")
+    p.add_argument("--runs", type=int, default=1, help="how often the operand must run")
+    p.add_argument("--id", default="adhoc")
+    p.add_argument("--family", choices=FAMILIES, default="read")
+    p.add_argument("--rule", default="-")
+    p.add_argument("--kind", choices=[k for k, _ in KINDS])
+    p.add_argument("--backend", choices=("interp", "c", "both"), default="both")
+    p.add_argument("--context", help="an id of syntax_contexts.tsv, or `all`")
+    p.add_argument("--frame", help="a frame of the prelude, or `all`")
+    p.set_defaults(fn=cmd_cell)
     p = sub.add_parser("gate")
     p.add_argument("--update", action="store_true", help="rewrite the baseline from this run")
     p.set_defaults(fn=cmd_gate)

@@ -128,7 +128,9 @@ make slot-matrix [ARGS="--filler all"]     # THE SLOT MATRIX (@PLN221): each ope
                                          #   syntax needs a row in `scripts/syntax_slots.tsv`) and
                                          #   `gate` (no cell fails outside
                                          #   `scripts/slot_matrix.baseline`; `gate --update` after
-                                         #   a fix, then read the diff)
+                                         #   a fix, then read the diff).  `cell '<statement with
+                                         #   <S>>' --type <type>` tries one shape at once and
+                                         #   prints the rows it would be
 make reason-census                       # WHICH REWRITES SAY WHY: per R- rule, the source sites
                                          #   that report why it refused a site and which site it
                                          #   admitted (a scan of `src/`, no build), and its state:

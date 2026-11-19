@@ -178,10 +178,12 @@ fix is then checked by cells that already exist.
    120 new cells and 41 lines to remove.  Still to learn: whether the baseline is the same
    on Linux.  The four contexts and two frames are not in the gate; they are a nightly
    candidate at five and a half minutes.
-2. **G2 — the ad-hoc cell.**  `slot_matrix.py cell '<statement with <S>>' --filler '<expr>'`
-   runs one shape on both backends with all four checks, and prints the table rows to add
-   when it fails.  The agent that meets a defect then adds the row at that moment.
-   *Verify:* the command on loft#2573's statement fails on the release build and passes here.
+2. **G2 — the ad-hoc cell** — **built.**  `slot_matrix.py cell '<statement with <S>>'`
+   with `--type T` (every filler of a type) or `--filler EXPR --plain EXPR` runs one shape
+   on both backends with all four checks, and prints the table rows the shape would be.
+   The agent that meets a defect then adds the row at that moment.  *Verified:*
+   `cell 'for p in <S> { s += p.k; }' --type coll` fails on the release of 2026-11-03 (the
+   operand runs five times) and passes on the branch.
 3. **G3 — calibrate the reading.**  The 23 `fits-rows` issues of [reach.tsv](reach.tsv)
    written as rows; the time walk says how many of them really fail on the build that had
    the defect.  That share is how far a judged verdict can be trusted.
