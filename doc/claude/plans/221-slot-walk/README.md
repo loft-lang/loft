@@ -15,7 +15,7 @@ tables, runs them on the interpreter and the C backend in a minute, and
 Built so far: the register with its completeness guard (A), the runner (B), depth two (D),
 the gate (F), the reach arc's two walks back over past defects (G), and of the second queue
 the anchor and the tools for debugging a failing cell.  The thirteen defects it reports are
-handed to the agent that fixes them ([found.md](found.md)).  Open: the rules for the ten
+handed to the agent that fixes them ([found.md](found.md)).  Open: the rules for the eight
 slots that cite none (H), breadth of operand type, and the rest of [queue.md](queue.md).
 On Linux the baseline holds (the gate passed in CI at 3,661 cells); the seven-test split
 and everything after it have not run there yet.
@@ -178,7 +178,7 @@ the branch that carries both fixes.
 | **E** — the cells as lockstep input | every generated cell fed to the Rust-against-loft comparison of results and debug layers | a difference in any layer on any cell | Blocked on the port's comparison harness taking generated input |
 | **F** — the gate | `tests/slot_matrix.rs`: seven tests, one a slot family, against a baseline that may only shrink; the wider axes nightly | a new failing cell on a PR (BROKEN); a baseline entry that passes again and was not removed (FIXED) | Shipped for one context and one frame; the nightly leg is open |
 | **G** — reach | the matrix walked back over past defects: `slot_matrix.py walk --old <binary>` against the release before, and the `silent-wrong` issues since it judged in [reach.tsv](reach.tsv); every axis and row it asks for | the time walk: a row added for a past issue must FAIL on the build that had the defect; the share of new issues that `fits-now` at the next release | Running — both time walks done, contexts, frames and operands that touch the statement added; [queue.md](queue.md) has what is left |
-| **H** — a rule for every slot | the formal text evaluated wherever a slot can cite no rule, or a run raises a question the text does not answer: the rule found and cited, or written | `slot_matrix.py list` names no slot without a rule; `rule_tags.py check` resolves every citation; the slot is the new rule's guard | Open — ten slots; the `??` fallback is settled and written into `(E-Coalesce)` |
+| **H** — a rule for every slot | the formal text evaluated wherever a slot can cite no rule, or a run raises a question the text does not answer: the rule found and cited, or written | `slot_matrix.py list` names no slot without a rule; `rule_tags.py check` resolves every citation; the slot is the new rule's guard | Running — eight slots left; settled so far: the `??` fallback (`(E-Coalesce)`) and the `assert` message (`(E-Assert)`) |
 
 ## Phase ordering
 

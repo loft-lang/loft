@@ -98,13 +98,13 @@ Two things that look like defects in a run and are not:
   `(E-Left)`'s prose in `formal/operational.md` said otherwise and now agrees with
   `(E-Coalesce)`, which states it; the slots `rd-coal-right-present` and
   `rd-coal-right-absent` hold it on both backends.
-- Ten slots cite no rule because none states their count; `slot_matrix.py list` names
+- Eight slots cite no rule because none states their count; `slot_matrix.py list` names
   them.
-- **An `assert`'s message is evaluated only when the assertion fails**, on both backends
-  and since the release of 2026-11-03; the release of 2026-10-01 evaluated it always.  No
-  formal rule says either, `CHANGELOG.md` states the new behaviour in passing, and
-  `GUARDS.md` still taught the old one (corrected with this entry).  A rule for the two
-  operands of `assert` is owed, and so is the answer whether the change was meant.
+- Settled (owner): an `assert`'s message is evaluated only when the assertion fails.  It
+  is `(E-Assert)` in `formal/operational.md` now, cited by the slots `ct-assert` and
+  `ct-assert-message`, and by the lowering in `src/parser/control.rs`.  The change from the
+  release of 2026-10-01, which evaluated the message always, was meant (loft#2090);
+  `GUARDS.md` still taught the old behaviour and is corrected.
 - `vi[i] = null` on a `vector<integer>` leaves `[10,null,30,40]`: the element becomes null
   and the vector keeps its length.  `(Col-Remove)` speaks of `c[key] = null` on a keyed
   collection and of `v.remove(i)` on a vector; whether a dense vector's element may be

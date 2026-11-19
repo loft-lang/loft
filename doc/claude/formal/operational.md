@@ -332,6 +332,26 @@ compute." There is **no** context-dependent "trap-suppression mode" any more —
 null whether or not it sits under `??` (@C80); `??` just decides what to do with that null.
 (This is what closes the old D-op-3.)
 
+### `assert` — the message is for the failure
+
+```
+  (E-Assert)     ⟨assert(c, m), σ⟩ → ⟨(), σ'⟩        if  ⟨c, σ⟩ → ⟨true, σ'⟩     (m is NOT evaluated)
+                 ⟨assert(c, m), σ⟩ → halt with m'      if  ⟨c, σ⟩ → ⟨false, σ'⟩
+                                                       and ⟨m, σ'⟩ → ⟨m', σ''⟩   (m is reduced only now)
+```
+
+**In words.** `assert` reduces its condition first, once.  When the condition holds, the
+message is not reduced at all: a call written in it does not run, and its effects do not
+happen.  When the condition fails, the message is reduced then, once, and the run halts
+with it.  `assert` is in this the same as `??` ((E-Coalesce)): the operand that is only
+needed on one path is evaluated only on that path.  It is therefore NOT an ordinary call
+under `(F-Args)`, whose arguments are all reduced before the body.
+
+Two consequences a test must know: a message that would itself fault stays unseen until
+the assertion fails, and a side effect written in a message cannot be relied on.  The
+condition is a truthiness position ((E-Truthy)).  The slot matrix holds both operands with
+a counted call (`ct-assert`, `ct-assert-message` in `scripts/syntax_slots.tsv`).
+
 ### `x?` — a fallback to the TYPE's default (@PLN116)
 
 ```
