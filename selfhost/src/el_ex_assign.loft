@@ -622,12 +622,13 @@ fn expression_node(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
           _ => {}
         }
       }
+      vars.cap_guard_done = false;
       ab = assignment(e, vars, at, fixed, op, target, rhs);
       // `@FR-L-CapRebind` with `@FR-O-Detach`: a whole rebind of a keyed local a live closure
       // captured — whatever its value's spelling — is preceded by the detach guard.
       if !e.first_pass && op == "=" {
         tv = match e.p.nodes[target] { SName { name: tn, member: tm } => if tm == "" { el_vars::var(vars, tn) } else { -1 }, _ => -1 };
-        cg = if tv >= 0 { cap_rebind_guard(e, vars, tv) } else { null };
+        cg = if tv >= 0 && !vars.cap_guard_done { cap_rebind_guard(e, vars, tv) } else { null };
         if cg != null {
           ab = ex(ir::NdInsert { items: [cg!, ab.code] }, ab.tp);
         }
@@ -1536,6 +1537,20 @@ fn nested_member_assign(e: el::El, vars: el_vars::Vars, op: text, target: intege
 // the closure record is live and still holds `v`'s store, `v` takes a fresh store of its own
 // (`OpInitRefSentinel` + `OpDatabase`); null for a local no closure captured.
 pub fn cap_rebind_guard(e: el::El, vars: el_vars::Vars, v: integer) -> ir::Node? {
+  aa = cap_rebind_cond(e, vars, v);
+  if aa == null {
+    return null;
+  }
+  el_ir::v_if(aa!, cap_detach(e, vars, v), ir::NdNull)
+}
+
+// The detach itself: `v` a fresh store of its own.
+pub fn cap_detach(e: el::El, vars: el_vars::Vars, v: integer) -> ir::Node {
+  ir::NdInsert { items: [el_ir::cl(e, "OpInitRefSentinel", [ir::NdVar { n: v }]), el_ir::cl(e, "OpDatabase", [ir::NdVar { n: v }, ir::NdInt { n: el_schema::keyed_type(e, el_types::base(el_vars::tp(vars, v))) }])] }
+}
+
+// The guard's test: the closure record that captured `v` is live and still holds `v`'s store.
+pub fn cap_rebind_cond(e: el::El, vars: el_vars::Vars, v: integer) -> ir::Node? {
   kcur = el_vars::tp(vars, v);
   if !keyed_kind(el_types::base(kcur)) || kcur is TyRefVar {
     return null;
@@ -1546,8 +1561,7 @@ pub fn cap_rebind_guard(e: el::El, vars: el_vars::Vars, v: integer) -> ir::Node?
       dd = el_ir::v_if(el_ir::cl(e, "OpDistinctStore", [el_ir::cl(e, "OpGetDbRef", [cw, ir::NdInt { n: cs.pos }]), ir::NdVar { n: v }]), ir::NdBoolean { b: false }, ir::NdBoolean { b: true });
       cc = el_ir::v_if(el_ir::cl(e, "OpConvBoolFromRef", [cw]), dd, ir::NdBoolean { b: false });
       bb = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [cw]), ir::NdBoolean { b: false }, cc);
-      aa = el_ir::v_if(bb, ir::NdBoolean { b: true }, ir::NdBoolean { b: false });
-      return el_ir::v_if(aa, ir::NdInsert { items: [el_ir::cl(e, "OpInitRefSentinel", [ir::NdVar { n: v }]), el_ir::cl(e, "OpDatabase", [ir::NdVar { n: v }, ir::NdInt { n: el_schema::keyed_type(e, el_types::base(kcur)) }])] }, ir::NdNull);
+      return el_ir::v_if(bb, ir::NdBoolean { b: true }, ir::NdBoolean { b: false });
     }
   }
   null
@@ -3677,7 +3691,26 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
         if self_only && pd >= 0 && ud >= 0 && el_ex_match::gives_away_its_store(e, x.code) {
           el_vars::drop_use(vars, v);
           kt = el_schema::keyed_type(e, el_types::base(kcur));
-          return ex(ir::NdInsert { items: kg + [ir::NdCall { def_nr: pd, args: [ir::NdVar { n: v }] }, el_ir::cl(e, "OpReplaceKeyed", [x.code, ir::NdVar { n: v }, ir::NdInt { n: kt + 32768 }]), ir::NdCall { def_nr: ud, args: [ir::NdVar { n: v }] }] }, ir::TyVoid);
+          // (A captured local's guard sits in the replace's destination, as for a join.)
+          sdest = ir::NdVar { n: v };
+          scond = cap_rebind_cond(e, vars, v);
+          if scond != null {
+            vars.cap_guard_done = true;
+            sdest = el_ir::v_block([el_ir::v_if(scond!, ir::NdInsert { items: [cap_detach(e, vars, v), el_ir::v_set(v, ir::NdNull)] }, ir::NdNull), ir::NdVar { n: v }], el_types::with_deps(el_types::base(kcur), [v]), "keyed rebind");
+          }
+          sitems = kg + [ir::NdCall { def_nr: pd, args: [ir::NdVar { n: v }] }, el_ir::cl(e, "OpReplaceKeyed", [x.code, sdest, ir::NdInt { n: kt + 32768 }]), ir::NdCall { def_nr: ud, args: [ir::NdVar { n: v }] }];
+          // (The store the closure still holds was protected under the local before the detach:
+          // released from the protection through the record.)
+          if scond != null {
+            for cs in vars.cap_slots {
+              if cs.var == v {
+                cw = ir::NdVar { n: cs.clos };
+                live = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [cw]), ir::NdBoolean { b: false }, el_ir::cl(e, "OpConvBoolFromRef", [cw]));
+                sitems += [el_ir::v_if(live, ir::NdCall { def_nr: ud, args: [el_ir::cl(e, "OpGetDbRef", [cw, ir::NdInt { n: cs.pos }])] }, ir::NdNull)];
+              }
+            }
+          }
+          return ex(ir::NdInsert { items: sitems }, ir::TyVoid);
         }
         if plain_args && el_ex_match::gives_away_its_store(e, x.code) && len(el_types::deps(x.tp)) == 0 {
           el_vars::drop_use(vars, v);
@@ -3713,6 +3746,14 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
           // (The local holds its own copy: it borrows nothing of the source.)
           el_vars::set_var_type(vars, v, el_types::with_deps(el_vars::tp(vars, v), []));
           kt = el_schema::keyed_type(e, el_types::base(kcur));
+          // A captured local's guard sits in the replace's destination (`#keyed rebind`), its
+          // detach nulling the local there; the statement takes no guard of its own.
+          kcond = cap_rebind_cond(e, vars, v);
+          if kcond != null {
+            vars.cap_guard_done = true;
+            krb = el_ir::v_block([el_ir::v_if(kcond!, ir::NdInsert { items: [cap_detach(e, vars, v), el_ir::v_set(v, ir::NdNull)] }, ir::NdNull), ir::NdVar { n: v }], el_types::with_deps(el_types::base(kcur), [v]), "keyed rebind");
+            return ex(el_ir::cl(e, "OpReplaceKeyed", [x.code, krb, ir::NdInt { n: kt }]), ir::TyVoid);
+          }
           return ex(ir::NdInsert { items: kg + [el_ir::v_set(v, ir::NdNull), el_ir::cl(e, "OpReplaceKeyed", [x.code, ir::NdVar { n: v }, ir::NdInt { n: kt }])] }, ir::TyVoid);
         }
         el::refuse(e, "a keyed local bound from something other than a local");

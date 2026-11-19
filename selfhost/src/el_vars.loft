@@ -312,6 +312,8 @@ pub struct Vars {
   pub item_into: integer = -1,
   // The keyed locals a closure of this pass captured (`@FR-L-CapRebind`'s detach guard).
   pub cap_slots: vector<CapSlot>,
+  // The bind being read placed its detach guard itself (a keyed join's `#keyed rebind`).
+  pub cap_guard_done: boolean = false,
   // Set while `rename_ret_buffer` judges a pass-1 match tail's arms (`arms_rename_candidate`).
   pub match_tail: boolean = false,
   // `mark_pass2_rebuilt`: the locals a second-pass call bind already re-derived the borrows of.
