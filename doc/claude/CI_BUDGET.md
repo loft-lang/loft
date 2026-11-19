@@ -650,7 +650,8 @@ does not belong on a PR, however cheap it is.**
 generated cells on the interpreter and a sample of about 900 on the C backend: 15 s of
 wall time on a developer machine, the families side by side.  The C backend compiles each
 cell, a tenth of a second apiece and 96% of a full run, so the full matrix on both
-(`slot_matrix.py gate --full`, about 100 s here) is not what the tests run.  On a CI runner it is several times slower:
+(`slot_matrix.py gate --full`, about 100 s here) is not what the tests run.  On a CI
+runner the seven tests take between 16 s and 68 s each.  On a CI runner it is several times slower:
 the full matrix as ONE test of 3,661 cells took 421 s and tripped
 `scripts/test_duration_gate.py`, and as seven tests beside one another four of them ran
 into the 600 s limit — which is why the tests sample the C backend.  It is in the per-PR test legs as any test binary.
