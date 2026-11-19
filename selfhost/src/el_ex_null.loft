@@ -2598,8 +2598,17 @@ pub fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -
       return ex(ir::NdReturn { inner: x }, ir::TyNever);
     }
   }
-  if w < 0 && e.first_pass && unrenamed && !el_expressions::buffer_bound(e) && branch_value(x) && owned_arms(e, vars, x) && first_arm_ref(vars, x) >= 0 {
+  // (A slice `match`'s arms answer elements they bound — views of the subject — so the buffer is
+  // not renamed onto them: each is copied in, `materialize_match_value` below.)
+  vmatch = match el_ir::unspan(x) { NdBlock { block: vmb } => vmb[0].name == "vector_match", _ => false };
+  if w < 0 && e.first_pass && unrenamed && !el_expressions::buffer_bound(e) && branch_value(x) && owned_arms(e, vars, x) && first_arm_ref(vars, x) >= 0 && !vmatch {
     rename_onto(e, vars, rb, first_arm_ref(vars, x));
+  }
+  if vmatch && !e.first_pass && rb >= 0 {
+    mvx = el_expressions::materialize_match_value(e, vars, el_ir::unspan(x), rb, result);
+    if mvx != null {
+      return ex(ir::NdReturn { inner: mvx! }, ir::TyNever);
+    }
   }
   a = if w >= 0 { attr_nr(el::def(e, d), el_vars::name_of(vars, w)) } else { -1 };
   // `MergeAttr` of a visible parameter: handed back as it is, the result borrowing it.  A tail
