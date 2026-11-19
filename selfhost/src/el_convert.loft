@@ -329,7 +329,10 @@ pub struct DeclaredRange {
 pub fn declared_range(t: ir::TypeT, nullable: boolean, aliases: boolean = false) -> DeclaredRange {
   match el_types::base(t) {
     TyInteger { spec } => {
-      if full_integer(spec) || (spec.forced_size > 0 && !nullable && !aliases) {
+      // (Rust asks `is_wide_template || is_signed32_template` by range alone: an `i32?` slot,
+      // its width forced, declares no range either — `self.cur_def = null` stores a bare null.)
+      template = spec.min == -2147483647 && (spec.max == 2147483647 || spec.max == 4294967295);
+      if full_integer(spec) || (template && !aliases) || (spec.forced_size > 0 && !nullable && !aliases) {
         return DeclaredRange { some: false, lo: 0, hi: 0, dflt: 0 };
       }
       width = spec.max - spec.min + 1;

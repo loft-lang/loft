@@ -1224,7 +1224,10 @@ pub fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
     TyVector { inner: i } => i,
     _ => if pk >= 0 { ir::TyReference { n: pk, dep: [] } } else { ir::TyUnknown { n: 0 } }
   };
-  if (fnr < 0 && !e.first_pass) || el_types::is_unknown(inner) {
+  // (An element type named by a forward reference — `default: vector<Value>` above `enum
+  // Value` — is still the stub's on the first pass; it settles at the file's end.)
+  forward_elem = e.first_pass && el_types::base(p.tp) is TyVector && el_types::is_unknown(inner);
+  if !forward_elem && ((fnr < 0 && !e.first_pass) || el_types::is_unknown(inner)) {
     el::refuse(e, "an append to a collection of this type: {type_kind(p.tp)}");
     return ex(ir::NdNull, ir::TyVoid);
   }
@@ -1254,6 +1257,25 @@ pub fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
   // `child_allocs` counts there.
   if e.first_pass && elm >= 0 && local {
     vars.allocs += [rec];
+  }
+  if forward_elem {
+    for it in items {
+      fsd = struct_literal_def(e, it);
+      fvl = el_ex_pattern::variant_literal(e, it);
+      match e.p.nodes[it] {
+        SStructLit { name: fln, fields: flf } => {
+          if fvl && el::def_nr(e, fln) >= 0 {
+            el_ex_pattern::first_pass_fields(e, vars, el::def_nr(e, fln), flf);
+          } else if fsd >= 0 {
+            el_ex_pattern::literal_field_exprs(e, vars, it);
+          } else {
+            el_ex_assign::expression(e, vars, it);
+          }
+        },
+        _ => { el_ex_assign::expression(e, vars, it); }
+      }
+    }
+    return ex(ir::NdNull, ir::TyVoid);
   }
   for it in items {
     if e.p.nodes[it] is SRepeat {
@@ -1714,11 +1736,18 @@ pub fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: 
       el::refuse(e, "an append to a nullable vector local in a loop, or of an element with no row");
       return ex(ir::NdNull, ir::TyVoid);
     }
+    // (A local that names no store yet takes `vector_db`'s guarded mint, tested by
+    // `OpVectorIsNull`, its backing never freed — the local owns the store on both paths; one
+    // that names a store already takes `absent_append_mint`'s `OpRefIsNull`.)
+    fresh_local = len(el_types::deps(el_vars::tp(vars, v))) == 0;
     odb = el_vars::work_vec_db(vars, ir::TyReference { n: orows!.main_def, dep: [] });
     el_vars::depend(vars, v, odb);
     // (`mark_inline_ref`: the mint is conditional, so the backing is nulled as an inline ref.)
     el_vars::mark_inline(vars, odb);
-    guard = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [ir::NdVar { n: v }]), ir::NdInsert { items: [
+    if fresh_local {
+      vars.vars[odb].skip_free = true;
+    }
+    guard = el_ir::v_if(el_ir::cl(e, if fresh_local { "OpVectorIsNull" } else { "OpRefIsNull" }, [ir::NdVar { n: v }]), ir::NdInsert { items: [
       el_ir::cl(e, "OpDatabase", [ir::NdVar { n: odb }, ir::NdInt { n: orows!.main_known }]),
       el_ir::v_set(v, el_ir::cl(e, "OpGetField", [ir::NdVar { n: odb }, ir::NdInt { n: 0 }, ir::NdInt { n: orows!.vec_known }])),
       el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: odb }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }])
