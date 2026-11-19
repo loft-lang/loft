@@ -1457,9 +1457,9 @@ pub fn keyed_for(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex) -> Ex {
   scratch = -1;
   if ct is TyHash || ct is TyRadix || ct is TyTrie {
     scratch = el_vars::create_unique(vars, "hash_scratch", el_types::with_deps(ir::TyReference { n: el_d, dep: [] }, el_types::deps(ct)));
-    // (A source that is no local — `for c in mk()` — is walked through the snapshot alone: the
-    // record borrows the scratch, `keyed_snapshot`'s `depending`.)
-    if el_ex_place::any_user_call(e, [x.code]) {
+    // (A source whose type borrows nothing — `for c in mk()` — is walked through the snapshot
+    // alone: the record borrows the scratch, `keyed_snapshot`'s `dep.is_empty()` arm.)
+    if len(el_types::deps(ct)) == 0 && !(el_ir::unspan(x.code) is NdVar) {
       elem = el_types::with_deps(elem, [scratch]);
     }
   }
