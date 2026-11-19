@@ -9,10 +9,10 @@ Tracker: [@PLN221](https://github.com/loft-lang/plans/issues/221).
 
 ## Status
 
-Phase A is built: the register, its completeness guard and a first runner
-(`scripts/slot_matrix.py`).  Phases B to F are open.  What the register measured, and what
-the first whole run found, is in § Phase A as built; the pilot the design rests on is in
-§ The pilot.
+Phases A and B are built: the register with its completeness guard, and the runner that
+asserts count, order, value and leak on both backends (`scripts/slot_matrix.py`).  Phases C
+to F are open, and C starts from ten causes the matrix reports today (§ Phase B as built).
+The pilot the design rests on is in § The pilot.
 
 ## Goal
 
@@ -108,7 +108,7 @@ ten slots gave 114 cells with four fillers, about eleven a slot.
 
 | Depth | What it crosses | Cells | Interpreter run |
 |---|---|---|---|
-| One | slot × filler × kind | 1,286 measured (1,300–1,600 estimated) | 133 s measured, a process per cell |
+| One | slot × filler × kind | 1,286 measured (1,300–1,600 estimated); 2,868 with twins and order cells | 3 s measured, batched |
 | Two | a filler inside a filler | 8,000–10,000 | a few minutes |
 | Three | one more level | near 60,000 | not planned |
 
@@ -159,8 +159,53 @@ branch at `6ec7ddf15`:
    `?`).  The same on `--native-c` and on the release build of 2026-11-18.
    `(E-Asgn-Compound)` says the place is addressed exactly once.
 
-The runner compares run counts only.  The twin, the order trace, the leak channel and the
-batched C run are phase B.
+## Phase B as built
+
+The cells of one collection kind are the test functions of one generated program, run by
+`loft --tests` with `LOFT_LEAK_CHECK=1`; a refused cell is taken out by the line its error
+names and the program is run again, and a cell that takes the program down is found by
+halving.  That makes the whole matrix a handful of processes a backend.
+
+| Run | Cells | Time |
+|---|---|---|
+| every slot with its plain variable, interpreter | 158 | under a second |
+| the whole matrix, interpreter | 2,868 with twins and order cells | 3 s |
+| the whole matrix, interpreter and `--native-c` | the same | 39 s |
+
+Of the 2,868 cells 2,746 pass, 61 are refused and 61 fail, 333 of them check order.
+**Falsified:** against the release build of 2026-11-18, which has loft#2573, `run --slot
+it-for --filler all` fails 8 of 36 cells; on the branch it fails none.
+
+**The ten causes behind the 61 failing cells**, on the branch at `6ec7ddf15`, each
+reproduced in a program of its own.  Both backends unless a row says otherwise.
+
+| # | Slot | What happens | Channel |
+|---|---|---|---|
+| 1 | `it-comp-source` | a comprehension over a `sorted` or `index` source runs the source once per step | count |
+| 2 | `wr-path-coll` | `h.ws[e].items = […]` addresses the place three times, with every form of `e` | count |
+| 3 | the compound writes and appends | a block of one statement and a value as the index runs twice (`vi[{ c.calls += 1; 1 }] += 3`); a block of two statements runs once | count |
+| 4 | `wr-elem-index` and the compound and removal forms | a write to an element whose index is a function-value call is lost: after `vi[fnv(at(c, 0))] = 3` the vector is unchanged | value |
+| 5 | `wr-elem-value` | in `vi[i] = box(c, h).n` the right side runs before the index | order |
+| 6 | `rd-text-slice` | in `x[h.ones[e]..]` the index runs before the text it indexes | order |
+| 7 | `it-slice-source` | `for n in held(c, h).v[i..j]` frees a store twice | leak |
+| 8 | `rd-coal-coll-absent` | `for p in h.ws[9].items ?? mk(c)` leaves a store behind, for the three keyed kinds | leak |
+| 9 | `ct-yield` | `yield box(c, h).n` in a generator ends the interpreter with SIGSEGV; the C backend answers right | crash, interpreter only |
+| 10 | `ct-parallel` | an arm that calls a function writing a record of the enclosing scope: the interpreter's worker panics or the process takes SIGBUS, the C backend runs it and the write lands.  The same write spelled in the arm itself is refused at compile time | crash, and the backends differ |
+
+Cause 4 is a wrong answer with nothing said.  Causes 5 and 6 are `(E-Asgn)` and `(E-Left)`
+not held for one form of operand each.  None of the ten is filed or fixed; they are phase
+C's first work, in this order of severity: 4, 10, 9, 7, 8, then the counts and the orders.
+
+**What the first runs taught about the tables.**
+
+- A filler must be a primary expression or stand in parentheses.  `tx(c) + ""` in a slot
+  followed by `[i]` parsed as another statement than its twin and read as a defect.
+- The form of a filler matters below what its name says: a block of one statement is
+  lowered differently from a block of two, and only one of them shows cause 3.  Depth two
+  will multiply such differences; the fillers table is where they are written down.
+- A receiver slot cannot take its expected value from the plain variable, because a call
+  that returns `h.ws[0]` writes somewhere else than `r`.  The bound-first twin is the
+  oracle wherever the operand runs exactly once.
 
 ## What a cell asserts
 
@@ -179,40 +224,17 @@ all fails the run as vacuous.
 
 ## The pilot
 
-[`pilot/gen.py`](pilot/gen.py) writes the cells and [`pilot/run.sh`](pilot/run.sh) runs
-them; counts and hand-written expected values only, no twin, no trace, no leak channel.
-
-| Build | Cells | Failing | Distinct causes |
-|---|---|---|---|
-| `main` at the release build of 2026-11-18 | 114 | 30 | 4 |
-| the branch carrying the fixes for loft#2573 and loft#2571 (`6ec7ddf15`) | 114 | 12 | 2, and 1 question |
-
-- **It found the known defects unaided.**  loft#2573 (24 cells: every loop form over
-  `sorted` and `index`, with every filler) and loft#2571 (the place of a collection append
-  run twice per item).
-- **It found two more that the fixes did not reach**, the same on the interpreter and
-  `--native-c`:
-  - a comprehension over a `sorted` or `index` source still runs the source once per step
-    (`[for p in mk(c) { p.k }]`: five runs for three elements) — loft#2573's fix covered the
-    `for` statement and not the comprehension;
-  - a collection assigned to a field at a computed place addresses the place three times
-    (`h.ws[at(c, 1)].items = [P { … }]`).
-- **It raised a question the rules must answer.**  A compound write through a record a
-  function returned (`box(c, h).n += 5`, where `box` returns `h.ws[0]`) leaves `h.ws[0]`
-  unchanged, with no diagnostic.  Whether that is a write to a copy that should be refused,
-  or a lost write, is for `binding.md` to say.
-- **It showed two rule sentences that disagree.**  `(E-Left)`'s prose says `??` "evaluates
-  both operands"; `(E-Coalesce)` and both backends evaluate the right side only when the
-  left is null.
-
-These are recorded here and not yet filed or fixed; phase C takes them first.
+The probe the design was written on — 114 hand-listed cells over ten slots, counts only —
+is recorded in [`pilot/README.md`](pilot/README.md) with its two scripts.  It reported
+loft#2573 and loft#2571 on `main` without being told of them, and causes 1 and 2 above on
+the branch that carries both fixes.
 
 ## Sub-arcs
 
 | Item | What it builds | Verify — what goes red if it is done wrong | Status |
 |---|---|---|---|
 | **A** — the slot register | `syntax_slots.tsv`, `syntax_fillers.tsv`, `syntax_outside.tsv`, each slot citing the rule that states its count | `doc_hygiene`'s `every_lexeme_has_an_operand_slot_or_a_reason`: every lexeme the lexer and the parser know is in a slot or has a reason; `selftest` removes a row, adds a lexeme and misspells a rule, and each must be reported | Shipped — the eleven rule-less counts and the twelve unreached operands are carried into C |
-| **B** — generator and runner | `scripts/slot_matrix.py` (`gen`, `run --backend both`, `--slot`, `--family`), the twin, the trace, the leak channel, the batched C run; `make slot-matrix` | run against a build that has loft#2573: it must report those cells.  The receipt is recorded as the tool's `@falsified-at` | Open |
+| **B** — generator and runner | `scripts/slot_matrix.py run --backend both`, `--slot`, `--kind`: the twin, the order trace, the leak channel, the batched run on both backends; `make slot-matrix` | run against a build that has loft#2573: it reports those cells, and none on the fixed build.  Recorded as the tool's `@falsified-at` | Shipped |
 | **C** — the walk, one family per step | each failing cause fixed at the lowering that copies the operand, one named suite cell per cause under its rule, the refused list read | the family's cells, both backends; the named cell fails on the build before the fix (`make falsify`) | Open |
 | **D** — depth two | fillers nested once | the same run at depth two; a cause found here that depth one missed is recorded with the pair that exposed it | Open |
 | **E** — the cells as lockstep input | every generated cell fed to the Rust-against-loft comparison of results and debug layers | a difference in any layer on any cell | Blocked on the port's comparison harness taking generated input |
