@@ -155,3 +155,43 @@ cn-format-text	construct	F-Interp	once	1	text	o = "<{ <S> }>";
 cn-format-spec	construct	F-Spec	once	1	int	o = "{ <S>:4}";
 cn-format-coll	construct	F-Render	once	1	coll	o = "{ <S> }";
 cn-format-rec	construct	F-Render	once	1	rec	o = "{ <S> }";
+fl-add	operator	E-Left	once	1	float	sf = <S> + fl2;
+fl-mul	operator	E-Left	once	1	float	sf = fl2 * <S>;
+fl-sub	operator	E-Left	once	1	float	sf = fl2 - <S>;
+fl-div	operator	E-Left	once	1	float	sf = <S> / fl;
+fl-lt	operator	E-Left	once	1	float	if <S> < fl2 { s = 1; } else { s = 2; }
+fl-ge	operator	E-Left	once	1	float	if <S> >= fl2 { s = 1; } else { s = 2; }
+fl-eq	operator	E-Eq	once	1	float	if <S> == fl { s = 1; } else { s = 2; }
+fl-ne	operator	E-Eq	once	1	float	if <S> != fl { s = 1; } else { s = 2; }
+fl-negate	operator	E-Op	once	1	float	sf = -<S>;
+fl-as-single	operator	N-Cast	once	1	float	ss = <S> as single;
+fl-field	write	E-Asgn	first	1	float	nr.fl = <S>;
+fl-field-add	write	E-Asgn-Compound	once	1	float	nr.fl += <S>;
+fl-elem	write	E-Asgn	first	1	float	vf[i] = <S>;
+fl-push	write	Col-Insert	first	1	float	vf += [<S>];
+fl-elem-index	read	N-Index	once	1	int	sf = vf[<S>];
+fl-format	construct	F-Interp	once	1	float	o = "{ <S> }";
+sg-add	operator	E-Left	once	1	single	ss = <S> + sg;
+sg-lt	operator	E-Left	once	1	single	if <S> < sg { s = 1; } else { s = 2; }
+sg-eq	operator	E-Eq	once	1	single	if <S> == sg { s = 1; } else { s = 2; }
+sg-as-float	operator	N-Cast	once	1	single	sf = <S> as float;
+sg-field	write	E-Asgn	first	1	single	nr.sg = <S>;
+sg-format	construct	F-Interp	once	1	single	o = "{ <S> }";
+ch-as-int	operator	N-Cast	once	1	char	s = <S> as integer;
+ch-eq	operator	E-Eq	once	1	char	if <S> == cx { s = 1; } else { s = 2; }
+ch-field	write	E-Asgn	first	1	char	nr.ch = <S>;
+ch-format	construct	F-Interp	once	1	char	o = "{ <S> }";
+by-field	write	E-Asgn	first	1	int	nr.by = <S> & 255;
+by-add	write	E-Asgn-Compound	once	1	int	nr.by += <S>;
+by-read	read	E-Left	once	1	int	s = nr.by + <S>;
+sh-field	write	E-Asgn	first	1	int	nr.sh = <S> & 32767;
+i4-field	write	E-Asgn	first	1	int	nr.i4 = <S> & 2147483647;
+i4-add	write	E-Asgn-Compound	once	1	int	nr.i4 += <S>;
+bo-field	write	E-Asgn	first	1	bool	nr.on = <S>;
+bo-elem	write	E-Asgn	first	1	bool	vbo[i] = <S>;
+bo-push	write	Col-Insert	first	1	bool	vbo += [<S>];
+en-field	write	E-Asgn	first	1	enum	nr.en = <S>;
+en-elem	write	E-Asgn	first	1	enum	vcol[i] = <S>;
+en-push	write	Col-Insert	first	1	enum	vcol += [<S>];
+en-eq	operator	E-Eq	once	1	enum	if <S> == en { s = 1; } else { s = 2; }
+en-ne	operator	E-Eq	once	1	enum	if <S> != en { s = 1; } else { s = 2; }

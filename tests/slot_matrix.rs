@@ -16,8 +16,11 @@
 //! operand run twice, reordered two operands, lost a write or leaked; and `FIXED` — a
 //! baseline line whose cell passes again, which wants only `gate --update` beside the fix.
 //!
-//! Unix only: the cells run through `loft --tests` with the C backend, and the runner reads
-//! that output's form.  Skipped (not failed) where `python3` is unavailable.
+//! No platform gate: the script runs wherever `python3` and a C compiler do, and reads only
+//! what `loft --tests` prints.  Skipped (not failed) where `python3` is unavailable.
+//!
+//! Seven tests and not one for a second reason: on a CI runner the whole matrix as ONE test
+//! took 421 s, past half the per-test limit (`scripts/test_duration_gate.py`).
 //!
 //! @falsified-at: hand-measured — with `LOFT` naming the release build of 2026-11-03
 //! (`v2026.11.0`) `gate --family iteration` exits 1 with a `BROKEN` block (the `for` source
@@ -28,7 +31,6 @@
 //!   WITNESS: `NEW it-for.coll-call.sorted [interp] (count): the operand ran 5 time(s)`.
 //!   HOLDS: `slot_matrix.py check` and `selftest` pass on both builds.
 
-#[cfg(unix)]
 fn gate(family: &str) {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let out = match loft::platform::process::harness_command("python3")
@@ -57,7 +59,6 @@ fn gate(family: &str) {
 macro_rules! family_gates {
     ($($name:ident => $family:literal),* $(,)?) => {
         $(
-            #[cfg(unix)]
             #[test]
             fn $name() {
                 gate($family);

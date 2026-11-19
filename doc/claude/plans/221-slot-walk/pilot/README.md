@@ -6,10 +6,9 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 # 221 — The slot walk: the pilot
 
 The record of the probe [the plan](../README.md) was designed on.  `scripts/slot_matrix.py`
-has replaced it; the two scripts stay as the smallest form of the idea.
+has replaced its two scripts, which are in this file's history and no longer in the tree.
 
-[`gen.py`](gen.py) writes the cells and [`run.sh`](run.sh) runs
-them; counts and hand-written expected values only, no twin, no trace, no leak channel.
+A generator script wrote the cells and a shell loop ran them; counts and hand-written expected values only, no twin, no trace, no leak channel.
 
 | Build | Cells | Failing | Distinct causes |
 |---|---|---|---|

@@ -105,3 +105,14 @@ int-writes-elem	int	poke(<C>, vi)	first
 int-writes-length	int	grow(<C>, vi)	first
 int-writes-field	int	renum(<C>, r)	first
 int-writes-text	int	retext(<C>, r)	first
+float-elem	float	(vf[at(<C>, 0)] ?? 0.0)
+float-if	float	(if yes(<C>, true) { 1.5 } else { 2.5 })
+single-var	single	sg
+single-call	single	sgl(<C>)
+single-cast	single	(flo(<C>) as single)
+char-var	char	cx
+char-call	char	chr1(<C>)
+char-index	char	x[at(<C>, 1)]
+int-byte	int	nbox(<C>, nr).one
+int-short	int	nbox(<C>, nr).one16
+int-int4	int	nbox(<C>, nr).one4
