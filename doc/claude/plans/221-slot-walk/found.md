@@ -6,7 +6,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 # 221 — The slot walk: the defects the matrix reports
 
 The hand-off list for whoever fixes them.  Each row is a fold of failing cells of
-`scripts/slot_matrix.py` on the branch as it stood late on 2026-11-19 (175 slots, 96 fillers); the cells themselves are the lines of
+`scripts/slot_matrix.py` on the branch as it stood late on 2026-11-19 (191 slots, 96 fillers, 6,061 cells); the cells themselves are the lines of
 `scripts/slot_matrix.baseline`.  This file is the record of what was found on 2026-11-19;
 the baseline is what holds today, and § What the later axes added says what changed in this
 list after its first writing.
@@ -79,6 +79,11 @@ of locals, fillers inside fillers, an anchor per slot, and forty slots for `floa
 - **Row 8 is new**: it shows only with a branch around the statement.
 - **Rows 12 and 13 are wider**: any element or field read as the operand, any element type.
 - **Row 4 depends on the frame**: a wrong value with locals, a double free with parameters.
+- **Rows 10 and 11 hold for the keyed kinds too**: with `sorted`, `index` and `hash` as the
+  collection, the place of a collection assignment is still addressed three times, and a
+  one-statement block as the index of an append through a path still runs twice.  The
+  appends themselves, the keyed lookup by key and the replace of a record whose key is
+  already present are right for every form of operand.
 - **Nothing else.**  The views frame, the anchor (174 hand-computed expectations, all
   held by both backends) and the forty slots of other operand types found no cause that is
   not in the rows above.  Against the release of 2026-10-01 the walk shows row 12 as the
@@ -105,6 +110,9 @@ Two things that look like defects in a run and are not:
   `ct-assert-message`, and by the lowering in `src/parser/control.rs`.  The change from the
   release of 2026-10-01, which evaluated the message always, was meant (loft#2090);
   `GUARDS.md` still taught the old behaviour and is corrected.
+- **`map`, `filter` and `reduce` refuse a slice as their source** (`map(mkv(c)[0..], inc1)`:
+  "first argument must be a vector"), while `LOFT_DATA.md` says a slice is a vector wherever
+  a vector is expected.  Either the refusal is lifted or that sentence gains its exception.
 - `vi[i] = null` on a `vector<integer>` leaves `[10,null,30,40]`: the element becomes null
   and the vector keeps its length.  `(Col-Remove)` speaks of `c[key] = null` on a keyed
   collection and of `v.remove(i)` on a vector; whether a dense vector's element may be

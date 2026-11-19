@@ -646,7 +646,7 @@ does not belong on a PR, however cheap it is.**
 
 ## The slot matrix's runs
 
-`tests/slot_matrix.rs` (@PLN221) is seven tests, one a slot family, that together run 4,772
+`tests/slot_matrix.rs` (@PLN221) is seven tests, one a slot family, that together run 6,061
 generated cells on the interpreter and the C backend: about a minute of wall time on a
 developer machine, the families side by side.  On a CI runner it is several times slower:
 as ONE test of 3,661 cells it took 421 s and tripped `scripts/test_duration_gate.py`, which
@@ -655,7 +655,7 @@ The wider runs are not, and are the night's when they are scheduled:
 
 | Run | Cells | Both backends |
 |---|---|---|
-| the gate | 4,772 | 59 s |
+| the gate | 6,061 | about 75 s |
 | `--context all --frame all` | about 23,000 | 5 min 33 s |
 | `--depth 2` | about 15,000 | 3 min 9 s |
 

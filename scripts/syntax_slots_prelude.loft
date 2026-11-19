@@ -62,6 +62,8 @@ fn retext(c: Ctr, w: W) -> integer { bump(c); w.t = "q"; 1 }
 fn inc1(a: integer) -> integer { a + 1 }
 fn pickfn(c: Ctr) -> fn(integer) -> integer { bump(c); inc1 }
 fn add2(a: integer, b: integer) -> integer { a * 10 + b }
+fn addp(a: integer, b: integer) -> integer { a + b }
+fn big(a: integer) -> boolean { a > 15 }
 fn dflt(a: integer, b: integer = 5) -> integer { a * 10 + b }
 fn total(self: W) -> integer { self.n + len(self.items) }
 fn hold() -> Hold {

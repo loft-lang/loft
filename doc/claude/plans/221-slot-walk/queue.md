@@ -138,7 +138,13 @@ weaknesses in what a green run means; the rest is breadth.
     field expression, `v.remove(i)`.  `coverage ops` is G9's probe as a command: the IR
     operations the corpus makes the compiler emit and no cell does, the corpus read once a
     build.  Its first use on arc H found that an `assert`'s message is evaluated only when
-    the assertion fails, which `GUARDS.md` taught the other way round.
+    the assertion fails, which `GUARDS.md` taught the other way round.  Sixteen of the
+    missing slots are added since (truthiness, the three combinators, an open-ended range,
+    destructuring, two `match` patterns, `v.remove(i)`, text and boolean comparison), and
+    eleven slots whose statement reads a collection of the cell's kind now run in every
+    kind, with an anchor a kind: 191 slots and 6,061 cells in the gate.  No new cause; the
+    gate's report gained a block for cells the compiler newly refuses, which is how the
+    combinators' refusal of a slice came up.
 18. **K6 — two counted operands** in one statement, with a twin that binds them in the order
     the rules give for that construct.  The costliest step (it is G5's open half).
 19. **K7 — the twelve unreached lexemes**: a file in the prelude, and a cell kind that
