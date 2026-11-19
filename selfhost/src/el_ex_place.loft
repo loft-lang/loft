@@ -810,19 +810,39 @@ pub fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: i
       return ex(ir::NdNull, ir::TyVoid);
     }
   }
-  // A vector LITERAL as a field's value makes Rust build the record apart and copy it in, its
-  // first pass leaving an unused `_elm_N` declared (1a-parser.md § Rust accidents): refused by
-  // name.
+  // A vector LITERAL as a field's value: `(R-InPlaceLiteral)` declines a record owning a
+  // collection field, so Rust builds the record apart (`__ref_p2_N`: the vector field emptied,
+  // one push per item, then the other fields) and copies it into the place (`OpCopyRecord`), its
+  // first pass leaving the literal's unused `_elm_N` declared (1a-parser.md § Rust accidents).
+  apart = false;
   for fi in fields {
     match e.p.nodes[fi] {
       SFieldInit { e: fe } => {
         if fe != null && e.p.nodes[fe!] is SVecLit {
-          el::refuse(e, "a record literal written into a field or an element: a vector literal field");
-          return ex(ir::NdNull, ir::TyVoid);
+          apart = true;
         }
       },
       _ => {}
     }
+  }
+  if apart {
+    if e.first_pass {
+      el_ex_pattern::first_pass_fields(e, vars, rd, fields);
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    // Rust's head, mirrored: the field form declares the vector literal's first-pass `_elm_N`
+    // (unused); the element form mints a `__ref_p2_N` before the one it builds in (unused).
+    if calls(e, place, "OpGetVector") {
+      el_vars::work_ref_p2(vars, ir::TyReference { n: rd, dep: [] });
+    } else {
+      fe = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [] });
+      el_vars::register_work_ref(vars, fe);
+    }
+    built = el_ex_object::object_fresh(e, vars, rd, fields, ir::TyReference { n: rd, dep: [] });
+    if el_types::is_unknown(built.tp) {
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    return ex(el_ir::cl(e, "OpCopyRecord", [built.code, place, ir::NdInt { n: el::def(e, rd).known_type }]), ir::TyVoid);
   }
   root = place_root(e, place);
   element = calls(e, place, "OpGetVector");
@@ -1761,12 +1781,18 @@ pub fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: 
   }
   // (A link to a keyed collection appends through the link as the collection would.)
   linked_keyed = match vt { TyRefVar { inner: lki } => keyed_kind(lki) && !(lki is TyOptional), _ => false };
-  if (linked_keyed || keyed_kind(vt) && !(vt is TyOptional)) && bin == "+" && (e.p.nodes[rhs] is SVecLit || e.p.nodes[rhs] is SStructLit) {
+  // (A NULLABLE keyed local takes the guarded mint first, `OpVectorIsNull`, as its bind does.)
+  opt_keyed_local = match vt { TyOptional { inner: oki } => keyed_kind(oki), _ => false } && !vars.vars[v].argument;
+  if (linked_keyed || keyed_kind(vt) && !(vt is TyOptional) || opt_keyed_local) && bin == "+" && (e.p.nodes[rhs] is SVecLit || e.p.nodes[rhs] is SStructLit) {
     ops = el_ex_vector::keyed_items(e, vars, v, rhs);
     if ops == null {
       return ex(ir::NdNull, ir::TyVoid);
     }
     el_vars::drop_use(vars, v);
+    if opt_keyed_local && !e.first_pass {
+      kdb = el_schema::keyed_type(e, el_types::without_deps(el_types::base(vt)));
+      return ex(ir::NdInsert { items: [el_ir::v_if(el_ir::cl(e, "OpVectorIsNull", [ir::NdVar { n: v }]), el_ir::cl(e, "OpDatabase", [ir::NdVar { n: v }, ir::NdInt { n: kdb }]), ir::NdNull)] + ops! }, ir::TyVoid);
+    }
     return ex(ir::NdInsert { items: ops! }, ir::TyVoid);
   }
   // A slice of a plain scalar vector appended to a vector local is that range appended
@@ -2059,13 +2085,22 @@ pub fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text,
       TyVector { inner } => return el_ex_pattern::vector_into(e, vars, v, rhs!, inner, at_close: declared! is TyOptional, typed: true),
       _ => {}
     }
-    if keyed_kind(declared!) && !(declared! is TyOptional) {
+    // A NULLABLE keyed local (`c: hash<H[k]>? = [H { … }]`) keeps its declared type, no deps:
+    // its store is minted where it holds none (`build_vector_list`'s guarded mint,
+    // `OpVectorIsNull`), then each item is a record made through it.
+    opt_keyed = match declared! { TyOptional { inner: oki } => keyed_kind(oki), _ => false };
+    if keyed_kind(declared!) && !(declared! is TyOptional) || opt_keyed && !vars.vars[v].argument && match e.p.nodes[rhs!] { SVecLit { items: oits } => len(oits) > 0, _ => false } {
       // A keyed local starts with no store; each item is a record made through it.
       ops = el_ex_vector::keyed_items(e, vars, v, rhs!);
       if ops == null {
         return ex(ir::NdNull, ir::TyVoid);
       }
       el_vars::drop_use(vars, v);
+      if opt_keyed && !e.first_pass {
+        kdb = el_schema::keyed_type(e, el_types::without_deps(el_types::base(declared!)));
+        mint = el_ir::v_if(el_ir::cl(e, "OpVectorIsNull", [ir::NdVar { n: v }]), el_ir::cl(e, "OpDatabase", [ir::NdVar { n: v }, ir::NdInt { n: kdb }]), ir::NdNull);
+        return ex(ir::NdInsert { items: [el_ir::v_set(v, ir::NdNull), mint] + ops! }, ir::TyVoid);
+      }
       // An empty literal is the bind alone, a statement of its own (no spliced insert).
       if len(ops!) == 0 {
         return ex(el_ir::v_set(v, ir::NdNull), ir::TyVoid);

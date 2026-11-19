@@ -1655,11 +1655,14 @@ pub fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::N
     vars.vars[buf].caller_hidden_buf = true;
     args = list + [ir::NdVar { n: buf }];
     ds: vector<integer> = [];
+    // (A callee the port refused keeps the first pass's borrows Rust's second pass prunes:
+    // its call lends nothing through them.)
+    refused_callee = len([for ri in e.refused_in if ri.fname == def.name { 1 }]) > 0;
     // An argument that is a variable is borrowed itself; any other value lends what its own
     // type borrows (a literal its store, `resolve_deps`) — except into a `τ?` result, whose
     // borrows Rust keeps only for variables (1a-parser.md § Rust accidents).
     for i in el_types::deps(rp) {
-      if i < len(list) {
+      if i < len(list) && !refused_callee {
         match el_ir::unspan(list[i]) {
           NdVar { n: av } => { if !ds.contains(av) { ds += [av]; } },
           // (Of such a value's borrows a `τ?` result still keeps the user's own locals — a
