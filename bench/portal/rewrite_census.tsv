@@ -721,6 +721,7 @@
 12_drawing	-	c	R-Base/counter	7
 12_drawing	-	c	R-Base/guard	1
 12_drawing	-	c	R-BoundedNest/kernel	1
+12_drawing	-	c	R-CSplit	2
 12_drawing	-	c	R-Callee	1
 12_drawing	-	c	R-CompleteWrite	13
 12_drawing	-	c	R-Counter	167
@@ -1583,6 +1584,7 @@
 20_interpreter	-	c	R-Base/counter	1
 20_interpreter	-	c	R-Base/guard	2
 20_interpreter	-	c	R-BoundedNest/kernel	1
+20_interpreter	-	c	R-CSplit	1
 20_interpreter	-	c	R-CompleteWrite	14
 20_interpreter	-	c	R-Counter	39
 20_interpreter	-	c	R-DischargeInto	1

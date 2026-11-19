@@ -258,8 +258,12 @@ a hot function its registers — every call builds the frame struct and makes tw
   `LOFT_TRACE_C_SPLIT=1` names each over-budget function, its parts and its frame size, or
   why it stayed whole.
 - **Guards:** `tests/c_split.rs` runs the split cells on both backends at budget 4, and
-  asserts that the default build splits and a `--ship` unit holds no part.  The plan and
-  its measurements are [@PLN212](https://github.com/loft-lang/plans/issues/212).
+  asserts that the default build splits and a `--ship` unit holds no part.  The rule is
+  `(R-CSplit)` in [formal/rewrites.md](formal/rewrites.md); the plan and its measurements are
+  [@PLN212](https://github.com/loft-lang/plans/issues/212).
+- **The runtime stays in the unit:** every unit carries the whole C runtime and compiles
+  alone, on every tier; no build compiles the runtime once and links it (`@C169`).  The
+  function cap is what bounds a compile, not a smaller unit.
 
 ## An exit's releases are written once (`(R-CTail)`)
 

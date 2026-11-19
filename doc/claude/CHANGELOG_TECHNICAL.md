@@ -10,6 +10,20 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### The C backend caps the size of a function in a semantics build (@PLN212)
+
+- `(R-CSplit)`: a function body over 300 runtime-call sites is written as a chain of
+  `LOFT_NOINLINE` parts that share one frame struct (`src/c/split.rs`).  MSVC's `cl /O1` takes
+  about quadratic time above 400 sites in one function, and the nightly MSVC sweep lost one
+  program a night to its 120 s compile limit; the eight slowest programs went from 592 s to
+  98 s of `cl` time with every answer unchanged, and no limit was raised.
+- The parts are compiled by MSVC alone (`#if defined(_MSC_VER)`); gcc and clang compile the
+  whole body.  A `--ship` unit and an ESP app keep every function whole, so a shipped
+  artefact's C is unchanged.
+- `LOFT_NO_C_SPLIT=1` turns it off; `LOFT_C_SPLIT=<n>` sets the budget and writes the parts for
+  every compiler; `LOFT_TRACE_C_SPLIT=1` names each function split.  The rule is `(R-CSplit)` in
+  `formal/rewrites.md`, counted by the rewrite census; guard `tests/c_split.rs`.
+
 ### `(R-RetAdopt)` runs on the interpreter (@PLN211 arc C)
 
 - A vector-returning function whose result local adopts the hidden return buffer now does so on
