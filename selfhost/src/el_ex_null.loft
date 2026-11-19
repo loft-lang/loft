@@ -124,6 +124,9 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
       present = el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpVectorIsNull", [h])]);
       // (An element read on the way to the field answers its absence: the nullable getter.)
       read = if elem_subject { el_ir::cl(e, "OpGetField", [nullable_arith(e, el_ir::unspan(x.code), false), ir::NdInt { n: 0 }, ir::NdInt { n: element_place_type(e, lhs) }]) } else { nullable_arith(e, x.code, true) };
+      // (loft#2567: the default builds a store of its own for every subject; its `_vec_N` is
+      // the registered buffer a call subject's is, declared in the statement.)
+      el_ex_call::register_default_literal(vars, d.code, el_types::with_deps(el_types::without_deps(lhs), [held]));
       return ex(el_ir::v_block([el_ir::v_set(held, read), el_ir::v_if(present, h, d.code)], lhs, "ncc"), lhs);
     }
     // A native call answers a fresh vector: held in a `__ncc_N` of its own type (nulled before
