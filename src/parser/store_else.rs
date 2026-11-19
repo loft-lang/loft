@@ -50,10 +50,11 @@ impl Parser {
         self.vars.clear_write_state();
         self.parse_block("else", &mut arm, &Type::Void);
         self.vars.restore_write_state(&write_state);
-        let mut steps = match std::mem::replace(n, Value::Null) {
-            Value::Insert(list) => list,
-            other => vec![other],
-        };
+        // An `Insert` splices its steps into the statement, so a nested one (a compound store's
+        // once-evaluated `__place` binding in front of an append's own steps, loft#2571) is
+        // the same statement: its steps are read at this level.
+        let mut steps = Vec::new();
+        flatten_inserts(std::mem::replace(n, Value::Null), &mut steps);
         let Some(shape) = self.store_shape(&steps) else {
             if !self.first_pass {
                 crate::diagnostic_at!(
@@ -295,6 +296,18 @@ impl Parser {
             Value::Block(bl) => bl.result.clone(),
             _ => Type::Reference(u32::MAX, crate::data::Deps::default()),
         }
+    }
+}
+
+/// The steps of a statement, every nested `Insert` spliced in where it stands.
+fn flatten_inserts(v: Value, out: &mut Vec<Value>) {
+    match v {
+        Value::Insert(list) => {
+            for s in list {
+                flatten_inserts(s, out);
+            }
+        }
+        other => out.push(other),
     }
 }
 

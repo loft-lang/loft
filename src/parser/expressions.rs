@@ -11210,7 +11210,12 @@ use a separate collection or add after the loop"
                                 && gargs.len() == 3
                                 && self.ir_has_user_call(&gargs[0]) =>
                         {
-                            Some((*get_d, gargs[0].clone(), gargs[1].clone(), Some(gargs[2].clone())))
+                            Some((
+                                *get_d,
+                                gargs[0].clone(),
+                                gargs[1].clone(),
+                                Some(gargs[2].clone()),
+                            ))
                         }
                         _ => None,
                     }
