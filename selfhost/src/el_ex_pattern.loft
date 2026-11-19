@@ -2290,7 +2290,7 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
   route4 = false;
   if reads_dest && !e.first_pass && (scalar_elem || record_elem) {
     for x in xs {
-      if el_ir::reads_var(x.code, v) && (!el_ex_null::hoistable(e, x.code) || (record_elem && match el_ir::unspan(x.code) { NdCall { def_nr: rcd } => !starts_with(el::def(e, rcd).name, "Op"), _ => false })) {
+      if el_ir::reads_var(x.code, v) && (hands_to_writer(e, x.code, v) || (record_elem && match el_ir::unspan(x.code) { NdCall { def_nr: rcd } => !starts_with(el::def(e, rcd).name, "Op"), _ => false })) {
         route4 = true;
       }
     }
@@ -2961,4 +2961,45 @@ fn branch_bound_anywhere(e: el::El, n: integer, name: text, depth: integer) -> b
     }
   }
   false
+}
+
+// `snapshot_read_destination`'s `writes`: does `n` hand the vector `v` to a call that is
+// neither primitive nor `#pure`, in an argument at a parameter that is not `const`
+// (`value_const`, C124), or to a call through a function value?
+fn hands_to_writer(e: el::El, n: ir::Node, v: integer) -> boolean {
+  match el_ir::unspan(n) {
+    NdCallRef { args: cra } => {
+      for a in cra {
+        if el_ir::reads_var(a, v) {
+          return true;
+        }
+      }
+      false
+    },
+    NdCall { def_nr, args } => {
+      d = el::def(e, def_nr);
+      body = d.code[0] ?? ir::NdNull;
+      if !((body is NdNull && d.rust != "") || d.purity == 1) {
+        for a in args {
+          if el_ir::reads_var(a, v) && (a#index >= len(d.attributes) || !d.attributes[a#index].value_const) {
+            return true;
+          }
+        }
+      }
+      for a in args {
+        if hands_to_writer(e, a, v) {
+          return true;
+        }
+      }
+      false
+    },
+    _ => {
+      for c in el_ir::children(el_ir::unspan(n)) {
+        if hands_to_writer(e, c, v) {
+          return true;
+        }
+      }
+      false
+    }
+  }
 }
