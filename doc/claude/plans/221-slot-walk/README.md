@@ -184,9 +184,11 @@ fix is then checked by cells that already exist.
    The agent that meets a defect then adds the row at that moment.  *Verified:*
    `cell 'for p in <S> { s += p.k; }' --type coll` fails on the release of 2026-11-03 (the
    operand runs five times) and passes on the branch.
-3. **G3 — calibrate the reading.**  The 23 `fits-rows` issues of [reach.tsv](reach.tsv)
-   written as rows; the time walk says how many of them really fail on the build that had
-   the defect.  That share is how far a judged verdict can be trusted.
+3. **G3 — calibrate the reading** — **begun.**  Five of the 23 `fits-rows` issues of
+   [reach.tsv](reach.tsv) were written as cells: three fail on the build that had the
+   defect and are rows now, two do not fit after all ([REACH.md § Calibration](REACH.md)).
+   Eighteen are left; each is a `cell` command first and a row only when it fails on the
+   older build.
 4. **G4 — fillers built from fillers** (this is phase D).  A filler template with a hole of
    its own, filled by the other fillers of that type: depth two without writing each by hand.
 5. **G5 — a second counted operand**, and a twin that binds every operand in source order.
