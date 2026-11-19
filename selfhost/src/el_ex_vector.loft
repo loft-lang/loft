@@ -26,6 +26,7 @@ use el_ex_place;
 use el_ex_call;
 use el_ex_null;
 use el_ex_pattern;
+use el_ex_object;
 
 // `Parser::write_to_file` (`f += value`): the value bound to a fresh `_wf_N` that borrows what it
 // borrows, then `OpWriteFile(f, OpCreateStack(_wf_N), row)` with the value's store row
@@ -168,28 +169,36 @@ pub fn slice(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   bounds: vector<ir::Node> = [];
+  btypes: vector<ir::TypeT> = [x.tp];
   for b in [lo, hi] {
     if len(b) == 0 {
       bounds += [ir::NdInt { n: if b#index == 0 { 0 } else { 2147483647 } }];
+      btypes += [ir::TyInteger { spec: i32_spec() }];
       continue;
     }
     y = el_ex_assign::expression(e, vars, b[0]!);
-    // A nullable bound makes the slice `text?`, answering null through `(N-Prop)`'s guard
-    // (`wrap_null_transparent`, loft#2306) — not carried yet.
-    if y.tp is TyOptional {
-      el::refuse(e, "a text slice with a nullable bound");
-      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
-    }
-    if !el_types::is_unknown(y.tp) && !(y.tp is TyInteger) {
+    btypes += [y.tp];
+    if !el_types::is_unknown(y.tp) && !(el_types::base(y.tp) is TyInteger) {
       el::refuse(e, "a text slice bound that is not an integer: {type_kind(y.tp)}");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
     }
     bounds += [if b#index == 1 && inclusive { el_ir::cl(e, "OpAddInt", [y.code, ir::NdInt { n: 1 }]) } else { y.code }];
   }
   code = el_ir::cl(e, "OpGetTextSub", [x.code] + bounds);
+  plain = code;
   // `wrap_chain`: the `[` step is wrapped in its position on the second pass, as an index is.
   if !e.first_pass {
     code = ir::NdSpan { pos: el::pos_at(e, at), inner: code };
+  }
+  // A nullable bound answers null where a bound is (`(N-Prop)`'s guard, `wrap_null_transparent`,
+  // loft#2306): the code is wrapped on the second pass.  Its TYPE is the subject's text, as any
+  // slice's — `parse_index` keeps `elm_type` and drops `text_slice_type`'s `text?`.
+  if (btypes[1] ?? ir::TyVoid) is TyOptional || (btypes[2] ?? ir::TyVoid) is TyOptional {
+    if e.first_pass {
+      return ex(code, ir::TyText { dep: el_types::deps(x.tp) });
+    }
+    w = el_ex_object::null_transparent(e, vars, plain, btypes, ir::TyText { dep: [] }, code);
+    return ex(w.code, ir::TyText { dep: el_types::deps(x.tp) });
   }
   // A slice borrows what the text it is cut from borrows: a field read's record, a local read
   // the local (unless read first into a bind's destination, `parse_var`'s `into` arm).

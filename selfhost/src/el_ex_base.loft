@@ -2179,8 +2179,10 @@ pub fn vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean) -> 
     el::refuse(e, "a vector of this element type: {type_kind(t)}");
     return null;
   }
-  // (An empty `[]` of a narrow element numbers nothing yet: its rows come at the first push.)
-  empty_narrow = match e.p.nodes[lit] { SVecLit { items } => len(items) == 0, _ => false } && match t { TyInteger { spec } => el_types::narrow_width(spec) > 0, _ => false };
+  // (An empty `[]` of a narrow or four-byte element numbers nothing yet: its rows come at the
+  // first push.)
+  // (Every width: byte, short and the four-byte `int<…>` / `int_raw<…>` rows alike, in append order.)
+  empty_narrow = match e.p.nodes[lit] { SVecLit { items } => len(items) == 0, _ => false } && match t { TyInteger { spec } => el_types::narrow_width(spec) > 0 || el_types::int4(spec) || el_types::uint4(spec), _ => false };
   if !empty_narrow {
     int4_rows(e, t);
   }
@@ -2398,7 +2400,8 @@ pub fn vector_store(e: el::El, t: ir::TypeT, nm: text) -> integer {
   match t {
     TyInteger { spec } => {
       if el_types::narrow_width(spec) > 0 || el_types::uint4(spec) {
-        c = if el_types::uint4(spec) { el_schema::content_type(e, t) } else { el_schema::narrow_element(e, spec) };
+        // (Looked up, never made here: a row is made at the first push, in append order.)
+        c = if el_types::uint4(spec) { el_schema::schema_type(e, "int_raw<{spec.min},false>") } else { el_schema::narrow_element(e, spec) };
         return if c < 0 { -1 } else { el_schema::schema_type(e, "vector<{e.b.types[c].name}>") };
       }
     },
