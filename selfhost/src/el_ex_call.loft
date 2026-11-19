@@ -2967,6 +2967,8 @@ pub fn coalesce(e: el::El, vars: el_vars::Vars, l: integer, r: integer) -> Ex {
   if el_ex_pattern::is_empty_literal(d.code) && keyed_kind(el_types::base(x.tp)) && !(el_types::base(x.tp) is TyVector) {
     kct = el_types::without_deps(el_types::base(x.tp));
     kvb = el_vars::create_unique(vars, "_kvb", kct);
+    // (`parse_vector`'s keyed arm mints the literal's element too, on both passes.)
+    el_vars::create_unique(vars, "elm", ir::TyReference { n: el_types::keyed_elem(kct), dep: [kvb] });
     if e.first_pass {
       d = ex(ir::NdNull, kct);
     } else {

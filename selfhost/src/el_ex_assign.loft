@@ -21,6 +21,7 @@ use el_definitions;
 use el_dispatch;
 use el_trace;
 use own;
+use binds;
 use el_ex_place;
 use el_ex_object;
 use el_ex_call;
@@ -2370,6 +2371,21 @@ pub fn discharge_copy_typed(e: el::El, rhs: integer, x: Ex) -> ir::Node {
   x.code
 }
 
+// `bound_to_a_value_in`: the variables a value sets to something other than `null` inside it.
+fn bound_to_a_value_in(n: ir::Node, out: vector<integer>) {
+  match n {
+    NdSet { var: bv, inner: bi } => {
+      if !(el_ir::unspan(bi) is NdNull) && !out.contains(bv) {
+        out += [bv];
+      }
+    },
+    _ => {}
+  }
+  for c in el_ir::children(n) {
+    bound_to_a_value_in(c, out);
+  }
+}
+
 // `Parser::change_var_type`'s mint: a local bound for the first time to a vector registers
 // `vector<T>` where the bind's statement ends (a no-op where a literal made it already).
 pub fn first_vector_bind(e: el::El, vars: el_vars::Vars, v: integer, t: ir::TypeT, at: integer) {
@@ -3724,6 +3740,41 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
           el_vars::drop_use(vars, v);
           kt = el_schema::keyed_type(e, el_types::base(kcur));
           return ex(ir::NdInsert { items: kg + [el_ir::v_set(v, ir::NdNull), el_ir::cl(e, "OpReplaceKeyed", [x.code, ir::NdVar { n: v }, ir::NdInt { n: kt + 32768 }])] }, ir::TyVoid);
+        }
+        // loft#1140 (`assign_keyed_rebind`, keyed-bind-call-with-heap-args.md): a loft call handed
+        // a record or a collection.  The source-free bit is `call_return_frees_source` (the
+        // callee hands back no caller store, or the bracket covers every argument), and where it
+        // is set the argument stores are protected from the replace's free while it runs
+        // (`protectable_ref_args`, the @P290 bracket) — less a slot the value itself binds to a
+        // value (`bound_to_a_value_in`: a vector literal's `_vec_N`).  The local borrows nothing.
+        if !plain_args && !self_only && pd >= 0 && ud >= 0 && !starts_with(el::def(e, cd).name, "Op") && cap_rebind_cond(e, vars, v) == null {
+          el_vars::drop_use(vars, v);
+          kt = el_schema::keyed_type(e, el_types::base(kcur));
+          kdefs = own::new_defs();
+          frees = binds::call_return_frees_source(e.b, own::ops_of(e.b), e.context, kdefs, x.code);
+          guarded: vector<integer> = [];
+          if frees {
+            inner: vector<integer> = [];
+            bound_to_a_value_in(x.code, inner);
+            for gs in binds::protectable_ref_args(e.b, kdefs, x.code).slots {
+              if !inner.contains(gs) {
+                guarded += [gs];
+              }
+            }
+          }
+          el_vars::set_var_type(vars, v, el_types::with_deps(el_vars::tp(vars, v), []));
+          kseq = kg;
+          if !el_ir::reads_var(x.code, v) {
+            kseq += [el_ir::v_set(v, ir::NdNull)];
+          }
+          for gs in guarded {
+            kseq += [ir::NdCall { def_nr: pd, args: [ir::NdVar { n: gs }] }];
+          }
+          kseq += [el_ir::cl(e, "OpReplaceKeyed", [x.code, ir::NdVar { n: v }, ir::NdInt { n: if frees { kt + 32768 } else { kt } }])];
+          for gs in guarded {
+            kseq += [ir::NdCall { def_nr: ud, args: [ir::NdVar { n: gs }] }];
+          }
+          return ex(ir::NdInsert { items: kseq }, ir::TyVoid);
         }
         // A keyed FIELD of a record (through its fields): the field's collection replaced
         // into the local, which is its own copy.

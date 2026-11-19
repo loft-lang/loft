@@ -215,8 +215,10 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
       // (found.md row 8: the holder VIEWS the place, an inline ref — its null init mints no
       // store.)
       el_vars::mark_inline(vars, kheld);
+      // (On the first pass too the holder is bound — Rust builds the block on both — so a
+      // consumer that asks whether the value runs a bind, a `for`'s source hold, sees it.)
       if e.first_pass {
-        return ex(ir::NdNull, lhs);
+        return ex(el_ir::v_block([el_ir::v_set(kheld, x.code), ir::NdVar { n: kheld }], lhs, "ncc"), lhs);
       }
       kh = ir::NdVar { n: kheld };
       kpresent = el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpVectorIsNull", [kh])]);
@@ -756,6 +758,8 @@ pub fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: intege
     if keyed_kind(b) && !(b is TyVector) {
       kct = el_types::without_deps(b);
       kvb = el_vars::create_unique(vars, "_kvb", kct);
+      // (`parse_vector`'s keyed arm mints the literal's element too, on both passes.)
+      el_vars::create_unique(vars, "elm", ir::TyReference { n: el_types::keyed_elem(kct), dep: [kvb] });
       if e.first_pass {
         return coalesce_with(e, vars, x, ex(ir::NdNull, kct));
       }
