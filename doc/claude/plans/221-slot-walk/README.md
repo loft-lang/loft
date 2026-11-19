@@ -180,8 +180,11 @@ fix is then checked by cells that already exist.
    `slot_matrix.py gate` (run by `tests/slot_matrix.rs`, 41 s) fails on a cell that is not
    ok and not listed, and on a listed cell that passes again; a crash line is marked
    unstable and may pass.  *Verified:* against the release of 2026-11-03 the gate reports
-   120 new cells and 41 lines to remove.  Still to learn: whether the baseline is the same
-   on Linux.  The four contexts and two frames are not in the gate; they are a nightly
+   120 new cells and 41 lines to remove.  The gate is split by slot family
+   (`gate --family F`, seven tests): a red test names the family, its output says first
+   whether something is BROKEN or only FIXED, the failing cells are folded toward causes,
+   and on GitHub each fold is an annotation on its row of the table.  Still to learn:
+   whether the baseline is the same on Linux.  The four contexts and two frames are not in the gate; they are a nightly
    candidate at five and a half minutes.
 2. **G2 — the ad-hoc cell** — **built.**  `slot_matrix.py cell '<statement with <S>>'`
    with `--type T` (every filler of a type) or `--filler EXPR --plain EXPR` runs one shape
