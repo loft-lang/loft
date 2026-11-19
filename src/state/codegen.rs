@@ -669,6 +669,12 @@ impl State {
                 // the stack, and the yield hands over that many bytes.  The `Insert` arm answers
                 // `Void` for a statement, so sized by it the yield handed over nothing and the
                 // integer stayed on the generator's stack.
+                //
+                // A yielded BLOCK answers the type of its last statement, which is a scope-exit
+                // free when the block made a temporary (`yield { c.log += "S"; 1 }` ends in
+                // `OpFreeText`), so it reads as `Void` too.  Where the value reads as `Void`, the
+                // generator's declared element type is what was pushed: the parser converted the
+                // yielded value to it.
                 let inner = node.yield_inner();
                 let t = if inner.kind() == ValueType::Insert {
                     let mut last = Type::Void;
@@ -678,6 +684,10 @@ impl State {
                     last
                 } else {
                     self.generate_node(inner, stack, false)
+                };
+                let t = match (t.base(), stack.data.def(stack.def_nr).returned.base()) {
+                    (Type::Void, Type::Iterator(elem, _)) => (**elem).clone(),
+                    _ => t,
                 };
                 // `(G-Own)`: the consumer owns what it is handed, so the generator forgets the
                 // temps holding it before it suspends — its tail and `free_coroutine` then find
