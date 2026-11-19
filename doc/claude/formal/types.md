@@ -868,7 +868,11 @@ capture typing is a new *source* of the types loft already has; `match` also sta
 
 ## Deviations
 
-**OPEN: 0.**
+**OPEN: 1.**
+
+- **D-types-41** (loft#2585) — violates `(N-Road)`: a parameter's element answered as a <!-- doc-lint: ok -->
+  function's tail is copied into the return buffer, and its nullable twin (`-> vector<S>?`) still
+  hands out a view of the parameter: the pair `ret-view-of-param-vector` carries `@OPEN`.
 
 `D-types-36` (loft#2006) holds: the copy a `return` makes tests its source at every <!-- doc-lint: ok -->
 root — a local, a field path, a call (bound first), an element or keyed read (re-read), a
