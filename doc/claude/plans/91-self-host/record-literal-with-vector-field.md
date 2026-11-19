@@ -11,7 +11,13 @@ vector literal field, assigned to an existing field or element:
 element literal reading its own place's vector length → `[3,5]`, which repeated settles at
 `[2,5]`; `b.c = C2 { items: [9], o: b.c.items }` → items `[9]`, o the OLD `[4,5]`.
 
-**Not in place, by the rule:** `(R-InPlaceLiteral)` (formal/rewrites.md) declines an element
+**⚠ Superseded for FIELD places by main 21992d3e3 (#2574):** `@FR-R-InPlaceLiteral` now builds
+a record literal with a vector-literal field IN PLACE when the place is a field (`vb.inner =
+Vf { … }`), unless an item reads the place or is itself a record literal. The built-apart form
+below still holds for an ELEMENT place (`vs.els[i] = Vf { … }`). Read the oracle at
+loft30-gate 06d02f19c or later for the field form.
+
+**Not in place, by the rule (as it read before 21992d3e3):** `(R-InPlaceLiteral)` (formal/rewrites.md) declines an element
 whose type owns a collection field, and Rust declines the field form too. A declined rewrite takes
 the plain path: the literal is BUILT APART and COPIED in. This is not a Rust defect; the port
 mirrors the copy.
