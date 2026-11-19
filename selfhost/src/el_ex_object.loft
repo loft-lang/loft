@@ -1645,6 +1645,21 @@ pub fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?,
     }
     return rf;
   }
+  // A call through an ELEMENT of a vector of function values (`fs[1](4)`): the element read into
+  // a `__fn_ref_tmp`, then called through it (`fn_call_tmp`), as a function-valued field is.
+  if name == "" && f != null && e.p.nodes[f!] is SIndex {
+    ix = el_ex_assign::expression(e, vars, f!);
+    if el_types::base(ix.tp) is TyFunction {
+      iw = el_vars::create_unique(vars, "__fn_ref_tmp", el_types::with_deps(el_types::base(ix.tp), []));
+      el_vars::set_defined(vars, iw);
+      icr = call_ref(e, vars, iw, args);
+      if e.first_pass || el_types::is_unknown(icr.tp) {
+        return icr;
+      }
+      vars.vars[iw].skip_free = true;
+      return ex(el_ir::v_block([el_ir::v_set(iw, ix.code), icr.code], icr.tp, "fn_call_tmp"), icr.tp);
+    }
+  }
   if name == "" || (source < 0 && el_vars::var(vars, name) >= 0) {
     kind = if name == "" { syn_kind(e, f ?? 0) } else { "a local of type {type_kind(el_vars::tp(vars, el_vars::var(vars, name)))}" };
     el::refuse(e, "a call that is not of a function by its bare name: {kind}");
@@ -3116,7 +3131,9 @@ pub fn by_receiver_type(e: el::El, name: text, list: vector<ir::Node>, t: ir::Ty
       el::refuse(e, "a `len` of a nullable index");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
     }
-    return ex(el_ir::cl(e, "OpLengthIndex", list), wide);
+    // (Rust's call route leaves the op inside a span of the call's own: one level deeper than
+    // a plain call's read.)
+    return ex(ir::NdSpan { pos: el::pos_at(e, if e.at >= 0 { e.at } else { 0 }), inner: el_ir::cl(e, "OpLengthIndex", list) }, wide);
   }
   if name != "size" {
     return null;

@@ -10648,6 +10648,30 @@ impl Parser {
         self.nullable_payload_struct(td).unwrap_or(td)
     }
 
+    /// The local `cond` proves present on the THEN path when that path is the local itself:
+    /// `OpConvBoolFromRef(x)` or `!OpRefIsNull(x)` with a then arm of `x`.
+    fn condition_proves_present(&self, cond: &Value, then: &Value) -> Option<u16> {
+        let Value::Var(x) = then.unspan() else {
+            return None;
+        };
+        let tested = match cond.unspan() {
+            Value::Call(d, args) if args.len() == 1 => match self.data.def(*d).name() {
+                "OpConvBoolFromRef" => args[0].unspan().clone(),
+                "OpNot" => match args[0].unspan() {
+                    Value::Call(n, inner)
+                        if inner.len() == 1 && self.data.def(*n).name() == "OpRefIsNull" =>
+                    {
+                        inner[0].unspan().clone()
+                    }
+                    _ => return None,
+                },
+                _ => return None,
+            },
+            _ => return None,
+        };
+        matches!(tested, Value::Var(t) if t == *x).then_some(*x)
+    }
+
     fn materialize_return_into(&mut self, td: u32, tail: &mut Value, w: u16) {
         let td = self.return_copy_type(td);
         if let Value::Return(inner) = tail {
@@ -10689,8 +10713,16 @@ impl Parser {
             self.state_route("materialize_return_into=arms");
             match tail {
                 Value::Span(b) => self.materialize_return_into(td, &mut b.1, w),
-                Value::If(_, t, f) => {
+                Value::If(c, t, f) => {
+                    // `@FR-N-Road` — a then arm that is the very local the condition tested
+                    // present (a discharge's `if OpConvBoolFromRef(__ncc_N) __ncc_N else …`)
+                    // is proven present there: its copy takes no absence test.  The test it
+                    // had answered the sentinel on a path that cannot run, and that dead
+                    // null arm kept `(R-ValueRecord)` off every `return v[i]?` of a record.
+                    let proven = self.condition_proves_present(c, t);
+                    let outer = std::mem::replace(&mut self.ret_proven_present, proven);
                     self.materialize_return_into(td, t, w);
+                    self.ret_proven_present = outer;
                     self.materialize_return_into(td, f, w);
                 }
                 Value::Block(bl) => {
@@ -10732,6 +10764,8 @@ impl Parser {
         // copy tests every local it is of, whatever the local and the function are typed
         // (`@FR-N-Road`).
         let absent_guard = match orig.unspan() {
+            // Proven present by the branch this copy stands in (`condition_proves_present`).
+            Value::Var(v) if self.ret_proven_present == Some(*v) => None,
             Value::Var(v) if self.record_local_may_be_absent(*v) => Some(Value::Var(*v)),
             // A FIELD of a record that may be absent is absent with it (loft#2006).  The read
             // is pure, so the test re-reads it.
@@ -12630,11 +12664,51 @@ impl Parser {
                     None => return false,
                 },
                 Value::Call(d, args) => {
-                    return *d == self.data.def_nr("OpGetField")
-                        && matches!(
-                            args.first().map(Value::unspan),
-                            Some(Value::Var(bv)) if matches!(self.vars.tp(*bv), Type::Reference(_, _))
-                        );
+                    if *d != self.data.def_nr("OpGetField") {
+                        return false;
+                    }
+                    return match args.first().map(Value::unspan) {
+                        Some(Value::Var(bv)) => matches!(self.vars.tp(*bv), Type::Reference(_, _)),
+                        // loft#2585 — an ELEMENT of an argument (`{ h[0] }`, read as
+                        // `OpGetField(OpGetVector(h, …), 0, <vector>)`): `(F-Ret)` makes the
+                        // answer the caller's own, and the caller adopts the one-buffer result
+                        // it is published as, so a write through it wrote the argument.  The
+                        // store-reuse hazard #426 met on this path was the premature free
+                        // `reclaim_safe` fixed; the copy is the field tail's.
+                        // A NULLABLE answer (`-> vector<T>? { v[i] }`) stays the element: the
+                        // copy of an absent element is an empty vector, not absent (`(L-Null)`
+                        // keeps a copy of an absent value absent).
+                        Some(base) => {
+                            !matches!(self.data.def(self.context).returned(), Type::Optional(_))
+                                && self.projection_rooted_at_argument(base)
+                        }
+                        None => false,
+                    };
+                }
+                _ => return false,
+            }
+        }
+    }
+
+    /// Is `v` a vector ELEMENT read (`OpGetVector`) on a projection chain whose root is an
+    /// argument of this function?
+    fn projection_rooted_at_argument(&self, v: &Value) -> bool {
+        let mut v = v;
+        let mut through_element = false;
+        loop {
+            match v.unspan() {
+                Value::Var(bv) => return through_element && self.vars.is_argument(*bv),
+                Value::Call(d, args) => {
+                    let name = self.data.def(*d).name();
+                    if name == "OpGetVector" {
+                        through_element = true;
+                    } else if name != "OpGetField" {
+                        return false;
+                    }
+                    let Some(first) = args.first() else {
+                        return false;
+                    };
+                    v = first;
                 }
                 _ => return false,
             }
@@ -15040,8 +15114,8 @@ impl Parser {
                 )
             };
             let d_nr = self.data.def_nr("n_assert");
-            // loft#2090 — the message is evaluated only when the assertion fails (#873's
-            // promise).  A constant message costs nothing to build and keeps the one call; a
+            // `@FR-E-Assert` (loft#2090) — the message is evaluated only when the assertion
+            // fails (#873's promise).  A constant message costs nothing to build and keeps the one call; a
             // built one (`"element {i} is {x}"`) is formatted on the failing branch alone, and
             // the passing branch hands `n_assert` the condition's own text, which is what a
             // run that lists its passing assertions (the playground's `report_asserts`) shows.
@@ -15560,6 +15634,29 @@ impl Parser {
         ) {
             return self.parse_call_diagnostic(val, name, list, types, call_pos);
         }
+        // `@FR-Slice-Value` — the collection a built-in walks (`map`, `filter`, `reduce`,
+        // `par_fold`, `parallel_for`) is a vector-typed position: a vector slice there
+        // (`map(v[1..3], f)`) is the fresh vector a bind makes of it (`iterator_as_vector`, the
+        // one home), where each lowering refused it as "first argument must be a vector".
+        let mut slice_list;
+        let mut slice_types;
+        let (list, types) = if matches!(
+            special,
+            "map" | "filter" | "reduce" | "par_fold" | "parallel_for"
+        ) && let Some(first) = types.first()
+            && let Type::Iterator(elm, _) = first.base()
+            && list.first().is_some_and(Self::slice_shaped)
+        {
+            slice_list = list.to_vec();
+            slice_types = types.to_vec();
+            let want = Type::Vector(elm.clone(), crate::data::Deps::none());
+            if let Some(vec_tp) = self.iterator_as_vector(&mut slice_list[0], &types[0], &want) {
+                slice_types[0] = vec_tp;
+            }
+            (&slice_list[..], &slice_types[..])
+        } else {
+            (list, types)
+        };
         self.check_persist_copy_root(name, list, arg_pos);
         self.note_store_handoff(name, types);
         match special {
@@ -17516,11 +17613,9 @@ impl Parser {
     /// - **capturing a parameter** (read or write) — SIGSEGVs at teardown.
     ///
     /// Reads of enclosing locals (any position/type) stay legal — that is the
-    /// proven-sound P245 surface that test-81 guards.  Known residual: passing a
-    /// captured heap value to a function that mutates it is transitive and is not
-    /// caught here (it still faults at runtime); catching it needs callee
-    /// analysis.  The full capture model is deferred to its driving consumer (the
-    /// server/client library) — see the plan-57 deferred-follow-ups.
+    /// proven-sound P245 surface that test-81 guards.  Passing a captured heap value to a
+    /// function that writes through that parameter is a write too, and is refused alike
+    /// (`parser::callee_writes_param`).
     fn reject_unsound_parallel_captures(&mut self, arms: &[Value], enclosing: &[bool]) {
         let mut viol: Vec<(u16, ParViolation)> = Vec::new();
         for arm in arms {
@@ -17584,6 +17679,22 @@ impl Parser {
                     && let Some(host) = args.first().and_then(Value::base_var)
                 {
                     self.note_mutation(host, encl, out);
+                }
+                // `@FR-C-Arms` — the same write made by a CALLEE: an enclosing heap local handed
+                // to a parameter the function writes through (`at(c, 1)` bumping `c.calls`).
+                // The worker's store is read-only, so the interpreter panicked and C let the
+                // write land, where the direct `c.calls += 1` is refused.
+                if self.data.def(*d).is_loft_defined() {
+                    for (k, a) in args.iter().enumerate() {
+                        if let Some(host) = Value::base_var(a)
+                            && (self.vars.tp(host).heap_def_nr().is_some()
+                                || matches!(self.vars.tp(host).base(), Type::Vector(..))
+                                || crate::data::is_keyed(self.vars.tp(host)))
+                            && crate::parser::callee_writes_param(*d, &self.data, k)
+                        {
+                            self.note_mutation(host, encl, out);
+                        }
+                    }
                 }
                 for a in args {
                     self.collect_parallel_violations(a, encl, out);

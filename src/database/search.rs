@@ -769,7 +769,6 @@ impl Stores {
         if content_tp == u16::MAX {
             return;
         }
-        let length = vector::length_vector(src, &self.allocations);
         let linked = self.is_linked(content_tp);
         let width = if linked {
             4
@@ -779,7 +778,6 @@ impl Stores {
         // Resolve every element BEFORE inserting any of them.  An insert may grow the
         // destination store, and when source and destination share one store a half-walked
         // source is exactly the read that answers with another record's bytes.
-        let mut records: Vec<DbRef> = Vec::with_capacity(length as usize);
         // A keyed source (`FILL_KEYED_SOURCE`) has the destination's own type, and the kinds
         // whose storage is no sequential slot list are listed by the module that owns their
         // layout, in the order a walk of them gives.  A `sorted` holds its elements in a
@@ -810,11 +808,14 @@ impl Stores {
         } else {
             None
         };
-        let length = if let Some(recs) = listed {
-            records = recs;
-            0
+        // Only a SLOT LIST has a vector's length: an `index`, `hash`, radix or trie source is
+        // listed above, and reading its header as a vector's length read bytes that are no
+        // length (valgrind: a conditional on uninitialised memory sizing the list).
+        let (mut records, length) = if let Some(recs) = listed {
+            (recs, 0)
         } else {
-            length
+            let length = vector::length_vector(src, &self.allocations);
+            (Vec::with_capacity(length as usize), length)
         };
         for i in 0..length {
             let slot = vector::get_vector(src, width, i64::from(i), &self.allocations);

@@ -64,6 +64,20 @@ record removed by key before the walk reaches it is not visited.  The SOURCE is 
 [operational.md](operational.md)'s `loop`/`break`/`if`, so its control flow is already pinned;
 `I-For` only fixes the ORDER and the stop condition.
 
+### `while` tests before every round
+
+```
+  (I-While)    while c { body }
+                 ≡  loop { if !c { break } ; body }
+```
+
+**In words.** The condition is reduced before every round, the last one included: a loop
+that runs its body N times reduces `c` N + 1 times, and a loop whose condition is false at
+once reduces it once and runs nothing.  It is the one loop whose test is an operand the
+author wrote, so it is the one place a loop's own operand runs once a step
+([operational.md](operational.md) `(E-Once)`); the condition is a truthiness position
+(`(E-Truthy)`).
+
 ### Ranges and text iterate the same shape
 
 ```
@@ -196,7 +210,7 @@ case past it (QUALITY-history.md B8i).
 
 ## Deviations
 
-**OPEN: 0.**  Every deviation is closed; the record is in the companion
+**OPEN: 0.**  The record of the others is in the companion
 [iteration-history.md](iteration-history.md).
 
 ## Conformance

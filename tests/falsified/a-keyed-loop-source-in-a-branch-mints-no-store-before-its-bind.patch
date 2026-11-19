@@ -1,0 +1,19 @@
+diff --git a/src/parser/collections.rs b/src/parser/collections.rs
+index 2875e4485..05c0c88c4 100644
+--- a/src/parser/collections.rs
++++ b/src/parser/collections.rs
+@@ -3941,14 +3941,6 @@ use #count instead"
+         self.vars.set_iteration_source(src_var);
+         if !self.first_pass {
+             self.vars.set_type(src_var, in_type.clone());
+-            // A KEYED source that is a VIEW (its type names what it borrows) is written before
+-            // its one read, so its null init mints no store (`bind_lowering::keyed_null_mints`):
+-            // declared ahead of an `if` arm the loop stands in, the minted store was left behind
+-            // (`for p in box(c, h).items`).  An owning source keeps its store: its bind copies
+-            // into it.  A vector's null init asks `vector_null_mints`, which reads its deps.
+-            if crate::data::is_keyed(in_type) && !in_type.depend().is_empty() {
+-                self.vars.mark_inline_ref(src_var);
+-            }
+         }
+         *in_type = in_type.depending(src_var);
+         let source = std::mem::replace(expr, Value::Var(src_var));

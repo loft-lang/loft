@@ -1,0 +1,42 @@
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index 9fd04e673..ea68f5415 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -17550,9 +17550,11 @@ impl Parser {
+     /// - **capturing a parameter** (read or write) — SIGSEGVs at teardown.
+     ///
+     /// Reads of enclosing locals (any position/type) stay legal — that is the
+-    /// proven-sound P245 surface that test-81 guards.  Passing a captured heap value to a
+-    /// function that writes through that parameter is a write too, and is refused alike
+-    /// (`parser::callee_writes_param`).
++    /// proven-sound P245 surface that test-81 guards.  Known residual: passing a
++    /// captured heap value to a function that mutates it is transitive and is not
++    /// caught here (it still faults at runtime); catching it needs callee
++    /// analysis.  The full capture model is deferred to its driving consumer (the
++    /// server/client library) — see the plan-57 deferred-follow-ups.
+     fn reject_unsound_parallel_captures(&mut self, arms: &[Value], enclosing: &[bool]) {
+         let mut viol: Vec<(u16, ParViolation)> = Vec::new();
+         for arm in arms {
+@@ -17617,22 +17619,6 @@ impl Parser {
+                 {
+                     self.note_mutation(host, encl, out);
+                 }
+-                // `@FR-C-Arms` — the same write made by a CALLEE: an enclosing heap local handed
+-                // to a parameter the function writes through (`at(c, 1)` bumping `c.calls`).
+-                // The worker's store is read-only, so the interpreter panicked and C let the
+-                // write land, where the direct `c.calls += 1` is refused.
+-                if self.data.def(*d).is_loft_defined() {
+-                    for (k, a) in args.iter().enumerate() {
+-                        if let Some(host) = Value::base_var(a)
+-                            && (self.vars.tp(host).heap_def_nr().is_some()
+-                                || matches!(self.vars.tp(host).base(), Type::Vector(..))
+-                                || crate::data::is_keyed(self.vars.tp(host)))
+-                            && crate::parser::callee_writes_param(*d, &self.data, k)
+-                        {
+-                            self.note_mutation(host, encl, out);
+-                        }
+-                    }
+-                }
+                 for a in args {
+                     self.collect_parallel_violations(a, encl, out);
+                 }

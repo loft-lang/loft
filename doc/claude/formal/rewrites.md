@@ -5641,8 +5641,10 @@ Sites: `opt::frame_calls::GuardFree` (`registers_buffers`, `is_guard_free`), the
                  another block; (b) the statement before the tail is complete, so nothing
                  brace-less governs the tail's first statement; (c) the value returned is
                  a plain name no release of the tail writes — it is read into the
-                 function's one result slot at its own place in the tail when the tail
-                 assigns it, before the tail when it was assigned earlier.  A body with a
+                 function's one result slot before the tail when it was assigned earlier,
+                 or when the tail's own read copies a name no other statement of the tail
+                 names (a release writes only what it names, so the read sees what it saw
+                 at its own place), and at its own place in the tail otherwise.  A body with a
                  preprocessor line stays whole, and so do the parts of (R-CSplit): a part
                  cannot jump into another.
                  WHAT IT DOES NOT DO: two exits whose tails differ in the middle — one

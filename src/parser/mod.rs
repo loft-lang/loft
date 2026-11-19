@@ -633,6 +633,12 @@ pub struct Parser {
     /// road before the roads that mint a work reference run, so nothing is minted for a
     /// record the update never builds (loft-lang/plans#202 P2).
     pub(crate) update_literals: HashSet<(u32, u32, u32)>,
+    /// loft#2584 — the assignments whose right side has no call and no block, as
+    /// `(function, line, column)` of the statement: pass 1 parses the right side after the
+    /// place and records it here ([`crate::lexer::Lexer::call_forms`]); pass 2 decides the
+    /// place before it reads the right side, and keeps an index that only reads inline only
+    /// for these.  Absent means the side may write what the index reads.
+    pub(crate) effect_free_rhs: HashSet<(u32, u32, u32)>,
     /// `@FR-R-Demote` — `(function, line, column)` of a literal's `{` whose one out-of-line field
     /// is its destination variable, read nowhere else in the literal: pass 1 records the field's
     /// name, and pass 2 moves the old record into that field instead of copying it.
@@ -1202,6 +1208,10 @@ pub struct Parser {
     /// taken by `keyed_snapshot`, which then builds a hash's snapshot in slot order instead of
     /// key order.  Any other walk ignores it: key order is one of the orders `unordered` allows.
     unordered_iterator: bool,
+    /// `@FR-N-Road` — the local a return copy's enclosing branch has just PROVEN present:
+    /// the present arm of a discharge (`if OpConvBoolFromRef(x) x else …`) copies `x` with
+    /// no absence test of its own (`materialize_return_into`).
+    ret_proven_present: Option<u16>,
     /// D-key-1: true only while parsing the *iterable* of a `for`/comprehension (set with
     /// save/restore around the iterable expression in `parse_in_range`).  A keyed range /
     /// partial-key subscript produces a `for`-only iterator (`Value::Iter`); `parse_key`
@@ -2188,6 +2198,7 @@ impl Parser {
             first_bind_targets: Vec::new(),
             first_bind_at: HashMap::new(),
             update_literals: HashSet::new(),
+            effect_free_rhs: HashSet::new(),
             demote_literals: HashMap::new(),
             demote_declined: HashSet::new(),
             binding_starts: Vec::new(),
@@ -2257,6 +2268,7 @@ impl Parser {
             reverse_iterator: false,
             source_refused: false,
             unordered_iterator: false,
+            ret_proven_present: None,
             iterable_context: false,
             last_range_from: None,
             literal_walk: None,

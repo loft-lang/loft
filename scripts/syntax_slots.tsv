@@ -1,0 +1,224 @@
+# The operand positions of loft's syntax — the slot register of the slot matrix (@PLN221).
+# Columns, tab-separated: id, family, rule, count, runs, type, statement[, declaration].
+#   rule    the formal rule that states how often this operand runs (`E-Left`, cited without
+#           its `@FR-` sigil); `-` when no rule states it yet, which `check` lists as owed.
+#   count   once | first | cond | step — exactly once; exactly once AND before the statement
+#           reads anything else, so that binding the operand first is what the rules say
+#           even when the operand writes what the statement works on; zero or one, decided
+#           by another operand; once per iteration.
+#   runs    how often the operand runs in THIS statement, in the prelude's world.
+#   type    what the slot takes; a filler of that type goes in (scripts/syntax_fillers.tsv).
+#           `type@kind,kind` keeps the slot to the collection kinds it has a meaning in
+#           (a keyed collection has no rendering; `#index` is not for an `index`), and
+#           `type!filler,filler` keeps out fillers that are not of the type the statement
+#           needs (a nullable integer into a narrow field).  What the compiler still
+#           refuses after that is a refusal of the LANGUAGE, and is listed as one.
+#   statement  one statement of `main` in scripts/syntax_slots_prelude.loft; `<S>` is the slot.
+#           Where a `{` follows the slot, the slot stands in parentheses: a block as the
+#           operand would otherwise be read as the statement's own body (`for n in 0..{…}
+#           {…}` is an open-ended range over the first block, and never ends).
+#   declaration  an optional top-level declaration the statement needs; `<S>` may sit there
+#           instead.  A function declared there takes `<ENV>` as its parameters and is
+#           called with `<ARGS>`: every value of the prelude's world, so that a filler finds
+#           the names it uses there as it does in `main`.  `<ENV -tk>` leaves a name
+#           out and `<ENV: c h i>` keeps only the named ones (the same after `ARGS`), for a
+#           declaration that cannot take the whole world: a generator with the world's
+#           collection of records or its tuple among its parameters ends the interpreter,
+#           which is a defect of its own, so that slot names the values its fillers use.
+#           `<BIND>` in it marks where the bound-first twin binds the operand (`t0 = …;`),
+#           which gives a slot inside a declaration its twin; without it the plain variable
+#           is what the cell is compared with.
+# A new operator, keyword or `#` attribute adds a row here, or a line in
+# scripts/syntax_outside.tsv saying why it takes no operand: `slot_matrix.py check` fails
+# until one of the two exists.
+it-for	iteration	I-For	once	1	coll	for p in <S> { s += p.k; }
+it-for-vint	iteration	I-For	once	1	vint	for n in <S> { s += n; }
+it-for-text	iteration	I-Text	once	1	text	for ch in <S> { s += 1; }
+it-filter-source	iteration	I-Filter	once	1	coll	for p in <S> if p.k > 1 { s += p.k; }
+it-filter-test	iteration	I-Filter	step	3	bool	for p in xs if <S> { s += p.k; }
+it-comp-source	iteration	I-Comp	once	1	coll	q = [for p in <S> { p.k }]; s = len(q);
+it-comp-test	iteration	I-Comp	step	3	bool	q = [for p in xs if <S> { p.k }]; s = len(q);
+it-comp-body	iteration	I-Comp	step	3	int	q = [for p in xs { <S> }]; s = len(q);
+it-range-low	iteration	I-Range	once	1	int	for n in <S>..j { s += n; }
+it-range-high	iteration	I-Range	once	1	int	for n in 0..(<S>) { s += 5; }
+it-range-incl-high	iteration	I-RangeIncl	once	1	int	for n in 0..=(<S>) { s += n; }
+it-slice-source	iteration	I-For	once	1	vint	for n in <S>[i..j] { s += n; }
+it-slice-bound	iteration	I-For	once	1	int	for n in vi[<S>..j] { s += n; }
+it-while	iteration	I-While	step	3	bool	n = 0; while <S> && n < 2 { n += 1; } s = n;
+it-index-attr	iteration	I-Index	step	3	int@vector,sorted,hash	for p in xs { if p#index == <S> { s += 1; } }
+it-par-source	iteration	C-Par	once	1	vint	for n in <S> par(m = inc1(n), 2) { s += m; }
+wr-var	write	E-Asgn	first	1	int	s = <S>;
+wr-field-recv	write	E-Asgn	once	1	rec	<S>.n = j;
+wr-field-value	write	E-Asgn	first	1	int	h.ws[1].n = <S>;
+wr-field-text	write	E-Asgn	first	1	text	h.ws[1].t = <S>;
+wr-field-coll	write	Col-Assign	once	1	coll	h.ws[1].items = <S>;
+wr-elem-recv	write	E-Asgn	once	1	vint	<S>[i] = j;
+wr-elem-index	write	E-Asgn	first	1	int	vi[<S>] = j;
+wr-elem-value	write	E-Asgn	first	1	int	vi[i] = <S>;
+wr-path-index	write	E-Asgn	first	1	int	h.ws[<S>].n = j;
+wr-path-text	write	E-Asgn	first	1	int	h.ws[<S>].t = x;
+wr-path-coll	write	Col-Assign	first	1	int	h.ws[<S>].items = [P { k: 7, t: "q" }];
+wr-add-recv	write	E-Asgn-Compound	once	1	rec	<S>.n += j;
+wr-add-value	write	E-Asgn-Compound	once	1	int	r.n += <S>;
+wr-add-index	write	E-Asgn-Compound	first	1	int	vi[<S>] += j;
+wr-sub-index	write	E-Asgn-Compound	first	1	int	vi[<S>] -= j;
+wr-mul-index	write	E-Asgn-Compound	first	1	int	vi[<S>] *= j;
+wr-div-index	write	E-Asgn-Compound	first	1	int	vi[<S>] /= j;
+wr-mod-index	write	E-Asgn-Compound	first	1	int	vi[<S>] %= j;
+wr-add-path	write	E-Asgn-Compound	first	1	int	h.ws[<S>].n += j;
+wr-add-discharge	write	E-Asgn-Discharge	once	1	int	h.ws[<S>].n? += j;
+wr-text-recv	write	E-Asgn-Compound	once	1	rec	<S>.t += x;
+wr-text-value	write	E-Asgn-Compound	once	1	text	r.t += <S>;
+wr-text-path	write	E-Asgn-Compound	first	1	int	h.ws[<S>].t += x;
+wr-push-recv	write	Col-Insert	once	1	rec	<S>.items += [P { k: 9, t: "z" }];
+wr-push-item	write	Col-Insert	first	1	int	r.items += [P { k: <S>, t: "z" }];
+wr-push-path	write	Col-Insert	first	1	int	h.ws[<S>].items += [P { k: 9, t: "z" }];
+wr-push-path-two	write	Col-Insert	first	1	int	h.ws[<S>].items += [P { k: 8, t: "y" }, P { k: 9, t: "z" }];
+wr-push-coll	write	Col-Concat	once	1	coll@vector	r.items += <S>;
+wr-push-int	write	Col-Insert	first	1	int	vi += [<S>];
+wr-remove-index	write	N-Store	first	1	int	vi[<S>] = null;
+rd-field	read	E-Field	once	1	rec	s = <S>.n;
+rd-elem-recv	read	N-Index	once	1	vint	s = <S>[i];
+rd-elem-index	read	N-Index	once	1	int	s = vi[<S>];
+rd-elem-negative	read	N-Index	once	1	int	s = vi[-<S>];
+rd-slice-low	read	Slice-Value	once	1	int	q = vi[<S>..j]; s = len(q);
+rd-slice-high	read	Slice-Value	once	1	int	q = vi[0..<S>]; s = len(q);
+rd-slice-open-low	read	Slice-Open	once	1	int	q = vi[<S>..]; s = len(q);
+rd-slice-open-high	read	Slice-Open	once	1	int	q = vi[..<S>]; s = len(q);
+rd-key-recv	read	Col-Lookup	once	1	coll	s = <S>[2].k;
+rd-key-key	read	Col-Lookup	once	1	int	s = xs[<S>].k;
+rd-text-recv	read	E-Index	once	1	text	o = "{<S>[i]}";
+rd-text-index	read	E-Index	once	1	int	o = "{x[<S>]}";
+rd-text-slice	read	E-Index	once	1	int	o = x[<S>..];
+rd-path-index	read	N-Chain	once	1	int	s = h.ws[<S>].items[0].k;
+rd-default	read	E-Default	once	1	int	s = h.ws[<S>].n?;
+rd-coal-left	read	E-Coalesce	once	1	int	s = h.ws[<S>].n ?? j;
+rd-coal-right-absent	read	E-Coalesce	cond	1	int	s = h.ws[9].n ?? <S>;
+rd-coal-right-present	read	E-Coalesce	cond	0	int	s = h.ws[1].n ?? <S>;
+rd-coal-coll-absent	read	E-Coalesce	cond	1	coll	for p in h.ws[9].items ?? <S> { s += p.k; }
+rd-coal-rec-left	read	E-Coalesce	once	1	nrec	s = (<S> ?? r).n;
+rd-coal-item-left	read	E-Coalesce	once	1	nitem	s = (<S> ?? P { k: 5, t: "d" }).k;
+rd-len	read	Col-Len	once	1	coll	s = len(<S>);
+ca-arg-first	call	F-Args	once	1	int	s = add2(<S>, j);
+ca-arg-second	call	F-Args	once	1	int	s = add2(i, <S>);
+ca-arg-default	call	F-Default	once	1	int	s = dflt(<S>);
+ca-recv-text	call	F-Recv	once	1	text	s = <S>.len();
+ca-recv-rec	call	F-Recv	once	1	rec	s = <S>.total();
+ca-callee	call	L-Apply	once	1	fn	s = <S>(j);
+ca-fnval-arg	call	L-Apply	once	1	int	s = fnv(<S>);
+ca-lambda-body	call	L-Fn	once	1	int	g = fn(a: integer) -> integer { a + <S> }; s = g(j);
+op-add-left	operator	E-Left	once	1	int	s = <S> + j;
+op-add-right	operator	E-Left	once	1	int	s = j + <S>;
+op-sub	operator	E-Left	once	1	int	s = j - <S>;
+op-mul	operator	E-Left	once	1	int	s = j * <S>;
+op-div	operator	E-Left	once	1	int	s = j / <S>;
+op-mod	operator	E-Left	once	1	int	s = <S> % j;
+op-pow	operator	E-Left	once	1	int	s = j ** <S>;
+op-bit-and	operator	E-Left	once	1	int	s = j & <S>;
+op-bit-or	operator	E-Left	once	1	int	s = j | <S>;
+op-bit-xor	operator	E-Left	once	1	int	s = j ^ <S>;
+op-shift-left	operator	E-Left	once	1	int	s = j << <S>;
+op-shift-right	operator	E-Left	once	1	int	s = j >> <S>;
+op-bit-not	operator	E-Op	once	1	int	s = ~<S>;
+op-negate	operator	E-Op	once	1	int	s = -<S>;
+op-not	operator	E-Op	once	1	bool	if !<S> { s = 1; } else { s = 2; }
+op-eq	operator	E-Eq	once	1	int	if <S> == j { s = 1; } else { s = 2; }
+op-ne	operator	E-Eq	once	1	int	if <S> != j { s = 1; }
+op-lt	operator	E-Left	once	1	int	if <S> < j { s = 1; }
+op-le	operator	E-Left	once	1	int	if <S> <= j { s = 1; }
+op-gt	operator	E-Left	once	1	int	if j > <S> { s = 1; }
+op-ge	operator	E-Left	once	1	int	if j >= <S> { s = 1; }
+op-eq-text	operator	E-Eq	once	1	text	if <S> == x { s = 1; }
+op-concat	operator	E-Concat	once	1	text	o = x + <S>;
+op-concat-tail	operator	Col-Concat	once	1	vint	q = cat(<ARGS>); s = len(q);	fn cat(<ENV>) -> vector<integer> { <BIND> <S> + [9] }
+op-float	operator	E-Left	once	1	float	s = (fl + <S>) as integer;
+op-as	operator	N-Cast	once	1	float	s = <S> as integer;
+op-is	operator	E-Is	once	1	enum	if <S> is Green { s = 1; }
+op-and-left	operator	E-And	once	1	bool	if <S> && b { s = 1; }
+op-and-right-taken	operator	E-And	cond	1	bool	if b && <S> { s = 1; }
+op-and-right-skipped	operator	E-And	cond	0	bool	if nb && <S> { s = 1; }
+op-or-left	operator	E-Or	once	1	bool	if <S> || nb { s = 1; }
+op-or-right-taken	operator	E-Or	cond	1	bool	if nb || <S> { s = 1; }
+op-or-right-skipped	operator	E-Or	cond	0	bool	if b || <S> { s = 1; }
+op-and-word	operator	E-And	cond	0	bool	if nb and <S> { s = 1; }
+op-or-word	operator	E-Or	cond	0	bool	if b or <S> { s = 1; }
+ct-if	control	E-IfT	once	1	bool	if <S> { s = 1; } else { s = 2; }
+ct-if-value-taken	control	E-IfT	cond	1	int	s = if b { <S> } else { j };
+ct-if-value-skipped	control	E-IfT	cond	0	int	s = if b { j } else { <S> };
+ct-if-empty-arm	control	E-IfT	once	1	bool	q = tp(<ARGS>); s = if q == null { -1 } else { 1 };	fn tp(<ENV>) -> vector<integer>? { if <S> { [] } else { null } }
+ct-match-subject	control	M-Once	once	1	int	match <S> { 1 => { s = 1; }, _ => { s = 9; } }
+ct-match-enum	control	M-Once	once	1	enum	match <S> { Green => { s = 1; }, _ => { s = 9; } }
+ct-match-arm-taken	control	M-Expr	cond	1	int	s = match i { 1 => <S>, _ => j };
+ct-match-arm-skipped	control	M-Expr	cond	0	int	s = match i { 1 => j, _ => <S> };
+ct-match-guard	control	P-Guard	once	1	bool	s = match en { Green if <S> => 1, _ => 9 };
+ct-return	control	F-Return	once	1	int	s = give(<ARGS>);	fn give(<ENV>) -> integer { return <S>; }
+ct-tail	control	F-Ret	once	1	int	s = tail(<ARGS>);	fn tail(<ENV>) -> integer { <S> }
+ct-assert	control	E-Assert	once	1	bool	assert(<S>, "held");
+ct-assert-message	control	E-Assert	cond	0	text	assert(b, <S>);
+ct-yield	control	G-Yield	once	1	int	for n in gen(<ARGS: c h i j vi r nr fnv>) { s += n; }	fn gen(<ENV: c h i j vi r nr fnv>) -> iterator<integer> { yield <S>; yield j; }
+ct-parallel	control	C-Arms	once	1	int	parallel { add2(<S>, j); add2(i, j); }
+cn-field	construct	E-Record	once	1	int	p2 = P { k: <S>, t: "a" }; s = p2.k;
+cn-field-text	construct	E-Record	once	1	text	p2 = P { k: 1, t: <S> }; o = p2.t;
+cn-vector	construct	Col-Cons	once	1	int	q = [i, <S>, j]; s = len(q);
+cn-tuple	construct	T-Cons	once	1	int	tp = (j, <S>); s = tp.1;
+cn-format	construct	F-Interp	once	1	int	o = "{ <S> }";
+cn-format-text	construct	F-Interp	once	1	text	o = "<{ <S> }>";
+cn-format-spec	construct	F-Spec	once	1	int	o = "{ <S>:4}";
+cn-format-coll	construct	F-Render	once	1	coll@vector	o = "{ <S> }";
+cn-format-rec	construct	F-Render	once	1	rec	o = "{ <S> }";
+fl-add	operator	E-Left	once	1	float	sf = <S> + fl2;
+fl-mul	operator	E-Left	once	1	float	sf = fl2 * <S>;
+fl-sub	operator	E-Left	once	1	float	sf = fl2 - <S>;
+fl-div	operator	E-Left	once	1	float	sf = <S> / fl;
+fl-lt	operator	E-Left	once	1	float	if <S> < fl2 { s = 1; } else { s = 2; }
+fl-ge	operator	E-Left	once	1	float	if <S> >= fl2 { s = 1; } else { s = 2; }
+fl-eq	operator	E-Eq	once	1	float	if <S> == fl { s = 1; } else { s = 2; }
+fl-ne	operator	E-Eq	once	1	float	if <S> != fl { s = 1; } else { s = 2; }
+fl-negate	operator	E-Op	once	1	float	sf = -<S>;
+fl-as-single	operator	N-Cast	once	1	float	ss = <S> as single;
+fl-field	write	E-Asgn	first	1	float	nr.fl = <S>;
+fl-field-add	write	E-Asgn-Compound	once	1	float	nr.fl += <S>;
+fl-elem	write	E-Asgn	first	1	float	vf[i] = <S>;
+fl-push	write	Col-Insert	first	1	float	vf += [<S>];
+fl-elem-index	read	N-Index	once	1	int	sf = vf[<S>];
+fl-format	construct	F-Interp	once	1	float	o = "{ <S> }";
+sg-add	operator	E-Left	once	1	single	ss = <S> + sg;
+sg-lt	operator	E-Left	once	1	single	if <S> < sg { s = 1; } else { s = 2; }
+sg-eq	operator	E-Eq	once	1	single	if <S> == sg { s = 1; } else { s = 2; }
+sg-as-float	operator	N-Cast	once	1	single	sf = <S> as float;
+sg-field	write	E-Asgn	first	1	single	nr.sg = <S>;
+sg-format	construct	F-Interp	once	1	single	o = "{ <S> }";
+ch-as-int	operator	N-Cast	once	1	char	s = <S> as integer;
+ch-eq	operator	E-Eq	once	1	char	if <S> == cx { s = 1; } else { s = 2; }
+ch-field	write	E-Asgn	first	1	char	nr.ch = <S>;
+ch-format	construct	F-Interp	once	1	char	o = "{ <S> }";
+by-field	write	E-Asgn	first	1	int!int-elem	nr.by = <S> & 255;
+by-add	write	E-Asgn-Compound	once	1	int	nr.by += <S>;
+by-read	read	E-Left	once	1	int	s = nr.by + <S>;
+sh-field	write	E-Asgn	first	1	int!int-elem	nr.sh = <S> & 32767;
+i4-field	write	E-Asgn	first	1	int!int-elem	nr.i4 = <S> & 2147483647;
+i4-add	write	E-Asgn-Compound	once	1	int	nr.i4 += <S>;
+bo-field	write	E-Asgn	first	1	bool	nr.on = <S>;
+bo-elem	write	E-Asgn	first	1	bool	vbo[i] = <S>;
+bo-push	write	Col-Insert	first	1	bool	vbo += [<S>];
+en-field	write	E-Asgn	first	1	enum	nr.en = <S>;
+en-elem	write	E-Asgn	first	1	enum	vcol[i] = <S>;
+en-push	write	Col-Insert	first	1	enum	vcol += [<S>];
+en-eq	operator	E-Eq	once	1	enum	if <S> == en { s = 1; } else { s = 2; }
+en-ne	operator	E-Eq	once	1	enum	if <S> != en { s = 1; } else { s = 2; }
+ct-truthy-int	control	E-Truthy	once	1	int	if <S> { s = 1; } else { s = 2; }
+ct-truthy-text	control	E-Truthy	once	1	text	if <S> { s = 1; } else { s = 2; }
+op-not-int	operator	E-Truthy	once	1	int	if !<S> { s = 1; } else { s = 2; }
+it-map-source	iteration	I-Map	once	1	vint	q = map(<S>, inc1); s = q[0] + len(q);
+it-map-fn	iteration	I-Map	once	1	fn	q = map(vi, <S>); s = q[1];
+it-filter-fn-source	iteration	I-Filter	once	1	vint	q = filter(<S>, big); s = len(q);
+it-reduce-source	iteration	I-Reduce	once	1	vint	s = reduce(<S>, 0, addp);
+it-reduce-init	iteration	I-Reduce	once	1	int	s = reduce(vi, <S>, addp);
+it-range-from	iteration	I-RangeFrom	once	1	int	for n in (<S>).. { if n > j { break; } s += n; }
+cn-destructure	construct	T-Destr	once	1	int	(a, bb) = (j, <S>); s = a * 10 + bb;
+ct-match-range	control	P-Range	once	1	int	match <S> { 0..5 => { s = 1; }, _ => { s = 2; } }
+ct-match-alt	control	P-Alt	once	1	int	match <S> { 1 | 2 => { s = 1; }, _ => { s = 2; } }
+wr-remove-dense	write	Col-RemoveDense	first	1	int	vi.remove(<S>);
+op-ne-text	operator	E-Eq	once	1	text	if <S> != x { s = 1; } else { s = 2; }
+op-eq-bool	operator	E-Eq	once	1	bool	if <S> == b { s = 1; } else { s = 2; }
+op-ne-bool	operator	E-Eq	once	1	bool	if <S> != b { s = 1; } else { s = 2; }

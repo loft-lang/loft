@@ -98,6 +98,7 @@ scripts/runtime_surface.py	--help
 scripts/script_twins.sh	--list
 scripts/scripts_named.py	--help
 scripts/skills-review.py	--help
+scripts/slot_matrix.py	check
 scripts/smoke-components.sh	--help
 scripts/stability_read.py	--help
 scripts/steering_rate.py	--help

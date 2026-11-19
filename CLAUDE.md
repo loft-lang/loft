@@ -282,6 +282,11 @@ the formal rules already gave the answer; strained = the fix extended a rule, ch
 surface or needed a design call.  Absence counts as unjudged ([.github/LABELS.md §
 `contract:`](.github/LABELS.md)).  Don't scope-creep the active fix with unrelated bugs.
 
+**Every compiler defect is held against the slot matrix (owner):** with its fix, say
+whether `scripts/slot_matrix.py` reaches it — and if not, add the rows that would (checked to
+FAIL on the build with the defect), or its line and missing axis to the reach ledger
+([ISSUE_TRACKING.md § Every defect is held against the slot matrix](doc/claude/ISSUE_TRACKING.md#every-defect-is-held-against-the-slot-matrix)).
+
 **A store-lifetime defect (leak, double free, use after free, wrong free) is fixed in three
 places (owner):** the compiler, the store records, and the static checker, which must report
 the defect with the cure switched off (`scripts/own_sweep.py --cell <cell>` reads CAUGHT, not
@@ -341,6 +346,7 @@ Networked runs: `LOFT_NET_PROFILE` (PERFORMANCE.md § LOFT_NET_PROFILE).
 
 **Testing / debug:** [TESTING.md](doc/claude/TESTING.md) where a test goes (start here) ·
 [RUNNING_TESTS.md](doc/claude/RUNNING_TESTS.md) · [GUARDS.md](doc/claude/GUARDS.md) `make falsify` ·
+[SLOT_MATRIX.md](doc/claude/SLOT_MATRIX.md) every operand position with every form of expression, generated ·
 [RUN_BOUNDS.md](doc/claude/RUN_BOUNDS.md) · [TEST_ENVIRONMENTS.md](doc/claude/TEST_ENVIRONMENTS.md) ·
 [LOFT_TEST.md](doc/claude/LOFT_TEST.md) · [DEBUG.md](doc/claude/DEBUG.md) · [CAVEATS.md](doc/claude/CAVEATS.md) · bisect switches:
 [NATIVE_SWITCHES.md](doc/claude/NATIVE_SWITCHES.md) / [BOTH_BACKEND_SWITCHES.md](doc/claude/BOTH_BACKEND_SWITCHES.md) ·

@@ -1,0 +1,13 @@
+diff --git a/src/scopes/get_free_vars.rs b/src/scopes/get_free_vars.rs
+index fc5811caa..53ccf1e07 100644
+--- a/src/scopes/get_free_vars.rs
++++ b/src/scopes/get_free_vars.rs
+@@ -262,7 +262,7 @@ impl Scopes<'_> {
+         // store, on the FIRST release of it (a view and its backing free one store).
+         let mut guarded_hooks: std::collections::HashSet<u16> =
+             std::collections::HashSet::default();
+-        let vars = self.claimants_after_their_tuples(self.variables(to_scope));
++        let vars = self.variables(to_scope);
+         // loft#2145 — the view locals among them a `&` callee may have rebound (released last
+         // below, from this list: the sweep consumes `vars`).
+         let view_rebound: Vec<(u16, u16)> = vars

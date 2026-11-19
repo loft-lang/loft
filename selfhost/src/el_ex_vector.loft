@@ -671,6 +671,18 @@ pub fn index(e: el::El, vars: el_vars::Vars, at: integer, c: integer?, keys: vec
     el::refuse(e, "an index that is not an integer: {type_kind(i.tp)}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
+  // A function value's element: its four-byte definition number, read as a function-valued
+  // field is (`fn_ref_field_read`: the number, then the reference null beside it).
+  if el_types::base(inner) is TyFunction {
+    fnt = el_types::without_deps(el_types::base(inner));
+    if e.first_pass {
+      return ex(ir::NdNull, fnt);
+    }
+    // (The value borrows the vector it was read from, a local by name; the read block itself
+    // borrows nothing.)
+    fdeps = match el_ir::unspan(x.code) { NdVar { n: fxv } => [fxv], _ => el_types::deps(x.tp) };
+    return ex(el_ir::v_block([el_ir::cl(e, "OpGetInt4", [el_ir::cl(e, "OpGetVector", [x.code, ir::NdInt { n: 4 }, i.code]), ir::NdInt { n: 0 }]), el_ir::cl(e, "OpNullRefSentinel", [])], fnt, "fn_ref_field_read"), el_types::with_deps(fnt, fdeps));
+  }
   // An index not provably in range reads the element as `τ?` (`@FR-N-Index`).
   may_miss = !fits(e, vars, i.code, x.code, false);
   size = elem_size(inner);
@@ -761,6 +773,28 @@ pub fn keyed_items(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> ve
   ls: vector<ir::Node> = [];
   for it in items {
     sd = struct_literal_def(e, it);
+    // A record that is no literal of it — a call's answer, a local, a view — is appended as a
+    // vector's record item is (`record_item_copy`: the call handed the element as its buffer,
+    // anything else copied in), into the collection's own type; `OpFinishRecord` indexes it.
+    if sd < 0 {
+      kx = el_ex_assign::expression(e, vars, it);
+      if e.first_pass {
+        continue;
+      }
+      if struct_ref(e, el_types::base(kx.tp)) != el_d {
+        refuse_known(e, kx.tp, "a keyed collection item of another type: {type_kind(kx.tp)}");
+        return null;
+      }
+      el_vars::set_var_type(vars, elm, ir::TyReference { n: el_d, dep: [v] });
+      ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: kt }, ir::NdInt { n: 65535 }]))];
+      kcopy = el_ex_match::record_item_copy(e, vars, elm, el_d, kx);
+      if kcopy == null {
+        return null;
+      }
+      ls += kcopy!;
+      ls += [el_ir::cl(e, "OpFinishRecord", [w, at, ir::NdInt { n: kt }, ir::NdInt { n: 65535 }])];
+      continue;
+    }
     if sd != el_d {
       el::refuse(e, "a keyed collection item that is not a literal of its record");
       return null;
