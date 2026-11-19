@@ -4493,6 +4493,14 @@ use #count instead"
                 self.vars.set_iteration_source(src_var);
                 if !self.first_pass {
                     self.vars.set_type(src_var, in_type.clone());
+                    // A source that is a VIEW (its type names what it borrows) is written before
+                    // its one read, so its null init mints no store
+                    // (`bind_lowering::keyed_null_mints`): declared ahead of an `if` arm the loop
+                    // stands in, the minted store was left behind (`for p in box(c, h).items`).
+                    // An owning source keeps its store: its bind copies into it.
+                    if !in_type.depend().is_empty() {
+                        self.vars.mark_inline_ref(src_var);
+                    }
                 }
                 in_type = in_type.depending(src_var);
                 fill = v_set(src_var, expr);
