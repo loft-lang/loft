@@ -1,5 +1,7 @@
 // loft#1421 shape at a COLLECTION element type — the control for `ret-view-of-param`.
 // Nullable: the RETURN carries `?`, exactly as in the struct pair.
+// @ABSENCE: the element is copied into the return buffer only where it is present (loft#2585): an
+// absent one is answered as it is, so the copy carries a null test the dense half has no need of.
 struct S { a: integer }
 fn view(p: vector<vector<S>>) -> vector<S>? { p[0] }
 fn main() { q: vector<vector<S>> = [[S { a: 7 }]]; v = view(q); println("{v[0].a ?? -1}"); }

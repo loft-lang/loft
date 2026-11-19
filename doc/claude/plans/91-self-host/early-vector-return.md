@@ -11,12 +11,14 @@ passes, for the field forms. Hand-computed: `a = from_src(Src { vals: [4, 7] }, 
 → `a` is `[4,7,9]` and the source stays `[4,7]`; `proj(5, -1)` → `[5,6]`; the tails `[k]` /
 `[k, k]` → `[3]` / `[2,2]`. The caller always gets its own copy.
 
-**One ORACLE DEFECT, not to mirror:** an early `return` of a CONSTANT hands out the
-constant's own store. `fn f(k) -> vector<integer> { if k < 0 { return NUMS; } [k] }` then
-`b = f(-1); b += [9]` stops with "write to a constant" (interpreter) or "write to a locked
-store" (C, rustc), on main as well. The TAIL spelling `fn f() -> vector<integer> { NUMS }`
-copies, and so does the bind `b = NUMS`. I'm fixing it on loft30-gate. Port the COPY form below
-for a constant too, which is what Rust will emit after the fix.
+**One case waits on a Rust decision (loft#2585): an early `return` of a CONSTANT.** Rust
+hands out the constant's own store (`return OpConstRef(874);`, no buffer), so a caller's
+`b = f(-1); b += [9]` stops with "write to a constant". That raw exit is deliberate: `@FR-R-Place`'s
+foreign-exit clause gives a call into a FIELD the field as its buffer and copies a foreign
+answer at the CALL SITE. The defect is a plain bind, which adopts the answer because the callee
+publishes the fresh one-buffer marker `["??"]`. The fix is being chosen between a copy in the
+callee and a guarded copy at the bind. Until it lands, port the constant exit as Rust emits it
+today (raw `OpConstRef`); the page will say if the callee form changes.
 
 ## Rust's form
 
@@ -34,11 +36,10 @@ return wrap(c).inner.v     (a field of a call's record: the holding record copie
         OpCopyRecord(OpGetField(n_wrap(c, __ref_1), 0, 101), __retbuf, 101);
         __retbuf }, 0, 7);
 
-return NUMS          (a constant: TODAY `return OpConstRef(874);` with no buffer, the defect;
-                      after the fix, and in the tail spelling today:)
-    OpClearVector(__retbuf);
-    OpAppendVector(__retbuf, OpConstRef(874), 0);
-    return __retbuf;
+return NUMS          (a constant, an early exit: raw, no buffer, today's Rust form)
+    return OpConstRef(874);
+{ NUMS }             (the same constant as the TAIL: copied into the buffer)
+    {#one_buffer_vec_copy  OpClearVector(__retbuf); OpAppendVector(__retbuf, OpConstRef(874), 0); __retbuf }
 ```
 
 The function declares the hidden `__retbuf: vector<integer>` attribute, and the body opens
@@ -50,7 +51,8 @@ in the dump comparison.
 **What to code:** an early `return e` of a vector `e` the function doesn't own goes through
 the same `__retbuf` copy as the tail: clear, `OpAppendVector(__retbuf, e, <elem type>)`, then
 `return __retbuf`. A field of a CALL's record copies the holding record into the buffer and
-reads the field off it (`#inline ref copy`). A constant takes the clear-and-append form.
+reads the field off it (`#inline ref copy`). An early CONSTANT exit is raw
+`return OpConstRef(n)`, as above.
 
 ## The sites (try 63fb36e57)
 
