@@ -3120,10 +3120,20 @@ fn anchor(stores: &Stores) -> String {
 pub(crate) fn variable_shapes(
     cx: &Cx,
     vars: &crate::variables::Function,
+    code: &Value,
     args: &[u16],
     body32: bool,
 ) -> Result<Vec<CType>, String> {
     let mut shapes = Vec::with_capacity(vars.count() as usize);
+    // The locals a statement binds.  A `parallel` arm's locals are never scoped (the arm runs
+    // on a frame of its own), so an unscoped local is no proof that nothing binds it.
+    let mut bound = std::collections::HashSet::new();
+    code.any_node(&mut |n| {
+        if let Value::Set(v, _) = n {
+            bound.insert(*v);
+        }
+        false
+    });
     for v in 0..vars.count() {
         // A `&` parameter has its target's shape, passed as a pointer to it.
         let tp = match vars.tp(v).base() {
@@ -3133,7 +3143,8 @@ pub(crate) fn variable_shapes(
         // A name the first pass met before its declaration became a local of no type; the
         // second pass resolved it, so nothing binds it and the scope pass never scoped it.
         // It is declared as a placeholder nothing reads.
-        if tp.is_unknown() && !args.contains(&v) && vars.scope(v) == u16::MAX {
+        if tp.is_unknown() && !args.contains(&v) && vars.scope(v) == u16::MAX && !bound.contains(&v)
+        {
             shapes.push(CType::Int);
             continue;
         }
@@ -3467,7 +3478,7 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     if args.len() != def.attributes().len() {
         return Err("parameters that do not match their arguments".into());
     }
-    let mut shapes = variable_shapes(cx, vars, &args, data.body_width32(d))?;
+    let mut shapes = variable_shapes(cx, vars, def.code(), &args, data.body_width32(d))?;
     if mask == 0 {
         trace_shapes(cx, d, &shapes);
         trace_counters(cx, d);
@@ -3496,6 +3507,8 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
         )
     };
     let vr_ptr = cx.vr_ptr_params(d);
+    // Each parameter's declaration by variable, for a `parallel` arm that reads one.
+    let mut param_decls = std::collections::HashMap::new();
     let params: Vec<String> = args
         .iter()
         .enumerate()
@@ -3505,7 +3518,7 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
             let c = shapes[a as usize];
             let name = body::var_name(vars.name(a), a);
             let apv_rec = apv.as_ref().and_then(|(_, roles, _)| roles.apart.get(&a));
-            if let Some(t) = apv_rec.and_then(|r| cx.ap2_ctype(*r)) {
+            let decl = if let Some(t) = apv_rec.and_then(|r| cx.ap2_ctype(*r)) {
                 format!("const {t} *loft_avp{a}")
             } else if apr_at == Some(i) {
                 "loft_text *loft_aprp".to_string()
@@ -3517,7 +3530,9 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
                 format!("const {} *{name}", passed(c))
             } else {
                 format!("{} {name}", passed(c))
-            }
+            };
+            param_decls.insert(a, decl.clone());
+            decl
         })
         .collect();
     // An `__inv` twin takes the header of each vector it indexes from its caller, which holds
@@ -3586,6 +3601,7 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
         let mut s = shapes.clone();
         tf.shape(&mut s);
         match body::FnWriter::new(cx, d, s, ret)
+            .param_decls(param_decls.clone())
             .places(places)
             .transient(tf)
             .write()
@@ -3610,6 +3626,7 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
     let cold = mask == 0 && places == 0 && inputs.is_empty() && scalar_inputs.is_empty() && !kept;
     let ordinary = |cold: bool, shapes: Vec<CType>, inputs, scalar_inputs| {
         body::FnWriter::new(cx, d, shapes, ret)
+            .param_decls(param_decls.clone())
             .cold_exits(cold)
             .places(places)
             .inputs(inputs)
