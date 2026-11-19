@@ -1,8 +1,8 @@
-diff --git b/src/parser/control.rs a/src/parser/control.rs
-index bce140d44..4b635c7ad 100644
---- b/src/parser/control.rs
-+++ a/src/parser/control.rs
-@@ -15594,28 +15594,6 @@ impl Parser {
+diff --git a/src/parser/control.rs b/src/parser/control.rs
+index 316ecf91c..588c8d201 100644
+--- a/src/parser/control.rs
++++ b/src/parser/control.rs
+@@ -15634,29 +15634,6 @@ impl Parser {
          ) {
              return self.parse_call_diagnostic(val, name, list, types, call_pos);
          }
@@ -15,7 +15,8 @@ index bce140d44..4b635c7ad 100644
 -        let (list, types) = if matches!(
 -            special,
 -            "map" | "filter" | "reduce" | "par_fold" | "parallel_for"
--        ) && let Some(Type::Iterator(elm, _)) = types.first().map(Type::base)
+-        ) && let Some(first) = types.first()
+-            && let Type::Iterator(elm, _) = first.base()
 -            && list.first().is_some_and(Self::slice_shaped)
 -        {
 -            slice_list = list.to_vec();
@@ -31,10 +32,10 @@ index bce140d44..4b635c7ad 100644
          self.check_persist_copy_root(name, list, arg_pos);
          self.note_store_handoff(name, types);
          match special {
-diff --git b/src/parser/fields.rs a/src/parser/fields.rs
+diff --git a/src/parser/fields.rs b/src/parser/fields.rs
 index 91828c341..76f35f31f 100644
---- b/src/parser/fields.rs
-+++ a/src/parser/fields.rs
+--- a/src/parser/fields.rs
++++ b/src/parser/fields.rs
 @@ -1755,19 +1755,6 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
  
      #[expect(clippy::too_many_lines, reason = "inherited")]
