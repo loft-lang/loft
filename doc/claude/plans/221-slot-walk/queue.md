@@ -124,8 +124,17 @@ weaknesses in what a green run means; the rest is breadth.
     nothing else; on the slice double free the interpreter names both frees.
 16. **K4 — sampled depth three.**  A seeded random sample of three-deep compositions, a few
     thousand a night; the whole of depth three is over 60,000 cells.
-17. **K5 — rule coverage.**  The evaluation rules of the formal chapters that no slot cites,
-    listed: missing slots found without reading an issue.  It feeds arc H.
+17. **K5 — coverage, two ways** — **built**, as `slot_matrix.py coverage`.
+    `coverage rules` lists, per formal chapter, the evaluation rules no slot cites: 48
+    rules are cited by the 175 slots and well over a hundred are not.  Many of those are
+    not about an operand, but the list names missing slots outright — truthiness in a
+    condition (`E-Truthy`), a null argument (`E-NullArg`), the combinators (`I-Map`,
+    `I-Reduce`), an open-ended range, a null source, tuple destructuring and projection
+    (`T-Destr`, `T-Proj`), the patterns of `match`, `yield from` (`G-Delegate`), a default
+    field expression, `v.remove(i)`.  `coverage ops` is G9's probe as a command: the IR
+    operations the corpus makes the compiler emit and no cell does, the corpus read once a
+    build.  Its first use on arc H found that an `assert`'s message is evaluated only when
+    the assertion fails, which `GUARDS.md` taught the other way round.
 18. **K6 — two counted operands** in one statement, with a twin that binds them in the order
     the rules give for that construct.  The costliest step (it is G5's open half).
 19. **K7 — the twelve unreached lexemes**: a file in the prelude, and a cell kind that

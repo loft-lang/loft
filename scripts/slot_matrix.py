@@ -27,6 +27,10 @@ runs the product.
                    cell 's = <S> + j;' --filler 'at(<C>, 1)' --plain i
                It runs the four checks on both backends and prints the table rows the
                shape would be.  The names a statement may use are the prelude's.
+    coverage   what the matrix does not exercise, without reading an issue:
+               `coverage rules` lists the evaluation rules of the formal chapters that no
+               slot cites; `coverage ops` the IR operations the corpus makes the compiler
+               emit and no cell does (the corpus is read once a build: minutes).
     explain    one failing cell laid open for whoever debugs it:
                    explain wr-elem-index.int-fnval.vector
                its program KEPT in a directory (the cell, its bound-first twin, its order
@@ -1249,6 +1253,94 @@ def cmd_explain(args):
     return 0
 
 
+# The chapters whose rules say how an operand is evaluated: the ones a slot can cite.
+EVALUATION_CHAPTERS = ("operational.md", "iteration.md", "calls.md", "collections.md", "matching.md",
+                       "formatting.md", "coroutines.md", "concurrency.md", "tuples.md", "closures.md",
+                       "operators.md")
+
+
+def ops_of(path):
+    """The IR operations `loft introspect` prints for a program, as a set of names."""
+    text = subprocess.run([loft_binary(), "introspect", path], capture_output=True, text=True,
+                          check=False).stdout.split("std::cell::UnsafeCell")[0]
+    return set(re.findall(r"\bOp[A-Z]\w+", text))
+
+
+def cmd_coverage(args):
+    """What the matrix does not exercise, measured two ways without reading an issue."""
+    import json
+    slots, fillers, _, problems = load_all()
+    if problems:
+        print("\n".join(problems))
+        return 1
+    if args.what == "rules":
+        # The evaluation rules no slot cites: each is an operand position the register
+        # may lack, or a rule that is not about one — to be read, not assumed.
+        sys.path.insert(0, HERE)
+        import rule_tags
+        cited = {s["rule"] for s in slots}
+        defined = rule_tags.defined_rules()
+        total = 0
+        for chapter in EVALUATION_CHAPTERS:
+            mine = sorted(r for r, files in defined.items() if chapter in files)
+            missing = [r for r in mine if r not in cited]
+            total += len(missing)
+            print(f"{chapter:16} {len(mine) - len(missing):3} of {len(mine):3} rules cited by a slot; "
+                  f"not cited: {' '.join(missing)}")
+        print(f"slot_matrix coverage: {len(cited - {'-'})} rules cited by {len(slots)} slots; "
+              f"{total} evaluation rules cited by none")
+        return 0
+    # IR operations: what the corpus makes the compiler emit and no cell does.
+    cells = make_cells(slots, fillers, "all", set(), None, *axes_of(args), depth=args.depth)
+    with tempfile.TemporaryDirectory(prefix="slot_matrix.") as tmp:
+        verdicts = evaluate(cells, ("interp",))
+        accepted = [c for c in cells if verdicts[c["name"]][0] != "REFUSED"]
+        by_kind, programs = {}, []
+        for c in accepted:
+            by_kind.setdefault(c["kind_type"], []).append(c)
+        for kind_type, mine in by_kind.items():
+            for n in range(0, len(mine), CHUNK):
+                text, spans = program(kind_type, mine[n:n + CHUNK])
+                # `loft introspect` prints what `main` reaches, so every cell is called.
+                text += "fn main() { " + " ".join(fn + "();" for _, _, fn in spans) + " }\n"
+                path = os.path.join(tmp, f"ops{len(programs)}.loft")
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(text)
+                programs.append(path)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count() or 4) as pool:
+            got = list(pool.map(ops_of, programs))
+    empty = sum(1 for g in got if not g)
+    matrix = set().union(*got) if got else set()
+    print(f"the matrix: {len(accepted)} accepted cells in {len(programs)} programs emit {len(matrix)} "
+          f"distinct IR operations" + (f"  ({empty} program(s) printed no IR — the count is low)" if empty else ""))
+    cache = os.path.join(ROOT, "target", "slot_matrix_corpus_ops.json")
+    corpus = None
+    if os.path.exists(cache) and not args.refresh:
+        saved = json.load(open(cache, encoding="utf-8"))
+        if saved.get("build") == build():
+            corpus = saved["ops"]
+    if corpus is None:
+        lister = os.path.join(HERE, "corpus_files.sh")
+        files = subprocess.run([lister], capture_output=True, text=True, cwd=ROOT, check=False).stdout.split()
+        files = [f if os.path.isabs(f) else os.path.join(ROOT, f) for f in files]
+        print(f"reading the corpus: {len(files)} files (minutes; kept in {cache} for this build)")
+        corpus = {}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count() or 4) as pool:
+            for ops in pool.map(ops_of, files):
+                for op in ops:
+                    corpus[op] = corpus.get(op, 0) + 1
+        os.makedirs(os.path.dirname(cache), exist_ok=True)
+        json.dump({"build": build(), "ops": corpus}, open(cache, "w", encoding="utf-8"))
+    missing = sorted(((n, op) for op, n in corpus.items() if op not in matrix), reverse=True)
+    print(f"the corpus: {len(corpus)} distinct IR operations; {len(corpus) - len(missing)} of them emitted "
+          f"by a cell, {len(missing)} by none:")
+    for n, op in missing[:args.top]:
+        print(f"  {op:30} in {n:4} corpus file(s)")
+    if len(missing) > args.top:
+        print(f"  … {len(missing) - args.top} more; `--top N` shows more")
+    return 0
+
+
 def cmd_walk(args):
     """The matrix on an OLDER build beside this one: what it would have caught."""
     slots, fillers, _, problems = load_all()
@@ -1342,6 +1434,15 @@ def main():
     p.add_argument("--frame", help="where its values come from: a frame of the prelude, or `all`")
     p.add_argument("--depth", type=int, choices=(1, 2), default=1, help="2 adds every wrapper filler around every other filler")
     p.set_defaults(fn=cmd_run)
+    p = sub.add_parser("coverage")
+    p.add_argument("what", choices=("rules", "ops"), help="`rules`: the evaluation rules no slot cites; "
+                   "`ops`: the IR operations the corpus emits and no cell does")
+    p.add_argument("--depth", type=int, choices=(1, 2), default=1)
+    p.add_argument("--context")
+    p.add_argument("--frame")
+    p.add_argument("--top", type=int, default=40)
+    p.add_argument("--refresh", action="store_true", help="read the corpus again")
+    p.set_defaults(fn=cmd_coverage)
     p = sub.add_parser("explain")
     p.add_argument("cell", help="a cell's name, as a run prints it")
     p.add_argument("--out", metavar="DIR", help="where to keep its program and outputs (default: a new temp dir)")
