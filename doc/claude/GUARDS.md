@@ -64,9 +64,8 @@ first's callback), exit on a **condition** under a deadline, and **assert the se
 ### `assert`'s message runs only when the assertion fails
 
 `assert(cond, msg)` evaluates `cond` once, and `msg` only when `cond` is false: a call
-written in the message does not run for an assertion that holds, on either backend.  (The
-release of 2026-10-01 still evaluated both, as an ordinary call's arguments.)  Two things
-follow for a test:
+written in the message does not run for an assertion that holds, on either backend.  Two
+things follow for a test:
 
 - a message that would crash, or that reads something already released, stays hidden until
   the assertion fails — and then it is the message that is reported, not the assertion;

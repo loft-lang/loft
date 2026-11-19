@@ -111,7 +111,11 @@ weaknesses in what a green run means; the rest is breadth.
     cause: the right side of an element write running before its index (found.md's row 12)
     holds for every element type.  The statements are written out per type; a slot row
     that names several types, with a partner and a result variable per type, is the open
-    half.  *Not yet re-measured:* how many more IR operations the cells emit (G9).
+    half.  *Measured after it* (`coverage ops`, depth one, one context): the cells emit
+    133 of the corpus's 267 IR operations, half, where 106 were emitted before by a wider
+    run.  What is still never emitted: clearing a collection (`OpClear`, `OpClearKeyed`),
+    hash and vector removal, text inequality, boolean equality, a `single` field read and
+    push, a character read, `trie` and `spatial`, files, casts from text.
 15. **K3 — a failing cell laid open** — **built**, as `slot_matrix.py explain <cell>`.  It
     keeps one program holding the cell, its bound-first twin, its order cell and the plain
     variable; prints each statement; runs the cell alone on both backends with loft's own
