@@ -11,7 +11,15 @@ vector literal field, assigned to an existing field or element:
 element literal reading its own place's vector length → `[3,5]`, which repeated settles at
 `[2,5]`; `b.c = C2 { items: [9], o: b.c.items }` → items `[9]`, o the OLD `[4,5]`.
 
-**Not in place, by the rule:** `(R-InPlaceLiteral)` (formal/rewrites.md) declines an element
+**⚠ Superseded for FIELD places by main 21992d3e3 (#2574), measured at loft30-gate 06d02f19c:**
+`vb.inner = Vf { v: [7, 8, 9], n: 3 }` is now built IN PLACE (`OpSetInt4(OpGetField(vb, 0, 100),
+8, 0)`, then `OpPushInt` into the field's vector, then `OpSetInt` of `n`, with `_elm_1: ref(boolean) = null`
+left in the body). `vs.els[i] = Vf { v: [len(vs.els[i].v), 5], n: 2 }` is still built apart and
+copied, as below. That cell is both an element place AND a literal reading its place, so which of
+the two keeps it apart is not separated here; read `@FR-R-InPlaceLiteral` in formal/rewrites.md
+before porting the decision.
+
+**Not in place, by the rule (as it read before 21992d3e3):** `(R-InPlaceLiteral)` (formal/rewrites.md) declines an element
 whose type owns a collection field, and Rust declines the field form too. A declined rewrite takes
 the plain path: the literal is BUILT APART and COPIED in. This is not a Rust defect; the port
 mirrors the copy.

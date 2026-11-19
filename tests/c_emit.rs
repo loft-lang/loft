@@ -8432,18 +8432,38 @@ fn a_return_inside_a_loop_frees_the_texts_a_later_statement_declares() {
         .map(str::to_string)
         .collect();
     assert!(temps.len() >= 2, "two text temporaries, one per `if`\n{c}");
+    // An exit is a `return`, or a jump into a release tail another exit wrote
+    // (`@FR-R-CTail`): what it frees is its own run before the jump and the shared run from
+    // the label to the `return` that ends it.
     let mut returns = 0;
     for (i, l) in body.iter().enumerate() {
-        if !l.trim_start().starts_with("return ") {
+        let t = l.trim_start();
+        let label = t
+            .strip_prefix("goto ")
+            .and_then(|g| g.strip_suffix(';'))
+            .filter(|g| g.starts_with("loft_rt"));
+        if !t.starts_with("return ") && label.is_none() {
             continue;
         }
         returns += 1;
-        let freed: Vec<&str> = body[..i]
+        let mut freed: Vec<&str> = body[..i]
             .iter()
             .rev()
             .take_while(|p| p.contains("loft_text_free(&") || p.starts_with("#line "))
             .copied()
             .collect();
+        if let Some(label) = label {
+            let at = body
+                .iter()
+                .position(|p| *p == format!("{label}:"))
+                .expect("the jump's label");
+            freed.extend(
+                body[at..]
+                    .iter()
+                    .take_while(|p| !p.trim_start().starts_with("return "))
+                    .copied(),
+            );
+        }
         for t in &temps {
             assert!(
                 freed

@@ -27,6 +27,13 @@ Overview):
 3. **`tests/*.rs`** — for what a script cannot express: an exact diagnostic set, a Rust API, a
    compiler internal, a process-level fixture, a cross-mode stdout matrix.
 
+**And a change to the SYNTAX owes the slot matrix a row.**  A new operator, keyword or `#`
+attribute adds its operand position to `scripts/syntax_slots.tsv` (with its hand-computed
+line in `scripts/syntax_expect.tsv`), or its reason to `scripts/syntax_outside.tsv`;
+`doc_hygiene` fails until it does.  A fix that makes generated cells pass removes their
+lines from `scripts/slot_matrix.baseline` ([TESTING.md § The slot
+matrix](../../../doc/claude/TESTING.md)).
+
 The rest of this skill is the how: the suite-cell and script annotations, the `code!` and
 `cross_mode!` macros, ignores, naming, and the `@falsified-at` receipt.  Running down why a
 test fails is the `loft-debug` skill; runtime log knobs are

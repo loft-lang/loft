@@ -516,7 +516,17 @@ impl Run<'_> {
         let operand = |v: &Value| -> Option<Pts> {
             match v.unspan() {
                 Value::Var(x) => Some(Self::pts(&st, *x)),
-                Value::TupleGet(..) => Self::named_var(&st, v).map(|k| Self::pts(&st, k)),
+                // A member with no name of its own yet is its tuple's: a tuple bound to `null` (its
+                // null init) holds null in every member (loft#2576: `OpDistinctStore(__kvb_1, t.0)`
+                // before `t`'s first literal read as undecidable, and its same arm, which nulls
+                // the accumulator, as a path the run could take).
+                Value::TupleGet(t, _) => Self::named_var(&st, v)
+                    .map(|k| Self::pts(&st, k))
+                    .or_else(|| {
+                        let whole = Self::pts(&st, *t);
+                        (!whole.is_empty() && whole.iter().all(|p| matches!(p, Pt::Null)))
+                            .then(|| [Pt::Null].into())
+                    }),
                 Value::Call(op, a) if *op == self.ops.fnref_closure => {
                     match a.first().map(Value::unspan) {
                         Some(Value::Var(g)) => Some(Self::pts(&st, *g)),

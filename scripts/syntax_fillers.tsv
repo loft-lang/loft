@@ -1,0 +1,118 @@
+# The forms of expression the slot matrix puts into an operand position (@PLN221).
+# Columns, tab-separated: id, type, expression.
+#   type  what the expression gives; a slot takes the fillers of its own type
+#         (scripts/syntax_slots.tsv names the types).
+#   expression  `<C>` is the counter the cell hands this operand.  Every filler but a type's
+#         `var` bumps that counter exactly ONCE per evaluation, and gives the same value as
+#         the `var` of its type, so a cell and its bound-first twin agree on the answer.
+#   A filler that bumps `calls` itself and writes no log (`int-block-one`: a block of ONE
+#   statement and a value, which is lowered differently from a longer one) gets no ORDER cell.
+#   A filler is a primary expression or stands in parentheses, so that the statement around
+#   it parses the same way as with a variable there.
+#   `<I:type>` in an expression is a HOLE: the row is a WRAPPER, generated once for every
+#   other filler of that type (never a variable, never another wrapper) at `--depth 2`.  A
+#   wrapper takes no `<C>` — the filler in its hole does the counting — and gives its own
+#   type's plain value when its hole holds that type's plain value.
+#   An optional fourth column, `first`, marks a filler that WRITES what the statement works
+#   on.  Such an operand changes the answer, so only the bound-first twin can say what is
+#   right, and only where binding first is what the rules say: the slots whose count is
+#   `first` (scripts/syntax_slots.tsv).  A row with this column goes into those slots only.
+# The `var` row of a type is its plain operand: evaluated once by construction, it is what a
+# slot is validated with before any other filler is tried.
+# `python3 scripts/slot_matrix.py check` validates this file; `fillers` runs each row.
+int-var	int	i
+int-call	int	at(<C>, 1)
+int-field	int	box(<C>, h).n
+int-elem	int	h.ones[at(<C>, 0)]
+int-coal	int	(h.ws[at(<C>, 9)].n ?? 1)
+int-default	int	h.ws[at(<C>, 0)].n?
+int-method	int	(txz(<C>).len() - 3)
+int-block	int	{ bump(<C>); 1 }
+int-block-write	int	{ <C>.calls += 1; <C>.log += "S"; 1 }
+int-block-one	int	{ <C>.calls += 1; 1 }
+int-if	int	if yes(<C>, true) { 1 } else { 2 }
+int-match	int	match at(<C>, 2) { 2 => 1, _ => 0 }
+int-fnval	int	fnv(at(<C>, 0))
+bool-var	bool	b
+bool-call	bool	yes(<C>, true)
+bool-field	bool	box(<C>, h).ok
+bool-compare	bool	(at(<C>, 1) == 1)
+bool-not	bool	(!yes(<C>, false))
+bool-if	bool	if yes(<C>, true) { true } else { false }
+text-var	text	x
+text-call	text	tx(<C>)
+text-field	text	box(<C>, h).t
+text-coal	text	(h.ws[at(<C>, 0)].t ?? "")
+text-format	text	"{tx(<C>)}"
+text-slice	text	txz(<C>)[1..]
+text-concat	text	(tx(<C>) + "")
+float-var	float	fl
+float-call	float	flo(<C>)
+float-field	float	box(<C>, h).f
+float-cast	float	(at(<C>, 3) as float / 2.0)
+rec-var	rec	r
+rec-call	rec	box(<C>, h)
+rec-elem	rec	h.ws[at(<C>, 0)]
+rec-if	rec	if yes(<C>, true) { h.ws[0] } else { h.ws[1] }
+coll-var	coll	xs
+coll-call	coll	mk(<C>)
+coll-field	coll	box(<C>, h).items
+coll-coal	coll	(h.ws[at(<C>, 0)].items ?? [])
+coll-default	coll	h.ws[at(<C>, 0)].items?
+vint-var	vint	vi
+vint-call	vint	mkv(<C>)
+vint-field	vint	held(<C>, h).v
+vint-slice	vint	mkv(<C>)[0..]
+vint-if-empty	vint	(if yes(<C>, false) { [] } else { [10, 20, 30, 40] })
+enum-var	enum	en
+enum-call	enum	col(<C>)
+enum-field	enum	box(<C>, h).tag
+enum-match	enum	match at(<C>, 2) { 2 => Green, _ => Red }
+fn-var	fn	fnv
+fn-call	fn	pickfn(<C>)
+nrec-var	nrec	h.ws[0]
+nrec-elem	nrec	h.ws[at(<C>, 0)]
+nrec-tuple-call	nrec	pairw(<C>).0
+nitem-var	nitem	xs[2]
+nitem-key	nitem	xs[at(<C>, 2)]
+nitem-tuple-member	nitem	tk.0[at(<C>, 2)]
+int-of-sum	int	(<I:int> + 0)
+int-of-elem	int	h.ones[<I:int> - 1]
+int-of-arg	int	add2(0, <I:int>)
+int-of-field	int	<I:rec>.n
+int-of-len	int	(len(<I:text>) - 2)
+int-of-if	int	(if <I:bool> { 1 } else { 2 })
+int-of-coal	int	(h.ws[<I:int> + 8].n ?? 1)
+bool-of-compare	bool	(<I:int> == 1)
+bool-of-field	bool	<I:rec>.ok
+bool-of-not	bool	(!(!<I:bool>))
+text-of-field	text	<I:rec>.t
+text-of-concat	text	(<I:text> + "")
+text-of-slice	text	<I:text>[0..]
+rec-of-elem	rec	h.ws[<I:int> - 1]
+rec-of-call	rec	same(<I:rec>)
+coll-of-field	coll	<I:rec>.items
+vint-of-slice	vint	<I:vint>[0..]
+nrec-of-elem	nrec	h.ws[<I:int> - 1]
+int-alias	int	(ident(<C>, vi)[0] - 9)
+int-alias-field	int	own(<C>, r).n
+text-alias	text	own(<C>, r).t
+rec-alias	rec	own(<C>, r)
+vint-alias	vint	ident(<C>, vi)
+coll-alias	coll	idc(<C>, xs)
+coll-alias-field	coll	own(<C>, r).items
+int-writes-elem	int	poke(<C>, vi)	first
+int-writes-length	int	grow(<C>, vi)	first
+int-writes-field	int	renum(<C>, r)	first
+int-writes-text	int	retext(<C>, r)	first
+float-elem	float	(vf[at(<C>, 0)] ?? 0.0)
+float-if	float	(if yes(<C>, true) { 1.5 } else { 2.5 })
+single-var	single	sg
+single-call	single	sgl(<C>)
+single-cast	single	(flo(<C>) as single)
+char-var	char	cx
+char-call	char	chr1(<C>)
+char-index	char	x[at(<C>, 1)]
+int-byte	int	nbox(<C>, nr).one
+int-short	int	nbox(<C>, nr).one16
+int-int4	int	nbox(<C>, nr).one4

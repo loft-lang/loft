@@ -243,6 +243,34 @@ The historical per-plan matrix definitions and bug-discovery records are in the 
 
 ---
 
+### The slot matrix — a new operator or keyword adds a row
+
+`scripts/slot_matrix.py` (@PLN221) is a third kind of matrix: it is generated, not written.
+`scripts/syntax_slots.tsv` lists every operand position of the syntax and
+`scripts/syntax_fillers.tsv` the forms of expression that go into one.  Each cell is one
+statement with one counted operand, checked on the interpreter and the C backend for how
+often the operand ran, the order, the result against the same statement with the operand
+bound to a local first, and leaks.
+
+What a change owes it:
+
+- **New syntax** — an operator, a keyword, a `#` attribute — adds the slot row for the
+  operand it takes, or a line in `scripts/syntax_outside.tsv` saying why it takes none.
+  `doc_hygiene`'s `every_lexeme_has_an_operand_slot_or_a_reason` fails until it does.
+- **A new slot row** adds its line to `scripts/syntax_expect.tsv`: the fields the plain
+  statement must leave changed, computed BY HAND.  `slot_matrix.py expect --propose` prints
+  what the compiler answers, as a proposal to check and never as the expectation.
+- **A fix** that makes listed cells pass removes their lines from
+  `scripts/slot_matrix.baseline` (`slot_matrix.py gate --update`, then read the diff: it
+  must only remove lines; the update is a full run, every cell on both backends, where
+  the tests compile only a sample).  `tests/slot_matrix.rs` fails on a failing cell that is not listed,
+  and on a listed cell that passes again; its output says which of the two it is.
+
+`make slot-matrix` runs the rows; `slot_matrix.py cell` and `expr` try a shape without
+touching a table.  The method is [STABILITY_METHOD.md § The slot
+matrix](STABILITY_METHOD.md#the-slot-matrix--the-walk-that-is-generated), the reference
+[SLOT_MATRIX.md](SLOT_MATRIX.md).
+
 ## Generated Test Files (`tests/generated/`)
 
 `Test::generate_code`, called from `Drop::drop`, writes these in every build profile, so a

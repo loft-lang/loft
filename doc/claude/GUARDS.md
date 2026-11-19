@@ -61,19 +61,19 @@ failure rate.  Sequence the steps deterministically (drive the second event from
 first's callback), exit on a **condition** under a deadline, and **assert the sequencing**
 (`attempts == 2`) — or the test passes for a reader that never re-read at all.
 
-### `assert`'s message runs too
+### `assert`'s message runs only when the assertion fails
 
-`assert(cond, msg)` is an ordinary call, so **both** arguments are evaluated
-([formal/calls.md](formal/calls.md) `F-Args`).  A side-effecting call written in the condition
-and again in the message runs **twice**:
+`assert(cond, msg)` evaluates `cond` once, and `msg` only when `cond` is false: a call
+written in the message does not run for an assertion that holds, on either backend.  Two
+things follow for a test:
 
-```loft
-c: vector<integer> = [0];
-assert(bump(c) == 5, "got {bump(c)}");   // c[0] is now 2, not 1
-assert(c[0] == 1, "…ran once");          // fails, and the fix is not here
-```
+- a message that would crash, or that reads something already released, stays hidden until
+  the assertion fails — and then it is the message that is reported, not the assertion;
+- a side effect written in the message cannot be relied on to have happened.
 
-Bind first (`got = bump(c); assert(got == 5, "got {got}")`).
+Bind what the message shows first (`got = bump(c); assert(got == 5, "got {got}")`).  The
+rule is `(E-Assert)` in [formal/operational.md](formal/operational.md); the slot matrix
+holds it (`ct-assert`, `ct-assert-message` in `scripts/syntax_slots.tsv`).
 
 ### Backend divergence: the differential check is the instrument
 
@@ -673,6 +673,32 @@ Each is one rule; the measured incident behind it is in
   ALIAS for a RECORD tail and must NOT for a COLLECTION one (`(B-Copy)`).  Settle it with the
   plain spelling of the same tail on the same build, and pin both boundaries as cells
   (loft#1399).
+
+### A generated guard — what makes the slot matrix's green mean something
+
+`tests/slot_matrix.rs` is a guard nobody wrote cell by cell (@PLN221,
+[STABILITY_METHOD.md § The slot matrix](STABILITY_METHOD.md#the-slot-matrix--the-walk-that-is-generated)),
+so each way a guard reads green while the defect stands had to be closed in the generator:
+
+- **The oracle.**  A cell is compared with its bound-first twin, which is the same compiler
+  on a simpler form — not an independent answer.  The independent part is the ANCHOR: each
+  slot's plain statement against a hand-computed expectation (`scripts/syntax_expect.tsv`).
+  A statement whose right result could not be told from "nothing happened" was rewritten
+  until it could.
+- **Vacuity.**  A cell the compiler refuses is not a pass, and a slot none of whose cells
+  compile fails the run.  A filler must bump its counter once and give its type's plain
+  value (`slot_matrix.py fillers`), compared with the plain variable and not with a twin.
+- **Falsification.**  `walk --old <binary>` is the receipt, redone at will: against the
+  release before, the gate reports the cells that release's defects break.
+- **The twin's limit.**  Binding the operand first is what the rules say only where the
+  operand runs exactly once and, for an operand that WRITES what the statement works on,
+  before the statement reads anything else (the slots marked `first`).  A writing operand
+  on the right of `+=` differs from its twin and is right: `(E-Asgn-Compound)` reads the
+  place first.
+- **A table that lies.**  A filler that is not a primary expression parses another
+  statement than its twin; a block before a `{` is read as the statement's body.  Fillers
+  stand in parentheses unless they are primary, and a slot followed by `{` puts its operand
+  in parentheses.
 
 ### What the guard owns
 

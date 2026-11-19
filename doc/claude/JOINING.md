@@ -18,6 +18,7 @@ place: [DEVELOPMENT.md § Stay close to `main`](DEVELOPMENT.md#stay-close-to-mai
 - [Does this tree already have that change?](#does-this-tree-already-have-that-change)
 - [Rebasing onto a squash that carried your commits](#rebasing-onto-a-squash-that-carried-your-commits)
 - [Joining a sibling checkout](#joining-a-sibling-checkout)
+- [Merge resolutions](#merge-resolutions)
 - [Resolving a conflict](#resolving-a-conflict)
 - [Verifying a join](#verifying-a-join)
 
@@ -181,6 +182,17 @@ cannot force; establish whose ref is stale before reporting overwritten work.
   a range, and cut the range around the run.
 - **New commits from a source are a new join.**  Commits taken after a join that passed the
   gate need the gate again, not only a build, a ratchet and a bundle stamp.
+
+## Merge resolutions
+
+`apply` picks commits and never a merge, so what a merge's own resolution added — the lines
+`git show --remerge-diff <merge>` shows beyond the automatic merge — reaches the joined tree only
+when some picked commit also carries it.  Once every source is picked, `apply` asks each
+skipped merge whether its resolution added a line the source's tip still holds and the joined
+tree lacks (derived files left out: `rederive` measures them), and STOPS naming the file and
+the first line.  Carry those lines by hand in a commit of their own, then run `apply` again.
+The check runs after the picks, not in the survey, because a line a merge chose from the
+source's own side arrives with a later pick: asked earlier, it would read as lost.
 
 ## Resolving a conflict
 

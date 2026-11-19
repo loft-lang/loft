@@ -1,0 +1,12 @@
+diff --git a/src/c/tail.rs b/src/c/tail.rs
+--- a/src/c/tail.rs
++++ b/src/c/tail.rs
+@@ -273,7 +273,7 @@
+         let mut parent = node;
+         for (k, s) in exit.stmts[..own].iter().enumerate().rev() {
+             let id = at.len();
+-            at.push(first + k);
++            at.push(first + k + 1);
+             // A statement this exit repeats keeps the node of its first writing.
+             parent = *nodes.entry((parent, s.clone())).or_insert(id);
+         }

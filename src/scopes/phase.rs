@@ -255,6 +255,7 @@ pub(super) fn run_scan_phase(
         owned_handle_members: HashSet::default(),
         free_transferred: HashSet::default(),
         consumed_lifts: Vec::new(),
+        place_operand: false,
         fn_defs: None,
         written_out: Vec::new(),
     };

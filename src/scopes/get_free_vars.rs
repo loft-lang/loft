@@ -133,6 +133,70 @@ impl Scopes<'_> {
             && !matches!(evidence, crate::use_analysis::OwnEvidence::Fallback)
     }
 
+    /// `@FR-H-FreeTwice` — a store two names hold is freed once.  A tuple member's release
+    /// DISARMS the work-refs that claim it (its call's buffer, a literal member's `__kvb_N`
+    /// accumulator: `tuple_owned_elem_frees` sets them to the sentinel), so a claimant's own
+    /// scope-end free is only sound AFTER the tuple's.  The scope's variable list is in
+    /// registration order, which put an accumulator ahead of its tuple wherever the tuple was
+    /// registered later — `t: (hash<H[k]>, integer) = ([…], 3); (t.0["b"] ?? H {…}).n` freed
+    /// the hash through `__kvb_1` and again through `t.0`.  A claimant that comes before one
+    /// of its tuples moves to just after the last of them; every other variable keeps its turn
+    /// (`@FR-H-Drop`: a scope releases its owners in reverse declaration order).
+    fn claimants_after_their_tuples(&self, vars: Vec<u16>) -> Vec<u16> {
+        // `LOFT_NO_CLAIMANT_ORDER=1` (STORE_RECORDS.md § The checks): registration order, as
+        // before loft#2576 — the claimant may be released ahead of the tuple that disarms it.
+        if crate::env_once!(std::env::var_os("LOFT_NO_CLAIMANT_ORDER").is_some()) {
+            return vars;
+        }
+        // Each claimant's tuples among `vars`: the claimant may not be released before any.
+        let mut claims: std::collections::HashMap<u16, Vec<u16>> =
+            std::collections::HashMap::default();
+        for t in &vars {
+            if let Some(m) = self.tuple_call_mint.get(t) {
+                for w in m.values().flatten() {
+                    claims.entry(*w).or_default().push(*t);
+                }
+            }
+        }
+        for ((t, _), ws) in &self.tuple_claimants {
+            if vars.contains(t) {
+                for w in ws {
+                    claims.entry(*w).or_default().push(*t);
+                }
+            }
+        }
+        // Only a claimant that comes BEFORE one of its tuples moves, to just after the last of
+        // them; every other variable keeps its turn (`@FR-H-Drop`: reverse declaration order).
+        let pos = |v: u16| vars.iter().position(|x| *x == v);
+        let mut moved: std::collections::HashMap<u16, Vec<u16>> =
+            std::collections::HashMap::default();
+        for (w, ts) in &claims {
+            let (Some(at), Some(last)) = (pos(*w), ts.iter().filter_map(|t| pos(*t)).max()) else {
+                continue;
+            };
+            if at < last {
+                moved.entry(vars[last]).or_default().push(*w);
+            }
+        }
+        if moved.is_empty() {
+            return vars;
+        }
+        let deferred: std::collections::HashSet<u16> = moved.values().flatten().copied().collect();
+        let mut out = Vec::with_capacity(vars.len());
+        for v in &vars {
+            if deferred.contains(v) {
+                continue;
+            }
+            out.push(*v);
+            if let Some(ws) = moved.get(v) {
+                let mut ws = ws.clone();
+                ws.sort_by_key(|w| pos(*w));
+                out.extend(ws);
+            }
+        }
+        out
+    }
+
     /// Which variables this scope must free on the way out, as the `OpFreeRef` /
     /// `OpFreeText` / per-element ops to emit before leaving it.
     ///
@@ -198,7 +262,7 @@ impl Scopes<'_> {
         // store, on the FIRST release of it (a view and its backing free one store).
         let mut guarded_hooks: std::collections::HashSet<u16> =
             std::collections::HashSet::default();
-        let vars = self.variables(to_scope);
+        let vars = self.claimants_after_their_tuples(self.variables(to_scope));
         // loft#2145 — the view locals among them a `&` callee may have rebound (released last
         // below, from this list: the sweep consumes `vars`).
         let view_rebound: Vec<(u16, u16)> = vars
