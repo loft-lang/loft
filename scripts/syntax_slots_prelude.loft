@@ -1,0 +1,67 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The fixed world every slot-matrix cell runs in (@PLN221, scripts/slot_matrix.py).
+// `KIND` is replaced by the collection type the cell is generated for; `// DECL`, `// STMT`
+// and `CELL` by the cell's own declaration, statement and name.  A filler is a call into
+// one of the functions below: each bumps the counter it is handed, so the cell can say how
+// often the operand ran.  The values are chosen so that every filler of a type gives the
+// same answer as that type's plain variable.
+
+struct P { k: integer, t: text }
+enum Col { Red, Green, Blue }
+struct W { n: integer, t: text, f: float, ok: boolean, tag: Col, items: KIND }
+struct Hold { ws: vector<W>, v: vector<integer>, ones: vector<integer> }
+struct Ctr { calls: integer = 0 }
+
+fn mk(c: Ctr) -> KIND { c.calls += 1; [P { k: 1, t: "a" }, P { k: 2, t: "b" }, P { k: 3, t: "c" }] }
+fn mkv(c: Ctr) -> vector<integer> { c.calls += 1; [10, 20, 30, 40] }
+fn box(c: Ctr, h: Hold) -> W { c.calls += 1; h.ws[0] }
+fn held(c: Ctr, h: Hold) -> Hold { c.calls += 1; h }
+fn at(c: Ctr, i: integer) -> integer { c.calls += 1; i }
+fn tx(c: Ctr) -> text { c.calls += 1; "abc" }
+fn txz(c: Ctr) -> text { c.calls += 1; "zabc" }
+fn yes(c: Ctr, b: boolean) -> boolean { c.calls += 1; b }
+fn flo(c: Ctr) -> float { c.calls += 1; 1.5 }
+fn col(c: Ctr) -> Col { c.calls += 1; Green }
+fn inc1(a: integer) -> integer { a + 1 }
+fn pickfn(c: Ctr) -> fn(integer) -> integer { c.calls += 1; inc1 }
+fn add2(a: integer, b: integer) -> integer { a * 10 + b }
+fn dflt(a: integer, b: integer = 5) -> integer { a * 10 + b }
+fn total(self: W) -> integer { self.n + len(self.items) }
+fn hold() -> Hold {
+  Hold {
+    ws: [
+      W { n: 1, t: "abc", f: 1.5, ok: true, tag: Green, items: [P { k: 1, t: "a" }, P { k: 2, t: "b" }, P { k: 3, t: "c" }] },
+      W { n: 2, t: "y", f: 2.5, ok: false, tag: Blue, items: [P { k: 4, t: "d" }] }
+    ],
+    v: [10, 20, 30, 40],
+    ones: [1, 1]
+  }
+}
+// The cell's final line shows every value the statement could have changed.  A keyed
+// collection has no rendering of its own, so each collection is shown by lookups: by
+// position for a vector, by key for the keyed kinds.
+fn show(v: KIND) -> text {
+  out = "{len(v)}:";
+  for k in 0..10 { t = v[k].t ?? "-"; out += t; }
+  out
+}
+fn show_w(w: W) -> text { "({w.n} {w.t} {w.f} {w.ok} {w.tag} {show(w.items)})" }
+fn show_h(h: Hold) -> text {
+  out = "";
+  for w in h.ws { out += show_w(w); }
+  "{out} {h.v} {h.ones}"
+}
+// DECL
+
+fn main() {
+  c = Ctr {}; d = Ctr {}; h = hold();
+  i = 1; j = 3; b = true; nb = false; x = "abc"; fl = 1.5; en = Green; fnv = inc1;
+  vi = [10, 20, 30, 40];
+  xs = mk(Ctr {});
+  r = W { n: 1, t: "abc", f: 1.5, ok: true, tag: Green, items: [P { k: 1, t: "a" }, P { k: 2, t: "b" }, P { k: 3, t: "c" }] };
+  s = 0; o = "";
+// STMT
+  println("CELL c={c.calls} d={d.calls} | s={s} o={o} i={i} j={j} b={b} nb={nb} x={x} fl={fl} en={en} f={fnv(1)} vi={vi} xs={show(xs)} r={show_w(r)} h={show_h(h)}");
+}

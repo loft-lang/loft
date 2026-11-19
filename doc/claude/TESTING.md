@@ -243,6 +243,17 @@ The historical per-plan matrix definitions and bug-discovery records are in the 
 
 ---
 
+### The slot matrix — a new operator or keyword adds a row
+
+`scripts/slot_matrix.py` (@PLN221) is a third kind of matrix: it is generated, not written.
+`scripts/syntax_slots.tsv` lists every operand position of the syntax and
+`scripts/syntax_fillers.tsv` the forms of expression that go into one; each cell counts how
+often its operand ran.  A change that adds an operator, a keyword or a `#` attribute adds the
+slot row for the operand it takes, or a line in `scripts/syntax_outside.tsv` saying why it
+takes none — `doc_hygiene`'s `every_lexeme_has_an_operand_slot_or_a_reason` fails until it
+does.  `make slot-matrix` runs the rows; the plan is
+[plans/221-slot-walk](plans/221-slot-walk/README.md).
+
 ## Generated Test Files (`tests/generated/`)
 
 `Test::generate_code`, called from `Drop::drop`, writes these in every build profile, so a

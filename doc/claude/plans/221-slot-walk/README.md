@@ -9,8 +9,10 @@ Tracker: [@PLN221](https://github.com/loft-lang/plans/issues/221).
 
 ## Status
 
-Open — design ready, pilot run, nothing built.  The pilot under [`pilot/`](pilot/) is the
-probe the design rests on; its result is in § The pilot.
+Phase A is built: the register, its completeness guard and a first runner
+(`scripts/slot_matrix.py`).  Phases B to F are open.  What the register measured, and what
+the first whole run found, is in § Phase A as built; the pilot the design rests on is in
+§ The pilot.
 
 ## Goal
 
@@ -85,8 +87,9 @@ states the count):
 | Constructors | record field · vector element · tuple member · enum payload · format hole · format width | 6 |
 | Concurrency and generators | `parallel` arm · `par` source · `yield` value | 3 |
 
-About 75 slots.  The count is an estimate until phase A's register exists; the families are
-taken from [LOFT.md](../../LOFT.md) and the lexer's token set.
+This table was the estimate the design started from, about 75 slots.  The register phase A
+wrote has 132: every operator token is its own row, and a slot whose count depends on
+another operand is two rows, one per outcome.
 
 **Fillers** (`scripts/syntax_fillers.tsv`: id, template, result type, the counters it
 bumps): a call · a field of a call's result · an element at a computed index · a keyed
@@ -105,7 +108,7 @@ ten slots gave 114 cells with four fillers, about eleven a slot.
 
 | Depth | What it crosses | Cells | Interpreter run |
 |---|---|---|---|
-| One | slot × filler × kind | 1,300–1,600 | about half a minute |
+| One | slot × filler × kind | 1,286 measured (1,300–1,600 estimated) | 133 s measured, a process per cell |
 | Two | a filler inside a filler | 8,000–10,000 | a few minutes |
 | Three | one more level | near 60,000 | not planned |
 
@@ -119,6 +122,45 @@ where 1,500 cell files would be unreviewable and would rot.  A NAMED suite cell 
 only for a distinct cause the matrix found, under the rule it broke — the defect-born cell
 [STABILITY_METHOD.md](../../STABILITY_METHOD.md) already ranks highest.  The estimate for
 those is tens, not hundreds: the pilot's 30 failing cells were four causes.
+
+## Phase A as built
+
+| Register | Rows | What it holds |
+|---|---|---|
+| `scripts/syntax_slots.tsv` | 132 slots | id, family, the rule that states the count, count class, expected runs, type, the statement |
+| `scripts/syntax_fillers.tsv` | 47 fillers | 9 types, each with its plain variable and 1 to 10 other forms |
+| `scripts/syntax_outside.tsv` | 40 lexemes | 12 `none`, 16 `decl`, 12 `unreached` |
+| `scripts/syntax_slots_prelude.loft` | — | the world a cell runs in |
+
+- **The lexicon is read from the source.**  `check` takes it from the lexer's two tables
+  and from every literal the parser asks the lexer for, 103 lexemes today.  A lexeme in
+  no slot, no filler and not listed outside fails `doc_hygiene`.
+- **Twelve lexemes take an operand the matrix cannot reach** (`unreached`): the field
+  expressions (`init`, `computed`, `default`, `$`), the file attributes (`#next`, `#read`,
+  `#format`), `#lock`, `T.parse`, `yield from` and `panic`.  loft#2575 sits in that list
+  (`f#next`).  They are owed, and each needs the prelude extended.
+- **Eleven slots cite no rule**, because no rule states their count: the `while`
+  condition, a field read, the three text reads, `is`, the two `assert` operands and the
+  record-literal fields.  `slot_matrix.py list` prints both lists.
+- **Every slot compiles with its plain variable, and every filler bumps its counter once
+  and gives its type's plain value** (`run`, `fillers`): 158 and 47 cells, none failing.
+
+**The first whole run at depth one**: 1,286 cells, 133 s on the interpreter with one process
+a cell; 1,222 pass, 35 are refused, 29 fail.  The failing cells are three causes, on the
+branch at `6ec7ddf15`:
+
+1. A comprehension over a `sorted` or `index` source runs the source once per step (8
+   cells) — in the pilot.
+2. A collection assigned to a field at a computed place addresses the place three times,
+   with every form of index (10 cells) — in the pilot.
+3. **New.**  A block expression as the index of a compound write runs twice, where a call
+   in the same position runs once: `vi[{ c.calls += 1; 1 }] += 3` (11 cells: all five
+   compound operators, the text and collection appends through a path, and three runs under
+   `?`).  The same on `--native-c` and on the release build of 2026-11-18.
+   `(E-Asgn-Compound)` says the place is addressed exactly once.
+
+The runner compares run counts only.  The twin, the order trace, the leak channel and the
+batched C run are phase B.
 
 ## What a cell asserts
 
@@ -169,7 +211,7 @@ These are recorded here and not yet filed or fixed; phase C takes them first.
 
 | Item | What it builds | Verify — what goes red if it is done wrong | Status |
 |---|---|---|---|
-| **A** — the slot register | `syntax_slots.tsv`, `syntax_fillers.tsv`, each slot citing the rule that states its count; the count-class exceptions written into the rule text where a rule is silent | a completeness guard: every operator token, keyword and `#` attribute the lexer knows appears in a slot row or in a short list of forms that take no operand.  Falsified by removing one row | Open |
+| **A** — the slot register | `syntax_slots.tsv`, `syntax_fillers.tsv`, `syntax_outside.tsv`, each slot citing the rule that states its count | `doc_hygiene`'s `every_lexeme_has_an_operand_slot_or_a_reason`: every lexeme the lexer and the parser know is in a slot or has a reason; `selftest` removes a row, adds a lexeme and misspells a rule, and each must be reported | Shipped — the eleven rule-less counts and the twelve unreached operands are carried into C |
 | **B** — generator and runner | `scripts/slot_matrix.py` (`gen`, `run --backend both`, `--slot`, `--family`), the twin, the trace, the leak channel, the batched C run; `make slot-matrix` | run against a build that has loft#2573: it must report those cells.  The receipt is recorded as the tool's `@falsified-at` | Open |
 | **C** — the walk, one family per step | each failing cause fixed at the lowering that copies the operand, one named suite cell per cause under its rule, the refused list read | the family's cells, both backends; the named cell fails on the build before the fix (`make falsify`) | Open |
 | **D** — depth two | fillers nested once | the same run at depth two; a cause found here that depth one missed is recorded with the pair that exposed it | Open |
@@ -208,9 +250,9 @@ steps.
 
 - `STABILITY_METHOD.md` — a section beside § The rule-led walk: what the slot walk is, when
   to run it, how a new construct adds its row.
-- `TESTING.md` and the `loft-test` skill — a new construct or operator adds a slot row;
-  where a cause's named cell goes.
-- `COMMANDS.md` — `make slot-matrix` and the script's subcommands.
+- `TESTING.md` — a new construct or operator adds a slot row (done with phase A); the
+  `loft-test` skill, and where a cause's named cell goes.
+- `COMMANDS.md` — `make slot-matrix` and the script's subcommands (done with phase A).
 - `GUARDS.md` — the completeness guard and the runner's falsification receipt.
 - `formal/operational.md` — the `(E-Left)` sentence on `??` made to agree with
   `(E-Coalesce)`; the count class of each slot the chapters leave unstated.
