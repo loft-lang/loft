@@ -1535,6 +1535,12 @@ pub fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::N
     pt = a.typedef[0];
     at = types[a#index] ?? ir::TyUnknown { n: 0 };
     arg = given[a#index] ?? ir::NdNull;
+    // (An empty `[]` is read at its parameter's vector on pass 1 too — `parse_vector` under the
+    // parameter's hint — its `_vec_N` and `_elm_N` minted there.)
+    if e.first_pass && el_ex_pattern::is_empty_literal(arg) && el_types::base(pt) is TyVector && !el_types::is_unknown(pt) {
+      conv += [el_ex_pattern::empty_literal_to(e, vars, el_types::base(pt))];
+      continue;
+    }
     // Pass 1 converts nothing: an argument it could not type yet is taken as it is, so the
     // call still mints its buffers there.
     if e.first_pass && el_types::is_unknown(at) {
