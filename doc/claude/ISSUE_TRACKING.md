@@ -450,12 +450,14 @@ measurement of the slot matrix (`scripts/slot_matrix.py`, @PLN221): either the m
 have found it, or it shows what the matrix cannot see yet.  So whoever files or fixes a
 compiler defect answers one question and writes the answer down with the fix:
 
-1. **Is it one statement whose answer depends on the FORM of an operand?**  Try it:
-   `python3 scripts/slot_matrix.py run --filler all --slot <id>` for the slot it sits in.
-   A cell that fails on the build with the defect means the matrix reaches it; say so in
-   the issue.
+1. **Is it one statement whose answer depends on the FORM of an operand?**  Try it, on the
+   build with the defect: `python3 scripts/slot_matrix.py cell '<the statement, <S> for the
+   operand>' --type <its type>`, or `--filler '<the expression>' --plain '<a variable of the
+   same value>'`.  The statement uses the names of `scripts/syntax_slots_prelude.loft`.  A
+   failing cell that the tables already hold (`run --filler all --slot <id>`) means the
+   matrix reaches it; say so in the issue.
 2. **Not reached, and rows would do it** — a slot row, a filler row, an operand type, a
-   prelude helper.  Add them in the same change as the fix, and check the new cell FAILS on
+   prelude helper; `cell` prints them.  Add them in the same change as the fix, and check the new cell FAILS on
    the build that has the defect (`slot_matrix.py walk --old <that build>`): a row that
    never failed proves nothing.
 3. **Not reached, and no row can express it** — it turns on something the tool does not
