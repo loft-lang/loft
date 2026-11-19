@@ -524,7 +524,8 @@ fn write_twin(cx: &Cx, key: TrKey, name: &str) -> Result<(String, String, Option
     if cx.value_records().fns.contains_key(&key.d) {
         return Err("a value-record result".into());
     }
-    let mut shapes = crate::c::variable_shapes(cx, vars, def.code(), &args, data.body_width32(key.d))?;
+    let mut shapes =
+        crate::c::variable_shapes(cx, vars, def.code(), &args, data.body_width32(key.d))?;
     let vr_locals = cx.vr_locals(key.d);
     let mut vr_sorted: Vec<(u16, u16)> = vr_locals.iter().map(|(v, k)| (*v, *k)).collect();
     vr_sorted.sort_unstable();
@@ -967,7 +968,8 @@ impl Cx<'_> {
         {
             return Err("a signature the twin does not take".into());
         }
-        let mut shapes = crate::c::variable_shapes(self, vars, def.code(), &args, self.data.body_width32(d))?;
+        let mut shapes =
+            crate::c::variable_shapes(self, vars, def.code(), &args, self.data.body_width32(d))?;
         crate::c::value_local_shapes(self, d, &mut shapes);
         let mut params = Vec::new();
         for &a in &args {

@@ -104,44 +104,7 @@ impl FnWriter<'_> {
         // The site's addresses, shared by every arm: each name once.
         let mut addrs: Vec<String> = Vec::new();
         for (k, (arm, text)) in arms.iter().zip(texts).enumerate() {
-            let names = identifiers(&text);
-            let mut own = HashSet::new();
-            assigned(arm, &mut own);
-            let mut copies = Vec::new();
-            let mut copy = |name: String, decl: Option<String>, addrs: &mut Vec<String>| {
-                let at = addrs.iter().position(|a| *a == name).unwrap_or_else(|| {
-                    addrs.push(name.clone());
-                    addrs.len() - 1
-                });
-                copies.push((name, at, decl));
-            };
-            for v in 0..self.shapes.len() {
-                let v16 = v as u16;
-                let name = var_name(self.vars.name(v16), v16);
-                if !names.contains(name.as_str()) || own.contains(&v16) {
-                    continue;
-                }
-                if self.params[v] {
-                    let decl = self.param_decls.get(&v16).cloned().ok_or_else(|| {
-                        format!("a parallel arm reads parameter {}", self.vars.name(v16))
-                    })?;
-                    copy(name, Some(decl), &mut addrs);
-                } else if !self.apr_holds(v16) && !self.undeclared.contains(&v16) {
-                    copy(name, None, &mut addrs);
-                }
-            }
-            for (t, _) in &self.temps[..temps_before] {
-                if names.contains(t.as_str()) {
-                    copy(t.clone(), None, &mut addrs);
-                }
-            }
-            for d in &self.decls[..decls_before] {
-                if let Some(n) = declared_name(d)
-                    && names.contains(n)
-                {
-                    copy(n.to_string(), None, &mut addrs);
-                }
-            }
+            let copies = self.arm_copies(arm, &text, temps_before, decls_before, &mut addrs)?;
             self.arm_fns.push(ArmFn {
                 name: format!("loft_arm{id}_{k}"),
                 text,
@@ -166,7 +129,10 @@ impl FnWriter<'_> {
         self.line(ind + 1, &format!("void *const loft_pv[] = {{ {pv} }};"));
         self.line(
             ind + 1,
-            &format!("static const loft_arm_fn loft_pf[] = {{ {} }};", fns.join(", ")),
+            &format!(
+                "static const loft_arm_fn loft_pf[] = {{ {} }};",
+                fns.join(", ")
+            ),
         );
         self.line(
             ind + 1,
@@ -174,6 +140,58 @@ impl FnWriter<'_> {
         );
         self.line(ind, "}");
         Ok(())
+    }
+
+    /// What `arm` copies in at its start: each enclosing local, temporary and declaration its
+    /// written `text` names and the arm does not bind itself, with its index in the site's
+    /// address array `addrs` (added there once) and a parameter's declaration.
+    fn arm_copies(
+        &self,
+        arm: &Value,
+        text: &str,
+        temps_before: usize,
+        decls_before: usize,
+        addrs: &mut Vec<String>,
+    ) -> Result<Vec<(String, usize, Option<String>)>, String> {
+        let names = identifiers(text);
+        let mut own = HashSet::new();
+        assigned(arm, &mut own);
+        let mut copies = Vec::new();
+        let mut copy = |name: String, decl: Option<String>| {
+            let at = addrs.iter().position(|a| *a == name).unwrap_or_else(|| {
+                addrs.push(name.clone());
+                addrs.len() - 1
+            });
+            copies.push((name, at, decl));
+        };
+        for v in 0..self.shapes.len() {
+            let v16 = v as u16;
+            let name = var_name(self.vars.name(v16), v16);
+            if !names.contains(name.as_str()) || own.contains(&v16) {
+                continue;
+            }
+            if self.params[v] {
+                let decl = self.param_decls.get(&v16).cloned().ok_or_else(|| {
+                    format!("a parallel arm reads parameter {}", self.vars.name(v16))
+                })?;
+                copy(name, Some(decl));
+            } else if !self.apr_holds(v16) && !self.undeclared.contains(&v16) {
+                copy(name, None);
+            }
+        }
+        for (t, _) in &self.temps[..temps_before] {
+            if names.contains(t.as_str()) {
+                copy(t.clone(), None);
+            }
+        }
+        for d in &self.decls[..decls_before] {
+            if let Some(n) = declared_name(d)
+                && names.contains(n)
+            {
+                copy(n.to_string(), None);
+            }
+        }
+        Ok(copies)
     }
 
     /// The arms' functions, each declaring what the enclosing function declares (`prologue`),

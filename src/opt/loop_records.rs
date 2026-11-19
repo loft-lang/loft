@@ -166,32 +166,33 @@ fn scalar_element(
     rec: &Value,
     vars: Option<&crate::variables::Function>,
 ) -> bool {
-    let Value::Call(d, a) = rec.unspan() else {
+    let Value::Call(op, ops) = rec.unspan() else {
         return false;
     };
-    if (*d as usize) >= data.definitions.len()
-        || !matches!(data.def(*d).name(), "OpGetVector" | "OpVectorRef")
+    if (*op as usize) >= data.definitions.len()
+        || !matches!(data.def(*op).name(), "OpGetVector" | "OpVectorRef")
     {
         return false;
     }
-    match a.first().map(Value::unspan) {
-        Some(Value::Var(x)) => vars
-            .is_some_and(|vs| matches!(vs.tp(*x).base(), Type::Vector(elm, _) if is_scalar(elm))),
-        Some(Value::Call(g, b))
-            if (*g as usize) < data.definitions.len() && data.def(*g).name() == "OpGetField" =>
+    match ops.first().map(Value::unspan) {
+        Some(Value::Var(var)) => vars
+            .is_some_and(|vs| matches!(vs.tp(*var).base(), Type::Vector(elm, _) if is_scalar(elm))),
+        Some(Value::Call(field, field_ops))
+            if (*field as usize) < data.definitions.len()
+                && data.def(*field).name() == "OpGetField" =>
         {
-            let Some(Value::Int(t)) = b.get(2).map(Value::unspan) else {
+            let Some(Value::Int(tp)) = field_ops.get(2).map(Value::unspan) else {
                 return false;
             };
-            let Some(crate::database::Parts::Vector(e)) = usize::try_from(*t)
+            let Some(crate::database::Parts::Vector(elm)) = usize::try_from(*tp)
                 .ok()
-                .and_then(|t| st.types.get(t))
-                .map(|t| &t.parts)
+                .and_then(|nr| st.types.get(nr))
+                .map(|ty| &ty.parts)
             else {
                 return false;
             };
             matches!(
-                st.types.get(usize::from(*e)).map(|t| &t.parts),
+                st.types.get(usize::from(*elm)).map(|ty| &ty.parts),
                 Some(crate::database::Parts::Int(..) | crate::database::Parts::IntRaw(..))
             )
         }
@@ -209,36 +210,39 @@ fn record_known_type(
 ) -> Option<u16> {
     match rec.unspan() {
         Value::Var(v) => crate::opt::writes::plain_record_type(data, vars?.tp(*v)),
-        Value::Call(d, a) if (*d as usize) < data.definitions.len() => match data.def(*d).name() {
-            "OpGetField" => match a.get(2).map(Value::unspan) {
-                Some(Value::Int(t)) => u16::try_from(*t).ok(),
-                _ => None,
-            },
-            "OpGetVector" | "OpVectorRef" => match a.first()?.unspan() {
-                Value::Var(x) => {
-                    let Type::Vector(elm, _) = vars?.tp(*x).base() else {
-                        return None;
-                    };
-                    crate::opt::writes::plain_record_type(data, elm)
-                }
-                Value::Call(g, b)
-                    if (*g as usize) < data.definitions.len()
-                        && data.def(*g).name() == "OpGetField" =>
-                {
-                    let Some(Value::Int(t)) = b.get(2).map(Value::unspan) else {
-                        return None;
-                    };
-                    match st.types.get(usize::try_from(*t).ok()?).map(|t| &t.parts) {
-                        Some(
-                            crate::database::Parts::Vector(e) | crate::database::Parts::Array(e),
-                        ) => Some(*e),
-                        _ => None,
+        Value::Call(op, ops) if (*op as usize) < data.definitions.len() => {
+            match data.def(*op).name() {
+                "OpGetField" => match ops.get(2).map(Value::unspan) {
+                    Some(Value::Int(tp)) => u16::try_from(*tp).ok(),
+                    _ => None,
+                },
+                "OpGetVector" | "OpVectorRef" => match ops.first()?.unspan() {
+                    Value::Var(var) => {
+                        let Type::Vector(elm, _) = vars?.tp(*var).base() else {
+                            return None;
+                        };
+                        crate::opt::writes::plain_record_type(data, elm)
                     }
-                }
+                    Value::Call(field, field_ops)
+                        if (*field as usize) < data.definitions.len()
+                            && data.def(*field).name() == "OpGetField" =>
+                    {
+                        let Some(Value::Int(tp)) = field_ops.get(2).map(Value::unspan) else {
+                            return None;
+                        };
+                        match st.types.get(usize::try_from(*tp).ok()?).map(|ty| &ty.parts) {
+                            Some(
+                                crate::database::Parts::Vector(elm)
+                                | crate::database::Parts::Array(elm),
+                            ) => Some(*elm),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                },
                 _ => None,
-            },
-            _ => None,
-        },
+            }
+        }
         _ => None,
     }
 }

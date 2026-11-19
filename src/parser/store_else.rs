@@ -37,6 +37,34 @@ use crate::diagnostics::{Level, diagnostic_format};
 use crate::parser::{Parser, v_if, v_set};
 
 impl Parser {
+    /// `@FR-N-Default` × `@FR-H-Write-Else`: a place discharged by a record the program builds
+    /// (`k[5]?`, `k[5] ?? Mark {}`) always names a record, so the write always lands — in the
+    /// fallback when the element is absent — and the arm can never run: said, once.  A compound
+    /// store reads the place first, so its target is the `__place_N` temp the parser bound the
+    /// place to among the statement's steps.
+    fn warn_else_never_runs(
+        &mut self,
+        at: &crate::lexer::Position,
+        target: &Value,
+        steps: &[Value],
+    ) {
+        let lands = discharge_always_lands(target)
+            || matches!(target.unspan(), Value::Var(p) if steps.iter().any(|s| {
+                matches!(s.unspan(), Value::Set(q, rhs) if q == p && discharge_always_lands(rhs))
+            }));
+        if !self.first_pass && lands {
+            crate::diagnostic_at!(
+                self.lexer,
+                at,
+                Level::Warning,
+                code = "else-never-runs",
+                "this `else` never runs: the place is discharged with a record (`?` or `?? \
+                 Type {{ … }}`), so the write always lands — in that record when the element \
+                 is absent; drop the discharge to run the arm when the element is absent"
+            );
+        }
+    }
+
     /// The `else { B }` after an assignment statement `n` (the lexer is ON `else`): parse the
     /// arm and rewrite `n` into the lowering above.  A statement that is no store is refused,
     /// naming the cure; the arm is still parsed so the block reads on.
@@ -74,26 +102,7 @@ impl Parser {
         let mut inserts: Vec<(usize, u8, Vec<Value>)> = Vec::new();
         let mut absent: Option<Value> = None;
         if let Some((target, writes)) = shape.target {
-            // `@FR-N-Default` × `@FR-H-Write-Else`: a place discharged by a record the program
-            // builds (`k[5]?`, `k[5] ?? Mark {}`) always names a record, so the write always
-            // lands — in the fallback when the element is absent — and the arm can never run.
-            // A compound store reads the place first, so its target is the `__place_N` temp
-            // the parser bound the place to among the statement's steps.
-            let lands = discharge_always_lands(&target)
-                || matches!(target.unspan(), Value::Var(p) if steps.iter().any(|s| {
-                    matches!(s.unspan(), Value::Set(q, rhs) if q == p && discharge_always_lands(rhs))
-                }));
-            if !self.first_pass && lands {
-                crate::diagnostic_at!(
-                    self.lexer,
-                    &at,
-                    Level::Warning,
-                    code = "else-never-runs",
-                    "this `else` never runs: the place is discharged with a record (`?` or `?? \
-                     Type {{ … }}`), so the write always lands — in that record when the element \
-                     is absent; drop the discharge to run the arm when the element is absent"
-                );
-            }
+            self.warn_else_never_runs(&at, &target, &steps);
             // The place, bound once: a view of what it names, never freed by this frame.
             let tp = self.store_target_type(&target);
             let wt = self.create_unique("store_target", &tp);
