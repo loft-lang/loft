@@ -1032,6 +1032,14 @@ pub fn arm_body(e: el::El, vars: el_vars::Vars, body: integer?, expected: ir::Ty
   if el_ex_match::sibling_variants(e, x.tp, expected) {
     return x;
   }
+  // A tuple arm whose members join into the expected tuple (`(5, 7)` beside `(integer?,
+  // integer?)`) is no conversion: it stands, and the match joins it (`join_tuple_arms`).
+  if el_types::base(x.tp) is TyTuple && el_types::base(expected) is TyTuple {
+    tj = el_ex_null::join_tuple_arms(e, expected, x.tp);
+    if tj != null && el_types::is_equal(e, tj!, expected) {
+      return x;
+    }
+  }
   c = el_convert::convert_admitting(e, vars, x.code, x.tp, expected);
   if c == null {
     refuse_known(e, x.tp, "a match arm of another type: {type_kind(x.tp)} for {type_kind(expected)}");
@@ -1712,6 +1720,10 @@ pub fn vector_of(e: el::El, t: ir::TypeT) {
     TyCharacter => el::def(e, el::source_nr(e, 0, "character")).known_type,
     TyText { dep: _ } => el::def(e, el::source_nr(e, 0, "text")).known_type,
     TyReference { n } => el::def(e, n).known_type,
+    // A narrow integer (`i32`, `u8`) registers its content row and vector row here, on the first
+    // pass (`Data::vector_element_type`'s `narrow_vector_content`); a plain integer's are the
+    // library's already.
+    TyInteger { spec } => if el_types::narrow_width(spec) > 0 || el_types::int4(spec) || el_types::uint4(spec) { el_schema::content_type(e, t) } else { -1 },
     // A vector element's content is the inner vector's own store type.
     TyVector { inner } => if el_types::elem_name(e, inner) == "" { -1 } else { vector_store(e, inner, el_types::elem_name(e, inner)) },
     _ => -1
@@ -2115,6 +2127,13 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
       // A nested vector literal is built into its element (`parse_item` with `elm`).
       nested += [it];
       xs += [ex(ir::NdNull, nested_item_type(e, vars, it, nested_want))];
+    } else if struct_ref(e, if el_types::is_unknown(declared) { held_elem } else { declared }) >= 0 {
+      // A record item is read INTO its element (`parse_item`): a local it starts with borrows
+      // nothing there (`parse_var`'s `into` arm).
+      keep_into = vars.item_into;
+      vars.item_into = leftmost(e, it);
+      xs += [el_ex_assign::expression(e, vars, it)];
+      vars.item_into = keep_into;
     } else {
       xs += [el_ex_assign::expression(e, vars, it)];
     }
@@ -2652,7 +2671,22 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
         return refused_build();
       }
       ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }]))];
+      xts = match x.tp { TyTuple { elems: xe } => xe, _ => [] };
       for m in parts {
+        // A tuple member is written FLATTENED at its own offsets in the element
+        // (`tuple_field_set`), a block of its own.
+        match elems[m#index] ?? ir::TyVoid {
+          TyTuple { elems: ine } => {
+            tfs = el_ex_object::tuple_field_set(e, vars, ine, at, fs[m#index]!.position, m, xts[m#index] ?? ir::TyVoid, "tuple_field_set");
+            if tfs == null {
+              el::refuse(e, "a vector of tuples with a tuple member of this shape");
+              return refused_build();
+            }
+            ls += [tfs!];
+            continue;
+          },
+          _ => {}
+        }
         // A record member is copied into its slot of the element (`set_field`).
         narrow = match elems[m#index] ?? ir::TyVoid { TyInteger { spec: ns } => el_types::narrow_width(ns) > 0, _ => false };
         if struct_ref(e, elems[m#index] ?? ir::TyVoid) >= 0 || narrow {

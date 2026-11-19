@@ -687,6 +687,7 @@ pub fn rename_var(n: ir::Node, from: integer, to: integer) -> ir::Node {
 pub fn rename_reads(n: ir::Node, from: integer, to: integer) -> ir::Node {
   match n {
     NdVar { n: v } => if v == from { ir::NdVar { n: to } } else { n },
+    NdTupleGet { var: tgv, idx: tgi } => if tgv == from { ir::NdTupleGet { var: to, idx: tgi } } else { n },
     NdCall { def_nr, args } => ir::NdCall { def_nr: def_nr, args: [for x in args { rename_reads(x, from, to) }] },
     NdCallRef { var, args } => ir::NdCallRef { var: var, args: [for x in args { rename_reads(x, from, to) }] },
     NdSet { var, inner } => ir::NdSet { var: var, inner: rename_reads(inner, from, to) },
@@ -1120,7 +1121,9 @@ pub fn field_get(e: el::El, d: integer, a: integer, r: ir::Node) -> ir::Node? {
       // The schema is laid out after the first pass, whose code is not kept.
       // A vector field of a linked record is its own `array<T>` (laid out by id).
       ak = if e.first_pass || def.known_type == el_schema::NO_TYPE { -1 } else { el_schema::array_field_type(e, def.known_type, def.attributes[a]!.name) };
-      vk = if e.first_pass { 0 } else if ak >= 0 { ak } else { vector_store(e, inner, el_types::elem_name(e, inner)) };
+      i4 = match inner { TyInteger { spec: isp } => el_types::int4(isp), _ => false };
+      fc4 = if i4 && !e.first_pass { el_schema::field_content(e, def.known_type, def.attributes[a]!.name) } else { -1 };
+      vk = if e.first_pass { 0 } else if ak >= 0 { ak } else if fc4 >= 0 { fc4 } else { vector_store(e, inner, el_types::elem_name(e, inner)) };
       if vk < 0 {
         el::refuse(e, "a field read of a vector the library has no rows for");
         return null;
@@ -2117,7 +2120,13 @@ pub fn loop_var(vars: el_vars::Vars, src_id: text, id: text, t: ir::TypeT) -> in
     vars.loop_vars += [u];
     return u;
   }
+  // `ended_spelling`: a spelling whose earlier binding has ended names that binding again once
+  // the loop's body is read (`restore_loop_spelling`, in `pop_loop`).
+  prior = el_vars::var(vars, src_id);
   lv = el_vars::loop_variable(vars, id, t);
+  if src_id != "_" && prior >= 0 && prior != lv && el_vars::binding_ended(vars, prior) {
+    vars.loop_spellings += [el_vars::LoopSpelling { lv: lv, name: src_id, prior: prior }];
+  }
   if id != src_id {
     el_vars::set_name(vars, src_id, lv);
   }
