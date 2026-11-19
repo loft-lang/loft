@@ -1072,7 +1072,7 @@ impl Parser {
             v,
             subject_type,
             has_wildcard || bool_exhaustive,
-            &result_type,
+            &mut result_type,
             arms,
         );
         // A struct, collection or enum result with a literal `null` arm; the scalar result is
