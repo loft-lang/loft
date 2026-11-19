@@ -2159,10 +2159,10 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
   in_t = declared;
   // (A function value's item that is no local mints its `___fn_ref_tmp_N` on the first pass, as
   // `fn_number_write` does on the second: Rust's variables persist across passes.)
-  if e.first_pass && el_types::base(in_t) is TyFunction {
+  if e.first_pass && (el_types::base(in_t) is TyFunction || (el_types::is_unknown(in_t) && len(xs) > 0 && el_types::base(xs[0]!.tp) is TyFunction)) {
     for x in xs {
       if !(el_ir::unspan(x.code) is NdVar) {
-        ft1 = el_vars::create_unique(vars, "__fn_ref_tmp", el_types::with_deps(el_types::base(in_t), []));
+        ft1 = el_vars::create_unique(vars, "__fn_ref_tmp", el_types::with_deps(if el_types::base(in_t) is TyFunction { el_types::base(in_t) } else { el_types::base(x.tp) }, []));
         el_vars::set_defined(vars, ft1);
       }
     }

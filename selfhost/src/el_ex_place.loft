@@ -2446,8 +2446,11 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
   // Asked of the literal's own record only (`Type::Reference(d) | Enum(d, true) if d == td_nr`): a
   // variant literal rebuilding a local of its enum is built in place.
   literal_of_root = root_d >= 0 && root_d == d;
+  // (A return buffer renamed onto the local — a hidden parameter — is built apart as the
+  // local it was is; a parameter the caller passed is refused by name.)
+  apart_param = vars.vars[v].argument && !hidden_param(e, vars, v);
   if !e.first_pass && !el_vars::is_compiler_generated(vars, v) && literal_of_root && el_types::owns_droppable(e, root_d, []) && any_user_call(e, ops[2..]) {
-    if vars.vars[v].argument {
+    if apart_param {
       el::refuse(e, "a literal of a droppable built apart for a parameter it rebinds");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
     }
