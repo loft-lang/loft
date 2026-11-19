@@ -689,6 +689,9 @@ worst:  ## The worst routines of the last complete runs (interp-gap, perf-portal
 rewrite-census-bless:  ## Record the current rewrite counts as the baseline (a deliberate decline)
 	cargo build --release --bin loft -q
 	python3 scripts/rewrite_census.py --bless
+bind-census:  ## Fail when the C writer lowers an assignment with another store effect than the interpreter (STORE_RECORDS.md; ARGS="--examples 3", "--out f.tsv")
+	cargo build --release --bin loft -q
+	python3 scripts/bind_census.py --loft target/release/loft --suite "$$(python3 scripts/suite_pin.py 2>/dev/null || echo ../loft-suite)" --writer c --check $(ARGS)
 c-sweep:  ## The C backend against the interpreter over the corpus, three macro modes (@PLN203; ARGS="--shard 0/4", "--poison", "--asan", FILE…)
 	cargo build --release --bin loft -q
 	python3 scripts/c_sweep.py $(ARGS)

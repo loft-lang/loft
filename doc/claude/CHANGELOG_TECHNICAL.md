@@ -10,6 +10,18 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### One lowering decision, held by a gate (@PLN220)
+
+- `make bind-census` fails when the C writer lowers an assignment with a store effect other
+  than the interpreter's: `scripts/bind_census.py --check`, judged by the expected C arm per
+  interpreter arm.  Over the suite the two agree at every paired assignment (155,796); the
+  nightly `Lowering census` job runs it, and `tests/bind_census.rs` holds one program per PR.
+- The interpreter's bind rows name two more facts, `mint=` and `srcfree=`, so a null init that
+  mints and a call copy that releases its source are compared, not assumed.
+- A block that hands over a local it bound itself (a discharge read in place) is bound plainly
+  on the interpreter as on C; the run-time join there had a copy arm that could not run.
+  `LOFT_DISCHARGE_BLOCK_JOIN=1` joins it again.
+
 ### The C backend caps the size of a function in a semantics build (@PLN212)
 
 - `(R-CSplit)`: a function body over 300 runtime-call sites is written as a chain of
