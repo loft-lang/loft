@@ -453,4 +453,4 @@ have to be order independent") — [record](DESIGN_DECISIONS-history.md#c168--wh
 (`src/parser/expressions.rs`); `formal/heap.md` `(H-Drop)`; guard
 `loft-suite/rules/heap/H-Drop/a-callee-declared-below-its-caller-changes-nothing-a-program-can-see.loft`
 and, for a compound assignment to a local bound from a later function,
-`loft-suite/rules/heap/H-Drop/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft`.
+`loft-suite/rules/types/N-Join/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft`.
