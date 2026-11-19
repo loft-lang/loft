@@ -152,3 +152,9 @@ leak:sendExitBarrierWithTimeoutSync
 # First seen on G-Mono's 2270 cell (nightly run 41823604401); a macOS-only no-op on Linux.
 leak:CSSM_ModuleDetach
 leak:KeychainImpl::aboutToDestruct
+# macOS CoreAnalytics' connection set-up: `CoreAnalytics::Client::initConnection` handles its
+# XPC connection event on a libdispatch workloop thread and `dispatch_async`s one 64-byte
+# continuation (`_dispatch_continuation_alloc_from_heap`) that Apple never frees — the same
+# client as the exit barrier above, with no loft or Rust frame on the stack.  First seen on
+# F-Surface's sibling-directory package cell (nightly run 44523131930); a macOS-only no-op.
+leak:CoreAnalytics::Client::initConnection
