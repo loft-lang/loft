@@ -101,10 +101,55 @@ is taken into a temp of its own first (`scopes::args::copy_written_text_operands
 `copy_written_vector_operands`; a vector's temp is a store minted and freed for it), so
 `v[set(v)]` indexes the vector as it was before `set` replaced it or wrote an element.  An
 operand nothing later can write is read in place: `v[len(v) - 1]` copies nothing
-(`scopes::args::writes_vector` reads a callee's body to tell).
+(`scopes::args::writes_vector` reads a callee's body to tell).  The copy is a READ's: the place
+of a write is a location in the live vector (`E-Asgn`), so `v[f(1)] = 3`, its compound forms, a
+field of the element and an element handed to a record parameter address `v` itself
+(`scopes::args::place_operand`, loft#2578).
 `LOFT_NO_COPY_WRITTEN_TEXT=1` / `LOFT_NO_COPY_WRITTEN_VECTOR=1` leave the operand in place: the
 first bisect step for a wrong answer where one expression both reads and writes a text or a
 vector.  Guards: `loft-suite/rules/operational/E-Left/`.
+
+### An operand is reduced once
+
+```
+  (E-Once)   an operand written once in a form is reduced ONCE per execution of that form,
+             whatever expression it is — a variable, a call, a field or an element read, a
+             `?? d`, an `if`, a block.  A lowering that needs the value in two places (the
+             read and the write of a compound assignment, the start and each step of a
+             walk) binds it once and uses the binding; it never repeats the operand's
+             expression.  Another count holds only where the form's own rule gives one:
+               zero or one    the right operand of `&&` / `||` (E-And, E-Or); a fallback
+                              (E-Coalesce); an assert's message (E-Assert); an arm of an
+                              `if` or a `match` that is not taken
+               once a step    the condition of a `while` (I-While); the filter and the body
+                              of a `for` and of a comprehension (I-Filter, I-Comp)
+  (E-Field)  ⟨e.f, σ⟩         reduce e to a record once, then read its field f.
+  (E-Index)  ⟨e[i], σ⟩ and ⟨e[a..b], σ⟩ over a text
+                              reduce e first, then the index or the bounds left to right,
+                              each once (E-Left); then read the character or the slice.
+  (E-Is)     ⟨e is V, σ⟩      reduce e once; the answer is whether its variant is V.
+  (E-Record) ⟨T { f₁: e₁, …, fₙ: eₙ }, σ⟩
+                              reduce e₁ … eₙ in the order they are WRITTEN, each once, then
+                              build the record; a field left out takes its declared default.
+```
+
+**In words.** However an operand is spelled, it runs once.  That is what a reader assumes of
+`v[next()] += 1` and of `for x in load() { … }`, and it is rustc's answer; it is also where a
+compiler goes wrong without anyone seeing it, because a statement whose operand ran twice
+still gives the right result whenever the operand has no effect of its own.  A plain
+variable is reduced once by construction, so only an operand of another FORM shows the
+fault — which is why the rule is stated over every form, and checked that way.
+
+The exceptions are exactly the operands a form may leave out or repeat by its own rule, and
+each is named above.  Nothing else is an exception: an operand that a lowering needs twice
+is bound (`scopes::args`, where a hoisted operand keeps its place in the order, cites this
+rule).  `(E-Field)`, `(E-Index)`, `(E-Is)` and `(E-Record)` state the count for four forms
+no other rule covered; a record's fields are reduced in the order the literal WRITES them,
+not the order the type declares them.  A collection's own lookups are `(Col-Lookup)`,
+`(N-Index)` and `(Slice-Value)` in their chapters.
+
+*Guard:* the slot matrix — `tests/slot_matrix.rs` over `scripts/syntax_slots.tsv`, which
+puts a counted operand of every form into every operand position, on both backends.
 
 ### Arithmetic — uncomputable yields null (the spreadsheet model)
 
@@ -329,6 +374,26 @@ compute." There is **no** context-dependent "trap-suppression mode" any more —
 null whether or not it sits under `??` (@C80); `??` just decides what to do with that null.
 (This is what closes the old D-op-3.)
 
+### `assert` — the message is for the failure
+
+```
+  (E-Assert)     ⟨assert(c, m), σ⟩ → ⟨(), σ'⟩        if  ⟨c, σ⟩ → ⟨true, σ'⟩     (m is NOT evaluated)
+                 ⟨assert(c, m), σ⟩ → halt with m'      if  ⟨c, σ⟩ → ⟨false, σ'⟩
+                                                       and ⟨m, σ'⟩ → ⟨m', σ''⟩   (m is reduced only now)
+```
+
+**In words.** `assert` reduces its condition first, once.  When the condition holds, the
+message is not reduced at all: a call written in it does not run, and its effects do not
+happen.  When the condition fails, the message is reduced then, once, and the run halts
+with it.  `assert` is in this the same as `??` ((E-Coalesce)): the operand that is only
+needed on one path is evaluated only on that path.  It is therefore NOT an ordinary call
+under `(F-Args)`, whose arguments are all reduced before the body.
+
+Two consequences a test must know: a message that would itself fault stays unseen until
+the assertion fails, and a side effect written in a message cannot be relied on.  The
+condition is a truthiness position ((E-Truthy)).  The slot matrix holds both operands with
+a counted call (`ct-assert`, `ct-assert-message` in `scripts/syntax_slots.tsv`).
+
 ### `x?` — a fallback to the TYPE's default (@PLN116)
 
 ```
@@ -524,7 +589,16 @@ drift apart; verified both backends —
 
 ## Deviations
 
-**OPEN: 2.**
+**OPEN: 6.**
+- **D-op-23** (loft#2578) — violates `(E-Asgn)`: a write to an element whose index may write
+  the vector (`v[f(0)] = x` with `f` a function value, `v[push(v)] = x`) lands in a copy of
+  the vector, and the vector is unchanged.
+- **D-op-24** (loft#2580) — violates `(E-Once)`: a collection literal assigned to a field
+  through an element path (`h.ws[e].items = […]`) reduces the path's index once per item.
+- **D-op-25** (loft#2581) — violates `(E-Asgn-Compound)`: a block of one statement and a value
+  as the index of a compound write is reduced twice.
+- **D-op-26** (loft#2582) — violates `(E-Asgn)`: a right side that reads a field of a call's
+  record is reduced before the place's index.
 - **D-op-1** — there is no shared operational semantics — the interpreter is the spec.  Not
   resolvable in a release: two implementations, and nothing links them into one executable
   semantics outside the tests that run both; @PLN89's differential oracle narrows it, and each

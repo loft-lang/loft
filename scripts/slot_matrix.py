@@ -27,6 +27,10 @@ runs the product.
                    cell 's = <S> + j;' --filler 'at(<C>, 1)' --plain i
                It runs the four checks on both backends and prints the table rows the
                shape would be.  The names a statement may use are the prelude's.
+    coverage   what the matrix does not exercise, without reading an issue:
+               `coverage rules` lists the evaluation rules of the formal chapters that no
+               slot cites; `coverage ops` the IR operations the corpus makes the compiler
+               emit and no cell does (the corpus is read once a build: minutes).
     explain    one failing cell laid open for whoever debugs it:
                    explain wr-elem-index.int-fnval.vector
                its program KEPT in a directory (the cell, its bound-first twin, its order
@@ -46,7 +50,9 @@ runs the product.
                cell that is not ok and not listed fails (BROKEN), and so does a listed cell
                that now passes (FIXED).  `--family F` takes one slot family and its lines,
                which is how tests/slot_matrix.rs splits the PR gate into seven tests;
-               `--update` rewrites the baseline from a whole run.  On GitHub each fold is
+               The interpreter runs every cell; the C backend, which compiles each one,
+               a sample (every slot with its plain variable and its type's first filler)
+               unless `--full`.  `--update` rewrites the baseline from a whole, full run.  On GitHub each fold is
                an annotation on the table row it names.
     walk       the matrix on an OLDER loft binary beside this one (`--old <binary>`): the
                cells that failed then and pass now are what the matrix would have caught,
@@ -89,6 +95,8 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -505,7 +513,10 @@ def make_cells(slots, fillers, which_filler, which_slot, which_kind, contexts=No
     for slot in slots:
         if which_slot and slot["id"] not in which_slot:
             continue
-        kinds = KINDS if slot["type"] in kinded_types else KINDS[:1]
+        # Every kind where the operand's type depends on it, and where the statement itself
+        # reads a collection of the cell's kind (a keyed lookup by an integer operand).
+        kinds = (KINDS if slot["type"] in kinded_types or KIND_NAMES.search(slot["stmt"] + slot["decl"])
+                 else KINDS[:1])
         for (kind, kind_type), (ctx, passes, wrap), frame in (
                 (k, c, f) for k in kinds for c in contexts for f in frames):
             if which_kind and kind != which_kind:
@@ -594,12 +605,20 @@ TIME_LIMIT = {"interp": int(os.environ.get("SLOT_MATRIX_INTERP_SECONDS", "40")),
 # one: a healthy cell answers in milliseconds, and a statement that loops for one form of
 # operand often loops for the next, each costing a whole limit.
 TIGHT_LIMIT = {"interp": 6, "c": 20}
+# What a run cost: per backend, how many programs were run and the seconds they took,
+# summed over the threads that ran them (so more than the wall time).
+SPENT = {"interp": [0, 0.0], "c": [0, 0.0]}
+SPENT_LOCK = threading.Lock()
 
 
 def invoke(backend, path, limit=None):
     cmd = [loft_binary()] + (["--native-c"] if backend == "c" else []) + ["--no-warnings", "--tests", path]
     env = dict(os.environ, LOFT_LEAK_CHECK="1", LOFT_TIMEOUT=str(limit or TIME_LIMIT[backend]))
+    began = time.monotonic()
     done = subprocess.run(cmd, capture_output=True, text=True, env=env, check=False)
+    with SPENT_LOCK:
+        SPENT[backend][0] += 1
+        SPENT[backend][1] += time.monotonic() - began
     return done.stdout + done.stderr
 
 
@@ -728,7 +747,7 @@ def prelude_problem(cells, backend, tmp):
     return None
 
 
-def evaluate(cells, backends):
+def evaluate(cells, backends, on_c=None):
     """Run the cells.  Returns {cell name: (verdict, [(backend, verdict, reason)])}, the
     verdict the worst over the backends: ok | FAIL | REFUSED."""
     with tempfile.TemporaryDirectory(prefix="slot_matrix.") as tmp:
@@ -738,13 +757,14 @@ def evaluate(cells, backends):
         interp = run_backend("interp", cells, tmp)
         per = {"interp": interp}
         if "c" in backends:
-            accepted = [c for c in cells if interp.get(c["name"], ("",))[0] != "REFUSED"]
+            accepted = [c for c in cells if interp.get(c["name"], ("",))[0] != "REFUSED"
+                        and (on_c is None or c["name"] in on_c)]
             per["c"] = run_backend("c", accepted, tmp)
     out = {}
     for cell in cells:
         lines, worst = [], "ok"
         for backend in per:
-            if backend == "c" and worst == "REFUSED":
+            if backend == "c" and (worst == "REFUSED" or (on_c is not None and cell["name"] not in on_c)):
                 continue
             v, why = verdict(cell, per[backend])
             if backend == "c" and v == "REFUSED":
@@ -871,6 +891,7 @@ def report(cells, verdicts, backends, verbose):
     print(f"slot_matrix: {len(cells)} cells ({orders} check order) on {' and '.join(backends)}: "
           f"{tally['ok']} ok, {tally['FAIL']} failing, {tally['REFUSED']} refused, "
           f"{len(vacuous)} slot(s) vacuous  [{build()}]")
+    print("          cost: " + "; ".join(f"{b} {SPENT[b][0]} program run(s), {SPENT[b][1]:.0f} s" for b in backends))
     if tally["FAIL"]:
         print("for one failing cell — its program kept, loft's diagnostics on, its IR beside its twin's: "
               "python3 scripts/slot_matrix.py explain <cell>")
@@ -942,7 +963,17 @@ def cmd_gate(args):
     family = {s["id"]: s["family"] for s in slots}
     mine = {s["id"] for s in slots if not args.family or s["family"] == args.family}
     cells = make_cells(slots, fillers, "all", mine, None)
-    verdicts = evaluate(cells, ("interp", "c"))
+    full = args.full or args.update
+    # The C backend compiles every cell, about a tenth of a second each, which is most of a
+    # run.  Unless the whole matrix is asked for, it gets a sample: every slot with its
+    # plain variable and with the first filler of its type (and their twins and order cells).
+    first_of = {}
+    for f in fillers:
+        if not f["id"].endswith("-var") and not HOLE.search(f["expr"]):
+            first_of.setdefault(f["type"], f["id"])
+    sampled = lambda name: name.split(".")[1].endswith("-var") or name.split(".")[1] in first_of.values()
+    on_c = None if full else {c["name"] for c in cells if c["slot"] == "_world" or sampled(c["name"])}
+    verdicts = evaluate(cells, ("interp", "c"), on_c)
     keys = baseline_keys(cells, verdicts)
     if args.update:
         with open(BASELINE, "w", encoding="utf-8") as f:
@@ -953,7 +984,9 @@ def cmd_gate(args):
         return 0
     stable, unstable = load_baseline()
     here = lambda key: family.get(key[0].split(".")[0]) == args.family if args.family else True
-    stable = {k for k in stable if here(k)}
+    # A baseline line of a cell this run did not put on the C backend says nothing here.
+    ran = lambda key: key[1] != "c" or on_c is None or key[0] in on_c
+    stable = {k for k in stable if here(k) and ran(k)}
     unstable = {k for k in unstable if here(k)}
     # A crash may also show as another channel on another machine; an unstable line
     # excuses its cell on its backend whatever the channel.
@@ -964,8 +997,11 @@ def cmd_gate(args):
     if not new and not gone:
         print(f"slot_matrix gate: {what}: {len(cells)} cells, {len(keys)} not ok, all in the baseline  [{loft_binary()}]")
         return 0
+    total_new = len(new)
     # The two findings want opposite actions, so each is said on its own, the one that
     # means something broke first.
+    refused = [k for k in new if k[2] == "refused"]
+    new = [k for k in new if k[2] != "refused"]
     if new:
         only = {n for n, _, _ in new}
         folds = causes([c for c in cells if c["name"] in only], verdicts, cells)
@@ -976,16 +1012,27 @@ def cmd_gate(args):
         annotate(folds, slots, fillers)
         print("the cells:")
         for name, backend, ch in new:
-            why = next((w for b, v, w in verdicts[name][1] if b == backend and v == "FAIL"), "refused by the compiler")
+            why = next((w for b, v, w in verdicts[name][1] if b == backend and v == "FAIL"), "")
             print(f"  NEW      {name} [{backend}] ({ch}): {why[:170]}")
         print(f"  to see one slot: python3 scripts/slot_matrix.py run --filler all --backend both --slot <id> -v")
+    if refused:
+        # Not a failure of an evaluation: the compiler now refuses a statement it took, or
+        # a new row is one it never takes.  Either is a claim the rules must back, so it
+        # is listed with the compiler's words and accepted by hand (`gate --update`).
+        print(f"REFUSED: {len(refused)} cell(s) of {what} are refused by the compiler and are not in the "
+              f"baseline.  Read each refusal against the rules; if it is right, `gate --update` lists it.")
+        for name, _, _ in refused:
+            why = next((w for _, v, w in verdicts[name][1] if v == "REFUSED"), "")
+            print(f"  REFUSED  {name}: {why[:200]}")
+            print(f"           {statement_of(next(c for c in cells if c['name'] == name))}")
     if gone:
         print(f"FIXED: {len(gone)} baseline line(s) of {what} pass now.  Nothing is broken: run "
               f"`python3 scripts/slot_matrix.py gate --update`, read the diff (it must only remove "
               f"lines), and commit it with the fix.")
         for name, backend, ch in gone:
             print(f"  PASSES   {name} [{backend}] ({ch})")
-    print(f"slot_matrix gate: {what}: {len(cells)} cells, {len(new)} new, {len(gone)} to remove  [{loft_binary()}]")
+    print(f"slot_matrix gate: {what}: {len(cells)} cells, {len(new)} failing and {total_new - len(new)} refused "
+          f"that are new, {len(gone)} to remove  [{loft_binary()}]")
     return 1
 
 
@@ -1249,6 +1296,94 @@ def cmd_explain(args):
     return 0
 
 
+# The chapters whose rules say how an operand is evaluated: the ones a slot can cite.
+EVALUATION_CHAPTERS = ("operational.md", "iteration.md", "calls.md", "collections.md", "matching.md",
+                       "formatting.md", "coroutines.md", "concurrency.md", "tuples.md", "closures.md",
+                       "operators.md")
+
+
+def ops_of(path):
+    """The IR operations `loft introspect` prints for a program, as a set of names."""
+    text = subprocess.run([loft_binary(), "introspect", path], capture_output=True, text=True,
+                          check=False).stdout.split("std::cell::UnsafeCell")[0]
+    return set(re.findall(r"\bOp[A-Z]\w+", text))
+
+
+def cmd_coverage(args):
+    """What the matrix does not exercise, measured two ways without reading an issue."""
+    import json
+    slots, fillers, _, problems = load_all()
+    if problems:
+        print("\n".join(problems))
+        return 1
+    if args.what == "rules":
+        # The evaluation rules no slot cites: each is an operand position the register
+        # may lack, or a rule that is not about one — to be read, not assumed.
+        sys.path.insert(0, HERE)
+        import rule_tags
+        cited = {s["rule"] for s in slots}
+        defined = rule_tags.defined_rules()
+        total = 0
+        for chapter in EVALUATION_CHAPTERS:
+            mine = sorted(r for r, files in defined.items() if chapter in files)
+            missing = [r for r in mine if r not in cited]
+            total += len(missing)
+            print(f"{chapter:16} {len(mine) - len(missing):3} of {len(mine):3} rules cited by a slot; "
+                  f"not cited: {' '.join(missing)}")
+        print(f"slot_matrix coverage: {len(cited - {'-'})} rules cited by {len(slots)} slots; "
+              f"{total} evaluation rules cited by none")
+        return 0
+    # IR operations: what the corpus makes the compiler emit and no cell does.
+    cells = make_cells(slots, fillers, "all", set(), None, *axes_of(args), depth=args.depth)
+    with tempfile.TemporaryDirectory(prefix="slot_matrix.") as tmp:
+        verdicts = evaluate(cells, ("interp",))
+        accepted = [c for c in cells if verdicts[c["name"]][0] != "REFUSED"]
+        by_kind, programs = {}, []
+        for c in accepted:
+            by_kind.setdefault(c["kind_type"], []).append(c)
+        for kind_type, mine in by_kind.items():
+            for n in range(0, len(mine), CHUNK):
+                text, spans = program(kind_type, mine[n:n + CHUNK])
+                # `loft introspect` prints what `main` reaches, so every cell is called.
+                text += "fn main() { " + " ".join(fn + "();" for _, _, fn in spans) + " }\n"
+                path = os.path.join(tmp, f"ops{len(programs)}.loft")
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(text)
+                programs.append(path)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count() or 4) as pool:
+            got = list(pool.map(ops_of, programs))
+    empty = sum(1 for g in got if not g)
+    matrix = set().union(*got) if got else set()
+    print(f"the matrix: {len(accepted)} accepted cells in {len(programs)} programs emit {len(matrix)} "
+          f"distinct IR operations" + (f"  ({empty} program(s) printed no IR — the count is low)" if empty else ""))
+    cache = os.path.join(ROOT, "target", "slot_matrix_corpus_ops.json")
+    corpus = None
+    if os.path.exists(cache) and not args.refresh:
+        saved = json.load(open(cache, encoding="utf-8"))
+        if saved.get("build") == build():
+            corpus = saved["ops"]
+    if corpus is None:
+        lister = os.path.join(HERE, "corpus_files.sh")
+        files = subprocess.run([lister], capture_output=True, text=True, cwd=ROOT, check=False).stdout.split()
+        files = [f if os.path.isabs(f) else os.path.join(ROOT, f) for f in files]
+        print(f"reading the corpus: {len(files)} files (minutes; kept in {cache} for this build)")
+        corpus = {}
+        with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count() or 4) as pool:
+            for ops in pool.map(ops_of, files):
+                for op in ops:
+                    corpus[op] = corpus.get(op, 0) + 1
+        os.makedirs(os.path.dirname(cache), exist_ok=True)
+        json.dump({"build": build(), "ops": corpus}, open(cache, "w", encoding="utf-8"))
+    missing = sorted(((n, op) for op, n in corpus.items() if op not in matrix), reverse=True)
+    print(f"the corpus: {len(corpus)} distinct IR operations; {len(corpus) - len(missing)} of them emitted "
+          f"by a cell, {len(missing)} by none:")
+    for n, op in missing[:args.top]:
+        print(f"  {op:30} in {n:4} corpus file(s)")
+    if len(missing) > args.top:
+        print(f"  … {len(missing) - args.top} more; `--top N` shows more")
+    return 0
+
+
 def cmd_walk(args):
     """The matrix on an OLDER build beside this one: what it would have caught."""
     slots, fillers, _, problems = load_all()
@@ -1342,6 +1477,15 @@ def main():
     p.add_argument("--frame", help="where its values come from: a frame of the prelude, or `all`")
     p.add_argument("--depth", type=int, choices=(1, 2), default=1, help="2 adds every wrapper filler around every other filler")
     p.set_defaults(fn=cmd_run)
+    p = sub.add_parser("coverage")
+    p.add_argument("what", choices=("rules", "ops"), help="`rules`: the evaluation rules no slot cites; "
+                   "`ops`: the IR operations the corpus emits and no cell does")
+    p.add_argument("--depth", type=int, choices=(1, 2), default=1)
+    p.add_argument("--context")
+    p.add_argument("--frame")
+    p.add_argument("--top", type=int, default=40)
+    p.add_argument("--refresh", action="store_true", help="read the corpus again")
+    p.set_defaults(fn=cmd_coverage)
     p = sub.add_parser("explain")
     p.add_argument("cell", help="a cell's name, as a run prints it")
     p.add_argument("--out", metavar="DIR", help="where to keep its program and outputs (default: a new temp dir)")
@@ -1382,6 +1526,7 @@ def main():
     p = sub.add_parser("gate")
     p.add_argument("--update", action="store_true", help="rewrite the baseline from this run")
     p.add_argument("--family", choices=FAMILIES, help="only the slots of one family, and their baseline lines")
+    p.add_argument("--full", action="store_true", help="every cell on the C backend too, not the sample")
     p.set_defaults(fn=cmd_gate)
     p = sub.add_parser("walk")
     p.add_argument("--old", required=True, help="the older loft binary")

@@ -118,6 +118,8 @@ impl Parser {
         }
     }
 
+    /// `@FR-E-Field`: `code` is the receiver, already parsed, and stays ONE node of the
+    /// result — the field read wraps it and never copies it, so the receiver is reduced once.
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn field(&mut self, code: &mut Value, tp: Type) -> Type {
         // @PLN102 — a field access can't be MORE non-null than its receiver: if the
@@ -3295,6 +3297,8 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         self.wrap_null_transparent(code, &[text.clone(), from.clone(), till], &text)
     }
 
+    /// `@FR-E-Index`: the text is reduced first, then the index or the bounds left to right,
+    /// each once; `code` arrives holding the reduced text and the bounds are parsed after it.
     pub(crate) fn parse_text_index(
         &mut self,
         code: &mut Value,

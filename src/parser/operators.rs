@@ -857,16 +857,19 @@ impl Parser {
         // A struct-`Enum` is the same heap record as a struct (`Type::heap_def_nr`): asked of
         // `Reference` alone, a join of an enum-returning call and a view of an enum field left
         // the call's minted store with no owner (loft#2467's family).
-        if self.first_pass
-            || !matches!(
-                result_tp.base(),
-                Type::Reference(_, _) | Type::Enum(_, true, _)
-            )
-            || result_tp.depend().is_empty()
-        {
+        if self.first_pass || !Self::joined_heap_value(result_tp) || result_tp.depend().is_empty() {
             return;
         }
         self.own_join_arm(code, result_tp);
+    }
+
+    /// The join results whose owning call arm answers a store of its own, which this frame
+    /// must hold when the join is a view (`@FR-O-Complete`): a record, a struct-`Enum`, and a
+    /// keyed collection.  A `vector` is not one: its call arm already delivers into the
+    /// caller's `__ref_N` buffer.
+    fn joined_heap_value(tp: &Type) -> bool {
+        matches!(tp.base(), Type::Reference(_, _) | Type::Enum(_, true, _))
+            || crate::data::is_keyed(tp)
     }
 
     /// One arm of [`Self::own_joined_call_arms`]: descend to the value the arm
@@ -2153,7 +2156,8 @@ impl Parser {
         let mut ceiling = OPERATORS.len();
         loop {
             // `is` stands at the comparison level: `level_run` reads it there when no
-            // comparison operator follows.
+            // comparison operator follows.  `@FR-E-Is`: its left operand is the value already
+            // parsed here, reduced once; the variant on the right is a name, not an operand.
             let next = self
                 .peek_binary_operator()
                 .or_else(|| self.lexer.peek_token("is").then_some((3, "is")));
@@ -4887,13 +4891,12 @@ impl Parser {
         // that point, and a default left owner-less on the absent path leaks its store.
         let record_view = self.owned_record_subject(lhs_type, code)
             && Self::frame_view_of(&result_type, 0).is_some();
-        // A struct-`Enum` result is the same heap record (`own_joined_call_arms` says why).
+        // A struct-`Enum` result is the same heap record (`own_joined_call_arms` says why), and
+        // a KEYED collection's call answers a fresh store with no caller buffer, as a record's
+        // does: `for p in h.ws[9].items ?? mk()` over a `sorted` left it with no owner.
         if !self.first_pass
             && (record_view
-                || (matches!(
-                    result_type.base(),
-                    Type::Reference(_, _) | Type::Enum(_, true, _)
-                ) && !result_type.depend().is_empty()))
+                || (Self::joined_heap_value(&result_type) && !result_type.depend().is_empty()))
             && let Some(owned) = self.materialise_owned_call(&rhs, &result_type)
         {
             rhs = owned;

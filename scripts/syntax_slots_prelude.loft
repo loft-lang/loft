@@ -62,6 +62,8 @@ fn retext(c: Ctr, w: W) -> integer { bump(c); w.t = "q"; 1 }
 fn inc1(a: integer) -> integer { a + 1 }
 fn pickfn(c: Ctr) -> fn(integer) -> integer { bump(c); inc1 }
 fn add2(a: integer, b: integer) -> integer { a * 10 + b }
+fn addp(a: integer, b: integer) -> integer { a + b }
+fn big(a: integer) -> boolean { a > 15 }
 fn dflt(a: integer, b: integer = 5) -> integer { a * 10 + b }
 fn total(self: W) -> integer { self.n + len(self.items) }
 fn hold() -> Hold {
@@ -90,6 +92,15 @@ fn show_h(h: Hold) -> text {
   for w in h.ws { out += show_w(w); }
   "{out} {h.v} {h.ones}"
 }
+// The two records of the world that are built the same way in every cell.
+fn mkw() -> W { W { n: 1, t: "abc", f: 1.5, ok: true, tag: Col.Green, items: [P { k: 1, t: "a" }, P { k: 2, t: "b" }, P { k: 3, t: "c" }] } }
+fn mkn() -> N { N { by: 7, sh: 300, i4: 70000, sg: 0.5f, ch: 'a', fl: 0.5, on: false, en: Red, one: 1, one16: 1, one4: 1 } }
+// One function prints every cell's final line, so that a cell's own code is its statement
+// and little else: the C backend compiles each cell, and a line built in every cell was
+// most of what it compiled.
+fn finish(name: text, c: Ctr, s: integer, o: text, i: integer, j: integer, b: boolean, nb: boolean, x: text, fl: float, en: Col, fnv: fn(integer) -> integer, vi: vector<integer>, xs: KIND, r: W, h: Hold, sf: float, ss: single, nr: N, vf: vector<float>, vbo: vector<boolean>, vcol: vector<Col>, more: text) {
+  println("{name} c={c.calls} log=<{c.log}> | s={s} ; o={o} ; i={i} ; j={j} ; b={b} ; nb={nb} ; x={x} ; fl={fl} ; en={en} ; f={fnv(1)} ; vi={vi} ; xs={show(xs)} ; r={show_w(r)} ; h={show_h(h)} ; sf={sf} ; ss={ss} ; nr={nr} ; vf={vf} ; vbo={vbo} ; vcol={vcol}{more}");
+}
 // === CELL locals ===
 CELLDECL
 fn CELLFN() {
@@ -97,31 +108,31 @@ fn CELLFN() {
   i = 1; j = 3; b = true; nb = false; x = "abc"; fl = 1.5; en = Col.Green; fnv = inc1;
   vi = [10, 20, 30, 40];
   xs = mk(Ctr {});
-  r = W { n: 1, t: "abc", f: 1.5, ok: true, tag: Col.Green, items: [P { k: 1, t: "a" }, P { k: 2, t: "b" }, P { k: 3, t: "c" }] };
+  r = mkw();
   tk: (KIND, integer) = ([P { k: 1, t: "a" }, P { k: 2, t: "b" }, P { k: 3, t: "c" }], 3);
   fl2 = 2.5; sg = 1.5f; cx = 'b';
-  nr = N { by: 7, sh: 300, i4: 70000, sg: 0.5f, ch: 'a', fl: 0.5, on: false, en: Red, one: 1, one16: 1, one4: 1 };
+  nr = mkn();
   vf = [1.5, 2.5, 3.5]; vbo = [false, false]; vcol = [Red, Blue];
   s = 0; o = ""; sf = 0.0; ss = 0.0f;
   CELLSTMT
-  println("CELLNAME c={c.calls} log=<{c.log}> | s={s} ; o={o} ; i={i} ; j={j} ; b={b} ; nb={nb} ; x={x} ; fl={fl} ; en={en} ; f={fnv(1)} ; vi={vi} ; xs={show(xs)} ; r={show_w(r)} ; h={show_h(h)} ; sf={sf} ; ss={ss} ; nr={nr} ; vf={vf} ; vbo={vbo} ; vcol={vcol}");
+  finish("CELLNAME", c, s, o, i, j, b, nb, x, fl, en, fnv, vi, xs, r, h, sf, ss, nr, vf, vbo, vcol, "");
 }
 // === CELL params ===
 CELLDECL
 fn CELLFN_in(c: Ctr, h: Hold, i: integer, j: integer, b: boolean, nb: boolean, x: text, fl: float, en: Col, fnv: fn(integer) -> integer, vi: vector<integer>, xs: KIND, r: W, tk: (KIND, integer), fl2: float, sg: single, cx: character, nr: N, vf: vector<float>, vbo: vector<boolean>, vcol: vector<Col>) {
   s = 0; o = ""; sf = 0.0; ss = 0.0f;
   CELLSTMT
-  println("CELLNAME c={c.calls} log=<{c.log}> | s={s} ; o={o} ; i={i} ; j={j} ; b={b} ; nb={nb} ; x={x} ; fl={fl} ; en={en} ; f={fnv(1)} ; vi={vi} ; xs={show(xs)} ; r={show_w(r)} ; h={show_h(h)} ; sf={sf} ; ss={ss} ; nr={nr} ; vf={vf} ; vbo={vbo} ; vcol={vcol}");
+  finish("CELLNAME", c, s, o, i, j, b, nb, x, fl, en, fnv, vi, xs, r, h, sf, ss, nr, vf, vbo, vcol, "");
 }
 fn CELLFN() {
   c = Ctr {}; h = hold();
   i = 1; j = 3; b = true; nb = false; x = "abc"; fl = 1.5; en = Col.Green; fnv = inc1;
   vi = [10, 20, 30, 40];
   xs = mk(Ctr {});
-  r = W { n: 1, t: "abc", f: 1.5, ok: true, tag: Col.Green, items: [P { k: 1, t: "a" }, P { k: 2, t: "b" }, P { k: 3, t: "c" }] };
+  r = mkw();
   tk: (KIND, integer) = ([P { k: 1, t: "a" }, P { k: 2, t: "b" }, P { k: 3, t: "c" }], 3);
   fl2 = 2.5; sg = 1.5f; cx = 'b';
-  nr = N { by: 7, sh: 300, i4: 70000, sg: 0.5f, ch: 'a', fl: 0.5, on: false, en: Red, one: 1, one16: 1, one4: 1 };
+  nr = mkn();
   vf = [1.5, 2.5, 3.5]; vbo = [false, false]; vcol = [Red, Blue];
   CELLFN_in(c, h, i, j, b, nb, x, fl, en, fnv, vi, xs, r, tk, fl2, sg, cx, nr, vf, vbo, vcol);
 }
@@ -132,10 +143,10 @@ fn CELLFN() {
   i = 1; j = 3; b = true; nb = false; x = "abc"; fl = 1.5; en = Col.Green; fnv = inc1;
   vi = [10, 20, 30, 40];
   xs = mk(Ctr {});
-  r = W { n: 1, t: "abc", f: 1.5, ok: true, tag: Col.Green, items: [P { k: 1, t: "a" }, P { k: 2, t: "b" }, P { k: 3, t: "c" }] };
+  r = mkw();
   tk: (KIND, integer) = ([P { k: 1, t: "a" }, P { k: 2, t: "b" }, P { k: 3, t: "c" }], 3);
   fl2 = 2.5; sg = 1.5f; cx = 'b';
-  nr = N { by: 7, sh: 300, i4: 70000, sg: 0.5f, ch: 'a', fl: 0.5, on: false, en: Red, one: 1, one16: 1, one4: 1 };
+  nr = mkn();
   vf = [1.5, 2.5, 3.5]; vbo = [false, false]; vcol = [Red, Blue];
   // Views bound BEFORE the statement and read AFTER it: an element of a record vector, a
   // record's collection field, a slice of the integer vector, an element of the collection.
@@ -143,5 +154,5 @@ fn CELLFN() {
   s = 0; o = ""; sf = 0.0; ss = 0.0f;
   CELLSTMT
   wn = vw.n ?? -1; et = ve.t ?? "-";
-  println("CELLNAME c={c.calls} log=<{c.log}> | s={s} ; o={o} ; i={i} ; j={j} ; b={b} ; nb={nb} ; x={x} ; fl={fl} ; en={en} ; f={fnv(1)} ; vi={vi} ; xs={show(xs)} ; r={show_w(r)} ; h={show_h(h)} ; sf={sf} ; ss={ss} ; nr={nr} ; vf={vf} ; vbo={vbo} ; vcol={vcol} ; views={wn} {show(vq)} {vt} {et}");
+  finish("CELLNAME", c, s, o, i, j, b, nb, x, fl, en, fnv, vi, xs, r, h, sf, ss, nr, vf, vbo, vcol, " ; views={wn} {show(vq)} {vt} {et}");
 }

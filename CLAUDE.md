@@ -346,6 +346,7 @@ Networked runs: `LOFT_NET_PROFILE` (PERFORMANCE.md § LOFT_NET_PROFILE).
 
 **Testing / debug:** [TESTING.md](doc/claude/TESTING.md) where a test goes (start here) ·
 [RUNNING_TESTS.md](doc/claude/RUNNING_TESTS.md) · [GUARDS.md](doc/claude/GUARDS.md) `make falsify` ·
+[SLOT_MATRIX.md](doc/claude/SLOT_MATRIX.md) every operand position with every form of expression, generated ·
 [RUN_BOUNDS.md](doc/claude/RUN_BOUNDS.md) · [TEST_ENVIRONMENTS.md](doc/claude/TEST_ENVIRONMENTS.md) ·
 [LOFT_TEST.md](doc/claude/LOFT_TEST.md) · [DEBUG.md](doc/claude/DEBUG.md) · [CAVEATS.md](doc/claude/CAVEATS.md) · bisect switches:
 [NATIVE_SWITCHES.md](doc/claude/NATIVE_SWITCHES.md) / [BOTH_BACKEND_SWITCHES.md](doc/claude/BOTH_BACKEND_SWITCHES.md) ·

@@ -589,8 +589,8 @@ construction.  The same construct with a call, a lookup or a `?? default` there 
 lowering, and when that lowering mentions the operand twice the program still answers
 right: only a counter inside the operand shows it.  So `scripts/slot_matrix.py` keeps the
 operand positions of the syntax ("slots"), the forms of expression that go into them
-("fillers"), and runs the product on the interpreter and the C backend — 4,772 cells in about a
-minute, from five tables of a few hundred lines.
+("fillers"), and runs the product on the interpreter and the C backend — 6,061 cells in a little
+over a minute, from five tables of a few hundred lines.
 
 **What it gives that a hand-written walk does not.**
 
@@ -619,12 +619,13 @@ the defect, or a line in the reach ledger naming the axis the tool lacks
 matrix](ISSUE_TRACKING.md#every-defect-is-held-against-the-slot-matrix)).  The ledger
 decides the next axis to build.
 
-**When to run what.**  The gate runs with every test run.  `slot_matrix.py cell` and `expr`
+**When to run what.**  The gate runs with every test run: every cell interpreted, a sample
+compiled.  `slot_matrix.py gate --full` compiles them all.  `slot_matrix.py cell` and `expr`
 try one statement or one expression at the moment a shape looks suspicious; `explain` lays
 one failing cell open, with the IR of the cell beside the IR of its twin.  The wider axes —
 a loop and a branch around the statement, parameters in place of locals, fillers inside
 fillers — are minutes, not seconds, and are for a change to a lowering and for the night.
-The plan, the queue and what the walks found: [plans/221-slot-walk](plans/221-slot-walk/README.md).
+The registers, the commands, the gate and the open work: [SLOT_MATRIX.md](SLOT_MATRIX.md).
 
 ---
 
