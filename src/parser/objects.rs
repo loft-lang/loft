@@ -4481,6 +4481,22 @@ impl Parser {
         }
     }
 
+    /// The set a format loop runs before its walk: a keyed source's snapshot (`keyed_snapshot`, as a
+    /// `for` statement and a comprehension take it), or — loft#2579, `@FR-I-For` — the hold of a
+    /// vector or ordered keyed source that runs a call (`hold_loop_source`), which was handed to
+    /// every step, so `"{for p in mk(c) { … }}"` called `mk` per element.  `None` for every other
+    /// source, which reads the same place each step.
+    fn format_loop_source(&mut self, expr: &mut Value, in_type: &mut Type) -> Option<Value> {
+        if let Some((_, fill)) = self.keyed_snapshot(expr, in_type, false) {
+            return Some(fill);
+        }
+        (matches!(
+            in_type.base(),
+            Type::Vector(..) | Type::Sorted(..) | Type::Index(..)
+        ) && self.ir_has_user_call(expr))
+        .then(|| self.hold_loop_source(expr, in_type))
+    }
+
     // Iterator for
     // <for> ::= <identifier> 'in' <range> '{' <block>
     pub(crate) fn iter_for(&mut self, val: &mut Value, append_value: &mut u16) -> Type {
@@ -4499,9 +4515,7 @@ impl Parser {
             // walked the HASH as if it were a snapshot and read a record number out of its
             // table header: a store panic on both backends.  The scope-exit release frees the
             // scratch, as it does for a comprehension's.
-            let snapshot = self
-                .keyed_snapshot(&mut expr, &mut in_type, false)
-                .map(|(_, fill)| fill);
+            let snapshot = self.format_loop_source(&mut expr, &mut in_type);
             // For text loops: {id}#next drives the loop; {id}#index is saved per-iteration.
             let (iter_var, pre_var) = if super::collections::walks_text(&in_type) {
                 let pos_var = self.create_var(&format!("{id}#next"), &I32);
