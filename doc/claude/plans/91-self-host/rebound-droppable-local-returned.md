@@ -36,8 +36,9 @@ renamed buffer `s`. Each one gets the guarded mint (`if (if OpRefIsNull(s) false
 OpConvBoolFromRef(s)) null else OpDatabase(s, <db>)`), then its fields in declaration order: an
 embedded record field from a call is the call into a fresh `__ref_N` copied in by `OpCopyRecord(…,
 OpGetField(s, <off>, <type>), <type>)`, a scalar by its setter. The early-return and `s = t`
-variants are in the site list. Trace them with `elab_trace.py --points route` before porting:
-`s = t` from a local takes a copy, not this build.
+variants are in the site list. `s = t` from another local (`swap`) is NOT a copy: `t` is built in
+its own local (`t: ref(Lhold) = null; OpCopyRecord(n_lmk(12, __ref_2), OpGetField(t, 0, 100), 100)`),
+and the rebind is the plain reference assignment `s: ref(Lhold) = t`, then `return s`.
 
 ## The sites (try ca4065330)
 
