@@ -1,0 +1,68 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @C168 — a compound assignment does not say what KIND of thing its target is.  A local bound
+// from a function declared FURTHER DOWN the file has no type on the first pass; the `+=` or
+// `*=` that follows typed it from its operand — a list literal made it a `vector<R>`, an
+// integer literal an `integer` — and the second pass then refused the function's own result
+// as a type change: "Variable 'h' cannot change type from vector<R> to hash<R[k]>", "from
+// integer to float".  The same body compiled with the function declared above it.
+//
+// Every caller exists twice with one body: `a…` calls functions declared above it, `b…` the
+// same functions declared at the end of the file.  Each answers a hand-computed value; `mk…(n)`
+// holds the records k = 1..n with v = 10k.
+// @falsified-at: 595074b4b — both backends refuse the file there: seven "cannot change type"
+//   errors, one per `b…` caller but `b_vec`, `b_set` and `b_text`.
+//   CHANNEL: the compile — the control refuses the program, this tree runs it.
+//   HOLDS: the `a…` callers alone compile and pass on both trees.
+struct R { k: integer, v: integer }
+fn val(r: R?) -> integer { if r == null { -1 } else { r.v } }
+
+fn mkh_a(n: integer) -> hash<R[k]> { h: hash<R[k]> = []; for i in 0..n { h += [R { k: i + 1, v: (i + 1) * 10 }]; } h }
+fn mks_a(n: integer) -> sorted<R[k]> { h: sorted<R[k]> = []; for i in 0..n { h += [R { k: i + 1, v: (i + 1) * 10 }]; } h }
+fn mki_a(n: integer) -> index<R[k]> { h: index<R[k]> = []; for i in 0..n { h += [R { k: i + 1, v: (i + 1) * 10 }]; } h }
+fn mkv_a(n: integer) -> vector<R> { h: vector<R> = []; for i in 0..n { h += [R { k: i + 1, v: (i + 1) * 10 }]; } h }
+fn mkf_a(n: integer) -> float { n as float * 1.5 }
+fn mkt_a(n: integer) -> text { "t{n}" }
+
+fn a_hash() -> integer { h = mkh_a(2); h += [R { k: 9, v: 90 }]; h += [R { k: 8, v: 80 }]; len(h) + val(h[8]) }
+fn a_hash_vec() -> integer { h = mkh_a(2); w = [R { k: 9, v: 90 }]; h += w; len(h) + val(h[9]) }
+fn a_sorted() -> integer { h = mks_a(2); h += [R { k: 0, v: 5 }]; t = 0; for r in h { t = t * 10 + r.k; } t }
+fn a_index() -> integer { h = mki_a(2); h += [R { k: 9, v: 90 }]; len(h) + val(h[9]) }
+fn a_walk() -> integer { h = mkh_a(2); h += [R { k: 9, v: 90 }]; t = 0; for r in h { t += r.v; } t }
+fn a_vec() -> integer { h = mkv_a(2); h += [R { k: 9, v: 90 }]; len(h) + h[2].v }
+fn a_set() -> integer { h = mkh_a(2); h[9] = R { k: 9, v: 90 }; len(h) + val(h[9]) }
+fn a_float() -> integer { x = mkf_a(2); x += 1; round(x) as integer }
+fn a_float_mul() -> integer { x = mkf_a(2); x *= 2; round(x) as integer }
+fn a_text() -> integer { x = mkt_a(2); x += "{1}"; len(x) }
+
+fn b_hash() -> integer { h = mkh_b(2); h += [R { k: 9, v: 90 }]; h += [R { k: 8, v: 80 }]; len(h) + val(h[8]) }
+fn b_hash_vec() -> integer { h = mkh_b(2); w = [R { k: 9, v: 90 }]; h += w; len(h) + val(h[9]) }
+fn b_sorted() -> integer { h = mks_b(2); h += [R { k: 0, v: 5 }]; t = 0; for r in h { t = t * 10 + r.k; } t }
+fn b_index() -> integer { h = mki_b(2); h += [R { k: 9, v: 90 }]; len(h) + val(h[9]) }
+fn b_walk() -> integer { h = mkh_b(2); h += [R { k: 9, v: 90 }]; t = 0; for r in h { t += r.v; } t }
+fn b_vec() -> integer { h = mkv_b(2); h += [R { k: 9, v: 90 }]; len(h) + h[2].v }
+fn b_set() -> integer { h = mkh_b(2); h[9] = R { k: 9, v: 90 }; len(h) + val(h[9]) }
+fn b_float() -> integer { x = mkf_b(2); x += 1; round(x) as integer }
+fn b_float_mul() -> integer { x = mkf_b(2); x *= 2; round(x) as integer }
+fn b_text() -> integer { x = mkt_b(2); x += "{1}"; len(x) }
+
+fn main() {
+  assert(a_hash() == 84 && b_hash() == 84, "hash: {a_hash()} {b_hash()}");
+  assert(a_hash_vec() == 93 && b_hash_vec() == 93, "hash_vec: {a_hash_vec()} {b_hash_vec()}");
+  assert(a_sorted() == 12 && b_sorted() == 12, "sorted: {a_sorted()} {b_sorted()}");
+  assert(a_index() == 93 && b_index() == 93, "index: {a_index()} {b_index()}");
+  assert(a_walk() == 120 && b_walk() == 120, "walk: {a_walk()} {b_walk()}");
+  assert(a_vec() == 93 && b_vec() == 93, "vec: {a_vec()} {b_vec()}");
+  assert(a_set() == 93 && b_set() == 93, "set: {a_set()} {b_set()}");
+  assert(a_float() == 4 && b_float() == 4, "float: {a_float()} {b_float()}");
+  assert(a_float_mul() == 6 && b_float_mul() == 6, "float_mul: {a_float_mul()} {b_float_mul()}");
+  assert(a_text() == 3 && b_text() == 3, "text: {a_text()} {b_text()}");
+}
+
+fn mkh_b(n: integer) -> hash<R[k]> { h: hash<R[k]> = []; for i in 0..n { h += [R { k: i + 1, v: (i + 1) * 10 }]; } h }
+fn mks_b(n: integer) -> sorted<R[k]> { h: sorted<R[k]> = []; for i in 0..n { h += [R { k: i + 1, v: (i + 1) * 10 }]; } h }
+fn mki_b(n: integer) -> index<R[k]> { h: index<R[k]> = []; for i in 0..n { h += [R { k: i + 1, v: (i + 1) * 10 }]; } h }
+fn mkv_b(n: integer) -> vector<R> { h: vector<R> = []; for i in 0..n { h += [R { k: i + 1, v: (i + 1) * 10 }]; } h }
+fn mkf_b(n: integer) -> float { n as float * 1.5 }
+fn mkt_b(n: integer) -> text { "t{n}" }

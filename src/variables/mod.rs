@@ -562,6 +562,10 @@ pub struct Function {
     /// Lives on the `Function` rather than on the parser because a var number is unique per
     /// FUNCTION, and the parser swaps this whole table for a lambda's.
     pass2_rebuilt: std::collections::HashSet<u16>,
+    /// @C168 — the locals a `=` bound on pass 1 to a value whose type that pass could not
+    /// know (a call of a function declared further down).  Read by the append that follows
+    /// such a bind, which must not type the local in its place.
+    untyped_binds: std::collections::HashSet<u16>,
     /// The undeclared locals whose latest PASS-1 bind had no type yet (a call to a function
     /// defined further down): pass 1 cannot say what they hold there, so a read of one answers
     /// `Unknown` as a fresh local's would (`Parser::parse_var`) — its type from an earlier bind
@@ -953,6 +957,7 @@ impl Function {
             capture_builds: None,
             adopter_released: std::collections::HashSet::new(),
             pass2_rebuilt: std::collections::HashSet::new(),
+            untyped_binds: std::collections::HashSet::new(),
             pass1_untyped_bind: std::collections::HashSet::new(),
             nullable_text_buffers: std::collections::HashSet::new(),
             join_owners: HashMap::new(),
@@ -1283,6 +1288,7 @@ impl Function {
             capture_builds: None,
             adopter_released: std::collections::HashSet::new(),
             pass2_rebuilt: std::collections::HashSet::new(),
+            untyped_binds: std::collections::HashSet::new(),
             pass1_untyped_bind: std::collections::HashSet::new(),
             nullable_text_buffers: other.nullable_text_buffers.clone(),
             join_owners: other.join_owners.clone(),
@@ -6489,6 +6495,16 @@ impl Function {
 
     /// Record that pass 2 has rebuilt `var_nr`'s borrow list — `true` the FIRST time only.
     ///
+    /// @C168: see [`Self::untyped_binds`].
+    pub(crate) fn mark_untyped_bind(&mut self, var_nr: u16) {
+        self.untyped_binds.insert(var_nr);
+    }
+
+    /// @C168: was `var_nr` bound on pass 1 to a value of unknown type?
+    pub(crate) fn is_untyped_bind(&self, var_nr: u16) -> bool {
+        self.untyped_binds.contains(&var_nr)
+    }
+
     /// loft#1466: see [`Self::pass2_rebuilt`].
     pub(crate) fn mark_pass2_rebuilt(&mut self, var_nr: u16) -> bool {
         self.pass2_rebuilt.insert(var_nr)

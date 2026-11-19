@@ -40,6 +40,15 @@ The standing order: stay far enough AHEAD with prepared subjects that the porter
 for one; FIX a defect that blocks the port or that the port would mirror; FILE every other
 defect met on the way, fixed or not.
 
+**A defect is not ported (owner: "make sure you do not reimplement bugs … as long as loft
+gets better for it you can take months").**  The number of agreeing programs is not the goal,
+and no cycle is short enough to justify copying a fault.  So a form the port would mirror is
+JUDGED before it is carried: a rule of the language, or a defect or an accident of the Rust
+front end.  Each prepared page says which, per form.  A defect is fixed in Rust first and the
+port follows the fixed form; until then the port refuses the shape by name.  An accident that
+changes nothing a program can observe (@C168: internal numbers) may be carried.  The tester
+never advises "carry it" for a form it has not judged.
+
 Preventing a problem is worth more than finding it sooner.  Three routines:
 
 - **A prepared topic comes with its probe already run both ways.**  On the Rust front end, on
@@ -130,3 +139,6 @@ Preventing a problem is worth more than finding it sooner.  Three routines:
 | 11-18 | 5db484adb | + | A probe run on the Rust front end before it was sent found a silent wrong answer there (loft#2561: a `-> S?` result read out of a held store is an empty record where its source is absent) — which the port would have mirrored | the first routine above |
 | 11-18 | 075b8a290 | ! | A try was answered against an older tip (its own base's cycle had not finished), reporting the base's gains as the change's; and a hand-run try shared the worktree with the mailbox's | a try waits until its base is gated and names the tip it compared against; tries take a lock |
 
+| 11-19 | fb394a832 | ! | The tester's judgment of 11-18 ("the null vector default is usable", eight cases, both backends) was vacuous: every case discharged `src.split(',')?`, and `split` of a null text answers an EMPTY vector, so the default arm never ran.  Probing a record receiver found that default silently wrong on main (loft#2567: every append lost; bound once per loop pass, it accumulates) | a judgment cell first proves that its path RUNS: the subject really absent (a function that answers `null`), the default's own value asserted |
+| 11-19 | fb394a832 | ? | The porter's refusal ("a call's nullable vector") followed the one-line shape the analysis named (`<call>?`) and also caught six shapes that agreed: the boundary was a receiver with deps, not a call | an analysis gives a shape as its measured BOUNDARY (what is in and what is out), never as one example |
+| 11-19 | ddbe4db03 | + | The boundary sent as a table, before the Rust fix: the porter narrowed by syntax to exactly it and promoted clean on the next try | — |

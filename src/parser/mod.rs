@@ -560,6 +560,11 @@ pub struct Parser {
     /// there is a VALUE being bound, whose arms `lift_borrowing_call_value` lifts.  Cleared
     /// inside a lambda's body, whose tail is a return position again (`ref_return`'s).
     pub(crate) in_bind_rhs: bool,
+    /// The local a `+=` is appending to while its right-hand side is read, or `u16::MAX`.
+    /// An append adds to a collection and does not say what KIND it is: where pass 1 cannot
+    /// know the kind yet, a list literal on the right must leave the local untyped
+    /// (`Parser::append_leaves_untyped`, @C168).
+    pub(crate) append_dest: u16,
     /// `LOFT_STATE_TRACE`'s `var` point: per function and pass, the spelled types of its
     /// variables as the trace last printed them (`Parser::state_trace_vars`).  Empty unless
     /// the trace is on.
@@ -2161,6 +2166,7 @@ impl Parser {
             mid_return_justified: std::collections::HashSet::new(),
             mid_return_prune_pending: std::collections::HashSet::new(),
             in_bind_rhs: false,
+            append_dest: u16::MAX,
             trace_vars: std::collections::HashMap::new(),
             produced: None,
             pending_lambda_facts: Vec::new(),

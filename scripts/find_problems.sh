@@ -839,6 +839,9 @@ if [[ "${1:-}" == "--bg" ]]; then
   # in the subshell, leaving /tmp/loft_problems.txt unwritten).
   RUNNER="$(sweep_test_tmp; test_runner_cmd)"
   echo "test runner: $RUNNER"
+  # The summary of an EARLIER run goes now: its name is this checkout's, not this run's, so a
+  # caller waiting for "the summary file exists" read the last run's verdict as this one's.
+  rm -f "$OUT"
   (
     run_start=$(date +%s)
     eval "$RUNNER" > "$LOG" 2>&1 || true
