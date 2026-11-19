@@ -1,30 +1,23 @@
 diff --git a/src/scopes/get_free_vars.rs b/src/scopes/get_free_vars.rs
-index cacce7dac..4ba42d677 100644
+index 2c02b5173..78a27e1b2 100644
 --- a/src/scopes/get_free_vars.rs
 +++ b/src/scopes/get_free_vars.rs
-@@ -1026,20 +1026,30 @@ impl Scopes<'_> {
-                         // The type's scope-end hook, immediately BEFORE the free that ends
-                         // the value's life — unless `v` is a buffer whose witness already
-                         // ran it.
--                        // `@FR-H-FreeTwice` — where a branch arm left `v` naming a hoisted
--                        // lift's store (`Scopes::lift_viewers`), that lift releases it — its hook
--                        // and its free: `v`'s own hook and free run only where `v` names none of
--                        // them.  An extra guard can only REFUSE a release, and each store it
--                        // refuses is one the lift releases.  The hook is guarded with the free:
--                        // left bare it ran the type's drop on a record the lift had already
--                        // freed (loft#2550, `r = if c { f() ?? return } else { … }`).
+@@ -1033,7 +1033,6 @@ impl Scopes<'_> {
+                         // refuses is one the lift releases.  The hook is guarded with the free:
+                         // left bare it ran the type's drop on a record the lift had already
+                         // freed (loft#2550, `r = if c { f() ?? return } else { … }`).
 -                        let guard = self.lift_viewer_guard(v, data);
-                         if !is_buffer
+                         // A collection buffer's hook runs over the binding it delivered to
+                         // (`delivered_binding`).  A binding whose scope has ended ran that hook
+                         // at its own end and emptied the vector (the scope-end clause above), so
+@@ -1051,9 +1050,23 @@ impl Scopes<'_> {
+                             && !binding_ended
                              && let Some(hook) = unless_moved(v, self.scope_end_hook(function, v, data, arm_dropped))
                          {
 -                            ls.push(guard(hook));
 +                            ls.push(hook);
                          }
 -                        ls.push(guard(call("OpFreeRef", v, data)));
-+                        // `@FR-H-FreeTwice` — where a branch arm left `v` naming a hoisted
-+                        // lift's store (`Scopes::lift_viewers`), that lift releases it: the free
-+                        // runs only where `v` names none of them.  An extra guard can only
-+                        // REFUSE a free, and each store it refuses is one the lift frees.
 +                        let distinct = data.def_nr("OpDistinctStore");
 +                        let free = self
 +                            .lift_viewers

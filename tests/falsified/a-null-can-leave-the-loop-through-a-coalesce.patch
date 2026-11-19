@@ -1,8 +1,8 @@
 diff --git a/src/generation/emit.rs b/src/generation/emit.rs
-index f3c093fab..8d0829dbe 100644
+index 39e9c0f78..56f1dbd5f 100644
 --- a/src/generation/emit.rs
 +++ b/src/generation/emit.rs
-@@ -2856,20 +2856,6 @@ impl Output<'_> {
+@@ -2878,20 +2878,6 @@ impl Output<'_> {
              }
              _ => false,
          };
@@ -23,7 +23,7 @@ index f3c093fab..8d0829dbe 100644
          // For `text_string_unify` we emit `{ (<branch>).to_string() }` around
          // each arm so the if-expression unifies on `String`.  Rust requires
          // braces for if-arms regardless of inner expression form, so even if
-@@ -2950,11 +2936,11 @@ impl Output<'_> {
+@@ -2972,11 +2958,11 @@ impl Output<'_> {
          } else {
              write!(w, "}} else ")?;
          }
@@ -38,7 +38,7 @@ index f3c093fab..8d0829dbe 100644
              (true, "({")
          } else if stmt_discard || !b_false {
              (true, "")
-@@ -2970,7 +2956,7 @@ impl Output<'_> {
+@@ -2992,7 +2978,7 @@ impl Output<'_> {
              None
          };
          write!(w, "{false_rest}")?;
@@ -47,7 +47,7 @@ index f3c093fab..8d0829dbe 100644
          // When the else branch is Null and the true branch returns a value,
          // emit a typed null sentinel instead of () to match the true branch type.
          if matches!(false_v, Value::Null)
-@@ -2987,18 +2973,18 @@ impl Output<'_> {
+@@ -3009,18 +2995,18 @@ impl Output<'_> {
              self.clone_handed_tuple_local = None;
          }
          self.close_arm_pre_evals(false_pre);
@@ -70,7 +70,7 @@ index f3c093fab..8d0829dbe 100644
          if wrap_block {
              write!(w, " }}")?;
          }
-@@ -4975,31 +4961,7 @@ impl Output<'_> {
+@@ -5016,31 +5002,7 @@ impl Output<'_> {
                      // nwb fns via the no-work-buffer arm).
                      let tail_outer_owned =
                          wrap_result && super::def_returns_owned_text(self.data.def(self.def_nr));
@@ -103,7 +103,7 @@ index f3c093fab..8d0829dbe 100644
                          // Wrap the captured value in a block.  A tail call whose
                          // argument carries a store-lifetime "lift" pre-eval emits that
                          // lift as a LEADING `{ … };` statement (it reassigns the lifted
-@@ -5041,17 +5003,12 @@ impl Output<'_> {
+@@ -5082,17 +5044,12 @@ impl Output<'_> {
                      // A tuple's text element takes its own copy, so an outer text variable at
                      // the tail is cloned rather than moved out (`tuple_text_elem`).
                      let clone_outer_text = self.tuple_text_elem
@@ -127,10 +127,10 @@ index f3c093fab..8d0829dbe 100644
                      if is_tail_capture_call {
                          // Close the block opened above; the call is its tail expr.
 diff --git a/src/parser/collections.rs b/src/parser/collections.rs
-index f3db27e2f..4344303ed 100644
+index bcad52810..7233fd094 100644
 --- a/src/parser/collections.rs
 +++ b/src/parser/collections.rs
-@@ -2487,7 +2487,7 @@ use #count instead"
+@@ -2557,7 +2557,7 @@ use #count instead"
              }
          } else if self.lexer.has_token("break") {
              if !self.in_loop {
@@ -139,7 +139,7 @@ index f3db27e2f..4344303ed 100644
              }
              // loft#998 — `x#break` names the loop to leave by its VARIABLE, so a name that
              // is not one has no level to jump. `Value::Null` rather than a level: every
-@@ -2498,10 +2498,7 @@ use #count instead"
+@@ -2568,10 +2568,7 @@ use #count instead"
                  Some(lv) => Value::Break(lv),
                  None => self.not_a_loop_variable(name, "break"),
              };
@@ -151,7 +151,7 @@ index f3db27e2f..4344303ed 100644
          } else if self.lexer.has_token("continue") {
              if !self.in_loop {
                  diagnostic!(self.lexer, Level::Error, "Cannot continue outside a loop");
-@@ -2510,7 +2507,7 @@ use #count instead"
+@@ -2580,7 +2577,7 @@ use #count instead"
                  Some(lv) => Value::Continue(lv),
                  None => self.not_a_loop_variable(name, "continue"),
              };
@@ -161,10 +161,10 @@ index f3db27e2f..4344303ed 100644
              self.iter_op_count_or_first(code, name, t, false, index_var);
          } else if self.lexer.has_keyword("first") {
 diff --git a/src/parser/control.rs b/src/parser/control.rs
-index d2a9f612e..d13c1bf92 100644
+index 4b29905b1..f886e8b0d 100644
 --- a/src/parser/control.rs
 +++ b/src/parser/control.rs
-@@ -22057,7 +22057,7 @@ impl Parser {
+@@ -14250,7 +14250,7 @@ impl Parser {
          // validate if there is a defined return value
          let mut v = Value::Null;
          let r_type = self.data.def(self.context).returned().clone();
@@ -174,10 +174,10 @@ index d2a9f612e..d13c1bf92 100644
              // used to report `not null` violations at the tuple literal site.
              let expr_start = self.lexer.peek().clone();
 diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
-index a3b302781..af375730a 100644
+index 809d3da2f..20596690a 100644
 --- a/src/parser/expressions.rs
 +++ b/src/parser/expressions.rs
-@@ -1229,19 +1229,6 @@ impl Parser {
+@@ -1283,19 +1283,6 @@ impl Parser {
          }
      }
  
@@ -197,7 +197,7 @@ index a3b302781..af375730a 100644
      // <expression> ::= <for> | 'continue' | 'break' | 'return' | 'yield' | '{' <block> | <operators>
      /// Depth-guarded entry to expression parsing: it bounds the nesting depth at
      /// [`crate::limits::LIMIT`], in every def, sandboxed or not, so a deep `((((…))))` is a clean
-@@ -1385,7 +1372,10 @@ impl Parser {
+@@ -1439,7 +1426,10 @@ impl Parser {
              // since loft loops are currently void-typed.  Covers the common
              // find/search pattern where break-with-value exits the function.
              // TODO: implement for...else for the general case.
@@ -210,10 +210,10 @@ index a3b302781..af375730a 100644
                  let break_tp = self.expression(&mut break_val);
                  let ret_tp = self.data.def(self.context).returned().clone();
 diff --git a/src/parser/operators.rs b/src/parser/operators.rs
-index eba789c7d..819001220 100644
+index a5efa0944..f17612377 100644
 --- a/src/parser/operators.rs
 +++ b/src/parser/operators.rs
-@@ -3603,6 +3603,30 @@ impl Parser {
+@@ -3786,6 +3786,30 @@ impl Parser {
              if matches!(self.data.def(*d).returned(), Type::Optional(_)))
      }
  
@@ -244,7 +244,7 @@ index eba789c7d..819001220 100644
      /// Desugar `lhs ?? ...` — both the plain-default form and the
      /// `?? return ret_expr` early-return form.  Lifted out of
      /// [`Self::handle_operator`] so each shape has its own focused helper.
-@@ -3759,14 +3783,8 @@ impl Parser {
+@@ -3942,14 +3966,8 @@ impl Parser {
          // `false ?? x` stays `false` (false is not null); `null ?? x` → x.
          if self.lexer.has_token("return") {
              self.build_null_coalesce_return(code, ctp, &lhs_type);
@@ -261,12 +261,21 @@ index eba789c7d..819001220 100644
          } else {
              self.build_null_coalesce_default(var_tp, code, parent_tp, precedence, ctp, &lhs_type);
          }
-@@ -4058,7 +4076,7 @@ impl Parser {
-         // produces the typed null sentinel.
-         let mut ret_val = Value::Null;
+@@ -4247,7 +4265,7 @@ impl Parser {
+     fn build_null_coalesce_return(&mut self, code: &mut Value, ctp: &mut Type, lhs_type: &Type) {
+         let mut ret_stmt = Value::Null;
          let r_type = self.data.def(self.context).returned().clone();
--        if self.control_value_follows() {
-+        if !self.lexer.peek_token(";") && !self.lexer.peek_token("}") {
-             let ret_pos = *self.lexer.peek_pos();
-             let t = self.expression(&mut ret_val);
-             // @FR-N-Store: `lhs ?? return ret` returns `ret` into the caller's non-null return
+-        if self.control_value_follows() && r_type == Type::Void {
++        if !self.lexer.peek_token(";") && !self.lexer.peek_token("}") && r_type == Type::Void {
+             // In a function with no value, `x ?? return f()` runs the void call and leaves —
+             // the one place a `return` is followed by an expression there, which published
+             // libraries write (`dev = open(..) ?? return assert(false, "no device")`).  The
+@@ -4259,7 +4277,7 @@ impl Parser {
+                 self.validate_convert("return", &t, &r_type, &ret_pos);
+             }
+             ret_stmt = Value::Return(Box::new(ret_val));
+-        } else if self.control_value_follows() {
++        } else if !self.lexer.peek_token(";") && !self.lexer.peek_token("}") {
+             self.parse_return(&mut ret_stmt);
+         } else {
+             let ret_val = if r_type != Type::Void && !self.first_pass {
