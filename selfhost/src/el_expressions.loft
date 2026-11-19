@@ -561,6 +561,11 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       if built == null {
         built = el_ex_null::merge_view_call(e, vars, code);
       }
+      // A slice `match` tail whose arms answer an element they bound (`[a, ..] => a`): each such
+      // arm is copied into the buffer (`materialized_view_return`), a `null` arm the sentinel.
+      if built == null {
+        built = materialize_match_arms(e, vars, code, rb, result);
+      }
       // A `null` tail answers the sentinel and delivers nothing into the buffer.
       if built == null && null_sentinel_tail(e, code) {
         built = code;
@@ -568,6 +573,20 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       // A body ending in a `return` delivered its value already (`record_return`).
       if built == null && ends_in_return(code) {
         built = code;
+        // (A `return` of a slice `match` materialized into the buffer: the body answers it.)
+        match code {
+          NdBlock { block: rbk } => {
+            rbl = rbk[0];
+            lastr = if len(rbl.operators) > 0 { el_ir::unspan(el_ir::last(rbl.operators)) } else { ir::NdNull };
+            rvm = match lastr { NdReturn { inner: ri } => match el_ir::unspan(ri) { NdBlock { block: rib } => rib[0].name == "vector_match", _ => false }, _ => false };
+            if rvm && rb >= 0 {
+              rown = el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb]);
+              rbl.result = [if result is TyOptional { ir::TyOptional { inner: rown } } else { rown }];
+              built = ir::NdBlock { block: [rbl] };
+            }
+          },
+          _ => {}
+        }
       }
       if built == null && body_tail(code) is NdIf && arms_build_into_refs(e, vars, body_tail(code)) {
         built = code;
@@ -1596,6 +1615,100 @@ pub fn rename_candidate(e: el::El, vars: el_vars::Vars, code: ir::Node, x: ir::N
     _ => {}
   }
   -1
+}
+
+// `materialize_view_return` per arm of a `vector_match` tail: an arm that answers a variable it
+// bound (a slice binding, a view of the subject's element) is copied into a fresh `__retbuf`,
+// the null sentinel stays; null where any other arm is met.
+pub fn materialize_match_arms(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, result: ir::TypeT) -> ir::Node? {
+  bl = match code { NdBlock { block } => block[0], _ => return null };
+  if len(bl.operators) == 0 {
+    return null;
+  }
+  mv = materialize_match_value(e, vars, el_ir::unspan(el_ir::last(bl.operators)), rb, result);
+  if mv == null {
+    return null;
+  }
+  bl.operators[-1] = el_ir::respan(el_ir::last(bl.operators), mv!);
+  owned0 = el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb]);
+  bl.result = [if result is TyOptional { ir::TyOptional { inner: owned0 } } else { owned0 }];
+  ir::NdBlock { block: [bl] }
+}
+
+// The `vector_match` block `tail` with each arm answering a variable it bound copied into the
+// buffer (`materialized_view_return`), a `null` arm the sentinel; null for any other value.
+pub fn materialize_match_value(e: el::El, vars: el_vars::Vars, tail: ir::Node, rb: integer, result: ir::TypeT) -> ir::Node? {
+  mb = match tail { NdBlock { block: tb } => if tb[0].name == "vector_match" { tb[0] } else { return null }, _ => return null };
+  if len(mb.operators) == 0 {
+    return null;
+  }
+  // (A struct enum is copied at its own record type, as a struct is.)
+  td = struct_ref(e, el_types::base(result));
+  if td < 0 {
+    td = el_types::struct_enum_def(el_types::base(result));
+  }
+  if td < 0 || rb < 0 {
+    return null;
+  }
+  kt = el::def(e, td).known_type;
+  owned = el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb]);
+  arms = materialize_arm(e, vars, mb.operators[-1], rb, kt, owned);
+  if arms == null {
+    return null;
+  }
+  if has_null_arm(mb.operators[-1]) && !((mb.result[0] ?? ir::TyVoid) is TyOptional) {
+    mb.result = [ir::TyOptional { inner: mb.result[0] ?? ir::TyVoid }];
+  }
+  mb.operators[-1] = arms!;
+  // (The result names the buffer it is delivered in, as a vector's does.)
+  rba = attr_nr(el::def(e, e.context), "__retbuf");
+  if rba >= 0 {
+    e.b.data.definitions[e.context].returned = [el_types::with_deps(el::def(e, e.context).returned[0] ?? result, [rba])];
+  }
+  ir::NdBlock { block: [mb] }
+}
+
+fn has_null_arm(n: ir::Node) -> boolean {
+  match n {
+    NdSpan { inner } => has_null_arm(inner),
+    NdIf { cond: _, t, f } => has_null_arm(t) || has_null_arm(f),
+    NdNull => true,
+    _ => false
+  }
+}
+
+fn materialize_arm(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, kt: integer, owned: ir::TypeT) -> ir::Node? {
+  match n {
+    NdSpan { pos, inner } => {
+      r = materialize_arm(e, vars, inner, rb, kt, owned);
+      return if r == null { null } else { ir::NdSpan { pos: pos, inner: r! } };
+    },
+    NdIf { cond, t, f } => {
+      a = materialize_arm(e, vars, t, rb, kt, owned);
+      b = materialize_arm(e, vars, f, rb, kt, owned);
+      return if a == null || b == null { null } else { ir::NdIf { cond: cond, t: a!, f: b! } };
+    },
+    NdCall { def_nr } => { return if el::def(e, def_nr).name == "OpNullRefSentinel" { n } else { null }; },
+    // (A `null` arm answers the record's null: the sentinel, `type_null_arms`.)
+    NdNull => { return el_ir::cl(e, "OpNullRefSentinel", []); },
+    NdBlock { block } => {
+      ab = block[0];
+      if len(ab.operators) == 0 || !(el_ir::unspan(el_ir::last(ab.operators)) is NdVar) {
+        return null;
+      }
+      b = ir::NdVar { n: rb };
+      // A NULLABLE binding is copied where present, inside its block: the sentinel where absent.
+      av = match el_ir::unspan(el_ir::last(ab.operators)) { NdVar { n: an } => an, _ => -1 };
+      if av >= 0 && el_vars::tp(vars, av) is TyOptional {
+        cp = el_ir::v_block([el_ir::v_set(rb, ir::NdNull), el_ir::cl(e, "OpDatabase", [b, ir::NdInt { n: kt }]), el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: av }, b, ir::NdInt { n: kt }]), b], owned, "materialized_view_return");
+        ab.operators[-1] = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [ir::NdVar { n: av }]), el_ir::cl(e, "OpNullRefSentinel", []), cp);
+        return ir::NdBlock { block: [ab] };
+      }
+      return el_ir::v_block([el_ir::v_set(rb, ir::NdNull), el_ir::cl(e, "OpDatabase", [b, ir::NdInt { n: kt }]), el_ir::cl(e, "OpCopyRecord", [n, b, ir::NdInt { n: kt }]), b], owned, "materialized_view_return");
+    },
+    _ => {}
+  }
+  null
 }
 
 // The last statement of a body block, unspanned; null for an empty body or no block.
