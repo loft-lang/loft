@@ -2297,6 +2297,19 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
     el::refuse(e, "a local that changes type: {retype_note(e, vars)}");
     return refused_build();
   }
+  // (A literal given to a field whose vector type is not made yet registers nothing on the
+  // first pass: `field_literal`.)
+  if e.first_pass && vars.field_literal == n {
+    vars.field_literal = -1;
+    // (Its SCHEMA type is numbered here, at the first use, as Rust numbers it; only the two
+    // definition entries wait for the end-of-file pass.)
+    vector_of(e, in_t);
+    late_codes: vector<ir::Node> = [];
+    for x in xs {
+      late_codes += [x.code];
+    }
+    return Built { x: ex(ir::NdNull, if value { el_vars::tp(vars, v) } else { ir::TyVoid }), items: late_codes, elem: in_t };
+  }
   // A DECLARED literal has its element's `vector<…>` row made where its type was read, items
   // or none (`g: vector<single> = []`).
   if len(xs) > 0 || (!el_types::is_unknown(declared) && !append) {
