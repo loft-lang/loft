@@ -670,6 +670,20 @@ pub fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: intege
       },
       _ => {}
     }
+    // A struct enum defaults to its first-declared variant with its fields at their defaults
+    // (`build_default`'s enum arm): `x?` is `x ?? <that variant>`.
+    sen = el_types::struct_enum_def(b);
+    if sen >= 0 {
+      first = -1;
+      for vdef in e.b.data.definitions {
+        if first < 0 && vdef.def_type == el::DT_ENUM_VALUE && vdef.parent == sen {
+          first = vdef#index;
+        }
+      }
+      if first >= 0 {
+        return el_ex_call::enum_coalesce(e, vars, x, el_ex_assign::unit_variant(e, vars, sen, first));
+      }
+    }
     if !el_convert::plain_scalar(b) {
       el::refuse(e, "a `?` default of this type: {type_kind(b)}");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
