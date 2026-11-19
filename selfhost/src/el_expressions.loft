@@ -2696,6 +2696,33 @@ fn views_a_local(vars: el_vars::Vars, v: integer) -> boolean {
   false
 }
 
+// The variable a slice `match` tail's FIRST arm answers when it is one of that arm's
+// captures (`[_, ..rest] => rest`), or -1.
+pub fn match_tail_capture(vars: el_vars::Vars, n: ir::Node) -> integer {
+  match el_ir::unspan(n) {
+    NdBlock { block } => {
+      bl = block[0];
+      if len(bl.operators) == 0 {
+        return -1;
+      }
+      if bl.name == "vector_match" {
+        return first_arm_var(vars, el_ir::unspan(bl.operators[-1]));
+      }
+      -1
+    },
+    _ => -1
+  }
+}
+
+fn first_arm_var(vars: el_vars::Vars, n: ir::Node) -> integer {
+  match n {
+    NdIf { cond: _, t, f: _ } => first_arm_var(vars, el_ir::unspan(t)),
+    NdBlock { block } => if len(block[0].operators) == 0 { -1 } else { first_arm_var(vars, el_ir::unspan(block[0].operators[-1])) },
+    NdVar { n: v } => if el_vars::name_of(vars, v).contains("#") { v } else { -1 },
+    _ => -1
+  }
+}
+
 pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, result: ir::TypeT) -> ir::Node {
   // A literal tail is read against the result's element (`-> vector<u8> { [104, 101] }` holds
   // bytes): a tail built at another element than the result names is not carried.
@@ -2806,6 +2833,13 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
         el::refuse(e, "a vector `return` before the body's end");
         return code;
       }
+    }
+    // A slice `match` tail renamed onto its first arm's capture on the first pass: the match
+    // built each arm into it (`vector_match`); the body answers it, borrowing the buffer.
+    mtc = match_tail_capture(vars, tail);
+    if mtc >= 0 && hidden_param(e, vars, mtc) {
+      bl.result = [el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb])];
+      return ir::NdBlock { block: [bl] };
     }
     // The buffer renamed onto the tail local on the first pass: the body answers the vector the
     // caller handed in, and opens by clearing it.  A local bound from a call (which Rust hands
@@ -2928,6 +2962,13 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
       // hidden parameter, its binds then refill the caller's vector.
       // A local a loop appends a call's vector to keeps its store and is copied in at the tail
       // (`classify_ret_promotion`'s `Bind`, `var_call_rebound_nested`).
+      // A slice-pattern `match` whose first arm answers its rest capture
+      // (`match v { [_, ..rest] => rest, _ => [] }`): `ls` is that capture, the buffer renamed
+      // onto it (the hidden parameter takes its name, `rest#1`).
+      mcap = match_tail_capture(vars, tail);
+      if mcap >= 0 && attr_nr(el::def(e, d), "__retbuf") >= 0 && !buffer_bound(e) {
+        rename_onto(e, vars, rb, mcap);
+      }
       match tail {
         NdVar { n } => {
           // Rust's `bound_to_vector_join` asks the return's type: the local's may be unknown yet.

@@ -2068,7 +2068,10 @@ pub fn pattern_bind(vars: el_vars::Vars, name: text, tp: ir::TypeT, names: vecto
   if id == name {
     id = el_vars::loop_binding(vars, name);
   }
-  bv = el_vars::loop_variable(vars, id, tp);
+  // (A capture the return buffer was renamed onto on the first pass is that hidden parameter
+  // now: the same variable, as Rust's function keeps its variables across passes.)
+  existing = el_vars::var(vars, id);
+  bv = if existing >= 0 && vars.vars[existing]!.argument { existing } else { el_vars::loop_variable(vars, id, tp) };
   el_vars::set_defined(vars, bv);
   names += [el_vars::VarName { name: name, nr: el_vars::var(vars, name) }];
   el_vars::set_name(vars, name, bv);
