@@ -2127,6 +2127,13 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
       // A nested vector literal is built into its element (`parse_item` with `elm`).
       nested += [it];
       xs += [ex(ir::NdNull, nested_item_type(e, vars, it, nested_want))];
+    } else if struct_ref(e, if el_types::is_unknown(declared) { held_elem } else { declared }) >= 0 {
+      // A record item is read INTO its element (`parse_item`): a local it starts with borrows
+      // nothing there (`parse_var`'s `into` arm).
+      keep_into = vars.item_into;
+      vars.item_into = leftmost(e, it);
+      xs += [el_ex_assign::expression(e, vars, it)];
+      vars.item_into = keep_into;
     } else {
       xs += [el_ex_assign::expression(e, vars, it)];
     }

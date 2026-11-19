@@ -1464,6 +1464,10 @@ pub fn keyed_for(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex) -> Ex {
   held_fill = ir::NdNull;
   if (ct is TySorted || ct is TyIndex) && el_ex_place::any_user_call(e, [x.code]) {
     held_src = el_vars::create_unique(vars, "vector", ct);
+    // (Typed as this pass's source: a `??` viewing a local borrows it, `["h"]`.)
+    if !e.first_pass {
+      el_vars::set_var_type(vars, held_src, ct);
+    }
     held_fill = el_ir::v_set(held_src, x.code);
     ct = el_types::with_deps(ct, [held_src]);
     x = ex(ir::NdVar { n: held_src }, ct);
@@ -1489,6 +1493,11 @@ pub fn keyed_for(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex) -> Ex {
   idx = el_ex_pattern::loop_index(vars, h.id);
   base = if h.id == "_" { el_vars::name_of(vars, idx) } else { h.id };
   lv = loop_var(vars, h.src_id, h.id, elem);
+  // (A source held on this pass is what the loop's variable borrows, whatever the first pass
+  // walked: `ref(P)["_vector_N"]`.)
+  if !e.first_pass && held_src >= 0 {
+    el_vars::set_var_type(vars, lv, elem);
+  }
   vars.active_loops += [lv];
   vars.active_values += [ir::NdNull];
   fc = el_ex_pattern::loop_filter(e, vars, h.filter);
@@ -3502,9 +3511,13 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
   has_rest = false;
   rest = "";
   sed = el_types::struct_enum_def(elm);
+  // A capture's literal test (`[x: 5, y]`), position by position: the literal node, -1 for none.
+  head_lit: vector<integer> = [];
+  tail_lit: vector<integer> = [];
   for el0 in elems {
     nm = "";
     pat = -1;
+    lit = -1;
     match e.p.nodes[el0] {
       PRest { name } => {
         if has_rest {
@@ -3516,6 +3529,35 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
         continue;
       },
       PWild => { nm = "_"; },
+      // A capture NAMES the element (`x: _`), a typed rest (`xs: integer*`), or an element a
+      // literal tests (`x: 5`, `field_sub`).
+      PCap { name: cn, pat: cp } => {
+        cpn = cp ?? -1;
+        match e.p.nodes[cpn] {
+          PWild => { nm = cn; },
+          PQuant { quant: cq } => {
+            if cq != "*" || has_rest {
+              el::refuse(e, "a slice pattern capture of a repetition of this kind");
+              return null;
+            }
+            has_rest = true;
+            rest = cn;
+            continue;
+          },
+          PLit { e: cle } => {
+            if cle == null || sed >= 0 {
+              el::refuse(e, "a slice pattern capture of a literal over this element");
+              return null;
+            }
+            nm = cn;
+            lit = cle!;
+          },
+          _ => {
+            el::refuse(e, "a slice pattern element of this form: {syn_kind(e, el0)}");
+            return null;
+          }
+        }
+      },
       _ => {
         nm = el_ex_pattern::rename_of(e, el0);
         if nm == "" && sed >= 0 && e.p.nodes[el0] is PName {
@@ -3529,9 +3571,11 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
     if has_rest {
       tail += [nm];
       tail_pat += [pat];
+      tail_lit += [lit];
     } else {
       head += [nm];
       head_pat += [pat];
+      head_lit += [lit];
     }
   }
   fixed = len(head) + len(tail);
@@ -3571,6 +3615,25 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
     } else if t != "_" {
       bv = pattern_bind(vars, t, named_t, names);
       binds += [el_ir::v_set(bv, slice_elem(e, elm, at))];
+    }
+  }
+  // Each capture's literal is tested (`#field_sub` over a `_fp_subj_N` read of the element),
+  // joined to the length test, the element bound with the rest.  (Its temp is minted after the
+  // captures' variables, as Rust numbers them.)
+  for hl in head_lit + tail_lit {
+    if hl >= 0 {
+      li = hl#index;
+      lpos = if li < len(head_lit) { li } else { li - len(head_lit) - len(tail_lit) };
+      lat = el_ir::cl(e, "OpGetVector", [ir::NdVar { n: sv }, ir::NdInt { n: es }, ir::NdInt { n: lpos }]);
+      fp = el_vars::create_unique(vars, "fp_subj", elm);
+      el_vars::set_defined(vars, fp);
+      lx = el_ex_assign::expression(e, vars, hl);
+      eqx = el_ex_null::builtin_op(e, vars, "==", ex(ir::NdVar { n: fp }, elm), lx);
+      if !e.first_pass && !(eqx.tp is TyBoolean) {
+        el::refuse(e, "a slice pattern capture of a literal of another type");
+        return null;
+      }
+      cond = el_ir::v_if(cond, el_ir::v_block([el_ir::v_set(fp, slice_elem(e, elm, lat)), eqx.code], ir::TyBoolean, "field_sub"), ir::NdBoolean { b: false });
     }
   }
   if rest != "" {

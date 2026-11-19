@@ -79,6 +79,13 @@ pub struct RebindFrame {
   pub names: vector<VarName>
 }
 
+// A keyed local a closure captured: the closure record it was stored in, and at which offset.
+pub struct CapSlot {
+  pub var: integer,
+  pub clos: integer,
+  pub pos: integer
+}
+
 pub struct LoopSpelling {
   pub lv: integer,
   pub name: text,
@@ -298,6 +305,13 @@ pub struct Vars {
   pub read_into: integer = -1,
   // Parsing the value of a plain local's `=` (`Parser::in_bind_rhs`).
   pub bind_rhs: boolean = false,
+  // The `??` being read is a bind's whole right side (`b = x ?? f()`): its join borrows nothing
+  // there (`coalesce` strips the subject's read), so no call arm is homed.
+  pub coalesce_is_bind: boolean = false,
+  // The leftmost syntax node of a record item a vector literal reads INTO its element, or -1.
+  pub item_into: integer = -1,
+  // The keyed locals a closure of this pass captured (`@FR-L-CapRebind`'s detach guard).
+  pub cap_slots: vector<CapSlot>,
   // Set while `rename_ret_buffer` judges a pass-1 match tail's arms (`arms_rename_candidate`).
   pub match_tail: boolean = false,
   // `mark_pass2_rebuilt`: the locals a second-pass call bind already re-derived the borrows of.
