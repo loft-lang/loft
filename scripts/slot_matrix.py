@@ -509,7 +509,10 @@ def make_cells(slots, fillers, which_filler, which_slot, which_kind, contexts=No
     for slot in slots:
         if which_slot and slot["id"] not in which_slot:
             continue
-        kinds = KINDS if slot["type"] in kinded_types else KINDS[:1]
+        # Every kind where the operand's type depends on it, and where the statement itself
+        # reads a collection of the cell's kind (a keyed lookup by an integer operand).
+        kinds = (KINDS if slot["type"] in kinded_types or KIND_NAMES.search(slot["stmt"] + slot["decl"])
+                 else KINDS[:1])
         for (kind, kind_type), (ctx, passes, wrap), frame in (
                 (k, c, f) for k in kinds for c in contexts for f in frames):
             if which_kind and kind != which_kind:
@@ -968,8 +971,11 @@ def cmd_gate(args):
     if not new and not gone:
         print(f"slot_matrix gate: {what}: {len(cells)} cells, {len(keys)} not ok, all in the baseline  [{loft_binary()}]")
         return 0
+    total_new = len(new)
     # The two findings want opposite actions, so each is said on its own, the one that
     # means something broke first.
+    refused = [k for k in new if k[2] == "refused"]
+    new = [k for k in new if k[2] != "refused"]
     if new:
         only = {n for n, _, _ in new}
         folds = causes([c for c in cells if c["name"] in only], verdicts, cells)
@@ -980,16 +986,27 @@ def cmd_gate(args):
         annotate(folds, slots, fillers)
         print("the cells:")
         for name, backend, ch in new:
-            why = next((w for b, v, w in verdicts[name][1] if b == backend and v == "FAIL"), "refused by the compiler")
+            why = next((w for b, v, w in verdicts[name][1] if b == backend and v == "FAIL"), "")
             print(f"  NEW      {name} [{backend}] ({ch}): {why[:170]}")
         print(f"  to see one slot: python3 scripts/slot_matrix.py run --filler all --backend both --slot <id> -v")
+    if refused:
+        # Not a failure of an evaluation: the compiler now refuses a statement it took, or
+        # a new row is one it never takes.  Either is a claim the rules must back, so it
+        # is listed with the compiler's words and accepted by hand (`gate --update`).
+        print(f"REFUSED: {len(refused)} cell(s) of {what} are refused by the compiler and are not in the "
+              f"baseline.  Read each refusal against the rules; if it is right, `gate --update` lists it.")
+        for name, _, _ in refused:
+            why = next((w for _, v, w in verdicts[name][1] if v == "REFUSED"), "")
+            print(f"  REFUSED  {name}: {why[:200]}")
+            print(f"           {statement_of(next(c for c in cells if c['name'] == name))}")
     if gone:
         print(f"FIXED: {len(gone)} baseline line(s) of {what} pass now.  Nothing is broken: run "
               f"`python3 scripts/slot_matrix.py gate --update`, read the diff (it must only remove "
               f"lines), and commit it with the fix.")
         for name, backend, ch in gone:
             print(f"  PASSES   {name} [{backend}] ({ch})")
-    print(f"slot_matrix gate: {what}: {len(cells)} cells, {len(new)} new, {len(gone)} to remove  [{loft_binary()}]")
+    print(f"slot_matrix gate: {what}: {len(cells)} cells, {len(new)} failing and {total_new - len(new)} refused "
+          f"that are new, {len(gone)} to remove  [{loft_binary()}]")
     return 1
 
 

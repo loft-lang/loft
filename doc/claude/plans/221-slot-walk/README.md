@@ -9,7 +9,7 @@ Tracker: [@PLN221](https://github.com/loft-lang/plans/issues/221).
 
 ## Status
 
-The generator is built and gating.  `scripts/slot_matrix.py` makes 4,772 cells from five
+The generator is built and gating.  `scripts/slot_matrix.py` makes 6,061 cells from five
 tables, runs them on the interpreter and the C backend in a minute, and
 `tests/slot_matrix.rs` holds them against a baseline in seven tests, one a slot family.
 Built so far: the register with its completeness guard (A), the runner (B), depth two (D),
@@ -89,13 +89,13 @@ The matrix is generated; the tables are what is kept and reviewed, never the cel
 
 | File under `scripts/` | Rows | What it holds |
 |---|---|---|
-| `syntax_slots.tsv` | 175 slots in 7 families | id, family, the rule that states the count, count class, expected runs, operand type, the statement, an optional declaration |
+| `syntax_slots.tsv` | 191 slots in 7 families | id, family, the rule that states the count, count class, expected runs, operand type, the statement, an optional declaration |
 | `syntax_fillers.tsv` | 96 fillers over 13 types | id, type, the expression; 19 are wrappers, 4 write what the statement works on and go only into `first` slots |
 | `syntax_contexts.tsv` | 4 contexts | id, how often the statement runs, the template around it |
-| `syntax_expect.tsv` | 174 of the 175 slots | the anchor: slot, kind, the fields the plain statement must leave changed |
-| `syntax_outside.tsv` | 40 lexemes | every lexeme in no slot, with why: it takes no operand, it is a declaration, or the matrix cannot reach it yet (12) |
+| `syntax_expect.tsv` | 190 of the 191 slots, a row a kind where the kind changes the answer | the anchor: slot, kind, the fields the plain statement must leave changed |
+| `syntax_outside.tsv` | 38 lexemes | every lexeme in no slot, with why: it takes no operand, it is a declaration, or the matrix cannot reach it yet (12) |
 | `syntax_slots_prelude.loft` | 3 frames | the world a cell runs in, and the functions a filler calls |
-| `slot_matrix.baseline` | 318 lines | the cells that do not pass today; the gate lets it only shrink |
+| `slot_matrix.baseline` | 477 lines | the cells that do not pass today; the gate lets it only shrink |
 
 The lexicon is read from the lexer's tables and the parser's own lexer calls, so syntax
 added without a slot row or a reason fails `doc_hygiene`.
@@ -126,7 +126,7 @@ twin agree and the anchor's hand value was computed from the same misreading.  E
 
 | Run | Cells | Both backends |
 |---|---|---|
-| the gate: every filler, one context, one frame | 4,772 | 59 s here; 421 s on a CI runner when it was 3,661 cells in one test |
+| the gate: every filler, one context, one frame | 6,061 | about 75 s here; 421 s on a CI runner when it was 3,661 cells in one test |
 | four contexts and two frames | about 23,000 | 5 min 33 s |
 | depth two | about 15,000 | 3 min 9 s |
 | depth three, whole | over 60,000 | not run; a sample is planned |

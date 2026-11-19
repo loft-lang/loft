@@ -195,3 +195,19 @@ en-elem	write	E-Asgn	first	1	enum	vcol[i] = <S>;
 en-push	write	Col-Insert	first	1	enum	vcol += [<S>];
 en-eq	operator	E-Eq	once	1	enum	if <S> == en { s = 1; } else { s = 2; }
 en-ne	operator	E-Eq	once	1	enum	if <S> != en { s = 1; } else { s = 2; }
+ct-truthy-int	control	E-Truthy	once	1	int	if <S> { s = 1; } else { s = 2; }
+ct-truthy-text	control	E-Truthy	once	1	text	if <S> { s = 1; } else { s = 2; }
+op-not-int	operator	E-Truthy	once	1	int	if !<S> { s = 1; } else { s = 2; }
+it-map-source	iteration	I-Map	once	1	vint	q = map(<S>, inc1); s = q[0] + len(q);
+it-map-fn	iteration	I-Map	once	1	fn	q = map(vi, <S>); s = q[1];
+it-filter-fn-source	iteration	I-Filter	once	1	vint	q = filter(<S>, big); s = len(q);
+it-reduce-source	iteration	I-Reduce	once	1	vint	s = reduce(<S>, 0, addp);
+it-reduce-init	iteration	I-Reduce	once	1	int	s = reduce(vi, <S>, addp);
+it-range-from	iteration	I-RangeFrom	once	1	int	for n in (<S>).. { if n > j { break; } s += n; }
+cn-destructure	construct	T-Destr	once	1	int	(a, bb) = (j, <S>); s = a * 10 + bb;
+ct-match-range	control	P-Range	once	1	int	match <S> { 0..5 => { s = 1; }, _ => { s = 2; } }
+ct-match-alt	control	P-Alt	once	1	int	match <S> { 1 | 2 => { s = 1; }, _ => { s = 2; } }
+wr-remove-dense	write	Col-RemoveDense	first	1	int	vi.remove(<S>);
+op-ne-text	operator	E-Eq	once	1	text	if <S> != x { s = 1; } else { s = 2; }
+op-eq-bool	operator	E-Eq	once	1	bool	if <S> == b { s = 1; } else { s = 2; }
+op-ne-bool	operator	E-Eq	once	1	bool	if <S> != b { s = 1; } else { s = 2; }

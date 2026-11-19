@@ -19,11 +19,9 @@ lock	unreached: `d#lock = e` takes a boolean; a locked store would stop the cell
 parse	unreached: `T.parse(e)` takes a text; the prelude has no text that parses to one of its records
 from	unreached: `yield from e` takes a generator; no slot type carries one yet
 panic	unreached: `panic(e)` takes a message and ends the program, so the cell cannot print its count
-break	none: leaves a loop; it carries no value
 continue	none: starts the next step of a loop; it carries no value
 count	none: `p#count`, a number the loop keeps for its variable
 first	none: `p#first`, a fact the loop keeps for its variable
-remove	none: `p#remove`, an action on the loop's current element
 errors	none: `s#errors` reads what a parse left on a variable
 exists	none: `f#exists` reads a fact about a file variable
 fields	none: `s#fields` walks a type's fields at compile time
