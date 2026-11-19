@@ -1689,7 +1689,17 @@ rebind — an early `return` inside the loop — parks too), and `Stores::park_o
                  so it cannot invalidate a header: a loop whose store writes are all
                  such sets keeps (R-Header).  What may run in such a loop is an
                  ALLOW-LIST (the store-free ops, IN_PLACE_SET_OPS); an op missing from
-                 it costs the rewrite, never correctness.  THE COPY CLAUSE: a
+                 it costs the rewrite, never correctness.  THE SLOT CLAUSE: the list
+                 is asked with the SLOT, not the op name — `OpSetInt4` also primes a
+                 collection field empty (`OpSetInt4(rec, pos, 0)` for `v: []`), which
+                 changes that vector's length, so it is on the list only where its slot
+                 types as a 4-byte number (a record field, or an element of a vector of
+                 numbers), where its record is YOUNGER than the loop's prelude (made by
+                 an earlier statement of its list — `OpNewRecord`, `OpPlaceRecord`,
+                 `OpDatabase` — or minted in this pass, or a buffer pool's record after
+                 its mint), or where
+                 the reader holds a record's ADDRESS only ((R-RecPtr): a primed field
+                 moves no record).  A slot it cannot type is a writer.  THE COPY CLAUSE: a
                  flag-free OpCopyRecord(src, dst, tp) over a record type that owns no
                  heap is the same write at a larger width — size(tp) bytes stored
                  at dst's address, nothing claimed, released or moved — and is on
@@ -1718,7 +1728,10 @@ rebind — an early `return` inside the loop — parks too), and `Stores::park_o
 in-place write moves nothing, so no header, aliased or not, can go stale; that is
 why the header needs no write set while a scalar (R-Scalar) does.  Switch
 `LOFT_NO_WRITE_HOIST`.  Sites: `hoist::IN_PLACE_SET_OPS`,
-`hoist::blocks_header_hoist`.
+`loop_records::in_place_set` and `loop_records::sets_into_new_records` (the slot clause),
+`hoist::blocks_header_hoist`.  Guard:
+`rules/rewrites/R-InPlace/a-vector-field-rebuilt-in-place-in-a-loop-keeps-its-pushes.loft`
+in the language suite.
 **The text clause of (R-Base)**: a TEXT element read —
 `OpGetText(OpGetVector*(P, 4, i), 0)`, a walk's element or an indexed `v[i]` — in a loop
 that holds P's header and element base reads the element's record number through the

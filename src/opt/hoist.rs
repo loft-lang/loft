@@ -2400,6 +2400,7 @@ fn view_extent_verdict_inner(
                     in_place: allow_in_place,
                     push: movers_apart,
                     mint: movers_apart,
+                    address_only: true,
                     ..HoistTiers::default()
                 },
                 &mut fresh,
@@ -2479,6 +2480,7 @@ fn view_extent_verdict_inner(
                                 in_place: allow_in_place,
                                 push: movers_apart,
                                 mint: movers_apart,
+                                address_only: true,
                                 ..HoistTiers::default()
                             },
                             &mut fresh_walk,

@@ -69,6 +69,32 @@ pub(crate) struct FieldSinks {
     demote_other: u32,
     demote_field: Option<String>,
 }
+/// The IR of a primed value with the place it is built THROUGH taken out of each write's
+/// receiver slot, so what remains is what its items read.  Only the receiver POSITION is
+/// masked — the first argument of each top-level write (`OpPushInt(<field>, item)`,
+/// `_elm = OpNewRecord(<field>, …)`, `OpFinishRecord(<field>, …)`): an item reading the field
+/// itself (`[len(b.inner.v)]`) is the same IR as the receiver and must still count.  A write
+/// nested deeper (a comprehension's loop) is left as it is, which keeps its decline.
+/// Each level is read through its `Span`: a spanned write is the same write, and missing it
+/// would leave its receiver counted as a read, which declines the in-place build.
+fn mask_receiver(v: &mut Value, receiver: &Value) {
+    let Value::Insert(ops) = v.unspan_mut() else {
+        return;
+    };
+    for op in ops.iter_mut() {
+        let call = match op.unspan_mut() {
+            Value::Set(_, inner) => inner.unspan_mut(),
+            other => other,
+        };
+        if let Value::Call(_, args) = call
+            && let Some(first) = args.first_mut()
+            && first.unspan() == receiver.unspan()
+        {
+            *first = Value::Null;
+        }
+    }
+}
+
 impl Parser {
     /// An abandoned construction's work-refs, marked skip-free so nothing frees what it never
     /// built — on the SECOND pass only.  The marks go by NAME and the names persist from pass 1
@@ -5998,6 +6024,9 @@ impl Parser {
             // (the literal writes THROUGH the field) — those must not be
             // hoisted; only pure value expressions (`value` started Null).
             let primed = !matches!(value, Value::Null);
+            // The place a primed value is built THROUGH: every write of the field's own items
+            // takes it as its receiver, which is no read of the old record (see `staged`).
+            let receiver = if primed { value.clone() } else { Value::Null };
             // `{}` is an empty Void BLOCK, not a collection literal — loft's empty
             // collection literal is `[]`.  For a collection field an empty `{}`
             // silently lowered to a 0-byte block that UNDER-FILLED the struct
@@ -6216,9 +6245,21 @@ impl Parser {
             // COLLECTION field is primed: its value is built in the field after every
             // collection header of the place was zeroed, so one that reads the place cannot be
             // staged at all, and the literal declines to the copy road instead.
+            //
+            // A primed value names the place in every write that builds it (`OpPushInt(<the
+            // field>, 7)`), and those receivers were counted as reads: `vb.inner = Vf { v:
+            // [7, 8, 9] }` declined although its items read nothing, built the record apart and
+            // copied it in — and on pass 1, which has no projection road, it had been built in
+            // place, leaving that attempt's `_elm_N` declared and unused.  Only what the ITEMS
+            // read decides, so the receiver is masked first; `[vb.inner.n]` still declines.
             let staged = if let Some((xv, xoff)) = self_read_root
-                && self.reads_place(&value, xv, xoff)
-            {
+                && (if primed {
+                    let mut items = value.clone();
+                    mask_receiver(&mut items, &receiver);
+                    self.reads_place(&items, xv, xoff)
+                } else {
+                    self.reads_place(&value, xv, xoff)
+                }) {
                 // loft#2521, `@FR-B-Copy` — an OUT-OF-LINE field's value is copied in by its
                 // field write (`OpSetChildRec`), which runs after the writes before it; staged,
                 // the temp is a view of the place those writes overwrite (`e[0] = Wrap { tag:

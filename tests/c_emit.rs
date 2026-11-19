@@ -192,7 +192,7 @@ fn compiled() -> Vec<String> {
     fa::write(&src, &c).expect("write C");
     let cc = loft::platform::process::harness_command("cc")
         .args([
-            "-std=c99",
+            "-std=c11",
             "-O2",
             "-Wall",
             "-Werror",
@@ -363,7 +363,7 @@ fn the_overflow_macros_answer_as_checked_arithmetic_in_every_mode() {
     ] {
         let exe = dir.join(format!("ovf-{mode}"));
         let cc = loft::platform::process::harness_command("cc")
-            .args(["-std=c99", "-O2"])
+            .args(["-std=c11", "-O2"])
             .args(flags)
             .arg(&src)
             .arg("-o")
@@ -454,7 +454,7 @@ fn main() {
     );
     let exe = dir.join("keyed");
     let cc = loft::platform::process::harness_command("cc")
-        .args(["-std=c99", "-O1", "-DLOFT_STRICT", "-pedantic", "-Werror"])
+        .args(["-std=c11", "-O1", "-DLOFT_STRICT", "-pedantic", "-Werror"])
         .arg(&c)
         .arg("-o")
         .arg(&exe)
@@ -540,7 +540,7 @@ fn main() {
         );
         let exe = dir.join("files");
         let cc = loft::platform::process::harness_command("cc")
-            .args(["-std=c99", "-O1", "-pedantic", "-Werror"])
+            .args(["-std=c11", "-O1", "-pedantic", "-Werror"])
             .args(flags)
             .arg(&c)
             .arg("-o")
@@ -618,7 +618,7 @@ fn a_program_reads_its_hash_seed_entropy_once() {
     );
     let obj = dir.join("count.o");
     let cc = loft::platform::process::harness_command("cc")
-        .args(["-std=c99", "-O1", "-c", "-o"])
+        .args(["-std=c11", "-O1", "-c", "-o"])
         .arg(&obj)
         .arg(&counter)
         .output()
@@ -630,7 +630,7 @@ fn a_program_reads_its_hash_seed_entropy_once() {
     );
     let exe = dir.join("h");
     let cc = loft::platform::process::harness_command("cc")
-        .args(["-std=c99", "-O1", "-Dfopen=loft_test_fopen"])
+        .args(["-std=c11", "-O1", "-Dfopen=loft_test_fopen"])
         .arg(&c)
         .args(unit_links(&c))
         .arg(&obj)
@@ -691,7 +691,7 @@ fn a_main_taking_texts_gets_the_programs_arguments() {
     );
     let exe = dir.join("m");
     let cc = loft::platform::process::harness_command("cc")
-        .args(["-std=c99", "-O1", "-pedantic", "-Werror"])
+        .args(["-std=c11", "-O1", "-pedantic", "-Werror"])
         .arg(&c)
         .args(unit_links(&c))
         .arg("-o")
@@ -783,7 +783,7 @@ fn main() {
     );
     let exe = dir.join("generators");
     let cc = loft::platform::process::harness_command("cc")
-        .args(["-std=c99", "-O1", "-DLOFT_STRICT", "-pedantic", "-Werror"])
+        .args(["-std=c11", "-O1", "-DLOFT_STRICT", "-pedantic", "-Werror"])
         .arg(&c)
         .arg("-o")
         .arg(&exe)
@@ -933,7 +933,7 @@ fn main() {
         );
         let exe = dir.join(mode);
         let cc = loft::platform::process::harness_command("cc")
-            .args(["-std=c99", "-O1", "-DLOFT_STRICT", "-pedantic", "-Werror"])
+            .args(["-std=c11", "-O1", "-DLOFT_STRICT", "-pedantic", "-Werror"])
             .arg(&c)
             .arg("-o")
             .arg(&exe)
@@ -1026,7 +1026,7 @@ fn main() {
     );
     let exe = dir.join("ff");
     let cc = loft::platform::process::harness_command("cc")
-        .args(["-std=c99", "-O1", "-DLOFT_STRICT", "-pedantic", "-Werror"])
+        .args(["-std=c11", "-O1", "-DLOFT_STRICT", "-pedantic", "-Werror"])
         .arg(&c)
         .arg("-o")
         .arg(&exe)
@@ -1122,7 +1122,7 @@ fn main() {
     ] {
         let exe = dir.join(format!("tk-{kind}"));
         let cc = loft::platform::process::harness_command("cc")
-            .args(["-std=c99", "-O1"])
+            .args(["-std=c11", "-O1"])
             .args(flags)
             .arg(&c)
             .arg("-o")
@@ -1260,7 +1260,7 @@ fn main() {
         for (kind, flags) in kinds {
             let exe = dir.join(format!("{mode}-{kind}"));
             let cc = loft::platform::process::harness_command("cc")
-                .args(["-std=c99", "-O1"])
+                .args(["-std=c11", "-O1"])
                 .args(&flags)
                 .arg(&c)
                 .arg("-o")
@@ -1480,7 +1480,7 @@ fn main() {
         for (kind, flags) in kinds {
             let exe = dir.join(format!("{mode}-{kind}"));
             let cc = loft::platform::process::harness_command("cc")
-                .args(["-std=c99", "-O1"])
+                .args(["-std=c11", "-O1"])
                 .args(&flags)
                 .arg(&c)
                 .arg("-o")
@@ -1745,7 +1745,7 @@ fn main() {
         for (kind, flags) in kinds {
             let exe = dir.join(format!("{mode}-{kind}"));
             let cc = loft::platform::process::harness_command("cc")
-                .args(["-std=c99", "-O1"])
+                .args(["-std=c11", "-O1"])
                 .args(&flags)
                 .arg(&c)
                 .arg("-o")
@@ -1885,7 +1885,7 @@ fn main() {
     );
     let build = |c: &std::path::Path, exe: &std::path::Path, flags: &[&str]| {
         let cc = loft::platform::process::harness_command("cc")
-            .args(["-std=c99", "-O1"])
+            .args(["-std=c11", "-O1"])
             .args(flags)
             .arg(c)
             .arg("-o")
@@ -2059,7 +2059,7 @@ fn main() {
     ] {
         let exe = dir.join(mode);
         let cc = loft::platform::process::harness_command("cc")
-            .args(["-std=c99", "-O1"])
+            .args(["-std=c11", "-O1"])
             .args(flags)
             .arg(&c)
             .arg("-o")
@@ -2142,7 +2142,7 @@ fn main() {
     ] {
         let exe = dir.join(mode);
         let cc = loft::platform::process::harness_command("cc")
-            .args(["-std=c99", "-O1"])
+            .args(["-std=c11", "-O1"])
             .args(flags)
             .arg(&c)
             .arg("-o")
@@ -2264,7 +2264,7 @@ fn main() {
     ] {
         let exe = dir.join(mode);
         let cc = loft::platform::process::harness_command("cc")
-            .args(["-std=c99", "-O1"])
+            .args(["-std=c11", "-O1"])
             .args(flags)
             .arg(&c)
             .arg("-o")
@@ -2345,7 +2345,7 @@ fn main() {
     );
     let exe = dir.join("par");
     let cc = loft::platform::process::harness_command("cc")
-        .args(["-std=c99", "-O1", "-DLOFT_STRICT", "-pedantic", "-Werror"])
+        .args(["-std=c11", "-O1", "-DLOFT_STRICT", "-pedantic", "-Werror"])
         .arg(&c)
         .arg("-o")
         .arg(&exe)
@@ -2568,7 +2568,7 @@ int main(int argc, char **argv) {
         .map(|v| format!("-D{v}"))
         .collect();
     let cc = loft::platform::process::harness_command("cc")
-        .args(["-std=c99", "-O2", "-pedantic", "-Werror"])
+        .args(["-std=c11", "-O2", "-pedantic", "-Werror"])
         .args(&switched)
         .arg(&src)
         .arg("-o")
@@ -2735,7 +2735,7 @@ int main(int argc, char **argv) {
     let (src, exe) = (dir.join("mapped.c"), dir.join("mapped"));
     fa::write(&src, &c).expect("write C");
     let cc = loft::platform::process::harness_command("cc")
-        .args(["-std=c99", "-O2", "-pedantic", "-Werror"])
+        .args(["-std=c11", "-O2", "-pedantic", "-Werror"])
         .arg(&src)
         .arg("-o")
         .arg(&exe)
@@ -3002,7 +3002,7 @@ fn a_strict_store_c_build_names_a_use_after_free_and_a_store_never_freed() {
         );
         fa::write(&src, &text).expect("write the cell");
         let cc = loft::platform::process::harness_command("cc")
-            .args(["-std=c99", "-O1", "-w"])
+            .args(["-std=c11", "-O1", "-w"])
             .args(strict.then_some("-DLOFT_STRICT_STORES"))
             .arg(&src)
             .arg("-o")
@@ -3143,7 +3143,7 @@ fn a_strict_store_c_build_names_the_free_that_killed_a_store_and_the_census_its_
     fa::write(&src, &text).expect("write the cell");
     let cc = loft::platform::process::harness_command("cc")
         .args([
-            "-std=c99",
+            "-std=c11",
             "-O1",
             "-w",
             "-DLOFT_STRICT_STORES",
@@ -3246,7 +3246,7 @@ fn a_test_run_on_the_c_leaves_no_store_behind() {
     );
     let exe = dir.join("leaves");
     let cc = loft::platform::process::harness_command("cc")
-        .args(["-std=c99", "-O1", "-w", "-DLOFT_STRICT_STORES"])
+        .args(["-std=c11", "-O1", "-w", "-DLOFT_STRICT_STORES"])
         .arg(&c)
         .arg("-o")
         .arg(&exe)
@@ -3315,7 +3315,7 @@ fn a_keyed_verify_c_build_names_a_fast_path_that_answers_wrong() {
         let exe = dir.join(name);
         fa::write(&src, text).expect("write the cell");
         let cc = loft::platform::process::harness_command("cc")
-            .args(["-std=c99", "-O1", "-w"])
+            .args(["-std=c11", "-O1", "-w"])
             .args(verify.then_some("-DLOFT_KEYED_VERIFY"))
             .arg(&src)
             .arg("-o")
@@ -3428,7 +3428,7 @@ fn a_copy_check_c_build_names_a_copy_that_lost_elements() {
         let exe = dir.join(name);
         fa::write(&src, text).expect("write the cell");
         let cc = loft::platform::process::harness_command("cc")
-            .args(["-std=c99", "-O1", "-w"])
+            .args(["-std=c11", "-O1", "-w"])
             .args(check.then_some("-DLOFT_COPY_CHECK"))
             .arg(&src)
             .arg("-o")
@@ -3549,7 +3549,7 @@ fn a_leak_site_c_build_names_where_a_kept_store_was_made() {
     let run = |sites: bool| -> String {
         let exe = dir.join(if sites { "sites" } else { "plain" });
         let cc = loft::platform::process::harness_command("cc")
-            .args(["-std=c99", "-O1", "-w"])
+            .args(["-std=c11", "-O1", "-w"])
             .args(sites.then_some("-DLOFT_LEAK_SITES"))
             .arg(&src)
             .arg("-o")
@@ -3717,7 +3717,7 @@ fn a_growth_past_the_word_count_stops_the_c() {
     let (src, exe) = (dir.join("grow.c"), dir.join("grow"));
     fa::write(&src, &c).expect("write C");
     let cc = loft::platform::process::harness_command("cc")
-        .args(["-std=c99", "-O1", "-w"])
+        .args(["-std=c11", "-O1", "-w"])
         .arg(&src)
         .arg("-o")
         .arg(&exe)
@@ -4039,7 +4039,7 @@ int main(int argc, char **argv) {
         };
         let cc = loft::platform::process::harness_command("cc")
             .args([
-                "-std=c99",
+                "-std=c11",
                 "-O2",
                 "-pedantic",
                 "-Werror",
@@ -4344,7 +4344,7 @@ int main(int argc, char **argv) {
     fa::write(&ops, &script).expect("write ops");
     let cc = loft::platform::process::harness_command("cc")
         .args([
-            "-std=c99",
+            "-std=c11",
             "-O2",
             "-pedantic",
             "-Werror",
@@ -4641,7 +4641,7 @@ int main(int argc, char **argv) {
     fa::write(&ops, &script).expect("write ops");
     let cc = loft::platform::process::harness_command("cc")
         .args([
-            "-std=c99",
+            "-std=c11",
             "-O2",
             "-pedantic",
             "-Werror",
@@ -4759,7 +4759,7 @@ impl Crossed {
             String::from_utf8_lossy(&emit.stderr)
         );
         let cc = loft::platform::process::harness_command("cc")
-            .args(["-std=c99", "-O1", "-w"])
+            .args(["-std=c11", "-O1", "-w"])
             .arg(&c_src)
             .arg("-o")
             .arg(&exe)
@@ -5253,7 +5253,7 @@ int main(int argc, char **argv) {
     }
     fa::write(&data, &bytes).expect("write inputs");
     let cc = loft::platform::process::harness_command("cc")
-        .args(["-std=c99", "-O1", "-Wno-unused-function"])
+        .args(["-std=c11", "-O1", "-Wno-unused-function"])
         .arg(&src)
         .arg("-o")
         .arg(&exe)
@@ -5421,15 +5421,15 @@ fn the_c_parses_text_as_the_interpreter_does() {
     assert_eq!(got.len(), want.len(), "the C stopped early");
 }
 
-/// The C is strict C99 where it uses the math constants (`PI`, `E` — `M_PI` and `M_E` are
-/// POSIX and `-std=c99` declares neither), and the release-pass probe
+/// The C is strict ISO C where it uses the math constants (`PI`, `E` — `M_PI` and `M_E` are
+/// POSIX and `-std=c11` declares neither), and the release-pass probe
 /// (`LOFT_RELEASE_PASS_PROBE=1`, @PLN201) gives the C generator the ship tier's forms: an
 /// overflowing product the checked C answers as null wraps — DEFINED, through unsigned
 /// arithmetic — while a zero divisor stays null and a value that never faulted is the same.
 /// Values hand-computed: 3037000500² = 9223372037000250000, which is 2⁶⁴ −
 /// 9223372036709301616 past `i64::MAX`.
 #[test]
-fn the_c_is_strict_c99_and_the_probe_wraps_where_the_checked_c_answers_null() {
+fn the_c_is_strict_iso_c_and_the_probe_wraps_where_the_checked_c_answers_null() {
     if !have_cc() {
         eprintln!("skipped: no cc on PATH");
         return;
@@ -5465,7 +5465,7 @@ fn the_c_is_strict_c99_and_the_probe_wraps_where_the_checked_c_answers_null() {
         );
         let exe = dir.join(if probe { "ship" } else { "checked" });
         let cc = loft::platform::process::harness_command("cc")
-            .args(["-std=c99", "-O2", "-DLOFT_STRICT", "-pedantic", "-Werror"])
+            .args(["-std=c11", "-O2", "-DLOFT_STRICT", "-pedantic", "-Werror"])
             .arg(&c)
             .arg("-o")
             .arg(&exe)
@@ -5551,7 +5551,7 @@ fn under_the_probe_a_locally_stepped_accumulator_wraps_and_the_checked_c_keeps_i
         );
         let exe = dir.join(if probe { "ship" } else { "checked" });
         let cc = loft::platform::process::harness_command("cc")
-            .args(["-std=c99", "-O2"])
+            .args(["-std=c11", "-O2"])
             .arg(&c)
             .arg("-o")
             .arg(&exe)
@@ -5639,7 +5639,7 @@ fn the_c_case_mapping_crosses_ascii_and_the_table_as_rust_does() {
     );
     let exe = dir.join("case");
     let cc = loft::platform::process::harness_command("cc")
-        .args(["-std=c99", "-O2"])
+        .args(["-std=c11", "-O2"])
         .arg(&c)
         .arg("-o")
         .arg(&exe)
@@ -5730,7 +5730,7 @@ fn main() {\n\
     );
     let exe = dir.join("shim");
     let cc = loft::platform::process::harness_command("cc")
-        .args(["-std=c99", "-O1", "-DLOFT_STRICT", "-pedantic", "-Werror"])
+        .args(["-std=c11", "-O1", "-DLOFT_STRICT", "-pedantic", "-Werror"])
         .arg(&c)
         .arg("-o")
         .arg(&exe)
@@ -6075,7 +6075,7 @@ fn a_library_declares_no_c_flags_and_none_reach_the_build() {
     );
     let exe = dir.join("flags");
     let cc = loft::platform::process::harness_command("cc")
-        .args(["-std=c99", "-O1"])
+        .args(["-std=c11", "-O1"])
         .arg(&c)
         .arg("-o")
         .arg(&exe)
@@ -6718,7 +6718,7 @@ fn run_asan(
     );
     let inc = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/c");
     let cc = loft::platform::process::harness_command("cc")
-        .args(["-std=c99", "-O1", "-g", "-DLOFT_CALL_CHAIN", "-pthread"])
+        .args(["-std=c11", "-O1", "-g", "-DLOFT_CALL_CHAIN", "-pthread"])
         .args(["-fsanitize=address,undefined", "-fno-omit-frame-pointer"])
         .arg(format!("-I{}", inc.display()))
         .arg(&c)
@@ -7398,7 +7398,7 @@ fn main() {
     ] {
         let exe = dir.join(mode);
         let cc = loft::platform::process::harness_command("cc")
-            .args(["-std=c99", "-O1"])
+            .args(["-std=c11", "-O1"])
             .args(flags)
             .arg(&c)
             .arg("-o")
@@ -7582,7 +7582,7 @@ fn both_answer(name: &str, src: &str, want: &str) -> String {
     );
     let exe = dir.join(name);
     let cc = loft::platform::process::harness_command("cc")
-        .args(["-std=c99", "-O1", "-DLOFT_STRICT", "-pedantic", "-Werror"])
+        .args(["-std=c11", "-O1", "-DLOFT_STRICT", "-pedantic", "-Werror"])
         .arg(&c)
         .arg("-o")
         .arg(&exe)
@@ -7800,7 +7800,7 @@ fn a_released_path_stays_bounded_where_it_used_to_leak() {
             String::from_utf8_lossy(&emit.stderr)
         );
         let cc = loft::platform::process::harness_command("cc")
-            .args(["-std=c99", "-O2", "-w", "-pthread", "-o"])
+            .args(["-std=c11", "-O2", "-w", "-pthread", "-o"])
             .arg(&exe)
             .arg(&c)
             .args(["-lm", "-ldl"])
@@ -8170,7 +8170,7 @@ int main(void) {
     let (src, exe) = (dir.join("arena.c"), dir.join("arena"));
     fa::write(&src, &c).expect("write C");
     let cc = loft::platform::process::harness_command("cc")
-        .args(["-std=c99", "-O1", "-Wno-unused-function"])
+        .args(["-std=c11", "-O1", "-Wno-unused-function"])
         .arg(&src)
         .arg("-o")
         .arg(&exe)
@@ -8603,7 +8603,7 @@ fn an_integer_literal_fallback_is_unmarked_and_a_float_one_keeps_its_cold_path()
     );
     let exe = dir.join("cold");
     let cc = loft::platform::process::harness_command("cc")
-        .args(["-std=c99", "-O2"])
+        .args(["-std=c11", "-O2"])
         .arg(&c)
         .arg("-o")
         .arg(&exe)
@@ -8696,7 +8696,7 @@ fn a_leaf_over_narrow_elements_gets_its_fast_twin() {
     );
     let exe = dir.join("narrow");
     let cc = loft::platform::process::harness_command("cc")
-        .args(["-std=c99", "-O2"])
+        .args(["-std=c11", "-O2"])
         .arg(&c)
         .arg("-o")
         .arg(&exe)
@@ -8787,7 +8787,7 @@ fn a_u32_element_write_is_a_held_store_and_a_run_of_them_is_one_fill() {
     );
     let exe = dir.join("u32");
     let cc = loft::platform::process::harness_command("cc")
-        .args(["-std=c99", "-O2"])
+        .args(["-std=c11", "-O2"])
         .arg(&c)
         .arg("-o")
         .arg(&exe)
@@ -8866,7 +8866,7 @@ fn a_text_call_result_is_read_from_its_work_buffer() {
     );
     let exe = dir.join("br");
     let cc = loft::platform::process::harness_command("cc")
-        .args(["-std=c99", "-O2"])
+        .args(["-std=c11", "-O2"])
         .arg(&c)
         .arg("-o")
         .arg(&exe)
@@ -8943,7 +8943,7 @@ fn an_early_exit_that_builds_a_text_is_a_cold_helper() {
     );
     let exe = dir.join("cold");
     let cc = loft::platform::process::harness_command("cc")
-        .args(["-std=c99", "-O2"])
+        .args(["-std=c11", "-O2"])
         .arg(&c)
         .arg("-o")
         .arg(&exe)

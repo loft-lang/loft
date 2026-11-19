@@ -148,7 +148,7 @@ fn harness_of(dir: &std::path::Path, defines: &[&str], harness: &str) -> std::pa
     generate(dir);
     let obj = dir.join("crt.o");
     let cc = harness_command("cc")
-        .args(["-std=c99", "-w", "-O2", "-c", "-I"])
+        .args(["-std=c11", "-w", "-O2", "-c", "-I"])
         .arg(dir)
         .args(defines)
         .arg(SHIM)
@@ -165,7 +165,7 @@ fn harness_of(dir: &std::path::Path, defines: &[&str], harness: &str) -> std::pa
     fa::write(&src, format!("{FIELDS}{harness}")).expect("write the harness");
     let exe = dir.join("harness");
     let link = harness_command("cc")
-        .args(["-std=c99", "-w", "-O2"])
+        .args(["-std=c11", "-w", "-O2"])
         .arg(&src)
         .arg(&obj)
         .arg("-o")
