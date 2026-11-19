@@ -3986,6 +3986,12 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         } else if let Some((_, snapshot)) = self.keyed_snapshot(&mut expr, &mut in_type, false) {
             // A keyed source is walked through its ordered snapshot, as a `for` walks it.
             fill = snapshot;
+        } else if matches!(in_type.base(), Type::Sorted(..) | Type::Index(..))
+            && self.ir_has_user_call(&expr)
+        {
+            // loft#2579 — an ordered keyed source is handed to every step: held once, as a
+            // `for` statement holds it (`hold_loop_source`).
+            fill = self.hold_loop_source(&mut expr, &mut in_type);
         }
         let var_tp = self.for_type(&in_type);
         // A `_` loop's counters are its own, as a `for` statement's are: by name, every `_`
