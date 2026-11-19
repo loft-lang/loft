@@ -150,17 +150,15 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
   // The place, read as a value: its code names the record and position the write takes.
   vars.tuple_raw = target;
   p = el_ex_assign::expression(e, vars, target);
-  // (A vector literal given to a FIELD whose `vector<T>` no earlier site made: Rust registers
-  // the type in its end-of-file pass, not at the literal as this port's literal build does —
-  // every later definition would number two off.  Refused by name until the build can leave
-  // the registration to the end.)
+  // A vector literal given to a FIELD whose `vector<T>` no earlier site made: Rust registers
+  // the type in its end-of-file pass, not at the literal — the literal's first-pass build is
+  // told so (`field_literal`), or every later definition would number two off.
   if e.first_pass && op == "=" && !(e.p.nodes[target] is SName) && match e.p.nodes[rhs] { SVecLit { items: fvi } => len(fvi) > 0, _ => false } {
     match el_types::base(p.tp) {
       TyVector { inner: fin } => {
         fnm = el_types::elem_name(e, fin);
         if fnm != "" && el::def_nr(e, "main_vector<{fnm}>") < 0 {
-          el::refuse(e, "a vector literal assigned to a field whose vector type no earlier site made");
-          return ex(ir::NdNull, ir::TyVoid);
+          vars.field_literal = rhs;
         }
       },
       _ => {}
