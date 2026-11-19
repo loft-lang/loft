@@ -2944,6 +2944,9 @@ pub fn intrinsic(e: el::El, vars: el_vars::Vars, at: integer, kind: text, args: 
           return ex(ir::NdNull, ir::TyVoid);
         }
         x = el_ex_assign::expression(e, vars, ae!);
+        if kind == "assert" && len(list) == 0 && !e.first_pass && untyped_empty(x) {
+          x = ex(ir::NdBoolean { b: true }, ir::TyBoolean);
+        }
         list += [x.code];
         types += [x.tp];
       },

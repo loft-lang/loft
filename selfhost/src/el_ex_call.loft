@@ -2849,6 +2849,13 @@ fn computed_index_in(e: el::El, n: ir::Node) -> boolean {
   }
 }
 
+fn computed_index_below(e: el::El, n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdCall { def_nr: _, args } => len(args) > 0 && computed_index_in(e, args[0]!),
+    _ => false
+  }
+}
+
 pub fn nullable_getter(e: el::El, code: ir::Node) -> ir::Node {
   match el_ir::unspan(code) {
     NdCall { def_nr, args } => {
@@ -3118,7 +3125,8 @@ pub fn enum_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
     plain = el_ir::cl(e, "OpGetField", [slot, off, kt]);
     // (An element reached through a computed index anywhere on the way — `ds[k].returned[0]` —
     // is in flight, `τ?`, whatever the read's own type kept.)
-    read = if x.tp is TyOptional || computed_index_in(e, slot) {
+    // (The element's own index is the nullable twin's: `v[i]?` reads `OpGetVectorNullable`.)
+    read = if x.tp is TyOptional || computed_index_below(e, slot) {
       el_ir::v_if(el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpGetInt4", [slot, off]), ir::NdInt { n: 0 }]), el_ir::cl(e, "OpNullRefSentinel", []), plain)
     } else {
       el_ex_base::nullable_arith(e, plain, true)

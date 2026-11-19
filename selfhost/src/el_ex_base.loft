@@ -22,6 +22,15 @@ pub struct Ex {
   pub tp: ir::TypeT
 }
 
+// The untyped `[]` (no element type anywhere): a present vector, so `true` wherever it is a
+// truth (`(E-Truthy)`, `if []`, `[] && b`, `!([])`, `assert([])`).
+pub fn untyped_empty(x: Ex) -> boolean {
+  el_types::is_unknown(x.tp) && match el_ir::unspan(x.code) {
+    NdInsert { items } => len(items) == 1 && match items[0]! { NdNull => true, _ => false },
+    _ => false
+  }
+}
+
 pub fn ex(code: ir::Node, tp: ir::TypeT) -> Ex {
   Ex { code: code, tp: tp }
 }

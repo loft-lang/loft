@@ -1110,10 +1110,27 @@ pub fn logical(e: el::El, vars: el_vars::Vars, is_or: boolean, l: integer, r: in
   facts = el_ex_call::assume_condition(e, vars, a.code, !is_or);
   b = el_ex_assign::expression(e, vars, r);
   forget_facts(vars, facts);
-  for x in [a, b] {
-    if !e.first_pass && !el_types::is_unknown(x.tp) && !(el_types::base(x.tp) is TyBoolean) {
-      el::refuse(e, "a `&&` or `||` operand that is not a boolean: {type_kind(x.tp)}");
-      return ex(ir::NdNull, ir::TyBoolean);
+  // `(E-Truthy)`: an operand of another type is its truth — absence alone is false (a vector
+  // by `OpNot(OpVectorIsNull)`, even a non-optional one; a record by its reference; a text by
+  // `OpConvBoolFromText`).
+  if !e.first_pass {
+    if untyped_empty(a) {
+      a = ex(ir::NdBoolean { b: true }, ir::TyBoolean);
+    }
+    if untyped_empty(b) {
+      b = ex(ir::NdBoolean { b: true }, ir::TyBoolean);
+    }
+    for x in [a, b] {
+      if !el_types::is_unknown(x.tp) && !(el_types::base(x.tp) is TyBoolean) && el_ex_pattern::condition(e, x) == null {
+        el::refuse(e, "a `&&` or `||` operand that is not a boolean: {type_kind(x.tp)}");
+        return ex(ir::NdNull, ir::TyBoolean);
+      }
+    }
+    if !el_types::is_unknown(a.tp) && !(el_types::base(a.tp) is TyBoolean) {
+      a = el_ex_pattern::condition(e, a)!;
+    }
+    if !el_types::is_unknown(b.tp) && !(el_types::base(b.tp) is TyBoolean) {
+      b = el_ex_pattern::condition(e, b)!;
     }
   }
   second = b.code;
@@ -1327,6 +1344,9 @@ pub fn unary(e: el::El, vars: el_vars::Vars, op: text, n: integer?) -> Ex {
   // `!` of a text is the negation of its truth, present and non-empty (`OpConvBoolFromText`);
   // of a collection, of its being there (`OpVectorIsNull`, negated — the one test of both its
   // absences).  Nullable or not, the test is the same.
+  if op == "!" && !e.first_pass && untyped_empty(x) {
+    return ex(el_ir::cl(e, "OpNot", [ir::NdBoolean { b: true }]), ir::TyBoolean);
+  }
   if op == "!" && el_types::base(x.tp) is TyText {
     return ex(el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpConvBoolFromText", [x.code])]), ir::TyBoolean);
   }
