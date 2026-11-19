@@ -6843,10 +6843,17 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             // borrowed: its type names no frame variable (one would leak into the shared
             // `vector<T>` definition), and a nullable one (`S?`) is the same slot.  A pointer
             // element keeps its marker.
+            //
+            // The same holds for a TEXT element: it is copied into the vector's store, so the
+            // first item's deps describe the item and not the slot.  Kept, a formatted first
+            // item typed the literal as a view of its format buffer (`["a{n}", "b"]` was
+            // `vector<text["__work_1"]>` while `["b", "a{n}"]` was `vector<text>`), so the
+            // element type depended on which item came first.
             *in_t = match t.base() {
                 Type::Reference(_, d) | Type::Enum(_, true, d) if !d.is_pointer_marker() => {
                     t.without_deps()
                 }
+                Type::Text(_) => t.without_deps(),
                 _ => t.clone(),
             };
         }
