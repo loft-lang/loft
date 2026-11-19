@@ -268,8 +268,8 @@ What a change owes it:
 
 `make slot-matrix` runs the rows; `slot_matrix.py cell` and `expr` try a shape without
 touching a table.  The method is [STABILITY_METHOD.md § The slot
-matrix](STABILITY_METHOD.md#the-slot-matrix--the-walk-that-is-generated), the plan
-[plans/221-slot-walk](plans/221-slot-walk/README.md).
+matrix](STABILITY_METHOD.md#the-slot-matrix--the-walk-that-is-generated), the reference
+[SLOT_MATRIX.md](SLOT_MATRIX.md).
 
 ## Generated Test Files (`tests/generated/`)
 

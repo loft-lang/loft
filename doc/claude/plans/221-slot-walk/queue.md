@@ -32,7 +32,7 @@ matrix finds more with every run, and each fix is then checked by cells that alr
    `cell 'for p in <S> { s += p.k; }' --type coll` fails on the release of 2026-11-03 (the
    operand runs five times) and passes on the branch.
 3. **G3 — calibrate the reading** — **begun.**  Five of the 23 `fits-rows` issues of
-   [reach.tsv](reach.tsv) were written as cells: three fail on the build that had the
+   [slot_reach.tsv](../../../../scripts/slot_reach.tsv) were written as cells: three fail on the build that had the
    defect and are rows now, two do not fit after all ([REACH.md § Calibration](REACH.md)).
    Eighteen are left; each is a `cell` command first and a row only when it fails on the
    older build.
