@@ -1,0 +1,158 @@
+# The anchor of the slot matrix (@PLN221): what each slot's PLAIN statement must leave
+# changed in the prelude's world.
+# Columns, tab-separated: slot id, collection kind or `*`, the changed fields.
+#   fields  the `name=value` fields of the cell's final line that differ from the untouched
+#           world, parted by ` ; `, each with its new value exactly as printed; `-` when the
+#           statement must change nothing.  Every other field must stay as it was.
+# The world (scripts/syntax_slots_prelude.loft): i=1, j=3, b=true, nb=false, x="abc",
+# fl=1.5, en=Green; vi=[10,20,30,40]; xs holds P{1,"a"} P{2,"b"} P{3,"c"}; r and h.ws[0] are
+# W{n:1, t:"abc", …, items: those three}; h.ws[1] is W{n:2, t:"y", …, items:[P{4,"d"}]}.  A
+# collection is shown as `length:` and one letter per lookup 0..9 — by position for a
+# vector, by key for the keyed kinds.
+# EVERY VALUE HERE IS COMPUTED BY HAND from the statement and the rules.  `slot_matrix.py
+# expect --propose` prints what the compiler answers for a slot that has no row; that is a
+# proposal to check, never the expectation.  Each plain cell is compared with its row on
+# every run; a slot without a row is named by `slot_matrix.py expect`.
+it-for	*	s=6
+it-for-vint	*	s=100
+it-for-text	*	s=3
+it-filter-source	*	s=5
+it-filter-test	*	s=6
+it-comp-source	*	s=3
+it-comp-test	*	s=3
+it-comp-body	*	s=3
+it-range-low	*	s=3
+it-range-high	*	s=5
+it-range-incl-high	*	s=1
+it-slice-source	*	s=50
+it-slice-bound	*	s=50
+it-while	*	s=2
+it-index-attr	*	s=1
+it-par-source	*	s=104
+wr-var	*	s=1
+wr-field-recv	*	r=(3 abc 1.5 true Green 3:abc-------)
+wr-field-value	*	h=(1 abc 1.5 true Green 3:abc-------)(1 y 2.5 false Blue 1:d---------) [10,20,30,40] [1,1]
+wr-field-text	*	h=(1 abc 1.5 true Green 3:abc-------)(2 abc 2.5 false Blue 1:d---------) [10,20,30,40] [1,1]
+wr-field-coll	vector	h=(1 abc 1.5 true Green 3:abc-------)(2 y 2.5 false Blue 3:abc-------) [10,20,30,40] [1,1]
+wr-field-coll	sorted	h=(1 abc 1.5 true Green 3:-abc------)(2 y 2.5 false Blue 3:-abc------) [10,20,30,40] [1,1]
+wr-field-coll	index	h=(1 abc 1.5 true Green 3:-abc------)(2 y 2.5 false Blue 3:-abc------) [10,20,30,40] [1,1]
+wr-field-coll	hash	h=(1 abc 1.5 true Green 3:-abc------)(2 y 2.5 false Blue 3:-abc------) [10,20,30,40] [1,1]
+wr-elem-recv	*	vi=[10,3,30,40]
+wr-elem-index	*	vi=[10,3,30,40]
+wr-elem-value	*	vi=[10,1,30,40]
+wr-path-index	*	h=(1 abc 1.5 true Green 3:abc-------)(3 y 2.5 false Blue 1:d---------) [10,20,30,40] [1,1]
+wr-path-text	*	h=(1 abc 1.5 true Green 3:abc-------)(2 abc 2.5 false Blue 1:d---------) [10,20,30,40] [1,1]
+wr-path-coll	*	h=(1 abc 1.5 true Green 3:abc-------)(2 y 2.5 false Blue 1:q---------) [10,20,30,40] [1,1]
+wr-add-recv	*	r=(4 abc 1.5 true Green 3:abc-------)
+wr-add-value	*	r=(2 abc 1.5 true Green 3:abc-------)
+wr-add-index	*	vi=[10,23,30,40]
+wr-sub-index	*	vi=[10,17,30,40]
+wr-mul-index	*	vi=[10,60,30,40]
+wr-div-index	*	vi=[10,6,30,40]
+wr-mod-index	*	vi=[10,2,30,40]
+wr-add-path	*	h=(1 abc 1.5 true Green 3:abc-------)(5 y 2.5 false Blue 1:d---------) [10,20,30,40] [1,1]
+wr-add-discharge	*	h=(1 abc 1.5 true Green 3:abc-------)(5 y 2.5 false Blue 1:d---------) [10,20,30,40] [1,1]
+wr-text-recv	*	r=(1 abcabc 1.5 true Green 3:abc-------)
+wr-text-value	*	r=(1 abcabc 1.5 true Green 3:abc-------)
+wr-text-path	*	h=(1 abc 1.5 true Green 3:abc-------)(2 yabc 2.5 false Blue 1:d---------) [10,20,30,40] [1,1]
+wr-push-recv	*	r=(1 abc 1.5 true Green 4:abcz------)
+wr-push-item	*	r=(1 abc 1.5 true Green 4:abcz------)
+wr-push-path	*	h=(1 abc 1.5 true Green 3:abc-------)(2 y 2.5 false Blue 2:dz--------) [10,20,30,40] [1,1]
+wr-push-path-two	*	h=(1 abc 1.5 true Green 3:abc-------)(2 y 2.5 false Blue 3:dyz-------) [10,20,30,40] [1,1]
+wr-push-coll	*	r=(1 abc 1.5 true Green 6:abcabc----)
+wr-push-int	*	vi=[10,20,30,40,1]
+rd-field	*	s=1
+rd-elem-recv	*	s=20
+rd-elem-index	*	s=20
+rd-elem-negative	*	s=40
+rd-slice-low	*	s=2
+rd-slice-high	*	s=1
+rd-slice-open-low	*	s=3
+rd-slice-open-high	*	s=1
+rd-key-recv	vector	s=3
+rd-key-recv	sorted	s=2
+rd-key-recv	index	s=2
+rd-key-recv	hash	s=2
+rd-key-key	*	s=2
+rd-text-recv	*	o=b
+rd-text-index	*	o=b
+rd-text-slice	*	o=bc
+rd-path-index	*	s=4
+rd-default	*	s=2
+rd-coal-left	*	s=2
+rd-coal-right-absent	*	s=1
+rd-coal-right-present	*	s=2
+rd-coal-coll-absent	*	s=6
+rd-coal-rec-left	*	s=1
+rd-coal-item-left	vector	s=3
+rd-coal-item-left	sorted	s=2
+rd-coal-item-left	index	s=2
+rd-coal-item-left	hash	s=2
+rd-len	*	s=3
+ca-arg-first	*	s=13
+ca-arg-second	*	s=11
+ca-arg-default	*	s=15
+ca-recv-text	*	s=3
+ca-recv-rec	*	s=4
+ca-callee	*	s=4
+ca-fnval-arg	*	s=2
+ca-lambda-body	*	s=4
+op-add-left	*	s=4
+op-add-right	*	s=4
+op-sub	*	s=2
+op-mul	*	s=3
+op-div	*	s=3
+op-mod	*	s=1
+op-pow	*	s=3
+op-bit-and	*	s=1
+op-bit-or	*	s=3
+op-bit-xor	*	s=2
+op-shift-left	*	s=6
+op-shift-right	*	s=1
+op-bit-not	*	s=-2
+op-negate	*	s=-1
+op-not	*	s=2
+op-eq	*	s=2
+op-ne	*	s=1
+op-lt	*	s=1
+op-le	*	s=1
+op-gt	*	s=1
+op-ge	*	s=1
+op-eq-text	*	s=1
+op-concat	*	o=abcabc
+op-concat-tail	*	s=5
+op-float	*	s=3
+op-as	*	s=1
+op-is	*	s=1
+op-and-left	*	s=1
+op-and-right-taken	*	s=1
+op-and-right-skipped	*	-
+op-or-left	*	s=1
+op-or-right-taken	*	s=1
+op-or-right-skipped	*	s=1
+op-and-word	*	-
+op-or-word	*	s=1
+ct-if	*	s=1
+ct-if-value-taken	*	s=1
+ct-if-value-skipped	*	s=3
+ct-if-empty-arm	*	s=1
+ct-match-subject	*	s=1
+ct-match-enum	*	s=1
+ct-match-arm-taken	*	s=1
+ct-match-arm-skipped	*	s=3
+ct-match-guard	*	s=1
+ct-return	*	s=1
+ct-tail	*	s=1
+ct-assert	*	-
+ct-assert-message	*	-
+ct-yield	*	s=4
+ct-parallel	*	-
+cn-field	*	s=1
+cn-field-text	*	o=abc
+cn-vector	*	s=3
+cn-tuple	*	s=1
+cn-format	*	o=1
+cn-format-text	*	o=<abc>
+cn-format-spec	*	o=   1
+cn-format-coll	*	o=[{k:1,t:"a"},{k:2,t:"b"},{k:3,t:"c"}]
+cn-format-rec	*	o={n:1,t:"abc",f:1.5,ok:true,tag:Green,items:[{k:1,t:"a"},{k:2,t:"b"},{k:3,t:"c"}]}

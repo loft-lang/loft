@@ -27,6 +27,21 @@ runs the product.
                    cell 's = <S> + j;' --filler 'at(<C>, 1)' --plain i
                It runs the four checks on both backends and prints the table rows the
                shape would be.  The names a statement may use are the prelude's.
+    explain    one failing cell laid open for whoever debugs it:
+                   explain wr-elem-index.int-fnval.vector
+               its program KEPT in a directory (the cell, its bound-first twin, its order
+               cell and the plain variable as functions of one file), each statement
+               printed, the cell run alone on both backends with loft's own diagnostics on
+               (`LOFT_REFREE_FAILS`, `LOFT_LEAK_SITES`), every field that differs with both
+               values, and the IR of the cell diffed against the IR of its twin — the
+               working form beside the broken one.
+    expr       the mirror of `cell`: one EXPRESSION tried wherever it can stand —
+                   expr 'at(<C>, 1)' --type int
+               in every slot of its type and, at depth two (the default), inside every
+               wrapper with a hole of its type; an expression with a hole of its own
+               (`h.ones[<I:int> - 1]`) is tried AROUND every filler of that type.
+               `--context all --frame all` adds the loop, the branch and the parameters.
+               It first checks the expression is usable (one bump, the plain value).
     gate       the whole matrix on both backends against scripts/slot_matrix.baseline: a
                cell that is not ok and not listed fails (BROKEN), and so does a listed cell
                that now passes (FIXED).  `--family F` takes one slot family and its lines,
@@ -55,6 +70,10 @@ program, so the whole matrix is a handful of processes per backend.
 slot_matrix.py run --slot it-for --filler all` fails 8 of 36 cells ("the operand ran 5
 time(s), the slot says 1"); the same command on a build with the fix fails none.
 
+Any run can go to the background: `slot_matrix.py --bg FILE <command …>` returns at once
+with the pid, writes to FILE, and ends FILE with `slot_matrix: done exit=<n>` — the line
+`scripts/wait_for.sh FILE 'slot_matrix: done' --pid <pid>` waits for.
+
 Two more axes are off unless asked for: `--context` puts the statement in a loop or a
 branch (scripts/syntax_contexts.tsv), `--frame` gives it its values as parameters instead of
 locals (the frames of the prelude).  `all` for both multiplies the matrix by eight.
@@ -79,6 +98,7 @@ OUTSIDE_TSV = os.path.join(HERE, "syntax_outside.tsv")
 CONTEXTS_TSV = os.path.join(HERE, "syntax_contexts.tsv")
 PRELUDE = os.path.join(HERE, "syntax_slots_prelude.loft")
 BASELINE = os.path.join(HERE, "slot_matrix.baseline")
+EXPECT_TSV = os.path.join(HERE, "syntax_expect.tsv")
 
 COUNTS = ("once", "first", "cond", "step")
 ONCE = ("once", "first")
@@ -90,6 +110,7 @@ KINDS = (("vector", "vector<P>"), ("sorted", "sorted<P[k]>"),
          ("index", "index<P[k]>"), ("hash", "hash<P[k]>"))
 KIND_NAMES = re.compile(r"\b(xs|mk|items|tk)\b")
 OUTSIDE_CLASSES = ("none:", "decl:", "unreached:")
+DONE = "slot_matrix: done"
 SLOT = "<S>"
 BIND = "<BIND>"
 HOLE = re.compile(r"<I:(\w+)>")
@@ -114,7 +135,9 @@ def neutral(slots, fillers):
     out = {}
     for t in types_of(fillers):
         for s in slots:
-            if s["type"] == t and s["count"] == "once" and not s["decl"]:
+            # Not a write: a filler that answers ANOTHER record than the plain variable
+            # would write somewhere else, and that is no fault of the filler.
+            if s["type"] == t and s["count"] in ONCE and not s["decl"] and s["family"] != "write":
                 out[t] = s["id"]
                 break
     return out
@@ -322,6 +345,29 @@ def expand(fillers, depth):
     return out
 
 
+
+def load_expect(path=EXPECT_TSV):
+    """The anchor: {(slot id, kind or `*`): {field: value}} — the fields of the cell's final
+    line that the slot's PLAIN statement must leave changed in the prelude's world."""
+    out = {}
+    if os.path.exists(path):
+        for nr, cols in rows(path):
+            if len(cols) != 3:
+                raise SystemExit(f"{os.path.basename(path)}:{nr}: want `slot<TAB>kind or *<TAB>field=value ; …`")
+            out[(cols[0], cols[1])] = fields_of(cols[2])
+    return out
+
+
+def fields_of(dump):
+    """A final line's fields: `name=value` parted by ` ; `.  `-` is no field at all."""
+    out = {}
+    for part in dump.split(" ; "):
+        name, eq, value = part.partition("=")
+        if eq:
+            out[name.strip()] = value          # the value as printed: a width is part of it
+    return out
+
+
 def load_all():
     slots, p1 = load_slots()
     fillers, p2 = load_fillers()
@@ -383,6 +429,27 @@ def cmd_list(_args):
     return 0
 
 
+
+def statement_of(cell):
+    """The loft a cell runs, on one line: its declaration if it has one, then its statement."""
+    return (cell["decl"].strip() + "   " if cell["decl"].strip() else "") + cell["stmt"].strip()
+
+
+_BUILD = {}
+
+
+def build():
+    """The compiler a run used: its path and what it says it is."""
+    path = loft_binary()
+    if path not in _BUILD:
+        try:
+            said = subprocess.run([path, "--version"], capture_output=True, text=True, check=False).stdout
+            _BUILD[path] = f"{path}, {said.splitlines()[0].strip()}" if said.strip() else path
+        except OSError:
+            _BUILD[path] = path
+    return _BUILD[path]
+
+
 def loft_binary():
     if os.environ.get("LOFT"):
         return os.environ["LOFT"]
@@ -425,13 +492,14 @@ def ordered(stmt):
     return ("".join(out), log) if len(log) > 1 else None
 
 
-def make_cells(slots, fillers, which_filler, which_slot, which_kind, contexts=None, frames=None, depth=1):
+def make_cells(slots, fillers, which_filler, which_slot, which_kind, contexts=None, frames=None, depth=1,
+               against_plain=False):
     """The cells of a run.  A slot's plain-variable cell is always there: it is what the
     value of every other cell of that slot is compared with.  `contexts` and `frames` are
     the ones to generate for; left out, the first of each."""
     contexts = contexts or load_contexts()[:1]
     frames = frames or list(load_frames()[1])[:1]
-    out = []
+    out, seen_worlds, expect = [], set(), load_expect()
     fillers = expand(fillers, depth)
     kinded_types = kinded(fillers)
     for slot in slots:
@@ -444,6 +512,13 @@ def make_cells(slots, fillers, which_filler, which_slot, which_kind, contexts=No
                 continue
             where = f"{slot['id']}.%s.{kind}" + ("" if (ctx, frame) == (contexts[0][0], frames[0]) and len(contexts) + len(frames) == 2 else f"@{ctx}/{frame}")
             base = where % f"{slot['type']}-var"
+            world = f"_world.{kind}@{ctx}/{frame}"
+            if world not in seen_worlds:
+                seen_worlds.add(world)
+                out.append({"name": world, "slot": "_world", "frame": frame, "kind_type": kind_type,
+                            "decl": "", "stmt": wrap.replace("<STMT>", ""), "base": world, "want": 0,
+                            "log": None})
+            want_fields = expect.get((slot["id"], kind), expect.get((slot["id"], "*")))
             for f in fillers:
                 if f["type"] != slot["type"]:
                     continue
@@ -459,12 +534,17 @@ def make_cells(slots, fillers, which_filler, which_slot, which_kind, contexts=No
                         "decl": slot["decl"].replace(SLOT, expr).replace(BIND, ""),
                         "stmt": put(slot["stmt"].replace(SLOT, expr)), "base": base,
                         "want": 0 if is_var else int(slot["runs"]) * passes, "log": None}
+                if is_var and passes == 1:
+                    cell["world"], cell["anchor"] = world, want_fields
                 out.append(cell)
                 # The bound-first twin: the filler bound to a local, then the statement
                 # with that local.  A local is evaluated once by construction, so the twin
                 # says what the statement must leave behind.  Only where the operand runs
                 # exactly once and sits in the frame; elsewhere the plain variable says it.
-                if not is_var and slot["count"] in ONCE and (not slot["decl"] or BIND in slot["decl"]):
+                # `against_plain` asks the other question — does the FILLER give its type's
+                # plain value — so there the plain variable is what the cell is compared with.
+                if (not against_plain and not is_var and slot["count"] in ONCE
+                        and (not slot["decl"] or BIND in slot["decl"])):
                     cell["base"] = cell["name"] + ".twin"
                     bind = f"t0 = {expr}; "
                     out.append(dict(
@@ -503,27 +583,37 @@ def program(kind_type, cells):
     return text, spans
 
 
-def invoke(backend, path):
+# loft's own time limit for one generated program, in seconds (`LOFT_TIMEOUT`,
+# RUN_BOUNDS.md § Execution timeout).  A cell that LOOPS would otherwise hold its whole
+# batch, and the run, for as long as it likes.  loft stops it itself and says where it was:
+# the interpreter ends the program naming the line, the C backend fails that one test and
+# goes on.  No outside timer: the compiler is the one that can name the cell.
+TIME_LIMIT = {"interp": int(os.environ.get("SLOT_MATRIX_INTERP_SECONDS", "40")),
+              "c": int(os.environ.get("SLOT_MATRIX_C_SECONDS", "60"))}
+# Once a program has had a cell stopped by the limit, what is left of it runs under this
+# one: a healthy cell answers in milliseconds, and a statement that loops for one form of
+# operand often loops for the next, each costing a whole limit.
+TIGHT_LIMIT = {"interp": 6, "c": 20}
+
+
+def invoke(backend, path, limit=None):
     cmd = [loft_binary()] + (["--native-c"] if backend == "c" else []) + ["--no-warnings", "--tests", path]
-    env = dict(os.environ, LOFT_LEAK_CHECK="1", LOFT_TIMEOUT="900")
-    try:
-        done = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=1200, check=False)
-    except subprocess.TimeoutExpired:
-        return "no answer in 1200 s"
+    env = dict(os.environ, LOFT_LEAK_CHECK="1", LOFT_TIMEOUT=str(limit or TIME_LIMIT[backend]))
+    done = subprocess.run(cmd, capture_output=True, text=True, env=env, check=False)
     return done.stdout + done.stderr
 
 
 def run_program(backend, cells, tmp, tag):
     """Run `cells` (all of one collection kind) as one program.  Returns, per cell name,
     ("REFUSED", message) | ("LOST", last output) | ("RAN", count, log, dump, test failure)."""
-    results, pending, turn = {}, list(cells), 0
+    results, pending, turn, limit = {}, list(cells), 0, TIME_LIMIT[backend]
     while pending:
         turn += 1
         text, spans = program(pending[0]["kind_type"], pending)
         path = os.path.join(tmp, f"{tag}_{turn}.loft")
         with open(path, "w", encoding="utf-8") as f:
             f.write(text)
-        out = invoke(backend, path)
+        out = invoke(backend, path, limit)
         refused = {}
         for message, line in re.findall(r"^\s*Error(?:\[[\w-]+\])?: (.*) at \S+?:(\d+):\d+\s*$", out, re.M):
             for cell, (first, last, _) in zip(pending, spans):
@@ -534,7 +624,23 @@ def run_program(backend, cells, tmp, tag):
                 results[name] = ("REFUSED", message)
             pending = [c for c in pending if c["name"] not in refused]
             continue
+        # The interpreter's time limit ends the whole program and names the line it was
+        # on: that cell does not finish, and the others are run again without it.
+        late = re.search(r"^\[timeout\].*?\bfn=(\S+) file=\S+?:(\d+)", out, re.M)
+        if late:
+            stuck = [cell for cell, (first, last, fn) in zip(pending, spans)
+                     if fn == late.group(1) or first <= int(late.group(2)) <= last]
+            if stuck:
+                results[stuck[0]["name"]] = ("LOST", f"it does not finish: loft's time limit "
+                                             f"({limit} s) ended it — the statement loops")
+                pending = [c for c in pending if c["name"] != stuck[0]["name"]]
+                limit = TIGHT_LIMIT[backend]
+                continue
         failed = dict(re.findall(r"^\s*FAIL\s+\S+::(test_c\d+)\s+—\s+(.*)$", out, re.M))
+        for fn, why in failed.items():
+            if "exit 124" in why:               # the C backend's form of the same limit
+                failed[fn] = (f"it does not finish: loft's time limit ({limit} s) "
+                              f"ended it — the statement loops")
         lost = []
         for cell, (_, _, fn) in zip(pending, spans):
             m = re.search(r"^%s c=(\d+) log=<(.*?)> \| (.*)$" % re.escape(cell["name"]), out, re.M)
@@ -546,7 +652,8 @@ def run_program(backend, cells, tmp, tag):
                 lost.append(cell)
         if len(lost) == 1 and len(pending) == 1:
             tail = [ln for ln in out.splitlines() if ln.strip()][-3:]
-            results[lost[0]["name"]] = ("LOST", " / ".join(tail)[:300] or "no output")
+            why = " / ".join(tail)[:300] or "no output"
+            results[lost[0]["name"]] = ("LOST", why)
         elif lost:                      # something took the program down: halve to find it
             half = (len(lost) + 1) // 2
             for n, part in enumerate((lost[:half], lost[half:])):
@@ -587,9 +694,26 @@ def verdict(cell, results):
     base = results.get(cell["base"])
     if base and base[0] == "RAN" and base[3] != dump:
         how = "its operand bound to a local first" if cell["base"].endswith(".twin") else "a plain variable"
-        return "FAIL", f"the result differs from the same statement with {how}"
+        got, want = fields_of(dump), fields_of(base[3])
+        off = [k for k in got if got[k] != want.get(k)] or ["the final line"]
+        k = off[0]
+        return "FAIL", (f"the result differs from the same statement with {how}: it leaves "
+                        f"{k}={got.get(k, dump)[:70]}, that one {k}={want.get(k, base[3])[:70]}"
+                        + (f" (and {len(off) - 1} more field(s))" if len(off) > 1 else ""))
     if failure:
         return "FAIL", ("a store is left behind: " if "not freed" in failure else "") + failure
+    if cell.get("anchor") is not None:
+        world = results.get(cell["world"])
+        if world and world[0] == "RAN":
+            want = dict(fields_of(world[3]), **cell["anchor"])
+            got = fields_of(dump)
+            # `views` is the views frame's own field: what a view shows after the
+            # statement is not part of the statement's expectation.
+            off = sorted(k for k in (set(want) | set(got)) - {"views"} if want.get(k) != got.get(k))
+            if off:
+                k = off[0]
+                return "FAIL", (f"the plain statement leaves {k}={got.get(k)}, the register says "
+                                f"{k}={want.get(k)}" + (f" (and {len(off) - 1} more field(s))" if len(off) > 1 else ""))
     return "ok", dump
 
 
@@ -635,6 +759,7 @@ def evaluate(cells, backends):
 def channel(why):
     """Which of the four assertions a failure is: count | order | value | leak | crash."""
     for word, name in (("time(s)", "count"), ("in the order", "order"), ("result differs", "value"),
+                       ("the register says", "anchor"),
                        ("left behind", "leak"), ("freed twice", "leak")):
         if word in why:
             return name
@@ -722,13 +847,16 @@ def report(cells, verdicts, backends, verbose):
     """Print what is not ok.  Returns the number of failing cells and vacuous slots."""
     tally = {"ok": 0, "FAIL": 0, "REFUSED": 0}
     accepted = {}
+    cells = [c for c in cells if c["slot"] != "_world"]
     for cell in cells:
         worst, lines = verdicts[cell["name"]]
         tally[worst] += 1
         accepted[cell["slot"]] = accepted.get(cell["slot"], 0) + (worst != "REFUSED")
         for backend, v, why in lines:
             if v == "FAIL" or verbose:
-                print(f"{v:8} {cell['name']} [{backend}]: {why[:200]}")
+                print(f"{v:8} {cell['name']} [{backend}]: {why[:260]}")
+        if worst == "FAIL":
+            print(f"         {statement_of(cell)}")
         if worst == "ok" and verbose:
             print(f"ok       {cell['name']}")
     vacuous = sorted(s for s, n in accepted.items() if n == 0)
@@ -742,7 +870,10 @@ def report(cells, verdicts, backends, verbose):
     orders = sum(1 for c in cells if c["log"] is not None)
     print(f"slot_matrix: {len(cells)} cells ({orders} check order) on {' and '.join(backends)}: "
           f"{tally['ok']} ok, {tally['FAIL']} failing, {tally['REFUSED']} refused, "
-          f"{len(vacuous)} slot(s) vacuous  [{loft_binary()}]")
+          f"{len(vacuous)} slot(s) vacuous  [{build()}]")
+    if tally["FAIL"]:
+        print("for one failing cell — its program kept, loft's diagnostics on, its IR beside its twin's: "
+              "python3 scripts/slot_matrix.py explain <cell>")
     return tally["FAIL"] + len(vacuous)
 
 
@@ -765,6 +896,8 @@ BASELINE_HEAD = """# The cells of the slot matrix that do not pass today (@PLN22
 def baseline_keys(cells, verdicts):
     keys = set()
     for cell in cells:
+        if cell["slot"] == "_world":
+            continue
         worst, lines = verdicts[cell["name"]]
         if worst == "REFUSED":
             keys.add((cell["name"], "-", "refused"))
@@ -895,6 +1028,227 @@ def cmd_cell(args):
     return 1 if failed else 0
 
 
+def cmd_expect(args):
+    """The anchor's rows: `--propose` prints, for every slot with no expectation, the fields
+    its plain statement changes on THIS build — a proposal to compute by hand and correct,
+    never to paste unread: it is the compiler's answer, not the rules'."""
+    slots, fillers, _, problems = load_all()
+    if problems:
+        print("\n".join(problems))
+        return 1
+    expect = load_expect()
+    owed = [s for s in slots if not any(k[0] == s["id"] for k in expect)]
+    if not args.propose:
+        print(f"slot_matrix expect: {len(slots) - len(owed)} of {len(slots)} slots have an expectation"
+              + (f"; none for: {' '.join(s['id'] for s in owed)}" if owed else ""))
+        return 1 if owed else 0
+    cells = make_cells(owed, fillers, "var", set(), None)
+    with tempfile.TemporaryDirectory(prefix="slot_matrix.") as tmp:
+        got = run_backend("interp", cells, tmp)
+    by_slot = {}
+    for cell in cells:
+        if cell["slot"] == "_world" or got.get(cell["name"], ("",))[0] != "RAN":
+            continue
+        world = fields_of(got[cell["world"]][3])
+        mine = fields_of(got[cell["name"]][3])
+        changed = " ; ".join(f"{k}={v}" for k, v in mine.items() if world.get(k) != v) or "-"
+        by_slot.setdefault(cell["slot"], {})[cell["name"].split(".")[2]] = changed
+    for slot in owed:
+        kinds = by_slot.get(slot["id"], {})
+        if len(set(kinds.values())) == 1:
+            print(f"{slot['id']}\t*\t{next(iter(kinds.values()))}")
+        else:
+            for kind, changed in kinds.items():
+                print(f"{slot['id']}\t{kind}\t{changed}")
+    return 0
+
+
+def cmd_expr(args):
+    """One EXPRESSION, tried wherever it can stand: in every slot of its type, in the
+    contexts and frames asked for, and at depth two both ways round."""
+    slots, fillers, _, problems = load_all()
+    if problems:
+        print("\n".join(problems))
+        return 1
+    types = types_of(fillers)
+    if args.type not in types:
+        print(f"slot_matrix expr: `--type` is one of {' '.join(types)}")
+        return 1
+    plain = [f for f in fillers if not HOLE.search(f["expr"])]
+    variables = [f for f in plain if f["id"].endswith("-var")]
+    mine = {"id": f"{args.type}-new", "type": args.type, "expr": args.expression, "only": "", "line": 0}
+    hole = HOLE.search(args.expression)
+    if hole:
+        # The expression is a wrapper: it stands AROUND every filler of its hole's type.
+        if COUNTER in args.expression or hole.group(1) not in types:
+            print(f"slot_matrix expr: an expression with a hole takes no `{COUNTER}`, and the hole's "
+                  f"type is one of {' '.join(types)}")
+            return 1
+        tried = [dict(mine, id=f"{mine['id']}({f['id']})", expr=args.expression.replace(hole.group(0), f["expr"]),
+                      only=f.get("only", ""))
+                 for f in plain if f["type"] == hole.group(1) and not f["id"].endswith("-var")]
+    else:
+        if COUNTER not in args.expression:
+            print(f"slot_matrix expr: the expression must hold `{COUNTER}` where its counted call takes "
+                  f"the counter (`at(<C>, 1)`), or a hole `<I:type>` to stand around the other fillers")
+            return 1
+        tried = [mine]
+        if args.depth == 2:
+            # ... and INSIDE every wrapper whose hole is of its type.
+            for w in fillers:
+                wh = HOLE.search(w["expr"])
+                if wh and wh.group(1) == args.type:
+                    tried.append({"id": f"{w['id']}({mine['id']})", "type": w["type"], "only": "",
+                                  "line": 0, "expr": w["expr"].replace(wh.group(0), args.expression)})
+    if args.plain:
+        variables = [dict(v, expr=args.plain) if v["type"] == args.type else v for v in variables]
+    wanted = {f["type"] for f in tried}
+    which = set(args.slot) or {s["id"] for s in slots if s["type"] in wanted}
+    backends = backends_of(args)
+    # First: is it usable at all — one bump of its counter, its type's plain value?
+    first = neutral(slots, fillers)
+    probe = make_cells(slots, variables + tried, "all", {first[t] for t in wanted if t in first}, KINDS[0][0],
+                       against_plain=True)
+    print(f"slot_matrix expr: `{args.expression}` as {len(tried)} filler(s) of type "
+          f"{', '.join(sorted(wanted))}; first in the neutral slot of each:")
+    if report(probe, evaluate(probe, ("interp",)), ("interp",), False):
+        print("slot_matrix expr: the expression is not usable as it is — it must run its counter once and "
+              "give the same value as its type's plain variable (`--plain EXPR` names another)")
+        return 2
+    cells = make_cells(slots, variables + tried, "all", which, args.kind, *axes_of(args))
+    failed = report(cells, evaluate(cells, backends), backends, args.verbose)
+    print("the row, should it join scripts/syntax_fillers.tsv:")
+    print(f"  {args.type}-<form>\t{args.type}\t{args.expression}")
+    return 1 if failed else 0
+
+
+def ir_of(text, functions, names=()):
+    """From `loft introspect` output, the IR of the named functions, with what differs
+    between any two cells for no reason of theirs taken out — their own names, the source
+    line each statement came from — so that two cells can be compared line by line."""
+    blocks = {}
+    for m in re.finditer(r"^fn n_(\w+)\(.*?(?=^fn n_|^byte-code for |\Z)", text, re.S | re.M):
+        blocks.setdefault(m.group(1), m.group(0))
+    out = []
+    for name in functions:
+        body = blocks.get(name)
+        if body:
+            for other in functions:
+                body = body.replace(other, "CELL")
+            for name in sorted(names, key=len, reverse=True):
+                body = body.replace(name, "NAME")
+            body = re.sub(r"^(\s*)\[\d+\] ", r"\1", body, flags=re.M)
+            out += [ln.rstrip() for ln in body.splitlines()]
+    return out
+
+
+def cmd_explain(args):
+    """One failing cell, laid open for whoever debugs it."""
+    import difflib
+    slots, fillers, _, problems = load_all()
+    if problems:
+        print("\n".join(problems))
+        return 1
+    want = re.sub(r"\.(twin|order)$", "", args.cell)
+    slot_id = want.split(".")[0]
+    wide = "@" in want
+    cells = make_cells(slots, fillers, "all", {slot_id}, None,
+                       load_contexts() if wide else None, list(load_frames()[1]) if wide else None,
+                       depth=2 if "(" in want else 1)
+    by = {c["name"]: c for c in cells}
+    if want not in by:
+        near = [n for n in by if n.startswith(slot_id + ".") and not n.endswith((".twin", ".order"))][:12]
+        print(f"slot_matrix explain: no cell `{want}`" + (f"; this slot has: {' '.join(near)} …" if near
+              else f"; `{slot_id}` is no slot of scripts/syntax_slots.tsv"))
+        return 2
+    cell = by[want]
+    plain = by.get(re.sub(r"\.[^.@]+\.(\w+)(@[\w/]+)?$",
+                          lambda m: f".{next(s['type'] for s in slots if s['id'] == slot_id)}-var.{m.group(1)}{m.group(2) or ''}",
+                          want))
+    twin, order = by.get(want + ".twin"), by.get(want + ".order")
+    world = next((c for c in cells if c["slot"] == "_world" and c["kind_type"] == cell["kind_type"]
+                  and c["frame"] == cell["frame"] and c["name"] == (plain or cell).get("world", c["name"])), None)
+    group = [c for c in (cell, twin, order, plain, world) if c]
+    roles = {id(cell): "the cell", id(twin): "its twin (the operand bound to a local first)",
+             id(order): "its order cell", id(plain): "the plain variable", id(world): "the world untouched"}
+    keep = os.path.abspath(args.out or tempfile.mkdtemp(prefix="slot_matrix.explain."))
+    os.makedirs(keep, exist_ok=True)
+    text, spans = program(cell["kind_type"], group)
+    path = os.path.join(keep, "cell.loft")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("// " + want + " — written by `slot_matrix.py explain`, with what it is compared with.\n")
+        for c, (_, _, fn) in zip(group, spans):
+            f.write(f"//   {fn}: {roles[id(c)]}\n")
+        f.write(text + "fn main() { " + " ".join(fn + "();" for _, _, fn in spans) + " }\n")
+    print(f"cell      {want}")
+    print(f"build     {build()}")
+    print(f"program   {path}   (kept; `loft {path}` runs it, `loft --tests {path}` each function)")
+    for c, (_, _, fn) in zip(group, spans):
+        if c is not world:
+            print(f"{fn}  {roles[id(c)]}:\n    {statement_of(c)}")
+    # Run it alone, with what loft can say about a store or a crash switched on.
+    lines = {}
+    for backend in backends_of(args):
+        cmd = [loft_binary()] + (["--native-c"] if backend == "c" else []) + ["--no-warnings", "--tests", path]
+        env = dict(os.environ, LOFT_LEAK_CHECK="1", LOFT_REFREE_FAILS="1", LOFT_LEAK_SITES="1",
+                   LOFT_TIMEOUT=str(TIME_LIMIT[backend]))
+        done = subprocess.run(cmd, capture_output=True, text=True, env=env, cwd=keep, check=False)
+        out = done.stdout + done.stderr
+        with open(os.path.join(keep, f"run-{backend}.txt"), "w", encoding="utf-8") as f:
+            f.write(out)
+        print(f"\n--- {backend}: `LOFT_LEAK_CHECK=1 LOFT_REFREE_FAILS=1 LOFT_LEAK_SITES=1 {' '.join(cmd)}`"
+              f"   (whole output in {keep}/run-{backend}.txt)")
+        for c in group:
+            m = re.search(r"^%s c=(\d+) log=<(.*?)> \| (.*)$" % re.escape(c["name"]), out, re.M)
+            lines[(backend, c["name"])] = m
+        said = [ln for ln in out.splitlines() if ln.strip() and not re.match(r"\S+ c=\d+ log=<", ln)
+                and "test result:" not in ln and not re.match(r"\s*ok\s", ln)]
+        for ln in said[:40]:
+            print("    " + ln[:700])
+        base = twin or plain
+        mine, theirs = lines[(backend, cell["name"])], base and lines[(backend, base["name"])]
+        if not mine:
+            print(f"    the cell printed no final line: it did not finish on {backend}")
+            continue
+        print(f"    the operand ran {mine.group(1)} time(s), the slot says {cell['want']}; log <{mine.group(2)}>"
+              + (f", source order <{order['log']}>" if order else ""))
+        if theirs:
+            got, ref = fields_of(mine.group(3)), fields_of(theirs.group(3))
+            off = [k for k in got if got[k] != ref.get(k)]
+            for k in off:
+                print(f"    {k}:  the cell {got[k]}\n    {' ' * len(k)}   {roles[id(base)].split(' (')[0]} {ref.get(k)}")
+            if not off:
+                print(f"    it leaves the same as {roles[id(base)].split(' (')[0]}")
+    # The IR of the cell beside the IR of what it is compared with: the working form and
+    # the broken one, which is where a compiler fix starts (CODEGEN_METHOD.md).
+    base = twin or plain
+    if base:
+        dump = subprocess.run([loft_binary(), "introspect", path], capture_output=True, text=True,
+                              cwd=keep, check=False).stdout.split("std::cell::UnsafeCell")[0]
+        with open(os.path.join(keep, "introspect.txt"), "w", encoding="utf-8") as f:
+            f.write(dump)
+        fn_of = {id(c): fn for c, (_, _, fn) in zip(group, spans)}
+
+        def functions(c):
+            n = group.index(c)
+            return [f"{d}_{n}" for d in re.findall(r"\bfn\s+([A-Za-z_]\w*)\s*\(", c["decl"])] + [
+                fn_of[id(c)] + "_in", fn_of[id(c)]]
+        names = [c["name"] for c in group]
+        a, b = ir_of(dump, functions(base), names), ir_of(dump, functions(cell), names)
+        diff = list(difflib.unified_diff(a, b, roles[id(base)].split(" (")[0], "the cell", lineterm="", n=2))
+        print(f"\n--- the IR, {roles[id(base)].split(' (')[0]} against the cell   (`loft introspect`, whole "
+              f"output in {keep}/introspect.txt)")
+        if not a or not b:
+            print("    `loft introspect` printed no IR for these functions")
+        elif not diff:
+            print("    the two lower to the same IR: the difference is made after it, in a backend or at run time")
+        for ln in diff[:args.lines]:
+            print("    " + ln[:220])
+        if len(diff) > args.lines:
+            print(f"    … {len(diff) - args.lines} more line(s); `--lines N` shows more")
+    return 0
+
+
 def cmd_walk(args):
     """The matrix on an OLDER build beside this one: what it would have caught."""
     slots, fillers, _, problems = load_all()
@@ -960,12 +1314,15 @@ def cmd_fillers(args):
     if problems:
         print("\n".join(problems))
         return 1
-    cells = make_cells(slots, fillers, "all", set(neutral(slots, fillers).values()), KINDS[0][0], depth=args.depth)
+    cells = make_cells(slots, fillers, "all", set(neutral(slots, fillers).values()), KINDS[0][0], depth=args.depth,
+                       against_plain=True)
     return 1 if run_matrix(cells, backends_of(args), args.verbose) else 0
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--bg", metavar="FILE", help="run the command in the background, its output in FILE, "
+                    "ending with a `slot_matrix: done exit=<n>` line (before the subcommand)")
     sub = ap.add_subparsers(dest="cmd", required=True)
     sub.add_parser("check").set_defaults(fn=cmd_check)
     sub.add_parser("selftest").set_defaults(fn=cmd_selftest)
@@ -985,6 +1342,27 @@ def main():
     p.add_argument("--frame", help="where its values come from: a frame of the prelude, or `all`")
     p.add_argument("--depth", type=int, choices=(1, 2), default=1, help="2 adds every wrapper filler around every other filler")
     p.set_defaults(fn=cmd_run)
+    p = sub.add_parser("explain")
+    p.add_argument("cell", help="a cell's name, as a run prints it")
+    p.add_argument("--out", metavar="DIR", help="where to keep its program and outputs (default: a new temp dir)")
+    p.add_argument("--backend", choices=("interp", "c", "both"), default="both")
+    p.add_argument("--lines", type=int, default=60, help="how much of the IR diff to print")
+    p.set_defaults(fn=cmd_explain)
+    p = sub.add_parser("expr")
+    p.add_argument("expression", help="one expression of the prelude's world; `<C>` its counter, or a hole `<I:type>`")
+    p.add_argument("--type", required=True, help="the operand type it gives")
+    p.add_argument("--plain", help="the same value with no counter, when the type's variable is not it")
+    p.add_argument("--depth", type=int, choices=(1, 2), default=2, help="2 (default) also puts it inside every wrapper")
+    p.add_argument("--slot", action="append", default=[], help="only these slots; may repeat")
+    p.add_argument("--kind", choices=[k for k, _ in KINDS])
+    p.add_argument("--backend", choices=("interp", "c", "both"), default="both")
+    p.add_argument("--context", help="an id of syntax_contexts.tsv, or `all`")
+    p.add_argument("--frame", help="a frame of the prelude, or `all`")
+    p.add_argument("-v", "--verbose", action="store_true")
+    p.set_defaults(fn=cmd_expr)
+    p = sub.add_parser("expect")
+    p.add_argument("--propose", action="store_true", help="print rows for the slots that have none")
+    p.set_defaults(fn=cmd_expect)
     p = sub.add_parser("cell")
     p.add_argument("statement", help="one statement of the prelude's world, `<S>` the operand")
     p.add_argument("--type", help="try every filler of this operand type")
@@ -1015,7 +1393,31 @@ def main():
     p.add_argument("--depth", type=int, choices=(1, 2), default=1, help="2 adds every wrapper filler around every other filler")
     p.set_defaults(fn=cmd_walk)
     args = ap.parse_args()
-    sys.exit(args.fn(args))
+    if args.bg:
+        # The same command, detached, its output in a file that ends with one line a wait
+        # can look for.  A whole run takes minutes; nothing should have to sit on it.
+        out = os.path.abspath(args.bg)
+        rest, skip = [], False
+        for a in sys.argv[1:]:
+            if skip or a.startswith("--bg="):
+                skip = False
+                continue
+            if a == "--bg":
+                skip = True
+                continue
+            rest.append(a)
+        with open(out, "w", encoding="utf-8") as f:
+            child = subprocess.Popen([sys.executable, os.path.abspath(__file__)] + rest, stdout=f,
+                                     stderr=subprocess.STDOUT, start_new_session=True,
+                                     env=dict(os.environ, SLOT_MATRIX_SIGNAL="1"))
+        print(f"slot_matrix: running in the background, pid {child.pid}, output in {out}\n"
+              f"it ends with the line `{DONE} exit=<n>`; wait for it with:\n"
+              f"  scripts/wait_for.sh {out} '{DONE}' --pid {child.pid}")
+        sys.exit(0)
+    code = args.fn(args)
+    if os.environ.get("SLOT_MATRIX_SIGNAL"):
+        print(f"{DONE} exit={code}", flush=True)
+    sys.exit(code)
 
 
 if __name__ == "__main__":

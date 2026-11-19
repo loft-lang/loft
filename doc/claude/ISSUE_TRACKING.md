@@ -453,7 +453,10 @@ compiler defect answers one question and writes the answer down with the fix:
 1. **Is it one statement whose answer depends on the FORM of an operand?**  Try it, on the
    build with the defect: `python3 scripts/slot_matrix.py cell '<the statement, <S> for the
    operand>' --type <its type>`, or `--filler '<the expression>' --plain '<a variable of the
-   same value>'`.  The statement uses the names of `scripts/syntax_slots_prelude.loft`.  A
+   same value>'`; or, when it is an EXPRESSION that looks wrong and not one statement,
+   `slot_matrix.py expr '<the expression, <C> for its counter>' --type <its type>`, which
+   tries it in every operand position of that type.  Both use the names of
+   `scripts/syntax_slots_prelude.loft`.  A
    failing cell that the tables already hold (`run --filler all --slot <id>`) means the
    matrix reaches it; say so in the issue.
 2. **Not reached, and rows would do it** — a slot row, a filler row, an operand type, a

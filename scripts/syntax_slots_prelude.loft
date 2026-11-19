@@ -68,7 +68,9 @@ fn hold() -> Hold {
     ones: [1, 1]
   }
 }
-// The cell's final line shows every value the statement could have changed.  A keyed
+// The cell's final line shows every value the statement could have changed, as fields
+// `name=value` parted by ` ; ` — scripts/syntax_expect.tsv names the fields a slot's plain
+// statement must leave changed.  A keyed
 // collection has no rendering of its own, so each collection is shown by lookups: by
 // position for a vector, by key for the keyed kinds.
 fn show(v: KIND) -> text {
@@ -93,14 +95,14 @@ fn CELLFN() {
   tk: (KIND, integer) = ([P { k: 1, t: "a" }, P { k: 2, t: "b" }, P { k: 3, t: "c" }], 3);
   s = 0; o = "";
   CELLSTMT
-  println("CELLNAME c={c.calls} log=<{c.log}> | s={s} o={o} i={i} j={j} b={b} nb={nb} x={x} fl={fl} en={en} f={fnv(1)} vi={vi} xs={show(xs)} r={show_w(r)} h={show_h(h)}");
+  println("CELLNAME c={c.calls} log=<{c.log}> | s={s} ; o={o} ; i={i} ; j={j} ; b={b} ; nb={nb} ; x={x} ; fl={fl} ; en={en} ; f={fnv(1)} ; vi={vi} ; xs={show(xs)} ; r={show_w(r)} ; h={show_h(h)}");
 }
 // === CELL params ===
 CELLDECL
 fn CELLFN_in(c: Ctr, h: Hold, i: integer, j: integer, b: boolean, nb: boolean, x: text, fl: float, en: Col, fnv: fn(integer) -> integer, vi: vector<integer>, xs: KIND, r: W, tk: (KIND, integer)) {
   s = 0; o = "";
   CELLSTMT
-  println("CELLNAME c={c.calls} log=<{c.log}> | s={s} o={o} i={i} j={j} b={b} nb={nb} x={x} fl={fl} en={en} f={fnv(1)} vi={vi} xs={show(xs)} r={show_w(r)} h={show_h(h)}");
+  println("CELLNAME c={c.calls} log=<{c.log}> | s={s} ; o={o} ; i={i} ; j={j} ; b={b} ; nb={nb} ; x={x} ; fl={fl} ; en={en} ; f={fnv(1)} ; vi={vi} ; xs={show(xs)} ; r={show_w(r)} ; h={show_h(h)}");
 }
 fn CELLFN() {
   c = Ctr {}; h = hold();
@@ -126,5 +128,5 @@ fn CELLFN() {
   s = 0; o = "";
   CELLSTMT
   wn = vw.n ?? -1; et = ve.t ?? "-";
-  println("CELLNAME c={c.calls} log=<{c.log}> | s={s} o={o} i={i} j={j} b={b} nb={nb} x={x} fl={fl} en={en} f={fnv(1)} vi={vi} xs={show(xs)} r={show_w(r)} h={show_h(h)} views: {wn} {show(vq)} {vt} {et}");
+  println("CELLNAME c={c.calls} log=<{c.log}> | s={s} ; o={o} ; i={i} ; j={j} ; b={b} ; nb={nb} ; x={x} ; fl={fl} ; en={en} ; f={fnv(1)} ; vi={vi} ; xs={show(xs)} ; r={show_w(r)} ; h={show_h(h)} ; views={wn} {show(vq)} {vt} {et}");
 }

@@ -10,8 +10,11 @@ The hand-off list for whoever fixes them.  Each row is a fold of failing cells o
 `scripts/slot_matrix.baseline`.  This file is the record of what was found on 2026-11-19;
 the baseline is what holds today.
 
-**To see one:** the command in its row, which prints every cell of the slot with the
-compiler's own words.  Add `--context all --frame all` where the row names a context.
+**To see one:** the command in its row, which prints every cell of the slot with its
+statement and the compiler's own words.  Add `--context all --frame all` where the row names
+a context.  **To debug one:** `python3 scripts/slot_matrix.py explain <cell>` with a cell's
+name from that output — its program is kept, loft's diagnostics are on, and the IR of the
+cell is diffed against the IR of its bound-first twin.
 **When one is fixed:** its cells pass, the gate (`tests/slot_matrix.rs`) fails on their
 baseline lines, and `python3 scripts/slot_matrix.py gate --update` removes them — read the
 diff, it must only remove lines.

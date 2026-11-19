@@ -95,9 +95,6 @@ it-comp-source.coll-field.index	c	count
 it-comp-source.coll-field.index	interp	count
 it-comp-source.coll-field.sorted	c	count
 it-comp-source.coll-field.sorted	interp	count
-it-range-high.int-block-one.vector	-	refused
-it-range-high.int-block-write.vector	-	refused
-it-range-high.int-block.vector	-	refused
 it-slice-source.vint-field.vector	c	leak
 it-slice-source.vint-field.vector	interp	leak
 it-slice-source.vint-slice.vector	-	refused

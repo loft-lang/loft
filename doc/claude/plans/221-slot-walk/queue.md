@@ -87,19 +87,29 @@ matrix finds more with every run, and each fix is then checked by cells that alr
 An evaluation of the generator as it stood with G1 to G8 built.  The first two are
 weaknesses in what a green run means; the rest is breadth.
 
-13. **K1 — an anchor.**  Every cell is compared with its twin or with the plain-variable
-    cell, and the plain-variable cell with nothing: were `+` itself wrong, cell and twin
-    would agree.  One expectation per slot, computed by hand — the values the plain
-    statement must leave changed in the prelude's world, everything else untouched — gives
-    the matrix an absolute footing.  *Verify:* a slot's expectation edited to a wrong value
-    fails that slot's plain cell.
+13. **K1 — an anchor** — **built.**  `scripts/syntax_expect.tsv` holds, for 134 of the 135
+    slots, the fields the slot's PLAIN statement must leave changed in the prelude's world;
+    everything else must stay as the untouched world has it.  Each value was computed by
+    hand from the statement and checked against what the compiler answers (`expect
+    --propose` prints that answer as a proposal, never as the expectation).  Nine
+    statements whose plain result could not be told from "nothing happened" were
+    strengthened first.  `wr-remove-index` has no row: what `v[i] = null` does to a dense
+    vector is a question for arc H.  *Verified:* `op-add-left`'s expectation edited to 5
+    fails its plain cell on both backends.
 14. **K2 — breadth of type.**  Of 135 slots 80 take an integer, 2 a float, 2 an enum, 1 a
     function value; every operator is tried with integers only.  A slot row that names
     several operand types runs the same statement over float, text and the narrow integer
     fields.  *Verify:* the IR operations of the corpus that no cell emits (G9) fall.
-15. **K3 — a reproduction per failing cell.**  `slot_matrix.py repro <cell>` writes one
-    self-contained program, for whoever fixes it.  *Verify:* the program fails alone the
-    way its cell does.
+15. **K3 — a failing cell laid open** — **built**, as `slot_matrix.py explain <cell>`.  It
+    keeps one program holding the cell, its bound-first twin, its order cell and the plain
+    variable; prints each statement; runs the cell alone on both backends with loft's own
+    diagnostics on (`LOFT_REFREE_FAILS` names the line and variable of each free,
+    `LOFT_LEAK_SITES` the leak); shows every field that differs with both values; and diffs
+    the IR of the cell against the IR of its twin — the working form beside the broken
+    one, where a compiler fix starts.  Every failing line of any run now carries its
+    statement and, for a value failure, the field and both values; the summary names the
+    build.  *Verified:* on the lost element write the IR diff is the `__lift_1` copy and
+    nothing else; on the slice double free the interpreter names both frees.
 16. **K4 — sampled depth three.**  A seeded random sample of three-deep compositions, a few
     thousand a night; the whole of depth three is over 60,000 cells.
 17. **K5 — rule coverage.**  The evaluation rules of the formal chapters that no slot cites,
@@ -111,3 +121,17 @@ weaknesses in what a green run means; the rest is breadth.
 20. **K8 — more contexts**: a closure body, an early return, a match arm.
 21. **K9 — more backends at night**: the rustc writer and wasm, too slow for the PR gate.
 22. **K10 — a second prelude** for the shape of a declaration (this is G7).
+
+## Built beside the queues
+
+- **`expr`** — the mirror of `cell`: one EXPRESSION tried in every slot of its type, in the
+  contexts and frames asked for, and at depth two both ways round (inside every wrapper
+  with a hole of its type; around every filler when it has a hole of its own).  It first
+  checks the expression is usable — one bump of its counter, its type's plain value.
+- **`--bg FILE`** — any run in the background, its output in FILE, ending with the line
+  `slot_matrix: done exit=<n>` that `scripts/wait_for.sh` waits for.
+- **A cell that loops is stopped by loft itself.**  Every generated program runs under
+  `LOFT_TIMEOUT`; the interpreter names the line it was on, which is the cell, and the C
+  backend fails that one test.  What is left of the program then runs under a tight limit,
+  so a statement that loops for every form of operand costs seconds a form, not a limit
+  each.  This is what bounds a random or a depth-three run, whose cells nobody has read.
