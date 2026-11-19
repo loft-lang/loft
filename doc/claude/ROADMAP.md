@@ -196,7 +196,6 @@ open plan.  Silent-wrong defects are issues, not plans: `gh issue list --label s
 | Plan | status | What it is |
 |---|---|---|
 | [@PLN60](https://github.com/loft-lang/plans/issues/60) | future | Asset pipeline |
-| [@PLN67](https://github.com/loft-lang/plans/issues/67) | future | Process management library |
 | [@PLN68](https://github.com/loft-lang/plans/issues/68) | future | File-system watch |
 | [@PLN69](https://github.com/loft-lang/plans/issues/69) | future | Caching library |
 | [@PLN91](https://github.com/loft-lang/plans/issues/91) | future | Self-hosting epic — loft-in-loft, an ANSI-C backend, small-board portability |
