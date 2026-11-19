@@ -121,7 +121,8 @@ make slot-matrix [ARGS="--filler all"]     # THE SLOT MATRIX (@PLN221): each ope
                                          #   `--backend both` adds the C backend (under a minute)
                                          #   and `--slot <id>` narrows it to one position;
                                          #   `--context all --frame all` adds a loop, a branch and
-                                         #   parameters (eight times the cells).  `walk --old
+                                         #   parameters (eight times the cells), `--depth 2` every
+                                         #   wrapper filler around every other (five times).  `walk --old
                                          #   <binary>` runs it on an older build beside this one:
                                          #   what it would have caught, and what has regressed  `scripts/slot_matrix.py
                                          #   list` shows the slots.  Two PR gates: `check` (new

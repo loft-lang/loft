@@ -60,11 +60,12 @@ address the live vector: the copy belongs to a READ of the element only.
 | 12 | `vi[i] = box(c, h).n;` | the right side runs before the index, against `(E-Asgn)` | both | `run --filler int-field --slot wr-elem-value --backend both -v` |
 | 13 | `o = x[h.ones[at(c, 0)]..];` | the index runs before the text it indexes, against `(E-Left)` | both | `run --filler int-elem --slot rd-text-slice --backend both -v` |
 
-## Two questions for the rules
+## For the rules
 
-- `(E-Left)`'s prose in `formal/operational.md` says `??` "evaluates both operands";
-  `(E-Coalesce)` and both backends evaluate the right side only when the left is null
-  (the slots `rd-coal-right-present` and `rd-coal-right-absent` pin that behaviour).
+- Settled (owner): the right side of `??` is evaluated only when the left is null.
+  `(E-Left)`'s prose in `formal/operational.md` said otherwise and now agrees with
+  `(E-Coalesce)`, which states it; the slots `rd-coal-right-present` and
+  `rd-coal-right-absent` hold it on both backends.
 - Eleven slots cite no rule because none states their count; `slot_matrix.py list` names
   them.
 

@@ -164,10 +164,11 @@ the branch that carries both fixes.
 | **A** — the slot register | `syntax_slots.tsv`, `syntax_fillers.tsv`, `syntax_outside.tsv`, each slot citing the rule that states its count | `doc_hygiene`'s `every_lexeme_has_an_operand_slot_or_a_reason`: every lexeme the lexer and the parser know is in a slot or has a reason; `selftest` removes a row, adds a lexeme and misspells a rule, and each must be reported | Shipped — the eleven rule-less counts and the twelve unreached operands are carried into C |
 | **B** — generator and runner | `scripts/slot_matrix.py run --backend both`, `--slot`, `--kind`: the twin, the order trace, the leak channel, the batched run on both backends; `make slot-matrix` | run against a build that has loft#2573: it reports those cells, and none on the fixed build.  Recorded as the tool's `@falsified-at` | Shipped |
 | **C** — the walk, one family per step | each failing cause fixed at the lowering that copies the operand, one named suite cell per cause under its rule, the refused list read | the family's cells, both backends; the named cell fails on the build before the fix (`make falsify`) | Open |
-| **D** — depth two | fillers nested once | the same run at depth two; a cause found here that depth one missed is recorded with the pair that exposed it | Open |
+| **D** — depth two | fillers nested once (`--depth 2`, wrapper rows with a `<I:type>` hole) | `fillers --depth 2`: every composed filler bumps its counter once and gives its type's plain value | Shipped (G4) |
 | **E** — the cells as lockstep input | every generated cell fed to the Rust-against-loft comparison of results and debug layers | a difference in any layer on any cell | Blocked on the port's comparison harness taking generated input |
 | **F** — the gate | depth one in the PR gate (`tests/slot_matrix.rs`), a baseline of open cells that may only shrink; the wider axes nightly | a new failing cell on a PR; a baseline entry that passes again and was not removed | Shipped for one context and one frame (G1); the nightly leg is open |
 | **G** — reach | the matrix walked back over past defects: `slot_matrix.py walk --old <binary>` against the release before, and the `silent-wrong` issues since it judged in [reach.tsv](reach.tsv); every axis and row it asks for | the time walk: a row added for a past issue must FAIL on the build that had the defect; the share of new issues that `fits-now` at the next release | Running — contexts and frames added; G1 to G9 of § Phase ordering are its steps |
+| **H** — a rule for every slot | the formal text evaluated wherever a slot can cite no rule, or a run raises a question the text does not answer: the rule found and cited, or written | `slot_matrix.py list` names no slot without a rule; `rule_tags.py check` resolves every citation; the slot is the new rule's guard | Open — ten slots; the `??` fallback is settled and written into `(E-Coalesce)` |
 
 ## Phase ordering
 
@@ -193,8 +194,14 @@ fix is then checked by cells that already exist.
    defect and are rows now, two do not fit after all ([REACH.md § Calibration](REACH.md)).
    Eighteen are left; each is a `cell` command first and a row only when it fails on the
    older build.
-4. **G4 — fillers built from fillers** (this is phase D).  A filler template with a hole of
-   its own, filled by the other fillers of that type: depth two without writing each by hand.
+4. **G4 — fillers built from fillers** (this is phase D) — **built.**  A row of
+   `syntax_fillers.tsv` with a `<I:type>` hole is a wrapper, generated at `--depth 2` once
+   around every other filler of that type: 18 wrappers make 15,058 cells, 189 s on both
+   backends.  A wrapper around a filler that fails the same way folds into that filler's
+   line, and a wrapper that fails around most fillers is a line of its own.  Depth two is
+   not in the gate.  What it showed: the two order defects are about an ELEMENT READ or a
+   FIELD READ as the operand, whatever stands inside it; the slice of a call's field leaks
+   in six slots, not one.
 5. **G5 — a second counted operand**, and a twin that binds every operand in source order.
    For the seven "two operands interacting" issues; it also replaces the plain-variable
    order check by a real one.
@@ -209,9 +216,20 @@ fix is then checked by cells that already exist.
 9. **G9 — a probe, before it is planned:** which IR operations the corpus produces and no
    cell of the matrix does.  If `loft introspect` gives that histogram cheaply, the gaps
    name missing rows without anyone reading an issue.
-10. **C — the fixes** are handed off: [found.md](found.md) is the list, the lost write
+10. **H — a rule for every slot.**  A slot whose `rule` column is `-` is an operand whose
+    evaluation count no formal rule states: the `while` condition, a field read, the three
+    text reads, `is`, the two `assert` operands, the two record-literal fields
+    (`slot_matrix.py list` names them).  For each: read the chapter it belongs to, and
+    either cite the rule that already covers it, or write the rule — how often the operand
+    runs, in what order with its neighbours, and under which condition it is skipped — and
+    cite that.  The same for every question a run raises that the text does not answer
+    (the `??` fallback was the first: settled as evaluated only when needed, and written
+    into `(E-Coalesce)`).  A new rule is the owner's to approve; the slot that cites it is
+    its guard from the first run.  *Verify:* `slot_matrix.py list` reports no slot without
+    a rule, and `rule_tags.py check` resolves every citation.
+11. **C — the fixes** are handed off: [found.md](found.md) is the list, the lost write
     first, and each fix removes its lines from the gate's baseline.
-11. **E — the cells as input to the two-implementation comparison**, when the port's
+12. **E — the cells as input to the two-implementation comparison**, when the port's
     harness takes generated programs.
 
 ## Open design questions
