@@ -1068,6 +1068,53 @@ pub fn content_enum(e: el::El, t: ir::TypeT) -> integer {
   }
 }
 
+// `value_struct_eq` (`@FR-E-Eq`, @C91): two values of one `value struct` compare field by field,
+// in DECLARATION order, each field through its own `==` (a nested value struct recurses here),
+// folded `if acc cmp else false` — the first field alone, no field at all `true`; `!=` is one
+// `OpNot` around the fold.  An operand that runs a call is held once in a `___veq_N` (the fold
+// and the holds in a `value_eq` block); any other is read in place per field.  Null where a
+// field's `==` does not resolve.
+fn value_struct_eq(e: el::El, vars: el_vars::Vars, op: text, ad: integer, a: Ex, b: Ex) -> Ex? {
+  pre: vector<ir::Node> = [];
+  ac = a.code;
+  bc = b.code;
+  if el_ex_place::any_user_call(e, [a.code]) {
+    ha = el_vars::create_unique(vars, "__veq", ir::TyReference { n: ad, dep: [] });
+    pre += [el_ir::v_set(ha, a.code)];
+    ac = ir::NdVar { n: ha };
+  }
+  if el_ex_place::any_user_call(e, [b.code]) {
+    hb = el_vars::create_unique(vars, "__veq", ir::TyReference { n: ad, dep: [] });
+    pre += [el_ir::v_set(hb, b.code)];
+    bc = ir::NdVar { n: hb };
+  }
+  acc: ir::Node? = null;
+  for at in el::def(e, ad).attributes {
+    ft = at.typedef[0] ?? ir::TyVoid;
+    if el_types::base(ft) is TyRoutine {
+      continue;
+    }
+    fa = field_get(e, ad, at#index, ac);
+    fb = field_get(e, ad, at#index, bc);
+    if fa == null || fb == null {
+      return null;
+    }
+    r = builtin_op(e, vars, "==", ex(fa!, ft), ex(fb!, ft));
+    if el_types::is_unknown(r.tp) || r.code is NdNull {
+      return null;
+    }
+    acc = if acc == null { r.code } else { el_ir::v_if(acc!, r.code, ir::NdBoolean { b: false }) };
+  }
+  fold = acc ?? ir::NdBoolean { b: true };
+  if op == "!=" {
+    fold = el_ir::cl(e, "OpNot", [fold]);
+  }
+  if len(pre) > 0 {
+    fold = el_ir::v_block(pre + [fold], ir::TyBoolean, "value_eq");
+  }
+  ex(fold, ir::TyBoolean)
+}
+
 pub fn builtin_op(e: el::El, vars: el_vars::Vars, op: text, a: Ex, b: Ex) -> Ex {
   // `@FR-Op-Back`: on a program's own type `a ⊕ b` is one call of the left operand's
   // `operator` method, its type the method's (`arith_through_operator`).
@@ -1154,8 +1201,12 @@ pub fn builtin_op(e: el::El, vars: el_vars::Vars, op: text, a: Ex, b: Ex) -> Ex 
     // own test, a literal operand held in a `___veq_N` — not through `OpEqContent`: not
     // carried, refused by name.)
     if ad >= 0 && ad == struct_ref(e, el_types::base(b.tp)) && e.value_structs.contains(ad) && !e.first_pass {
-      el::refuse(e, "a comparison of two value structs (field by field)");
-      return ex(ir::NdNull, ir::TyBoolean);
+      vse = value_struct_eq(e, vars, op, ad, a, b);
+      if vse == null {
+        el::refuse(e, "a comparison of two value structs (field by field)");
+        return ex(ir::NdNull, ir::TyBoolean);
+      }
+      return vse!;
     }
     if ad >= 0 && ad == struct_ref(e, el_types::base(b.tp)) && !starts_with(el::def(e, ad).name, "__tuple<") && !has_operator_method(e, ad) {
       return ex(el_ir::cl(e, if op == "==" { "OpEqContent" } else { "OpNeContent" }, [a.code, b.code, ir::NdInt { n: el::def(e, ad).known_type }]), ir::TyBoolean);

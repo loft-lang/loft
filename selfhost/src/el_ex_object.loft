@@ -3116,7 +3116,9 @@ pub fn by_receiver_type(e: el::El, name: text, list: vector<ir::Node>, t: ir::Ty
       el::refuse(e, "a `len` of a nullable index");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
     }
-    return ex(el_ir::cl(e, "OpLengthIndex", list), wide);
+    // (Rust's call route leaves the op inside a span of the call's own: one level deeper than
+    // a plain call's read.)
+    return ex(ir::NdSpan { pos: el::pos_at(e, if e.at >= 0 { e.at } else { 0 }), inner: el_ir::cl(e, "OpLengthIndex", list) }, wide);
   }
   if name != "size" {
     return null;
