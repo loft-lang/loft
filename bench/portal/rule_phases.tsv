@@ -13,7 +13,7 @@ R-Apart/vector	c,native	9	0	0	0	26	36
 R-AppendTwin	c,native	3	0	0	0	33	35
 R-AppendTwin/loop-window	c	3	0	0	0	4	0
 R-AppendTwin/mint	c	3	0	0	0	5	0
-R-Base	c,native	61	0	0	0	1222	6897
+R-Base	c,native	61	0	0	0	1222	6894
 R-Base/counter	c	44	0	0	0	390	0
 R-Base/grid	c	2	0	0	0	102	0
 R-Base/guard	c	56	0	0	0	90	0
@@ -30,7 +30,7 @@ R-Callee	c,native	20	0	0	0	66	176
 R-CharWalk	c,native	61	0	0	0	34	658
 R-Compact	ir	1	0	2	0	0	0
 R-Compact/prepend	ir	1	0	1	0	0	0
-R-CompleteWrite	ir	61	0	2421	0	0	0
+R-CompleteWrite	ir	61	0	2460	0	0	0
 R-Const	ir	2	0	3	0	0	0
 R-Const/fn	parse	5	7	0	0	0	0
 R-CopyView	ir	4	0	8	0	0	0
@@ -72,8 +72,8 @@ R-GuardedChain	c,native	42	0	0	0	145	1199
 R-GuardedChain/operators	c,native	42	0	0	0	532	3617
 R-GuardedChain/versions	c	7	0	0	0	21	0
 R-HandOver/rotate	c,native	1	0	0	0	2	2
-R-Header	c,native	61	0	0	0	1243	8148
-R-Header/apart	c,native	24	0	0	0	259	286
+R-Header	c,native	61	0	0	0	1243	8145
+R-Header/apart	c,native	25	0	0	0	263	290
 R-Header/apart-param	c,native	15	0	0	0	83	47
 R-Header/function	native	24	0	0	0	0	139
 R-Header/grown	c	2	0	0	0	26	0
@@ -110,7 +110,7 @@ R-LoopRecord	ir	4	0	6	0	0	0
 R-LoopRecord/refill	ir	2	0	6	0	0	0
 R-LoopSlot	interp	61	0	0	4165	0	0
 R-MaskRange	parse	9	49	0	0	0	0
-R-Mint	c,native	61	0	0	0	352	1340
+R-Mint	c,native	61	0	0	0	352	1196
 R-MoveAppend	native	1	0	0	0	0	1
 R-MoveChild	parse	1	2	0	0	0	0
 R-MoveLast	ir	3	0	9	0	0	0
