@@ -3026,6 +3026,51 @@ pub fn enum_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
     }
     return ex(el_ir::v_if(el_ir::cl(e, "OpNot", [t!]), x.code, d.code), el_types::without_deps(lhs));
   }
+  // A FIELD or an ELEMENT (`b.s ?? …`, `v[i]?`): the slot is read once into a `__ncc_N` that
+  // views its root — the null sentinel where the slot's first word is zero, the record there
+  // otherwise — and the "ncc" block answers it or the default.
+  ux = el_ir::unspan(x.code);
+  root = place_root(e, ux);
+  slot = ir::NdNull;
+  off = ir::NdInt { n: 0 };
+  kt = ir::NdInt { n: if en >= 0 { el::def(e, en).known_type } else { 0 } };
+  match ux {
+    NdCall { def_nr: pd, args: pa } => {
+      pn = el::def(e, pd).name;
+      if pn == "OpGetField" && len(pa) == 3 {
+        slot = pa[0]!;
+        off = pa[1]!;
+        kt = pa[2]!;
+      } else if pn == "OpGetVector" && len(pa) == 3 {
+        slot = ux;
+      }
+    },
+    _ => {}
+  }
+  if root >= 0 && !(slot is NdNull) {
+    pt = el_types::with_deps(el_types::without_deps(lhs), [root]);
+    ph = el_vars::create_unique(vars, "_ncc", pt);
+    vars.vars[ph].skip_free = true;
+    el_vars::register_work_ref(vars, ph);
+    if e.first_pass {
+      return ex(ir::NdNull, pt);
+    }
+    el_vars::set_var_type(vars, ph, pt);
+    hv = ir::NdVar { n: ph };
+    // The subject's TYPE picks the read.  An optional one (`v[i]` at an index nothing proves, a
+    // `Sh?` field) is read through its slot's tag (`read_through_enum_slot`, `(L-Null-Which)`):
+    // the null sentinel where the first word is zero, the record otherwise.  A dense one
+    // (`v[1]`, a range loop's `v[i]`) is read through the nullable twin of its getter
+    // (`rewrite_outer_arith_to_nullable`); its absence is the test around `__ncc_N` alone.
+    plain = el_ir::cl(e, "OpGetField", [slot, off, kt]);
+    read = if x.tp is TyOptional {
+      el_ir::v_if(el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpGetInt4", [slot, off]), ir::NdInt { n: 0 }]), el_ir::cl(e, "OpNullRefSentinel", []), plain)
+    } else {
+      el_ex_base::nullable_arith(e, plain, true)
+    };
+    absent = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [hv]), ir::NdBoolean { b: true }, el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpGetInt4", [hv, ir::NdInt { n: 0 }]), ir::NdInt { n: 0 }]));
+    return ex(el_ir::v_block([el_ir::v_set(ph, read), el_ir::v_if(el_ir::cl(e, "OpNot", [absent]), hv, d.code)], pt, "ncc"), pt);
+  }
   if !match el_ir::unspan(x.code) { NdCall { def_nr } => !starts_with(el::def(e, def_nr).name, "Op"), _ => false } {
     el::refuse(e, "a struct-enum `??` on something other than a local or a loft call: {node_kind(e, x.code)}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
