@@ -889,7 +889,7 @@ impl Parser {
             // @C168: declared by variable number, which follows where a callee stands in the
             // file (its buffer is numbered on pass 2 when it is declared below).  Allowed: the
             // order of these hidden stores is nothing a program observes.  Guard:
-            // `tests/scripts/a-callee-declared-below-its-caller-changes-nothing-a-program-can-see.loft`.
+            // `loft-suite/rules/heap/H-Drop/a-callee-declared-below-its-caller-changes-nothing-a-program-can-see.loft`.
             for r in self.vars.work_references() {
                 if crate::env_once!(std::env::var("LOFT_TRACE_PREAMBLE").is_ok()) {
                     eprintln!(
@@ -11211,7 +11211,20 @@ use a separate collection or add after the loop"
                                 && gargs.len() == 2
                                 && self.ir_has_user_call(&gargs[0]) =>
                         {
-                            Some((*get_d, gargs[0].clone(), gargs[1].clone()))
+                            Some((*get_d, gargs[0].clone(), gargs[1].clone(), None))
+                        }
+                        // loft#2571 — a COLLECTION field's place is `OpGetField(rec, off, tp)`,
+                        // and an append of record items writes through it twice per item
+                        // (`OpNewRecord(<place>, …)`, `OpFinishRecord(<place>, …)`): left
+                        // unhoisted, `k[bump()].mpts += [Pt { … }, Pt { … }]` called `bump` four
+                        // times.  The same once-evaluated binding, the type operand kept
+                        // (`@FR-E-Asgn-Compound`: the place's addressing runs EXACTLY ONCE).
+                        Value::Call(get_d, gargs)
+                            if self.data.def(*get_d).name == "OpGetField"
+                                && gargs.len() == 3
+                                && self.ir_has_user_call(&gargs[0]) =>
+                        {
+                            Some((*get_d, gargs[0].clone(), gargs[1].clone(), Some(gargs[2].clone())))
                         }
                         _ => None,
                     }
@@ -11220,7 +11233,7 @@ use a separate collection or add after the loop"
                 };
                 let mut f2_setup: Option<Value> = None;
                 let mut f2_hoisted = false;
-                if let Some((get_d, accessor, offset)) = f2_place {
+                if let Some((get_d, accessor, offset, field_tp)) = f2_place {
                     // The hoist rewrites `to` to reference a fresh temp, which hides the
                     // ORIGINAL place's const / value-const base from `validate_write` (it walks
                     // the expression). Run the write-legality check on the original place NOW,
@@ -11267,7 +11280,9 @@ use a separate collection or add after the loop"
                     }
                     let elem_var = self.create_unique("_place", &elem_tp);
                     f2_setup = Some(v_set(elem_var, accessor));
-                    let rebuilt = Value::Call(get_d, vec![Value::Var(elem_var), offset]);
+                    let mut rebuilt_args = vec![Value::Var(elem_var), offset];
+                    rebuilt_args.extend(field_tp);
+                    let rebuilt = Value::Call(get_d, rebuilt_args);
                     to = rebuilt.clone();
                     *code = rebuilt;
                 }

@@ -451,4 +451,4 @@ position — that is a defect of this decision's first half, not of its second. 
 have to be order independent") — [record](DESIGN_DECISIONS-history.md#c168--where-a-function-is-declared-changes-nothing-a-program-can-observe-its-internal-numbers-may-differ).
 **Holds at:** `@C168` — the frame-top declarations in `Parser::parse_code`
 (`src/parser/expressions.rs`); `formal/heap.md` `(H-Drop)`; guard
-`tests/scripts/a-callee-declared-below-its-caller-changes-nothing-a-program-can-see.loft`.
+`loft-suite/rules/heap/H-Drop/a-callee-declared-below-its-caller-changes-nothing-a-program-can-see.loft`.
