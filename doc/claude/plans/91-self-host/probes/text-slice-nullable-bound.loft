@@ -1,0 +1,69 @@
+// A challenge for a TEXT SLICE WITH A NULLABLE BOUND (@PLN91): one function per case, one axis
+// each; every function answers a hand-computed value.  `maybe(x)` is x when x > 0, else null.
+//   which bound is nullable:      end_null, start_null, both_held, both_one_null
+//   an open side:                 open_end_null, open_start_null, open_end_held
+//   inclusive:                    incl_end_null, incl_end_held, incl_start_held
+//   the slice's consumer:         eq_null (== null), coalesce (??), length (len), bind_then_read,
+//                                 append (+=), format ("{…}")
+//   the bound expression:         find_plus (integer? arithmetic from find), elem_bound (an element)
+//   the text is not a local:      call_text (a call, read FIRST: E-Left), field_text (a field)
+//   a scalar call ahead of a nullable argument (F-Args, the shared null_transparent):
+//                                 min_ahead (a call ahead: held in `_ntp`), min_var_ahead (a local: stays)
+//   repetition:                   loop_mixed (null and present passes alternate)
+struct Ctr { log: text = "" }
+struct Doc { body: text }
+
+fn maybe(x: integer) -> integer? { if x > 0 { x } else { null } }
+fn word(c: Ctr) -> text { c.log += "w"; "abcdef" }
+fn at(c: Ctr, n: integer) -> integer? { c.log += "I"; maybe(n) }
+
+fn end_null(t: text) -> boolean { t[1..maybe(0)] == null }
+fn start_null(t: text) -> boolean { t[maybe(0)..2] == null }
+fn both_held(t: text) -> text { t[maybe(1)..maybe(3)] ?? "?" }
+fn both_one_null(t: text) -> text { t[maybe(1)..maybe(0)] ?? "?" }
+fn open_end_null(t: text) -> boolean { t[maybe(0)..] == null }
+fn open_start_null(t: text) -> boolean { t[..maybe(0)] == null }
+fn open_end_held(t: text) -> text { t[maybe(3)..] ?? "?" }
+fn incl_end_null(t: text) -> boolean { t[1..=maybe(0)] == null }
+fn incl_end_held(t: text) -> text { t[1..=maybe(2)] ?? "?" }
+fn incl_start_held(t: text) -> text { t[maybe(2)..=3] ?? "?" }
+fn eq_null(t: text) -> boolean { t[2..maybe(4)] == null }
+fn coalesce(t: text) -> text { t[2..maybe(0)] ?? "none" }
+fn length(t: text) -> integer { len(t[1..maybe(4)]) }
+fn bind_then_read(t: text) -> text { s = t[1..maybe(3)]; "{s}/{s}" }
+fn append(t: text) -> text { r = "<"; r += t[2..maybe(5)]; r += ">"; r }
+fn format(t: text) -> text { "[{t[maybe(4)..]}]" }
+fn find_plus(line: text) -> text { at = find(line, "="); rest = line[at + 1..]; "{rest}:{size(rest)}" }
+fn elem_bound(t: text) -> text { xs: vector<integer> = [1, 4]; t[xs[0]..xs[1]] ?? "?" }
+fn call_text() -> text { c = Ctr {}; s = word(c)[at(c, 2)..] ?? "?"; "{s} {c.log}" }
+fn field_text() -> text { d = Doc { body: "loft-lang" }; d.body[maybe(5)..] ?? "?" }
+fn a1(c: Ctr) -> integer { c.log += "a"; 4 }
+fn min_ahead() -> text { c = Ctr {}; m = min(a1(c), at(c, 2)) ?? 0; d = Ctr {}; n = min(a1(d), at(d, 0)) ?? 9; "{m}{n} {c.log} {d.log}" }
+fn min_var_ahead() -> integer { k = 7; min(k, maybe(3)) ?? 0 }
+fn loop_mixed(t: text) -> text { o = ""; for i in 0..4 { o += t[maybe(i)..] ?? "-"; o += ","; } o }
+
+fn main() {
+  assert(end_null("hello"), "end_null");
+  assert(start_null("hello"), "start_null");
+  assert(both_held("hello") == "el", "both_held {both_held(\"hello\")}");
+  assert(both_one_null("hello") == "?", "both_one_null");
+  assert(open_end_null("hello"), "open_end_null");
+  assert(open_start_null("hello"), "open_start_null");
+  assert(open_end_held("hello") == "lo", "open_end_held");
+  assert(incl_end_null("hello"), "incl_end_null");
+  assert(incl_end_held("hello") == "el", "incl_end_held");
+  assert(incl_start_held("hello") == "ll", "incl_start_held");
+  assert(!eq_null("hello"), "eq_null");
+  assert(coalesce("hello") == "none", "coalesce");
+  assert(length("hello") == 3, "length {length(\"hello\")}");
+  assert(bind_then_read("hello") == "el/el", "bind_then_read");
+  assert(append("hello") == "<llo>", "append {append(\"hello\")}");
+  assert(format("hello") == "[o]", "format {format(\"hello\")}");
+  assert(find_plus("key=val") == "val:3", "find_plus {find_plus(\"key=val\")}");
+  assert(elem_bound("hello") == "ell", "elem_bound");
+  assert(call_text() == "cdef wI", "call_text {call_text()}");
+  assert(field_text() == "lang", "field_text {field_text()}");
+  assert(min_ahead() == "29 aI aI", "min_ahead {min_ahead()}");
+  assert(min_var_ahead() == 3, "min_var_ahead");
+  assert(loop_mixed("abc") == "-,bc,c,,", "loop_mixed {loop_mixed(\"abc\")}");
+}
