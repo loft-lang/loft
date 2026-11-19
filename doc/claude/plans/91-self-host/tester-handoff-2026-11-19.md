@@ -85,6 +85,13 @@ operand":
   serialises its seven family gates (4e19e802d): run unserialised, they OOM-killed this 14 GiB
   laptop. Run it alone, or under `systemd-run --user --scope -p MemoryMax=8G`.
 
+## Quoting a commit to a peer
+
+`kr-tools/land.sh` CHERRY-PICKS onto the remote tip, so the landed commit has a new sha: the one
+it prints (`LANDED <sha>`) is the one on origin, and the local commit's sha exists only in the
+landing worktree. Quote the LANDED sha in every message and issue comment. On 2026-11-19 two
+messages to loft3 named the local shas (288939d44, 120d959a9), which origin does not have.
+
 ## Peers
 
 - The PORTER: `SendMessage` to `bridge:session_015fP1u2RTCyGqEvFJ5edvkL` (shown as
