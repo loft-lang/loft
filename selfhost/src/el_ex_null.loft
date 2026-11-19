@@ -2014,6 +2014,9 @@ pub fn join_tuple_arms(e: el::El, a: ir::TypeT, b: ir::TypeT) -> ir::TypeT? {
       out += [if (x is TyOptional) { x } else { ir::TyOptional { inner: x } }];
     } else if el_types::is_equal(e, x, y) {
       out += [x];
+    } else if el_types::is_equal(e, el_types::without_deps(el_types::base(x)), el_types::without_deps(el_types::base(y))) && (x is TyOptional || y is TyOptional) {
+      // Through the `?` (`@FR-N-Shape`): the join stays optional (`@FR-N-Join`).
+      out += [if (x is TyOptional) { x } else { y }];
     } else if el_types::base(x) is TyTuple && el_types::base(y) is TyTuple {
       j = join_tuple_arms(e, x, y);
       if j == null {
