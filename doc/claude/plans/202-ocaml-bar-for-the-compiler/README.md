@@ -2,16 +2,27 @@
 
 ## Status
 
-**Open — filed 2026-10-24 (owner, @PLN202), measured, no implementation.**  Child of @PLN91 strand
-1a (the compiler in loft).  Every row below was measured on main @ b36d0449f and re-measured
-2026-10-25 on `157-native-4x` @ f32f908a2, on BOTH backends from a scratch directory; the probes
-are in the plan directory's `probes/` (one per row, named by bar entry) and become cells under P0.
-The re-measurement closed two steps without code — **P1** (`>>` already works on main) and **P6**
-(not needed by 1a's AST rule) — and added two, **P8** (two diagnostics that name a cure which does
-not compile) and **P9** (the documentation and the skills).  **P0, P2, P2b, P3, P4, P5a, P5b, P7, P8 and P9 are done**
-(2026-10-25, with loft#2166, #2168, #2170, #2184 and #2185 fixed on the way and loft#2171,
-loft#2179 and loft#2186 found); P5b's one clause left refused is the text-parameter move (below).
-One defect fell out of the measurement and is filed: loft#2163 (open).
+**DONE — closed 2026-11-19.**  Every step below shipped or was closed by measurement, and the
+bar's rows a compiler front end uses pass on both backends.  The reference content lives in its
+home docs: [OCAML_BAR.md](../../bars/OCAML_BAR.md) § Evaluation (the rows), LOFT_DATA.md § Structs
+(`..base`), LOFT_CONTROL.md § Match (the complete slice match), DIAGNOSTICS.md
+(`match-scalar-hole`, `tail-call-not-jumped`), formal/matching.md `(M-Total)`, formal/binding.md
+`(B-Copy)` and formal/rewrites.md `(R-TailSelf)`.  What follows is the closure record.
+
+- **Re-measured at the close** (`tuxedo-pr2438-post` @ 7f86538af, interpreter and `--native-c`):
+  all 25 probes in `probes/` answer the same on both backends and as the table below says.  A
+  tail recursion whose frame owns stores (a text local, a vector parameter, a record parameter
+  with a text result) runs 100 000 deep on both.
+- **Every defect the plan names is closed:** loft#2163, #2166, #2168, #2170, #2171, #2179, #2184,
+  #2185 and #2186.  With loft#2163 fixed, `&v[i]` into a vector that grows afterwards reads the
+  right record on both backends (`probes/h6c_ref_into_growing.loft`), so the "never `&v[i]`" half
+  of the AST rule below is no longer forced; 1a's arena indices remain its own choice.
+- **P5b after its close:** the owner's ruling changed from a refusal to a warning.  A tail
+  self-call the frame cannot reuse stays a call and `warning[tail-call-not-jumped]` names it
+  (@C155, DESIGN_DECISIONS_FAILURE.md).  The one shape still a call that could jump, a swap of two
+  text parameters, is stated in formal/rewrites.md `(R-TailSelf)` and warned like the others; no
+  step of this plan is waiting on it.
+- Child of @PLN91 strand 1a (the compiler in loft), which consumes the rows.
 
 ## Goal
 

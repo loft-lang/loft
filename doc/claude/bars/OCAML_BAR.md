@@ -63,7 +63,7 @@ it.
 | H3 abstract type | **PASS** | `p.x` on a `geo::Pt` from outside `geo` → *"field `x` of `Pt` is not `pub` in `geo`"*, naming the cure (`pub x`); a field is private to its file (@C140).  A non-`pub` `type` alias named by a `pub` fn is OCaml's `type t` (`tests/pub_visibility.rs`). |
 | H4 phantom type parameter | **PASS** | `Door<Closed>` into a `Door<Open>` parameter → *"expected Door<Open>, got Door<Closed>"* |
 | H5 structural equality | **PASS** | `==` on structs and on enum variants with fields compares by value |
-| H6 recursion as the loop | pass | a self-call in tail position of a scalar function is a jump to its entry (`(R-TailSelf)`): `count(100000, 0)` answers 100000 on both backends; a frame that owns a store still takes a call (loft-lang/plans#202 P5b) |
+| H6 recursion as the loop | pass | a self-call in tail position of a scalar function is a jump to its entry (`(R-TailSelf)`): `count(100000, 0)` answers 100000 on both backends; a frame that owns a store jumps too (a text or store-held local, a parameter passed through, a result held in a store); a shape the frame cannot reuse stays a call and `warning[tail-call-not-jumped]` names it (@C155) |
 | H7 match guard | **PASS** | `Circle { r } if r > 10 => …` |
 | H8 option chaining | **PASS** | `h = half(n)?;` returns null from the function when `half` does — OCaml's `let*` over `option` |
 | H9 mutually recursive types | **PASS** | `Dir` holds `vector<Entry>`, `Entry` holds `Dir?`, either declared first.  The first spelling named the type `File` and hit [loft#1882](https://github.com/loft-lang/loft/issues/1882) <!-- doc-lint: ok --> |
