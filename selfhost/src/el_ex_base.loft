@@ -1120,7 +1120,9 @@ pub fn field_get(e: el::El, d: integer, a: integer, r: ir::Node) -> ir::Node? {
       // The schema is laid out after the first pass, whose code is not kept.
       // A vector field of a linked record is its own `array<T>` (laid out by id).
       ak = if e.first_pass || def.known_type == el_schema::NO_TYPE { -1 } else { el_schema::array_field_type(e, def.known_type, def.attributes[a]!.name) };
-      vk = if e.first_pass { 0 } else if ak >= 0 { ak } else { vector_store(e, inner, el_types::elem_name(e, inner)) };
+      i4 = match inner { TyInteger { spec: isp } => el_types::int4(isp), _ => false };
+      fc4 = if i4 && !e.first_pass { el_schema::field_content(e, def.known_type, def.attributes[a]!.name) } else { -1 };
+      vk = if e.first_pass { 0 } else if ak >= 0 { ak } else if fc4 >= 0 { fc4 } else { vector_store(e, inner, el_types::elem_name(e, inner)) };
       if vk < 0 {
         el::refuse(e, "a field read of a vector the library has no rows for");
         return null;

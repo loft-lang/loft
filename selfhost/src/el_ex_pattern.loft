@@ -1720,6 +1720,10 @@ pub fn vector_of(e: el::El, t: ir::TypeT) {
     TyCharacter => el::def(e, el::source_nr(e, 0, "character")).known_type,
     TyText { dep: _ } => el::def(e, el::source_nr(e, 0, "text")).known_type,
     TyReference { n } => el::def(e, n).known_type,
+    // A narrow integer (`i32`, `u8`) registers its content row and vector row here, on the first
+    // pass (`Data::vector_element_type`'s `narrow_vector_content`); a plain integer's are the
+    // library's already.
+    TyInteger { spec } => if el_types::narrow_width(spec) > 0 || el_types::int4(spec) || el_types::uint4(spec) { el_schema::content_type(e, t) } else { -1 },
     // A vector element's content is the inner vector's own store type.
     TyVector { inner } => if el_types::elem_name(e, inner) == "" { -1 } else { vector_store(e, inner, el_types::elem_name(e, inner)) },
     _ => -1
