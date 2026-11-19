@@ -756,6 +756,8 @@ impl Stores {
     ) {
         let free_source = raw_tp & 0x8000 != 0;
         let tp = raw_tp & 0x7FFF;
+        let keyed_source = parent_tp & crate::database::FILL_KEYED_SOURCE != 0;
+        let parent_tp = parent_tp & !crate::database::FILL_KEYED_SOURCE;
         if (tp as usize) >= self.types.len() || src.is_null() || src.store_nr == u16::MAX {
             return;
         }
@@ -778,6 +780,42 @@ impl Stores {
         // destination store, and when source and destination share one store a half-walked
         // source is exactly the read that answers with another record's bytes.
         let mut records: Vec<DbRef> = Vec::with_capacity(length as usize);
+        // A keyed source (`FILL_KEYED_SOURCE`) has the destination's own type, and the kinds
+        // whose storage is no sequential slot list are listed by the module that owns their
+        // layout, in the order a walk of them gives.  A `sorted` holds its elements in a
+        // vector and an `ordered` in a slot list, which the loop below reads as it stands.
+        let listed = if keyed_source {
+            let rec_refs = |recs: Vec<u32>| -> Vec<DbRef> {
+                recs.into_iter()
+                    .map(|rec| DbRef {
+                        store_nr: src.store_nr,
+                        rec,
+                        pos: RECORD_PAYLOAD,
+                    })
+                    .collect()
+            };
+            match self.types[tp as usize].parts {
+                Parts::Hash(_, _) => {
+                    Some(hash::records_sorted(src, &self.allocations, self.keys(tp)))
+                }
+                Parts::Index(..) => Some(rec_refs(btree::records(src, &self.allocations))),
+                Parts::Radix(_, _) => {
+                    Some(rec_refs(crate::radix_db::records(src, &self.allocations)))
+                }
+                Parts::Trie(_, _) => {
+                    Some(rec_refs(crate::trie_db::records(src, &self.allocations)))
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
+        let length = if let Some(recs) = listed {
+            records = recs;
+            0
+        } else {
+            length
+        };
         for i in 0..length {
             let slot = vector::get_vector(src, width, i64::from(i), &self.allocations);
             if slot.rec == 0 {

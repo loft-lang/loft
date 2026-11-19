@@ -963,8 +963,13 @@ jobs:
       - uses: ./.github/actions/checkout-suite
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
+      # The components too (`make components`): the `web` guard's natives are the `net`
+      # component, which a build binds only when `target/release/components/` holds it
+      # (src/components.rs) — without it the app carries a "not installed" stub.
       - name: Build the release loft binary
-        run: cargo build --release --bin loft
+        run: |
+          cargo build --release --bin loft --bin loft-components
+          target/release/loft-components
       # The emulator runs on KVM, which a hosted runner has but does not open to the user.
       - name: Enable KVM
         run: |

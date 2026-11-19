@@ -181,8 +181,9 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-Base)` | `R-Base` c, native · `/counter` c · `/grid` c · `/guard` c · `/length-local` c · `/wrap-select` c |
 | `(R-BoundAppend)` | `R-BoundAppend` parse |
 | `(R-BoundedNest)` | `R-BoundedNest` native · `/kernel` ir |
-| `(R-BufferReturn)` | counted; admitted on no bench program |
+| `(R-BufferReturn)` | `R-BufferReturn` c · `/bind` c |
 | `(R-ByteCopy)` | `R-ByteCopy` ir |
+| `(R-CTail)` | `R-CTail` c |
 | `(R-CallLine)` | not counted — executor: a frame's line derived from its call position |
 | `(R-Callee)` | `R-Callee` c, native |
 | `(R-CharWalk)` | `R-CharWalk` c, native |
@@ -212,7 +213,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-FaultFlag)` | `R-FaultFlag` native |
 | `(R-FieldAppend)` | `R-FieldAppend` c, native · `/bare` c, native |
 | `(R-FileHold)` | `R-FileHold` c, native |
-| `(R-Fill)` | `R-Fill` c, native · `/guarded` c, native |
+| `(R-Fill)` | `R-Fill` c, native · `/guarded` c |
 | `(R-FirstClaim)` | `R-FirstClaim` interp |
 | `(R-FlatCopy)` | `R-FlatCopy` c, native |
 | `(R-FnRefBuffer)` | `R-FnRefBuffer` c · `/frame` c |
@@ -271,7 +272,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-Range)` | `R-Range` c, native · `/index` c |
 | `(R-RangedCall)` | `R-RangedCall` c, native · `/guard` c |
 | `(R-Rebind)` | `R-Rebind` ir |
-| `(R-RebindBuffer)` | `R-RebindBuffer` native |
+| `(R-RebindBuffer)` | counted; admitted on no bench program |
 | `(R-RecPtr)` | `R-RecPtr` c, native · `/held` c · `/index` native · `/nested` native · `/param` c · `/text` c |
 | `(R-RefParam)` | `R-RefParam` c |
 | `(R-RefillBuffer)` | `R-RefillBuffer` native |

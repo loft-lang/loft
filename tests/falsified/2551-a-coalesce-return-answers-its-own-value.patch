@@ -1,8 +1,8 @@
-diff --git b/src/parser/operators.rs a/src/parser/operators.rs
-index 9f3201384..d66750fb4 100644
---- b/src/parser/operators.rs
-+++ a/src/parser/operators.rs
-@@ -4230,28 +4230,42 @@ impl Parser {
+diff --git a/src/parser/operators.rs b/src/parser/operators.rs
+index a5efa0944..81a93785d 100644
+--- a/src/parser/operators.rs
++++ b/src/parser/operators.rs
+@@ -4235,40 +4235,42 @@ impl Parser {
  
      /// `lhs ?? return ret_expr` — emit the block that returns early when `lhs`
      /// is null and otherwise evaluates to `lhs`.
@@ -21,19 +21,17 @@ index 9f3201384..d66750fb4 100644
 +        // declared return type.  Empty `return` in a non-void function
 +        // produces the typed null sentinel.
 +        let mut ret_val = Value::Null;
-+        let r_type = self.data.def(self.context).returned().clone();
-         if self.control_value_follows() {
--            self.parse_return(&mut ret_stmt);
--        } else {
--            let r_type = self.data.def(self.context).returned().clone();
--            let ret_val = if r_type != Type::Void && !self.first_pass {
--                self.null_value(&r_type)
--            } else {
--                Value::Null
--            };
--            ret_stmt = Value::Return(Box::new(ret_val));
-+            let ret_pos = *self.lexer.peek_pos();
-+            let t = self.expression(&mut ret_val);
+         let r_type = self.data.def(self.context).returned().clone();
+-        if self.control_value_follows() && r_type == Type::Void {
+-            // In a function with no value, `x ?? return f()` runs the void call and leaves —
+-            // the one place a `return` is followed by an expression there, which published
+-            // libraries write (`dev = open(..) ?? return assert(false, "no device")`).  The
+-            // statement's parse refuses any expression after `return` in such a function.
++        if self.control_value_follows() {
+             let ret_pos = *self.lexer.peek_pos();
+-            let mut ret_val = Value::Null;
+             let t = self.expression(&mut ret_val);
+-            if t != Type::Void && !self.first_pass {
 +            // @FR-N-Store: `lhs ?? return ret` returns `ret` into the caller's non-null return
 +            // slot — the store face asks; a bare `null` return takes the sentinel path below
 +            // and is asked at the site.
@@ -55,8 +53,18 @@ index 9f3201384..d66750fb4 100644
 +                )
 +                && !self.first_pass
 +            {
-+                self.validate_convert("return", &t, &r_type, &ret_pos);
-+            }
+                 self.validate_convert("return", &t, &r_type, &ret_pos);
+             }
+-            ret_stmt = Value::Return(Box::new(ret_val));
+-        } else if self.control_value_follows() {
+-            self.parse_return(&mut ret_stmt);
+-        } else {
+-            let ret_val = if r_type != Type::Void && !self.first_pass {
+-                self.null_value(&r_type)
+-            } else {
+-                Value::Null
+-            };
+-            ret_stmt = Value::Return(Box::new(ret_val));
 +        } else if r_type != Type::Void && !self.first_pass {
 +            ret_val = self.null_value(&r_type);
          }

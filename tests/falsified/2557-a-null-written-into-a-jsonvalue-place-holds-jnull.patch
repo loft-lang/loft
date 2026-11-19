@@ -1,7 +1,7 @@
-diff --git b/src/parser/collections.rs a/src/parser/collections.rs
-index 02470adba..995137a03 100644
---- b/src/parser/collections.rs
-+++ a/src/parser/collections.rs
+diff --git a/src/parser/collections.rs b/src/parser/collections.rs
+index ac1e78b16..995137a03 100644
+--- a/src/parser/collections.rs
++++ b/src/parser/collections.rs
 @@ -1803,13 +1803,10 @@ impl Parser {
          // field stayed present and `b.s = null` was silently a no-op.
          // `base()`, because a nullable field arrives as `Optional(Enum(…))` — the same
@@ -12,14 +12,14 @@ index 02470adba..995137a03 100644
              && self.is_null_source(val)
              && let Type::Enum(syn, true, _) = f_type.base()
              && !self.data.def(*syn).name.starts_with("__nullable<")
--            && !(self.data.def(*syn).name == "JsonValue" && !matches!(f_type, Type::Optional(_)))
+-            && (self.data.def(*syn).name != "JsonValue" || f_type.is_optional())
              && let Some((base, fld)) = self.inline_slot_word(to)
          {
              return self.cl("OpSetInt4", &[base, fld, Value::Int(0)]);
-diff --git b/src/parser/convert.rs a/src/parser/convert.rs
-index 8958c7c72..660abdae5 100644
---- b/src/parser/convert.rs
-+++ a/src/parser/convert.rs
+diff --git a/src/parser/convert.rs b/src/parser/convert.rs
+index 0f97eaa7c..660abdae5 100644
+--- a/src/parser/convert.rs
++++ b/src/parser/convert.rs
 @@ -181,21 +181,6 @@ impl Parser {
          should: &Type,
          ctx: StoreCtx,
@@ -30,8 +30,8 @@ index 8958c7c72..660abdae5 100644
 -        // omitted field's default is, `objects.rs`).  Stored as the plain null, it read back as no
 -        // variant at all: `kind()` answered "JUnknown" and a `match` on `JNull` fell through.  A
 -        // `JsonValue?` place keeps its null (D-Opt).
--        if matches!(is_type, Type::Null)
--            && !matches!(should, Type::Optional(_))
+-        if *is_type == Type::Null
+-            && !should.is_optional()
 -            && let Type::Enum(e, true, _) = should.base()
 -            && self.data.def(*e).name == "JsonValue"
 -        {
@@ -42,11 +42,11 @@ index 8958c7c72..660abdae5 100644
          self.store_ctx.push(ctx);
          let accepted = self.convert(code, is_type, should);
          self.store_ctx.pop();
-diff --git b/src/parser/objects.rs a/src/parser/objects.rs
-index 04b68bf4e..5cf0eb7a4 100644
---- b/src/parser/objects.rs
-+++ a/src/parser/objects.rs
-@@ -8581,13 +8581,10 @@ impl Parser {
+diff --git a/src/parser/objects.rs b/src/parser/objects.rs
+index a2279f734..796d533da 100644
+--- a/src/parser/objects.rs
++++ b/src/parser/objects.rs
+@@ -8588,13 +8588,10 @@ impl Parser {
          // is spelled in four bytes.  Nothing observed it, because the null TEST for the
          // type was refused — so the write had never been right and could not be seen.
          // Write the pointer directly, the same shape and the same reason as the arm above.
@@ -56,7 +56,7 @@ index 04b68bf4e..5cf0eb7a4 100644
              && self.is_null_source(value)
              && let Type::Enum(syn, true, _) = &td_base
              && !self.data.def(*syn).name.starts_with("__nullable<")
--            && !(self.data.def(*syn).name == "JsonValue" && !matches!(td, Type::Optional(_)))
+-            && (self.data.def(*syn).name != "JsonValue" || td.is_optional())
          {
              let item_pos = i32::from(
                  self.database

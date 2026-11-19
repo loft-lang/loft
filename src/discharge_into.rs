@@ -94,9 +94,9 @@ fn frees(ops: &Ops, node_v: &Value, tmp: u16) -> bool {
         && matches!(a[0].unspan(), Value::Var(x) if *x == tmp))
 }
 
-fn rewrite_in(ops: &Ops, code: &Value, node: &mut Value) -> usize {
+fn rewrite_in(ops: &Ops, name: &str, code: &Value, node: &mut Value) -> usize {
     let mut n = 0;
-    node.for_each_child_mut(&mut |c| n += rewrite_in(ops, code, c));
+    node.for_each_child_mut(&mut |c| n += rewrite_in(ops, name, code, c));
     let block = match node {
         Value::Block(blk) | Value::Loop(blk) => blk,
         _ => return n,
@@ -115,6 +115,12 @@ fn rewrite_in(ops: &Ops, code: &Value, node: &mut Value) -> usize {
             .filter(|&k| frees(ops, &block.operators[k], tmp));
         // Its assignment, the test, the moving arm and the free: nothing else may name it.
         let Some(free_at) = free_at.filter(|_| uses(code, tmp) == 4) else {
+            crate::rewrite_census::declined_in(
+                "R-DischargeInto",
+                name,
+                &at.to_string(),
+                "the temporary is used beyond its assignment, test, move and free",
+            );
             at += 1;
             continue;
         };
@@ -168,7 +174,7 @@ pub fn rewrite_program(data: &mut Data) -> usize {
         let name = def.name().to_string();
         let snapshot = def.code().clone();
         let mut code = std::mem::replace(&mut data.definitions[d as usize].code, Value::Null);
-        let n = rewrite_in(&ops, &snapshot, &mut code);
+        let n = rewrite_in(&ops, &name, &snapshot, &mut code);
         data.definitions[d as usize].code = code;
         if n > 0 {
             if trace() {
@@ -180,6 +186,8 @@ pub fn rewrite_program(data: &mut Data) -> usize {
             total += n;
         }
     }
+    // @decline-owed: a discharge whose local is read by the read or the default
+    //   (`discharge_into`); a temporary used beyond its four mentions reports
     crate::rewrite_census::fired("R-DischargeInto", total);
     total
 }

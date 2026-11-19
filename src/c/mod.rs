@@ -2729,6 +2729,9 @@ fn unit_defines(
         out.push_str("#define LOFT_NO_LOCKS 1\n");
         // The unit is the site: credited to the C writer, no function.
         let _census_unit = crate::rewrite_census::InBody::enter("c", "");
+        // @no-decline: match only: the pattern is a unit that reaches no lock source (`#lock =
+        //   …`, a mapped file, a constant store); a unit that reaches one is not the pattern,
+        //   and no test follows the match
         crate::rewrite_census::fired("R-NoLocks", 1);
     }
     // `@FR-R-NoThreads`: the runtime keeps its store table, frames and pools thread-local
@@ -2750,6 +2753,9 @@ fn unit_defines(
     {
         out.push_str("#define LOFT_NO_THREADS 1\n");
         let _census_unit = crate::rewrite_census::InBody::enter("c", "");
+        // @no-decline: match only: the pattern is a unit that runs no `par` loop on threads and
+        //   reaches no engine kernel; a unit that does is not the pattern, and no test follows
+        //   the match
         crate::rewrite_census::fired("R-NoThreads", 1);
     }
     // The JSON reader (`loft_json.h`) is compiled in for a unit that reads JSON: the JsonValue
@@ -3298,6 +3304,9 @@ fn resolve_hot_helpers(cx: &Cx, protos: &str, bodies: &str) -> (String, String) 
             .iter()
             .filter(|d| hot.contains(d))
             .count();
+        // @no-decline: match only: the pattern is a function within the size bound (twelve
+        //   statements, or a twin's or a hinted helper's own bound); a longer function is not
+        //   the pattern, and no test follows the match
         crate::rewrite_census::fired("R-Inline/helper", inlined);
     }
     let resolve = |text: &str| -> String {
@@ -3581,6 +3590,11 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
             .write()
         {
             Ok(b) => {
+                // @decline-owed: a producer whose transient twin cannot be written; and WHICH
+                //   use of the value no transient arm answers — a field set or append that
+                //   would store it, a keyed insert, an escaping return, a computed offset, a
+                //   choice between two transient values: the writer's errors are built text,
+                //   counted under one test.  The roots' tests report
                 crate::rewrite_census::fired("R-Transient", 1);
                 Some(b)
             }

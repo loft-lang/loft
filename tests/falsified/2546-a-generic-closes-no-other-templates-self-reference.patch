@@ -1,8 +1,8 @@
-diff --git b/src/data.rs a/src/data.rs
-index 5dc82e343..1cda9bbe0 100644
---- b/src/data.rs
-+++ a/src/data.rs
-@@ -11854,95 +11854,35 @@ impl Data {
+diff --git a/src/data.rs b/src/data.rs
+index 77c80a361..3b1895fb0 100644
+--- a/src/data.rs
++++ b/src/data.rs
+@@ -11871,95 +11871,35 @@ impl Data {
          })
      }
  
@@ -120,7 +120,7 @@ index 5dc82e343..1cda9bbe0 100644
      }
  
      /// The instance an OPEN instance `open` closes to at the arguments `args`: its template's
-@@ -12055,15 +11995,13 @@ impl Data {
+@@ -12072,16 +12012,13 @@ impl Data {
          template: u32,
      ) -> Vec<(u32, Type)> {
          let mut pairs: Vec<(u32, Type)> = Vec::new();
@@ -137,7 +137,8 @@ index 5dc82e343..1cda9bbe0 100644
 +        // H5 refuses).  Only the open tuples this template's own types name are closed.
 +        let own_tuples = self.open_tuples_named_by(template);
          for d in 0..self.definitions() {
--            if (!own.contains(&d) && (self.is_tuple_def(d) || self.is_foreign_self_reference(d, template)))
+-            if (!own.contains(&d)
+-                && (self.is_tuple_def(d) || self.is_foreign_self_reference(d, template)))
 +            if (self.is_tuple_def(d) && !own_tuples.contains(&d))
                  || !self.is_open_instance(d)
                  || !bindings.iter().any(|(h, _)| {

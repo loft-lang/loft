@@ -283,7 +283,12 @@ fn admit(
 ) -> Option<Plan> {
     let (wit, dst, tp, ft, src) = rebind_shape(stmts, at, ops)?;
     let vars = data.def(d_nr).variables();
-    let trace = |why: &str| {
+    let trace = |why: &'static str| {
+        if crate::rewrite_census::declines_wanted() {
+            let site = format!("{}:{}", data.def(d_nr).name(), vars.name(dst));
+            let why = why.strip_prefix("declined — ").unwrap_or(why);
+            crate::rewrite_census::declined("R-MoveLast", &site, why);
+        }
         if crate::keys::trace_place() {
             eprintln!(
                 "[take-local] fn={} {} = {}: {why}",

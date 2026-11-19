@@ -8,6 +8,10 @@
     scripts/decline_census.py --reasons 8  # more reasons per rule (default 4)
     scripts/decline_census.py --programs   # also the per-program split
     scripts/decline_census.py --record     # ...and keep the run in bench/portal/decline_census.tsv
+    scripts/decline_census.py --functions <prog.loft> [name …]
+                                           # one program, by FUNCTION: what each rule rewrote
+                                           # there and what each test refused (all functions,
+                                           # or the named ones; a name matches as a substring)
     LOFT_BIN=<loft> scripts/decline_census.py
 
 Why
@@ -40,7 +44,6 @@ baseline and nothing fails on it.
 """
 
 import os
-import re
 import subprocess
 import sys
 import tempfile
@@ -51,7 +54,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 RECORD = ROOT / "bench" / "portal" / "decline_census.tsv"
 sys.path.insert(0, str(ROOT / "scripts"))
-from rewrite_census import programs, rust_writer_env, warm_dependencies  # noqa: E402
+import reason_census  # noqa: E402
+from rewrite_census import WRITERS, programs, rust_writer_env, warm_dependencies  # noqa: E402
 
 # The rules whose declines the compiler reports (`rewrite_census::declined` call sites).
 # A rule absent here with admissions present is shown as `not reported`.
@@ -63,44 +67,110 @@ REPORTED = {
     "R-Range": ("an integer operator emitted plain because its result provably fits", "complete"),
     "R-RecPtr": ("a held record address for a view", "complete"),
     "R-ValueRecord": ("a record type kept as a value", "partial"),
+    "R-Wrapper": ("a call of a wrapper answered by its inner call", "partial"),
+    "R-SliceArg/range": ("a slice handed as a range of its source", "partial"),
+    "R-SliceInto": ("a slice appended straight into its destination", "partial"),
+    "R-TailSelf": ("a self tail call run as a jump", "partial"),
+    "R-Tabulate": ("a branchy classifier of a byte answered from a table (C)", "partial"),
+    "R-ByteCopy": ("a byte loop run as one copy", "partial"),
+    "R-VecCopy": ("an element loop run as one copy", "partial"),
+    "R-TextRun": ("a run of bytes read as one text", "partial"),
+    "R-ForwardWalk": ("a forward walk counted once", "partial"),
+    "R-ForwardResult": ("a result delivered into the caller's buffer", "partial"),
+    "R-MoveLast": ("a local's last use moved, not copied", "partial"),
+    "R-CopyView": ("a record local bound by a copy of a view, kept as a view", "partial"),
+    "R-CopyView/walk": ("a walk of a copied record read through its source", "partial"),
+    "R-ExitVector": ("a local vector moved into the return buffer's literal", "partial"),
+    "R-ExitVector/record": ("a record local built in the return buffer", "partial"),
+    "R-HostStore": ("a result built in its host's store", "partial"),
+    "R-ReturnField": ("a returned field answered as its local's own store", "partial"),
+    "R-Rebind": ("`x = f(x, …)` handing the callee x's own record", "partial"),
+    "R-CtorLiteral": ("a constructor call replaced by its literal", "partial"),
+    "R-Place": ("a call's result built in the place it is stored to", "partial"),
+    "R-InRange": ("a record element read inside its range, never null", "partial"),
+    "R-LazySplit": ("a split walked piece by piece, no vector built", "partial"),
+    "R-TextBorrow": ("a walked text element borrowed, not copied", "partial"),
+    "R-WorkBuffer": ("a callee's vector local lent by its caller", "partial"),
+    "R-WorkBuffer/onward": ("a work buffer handed on to a further callee", "partial"),
+    "R-LoopRecord": ("a loop's record local kept across the passes", "partial"),
+    "R-ValueLocal": ("a small record local or parameter carried as scalars", "partial"),
+    "R-Reuse": ("a call's hidden record buffer pooled across calls", "partial"),
+    "R-AppendTwin": ("an appended call building straight into its destination", "partial"),
+    "R-ViewReturn": ("a returned view answered by address, no buffer minted", "partial"),
+    "R-Apart/records": ("a vector of records held apart from the store", "partial"),
+    "R-Apart": ("a record value held apart from the store", "partial"),
+    "R-Compact": ("a rebuild of a vector done in place", "partial"),
+    "R-Const": ("a call of a constant-literal function read as the constant", "partial"),
+    "R-LoopBuffer": ("a loop's literal buffer kept across the passes", "partial"),
+    "R-SelfReplace": ("a buffer replaced by a view of itself, dropped", "partial"),
+    "R-DischargeInto": ("a text read discharged straight into its local", "partial"),
+    "R-BoundAppend": ("a call's vector appended where it is made", "partial"),
+    "R-StreamWalk": ("a produced vector walked as it is appended", "partial"),
+    "R-Transient": ("a value built and dropped in one function, held off the store (C)", "partial"),
+    "R-DeferredCopy": ("a record copy put off until a write needs it (C)", "partial"),
+    "R-Peel": ("a short counted loop unrolled (C)", "partial"),
+    "R-KeyedEntry": ("a keyed insert written into its entry", "partial"),
+    "R-CompleteWrite": ("a record minted without its prefill", "partial"),
+    "R-RangedCall": ("a call taking its callee's ranged variant", "partial"),
+    "R-PureReuse": ("a pure call computed once for two uses", "partial"),
+    "R-LeafChain": ("a function whose whole call tree runs without a frame", "partial"),
+    "R-View": ("a vector view's header held for the rest of its block", "partial"),
+    "R-LitDiv": ("a division by a literal without its guards", "partial"),
+    "R-Counter": ("a loop counter proven never the null sentinel", "partial"),
+    "R-Counter/probe": ("an integer local proven non-null under the probe", "partial"),
+    "R-LiteralAppend": ("an appended literal built in its element", "partial"),
+    "R-Cold/loft": ("a text-building `if` arm outlined as a cold function (C)", "partial"),
+    "R-Apart/vector": ("a scalar vector held apart from the store", "partial"),
+    "R-Version": ("a leaf's fast twin called from a counted loop (C)", "partial"),
+    "R-DecodeView": ("a decoded field held as a span of its source bytes", "partial"),
+    "R-FaultFlag": ("a `for` statement run as a fast copy with one fault flag", "partial"),
 }
 
 
 def mask(why):
-    """One condition as one row: names in backticks and numbers become `_`."""
-    why = re.sub(r"`[^`]*`", "`_`", why)
-    return re.sub(r"\d+", "_", why)
+    """A label as written: the compiler passes a fixed clause label (`rewrite_census::declined`
+    takes `&'static str`), so there is no name or number of the program in it to mask."""
+    return why
 
 
 def census(loft, prog):
+    """One program's admissions and refusals over every writer (`rewrite_census.WRITERS`: the C
+    writer, and the rustc one while it exists).  A rule the parser or the scope pass decides
+    counts the same under each, and a writer's own rule counts under that writer alone, so the
+    larger count of the runs is the program's."""
     name, commit, cwd, argv = prog
-    with tempfile.TemporaryDirectory() as tmp:
-        adm, dec, out = (Path(tmp) / f for f in ("adm.tsv", "dec.tsv", "out.rs"))
-        proc = subprocess.run(
-            [loft, "--native-rust", "--native-emit", str(out), "--lean", *argv],
-            cwd=cwd, capture_output=True, text=True, timeout=300,
-            # `--native-emit` must write Rust whatever `LOFT_NATIVE_BACKEND` says (`make ci`
-            # exports it as `c`): the same environment as the rewrite census's runs.
-            env={**rust_writer_env(), "LOFT_NO_NATIVE_LIBS": "1",
-                 "LOFT_REWRITE_CENSUS": str(adm), "LOFT_DECLINE_CENSUS": str(dec)},
-        )
-        if proc.returncode != 0 or not adm.exists():
-            return name, None, None, proc.stderr.strip().splitlines()[-1:] or ["no output"]
-        admitted = {}
-        for line in adm.read_text(encoding="utf-8").splitlines():
-            rule, _, n = line.partition("\t")
-            admitted[rule] = int(n)
-        declined = defaultdict(int)
-        if dec.exists():
-            for line in dec.read_text(encoding="utf-8").splitlines():
+    admitted, declined, errors = defaultdict(int), defaultdict(int), []
+    for writer, (ext, flags) in WRITERS.items():
+        with tempfile.TemporaryDirectory() as tmp:
+            adm, dec, out = (Path(tmp) / f for f in ("adm.tsv", "dec.tsv", "out" + ext))
+            proc = subprocess.run(
+                [loft, *flags(out), *argv],
+                cwd=cwd, capture_output=True, text=True, timeout=300,
+                # Each writer is chosen by its flag, whatever `LOFT_NATIVE_BACKEND` says (`make
+                # ci` exports it as `c`): the same environment as the rewrite census's runs.
+                env={**rust_writer_env(), "LOFT_NO_NATIVE_LIBS": "1",
+                     "LOFT_REWRITE_CENSUS": str(adm), "LOFT_DECLINE_CENSUS": str(dec)},
+            )
+            if proc.returncode != 0 or not adm.exists():
+                errors.append(f"{writer}: " + (proc.stderr.strip().splitlines()[-1:] or ["no output"])[0])
+                continue
+            sites = {}
+            for line in adm.read_text(encoding="utf-8").splitlines():
+                rule, _, n = line.partition("\t")
+                sites[rule] = int(n)
+            for line in dec.read_text(encoding="utf-8").splitlines() if dec.exists() else []:
                 rule, why, n = line.split("\t")
                 if why == "admitted":
                     # The rule names its sites: one per loop or view, comparable with the
                     # declines, where the rewrite census counts every emitted copy.
-                    admitted[rule] = int(n)
+                    sites[rule] = int(n)
                 else:
-                    declined[(rule, mask(why))] += int(n)
-        return name, admitted, dict(declined), None
+                    declined[(rule, mask(why))] = max(declined[(rule, mask(why))], int(n))
+            for rule, n in sites.items():
+                admitted[rule] = max(admitted[rule], n)
+    if not admitted:
+        return name, None, None, errors or ["no output"]
+    return name, dict(admitted), dict(declined), None
 
 
 def family(rule):
@@ -139,6 +209,17 @@ def report(results, reasons, per_program):
                              f"({len(top) - reasons} more reasons)")
         else:
             lines.append(f"{rule:<28} {a:>8} {'':>8} {'':>6}  not reported")
+    quiet = silent_rules(admitted, declined)
+    for title, names in (("fire in NO program of the body", quiet[0]),
+                         ("report their refusals and refused NOTHING", quiet[1])):
+        lines.append("")
+        lines.append(f"{len(names)} rules {title}: " + (", ".join(names) or "none"))
+    labels = defaultdict(set)
+    for rule, why in by_rule_reason:
+        labels[rule].add(why)
+    lines.append("")
+    lines.append("labels in use per rule: "
+                 + ", ".join(f"{r} {len(labels[r])}" for r in sorted(labels)))
     if per_program:
         lines.append("")
         lines.append(f"{'program':<28} {'rule':<28} {'admitted':>8} {'declined':>8}")
@@ -152,6 +233,19 @@ def report(results, reasons, per_program):
     return "\n".join(lines), admitted, declined, by_rule_reason
 
 
+def silent_rules(admitted, declined):
+    """What the body of programs never showed: the rules the source can fire (a `fired` call,
+    `reason_census.scan`) that fired in no program, and the rules that report refusals (a
+    `declined` call) and refused nothing.  Either the body lacks the shape, or the rule is
+    dead; the census cannot tell which, and says so by naming them."""
+    counts, _, _, _ = reason_census.scan()
+    seen_fired = {x for r, n in admitted.items() if n for x in (r, family(r))}
+    seen_declined = {x for r, n in declined.items() if n for x in (r, family(r))}
+    never_fired = sorted(r for r, c in counts.items() if c["fired"] and r not in seen_fired)
+    never_refused = sorted(r for r, c in counts.items() if c["declined"] and r not in seen_declined)
+    return never_fired, never_refused
+
+
 def record(results, admitted, declined, by_rule_reason):
     head = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--short=9", "HEAD"],
                           capture_output=True, text=True).stdout.strip() or "?"
@@ -159,7 +253,8 @@ def record(results, admitted, declined, by_rule_reason):
         "# The decline census: per rewrite rule, the sites admitted and the sites refused by reason,",
         "# over the bench programs.  Written by `scripts/decline_census.py --record`; a report, not a baseline.",
         f"# commit={head} programs={len(results)}",
-        "# rule <TAB> reason (`admitted` for the admissions; names masked as `_`) <TAB> count",
+        "# rule <TAB> reason (`admitted` for the admissions) <TAB> count; a 0 row is a rule that fired",
+        "# in no program (`admitted`) or reports its refusals and refused nothing (`(no refusal)`)",
     ]
     for rule in sorted(set(admitted) | set(declined)):
         if admitted.get(rule):
@@ -167,7 +262,54 @@ def record(results, admitted, declined, by_rule_reason):
         for (r, why), n in sorted(by_rule_reason.items()):
             if r == rule:
                 lines.append(f"{rule}\t{why}\t{n}")
+    never_fired, never_refused = silent_rules(admitted, declined)
+    lines += [f"{rule}\tadmitted\t0" for rule in never_fired]
+    lines += [f"{rule}\t(no refusal)\t0" for rule in never_refused]
     RECORD.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def by_function(loft, prog, names):
+    """One program's rewrites and refusals by function: `LOFT_REWRITE_CENSUS_FN` beside
+    `LOFT_DECLINE_CENSUS_FN`, over both writers.  Counts, never a verdict: a function can
+    match a rule at one place and be refused at another (REWRITE_REASONS.md).  With no name,
+    the functions and rules that refused something; with names, everything of those."""
+    fired = defaultdict(int)
+    refused = defaultdict(lambda: defaultdict(int))
+    own_phase = {"rust": "native", "c": "c"}
+    for nth, (writer, (ext, flags)) in enumerate(WRITERS.items()):
+        with tempfile.TemporaryDirectory() as tmp:
+            adm, dec, out = (Path(tmp) / f for f in ("adm.tsv", "dec.tsv", "out" + ext))
+            proc = subprocess.run(
+                [loft, *flags(out), prog], capture_output=True, text=True, timeout=300,
+                env={**rust_writer_env(), "LOFT_NO_NATIVE_LIBS": "1",
+                     "LOFT_REWRITE_CENSUS_FN": str(adm), "LOFT_DECLINE_CENSUS_FN": str(dec)},
+            )
+            if not adm.exists():
+                print(f"decline_census: the {writer} writer gave no census: "
+                      f"{(proc.stderr.strip().splitlines() or ['no output'])[-1]}", file=sys.stderr)
+                continue
+            # The `parse` and `ir` phases run before any writer: counted from the first run.
+            for line in adm.read_text(encoding="utf-8").splitlines():
+                phase, function, rule, n = line.split("\t")
+                if nth == 0 or phase == own_phase.get(writer, writer):
+                    fired[(function, rule)] += int(n)
+            # A test both runs report is one refusal: the larger count of the two.
+            for line in dec.read_text(encoding="utf-8").splitlines() if dec.exists() else []:
+                function, rule, why, n = line.split("\t")
+                at = refused[(function, rule)]
+                at[why] = max(at[why], int(n))
+    last = None
+    for function, rule in sorted(set(fired) | set(refused)):
+        tests = refused.get((function, rule), {})
+        if (names and not any(n in function for n in names)) or (not names and not tests):
+            continue
+        if function != last:
+            print(f"\n{function or '(no function)'}")
+            last = function
+        print(f"  {rule:<26} rewrote {fired.get((function, rule), 0):>4}")
+        for why, n in sorted(tests.items(), key=lambda kv: (-kv[1], kv[0])):
+            print(f"  {'':<26} refused {n:>4}  {why}")
+    return 0
 
 
 def main() -> int:
@@ -175,6 +317,10 @@ def main() -> int:
     if "--help" in args or "-h" in args:
         print(__doc__.strip())
         return 0
+    if "--functions" in args:
+        at = args.index("--functions")
+        loft = os.environ.get("LOFT_BIN") or str(ROOT / "target" / "release" / "loft")
+        return by_function(loft, args[at + 1], args[at + 2:])
     only = None
     if "--only" in args:
         only = set(args[args.index("--only") + 1].split(","))

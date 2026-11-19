@@ -711,9 +711,11 @@ pub fn parallel_join(self: state::State) {
 // `Stores::fill_keyed_from_vector`: every record of the plain vector `src` filed by key into a
 // keyed collection of type `raw` (its top bit frees the source after).  With `field` 65535 the
 // collection is `parent` itself; otherwise it is field `field` of the `parent_tp` struct at
-// `parent`, and a field of a linked group files each record into every member.
-pub fn fill_keyed(self: state::State, parent: state::DbRef, src: state::DbRef, raw: integer, parent_tp: integer, field: integer) {
+// `parent`, and a field of a linked group files each record into every member.  The top bit of
+// `raw_parent_tp` says the source is a keyed collection of the same type, not a vector.
+pub fn fill_keyed(self: state::State, parent: state::DbRef, src: state::DbRef, raw: integer, raw_parent_tp: integer, field: integer) {
   tp = raw & 32767;
+  parent_tp = raw_parent_tp & 32767;
   self.load_table();
   elem = self.fact(state::F_CONTENT, tp);
   if elem == null {
@@ -742,7 +744,7 @@ pub fn fill_keyed(self: state::State, parent: state::DbRef, src: state::DbRef, r
       }
     }
   }
-  crt::fill_keyed(elem!, tp, parent.store_nr, parent.rec, place, src.store_nr, src.rec, src.pos, self.fact(state::F_KEYED_KIND, tp) ?? 0, self.types[elem!]?.linked ?? false, raw & 32768 != 0, held, nullable, parent.store_nr, parent.rec, parent.pos, members);
+  crt::fill_keyed(elem!, tp, parent.store_nr, parent.rec, place, src.store_nr, src.rec, src.pos, self.fact(state::F_KEYED_KIND, tp) ?? 0, self.types[elem!]?.linked ?? false, raw & 32768 != 0, held, nullable, parent.store_nr, parent.rec, parent.pos, raw_parent_tp & 32768 != 0, members);
 }
 
 // `State::string_from_const_store`: a view of the long text the constant store holds in record

@@ -3857,7 +3857,7 @@ impl Parser {
                                 self.context,
                             )
                             .err()
-                            .map(|(at, why)| (at.or(call.at), why))
+                            .map(|(at, _, why)| (at.or(call.at), why))
                         });
                 if let Some((at, why)) = refused {
                     let fn_name = def.name().trim_start_matches("n_").to_string();

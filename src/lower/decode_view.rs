@@ -510,7 +510,7 @@ struct Scan<'a> {
     frame: &'a HashSet<u16>,
     /// Region calls: callee, and which arguments are the frame.
     calls: Vec<(u32, Vec<bool>)>,
-    why: Option<String>,
+    why: Option<crate::rewrite_census::Refusal>,
     /// Span writes the region can make here.
     sites: usize,
 }
@@ -520,7 +520,7 @@ impl<'a> Scan<'a> {
         self.t.data
     }
 
-    fn decline(&mut self, why: impl Into<String>) {
+    fn decline(&mut self, why: impl Into<crate::rewrite_census::Refusal>) {
         if self.why.is_none() {
             self.why = Some(why.into());
         }
@@ -670,7 +670,10 @@ impl<'a> Scan<'a> {
                         .iter()
                         .any(|a| self.t.holds(self.def_nr, a) != Holds::No)
                 {
-                    self.decline(format!("{name} on a decoded value"));
+                    self.decline(crate::rewrite_census::Refusal::about(
+                        "an operator outside the allowed list on a decoded value",
+                        name,
+                    ));
                 }
                 for a in args {
                     self.walk(a);
@@ -729,9 +732,9 @@ impl<'a> Scan<'a> {
                 self.walk(hi);
                 return;
             }
-            self.decline(format!(
-                "{} handed a decoded value or the frame",
-                data.def(d).name()
+            self.decline(crate::rewrite_census::Refusal::about(
+                "a function with no loft body handed a decoded value or the frame",
+                data.def(d).name(),
             ));
             return;
         }
@@ -844,6 +847,7 @@ fn region_of(
         };
         scan.walk(&data.def(g).code);
         if let Some(why) = scan.why {
+            crate::rewrite_census::declined("R-DecodeView", data.def(g).name(), why.clause);
             return Err(format!("{}: {why}", data.def(g).name()));
         }
         r.sites += scan.sites;

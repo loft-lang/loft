@@ -211,6 +211,12 @@ fn admitted(data: &Data, d_nr: u32, code: &Value, ops: &Ops, mode: Mode) -> Vec<
                 plans.push(plan);
             }
             Err(why) => {
+                crate::rewrite_census::declined_in(
+                    "R-Place",
+                    data.def(d_nr).name(),
+                    function.name(*v),
+                    why,
+                );
                 if crate::keys::trace_place() {
                     eprintln!(
                         "[place{}] fn={} v={}: DECLINED — {why}",
@@ -1216,6 +1222,12 @@ fn find_loop_binds(
                             plans.push(plan);
                         }
                         Err(why) => {
+                            crate::rewrite_census::declined_in(
+                                "R-Place",
+                                data.def(d_nr).name(),
+                                function.name(*v),
+                                why,
+                            );
                             if crate::keys::trace_place() {
                                 eprintln!(
                                     "[place] fn={} v={}: DECLINED (loop) — {why}",

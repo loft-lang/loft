@@ -80,7 +80,7 @@ impl StoreTypeOf for Stores {
         | Type::Radix(d, ..)
         | Type::Trie(d, ..)
         | Type::Sorted(d, ..)
-        | Type::Index(d, ..)) = tp
+        | Type::Index(d, ..)) = tp.base()
         else {
             return u16::MAX;
         };

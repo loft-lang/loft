@@ -2177,7 +2177,7 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
     // names the local itself, which Rust's does not.
     t0 = el_types::unrewritten(xs[0].tp);
     bare_local = el_ir::unspan(xs[0].code) is NdVar;
-    in_t = if bare_local { if (el_types::base(t0) is TyVector) { t0 } else { el_types::without_deps(t0) } } else { match el_types::base(t0) { TyReference { n: _ } => el_types::without_deps(t0), TyEnum { is_ref } => if is_ref { el_types::without_deps(t0) } else { t0 }, _ => t0 } };
+    in_t = if bare_local { if (el_types::base(t0) is TyVector) { t0 } else { el_types::without_deps(t0) } } else { match el_types::base(t0) { TyReference { n: _ } => el_types::without_deps(t0), TyText { dep: _ } => el_types::without_deps(t0), TyEnum { is_ref } => if is_ref { el_types::without_deps(t0) } else { t0 }, _ => t0 } };
     // A first item that is a loft call answering a vector into a buffer: the elements are
     // typed as borrowing that buffer (`vector<vector<integer>["__ref_1"]>`).  Nothing observes
     // it — the elements are copies (judged by the tester) — and it is typed on the first pass

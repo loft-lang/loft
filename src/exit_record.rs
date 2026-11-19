@@ -141,6 +141,12 @@ pub fn rewrite(data: &mut Data, database: &Stores, d_nr: u32) {
                 });
             }
             Err(why) => {
+                crate::rewrite_census::declined_in(
+                    "R-ExitVector/record",
+                    def.name(),
+                    function.name(*local),
+                    why,
+                );
                 if crate::keys::trace_place() {
                     eprintln!(
                         "[exit-record] fn={} v={}: DECLINED — {why}",
