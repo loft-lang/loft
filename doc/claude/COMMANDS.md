@@ -132,7 +132,14 @@ make slot-matrix [ARGS="--filler all"]     # THE SLOT MATRIX (@PLN221): each ope
                                          #   of the seven tests of `tests/slot_matrix.rs`; `gate
                                          #   --update` after a fix, then read the diff).  `cell '<statement with
                                          #   <S>>' --type <type>` tries one shape at once and
-                                         #   prints the rows it would be
+                                         #   prints the rows it would be; `expr '<expression with
+                                         #   <C>>' --type <type>` tries one EXPRESSION in every
+                                         #   slot of its type and inside every wrapper.  A long
+                                         #   run goes to the background with `--bg FILE` before
+                                         #   the command: it ends FILE with `slot_matrix: done`,
+                                         #   which `scripts/wait_for.sh` waits for.  `explain
+                                         #   <cell>` lays one failing cell open: its program kept,
+                                         #   loft's diagnostics on, its IR diffed with its twin's
 make reason-census                       # WHICH REWRITES SAY WHY: per R- rule, the source sites
                                          #   that report why it refused a site and which site it
                                          #   admitted (a scan of `src/`, no build), and its state:
