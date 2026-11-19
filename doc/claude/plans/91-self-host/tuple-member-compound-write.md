@@ -64,6 +64,14 @@ append-to-a-vector block with the member as its destination; (e) an element's me
 when its index is free of calls, else bound once to a `__place_N` view typed
 `ref(__tuple<…>)["<vector>"]`.
 
+**Checked with the slot matrix** (`slot_matrix.py cell '<stmt>' --type int`, 35 integer
+fillers against their bind-first twins, interpreter and C): `tq.0 += <S>`, `tv[1].1 += <S>`
+and `ta.0 += [<S>]` hold for every filler. **One oracle defect not to mirror:** an element
+member whose INDEX calls a function value (`tv[fnv(…) % 2].1 += 5`) loses the write on
+loft30-gate (`s=6` where the twin leaves 11). That's @PLN221 found.md row 1, loft#2578, fixed
+on tuxedo-pr2574-next and on loft30-gate with the next join. Port the form for a plain call
+index (the `__place_N` view) and let a function-value index take the same route.
+
 ## The sites (try 431d5ddc5)
 
 ```
