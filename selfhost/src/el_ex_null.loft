@@ -1731,7 +1731,12 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
       }
     }
     if len(deps) > 0 {
-      return ex(el_ir::v_if(c.code, borrowing_arm(t.code, td), borrowing_arm(f.code, fd)), el_types::with_deps(t.tp, deps));
+      jtt = el_types::with_deps(t.tp, deps);
+      // (DN1 below, after the deps are merged: a null arm beside a text one makes it `text?`.)
+      if t.tp is TyText && el_ex_pattern::branch_yields_null(e, t.code) != el_ex_pattern::branch_yields_null(e, f.code) {
+        jtt = ir::TyOptional { inner: jtt };
+      }
+      return ex(el_ir::v_if(c.code, borrowing_arm(t.code, td), borrowing_arm(f.code, fd)), jtt);
     }
   }
   // A join of function values borrows what either arm's closure does (`merge_dependencies`); each
@@ -1827,7 +1832,8 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
   }
   // `@PLN25` DN1: an arm whose code ends in a null — the sibling's null behind a then arm that
   // never finishes, a null literal call — beside a non-null scalar arm makes the join `τ?`.
-  if !(t.tp is TyOptional) && el_convert::plain_scalar(t.tp) && el_ex_pattern::branch_yields_null(e, t.code) != el_ex_pattern::branch_yields_null(e, f.code) {
+  // A text is such a scalar (`is_non_null_scalar`).
+  if !(t.tp is TyOptional) && (el_convert::plain_scalar(t.tp) || t.tp is TyText) && el_ex_pattern::branch_yields_null(e, t.code) != el_ex_pattern::branch_yields_null(e, f.code) {
     return ex(el_ir::v_if(c.code, t.code, f.code), ir::TyOptional { inner: t.tp });
   }
   ex(el_ir::v_if(c.code, t.code, f.code), t.tp)
