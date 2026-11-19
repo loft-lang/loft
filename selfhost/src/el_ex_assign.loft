@@ -1177,19 +1177,45 @@ pub fn holds_lambda(e: el::El, n: integer) -> boolean {
 // to the member's own null, a dense value into a `τ?` member as it is; any other tuple value is
 // held in a `__tconv_N` and each member read from it converted (a "tuple_convert" block).  Null
 // where a member has no conversion, or is no scalar or text.
+// The type a local declared `want` takes from a tuple literal converted member by member: a
+// heap member borrows what its value borrows (`vector<integer>["__vdb_1"]?`), the rest as
+// declared.
+pub fn tuple_declared_type(x: Ex, want: vector<ir::TypeT>) -> ir::TypeT {
+  have = match x.tp { TyTuple { elems } => elems, _ => [] };
+  out: vector<ir::TypeT> = [];
+  for w in want {
+    wb = el_types::base(w);
+    hv = have[w#index] ?? ir::TyVoid;
+    if !(is_scalar(wb) || wb is TyText) && len(el_types::deps(hv)) > 0 {
+      wd = el_types::with_deps(wb, el_types::deps(hv));
+      out += [if w is TyOptional { ir::TyOptional { inner: wd } } else { wd }];
+    } else {
+      out += [w];
+    }
+  }
+  ir::TyTuple { elems: out }
+}
+
 pub fn tuple_declared(e: el::El, vars: el_vars::Vars, x: Ex, want: vector<ir::TypeT>) -> ir::Node? {
   have = match x.tp { TyTuple { elems } => elems, _ => return null };
   if len(have) != len(want) {
     return null;
   }
-  // A heap member's conversion keeps the store its copy made (`tuple_member_move`): not carried.
+  lit = match el_ir::unspan(x.code) { NdTuple { items } => items, _ => [] };
+  // A heap member of a tuple LITERAL is its declared type where it stands: `null` beside a
+  // nullable record the reference sentinel, a value of the declared base (a call's record, a
+  // vector built in its own store) as it is.  Through a held tuple (`tuple_member_move`), and
+  // a keyed member a literal must be built as (`__kvb_N`), it is not carried.
   for w in want {
     wb = el_types::base(w);
     if !(is_scalar(wb) || wb is TyText) {
-      return null;
+      hv = have[w#index]!;
+      ok = len(lit) == len(want) && (keyed_kind(wb) == false) && ((hv is TyNull && w is TyOptional && wb is TyReference) || el_types::is_equal(e, el_types::without_deps(wb), el_types::without_deps(el_types::base(hv))));
+      if !ok {
+        return null;
+      }
     }
   }
-  lit = match el_ir::unspan(x.code) { NdTuple { items } => items, _ => [] };
   held = -1;
   if len(lit) != len(want) {
     held = el_vars::create_unique(vars, "_tconv", x.tp);
@@ -1199,7 +1225,9 @@ pub fn tuple_declared(e: el::El, vars: el_vars::Vars, x: Ex, want: vector<ir::Ty
     i = w#index;
     src = if held >= 0 { ir::NdTupleGet { var: held, idx: i } } else { lit[i]! };
     ht = have[i]!;
-    c = if ht is TyNull { el_convert::null_of(e, el_types::without_deps(el_types::base(w))) } else { stored(e, vars, ex(src, ht), w) };
+    wb2 = el_types::base(w);
+    heap_member = !(is_scalar(wb2) || wb2 is TyText);
+    c = if heap_member && ht is TyNull { el_ir::cl(e, "OpNullRefSentinel", []) } else if heap_member { src } else if ht is TyNull { el_convert::null_of(e, el_types::without_deps(el_types::base(w))) } else { stored(e, vars, ex(src, ht), w) };
     if c == null {
       return null;
     }

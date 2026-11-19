@@ -2259,7 +2259,12 @@ pub fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text,
   // A tuple into a local declared a tuple of other member types converts member by member.
   if c == null && x.tp is TyTuple {
     match declared! {
-      TyTuple { elems: want } => { c = el_ex_assign::tuple_declared(e, vars, x, want); },
+      TyTuple { elems: want } => {
+        c = el_ex_assign::tuple_declared(e, vars, x, want);
+        if c != null && !e.first_pass {
+          el_vars::change_var_type(e, vars, v, el_ex_assign::tuple_declared_type(x, want));
+        }
+      },
       _ => {}
     }
   }
