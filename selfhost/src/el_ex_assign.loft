@@ -2454,6 +2454,31 @@ fn empty_cast_bind(e: el::El, vars: el_vars::Vars, n: integer, op: text, target:
   ""
 }
 
+// `keep[i]?.k += add`: the whole discharge is held ONCE in a `__place_N` — the element where
+// it is there, the type's default record where it is not (`(N-Default)`: a write through `?`
+// onto an absent place lands in that default, which is dropped) — and the field is read and
+// written through it.
+fn place_through_discharge(e: el::El, vars: el_vars::Vars, op: text, target: integer, subject: integer, rhs: integer) -> Ex {
+  field = match e.p.nodes[target] { SMember { name: fnm } => fnm, _ => "" };
+  at = match e.p.nodes[target] { SMember { at: fat } => fat, _ => 0 };
+  s = expression(e, vars, subject);
+  if el_types::is_unknown(s.tp) || struct_ref(e, el_types::base(s.tp)) < 0 {
+    if !el_types::is_unknown(s.tp) {
+      el::refuse(e, "a compound assignment to a field of a `?` read");
+    }
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  pl = el_vars::create_unique(vars, "_place", el_types::base(s.tp));
+  e.p.nodes += [SName { at: at, name: el_vars::name_of(vars, pl), member: "" }];
+  through = len(e.p.nodes) - 1;
+  e.p.nodes += [SMember { at: at, e: through, name: field, args: [], call: false }];
+  w = el_ex_place::place_assignment(e, vars, op, len(e.p.nodes) - 1, rhs);
+  if e.first_pass {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  ex(ir::NdInsert { items: [el_ir::v_set(pl, s.code), w.code] }, ir::TyVoid)
+}
+
 pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: text, target: integer, rhs: integer?) -> Ex {
   // A compound assignment to a field of a `?` read (`v[0]?.k += x`): Rust binds the place once
   // (`__place_N`) and reads and writes through it — not carried.
@@ -2461,8 +2486,13 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
     match e.p.nodes[target] {
       SMember { e: cme, call } => {
         if !call && cme != null && match e.p.nodes[cme!] { SPostfix { op: cpo } => cpo == "?", _ => false } {
-          el::refuse(e, "a compound assignment to a field of a `?` read");
-          return ex(ir::NdNull, ir::TyVoid);
+          // A vector literal appended through it is built through the read itself, with no
+          // place bound: not carried.
+          if e.p.nodes[rhs!] is SVecLit {
+            el::refuse(e, "a compound assignment to a field of a `?` read");
+            return ex(ir::NdNull, ir::TyVoid);
+          }
+          return place_through_discharge(e, vars, op, target, cme!, rhs!);
         }
       },
       _ => {}
