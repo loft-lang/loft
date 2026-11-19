@@ -84,6 +84,7 @@ one of the index constructions above, or `v[nr]!.name`.
 | `text-slice-char-bound` | Slice by bytes: `size(t)` for the byte length, `t[i..]` for the rest.  `t[..-1]` drops a final ONE-BYTE character such as `\r`; a bound inside a multi-byte character moves to that character's end, so it does not drop a final `€`. |
 | `shadowed-by-method` | If the method does the same work, delete your function and call the method; otherwise rename it, or call it qualified as `lib::f(…)`. |
 | `linked-group-double-fill` | Fill the group through one member: the other route sees the same records.  If the fields were meant to be two separate collections, give each its own element type. |
+| `else-never-runs` | Drop the `?` (or the `?? T { … }`) from the place: `k[5].f = v else { … }` names nothing when the element is absent, so the write does not take and the arm runs.  If writing into a default record was the point, drop the `else`. |
 | `view-written-back` | Bind the saved value as a copy, `keep = Lib { ..st.lib }`, so it keeps what the place held at the bind; the write-back then restores it.  If the view was meant to follow the place, drop the write-back: it copies the place onto itself. |
 | `avoidable-copy` (advice) | Move the line that reads the source again above the copy, or drop that line when its value is never read.  When neither holds the copy is necessary and nothing is reported. |
 

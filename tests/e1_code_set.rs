@@ -21,6 +21,12 @@ use std::sync::atomic::{AtomicU32, Ordering};
 /// THE GOLDEN: the frozen E1 code set + a minimal program that triggers each. Adding /
 /// renaming / removing a code must update this array (a reviewed diff).
 const CODES: &[(&str, &str)] = &[
+    // loft#2570 — a store's `else` on a place discharged with a record (`k[5]?.f = v`): the
+    // write always lands, in the fallback when the element is absent, so the arm never runs.
+    (
+        "else-never-runs",
+        "struct Mark { n: integer = 0 }\nfn main() { k: vector<Mark> = []; e = 0; k[5]?.n = 3 else { e = 1 }; print(\"{e}\"); }",
+    ),
     // C123 — `both` as a first parameter is deprecated in favour of `self`, which already
     // takes both call spellings; the declaration still compiles and means `self`.
     (

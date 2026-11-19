@@ -109,6 +109,9 @@ pub struct El {
   // Rust's first pass builds that literal in the local, which then names only itself, so the
   // second pass finds it holding no backing (`vector_needs_db`).
   pub unbacked: vector<integer>,
+  // The assignment nodes that first bind a local to `[] as vector<T>` (found on the first
+  // pass, read as the typed declaration on both).
+  pub cast_decls: vector<integer>,
   // The vector locals a bare `null` widened to `vector<T>?` on the first pass
   // (`context * 65536 + variable`): the second gives each such write its absent backing.
   // The line of the top-level declaration being read: what a refusal met outside any statement
@@ -217,6 +220,7 @@ pub fn new_el(p: syntax::Syntax, file: text, default: boolean) -> El {
     refused_at: [],
     refused_in: [],
     unbacked: [],
+    cast_decls: [],
     decl_line: 0,
     trace_vars: [],
     at: -1,

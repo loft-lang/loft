@@ -889,7 +889,7 @@ impl Parser {
             // @C168: declared by variable number, which follows where a callee stands in the
             // file (its buffer is numbered on pass 2 when it is declared below).  Allowed: the
             // order of these hidden stores is nothing a program observes.  Guard:
-            // `tests/scripts/a-callee-declared-below-its-caller-changes-nothing-a-program-can-see.loft`.
+            // `loft-suite/rules/heap/H-Drop/a-callee-declared-below-its-caller-changes-nothing-a-program-can-see.loft`.
             for r in self.vars.work_references() {
                 if crate::env_once!(std::env::var("LOFT_TRACE_PREAMBLE").is_ok()) {
                     eprintln!(
@@ -5539,6 +5539,10 @@ use a separate collection or add after the loop"
         let expect = link_tuple.as_ref().unwrap_or(f_type);
         let prev_bind_rhs =
             std::mem::replace(&mut self.in_bind_rhs, op == "=" && var_nr != u16::MAX);
+        let prev_append_dest = std::mem::replace(
+            &mut self.append_dest,
+            if op == "+=" { var_nr } else { u16::MAX },
+        );
         // The right-hand side's first token: where a diagnostic about the stored value goes
         // when the value carries no span of its own (a local read).  A preset value was parsed
         // elsewhere and has none here.
@@ -5552,9 +5556,14 @@ use a separate collection or add after the loop"
             self.parse_operators(expect, code, &mut parent_tp, 0)
         };
         self.in_bind_rhs = prev_bind_rhs;
+        self.append_dest = prev_append_dest;
         // A right-hand side that reported its own error answers `void` because it failed:
         // that error is the one mistake, so the bind below adds none.
         let rhs_failed = self.lexer.diagnostics().error_count() > errors_before_rhs;
+        // @C168: a bind whose value pass 1 cannot type yet (see `append_leaves_untyped`).
+        if self.first_pass && op == "=" && var_nr != u16::MAX && s_type.is_unknown() {
+            self.vars.mark_untyped_bind(var_nr);
+        }
         // A value that answers nothing has nothing to bind.  Admitted, `s = f()` of a function
         // with no result left `s` a `void` local, and each later read misfired far from the
         // cause: `s + 1` reported `Expect token ;`, `"{s + 1}"` five syntax errors.  Named here,
@@ -7644,9 +7653,8 @@ use a separate collection or add after the loop"
                     // `Shape`'s first variant, not `Circle`'s zero.  A variant's value is a
                     // `Shape` value, so reading it as `Shape?` changes no representation; the
                     // value keeps its own deps, which say whose store it is to free.
-                    let mut parent = Type::Null;
                     let mut tp = Type::Optional(Box::new(slot_tp.base().with_deps_of(&inner)));
-                    self.handle_default_fallback(slot_tp, code, &mut parent, &mut tp);
+                    self.handle_default_fallback(slot_tp, code, &mut tp);
                     s_type = tp;
                 }
             }
@@ -7857,7 +7865,13 @@ use a separate collection or add after the loop"
             }
             _ => s_type,
         };
-        if !compound_keeps_place && !text_appends_rendering {
+        // @C168: a compound assignment (`h += …`, `x *= …`) changes what its target holds and
+        // never says what KIND of thing it is; where pass 1 could not type the target's bind (a
+        // function declared further down), the operand must not type it in the bind's place —
+        // `h = mk(); h += [R { … }]` made `h` a `vector<R>` on pass 1, and pass 2 refused the
+        // hash, sorted or index the function answers as a type change.
+        let leaves_untyped = op != "=" && self.untyped_on_pass1(var_nr);
+        if !compound_keeps_place && !text_appends_rendering && !leaves_untyped {
             self.change_var(to, &s_type);
         }
         // @PLN110 3a — track `n = len(s)` so `for i in 0..n` keeps the strict-index
@@ -11197,7 +11211,25 @@ use a separate collection or add after the loop"
                                 && gargs.len() == 2
                                 && self.ir_has_user_call(&gargs[0]) =>
                         {
-                            Some((*get_d, gargs[0].clone(), gargs[1].clone()))
+                            Some((*get_d, gargs[0].clone(), gargs[1].clone(), None))
+                        }
+                        // loft#2571 — a COLLECTION field's place is `OpGetField(rec, off, tp)`,
+                        // and an append of record items writes through it twice per item
+                        // (`OpNewRecord(<place>, …)`, `OpFinishRecord(<place>, …)`): left
+                        // unhoisted, `k[bump()].mpts += [Pt { … }, Pt { … }]` called `bump` four
+                        // times.  The same once-evaluated binding, the type operand kept
+                        // (`@FR-E-Asgn-Compound`: the place's addressing runs EXACTLY ONCE).
+                        Value::Call(get_d, gargs)
+                            if self.data.def(*get_d).name == "OpGetField"
+                                && gargs.len() == 3
+                                && self.ir_has_user_call(&gargs[0]) =>
+                        {
+                            Some((
+                                *get_d,
+                                gargs[0].clone(),
+                                gargs[1].clone(),
+                                Some(gargs[2].clone()),
+                            ))
                         }
                         _ => None,
                     }
@@ -11206,7 +11238,7 @@ use a separate collection or add after the loop"
                 };
                 let mut f2_setup: Option<Value> = None;
                 let mut f2_hoisted = false;
-                if let Some((get_d, accessor, offset)) = f2_place {
+                if let Some((get_d, accessor, offset, field_tp)) = f2_place {
                     // The hoist rewrites `to` to reference a fresh temp, which hides the
                     // ORIGINAL place's const / value-const base from `validate_write` (it walks
                     // the expression). Run the write-legality check on the original place NOW,
@@ -11253,7 +11285,9 @@ use a separate collection or add after the loop"
                     }
                     let elem_var = self.create_unique("_place", &elem_tp);
                     f2_setup = Some(v_set(elem_var, accessor));
-                    let rebuilt = Value::Call(get_d, vec![Value::Var(elem_var), offset]);
+                    let mut rebuilt_args = vec![Value::Var(elem_var), offset];
+                    rebuilt_args.extend(field_tp);
+                    let rebuilt = Value::Call(get_d, rebuilt_args);
                     to = rebuilt.clone();
                     *code = rebuilt;
                 }

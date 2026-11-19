@@ -2,7 +2,7 @@
 
 What to mirror for `<vector>[lo..hi]` where the port refuses "a slice of a vector that is no
 local of plain scalars".  The probe is [probes/vector-slice.loft](probes/vector-slice.loft):
-25 cases, every value hand-computed, clean on the interpreter (also under `LOFT_POISON=1`) and
+26 cases, every value hand-computed, clean on the interpreter (also under `LOFT_POISON=1`) and
 the C backend.
 
 ## What is already carried, and the three gaps
@@ -75,6 +75,12 @@ The result borrows the RECORD LOCAL through its elements: `s: vector<ref(R)["b"]
 As an argument (`len(b.rs[1..4])`) the loop stands inside the `iter_vec` block, after the
 inner preamble, and writes into `___iter_vec_1`.
 
+Where the slice is the FIRST place a vector of those records is written (`field_first_bind`:
+the field is filled by appends, no `vector<Q>` stands in a signature or a literal before it),
+Rust creates the `vector<Q>` and `main_vector<Q>` types at the slice's bind.  Where a type is
+created is an internal number (@C168), nothing a program observes: the port may follow it or
+refuse the shape by name.
+
 ## 3. Elements that are vectors
 
 The same loop; three things differ from the record form (`nested_bind`):
@@ -105,3 +111,10 @@ holder's initialiser before the loop: `_slice_elm_1: text["__ref_p2_1"] = "";` t
 local `vector<vector<integer>["__ref_1"]>["__vdb_1"]` (the element type borrows the first
 call's buffer), the port `vector<vector<integer>>["__vdb_1"]`.  No corpus program agrees
 through it today, so the gate does not show it; a literal of locals or of literals agrees.
+
+Judged: an accident nothing observes.  The elements are copies (`OpCopyRecord` into each new
+element), so the borrow the type claims is not real, and a claimed borrow can only hold a free
+back.  [probes/vector-literal-of-calls.loft](probes/vector-literal-of-calls.loft) reads the
+literal after the buffers are reused, returns it out of the frame, rebuilds it in a loop and
+appends to it and to an element: every value is right and no store is left, on both backends.
+So the port may carry the dep to agree, or refuse the shape; it is not a defect to wait for.

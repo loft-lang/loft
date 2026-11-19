@@ -327,6 +327,36 @@ pub(crate) struct FrameReleases {
     pub(crate) placed: HashSet<u16>,
 }
 
+/// The variables only `parallel` arms use: each appears inside an arm, and outside every arm
+/// at most in a `v = null` initialisation the frame hoisted.
+fn arm_locals(ir: &Value) -> HashSet<u16> {
+    fn walk(v: &Value, in_arm: bool, inside: &mut HashSet<u16>, outside: &mut HashSet<u16>) {
+        match v {
+            Value::Parallel(arms) => arms.iter().for_each(|a| walk(a, true, inside, outside)),
+            Value::Set(_, x) if !in_arm && matches!(x.unspan(), Value::Null) => {}
+            Value::Var(var) if in_arm => {
+                inside.insert(*var);
+            }
+            Value::Var(var) => {
+                outside.insert(*var);
+            }
+            Value::Set(var, x) => {
+                if in_arm {
+                    inside.insert(*var);
+                } else {
+                    outside.insert(*var);
+                }
+                walk(x, in_arm, inside, outside);
+            }
+            _ => v.for_each_child(&mut |c| walk(c, in_arm, inside, outside)),
+        }
+    }
+    let (mut inside, mut outside) = (HashSet::default(), HashSet::default());
+    walk(ir, false, &mut inside, &mut outside);
+    inside.retain(|v| !outside.contains(v));
+    inside
+}
+
 impl FrameReleases {
     pub(crate) fn of(
         ir: &Value,
@@ -364,6 +394,11 @@ impl FrameReleases {
             .collect();
         let mut freed: HashSet<u16> = HashSet::default();
         collect_freed_vars(ir, &free_ops, &mut freed);
+        // `@FR-C-Arms`: a `parallel` arm runs on a worker of its own, and the stores it makes die
+        // with that worker (the interpreter's worker clone, the C runtime's worker table, the
+        // rustc runtime's worker stores) — an arm's locals are released with no free op.  An
+        // arm's local is one only arms use: outside them it is at most initialised to null.
+        freed.extend(arm_locals(ir));
 
         // A block-tail temp adopted into a freed LHS (`q = f#read as S`, whose
         // `#reading file` surface temp `_read_N` moves its record into `q`) has no

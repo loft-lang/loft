@@ -35,7 +35,7 @@ ROOT = os.path.dirname(os.path.dirname(HERE))
 sys.path.insert(0, os.path.dirname(HERE))
 import stats  # noqa: E402
 
-CFLAGS = ["-std=c99", "-O3", "-g", "-fno-omit-frame-pointer", "-fno-inline-functions-called-once"]
+CFLAGS = ["-std=c11", "-O3", "-g", "-fno-omit-frame-pointer", "-fno-inline-functions-called-once"]
 RUNTIME_CALLS = {"memcpy", "memmove", "memset", "memchr", "memcmp", "malloc", "free", "realloc",
                  "calloc", "strlen"}
 

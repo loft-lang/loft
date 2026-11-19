@@ -6357,6 +6357,55 @@ impl Parser {
         }
     }
 
+    /// `@FR-L-Null-Which` — an arm whose value is a tagged nullable slot, read through its tag at
+    /// its LEAVES (`read_through_tag`): a block's last operator, both arms of a nested `if` (an
+    /// `else if` chain), so a condition is never evaluated twice and only places are re-read.  A
+    /// leaf already in the pointer's spelling (a `null`, a pointer) is left alone.  `tp` becomes
+    /// the pointer type where any leaf moved.
+    pub(super) fn read_arm_through_tag(&mut self, arm: &mut Value, tp: &mut Type) {
+        let slot = tp.clone();
+        let Some((_, pointer)) = self.tagged_pointer_type(&slot) else {
+            return;
+        };
+        self.read_leaves_through_tag(arm, &slot);
+        *tp = pointer;
+    }
+
+    fn read_leaves_through_tag(&mut self, v: &mut Value, slot: &Type) {
+        match v {
+            Value::Block(bl) => {
+                if let Some(last) = bl.operators.last_mut() {
+                    self.read_leaves_through_tag(last, slot);
+                }
+                if let Some((_, pointer)) = self.tagged_pointer_type(&bl.result) {
+                    bl.result = pointer;
+                }
+            }
+            Value::If(_, then_v, else_v) => {
+                self.read_leaves_through_tag(then_v, slot);
+                self.read_leaves_through_tag(else_v, slot);
+            }
+            Value::Null => {}
+            Value::Call(d, _) if self.data.def(*d).name() == "OpNullRefSentinel" => {}
+            other => {
+                let mut t = slot.clone();
+                self.read_through_tag(other, &mut t);
+            }
+        }
+    }
+
+    /// Do the two arm types of a join spell one `S?` two ways — a tagged slot beside the pointer
+    /// or a `null`?  Then the slot arm is read through its tag (`read_arm_through_tag`).
+    fn mixed_null_spellings(&self, slot: &Type, other: &Type, other_is_null: bool) -> bool {
+        let Some((_, pointer)) = self.tagged_pointer_type(slot) else {
+            return false;
+        };
+        other_is_null
+            || matches!(other.base(), Type::Null)
+            || (self.tagged_pointer_type(other).is_none()
+                && other.without_deps() == pointer.without_deps())
+    }
+
     pub(crate) fn parse_if(&mut self, code: &mut Value) -> Type {
         // loft#1382 — take statement position from the caller and CLEAR it, so a value-`if`
         // nested inside a statement one (`if c { v = if d { 1 } else { 2 } }`) does not
@@ -6508,6 +6557,12 @@ impl Parser {
                     Self::arm_expectation(&true_type)
                 };
                 let mut chain_type = self.parse_if_expecting(&mut false_code, &chain_expected);
+                // The same rule for an `else if` chain: its value is the nested `if`.
+                if self.mixed_null_spellings(&true_type, &chain_type, false) {
+                    self.read_arm_through_tag(&mut true_code, &mut true_type);
+                } else if self.mixed_null_spellings(&chain_type, &true_type, true_is_null) {
+                    self.read_arm_through_tag(&mut false_code, &mut chain_type);
+                }
                 if let Some(fit) = self.arm_fits_named_width(&true_type, &false_code, &chain_type) {
                     chain_type = fit;
                 }
@@ -6556,6 +6611,18 @@ impl Parser {
                     self.parse_block("else", &mut false_code, &Self::arm_expectation(&true_type));
                 false_fact = std::mem::take(&mut self.operand_fact);
                 false_is_null_literal = self.block_tail_null_literal;
+                // `@FR-L-Null-Which` — a tagged `__nullable<S>` arm joined with a bare `null` leaves
+                // its slot HERE: the join is a value, and a value of `S?` outside a slot is the
+                // pointer, `nullref` for absence.  Left in the slot's spelling, the `null` arm
+                // answered the pointer sentinel into a join typed as the slot, and the consumer
+                // projected the payload past a tag it never tested: `if k == 0 { h.a } else {
+                // null }` with `h.a` absent answered a default record (`n == 0`), on every backend.
+                // Two slot arms keep the slot's spelling and are read once at the consumer.
+                if self.mixed_null_spellings(&true_type, &false_type, false_is_null_literal) {
+                    self.read_arm_through_tag(&mut true_code, &mut true_type);
+                } else if self.mixed_null_spellings(&false_type, &true_type, true_is_null) {
+                    self.read_arm_through_tag(&mut false_code, &mut false_type);
+                }
                 // loft#2545 — an empty literal `[]` beside a then arm of no type yet (on pass 1 a
                 // forward callee) names no type either: it answers `Unknown`, as the same `[]`
                 // does as a THEN arm (`true_is_empty_literal`).  Parsed against `Unknown` it came

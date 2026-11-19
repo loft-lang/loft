@@ -109,7 +109,23 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
     // A vector that is itself an ELEMENT (`vs[0] ?? []`) is read out of its slot through the
     // nullable getter (`OpGetField(OpGetVectorNullable(vs, …), 0, <vector's type>)`).
     elem_subject = element_of_path(e, el_ir::unspan(x.code)) && element_place_type(e, lhs) >= 0;
-    if !(x.code is NdVar) && !el_ex_call::buffered_loft_call(e, x.code) && (copies_whole_vector(e, vars, x.code) || field_path(e, x.code) || elem_subject) {
+    // A field of an element of a LINKED collection (a vector that shares its records with a
+    // keyed sibling holds their ids: the element read is `OpVectorRef(v, i)`): the same hold.
+    linked_field = match el_ir::unspan(x.code) {
+      NdCall { def_nr: lfd, args: lfa } => el::def(e, lfd).name == "OpGetField" && len(lfa) == 3 && match el_ir::unspan(lfa[0]!) {
+        NdCall { def_nr: lrd, args: lra } => el::def(e, lrd).name == "OpVectorRef" && len(lra) == 2 && (el_ir::unspan(lra[0]!) is NdVar || field_path(e, lra[0]!)),
+        _ => false
+      },
+      _ => false
+    };
+    // A field read THROUGH a nullable record (`h.a.v` with `a: R?`: the field of the payload
+    // `read_through_tag` picks, an `if` over the slot's tag) is held the same way: it views
+    // what the slot borrows.
+    tag_field = len(el_types::deps(x.tp)) > 0 && match el_ir::unspan(x.code) {
+      NdCall { def_nr: tfd, args: tfa } => el::def(e, tfd).name == "OpGetField" && len(tfa) == 3 && el_ir::unspan(tfa[0]!) is NdIf,
+      _ => false
+    };
+    if !(x.code is NdVar) && !el_ex_call::buffered_loft_call(e, x.code) && (copies_whole_vector(e, vars, x.code) || field_path(e, x.code) || elem_subject || linked_field || tag_field) {
       // The default's buffer borrows the record too: a work ref nulled at the head.
       if !e.first_pass {
         el_ex_call::borrowed_literal_buffer(vars, d.code);
@@ -124,6 +140,9 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
       present = el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpVectorIsNull", [h])]);
       // (An element read on the way to the field answers its absence: the nullable getter.)
       read = if elem_subject { el_ir::cl(e, "OpGetField", [nullable_arith(e, el_ir::unspan(x.code), false), ir::NdInt { n: 0 }, ir::NdInt { n: element_place_type(e, lhs) }]) } else { nullable_arith(e, x.code, true) };
+      // (loft#2567: the default builds a store of its own for every subject; its `_vec_N` is
+      // the registered buffer a call subject's is, declared in the statement.)
+      el_ex_call::register_default_literal(vars, d.code, el_types::with_deps(el_types::without_deps(lhs), [held]));
       return ex(el_ir::v_block([el_ir::v_set(held, read), el_ir::v_if(present, h, d.code)], lhs, "ncc"), lhs);
     }
     // A native call answers a fresh vector: held in a `__ncc_N` of its own type (nulled before
@@ -171,6 +190,25 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
     vt = el_types::without_deps(lhs);
     present = el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpVectorIsNull", [x.code])]);
     return ex(el_ir::v_if(present, x.code, d.code), el_types::with_deps(vt, el_types::deps(lhs)));
+  }
+  // A keyed local (`h ?? []`, `h: hash<E[k]>?`): the collection where it is present
+  // (`coalesce_not_null`'s `OpVectorIsNull`), the default where not.  Any other keyed subject
+  // is refused by name.
+  if keyed_kind(lhs) {
+    if !(el_ir::unspan(x.code) is NdVar) {
+      el::refuse(e, "a keyed `??` on something other than a local");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    if !el_types::is_equal(e, el_types::without_deps(lhs), el_types::without_deps(el_types::base(d.tp))) {
+      el::refuse(e, "a keyed `??` default of another type");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    kt = el_types::with_deps(el_types::without_deps(lhs), el_types::deps(lhs));
+    if e.first_pass {
+      return ex(ir::NdNull, kt);
+    }
+    kp = el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpVectorIsNull", [x.code])]);
+    return ex(el_ir::v_if(kp, x.code, d.code), kt);
   }
   // A plain enum's value is a scalar here: its null is the zero ordinal (`OpConvBoolFromEnum`).
   if !el_convert::plain_scalar(lhs) && !el_convert::plain_enum(lhs) {
@@ -652,9 +690,23 @@ pub fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: intege
     }
     // A vector of scalars defaults to `[]` (`build_default`'s collection arm): `x?` is
     // `x ?? []`.  A vector of records registers its default's types where Rust does not yet.
-    if b is TyVector && match b { TyVector { inner } => el_convert::plain_scalar(inner) || el_types::base(inner) is TyText && !(inner is TyOptional), _ => false } {
+    // (A vector of NULLABLE records too: Rust's `[]` registers `vector<__nullable<T>>` and
+    // its `main_vector` there, and the default is the same build.)
+    nullable_records = match b { TyVector { inner: nri } => el_ex_base::is_nullable_wrapper(e, nri), _ => false };
+    // (Its two definitions are made by the default's own `[]`, which Rust reads from a
+    // synthetic source: at 1:3.)
+    if nullable_records {
+      nrin = match b { TyVector { inner: nri2 } => nri2, _ => ir::TyVoid };
+      nrnm = el_types::elem_name(e, nrin);
+      if nrnm != "" && el::def_nr(e, "main_vector<{nrnm}>") < 0 {
+        el_schema::make_vector_def(e, nrin, nrnm, ir::Position { file: e.file, line: 1, pos: 3 }, true);
+      }
+    }
+    if b is TyVector && (nullable_records || match b { TyVector { inner } => el_convert::plain_scalar(inner) || el_types::base(inner) is TyText && !(inner is TyOptional), _ => false }) {
+      // (loft#2567: the default is a fresh expression — it never takes the subject chain's
+      // borrows, and builds a store of its own whatever the subject is.)
       vt = el_types::without_deps(b);
-      return coalesce_with(e, vars, x, ex(el_ex_pattern::empty_literal_to(e, vars, vt, borrows: el_ex_call::view_borrows(e, vars, x)), vt));
+      return coalesce_with(e, vars, x, ex(el_ex_pattern::empty_literal_to(e, vars, vt, borrows: []), vt));
     }
     // A plain enum defaults to its first-declared variant (`build_default`'s enum arm, D-Enum).
     match b {
@@ -664,6 +716,20 @@ pub fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: intege
         }
       },
       _ => {}
+    }
+    // A struct enum defaults to its first-declared variant with its fields at their defaults
+    // (`build_default`'s enum arm): `x?` is `x ?? <that variant>`.
+    sen = el_types::struct_enum_def(b);
+    if sen >= 0 {
+      first = -1;
+      for vdef in e.b.data.definitions {
+        if first < 0 && vdef.def_type == el::DT_ENUM_VALUE && vdef.parent == sen {
+          first = vdef#index;
+        }
+      }
+      if first >= 0 {
+        return el_ex_call::enum_coalesce(e, vars, x, el_ex_assign::unit_variant(e, vars, sen, first));
+      }
     }
     if !el_convert::plain_scalar(b) {
       el::refuse(e, "a `?` default of this type: {type_kind(b)}");
@@ -1056,7 +1122,9 @@ pub fn builtin_op(e: el::El, vars: el_vars::Vars, op: text, a: Ex, b: Ex) -> Ex 
     }
     // A bare struct reference keeps the generic identity dispatch against the null reference
     // (`OpEqRef`'s `rec` test is total over what a read answers), in the operands' order.
-    if !(v.tp is TyOptional) && sd >= 0 && !starts_with(el::def(e, sd).name, "__tuple<") && !has_operator_method(e, sd) {
+    // (A struct-enum variant's record (`x: Bin`) is a bare reference too.)
+    vrec = match vb { TyReference { n: vrn } => el::def(e, vrn).def_type == el::DT_ENUM_VALUE, _ => false };
+    if !(v.tp is TyOptional) && (vrec || sd >= 0 && !starts_with(el::def(e, sd).name, "__tuple<") && !has_operator_method(e, sd)) {
       nl = el_ir::cl(e, "OpNullRefSentinel", []);
       return ex(el_ir::cl(e, if op == "==" { "OpEqRef" } else { "OpNeRef" }, if b.tp is TyNull { [v.code, nl] } else { [nl, v.code] }), ir::TyBoolean);
     }
@@ -1958,6 +2026,21 @@ pub fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
     if hinted {
       vars.expect_node = -1;
     }
+    // `convert`'s tagged arm (`@FR-L-Null-Tag`) at a `return`, as at a body's tail: a
+    // `__nullable<S>` value of a `-> S?` function is read through its tag, absence the
+    // reference null sentinel (`return h.a;` with `a: R?`).
+    if !e.first_pass && is_nullable_wrapper(e, v.tp) && result is TyOptional && struct_ref(e, el_types::base(result)) == el_ex_place::nullable_payload(e, el_types::struct_enum_def(v.tp)) {
+      tagged = el_ex_place::read_through_tag(e, vars, v);
+      if tagged == null {
+        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+      }
+      v = tagged!;
+      // (Read where it lies — the record or the sentinel — it is answered as it is: a view
+      // of what the slot's record is a field of.)
+      if el_ir::unspan(v.code) is NdIf {
+        return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
+      }
+    }
     // A struct enum is a record as well: a variant is built into the buffer as a struct is.
     if el_types::base(result) is TyReference || (el_types::struct_enum_def(result) >= 0 && !(result is TyOptional)) || (el_types::struct_enum_def(result) >= 0 && !(v.tp is TyNull)) {
       return record_return(e, vars, v, result);
@@ -2198,6 +2281,14 @@ pub fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -
       if !returns_argument_view(el::def(e, def_nr)) {
         w = hidden_ref_arg(vars, args);
         chain = true;
+      } else {
+        // (A callee handing back its argument whose argument lends nothing — `id2(g(k))`, a
+        // fresh record — answers in its own buffer: `ls` names that buffer, the candidate.)
+        vhr = hidden_ref_arg(vars, args);
+        if vhr >= 0 && el_types::deps(v.tp) == [vhr] {
+          w = vhr;
+          chain = true;
+        }
       }
     },
     _ => {}
@@ -2264,6 +2355,30 @@ pub fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -
       if !el_types::deps(ret).contains(pa) {
         e.b.data.definitions[d].returned = [el_types::with_deps(ret, el_types::deps(ret) + [pa])];
       }
+      return ex(ir::NdReturn { inner: x }, ir::TyNever);
+    }
+  }
+  // So is a call answering a view of its arguments (`return same(view(h, 0))`) where all it
+  // borrows is visible parameters: `MergeAttr` for each, the call handed back as it is.
+  if w < 0 && x is NdCall && returns_argument_view(el::def(e, match x { NdCall { def_nr: xd } => xd, _ => 0 })) && len(el_types::deps(v.tp)) > 0 {
+    vattrs: vector<integer> = [];
+    for dv in el_types::deps(v.tp) {
+      va = if vars.vars[dv].argument { attr_nr(el::def(e, d), el_vars::name_of(vars, dv)) } else { -1 };
+      if va < 0 || el::def(e, d).attributes[va].hidden {
+        vattrs = [];
+        break;
+      }
+      vattrs += [va];
+    }
+    if len(vattrs) > 0 {
+      vret = el::def(e, d).returned[0];
+      vdeps = el_types::deps(vret);
+      for va in vattrs {
+        if !vdeps.contains(va) {
+          vdeps += [va];
+        }
+      }
+      e.b.data.definitions[d].returned = [el_types::with_deps(vret, vdeps)];
       return ex(ir::NdReturn { inner: x }, ir::TyNever);
     }
   }

@@ -611,7 +611,18 @@ fn expression_node(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     SBool { b } => ex(ir::NdBoolean { b: b }, ir::TyBoolean),
     SNull => ex(ir::NdNull, ir::TyNull),
     SName { name, member } => tuple_field_copy(e, vars, n, name_expression(e, vars, name, member, n == vars.read_into)),
-    SAssign { at, fixed, op, target, e: rhs } => noted_bind(e, vars, assignment(e, vars, at, fixed, op, target, rhs)),
+    SAssign { at, fixed, op, target, e: rhs } => {
+      // `parts = [] as vector<text>` where it first binds the local: the empty literal
+      // declared at that type (a store of its own), as `parts: vector<text> = []` is.
+      cd_name = empty_cast_bind(e, vars, n, op, target, rhs);
+      if cd_name != "" {
+        match e.p.nodes[rhs ?? 0] {
+          SAs { e: ce, tp: ct } => { return noted_bind(e, vars, el_ex_place::declaration(e, vars, fixed, cd_name, ct, ce)); },
+          _ => {}
+        }
+      }
+      noted_bind(e, vars, assignment(e, vars, at, fixed, op, target, rhs))
+    },
     SLet { fixed, name, amp, tfixed, tp, e: rhs } => noted_bind(e, vars, el_ex_place::declaration(e, vars, fixed || amp || tfixed, name, tp, rhs)),
     SCall { at, f, args } => el_ex_object::call_expression(e, vars, at, f, args),
     SString { parts } => el_ex_call::string_expression(e, vars, parts),
@@ -2420,15 +2431,95 @@ pub fn noted_bind(e: el::El, vars: el_vars::Vars, x: Ex) -> Ex {
 // `Parser::parse_assign` for a plain `name = value`: the left side names a local — created on
 // the first pass, found again on the second — the right side is read, the local takes the
 // value's type (`change_var`) and the statement is the `Set` (`towards_set`), typed void.
+// The local an assignment first binds to an empty literal cast to a vector type, or "".
+fn empty_cast_bind(e: el::El, vars: el_vars::Vars, n: integer, op: text, target: integer, rhs: integer?) -> text {
+  if op != "=" || rhs == null {
+    return "";
+  }
+  name = match e.p.nodes[target] { SName { name: tn, member } => if member == "" { tn } else { "" }, _ => "" };
+  empty = match e.p.nodes[rhs!] {
+    SAs { e: ce, tp: ct, checked } => !checked && ct != null && ce != null && match e.p.nodes[ce!] { SVecLit { items } => len(items) == 0, _ => false } && match e.p.nodes[ct!] { STy { name: tyn } => tyn == "vector", _ => false },
+    _ => false
+  };
+  if name == "" || !empty {
+    return "";
+  }
+  if e.cast_decls.contains(n) {
+    return name;
+  }
+  if e.first_pass && vars.names[name] == null {
+    e.cast_decls += [n];
+    return name;
+  }
+  ""
+}
+
+// Does the syntax under `n` run a call, or discharge a nullable (`x?`)?
+fn runs_a_call(e: el::El, n: integer) -> boolean {
+  match e.p.nodes[n] {
+    SCall { at: _ } => { return true; },
+    SMember { call } => { if call { return true; } },
+    SPostfix { op } => { if op == "?" { return true; } },
+    // (A `??` over anything but a local holds its subject in a `__ncc_N` first: a `Set`, which
+    // Rust's `ir_has_user_call` counts as a call.)
+    SBin { op: bop, l: bl } => { if bop == "??" && !(e.p.nodes[bl] is SName) { return true; } },
+    _ => {}
+  }
+  for c in el_length::children(e, n) {
+    if runs_a_call(e, c) {
+      return true;
+    }
+  }
+  false
+}
+
+// `keep[i]?.k += add`: the whole discharge is held ONCE in a `__place_N` — the element where
+// it is there, the type's default record where it is not (`(N-Default)`: a write through `?`
+// onto an absent place lands in that default, which is dropped) — and the field is read and
+// written through it.
+fn place_through_discharge(e: el::El, vars: el_vars::Vars, op: text, target: integer, subject: integer, rhs: integer) -> Ex {
+  field = match e.p.nodes[target] { SMember { name: fnm } => fnm, _ => "" };
+  at = match e.p.nodes[target] { SMember { at: fat } => fat, _ => 0 };
+  s = expression(e, vars, subject);
+  if el_types::is_unknown(s.tp) || struct_ref(e, el_types::base(s.tp)) < 0 {
+    if !el_types::is_unknown(s.tp) {
+      el::refuse(e, "a compound assignment to a field of a `?` read");
+    }
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  pl = el_vars::create_unique(vars, "_place", el_types::base(s.tp));
+  e.p.nodes += [SName { at: at, name: el_vars::name_of(vars, pl), member: "" }];
+  through = len(e.p.nodes) - 1;
+  e.p.nodes += [SMember { at: at, e: through, name: field, args: [], call: false }];
+  w = el_ex_place::place_assignment(e, vars, op, len(e.p.nodes) - 1, rhs);
+  if e.first_pass {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  // (An element the write makes through the place borrows what the place views, not the
+  // place: `_elm_N: ref(Pt)["c"]`.)
+  for pv in vars.vars {
+    if starts_with(pv.name, "_elm_") && el_types::deps(pv.type_def[0] ?? ir::TyVoid) == [pl] {
+      el_vars::set_var_type(vars, pv#index, el_types::with_deps(pv.type_def[0] ?? ir::TyVoid, el_types::deps(s.tp)));
+    }
+  }
+  ex(ir::NdInsert { items: [el_ir::v_set(pl, s.code), w.code] }, ir::TyVoid)
+}
+
 pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: text, target: integer, rhs: integer?) -> Ex {
   // A compound assignment to a field of a `?` read (`v[0]?.k += x`): Rust binds the place once
   // (`__place_N`) and reads and writes through it — not carried.
   if op != "=" && rhs != null {
     match e.p.nodes[target] {
       SMember { e: cme, call } => {
-        if !call && cme != null && match e.p.nodes[cme!] { SPostfix { op: cpo } => cpo == "?", _ => false } {
-          el::refuse(e, "a compound assignment to a field of a `?` read");
-          return ex(ir::NdNull, ir::TyVoid);
+        // `@PLN102 F2`, `@FR-E-Asgn-Compound`: the place's addressing reduces EXACTLY ONCE.
+        // Where the record the field is of is reached through a call — an index that calls
+        // (`c.items[len(c.items) - 1].n += 1`), a call's result, a `?` discharge (which mints
+        // its default) — it is bound once in a `__place_N` and the field read and written
+        // through that.
+        // (On the second pass only, as Rust binds it: a first-pass mint would number the
+        // function's later variables one off.)
+        if !e.first_pass && !call && cme != null && runs_a_call(e, cme!) {
+          return place_through_discharge(e, vars, op, target, cme!, rhs!);
         }
       },
       _ => {}

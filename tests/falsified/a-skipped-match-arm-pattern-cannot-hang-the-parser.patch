@@ -1,7 +1,8 @@
 diff --git a/src/parser/match_expr.rs b/src/parser/match_expr.rs
+index 112e86af1..a1740d648 100644
 --- a/src/parser/match_expr.rs
 +++ b/src/parser/match_expr.rs
-@@ -6979,10 +6979,8 @@ impl Parser {
+@@ -690,10 +690,8 @@ impl Parser {
                          self.data.def(e_nr).name()
                      );
                  }
@@ -12,9 +13,9 @@ diff --git a/src/parser/match_expr.rs b/src/parser/match_expr.rs
 +                // Skip this arm gracefully.  A subject whose enum pass 1 cannot see yet still
 +                // binds its captures for the body.
                  let forward = if self.first_pass && e_nr == u32::MAX {
-                     self.bind_forward_capture_list()
+                     self.bind_forward_capture_list(false)
                  } else {
-@@ -6990,7 +6988,16 @@ impl Parser {
+@@ -701,7 +699,16 @@ impl Parser {
                  };
                  match forward {
                      Some(mut aliases) => self.pattern_binds_pending.append(&mut aliases),

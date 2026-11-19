@@ -243,7 +243,8 @@ pub fn link_argument(e: el::El, vars: el_vars::Vars, arg: ir::Node, at: ir::Type
   }
   vt = el_vars::tp(vars, v);
   if vt is TyRefVar {
-    if el_types::is_equal(e, vt, pt) && !(el_types::base(inner) is TyText) {
+    // (A `&text` link is passed on as the variable itself, as every other link is.)
+    if el_types::is_equal(e, vt, pt) {
       return arg;
     }
     el::refuse(e, "a `&` argument that is a link of another type");
@@ -1523,6 +1524,11 @@ pub fn cast_expr(e: el::El, vars: el_vars::Vars, ae: integer?, tn: integer?) -> 
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   to = t!;
+  // `@C131`: a struct-enum value cast to one of its own variants (`self.code[b] as Block`).
+  vc = variant_cast(e, vars, x, to, ae!, tn!);
+  if vc != null {
+    return vc!;
+  }
   // `as τ?` that narrows nothing: the cast to the base, typed `τ?`.  A checked narrowing (the
   // `dn4cast` guard and the store's range default) is refused by name.
   match to {
@@ -1533,6 +1539,9 @@ pub fn cast_expr(e: el::El, vars: el_vars::Vars, ae: integer?, tn: integer?) -> 
         if n != null {
           return ex(if e.first_pass { ir::NdNull } else { n! }, to);
         }
+      } else if inner is TyText && x.tp is TyNull {
+        // `null as text?`: the text null.
+        return ex(if e.first_pass { ir::NdNull } else { el_ir::cl(e, "OpConvTextFromNull", []) }, to);
       } else if el_convert::plain_scalar(inner) && src is TyText {
         c = el_convert::cast(e, x.code, src, inner);
         if c != null {
@@ -1583,6 +1592,85 @@ pub fn cast_expr(e: el::El, vars: el_vars::Vars, ae: integer?, tn: integer?) -> 
     return dn4_cast(e, vars, ex(x.code, xb), to);
   }
   cast_expr_to(e, vars, x, to)
+}
+
+// `@C131`, `Parser::cast`'s struct-enum arm: a value of a struct enum cast to one of its own
+// variants is the value where its tag is the variant's and the null reference where it is not,
+// typed as the variant borrowing what the value borrows.  Carried where an `is` test proved the
+// variant (`variant_proven`) and for the checked `as V?` (typed `V?`); an unproven plain cast (its
+// default fallback, a local's `if s is V { … } else { … }` rewrite) is refused by name.  Null where the cast is no
+// variant cast.
+fn variant_cast(e: el::El, vars: el_vars::Vars, x: Ex, to: ir::TypeT, ae: integer, tn: integer) -> Ex? {
+  sen = el_types::struct_enum_def(x.tp);
+  vd = match el_types::base(to) { TyReference { n } => n, _ => -1 };
+  if sen < 0 || vd < 0 || el::def(e, vd).def_type != el::DT_ENUM_VALUE || el::def(e, vd).parent != sen {
+    return null;
+  }
+  // The checked `as V?` is the same test, null on a miss: typed `V?`, nothing to prove.
+  checked = to is TyOptional;
+  disc = el_ex_object::variant_ord(e, vd);
+  place = el_ir::unspan(x.code);
+  proven = checked;
+  for pv in vars.proven {
+    if pv.disc == disc && el_ex_base::same_expression(pv.place, place) {
+      proven = true;
+    }
+  }
+  // An unproven cast of a LOCAL is `if s is V { s as V } else { (s as V?)? }` (Rust's
+  // `subparse_default`): the hit a proven cast, a miss the variant's default record.  Of
+  // anything else (its `?` default fallback) it is refused by name.
+  if !proven {
+    sn = match e.p.nodes[ae] { SName { name: an, member: am } => if am == "" { an } else { "" }, _ => "" };
+    vn = match e.p.nodes[tn] { STy { name: tyn } => tyn, _ => "" };
+    if sn != "" && vn != "" && el_ir::unspan(x.code) is NdVar {
+      return ex_some(spelled_variant_cast(e, vars, sn, vn, tn));
+    }
+    if !e.first_pass {
+      el::refuse(e, "a variant cast no `is` test proves");
+    }
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  rt = el_types::with_deps(ir::TyReference { n: vd, dep: [] }, el_types::deps(x.tp));
+  if checked {
+    rt = ir::TyOptional { inner: rt };
+  }
+  if e.first_pass {
+    return ex(ir::NdNull, rt);
+  }
+  test = el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpConvIntFromEnum", [el_ir::cl(e, "OpGetEnum", [x.code, ir::NdInt { n: 0 }])]), ir::NdInt { n: disc }]);
+  ex(el_ir::v_if(test, x.code, el_ir::cl(e, "OpConvRefFromNull", [])), rt)
+}
+
+fn ex_some(x: Ex) -> Ex? {
+  x
+}
+
+// `subparse_default`'s `if {n} is {vn} {{ {n} as {vn} }} else {{ ({n} as {vn}?)? }}`, as syntax.
+fn spelled_variant_cast(e: el::El, vars: el_vars::Vars, sn: text, vn: text, tn: integer) -> Ex {
+  at = match e.p.nodes[tn] { STy { at: ta } => ta, _ => 0 };
+  qt = match e.p.nodes[tn] {
+    STy { at: q0, name: q1, member: q2, args: q3, elem_null: q4, keys: q5, deps: q6, limit: q7, not_null: q8, assoc: q9 } => STy { at: q0, name: q1, member: q2, args: q3, elem_null: q4, keys: q5, deps: q6, limit: q7, not_null: q8, assoc: q9, nullable: true },
+    _ => e.p.nodes[tn]
+  };
+  e.p.nodes += [qt];
+  tq = len(e.p.nodes) - 1;
+  e.p.nodes += [SName { at: at, name: sn, member: "" }];
+  e.p.nodes += [SIs { at: at, e: len(e.p.nodes) - 1, variant: vn, caps: [], has_caps: false }];
+  cond = len(e.p.nodes) - 1;
+  e.p.nodes += [SName { at: at, name: sn, member: "" }];
+  e.p.nodes += [SAs { at: at, e: len(e.p.nodes) - 1, tp: tn, checked: false }];
+  e.p.nodes += [SStmt { at: at, e: len(e.p.nodes) - 1, semi: false, orelse: null }];
+  e.p.nodes += [SBlock { at: at, stmts: [len(e.p.nodes) - 1], end: at }];
+  hit = len(e.p.nodes) - 1;
+  e.p.nodes += [SName { at: at, name: sn, member: "" }];
+  e.p.nodes += [SAs { at: at, e: len(e.p.nodes) - 1, tp: tq, checked: false }];
+  e.p.nodes += [SParen { at: at, e: len(e.p.nodes) - 1 }];
+  e.p.nodes += [SPostfix { at: at, op: "?", e: len(e.p.nodes) - 1 }];
+  e.p.nodes += [SStmt { at: at, e: len(e.p.nodes) - 1, semi: false, orelse: null }];
+  e.p.nodes += [SBlock { at: at, stmts: [len(e.p.nodes) - 1], end: at }];
+  miss = len(e.p.nodes) - 1;
+  e.p.nodes += [SIf { at: at, cond: cond, then: hit, other: miss }];
+  el_ex_assign::expression(e, vars, len(e.p.nodes) - 1)
 }
 
 // `Parser::dn4_checked_cast` — `el_convert::dn4_cast`, typed as an `Ex`.
@@ -2358,6 +2446,11 @@ pub fn tail_of(n: ir::Node) -> ir::Node {
 pub fn match_fallback(e: el::El, rbase: ir::TypeT) -> ir::Node? {
   if rbase is TyFunction {
     return ir::NdFnRef { def_nr: 0, var: el::NO_TYPE, t: [rbase] };
+  }
+  // (`null_value`: a struct enum's null — a `__nullable<S>` slot's too — is the reference
+  // sentinel.)
+  if el_types::struct_enum_def(rbase) >= 0 {
+    return el_ir::cl(e, "OpNullRefSentinel", []);
   }
   el_convert::null_of(e, rbase)
 }

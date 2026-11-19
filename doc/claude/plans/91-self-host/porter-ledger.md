@@ -40,6 +40,15 @@ The standing order: stay far enough AHEAD with prepared subjects that the porter
 for one; FIX a defect that blocks the port or that the port would mirror; FILE every other
 defect met on the way, fixed or not.
 
+**A defect is not ported (owner: "make sure you do not reimplement bugs … as long as loft
+gets better for it you can take months").**  The number of agreeing programs is not the goal,
+and no cycle is short enough to justify copying a fault.  So a form the port would mirror is
+JUDGED before it is carried: a rule of the language, or a defect or an accident of the Rust
+front end.  Each prepared page says which, per form.  A defect is fixed in Rust first and the
+port follows the fixed form; until then the port refuses the shape by name.  An accident that
+changes nothing a program can observe (@C168: internal numbers) may be carried.  The tester
+never advises "carry it" for a form it has not judged.
+
 Preventing a problem is worth more than finding it sooner.  Three routines:
 
 - **A prepared topic comes with its probe already run both ways.**  On the Rust front end, on
@@ -67,6 +76,7 @@ Preventing a problem is worth more than finding it sooner.  Three routines:
 | An analysis carries open cases, or a line composed and not copied | 2 | probe until settled; copy the trace's line | habit |
 | A tool hands the porter raw output to wait for and read | 1 | every porter-facing tool posts and returns; the answer is the tester's analysis in a message | rule, from the owner |
 | The porter keeps a script of its own for something the loop has | 1 | each new tool is announced with a ready command for the porter's current tip | habit |
+| An instrument reports a pass it never ran (a judgment whose default arm never ran; a memory figure from a binary that never started) | 2 | every probe prints the program's own output beside each number and a path marker for the arm it judges, so a probe that did not run cannot read as a pass | adopted |
 
 ## The rows
 
@@ -130,3 +140,14 @@ Preventing a problem is worth more than finding it sooner.  Three routines:
 | 11-18 | 5db484adb | + | A probe run on the Rust front end before it was sent found a silent wrong answer there (loft#2561: a `-> S?` result read out of a held store is an empty record where its source is absent) — which the port would have mirrored | the first routine above |
 | 11-18 | 075b8a290 | ! | A try was answered against an older tip (its own base's cycle had not finished), reporting the base's gains as the change's; and a hand-run try shared the worktree with the mailbox's | a try waits until its base is gated and names the tip it compared against; tries take a lock |
 
+| 11-19 | fb394a832 | ! | The tester's judgment of 11-18 ("the null vector default is usable", eight cases, both backends) was vacuous: every case discharged `src.split(',')?`, and `split` of a null text answers an EMPTY vector, so the default arm never ran.  Probing a record receiver found that default silently wrong on main (loft#2567: every append lost; bound once per loop pass, it accumulates) | a judgment cell first proves that its path RUNS: the subject really absent (a function that answers `null`), the default's own value asserted |
+| 11-19 | fb394a832 | ? | The porter's refusal ("a call's nullable vector") followed the one-line shape the analysis named (`<call>?`) and also caught six shapes that agreed: the boundary was a receiver with deps, not a call | an analysis gives a shape as its measured BOUNDARY (what is in and what is out), never as one example |
+| 11-19 | ddbe4db03 | + | The boundary sent as a table, before the Rust fix: the porter narrowed by syntax to exactly it and promoted clean on the next try | — |
+| 11-19 | 93e7a5201 | + | The try's one differ (a nested literal's text element typed with its format buffer's dep) was judged a Rust ACCIDENT before the port mirrored it: the type depended on which item came first.  Fixed in Rust (d693191cf); the porter dropped the try that had copied the flat case | — |
+| 11-19 | d20efc493 | ? | The porter held a local stack on a question built from a "free-call twin" whose Rust form, dumped on the current build, matched the field-chain form exactly: the difference to judge was not in Rust | an analysis question names the program behind every comparison; the tester dumps both twins on the current Rust before judging |
+| 11-19 | 2cbc247dc | + | The pick "a `&` argument that is a link of another type", sent measured on a port build with the one-line change (2 agree, lib/process exposed with its Rust form judged): the try lifted exactly the three predicted programs, the porter carrying the held `__place_N` form the analysis named | — |
+| 11-19 | 6327f9206 | ? | The tip's one differ was in the tester's own new guard (loft#2567's `handed_back`): a guard written for Rust is also a corpus program the port meets, and nobody had gated it on the port before it landed | a new tests/scripts guard is run through the port's gate (`elab_gate.py --show` with the last tip's tools) before it lands, and its differ, if any, sent with the landing |
+| 11-19 | 9cb9f0c37 | ! | The tester's C memory figures for the keyed replace and the struct-enum default were an artifact: `--out` makes a directory, so the timed command was `time` failing to run it ("944 KB" every time).  The conclusions held once remeasured (1.8 MB flat, 1x to 100x), and the correction was sent.  The second vacuous instrument in one day, after the null-vector judgment whose default arm never ran | every number a probe reports is printed beside the program's own output, so a probe that did not run cannot read as a pass; promoted to the Patterns table as "an instrument proves it ran" |
+| 11-19 | 9cb9f0c37 | ? | The tester prepared the struct-enum `?` default while the porter's own try of it was already in the mailbox | the mailbox's open tries and the porter's queue are read before a subject is chosen |
+| 11-19 | 28c911e5f | ! | The tester's analysis said a struct-enum `?` over an element ALWAYS reads through the nullable getter, generalised from literal-index probes; the porter's one-function-per-row table showed a variable index taking the read-through-tag `if` form.  Ruled: the form follows the element read's TYPE (a variable index types it `Sh?`), both forms correct out of range on three backends.  The porter withdrew the try rather than port the wrong rule | an analysis that states a form for a CLASS varies the class's axis (here the index: literal, local, parameter, loop variable) before it says "always" |
+| 11-19 | a0688644c | + | The porter held a shape refused and asked for a judgment ("the discharge is evaluated TWICE"), naming the check to run; measured, it was a silent-wrong Rust defect on main (loft#2571: a record append to a field at a computed place ran the index twice per item), fixed before the port mirrored it.  The tester's own ruling on the same shape an hour earlier had looked at the absent case and not at the evaluation count | a ruling on a WRITE through a computed place counts how often the place's addressing runs (an index that counts its calls), beside the value |

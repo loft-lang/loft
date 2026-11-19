@@ -267,6 +267,12 @@ pub struct Vars {
   // The vector literal a bind's value chain starts with (`t = [..].map(f)`): Rust's first pass
   // builds it into the bound local, so its element temp is minted before its accumulator.
   pub recv_literal: integer = -1,
+  // The bind of a compound assignment's place (`__place_N = <accessor>`), to stand ahead of
+  // the statement it was lifted out of.
+  pub place_setup: vector<ir::Node> = [],
+  // The vector literal a first-pass assignment gives a FIELD whose `vector<T>` is not made
+  // yet: its build registers no type (the end-of-file pass does).
+  pub field_literal: integer = -1,
   // `parse_var`'s `into` arm: the syntax node of a local bind's right-hand side read first,
   // into the destination — a text read there keeps its own type (-1: none)
   pub read_into: integer = -1,

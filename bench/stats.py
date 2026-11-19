@@ -50,7 +50,7 @@ of the shipped product beside the speed of the checked build.  The ship hash is 
 hashes that must agree: a fault the checked lanes answer as null wraps there, so a row whose
 ship hash differs is marked and carries no ship ratio.
 `c` and `cship` measure the C99 backend (@PLN200, `loft --emit-c`, built by `--cc` with
-`--c-flags`, `-std=c99 -O3`) against the same Rust twin: `c` is the CHECKED C — every
+`--c-flags`, `-std=c11 -O3`) against the same Rust twin: `c` is the CHECKED C — every
 expression's fault check kept, as the interpreter answers — and VALIDATES the C generator: its
 hash must be the twin's, a row whose hash differs is reported and the run exits 1; `cship` is
 the C under `LOFT_RELEASE_PASS_PROBE=1`, the ship tier's ceiling as the Rust `ship` lane has it,
@@ -89,6 +89,30 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
+
+
+def dependency_search_args(lib_dir):
+    """`-L` for every directory rustc searches to resolve loft's dependencies, under either
+    cargo layout — `src/cargo_layout.rs::dependency_dirs`, mirrored: the classic `deps/`, or
+    cargo 1.100's per-unit `build/<crate>/<hash>/out/` (no `deps/` at all, so `-L <lib>/deps`
+    named nothing and rustc said `E0463: can't find crate for sha2`).  A `deps/` beside a
+    per-unit tree whose rlib IS the linked one is an older toolchain's debris (loft#2033)."""
+    classic = os.path.join(lib_dir, "deps")
+    per_unit = []
+    build_root = os.path.join(lib_dir, "build")
+    for c in sorted(os.listdir(build_root)) if os.path.isdir(build_root) else []:
+        cdir = os.path.join(build_root, c)
+        for h in sorted(os.listdir(cdir)) if os.path.isdir(cdir) else []:
+            out = os.path.join(cdir, h, "out")
+            if os.path.isdir(out) and any(f.rsplit(".", 1)[-1].lower() in ("rlib", "so", "dylib", "dll")
+                                          for f in os.listdir(out)):
+                per_unit.append(out)
+    rlib = os.path.join(lib_dir, "libloft.rlib")
+    linked_is_per_unit = os.path.exists(rlib) and any(
+        os.path.exists(os.path.join(d, "libloft.rlib")) and os.path.samefile(os.path.join(d, "libloft.rlib"), rlib)
+        for d in per_unit)
+    dirs = [classic] if (os.path.isdir(classic) and not linked_is_per_unit) or not per_unit else per_unit
+    return [x for d in dirs for x in ("-L", d)]
 
 
 def release_rustc_args():
@@ -174,7 +198,7 @@ NICE = ["nice", "-n", "10"] if shutil.which("nice") else []
 SHIP_ENV = {**os.environ, "LOFT_RELEASE_PASS_PROBE": "1"}
 # The C lanes' compiler command (`--cc` and `--c-flags`, set in `main`), and what they found:
 # a program the C backend did not build, and a checked C row whose hash is not the twin's.
-C_CMD = ["cc", "-std=c99", "-O3"]
+C_CMD = ["cc", "-std=c11", "-O3"]
 C_SKIPS = []
 C_MISMATCHES = []
 # The programs whose measurement stopped (a lane that failed to run, a hash that moved): each
@@ -224,11 +248,13 @@ def build(bench, lanes, loft, lib_dir, ref_flags, times, reserve_gb):
     if "native" in lanes:
         rs = os.path.join(out, "stats_native.rs")
         exe = os.path.join(out, "stats_native")
-        run_checked([loft, "--native-emit", rs, "--lean", "--path", ROOT + "/",
+        # `--native-rust`: these two lanes measure the rustc writer, and `--native-emit` writes
+        # through whichever writer is selected — the C backend by default since the C9 flip.
+        run_checked([loft, "--native-emit", rs, "--native-rust", "--lean", "--path", ROOT + "/",
                      os.path.join(d, "bench.loft")], f"{bench}: loft --native-emit", times,
                     "native-emit", reserve_gb)
         run_checked(["rustc", *release_rustc_args(), "--edition=2024",
-                     "--extern", f"loft={lib_dir}/libloft.rlib", "-L", f"{lib_dir}/deps",
+                     "--extern", f"loft={lib_dir}/libloft.rlib", *dependency_search_args(lib_dir),
                      "-o", exe, rs], f"{bench}: rustc (native lane)", times, "native-rustc",
                     reserve_gb)
         os.remove(rs)
@@ -240,11 +266,11 @@ def build(bench, lanes, loft, lib_dir, ref_flags, times, reserve_gb):
         # still agree with the checked lanes.
         rs = os.path.join(out, "stats_ship.rs")
         exe = os.path.join(out, "stats_ship")
-        run_checked([loft, "--native-emit", rs, "--lean", "--path", ROOT + "/",
+        run_checked([loft, "--native-emit", rs, "--native-rust", "--lean", "--path", ROOT + "/",
                      os.path.join(d, "bench.loft")], f"{bench}: loft --native-emit (ship)", times,
                     "ship-emit", reserve_gb, env=SHIP_ENV)
         run_checked(["rustc", *release_rustc_args(), "--edition=2024",
-                     "--extern", f"loft={lib_dir}/libloft.rlib", "-L", f"{lib_dir}/deps",
+                     "--extern", f"loft={lib_dir}/libloft.rlib", *dependency_search_args(lib_dir),
                      "-o", exe, rs], f"{bench}: rustc (ship lane)", times, "ship-rustc",
                     reserve_gb)
         os.remove(rs)
@@ -792,7 +818,7 @@ def main():
     ap.add_argument("--ref-flags", default="-O", help="rustc flags for the reference lane")
     ap.add_argument("--cc", default=os.environ.get("CC", "cc"),
                     help="the C compiler of the c / cship lanes")
-    ap.add_argument("--c-flags", default="-std=c99 -O3",
+    ap.add_argument("--c-flags", default="-std=c11 -O3",
                     help="its flags for the c / cship lanes (-lm is appended)")
     ap.add_argument("--package-target-ms", type=float, default=4000.0,
                     help="the run length a --package lane is calibrated to: a library's bench "
