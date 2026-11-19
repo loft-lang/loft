@@ -23,7 +23,7 @@ fn census(switch: Option<&str>) -> Option<(bool, String)> {
     // caches beside it.
     let cell = dir.join("cell.loft");
     loft::file_access::copy(
-        &root.join("tests/scripts/a-discharge-block-hands-over-the-local-it-bound.loft"),
+        root.join("tests/scripts/a-discharge-block-hands-over-the-local-it-bound.loft"),
         &cell,
     )
     .ok()?;
