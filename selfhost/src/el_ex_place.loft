@@ -1365,15 +1365,18 @@ pub fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
             NdCall { def_nr: wd, args: wa } => {
               // (A scalar or text value of any shape is staged whole; a record or collection
               // value built here — a nested construction — is not carried.)
-              wpt = el::def(e, wd).attributes[2];
+              // (The value is the last argument: a narrow write's `min` before it is a
+              // constant parameter, which `value_args` passes over.)
+              wvi = len(wa) - 1;
+              wpt = el::def(e, wd).attributes[wvi];
               staged_kind = wpt != null && (el_ex_call::scalar(el_types::base(wpt!.typedef[0] ?? ir::TyVoid)) || el_types::base(wpt!.typedef[0] ?? ir::TyVoid) is TyText);
               // (Only a nested record CONSTRUCTION moves ahead of the mint, which is not
               // carried; any other record or collection value is a view and keeps its place.)
               // (A write of another arity — a vector field's append — is no plain value.)
-              if !starts_with(el::def(e, wd).name, "OpSet") || len(wa) != 3 {
+              if !starts_with(el::def(e, wd).name, "OpSet") || !plain_setter(e, wd, len(wa)) {
                 plain_values = false;
               } else {
-                built_here = match el_ir::unspan(wa[2]!) { NdBlock { block: cb } => cb[0].name == "Object" || cb[0].name == "EnumUnitLit" || cb[0].name == "Vector", _ => false };
+                built_here = match el_ir::unspan(wa[wvi]!) { NdBlock { block: cb } => cb[0].name == "Object" || cb[0].name == "EnumUnitLit" || cb[0].name == "Vector", _ => false };
                 if !staged_kind && built_here {
                   plain_values = false;
                 }
@@ -1417,13 +1420,16 @@ pub fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
           }
           match el_ir::unspan(op) {
             NdCall { def_nr: wd, args: wa } => {
-              val = el_ir::unspan(wa[2]!);
+              svi = len(wa) - 1;
+              val = el_ir::unspan(wa[svi]!);
               constant = val is NdInt || val is NdLong || val is NdFloat || val is NdSingle || val is NdBoolean || val is NdText || val is NdNull || val is NdEnum;
-              pt = el::def(e, wd).attributes[2]!.typedef[0] ?? ir::TyVoid;
+              pt = el::def(e, wd).attributes[svi]!.typedef[0] ?? ir::TyVoid;
               if !constant && (el_ex_call::scalar(el_types::base(pt)) || el_types::base(pt) is TyText) {
                 tmp = el_vars::work_ref(vars, pt);
-                ls += [el_ir::v_set(tmp, wa[2]!)];
-                staged_writes += [ir::NdCall { def_nr: wd, args: [wa[0]!, wa[1]!, ir::NdVar { n: tmp }] }];
+                ls += [el_ir::v_set(tmp, wa[svi]!)];
+                staged_args = wa;
+                staged_args[svi] = ir::NdVar { n: tmp };
+                staged_writes += [ir::NdCall { def_nr: wd, args: staged_args }];
               } else {
                 staged_writes += [op];
               }
@@ -1439,7 +1445,9 @@ pub fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
       continue;
     }
     x = el_ex_assign::expression(e, vars, it);
-    if !el_types::is_unknown(x.tp) && !el_types::is_equal(e, inner, x.tp) {
+    // (A value typed by one of a struct enum's variants — `sh = Circle { … }` — is an item of
+    // the enum's vector: Rust's append asks no type of it.)
+    if !el_types::is_unknown(x.tp) && !el_types::is_equal(e, inner, x.tp) && !variant_of(e, inner, x.tp) {
       el::refuse(e, "a vector item of another type than the field's: {display_type_name(e, inner)} then {display_type_name(e, x.tp)}");
       return ex(ir::NdNull, ir::TyVoid);
     }
@@ -1467,6 +1475,18 @@ pub fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
       ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [r, ir::NdInt { n: pkt }, ir::NdInt { n: fnr }]))];
       ls += copy!;
       ls += [el_ir::cl(e, "OpFinishRecord", [r, at, ir::NdInt { n: pkt }, ir::NdInt { n: fnr }])];
+    } else if el_types::struct_enum_def(inner) >= 0 {
+      // A struct-enum element (a unit variant `Dot`, a local, a call, an element) is copied
+      // into the fresh element as a struct's is, at the ENUM's type (`inner_nr`).
+      sen = el_types::struct_enum_def(inner);
+      el_vars::set_var_type(vars, elm, ir::TyReference { n: sen, dep: [rec] });
+      copy = el_ex_match::record_item_copy(e, vars, elm, sen, x);
+      if copy == null {
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [r, ir::NdInt { n: pkt }, ir::NdInt { n: fnr }]))];
+      ls += copy!;
+      ls += [el_ir::cl(e, "OpFinishRecord", [r, at, ir::NdInt { n: pkt }, ir::NdInt { n: fnr }])];
     } else {
       el::refuse(e, "a record item appended that is not a literal");
       return ex(ir::NdNull, ir::TyVoid);
@@ -1478,6 +1498,24 @@ pub fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
     el_ex_pattern::vector_of(e, inner);
   }
   ex(ir::NdInsert { items: ls }, ir::TyVoid)
+}
+
+// A field write `OpSet<kind>(record, position, value)`, or a narrow one with a constant `min`
+// before the value (`OpSetShortRaw(record, position, min, value)`).
+fn plain_setter(e: el::El, wd: integer, n: integer) -> boolean {
+  n == 3 || (n == 4 && len(el::def(e, wd).attributes) == 4 && el::def(e, wd).attributes[2].constant)
+}
+
+// Is `t` a record variant of the struct enum `inner` (a local typed `Circle` of `vector<Sh>`)?
+fn variant_of(e: el::El, inner: ir::TypeT, t: ir::TypeT) -> boolean {
+  sen = el_types::struct_enum_def(inner);
+  if sen < 0 {
+    return false;
+  }
+  match el_types::base(t) {
+    TyReference { n } => el::def(e, n).def_type == el::DT_ENUM_VALUE && el::def(e, n).parent == sen,
+    _ => false
+  }
 }
 
 // The struct a record place is of: a local's, a field's (`OpGetField`'s known type), an element's

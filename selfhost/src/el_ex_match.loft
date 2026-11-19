@@ -1524,6 +1524,11 @@ pub fn cast_expr(e: el::El, vars: el_vars::Vars, ae: integer?, tn: integer?) -> 
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   to = t!;
+  // `@C131`: a struct-enum value cast to one of its own variants (`self.code[b] as Block`).
+  vc = variant_cast(e, vars, x, to);
+  if vc != null {
+    return vc!;
+  }
   // `as τ?` that narrows nothing: the cast to the base, typed `τ?`.  A checked narrowing (the
   // `dn4cast` guard and the store's range default) is refused by name.
   match to {
@@ -1587,6 +1592,42 @@ pub fn cast_expr(e: el::El, vars: el_vars::Vars, ae: integer?, tn: integer?) -> 
     return dn4_cast(e, vars, ex(x.code, xb), to);
   }
   cast_expr_to(e, vars, x, to)
+}
+
+// `@C131`, `Parser::cast`'s struct-enum arm: a value of a struct enum cast to one of its own
+// variants is the value where its tag is the variant's and the null reference where it is not,
+// typed as the variant borrowing what the value borrows.  Carried where an `is` test proved the
+// variant (`variant_proven`); a checked `as V?` and an unproven cast (its default fallback, a
+// local's `if s is V { … } else { … }` rewrite) are refused by name.  Null where the cast is no
+// variant cast.
+fn variant_cast(e: el::El, vars: el_vars::Vars, x: Ex, to: ir::TypeT) -> Ex? {
+  sen = el_types::struct_enum_def(x.tp);
+  vd = match el_types::base(to) { TyReference { n } => n, _ => -1 };
+  if sen < 0 || vd < 0 || el::def(e, vd).def_type != el::DT_ENUM_VALUE || el::def(e, vd).parent != sen {
+    return null;
+  }
+  if to is TyOptional {
+    el::refuse(e, "a checked variant cast (`as V?`)");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  disc = el_ex_object::variant_ord(e, vd);
+  place = el_ir::unspan(x.code);
+  proven = false;
+  for pv in vars.proven {
+    if pv.disc == disc && el_ex_base::same_expression(pv.place, place) {
+      proven = true;
+    }
+  }
+  if !proven && !e.first_pass {
+    el::refuse(e, "a variant cast no `is` test proves");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  rt = el_types::with_deps(ir::TyReference { n: vd, dep: [] }, el_types::deps(x.tp));
+  if e.first_pass {
+    return ex(ir::NdNull, rt);
+  }
+  test = el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpConvIntFromEnum", [el_ir::cl(e, "OpGetEnum", [x.code, ir::NdInt { n: 0 }])]), ir::NdInt { n: disc }]);
+  ex(el_ir::v_if(test, x.code, el_ir::cl(e, "OpConvRefFromNull", [])), rt)
 }
 
 // `Parser::dn4_checked_cast` — `el_convert::dn4_cast`, typed as an `Ex`.
