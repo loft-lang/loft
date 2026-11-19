@@ -1122,7 +1122,9 @@ pub fn builtin_op(e: el::El, vars: el_vars::Vars, op: text, a: Ex, b: Ex) -> Ex 
     }
     // A bare struct reference keeps the generic identity dispatch against the null reference
     // (`OpEqRef`'s `rec` test is total over what a read answers), in the operands' order.
-    if !(v.tp is TyOptional) && sd >= 0 && !starts_with(el::def(e, sd).name, "__tuple<") && !has_operator_method(e, sd) {
+    // (A struct-enum variant's record (`x: Bin`) is a bare reference too.)
+    vrec = match vb { TyReference { n: vrn } => el::def(e, vrn).def_type == el::DT_ENUM_VALUE, _ => false };
+    if !(v.tp is TyOptional) && (vrec || sd >= 0 && !starts_with(el::def(e, sd).name, "__tuple<") && !has_operator_method(e, sd)) {
       nl = el_ir::cl(e, "OpNullRefSentinel", []);
       return ex(el_ir::cl(e, if op == "==" { "OpEqRef" } else { "OpNeRef" }, if b.tp is TyNull { [v.code, nl] } else { [nl, v.code] }), ir::TyBoolean);
     }
@@ -2279,6 +2281,14 @@ pub fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -
       if !returns_argument_view(el::def(e, def_nr)) {
         w = hidden_ref_arg(vars, args);
         chain = true;
+      } else {
+        // (A callee handing back its argument whose argument lends nothing — `id2(g(k))`, a
+        // fresh record — answers in its own buffer: `ls` names that buffer, the candidate.)
+        vhr = hidden_ref_arg(vars, args);
+        if vhr >= 0 && el_types::deps(v.tp) == [vhr] {
+          w = vhr;
+          chain = true;
+        }
       }
     },
     _ => {}
@@ -2345,6 +2355,30 @@ pub fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -
       if !el_types::deps(ret).contains(pa) {
         e.b.data.definitions[d].returned = [el_types::with_deps(ret, el_types::deps(ret) + [pa])];
       }
+      return ex(ir::NdReturn { inner: x }, ir::TyNever);
+    }
+  }
+  // So is a call answering a view of its arguments (`return same(view(h, 0))`) where all it
+  // borrows is visible parameters: `MergeAttr` for each, the call handed back as it is.
+  if w < 0 && x is NdCall && returns_argument_view(el::def(e, match x { NdCall { def_nr: xd } => xd, _ => 0 })) && len(el_types::deps(v.tp)) > 0 {
+    vattrs: vector<integer> = [];
+    for dv in el_types::deps(v.tp) {
+      va = if vars.vars[dv].argument { attr_nr(el::def(e, d), el_vars::name_of(vars, dv)) } else { -1 };
+      if va < 0 || el::def(e, d).attributes[va].hidden {
+        vattrs = [];
+        break;
+      }
+      vattrs += [va];
+    }
+    if len(vattrs) > 0 {
+      vret = el::def(e, d).returned[0];
+      vdeps = el_types::deps(vret);
+      for va in vattrs {
+        if !vdeps.contains(va) {
+          vdeps += [va];
+        }
+      }
+      e.b.data.definitions[d].returned = [el_types::with_deps(vret, vdeps)];
       return ex(ir::NdReturn { inner: x }, ir::TyNever);
     }
   }
