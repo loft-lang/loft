@@ -1919,7 +1919,9 @@ pub fn copy_arms(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, td: i
   binds: vector<ir::Node> = [];
   if user && el::def(e, e.context).def_type != el::DT_GENERIC {
     block_deps = match x { NdBlock { block: xb } => el_types::deps(xb[0].result[0] ?? ir::TyVoid), _ => [] };
-    if x is NdBlock && len(block_deps) > 0 && !source_is_literal(x) {
+    // (Only where the arm's value IS a read: an arm answering a call's own result owns that
+    // store, and the deps on its block are the join's — `@FR-O-Complete`.)
+    if x is NdBlock && len(block_deps) > 0 && !source_is_literal(x) && record_read(e, el_ir::unspan(arm_tail(x))) {
       hv = el_vars::create_unique(vars, "_ret_src", ir::TyOptional { inner: ir::TyReference { n: td, dep: block_deps } });
       binds = [el_ir::v_set(hv, x)];
       src = ir::NdVar { n: hv };
@@ -1966,6 +1968,15 @@ pub fn copy_arms(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, td: i
     copy = el_ir::v_block(binds + [copy], owned, "return_source");
   }
   copy
+}
+
+// The value a block (or an inserted group) ends in, through its nesting.
+fn arm_tail(n: ir::Node) -> ir::Node {
+  match el_ir::unspan(n) {
+    NdBlock { block } => if len(block[0].operators) > 0 { arm_tail(el_ir::last(block[0].operators)) } else { n },
+    NdInsert { items } => if len(items) > 0 { arm_tail(items[-1]!) } else { n },
+    _ => n
+  }
 }
 
 // `Parser::is_record_read`: a read of a record out of a place — `OpGet…`, or a projection.
