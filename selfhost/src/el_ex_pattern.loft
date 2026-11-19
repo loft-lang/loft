@@ -1791,8 +1791,21 @@ pub fn vector_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decla
 // `elem`: the element type a hint names (a `??` default's subject), else unknown.
 // The definitions a hinted literal makes are made at its `]`.
 pub fn vector_value(e: el::El, vars: el_vars::Vars, n: integer, hinted: boolean = true, borrows: vector<integer> = [], elem: ir::TypeT = ir::TyUnknown { n: 0 }) -> Built {
+  if el_trace::on() {
+    el_trace::route(e, "parse_vector");
+  }
+  // A literal that starts a bind's chain (`t = [..].map(f)`, `a = [10, 20][1]`): the first pass
+  // of Rust builds it into the bound local — the element temp minted — and renames the build
+  // onto a fresh accumulator once it meets the `.` or `[` (`parse_vector`'s receiver rename).
+  pre = -1;
+  if e.first_pass && vars.recv_literal == n && match e.p.nodes[n] { SVecLit { items: ri } => len(ri) > 0, _ => false } {
+    pre = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [] });
+  }
+  if vars.recv_literal == n {
+    vars.recv_literal = -1;
+  }
   v = el_vars::create_unique(vars, "vec", ir::TyVector { inner: ir::TyUnknown { n: 0 }, dep: [] });
-  vector_build(e, vars, v, n, elem, value: true, hinted: hinted, borrows: borrows, at_close: !el_types::is_unknown(elem))
+  vector_build(e, vars, v, n, elem, value: true, hinted: hinted, borrows: borrows, at_close: !el_types::is_unknown(elem), elm_made: pre)
 }
 
 // `w += [items]` on a vector local that already has its store: the same build appended to it —
@@ -1978,7 +1991,10 @@ pub fn first_pass_fields(e: el::El, vars: el_vars::Vars, d: integer, fields: vec
 
 // The one build behind the three literal forms: into a local (`vector_into`), in value position
 // (`value`, `vector_value`) and appended to a local that has its store (`append`, `vector_append`).
-pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared: ir::TypeT, append: boolean = false, value: boolean = false, hinted: boolean = true, at_close: boolean = false, borrows: vector<integer> = [], typed: boolean = false) -> Built {
+pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared: ir::TypeT, append: boolean = false, value: boolean = false, hinted: boolean = true, at_close: boolean = false, borrows: vector<integer> = [], typed: boolean = false, elm_made: integer = -1) -> Built {
+  if el_trace::on() {
+    el_trace::route(e, "parse_vector");
+  }
   items: vector<integer> = [];
   match e.p.nodes[n] {
     SVecLit { items: its } => { items = its; },
@@ -1995,6 +2011,9 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
           el::refuse(e, "a repeated vector item");
           return refused_build();
         }
+        if el_trace::on() {
+          el_trace::route(e, "parse_multiply");
+        }
         items[len(items) - 1] = re!;
         rep_n = rn;
       },
@@ -2007,7 +2026,7 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
   // append alike.
   elm = -1;
   if len(items) > 0 {
-    elm = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: if value { [] } else { [v] } });
+    elm = if elm_made >= 0 { elm_made } else { el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: if value { [] } else { [v] } }) };
     // The first pass makes each item through the local (`OpNewRecord(v, …)` into this temp):
     // one record made through it, what `child_allocs` counts.
     if e.first_pass && !value {
@@ -2486,12 +2505,37 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
       }
       // `(I-Comp)`: a record item whose fields read the vector it is appended to reads it as the
       // statement began — Rust snapshots it first (`_build_src`), not carried: refused by name.
+      // A literal of ONE record item on a local no `&` links to is carried: the vector is copied
+      // into a `_build_src_N` of its own store before anything grows, and the item's reads go
+      // to the copy (`literal_reads_dest`'s snapshot).  The store is minted on the second pass.
       if append && v >= 0 {
+        reads_self = false;
         for op in fl! {
           if op#index >= 2 && el_ir::reads_var(op, v) {
+            reads_self = true;
+          }
+        }
+        if reads_self {
+          linked = false;
+          for lx in vars.vars {
+            if (lx.type_def[0] ?? ir::TyVoid) is TyRefVar {
+              linked = true;
+            }
+          }
+          row = el_ex_vector::append_row(e, in_t);
+          // (An item with a vector literal of its own stages that literal's items first,
+          // `stage_append_fields`: not carried.)
+          if len(order) != 1 || linked || row < 0 || vars.vars[v].argument || holds_vector_literal(e, it) {
             el::refuse(e, "an appended record item that reads the vector it is appended to (a snapshot)");
             return refused_build();
           }
+          src = el_vars::create_unique(vars, "build_src", ir::TyVector { inner: in_t, dep: [] });
+          if !e.first_pass {
+            snap = literal_store(e, vars, src, r);
+            snap += [el_ir::cl(e, "OpAppendVector", [ir::NdVar { n: src }, w, ir::NdInt { n: row }])];
+            ls = snap + ls;
+          }
+          fl = [for op in fl! { if op#index >= 2 { rename_reads(op, v, src) } else { op } }];
         }
       }
       ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }]))];
@@ -2718,6 +2762,16 @@ pub fn is_empty_literal(n: ir::Node) -> boolean {
     NdInsert { items } => len(items) == 1 && (items[0] ?? ir::NdBoolean { b: false }) is NdNull,
     _ => false
   }
+}
+
+// Does the syntax under `n` hold a vector literal?
+fn holds_vector_literal(e: el::El, n: integer) -> boolean {
+  for c in el_length::children(e, n) {
+    if e.p.nodes[c] is SVecLit || holds_vector_literal(e, c) {
+      return true;
+    }
+  }
+  false
 }
 
 // The untyped `[]` converted to vector type `t`: an empty value literal of its element, in a

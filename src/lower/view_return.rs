@@ -350,7 +350,13 @@ pub fn site(
     let Value::Call(f, args) = init.unspan() else {
         return None;
     };
-    let decline = |why: &str| {
+    let decline = |why: &'static str| {
+        crate::rewrite_census::declined_in(
+            "R-ViewReturn",
+            data.def(d_nr).name(),
+            name(data, *f),
+            why,
+        );
         if trace() {
             eprintln!(
                 "[view-return] {} -> {}: declined, {why}",

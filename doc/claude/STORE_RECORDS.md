@@ -312,6 +312,9 @@ A vector field replaced from a
 projection whose type carries no dep (a destructured tuple member, `(s.n, s.t, s.v) = trio(…)`)
 copies it into the staging temp as a typed projection does (`__p154_rhs`);
 `LOFT_NO_UNTYPED_PROJECTION_COPY=1` stages the projection itself, which the temp then frees.
+A returned keyed collection that is a field of a local record is copied into a local of its own
+before the record's free (`keyed_local_field_copy_out`); `LOFT_NO_KEYED_FIELD_RETURN_COPY=1`
+returns the field itself, which the records report as a read by the return after the store's end.
 A generic instance returning a COLLECTION through a local bound whole from its parameter
 (`s = x; s`) declares the borrow its concrete twin does, since a collection's whole bind shares
 the store (`collection_return_views_whole_binds`); `LOFT_NO_COLLECTION_LOCAL_VIEW=1` declares it

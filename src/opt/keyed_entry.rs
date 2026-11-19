@@ -267,34 +267,63 @@ fn writes_key(op: &str, off: u16, key_pos: &[u16], text_key: bool) -> KeyWrite {
     }
 }
 
-/// The insert headed by statement `at` of `ops`, in function `d_nr`, when the clause admits it.
-pub fn site<'a>(
+const OTHER_SETTER: &str = "a key or a text field written by another setter";
+
+/// A setter's offset operand.
+fn offset(a: &[Value]) -> Option<u16> {
+    u16::try_from(int_of(a.get(1)?)?).ok()
+}
+
+/// Is `buf` bound to a value once in the function and named nowhere outside `run`?
+fn buffer_alone(data: &Data, d_nr: u32, buf: u16, run: &[Value]) -> bool {
+    let inside: usize = run.iter().map(|o| mentions(o, buf)).sum();
+    let mut binds = 0usize;
+    data.def(d_nr).code().walk(&mut |n| {
+        if let Value::Set(x, v) = n
+            && *x == buf
+            && !matches!(v.unspan(), Value::Null)
+        {
+            binds += 1;
+        }
+    });
+    binds == 1 && mentions(data.def(d_nr).code(), buf) == inside
+}
+
+const BETWEEN: &str =
+    "a statement between the mint and the finish that is no field write of the buffer alone";
+
+/// The insert headed by statement `at` of `ops`, in function `d_nr`, when the clause admits it:
+/// `Err(None)` where the statement is no insert into a heap-free hash, and the test that
+/// refused one that is.
+fn site<'a>(
     ops: &'a [Value],
     at: usize,
     data: &Data,
     stores: &Stores,
     d_nr: u32,
-) -> Option<Site<'a>> {
+) -> Result<Site<'a>, Option<&'static str>> {
     let Value::Set(buf, mint) = ops[at].unspan() else {
-        return None;
+        return Err(None);
     };
     let buf = *buf;
     let Value::Call(d, margs) = mint.unspan() else {
-        return None;
+        return Err(None);
     };
     if name(data, *d) != "OpNewRecord" {
-        return None;
+        return Err(None);
     }
     let [coll, ptp, fld] = &margs[..] else {
-        return None;
+        return Err(None);
     };
-    let parent_tp = u16::try_from(int_of(ptp)?).ok()?;
-    let field = u16::try_from(int_of(fld)?).unwrap_or(u16::MAX);
-    let (content, key_pos, text_key) = heap_free_hash(stores, parent_tp, field)?;
+    let parent_tp = int_of(ptp)
+        .and_then(|t| u16::try_from(t).ok())
+        .ok_or(None)?;
+    let field = u16::try_from(int_of(fld).ok_or(None)?).unwrap_or(u16::MAX);
+    let (content, key_pos, text_key) = heap_free_hash(stores, parent_tp, field).ok_or(None)?;
     let mut key: Vec<Option<&Value>> = vec![None; key_pos.len()];
     // The collection is evaluated once for the entry: a pure path, the place the plain form's
     // claim and finish both name.
-    crate::opt::writes::vector_path(data, coll)?;
+    crate::opt::writes::vector_path(data, coll).ok_or(Some("the collection is off a pure path"))?;
     let mut roots: Vec<u16> = Vec::new();
     coll.walk(&mut |m| {
         if let Value::Var(x) = m.unspan() {
@@ -312,10 +341,10 @@ pub fn site<'a>(
                     && a.get(1).is_some_and(|x| is_var(x, buf)) =>
             {
                 let [fin_coll, _, fin_tp, fin_fld] = &a[..] else {
-                    return None;
+                    return Err(None);
                 };
                 if fin_coll.unspan() != coll.unspan() || fin_tp != ptp || fin_fld != fld {
-                    return None;
+                    return Err(None);
                 }
                 last = Some(j);
                 break;
@@ -327,50 +356,43 @@ pub fn site<'a>(
                         .skip(1)
                         .all(|x| mentions(x, buf) == 0 && !rebinds(x, &roots)) =>
             {
-                let off = u16::try_from(int_of(a.get(1)?)?).ok()?;
+                let off = offset(a).ok_or(None)?;
                 if written.contains(&off) {
-                    return None;
+                    return Err(Some("a field written twice"));
                 }
                 written.push(off);
                 match writes_key(name(data, *c), off, &key_pos, text_key) {
-                    KeyWrite::Part(part) => key[part] = Some(a.get(2)?),
+                    KeyWrite::Part(part) => key[part] = Some(a.get(2).ok_or(None)?),
                     KeyWrite::Field => {}
-                    KeyWrite::Decline => return None,
+                    KeyWrite::Decline => return Err(Some(OTHER_SETTER)),
                 }
                 writes.push(op);
             }
-            _ => return None,
+            _ => return Err(Some(BETWEEN)),
         }
     }
-    let last = last?;
-    let keys: Vec<&Value> = key.into_iter().collect::<Option<_>>()?;
+    let last = last.ok_or(None)?;
+    let keys: Vec<&Value> = key
+        .into_iter()
+        .collect::<Option<_>>()
+        .ok_or(Some("a part of the key is not written"))?;
     // Every field written, so an overwrite leaves nothing of the entry it lands on.
     let (Parts::Struct(fields) | Parts::EnumValue(_, fields)) =
-        &stores.types.get(content as usize)?.parts
+        &stores.types.get(content as usize).ok_or(None)?.parts
     else {
-        return None;
+        return Err(None);
     };
     if fields.is_empty() || !fields.iter().all(|f| written.contains(&f.position)) {
-        return None;
+        return Err(Some("a field of the entry is left unwritten"));
     }
     // The buffer is the literal's alone: outside these statements nothing reads it, and
     // nothing binds it but a null (a `Set` names its variable by number, not as a `Var`) —
     // the mint is its one binding to a value.  Counted, not compared by node, so the answer
     // is the same on a copy of the body (the IR pass rewrites one).
-    let inside: usize = ops[at..=last].iter().map(|o| mentions(o, buf)).sum();
-    let mut binds = 0usize;
-    data.def(d_nr).code().walk(&mut |n| {
-        if let Value::Set(x, v) = n
-            && *x == buf
-            && !matches!(v.unspan(), Value::Null)
-        {
-            binds += 1;
-        }
-    });
-    if binds != 1 || mentions(data.def(d_nr).code(), buf) != inside {
-        return None;
+    if !buffer_alone(data, d_nr, buf, &ops[at..=last]) {
+        return Err(Some("the buffer is named outside the insert"));
     }
-    Some(Site {
+    Ok(Site {
         coll,
         parent_tp,
         field,
@@ -490,6 +512,11 @@ pub fn rewrite_program(data: &mut Data, stores: &Stores) -> usize {
                 data.def(d).name()
             );
         }
+        // @decline-owed: a hash key that is not one to four integer parts or one text that is
+        //   the record's only heap, and a linked-group record (`heap_free_hash`); a text key
+        //   that is no literal or unrebound local; a generator; the subscript clause; at run
+        //   time, a live snapshot or a hash with no table.  The insert's own tests report
+        //   (`site`)
         crate::rewrite_census::fired("R-KeyedEntry", n);
         crate::rewrite_census::fired("R-KeyedEntry/subscript", subscripts);
         total += n + subscripts;
@@ -547,7 +574,20 @@ fn replacement(
     scope: u16,
     temps: &mut Temps,
 ) -> Option<(usize, Vec<Value>)> {
-    let ke = site(ops, at, data, stores, d)?;
+    let ke = match site(ops, at, data, stores, d) {
+        Ok(ke) => ke,
+        Err(why) => {
+            if let Some(why) = why {
+                crate::rewrite_census::declined_in(
+                    "R-KeyedEntry",
+                    data.def(d).name(),
+                    &format!("{scope}:{at}"),
+                    why,
+                );
+            }
+            return None;
+        }
+    };
     let Value::Set(buf, _) = ops[at].unspan() else {
         return None;
     };

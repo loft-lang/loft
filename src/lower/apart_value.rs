@@ -828,6 +828,7 @@ fn roles_of(
     for (&v, &r) in &rec {
         if bad_roots.contains(&find(&mut parent, v)) {
             if let Some(w) = g.why.get(&v) {
+                crate::rewrite_census::declined_in("R-Apart", def.name(), vars.name(v), w);
                 declined.push((v, w));
             }
             continue;

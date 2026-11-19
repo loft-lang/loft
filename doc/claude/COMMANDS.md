@@ -114,13 +114,31 @@ make rewrite-census                      # which REWRITES still fire where they 
                                          #   and writer, and so does a rule applied by another set of
                                          #   phases (`scripts/rule_phases.py`); seconds, exact, in `make ci`
                                          #   and on the PR.  `-bless` records a deliberate decline
+make reason-census                       # WHICH REWRITES SAY WHY: per R- rule, the source sites
+                                         #   that report why it refused a site and which site it
+                                         #   admitted (a scan of `src/`, no build), and its state:
+                                         #   reports · nothing to report (`// @no-decline: <why>`
+                                         #   above its `fired` call) · owes its reasons
+                                         #   (`// @decline-owed: <what it refuses on>`) · silent
+                                         #   (unread).  `--missing` the silent rules, `--owed` the
+                                         #   owing ones, `--check` against
+                                         #   `tests/reason_census.baseline` (a rule never falls
+                                         #   silent; a marker needs its text), `--self-test`.  A
+                                         #   rule no census counts reads its reason from
+                                         #   formal/rewrites.md's phase table (`not counted — …`)
 make decline-census                      # HOW FAR EACH REWRITE REACHES: per R- rule, the sites it
                                          #   admitted against the sites it REFUSED, the refusals
                                          #   ranked by reason — a routine over its bar is a shape a
                                          #   rewrite declined, and the top reason of a rule that
                                          #   matters is the next arc, by yield.  Rules without
                                          #   decline reporting read `not reported`, never covered.
-                                         #   A REPORT (`ARGS="--record"` keeps the snapshot)
+                                         #   A REPORT (`ARGS="--record"` keeps the snapshot); it
+                                         #   also counts the labels each rule uses, and names the
+                                         #   rules that fired in NO program and the reporting
+                                         #   rules that refused NOTHING.  Every writer is run
+                                         #   `ARGS="--functions <prog.loft> [name …]"`: one program
+                                         #   by FUNCTION — what each rule rewrote there and what
+                                         #   each test refused (REWRITE_REASONS.md)
 make perf-portal                         # WHERE NATIVE STANDS AGAINST RUST, BY CLASS: measures
                                          #   every bench lane here and renders ONE page,
                                          #   doc/claude/PERF_PORTAL.md — a median per mechanism
@@ -193,7 +211,9 @@ make work                                # the open issues that are PICK-UP work
                                          #   and `status:planned` (fix path is a PLAN, measured
                                          #   there).  START HERE to find the next task, and use
                                          #   `ARGS=--count` for the scalar.  A failed query is
-                                         #   exit 2, never an empty list — ISSUE_TRACKING.md
+                                         #   exit 2, never an empty list — ISSUE_TRACKING.md.
+                                         #   This checkout's own claims with no fix pushed are
+                                         #   listed below it: they come FIRST
 make disk-headroom                       # ROOM FOR A GATE: every gate runs this first; by hand
                                          #   when a build says `No space left on device`.  This
                                          #   checkout's scratch only, never a sibling's live run

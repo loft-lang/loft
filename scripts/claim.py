@@ -10,6 +10,11 @@
                                                           can pick it up in between
     scripts/claim.py release N [--why TEXT]              hand a claim back (work stopped, moved)
     scripts/claim.py check N                             who holds it, if anyone
+    scripts/claim.py mine                                the open issues THIS checkout holds a
+                                                          claim on and has pushed no fix for —
+                                                          `make work` hides a claimed issue from
+                                                          everyone, its claimer included, so a
+                                                          claim set aside drops out of sight
 
     --repo loft-lang/loft (default) | loft-lang/plans    LOFT_STREAM=<name> overrides the stream
 
@@ -166,6 +171,35 @@ def check(args, me):
     return 0 if claims[0][0] == me else 1
 
 
+def mine(args, me):
+    """The open, claimed issues with no fix pushed, split into this checkout's and the rest.
+    A claim's stream carries its branch, and a claim outlives the branch it was taken on, so
+    "this checkout" is the `<host>/<checkout>` part alone."""
+    here = me.split("@")[0]
+    raw = gh("issue", "list", "--repo", args.repo, "--state", "open", "--label", LABEL, "--limit", "200",
+             "--json", "number,title,labels,body,createdAt,comments")
+    own, others = [], 0
+    for issue in json.loads(raw):
+        if any(label["name"] == "fixed-pending-merge" for label in issue["labels"]):
+            continue
+        claims = live_claims(issue)
+        if claims and claims[0][0].split("@")[0] == here:
+            stream, (stamp, _) = claims[0]
+            own.append((stamp, issue["number"], issue["title"], stream))
+        elif claims:
+            others += 1
+    now = datetime.datetime.now(datetime.timezone.utc)
+    if own:
+        print(f"claimed by this checkout, no fix pushed: {len(own)} — fix it, or `scripts/claim.py release N`")
+        for stamp, n, title, stream in sorted(own):
+            days = (now - stamp).days
+            age = f"{days} d" if days else "today"
+            print(f"#{n}  claimed {age} ago on {stream.split('@')[-1]}  {title}")
+    if others:
+        print(f"claimed by another stream, no fix pushed: {others}")
+    return 0
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--repo", default="loft-lang/loft")
@@ -184,9 +218,10 @@ def main():
     r.add_argument("--why")
     c = sub.add_parser("check")
     c.add_argument("n", type=int)
+    sub.add_parser("mine")
     args = p.parse_args()
     me = stream_name()
-    return {"take": take, "file": file_claimed, "release": release, "check": check}[args.cmd](args, me)
+    return {"take": take, "file": file_claimed, "release": release, "check": check, "mine": mine}[args.cmd](args, me)
 
 
 if __name__ == "__main__":

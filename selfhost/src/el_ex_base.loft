@@ -682,6 +682,37 @@ pub fn rename_var(n: ir::Node, from: integer, to: integer) -> ir::Node {
   }
 }
 
+// Every READ `Var(from)` in `n` as `Var(to)` (`map_nodes` over the `Var` nodes alone): no
+// assignment target and no block's result dependency is touched.
+pub fn rename_reads(n: ir::Node, from: integer, to: integer) -> ir::Node {
+  match n {
+    NdVar { n: v } => if v == from { ir::NdVar { n: to } } else { n },
+    NdCall { def_nr, args } => ir::NdCall { def_nr: def_nr, args: [for x in args { rename_reads(x, from, to) }] },
+    NdCallRef { var, args } => ir::NdCallRef { var: var, args: [for x in args { rename_reads(x, from, to) }] },
+    NdSet { var, inner } => ir::NdSet { var: var, inner: rename_reads(inner, from, to) },
+    NdTuplePut { var, idx, inner } => ir::NdTuplePut { var: var, idx: idx, inner: rename_reads(inner, from, to) },
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: rename_reads(inner, from, to) },
+    NdReturn { inner } => ir::NdReturn { inner: rename_reads(inner, from, to) },
+    NdDrop { inner } => ir::NdDrop { inner: rename_reads(inner, from, to) },
+    NdYield { inner } => ir::NdYield { inner: rename_reads(inner, from, to) },
+    NdIf { cond, t, f } => ir::NdIf { cond: rename_reads(cond, from, to), t: rename_reads(t, from, to), f: rename_reads(f, from, to) },
+    NdInsert { items } => ir::NdInsert { items: [for x in items { rename_reads(x, from, to) }] },
+    NdTuple { items } => ir::NdTuple { items: [for x in items { rename_reads(x, from, to) }] },
+    NdIter { var, create, next, init } => ir::NdIter { var: var, create: rename_reads(create, from, to), next: rename_reads(next, from, to), init: rename_reads(init, from, to) },
+    NdBlock { block } => {
+      b = block[0];
+      b.operators = [for x in b.operators { rename_reads(x, from, to) }];
+      ir::NdBlock { block: [b] }
+    },
+    NdLoop { block } => {
+      b = block[0];
+      b.operators = [for x in b.operators { rename_reads(x, from, to) }];
+      ir::NdLoop { block: [b] }
+    },
+    _ => n
+  }
+}
+
 // `rewrite_dep_in_type`: a type's dependency on `from` as one on `to`.
 pub fn rename_dep(t: ir::TypeT, from: integer, to: integer) -> ir::TypeT {
   el_types::with_deps(t, [for d in el_types::deps(t) { if d == from { to } else { d } }])
@@ -829,6 +860,35 @@ pub fn leftmost(e: el::El, n: integer) -> integer {
     SPostfix { e: pe } => if pe == null { n } else { leftmost(e, pe!) },
     SParen { e: pe } => if pe == null { n } else { leftmost(e, pe!) },
     _ => n
+  }
+}
+
+// Is `n` a read of a field of a field … of a variable (`OpGetField` all the way down)?
+pub fn field_path(e: el::El, n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdCall { def_nr, args } => {
+      if el::def(e, def_nr).name != "OpGetField" || len(args) != 3 {
+        return false;
+      }
+      inner = el_ir::unspan(args[0]!);
+      inner is NdVar || field_path(e, inner) || element_of_path(e, inner)
+    },
+    _ => false
+  }
+}
+
+// An element read (`OpGetVector`) of a variable or of a field path: `rs[0]` under `rs[0].items`.
+pub fn element_of_path(e: el::El, n: ir::Node) -> boolean {
+  match n {
+    NdCall { def_nr, args } => {
+      nm = el::def(e, def_nr).name;
+      if (nm != "OpGetVector" && nm != "OpGetVectorNullable") || len(args) != 3 {
+        return false;
+      }
+      base = el_ir::unspan(args[0]!);
+      base is NdVar || field_path(e, base)
+    },
+    _ => false
   }
 }
 

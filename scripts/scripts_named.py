@@ -36,7 +36,7 @@ BASELINE = "tests/scripts_unpinned.baseline"
 # The files whose mention of a script keeps it here.  Listed, not "everything but", because a
 # grep over the whole tree (the rendered doc pages are large) takes minutes; these take seconds.
 PINNERS = ["tests/*.rs", "tests/common", "tests/golden", "tests/fixtures", "tests/lib",
-           "tests/docs", "tests/comparisons", "tests/c_split", "scripts", "Makefile", ".github",
+           "tests/docs", "tests/comparisons", "tests/c_split", "tests/c_tail", "scripts", "Makefile", ".github",
            "examples-index.tsv", "src", "bench", "selfhost", "default", "lib", "tools",
            "Cargo.toml", "loft.toml"]
 # A survey baseline lists every corpus program the survey measured — written FROM the scripts,

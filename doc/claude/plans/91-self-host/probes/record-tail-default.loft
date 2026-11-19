@@ -1,0 +1,89 @@
+// A challenge for a record tail that is `<collection read> ?? RecordLiteral` (@PLN91): one
+// function per case, one axis each.  Every function answers a hand-computed value.
+//   the subject is a fresh call's vector:        call_vec, call_vec_miss
+//   ... a field of a call's record:              call_field, call_nested
+//   ... a local bound from a call:               local_vec, local_hash, local_hash_miss
+//   ... a KEYED local (the buffer is renamed):   keyed_local_hash, keyed_local_sorted, keyed_local_index,
+//                                                keyed_local_miss, keyed_built_here
+//   ... a local built here:                      built_here
+//   ... a local rebound before the tail:         reassigned
+//   ... a PARAMETER's field (nothing to copy):   param_field, param_keyed
+//   the default is not a literal:                default_call, default_local
+//   the same subject, not at the tail:           bound_then_returned, mid_return
+struct Cell { q: integer, r: integer }
+// (Two collections of one record type in ONE struct are a linked group, @FR-Col-Group: an
+// append to one files the record in both.  So the vector and the hash live in two structs.)
+struct Bag { n: integer, b_vec: vector<Cell> }
+struct HBag { n: integer, b_hash: hash<Cell[q]> }
+struct Outer { o_bag: Bag }
+
+fn cells(n: integer) -> vector<Cell> { v: vector<Cell> = []; for i in 0..n { v += [Cell { q: i, r: i * 10 }]; } v }
+fn bag(n: integer) -> Bag { b = Bag { n: n }; for i in 0..n { b.b_vec += [Cell { q: i, r: i * 10 }]; } b }
+fn hbag(n: integer) -> HBag { b = HBag { n: n }; for i in 0..n { b.b_hash += [Cell { q: i, r: i * 10 }]; } b }
+fn outer(n: integer) -> Outer { Outer { o_bag: bag(n) } }
+fn fallback() -> Cell { Cell { q: -2, r: -2 } }
+
+fn call_vec() -> Cell { cells(3)[1] ?? Cell { q: -1, r: -1 } }
+fn call_vec_miss() -> Cell { cells(3)[9] ?? Cell { q: -1, r: -1 } }
+fn call_field() -> Cell { bag(3).b_vec[2] ?? Cell { q: -1, r: -1 } }
+fn call_nested() -> Cell { outer(3).o_bag.b_vec[2] ?? Cell { q: -1, r: -1 } }
+fn local_vec() -> Cell { v = cells(3); v[1] ?? Cell { q: -1, r: -1 } }
+fn local_hash() -> Cell { b = hbag(3); b.b_hash[2] ?? Cell { q: -1, r: -1 } }
+fn local_hash_miss() -> Cell { b = hbag(3); b.b_hash[7] ?? Cell { q: -1, r: -1 } }
+fn mk_h(n: integer) -> hash<Cell[q]> { h: hash<Cell[q]> = []; for i in 0..n { h += [Cell { q: i, r: i * 10 }]; } h }
+fn mk_s(n: integer) -> sorted<Cell[q]> { s: sorted<Cell[q]> = []; for i in 0..n { s += [Cell { q: i, r: i * 10 }]; } s }
+fn mk_i(n: integer) -> index<Cell[q]> { ix: index<Cell[q]> = []; for i in 0..n { ix += [Cell { q: i, r: i * 10 }]; } ix }
+fn keyed_local_hash() -> Cell { v = mk_h(3); v[2] ?? Cell { q: -1, r: -1 } }
+fn keyed_local_sorted() -> Cell { v = mk_s(3); v[1] ?? Cell { q: -1, r: -1 } }
+fn keyed_local_index() -> Cell { v = mk_i(3); v[2] ?? Cell { q: -1, r: -1 } }
+fn keyed_local_miss() -> Cell { v = mk_h(3); v[7] ?? Cell { q: -1, r: -1 } }
+fn keyed_built_here() -> Cell {
+  h: hash<Cell[q]> = [];
+  h += [Cell { q: 5, r: 50 }];
+  h[5] ?? Cell { q: -1, r: -1 }
+}
+fn built_here() -> Cell {
+  v: vector<Cell> = [];
+  v += [Cell { q: 5, r: 50 }];
+  v[0] ?? Cell { q: -1, r: -1 }
+}
+fn reassigned() -> Cell {
+  v = cells(2);
+  n = len(v);
+  v = cells(n + 2);
+  v[3] ?? Cell { q: -1, r: -1 }
+}
+fn param_field(b: Bag) -> Cell { b.b_vec[1] ?? Cell { q: -1, r: -1 } }
+fn param_keyed(b: HBag) -> Cell { b.b_hash[2] ?? Cell { q: -1, r: -1 } }
+fn default_call() -> Cell { cells(3)[9] ?? fallback() }
+fn default_local() -> Cell { d = Cell { q: -3, r: -3 }; cells(3)[9] ?? d }
+fn bound_then_returned() -> Cell { c = cells(3)[1] ?? Cell { q: -1, r: -1 }; c }
+fn mid_return(n: integer) -> Cell {
+  if n > 0 { return cells(3)[1] ?? Cell { q: -1, r: -1 }; }
+  Cell { q: 0, r: 0 }
+}
+
+fn main() {
+  assert(call_vec().r == 10, "call_vec");
+  assert(call_vec_miss().q == -1, "call_vec_miss");
+  assert(call_field().r == 20, "call_field");
+  assert(call_nested().r == 20, "call_nested");
+  assert(local_vec().r == 10, "local_vec");
+  assert(local_hash().r == 20, "local_hash");
+  assert(local_hash_miss().q == -1, "local_hash_miss");
+  assert(keyed_local_hash().r == 20, "keyed_local_hash");
+  assert(keyed_local_sorted().r == 10, "keyed_local_sorted");
+  assert(keyed_local_index().r == 20, "keyed_local_index");
+  assert(keyed_local_miss().q == -1, "keyed_local_miss");
+  assert(keyed_built_here().r == 50, "keyed_built_here");
+  assert(built_here().r == 50, "built_here");
+  assert(reassigned().r == 30, "reassigned");
+  b = bag(3);
+  assert(param_field(b).r == 10, "param_field");
+  h = hbag(3);
+  assert(param_keyed(h).r == 20, "param_keyed");
+  assert(default_call().q == -2, "default_call");
+  assert(default_local().q == -3, "default_local");
+  assert(bound_then_returned().r == 10, "bound_then_returned");
+  assert(mid_return(1).r == 10 && mid_return(0).q == 0, "mid_return");
+}

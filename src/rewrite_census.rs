@@ -30,6 +30,11 @@
 //! admissions: together they say what share of the shapes a rule is written for it reaches,
 //! and which conditions hold the rest back (`scripts/decline_census.py`, `make
 //! decline-census`).  Not every rule reports its declines yet; the report says which do.
+//!
+//! `LOFT_DECLINE_CENSUS_FN=<file>` writes the same refusals split by function —
+//! `function<TAB>rule<TAB>why<TAB>count` — to read beside `LOFT_REWRITE_CENSUS_FN`: what a
+//! rule rewrote in a function and what each test refused there.  It holds counts, never a
+//! verdict for a function, and names no site (`doc/claude/REWRITE_REASONS.md`).
 
 use std::collections::{BTreeMap, HashSet};
 use std::fmt::Write as _;
@@ -44,7 +49,10 @@ static BY_FN: Mutex<ByFn> = Mutex::new(BTreeMap::new());
 /// The body an admission is being decided for: `(phase, function)`.
 static WHERE: Mutex<Option<(&'static str, String)>> = Mutex::new(None);
 /// `(rule, why) → sites declined for that reason`, kept only when `LOFT_DECLINE_CENSUS` is set.
-static DECLINES: Mutex<BTreeMap<(&'static str, String), u64>> = Mutex::new(BTreeMap::new());
+static DECLINES: Mutex<BTreeMap<(&'static str, &'static str), u64>> = Mutex::new(BTreeMap::new());
+/// `(function, rule, why) → sites declined`, kept only when `LOFT_DECLINE_CENSUS_FN` is set.
+type DeclinesByFn = BTreeMap<(String, &'static str, &'static str), u64>;
+static DECLINES_BY_FN: Mutex<DeclinesByFn> = Mutex::new(BTreeMap::new());
 /// The `(rule, site)` pairs already counted: a site asked about twice is one decline.
 static DECLINED_SITES: Mutex<Option<HashSet<(&'static str, String)>>> = Mutex::new(None);
 /// The `(rule, site)` pairs admitted, for the rules that name their sites: `fired` counts
@@ -62,7 +70,7 @@ impl InBody {
     #[must_use]
     pub fn enter(phase: &'static str, function: &str) -> Self {
         let mut prev = None;
-        if (by_fn_target().is_some() || decline_target().is_some())
+        if (by_fn_target().is_some() || refusals_kept())
             && let Ok(mut w) = WHERE.lock()
         {
             prev = w.replace((phase, function.to_owned()));
@@ -73,7 +81,7 @@ impl InBody {
 
 impl Drop for InBody {
     fn drop(&mut self) {
-        if (by_fn_target().is_some() || decline_target().is_some())
+        if (by_fn_target().is_some() || refusals_kept())
             && let Ok(mut w) = WHERE.lock()
         {
             *w = self.prev.take();
@@ -125,9 +133,66 @@ fn decline_target() -> Option<&'static str> {
         .as_deref()
 }
 
+fn decline_fn_target() -> Option<&'static str> {
+    static PATH: OnceLock<Option<String>> = OnceLock::new();
+    PATH.get_or_init(|| crate::platform::env_output("LOFT_DECLINE_CENSUS_FN"))
+        .as_deref()
+}
+
+/// Is either refusal census being written?
+fn refusals_kept() -> bool {
+    decline_target().is_some() || decline_fn_target().is_some()
+}
+
+/// A refused match: the CLAUSE of the rule that failed — a fixed label, the one thing the
+/// census counts — and, for a trace of one function, what at the site it failed on
+/// (`doc/claude/REWRITE_REASONS.md`).  A gate answers `Err(Refusal)`; its caller reports
+/// `clause` to [`declined`] and prints the whole refusal where a trace is on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Refusal {
+    pub clause: &'static str,
+    pub about: String,
+}
+
+impl Refusal {
+    /// The clause alone.
+    #[must_use]
+    pub fn of(clause: &'static str) -> Self {
+        Refusal {
+            clause,
+            about: String::new(),
+        }
+    }
+
+    /// The clause, and the name or value at the site it failed on.
+    #[must_use]
+    pub fn about(clause: &'static str, about: impl Into<String>) -> Self {
+        Refusal {
+            clause,
+            about: about.into(),
+        }
+    }
+}
+
+impl From<&'static str> for Refusal {
+    fn from(clause: &'static str) -> Self {
+        Refusal::of(clause)
+    }
+}
+
+impl std::fmt::Display for Refusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.about.is_empty() {
+            f.write_str(self.clause)
+        } else {
+            write!(f, "{} ({})", self.clause, self.about)
+        }
+    }
+}
+
 /// Is a decline census being written?  A reason that costs work to compute is asked only then.
 pub fn declines_wanted() -> bool {
-    PAUSED.load(Ordering::Relaxed) == 0 && decline_target().is_some()
+    PAUSED.load(Ordering::Relaxed) == 0 && refusals_kept()
 }
 
 /// Rewrite `rule` refused `site` — a loop, a local, a function the rule is shaped for —
@@ -135,22 +200,55 @@ pub fn declines_wanted() -> bool {
 /// read inside the body being generated (`InBody`), so a loop's scope number, which every
 /// function counts from one, names one loop.  A site one probe refuses and another admits
 /// is in both counts, so a rule's reach reads as a floor.
-pub fn declined(rule: &'static str, site: &str, why: &str) {
-    if PAUSED.load(Ordering::Relaxed) > 0 || decline_target().is_none() {
+///
+/// The per-function census credits the refusal to the body being generated; outside one, a
+/// site key is `function:rest` or a function's name, and anything else (an address) is
+/// credited to no function.  [`declined_in`] names the function outright.
+pub fn declined(rule: &'static str, site: &str, why: &'static str) {
+    if !declines_wanted() {
         return;
     }
-    let site = match WHERE.lock().ok().and_then(|w| w.clone()) {
-        Some((_, function)) => format!("{function}:{site}"),
-        None => site.to_owned(),
-    };
+    match WHERE.lock().ok().and_then(|w| w.clone()) {
+        Some((_, function)) if !function.is_empty() => {
+            count(rule, &function, format!("{function}:{site}"), why);
+        }
+        _ => {
+            let function = site.split(':').next().unwrap_or_default();
+            let function = if function.starts_with("0x") {
+                ""
+            } else {
+                function
+            };
+            count(rule, function, site.to_owned(), why);
+        }
+    }
+}
+
+/// [`declined`] for a site named by its function and a local, loop or block of it.  The key
+/// is built only where a census is being written.
+pub fn declined_in(rule: &'static str, function: &str, site: &str, why: &'static str) {
+    if declines_wanted() {
+        count(rule, function, format!("{function}:{site}"), why);
+    }
+}
+
+/// One refusal of `rule` at the site `key` of `function`, unless that site was counted.
+fn count(rule: &'static str, function: &str, key: String, why: &'static str) {
     if let Ok(mut seen) = DECLINED_SITES.lock() {
-        let fresh = seen.get_or_insert_with(HashSet::new).insert((rule, site));
+        let fresh = seen.get_or_insert_with(HashSet::new).insert((rule, key));
         if !fresh {
             return;
         }
     }
-    if let Ok(mut d) = DECLINES.lock() {
-        *d.entry((rule, why.to_owned())).or_insert(0) += 1;
+    if decline_target().is_some()
+        && let Ok(mut d) = DECLINES.lock()
+    {
+        *d.entry((rule, why)).or_insert(0) += 1;
+    }
+    if decline_fn_target().is_some()
+        && let Ok(mut d) = DECLINES_BY_FN.lock()
+    {
+        *d.entry((function.to_owned(), rule, why)).or_insert(0) += 1;
     }
 }
 
@@ -198,6 +296,7 @@ pub fn fired(rule: &'static str, n: usize) {
 pub fn write() {
     write_by_fn();
     write_declines();
+    write_declines_by_fn();
     let Some(path) = target() else { return };
     let Ok(c) = COUNTS.lock() else { return };
     let mut out = String::new();
@@ -225,6 +324,18 @@ fn write_declines() {
         }
     }
     crate::platform::write_env_output(path, &out, "the decline census");
+}
+
+fn write_declines_by_fn() {
+    let Some(path) = decline_fn_target() else {
+        return;
+    };
+    let Ok(d) = DECLINES_BY_FN.lock() else { return };
+    let mut out = String::new();
+    for ((function, rule, why), n) in d.iter() {
+        let _ = writeln!(out, "{function}\t{rule}\t{why}\t{n}");
+    }
+    crate::platform::write_env_output(path, &out, "the per-function decline census");
 }
 
 fn write_by_fn() {

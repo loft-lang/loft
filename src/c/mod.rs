@@ -27,6 +27,7 @@ mod parse;
 mod reflect;
 mod show;
 mod split;
+mod tail;
 mod tidy;
 pub(crate) mod tls;
 mod unicode;
@@ -2728,6 +2729,9 @@ fn unit_defines(
         out.push_str("#define LOFT_NO_LOCKS 1\n");
         // The unit is the site: credited to the C writer, no function.
         let _census_unit = crate::rewrite_census::InBody::enter("c", "");
+        // @no-decline: match only: the pattern is a unit that reaches no lock source (`#lock =
+        //   …`, a mapped file, a constant store); a unit that reaches one is not the pattern,
+        //   and no test follows the match
         crate::rewrite_census::fired("R-NoLocks", 1);
     }
     // `@FR-R-NoThreads`: the runtime keeps its store table, frames and pools thread-local
@@ -2749,6 +2753,9 @@ fn unit_defines(
     {
         out.push_str("#define LOFT_NO_THREADS 1\n");
         let _census_unit = crate::rewrite_census::InBody::enter("c", "");
+        // @no-decline: match only: the pattern is a unit that runs no `par` loop on threads and
+        //   reaches no engine kernel; a unit that does is not the pattern, and no test follows
+        //   the match
         crate::rewrite_census::fired("R-NoThreads", 1);
     }
     // The JSON reader (`loft_json.h`) is compiled in for a unit that reads JSON: the JsonValue
@@ -3297,6 +3304,9 @@ fn resolve_hot_helpers(cx: &Cx, protos: &str, bodies: &str) -> (String, String) 
             .iter()
             .filter(|d| hot.contains(d))
             .count();
+        // @no-decline: match only: the pattern is a function within the size bound (twelve
+        //   statements, or a twin's or a hinted helper's own bound); a longer function is not
+        //   the pattern, and no test follows the match
         crate::rewrite_census::fired("R-Inline/helper", inlined);
     }
     let resolve = |text: &str| -> String {
@@ -3580,6 +3590,11 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
             .write()
         {
             Ok(b) => {
+                // @decline-owed: a producer whose transient twin cannot be written; and WHICH
+                //   use of the value no transient arm answers — a field set or append that
+                //   would store it, a keyed insert, an escaping return, a computed offset, a
+                //   choice between two transient values: the writer's errors are built text,
+                //   counted under one test.  The roots' tests report
                 crate::rewrite_census::fired("R-Transient", 1);
                 Some(b)
             }
@@ -4829,6 +4844,13 @@ fn framed(
     );
     let whole = format!("{body_storage} {} {fr}({params}) {{\n{body}}}\n", held(ret));
     trace_body(name, parts.is_some(), &whole);
+    // `@FR-R-CTail`: the whole body's shared release tails are written once.  The parts keep
+    // every exit's own statements (a part cannot jump into another), and the body trace above
+    // shows the body before this pass, as the body comparisons read it.
+    let whole = match tail::merge(name, &held(ret), body) {
+        Some(body) => format!("{body_storage} {} {fr}({params}) {{\n{body}}}\n", held(ret)),
+        None => whole,
+    };
     let text = match parts {
         Some(parts) if split::everywhere() => parts,
         Some(parts) => format!("#if defined(_MSC_VER)\n{parts}#else\n{whole}#endif\n"),

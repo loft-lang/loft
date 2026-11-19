@@ -13,7 +13,7 @@ header verdict's callee clause, …) reads it from ONE generic routine.  This ch
 that routine computes, which way each fact may err, how far it follows calls, and how a fact
 proven at a call site specialises the callee.
 
-**OPEN: 3** — the register at the end.  The rewrites themselves stay in `rewrites.md`; this
+**OPEN: 2** — the register at the end.  The rewrites themselves stay in `rewrites.md`; this
 chapter is the fact source they cite.
 
 ## The routine
@@ -175,17 +175,39 @@ budget one number.
 ```
 
 ```
-  (Fact-Oracle)  every kind has a falsifier that runs the program: under
-                 `LOFT_FACT_VERIFY=1` the interpreter checks a MUST `entry` fact on entry, a
-                 MUST result fact at return, and a MAY `writes` / `mints` summary as a
-                 superset of what the call actually wrote and minted, recorded per call
-                 while the switch is on.  A failed check names the function, the kind, the
-                 reach and the fact.
+  (Fact-Oracle)  a fact is falsified by PROGRAMS, never by a checker inside the
+                 compiler: there is no switch under which loft verifies its own facts as a
+                 program runs.  The change that widens a kind's reach lands with (a) a suite
+                 cell whose rewrite fires only at the new reach — the census shows it
+                 firing — with hand-computed values that hold on both backends and equally
+                 with the rewrite's own `LOFT_NO_*` switch set, and (b) the published
+                 libraries and the dogfood programs re-validated on that change.  A kind at
+                 its present reach owes nothing more: the census and the suite's values
+                 guard it.
 ```
 
 **In words.**  The census is the parallel run that makes moving an analysis safe (the old walk
-and the routine admit the same sites, or the move is not done); the oracle is what makes a
-widened reach safe, since the census can only count what is admitted, not whether it was right.
+and the routine admit the same sites, or the move is not done); it counts what is admitted, not
+whether it was right.  Whether it was right is asked of real programs: a cell that reaches the
+widened answer and is compared with the rewrite off, and every library and consumer that
+already runs on loft.  A run-time self-check would be a second implementation of every fact,
+owed its own proof, and the far end of it is a flag that makes the compiler behave correctly.
+This is the concern of the backends answering alike, asked of the analyses: it stays, and no
+program settles it.  A cell, a library and a consumer can each show a fact WRONG; none shows
+the facts right, so the evidence is what runs on loft and it grows with every program that does.
+A layer that validates the analyses adds complexity to check complexity; what makes a decision
+checkable is that it can be READ from outside.  The EFFECT of every rewrite already can: each
+has its own `LOFT_NO_*` switch, and the census counts where it fires by rule and by function
+(`LOFT_REWRITE_CENSUS`, `LOFT_REWRITE_CENSUS_FN`).  What is not complete is the REASON: a
+rewrite says why it refused a site through `rewrite_census::declined(rule, site, why)`
+(`LOFT_DECLINE_CENSUS`, `make decline-census`), and only some rules call it.  `make
+reason-census` counts, per rule, the sites in the source that report a refusal's reason and an
+admitted site, and tells four states apart: a rule that reports, one that states it has
+nothing to report (`// @no-decline: <why>` above its `fired` call — a rewrite that cannot
+refuse), one that was read and refuses on conditions it does not report yet
+(`// @decline-owed: <the conditions>`), and one nobody has read.
+`tests/reason_census.baseline` is its baseline, and a rule never falls silent.  What a refusal
+logs, and what is still to wire: [REWRITE_REASONS.md](../REWRITE_REASONS.md).
 
 ## Relations
 
@@ -249,14 +271,3 @@ Closed entries: [facts-history.md](facts-history.md).
   named bits and 24 parameter bits left, guarded by a compile-time assert.
 - **Removal:** a key of (function, assumptions) and one registry, the existing twins re-keyed
   with their emission unchanged — designed in `plans/211-rule-phases/design.md` § D-fact-3.
-
-### D-fact-4 (OPEN, @PLN211) — no kind has its run-time falsifier
-- **Violates:** `Fact-Oracle`, and through it `Fact-ReachMin`'s guard
-- **Where:** `LOFT_FACT_VERIFY` is read nowhere in `src/`; the interpreter checks no `entry`
-  fact on entry, no result fact at return and no `writes` / `mints` summary against the call
-- **Effect:** a widened reach is guarded only by the rewrite census and the language suite's
-  values (the `Fact-Direction` cell: a fact the routine cannot establish costs a rewrite, never a
-  value); a fact the routine gets WRONG is caught only where a program's answer moves.
-- **Removal:** the interpreter's checks under `LOFT_FACT_VERIFY=1`, built with @PLN211 Arc C
-  step 2 (`plans/211-rule-phases/design.md` § `(Fact-Oracle)` itself), each failed check naming
-  the function, the kind, the reach and the fact.

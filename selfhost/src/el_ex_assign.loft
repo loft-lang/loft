@@ -108,16 +108,40 @@ pub fn minting_call(e: el::El, n: ir::Node) -> boolean {
 // a work ref of its own (`materialize_view_return`), so the buffer is no chain's and a literal
 // exit beside it keeps its own store.
 pub fn returns_projection(e: el::El, i: integer) -> boolean {
+  // The body's own tail is such an exit too.
+  match e.p.nodes[i] {
+    SBlock { stmts } => {
+      if len(stmts) > 0 {
+        match e.p.nodes[stmts[-1]] {
+          SStmt { e: se, semi, orelse } => {
+            if se != null && !semi && orelse == null && projection_syntax(e, se!) {
+              return true;
+            }
+          },
+          _ => {}
+        }
+      }
+    },
+    _ => {}
+  }
+  return_of_projection(e, i)
+}
+
+fn projection_syntax(e: el::El, x: integer) -> boolean {
+  match e.p.nodes[x] { SMember { call } => !call, SIndex { range } => !range, _ => false }
+}
+
+fn return_of_projection(e: el::El, i: integer) -> boolean {
   match e.p.nodes[i] {
     SJump { kind, e: x } => {
       if kind == "return" && x != null {
-        return match e.p.nodes[x!] { SMember { call } => !call, SIndex { range } => !range, _ => false };
+        return projection_syntax(e, x!);
       }
     },
     _ => {}
   }
   for c in el_length::children(e, i) {
-    if returns_projection(e, c) {
+    if return_of_projection(e, c) {
       return true;
     }
   }
@@ -225,6 +249,10 @@ fn block_body(e: el::El, vars: el_vars::Vars, n: integer, context: text, result:
         }
         x = el_ex_object::statement(e, vars, se ?? 0, orelse);
         t = x.tp;
+        if el_trace::on() {
+          el_trace::value(e, vars, at, t);
+          el_trace::vars(e, vars, at);
+        }
         el_ex_call::statement_proofs(e, vars, x.code);
         // `@FR-E-Uncomp-Seen`: a compound step into a dense narrow local (its guard's default a
         // value, not the null) followed by `if !local` fuses with that test (`fuse_fit_test`, a
@@ -556,8 +584,21 @@ fn tuple_field_copy(e: el::El, vars: el_vars::Vars, n: integer, r: Ex) -> Ex {
   ex(ir::NdTuple { items: out }, ir::TyTuple { elems: tps })
 }
 
-// `Parser::expression`: one expression node.
+// `Parser::expression`: one expression node.  `e.at` names its first token while it is
+// elaborated — what a refusal or a route met inside it reports — and the enclosing node's again
+// after it.
 pub fn expression(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
+  outer = e.at;
+  // The node's leftmost token where `node_start` knows the shape (a call's callee, a binary's
+  // left operand); the node's own token otherwise (a `match`, an `if`, a literal start there).
+  first = el_ex_null::node_start(e, n);
+  e.at = if first > 0 { first } else { e.p.nodes[n].at };
+  x = expression_node(e, vars, n);
+  e.at = outer;
+  x
+}
+
+fn expression_node(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
   vars.site = n;
   match e.p.nodes[n] {
     SInt { v } => ex(ir::NdInt { n: v }, ir::TyInteger { spec: i32_spec() }),
@@ -2057,6 +2098,25 @@ pub fn vec_copy_bind(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> Ex {
   // replace.  A hidden or compiler-made parameter is a buffer filled in place: refused.
   param = vars.vars[v].argument;
   opt_param = param && el_vars::tp(vars, v) is TyOptional;
+  // A local the first pass renamed the return buffer onto (`v = x.c; v`) is that buffer on the
+  // second: the caller's store is emptied and refilled where the local is bound, no store of
+  // its own minted (`OpClearVector`, `OpAppendVector`).
+  // (From a FIELD's read: a copy of another vector local keeps its own store in Rust, the
+  // buffer filled at the tail — not carried.)
+  if !e.first_pass && field_read && param && hidden_param(e, vars, v) && !el_vars::is_compiler_generated(vars, v) && !(x.tp is TyOptional) && !(el_vars::tp(vars, v) is TyOptional) {
+    bnm = el_types::elem_name(e, elm);
+    brec = match el_types::base(elm) {
+      TyReference { n } => el::def(e, n).known_type,
+      _ => if bnm == "" { -1 } else { el_schema::schema_type(e, bnm) }
+    };
+    if bnm != "" && brec >= 0 && el::def_nr(e, "main_vector<{bnm}>") >= 0 {
+      el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [v] });
+      return ex(ir::NdInsert { items: [
+        el_ir::cl(e, "OpClearVector", [ir::NdVar { n: v }]),
+        el_ir::cl(e, "OpAppendVector", [ir::NdVar { n: v }, x.code, ir::NdInt { n: brec }])
+      ] }, ir::TyVoid);
+    }
+  }
   if x.tp is TyOptional || (el_vars::tp(vars, v) is TyOptional && !param) || (param && (hidden_param(e, vars, v) || el_vars::is_compiler_generated(vars, v))) {
     el::refuse(e, "a whole-vector copy bind of a nullable vector or into a buffer parameter");
     return ex(ir::NdNull, ir::TyVoid);
@@ -2361,6 +2421,35 @@ pub fn noted_bind(e: el::El, vars: el_vars::Vars, x: Ex) -> Ex {
 // the first pass, found again on the second — the right side is read, the local takes the
 // value's type (`change_var`) and the statement is the `Set` (`towards_set`), typed void.
 pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: text, target: integer, rhs: integer?) -> Ex {
+  // A compound assignment to a field of a `?` read (`v[0]?.k += x`): Rust binds the place once
+  // (`__place_N`) and reads and writes through it — not carried.
+  if op != "=" && rhs != null {
+    match e.p.nodes[target] {
+      SMember { e: cme, call } => {
+        if !call && cme != null && match e.p.nodes[cme!] { SPostfix { op: cpo } => cpo == "?", _ => false } {
+          el::refuse(e, "a compound assignment to a field of a `?` read");
+          return ex(ir::NdNull, ir::TyVoid);
+        }
+      },
+      _ => {}
+    }
+  }
+  // The literal a plain bind's value chain starts with is built as a receiver (`recv_literal`).
+  if op == "=" && rhs != null && e.p.nodes[target] is SName {
+    root = rhs!;
+    more = true;
+    while more {
+      more = false;
+      match e.p.nodes[root] {
+        SMember { e: me } => { if me != null { root = me!; more = true; } },
+        SIndex { e: ie } => { if ie != null { root = ie!; more = true; } },
+        _ => {}
+      }
+    }
+    if root != rhs! && e.p.nodes[root] is SVecLit {
+      vars.recv_literal = root;
+    }
+  }
   if rhs != null {
     el_ex_place::unqualify_literal(e, rhs!);
   }
@@ -3271,6 +3360,21 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
       TyOptional { inner } => {
         if el_length::assignments(e, vars.body, written) == 1 {
           el_vars::set_var_type(vars, v, inner);
+        }
+      },
+      _ => {}
+    }
+  }
+  // `own_fresh_bind_sites`: a vector local that borrows a store, bound to a call whose vector
+  // answer borrows nothing (a native's fresh vector), is given a work-ref owner by a rewrite
+  // of the finished body — not carried: refused by name.
+  if !e.first_pass && !vars.vars[v].argument && el_types::base(el_vars::tp(vars, v)) is TyVector && len(el_types::deps(el_vars::tp(vars, v))) > 0 {
+    match el_ir::unspan(x.code) {
+      NdCall { def_nr: fbd, args: fba } => {
+        fbr = el::def(e, fbd).returned[0] ?? ir::TyVoid;
+        if el_types::base(fbr) is TyVector && len(el_types::deps(fbr)) == 0 && !starts_with(el::def(e, fbd).name, "Op") && hidden_ref_arg(vars, fba) < 0 {
+          el::refuse(e, "a borrowing vector local bound to a call's fresh vector");
+          return ex(ir::NdNull, ir::TyVoid);
         }
       },
       _ => {}

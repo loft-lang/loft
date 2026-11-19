@@ -1698,6 +1698,9 @@ pub fn match_subject(e: el::El, vars: el_vars::Vars, t: ir::TypeT) -> integer {
 }
 
 pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<integer>, node: integer = -1) -> Ex {
+  if el_trace::on() {
+    el_trace::route(e, "parse_match");
+  }
   vars.match_site = subject;
   // A bind's right-hand side (`r = match …`): Rust writes each arm into the destination.
   at_bind = node >= 0 && vars.expect_node == node;
@@ -1792,6 +1795,9 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
   v = -1;
   if scalar_subject || enum_subject {
     // A text read from a local borrows that local.
+    if el_trace::on() {
+      el_trace::route(e, "parse_scalar_match");
+    }
     if st is TyText {
       match x.code {
         NdVar { n } => { st = ir::TyText { dep: [n] }; },
@@ -2199,6 +2205,9 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
 // arm back, ending in a wildcard arm's code or the result's null.  A guard, alternatives, a
 // binding and any other member pattern are refused by name.
 pub fn tuple_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>, at_bind: boolean) -> Ex {
+  if el_trace::on() {
+    el_trace::route(e, "parse_tuple_match");
+  }
   elems = match el_types::base(x.tp) { TyTuple { elems: es } => es, _ => [] };
   tmp = el_vars::create_unique(vars, "match_tuple", x.tp);
   el_vars::set_defined(vars, tmp);
@@ -2542,6 +2551,9 @@ pub fn arm_block_deps(n: ir::Node) -> vector<integer> {
 // stream into a buffer vector of its own (`_stream_buf_N`, bounded by `max_lookahead`), then
 // matches the buffer as a vector.  Carried for a plain integer element; any other is refused.
 pub fn stream_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>, node: integer) -> Ex {
+  if el_trace::on() {
+    el_trace::route(e, "parse_vector_match");
+  }
   void = ex(ir::NdNull, ir::TyUnknown { n: 0 });
   elem = match el_types::base(x.tp) { TyIterator { step } => step, _ => ir::TyVoid };
   plain_int = match elem { TyInteger { spec } => el_types::narrow_width(spec) == 0 && spec.forced_size == 0, _ => false };
@@ -2678,6 +2690,9 @@ pub fn cursor_shape(e: el::El, t: ir::TypeT) -> vector<integer> {
 // cursor past what it read.  A rest, a repetition, an alternation and a sub-rule are not
 // carried in a cursor pattern.
 pub fn cursor_match(e: el::El, vars: el_vars::Vars, x: Ex, cs: vector<integer>, arms: vector<integer>) -> Ex {
+  if el_trace::on() {
+    el_trace::route(e, "parse_cursor_match");
+  }
   cd = cs[0]!;
   elm = match el::def(e, cd).attributes[cs[1]!].typedef[0] ?? ir::TyVoid { TyVector { inner } => inner, _ => ir::TyVoid };
   copy = !(el_ir::unspan(x.code) is NdVar);
@@ -2709,6 +2724,9 @@ pub fn cursor_match(e: el::El, vars: el_vars::Vars, x: Ex, cs: vector<integer>, 
 }
 
 pub fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>) -> Ex {
+  if el_trace::on() {
+    el_trace::route(e, "parse_vector_match");
+  }
   void = ex(ir::NdNull, ir::TyUnknown { n: 0 });
   elm = match el_types::base(x.tp) { TyVector { inner } => inner, _ => ir::TyVoid };
   narrow = match elm { TyInteger { spec } => el_types::narrow_width(spec) > 0 || spec.forced_size != 0, _ => false };
@@ -3388,4 +3406,257 @@ fn halting_call_syntax(e: el::El, n: integer) -> boolean {
 // beside one the first pass could not type (or a `null`), which leaves it for the arms after.
 fn arm_settles(result: ir::TypeT, arm: ir::TypeT) -> boolean {
   unsettled(result) && !(el_types::base(arm) is TyNever && (el_types::is_unknown(el_types::base(result)) && !(el_types::base(result) is TyVoid) || el_types::base(result) is TyNull))
+}
+
+// `Parser::parse_map` — `v.map(f)` / `map(v, f)` is no call: it is built in place as a
+// comprehension over the vector (`build_comprehension_code`), each element handed to `f` and the
+// answer pushed onto a fresh vector.  Carried for a vector of plain scalars mapped by a function
+// the call names directly (a function's name, a lambda that captures nothing) to a plain
+// scalar; a function value, a record or text element and a callee with hidden parameters are
+// refused by name.  The first pass answers the result's type alone, as Rust's does.
+pub fn map_call(e: el::El, vars: el_vars::Vars, at: integer, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex {
+  if el_trace::on() {
+    el_trace::route(e, "parse_map");
+  }
+  in_elem = match el_types::base(types[0]!) { TyVector { inner } => inner, _ => ir::TyVoid };
+  out = match el_types::base(types[1]!) { TyFunction { args: _, result } => result, _ => ir::TyUnknown { n: 0 } };
+  if e.first_pass {
+    // (The function's answer as it is declared, its borrow of a parameter included: Rust's
+    // first pass types the receiving local `vector<text["…"]>` from it.)
+    rt1 = if !el_types::is_unknown(out) && !(out is TyVoid) { out } else { el_types::without_deps(in_elem) };
+    return ex(ir::NdNull, ir::TyVector { inner: rt1, dep: [] });
+  }
+  d = match el_ir::unspan(list[1]!) { NdInt { n } => n, _ => -1 };
+  if el_types::is_unknown(out) || out is TyVoid {
+    el::refuse(e, "a `map` through a function value");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  nm = el_types::elem_name(e, out);
+  push = el_ex_pattern::push_op(out);
+  // The element kinds carried: a plain scalar (pushed), a text (a record of one text, written
+  // by `OpSetText`) and a plain struct (copied into its fresh element).
+  text_out = el_types::base(out) is TyText && !(out is TyOptional);
+  rec_out = !(out is TyOptional) && struct_ref(e, el_types::base(out)) >= 0 && el::def(e, struct_ref(e, el_types::base(out))).def_type == el::DT_STRUCT;
+  out_ok = el_convert::plain_scalar(out) && push != "" || text_out || rec_out;
+  in_text = el_types::base(in_elem) is TyText && !(in_elem is TyOptional);
+  in_rec = !(in_elem is TyOptional) && struct_ref(e, el_types::base(in_elem)) >= 0 && el::def(e, struct_ref(e, el_types::base(in_elem))).def_type == el::DT_STRUCT;
+  in_ok = el_convert::plain_scalar(in_elem) || in_text || in_rec;
+  // A function VALUE (a local, a lambda with captures) is held in `_map_fn_N` first, minted
+  // before the walk's own temporaries, and called through it (`callback_call_ref`).
+  by_value = d < 0;
+  if !in_ok || !out_ok || nm == "" || el::def_nr(e, "main_vector<{nm}>") < 0 || by_value && !(el_convert::plain_scalar(in_elem) && el_convert::plain_scalar(out)) {
+    el::refuse(e, "a `map` over or to an element of this kind: {type_kind(in_elem)} to {type_kind(out)}");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  // (A lambda answering a record: Rust's first pass already types the receiving local with the
+  // lambda's borrow of its parameter, which this port's first pass has not derived yet.)
+  if !by_value && rec_out && len(el_types::deps(out)) > 0 && el::def(e, d).name.starts_with("n___lambda") {
+    el::refuse(e, "a `map` by a lambda answering a record that borrows its parameter");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  fv = if by_value { el_vars::create_unique(vars, "map_fn", types[1]!) } else { -1 };
+  if fv >= 0 {
+    el_vars::set_defined(vars, fv);
+  }
+  int_t = ir::TyInteger { spec: i32_spec() };
+  mv = el_vars::create_unique(vars, "map_vec", walked_type(list[0]!, types[0]!));
+  el_vars::set_defined(vars, mv);
+  idx = el_vars::create_unique(vars, "map_idx", int_t);
+  el_vars::set_defined(vars, idx);
+  elm_t = if in_text || in_rec { el_types::with_deps(el_types::without_deps(in_elem), [mv]) } else { in_elem };
+  elm_v = el_vars::create_unique(vars, "map_elm", elm_t);
+  el_vars::set_defined(vars, elm_v);
+  rt = ir::TyVector { inner: out, dep: [] };
+  res = el_vars::create_unique(vars, "map_result", rt);
+  el_vars::set_defined(vars, res);
+  out_d = el_ex_base::type_def_nr(e, el_types::base(out));
+  slot = el_vars::create_unique(vars, "elm", ir::TyReference { n: if (text_out || rec_out) && out_d >= 0 { out_d } else { 0 }, dep: [res] });
+  // The callback's call, made as any call (`callback_call`): its hidden buffers are the call's.
+  call: ir::Node = ir::NdNull;
+  if by_value {
+    call = ir::NdCallRef { var: fv, args: [ir::NdVar { n: elm_v }] };
+  } else {
+    vars.call_at = at;
+    vars.call_tok = at;
+    cr = el_ex_call::call_args(e, vars, d, [ir::NdVar { n: elm_v }], [elm_t]);
+    vars.call_at = -2;
+    if cr == null {
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    call = cr!.code;
+  }
+  rows = el_ex_base::vector_rows(e, out, 0, true);
+  nx = vector_step(e, mv, idx, in_elem);
+  if rows == null || nx == null {
+    el::refuse(e, "a `map` over or to an element of this kind: {type_kind(in_elem)} to {type_kind(out)}");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  ops = el_ex_pattern::literal_store(e, vars, res, rows!);
+  comp = el_vars::create_unique(vars, "comp", out);
+  el_vars::set_defined(vars, comp);
+  w = ir::NdVar { n: res };
+  steps: vector<ir::Node> = [el_ir::v_set(elm_v, nx!), vector_past_end(e, mv, idx), el_ir::v_set(comp, call)];
+  if text_out || rec_out {
+    sv = ir::NdVar { n: slot };
+    vk = ir::NdInt { n: rows!.vec_known };
+    steps += [el_ir::v_set(slot, el_ir::cl(e, "OpNewRecord", [w, vk, ir::NdInt { n: 65535 }]))];
+    if text_out {
+      steps += [el_ex_pattern::elem_write(e, out, sv, ir::NdVar { n: comp })];
+    } else {
+      rk = el::def(e, struct_ref(e, el_types::base(out))).known_type;
+      steps += [el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: comp }, el_ir::cl(e, "OpGetField", [sv, ir::NdInt { n: 0 }, ir::NdInt { n: rk }]), ir::NdInt { n: rk + 16384 }])];
+    }
+    steps += [el_ir::cl(e, "OpFinishRecord", [w, sv, vk, ir::NdInt { n: 65535 }])];
+  } else {
+    steps += [el_ir::cl(e, push, el_ex_pattern::push_args(e, vars, out, w, ir::NdVar { n: comp }))];
+  }
+  fill = if fv >= 0 { ir::NdInsert { items: [el_ir::v_set(mv, list[0]!), el_ir::v_set(fv, list[1]!)] } } else { el_ir::v_set(mv, list[0]!) };
+  ops += [fill, el_ir::v_set(idx, ir::NdInt { n: -1 }), el_ir::v_loop(steps, "For comprehension"), w];
+  bt = el_vars::tp(vars, res);
+  ex(el_ir::v_block(ops, bt, "Vector comprehension"), bt)
+}
+
+// The type of the hoisted copy a `map` / `filter` / `reduce` walks: the source's, borrowing the
+// source itself where it is a local (`depending` replaces the deps).
+fn walked_type(src: ir::Node, t: ir::TypeT) -> ir::TypeT {
+  match el_ir::unspan(src) {
+    NdVar { n } => el_types::with_deps(el_types::base(t), [n]),
+    _ => t
+  }
+}
+
+// `Parser::parse_filter`: as `map_call`, the element kept where the predicate holds
+// (`if pred(elm) null else continue`), then pushed as it is.
+pub fn filter_call(e: el::El, vars: el_vars::Vars, at: integer, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex {
+  if el_trace::on() {
+    el_trace::route(e, "parse_filter");
+  }
+  in_elem = match el_types::base(types[0]!) { TyVector { inner } => inner, _ => ir::TyVoid };
+  if e.first_pass {
+    return ex(ir::NdNull, ir::TyVector { inner: el_types::without_deps(in_elem), dep: [] });
+  }
+  d = match el_ir::unspan(list[1]!) { NdInt { n } => n, _ => -1 };
+  answers_bool = match el_types::base(types[1]!) { TyFunction { args: _, result } => result is TyBoolean, _ => false };
+  nm = el_types::elem_name(e, in_elem);
+  push = el_ex_pattern::push_op(in_elem);
+  if !answers_bool {
+    el::refuse(e, "a `filter` through a function value");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  // The element kinds carried, as `map_call`'s: a plain scalar, a text, a plain struct.
+  in_text = el_types::base(in_elem) is TyText && !(in_elem is TyOptional);
+  in_rec = !(in_elem is TyOptional) && struct_ref(e, el_types::base(in_elem)) >= 0 && el::def(e, struct_ref(e, el_types::base(in_elem))).def_type == el::DT_STRUCT;
+  by_value = d < 0;
+  if !(el_convert::plain_scalar(in_elem) && push != "" || in_text || in_rec) || nm == "" || el::def_nr(e, "main_vector<{nm}>") < 0 || by_value && !el_convert::plain_scalar(in_elem) {
+    el::refuse(e, "a `filter` of an element of this kind: {type_kind(in_elem)}");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  // (A predicate VALUE is held in `_filter_fn_N` first, as `map`'s function is.)
+  fv = if by_value { el_vars::create_unique(vars, "filter_fn", types[1]!) } else { -1 };
+  if fv >= 0 {
+    el_vars::set_defined(vars, fv);
+  }
+  int_t = ir::TyInteger { spec: i32_spec() };
+  mv = el_vars::create_unique(vars, "filter_vec", walked_type(list[0]!, types[0]!));
+  el_vars::set_defined(vars, mv);
+  idx = el_vars::create_unique(vars, "filter_idx", int_t);
+  el_vars::set_defined(vars, idx);
+  plain = el_types::without_deps(in_elem);
+  elm_t = if in_text || in_rec { el_types::with_deps(plain, [mv]) } else { in_elem };
+  elm_v = el_vars::create_unique(vars, "filter_elm", elm_t);
+  el_vars::set_defined(vars, elm_v);
+  res = el_vars::create_unique(vars, "filter_result", ir::TyVector { inner: plain, dep: [] });
+  el_vars::set_defined(vars, res);
+  in_d = el_ex_base::type_def_nr(e, el_types::base(in_elem));
+  slot = el_vars::create_unique(vars, "elm", ir::TyReference { n: if (in_text || in_rec) && in_d >= 0 { in_d } else { 0 }, dep: [res] });
+  test: ir::Node = ir::NdNull;
+  if by_value {
+    test = ir::NdCallRef { var: fv, args: [ir::NdVar { n: elm_v }] };
+  } else {
+    vars.call_at = at;
+    vars.call_tok = at;
+    cr = el_ex_call::call_args(e, vars, d, [ir::NdVar { n: elm_v }], [elm_t]);
+    vars.call_at = -2;
+    if cr == null {
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    test = cr!.code;
+  }
+  rows = el_ex_base::vector_rows(e, in_elem, 0, true);
+  nx = vector_step(e, mv, idx, in_elem);
+  if rows == null || nx == null {
+    el::refuse(e, "a `filter` of an element of this kind: {type_kind(in_elem)}");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  ops = el_ex_pattern::literal_store(e, vars, res, rows!);
+  comp = el_vars::create_unique(vars, "comp", if in_text || in_rec { el_types::with_deps(plain, [elm_v]) } else { in_elem });
+  el_vars::set_defined(vars, comp);
+  w = ir::NdVar { n: res };
+  steps: vector<ir::Node> = [
+    el_ir::v_set(elm_v, nx!),
+    vector_past_end(e, mv, idx),
+    el_ir::v_if(test, ir::NdNull, ir::NdContinue { n: 0 }),
+    el_ir::v_set(comp, ir::NdVar { n: elm_v })
+  ];
+  if in_text || in_rec {
+    sv = ir::NdVar { n: slot };
+    vk = ir::NdInt { n: rows!.vec_known };
+    steps += [el_ir::v_set(slot, el_ir::cl(e, "OpNewRecord", [w, vk, ir::NdInt { n: 65535 }]))];
+    if in_text {
+      steps += [el_ex_pattern::elem_write(e, in_elem, sv, ir::NdVar { n: comp })];
+    } else {
+      rk = el::def(e, struct_ref(e, el_types::base(in_elem))).known_type;
+      steps += [el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: comp }, el_ir::cl(e, "OpGetField", [sv, ir::NdInt { n: 0 }, ir::NdInt { n: rk }]), ir::NdInt { n: rk + 16384 }])];
+    }
+    steps += [el_ir::cl(e, "OpFinishRecord", [w, sv, vk, ir::NdInt { n: 65535 }])];
+  } else {
+    steps += [el_ir::cl(e, push, el_ex_pattern::push_args(e, vars, in_elem, w, ir::NdVar { n: comp }))];
+  }
+  fill = if fv >= 0 { ir::NdInsert { items: [el_ir::v_set(mv, list[0]!), el_ir::v_set(fv, list[1]!)] } } else { el_ir::v_set(mv, list[0]!) };
+  ops += [fill, el_ir::v_set(idx, ir::NdInt { n: -1 }), el_ir::v_loop(steps, "For comprehension"), w];
+  bt = el_vars::tp(vars, res);
+  ex(el_ir::v_block(ops, bt, "Vector comprehension"), bt)
+}
+
+// `Parser::parse_reduce`: `v.reduce(init, f)` folds in place — the accumulator set to `init`,
+// then `acc = f(acc, elm)` for each element — in a "reduce" block answering it.
+pub fn reduce_call(e: el::El, vars: el_vars::Vars, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex {
+  if el_trace::on() {
+    el_trace::route(e, "parse_reduce");
+  }
+  in_elem = match el_types::base(types[0]!) { TyVector { inner } => inner, _ => ir::TyVoid };
+  out = match el_types::base(types[2]!) { TyFunction { args: _, result } => result, _ => ir::TyUnknown { n: 0 } };
+  if e.first_pass {
+    return ex(ir::NdNull, if el_types::is_unknown(out) || out is TyVoid { el_types::without_deps(types[1]!) } else { el_types::without_deps(out) });
+  }
+  d = match el_ir::unspan(list[2]!) { NdInt { n } => n, _ => -1 };
+  if d < 0 || el_types::is_unknown(out) {
+    el::refuse(e, "a `reduce` through a function value");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  if len(el::def(e, d).attributes) != 2 || !el_convert::plain_scalar(in_elem) || !el_convert::plain_scalar(out) || !el_types::is_equal(e, el_types::base(types[1]!), el_types::base(out)) {
+    el::refuse(e, "a `reduce` over or to a value that is no plain scalar, or by a function with hidden parameters");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  int_t = ir::TyInteger { spec: i32_spec() };
+  acc = el_vars::create_unique(vars, "reduce_acc", el_types::without_deps(out));
+  el_vars::set_defined(vars, acc);
+  mv = el_vars::create_unique(vars, "reduce_vec", walked_type(list[0]!, types[0]!));
+  el_vars::set_defined(vars, mv);
+  idx = el_vars::create_unique(vars, "reduce_idx", int_t);
+  el_vars::set_defined(vars, idx);
+  elm_v = el_vars::create_unique(vars, "reduce_elm", in_elem);
+  el_vars::set_defined(vars, elm_v);
+  nx = vector_step(e, mv, idx, in_elem);
+  if nx == null {
+    el::refuse(e, "a `reduce` over or to a value that is no plain scalar, or by a function with hidden parameters");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  steps: vector<ir::Node> = [
+    el_ir::v_set(elm_v, nx!),
+    ir::NdInsert { items: [vector_past_end(e, mv, idx)] },
+    el_ir::v_set(acc, ir::NdCall { def_nr: d, args: [ir::NdVar { n: acc }, ir::NdVar { n: elm_v }] })
+  ];
+  bt = el_types::without_deps(out);
+  ex(el_ir::v_block([el_ir::v_set(acc, list[1]!), el_ir::v_set(mv, list[0]!), el_ir::v_set(idx, ir::NdInt { n: -1 }), el_ir::v_loop(steps, "reduce loop"), ir::NdVar { n: acc }], bt, "reduce"), bt)
 }

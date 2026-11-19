@@ -698,7 +698,7 @@ pub(super) fn drop_hook(function: &Function, v: u16, data: &Data) -> Option<Valu
 /// owner `(H-Drop)` asks for, and releasing through a guess would double a drop — which
 /// `(H-Drop)` rules out more firmly than it rules out losing one — so the ambiguous case
 /// keeps the buffer as the subject and behaves as it did before.
-fn delivered_binding(function: &Function, buffer: u16) -> Option<u16> {
+pub(super) fn delivered_binding(function: &Function, buffer: u16) -> Option<u16> {
     // A hidden RETURN buffer only (`__ref_N`).  A local's own `__vdb_N` backing already
     // releases through itself, and redirecting THAT onto a binding that borrows it releases
     // twice — measured on `d = mkv(); e = d`, the shape D-heap-13 warns is not a control.

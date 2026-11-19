@@ -24,7 +24,9 @@ ROOT = os.path.dirname(os.path.dirname(HERE))
 
 
 def trace_lines(text):
-    return [l for l in text.splitlines() if l.startswith("state ")]
+    """The state lines both sides print alike; `route` (Rust's) and `refuse` (the port's) say
+    which code ran and are read with --routes, beside each other, not diffed."""
+    return [l for l in text.splitlines() if l.startswith("state ") and " route " not in l and " refuse " not in l]
 
 
 def main():

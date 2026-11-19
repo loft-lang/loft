@@ -1252,6 +1252,9 @@ impl Output<'_> {
                     && crate::keys::text_clear_enabled()
                     && matches!(to.unspan(), Value::Text(t) if t.is_empty())
                 {
+                    // @decline-owed: a first bind, a text parameter passed by value, a
+                    //   generator field and a narrow-encoded local, each of which keeps the
+                    //   fresh `String`
                     crate::rewrite_census::fired("R-TextClear", 1);
                     return write!(w, "unsafe {{ (*var_{name}).clear() }}");
                 }
@@ -2081,6 +2084,12 @@ impl Output<'_> {
                 }
             };
             if crate::keys::swap_rebind_enabled() {
+                // @decline-owed: on the C, a bind whose value is no call, that does not free
+                //   its source, or whose type holds a stored reference (`swap_safe`); at run
+                //   time, a result in the store the destination or an argument names, one a
+                //   fn-ref call borrowed or a hidden buffer keeps, a source or destination that
+                //   is not its store's typed root, a stack, pinned or frame-held store: each
+                //   keeps the reset and the copy
                 crate::rewrite_census::fired("H-SwapRebind", 1);
             }
             let mut copy = copy_with(&tp_with_free);
@@ -2123,6 +2132,12 @@ impl Output<'_> {
             let rebind = match self.rebind_buffer.take() {
                 Some((v, buf, rbw)) if v == var && !witnessed && !variables.is_view_elided(var) => {
                     self.rebind_buffer_used = true;
+                    // @decline-owed: a rebind outside a loop or in a coroutine; a value that is
+                    //   no direct call answering a fresh store through a buffer only it and its
+                    //   frees name; a destination that is an argument, captured, never-free,
+                    //   witnessed or view-elided; a borrower of either store named at or after
+                    //   the rebind; at run time, a null result, one in the local's own store, a
+                    //   local holding none, a buffer holding another store
                     crate::rewrite_census::fired("R-RebindBuffer", 1);
                     let entry = rbw
                         .map(|r| format!(" && _dst.store_nr != {r}.store_nr"))

@@ -560,6 +560,10 @@ pub struct Parser {
     /// there is a VALUE being bound, whose arms `lift_borrowing_call_value` lifts.  Cleared
     /// inside a lambda's body, whose tail is a return position again (`ref_return`'s).
     pub(crate) in_bind_rhs: bool,
+    /// `LOFT_STATE_TRACE`'s `var` point: per function and pass, the spelled types of its
+    /// variables as the trace last printed them (`Parser::state_trace_vars`).  Empty unless
+    /// the trace is on.
+    pub(crate) trace_vars: std::collections::HashMap<(u32, bool), Vec<String>>,
     /// @PLN187 — the fact a producer that is not a variable or a call (a field read, a
     /// literal, a branch's value) left for `settle_operand` to take.
     pub(crate) produced: Option<crate::data::AliasFact>,
@@ -2157,6 +2161,7 @@ impl Parser {
             mid_return_justified: std::collections::HashSet::new(),
             mid_return_prune_pending: std::collections::HashSet::new(),
             in_bind_rhs: false,
+            trace_vars: std::collections::HashMap::new(),
             produced: None,
             pending_lambda_facts: Vec::new(),
             lambda_result: crate::data::AliasFact::Plain,

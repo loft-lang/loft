@@ -115,16 +115,22 @@ fn substitute(v: &mut Value, cx: &mut Cx) {
                 cx.buffers.insert(b);
                 return;
             }
+            let why = if buffer.is_none() {
+                "the call does not take its one hidden buffer"
+            } else {
+                "the result reaches a position that is not a read"
+            };
+            crate::rewrite_census::declined_in(
+                "R-Const",
+                cx.data.def(cx.d_nr).name(),
+                cx.data.def(f).name(),
+                why,
+            );
             if crate::keys::trace_const() {
                 eprintln!(
-                    "[const] fn={} callee={} DECLINED: {}",
+                    "[const] fn={} callee={} DECLINED: {why}",
                     cx.data.def(cx.d_nr).name(),
                     cx.data.def(f).name(),
-                    if buffer.is_none() {
-                        "the call does not take its one hidden buffer"
-                    } else {
-                        "the result reaches a position that is not a read"
-                    }
                 );
             }
         }

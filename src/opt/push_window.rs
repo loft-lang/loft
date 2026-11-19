@@ -329,11 +329,15 @@ pub(crate) fn push_loop_on<'a>(
     only: Option<&PathKey>,
 ) -> Option<PushLoop<'a>> {
     let trace = std::env::var("LOFT_TRACE_PUSH_FILL").is_ok() && only.is_none();
-    let decline = |why: &str| -> Option<PushLoop<'a>> {
+    let decline = |why: crate::rewrite_census::Refusal| -> Option<PushLoop<'a>> {
         // A loop with no push of its own is not a shape the rule is for (an outer loop
         // around a counted one): traced, never counted.
-        if only.is_none() && why != "no push at the top level of the body" {
-            crate::rewrite_census::declined("R-PushFill/loop", &format!("loop {}", lp.scope), why);
+        if only.is_none() && why.clause != "no push at the top level of the body" {
+            crate::rewrite_census::declined(
+                "R-PushFill/loop",
+                &format!("loop {}", lp.scope),
+                why.clause,
+            );
         }
         if trace {
             eprintln!("push-fill: loop {} declined — {why}", lp.scope);
@@ -343,7 +347,12 @@ pub(crate) fn push_loop_on<'a>(
     let body = push_loop_body(lp)?;
     let rc = match range_counters(lp, data) {
         Ok(rc) => rc,
-        Err(why) => return decline(&why),
+        Err(why) => {
+            return decline(crate::rewrite_census::Refusal::about(
+                "the loop is not a counted range",
+                why,
+            ));
+        }
     };
     let stmts: Vec<&Value> = body
         .iter()
@@ -379,7 +388,11 @@ pub(crate) fn push_loop_on<'a>(
         {
             biased |= bias.is_some();
             match &path {
-                Some(pp) if *pp != p => return decline("the pushes reach two paths"),
+                Some(pp) if *pp != p => {
+                    return decline(crate::rewrite_census::Refusal::of(
+                        "the pushes reach two paths",
+                    ));
+                }
                 Some(_) => {}
                 None => {
                     path = Some(p);
@@ -392,7 +405,9 @@ pub(crate) fn push_loop_on<'a>(
         }
     }
     let (Some(path), Some(vector)) = (path, vector) else {
-        return decline("no push at the top level of the body");
+        return decline(crate::rewrite_census::Refusal::of(
+            "no push at the top level of the body",
+        ));
     };
     // The statements that are neither a counted push nor the path's own reservation (which
     // the parser emits BEFORE the push, so it is counted once the path is known).
@@ -420,7 +435,9 @@ pub(crate) fn push_loop_on<'a>(
         })
     });
     if early {
-        return decline("the body can leave early, or loops");
+        return decline(crate::rewrite_census::Refusal::of(
+            "the body can leave early, or loops",
+        ));
     }
     // Every push to the path is one of the counted ones, and nothing else writes it.
     let mut all = 0usize;
@@ -446,17 +463,23 @@ pub(crate) fn push_loop_on<'a>(
         });
     }
     if other {
-        return decline("another write reaches the path");
+        return decline(crate::rewrite_census::Refusal::of(
+            "another write reaches the path",
+        ));
     }
     if all != vals.len() {
-        return decline("a push stands under a branch");
+        return decline(crate::rewrite_census::Refusal::of(
+            "a push stands under a branch",
+        ));
     }
     let mut banned = vec![rc.loop_var, rc.index, path.0];
     if let Some(nx) = rc.next {
         banned.push(nx);
     }
     if !simple_invariant(rc.hi, data, &banned) {
-        return decline("the range's end is not a simple invariant");
+        return decline(crate::rewrite_census::Refusal::of(
+            "the range's end is not a simple invariant",
+        ));
     }
     let fill =
         if !biased && vals.len() == 1 && plain == 0 && simple_invariant(vals[0], data, &banned) {
@@ -552,9 +575,9 @@ pub fn push_window_ok(
     def_nr: u32,
     stores: Option<&Stores>,
     fx: &mut Facts,
-) -> Result<(), String> {
+) -> Result<(), crate::rewrite_census::Refusal> {
     if p.fill.is_some() {
-        return Err("the loop is one fill".to_string());
+        return Err(crate::rewrite_census::Refusal::of("the loop is one fill"));
     }
     let vars = data.def(def_nr).variables();
     let root = p.path.0;
@@ -569,15 +592,21 @@ pub fn push_window_ok(
             || work_buffer_arg(data, def_nr, root)
             || holder.is_some())
     {
-        return Err("the pushed vector's root is not exclusive".to_string());
+        return Err(crate::rewrite_census::Refusal::of(
+            "the pushed vector's root is not exclusive",
+        ));
     }
     let Some(body) = push_loop_body(lp) else {
-        return Err("not a counted push loop".to_string());
+        return Err(crate::rewrite_census::Refusal::of(
+            "not a counted push loop",
+        ));
     };
     if let Some(h) = holder
         && body.iter().any(|s| s.reads_var(h))
     {
-        return Err("the loop names the record holding the pushed vector".to_string());
+        return Err(crate::rewrite_census::Refusal::of(
+            "the loop names the record holding the pushed vector",
+        ));
     }
     let mut parts: Vec<&Value> = Vec::new();
     for s in body {
@@ -630,7 +659,7 @@ pub(crate) fn window_parts_ok(
     stores: Option<&Stores>,
     fx: &mut Facts,
     facts: Option<&StoreFacts>,
-) -> Result<(), String> {
+) -> Result<(), crate::rewrite_census::Refusal> {
     // The variables that COULD name the root's store: asked per variable through the one
     // naming predicate (`Value::reads_var`), so every spelling of a mention is covered.
     let may_view: Vec<u16> = (0..vars.count())
@@ -672,12 +701,14 @@ pub(crate) fn window_parts_ok(
         .collect();
     for part in parts {
         if roots.iter().any(|&r| part.reads_var(r)) {
-            return Err("the body names the pushed vector outside its pushes".to_string());
+            return Err(crate::rewrite_census::Refusal::of(
+                "the body names the pushed vector outside its pushes",
+            ));
         }
         if let Some(x) = may_view.iter().find(|&&x| part.reads_var(x)) {
-            return Err(format!(
-                "the body names `{}`, which may view the pushed vector",
-                vars.name(*x)
+            return Err(crate::rewrite_census::Refusal::about(
+                "the body names a local that may view the pushed vector",
+                vars.name(*x),
             ));
         }
         // Asked as the header hoist asks it — with the variable table and the in-place
@@ -700,7 +731,9 @@ pub(crate) fn window_parts_ok(
                 None,
             )
         }) {
-            return Err("the body writes a store beside its pushes".to_string());
+            return Err(crate::rewrite_census::Refusal::of(
+                "the body writes a store beside its pushes",
+            ));
         }
     }
     Ok(())
@@ -933,17 +966,21 @@ pub fn mint_window_ok(
     def_nr: u32,
     stores: Option<&Stores>,
     fx: &mut Facts,
-) -> Result<(), String> {
+) -> Result<(), crate::rewrite_census::Refusal> {
     let vars = data.def(def_nr).variables();
     let root = m.path.0;
     let root_is_retbuf = retbuf_var(data, def_nr) == Some(root);
     if root >= vars.count()
         || !(owned_local(vars, root) || root_is_retbuf || work_buffer_arg(data, def_nr, root))
     {
-        return Err("the appended vector's root is not exclusive".to_string());
+        return Err(crate::rewrite_census::Refusal::of(
+            "the appended vector's root is not exclusive",
+        ));
     }
     let Some(body) = plain_for_body(lp) else {
-        return Err("not a plain counted loop".to_string());
+        return Err(crate::rewrite_census::Refusal::of(
+            "not a plain counted loop",
+        ));
     };
     // The elements minted by the groups: their field sets are the group's own writes.
     let mut fresh: HashSet<u16> = HashSet::new();
@@ -1030,7 +1067,9 @@ pub fn mint_window_ok(
         }
     }
     if copies_heap_into_fresh(body, &fresh, data, stores) {
-        return Err("a whole-record copy into the element owns heap fields".to_string());
+        return Err(crate::rewrite_census::Refusal::of(
+            "a whole-record copy into the element owns heap fields",
+        ));
     }
     let mut parts: Vec<&Value> = Vec::new();
     for s in &body.operators {

@@ -875,9 +875,19 @@ fn no_worse(a: integer, b: integer) -> boolean {
 // How far each routed argument is from member `d`'s parameter, or null when `d` does not take the
 // call (`@FR-Disp-Applicable`): more arguments than parameters, a trailing parameter with no
 // default, or an argument its parameter cannot accept.
-fn definition_ranks(e: el::El, d: integer, args: vector<ir::TypeT>) -> vector<integer>? {
+fn definition_ranks(e: el::El, d: integer, args: vector<ir::TypeT>, literals: vector<boolean> = []) -> vector<integer>? {
   if el::def(e, d).def_type == el::DT_GENERIC {
     return template_ranks(e, d, args);
+  }
+  // A literal still marked as built in place (the first pass's) takes only a parameter of its
+  // own type.
+  for lit in literals {
+    if lit && lit#index < len(args) {
+      lp = visible_params(e, d)[lit#index];
+      if lp == null || rank(e, el_types::base(args[lit#index]!), el_types::base(lp!)) != EXACT {
+        return null;
+      }
+    }
   }
   if !takes_arity(e, d, len(args)) {
     return null;
@@ -1313,7 +1323,7 @@ pub fn source_set(e: el::El, source: integer, name: text) -> integer {
 }
 
 // `only`: a qualified call's library, whose own members alone it reaches (-1: every member).
-pub fn select(e: el::El, set: integer, name: text, types: vector<ir::TypeT>, pos: ir::Position, only: integer = -1) -> integer {
+pub fn select(e: el::El, set: integer, name: text, types: vector<ir::TypeT>, pos: ir::Position, only: integer = -1, literals: vector<boolean> = []) -> integer {
   args = routed(types);
   for t in args {
     if !(el_types::base(t) is TyNull) && identity(e, t) == "" {
@@ -1328,7 +1338,7 @@ pub fn select(e: el::El, set: integer, name: text, types: vector<ir::TypeT>, pos
     el::refuse(e, "a call of an overload set inside a generic");
     return -1;
   }
-  one = select_static(e, set, args, only);
+  one = select_static(e, set, args, only, literals);
   if !e.first_pass {
     // `dynamic_positions(…, nullable: fallback.is_some())`: a nullable position decides by
     // variant only where the static types select a member, its null leaf.
@@ -1348,7 +1358,7 @@ pub fn select(e: el::El, set: integer, name: text, types: vector<ir::TypeT>, pos
 }
 
 // `select_overload_from`: the unique minimal member taking `args`; -1 for none, -2 for two.
-fn select_static(e: el::El, set: integer, args: vector<ir::TypeT>, only: integer = -1) -> integer {
+fn select_static(e: el::El, set: integer, args: vector<ir::TypeT>, only: integer = -1, literals: vector<boolean> = []) -> integer {
   taking: vector<Ranked> = [];
   for a in el::def(e, set).attributes {
     match a.typedef[0] {
@@ -1356,7 +1366,7 @@ fn select_static(e: el::El, set: integer, args: vector<ir::TypeT>, only: integer
         if only >= 0 && el::def(e, n).source != only {
           continue;
         }
-        r = definition_ranks(e, n, args);
+        r = definition_ranks(e, n, args, literals);
         if r != null {
           taking += [Ranked { d: n, ranks: r! }];
         }

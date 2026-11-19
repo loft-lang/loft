@@ -180,6 +180,12 @@ impl Cx<'_> {
                     return;
                 }
                 Err(why) => {
+                    crate::rewrite_census::declined_in(
+                        "R-ReturnField",
+                        self.name,
+                        &bl.scope.to_string(),
+                        why,
+                    );
                     if crate::keys::trace_place() {
                         eprintln!("[return-field] fn={}: DECLINED — {why}", self.name);
                     }
@@ -204,6 +210,10 @@ impl Cx<'_> {
                     bl.operators.push(Value::Block(Box::new(exit)));
                 }
                 Err(why) => {
+                    if crate::rewrite_census::declines_wanted() {
+                        let site = format!("{}:tested {}", self.name, bl.scope);
+                        crate::rewrite_census::declined("R-ReturnField", &site, why);
+                    }
                     if crate::keys::trace_place() {
                         eprintln!(
                             "[return-field] fn={}: DECLINED (presence-tested) — {why}",

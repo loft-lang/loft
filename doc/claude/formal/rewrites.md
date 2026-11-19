@@ -181,8 +181,9 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-Base)` | `R-Base` c, native · `/counter` c · `/grid` c · `/guard` c · `/length-local` c · `/wrap-select` c |
 | `(R-BoundAppend)` | `R-BoundAppend` parse |
 | `(R-BoundedNest)` | `R-BoundedNest` native · `/kernel` ir |
-| `(R-BufferReturn)` | counted; admitted on no bench program |
+| `(R-BufferReturn)` | `R-BufferReturn` c · `/bind` c |
 | `(R-ByteCopy)` | `R-ByteCopy` ir |
+| `(R-CTail)` | `R-CTail` c |
 | `(R-CallLine)` | not counted — executor: a frame's line derived from its call position |
 | `(R-Callee)` | `R-Callee` c, native |
 | `(R-CharWalk)` | `R-CharWalk` c, native |
@@ -211,7 +212,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-FaultFlag)` | `R-FaultFlag` native |
 | `(R-FieldAppend)` | `R-FieldAppend` c, native · `/bare` c, native |
 | `(R-FileHold)` | `R-FileHold` c, native |
-| `(R-Fill)` | `R-Fill` c, native · `/guarded` c, native |
+| `(R-Fill)` | `R-Fill` c, native · `/guarded` c |
 | `(R-FirstClaim)` | `R-FirstClaim` interp |
 | `(R-FlatCopy)` | `R-FlatCopy` c, native |
 | `(R-FnRefBuffer)` | `R-FnRefBuffer` c · `/frame` c |
@@ -270,7 +271,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-Range)` | `R-Range` c, native · `/index` c |
 | `(R-RangedCall)` | `R-RangedCall` c, native · `/guard` c |
 | `(R-Rebind)` | `R-Rebind` ir |
-| `(R-RebindBuffer)` | `R-RebindBuffer` native |
+| `(R-RebindBuffer)` | counted; admitted on no bench program |
 | `(R-RecPtr)` | `R-RecPtr` c, native · `/held` c · `/index` native · `/nested` native · `/param` c · `/text` c |
 | `(R-RefParam)` | `R-RefParam` c |
 | `(R-RefillBuffer)` | `R-RefillBuffer` native |
@@ -5607,6 +5608,40 @@ Sites: `opt::frame_calls::GuardFree` (`registers_buffers`, `is_guard_free`), the
                  (`_tlv_get_addr`, 13 % of a record-building recursion's profile).  Measured
                  on Apple silicon, clang: 21_tree `build_rec` −14.5 %; every routine of
                  @PLN219's hand pricing −10 % to −21 %.  Switch `LOFT_NO_THREAD_FACT=1`.
+
+  (R-CTail)      the C of a function writes each RELEASE TAIL two of its exits share once.
+                 An exit's tail is the unbroken run of release statements straight before
+                 its `return`: the scope pass's frees of what the function still owns
+                 ((H-Free)), then the writer's own (its texts, its parked work buffers).
+                 Written at every exit, a body grows as exits × owned locals, not with its
+                 source.  Where the last eight or more statements of a tail are, text for
+                 text, the end of a tail already written, the exit keeps its own
+                 statements that differ and jumps into the written one.
+                 THE INVARIANT: every exit runs the statements it ran before, in the order
+                 it ran them, and returns the value it read where it read it.  The rule
+                 moves where a statement is WRITTEN, never which statements run, so it
+                 asks nothing about what a release does, holds in every tier and on every
+                 C compiler, and changes no answer, no free and no leak.
+                 PREMISES, each tested per exit, and an exit that fails one is written as
+                 it was: (a) a tail statement names only what the function declares at
+                 its top level — a name a nested block declares is another object in
+                 another block; (b) the statement before the tail is complete, so nothing
+                 brace-less governs the tail's first statement; (c) the value returned is
+                 a plain name no release of the tail writes — it is read into the
+                 function's one result slot at its own place in the tail when the tail
+                 assigns it, before the tail when it was assigned earlier.  A body with a
+                 preprocessor line stays whole, and so do the parts of (R-CSplit): a part
+                 cannot jump into another.
+                 WHAT IT DOES NOT DO: two exits whose tails differ in the middle — one
+                 frees a local the other does not own yet — share only the end after the
+                 difference.  Freeing the union at one epilogue would need the fact that
+                 the local is unset on every path to the exit that omits it, which a
+                 hand-over without a reset does not give; that is a rule of the scope
+                 pass, not of this one.
+                 Measured on the loft-written elaborator (6324 functions): the unit
+                 72.0 → 65.5 MB, its largest function 80 529 → 37 576 lines, 253
+                 functions shortened.  Switch `LOFT_NO_C_TAIL=1`; `LOFT_TRACE_C_TAIL=1`
+                 names each function shortened.  Site `src/c/tail.rs`.
 
   (R-Inline)     a loft function the C writes in at most twelve statements is declared
                  `static inline`, its frame wrapper with it, and its body is ALWAYS

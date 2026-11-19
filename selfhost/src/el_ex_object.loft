@@ -354,6 +354,9 @@ pub fn update_writes(e: el::El, vars: el_vars::Vars, r: ir::Node, d: integer, fi
 }
 
 pub fn object_expr(e: el::El, vars: el_vars::Vars, name0: text, member0: text, fields: vector<integer>, base: integer?) -> Ex {
+  if el_trace::on() {
+    el_trace::route(e, "parse_object");
+  }
   qv = el_ex_place::qualified_variant(e, name0, member0);
   name = if qv != "" { qv } else { name0 };
   member = if qv != "" { "" } else { member0 };
@@ -408,6 +411,10 @@ pub fn to_default(e: el::El, t: ir::TypeT) -> ir::Node {
       en = match inner { TyEnum { n: en0, is_ref } => if is_ref { -1 } else { en0 }, _ => -1 };
       if en >= 0 {
         return ir::NdEnum { ord: 0, tp: el::def(e, en).known_type };
+      }
+      // (An absent text is the null text, `OpConvTextFromNull`.)
+      if inner is TyText {
+        return el_ir::cl(e, "OpConvTextFromNull", []);
       }
       nl = if inner is TyInteger || inner is TyFloat || inner is TySingle { el_convert::null_of(e, inner) } else { null };
       if nl == null {
@@ -825,7 +832,12 @@ pub fn member(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: t
     // wraps it in its position.)
     qd = if qn != "" { el::def_nr(e, qn) } else { -1 };
     if qd >= 0 && el_ex_place::qualified_variant(e, qn, name) != "" && (el::def(e, qd).returned[0] ?? ir::TyVoid) == ir::TyEnum { n: qd, is_ref: true, dep: [] } {
-      return el_ex_assign::global_name(e, vars, -1, name);
+      // (Read through the member access, the value carries its position as any member's does.)
+      qv = el_ex_assign::global_name(e, vars, -1, name);
+      if e.first_pass || qv.code is NdNull {
+        return qv;
+      }
+      return ex(ir::NdSpan { pos: el::pos_at(e, at), inner: qv.code }, qv.tp);
     }
   }
   // `T.parse(text)` on a struct, a record variant or a struct enum (`parse_var`'s type arm).
@@ -1599,6 +1611,15 @@ pub fn hinted_argument(e: el::El, vars: el_vars::Vars, node: integer, elem: ir::
 // definition the name and the first argument's type select (`call`, `Data::candidates`), each
 // argument converted to its parameter (`process_call_args`).  On the second pass the call is
 // wrapped in its position: where the lexer stood after the token that follows `(`.
+// Is a call's argument a struct literal (behind its `SArg`, unnamed)?
+fn literal_argument(e: el::El, a: integer) -> boolean {
+  match e.p.nodes[a] {
+    SStructLit { name: _ } => true,
+    SArg { name, e: inner } => name == "" && inner != null && e.p.nodes[inner!] is SStructLit,
+    _ => false
+  }
+}
+
 pub fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?, args: vector<integer>) -> Ex {
   name = "";
   // A qualified `lib::f(…)` reaches the library's own definitions alone (`Parser::parse_var`'s
@@ -1635,20 +1656,48 @@ pub fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?,
   for a in args {
     match e.p.nodes[a] {
       SArg { at: aat, name: an, e: ae } => {
-        if an != "" || ae == null {
+        if ae == null {
           el::refuse(e, "a named argument");
           return ex(ir::NdNull, ir::TyUnknown { n: 0 });
         }
         // `free_call_hint`, asked per argument with the types read so far: its parameter's
         // `fn(…)` types a short lambda argument.  A qualified call asks the library alone.
         hd = if source >= 0 { look(e, source, "n_{name}") } else { el_dispatch::free_call_hint(e, name, types) };
-        hint_lambda(e, vars, hd, a#index, ae!, sofar: types);
-        eh = argument_element_hint(e, hd, a#index, ae!);
+        // A named argument of a function the name alone selects, at or after the position
+        // reached: the parameters it skips take their constant defaults, and it is read as the
+        // argument of its own position.  Any other (an overload set, a parameter already
+        // given, a skipped one with no constant default) is refused by name.
+        if an != "" {
+          // (A qualified call names its library's one function of that name.)
+          np = if hd >= 0 && (if source >= 0 { el_dispatch::source_set(e, source, name) < 0 } else { el_dispatch::own_set(e, name) < 0 }) { attr_nr(el::def(e, hd), an) } else { -1 };
+          gap_ok = np >= len(list);
+          if gap_ok {
+            for k in len(list)..np {
+              ka = el::def(e, hd).attributes[k];
+              kv = if ka == null { ir::NdNull } else { el_ir::unspan(ka!.value[0] ?? ir::NdNull) };
+              if !(kv is NdInt || kv is NdLong || kv is NdFloat || kv is NdSingle || kv is NdBoolean || kv is NdText) {
+                gap_ok = false;
+              }
+            }
+          }
+          if !gap_ok {
+            el::refuse(e, "a named argument");
+            return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+          }
+          for k in len(list)..np {
+            ka = el::def(e, hd).attributes[k]!;
+            list += [ka.value[0]!];
+            types += [ka.typedef[0] ?? ir::TyVoid];
+            built += [ir::TyUnknown { n: 0 }];
+          }
+        }
+        hint_lambda(e, vars, hd, len(list), ae!, sofar: types);
+        eh = argument_element_hint(e, hd, len(list), ae!);
         built += [eh];
         if el_trace::on() {
           el_trace::state(e, vars, "arg", aat, ae!);
         }
-        x = argument_view(e, vars, hinted_argument(e, vars, ae!, eh, d: hd, i: a#index, sofar: types));
+        x = argument_view(e, vars, hinted_argument(e, vars, ae!, eh, d: hd, i: len(list), sofar: types));
         // A tuple handed to a TEMPLATE has its `__tuple<…>` record made where the call's
         // statement ends (`ensure_tuple_defs`): the instance is keyed and laid out by it.
         if !e.first_pass && hd >= 0 && el::def(e, hd).def_type == el::DT_GENERIC {
@@ -1706,7 +1755,23 @@ pub fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?,
   if source < 0 && name == "sort" && sorts_itself(types) {
     return sort_call(e, list, types);
   }
+  // `parse_map` / `parse_filter` / `parse_reduce` in the call spelling (`map(v, f)`): built in
+  // place as the method spelling is, where the program declares none of its own.
+  if source < 0 && len(types) > 0 && el_types::base(first) is TyVector && !(first is TyOptional) && !open_types(e, types) && el_dispatch::own_set(e, name) < 0 && el::def_nr(e, "n_{name}") < 0 {
+    if name == "map" && len(list) == 2 && el_types::base(types[1]!) is TyFunction {
+      return el_ex_match::map_call(e, vars, at, list, types);
+    }
+    if name == "filter" && len(list) == 2 && el_types::base(types[1]!) is TyFunction {
+      return el_ex_match::filter_call(e, vars, at, list, types);
+    }
+    if name == "reduce" && len(list) == 3 && el_types::base(types[2]!) is TyFunction && (e.first_pass || el_ir::unspan(list[2]!) is NdInt) {
+      return el_ex_match::reduce_call(e, vars, list, types);
+    }
+  }
   if source < 0 && len(types) == 1 && el_types::base(first) is TyIterator && (name == "next" || name == "exhausted") {
+    if el_trace::on() {
+      el_trace::route(e, "call:{name}");
+    }
     step = match el_types::base(first) { TyIterator { step: st } => st, _ => ir::TyVoid };
     if name == "exhausted" {
       return ex(el_ir::cl(e, "OpCoroutineExhausted", [list[0]]), ir::TyBoolean);
@@ -1725,7 +1790,14 @@ pub fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?,
   set = if source < 0 { el_dispatch::own_set(e, name) } else { el_dispatch::source_set(e, source, name) };
   // A dispatcher a run-time decided call makes is placed where Rust's lexer then stands: past the
   // token after the call's `)`.
-  d = if set >= 0 { el_dispatch::select(e, set, name, types, el::pos_at(e, el_types::closing_paren(e, after_paren(e, at) - 1) + 1), only: source) } else { find_fn(e, name, routed_receiver(first, types), source) };
+  // On the first pass a struct literal's type is still marked as built in place (`Rewritten`),
+  // which only a parameter of exactly its type takes: a member reached by widening the literal
+  // (a variant into its enum) is selected on the second pass, where its buffer is then minted.
+  lits: vector<boolean> = [];
+  if e.first_pass && set >= 0 {
+    lits = [for t in types { t#index < len(args) && literal_argument(e, args[t#index]!) }];
+  }
+  d = if set >= 0 { el_dispatch::select(e, set, name, types, el::pos_at(e, el_types::closing_paren(e, after_paren(e, at) - 1) + 1), only: source, literals: lits) } else { find_fn(e, name, routed_receiver(first, types), source) };
   if d < 0 && set >= 0 {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
@@ -1967,6 +2039,9 @@ pub fn size_call(e: el::El, list: vector<ir::Node>, t: ir::TypeT) -> Ex? {
 // instance's (`tvinsert`).  An element that reads the vector it is inserted into is staged
 // first, a vector of vectors appends, a linked group links the record: not carried.
 pub fn insert_call(e: el::El, vars: el_vars::Vars, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex {
+  if el_trace::on() {
+    el_trace::route(e, "parse_insert");
+  }
   if e.first_pass {
     return ex(ir::NdNull, ir::TyVoid);
   }
@@ -2021,6 +2096,9 @@ pub fn vector_insert(e: el::El, vars: el_vars::Vars, vec: ir::Node, index: ir::N
 // element's store size; over a type variable's element the choice is each instance's
 // (`tvreverse`).
 pub fn reverse_call(e: el::El, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex {
+  if el_trace::on() {
+    el_trace::route(e, "parse_reverse");
+  }
   if e.first_pass {
     return ex(ir::NdNull, ir::TyVoid);
   }
@@ -2042,6 +2120,9 @@ pub fn reverse_call(e: el::El, list: vector<ir::Node>, types: vector<ir::TypeT>)
 }
 
 pub fn reserve_call(e: el::El, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex {
+  if el_trace::on() {
+    el_trace::route(e, "parse_reserve");
+  }
   if e.first_pass {
     return ex(ir::NdNull, ir::TyVoid);
   }
@@ -2081,6 +2162,14 @@ pub fn store_else(e: el::El, vars: el_vars::Vars, code: ir::Node, orelse: intege
   has_target = false;
   write_steps: vector<integer> = [];
   write_args: vector<integer> = [];
+  // An APPEND is a store too (`is_append_op`): its target is the collection it claims in,
+  // bound in `_store_target_N` before the claim.  That form is not carried yet.
+  for st in steps {
+    if append_step(e, st) {
+      el::refuse(e, "a store `else` on an append");
+      return code;
+    }
+  }
   for st in steps {
     match el_ir::unspan(st) {
       NdCall { def_nr, args } => {
@@ -2549,9 +2638,34 @@ pub fn method_call_on(e: el::El, vars: el_vars::Vars, at: integer, x: Ex, re: in
   for a in args {
     match e.p.nodes[a] {
       SArg { at: aat, name: an, e: ae } => {
-        if an != "" || ae == null {
+        if ae == null {
           el::refuse(e, "a named argument");
           return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+        }
+        // A named argument of a method the name alone selects, as a free call's: at or after
+        // the position reached, the parameters it skips taking their constant defaults.
+        if an != "" {
+          mnp = if hint_nr >= 0 && el_dispatch::own_set(e, name) < 0 { attr_nr(el::def(e, hint_nr), an) } else { -1 };
+          mgap = mnp >= len(list);
+          if mgap {
+            for k in len(list)..mnp {
+              ka = el::def(e, hint_nr).attributes[k];
+              kv = if ka == null { ir::NdNull } else { el_ir::unspan(ka!.value[0] ?? ir::NdNull) };
+              if !(kv is NdInt || kv is NdLong || kv is NdFloat || kv is NdSingle || kv is NdBoolean || kv is NdText) {
+                mgap = false;
+              }
+            }
+          }
+          if !mgap {
+            el::refuse(e, "a named argument");
+            return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+          }
+          for k in len(list)..mnp {
+            ka = el::def(e, hint_nr).attributes[k]!;
+            list += [ka.value[0]!];
+            types += [ka.typedef[0] ?? ir::TyVoid];
+            built += [ir::TyUnknown { n: 0 }];
+          }
         }
         if el_trace::on() {
           el_trace::state(e, vars, "arg", aat, ae!);
@@ -2589,6 +2703,19 @@ pub fn method_call_on(e: el::El, vars: el_vars::Vars, at: integer, x: Ex, re: in
   }
   if name == "sort" && sorts_itself(types) {
     return sort_call(e, list, types);
+  }
+  // `parse_map`: a vector's `map` is built in place, where the program declares none of its own.
+  if name == "map" && len(list) == 2 && el_types::base(x.tp) is TyVector && !(x.tp is TyOptional) && el_types::base(types[1]!) is TyFunction && !open_types(e, types) && el_dispatch::own_set(e, name) < 0 && el::def_nr(e, "n_map") < 0 {
+    return el_ex_match::map_call(e, vars, at, list, types);
+  }
+  // `parse_filter`, `parse_reduce`: built in place as well.
+  if name == "filter" && len(list) == 2 && el_types::base(x.tp) is TyVector && !(x.tp is TyOptional) && el_types::base(types[1]!) is TyFunction && !open_types(e, types) && el_dispatch::own_set(e, name) < 0 && el::def_nr(e, "n_filter") < 0 {
+    return el_ex_match::filter_call(e, vars, at, list, types);
+  }
+  // (`reduce` through a function VALUE is a call of the standard library's generic: only a
+  // function the call names directly is folded in place.)
+  if name == "reduce" && len(list) == 3 && el_types::base(x.tp) is TyVector && !(x.tp is TyOptional) && el_types::base(types[2]!) is TyFunction && (e.first_pass || el_ir::unspan(list[2]!) is NdInt) && !open_types(e, types) && el_dispatch::own_set(e, name) < 0 && el::def_nr(e, "n_reduce") < 0 {
+    return el_ex_match::reduce_call(e, vars, list, types);
   }
   // A method name that is an overload set reaches the member its argument types select, the
   // receiver first (`x.m(a)` is `m(x, a)`, `F-Recv`).
@@ -2655,6 +2782,9 @@ pub fn sorts_itself(types: vector<ir::TypeT>) -> boolean {
 // `parse_sort`: `OpSortVector(v, elem)`, sorting in place by the elements' store type; nothing on
 // the first pass.
 pub fn sort_call(e: el::El, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex {
+  if el_trace::on() {
+    el_trace::route(e, "parse_sort");
+  }
   if e.first_pass {
     return ex(ir::NdNull, ir::TyVoid);
   }
@@ -3310,4 +3440,29 @@ pub fn instance_carried(e: el::El, n: ir::Node, h: integer, row: integer, tv: ir
     }
   }
   ""
+}
+
+// Whether an argument's type still names a type variable: inside a generic's template `map`,
+// `filter` and `reduce` are the standard library's generic call, not built in place.
+fn open_types(e: el::El, types: vector<ir::TypeT>) -> boolean {
+  for t in types {
+    if el_definitions::mentions_type_var(e, t) {
+      return true;
+    }
+  }
+  false
+}
+
+
+// `Parser::is_append_op` over one step: a claim in, a push onto or a filing into a collection,
+// called directly or bound (`_elm = OpNewRecord(…)`).
+fn append_step(e: el::El, st: ir::Node) -> boolean {
+  match el_ir::unspan(st) {
+    NdSet { var: _, inner } => append_step(e, inner),
+    NdCall { def_nr, args: _ } => {
+      nm = el::def(e, def_nr).name;
+      nm.starts_with("OpPush") || nm == "OpNewRecord" || nm == "OpFinishRecord" || nm == "OpAppendVector" || nm == "OpAppendCopy" || nm == "n_keyed_entry_ints" || nm == "n_keyed_entry_text"
+    },
+    _ => false
+  }
 }

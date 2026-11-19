@@ -1,7 +1,8 @@
 diff --git a/src/parser/control.rs b/src/parser/control.rs
+index 4a5aa038a..5cfeb41ad 100644
 --- a/src/parser/control.rs
 +++ b/src/parser/control.rs
-@@ -889,41 +889,6 @@ impl Parser {
+@@ -889,19 +889,6 @@ impl Parser {
                  .starts_with("n___lambda_")
      }
  
@@ -18,35 +19,13 @@ diff --git a/src/parser/control.rs b/src/parser/control.rs
 -        brace
 -    }
 -
--    /// Skip one `{ … }` block, nested braces included, when the parser is at its `{`.
--    pub(super) fn skip_braced_block(&mut self) {
--        if !self.lexer.peek_token("{") {
--            return;
--        }
--        let mut depth = 0;
--        loop {
--            if self.lexer.has_token("{") {
--                depth += 1;
--            } else if self.lexer.has_token("}") {
--                depth -= 1;
--                if depth == 0 {
--                    break;
--                }
--            } else if self.lexer.peek().has == crate::lexer::LexItem::None {
--                break;
--            } else {
--                self.lexer.cont();
--            }
--        }
--    }
--
-     pub(crate) fn parse_block(&mut self, context: &str, val: &mut Value, result: &Type) -> Type {
-         // loft#1540 — an arm handed its SIBLING's function type converts with that type's
-         // `const` parameters set aside: the join is the parameters BOTH arms declare `const`
-@@ -1122,35 +1087,6 @@ impl Parser {
-                 break;
+     /// Skip one `{ … }` block, nested braces included, when the parser is at its `{`.
+     pub(super) fn skip_braced_block(&mut self) {
+         if !self.lexer.peek_token("{") {
+@@ -1123,35 +1110,6 @@ impl Parser {
              }
              self.state_trace("stmt");
+             let stmt_at = *self.lexer.pos();
 -            // @C67 — loft has no `try { … } catch { … }`, and was refusing it as a bare
 -            // "Expect token ;" that named neither the decision nor the spelling to use.  Said
 -            // by name, then both blocks are skipped so nothing cascades.  Only `try` directly

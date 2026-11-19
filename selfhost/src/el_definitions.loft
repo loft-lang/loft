@@ -18,6 +18,7 @@ use el_ex_assign;
 use el_dispatch;
 use el_schema;
 use el_cell;
+use el_trace;
 
 
 // `Parser::parse_file`'s definition loop, over the file's items in order.
@@ -67,6 +68,18 @@ pub fn elab_file(e: el::El, file: integer) {
 }
 
 fn top_item(e: el::El, it: integer) {
+  // The declaration's own line, for a refusal met outside any statement.
+  dat = match e.p.nodes[it] {
+    SDirective { at } => at,
+    SAlias { at } => at,
+    SEnum { at } => at,
+    SInterface { at } => at,
+    SFn { at } => at,
+    SStruct { at } => at,
+    SConst { at } => at,
+    _ => -1
+  };
+  e.decl_line = if dat >= 0 { e.p.line[dat] ?? 0 } else { 0 };
   match e.p.nodes[it] {
     // `#width 32` narrows every integer operation of the file (`OpNarrow32`) and its integer
     // fields — not carried; the other directives leave the code as it is.
@@ -268,6 +281,7 @@ fn load_library(e: el::El, id: text, alias: text, f: text) {
     e.lines += [ln];
   }
   e.line = 0;
+  e.decl_line = 0;
   elab_file(e, tree!);
   name_only_types(e, e.source);
   e.p = keep_p;
@@ -554,7 +568,15 @@ fn parse_fields(e: el::El, d: integer, fields: vector<integer>) {
         fi = field_init_node(e, mods);
         dv: ir::Node? = null;
         if fi != null {
-          dv = field_default_value(e, fi!, t!);
+          // `parse_stored_default`: a vector literal is no default a construction site can
+          // replay, so it is hoisted into a function of its own, `n___dflt_<Struct>_<field>`,
+          // minted here on the first pass and re-read into it on the second; the stored default
+          // is the call (`default_value_fn`).  A template's field is not hoisted.
+          if hoists_default(e, fi!, t!) && len(e.type_vars) == 0 {
+            dv = hoisted_default(e, "__dflt_{el::def(e, d).name}_{fname}", tn!, fi!);
+          } else {
+            dv = field_default_value(e, fi!, t!);
+          }
           if dv == null {
             continue;
           }
@@ -629,6 +651,100 @@ fn field_init_node(e: el::El, mods: vector<integer>) -> integer? {
   }
 }
 
+// `default_replayable_in_place`, read off the syntax for the kinds carried: a vector literal for
+// a vector field, a text with a hole for a text field, a struct literal or a call for a field of
+// a plain struct — none of them reading `$` (that one is a method of the record: not carried).
+fn hoists_default(e: el::El, init: integer, t: ir::TypeT) -> boolean {
+  if reads_dollar(e, init) {
+    return false;
+  }
+  if e.p.nodes[init] is SVecLit && t is TyVector {
+    return true;
+  }
+  if t is TyText {
+    return match e.p.nodes[init] { SString { parts } => len([for p in parts if e.p.nodes[p] is SHole { 1 }]) > 0, _ => false };
+  }
+  match t {
+    TyReference { n: sd, dep } => len(dep) == 0 && el::def(e, sd).def_type == el::DT_STRUCT && (e.p.nodes[init] is SStructLit || e.p.nodes[init] is SCall),
+    _ => false
+  }
+}
+
+// Does the syntax under `n` spell one of `names` as a bare name?
+fn names_any(e: el::El, n: integer, names: vector<text>) -> boolean {
+  match e.p.nodes[n] {
+    SName { name: nm, member } => { if member == "" && names.contains(nm) { return true; } },
+    _ => {}
+  }
+  for c in el_length::children(e, n) {
+    if names_any(e, c, names) {
+      return true;
+    }
+  }
+  false
+}
+
+fn reads_dollar(e: el::El, n: integer) -> boolean {
+  if e.p.nodes[n] is SDollar {
+    return true;
+  }
+  for c in el_length::children(e, n) {
+    if reads_dollar(e, c) {
+      return true;
+    }
+  }
+  false
+}
+
+// `default_value_fn`: the default at syntax node `init` as the body of a function `name` that
+// answers the type at `tn` — a definition of its own, parsed as any function's body is (its tail
+// delivered through its hidden buffer).  Answers the call that stands for the default.
+fn hoisted_default(e: el::El, name: text, tn: integer, init: integer) -> ir::Node? {
+  at = match e.p.nodes[init] { SVecLit { at: va } => va, SString { at: sa } => sa, SStructLit { at: la } => la, SCall { at: ca } => ca, _ => el_ex_null::node_start(e, init) };
+  // (The default is no statement of a block in Rust, so it carries no line marker: the
+  // synthetic statement stands at token 0, which gives none.)
+  e.p.nodes += [SStmt { at: 0, e: init, semi: false, orelse: null }];
+  stmt = len(e.p.nodes) - 1;
+  e.p.nodes += [SBlock { at: 0, stmts: [stmt], end: 0 }];
+  body = len(e.p.nodes) - 1;
+  ctx = e.context;
+  tvs = e.type_vars;
+  e.type_vars = [];
+  // Rust reads the default once in place before it hoists it, and the definitions that read
+  // minted stay: a vector literal whose element no earlier site put in a vector makes
+  // `vector<E>` and `main_vector<E>` at its `]`, BEFORE the function.
+  if e.first_pass {
+    match e.p.nodes[init] {
+      SVecLit { at: lat } => {
+        match el_types::parse_type(e, tn) {
+          TyVector { inner: vin } => {
+            vnm = el_types::elem_name(e, vin);
+            if vnm != "" && el::def_nr(e, "main_vector<{vnm}>") < 0 {
+              el_schema::make_vector_def(e, vin, vnm, el::pos_at(e, el_ex_base::closing_bracket(e, lat)), true);
+            }
+          },
+          _ => {}
+        }
+      },
+      _ => {}
+    }
+  }
+  // (No statement inside it opens a new line: the line counter stands past every line while
+  // the body is read.)
+  line = e.line;
+  e.line = 1073741824;
+  key = parse_function(e, at, name, [], tn, body);
+  e.line = line;
+  e.context = ctx;
+  e.type_vars = tvs;
+  d = if key == "" { -1 } else { el::def_nr(e, key) };
+  if d < 0 {
+    el::refuse(e, "a field default hoisted into a function that could not be made");
+    return null;
+  }
+  ir::NdCall { def_nr: d, args: [] }
+}
+
 // `parse_stored_default`: a field's `= value` read in the struct's context, with no frame of its
 // own, and on the second pass converted to the field's type (`convert`).  A plain scalar or a
 // literal text that names no slot is carried; anything else is refused by name.
@@ -681,7 +797,10 @@ fn param_default(e: el::El, init: integer, pt: ir::TypeT) -> ir::Node? {
     NdEnum { ord: _ } => plain_enum,
     _ => false
   };
-  if !constant || len(vars.vars) > 0 {
+  // `default_replayable_in_place`: arithmetic and calls over literals are replayed at each call
+  // site as they stand — a plain scalar's expression that names no variable and builds nothing.
+  replayed = el_convert::plain_scalar(el_types::base(x.tp)) && !(x.tp is TyOptional) && flat_expression(el_ir::unspan(x.code));
+  if !(constant || replayed) || len(vars.vars) > 0 {
     el::refuse(e, "a parameter default other than a constant");
     return null;
   }
@@ -697,6 +816,27 @@ fn param_default(e: el::El, init: integer, pt: ir::TypeT) -> ir::Node? {
     el::refuse(e, "a parameter default its parameter's type does not take");
   }
   c
+}
+
+// A value of literals and calls alone: no block, no branch, no variable.
+fn flat_expression(n: ir::Node) -> boolean {
+  match n {
+    NdInt { n: _ } => true,
+    NdLong { n: _ } => true,
+    NdFloat { f: _ } => true,
+    NdSingle { f: _ } => true,
+    NdBoolean { b: _ } => true,
+    NdSpan { inner } => flat_expression(inner),
+    NdCall { def_nr: _, args } => {
+      for a in args {
+        if !flat_expression(a) {
+          return false;
+        }
+      }
+      true
+    },
+    _ => false
+  }
 }
 
 // `Parser::parse_constant`, `const NAME = value;`: a definition of its own (`DefType::Constant`),
@@ -1159,7 +1299,14 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
         }
         dv = ir::NdNull;
         if init != null {
-          d = param_default(e, init!, t!);
+          // A default that builds a value is hoisted (`n___dflt_<fn>_<param>`), minted here —
+          // before the function it belongs to — where it reads none of the earlier parameters
+          // (those it would take as arguments of its own: not carried).
+          d = if tp != null && !amp && len(tvars) == 0 && len(e.type_vars) == 0 && !starts_with(name, "__") && hoists_default(e, init!, t!) && !names_any(e, init!, [for ea in arguments { ea.name }]) {
+            hoisted_default(e, "__dflt_{name}_{an}", tp!, init!)
+          } else {
+            param_default(e, init!, t!)
+          };
           if d == null {
             return "";
           }
@@ -1181,7 +1328,10 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
   after = at;
   // A short lambda answers the hint's result, unless that names nothing (loft#945).
   rt: ir::TypeT = if !(hint is TyFunction) || el_types::is_unknown(hint_ret) { ir::TyVoid } else { hint_ret };
-  if ret != null {
+  if starts_with(name, "__dflt_") {
+    // A hoisted default has no signature in the source: its definition stands where the lexer
+    // stood past the default's first token (`default_value_fn`), which is `at`.
+  } else if ret != null {
     // `-> T` (or `-> const T`, a function or a tuple type): the lexer stood on the `->`, which a
     // `const` stands between.
     back = if ret_const { 2 } else { 1 };
@@ -1418,7 +1568,8 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
     if len(params) == 0 && len(tvars) == 0 && ends_in_repeat_literal(e, body!) {
       el::refuse(e, "a function of no parameters whose body ends in a repeat literal (its pass-1 constant twin)");
     }
-    if e.first_pass && len(params) == 0 && len(tvars) == 0 && sole_vector_literal(e, body!) && const_twin_ok(e, e.context, body!) {
+    // (A hoisted default is an internal function, `Definition::is_internal`: it gets no twin.)
+    if e.first_pass && len(params) == 0 && len(tvars) == 0 && !starts_with(name, "__dflt_") && sole_vector_literal(e, body!) && const_twin_ok(e, e.context, body!) {
       cd = el::add_def(e, "__const_{el::def(e, e.context).name}", el::def(e, e.context).position, el::DT_CONSTANT);
       e.b.data.definitions[cd].returned = el::def(e, e.context).returned;
       e.b.data.definitions[cd].synthetic = "literal_const";
@@ -1431,6 +1582,9 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
     for s in el_vars::minted_parameters(vars) {
       e.step_over += [el::StepOver { d: e.context, name: el_vars::name_of(vars, s.nr), site: s.site }];
     }
+  }
+  if el_trace::on() {
+    el_trace::fn_end(e, vars, e.context);
   }
   e.b.data.definitions[e.context].variables = el_vars::stored(vars);
   if len(annots) > 0 && !apply_annotations(e, e.context, annots) {
@@ -1793,10 +1947,8 @@ fn fn_key(e: el::El, name: text, arguments: vector<Argument>) -> text {
   }
   // The standard library's types come with the image, their members included; a library's
   // take the program's methods as its own types do.
-  if td.source != e.source && td.source == el::STD_SOURCE {
-    el::refuse(e, "a method on a type the program does not declare");
-    return "";
-  }
+  // (A standard type — `integer`, `text`, `vector` — takes the program's method as the
+  // program's own types do: `t_7integer_double`, the member on the type's definition.)
   sig = if t is TyOptional { "{td.name}?" } else { td.name };
   "t_{len(sig)}{sig}_{name}"
 }
@@ -1835,6 +1987,12 @@ fn add_fn(e: el::El, key: text, name: text, arguments: vector<Argument>, pos: ir
       for a in el::def(e, tn).attributes {
         if a.name == name {
           slot = match a.typedef[0] ?? ir::TyVoid { TyRoutine { n } => n, _ => -1 };
+          // A standard type read out of the program's image already carries the member Rust
+          // gave it, naming the definition about to be made here: it stands as it is.
+          if slot >= len(e.b.data.definitions) {
+            tn = -1;
+            break;
+          }
           // An overload of the slot's method (`Disp-Key`): the slot keeps the incumbent, the
           // set carries both.
           if el_dispatch::own_set(e, name) >= 0 && slot >= 0 && el::def(e, slot).name != key {

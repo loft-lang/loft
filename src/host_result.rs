@@ -101,6 +101,10 @@ pub fn rewrite_program(data: &mut Data) -> usize {
                 total += 1;
             }
             Err(why) => {
+                // A function with no call to itself is not this clause's pattern: no refusal.
+                if why != NO_SELF_CALL {
+                    crate::rewrite_census::declined("R-HostStore", data.def(d_nr).name(), why);
+                }
                 if trace && why != NO_SELF_CALL {
                     eprintln!(
                         "[host-store] result clause: {} declined — {why}",

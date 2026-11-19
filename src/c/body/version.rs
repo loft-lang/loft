@@ -679,6 +679,8 @@ impl FnWriter<'_> {
             guard.push(format!("{pre}({})", vals.join(", ")));
         }
         self.line(ind, &format!("{flag} = {};", guard.join("\n        && ")));
+        // @decline-owed: a callee that is no leaf (`version_callee_decline`) and the nest's
+        //   loop gate; the call's arguments report
         crate::rewrite_census::fired("R-Version", 1);
         if crate::opt::version::trace() {
             eprintln!(
@@ -725,7 +727,13 @@ impl FnWriter<'_> {
         (read.as_slice() == inputs).then(|| flag.clone())
     }
 
-    fn version_decline(&self, d: u32, why: &str) -> Option<(String, Vec<String>)> {
+    fn version_decline(&self, d: u32, why: &'static str) -> Option<(String, Vec<String>)> {
+        crate::rewrite_census::declined_in(
+            "R-Version",
+            &self.cx.data.def(self.d).original_name(),
+            &self.cx.data.def(d).original_name(),
+            why,
+        );
         if crate::opt::version::trace() {
             eprintln!(
                 "[version] {} call of {} declined: {why}",

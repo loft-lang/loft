@@ -1,16 +1,23 @@
-diff --git b/src/self_replace.rs a/src/self_replace.rs
-index 6922656a6..6e0f2ff06 100644
---- b/src/self_replace.rs
-+++ a/src/self_replace.rs
-@@ -62,14 +62,14 @@ fn drop_in(data: &Data, ops: &mut [Value], replace: u32, field: u32) -> usize {
-     let mut dropped = 0;
-     for (k, x, b) in views {
-         let after = &ops[k + 1..];
--        if x == b || disturbed(data, after, x) || disturbed(data, after, b) {
-+        if x == b {
+diff --git a/src/self_replace.rs b/src/self_replace.rs
+index 5294ced16..cfd10eaa0 100644
+--- a/src/self_replace.rs
++++ b/src/self_replace.rs
+@@ -80,13 +80,7 @@ fn drop_in(data: &Data, d: u32, ops: &mut [Value], replace: u32, field: u32) ->
+         if x == b {
              continue;
          }
-         for s in &mut ops[k + 1..] {
+-        let why = if disturbed(data, after, x) {
+-            Some("the view is assigned, re-pointed or freed after its bind")
+-        } else if disturbed(data, after, b) {
+-            Some("the buffer is assigned, re-pointed or freed after the bind")
+-        } else {
+-            None
+-        };
++        let why: Option<&str> = None;
+         if let Some(why) = why {
+             // A view no statement replaces its buffer with is not this rule's pattern.
+             if crate::rewrite_census::declines_wanted() && replaces(after, replace, b, x) {
+@@ -104,7 +98,7 @@ fn drop_in(data: &Data, d: u32, ops: &mut [Value], replace: u32, field: u32) ->
              s.map_nodes(&mut |n| {
                  if let Value::Call(op, args) = n.unspan()
                      && *op == replace

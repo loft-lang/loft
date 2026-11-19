@@ -554,6 +554,9 @@ pub struct Written {
   pub generator: boolean,
   pub gen_decls: text,
   pub gen_bodies: text,
+  // `@FR-R-CTail`: `text` before its shared release tails were merged, which is what the body
+  // trace shows (`trace_body`); "" where nothing was merged.
+  pub traced: text,
 }
 
 fn refuse(w: W, why: text) {

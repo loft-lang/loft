@@ -1,8 +1,8 @@
 diff --git a/src/parser/definitions.rs b/src/parser/definitions.rs
-index 15deb5023..e3748c944 100644
+index fb59761c3..24a01dcf4 100644
 --- a/src/parser/definitions.rs
 +++ b/src/parser/definitions.rs
-@@ -5281,7 +5281,9 @@ impl Parser {
+@@ -5600,7 +5600,9 @@ impl Parser {
                               elements are always dense (a key / slot denotes presence)"
                          );
                      }
@@ -14,19 +14,19 @@ index 15deb5023..e3748c944 100644
                      // A `?` written after the element's own modifiers (`integer limit(0, 9)?`)
                      // is read by `parse_type` itself, past the identifier-adjacent test above —
 diff --git a/src/parser/expressions.rs b/src/parser/expressions.rs
-index 0625d61d0..5dfdef6b6 100644
+index 809d3da2f..a475090c3 100644
 --- a/src/parser/expressions.rs
 +++ b/src/parser/expressions.rs
-@@ -3927,7 +3927,7 @@ use a separate collection or add after the loop"
+@@ -4642,7 +4642,7 @@ use a separate collection or add after the loop"
          // nothing, so `x = ;` silently bound null and `x += ;` compiled to a program whose
          // later output vanished (loft#1800's library parser met it: the compiler accepted
          // what no grammar of loft allows).
 -        if self.preset_rhs.is_none() && self.operand_absent() {
 +        if self.operand_absent() {
              diagnostic!(self.lexer, Level::Error, "Expected a value after `{op}`");
-             *code = Value::Null;
-             return Type::Void;
-@@ -8395,243 +8395,6 @@ use a separate collection or add after the loop"
+             // A stray `?` (`k = ? 4`) is read past, and a binary operator (`k = or true`)
+             // parses on with its left side absent, so the line is refused once (loft#2543);
+@@ -9517,243 +9517,6 @@ use a separate collection or add after the loop"
          binds
      }
  
@@ -270,7 +270,7 @@ index 0625d61d0..5dfdef6b6 100644
      /// Parse an assignment, keeping [`Parser::last_place_discharge`] the answer for the
      /// left-hand side that is being parsed HERE.
      ///
-@@ -8907,9 +8670,6 @@ use a separate collection or add after the loop"
+@@ -10196,9 +9959,6 @@ use a separate collection or add after the loop"
          // LHS parse.  Only ever SET here (never cleared): a nested parse_assign
          // inside the list must not un-mark the elements around it.  Restored
          // below, so the RHS — parsed further down — sees the outer state again.
@@ -280,7 +280,7 @@ index 0625d61d0..5dfdef6b6 100644
          let saved_tuple_lhs = self.in_tuple_lhs;
          if self.peek_tuple_lhs() {
              self.in_tuple_lhs = true;
-@@ -9165,7 +8925,6 @@ use a separate collection or add after the loop"
+@@ -10469,7 +10229,6 @@ use a separate collection or add after the loop"
                  );
              }
              let mut rhs = Value::Null;
@@ -288,7 +288,7 @@ index 0625d61d0..5dfdef6b6 100644
              // `@FR-B-Scope` — the names this destructure binds first hold nothing yet.
              let starts: Vec<(u32, u16, bool)> = var_nrs
                  .iter()
-@@ -9247,9 +9006,6 @@ use a separate collection or add after the loop"
+@@ -10551,9 +10310,6 @@ use a separate collection or add after the loop"
                  if !self.first_pass {
                      self.change_var_type(tmp, &tmp_tp);
                  }
@@ -298,7 +298,7 @@ index 0625d61d0..5dfdef6b6 100644
                  let mut steps = vec![Value::Set(tmp, Box::new(rhs))];
                  for (i, &v_nr) in var_nrs.iter().enumerate() {
                      // The arity mismatch above is already an Error, but it only
-@@ -9289,26 +9045,12 @@ use a separate collection or add after the loop"
+@@ -10593,26 +10349,12 @@ use a separate collection or add after the loop"
                          && !matches!(self.vars.tp(v_nr), Type::Optional(_) | Type::RefVar(_))
                          && !self.vars.tp(v_nr).is_unknown()
                          && self.vars.tp(v_nr).is_equal(elem_tp.base());
@@ -327,7 +327,7 @@ index 0625d61d0..5dfdef6b6 100644
                          format!(
                              "{} `{}`",
                              if self.vars.is_argument(v_nr) {
-@@ -9326,28 +9068,12 @@ use a separate collection or add after the loop"
+@@ -10630,28 +10372,12 @@ use a separate collection or add after the loop"
                          self.change_var_type(v_nr, &member_tp);
                      }
                      let step = if ref_def_nr == u32::MAX {
@@ -359,7 +359,7 @@ index 0625d61d0..5dfdef6b6 100644
                          }
                          if owned_base
                              && Self::is_collection_type(rhs_elems[i].base())
-@@ -9386,21 +9112,8 @@ use a separate collection or add after the loop"
+@@ -10690,21 +10416,8 @@ use a separate collection or add after the loop"
                          if let Some((syn, _)) = tagged_member {
                              view = self.emit_nullable_slot_read(syn, view, &rhs_elems[i]);
                          }

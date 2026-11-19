@@ -182,6 +182,12 @@ fn admitted(data: &Data, d_nr: u32, ops: &Ops) -> Option<(Vec<Plan>, u16, Value)
                 });
             }
             Err(why) => {
+                crate::rewrite_census::declined_in(
+                    "R-ExitVector",
+                    def.name(),
+                    function.name(v),
+                    why,
+                );
                 if crate::keys::trace_place() {
                     eprintln!(
                         "[exit-vector] fn={} v={}: DECLINED — {why}",

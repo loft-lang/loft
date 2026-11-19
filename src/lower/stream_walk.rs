@@ -41,6 +41,7 @@
 //! `LOFT_TRACE_STREAM_WALK=1` names every producer and site admitted or declined, with why.
 use crate::data::{Data, DefType, Type, Value};
 use crate::fxhash::{FxHashMap as HashMap, FxHashSet as HashSet};
+use crate::rewrite_census::Refusal;
 
 /// `LOFT_NO_STREAM_WALK=1` — every vector is built and walked (`@FR-R-StreamWalk` off): the
 /// before-half of every A/B, and the first bisect step for a wrong value out of such a walk.
@@ -330,16 +331,16 @@ impl<'a> Quiet<'a> {
     /// # Errors
     ///
     /// Why it is not, as `LOFT_TRACE_STREAM_WALK=1` prints it.
-    pub fn fragment(&self, f: u32, code: &Value, own: &HashSet<u16>) -> Result<(), String> {
+    pub fn fragment(&self, f: u32, code: &Value, own: &HashSet<u16>) -> Result<(), Refusal> {
         let data = self.data;
         let vars = data.def(f).variables();
-        let mut why: Option<String> = None;
+        let mut why: Option<Refusal> = None;
         let owned = |a: &Value| root(a, data).is_some_and(|r| own.contains(&r));
         code.any_node(&mut |n| {
             match n {
                 Value::Set(v, _) if vars.is_argument(*v) && !own.contains(v) => {
                     if matches!(vars.tp(*v).base(), Type::RefVar(_)) {
-                        why = Some(format!("writes parameter {}", vars.name(*v)));
+                        why = Some(Refusal::about("writes a parameter", vars.name(*v)));
                     }
                 }
                 Value::Call(d, args) => {
@@ -351,12 +352,15 @@ impl<'a> Quiet<'a> {
                     let name = callee.name();
                     if name.starts_with("n_") && !matches!(callee.code(), Value::Null) {
                         if !self.fns.contains(d) {
-                            why = Some(format!("calls {name}, which is not quiet"));
+                            why = Some(Refusal::about("calls a function that is not quiet", name));
                         } else if let Some(i) = written_params(data, *d)
                             .into_iter()
                             .find(|&i| args.get(i).is_some_and(|a| !owned(a)))
                         {
-                            why = Some(format!("hands {name} a buffer it does not own ({i})"));
+                            why = Some(Refusal::about(
+                                "hands a call a buffer it does not own",
+                                format!("{name} ({i})"),
+                            ));
                         }
                     } else if crate::pure_reuse::reads_only(name) {
                     } else if name == "OpFreeText" {
@@ -371,15 +375,21 @@ impl<'a> Quiet<'a> {
                         }
                     } else if is_free(name) {
                         if args.first().is_some_and(|a| !owned(a)) {
-                            why = Some(format!("{name} of a place it does not own"));
+                            why = Some(Refusal::about(
+                                "an operator on a place it does not own",
+                                name,
+                            ));
                         }
                     } else if let Some(t) = crate::pure_reuse::text_write_target(name) {
                         if args.get(t).is_none_or(|a| !owned(a)) {
-                            why = Some(format!("{name} writes a place it does not own"));
+                            why = Some(Refusal::about(
+                                "an operator writes a place it does not own",
+                                name,
+                            ));
                         }
                     } else if name == "OpCreateStack" || name == "OpConvTextFromNull" {
                     } else {
-                        why = Some(format!("calls {name}"));
+                        why = Some(Refusal::about("a call the walk cannot admit", name));
                     }
                 }
                 Value::CallRef(v, args) => {
@@ -391,7 +401,10 @@ impl<'a> Quiet<'a> {
                                 .iter()
                                 .find(|a| a.has_closure || !self.fns.contains(&a.d_nr))
                             {
-                                why = Some(format!("a fn-ref may call {}", a.name));
+                                why = Some(Refusal::about(
+                                    "a fn-ref may call a function that is not quiet",
+                                    a.name.as_str(),
+                                ));
                             } else if args
                                 .iter()
                                 .any(|a| matches!(a.unspan(), Value::Block(_)) && !owned(a))
@@ -420,7 +433,7 @@ fn vector_of_records(data: &Data, func: u32) -> bool {
 }
 
 /// The producer plan of `func`, or why it declines.
-fn producer(data: &Data, quiet: &Quiet, func: u32) -> Result<Producer, String> {
+fn producer(data: &Data, quiet: &Quiet, func: u32) -> Result<Producer, Refusal> {
     if !vector_of_records(data, func) {
         return Err("does not answer a vector of records".into());
     }
@@ -455,7 +468,7 @@ fn plumbing(
     data: &Data,
     code: &Value,
     buf: u16,
-) -> Result<(HashSet<u16>, HashSet<u16>, u16), String> {
+) -> Result<(HashSet<u16>, HashSet<u16>, u16), Refusal> {
     let mut plumbing: HashSet<u16> = HashSet::default();
     plumbing.insert(buf);
     let mut out: Option<u16> = None;
@@ -511,8 +524,8 @@ fn classify(
     buf: u16,
     out: u16,
     prod: &mut Producer,
-) -> Result<(), String> {
-    let mut why: Option<String> = None;
+) -> Result<(), Refusal> {
+    let mut why: Option<Refusal> = None;
     scan_blocks(code, &mut |ops| {
         let mut at = 0;
         while why.is_none() && at < ops.len() {
@@ -577,7 +590,7 @@ fn producer_statement(
     out: u16,
     ops: &[Value],
     at: usize,
-) -> Result<Stmt, String> {
+) -> Result<Stmt, Refusal> {
     let is = |v: &Value, x: u16| var_of(v) == Some(x);
     match ops[at].unspan() {
         Value::Return(r) if is(r, buf) => Ok(Stmt::Keep),
@@ -590,7 +603,7 @@ fn producer_statement(
                 "OpNewRecord" if args.first().is_some_and(|a| is(a, out)) => {
                     group(data, prod, *v, out, ops, at)
                 }
-                other => Err(format!("binds plumbing with {other}")),
+                other => Err(Refusal::about("binds plumbing with an operator", other)),
             },
             _ => Err("binds plumbing".into()),
         },
@@ -613,7 +626,7 @@ fn producer_statement(
                 {
                     Ok(Stmt::Keep)
                 }
-                other => Err(format!("{other} mentions the buffer")),
+                other => Err(Refusal::about("an operator mentions the buffer", other)),
             }
         }
         _ => Err("mentions the buffer".into()),
@@ -628,7 +641,7 @@ fn group(
     out: u16,
     ops: &[Value],
     at: usize,
-) -> Result<Stmt, String> {
+) -> Result<Stmt, Refusal> {
     let mut grp = Group::default();
     for (pos, op) in ops.iter().enumerate().skip(at + 1) {
         match op.unspan() {
@@ -653,7 +666,7 @@ fn group(
                     args.get(1).and_then(int_of),
                     args.get(2),
                 ) else {
-                    return Err(format!("{name} inside an append"));
+                    return Err(Refusal::about("an operator inside an append", name));
                 };
                 if args.first().and_then(var_of) != Some(elem) {
                     return Err("an append sets another record".into());
@@ -781,7 +794,7 @@ fn writes_into(data: &Data, code: &Value, set: &HashSet<u16>) -> bool {
 }
 
 /// The shape of a counted walk over `runs`: `(index, body)`.
-fn walk_shape<'v>(data: &Data, walk: &'v Value, runs: u16) -> Result<(u16, &'v Value), String> {
+fn walk_shape<'v>(data: &Data, walk: &'v Value, runs: u16) -> Result<(u16, &'v Value), Refusal> {
     let Value::Block(fb) = walk.unspan() else {
         return Err("the call is not followed by a walk".into());
     };
@@ -832,13 +845,13 @@ fn body_reads(
     runs: u16,
     index: u16,
     elem: Option<(u16, usize)>,
-) -> Result<Vec<(i64, Kind)>, String> {
+) -> Result<Vec<(i64, Kind)>, Refusal> {
     let Value::Block(bl) = body.unspan() else {
         return Err("not a body".into());
     };
     let mut reads: Vec<(i64, Kind)> = Vec::new();
-    let mut bad: Option<String> = None;
-    let mut unset: Option<String> = None;
+    let mut bad: Option<Refusal> = None;
+    let mut unset: Option<Refusal> = None;
     for (n, o) in significant(&bl.operators).into_iter().enumerate() {
         if n == 0 && elem.is_some() {
             continue;
@@ -861,7 +874,10 @@ fn body_reads(
                     if prod.fields.contains(&(off, kind)) {
                         reads.push((off, kind));
                     } else {
-                        unset = Some(format!("reads field {off}, which not every append sets"));
+                        unset = Some(Refusal::about(
+                            "reads a field not every append sets",
+                            off.to_string(),
+                        ));
                     }
                 }
                 through
@@ -895,7 +911,7 @@ fn site(
     at: usize,
     runs: u16,
     producer: u32,
-) -> Result<(Site, Vec<(i64, Kind)>), String> {
+) -> Result<(Site, Vec<(i64, Kind)>), Refusal> {
     let def = data.def(func);
     // What the call reads: nothing between the call and the walk, and nothing in the walk,
     // may write it — the call moves down to the walk, and the producer runs inside it.
@@ -949,9 +965,9 @@ fn site(
     let frees = count_free_mentions(data, def.code(), runs);
     let inits = count_null_inits(def.code(), runs);
     if outside != 1 + frees + inits {
-        return Err(format!(
-            "{} is mentioned outside the walk",
-            def.variables().name(runs)
+        return Err(Refusal::about(
+            "the vector is mentioned outside the walk",
+            def.variables().name(runs),
         ));
     }
     let site = Site {
@@ -973,7 +989,7 @@ fn check_mentions(
     v: &Value,
     accept: &mut dyn FnMut(&Value) -> bool,
     watched: &mut dyn FnMut(u16) -> bool,
-    bad: &mut Option<String>,
+    bad: &mut Option<Refusal>,
 ) {
     if bad.is_some() || accept(v) {
         return;
@@ -981,7 +997,10 @@ fn check_mentions(
     if let Value::Var(x) | Value::Set(x, _) = v.unspan()
         && watched(*x)
     {
-        *bad = Some(format!("the walk mentions variable {x} otherwise"));
+        *bad = Some(Refusal::about(
+            "the walk mentions a variable otherwise",
+            x.to_string(),
+        ));
         return;
     }
     v.unspan()
@@ -1087,7 +1106,10 @@ pub fn plan(data: &Data, reachable: &std::collections::HashSet<u32>) -> SwPlan {
                 trace(|| format!("{}: a producer of {} appends", name(*pd), prod.groups.len()));
                 plan.producers.insert(*pd, prod);
             }
-            Err(e) => trace(|| format!("{}: no producer — {e}", name(*pd))),
+            Err(e) => {
+                crate::rewrite_census::declined("R-StreamWalk", &name(*pd), e.clause);
+                trace(|| format!("{}: no producer — {e}", name(*pd)));
+            }
         }
     }
     let mut consumers: Vec<u32> = calls.iter().map(|(g, _)| *g).collect();
@@ -1117,7 +1139,7 @@ fn admit_sites(data: &Data, quiet: &Quiet, plan: &mut SwPlan, func: u32) {
         }
     });
     for (stmt, runs, pd) in found {
-        let mut res: Option<Result<(Site, Vec<(i64, Kind)>), String>> = None;
+        let mut res: Option<Result<(Site, Vec<(i64, Kind)>), Refusal>> = None;
         scan_blocks(data.def(func).code(), &mut |ops| {
             if res.is_none()
                 && let Some(at) = ops.iter().position(|o| addr(o) == stmt)
@@ -1148,7 +1170,13 @@ fn admit_sites(data: &Data, quiet: &Quiet, plan: &mut SwPlan, func: u32) {
                 plan.sites.entry(func).or_default().push(site);
             }
             Some(Err(e)) => {
-                trace(|| format!("{}: walk of {} declined — {e}", name(func), name(pd)))
+                crate::rewrite_census::declined_in(
+                    "R-StreamWalk",
+                    &name(func),
+                    &name(pd),
+                    e.clause,
+                );
+                trace(|| format!("{}: walk of {} declined — {e}", name(func), name(pd)));
             }
             None => {}
         }

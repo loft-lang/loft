@@ -1,0 +1,69 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// `@FR-R-CTail`: functions that own eight records and leave through several exits, one per
+// result shape (a record, a text, a nullable integer, nothing, a tuple).  Every answer is
+// hand-computed; `tests/c_tail.rs` runs the cell on the interpreter and on the C backend
+// with the tails merged and unmerged.
+
+struct P { x: integer, name: text }
+fn mk(n: integer) -> P { P { x: n, name: "p{n}" } }
+fn many(k: integer) -> P {
+  a = mk(10); b = mk(20); c = mk(30); d = mk(40); e = mk(50); f = mk(60); g = mk(70); h = mk(80);
+  v = [mk(1), mk(2)];
+  if k == 1 { return a; }
+  if k == 2 { return b; }
+  if k == 3 { return h; }
+  if k == 4 { return v[0]; }
+  for i in 0..5 { w = mk(100 + i); if i == k - 5 { return w; } }
+  if k == 11 { return mk(a.x + b.x + c.x + d.x + e.x + f.x + g.x + h.x); }
+  mk(len(v))
+}
+fn txt(k: integer) -> text {
+  a = mk(10); b = mk(20); c = mk(30); d = mk(40); e = mk(50); f = mk(60); g = mk(70); h = mk(80);
+  s = "s{k}";
+  if k == 1 { return a.name; }
+  if k == 2 { return "lit"; }
+  if k == 3 { return s; }
+  if k == 4 { return "{s}-{h.name}"; }
+  "{b.name}{c.name}{d.name}{e.name}{f.name}{g.name}"
+}
+fn num(k: integer) -> integer? {
+  a = mk(10); b = mk(20); c = mk(30); d = mk(40); e = mk(50); f = mk(60); g = mk(70); h = mk(80);
+  if k == 1 { return a.x; }
+  if k == 2 { return b.x + c.x; }
+  if k == 3 { return len("{d.name}{e.name}"); }
+  if k == 4 { return null; }
+  f.x + g.x + h.x
+}
+fn eff(k: integer, out: &vector<integer>) {
+  a = mk(10); b = mk(20); c = mk(30); d = mk(40); e = mk(50); f = mk(60); g = mk(70); h = mk(80);
+  if k == 1 { out += [a.x]; return; }
+  if k == 2 { out += [b.x, c.x]; return; }
+  if k == 3 { return; }
+  out += [d.x + e.x + f.x + g.x + h.x];
+}
+fn pair(k: integer) -> (integer, text) {
+  a = mk(10); b = mk(20); c = mk(30); d = mk(40); e = mk(50); f = mk(60); g = mk(70); h = mk(80);
+  if k == 1 { return (a.x, a.name); }
+  if k == 2 { return (b.x + c.x, "{d.name}{e.name}"); }
+  (f.x + g.x + h.x, "end")
+}
+fn main() {
+  r = "";
+  for k in 1..13 { p = many(k); r += "{p.x}:{p.name} "; }
+  assert(r == "10:p10 20:p20 80:p80 1:p1 100:p100 101:p101 102:p102 103:p103 104:p104 2:p2 360:p360 2:p2 ", "many [{r}]");
+  t = "";
+  for k in 1..6 { t += "{txt(k)}|"; }
+  assert(t == "p10|lit|s3|s4-p80|p20p30p40p50p60p70|", "txt [{t}]");
+  n = "";
+  for k in 1..6 { n += "{num(k)}|"; }
+  assert(n == "10|50|6|null|210|", "num [{n}]");
+  o: vector<integer> = [];
+  for k in 1..5 { eff(k, o); }
+  assert("{o}" == "[10,20,30,300]" && len(o) == 4, "eff {o}");
+  q = "";
+  for k in 1..4 { (i, s) = pair(k); q += "{i}{s}|"; }
+  assert(q == "10p10|50p40p50|210end|", "pair [{q}]");
+  println("exits ok");
+}

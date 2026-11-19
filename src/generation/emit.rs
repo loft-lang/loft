@@ -995,6 +995,11 @@ impl Output<'_> {
                     writeln!(w)?;
                     self.indent(w)?;
                     write!(w, "}}")?;
+                    // @decline-owed: a loop that holds a `yield`, a `par` or a fn-ref call; a
+                    //   generator body; a loop inside a versioned copy; a copy that gains no
+                    //   header an enclosing frame lacks, no record address and no borrowed walk
+                    //   element (`distinct_version`); at run time, a buffer whose store is a
+                    //   tested parameter's runs the plain loop
                     crate::rewrite_census::fired("R-Alias/versioned", 1);
                 } else {
                     self.in_distinct_copy = true;
@@ -1665,6 +1670,11 @@ impl Output<'_> {
         )
         .and_then(|rec| self.plan.value_records.types.get(&rec))
         .map(|t| t.fields.clone());
+        // @decline-owed: a dispatch group with an arm `(R-ValueRecord)` declines or admits with
+        //   another record, which keeps the record form for every arm; a signature that answers
+        //   no plain record; a capturing arm or a `&text` argument that picks a store instance;
+        //   an arm that is a `par` worker or a target no listed dispatch reaches; in a library
+        //   artifact, a dispatch that can call back into the interpreter
         crate::rewrite_census::fired("R-FnRefValue", usize::from(value_fields.is_some()));
         let heap_return = value_fields.is_none()
             && matches!(
@@ -3525,6 +3535,12 @@ impl Output<'_> {
                 self.data.def(self.def_nr).name()
             );
         }
+        // @decline-owed: an append that is no fresh copy keeping its source; a statement
+        //   between append and drop that binds a local, touches the vector or calls; a drop
+        //   that is not `if K < len(h.F) { g(h, len(h.F) - K) }`, K a literal >= 1, on a plain
+        //   vector; a `g` that is no suffix keep (an early return not proved false, a second
+        //   keep, a call); the appended temp read later; a coroutine body; at run time, a
+        //   vector not at length K
         crate::rewrite_census::fired("R-HandOver/rotate", 1);
         Ok(())
     }
@@ -3698,6 +3714,12 @@ impl Output<'_> {
         )?;
         self.indent(w)?;
         writeln!(w, "}}")?;
+        // @decline-owed: keyed: a collection that is no pure path, a key that is no bare
+        //   variable or number, a partial subscript, a text field, a buffer named outside the
+        //   literal, a coroutine body, on C a text key or over eight parts; element: an
+        //   unrepeatable base, an index that is no literal or bare variable, a type with a
+        //   collection field, a linked-group member; a literal reading its own place's
+        //   collection
         crate::rewrite_census::fired("R-InPlaceLiteral/keyed", 1);
         Ok(())
     }
@@ -4723,6 +4745,12 @@ impl Output<'_> {
                         rl.size, rl.count
                     )?;
                     self.indent += 1;
+                    // @decline-owed: a return buffer with a mint that heads no literal group
+                    //   covering every field; a type that is not refillable (a field owning
+                    //   heap other than a vector of heap-free elements, the one-field wrapper
+                    //   of a vector of scalar-and-text records excepted); such a wrapper not
+                    //   cleared at entry before its first mint; an append or destination twin's
+                    //   buffer; a mint that hosts a placed append buffer
                     crate::rewrite_census::fired("R-RefillBuffer", 1);
                     Some((rl, first, second))
                 } else {

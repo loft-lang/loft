@@ -170,7 +170,13 @@ pub(super) fn reuse_record_buffers(
     if trace {
         crate::loft_eprintln!("[pool] {} candidates {:?}", data.def(fn_nr).name(), guarded);
     }
-    let decline = |av: u16, why: &str| {
+    let decline = |av: u16, why: &'static str| {
+        crate::rewrite_census::declined_in(
+            "R-Reuse",
+            data.def(fn_nr).name(),
+            function.name(av),
+            why,
+        );
         if trace {
             crate::loft_eprintln!(
                 "[pool] {} {}: {why}",

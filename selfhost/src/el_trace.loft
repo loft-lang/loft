@@ -10,6 +10,7 @@ use ir;
 use el;
 use el_vars;
 use el_types;
+use report;
 
 // Is the trace asked for?
 pub fn on() -> boolean {
@@ -44,6 +45,101 @@ pub fn state(e: el::El, vars: el_vars::Vars, point: text, at: integer, node: int
     line += " cur_type_vars={[for t in e.type_vars { t.spelling }].join(",")}";
   }
   eprintln(line);
+}
+
+// The `stmt-end` point (`Parser::state_trace_value`): the type the statement read from token
+// `at` answered, in the IR dump's spelling, deps by variable name.
+pub fn value(e: el::El, vars: el_vars::Vars, at: integer, tp: ir::TypeT) {
+  if e.source == el::STD_SOURCE {
+    return;
+  }
+  p = el::pos_at(e, at);
+  eprintln("state {if e.first_pass { 1 } else { 2 }} {p.line}:{p.pos} stmt-end value={report::type_show_in(e.b, el_vars::stored(vars), tp)}");
+}
+
+// The `var` point (`Parser::state_trace_vars`, port-debug-output.md § 1): what the statement read
+// from token `at` did to the function's variable table — `+ <type>` for a variable it created,
+// `<old> -> <new>` for one whose type or deps it changed — found by comparing the table with
+// what this function last printed on this pass.  A statement nested in another prints first, so
+// each change goes to the innermost statement that ended after it.
+pub fn vars(e: el::El, vars: el_vars::Vars, at: integer) {
+  if e.source == el::STD_SOURCE || e.context < 0 {
+    return;
+  }
+  f = el_vars::stored(vars);
+  now: vector<text> = [for v in f.variables { report::type_show_in(e.b, f, v.type_def[0] ?? ir::TyVoid) }];
+  p = el::pos_at(e, at);
+  head = "state {if e.first_pass { 1 } else { 2 }} {p.line}:{p.pos} var {el::def(e, e.context).name}";
+  key = "{e.context}/{if e.first_pass { 1 } else { 2 }}";
+  seen = e.trace_vars[key];
+  // How many variables the last print covered; a table shorter than that is another reading
+  // of the function, compared with nothing.
+  had = if seen == null { 0 } else { len(seen.types) };
+  if had > len(now) {
+    had = 0;
+  }
+  for tp in now {
+    v = tp#index;
+    name = f.variables[v].name;
+    if v >= had {
+      eprintln("{head} {v} {name} + {tp}");
+    } else {
+      old = seen.types[v] ?? "";
+      if old != tp {
+        eprintln("{head} {v} {name} {old} -> {tp}");
+      }
+    }
+  }
+  // Replaced only now: the record just compared with is read until here.
+  if seen != null {
+    e.trace_vars[key] = null;
+  }
+  e.trace_vars += [el::TraceSeen { key: key, types: now }];
+}
+
+// The `fn-end` point (`Parser::state_trace_fn_end`): definition `d`'s result and each variable
+// `vars` holds for it, as this pass leaves them, at the definition's position.
+pub fn fn_end(e: el::El, vars: el_vars::Vars, d: integer) {
+  if e.source == el::STD_SOURCE {
+    return;
+  }
+  def = el::def(e, d);
+  f = el_vars::stored(vars);
+  head = "state {if e.first_pass { 1 } else { 2 }} {def.position.line}:{def.position.pos} fn-end {def.name}";
+  // `LOFT_STATE_TRACE_CONTROL`: the gate's positive control (`elab_gate.py --pass1`) — the first
+  // pass's result is printed as a type no function has, so the comparison must read a differ.
+  if e.first_pass && len(env_variable("LOFT_STATE_TRACE_CONTROL")) > 0 {
+    eprintln("{head} ret=(control)");
+  } else {
+    // A result's deps number ATTRIBUTES of the definition, while the type's own spelling names
+    // the VARIABLE of that number: `attrs=<n>:<attribute name>` says which attribute each is.
+    rt = def.returned[0] ?? ir::TyVoid;
+    attrs: vector<text> = [];
+    for n in el_types::deps(rt) {
+      a = def.attributes[n];
+      attrs += [if a == null { "{n}:#" } else { "{n}:{a.name}" }];
+    }
+    shown = report::type_show_in(e.b, f, rt);
+    if len(attrs) == 0 {
+      eprintln("{head} ret={shown}");
+    } else {
+      eprintln("{head} ret={shown} attrs={attrs.join(",")}");
+    }
+  }
+  for v in f.variables {
+    eprintln("{head} var {v#index} {v.name}={report::type_show_in(e.b, f, v.type_def[0] ?? ir::TyVoid)}");
+  }
+}
+
+// The `route` point (`Parser::state_route`, elaborator-instruments.md § 2 step 4): the port
+// takes its mirror of the Rust handler `name`, at the expression node being elaborated
+// (`el::trace_pos`).  Rust prints where its lexer stands when the handler is entered, which is
+// not where the construct starts, so the two sides are joined by line and handler.
+pub fn route(e: el::El, name: text) {
+  if e.source == el::STD_SOURCE {
+    return;
+  }
+  eprintln("state {if e.first_pass { 1 } else { 2 }} {el::trace_pos(e)} route {name}");
 }
 
 // `Parser::trace_shape`: a type's shape and the definitions it names, no deps.
