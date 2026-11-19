@@ -11204,7 +11204,15 @@ use a separate collection or add after the loop"
                 // `to` is `OpGet<T>(accessor, offset)`: `accessor` produces the element
                 // reference (and carries the fn/method call), `offset` is the field position
                 // within it (0 for a scalar element, e.g. 8 for the 2nd field of a struct).
-                let f2_place = if op != "=" && !self.first_pass {
+                // loft#2580 — a whole COLLECTION written to such a place addresses it once per op
+                // that rebuilds it (the clear, then each item's mint and finish on the parent, or
+                // the append), so `h.ws[at(c, 1)].items = [P {…}]` called `at` three times: under
+                // `(E-Asgn)` the place is addressed once, so `=` of a collection takes the hoist
+                // too.  A scalar `=` addresses its place once and keeps it inline.
+                let f2_place = if (op != "="
+                    || crate::parser::vectors::is_collection(f_type.base()))
+                    && !self.first_pass
+                {
                     match to.unspan() {
                         Value::Call(get_d, gargs)
                             if self.data.def(*get_d).name.starts_with("OpGet")
