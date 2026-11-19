@@ -2663,6 +2663,28 @@ pub fn literal_backing(vars: el_vars::Vars, v: integer) -> integer {
 // the buffer — declared on the first pass, which callers read — and the body opens by clearing
 // it (`OpClearVector`, the first statement moved into that insert).  Any other tail is refused
 // by name.
+// `Parser::var_views_local`: does `v` borrow, through its deps and the stores minted for it
+// (`__vdb_N`, `__ref_N`: walked through), a local that is no parameter?
+fn views_a_local(vars: el_vars::Vars, v: integer) -> boolean {
+  work: vector<integer> = [v];
+  at = 0;
+  while at < len(work) {
+    w = work[at]!;
+    at += 1;
+    for d in el_types::deps(el_vars::tp(vars, w)) {
+      if d < 0 || d >= len(vars.vars) || work.contains(d) || vars.vars[d].argument {
+        continue;
+      }
+      nm = el_vars::name_of(vars, d);
+      if !(starts_with(nm, "__vdb_") || starts_with(nm, "__ref_")) {
+        return true;
+      }
+      work += [d];
+    }
+  }
+  false
+}
+
 pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, result: ir::TypeT) -> ir::Node {
   // A literal tail is read against the result's element (`-> vector<u8> { [104, 101] }` holds
   // bytes): a tail built at another element than the result names is not carried.
@@ -2898,7 +2920,10 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
       match tail {
         NdVar { n } => {
           // Rust's `bound_to_vector_join` asks the return's type: the local's may be unknown yet.
-          if !vars.vars[n].argument && (bound_to_branch(code, n) || branch_bound_syntax(e, vars.body, el_vars::name_of(vars, n))) {
+          // (`var_views_local`: a tail local that views another local — a `?` / `??` over a
+          // call holds its subject in `__ncc_N` — is never renamed onto the buffer, whose
+          // store would die with the frame: `Bind`, the copy.  Mints are walked through.)
+          if !vars.vars[n].argument && (bound_to_branch(code, n) || branch_bound_syntax(e, vars.body, el_vars::name_of(vars, n)) || views_a_local(vars, n)) {
             // `Bind`: the local is copied into the buffer at the tail, which the result borrows.
             if !el_types::deps(ret).contains(ba) {
               e.b.data.definitions[d].returned = [el_types::with_deps(ret, el_types::deps(ret) + [ba])];
