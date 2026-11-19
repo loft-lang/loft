@@ -2460,6 +2460,9 @@ fn runs_a_call(e: el::El, n: integer) -> boolean {
     SCall { at: _ } => { return true; },
     SMember { call } => { if call { return true; } },
     SPostfix { op } => { if op == "?" { return true; } },
+    // (A `??` over anything but a local holds its subject in a `__ncc_N` first: a `Set`, which
+    // Rust's `ir_has_user_call` counts as a call.)
+    SBin { op: bop, l: bl } => { if bop == "??" && !(e.p.nodes[bl] is SName) { return true; } },
     _ => {}
   }
   for c in el_length::children(e, n) {
