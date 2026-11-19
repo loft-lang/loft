@@ -2268,6 +2268,55 @@ fn every_rule_citation_resolves() {
     );
 }
 
+/// Every lexeme the lexer and the parser know has an operand slot in the slot matrix, or a
+/// line saying why it takes none (@PLN221).
+///
+/// The slot matrix (`scripts/slot_matrix.py`) puts every form of expression into every
+/// operand position of the syntax and counts how often the operand runs.  It can only do
+/// that for the positions its register lists, so syntax added without a row is syntax the
+/// matrix never checks.  The lexicon is read from `src/lexer.rs` and from the literals
+/// `src/parser/` asks the lexer for, never from a list kept beside the register: a new
+/// operator, keyword or `#` attribute fails this test until `scripts/syntax_slots.tsv`
+/// gains the row for the operand it takes, or `scripts/syntax_outside.tsv` the reason it
+/// takes none.  The same run refuses a slot citing an undefined formal rule and a row with
+/// the wrong number of `<S>` markers.
+///
+/// `selftest` runs with it and is the proof the check can fail: it removes a slot row, adds
+/// a lexeme and misspells a rule on copies of the registers, and each must be reported.
+/// Skipped (not failed) where `python3` is unavailable.
+///
+/// @falsified-at: hand-measured — with the `wr-mod-index` row deleted from
+/// `syntax_slots.tsv`, `check` exits 1 naming the lexeme `%=`; `selftest` repeats that on
+/// every run.
+#[test]
+fn every_lexeme_has_an_operand_slot_or_a_reason() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    for step in ["check", "selftest"] {
+        let out = match loft::platform::process::harness_command("python3")
+            .arg(root.join("scripts/slot_matrix.py"))
+            .arg(step)
+            .current_dir(root)
+            .output()
+        {
+            Ok(o) => o,
+            Err(e) => {
+                eprintln!(
+                    "SKIP every_lexeme_has_an_operand_slot_or_a_reason: python3 unavailable ({e})"
+                );
+                return;
+            }
+        };
+        assert!(
+            out.status.success(),
+            "the slot register is incomplete or malformed (`slot_matrix.py {step}`):\n{}{}\n\
+             Run `python3 scripts/slot_matrix.py {step}` to reproduce; `list` shows the \
+             slots per family.",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr),
+        );
+    }
+}
+
 /// The register report asks the tracker about the issue an entry was FILED AS.
 ///
 /// `rule_tags.py registers --issues` names an OPEN deviation whose issue has since closed, as

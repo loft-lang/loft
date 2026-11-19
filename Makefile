@@ -3001,6 +3001,10 @@ stability-read:  ## The weekly stability read: every meter of the owner's direct
 rule-pairs:  ## The rule pairs the formal text names that no guard file names together
 	@python3 scripts/rule_tags.py pairs $(ARGS)
 
+.PHONY: slot-matrix
+slot-matrix:  ## The slot matrix (@PLN221): each operand position with each form of expression; ARGS="--filler all" is the whole matrix
+	@python3 scripts/slot_matrix.py check && python3 scripts/slot_matrix.py run $(ARGS)
+
 .PHONY: rule-worklist
 rule-worklist:  ## The rule-led walk's queue: untested rules ordered by the defects a walk is expected to find
 	@python3 scripts/rule_tags.py worklist $(ARGS)

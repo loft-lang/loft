@@ -1,0 +1,147 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The fixed world every slot-matrix cell runs in (@PLN221, scripts/slot_matrix.py).
+// The text above the first `=== CELL` line is written once into a generated program.  Each
+// `=== CELL <frame> ===` section below it is a FRAME: the function a cell's statement
+// stands in, written once per cell with `CELLDECL` and `CELLSTMT` replaced by the cell's
+// declaration and statement, and `CELLFN` and `CELLNAME` by its function and its name.
+// `KIND` is replaced everywhere by the collection type the program is generated for.
+// The frames differ in where the statement's values come from: `locals` binds them in the
+// function itself, `params` receives every one of them as a parameter, and `views` is
+// `locals` with four views of those values bound before the statement and read after it.
+//
+// A filler is a call into one of the functions below.  Each one that stands in a slot bumps
+// the counter it is handed and writes `S` into its log, so the cell can say how often and
+// when the operand ran.  The `o…` functions stand in for the plain variables of a statement
+// when the cell checks ORDER: they write their own letter and count nothing.  The values
+// are chosen so that every filler of a type gives the same answer as that type's variable.
+
+struct P { k: integer, t: text }
+enum Col { Red, Green, Blue }
+struct W { n: integer, t: text, f: float, ok: boolean, tag: Col, items: KIND }
+struct Hold { ws: vector<W>, v: vector<integer>, ones: vector<integer> }
+// The narrow and the non-integer scalars, as fields: a record of its own, so that the dumps
+// of `W` and `Hold` the anchor names stay as they are.
+struct N { by: u8, sh: i16, i4: i32, sg: single, ch: character, fl: float, on: boolean, en: Col, one: u8, one16: i16, one4: i32 }
+struct Ctr { calls: integer = 0, log: text = "" }
+
+fn bump(c: Ctr) { c.calls += 1; c.log += "S"; }
+fn mk(c: Ctr) -> KIND { bump(c); [P { k: 1, t: "a" }, P { k: 2, t: "b" }, P { k: 3, t: "c" }] }
+fn mkv(c: Ctr) -> vector<integer> { bump(c); [10, 20, 30, 40] }
+fn box(c: Ctr, h: Hold) -> W { bump(c); h.ws[0] }
+fn held(c: Ctr, h: Hold) -> Hold { bump(c); h }
+fn at(c: Ctr, i: integer) -> integer { bump(c); i }
+fn tx(c: Ctr) -> text { bump(c); "abc" }
+fn txz(c: Ctr) -> text { bump(c); "zabc" }
+fn yes(c: Ctr, b: boolean) -> boolean { bump(c); b }
+fn flo(c: Ctr) -> float { bump(c); 1.5 }
+fn col(c: Ctr) -> Col { bump(c); Col.Green }
+fn oi(c: Ctr) -> integer { c.log += "i"; 1 }
+fn oj(c: Ctr) -> integer { c.log += "j"; 3 }
+fn ob(c: Ctr) -> boolean { c.log += "b"; true }
+fn onb(c: Ctr) -> boolean { c.log += "n"; false }
+fn ox(c: Ctr) -> text { c.log += "x"; "abc" }
+fn ofl(c: Ctr) -> float { c.log += "f"; 1.5 }
+fn oen(c: Ctr) -> Col { c.log += "e"; Col.Green }
+fn pairw(c: Ctr) -> (W?, integer) { bump(c); (W { n: 1, t: "abc", f: 1.5, ok: true, tag: Col.Green, items: [] }, 3) }
+fn same(w: W) -> W { w }
+fn nbox(c: Ctr, n: N) -> N { bump(c); n }
+fn sgl(c: Ctr) -> single { bump(c); 1.5f }
+fn chr1(c: Ctr) -> character { bump(c); 'b' }
+// The value handed in, answered as it is: a filler built on one of these is the SAME record
+// or vector the statement works on, reached through a call.
+fn own(c: Ctr, w: W) -> W { bump(c); w }
+fn ident(c: Ctr, v: vector<integer>) -> vector<integer> { bump(c); v }
+fn idc(c: Ctr, v: KIND) -> KIND { bump(c); v }
+// An operand that WRITES what the statement works on, and answers 1.
+fn poke(c: Ctr, v: vector<integer>) -> integer { bump(c); v[3] = 44; 1 }
+fn grow(c: Ctr, v: vector<integer>) -> integer { bump(c); v += [50]; 1 }
+fn renum(c: Ctr, w: W) -> integer { bump(c); w.n = 8; 1 }
+fn retext(c: Ctr, w: W) -> integer { bump(c); w.t = "q"; 1 }
+fn inc1(a: integer) -> integer { a + 1 }
+fn pickfn(c: Ctr) -> fn(integer) -> integer { bump(c); inc1 }
+fn add2(a: integer, b: integer) -> integer { a * 10 + b }
+fn dflt(a: integer, b: integer = 5) -> integer { a * 10 + b }
+fn total(self: W) -> integer { self.n + len(self.items) }
+fn hold() -> Hold {
+  Hold {
+    ws: [
+      W { n: 1, t: "abc", f: 1.5, ok: true, tag: Col.Green, items: [P { k: 1, t: "a" }, P { k: 2, t: "b" }, P { k: 3, t: "c" }] },
+      W { n: 2, t: "y", f: 2.5, ok: false, tag: Col.Blue, items: [P { k: 4, t: "d" }] }
+    ],
+    v: [10, 20, 30, 40],
+    ones: [1, 1]
+  }
+}
+// The cell's final line shows every value the statement could have changed, as fields
+// `name=value` parted by ` ; ` — scripts/syntax_expect.tsv names the fields a slot's plain
+// statement must leave changed.  A keyed
+// collection has no rendering of its own, so each collection is shown by lookups: by
+// position for a vector, by key for the keyed kinds.
+fn show(v: KIND) -> text {
+  out = "{len(v)}:";
+  for k in 0..10 { t = v[k].t ?? "-"; out += t; }
+  out
+}
+fn show_w(w: W) -> text { "({w.n} {w.t} {w.f} {w.ok} {w.tag} {show(w.items)})" }
+fn show_h(h: Hold) -> text {
+  out = "";
+  for w in h.ws { out += show_w(w); }
+  "{out} {h.v} {h.ones}"
+}
+// === CELL locals ===
+CELLDECL
+fn CELLFN() {
+  c = Ctr {}; h = hold();
+  i = 1; j = 3; b = true; nb = false; x = "abc"; fl = 1.5; en = Col.Green; fnv = inc1;
+  vi = [10, 20, 30, 40];
+  xs = mk(Ctr {});
+  r = W { n: 1, t: "abc", f: 1.5, ok: true, tag: Col.Green, items: [P { k: 1, t: "a" }, P { k: 2, t: "b" }, P { k: 3, t: "c" }] };
+  tk: (KIND, integer) = ([P { k: 1, t: "a" }, P { k: 2, t: "b" }, P { k: 3, t: "c" }], 3);
+  fl2 = 2.5; sg = 1.5f; cx = 'b';
+  nr = N { by: 7, sh: 300, i4: 70000, sg: 0.5f, ch: 'a', fl: 0.5, on: false, en: Red, one: 1, one16: 1, one4: 1 };
+  vf = [1.5, 2.5, 3.5]; vbo = [false, false]; vcol = [Red, Blue];
+  s = 0; o = ""; sf = 0.0; ss = 0.0f;
+  CELLSTMT
+  println("CELLNAME c={c.calls} log=<{c.log}> | s={s} ; o={o} ; i={i} ; j={j} ; b={b} ; nb={nb} ; x={x} ; fl={fl} ; en={en} ; f={fnv(1)} ; vi={vi} ; xs={show(xs)} ; r={show_w(r)} ; h={show_h(h)} ; sf={sf} ; ss={ss} ; nr={nr} ; vf={vf} ; vbo={vbo} ; vcol={vcol}");
+}
+// === CELL params ===
+CELLDECL
+fn CELLFN_in(c: Ctr, h: Hold, i: integer, j: integer, b: boolean, nb: boolean, x: text, fl: float, en: Col, fnv: fn(integer) -> integer, vi: vector<integer>, xs: KIND, r: W, tk: (KIND, integer), fl2: float, sg: single, cx: character, nr: N, vf: vector<float>, vbo: vector<boolean>, vcol: vector<Col>) {
+  s = 0; o = ""; sf = 0.0; ss = 0.0f;
+  CELLSTMT
+  println("CELLNAME c={c.calls} log=<{c.log}> | s={s} ; o={o} ; i={i} ; j={j} ; b={b} ; nb={nb} ; x={x} ; fl={fl} ; en={en} ; f={fnv(1)} ; vi={vi} ; xs={show(xs)} ; r={show_w(r)} ; h={show_h(h)} ; sf={sf} ; ss={ss} ; nr={nr} ; vf={vf} ; vbo={vbo} ; vcol={vcol}");
+}
+fn CELLFN() {
+  c = Ctr {}; h = hold();
+  i = 1; j = 3; b = true; nb = false; x = "abc"; fl = 1.5; en = Col.Green; fnv = inc1;
+  vi = [10, 20, 30, 40];
+  xs = mk(Ctr {});
+  r = W { n: 1, t: "abc", f: 1.5, ok: true, tag: Col.Green, items: [P { k: 1, t: "a" }, P { k: 2, t: "b" }, P { k: 3, t: "c" }] };
+  tk: (KIND, integer) = ([P { k: 1, t: "a" }, P { k: 2, t: "b" }, P { k: 3, t: "c" }], 3);
+  fl2 = 2.5; sg = 1.5f; cx = 'b';
+  nr = N { by: 7, sh: 300, i4: 70000, sg: 0.5f, ch: 'a', fl: 0.5, on: false, en: Red, one: 1, one16: 1, one4: 1 };
+  vf = [1.5, 2.5, 3.5]; vbo = [false, false]; vcol = [Red, Blue];
+  CELLFN_in(c, h, i, j, b, nb, x, fl, en, fnv, vi, xs, r, tk, fl2, sg, cx, nr, vf, vbo, vcol);
+}
+// === CELL views ===
+CELLDECL
+fn CELLFN() {
+  c = Ctr {}; h = hold();
+  i = 1; j = 3; b = true; nb = false; x = "abc"; fl = 1.5; en = Col.Green; fnv = inc1;
+  vi = [10, 20, 30, 40];
+  xs = mk(Ctr {});
+  r = W { n: 1, t: "abc", f: 1.5, ok: true, tag: Col.Green, items: [P { k: 1, t: "a" }, P { k: 2, t: "b" }, P { k: 3, t: "c" }] };
+  tk: (KIND, integer) = ([P { k: 1, t: "a" }, P { k: 2, t: "b" }, P { k: 3, t: "c" }], 3);
+  fl2 = 2.5; sg = 1.5f; cx = 'b';
+  nr = N { by: 7, sh: 300, i4: 70000, sg: 0.5f, ch: 'a', fl: 0.5, on: false, en: Red, one: 1, one16: 1, one4: 1 };
+  vf = [1.5, 2.5, 3.5]; vbo = [false, false]; vcol = [Red, Blue];
+  // Views bound BEFORE the statement and read AFTER it: an element of a record vector, a
+  // record's collection field, a slice of the integer vector, an element of the collection.
+  vw = h.ws[1]; vq = r.items; vt = vi[1..3]; ve = xs[2];
+  s = 0; o = ""; sf = 0.0; ss = 0.0f;
+  CELLSTMT
+  wn = vw.n ?? -1; et = ve.t ?? "-";
+  println("CELLNAME c={c.calls} log=<{c.log}> | s={s} ; o={o} ; i={i} ; j={j} ; b={b} ; nb={nb} ; x={x} ; fl={fl} ; en={en} ; f={fnv(1)} ; vi={vi} ; xs={show(xs)} ; r={show_w(r)} ; h={show_h(h)} ; sf={sf} ; ss={ss} ; nr={nr} ; vf={vf} ; vbo={vbo} ; vcol={vcol} ; views={wn} {show(vq)} {vt} {et}");
+}

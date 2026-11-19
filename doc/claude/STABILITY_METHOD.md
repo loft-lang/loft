@@ -577,6 +577,57 @@ tree, comes with its own oracle (the rule states what must be true), and ends wi
 enforce. Reach for a screen when a rule walk has named a class and you want its full extent;
 do not reach for one as the way in.
 
+## The slot matrix — the walk that is generated
+
+The rule-led walk above is written by hand: someone picks a rule, builds its cells and
+computes each answer.  The slot matrix is the same idea turned into a generator, for the one
+question that can be asked of every construct alike: *is each operand evaluated once, in
+order, to the right result, without a leak, whatever FORM of expression it is?*
+
+A construct tested with a plain variable in an operand position is evaluated once by
+construction.  The same construct with a call, a lookup or a `?? default` there is another
+lowering, and when that lowering mentions the operand twice the program still answers
+right: only a counter inside the operand shows it.  So `scripts/slot_matrix.py` keeps the
+operand positions of the syntax ("slots"), the forms of expression that go into them
+("fillers"), and runs the product on the interpreter and the C backend — 4,772 cells in about a
+minute, from five tables of a few hundred lines.
+
+**What it gives that a hand-written walk does not.**
+
+- *It is complete over its tables.*  A filler added once runs in every slot of its type; a
+  slot added once takes every filler.  Nobody chooses which crossing to build.
+- *It cannot forget new syntax.*  The lexicon is read from the lexer and the parser, and a
+  lexeme with no slot row and no reason fails `doc_hygiene`.
+- *It gates.*  `tests/slot_matrix.rs` holds every cell against a baseline that may only
+  shrink, so a change that breaks an evaluation fails its own PR.
+- *It walks back in time.*  `slot_matrix.py walk --old <binary>` runs the cells on an older
+  compiler: what failed then and passes now is what it would have caught, and what passed
+  then and fails now is a regression.
+
+**What it does not replace.**  It compares a statement with the same statement whose
+operand is bound to a local first, so it sees a defect only where the FORM of the operand
+changes the answer.  A defect that is wrong for every form — most of the "bind a view,
+disturb its source, read it" class — needs an expected value written by hand, which is a
+suite cell under its rule.  And each slot's plain statement is anchored to a hand-computed
+expectation (`scripts/syntax_expect.tsv`), which is only as good as the reading of the rules
+behind it.
+
+**How it is kept honest.**  Every compiler defect, found by any means, is held against it
+when it is filed or fixed: reached, reached with new rows that must fail on the build with
+the defect, or a line in the reach ledger naming the axis the tool lacks
+([ISSUE_TRACKING.md § Every defect is held against the slot
+matrix](ISSUE_TRACKING.md#every-defect-is-held-against-the-slot-matrix)).  The ledger
+decides the next axis to build.
+
+**When to run what.**  The gate runs with every test run.  `slot_matrix.py cell` and `expr`
+try one statement or one expression at the moment a shape looks suspicious; `explain` lays
+one failing cell open, with the IR of the cell beside the IR of its twin.  The wider axes —
+a loop and a branch around the statement, parameters in place of locals, fillers inside
+fillers — are minutes, not seconds, and are for a change to a lowering and for the night.
+The plan, the queue and what the walks found: [plans/221-slot-walk](plans/221-slot-walk/README.md).
+
+---
+
 ## The weekly read — `make stability-read`
 
 The meters of [STABILITY_ROADMAP.md § The owner's directive](STABILITY_ROADMAP.md) are each

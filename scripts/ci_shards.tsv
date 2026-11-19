@@ -387,6 +387,7 @@ single_use	0.4
 siphash_std_parity	0.0
 slice_borrow	0.3
 slice_copy	16.4
+slot_matrix	45.0
 slot_v2_baseline	1.5
 slots	0.7
 spans_on_ir	0.6

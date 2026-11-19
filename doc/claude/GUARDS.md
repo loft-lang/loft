@@ -674,6 +674,32 @@ Each is one rule; the measured incident behind it is in
   plain spelling of the same tail on the same build, and pin both boundaries as cells
   (loft#1399).
 
+### A generated guard — what makes the slot matrix's green mean something
+
+`tests/slot_matrix.rs` is a guard nobody wrote cell by cell (@PLN221,
+[STABILITY_METHOD.md § The slot matrix](STABILITY_METHOD.md#the-slot-matrix--the-walk-that-is-generated)),
+so each way a guard reads green while the defect stands had to be closed in the generator:
+
+- **The oracle.**  A cell is compared with its bound-first twin, which is the same compiler
+  on a simpler form — not an independent answer.  The independent part is the ANCHOR: each
+  slot's plain statement against a hand-computed expectation (`scripts/syntax_expect.tsv`).
+  A statement whose right result could not be told from "nothing happened" was rewritten
+  until it could.
+- **Vacuity.**  A cell the compiler refuses is not a pass, and a slot none of whose cells
+  compile fails the run.  A filler must bump its counter once and give its type's plain
+  value (`slot_matrix.py fillers`), compared with the plain variable and not with a twin.
+- **Falsification.**  `walk --old <binary>` is the receipt, redone at will: against the
+  release before, the gate reports the cells that release's defects break.
+- **The twin's limit.**  Binding the operand first is what the rules say only where the
+  operand runs exactly once and, for an operand that WRITES what the statement works on,
+  before the statement reads anything else (the slots marked `first`).  A writing operand
+  on the right of `+=` differs from its twin and is right: `(E-Asgn-Compound)` reads the
+  place first.
+- **A table that lies.**  A filler that is not a primary expression parses another
+  statement than its twin; a block before a `{` is read as the statement's body.  Fillers
+  stand in parentheses unless they are primary, and a slot followed by `{` puts its operand
+  in parentheses.
+
 ### What the guard owns
 
 - **A cell your new guard fails may be somebody else's defect.**  Revert your fix by inverse edit

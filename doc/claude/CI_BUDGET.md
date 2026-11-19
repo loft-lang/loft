@@ -644,6 +644,25 @@ introduced them, when the author still has the context to fix it.
 A second rule follows from the first: **a gate that cannot fail because of a diff
 does not belong on a PR, however cheap it is.**
 
+## The slot matrix's runs
+
+`tests/slot_matrix.rs` (@PLN221) is seven tests, one a slot family, that together run 4,772
+generated cells on the interpreter and the C backend: about a minute of wall time on a
+developer machine, the families side by side.  On a CI runner it is several times slower:
+as ONE test of 3,661 cells it took 421 s and tripped `scripts/test_duration_gate.py`, which
+is why it is seven.  It is in the per-PR test legs as any test binary.
+The wider runs are not, and are the night's when they are scheduled:
+
+| Run | Cells | Both backends |
+|---|---|---|
+| the gate | 4,772 | 59 s |
+| `--context all --frame all` | about 23,000 | 5 min 33 s |
+| `--depth 2` | about 15,000 | 3 min 9 s |
+
+Every generated program runs under loft's own `LOFT_TIMEOUT` (40 s interpreted, 60 s
+compiled; 6 s and 20 s for what is left of a program once one of its cells was stopped), so
+a cell that loops costs its limit and is named, and cannot hold the leg.
+
 ## What runs when — today
 
 | cadence | jobs | trigger |

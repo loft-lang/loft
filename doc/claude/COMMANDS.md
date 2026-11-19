@@ -114,6 +114,32 @@ make rewrite-census                      # which REWRITES still fire where they 
                                          #   and writer, and so does a rule applied by another set of
                                          #   phases (`scripts/rule_phases.py`); seconds, exact, in `make ci`
                                          #   and on the PR.  `-bless` records a deliberate decline
+make slot-matrix [ARGS="--filler all"]     # THE SLOT MATRIX (@PLN221): each operand position of the
+                                         #   syntax with a counted expression in it.  Bare, it runs
+                                         #   every slot with its plain variable, which validates the
+                                         #   register; `--filler all` is the whole matrix,
+                                         #   `--backend both` adds the C backend (under a minute)
+                                         #   and `--slot <id>` narrows it to one position;
+                                         #   `--context all --frame all` adds a loop, a branch and
+                                         #   parameters (eight times the cells), `--depth 2` every
+                                         #   wrapper filler around every other (five times).  `walk --old
+                                         #   <binary>` runs it on an older build beside this one:
+                                         #   what it would have caught, and what has regressed  `scripts/slot_matrix.py
+                                         #   list` shows the slots.  Two PR gates: `check` (new
+                                         #   syntax needs a row in `scripts/syntax_slots.tsv`) and
+                                         #   `gate` (no cell fails outside
+                                         #   `scripts/slot_matrix.baseline`; `--family F` for one
+                                         #   of the seven tests of `tests/slot_matrix.rs`; `gate
+                                         #   --update` after a fix, then read the diff).  `cell '<statement with
+                                         #   <S>>' --type <type>` tries one shape at once and
+                                         #   prints the rows it would be; `expr '<expression with
+                                         #   <C>>' --type <type>` tries one EXPRESSION in every
+                                         #   slot of its type and inside every wrapper.  A long
+                                         #   run goes to the background with `--bg FILE` before
+                                         #   the command: it ends FILE with `slot_matrix: done`,
+                                         #   which `scripts/wait_for.sh` waits for.  `explain
+                                         #   <cell>` lays one failing cell open: its program kept,
+                                         #   loft's diagnostics on, its IR diffed with its twin's
 make reason-census                       # WHICH REWRITES SAY WHY: per R- rule, the source sites
                                          #   that report why it refused a site and which site it
                                          #   admitted (a scan of `src/`, no build), and its state:
