@@ -2232,6 +2232,26 @@ pub fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text,
       return ex(el_ir::v_set(v, o.code), ir::TyVoid);
     }
   }
+  // A tuple literal whose vector-literal item meets a KEYED declared member (`(hash<H[k]>,
+  // integer) = ([H {…}], 3)`) is built in a `__kvb_N` accumulator — not carried: refused by
+  // name BEFORE the item is read, which would register the element's vector rows Rust's keyed
+  // route never makes.
+  match el_types::base(declared!) {
+    TyTuple { elems: kde } => {
+      match e.p.nodes[rhs!] {
+        STupleLit { elems: kitems } => {
+          for kd in kde {
+            if keyed_kind(el_types::base(kd)) && kd#index < len(kitems) && e.p.nodes[kitems[kd#index]!] is SVecLit {
+              el::refuse(e, "a keyed tuple member given a vector literal");
+              return ex(ir::NdNull, ir::TyVoid);
+            }
+          }
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
   // A struct literal of the declared struct is built in place in the local, as without the
   // annotation (`parse_object`'s destination hint).
   if e.p.nodes[rhs!] is SStructLit && struct_ref(e, el_types::base(declared!)) >= 0 && struct_literal_def(e, rhs!) == struct_ref(e, el_types::base(declared!)) {

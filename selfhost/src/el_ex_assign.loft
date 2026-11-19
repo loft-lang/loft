@@ -1394,6 +1394,46 @@ fn tuple_member_chain_of_place(e: el::El, n: integer) -> boolean {
   }
 }
 
+// `Parser::unbox_tuple_from_dbref` for an element of a vector of tuples bound to a local
+// (`y = v[1]`): the element held in a `__ref_N` borrowing the vector (never freed), each member
+// read at its field's position into the stack tuple ("tuple_unbox").  The local keeps the read's
+// type (`τ?` by a computed index).  A tuple with a heap member is left as it is.
+fn unbox_tuple_element(e: el::El, vars: el_vars::Vars, x: Ex) -> Ex? {
+  elems = match el_types::base(x.tp) { TyTuple { elems: ue } => ue, _ => return null };
+  root = -1;
+  match el_ir::unspan(x.code) {
+    NdCall { def_nr: ud, args: ua } => {
+      nm = el::def(e, ud).name;
+      if (nm == "OpGetVector" || nm == "OpGetVectorNullable") && len(ua) == 3 {
+        root = match el_ir::unspan(ua[0]!) { NdVar { n: ur } => ur, _ => -1 };
+      }
+    },
+    _ => {}
+  }
+  if root < 0 || len([for um in elems if !(el_convert::plain_scalar(el_types::base(um)) || el_types::base(um) is TyText) { um }]) > 0 {
+    return null;
+  }
+  td = el_types::tuple_def_of(e, elems);
+  if td < 0 {
+    return null;
+  }
+  tmp = el_vars::work_ref(vars, ir::TyReference { n: td, dep: [root] });
+  if e.first_pass {
+    return null;
+  }
+  vars.vars[tmp].skip_free = true;
+  dense = match el_ir::unspan(x.code) { NdCall { def_nr: dd, args: da } => if el::def(e, dd).name == "OpGetVectorNullable" { el_ir::cl(e, "OpGetVector", da) } else { el_ir::unspan(x.code) }, _ => x.code };
+  items: vector<ir::Node> = [];
+  for um2 in elems {
+    g = field_get(e, td, um2#index, ir::NdVar { n: tmp });
+    if g == null {
+      return null;
+    }
+    items += [g!];
+  }
+  ex(el_ir::v_block([el_ir::v_set(tmp, dense), ir::NdTuple { items: items }], ir::TyTuple { elems: elems }, "tuple_unbox"), x.tp)
+}
+
 fn nested_member_assign(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: integer) -> Ex? {
   if op != "=" {
     return null;
@@ -1631,6 +1671,26 @@ pub fn tuple_get(e: el::El, vars: el_vars::Vars, te: integer?, index: integer) -
         froot = place_root(e, fi[index]!);
         fmt = fe[index]!;
         return ex(fi[index]!, if el_types::base(fmt) is TyText && froot >= 0 { ir::TyText { dep: [froot] } } else { fmt });
+      }
+    },
+    _ => {}
+  }
+  // `@FR-T-Absent` × `(N-Prop)`: a member of an in-flight tuple local (`z = v[i]`, `τ?`) is `τᵢ?`.
+  match el_ir::unspan(x.code) {
+    NdVar { n: otv } => {
+      match x.tp {
+        TyOptional { inner: oin } => {
+          match oin {
+            TyTuple { elems: oel } => {
+              if index >= 0 && index < len(oel) && el_convert::plain_scalar(el_types::base(oel[index]!)) {
+                om = oel[index]!;
+                return ex(ir::NdTupleGet { var: otv, idx: index }, if (om is TyOptional) { om } else { ir::TyOptional { inner: om } });
+              }
+            },
+            _ => {}
+          }
+        },
+        _ => {}
       }
     },
     _ => {}
@@ -2815,6 +2875,13 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
           aops += [el_ir::v_if(el_ir::cl(e, "OpVectorIsNull", [ir::NdTupleGet { var: tvar, idx: tix }]), ir::NdTuplePut { var: tvar, idx: tix, inner: aat }, ir::NdNull), aat];
           return ex(el_ir::v_block(aops, vt2, "Vector"), ir::TyVoid);
         }
+        // A keyed member appended a vector literal (`t.0 += [H {…}]`) takes the keyed literal
+        // route (`__kvb_N`) — not carried: refused by name before the literal is read, which
+        // would register the element's vector rows Rust's route never makes.
+        if keyed_kind(el_types::base(mt)) && e.p.nodes[rhs!] is SVecLit {
+          el::refuse(e, "a vector literal appended to a keyed tuple member");
+          return ex(ir::NdNull, ir::TyVoid);
+        }
         tx = expression(e, vars, rhs!);
         // `q.1 += "b"`: built in a work text of its own — cleared, the member and the value
         // appended — then stored (each `+=` takes its own `__work_N`).
@@ -3417,6 +3484,12 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
   x = expression(e, vars, rhs!);
   vars.boxed_tuple_at = outer_boxed;
   vars.assign_target = outer_target;
+  if op == "=" {
+    ux = unbox_tuple_element(e, vars, x);
+    if ux != null {
+      x = ux!;
+    }
+  }
   // `@FR-L-Null-Which`: a local spells `S?` as the pointer, so a tagged slot (a field, a vector
   // element) bound to one is read through its tag here, on both passes; a `&` keeps the slot.
   if op == "=" && is_nullable_wrapper(e, x.tp) && !(match e.p.nodes[rhs!] { SUnary { op: uo } => uo == "&", _ => false }) {
