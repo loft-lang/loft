@@ -2664,7 +2664,22 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
         return refused_build();
       }
       ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }]))];
+      xts = match x.tp { TyTuple { elems: xe } => xe, _ => [] };
       for m in parts {
+        // A tuple member is written FLATTENED at its own offsets in the element
+        // (`tuple_field_set`), a block of its own.
+        match elems[m#index] ?? ir::TyVoid {
+          TyTuple { elems: ine } => {
+            tfs = el_ex_object::tuple_field_set(e, vars, ine, at, fs[m#index]!.position, m, xts[m#index] ?? ir::TyVoid, "tuple_field_set");
+            if tfs == null {
+              el::refuse(e, "a vector of tuples with a tuple member of this shape");
+              return refused_build();
+            }
+            ls += [tfs!];
+            continue;
+          },
+          _ => {}
+        }
         // A record member is copied into its slot of the element (`set_field`).
         narrow = match elems[m#index] ?? ir::TyVoid { TyInteger { spec: ns } => el_types::narrow_width(ns) > 0, _ => false };
         if struct_ref(e, elems[m#index] ?? ir::TyVoid) >= 0 || narrow {
