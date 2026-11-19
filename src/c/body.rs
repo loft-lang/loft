@@ -10186,7 +10186,7 @@ impl<'a> FnWriter<'a> {
                 Ok(E::new(format!("((double) {})", as_single(a)?), K::Float))
             }
             // The constants as the shortest literals that round-trip to Rust's own: `M_PI` and
-            // `M_E` are POSIX, and `-std=c99` does not declare them.
+            // `M_E` are POSIX, and `-std=c11` does not declare them.
             ("OpMathPiFloat", []) => Ok(E::new(format!("{:?}", std::f64::consts::PI), K::Float)),
             ("OpMathEFloat", []) => Ok(E::new(format!("{:?}", std::f64::consts::E), K::Float)),
             ("OpMathFuncFloat" | "OpMathFuncSingle", [id, v]) => {

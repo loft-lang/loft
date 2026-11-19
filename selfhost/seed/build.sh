@@ -52,5 +52,5 @@ case "$(uname -s 2>/dev/null || echo unknown)" in
     ;;
 esac
 # shellcheck disable=SC2086  # the flag variables are word lists
-$CC -std=c99 -w $THREADS $CFLAGS $LTO -I gen -DLOFT_BIND_LIBS gen/run_image_run.c selfhost/crt/shim/crt.c \
+$CC -std=c11 -w $THREADS $CFLAGS $LTO -I gen -DLOFT_BIND_LIBS gen/run_image_run.c selfhost/crt/shim/crt.c \
   -o "$OUT" $EXPORT $LIBS

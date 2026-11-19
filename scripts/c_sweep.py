@@ -88,7 +88,7 @@ ROOT = Path(__file__).resolve().parent.parent
 LOFT = os.environ.get("LOFT_BIN") or str(ROOT / "target" / "release" / "loft")
 # The host's C compiler as the driver picks it (`c_driver::cc_program`): LOFT_CC, else CC, else cc.
 HOST_CC = os.environ.get("LOFT_CC") or os.environ.get("CC") or "cc"
-CC = [HOST_CC, "-std=c99", "-O1", "-DLOFT_CALL_CHAIN", "-pthread"] + (["-ldl"] if sys.platform.startswith("linux") else [])
+CC = [HOST_CC, "-std=c11", "-O1", "-DLOFT_CALL_CHAIN", "-pthread"] + (["-ldl"] if sys.platform.startswith("linux") else [])
 # After the objects, where a gcc link resolves it (`platform::c_system_link_libs`).
 SYSTEM_LIBS = ["-lws2_32", "-lcrypt32"] if sys.platform == "win32" else []
 # MSVC's `cl` (or `clang-cl`), told apart by name as the driver tells it (`c_driver::dialect`):
@@ -97,7 +97,7 @@ MSVC = Path(HOST_CC).stem.lower() in ("cl", "clang-cl")
 
 
 def msvc_args(gnu: list[str]) -> list[str]:
-    spelled = {"-std=c99": "/std:c11", "-w": "/W0", "-Wall": "/W3", "-Werror": "/WX",
+    spelled = {"-std=c11": "/std:c11", "-w": "/W0", "-Wall": "/W3", "-Werror": "/WX",
                "-O0": "/Od", "-O1": "/O1", "-O2": "/O2", "-O3": "/O2", "-g": "/Z7"}
     out = []
     for f in gnu:
@@ -168,7 +168,7 @@ ASAN = ["-g1", "-fsanitize=address,undefined", "-fno-omit-frame-pointer", "-fno-
 # encoding — clang 22's default is the legacy `try`, which wasmtime refuses — wasmtime's
 # `exceptions`, wasi-libc's libsetjmp); `clock` and `signal` are WASI's emulation libraries.  Needs clang, lld,
 # wasi-libc and the wasm32 compiler-rt (Ubuntu: clang lld wasi-libc libclang-rt-dev-wasm32).
-WASM_CC = [os.environ.get("LOFT_WASM_CC") or "clang", "--target=wasm32-wasi", "-std=c99", "-O1", "-w",
+WASM_CC = [os.environ.get("LOFT_WASM_CC") or "clang", "--target=wasm32-wasi", "-std=c11", "-O1", "-w",
            "-mllvm", "-wasm-enable-sjlj", "-mllvm", "-wasm-use-legacy-eh=false",
            "-D_WASI_EMULATED_PROCESS_CLOCKS", "-D_WASI_EMULATED_SIGNAL"]
 # wasm-ld reserves a 64 KiB stack by default; a native program has Linux's 8 MiB, and a deep
@@ -180,11 +180,11 @@ WASM_LIBS = ["-Wl,-z,stack-size=8388608", "-lm", "-lsetjmp", "-lwasi-emulated-pr
 # gcc-multilib), run natively.  `--riscv32`: as 32-bit RISC-V Linux, the Tanmatsu's ISA, by
 # `zig cc -target riscv32-linux-musl` (LOFT_RISCV32_CC names another compiler) and run under
 # `qemu-riscv32` (Ubuntu's qemu-user).  Both build the unit with its shims' sources, as wasm does.
-M32_CC = ["cc", "-m32", "-std=c99", "-O1", "-DLOFT_CALL_CHAIN", "-pthread", "-w"] + \
+M32_CC = ["cc", "-m32", "-std=c11", "-O1", "-DLOFT_CALL_CHAIN", "-pthread", "-w"] + \
     (["-ldl"] if sys.platform.startswith("linux") else [])
 RV32_CC = (os.environ.get("LOFT_RISCV32_CC") or
            f"{shutil.which('zig') or '/snap/bin/zig'} cc -target riscv32-linux-musl").split() + \
-    ["-std=c99", "-O1", "-DLOFT_CALL_CHAIN", "-w"]
+    ["-std=c11", "-O1", "-DLOFT_CALL_CHAIN", "-w"]
 CROSS = {"m32": M32_CC, "riscv32": RV32_CC}
 
 

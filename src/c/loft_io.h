@@ -502,7 +502,7 @@ static char *loft_file_path(loft_ref f) {
  * the main thread does: there is no table for two threads to grow (loft#2568).  It is opened
  * read-write where it can be, so a read and a later write go through one descriptor.  On
  * Windows it is opened shared for deletion, so a `delete` of an open file goes through as on
- * the other hosts.  A build with no descriptors (`-DLOFT_NO_POSIX`: ISO C99 alone) keeps no
+ * the other hosts.  A build with no descriptors (`-DLOFT_NO_POSIX`: ISO C alone) keeps no
  * handle: each read or write opens the path and closes it again. */
 #if defined(LOFT_POSIX) || defined(_WIN32)
 #define LOFT_FD 1

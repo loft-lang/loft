@@ -310,7 +310,7 @@ f(x), n) { … }`, which delivers each worker's value to the loop body.
 Every arm is running before any has to finish, so arms may wait on each other — a server arm
 and the client arm that talks to it.  Both backends run them so (`@FR-C-Arms`, guard
 `loft-suite/rules/concurrency/C-Arms/2568-parallel-arms-run-at-once.loft`); a build without
-threads (ISO C99 alone, WASI, a microcontroller) runs them in order.
+threads (WASI, a microcontroller, a C build without POSIX) runs them in order.
 
 ### Match expressions
 

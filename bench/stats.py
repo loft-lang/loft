@@ -50,7 +50,7 @@ of the shipped product beside the speed of the checked build.  The ship hash is 
 hashes that must agree: a fault the checked lanes answer as null wraps there, so a row whose
 ship hash differs is marked and carries no ship ratio.
 `c` and `cship` measure the C99 backend (@PLN200, `loft --emit-c`, built by `--cc` with
-`--c-flags`, `-std=c99 -O3`) against the same Rust twin: `c` is the CHECKED C — every
+`--c-flags`, `-std=c11 -O3`) against the same Rust twin: `c` is the CHECKED C — every
 expression's fault check kept, as the interpreter answers — and VALIDATES the C generator: its
 hash must be the twin's, a row whose hash differs is reported and the run exits 1; `cship` is
 the C under `LOFT_RELEASE_PASS_PROBE=1`, the ship tier's ceiling as the Rust `ship` lane has it,
@@ -174,7 +174,7 @@ NICE = ["nice", "-n", "10"] if shutil.which("nice") else []
 SHIP_ENV = {**os.environ, "LOFT_RELEASE_PASS_PROBE": "1"}
 # The C lanes' compiler command (`--cc` and `--c-flags`, set in `main`), and what they found:
 # a program the C backend did not build, and a checked C row whose hash is not the twin's.
-C_CMD = ["cc", "-std=c99", "-O3"]
+C_CMD = ["cc", "-std=c11", "-O3"]
 C_SKIPS = []
 C_MISMATCHES = []
 # The programs whose measurement stopped (a lane that failed to run, a hash that moved): each
@@ -792,7 +792,7 @@ def main():
     ap.add_argument("--ref-flags", default="-O", help="rustc flags for the reference lane")
     ap.add_argument("--cc", default=os.environ.get("CC", "cc"),
                     help="the C compiler of the c / cship lanes")
-    ap.add_argument("--c-flags", default="-std=c99 -O3",
+    ap.add_argument("--c-flags", default="-std=c11 -O3",
                     help="its flags for the c / cship lanes (-lm is appended)")
     ap.add_argument("--package-target-ms", type=float, default=4000.0,
                     help="the run length a --package lane is calibrated to: a library's bench "

@@ -114,8 +114,8 @@ waits for would never see it start. An arm reads the enclosing locals at their v
 and changes none of them, so nothing an arm does is visible to another arm or to the code after
 the block except through the outside world (a file, a socket, the output). Arms that use the
 outside world share it as separate threads do: two arms appending to one file interleave in an
-order the language does not define (`C-Impure`). A build with no threads (ISO C99 alone, WASI,
-a microcontroller) runs the arms in order, so there an arm that waits for a later one waits in
+order the language does not define (`C-Impure`). A build with no threads (WASI, a
+microcontroller, a C build without POSIX) runs the arms in order, so there an arm that waits for a later one waits in
 vain.
 
 ---
