@@ -1093,6 +1093,14 @@ fn view_tail(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, result
     }
     return code;
   }
+  // A tail the first pass did not see as a view — a join of nullable record fields, read
+  // through a held slot on this pass alone (`if k == 0 { h.a } else { h.b }`) — takes the
+  // rename now: `ref_return` runs on whichever pass picks `MaterializeView`, and `@PLN85
+  // D-own-2` then prunes the parameters the copy no longer borrows.
+  late = unrenamed && !buffer_bound(e) && !enum_result;
+  if late {
+    rename_onto(e, vars, rb, w);
+  }
   buf = el_ex_null::return_buffer(e, vars);
   if buf < 0 {
     return null;
@@ -1105,6 +1113,9 @@ fn view_tail(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, result
   if copied == null {
     el::refuse(e, "a record tail reading into a local, copied from a source read once");
     return code;
+  }
+  if late {
+    prune_copied_tail_params(e, bl.operators);
   }
   bl.operators[-1] = if through_return { el_ir::respan(last, ir::NdReturn { inner: copied! }) } else { copied! };
   ir::NdBlock { block: [bl] }
