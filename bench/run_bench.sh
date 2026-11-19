@@ -191,12 +191,13 @@ run_bench() {
   if [[ $HAS_LOFT -eq 1 && $HAS_RUST -eq 1 && -n "$LOFT_LIB" && $NO_BUILD -eq 0 && -f "$dir/bench.loft" ]]; then
     mkdir -p "$build_dir"
     native_rs="$build_dir/bench.rs"
-    # The rustc emitter, whatever backend the environment selects (its C is not Rust).
-    LOFT_NATIVE_BACKEND= "$LOFT" --native-emit "$native_rs" --lean "${LOFT_PATH_FLAG[@]}" "$dir/bench.loft" > /dev/null 2>&1 || true
+    # The rustc emitter, named by `--native-rust`: `--native-emit` writes through the selected
+    # writer, the C backend by default, and its C is not Rust.
+    "$LOFT" --native-emit "$native_rs" --native-rust --lean "${LOFT_PATH_FLAG[@]}" "$dir/bench.loft" > /dev/null 2>&1 || true
     if [[ -f "$native_rs" ]]; then
       rustc "${RELEASE_ARGS[@]}" --edition=2024 \
         --extern "loft=$LOFT_LIB/libloft.rlib" \
-        -L "$LOFT_LIB/deps" \
+        $(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import stats; print(" ".join(stats.dependency_search_args(sys.argv[2])))' "$SCRIPT_DIR" "$LOFT_LIB") \
         -o "$build_dir/bench_bin" \
         "$native_rs" > /dev/null 2>&1 || true
       rm -f "$native_rs"
