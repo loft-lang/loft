@@ -57,12 +57,15 @@ pub fn in_place_set(
 }
 
 /// The setter nodes of `node` whose receiver is a record an EARLIER statement of the same
-/// statement list created — `v = OpNewRecord(…)` (an element minted into any collection) or
-/// `v = OpPlaceRecord(…)` (a record placed in a host's store) — reached as the variable or
-/// through `OpGetField`.  Such a set writes a record younger than anything a loop derived in
-/// its prelude, so whatever its slot holds — a literal priming `v: []` included — it stales no
-/// header (`@FR-R-InPlace`).  Only siblings count: a creation in one branch never vouches for
-/// a set in another, and a later `Set` of the variable from anything else ends its window.
+/// statement list created — `v = OpNewRecord(…)` (an element minted into any collection),
+/// `v = OpPlaceRecord(…)` (a record placed in a host's store) or `OpDatabase(v, …)` (a store
+/// claimed for `v`, a loop buffer's mint among them) — reached as the variable or through
+/// `OpGetField`.  Such a set writes a record younger than anything a loop derived in its
+/// prelude, so whatever its slot holds — a literal priming `v: []` included — it stales no
+/// header (`@FR-R-InPlace`).  The creation itself is judged by the gate on its own: one the
+/// gate does not admit declines the loop whatever this answers.  Only siblings count: a
+/// creation in one branch never vouches for a set in another, and a later `Set` of the
+/// variable from anything else ends its window.
 #[must_use]
 pub(crate) fn sets_into_new_records(node: &Value, data: &Data) -> HashSet<*const Value> {
     let mut out = HashSet::new();
@@ -92,6 +95,14 @@ pub(crate) fn sets_into_new_records(node: &Value, data: &Data) -> HashSet<*const
                         }) =>
                 {
                     out.insert(std::ptr::from_ref(op.unspan()));
+                }
+                Value::Call(d, args)
+                    if (*d as usize) < data.definitions.len()
+                        && matches!(data.def(*d).name(), "OpDatabase" | "OpDatabaseNP") =>
+                {
+                    if let Some(Value::Var(v)) = args.first().map(Value::unspan) {
+                        young.insert(*v);
+                    }
                 }
                 _ => {}
             }
