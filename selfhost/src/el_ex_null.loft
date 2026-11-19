@@ -118,7 +118,14 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
       },
       _ => false
     };
-    if !(x.code is NdVar) && !el_ex_call::buffered_loft_call(e, x.code) && (copies_whole_vector(e, vars, x.code) || field_path(e, x.code) || elem_subject || linked_field) {
+    // A field read THROUGH a nullable record (`h.a.v` with `a: R?`: the field of the payload
+    // `read_through_tag` picks, an `if` over the slot's tag) is held the same way: it views
+    // what the slot borrows.
+    tag_field = len(el_types::deps(x.tp)) > 0 && match el_ir::unspan(x.code) {
+      NdCall { def_nr: tfd, args: tfa } => el::def(e, tfd).name == "OpGetField" && len(tfa) == 3 && el_ir::unspan(tfa[0]!) is NdIf,
+      _ => false
+    };
+    if !(x.code is NdVar) && !el_ex_call::buffered_loft_call(e, x.code) && (copies_whole_vector(e, vars, x.code) || field_path(e, x.code) || elem_subject || linked_field || tag_field) {
       // The default's buffer borrows the record too: a work ref nulled at the head.
       if !e.first_pass {
         el_ex_call::borrowed_literal_buffer(vars, d.code);
@@ -183,6 +190,25 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
     vt = el_types::without_deps(lhs);
     present = el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpVectorIsNull", [x.code])]);
     return ex(el_ir::v_if(present, x.code, d.code), el_types::with_deps(vt, el_types::deps(lhs)));
+  }
+  // A keyed local (`h ?? []`, `h: hash<E[k]>?`): the collection where it is present
+  // (`coalesce_not_null`'s `OpVectorIsNull`), the default where not.  Any other keyed subject
+  // is refused by name.
+  if keyed_kind(lhs) {
+    if !(el_ir::unspan(x.code) is NdVar) {
+      el::refuse(e, "a keyed `??` on something other than a local");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    if !el_types::is_equal(e, el_types::without_deps(lhs), el_types::without_deps(el_types::base(d.tp))) {
+      el::refuse(e, "a keyed `??` default of another type");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    kt = el_types::with_deps(el_types::without_deps(lhs), el_types::deps(lhs));
+    if e.first_pass {
+      return ex(ir::NdNull, kt);
+    }
+    kp = el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpVectorIsNull", [x.code])]);
+    return ex(el_ir::v_if(kp, x.code, d.code), kt);
   }
   // A plain enum's value is a scalar here: its null is the zero ordinal (`OpConvBoolFromEnum`).
   if !el_convert::plain_scalar(lhs) && !el_convert::plain_enum(lhs) {
@@ -1096,7 +1122,9 @@ pub fn builtin_op(e: el::El, vars: el_vars::Vars, op: text, a: Ex, b: Ex) -> Ex 
     }
     // A bare struct reference keeps the generic identity dispatch against the null reference
     // (`OpEqRef`'s `rec` test is total over what a read answers), in the operands' order.
-    if !(v.tp is TyOptional) && sd >= 0 && !starts_with(el::def(e, sd).name, "__tuple<") && !has_operator_method(e, sd) {
+    // (A struct-enum variant's record (`x: Bin`) is a bare reference too.)
+    vrec = match vb { TyReference { n: vrn } => el::def(e, vrn).def_type == el::DT_ENUM_VALUE, _ => false };
+    if !(v.tp is TyOptional) && (vrec || sd >= 0 && !starts_with(el::def(e, sd).name, "__tuple<") && !has_operator_method(e, sd)) {
       nl = el_ir::cl(e, "OpNullRefSentinel", []);
       return ex(el_ir::cl(e, if op == "==" { "OpEqRef" } else { "OpNeRef" }, if b.tp is TyNull { [v.code, nl] } else { [nl, v.code] }), ir::TyBoolean);
     }
@@ -2253,6 +2281,14 @@ pub fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -
       if !returns_argument_view(el::def(e, def_nr)) {
         w = hidden_ref_arg(vars, args);
         chain = true;
+      } else {
+        // (A callee handing back its argument whose argument lends nothing — `id2(g(k))`, a
+        // fresh record — answers in its own buffer: `ls` names that buffer, the candidate.)
+        vhr = hidden_ref_arg(vars, args);
+        if vhr >= 0 && el_types::deps(v.tp) == [vhr] {
+          w = vhr;
+          chain = true;
+        }
       }
     },
     _ => {}
@@ -2319,6 +2355,30 @@ pub fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -
       if !el_types::deps(ret).contains(pa) {
         e.b.data.definitions[d].returned = [el_types::with_deps(ret, el_types::deps(ret) + [pa])];
       }
+      return ex(ir::NdReturn { inner: x }, ir::TyNever);
+    }
+  }
+  // So is a call answering a view of its arguments (`return same(view(h, 0))`) where all it
+  // borrows is visible parameters: `MergeAttr` for each, the call handed back as it is.
+  if w < 0 && x is NdCall && returns_argument_view(el::def(e, match x { NdCall { def_nr: xd } => xd, _ => 0 })) && len(el_types::deps(v.tp)) > 0 {
+    vattrs: vector<integer> = [];
+    for dv in el_types::deps(v.tp) {
+      va = if vars.vars[dv].argument { attr_nr(el::def(e, d), el_vars::name_of(vars, dv)) } else { -1 };
+      if va < 0 || el::def(e, d).attributes[va].hidden {
+        vattrs = [];
+        break;
+      }
+      vattrs += [va];
+    }
+    if len(vattrs) > 0 {
+      vret = el::def(e, d).returned[0];
+      vdeps = el_types::deps(vret);
+      for va in vattrs {
+        if !vdeps.contains(va) {
+          vdeps += [va];
+        }
+      }
+      e.b.data.definitions[d].returned = [el_types::with_deps(vret, vdeps)];
       return ex(ir::NdReturn { inner: x }, ir::TyNever);
     }
   }

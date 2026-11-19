@@ -2919,6 +2919,19 @@ pub fn coalesce(e: el::El, vars: el_vars::Vars, l: integer, r: integer) -> Ex {
     lit = el_ex_pattern::empty_literal_to(e, vars, vt, borrows: []);
     d = ex(if e.first_pass && !fresh_native_call(e, x.code) { ir::NdNull } else { lit }, vt);
   }
+  // A keyed subject's `[]` is that collection, empty, in a `__kvb_N` of its own (`parse_vector`'s
+  // keyed arm against the subject's type): nulled at the head, given its store.
+  if el_ex_pattern::is_empty_literal(d.code) && keyed_kind(el_types::base(x.tp)) && !(el_types::base(x.tp) is TyVector) {
+    kct = el_types::without_deps(el_types::base(x.tp));
+    kvb = el_vars::create_unique(vars, "_kvb", kct);
+    if e.first_pass {
+      d = ex(ir::NdNull, kct);
+    } else {
+      el_vars::register_work_ref(vars, kvb);
+      kw = ir::NdVar { n: kvb };
+      d = ex(el_ir::v_block([el_ir::v_set(kvb, ir::NdNull), el_ir::cl(e, "OpDatabase", [kw, ir::NdInt { n: el_schema::keyed_type(e, kct) }]), kw], kct, "Vector"), kct);
+    }
+  }
   if el_ex_pattern::is_empty_literal(d.code) {
     el::refuse(e, "a `??` with an empty vector literal as its default");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -2970,8 +2983,10 @@ pub fn record_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   // The `if` borrows what its subject's read borrows: nothing where that read was a bind's
   // first (`coalesce` strips it there, `parse_var`'s `into` arm), the local where it is an
   // argument — which lends it to the call's result (`call_dependencies`).
+  // (`(N-Join)`: a default that may itself be absent — `nn ?? y ?? x` over `R?` locals — leaves
+  // the result `R?`.)
   if x.code is NdVar {
-    return ex(el_ir::v_if(el_ir::cl(e, "OpConvBoolFromRef", [x.code]), x.code, d.code), lhs);
+    return ex(el_ir::v_if(el_ir::cl(e, "OpConvBoolFromRef", [x.code]), x.code, d.code), if d.tp is TyOptional { ir::TyOptional { inner: lhs } } else { lhs });
   }
   // Minted on both passes, as the Rust mints it, so it numbers before the second pass's buffers.
   held = el_vars::create_unique(vars, "_ncc", lhs);

@@ -1591,15 +1591,9 @@ pub fn concat_operand(e: el::El, vars: el_vars::Vars, list: vector<ir::Node>, ac
     el::refuse(e, "a nullable concatenation operand");
     return;
   }
-  render: vector<ir::Node> = [];
-  el_ex_call::append_data(e, render, acc, x.code, x.tp);
-  if e.first_pass {
-    for op in render {
-      list += [op];
-    }
-    return;
-  }
-  repeatable = match x.code {
+  // On the second pass an operand that is not repeatable is held first: a scalar in a
+  // `_concat_N` of its own type (a heap operand's work ref is not carried: refused by name).
+  repeatable = e.first_pass || match el_ir::unspan(x.code) {
     NdVar { n: _ } => true,
     NdInt { n: _ } => true,
     NdLong { n: _ } => true,
@@ -1608,7 +1602,21 @@ pub fn concat_operand(e: el::El, vars: el_vars::Vars, list: vector<ir::Node>, ac
     _ => false
   };
   if !repeatable {
-    el::refuse(e, "a concatenation operand bound before its null test");
+    if heap_def(el_types::base(x.tp)) >= 0 || el_types::base(x.tp) is TyVector {
+      el::refuse(e, "a concatenation operand bound before its null test");
+      return;
+    }
+    held = el_vars::create_unique(vars, "concat", el_types::base(x.tp));
+    el_vars::set_defined(vars, held);
+    list += [el_ir::v_set(held, x.code)];
+    x = ex(ir::NdVar { n: held }, el_types::base(x.tp));
+  }
+  render: vector<ir::Node> = [];
+  el_ex_call::append_data(e, render, acc, x.code, x.tp);
+  if e.first_pass {
+    for op in render {
+      list += [op];
+    }
     return;
   }
   is_null = match x.tp {
