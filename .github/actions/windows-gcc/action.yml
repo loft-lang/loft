@@ -21,7 +21,9 @@ runs:
         # gcc 16.2.0 is held at package revision 6: with revision 7 the net component's TLS
         # client does not compile, while every job on revision 6 builds it (main's CI run
         # 44433835724: four Windows shards on -6 green, the one on -7 red).  Lift the pin once
-        # a later revision builds `loft-components` on a windows-probe.
+        # a later revision builds `loft-components` on a windows-probe.  Every package of the
+        # gcc set is held together: an image that ships revision 7 has `libstdc++` -7, which
+        # requires `libgcc` -7, so a pin that leaves it out cannot install.
         want=16.2.0-6
         have=$(/c/msys64/usr/bin/pacman -Q mingw-w64-ucrt-x86_64-gcc | cut -d' ' -f2)
         if [ "$have" != "$want" ]; then
@@ -29,7 +31,8 @@ runs:
           timeout 600 /c/msys64/usr/bin/pacman -U --noconfirm \
             "$repo/mingw-w64-ucrt-x86_64-gcc-$want-any.pkg.tar.zst" \
             "$repo/mingw-w64-ucrt-x86_64-libgcc-$want-any.pkg.tar.zst" \
-            "$repo/mingw-w64-ucrt-x86_64-cc-libs-$want-any.pkg.tar.zst"
+            "$repo/mingw-w64-ucrt-x86_64-cc-libs-$want-any.pkg.tar.zst" \
+            "$repo/mingw-w64-ucrt-x86_64-libstdc++-$want-any.pkg.tar.zst"
         fi
         "$gcc" --version | head -1
         major=$("$gcc" -dumpversion | cut -d. -f1)
