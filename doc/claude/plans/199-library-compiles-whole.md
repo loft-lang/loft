@@ -424,11 +424,21 @@ Each shape below still declines, and runs interpreted: the answer is right, only
 is scheduled.  One is lifted when a consumer or a profile meets it — the trace
 (`LOFT_TRACE_NATIVE_GATE=1`) names the function and the reason.
 
+**Measured 2026-11-19** (`tuxedo-pr2438-post` @ 589b49355).  `make gate-census`: every
+published library compiles whole — 56 packages at their newest versions, no decline reason in
+the registry (seven `hex_*` packages are read at their newest version by hand: the census
+takes its versions from the local registry clone, and an older one of theirs no longer
+resolves).  `tests/n3_use_native.rs`: `gatefull` 51 of 51.  A scratch library with one function
+per shape of this table (`probes` in the plan issue's comment of that date): 15 of 16 run
+interpreted with the hand-computed answer, for the reasons below; `&(integer, integer)`
+compiles.  So what keeps this plan open is these shapes and F2, met by no published function.
+
 | shape | where it declines |
 |---|---|
-| `&text`, `&(…)` parameters | `native_gate::is_ref_scalar` |
+| `&text`, `&single`, `&character` parameters | `native_gate::is_ref_scalar` |
 | a narrow scalar (`single`, `character`, a plain enum, a sized `integer`) in a tuple parameter, a generator's yield, a `&T`, or a function value's signature | `is_tuple_leaf`, `generator_crosses`, `is_ref_scalar`, `fnref::upcall_carries` |
-| a tuple yield | `generator_crosses` |
+| a tuple yield; a yield of a `single`, a `character` or a plain enum | `generator_crosses` |
+| a yield of a nested tuple (F2) | `coroutine_layout::channel_tag` answers `CHANNEL_NONE` |
 | a function value with a `&T` parameter, or a keyed-collection result | `fnref::upcall_carries` |
 
 The procedure, the one every step above followed:
