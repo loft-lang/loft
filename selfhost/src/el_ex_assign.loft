@@ -957,6 +957,8 @@ pub fn closure_attr_type(e: el::El, t: ir::TypeT) -> ir::TypeT {
     TyHash { n: kh } => ir::TyReference { n: kh, dep: [el_types::MARKER] },
     TySorted { n: ks } => ir::TyReference { n: ks, dep: [el_types::MARKER] },
     TyIndex { n: ki } => ir::TyReference { n: ki, dep: [el_types::MARKER] },
+    TyRadix { n: kr } => ir::TyReference { n: kr, dep: [el_types::MARKER] },
+    TyTrie { n: kt2 } => ir::TyReference { n: kt2, dep: [el_types::MARKER] },
     _ => t
   }
 }
@@ -3651,6 +3653,32 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
             plain_args = false;
           }
         }
+        // A call handed the bound local itself (`a = grow(a, 7)`, `protectable_ref_args`): the
+        // local's store protected from the call's frees while it runs, then replaced into.
+        self_only = !plain_args && match el_ir::unspan(x.code) {
+          NdCall { args: sa } => {
+            ok = true;
+            for sx in sa {
+              sxt = match el_ir::unspan(sx) { NdVar { n: sxv } => el_types::base(el_vars::tp(vars, sxv)), _ => ir::TyVoid };
+              heap_arg = !(sxt is TyVoid) && !(is_scalar(sxt) || sxt is TyText);
+              if heap_arg && el_ir::unspan(sx) != ir::NdVar { n: v } {
+                ok = false;
+              }
+              if !(el_ir::unspan(sx) is NdVar) && !(el_ir::unspan(sx) is NdInt) && !(el_ir::unspan(sx) is NdText) && el_ir::reads_var(sx, v) {
+                ok = false;
+              }
+            }
+            ok && el_ir::reads_var(x.code, v)
+          },
+          _ => false
+        };
+        pd = el::def_nr(e, "n_protect_store_frees");
+        ud = el::def_nr(e, "n_unprotect_store_frees");
+        if self_only && pd >= 0 && ud >= 0 && el_ex_match::gives_away_its_store(e, x.code) {
+          el_vars::drop_use(vars, v);
+          kt = el_schema::keyed_type(e, el_types::base(kcur));
+          return ex(ir::NdInsert { items: kg + [ir::NdCall { def_nr: pd, args: [ir::NdVar { n: v }] }, el_ir::cl(e, "OpReplaceKeyed", [x.code, ir::NdVar { n: v }, ir::NdInt { n: kt + 32768 }]), ir::NdCall { def_nr: ud, args: [ir::NdVar { n: v }] }] }, ir::TyVoid);
+        }
         if plain_args && el_ex_match::gives_away_its_store(e, x.code) && len(el_types::deps(x.tp)) == 0 {
           el_vars::drop_use(vars, v);
           kt = el_schema::keyed_type(e, el_types::base(kcur));
@@ -3678,7 +3706,9 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
       },
       // An `if` whose arms each answer a keyed local: whichever it answers is replaced in.
       NdIf { cond: _, t: kt_arm, f: kf_arm } => {
-        if keyed_arm_local(kt_arm) >= 0 && keyed_arm_local(kf_arm) >= 0 {
+        // (A `?? []` discharge: the empty arm a `Vector` block minting its own keyed store.)
+        empty_arm = match el_ir::unspan(kf_arm) { NdBlock { block: eb } => eb[0].name == "Vector", _ => false };
+        if keyed_arm_local(kt_arm) >= 0 && (keyed_arm_local(kf_arm) >= 0 || empty_arm) {
           el_vars::drop_use(vars, v);
           // (The local holds its own copy: it borrows nothing of the source.)
           el_vars::set_var_type(vars, v, el_types::with_deps(el_vars::tp(vars, v), []));

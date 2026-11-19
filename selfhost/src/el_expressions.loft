@@ -2563,6 +2563,40 @@ pub fn record_result(result: ir::TypeT) -> boolean {
   el_types::base(result) is TyReference || (el_types::struct_enum_def(result) >= 0 && !(result is TyOptional))
 }
 
+// `returned_params` over the early exits alone (an `Insert` ending in its `return`): a
+// parameter the body appends into the buffer elsewhere (`b += v`) is published by none.
+pub fn early_returned_params(e: el::El, vars: el_vars::Vars, ops: vector<ir::Node>, buf: integer) -> vector<integer> {
+  r: vector<integer> = [];
+  for op in ops {
+    found: vector<integer> = [];
+    match el_ir::unspan(op) {
+      NdInsert { items } => {
+        if len(items) > 0 && el_ir::unspan(items[-1]!) is NdReturn {
+          found = returned_params(e, vars, items, buf);
+        } else {
+          found = early_returned_params(e, vars, items, buf);
+        }
+      },
+      // (An exit spliced into a branch's block: its statements end in the `return`.)
+      NdBlock { block: eb } => {
+        eops = eb[0].operators;
+        if len(eops) > 0 && el_ir::unspan(eops[-1]) is NdReturn {
+          found = returned_params(e, vars, eops, buf);
+        } else {
+          found = early_returned_params(e, vars, eops, buf);
+        }
+      },
+      _ => { found = early_returned_params(e, vars, el_ir::children(op), buf); }
+    }
+    for x in found {
+      if !r.contains(x) {
+        r += [x];
+      }
+    }
+  }
+  r
+}
+
 pub fn returned_params(e: el::El, vars: el_vars::Vars, ops: vector<ir::Node>, buf: integer) -> vector<integer> {
   r: vector<integer> = [];
   for op in ops {
@@ -2910,7 +2944,7 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
       // (loft#1625, `borrowed_param_deps` → `ref_return(…, MidReturn)`: a parameter — or a field
       // of one — an early exit copies into the buffer is still published, after the buffer.)
       rds = [rb];
-      for rp in returned_params(e, vars, bl.operators, renamed) {
+      for rp in early_returned_params(e, vars, bl.operators, renamed) {
         if !rds.contains(rp) {
           rds += [rp];
         }
