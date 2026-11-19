@@ -552,6 +552,11 @@ fn apart_mint(
         }
         return None;
     }
+    // @decline-owed: under the apart-call clause: a second minted path, a field-path target, a
+    //   body variable that can hold an element and is not fresh this pass, a mention of the
+    //   vector outside its own mint group or a placement host, a function-value call, `par` or
+    //   `yield`; overall: a mint `(R-Mint)` refuses, an element that is no plain struct or
+    //   struct-enum, a path with one group that does not qualify
     crate::rewrite_census::fired("R-PushRec/apart", 1);
     Some((target.path, target.vector))
 }
@@ -1220,6 +1225,12 @@ pub fn hoistable(
             });
         }
         out.vectors.retain(|(q, _)| !mover(q));
+        // @decline-owed: a loop `(R-InPlace)` does not admit; a target that is neither a bare
+        //   plain-vector variable nor a plain vector field of a plain record over a pure path
+        //   (a keyed collection); a root the body rebinds other than to null or an
+        //   emitter-owned buffer's projection; beside another mover or holder, a root that is
+        //   no owned local, return buffer or work-buffer argument; a loop admitted through its
+        //   text sets
         crate::rewrite_census::fired("R-Mint", mints.len());
         out.pushes = pushes;
         out.mint_pushes = mint_fused
@@ -1740,6 +1751,12 @@ pub fn view_def_header(
             )
         })
     }) {
+        crate::rewrite_census::declined_in(
+            "R-View",
+            data.def(def_nr).name(),
+            vars.name(*d),
+            "a statement after the bind blocks a held header",
+        );
         return None;
     }
     let mut rebound = false;
@@ -1759,6 +1776,14 @@ pub fn view_def_header(
             }
             false
         });
+    }
+    if indexed && rebound {
+        crate::rewrite_census::declined_in(
+            "R-View",
+            data.def(def_nr).name(),
+            vars.name(*d),
+            "the view is rebound after its bind",
+        );
     }
     (indexed && !rebound).then_some(*d)
 }
@@ -3831,7 +3856,7 @@ pub fn push_windows_ok(
     def_nr: u32,
     stores: Option<&Stores>,
     fx: &mut Facts,
-) -> Result<(), String> {
+) -> Result<(), crate::rewrite_census::Refusal> {
     let vars = data.def(def_nr).variables();
     let retbuf = retbuf_var(data, def_nr);
     let roots: Vec<u16> = ps.iter().map(|p| p.path.0).collect();
@@ -3841,14 +3866,16 @@ pub fn push_windows_ok(
                 || retbuf == Some(root)
                 || work_buffer_arg(data, def_nr, root))
         {
-            return Err(format!(
-                "the pushed vector's root `{}` is not exclusive",
-                vars.name(root)
+            return Err(crate::rewrite_census::Refusal::about(
+                "the pushed vector's root is not exclusive",
+                vars.name(root),
             ));
         }
     }
     let Some(body) = push_loop_body(lp) else {
-        return Err("not a counted push loop".to_string());
+        return Err(crate::rewrite_census::Refusal::of(
+            "not a counted push loop",
+        ));
     };
     let mut parts: Vec<&Value> = Vec::new();
     for s in body {
@@ -3899,19 +3926,21 @@ pub fn deep_window_ok(
     stores: Option<&Stores>,
     fx: &mut Facts,
     facts: Option<&StoreFacts>,
-) -> Result<(), String> {
+) -> Result<(), crate::rewrite_census::Refusal> {
     fn collect<'v>(
         n: &'v Value,
         data: &Data,
         path: &PathKey,
         depth: u16,
         parts: &mut Vec<&'v Value>,
-    ) -> Result<(), String> {
+    ) -> Result<(), crate::rewrite_census::Refusal> {
         match n.unspan() {
-            Value::Return(_) | Value::Yield(_) => Err("the body can return".to_string()),
-            Value::Break(k) | Value::Continue(k) if *k > depth => {
-                Err("a jump leaves a loop enclosing the window".to_string())
+            Value::Return(_) | Value::Yield(_) => {
+                Err(crate::rewrite_census::Refusal::of("the body can return"))
             }
+            Value::Break(k) | Value::Continue(k) if *k > depth => Err(
+                crate::rewrite_census::Refusal::of("a jump leaves a loop enclosing the window"),
+            ),
             Value::Break(_) | Value::Continue(_) | Value::Line(_) => Ok(()),
             Value::If(c, t, e) => {
                 parts.push(c);
@@ -3953,7 +3982,9 @@ pub fn deep_window_ok(
     if root >= vars.count()
         || !(owned_local(vars, root) || root_is_retbuf || work_buffer_arg(data, def_nr, root))
     {
-        return Err("the pushed vector's root is not exclusive".to_string());
+        return Err(crate::rewrite_census::Refusal::of(
+            "the pushed vector's root is not exclusive",
+        ));
     }
     let mut parts: Vec<&Value> = Vec::new();
     for o in &lp.operators {

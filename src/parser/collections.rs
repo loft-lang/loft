@@ -2190,20 +2190,13 @@ impl Parser {
                 // clear comes first for the reason `=` always clears — it replaces the
                 // collection rather than adding to it — and it is the group-aware clear, so
                 // a member's siblings are reset with it (loft#898).
-                if !crate::parser::vectors::is_keyed(src_tp) {
-                    let mut ops = self.keyed_group_clear(to, kt, parent_tp);
-                    let (parent, parent_tp_id, field_nr) = self.fill_keyed_site(to, parent_tp, kt);
-                    ops.push(self.cl(
-                        "OpFillKeyed",
-                        &[
-                            parent,
-                            val.clone(),
-                            Value::Int(tp_val),
-                            Value::Int(i32::from(parent_tp_id)),
-                            Value::Int(i32::from(field_nr)),
-                        ],
-                    ));
-                    return Value::Insert(ops);
+                //
+                // loft#2563 — a KEYED value into a member of a linked group takes the same
+                // route: `OpReplaceKeyed` knows the member and nothing of its group, so it
+                // left the other members out of step.  Any other keyed destination keeps it.
+                if let Some(ops) = self.keyed_field_replace(to, parent_tp, kt, tp_val, val, src_tp)
+                {
+                    return ops;
                 }
                 return self.cl(
                     "OpReplaceKeyed",
@@ -3927,6 +3920,10 @@ use #count instead"
             Box::new(Value::Null),
         );
         if !self.first_pass {
+            // @decline-owed: an empty literal or one of seventeen or more items; a `rev(…)`
+            //   around it; a `par` walk; a `[v; n]` repeat; a text, record, tuple or nullable
+            //   item; an item that is a `return`; a literal that is not the whole iterable or
+            //   is bound to a variable, field or keyed destination
             crate::rewrite_census::fired("R-LiteralWalk", 1);
         }
         Some(Type::Iterator(Box::new(elem), Box::new(Type::Null)))

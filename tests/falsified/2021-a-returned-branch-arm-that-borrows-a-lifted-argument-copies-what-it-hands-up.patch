@@ -1,5 +1,5 @@
 diff --git a/src/bind_lowering.rs b/src/bind_lowering.rs
-index 41c85498d..9e8b0965a 100644
+index ca364aae9..bd8b1bfdf 100644
 --- a/src/bind_lowering.rs
 +++ b/src/bind_lowering.rs
 @@ -840,7 +840,7 @@ pub fn re_bind(data: &Data, d_nr: u32, function: &Function, v: u16, value: &Valu
@@ -22,7 +22,7 @@ index 41c85498d..9e8b0965a 100644
                      || (rb.copies_into_fresh() && !crate::keys::buffer_fresh_copy_off()))))
          && matches!(value.unspan(), Value::Call(_, _) | Value::CallRef(_, _))
 diff --git a/src/scopes/free_vars.rs b/src/scopes/free_vars.rs
-index a78d0ddba..9682b36ca 100644
+index 3869f82d4..a4165d170 100644
 --- a/src/scopes/free_vars.rs
 +++ b/src/scopes/free_vars.rs
 @@ -15,7 +15,7 @@ use super::insert_free::{
@@ -34,7 +34,7 @@ index a78d0ddba..9682b36ca 100644
      return_copies_whole_local, return_has_non_source_arm, return_has_null_arm,
      return_moved_holders, returned_var_null_unified,
  };
-@@ -703,7 +703,7 @@ impl Scopes<'_> {
+@@ -704,7 +704,7 @@ impl Scopes<'_> {
                  "OpFreeRefIfDistinct"
              });
              let mut result = Vec::with_capacity(ls.len() + null_arm_record_sources.len() + 2);
@@ -43,7 +43,7 @@ index a78d0ddba..9682b36ca 100644
              let distinct = data.def_nr("OpDistinctStore");
              let join_arm_dropped = &join_arm_dropped;
              // The sweep's frees go FIRST: they name the returned local as their WITNESS (its
-@@ -718,7 +718,7 @@ impl Scopes<'_> {
+@@ -719,7 +719,7 @@ impl Scopes<'_> {
              // comes back as the return value.  The sweep freed it unconditionally, so the
              // caller read a released store (poison: `null`; the C runtime reused it first).
              // Freed only when it is not the store returned.
@@ -52,7 +52,7 @@ index a78d0ddba..9682b36ca 100644
                  let free_nr = data.def_nr("OpFreeRef");
                  let free_distinct = data.def_nr("OpFreeRefIfDistinct");
                  for op in &mut ls {
-@@ -893,7 +893,7 @@ impl Scopes<'_> {
+@@ -895,7 +895,7 @@ impl Scopes<'_> {
              self.var_scope.insert(tmp, self.scope);
              self.var_order.push(tmp);
              let mut result = Vec::with_capacity(ls.len() + 2);
@@ -61,7 +61,7 @@ index a78d0ddba..9682b36ca 100644
              free_copied_text_sources(&mut result, expr, &ls, function, data);
              result.extend(ls);
              result.push(Value::Return(Box::new(Value::Var(tmp))));
-@@ -939,7 +939,7 @@ impl Scopes<'_> {
+@@ -941,7 +941,7 @@ impl Scopes<'_> {
              self.var_scope.insert(tmp, self.scope);
              self.var_order.push(tmp);
              let mut result = Vec::with_capacity(ls.len() + 2);
@@ -70,16 +70,16 @@ index a78d0ddba..9682b36ca 100644
              result.extend(ls);
              result.push(Value::Return(Box::new(Value::Var(tmp))));
              return result;
-@@ -994,7 +994,7 @@ impl Scopes<'_> {
-                 }
+@@ -997,7 +997,7 @@ impl Scopes<'_> {
              }
+             hooks_follow_returned_frees(&mut ls, tmp, data);
              let mut result = Vec::with_capacity(ls.len() + 2);
 -            result.extend(self.bind_return_temp(tmp, expr, function, data));
 +            result.extend(bind_return_temp(tmp, expr));
              result.append(&mut ls);
              result.push(Value::Return(Box::new(Value::Var(tmp))));
              return result;
-@@ -1287,7 +1287,7 @@ impl Scopes<'_> {
+@@ -1290,7 +1290,7 @@ impl Scopes<'_> {
                      self.ret_temp_counter += 1;
                      let name = format!("__ret_tail_{}", self.ret_temp_counter);
                      let tmp = function.add_temp_var(&name, tp);
@@ -88,7 +88,7 @@ index a78d0ddba..9682b36ca 100644
                      ls.push(Value::Return(Box::new(Value::Var(tmp))));
                  } else if ret_var != u16::MAX {
                      ls.push(Value::Return(Box::new(Value::Var(ret_var))));
-@@ -1355,7 +1355,7 @@ impl Scopes<'_> {
+@@ -1358,7 +1358,7 @@ impl Scopes<'_> {
                      self.ret_temp_counter += 1;
                      let name = format!("__ret_tail_{}", self.ret_temp_counter);
                      let tmp = function.add_temp_var(&name, tp);
@@ -97,7 +97,7 @@ index a78d0ddba..9682b36ca 100644
                      ls.push(Value::Return(Box::new(Value::Var(tmp))));
                  } else {
                      ls.push(Value::Return(Box::new(Value::Null)));
-@@ -1436,165 +1436,33 @@ pub(super) struct Delivered {
+@@ -1439,165 +1439,33 @@ pub(super) struct Delivered {
      pub(super) moved_out: Option<(u16, Vec<u16>)>,
  }
  
@@ -289,10 +289,10 @@ index a78d0ddba..9682b36ca 100644
  
  /// loft#2282 — `tp`, a definition's declared return type, with a dep on its hidden TEXT
 diff --git a/src/state/codegen.rs b/src/state/codegen.rs
-index e712174b9..c1dc1083c 100644
+index 1142a26e0..dd16c9b0f 100644
 --- a/src/state/codegen.rs
 +++ b/src/state/codegen.rs
-@@ -7313,46 +7313,6 @@ fn start_step(r: &Rotation) -> Option<Rotation> {
+@@ -7342,46 +7342,6 @@ fn start_step(r: &Rotation) -> Option<Rotation> {
      })
  }
  

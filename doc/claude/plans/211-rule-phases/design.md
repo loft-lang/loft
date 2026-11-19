@@ -427,10 +427,9 @@ callees) against the same three.  text2d even again, graphics `draw_line` 0.89×
 kept.  Left as layout: hex_field `trace`, and hex_terrain `terrain_hydrology` +3.6 % — its hot
 selection scans are identical C outside the guarded copy, which only enlarges the function.
 
-**`(Fact-Oracle)` itself** — the interpreter checking a MUST `entry` fact on entry and a MAY
-`writes` summary as a superset of what the call did — is built with step 2, under
-`LOFT_FACT_VERIFY=1`, so a widened reach has a run-time falsifier on the interpreter as the C's
-verify form gives one on the C.
+**`(Fact-Oracle)` itself** — no run-time checker is built: a widened reach lands with a suite
+cell compared against the rewrite's own switch, and with the libraries and dogfood programs
+re-validated (the rule as `formal/facts.md` states it).
 
 ## Arc D — widening the rules we have
 

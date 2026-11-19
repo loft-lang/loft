@@ -628,7 +628,7 @@ CI_LIVE_GATES = $$( n=0; seen=""; for f in .ci-running ../*/.ci-running; do [ -f
 # mostly contention), best of two runs, and prints what drifted.  `speed-discover`
 # is the wide parallel pass that finds which tests deserve an annotation.
 # Nothing here fails: correctness fails a build, speed is what you read.
-.PHONY: c-sweep c-lint-census seed seed-check gate-census speed profile profile-corpus speed-gate interp-gap gap-report janitor-install rewrite-census rewrite-census-bless runtime-surface decline-census speed-discover speed-bless sweep-scratch sweep-target native-ratio native-ratio-gate claims fences sections
+.PHONY: c-sweep c-lint-census seed seed-check gate-census speed profile profile-corpus speed-gate interp-gap gap-report janitor-install reason-census rewrite-census rewrite-census-bless runtime-surface decline-census speed-discover speed-bless sweep-scratch sweep-target native-ratio native-ratio-gate claims fences sections
 
 sweep-scratch:  ## Reclaim loft's scratch: dead-process native artefacts, aged test caches, old sessions
 	@# What loft writes to a temp dir and what removes it — RUN_BOUNDS.md § Scratch hygiene.
@@ -695,6 +695,8 @@ c-sweep:  ## The C backend against the interpreter over the corpus, three macro 
 decline-census:  ## Per rewrite rule: sites admitted vs refused, the refusals by reason (a report; ARGS="--record")
 	cargo build --release --bin loft -q
 	python3 scripts/decline_census.py $(ARGS)
+reason-census:  ## Per rewrite rule: does it report why it refuses a site, and which site it admits (source scan; ARGS="--missing|--check|--record")
+	python3 scripts/reason_census.py $(ARGS)
 gate-census:  ## Per published library: how many functions compile, and every decline reason counted (a report; ARGS="<pkg>…")
 	cargo build --release --bin loft -q
 	scripts/gate_census.sh $(ARGS)

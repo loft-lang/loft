@@ -1357,6 +1357,9 @@ impl<'a> FnWriter<'a> {
             );
             n += 1;
         }
+        // @decline-owed: a work text that is a parameter or a store link; one whose declaration
+        //   is not written exactly once in the function; a generator's body; at run time, a
+        //   recursive frame finds its slot empty and takes nothing
         crate::rewrite_census::fired("R-WorkPark", n);
         out
     }
@@ -1707,6 +1710,12 @@ impl<'a> FnWriter<'a> {
                     self.line(ind, &format!("{name} = {};", as_int(e)?));
                     self.line(ind, &format!("{name}_set = 1;"));
                     self.hoisted_memos.insert(name.clone());
+                    // @decline-owed: for the hoist, a chain holding a `Nullable` operator,
+                    //   which stays a first-use memo; for the memo, a chain the loop rebinds an
+                    //   operand of (its counters included) or lets one escape (a by-reference
+                    //   or fn-ref argument, a tuple destination, an iterator variable); a body
+                    //   that yields or runs `parallel`; a chain of literals alone; on C, a
+                    //   generator body and a transient twin
                     crate::rewrite_census::fired("R-Invariant/hoist", 1);
                 }
                 let memo = std::rc::Rc::new((name, ch.chain));
@@ -1824,6 +1833,12 @@ impl<'a> FnWriter<'a> {
                 "loft_ph {h} = {{ {{ 0xFFFF, 0, 0, 0 }}, 0, 0, 0, 0 }};"
             ));
             self.line(ind, &format!("{h} = loft_ph_of({}, {size});", as_ref(e)?));
+            // @decline-owed: a loop with a store write that is no in-place set, fusable scalar
+            //   push to a pure path or admitted mint, or with a fn-ref call, a `yield` or a
+            //   parallel block (`blocks_header_hoist`); a pushed root the body rebinds; beside
+            //   another mover or holder, a pushed root that is no owned local, return buffer or
+            //   work-buffer argument (`(R-Alias)`); a loop admitted through its text sets; a
+            //   path a push window holds
             crate::rewrite_census::fired("R-Push", 1);
             if based {
                 crate::rewrite_census::fired("R-Push/sole", 1);
@@ -2792,6 +2807,12 @@ impl<'a> FnWriter<'a> {
                 let size = Self::literal(size, "element size")?;
                 if let Some(i) = self.counter_index(idx, &h) {
                     let proof = self.held_proof(v, &h);
+                    // @decline-owed: in a loop that grows a store (a push, a mint through a
+                    //   push header or not, a text set), a held path whose store is not proven
+                    //   apart from every store grown (`StoreFacts::distinct`) keeps its header
+                    //   without the base; a path a push header or a generator's persistent
+                    //   field holds; a fused read whose index is no counter proven inside the
+                    //   held vector
                     crate::rewrite_census::fired("R-Base/counter", 1);
                     return Ok(Some(E::new(
                         format!("({proof}, loft_vh_at_ref({h}, {size}, {i}))"),
@@ -5219,6 +5240,12 @@ impl<'a> FnWriter<'a> {
             self.line(ind, &format!("loft_park_take(&{slot}, &{var});"));
         }
         if !parked.is_empty() {
+            // @decline-owed: a binding that is an argument or carries an owner or entry
+            //   witness; one bound by anything but an unresolved function-value call answering
+            //   a record (or null), with a bind outside a loop or under two outermost loops, or
+            //   with a mention that is no free and no argument of a scalar-answering call or
+            //   getter; a record held apart; a target that takes no hidden record buffer (it is
+            //   passed null)
             crate::rewrite_census::fired("R-FnRefBuffer/frame", parked.len());
         }
         self.loop_stmt_inner(b, ind)?;
@@ -6373,6 +6400,11 @@ impl<'a> FnWriter<'a> {
                 u32::from(tab.separator)
             ),
         );
+        // @decline-owed: a function that yields; a separator that is no character constant or
+        //   is the null character; a target that is no plain local `vector<text>` bound once; a
+        //   mention the table cannot answer (anything but a length, an element read or a plain
+        //   walk whose hidden vector is read only that way), or one outside the binding block
+        //   or ahead of the bind
         crate::rewrite_census::fired("R-SplitTable", 1);
         self.flush(ind);
         Ok(())
@@ -7250,6 +7282,10 @@ impl<'a> FnWriter<'a> {
         self.cx.name_types();
         let buf = self.var(a.buf);
         let clear = if self.clear_releases_nothing(&Value::Var(a.buf)) {
+            // @decline-owed: a vector local of scalar elements, and an `OpGetField` vector that
+            //   is a plain vector whose element owns no heap and is not linked
+            //   (`clear_releases_nothing`): each takes the plain length reset; at run time, a
+            //   store whose root is not the one-field vector wrapper keeps the reset
             crate::rewrite_census::fired("H-ClearRelease/plain", 1);
             format!("loft_vec_clear({buf})")
         } else {
@@ -7427,6 +7463,12 @@ impl<'a> FnWriter<'a> {
                     && w != target
                 {
                     self.line(ind, &format!("loft_text_move(&{target}, &{w});"));
+                    // @decline-owed: a callee with more than one `&text` parameter, or a
+                    //   `return` or tail that is not the buffer, a block ending in it or the
+                    //   null text (`answers_work`); a signature the twin does not take
+                    //   (`plain_params`); a buffer argument that is no plain place; a native; a
+                    //   call that takes another twin; for the bind, a buffer that is not the
+                    //   call site's own or is the target itself
                     crate::rewrite_census::fired("R-BufferReturn/bind", 1);
                     return Ok(());
                 }

@@ -527,6 +527,7 @@ pub fn plan(data: &Data, stores: &Stores) -> RecPlan {
         t.insert(v, rec);
         let w = walk(data, &types, &candidates, f, t, true);
         if let Some(why) = w.declined.get(&v) {
+            crate::rewrite_census::declined("R-Apart/records", def.name(), why);
             if trace_on() {
                 eprintln!("[apart-records] {} is no twin: {why}", def.name());
             }
@@ -608,6 +609,12 @@ fn owners_of(
                 .then_some("reaches no twin")
         });
         if let Some(why) = why {
+            crate::rewrite_census::declined_in(
+                "R-Apart/records",
+                def.name(),
+                def.variables().name(v),
+                why,
+            );
             if trace_on() {
                 eprintln!(
                     "[apart-records] {}: `{}` stays in the store: {why}",

@@ -914,10 +914,20 @@ static int loft_rotate_from_parts(loft_ref vec, const loft_text *f, const uint32
  * keyed collection `c` as a deep copy under its own key (`insert_keyed_copy`, the latest of one
  * key winning); a null linked element has no key and stays out.  Every element is resolved
  * before the first insert, which may grow a store they share.  A source the bind gives up is
- * freed. */
+ * freed.  `keyed_src`: the source is a keyed collection of `c`'s own type, and a kind whose
+ * storage is no sequential list (a hash, an index, a spatial, a trie) is listed by its walk. */
 static void loft_fill_keyed(const loft_tdesc *T, uint16_t etp, loft_ref c, loft_ref src, int kind,
-                            const loft_key *keys, int nk, int linked, int free_source, const loft_group *g) {
+                            const loft_key *keys, int nk, int linked, int free_source, const loft_group *g,
+                            int keyed_src) {
     if (src.store_nr == 0xFFFF || src.store_nr >= loft_nstores) return;
+    if (keyed_src && kind != LOFT_KEYED_SORTED && kind != LOFT_KEYED_ORDERED) {
+        uint32_t m = 0;
+        loft_ref *e = loft_keyed_refs(src, kind == LOFT_KEYED_HASH ? 1 : kind == LOFT_KEYED_INDEX ? 2 : 3, keys, nk, &m);
+        for (uint32_t i = 0; i < m; i++) loft_set_keyed(T, etp, c, e[i], kind, keys, nk, 0, 0, 0, g);
+        free(e);
+        if (free_source && src.store_nr != c.store_nr && !loft_free_protected(src)) loft_free_ref(src);
+        return;
+    }
     int64_t len = loft_vec_len(src);
     uint32_t width = linked ? 4u : T[etp].size;
     loft_ref *recs = (loft_ref *) malloc(sizeof(loft_ref) * (size_t) (len > 0 ? len : 1));

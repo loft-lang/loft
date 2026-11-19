@@ -9331,7 +9331,12 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         match val.unspan() {
             Value::Var(v) => *v != u16::MAX,
             Value::TupleGet(_, _) => true,
-            Value::Call(d, _) => self.data.def(*d).name().starts_with("OpGet"),
+            // A function's result is a collection that exists too (loft#2563): `d.h += mk()`
+            // slipped past as "constructed on the spot" and emitted no write at all.
+            Value::Call(d, _) => {
+                let name = self.data.def(*d).name();
+                name.starts_with("OpGet") || !name.starts_with("Op")
+            }
             _ => false,
         }
     }

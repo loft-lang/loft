@@ -165,14 +165,24 @@ pub fn borrowed_text_walks(
                     );
                 }
             }
-            Err(why) if trace => {
-                eprintln!(
-                    "[text-borrow] {}: `{}` declined — {why}",
-                    def.name(),
-                    vars.name(p)
-                );
+            Err(why) => {
+                // A walk whose variable is no text is not this rule's pattern: no refusal.
+                if matches!(vars.tp(p).base(), Type::Text(_)) {
+                    crate::rewrite_census::declined_in(
+                        "R-TextBorrow",
+                        def.name(),
+                        vars.name(p),
+                        why,
+                    );
+                }
+                if trace {
+                    eprintln!(
+                        "[text-borrow] {}: `{}` declined — {why}",
+                        def.name(),
+                        vars.name(p)
+                    );
+                }
             }
-            Err(_) => {}
         }
         false
     });

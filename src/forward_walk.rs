@@ -299,6 +299,10 @@ fn rewrite_in(
         body.iter().try_for_each(|o| check_body(data, vars, &w, o))
     };
     if let Err(why) = decline {
+        if crate::rewrite_census::declines_wanted() {
+            let site = format!("{fname}:{}", vars.name(w.lv));
+            crate::rewrite_census::declined("R-ForwardWalk", &site, why);
+        }
         if trace() {
             eprintln!("forward-walk: {fname} {} declined: {why}", vars.name(w.lv));
         }

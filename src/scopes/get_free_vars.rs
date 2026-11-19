@@ -1034,7 +1034,21 @@ impl Scopes<'_> {
                         // left bare it ran the type's drop on a record the lift had already
                         // freed (loft#2550, `r = if c { f() ?? return } else { … }`).
                         let guard = self.lift_viewer_guard(v, data);
+                        // A collection buffer's hook runs over the binding it delivered to
+                        // (`delivered_binding`).  A binding whose scope has ended ran that hook
+                        // at its own end and emptied the vector (the scope-end clause above), so
+                        // the buffer runs none here: the hook would name a local outside its
+                        // block.  `LOFT_NO_BUFFER_HOOK_SCOPE=1`.
+                        let binding_ended = !crate::env_once!(
+                            std::env::var_os("LOFT_NO_BUFFER_HOOK_SCOPE").is_some()
+                        ) && matches!(function.tp(v).base(), Type::Vector(_, _))
+                            && super::drops::delivered_binding(function, v).is_some_and(|b| {
+                                self.var_scope
+                                    .get(&b)
+                                    .is_some_and(|s| *s != self.scope && !self.stack.contains(s))
+                            });
                         if !is_buffer
+                            && !binding_ended
                             && let Some(hook) = unless_moved(v, self.scope_end_hook(function, v, data, arm_dropped))
                         {
                             ls.push(guard(hook));

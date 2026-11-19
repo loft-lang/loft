@@ -1,8 +1,8 @@
 diff --git a/src/parser/collections.rs b/src/parser/collections.rs
-index f9832e51f..ddcf2584f 100644
+index bcad52810..9b382c58a 100644
 --- a/src/parser/collections.rs
 +++ b/src/parser/collections.rs
-@@ -7532,9 +7532,8 @@ use #count instead"
+@@ -7628,9 +7628,8 @@ use #count instead"
              return true;
          };
          // The special form calls a function it names at compile time (`Value::Int(d)`); a
@@ -15,10 +15,10 @@ index f9832e51f..ddcf2584f 100644
          if !constant_fn && self.builtin_selected(source, "reduce", types).is_some() {
              return false;
 diff --git a/src/parser/control.rs b/src/parser/control.rs
-index 6af4be7f9..d3862b1e6 100644
+index 4a5aa038a..cd008f8cd 100644
 --- a/src/parser/control.rs
 +++ b/src/parser/control.rs
-@@ -23438,58 +23438,6 @@ impl Parser {
+@@ -16194,58 +16194,6 @@ impl Parser {
      // - Worker's first parameter must be a reference to T (type checked by name).
      // - Return type must be a primitive: integer, long, float, or boolean.
      // - Extra arg count must match the worker's extra parameters (args[1..]).
@@ -77,9 +77,9 @@ index 6af4be7f9..d3862b1e6 100644
      /// Compiler special-case for `reduce(v: vector<T>, init: U, f: fn(U, T) -> U) -> U`.
      /// Generates inline bytecode equivalent to a left-fold over the vector.
      /// Does a value of this type live in a STORE (or a text buffer) rather than in the
-@@ -23515,14 +23463,7 @@ impl Parser {
-     #[expect(clippy::too_many_lines, reason = "inherited")]
+@@ -16272,14 +16220,7 @@ impl Parser {
      pub(crate) fn parse_reduce(&mut self, val: &mut Value, list: &[Value], types: &[Type]) -> Type {
+         self.state_route("parse_reduce");
          if self.first_pass {
 -            // The accumulator is the fold's first parameter (loft#1959); the initial value
 -            // answers only when the fold does not say.
@@ -93,7 +93,7 @@ index 6af4be7f9..d3862b1e6 100644
              if types.len() >= 2 {
                  return types[1].clone();
              }
-@@ -23536,7 +23477,7 @@ impl Parser {
+@@ -16293,7 +16234,7 @@ impl Parser {
              );
              return Type::Unknown(0);
          }
@@ -102,7 +102,7 @@ index 6af4be7f9..d3862b1e6 100644
              *elm.clone()
          } else {
              diagnostic!(
-@@ -23546,7 +23487,7 @@ impl Parser {
+@@ -16303,7 +16244,7 @@ impl Parser {
              );
              return Type::Unknown(0);
          };
@@ -111,7 +111,7 @@ index 6af4be7f9..d3862b1e6 100644
              (params.clone(), *ret.clone())
          } else {
              diagnostic!(
-@@ -23616,24 +23557,6 @@ impl Parser {
+@@ -16373,24 +16314,6 @@ impl Parser {
              *val = v_block(list.to_vec(), carried, Self::TV_REDUCE);
              return acc_type;
          }
@@ -136,7 +136,7 @@ index 6af4be7f9..d3862b1e6 100644
          if Self::is_heap_storage(&acc_type) && !matches!(acc_type.base(), Type::Text(_)) {
              diagnostic!(
                  self.lexer,
-@@ -23660,23 +23583,17 @@ impl Parser {
+@@ -16417,23 +16340,17 @@ impl Parser {
              );
              return Type::Unknown(0);
          }
@@ -165,7 +165,7 @@ index 6af4be7f9..d3862b1e6 100644
  
          // loft#951 — a TEXT accumulator is minted as a WORK BUFFER, which puts it at
          // FUNCTION scope rather than inside the `reduce` block.  The block's tail is the
-@@ -23778,7 +23695,7 @@ impl Parser {
+@@ -16535,7 +16452,7 @@ impl Parser {
  
          *val = v_block(
              vec![

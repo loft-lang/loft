@@ -1,5 +1,5 @@
 diff --git a/src/generation/ops/parallel.rs b/src/generation/ops/parallel.rs
-index 6d62af979..f5b2c508c 100644
+index 841829efb..ecf159356 100644
 --- a/src/generation/ops/parallel.rs
 +++ b/src/generation/ops/parallel.rs
 @@ -35,7 +35,6 @@
@@ -55,10 +55,10 @@ index 6d62af979..f5b2c508c 100644
      (i32::from(ctx.output.stores.size(kt)), i32::from(kt))
  }
 diff --git a/src/parser/mod.rs b/src/parser/mod.rs
-index 297a78de4..0fd4e500e 100644
+index 9510c9317..29ef42fe2 100644
 --- a/src/parser/mod.rs
 +++ b/src/parser/mod.rs
-@@ -3320,3 +3320,16 @@ mod plan86_nesting_guard_tests;
+@@ -3774,3 +3774,16 @@ mod plan86_nesting_guard_tests;
  mod plan86_reachable_set_tests;
  #[cfg(test)]
  mod plan86_sandbox_designation_tests;
@@ -76,7 +76,7 @@ index 297a78de4..0fd4e500e 100644
 +}
 +
 diff --git a/src/parser/vectors.rs b/src/parser/vectors.rs
-index 475ce7e30..b8529e161 100644
+index 3db467f3f..11378024a 100644
 --- a/src/parser/vectors.rs
 +++ b/src/parser/vectors.rs
 @@ -3,11 +3,10 @@
@@ -92,7 +92,7 @@ index 475ce7e30..b8529e161 100644
  
  /// The neutral record type of a captured fn-ref's closure half (loft#1869).
  pub(crate) const FN_RECORD: &str = "__fn_record";
-@@ -8196,7 +8195,10 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+@@ -9181,7 +9180,10 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
              Type::Function(..) => self.database.int(0, false),
              Type::Reference(r, _) | Type::Enum(r, _, _) => self.data.def(*r).known_type(),
              Type::Hash(tp, key, _) => {
@@ -104,7 +104,7 @@ index 475ce7e30..b8529e161 100644
                  if r != u16::MAX {
                      return r;
                  }
-@@ -8211,7 +8213,10 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+@@ -9196,7 +9198,10 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                  // @PLN48 — mirror Hash: resolve the spatial<T[…]> db type id, and
                  // register it on demand for a local-only var (whose type would else
                  // be absent from the schema, so iteration/`get_type` sees u16::MAX).
@@ -116,7 +116,7 @@ index 475ce7e30..b8529e161 100644
                  if r != u16::MAX {
                      return r;
                  }
-@@ -8225,7 +8230,8 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+@@ -9210,7 +9215,8 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                  // The Radix shape, for a trie: resolve the registered id, and register
                  // on demand for a local-only var whose type is otherwise absent from
                  // the schema.  Same spelling `Stores::trie` uses.
@@ -126,7 +126,7 @@ index 475ce7e30..b8529e161 100644
                  if r != u16::MAX {
                      return r;
                  }
-@@ -8236,7 +8242,15 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+@@ -9221,7 +9227,15 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                  self.database.trie(c_tp, key)
              }
              Type::Sorted(tp, key, _) => {
@@ -143,7 +143,7 @@ index 475ce7e30..b8529e161 100644
                  if r != u16::MAX {
                      return r;
                  }
-@@ -8252,7 +8266,9 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+@@ -9237,7 +9251,9 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                  self.database.sorted(c_tp, key)
              }
              Type::Index(tp, key, _) => {
@@ -155,7 +155,7 @@ index 475ce7e30..b8529e161 100644
                      return r;
                  }
 diff --git a/src/type_schema.rs b/src/type_schema.rs
-index 3e767ff0f..c9a418cfc 100644
+index e2a707b2a..bcba6908d 100644
 --- a/src/type_schema.rs
 +++ b/src/type_schema.rs
 @@ -14,15 +14,6 @@ use crate::database::Stores;
@@ -174,33 +174,51 @@ index 3e767ff0f..c9a418cfc 100644
  }
  
  impl StoreTypeOf for Stores {
-@@ -66,47 +57,4 @@ impl StoreTypeOf for Stores {
-             _ => data.def(data.type_def_nr(tp)).known_type,
+@@ -67,65 +58,4 @@ impl StoreTypeOf for Stores {
          }
      }
--
+ 
 -    fn keyed_type(&self, data: &Data, tp: &Type) -> u16 {
 -        let tp = tp.base();
+-        // The element is named as the schema REGISTERED it, which is what the mints spell
+-        // (`Stores::hash` and its siblings name a type from `types[content].name`): a second
+-        // source's struct of a name already taken is registered source-qualified
+-        // (`typedef::fill_database`), so its definition name finds the FIRST source's
+-        // collection — a `hash<Nm[k]>` read then probed with the other struct's key layout
+-        // and every lookup missed, with no diagnostic.  An element not registered yet has no
+-        // collection either.
+-        let (Type::Hash(d, ..)
+-        | Type::Radix(d, ..)
+-        | Type::Trie(d, ..)
+-        | Type::Sorted(d, ..)
+-        | Type::Index(d, ..)) = tp.base()
+-        else {
+-            return u16::MAX;
+-        };
+-        let content = data.def(*d).known_type();
+-        let Some(element) = self.types.get(content as usize).map(|t| t.name.as_str()) else {
+-            return u16::MAX;
+-        };
 -        match tp {
--            Type::Hash(d, key, _) | Type::Radix(d, key, _) => {
+-            Type::Hash(_, key, _) | Type::Radix(_, key, _) => {
 -                let kind = if matches!(tp, Type::Hash(..)) {
 -                    "hash"
 -                } else {
 -                    "spatial"
 -                };
--                let mut name = format!("{kind}<{}[", data.def(*d).name());
--                self.field_name(data.def(*d).known_type(), key, &mut name);
+-                let mut name = format!("{kind}<{element}[");
+-                self.field_name(content, key, &mut name);
 -                self.name(&name)
 -            }
--            Type::Trie(d, key, _) => self.name(&format!("trie<{}[{key}]>", data.def(*d).name())),
--            Type::Sorted(d, key, _) => {
--                let r = self.name(&keyed_name("sorted", data.def(*d).name(), key));
+-            Type::Trie(_, key, _) => self.name(&format!("trie<{element}[{key}]>")),
+-            Type::Sorted(_, key, _) => {
+-                let r = self.name(&keyed_name("sorted", element, key));
 -                if r != u16::MAX {
 -                    return r;
 -                }
--                self.name(&keyed_name("ordered", data.def(*d).name(), key))
+-                self.name(&keyed_name("ordered", element, key))
 -            }
--            Type::Index(d, key, _) => self.name(&keyed_name("index", data.def(*d).name(), key)),
+-            Type::Index(_, key, _) => self.name(&keyed_name("index", element, key)),
 -            _ => u16::MAX,
 -        }
 -    }

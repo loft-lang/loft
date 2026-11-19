@@ -1449,10 +1449,12 @@ void loft_crt_group_finish(int64_t elem, int64_t held, int64_t nullable, int64_t
 /* OpFillKeyed (`Stores::fill_keyed_from_vector`): every record of the vector `src` filed into
  * the keyed collection at `c`, of type `tp` with elements of type `elem`.  `m` holds the
  * collection's linked group as `loft_crt_group_finish` takes one — empty outside a group — and
- * `p` is the struct that holds it.  `kind` as the lowering numbers it (`loft_crt_set_keyed`). */
+ * `p` is the struct that holds it.  `kind` as the lowering numbers it (`loft_crt_set_keyed`).
+ * `keyed_src`: the source is a keyed collection of the same type, not a vector. */
 void loft_crt_fill_keyed(int64_t elem, int64_t tp, int64_t cs, int64_t cr, int64_t cp, int64_t ss, int64_t sr,
                          int64_t sp, int64_t kind, int64_t linked, int64_t free_source, int64_t held,
-                         int64_t nullable, int64_t ps, int64_t pr, int64_t pp, const int64_t *m, int64_t nm) {
+                         int64_t nullable, int64_t ps, int64_t pr, int64_t pp, int64_t keyed_src, const int64_t *m,
+                         int64_t nm) {
     int k = kind == 1 ? LOFT_KEYED_SORTED : kind == 2 ? LOFT_KEYED_ORDERED : kind == 3 ? LOFT_KEYED_INDEX
           : kind == 4 ? LOFT_KEYED_SPATIAL : kind == 5 ? LOFT_KEYED_TRIE : LOFT_KEYED_HASH;
     int n = (int) (nm / 3);
@@ -1472,7 +1474,8 @@ void loft_crt_fill_keyed(int64_t elem, int64_t tp, int64_t cs, int64_t cr, int64
     g.held = (int) held;
     g.nullable = (int) nullable;
     loft_fill_keyed(loft_crt_types, (uint16_t) elem, loft_crt_ref(cs, cr, cp), loft_crt_ref(ss, sr, sp), k,
-                    loft_crt_types[tp].keys, loft_crt_types[tp].nk, (int) linked, (int) free_source, n > 0 ? &g : 0);
+                    loft_crt_types[tp].keys, loft_crt_types[tp].nk, (int) linked, (int) free_source, n > 0 ? &g : 0,
+                    (int) keyed_src);
 }
 
 /* OpSortVector (`Stores::sort_vector`): the primitive vector sorted in place, its elements of

@@ -241,6 +241,12 @@ impl Output<'_> {
             if !self.dest_requests.contains(&key) {
                 self.dest_requests.push(key);
             }
+            // @decline-owed: a callee that is no loft function, answers an iterator, has no
+            //   scalar field or a field that is neither the moved one nor a scalar, a moved
+            //   field off offset 0, or a buffer mention no admitted form accounts for; a caller
+            //   that uses a result outside its window, in the `else` arm, or other than by the
+            //   `ok` test, the one move and scalar reads; a call argument that reaches the
+            //   container
             crate::rewrite_census::fired("R-Destination", 1);
         }
         dest
@@ -334,6 +340,12 @@ impl Output<'_> {
         } else {
             None
         };
+        // @decline-owed: a callee `(R-Callee)` does not admit (a store writer that is not
+        //   in-place-only, a template body, a generator, a write set that cannot be typed); a
+        //   parameter it rebinds or a tuple parameter; a field its own write set reaches; a
+        //   call whose enclosing frames do not hold every input of the argument; a call another
+        //   twin form takes (append, kept header, apart, transient); on C, a native C route or
+        //   64 arguments or more
         crate::rewrite_census::fired("R-Inputs", usize::from(twin_args.is_some()));
         // @PLN164 E-1 — a FORWARD (`hoist::forward_site`): the call's value is the buffer it
         // was handed, with the tuple written into it as the callee's record form would have.
@@ -527,6 +539,11 @@ impl Output<'_> {
         // (`(R-RefillBuffer)`) — and any emission of it that does not mints over the live
         // buffer, which clears its store — so neither a twin nor the release is owed.
         if self.refill_text.vectors.contains(&(vals.as_ptr() as usize)) {
+            // @decline-owed: a result buffer that is no pooled call buffer or is named outside
+            //   its pool; a result bound twice or, for texts, not only read; arguments naming
+            //   the buffer or the result; a callee whose result heap is not text only (or, for
+            //   the vector clause, not vectors of plain elements), with an exit that is no
+            //   literal writing every text once, or naming its buffer outside its literals
             crate::rewrite_census::fired("R-RefillText", 1);
             return Ok((false, false));
         }

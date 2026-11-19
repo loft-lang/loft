@@ -3200,7 +3200,10 @@ impl Parser {
                 // -Index · -Spatial · -Trie), so a sixth keyed kind arrives here already
                 // handled instead of joining the four hand-spelled `Type::Vector` lists
                 // this arm sits beside.
-                let ls = t.base().depend();
+                let last = l.len() - 1;
+                let ls = self
+                    .keyed_local_field_copy_out(&mut l[last], t)
+                    .unwrap_or_else(|| t.base().depend());
                 self.ref_return(&ls, l, RetSite::BlockTail);
             } else if let Type::Vector(elm, _) = result.ret_promo_base()
                 && let Some((buf_attr, buf_var)) = self.return_buffer()
@@ -3237,6 +3240,73 @@ impl Parser {
             }
         }
         tp
+    }
+
+    /// loft#2562 — a returned keyed collection that is a FIELD of a local record is copied
+    /// out before the record is released; answers the deps the return then carries.
+    ///
+    /// A keyed return hands its store up, which is right for a collection built in a local
+    /// of its own.  A field of a local record owns no store: the value is a place inside the
+    /// record's, and the record is freed on the way out, so the caller copied from — and then
+    /// released — a store already gone (`@FR-F-Ret`; the C backend counted the second
+    /// release).  The copy is the one a block value takes for the same tail
+    /// ([`Parser::materialize_collection_value`], loft#1494): a local that owns its store.
+    ///
+    /// A place rooted at a PARAMETER is left alone — it is a view of the caller's own
+    /// collection, the borrow `ref_return` records.  Every other field read is copied: one
+    /// rooted at a local, and one read out of a call's result, whose record the frame
+    /// releases as well.  The walk is [`Self::materialize_view_arms`]'s, so an `if` arm that
+    /// answers the field is reached, and each leaf is copied on the path that runs it.
+    /// `LOFT_NO_KEYED_FIELD_RETURN_COPY=1` returns the field as it stands.
+    fn keyed_local_field_copy_out(&mut self, tail: &mut Value, t: &Type) -> Option<Vec<u16>> {
+        if crate::env_once!(std::env::var_os("LOFT_NO_KEYED_FIELD_RETURN_COPY").is_some()) {
+            return None;
+        }
+        let mut roots = Vec::new();
+        self.keyed_field_leaves_copy_out(tail, &t.without_deps(), &mut roots);
+        if roots.is_empty() {
+            return None;
+        }
+        let mut ls = t.base().depend();
+        ls.retain(|d| !roots.contains(d));
+        Some(ls)
+    }
+
+    fn keyed_field_leaves_copy_out(&mut self, tail: &mut Value, t: &Type, roots: &mut Vec<u16>) {
+        match tail {
+            Value::Return(inner) | Value::Drop(inner) => {
+                self.keyed_field_leaves_copy_out(inner, t, roots);
+            }
+            Value::Span(b) => self.keyed_field_leaves_copy_out(&mut b.1, t, roots),
+            Value::If(_, a, b) => {
+                self.keyed_field_leaves_copy_out(a, t, roots);
+                self.keyed_field_leaves_copy_out(b, t, roots);
+            }
+            Value::Block(bl) => {
+                if let Some(last) = bl.operators.last_mut() {
+                    self.keyed_field_leaves_copy_out(last, t, roots);
+                }
+            }
+            Value::Insert(ops) => {
+                if let Some(last) = ops.last_mut() {
+                    self.keyed_field_leaves_copy_out(last, t, roots);
+                }
+            }
+            leaf => {
+                let get_field = self.data.def_nr("OpGetField");
+                if !matches!(leaf, Value::Call(d, _) if *d == get_field) {
+                    return;
+                }
+                let root = match self.field_place(leaf) {
+                    Some((root, _)) if self.vars.is_argument(root) => return,
+                    Some((root, _)) => root,
+                    None => u16::MAX,
+                };
+                if self.materialize_collection_value(leaf, t) != u16::MAX {
+                    roots.push(root);
+                }
+            }
+        }
     }
 
     /// @PLN104 — restore the `a == v` invariant for a promoted text retbuf `tv` (its return
@@ -10841,9 +10911,22 @@ impl Parser {
         }
         // A branch ARM wraps its read in a block (`if c { f(x)[i] } else { null }`): the block
         // is a view of what its deps name, read once into a handle as a lifted container is.
+        //
+        // Only where the arm's value IS a read.  An arm that answers a call's own result
+        // (`{ …; fresh(v) }`) owns that store, and the deps on its block are the JOIN's — the
+        // other arm's view — so bound as a view here the result was released by nobody
+        // (`@FR-O-Complete`).
+        fn arm_tail(v: &Value) -> &Value {
+            match v.unspan() {
+                Value::Block(bl) => bl.operators.last().map_or(v, arm_tail),
+                Value::Insert(ops) => ops.last().map_or(v, arm_tail),
+                _ => v,
+            }
+        }
         if let Value::Block(bl) = src.unspan()
             && !bl.result.depend().is_empty()
             && !Self::copy_source_is_a_literal(src)
+            && read(self, arm_tail(src))
         {
             let tp = Type::Optional(Box::new(Type::Reference(
                 td,
@@ -14479,7 +14562,9 @@ impl Parser {
                     // Same treatment as the tail: hand `ref_return` the returned value's
                     // deps so `MergeAttr` records any borrowed parameter, and let it make
                     // no placement decision (a keyed return is signature-only there).
-                    let ls_own: Vec<u16> = t.depend();
+                    let ls_own: Vec<u16> = self
+                        .keyed_local_field_copy_out(&mut v, &t)
+                        .unwrap_or_else(|| t.depend());
                     self.ref_return(&ls_own, std::slice::from_mut(&mut v), RetSite::MidReturn);
                 } else if let Type::Vector(_, ls) = &t
                     && self.return_buffer().is_some()

@@ -737,7 +737,11 @@ loft-suite/rules/collections/Col-Insert/1159-a-keyed-collection-filled-from-a-ve
 loft-suite/rules/collections/Col-Group/a-groups-members-are-found-by-their-element-type-whatever-the-order-or-the-nullability.loft;
 loft-suite/rules/collections/Col-Group/1160-a-variant-binding-write-means-the-field-write.loft;
 tests/scripts/927-trie-spatial-linked-group.loft;
-loft-suite/rules/collections/Col-Group/a-write-through-any-member-of-a-linked-group-reaches-every-member.loft.
+loft-suite/rules/collections/Col-Group/a-write-through-any-member-of-a-linked-group-reaches-every-member.loft;
+`Parser::keyed_field_replace` / `Parser::keyed_group_fill` (`src/parser/expressions.rs`, a whole
+keyed value written into a member: the source staged, the group clear, `OpFillKeyed` with
+`FILL_KEYED_SOURCE`);
+loft-suite/rules/collections/Col-Group/2563-a-keyed-value-into-a-group-member-reaches-every-member.loft.
 
 ---
 

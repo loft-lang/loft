@@ -168,7 +168,13 @@ impl FnWriter<'_> {
         let own_name = format!("__own_{}", vars.name(x));
         let own = (0..n).find(|w| vars.name(*w) == own_name)?;
         let tp = data.def(vars.tp(x).base().heap_def_nr()?).known_type();
-        let why = |what: &str| {
+        let why = |what: &'static str| {
+            crate::rewrite_census::declined_in(
+                "R-DeferredCopy",
+                data.def(self.d).name(),
+                vars.name(x),
+                what,
+            );
             if Self::dc_trace() {
                 eprintln!(
                     "deferred-copy: {} {} declined: {what}",

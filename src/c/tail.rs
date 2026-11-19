@@ -307,6 +307,7 @@ pub(crate) fn merge(name: &str, ret: &str, body: &str) -> Option<String> {
             labels.len()
         );
     }
+    crate::rewrite_census::fired("R-CTail", labels.len());
     Some(text)
 }
 

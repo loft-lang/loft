@@ -747,6 +747,20 @@ fn apart(key: &Key, f: u32, data: &Data) -> bool {
     })
 }
 
+const NOT_ALWAYS: &str = "no call of the pair runs on every path";
+const DISTURBED: &str = "the first call's own statement disturbs what the call reads";
+const NO_VARIANT: &str = "a sharing wrapper has no variant";
+
+/// A pair of calls of one pure function the rule matched and left as two, counted under the
+/// test that refused it.
+fn refused(data: &Data, f: u32, inner: u32, why: &'static str) {
+    crate::rewrite_census::declined_in(
+        "R-PureReuse",
+        data.def(f).name(),
+        data.def(inner).name(),
+        why,
+    );
+}
 /// Reuse within one block's statements; answers whether it rewrote anything.
 ///
 /// A key is taken from statement `i` and its later calls are collected up to the first
@@ -812,10 +826,15 @@ fn reuse_in_block(
                 later.push(j);
                 any_always |= alw;
             }
-            if later.is_empty()
-                || !any_always
-                || disturbs(&ops[i], &key, data, r, &reach, true, false)
-            {
+            if later.is_empty() {
+                continue;
+            }
+            if !any_always {
+                refused(data, f, key.inner, NOT_ALWAYS);
+                continue;
+            }
+            if disturbs(&ops[i], &key, data, r, &reach, true, false) {
+                refused(data, f, key.inner, DISTURBED);
                 continue;
             }
             // A sharing wrapper's call needs the wrapper's variant.
@@ -841,6 +860,7 @@ fn reuse_in_block(
                 }
             }
             if !ok {
+                refused(data, f, key.inner, NO_VARIANT);
                 continue;
             }
             let shared = rewrite(ops, i, &later, &key, f, data, db, r, variants);
@@ -927,6 +947,11 @@ fn rewrite(
             shared |= hit.get();
         }
     }
+    // @decline-owed: an inner function that writes through a parameter, calls a function value
+    //   or a function that is not effect-free, yields, or names a native outside the value-only
+    //   list; a call whose argument is no variable; a first or later call its statement does
+    //   not always evaluate; a statement between the calls that writes a store, calls a
+    //   function with effects or rebinds an argument
     crate::rewrite_census::fired(
         if shared {
             "R-PureReuse/shared"

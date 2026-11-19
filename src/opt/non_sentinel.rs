@@ -318,6 +318,10 @@ fn proven_params(data: &Data) -> std::rc::Rc<HashMap<u32, Vec<bool>>> {
     let mut assumed = as_flags(&shape, &proven);
     RETURNS.with(|m| m.borrow_mut().clear());
     assumed.retain(|_, f| f.iter().any(|x| *x));
+    // @decline-owed: a function taken as a value or never called directly; a parameter the body
+    //   rebinds or lends; a parameter one call site passes an argument the proof does not
+    //   accept; for a call site's twin, a callee that neither divides nor takes a remainder by
+    //   a literal, itself or in a function it calls directly
     crate::rewrite_census::fired(
         "R-NonSentinelParam",
         assumed
@@ -604,6 +608,11 @@ fn greatest_integer_locals(
         assumed.retain(|nr| {
             let keep = round.get(nr).copied().unwrap_or(true);
             if !keep {
+                crate::rewrite_census::declined(
+                    "R-Counter/probe",
+                    &format!("{:p}:{}", std::ptr::from_ref(code), function.name(*nr)),
+                    "an assignment the proof rejects",
+                );
                 vars.remove(nr);
             }
             keep
@@ -612,6 +621,9 @@ fn greatest_integer_locals(
             break;
         }
     }
+    // @decline-owed: an inclusive range whose end is not a literal below the type's maximum;
+    //   under the probe, an integer local that is a parameter, escapes, or has an assignment
+    //   the proof rejects
     crate::rewrite_census::fired("R-Counter/probe", assumed.len());
 }
 
@@ -624,6 +636,13 @@ fn seed_range_counters(data: &Data, v: &Value, vars: &mut HashMap<u16, bool>) {
         let bounded = !rc.inclusive
             || matches!(rc.hi.unspan(), Value::Int(k) if *k < i32::MAX)
             || matches!(rc.hi.unspan(), Value::Long(k) if *k < i64::MAX);
+        if !bounded {
+            crate::rewrite_census::declined(
+                "R-Counter",
+                &format!("{:p}", std::ptr::from_ref(lp)),
+                "an inclusive range whose end is not a literal below the type's maximum",
+            );
+        }
         if bounded {
             crate::rewrite_census::fired("R-Counter", 1);
             vars.insert(rc.index, true);

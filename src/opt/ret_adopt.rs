@@ -585,6 +585,40 @@ pub fn complete_writes(data: &Data, stores: &Stores, def_nr: u32) -> CompleteWri
             (&mint_covered, &mint_sites),
         );
     }
+    if crate::rewrite_census::declines_wanted() {
+        const UNCOVERED: &str = "a literal group leaves a field of the record unwritten";
+        const NO_GROUP: &str = "a mint that heads no statement group of a block or loop";
+        for v in db_sites.keys() {
+            let why = if db_declined.contains(v) {
+                UNCOVERED
+            } else if db_covered.get(v) == db_sites.get(v) {
+                continue;
+            } else {
+                NO_GROUP
+            };
+            crate::rewrite_census::declined_in(
+                "R-CompleteWrite",
+                def.name(),
+                def.variables().name(*v),
+                why,
+            );
+        }
+        for t in mint_sites.keys() {
+            let why = if mint_declined.contains(t) {
+                UNCOVERED
+            } else if mint_covered.get(t) == mint_sites.get(t) {
+                continue;
+            } else {
+                NO_GROUP
+            };
+            crate::rewrite_census::declined_in(
+                "R-CompleteWrite",
+                def.name(),
+                &format!("type {t}"),
+                why,
+            );
+        }
+    }
     out.db_vars
         .retain(|v| !db_declined.contains(v) && db_covered.get(v) == db_sites.get(v));
     out.mint_tps
