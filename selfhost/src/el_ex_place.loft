@@ -320,8 +320,10 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
   // field's text, and the local is written back whole — made before the value is read, as there.
   // The text is appended as it is, a formatted one too (no local append's flattening); any other
   // value is refused by name.
-  if op == "+=" && p.tp is TyText {
-    f = el_vars::create_unique(vars, "field", ir::TyText { dep: [] });
+  // (An element at an index nothing proves reads as `text?`: its `_field_N` is `text?` too.)
+  unproven = p.tp is TyOptional && el_types::base(p.tp) is TyText && calls(e, el_ir::unspan(p.code), "OpGetText") && match el_ir::unspan(p.code) { NdCall { args: ua } => len(ua) == 2 && calls(e, el_ir::unspan(ua[0]!), "OpGetVector"), _ => false };
+  if op == "+=" && (p.tp is TyText || unproven) {
+    f = el_vars::create_unique(vars, "field", if unproven && computed_text_slot(e, el_ir::unspan(p.code)) == null { ir::TyOptional { inner: ir::TyText { dep: [] } } } else { ir::TyText { dep: [] } });
     x = el_ex_assign::expression(e, vars, rhs);
     if e.first_pass {
       return ex(ir::NdNull, ir::TyVoid);
@@ -331,6 +333,25 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
       return ex(ir::NdNull, ir::TyVoid);
     }
     place = el_ir::unspan(p.code);
+    // A text ELEMENT at a computed index (`self.argv[len(self.argv) - 1] += part`): the
+    // element's place is evaluated ONCE into a `__place_N`, read and written through it.  A
+    // literal or a bare variable as the index stays direct.
+    slot = computed_text_slot(e, place);
+    if slot != null {
+      root = place_root(e, slot!);
+      if root < 0 {
+        el::refuse(e, "a compound append to a text element at a computed index");
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      pl = el_vars::create_unique(vars, "_place", ir::TyVector { inner: ir::TyText { dep: [] }, dep: [root] });
+      pv = ir::NdVar { n: pl };
+      return ex(ir::NdInsert { items: [
+        el_ir::v_set(pl, slot!),
+        el_ir::v_set(f, el_ir::cl(e, "OpGetText", [pv, ir::NdInt { n: 0 }])),
+        el_ir::cl(e, "OpAppendText", [ir::NdVar { n: f }, x.code]),
+        el_ir::cl(e, "OpSetTextReplace", [pv, ir::NdInt { n: 0 }, ir::NdVar { n: f }])
+      ] }, ir::TyVoid);
+    }
     w = place_write(e, place, ir::NdVar { n: f });
     if w == null {
       el::refuse(e, "an assignment to a place that is not a plain local: {place_read(e, place)}");
@@ -2681,6 +2702,30 @@ pub fn stage_self_reads(e: el::El, vars: el_vars::Vars, code: ir::Node, coll: in
 // A literal's fields written into the record at `r` (the local `v`, or a place inside it): each
 // written vector field's handle zeroed, each written field set in literal order, and — on the
 // second pass — each omitted field its type's default, in declaration order (`object_init`).
+// The element read under a text read (`OpGetText(OpGetVector(v, 4, <index>), 0)`) whose index
+// is neither a literal nor a bare variable, or null.
+fn computed_text_slot(e: el::El, place: ir::Node) -> ir::Node? {
+  match place {
+    NdCall { def_nr, args } => {
+      if el::def(e, def_nr).name != "OpGetText" || len(args) != 2 {
+        return null;
+      }
+      slot = el_ir::unspan(args[0]!);
+      match slot {
+        NdCall { def_nr: sd, args: sa } => {
+          if el::def(e, sd).name != "OpGetVector" || len(sa) != 3 {
+            return null;
+          }
+          ix = el_ir::unspan(sa[2]!);
+          if ix is NdInt || ix is NdVar { null } else { slot }
+        },
+        _ => null
+      }
+    },
+    _ => null
+  }
+}
+
 // A keyed value written into a keyed place of type `to`: 0 for a place (a local, a parameter,
 // a field read — deep-copied), 32768 for a fresh call that gives away its store
 // (`call_gives_away_its_store`; a record or collection argument is bracketed against its

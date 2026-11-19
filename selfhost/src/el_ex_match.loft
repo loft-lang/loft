@@ -243,7 +243,8 @@ pub fn link_argument(e: el::El, vars: el_vars::Vars, arg: ir::Node, at: ir::Type
   }
   vt = el_vars::tp(vars, v);
   if vt is TyRefVar {
-    if el_types::is_equal(e, vt, pt) && !(el_types::base(inner) is TyText) {
+    // (A `&text` link is passed on as the variable itself, as every other link is.)
+    if el_types::is_equal(e, vt, pt) {
       return arg;
     }
     el::refuse(e, "a `&` argument that is a link of another type");
