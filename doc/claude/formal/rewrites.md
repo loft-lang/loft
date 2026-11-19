@@ -1694,8 +1694,9 @@ rebind — an early `return` inside the loop — parks too), and `Stores::park_o
                  changes that vector's length, so it is on the list only where its slot
                  types as a 4-byte number (a record field, or an element of a vector of
                  numbers), where its record is YOUNGER than the loop's prelude (made by
-                 an earlier statement of its list — `OpNewRecord`, `OpPlaceRecord` — or
-                 minted in this pass, or a buffer pool's record after its mint), or where
+                 an earlier statement of its list — `OpNewRecord`, `OpPlaceRecord`,
+                 `OpDatabase` — or minted in this pass, or a buffer pool's record after
+                 its mint), or where
                  the reader holds a record's ADDRESS only ((R-RecPtr): a primed field
                  moves no record).  A slot it cannot type is a writer.  THE COPY CLAUSE: a
                  flag-free OpCopyRecord(src, dst, tp) over a record type that owns no
