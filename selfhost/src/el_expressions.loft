@@ -1671,6 +1671,11 @@ pub fn materialize_if_tail(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: i
     return null;
   }
   kt = el::def(e, td).known_type;
+  // (An arm that hands back a parameter — itself, a read rooted at it, or a call that may answer
+  // one — is no copy: `MergeAttr` publishes the parameter, or the buffer is renamed.)
+  if arm_hands_back(e, vars, el_ir::unspan(el_ir::last(bl.operators))) {
+    return null;
+  }
   owned = el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb]);
   arms = materialize_arm(e, vars, el_ir::unspan(el_ir::last(bl.operators)), rb, kt, owned, any_block: true);
   if arms == null {
@@ -1710,6 +1715,24 @@ pub fn materialize_whole_tail(e: el::El, vars: el_vars::Vars, code: ir::Node, rb
     e.b.data.definitions[e.context].returned = [el_types::with_deps(el::def(e, e.context).returned[0] ?? result, [rba])];
   }
   ir::NdBlock { block: [bl] }
+}
+
+fn arm_hands_back(e: el::El, vars: el_vars::Vars, n: ir::Node) -> boolean {
+  match n {
+    NdSpan { inner } => arm_hands_back(e, vars, inner),
+    NdIf { cond: _, t, f } => arm_hands_back(e, vars, t) || arm_hands_back(e, vars, f),
+    NdBlock { block } => len(block[0].operators) > 0 && arm_hands_back(e, vars, el_ir::unspan(el_ir::last(block[0].operators))),
+    NdVar { n: v } => vars.vars[v].argument && !hidden_param(e, vars, v),
+    NdCall { def_nr, args: _ } => {
+      nm = el::def(e, def_nr).name;
+      if starts_with(nm, "n_") || starts_with(nm, "t_") {
+        return true;
+      }
+      pr = place_root(e, n);
+      pr >= 0 && vars.vars[pr].argument && !hidden_param(e, vars, pr)
+    },
+    _ => false
+  }
 }
 
 pub fn materialize_join_tail(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, result: ir::TypeT) -> ir::Node? {

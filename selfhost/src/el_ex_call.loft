@@ -2836,6 +2836,19 @@ pub fn coalesce_jump(e: el::El, vars: el_vars::Vars, x: Ex, j: Ex) -> Ex {
 
 // An element read with the nullable getter (`OpGetVectorNullable` / `OpVectorRefNullable`), for a
 // form that answers the element's absence itself (`!`, `?? return`); any other read as it is.
+// Does the place `n` read an element by an index that is no literal (`OpGetVector(v, s, k)`)?
+fn computed_index_in(e: el::El, n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdCall { def_nr, args } => {
+      if el::def(e, def_nr).name == "OpGetVector" && len(args) == 3 && !(el_ir::unspan(args[2]!) is NdInt) {
+        return true;
+      }
+      len(args) > 0 && computed_index_in(e, args[0]!)
+    },
+    _ => false
+  }
+}
+
 pub fn nullable_getter(e: el::El, code: ir::Node) -> ir::Node {
   match el_ir::unspan(code) {
     NdCall { def_nr, args } => {
@@ -3103,7 +3116,9 @@ pub fn enum_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
     // (`v[1]`, a range loop's `v[i]`) is read through the nullable twin of its getter
     // (`rewrite_outer_arith_to_nullable`); its absence is the test around `__ncc_N` alone.
     plain = el_ir::cl(e, "OpGetField", [slot, off, kt]);
-    read = if x.tp is TyOptional {
+    // (An element reached through a computed index anywhere on the way — `ds[k].returned[0]` —
+    // is in flight, `τ?`, whatever the read's own type kept.)
+    read = if x.tp is TyOptional || computed_index_in(e, slot) {
       el_ir::v_if(el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpGetInt4", [slot, off]), ir::NdInt { n: 0 }]), el_ir::cl(e, "OpNullRefSentinel", []), plain)
     } else {
       el_ex_base::nullable_arith(e, plain, true)

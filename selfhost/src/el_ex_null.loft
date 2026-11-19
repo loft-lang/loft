@@ -2398,11 +2398,10 @@ pub fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
         // exit).
         NdCall { def_nr: rfd, args: rfa } => {
           rfn = el::def(e, rfd).name;
-          if rfn == "OpConstRef" {
-            return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
-          }
           froot = place_root(e, el_ir::unspan(v.code));
-          if rfn == "OpGetField" && froot >= 0 && vars.vars[froot].argument && !hidden_param(e, vars, froot) {
+          // (A constant — loft#2585's option 1, loft30-gate c56adea85 — is copied as a
+          // parameter's field is: the caller gets its own store.)
+          if (rfn == "OpGetField" && froot >= 0 && vars.vars[froot].argument && !hidden_param(e, vars, froot)) || rfn == "OpConstRef" {
             if e.first_pass {
               return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
             }
