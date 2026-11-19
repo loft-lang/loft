@@ -195,6 +195,23 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   // (`coalesce_not_null`'s `OpVectorIsNull`), the default where not.  Any other keyed subject
   // is refused by name.
   if keyed_kind(lhs) {
+    // A field path (`self.tokens[l].possible ?? []`, a point lookup's field included) is held
+    // in a `__ncc_N` viewing it, as a vector field is; the "ncc" block answers it where present.
+    if !(el_ir::unspan(x.code) is NdVar) && (field_path(e, x.code) || keyed_field_read(e, x.code)) {
+      if !el_types::is_equal(e, el_types::without_deps(lhs), el_types::without_deps(el_types::base(d.tp))) {
+        el::refuse(e, "a keyed `??` default of another type");
+        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+      }
+      kheld = el_vars::create_unique(vars, "_ncc", lhs);
+      vars.vars[kheld].skip_free = true;
+      el_vars::register_work_ref(vars, kheld);
+      if e.first_pass {
+        return ex(ir::NdNull, lhs);
+      }
+      kh = ir::NdVar { n: kheld };
+      kpresent = el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpVectorIsNull", [kh])]);
+      return ex(el_ir::v_block([el_ir::v_set(kheld, nullable_arith(e, x.code, true)), el_ir::v_if(kpresent, kh, d.code)], lhs, "ncc"), lhs);
+    }
     if !(el_ir::unspan(x.code) is NdVar) {
       el::refuse(e, "a keyed `??` on something other than a local");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -2269,6 +2286,7 @@ pub fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -
   }
   w = -1;
   chain = false;
+  own_view = false;
   match x {
     // `declared_in_loop`: a local made inside an open loop (numbered after its variable) is no
     // candidate; one from before the loop is, wherever the `return` stands.
@@ -2285,9 +2303,11 @@ pub fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -
         // (A callee handing back its argument whose argument lends nothing — `id2(g(k))`, a
         // fresh record — answers in its own buffer: `ls` names that buffer, the candidate.)
         vhr = hidden_ref_arg(vars, args);
-        if vhr >= 0 && el_types::deps(v.tp) == [vhr] {
+        vparams = [for dv in el_types::deps(v.tp) if vars.vars[dv].argument { dv }];
+        if vhr >= 0 && len(el_types::deps(v.tp)) > 0 && len(vparams) == 0 {
           w = vhr;
           chain = true;
+          own_view = true;
         }
       }
     },
@@ -2303,8 +2323,20 @@ pub fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -
   if !w_shape_ok && chain {
     return ex(ir::NdReturn { inner: x }, ir::TyNever);
   }
-  if w >= 0 && w_shape_ok && e.first_pass && unrenamed && !el_expressions::buffer_bound(e) && el_expressions::rename_candidate(e, vars, v.code, x) == w {
+  if w >= 0 && w_shape_ok && e.first_pass && unrenamed && !el_expressions::buffer_bound(e) && (own_view || el_expressions::rename_candidate(e, vars, v.code, x) == w) {
     rename_onto(e, vars, rb, w);
+  }
+  // (The argument-view call answering in its own buffer is handed back as it stands: the
+  // buffer it was renamed onto joins the result's borrows, `MergeAttr` on the second pass.)
+  if own_view && w_shape_ok {
+    oa = attr_nr(el::def(e, d), el_vars::name_of(vars, w));
+    if oa >= 0 {
+      ret = el::def(e, d).returned[0];
+      if !el_types::deps(ret).contains(oa) {
+        e.b.data.definitions[d].returned = [el_types::with_deps(ret, el_types::deps(ret) + [oa])];
+      }
+      return ex(ir::NdReturn { inner: x }, ir::TyNever);
+    }
   }
   if w < 0 && e.first_pass && unrenamed && !el_expressions::buffer_bound(e) && branch_value(x) && owned_arms(e, vars, x) && first_arm_ref(vars, x) >= 0 {
     rename_onto(e, vars, rb, first_arm_ref(vars, x));
@@ -2833,6 +2865,13 @@ pub fn merge_view_call(e: el::El, vars: el_vars::Vars, code: ir::Node) -> ir::No
       }
       bl.result = [block[0].result[0] ?? ir::TyVoid];
     },
+    // A branch whose every leaf is a visible parameter or a call handing back a view of its
+    // arguments (`if n == 0 { p } else { again(p, n - 1) }`): `ls` is the parameters, `MergeAttr`.
+    NdIf { cond: _ } => {
+      if !view_leaves(e, vars, el_ir::unspan(bl.operators[-1])) {
+        return null;
+      }
+    },
     _ => return null
   }
   tp = bl.result[0] ?? ir::TyVoid;
@@ -2870,6 +2909,31 @@ pub fn merge_view_call(e: el::El, vars: el_vars::Vars, code: ir::Node) -> ir::No
   }
   e.b.data.definitions[d].returned = [el_types::with_deps(ret, kept)];
   ir::NdBlock { block: [bl] }
+}
+
+// A field read (`OpGetField`) off a keyed point lookup (`OpGetRecord`) or off a field path.
+fn keyed_field_read(e: el::El, n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdCall { def_nr, args } => el::def(e, def_nr).name == "OpGetField" && len(args) == 3 && match el_ir::unspan(args[0]!) {
+      NdCall { def_nr: rd, args: ra } => el::def(e, rd).name == "OpGetRecord" && len(ra) > 0 && (el_ir::unspan(ra[0]!) is NdVar || field_path(e, ra[0]!)),
+      _ => false
+    },
+    _ => false
+  }
+}
+
+// Every leaf of `n` — through `if` arms and blocks' tails — a visible parameter or a call that
+// answers a view of its arguments.
+fn view_leaves(e: el::El, vars: el_vars::Vars, n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdIf { cond: _, t, f } => view_leaves(e, vars, t) && view_leaves(e, vars, f),
+    NdBlock { block } => len(block[0].operators) > 0 && view_leaves(e, vars, block[0].operators[-1]),
+    NdVar { n: v } => vars.vars[v].argument && attr_nr(el::def(e, e.context), el_vars::name_of(vars, v)) >= 0 && !el::def(e, e.context).attributes[attr_nr(el::def(e, e.context), el_vars::name_of(vars, v))].hidden,
+    // (On the first pass a callee declared below lends the join nothing yet: `ls` is the other
+    // arms' parameters, as Rust's first pass reads it.)
+    NdCall { def_nr } => returns_argument_view(el::def(e, def_nr)) || (e.first_pass && def_nr > e.context && starts_with(el::def(e, def_nr).name, "n_")),
+    _ => false
+  }
 }
 
 // `Parser::return_buffer`: the variable of the function's hidden record return buffer, by
