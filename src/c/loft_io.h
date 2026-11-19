@@ -569,13 +569,13 @@ static loft_fh loft_fh_open(const char *path, int how) {
 }
 
 /* Up to `n` bytes at `at` into `buf`: how many came, fewer only at the end or on an error. */
-static size_t loft_fh_read(loft_fh fd, void *buf, size_t n, int64_t at) {
+LOFT_NOIPA static size_t loft_fh_read(loft_fh fd, void *buf, size_t n, int64_t at) {
     size_t got = 0;
     while (got < n) {
 #if defined(_WIN32)
         size_t want = n - got < ((size_t) 1 << 30) ? n - got : (size_t) 1 << 30;
         int r = _lseeki64(fd, at + (int64_t) got, SEEK_SET) < 0 ? -1 : _read(fd, (char *) buf + got, (unsigned) want);
-#elif defined(ESP_PLATFORM)
+#elif defined(ESP_PLATFORM) || defined(__wasi__)
         int r = lseek(fd, (off_t) (at + (int64_t) got), SEEK_SET) < 0 ? -1 : (int) read(fd, (char *) buf + got, n - got);
 #else
         ssize_t r = pread(fd, (char *) buf + got, n - got, (off_t) (at + (int64_t) got));
@@ -588,13 +588,13 @@ static size_t loft_fh_read(loft_fh fd, void *buf, size_t n, int64_t at) {
 }
 
 /* The `n` bytes of `buf` at `at`: 1 when all were written. */
-static int loft_fh_write(loft_fh fd, const void *buf, size_t n, int64_t at) {
+LOFT_NOIPA static int loft_fh_write(loft_fh fd, const void *buf, size_t n, int64_t at) {
     size_t done = 0;
     while (done < n) {
 #if defined(_WIN32)
         size_t want = n - done < ((size_t) 1 << 30) ? n - done : (size_t) 1 << 30;
         int r = _lseeki64(fd, at + (int64_t) done, SEEK_SET) < 0 ? -1 : _write(fd, (const char *) buf + done, (unsigned) want);
-#elif defined(ESP_PLATFORM)
+#elif defined(ESP_PLATFORM) || defined(__wasi__)
         int r = lseek(fd, (off_t) (at + (int64_t) done), SEEK_SET) < 0 ? -1 : (int) write(fd, (const char *) buf + done, n - done);
 #else
         ssize_t r = pwrite(fd, (const char *) buf + done, n - done, (off_t) (at + (int64_t) done));
@@ -907,11 +907,13 @@ static int64_t loft_read_file(loft_ref f, int64_t n, int text, int64_t width, ui
     return loft_read_file_in(f, n, text, width, 0, 0, out);
 }
 
-/* OpSeekFile: the next read or write starts at `pos` — the record's position, which every read
- * and write starts from. */
+/* OpSeekFile (`f#next = pos` writes it, then sets `#next` itself): a record with no handle open
+ * takes `pos` as the position its first read or write opens at, as `State::seek_file` does; one
+ * with a descriptor open has no stream position to move — every read and write starts at the
+ * record's `#next`, which the assignment that follows sets. */
 static void loft_seek_file(loft_ref f, int64_t pos) {
     if (f.store_nr == 0xFFFF || f.rec == 0) return;
-    loft_file_set_long(f, 16, pos);
+    if (loft_file_fd(f) < 0) loft_file_set_long(f, 16, pos);
 }
 
 /* OpSizeFile: the file's size now, or null. */

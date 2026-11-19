@@ -174,6 +174,17 @@ LOFT_NORETURN void loft_android_exit(int code);
 #define LOFT_UNLIKELY(x) (x)
 #define LOFT_COLD_PATH() ((void) 0)
 #endif
+/* `LOFT_NOIPA`: a function gcc's interprocedural passes leave alone.  gcc 15's known-bits
+ * propagation (`-fipa-bit-cp`, on at -O2 and up) emptied the positional file read
+ * (`loft_fh_read`, loft_io.h) once every live caller of it was a constant-specialised clone of
+ * `loft_read_file_in`: the read never ran and a file answered empty under `--ship`.  The mark
+ * goes on the leaf I/O functions, which make a system call each time, so it costs nothing;
+ * gcc only, clang neither has nor needs it. */
+#if defined(LOFT_GNU) && !defined(__clang__)
+#define LOFT_NOIPA __attribute__((noipa))
+#else
+#define LOFT_NOIPA
+#endif
 /* `(R-CSplit)`: a function body over the size budget calls its parts with `LOFT_PART_CALL`, which
  * no compiler may inline, so each part is optimised as the size it was cut to.  With no
  * out-of-line mark (pure C99 under `LOFT_STRICT`, or an unknown compiler), the call goes

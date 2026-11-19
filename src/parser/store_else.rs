@@ -62,6 +62,17 @@ impl Parser {
                  Type {{ … }}`), so the write always lands — in that record when the element \
                  is absent; drop the discharge to run the arm when the element is absent"
             );
+            self.lexer.fix_last(crate::diagnostics::Fix {
+                kind: crate::diagnostics::FixKind::Conditional,
+                title: "drop the `?` / `?? Type { … }` from the place".to_string(),
+                condition: Some(
+                    "if the arm should run when the element is absent; otherwise drop the `else`"
+                        .to_string(),
+                ),
+                edit: None,
+                concept: "a store's failure arm",
+                concept_ref: "@F126",
+            });
         }
     }
 
