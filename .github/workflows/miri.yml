@@ -913,6 +913,32 @@ jobs:
       - name: The interpreter and the C writer name one store effect per assignment
         run: python3 scripts/bind_census.py --loft target/release/loft --suite "$LOFT_SUITE_DIR" --jobs 4 --writer c --check --examples 3
 
+  slot-matrix-c:
+    # @windows-exempt: the matrix generates platform-free loft; the Windows C compiler is c-sweep-platforms' question
+    # @nightly-class: report — a statement whose answer the FORM of an operand changes, on the C backend past the per-PR sample
+    name: Slot matrix, every cell on the C backend
+    if: github.event_name != 'pull_request'
+    needs: pr-ci-started
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install mold + sqlite
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold libsqlite3-0
+      - name: Build the release loft binary
+        run: cargo build --release --bin loft
+      # @PLN221 — `tests/slot_matrix.rs` runs every cell on the interpreter and a SAMPLE on the C
+      # backend, because the whole matrix compiled for C passes the per-test time limit on a
+      # runner (CI_BUDGET.md § The slot matrix's runs).  This is the rest: every cell on both
+      # backends against the same baseline, which only shrinks — a red is a cell that is not ok
+      # and not listed, or a listed cell that passes now (`gate --update` removes it).
+      - name: The gate, every cell on the C backend
+        env:
+          LOFT: ${{ github.workspace }}/target/release/loft
+        run: python3 scripts/slot_matrix.py gate --full
+
   c-sweep-platforms:
     # @nightly-class: unsound — the C backend answering other than the interpreter on macOS or Windows
     # @PLN203 C8 — `ci.yml`'s `c-sweep` on the other two hosts and their compilers: Apple clang,
@@ -2113,7 +2139,7 @@ jobs:
     name: → tracked issue (red-steps digest)
     needs: [pr-ci-started, stale-plans-audit, stale-claims, miri, asan, asan-leak-gate, poison, native-poison, poison-claim, stack-shadow, tsan,
             native-asan, valgrind, c-sweep-unsound, c-sweep-platforms, c-sweep-android, bind-census, release-gate-sweeps, debug-asserts, audit,
-            toolchain-matrix, index-hygiene, library-health]
+            toolchain-matrix, index-hygiene, library-health, slot-matrix-c]
     if: always() && github.event_name != 'pull_request' && !inputs.from_gate && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
     permissions:
@@ -2130,7 +2156,7 @@ jobs:
     name: Daily status (the one place to look)
     needs: [pr-ci-started, stale-plans-audit, stale-claims, miri, asan, asan-leak-gate, poison, native-poison, poison-claim, stack-shadow, tsan,
             native-asan, valgrind, c-sweep-unsound, c-sweep-platforms, c-sweep-android, bind-census, release-gate-sweeps, debug-asserts, audit,
-            toolchain-matrix, index-hygiene, library-health]
+            toolchain-matrix, index-hygiene, library-health, slot-matrix-c]
     # The digest describes the default branch's nightlies, so it follows `notify`: not a
     # PR, not the release gate, and not a dispatch on another branch.
     if: always() && github.event_name != 'pull_request' && !inputs.from_gate && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
