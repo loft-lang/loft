@@ -143,6 +143,11 @@ impl Scopes<'_> {
     /// of its tuples moves to just after the last of them; every other variable keeps its turn
     /// (`@FR-H-Drop`: a scope releases its owners in reverse declaration order).
     fn claimants_after_their_tuples(&self, vars: Vec<u16>) -> Vec<u16> {
+        // `LOFT_NO_CLAIMANT_ORDER=1` (STORE_RECORDS.md § The checks): registration order, as
+        // before loft#2576 — the claimant may be released ahead of the tuple that disarms it.
+        if crate::env_once!(std::env::var_os("LOFT_NO_CLAIMANT_ORDER").is_some()) {
+            return vars;
+        }
         // Each claimant's tuples among `vars`: the claimant may not be released before any.
         let mut claims: std::collections::HashMap<u16, Vec<u16>> =
             std::collections::HashMap::default();
