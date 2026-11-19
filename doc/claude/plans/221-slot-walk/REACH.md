@@ -30,6 +30,20 @@ backends:
 | fail on both | 48 | nine folds the release already had |
 | refused then, accepted now | 0 | the prelude and every cell compile on the release |
 
+Against the release of 2026-10-01 (`v2026.10.0`), 3,657 cells, the interpreter:
+
+| Group | Cells | What they are |
+|---|---|---|
+| failed then, pass now | 109 | chiefly ONE order defect that was in twelve slots: a field of a call's record as the SECOND operand of a binary operator or the second argument of a call ran before the first.  The right side of an element write (found.md's row 12) is the one instance of it still open |
+| pass then, fail now | 45 | the lost element write and the two double frees that the November walk also shows, plus an order and a leak fold that October did not have |
+| fail on both | 59 | folds two months old: the comprehension source, the place of a collection assignment, the one-statement block, the generator and `parallel` crashes |
+| refused then, accepted now | 89 | syntax October did not have (`**`, among others) |
+
+**How far back the walk reaches is set by the prelude.**  October's compiler wanted enum
+variants qualified (`Col.Green`), so the prelude spells them that way; two slots are vacuous
+there because their syntax is newer.  A walk further back needs the prelude checked on that
+build first — `slot_matrix.py run` on it says at once whether it compiles.
+
 The older binary is any build: `git worktree add --detach <dir> <tag>`, then `cargo build
 --release --bin loft` there.  Run the walk at each release against the one before it.
 
@@ -52,7 +66,7 @@ the 43 name:
 | Axis | Issues | State |
 |---|---|---|
 | statement context — in a loop, in a branch, in a closure, after an early return | 10 | **added**: `scripts/syntax_contexts.tsv` (`plain`, `loop`, `branch`, `else`); a closure and an early return are not in it yet |
-| a sequence of statements — bind a view, disturb its source, read the view | 10 | open; see below |
+| a sequence of statements — bind a view, disturb its source, read the view | 10 | **tried, and it found nothing**: the prelude's `views` frame binds four views before the statement and reads them after it, and no cell fails there that does not fail without them.  These defects are wrong with a plain variable too, so they want sequences and expected values written by hand |
 | the shape of a declaration — a field modifier, a nullable field, a linked group, a generic | 7 | open: needs more than one prelude |
 | two operands of one statement interacting — an index that writes the vector it indexes | 7 | open: needs a second counted operand and a twin that binds every operand in source order |
 | how the receiver was built — a parameter, a `&` parameter, a literal, a tuple member | 5 | **partly added**: the prelude's `params` frame; a `&` frame is refused wherever the statement does not write through it |

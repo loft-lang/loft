@@ -212,14 +212,19 @@ fix is then checked by cells that already exist.
    that binds EVERY operand in source order, with collection operands copied where the
    rules read them by value, which is what a writing operand in a READ slot needs
    (loft#2503's own case, `v[set(v)]`).
-6. **G6 — views across the statement.**  The prelude binds views of its values before the
-   statement and shows them after it, for the ten "bind, disturb, read" issues.
+6. **G6 — views across the statement** — **built, and it found nothing.**  The prelude's
+   `views` frame binds an element view, a collection-field view, a slice and a keyed
+   element before the statement and shows them after it (`--frame views`): 3,657 cells,
+   none failing that does not fail without the views.  The ten "bind, disturb, read"
+   issues are wrong for every form of operand, so the matrix is the wrong instrument for
+   them; they stay hand-written suite cells.
 7. **G7 — a second prelude**: nullable fields, a struct-enum, a generic, for the seven
    declaration-shape issues.
-8. **G8 — the older walks.**  `walk` against `v2026.10.0`, which needs no reading; then a
-   SAMPLE of about thirty of October's `silent-wrong` issues, judged as November's were.
-   October's finder was the rule walk and not the port, so the sample is there to see
-   whether it names an axis November did not — not to fill the ledger.
+8. **G8 — the older walks** — **the time walk done.**  Against `v2026.10.0` the matrix
+   shows 109 cells fixed since, most of them one order defect that stood in twelve slots
+   ([REACH.md](REACH.md)).  The prelude had to spell its enum variants qualified to compile
+   there.  *Open:* the SAMPLE of about thirty of October's `silent-wrong` issues, to see
+   whether the rule walk's findings name an axis November's did not.
 9. **G9 — a probe, before it is planned:** which IR operations the corpus produces and no
    cell of the matrix does.  If `loft introspect` gives that histogram cheaply, the gaps
    name missing rows without anyone reading an issue.
