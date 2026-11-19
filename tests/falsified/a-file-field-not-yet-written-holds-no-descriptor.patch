@@ -1,0 +1,47 @@
+diff --git b/src/c/loft_io.h a/src/c/loft_io.h
+index 28ab6d16b..d3f2f3b25 100644
+--- b/src/c/loft_io.h
++++ a/src/c/loft_io.h
+@@ -1,7 +1,7 @@
+ /* ── Files (src/state/io.rs, src/database/io.rs, codegen_runtime.rs's fs_*) ────────────────
+  * A `File` record: its size at byte 0, the position of the last read or write at 8, the next one
+- * at 16 (null: not set), its path at 24, its handle at 28 (an OS descriptor plus one; 0 or
+- * INT32_MIN for none: `loft_file_get`) and its format at 32 (1 TextFile, 2 LittleEndian, 3 BigEndian, 4 Directory,
++ * at 16 (null: not set), its path at 24, its handle at 28 (an OS descriptor, INT32_MIN for
++ * none: `loft_file_get`) and its format at 32 (1 TextFile, 2 LittleEndian, 3 BigEndian, 4 Directory,
+  * 5 NotExists).
+  *
+  * What a file needs beyond C99 — a path's kind and size, a directory listing, mkdir, rmdir,
+@@ -494,11 +494,8 @@ static char *loft_file_path(loft_ref f) {
+     return loft_resolve(loft_get_text(f, 24));
+ }
+ 
+-/* A File record's handle (byte 28) is the OS descriptor it reads and writes through, kept PLUS
+- * ONE, so a record's zero bytes read as no descriptor: a `File` field of a record just allocated
+- * and not yet written (`Holder { h: f }` releases the field's old value before the copy lands)
+- * names none, where descriptor 0 closed the program's stdin.  INT32_MIN, the field's null, is
+- * none as well.  It is none while no descriptor is open: opened on the record's first read or write, read and written at the
++/* A File record's handle (byte 28) is the OS descriptor it reads and writes through, INT32_MIN
++ * while none is open: opened on the record's first read or write, read and written at the
+  * record's own position (`#next`, byte 16, which the record always holds) and closed when the
+  * record goes.  No record shares it — a copy of a record opens its own (`loft_file_lease`) —
+  * and nothing else holds it, so a `par` worker or a `parallel` arm opens and reads files as
+@@ -628,7 +625,7 @@ static void loft_fh_close(loft_fh fd) {
+ static int32_t loft_file_fd(loft_ref f) {
+     int32_t h;
+     memcpy(&h, loft_at(loft_store_of(f), f.rec, f.pos + 28), 4);
+-    return h > 0 ? h - 1 : INT32_MIN;
++    return h;
+ }
+ #else
+ typedef FILE *loft_fh;
+@@ -675,8 +672,7 @@ static int loft_file_get(loft_ref f, int how, loft_fh *h, char **path) {
+     *h = loft_fh_open(*path, how);
+ #if defined(LOFT_FD)
+     if (*h < 0) return 0;
+-    int32_t kept = *h + 1;
+-    memcpy(loft_at(loft_store_of(f), f.rec, f.pos + 28), &kept, 4);
++    memcpy(loft_at(loft_store_of(f), f.rec, f.pos + 28), h, 4);
+ #else
+     if (!*h) return 0;
+ #endif

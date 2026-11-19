@@ -1,15 +1,14 @@
 diff --git a/src/parser/objects.rs b/src/parser/objects.rs
-index 56503fa5b..0185748ed 100644
+index 06e8aca99..a7ac1189c 100644
 --- a/src/parser/objects.rs
 +++ b/src/parser/objects.rs
-@@ -4428,9 +4428,7 @@ impl Parser {
-             // walked the HASH as if it were a snapshot and read a record number out of its
-             // table header: a store panic on both backends.  The scope-exit release frees the
-             // scratch, as it does for a comprehension's.
--            let snapshot = self
--                .keyed_snapshot(&mut expr, &mut in_type, false)
--                .map(|(_, fill)| fill);
-+            let snapshot: Option<Value> = None;
-             // For text loops: {id}#next drives the loop; {id}#index is saved per-iteration.
-             let (iter_var, pre_var) = if super::collections::walks_text(&in_type) {
-                 let pos_var = self.create_var(&format!("{id}#next"), &I32);
+@@ -4487,9 +4487,6 @@ impl Parser {
+     /// every step, so `"{for p in mk(c) { … }}"` called `mk` per element.  `None` for every other
+     /// source, which reads the same place each step.
+     fn format_loop_source(&mut self, expr: &mut Value, in_type: &mut Type) -> Option<Value> {
+-        if let Some((_, fill)) = self.keyed_snapshot(expr, in_type, false) {
+-            return Some(fill);
+-        }
+         (matches!(
+             in_type.base(),
+             Type::Vector(..) | Type::Sorted(..) | Type::Index(..)
