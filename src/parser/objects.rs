@@ -6857,6 +6857,10 @@ impl Parser {
     /// A struct or variant literal: one level of depth (`crate::limits`), since its field
     /// values are parsed without passing through `expression`, so a literal nested in a field
     /// counts here.
+    ///
+    /// `@FR-E-Record`: the field values are reduced in the order the literal WRITES them,
+    /// each once — they are parsed and emitted in source order, whatever order the type
+    /// declares its fields in.
     pub(crate) fn parse_object(&mut self, td_nr: u32, code: &mut Value) -> Type {
         self.state_route("parse_object");
         if !self.enter_depth() {

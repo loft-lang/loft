@@ -103,8 +103,8 @@ Two things that look like defects in a run and are not:
   `(E-Left)`'s prose in `formal/operational.md` said otherwise and now agrees with
   `(E-Coalesce)`, which states it; the slots `rd-coal-right-present` and
   `rd-coal-right-absent` hold it on both backends.
-- Eight slots cite no rule because none states their count; `slot_matrix.py list` names
-  them.
+- Every slot cites a rule now.  The eight that cited none are covered by `(E-Once)`,
+  `(E-Field)`, `(E-Index)`, `(E-Is)`, `(E-Record)` and `(I-While)`, written for them.
 - Settled (owner): an `assert`'s message is evaluated only when the assertion fails.  It
   is `(E-Assert)` in `formal/operational.md` now, cited by the slots `ct-assert` and
   `ct-assert-message`, and by the lowering in `src/parser/control.rs`.  The change from the
@@ -113,10 +113,10 @@ Two things that look like defects in a run and are not:
 - **`map`, `filter` and `reduce` refuse a slice as their source** (`map(mkv(c)[0..], inc1)`:
   "first argument must be a vector"), while `LOFT_DATA.md` says a slice is a vector wherever
   a vector is expected.  Either the refusal is lifted or that sentence gains its exception.
-- `vi[i] = null` on a `vector<integer>` leaves `[10,null,30,40]`: the element becomes null
-  and the vector keeps its length.  `(Col-Remove)` speaks of `c[key] = null` on a keyed
-  collection and of `v.remove(i)` on a vector; whether a dense vector's element may be
-  SET to null this way is not stated, so the slot `wr-remove-index` has no anchor.
+- Settled by a rule that was there: `vi[i] = null` on a `vector<integer>` stores the null
+  and keeps the length (`[10,null,30,40]`), with a warning.  That is `(N-Store)` — a vector
+  element reserves a null it can hold — and not `(Col-Remove)`, which the slot had cited
+  wrongly; the slot `wr-remove-index` cites `(N-Store)` now and has its anchor.
 
 ## What the matrix cannot say about these
 

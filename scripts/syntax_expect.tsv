@@ -233,3 +233,4 @@ rd-path-index	vector	s=4
 rd-path-index	sorted	s=null
 rd-path-index	index	s=null
 rd-path-index	hash	s=null
+wr-remove-index	*	vi=[10,null,30,40]

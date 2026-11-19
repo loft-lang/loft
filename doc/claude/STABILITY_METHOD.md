@@ -619,7 +619,8 @@ the defect, or a line in the reach ledger naming the axis the tool lacks
 matrix](ISSUE_TRACKING.md#every-defect-is-held-against-the-slot-matrix)).  The ledger
 decides the next axis to build.
 
-**When to run what.**  The gate runs with every test run.  `slot_matrix.py cell` and `expr`
+**When to run what.**  The gate runs with every test run: every cell interpreted, a sample
+compiled.  `slot_matrix.py gate --full` compiles them all.  `slot_matrix.py cell` and `expr`
 try one statement or one expression at the moment a shape looks suspicious; `explain` lays
 one failing cell open, with the IR of the cell beside the IR of its twin.  The wider axes —
 a loop and a branch around the statement, parameters in place of locals, fillers inside

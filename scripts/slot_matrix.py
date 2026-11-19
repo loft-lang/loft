@@ -50,7 +50,9 @@ runs the product.
                cell that is not ok and not listed fails (BROKEN), and so does a listed cell
                that now passes (FIXED).  `--family F` takes one slot family and its lines,
                which is how tests/slot_matrix.rs splits the PR gate into seven tests;
-               `--update` rewrites the baseline from a whole run.  On GitHub each fold is
+               The interpreter runs every cell; the C backend, which compiles each one,
+               a sample (every slot with its plain variable and its type's first filler)
+               unless `--full`.  `--update` rewrites the baseline from a whole, full run.  On GitHub each fold is
                an annotation on the table row it names.
     walk       the matrix on an OLDER loft binary beside this one (`--old <binary>`): the
                cells that failed then and pass now are what the matrix would have caught,
@@ -93,6 +95,8 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -601,12 +605,20 @@ TIME_LIMIT = {"interp": int(os.environ.get("SLOT_MATRIX_INTERP_SECONDS", "40")),
 # one: a healthy cell answers in milliseconds, and a statement that loops for one form of
 # operand often loops for the next, each costing a whole limit.
 TIGHT_LIMIT = {"interp": 6, "c": 20}
+# What a run cost: per backend, how many programs were run and the seconds they took,
+# summed over the threads that ran them (so more than the wall time).
+SPENT = {"interp": [0, 0.0], "c": [0, 0.0]}
+SPENT_LOCK = threading.Lock()
 
 
 def invoke(backend, path, limit=None):
     cmd = [loft_binary()] + (["--native-c"] if backend == "c" else []) + ["--no-warnings", "--tests", path]
     env = dict(os.environ, LOFT_LEAK_CHECK="1", LOFT_TIMEOUT=str(limit or TIME_LIMIT[backend]))
+    began = time.monotonic()
     done = subprocess.run(cmd, capture_output=True, text=True, env=env, check=False)
+    with SPENT_LOCK:
+        SPENT[backend][0] += 1
+        SPENT[backend][1] += time.monotonic() - began
     return done.stdout + done.stderr
 
 
@@ -735,7 +747,7 @@ def prelude_problem(cells, backend, tmp):
     return None
 
 
-def evaluate(cells, backends):
+def evaluate(cells, backends, on_c=None):
     """Run the cells.  Returns {cell name: (verdict, [(backend, verdict, reason)])}, the
     verdict the worst over the backends: ok | FAIL | REFUSED."""
     with tempfile.TemporaryDirectory(prefix="slot_matrix.") as tmp:
@@ -745,13 +757,14 @@ def evaluate(cells, backends):
         interp = run_backend("interp", cells, tmp)
         per = {"interp": interp}
         if "c" in backends:
-            accepted = [c for c in cells if interp.get(c["name"], ("",))[0] != "REFUSED"]
+            accepted = [c for c in cells if interp.get(c["name"], ("",))[0] != "REFUSED"
+                        and (on_c is None or c["name"] in on_c)]
             per["c"] = run_backend("c", accepted, tmp)
     out = {}
     for cell in cells:
         lines, worst = [], "ok"
         for backend in per:
-            if backend == "c" and worst == "REFUSED":
+            if backend == "c" and (worst == "REFUSED" or (on_c is not None and cell["name"] not in on_c)):
                 continue
             v, why = verdict(cell, per[backend])
             if backend == "c" and v == "REFUSED":
@@ -878,6 +891,7 @@ def report(cells, verdicts, backends, verbose):
     print(f"slot_matrix: {len(cells)} cells ({orders} check order) on {' and '.join(backends)}: "
           f"{tally['ok']} ok, {tally['FAIL']} failing, {tally['REFUSED']} refused, "
           f"{len(vacuous)} slot(s) vacuous  [{build()}]")
+    print("          cost: " + "; ".join(f"{b} {SPENT[b][0]} program run(s), {SPENT[b][1]:.0f} s" for b in backends))
     if tally["FAIL"]:
         print("for one failing cell — its program kept, loft's diagnostics on, its IR beside its twin's: "
               "python3 scripts/slot_matrix.py explain <cell>")
@@ -949,7 +963,17 @@ def cmd_gate(args):
     family = {s["id"]: s["family"] for s in slots}
     mine = {s["id"] for s in slots if not args.family or s["family"] == args.family}
     cells = make_cells(slots, fillers, "all", mine, None)
-    verdicts = evaluate(cells, ("interp", "c"))
+    full = args.full or args.update
+    # The C backend compiles every cell, about a tenth of a second each, which is most of a
+    # run.  Unless the whole matrix is asked for, it gets a sample: every slot with its
+    # plain variable and with the first filler of its type (and their twins and order cells).
+    first_of = {}
+    for f in fillers:
+        if not f["id"].endswith("-var") and not HOLE.search(f["expr"]):
+            first_of.setdefault(f["type"], f["id"])
+    sampled = lambda name: name.split(".")[1].endswith("-var") or name.split(".")[1] in first_of.values()
+    on_c = None if full else {c["name"] for c in cells if c["slot"] == "_world" or sampled(c["name"])}
+    verdicts = evaluate(cells, ("interp", "c"), on_c)
     keys = baseline_keys(cells, verdicts)
     if args.update:
         with open(BASELINE, "w", encoding="utf-8") as f:
@@ -960,7 +984,9 @@ def cmd_gate(args):
         return 0
     stable, unstable = load_baseline()
     here = lambda key: family.get(key[0].split(".")[0]) == args.family if args.family else True
-    stable = {k for k in stable if here(k)}
+    # A baseline line of a cell this run did not put on the C backend says nothing here.
+    ran = lambda key: key[1] != "c" or on_c is None or key[0] in on_c
+    stable = {k for k in stable if here(k) and ran(k)}
     unstable = {k for k in unstable if here(k)}
     # A crash may also show as another channel on another machine; an unstable line
     # excuses its cell on its backend whatever the channel.
@@ -1500,6 +1526,7 @@ def main():
     p = sub.add_parser("gate")
     p.add_argument("--update", action="store_true", help="rewrite the baseline from this run")
     p.add_argument("--family", choices=FAMILIES, help="only the slots of one family, and their baseline lines")
+    p.add_argument("--full", action="store_true", help="every cell on the C backend too, not the sample")
     p.set_defaults(fn=cmd_gate)
     p = sub.add_parser("walk")
     p.add_argument("--old", required=True, help="the older loft binary")

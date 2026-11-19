@@ -11,18 +11,20 @@ matrix finds more with every run, and each fix is then checked by cells that alr
 ## The first queue — reach
 
 1. **G1 — the baseline and the gate** (this is phase F, taken first) — **built.**
-   `scripts/slot_matrix.baseline` lists the 179 cell lines that do not pass today, and
-   `slot_matrix.py gate` (run by `tests/slot_matrix.rs`, 41 s) fails on a cell that is not
-   ok and not listed, and on a listed cell that passes again; a crash line is marked
-   unstable and may pass.  *Verified:* against the release of 2026-11-03 the gate reports
-   120 new cells and 41 lines to remove.  The gate is split by slot family
-   (`gate --family F`, seven tests): a red test names the family, its output says first
-   whether something is BROKEN or only FIXED, the failing cells are folded toward causes,
-   and on GitHub each fold is an annotation on its row of the table.  On Linux the gate passed with the same baseline
-   (CI, 3,661 cells), and showed two things this machine had not: the single test took
-   421 s there, over the per-test duration limit, and its `#[cfg(unix)]` broke the
-   platform census — it runs on every platform now.  The four contexts and two frames are not in the gate; they are a nightly
-   candidate at five and a half minutes.
+   `scripts/slot_matrix.baseline` lists the cell lines that do not pass today, and
+   `slot_matrix.py gate` fails on a cell that is not ok and not listed (BROKEN), on a
+   listed cell that passes again (FIXED), and lists a cell the compiler newly refuses; a
+   crash line is marked unstable and may pass.  `tests/slot_matrix.rs` runs it as seven
+   tests, one a slot family, with each fold an annotation on its table row on GitHub.
+   *What CI taught.*  The baseline holds on Linux.  But compiling every cell costs a tenth
+   of a second each, 96% of a run, and on a CI runner the whole matrix on both backends
+   ran past the per-test limit both as one test (421 s) and as seven beside one another
+   (four at 600 s).  So the gate runs every cell on the interpreter and a SAMPLE on the C
+   backend — each slot with its plain variable and its type's first filler — in 15 s here;
+   `gate --full` is the whole matrix on both, and is what rewrites the baseline.  The
+   full run, the four contexts, the frames and depth two are a nightly leg not yet
+   scheduled.  The test had also carried a `#[cfg(unix)]` and a `std::fs` read, which the
+   platform census and Clippy refuse.
 2. **G2 — the ad-hoc cell** — **built.**  `slot_matrix.py cell '<statement with <S>>'`
    with `--type T` (every filler of a type) or `--filler EXPR --plain EXPR` runs one shape
    on both backends with all four checks, and prints the table rows the shape would be.
@@ -74,17 +76,17 @@ matrix finds more with every run, and each fix is then checked by cells that alr
    what K2 took its slots from.  The probe is a scratch script, not yet a command; two of
    its three runs were invalid (a cell's function not reachable from a `main`; a program
    holding a refused cell), which is the reason to make it one.
-10. **H — a rule for every slot.**  A slot whose `rule` column is `-` is an operand whose
-    evaluation count no formal rule states: the `while` condition, a field read, the three
-    text reads, `is`, the two `assert` operands, the two record-literal fields
-    (`slot_matrix.py list` names them).  For each: read the chapter it belongs to, and
-    either cite the rule that already covers it, or write the rule — how often the operand
-    runs, in what order with its neighbours, and under which condition it is skipped — and
-    cite that.  The same for every question a run raises that the text does not answer
-    (the `??` fallback was the first: settled as evaluated only when needed, and written
-    into `(E-Coalesce)`).  A new rule is the owner's to approve; the slot that cites it is
-    its guard from the first run.  *Verify:* `slot_matrix.py list` reports no slot without
-    a rule, and `rule_tags.py check` resolves every citation.
+10. **H — a rule for every slot** — **done.**  All 191 slots cite a formal rule and have an
+    anchor.  Written for it, each probed on both backends before it was stated and cited
+    by the lowering that implements it: `(E-Once)` — an operand of any form is reduced
+    once, the exceptions named; `(E-Field)`, `(E-Index)` over a text, `(E-Is)`,
+    `(E-Record)` — fields in the order WRITTEN; `(I-While)` — the condition before every
+    round; `(E-Assert)` — the message only when the assertion fails; and the `??` fallback
+    in `(E-Coalesce)`.  One slot had cited the wrong rule: `v[i] = null` on a vector is
+    `(N-Store)`, a null stored, not a removal.  The five defects the fixing agent filed
+    (loft#2578 to loft#2582) are open deviations of the rules they break, `D-op-23` to
+    `D-op-26` and `D-iter-17`.  *Owed:* a cell in the language suite under each new rule;
+    today the slot matrix is their guard.
 11. **C — the fixes** are handed off: [found.md](found.md) is the list, the lost write
     first, and each fix removes its lines from the gate's baseline.
 12. **E — the cells as input to the two-implementation comparison**, when the port's
