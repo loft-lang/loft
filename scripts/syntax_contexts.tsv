@@ -1,0 +1,13 @@
+# Where a slot-matrix cell's statement stands (@PLN221).
+# Columns, tab-separated: id, passes, template.
+#   passes    how often the statement runs in this context; every expected run count and
+#             the expected order log are multiplied by it.
+#   template  `<STMT>` is the cell's statement.  The cell's twin and its plain-variable cell
+#             stand in the same context, so what they leave behind stays comparable.
+# The first row is the context a run uses when none is asked for.  A defect that shows only
+# on a second pass, or only inside a branch, is one this axis reaches and the bare statement
+# does not (loft#2569, loft#2446, loft#2419).
+plain	1	<STMT>
+loop	2	for turn in 0..2 { <STMT> }
+branch	1	if b { <STMT> }
+else	1	if nb { s = -1; } else { <STMT> }
