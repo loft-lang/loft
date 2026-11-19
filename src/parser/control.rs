@@ -12664,11 +12664,51 @@ impl Parser {
                     None => return false,
                 },
                 Value::Call(d, args) => {
-                    return *d == self.data.def_nr("OpGetField")
-                        && matches!(
-                            args.first().map(Value::unspan),
-                            Some(Value::Var(bv)) if matches!(self.vars.tp(*bv), Type::Reference(_, _))
-                        );
+                    if *d != self.data.def_nr("OpGetField") {
+                        return false;
+                    }
+                    return match args.first().map(Value::unspan) {
+                        Some(Value::Var(bv)) => matches!(self.vars.tp(*bv), Type::Reference(_, _)),
+                        // loft#2585 — an ELEMENT of an argument (`{ h[0] }`, read as
+                        // `OpGetField(OpGetVector(h, …), 0, <vector>)`): `(F-Ret)` makes the
+                        // answer the caller's own, and the caller adopts the one-buffer result
+                        // it is published as, so a write through it wrote the argument.  The
+                        // store-reuse hazard #426 met on this path was the premature free
+                        // `reclaim_safe` fixed; the copy is the field tail's.
+                        // A NULLABLE answer (`-> vector<T>? { v[i] }`) stays the element: the
+                        // copy of an absent element is an empty vector, not absent (`(L-Null)`
+                        // keeps a copy of an absent value absent).
+                        Some(base) => {
+                            !matches!(self.data.def(self.context).returned(), Type::Optional(_))
+                                && self.projection_rooted_at_argument(base)
+                        }
+                        None => false,
+                    };
+                }
+                _ => return false,
+            }
+        }
+    }
+
+    /// Is `v` a vector ELEMENT read (`OpGetVector`) on a projection chain whose root is an
+    /// argument of this function?
+    fn projection_rooted_at_argument(&self, v: &Value) -> bool {
+        let mut v = v;
+        let mut through_element = false;
+        loop {
+            match v.unspan() {
+                Value::Var(bv) => return through_element && self.vars.is_argument(*bv),
+                Value::Call(d, args) => {
+                    let name = self.data.def(*d).name();
+                    if name == "OpGetVector" {
+                        through_element = true;
+                    } else if name != "OpGetField" {
+                        return false;
+                    }
+                    let Some(first) = args.first() else {
+                        return false;
+                    };
+                    v = first;
                 }
                 _ => return false,
             }
