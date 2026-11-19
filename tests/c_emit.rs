@@ -1287,6 +1287,76 @@ fn main() {
     }
 }
 
+/// `@FR-N-Road` / `(R-ValueRecord)` — a record returned out of a discharged view, `return
+/// v[i]?` inside a loop (moros's `map_get_hex`), travels as its struct.  The copy into the
+/// return buffer stands in the present arm of the discharge (`if OpConvBoolFromRef(__ncc_N)
+/// __ncc_N else …`), so its source is PROVEN present and takes no absence test; the test it
+/// had answered `OpNullRefSentinel()` on a path that cannot run, a null leaf no non-nullable
+/// layout admits, and the function fell back to a store minted per call (the bench's
+/// `slope_path_with_undo` ran 2.7x slower in C ship).  The values are the same on either
+/// road, so the guard is the emitted signature.
+#[test]
+fn a_record_returned_from_a_discharged_view_travels_as_a_struct() {
+    let src = r#"struct Hex { h: integer, m: integer, i: integer, r: integer, n: integer, e: integer, s: integer }
+struct Chunk { cx: integer, hexes: vector<Hex> }
+struct Map { chunks: vector<Chunk> }
+fn get_hex(m: Map, cx: integer, idx: integer) -> Hex {
+  for c in m.chunks {
+    if c.cx == cx && idx >= 0 && idx < len(c.hexes) { return c.hexes[idx]?; }
+  }
+  Hex {}
+}
+fn main() {
+  m = Map { chunks: [Chunk { cx: 1, hexes: [Hex { h: 5, m: 0, i: 0, r: 0, n: 0, e: 0, s: 2 }] }] };
+  a = get_hex(m, 1, 0);
+  b = get_hex(m, 2, 0);
+  println("{a.h} {a.s} {b.h}");
+}
+"#;
+    // a: the one hex of chunk 1, h 5 and s 2; b: no chunk 2, the default hex, h 0.
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("value-record-discharge");
+    let file = dir.join("vd.loft");
+    fa::write(&file, src).expect("write program");
+    let interp = loft::platform::process::harness_command(loft)
+        .arg("--interpret")
+        .arg(&file)
+        .output()
+        .expect("run loft");
+    assert_eq!(
+        String::from_utf8_lossy(&interp.stdout),
+        "5 2 0\n",
+        "the interpreter"
+    );
+    let c = dir.join("vd.c");
+    let _ = fa::remove_file(&c);
+    let emit = loft::platform::process::harness_command(loft)
+        .arg("--emit-c")
+        .arg(&c)
+        .arg(&file)
+        .output()
+        .expect("run loft --emit-c");
+    assert!(
+        emit.status.success(),
+        "{}",
+        String::from_utf8_lossy(&emit.stderr)
+    );
+    let text = fa::read_to_string(&c).expect("read the C");
+    let sig = text
+        .lines()
+        .find(|l| {
+            (l.starts_with("static ") || l.starts_with("LOFT_HOT_INLINE "))
+                && l.contains("n_get_hex(")
+        })
+        .unwrap_or_default()
+        .replacen("static inline ", "static ", 1)
+        .replacen("LOFT_HOT_INLINE ", "static ", 1);
+    assert!(
+        sig.starts_with("static loft_tup"),
+        "get_hex returns through a store: {sig}"
+    );
+}
+
 /// `@FR-R-SplitTable`: a `parts = text.split(c)` read only by its length, its element reads
 /// and a walk keeps its pieces as slices of a copy of the text (`loft_stab`) and never builds
 /// the vector or mints its buffer.  The cells: separators at both ends and doubled, an empty
