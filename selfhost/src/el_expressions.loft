@@ -1872,6 +1872,26 @@ fn branch_yields_null(e: el::El, n: ir::Node) -> boolean {
 // value is copied whole (`{ w = null; OpDatabase(w, kt); OpCopyRecord(<value>, w, kt); w }`),
 // behind a null test where the value may be absent and can be read again.  Null where a leaf
 // needs its source bound first (`bind_return_source`): not carried.
+// The local a condition proves present: `OpConvBoolFromRef(x)` or `OpNot(OpRefIsNull(x))`; -1.
+pub fn present_tested(e: el::El, c: ir::Node) -> integer {
+  match el_ir::unspan(c) {
+    NdCall { def_nr, args } => {
+      nm = el::def(e, def_nr).name;
+      if nm == "OpConvBoolFromRef" && len(args) == 1 {
+        return match el_ir::unspan(args[0]!) { NdVar { n } => n, _ => -1 };
+      }
+      if nm == "OpNot" && len(args) == 1 {
+        return match el_ir::unspan(args[0]!) {
+          NdCall { def_nr: id, args: ia } => if el::def(e, id).name == "OpRefIsNull" && len(ia) == 1 { match el_ir::unspan(ia[0]!) { NdVar { n } => n, _ => -1 } } else { -1 },
+          _ => -1
+        };
+      }
+      -1
+    },
+    _ => -1
+  }
+}
+
 pub fn copy_arms(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, td: integer, owned: ir::TypeT) -> ir::Node? {
   if el_trace::on() {
     el_trace::route(e, "materialize_return_into");
@@ -1886,7 +1906,17 @@ pub fn copy_arms(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, td: i
         return ir::NdSpan { pos: pos, inner: ci! };
       },
       NdIf { cond, t, f } => {
+        // (`@FR-N-Road`, tested unless proven present: a then arm that IS the local its
+        // condition proved present — `OpConvBoolFromRef(x)`, `OpNot(OpRefIsNull(x))` — is copied
+        // with no absence test.)
+        keep_present = vars.copy_present;
+        pv = present_tested(e, cond);
+        tv = match el_ir::unspan(t) { NdVar { n: tn } => tn, NdBlock { block: tbb } => if len(tbb[0].operators) > 0 { match el_ir::unspan(tbb[0].operators[-1]) { NdVar { n: tbn } => tbn, _ => -1 } } else { -1 }, _ => -1 };
+        if pv >= 0 && pv == tv {
+          vars.copy_present = pv;
+        }
         ct = copy_arms(e, vars, t, rb, td, owned);
+        vars.copy_present = keep_present;
         cf = copy_arms(e, vars, f, rb, td, owned);
         if ct == null || cf == null {
           return null;
@@ -1962,7 +1992,7 @@ pub fn copy_arms(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, td: i
   // The copy is bare only where its source is PROVEN present (`copy_source_is_present`); any
   // other source with no user call in it is tested by reading it again.
   guard = match x {
-    NdVar { n: v } => record_may_be_absent(vars, v, []),
+    NdVar { n: v } => v != vars.copy_present && record_may_be_absent(vars, v, []),
     _ => !user && !source_is_present(e, vars, x)
   };
   if guard {
