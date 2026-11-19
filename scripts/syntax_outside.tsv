@@ -1,0 +1,49 @@
+# The lexemes that are in no slot of the slot matrix, each with the reason (@PLN221).
+# Columns, tab-separated: lexeme, class and reason.  The reason starts with its class:
+#   none:       the form takes no operand, so there is nothing to count.
+#   decl:       it is part of a declaration or a type; what follows it is not an expression
+#               evaluated at run time.
+#   unreached:  it DOES take an operand, and the matrix cannot put a counted expression in
+#               it yet.  These are owed: each needs the prelude or the slot types extended.
+# `slot_matrix.py check` fails on a lexeme the lexer or the parser knows that is neither in
+# a slot or filler nor here, and on a line here that a slot has since made untrue.
+$	unreached: the record itself inside a field's own expression (`init`, `computed`, `default`); no value of the caller reaches it
+computed	unreached: a field expression run at every read of the field; it sees only the record, so a cell cannot hand it a counter
+default	unreached: a field expression run when a record is built without the field; it sees only the record
+init	unreached: a field expression run once when a record is built; it sees only the record
+virtual	unreached: the older spelling of `computed`
+next	unreached: `f#next = e` moves a file's position and takes an expression; the prelude has no file
+read	unreached: `f#read(n)` takes a byte count; the prelude has no file
+format	unreached: `f#format = e` takes a value; the prelude has no file
+lock	unreached: `d#lock = e` takes a boolean; a locked store would stop the cell's own writes
+parse	unreached: `T.parse(e)` takes a text; the prelude has no text that parses to one of its records
+from	unreached: `yield from e` takes a generator; no slot type carries one yet
+panic	unreached: `panic(e)` takes a message and ends the program, so the cell cannot print its count
+break	none: leaves a loop; it carries no value
+continue	none: starts the next step of a loop; it carries no value
+count	none: `p#count`, a number the loop keeps for its variable
+first	none: `p#first`, a fact the loop keeps for its variable
+remove	none: `p#remove`, an action on the loop's current element
+errors	none: `s#errors` reads what a parse left on a variable
+exists	none: `f#exists` reads a fact about a file variable
+fields	none: `s#fields` walks a type's fields at compile time
+@	none: binds a name to a pattern in a match arm; a pattern is not evaluated as an operand
+//	none: a comment
+:=	none: only looked for, to tell a block from a typed binding; it is not loft syntax
+not	decl: the deprecated `not null` modifier of a type
+const	decl: a modifier of a parameter's or a field's type
+limit	decl: a field's range, written with literals
+size	decl: a field's stored width, written with a literal
+::	decl: qualifies a name with the file or type that declares it
+capability	decl: declares a capability group
+enum	decl: declares a type
+struct	decl: declares a type
+type	decl: declares a type
+interface	decl: declares an interface
+operator	decl: declares an operator of a type
+op	decl: declares an operator of a type
+pub	decl: makes a declaration visible outside its file
+use	decl: imports a file or a library
+sizeof	decl: takes a type and is answered at compile time
+type_name	decl: takes a type and is answered at compile time
+debug_assert	none: reserved for a future release; the compiler refuses it today

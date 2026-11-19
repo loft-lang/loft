@@ -114,6 +114,13 @@ make rewrite-census                      # which REWRITES still fire where they 
                                          #   and writer, and so does a rule applied by another set of
                                          #   phases (`scripts/rule_phases.py`); seconds, exact, in `make ci`
                                          #   and on the PR.  `-bless` records a deliberate decline
+make slot-matrix [ARGS="--filler all"]     # THE SLOT MATRIX (@PLN221): each operand position of the
+                                         #   syntax with a counted expression in it.  Bare, it runs
+                                         #   every slot with its plain variable, which validates the
+                                         #   register; `--filler all` is the whole matrix and
+                                         #   `--slot <id>` one position.  `scripts/slot_matrix.py
+                                         #   list` shows the slots, `check` is the PR gate: new
+                                         #   syntax needs a row in `scripts/syntax_slots.tsv`
 make reason-census                       # WHICH REWRITES SAY WHY: per R- rule, the source sites
                                          #   that report why it refused a site and which site it
                                          #   admitted (a scan of `src/`, no build), and its state:
