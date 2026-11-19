@@ -1233,7 +1233,7 @@
 17_consumer_moros_dryopea	-	c	R-CTail	1
 17_consumer_moros_dryopea	-	c	R-Compact	2
 17_consumer_moros_dryopea	-	c	R-CompleteWrite	46
-17_consumer_moros_dryopea	-	c	R-Counter	359
+17_consumer_moros_dryopea	-	c	R-Counter	354
 17_consumer_moros_dryopea	-	c	R-CtorLiteral	4
 17_consumer_moros_dryopea	-	c	R-DischargeInto	1
 17_consumer_moros_dryopea	-	c	R-ExitVector	2
@@ -1263,7 +1263,7 @@
 17_consumer_moros_dryopea	-	c	R-KeyedEntry/subscript	3
 17_consumer_moros_dryopea	-	c	R-LiteralAppend	1
 17_consumer_moros_dryopea	-	c	R-LoopSlot	54
-17_consumer_moros_dryopea	-	c	R-Mint	49
+17_consumer_moros_dryopea	-	c	R-Mint	48
 17_consumer_moros_dryopea	-	c	R-NoThreads	1
 17_consumer_moros_dryopea	-	c	R-NonSentinelParam	38
 17_consumer_moros_dryopea	-	c	R-NonSentinelParam/twin	4
@@ -1277,7 +1277,7 @@
 17_consumer_moros_dryopea	-	c	R-RecPtr/param	2
 17_consumer_moros_dryopea	-	c	R-RecPtr/text	7
 17_consumer_moros_dryopea	-	c	R-RefParam	149
-17_consumer_moros_dryopea	-	c	R-RetAdopt	5
+17_consumer_moros_dryopea	-	c	R-RetAdopt	3
 17_consumer_moros_dryopea	-	c	R-Reuse	11
 17_consumer_moros_dryopea	-	c	R-Rotate	62
 17_consumer_moros_dryopea	-	c	R-Scalar	2
@@ -1301,7 +1301,7 @@
 17_consumer_moros_dryopea	-	rust	R-CharWalk	10
 17_consumer_moros_dryopea	-	rust	R-Compact	2
 17_consumer_moros_dryopea	-	rust	R-CompleteWrite	46
-17_consumer_moros_dryopea	-	rust	R-Counter	223
+17_consumer_moros_dryopea	-	rust	R-Counter	222
 17_consumer_moros_dryopea	-	rust	R-CtorLiteral	4
 17_consumer_moros_dryopea	-	rust	R-DischargeInto	1
 17_consumer_moros_dryopea	-	rust	R-ExitVector	2
@@ -1333,7 +1333,7 @@
 17_consumer_moros_dryopea	-	rust	R-LitDiv	91
 17_consumer_moros_dryopea	-	rust	R-LiteralAppend	1
 17_consumer_moros_dryopea	-	rust	R-LoopSlot	54
-17_consumer_moros_dryopea	-	rust	R-Mint	56
+17_consumer_moros_dryopea	-	rust	R-Mint	55
 17_consumer_moros_dryopea	-	rust	R-PushFill/record	1
 17_consumer_moros_dryopea	-	rust	R-PushRec	20
 17_consumer_moros_dryopea	-	rust	R-Range	502
@@ -1341,7 +1341,7 @@
 17_consumer_moros_dryopea	-	rust	R-RecPtr	47
 17_consumer_moros_dryopea	-	rust	R-RecPtr/nested	14
 17_consumer_moros_dryopea	-	rust	R-RefillBuffer	2
-17_consumer_moros_dryopea	-	rust	R-RetAdopt	8
+17_consumer_moros_dryopea	-	rust	R-RetAdopt	6
 17_consumer_moros_dryopea	-	rust	R-Reuse	11
 17_consumer_moros_dryopea	-	rust	R-Rotate	62
 17_consumer_moros_dryopea	-	rust	R-Scalar	2
