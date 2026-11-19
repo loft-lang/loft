@@ -163,11 +163,45 @@ the branch that carries both fixes.
 | **D** — depth two | fillers nested once | the same run at depth two; a cause found here that depth one missed is recorded with the pair that exposed it | Open |
 | **E** — the cells as lockstep input | every generated cell fed to the Rust-against-loft comparison of results and debug layers | a difference in any layer on any cell | Blocked on the port's comparison harness taking generated input |
 | **F** — the gate | depth one in the changed-subject loop and the PR gate, depth two nightly; a baseline of open cells that may only shrink | a new failing cell on a PR; a baseline entry that passes again and was not removed | Open |
-| **G** — reach | the matrix walked back over past defects: `slot_matrix.py walk --old <binary>` against the release before, and the `silent-wrong` issues since it judged in [reach.tsv](reach.tsv); every axis and row it asks for | the time walk: a row added for a past issue must FAIL on the build that had the defect; the share of new issues that `fits-now` at the next release | Running — contexts and frames added; the sequence axis, a second operand and more worlds are open ([REACH.md](REACH.md)) |
+| **G** — reach | the matrix walked back over past defects: `slot_matrix.py walk --old <binary>` against the release before, and the `silent-wrong` issues since it judged in [reach.tsv](reach.tsv); every axis and row it asks for | the time walk: a row added for a past issue must FAIL on the build that had the defect; the share of new issues that `fits-now` at the next release | Running — contexts and frames added; G1 to G9 of § Phase ordering are its steps |
 
-Phase C's order is by the pilot's yield: iteration, then write places, then reads, then the
-rest.  Each family is its own step, with its own comparison, and can be put down between
-steps.
+## Phase ordering
+
+The tooling comes before the fixes: a wider matrix finds more with every run, and each
+fix is then checked by cells that already exist.
+
+1. **G1 — the baseline and the gate** (this is phase F, taken first).  A file of the cells
+   known to fail, which may only shrink, so the 39-second run joins the PR gate before the
+   causes are fixed.  *Verify:* a cell that newly fails turns the gate red; a baseline line
+   whose cell passes again and was not removed does too.  The time walk showed three
+   regressions inside two weeks that this would have stopped at their own PR.
+2. **G2 — the ad-hoc cell.**  `slot_matrix.py cell '<statement with <S>>' --filler '<expr>'`
+   runs one shape on both backends with all four checks, and prints the table rows to add
+   when it fails.  The agent that meets a defect then adds the row at that moment.
+   *Verify:* the command on loft#2573's statement fails on the release build and passes here.
+3. **G3 — calibrate the reading.**  The 23 `fits-rows` issues of [reach.tsv](reach.tsv)
+   written as rows; the time walk says how many of them really fail on the build that had
+   the defect.  That share is how far a judged verdict can be trusted.
+4. **G4 — fillers built from fillers** (this is phase D).  A filler template with a hole of
+   its own, filled by the other fillers of that type: depth two without writing each by hand.
+5. **G5 — a second counted operand**, and a twin that binds every operand in source order.
+   For the seven "two operands interacting" issues; it also replaces the plain-variable
+   order check by a real one.
+6. **G6 — views across the statement.**  The prelude binds views of its values before the
+   statement and shows them after it, for the ten "bind, disturb, read" issues.
+7. **G7 — a second prelude**: nullable fields, a struct-enum, a generic, for the seven
+   declaration-shape issues.
+8. **G8 — the older walks.**  `walk` against `v2026.10.0`, which needs no reading; then a
+   SAMPLE of about thirty of October's `silent-wrong` issues, judged as November's were.
+   October's finder was the rule walk and not the port, so the sample is there to see
+   whether it names an axis November did not — not to fill the ledger.
+9. **G9 — a probe, before it is planned:** which IR operations the corpus produces and no
+   cell of the matrix does.  If `loft introspect` gives that histogram cheaply, the gaps
+   name missing rows without anyone reading an issue.
+10. **C — the fixes**, in the order of [built.md](built.md): the lost write first.  Phase
+    C's families follow the yield: iteration, write places, reads, the rest.
+11. **E — the cells as input to the two-implementation comparison**, when the port's
+    harness takes generated programs.
 
 ## Open design questions
 

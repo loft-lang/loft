@@ -90,16 +90,9 @@ bare statement does not show:
 
 ## What the walk asks for next
 
-1. **The 23 `fits-rows` issues**, as rows.  Each is a cell that must fail on the build that
-   had the defect, which the time walk checks without reading anything.
-2. **A sequence axis.**  Ten issues are "bind a view, disturb, read".  The prelude can bind
-   views of its values before the statement and show them after it, which reaches the ones
-   where the operand's form matters; the rest need hand-written expectations.
-3. **A second operand.**  Seven issues need two counted operands, one of which writes what
-   the other reads.  That wants fillers that write the prelude's own values, and a twin
-   that binds every operand in source order, not only the slot.
-4. **More worlds.**  Seven issues turn on a declaration.  A second prelude — nullable
-   fields, a struct-enum, a generic — multiplies the matrix once more.
+The steps are G1 to G9 of [the plan's § Phase ordering](README.md#phase-ordering): the gate
+first, then the ad-hoc cell, the calibration of this ledger's 23 `fits-rows` verdicts, and
+the axes the table above leaves open.
 
 The ledger is redone at each release: the new `silent-wrong` issues are judged, and the
 share that `fits-now` is the matrix's reach on defects it was not built from.
