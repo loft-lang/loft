@@ -206,6 +206,9 @@ pub fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: 
     in2 = match inner { TyVector { inner: vi } => vi, _ => ir::TyVoid };
     if !(in2 is TyVoid) && e.p.nodes[it] is SVecLit && el_ex_pattern::push_op(in2) != "" && elm >= 0 {
       subs = match e.p.nodes[it] { SVecLit { items: si } => si, _ => [] };
+      // (The inner literal takes an element temp of its own, as `parse_vector` gives every
+      // nested literal — unused where its items are pushed.)
+      el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [elm] });
       sxs: vector<Ex> = [];
       for sb in subs {
         sxs += [el_ex_assign::expression(e, vars, sb)];

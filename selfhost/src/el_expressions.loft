@@ -1722,7 +1722,9 @@ fn arm_hands_back(e: el::El, vars: el_vars::Vars, n: ir::Node) -> boolean {
     NdSpan { inner } => arm_hands_back(e, vars, inner),
     NdIf { cond: _, t, f } => arm_hands_back(e, vars, t) || arm_hands_back(e, vars, f),
     NdBlock { block } => len(block[0].operators) > 0 && arm_hands_back(e, vars, el_ir::unspan(el_ir::last(block[0].operators))),
-    NdVar { n: v } => vars.vars[v].argument && !hidden_param(e, vars, v),
+    // (A `??` or `!` holder viewing a parameter hands that parameter back — `["h"]`; a user
+    // local viewing one is its own value, copied.)
+    NdVar { n: v } => (vars.vars[v].argument && !hidden_param(e, vars, v)) || ((starts_with(el_vars::name_of(vars, v), "__ncc_") || starts_with(el_vars::name_of(vars, v), "_ncr_")) && len([for hd in el_types::deps(el_vars::tp(vars, v)) if hd < len(vars.vars) && vars.vars[hd].argument { hd }]) > 0),
     NdCall { def_nr, args: _ } => {
       nm = el::def(e, def_nr).name;
       if starts_with(nm, "n_") || starts_with(nm, "t_") {
