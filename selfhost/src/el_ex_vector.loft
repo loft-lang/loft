@@ -1120,6 +1120,14 @@ pub fn logical(e: el::El, vars: el_vars::Vars, is_or: boolean, l: integer, r: in
     if untyped_empty(b) {
       b = ex(ir::NdBoolean { b: true }, ir::TyBoolean);
     }
+    // A `null` literal is a `boolean?` absence (`OpConvBoolFromNull`): the right operand made
+    // definite by `== true` below, as any `boolean?`.
+    if a.tp is TyNull {
+      a = ex(el_ir::cl(e, "OpConvBoolFromNull", []), ir::TyOptional { inner: ir::TyBoolean });
+    }
+    if b.tp is TyNull {
+      b = ex(el_ir::cl(e, "OpConvBoolFromNull", []), ir::TyOptional { inner: ir::TyBoolean });
+    }
     for x in [a, b] {
       if !el_types::is_unknown(x.tp) && !(el_types::base(x.tp) is TyBoolean) && el_ex_pattern::condition(e, x) == null {
         el::refuse(e, "a `&&` or `||` operand that is not a boolean: {type_kind(x.tp)}");
