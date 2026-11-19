@@ -12664,11 +12664,53 @@ impl Parser {
                     None => return false,
                 },
                 Value::Call(d, args) => {
-                    return *d == self.data.def_nr("OpGetField")
-                        && matches!(
-                            args.first().map(Value::unspan),
-                            Some(Value::Var(bv)) if matches!(self.vars.tp(*bv), Type::Reference(_, _))
-                        );
+                    if *d != self.data.def_nr("OpGetField") {
+                        return false;
+                    }
+                    return match args.first().map(Value::unspan) {
+                        // A NULLABLE record parameter (`s: S?`) too: its field is a view of the
+                        // caller's record as much as a dense one's is, and the copy below tests
+                        // absence where the answer is nullable (loft#2585).
+                        Some(Value::Var(bv)) => {
+                            matches!(self.vars.tp(*bv).peel_optional().0, Type::Reference(_, _))
+                        }
+                        // loft#2585 — an ELEMENT of an argument (`{ h[0] }`, read as
+                        // `OpGetField(OpGetVector(h, …), 0, <vector>)`): `(F-Ret)` makes the
+                        // answer the caller's own, and the caller adopts the one-buffer result
+                        // it is published as, so a write through it wrote the argument.  The
+                        // store-reuse hazard #426 met on this path was the premature free
+                        // `reclaim_safe` fixed; the copy is the field tail's.
+                        // A NULLABLE answer (`-> vector<T>? { v[i] }`) is copied only where the
+                        // element is present (`copy_borrow_tail_into_retbuf`'s guarded form):
+                        // `(L-Null)` keeps a copy of an absent value absent.
+                        Some(base) => self.projection_rooted_at_argument(base),
+                        None => false,
+                    };
+                }
+                _ => return false,
+            }
+        }
+    }
+
+    /// Is `v` a vector ELEMENT read (`OpGetVector`) on a projection chain whose root is an
+    /// argument of this function?
+    fn projection_rooted_at_argument(&self, v: &Value) -> bool {
+        let mut v = v;
+        let mut through_element = false;
+        loop {
+            match v.unspan() {
+                Value::Var(bv) => return through_element && self.vars.is_argument(*bv),
+                Value::Call(d, args) => {
+                    let name = self.data.def(*d).name();
+                    if name == "OpGetVector" {
+                        through_element = true;
+                    } else if name != "OpGetField" {
+                        return false;
+                    }
+                    let Some(first) = args.first() else {
+                        return false;
+                    };
+                    v = first;
                 }
                 _ => return false,
             }
@@ -12776,15 +12818,48 @@ impl Parser {
         // explicit `return <borrow>` path in `parse_return`, which appends inline
         // and frees nothing.
         let orig = std::mem::replace(last, Value::Null);
-        let append = self.cl(
-            "OpAppendVector",
-            &[Value::Var(buf_var), orig, Value::Int(rec_tp)],
-        );
-        *last = crate::data::v_block(
-            vec![clear, append, Value::Var(buf_var)],
-            Type::Vector(Box::new(elm_ty.clone()), Deps::frame1(buf_var)),
-            "borrow_tail_copy_104",
-        );
+        // loft#2585 — a NULLABLE answer (`-> vector<T>? { v[i] }`, `{ s.v }` of an `s: S?`)
+        // copies only where the value is present; an absent one stays absent (`(L-Null)`),
+        // since the copy of an absent vector is an empty vector.  The element is read once
+        // into a local that only views it (skip_free: P462's over-free was such a local's free
+        // of the borrowed source).
+        let guarded = self.data.def(self.context).returned().peel_optional().1;
+        let buf_tp = Type::Vector(Box::new(elm_ty.clone()), Deps::frame1(buf_var));
+        if guarded {
+            let fwd = self.create_unique(
+                "fwd_elm",
+                &Type::Vector(Box::new(elm_ty.clone()), Deps::none()),
+            );
+            self.vars.set_skip_free(fwd);
+            let append = self.cl(
+                "OpAppendVector",
+                &[Value::Var(buf_var), Value::Var(fwd), Value::Int(rec_tp)],
+            );
+            let copy = crate::data::v_block(
+                vec![clear, append, Value::Var(buf_var)],
+                buf_tp.clone(),
+                "borrow_tail_copy_104",
+            );
+            let absent = self.cl("OpVectorIsNull", &[Value::Var(fwd)]);
+            *last = crate::data::v_block(
+                vec![
+                    crate::data::v_set(fwd, orig),
+                    crate::data::v_if(absent, Value::Var(fwd), copy),
+                ],
+                buf_tp,
+                "borrow_tail_copy_104",
+            );
+        } else {
+            let append = self.cl(
+                "OpAppendVector",
+                &[Value::Var(buf_var), orig, Value::Int(rec_tp)],
+            );
+            *last = crate::data::v_block(
+                vec![clear, append, Value::Var(buf_var)],
+                buf_tp,
+                "borrow_tail_copy_104",
+            );
+        }
         // Every return delivers once the function is buffer-bound — the sibling of the
         // forwarder leg's delivery (loft#2443).
         let tail = l.len() - 1;

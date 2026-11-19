@@ -92,6 +92,14 @@ it prints (`LANDED <sha>`) is the one on origin, and the local commit's sha exis
 landing worktree. Quote the LANDED sha in every message and issue comment. On 2026-11-19 two
 messages to loft3 named the local shas (288939d44, 120d959a9), which origin does not have.
 
+## The checks a parser fix lands with (tester)
+
+Beyond the matrix, the suite on both backends, `c_emit`, clippy, the census and the parsed-IR
+corpus dump: `python3 scripts/ir_walker_audit.py optional --check-ratchet` (a shape-test count
+that FELL is re-pinned in the same commit, `--write-ratchet`, and QUALITY.md's row follows it)
+and `cargo test --release --test doc_hygiene`.  62a90f9de lowered the count and the row went
+stale on two branches until loft3's run caught it.
+
 ## Peers
 
 - The PORTER: `SendMessage` to `bridge:session_015fP1u2RTCyGqEvFJ5edvkL` (shown as
