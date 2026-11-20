@@ -153,6 +153,10 @@ pub struct El {
   pub closure_rec: integer,
   pub closure_var: integer,
   pub step_over: vector<StepOver>,
+  // `ref_linked_tuple_locals` (`@FR-T-Ref-Rep`): each tuple local (definition, name) the first
+  // pass saw handed to a `&(…)` parameter that links the `__tuple<…>` record — the second pass
+  // builds it as that record.
+  pub ref_tuple_links: vector<StepOver>,
   // The libraries: `Data::use_names` (emptied each pass, as `Data::reset` does), the name each
   // source was first loaded under, the file each importing source is read from, the plain
   // imports, the imports waiting for their importer's use region to end, and the sources being
@@ -240,6 +244,7 @@ pub fn new_el(p: syntax::Syntax, file: text, default: boolean) -> El {
     closure_rec: -1,
     closure_var: -1,
     step_over: [],
+    ref_tuple_links: [],
     use_names: [UseSource { name: "std", source: STD_SOURCE }],
     labels: [],
     source_files: [],

@@ -247,6 +247,15 @@ fn method_key(e: el::El, key: text, name: text, types: vector<ir::TypeT>, pos: i
   }
   if e.first_pass {
     set = el::source_nr(e, e.source, name);
+    // (`admit_overload_set` looks the name up anywhere, `def_nr`: a set of it the library
+    // holds — `compare`, over `Release`'s two — carries the members, and no set is made.)
+    if set < 0 && el::def_nr(e, name) >= 0 && el::def(e, el::def_nr(e, name)).def_type == el::DT_DYNAMIC {
+      lib = el::def_nr(e, name);
+      if !carries(e, lib, incumbent) {
+        carry(e, lib, receiver_spelling(key), incumbent);
+      }
+      return "t_{len(full)}{full}_{name}";
+    }
     if set >= 0 && el::def(e, set).def_type != el::DT_DYNAMIC {
       el::refuse(e, "a method overload beside a definition of its name that is no set");
       return "";
@@ -801,7 +810,7 @@ struct Ranked {
 
 // `Data::routed_types` (`F-Recv`'s argument clause): where any argument is nullable, every other
 // is read as nullable too, so a nullable argument anywhere reaches the `τ?` member.
-fn routed(types: vector<ir::TypeT>) -> vector<ir::TypeT> {
+pub fn routed(types: vector<ir::TypeT>) -> vector<ir::TypeT> {
   if len(types) == 0 {
     return [ir::TyUnknown { n: 0 }];
   }
@@ -1358,7 +1367,7 @@ pub fn select(e: el::El, set: integer, name: text, types: vector<ir::TypeT>, pos
 }
 
 // `select_overload_from`: the unique minimal member taking `args`; -1 for none, -2 for two.
-fn select_static(e: el::El, set: integer, args: vector<ir::TypeT>, only: integer = -1, literals: vector<boolean> = []) -> integer {
+pub fn select_static(e: el::El, set: integer, args: vector<ir::TypeT>, only: integer = -1, literals: vector<boolean> = []) -> integer {
   taking: vector<Ranked> = [];
   for a in el::def(e, set).attributes {
     match a.typedef[0] {

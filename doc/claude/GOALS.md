@@ -214,6 +214,14 @@ speed of it is a `--native` concern (the interpreter's dispatch overhead masks l
 so today loft lets you *express* the right layout and `--native` turns that into machine
 cost.
 
+The same line holds for **safety**: robustness is the compiler's work, not a tax on the
+shipped program.  Where a defect can be closed by a fact the compiler has (a binding that is
+rebound or not, a store that is one call site's or not), it is closed there, at compile time,
+and the generated code carries no check for it.  A run-time check is the last resort, for a
+question no static fact can answer; and a check that already exists to buy an optimisation (a
+store compare that saves an allocation per loop pass) is kept for that saving, never widened
+into a correctness guard that every program then pays for.
+
 ### Fixable end to end — the open-source lesson
 
 A production lesson sits under the whole distribution: **almost no tool or library

@@ -34,7 +34,7 @@ use el_ex_vector;
 // tail; a tuple literal's members, or a tuple local's read member by member, are written at
 // their fields (`synthetic_tuple_return`).  Null for a leaf that is neither, or a member that
 // is no plain scalar, text or record.
-fn boxed_tail_into(e: el::El, vars: el_vars::Vars, n: ir::Node, w: integer, td: integer) -> ir::Node? {
+pub fn boxed_tail_into(e: el::El, vars: el_vars::Vars, n: ir::Node, w: integer, td: integer) -> ir::Node? {
   owned = ir::TyReference { n: td, dep: [w] };
   match n {
     NdSpan { pos, inner } => {
@@ -255,7 +255,9 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   match b.code {
     NdBlock { block } => {
       tl = if len(block[0].operators) > 0 { el_ir::unspan(el_ir::last(block[0].operators)) } else { ir::NdNull };
-      joins = tl is NdIf || match tl { NdBlock { block: tb } => tb[0].name == "vector_match", _ => false };
+      // (A tail `if` whose arms both leave — a bind that never arrived, `(C-Never)` — joins
+      // nothing.)
+      joins = (tl is NdIf && !diverges(tl)) || match tl { NdBlock { block: tb } => tb[0].name == "vector_match", _ => false };
       if !e.first_pass && joins && el_types::base(b.tp) is TyText && len(el_types::deps(el_types::base(b.tp))) > 0 {
         el::refuse(e, "a text `if` or vector match at a text function's tail, answered through an accumulator");
       }
@@ -273,9 +275,10 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   // heap result otherwise keeps the type its return path gave the tail.
   // (A variant the tail answers is of the enum the result names: `-> Own?` over a `Borrowed`.)
   nullable_over_tail = match result { TyOptional { inner } => (el_types::is_equal(e, el_types::without_deps(inner), el_types::without_deps(b.tp)) || (variant_parent(e, b.tp) >= 0 && variant_parent(e, b.tp) == el_types::struct_enum_def(inner))) && !(b.tp is TyOptional), _ => false };
-  // (A tuple `if` tail its arms joined to a narrower spelling — `(integer?, integer)` under
-  // `-> (u8?, u8)` — is converted to the declared tuple at the body: `block_result`.)
-  tuple_if_tail = result is TyTuple && b.tp is TyTuple && !el_types::is_equal(e, result, b.tp) && el_ir::unspan(body_tail(b.code)) is NdIf;
+  // (A tuple tail of another spelling than the declared one — an `if` its arms joined to a
+  // narrower spelling, `(integer?, integer)` under `-> (u8?, u8)`, or a literal `(1, 2)` under
+  // `-> (integer?, integer)` — types the body as the declared tuple: `block_result`.)
+  tuple_if_tail = result is TyTuple && b.tp is TyTuple && !el_types::is_equal(e, result, b.tp);
   if !e.first_pass && (el_types::base(result) is TyText || nullable_over_tail || tuple_if_tail) {
     match code {
       NdBlock { block } => {
@@ -446,7 +449,57 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   // its body typed without a borrow — not carried: refused by name.
   // A keyed local of the body's own at the tail is answered as it is, the body typed as the
   // collection without a borrow; any other tail is refused by name.
-  if !e.first_pass && keyed_kind(el_types::base(result)) {
+  // A keyed PARAMETER answered at the tail (`fn id(x: hash<…>) -> hash<…> { x }`) is borrowed
+  // (`MergeAttr`): the result borrows that parameter, by attribute number, on both passes; the
+  // body stays typed as the parameter's read.
+  // (So is any body whose type borrows only visible parameters — a field of one, an `if` of
+  // two, a `??` over one: the result borrows each, as the body's type names them.)
+  kparam = false;
+  if keyed_kind(el_types::base(result)) && !(result is TyOptional) && len(el_types::deps(b.tp)) > 0 {
+    kas: vector<integer> = [];
+    for kpv in el_types::deps(b.tp) {
+      ka = if kpv >= 0 && kpv < len(vars.vars) && vars.vars[kpv].argument && !hidden_param(e, vars, kpv) { attr_nr(el::def(e, e.context), el_vars::name_of(vars, kpv)) } else { -1 };
+      if ka < 0 {
+        kas = [];
+        break;
+      }
+      kas += [ka];
+    }
+    if len(kas) > 0 {
+      kparam = true;
+      kr0 = el::def(e, e.context).returned[0] ?? result;
+      kds = el_types::deps(kr0);
+      for ka in kas {
+        if !kds.contains(ka) {
+          kds += [ka];
+        }
+      }
+      e.b.data.definitions[e.context].returned = [el_types::with_deps(kr0, kds)];
+    }
+  }
+  // A tail that is a keyed field of a local record (`b.fr_h`) is copied out first
+  // (`keyed_field_copy_out`, loft#2562); the body answers the copy, typed without a borrow.
+  kcopied = false;
+  if keyed_kind(el_types::base(result)) && !kparam && !(result is TyOptional) && len(el_types::deps(b.tp)) > 0 {
+    match code {
+      NdBlock { block } => {
+        kcb = block[0];
+        if len(kcb.operators) > 0 {
+          kco = keyed_field_copy_out(e, vars, kcb.operators[-1]!, result);
+          if kco != null {
+            kcb.operators[len(kcb.operators) - 1] = kco!;
+            kcb.result = [el_types::without_deps(el_types::base(result))];
+            code = ir::NdBlock { block: [kcb] };
+            kcopied = true;
+          }
+        }
+      },
+      _ => {}
+    }
+  }
+  // (A body whose type borrows nothing — a fresh call, a join of one and a null — answers the
+  // collection as it is.)
+  if !e.first_pass && keyed_kind(el_types::base(result)) && !kparam && !kcopied && len(el_types::deps(b.tp)) > 0 {
     kv = match body_tail(code) { NdVar { n } => if !vars.vars[n].argument && keyed_kind(el_types::base(el_vars::tp(vars, n))) && !(result is TyOptional) { n } else { -1 }, _ => -1 };
     // A literal tail was built as the collection where it was read (`keyed_tail_literal`).
     klit = match body_tail(code) { NdBlock { block } => block[0].name == "Vector" && keyed_kind(block[0].result[0] ?? ir::TyVoid), _ => false };
@@ -1039,9 +1092,80 @@ fn tail_is_join(n: ir::Node) -> boolean {
   }
 }
 
+// `Parser::keyed_local_field_copy_out` (loft#2562, `@FR-F-Ret`): a returned keyed collection
+// that is a FIELD of a local record (or of a call's result) owns no store — it lies inside the
+// record the frame frees — so each such leaf of the tail (through `return`, blocks and `if`
+// arms) is copied out into a local that owns its store (`materialize_keyed_value`:
+// `__blk_val_N = null; OpReplaceKeyed(<field>, __blk_val_N, kt); __blk_val_N`), minted on
+// both passes.  A field of a PARAMETER is the caller's: left alone.  Null where no leaf was
+// copied.
+pub fn keyed_field_copy_out(e: el::El, vars: el_vars::Vars, n: ir::Node, t: ir::TypeT) -> ir::Node? {
+  match n {
+    NdReturn { inner } => {
+      r = keyed_field_copy_out(e, vars, inner, t);
+      return if r == null { null } else { ir::NdReturn { inner: r! } };
+    },
+    NdDrop { inner } => {
+      r = keyed_field_copy_out(e, vars, inner, t);
+      return if r == null { null } else { ir::NdDrop { inner: r! } };
+    },
+    NdSpan { pos, inner } => {
+      r = keyed_field_copy_out(e, vars, inner, t);
+      return if r == null { null } else { ir::NdSpan { pos: pos, inner: r! } };
+    },
+    NdIf { cond, t: ta, f: fa } => {
+      rt = keyed_field_copy_out(e, vars, ta, t);
+      rf = keyed_field_copy_out(e, vars, fa, t);
+      if rt == null && rf == null {
+        return null;
+      }
+      return ir::NdIf { cond: cond, t: rt ?? ta, f: rf ?? fa };
+    },
+    NdBlock { block } => {
+      bl = block[0];
+      if len(bl.operators) == 0 {
+        return null;
+      }
+      r = keyed_field_copy_out(e, vars, bl.operators[-1]!, t);
+      if r == null {
+        return null;
+      }
+      bl.operators[len(bl.operators) - 1] = r!;
+      return ir::NdBlock { block: [bl] };
+    },
+    NdInsert { items } => {
+      if len(items) == 0 {
+        return null;
+      }
+      r = keyed_field_copy_out(e, vars, items[-1]!, t);
+      if r == null {
+        return null;
+      }
+      return ir::NdInsert { items: items[..-1] + [r!] };
+    },
+    NdCall { def_nr, args: ka } => {
+      if el::def(e, def_nr).name != "OpGetField" || len(ka) != 3 {
+        return null;
+      }
+      root = place_root(e, n);
+      if root >= 0 && vars.vars[root].argument {
+        return null;
+      }
+      // (The collection's type is the one the field read names: no schema lookup, which would
+      // number types early.)
+      kt = match el_ir::unspan(ka[2]!) { NdInt { n: kn } => kn, _ => 0 };
+      tmp = el_vars::create_unique(vars, "__blk_val", el_types::without_deps(el_types::base(t)));
+      el_vars::set_defined(vars, tmp);
+      return ir::NdInsert { items: [el_ir::v_set(tmp, ir::NdNull), el_ir::cl(e, "OpReplaceKeyed", [n, ir::NdVar { n: tmp }, ir::NdInt { n: kt }]), ir::NdVar { n: tmp }] };
+    },
+    _ => {}
+  }
+  null
+}
+
 // `Parser::reads_a_stored_reference` (loft#1977): does the tail hand up, on some arm, the record
 // a stored `reference<T>` names (`OpGetDbRef`), or a local of `bound` a block set to such a read?
-fn reads_stored_reference(e: el::El, n: ir::Node, bound: vector<integer>) -> boolean {
+pub fn reads_stored_reference(e: el::El, n: ir::Node, bound: vector<integer>) -> boolean {
   match el_ir::unspan(n) {
     NdReturn { inner } => reads_stored_reference(e, inner, bound),
     NdDrop { inner } => reads_stored_reference(e, inner, bound),
@@ -1413,6 +1537,33 @@ pub fn def_has_attr_prefix(def: ir::Definition, prefix: text) -> boolean {
   false
 }
 
+// `callee_forwards_foreign_store`: a function with no body (a native), or one whose body ends
+// in a call of such a function, answers a store of its own making.
+fn forwards_foreign_store(e: el::El, d: integer, depth: integer) -> boolean {
+  if depth > 8 || d < 0 {
+    return false;
+  }
+  def = el::def(e, d);
+  if !starts_with(def.name, "n_") && !starts_with(def.name, "t_") {
+    return false;
+  }
+  code = def.code[0] ?? ir::NdNull;
+  if code is NdNull {
+    return true;
+  }
+  t = match code { NdBlock { block } => if len(block[0].operators) > 0 { el_ir::unspan(el_ir::last(block[0].operators)) } else { ir::NdNull }, _ => ir::NdNull };
+  match t {
+    NdCall { def_nr } => forwards_foreign_store(e, def_nr, depth + 1),
+    _ => false
+  }
+}
+
+// `is_match_wrapper` (control.rs): the names a `match` lowers its block under — the one list
+// `if_tail_yields_text` and `text_branch_into` look through.
+pub fn is_match_wrapper(name: text) -> boolean {
+  name == "match" || name == "scalar_match" || name == "vector_match" || name == "struct_match" || name == "tuple_match" || name == "stream match" || name == "cursor match"
+}
+
 // `if_tail_yields_text`: an `if` (through a `return`, a `??` block or a match wrapper) whose
 // every arm answers a value.
 pub fn if_tail_yields_text(n: ir::Node) -> boolean {
@@ -1423,7 +1574,7 @@ pub fn if_tail_yields_text(n: ir::Node) -> boolean {
     NdIf { cond: _, t, f } => arm_yields_text(t) && arm_yields_text(f),
     NdBlock { block } => {
       nm = block[0].name;
-      wrapper = nm == "ncc" || nm == "ncr" || nm == "match" || nm == "scalar_match" || nm == "vector_match" || nm == "struct_match" || nm == "tuple_match";
+      wrapper = nm == "ncc" || nm == "ncr" || is_match_wrapper(nm);
       wrapper && len(block[0].operators) > 0 && if_tail_yields_text(block[0].operators[-1]!)
     },
     _ => false
@@ -2666,12 +2817,37 @@ pub fn child_allocs(e: el::El, vars: el_vars::Vars, code: ir::Node, v: integer) 
 // The parameters an `if` tail's arms hand back, every other arm answering the null sentinel;
 // null when an arm answers anything else.
 pub fn if_tail_params(e: el::El, vars: el_vars::Vars, code: ir::Node) -> vector<integer>? {
+  // (The body's own binds are no arm's: a tail local bound in the body is no branch.)
+  if_tail_params_in(e, vars, code, [], false)
+}
+
+// `if_tail_params` with the binds the enclosing blocks made (`sets`), so a local arm — an `ncr`
+// temp (`h.ds[0]!`), a `??` temp (`__ncc_N`) — reads back to the parameter its bind views.
+fn if_tail_params_in(e: el::El, vars: el_vars::Vars, code: ir::Node, sets: vector<ir::Node>, in_arm: boolean) -> vector<integer>? {
   // A body's block is read at its tail; a record literal's block is the arm itself.
   tail = match code { NdBlock { block } => if block[0].name == "Object" { code } else { el_ir::unspan(el_ir::last(block[0].operators)) }, _ => code };
+  inner_sets: vector<ir::Node> = [for s0 in sets { s0 }];
+  match code {
+    NdBlock { block: cb } => {
+      if cb[0].name != "Object" && in_arm {
+        for op in cb[0].operators {
+          if el_ir::unspan(op) is NdSet {
+            inner_sets += [el_ir::unspan(op)];
+          }
+        }
+      }
+    },
+    _ => {}
+  }
   match tail {
     NdIf { cond: _, t, f } => {
-      a = call_arm_params(e, vars, t) ?? if_tail_params(e, vars, t);
-      b = call_arm_params(e, vars, f) ?? if_tail_params(e, vars, f);
+      // (A struct-enum match's arm — typed by its variant, beside a recursion's `["??"]` deps —
+      // is not carried.)
+      if is_match_arm(t) || is_match_arm(f) {
+        return null;
+      }
+      a = call_arm_params(e, vars, t) ?? if_tail_params_in(e, vars, t, inner_sets, true);
+      b = call_arm_params(e, vars, f) ?? if_tail_params_in(e, vars, f, inner_sets, true);
       if a == null || b == null {
         return null;
       }
@@ -2686,6 +2862,24 @@ pub fn if_tail_params(e: el::El, vars: el_vars::Vars, code: ir::Node) -> vector<
     NdVar { n } => {
       if vars.vars[n]!.argument {
         return [n];
+      }
+      // (A local the arm's block bound — an `ncr` or `??` temp — answers what its bind views:
+      // an element or a field of a parameter answers that parameter.)
+      k = len(inner_sets) - 1;
+      while k >= 0 {
+        match inner_sets[k]! {
+          NdSet { var: sv, inner: si } => {
+            if sv == n {
+              sr = read_param_root(e, el_ir::unspan(si));
+              if sr >= 0 && vars.vars[sr]!.argument {
+                return [sr];
+              }
+              return null;
+            }
+          },
+          _ => {}
+        }
+        k -= 1;
       }
       null
     },
@@ -2718,12 +2912,42 @@ pub fn if_tail_params(e: el::El, vars: el_vars::Vars, code: ir::Node) -> vector<
         return [];
       }
       if block[0].name == "scalar_match" {
-        mps = if_tail_params(e, vars, el_ir::last(block[0].operators));
+        mps = if_tail_params_in(e, vars, el_ir::last(block[0].operators), inner_sets, in_arm);
         return mps;
+      }
+      // A plain block, an `ncr` / `ncc` block: the value its last operator delivers, its binds
+      // known to the arm.  (A `match` arm — a struct-enum match's, typed by its variant, beside
+      // a recursion's `["??"]` deps — is not carried.)
+      bn = block[0].name;
+      if (bn == "block" || bn == "ncr" || bn == "ncc") && len(block[0].operators) > 0 {
+        return if_tail_params_in(e, vars, tail, inner_sets, in_arm);
       }
       null
     },
     _ => null
+  }
+}
+
+fn is_match_arm(n: ir::Node) -> boolean {
+  match el_ir::unspan(n) { NdBlock { block } => block[0].name == "match_arm", _ => false }
+}
+
+// The local a read of a field or an element is rooted at — through `OpGetField`, `OpGetVector`,
+// `OpGetVectorNullable` and `OpGetRecord` — or -1 where the value is no such read.
+fn read_param_root(e: el::El, n: ir::Node) -> integer {
+  match n {
+    NdSpan { inner } => read_param_root(e, inner),
+    NdCall { def_nr, args } => {
+      nm = el::def(e, def_nr).name;
+      if len(args) == 0 || !(nm == "OpGetField" || nm == "OpGetVector" || nm == "OpGetVectorNullable" || nm == "OpGetRecord") {
+        return -1;
+      }
+      match el_ir::unspan(args[0]!) {
+        NdVar { n: v } => v,
+        _ => read_param_root(e, el_ir::unspan(args[0]!))
+      }
+    },
+    _ => -1
   }
 }
 
@@ -3294,6 +3518,17 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
   // A vector field of a local record is copied into the buffer at the tail, as such a local is.
   field_tail = calls(e, tail, "OpGetField") && place_root(e, tail) >= 0 && !vars.vars[place_root(e, tail)]!.argument;
   ret = el::def(e, d).returned[0];
+  // (`AsIs` over a user function forwarding a foreign store: the call's own buffer is a vector
+  // of the result's element, its type made where the body ends — at its `}` — on the first pass.)
+  ftd = match tail { NdCall { def_nr: ftn } => ftn, _ => -1 };
+  if e.first_pass && ftd >= 0 && !((el::def(e, ftd).code[0] ?? ir::NdNull) is NdNull) && forwards_foreign_store(e, ftd, 0) {
+    fel = match el_types::base(result) { TyVector { inner } => inner, _ => ir::TyVoid };
+    fnm = el_types::elem_name(e, fel);
+    fbe = match e.p.nodes[vars.body] { SBlock { end } => end, _ => -1 };
+    if fnm != "" && fbe >= 0 && el::def_nr(e, "main_vector<{fnm}>") < 0 {
+      el_schema::make_vector_def(e, fel, fnm, el::pos_at(e, fbe), true, narrow_early: false);
+    }
+  }
   if e.first_pass {
     if (literal || local >= 0 || field_tail) && !el_types::deps(ret).contains(ba) {
       e.b.data.definitions[d].returned = [el_types::with_deps(ret, el_types::deps(ret) + [ba])];
@@ -3342,6 +3577,13 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
   // A body ending in a `return` that delivered into the buffer itself (`return q ?? […]`:
   // clear, append, `return __retbuf`) has nothing left to deliver.
   if el_types::deps(ret).contains(ba) && match tail { NdInsert { items: ti } => len(ti) > 0 && el_ir::unspan(ti[-1]!) == ir::NdReturn { inner: ir::NdVar { n: rb } }, NdReturn { inner: tri } => el_ir::unspan(tri) == ir::NdVar { n: rb } && len(bl.operators) > 1 && calls(e, el_ir::unspan(bl.operators[-2]!), "OpAppendVector"), _ => false } {
+    return code;
+  }
+  // `classify_vector_delivery`'s `AsIs`: a tail call whose answer is a store of the callee's
+  // own — a native's, or a function's that forwards one (`callee_forwards_foreign_store`) — is
+  // returned as it stands; the buffer goes unused.
+  tcd = match tail { NdCall { def_nr: tdn } => tdn, _ => -1 };
+  if tcd >= 0 && forwards_foreign_store(e, tcd, 0) {
     return code;
   }
   if len(bl.operators) == 0 || !el_types::deps(ret).contains(ba) {
@@ -4666,10 +4908,18 @@ pub fn finish_body(e: el::El, vars: el_vars::Vars, body: ir::Node) -> ir::Node {
       // (`work_ref_takes_preamble`): a promoted return buffer is an argument and takes none, nor
       // does one that borrows (a caller's hidden buffer and an `__ncc_` temp still do); a text
       // takes the empty text, anything else null.
+      // (`@C168`: the preamble by descending number — each entry put first — with every
+      // literal element temp `_elm_N` among them, ascending, directly after the highest entry:
+      // they are not the preamble loop's own, Rust inserts them after it.)
+      elm_ws: vector<integer> = [];
       for wr in vars.work_refs {
         wt = el_vars::tp(vars, wr);
         borrows = len(el_types::deps(wt)) > 0 && !vars.vars[wr].caller_hidden_buf && !starts_with(vars.vars[wr].name, "__ncc_");
         if vars.vars[wr].argument || vars.inline_refs.contains(wr) || borrows {
+          continue;
+        }
+        if starts_with(vars.vars[wr].name, "_elm_") {
+          elm_ws += [wr];
           continue;
         }
         init = if el_types::base(wt) is TyText { ir::NdText { s: "" } } else { ir::NdNull };
@@ -4678,6 +4928,16 @@ pub fn finish_body(e: el::El, vars: el_vars::Vars, body: ir::Node) -> ir::Node {
           ops += [op];
         }
         bl.operators = ops;
+      }
+      if len(elm_ws) > 0 {
+        elm_ws.sort();
+        first_n = len(vars.work_refs) > len(elm_ws) && len(bl.operators) > 0 && el_ir::unspan(bl.operators[0]) is NdSet;
+        eops: vector<ir::Node> = if first_n { [bl.operators[0]!] } else { [] };
+        for ew in elm_ws {
+          eops += [el_ir::v_set(ew, ir::NdNull)];
+        }
+        eops += if first_n { bl.operators[1..] } else { bl.operators };
+        bl.operators = eops;
       }
       // An inline container's buffer is nulled just before the first statement that assigns it
       // (`inline_ref_set_in`: a `Set` of it anywhere inside — a store only `OpDatabase` fills,
@@ -4723,5 +4983,24 @@ pub fn finish_body(e: el::El, vars: el_vars::Vars, body: ir::Node) -> ir::Node {
       ir::NdBlock { block: [bl] }
     },
     _ => code
+  }
+}
+
+// Does every path through `n` leave by a `return`, `break` or `continue`?
+fn diverges(n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdReturn { inner: _ } => true,
+    NdBreak { n: _ } => true,
+    NdContinue { n: _ } => true,
+    NdIf { cond: _, t, f } => diverges(t) && diverges(f),
+    NdBlock { block } => {
+      for o in block[0].operators {
+        if diverges(o) {
+          return true;
+        }
+      }
+      false
+    },
+    _ => false
   }
 }

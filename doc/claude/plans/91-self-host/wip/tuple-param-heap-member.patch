@@ -1,0 +1,195 @@
+diff --git a/selfhost/src/el_definitions.loft b/selfhost/src/el_definitions.loft
+index 018e6b84d..5bfea2d1e 100644
+--- a/selfhost/src/el_definitions.loft
++++ b/selfhost/src/el_definitions.loft
+@@ -1465,8 +1465,9 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
+             for pm in pe {
+               pb = el_types::base(pm);
+               // (A vector member is carried: read through the parameter, or copied into the
+-              // `__tp_<name>` a write promotes.)
+-              if pb is TyReference || (pb is TyEnum && el_types::struct_enum_def(pb) >= 0) {
++              // `__tp_<name>` a write promotes; so is a plain struct member, `@FR-F-ParamTuple`.
++              // A struct enum's is refused by name.)
++              if pb is TyEnum && el_types::struct_enum_def(pb) >= 0 {
+                 el::refuse(e, "a tuple parameter with a heap member");
+               }
+             }
+@@ -1603,7 +1604,7 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
+         hv = el_vars::var(vars, ha.name);
+         match ha.typedef {
+           TyTuple { elems: hpe } => {
+-            if hv >= 0 && len([for hm in hpe if (el_types::base(hm) is TyVector) { hm }]) > 0 && el_vars::var(vars, "__tp_{ha.name}") < 0 {
++            if hv >= 0 && len([for hm in hpe if (el_types::base(hm) is TyVector || el_types::base(hm) is TyReference) { hm }]) > 0 && el_vars::var(vars, "__tp_{ha.name}") < 0 {
+               el_vars::promote_tuple_param(vars, hv);
+             }
+           },
+diff --git a/selfhost/src/el_expressions.loft b/selfhost/src/el_expressions.loft
+index a9186da8a..5af3e7e55 100644
+--- a/selfhost/src/el_expressions.loft
++++ b/selfhost/src/el_expressions.loft
+@@ -112,6 +112,33 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
+       _ => {}
+     }
+   }
++  // `@FR-F-ParamTuple`: each tuple shadow's copy seed is built at the body's entry on the
++  // second pass, so its `__ref_p2_N` number before the body's own work refs.
++  vars.seed_codes = [];
++  vars.seed_types = [];
++  vars.seed_built = [];
++  if !e.first_pass {
++    for ssh in vars.promoted_shadows {
++      spp = vars.promoted_params[ssh#index] ?? -1;
++      sbuilt = false;
++      match el_vars::tp(vars, spp) {
++        TyTuple { elems: spel } => {
++          spc = el_ex_assign::tuple_whole_bind_copy(e, vars, spp, spel);
++          if spc != null {
++            vars.seed_codes += [spc!.code];
++            vars.seed_types += [spc!.tp];
++            sbuilt = true;
++          }
++        },
++        _ => {}
++      }
++      if !sbuilt {
++        vars.seed_codes += [ir::NdNull];
++        vars.seed_types += [ir::TyVoid];
++      }
++      vars.seed_built += [sbuilt];
++    }
++  }
+   b = el_ex_assign::parse_block(e, vars, body, "return from block", result);
+   // A function value read off a field and ANSWERED takes a copy of the field's closure record,
+   // as one bound to a local does (`(B-View)`).
+@@ -866,6 +893,8 @@ fn projects_into_local(e: el::El, vars: el_vars::Vars, n: ir::Node, every_arm: b
+     NdBlock { block } => len(block[0].operators) > 0 && projects_into_local(e, vars, el_ir::last(block[0].operators), every_arm, arms),
+     NdInsert { items } => len(items) > 0 && projects_into_local(e, vars, items[-1]!, every_arm, arms),
+     NdIf { cond: _, t, f } => (every_arm || arms) && (projects_into_local(e, vars, t, every_arm, arms) || projects_into_local(e, vars, f, every_arm, arms)),
++    // A tuple member read is a projection too, rooted at its tuple local (`__tp_p.0`).
++    NdTupleGet { var: tgv } => !vars.vars[tgv].argument,
+     NdCall { def_nr, args } => {
+       nm = el::def(e, def_nr).name;
+       if (nm != "OpGetField" && nm != "OpGetVector") || len(args) == 0 {
+@@ -877,6 +906,8 @@ fn projects_into_local(e: el::El, vars: el_vars::Vars, n: ir::Node, every_arm: b
+       }
+       match projection_base(args[0]!) {
+         NdVar { n: base } => !vars.vars[base].argument,
++        // (A field of a tuple member, `t.0.items`, roots at the tuple local.)
++        NdTupleGet { var: ptv } => !vars.vars[ptv].argument,
+         NdCall { def_nr: bd } => {
+           bn = el::def(e, bd).name;
+           if bn == "OpGetField" || bn == "OpGetVector" { projects_into_local(e, vars, projection_base(args[0]!), false, arms) } else { true }
+@@ -1163,6 +1194,72 @@ pub fn keyed_field_copy_out(e: el::El, vars: el_vars::Vars, n: ir::Node, t: ir::
+   null
+ }
+ 
++// `passes::MemberWalk::only_read`, negated (`@FR-F-ParamTuple`): does the finished body write
++// through a place inside a member of the tuple shadow `sh` — a write op (`OpSet…`, `OpAppend…`,
++// `OpClear…`, `OpPush…`) whose place is rooted at `sh.k`, or at a local bound from such a read
++// (to a fixed point)?  A member rebind (`t.1 = …`) is no such write.
++pub fn member_written(e: el::El, body: ir::Node, sh: integer) -> boolean {
++  locals: vector<integer> = [];
++  changed = true;
++  while changed {
++    changed = false;
++    for x in member_bound_locals(e, body, sh, locals) {
++      if !locals.contains(x) {
++        locals += [x];
++        changed = true;
++      }
++    }
++  }
++  writes_member_place(e, body, sh, locals)
++}
++
++fn member_rooted(e: el::El, place: ir::Node, sh: integer, locals: vector<integer>) -> boolean {
++  match el_ir::unspan(place) {
++    NdTupleGet { var } => var == sh,
++    NdVar { n } => locals.contains(n),
++    NdCall { def_nr, args } => {
++      nm = el::def(e, def_nr).name;
++      len(args) > 0 && (nm == "OpGetField" || nm == "OpGetVector" || nm == "OpGetVectorNullable") && member_rooted(e, args[0]!, sh, locals)
++    },
++    _ => false
++  }
++}
++
++fn member_bound_locals(e: el::El, n: ir::Node, sh: integer, locals: vector<integer>) -> vector<integer> {
++  out: vector<integer> = [];
++  match n {
++    NdSet { var, inner } => {
++      if member_rooted(e, inner, sh, locals) {
++        out += [var];
++      }
++    },
++    _ => {}
++  }
++  for c in el_ir::children(n) {
++    out += member_bound_locals(e, c, sh, locals);
++  }
++  out
++}
++
++fn writes_member_place(e: el::El, n: ir::Node, sh: integer, locals: vector<integer>) -> boolean {
++  match n {
++    NdCall { def_nr, args } => {
++      nm = el::def(e, def_nr).name;
++      if len(args) > 0 && (starts_with(nm, "OpSet") || starts_with(nm, "OpAppend") || starts_with(nm, "OpClear") || starts_with(nm, "OpPush")) && member_rooted(e, args[0]!, sh, locals) {
++        // (A member rebind of the shadow itself, `t.1 = …`, is a `TuplePut`, not one of these.)
++        return true;
++      }
++    },
++    _ => {}
++  }
++  for c in el_ir::children(n) {
++    if writes_member_place(e, c, sh, locals) {
++      return true;
++    }
++  }
++  false
++}
++
+ // `Parser::reads_a_stored_reference` (loft#1977): does the tail hand up, on some arm, the record
+ // a stored `reference<T>` names (`OpGetDbRef`), or a local of `bound` a block set to such a read?
+ pub fn reads_stored_reference(e: el::El, n: ir::Node, bound: vector<integer>) -> boolean {
+@@ -4769,10 +4866,11 @@ pub fn finish_body(e: el::El, vars: el_vars::Vars, body: ir::Node) -> ir::Node {
+         // store of its own (`tuple_param_seed`, `tuple_member_move`).
+         match el_vars::tp(vars, pp) {
+           TyTuple { elems: pel } => {
+-            pc = el_ex_assign::tuple_whole_bind_copy(e, vars, pp, pel);
++            // (The seed built at the body's entry, `parse_code`; built here where none was.)
++            pc = if (vars.seed_built[sh#index] ?? false) { ex(vars.seed_codes[sh#index] ?? ir::NdNull, vars.seed_types[sh#index] ?? ir::TyVoid) } else { el_ex_assign::tuple_whole_bind_copy(e, vars, pp, pel) };
+             // (Where no member needed a copy the seed is the plain alias, `__tp_t = t`.)
+             copied = pc != null && match pc!.code { NdTuple { items: pit } => len([for pi in pit if (pi is NdBlock) { pi }]) > 0, _ => true };
+-            if pc != null && copied && vars.heap_member_written.contains(sh) {
++            if pc != null && copied && (vars.heap_member_written.contains(sh) || member_written(e, ir::NdBlock { block: [bl] }, sh)) {
+               seed = el_ir::v_set(sh, pc!.code);
+               el_vars::set_var_type(vars, sh, pc!.tp);
+             } else if copied {
+diff --git a/selfhost/src/el_vars.loft b/selfhost/src/el_vars.loft
+index 9ce16e555..50c187b0a 100644
+--- a/selfhost/src/el_vars.loft
++++ b/selfhost/src/el_vars.loft
+@@ -224,6 +224,12 @@ pub struct Vars {
+   // (`__tp_<name>`) its name reads as from then on, pairwise
+   pub promoted_params: vector<integer>,
+   pub promoted_shadows: vector<integer>,
++  // A tuple shadow's entry seed, built where the second pass enters the body (its work refs
++  // numbered there, as Rust's are), pairwise with `promoted_shadows`; `seed_built` false where
++  // none was built.
++  pub seed_codes: vector<ir::Node>,
++  pub seed_types: vector<ir::TypeT>,
++  pub seed_built: vector<boolean>,
+   // the cast being read is the left side of a `??`, which makes a narrowing one checked
+   pub dn4_coalesce: boolean = false,
+   // A destructure's right-hand call may answer a BOXED tuple (`boxed_tuple_return`): its record.
+@@ -823,6 +829,9 @@ pub fn take_over(v: Vars, kept: ir::Function) {
+   // shadow from the first statement on, the shadow defined (it is seeded at entry).
+   v.promoted_params = [];
+   v.promoted_shadows = [];
++  v.seed_codes = [];
++  v.seed_types = [];
++  v.seed_built = [];
+   for sh in v.vars {
+     if starts_with(sh.name, "__tp_") {
+       for orig in v.vars {
