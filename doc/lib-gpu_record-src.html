@@ -23,17 +23,17 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <a href="https://loft-lang.org/blog/">Blog</a> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>gpu_record source</h1>
 <article>
-<p><a href="lib-gpu_record.html">← gpu_record</a> · <a href="lib-gpu_record-api.html">API reference</a> · version 0.2.0</p>
-<p class="lib-legend">3 file(s), 399 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<p><a href="lib-gpu_record.html">← gpu_record</a> · <a href="lib-gpu_record-api.html">API reference</a> · version 0.3.1</p>
+<p class="lib-legend">3 file(s), 424 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
 <table class="lib-table">
 <tr><th>Item</th><th>Defined</th><th>Worked example</th><th>Call sites</th></tr>
-<tr><td><code>table</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-record-loft-L27">27</a></td><td>—</td><td><a href="#tests-frame-loft-L47">47</a> <a href="#tests-frame-loft-L277">277</a> <a href="#tests-frame-loft-L314">314</a> <a href="#tests-width32-loft-L13">13</a> <a href="#tests-width32-loft-L14">14</a> <a href="#tests-width32-loft-L15">15</a></td></tr>
+<tr><td><code>table</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-record-loft-L27">27</a></td><td>—</td><td><a href="#tests-frame-loft-L47">47</a> <a href="#tests-frame-loft-L264">264</a> <a href="#tests-frame-loft-L302">302</a> <a href="#tests-frame-loft-L339">339</a> <a href="#tests-width32-loft-L13">13</a> <a href="#tests-width32-loft-L14">14</a> … (7 total)</td></tr>
 <tr><td><code>log</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-record-loft-L32">32</a></td><td>—</td><td><a href="#tests-frame-loft-L86">86</a> <a href="#tests-frame-loft-L141">141</a> <a href="#tests-frame-loft-L148">148</a> <a href="#tests-frame-loft-L159">159</a> <a href="#tests-frame-loft-L207">207</a> <a href="#tests-frame-loft-L248">248</a> … (9 total)</td></tr>
-<tr><td><code>reset</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-record-loft-L37">37</a></td><td>—</td><td><a href="#tests-frame-loft-L46">46</a> <a href="#tests-frame-loft-L313">313</a> <a href="#tests-width32-loft-L12">12</a></td></tr>
-<tr><td><code>live</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-record-loft-L42">42</a></td><td>—</td><td><a href="#tests-frame-loft-L230">230</a> <a href="#tests-frame-loft-L239">239</a> <a href="#tests-frame-loft-L247">247</a></td></tr>
-<tr><td><code>refuse_source</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-record-loft-L49">49</a></td><td>—</td><td><a href="#tests-frame-loft-L269">269</a> <a href="#tests-frame-loft-L273">273</a></td></tr>
+<tr><td><code>reset</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-record-loft-L37">37</a></td><td>—</td><td><a href="#tests-frame-loft-L46">46</a> <a href="#tests-frame-loft-L338">338</a> <a href="#tests-width32-loft-L12">12</a></td></tr>
+<tr><td><code>live</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-record-loft-L42">42</a></td><td>—</td><td><a href="#tests-frame-loft-L230">230</a> <a href="#tests-frame-loft-L239">239</a> <a href="#tests-frame-loft-L247">247</a> <a href="#tests-frame-loft-L263">263</a> <a href="#tests-frame-loft-L266">266</a> <a href="#tests-frame-loft-L268">268</a></td></tr>
+<tr><td><code>refuse_source</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-record-loft-L49">49</a></td><td>—</td><td><a href="#tests-frame-loft-L294">294</a> <a href="#tests-frame-loft-L298">298</a></td></tr>
 </table>
 <h2 id="src-gpu-record-loft">src/gpu_record.loft</h2>
 <pre class="src"><code><span id="src-gpu-record-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
@@ -341,72 +341,97 @@
 <span id="tests-frame-loft-L250">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(mesh.<span class="fn-call">floats</span>() == <span class="nm">1</span>, <span class="st">"the buffer's own record stays readable"</span>);</span>
 <span id="tests-frame-loft-L251">}</span>
 <span id="tests-frame-loft-L252"></span>
-<span id="tests-frame-loft-L253"><span class="kw">fn</span> <span class="fn-call">test_a_program_without_this_backends_source_builds_no_pipeline</span>() {</span>
-<span id="tests-frame-loft-L254">  dev = <span class="fn-call">open</span>();</span>
-<span id="tests-frame-loft-L255">  p = gpu::<span class="en">Program</span> { vertex: [gpu::<span class="en">F3</span>], instance: [], block: [], textures: <span class="nm">0</span>, sources: [gpu::<span class="fn-call">source</span>(<span class="st">"other"</span>, <span class="st">"v"</span>, <span class="st">"f"</span>)] };</span>
-<span id="tests-frame-loft-L256">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(dev.<span class="fn-call">pipeline</span>(p, gpu::<span class="en">State</span> {}) == <span class="kw">null</span>, <span class="st">"no source tagged for this backend"</span>);</span>
-<span id="tests-frame-loft-L257">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">after_open</span>() == <span class="st">""</span>, <span class="st">"the backend was not asked:\n{after_open()}"</span>);</span>
-<span id="tests-frame-loft-L258">}</span>
-<span id="tests-frame-loft-L259"></span>
-<span id="tests-frame-loft-L260"><span class="kw">fn</span> <span class="fn-call">test_a_block_with_a_three_float_field_builds_no_pipeline</span>() {</span>
-<span id="tests-frame-loft-L261">  dev = <span class="fn-call">open</span>();</span>
-<span id="tests-frame-loft-L262">  p = gpu::<span class="en">Program</span> { vertex: [gpu::<span class="en">F3</span>], instance: [], block: [gpu::<span class="en">F3</span>], textures: <span class="nm">0</span>, sources: [gpu::<span class="fn-call">source</span>(<span class="st">"record"</span>, <span class="st">"v"</span>, <span class="st">"f"</span>)] };</span>
-<span id="tests-frame-loft-L263">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(dev.<span class="fn-call">pipeline</span>(p, gpu::<span class="en">State</span> {}) == <span class="kw">null</span>, <span class="st">"a block takes no F3"</span>);</span>
-<span id="tests-frame-loft-L264">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">after_open</span>() == <span class="st">""</span>, <span class="st">"the backend was not asked:\n{after_open()}"</span>);</span>
-<span id="tests-frame-loft-L265">}</span>
-<span id="tests-frame-loft-L266"></span>
-<span id="tests-frame-loft-L267"><span class="kw">fn</span> <span class="fn-call">test_a_backend_that_compiles_nothing_refuses_a_source_and_takes_a_blob</span>() {</span>
-<span id="tests-frame-loft-L268">  dev = <span class="fn-call">open</span>();</span>
-<span id="tests-frame-loft-L269">  gpu_record::<span class="fn-call">refuse_source</span>(<span class="kw">true</span>);</span>
-<span id="tests-frame-loft-L270">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(dev.<span class="fn-call">pipeline</span>(<span class="fn-call">copies</span>(), gpu::<span class="en">State</span> {}) == <span class="kw">null</span>, <span class="st">"source text is refused in this mode"</span>);</span>
-<span id="tests-frame-loft-L271">  ahead = gpu::<span class="en">Program</span> { vertex: [gpu::<span class="en">F3</span>], instance: [], block: [], textures: <span class="nm">0</span>, sources: [gpu::<span class="fn-call">source</span>(<span class="st">"record"</span>, <span class="st">""</span>, <span class="st">""</span>)] };</span>
-<span id="tests-frame-loft-L272">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(dev.<span class="fn-call">pipeline</span>(ahead, gpu::<span class="en">State</span> {}) != <span class="kw">null</span>, <span class="st">"a shader compiled ahead passes"</span>);</span>
-<span id="tests-frame-loft-L273">  gpu_record::<span class="fn-call">refuse_source</span>(<span class="kw">false</span>);</span>
-<span id="tests-frame-loft-L274">}</span>
-<span id="tests-frame-loft-L275"></span>
-<span id="tests-frame-loft-L276"><span class="kw">fn</span> <span class="fn-call">test_no_table_opens_no_device</span>() {</span>
-<span id="tests-frame-loft-L277">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(gpu::<span class="fn-call">open</span>(<span class="nm">0</span>, <span class="nm">64</span>, <span class="nm">48</span>, <span class="st">"none"</span>) == <span class="kw">null</span>, <span class="st">"a backend whose stack is absent answers table 0"</span>);</span>
-<span id="tests-frame-loft-L278">}</span>
-<span id="tests-frame-loft-L279"></span>
-<span id="tests-frame-loft-L280"><span class="kw">fn</span> <span class="fn-call">test_input_a_small_machines_pixels_and_a_targets_pixels_reach_the_backend</span>() {</span>
-<span id="tests-frame-loft-L281">  dev = <span class="fn-call">open</span>();</span>
-<span id="tests-frame-loft-L282">  <span class="cm">// the recording backend has no keys, no pointer and no events: each answers nothing</span></span>
-<span id="tests-frame-loft-L283">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!dev.<span class="fn-call">key_down</span>(<span class="nm">65</span>) &amp;&amp; dev.<span class="fn-call">pointer_x</span>() == <span class="nm">0</span> &amp;&amp; dev.<span class="fn-call">pointer_y</span>() == <span class="nm">0</span> &amp;&amp; dev.<span class="fn-call">buttons</span>() == <span class="nm">0</span>, <span class="st">"no input"</span>);</span>
-<span id="tests-frame-loft-L284">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(dev.<span class="fn-call">typed</span>()) == <span class="nm">0</span> &amp;&amp; <span class="bi"><a href="stdlib-text.html">len</a></span>(dev.<span class="fn-call">events</span>()) == <span class="nm">0</span>, <span class="st">"no text, no events"</span>);</span>
-<span id="tests-frame-loft-L285">  held = dev.<span class="fn-call"><a href="stdlib-json-reading-values.html">keys</a></span>();</span>
-<span id="tests-frame-loft-L286">  down = <span class="nm">0</span>;</span>
-<span id="tests-frame-loft-L287">  <span class="kw">for</span> k <span class="kw">in</span> held { <span class="kw">if</span> k { down += <span class="nm">1</span>; } }</span>
-<span id="tests-frame-loft-L288">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(held) == <span class="nm">256</span> &amp;&amp; down == <span class="nm">0</span>, <span class="st">"256 flags, none down: {len(held)} {down}"</span>);</span>
-<span id="tests-frame-loft-L289">  t = dev.<span class="fn-call">texture</span>(<span class="nm">2</span>, <span class="nm">1</span>);</span>
-<span id="tests-frame-loft-L290">  <span class="cm">// 63488 is five bits of red (f800), 2016 six of green</span></span>
-<span id="tests-frame-loft-L291">  t.<span class="fn-call">put_rgb565</span>(<span class="nm">0</span>, <span class="nm">0</span>, [<span class="nm">63488</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>, <span class="nm">2016</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>], <span class="nm">2</span>, <span class="nm">1</span>);</span>
-<span id="tests-frame-loft-L292">  t.<span class="fn-call">put_rgb565</span>(<span class="nm">0</span>, <span class="nm">0</span>, [<span class="nm">63488</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>], <span class="nm">2</span>, <span class="nm">1</span>); <span class="cm">// too few values: not sent</span></span>
-<span id="tests-frame-loft-L293">  target = dev.<span class="fn-call">colour_target</span>(t);</span>
-<span id="tests-frame-loft-L294">  got = dev.<span class="fn-call">capture_of</span>(target);</span>
-<span id="tests-frame-loft-L295">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(got) == <span class="nm">2</span>, <span class="st">"a target's capture is its own size, got {len(got)}"</span>);</span>
-<span id="tests-frame-loft-L296">  deep = dev.<span class="fn-call">depth_target</span>(dev.<span class="fn-call">depth_texture</span>(<span class="nm">4</span>, <span class="nm">4</span>));</span>
-<span id="tests-frame-loft-L297">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(dev.<span class="fn-call">capture_of</span>(deep)) == <span class="nm">0</span>, <span class="st">"a target with no colour has no pixels to read"</span>);</span>
-<span id="tests-frame-loft-L298">  whole = dev.<span class="fn-call">capture</span>();</span>
-<span id="tests-frame-loft-L299">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(whole) == <span class="nm">64</span> * <span class="nm">48</span>, <span class="st">"the window's capture is the window's size"</span>);</span>
-<span id="tests-frame-loft-L300">  want = <span class="fn-call"><a href="stdlib-file-system.html">lines</a></span>([</span>
-<span id="tests-frame-loft-L301">    <span class="st">"texture 2 2x1 colour"</span>,</span>
-<span id="tests-frame-loft-L302">    <span class="st">"texture_put565 2 at 0,0 2x1 first f800"</span>,</span>
-<span id="tests-frame-loft-L303">    <span class="st">"target 3 colour 2 depth 0"</span>,</span>
-<span id="tests-frame-loft-L304">    <span class="st">"capture 3 pixels 2"</span>,</span>
-<span id="tests-frame-loft-L305">    <span class="st">"texture 4 4x4 depth"</span>,</span>
-<span id="tests-frame-loft-L306">    <span class="st">"target 5 colour 0 depth 4"</span>,</span>
-<span id="tests-frame-loft-L307">    <span class="st">"capture 0 pixels 3072"</span>,</span>
-<span id="tests-frame-loft-L308">  ]);</span>
-<span id="tests-frame-loft-L309">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">after_open</span>().<span class="fn-call"><a href="stdlib-path-helpers.html">starts_with</a></span>(want), <span class="st">"what arrived:\n{after_open()}"</span>);</span>
-<span id="tests-frame-loft-L310">}</span>
-<span id="tests-frame-loft-L311"></span>
-<span id="tests-frame-loft-L312"><span class="kw">fn</span> <span class="fn-call">test_a_window_over_the_whole_screen_is_asked_for_as_one</span>() {</span>
-<span id="tests-frame-loft-L313">  gpu_record::<span class="fn-call">reset</span>();</span>
-<span id="tests-frame-loft-L314">  dev = gpu::<span class="fn-call">open_fullscreen</span>(gpu_record::<span class="fn-call">table</span>(), <span class="st">"whole"</span>) ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"no device"</span>);</span>
-<span id="tests-frame-loft-L315">  <span class="cm">// no size is asked: the backend gives the screen's</span></span>
-<span id="tests-frame-loft-L316">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(gpu_record::<span class="bi"><a href="stdlib-math.html">log</a></span>() == <span class="st">"open 1 0x0 \"</span>whole\<span class="st">" fullscreen\n"</span>, <span class="st">"what the backend was asked:\n{gpu_record::log()}"</span>);</span>
-<span id="tests-frame-loft-L317">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(dev.<span class="fn-call">poll</span>(), <span class="st">"it is open"</span>);</span>
-<span id="tests-frame-loft-L318">}</span>
+<span id="tests-frame-loft-L253"><span class="kw">struct</span> <span class="en">Pair</span> { mesh: gpu::<span class="en">Buffer</span>, image: gpu::<span class="en">Texture</span> }</span>
+<span id="tests-frame-loft-L254"></span>
+<span id="tests-frame-loft-L255"><span class="kw">struct</span> <span class="en">Kept</span> { pair: <span class="en">Pair</span>? }</span>
+<span id="tests-frame-loft-L256"></span>
+<span id="tests-frame-loft-L257"><span class="cm">// Objects held in a record a program empties later are released when it is emptied, also when</span></span>
+<span id="tests-frame-loft-L258"><span class="cm">// that is after their device closed and a second one is open: the second keeps what it made.</span></span>
+<span id="tests-frame-loft-L259"><span class="kw">fn</span> <span class="fn-call">test_objects_of_a_closed_device_let_go_beside_a_second_device</span>() {</span>
+<span id="tests-frame-loft-L260">  first = <span class="fn-call">open</span>();</span>
+<span id="tests-frame-loft-L261">  kept = <span class="en">Kept</span> { pair: <span class="en">Pair</span> { mesh: first.<span class="fn-call">buffer</span>([<span class="nm">0.0f</span>]), image: first.<span class="fn-call">texture</span>(<span class="nm">4</span>, <span class="nm">4</span>) } };</span>
+<span id="tests-frame-loft-L262">  first.<span class="fn-call">close</span>();</span>
+<span id="tests-frame-loft-L263">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(gpu_record::<span class="fn-call">live</span>() == <span class="nm">0</span>, <span class="st">"closing the first device freed what it made"</span>);</span>
+<span id="tests-frame-loft-L264">  second = gpu::<span class="fn-call">open</span>(gpu_record::<span class="fn-call">table</span>(), <span class="nm">64</span>, <span class="nm">48</span>, <span class="st">"second"</span>)!;</span>
+<span id="tests-frame-loft-L265">  mine = second.<span class="fn-call">buffer</span>([<span class="nm">1.0f</span>, <span class="nm">2.0f</span>]);</span>
+<span id="tests-frame-loft-L266">  held = gpu_record::<span class="fn-call">live</span>();</span>
+<span id="tests-frame-loft-L267">  kept.pair = <span class="kw">null</span>;</span>
+<span id="tests-frame-loft-L268">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(gpu_record::<span class="fn-call">live</span>() == held, <span class="st">"letting the first device's objects go frees none of the second's: {gpu_record::live()} of {held}"</span>);</span>
+<span id="tests-frame-loft-L269">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(mine.<span class="fn-call">floats</span>() == <span class="nm">2</span>, <span class="st">"the second device's buffer is whole"</span>);</span>
+<span id="tests-frame-loft-L270">}</span>
+<span id="tests-frame-loft-L271"></span>
+<span id="tests-frame-loft-L272"><span class="kw">fn</span> <span class="fn-call">test_a_depth_written_without_a_test_reaches_the_backend_as_its_own_state</span>() {</span>
+<span id="tests-frame-loft-L273">  dev = <span class="fn-call">open</span>();</span>
+<span id="tests-frame-loft-L274">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(dev.<span class="fn-call">pipeline</span>(<span class="fn-call">copies</span>(), gpu::<span class="en">State</span> { depth: gpu::<span class="en">DEPTH_WRITE</span> }) != <span class="kw">null</span>, <span class="st">"this backend takes the state"</span>);</span>
+<span id="tests-frame-loft-L275">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">after_open</span>().<span class="fn-call"><a href="stdlib-text.html">contains</a></span>(<span class="st">"  state shape 0 depth 3 blend 0 cull 0 into 0"</span>), <span class="st">"the state arrives as 3:\n{after_open()}"</span>);</span>
+<span id="tests-frame-loft-L276">}</span>
+<span id="tests-frame-loft-L277"></span>
+<span id="tests-frame-loft-L278"><span class="kw">fn</span> <span class="fn-call">test_a_program_without_this_backends_source_builds_no_pipeline</span>() {</span>
+<span id="tests-frame-loft-L279">  dev = <span class="fn-call">open</span>();</span>
+<span id="tests-frame-loft-L280">  p = gpu::<span class="en">Program</span> { vertex: [gpu::<span class="en">F3</span>], instance: [], block: [], textures: <span class="nm">0</span>, sources: [gpu::<span class="fn-call">source</span>(<span class="st">"other"</span>, <span class="st">"v"</span>, <span class="st">"f"</span>)] };</span>
+<span id="tests-frame-loft-L281">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(dev.<span class="fn-call">pipeline</span>(p, gpu::<span class="en">State</span> {}) == <span class="kw">null</span>, <span class="st">"no source tagged for this backend"</span>);</span>
+<span id="tests-frame-loft-L282">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">after_open</span>() == <span class="st">""</span>, <span class="st">"the backend was not asked:\n{after_open()}"</span>);</span>
+<span id="tests-frame-loft-L283">}</span>
+<span id="tests-frame-loft-L284"></span>
+<span id="tests-frame-loft-L285"><span class="kw">fn</span> <span class="fn-call">test_a_block_with_a_three_float_field_builds_no_pipeline</span>() {</span>
+<span id="tests-frame-loft-L286">  dev = <span class="fn-call">open</span>();</span>
+<span id="tests-frame-loft-L287">  p = gpu::<span class="en">Program</span> { vertex: [gpu::<span class="en">F3</span>], instance: [], block: [gpu::<span class="en">F3</span>], textures: <span class="nm">0</span>, sources: [gpu::<span class="fn-call">source</span>(<span class="st">"record"</span>, <span class="st">"v"</span>, <span class="st">"f"</span>)] };</span>
+<span id="tests-frame-loft-L288">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(dev.<span class="fn-call">pipeline</span>(p, gpu::<span class="en">State</span> {}) == <span class="kw">null</span>, <span class="st">"a block takes no F3"</span>);</span>
+<span id="tests-frame-loft-L289">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">after_open</span>() == <span class="st">""</span>, <span class="st">"the backend was not asked:\n{after_open()}"</span>);</span>
+<span id="tests-frame-loft-L290">}</span>
+<span id="tests-frame-loft-L291"></span>
+<span id="tests-frame-loft-L292"><span class="kw">fn</span> <span class="fn-call">test_a_backend_that_compiles_nothing_refuses_a_source_and_takes_a_blob</span>() {</span>
+<span id="tests-frame-loft-L293">  dev = <span class="fn-call">open</span>();</span>
+<span id="tests-frame-loft-L294">  gpu_record::<span class="fn-call">refuse_source</span>(<span class="kw">true</span>);</span>
+<span id="tests-frame-loft-L295">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(dev.<span class="fn-call">pipeline</span>(<span class="fn-call">copies</span>(), gpu::<span class="en">State</span> {}) == <span class="kw">null</span>, <span class="st">"source text is refused in this mode"</span>);</span>
+<span id="tests-frame-loft-L296">  ahead = gpu::<span class="en">Program</span> { vertex: [gpu::<span class="en">F3</span>], instance: [], block: [], textures: <span class="nm">0</span>, sources: [gpu::<span class="fn-call">source</span>(<span class="st">"record"</span>, <span class="st">""</span>, <span class="st">""</span>)] };</span>
+<span id="tests-frame-loft-L297">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(dev.<span class="fn-call">pipeline</span>(ahead, gpu::<span class="en">State</span> {}) != <span class="kw">null</span>, <span class="st">"a shader compiled ahead passes"</span>);</span>
+<span id="tests-frame-loft-L298">  gpu_record::<span class="fn-call">refuse_source</span>(<span class="kw">false</span>);</span>
+<span id="tests-frame-loft-L299">}</span>
+<span id="tests-frame-loft-L300"></span>
+<span id="tests-frame-loft-L301"><span class="kw">fn</span> <span class="fn-call">test_no_table_opens_no_device</span>() {</span>
+<span id="tests-frame-loft-L302">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(gpu::<span class="fn-call">open</span>(<span class="nm">0</span>, <span class="nm">64</span>, <span class="nm">48</span>, <span class="st">"none"</span>) == <span class="kw">null</span>, <span class="st">"a backend whose stack is absent answers table 0"</span>);</span>
+<span id="tests-frame-loft-L303">}</span>
+<span id="tests-frame-loft-L304"></span>
+<span id="tests-frame-loft-L305"><span class="kw">fn</span> <span class="fn-call">test_input_a_small_machines_pixels_and_a_targets_pixels_reach_the_backend</span>() {</span>
+<span id="tests-frame-loft-L306">  dev = <span class="fn-call">open</span>();</span>
+<span id="tests-frame-loft-L307">  <span class="cm">// the recording backend has no keys, no pointer and no events: each answers nothing</span></span>
+<span id="tests-frame-loft-L308">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!dev.<span class="fn-call">key_down</span>(<span class="nm">65</span>) &amp;&amp; dev.<span class="fn-call">pointer_x</span>() == <span class="nm">0</span> &amp;&amp; dev.<span class="fn-call">pointer_y</span>() == <span class="nm">0</span> &amp;&amp; dev.<span class="fn-call">buttons</span>() == <span class="nm">0</span>, <span class="st">"no input"</span>);</span>
+<span id="tests-frame-loft-L309">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(dev.<span class="fn-call">typed</span>()) == <span class="nm">0</span> &amp;&amp; <span class="bi"><a href="stdlib-text.html">len</a></span>(dev.<span class="fn-call">events</span>()) == <span class="nm">0</span>, <span class="st">"no text, no events"</span>);</span>
+<span id="tests-frame-loft-L310">  held = dev.<span class="fn-call"><a href="stdlib-json-reading-values.html">keys</a></span>();</span>
+<span id="tests-frame-loft-L311">  down = <span class="nm">0</span>;</span>
+<span id="tests-frame-loft-L312">  <span class="kw">for</span> k <span class="kw">in</span> held { <span class="kw">if</span> k { down += <span class="nm">1</span>; } }</span>
+<span id="tests-frame-loft-L313">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(held) == <span class="nm">256</span> &amp;&amp; down == <span class="nm">0</span>, <span class="st">"256 flags, none down: {len(held)} {down}"</span>);</span>
+<span id="tests-frame-loft-L314">  t = dev.<span class="fn-call">texture</span>(<span class="nm">2</span>, <span class="nm">1</span>);</span>
+<span id="tests-frame-loft-L315">  <span class="cm">// 63488 is five bits of red (f800), 2016 six of green</span></span>
+<span id="tests-frame-loft-L316">  t.<span class="fn-call">put_rgb565</span>(<span class="nm">0</span>, <span class="nm">0</span>, [<span class="nm">63488</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>, <span class="nm">2016</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>], <span class="nm">2</span>, <span class="nm">1</span>);</span>
+<span id="tests-frame-loft-L317">  t.<span class="fn-call">put_rgb565</span>(<span class="nm">0</span>, <span class="nm">0</span>, [<span class="nm">63488</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i32</a></span>], <span class="nm">2</span>, <span class="nm">1</span>); <span class="cm">// too few values: not sent</span></span>
+<span id="tests-frame-loft-L318">  target = dev.<span class="fn-call">colour_target</span>(t);</span>
+<span id="tests-frame-loft-L319">  got = dev.<span class="fn-call">capture_of</span>(target);</span>
+<span id="tests-frame-loft-L320">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(got) == <span class="nm">2</span>, <span class="st">"a target's capture is its own size, got {len(got)}"</span>);</span>
+<span id="tests-frame-loft-L321">  deep = dev.<span class="fn-call">depth_target</span>(dev.<span class="fn-call">depth_texture</span>(<span class="nm">4</span>, <span class="nm">4</span>));</span>
+<span id="tests-frame-loft-L322">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(dev.<span class="fn-call">capture_of</span>(deep)) == <span class="nm">0</span>, <span class="st">"a target with no colour has no pixels to read"</span>);</span>
+<span id="tests-frame-loft-L323">  whole = dev.<span class="fn-call">capture</span>();</span>
+<span id="tests-frame-loft-L324">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(whole) == <span class="nm">64</span> * <span class="nm">48</span>, <span class="st">"the window's capture is the window's size"</span>);</span>
+<span id="tests-frame-loft-L325">  want = <span class="fn-call"><a href="stdlib-file-system.html">lines</a></span>([</span>
+<span id="tests-frame-loft-L326">    <span class="st">"texture 2 2x1 colour"</span>,</span>
+<span id="tests-frame-loft-L327">    <span class="st">"texture_put565 2 at 0,0 2x1 first f800"</span>,</span>
+<span id="tests-frame-loft-L328">    <span class="st">"target 3 colour 2 depth 0"</span>,</span>
+<span id="tests-frame-loft-L329">    <span class="st">"capture 3 pixels 2"</span>,</span>
+<span id="tests-frame-loft-L330">    <span class="st">"texture 4 4x4 depth"</span>,</span>
+<span id="tests-frame-loft-L331">    <span class="st">"target 5 colour 0 depth 4"</span>,</span>
+<span id="tests-frame-loft-L332">    <span class="st">"capture 0 pixels 3072"</span>,</span>
+<span id="tests-frame-loft-L333">  ]);</span>
+<span id="tests-frame-loft-L334">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">after_open</span>().<span class="fn-call"><a href="stdlib-path-helpers.html">starts_with</a></span>(want), <span class="st">"what arrived:\n{after_open()}"</span>);</span>
+<span id="tests-frame-loft-L335">}</span>
+<span id="tests-frame-loft-L336"></span>
+<span id="tests-frame-loft-L337"><span class="kw">fn</span> <span class="fn-call">test_a_window_over_the_whole_screen_is_asked_for_as_one</span>() {</span>
+<span id="tests-frame-loft-L338">  gpu_record::<span class="fn-call">reset</span>();</span>
+<span id="tests-frame-loft-L339">  dev = gpu::<span class="fn-call">open_fullscreen</span>(gpu_record::<span class="fn-call">table</span>(), <span class="st">"whole"</span>) ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"no device"</span>);</span>
+<span id="tests-frame-loft-L340">  <span class="cm">// no size is asked: the backend gives the screen's</span></span>
+<span id="tests-frame-loft-L341">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(gpu_record::<span class="bi"><a href="stdlib-math.html">log</a></span>() == <span class="st">"open 1 0x0 \"</span>whole\<span class="st">" fullscreen\n"</span>, <span class="st">"what the backend was asked:\n{gpu_record::log()}"</span>);</span>
+<span id="tests-frame-loft-L342">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(dev.<span class="fn-call">poll</span>(), <span class="st">"it is open"</span>);</span>
+<span id="tests-frame-loft-L343">}</span>
 </code></pre>
 <h2 id="tests-width32-loft">tests/width32.loft</h2>
 <pre class="src"><code><span id="tests-width32-loft-L1">#width <span class="nm">32</span></span>
