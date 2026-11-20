@@ -5163,6 +5163,16 @@ pub fn width32_all() -> bool {
     std::env::var("LOFT_WIDTH").is_ok_and(|v| v.trim() == "32")
 }
 
+/// @PLN217 — the flag that put this build under the 32-bit regime when no width was asked for
+/// (`--native-esp`: its processor is 32-bit), so a program that does not compile there is told
+/// how to build as it was written.  `None` when the width was chosen.
+#[must_use]
+pub fn width32_implied_by() -> Option<String> {
+    std::env::var("LOFT_WIDTH_IMPLIED_BY")
+        .ok()
+        .filter(|by| !by.is_empty() && width32_all())
+}
+
 /// `@FR-B-Copy` — a projection rebound into a KEPT local (loft#1522's veto) is copied as into an
 /// owner, and the kept local's rebind releases a copy it displaces (`scopes`'s
 /// `kept_displaced_free`).  **DEFAULT ON**; `LOFT_NO_KEPT_ELEMENT_COPY=1` binds the projection
