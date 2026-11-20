@@ -1234,6 +1234,13 @@ that narrow path is fixed — still without blanket widening (@C83 § Revisit). 
 [plans/88-integer-i64.md](../plans/88-integer-i64.md) remains the reference for any such targeted
 fix. @PLN88's storage-rework rungs are **not** pursued (off the path per @C83).
 
+
+`D-types-41` (loft#2585) was opened and CLOSED 2026-11-19: a parameter's element answered as a <!-- doc-lint: ok -->
+function's tail was copied into the return buffer while its nullable twin (`-> vector<S>?`) handed
+out a view of the parameter (`(N-Road)`, the pair `ret-view-of-param-vector`).  Closed by the copy
+of a nullable answer where it is present (loft30-gate e2652f44a); the pair states the null test
+as its `@ABSENCE`.
+
 ## Carried by types.md until 2026-09-04
 
 The rules doc used to carry these beside its `OPEN` line — closure summaries, and notes on

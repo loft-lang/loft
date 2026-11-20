@@ -92,6 +92,22 @@ pub(crate) fn writes_vector(v: &Value, x: u16, data: &Data) -> bool {
 
 const WRITES_DEPTH: u8 = 6;
 
+/// The operators that write the vector their first argument names.
+const VECTOR_MUTATORS: &[&str] = &[
+    "OpClearVector",
+    "OpRemoveVector",
+    "OpKeepVectorRange",
+    "OpPrependVector",
+    "OpInsertVector",
+    "OpAppendVector",
+    "OpSliceVector",
+    "OpAdoptVector",
+    "OpReplaceVector",
+    "OpMoveVector",
+    "OpPreAllocVector",
+    "OpReserveVector",
+];
+
 fn writes_vector_at(v: &Value, x: u16, data: &Data, depth: u8) -> bool {
     // A write TARGET reached from `x`: `x` itself or a projection chain rooted in it.
     fn names(a: &Value, x: u16) -> bool {
@@ -109,20 +125,6 @@ fn writes_vector_at(v: &Value, x: u16, data: &Data, depth: u8) -> bool {
             _ => false,
         }
     }
-    const MUTATORS: &[&str] = &[
-        "OpClearVector",
-        "OpRemoveVector",
-        "OpKeepVectorRange",
-        "OpPrependVector",
-        "OpInsertVector",
-        "OpAppendVector",
-        "OpSliceVector",
-        "OpAdoptVector",
-        "OpReplaceVector",
-        "OpMoveVector",
-        "OpPreAllocVector",
-        "OpReserveVector",
-    ];
     v.any_node(&mut |n| match n {
         Value::Set(y, _) => *y == x,
         Value::CallRef(..) => true,
@@ -130,7 +132,7 @@ fn writes_vector_at(v: &Value, x: u16, data: &Data, depth: u8) -> bool {
             let def = data.def(*d);
             let name = def.name();
             if name.starts_with("Op") {
-                (MUTATORS.contains(&name) || name.starts_with("OpSet"))
+                (VECTOR_MUTATORS.contains(&name) || name.starts_with("OpSet"))
                     && args.first().is_some_and(|a| names(a, x))
                     || (name == "OpMoveVector" && args.get(1).is_some_and(|a| names(a, x)))
             } else {
@@ -150,6 +152,59 @@ fn writes_vector_at(v: &Value, x: u16, data: &Data, depth: u8) -> bool {
         }
         _ => false,
     })
+}
+
+/// The element calls a write can take as its PLACE, and that pass the place on to their first
+/// argument: an element of a vector (`OpGetVector`, `OpVectorRef` and their nullable forms) and
+/// a field of a record (`OpGetField`).
+const PLACE_PROJECTIONS: &[&str] = &[
+    "OpGetVector",
+    "OpGetVectorNullable",
+    "OpVectorRef",
+    "OpVectorRefNullable",
+    "OpGetField",
+];
+
+/// loft#2578, `(E-Asgn)` — is argument `arg_idx` of `outer_call` the PLACE of a write?  The
+/// place reduces to a location in the live store, so an element copy taken for `(E-Left)`
+/// (`copy_written_vector_operands`, which reads an operand's CONTENTS) must not stand in for
+/// it: `vi[f(1)] = 3` wrote into the copy and the write was lost.  A place is the first
+/// argument of a field or element write (`OpSet*`) or of a vector mutator, the first argument
+/// of a projection that is itself a place (`h.ws[f(0)].v[1] = 3`), and an argument handed to a
+/// record or `&` parameter that is not `const`, whose writes land in the caller's store.  Only
+/// an element or field call is marked: a variable or a block is no projection, and the mark
+/// reaches no call nested inside an index.  A view BOUND from an element (`r = ws[f(0)]`) is a
+/// read: it takes the copy, as the loft#2503 cell pins for an index that writes the vector.
+fn place_operand(
+    outer_call: u32,
+    arg_idx: usize,
+    outer_is_place: bool,
+    a: &Value,
+    data: &Data,
+) -> bool {
+    if outer_call == u32::MAX || (outer_call as usize) >= data.definitions.len() {
+        return false;
+    }
+    let Value::Call(inner, _) = a.unspan() else {
+        return false;
+    };
+    if (*inner as usize) >= data.definitions.len()
+        || !PLACE_PROJECTIONS.contains(&data.def(*inner).name())
+    {
+        return false;
+    }
+    let def = data.def(outer_call);
+    let name = def.name();
+    if name.starts_with("Op") {
+        arg_idx == 0
+            && (name.starts_with("OpSet")
+                || VECTOR_MUTATORS.contains(&name)
+                || (outer_is_place && PLACE_PROJECTIONS.contains(&name)))
+    } else {
+        def.attributes.get(arg_idx).is_some_and(|p| {
+            !p.constant && matches!(p.typedef.base(), Type::RefVar(_) | Type::Reference(..))
+        })
+    }
 }
 
 /// The argument whose store `outer_call` frees for itself (`OpSets::freed_source_arg`): a
@@ -393,6 +448,7 @@ impl Scopes<'_> {
         // runs for every call the scope pass scans, the stdlib's included, on every compile.
         let mut hoisted_from: Vec<usize> = Vec::new();
         let consumed_from = self.consumed_lifts.len();
+        let is_place = std::mem::take(&mut self.place_operand);
         for (arg_idx, a) in args.iter().enumerate() {
             if !preamble.is_empty() {
                 hoisted_from.resize(arg_idx, 0);
@@ -413,7 +469,9 @@ impl Scopes<'_> {
             } else {
                 a
             };
+            self.place_operand = place_operand(outer_call, arg_idx, is_place, a, data);
             let scanned = self.scan(a, function, data);
+            self.place_operand = false;
             // #248 — force-lift a trailing inline heap-returning call argument
             // (one NOT already lifted by the `inline_struct_return` arms below
             // because it returns via a hidden work-ref / non-empty dep) when the
@@ -775,7 +833,15 @@ impl Scopes<'_> {
         }
         if outer_call != u32::MAX && ls.len() == args.len() {
             self.copy_written_text_operands(outer_call, &mut preamble, &mut ls, function, data);
-            self.copy_written_vector_operands(outer_call, &mut preamble, &mut ls, function, data);
+            if !is_place {
+                self.copy_written_vector_operands(
+                    outer_call,
+                    &mut preamble,
+                    &mut ls,
+                    function,
+                    data,
+                );
+            }
         }
         if outer_call != u32::MAX && ls.len() == args.len() {
             self.keep_viewed_displaced(
@@ -952,6 +1018,11 @@ impl Scopes<'_> {
                     }
                     kept[j] = true;
                     let Some(tp) = Self::operand_value_type(&ls[j], function, data) else {
+                        // A PLACE (`vi[at(c, 2)]` as the write's target) is a reference no temp
+                        // can hold, but its INDEX is a value: evaluated into a temp here, the
+                        // place keeps its turn ahead of the hoisted operations (loft#2582:
+                        // `vi[at(c, 2)] = box(c, h).n` ran the right side's lifted call first).
+                        self.lift_place_indices(&mut ls[j], preamble, function, data);
                         continue;
                     };
                     self.lift_counter += 1;
@@ -1141,6 +1212,47 @@ impl Scopes<'_> {
 
     /// The type of the temp that holds `operand`'s VALUE: a scalar or a text.  `None` for
     /// anything else, which is passed by reference and so has no value to take early.
+    /// `@FR-E-Left` for a PLACE operand: every index of a projection chain (`OpGetVector(v, size,
+    /// i)`, through further projections to the root) that runs a call is evaluated into a temp
+    /// pushed on `preamble`, in source order, and the place reads the temp.  The chain itself
+    /// stays in the operand, so the place is still the one the write addresses.
+    fn lift_place_indices(
+        &mut self,
+        place: &mut Value,
+        preamble: &mut Vec<Value>,
+        function: &mut Function,
+        data: &Data,
+    ) {
+        let target = match place {
+            Value::Span(b) => &mut b.1,
+            other => other,
+        };
+        let Value::Call(d, args) = target else {
+            return;
+        };
+        if !crate::use_analysis::is_projection_op(data, *d) {
+            return;
+        }
+        if let Some(base) = args.first_mut() {
+            self.lift_place_indices(base, preamble, function, data);
+        }
+        for arg in args.iter_mut().skip(1) {
+            let runs_a_call = arg.any_node(&mut |n| {
+                matches!(n, Value::Call(c, _) if !data.def(*c).name().starts_with("Op"))
+                    || matches!(n, Value::CallRef(..))
+            });
+            if !runs_a_call {
+                continue;
+            }
+            let Some(tp) = Self::operand_value_type(arg, function, data) else {
+                continue;
+            };
+            let tmp = self.new_lift_var(function, &tp);
+            let index = std::mem::replace(arg, Value::Var(tmp));
+            preamble.push(v_set(tmp, index));
+        }
+    }
+
     fn operand_value_type(operand: &Value, function: &Function, data: &Data) -> Option<Type> {
         let tp = match operand.unspan() {
             Value::Call(d, _) => data.def(*d).returned().clone(),

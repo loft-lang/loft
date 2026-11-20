@@ -1,0 +1,51 @@
+// A challenge for a WHOLE-VECTOR COPY BIND of a NARROW-integer vector (@PLN91): `w = m` where m
+// is a `vector<u8>` (or another narrow element); one function per case, one axis each; every
+// function answers a hand-computed value.  `bytes(n)` is [1, 2, …, n] as u8.
+//   the source:            from_call (a local bound from a call), from_coalesce (`a ?? []` of a nullable parameter),
+//                          from_param (a parameter, the local is new), from_literal_local
+//   the destination:       param_rebind (a visible parameter rebound, `b = c`)
+//   the element width:     elem_i8, elem_u16, elem_i16, elem_u32
+//   independence:          write_copy (the copy written, the source kept), write_source
+//                          (the source grown, the copy kept)
+//   placement:             in_loop (a copy per pass), first_vector (the copy is the first
+//                          vector<u8> the program declares: no literal, no field before it)
+//   no row yet:            empty_declared (`m: vector<u8> = []; w = m`: no append registers the rows)
+//   control:               elem_integer (a vector<integer>: carried today)
+struct Ctr { n: integer }
+
+fn bytes(n: integer) -> vector<u8> { v: vector<u8> = []; for i in 0..n { v += [((i + 1) & 255) as u8]; } v }
+fn sum8(v: vector<u8>) -> integer { t = 0; for b in v { t += b as integer; } t }
+
+fn from_call() -> integer { m = bytes(4); w = m; sum8(w) * 10 + len(w) }
+fn from_coalesce(a: vector<u8>?, b: vector<u8>?) -> integer { m = a ?? []; w = m; n = b ?? []; z = n; sum8(w) * 10 + len(z) }
+fn from_param(c: vector<u8>) -> integer { w = c; w[0] = 9; sum8(w) * 100 + c[0] }
+fn from_literal_local() -> integer { m: vector<u8> = [5, 6, 7]; w = m; sum8(w) + len(w) * 100 }
+fn param_rebind(b: vector<u8>, c: vector<u8>) -> integer { b = c; (b[0] ?? 0) + (b[5] ?? 0) * 1000 + len(b) * 100 }
+fn elem_i8() -> integer { m: vector<i8> = [-3, 4]; w = m; w[0] = 1; (w[0] as integer) * 100 + (m[0] as integer) }
+fn elem_u16() -> integer { m: vector<u16> = [300, 400]; w = m; m[0] = 1; (w[0] as integer) + (m[0] as integer) * 10000 }
+fn elem_i16() -> integer { m: vector<i16> = [-300, 400]; w = m; (w[0] as integer) + (w[1] as integer) }
+fn elem_u32() -> integer { m: vector<u32> = [70000, 2]; w = m; (w[0] as integer) + len(w) }
+fn write_copy() -> integer { m = bytes(3); w = m; w[0] = 50; w += [60 as u8]; sum8(m) * 1000 + sum8(w) }
+fn write_source() -> integer { m = bytes(3); w = m; m += [10 as u8]; m[1] = 0; sum8(w) * 1000 + sum8(m) }
+fn in_loop() -> integer { m = bytes(5); t = 0; for i in 0..3 { w = m; w[i] = 0; t += sum8(w); } t * 100 + sum8(m) }
+fn first_vector(c: Ctr) -> integer { c.n += 1; m = bytes(2); w = m; sum8(w) + c.n * 100 }
+fn empty_declared() -> integer { m: vector<u8> = []; w = m; len(w) * 10 + len(m) + 7 }
+fn elem_integer() -> integer { m: vector<integer> = [10, 20]; w = m; w[0] = 1; w[0] + m[0] * 100 }
+
+fn main() {
+  assert(from_call() == 104, "from_call {from_call()}");
+  assert(from_coalesce(bytes(3), null) == 60, "from_coalesce {from_coalesce(bytes(3), null)}");
+  assert(from_param(bytes(3)) == 1401, "from_param {from_param(bytes(3))}");
+  assert(from_literal_local() == 318, "from_literal_local {from_literal_local()}");
+  assert(param_rebind(bytes(2), bytes(3)) == 301, "param_rebind {param_rebind(bytes(2), bytes(3))}");
+  assert(elem_i8() == 97, "elem_i8 {elem_i8()}");
+  assert(elem_u16() == 10300, "elem_u16 {elem_u16()}");
+  assert(elem_i16() == 100, "elem_i16 {elem_i16()}");
+  assert(elem_u32() == 70002, "elem_u32 {elem_u32()}");
+  assert(write_copy() == 6115, "write_copy {write_copy()}");
+  assert(write_source() == 6014, "write_source {write_source()}");
+  assert(in_loop() == 3915, "in_loop {in_loop()}");
+  assert(first_vector(Ctr { n: 0 }) == 103, "first_vector {first_vector(Ctr { n: 0 })}");
+  assert(empty_declared() == 7, "empty_declared {empty_declared()}");
+  assert(elem_integer() == 1001, "elem_integer {elem_integer()}");
+}

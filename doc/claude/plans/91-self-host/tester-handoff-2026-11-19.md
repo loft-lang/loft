@@ -64,6 +64,53 @@ agreeing count is not the goal.  It is in the ledger.
 - `scripts/find_problems.sh --bg` removes the previous run's summary first (88f660f50): the
   file is named for the checkout, and an old one read as the new run's verdict.
 
+## The slot matrix in the tester's inspections (owner, 2026-11-19)
+
+loft30-gate carries @PLN221's `scripts/slot_matrix.py` (merged from tuxedo-pr2438-post at
+53d2de5a8). Use it wherever a judgment is "does this statement hold for every form of its
+operand":
+
+- **Judging a porter subject:** `python3 scripts/slot_matrix.py cell '<stmt, <S> the operand>'
+  --type <int|vint|text|rec|coll|…> --backend both` runs the shape over every filler of that
+  type on the interpreter and C with the count, order, value and leak checks, each against its
+  bind-first twin. A statement may declare its own locals (`tq = (1, "a"); tq.0 += <S>;`). A
+  failing cell is an oracle defect: check `found.md` and loft3's -next before treating it as
+  new, and name it on the subject page as a form NOT to mirror.
+- **Verifying a Rust fix:** `slot_matrix.py gate` (or `gate --family F`) before landing. A fix
+  may only remove baseline lines (`gate --update`, then read the diff). A cell the fix makes
+  pass can expose its twin as NEW (the rd-coal-rec-left twin did).
+- **Another build:** `LOFT=<binary>` points the tool at it, e.g. a peer's -next built in a
+  worktree.
+- **Load:** one gate runs half the cores' worth of C compiles. `cargo test --test slot_matrix`
+  serialises its seven family gates (4e19e802d): run unserialised, they OOM-killed this 14 GiB
+  laptop. Run it alone, or under `systemd-run --user --scope -p MemoryMax=8G`.
+
+## Quoting a commit to a peer
+
+`kr-tools/land.sh` CHERRY-PICKS onto the remote tip, so the landed commit has a new sha: the one
+it prints (`LANDED <sha>`) is the one on origin, and the local commit's sha exists only in the
+landing worktree. Quote the LANDED sha in every message and issue comment. On 2026-11-19 two
+messages to loft3 named the local shas (288939d44, 120d959a9), which origin does not have.
+
+## The checks a parser fix lands with (tester)
+
+Beyond the matrix, the suite on both backends, `c_emit`, clippy, the census and the parsed-IR
+corpus dump: `python3 scripts/ir_walker_audit.py optional --check-ratchet` (a shape-test count
+that FELL is re-pinned in the same commit, `--write-ratchet`, and QUALITY.md's row follows it)
+and `cargo test --release --test doc_hygiene`.  62a90f9de lowered the count and the row went
+stale on two branches until loft3's run caught it.
+
+## The backlog at the porter's session change (2026-11-19 night)
+
+Prepared, untouched, judged on three backends (pages in this directory):
+`call-index-element-write.md` (an element written through an index that runs a call, 10 programs)
+and `postfix-default.md` (`e?` on a nullable collection: the `?? []` lowering, 18 programs).  In
+progress on the porter's side: record-return (`record-return-verdicts.md`, Bind group), the
+narrow declared-empty vector numbering (a declared-empty `vector<u8>` registers nothing on pass 1,
+its rows come at the append in source order: try b94e088a2's two regressions), and a `null`
+operand of `&&`/`||` (4c24c290d, not ready).  Last gated try: b94e088a2 (1226 of 2114, 2
+regressions above; NOT to be promoted).  The tester's tracker is `~/workspace/kr-tools/backlog.md`.
+
 ## Peers
 
 - The PORTER: `SendMessage` to `bridge:session_015fP1u2RTCyGqEvFJ5edvkL` (shown as

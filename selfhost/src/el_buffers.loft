@@ -705,7 +705,9 @@ fn is_trio(e: el::El, ops: vector<ir::Node>, i: integer, v: integer, db: integer
 fn patch_callers(e: el::El, promoted: vector<integer>, pool: vector<Pool>, fresh: vector<integer>) {
   for c in e.b.data.definitions {
     cd = c#index;
-    if c.source != e.source || el_ir::is_null(c.code[0] ?? ir::NdNull) || !calls_short(e, c.code[0] ?? ir::NdNull, promoted) {
+    // (Every definition's calls, as `patch_work_buffer_callers` walks them: a program calling a
+    // library's promoted function hands its buffer too.)
+    if el_ir::is_null(c.code[0] ?? ir::NdNull) || !calls_short(e, c.code[0] ?? ir::NdNull, promoted) {
       continue;
     }
     vars = el_vars::load(c.variables);

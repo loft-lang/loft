@@ -84,7 +84,8 @@ fn boxed_tail_into(e: el::El, vars: el_vars::Vars, n: ir::Node, w: integer, td: 
   for m in members {
     full = def.attributes[m#index]!.typedef[0] ?? ir::TyVoid;
     mt = el_types::base(full);
-    if full is TyOptional || !(el_convert::plain_scalar(mt) || mt is TyText || struct_ref(e, mt) >= 0) {
+    // (A nullable plain scalar is set as its value is, its null the scalar's own sentinel.)
+    if (full is TyOptional && !el_convert::plain_scalar(mt)) || !(el_convert::plain_scalar(mt) || mt is TyText || struct_ref(e, mt) >= 0) {
       el::refuse(e, "a boxed tuple with a member that is no plain scalar, text or record");
       return null;
     }
@@ -272,7 +273,10 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   // heap result otherwise keeps the type its return path gave the tail.
   // (A variant the tail answers is of the enum the result names: `-> Own?` over a `Borrowed`.)
   nullable_over_tail = match result { TyOptional { inner } => (el_types::is_equal(e, el_types::without_deps(inner), el_types::without_deps(b.tp)) || (variant_parent(e, b.tp) >= 0 && variant_parent(e, b.tp) == el_types::struct_enum_def(inner))) && !(b.tp is TyOptional), _ => false };
-  if !e.first_pass && (el_types::base(result) is TyText || nullable_over_tail) {
+  // (A tuple `if` tail its arms joined to a narrower spelling — `(integer?, integer)` under
+  // `-> (u8?, u8)` — is converted to the declared tuple at the body: `block_result`.)
+  tuple_if_tail = result is TyTuple && b.tp is TyTuple && !el_types::is_equal(e, result, b.tp) && el_ir::unspan(body_tail(b.code)) is NdIf;
+  if !e.first_pass && (el_types::base(result) is TyText || nullable_over_tail || tuple_if_tail) {
     match code {
       NdBlock { block } => {
         bl = block[0];
@@ -557,6 +561,17 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       if built == null {
         built = el_ex_null::merge_view_call(e, vars, code);
       }
+      // A slice `match` tail whose arms answer an element they bound (`[a, ..] => a`): each such
+      // arm is copied into the buffer (`materialized_view_return`), a `null` arm the sentinel.
+      if built == null {
+        built = materialize_match_arms(e, vars, code, rb, result);
+      }
+      // A scalar `match` tail whose join borrows a local of the body (`["t"]`) is copied whole
+      // into the buffer (`MaterializeView` on the join).
+      if built == null {
+        built = materialize_join_tail(e, vars, code, rb, result);
+        view_answer = built != null;
+      }
       // A `null` tail answers the sentinel and delivers nothing into the buffer.
       if built == null && null_sentinel_tail(e, code) {
         built = code;
@@ -564,6 +579,20 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       // A body ending in a `return` delivered its value already (`record_return`).
       if built == null && ends_in_return(code) {
         built = code;
+        // (A `return` of a slice `match` materialized into the buffer: the body answers it.)
+        match code {
+          NdBlock { block: rbk } => {
+            rbl = rbk[0];
+            lastr = if len(rbl.operators) > 0 { el_ir::unspan(el_ir::last(rbl.operators)) } else { ir::NdNull };
+            rvm = match lastr { NdReturn { inner: ri } => match el_ir::unspan(ri) { NdBlock { block: rib } => rib[0].name == "vector_match", _ => false }, _ => false };
+            if rvm && rb >= 0 {
+              rown = el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb]);
+              rbl.result = [if result is TyOptional { ir::TyOptional { inner: rown } } else { rown }];
+              built = ir::NdBlock { block: [rbl] };
+            }
+          },
+          _ => {}
+        }
       }
       if built == null && body_tail(code) is NdIf && arms_build_into_refs(e, vars, body_tail(code)) {
         built = code;
@@ -585,9 +614,26 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       if built == null && el_types::struct_enum_def(result) >= 0 && !(result is TyOptional) && match body_tail(code) { NdCall { def_nr: ntd } => starts_with(el::def(e, ntd).name, "n_") && ((el::def(e, ntd).code[0] ?? ir::NdNull) is NdNull), _ => false } {
         built = code;
       }
+      // Last: an `if` tail whose arms are blocks (a literal, a nullable local) or the sentinel —
+      // each arm copied into the buffer (`Bind`), a nullable local's only where present.
+      if_copied = false;
+      // A call through a function value (`f(n)`, `fn_ref[…]`) answers a record of no known
+      // buffer: its answer copied into the buffer (`materialized_view_return`).
+      if built == null && body_tail(code) is NdCallRef {
+        built = materialize_whole_tail(e, vars, code, rb, result);
+        if_copied = built != null;
+      }
+      if built == null && body_tail(code) is NdIf {
+        built = materialize_if_tail(e, vars, code, rb, result);
+        if_copied = built != null;
+      }
       kind = tail_kind(e, vars, code);
       // A tail already refused is no second refusal.
-      if built != null {
+      if built != null && if_copied {
+        code = built!;
+        // (Copied arm by arm: the body is typed as the buffer, `view_answer`.)
+        view_answer = true;
+      } else if built != null {
         code = built!;
         code = literal_exits_into_buffer(e, vars, code, rb, result);
         if el_types::base(result) is TyReference {
@@ -694,7 +740,11 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
             rt0 = now;
           }
         }
-        bl.result = [if arms_answer { el_types::with_deps(result, ad ?? el_types::deps(result)) } else { rt0 }];
+        // (An `if` of parameter views beside a call arm keeps its then arm's type, whatever the
+        // signature merged: `view_join_type`.)
+        vjl = if len(bl.operators) > 0 { el_ir::unspan(el_ir::last(bl.operators)) } else { ir::NdNull };
+        vjt = if vjl is NdIf && el_ex_null::view_leaves(e, vars, vjl) { el_ex_null::view_join_type(e, vars, vjl) } else { null };
+        bl.result = [if vjt != null { vjt! } else if arms_answer { el_types::with_deps(result, ad ?? el_types::deps(result)) } else { rt0 }];
         code = ir::NdBlock { block: [bl] };
       },
       _ => {}
@@ -1307,6 +1357,12 @@ pub fn text_return(e: el::El, vars: el_vars::Vars, t: ir::TypeT) {
       if !e.first_pass && !starts_with(nm, "_") {
         continue;
       }
+      // (loft#2286, loft#1616: on the second pass a pooled `__work_N` is promoted only where the
+      // first pass promoted it — its number follows the pool, not the role — and another
+      // compiler temp only where the first pass published no hidden text buffer.)
+      if !e.first_pass && (starts_with(nm, "__work_") || len([for pa in el::def(e, d).attributes if pa.hidden && ((pa.typedef[0] ?? ir::TyVoid) is TyRefVar) { pa }]) > 0) {
+        continue;
+      }
       na = el::attribute(nm, stack);
       na.hidden = true;
       e.b.data.definitions[d].attributes += [na];
@@ -1582,6 +1638,217 @@ pub fn rename_candidate(e: el::El, vars: el_vars::Vars, code: ir::Node, x: ir::N
     _ => {}
   }
   -1
+}
+
+// `materialize_view_return` per arm of a `vector_match` tail: an arm that answers a variable it
+// bound (a slice binding, a view of the subject's element) is copied into a fresh `__retbuf`,
+// the null sentinel stays; null where any other arm is met.
+pub fn materialize_match_arms(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, result: ir::TypeT) -> ir::Node? {
+  bl = match code { NdBlock { block } => block[0], _ => return null };
+  if len(bl.operators) == 0 {
+    return null;
+  }
+  mv = materialize_match_value(e, vars, el_ir::unspan(el_ir::last(bl.operators)), rb, result);
+  if mv == null {
+    return null;
+  }
+  bl.operators[-1] = el_ir::respan(el_ir::last(bl.operators), mv!);
+  owned0 = el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb]);
+  bl.result = [if result is TyOptional { ir::TyOptional { inner: owned0 } } else { owned0 }];
+  ir::NdBlock { block: [bl] }
+}
+
+pub fn materialize_if_tail(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, result: ir::TypeT) -> ir::Node? {
+  bl = match code { NdBlock { block } => block[0], _ => return null };
+  if len(bl.operators) == 0 || rb < 0 {
+    return null;
+  }
+  td = struct_ref(e, el_types::base(result));
+  if td < 0 {
+    td = el_types::struct_enum_def(el_types::base(result));
+  }
+  if td < 0 {
+    return null;
+  }
+  kt = el::def(e, td).known_type;
+  // (An arm that hands back a parameter — itself, a read rooted at it, or a call that may answer
+  // one — is no copy: `MergeAttr` publishes the parameter, or the buffer is renamed.)
+  if arm_hands_back(e, vars, el_ir::unspan(el_ir::last(bl.operators))) {
+    return null;
+  }
+  owned = el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb]);
+  arms = materialize_arm(e, vars, el_ir::unspan(el_ir::last(bl.operators)), rb, kt, owned, any_block: true);
+  if arms == null {
+    return null;
+  }
+  bl.operators[-1] = el_ir::respan(el_ir::last(bl.operators), arms!);
+  bl.result = [if result is TyOptional { ir::TyOptional { inner: owned } } else { owned }];
+  rba = attr_nr(el::def(e, e.context), "__retbuf");
+  if rba >= 0 {
+    e.b.data.definitions[e.context].returned = [el_types::with_deps(el::def(e, e.context).returned[0] ?? result, [rba])];
+  }
+  ir::NdBlock { block: [bl] }
+}
+
+// The body's tail copied whole into the buffer, the body typed by it, the result publishing the
+// buffer's attribute; null where the result is no record.
+pub fn materialize_whole_tail(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, result: ir::TypeT) -> ir::Node? {
+  bl = match code { NdBlock { block } => block[0], _ => return null };
+  if len(bl.operators) == 0 || rb < 0 {
+    return null;
+  }
+  td = struct_ref(e, el_types::base(result));
+  if td < 0 {
+    td = el_types::struct_enum_def(el_types::base(result));
+  }
+  if td < 0 {
+    return null;
+  }
+  tail = el_ir::unspan(el_ir::last(bl.operators));
+  kt = ir::NdInt { n: el::def(e, td).known_type };
+  b = ir::NdVar { n: rb };
+  owned = el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb]);
+  bl.operators[-1] = el_ir::respan(el_ir::last(bl.operators), el_ir::v_block([el_ir::v_set(rb, ir::NdNull), el_ir::cl(e, "OpDatabase", [b, kt]), el_ir::cl(e, "OpCopyRecord", [tail, b, kt]), b], owned, "materialized_view_return"));
+  bl.result = [if result is TyOptional { ir::TyOptional { inner: owned } } else { owned }];
+  rba = attr_nr(el::def(e, e.context), "__retbuf");
+  if rba >= 0 {
+    e.b.data.definitions[e.context].returned = [el_types::with_deps(el::def(e, e.context).returned[0] ?? result, [rba])];
+  }
+  ir::NdBlock { block: [bl] }
+}
+
+fn arm_hands_back(e: el::El, vars: el_vars::Vars, n: ir::Node) -> boolean {
+  match n {
+    NdSpan { inner } => arm_hands_back(e, vars, inner),
+    NdIf { cond: _, t, f } => arm_hands_back(e, vars, t) || arm_hands_back(e, vars, f),
+    NdBlock { block } => len(block[0].operators) > 0 && arm_hands_back(e, vars, el_ir::unspan(el_ir::last(block[0].operators))),
+    // (A `??` or `!` holder viewing a parameter hands that parameter back — `["h"]`; a user
+    // local viewing one is its own value, copied.)
+    NdVar { n: v } => (vars.vars[v].argument && !hidden_param(e, vars, v)) || ((starts_with(el_vars::name_of(vars, v), "__ncc_") || starts_with(el_vars::name_of(vars, v), "_ncr_")) && len([for hd in el_types::deps(el_vars::tp(vars, v)) if hd < len(vars.vars) && vars.vars[hd].argument { hd }]) > 0),
+    NdCall { def_nr, args: _ } => {
+      nm = el::def(e, def_nr).name;
+      if starts_with(nm, "n_") || starts_with(nm, "t_") {
+        return true;
+      }
+      pr = place_root(e, n);
+      pr >= 0 && vars.vars[pr].argument && !hidden_param(e, vars, pr)
+    },
+    _ => false
+  }
+}
+
+pub fn materialize_join_tail(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, result: ir::TypeT) -> ir::Node? {
+  bl = match code { NdBlock { block } => block[0], _ => return null };
+  if len(bl.operators) == 0 || rb < 0 {
+    return null;
+  }
+  tail = el_ir::unspan(el_ir::last(bl.operators));
+  jt = match tail { NdBlock { block: tb } => if tb[0].name == "scalar_match" { tb[0].result[0] ?? ir::TyVoid } else { return null }, _ => return null };
+  // (Every borrow a local of the body: a join that also hands back a parameter is answered
+  // through the parameters' own route.)
+  local_view = len(el_types::deps(jt)) > 0 && len([for jd in el_types::deps(jt) if jd >= len(vars.vars) || vars.vars[jd].argument { jd }]) == 0;
+  td = struct_ref(e, el_types::base(result));
+  if td < 0 {
+    td = el_types::struct_enum_def(el_types::base(result));
+  }
+  if !local_view || td < 0 {
+    return null;
+  }
+  kt = ir::NdInt { n: el::def(e, td).known_type };
+  b = ir::NdVar { n: rb };
+  owned = el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb]);
+  bl.operators[-1] = el_ir::respan(el_ir::last(bl.operators), el_ir::v_block([el_ir::v_set(rb, ir::NdNull), el_ir::cl(e, "OpDatabase", [b, kt]), el_ir::cl(e, "OpCopyRecord", [tail, b, kt]), b], owned, "materialized_view_return"));
+  bl.result = [if result is TyOptional { ir::TyOptional { inner: owned } } else { owned }];
+  rba = attr_nr(el::def(e, e.context), "__retbuf");
+  if rba >= 0 {
+    e.b.data.definitions[e.context].returned = [el_types::with_deps(el::def(e, e.context).returned[0] ?? result, [rba])];
+  }
+  ir::NdBlock { block: [bl] }
+}
+
+// The `vector_match` block `tail` with each arm answering a variable it bound copied into the
+// buffer (`materialized_view_return`), a `null` arm the sentinel; null for any other value.
+pub fn materialize_match_value(e: el::El, vars: el_vars::Vars, tail: ir::Node, rb: integer, result: ir::TypeT) -> ir::Node? {
+  mb = match tail { NdBlock { block: tb } => if tb[0].name == "vector_match" { tb[0] } else { return null }, _ => return null };
+  if len(mb.operators) == 0 {
+    return null;
+  }
+  // (A struct enum is copied at its own record type, as a struct is.)
+  td = struct_ref(e, el_types::base(result));
+  if td < 0 {
+    td = el_types::struct_enum_def(el_types::base(result));
+  }
+  if td < 0 || rb < 0 {
+    return null;
+  }
+  kt = el::def(e, td).known_type;
+  owned = el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb]);
+  arms = materialize_arm(e, vars, mb.operators[-1], rb, kt, owned);
+  if arms == null {
+    return null;
+  }
+  if has_null_arm(mb.operators[-1]) && !((mb.result[0] ?? ir::TyVoid) is TyOptional) {
+    mb.result = [ir::TyOptional { inner: mb.result[0] ?? ir::TyVoid }];
+  }
+  mb.operators[-1] = arms!;
+  // (The result names the buffer it is delivered in, as a vector's does.)
+  rba = attr_nr(el::def(e, e.context), "__retbuf");
+  if rba >= 0 {
+    e.b.data.definitions[e.context].returned = [el_types::with_deps(el::def(e, e.context).returned[0] ?? result, [rba])];
+  }
+  ir::NdBlock { block: [mb] }
+}
+
+fn has_null_arm(n: ir::Node) -> boolean {
+  match n {
+    NdSpan { inner } => has_null_arm(inner),
+    NdIf { cond: _, t, f } => has_null_arm(t) || has_null_arm(f),
+    NdNull => true,
+    _ => false
+  }
+}
+
+fn materialize_arm(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, kt: integer, owned: ir::TypeT, any_block: boolean = false) -> ir::Node? {
+  match n {
+    NdSpan { pos, inner } => {
+      r = materialize_arm(e, vars, inner, rb, kt, owned, any_block);
+      return if r == null { null } else { ir::NdSpan { pos: pos, inner: r! } };
+    },
+    NdIf { cond, t, f } => {
+      a = materialize_arm(e, vars, t, rb, kt, owned, any_block);
+      b = materialize_arm(e, vars, f, rb, kt, owned, any_block);
+      return if a == null || b == null { null } else { ir::NdIf { cond: cond, t: a!, f: b! } };
+    },
+    NdCall { def_nr } => { return if el::def(e, def_nr).name == "OpNullRefSentinel" { n } else { null }; },
+    // (A `null` arm answers the record's null: the sentinel, `type_null_arms`.)
+    NdNull => { return el_ir::cl(e, "OpNullRefSentinel", []); },
+    NdBlock { block } => {
+      ab = block[0];
+      if len(ab.operators) == 0 || (!any_block && !(el_ir::unspan(el_ir::last(ab.operators)) is NdVar)) {
+        return null;
+      }
+      b = ir::NdVar { n: rb };
+      // (A whole block copied in is typed without the store its own literal mints.)
+      if any_block && !(el_ir::unspan(el_ir::last(ab.operators)) is NdVar) {
+        ab.result = [el_types::without_deps(ab.result[0] ?? owned)];
+        return el_ir::v_block([el_ir::v_set(rb, ir::NdNull), el_ir::cl(e, "OpDatabase", [b, ir::NdInt { n: kt }]), el_ir::cl(e, "OpCopyRecord", [ir::NdBlock { block: [ab] }, b, ir::NdInt { n: kt }]), b], owned, "materialized_view_return");
+      }
+      // A NULLABLE binding is copied where present, inside its block: the sentinel where absent.
+      av = match el_ir::unspan(el_ir::last(ab.operators)) { NdVar { n: an } => an, _ => -1 };
+      if av >= 0 && el_vars::tp(vars, av) is TyOptional {
+        cp = el_ir::v_block([el_ir::v_set(rb, ir::NdNull), el_ir::cl(e, "OpDatabase", [b, ir::NdInt { n: kt }]), el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: av }, b, ir::NdInt { n: kt }]), b], owned, "materialized_view_return");
+        ab.operators[-1] = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [ir::NdVar { n: av }]), el_ir::cl(e, "OpNullRefSentinel", []), cp);
+        // (An `if` arm's block answers the buffer; a slice binding's keeps its own type.)
+        if any_block {
+          ab.result = [owned];
+        }
+        return ir::NdBlock { block: [ab] };
+      }
+      return el_ir::v_block([el_ir::v_set(rb, ir::NdNull), el_ir::cl(e, "OpDatabase", [b, ir::NdInt { n: kt }]), el_ir::cl(e, "OpCopyRecord", [n, b, ir::NdInt { n: kt }]), b], owned, "materialized_view_return");
+    },
+    _ => {}
+  }
+  null
 }
 
 // The last statement of a body block, unspanned; null for an empty body or no block.
@@ -1868,6 +2135,26 @@ fn branch_yields_null(e: el::El, n: ir::Node) -> boolean {
 // value is copied whole (`{ w = null; OpDatabase(w, kt); OpCopyRecord(<value>, w, kt); w }`),
 // behind a null test where the value may be absent and can be read again.  Null where a leaf
 // needs its source bound first (`bind_return_source`): not carried.
+// The local a condition proves present: `OpConvBoolFromRef(x)` or `OpNot(OpRefIsNull(x))`; -1.
+pub fn present_tested(e: el::El, c: ir::Node) -> integer {
+  match el_ir::unspan(c) {
+    NdCall { def_nr, args } => {
+      nm = el::def(e, def_nr).name;
+      if nm == "OpConvBoolFromRef" && len(args) == 1 {
+        return match el_ir::unspan(args[0]!) { NdVar { n } => n, _ => -1 };
+      }
+      if nm == "OpNot" && len(args) == 1 {
+        return match el_ir::unspan(args[0]!) {
+          NdCall { def_nr: id, args: ia } => if el::def(e, id).name == "OpRefIsNull" && len(ia) == 1 { match el_ir::unspan(ia[0]!) { NdVar { n } => n, _ => -1 } } else { -1 },
+          _ => -1
+        };
+      }
+      -1
+    },
+    _ => -1
+  }
+}
+
 pub fn copy_arms(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, td: integer, owned: ir::TypeT) -> ir::Node? {
   if el_trace::on() {
     el_trace::route(e, "materialize_return_into");
@@ -1882,7 +2169,17 @@ pub fn copy_arms(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, td: i
         return ir::NdSpan { pos: pos, inner: ci! };
       },
       NdIf { cond, t, f } => {
+        // (`@FR-N-Road`, tested unless proven present: a then arm that IS the local its
+        // condition proved present — `OpConvBoolFromRef(x)`, `OpNot(OpRefIsNull(x))` — is copied
+        // with no absence test.)
+        keep_present = vars.copy_present;
+        pv = present_tested(e, cond);
+        tv = match el_ir::unspan(t) { NdVar { n: tn } => tn, NdBlock { block: tbb } => if len(tbb[0].operators) > 0 { match el_ir::unspan(tbb[0].operators[-1]) { NdVar { n: tbn } => tbn, _ => -1 } } else { -1 }, _ => -1 };
+        if pv >= 0 && pv == tv {
+          vars.copy_present = pv;
+        }
         ct = copy_arms(e, vars, t, rb, td, owned);
+        vars.copy_present = keep_present;
         cf = copy_arms(e, vars, f, rb, td, owned);
         if ct == null || cf == null {
           return null;
@@ -1919,7 +2216,9 @@ pub fn copy_arms(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, td: i
   binds: vector<ir::Node> = [];
   if user && el::def(e, e.context).def_type != el::DT_GENERIC {
     block_deps = match x { NdBlock { block: xb } => el_types::deps(xb[0].result[0] ?? ir::TyVoid), _ => [] };
-    if x is NdBlock && len(block_deps) > 0 && !source_is_literal(x) {
+    // (Only where the arm's value IS a read: an arm answering a call's own result owns that
+    // store, and the deps on its block are the join's — `@FR-O-Complete`.)
+    if x is NdBlock && len(block_deps) > 0 && !source_is_literal(x) && record_read(e, el_ir::unspan(arm_tail(x))) {
       hv = el_vars::create_unique(vars, "_ret_src", ir::TyOptional { inner: ir::TyReference { n: td, dep: block_deps } });
       binds = [el_ir::v_set(hv, x)];
       src = ir::NdVar { n: hv };
@@ -1956,7 +2255,7 @@ pub fn copy_arms(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, td: i
   // The copy is bare only where its source is PROVEN present (`copy_source_is_present`); any
   // other source with no user call in it is tested by reading it again.
   guard = match x {
-    NdVar { n: v } => record_may_be_absent(vars, v, []),
+    NdVar { n: v } => v != vars.copy_present && record_may_be_absent(vars, v, []),
     _ => !user && !source_is_present(e, vars, x)
   };
   if guard {
@@ -1966,6 +2265,15 @@ pub fn copy_arms(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, td: i
     copy = el_ir::v_block(binds + [copy], owned, "return_source");
   }
   copy
+}
+
+// The value a block (or an inserted group) ends in, through its nesting.
+fn arm_tail(n: ir::Node) -> ir::Node {
+  match el_ir::unspan(n) {
+    NdBlock { block } => if len(block[0].operators) > 0 { arm_tail(el_ir::last(block[0].operators)) } else { n },
+    NdInsert { items } => if len(items) > 0 { arm_tail(items[-1]!) } else { n },
+    _ => n
+  }
 }
 
 // `Parser::is_record_read`: a read of a record out of a place — `OpGet…`, or a projection.
@@ -2508,6 +2816,40 @@ pub fn record_result(result: ir::TypeT) -> boolean {
   el_types::base(result) is TyReference || (el_types::struct_enum_def(result) >= 0 && !(result is TyOptional))
 }
 
+// `returned_params` over the early exits alone (an `Insert` ending in its `return`): a
+// parameter the body appends into the buffer elsewhere (`b += v`) is published by none.
+pub fn early_returned_params(e: el::El, vars: el_vars::Vars, ops: vector<ir::Node>, buf: integer) -> vector<integer> {
+  r: vector<integer> = [];
+  for op in ops {
+    found: vector<integer> = [];
+    match el_ir::unspan(op) {
+      NdInsert { items } => {
+        if len(items) > 0 && el_ir::unspan(items[-1]!) is NdReturn {
+          found = returned_params(e, vars, items, buf);
+        } else {
+          found = early_returned_params(e, vars, items, buf);
+        }
+      },
+      // (An exit spliced into a branch's block: its statements end in the `return`.)
+      NdBlock { block: eb } => {
+        eops = eb[0].operators;
+        if len(eops) > 0 && el_ir::unspan(eops[-1]) is NdReturn {
+          found = returned_params(e, vars, eops, buf);
+        } else {
+          found = early_returned_params(e, vars, eops, buf);
+        }
+      },
+      _ => { found = early_returned_params(e, vars, el_ir::children(op), buf); }
+    }
+    for x in found {
+      if !r.contains(x) {
+        r += [x];
+      }
+    }
+  }
+  r
+}
+
 pub fn returned_params(e: el::El, vars: el_vars::Vars, ops: vector<ir::Node>, buf: integer) -> vector<integer> {
   r: vector<integer> = [];
   for op in ops {
@@ -2516,6 +2858,13 @@ pub fn returned_params(e: el::El, vars: el_vars::Vars, ops: vector<ir::Node>, bu
         if len(args) == 3 && el::def(e, def_nr).name == "OpAppendVector" && el_ir::unspan(args[0]) == ir::NdVar { n: buf } {
           match el_ir::unspan(args[1]) {
             NdVar { n } => { if vars.vars[n].argument && !r.contains(n) && (el_types::base(el_vars::tp(vars, n)) is TyVector) { r += [n]; } },
+            // (A field of a parameter, `return s.vals`, borrows the parameter.)
+            NdCall { def_nr: rfd } => {
+              fr = place_root(e, el_ir::unspan(args[1]));
+              if el::def(e, rfd).name == "OpGetField" && fr >= 0 && vars.vars[fr].argument && !r.contains(fr) {
+                r += [fr];
+              }
+            },
             _ => {}
           }
         }
@@ -2685,6 +3034,33 @@ fn views_a_local(vars: el_vars::Vars, v: integer) -> boolean {
   false
 }
 
+// The variable a slice `match` tail's FIRST arm answers when it is one of that arm's
+// captures (`[_, ..rest] => rest`), or -1.
+pub fn match_tail_capture(vars: el_vars::Vars, n: ir::Node) -> integer {
+  match el_ir::unspan(n) {
+    NdBlock { block } => {
+      bl = block[0];
+      if len(bl.operators) == 0 {
+        return -1;
+      }
+      if bl.name == "vector_match" {
+        return first_arm_var(vars, el_ir::unspan(bl.operators[-1]));
+      }
+      -1
+    },
+    _ => -1
+  }
+}
+
+fn first_arm_var(vars: el_vars::Vars, n: ir::Node) -> integer {
+  match n {
+    NdIf { cond: _, t, f: _ } => first_arm_var(vars, el_ir::unspan(t)),
+    NdBlock { block } => if len(block[0].operators) == 0 { -1 } else { first_arm_var(vars, el_ir::unspan(block[0].operators[-1])) },
+    NdVar { n: v } => if el_vars::name_of(vars, v).contains("#") { v } else { -1 },
+    _ => -1
+  }
+}
+
 pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, result: ir::TypeT) -> ir::Node {
   // A literal tail is read against the result's element (`-> vector<u8> { [104, 101] }` holds
   // bytes): a tail built at another element than the result names is not carried.
@@ -2796,6 +3172,13 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
         return code;
       }
     }
+    // A slice `match` tail renamed onto its first arm's capture on the first pass: the match
+    // built each arm into it (`vector_match`); the body answers it, borrowing the buffer.
+    mtc = match_tail_capture(vars, tail);
+    if mtc >= 0 && hidden_param(e, vars, mtc) {
+      bl.result = [el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb])];
+      return ir::NdBlock { block: [bl] };
+    }
     // The buffer renamed onto the tail local on the first pass: the body answers the vector the
     // caller handed in, and opens by clearing it.  A local bound from a call (which Rust hands
     // the buffer itself) is refused by name.
@@ -2811,7 +3194,15 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
         }
         bl = collapsed!;
       }
-      bl.result = [el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb])];
+      // (loft#1625, `borrowed_param_deps` → `ref_return(…, MidReturn)`: a parameter — or a field
+      // of one — an early exit copies into the buffer is still published, after the buffer.)
+      rds = [rb];
+      for rp in early_returned_params(e, vars, bl.operators, renamed) {
+        if !rds.contains(rp) {
+          rds += [rp];
+        }
+      }
+      bl.result = [el_types::with_deps(el_types::without_deps(el_types::base(result)), rds)];
       bl.operators[0] = ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [ir::NdVar { n: renamed }]), bl.operators[0]] };
       return ir::NdBlock { block: [bl] };
     }
@@ -2917,6 +3308,13 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
       // hidden parameter, its binds then refill the caller's vector.
       // A local a loop appends a call's vector to keeps its store and is copied in at the tail
       // (`classify_ret_promotion`'s `Bind`, `var_call_rebound_nested`).
+      // A slice-pattern `match` whose first arm answers its rest capture
+      // (`match v { [_, ..rest] => rest, _ => [] }`): `ls` is that capture, the buffer renamed
+      // onto it (the hidden parameter takes its name, `rest#1`).
+      mcap = match_tail_capture(vars, tail);
+      if mcap >= 0 && attr_nr(el::def(e, d), "__retbuf") >= 0 && !buffer_bound(e) {
+        rename_onto(e, vars, rb, mcap);
+      }
       match tail {
         NdVar { n } => {
           // Rust's `bound_to_vector_join` asks the return's type: the local's may be unknown yet.
@@ -3283,7 +3681,18 @@ pub fn arm_delivery(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer,
   b = ir::NdVar { n: rb };
   if param {
     own = el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb]);
-    bl.operators[-1] = el_ir::v_block([el_ir::cl(e, "OpClearVector", [b]), el_ir::cl(e, "OpAppendVector", [b, tail, ir::NdInt { n: rec }]), b], own, "borrow_tail_copy_104");
+    copy_in = el_ir::v_block([el_ir::cl(e, "OpClearVector", [b]), el_ir::cl(e, "OpAppendVector", [b, tail, ir::NdInt { n: rec }]), b], own, "borrow_tail_copy_104");
+    // A NULLABLE answer is copied where present (loft30-gate e2652f44a): the view held in a
+    // skip-free `_fwd_elm_N`, answered as it is where null.
+    if result is TyOptional {
+      fwd = el_vars::create_unique(vars, "fwd_elm", el_types::without_deps(el_types::base(result)));
+      el_vars::set_defined(vars, fwd);
+      vars.vars[fwd].skip_free = true;
+      fv = ir::NdVar { n: fwd };
+      inner = el_ir::v_block([el_ir::cl(e, "OpClearVector", [b]), el_ir::cl(e, "OpAppendVector", [b, fv, ir::NdInt { n: rec }]), b], own, "borrow_tail_copy_104");
+      copy_in = el_ir::v_block([el_ir::v_set(fwd, tail), el_ir::v_if(el_ir::cl(e, "OpVectorIsNull", [fv]), fv, inner)], own, "borrow_tail_copy_104");
+    }
+    bl.operators[-1] = copy_in;
     if result is TyOptional && !((bl.result[0] ?? ir::TyVoid) is TyOptional) {
       bl.result = [ir::TyOptional { inner: bl.result[0] ?? ir::TyVoid }];
     }
@@ -4224,7 +4633,30 @@ pub fn finish_body(e: el::El, vars: el_vars::Vars, body: ir::Node) -> ir::Node {
       // Each promoted text parameter's shadow is seeded from the parameter, ahead of the work
       // texts (`finish_body`'s `promoted_text_args`).
       for sh in vars.promoted_shadows {
-        ops: vector<ir::Node> = [el_ir::v_set(sh, ir::NdVar { n: vars.promoted_params[sh#index] ?? -1 })];
+        pp = vars.promoted_params[sh#index] ?? -1;
+        seed = el_ir::v_set(sh, ir::NdVar { n: pp });
+        // A tuple shadow is the parameter's copy, member by member: a heap member moved into a
+        // store of its own (`tuple_param_seed`, `tuple_member_move`).
+        match el_vars::tp(vars, pp) {
+          TyTuple { elems: pel } => {
+            pc = el_ex_assign::tuple_whole_bind_copy(e, vars, pp, pel);
+            // (Where no member needed a copy the seed is the plain alias, `__tp_t = t`.)
+            copied = pc != null && match pc!.code { NdTuple { items: pit } => len([for pi in pit if (pi is NdBlock) { pi }]) > 0, _ => true };
+            if pc != null && copied && vars.heap_member_written.contains(sh) {
+              seed = el_ir::v_set(sh, pc!.code);
+              el_vars::set_var_type(vars, sh, pc!.tp);
+            } else if copied {
+              // (Only read: the alias, typed as a view of the parameter's heap members.)
+              vw: vector<ir::TypeT> = [];
+              for pm in pel {
+                vw += [if is_scalar(el_types::base(pm)) || (el_types::base(pm) is TyTuple) { pm } else { el_types::with_deps(pm, [pp]) }];
+              }
+              el_vars::set_var_type(vars, sh, ir::TyTuple { elems: vw });
+            }
+          },
+          _ => {}
+        }
+        ops: vector<ir::Node> = [seed];
         for op in bl.operators {
           ops += [op];
         }

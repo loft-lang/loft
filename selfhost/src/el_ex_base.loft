@@ -22,6 +22,15 @@ pub struct Ex {
   pub tp: ir::TypeT
 }
 
+// The untyped `[]` (no element type anywhere): a present vector, so `true` wherever it is a
+// truth (`(E-Truthy)`, `if []`, `[] && b`, `!([])`, `assert([])`).
+pub fn untyped_empty(x: Ex) -> boolean {
+  el_types::is_unknown(x.tp) && match el_ir::unspan(x.code) {
+    NdInsert { items } => len(items) == 1 && match items[0]! { NdNull => true, _ => false },
+    _ => false
+  }
+}
+
 pub fn ex(code: ir::Node, tp: ir::TypeT) -> Ex {
   Ex { code: code, tp: tp }
 }
@@ -687,6 +696,7 @@ pub fn rename_var(n: ir::Node, from: integer, to: integer) -> ir::Node {
 pub fn rename_reads(n: ir::Node, from: integer, to: integer) -> ir::Node {
   match n {
     NdVar { n: v } => if v == from { ir::NdVar { n: to } } else { n },
+    NdTupleGet { var: tgv, idx: tgi } => if tgv == from { ir::NdTupleGet { var: to, idx: tgi } } else { n },
     NdCall { def_nr, args } => ir::NdCall { def_nr: def_nr, args: [for x in args { rename_reads(x, from, to) }] },
     NdCallRef { var, args } => ir::NdCallRef { var: var, args: [for x in args { rename_reads(x, from, to) }] },
     NdSet { var, inner } => ir::NdSet { var: var, inner: rename_reads(inner, from, to) },
@@ -1120,7 +1130,9 @@ pub fn field_get(e: el::El, d: integer, a: integer, r: ir::Node) -> ir::Node? {
       // The schema is laid out after the first pass, whose code is not kept.
       // A vector field of a linked record is its own `array<T>` (laid out by id).
       ak = if e.first_pass || def.known_type == el_schema::NO_TYPE { -1 } else { el_schema::array_field_type(e, def.known_type, def.attributes[a]!.name) };
-      vk = if e.first_pass { 0 } else if ak >= 0 { ak } else { vector_store(e, inner, el_types::elem_name(e, inner)) };
+      i4 = match inner { TyInteger { spec: isp } => el_types::int4(isp), _ => false };
+      fc4 = if i4 && !e.first_pass { el_schema::field_content(e, def.known_type, def.attributes[a]!.name) } else { -1 };
+      vk = if e.first_pass { 0 } else if ak >= 0 { ak } else if fc4 >= 0 { fc4 } else { vector_store(e, inner, el_types::elem_name(e, inner)) };
       if vk < 0 {
         el::refuse(e, "a field read of a vector the library has no rows for");
         return null;
@@ -2068,7 +2080,10 @@ pub fn pattern_bind(vars: el_vars::Vars, name: text, tp: ir::TypeT, names: vecto
   if id == name {
     id = el_vars::loop_binding(vars, name);
   }
-  bv = el_vars::loop_variable(vars, id, tp);
+  // (A capture the return buffer was renamed onto on the first pass is that hidden parameter
+  // now: the same variable, as Rust's function keeps its variables across passes.)
+  existing = el_vars::var(vars, id);
+  bv = if existing >= 0 && vars.vars[existing]!.argument { existing } else { el_vars::loop_variable(vars, id, tp) };
   el_vars::set_defined(vars, bv);
   names += [el_vars::VarName { name: name, nr: el_vars::var(vars, name) }];
   el_vars::set_name(vars, name, bv);
@@ -2114,7 +2129,13 @@ pub fn loop_var(vars: el_vars::Vars, src_id: text, id: text, t: ir::TypeT) -> in
     vars.loop_vars += [u];
     return u;
   }
+  // `ended_spelling`: a spelling whose earlier binding has ended names that binding again once
+  // the loop's body is read (`restore_loop_spelling`, in `pop_loop`).
+  prior = el_vars::var(vars, src_id);
   lv = el_vars::loop_variable(vars, id, t);
+  if src_id != "_" && prior >= 0 && prior != lv && el_vars::binding_ended(vars, prior) {
+    vars.loop_spellings += [el_vars::LoopSpelling { lv: lv, name: src_id, prior: prior }];
+  }
   if id != src_id {
     el_vars::set_name(vars, src_id, lv);
   }
@@ -2158,7 +2179,13 @@ pub fn vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean) -> 
     el::refuse(e, "a vector of this element type: {type_kind(t)}");
     return null;
   }
-  int4_rows(e, t);
+  // (An empty `[]` of a narrow or four-byte element numbers nothing yet: its rows come at the
+  // first push.)
+  // (Every width: byte, short and the four-byte `int<…>` / `int_raw<…>` rows alike, in append order.)
+  empty_narrow = match e.p.nodes[lit] { SVecLit { items } => len(items) == 0, _ => false } && match t { TyInteger { spec } => el_types::narrow_width(spec) > 0 || el_types::int4(spec) || el_types::uint4(spec), _ => false };
+  if !empty_narrow {
+    int4_rows(e, t);
+  }
   if el::def_nr(e, "main_vector<{nm}>") < 0 {
     tok = 0;
     match e.p.nodes[lit] {
@@ -2185,6 +2212,18 @@ pub fn vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean) -> 
     svd = el::add_def(e, "vector<{sbn}>", el::pos_at(e, sat), el::DT_VECTOR);
     e.b.data.definitions[svd].parent = el::source_nr(e, 0, sbn);
     e.b.data.definitions[svd].known_type = el_schema::schema_type(e, "vector<{sbn}>");
+  }
+  // (A function value's `vector<i32>` definition follows on the second pass, at the literal,
+  // its row the four-byte element vector's.)
+  if !e.first_pass && t is TyFunction && el::def_nr(e, "vector<i32>") < 0 {
+    ftok = match e.p.nodes[lit] { SVecLit { at } => at, SComprehension { at } => at, _ => 0 };
+    fat = closing_bracket(e, ftok);
+    if fat == ftok + 1 || declared {
+      fat = ftok - 1;
+    }
+    fvd = el::add_def(e, "vector<i32>", el::pos_at(e, fat), el::DT_VECTOR);
+    e.b.data.definitions[fvd].parent = el::source_nr(e, 0, "i32");
+    e.b.data.definitions[fvd].known_type = el_schema::vector_type(e, el_schema::content_type(e, t));
   }
   md = el::def_nr(e, "main_vector<{nm}>");
   vk = vector_store(e, t, nm);
@@ -2254,12 +2293,15 @@ pub fn tuple_vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolea
 // by `fill_all`.
 pub fn vector_def(e: el::El, t: ir::TypeT, nm: text, lit: integer, declared: boolean) {
   at = closing_bracket(e, lit);
+  // An empty `[]` numbers no narrow element row here: `Data::vector_def` makes definitions only,
+  // and the rows come where the program first pushes into the vector, in that order.
+  empty = at == lit + 1;
   // A declared element type, or an empty `[]`, makes them before the literal is read: the lexer
   // stands after the token before its `[`.
   if at == lit + 1 || declared {
     at = lit - 1;
   }
-  el_schema::make_vector_def(e, t, nm, el::pos_at(e, at), true);
+  el_schema::make_vector_def(e, t, nm, el::pos_at(e, at), true, narrow_early: !empty);
   // A nullable scalar's vector is stored as the scalar's: where the library has no
   // `vector<scalar>` (`float`, `boolean`) its row is made here (`database.vector`).
   bn = el_types::nullable_scalar_elem(e, t);
@@ -2324,7 +2366,7 @@ pub fn elem_size(t: ir::TypeT) -> integer {
     TyCharacter => 4,
     TyEnum { n: _, is_ref } => if is_ref { -2 } else { 1 },
     // A nullable struct enum is its enum's record (null the zero tag).
-    TyOptional { inner } => match inner { TyEnum { is_ref } => if is_ref { -2 } else { -1 }, TyInteger { spec } => if el_types::narrow_width(spec) > 0 { -1 } else if el_types::int4(spec) { 4 } else { 8 }, TyFloat => 8, TyBoolean => 1, _ => -1 },
+    TyOptional { inner } => match inner { TyEnum { is_ref } => if is_ref { -2 } else { -1 }, TyInteger { spec } => if el_types::narrow_width(spec) > 0 { -1 } else if el_types::int4(spec) { 4 } else { 8 }, TyFloat => 8, TyBoolean => 1, TyText { dep: _ } => 4, _ => -1 },
     _ => -1
   }
 }
@@ -2332,6 +2374,10 @@ pub fn elem_size(t: ir::TypeT) -> integer {
 // The store type of a `vector<T>` (`vector<…>` of the element's store type): a narrow integer's
 // is named after its width (`vector<byte>`), not its definition (`vector<integer(0, 255)>`).
 pub fn vector_store(e: el::El, t: ir::TypeT, nm: text) -> integer {
+  // A function value is stored as its four-byte definition number (`vector<int<0,false>>`).
+  if t is TyFunction {
+    return el_schema::vector_type(e, el_schema::content_type(e, t));
+  }
   // A `vector<i32?>` has a nullable four-byte row of its own (`vector<int<-2147483647,true>>`).
   match t {
     TyOptional { inner: oi } => {
@@ -2354,7 +2400,8 @@ pub fn vector_store(e: el::El, t: ir::TypeT, nm: text) -> integer {
   match t {
     TyInteger { spec } => {
       if el_types::narrow_width(spec) > 0 || el_types::uint4(spec) {
-        c = if el_types::uint4(spec) { el_schema::content_type(e, t) } else { el_schema::narrow_element(e, spec) };
+        // (Looked up, never made here: a row is made at the first push, in append order.)
+        c = if el_types::uint4(spec) { el_schema::schema_type(e, "int_raw<{spec.min},false>") } else { el_schema::narrow_element(e, spec) };
         return if c < 0 { -1 } else { el_schema::schema_type(e, "vector<{e.b.types[c].name}>") };
       }
     },
@@ -2389,7 +2436,7 @@ pub fn read_op(t: ir::TypeT) -> text {
     TyCharacter => "OpGetCharacter",
     TyEnum { n: _, is_ref } => if is_ref { "" } else { "OpGetEnum" },
     // A nullable plain integer element is read as the integer it is stored as.
-    TyOptional { inner } => match inner { TyInteger { spec } => if el_types::narrow_width(spec) > 0 { "" } else if el_types::int4(spec) { "OpGetInt4" } else { "OpGetInt" }, TyFloat => "OpGetFloat", TyBoolean => "OpGetBoolean", _ => "" },
+    TyOptional { inner } => match inner { TyInteger { spec } => if el_types::narrow_width(spec) > 0 { "" } else if el_types::int4(spec) { "OpGetInt4" } else { "OpGetInt" }, TyFloat => "OpGetFloat", TyBoolean => "OpGetBoolean", TyText { dep: _ } => "OpGetText", _ => "" },
     _ => ""
   }
 }

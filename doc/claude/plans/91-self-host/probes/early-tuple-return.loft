@@ -1,0 +1,49 @@
+// A challenge for an EARLY `return` OF A TUPLE (@PLN91): one function per case, one axis each;
+// every function answers a hand-computed value; `sc(t)` folds a (integer, integer) to t.0 * 100 + t.1.
+//   the members:          ints (integer, integer), mixed (integer, float), null_member
+//                         ((integer?, integer) = (null, 3)), text_member, record_member, narrow (u8)
+//   the returned value:   a literal (all above), local_tuple (a tuple local), call_tuple (a call)
+//   the exits:            several (three exits, two early), in_loop (inside a `for`), recursion
+//   control:              tail_only (no early return)
+struct P { n: integer }
+
+fn sc(t: (integer, integer)) -> integer { t.0 * 100 + t.1 }
+fn tail_only(d: integer) -> (integer, integer) { (d + 1, d + 2) }
+fn ints(d: integer) -> (integer, integer) { if d == 0 { return (7, 8); } (d, d) }
+fn mixed(d: integer) -> (integer, float) { if d == 0 { return (3, 0.5); } (d, 2.0) }
+fn null_member(z: boolean) -> (integer?, integer) { if z { return (null, 3); } (4, 5) }
+fn text_member(d: integer) -> (text, integer) { if d == 0 { return ("early{d}", 1); } ("late", 2) }
+fn record_member(d: integer) -> (P, integer) { if d == 0 { return (P { n: 41 }, 1); } (P { n: 9 }, 2) }
+fn narrow(d: integer) -> (u8, integer) { if d == 0 { return (200 as u8, 1); } (5 as u8, 2) }
+fn local_tuple(d: integer) -> (integer, integer) { t = (d * 2, d * 3); if d > 0 { return t; } (0, 0) }
+fn call_tuple(d: integer) -> (integer, integer) { if d > 0 { return tail_only(d); } (9, 9) }
+fn several(q: integer, r: integer, d: integer) -> (integer, integer) { if d == 0 { return (q + 1, r); } if d == 1 { return (q, r - 1); } (q - 1, r + 1) }
+fn in_loop(n: integer) -> (integer, integer) { s = 0; for i in 0..n { s += i; if s > 5 { return (i, s); } } (-1, s) }
+fn recursion(i: integer, a: integer, b: float) -> (integer, float) { if i == 0 { return (a, b) } recursion(i - 1, a + 1, b + 0.5) }
+
+fn chk_ints() -> integer { sc(ints(0)) * 1000 + sc(ints(4)) }
+fn chk_mixed() -> integer { m = mixed(0); k = mixed(1); if m.0 == 3 && m.1 == 0.5 && k.1 == 2.0 { 1 } else { 0 } }
+fn chk_null_member() -> integer { nm = null_member(true); nn = null_member(false); if nm.0 == null && nm.1 == 3 && nn.0 == 4 { 1 } else { 0 } }
+fn chk_text_member() -> text { te = text_member(0); tl = text_member(1); "{te.0}/{te.1}/{tl.0}" }
+fn chk_record_member() -> integer { re = record_member(0); rl = record_member(1); re.0.n * 100 + rl.0.n * 10 + re.1 + rl.1 }
+fn chk_narrow() -> integer { na = narrow(0); (na.0 as integer) * 10 + na.1 }
+fn chk_local_tuple() -> integer { sc(local_tuple(2)) * 1000 + sc(local_tuple(0)) }
+fn chk_call_tuple() -> integer { sc(call_tuple(1)) * 1000 + sc(call_tuple(0)) }
+fn chk_several() -> integer { sc(several(5, 5, 0)) * 1000000 + sc(several(5, 5, 1)) * 1000 + sc(several(5, 5, 2)) }
+fn chk_in_loop() -> integer { sc(in_loop(10)) * 1000 + sc(in_loop(3)) }
+fn chk_recursion() -> integer { rc = recursion(3, 0, 0.0); if rc.0 == 3 && rc.1 == 1.5 { 1 } else { 0 } }
+
+fn main() {
+  assert(sc(tail_only(1)) == 203, "tail_only");
+  assert(chk_ints() == 708404, "ints {chk_ints()}");
+  assert(chk_mixed() == 1, "mixed");
+  assert(chk_null_member() == 1, "null_member");
+  assert(chk_text_member() == "early0/1/late", "text_member {chk_text_member()}");
+  assert(chk_record_member() == 4193, "record_member {chk_record_member()}");
+  assert(chk_narrow() == 2001, "narrow {chk_narrow()}");
+  assert(chk_local_tuple() == 406000, "local_tuple {chk_local_tuple()}");
+  assert(chk_call_tuple() == 203909, "call_tuple {chk_call_tuple()}");
+  assert(chk_several() == 605504406, "several {chk_several()}");
+  assert(chk_in_loop() == 306 * 1000 - 97, "in_loop {chk_in_loop()}");
+  assert(chk_recursion() == 1, "recursion");
+}

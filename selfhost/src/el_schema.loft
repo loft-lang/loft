@@ -282,10 +282,12 @@ pub fn make_vector_def(e: el::El, t: ir::TypeT, nm: text, pos: ir::Position, typ
     e.b.data.definitions[vd].parent = match t {
       TyReference { n } => n,
       TyEnum { n } => n,
-      TyOptional { inner } => match inner { TyEnum { n } => n, TyReference { n } => n, TyInteger { spec: _ } => el::source_nr(e, 0, "integer"), TyFloat => el::source_nr(e, 0, "float"), TyBoolean => el::source_nr(e, 0, "boolean"), _ => -1 },
+      TyOptional { inner } => match inner { TyEnum { n } => n, TyReference { n } => n, TyInteger { spec: _ } => el::source_nr(e, 0, "integer"), TyFloat => el::source_nr(e, 0, "float"), TyBoolean => el::source_nr(e, 0, "boolean"), TyText { dep: _ } => el::source_nr(e, 0, "text"), _ => -1 },
       TyInteger { spec: _ } => el::source_nr(e, 0, "integer"),
-      // `type_def_nr` of any vector is the library's `vector`.
+      // `type_def_nr` of any vector is the library's `vector`; a function value's is `i32`, the
+      // four-byte number it is stored as.
       TyVector { inner: _ } => el::source_nr(e, 0, "vector"),
+      TyFunction { args: _ } => el::source_nr(e, 0, "i32"),
       _ => el::source_nr(e, 0, nm)
     };
   }
@@ -647,7 +649,7 @@ fn store_type(e: el::El, t: ir::TypeT, field: boolean) -> integer {
     },
     TyEnum { n } => enum_content(e, n),
     // A nullable struct enum's slot is the enum's record (its null the zero tag).
-    TyOptional { inner } => match inner { TyEnum { n, is_ref } => if is_ref { enum_content(e, n) } else { -1 }, TyInteger { spec: ns } => if el_types::int4(ns) { int_part(e, ns, el::NONE, true) } else if el_types::nullable_scalar_elem(e, t) == "integer" { schema_type(e, "integer") } else { -1 }, TyFloat => known(e, "float"), TyBoolean => known(e, "boolean"), _ => -1 },
+    TyOptional { inner } => match inner { TyEnum { n, is_ref } => if is_ref { enum_content(e, n) } else { -1 }, TyInteger { spec: ns } => if el_types::int4(ns) { int_part(e, ns, el::NONE, true) } else if el_types::nullable_scalar_elem(e, t) == "integer" { schema_type(e, "integer") } else { -1 }, TyFloat => known(e, "float"), TyBoolean => known(e, "boolean"), TyText { dep: _ } => known(e, "text"), _ => -1 },
     TyBoolean => known(e, "boolean"),
     TyFloat => known(e, "float"),
     TySingle => known(e, "single"),
@@ -1041,6 +1043,21 @@ pub fn field_position(e: el::El, t: integer, name: text) -> integer {
 pub fn array_field_type(e: el::El, t: integer, name: text) -> integer {
   for f in struct_fields(e, t) {
     if f.name == name && (e.b.types[f.content]!.parts[0] ?? ir::PtBase) is PtArray {
+      return f.content;
+    }
+  }
+  -1
+}
+
+// The store type of field `name` in store type `t` as the schema laid it out, or -1.  A
+// `vector<i32>` FIELD is its narrow `vector<int<…>>` row there, where a local's is the library's
+// `vector<integer>`.
+pub fn field_content(e: el::El, t: integer, name: text) -> integer {
+  if t < 0 || t == NO_TYPE {
+    return -1;
+  }
+  for f in struct_fields(e, t) {
+    if f.name == name {
       return f.content;
     }
   }

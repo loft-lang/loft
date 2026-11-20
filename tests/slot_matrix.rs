@@ -39,7 +39,17 @@
 //!   WITNESS: `NEW it-for.coll-call.sorted [interp] (count): the operand ran 5 time(s)`.
 //!   HOLDS: `slot_matrix.py check` and `selftest` pass on both builds.
 
+/// One family's gate at a time.  Each gate runs its cells on a pool of half the cores, and
+/// every cell compiles a C program; the test harness runs the seven family tests at once, so
+/// without this the binary ran seven pools together — 70 compiles on a 20-core laptop,
+/// 11 GB of memory and 19 GB of swap until the OOM killer stopped it.  Serialised, the
+/// binary uses what one `slot_matrix.py gate` run uses.
+static ONE_GATE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn gate(family: &str) {
+    let _one = ONE_GATE_AT_A_TIME
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let out = match loft::platform::process::harness_command("python3")
         .arg(root.join("scripts/slot_matrix.py"))

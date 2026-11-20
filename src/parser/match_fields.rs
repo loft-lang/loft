@@ -624,8 +624,13 @@ impl Parser {
     /// range or a `null` pattern is its own test, a literal is compared with `==`.
     fn scalar_field_test(&mut self, field_type: &Type, tmp: u16) -> Value {
         let (pat, pat_type) = self.parse_match_pattern(field_type, tmp);
-        // A pattern that is already a test answers a boolean, nullable or not.
-        if matches!(pat_type.base(), Type::Boolean) || matches!(pat, Value::Block(_)) {
+        // A pattern that is already a test answers a boolean, nullable or not — a range over a
+        // number is one.  Over a BOOLEAN subject a boolean pattern is a VALUE to compare: taken
+        // as the test, the literal `true` matched every value and `false` none (loft#2587).
+        let subject_is_boolean = matches!(field_type.base(), Type::Boolean);
+        if (!subject_is_boolean && matches!(pat_type.base(), Type::Boolean))
+            || matches!(pat, Value::Block(_))
+        {
             return pat;
         }
         let mut eq = Value::Null;

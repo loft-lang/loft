@@ -3929,6 +3929,32 @@ use #count instead"
         Some(Type::Iterator(Box::new(elem), Box::new(Type::Null)))
     }
 
+    /// `@FR-I-For` — a loop's source is evaluated ONCE (iteration.md), whichever spelling walks
+    /// it: a `for` statement, a comprehension, a loop inside a format string.  The source is set
+    /// into a temp the loop then iterates — its deps on the temp, so the store's own owner frees
+    /// it — and `expr` is rewritten to name the temp; the answer is the set, to run before the
+    /// walk starts.  The one home for the hold, so the three spellings cannot disagree about
+    /// what is held (loft#2573 held a `for` statement's ordered keyed source; loft#2579 the
+    /// comprehension's and the format loop's).
+    pub(crate) fn hold_loop_source(&mut self, expr: &mut Value, in_type: &mut Type) -> Value {
+        let src_var = self.create_unique("vector", in_type);
+        self.vars.set_iteration_source(src_var);
+        if !self.first_pass {
+            self.vars.set_type(src_var, in_type.clone());
+            // A KEYED source that is a VIEW (its type names what it borrows) is written before
+            // its one read, so its null init mints no store (`bind_lowering::keyed_null_mints`):
+            // declared ahead of an `if` arm the loop stands in, the minted store was left behind
+            // (`for p in box(c, h).items`).  An owning source keeps its store: its bind copies
+            // into it.  A vector's null init asks `vector_null_mints`, which reads its deps.
+            if crate::data::is_keyed(in_type) && !in_type.depend().is_empty() {
+                self.vars.mark_inline_ref(src_var);
+            }
+        }
+        *in_type = in_type.depending(src_var);
+        let source = std::mem::replace(expr, Value::Var(src_var));
+        v_set(src_var, source)
+    }
+
     /// The snapshot a walk over a keyed kind reads: a `hash`, `spatial` or `trie` source is
     /// walked through an ordered scratch of its records, built here as `fill` into a fresh
     /// `hash_scratch` variable that `expr` is rewritten to name.  `None` for every other kind.
@@ -4489,14 +4515,7 @@ use #count instead"
                 // `for p in mk(c)` over three records called `mk` five times.  Held in the loop's
                 // source temp as a vector's is; a variable or a pure projection reads the same
                 // place each step and is left as it is.
-                let src_var = self.create_unique("vector", &in_type);
-                self.vars.set_iteration_source(src_var);
-                if !self.first_pass {
-                    self.vars.set_type(src_var, in_type.clone());
-                }
-                in_type = in_type.depending(src_var);
-                fill = v_set(src_var, expr);
-                expr = Value::Var(src_var);
+                fill = self.hold_loop_source(&mut expr, &mut in_type);
             }
             // Optional parallel clause: par(result=worker(elem), threads)
             if let LexItem::Identifier(kw) = &self.lexer.peek().has.clone()

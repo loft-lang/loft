@@ -212,11 +212,13 @@ fn foreign_copies(func: &str, env: &[(&str, &str)]) -> usize {
 
 #[test]
 fn a_callee_answering_a_constant_is_placed_and_its_answer_copied_in() {
-    // `names` and `wrote_first` answer a constant on some exit: f1, f2 and f5's two literals in
-    // `main`, and `panel`'s local built in the return buffer.  `pick` and `from_src` answer a
-    // parameter, which the callee already delivers into its buffer: placed without a guard.
-    assert_eq!(foreign_copies("main", &[]), 4, "main");
-    assert_eq!(foreign_copies("panel", &[]), 1, "panel");
+    // `names` and `wrote_first` answer a constant on some exit, `pick` and `from_src` a
+    // parameter.  `@FR-F-Ret`: the callee copies each of them into its return buffer (loft#2585),
+    // so every exit answers the buffer and no call site places with a guarded copy — f1, f2 and
+    // f5's literals in `main` and `panel`'s local included.  The fixture's values pin that the
+    // copy happens.
+    assert_eq!(foreign_copies("main", &[]), 0, "main");
+    assert_eq!(foreign_copies("panel", &[]), 0, "panel");
     let off = [("LOFT_NO_PLACE_FOREIGN_EXIT", "1")];
     assert_eq!(foreign_copies("main", &off), 0, "main, switch off");
     assert_eq!(foreign_copies("panel", &off), 0, "panel, switch off");

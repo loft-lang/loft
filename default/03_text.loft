@@ -310,5 +310,5 @@ pub fn program_directory(v: text = "") -> text env#read;
 /// Returns the directory containing the main source file being executed.
 /// Use to locate data files relative to the script, regardless of working directory.
 pub fn source_dir() -> text env#read;
-#rust"Stores::source_dir_native()"
+#rust"stores.source_dir_given()"
 #impure(host_io)

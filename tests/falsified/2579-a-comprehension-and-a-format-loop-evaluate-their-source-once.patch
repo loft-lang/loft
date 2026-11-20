@@ -1,0 +1,116 @@
+diff --git b/src/parser/collections.rs a/src/parser/collections.rs
+index 2875e4485..21d57420b 100644
+--- b/src/parser/collections.rs
++++ a/src/parser/collections.rs
+@@ -3929,32 +3929,6 @@ use #count instead"
+         Some(Type::Iterator(Box::new(elem), Box::new(Type::Null)))
+     }
+ 
+-    /// `@FR-I-For` — a loop's source is evaluated ONCE (iteration.md), whichever spelling walks
+-    /// it: a `for` statement, a comprehension, a loop inside a format string.  The source is set
+-    /// into a temp the loop then iterates — its deps on the temp, so the store's own owner frees
+-    /// it — and `expr` is rewritten to name the temp; the answer is the set, to run before the
+-    /// walk starts.  The one home for the hold, so the three spellings cannot disagree about
+-    /// what is held (loft#2573 held a `for` statement's ordered keyed source; loft#2579 the
+-    /// comprehension's and the format loop's).
+-    pub(crate) fn hold_loop_source(&mut self, expr: &mut Value, in_type: &mut Type) -> Value {
+-        let src_var = self.create_unique("vector", in_type);
+-        self.vars.set_iteration_source(src_var);
+-        if !self.first_pass {
+-            self.vars.set_type(src_var, in_type.clone());
+-            // A KEYED source that is a VIEW (its type names what it borrows) is written before
+-            // its one read, so its null init mints no store (`bind_lowering::keyed_null_mints`):
+-            // declared ahead of an `if` arm the loop stands in, the minted store was left behind
+-            // (`for p in box(c, h).items`).  An owning source keeps its store: its bind copies
+-            // into it.  A vector's null init asks `vector_null_mints`, which reads its deps.
+-            if crate::data::is_keyed(in_type) && !in_type.depend().is_empty() {
+-                self.vars.mark_inline_ref(src_var);
+-            }
+-        }
+-        *in_type = in_type.depending(src_var);
+-        let source = std::mem::replace(expr, Value::Var(src_var));
+-        v_set(src_var, source)
+-    }
+-
+     /// The snapshot a walk over a keyed kind reads: a `hash`, `spatial` or `trie` source is
+     /// walked through an ordered scratch of its records, built here as `fill` into a fresh
+     /// `hash_scratch` variable that `expr` is rewritten to name.  `None` for every other kind.
+@@ -4515,7 +4489,22 @@ use #count instead"
+                 // `for p in mk(c)` over three records called `mk` five times.  Held in the loop's
+                 // source temp as a vector's is; a variable or a pure projection reads the same
+                 // place each step and is left as it is.
+-                fill = self.hold_loop_source(&mut expr, &mut in_type);
++                let src_var = self.create_unique("vector", &in_type);
++                self.vars.set_iteration_source(src_var);
++                if !self.first_pass {
++                    self.vars.set_type(src_var, in_type.clone());
++                    // A source that is a VIEW (its type names what it borrows) is written before
++                    // its one read, so its null init mints no store
++                    // (`bind_lowering::keyed_null_mints`): declared ahead of an `if` arm the loop
++                    // stands in, the minted store was left behind (`for p in box(c, h).items`).
++                    // An owning source keeps its store: its bind copies into it.
++                    if !in_type.depend().is_empty() {
++                        self.vars.mark_inline_ref(src_var);
++                    }
++                }
++                in_type = in_type.depending(src_var);
++                fill = v_set(src_var, expr);
++                expr = Value::Var(src_var);
+             }
+             // Optional parallel clause: par(result=worker(elem), threads)
+             if let LexItem::Identifier(kw) = &self.lexer.peek().has.clone()
+diff --git b/src/parser/objects.rs a/src/parser/objects.rs
+index 5539dd19e..683d8a946 100644
+--- b/src/parser/objects.rs
++++ a/src/parser/objects.rs
+@@ -4481,22 +4481,6 @@ impl Parser {
+         }
+     }
+ 
+-    /// The set a format loop runs before its walk: a keyed source's snapshot (`keyed_snapshot`, as a
+-    /// `for` statement and a comprehension take it), or — loft#2579, `@FR-I-For` — the hold of a
+-    /// vector or ordered keyed source that runs a call (`hold_loop_source`), which was handed to
+-    /// every step, so `"{for p in mk(c) { … }}"` called `mk` per element.  `None` for every other
+-    /// source, which reads the same place each step.
+-    fn format_loop_source(&mut self, expr: &mut Value, in_type: &mut Type) -> Option<Value> {
+-        if let Some((_, fill)) = self.keyed_snapshot(expr, in_type, false) {
+-            return Some(fill);
+-        }
+-        (matches!(
+-            in_type.base(),
+-            Type::Vector(..) | Type::Sorted(..) | Type::Index(..)
+-        ) && self.ir_has_user_call(expr))
+-        .then(|| self.hold_loop_source(expr, in_type))
+-    }
+-
+     // Iterator for
+     // <for> ::= <identifier> 'in' <range> '{' <block>
+     pub(crate) fn iter_for(&mut self, val: &mut Value, append_value: &mut u16) -> Type {
+@@ -4515,7 +4499,9 @@ impl Parser {
+             // walked the HASH as if it were a snapshot and read a record number out of its
+             // table header: a store panic on both backends.  The scope-exit release frees the
+             // scratch, as it does for a comprehension's.
+-            let snapshot = self.format_loop_source(&mut expr, &mut in_type);
++            let snapshot = self
++                .keyed_snapshot(&mut expr, &mut in_type, false)
++                .map(|(_, fill)| fill);
+             // For text loops: {id}#next drives the loop; {id}#index is saved per-iteration.
+             let (iter_var, pre_var) = if super::collections::walks_text(&in_type) {
+                 let pos_var = self.create_var(&format!("{id}#next"), &I32);
+diff --git b/src/parser/vectors.rs a/src/parser/vectors.rs
+index dfa0d0b19..a6c07f9ea 100644
+--- b/src/parser/vectors.rs
++++ a/src/parser/vectors.rs
+@@ -3986,12 +3986,6 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+         } else if let Some((_, snapshot)) = self.keyed_snapshot(&mut expr, &mut in_type, false) {
+             // A keyed source is walked through its ordered snapshot, as a `for` walks it.
+             fill = snapshot;
+-        } else if matches!(in_type.base(), Type::Sorted(..) | Type::Index(..))
+-            && self.ir_has_user_call(&expr)
+-        {
+-            // loft#2579 — an ordered keyed source is handed to every step: held once, as a
+-            // `for` statement holds it (`hold_loop_source`).
+-            fill = self.hold_loop_source(&mut expr, &mut in_type);
+         }
+         let var_tp = self.for_type(&in_type);
+         // A `_` loop's counters are its own, as a `for` statement's are: by name, every `_`

@@ -1772,7 +1772,13 @@ impl Scopes<'_> {
                 .extend(built_before.iter().map(|(rec, _)| *rec));
         }
         let outer_hoists = std::mem::take(&mut self.value_hoists);
+        // loft#2578 — the `_place` temp a compound write binds its place to once (`(E-Asgn-
+        // Compound)`, `vi[f(1)] += 3`) reads and writes through that place: the element call it
+        // binds addresses the live vector, as the write's own place does.
+        self.place_operand =
+            function.name(v).starts_with("__place_") && matches!(value.unspan(), Value::Call(..));
         let scanned = self.scan(value, function, data);
+        self.place_operand = false;
         // `@FR-H-FreeTwice` — an arm of the value that reads a projection out of a lifted call
         // result leaves `v` naming that lift's store, which the lift's own free releases.
         let mut viewed = std::mem::replace(&mut self.value_hoists, outer_hoists);
@@ -1802,6 +1808,19 @@ impl Scopes<'_> {
                     && !viewed.contains(&t)
                 {
                     viewed.push(t);
+                }
+            }
+        }
+        // loft#2577's owner — a slot read off a call's tuple (`t0 = f().0`) binds the call to a
+        // work ref and answers a view of it (`Parser::emit_nullable_slot_read`): the binding
+        // views that owner as it views a hoisted lift, so its free runs only where it names
+        // another store.
+        if let Value::Block(bl) = value.unspan()
+            && bl.name == "nullable_slot_read"
+        {
+            for d in bl.result.depend() {
+                if d != v && function.name(d).starts_with("__ref_") && !viewed.contains(&d) {
+                    viewed.push(d);
                 }
             }
         }

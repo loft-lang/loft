@@ -1087,12 +1087,31 @@ impl Parser {
         let mut sets: Vec<Value> = Vec::new();
         let mut checks: Vec<(u16, Type)> = Vec::new();
         if let Value::Call(_d, args) = code.unspan_mut() {
-            for (i, at) in arg_types.iter().enumerate() {
-                if matches!(at, Type::Optional(_)) && i < args.len() {
+            // `(F-Args)` — the hoisted arguments run before the call, so an argument AHEAD of
+            // the last nullable one is hoisted too, in its place in the order: left in the call,
+            // `ox(c)[h.ones[at(c, 0)]..]` ran the bound before the text it slices.  A variable or
+            // a literal reads the same either way and stays.
+            let last = arg_types
+                .iter()
+                .take(args.len())
+                .rposition(|at| matches!(at, Type::Optional(_)));
+            for (i, at) in arg_types.iter().enumerate().take(args.len()) {
+                if matches!(at, Type::Optional(_)) {
                     let tmp = self.create_unique("_ntp", at);
                     let orig = std::mem::replace(&mut args[i], Value::Var(tmp));
                     sets.push(crate::data::v_set(tmp, orig));
                     checks.push((tmp, at.base().clone()));
+                } else if last.is_some_and(|l| i < l) && !Self::reads_alike_anywhere(&args[i]) {
+                    // A TEXT is a function-scope work text: the call's answer may be a view of
+                    // it (`OpGetTextSub`), read after this block ends.  This runs on pass 2
+                    // only, so the pass-2 sequence.
+                    let tmp = if matches!(at.base(), Type::Text(_)) {
+                        self.vars.work_text_p2(&mut self.lexer)
+                    } else {
+                        self.create_unique("_ntp", at)
+                    };
+                    let orig = std::mem::replace(&mut args[i], Value::Var(tmp));
+                    sets.push(crate::data::v_set(tmp, orig));
                 }
             }
         } else {
@@ -1111,6 +1130,23 @@ impl Parser {
         sets.push(inner);
         *code = crate::data::v_block(sets, opt.clone(), "null_transparent");
         opt
+    }
+
+    /// Does `v` answer the same wherever it is evaluated in a statement — a variable or a
+    /// literal?
+    fn reads_alike_anywhere(v: &Value) -> bool {
+        matches!(
+            v.unspan(),
+            Value::Var(_)
+                | Value::Null
+                | Value::Int(_)
+                | Value::Long(_)
+                | Value::Float(_)
+                | Value::Single(_)
+                | Value::Boolean(_)
+                | Value::Text(_)
+                | Value::Enum(..)
+        )
     }
 
     // @F17 — resolve named args into positional slots + fill omitted defaults

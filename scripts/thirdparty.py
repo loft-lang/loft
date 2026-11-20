@@ -688,7 +688,12 @@ def shim_artifact(root, d, shim, deps=()):
     shutil.rmtree(stage, ignore_errors=True)
     os.makedirs(stage, exist_ok=True)
     missing = stage_dep_headers(root, d, deps, stage)
-    srcs = [os.path.join(root, f) for f in shim if f.endswith((".c", ".cc", ".cpp"))]
+    # loft writes `loft_width.h` beside a shim it compiles (`src/c_shim.rs`, @PLN217), so a
+    # shim may include it as its own; the build that reads what the shim links does the same.
+    width_h = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src", "c", "loft_width.h")
+    if os.path.isfile(width_h):
+        shutil.copyfile(width_h, os.path.join(stage, "loft_width.h"))
+    srcs =[os.path.join(root, f) for f in shim if f.endswith((".c", ".cc", ".cpp"))]
     r = run([cc, "-shared", "-fPIC", "-O0", "-w", "-o", so, *srcs, "-I" + os.path.join(root, d, "c"),
              "-I" + os.path.join(root, d), "-I" + stage, "-lm"])
     if r.returncode != 0:

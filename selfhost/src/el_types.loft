@@ -247,9 +247,11 @@ pub fn elem_name(e: el::El, t: ir::TypeT) -> text {
     // the enum's records, null the zero tag.
     // A nullable plain integer, float or boolean is named the same way (`vector<integer?>`):
     // stored as the scalar it is, null its sentinel.
-    TyOptional { inner } => match inner { TyEnum { n, is_ref } => if is_ref && !starts_with(el::def(e, n).name, "__nullable<") { "{el::def(e, n).name}?" } else { "" }, TyInteger { spec: _ } => if elem_name(e, inner) == "integer" { "integer?" } else { "" }, TyFloat => "float?", TyBoolean => "boolean?", _ => "" },
+    TyOptional { inner } => match inner { TyEnum { n, is_ref } => if is_ref && !starts_with(el::def(e, n).name, "__nullable<") { "{el::def(e, n).name}?" } else { "" }, TyInteger { spec: _ } => if elem_name(e, inner) == "integer" { "integer?" } else { "" }, TyFloat => "float?", TyBoolean => "boolean?", TyText { dep: _ } => "text?", _ => "" },
     // A vector of vectors: its element is named as the inner vector's own type.
     TyVector { inner } => if elem_name(e, inner) == "" { "" } else { "vector<{elem_name(e, inner)}>" },
+    // A function value is named as its type is spelled (`fn(integer) -> integer`).
+    TyFunction { args: _ } => key_name(e, t),
     _ => ""
   }
 }
@@ -323,6 +325,8 @@ pub fn nullable_scalar_elem(e: el::El, t: ir::TypeT) -> text {
       TyInteger { spec: _ } => if elem_name(e, inner) == "integer" { "integer" } else { "" },
       TyFloat => "float",
       TyBoolean => "boolean",
+      // (A `text?` element is stored as a `text`, null the text sentinel.)
+      TyText { dep: _ } => "text",
       _ => ""
     },
     _ => ""
@@ -772,6 +776,10 @@ pub fn tuple_spelling_e(e: el::El, elems: vector<ir::TypeT>, sep: text) -> text 
     // A narrow integer member is spelled by its range (`integer(0, 255)`).
     if m == "" {
       m = match t { TyInteger { spec: ns } => if narrow_width(ns) > 0 { "integer({ns.min}, {ns.max})" } else { "" }, _ => "" };
+    }
+    // A tuple member is spelled as the tuple it is, its own members `, `-joined.
+    if m == "" {
+      m = match t { TyTuple { elems: ie } => { isp = tuple_spelling_e(e, ie, ", "); if isp == "" { "" } else { "({isp})" } }, _ => "" };
     }
     if m == "" {
       return "";

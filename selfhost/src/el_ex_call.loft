@@ -1453,6 +1453,7 @@ pub fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::N
   // with no default that is hidden or compiler-named (`__…`, a dispatcher's forwarded buffer).
   promoted = n > 0 && (def.attributes[-1].hidden || (starts_with(def.attributes[-1].name, "__") && el_ir::is_null(def.attributes[-1].value[0] ?? ir::NdNull)));
   retbuf = n == len(given) + 1 && promoted && (last_t is TyReference || el_types::struct_enum_def(last_t) >= 0 || (last_t is TyVector && !(def.attributes[-1].work_buffer)));
+
   // `add_defaults`' `&text` arm: each trailing hidden text buffer is a fresh `__work_cN` of
   // the caller's, set empty and handed as a stack reference ("default ref").
   bufs = !retbuf && n > len(given);
@@ -1534,6 +1535,12 @@ pub fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::N
     pt = a.typedef[0];
     at = types[a#index] ?? ir::TyUnknown { n: 0 };
     arg = given[a#index] ?? ir::NdNull;
+    // (An empty `[]` is read at its parameter's vector on pass 1 too — `parse_vector` under the
+    // parameter's hint — its `_vec_N` and `_elm_N` minted there.)
+    if e.first_pass && el_ex_pattern::is_empty_literal(arg) && el_types::base(pt) is TyVector && !el_types::is_unknown(pt) {
+      conv += [el_ex_pattern::empty_literal_to(e, vars, el_types::base(pt))];
+      continue;
+    }
     // Pass 1 converts nothing: an argument it could not type yet is taken as it is, so the
     // call still mints its buffers there.
     if e.first_pass && el_types::is_unknown(at) {
@@ -1655,11 +1662,20 @@ pub fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::N
     vars.vars[buf].caller_hidden_buf = true;
     args = list + [ir::NdVar { n: buf }];
     ds: vector<integer> = [];
+    // (A callee the port refused whose result borrows its hidden buffer RENAMED onto a local
+    // (`r`, not `__retbuf` or a `__ref_N`) BESIDE a
+    // visible parameter keeps the first pass's borrow that Rust's second pass prunes — the
+    // answer is copied out of the buffer, `ref_return`'s D-own-2 — so its call lends nothing
+    // through them.  One that only views its parameters keeps them, as Rust does.)
+    rdeps = el_types::deps(rp);
+    hidden_dep = len([for hd in rdeps if hd < len(def.attributes) && def.attributes[hd].hidden && !starts_with(def.attributes[hd].name, "__") { 1 }]) > 0;
+    visible_dep = len([for vd in rdeps if vd < len(def.attributes) && !def.attributes[vd].hidden { 1 }]) > 0;
+    refused_callee = hidden_dep && visible_dep && len([for ri in e.refused_in if ri.fname == def.name { 1 }]) > 0;
     // An argument that is a variable is borrowed itself; any other value lends what its own
     // type borrows (a literal its store, `resolve_deps`) — except into a `τ?` result, whose
     // borrows Rust keeps only for variables (1a-parser.md § Rust accidents).
     for i in el_types::deps(rp) {
-      if i < len(list) {
+      if i < len(list) && !refused_callee {
         match el_ir::unspan(list[i]) {
           NdVar { n: av } => { if !ds.contains(av) { ds += [av]; } },
           // (Of such a value's borrows a `τ?` result still keeps the user's own locals — a
@@ -1738,7 +1754,8 @@ pub fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::N
   plain_fn = el_types::base(ret) is TyFunction && len([for x in el_types::deps(ret) if x < el_ex_assign::CALLEE_FRAME { x }]) == 0;
   // A tuple of plain scalars travels as a value; one holding a text or a heap member is boxed
   // (`boxed_tuple_return`) — not carried.
-  plain_tuple = match ret { TyTuple { elems } => len([for t in elems if !el_convert::plain_scalar(t) { t }]) == 0, _ => false };
+  // (A nullable plain scalar carries no lifetime either: `(integer?, integer)` is a value.)
+  plain_tuple = match ret { TyTuple { elems } => len([for t in elems if !el_convert::plain_scalar(el_types::base(t)) { t }]) == 0, _ => false };
   // `boxed_tuple_return`: a tuple holding a heap member is answered in a `__tuple<…>` record
   // the caller hands in (a fresh `__ref_N`) — carried where a destructure takes it apart.
   if vars.boxed_tuple_at >= 0 && vars.boxed_tuple_at == vars.call_at && !plain_tuple && !retbuf {
@@ -2250,7 +2267,10 @@ pub fn binary(e: el::El, vars: el_vars::Vars, at: integer, op: text, l: integer,
   if (op == "==" || op == "!=") && amp_operand(e, l) >= 0 && amp_operand(e, r) >= 0 {
     return identity_compare(e, vars, op, amp_operand(e, l), amp_operand(e, r));
   }
-  a = el_ex_assign::expression(e, vars, l);
+  // (A vector literal as the LEFT operand of `==` / `!=` has no context naming its element:
+  // its element temp keeps the bare reference it was minted with, `unique_elm_var`.)
+  left_lit = (op == "==" || op == "!=") && match e.p.nodes[l] { SVecLit { items: lli } => len(lli) > 0, _ => false };
+  a = if left_lit { el_ex_pattern::vector_value(e, vars, l, hinted: false).x } else { el_ex_assign::expression(e, vars, l) };
   // The right operand is read in the left's context (`parse_operators`' `parent_tp`): a vector
   // literal there knows its element.
   match el_types::base(a.tp) {
@@ -2822,6 +2842,26 @@ pub fn coalesce_jump(e: el::El, vars: el_vars::Vars, x: Ex, j: Ex) -> Ex {
 
 // An element read with the nullable getter (`OpGetVectorNullable` / `OpVectorRefNullable`), for a
 // form that answers the element's absence itself (`!`, `?? return`); any other read as it is.
+// Does the place `n` read an element by an index that is no literal (`OpGetVector(v, s, k)`)?
+fn computed_index_in(e: el::El, n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdCall { def_nr, args } => {
+      if el::def(e, def_nr).name == "OpGetVector" && len(args) == 3 && !(el_ir::unspan(args[2]!) is NdInt) {
+        return true;
+      }
+      len(args) > 0 && computed_index_in(e, args[0]!)
+    },
+    _ => false
+  }
+}
+
+fn computed_index_below(e: el::El, n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdCall { def_nr: _, args } => len(args) > 0 && computed_index_in(e, args[0]!),
+    _ => false
+  }
+}
+
 pub fn nullable_getter(e: el::El, code: ir::Node) -> ir::Node {
   match el_ir::unspan(code) {
     NdCall { def_nr, args } => {
@@ -2866,6 +2906,9 @@ pub fn present_check(e: el::El, vars: el_vars::Vars, subject: ir::Node, b: ir::T
 // or nullable keeps the result nullable.  A `return`, `break` or `continue` default, arithmetic as
 // the subject and a subject that is not a plain scalar are refused by name.
 pub fn coalesce(e: el::El, vars: el_vars::Vars, l: integer, r: integer) -> Ex {
+  // (A subject read straight into a bind's destination borrows nothing — `parse_var`'s `into`
+  // arm — so its join is no view and homes no call arm.)
+  is_bind_coalesce = (l == vars.read_into && vars.bind_rhs) || l == vars.item_into || (vars.expect_node >= 0 && match e.p.nodes[vars.expect_node] { SBin { op: cop, l: cl } => cop == "??" && cl == l, _ => false });
   // `e as N ?? d`: the `??` supplies a narrowing cast's fallback, so the cast is checked.
   outer = vars.dn4_coalesce;
   vars.dn4_coalesce = e.p.nodes[l] is SAs;
@@ -2944,6 +2987,7 @@ pub fn coalesce(e: el::El, vars: el_vars::Vars, l: integer, r: integer) -> Ex {
     }
     return coalesce_jump(e, vars, x, d);
   }
+  vars.coalesce_is_bind = is_bind_coalesce;
   el_ex_null::coalesce_with(e, vars, x, d)
 }
 
@@ -2986,7 +3030,14 @@ pub fn record_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   // (`(N-Join)`: a default that may itself be absent — `nn ?? y ?? x` over `R?` locals — leaves
   // the result `R?`.)
   if x.code is NdVar {
-    return ex(el_ir::v_if(el_ir::cl(e, "OpConvBoolFromRef", [x.code]), x.code, d.code), if d.tp is TyOptional { ir::TyOptional { inner: lhs } } else { lhs });
+    // A VIEW join (`ref(Ms)["g"]`) gives a call default its home (`join-arm-owner`), the call's
+    // own buffer reused (`materialise_owned_call`).
+    // (A local's read borrows it — the join a view of it — unless it is read straight into a
+    // bind's destination: then no call arm is homed.)
+    rxv = match el_ir::unspan(x.code) { NdVar { n: rx } => rx, _ => -1 };
+    rjt = el_types::with_deps(lhs, [rxv]);
+    rdc = if !e.first_pass && rxv >= 0 && !vars.coalesce_is_bind { el_ex_null::own_join_arm(e, vars, d.code, rjt) } else { d.code };
+    return ex(el_ir::v_if(el_ir::cl(e, "OpConvBoolFromRef", [x.code]), x.code, rdc), if d.tp is TyOptional { ir::TyOptional { inner: lhs } } else { lhs });
   }
   // Minted on both passes, as the Rust mints it, so it numbers before the second pass's buffers.
   held = el_vars::create_unique(vars, "_ncc", lhs);
@@ -3078,7 +3129,10 @@ pub fn enum_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
     // (`v[1]`, a range loop's `v[i]`) is read through the nullable twin of its getter
     // (`rewrite_outer_arith_to_nullable`); its absence is the test around `__ncc_N` alone.
     plain = el_ir::cl(e, "OpGetField", [slot, off, kt]);
-    read = if x.tp is TyOptional {
+    // (An element reached through a computed index anywhere on the way — `ds[k].returned[0]` —
+    // is in flight, `τ?`, whatever the read's own type kept.)
+    // (The element's own index is the nullable twin's: `v[i]?` reads `OpGetVectorNullable`.)
+    read = if x.tp is TyOptional || computed_index_below(e, slot) {
       el_ir::v_if(el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpGetInt4", [slot, off]), ir::NdInt { n: 0 }]), el_ir::cl(e, "OpNullRefSentinel", []), plain)
     } else {
       el_ex_base::nullable_arith(e, plain, true)

@@ -1,0 +1,13 @@
+diff --git a/src/parser/control.rs b/src/parser/control.rs
+index 7d166f325..c15dca0c1 100644
+--- a/src/parser/control.rs
++++ b/src/parser/control.rs
+@@ -12683,7 +12683,7 @@ impl Parser {
+                         // A NULLABLE answer (`-> vector<T>? { v[i] }`) is copied only where the
+                         // element is present (`copy_borrow_tail_into_retbuf`'s guarded form):
+                         // `(L-Null)` keeps a copy of an absent value absent.
+-                        Some(base) => self.projection_rooted_at_argument(base),
++                        Some(base) => false && self.projection_rooted_at_argument(base),
+                         None => false,
+                     };
+                 }

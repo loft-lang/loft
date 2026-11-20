@@ -31,8 +31,10 @@
 //! - the statement before the tail is complete (it ends `;`, `{` or `}`), so no brace-less
 //!   `if` or `else` governs the tail's first statement;
 //! - the value returned is a plain name no release in the tail writes.  It is read into the
-//!   function's one result slot `loft_rv` where the exit read it — at its own place in the
-//!   tail when the tail assigns it, before the tail when it was assigned earlier.
+//!   function's one result slot `loft_rv` before the tail — where the tail's own read copies a
+//!   name no other statement of the tail names, or the value was assigned earlier — and at
+//!   its own place in the tail otherwise.  A release writes only what it names, so a read moved
+//!   past releases that do not name it sees what it saw.
 //!
 //! A body with a preprocessor line is left whole.  `LOFT_NO_C_TAIL=1` turns the pass off (the
 //! bisect step); `LOFT_TRACE_C_TAIL=1` names each function it shortened and by how much.
@@ -174,13 +176,26 @@ fn exit_at(lines: &[&str], ret: usize, nested: &HashSet<&str>) -> Option<Exit> {
     }
     let writes = format!("(&{x}");
     let mut stmts = Vec::with_capacity(ret - from + 2);
-    for l in &lines[from..ret] {
+    // The tail's read of the result moves to the front when no other statement of the tail
+    // names what it reads: a release writes only what it names, so the value is the one the
+    // read saw at its own place, and exits returning different names share every release.
+    let mut read_first = None;
+    for (k, l) in lines[from..ret].iter().enumerate() {
         let t = l.trim();
         if idents(t).iter().any(|i| nested.contains(i)) {
             return None;
         }
         if let Some(value) = t.strip_prefix(assign.as_str()).filter(|_| !x.is_empty()) {
-            stmts.push(format!("loft_rv = {value}"));
+            let read = value.strip_suffix(';').unwrap_or(value);
+            let named_elsewhere = lines[from..ret]
+                .iter()
+                .enumerate()
+                .any(|(j, o)| j != k && idents(o.trim()).contains(&read));
+            if named_elsewhere {
+                stmts.push(format!("loft_rv = {value}"));
+            } else {
+                read_first = Some(format!("loft_rv = {value}"));
+            }
         } else {
             // A release that writes the returned name: the exit stays as written.
             if !x.is_empty()
@@ -195,6 +210,9 @@ fn exit_at(lines: &[&str], ret: usize, nested: &HashSet<&str>) -> Option<Exit> {
             }
             stmts.push(t.to_string());
         }
+    }
+    if let Some(read) = read_first {
+        stmts.insert(0, read);
     }
     if x.is_empty() {
         stmts.push("return;".to_string());
@@ -414,13 +432,36 @@ mod tests {
             t = tail(10)
         );
         let m = merge("f", "loft_ref", &body).expect("merged");
-        // The first exit is written whole and the third shares all of it; the second returns
-        // another value, read mid-tail, so it shares too little and is whole as well.
-        assert_eq!(m.matches("loft_free_var(&v0_x);").count(), 2, "{m}");
-        assert_eq!(m.matches("loft_text_free(&t7);").count(), 2, "{m}");
-        assert_eq!(m.matches("return loft_rv;").count(), 2, "{m}");
+        // The first exit is written whole and the third shares all of it.  The second returns
+        // another value, read mid-tail, but no release names what it reads: the read moves to
+        // the front, and the exit writes its read and its own release, then shares the rest.
+        assert_eq!(m.matches("loft_free_var(&v0_x);").count(), 1, "{m}");
+        assert_eq!(m.matches("loft_text_free(&t7);").count(), 1, "{m}");
+        assert_eq!(m.matches("return loft_rv;").count(), 1, "{m}");
+        assert_eq!(m.matches("goto loft_rt").count(), 2, "{m}");
         assert!(m.contains("loft_rv = v8_r;") && m.contains("loft_free_var(&v99_own);"));
         assert!(m.starts_with("    loft_ref loft_rv;\n"));
+    }
+
+    #[test]
+    fn a_read_of_a_name_the_tail_releases_stays_where_it_was() {
+        // `t1 = v5_x;` copies a name the tail frees (`loft_free_var(&v5_x)` nulls it): read
+        // first it would see the record, read in place it sees what the exit saw.  So each read
+        // stays at its place, the two exits differ in their last statement but one, and
+        // nothing is shared.
+        let t = tail(10);
+        let body =
+            format!("{t}    t1 = v5_x;\n    return t1;\n{t}    t2 = v6_x;\n    return t2;\n");
+        assert!(merge("f", "loft_ref", &body).is_none());
+        // The control: the same exits reading names no release names share all ten frees.
+        let free =
+            format!("{t}    t1 = v55_y;\n    return t1;\n{t}    t2 = v66_y;\n    return t2;\n");
+        let m = merge("f", "loft_ref", &free).expect("merged");
+        assert_eq!(m.matches("loft_free_var(&v5_x);").count(), 1, "{m}");
+        assert!(
+            m.contains("loft_rv = v55_y;") && m.contains("loft_rv = v66_y;"),
+            "{m}"
+        );
     }
 
     #[test]

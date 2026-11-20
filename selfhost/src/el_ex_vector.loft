@@ -26,6 +26,7 @@ use el_ex_place;
 use el_ex_call;
 use el_ex_null;
 use el_ex_pattern;
+use el_ex_object;
 
 // `Parser::write_to_file` (`f += value`): the value bound to a fresh `_wf_N` that borrows what it
 // borrows, then `OpWriteFile(f, OpCreateStack(_wf_N), row)` with the value's store row
@@ -168,28 +169,36 @@ pub fn slice(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   bounds: vector<ir::Node> = [];
+  btypes: vector<ir::TypeT> = [x.tp];
   for b in [lo, hi] {
     if len(b) == 0 {
       bounds += [ir::NdInt { n: if b#index == 0 { 0 } else { 2147483647 } }];
+      btypes += [ir::TyInteger { spec: i32_spec() }];
       continue;
     }
     y = el_ex_assign::expression(e, vars, b[0]!);
-    // A nullable bound makes the slice `text?`, answering null through `(N-Prop)`'s guard
-    // (`wrap_null_transparent`, loft#2306) — not carried yet.
-    if y.tp is TyOptional {
-      el::refuse(e, "a text slice with a nullable bound");
-      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
-    }
-    if !el_types::is_unknown(y.tp) && !(y.tp is TyInteger) {
+    btypes += [y.tp];
+    if !el_types::is_unknown(y.tp) && !(el_types::base(y.tp) is TyInteger) {
       el::refuse(e, "a text slice bound that is not an integer: {type_kind(y.tp)}");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
     }
     bounds += [if b#index == 1 && inclusive { el_ir::cl(e, "OpAddInt", [y.code, ir::NdInt { n: 1 }]) } else { y.code }];
   }
   code = el_ir::cl(e, "OpGetTextSub", [x.code] + bounds);
+  plain = code;
   // `wrap_chain`: the `[` step is wrapped in its position on the second pass, as an index is.
   if !e.first_pass {
     code = ir::NdSpan { pos: el::pos_at(e, at), inner: code };
+  }
+  // A nullable bound answers null where a bound is (`(N-Prop)`'s guard, `wrap_null_transparent`,
+  // loft#2306): the code is wrapped on the second pass.  Its TYPE is the subject's text, as any
+  // slice's — `parse_index` keeps `elm_type` and drops `text_slice_type`'s `text?`.
+  if (btypes[1] ?? ir::TyVoid) is TyOptional || (btypes[2] ?? ir::TyVoid) is TyOptional {
+    if e.first_pass {
+      return ex(code, ir::TyText { dep: el_types::deps(x.tp) });
+    }
+    w = el_ex_object::null_transparent(e, vars, plain, btypes, ir::TyText { dep: [] }, code);
+    return ex(w.code, ir::TyText { dep: el_types::deps(x.tp) });
   }
   // A slice borrows what the text it is cut from borrows: a field read's record, a local read
   // the local (unless read first into a bind's destination, `parse_var`'s `into` arm).
@@ -671,6 +680,18 @@ pub fn index(e: el::El, vars: el_vars::Vars, at: integer, c: integer?, keys: vec
     el::refuse(e, "an index that is not an integer: {type_kind(i.tp)}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
+  // A function value's element: its four-byte definition number, read as a function-valued
+  // field is (`fn_ref_field_read`: the number, then the reference null beside it).
+  if el_types::base(inner) is TyFunction {
+    fnt = el_types::without_deps(el_types::base(inner));
+    if e.first_pass {
+      return ex(ir::NdNull, fnt);
+    }
+    // (The value borrows the vector it was read from, a local by name; the read block itself
+    // borrows nothing.)
+    fdeps = match el_ir::unspan(x.code) { NdVar { n: fxv } => [fxv], _ => el_types::deps(x.tp) };
+    return ex(el_ir::v_block([el_ir::cl(e, "OpGetInt4", [el_ir::cl(e, "OpGetVector", [x.code, ir::NdInt { n: 4 }, i.code]), ir::NdInt { n: 0 }]), el_ir::cl(e, "OpNullRefSentinel", [])], fnt, "fn_ref_field_read"), el_types::with_deps(fnt, fdeps));
+  }
   // An index not provably in range reads the element as `τ?` (`@FR-N-Index`).
   may_miss = !fits(e, vars, i.code, x.code, false);
   size = elem_size(inner);
@@ -761,6 +782,28 @@ pub fn keyed_items(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> ve
   ls: vector<ir::Node> = [];
   for it in items {
     sd = struct_literal_def(e, it);
+    // A record that is no literal of it — a call's answer, a local, a view — is appended as a
+    // vector's record item is (`record_item_copy`: the call handed the element as its buffer,
+    // anything else copied in), into the collection's own type; `OpFinishRecord` indexes it.
+    if sd < 0 {
+      kx = el_ex_assign::expression(e, vars, it);
+      if e.first_pass {
+        continue;
+      }
+      if struct_ref(e, el_types::base(kx.tp)) != el_d {
+        refuse_known(e, kx.tp, "a keyed collection item of another type: {type_kind(kx.tp)}");
+        return null;
+      }
+      el_vars::set_var_type(vars, elm, ir::TyReference { n: el_d, dep: [v] });
+      ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: kt }, ir::NdInt { n: 65535 }]))];
+      kcopy = el_ex_match::record_item_copy(e, vars, elm, el_d, kx);
+      if kcopy == null {
+        return null;
+      }
+      ls += kcopy!;
+      ls += [el_ir::cl(e, "OpFinishRecord", [w, at, ir::NdInt { n: kt }, ir::NdInt { n: 65535 }])];
+      continue;
+    }
     if sd != el_d {
       el::refuse(e, "a keyed collection item that is not a literal of its record");
       return null;
@@ -1076,10 +1119,35 @@ pub fn logical(e: el::El, vars: el_vars::Vars, is_or: boolean, l: integer, r: in
   facts = el_ex_call::assume_condition(e, vars, a.code, !is_or);
   b = el_ex_assign::expression(e, vars, r);
   forget_facts(vars, facts);
-  for x in [a, b] {
-    if !e.first_pass && !el_types::is_unknown(x.tp) && !(el_types::base(x.tp) is TyBoolean) {
-      el::refuse(e, "a `&&` or `||` operand that is not a boolean: {type_kind(x.tp)}");
-      return ex(ir::NdNull, ir::TyBoolean);
+  // `(E-Truthy)`: an operand of another type is its truth — absence alone is false (a vector
+  // by `OpNot(OpVectorIsNull)`, even a non-optional one; a record by its reference; a text by
+  // `OpConvBoolFromText`).
+  if !e.first_pass {
+    if untyped_empty(a) {
+      a = ex(ir::NdBoolean { b: true }, ir::TyBoolean);
+    }
+    if untyped_empty(b) {
+      b = ex(ir::NdBoolean { b: true }, ir::TyBoolean);
+    }
+    // A `null` literal is a `boolean?` absence (`OpConvBoolFromNull`): the right operand made
+    // definite by `== true` below, as any `boolean?`.
+    if a.tp is TyNull {
+      a = ex(el_ir::cl(e, "OpConvBoolFromNull", []), ir::TyOptional { inner: ir::TyBoolean });
+    }
+    if b.tp is TyNull {
+      b = ex(el_ir::cl(e, "OpConvBoolFromNull", []), ir::TyOptional { inner: ir::TyBoolean });
+    }
+    for x in [a, b] {
+      if !el_types::is_unknown(x.tp) && !(el_types::base(x.tp) is TyBoolean) && el_ex_pattern::condition(e, x) == null {
+        el::refuse(e, "a `&&` or `||` operand that is not a boolean: {type_kind(x.tp)}");
+        return ex(ir::NdNull, ir::TyBoolean);
+      }
+    }
+    if !el_types::is_unknown(a.tp) && !(el_types::base(a.tp) is TyBoolean) {
+      a = el_ex_pattern::condition(e, a)!;
+    }
+    if !el_types::is_unknown(b.tp) && !(el_types::base(b.tp) is TyBoolean) {
+      b = el_ex_pattern::condition(e, b)!;
     }
   }
   second = b.code;
@@ -1293,6 +1361,9 @@ pub fn unary(e: el::El, vars: el_vars::Vars, op: text, n: integer?) -> Ex {
   // `!` of a text is the negation of its truth, present and non-empty (`OpConvBoolFromText`);
   // of a collection, of its being there (`OpVectorIsNull`, negated — the one test of both its
   // absences).  Nullable or not, the test is the same.
+  if op == "!" && !e.first_pass && untyped_empty(x) {
+    return ex(el_ir::cl(e, "OpNot", [ir::NdBoolean { b: true }]), ir::TyBoolean);
+  }
   if op == "!" && el_types::base(x.tp) is TyText {
     return ex(el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpConvBoolFromText", [x.code])]), ir::TyBoolean);
   }
@@ -1438,8 +1509,11 @@ pub fn vector_concat(e: el::El, vars: el_vars::Vars, dest: integer, a: Ex, parts
     NdBlock { block } => block[0].name == "iter_vec" || block[0].name == "Vector",
     _ => false
   };
+  // (A place or a call — `h[0]`, `w.v`, `first(h)` — is appended as it stands, like a local:
+  // the concatenation copies, never views.)
   ok_first = fresh || match first {
     NdVar { n } => n != dest,
+    NdCall { def_nr: _ } => dest < 0 || !el_ir::reads_var(first, dest),
     _ => false
   };
   if !e.first_pass && (!ok_first || !is_scalar(elm)) {

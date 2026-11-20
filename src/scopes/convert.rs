@@ -595,36 +595,15 @@ impl Scopes<'_> {
                     Value::Span(b) => (Some(b.0), b.1.clone()),
                     other => (None, other),
                 };
-                // A `parallel { … }` arm runs on a WORKER over a copy of this frame: the
-                // `__work_N` text a formatted argument builds there is the worker's copy,
-                // which nothing frees — the frame's own scope-exit `OpFreeText` releases
-                // main's (empty) copy.  Each arm frees the work texts it wrote, on the
-                // worker, once its call has consumed them (loft#1357).
+                // A `parallel { … }` arm runs on a WORKER over a copy of this frame: a text the
+                // arm writes there is the worker's copy, which nothing frees — the frame's own
+                // scope-exit `OpFreeText` releases main's copy.  Each arm frees the texts it
+                // wrote, on the worker, once it has ended: the `__work_N` a formatted argument
+                // builds (loft#1357) and every text local of the arm's own (`{ s = "a"; s +=
+                // "b"; … }`, whose block the scope pass gives no exit of its own).  An arm may
+                // not write an enclosing text (`@FR-C-Arms`), so every text it sets is its own.
                 if let Value::Parallel(arms) = &inner {
-                    let arms: Vec<Value> = arms
-                        .iter()
-                        .map(|arm| {
-                            let mut work: Vec<u16> = Vec::new();
-                            arm.walk(&mut |v| {
-                                if let Value::Var(w) = v
-                                    && function.name(*w).starts_with("__work_")
-                                    && matches!(function.tp(*w).base(), Type::Text(_))
-                                    && !work.contains(w)
-                                {
-                                    work.push(*w);
-                                }
-                            });
-                            if work.is_empty() {
-                                return arm.clone();
-                            }
-                            let mut ops = Vec::with_capacity(work.len() + 1);
-                            ops.push(arm.clone());
-                            for w in work {
-                                ops.push(call("OpFreeText", w, data));
-                            }
-                            Value::Insert(ops)
-                        })
-                        .collect();
+                    let arms = free_arm_texts(arms, function, data);
                     let stmt = match pos {
                         Some(p) => Value::Span(Box::new((p, Value::Parallel(arms)))),
                         None => Value::Parallel(arms),
@@ -883,4 +862,47 @@ fn collect_consumed_ncc_text(
         Value::Block(_) | Value::Loop(_) => {}
         _ => node.for_each_child(&mut |c| collect_consumed_ncc_text(c, function, under_arm, out)),
     }
+}
+
+/// The arms of a `parallel` block, each followed by the release of every text it wrote — on
+/// its worker, where those texts live (see the caller).  A `parallel` NESTED in an arm runs its
+/// own arms on workers of their own, so it is rewritten the same way first: its arms' texts
+/// were the worker's of the INNER block, which the outer arm's frees never reach.
+fn free_arm_texts(arms: &[Value], function: &Function, data: &Data) -> Vec<Value> {
+    fn nested(v: &mut Value, function: &Function, data: &Data) {
+        if let Value::Parallel(inner) = v {
+            *inner = free_arm_texts(inner, function, data);
+            return;
+        }
+        v.for_each_child_mut(&mut |c| nested(c, function, data));
+    }
+    arms.iter()
+        .map(|arm| {
+            let mut arm = arm.clone();
+            nested(&mut arm, function, data);
+            let mut work: Vec<u16> = Vec::new();
+            arm.walk(&mut |v| {
+                let w = match v {
+                    Value::Var(w) if function.name(*w).starts_with("__work_") => *w,
+                    Value::Set(w, _) => *w,
+                    _ => return,
+                };
+                if matches!(function.tp(w).base(), Type::Text(_))
+                    && !function.is_argument(w)
+                    && !work.contains(&w)
+                {
+                    work.push(w);
+                }
+            });
+            if work.is_empty() {
+                return arm;
+            }
+            let mut ops = Vec::with_capacity(work.len() + 1);
+            ops.push(arm);
+            for w in work {
+                ops.push(call("OpFreeText", w, data));
+            }
+            Value::Insert(ops)
+        })
+        .collect()
 }

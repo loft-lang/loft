@@ -114,12 +114,12 @@ background and ends FILE with a line `scripts/wait_for.sh` waits for.
 `tests/slot_matrix.rs` is seven tests, one a slot family, each `slot_matrix.py gate --family
 F`.  A failing test says first which of three things it is:
 
-- **BROKEN** — a cell fails that is not in `scripts/slot_matrix.baseline`.  The failing
+- **`BROKEN`** — a cell fails that is not in `scripts/slot_matrix.baseline`.  The failing
   cells are folded toward causes, each with its statement; on GitHub each fold is an
   annotation on the row of the table it names.
-- **FIXED** — a baseline line whose cell passes again.  Nothing is broken: run
+- **`FIXED`** — a baseline line whose cell passes again.  Nothing is broken: run <!-- doc-lint: ok -->
   `slot_matrix.py gate --update` and read the diff, which must only remove lines.
-- **REFUSED** — a cell the compiler refuses that the baseline does not list, with the
+- **`REFUSED`** — a cell the compiler refuses that the baseline does not list, with the
   compiler's words.  A refusal is a claim the rules must back.
 
 The tests interpret every cell and compile a SAMPLE: each slot with its plain variable and

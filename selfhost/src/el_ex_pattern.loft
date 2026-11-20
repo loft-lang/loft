@@ -621,9 +621,14 @@ pub fn slice_vector(e: el::El, vars: el_vars::Vars, sv: integer, elm: ir::TypeT,
   // A record element is a view of the subject's element (`Vector Index`'s dep on the vector).
   record = proj == null && sed >= 0;
   fv = el_vars::create_unique(vars, "slice_elm", if record { el_types::with_deps(elm, [sv]) } else { vt_inner });
-  db = el_vars::work_vec_db(vars, ir::TyReference { n: r.main_def, dep: [] });
-  el_vars::depend(vars, rv, db);
-  el_vars::set_var_type(vars, ev, ir::TyReference { n: el::def_nr(e, nm), dep: [db] });
+  // (A rest the return buffer was renamed onto is the caller's vector: cleared and filled in
+  // place, no store of its own.)
+  in_buffer = vars.vars[rv].argument;
+  db = if in_buffer { -1 } else { el_vars::work_vec_db(vars, ir::TyReference { n: r.main_def, dep: [] }) };
+  if !in_buffer {
+    el_vars::depend(vars, rv, db);
+  }
+  el_vars::set_var_type(vars, ev, ir::TyReference { n: el::def_nr(e, nm), dep: [if in_buffer { rv } else { db }] });
   w = ir::NdVar { n: ev };
   body = [
     el_ir::v_set(fv, read),
@@ -637,12 +642,12 @@ pub fn slice_vector(e: el::El, vars: el_vars::Vars, sv: integer, elm: ir::TypeT,
     },
     el_ir::cl(e, "OpFinishRecord", [ir::NdVar { n: rv }, w, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }])
   ];
-  ops: vector<ir::Node> = [
+  ops: vector<ir::Node> = if in_buffer { [el_ir::cl(e, "OpClearVector", [ir::NdVar { n: rv }]), init] } else { [
     el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: r.main_known }]),
     el_ir::v_set(rv, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: r.vec_known }])),
     el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }]),
     init
-  ];
+  ] };
   if vt_inner is TyText {
     ops += [el_ir::v_set(fv, ir::NdText { s: "" })];
   }
@@ -1027,6 +1032,14 @@ pub fn arm_body(e: el::El, vars: el_vars::Vars, body: integer?, expected: ir::Ty
   if el_ex_match::sibling_variants(e, x.tp, expected) {
     return x;
   }
+  // A tuple arm whose members join into the expected tuple (`(5, 7)` beside `(integer?,
+  // integer?)`) is no conversion: it stands, and the match joins it (`join_tuple_arms`).
+  if el_types::base(x.tp) is TyTuple && el_types::base(expected) is TyTuple {
+    tj = el_ex_null::join_tuple_arms(e, expected, x.tp);
+    if tj != null && el_types::is_equal(e, tj!, expected) {
+      return x;
+    }
+  }
   c = el_convert::convert_admitting(e, vars, x.code, x.tp, expected);
   if c == null {
     refuse_known(e, x.tp, "a match arm of another type: {type_kind(x.tp)} for {type_kind(expected)}");
@@ -1225,6 +1238,9 @@ pub fn pattern_literal(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
 // as false — any other scalar as its truth (`OpConvBoolFrom…`, through a `?`: present), and a
 // heap handle as its presence.  Null for a value with no truth.
 pub fn condition(e: el::El, c: Ex) -> Ex? {
+  if !e.first_pass && untyped_empty(c) {
+    return ex(ir::NdBoolean { b: true }, ir::TyBoolean);
+  }
   b = el_types::base(c.tp);
   if el_types::is_unknown(c.tp) || b is TyBoolean {
     return c;
@@ -1707,6 +1723,10 @@ pub fn vector_of(e: el::El, t: ir::TypeT) {
     TyCharacter => el::def(e, el::source_nr(e, 0, "character")).known_type,
     TyText { dep: _ } => el::def(e, el::source_nr(e, 0, "text")).known_type,
     TyReference { n } => el::def(e, n).known_type,
+    // A narrow integer (`i32`, `u8`) registers its content row and vector row here, on the first
+    // pass (`Data::vector_element_type`'s `narrow_vector_content`); a plain integer's are the
+    // library's already.
+    TyInteger { spec } => if el_types::narrow_width(spec) > 0 || el_types::int4(spec) || el_types::uint4(spec) { el_schema::content_type(e, t) } else { -1 },
     // A vector element's content is the inner vector's own store type.
     TyVector { inner } => if el_types::elem_name(e, inner) == "" { -1 } else { vector_store(e, inner, el_types::elem_name(e, inner)) },
     _ => -1
@@ -2106,10 +2126,18 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
         literal_field_exprs(e, vars, it);
       }
       xs += [ex(ir::NdNull, ir::TyReference { n: sd, dep: [] })];
-    } else if el_ex_place::vec_lit_len(e, it) > 0 {
-      // A nested vector literal is built into its element (`parse_item` with `elm`).
+    } else if el_ex_place::vec_lit_len(e, it) > 0 || (e.p.nodes[it] is SVecLit && (el_types::base(nested_want) is TyVector || len([for oi in items if el_ex_place::vec_lit_len(e, oi) > 0 { oi }]) > 0)) {
+      // A nested vector literal is built into its element (`parse_item` with `elm`) — an empty
+      // one too (`[[1], []]`): its element made and zeroed, nothing appended.
       nested += [it];
       xs += [ex(ir::NdNull, nested_item_type(e, vars, it, nested_want))];
+    } else if struct_ref(e, if el_types::is_unknown(declared) { held_elem } else { declared }) >= 0 {
+      // A record item is read INTO its element (`parse_item`): a local it starts with borrows
+      // nothing there (`parse_var`'s `into` arm).
+      keep_into = vars.item_into;
+      vars.item_into = leftmost(e, it);
+      xs += [el_ex_assign::expression(e, vars, it)];
+      vars.item_into = keep_into;
     } else {
       xs += [el_ex_assign::expression(e, vars, it)];
     }
@@ -2152,6 +2180,16 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
     }
   }
   in_t = declared;
+  // (A function value's item that is no local mints its `___fn_ref_tmp_N` on the first pass, as
+  // `fn_number_write` does on the second: Rust's variables persist across passes.)
+  if e.first_pass && (el_types::base(in_t) is TyFunction || (el_types::is_unknown(in_t) && len(xs) > 0 && el_types::base(xs[0]!.tp) is TyFunction)) {
+    for x in xs {
+      if !(el_ir::unspan(x.code) is NdVar) {
+        ft1 = el_vars::create_unique(vars, "__fn_ref_tmp", el_types::with_deps(if el_types::base(in_t) is TyFunction { el_types::base(in_t) } else { el_types::base(x.tp) }, []));
+        el_vars::set_defined(vars, ft1);
+      }
+    }
+  }
   if el_types::is_unknown(in_t) {
     if len(xs) == 0 && value {
       el::refuse(e, "an empty vector literal in value position");
@@ -2275,7 +2313,36 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
   // grows (@PLN157 § V-w); the staging of a call that may write the vector and the whole-vector
   // snapshot (`_build_src`) are not carried yet.
   staged: vector<ir::Node> = [];
-  if reads_dest {
+  // Route 4 of `snapshot_read_destination` (`stage_literal_parts`), ahead of route 5: a part
+  // that reads the destination through a call that is neither primitive nor `#pure`
+  // (`v += [last(v) + i]`, `g += [a_mk(g[0]?, 50)]`) — every non-constant part of a scalar or
+  // text element is evaluated into a `__ref_N` first, every call part of a record element into
+  // a `__ref_p2_N` (its answer then copied into the new element).
+  scalar_elem = el_convert::plain_scalar(el_types::base(in_t)) || el_types::base(in_t) is TyText;
+  record_elem = struct_ref(e, el_types::base(in_t)) >= 0;
+  route4 = false;
+  if reads_dest && !e.first_pass && (scalar_elem || record_elem) {
+    for x in xs {
+      if el_ir::reads_var(x.code, v) && (hands_to_writer(e, x.code, v) || (record_elem && match el_ir::unspan(x.code) { NdCall { def_nr: rcd } => !starts_with(el::def(e, rcd).name, "Op"), _ => false })) {
+        route4 = true;
+      }
+    }
+  }
+  if route4 {
+    s4: vector<Ex> = [];
+    for x in xs {
+      xc = el_ir::unspan(x.code);
+      constant = xc is NdInt || xc is NdLong || xc is NdFloat || xc is NdSingle || xc is NdBoolean || xc is NdText || xc is NdNull;
+      if constant || (record_elem && !(xc is NdCall)) {
+        s4 += [x];
+        continue;
+      }
+      tmp = if scalar_elem { el_vars::work_ref(vars, in_t) } else { el_vars::work_ref_p2(vars, el_types::without_deps(in_t)) };
+      staged += [el_ir::v_set(tmp, x.code)];
+      s4 += [ex(ir::NdVar { n: tmp }, x.tp)];
+    }
+    xs = s4;
+  } else if reads_dest {
     if !el_ex_null::build_vals_carry(e, vars, v, in_t, xs) {
       el::refuse(e, "an appended item that reads the vector it is appended to, staged or snapshotted");
       return refused_build();
@@ -2310,9 +2377,10 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
     }
     return Built { x: ex(ir::NdNull, if value { el_vars::tp(vars, v) } else { ir::TyVoid }), items: late_codes, elem: in_t };
   }
-  // A DECLARED literal has its element's `vector<…>` row made where its type was read, items
-  // or none (`g: vector<single> = []`).
-  if len(xs) > 0 || (!el_types::is_unknown(declared) && !append) {
+  // A literal with items has its element's `vector<…>` row made here; an empty one, declared
+  // or not (`g: vector<single> = []`), numbers nothing yet: its rows come at its store's mint,
+  // `main_vector<T>` before `vector<T>`, after the structs.
+  if len(xs) > 0 {
     vector_of(e, in_t);
   }
   rows = vector_rows(e, in_t, n, !el_types::is_unknown(declared) && !at_close);
@@ -2403,7 +2471,8 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
   }
   // A struct enum, nullable or not, is an element of its enum's record (null the zero tag).
   senum = el_ex_match::struct_enum_of(e, match in_t { TyOptional { inner } => inner, _ => in_t });
-  if len(xs) > 0 {
+  // (Function values are made record by record, no pre-allocation.)
+  if len(xs) > 0 && !(el_types::base(in_t) is TyFunction) {
     size = elem_size(in_t);
     if size == -2 && senum >= 0 && len(recs) == 0 {
       size = record_size(e, ir::TyEnum { n: senum, is_ref: true, dep: [] });
@@ -2583,6 +2652,10 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
     for it in nested {
       ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }]))];
       ls += [el_ir::cl(e, "OpSetInt4", [at, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }])];
+      if el_ex_place::vec_lit_len(e, it) == 0 {
+        ls += [el_ir::cl(e, "OpFinishRecord", [w, at, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }])];
+        continue;
+      }
       b = vector_build(e, vars, elm, it, inner_t, append: true);
       match b.x.code {
         NdInsert { items: bi } => { ls += bi; },
@@ -2607,7 +2680,22 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
         return refused_build();
       }
       ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }]))];
+      xts = match x.tp { TyTuple { elems: xe } => xe, _ => [] };
       for m in parts {
+        // A tuple member is written FLATTENED at its own offsets in the element
+        // (`tuple_field_set`), a block of its own.
+        match elems[m#index] ?? ir::TyVoid {
+          TyTuple { elems: ine } => {
+            tfs = el_ex_object::tuple_field_set(e, vars, ine, at, fs[m#index]!.position, m, xts[m#index] ?? ir::TyVoid, "tuple_field_set");
+            if tfs == null {
+              el::refuse(e, "a vector of tuples with a tuple member of this shape");
+              return refused_build();
+            }
+            ls += [tfs!];
+            continue;
+          },
+          _ => {}
+        }
         // A record member is copied into its slot of the element (`set_field`).
         narrow = match elems[m#index] ?? ir::TyVoid { TyInteger { spec: ns } => el_types::narrow_width(ns) > 0, _ => false };
         if struct_ref(e, elems[m#index] ?? ir::TyVoid) >= 0 || narrow {
@@ -2636,6 +2724,26 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
       match x.code {
         NdInsert { items: steps } => { ls += steps; },
         _ => { ls += [x.code]; }
+      }
+      ls += [el_ir::cl(e, "OpFinishRecord", [w, at, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }])];
+    }
+    xs = [];
+  }
+  // A function value's element is a four-byte record holding the function's definition
+  // number: made through the vector, written as a function-valued field is (`fn_number_write`:
+  // `___fn_ref_tmp_N = <def nr>; OpSetInt4(_elm_N, 0, FnRefDnr(tmp))`), finished.
+  if len(recs) == 0 && len(xs) > 0 && el_types::base(in_t) is TyFunction {
+    at = ir::NdVar { n: elm };
+    for x in xs {
+      ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }]))];
+      fw = el_ex_object::fn_number_write(e, vars, at, ir::NdInt { n: 0 }, x.code, in_t);
+      if fw == null {
+        el::refuse(e, "a vector item of a function type that is no named function or local");
+        return refused_build();
+      }
+      match fw! {
+        NdBlock { block: fwb } => { ls += fwb[0].operators; },
+        _ => { ls += [fw!]; }
       }
       ls += [el_ir::cl(e, "OpFinishRecord", [w, at, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }])];
     }
@@ -2833,7 +2941,7 @@ pub fn empty_literal_to(e: el::El, vars: el_vars::Vars, t: ir::TypeT, borrows: v
 }
 
 // `vector_db`: a fresh `__vdb_N` store for vector local `v`, the local borrowing it.
-pub fn literal_store(e: el::El, vars: el_vars::Vars, v: integer, r: VecRows, rebind: boolean = false) -> vector<ir::Node> {
+pub fn literal_store(e: el::El, vars: el_vars::Vars, v: integer, r: VecRows, rebind: boolean = false, slot: integer = 0) -> vector<ir::Node> {
   db = el_vars::work_vec_db(vars, ir::TyReference { n: r.main_def, dep: [] });
   if rebind {
     vars.vars[db].skip_free = true;
@@ -2843,7 +2951,7 @@ pub fn literal_store(e: el::El, vars: el_vars::Vars, v: integer, r: VecRows, reb
   [
     el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: r.main_known }]),
     el_ir::v_set(v, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: r.vec_known }])),
-    el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }])
+    el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: slot }])
   ]
 }
 
@@ -2927,4 +3035,45 @@ fn branch_bound_anywhere(e: el::El, n: integer, name: text, depth: integer) -> b
     }
   }
   false
+}
+
+// `snapshot_read_destination`'s `writes`: does `n` hand the vector `v` to a call that is
+// neither primitive nor `#pure`, in an argument at a parameter that is not `const`
+// (`value_const`, C124), or to a call through a function value?
+fn hands_to_writer(e: el::El, n: ir::Node, v: integer) -> boolean {
+  match el_ir::unspan(n) {
+    NdCallRef { args: cra } => {
+      for a in cra {
+        if el_ir::reads_var(a, v) {
+          return true;
+        }
+      }
+      false
+    },
+    NdCall { def_nr, args } => {
+      d = el::def(e, def_nr);
+      body = d.code[0] ?? ir::NdNull;
+      if !((body is NdNull && d.rust != "") || d.purity == 1) {
+        for a in args {
+          if el_ir::reads_var(a, v) && (a#index >= len(d.attributes) || !d.attributes[a#index].value_const) {
+            return true;
+          }
+        }
+      }
+      for a in args {
+        if hands_to_writer(e, a, v) {
+          return true;
+        }
+      }
+      false
+    },
+    _ => {
+      for c in el_ir::children(el_ir::unspan(n)) {
+        if hands_to_writer(e, c, v) {
+          return true;
+        }
+      }
+      false
+    }
+  }
 }

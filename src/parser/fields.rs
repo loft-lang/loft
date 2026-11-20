@@ -1755,6 +1755,19 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
 
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_index(&mut self, code: &mut Value, tp: &Type) -> Type {
+        // `@FR-Slice-Value` — an indexed or re-sliced SLICE (`v[1..][0]`, `v[1..][1..]`) is a
+        // vector-typed position like a method's receiver: the slice is materialised as the
+        // fresh vector a bind makes (`iterator_as_vector`, the one home), then indexed.
+        let mut tp = tp.clone();
+        if let Type::Iterator(elm, _) = tp.base()
+            && Self::slice_shaped(code)
+        {
+            let want = Type::Vector(elm.clone(), crate::data::Deps::none());
+            if let Some(vec_tp) = self.iterator_as_vector(code, &tp, &want) {
+                tp = vec_tp;
+            }
+        }
+        let tp = &tp;
         let mut t = tp.clone();
         let mut p = Value::Null;
         self.un_ref(&mut t, &mut p);

@@ -615,6 +615,11 @@ struct Scopes<'s> {
     /// loft#2319 — the same temps in the order this pass met them, so the call that consumes
     /// one can read it back as null after itself (`scan_args`' postamble).
     consumed_lifts: Vec<u16>,
+    /// loft#2578 — the call `scan_args` enters next is the PLACE of a write, or a projection
+    /// of one (`scan_args::place_operand`): it addresses the live vector, so
+    /// `copy_written_vector_operands` leaves it in place.  Taken at `scan_args`' entry, so it
+    /// reaches that one call and no call inside it.
+    place_operand: bool,
     /// loft#854 — the whole-function half of the ownership oracle, computed once
     /// for `d_nr` instead of once per question.
     ///

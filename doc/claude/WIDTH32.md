@@ -41,7 +41,9 @@ another name.
   32-bit operands is a 32-bit operation.  Its result is an `i32`, and a result outside the
   `i32` range reads null, as a 64-bit overflow does (C85).  The parser writes this as
   `OpNarrow32` around the operation.
-- An operand of type `i64` makes the operation 64-bit.  That is the one way to widen.
+- An operand whose type reaches past `i32` — an `i64`, a `u32` — makes the operation 64-bit.
+  So `((a & 255) as u32) << 24` is a 64-bit shift that holds a colour's alpha byte, where
+  `(a & 255) << 24` is a 32-bit one that reads null for an alpha of 128 or more.
 - A call into a 64-bit file has its integer answer (any but `i64` and `u32`) and a plain
   `float` answer narrowed where the call returns.  A value that does not fit reads null.  A
   generic instance counts as its template's file: `sum` over a `vector<i32>` runs the
