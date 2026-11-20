@@ -3111,6 +3111,11 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
     if kfo >= 0 && kown != "" && !el_ex_place::syntax_names(e, rhs!, kown) {
       kfrv = match e.p.nodes[match e.p.nodes[target] { SMember { e: kbe } => kbe ?? -1, _ => -1 }] { SName { name: kbn } => el_vars::var(vars, kbn), _ => -1 };
       kfd = struct_ref(e, el_types::base(el_vars::tp(vars, kfrv)));
+      // (`child_allocs`: each append with items makes a record through the owner — counted on
+      // the first pass, where the owner's promotion onto the return buffer is decided.)
+      if e.first_pass && !vars.vars[kfrv].argument {
+        vars.allocs += [kfrv];
+      }
       // (The field append's road registers the element's `vector<…>` store row on the second
       // pass, before the items, as Rust's `parse_append_vector` does.)
       if !e.first_pass {
