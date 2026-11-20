@@ -437,7 +437,7 @@ pub fn verified_cached_feed() -> Option<&'static AdvisoryFeed> {
 pub fn refresh_cached_feed() {
     const ASKED_TTL_SECS: u64 = 60 * 60;
     let (cache, _) = advisories_paths();
-    let asked = cache.with_extension("asked");
+    let asked = registry_index::cache_dir().join("advisories.asked");
     if std::env::var_os("LOFT_OFFLINE").is_some()
         || !older_than(&cache, ADVISORIES_TTL_SECS)
         || !older_than(&asked, ASKED_TTL_SECS)
