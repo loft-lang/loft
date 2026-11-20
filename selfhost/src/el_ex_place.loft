@@ -2668,10 +2668,13 @@ pub fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text,
   vars.slice_node = if declared! is TyVector { el_ex_vector::slice_target(e, rhs!) } else { -1 };
   outer_into = vars.read_into;
   vars.read_into = leftmost(e, rhs!);
+  outer_expect_node = vars.expect_node;
+  outer_expect = ex(ir::NdNull, vars.expect);
   vars.expect_node = rhs!;
   vars.expect = declared!;
   x = el_ex_assign::expression(e, vars, rhs!);
-  vars.expect_node = -1;
+  vars.expect_node = outer_expect_node;
+  vars.expect = outer_expect.tp;
   vars.read_into = outer_into;
   vars.slice_node = outer_slice;
   // `(C-Never)`: a declared local bound to a value that never arrives is typed so, as an
@@ -4577,7 +4580,7 @@ pub fn field_vector_copy(e: el::El, vars: el_vars::Vars, r: ir::Node, d: integer
   // (`@FR-T-Chk-Vec`: the field's type reaches a branch's arms, so an untyped `[]` arm is
   // built where it stands.)
   kept_node = vars.expect_node;
-  kept_tp = vars.expect;
+  kept_tp = ex(ir::NdNull, vars.expect);
   branch = match e.p.nodes[n] {
     SIf { cond: _ } => n,
     SBlock { stmts } => if len(stmts) == 1 { match e.p.nodes[stmts[0]] { SStmt { e: se, semi, orelse } => if se != null && !semi && orelse == null && e.p.nodes[se!] is SIf { se! } else { -1 }, _ => -1 } } else { -1 },
@@ -4589,7 +4592,7 @@ pub fn field_vector_copy(e: el::El, vars: el_vars::Vars, r: ir::Node, d: integer
   }
   x = el_ex_assign::expression(e, vars, n);
   vars.expect_node = kept_node;
-  vars.expect = kept_tp;
+  vars.expect = kept_tp.tp;
   if e.first_pass {
     return [];
   }

@@ -1210,14 +1210,14 @@ pub fn arm_body(e: el::El, vars: el_vars::Vars, body: integer?, expected: ir::Ty
   }
   // (An `if` arm of a match answering into an expected vector takes that vector, `arm_expect`.)
   kept_node = vars.expect_node;
-  kept_tp = vars.expect;
+  kept_tp = ex(ir::NdNull, vars.expect);
   if e.p.nodes[body!] is SIf && el_types::base(vars.arm_expect) is TyVector {
     vars.expect_node = body!;
     vars.expect = vars.arm_expect;
   }
   x = el_ex_assign::expression(e, vars, body!);
   vars.expect_node = kept_node;
-  vars.expect = kept_tp;
+  vars.expect = kept_tp.tp;
   // An arm answering a call that may hand back an argument, in a bind's value: its copy.
   lifted = el_ex_null::lift_borrowing_call(e, vars, x.code, x.tp);
   if lifted != null {
