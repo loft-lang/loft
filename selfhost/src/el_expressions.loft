@@ -119,7 +119,7 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   kept_node = vars.expect_node;
   kept_tp = vars.expect;
   ttail = el_ex_deliver::tail_syntax(e, body);
-  if ttail >= 0 && e.p.nodes[ttail] is SIf && el_types::base(result) is TyVector {
+  if ttail >= 0 && (e.p.nodes[ttail] is SIf || e.p.nodes[ttail] is SMatch) && el_types::base(result) is TyVector {
     vars.expect_node = ttail;
     vars.expect = el_types::without_deps(result);
   }
