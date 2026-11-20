@@ -53,8 +53,10 @@ jobs:
         run: cargo build --release --bin loft
       - name: Gate E (real gate, writes the baseline)
         run: |
-          # The elaborator's optimised build needs more than 6 GB of address space in cc1.
-          ulimit -v 9000000
+          # The elaborator's optimised build needs more than 9 GB of address space in cc1 (run
+          # 44740409201: "virtual memory exhausted" under 9 GB at 04e644a94).  The runner has
+          # 15 GB and builds one tool at a time, so the cap leaves 2 GB to the rest.
+          ulimit -v 13000000
           # The gate's exit, not `tee`'s: a gate that did not run (a build out of memory) fails.
           set -o pipefail
           # One tool build at a time, optimised: with `(R-CTail)` the elaborator's optimised
