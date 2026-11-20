@@ -185,7 +185,10 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
     match el_ir::unspan(p.code) {
       NdCall { def_nr: gd, args: ga } => {
         if starts_with(el::def(e, gd).name, "OpGet") && len(ga) == 2 && calls(e, el_ir::unspan(ga[0]!), "OpGetVector") && any_user_call(e, [el_ir::unspan(ga[0]!)]) && place_root(e, el_ir::unspan(ga[0]!)) >= 0 {
-          f2 = el_vars::create_unique(vars, "_place", ir::TyVector { inner: el_types::without_deps(el_types::base(p.tp)), dep: [place_root(e, el_ir::unspan(ga[0]!))] });
+          // (Typed as the vector itself — `parent_tp.base()` — its element's own `?` kept.)
+          f2vt = match el_ir::unspan(ga[0]!) { NdCall { args: f2a } => el_types::base(place_type(e, vars, f2a[0] ?? ir::NdNull)), _ => ir::TyVoid };
+          f2in = match f2vt { TyVector { inner: f2i } => el_types::without_deps(f2i), _ => el_types::without_deps(el_types::base(p.tp)) };
+          f2 = el_vars::create_unique(vars, "_place", ir::TyVector { inner: f2in, dep: [place_root(e, el_ir::unspan(ga[0]!))] });
           vars.place_setup = [el_ir::v_set(f2, el_ir::unspan(ga[0]!))];
           p.code = ir::NdCall { def_nr: gd, args: [ir::NdVar { n: f2 }, ga[1]!] };
           // (Read through the bound place, the element is there: its base type.)

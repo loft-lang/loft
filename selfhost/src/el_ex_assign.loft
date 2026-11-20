@@ -2396,6 +2396,43 @@ pub fn discharge_copy_typed(e: el::El, rhs: integer, x: Ex) -> ir::Node {
   x.code
 }
 
+// `discharge_seed` for an integer element's compound (`OpSetInt(P, 0, …)`): the seed
+// `if OpNot(OpConvBoolFromInt(OpGetInt(P, 0))) OpSetInt(P, 0, 0) else {}` goes right before the
+// write, after any place setup.  Null for another shape.
+fn discharge_seeded(e: el::El, code: ir::Node) -> ir::Node? {
+  items: vector<ir::Node> = match code { NdInsert { items: di } => di, _ => [code] };
+  if len(items) == 0 {
+    return null;
+  }
+  last = el_ir::unspan(items[-1]!);
+  match last {
+    NdCall { def_nr, args } => {
+      if el::def(e, def_nr).name != "OpSetInt" || len(args) != 3 {
+        return null;
+      }
+      acc = args[0]!;
+      off = args[1]!;
+      // (Read through the discharge's own getter, the nullable one, where no `__place_N` holds
+      // the element.)
+      match el_ir::unspan(acc) {
+        NdCall { def_nr: ad, args: aa } => {
+          if el::def(e, ad).name == "OpGetVector" {
+            nacc = el_ir::cl(e, "OpGetVectorNullable", aa);
+            last = el_ir::replace_subtree(last, acc, nacc);
+            items[len(items) - 1] = last;
+            acc = nacc;
+          }
+        },
+        _ => {}
+      }
+      seed = el_ir::v_if(el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpConvBoolFromInt", [el_ir::cl(e, "OpGetInt", [acc, off])])]), el_ir::cl(e, "OpSetInt", [acc, off, ir::NdInt { n: 0 }]), ir::NdInsert { items: [] });
+      return ir::NdInsert { items: items[..-1] + [seed, items[-1]!] };
+    },
+    _ => {}
+  }
+  null
+}
+
 // `Parser::is_struct_returning_call`: a call of a loft function with a body (`n_…`), or a struct
 // literal's block — what allocates a store of its own.  (`answers_caller_buffer` is a collection
 // return handed a caller buffer: no keyed result has one.)
@@ -2902,6 +2939,29 @@ fn place_through_discharge(e: el::El, vars: el_vars::Vars, op: text, target: int
 }
 
 pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: text, target: integer, rhs: integer?) -> Ex {
+  // loft#1205 (`@FR-E-Asgn-Discharge`): `n[i]? += 1` — the `?` is peeled to the element it
+  // reads, the compound written through that place (bound once where its index has an effect),
+  // and an integer element seeded with its default where it is null first (`discharge_seed`:
+  // `if !n[i] { n[i] = 0 }`), so `null? + 1` is 1.  Another element type is refused by name.
+  if op != "=" && rhs != null {
+    match e.p.nodes[target] {
+      SPostfix { op: dop, e: din } => {
+        if dop == "?" && din != null && e.p.nodes[din!] is SIndex {
+          dw = el_ex_place::place_assignment(e, vars, op, din!, rhs!);
+          if e.first_pass {
+            return dw;
+          }
+          dseeded = discharge_seeded(e, dw.code);
+          if dseeded == null {
+            el::refuse(e, "a compound assignment through a `?` discharge of this element");
+            return ex(ir::NdNull, ir::TyVoid);
+          }
+          return ex(dseeded!, ir::TyVoid);
+        }
+      },
+      _ => {}
+    }
+  }
   // A compound assignment to a field of a `?` read (`v[0]?.k += x`): Rust binds the place once
   // (`__place_N`) and reads and writes through it — not carried.
   if op != "=" && rhs != null {
