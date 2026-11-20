@@ -105,17 +105,20 @@ fn route(req: server::Request) {
     } else if p == "/favicon.ico" {
         req.respond_404();
     } else if p.starts_with("/tree/") {
-        rel = p[6..len(p)];
+        rel = under_root(p[6..len(p)]);
+        if rel == null { req.respond_typed(403, "outside the project", "text/plain; charset=utf-8"); return; }
         body = page_tree(rel);
         req.respond_html(body);
     } else if p == "/tree" {
         body = page_tree("");
         req.respond_html(body);
     } else if p.starts_with("/raw/") {
-        rel = p[5..len(p)];
+        rel = under_root(p[5..len(p)]);
+        if rel == null { req.respond_typed(403, "outside the project", "text/plain; charset=utf-8"); return; }
         respond_raw(req, rel);
     } else if p.starts_with("/file/") {
-        rel = p[6..len(p)];
+        rel = under_root(p[6..len(p)]);
+        if rel == null { req.respond_typed(403, "outside the project", "text/plain; charset=utf-8"); return; }
         respond_file(req, rel);
     } else if p == "/tags" {
         body = page_tags();
@@ -564,6 +567,16 @@ fn page_tree(rel: text) -> text {
     body += "</ul>";
     title = "{rel}/";
     page(title, body)
+}
+
+// A request's path as a path under the project root, or null when it names anything
+// outside it (`inside`): the pages below open what they are given, and the request line
+// is whoever sent it's to write.  "" is the root itself.
+fn under_root(request: text) -> text? {
+    at = inside(".", request);
+    if at == null { return null; }
+    if at == "." { return ""; }
+    at[2..len(at)]
 }
 
 fn respond_raw(req: server::Request, rel: text) {

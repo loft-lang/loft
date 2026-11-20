@@ -1281,6 +1281,58 @@ pub fn ends_with(self: text, value: text) -> boolean;
 #rust"@self.ends_with(@value)"
 #pure
 
+/// Where `path` lies under `root`, or null when it would lie outside it (`@FR-Path-Inside`).
+/// Use it for a path a program did not write itself — the path of a request, a name out of
+/// an archive, a file name a user typed — before handing it to `file`, `read_bytes` or
+/// `delete`: loft opens whatever path it is given (`../../etc/passwd` and `/etc/passwd`
+/// included), and this is the check that keeps such a path inside the directory it was
+/// meant for.
+///   at = inside("public", request_path);
+///   if at == null { respond(403, "outside") } else { serve(file(at)) }
+/// The path is read as loft reads every path: `/` and `\` both separate, `.` stays where
+/// it is and `..` steps up.  A `..` that stays inside is fine (`a/../b` is `root/b`); one
+/// that steps above the root is null, as are an absolute path and one naming a drive
+/// (`C:`).  Null means OUTSIDE, which is not "no such file": answer it as a refusal.  A
+/// symbolic link inside the root is followed where it leads, as the file system does.
+pub fn inside(root: text, path: text) -> text? {
+  segs: vector<text> = [];
+  seg = "";
+  first = true;
+  for c in path {
+    if c == '/' || c == '\\' {
+      // A path that opens with a separator is absolute.
+      if first { return null; }
+      segs += [seg];
+      seg = "";
+    } else {
+      // The one place a `:` may stand is a drive prefix, and that is absolute too.
+      if c == ':' { return null; }
+      seg += "{c}";
+    }
+    first = false;
+  }
+  segs += [seg];
+  // Right to left: a `..` cancels the nearest name before it, and one left over at the
+  // end stepped above the root.
+  rest = "";
+  up = 0;
+  n = segs.len();
+  for i in 0..n {
+    name = segs[n - 1 - i];
+    if name == "" || name == "." { continue; }
+    if name == ".." { up += 1; continue; }
+    if up > 0 { up -= 1; continue; }
+    rest = if rest == "" { name } else { "{name}/{rest}" };
+  }
+  if up > 0 { return null; }
+  base = root;
+  while base.size() > 1 && (base.ends_with("/") || base.ends_with("\\")) { base = base[..base.size() - 1]; }
+  if rest == "" { return base; }
+  if base == "" { return rest; }
+  if base == "/" { return "/{rest}"; }
+  "{base}/{rest}"
+}
+
 /// Directory part of a path — strips the trailing `/<segment>`.
 /// Paths are plain slash-separated text: a `\` is not a separator here, on any
 /// platform.
