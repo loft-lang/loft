@@ -869,6 +869,8 @@ pub fn syntax_deliverable_arms(e: el::El, vars: el_vars::Vars, n: integer) -> bo
   }
   match e.p.nodes[n] {
     SIf { cond: _, then, other } => other != null && syntax_deliverable_arm(e, vars, then) && syntax_deliverable_arm(e, vars, other!),
+    // (A match whose every arm is deliverable, as an `if` chain's.)
+    SMatch { arms } => len(arms) > 0 && len([for a in arms if !(match e.p.nodes[a] { SArm { body: ab } => ab != null && syntax_deliverable_arm(e, vars, ab!), _ => false }) { 1 }]) == 0,
     _ => false
   }
 }
@@ -876,6 +878,10 @@ pub fn syntax_deliverable_arms(e: el::El, vars: el_vars::Vars, n: integer) -> bo
 fn syntax_deliverable_arm(e: el::El, vars: el_vars::Vars, n: integer) -> boolean {
   match e.p.nodes[n] {
     SIf { cond: _ } => syntax_deliverable_arms(e, vars, n),
+    // (A bare arm of a match: `null`, or a vector literal — an empty `[]` built as the result's
+    // vector, `@FR-T-Chk-Vec`.)
+    SNull { at: _ } => true,
+    SVecLit { at: _ } => true,
     SBlock { at: _ } => {
       t = tail_syntax(e, n);
       if t < 0 {
@@ -888,7 +894,7 @@ fn syntax_deliverable_arm(e: el::El, vars: el_vars::Vars, n: integer) -> boolean
         },
         _ => false
       };
-      named || e.p.nodes[t] is SNull || (match e.p.nodes[t] { SVecLit { items } => len(items) > 0, _ => false }) || e.p.nodes[t] is SIf && syntax_deliverable_arms(e, vars, t)
+      named || e.p.nodes[t] is SNull || e.p.nodes[t] is SVecLit || e.p.nodes[t] is SIf && syntax_deliverable_arms(e, vars, t)
     },
     _ => false
   }
