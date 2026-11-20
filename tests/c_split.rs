@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! `(R-CSplit)` (@PLN212): each `tests/c_split/*.loft` cell, built by the C backend with a
+//! `@FR-R-CSplit` (@PLN212): each `tests/c_split/*.loft` cell, built by the C backend with a
 //! budget small enough that every function it holds is split, answers its hand-computed
 //! values (the cell asserts them), exits 0 and frees every store — and the trace shows each
 //! function the cell names really was split, so no cell passes by staying whole.  The same
@@ -190,4 +190,33 @@ fn a_call_before_its_blocks_frees_is_the_blocks_value_in_a_shipped_unit() {
         );
         assert!(r.status.success(), "{name} on {backend:?}: {err}");
     }
+}
+
+/// `@C169`: a C unit carries its whole runtime and compiles alone — it includes no file of
+/// loft's (only the system's `<...>` headers) and defines the runtime it calls, a cold helper
+/// such as the leak report included.  A build that compiled the runtime apart would write an
+/// include or a bare declaration here instead.
+///
+/// @falsified-at: none — the decision keeps the shape every build already has, so no earlier
+/// build fails it; it goes red on the first build that moves the runtime out of the unit.
+#[test]
+fn a_unit_carries_its_runtime_and_compiles_alone() {
+    let dir = std::env::temp_dir().join(format!("loft-c-unit-whole-{}", std::process::id()));
+    loft::file_access::create_dir_all(&dir).unwrap();
+    let prog = dir.join("small.loft");
+    loft::file_access::write(&prog, "fn main() {\n    println(\"{1 + 2}\");\n}\n").unwrap();
+    for args in [&[][..], &["--ship"][..]] {
+        let unit = emitted(&prog, args, &[]);
+        assert!(
+            !unit
+                .lines()
+                .any(|l| l.trim_start().starts_with("#include \"")),
+            "{args:?}: the unit includes a file of loft's"
+        );
+        assert!(
+            unit.contains("static void loft_leak_report(void) {"),
+            "{args:?}: the unit defines the runtime it calls"
+        );
+    }
+    let _ = loft::file_access::remove_dir_all(&dir);
 }

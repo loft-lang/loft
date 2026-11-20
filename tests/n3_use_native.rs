@@ -223,6 +223,68 @@ fn a_compiled_librarys_nullable_text_answer_reaches_the_script() {
     let _ = fa::remove_dir_all(&tmp);
 }
 
+/// `source_dir()` asked inside a compiled library answers the PROGRAM's directory, as the
+/// program's own call does.  The compiled body read it from the process (`LOFT_SOURCE_DIR`,
+/// else where the executable is) while the interpreter reads the `Stores` it runs on, so a
+/// library loading a file beside the program (`graphics::load_font("ui.ttf")`) looked beside
+/// the `loft` binary and found nothing — on the interpreter only, and only once the library's
+/// artifact existed.
+#[test]
+fn source_dir_inside_a_compiled_library_is_the_programs() {
+    if loft::platform::process::harness_command("rustc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        eprintln!("skip: rustc unavailable");
+        return;
+    }
+    let pid = std::process::id();
+    let tmp = std::env::temp_dir().join(format!("loft_n3_where_{pid}"));
+    let _ = fa::remove_dir_all(&tmp);
+    fa::create_dir_all(&tmp).unwrap();
+    let prog = tmp.join("main.loft");
+    fa::write(
+        &prog,
+        "use wherelib;\n\
+         fn main() {\n\
+         \x20 here = source_dir();\n\
+         \x20 println(\"{len(here) > 0} {wherelib::where_am_i() == here} {wherelib::tagged(\"t\") == \"t:{here}\"}\");\n\
+         }\n",
+    )
+    .unwrap();
+    let lib = private_lib(&tmp, &["wherelib"]);
+    // Twice: the second run finds the artifact the first one built.  A `LOFT_SOURCE_DIR` set
+    // by whoever runs the suite must not be what makes the answer right, so it names a
+    // directory that is neither.
+    for run in 0..2 {
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+            .arg("--lib")
+            .arg(&lib)
+            .arg("--interpret")
+            .arg(&prog)
+            .env("LOFT_NO_CACHE", "1")
+            .env("LOFT_SOURCE_DIR", tmp.join("elsewhere"))
+            .output()
+            .expect("run the loft binary");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            out.status.success(),
+            "run {run}: loft exited non-zero.\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+        assert_eq!(
+            stdout, "true true true\n",
+            "run {run}: a compiled library's source_dir() is not the program's"
+        );
+    }
+    assert!(
+        cdylib_present_for(&lib.join("wherelib/native-auto"), "wherelib"),
+        "the library was not compiled, so the test exercised nothing"
+    );
+    let _ = fa::remove_dir_all(&tmp);
+}
+
 /// @PLN11 Arc N / N3 (B3) — silent per-function fallback: a library where two
 /// public functions compile (`triple`, and `apply_inc`, which calls through a function
 /// value, @PLN199 C2) and one does not (`label`, whose function value returns a `single` the

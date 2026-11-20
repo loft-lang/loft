@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @I68 — Native Rust generator: a second compiled target, C
 
-//! `(R-CSplit)` (@PLN212): a function body over the size budget is written as a chain of
+//! `@FR-R-CSplit` (@PLN212): a function body over the size budget is written as a chain of
 //! `LOFT_NOINLINE` part functions, so no function the C compiler optimises is large enough
 //! for its optimiser time to grow out of bounds (MSVC's grows about quadratically above 400
 //! runtime-call sites).
@@ -855,6 +855,7 @@ fn split_at(
         let _ = writeln!(out, "    return loft_fr->loft_split_ret;");
     }
     let _ = writeln!(out, "}}");
+    crate::rewrite_census::fired("R-CSplit", 1);
     if trace() {
         let costs: Vec<String> = parts.iter().map(|p| unit_cost(p).to_string()).collect();
         eprintln!(

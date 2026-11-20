@@ -1,0 +1,53 @@
+// A challenge for a KEYED LOCAL BOUND FROM A CALL, by what the call's arguments are (@PLN91):
+// one function per case, one axis each; every function answers a hand-computed value.
+//   control (carried):        arg_none (no argument), arg_scalar (an integer)
+//   a temporary argument:     arg_record_literal (`keyed(KRec { k: 2 })`), arg_vector_literal
+//                             (`mkset(["c", "a", "b", "a"])`), arg_text_format (`one("z{n}")`)
+//   a record local argument:  arg_record_local (sorted), arg_record_local_hash, arg_record_local_index
+//   a callee answering its own argument (a borrow, no store given away):
+//                             arg_borrowed (`id(g)`), arg_borrowed_field (`id(b.s)`)
+//   repetition:               loop_vector_literal (a literal per pass), loop_record_literal
+struct P { k: integer, t: text }
+struct KRec { k: integer }
+struct W { key: text }
+struct Ctr { calls: integer = 0 }
+
+fn mk0() -> sorted<P[k]> { [P { k: 3, t: "c" }, P { k: 1, t: "a" }] }
+fn mkn(n: integer) -> sorted<P[k]> { out: sorted<P[k]> = []; for i in 0..n { out += [P { k: n - i, t: "x" }]; } out }
+fn keyed(base: KRec) -> sorted<P[k]> { out: sorted<P[k]> = []; for i in 0..3 { out += [P { k: base.k + i * 2, t: "r" }]; } out }
+fn mkset(items: vector<text>) -> sorted<W[key]> { out: sorted<W[key]> = []; for i in items { if out[i] == null { out += [W { key: i }]; } } out }
+fn one(s: text) -> hash<W[key]> { out: hash<W[key]> = []; out += [W { key: s }]; out }
+fn mk_sorted(c: Ctr) -> sorted<P[k]> { c.calls += 1; [P { k: 1, t: "a" }, P { k: 2, t: "b" }, P { k: 3, t: "c" }] }
+fn mk_hash(c: Ctr) -> hash<P[k]> { c.calls += 1; [P { k: 1, t: "a" }, P { k: 2, t: "b" }, P { k: 3, t: "c" }] }
+fn mk_index(c: Ctr) -> index<P[k]> { c.calls += 1; [P { k: 1, t: "a" }, P { k: 2, t: "b" }, P { k: 3, t: "c" }] }
+struct Bag { s: sorted<P[k]> }
+fn id(h: sorted<P[k]>) -> sorted<P[k]> { h }
+fn ksum(s: sorted<P[k]>) -> integer { t = 0; for p in s { t = t * 10 + p.k; } t }
+
+fn arg_none() -> integer { s = mk0(); ksum(s) * 10 + len(s) }
+fn arg_scalar() -> integer { s = mkn(3); ksum(s) * 10 + len(s) }
+fn arg_record_literal() -> integer { s = keyed(KRec { k: 2 }); ksum(s) * 10 + len(s) }
+fn arg_vector_literal() -> integer { s = mkset(["c", "a", "b", "a"]); o = ""; for w in s { o += w.key; } len(s) * 1000 + (if o == "abc" { 1 } else { 0 }) }
+fn arg_text_format(n: integer) -> integer { s = one("z{n}"); len(s) * 10 + (if s["z{n}"] != null { 1 } else { 0 }) }
+fn arg_record_local() -> integer { c = Ctr {}; s = mk_sorted(c); ksum(s) * 10 + c.calls }
+fn arg_record_local_hash() -> integer { c = Ctr {}; h = mk_hash(c); t = 0; for p in h { t += p.k; } t * 10 + c.calls }
+fn arg_record_local_index() -> integer { c = Ctr {}; x = mk_index(c); t = 0; for p in x { t = t * 10 + p.k; } t * 10 + c.calls }
+fn arg_borrowed() -> integer { g = mk0(); s = id(g); s += [P { k: 9, t: "n" }]; len(g) * 10 + len(s) }
+fn arg_borrowed_field() -> integer { b = Bag { s: mk0() }; s = id(b.s); s += [P { k: 9, t: "n" }]; len(b.s) * 10 + len(s) }
+fn loop_vector_literal() -> integer { t = 0; for k in 0..4 { seen = mkset(["c", "a", "b", "a"]); t += len(seen) * 100 + k; } t }
+fn loop_record_literal() -> integer { t = 0; for k in 0..3 { s = keyed(KRec { k: k }); t += ksum(s); } t }
+
+fn main() {
+  assert(arg_none() == 132, "arg_none {arg_none()}");
+  assert(arg_scalar() == 1233, "arg_scalar {arg_scalar()}");
+  assert(arg_record_literal() == 2463, "arg_record_literal {arg_record_literal()}");
+  assert(arg_vector_literal() == 3001, "arg_vector_literal {arg_vector_literal()}");
+  assert(arg_text_format(7) == 11, "arg_text_format {arg_text_format(7)}");
+  assert(arg_record_local() == 1231, "arg_record_local {arg_record_local()}");
+  assert(arg_record_local_hash() == 61, "arg_record_local_hash {arg_record_local_hash()}");
+  assert(arg_record_local_index() == 1231, "arg_record_local_index {arg_record_local_index()}");
+  assert(arg_borrowed() == 23, "arg_borrowed {arg_borrowed()}");
+  assert(arg_borrowed_field() == 23, "arg_borrowed_field {arg_borrowed_field()}");
+  assert(loop_vector_literal() == 1206, "loop_vector_literal {loop_vector_literal()}");
+  assert(loop_record_literal() == 405, "loop_record_literal {loop_record_literal()}");
+}

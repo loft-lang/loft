@@ -27,6 +27,9 @@ import sys
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
 
+# An arm is its lowering's name and its facts, joined by this separator (not a path).
+ARM_SEP = "/"
+
 WRITER_ENV = {"c": ("--native-c", "LOFT_TRACE_BIND_C"), "native": ("--native", "LOFT_TRACE_BIND_NATIVE")}
 
 
@@ -44,12 +47,95 @@ def rows(path):
                     continue
                 fn, var, kind, site, arm = parts[0], parts[1], parts[2], parts[3], parts[4]
                 words = arm.split(" ")
-                b2 = next((w for w in words if w.startswith("b2=") and "/" not in w), None)
-                arm = words[-1] + (f"/{b2}" if b2 else "")
+                # The arm is the last word that is no fact; the facts that are part of the
+                # lowering ride on its name: the displaced free, a null init's mint, and
+                # whether a call copy releases its source.
+                name = next((w for w in reversed(words) if "=" not in w), words[-1])
+                facts = [
+                    w
+                    for w in words
+                    if w.startswith(("b2=", "mint=", "srcfree=")) and ARM_SEP not in w
+                ]
+                arm = ARM_SEP.join([name] + facts)
                 out[(fn, var)].append((kind, site, arm))
     except OSError:
         pass
     return out
+
+
+# The C writer's arms that are its own REPRESENTATION of a value — a value record, a scalar
+# kept across a chain, a rewritten bind, a write through a link — each used for any
+# interpreter arm.  They choose how the value is held, not which store is copied or freed.
+C_REPRESENTATION = {
+    "value-record", "sticky", "spec-chain", "rewritten", "link-write", "link-repoint",
+    "store-link", "adopted-init",
+}
+
+# The C arm each interpreter arm is lowered as when the two writers decide the same store
+# effect.  `*` stands for any displaced-free fact.  An interpreter arm missing here, or met
+# with a C arm that is neither its entry nor a representation arm, fails `--check`.
+C_EXPECTED = {
+    ("first", "F1"): {"assign"},
+    ("first", "F3"): {"var-copy"},
+    ("first", "copy"): {"var-copy"},
+    ("first", "F4"): {"element-copy"},
+    ("first", "F5"): {"element-copy"},
+    ("first", "F6"): {"join"},
+    ("first", "F7-join"): {"join"},
+    ("first", "F8"): {"join"},
+    ("first", "F9a"): {"join"},
+    ("first", "F7-copy/srcfree=1"): {"call-copy-free"},
+    ("first", "F7-copy/srcfree=0"): {"call-copy"},
+    ("first", "F9c/srcfree=1"): {"call-copy-free"},
+    ("first", "F9c/srcfree=0"): {"call-copy"},
+    ("first", "F9b"): {"assign"},
+    ("first", "F10"): {"assign"},
+    ("first", "F11/mint=1"): {"vector-null"},
+    ("first", "F11/mint=0"): {"assign"},
+    ("first", "F12"): {"keyed-null"},
+    ("first", "F13"): {"assign"},
+    ("first", "first-text"): {"assign"},
+    ("first", "first-fn"): {"assign"},
+    ("first", "first-refvar"): {"assign"},
+    ("first", "first-iter-null"): {"assign"},
+    ("first", "first-tuple-null"): {"assign"},
+    ("first", "walk-step"): {"assign"},
+    ("re", "B0"): {"keyed-null"},
+    ("re", "R1/*"): {"join"},
+    ("re", "R2a/*"): {"join"},
+    ("re", "R2b/*/srcfree=1"): {"call-copy-free"},
+    ("re", "R2b/*/srcfree=0"): {"call-copy"},
+    ("re", "R2c/*"): {"var-copy"},
+    ("re", "R2d/*"): {"element-copy", "reading-view-copy"},
+    ("re", "R3/b2=none"): {"assign"},
+    ("re", "R3/b2=none/mint=1"): {"vector-null"},
+    ("re", "R3/b2=pre"): {"displacing-rebind"},
+    ("re", "R3/b2=stash"): {"displacing-rebind"},
+}
+
+
+def expected_c(kind, arm):
+    """The C arms that agree with interpreter arm `arm`, or None when it is not classified."""
+    hit = C_EXPECTED.get((kind, arm))
+    if hit is None:
+        parts = arm.split(ARM_SEP)
+        starred = ARM_SEP.join(["*" if p.startswith("b2=") else p for p in parts])
+        hit = C_EXPECTED.get((kind, starred))
+    return hit
+
+
+def judge(pairs):
+    """(disagreements, unclassified) among the counted (kind, interpreter arm, C arm) pairs."""
+    differ, unknown = [], []
+    for (kind, ia, wa), n in sorted(pairs.items()):
+        if wa in C_REPRESENTATION:
+            continue
+        want = expected_c(kind, ia)
+        if want is None:
+            unknown.append((kind, ia, wa, n))
+        elif wa not in want:
+            differ.append((kind, ia, wa, n))
+    return differ, unknown
 
 
 def by_site(seq):
@@ -110,6 +196,11 @@ def main():
     ap.add_argument("--jobs", type=int, default=8)
     ap.add_argument("--out")
     ap.add_argument("--examples", type=int, default=0, help="cells to list per split pair")
+    ap.add_argument(
+        "--check",
+        action="store_true",
+        help="fail when the C writer decides a store effect the interpreter does not",
+    )
     a = ap.parse_args()
     loft = os.path.abspath(a.loft)
     if a.cells:
@@ -150,6 +241,24 @@ def main():
         with open(a.out, "w", encoding="utf-8") as f:
             for r in allrows:
                 f.write("\t".join(str(x) for x in r) + "\n")
+    if a.check:
+        if a.writer != "c":
+            print("--check judges the C writer; the rustc writer's census is a report")
+            return 2
+        differ, unknown = judge(pairs)
+        if not allrows:
+            print("\nFAIL: no assignment was paired — the census could not run")
+            return 1
+        for kind, ia, wa, n in differ:
+            print(f"\nDIFFERS: {kind} {ia} is lowered as {wa} ×{n} (expected "
+                  f"{' or '.join(sorted(expected_c(kind, ia)))})")
+        for kind, ia, wa, n in unknown:
+            print(f"\nUNCLASSIFIED: {kind} {ia} (met with {wa} ×{n}) has no entry in C_EXPECTED")
+        if differ or unknown:
+            print(f"\nFAIL: {len(differ)} store-relevant disagreement(s), {len(unknown)} "
+                  "unclassified arm(s) — STORE_RECORDS.md § The lowering census")
+            return 1
+        print("\nok: the two writers decide the same store effect at every paired assignment")
     return 0
 
 

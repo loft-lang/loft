@@ -158,6 +158,19 @@ impl FirstArm {
             FirstArm::RecordVarCopy { src, .. } => {
                 facts.push(format!("src={}", trace_var(function, Some(src))));
             }
+            // The two choices inside an arm that decide a store: whether the null init mints,
+            // and whether the copy releases its source — each the one shared answer.
+            FirstArm::VectorNull => {
+                facts.push(format!("mint={}", u8::from(vector_null_mints(function, v))));
+            }
+            FirstArm::NullableCallCopy { .. } | FirstArm::CallCopy { .. } => {
+                facts.push(format!(
+                    "srcfree={}",
+                    u8::from(crate::use_analysis::call_return_frees_source(
+                        data, d_nr, value
+                    ))
+                ));
+            }
             _ => {}
         }
         facts.extend(trace_call_facts(data, d_nr, function, v, value));
@@ -473,6 +486,14 @@ impl ReBind {
         )];
         if let ReArm::VarCopy { src, .. } = self.arm {
             facts.push(format!("src={}", trace_var(function, Some(src))));
+        }
+        if let ReArm::CallCopy { .. } = self.arm {
+            facts.push(format!(
+                "srcfree={}",
+                u8::from(crate::use_analysis::call_return_frees_source(
+                    data, d_nr, value
+                ))
+            ));
         }
         facts.extend(trace_call_facts(data, d_nr, function, v, value));
         facts.join(" ")
@@ -1146,10 +1167,47 @@ fn re_arm(
 /// the oracle's `Join` base.
 fn join_base(data: &Data, d_nr: u32, function: &Function, value: &Value, v: u16) -> Option<u16> {
     choice_var_arm(data, d_nr, function, value, v).or_else(|| {
+        if block_hands_over_its_own(data, d_nr, function, value) {
+            return None;
+        }
         match crate::use_analysis::ownership_of(data, d_nr, value) {
             crate::use_analysis::Own::Join { base } => Some(base),
             _ => None,
         }
+    })
+}
+
+/// `@FR-O-Move` — a block whose value is a local the block itself bound to a store of its own
+/// (a discharge, `{ t = f(b); if !t { panic } t }`): the local's first bind already joined,
+/// copied or adopted the call's answer, so the block hands over a store nothing else names.
+/// The oracle reads through `t` to the call and answers that call's `Join`; joined again at
+/// the outer bind, the copy arm could never run (the answer is never the base's store by
+/// then), and the C writer, which asks the value and not the oracle, binds it as it is.  The
+/// outer bind is the plain one on every writer.  Any other block, and a local whose own bind
+/// keeps a view, answer `false` and keep the oracle's reading.  @PLN220.
+/// `LOFT_DISCHARGE_BLOCK_JOIN=1` joins such a block again.
+fn block_hands_over_its_own(data: &Data, d_nr: u32, function: &Function, value: &Value) -> bool {
+    if crate::keys::discharge_block_join() {
+        return false;
+    }
+    let Value::Block(b) = value.unspan() else {
+        return false;
+    };
+    let Some(Value::Var(w)) = b.operators.last().map(Value::unspan) else {
+        return false;
+    };
+    b.operators.iter().any(|op| {
+        matches!(op.unspan(), Value::Set(sv, e) if sv == w && matches!(
+            first_arm(data, d_nr, function, *w, e),
+            FirstArm::RecordCopyCall { .. }
+                | FirstArm::CallRefJoin { .. }
+                | FirstArm::NullableCallCopy { .. }
+                | FirstArm::NullableCallJoin { .. }
+                | FirstArm::OpaqueCallRef { .. }
+                | FirstArm::CallJoin { .. }
+                | FirstArm::CallAdopt
+                | FirstArm::CallCopy { .. }
+        ))
     })
 }
 

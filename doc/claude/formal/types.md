@@ -177,7 +177,12 @@ semantics live in [binding.md](binding.md); here it is just one more thing `⤳`
                narrowing is admitted iff r fits.  r: a constant is its value; a local, a
                parameter or a call is its DECLARED range; a narrow field or element read is
                its width; `+ - *` the interval arithmetic of the operands' r; `a & c` (one
-               operand with r ⊆ [0, c]) is [0, c]; `a % c` (c a non-zero constant) is
+               operand with r ⊆ [0, c]) is [0, c]; `a | b` and `a ^ b` (both r non-negative)
+               are [0, 2ᵏ-1], k the bit length of the larger upper end; `a << c` (c a constant
+               in 0..63) is a's r times 2ᶜ, nothing when an end passes i64; `a >> c` (c a
+               constant, a's r non-negative) is a's r divided by 2ᶜ; a regime file's 32-bit
+               operation (W-Op) is its operand's r when that r is inside i32, and nothing
+               otherwise, since past i32 it reads null; `a % c` (c a non-zero constant) is
                [-(|c|-1), |c|-1], or [0, |c|-1] when a's r is non-negative; an `if` or
                `match` the union of its arms'.  So `lo: u8 = x & 255` is admitted and
                `m = x & 255; lo: u8 = m` is refused — `m` is an `integer`, and a local's
@@ -780,10 +785,11 @@ unchanged, since every type here is still an `Integer[a,b]`.
               `123l` and `2.5d` are 64-bit literals in every file.  This refines (I-Lit):
               the literal still checks at an expected width.
   (W-Op)      in a regime file an integer operation (+ - * / % << >> & | ^, a compound
-              assignment, unary -) whose operands are both 32-bit is a 32-bit operation: its
-              result has the i32 type, and a value outside the i32 range reads null, as a
-              64-bit overflow does (operational.md (E-Uncomp)).  An i64 operand makes the
-              operation 64-bit; that is the one way to widen an expression.
+              assignment, unary -) whose operands are both 32-bit — of a type whose range is
+              inside i32 — is a 32-bit operation: its result has the i32 type, and a value
+              outside the i32 range reads null, as a 64-bit overflow does (operational.md
+              (E-Uncomp)).  An operand whose type reaches past i32 — an `i64`, a `u32` —
+              makes the operation 64-bit; that is how an expression widens.
   (W-Call)    where a call crosses between a regime file and a 64-bit file, a value of a
               width-neutral type crosses at the receiving side's width: a 64-bit callee's
               plain `integer` or `float` answer is narrowed where the call returns, and an

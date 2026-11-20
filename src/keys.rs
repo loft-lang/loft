@@ -3703,6 +3703,14 @@ pub fn stashed_join_off() -> bool {
     *ON.get_or_init(|| env_set("LOFT_NO_STASHED_JOIN"))
 }
 
+/// `LOFT_DISCHARGE_BLOCK_JOIN=1` — a reassignment from a block that hands over a local it bound
+/// itself joins at run time again (`bind_lowering::block_hands_over_its_own`; @PLN220's A/B).
+#[must_use]
+pub fn discharge_block_join() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_DISCHARGE_BLOCK_JOIN"))
+}
+
 /// `LOFT_TAIL_JUMP_FREES_BUFFER=1` — a self tail call's jump runs the return buffer's
 /// return-time release again (`opt::tail_self::releases`, `@FR-O-Buffer`).
 #[must_use]

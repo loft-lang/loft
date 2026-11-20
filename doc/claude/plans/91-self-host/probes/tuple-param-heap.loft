@@ -1,0 +1,65 @@
+// A challenge for a BY-VALUE TUPLE PARAMETER WITH A HEAP MEMBER (@PLN91): `fn f(t: (P, integer))`.
+// `(F-ParamTuple)`: the parameter is the callee's own value, so a write through it never reaches
+// the caller's tuple.  One callee per case, checked by its `chk_` caller; values hand-computed.
+//   reads:          read_field (`t.0.x + t.1`), read_two (`(P, P)`), read_second (`(integer, P)`),
+//                   read_nullable (`(P?, integer)`, absent and present)
+//   writes (the caller keeps its own): write_field (`t.0.x = 50`), rebind_member (`t.0 = P { x: 9 }`),
+//                   write_scalar (`t.1 = 5`), compound (`t.0.x += 1`)
+//   hand-ons:       pass_member (`g(t.0)`), alias (`x = t.0; x.x = 70`)
+//   other members:  text_member (`(text, P)`)
+//   answers:        bump (`t.0.x += 1; t`, the tuple returned)
+//   the argument:   arg_literal (a literal), arg_call (a call's result), in_loop (per pass)
+struct P { x: integer }
+
+fn g(p: P) -> integer { p.x * 2 }
+fn mk(n: integer) -> (P, integer) { (P { x: n }, n + 1) }
+
+fn read_field(t: (P, integer)) -> integer { t.0.x + t.1 }
+fn read_two(t: (P, P)) -> integer { t.0.x * 100 + t.1.x }
+fn read_second(t: (integer, P)) -> integer { t.0 + t.1.x }
+fn read_nullable(t: (P?, integer)) -> integer { (if t.0 == null { 0 } else { t.0!.x }) * 10 + t.1 }
+fn write_field(t: (P, integer)) -> integer { t.0.x = 50; t.0.x + t.1 }
+fn rebind_member(t: (P, integer)) -> integer { t.0 = P { x: 9 }; t.0.x + t.1 }
+fn write_scalar(t: (P, integer)) -> integer { t.1 = 5; t.0.x + t.1 }
+fn compound(t: (P, integer)) -> integer { t.0.x += 1; t.0.x * 10 + t.1 }
+fn pass_member(t: (P, integer)) -> integer { g(t.0) + t.1 }
+fn alias(t: (P, integer)) -> integer { x = t.0; x.x = 70; x.x + t.0.x }
+fn text_member(t: (text, P)) -> text { t.0 += "!"; t.1.x = 90; "{t.0}{t.1.x}" }
+fn bump(t: (P, integer)) -> (P, integer) { t.0.x += 1; t }
+fn arg_literal(t: (P, integer)) -> integer { t.0.x * 10 + t.1 }
+fn arg_call(t: (P, integer)) -> integer { t.0.x * 10 + t.1 }
+fn in_loop(t: (P, integer)) -> integer { t.0.x + t.1 }
+
+fn chk_read_field() -> integer { a = (P { x: 3 }, 4); read_field(a) * 10 + a.0.x }
+fn chk_read_two() -> integer { read_two((P { x: 1 }, P { x: 2 })) }
+fn chk_read_second() -> integer { read_second((5, P { x: 6 })) }
+fn chk_read_nullable() -> integer { a: (P?, integer) = (null, 1); b: (P?, integer) = (P { x: 3 }, 2); read_nullable(a) * 100 + read_nullable(b) }
+fn chk_write_field() -> integer { a = (P { x: 3 }, 4); r = write_field(a); r * 100 + a.0.x }
+fn chk_rebind_member() -> integer { a = (P { x: 3 }, 4); r = rebind_member(a); r * 100 + a.0.x }
+fn chk_write_scalar() -> integer { a = (P { x: 3 }, 4); r = write_scalar(a); r * 100 + a.1 }
+fn chk_compound() -> integer { a = (P { x: 3 }, 4); r = compound(a); r * 100 + a.0.x }
+fn chk_pass_member() -> integer { pass_member((P { x: 3 }, 4)) }
+fn chk_alias() -> integer { a = (P { x: 3 }, 4); r = alias(a); r * 100 + a.0.x }
+fn chk_text_member() -> text { a = ("hi", P { x: 1 }); r = text_member(a); "{r}|{a.0}{a.1.x}" }
+fn chk_bump() -> integer { a = (P { x: 3 }, 4); b = bump(a); b.0.x * 100 + a.0.x * 10 + b.1 }
+fn chk_arg_literal() -> integer { arg_literal((P { x: 7 }, 8)) }
+fn chk_arg_call() -> integer { arg_call(mk(6)) }
+fn chk_in_loop() -> integer { t = 0; for i in 0..3 { t += in_loop((P { x: i }, i)); } t }
+
+fn main() {
+  assert(chk_read_field() == 73, "read_field {chk_read_field()}");
+  assert(chk_read_two() == 102, "read_two {chk_read_two()}");
+  assert(chk_read_second() == 11, "read_second {chk_read_second()}");
+  assert(chk_read_nullable() == 132, "read_nullable {chk_read_nullable()}");
+  assert(chk_write_field() == 5403, "write_field {chk_write_field()}");
+  assert(chk_rebind_member() == 1303, "rebind_member {chk_rebind_member()}");
+  assert(chk_write_scalar() == 804, "write_scalar {chk_write_scalar()}");
+  assert(chk_compound() == 4403, "compound {chk_compound()}");
+  assert(chk_pass_member() == 10, "pass_member {chk_pass_member()}");
+  assert(chk_alias() == 14003, "alias {chk_alias()}");
+  assert(chk_text_member() == "hi!90|hi1", "text_member {chk_text_member()}");
+  assert(chk_bump() == 434, "bump {chk_bump()}");
+  assert(chk_arg_literal() == 78, "arg_literal {chk_arg_literal()}");
+  assert(chk_arg_call() == 67, "arg_call {chk_arg_call()}");
+  assert(chk_in_loop() == 6, "in_loop {chk_in_loop()}");
+}

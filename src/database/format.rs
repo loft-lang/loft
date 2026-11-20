@@ -1504,8 +1504,27 @@ impl Stores {
         Self::dir_with_sub(&base, sub)
     }
 
-    /// Native backend for `source_dir()` (`default/03_text.loft`'s
-    /// `#rust"Stores::source_dir_native()"` template).
+    /// What `source_dir()` answers in code the rustc writer emits (`default/03_text.loft`'s
+    /// `#rust"stores.source_dir_given()"` template): the directory THIS `Stores` holds, the
+    /// one home the interpreter's native and every file operation read (`resolve_path`).
+    ///
+    /// A library's functions compiled for the interpreter run inside the interpreter's
+    /// process on its `Stores`.  Read from the process there (the environment, the
+    /// executable's place) and `source_dir()` inside a library answers where the `loft`
+    /// binary is, while the program beside it answers where the program is.  A native
+    /// program's `main` fills the field from [`Stores::source_dir_native`] before anything
+    /// runs, so it answers the same as before; an entry that left the field empty still
+    /// gets that answer.
+    #[must_use]
+    pub fn source_dir_given(&self) -> String {
+        if self.source_dir.is_empty() {
+            return Self::source_dir_native();
+        }
+        // `@FR-Path-Sep` — given in the portable form, like every directory loft gives.
+        crate::file_access::given(&self.source_dir)
+    }
+
+    /// What a native program's `main` fills `Stores::source_dir` with at start.
     ///
     /// #255 / @PLN9 Phase 1: under `--native` the program's "own directory" is
     /// the **executable's directory** for a standalone bundle (a compiled

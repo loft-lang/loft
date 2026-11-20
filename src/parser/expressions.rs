@@ -11995,7 +11995,13 @@ use a separate collection or add after the loop"
     /// - The mask is spelled out, and only when one fits the range (`narrowing_mask`).
     /// - A `dense` slot — a `yield` into `iterator<τ>`, whose element cannot be `τ?` — is not
     ///   offered the nullable destination.
-    pub(crate) fn narrowing_cures(code: &Value, dst_tp: &Type, dst: &str, dense: bool) -> String {
+    pub(crate) fn narrowing_cures(
+        &self,
+        code: &Value,
+        dst_tp: &Type,
+        dst: &str,
+        dense: bool,
+    ) -> String {
         use std::fmt::Write as _;
         let mut out = if dense {
             "give it a fallback with `?? <value>`".to_string()
@@ -12005,7 +12011,7 @@ use a separate collection or add after the loop"
                  value that does not fit reads null"
             )
         };
-        if let Some(mask) = Self::narrowing_mask(dst_tp) {
+        if let Some(mask) = Self::narrowing_mask(dst_tp, self.data.width32()) {
             let _ = write!(
                 out,
                 ", or make the value provably fit with a mask (`& {mask}`)"
@@ -12077,7 +12083,7 @@ use a separate collection or add after the loop"
             if !self.int_value_fits(code, store_tp) {
                 // Refused where the author can choose what an unfitting value becomes (@C127).
                 let src = self.narrow_source_name(code, s_type);
-                let cures = Self::narrowing_cures(code, store_tp, &dst, false);
+                let cures = self.narrowing_cures(code, store_tp, &dst, false);
                 diagnostic!(
                     self.lexer,
                     Level::Error,
@@ -12176,8 +12182,11 @@ use a separate collection or add after the loop"
     /// The mask a narrowing cure can name for `dst`: the largest `2^k - 1` inside its non-null
     /// range, so `v & mask` provably fits whatever `v` is.  None when no such mask exists — a
     /// range that excludes 0 (`limit(10, 20)`) holds no `v & m` for every `v`, and offering
-    /// "a mask" there names a cure that does not compile (loft#1804).
-    pub(crate) fn narrowing_mask(dst: &Type) -> Option<i64> {
+    /// "a mask" there names a cure that does not compile (loft#1804).  Spelled as the cure
+    /// writes it: under the 32-bit regime a mask past i32 carries the `l` suffix, which
+    /// `@FR-W-Lit` asks of such a literal — and the wide literal makes the `&` a 64-bit
+    /// operation (`@FR-W-Op`), so a negative `i32` keeps its low bits.
+    pub(crate) fn narrowing_mask(dst: &Type, regime: bool) -> Option<String> {
         let Type::Integer(spec) = dst.base() else {
             return None;
         };
@@ -12188,7 +12197,9 @@ use a separate collection or add after the loop"
         // The bit length of `hi + 1`, less one: `u8` (255) answers 255, `u32` (4294967295)
         // answers 4294967295, `limit(0, 300)` answers 255.
         let bits = 63 - hi.checked_add(1)?.leading_zeros();
-        Some((1_i64 << bits) - 1)
+        let mask = (1_i64 << bits) - 1;
+        let wide = regime && mask > i64::from(i32::MAX);
+        Some(format!("{mask}{}", if wide { "l" } else { "" }))
     }
 
     /// Is this expression itself a null discharge (`a ?? b`)?

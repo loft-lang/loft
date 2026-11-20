@@ -502,3 +502,22 @@ rather than the environment.  Decided 2026-11-16 (owner).
 (`check_advisory`); guards `an_advisory_refuses_or_warns_by_its_severity`,
 `security_high_refuses_only_when_strict` (`src/registry_advisories.rs`) and
 `a_security_critical_advisory_refuses_the_install` (`tests/registry_e2e.rs`).
+
+## C169 — A C unit carries its whole runtime; no build compiles the runtime apart
+
+**Decision.** Every C unit loft writes — a semantics build and a shipped one alike — starts with
+the whole C runtime and compiles alone, with one compiler call.  No tier compiles the runtime
+once into a cached object and links it in.
+**Why.** One unit has one failure mode: the C compiler's.  A runtime object apart adds a cache
+keyed by compiler and flags, a second link step, and a line between what stays inline in the
+unit and what moves out — a line every rewrite that expects a helper inlined would have to
+respect.  What it would buy is compile time on MSVC alone, where the runtime costs a small
+program under a second of `cl /O1` — about two minutes of a nightly sweep shard; gcc and clang
+drop the unused runtime at no cost.  The cost that did take programs past the compile limit, one
+huge function, is closed by `(R-CSplit)`.
+**Revisit when.** The runtime's share of a compiler's time on a small program passes the
+program's own on a compiler a PR gate runs, or a sweep shard nears its limit with no function
+over the split budget.  Decided 2026-11-19 — [record](DESIGN_DECISIONS-history.md#c169--a-c-unit-carries-its-whole-runtime-no-build-compiles-the-runtime-apart).
+**Holds at:** `@C169` — `src/c/mod.rs` (`RUNTIME`, written at the head of every unit);
+[C_BACKEND.md](C_BACKEND.md) § Large functions are split into parts; guard
+`a_unit_carries_its_runtime_and_compiles_alone` (`tests/c_split.rs`).

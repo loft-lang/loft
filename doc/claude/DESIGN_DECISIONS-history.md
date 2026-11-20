@@ -5155,3 +5155,26 @@ definition ids do not have to be order independent.
 **Built.** The guard alone — one body per caller with its callees above and below, asserting the
 value and the release trace of each.  Not built: the numbering change.
 
+
+## C169 — A C unit carries its whole runtime; no build compiles the runtime apart
+
+**Question (@PLN212 P4).** Should a semantics build compile the non-inline C runtime once per
+(compiler, flags) into a cached object and link it, so MSVC stops paying for the runtime in
+every program?  The plan's corpus measurement of 2026-11-04 put a fixed cost of about 3.7 s of
+`cl` wall time on every program, four compiles at a time — 10,200 s of the sweep's 17,537 s.
+
+**Evaluation (2026-11-19, windows-probe 44569352010, `cl` 19.51, 4 cores, one compile at a
+time).** The premise has shrunk.  A one-line program compiles in 1.1 s at `/O1`, 0.4 s with the
+runtime under `#pragma optimize("", off)`, 0.3 s at `/Od`.  Over seven programs (the one-liner,
+four small tests, and the two largest of the 11-06 failures) `/O1` takes 20.2 s, 14.1 s with the
+runtime unoptimised — 0.7 to 1.6 s a program, the ceiling of what a runtime compiled apart can
+save — and 2.5 s at `/Od`: most of the time is now the program's own functions.  Across about
+2,750 compiled programs, four at a time on six shards, that ceiling is one and a half to three
+minutes of a shard that runs 15 to 29 minutes, 6.5 of them the cargo build.  No shard of the
+twelve nightlies of 2026-11-08 to 11-19 lost a program to the compile limit.
+
+**Decision (2026-11-19).** Not built.  The unit stays whole on every tier.  Compiling the
+runtime unoptimised in place (the pragma) was weighed and declined with it: it would take the
+runtime out of `cl`'s optimiser in the one sweep that runs it there.
+
+**Revisit trigger.** As the entry states.

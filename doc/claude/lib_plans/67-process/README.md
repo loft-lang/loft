@@ -5,8 +5,14 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 # `lib/process/` — subprocess primitive
 
-**Status:** Future — opened 2026-05-15 from dogfood findings
-in @PLAN37 phase 07 + @PLAN35 viewer.
+**DONE — closed 2026-11-19.**  Shipped as `lib/process` (with `lib/git` on top of it), built under @PLN179 strand 4 and @PLN119 arc F; the reference is the library's own source docs (`lib/process/src/process.loft`) and its tests.
+
+- **The primitive:** a typed `Command` (a format string whose holes never become syntax; no shell), `run()` with input and a `timeout`, `start()` with `wait` / `alive` / `stop` (a stop takes the whole tree), and the streaming read `lines()` / `err_lines()`.  `Run` answers `ok`, `code` (`128 + n` for a signal), both streams and `timed_out`.
+- **The payoff this plan named:** `tools/viewer/refresh.sh` is deleted (`tools/viewer/refresh.loft` reads git through `lib/git`); `tools/indexer/scan.sh` is deleted and `scan.loft` asks `git::tracked_files()`, so the tracked-file workaround is gone.  A loft-written `make` driver is writable now; porting the repo's own tooling is @PLN179's work, not this plan's.
+- **Verified at the close** (loft `tuxedo-pr2438-post` @ 1a06bab05): `tests/lib_process.rs` 13 of 13 on the interpreter and compiled, the emulated Windows host included; `make index` and the viewer refresh run.
+- **Differs from the sketch below:** the API is `Command.run()` rather than `run(cmd, args)`, and the host side is the loft binary's own `src/process_run.rs` (and `loft_process.h` on C), not a separate package with a Rust bridge.
+
+What follows is the plan as it was opened.
 
 ## Why
 

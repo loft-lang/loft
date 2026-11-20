@@ -36,7 +36,8 @@ use crate::data::{Data, DefType, Type, Value};
 use crate::database::Stores;
 use std::fmt::Write as _;
 
-/// The C runtime every unit starts with.
+/// The C runtime every unit starts with — whole, on every tier: a unit compiles alone and no
+/// build compiles the runtime apart (`@C169`).
 const RUNTIME: &str = concat!(
     include_str!("loft_cc.h"),
     include_str!("loft_text.h"),
@@ -4841,7 +4842,7 @@ fn framed(
     storage: &str,
 ) -> String {
     let def = cx.data.def(d);
-    // `(R-CSplit)`: a body over the size budget goes out as a chain of parts.
+    // `@FR-R-CSplit`: a body over the size budget goes out as a chain of parts.
     let fr = format!("{name}__fr");
     let parts = split::split(storage, &held(ret).clone(), &fr, params, body);
     // `@FR-R-Inline`: a body hinted inline is ALWAYS inlined into its frame wrapper, so the

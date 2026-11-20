@@ -1,0 +1,47 @@
+// A challenge for a `for` OVER A KEYED RANGE (@PLN91): `for e in c[lo..hi]` over a sorted or an
+// index collection.  One function per case, one axis each; every function answers a
+// hand-computed value.  The rows: k = 10, 20, 30, 40, 50 (v = k / 10), words apple..elderberry.
+//   the subject:   field_sorted (`db.m[15..35]`, a field), local_sorted (a keyed local),
+//                  field_index (an index field)
+//   the bounds:    inclusive (`[20..=40]`), open_start (`[..30]`), open_end (`[30..]`),
+//                  descending (`[45..15]` over a `[-k]` key: 40, 30, 20), reversed_empty
+//                  (`[45..15]` over an ascending key: no row), text_keys (`["b"..="d"]`),
+//                  var_bounds (bounds from locals)
+//   the body:      early_break (a `break` inside), count_only (the element unread)
+struct R { k: integer, v: integer }
+struct Db { m: sorted<R[k]> }
+struct Dn { m: sorted<R[-k]> }
+struct Ix { m: index<R[k]> }
+struct W { name: text, score: integer }
+struct Dict { words: sorted<W[name]> }
+
+fn db() -> Db { Db { m: [R { k: 30, v: 3 }, R { k: 10, v: 1 }, R { k: 50, v: 5 }, R { k: 20, v: 2 }, R { k: 40, v: 4 }] } }
+fn ix() -> Ix { Ix { m: [R { k: 30, v: 3 }, R { k: 10, v: 1 }, R { k: 50, v: 5 }, R { k: 20, v: 2 }, R { k: 40, v: 4 }] } }
+
+fn field_sorted() -> integer { d = db(); t = 0; for r in d.m[15..35] { t = t * 10 + r.v; } t }
+fn local_sorted() -> integer { s: sorted<R[k]> = [R { k: 30, v: 3 }, R { k: 10, v: 1 }, R { k: 20, v: 2 }]; t = 0; for r in s[10..25] { t = t * 10 + r.v; } t }
+fn field_index() -> integer { x = ix(); t = 0; for r in x.m[20..=40] { t = t * 10 + r.v; } t }
+fn inclusive() -> integer { d = db(); t = 0; for r in d.m[20..=40] { t = t * 10 + r.v; } t }
+fn open_start() -> integer { d = db(); t = 0; for r in d.m[..30] { t = t * 10 + r.v; } t }
+fn open_end() -> integer { d = db(); t = 0; for r in d.m[30..] { t = t * 10 + r.v; } t }
+fn descending() -> integer { d = Dn { m: [R { k: 30, v: 3 }, R { k: 10, v: 1 }, R { k: 50, v: 5 }, R { k: 20, v: 2 }, R { k: 40, v: 4 }] }; t = 0; for r in d.m[45..15] { t = t * 10 + r.v; } t }
+fn reversed_empty() -> integer { d = db(); t = 7; for r in d.m[45..15] { t = t * 10 + r.v; } t }
+fn text_keys() -> integer { d = Dict { words: [W { name: "apple", score: 5 }, W { name: "banana", score: 3 }, W { name: "cherry", score: 8 }, W { name: "date", score: 2 }, W { name: "elderberry", score: 1 }] }; t = 0; for w in d.words["banana"..="date"] { t += w.score; } t }
+fn var_bounds(lo: integer, hi: integer) -> integer { d = db(); t = 0; for r in d.m[lo..hi] { t = t * 10 + r.v; } t }
+fn early_break() -> integer { d = db(); t = 0; for r in d.m[10..60] { if r.k > 30 { break; } t = t * 10 + r.v; } t }
+fn count_only() -> integer { d = db(); n = 0; for _ in d.m[15..45] { n += 1; } n }
+
+fn main() {
+  assert(field_sorted() == 23, "field_sorted {field_sorted()}");
+  assert(local_sorted() == 12, "local_sorted {local_sorted()}");
+  assert(field_index() == 234, "field_index {field_index()}");
+  assert(inclusive() == 234, "inclusive {inclusive()}");
+  assert(open_start() == 12, "open_start {open_start()}");
+  assert(open_end() == 345, "open_end {open_end()}");
+  assert(descending() == 432, "descending {descending()}");
+  assert(reversed_empty() == 7, "reversed_empty {reversed_empty()}");
+  assert(text_keys() == 13, "text_keys {text_keys()}");
+  assert(var_bounds(15, 45) == 234, "var_bounds {var_bounds(15, 45)}");
+  assert(early_break() == 123, "early_break {early_break()}");
+  assert(count_only() == 3, "count_only {count_only()}");
+}

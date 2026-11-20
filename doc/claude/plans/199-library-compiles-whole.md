@@ -5,6 +5,10 @@ Plan: [loft-lang/plans#199](https://github.com/loft-lang/plans/issues/199).  The
 a reason, because a value has the same layout in both modes.  Without `rustc`, only a library
 that is not in the registry runs interpreted.
 
+## Status
+
+**PARKED 2026-11-19 (owner).**  Shipped: A0–A4, B1, B2, C0–C2, D1–D3, E1–E3, G0–G3, F1, F3, F4 — every published library compiles whole (`make gate-census`: 56 packages, no decline reason) and `gatefull` is 51 of 51.  Paused: F2, the standing shapes and F-last.  **Trigger:** `LOFT_TRACE_NATIVE_GATE=1` names one of the standing shapes on a real consumer or in a profile; that shape is lifted then, by the procedure in § Standing work of the plan doc.
+
 `LOFT_NO_CACHE=1 LOFT_TRACE_NATIVE_GATE=1 loft script.loft` shows what is left; every step
 below ends with that trace losing a line.
 
@@ -424,11 +428,21 @@ Each shape below still declines, and runs interpreted: the answer is right, only
 is scheduled.  One is lifted when a consumer or a profile meets it — the trace
 (`LOFT_TRACE_NATIVE_GATE=1`) names the function and the reason.
 
+**Measured 2026-11-19** (`tuxedo-pr2438-post` @ 589b49355).  `make gate-census`: every
+published library compiles whole — 56 packages at their newest versions, no decline reason in
+the registry (seven `hex_*` packages are read at their newest version by hand: the census
+takes its versions from the local registry clone, and an older one of theirs no longer
+resolves).  `tests/n3_use_native.rs`: `gatefull` 51 of 51.  A scratch library with one function
+per shape of this table (`probes` in the plan issue's comment of that date): 15 of 16 run
+interpreted with the hand-computed answer, for the reasons below; `&(integer, integer)`
+compiles.  So what keeps this plan open is these shapes and F2, met by no published function.
+
 | shape | where it declines |
 |---|---|
-| `&text`, `&(…)` parameters | `native_gate::is_ref_scalar` |
+| `&text`, `&single`, `&character` parameters | `native_gate::is_ref_scalar` |
 | a narrow scalar (`single`, `character`, a plain enum, a sized `integer`) in a tuple parameter, a generator's yield, a `&T`, or a function value's signature | `is_tuple_leaf`, `generator_crosses`, `is_ref_scalar`, `fnref::upcall_carries` |
-| a tuple yield | `generator_crosses` |
+| a tuple yield; a yield of a `single`, a `character` or a plain enum | `generator_crosses` |
+| a yield of a nested tuple (F2) | `coroutine_layout::channel_tag` answers `CHANNEL_NONE` |
 | a function value with a `&T` parameter, or a keyed-collection result | `fnref::upcall_carries` |
 
 The procedure, the one every step above followed:

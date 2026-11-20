@@ -25,6 +25,7 @@ R-BoundedNest/kernel	ir	61	0	61	0	0	0
 R-BufferReturn	c	18	0	0	0	263	0
 R-BufferReturn/bind	c	17	0	0	0	112	0
 R-ByteCopy	ir	2	0	4	0	0	0
+R-CSplit	c	11	0	0	0	22	0
 R-CTail	c	16	0	0	0	71	0
 R-Callee	c,native	20	0	0	0	66	176
 R-CharWalk	c,native	61	0	0	0	34	658
@@ -35,7 +36,7 @@ R-Const	ir	2	0	3	0	0	0
 R-Const/fn	parse	5	7	0	0	0	0
 R-CopyView	ir	4	0	8	0	0	0
 R-CopyView/walk	ir	1	0	4	0	0	0
-R-Counter	ir,c,native	61	0	1546	0	18185	12432
+R-Counter	ir,c,native	61	0	1546	0	18180	12431
 R-CtorLiteral	parse	3	11	0	0	0	0
 R-Demote	parse	1	4	0	0	0	0
 R-Demote/place	parse	1	1	0	0	0	0
@@ -110,7 +111,7 @@ R-LoopRecord	ir	4	0	6	0	0	0
 R-LoopRecord/refill	ir	2	0	6	0	0	0
 R-LoopSlot	interp	61	0	0	4165	0	0
 R-MaskRange	parse	9	49	0	0	0	0
-R-Mint	c,native	61	0	0	0	352	1196
+R-Mint	c,native	61	0	0	0	351	1195
 R-MoveAppend	native	1	0	0	0	0	1
 R-MoveChild	parse	1	2	0	0	0	0
 R-MoveLast	ir	3	0	9	0	0	0
@@ -154,7 +155,7 @@ R-RefillText	native	4	0	0	0	0	9
 R-Refresh	native	4	0	0	0	0	16
 R-Refresh/keep-header	c	1	0	0	0	2	0
 R-RepeatRun	ir	10	0	109	0	0	0
-R-RetAdopt	interp,c,native	61	0	0	240	35	244
+R-RetAdopt	interp,c,native	61	0	0	239	34	243
 R-ReturnField	ir	1	0	1	0	0	0
 R-Reuse	ir	25	0	225	0	0	0
 R-Rotate	interp	61	0	0	4949	0	0

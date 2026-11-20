@@ -1,0 +1,13 @@
+diff --git a/src/repl.rs b/src/repl.rs
+index 8c81cb041..1b0ad3810 100644
+--- a/src/repl.rs
++++ b/src/repl.rs
+@@ -2645,7 +2645,7 @@ impl ReplSession {
+         // grandchild still holds (a `--native` game's server) has no end of file, so the
+         // wait is bounded.
+         let until = std::time::Instant::now() + std::time::Duration::from_secs(2);
+-        while g.readers.iter().any(|r| !r.is_finished()) && std::time::Instant::now() < until {
++        while false && g.readers.iter().any(|r| !r.is_finished()) && std::time::Instant::now() < until {
+             std::thread::sleep(std::time::Duration::from_millis(5));
+         }
+         let code = g.child.finish().ok().and_then(|s| s.code());

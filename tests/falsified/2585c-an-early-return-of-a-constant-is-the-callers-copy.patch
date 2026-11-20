@@ -1,0 +1,18 @@
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index 7d166f325..89cec63b3 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -14906,12 +14906,7 @@ impl Parser {
+                                 // which the raw literal is right and the caller frees it.
+                                 || (!dep.is_empty()
+                                     && dep.iter().all(|&d| self.vars.name(d).starts_with("__vdb_"))
+-                                    && r_type.deps_ref().is_some_and(|d| !d.is_empty()))
+-                                // A top-level CONSTANT's view (`return NUMS`): the write-locked
+-                                // constant store, which `(F-Ret)` must not hand out — a caller
+-                                // that wrote its result stopped on the lock (loft#2585).  The tail
+-                                // spelling `{ NUMS }` copies it into the buffer the same way.
+-                                || self.is_const_view(&v))
++                                    && r_type.deps_ref().is_some_and(|d| !d.is_empty())))
+                         {
+                             (a, bv)
+                         } else {
