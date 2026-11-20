@@ -5908,8 +5908,10 @@ fn a_library_artifact_lists_only_its_own_packages_c_libraries() {
             .and_then(|t| t.split("];").next())
             .expect("the artifact has a __C_LIBS table")
             .to_string();
+        // `lctab_shim_<hash>`: `liblctab_shim_…` on Unix, `lctab_shim_….dll` on Windows,
+        // which gives a library no `lib` prefix.  lctab_b's is `…lctab_b_shim_…`.
         assert!(
-            table.contains("liblctab_shim"),
+            table.contains("lctab_shim_"),
             "lctab's own shim is missing:{table}"
         );
         assert!(
