@@ -357,7 +357,7 @@ fn client(p: &Ports) {
     let (head, body) = read_response(&mut page);
     assert_eq!(header(&head, "content-type"), Some("text/html"));
     assert_eq!(body, b"page /page");
-    // A request that claims a body of nine petabytes: dropped unanswered, and the pump
+    // A request that claims a body of nine petabytes: answered 413 and closed, and the pump
     // serves on (everything below needs it to).  A server that sizes an allocation by the
     // claim dies here.
     let mut huge = connect(p.plain);
@@ -366,8 +366,8 @@ fn client(p: &Ports) {
     let mut answer = Vec::new();
     let _ = huge.read_to_end(&mut answer);
     assert!(
-        answer.is_empty(),
-        "an oversized request is not answered: {}",
+        answer.starts_with(b"HTTP/1.1 413 "),
+        "an oversized request is told so: {}",
         String::from_utf8_lossy(&answer)
     );
     // A peer that connects and says nothing, held open across the next exchange: the pump
