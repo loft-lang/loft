@@ -2436,6 +2436,22 @@ fn discharge_seeded(e: el::El, code: ir::Node) -> ir::Node? {
   null
 }
 
+// Is `target` a `File` field of a local record (`b.h`), by the local's declared type?
+fn file_field_of_local(e: el::El, vars: el_vars::Vars, target: integer) -> boolean {
+  match e.p.nodes[target] {
+    SMember { e: be, name: fname, call } => {
+      if call || be == null {
+        return false;
+      }
+      rv = match e.p.nodes[be!] { SName { name, member } => if member == "" { el_vars::var(vars, name) } else { -1 }, _ => -1 };
+      rd = if rv < 0 { -1 } else { struct_ref(e, el_types::base(el_vars::tp(vars, rv))) };
+      fa = if rd < 0 { -1 } else { attr_nr(el::def(e, rd), fname) };
+      fa >= 0 && el_ex_pattern::is_file(e, el_types::base(el::def(e, rd).attributes[fa]!.typedef[0] ?? ir::TyVoid))
+    },
+    _ => false
+  }
+}
+
 // A tuple of scalar members alone.
 fn scalar_tuple(t: ir::TypeT) -> boolean {
   match el_types::base(t) {
@@ -3065,6 +3081,13 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
   // (A tuple member of a place — `v[1].1 += 3`, `w[0].1.1 += 7` — is the member's field in the
   // element: a place as any field is.)
   member_of_place = match e.p.nodes[target] { STupleGet { e: tpe } => tpe != null && !(e.p.nodes[tpe!] is SName) && !(e.p.nodes[tpe!] is STupleGet), _ => false } || tuple_member_chain_of_place(e, target) || linked_tuple_record_member(e, vars, target);
+  // `write_to_file` on a FIELD (`b.h += "ab"`): the file the field holds, read where it lies,
+  // takes the write as a file local does.
+  if op == "+=" && file_field_of_local(e, vars, target) {
+    fp = expression(e, vars, target);
+    fx = expression(e, vars, rhs!);
+    return el_ex_vector::file_append(e, vars, -1, rhs!, fx, place: fp.code);
+  }
   if e.p.nodes[target] is SMember || e.p.nodes[target] is SIndex || member_of_place {
     return el_ex_place::place_assignment(e, vars, op, target, rhs!);
   }
