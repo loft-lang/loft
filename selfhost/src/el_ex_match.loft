@@ -3583,11 +3583,24 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
   // A capture's literal test (`[x: 5, y]`), position by position: the literal node, -1 for none.
   head_lit: vector<integer> = [];
   tail_lit: vector<integer> = [];
+  // A bare literal element (`[xs: integer*, 9]`): tested in the guard where it stands, the
+  // element read inline (`OpEq…(<element>, <literal>)`); -1 for none.
+  head_blit: vector<integer> = [];
+  tail_blit: vector<integer> = [];
   for el0 in elems {
     nm = "";
     pat = -1;
     lit = -1;
+    blit = -1;
     match e.p.nodes[el0] {
+      PLit { e: ble } => {
+        if ble == null || sed >= 0 {
+          el::refuse(e, "a slice pattern literal over this element");
+          return null;
+        }
+        nm = "_";
+        blit = ble!;
+      },
       PRest { name } => {
         if has_rest {
           el::refuse(e, "a slice pattern with two rests");
@@ -3641,10 +3654,12 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
       tail += [nm];
       tail_pat += [pat];
       tail_lit += [lit];
+      tail_blit += [blit];
     } else {
       head += [nm];
       head_pat += [pat];
       head_lit += [lit];
+      head_blit += [blit];
     }
   }
   fixed = len(head) + len(tail);
@@ -3667,6 +3682,10 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
       }
       cond = el_ir::v_if(cond, va!.cond ?? ir::NdBoolean { b: true }, ir::NdBoolean { b: false });
       binds += va!.binds;
+    } else if (head_blit[h#index] ?? -1) >= 0 {
+      hbx = el_ex_assign::expression(e, vars, head_blit[h#index] ?? 0);
+      hbe = el_ex_null::builtin_op(e, vars, "==", ex(slice_elem(e, elm, at), elm), hbx);
+      cond = el_ir::v_if(cond, hbe.code, ir::NdBoolean { b: false });
     } else if h != "_" {
       bv = pattern_bind(vars, h, named_t, names);
       binds += [el_ir::v_set(bv, slice_elem(e, elm, at))];
@@ -3681,6 +3700,10 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
       }
       cond = el_ir::v_if(cond, va!.cond ?? ir::NdBoolean { b: true }, ir::NdBoolean { b: false });
       binds += va!.binds;
+    } else if (tail_blit[t#index] ?? -1) >= 0 {
+      tbx = el_ex_assign::expression(e, vars, tail_blit[t#index] ?? 0);
+      tbe = el_ex_null::builtin_op(e, vars, "==", ex(slice_elem(e, elm, at), elm), tbx);
+      cond = el_ir::v_if(cond, tbe.code, ir::NdBoolean { b: false });
     } else if t != "_" {
       bv = pattern_bind(vars, t, named_t, names);
       binds += [el_ir::v_set(bv, slice_elem(e, elm, at))];
