@@ -5622,7 +5622,7 @@ impl Parser {
                     Type::Optional(inner)
                         if type_name == "vector"
                             && !nullable_elem
-                            && matches!(*inner, Type::Reference(..) | Type::Unknown(_)) =>
+                            && matches!(inner.base(), Type::Reference(..) | Type::Unknown(_)) =>
                     {
                         nullable_elem = true;
                         *inner
@@ -8824,7 +8824,7 @@ impl Parser {
             let first = Value::Call(enter, vec![Value::Var(self_var), tp.clone()]);
             let last = Value::Call(leave, vec![Value::Var(self_var), tp]);
             match code {
-                Value::Block(bl) if bl.result == Type::Void => {
+                Value::Block(bl) if matches!(bl.result.base(), Type::Void) => {
                     bl.operators.insert(0, first);
                     bl.operators.push(last);
                 }

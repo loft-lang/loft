@@ -472,7 +472,7 @@ impl Output<'_> {
                     if arm_vars.contains(&v)
                         || !self.declared.contains(&v)
                         || !variables.name(v).starts_with('_')
-                        || matches!(tp, Type::RefVar(_))
+                        || matches!(tp.base(), Type::RefVar(_))
                     {
                         continue;
                     }
