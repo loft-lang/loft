@@ -10098,10 +10098,12 @@ impl<'a> FnWriter<'a> {
             ("OpNeFloat", false, "loft_feq", true),
             ("OpLtFloat", false, "loft_flt", false),
             ("OpLeFloat", false, "loft_fle", false),
-            ("OpEqSingle", true, "loft_feq", false),
-            ("OpNeSingle", true, "loft_feq", true),
-            ("OpLtSingle", true, "loft_flt", false),
-            ("OpLeSingle", true, "loft_fle", false),
+            // @PLN217 — two singles compare in single precision (`loft_feq32` …): the double
+            // forms would widen both first, a library call each on a single-precision FPU.
+            ("OpEqSingle", true, "loft_feq32", false),
+            ("OpNeSingle", true, "loft_feq32", true),
+            ("OpLtSingle", true, "loft_flt32", false),
+            ("OpLeSingle", true, "loft_fle32", false),
         ];
         let shape = |single: bool| -> (K, fn(E) -> Result<String, String>) {
             if single {
