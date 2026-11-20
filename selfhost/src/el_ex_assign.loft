@@ -1475,6 +1475,7 @@ fn unbox_tuple_element(e: el::El, vars: el_vars::Vars, x: Ex) -> Ex? {
   vars.vars[tmp].skip_free = true;
   dense = match el_ir::unspan(x.code) { NdCall { def_nr: dd, args: da } => if el::def(e, dd).name == "OpGetVectorNullable" { el_ir::cl(e, "OpGetVector", da) } else { el_ir::unspan(x.code) }, _ => x.code };
   items: vector<ir::Node> = [];
+  local_tp_members: vector<ir::TypeT> = match el_types::base(x.tp) { TyTuple { elems: lme } => lme, _ => [] };
   for um2 in elems {
     match el_types::base(um2) {
       TyTuple { elems: ine } => {
@@ -1500,10 +1501,20 @@ fn unbox_tuple_element(e: el::El, vars: el_vars::Vars, x: Ex) -> Ex? {
     if g == null {
       return null;
     }
+    // `@FR-B-Copy`: a text member of an element of a LOCAL vector is copied into a work text of
+    // the bind's own (`tuple_member_copy`, `__work_p2_N`) — the local's member borrows that; one
+    // of a parameter's vector stays a view of it.
+    if el_types::base(um2) is TyText && !vars.vars[root].argument {
+      wt = el_vars::work_text_p2(vars);
+      items += [el_ir::v_block([el_ir::v_set(wt, g!), ir::NdVar { n: wt }], ir::TyText { dep: [wt] }, "tuple_member_copy")];
+      local_tp_members[um2#index] = ir::TyText { dep: [wt] };
+      continue;
+    }
     items += [g!];
   }
   // (The block's members borrow nothing — the local keeps the read's borrows.)
-  ex(el_ir::v_block([el_ir::v_set(tmp, dense), ir::NdTuple { items: items }], ir::TyTuple { elems: [for be in elems { el_types::without_deps(be) }] }, "tuple_unbox"), x.tp)
+  ltp = if len(local_tp_members) > 0 && match el_types::base(x.tp) { TyTuple { elems: _ } => true, _ => false } { if x.tp is TyOptional { ir::TyOptional { inner: ir::TyTuple { elems: local_tp_members } } } else { ir::TyTuple { elems: local_tp_members } } } else { x.tp };
+  ex(el_ir::v_block([el_ir::v_set(tmp, dense), ir::NdTuple { items: items }], ir::TyTuple { elems: [for be in elems { el_types::without_deps(be) }] }, "tuple_unbox"), ltp)
 }
 
 fn nested_member_assign(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: integer) -> Ex? {
@@ -1851,6 +1862,24 @@ pub fn tuple_get(e: el::El, vars: el_vars::Vars, te: integer?, index: integer) -
           }
         },
         _ => {}
+      }
+    },
+    _ => {}
+  }
+  // (An element read by a variable index is a `τ?` tuple: its member is read off the element
+  // as a dense one's is — `(T-Absent)`: an absent element's members are null.)
+  match x.tp {
+    TyOptional { inner: oxi } => {
+      if oxi is TyTuple {
+        match el_ir::unspan(x.code) {
+          NdCall { def_nr: oxd, args: oxa } => {
+            oxn = el::def(e, oxd).name;
+            if oxn == "OpGetVectorNullable" || oxn == "OpGetVector" {
+              x = ex(el_ir::cl(e, "OpGetVector", oxa), oxi);
+            }
+          },
+          _ => {}
+        }
       }
     },
     _ => {}
