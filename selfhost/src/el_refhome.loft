@@ -19,6 +19,11 @@ use el_ir;
 use el_types;
 
 pub fn check_stored_reference_homes(e: el::El) {
+  // (`stored_reference_homes` moves nothing, so nothing is refused, unless the program
+  // declares a `reference<T>` field: `Stores::has_reference_fields`.)
+  if !has_reference_fields(e) {
+    return;
+  }
   for d in e.b.data.definitions {
     if d.source != el::MAIN_SOURCE || d.def_type != el::DT_FUNCTION {
       continue;
@@ -128,17 +133,17 @@ fn lifted_home(e: el::El, vs: ir::Function, n: ir::Node, depths: vector<integer>
         }
       }
       // (A callee's link, loft#2597: `f = build(t)` with `build(t: const Tex) -> Shared {
-      // Shared { tex: t } }` — the result, built in the caller's return buffer, holds `t`'s
-      // record; the buffer is a work variable of the function's head, so it outlives a `t`
-      // bound in a deeper block.)
+      // Shared { tex: t } }` — the callee stores its parameter into a reference field of the
+      // result (the callee summary, `ParamPair`, closed over calls), built in the caller's
+      // return buffer: a work variable of the function's head, which outlives a `t` bound in a
+      // deeper block.)
       fd = el::def(e, def_nr);
       if fd.def_type == el::DT_FUNCTION && len(args) >= 2 {
         buf = match el_ir::unspan(args[-1]) { NdVar { n: bv } => bv, _ => -1 };
-        kept = el_types::deps(fd.returned[0] ?? ir::TyVoid);
         if buf >= 0 && buf < len(depths) && depths[buf] >= 0 && vs.variables[buf].name.starts_with("__ref_") {
           for a in args[0..len(args) - 1] {
             sa = match el_ir::unspan(a) { NdVar { n: av } => av, _ => -1 };
-            if sa >= 0 && sa < len(depths) && kept.contains(a#index) && depths[sa] > depths[buf] {
+            if sa >= 0 && sa < len(depths) && depths[sa] > depths[buf] && links_param(e, def_nr, a#index, 0) {
               return true;
             }
           }
@@ -149,6 +154,56 @@ fn lifted_home(e: el::El, vs: ir::Function, n: ir::Node, depths: vector<integer>
   }
   for c in el_ir::children(n) {
     if lifted_home(e, vs, c, depths) {
+      return true;
+    }
+  }
+  false
+}
+
+// `Stores::has_reference_fields`: some struct (or variant) declares a `reference<T>` field —
+// a pointer field, the marker dep.  The compiler's own records (`__…`) are not declarations.
+fn has_reference_fields(e: el::El) -> boolean {
+  for d in e.b.data.definitions {
+    if !(d.def_type == el::DT_STRUCT || d.def_type == el::DT_ENUM_VALUE) || starts_with(d.name, "__") {
+      continue;
+    }
+    for a in d.attributes {
+      if el_types::is_pointer(a.typedef[0] ?? ir::TyVoid) {
+        return true;
+      }
+    }
+  }
+  false
+}
+
+// The callee summary (`ParamPair`): does function `f` store its parameter `p` into a record's
+// reference field (`OpSetDbRef(…, pos, p)`), itself or through a callee it hands `p` to?
+fn links_param(e: el::El, f: integer, p: integer, depth: integer) -> boolean {
+  if depth > 8 || f < 0 || len(el::def(e, f).code) == 0 {
+    return false;
+  }
+  stores_param(e, el::def(e, f).code[0]!, p, depth)
+}
+
+fn stores_param(e: el::El, n: ir::Node, p: integer, depth: integer) -> boolean {
+  match el_ir::unspan(n) {
+    NdCall { def_nr, args } => {
+      nm = el::def(e, def_nr).name;
+      if nm == "OpSetDbRef" && len(args) == 3 && root(e, args[2]) == p {
+        return true;
+      }
+      if el::def(e, def_nr).def_type == el::DT_FUNCTION {
+        for a in args {
+          if el_ir::unspan(a) == ir::NdVar { n: p } && links_param(e, def_nr, a#index, depth + 1) {
+            return true;
+          }
+        }
+      }
+    },
+    _ => {}
+  }
+  for c in el_ir::children(n) {
+    if stores_param(e, c, p, depth) {
       return true;
     }
   }
