@@ -5806,9 +5806,10 @@ impl Parser {
                             // the author typed, which for `as integer limit(0, 10)` is
                             // `integer`, and `integer?` is no cure for that cast.
                             let dst = self.int_type_name(&tp);
-                            let mask = Self::narrowing_mask(&tp).map_or(String::new(), |m| {
-                                format!(", or mask it first, `(<value> & {m}) as {dst}`")
-                            });
+                            let mask = Self::narrowing_mask(&tp, self.data.width32())
+                                .map_or(String::new(), |m| {
+                                    format!(", or mask it first, `(<value> & {m}) as {dst}`")
+                                });
                             diagnostic!(
                                 self.lexer,
                                 Level::Error,

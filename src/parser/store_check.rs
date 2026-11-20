@@ -270,9 +270,11 @@ impl Parser {
     /// `@FR-N-Arith` — the values an integer EXPRESSION can take, as far as its own shape
     /// proves them: a constant is its value, a local or a call is its DECLARED range, a narrow
     /// field or element read is its width, `+ - *` the interval arithmetic of their operands,
-    /// `a & c` (c ≥ 0) is `[0, c]`, `a % c` is `[-(|c|-1), |c|-1]` — `[0, |c|-1]` when `a`
-    /// cannot be negative — and `x ?? d` the union of its two.  `None` is "anything an integer
-    /// holds".
+    /// `a & c` (c ≥ 0) is `[0, c]`, `a | b` and `a ^ b` (both ≥ 0) `[0, 2ᵏ-1]` for the wider
+    /// one's bit length k, `a << c` / `a >> c` (c a constant) the operand's range scaled by
+    /// 2ᶜ, `a % c` is `[-(|c|-1), |c|-1]` — `[0, |c|-1]` when `a` cannot be negative — a regime
+    /// file's 32-bit operation its operand's range when that is inside i32 (`@FR-W-Op`), and
+    /// `x ?? d` the union of its two.  `None` is "anything an integer holds".
     ///
     /// The range is asked HERE, where a narrow destination needs it, and never written into the
     /// expression's type: `x & 255` is an `integer`, a local bound to
@@ -335,6 +337,40 @@ impl Parser {
                         .map(|(_, hi)| hi)
                         .min()
                         .map(|hi| (0, hi)),
+                    // `a | b` and `a ^ b` of two non-negative operands set no bit above the
+                    // wider one's highest: `[0, 2ᵏ-1]`, k that operand's bit length.
+                    "OpLorInt" | "OpEorInt" => {
+                        let ((al, ah), (bl, bh)) = operand(0).zip(operand(1))?;
+                        if al < 0 || bl < 0 {
+                            return None;
+                        }
+                        let bits = 64 - ah.max(bh).leading_zeros();
+                        Some((0, i64::try_from((1_u64 << bits) - 1).ok()?))
+                    }
+                    // `a << c` and `a >> c` by a constant `c` in 0..64: the operand's range
+                    // scaled by 2ᶜ — a range whose ends overflow proves nothing — or, for a
+                    // non-negative operand, divided by it.  The run-time `<<` overflows only
+                    // past i64, which a range inside it never reaches.
+                    "OpSLeftInt" | "OpSRightInt" => {
+                        let c = args.get(1).and_then(|a| self.const_int(a))?;
+                        let (lo, hi) = operand(0)?;
+                        let c = u32::try_from(c).ok().filter(|c| *c < 63)?;
+                        if name == "OpSLeftInt" {
+                            let f = 1_i64 << c;
+                            Some((lo.checked_mul(f)?, hi.checked_mul(f)?))
+                        } else if lo >= 0 {
+                            Some((lo >> c, hi >> c))
+                        } else {
+                            None
+                        }
+                    }
+                    // `@FR-W-Op` — a regime file's 32-bit operation reads null outside i32, so
+                    // it keeps its operand's range only when that range is inside i32: there
+                    // the narrowing changes nothing.  Past it the result can be null, which no
+                    // narrow slot holds, so nothing is proven.
+                    "OpNarrow32" => operand(0).filter(|(lo, hi)| {
+                        *lo > i64::from(i32::MIN) && *hi <= i64::from(i32::MAX)
+                    }),
                     "OpRemInt" => {
                         let c = args.get(1).and_then(|a| self.const_int(a))?;
                         if c == 0 {
