@@ -684,6 +684,22 @@ call's `__lift_N` is read back as null after it and keeps no free (`OpSets::free
 **`LOFT_NO_CHILD_REC_TAKES=1`** leaves `OpSetChildRec` out: the first bisect step for a
 re-free (`LOFT_DOUBLE_FREE`) after `cur = f(…)` through a link (`B-Ref-Write/2433-…`).
 
+**The writes into an out-of-line field that copy nothing (default-ON, BOTH backends).**  Each
+switch restores the copy its rewrite removed, and is the first bisect step for a wrong value,
+a leak or a double release in a user's tree or list at the shape it names; the falsifiers are
+`LOFT_STRICT_STORES=1` and `LOFT_POISON=1` against hand-computed values.
+
+| switch | rule | with it set | the shape |
+|---|---|---|---|
+| `LOFT_NO_MOVE_CHILD=1` | `@FR-R-MoveChild` (parse time) | the surviving subtree is copied into a fresh record and the old one released (`OpSetChildRec`) | an unlink: `h.f = h.f.g`, `cur = cur.left` through a field link, `slot = slot.right` through a slot parameter |
+| `LOFT_NO_CHILD_LITERAL=1` | `@FR-R-InPlaceLiteral`, out-of-line clause (parse time) | the literal is built in a store of its own, copied in and the store freed | an insert: `t.left = Tree { … }`, `cur = Tree { … }` through a field link |
+| `LOFT_NO_DIRECT_DEMOTE=1` | `@FR-R-Demote` (parse time) | the demote runs as its five-op form through a temporary record, not `OpDemoteRec` | a front push: `h = T { …, f: h }` |
+| `LOFT_NO_COPY_VIEW_WALK=1` | `@FR-R-CopyView`, walk clause (scope pass) | a cursor that only walks (`t = t.left`, a `match` payload stepped into it) is a copy again | a read-only lookup or a walk over a list |
+| `LOFT_NO_HOST_STORE=1` | `@FR-R-HostStore` (after every body is settled) | a write-back `t.f = g(t.f, …)` mints a store per call and copies the result into `t`'s | the textbook recursion that builds a tree |
+| `LOFT_NO_HOST_RESULT=1` | `@FR-R-HostStore`, literal clause | a call's answer handed to a literal's out-of-line field is copied in, not adopted by its number | `Add { l: gen(…), r: gen(…) }` |
+
+`LOFT_TRACE_HOST_STORE=1` names each call `(R-HostStore)` admits or declines.
+
 ## Lowering: `??` chains and nested literals
 
 **A `??` chain is RIGHT-associated (loft#1612, `@FR-G-Assoc`, `@FR-B-Copy`, default-ON, both
