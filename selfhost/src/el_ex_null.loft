@@ -2493,8 +2493,38 @@ pub fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
         return ex(ir::NdReturn { inner: kco! }, ir::TyNever);
       }
     }
-    // A scalar result, nullable or not, takes the value converted to it.
-    if !el_ex_call::scalar(el_types::base(result)) || result is TyVoid {
+    // A scalar result, nullable or not, takes the value converted to it — and so does a tuple
+    // of scalar members, as the tail's tuple is: a literal member by member (`return (null, 3)`
+    // into `(integer?, integer)` is `(OpConvIntFromNull(), 3)`), a tuple local or a call as it
+    // is.  No buffer, no hold.
+    scalar_tuple = match result { TyTuple { elems: rte } => len(rte) > 0 && len([for rm in rte if !el_ex_call::scalar(el_types::base(rm)) { 1 }]) == 0, _ => false };
+    if scalar_tuple && e.first_pass {
+      return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
+    }
+    if scalar_tuple {
+      match el_ir::unspan(v.code) {
+        NdTuple { items } => {
+          want = match result { TyTuple { elems: we } => we, _ => [] };
+          have = match v.tp { TyTuple { elems: he } => he, _ => [] };
+          if len(items) == len(want) && len(have) == len(want) {
+            conv: vector<ir::Node> = [];
+            for it in items {
+              wm = el_types::base(want[it#index] ?? ir::TyVoid);
+              hm = have[it#index] ?? ir::TyVoid;
+              mc = if hm is TyNull { el_convert::null_of(e, wm) } else { stored(e, vars, ex(it, hm), wm) };
+              if mc == null {
+                refuse_known(e, hm, "a `return` tuple member its declared type converts: {type_kind(hm)} to {type_kind(wm)}");
+                return ex(ir::NdNull, ir::TyNever);
+              }
+              conv += [mc!];
+            }
+            return ex(ir::NdReturn { inner: ir::NdTuple { items: conv } }, ir::TyNever);
+          }
+        },
+        _ => {}
+      }
+    }
+    if (!el_ex_call::scalar(el_types::base(result)) && !scalar_tuple) || result is TyVoid {
       el::refuse(e, "a `return` with a value of this type: {type_kind(result)}");
       return ex(ir::NdNull, ir::TyNever);
     }
