@@ -368,9 +368,8 @@ impl Parser {
                     // it keeps its operand's range only when that range is inside i32: there
                     // the narrowing changes nothing.  Past it the result can be null, which no
                     // narrow slot holds, so nothing is proven.
-                    "OpNarrow32" => operand(0).filter(|(lo, hi)| {
-                        *lo > i64::from(i32::MIN) && *hi <= i64::from(i32::MAX)
-                    }),
+                    "OpNarrow32" => operand(0)
+                        .filter(|(lo, hi)| *lo > i64::from(i32::MIN) && *hi <= i64::from(i32::MAX)),
                     "OpRemInt" => {
                         let c = args.get(1).and_then(|a| self.const_int(a))?;
                         if c == 0 {
