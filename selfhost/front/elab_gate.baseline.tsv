@@ -831,7 +831,7 @@ elab	refused	tests/scripts/store_compact_slack_730.loft
 elab	refused	tests/scripts/store_digest_b0.loft
 elab	refused	tests/scripts/store_paged_enum_field.loft
 
-layer	elab-functions	agree	14375	of	24810
+layer	elab-functions	agree	14377	of	24810
 elab-functions	agree	lib/docs.loft::Anchor
 elab-functions	agree	lib/docs.loft::Character
 elab-functions	agree	lib/docs.loft::Double
@@ -10037,6 +10037,7 @@ elab-functions	agree	loft-suite/rules/tuples/T-Absent/an-absent-tuple-meets-the-
 elab-functions	agree	loft-suite/rules/tuples/T-Absent/an-absent-tuple-meets-the-type-its-author-declares.loft::main_vector<(integer, integer)>
 elab-functions	agree	loft-suite/rules/tuples/T-Absent/an-absent-tuple-meets-the-type-its-author-declares.loft::main_vector<(integer, text)>
 elab-functions	agree	loft-suite/rules/tuples/T-Absent/an-absent-tuple-meets-the-type-its-author-declares.loft::n_a3_first
+elab-functions	agree	loft-suite/rules/tuples/T-Absent/an-absent-tuple-meets-the-type-its-author-declares.loft::n_c5
 elab-functions	agree	loft-suite/rules/tuples/T-Absent/an-absent-tuple-meets-the-type-its-author-declares.loft::n_c7_pick
 elab-functions	agree	loft-suite/rules/tuples/T-Absent/an-absent-tuple-meets-the-type-its-author-declares.loft::n_main
 elab-functions	agree	loft-suite/rules/tuples/T-Absent/an-absent-tuple-meets-the-type-its-author-declares.loft::vector<((integer, text), integer)>
@@ -10596,6 +10597,7 @@ elab-functions	agree	loft-suite/rules/types/N-Domain/1478-a-text-tuple-member-fi
 elab-functions	agree	loft-suite/rules/types/N-Domain/1478-a-text-tuple-member-fits-its-owned-slot.loft::main_vector<(integer, integer)>
 elab-functions	agree	loft-suite/rules/types/N-Domain/1478-a-text-tuple-member-fits-its-owned-slot.loft::main_vector<(integer, text)>
 elab-functions	agree	loft-suite/rules/types/N-Domain/1478-a-text-tuple-member-fits-its-owned-slot.loft::main_vector<(text, text)>
+elab-functions	agree	loft-suite/rules/types/N-Domain/1478-a-text-tuple-member-fits-its-owned-slot.loft::n_pick78
 elab-functions	agree	loft-suite/rules/types/N-Domain/1478-a-text-tuple-member-fits-its-owned-slot.loft::vector<((integer, text), integer)>
 elab-functions	agree	loft-suite/rules/types/N-Domain/1478-a-text-tuple-member-fits-its-owned-slot.loft::vector<(boolean, text)>
 elab-functions	agree	loft-suite/rules/types/N-Domain/1478-a-text-tuple-member-fits-its-owned-slot.loft::vector<(integer, integer)>
@@ -15208,7 +15210,7 @@ elab-functions	agree	tests/scripts/store_paged_enum_field.loft::main_vector<inte
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::n_bytes
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::vector<integer(0, 255)>
 
-layer	elab-pass1	agree	11813	of	17641
+layer	elab-pass1	agree	11813	of	17643
 elab-pass1	agree	lib/code.loft::t_4Code_add_block
 elab-pass1	agree	lib/code.loft::t_4Code_add_if
 elab-pass1	agree	lib/code.loft::t_4Code_add_loop
