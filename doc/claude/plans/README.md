@@ -3,27 +3,30 @@
 Multi-phase initiatives that span more than one session — core language,
 compiler/runtime, **and library** work, unified here.
 
-> **Current convention — flat, in `plans/`, numbered to the issue (2026-06-19).**
-> A plan is a **single flat file**, `plans/<n>-<slug>.md`, with its phases as
-> sections inside that one file — *not* a directory of per-phase files.  `<n>` is
-> the plan's [`loft-lang/plans`](https://github.com/loft-lang/plans) issue number
-> (`@PLN<n>`): every plan has a gh issue (the cross-ecosystem id), and the local
-> file is named to match it.
+> **Current convention — in `plans/`, numbered to the issue, in the repository always.**
+> A plan is `plans/<n>-<slug>.md`, or a directory `plans/<n>-<slug>/` with a `README.md`
+> once it needs more than one file — and most plans come to need that: a file per phase or
+> per split of the work, the probes a design rests on, a queue, a handoff, the data a
+> measurement produced.  Split when a part is read or changed on its own; the README stays
+> the map.  `<n>` is the plan's [`loft-lang/plans`](https://github.com/loft-lang/plans)
+> issue number (`@PLN<n>`): every plan has a gh issue (the cross-ecosystem id), and the
+> local file or directory is named to match it.  The issue may hold information too — the
+> long form of a design, results as comments, the discussion — but a plan is never in the
+> issue alone: what has to be split, run or carried by a branch is here.
 >
 > - **Every new plan lands here in `plans/`, whatever its source** — core,
 >   runtime, or library.  There is no separate `lib_plans/` for new work;
 >   `lib_plans/` is legacy and being absorbed.
 > - **New plan** (e.g. a library scope): create the gh issue first
 >   (`gh issue create --repo loft-lang/plans`, with a required `status:*` +
->   `subject:*` label), read its number `n`, then write `plans/<n>-<slug>.md`.
+>   `subject:*` label), read its number `n`, then write `plans/<n>-<slug>.md` or
+>   `plans/<n>-<slug>/README.md`.
 > - **Migrating an existing local plan** (a `lib_plans/` dir, or an un-issued
 >   `plans/` dir): if it already maps to a `@PLN` issue, move + renumber to that
 >   number; **if it does not exist on gh yet, create the issue, then renumber to
 >   it.**
-> - The existing numbered **directories** below predate this and remain as
->   legacy closure records.  An investigation plan needing a probe corpus may
->   keep an adjacent `<n>-<slug>/` dir (with `probes/`) — the one exception to
->   flat.
+> - A directory numbered by the order it was opened in, from before plans were numbered
+>   to their issue, stays as its closure record.
 
 ## The rule — docs vs plans
 
@@ -502,9 +505,10 @@ Use [`_TEMPLATE.md`](_TEMPLATE.md) for the issue body's shape: Status / Goal /
 Effort / Sub-arcs / Phase ordering / Open questions / Cross-arc dependencies /
 **Documentation** (what to update outside the plan when it finishes — required) / See also.  The file is named for the issue: `plans/<n>-<slug>.md`, or
 `plans/<n>-<slug>/README.md` when it has companion files — the probes a design rests on
-go in its `probes/`, each saying in its header what holds.  The file holds the state, the
-steps and what each goes red on; a design too long for it stays in the issue's body, linked
-from the file's first line.  Length budget: 100-300 lines;
+go in its `probes/`, each saying in its header what holds.  The README holds the state, the
+steps and what each goes red on, and links what was split off; the long form of a design
+may stay in the issue's body, linked from the README's first line.  Length budget for one
+file: 100-300 lines — past it, split;
 longer content belongs in `doc/claude/*.md`.
 
 (Existing `plans/<NN>-<slug>/` dirs predate this and are kept as-is; only *new*
