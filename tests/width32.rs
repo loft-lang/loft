@@ -511,3 +511,50 @@ fn the_wide_ledger_names_what_is_64_bit_and_why() {
     let _ = emit_c("ledger64", WIDE, None);
     assert!(ledger("ledger64").is_empty(), "a 64-bit build writes none");
 }
+
+const REMOVE: &str = "struct B { n: integer }
+fn thin(bs: vector<B>) -> integer {
+  seen = 0;
+  for b in bs {
+    seen += b.n;
+    if b.n % 2 == 0 { b#remove; }
+  }
+  seen
+}
+fn main() {
+  bs = [B { n: 2 }, B { n: 4 }, B { n: 5 }, B { n: 6 }, B { n: 7 }];
+  guard = 77;
+  seen = thin(bs);
+  left = 0;
+  for b in bs { left = left * 10 + b.n; }
+  println(\"{seen} {len(bs)} {left} {guard}\");
+}
+";
+
+/// @PLN217 — a removal inside a vector walk steps the walk's index back through its address.
+/// Under the 32-bit regime that index is held in 32 bits (`@FR-W-Count`), so the runtime is
+/// handed it at its own width (`loft_vec_walk_remove32`): written as 64 bits it would overrun
+/// the counter.  Every element is visited once — 2 + 4 + 5 + 6 + 7 = 24 — the three even ones
+/// go, 5 and 7 stay (57), and the local beside the walk keeps its 77.  Both widths, both
+/// backends; the C must compile with no pointer of the wrong width.
+#[test]
+fn a_removal_in_a_walk_steps_a_32_bit_index_back() {
+    for backend in ["--interpret", "--native-c"] {
+        let b = &backend[2..5];
+        for width in [Some("32"), None] {
+            let name = format!("remove{b}{}", width.unwrap_or("64"));
+            assert_eq!(
+                run_on(backend, &name, "", REMOVE, width),
+                "24 2 57 77\n",
+                "{backend} {width:?}"
+            );
+        }
+    }
+    let c32 = emit_c("remove-c32", REMOVE, Some("32"));
+    assert!(c32.contains("loft_vec_walk_remove32("), "the 32-bit index");
+    let c64 = emit_c("remove-c64", REMOVE, None);
+    assert!(
+        c64.contains("loft_vec_walk_remove(") && !c64.contains("loft_vec_walk_remove32(l"),
+        "the 64-bit index"
+    );
+}

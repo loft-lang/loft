@@ -26,6 +26,7 @@
 
 use crate::data::{Data, Type};
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 
 /// One line of the ledger.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -224,7 +225,7 @@ pub(crate) fn crossings(program: &str) -> BTreeMap<Entry, u32> {
     let mut out = BTreeMap::new();
     let mut function = "";
     let mut body = String::new();
-    let mut flush = |function: &str, body: &str, out: &mut BTreeMap<Entry, u32>| {
+    let flush = |function: &str, body: &str, out: &mut BTreeMap<Entry, u32>| {
         let text = body.as_bytes();
         for conv in CROSSINGS {
             for (at, _) in body.match_indices(conv) {
@@ -279,7 +280,7 @@ pub(crate) fn crossings(program: &str) -> BTreeMap<Entry, u32> {
 pub(crate) fn render(entries: &BTreeMap<Entry, u32>) -> String {
     let mut text = String::new();
     for (e, n) in entries {
-        text.push_str(&format!("{}\t{}\t{}\t{n}\n", e.function, e.class, e.what));
+        let _ = writeln!(text, "{}\t{}\t{}\t{n}", e.function, e.class, e.what);
     }
     text
 }
@@ -322,7 +323,7 @@ static void n_plain(int32_t v0_a) {
 }
 ";
 
-    fn find<'a>(l: &'a BTreeMap<Entry, u32>, function: &str, class: &str, what: &str) -> u32 {
+    fn find(l: &BTreeMap<Entry, u32>, function: &str, class: &str, what: &str) -> u32 {
         l.iter()
             .find(|(e, _)| e.function == function && e.class == class && e.what == what)
             .map_or(0, |(_, n)| *n)

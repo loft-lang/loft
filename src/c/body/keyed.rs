@@ -998,6 +998,10 @@ impl FnWriter<'_> {
             ("OpStep", [Value::Var(state), data, on, arg]) => {
                 let on = Self::literal(on, "walk kind")?;
                 let arg = Self::literal(arg, "walk argument")?;
+                // @PLN217 — the runtime writes the state through its address at 64 bits.
+                if self.shapes[*state as usize] == CType::Int32 {
+                    return Err("a walk whose state is held in 32 bits".into());
+                }
                 let state = self.var(*state);
                 let data = self.expr(data, ind)?;
                 let data = as_ref(data)?;
@@ -1151,10 +1155,20 @@ impl FnWriter<'_> {
         let tp = u16::try_from(Self::literal(tp, "type")?)
             .map_err(|_| "a type number out of range".to_string())?;
         let reverse = i32::from(on & 64 != 0);
+        // @PLN217 — the runtime writes the walk's state through its address, so the address
+        // must be of what the state is held in.  A vector walk's state is its index, which a
+        // body under the 32-bit regime holds in 32 bits (`@FR-W-Count`); a keyed walk's state
+        // packs two positions and is 64 bits everywhere.
+        let narrow = self.shapes[state as usize] == CType::Int32;
+        if narrow && on & 63 != 0 {
+            return Err("a keyed walk whose state is held in 32 bits".into());
+        }
         let call = match on & 63 {
             // A vector walk: its state is the index; forward, the successor moves into the
             // removed slot, so the index steps back to visit it.
+            0 if !self.cx.stores.is_linked(tp) && narrow => "loft_vec_walk_remove32",
             0 if !self.cx.stores.is_linked(tp) => "loft_vec_walk_remove",
+            0 if narrow => "loft_array_walk_remove32",
             0 => "loft_array_walk_remove",
             1 => {
                 let (_, elem, _) = self.keyed_of(tp)?;
