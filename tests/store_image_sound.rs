@@ -1,19 +1,22 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! `@FR-S-Sound` — a store image is refused when a number INSIDE it does not hold.
+//! `@FR-S-Sound` — the one walk that says whether a store's numbers hold, asked for by the
+//! program: `store_verify`, and the loader for a file from elsewhere.
 //!
 //! A save is a file people pass on, and every read after a load believes what the file says:
 //! which record a field names, how many elements a vector has, how long a text is.  One
 //! program writes an image of a struct holding a text and a vector of three records, each with
 //! a text of its own.  The test then changes ONE number in a copy of that image, and a second
-//! program loads the copy and reports what it sees, on the interpreter and on the C build.
+//! program opens the copy two ways, on the interpreter and on the C build.
 //!
-//! Expected, fixed in advance: the untouched image and a plain copy of it load and read
-//! `name [seven77] len 3 walked 3 sum 60 labels a1b2c3` (10 + 20 + 30); every changed copy is
-//! refused — `loaded false`, an empty value, and a `refusing` line on stderr.  Without the
-//! check the C build walks 1000 elements out of a three-element record or dies, and the
-//! interpreter reads other records' bytes as elements until it leaves the store.
+//! Expected, fixed in advance:
+//! - `store_load_untrusted` reads the untouched image and a plain copy as
+//!   `name [seven77] len 3 walked 3 sum 60 labels a1b2c3` (10 + 20 + 30), and refuses every
+//!   changed copy — `loaded false`, an empty value, a line saying which number;
+//! - `store_load` followed by `store_verify` answers `verify true` for the two sound files
+//!   and `verify false` for every changed one.  A plain `store_load` runs no walk: the
+//!   program that wants the answer asks.
 
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
@@ -32,7 +35,12 @@ struct W { name: text, items: vector<R> }
 
 fn main() {
   l = W { name: "", items: [] };
-  ok = store_load(l, env_variable("IMG") ?? "");
+  p = env_variable("IMG") ?? "";
+  if (env_variable("MODE") ?? "") == "verify" {
+    println("loaded {store_load(l, p)} verify {store_verify(l)}");
+    return;
+  }
+  ok = store_load_untrusted(l, p);
   s = 0;
   n = 0;
   labels = "";
@@ -51,13 +59,14 @@ fn scratch() -> PathBuf {
     dir
 }
 
-fn loft(dir: &Path, backend: &str, program: &str, image: &str) -> (String, String) {
+fn loft(dir: &Path, backend: &str, program: &str, image: &str, mode: &str) -> (String, String) {
     let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg(backend)
         .arg("--no-warnings")
         .arg(program)
         .current_dir(dir)
         .env("IMG", image)
+        .env("MODE", mode)
         .env("LOFT_TIMEOUT", "300")
         .output()
         .expect("loft runs");
@@ -76,7 +85,7 @@ fn a_number_inside_an_image_that_does_not_hold_refuses_the_load() {
     let dir = scratch();
     fa::write(dir.join("write.loft"), WRITER).expect("writer");
     fa::write(dir.join("read.loft"), READER).expect("reader");
-    let (wrote, err) = loft(&dir, "--interpret", "write.loft", "");
+    let (wrote, err) = loft(&dir, "--interpret", "write.loft", "", "");
     assert_eq!(wrote, "wrote true", "{err}");
     let image = fa::read(dir.join("img.store")).expect("the image");
     let sidecar = fa::read(dir.join("img.store.dschema")).expect("its sidecar");
@@ -121,16 +130,22 @@ fn a_number_inside_an_image_that_does_not_hold_refuses_the_load() {
     }
     for backend in backends {
         for tag in ["img", "copy"] {
-            let (out, err) = loft(&dir, backend, "read.loft", &format!("{tag}.store"));
+            let file = format!("{tag}.store");
+            let (out, err) = loft(&dir, backend, "read.loft", &file, "");
             assert_eq!(out, SOUND, "{backend} {tag}: a sound image loads\n{err}");
+            let (out, err) = loft(&dir, backend, "read.loft", &file, "verify");
+            assert_eq!(out, "loaded true verify true", "{backend} {tag}\n{err}");
         }
         for (tag, _, _) in cells {
-            let (out, err) = loft(&dir, backend, "read.loft", &format!("{tag}.store"));
+            let file = format!("{tag}.store");
+            let (out, err) = loft(&dir, backend, "read.loft", &file, "");
             assert_eq!(out, REFUSED, "{backend} {tag}: the image is refused\n{err}");
             assert!(
-                err.contains("store_load: refusing"),
-                "{backend} {tag}: and the refusal says why\n{err}"
+                err.contains("[cr-check]") && err.contains("store_load_untrusted: refusing"),
+                "{backend} {tag}: and the refusal says which number\n{err}"
             );
+            let (out, err) = loft(&dir, backend, "read.loft", &file, "verify");
+            assert_eq!(out, "loaded true verify false", "{backend} {tag}\n{err}");
         }
     }
     let _ = fa::remove_dir_all(&dir);

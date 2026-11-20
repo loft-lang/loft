@@ -3333,349 +3333,6 @@ impl Stores {
         &self.allocations[nr as usize]
     }
 
-    /// #306 diagnostic (`LOFT_TRACE_CR`) — bounds-checked mirror of the
-    /// `copy_claims` walk.  Reports (instead of faulting on) the first broken
-    /// interior edges of `rec`'s claim graph: a text offset or vector record
-    /// id outside its store's buffer, a freed/out-of-range store, or an
-    /// insane vector length.  Diagnostic only; never dereferences unchecked.
-    #[expect(clippy::too_many_lines, reason = "inherited")]
-    pub fn validate_claims(&self, rec: &DbRef, tp: u16, path: &str, problems: &mut u32) {
-        if *problems > 8 {
-            return;
-        }
-        if rec.store_nr as usize >= self.allocations.len() {
-            crate::loft_eprintln!(
-                "[cr-check] {path}: ref #{}.{},{} — store out of range",
-                rec.store_nr,
-                rec.rec,
-                rec.pos
-            );
-            *problems += 1;
-            return;
-        }
-        let store = &self.allocations[rec.store_nr as usize];
-        if store.free {
-            crate::loft_eprintln!(
-                "[cr-check] {path}: ref #{}.{},{} — store FREED",
-                rec.store_nr,
-                rec.rec,
-                rec.pos
-            );
-            *problems += 1;
-            return;
-        }
-        let cap = store.capacity_words();
-        if rec.rec >= cap || u64::from(rec.rec) * 8 + u64::from(rec.pos) >= u64::from(cap) * 8 {
-            crate::loft_eprintln!(
-                "[cr-check] {path}: ref #{}.{},{} — record beyond store capacity ({cap} words)",
-                rec.store_nr,
-                rec.rec,
-                rec.pos
-            );
-            *problems += 1;
-            return;
-        }
-        if (tp as usize) >= self.types.len() {
-            crate::loft_eprintln!("[cr-check] {path}: type {tp} out of range");
-            *problems += 1;
-            return;
-        }
-        match &self.types[tp as usize].parts {
-            Parts::Base if tp == 5 => {
-                let cur = store.get_u32_raw(rec.rec, rec.pos);
-                if cur != 0 && cur >= cap {
-                    crate::loft_eprintln!(
-                        "[cr-check] {path}: text offset {cur} beyond store #{} capacity {cap}",
-                        rec.store_nr
-                    );
-                    *problems += 1;
-                }
-            }
-            Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
-                for f in fields {
-                    self.validate_claims(
-                        &DbRef {
-                            store_nr: rec.store_nr,
-                            rec: rec.rec,
-                            pos: rec.pos + u32::from(f.position),
-                        },
-                        f.content,
-                        &format!("{path}.{}", f.name),
-                        problems,
-                    );
-                }
-            }
-            Parts::Vector(v) | Parts::Sorted(v, _) => {
-                let cur = store.get_u32_raw(rec.rec, rec.pos);
-                if cur == 0 {
-                    return;
-                }
-                if cur >= cap {
-                    crate::loft_eprintln!(
-                        "[cr-check] {path}: vector rec {cur} beyond store #{} capacity {cap}",
-                        rec.store_nr
-                    );
-                    *problems += 1;
-                    return;
-                }
-                let len = store.get_u32_raw(cur, 4);
-                let size = u32::from(self.size(*v));
-                if u64::from(len) * u64::from(size) > u64::from(cap) * 8 {
-                    crate::loft_eprintln!(
-                        "[cr-check] {path}: vector rec {cur} len {len} (elem size {size}) \
-                         exceeds store #{} capacity {cap} words",
-                        rec.store_nr
-                    );
-                    *problems += 1;
-                    return;
-                }
-                for i in 0..len.min(16) {
-                    self.validate_claims(
-                        &DbRef {
-                            store_nr: rec.store_nr,
-                            rec: cur,
-                            pos: 8 + size * i,
-                        },
-                        *v,
-                        &format!("{path}[{i}]"),
-                        problems,
-                    );
-                }
-            }
-            Parts::ChildRec(ct) => {
-                let r = store.get_u32_raw(rec.rec, rec.pos);
-                if r == 0 {
-                    return;
-                }
-                if r >= cap {
-                    crate::loft_eprintln!(
-                        "[cr-check] {path}: child rec {r} beyond store #{} capacity {cap}",
-                        rec.store_nr
-                    );
-                    *problems += 1;
-                    return;
-                }
-                self.validate_claims(
-                    &DbRef {
-                        store_nr: rec.store_nr,
-                        rec: r,
-                        pos: 8,
-                    },
-                    *ct,
-                    &format!("{path}->child"),
-                    problems,
-                );
-            }
-            Parts::Enum(values) => {
-                // Mirrors `copy_claims`' Enum arm (direct index, no -1 shift).
-                let e_nr = store.get_byte(rec.rec, rec.pos, -1);
-                if e_nr >= 0 && (e_nr as usize) < values.len() {
-                    let etp = values[e_nr as usize].0;
-                    if etp != u16::MAX {
-                        self.validate_claims(rec, etp, path, problems);
-                    }
-                }
-            }
-            Parts::Hash(v, _) => {
-                // Bounds-checked hash walk (the per-element kind for_each_owned_child
-                // trusts; here it is guard-before-deref).  Mirrors hash.rs: the root
-                // word holds the bucket-record claim; bucket layout is word 0 = room,
-                // buckets from `BUCKET0`, `elms = (room - RESERVED_WORDS) * 2`.
-                let cur = store.get_u32_raw(rec.rec, rec.pos);
-                if cur == 0 {
-                    return;
-                }
-                if cur >= cap {
-                    crate::loft_eprintln!(
-                        "[cr-check] {path}: hash bucket rec {cur} beyond store #{} capacity {cap}",
-                        rec.store_nr
-                    );
-                    *problems += 1;
-                    return;
-                }
-                // `room` is the bucket record's SIZE HEADER, which hash.rs deliberately
-                // doubles as data (`src/hash.rs`: "fld 0 : size header (word count =
-                // `room`); see `Store::record_words`").  Read it through the header
-                // accessor: `get_u32_raw` is the FIELD accessor and asserts `fld >= 4`
-                // under armed debug-assertions, because fld 0..4 IS the header it is
-                // meant to sit above — so reading word 0 with it panicked the
-                // debug-assertions gate ("Fld 0 is outside of record N").
-                let room = store.record_words(cur);
-                if room < crate::hash::RESERVED_WORDS || u64::from(room) > u64::from(cap) {
-                    crate::loft_eprintln!(
-                        "[cr-check] {path}: hash bucket rec {cur} insane room {room} (cap {cap})",
-                    );
-                    *problems += 1;
-                    return;
-                }
-                // `(Col-Inline)` — an inline table's entries are positions in the table
-                // record itself, listed by the hash's own walk.
-                if crate::hash::is_inline(store, cur) {
-                    for entry in crate::hash::records(rec, &self.allocations) {
-                        self.validate_claims(&entry, *v, &format!("{path}{{inline}}"), problems);
-                    }
-                    return;
-                }
-                let sb = crate::hash::slot_bytes(store, cur);
-                let elms = (room - crate::hash::RESERVED_WORDS) * 8 / sb;
-                // @PLN135 arc H — a slot holds an arena INDEX for a hash that owns its
-                // entries, and a record number for one that borrows them (a secondary
-                // index).  The stride the table records is the discriminator, and the
-                // chunk directory has to be reached before any slot can be decoded —
-                // guarded first, like everything else here, because this walk exists
-                // to survive a corrupt store rather than to assume a sound one.
-                let stride = crate::hash::stride(store, cur);
-                let dir = store.get_u32_raw(cur, crate::arena::DIR_FLD);
-                if stride != 0 && dir >= cap {
-                    crate::loft_eprintln!(
-                        "[cr-check] {path}: hash arena directory {dir} beyond store #{} capacity {cap}",
-                        rec.store_nr
-                    );
-                    *problems += 1;
-                    return;
-                }
-                for i in 0..elms {
-                    let slot = store.get_u32_raw(cur, crate::hash::BUCKET0 + i * sb);
-                    if slot == 0 {
-                        continue;
-                    }
-                    // The slot's high bit says it names a RECORD rather than an arena
-                    // index (`hash::SLOT_RECORD`) — one table can hold both, so this
-                    // is decided per slot. Decoding a tagged record as an index would
-                    // read a chunk that does not exist and skip a live entry.
-                    let (entry, pos) = if stride == 0 || slot & crate::hash::SLOT_RECORD != 0 {
-                        (
-                            slot & !crate::hash::SLOT_RECORD,
-                            crate::store::RECORD_PAYLOAD,
-                        )
-                    } else {
-                        match crate::arena::slot(store, cur, slot, stride) {
-                            Some(found) => found,
-                            None => continue,
-                        }
-                    };
-                    if entry >= cap {
-                        crate::loft_eprintln!(
-                            "[cr-check] {path}: hash entry rec {entry} beyond store #{} capacity {cap}",
-                            rec.store_nr
-                        );
-                        *problems += 1;
-                        if *problems > 8 {
-                            return;
-                        }
-                        continue;
-                    }
-                    self.validate_claims(
-                        &DbRef {
-                            store_nr: rec.store_nr,
-                            rec: entry,
-                            pos,
-                        },
-                        *v,
-                        &format!("{path}{{#{entry}}}"),
-                        problems,
-                    );
-                }
-            }
-            // An ARRAY / ORDERED holds a record of element REFERENCES.  The root word is
-            // the claim; each slot is a rec number into this store.  Bounds-check both,
-            // then validate the elements — this walk exists to run over a heap that may
-            // already be corrupt, so every number is guarded before it is followed.
-            Parts::Array(v) | Parts::Ordered(v, _) => {
-                let cur = store.get_u32_raw(rec.rec, rec.pos);
-                if cur == 0 {
-                    return;
-                }
-                if cur >= cap {
-                    crate::loft_eprintln!(
-                        "[cr-check] {path}: array rec {cur} beyond store #{} capacity {cap}",
-                        rec.store_nr
-                    );
-                    *problems += 1;
-                    return;
-                }
-                let len = store.get_u32_raw(cur, 4);
-                if u64::from(len) * 4 > u64::from(cap) * 8 {
-                    crate::loft_eprintln!(
-                        "[cr-check] {path}: array rec {cur} len {len} exceeds store #{} \
-                         capacity {cap} words",
-                        rec.store_nr
-                    );
-                    *problems += 1;
-                    return;
-                }
-                for i in 0..len.min(16) {
-                    let elm = store.get_u32_raw(cur, 8 + 4 * i);
-                    if elm == 0 {
-                        continue;
-                    }
-                    if elm >= cap {
-                        crate::loft_eprintln!(
-                            "[cr-check] {path}[{i}]: array element rec {elm} beyond store #{} \
-                             capacity {cap}",
-                            rec.store_nr
-                        );
-                        *problems += 1;
-                        return;
-                    }
-                    self.validate_claims(
-                        &DbRef {
-                            store_nr: rec.store_nr,
-                            rec: elm,
-                            pos: 8,
-                        },
-                        *v,
-                        &format!("{path}[{i}]"),
-                        problems,
-                    );
-                }
-            }
-            // A RADIX / TRIE root word claims the tree record.  The LEAVES belong to the
-            // primary collection and are validated through it, so this checks the spine
-            // itself is in range and stops — the same split `for_each_owned_child` makes
-            // (it keeps `cur` and no per-leaf children).
-            Parts::Radix(_, _) | Parts::Trie(_, _) => {
-                let cur = store.get_u32_raw(rec.rec, rec.pos);
-                if cur != 0 && cur >= cap {
-                    crate::loft_eprintln!(
-                        "[cr-check] {path}: tree rec {cur} beyond store #{} capacity {cap}",
-                        rec.store_nr
-                    );
-                    *problems += 1;
-                }
-            }
-            // A stored 12-byte DbRef points OUT of this store, so the only thing checkable
-            // here without following it into another allocation is its store number.
-            // Following it is what `validate_claims` is called ON, one level up.
-            Parts::DbRef => {
-                let sn = store.get_u32_raw(rec.rec, rec.pos);
-                if sn != u32::from(u16::MAX) && sn as usize >= self.allocations.len() {
-                    crate::loft_eprintln!(
-                        "[cr-check] {path}: stored DbRef names store #{sn}, out of range"
-                    );
-                    *problems += 1;
-                }
-            }
-            // Deliberately nothing, and each for its own reason — not a catch-all.
-            //
-            // `Index` BORROWS its rows from the primary collection: `for_each_owned_child`
-            // answers `empty(None, …)` for it, so there is no claim of its own to check
-            // and walking into the primary's rows would double-report every problem.
-            //
-            // The narrow-integer kinds and a non-text `Base` hold VALUES, not claims:
-            // there is no record number in them to be out of range, so a walk has nothing
-            // to say.  (`Base` at `tp == 5` is `text`, which DOES hold an offset and is
-            // checked in the first arm above.)
-            Parts::Index(_, _)
-            | Parts::Byte(_, _)
-            | Parts::Short(_, _)
-            | Parts::Int(_, _)
-            | Parts::IntRaw(_, _)
-            | Parts::ShortRaw(_, _)
-            | Parts::Base => {}
-        }
-    }
-
     /// `tp` is the CONTAINER type (`Vector` / `Sorted`), not the content type — the
     /// same convention as `array_body` / `hash_body` / `index_body`, so the keystone
     /// walk keys on the container's `Parts` and the content type is read back out.
@@ -5526,16 +5183,6 @@ impl Stores {
             f.sync_all()
         })();
         let sidecar = image.and_then(|()| id.stage_beside(path));
-        // `@FR-S-Guard` — the guard is the third file of the same write, staged like the
-        // other two and moved into place last: what the image and the sidecar hashed to.
-        let guard = crate::store_guard::guard_path(path);
-        let mut guard_staged = guard.as_os_str().to_owned();
-        guard_staged.push(".tmp");
-        let guard_staged = std::path::PathBuf::from(guard_staged);
-        let sidecar = sidecar.and_then(|side| {
-            let text = crate::store_guard::render(&padded, &crate::file_access::read(&side)?);
-            crate::file_access::write(&guard_staged, text).map(|()| side)
-        });
         let Ok(sidecar) = sidecar else {
             let _ = crate::file_access::remove_file(&staged);
             if std::env::var_os("LOFT_LOADER_STATS").is_some() {
@@ -5546,10 +5193,12 @@ impl Stores {
         if crate::file_access::rename(&staged, path).is_err()
             || crate::file_access::rename(&sidecar, crate::schema_sidecar::dschema_path(path))
                 .is_err()
-            || crate::file_access::rename(&guard_staged, &guard).is_err()
         {
             return false;
         }
+        // `@FR-S-Guard` — a guard is written by whoever wants one, not by a save: the one
+        // an earlier writer left names another image now, and goes.
+        let _ = crate::file_access::remove_file(crate::store_guard::guard_path(path));
         if std::env::var_os("LOFT_LOADER_STATS").is_some() {
             crate::loft_eprintln!(
                 "store_persist_copy: wrote {} bytes, laid out {laid} tree(s) for paging",
@@ -5648,6 +5297,7 @@ impl Stores {
             Self::recorded_slot(path),
             &what,
             "store_load",
+            false,
         ) {
             return false;
         }
@@ -7003,7 +6653,7 @@ impl Stores {
         new_store.set_created_at(preserved.2);
         new_store.last_op_at = preserved.3;
         new_store.pinned = preserved.4;
-        self.adopt_image(slot, new_store, None, "the image", "store_load")
+        self.adopt_image(slot, new_store, None, "the image", "store_load", false)
     }
 
     /// [`Stores::load_bytes`] for an image whose sidecar recorded the slot it was written
@@ -7033,7 +6683,8 @@ impl Stores {
         new_store.set_created_at(preserved.2);
         new_store.last_op_at = preserved.3;
         new_store.pinned = preserved.4;
-        self.adopt_image(slot, new_store, recorded, what, builtin)
+        // The loaders that come through here read a file from elsewhere: they ask the walk.
+        self.adopt_image(slot, new_store, recorded, what, builtin, true)
     }
 
     /// Put a loaded store image in `slot` and make its stored references name it there
@@ -7046,11 +6697,21 @@ impl Stores {
         recorded: Option<u16>,
         what: &str,
         builtin: &str,
+        checked: bool,
     ) -> bool {
         let previous = std::mem::replace(&mut self.allocations[slot as usize], image);
-        // `@FR-S-Sound` — before anything follows a number the image holds, the rebase
-        // below included.
-        let sound = self.image_sound(slot);
+        // `@FR-S-Sound` — a loader for a file from elsewhere asks the walk before anything
+        // follows a number the image holds, the rebase below included.
+        let sound = if checked
+            && !self.verify_graph_ok(&DbRef {
+                store_nr: slot,
+                rec: crate::store::PRIMARY,
+                pos: 8,
+            }) {
+            Err("a number inside it does not hold (the lines above say which)".to_string())
+        } else {
+            Ok(())
+        };
         match sound.and_then(|()| self.rebase_stored_refs(slot, recorded)) {
             Ok(()) => true,
             Err(why) => {

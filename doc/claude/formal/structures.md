@@ -189,35 +189,38 @@ it may place blocks differently, but it must write each kind of block the same w
               and replaces what is there only when both are written; the call answers true only
               then.  A write that fails before the replace leaves the previous image and its
               sidecar as they were.
-  (S-Sound)   a loader that reads a whole image adopts it only when the numbers INSIDE it hold,
-              followed from the root under the root's type before any other read:
+  (S-Sound)   ONE walk says whether the numbers INSIDE a store hold, followed from a value
+              under its type, each checked before it is followed:
                 - a record number names a block of the chain that is claimed and STARTS there
                   (0 names none; a text's number above 2^31 − 1 is null);
-                - a vector's or a sorted's length times its element size, a text's length, and
-                  a value's size at its position lie inside the block that holds them;
-                - a text's bytes are UTF-8.
-              The walk reads what a type owns in line: a struct's fields, an enum value's, a
-              text, a vector's and a sorted's elements, a child record.  It does not yet read a
-              keyed collection's tables and nodes (hash, index, spatial, trie, array, ordered) —
-              nor, therefore, what such a collection holds — or the record a stored reference
-              names.  A record two fields name is walked once.  The refusal is S-Gate's: false,
-              and the slot keeps the store it had.
-  (S-Guard)   beside an image at <path> a writer leaves its GUARD <path>.guard, UTF-8 lines:
+                - a vector's, a sorted's or an array's length times its element size, a text's
+                  length, a child record's and a table's size lie inside the block that holds
+                  them;
+                - a text's bytes are UTF-8;
+                - a nest deeper than 4096 is records that name each other.
+              It reads struct fields, enum values, texts, vectors, sorted vectors, child
+              records, a hash's table and entries, an array's and an ordered's elements, and
+              the record of a spatial's or a trie's tree; it does not read an index's nodes,
+              a tree's leaves or the record a stored reference names.  It runs when the
+              program asks: store_verify answers it for a value, and the loaders for a file
+              from elsewhere — store_load_untrusted and the URL loaders — ask it before
+              anything else reads the image, and refuse (S-Gate's answer) when it fails.
+              store_load does not run it.
+  (S-Guard)   beside an image at <path> may lie its GUARD <path>.guard, UTF-8 lines:
                 LOFT-GUARD v1
                 image=<SHA-256 of the image's bytes, 64 hex digits>
                 sidecar=<SHA-256 of the sidecar's bytes>
-              It is the third file of the pair's one write (S-Pair), moved into place last.
-              EVERY writer of an image at a path writes its guard, and a tool that moves a pair
-              moves its guard with it: a guard an earlier write left would refuse the new image.
-              A loader that reads an image from a file checks the guard before it reads the
-              image or the sidecar for what they hold.  The guard does not HOLD when it
-              cannot be read, is not one, names no image, or names another image or sidecar
-              than the ones there:
+              A save writes none: a guard is written by whoever wants one, and a save over a
+              guarded store removes the guard it outdates.  A tool that moves a pair moves
+              its guard with it.  A loader that reads an image from a file checks a guard
+              that is there before it reads the image or the sidecar for what they hold.
+              The guard does not HOLD when it cannot be read, is not one, names no image, or
+              names another image or sidecar than the ones there:
                 - store_load_untrusted refuses (S-Gate's answer);
                 - store_load says so on stderr and reads the file as it is.
               NO guard — the file is read as it is, by both.  A reader takes the lines it
-              knows and passes over the others.  Deleting a file deletes the guard beside it.
-              The paged, lazy and URL loaders do not read a guard.
+              knows and passes over the others.  The paged, lazy and URL loaders do not read
+              a guard.
 ```
 
 **In words.** The sidecar is the image's passport: which layout, which placement, which release.
@@ -228,15 +231,12 @@ the token says how the hash or tree finds the RECORD.  Writing the two files as 
 keeps the passport honest: an image beside no sidecar is refused, and one beside an older
 writer's sidecar would be read under rules it was not written by.  The passport says how to
 read the bytes, not that they can be trusted: an image is a file people pass on, and every read
-after a load believes the record numbers and lengths it holds.  So a whole-image load walks them
-once and refuses an image where one points outside its own record, which is what keeps a save
-from someone else from deciding where the program reads and writes.  The guard answers a
-different question — are these the bytes that were written — so a save cut short when the power
-went, or a damaged file, is noticed instead of read as something else.  It is not a lock, and is
-not meant as one: a save changed on purpose is still a save, and a guard that some other writer
-left behind — an editor, an earlier loft — must not cost a good one.  So the ordinary load says
-what it saw and goes on, and only the loader meant for a file from elsewhere refuses; removing
-the guard, or writing a new one (three lines and two hashes), settles it either way.
+after a load believes the record numbers and lengths it holds.  One walk checks them, and it
+runs when the program asks for it — a program that reads its own files does not pay for it, and
+one that opens a file from elsewhere uses the loader that does.  The guard answers a different
+question — are these the bytes someone vouched for — and is as optional: nothing writes one
+unless asked, a save changed on purpose is still a save, and only the loader meant for a file
+from elsewhere refuses on it.
 
 ### The hash table
 
@@ -443,14 +443,13 @@ computes differently from the resident store becomes a lookup that silently answ
 - **`S-Pair`** — `tests/scripts/2173-an-image-and-its-sidecar-are-written-together.loft`.
 - **`S-Sound`** — `tests/store_image_sound.rs`: one number changed per copy of an image (a
   vector's length and record, a text's length, record and bytes, the same inside a vector's
-  element), each refused on the interpreter and on the C build, beside the image and a plain
-  copy that load.
-- **`S-Guard`** — `tests/store_image_guard.rs`: each backend writes, each reads with both
-  loaders — a value changed under the guard, and a guard naming another image or sidecar, are
-  read with a warning by `store_load` and refused by `store_load_untrusted`; the changed image
-  without its guard loads, as do a store with no guard and one whose guard carries a later
-  writer's line; a deleted store leaves no guard.  And `tests/store_upgrade.rs`, whose
-  upgraded stores load without a warning only when the upgrade wrote their guard.
+  element), each refused by `store_load_untrusted` and answered false by `store_verify` after a
+  plain load, on the interpreter and on the C build, beside the image and a plain copy.
+- **`S-Guard`** — `tests/store_image_guard.rs`: each backend writes (no guard), each reads
+  with both loaders — a value changed under a guard, and a guard naming another image or
+  sidecar, are read with a warning by `store_load` and refused by `store_load_untrusted`; the
+  changed image without its guard loads, as do a store with no guard and one whose guard
+  carries a later writer's line; a save over a guarded store removes the guard.
 - **`S-Gate`, an image with no sidecar** —
   `loft-suite/rules/layout/L-Sound/2174-an-image-without-its-sidecar-is-refused.loft` (whole, untrusted and paged
   loaders refused; the pair loads), and `dschema_lifecycle_beside_a_store` (`Bare`).

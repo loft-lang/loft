@@ -78,28 +78,27 @@ sidecar (a legacy store) falls back to the `store_verify` backstop. Set
 
 #### What a whole-image load checks, and what it does not
 
-`store_load` and `store_load_untrusted` read a file a program did not necessarily write, so
-"the load answered true" means exactly this (`formal/structures.md` S-Frame, S-Gate,
-S-Sound, S-Guard):
+`store_load` is for a file the program wrote; `store_load_untrusted` is for one it did not
+(`formal/structures.md` S-Frame, S-Gate, S-Sound, S-Guard):
 
-| Checked | By |
-|---|---|
-| the file is a chain of blocks that tiles it | both |
-| its `.dschema` layout is this program's, or converts to it | both |
-| a record number names a record, and a vector's or text's length lies inside its record — through structs, enum values, texts, vectors, sorted vectors and child records | both |
-| a text is UTF-8 | both |
-| the file is the one its `.guard` was written for | `store_load` warns and reads on; `store_load_untrusted` refuses |
+| Checked | `store_load` | `store_load_untrusted` |
+|---|---|---|
+| the file is a chain of blocks that tiles it | yes | yes |
+| its `.dschema` layout is this program's, or converts to it | yes | yes |
+| every record number names a record, and every length lies inside its record | no — ask `store_verify` | yes, before anything else reads the file |
+| a text is UTF-8 | no | yes |
+| the file is the one a `.guard` beside it was written for | warns and reads on | refuses |
 
-NOT checked: the tables and nodes of a hash, index, spatial, trie, array or ordered
-collection, and so what such a collection holds; the record a stored reference names; and
-any of this for the paged, lazy and URL loaders, which read no guard either.  A file from a
-source you do not trust is safe to open only as far as this table goes.
+The walk in the third row is ONE routine, the one `store_verify` runs.  It follows structs,
+enum values, texts, vectors, child records, a hash's table and entries, and an array's or an
+ordered's elements; it does not read an index's nodes, a tree's leaves or the record a stored
+reference names, and the paged and lazy loaders do not run it.  A file from a source you do
+not trust is safe to open only as far as that goes.
 
 The guard (`<path>.guard`) is three lines — `LOFT-GUARD v1`, `image=<SHA-256 of the image>`,
-`sidecar=<SHA-256 of the .dschema>` — written by every writer of an image and removed with the
-file by `delete(path)`.  It says whether the bytes are the ones that were written, not who
-may change them: a tool that edits a store writes those three lines again, or removes the
-file, and the store loads without comment.
+`sidecar=<SHA-256 of the .dschema>`.  Nothing writes one unless asked: a build step, a tool or
+the program writes it for a file it vouches for, and a save over that file removes it.  It
+says whether the bytes are the ones vouched for, not who may change them.
 
 #### A changed definition: the store upgrade
 
