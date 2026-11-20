@@ -576,17 +576,6 @@ static int loft_guard_same(const uint8_t *bytes, size_t n, const char *hex, size
     return 1;
 }
 
-/* The guard's text for an image and its sidecar, malloc'd. */
-static char *loft_guard_render(const uint8_t *image, size_t n, const char *sidecar, size_t sn) {
-    char a[65], b[65];
-    loft_sha256_hex(image, n, a);
-    loft_sha256_hex((const uint8_t *) sidecar, sn, b);
-    char *text = (char *) malloc(200);
-    if (!text) { fputs("loft: out of memory\n", stderr); abort(); }
-    snprintf(text, 200, "LOFT-GUARD v1\nimage=%s\nsidecar=%s\n", a, b);
-    return text;
-}
-
 /* `store_guard::check`: 1 when `bytes`, read from `path`, are what the guard beside it was
  * written for, and when there is no guard; 0 with `why` saying what does not match. */
 static int loft_guard_holds(const char *path, const uint8_t *bytes, size_t n, char *why, size_t cap) {
@@ -715,14 +704,10 @@ static int loft_image_write(const loft_tdesc *T, uint32_t ntypes, loft_ref r, lo
          * only when both are written are they renamed into place, as persist_copy does. */
         char *p = loft_cpath(path, 0), *ptmp = loft_cpath(path, ".tmp");
         char *side = loft_cpath(path, ".dschema"), *stmp = loft_cpath(path, ".dschema.tmp");
-        /* `@FR-S-Guard`: the guard is the third file of the same write, staged like the other
-         * two and moved into place last. */
-        char *guard = loft_cpath(path, ".guard"), *gtmp = loft_cpath(path, ".guard.tmp");
         size_t scap = strlen(sc->before_slot) + strlen(sc->after_slot) + 32;
         char *stext = (char *) malloc(scap);
         if (!stext) { fputs("loft: out of memory\n", stderr); abort(); }
         size_t slen = (size_t) snprintf(stext, scap, "%sslot=%u\n%s", sc->before_slot, (unsigned) dst, sc->after_slot);
-        char *gtext = loft_guard_render(img, (size_t) target * 8, stext, slen);
         FILE *f = fopen(ptmp, "wb");
         if (f) {
             ok = fwrite(img, 8, target, f) == target;
@@ -738,24 +723,16 @@ static int loft_image_write(const loft_tdesc *T, uint32_t ntypes, loft_ref r, lo
                 if (!ok) (void) remove(stmp);
             }
         }
-        if (ok) {
-            FILE *g = fopen(gtmp, "wb");
-            ok = g != 0;
-            if (g) {
-                ok = fputs(gtext, g) >= 0;
-                ok = fclose(g) == 0 && ok;
-            }
-            if (!ok) {
-                (void) remove(gtmp);
-                (void) remove(stmp);
-            }
-        }
         if (!ok) (void) remove(ptmp);
-        else ok = loft_rename(ptmp, p) == 0 && loft_rename(stmp, side) == 0 && loft_rename(gtmp, guard) == 0;
+        else ok = loft_rename(ptmp, p) == 0 && loft_rename(stmp, side) == 0;
+        /* `@FR-S-Guard`: a guard is written by whoever wants one, not by a save: the one an
+         * earlier writer left names another image now, and goes. */
+        if (ok) {
+            char *guard = loft_cpath(path, ".guard");
+            (void) remove(guard);
+            free(guard);
+        }
         free(stext);
-        free(gtext);
-        free(guard);
-        free(gtmp);
         free(p);
         free(ptmp);
         free(side);
@@ -1197,6 +1174,7 @@ static int loft_rebase_refs(const loft_sidecar *sc, uint16_t nr, long recorded, 
     return ok;
 }
 
+static uint8_t loft_store_verify(const loft_tdesc *T, uint32_t nt, loft_ref r);
 static int loft_image_adopt(loft_ref r, uint8_t *bytes, size_t n, int untrusted, const loft_sidecar *sc,
                             long recorded, const char *what, const char *who);
 
@@ -1302,183 +1280,6 @@ static int loft_image_load(loft_ref r, loft_str path, const loft_sidecar *sc, in
     return ok;
 }
 
-/* ── `Stores::image_sound` (`@FR-S-Sound`) ───────────────────────────────────────────────────
- * The numbers INSIDE an image, checked on its bytes before it is adopted.  The frame check says
- * the file is a chain of blocks; every read after the load believes what the blocks hold — a
- * record number in a field, a vector's length, a text's length — and no store access here is
- * bounded.  The walk follows the root's type and refuses the image unless every record number
- * it meets names a claimed block and what each kind keeps in a block lies inside it.  It reads
- * what a type owns in line — struct fields, texts, vectors, child records — and stops at a keyed
- * collection and at a stored reference, as the interpreter's does. */
-typedef struct { uint32_t rec, pos, words; uint16_t tp; } loft_snd_item;
-typedef struct { loft_snd_item *p; size_t n, cap; } loft_snd_work;
-
-static void loft_snd_push(loft_snd_work *w, uint32_t rec, uint32_t pos, uint16_t tp, uint32_t words) {
-    if (w->n == w->cap) {
-        w->cap = w->cap ? w->cap * 2 : 64;
-        w->p = (loft_snd_item *) realloc(w->p, w->cap * sizeof *w->p);
-        if (!w->p) { fputs("loft: out of memory\n", stderr); abort(); }
-    }
-    loft_snd_item it = { rec, pos, words, tp };
-    w->p[w->n++] = it;
-}
-
-static uint32_t loft_snd_u32(const uint8_t *b, uint32_t rec, uint32_t byte) {
-    uint32_t v;
-    memcpy(&v, b + (size_t) rec * 8 + byte, 4);
-    return v;
-}
-
-/* The words of the claimed block that STARTS at `rec`, 0 for a number that is past the image,
- * inside a block, or a free block's. */
-static uint32_t loft_snd_block(const uint8_t *b, const uint64_t *starts, uint32_t words, uint32_t rec) {
-    if (rec < LOFT_ST_PRIMARY || rec >= words || !((starts[rec >> 6] >> (rec & 63)) & 1)) return 0;
-    return loft_snd_u32(b, rec, 0);
-}
-
-/* Whether a value of `tp` holds anything the walk reads: a vector of plain numbers is sound by
- * its length alone. */
-static int loft_snd_holds_numbers(const loft_tdesc *T, uint32_t nt, uint16_t tp) {
-    if (tp >= nt) return 1;
-    const loft_tdesc *d = &T[tp];
-    if (d->kind == LOFT_T_SCALAR) return 0;
-    if (d->kind != LOFT_T_STRUCT) return 1;
-    for (uint16_t i = 0; i < d->n; i++) {
-        if (loft_snd_holds_numbers(T, nt, d->fields[i].type)) return 1;
-    }
-    return 0;
-}
-
-/* 1 when the image may be read under `root_tp`; 0 with `why` naming the first number that does
- * not hold.  `b` passed `loft_image_refusal`: its chain tiles its `words`. */
-static int loft_image_sound(const loft_tdesc *T, uint32_t nt, uint16_t root_tp, const uint8_t *b, uint32_t words,
-                            char *why, size_t cap) {
-    if (!T || root_tp >= nt || words <= LOFT_ST_PRIMARY) return 1;
-    size_t nw = ((size_t) words + 63) / 64;
-    uint64_t *starts = (uint64_t *) calloc(nw * 2, sizeof *starts);
-    if (!starts) { fputs("loft: out of memory\n", stderr); abort(); }
-    /* A record is walked once: a second field naming it has nothing new to say, and records
-     * that name each other in a ring would otherwise never end. */
-    uint64_t *walked = starts + nw;
-    for (uint32_t pos = LOFT_ST_PRIMARY; pos < words;) {
-        int32_t h;
-        memcpy(&h, b + (size_t) pos * 8, 4);
-        if (h > 0) starts[pos >> 6] |= (uint64_t) 1 << (pos & 63);
-        if (h == 0 || h == INT32_MIN) break;
-        pos += (uint32_t) (h < 0 ? -h : h);
-    }
-    loft_snd_work w = { 0, 0, 0 };
-    int ok = 1;
-    uint32_t root_words = loft_snd_block(b, starts, words, LOFT_ST_PRIMARY);
-    if (!root_words) goto done; /* no root record: nothing is read */
-    if ((uint64_t) 8 + T[root_tp].size > (uint64_t) root_words * 8) {
-        snprintf(why, cap, "the root needs %u bytes and its record is %u words", 8u + T[root_tp].size, root_words);
-        ok = 0;
-        goto done;
-    }
-    loft_snd_push(&w, LOFT_ST_PRIMARY, 8, root_tp, root_words);
-    while (ok && w.n) {
-        loft_snd_item it = w.p[--w.n];
-        if (it.tp >= nt) {
-            snprintf(why, cap, "type %u is not one of this program's", (unsigned) it.tp);
-            ok = 0;
-            break;
-        }
-        const loft_tdesc *d = &T[it.tp];
-        switch (d->kind) {
-        case LOFT_T_TEXT: {
-            uint32_t t = loft_snd_u32(b, it.rec, it.pos);
-            if (t == 0 || t > (uint32_t) INT32_MAX) break;
-            uint32_t tw = loft_snd_block(b, starts, words, t);
-            if (!tw) {
-                snprintf(why, cap, "a text is said to be record %u, which is not a record", t);
-                ok = 0;
-                break;
-            }
-            uint32_t len = loft_snd_u32(b, t, 4);
-            if ((uint64_t) 8 + len > (uint64_t) tw * 8) {
-                snprintf(why, cap, "text record %u says %u bytes and is %u words", t, len, tw);
-                ok = 0;
-            } else if (!loft_utf8_valid(b + (size_t) t * 8 + 8, len)) {
-                snprintf(why, cap, "text record %u is not UTF-8", t);
-                ok = 0;
-            }
-            break;
-        }
-        case LOFT_T_STRUCT:
-            for (uint16_t i = 0; i < d->n; i++) loft_snd_push(&w, it.rec, it.pos + d->fields[i].pos, d->fields[i].type, it.words);
-            break;
-        case LOFT_T_ENUM: {
-            int e = (int) b[(size_t) it.rec * 8 + it.pos] - 1;
-            if (e < 0 || e >= d->n || d->variants[e] == 0xFFFF) break;
-            uint16_t vt = d->variants[e];
-            if (vt < nt && (uint64_t) it.pos + T[vt].size > (uint64_t) it.words * 8) {
-                snprintf(why, cap, "an enum value needs %u bytes and its record is %u words", it.pos + T[vt].size, it.words);
-                ok = 0;
-                break;
-            }
-            loft_snd_push(&w, it.rec, it.pos, vt, it.words);
-            break;
-        }
-        case LOFT_T_VECTOR: {
-            uint32_t v = loft_snd_u32(b, it.rec, it.pos);
-            if (v == 0) break;
-            uint32_t vw = loft_snd_block(b, starts, words, v);
-            if (!vw) {
-                snprintf(why, cap, "a vector is said to be record %u, which is not a record", v);
-                ok = 0;
-                break;
-            }
-            uint32_t len = loft_snd_u32(b, v, 4);
-            uint32_t size = d->elem < nt ? T[d->elem].size : 0;
-            if ((uint64_t) 8 + (uint64_t) len * size > (uint64_t) vw * 8) {
-                snprintf(why, cap, "vector record %u says %u elements of %u bytes and is %u words", v, len, size, vw);
-                ok = 0;
-                break;
-            }
-            if ((walked[v >> 6] >> (v & 63)) & 1) break;
-            walked[v >> 6] |= (uint64_t) 1 << (v & 63);
-            if (!loft_snd_holds_numbers(T, nt, d->elem)) break;
-            for (uint32_t i = 0; i < len; i++) loft_snd_push(&w, v, 8 + i * size, d->elem, vw);
-            break;
-        }
-        case LOFT_T_CHILD: {
-            uint32_t c = loft_snd_u32(b, it.rec, it.pos);
-            if (c == 0) break;
-            uint32_t cw = loft_snd_block(b, starts, words, c);
-            uint32_t need = 8u + (d->elem < nt ? T[d->elem].size : 0);
-            if (!cw) {
-                snprintf(why, cap, "a child record is said to be record %u, which is not a record", c);
-                ok = 0;
-            } else if ((uint64_t) need > (uint64_t) cw * 8) {
-                snprintf(why, cap, "a child record needs %u bytes and its record is %u words", need, cw);
-                ok = 0;
-            } else if (!((walked[c >> 6] >> (c & 63)) & 1)) {
-                walked[c >> 6] |= (uint64_t) 1 << (c & 63);
-                loft_snd_push(&w, c, 8, d->elem, cw);
-            }
-            break;
-        }
-        /* Not read yet, each named so that a new kind is a decision made here: a keyed
-         * collection's own tables and nodes (and so what it holds), and a stored reference,
-         * which the load rebases after this walk. */
-        case LOFT_T_HASH:
-        case LOFT_T_INDEX:
-        case LOFT_T_ORDERED:
-        case LOFT_T_RADIX:
-        case LOFT_T_TRIE:
-        case LOFT_T_DBREF:
-        /* A value: no record number and no length to be wrong. */
-        case LOFT_T_SCALAR:
-            break;
-        }
-    }
-done:
-    free(w.p);
-    free(starts);
-    return ok;
-}
-
 /* `load_bytes_from` / `Store::load`: image `bytes` (malloc'd, `n` long, taken over) adopted as the
  * store `r` names — a store keeps its type and its liveness, its allocator state re-derived from
  * the image's own blocks; with `validate` an image whose block structure does not hold is
@@ -1487,19 +1288,30 @@ static int loft_image_adopt(loft_ref r, uint8_t *bytes, size_t n, int untrusted,
                             long recorded, const char *what, const char *who) {
     char reason[160];
     const char *bad = loft_image_refusal(bytes, n, reason, sizeof reason);
-    (void) untrusted;
     if (bad) {
         fprintf(stderr, "%s: refusing %s \xe2\x80\x94 %s.\n", who, what, bad);
         free(bytes);
         return 0;
     }
     uint32_t words = (uint32_t) (n / 8), unrecorded = 1;
-    /* `@FR-S-Sound` — before anything follows a number the image holds, the rebase below
-     * included. */
-    if (!loft_image_sound(loft_T, loft_T_n, loft_stores[r.store_nr].known, bytes, words, reason, sizeof reason)) {
-        fprintf(stderr, "%s: refusing %s \xe2\x80\x94 %s.\n", who, what, reason);
-        free(bytes);
-        return 0;
+    /* `@FR-S-Sound` — a loader for a file from elsewhere asks the walk before anything follows
+     * a number the image holds, the rebase below included.  The image stands in the slot for
+     * the walk and is taken out again: nothing is adopted yet. */
+    if (untrusted && loft_T && loft_stores[r.store_nr].known != 0xFFFF) {
+        loft_store_t *t = &loft_stores[r.store_nr];
+        uint8_t *held_buf = t->buf;
+        uint32_t held_size = t->size;
+        t->buf = bytes;
+        t->size = words;
+        loft_ref root = { r.store_nr, LOFT_ST_PRIMARY, 8, 0 };
+        int sound = loft_store_verify(loft_T, loft_T_n, root);
+        t->buf = held_buf;
+        t->size = held_size;
+        if (!sound) {
+            fprintf(stderr, "%s: refusing %s \xe2\x80\x94 a number inside it does not hold (the lines above say which).\n", who, what);
+            free(bytes);
+            return 0;
+        }
     }
     /* A store in memory records no length: only a written image does (`(S-Frame)`). */
     memcpy(bytes + 4, &unrecorded, 4);
@@ -1539,51 +1351,114 @@ static int loft_image_adopt(loft_ref r, uint8_t *bytes, size_t n, int untrusted,
     return 1;
 }
 
-/* ── store_verify (Stores::verify_graph_ok, validate_claims) ────────────────────────────────
- * A bounds-checked walk of a value's claim graph: every number is guarded before it is
- * followed, a problem is reported on stderr and counted, and the walk stops past eight.  The
- * report names the value as `store_verify` rather than by its field path: the C's type table
- * carries no field names. */
+/* ── store_verify (Stores::verify_graph_ok, validate_claims, `@FR-S-Sound`) ─────────────────
+ * The ONE walk that says whether a store's numbers hold, asked by `store_verify` and by the
+ * loaders for a file from elsewhere: a value followed under its type, every number guarded
+ * before it is followed — a record number must name a claimed block that STARTS there, and what
+ * each kind keeps in a block must lie inside it.  A problem is reported on stderr and counted,
+ * and the walk stops past eight.  The report names the value as `store_verify`: the C's type
+ * table carries no field names. */
+
+/* The store the walk is in: which of its words start a claimed block, read off its chain once
+ * (the claim set is the allocator's, and an image standing in a slot has none yet), and how
+ * deep the walk is. */
+static LOFT_TLS uint64_t *loft_vc_starts;
+static LOFT_TLS uint32_t loft_vc_words;
+static LOFT_TLS uint32_t loft_vc_depth;
+#define LOFT_VC_MAX_DEPTH 4096
+
+static void loft_vc_begin(const loft_store_t *s) {
+    loft_vc_words = s->size;
+    loft_vc_depth = 0;
+    loft_vc_starts = (uint64_t *) calloc(((size_t) s->size + 63) / 64 + 1, sizeof *loft_vc_starts);
+    if (!loft_vc_starts) { fputs("loft: out of memory\n", stderr); abort(); }
+    for (uint32_t pos = LOFT_ST_PRIMARY; pos < s->size;) {
+        int32_t h;
+        memcpy(&h, s->buf + (size_t) pos * 8, 4);
+        if (h > 0) loft_vc_starts[pos >> 6] |= (uint64_t) 1 << (pos & 63);
+        if (h == 0 || h == INT32_MIN) break;
+        uint32_t n = (uint32_t) (h < 0 ? -h : h);
+        if (n > s->size - pos) break;
+        pos += n;
+    }
+}
+
+/* The words of the claimed block that starts at `rec`; 0 for a number that is past the store,
+ * inside a block, or a free block's. */
+static uint32_t loft_vc_block(const loft_store_t *s, uint32_t rec) {
+    if (rec < LOFT_ST_PRIMARY || rec >= loft_vc_words || !((loft_vc_starts[rec >> 6] >> (rec & 63)) & 1)) return 0;
+    int32_t h;
+    memcpy(&h, s->buf + (size_t) rec * 8, 4);
+    return h > 0 ? (uint32_t) h : 0;
+}
+
+/* Whether a value of `tp` holds anything the walk reads: a vector of plain numbers is sound by
+ * its length alone. */
+static int loft_vc_holds_numbers(const loft_tdesc *T, uint32_t nt, uint16_t tp) {
+    if (tp >= nt) return 1;
+    const loft_tdesc *d = &T[tp];
+    if (d->kind == LOFT_T_SCALAR) return 0;
+    if (d->kind != LOFT_T_STRUCT) return 1;
+    for (uint16_t i = 0; i < d->n; i++) {
+        if (loft_vc_holds_numbers(T, nt, d->fields[i].type)) return 1;
+    }
+    return 0;
+}
+
+#define LOFT_VC_BAD(...) do { fprintf(stderr, "[cr-check] store_verify: " __VA_ARGS__); fputc('\n', stderr); (*problems)++; } while (0)
+
+static void loft_validate_claims_at(const loft_tdesc *T, uint32_t nt, uint16_t tp, loft_ref r, uint32_t *problems);
+
 static void loft_validate_claims(const loft_tdesc *T, uint32_t nt, uint16_t tp, loft_ref r, uint32_t *problems) {
     if (*problems > 8) return;
+    if (loft_vc_depth > LOFT_VC_MAX_DEPTH) {
+        LOFT_VC_BAD("nested more than %d deep \xe2\x80\x94 records that name each other", LOFT_VC_MAX_DEPTH);
+        return;
+    }
+    loft_vc_depth++;
+    loft_validate_claims_at(T, nt, tp, r, problems);
+    loft_vc_depth--;
+}
+
+static void loft_validate_claims_at(const loft_tdesc *T, uint32_t nt, uint16_t tp, loft_ref r, uint32_t *problems) {
     if (r.store_nr >= loft_nstores) {
-        fprintf(stderr, "[cr-check] store_verify: ref #%u.%u,%u \xe2\x80\x94 store out of range\n",
-                (unsigned) r.store_nr, r.rec, r.pos);
-        (*problems)++;
+        LOFT_VC_BAD("ref #%u.%u,%u \xe2\x80\x94 store out of range", (unsigned) r.store_nr, r.rec, r.pos);
         return;
     }
     loft_store_t *s = &loft_stores[r.store_nr];
     if (!s->live) {
-        fprintf(stderr, "[cr-check] store_verify: ref #%u.%u,%u \xe2\x80\x94 store FREED\n",
-                (unsigned) r.store_nr, r.rec, r.pos);
-        (*problems)++;
+        LOFT_VC_BAD("ref #%u.%u,%u \xe2\x80\x94 store FREED", (unsigned) r.store_nr, r.rec, r.pos);
         return;
     }
     uint32_t cap = s->size;
-    if (r.rec >= cap || (uint64_t) r.rec * 8 + r.pos >= (uint64_t) cap * 8) {
-        fprintf(stderr, "[cr-check] store_verify: ref #%u.%u,%u \xe2\x80\x94 record beyond store capacity (%u words)\n",
-                (unsigned) r.store_nr, r.rec, r.pos, cap);
-        (*problems)++;
-        return;
-    }
     if (tp >= nt) {
-        fprintf(stderr, "[cr-check] store_verify: type %u out of range\n", (unsigned) tp);
-        (*problems)++;
+        LOFT_VC_BAD("type %u out of range", (unsigned) tp);
         return;
     }
     const loft_tdesc *d = &T[tp];
+    /* The value itself lies inside the store, whatever it is: every arm reads it. */
+    if (r.rec >= cap || (uint64_t) r.rec * 8 + r.pos + (d->size ? d->size : 1) > (uint64_t) cap * 8) {
+        LOFT_VC_BAD("ref #%u.%u,%u \xe2\x80\x94 beyond store capacity (%u words)", (unsigned) r.store_nr, r.rec, r.pos, cap);
+        return;
+    }
     switch (d->kind) {
     case LOFT_T_TEXT: {
         uint32_t cur = loft_u32(s, r.rec, r.pos);
-        if (cur != 0 && cur >= cap) {
-            fprintf(stderr, "[cr-check] store_verify: text offset %u beyond store #%u capacity %u\n",
-                    cur, (unsigned) r.store_nr, cap);
-            (*problems)++;
+        /* 0 and the forms above INT32_MAX name no record. */
+        if (cur == 0 || cur > (uint32_t) INT32_MAX) return;
+        uint32_t words = loft_vc_block(s, cur);
+        if (!words) {
+            LOFT_VC_BAD("text record %u is not a record", cur);
+            return;
         }
+        uint32_t len = loft_u32(s, cur, 4);
+        if ((uint64_t) 8 + len > (uint64_t) words * 8) LOFT_VC_BAD("text record %u says %u bytes and is %u words", cur, len, words);
+        else if (!loft_utf8_valid(s->buf + (size_t) cur * 8 + 8, len)) LOFT_VC_BAD("text record %u is not UTF-8", cur);
         return;
     }
     case LOFT_T_STRUCT:
         for (uint16_t i = 0; i < d->n; i++) {
+            if (!loft_vc_holds_numbers(T, nt, d->fields[i].type)) continue;
             loft_ref f = { r.store_nr, r.rec, r.pos + d->fields[i].pos, 0 };
             loft_validate_claims(T, nt, d->fields[i].type, f, problems);
         }
@@ -1591,20 +1466,18 @@ static void loft_validate_claims(const loft_tdesc *T, uint32_t nt, uint16_t tp, 
     case LOFT_T_VECTOR: {
         uint32_t cur = loft_u32(s, r.rec, r.pos);
         if (cur == 0) return;
-        if (cur >= cap) {
-            fprintf(stderr, "[cr-check] store_verify: vector rec %u beyond store #%u capacity %u\n",
-                    cur, (unsigned) r.store_nr, cap);
-            (*problems)++;
+        uint32_t words = loft_vc_block(s, cur);
+        if (!words) {
+            LOFT_VC_BAD("vector record %u is not a record", cur);
             return;
         }
-        uint32_t len = loft_u32(s, cur, 4), size = T[d->elem].size;
-        if ((uint64_t) len * size > (uint64_t) cap * 8) {
-            fprintf(stderr, "[cr-check] store_verify: vector rec %u len %u (elem size %u) exceeds store #%u capacity %u words\n",
-                    cur, len, size, (unsigned) r.store_nr, cap);
-            (*problems)++;
+        uint32_t len = loft_u32(s, cur, 4), size = d->elem < nt ? T[d->elem].size : 0;
+        if ((uint64_t) 8 + (uint64_t) len * size > (uint64_t) words * 8) {
+            LOFT_VC_BAD("vector record %u says %u elements of %u bytes and is %u words", cur, len, size, words);
             return;
         }
-        for (uint32_t i = 0; i < len && i < 16; i++) {
+        if (!loft_vc_holds_numbers(T, nt, d->elem)) return;
+        for (uint32_t i = 0; i < len && *problems <= 8; i++) {
             loft_ref e = { r.store_nr, cur, 8 + size * i, 0 };
             loft_validate_claims(T, nt, d->elem, e, problems);
         }
@@ -1613,10 +1486,13 @@ static void loft_validate_claims(const loft_tdesc *T, uint32_t nt, uint16_t tp, 
     case LOFT_T_CHILD: {
         uint32_t c = loft_u32(s, r.rec, r.pos);
         if (c == 0) return;
-        if (c >= cap) {
-            fprintf(stderr, "[cr-check] store_verify: child rec %u beyond store #%u capacity %u\n",
-                    c, (unsigned) r.store_nr, cap);
-            (*problems)++;
+        uint32_t words = loft_vc_block(s, c);
+        if (!words) {
+            LOFT_VC_BAD("child record %u is not a record", c);
+            return;
+        }
+        if ((uint64_t) 8 + (d->elem < nt ? T[d->elem].size : 0) > (uint64_t) words * 8) {
+            LOFT_VC_BAD("child record %u is %u words, too small for its type", c, words);
             return;
         }
         loft_ref e = { r.store_nr, c, 8, 0 };
@@ -1631,16 +1507,13 @@ static void loft_validate_claims(const loft_tdesc *T, uint32_t nt, uint16_t tp, 
     case LOFT_T_HASH: {
         uint32_t cur = loft_u32(s, r.rec, r.pos);
         if (cur == 0) return;
-        if (cur >= cap) {
-            fprintf(stderr, "[cr-check] store_verify: hash bucket rec %u beyond store #%u capacity %u\n",
-                    cur, (unsigned) r.store_nr, cap);
-            (*problems)++;
+        uint32_t room = loft_vc_block(s, cur);
+        if (!room) {
+            LOFT_VC_BAD("hash table record %u is not a record", cur);
             return;
         }
-        uint32_t room = loft_rec_words(s, cur);
-        if (room < LOFT_H_RESERVED || room > cap) {
-            fprintf(stderr, "[cr-check] store_verify: hash bucket rec %u insane room %u (cap %u)\n", cur, room, cap);
-            (*problems)++;
+        if (room < LOFT_H_RESERVED) {
+            LOFT_VC_BAD("hash table record %u is %u words, too small", cur, room);
             return;
         }
         if (loft_h_is_inline(s, cur)) {
@@ -1654,10 +1527,8 @@ static void loft_validate_claims(const loft_tdesc *T, uint32_t nt, uint16_t tp, 
         uint32_t elms = (room - LOFT_H_RESERVED) * 8 / sb;
         uint32_t stride = loft_h_stride(s, cur);
         uint32_t dir = loft_u32(s, cur, LOFT_AR_DIR_FLD);
-        if (stride != 0 && dir >= cap) {
-            fprintf(stderr, "[cr-check] store_verify: hash arena directory %u beyond store #%u capacity %u\n",
-                    dir, (unsigned) r.store_nr, cap);
-            (*problems)++;
+        if (stride != 0 && !loft_vc_block(s, dir)) {
+            LOFT_VC_BAD("hash arena directory %u is not a record", dir);
             return;
         }
         for (uint32_t i = 0; i < elms; i++) {
@@ -1666,19 +1537,17 @@ static void loft_validate_claims(const loft_tdesc *T, uint32_t nt, uint16_t tp, 
             if (stride == 0 || (slot & LOFT_H_SLOT_RECORD) != 0) {
                 entry = slot & ~LOFT_H_SLOT_RECORD;
                 pos = 8;
+                if (!loft_vc_block(s, entry)) {
+                    LOFT_VC_BAD("hash entry record %u is not a record", entry);
+                    if (*problems > 8) return;
+                    continue;
+                }
             } else {
                 uint32_t k, off;
                 loft_ar_locate(slot, stride, &k, &off);
                 entry = loft_ar_chunk_rec(s, dir, k);
                 if (entry == 0) continue;
                 pos = off;
-            }
-            if (entry >= cap) {
-                fprintf(stderr, "[cr-check] store_verify: hash entry rec %u beyond store #%u capacity %u\n",
-                        entry, (unsigned) r.store_nr, cap);
-                (*problems)++;
-                if (*problems > 8) return;
-                continue;
             }
             loft_ref e = { r.store_nr, entry, pos, 0 };
             loft_validate_claims(T, nt, d->elem, e, problems);
@@ -1688,26 +1557,22 @@ static void loft_validate_claims(const loft_tdesc *T, uint32_t nt, uint16_t tp, 
     case LOFT_T_ORDERED: {
         uint32_t cur = loft_u32(s, r.rec, r.pos);
         if (cur == 0) return;
-        if (cur >= cap) {
-            fprintf(stderr, "[cr-check] store_verify: array rec %u beyond store #%u capacity %u\n",
-                    cur, (unsigned) r.store_nr, cap);
-            (*problems)++;
+        uint32_t words = loft_vc_block(s, cur);
+        if (!words) {
+            LOFT_VC_BAD("array record %u is not a record", cur);
             return;
         }
         uint32_t len = loft_u32(s, cur, 4);
-        if ((uint64_t) len * 4 > (uint64_t) cap * 8) {
-            fprintf(stderr, "[cr-check] store_verify: array rec %u len %u exceeds store #%u capacity %u words\n",
-                    cur, len, (unsigned) r.store_nr, cap);
-            (*problems)++;
+        if ((uint64_t) 8 + (uint64_t) len * 4 > (uint64_t) words * 8) {
+            LOFT_VC_BAD("array record %u says %u elements and is %u words", cur, len, words);
             return;
         }
-        for (uint32_t i = 0; i < len && i < 16; i++) {
+        for (uint32_t i = 0; i < len && *problems <= 8; i++) {
             uint32_t elm = loft_u32(s, cur, 8 + 4 * i);
             if (elm == 0) continue;
-            if (elm >= cap) {
-                fprintf(stderr, "[cr-check] store_verify[%u]: array element rec %u beyond store #%u capacity %u\n",
-                        i, elm, (unsigned) r.store_nr, cap);
-                (*problems)++;
+            uint32_t ew = loft_vc_block(s, elm);
+            if (!ew || (uint64_t) 8 + (d->elem < nt ? T[d->elem].size : 0) > (uint64_t) ew * 8) {
+                LOFT_VC_BAD("array element %u is said to be record %u, which is not one that holds it", i, elm);
                 return;
             }
             loft_ref e = { r.store_nr, elm, 8, 0 };
@@ -1717,21 +1582,14 @@ static void loft_validate_claims(const loft_tdesc *T, uint32_t nt, uint16_t tp, 
     }
     case LOFT_T_RADIX:
     case LOFT_T_TRIE: {
-        /* The leaves belong to the primary collection; the spine alone is checked. */
+        /* The leaves belong to the primary collection; the spine's own record is checked. */
         uint32_t cur = loft_u32(s, r.rec, r.pos);
-        if (cur != 0 && cur >= cap) {
-            fprintf(stderr, "[cr-check] store_verify: tree rec %u beyond store #%u capacity %u\n",
-                    cur, (unsigned) r.store_nr, cap);
-            (*problems)++;
-        }
+        if (cur != 0 && !loft_vc_block(s, cur)) LOFT_VC_BAD("tree record %u is not a record", cur);
         return;
     }
     case LOFT_T_DBREF: {
         uint32_t sn = loft_u32(s, r.rec, r.pos);
-        if (sn != 0xFFFFu && sn >= loft_nstores) {
-            fprintf(stderr, "[cr-check] store_verify: stored DbRef names store #%u, out of range\n", sn);
-            (*problems)++;
-        }
+        if (sn != 0xFFFFu && sn >= loft_nstores) LOFT_VC_BAD("stored DbRef names store #%u, out of range", sn);
         return;
     }
     default:
@@ -1739,6 +1597,7 @@ static void loft_validate_claims(const loft_tdesc *T, uint32_t nt, uint16_t tp, 
         return;
     }
 }
+#undef LOFT_VC_BAD
 
 /* store_verify (Stores::verify_graph_ok): the walk over what `r` points at — the type its
  * store was minted as, or the field of it at `r`'s offset (`type_at`) — false for a store
@@ -1755,6 +1614,9 @@ static uint8_t loft_store_verify(const loft_tdesc *T, uint32_t nt, loft_ref r) {
             }
     }
     uint32_t problems = 0;
+    loft_vc_begin(&loft_stores[r.store_nr]);
     loft_validate_claims(T, nt, tp, r, &problems);
+    free(loft_vc_starts);
+    loft_vc_starts = 0;
     return problems == 0;
 }

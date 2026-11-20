@@ -9,7 +9,9 @@
 //! power loss, a damaged file, an image beside another write's sidecar — each is refused
 //! instead of read.  It is not a lock: whoever changes a save on purpose removes the guard or
 //! writes a new one, and the load goes on (`@FR-S-Sound` is what keeps a changed save from
-//! reading outside itself).  A store with no guard loads as it always did.
+//! reading outside itself).  A store with no guard loads as it always did, and a save writes
+//! none: a guard is written by whoever wants one — a tool, a build step, the program — with
+//! [`write_beside`] or by hand, and a save over a guarded store removes the guard it outdates.
 //!
 //! ```text
 //! LOFT-GUARD v1
@@ -51,15 +53,6 @@ pub fn render(image: &[u8], sidecar: &[u8]) -> String {
 pub fn write_beside(path: &Path, image: &[u8]) -> std::io::Result<()> {
     let sidecar = crate::file_access::read(crate::schema_sidecar::dschema_path(path))?;
     crate::file_access::write(guard_path(path), render(image, &sidecar))
-}
-
-/// Remove the guard beside `path`, when what lies there is one: a guard describes the file
-/// it lies beside and nothing else, so it goes when that file is deleted.
-pub fn remove_beside(path: &Path) {
-    let guard = guard_path(path);
-    if crate::file_access::read_to_string(&guard).is_ok_and(|text| text.starts_with(MAGIC)) {
-        let _ = crate::file_access::remove_file(&guard);
-    }
 }
 
 /// Whether `image`, the bytes read from `path`, are what the guard beside `path` was written

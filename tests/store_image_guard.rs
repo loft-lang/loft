@@ -1,16 +1,18 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
-//! `@FR-S-Guard` — the guard beside a saved store says whether the store is the one that was
-//! written, and nothing about who may change it.
+//! `@FR-S-Guard` — a guard beside a saved store says whether the store is the one the guard
+//! was written for, and nothing about who may change it.  A save writes none: the guard is
+//! written by whoever wants one (here the test, as a build step would), and checked when it
+//! is there.
 //!
 //! Each backend writes an image of a struct holding a text and a vector of three records
-//! (10 + 20 + 30 = 60); each backend then loads these, as files beside it, with `store_load`
-//! and with `store_load_untrusted`:
+//! (10 + 20 + 30 = 60) — and no guard; each backend then loads these, as files beside it, with
+//! `store_load` and with `store_load_untrusted`:
 //!
 //! | the files | `store_load` | `store_load_untrusted` |
 //! |---|---|---|
-//! | as written | sum 60 | sum 60 |
+//! | the image and its guard | sum 60 | sum 60 |
 //! | the 20 changed to 21, guard left | sum 61, and a warning | refused |
 //! | the same, guard removed | sum 61 | sum 61 |
 //! | the guard naming another image | sum 60, and a warning | refused |
@@ -19,10 +21,8 @@
 //! | no guard at all | sum 60 | sum 60 |
 //!
 //! The changed 20 is a VALUE: no number in the image points anywhere it should not, so the
-//! soundness walk (`@FR-S-Sound`) has nothing to say and only the guard can.  A save changed on
-//! purpose is a save, and a guard some other writer left must not cost a good one: the
-//! ordinary load says what it saw and goes on, and the loader for a file from elsewhere
-//! refuses.  A deleted store takes its guard with it.
+//! soundness walk (`@FR-S-Sound`) has nothing to say and only the guard can.  A save over a
+//! guarded store removes the guard it outdates.
 
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
@@ -46,15 +46,6 @@ fn main() {
   s = 0;
   for r in l.items { s += r.v; }
   println("loaded {ok} name [{l.name}] len {len(l.items)} sum {s}");
-}
-"#;
-
-const DELETER: &str = r#"struct W { name: text }
-
-fn main() {
-  w = W { name: "gone" };
-  wrote = store_persist_copy(w, "gone.store");
-  println("wrote {wrote} deleted {delete("gone.store")}");
 }
 "#;
 
@@ -99,8 +90,11 @@ fn the_guard_says_whether_a_store_is_the_one_that_was_written() {
         assert_eq!(wrote, "wrote true", "{writer}: {err}");
         let image = fa::read(dir.join("img.store")).expect("the image");
         let sidecar = fa::read(dir.join("img.store.dschema")).expect("its sidecar");
-        let guard = fa::read_to_string(dir.join("img.store.guard"))
-            .unwrap_or_else(|_| panic!("{writer}: the write leaves a guard beside the image"));
+        assert!(
+            !fa::exists(dir.join("img.store.guard")),
+            "{writer}: a save writes no guard"
+        );
+        let guard = loft::store_guard::render(&image, &sidecar);
         assert!(guard.starts_with("LOFT-GUARD v1\nimage="), "{guard}");
 
         // The second element's `v` (`R`: v at 0), read off the image: the root's vector
@@ -188,13 +182,13 @@ fn the_guard_says_whether_a_store_is_the_one_that_was_written() {
                 );
             }
         }
-        // A deleted store takes its guard with it; its sidecar is the program's to delete.
-        fa::write(dir.join("delete.loft"), DELETER).expect("deleter");
-        let (out, err) = loft(&dir, writer, "delete.loft", "", "");
-        assert_eq!(out, "wrote true deleted Ok", "{writer}: {err}");
+        // A save over a guarded store removes the guard it outdates.
+        fa::write(dir.join("img.store.guard"), &guard).expect("a guard");
+        let (wrote, err) = loft(&dir, writer, "write.loft", "", "");
+        assert_eq!(wrote, "wrote true", "{writer}: {err}");
         assert!(
-            fa::exists(dir.join("gone.store.dschema")) && !fa::exists(dir.join("gone.store.guard")),
-            "{writer}: the guard went with the store, the sidecar stayed"
+            !fa::exists(dir.join("img.store.guard")),
+            "{writer}: the save removed the guard of the store it replaced"
         );
         let _ = fa::remove_dir_all(&dir);
     }

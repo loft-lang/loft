@@ -6609,14 +6609,7 @@ pub fn fs_is_file(path: &str) -> bool {
 impl Stores {
     #[must_use]
     pub fn fs_delete_at(&self, raw: &str) -> i64 {
-        self.resolve_path(raw).map_or(FS_OTHER, |p| {
-            let code = fs_delete(&p);
-            // `@FR-S-Guard` — a store's guard goes with the file it describes.
-            if code == FS_OK {
-                crate::store_guard::remove_beside(std::path::Path::new(&p));
-            }
-            code
-        })
+        self.resolve_path(raw).map_or(FS_OTHER, |p| fs_delete(&p))
     }
 
     #[must_use]
