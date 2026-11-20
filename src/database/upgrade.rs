@@ -1551,10 +1551,19 @@ fn swap_in_upgrade(
     let io = |e: std::io::Error| e.to_string();
     super::allocation::write_image_atomic(&next, image).map_err(io)?;
     current.write_beside(&next).map_err(io)?;
+    // `@FR-S-Guard` — each pair keeps its own guard: the kept store's moves with it (and an
+    // earlier `.old`'s, which names another image, goes), the upgraded one's is written here.
+    use crate::store_guard::guard_path;
+    crate::store_guard::write_beside(&next, image).map_err(io)?;
     crate::file_access::rename(path, &kept).map_err(io)?;
     crate::file_access::rename(&side, dschema_path(&kept)).map_err(io)?;
+    let _ = crate::file_access::remove_file(guard_path(&kept));
+    if crate::file_access::exists(guard_path(path)) {
+        crate::file_access::rename(guard_path(path), guard_path(&kept)).map_err(io)?;
+    }
     crate::file_access::rename(&next, path).map_err(io)?;
     crate::file_access::rename(dschema_path(&next), &side).map_err(io)?;
+    crate::file_access::rename(guard_path(&next), guard_path(path)).map_err(io)?;
     Ok(kept)
 }
 
@@ -1667,7 +1676,9 @@ impl Stores {
         crate::file_access::write(path, &image).map_err(|e| e.to_string())?;
         crate::schema_sidecar::LayoutIdentity::of_store(self, named, tp)
             .write_beside(path)
-            .map_err(|e| e.to_string())
+            .map_err(|e| e.to_string())?;
+        // `@FR-S-Guard` — a writer of a pair writes its guard.
+        crate::store_guard::write_beside(path, &image).map_err(|e| e.to_string())
     }
 }
 

@@ -467,6 +467,166 @@ static uint32_t loft_image_live_end(const loft_store_t *s) {
     return rec == s->size ? live_end : 0;
 }
 
+/* FIPS 180-4 SHA-256 (`integrity::sha256_hex`): the digest of `p` as 64 lowercase hex digits. */
+static void loft_sha256_hex(const uint8_t *p, size_t n, char hex[65]) {
+    static const uint32_t k[64] = {
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+        0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+        0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+        0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+        0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+        0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+        0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2 };
+    uint32_t h[8] = { 0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19 };
+    size_t total = ((n + 9 + 63) / 64) * 64;
+    uint8_t *m = (uint8_t *) calloc(total, 1);
+    if (!m) { fputs("loft: out of memory\n", stderr); abort(); }
+    if (n) memcpy(m, p, n);
+    m[n] = 0x80;
+    uint64_t bits = (uint64_t) n * 8;
+    for (int i = 0; i < 8; i++) m[total - 1 - i] = (uint8_t) (bits >> (8 * i));
+#define LOFT_ROR(x, r) (((x) >> (r)) | ((x) << (32 - (r))))
+    for (size_t off = 0; off < total; off += 64) {
+        uint32_t w[64];
+        for (int i = 0; i < 16; i++)
+            w[i] = (uint32_t) m[off + 4 * i] << 24 | (uint32_t) m[off + 4 * i + 1] << 16 | (uint32_t) m[off + 4 * i + 2] << 8 |
+                   (uint32_t) m[off + 4 * i + 3];
+        for (int i = 16; i < 64; i++) {
+            uint32_t s0 = LOFT_ROR(w[i - 15], 7) ^ LOFT_ROR(w[i - 15], 18) ^ (w[i - 15] >> 3);
+            uint32_t s1 = LOFT_ROR(w[i - 2], 17) ^ LOFT_ROR(w[i - 2], 19) ^ (w[i - 2] >> 10);
+            w[i] = w[i - 16] + s0 + w[i - 7] + s1;
+        }
+        uint32_t a = h[0], b = h[1], c = h[2], d = h[3], e = h[4], f = h[5], g = h[6], hh = h[7];
+        for (int i = 0; i < 64; i++) {
+            uint32_t t1 = hh + (LOFT_ROR(e, 6) ^ LOFT_ROR(e, 11) ^ LOFT_ROR(e, 25)) + ((e & f) ^ (~e & g)) + k[i] + w[i];
+            uint32_t t2 = (LOFT_ROR(a, 2) ^ LOFT_ROR(a, 13) ^ LOFT_ROR(a, 22)) + ((a & b) ^ (a & c) ^ (b & c));
+            hh = g;
+            g = f;
+            f = e;
+            e = d + t1;
+            d = c;
+            c = b;
+            b = a;
+            a = t1 + t2;
+        }
+        h[0] += a; h[1] += b; h[2] += c; h[3] += d; h[4] += e; h[5] += f; h[6] += g; h[7] += hh;
+    }
+#undef LOFT_ROR
+    free(m);
+    for (int i = 0; i < 8; i++) snprintf(hex + 8 * i, 9, "%08x", (unsigned) h[i]);
+}
+
+/* ── The guard beside an image (`store_guard`, `@FR-S-Guard`) ────────────────────────────────
+ * `<image>.guard`: what the image and its sidecar hashed to when they were written, checked
+ * before a loader reads either.  A reader takes the lines it knows and passes over the rest:
+ *     LOFT-GUARD v1
+ *     image=<SHA-256 of the image, 64 hex digits>
+ *     sidecar=<SHA-256 of the .dschema sidecar>
+ * It says whether these are the bytes that were written — not who may change them: a file
+ * whose guard was removed loads as any unguarded one. */
+static uint8_t *loft_guard_slurp(const char *path, size_t *n) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return 0;
+    size_t cap = 1 << 12, len = 0, got;
+    uint8_t *b = (uint8_t *) malloc(cap);
+    if (!b) { fputs("loft: out of memory\n", stderr); abort(); }
+    while ((got = fread(b + len, 1, cap - len, f)) > 0) {
+        len += got;
+        if (len == cap) {
+            cap *= 2;
+            b = (uint8_t *) realloc(b, cap);
+            if (!b) { fputs("loft: out of memory\n", stderr); abort(); }
+        }
+    }
+    fclose(f);
+    *n = len;
+    return b;
+}
+
+/* The value of the guard line that starts with `key`, trimmed: its start and length, 0 when the
+ * guard has no such line. */
+static const char *loft_guard_line(const char *text, size_t n, const char *key, size_t *vn) {
+    size_t kn = strlen(key);
+    for (size_t at = 0; at < n;) {
+        size_t end = at;
+        while (end < n && text[end] != '\n') end++;
+        if (end - at >= kn && memcmp(text + at, key, kn) == 0) {
+            size_t a = at + kn, b = end;
+            while (a < b && (text[a] == ' ' || text[a] == '\t' || text[a] == '\r')) a++;
+            while (b > a && (text[b - 1] == ' ' || text[b - 1] == '\t' || text[b - 1] == '\r')) b--;
+            *vn = b - a;
+            return text + a;
+        }
+        at = end + 1;
+    }
+    return 0;
+}
+
+/* Whether `hex`, as a guard spells it in either case, is the SHA-256 of `bytes`. */
+static int loft_guard_same(const uint8_t *bytes, size_t n, const char *hex, size_t hn) {
+    char own[65];
+    loft_sha256_hex(bytes, n, own);
+    if (hn != 64) return 0;
+    for (size_t i = 0; i < 64; i++) {
+        char c = hex[i];
+        if (c >= 'A' && c <= 'F') c = (char) (c - 'A' + 'a');
+        if (c != own[i]) return 0;
+    }
+    return 1;
+}
+
+/* The guard's text for an image and its sidecar, malloc'd. */
+static char *loft_guard_render(const uint8_t *image, size_t n, const char *sidecar, size_t sn) {
+    char a[65], b[65];
+    loft_sha256_hex(image, n, a);
+    loft_sha256_hex((const uint8_t *) sidecar, sn, b);
+    char *text = (char *) malloc(200);
+    if (!text) { fputs("loft: out of memory\n", stderr); abort(); }
+    snprintf(text, 200, "LOFT-GUARD v1\nimage=%s\nsidecar=%s\n", a, b);
+    return text;
+}
+
+/* `store_guard::check`: 1 when `bytes`, read from `path`, are what the guard beside it was
+ * written for, and when there is no guard; 0 with `why` saying what does not match. */
+static int loft_guard_holds(const char *path, const uint8_t *bytes, size_t n, char *why, size_t cap) {
+    size_t pn = strlen(path);
+    char *gp = (char *) malloc(pn + 9);
+    if (!gp) { fputs("loft: out of memory\n", stderr); abort(); }
+    memcpy(gp, path, pn);
+    memcpy(gp + pn, ".guard", 7);
+    size_t gn = 0, sn = 0, vn = 0;
+    const char *bad = 0;
+    FILE *probe = fopen(gp, "rb");
+    if (!probe && errno == ENOENT) {
+        free(gp);
+        return 1;
+    }
+    if (probe) fclose(probe);
+    char *text = (char *) loft_guard_slurp(gp, &gn);
+    uint8_t *side = 0;
+    const char *v;
+    if (!text) bad = "its guard cannot be read";
+    else if (gn < 12 || memcmp(text, "LOFT-GUARD v", 12) != 0) bad = "its guard is not a guard file";
+    else if (!(v = loft_guard_line(text, gn, "image=", &vn))) bad = "its guard names no image";
+    else if (!loft_guard_same(bytes, n, v, vn)) bad = "it is not the file its guard was written for: damaged, cut short, or changed since";
+    else if ((v = loft_guard_line(text, gn, "sidecar=", &vn))) {
+        char *sp = (char *) malloc(pn + 9);
+        if (!sp) { fputs("loft: out of memory\n", stderr); abort(); }
+        memcpy(sp, path, pn);
+        memcpy(sp + pn, ".dschema", 9);
+        side = loft_guard_slurp(sp, &sn);
+        free(sp);
+        if (!side) bad = "its layout sidecar cannot be read";
+        else if (!loft_guard_same(side, sn, v, vn)) bad = "its layout sidecar is not the one its guard was written for";
+    }
+    if (bad) snprintf(why, cap, "%s; remove %s to load the file as it is", bad, gp);
+    free(side);
+    free(text);
+    free(gp);
+    return !bad;
+}
+
 /* A loader's path a name check refuses (`file_access`: a control character, a device name …),
  * said once on stderr as file I/O says it (`loft_normalize`'s check, in loft_io.h). */
 static char *loft_normalize(loft_str raw, const char *base, int check);
@@ -555,6 +715,14 @@ static int loft_image_write(const loft_tdesc *T, uint32_t ntypes, loft_ref r, lo
          * only when both are written are they renamed into place, as persist_copy does. */
         char *p = loft_cpath(path, 0), *ptmp = loft_cpath(path, ".tmp");
         char *side = loft_cpath(path, ".dschema"), *stmp = loft_cpath(path, ".dschema.tmp");
+        /* `@FR-S-Guard`: the guard is the third file of the same write, staged like the other
+         * two and moved into place last. */
+        char *guard = loft_cpath(path, ".guard"), *gtmp = loft_cpath(path, ".guard.tmp");
+        size_t scap = strlen(sc->before_slot) + strlen(sc->after_slot) + 32;
+        char *stext = (char *) malloc(scap);
+        if (!stext) { fputs("loft: out of memory\n", stderr); abort(); }
+        size_t slen = (size_t) snprintf(stext, scap, "%sslot=%u\n%s", sc->before_slot, (unsigned) dst, sc->after_slot);
+        char *gtext = loft_guard_render(img, (size_t) target * 8, stext, slen);
         FILE *f = fopen(ptmp, "wb");
         if (f) {
             ok = fwrite(img, 8, target, f) == target;
@@ -565,13 +733,29 @@ static int loft_image_write(const loft_tdesc *T, uint32_t ntypes, loft_ref r, lo
             FILE *g = fopen(stmp, "wb");
             ok = g != 0;
             if (g) {
-                ok = fprintf(g, "%sslot=%u\n%s", sc->before_slot, (unsigned) dst, sc->after_slot) > 0;
+                ok = fwrite(stext, 1, slen, g) == slen;
                 ok = fclose(g) == 0 && ok;
                 if (!ok) (void) remove(stmp);
             }
         }
+        if (ok) {
+            FILE *g = fopen(gtmp, "wb");
+            ok = g != 0;
+            if (g) {
+                ok = fputs(gtext, g) >= 0;
+                ok = fclose(g) == 0 && ok;
+            }
+            if (!ok) {
+                (void) remove(gtmp);
+                (void) remove(stmp);
+            }
+        }
         if (!ok) (void) remove(ptmp);
-        else ok = loft_rename(ptmp, p) == 0 && loft_rename(stmp, side) == 0;
+        else ok = loft_rename(ptmp, p) == 0 && loft_rename(stmp, side) == 0 && loft_rename(gtmp, guard) == 0;
+        free(stext);
+        free(gtext);
+        free(guard);
+        free(gtmp);
         free(p);
         free(ptmp);
         free(side);
@@ -1052,6 +1236,18 @@ static int loft_image_load(loft_ref r, loft_str path, const loft_sidecar *sc, in
         }
     }
     fclose(f);
+    {
+        /* `@FR-S-Guard`: before the image or its sidecar is read for what it holds. */
+        char *q = loft_cpath(path, 0);
+        char why[1200];
+        if (!loft_guard_holds(q, bytes, n, why, sizeof why)) {
+            fprintf(stderr, "%s: refusing %s \xe2\x80\x94 %s.\n", who, q, why);
+            free(q);
+            free(bytes);
+            return 0;
+        }
+        free(q);
+    }
     /* `store_load` asks for at least the header before it reads (`image_at_least`): a shorter
      * file is no image and says nothing; the untrusted loader reads it and says why. */
     if (!untrusted && n < 16) {
