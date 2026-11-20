@@ -4930,19 +4930,11 @@ fn framed(
     }
 }
 
-/// Set by a `--ship` run before it writes its unit ([`ship_units`]).
-static SHIPPED_UNITS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
 /// Every unit this process writes from now on is a shipped artefact's (`--ship`, NATIVE.md
-/// § Optimisation tiers): its functions stay whole, as [`functions_whole`] says.
+/// § Optimisation tiers): its functions stay whole, as [`functions_whole`] says.  The fact
+/// itself lives in [`crate::ship_tier`], where the parser reads it too.
 pub fn ship_units() {
-    SHIPPED_UNITS.store(true, std::sync::atomic::Ordering::Relaxed);
-}
-
-/// Whether this process writes shipped artefacts (`--ship`): what a shipped build leaves
-/// out, a development check among it (`Parser::arm_drop_marks`), asks here.
-pub fn shipped_units() -> bool {
-    SHIPPED_UNITS.load(std::sync::atomic::Ordering::Relaxed)
+    crate::ship_tier::ship_units();
 }
 
 /// Whether the unit being written keeps every function whole: a shipped artefact's (a
@@ -4950,7 +4942,7 @@ pub fn shipped_units() -> bool {
 /// build splits an over-budget function into parts instead (`(R-CSplit)`, `split::budget`),
 /// so the C compiler's optimiser time stays bounded.
 pub fn functions_whole() -> bool {
-    SHIPPED_UNITS.load(std::sync::atomic::Ordering::Relaxed) || ESP_UNIT.with(std::cell::Cell::get)
+    crate::ship_tier::shipped_units() || ESP_UNIT.with(std::cell::Cell::get)
 }
 
 thread_local! {

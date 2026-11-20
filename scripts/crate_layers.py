@@ -74,7 +74,7 @@ LAYERS: list[tuple[str, list[str]]] = [
         "radix_db", "radix_tree", "registry", "registry_advisories", "registry_index",
         "registry_keys", "registry_signing", "repeat_run", "repl_doc", "resolution",
         "resolution_scope", "return_field", "rewrite_census", "runtime_abi", "runtime_error",
-        "rust_spelling", "sandbox", "schema_sidecar", "self_update", "shared_call", "siphash",
+        "rust_spelling", "sandbox", "schema_sidecar", "self_update", "shared_call", "ship_tier", "siphash",
         "slice_text", "slot_alias", "spatial", "stack_census", "stack_verify", "stdlib_ops",
         "stdlib_sources", "store", "store_budget", "store_census", "store_guard", "store_trace",
         "take_local",

@@ -533,6 +533,8 @@ pub mod sandbox;
 pub mod schema_sidecar;
 #[cfg(feature = "registry")]
 pub mod self_update;
+/// Whether this process writes shipped artefacts (`--ship`): read by the parser and the C writer.
+pub mod ship_tier;
 mod stack;
 pub mod stdlib_codegen;
 pub mod store_guard;

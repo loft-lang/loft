@@ -8791,7 +8791,7 @@ impl Parser {
     /// production run (`--production`) nor a shipped build (`--ship`): a development and test
     /// check, never a cost of the program that ships.
     fn arm_drop_marks(&mut self) {
-        if std::env::var_os("LOFT_PRODUCTION").is_some() || crate::c::shipped_units() {
+        if std::env::var_os("LOFT_PRODUCTION").is_some() || crate::ship_tier::shipped_units() {
             return;
         }
         let (enter, leave) = (
