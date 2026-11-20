@@ -448,7 +448,37 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   // its body typed without a borrow — not carried: refused by name.
   // A keyed local of the body's own at the tail is answered as it is, the body typed as the
   // collection without a borrow; any other tail is refused by name.
-  if !e.first_pass && keyed_kind(el_types::base(result)) {
+  // A keyed PARAMETER answered at the tail (`fn id(x: hash<…>) -> hash<…> { x }`) is borrowed
+  // (`MergeAttr`): the result borrows that parameter, by attribute number, on both passes; the
+  // body stays typed as the parameter's read.
+  // (So is any body whose type borrows only visible parameters — a field of one, an `if` of
+  // two, a `??` over one: the result borrows each, as the body's type names them.)
+  kparam = false;
+  if keyed_kind(el_types::base(result)) && !(result is TyOptional) && len(el_types::deps(b.tp)) > 0 {
+    kas: vector<integer> = [];
+    for kpv in el_types::deps(b.tp) {
+      ka = if kpv >= 0 && kpv < len(vars.vars) && vars.vars[kpv].argument && !hidden_param(e, vars, kpv) { attr_nr(el::def(e, e.context), el_vars::name_of(vars, kpv)) } else { -1 };
+      if ka < 0 {
+        kas = [];
+        break;
+      }
+      kas += [ka];
+    }
+    if len(kas) > 0 {
+      kparam = true;
+      kr0 = el::def(e, e.context).returned[0] ?? result;
+      kds = el_types::deps(kr0);
+      for ka in kas {
+        if !kds.contains(ka) {
+          kds += [ka];
+        }
+      }
+      e.b.data.definitions[e.context].returned = [el_types::with_deps(kr0, kds)];
+    }
+  }
+  // (A body whose type borrows nothing — a fresh call, a join of one and a null — answers the
+  // collection as it is.)
+  if !e.first_pass && keyed_kind(el_types::base(result)) && !kparam && len(el_types::deps(b.tp)) > 0 {
     kv = match body_tail(code) { NdVar { n } => if !vars.vars[n].argument && keyed_kind(el_types::base(el_vars::tp(vars, n))) && !(result is TyOptional) { n } else { -1 }, _ => -1 };
     // A literal tail was built as the collection where it was read (`keyed_tail_literal`).
     klit = match body_tail(code) { NdBlock { block } => block[0].name == "Vector" && keyed_kind(block[0].result[0] ?? ir::TyVoid), _ => false };

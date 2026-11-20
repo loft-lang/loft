@@ -1585,7 +1585,8 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
       return ex(if f.tp is TyNull { el_ir::v_if(c.code, sl!, nl!) } else { el_ir::v_if(c.code, nl!, sl!) }, pt);
     }
   }
-  vector_null = f.tp is TyNull && !(t.tp is TyOptional) && t.tp is TyVector;
+  // (A keyed collection is a collection here too: its null the reference sentinel.)
+  vector_null = f.tp is TyNull && !(t.tp is TyOptional) && (t.tp is TyVector || keyed_kind(t.tp));
   // A struct enum's variant beside a `null` arm joins to the enum `?` (`variant_parent_enum`),
   // its arms typed as the variant.
   variant_null = f.tp is TyNull && !(t.tp is TyOptional) && el_expressions::variant_parent(e, t.tp) >= 0;

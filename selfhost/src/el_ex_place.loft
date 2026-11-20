@@ -3263,14 +3263,13 @@ fn keyed_source(e: el::El, x: Ex, to: ir::TypeT) -> integer {
     return 0;
   }
   match xc {
+    // (`set_field_check`'s keyed arm: any call's value is replaced in, its store freed after
+    // only where the call gives it away, `call_gives_away_its_store`.)
     NdCall { def_nr: cd } => {
-      for ca in el::def(e, cd).attributes {
-        cb = el_types::base(ca.typedef[0] ?? ir::TyVoid);
-        if !(is_scalar(cb) || cb is TyText) {
-          return -1;
-        }
+      if starts_with(el::def(e, cd).name, "Op") {
+        return -1;
       }
-      if el_ex_match::gives_away_its_store(e, x.code) && len(el_types::deps(x.tp)) == 0 { 32768 } else { -1 }
+      if el_ex_match::gives_away_its_store(e, x.code) && len(el_types::deps(x.tp)) == 0 { 32768 } else { 0 }
     },
     _ => -1
   }
