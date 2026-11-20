@@ -5,7 +5,7 @@
 #            or a prelude helper is missing) | needs-axis (it turns on something the tool
 #            does not vary) | outside (not about evaluating an operand)
 #   missing  what the tables or the tool lacked for it
-2596	needs-axis	call argument of a record type whose callee keeps a `&` to a sub-record of its parameter	local bound from a function answering a small no-heap record	axis: how the receiver was built	value	Interpreter only: the value local is lent a temporary record, so a write through the kept reference misses it; needs a prelude record R-ValueRecord admits (no heap, at most eight scalars).
+2596	fits-now	ca-sm-link	sm-var	-	value	Calibrated 2026-11-20: fails in the locals and views frames on main d268b48cc (interpreter; `sm` bound by a call is lent a temporary record), passes with the fix and in the params frame.
 2593	needs-axis	any read of an element of a `vector<lib::S?>`	-	axis: shape of a declaration	value	The `?` of a record element named through a qualifier was dropped, so the vector was dense; wrong for every operand form.
 2577	fits-now	rd-coal-rec-left	nrec-tuple-call	-	value	Garbage on the interpreter, double free on C; the twin (tuple bound first) is right.
 2575	fits-rows	value of `f#next = <S>` on a file with no handle open	int-call	slot row; prelude helper	count	Listed unreached in the register; the prelude needs a file record.

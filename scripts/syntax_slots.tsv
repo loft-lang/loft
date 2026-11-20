@@ -222,3 +222,11 @@ wr-remove-dense	write	Col-RemoveDense	first	1	int	vi.remove(<S>);
 op-ne-text	operator	E-Eq	once	1	text	if <S> != x { s = 1; } else { s = 2; }
 op-eq-bool	operator	E-Eq	once	1	bool	if <S> == b { s = 1; } else { s = 2; }
 op-ne-bool	operator	E-Eq	once	1	bool	if <S> != b { s = 1; } else { s = 2; }
+# The small record `sm` (no heap, at most eight scalars): the value-record rewrites carry it as
+# the tuple of its fields — returned, bound, handed to a parameter, lent to a callee.
+rd-sm-field	read	E-Field	once	1	sm	s = <S>.k;
+rd-sm-sub	read	E-Field	once	1	sm	s = <S>.at.y;
+wr-sm-field	write	E-Asgn-Compound	once	1	sm	<S>.k += j;
+wr-sm-sub	write	E-Asgn	once	1	sm	<S>.at.x = j;
+ca-sm-arg	call	F-Args	once	1	sm	s = smsum(<S>);
+ca-sm-link	call	F-Args	once	1	sm	smbump(<S>);
