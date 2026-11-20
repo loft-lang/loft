@@ -138,6 +138,11 @@ pub fn slice(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
   if x.tp is TyRefVar && match x.tp { TyRefVar { inner: ri } => el_types::base(ri) is TyText, _ => false } {
     x = ex(x.code, match x.tp { TyRefVar { inner: ri } => ri, _ => x.tp });
   }
+  // (A by-value text parameter's copy, `__tp_<param>`, is sliced as the parameter it stands
+  // for: it borrows nothing — not the `__work_N` the copy was built in.)
+  if x.tp is TyText && match el_ir::unspan(x.code) { NdVar { n: tpv } => starts_with(el_vars::name_of(vars, tpv), "__tp_"), _ => false } {
+    x = ex(x.code, el_types::without_deps(x.tp));
+  }
   if x.tp is TyTrie || x.tp is TyRadix {
     return keyed_slice(e, vars, x, lo, hi, null);
   }

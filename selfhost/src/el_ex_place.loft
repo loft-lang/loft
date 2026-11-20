@@ -1878,6 +1878,19 @@ pub fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
     if e.first_pass {
       continue;
     }
+    // An `i32` item that is a `??` is narrowed inside it, as a literal's item is
+    // (`range_guard_inside_discharge`; a bare variable's two reads each cast).
+    if match inner { TyInteger { spec } => el_types::int4(spec), _ => false } {
+      fbare = match el_ir::unspan(x.code) { NdIf { cond: fbc, t: fbt } => el_ir::unspan(fbt) is NdVar && match el_ir::unspan(fbc) { NdCall { args: fbca } => len(fbca) == 1 && el_ir::unspan(fbca[0] ?? ir::NdNull) == el_ir::unspan(fbt), _ => false }, _ => false };
+      if fbare || match el_ir::unspan(x.code) { NdBlock { block: fnb } => fnb[0].name == "ncc", _ => false } {
+        fgx = el_convert::guard_discharge(e, vars, x.code, inner);
+        if fgx == null {
+          el::refuse(e, "an `i32` vector item that is a `??`");
+          return ex(ir::NdNull, ir::TyVoid);
+        }
+        x = ex(fgx!, x.tp);
+      }
+    }
     if push != "" {
       ls += [el_ir::cl(e, push, el_ex_pattern::push_args(e, vars, inner, place, x.code))];
     } else if inner is TyText || elem_size(inner) == 2 {

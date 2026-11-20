@@ -1054,6 +1054,22 @@ pub fn operator_member(e: el::El, form: text, lt: ir::TypeT, rt: ir::TypeT) -> i
   if el_types::is_unknown(rt) {
     return -1;
   }
+  // `Parser::operator_member`: a type with several of the name has them in the overload set
+  // under the bare name (the library's `compare` carries a program's two `operator compare`),
+  // chosen among as `a.compare(b)` would choose (`@FR-Disp-Select`); none applying, or no set,
+  // leaves the receiver's own key.  Two applying is no operator.
+  lrec = match el_types::base(el_types::unrewritten(lt)) { TyReference { n: _ } => true, TyEnum { n: _ } => true, _ => false };
+  key = if form == "" || el_types::is_unknown(lt) || !lrec { -1 } else { find_op_method(e, form, el_types::unrewritten(lt)) };
+  set = if key >= 0 { el::def_nr(e, form) } else { -1 };
+  if set >= 0 && el::def(e, set).def_type == el::DT_DYNAMIC {
+    ch = el_dispatch::select_static(e, set, el_dispatch::routed([el_types::unrewritten(lt), el_types::unrewritten(rt)]));
+    if ch == -2 {
+      return -1;
+    }
+    if ch >= 0 && ch != key {
+      return operator_def(e, ch, form, lt, 2);
+    }
+  }
   operator_of(e, form, lt, 2)
 }
 
@@ -1090,6 +1106,13 @@ pub fn operator_of(e: el::El, form: text, lt: ir::TypeT, arity: integer) -> inte
   if d < 0 {
     return -1;
   }
+  operator_def(e, d, form, lt, arity)
+}
+
+// `operator_of`'s checks on the member `d` it found: the left operand's own method, written
+// `operator`, no template; -1 otherwise.
+fn operator_def(e: el::El, d: integer, form: text, lt: ir::TypeT, arity: integer) -> integer {
+  left = match el_types::base(el_types::unrewritten(lt)) { TyReference { n } => n, TyEnum { n } => n, _ => -1 };
   def = el::def(e, d);
   visible = [for a in def.attributes if !a.hidden { a }];
   own = len(visible) == arity && match el_types::base(visible[0].typedef[0] ?? ir::TyVoid) { TyReference { n } => n == left, TyEnum { n } => n == left, _ => false };

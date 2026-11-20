@@ -1674,6 +1674,12 @@ pub fn cast_expr(e: el::El, vars: el_vars::Vars, ae: integer?, tn: integer?) -> 
           return ex(if e.first_pass { ir::NdNull } else { c! }, to);
         }
       } else if el_convert::plain_scalar(inner) && !el_convert::narrowing_int(src, inner) {
+        // (A bare integer variable cast to an integer it does not narrow is the variable on
+        // pass 1 too — so a `??` over the cast sees it bare and holds nothing, `(v as i32?) ?? 0`,
+        // as on pass 2 where the conversion answers the variable.)
+        if e.first_pass && el_ir::unspan(x.code) is NdVar && src is TyInteger && inner is TyInteger {
+          return ex(x.code, to);
+        }
         b = cast_expr_to(e, vars, ex(x.code, src), inner);
         return ex(b.code, if el_types::is_unknown(b.tp) { b.tp } else { to });
       } else if el_convert::narrowing_int(src, inner) && !(x.tp is TyOptional) && (e.first_pass || !el_convert::value_fits(e, vars, x.code, inner)) {

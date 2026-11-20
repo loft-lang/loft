@@ -222,6 +222,11 @@ pub fn plain_scalar(t: ir::TypeT) -> boolean {
 // `(C-Int)`), a `Never` anywhere, and the first `OpConv` whose parameter and result are the pair
 // (`Data::converts_with`).  A narrowing integer store is the author's to write as a cast (null
 // unless a constant provably fits); `explicit` is the `as` that does so.
+// `operators.rs`'s `int_literal`: an `i32` literal where the value fits, else an `i64` one.
+fn int_literal(n: integer) -> ir::Node {
+  if n >= -2147483648 && n <= 2147483647 { ir::NdInt { n: n } } else { ir::NdLong { n: n } }
+}
+
 // `Parser::dn4_checked_cast` (`@FR-N-Cast`'s checked half, DN4): the value bound once in a
 // `__dn4_N` and answered where it lies in the target's range, else the integer null — typed
 // `τ?`.  A constant has its answer now.
@@ -240,8 +245,9 @@ pub fn dn4_cast(e: el::El, vars: el_vars::Vars, code: ir::Node, src: ir::TypeT, 
   tmp = el_vars::create_unique(vars, "_dn4", src);
   t = ir::NdVar { n: tmp };
   nl = el_ir::cl(e, "OpConvIntFromNull", []);
-  inner = el_ir::v_if(el_ir::cl(e, "OpLeInt", [t, ir::NdInt { n: hi }]), t, nl);
-  outer = el_ir::v_if(el_ir::cl(e, "OpLeInt", [ir::NdInt { n: lo }, t]), inner, nl);
+  // (A bound past `i32` is a 64-bit literal, `int_literal`: `u32`'s `4294967295i64`.)
+  inner = el_ir::v_if(el_ir::cl(e, "OpLeInt", [t, int_literal(hi)]), t, nl);
+  outer = el_ir::v_if(el_ir::cl(e, "OpLeInt", [int_literal(lo), t]), inner, nl);
   el_ir::v_block([el_ir::v_set(tmp, code), outer], res, "dn4cast")
 }
 

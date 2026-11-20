@@ -2017,7 +2017,8 @@ fn add_fn(e: el::El, key: text, name: text, arguments: vector<Argument>, pos: ir
           }
           // An overload of the slot's method (`Disp-Key`): the slot keeps the incumbent, the
           // set carries both.
-          if el_dispatch::own_set(e, name) >= 0 && slot >= 0 && el::def(e, slot).name != key {
+          // (So does a library set of the name, which carries the members then.)
+          if (el_dispatch::own_set(e, name) >= 0 || (el::def_nr(e, name) >= 0 && el::def(e, el::def_nr(e, name)).def_type == el::DT_DYNAMIC)) && slot >= 0 && el::def(e, slot).name != key {
             tn = -1;
             break;
           }
