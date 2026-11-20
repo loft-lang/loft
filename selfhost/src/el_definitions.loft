@@ -835,6 +835,8 @@ fn flat_expression(n: ir::Node) -> boolean {
       }
       true
     },
+    // (`default_replayable_in_place`'s `If` arm: a `&&` / `||` over replayable operands.)
+    NdIf { cond, t, f } => flat_expression(cond) && flat_expression(t) && flat_expression(f),
     _ => false
   }
 }
