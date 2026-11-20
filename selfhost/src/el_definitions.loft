@@ -1950,13 +1950,10 @@ fn fn_key(e: el::El, name: text, arguments: vector<Argument>) -> text {
   if len(arguments) == 0 || arguments[0].name != "self" {
     return "n_{name}";
   }
-  // An operator method (`OpAdd`) is its own port.  The `OpDrop` and `OpCopy` hooks are methods
-  // as any other; the cascades a type holding a droppable takes are refused after the passes
-  // (`refuse_drop_cascades`).
-  if starts_with(name, "Op") && name != "OpDrop" && name != "OpCopy" {
-    el::refuse(e, "a method named as an operator: {name}");
-    return "";
-  }
+  // (@C132: a method written `fn OpEq(self: W, …)` is an ordinary method, `t_1W_OpEq`, which
+  // `==` does not call; only `operator` declares an operator.  The `OpDrop` and `OpCopy` hooks
+  // are methods as any other; the cascades a type holding a droppable takes are refused after
+  // the passes, `refuse_drop_cascades`.)
   t = arguments[0].typedef;
   tn = el_ex_base::type_def_nr(e, match t { TyRefVar { inner } => inner, _ => t });
   if tn < 0 {

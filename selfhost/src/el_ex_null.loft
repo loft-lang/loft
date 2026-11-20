@@ -1381,7 +1381,11 @@ pub fn ordering_discriminant(e: el::El, variant: text) -> integer {
 // Does struct `d` declare an `==` / `!=` of its own (`user_op_method`'s `t_<len><Type>_OpEq`)?
 pub fn has_operator_method(e: el::El, d: integer) -> boolean {
   nm = el::def(e, d).name;
-  el::def_nr(e, "t_{len(nm)}{nm}_OpEq") >= 0 || el::def_nr(e, "t_{len(nm)}{nm}_OpNe") >= 0
+  // (@C132: only a method declared `operator` is one; a `fn OpEq(self: …)` is an ordinary
+  // method, which `==` does not call.)
+  eqd = el::def_nr(e, "t_{len(nm)}{nm}_OpEq");
+  ned = el::def_nr(e, "t_{len(nm)}{nm}_OpNe");
+  (eqd >= 0 && el::def(e, eqd).operator_form) || (ned >= 0 && el::def(e, ned).operator_form)
 }
 
 // `Parser::parse_if_expecting`: the condition (a boolean, which `convert_condition` leaves as it
