@@ -5,7 +5,7 @@ programs at try b94e088a2, 3 of them held by it alone): `w = m`, `kept = e`, `ba
 `b = c` (a parameter rebound) where the vector is a `vector<u8>` (every corpus site), or any
 other narrow element (`i8`, `u16`, `i16`, `u32`).  The refusal is `el_ex_assign.loft:2453`.
 
-**Judged right** on the interpreter (LOFT_POISON), --native-c and --native (leak check),
+**Judged right** on the interpreter (LOFT_POISON), --native-c and --native-rust (leak check),
 values hand-computed; a wrong expected value fails the run.  Probe:
 [probes/vector-copy-narrow.loft](probes/vector-copy-narrow.loft), 15 cases.  Split one function
 per case on b94e088a2: 14 refused, the `vector<integer>` control (`elem_integer`) agrees.

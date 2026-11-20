@@ -11,7 +11,7 @@ struct field can hold (no `τ?`, no function, no nested tuple) names the `__tupl
 the representation a `&S` has.  A link to a tuple local, a vector element and a struct field
 are then one mechanism (loft#1883).
 
-**Judged right** on the interpreter (LOFT_POISON) and --native-c (leak check), values
+**Judged right** on the interpreter (LOFT_POISON), --native-c and --native-rust (leak check), values
 hand-computed; a wrong expected value fails the run.  Probe:
 [probes/ref-tuple-param.loft](probes/ref-tuple-param.loft), 10 callees, each checked by its
 `chk_` caller.  On e27ec2076 every case is refused at the signature.

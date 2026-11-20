@@ -9,7 +9,7 @@ form.  The refusal is `el_ex_vector.loft:180`.
 makes the slice `text?`, null where a bound is (loft#2306).  The operands still run left to
 right, each once (`(E-Left)` × `(F-Args)`).
 
-**Judged right** on the interpreter (LOFT_POISON), --native-c and --native (leak check), values
+**Judged right** on the interpreter (LOFT_POISON), --native-c and --native-rust (leak check), values
 hand-computed; the probe fails when one expected value is changed.  Probe:
 [probes/text-slice-nullable-bound.loft](probes/text-slice-nullable-bound.loft), 23 cases, one
 axis each.  Split one function per case (`kr-tools/subj/cases.sh FILE maybe,word,at,a1`): 21

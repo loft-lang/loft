@@ -12,7 +12,7 @@ the MULTI-element alternation (`slice_alt`) and refuses this one in the fixed-el
 `@FR-P-Alt-Diff` (one bound by only some branches is `τ?`, null when another branch matched),
 `@FR-G-Pat-Prec` (`a:V | b:W` captures the matched element).
 
-**Judged right** on the interpreter (LOFT_POISON) and --native-c (leak check), values
+**Judged right** on the interpreter (LOFT_POISON), --native-c and --native-rust (leak check), values
 hand-computed; a wrong expected value fails the run.  Probe:
 [probes/slice-single-alternation.loft](probes/slice-single-alternation.loft), 11 cases.  On
 a15f52718 every case is refused at the group.

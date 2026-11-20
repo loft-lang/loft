@@ -5,7 +5,7 @@ e27ec2076, 3 of them held by it alone): `if i == 0 { return (a, b) }`,
 `if d == 0 { return (q + 1, r); }`, `if z { return (null, 3); }`.  Every corpus site has scalar
 members.  The refusal is the guard at el_ex_null.loft:2436 (`!scalar(result)`).
 
-**Judged right** on the interpreter (LOFT_POISON) and --native-c (leak check), values
+**Judged right** on the interpreter (LOFT_POISON), --native-c and --native-rust (leak check), values
 hand-computed; a wrong expected value fails the run.  Probe:
 [probes/early-tuple-return.loft](probes/early-tuple-return.loft), 12 cases, each checked by
 its `chk_` caller.  On c70896b1a the scalar cases are refused at the guard.  `text_member` and

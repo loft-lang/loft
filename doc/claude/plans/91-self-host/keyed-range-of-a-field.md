@@ -9,7 +9,7 @@ is not an integer: TyText").  The family's text slices of a `&text` (1011, R-Sli
 192) are the porter's 2f3471676, in its tries.  Its compound spatial keys (`s[3, 4]`) are
 another shape and aren't part of this page.
 
-**Judged right** on the interpreter (LOFT_POISON) and --native-c (leak check), values
+**Judged right** on the interpreter (LOFT_POISON), --native-c and --native-rust (leak check), values
 hand-computed; a wrong expected value fails the run.  Probe:
 [probes/keyed-range-walk.loft](probes/keyed-range-walk.loft), 12 cases.  On a15f52718 the
 LOCAL case (`local_sorted`) agrees and every FIELD case is refused.  A local over integer keys

@@ -11,7 +11,7 @@ a record local (`mk_sorted(w)`, I-For/2573), a keyed local or field the callee m
 Not this subject: an `if` whose arms are calls (`r = if c { g(n1) } else { g(n2) }`, 6 sites:
 Rust's `join_source_frees`), a call through a function value (`x = m(i)`, 3 sites).
 
-**Judged right** on the interpreter (LOFT_POISON), --native-c and --native (leak check),
+**Judged right** on the interpreter (LOFT_POISON), --native-c and --native-rust (leak check),
 values hand-computed; a wrong expected value fails the run.  Probe:
 [probes/keyed-bind-call-args.loft](probes/keyed-bind-call-args.loft), 12 cases.  Split one
 function per case on b94e088a2: `arg_none`, `arg_scalar`, `arg_text_format` AGREE (the
