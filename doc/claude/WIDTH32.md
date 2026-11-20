@@ -16,6 +16,7 @@ so a program pays for 64 bits only where it asks for them.
 |---|---|
 | `#width 32` as the first line of a file | that file |
 | `loft --width 32 …` or `LOFT_WIDTH=32` | every file: the program, every library it uses and the standard library |
+| `loft --native-esp …` | the same as `--width 32`: the Tanmatsu's processor is 32-bit.  `--width 64` or `LOFT_WIDTH=64` keeps 64 bits |
 | `#width 64` as the first line of a file | keeps that file 64-bit under `--width 32` |
 
 The standard library (`default/*.loft`) is under the regime only with the whole program: a
@@ -147,7 +148,7 @@ bisect step for a C-only wrong answer.
 
 ## The image gate
 
-`loft --native-esp --width 32` disassembles the app it linked and refuses it when a function
+A 32-bit `loft --native-esp` build — its default — disassembles the app it linked and refuses it when a function
 on loft's side — the program, loft's runtime, the C of a library the program uses — calls a
 `double` helper (`__adddf3`, `__muldf3`, `__extendsfdf2`, …) or a 64-bit integer one
 (`__muldi3`, `__divdi3`, `__ashldi3`, …): the ESP32-P4 has no instruction for either.  The
