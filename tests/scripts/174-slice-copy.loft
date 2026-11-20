@@ -15,7 +15,8 @@ fn gsl<T>(v: vector<T>) -> vector<T> { r = v[1..3]; r }
 fn total(v: const vector<integer>) -> integer { s = 0; for x in v { s += x; } s }
 
 // One function per group of cases that share a local: one C function of 3188 lines took MSVC
-// `cl /O1` past the C sweep's compile limit, where gcc takes seconds.
+// `cl /O1` past the C sweep's compile limit, where gcc takes seconds.  The C backend now caps
+// a function's size itself (`@FR-R-CSplit`); the groups stay because the cases read better so.
 fn a_plain_slice_and_its_fresh_copy(m: vector<integer>) {
   // c1: a plain slice — elements 7..14: 21, 24, …, 39
   s = m[7..14];

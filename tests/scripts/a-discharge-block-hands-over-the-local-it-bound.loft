@@ -1,0 +1,92 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-O-Move — a discharge `f(b)!` read in place is a block that binds the call's answer to a
+// local of its own and hands that local over: `{ t = f(b); if !t { panic } t }`.  The local's
+// bind joins (a view of `b` is copied, a store the callee made is adopted), so the block's
+// value is a store nothing else names, and the bind that takes it is the plain one on every
+// writer (`bind_lowering::block_hands_over_its_own`, @PLN220).
+//
+// CHANNEL: the VALUES (hand-computed beside each cell), the base read back after the reads,
+//          and the leak / double-free gate; `tests/bind_census.rs` asks that both writers name
+//          the same lowering for every assignment here.
+// Axes this file MOVES:  the callee's answer (a view of its argument, a store it made, either
+//                        per call); the read (handed to a call, a field, an element); one base
+//                        or two alternating; the base grown between reads.
+// Axes it HOLDS FIXED:   the callee is a loft function answering `Sc?`; the element type is one
+//                        record with a text and a vector member.
+//
+// @ARMED: LOFT_STRICT_STORES=1 LOFT_REFREE_FAILS=1 LOFT_DOUBLE_FREE=1
+// @falsified-at: none — the lowering changes no answer (the join's copy arm could not run);
+//   the receipt is the census: with `LOFT_DISCHARGE_BLOCK_JOIN=1` `tests/bind_census.rs` reads
+//   `re R1/b2=pre is lowered as displacing-rebind` for the lift temporaries here.
+
+struct Sc { name: text, size: integer, tags: vector<integer> }
+struct Bundle { schemas: vector<Sc> }
+fn schema(b: Bundle, tp: integer) -> Sc? { if tp < len(b.schemas) { b.schemas[tp] } else { null } }
+// fresh on one arm, a view of its argument on the other
+fn mixed(b: Bundle, tp: integer) -> Sc? {
+  if tp == 9 { null } else if tp < len(b.schemas) { b.schemas[tp] } else { Sc { name: "fresh", size: 70 + tp, tags: [tp] } }
+}
+fn show(s: Sc) -> integer { s.size + len(s.name) }
+
+// c1: one base, the same store every time.  3+1 + 5+1 = 10
+fn test_c1_one_base() {
+  b = Bundle { schemas: [Sc { name: "x", size: 3, tags: [4] }, Sc { name: "y", size: 5, tags: [6] }] };
+  r = 0;
+  for k in 0..2 { r += show(schema(b, k)!); }
+  assert(r == 10, "c1 {r}");
+  assert(len(b.schemas) == 2 && b.schemas[1].name == "y", "c1 base");
+}
+
+// c2: two bases alternate: the temporary moves from a view of b1 to a view of b2 and back.
+// k=0: b1[0].size 3; k=1: b2[0].size 20; k=2: 3; k=3: 20  => 46
+fn alt(b1: Bundle, b2: Bundle) -> integer {
+  r = 0;
+  for k in 0..4 {
+    if k % 2 == 0 { r += schema(b1, 0)!.size; } else { r += schema(b2, 0)!.size; }
+  }
+  r
+}
+fn alt_one_site(b1: Bundle, b2: Bundle) -> integer {
+  r = 0;
+  for k in 0..4 { r += schema(if k % 2 == 0 { b1 } else { b2 }, 0)!.size; }
+  r
+}
+fn test_c2_two_bases() {
+  b1 = Bundle { schemas: [Sc { name: "x", size: 3, tags: [4] }] };
+  b2 = Bundle { schemas: [Sc { name: "long", size: 20, tags: [7, 8] }] };
+  assert(alt(b1, b2) == 46, "c2 two sites {alt(b1, b2)}");
+  assert(alt_one_site(b1, b2) == 46, "c2 one site {alt_one_site(b1, b2)}");
+  assert(b1.schemas[0].name == "x" && b1.schemas[0].tags[0] == 4 && len(b1.schemas) == 1, "c2 b1 kept");
+  assert(b2.schemas[0].name == "long" && len(b2.schemas[0].tags) == 2 && b2.schemas[0].tags[1] == 8, "c2 b2 kept");
+}
+
+// c3: fresh and view answers alternate at one site.
+// tp=0: view 3+1=4; tp=5: fresh 75+5=80; tp=0: 4; tp=6: fresh 76+5=81  => 169
+fn test_c3_fresh_and_view() {
+  b = Bundle { schemas: [Sc { name: "x", size: 3, tags: [4] }] };
+  r = 0;
+  for tp in [0, 5, 0, 6] { r += show(mixed(b, tp)!); }
+  assert(r == 169, "c3 {r}");
+  assert(b.schemas[0].name == "x" && b.schemas[0].tags[0] == 4, "c3 base kept");
+}
+
+// c4: fresh, then view, then a field and an element read.  75 + 3 + tags: 5 + 4 => 87
+fn test_c4_reads() {
+  b = Bundle { schemas: [Sc { name: "x", size: 3, tags: [4] }] };
+  r = mixed(b, 5)!.size;
+  r += mixed(b, 0)!.size;
+  r += mixed(b, 5)!.tags[0];
+  r += mixed(b, 0)!.tags[0];
+  assert(r == 87, "c4 {r}");
+  assert(len(b.schemas) == 1 && b.schemas[0].size == 3, "c4 base kept");
+}
+
+// c5: the view outlives nothing: the base is read and grown after the function that read it.
+fn test_c5_base_grows_after() {
+  b = Bundle { schemas: [Sc { name: "x", size: 3, tags: [4] }] };
+  r = 0;
+  for k in 0..3 { r += schema(b, 0)!.size; b.schemas += [Sc { name: "n{k}", size: k, tags: [] }]; }
+  assert(r == 9, "c5 {r}");
+  assert(len(b.schemas) == 4 && b.schemas[3].name == "n2" && b.schemas[0].name == "x", "c5 base");
+}

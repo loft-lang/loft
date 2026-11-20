@@ -527,15 +527,43 @@ names its source line, so the census pairs by site; an interpreter row carries t
 lowering read and a C row the arm `bind_lowering` decides beside its own (`lowering=R1/b2=stash
 join`).
 
+A block that hands over a local it bound itself — a discharge read in place, `{ t = f(b); if
+!t { panic } t }` — is bound plainly on every writer (`bind_lowering::block_hands_over_its_own`,
+`@FR-O-Move`): the local's own bind already joined, copied or adopted the call's answer, so a
+second join at the outer bind had a copy arm that could not run.  `LOFT_DISCHARGE_BLOCK_JOIN=1`
+joins it again on the interpreter.
+
+### The lowering census is a gate
+
+`make bind-census` runs the census over the language suite with `--check`: it fails when the C
+writer lowers an assignment with a store effect other than the interpreter's, or meets an
+interpreter arm it has no entry for.  The judgment is two tables in `scripts/bind_census.py`:
+
+- `C_EXPECTED` — the C arm each interpreter arm becomes when both decide alike.  Three facts
+  ride on the interpreter arm's name, each the one shared answer both writers read: the
+  displaced free (`b2=`), whether a null init mints (`mint=`, `vector_null_mints` and
+  `lazy_buffer_mints_at`), and whether a call copy releases its source (`srcfree=`,
+  `call_return_frees_source`).
+- `C_REPRESENTATION` — the C arms that choose how a value is HELD (a value record, a scalar
+  kept across a chain, a rewritten bind, a write through a link) and are met under any
+  interpreter arm.  The census cannot see inside these: that each takes its store effect from
+  `bind_lowering` is checked by the C sweep and the store sweeps, not here.
+
+A new arm on either side is added to the table it belongs in, with the rule that settles it.
+The nightly `Lowering census` job runs the whole suite; `tests/bind_census.rs` holds one
+program on every PR and proves the check can fail.  The rustc writer's census
+(`--writer native`) is a report and has no table.
+
 ## Phases
 
 1. **Records beside the checker.**  Build the records as an observer (the shipped code stays
    byte-identical) and print them with `LOFT_STORE_TABLE=<fn>`; `LOFT_OWN_ORACLE=check-records`
    reports their findings, and `scripts/own_sweep.py --oracle check-records` measures them.
    Built: `src/store_records.rs`.
-2. **The lowering in the IR.**  Each assignment carries its lowering kind, decided in one place
-   before code generation; the three code generators read it instead of deciding it, and
-   `LOFT_TRACE_BIND`'s arms become the kinds' names.
+2. **The lowering decided once.**  Built for the store effect: `bind_lowering` decides every
+   assignment's arm and displaced free, the bytecode writer and the records read only that,
+   and the C writer is held to it by the census gate above.  Not built: the decision as a node
+   of the IR, which phase 5 needs before a writer can stop asking `bind_lowering` per site.
 3. **Checks on the records.**  Re-base the leak, double-end, use-after-end and wrong-end
    checks on the records; drive the sweep's MISS and STATIC counts to 0, one shape at a time,
    each with its suite cell.

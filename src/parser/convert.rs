@@ -489,7 +489,7 @@ impl Parser {
             let src = self.narrow_source_name(code, is_type);
             let dst = self.int_type_name(should);
             let dense = self.store_ctx.last().is_some_and(|c| c.dense);
-            let cures = Self::narrowing_cures(code, should, &dst, dense);
+            let cures = self.narrowing_cures(code, should, &dst, dense);
             diagnostic!(
                 self.lexer,
                 Level::Error,

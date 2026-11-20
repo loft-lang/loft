@@ -183,6 +183,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-BoundedNest)` | `R-BoundedNest` native · `/kernel` ir |
 | `(R-BufferReturn)` | `R-BufferReturn` c · `/bind` c |
 | `(R-ByteCopy)` | `R-ByteCopy` ir |
+| `(R-CSplit)` | `R-CSplit` c |
 | `(R-CTail)` | `R-CTail` c |
 | `(R-CallLine)` | not counted — executor: a frame's line derived from its call position |
 | `(R-Callee)` | `R-Callee` c, native |
@@ -5658,6 +5659,38 @@ Sites: `opt::frame_calls::GuardFree` (`registers_buffers`, `is_guard_free`), the
                  72.0 → 65.5 MB, its largest function 80 529 → 37 576 lines, 253
                  functions shortened.  Switch `LOFT_NO_C_TAIL=1`; `LOFT_TRACE_C_TAIL=1`
                  names each function shortened.  Site `src/c/tail.rs`.
+
+  (R-CSplit)     the C of a function body over the SIZE BUDGET is written as a chain of
+                 parts.  The budget is 300 runtime-call sites in one body — the measure
+                 that follows a C compiler's optimiser time, which for MSVC's `cl /O1`
+                 grows about with the square of it above 400 sites.  Consecutive
+                 TOP-LEVEL statements of the body move into `LOFT_NOINLINE` functions
+                 `<fn>__part<k>`, which the function calls in order; a parameter and a
+                 local more than one part names live in one frame struct the function
+                 owns and hands each part by pointer, and a local one part alone names
+                 stays that part's own unless its address is taken.
+                 THE INVARIANT: every statement of the body runs once, in the order it
+                 ran, on the same objects.  The rule moves where a statement is WRITTEN,
+                 never what it does, so a split changes no answer, no free and no leak.
+                 A part that holds a `return` leaves the value in the frame and answers
+                 1; the function returns it where the body did.
+                 PREMISES: a cut falls only on a statement boundary of the body's top
+                 level — never inside a loop, an `if`, a `match` or a block's value; a
+                 `goto` and its label share a part; the hold list (`LOFT_HOLD`) stays in
+                 the function.  A body the pass cannot read for certain stays whole: a
+                 `setjmp`, a preprocessor conditional, a block comment over lines, a
+                 label it cannot place.
+                 TIERS: a semantics build alone.  A shipped unit (`--ship`, an ESP app)
+                 keeps every function whole, so its C is the C it is without the rule
+                 (`functions_whole`).  The parts are compiled by MSVC alone: the body is
+                 written both ways, the parts under `#if defined(_MSC_VER)`, because gcc
+                 and clang stay linear on a large function and a split costs a hot
+                 function its registers.
+                 Measured on `cl /O1`, the eight slowest programs of the C sweep: 592 s
+                 whole, 98 s in parts, every answer the same.  Switch `LOFT_NO_C_SPLIT=1`;
+                 `LOFT_C_SPLIT=<n>` sets the budget and writes the parts for every
+                 compiler; `LOFT_TRACE_C_SPLIT=1` names each function split.  Site
+                 `src/c/split.rs`; guard `tests/c_split.rs`.
 
   (R-Inline)     a loft function the C writes in at most twelve statements is declared
                  `static inline`, its frame wrapper with it, and its body is ALWAYS

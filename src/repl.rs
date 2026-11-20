@@ -1633,10 +1633,10 @@ pub struct TestRun {
 fn drain_pipe<R: std::io::Read + Send + 'static>(
     pipe: Option<R>,
     buf: &std::sync::Arc<std::sync::Mutex<String>>,
-) {
-    let Some(p) = pipe else { return };
+) -> Option<std::thread::JoinHandle<()>> {
+    let p = pipe?;
     let buf = std::sync::Arc::clone(buf);
-    std::thread::spawn(move || {
+    Some(std::thread::spawn(move || {
         let reader = std::io::BufReader::new(p);
         for line in reader.lines() {
             let Ok(line) = line else { break };
@@ -1644,7 +1644,7 @@ fn drain_pipe<R: std::io::Read + Send + 'static>(
             g.push_str(&line);
             g.push('\n');
         }
-    });
+    }))
 }
 
 /// Extract a readable message from a caught panic payload.
@@ -1896,6 +1896,9 @@ enum SessionShape {
 struct GameProc {
     child: crate::platform::process::Running,
     output: std::sync::Arc<std::sync::Mutex<String>>,
+    /// The threads draining the child's stdout and stderr into `output`; each ends at its
+    /// pipe's end of file.
+    readers: Vec<std::thread::JoinHandle<()>>,
 }
 
 /// @PLN14 arc D — one binding's frame-seed result, as the differential Step 4 is
@@ -2606,9 +2609,18 @@ impl ReplSession {
             .start()
             .map_err(|e| format!("cannot launch game: {e}"))?;
         let output = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
-        drain_pipe(child.take_stdout(), &output);
-        drain_pipe(child.take_stderr(), &output);
-        self.game = Some(GameProc { child, output });
+        let readers = [
+            drain_pipe(child.take_stdout(), &output),
+            drain_pipe(child.take_stderr(), &output),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        self.game = Some(GameProc {
+            child,
+            output,
+            readers,
+        });
         Ok(())
     }
 
@@ -2617,16 +2629,27 @@ impl ReplSession {
     /// ended the slot is cleared, so the next [`launch_game`](Self::launch_game) is free.
     pub fn game_status(&mut self) -> Option<(bool, String, Option<i32>)> {
         let g = self.game.as_mut()?;
-        let chunk = std::mem::take(
-            &mut *g
-                .output
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner),
-        );
+        let take = |g: &GameProc| {
+            std::mem::take(
+                &mut *g
+                    .output
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner),
+            )
+        };
         if g.child.alive() {
-            return Some((true, chunk, None));
+            return Some((true, take(g), None));
+        }
+        // The child has ended, but its last lines may still be in the pipes: the exit is
+        // reported with everything it wrote, so the readers are waited for first.  A pipe a
+        // grandchild still holds (a `--native` game's server) has no end of file, so the
+        // wait is bounded.
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while g.readers.iter().any(|r| !r.is_finished()) && std::time::Instant::now() < until {
+            std::thread::sleep(std::time::Duration::from_millis(5));
         }
         let code = g.child.finish().ok().and_then(|s| s.code());
+        let chunk = take(g);
         self.game = None;
         Some((false, chunk, code))
     }
