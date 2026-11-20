@@ -305,7 +305,18 @@ impl Scopes<'_> {
             {
                 self.scan_inner(&rewritten, function, data)
             }
-            Value::Set(ov, value) => self.scan_set(*ov, value, function, data),
+            Value::Set(ov, value) => {
+                let set = self.scan_set(*ov, value, function, data);
+                // loft#2594 — the bind took the buffer's store (`literal_moves`): the buffer's
+                // slot is reset to the null sentinel behind it, freeing nothing.
+                match self.moved_buffer.take_if(|(local, _)| *local == *ov) {
+                    Some((_, av)) => Value::Insert(vec![
+                        set,
+                        Value::Call(data.def_nr("OpInitRefSentinel"), vec![Value::Var(av)]),
+                    ]),
+                    None => set,
+                }
+            }
             Value::Loop(lp) => {
                 let scope = self.enter_scope();
                 self.loops.push(scope);
