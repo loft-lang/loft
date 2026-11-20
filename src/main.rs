@@ -2017,8 +2017,16 @@ fn self_update_cmd(args: &SelfUpdateArgs<'_>) -> i32 {
             // Staged beside nothing else of ours, and removed on every exit path: a
             // half-unpacked bundle left in a temp directory is the kind of debris a
             // later run would happily pick up.
-            let tmp =
-                std::env::temp_dir().join(format!("loft-self-update-{to}-{}", std::process::id()));
+            // The name carries the clock as well as the pid: `fetch_bundle` refuses a
+            // directory that already exists, and a name another user can compute is one
+            // they can sit on to keep this machine from updating.
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.subsec_nanos());
+            let tmp = std::env::temp_dir().join(format!(
+                "loft-self-update-{to}-{}-{nanos:09}",
+                std::process::id()
+            ));
             let staged = match loft::self_update::fetch_bundle(&url, &sha256, &tmp) {
                 Ok(p) => p,
                 Err(e) => {

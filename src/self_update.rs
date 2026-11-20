@@ -50,20 +50,33 @@ pub const TOOLCHAIN_PKG: &str = "loft";
 /// not a release bundle.
 #[cfg(feature = "registry")]
 pub fn fetch_bundle(url: &str, sha256: &str, tmp: &Path) -> Result<PathBuf, String> {
-    file_access::create_dir_all(tmp).map_err(|e| format!("cannot create {e}"))?;
-    let zip_path = tmp.join("bundle.zip");
-    let bytes = crate::registry_index::download_tarball(url, &zip_path)?;
+    // The archive never touches the disk: the bytes that were hashed are the bytes that
+    // are unpacked, and nothing that failed its hash is left anywhere.
+    let bytes = crate::registry_index::fetch_bytes(url)?;
     crate::integrity::verify_sha256(&bytes, sha256).map_err(|e| {
-        // Leave nothing unpacked behind that failed its hash.
-        let _ = file_access::remove_file(&zip_path);
         format!(
             "the downloaded bundle does not match the hash the signed index publishes \
              ({e}).  Nothing was installed."
         )
     })?;
+    // The staging directory is made HERE and must not exist: one that was already there
+    // (the temp directory is shared, and the name is guessable) belongs to whoever made
+    // it, who can replace what is unpacked into it before it is installed.
+    file_access::create_dir(tmp).map_err(|e| {
+        format!(
+            "cannot create the staging directory {} ({e}); if it exists, it is not ours \
+             to unpack into.  Nothing was installed.",
+            tmp.display()
+        )
+    })?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        file_access::set_permissions(tmp, std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| format!("cannot make the staging directory private: {e}"))?;
+    }
     let extract = tmp.join("x");
-    let file = file_access::open(&zip_path).map_err(|e| format!("cannot open bundle: {e}"))?;
-    zip::ZipArchive::new(file)
+    zip::ZipArchive::new(std::io::Cursor::new(&bytes[..]))
         .map_err(|e| format!("the bundle is not a readable zip: {e}"))?
         .extract(&extract)
         .map_err(|e| format!("cannot unpack the bundle: {e}"))?;
@@ -1004,6 +1017,18 @@ mod tests {
             file_access::is_file(staged.join("bin").join("loft")),
             "{}",
             staged.display()
+        );
+
+        // Refusal: a staging directory that already exists is somebody else's.  Same
+        // bundle, same hash as the pass above; only the directory differs.
+        let squatted = base.join("squatted");
+        file_access::create_dir_all(&squatted).unwrap();
+        let err = fetch_bundle(&url, &good, &squatted)
+            .expect_err("a staging directory that already exists must be refused");
+        assert!(err.contains("not ours"), "{err}");
+        assert!(
+            !file_access::exists(squatted.join("x")),
+            "and nothing is unpacked into it"
         );
 
         // Refusal: one wrong hash, nothing unpacked.
