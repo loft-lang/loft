@@ -63,7 +63,7 @@ sole programs ×2 + programs met / 3).
 
 | issue | what | state |
 |---|---|---|
-| #2591 (silent-wrong, main) | a name a slice pattern's alternation captured (single-element, multi-element, optional group) kept naming the capture after the arm (`@FR-B-Scope`); a capture named like the subject looped `parse_match_inner` into OOM | fixed on loft30-gate f406c3312; corpus parses identically; guard cell text on the issue, sent to loft3 to place |
+| #2591 (silent-wrong, main) | a name a slice pattern's alternation captured (single-element, multi-element, optional group) kept naming the capture after the arm (`@FR-B-Scope`); a capture named like the subject looped `parse_match_inner` into OOM | fixed on loft30-gate f406c3312; guard cell placed by loft3 in loft-suite 302a24b (falsified on 203d1bf6c) |
 
 ## Instruments changed
 
