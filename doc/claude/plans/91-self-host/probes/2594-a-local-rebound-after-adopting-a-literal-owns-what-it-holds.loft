@@ -1,0 +1,67 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @FR-B-Copy, @FR-O-Buffer, @FR-H-FreeTwice: a record local in a block whose first value is a
+// literal built in the function's construction buffer (`{ ft = TyVoid; … }`) and which is then
+// rebound from calls owns what it holds.  Every rebind copies or adopts what the call answers and
+// releases the store it displaces; the block's exit releases the last one.  Paired with the buffer
+// instead, the local kept every store it displaced (a leak per rebind in a loop), and a rebind
+// that reads the local (`ft = join(ft, c.ft)`) bound the call's answer plainly, so the exit
+// released another argument's record (a double free on every backend; loft#2594, main).
+//
+// Axes this file MOVES:  what the call answers (its second argument always, a fresh value on one
+//                        path, its first argument, the local itself); what that argument is (a
+//                        vector element's field, a local, a unit variant); the repetition (one
+//                        rebind, a loop, nested loops, 200 passes, 50 passes reading and not).
+// Axes it HOLDS FIXED:   the literal is the local's first bind; the calls are user functions.
+// Controls: fn_scope (the same rebinds at function scope), first_bind (no rebind of the local).
+pub struct Spec { pub min: integer, pub max: integer }
+pub enum Ty { TyVoid, TyInteger { spec: Spec }, TyText { dep: vector<integer> } }
+pub struct Cap { pub name: text, pub ft: Ty }
+pub struct Br { pub caps: vector<Cap> }
+
+fn only_b(a: Ty, b: Ty) -> Ty { b }
+fn join(a: Ty, b: Ty) -> Ty {
+  match a {
+    TyInteger { spec: sa } => match b {
+      TyInteger { spec: sb } => TyInteger { spec: Spec { min: if sa.min < sb.min { sa.min } else { sb.min }, max: if sa.max > sb.max { sa.max } else { sb.max } } },
+      _ => b
+    },
+    _ => b
+  }
+}
+fn keep_a(a: Ty, b: Ty) -> Ty { if b is TyVoid { a } else { a } }
+fn code(t: Ty) -> integer { match t { TyVoid => 1, TyInteger { spec } => 1000 + spec.min * 10 + spec.max, TyText { dep } => 2 + len(dep) * 100 } }
+fn caps() -> vector<Cap> { [Cap { name: "w", ft: TyText { dep: [7] } }, Cap { name: "n", ft: TyInteger { spec: Spec { min: 1, max: 2 } } }, Cap { name: "m", ft: TyInteger { spec: Spec { min: 0, max: 5 } } }] }
+
+fn ans_b() -> integer { cs = caps(); r = 0; { ft = TyVoid; ft = only_b(ft, cs[0].ft); r = code(ft); } r }
+fn ans_fresh() -> integer { cs = caps(); r = 0; { ft = TyVoid; ft = join(ft, cs[1].ft); ft = join(ft, cs[2].ft); r = code(ft); } r }
+fn ans_a() -> integer { cs = caps(); r = 0; { ft = TyText { dep: [1, 2] }; ft = keep_a(ft, cs[1].ft); r = code(ft); } r }
+fn b_field() -> integer { cs = caps(); r = 0; { ft = TyVoid; ft = join(ft, cs[0].ft); r = code(ft); } r * 10 + code(cs[0].ft) }
+fn b_local() -> integer { t = TyText { dep: [3, 4] }; r = 0; { ft = TyVoid; ft = join(ft, t); r = code(ft); } r * 1000 + code(t) }
+fn b_unit() -> integer { cs = [Cap { name: "v", ft: TyVoid }]; r = 0; { ft = TyText { dep: [] }; ft = join(ft, cs[0].ft); r = code(ft); } r }
+fn loop_vec() -> integer { cs = caps(); r = 0; { ft = TyVoid; for c in cs { ft = join(ft, c.ft); } r = code(ft); } r }
+fn nested() -> integer { brs = [Br { caps: caps() }, Br { caps: caps() }]; r = 0; { ft = TyVoid; for sb in brs { for c in sb.caps { ft = join(ft, c.ft); } } r = code(ft); } r }
+fn many() -> integer { cs = caps(); t = 0; { ft = TyVoid; for i in 0..200 { ft = join(ft, cs[i % 3].ft); t += code(ft); } } t }
+fn fn_scope() -> integer { cs = caps(); ft = TyVoid; ft = join(ft, cs[1].ft); ft = join(ft, cs[2].ft); code(ft) }
+fn first_bind() -> integer { cs = caps(); r = 0; { f0 = TyVoid; ft = join(f0, cs[0].ft); r = code(ft); } r }
+
+fn test_ans_b() { assert(ans_b() == 102, "ans_b {ans_b()}"); }
+fn test_ans_fresh() { assert(ans_fresh() == 1005, "ans_fresh {ans_fresh()}"); }
+fn test_ans_a() { assert(ans_a() == 202, "ans_a {ans_a()}"); }
+fn test_b_field() { assert(b_field() == 1122, "b_field {b_field()}"); }
+fn test_b_local() { assert(b_local() == 202202, "b_local {b_local()}"); }
+fn test_b_unit() { assert(b_unit() == 1, "b_unit {b_unit()}"); }
+fn test_loop_vec() { assert(loop_vec() == 1005, "loop_vec {loop_vec()}"); }
+fn test_nested() { assert(nested() == 1005, "nested {nested()}"); }
+fn test_many() { assert(many() == 140968, "many {many()}"); }
+fn test_fn_scope() { assert(fn_scope() == 1005, "fn_scope {fn_scope()}"); }
+fn test_first_bind() { assert(first_bind() == 102, "first_bind {first_bind()}"); }
+
+pub struct KS { n: integer, tags: vector<integer> }
+fn id(u: KS) -> KS { u }
+fn mk(n: integer) -> KS { KS { n: n, tags: [n] } }
+fn pick(a: KS, b: KS) -> KS { if a.n > 100 { mk(a.n) } else { b } }
+fn test_kept_noread_loop() { u = mk(7); r = 0; { x = KS { n: 1, tags: [] }; for i in 0..50 { x = id(u); r += x.n; } } assert(r == 350, "r {r}"); }
+fn test_kept_noread_mint_loop() { r = 0; { x = KS { n: 1, tags: [] }; for i in 0..50 { x = mk(i); r += x.n; } } assert(r == 1225, "r {r}"); }
+fn test_kept_read_loop() { u = mk(7); r = 0; { x = KS { n: 1, tags: [] }; for i in 0..50 { x = pick(x, u); r += x.n; } } assert(r == 350, "r {r}"); }
