@@ -2668,7 +2668,7 @@ impl Output<'_> {
                 // Any other tuple-valued yield — a variable, a field, a call — is bound once
                 // and written member by member.  Matched on the literal alone, it wrote no slot
                 // and the consumer read zeros, with nothing reported.
-                let code = self.generate_expr_buf(val)?;
+                let code = self.yield_value_code(val)?;
                 writeln!(w, "                let __yt = {code};")?;
                 let mut slot = 0usize;
                 for (i, &kind) in kinds.iter().enumerate() {
@@ -2706,7 +2706,7 @@ impl Output<'_> {
             );
             let yield_code = match self.fn_number_code(val).filter(|_| is_bare_dnr) {
                 Some(code) => code,
-                None => self.generate_expr_buf(val)?,
+                None => self.yield_value_code(val)?,
             };
             if is_bare_dnr {
                 writeln!(
@@ -2737,7 +2737,7 @@ impl Output<'_> {
             }
             writeln!(w, "                return true;")?;
         } else {
-            let yield_code = self.generate_expr_buf(val)?;
+            let yield_code = self.yield_value_code(val)?;
             // `(G-Own)`: a yielded record is HANDED to the consumer, so the
             // generator forgets the temps holding it rather than releasing them
             // at its tail or when it is dropped.
@@ -2766,6 +2766,20 @@ impl Output<'_> {
             }
         }
         Ok(())
+    }
+
+    /// The Rust of a yielded VALUE, as an expression: a statement list (`Insert` — a hoisted
+    /// call bound first, then the read of its field: `yield box(c, h).t`) is a block, whose
+    /// value is its last statement.  Bare, its statements landed inside the channel's
+    /// parentheses (`return ( stmt; expr ).to_string()`), which is no Rust; the same braces a
+    /// `return` of such a list takes (`emit.rs`, `block_braces`).
+    fn yield_value_code(&mut self, val: &Value) -> std::io::Result<String> {
+        let code = self.generate_expr_buf(val)?;
+        Ok(if matches!(val.unspan(), Value::Insert(_)) {
+            format!("{{ {code} }}")
+        } else {
+            code
+        })
     }
 
     /// The statement an eager factory pushes a yielded FN-REF with (loft#1676): its two slot
