@@ -3079,12 +3079,12 @@ LOFT_HOT_INLINE int64_t loft_neg(int64_t a) {
 }
 
 /* OpLengthText: characters, OpSizeText: bytes; both 0 for the null text. */
-static int64_t loft_text_length(loft_str s) {
-    return loft_str_is_null(s) ? 0 : (int64_t) loft_chars(s);
+static loft_int loft_text_length(loft_str s) {
+    return loft_str_is_null(s) ? 0 : (loft_int) loft_chars(s);
 }
 
-static int64_t loft_text_size(loft_str s) {
-    return loft_str_is_null(s) ? 0 : (int64_t) s.len;
+static loft_int loft_text_size(loft_str s) {
+    return loft_str_is_null(s) ? 0 : (loft_int) s.len;
 }
 
 /* Stores::free_displaced: free what a rebind displaced, unless it is the witness's store. */
@@ -5249,6 +5249,8 @@ static double loft_bits2f(int64_t v) { double f; memcpy(&f, &v, 8); return f; }
 static int64_t loft_s2bits(float f) { int32_t v; memcpy(&v, &f, 4); return v; }
 static float loft_bits2s(int64_t v) { int32_t w = (int32_t) v; float f; memcpy(&f, &w, 4); return f; }
 static float loft_i2s(int64_t v) { return v == LOFT_NULL ? (float) NAN : (float) v; }
+/* @PLN217 — the same for an integer held in 32 bits. */
+static float loft_i2s32(int32_t v) { return v == INT32_MIN ? (float) NAN : (float) v; }
 
 /* OpCastIntFromFloat: NaN and a value outside i64 are null; else truncated toward zero. */
 static int64_t loft_f2i(double v) {

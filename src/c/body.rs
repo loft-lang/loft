@@ -1975,7 +1975,7 @@ impl<'a> FnWriter<'a> {
                 "loft_ph_put4",
                 format!("loft_f32_bits({})", as_single(val)?),
             ),
-            "OpPushInt4" => ("loft_ph_put4", format!("loft_i4_bits({})", as_int(val)?)),
+            "OpPushInt4" => ("loft_ph_put4", i4_bits(val)?),
             "OpPushCharacter" => ("loft_ph_put4", format!("(uint32_t) {}", as_char(val)?)),
             "OpPushBoolean" => ("loft_ph_put1", format!("(uint8_t) {}", as_bool(val)?)),
             "OpPushEnum" => ("loft_ph_put1", format!("(uint8_t) {}", as_enum(val)?)),
@@ -2674,7 +2674,7 @@ impl<'a> FnWriter<'a> {
                 "loft_win_put4",
                 format!("loft_f32_bits({})", as_single(val)?),
             ),
-            "OpPushInt4" => ("loft_win_put4", format!("loft_i4_bits({})", as_int(val)?)),
+            "OpPushInt4" => ("loft_win_put4", i4_bits(val)?),
             "OpPushCharacter" => ("loft_win_put4", as_char(val)?),
             "OpPushBoolean" => ("loft_win_put1", as_bool(val)?),
             "OpPushEnum" => ("loft_win_put1", as_enum(val)?),
@@ -9940,7 +9940,8 @@ impl<'a> FnWriter<'a> {
                 } else {
                     "loft_text_size"
                 };
-                Ok(E::new(format!("{f}({})", as_view(a)?), K::Int))
+                // @PLN217 — a text's length and size are counts: the build's integer.
+                Ok(E::new(format!("{f}({})", as_view(a)?), wint()))
             }
             "OpRangeDefault" => {
                 let [v, lo, hi, dflt] = args else {
@@ -10183,6 +10184,10 @@ impl<'a> FnWriter<'a> {
             }
             ("OpConvSingleFromInt", [_]) => {
                 let a = self.one(name, args, ind)?;
+                // @PLN217 — an integer held in 32 bits converts in 32 bits.
+                if a.kind == K::Int32 {
+                    return Ok(E::new(format!("loft_i2s32({})", a.code), K::Single));
+                }
                 Ok(E::new(format!("loft_i2s({})", as_int(a)?), K::Single))
             }
             ("OpCastIntFromFloat", [_]) => {
@@ -11826,6 +11831,16 @@ fn as_int32(e: E) -> Result<String, String> {
 /// 32-bit build (`--width 32`), where a 64-bit value outside it reads null, and `int64_t`
 /// otherwise.  Keyed on the build and not on how this unit holds its locals
 /// (`LOFT_NO_C_INT32`), because the runtime's width is the build's.
+/// The four bytes a 4-byte integer element holds: a value held in 32 bits as it stands (its
+/// null is the element's own bit pattern, @PLN217), a 64-bit one through `loft_i4_bits`.
+fn i4_bits(e: E) -> Result<String, String> {
+    if e.kind == K::Int32 {
+        Ok(format!("(uint32_t) {}", e.code))
+    } else {
+        Ok(format!("loft_i4_bits({})", as_int(e)?))
+    }
+}
+
 fn as_wint(e: E) -> Result<String, String> {
     if crate::keys::width32_all() {
         as_int32(e)
