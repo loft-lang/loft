@@ -1776,9 +1776,12 @@ pub fn tuple_get(e: el::El, vars: el_vars::Vars, te: integer?, index: integer) -
     },
     _ => {}
   }
+  // (`@FR-T-Ref-Rep`: a `&(…)` parameter links the `__tuple<…>` record — its members are read
+  // as a boxed tuple's are.)
+  xlt = match x.tp { TyRefVar { inner: xli } => if el_types::base(xli) is TyReference { el_types::base(xli) } else { x.tp }, _ => x.tp };
   match el_ir::unspan(x.code) {
     NdVar { n: tv } => {
-      match x.tp {
+      match xlt {
         TyTuple { elems } => {
           if index < 0 || index >= len(elems) {
             el::refuse(e, "a tuple member past the tuple's end");
@@ -2433,6 +2436,32 @@ fn discharge_seeded(e: el::El, code: ir::Node) -> ir::Node? {
   null
 }
 
+// A tuple of scalar members alone.
+fn scalar_tuple(t: ir::TypeT) -> boolean {
+  match el_types::base(t) {
+    TyTuple { elems } => len(elems) > 0 && len([for m in elems if !is_scalar(el_types::base(m)) { 1 }]) == 0,
+    _ => false
+  }
+}
+
+// `@FR-T-Ref-Rep`: a member of a `&(…)` parameter that links the `__tuple<…>` record
+// (`p.0 = p.1`) — a field of that record, written as a record's field is.
+fn linked_tuple_record_member(e: el::El, vars: el_vars::Vars, target: integer) -> boolean {
+  match e.p.nodes[target] {
+    STupleGet { e: tpe } => {
+      if tpe == null {
+        return false;
+      }
+      v = match e.p.nodes[tpe!] { SName { name, member } => if member == "" { el_vars::var(vars, name) } else { -1 }, _ => -1 };
+      v >= 0 && match el_vars::tp(vars, v) {
+        TyRefVar { inner } => match el_types::base(inner) { TyReference { n } => starts_with(el::def(e, n).name, "__tuple<"), _ => false },
+        _ => false
+      }
+    },
+    _ => false
+  }
+}
+
 // `Parser::is_struct_returning_call`: a call of a loft function with a body (`n_…`), or a struct
 // literal's block — what allocates a store of its own.  (`answers_caller_buffer` is a collection
 // return handed a caller buffer: no keyed result has one.)
@@ -3035,7 +3064,7 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
   }
   // (A tuple member of a place — `v[1].1 += 3`, `w[0].1.1 += 7` — is the member's field in the
   // element: a place as any field is.)
-  member_of_place = match e.p.nodes[target] { STupleGet { e: tpe } => tpe != null && !(e.p.nodes[tpe!] is SName) && !(e.p.nodes[tpe!] is STupleGet), _ => false } || tuple_member_chain_of_place(e, target);
+  member_of_place = match e.p.nodes[target] { STupleGet { e: tpe } => tpe != null && !(e.p.nodes[tpe!] is SName) && !(e.p.nodes[tpe!] is STupleGet), _ => false } || tuple_member_chain_of_place(e, target) || linked_tuple_record_member(e, vars, target);
   if e.p.nodes[target] is SMember || e.p.nodes[target] is SIndex || member_of_place {
     return el_ex_place::place_assignment(e, vars, op, target, rhs!);
   }
@@ -3055,7 +3084,10 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
       tvar = match e.p.nodes[tse ?? 0] { SName { name: tn, member: tm } => if tse != null && tm == "" { el_vars::var(vars, tn) } else { -1 }, _ => -1 };
       // A written tuple PARAMETER is the callee's copy (`__tp_<name>`), made where the first pass
       // meets the write.
-      if e.first_pass && tvar >= 0 && vars.vars[tvar].argument && !hidden_param(e, vars, tvar) && el_types::base(el_vars::tp(vars, tvar)) is TyTuple {
+      // (`promote_written_tuple_param` for a text-carrying tuple; a heap-carrying one Rust
+      // shadows at entry, `@FR-F-ParamTuple` — the same local.  A tuple of scalars alone is
+      // written in place.)
+      if e.first_pass && tvar >= 0 && vars.vars[tvar].argument && !hidden_param(e, vars, tvar) && el_types::base(el_vars::tp(vars, tvar)) is TyTuple && !scalar_tuple(el_vars::tp(vars, tvar)) {
         tvar = el_vars::promote_tuple_param(vars, tvar);
       }
       members = if tvar >= 0 { match el_vars::tp(vars, tvar) { TyTuple { elems: tel } => tel, _ => [] } } else { [] };
@@ -3065,7 +3097,10 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
         el::refuse(e, "a write to a member of a tuple local declared with a narrow member");
         return ex(ir::NdNull, ir::TyVoid);
       }
-      if tvar >= 0 && !vars.vars[tvar].argument && tix >= 0 && tix < len(members) {
+      // (A tuple parameter of scalars alone is written in place, `p.0 = …` — Rust shadows a
+      // text-carrying one, above, and a heap-carrying one at entry.)
+      scalar_param = tvar >= 0 && vars.vars[tvar].argument && scalar_tuple(el_vars::tp(vars, tvar));
+      if tvar >= 0 && (!vars.vars[tvar].argument || scalar_param) && tix >= 0 && tix < len(members) {
         mt = members[tix]!;
         if !(is_scalar(el_types::base(mt)) || el_types::base(mt) is TyText) && !vars.heap_member_written.contains(tvar) {
           vars.heap_member_written += [tvar];
@@ -3181,6 +3216,50 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
       }
     },
     _ => {}
+  }
+  // `@FR-T-Ref-Rep` (expressions.rs:5785): a tuple local the first pass saw handed to a `&(…)`
+  // record parameter is built as the `__tuple<…>` record on the second — a work ref `__ref_N`,
+  // the literal written member by member (`synthetic_tuple_return`), the local typed
+  // `ref(__tuple<…>)["__ref_N"]`.
+  if op == "=" && !e.first_pass && rhs != null && e.p.nodes[rhs!] is STupleLit {
+    rtl = match e.p.nodes[target] { SName { name: rtn, member: rtm } => if rtm == "" { rtn } else { "" }, _ => "" };
+    if rtl != "" && len([for rl in e.ref_tuple_links if rl.d == e.context && rl.name == rtl { 1 }]) > 0 {
+      rx = expression(e, vars, rhs!);
+      rel = match rx.tp { TyTuple { elems } => elems, _ => [] };
+      rtd = el_types::tuple_def_of(e, rel);
+      if rtd < 0 {
+        el::refuse(e, "a tuple local linked by a `&` parameter, of a shape with no record");
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      rw = el_vars::work_ref(vars, ir::TyReference { n: rtd, dep: [] });
+      rbuilt = el_expressions::boxed_tail_into(e, vars, el_ir::unspan(rx.code), rw, rtd);
+      if rbuilt == null {
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      rv = el_ex_object::binding_var(e, vars, rtl);
+      el_vars::set_var_type(vars, rv, ir::TyReference { n: rtd, dep: [rw] });
+      return ex(el_ir::v_set(rv, rbuilt!), ir::TyVoid);
+    }
+  }
+  // `ref_tuple_whole_write`: `p = (9, 8)` through a `&(…)` link to a `__tuple<…>` record — the
+  // value built as a record of the link's own type in a work ref (`synthetic_tuple_return`),
+  // then copied over the linked record whole (`OpCopyRecord`), a `ref_tuple_write` block.
+  if op == "=" && rhs != null {
+    wpv = match e.p.nodes[target] { SName { name: wpn, member: wpm } => if wpm == "" { el_vars::var(vars, wpn) } else { -1 }, _ => -1 };
+    wtd = if wpv < 0 { -1 } else { match el_vars::tp(vars, wpv) { TyRefVar { inner: wpi } => match el_types::base(wpi) { TyReference { n: wpd } => if starts_with(el::def(e, wpd).name, "__tuple<") { wpd } else { -1 }, _ => -1 }, _ => -1 } };
+    if wtd >= 0 && e.p.nodes[rhs!] is STupleLit {
+      wx = expression(e, vars, rhs!);
+      ww = el_vars::work_ref(vars, ir::TyReference { n: wtd, dep: [] });
+      if e.first_pass {
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      wbuilt = el_expressions::boxed_tail_into(e, vars, el_ir::unspan(wx.code), ww, wtd);
+      if wbuilt == null {
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      wcopy = el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: ww }, ir::NdVar { n: wpv }, ir::NdInt { n: el::def(e, wtd).known_type }]);
+      return ex(el_ir::v_block([wbuilt!, wcopy], ir::TyVoid, "ref_tuple_write"), ir::TyVoid);
+    }
   }
   // A local a closure writes lives in its cell (`@FR-L-CapWrite`), written through it.
   boxed = el_cell::assign(e, vars, op, target, rhs!);

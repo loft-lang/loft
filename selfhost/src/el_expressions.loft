@@ -34,7 +34,7 @@ use el_ex_vector;
 // tail; a tuple literal's members, or a tuple local's read member by member, are written at
 // their fields (`synthetic_tuple_return`).  Null for a leaf that is neither, or a member that
 // is no plain scalar, text or record.
-fn boxed_tail_into(e: el::El, vars: el_vars::Vars, n: ir::Node, w: integer, td: integer) -> ir::Node? {
+pub fn boxed_tail_into(e: el::El, vars: el_vars::Vars, n: ir::Node, w: integer, td: integer) -> ir::Node? {
   owned = ir::TyReference { n: td, dep: [w] };
   match n {
     NdSpan { pos, inner } => {
