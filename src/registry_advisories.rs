@@ -427,6 +427,39 @@ pub fn verified_cached_feed() -> Option<&'static AdvisoryFeed> {
     .as_ref()
 }
 
+/// @C167 — bring the cached feed up to date for a build that SHIPS: the copy that leaves this
+/// machine is held against what is known now, where an ordinary build reads the cache as it
+/// stands.  The registry is asked only when all of these hold: the cache is stale or absent;
+/// a registry package is installed at all (a program can load none otherwise, and installing
+/// one refreshes the feed itself); the registry was not asked within the last hour (a feed
+/// that is not hosted leaves no cache to be fresh); and `LOFT_OFFLINE` is not set.  A feed
+/// that cannot be had or does not verify leaves the cache as it was; `loft audit` reports why.
+pub fn refresh_cached_feed() {
+    const ASKED_TTL_SECS: u64 = 60 * 60;
+    let (cache, _) = advisories_paths();
+    let asked = cache.with_extension("asked");
+    if std::env::var_os("LOFT_OFFLINE").is_some()
+        || !older_than(&cache, ADVISORIES_TTL_SECS)
+        || !older_than(&asked, ASKED_TTL_SECS)
+        || registry_index::installed_packages().is_empty()
+    {
+        return;
+    }
+    let _ = crate::file_access::write(&asked, b"");
+    let _ = load_or_fetch(&LoadOptions {
+        allow_unsigned: false,
+        offline: false,
+        refresh: false,
+    });
+}
+
+/// The cached feed's bytes, unverified: an input of a shipped build's cache key (@C167), so
+/// a binary built before the feed changed is not handed out as the build held against it.
+#[must_use]
+pub fn cached_feed_bytes() -> Option<Vec<u8>> {
+    crate::file_access::read(advisories_paths().0).ok()
+}
+
 /// Classify a single (name, version) tuple against the feed.
 ///
 /// Returns one [`Classification`] per matching advisory — multiple
@@ -487,6 +520,11 @@ pub fn advisories_paths() -> (PathBuf, PathBuf) {
 /// `install::index_stale` shape — caller uses mtime.
 #[must_use]
 pub fn cache_stale(path: &std::path::Path) -> bool {
+    older_than(path, ADVISORIES_TTL_SECS)
+}
+
+/// Whether `path` was last written more than `secs` ago; an absent or unreadable one was.
+fn older_than(path: &std::path::Path, secs: u64) -> bool {
     let Ok(meta) = crate::file_access::metadata(path) else {
         return true;
     };
@@ -496,7 +534,7 @@ pub fn cache_stale(path: &std::path::Path) -> bool {
     let Ok(age) = modified.elapsed() else {
         return true;
     };
-    age.as_secs() > ADVISORIES_TTL_SECS
+    age.as_secs() > secs
 }
 
 // ── Loader ────────────────────────────────────────────────────────

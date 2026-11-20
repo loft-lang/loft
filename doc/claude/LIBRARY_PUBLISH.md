@@ -253,7 +253,8 @@ The override is the way to keep running a vulnerable release while porting off i
 fixes can break an API — and it names the advisory, so the choice is written down where it is
 made.  Only a VERIFIED feed counts: a feed whose signature does not verify could refuse any
 package or hide a refusal.  The install refreshes the cached feed when it is stale; a build or
-run reads the cache and never fetches.
+run reads the cache and never fetches — except a build that ships (`--ship`), which refreshes
+a stale cache before it reads it.
 
 ### 5c. Update the dep set
 

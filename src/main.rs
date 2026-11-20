@@ -4443,6 +4443,12 @@ fn native_source_key_fingerprint(
         c_driver::cc_identity(&c_driver::cc_program()).hash(&mut h);
     }
     ship_build.hash(&mut h);
+    // @C167 — a shipped binary was held against one advisory feed; another feed is another
+    // build, so the parse (where the advisories are read) runs again.
+    #[cfg(feature = "registry")]
+    if ship_build {
+        loft::registry_advisories::cached_feed_bytes().hash(&mut h);
+    }
     native_debug.hash(&mut h);
     lean.hash(&mut h);
     html_names.hash(&mut h);
@@ -9458,6 +9464,10 @@ fn main() {
             eprintln!("loft: --ship: {why}");
             std::process::exit(2);
         }
+        // @C167 — before anything reads the cached advisory feed: the cache key below and
+        // the parse.
+        #[cfg(feature = "registry")]
+        loft::registry_advisories::refresh_cached_feed();
     }
     // Resolve sentinel empty paths to .loft/ defaults now that file_name is known.
     if let Some(ref mut p) = native_wasm
@@ -9965,7 +9975,9 @@ fn main() {
     }
     // #358 — a warm hit returns the def-table index where user definitions
     // start; the cold path derives it from the post-stdlib def count below.
-    let warm_user_start = if program_cache_on && !p.sandbox_is_active() {
+    // @C167 — a shipped build parses: the advisories are read where a `use` resolves, and a
+    // cached image replaces that.
+    let warm_user_start = if program_cache_on && !p.sandbox_is_active() && !ship_build {
         loft::startup_cache::warm_load_program(
             &mut p,
             &abs_file,

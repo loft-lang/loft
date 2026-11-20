@@ -1867,6 +1867,10 @@ pub struct Parser {
     /// anyway; this dedupe is for the warning/note tiers.
     #[cfg(feature = "registry")]
     advisory_checked: std::collections::HashSet<(String, String)>,
+    /// @C167 — the advisory feed this parse is held against, when its caller supplies one
+    /// it has verified itself; `None` reads the verified cached feed.
+    #[cfg(feature = "registry")]
+    pub advisory_feed: Option<crate::registry_advisories::AdvisoryFeed>,
 }
 
 /// The binary operator levels, loosest first.
@@ -2439,6 +2443,8 @@ impl Parser {
             last_field_read_site: None,
             #[cfg(feature = "registry")]
             advisory_checked: std::collections::HashSet::new(),
+            #[cfg(feature = "registry")]
+            advisory_feed: None,
         }
     }
 
