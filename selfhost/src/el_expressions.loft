@@ -3430,6 +3430,14 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
       bl.operators[0] = ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [ir::NdVar { n: renamed }]), bl.operators[0]] };
       return ir::NdBlock { block: [bl] };
     }
+    // `Rename` over a tail call: the buffer renamed onto the call's own `__ref_N` on the first
+    // pass, the call handed it — the body opens by clearing it, and answers it.
+    rcall = match tail { NdCall { args: tca } => match el_ir::unspan(tca[-1] ?? ir::NdNull) { NdVar { n: tcv } => if vars.vars[tcv].argument && hidden_param(e, vars, tcv) { tcv } else { -1 }, _ => -1 }, _ => -1 };
+    if rcall >= 0 {
+      bl.result = [el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb])];
+      bl.operators[0] = ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [ir::NdVar { n: rcall }]), bl.operators[0]] };
+      return ir::NdBlock { block: [bl] };
+    }
   }
   ba = attr_nr(el::def(e, d), "__retbuf");
   // The buffer renamed onto the one local an `if` tail's arms answer beside literals: each
@@ -3549,6 +3557,22 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
       mcap = match_tail_capture(vars, tail);
       if mcap >= 0 && attr_nr(el::def(e, d), "__retbuf") >= 0 && !buffer_bound(e) {
         rename_onto(e, vars, rb, mcap);
+      }
+      // `classify_vector_delivery`'s `Rename`: a tail call of a function that builds into the
+      // buffer it is handed (a body, no foreign store forwarded) takes the caller's — the
+      // buffer renamed onto the call's own `__ref_N`.
+      match tail {
+        NdCall { def_nr: rcd, args: rca } => {
+          rw = match el_ir::unspan(rca[-1] ?? ir::NdNull) { NdVar { n: rwn } => if starts_with(el_vars::name_of(vars, rwn), "__ref_") && !vars.vars[rwn].argument { rwn } else { -1 }, _ => -1 };
+          // (Only where the tail borrows nothing, `ls.is_empty()`: a call whose answer may view
+          // an argument — `g(Filled { items: inner })` — is copied, `CopyBorrow`, not carried.
+          // Taken conservatively: every visible argument a scalar.)
+          rheap = len([for ra in el::def(e, rcd).attributes if !ra.hidden && !is_scalar(el_types::base(ra.typedef[0] ?? ir::TyVoid)) { 1 }]) > 0;
+          if rw >= 0 && !rheap && !((el::def(e, rcd).code[0] ?? ir::NdNull) is NdNull) && !forwards_foreign_store(e, rcd, 0) && attr_nr(el::def(e, d), "__retbuf") >= 0 && !buffer_bound(e) {
+            rename_onto(e, vars, rb, rw);
+          }
+        },
+        _ => {}
       }
       match tail {
         NdVar { n } => {
