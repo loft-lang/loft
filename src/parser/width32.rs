@@ -203,6 +203,19 @@ impl Parser {
         }
     }
 
+    /// The type of a count or a counter the compiler makes itself — a loop's `x#index`, its
+    /// `x#count`, a walk's position and length, a comprehension's index, a text loop's
+    /// `x#next`: the file's own `integer`, so an `i32` in a file under the regime, as a
+    /// collection's `len` is.  No collection there is longer than an `i32` counts.  Enforces
+    /// `@FR-W-Count`.
+    pub(crate) fn count_type(&self) -> Type {
+        if self.data.width32() {
+            Type::Integer(crate::narrow::IntegerSpec::i32())
+        } else {
+            crate::data::I32.clone()
+        }
+    }
+
     /// @PLN217 — does the function whose signature begins here end in `;`, a binding to the
     /// runtime with no loft body?  Looks ahead to the first `;` or `{` and comes back.
     pub(crate) fn body_less_ahead(&mut self) -> bool {

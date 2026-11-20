@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use super::{
-    Context, DefType, I32, Level, LexItem, OutputState, Parser, Parts, Type, Value,
-    diagnostic_format, v_block, v_if, v_loop, v_set, var_size,
+    Context, DefType, Level, LexItem, OutputState, Parser, Parts, Type, Value, diagnostic_format,
+    v_block, v_if, v_loop, v_set, var_size,
 };
 use crate::type_schema::StoreTypeOf;
 use crate::variables::Function;
@@ -811,19 +811,20 @@ impl Parser {
                     let step = if reverse {
                         // Decrement, but clamp at i32::MIN to prevent negative-index wrap.
                         // When iter reaches -1, set it to i32::MIN so GetVector returns null.
-                        let decremented = self.op("Min", i.clone(), Value::Int(1), I32.clone());
-                        let cond = self.op("Le", Value::Int(1), i.clone(), I32.clone());
+                        let decremented =
+                            self.op("Min", i.clone(), Value::Int(1), self.count_type());
+                        let cond = self.op("Le", Value::Int(1), i.clone(), self.count_type());
                         v_block(
                             vec![Value::If(
                                 Box::new(cond),
                                 Box::new(decremented),
                                 Box::new(Value::Int(i32::MIN)),
                             )],
-                            I32.clone(),
+                            self.count_type(),
                             "rev step",
                         )
                     } else {
-                        self.op("Add", i.clone(), Value::Int(1), I32.clone())
+                        self.op("Add", i.clone(), Value::Int(1), self.count_type())
                     };
                     // P189b: keep block type aligned with for_type's
                     // Reference(__tuple<…>) — the next-expression yields
@@ -905,7 +906,12 @@ impl Parser {
                     // also picks up the bit (fill_iter does not reset it itself).
                     self.reverse_iterator = false;
                     let next_expr = self.cl("OpStep", &ls);
-                    let incr = self.op("Add", Value::Var(iter_var), Value::Int(1), I32.clone());
+                    let incr = self.op(
+                        "Add",
+                        Value::Var(iter_var),
+                        Value::Int(1),
+                        self.count_type(),
+                    );
                     let iter_next = v_block(
                         vec![v_set(iter_var, incr), next_expr],
                         elem_type,
@@ -2434,7 +2440,7 @@ impl Parser {
         let count = if self.vars.name_exists(&count_var) {
             self.vars.var(&count_var)
         } else {
-            self.create_var(&count_var, &I32)
+            self.create_var(&count_var, &self.count_type())
         };
         // loft#794 — register the counter on the loop `name` iterates, which is
         // not necessarily the loop being parsed: `for p { for q { p#count } }`
@@ -2446,7 +2452,7 @@ impl Parser {
             *t = Type::Boolean;
         } else {
             *code = Value::Var(count);
-            *t = I32.clone();
+            *t = self.count_type();
         }
     }
 
@@ -2507,7 +2513,7 @@ use #count instead"
                 );
                 // An integer in its place, so the expression around it reports nothing more.
                 *code = Value::Int(0);
-                *t = I32.clone();
+                *t = self.count_type();
             } else if self
                 .positionless_loops
                 .contains(&(self.context, self.vars.var(&format!("{base}#index"))))
@@ -2523,7 +2529,7 @@ use #count instead"
                 );
                 // An integer in its place, so the expression around it reports nothing more.
                 *code = Value::Int(0);
-                *t = I32.clone();
+                *t = self.count_type();
             } else {
                 let i_name = &format!("{base}#index");
                 if self.vars.name_exists(i_name) {
@@ -3563,12 +3569,12 @@ use #count instead"
             && matches!(**next, Value::Block(_))
         {
             let count = if *var == u16::MAX {
-                self.create_unique("count", &I32)
+                self.create_unique("count", &self.count_type())
             } else {
                 let count_name = format!("{}#count", self.vars.name(*var));
                 let c = self.vars.var(&count_name);
                 if c == u16::MAX {
-                    self.create_var(&count_name, &I32)
+                    self.create_var(&count_name, &self.count_type())
                 } else {
                     c
                 }
@@ -3746,13 +3752,13 @@ use #count instead"
         let var_tp = self.struct_value_loop_type(in_type, &expr, var_tp);
         // For text loops: {id}#next drives the loop; {id}#index is saved per-iteration.
         let (iter_var, pre_var) = if walks_text(in_type) {
-            let pos_var = self.create_var(&format!("{id}#next"), &I32);
+            let pos_var = self.create_var(&format!("{id}#next"), &self.count_type());
             self.vars.defined(pos_var);
-            let index_var = self.create_var(&format!("{id}#index"), &I32);
+            let index_var = self.create_var(&format!("{id}#index"), &self.count_type());
             self.vars.defined(index_var);
             (pos_var, Some(index_var))
         } else {
-            let iv = self.create_var(&format!("{id}#index"), &I32);
+            let iv = self.create_var(&format!("{id}#index"), &self.count_type());
             self.vars.defined(iv);
             (iv, None)
         };
@@ -3877,9 +3883,9 @@ use #count instead"
         // The counter is the loop's `x#index`, as a range's is; `-1` seeds the step-first
         // form so the yielded index counts 0, 1, 2 (…) like the vector walk's.
         let ivar = if id == "_" {
-            self.create_unique("index", &I32)
+            self.create_unique("index", &self.count_type())
         } else {
-            self.create_var(&format!("{id}#index"), &I32)
+            self.create_var(&format!("{id}#index"), &self.count_type())
         };
         self.vars.defined(ivar);
         prelude.push(v_set(ivar, Value::Int(-1)));
@@ -3888,16 +3894,16 @@ use #count instead"
             "+",
             Value::Var(ivar),
             Value::Int(1),
-            I32.clone(),
-            I32.clone(),
+            self.count_type(),
+            self.count_type(),
         );
         let mut ls = vec![v_set(ivar, step)];
         let done = self.conv_op(
             "<=",
             Value::Int(n),
             Value::Var(ivar),
-            I32.clone(),
-            I32.clone(),
+            self.count_type(),
+            self.count_type(),
         );
         ls.push(v_if(done, Value::Break(0), Value::Null));
         let mut select = Value::Var(temps[temps.len() - 1]);
@@ -3907,8 +3913,8 @@ use #count instead"
                 "==",
                 Value::Var(ivar),
                 Value::Int(k),
-                I32.clone(),
-                I32.clone(),
+                self.count_type(),
+                self.count_type(),
             );
             select = v_if(at, Value::Var(*t), select);
         }
@@ -5051,7 +5057,7 @@ use #count instead"
         }
         // Allocate the backing store for __par_mat.
         let db_setup = self.vector_db(&elem_ref_tp, mat_var);
-        let iter_idx = self.create_unique("__par_mat_idx", &I32);
+        let iter_idx = self.create_unique("__par_mat_idx", &self.count_type());
         self.vars.defined(iter_idx);
         let elm_var = self.create_unique("__par_mat_e", &elem_ref_tp);
         self.vars.defined(elm_var);
@@ -5187,11 +5193,11 @@ use #count instead"
         // Iterator state vars — text drives a (pos, index) pair, every other
         // iterator a single index — mirroring parse_vector_for.
         let (iter_var, pre_var) = if walks_text(in_type) {
-            let pos = mk(self, "mat_next", &I32);
-            let idx = mk(self, "mat_index", &I32);
+            let pos = mk(self, "mat_next", &self.count_type());
+            let idx = mk(self, "mat_index", &self.count_type());
             (pos, Some(idx))
         } else {
-            let iv = mk(self, "mat_index", &I32);
+            let iv = mk(self, "mat_index", &self.count_type());
             (iv, None)
         };
         let for_var = mk(self, "mat_e", &elem_tp);
@@ -5994,12 +6000,12 @@ use #count instead"
         };
 
         // Create index variable (b#index).
-        let idx_var = self.create_var(&format!("{result_name}#index"), &I32);
+        let idx_var = self.create_var(&format!("{result_name}#index"), &self.count_type());
         self.vars.defined(idx_var);
         self.vars.in_use(idx_var, true);
 
         // Create length variable (par_len#N).
-        let len_var = self.create_unique("par_len", &I32);
+        let len_var = self.create_unique("par_len", &self.count_type());
         self.vars.defined(len_var);
         self.vars.in_use(len_var, true);
 
@@ -6026,7 +6032,7 @@ use #count instead"
         let b_type = if fn_d_nr == u32::MAX && self.first_pass {
             Type::Unknown(u32::MAX)
         } else if matches!(ret_type, Type::Unknown(_)) {
-            I32.clone()
+            self.count_type()
         } else if let Type::Text(_) = ret_type {
             // Strip worker-internal deps — they reference variables in the worker scope.
             // The marker is kept: a `text?` result is still read as nullable.
@@ -6980,7 +6986,7 @@ use #count instead"
         let vec_copy_var = self.create_unique("map_vec", &in_type);
         in_type = in_type.depending(vec_copy_var);
 
-        let iter_var = self.create_unique("map_idx", &I32);
+        let iter_var = self.create_unique("map_idx", &self.count_type());
         self.vars.defined(iter_var);
 
         let var_tp = self.for_type(&in_type);
@@ -7164,7 +7170,7 @@ use #count instead"
         let vec_copy_var = self.create_unique("filter_vec", &in_type);
         in_type = in_type.depending(vec_copy_var);
 
-        let iter_var = self.create_unique("filter_idx", &I32);
+        let iter_var = self.create_unique("filter_idx", &self.count_type());
         self.vars.defined(iter_var);
 
         let var_tp = self.for_type(&in_type);
@@ -8209,7 +8215,7 @@ use #count instead"
         let vec_var = self.create_unique(&format!("{name}_vec"), &in_type);
         in_type = in_type.depending(vec_var);
 
-        let iter_var = self.create_unique(&format!("{name}_idx"), &I32);
+        let iter_var = self.create_unique(&format!("{name}_idx"), &self.count_type());
         self.vars.defined(iter_var);
 
         let var_tp = self.for_type(&in_type);
@@ -8354,13 +8360,13 @@ use #count instead"
     ) -> Type {
         self.state_route("parse_count_if");
         if self.first_pass {
-            return I32.clone();
+            return self.count_type();
         }
         let Some((_, fn_d_nr)) = self.validate_predicate_args("count_if", list, types) else {
-            return I32.clone();
+            return self.count_type();
         };
 
-        let acc = self.create_unique("cntif_acc", &I32);
+        let acc = self.create_unique("cntif_acc", &self.count_type());
         self.vars.defined(acc);
 
         let lp = self.predicate_loop_scaffold("count_if", list, types, fn_d_nr);
@@ -8382,8 +8388,8 @@ use #count instead"
         stmts.push(v_loop(loop_body, "count_if"));
         stmts.push(Value::Var(acc));
 
-        *val = v_block(stmts, I32.clone(), "count_if");
-        I32.clone()
+        *val = v_block(stmts, self.count_type(), "count_if");
+        self.count_type()
     }
 }
 
