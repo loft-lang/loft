@@ -29,6 +29,7 @@ use el_ex_null;
 use el_ex_match;
 use el_ex_pattern;
 use el_ex_vector;
+use el_ex_copy;
 
 // `Parser::note_key_field_write`: a write to a key field through a local that views an element
 // of a keyed collection would leave the element under the wrong key, so the local stops viewing
@@ -1246,7 +1247,7 @@ pub fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: i
     return ex(ir::NdInsert { items: lstage + built! }, ir::TyVoid);
   }
   ops = built;
-  viewers = el_expressions::store_viewers(vars, root) + [root];
+  viewers = el_ex_copy::store_viewers(vars, root) + [root];
   for op in ops! {
     match op {
       NdCall { args } => {
@@ -2795,7 +2796,7 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
   // the second pass, for a literal of the local's own record or a variant of its enum.
   watch_hit = false;
   if !e.first_pass && !el_vars::is_compiler_generated(vars, v) && !(el_types::base(vt) is TyUnknown) {
-    watch = el_expressions::store_viewers(vars, v) + [v];
+    watch = el_ex_copy::store_viewers(vars, v) + [v];
     for fi in fields {
       match e.p.nodes[fi] {
         SFieldInit { name: fname, e: fe } => {
@@ -2874,7 +2875,7 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
   // record is made; a collection or nested-literal field is built in place and never staged.
   staged: vector<ir::Node> = [];
   if !e.first_pass && !el_vars::is_compiler_generated(vars, v) {
-    viewers = el_expressions::store_viewers(vars, v) + [v];
+    viewers = el_ex_copy::store_viewers(vars, v) + [v];
     // A literal that hands the old record to its own out-of-line field while ANOTHER field
     // reads the record does not demote: the first attempt's scalar staging is abandoned (its
     // `__ref_N` stay declared, 1a-parser.md § Rust accidents) and the build starts again with
@@ -3833,7 +3834,7 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
 // occurrence not spared as `OpGetField(root, <another offset>, …)` where the destination is a
 // field of the root — or a local that views the root's store?
 fn literal_place_read(e: el::El, vars: el_vars::Vars, value: ir::Node, root: integer, place: ir::Node) -> boolean {
-  for w in el_expressions::store_viewers(vars, root) {
+  for w in el_ex_copy::store_viewers(vars, root) {
     if w != root && el_ir::reads_var(value, w) {
       return true;
     }
@@ -4564,11 +4565,11 @@ pub fn field_vector_copy(e: el::El, vars: el_vars::Vars, r: ir::Node, d: integer
   whole = copies_whole_vector(e, vars, x.code) || (calls(e, x.code, "OpGetField") && el_ex_base::field_path(e, el_ir::unspan(x.code)));
   // A branch whose arms each build a vector in a store of their own (`{ if c { [] } else
   // { [2] } }`): appended from whichever it answers.
-  if !whole && (el_ir::unspan(x.code) is NdIf || el_expressions::tail_kind(e, vars, x.code) == "if") && len(el_types::deps(x.tp)) > 0 && fresh_vector_arms(vars, x.code) {
+  if !whole && (el_ir::unspan(x.code) is NdIf || el_ex_copy::tail_kind(e, vars, x.code) == "if") && len(el_types::deps(x.tp)) > 0 && fresh_vector_arms(vars, x.code) {
     whole = true;
   }
   if x.tp is TyOptional || !(el_types::base(x.tp) is TyVector) || !whole || !el_types::is_equal(e, x.tp, ir::TyVector { inner: inner, dep: [] }) {
-    what = if x.tp is TyOptional { "a nullable vector" } else if !(el_types::base(x.tp) is TyVector) { display_type_name(e, x.tp) } else if !copies_whole_vector(e, vars, x.code) { el_expressions::tail_kind(e, vars, x.code) } else { "a vector of {display_type_name(e, x.tp)}" };
+    what = if x.tp is TyOptional { "a nullable vector" } else if !(el_types::base(x.tp) is TyVector) { display_type_name(e, x.tp) } else if !copies_whole_vector(e, vars, x.code) { el_ex_copy::tail_kind(e, vars, x.code) } else { "a vector of {display_type_name(e, x.tp)}" };
     refuse_known(e, x.tp, "a vector field written from something other than a literal or a vector place: {what}");
     return null;
   }
