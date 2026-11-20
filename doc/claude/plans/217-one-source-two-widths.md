@@ -82,9 +82,19 @@ taken of one, do not survive its narrowing.
    a plain `int64_t` or `double` to a baseline, 1152 over 32 headers (`loft_rt.h` 422); each
    is to become `loft_int` / `loft_float`, or `loft_word` / `loft_fword` where the value is
    64 bits in every build.
-6. **The image gate against the game** — it holds on a small reference app with thirteen
-   runtime exceptions; `tile-world-game` has not been built through it, and will need its own
-   `esp-width64.allow` for what it declares `i64` or `f64`.
+6. **`tile-world-game` as a 32-bit app** — measured on a scratch copy of its tree (`cd9ee29`
+   plus its 24 local commits) with this branch's loft: `loft --native-esp --width 64` builds it
+   as before (5.8 MB), and the 32-bit default stops at 37 errors — 21 in the library copies
+   its `libs/` holds (graphics 0.13.0, gpu 0.3.0, audio 0.2.3, scene3d 0.6.0; graphics 0.13.4
+   and audio 0.2.4 are the releases written for the regime) and the rest in the game itself:
+   `Timing.since` holds `ticks()`, an `i64`; colour and bit literals past 32 bits; `f64`
+   arguments where a library takes a `single`.  The game is its own agent's to change
+   (`218-tanmatsu-stage-engine/kit/tile-world-game-width32.diff` was the report); the failing
+   build ends with the note that `--width 64` builds the program as written.  The image gate
+   has therefore not seen the game, only a small reference app.
+   The libraries' own TEST files are not regime-clean either: under `LOFT_WIDTH=32` the suites
+   of gpu, scene3d, graphics, gridmesh, tiles and imaging stop on literals past 32 bits, with
+   this loft and with the installed one.
 7. **On the device** — the demo world from a 32-bit build, measured against 60 frames.
 
 ## Not this plan's

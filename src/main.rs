@@ -4552,6 +4552,14 @@ fn report_parse_diagnostics(
             }
         }
         if diags.level() >= Level::Error {
+            // @PLN217 — a build that took the 32-bit regime without being asked says how to
+            // build the program as it was written.
+            if let Some(by) = loft::keys::width32_implied_by() {
+                eprintln!(
+                    "note: `{by}` builds a 32-bit app, where a plain `integer` is an `i32` and a \
+                     plain `float` a `single`; `--width 64` builds this program as a 64-bit one"
+                );
+            }
             std::process::exit(1);
         }
     }
@@ -8160,6 +8168,7 @@ fn main() {
                 // SAFETY: as for --width — set before any parse reads it.
                 unsafe {
                     std::env::set_var("LOFT_WIDTH", "32");
+                    std::env::set_var("LOFT_WIDTH_IMPLIED_BY", "--native-esp");
                 }
             }
             // The project directory is optional, as `--native-wasm`'s output is.
@@ -8321,6 +8330,7 @@ fn main() {
             // SAFETY: as for --dev-soft-halt — set before any parse reads it.
             unsafe {
                 std::env::set_var("LOFT_WIDTH", &bits);
+                std::env::remove_var("LOFT_WIDTH_IMPLIED_BY");
             }
         } else if a == "--timeout" {
             // @PLAN49 T3 — `--timeout <secs>` arms the watchdog.  The
