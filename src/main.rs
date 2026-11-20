@@ -12174,7 +12174,13 @@ fn main() {
         };
         // The asyncify async→sync bridge (AsyncifyCtrl), shared by the GL and the
         // headless templates.  gl_js references it, so it is emitted FIRST.
-        let env_js = include_str!("../doc/loft-env.js");
+        // A page built to ship takes no `LOFT_*` switch from its URL: the query string is
+        // whoever made the link's to write, and the switches are a developer's instrument.
+        let env_js = if ship_build {
+            "function loftInstallEnv() {}\n"
+        } else {
+            include_str!("../doc/loft-env.js")
+        };
         let asyncify_js =
             include_str!("../doc/loft-asyncify.js").replace("export { AsyncifyCtrl };", "");
         // loft#851 — the page's filesystem.  Emitted BEFORE gl_js, whose
