@@ -11,7 +11,6 @@ runtime	loft_call1	8
 runtime	loft_char_int	12
 runtime	loft_char_len	1
 runtime	loft_char_of_at	22
-runtime	loft_f2i_at	151
 runtime	loft_find	90
 runtime	loft_format_float	1779
 runtime	loft_format_text	1
@@ -62,7 +61,7 @@ runtime	loft_rx_count	70
 runtime	loft_rx_table_bytes	2
 runtime	loft_seek_file	2
 runtime	loft_set_byte_nullable_at	30
-runtime	loft_set_byte_v_at	80
+runtime	loft_set_byte_v_at	81
 runtime	loft_set_int_at	95
 runtime	loft_set_short_at	11
 runtime	loft_set_short_raw_at	66

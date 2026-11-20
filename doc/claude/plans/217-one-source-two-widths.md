@@ -70,9 +70,10 @@ taken of one, do not survive its narrowing.
    text-position helpers (`loft_vec_slice_view`, `loft_text_sub`, `loft_text_char`), the narrow
    field helpers (`loft_range_default_at`, `loft_byte_raw`, `loft_get_byte`), `loft_array_get`.
    `loft_kv_int` is a keyed collection's key, 64 bits in the table's own format.
-2. **`(x as integer)` in a regime file answers 64 bits** (`OpCastIntFromSingle` through
-   `loft_f2i_at`, which takes a `double`): the cast's type should be the file's `integer`
-   (`(W-Name)`), and the conversion a single-to-`i32` one.
+2. **A cast to `integer` under the regime** — done: `(W-Name)` covers the cast, the parser
+   narrows at it, and the C converts a single with no double (`loft_s2i32_at`).  The same
+   for a single's other conversions is open: printing one (`loft_format_float`), and the
+   maths functions a single reaches through a `double`.
 3. **The undeclared values left** — staging, discharge and lift temporaries (`__stg_p`,
    `__dc_i`, `__lift`, `__ref`), `text_len.rs`'s `_len`.
 4. **The `value` and `op` classes judged** — the ledger does not yet check that an operand of

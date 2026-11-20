@@ -9294,6 +9294,18 @@ impl<'a> FnWriter<'a> {
         {
             return Ok(E::new(format!("INT32_C({lit})"), K::Int32));
         }
+        // @PLN217 — a single cast to a 32-bit integer converts in single precision.
+        if let Value::Call(op_nr, args) = x.unspan()
+            && let [a] = args.as_slice()
+            && self.cx.data.def(*op_nr).name() == "OpCastIntFromSingle"
+            && !super::no_c_int32()
+        {
+            let a = self.expr(a, ind)?;
+            return Ok(E::new(
+                format!("loft_s2i32_at({}, {})", as_single(a)?, self.site()),
+                K::Int32,
+            ));
+        }
         if let Value::Call(op_nr, args) = x.unspan()
             && args.len() == 2
             && is_operator(self.cx.data, *op_nr)
