@@ -1614,6 +1614,12 @@ pub fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::N
       conv += [rx!.code];
       continue;
     }
+    // A `null` handed to a record parameter is the reference sentinel (`Parser::null` for a
+    // record type), whether the parameter is declared `S` or `S?`.
+    if at is TyNull && el_types::base(pt) is TyReference {
+      conv += [el_ir::cl(e, "OpNullRefSentinel", [])];
+      continue;
+    }
     c = el_convert::convert_store(e, vars, arg, at, pt);
     if c != null {
       conv += [c!];
@@ -2967,6 +2973,8 @@ pub fn coalesce(e: el::El, vars: el_vars::Vars, l: integer, r: integer) -> Ex {
   if el_ex_pattern::is_empty_literal(d.code) && keyed_kind(el_types::base(x.tp)) && !(el_types::base(x.tp) is TyVector) {
     kct = el_types::without_deps(el_types::base(x.tp));
     kvb = el_vars::create_unique(vars, "_kvb", kct);
+    // (`parse_vector`'s keyed arm mints the literal's element too, on both passes.)
+    el_vars::create_unique(vars, "elm", ir::TyReference { n: el_types::keyed_elem(kct), dep: [kvb] });
     if e.first_pass {
       d = ex(ir::NdNull, kct);
     } else {
@@ -3001,7 +3009,11 @@ pub fn record_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   lhs = el_types::base(x.tp);
   rd = match lhs { TyReference { n } => n, _ => -1 };
   dd = match el_types::base(d.tp) { TyReference { n } => n, _ => -2 };
-  if rd <= 0 || el::def(e, rd).def_type != el::DT_STRUCT || dd != rd {
+  // (A struct-enum VARIANT subject — a checked cast's `n as Bin?` — takes a default of its own
+  // variant or a value of its enum: `(n as Bin?)?`'s `EnumUnitLit`.)
+  variant = rd > 0 && el::def(e, rd).def_type == el::DT_ENUM_VALUE;
+  variant_fits = variant && (dd == rd || el_types::struct_enum_def(el_types::base(d.tp)) == el::def(e, rd).parent);
+  if rd <= 0 || (!variant_fits && (el::def(e, rd).def_type != el::DT_STRUCT || dd != rd)) {
     refuse_known(e, d.tp, "a `??` on a record with a default of another type: {type_kind(d.tp)}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
@@ -3039,6 +3051,10 @@ pub fn record_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
     rdc = if !e.first_pass && rxv >= 0 && !vars.coalesce_is_bind { el_ex_null::own_join_arm(e, vars, d.code, rjt) } else { d.code };
     return ex(el_ir::v_if(el_ir::cl(e, "OpConvBoolFromRef", [x.code]), x.code, rdc), if d.tp is TyOptional { ir::TyOptional { inner: lhs } } else { lhs });
   }
+  // (A variant subject's holder is the second pass's alone: Rust's first pass mints none.)
+  if variant && e.first_pass {
+    return ex(ir::NdNull, lhs);
+  }
   // Minted on both passes, as the Rust mints it, so it numbers before the second pass's buffers.
   held = el_vars::create_unique(vars, "_ncc", lhs);
   vars.vars[held].skip_free = true;
@@ -3048,6 +3064,12 @@ pub fn record_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
     // function ending in it merges that borrow on this pass (`merge_view_call`) and its
     // callers read the view.
     if !owned {
+      // (A stored reference, `h.link` — `OpGetDbRef` — is read into the holder already: the
+      // tail then reads a record no argument owns, `reads_a_stored_reference`, and is copied
+      // into the buffer rather than merged.)
+      if match el_ir::unspan(x.code) { NdCall { def_nr: sdr } => el::def(e, sdr).name == "OpGetDbRef", _ => false } {
+        return ex(el_ir::v_block([el_ir::v_set(held, x.code), ir::NdVar { n: held }], lhs, "ncc"), lhs);
+      }
       return ex(el_ir::v_block([ir::NdNull], lhs, "ncc"), lhs);
     }
     return ex(ir::NdNull, el_types::with_deps(el_types::without_deps(lhs), [held]));

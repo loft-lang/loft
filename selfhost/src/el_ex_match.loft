@@ -269,6 +269,38 @@ pub fn link_argument(e: el::El, vars: el_vars::Vars, arg: ir::Node, at: ir::Type
     el::refuse(e, "a keyed collection local handed to a `&` parameter");
     return null;
   }
+  // @C118 (`null_local_slot`): a nullable collection LOCAL handed by `&` is given its slot
+  // first, marked ABSENT, so an append through the link lands in it — a vector with no backing
+  // yet by a guarded mint (`vector_db_init`, `OpRefIsNull`), the backing an inline ref.  A local
+  // with a backing (`null_backing_home`) or a keyed one is not carried: refused by name.
+  if !e.first_pass && !vars.vars[v].argument && vt is TyOptional && el_types::is_collection(el_types::base(vt)) {
+    match el_types::base(vt) {
+      TyVector { inner: nle } => {
+        if len(el_types::deps(vt)) == 0 {
+          nrows = vector_rows(e, nle, 0, true);
+          if nrows != null {
+            nops = el_ex_pattern::literal_store(e, vars, v, nrows!, slot: -1);
+            for ndb in el_types::deps(el_vars::tp(vars, v)) {
+              el_vars::mark_inline(vars, ndb);
+            }
+            nguard = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [ir::NdVar { n: v }]), ir::NdInsert { items: nops }, ir::NdNull);
+            return ir::NdInsert { items: [nguard, el_ir::cl(e, "OpCreateStack", [arg])] };
+          }
+        }
+        // (`null_backing_home`: only a single `__ref_N` vector backing is pointed into first;
+        // any other backed local is linked as it is.)
+        nbd = el_types::deps(vt);
+        if len(nbd) == 1 && starts_with(el_vars::name_of(vars, nbd[0]!), "__ref_") && el_types::base(el_vars::tp(vars, nbd[0]!)) is TyVector {
+          el::refuse(e, "a nullable vector local backed by a call's buffer handed to a `&` parameter");
+          return null;
+        }
+      },
+      _ => {
+        el::refuse(e, "a nullable keyed local handed to a `&` parameter");
+        return null;
+      }
+    }
+  }
   el_ir::cl(e, "OpCreateStack", [arg])
 }
 
@@ -1618,6 +1650,13 @@ pub fn cast_expr(e: el::El, vars: el_vars::Vars, ae: integer?, tn: integer?) -> 
   }
   // `as τ?` that narrows nothing: the cast to the base, typed `τ?`.  A checked narrowing (the
   // `dn4cast` guard and the store's range default) is refused by name.
+  // A text to a plain enum (`bad as Direction`, `bad as Direction?`): the value its variant name
+  // spells, the first variant where it names none (`OpCastEnumFromText`) — never null, so typed
+  // as the enum itself.
+  ten = match el_types::base(to) { TyEnum { n: tn0, is_ref: tr0 } => if tr0 { -1 } else { tn0 }, _ => -1 };
+  if ten >= 0 && el_types::base(x.tp) is TyText && !(x.tp is TyOptional) {
+    return ex(if e.first_pass { ir::NdNull } else { el_ir::cl(e, "OpCastEnumFromText", [x.code, ir::NdInt { n: el::def(e, ten).known_type }]) }, el_types::base(to));
+  }
   match to {
     TyOptional { inner } => {
       src = el_types::base(x.tp);
@@ -1635,11 +1674,24 @@ pub fn cast_expr(e: el::El, vars: el_vars::Vars, ae: integer?, tn: integer?) -> 
           return ex(if e.first_pass { ir::NdNull } else { c! }, to);
         }
       } else if el_convert::plain_scalar(inner) && !el_convert::narrowing_int(src, inner) {
+        // (A bare integer variable cast to an integer it does not narrow is the variable on
+        // pass 1 too — so a `??` over the cast sees it bare and holds nothing, `(v as i32?) ?? 0`,
+        // as on pass 2 where the conversion answers the variable.)
+        if e.first_pass && el_ir::unspan(x.code) is NdVar && src is TyInteger && inner is TyInteger {
+          return ex(x.code, to);
+        }
         b = cast_expr_to(e, vars, ex(x.code, src), inner);
         return ex(b.code, if el_types::is_unknown(b.tp) { b.tp } else { to });
       } else if el_convert::narrowing_int(src, inner) && !(x.tp is TyOptional) && (e.first_pass || !el_convert::value_fits(e, vars, x.code, inner)) {
         // Pass 1 converts nothing: the cast is typed `τ?` there and built on pass 2.
         return if e.first_pass { ex(ir::NdNull, to) } else { dn4_cast(e, vars, x, inner) };
+      } else if el_convert::narrowing_int(src, inner) && !(x.tp is TyOptional) {
+        // (A value that provably fits — `1 as u8?` — is the value itself, typed `τ?`.)
+        return ex(if e.first_pass { ir::NdNull } else { x.code }, to);
+      } else if el_convert::narrowing_int(src, inner) && x.tp is TyOptional && src is TyInteger {
+        // (A nullable integer — an element read at an index nothing proves — is cast as it reads:
+        // its null fails the range test and casts to null.)
+        return if e.first_pass { ex(ir::NdNull, to) } else { dn4_cast(e, vars, ex(x.code, src), inner) };
       }
       el::refuse(e, "a checked narrowing cast");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -2933,7 +2985,10 @@ pub fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>
   elm = match el_types::base(x.tp) { TyVector { inner } => inner, _ => ir::TyVoid };
   narrow = match elm { TyInteger { spec } => el_types::narrow_width(spec) > 0 || spec.forced_size != 0, _ => false };
   sed = el_types::struct_enum_def(elm);
-  if !(el_convert::plain_scalar(elm) || elm is TyText || sed >= 0) || narrow || (elm is TyEnum && sed < 0) {
+  // (A plain struct element is matched as a struct enum's is, bound as a view of its slot; a
+  // linked one — held by id — is not carried.)
+  pstruct = el_ex_base::struct_ref(e, el_types::base(elm)) >= 0 && !el_ex_base::linked_record(e, elm);
+  if !(el_convert::plain_scalar(elm) || elm is TyText || sed >= 0 || pstruct) || narrow || (elm is TyEnum && sed < 0) {
     el::refuse(e, "a vector match over this element type: {type_kind(elm)}");
     return void;
   }
@@ -3008,7 +3063,7 @@ pub fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>
         expected = if unsettled(result) { ir::TyUnknown { n: 0 } } else { el_ex_null::arm_expectation(result) };
         arm_cursor = vars.cursor;
         vars.cursor = [];
-        b = el_ex_pattern::arm_body(e, vars, body, expected);
+        b = el_ex_pattern::empty_vector_arm(e, vars, body, expected) ?? el_ex_pattern::arm_body(e, vars, body, expected);
         vars.cursor = arm_cursor;
         // `@FR-C-Never`'s typed halt in a vector match (`type_null_arms` over the slice arms) is
         // not carried.
@@ -3144,6 +3199,8 @@ fn buffer_arms(e: el::El, vars: el_vars::Vars, out: vector<SMArm>, elm: ir::Type
             deps += [wv];
           }
           bl.operators[-1] = ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [b]), el_ir::cl(e, "OpAppendVector", [b, last, ir::NdInt { n: row }]), b] };
+          // (The arm keeps the type of the capture it answered: `["whole#1"]`.)
+          bl.result = [ir::TyVector { inner: el_types::without_deps(elm), dep: [wv] }];
         } else {
           el::refuse(e, "a vector match tail arm of this form: block {bl.name}");
           return null;
@@ -3551,11 +3608,25 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
   // A capture's literal test (`[x: 5, y]`), position by position: the literal node, -1 for none.
   head_lit: vector<integer> = [];
   tail_lit: vector<integer> = [];
+  // A bare literal element (`[xs: integer*, 9]`): tested in the guard where it stands, the
+  // element read inline (`OpEq…(<element>, <literal>)`); -1 for none.
+  head_blit: vector<integer> = [];
+  tail_blit: vector<integer> = [];
+  plus_rest = 0;
   for el0 in elems {
     nm = "";
     pat = -1;
     lit = -1;
+    blit = -1;
     match e.p.nodes[el0] {
+      PLit { e: ble } => {
+        if ble == null || sed >= 0 {
+          el::refuse(e, "a slice pattern literal over this element");
+          return null;
+        }
+        nm = "_";
+        blit = ble!;
+      },
       PRest { name } => {
         if has_rest {
           el::refuse(e, "a slice pattern with two rests");
@@ -3573,9 +3644,14 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
         match e.p.nodes[cpn] {
           PWild => { nm = cn; },
           PQuant { quant: cq } => {
-            if cq != "*" || has_rest {
+            if (cq != "*" && cq != "+") || has_rest {
               el::refuse(e, "a slice pattern capture of a repetition of this kind");
               return null;
+            }
+            // (`xs: integer+` is the rest that holds one element at least: the length test
+            // counts it.)
+            if cq == "+" {
+              plus_rest = 1;
             }
             has_rest = true;
             rest = cn;
@@ -3609,22 +3685,25 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
       tail += [nm];
       tail_pat += [pat];
       tail_lit += [lit];
+      tail_blit += [blit];
     } else {
       head += [nm];
       head_pat += [pat];
       head_lit += [lit];
+      head_blit += [blit];
     }
   }
   fixed = len(head) + len(tail);
   ln = el_ir::cl(e, "OpLengthVector", [ir::NdVar { n: sv }]);
-  cond = if has_rest { el_ir::cl(e, "OpLeInt", [ir::NdInt { n: fixed }, ln]) } else { el_ir::cl(e, "OpEqInt", [ln, ir::NdInt { n: fixed }]) };
+  cond = if has_rest { el_ir::cl(e, "OpLeInt", [ir::NdInt { n: fixed + plus_rest }, ln]) } else { el_ir::cl(e, "OpEqInt", [ln, ir::NdInt { n: fixed }]) };
   // A cursor pattern is a prefix read from the entry position.
   if len(cur) > 0 {
     cond = el_ir::cl(e, "OpLeInt", [el_ir::cl(e, "OpAddInt", [ir::NdVar { n: cur[3]! }, ir::NdInt { n: fixed }]), ln]);
   }
-  es = if sed >= 0 { element_stride(e, elm) } else { elem_size(elm) };
+  rec = sed >= 0 || el_ex_base::struct_ref(e, el_types::base(elm)) >= 0;
+  es = if rec { element_stride(e, elm) } else { elem_size(elm) };
   // A record element bound by name views the subject's element: it borrows what the subject does.
-  named_t = if sed >= 0 { el_types::with_deps(elm, [src]) } else { elm };
+  named_t = if rec { el_types::with_deps(elm, [src]) } else { elm };
   binds: vector<ir::Node> = [];
   for h in head {
     at = el_ir::cl(e, "OpGetVector", [ir::NdVar { n: sv }, ir::NdInt { n: es }, if len(cur) > 0 { el_ir::cl(e, "OpAddInt", [ir::NdVar { n: cur[3]! }, ir::NdInt { n: h#index }]) } else { ir::NdInt { n: h#index } }]);
@@ -3635,6 +3714,10 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
       }
       cond = el_ir::v_if(cond, va!.cond ?? ir::NdBoolean { b: true }, ir::NdBoolean { b: false });
       binds += va!.binds;
+    } else if (head_blit[h#index] ?? -1) >= 0 {
+      hbx = el_ex_assign::expression(e, vars, head_blit[h#index] ?? 0);
+      hbe = el_ex_null::builtin_op(e, vars, "==", ex(slice_elem(e, elm, at), elm), hbx);
+      cond = el_ir::v_if(cond, hbe.code, ir::NdBoolean { b: false });
     } else if h != "_" {
       bv = pattern_bind(vars, h, named_t, names);
       binds += [el_ir::v_set(bv, slice_elem(e, elm, at))];
@@ -3649,6 +3732,10 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
       }
       cond = el_ir::v_if(cond, va!.cond ?? ir::NdBoolean { b: true }, ir::NdBoolean { b: false });
       binds += va!.binds;
+    } else if (tail_blit[t#index] ?? -1) >= 0 {
+      tbx = el_ex_assign::expression(e, vars, tail_blit[t#index] ?? 0);
+      tbe = el_ex_null::builtin_op(e, vars, "==", ex(slice_elem(e, elm, at), elm), tbx);
+      cond = el_ir::v_if(cond, tbe.code, ir::NdBoolean { b: false });
     } else if t != "_" {
       bv = pattern_bind(vars, t, named_t, names);
       binds += [el_ir::v_set(bv, slice_elem(e, elm, at))];

@@ -2093,8 +2093,11 @@ pub fn pattern_bind(vars: el_vars::Vars, name: text, tp: ir::TypeT, names: vecto
 // An element of the slice subject read at `at` (`OpGetVector(…)`): a struct enum's record in its
 // slot (`OpGetField(…, 0, T)`), a scalar or a text read at 0.
 pub fn slice_elem(e: el::El, elm: ir::TypeT, at: ir::Node) -> ir::Node {
-  place = element_place_type(e, elm);
-  if el_types::struct_enum_def(elm) >= 0 && place >= 0 {
+  // (A plain struct's element is read the same way, at the struct's own type: a view of its
+  // slot.)
+  psd = struct_ref(e, el_types::base(elm));
+  place = if psd >= 0 { el::def(e, psd).known_type } else { element_place_type(e, elm) };
+  if (el_types::struct_enum_def(elm) >= 0 || psd >= 0) && place >= 0 && place != el_schema::NO_TYPE {
     return el_ir::cl(e, "OpGetField", [at, ir::NdInt { n: 0 }, ir::NdInt { n: place }]);
   }
   elem_read(e, elm, at)
@@ -2547,6 +2550,13 @@ pub fn call_op(e: el::El, vars: el_vars::Vars, op: text, list: vector<ir::Node>,
   for t in types {
     if el_types::is_unknown(t) {
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+  }
+  // `(C-Never)`: an operand that never arrives (a local bound to a diverging value, read in the
+  // statements after it that no run reaches) makes the operation never arrive either.
+  for t in types {
+    if t is TyNever {
+      return ex(ir::NdNull, ir::TyNever);
     }
   }
   // I8.1: an operand of a type variable takes its bound's stub, `t_<LEN><holder>#g<arity>_Op…`

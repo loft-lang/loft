@@ -598,10 +598,14 @@ pub fn slice_vector(e: el::El, vars: el_vars::Vars, sv: integer, elm: ir::TypeT,
   brk = el_ir::v_if(el_ir::cl(e, "OpLeInt", [ir::NdVar { n: hi_v }, i]), ir::NdBreak { n: 0 }, ir::NdNull);
   at = el_ir::v_block([advance, brk, i], int_t, "Iter range");
   sed = el_types::struct_enum_def(elm);
-  es = if sed >= 0 { element_stride(e, elm) } else { elem_size(elm) };
+  // (A plain struct element is copied as a struct enum's is.)
+  psd = struct_ref(e, el_types::base(elm));
+  es = if sed >= 0 || psd >= 0 { element_stride(e, elm) } else { elem_size(elm) };
   read = ir::NdNull;
   if proj == null {
-    read = el_ir::v_block([slice_elem(e, elm, el_ir::cl(e, "OpGetVectorNullable", [ir::NdVar { n: sv }, ir::NdInt { n: es }, at]))], elm, "Vector Index");
+    // (A plain struct's element is the slot itself, read through no field.)
+    gn = el_ir::cl(e, "OpGetVectorNullable", [ir::NdVar { n: sv }, ir::NdInt { n: es }, at]);
+    read = el_ir::v_block([if psd >= 0 { gn } else { slice_elem(e, elm, gn) }], elm, "Vector Index");
   } else {
     fr = field_get(e, proj!.vd, proj!.fa, slice_elem(e, elm, el_ir::cl(e, "OpGetVector", [ir::NdVar { n: sv }, ir::NdInt { n: es }, at])));
     if fr == null || !(el_convert::plain_scalar(proj!.ft) || proj!.ft is TyText) {
@@ -619,7 +623,7 @@ pub fn slice_vector(e: el::El, vars: el_vars::Vars, sv: integer, elm: ir::TypeT,
   r = rows!;
   ev = el_vars::create_unique(vars, "elm", ir::TyReference { n: el::def_nr(e, nm), dep: [rv] });
   // A record element is a view of the subject's element (`Vector Index`'s dep on the vector).
-  record = proj == null && sed >= 0;
+  record = proj == null && (sed >= 0 || psd >= 0);
   fv = el_vars::create_unique(vars, "slice_elm", if record { el_types::with_deps(elm, [sv]) } else { vt_inner });
   // (A rest the return buffer was renamed onto is the caller's vector: cleared and filled in
   // place, no store of its own.)
@@ -635,7 +639,7 @@ pub fn slice_vector(e: el::El, vars: el_vars::Vars, sv: integer, elm: ir::TypeT,
     el_ir::v_set(ev, el_ir::cl(e, "OpNewRecord", [ir::NdVar { n: rv }, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }])),
     // A record element is copied into the new slot (`OpCopyRecord`), a scalar written there.
     if record {
-      place = element_place_type(e, elm);
+      place = if psd >= 0 { el::def(e, psd).known_type } else { element_place_type(e, elm) };
       el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: fv }, el_ir::cl(e, "OpGetField", [w, ir::NdInt { n: 0 }, ir::NdInt { n: place }]), ir::NdInt { n: place }])
     } else {
       el_ir::cl(e, el_ex_object::tuple_set_op(vt_inner), [w, ir::NdInt { n: 0 }, ir::NdVar { n: fv }])
@@ -991,6 +995,31 @@ fn behind_a_halt(e: el::El, ops: vector<ir::Node>) -> boolean {
 
 // `parse_match_arm_body`: a block read as a "match_arm" block, or an expression converted to the
 // type the arms so far settled on.
+// A slice `match`'s untyped `[]` arm: `parse_vector` reads it against the vector its siblings
+// settled on — its `_vec_N` and `_elm_N` minted on both passes, a vector type the program has
+// not made yet made at the `]` (`vector_def`).  Null for any other arm.
+pub fn empty_vector_arm(e: el::El, vars: el_vars::Vars, body: integer?, expected: ir::TypeT) -> Ex? {
+  if body == null {
+    return null;
+  }
+  if el_types::base(expected) is TyVector && !el_types::is_unknown(expected) && match e.p.nodes[body!] { SVecLit { items } => len(items) == 0, _ => false } {
+    evt = el_types::without_deps(el_types::base(expected));
+    ein = match evt { TyVector { inner } => inner, _ => ir::TyVoid };
+    enm = el_types::elem_name(e, ein);
+    if enm != "" {
+      if el::def_nr(e, "main_vector<{enm}>") < 0 {
+        match e.p.nodes[body!] {
+          SVecLit { at } => { el_schema::make_vector_def(e, ein, enm, el::pos_at(e, closing_bracket(e, at)), true, narrow_early: false); },
+          _ => {}
+        }
+      }
+      ec = empty_literal_to(e, vars, evt);
+      return ex(ec, match ec { NdBlock { block: ecb } => ecb[0].result[0] ?? evt, _ => evt });
+    }
+  }
+  null
+}
+
 pub fn arm_body(e: el::El, vars: el_vars::Vars, body: integer?, expected: ir::TypeT) -> Ex {
   if body == null {
     return ex(ir::NdNull, ir::TyVoid);
@@ -1835,7 +1864,7 @@ pub fn vector_append(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> 
   inner = ir::TyUnknown { n: 0 };
   match el_vars::tp(vars, v) {
     TyVector { inner: i } => { inner = i; },
-    TyRefVar { inner: lv } => match lv { TyVector { inner: i } => { inner = i; }, _ => {} },
+    TyRefVar { inner: lv } => match el_types::base(lv) { TyVector { inner: i } => { inner = i; }, _ => {} },
     TyOptional { inner: ov } => match ov { TyVector { inner: i } => { inner = i; }, _ => {} },
     _ => {}
   }
@@ -2247,12 +2276,19 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
   // (`convert_store_lenient`: a `null`, or a nullable value of the element's own base, is stored
   // as the slot's null — `@FR-N-Store` warns there); an undeclared literal whose later item is a
   // float where the earlier ones are integers widens them (`widen_literal_items`).
-  // An `i32` element given a `??` is narrowed inside it (`dn4cast` under the `ncc`): not carried.
+  // An `i32` element given a `??` is narrowed inside it (`range_guard_inside_discharge`: the
+  // subject's `dn4cast` under the `ncc`).
   if !e.first_pass && match in_t { TyInteger { spec } => el_types::int4(spec), _ => false } {
     for x in xs {
-      if match el_ir::unspan(x.code) { NdBlock { block: nb } => nb[0].name == "ncc", _ => false } {
-        el::refuse(e, "an `i32` vector item that is a `??`");
-        return refused_build();
+      // (A bare-variable `??` too: `guard_discharge` casts both its reads.)
+      bare = match el_ir::unspan(x.code) { NdIf { cond: bc, t: bt } => el_ir::unspan(bt) is NdVar && match el_ir::unspan(bc) { NdCall { args: bca } => len(bca) == 1 && el_ir::unspan(bca[0] ?? ir::NdNull) == el_ir::unspan(bt), _ => false }, _ => false };
+      if bare || match el_ir::unspan(x.code) { NdBlock { block: nb } => nb[0].name == "ncc", _ => false } {
+        gx = el_convert::guard_discharge(e, vars, x.code, in_t);
+        if gx == null {
+          el::refuse(e, "an `i32` vector item that is a `??`");
+          return refused_build();
+        }
+        xs[x#index].code = gx!;
       }
     }
   }

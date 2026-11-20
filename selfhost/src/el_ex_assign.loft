@@ -21,6 +21,7 @@ use el_definitions;
 use el_dispatch;
 use el_trace;
 use own;
+use binds;
 use el_ex_place;
 use el_ex_object;
 use el_ex_call;
@@ -156,7 +157,9 @@ pub fn call_rooted(e: el::El, vars: el_vars::Vars, n: ir::Node) -> boolean {
     return false;
   }
   match el_ir::unspan(root!) {
-    NdCall { def_nr, args } => !returns_argument_view(el::def(e, def_nr)) && hidden_ref_arg(vars, args) >= 0,
+    // (A callee that hands back a parameter's record too: Rust's `return_source` holds what the
+    // call answered in `__ret_root_N` and the field is copied out of it all the same.)
+    NdCall { def_nr: _, args } => hidden_ref_arg(vars, args) >= 0,
     _ => false
   }
 }
@@ -230,6 +233,9 @@ fn block_body(e: el::El, vars: el_vars::Vars, n: integer, context: text, result:
   l: vector<ir::Node> = [];
   dz = len(vars.nonzero);
   dp = len(vars.present);
+  // `(C-Never)` (loft#2388): a statement whose value never arrives ends the block's reachable
+  // part — the statements after it are read, not kept.
+  unreachable_rest = false;
   for s in stmts {
     match e.p.nodes[s] {
       SStmt { at, e: se, semi, orelse } => {
@@ -248,7 +254,24 @@ fn block_body(e: el::El, vars: el_vars::Vars, n: integer, context: text, result:
           el_trace::state(e, vars, "stmt", at, se!);
         }
         x = el_ex_object::statement(e, vars, se ?? 0, orelse);
+        if unreachable_rest {
+          continue;
+        }
         t = x.tp;
+        // A local bound to a value that never arrives has no value to hold: the statement is
+        // the diverging value itself (second pass only, as Rust rewrites it).
+        if !e.first_pass {
+          match el_ir::unspan(x.code) {
+            NdSet { var: nv, inner: nrhs } => {
+              if el_types::base(el_vars::tp(vars, nv)) is TyNever && !(el_ir::unspan(nrhs) is NdNull) {
+                x = ex(nrhs, ir::TyNever);
+                t = ir::TyNever;
+                unreachable_rest = true;
+              }
+            },
+            _ => {}
+          }
+        }
         if el_trace::on() {
           el_trace::value(e, vars, at, t);
           el_trace::vars(e, vars, at);
@@ -306,6 +329,9 @@ fn block_body(e: el::El, vars: el_vars::Vars, n: integer, context: text, result:
       },
       _ => {}
     }
+  }
+  if unreachable_rest {
+    t = ir::TyNever;
   }
   // `parse_block_inner` leaves its loop at the `}` after a last statement with no `;` before
   // it reads the line again: only a `;`-ended last statement moves the line on to the `}`.
@@ -2370,6 +2396,114 @@ pub fn discharge_copy_typed(e: el::El, rhs: integer, x: Ex) -> ir::Node {
   x.code
 }
 
+// `discharge_seed` for an integer element's compound (`OpSetInt(P, 0, …)`): the seed
+// `if OpNot(OpConvBoolFromInt(OpGetInt(P, 0))) OpSetInt(P, 0, 0) else {}` goes right before the
+// write, after any place setup.  Null for another shape.
+fn discharge_seeded(e: el::El, code: ir::Node) -> ir::Node? {
+  items: vector<ir::Node> = match code { NdInsert { items: di } => di, _ => [code] };
+  if len(items) == 0 {
+    return null;
+  }
+  last = el_ir::unspan(items[-1]!);
+  match last {
+    NdCall { def_nr, args } => {
+      if el::def(e, def_nr).name != "OpSetInt" || len(args) != 3 {
+        return null;
+      }
+      acc = args[0]!;
+      off = args[1]!;
+      // (Read through the discharge's own getter, the nullable one, where no `__place_N` holds
+      // the element.)
+      match el_ir::unspan(acc) {
+        NdCall { def_nr: ad, args: aa } => {
+          if el::def(e, ad).name == "OpGetVector" {
+            nacc = el_ir::cl(e, "OpGetVectorNullable", aa);
+            last = el_ir::replace_subtree(last, acc, nacc);
+            items[len(items) - 1] = last;
+            acc = nacc;
+          }
+        },
+        _ => {}
+      }
+      seed = el_ir::v_if(el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpConvBoolFromInt", [el_ir::cl(e, "OpGetInt", [acc, off])])]), el_ir::cl(e, "OpSetInt", [acc, off, ir::NdInt { n: 0 }]), ir::NdInsert { items: [] });
+      return ir::NdInsert { items: items[..-1] + [seed, items[-1]!] };
+    },
+    _ => {}
+  }
+  null
+}
+
+// `Parser::is_struct_returning_call`: a call of a loft function with a body (`n_…`), or a struct
+// literal's block — what allocates a store of its own.  (`answers_caller_buffer` is a collection
+// return handed a caller buffer: no keyed result has one.)
+fn struct_returning_call(e: el::El, n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdCall { def_nr } => starts_with(el::def(e, def_nr).name, "n_") && !el_ir::is_null(el::def(e, def_nr).code[0] ?? ir::NdNull),
+    NdBlock { block } => block[0].name == "Object",
+    _ => false
+  }
+}
+
+// `Parser::join_arms`: the terminal value of every arm an `if` chain can answer — a block's is
+// its last operator's; an `ncc` block's are its tail `if`'s, its subject's holder read as the
+// subject's assignment.
+fn join_arms(e: el::El, n: ir::Node, out: vector<ir::Node>) {
+  match el_ir::unspan(n) {
+    NdIf { cond: _, t, f } => {
+      join_arms(e, t, out);
+      join_arms(e, f, out);
+    },
+    NdBlock { block } => {
+      bl = block[0];
+      if len(bl.operators) == 0 {
+        return;
+      }
+      if bl.name == "ncc" {
+        sv = -1;
+        sval = ir::NdNull;
+        for op in bl.operators {
+          match el_ir::unspan(op) {
+            NdSet { var: hv, inner: hval } => {
+              if sv < 0 && !(el_ir::unspan(hval) is NdNull) {
+                sv = hv;
+                sval = hval;
+              }
+            },
+            _ => {}
+          }
+        }
+        raw: vector<ir::Node> = [];
+        join_arms(e, bl.operators[-1]!, raw);
+        for a in raw {
+          if sv >= 0 && el_ir::unspan(a) == ir::NdVar { n: sv } {
+            out += [sval];
+          } else {
+            out += [a];
+          }
+        }
+        return;
+      }
+      join_arms(e, bl.operators[-1]!, out);
+    },
+    _ => { out += [n]; }
+  }
+}
+
+// `bound_to_a_value_in`: the variables a value sets to something other than `null` inside it.
+fn bound_to_a_value_in(n: ir::Node, out: vector<integer>) {
+  match n {
+    NdSet { var: bv, inner: bi } => {
+      if !(el_ir::unspan(bi) is NdNull) && !out.contains(bv) {
+        out += [bv];
+      }
+    },
+    _ => {}
+  }
+  for c in el_ir::children(n) {
+    bound_to_a_value_in(c, out);
+  }
+}
+
 // `Parser::change_var_type`'s mint: a local bound for the first time to a vector registers
 // `vector<T>` where the bind's statement ends (a no-op where a literal made it already).
 pub fn first_vector_bind(e: el::El, vars: el_vars::Vars, v: integer, t: ir::TypeT, at: integer) {
@@ -2805,6 +2939,29 @@ fn place_through_discharge(e: el::El, vars: el_vars::Vars, op: text, target: int
 }
 
 pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: text, target: integer, rhs: integer?) -> Ex {
+  // loft#1205 (`@FR-E-Asgn-Discharge`): `n[i]? += 1` — the `?` is peeled to the element it
+  // reads, the compound written through that place (bound once where its index has an effect),
+  // and an integer element seeded with its default where it is null first (`discharge_seed`:
+  // `if !n[i] { n[i] = 0 }`), so `null? + 1` is 1.  Another element type is refused by name.
+  if op != "=" && rhs != null {
+    match e.p.nodes[target] {
+      SPostfix { op: dop, e: din } => {
+        if dop == "?" && din != null && e.p.nodes[din!] is SIndex {
+          dw = el_ex_place::place_assignment(e, vars, op, din!, rhs!);
+          if e.first_pass {
+            return dw;
+          }
+          dseeded = discharge_seeded(e, dw.code);
+          if dseeded == null {
+            el::refuse(e, "a compound assignment through a `?` discharge of this element");
+            return ex(ir::NdNull, ir::TyVoid);
+          }
+          return ex(dseeded!, ir::TyVoid);
+        }
+      },
+      _ => {}
+    }
+  }
   // A compound assignment to a field of a `?` read (`v[0]?.k += x`): Rust binds the place once
   // (`__place_N`) and reads and writes through it — not carried.
   if op != "=" && rhs != null {
@@ -3725,6 +3882,46 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
           kt = el_schema::keyed_type(e, el_types::base(kcur));
           return ex(ir::NdInsert { items: kg + [el_ir::v_set(v, ir::NdNull), el_ir::cl(e, "OpReplaceKeyed", [x.code, ir::NdVar { n: v }, ir::NdInt { n: kt + 32768 }])] }, ir::TyVoid);
         }
+        // loft#1140 (`assign_keyed_rebind`, keyed-bind-call-with-heap-args.md): a loft call handed
+        // a record or a collection.  The source-free bit is `call_return_frees_source` (the
+        // callee hands back no caller store, or the bracket covers every argument), and where it
+        // is set the argument stores are protected from the replace's free while it runs
+        // (`protectable_ref_args`, the @P290 bracket) — less a slot the value itself binds to a
+        // value (`bound_to_a_value_in`: a vector literal's `_vec_N`).  The local borrows nothing.
+        // (A call handed the local itself takes this form too where the self-only arm above,
+        // a callee that gives its store away, did not apply: `a = add(a, x)` with `add`
+        // answering its parameter.)
+        if !plain_args && pd >= 0 && ud >= 0 && !starts_with(el::def(e, cd).name, "Op") && cap_rebind_cond(e, vars, v) == null {
+          // (`is_struct_returning_call`: only a loft function with a body sets the bit.)
+          ksr = struct_returning_call(e, x.code);
+          el_vars::drop_use(vars, v);
+          kt = el_schema::keyed_type(e, el_types::base(kcur));
+          kdefs = own::new_defs();
+          frees = ksr && binds::call_return_frees_source(e.b, own::ops_of(e.b), e.context, kdefs, x.code);
+          guarded: vector<integer> = [];
+          if frees {
+            inner: vector<integer> = [];
+            bound_to_a_value_in(x.code, inner);
+            for gs in binds::protectable_ref_args(e.b, kdefs, x.code).slots {
+              if !inner.contains(gs) {
+                guarded += [gs];
+              }
+            }
+          }
+          el_vars::set_var_type(vars, v, el_types::with_deps(el_vars::tp(vars, v), []));
+          kseq = kg;
+          if !el_ir::reads_var(x.code, v) {
+            kseq += [el_ir::v_set(v, ir::NdNull)];
+          }
+          for gs in guarded {
+            kseq += [ir::NdCall { def_nr: pd, args: [ir::NdVar { n: gs }] }];
+          }
+          kseq += [el_ir::cl(e, "OpReplaceKeyed", [x.code, ir::NdVar { n: v }, ir::NdInt { n: if frees { kt + 32768 } else { kt } }])];
+          for gs in guarded {
+            kseq += [ir::NdCall { def_nr: ud, args: [ir::NdVar { n: gs }] }];
+          }
+          return ex(ir::NdInsert { items: kseq }, ir::TyVoid);
+        }
         // A keyed FIELD of a record (through its fields): the field's collection replaced
         // into the local, which is its own copy.
         // A NESTED projection (`m.inn.h`, a field of an element) is a view of its root instead
@@ -3763,6 +3960,61 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
             return ex(el_ir::cl(e, "OpReplaceKeyed", [x.code, krb, ir::NdInt { n: kt }]), ir::TyVoid);
           }
           return ex(ir::NdInsert { items: kg + [el_ir::v_set(v, ir::NdNull), el_ir::cl(e, "OpReplaceKeyed", [x.code, ir::NdVar { n: v }, ir::NdInt { n: kt }])] }, ir::TyVoid);
+        }
+        // loft#1154 (`join_source_frees`): any other join is replaced in as a whole.  Where an
+        // arm is a call that may free its source, the source-free bit is set and every arm's
+        // stores are protected (the freeing call's `protectable_ref_args`, every other arm's
+        // `view_root_slots`); an arm that names no slot leaves the bit off and no bracket.
+        jpd = el::def_nr(e, "n_protect_store_frees");
+        jud = el::def_nr(e, "n_unprotect_store_frees");
+        if jpd >= 0 && jud >= 0 && cap_rebind_cond(e, vars, v) == null {
+          jarms: vector<ir::Node> = [];
+          join_arms(e, x.code, jarms);
+          if len(jarms) >= 2 {
+            el_vars::drop_use(vars, v);
+            jkt = el_schema::keyed_type(e, el_types::base(kcur));
+            jdefs = own::new_defs();
+            jops = own::ops_of(e.b);
+            jw: vector<integer> = [];
+            jfree = false;
+            jok = true;
+            for ja in jarms {
+              if struct_returning_call(e, ja) && binds::call_return_frees_source(e.b, jops, e.context, jdefs, ja) {
+                jfree = true;
+                jw += binds::protectable_ref_args(e.b, jdefs, ja).slots;
+                continue;
+              }
+              jvs: vector<integer> = [];
+              if !own::view_root_slots(e.b, ja, jvs) {
+                jok = false;
+              }
+              jw += jvs;
+            }
+            jfrees = jok && jfree;
+            jg: vector<integer> = [];
+            if jfrees {
+              jinner: vector<integer> = [];
+              bound_to_a_value_in(x.code, jinner);
+              for gs in jw {
+                if !jinner.contains(gs) {
+                  jg += [gs];
+                }
+              }
+            }
+            el_vars::set_var_type(vars, v, el_types::with_deps(el_vars::tp(vars, v), []));
+            jseq = kg;
+            if !el_ir::reads_var(x.code, v) {
+              jseq += [el_ir::v_set(v, ir::NdNull)];
+            }
+            for gs in jg {
+              jseq += [ir::NdCall { def_nr: jpd, args: [ir::NdVar { n: gs }] }];
+            }
+            jseq += [el_ir::cl(e, "OpReplaceKeyed", [x.code, ir::NdVar { n: v }, ir::NdInt { n: if jfrees { jkt + 32768 } else { jkt } }])];
+            for gs in jg {
+              jseq += [ir::NdCall { def_nr: jud, args: [ir::NdVar { n: gs }] }];
+            }
+            return ex(ir::NdInsert { items: jseq }, ir::TyVoid);
+          }
         }
         el::refuse(e, "a keyed local bound from something other than a local");
         return ex(ir::NdNull, ir::TyVoid);
