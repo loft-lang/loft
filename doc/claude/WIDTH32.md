@@ -54,8 +54,10 @@ another name.
   `integer` argument for a parameter the regime made 32-bit is narrowed at the call, and a
   `float` argument for a `single` one is rounded.  A value that does not fit reads null.  So a
   library goes under the regime without its 64-bit callers changing a line.  A parameter the
-  library declares `i64` or `f64` takes the value as it is: declare a colour, a hash or a
-  timestamp parameter that way.
+  library declares `i64` or `f64` takes the value as it is: declare a timestamp parameter
+  that way.  A colour, a hash or a bit mask is a `u32`: 32 bits on either width, and an
+  `integer` narrowed into one is checked, 0 where it does not fit (`@FR-I-Narrow-U32`), so its
+  64-bit callers pass their `integer` values unchanged.
 - The two arms of an `if` that are both 32-bit join to a 32-bit value.
 - A plain `integer` that is not a call (an element's `#index`, a field of a 64-bit file's
   struct) stored into an `i32` is narrowed there, null when it does not fit.  A target

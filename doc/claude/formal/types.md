@@ -191,7 +191,8 @@ semantics live in [binding.md](binding.md); here it is just one more thing `⤳`
   (N-Cast)     Γ ⊢ e ⇒ Integer, r = the range e proves (N-Arith)   ⟹   Γ ⊢ (e as τ) ⇒ τ
                REQUIRES r ⊆ range(τ).  If the
                fit is NOT provable it is a COMPILE ERROR — `as τ` is an assertion of fit; the
-               honest form for a maybe-miss is `as τ?`.  (`b: integer; b as u8` errors; `400
+               honest form for a maybe-miss is `as τ?`.  `as u32` is the one exception: it is
+               the checked narrowing of (I-Narrow-U32), 0 where the value does not fit.  (`b: integer; b as u8` errors; `400
                as u8` errors — provably can't fit.)
   (N-Cast?)    Γ ⊢ (e as τ?) ⇒ τ?    the CHECKED cast — value if it fits, else null.  Always
                legal; NEVER yields an out-of-range value.  (`b as u8? ⇒ u8?`.)
@@ -733,7 +734,15 @@ gap, see [../plans/102-stability-contract/formal-audit.md](../plans/102-stabilit
                   means "this did not fit", it is visible, and `??` recovers from it.  So
                   the marker would ask for intent the type has already stated.  A
                   NON-nullable narrow target has no such value and is still refused, and
-                  the refusal names `τ?` as the cure.
+                  the refusal names `τ?` as the cure — except `u32` (I-Narrow-U32).
+  (I-Narrow-U32)  a narrowing into a non-null `u32`, implicit or by `as u32`, is checked and
+                  not refused: the value where it fits, and 0 where it does not.  A `u32`
+                  spends its four bytes on values, so it has no null to answer with, and 0
+                  is its default — what a null stored into one already becomes; the miss is
+                  logged (@C80).  So `u32` is as easy to write as `integer` under either
+                  width (@FR-W-Name), for colours, hashes and masks.  A CONSTANT outside
+                  0..=4294967295 is still refused, and a value whose range is proven (N-Arith)
+                  takes no check.
   (I-Lit)     an integer literal n  has every type Integer[a,b] with a ≤ n ≤ b
               (it checks at the expected width; it does not force i64).
   (I-Join)    a variable assigned e₁ … eₙ in a scope has type  ⨆ᵢ τᵢ  where τᵢ are the
@@ -744,7 +753,8 @@ gap, see [../plans/102-stability-contract/formal-audit.md](../plans/102-stabilit
 **In words.** An integer's type is its value *range*. A narrower integer fits a wider one
 for free (`u8` flows into `integer`); the other way round (wider into narrower) needs an
 explicit `as`, unless the value is a literal that plainly fits — or unless the target is
-NULLABLE, which is the one target that already says what an out-of-range value becomes. A literal takes whatever
+NULLABLE, which already says what an out-of-range value becomes, or a `u32`, whose answer
+for one is its default 0. A literal takes whatever
 width is expected of it. And a variable written in several places gets the type big enough
 for *all* its writes (the join) — not just its first one. That last point was the
 #433-residual; `(I-Join)` is now implemented for inferred locals (an inferred local widens
