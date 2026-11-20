@@ -1202,6 +1202,60 @@ fn a_shipped_build_asks_for_the_advisory_feed() {
     assert_eq!(again, 1, "and not again within the hour");
 }
 
+/// An index that carries bytes which are not a signature is not an UNSIGNED index, and
+/// `allow_unsigned` does not waive it: whoever serves a changed index and cannot sign it can
+/// always serve a `.sig` of the wrong length.  Two registries serving the same index, each
+/// installed into a fresh home with `allow_unsigned` on:
+/// - no `.sig` at all — the install succeeds (the waiver's own case, and the control that
+///   this index installs);
+/// - a one-byte `.sig` — refused, and nothing is extracted.
+/// Fails on a build that waives a malformed signature (the second install succeeds).
+#[test]
+fn a_wrong_length_signature_is_not_an_unsigned_index() {
+    let tmp = tmpdir("wrong_length_signature");
+    let entries = publish_versions(&tmp, "sg", &["0.1.0"], "");
+    let index = index_of(&[("sg", &entries)]).into_bytes();
+    let opts = loft::install::InstallOptions {
+        allow_unsigned: true,
+        refresh: true,
+        skip_lockfile: true,
+        ..Default::default()
+    };
+    let install_from = |tag: &str, files: HashMap<String, Vec<u8>>| {
+        let server = FixtureServer::new(files);
+        let home = tmpdir(&format!("wrong_length_signature_{tag}"));
+        let (_home, _lh) = HomeGuard::set(&home);
+        let (_reg, _lr) = RegUrlGuard::set(&server.url_for("/index.json"));
+        let result = loft::install::install_one("sg", Some("0.1.0"), &opts).map(|_| ());
+        let extracted = fa::exists(home.join(".loft/registry/sg-0.1.0"));
+        drop(_reg);
+        drop(_home);
+        let _ = fa::remove_dir_all(&home);
+        (result, extracted)
+    };
+    let unsigned = install_from(
+        "none",
+        HashMap::from([("/index.json".to_string(), index.clone())]),
+    );
+    let wrong_length = install_from(
+        "one_byte",
+        HashMap::from([
+            ("/index.json".to_string(), index),
+            ("/index.json.sig".to_string(), vec![0x2a]),
+        ]),
+    );
+    let _ = fa::remove_dir_all(&tmp);
+    unsigned
+        .0
+        .expect("an index with no signature installs under the waiver");
+    assert!(unsigned.1, "and its package is extracted");
+    let why = wrong_length
+        .0
+        .expect_err("a one-byte signature is refused under the waiver too");
+    assert!(why.contains("malformed"), "the refusal says why: {why}");
+    assert!(!wrong_length.1, "and nothing of it is extracted");
+}
+
 // ── loft search S4 — offline cache fallback ───────────────────────
 
 /// PKG.REG R8 (search S4): when the registry is unreachable but a cached index

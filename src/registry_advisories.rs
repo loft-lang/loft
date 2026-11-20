@@ -165,6 +165,7 @@ pub fn parse_advisories(content: &str) -> Result<AdvisoryFeed, String> {
     let mut updated: Option<String> = None;
     let mut retention_days: Option<u32> = None;
     let mut advisories: Vec<Advisory> = Vec::new();
+    let mut listed = false;
     for (k, _, v) in &root {
         match k.as_str() {
             "schema_version" => {
@@ -192,6 +193,7 @@ pub fn parse_advisories(content: &str) -> Result<AdvisoryFeed, String> {
                 let Parsed::Array(arr) = v else {
                     return Err("advisories.json: `advisories` must be an array".to_string());
                 };
+                listed = true;
                 for entry in arr {
                     advisories.push(parse_advisory(entry)?);
                 }
@@ -207,6 +209,12 @@ pub fn parse_advisories(content: &str) -> Result<AdvisoryFeed, String> {
         return Err(format!(
             "advisories.json: schema_version {schema_version} unsupported — upgrade loft"
         ));
+    }
+    // A feed says what it lists, even when that is nothing.  The registry's index is signed
+    // by the same keys and also carries `schema_version: 1`: without this it reads as a
+    // valid feed of no advisories, and anyone can serve it in the feed's place.
+    if !listed {
+        return Err("advisories.json: missing `advisories`".to_string());
     }
     Ok(AdvisoryFeed {
         schema_version,
@@ -660,9 +668,10 @@ fn verify_feed(content: &[u8], sig: &[u8], opts: LoadOptions) -> Result<(), Stri
     let result = registry_signing::verify_index(content, sig);
     match result {
         VerifyResult::Valid => Ok(()),
-        VerifyResult::NoTrustRoot | VerifyResult::MalformedSignature if opts.allow_unsigned => {
-            Ok(())
-        }
+        // As for the index (`install::verify_or_explain`): the waiver is for a feed with no
+        // signature, never for one whose signature is the wrong shape.
+        VerifyResult::NoTrustRoot if opts.allow_unsigned => Ok(()),
+        VerifyResult::MalformedSignature if opts.allow_unsigned && sig.is_empty() => Ok(()),
         VerifyResult::Invalid => {
             Err("advisories.json signature INVALID — refusing to load".to_string())
         }
@@ -680,6 +689,25 @@ fn verify_feed(content: &[u8], sig: &[u8], opts: LoadOptions) -> Result<(), Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The registry's index is signed by the feed's keys and has the feed's
+    /// `schema_version`: served in the feed's place it must not read as a feed of no
+    /// advisories.  A feed that lists none says so, and still parses.
+    #[test]
+    fn an_index_is_not_a_feed_of_no_advisories() {
+        let index = r#"{"schema_version": 1, "updated": "2026-11-20T00:00:00Z",
+            "packages": {"web": {"versions": {}}}}"#;
+        let why = parse_advisories(index).expect_err("an index is not a feed");
+        assert!(why.contains("missing `advisories`"), "{why}");
+        let empty = r#"{"schema_version": 1, "advisories": []}"#;
+        assert_eq!(
+            parse_advisories(empty)
+                .expect("an empty feed")
+                .advisories
+                .len(),
+            0
+        );
+    }
 
     const FIXTURE: &str = r#"{
   "schema_version": 1,
