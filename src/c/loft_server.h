@@ -34,6 +34,13 @@ int loft_tls_poll(struct loft_tls *t, int ms);
 #define LOFT_SRV_CLIENT_READ_TLS_MS 2000
 /* A request parked by the non-blocking accept is read within this. */
 #define LOFT_SRV_REQUEST_READ_MS 500
+/* A whole request, head and body, where the server may not wait: the read timeout bounds one
+ * read, and a peer that sends a byte per read would otherwise hold a single-threaded server for
+ * as long as it likes. */
+#define LOFT_SRV_REQUEST_TOTAL_MS 5000
+/* One write to a peer: a client that stops reading fills its window, and a send with no bound
+ * then never returns. */
+#define LOFT_SRV_SEND_MS 5000
 
 typedef struct {
     int fd; /* -1: a closed slot */
@@ -93,12 +100,14 @@ static int loft_srv_header(const loft_text *heads, const char *name, const char 
 /* The request on `s` into the request state: its line, its `Key: Value` header lines (`\n` each)
  * and a `Content-Length` body.  The head is read a byte at a time, so a WebSocket frame a client
  * sends right behind its upgrade request stays in the stream for the first frame read.  0 when
- * the stream ends, the head passes 16 KiB, or the request line is not two words. */
-static int loft_srv_parse_request(loft_stream *s) {
+ * the stream ends, the head passes 16 KiB, the request line is not two words, or the request
+ * takes longer than `budget_ms` to arrive (0: no bound, a caller that chose to wait). */
+static int loft_srv_parse_request(loft_stream *s, int64_t budget_ms) {
     loft_text raw = { 0, 0, 0 };
+    int64_t late = budget_ms ? loft_now_us() + budget_ms * 1000 : 0;
     while (raw.len < 4 || memcmp(raw.p + raw.len - 4, "\r\n\r\n", 4) != 0) {
         char b;
-        if (loft_stream_read(s, &b, 1) != 1 || raw.len > LOFT_SRV_MAX_HEAD) {
+        if (loft_stream_read(s, &b, 1) != 1 || raw.len > LOFT_SRV_MAX_HEAD || (late && loft_now_us() > late)) {
             free(raw.p);
             return 0;
         }
@@ -158,11 +167,15 @@ static int loft_srv_parse_request(loft_stream *s) {
         free(heads.p);
         return 0;
     }
-    if (length && !loft_stream_read_exact(s, body, (size_t) length)) {
-        free(body);
-        free(head.p);
-        free(heads.p);
-        return 0;
+    for (size_t got = 0; got < (size_t) length;) {
+        long r = (late && loft_now_us() > late) ? 0 : loft_stream_read(s, body + got, (size_t) length - got);
+        if (r <= 0) {
+            free(body);
+            free(head.p);
+            free(heads.p);
+            return 0;
+        }
+        got += (size_t) r;
     }
     loft_srv_set(&loft_srv_method, w[0], wn[0]);
     loft_srv_set(&loft_srv_path, w[1], wn[1]);
@@ -287,6 +300,7 @@ static int loft_srv_accept(int64_t h, int nonblocking, loft_stream *out) {
     }
     loft_sock_cloexec(fd);
     loft_sock_blocking(fd, 1);
+    loft_sock_timeout_opt(fd, SO_SNDTIMEO, LOFT_SRV_SEND_MS);
     out->fd = fd;
     out->tls = 0;
 #ifdef LOFT_HTTPS
@@ -317,7 +331,7 @@ static uint8_t loft_srv_tcp_accept(int64_t h, int nonblocking) {
     loft_stream conn = { -1, 0 };
     if (loft_srv_accept(h, nonblocking, &conn) != 1) return 0;
     if (nonblocking) loft_sock_timeout(conn.fd, LOFT_SRV_REQUEST_READ_MS);
-    if (!loft_srv_parse_request(&conn)) {
+    if (!loft_srv_parse_request(&conn, nonblocking ? LOFT_SRV_REQUEST_TOTAL_MS : 0)) {
         loft_stream_close(&conn);
         return 0;
     }
@@ -507,7 +521,10 @@ static int64_t loft_srv_accept_client(int64_t h) {
     int got = loft_srv_accept(h, 1, &conn);
     if (got == 0) return -1;
     if (got < 0) return -2;
-    if (!loft_srv_parse_request(&conn)) {
+    /* The pump serves every client from this one thread: a peer that connects and says nothing
+     * must cost it one read timeout, not the server. */
+    loft_sock_timeout(conn.fd, LOFT_SRV_REQUEST_READ_MS);
+    if (!loft_srv_parse_request(&conn, LOFT_SRV_REQUEST_TOTAL_MS)) {
         loft_stream_close(&conn);
         return -2;
     }
