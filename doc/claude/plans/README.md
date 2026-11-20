@@ -66,7 +66,7 @@ tried (33/35/lib-11) and shown to be over-engineering.
 |---|---|---|
 | **Bug fix** | A focused fix + regression test + commit.  A [**GitHub Issue**](../ISSUE_TRACKING.md) only if you're **not** fixing it now (it blocks you, or it's M+ — see [CLAUDE.md § Bug-filing policy](../../../CLAUDE.md#bug-filing-policy--mandatory)) | Single root cause, fits in one commit, no design choices, no multi-phase sequencing.  **The default** — most bugs are neither a plan nor even an Issue; they're just fixed. |
 | **Light — `## Open work` section** | A `## Open work` section in the relevant `doc/claude/<NAME>.md` reference doc | The normal flow.  TODO is co-located with the architecture it touches; one row per item; closure is "remove the row + update the reference content."  Used by NATIVE.md, PERFORMANCE.md, PACKAGES.md, QUALITY.md today. |
-| **Plan — a [`loft-lang/plans`](https://github.com/loft-lang/plans) issue (`@PLN<n>`)** | The issue is the plan; its number is the id.  No local slot.  A big multi-phase design may add an optional local dir named for the issue (`plans/<n>-<slug>/`), but the issue stays canonical. | Multi-session initiative with explicit phasing, design-before-implementation discipline, cross-arc dependencies, or a long arc that needs its own document space. |
+| **Plan — a [`loft-lang/plans`](https://github.com/loft-lang/plans) issue (`@PLN<n>`)** | The issue gives the plan its number, its status and its discussion.  **The plan itself is in the repository, always**: `plans/<n>-<slug>.md`, or `plans/<n>-<slug>/README.md` when it has companions (probes, phase files).  A plan with no file here is not opened yet. | Multi-session initiative with explicit phasing, design-before-implementation discipline, cross-arc dependencies, or a long arc that needs its own document space. |
 | **Investigation plan — a `loft-lang/plans` issue + (for big ones) a local `<n>-<slug>/` dir with `probes/` + per-cluster docs** | Probes + cluster docs + verified-vs-hypothesized accountability.  Canonical example: PLAN51 (62 probes, 5 clusters, 12-commit fix arc). | Failure CLASS with multiple sub-mechanisms; needs probe-driven mechanism investigation BEFORE the fix design is clear.  See § When a problem should escalate to an investigation plan below. |
 
 The light flow is the default.  Promote to a plan only when
@@ -491,17 +491,20 @@ its code.  [`_TEMPLATE.md`](_TEMPLATE.md) § Documentation has the usual set.
 
 ### Authoring a new plan
 
-Open an issue in [`loft-lang/plans`](https://github.com/loft-lang/plans).  The
-issue **is** the plan; its number is the canonical id, referenced as `@PLN<n>`
-(see [CLAUDE.md § Tracker tags](../../../CLAUDE.md)).  There is **no local plan
-slot** — small plans live entirely in the issue.
+Open an issue in [`loft-lang/plans`](https://github.com/loft-lang/plans): its number is
+the plan's id, referenced as `@PLN<n>` (see [CLAUDE.md § Tracker tags](../../../CLAUDE.md)),
+and it carries the status label and the discussion.  **Then write the plan's file here, in
+the same piece of work: every plan has a file or a directory in this repository, however
+small it is.**  The repository is what every agent reads and what a branch carries; an issue
+is read only by whoever goes to look, and its probes cannot be run from it.
 
 Use [`_TEMPLATE.md`](_TEMPLATE.md) for the issue body's shape: Status / Goal /
 Effort / Sub-arcs / Phase ordering / Open questions / Cross-arc dependencies /
-**Documentation** (what to update outside the plan when it finishes — required) / See also.  A **big multi-phase design** that needs its own document space may add
-a local file named for the issue — `plans/<n>-<slug>.md`, or `plans/<n>-<slug>/README.md`
-when it has companion files — but the issue stays the canonical home and the file is
-optional.  Length budget: 100-300 lines;
+**Documentation** (what to update outside the plan when it finishes — required) / See also.  The file is named for the issue: `plans/<n>-<slug>.md`, or
+`plans/<n>-<slug>/README.md` when it has companion files — the probes a design rests on
+go in its `probes/`, each saying in its header what holds.  The file holds the state, the
+steps and what each goes red on; a design too long for it stays in the issue's body, linked
+from the file's first line.  Length budget: 100-300 lines;
 longer content belongs in `doc/claude/*.md`.
 
 (Existing `plans/<NN>-<slug>/` dirs predate this and are kept as-is; only *new*
@@ -621,10 +624,9 @@ item that's been deferred for two releases.
 ## Conventions
 
 - A new plan opens as a [`loft-lang/plans`](https://github.com/loft-lang/plans)
-  issue (`@PLN<n>`) — no local slot.  A big multi-phase design may add an
-  optional local file named for the issue (`<n>-slug.md` from `_TEMPLATE.md`, or a
-  `<n>-slug/` dir with a README and `00-<first-phase>.md` when it has companions);
-  small plans live in the issue alone.
+  issue (`@PLN<n>`) AND as a file here named for it, always: `<n>-slug.md` from
+  `_TEMPLATE.md`, or a `<n>-slug/` dir with a README (and `probes/`, `00-<first-phase>.md`)
+  when it has companions.  No plan lives in the issue alone.
 - Existing `NN-slug/` dirs predate this (number = monotonic open-order, not
   priority) and are kept as-is.
 - Phase files begin with `Status: open | in-progress | done`.

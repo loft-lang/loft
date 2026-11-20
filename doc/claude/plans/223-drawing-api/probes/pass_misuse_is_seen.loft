@@ -1,0 +1,32 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A pass that ends on an early `return`, and the two misuses a window can see: `present`
+// while a pass is open, and a second pass begun inside one.
+// Holds when: pass 4 ends both times, and the window closes with
+//   refused ["present inside pass 9","pass 10 begun inside pass 9"]
+
+enum Depth { DepthOff, DepthTest, DepthWrite }
+struct Dev { handle: integer, open_pass: integer, draws: integer, ended: integer, refused: vector<text> }
+struct Win { dev: Dev, frames: integer }
+fn OpDrop(self: Win) { println("close: {self.dev.draws} draws, {self.dev.ended} passes, {self.frames} frames, refused {self.dev.refused}"); }
+struct Tex { id: integer }
+fn OpDrop(self: Tex) { println("drop tex {self.id}"); }
+struct Sh { id: integer }
+struct Slot { t: reference<Tex> }
+struct Mat { shader: reference<Sh>, texs: vector<Slot>, block: vector<float>, depth: Depth }
+struct Mesh { id: integer }
+struct Pass { win: reference<Win>, into: integer }
+fn OpDrop(self: Pass) { self.win.dev.open_pass = 0; self.win.dev.ended += 1; println("  end pass {self.into}"); }
+fn open(h: integer) -> Win { Win { dev: Dev { handle: h, open_pass: 0, draws: 0, ended: 0, refused: [] }, frames: 0 } }
+fn pass(self: Win, into: integer) -> Pass { if self.dev.open_pass != 0 { self.dev.refused += ["pass {into} begun inside pass {self.dev.open_pass}"]; } self.dev.open_pass = into; println("  begin pass {into}"); Pass { win: self, into: into } }
+fn present(self: Win) { if self.dev.open_pass != 0 { self.dev.refused += ["present inside pass {self.dev.open_pass}"]; } self.frames += 1; }
+fn material(sh: const Sh, t: const Tex, depth: Depth) -> Mat { Mat { shader: sh, texs: [Slot { t: t }], block: [0.0], depth: depth } }
+fn set(self: Mat, v: float) { self.block[0] = v; }
+fn draw(self: Pass, mesh: const Mesh, mat: const Mat) { self.win.dev.draws += 1; println("    draw mesh {mesh.id} sh {mat.shader.id} tex {mat.texs[0].t.id} u {mat.block[0]} in pass {self.into}"); }
+fn world(p: Pass, meshes: const vector<Mesh>, mat: Mat) { for m in meshes { mat.set(m.id as float); p.draw(m, mat); } }
+
+fn early(w: Win, m: const Mesh, a: const Mat, stop: boolean) -> integer { p = w.pass(4); if stop { return 1; } p.draw(m, a); 2 }
+fn main() { w = open(3); sh = Sh { id: 5 }; t = Tex { id: 7 }; a = material(sh, t, DepthOff); m = Mesh { id: 1 };
+  r = early(w, m, a, true); w.present(); r += early(w, m, a, false); w.present();
+  p = w.pass(9); p.draw(m, a); w.present(); q = w.pass(10); println("r {r}"); }

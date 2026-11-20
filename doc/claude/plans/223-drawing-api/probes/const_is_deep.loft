@@ -1,0 +1,22 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A draw on a `const` holder that changes what the holder refers to.
+// Holds when: refused — "Cannot modify const parameter 'self'".  So what a draw changes is
+// its receiver, and the receiver is not `const`.
+
+struct Kept { depth: boolean, blend: integer }
+struct Win { handle: integer, draws: integer, kept: Kept }
+fn OpDrop(self: Win) { println("close win {self.handle} after {self.draws} draws"); }
+struct Tex { id: integer }
+fn OpDrop(self: Tex) { println("drop tex {self.id}"); }
+struct Mesh { id: integer, win: reference<Win> }
+struct Slot { t: reference<Tex> }
+struct Mat { name: text, texs: vector<Slot> }
+fn open(h: integer) -> Win { Win { handle: h, draws: 0, kept: Kept { depth: true, blend: 0 } } }
+fn mesh(self: Win, id: integer) -> Mesh { Mesh { id: id, win: self } }
+fn tex(self: const Win, id: integer) -> Tex { Tex { id: id + self.handle * 0 } }
+fn total(m: const Mat) -> integer { s = 0; for x in m.texs { s += x.t.id; } s }
+
+fn draw(self: const Mesh, m: const Mat) { self.win.draws += 1 + total(m) * 0; }
+fn main() { w = open(3); m = w.mesh(1); t = w.tex(7); a = Mat { name: "a", texs: [Slot { t: t }] }; m.draw(a); println("draws {w.draws}"); }
