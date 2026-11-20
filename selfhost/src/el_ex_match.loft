@@ -1650,6 +1650,13 @@ pub fn cast_expr(e: el::El, vars: el_vars::Vars, ae: integer?, tn: integer?) -> 
   }
   // `as τ?` that narrows nothing: the cast to the base, typed `τ?`.  A checked narrowing (the
   // `dn4cast` guard and the store's range default) is refused by name.
+  // A text to a plain enum (`bad as Direction`, `bad as Direction?`): the value its variant name
+  // spells, the first variant where it names none (`OpCastEnumFromText`) — never null, so typed
+  // as the enum itself.
+  ten = match el_types::base(to) { TyEnum { n: tn0, is_ref: tr0 } => if tr0 { -1 } else { tn0 }, _ => -1 };
+  if ten >= 0 && el_types::base(x.tp) is TyText && !(x.tp is TyOptional) {
+    return ex(if e.first_pass { ir::NdNull } else { el_ir::cl(e, "OpCastEnumFromText", [x.code, ir::NdInt { n: el::def(e, ten).known_type }]) }, el_types::base(to));
+  }
   match to {
     TyOptional { inner } => {
       src = el_types::base(x.tp);
@@ -1672,6 +1679,13 @@ pub fn cast_expr(e: el::El, vars: el_vars::Vars, ae: integer?, tn: integer?) -> 
       } else if el_convert::narrowing_int(src, inner) && !(x.tp is TyOptional) && (e.first_pass || !el_convert::value_fits(e, vars, x.code, inner)) {
         // Pass 1 converts nothing: the cast is typed `τ?` there and built on pass 2.
         return if e.first_pass { ex(ir::NdNull, to) } else { dn4_cast(e, vars, x, inner) };
+      } else if el_convert::narrowing_int(src, inner) && !(x.tp is TyOptional) {
+        // (A value that provably fits — `1 as u8?` — is the value itself, typed `τ?`.)
+        return ex(if e.first_pass { ir::NdNull } else { x.code }, to);
+      } else if el_convert::narrowing_int(src, inner) && x.tp is TyOptional && src is TyInteger {
+        // (A nullable integer — an element read at an index nothing proves — is cast as it reads:
+        // its null fails the range test and casts to null.)
+        return if e.first_pass { ex(ir::NdNull, to) } else { dn4_cast(e, vars, ex(x.code, src), inner) };
       }
       el::refuse(e, "a checked narrowing cast");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
