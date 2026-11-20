@@ -5346,6 +5346,20 @@ impl Store {
         rec > PRIMARY && rec < self.size && self.read::<i32>(rec, 0) > 0
     }
 
+    /// The words of the claimed block that STARTS at `rec`, by the claim set the block chain
+    /// gave (`claims_rebuild`): `None` for a number that is past the store, inside a block,
+    /// or a free block's.  The header alone cannot say this — any word inside a record may
+    /// read as a positive number.
+    #[must_use]
+    pub fn claimed_words(&self, rec: u32) -> Option<u32> {
+        if rec < PRIMARY || rec >= self.size || !self.claims.contains(rec) {
+            return None;
+        }
+        u32::try_from(self.read::<i32>(rec, 0))
+            .ok()
+            .filter(|w| *w > 0)
+    }
+
     /// Does this store hold a ROOT — record 1 claimed?  A store `init()` left as one free
     /// block has none yet: its record-1 words past the header were never written (a store
     /// is not zero-filled unless `defined`), so nothing may read a type or a field there.

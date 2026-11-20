@@ -189,6 +189,19 @@ it may place blocks differently, but it must write each kind of block the same w
               and replaces what is there only when both are written; the call answers true only
               then.  A write that fails before the replace leaves the previous image and its
               sidecar as they were.
+  (S-Sound)   a loader that reads a whole image adopts it only when the numbers INSIDE it hold,
+              followed from the root under the root's type before any other read:
+                - a record number names a block of the chain that is claimed and STARTS there
+                  (0 names none; a text's number above 2^31 − 1 is null);
+                - a vector's or a sorted's length times its element size, a text's length, and
+                  a value's size at its position lie inside the block that holds them;
+                - a text's bytes are UTF-8.
+              The walk reads what a type owns in line: a struct's fields, an enum value's, a
+              text, a vector's and a sorted's elements, a child record.  It does not yet read a
+              keyed collection's tables and nodes (hash, index, spatial, trie, array, ordered) —
+              nor, therefore, what such a collection holds — or the record a stored reference
+              names.  A record two fields name is walked once.  The refusal is S-Gate's: false,
+              and the slot keeps the store it had.
 ```
 
 **In words.** The sidecar is the image's passport: which layout, which placement, which release.
@@ -197,7 +210,11 @@ between releases without one image ever being read under the wrong rules.  The p
 is the part that covers this chapter: the layout hash alone says where a record's FIELDS are,
 the token says how the hash or tree finds the RECORD.  Writing the two files as one is what
 keeps the passport honest: an image beside no sidecar is refused, and one beside an older
-writer's sidecar would be read under rules it was not written by.
+writer's sidecar would be read under rules it was not written by.  The passport says how to
+read the bytes, not that they can be trusted: an image is a file people pass on, and every read
+after a load believes the record numbers and lengths it holds.  So a whole-image load walks them
+once and refuses an image where one points outside its own record, which is what keeps a save
+from someone else from deciding where the program reads and writes.
 
 ### The hash table
 
@@ -402,6 +419,10 @@ computes differently from the resident store becomes a lookup that silently answ
   `tests/scripts/2177-a-malformed-image-answers-every-paged-load.loft`; the C's reader beside
   the interpreter's and native's, `tests/c_emit.rs` `the_paged_loaders_read_every_backends_image`.
 - **`S-Pair`** — `tests/scripts/2173-an-image-and-its-sidecar-are-written-together.loft`.
+- **`S-Sound`** — `tests/store_image_sound.rs`: one number changed per copy of an image (a
+  vector's length and record, a text's length, record and bytes, the same inside a vector's
+  element), each refused on the interpreter and on the C build, beside the image and a plain
+  copy that load.
 - **`S-Gate`, an image with no sidecar** —
   `loft-suite/rules/layout/L-Sound/2174-an-image-without-its-sidecar-is-refused.loft` (whole, untrusted and paged
   loaders refused; the pair loads), and `dschema_lifecycle_beside_a_store` (`Bare`).

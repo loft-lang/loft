@@ -7034,7 +7034,10 @@ impl Stores {
         builtin: &str,
     ) -> bool {
         let previous = std::mem::replace(&mut self.allocations[slot as usize], image);
-        match self.rebase_stored_refs(slot, recorded) {
+        // `@FR-S-Sound` — before anything follows a number the image holds, the rebase
+        // below included.
+        let sound = self.image_sound(slot);
+        match sound.and_then(|()| self.rebase_stored_refs(slot, recorded)) {
             Ok(()) => true,
             Err(why) => {
                 self.allocations[slot as usize] = previous;
