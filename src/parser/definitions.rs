@@ -8781,6 +8781,61 @@ impl Parser {
         self.finish_drop_cascade(c_nr, ops, outer_vars, outer_context);
     }
 
+    /// `@FR-H-DropOnce` — a droppable value is released once.  The OUTERMOST release of a user
+    /// struct with an `OpDrop` is bracketed — its synthesized cascade where it has one (which
+    /// runs the hook and then releases the fields, reading them from the record), the hook
+    /// otherwise: `OpDropEnter(self, tp)` first ends the run when the record is already
+    /// released, and `OpDropLeave(self, tp)` last marks it released.  Only a value that is the
+    /// root record of a store of its own type is marked: one held inline or as an element has
+    /// no record of its own, and can share the position of the record that holds it.  Not in a
+    /// production run (`--production`) nor a shipped build (`--ship`): a development and test
+    /// check, never a cost of the program that ships.
+    fn arm_drop_marks(&mut self) {
+        if std::env::var_os("LOFT_PRODUCTION").is_some() || crate::c::shipped_units() {
+            return;
+        }
+        let (enter, leave) = (
+            self.data.def_nr("OpDropEnter"),
+            self.data.def_nr("OpDropLeave"),
+        );
+        if enter == u32::MAX || leave == u32::MAX {
+            return;
+        }
+        for t in 0..self.data.definitions() {
+            let hook = self.data.drop_hook_nr(t);
+            let kt = self.data.def(t).known_type();
+            if hook == u32::MAX
+                || kt == u16::MAX
+                || self.data.def_type(t) != DefType::Struct
+                || self.data.def(t).name.starts_with("__")
+            {
+                continue;
+            }
+            let cascade = self.data.drop_cascade_nr(t);
+            let target = if cascade == u32::MAX { hook } else { cascade };
+            let self_var = self.data.def(target).variables.var("self");
+            let code = &mut self.data.definitions[target as usize].code;
+            let armed = matches!(code, Value::Block(bl)
+                if matches!(bl.operators.first(), Some(Value::Call(d, _)) if *d == enter));
+            if armed || self_var == u16::MAX {
+                continue;
+            }
+            let tp = Value::Int(i32::from(kt));
+            let first = Value::Call(enter, vec![Value::Var(self_var), tp.clone()]);
+            let last = Value::Call(leave, vec![Value::Var(self_var), tp]);
+            match code {
+                Value::Block(bl) if bl.result == Type::Void => {
+                    bl.operators.insert(0, first);
+                    bl.operators.push(last);
+                }
+                _ => {
+                    let body = std::mem::replace(code, Value::Null);
+                    *code = v_block(vec![first, body, last], Type::Void, "drop_once");
+                }
+            }
+        }
+    }
+
     pub(crate) fn synth_drop_cascades(&mut self) {
         // The parse unit is finished: what every fn field holds is known from here on.
         self.data.fn_fields_settled = self.data.definitions();
@@ -8884,6 +8939,8 @@ impl Parser {
                 self.fill_drop_cascade(t, c_nr);
             }
         }
+        // After the cascades exist: the bracket goes around the outermost release.
+        self.arm_drop_marks();
     }
 
     /// @PLN196 — the name of the function that fills field `a_nr` of struct `d_nr` with its

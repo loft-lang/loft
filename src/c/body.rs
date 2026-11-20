@@ -10761,6 +10761,17 @@ impl<'a> FnWriter<'a> {
                     K::Void,
                 ))
             }
+            ("OpDropEnter" | "OpDropLeave", [r, tp]) => {
+                let tp =
+                    u16::try_from(Self::literal(tp, "type")?).map_err(|_| "a type out of range")?;
+                let r = self.expr(r, ind)?;
+                let f = if name == "OpDropEnter" {
+                    "loft_drop_enter"
+                } else {
+                    "loft_drop_leave"
+                };
+                Ok(E::new(format!("{f}({}, {tp})", as_ref(r)?), K::Void))
+            }
             ("OpStoreLive", [r]) => {
                 let r = self.expr(r, ind)?;
                 Ok(E::new(format!("loft_store_live({})", as_ref(r)?), K::Cond))

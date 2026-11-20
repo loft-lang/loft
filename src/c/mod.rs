@@ -4939,6 +4939,12 @@ pub fn ship_units() {
     SHIPPED_UNITS.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
+/// Whether this process writes shipped artefacts (`--ship`): what a shipped build leaves
+/// out, a development check among it (`Parser::arm_drop_marks`), asks here.
+pub fn shipped_units() -> bool {
+    SHIPPED_UNITS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Whether the unit being written keeps every function whole: a shipped artefact's (a
 /// `--ship` run, an ESP app), which takes full optimisation of its C as written.  A semantics
 /// build splits an over-budget function into parts instead (`(R-CSplit)`, `split::budget`),

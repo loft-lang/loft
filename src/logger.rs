@@ -365,7 +365,8 @@ impl Logger {
             Rk::UserPanic { .. }
             | Rk::StackOverflow
             | Rk::Relayed { .. }
-            | Rk::StoreFreedTwice { .. } => Severity::Fatal,
+            | Rk::StoreFreedTwice { .. }
+            | Rk::ValueReleasedTwice { .. } => Severity::Fatal,
             // An `exit(code)` is the program's own verdict, never a fault; it reaches a log
             // only through a host that logs every halt, and then as information.
             Rk::Exit { .. } => Severity::Info,

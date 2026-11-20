@@ -593,6 +593,10 @@ fn c_get_dir(path: text, bytes: integer, store: integer, rec: integer, pos: inte
 #c "loft_crt_get_dir" "int64_t(const char*, int64_t, int64_t, int64_t, int64_t, int64_t)"
 fn c_ref_removed(store: integer, rec: integer) -> integer;
 #c "loft_crt_ref_removed" "int64_t(int64_t, int64_t)"
+fn c_drop_leave(store: integer, tp: integer) -> integer;
+#c "loft_crt_drop_leave" "int64_t(int64_t, int64_t)"
+fn c_drop_released(store: integer) -> integer;
+#c "loft_crt_drop_released" "int64_t(int64_t)"
 fn c_null_reported(out: vector<integer>) -> integer;
 #c "loft_crt_null_reported" "int64_t(int64_t*, int64_t)"
 fn c_set_child_rec(tp: integer, fs: integer, fr: integer, fp: integer, ss: integer, sr: integer, sp: integer, free_source: integer);
@@ -1152,6 +1156,17 @@ pub fn evacuate(tp: integer, hs: integer, hr: integer, hp: integer, fld: integer
 // whether the path is a directory that was read.
 pub fn get_dir(path: text?, store: integer, rec: integer, pos: integer, size: integer) -> boolean {
   c_get_dir(path ?? "", bytes_of(path), store, rec, pos, size) != 0
+}
+
+// `Stores::drop_leave`: the root record of `store`, a `tp` released by its `OpDrop`, is marked
+// released.
+pub fn drop_leave(store: integer, tp: integer) {
+  c_drop_leave(store, tp);
+}
+
+// Was the root record of `store` released by its `OpDrop` (`Store::released_root`)?
+pub fn drop_released(store: integer) -> boolean {
+  c_drop_released(store) != 0
 }
 
 // `Stores::reference_removed`: does a reference to record `rec` of `store` name a record that

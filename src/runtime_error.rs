@@ -136,6 +136,10 @@ pub enum RuntimeErrorKind {
     /// A store freed a second time (`@FR-H-FreeTwice`): a defect of the compiler, never of the
     /// program, so the message asks for a report.  `detail` names both frees.
     StoreFreedTwice { detail: String },
+    /// A value whose `OpDrop` ran again after it had been released (`@FR-H-DropOnce`): by a
+    /// call of `OpDrop` in the program, or by a defect of the compiler.  `detail` names the
+    /// record.
+    ValueReleasedTwice { detail: String },
 }
 
 impl RuntimeErrorKind {
@@ -158,6 +162,7 @@ impl RuntimeErrorKind {
             RuntimeErrorKind::Exit { .. } => "exit",
             RuntimeErrorKind::Relayed { label, .. } => label,
             RuntimeErrorKind::StoreFreedTwice { .. } => "store_freed_twice",
+            RuntimeErrorKind::ValueReleasedTwice { .. } => "value_released_twice",
         }
     }
 
@@ -208,6 +213,10 @@ impl RuntimeErrorKind {
             RuntimeErrorKind::Relayed { detail, .. } => detail.clone(),
             RuntimeErrorKind::StoreFreedTwice { detail } => format!(
                 "a store was freed twice: {detail} (a defect in the loft compiler; please report it)"
+            ),
+            RuntimeErrorKind::ValueReleasedTwice { detail } => format!(
+                "a value was released twice: its OpDrop ran again on {detail} — by a call of \
+                 `OpDrop` in the program, or by a defect in the loft compiler (please report it)"
             ),
         }
     }

@@ -1577,6 +1577,18 @@ fn OpDistinctStore(a: reference, b: reference) -> boolean;
 // cascade at a release: the release protocol frees some stores twice (a branch join frees per
 // arm, `@FR-H-FreeTwice`), so the cascade runs with the free that actually releases — the
 // question `Stores::free_named` asks before it frees, and `OpDropFnRef` asks before it runs one.
+// `@FR-H-DropOnce` — the bracket the outermost release of a droppable `tp` runs in, outside a
+// production run and a shipped build (`Parser::arm_drop_marks`): leaving marks the value's record
+// released, and entering on a record already marked ends the run.  Only the root record of a
+// store of type `tp` is marked: a value held inline or as an element has no record of its own.
+fn OpDropEnter(r: reference, tp: const u16);
+#cold
+#rust"s.database.drop_enter(&@r, @tp);"
+#loft"s.drop_enter(r, tp);"
+fn OpDropLeave(r: reference, tp: const u16);
+#cold
+#rust"s.database.drop_leave(&@r, @tp);"
+#loft"s.drop_leave(r, tp);"
 fn OpStoreLive(r: reference) -> boolean;
 #rust"s.database.store_live(&@r)"
 #loft"r.rec != 0 && r.store_nr != state::NULL_STORE && crt::store_live(r.store_nr)"

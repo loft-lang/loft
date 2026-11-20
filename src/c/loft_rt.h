@@ -1971,6 +1971,36 @@ static int loft_refree_allowed(void) {
     return v;
 }
 
+/* `@FR-H-DropOnce` (`Stores::drop_enter` / `drop_leave`): the outermost release of a droppable
+ * `tp` releases its value once.  Leaving it marks the store's root released
+ * (`released_root`, cleared when the root is claimed again); entering it on a marked root ends
+ * the run as a store freed twice does.  Only the root record of a store of type `tp` is marked
+ * (`Stores::is_own_root`): a value held inline can share its position. */
+static int loft_drop_own_root(loft_ref r, uint16_t tp) {
+    return r.rec == LOFT_ST_PRIMARY && r.pos == 8 && r.store_nr < loft_nstores
+        && loft_stores[r.store_nr].live && loft_stores[r.store_nr].known == tp;
+}
+
+static void loft_drop_enter(loft_ref r, uint16_t tp) {
+    if (!loft_drop_own_root(r, tp) || !loft_stores[r.store_nr].released_root)
+        return;
+    char m[240];
+    snprintf(m, sizeof m,
+             "a value was released twice: its OpDrop ran again on record %u of store #%u — by a "
+             "call of `OpDrop` in the program, or by a defect in the loft compiler (please report it)",
+             (unsigned) r.rec, (unsigned) r.store_nr);
+    fflush(stdout);
+    fprintf(stderr, "error: %s\n", m);
+    loft_fail_msg.len = 0;
+    loft_push(&loft_fail_msg, m, strlen(m));
+    if (loft_in_test) { LOFT_RELEASE_HELD(0); LOFT_LONGJMP(loft_test_jmp); }
+    LOFT_EXIT(1);
+}
+
+static void loft_drop_leave(loft_ref r, uint16_t tp) {
+    if (loft_drop_own_root(r, tp)) loft_stores[r.store_nr].released_root = 1;
+}
+
 static void loft_refree_fail(uint32_t nr) {
     char m[160];
     snprintf(m, sizeof m,

@@ -38,6 +38,27 @@ pub fn new_child_rec(self: state::State, field: state::DbRef, tp: integer) -> st
   out_ref(io)
 }
 
+// `Stores::drop_enter`: the outermost release of a `tp` entered on a root record already marked
+// released ends the run (`@FR-H-DropOnce`).
+pub fn drop_enter(self: state::State, r: state::DbRef, tp: integer) {
+  if own_root(r, tp) && crt::drop_released(r.store_nr) {
+    panic("a value was released twice: its OpDrop ran again on record {r.rec} of store #{r.store_nr} — by a call of `OpDrop` in the program, or by a defect in the loft compiler (please report it)");
+  }
+}
+
+// `Stores::drop_leave`: the outermost release of a `tp` is done; its root record is marked
+// released.
+pub fn drop_leave(self: state::State, r: state::DbRef, tp: integer) {
+  if own_root(r, tp) {
+    crt::drop_leave(r.store_nr, tp);
+  }
+}
+
+// `Stores::is_own_root`: the root record of a live store of type `tp`.
+fn own_root(r: state::DbRef, tp: integer) -> boolean {
+  r.rec == 1 && r.pos == 8 && r.store_nr != state::NULL_STORE && crt::store_live(r.store_nr) && crt::store_known(r.store_nr) == tp
+}
+
 // `Stores::evacuate`: the holder's field `fld` moved out to a record of its own at `home`,
 // placed as `OpPlaceRecord` places one — foreign where the holder's store is a vector of
 // another element type.

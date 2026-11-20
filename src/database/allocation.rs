@@ -1725,6 +1725,36 @@ impl Stores {
                 .is_some_and(|s| !s.is_free())
     }
 
+    /// Is `db` the root record of a live store whose type is `tp` — a value with a record of
+    /// its own, as opposed to one held inline (which can share the root's position) or an
+    /// element?  The one shape `@FR-H-DropOnce` marks.
+    fn is_own_root(&self, db: &DbRef, tp: u16) -> bool {
+        db.rec == crate::store::PRIMARY
+            && db.pos == 8
+            && self.store_live(db)
+            && self.allocations[db.store_nr as usize].known_type == tp
+    }
+
+    /// `@FR-H-DropOnce` (`OpDropEnter`) — the outermost release of a `tp` entered on a record
+    /// whose value was already released ends the run.
+    pub fn drop_enter(&mut self, db: &DbRef, tp: u16) {
+        if self.is_own_root(db, tp) && self.allocations[db.store_nr as usize].released_root {
+            let detail = format!("record {} of store #{}", db.rec, db.store_nr);
+            self.raise_runtime(crate::runtime_error::RuntimeErrorKind::ValueReleasedTwice {
+                detail,
+            });
+        }
+    }
+
+    /// `@FR-H-DropOnce` (`OpDropLeave`) — the outermost release of a `tp` is done: its record is
+    /// marked released (`Store::released_root`).  The bytes stay until the owner frees them —
+    /// the release protocol still reads what names them (a closure's capture slot) to free it.
+    pub fn drop_leave(&mut self, db: &DbRef, tp: u16) {
+        if self.is_own_root(db, tp) {
+            self.allocations[db.store_nr as usize].released_root = true;
+        }
+    }
+
     /// `@FR-H-FreeTwice` — fail the run at a second free of store `al`, naming the op that
     /// freed it first (`first`, a bytecode position) and the one freeing it again.
     fn refuse_refree(&mut self, al: u16, first: u32, name: &str) {
