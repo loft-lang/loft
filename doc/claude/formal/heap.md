@@ -1,3 +1,4 @@
+<!-- size-exempt: a formal rule doc, read by rule tag and anchor (DOC_QUALITY § Maintainer docs 2) -->
 <!--
 Copyright (c) 2026 Jurjen Stellingwerff
 SPDX-License-Identifier: LGPL-3.0-or-later
@@ -811,6 +812,13 @@ installed, which the frame does own.
              `v[i] = other`), an element taken OUT (`v.remove(i)`), and a keyed
              collection's records are NOT released by the language — the author releases
              them (INTERFACES.md § `OpDrop`, the documented boundary).
+  (H-DropOnce) a value is released ONCE: the outermost release of a type that declares
+             `OpDrop` (its cascade, or the hook alone) runs at most once on a value.  A
+             second one is a fault of the program (it called `OpDrop` itself) or of the
+             compiler, and outside a production run and a shipped build it ends the run
+             with "a value was released twice" — on every backend.  Checked for a value
+             that is the root record of a store of its own type; one held inline or as an
+             element is not.  The record keeps its bytes until its owner frees it.
   (H-Handle) a `File` holds a resource the RUNTIME declares — the OS handle its first read
              or write opened — and every `File` record that names the handle holds a lease
              on it (H-Lease): the record that opened it, and each deep copy of a record
