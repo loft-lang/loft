@@ -68,5 +68,6 @@ the hardware.
 
 ## See also
 
-- The probes of steps 1–3: branch `plan222-probes` of loft-libs-graphics, `probes/plan222/`.
+- The probes of steps 1–3: [`probes/`](probes/README.md) — four packages run against
+  loft-libs-graphics by path (`--lib <its checkout>`), each with what it settled.
 - The consumers' ports: jjstwerff/crawler#22, jjstwerff/dryopea#4.
