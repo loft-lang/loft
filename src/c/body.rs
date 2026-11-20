@@ -2851,7 +2851,7 @@ impl<'a> FnWriter<'a> {
                 let i = self.expr(idx, ind)?;
                 let guard = self.guard_index(idx);
                 if guard == Some(true) {
-                    let i = as_int(i)?;
+                    let i = as_wint(i)?;
                     let proof = self.held_proof(v, &h);
                     return Ok(Some(E::new(
                         format!("({proof}, loft_vh_at_ref({h}, {size}, {i}))"),
@@ -2859,9 +2859,9 @@ impl<'a> FnWriter<'a> {
                     )));
                 }
                 let (i, nn) = if guard.is_some() {
-                    (as_int(i)?, "_lt")
+                    (as_wint(i)?, "_lt")
                 } else {
-                    self.index_arg(idx, as_int(i)?)
+                    self.index_arg(idx, i)?
                 };
                 let proof = self.held_proof(v, &h);
                 let (at, tail) = at(name == "OpGetVector");
@@ -2872,7 +2872,7 @@ impl<'a> FnWriter<'a> {
             }
             ("OpLengthVector", [v]) => Ok(self
                 .held_vector(v)
-                .map(|h| E::new(format!("{h}.len"), K::Int))),
+                .map(|h| E::new(format!("{h}.len"), wint()))),
             ("OpGetInt" | "OpGetFloat", [inner, fld]) => {
                 let Some((vec, size, idx, report)) = elem(inner) else {
                     return Ok(None);
@@ -2899,7 +2899,7 @@ impl<'a> FnWriter<'a> {
                 }
                 let index = self.expr(idx, ind)?;
                 if versioned {
-                    let index = as_int(index)?;
+                    let index = as_wint(index)?;
                     let code = version::version_access(name, &held, size, fld, &index, None);
                     let k = if name == "OpGetInt" { K::Int } else { K::Float };
                     return Ok(Some(E::new(code, k)));
@@ -2912,7 +2912,7 @@ impl<'a> FnWriter<'a> {
                         "loft_vh_at_float"
                     };
                     let k = if name == "OpGetInt" { K::Int } else { K::Float };
-                    let i = as_int(index)?;
+                    let i = as_wint(index)?;
                     let proof = self.held_proof(vec, &held);
                     return Ok(Some(E::new(
                         format!("({proof}, {f}({held}, {size}, {i}, {fld}))"),
@@ -2926,7 +2926,7 @@ impl<'a> FnWriter<'a> {
                         ("loft_vh_at_float", "loft_vh_get_float", K::Float)
                     };
                     let proof = self.held_proof(vec, &held);
-                    let i = as_int(index)?;
+                    let i = as_wint(index)?;
                     let (at, tail) = at(report);
                     return Ok(Some(E::new(
                         format!(
@@ -2943,9 +2943,9 @@ impl<'a> FnWriter<'a> {
                 let proof = self.held_proof(vec, &held);
                 let (at, tail) = at(report);
                 let (index, nn) = if guard.is_some() {
-                    (as_int(index)?, "_lt")
+                    (as_wint(index)?, "_lt")
                 } else {
-                    self.index_arg(idx, as_int(index)?)
+                    self.index_arg(idx, index)?
                 };
                 // The plain read through a loop's push header takes the header itself
                 // (`loft_ph_get_*`), not a view built per read.
@@ -2997,14 +2997,14 @@ impl<'a> FnWriter<'a> {
                     format!("loft_vh_at_addr({held}, {size}, {i})")
                 } else if self.version_raw(args) {
                     // `@FR-R-Version`'s fast twin: the leaf's precondition proved the index.
-                    let index = as_int(self.expr(idx, ind)?)?;
+                    let index = as_wint(self.expr(idx, ind)?)?;
                     format!("loft_vh_at_addr({held}, {size}, {index})")
                 } else {
-                    let index = as_int(self.expr(idx, ind)?)?;
+                    let index = self.expr(idx, ind)?;
                     let guard = self.guard_index(idx);
                     let (index, nn) = match guard {
-                        Some(_) => (index, "_lt"),
-                        None => self.index_arg(idx, index),
+                        Some(_) => (as_wint(index)?, "_lt"),
+                        None => self.index_arg(idx, index)?,
                     };
                     let (at, tail) = at(report);
                     if guard == Some(true) {
@@ -3034,7 +3034,7 @@ impl<'a> FnWriter<'a> {
                 let size = Self::literal(size, "element size")?;
                 let fld = Self::literal(fld, "field")?;
                 let (index, value) = self.two(name, &[idx, val], ind)?;
-                let (index, value) = (as_int(index)?, as_bool(value)?);
+                let (index, value) = (as_wint(index)?, as_bool(value)?);
                 let code = version::version_access(name, &held, size, fld, &index, Some(&value));
                 let proof = self.held_proof(vec, &held);
                 Ok(Some(E::new(format!("({proof}, {code})"), K::Void)))
@@ -3052,7 +3052,7 @@ impl<'a> FnWriter<'a> {
                 let fld = Self::literal(fld, "field")?;
                 let (index, value) = self.two(name, &[idx, val], ind)?;
                 if self.version_raw(args) {
-                    let index = as_int(index)?;
+                    let index = as_wint(index)?;
                     let value = if name == "OpSetFloat" {
                         as_float(value)?
                     } else {
@@ -3069,7 +3069,7 @@ impl<'a> FnWriter<'a> {
                 };
                 let guard = self.guard_index(idx);
                 if guard == Some(true) {
-                    let index = as_int(index)?;
+                    let index = as_wint(index)?;
                     let proof = self.held_proof(vec, &held);
                     return Ok(Some(E::new(
                         format!("({proof}, {put}({held}, {size}, {index}, {fld}, {value}))"),
@@ -3079,9 +3079,9 @@ impl<'a> FnWriter<'a> {
                 let proof = self.held_proof(vec, &held);
                 let (at, tail) = at(report);
                 let (index, nn) = if guard.is_some() {
-                    (as_int(index)?, "_lt")
+                    (as_wint(index)?, "_lt")
                 } else {
-                    self.index_arg(idx, as_int(index)?)
+                    self.index_arg(idx, index)?
                 };
                 Ok(Some(E::new(
                     format!(
@@ -4240,8 +4240,17 @@ impl<'a> FnWriter<'a> {
     /// `LOFT_NO_WRAP_SELECT=1` writes the `%`.
     fn counter_index(&self, idx: &Value, held: &str) -> Option<String> {
         let ours = |ctr: u16| self.in_range.iter().any(|(c, hh)| *c == ctr && hh == held);
+        // @PLN217 — an accessor takes its index as the build's integer (`loft_int`); a counter
+        // proven inside the vector fits it, so a 64-bit one is cast and not tested.
+        let fit = |code: String| {
+            if crate::keys::width32_all() {
+                format!("(loft_int) ({code})")
+            } else {
+                code
+            }
+        };
         if let Value::Var(ctr) = idx.unspan() {
-            return ours(*ctr).then(|| self.var(*ctr));
+            return ours(*ctr).then(|| fit(self.var(*ctr)));
         }
         let (ctr, step, divisor) = crate::loop_shape::wrapped_counter(self.cx.data, idx)?;
         let Value::Var(len) = divisor.unspan() else {
@@ -4256,14 +4265,14 @@ impl<'a> FnWriter<'a> {
             return None;
         }
         let (i, n) = (self.var(ctr), self.var(*len));
-        Some(if step == 0 {
+        Some(fit(if step == 0 {
             i
         } else if step == 1 && !std::env::var("LOFT_NO_WRAP_SELECT").is_ok_and(|v| v != "0") {
             crate::rewrite_census::fired("R-Base/wrap-select", 1);
             format!("({i} == {n} - INT64_C(1) ? INT64_C(0) : {i} + INT64_C(1))")
         } else {
             format!("(({i} + INT64_C({step})) % {n})")
-        })
+        }))
     }
 
     /// The bind of a record's address `pa` (`bind_record_ptr`): the store lookup, or — the
@@ -4334,6 +4343,14 @@ impl<'a> FnWriter<'a> {
             // A variable index, or one the loop proves inside the vector (a wrapped counter).
             let (index, raw) = match (args[2].unspan(), self.counter_index(&args[2], &header)) {
                 (_, Some(i)) => (i, true),
+                // @PLN217 — the accessor's index is the build's integer: a 64-bit variable is
+                // narrowed, its null and a value outside the width both reading as outside.
+                (Value::Var(index), None)
+                    if crate::keys::width32_all()
+                        && self.shapes[*index as usize] != CType::Int32 =>
+                {
+                    (format!("loft_n32({})", self.var(*index)), false)
+                }
                 (Value::Var(index), None) => (self.var(*index), false),
                 _ => return None,
             };
@@ -5219,20 +5236,27 @@ impl<'a> FnWriter<'a> {
     /// handed to the accessor as such (`loft_nonneg`), so its from-the-end wrap folds away.
     /// Answers the argument and the accessor suffix (`_nn`, the accessors that test the index
     /// with one unsigned compare).
-    fn index_arg(&mut self, idx: &Value, code: String) -> (String, &'static str) {
+    ///
+    /// @PLN217 — the accessor takes the index as the build's integer (`as_wint`).  In a 32-bit
+    /// build a 64-bit index is narrowed there, and one past the width reads null, which is
+    /// negative: so the claim is made for such an index only when the proof also bounds it
+    /// inside the width.
+    fn index_arg(&mut self, idx: &Value, index: E) -> Result<(String, &'static str), String> {
+        let narrowed = crate::keys::width32_all() && index.kind != K::Int32;
+        let code = as_wint(index)?;
         if crate::env_once!(std::env::var("LOFT_NO_RANGE_ARITH").is_ok_and(|v| v != "0")) {
-            return (code, "");
+            return Ok((code, ""));
         }
         let facts = self.nn_facts();
         let over = self.range_override.last().cloned();
         let ranges = over.as_deref().unwrap_or(&facts.1);
         match crate::opt::range::range(self.cx.data, &facts.0, ranges, idx, 0) {
-            Some((lo, _)) if lo >= 0 => {
+            Some((lo, hi)) if lo >= 0 && (!narrowed || hi <= i64::from(i32::MAX)) => {
                 crate::rewrite_census::fired("R-Range/index", 1);
                 let site = format!("\"R-Range:{}\"", self.cx.data.def(self.d).name());
-                (format!("loft_nonneg({code}, {site})"), "_nn")
+                Ok((format!("loft_nonneg({code}, {site})"), "_nn"))
             }
-            _ => (code, ""),
+            _ => Ok((code, "")),
         }
     }
 
@@ -8316,7 +8340,7 @@ impl<'a> FnWriter<'a> {
             return Ok(Some(E::new(format!("((int64_t) st{t}.n)"), K::Int)));
         }
         if let Some(h) = self.held_vector(v) {
-            return Ok(Some(E::new(format!("{h}.len"), K::Int)));
+            return Ok(Some(E::new(format!("{h}.len"), wint())));
         }
         self.pushed_mint("OpLengthVector", args, ind)
     }
@@ -10950,8 +10974,15 @@ impl<'a> FnWriter<'a> {
             ("OpSizeVector", [v, stride]) => {
                 let stride = Self::literal(stride, "stride")?;
                 let v = self.expr(v, ind)?;
+                // @PLN217 — the length is the build's integer; the size in bytes is taken in 64
+                // bits, which a 32-bit length times its stride needs.
+                let wide = if crate::keys::width32_all() {
+                    "(int64_t) "
+                } else {
+                    ""
+                };
                 Ok(E::new(
-                    format!("(loft_vec_len({}) * {stride})", as_ref(v)?),
+                    format!("({wide}loft_vec_len({}) * {stride})", as_ref(v)?),
                     K::Int,
                 ))
             }
@@ -11103,7 +11134,7 @@ impl<'a> FnWriter<'a> {
             }
             ("OpLengthVector", [v]) => {
                 let v = self.expr(v, ind)?;
-                Ok(E::new(format!("loft_vec_len({})", as_ref(v)?), K::Int))
+                Ok(E::new(format!("loft_vec_len({})", as_ref(v)?), wint()))
             }
             ("OpPreAllocVector", [v, count, size]) => {
                 let count = Self::literal(count, "count")?;
@@ -11558,7 +11589,7 @@ impl<'a> FnWriter<'a> {
             }
             ("OpLengthSorted", [v]) => {
                 let v = self.expr(v, ind)?;
-                Ok(E::new(format!("loft_vec_len({})", as_ref(v)?), K::Int))
+                Ok(E::new(format!("loft_vec_len({})", as_ref(v)?), wint()))
             }
             ("OpEqRef" | "OpNeRef", [_, _]) => {
                 let (a, b) = self.two(name, args, ind)?;
