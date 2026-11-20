@@ -371,6 +371,7 @@ n_fs_result
 n_get_store_lock
 n_hash_sorted
 n_hash_unsorted
+n_inside
 n_json_array
 n_json_bool
 n_json_errors
