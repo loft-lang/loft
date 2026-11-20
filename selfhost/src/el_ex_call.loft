@@ -1535,6 +1535,12 @@ pub fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::N
     pt = a.typedef[0];
     at = types[a#index] ?? ir::TyUnknown { n: 0 };
     arg = given[a#index] ?? ir::NdNull;
+    // (An empty `[]` is read at its parameter's vector on pass 1 too — `parse_vector` under the
+    // parameter's hint — its `_vec_N` and `_elm_N` minted there.)
+    if e.first_pass && el_ex_pattern::is_empty_literal(arg) && el_types::base(pt) is TyVector && !el_types::is_unknown(pt) {
+      conv += [el_ex_pattern::empty_literal_to(e, vars, el_types::base(pt))];
+      continue;
+    }
     // Pass 1 converts nothing: an argument it could not type yet is taken as it is, so the
     // call still mints its buffers there.
     if e.first_pass && el_types::is_unknown(at) {
@@ -2836,6 +2842,26 @@ pub fn coalesce_jump(e: el::El, vars: el_vars::Vars, x: Ex, j: Ex) -> Ex {
 
 // An element read with the nullable getter (`OpGetVectorNullable` / `OpVectorRefNullable`), for a
 // form that answers the element's absence itself (`!`, `?? return`); any other read as it is.
+// Does the place `n` read an element by an index that is no literal (`OpGetVector(v, s, k)`)?
+fn computed_index_in(e: el::El, n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdCall { def_nr, args } => {
+      if el::def(e, def_nr).name == "OpGetVector" && len(args) == 3 && !(el_ir::unspan(args[2]!) is NdInt) {
+        return true;
+      }
+      len(args) > 0 && computed_index_in(e, args[0]!)
+    },
+    _ => false
+  }
+}
+
+fn computed_index_below(e: el::El, n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdCall { def_nr: _, args } => len(args) > 0 && computed_index_in(e, args[0]!),
+    _ => false
+  }
+}
+
 pub fn nullable_getter(e: el::El, code: ir::Node) -> ir::Node {
   match el_ir::unspan(code) {
     NdCall { def_nr, args } => {
@@ -3103,7 +3129,10 @@ pub fn enum_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
     // (`v[1]`, a range loop's `v[i]`) is read through the nullable twin of its getter
     // (`rewrite_outer_arith_to_nullable`); its absence is the test around `__ncc_N` alone.
     plain = el_ir::cl(e, "OpGetField", [slot, off, kt]);
-    read = if x.tp is TyOptional {
+    // (An element reached through a computed index anywhere on the way — `ds[k].returned[0]` —
+    // is in flight, `τ?`, whatever the read's own type kept.)
+    // (The element's own index is the nullable twin's: `v[i]?` reads `OpGetVectorNullable`.)
+    read = if x.tp is TyOptional || computed_index_below(e, slot) {
       el_ir::v_if(el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpGetInt4", [slot, off]), ir::NdInt { n: 0 }]), el_ir::cl(e, "OpNullRefSentinel", []), plain)
     } else {
       el_ex_base::nullable_arith(e, plain, true)

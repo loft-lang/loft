@@ -1,0 +1,43 @@
+// A challenge for a `&` TUPLE PARAMETER (@PLN91): `fn f(p: &(integer, integer))` writes the
+// caller's tuple in place.  One function per case (the callee), checked by its `chk_` caller;
+// every value hand-computed.
+//   the callee writes:    swap (members exchanged through a temp), compound (`p.0 += k; p.1 += p.0 % 7`),
+//                         whole (`p = (9, 8)`), read_only (no write: a warning, not a refusal)
+//   the members:          mixed (integer, float), narrow (u8, integer), text_member (text, integer)
+//   the argument:         forwarded (a `&` parameter handed on to another), in_loop (called per pass)
+//   two links:            two_links (two `&` tuples, distinct)
+fn swap(p: &(integer, integer)) { t = p.0; p.0 = p.1; p.1 = t; }
+fn compound(p: &(integer, integer), k: integer) { p.0 += k; p.1 += p.0 % 7; }
+fn whole(p: &(integer, integer)) { p = (9, 8); }
+fn read_only(p: &(integer, integer)) -> integer { p.0 * 10 + p.1 }
+fn mixed(p: &(integer, float)) { p.0 += 1; p.1 = p.1 * 2.0; }
+fn narrow(p: &(u8, integer)) { p.1 += p.0 as integer; }
+fn text_member(p: &(text, integer)) { p.1 += 1; p.0 += "!"; }
+fn fwd_inner(p: &(integer, integer)) { t = p.0; p.0 = p.1; p.1 = t; }
+fn forwarded(p: &(integer, integer)) { fwd_inner(p); p.0 += 100; }
+fn in_loop(p: &(integer, integer)) { p.0 += 1; p.1 += p.0; }
+fn two_links(a: &(integer, integer), b: &(integer, integer)) -> integer { a.0 += 1; b.0 += 10; a.0 + b.0 }
+
+fn chk_swap() -> integer { x = (3, 7); swap(x); x.0 * 10 + x.1 }
+fn chk_compound() -> integer { x = (1, 2); compound(x, 5); x.0 * 100 + x.1 }
+fn chk_whole() -> integer { x = (1, 2); whole(x); x.0 * 10 + x.1 }
+fn chk_read_only() -> integer { x = (4, 5); read_only(x) + x.0 }
+fn chk_mixed() -> integer { x = (1, 1.25); mixed(x); if x.0 == 2 && x.1 == 2.5 { 1 } else { 0 } }
+fn chk_narrow() -> integer { x = (200 as u8, 5); narrow(x); x.1 }
+fn chk_text_member() -> text { x = ("hi", 1); text_member(x); "{x.0}{x.1}" }
+fn chk_forwarded() -> integer { x = (3, 7); forwarded(x); x.0 * 1000 + x.1 }
+fn chk_in_loop() -> integer { x = (0, 0); for _ in 0..3 { in_loop(x); } x.0 * 100 + x.1 }
+fn chk_two_links() -> integer { a = (1, 0); b = (2, 0); r = two_links(a, b); r * 100 + a.0 * 10 + b.0 }
+
+fn main() {
+  assert(chk_swap() == 73, "swap {chk_swap()}");
+  assert(chk_compound() == 608, "compound {chk_compound()}");
+  assert(chk_whole() == 98, "whole {chk_whole()}");
+  assert(chk_read_only() == 49, "read_only {chk_read_only()}");
+  assert(chk_mixed() == 1, "mixed");
+  assert(chk_narrow() == 205, "narrow {chk_narrow()}");
+  assert(chk_text_member() == "hi!2", "text_member {chk_text_member()}");
+  assert(chk_forwarded() == 107003, "forwarded {chk_forwarded()}");
+  assert(chk_in_loop() == 306, "in_loop {chk_in_loop()}");
+  assert(chk_two_links() == 1432, "two_links {chk_two_links()}");
+}

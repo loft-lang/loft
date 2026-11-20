@@ -1,0 +1,55 @@
+// A challenge for a SINGLE-ELEMENT ALTERNATION in a slice pattern (@PLN91): `[(A | B)]`, each
+// branch one element wide.  One function per case, one axis each; every function answers a
+// hand-computed value.  `toks(k)` builds a vector of Tok from a code string.
+//   the branches:        units (`[(Ident | Str | Num)]`), same_field (`[(Ident { n } | Str { n })]`),
+//                        diff_fields (`[(Word { w } | Num { n })]`: each capture nullable),
+//                        two_fields (`[(Add { x, y } | Neg { x })]`)
+//   a name on the element: named_each (`[(a: Num | b: Word)]`), named_same (`[(a: Num | a: Word)]`),
+//                        named_one (`[(a: Num | Word)]`, a coalesced default)
+//   the position:        with_rest (`[(a: Num | Word), ..r]`), after_head (`[_, (Num { n } | Byte { n })]`)
+//   a guard:             guarded (`[(Rect { w: v } | Rect { h: v }), ..] if v > 5`)
+//   a wildcard field:    wild_field (`[(CpA { f: _ } | CpB), ..]`)
+enum Tok { Ident { n: text }, Str { n: text }, Num { v: integer }, Word { w: text }, Byte { v: integer }, Sep }
+enum Ex { Add { x: integer, y: integer }, Neg { x: integer } }
+enum Sh { Rect { w: integer, h: integer }, Dot }
+enum CpT { CpA { f: integer }, CpB, CpC }
+
+fn show(t: Tok?) -> text { match t { Num { v } => "N{v}", Word { w } => "W{w}", Ident { n } => "I{n}", Str { n } => "S{n}", Byte { v } => "B{v}", Sep => "_", null => "-" } }
+
+fn units(xs: vector<Tok>) -> text { match xs { [(Ident | Str | Num)] => "one", _ => "other" } }
+fn same_field(xs: vector<Tok>) -> text { match xs { [(Ident { n } | Str { n })] => n, _ => "none" } }
+fn diff_fields(xs: vector<Tok>) -> text { match xs { [(Word { w } | Num { v })] => "{w ?? \"-\"}:{v ?? -1}", _ => "x" } }
+fn two_fields(xs: vector<Ex>) -> integer { match xs { [(Add { x, y } | Neg { x })] => x + (y ?? 0), _ => -1 } }
+fn named_each(xs: vector<Tok>) -> text { match xs { [(a: Num | b: Word)] => "{a == null}:{b == null}:{show(a)}:{show(b)}", _ => "x" } }
+fn named_same(xs: vector<Tok>) -> text { match xs { [(a: Num | a: Word)] => "{a == null}:{show(a)}", _ => "x" } }
+fn named_one(xs: vector<Tok>) -> text { match xs { [(a: Num | Word)] => show(a ?? Sep), _ => "x" } }
+fn with_rest(xs: vector<Tok>) -> text { match xs { [(a: Num | Word), ..r] => "{show(a)}:{len(r)}", _ => "x" } }
+fn after_head(xs: vector<Tok>) -> integer { match xs { [_h, (Num { v } | Byte { v })] => v + 1000, _ => -1 } }
+fn guarded(xs: vector<Sh>) -> integer { match xs { [(Rect { w: v } | Rect { h: v }), ..] if v > 5 => v, _ => -1 } }
+fn wild_field(xs: vector<CpT>) -> integer { match xs { [(CpA { f: _ } | CpB), ..] => 1, _ => 0 } }
+
+fn chk_units() -> text { "{units([Num { v: 1 }])}/{units([Sep])}/{units([Str { n: \"a\" }, Sep])}" }
+fn chk_same_field() -> text { "{same_field([Str { n: \"s\" }])}/{same_field([Ident { n: \"i\" }])}/{same_field([Num { v: 1 }])}" }
+fn chk_diff_fields() -> text { "{diff_fields([Word { w: \"q\" }])}/{diff_fields([Num { v: 4 }])}/{diff_fields([Sep])}" }
+fn chk_two_fields() -> integer { two_fields([Add { x: 3, y: 4 }]) * 100 + two_fields([Neg { x: 9 }]) }
+fn chk_named_each() -> text { "{named_each([Num { v: 2 }])}|{named_each([Word { w: \"z\" }])}" }
+fn chk_named_same() -> text { "{named_same([Num { v: 2 }])}|{named_same([Word { w: \"z\" }])}|{named_same([Sep])}" }
+fn chk_named_one() -> text { "{named_one([Num { v: 2 }])}|{named_one([Word { w: \"z\" }])}" }
+fn chk_with_rest() -> text { "{with_rest([Num { v: 2 }, Sep, Sep])}|{with_rest([Word { w: \"z\" }])}|{with_rest([Sep])}" }
+fn chk_after_head() -> integer { after_head([Sep, Byte { v: 7 }]) + after_head([Sep, Num { v: 5 }]) * 10000 + after_head([Num { v: 5 }]) }
+fn chk_guarded() -> integer { guarded([Rect { w: 9, h: 1 }]) * 100 + guarded([Rect { w: 1, h: 8 }]) * 0 + guarded([Rect { w: 1, h: 2 }]) }
+fn chk_wild_field() -> integer { wild_field([CpA { f: 1 }]) * 100 + wild_field([CpB, CpC]) * 10 + wild_field([CpC]) }
+
+fn main() {
+  assert(chk_units() == "one/other/other", "units {chk_units()}");
+  assert(chk_same_field() == "s/i/none", "same_field {chk_same_field()}");
+  assert(chk_diff_fields() == "q:-1/-:4/x", "diff_fields {chk_diff_fields()}");
+  assert(chk_two_fields() == 709, "two_fields {chk_two_fields()}");
+  assert(chk_named_each() == "false:true:N2:-|true:false:-:Wz", "named_each {chk_named_each()}");
+  assert(chk_named_same() == "false:N2|false:Wz|x", "named_same {chk_named_same()}");
+  assert(chk_named_one() == "N2|_", "named_one {chk_named_one()}");
+  assert(chk_with_rest() == "N2:2|-:0|x", "with_rest {chk_with_rest()}");
+  assert(chk_after_head() == 10051006, "after_head {chk_after_head()}");
+  assert(chk_guarded() == 899, "guarded {chk_guarded()}");
+  assert(chk_wild_field() == 110, "wild_field {chk_wild_field()}");
+}
