@@ -1025,6 +1025,21 @@ static int64_t loft_fs_delete(loft_str raw) {
         code = loft_is_dir(path) ? LOFT_FS_IS_DIRECTORY : loft_fs_code(e);
     }
 #endif
+    if (code == LOFT_FS_OK) {
+        /* `@FR-S-Guard` (`store_guard::remove_beside`): a store's guard goes with the file it
+         * describes — when what lies beside the path is one. */
+        size_t pn = strlen(path);
+        char *guard = (char *) malloc(pn + 7);
+        if (!guard) { fputs("loft: out of memory\n", stderr); abort(); }
+        memcpy(guard, path, pn);
+        memcpy(guard + pn, ".guard", 7);
+        char head[12];
+        FILE *g = fopen(guard, "rb");
+        int is_guard = g && fread(head, 1, 12, g) == 12 && memcmp(head, "LOFT-GUARD v", 12) == 0;
+        if (g) fclose(g);
+        if (is_guard) (void) remove(guard);
+        free(guard);
+    }
     free(path);
     return code;
 }

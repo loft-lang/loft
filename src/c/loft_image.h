@@ -620,7 +620,7 @@ static int loft_guard_holds(const char *path, const uint8_t *bytes, size_t n, ch
         if (!side) bad = "its layout sidecar cannot be read";
         else if (!loft_guard_same(side, sn, v, vn)) bad = "its layout sidecar is not the one its guard was written for";
     }
-    if (bad) snprintf(why, cap, "%s; remove %s to load the file as it is", bad, gp);
+    if (bad) snprintf(why, cap, "%s", bad);
     free(side);
     free(text);
     free(gp);
@@ -1239,12 +1239,17 @@ static int loft_image_load(loft_ref r, loft_str path, const loft_sidecar *sc, in
     {
         /* `@FR-S-Guard`: before the image or its sidecar is read for what it holds. */
         char *q = loft_cpath(path, 0);
-        char why[1200];
+        char why[200];
         if (!loft_guard_holds(q, bytes, n, why, sizeof why)) {
-            fprintf(stderr, "%s: refusing %s \xe2\x80\x94 %s.\n", who, q, why);
-            free(q);
-            free(bytes);
-            return 0;
+            /* The loader for a file from elsewhere refuses; the other reads it with a
+             * warning: a guard a write did not know of would otherwise cost a good save. */
+            if (untrusted) {
+                fprintf(stderr, "%s: refusing %s \xe2\x80\x94 %s; remove %s.guard to load the file as it is.\n", who, q, why, q);
+                free(q);
+                free(bytes);
+                return 0;
+            }
+            fprintf(stderr, "%s: %s \xe2\x80\x94 %s; it is loaded as it is.  Remove %s.guard if the change was meant.\n", who, q, why, q);
         }
         free(q);
     }

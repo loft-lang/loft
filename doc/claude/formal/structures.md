@@ -210,11 +210,14 @@ it may place blocks differently, but it must write each kind of block the same w
               EVERY writer of an image at a path writes its guard, and a tool that moves a pair
               moves its guard with it: a guard an earlier write left would refuse the new image.
               A loader that reads an image from a file checks the guard before it reads the
-              image or the sidecar for what they hold, and refuses (S-Gate's answer) when the
-              guard cannot be read, is not one, names no image, or names another image or
-              sidecar than the ones there.  NO guard — the file is read as it is.  A reader
-              takes the lines it knows and passes over the others.  The paged, lazy and URL
-              loaders do not read a guard.
+              image or the sidecar for what they hold.  The guard does not HOLD when it
+              cannot be read, is not one, names no image, or names another image or sidecar
+              than the ones there:
+                - store_load_untrusted refuses (S-Gate's answer);
+                - store_load says so on stderr and reads the file as it is.
+              NO guard — the file is read as it is, by both.  A reader takes the lines it
+              knows and passes over the others.  Deleting a file deletes the guard beside it.
+              The paged, lazy and URL loaders do not read a guard.
 ```
 
 **In words.** The sidecar is the image's passport: which layout, which placement, which release.
@@ -229,9 +232,11 @@ after a load believes the record numbers and lengths it holds.  So a whole-image
 once and refuses an image where one points outside its own record, which is what keeps a save
 from someone else from deciding where the program reads and writes.  The guard answers a
 different question — are these the bytes that were written — so a save cut short when the power
-went, or a damaged file, is refused instead of read as something else.  It is not a lock, and is
-not meant as one: a save changed on purpose is still a save, and removing the guard (or writing
-a new one, which is three lines and two hashes) is all it takes to load it.
+went, or a damaged file, is noticed instead of read as something else.  It is not a lock, and is
+not meant as one: a save changed on purpose is still a save, and a guard that some other writer
+left behind — an editor, an earlier loft — must not cost a good one.  So the ordinary load says
+what it saw and goes on, and only the loader meant for a file from elsewhere refuses; removing
+the guard, or writing a new one (three lines and two hashes), settles it either way.
 
 ### The hash table
 
@@ -440,11 +445,12 @@ computes differently from the resident store becomes a lookup that silently answ
   vector's length and record, a text's length, record and bytes, the same inside a vector's
   element), each refused on the interpreter and on the C build, beside the image and a plain
   copy that load.
-- **`S-Guard`** — `tests/store_image_guard.rs`: each backend writes, each reads — a value
-  changed under the guard and a sidecar changed under it are refused, the changed image without
-  its guard loads, as do a store with no guard and one whose guard carries a later writer's
-  line; and `tests/store_upgrade.rs`, whose upgraded stores load only when the upgrade wrote
-  their guard.
+- **`S-Guard`** — `tests/store_image_guard.rs`: each backend writes, each reads with both
+  loaders — a value changed under the guard, and a guard naming another image or sidecar, are
+  read with a warning by `store_load` and refused by `store_load_untrusted`; the changed image
+  without its guard loads, as do a store with no guard and one whose guard carries a later
+  writer's line; a deleted store leaves no guard.  And `tests/store_upgrade.rs`, whose
+  upgraded stores load without a warning only when the upgrade wrote their guard.
 - **`S-Gate`, an image with no sidecar** —
   `loft-suite/rules/layout/L-Sound/2174-an-image-without-its-sidecar-is-refused.loft` (whole, untrusted and paged
   loaders refused; the pair loads), and `dschema_lifecycle_beside_a_store` (`Bare`).

@@ -5596,7 +5596,7 @@ impl Stores {
         if slot_idx >= self.allocations.len() {
             return false;
         }
-        if !Self::guard_holds(path, "store_load") {
+        if !Self::guard_holds(path, "store_load", false) {
             return false;
         }
         // A file written under an older layout is converted in memory (@PLN196, open
@@ -7061,20 +7061,34 @@ impl Stores {
         }
     }
 
-    /// `@FR-S-Guard` — whether the store file at `path` is the one its guard was written
-    /// for, asked before a loader reads the image or its sidecar; the refusal is printed.
-    /// A file with no guard, or one that cannot be read at all, is the loader's to answer.
-    fn guard_holds(path: &std::path::Path, builtin: &str) -> bool {
+    /// `@FR-S-Guard` — whether the store file at `path` may be read, asked before a loader
+    /// reads the image or its sidecar.  A file that is not the one its guard was written
+    /// for is refused by a `strict` loader (the one for a file from elsewhere) and read
+    /// with a warning by the other: a guard a write did not know of — another tool's, an
+    /// earlier loft's — would otherwise cost a good save.  A file with no guard, or one
+    /// that cannot be read at all, is the loader's to answer.
+    fn guard_holds(path: &std::path::Path, builtin: &str, strict: bool) -> bool {
         let Some(image) = path.to_str().and_then(crate::store::image_bytes) else {
             return true;
         };
-        match crate::store_guard::check(path, &image) {
-            Ok(()) => true,
-            Err(why) => {
-                crate::loft_eprintln!("{builtin}: refusing {} — {why}.", path.display());
-                false
-            }
+        let Err(why) = crate::store_guard::check(path, &image) else {
+            return true;
+        };
+        let guard = crate::store_guard::guard_path(path);
+        if strict {
+            crate::loft_eprintln!(
+                "{builtin}: refusing {} — {why}; remove {} to load the file as it is.",
+                path.display(),
+                guard.display()
+            );
+        } else {
+            crate::loft_eprintln!(
+                "{builtin}: {} — {why}; it is loaded as it is.  Remove {} if the change was meant.",
+                path.display(),
+                guard.display()
+            );
         }
+        !strict
     }
 
     /// The slot a store file's sidecar says it was written from.
@@ -7222,7 +7236,7 @@ impl Stores {
             return false;
         };
         let path = std::path::Path::new(&resolved);
-        if !Self::guard_holds(path, "store_load_untrusted") {
+        if !Self::guard_holds(path, "store_load_untrusted", true) {
             return false;
         }
         // An older layout converts in memory, as `store_load` does (@PLN196); the converter
