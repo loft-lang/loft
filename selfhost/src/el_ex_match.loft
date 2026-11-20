@@ -1044,10 +1044,51 @@ pub fn key_range_syntax(e: el::El, n: integer) -> boolean {
   match e.p.nodes[n] { SIndex { range } => range, _ => false }
 }
 
+// A field of a local that is a sorted or an index (`d.m[15..35]`): the local, or -1.
+fn key_range_field_root(e: el::El, vars: el_vars::Vars, n: integer) -> integer {
+  match e.p.nodes[n] {
+    SIndex { e: ie, range, limit, spatial } => {
+      if !range || ie == null || limit != null || spatial {
+        return -1;
+      }
+      match e.p.nodes[ie!] {
+        SMember { e: be, name: fname, call } => {
+          if call || be == null {
+            return -1;
+          }
+          rv = match e.p.nodes[be!] { SName { name, member } => if member == "" { el_vars::var(vars, name) } else { -1 }, _ => -1 };
+          if rv < 0 {
+            return -1;
+          }
+          rd = struct_ref(e, el_types::base(el_vars::tp(vars, rv)));
+          fa = if rd < 0 { -1 } else { attr_nr(el::def(e, rd), fname) };
+          ft = if fa < 0 { ir::TyVoid } else { el_types::base(el::def(e, rd).attributes[fa]!.typedef[0] ?? ir::TyVoid) };
+          if (ft is TySorted || ft is TyIndex) { rv } else { -1 }
+        },
+        _ => -1
+      }
+    },
+    _ => -1
+  }
+}
+
 pub fn key_range(e: el::El, vars: el_vars::Vars, n: integer) -> KeyRange? {
   cv = key_range_local(e, vars, n);
-  if cv < 0 {
+  // A field of a local (`d.m[15..35]`): the field's place is read at `OpIterate` and again at
+  // every `OpStep`, and the loop variable borrows the local (`["d"]`).
+  froot = if cv < 0 { key_range_field_root(e, vars, n) } else { -1 };
+  if cv < 0 && froot < 0 {
     return null;
+  }
+  coll: ir::Node = ir::NdVar { n: cv };
+  ct = ir::TyVoid;
+  if froot >= 0 {
+    fie = match e.p.nodes[n] { SIndex { e: fie0 } => fie0 ?? -1, _ => -1 };
+    fx = el_ex_assign::expression(e, vars, fie);
+    coll = fx.code;
+    ct = el_types::base(fx.tp);
+  } else {
+    ct = el_types::base(el_vars::tp(vars, cv));
   }
   lo: vector<integer> = [];
   hi: vector<integer> = [];
@@ -1056,9 +1097,8 @@ pub fn key_range(e: el::El, vars: el_vars::Vars, n: integer) -> KeyRange? {
     SIndex { keys, hi: h, inclusive: inc } => { lo = keys; hi = h; inclusive = inc; },
     _ => {}
   }
-  ct = el_types::base(el_vars::tp(vars, cv));
   el_d = el_types::keyed_elem(ct);
-  elem = el_types::with_deps(ir::TyReference { n: el_d, dep: [] }, el_types::deps(ct) + [cv]);
+  elem = el_types::with_deps(ir::TyReference { n: el_d, dep: [] }, if froot >= 0 { [froot] } else { el_types::deps(ct) + [cv] });
   if len(lo) > 1 || len(hi) > 1 {
     el::refuse(e, "a key range over more than one key");
     return null;
@@ -1066,7 +1106,8 @@ pub fn key_range(e: el::El, vars: el_vars::Vars, n: integer) -> KeyRange? {
   from: vector<ir::Node> = [];
   for k in lo {
     kx = el_ex_assign::expression(e, vars, k);
-    if !e.first_pass && !(el_types::base(kx.tp) is TyInteger) {
+    // (A text key takes a text bound as it is: `d.words["banana"..="date"]`.)
+    if !e.first_pass && !(el_types::base(kx.tp) is TyInteger) && !(el_types::base(kx.tp) is TyText) {
       el::refuse(e, "a key range whose bound is not an integer: {type_kind(kx.tp)}");
       return null;
     }
@@ -1077,14 +1118,14 @@ pub fn key_range(e: el::El, vars: el_vars::Vars, n: integer) -> KeyRange? {
   to: vector<ir::Node> = [];
   for k in hi {
     kx = el_ex_assign::expression(e, vars, k);
-    if !e.first_pass && !(el_types::base(kx.tp) is TyInteger) {
+    if !e.first_pass && !(el_types::base(kx.tp) is TyInteger) && !(el_types::base(kx.tp) is TyText) {
       el::refuse(e, "a key range whose bound is not an integer: {type_kind(kx.tp)}");
       return null;
     }
     to += [kx.code];
   }
   if e.first_pass {
-    return KeyRange { iter: it, start: ir::NdNull, coll: ir::NdVar { n: cv }, on: 0, arg: 0, elem: elem };
+    return KeyRange { iter: it, start: ir::NdNull, coll: coll, on: 0, arg: 0, elem: elem };
   }
   known = el_schema::keyed_type(e, ct);
   on = 2;
@@ -1102,11 +1143,11 @@ pub fn key_range(e: el::El, vars: el_vars::Vars, n: integer) -> KeyRange? {
   if inclusive {
     on += 128;
   }
-  args: vector<ir::Node> = [ir::NdVar { n: cv }, ir::NdInt { n: on }, ir::NdInt { n: arg }, ir::NdKeys { keys: el_schema::key_descriptors(e, known) }, ir::NdInt { n: len(from) }];
+  args: vector<ir::Node> = [coll, ir::NdInt { n: on }, ir::NdInt { n: arg }, ir::NdKeys { keys: el_schema::key_descriptors(e, known) }, ir::NdInt { n: len(from) }];
   args += from;
   args += [ir::NdInt { n: len(to) }];
   args += to;
-  KeyRange { iter: it, start: el_ir::cl(e, "OpIterate", args), coll: ir::NdVar { n: cv }, on: on, arg: arg, elem: elem }
+  KeyRange { iter: it, start: el_ir::cl(e, "OpIterate", args), coll: coll, on: on, arg: arg, elem: elem }
 }
 
 pub fn key_range_step(e: el::El, kr: KeyRange) -> ir::Node {
