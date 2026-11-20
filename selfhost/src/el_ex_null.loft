@@ -711,6 +711,10 @@ pub fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: intege
     if el_types::is_unknown(x.tp) {
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
     }
+    // `@FR-B-Ref-Uniform`: a `&τ?` link's `?` is its referent's — the link read as `τ?`.
+    while x.tp is TyRefVar {
+      x = ex(x.code, match x.tp { TyRefVar { inner } => inner, _ => x.tp });
+    }
     // An `S?` slot's default is its record's (`read_through_tag`).
     if is_nullable_wrapper(e, x.tp) {
       rx = el_ex_place::read_through_tag(e, vars, x);

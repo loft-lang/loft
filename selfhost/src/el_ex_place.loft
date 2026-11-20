@@ -2097,7 +2097,8 @@ pub fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: 
   }
   // A link to a vector (`v: &vector<T>`) appends through the link as the vector would
   // (`@FR-B-Ref-Uniform`).
-  linked_vec = match vt { TyRefVar { inner } => inner is TyVector, _ => false };
+  // (A link to a `vector<T>?` too: the referent's `?` changes nothing an append writes.)
+  linked_vec = match vt { TyRefVar { inner } => el_types::base(inner) is TyVector, _ => false };
   // `absent_append_mint` (`@FR-Col-Insert-Absent`): an append onto a nullable vector LOCAL
   // builds the empty vector first where the local holds null, in a backing of its own.
   opt_elem = match vt { TyOptional { inner: oi } => match oi { TyVector { inner: oe } => oe, _ => ir::TyVoid }, _ => ir::TyVoid };

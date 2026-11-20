@@ -1835,7 +1835,7 @@ pub fn vector_append(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> 
   inner = ir::TyUnknown { n: 0 };
   match el_vars::tp(vars, v) {
     TyVector { inner: i } => { inner = i; },
-    TyRefVar { inner: lv } => match lv { TyVector { inner: i } => { inner = i; }, _ => {} },
+    TyRefVar { inner: lv } => match el_types::base(lv) { TyVector { inner: i } => { inner = i; }, _ => {} },
     TyOptional { inner: ov } => match ov { TyVector { inner: i } => { inner = i; }, _ => {} },
     _ => {}
   }

@@ -269,6 +269,38 @@ pub fn link_argument(e: el::El, vars: el_vars::Vars, arg: ir::Node, at: ir::Type
     el::refuse(e, "a keyed collection local handed to a `&` parameter");
     return null;
   }
+  // @C118 (`null_local_slot`): a nullable collection LOCAL handed by `&` is given its slot
+  // first, marked ABSENT, so an append through the link lands in it — a vector with no backing
+  // yet by a guarded mint (`vector_db_init`, `OpRefIsNull`), the backing an inline ref.  A local
+  // with a backing (`null_backing_home`) or a keyed one is not carried: refused by name.
+  if !e.first_pass && !vars.vars[v].argument && vt is TyOptional && el_types::is_collection(el_types::base(vt)) {
+    match el_types::base(vt) {
+      TyVector { inner: nle } => {
+        if len(el_types::deps(vt)) == 0 {
+          nrows = vector_rows(e, nle, 0, true);
+          if nrows != null {
+            nops = el_ex_pattern::literal_store(e, vars, v, nrows!, slot: -1);
+            for ndb in el_types::deps(el_vars::tp(vars, v)) {
+              el_vars::mark_inline(vars, ndb);
+            }
+            nguard = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [ir::NdVar { n: v }]), ir::NdInsert { items: nops }, ir::NdNull);
+            return ir::NdInsert { items: [nguard, el_ir::cl(e, "OpCreateStack", [arg])] };
+          }
+        }
+        // (`null_backing_home`: only a single `__ref_N` vector backing is pointed into first;
+        // any other backed local is linked as it is.)
+        nbd = el_types::deps(vt);
+        if len(nbd) == 1 && starts_with(el_vars::name_of(vars, nbd[0]!), "__ref_") && el_types::base(el_vars::tp(vars, nbd[0]!)) is TyVector {
+          el::refuse(e, "a nullable vector local backed by a call's buffer handed to a `&` parameter");
+          return null;
+        }
+      },
+      _ => {
+        el::refuse(e, "a nullable keyed local handed to a `&` parameter");
+        return null;
+      }
+    }
+  }
   el_ir::cl(e, "OpCreateStack", [arg])
 }
 
