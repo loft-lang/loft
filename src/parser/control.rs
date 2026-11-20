@@ -12668,20 +12668,22 @@ impl Parser {
                         return false;
                     }
                     return match args.first().map(Value::unspan) {
-                        Some(Value::Var(bv)) => matches!(self.vars.tp(*bv), Type::Reference(_, _)),
+                        // A NULLABLE record parameter (`s: S?`) too: its field is a view of the
+                        // caller's record as much as a dense one's is, and the copy below tests
+                        // absence where the answer is nullable (loft#2585).
+                        Some(Value::Var(bv)) => {
+                            matches!(self.vars.tp(*bv).peel_optional().0, Type::Reference(_, _))
+                        }
                         // loft#2585 — an ELEMENT of an argument (`{ h[0] }`, read as
                         // `OpGetField(OpGetVector(h, …), 0, <vector>)`): `(F-Ret)` makes the
                         // answer the caller's own, and the caller adopts the one-buffer result
                         // it is published as, so a write through it wrote the argument.  The
                         // store-reuse hazard #426 met on this path was the premature free
                         // `reclaim_safe` fixed; the copy is the field tail's.
-                        // A NULLABLE answer (`-> vector<T>? { v[i] }`) stays the element: the
-                        // copy of an absent element is an empty vector, not absent (`(L-Null)`
-                        // keeps a copy of an absent value absent).
-                        Some(base) => {
-                            !matches!(self.data.def(self.context).returned(), Type::Optional(_))
-                                && self.projection_rooted_at_argument(base)
-                        }
+                        // A NULLABLE answer (`-> vector<T>? { v[i] }`) is copied only where the
+                        // element is present (`copy_borrow_tail_into_retbuf`'s guarded form):
+                        // `(L-Null)` keeps a copy of an absent value absent.
+                        Some(base) => self.projection_rooted_at_argument(base),
                         None => false,
                     };
                 }
@@ -12816,15 +12818,48 @@ impl Parser {
         // explicit `return <borrow>` path in `parse_return`, which appends inline
         // and frees nothing.
         let orig = std::mem::replace(last, Value::Null);
-        let append = self.cl(
-            "OpAppendVector",
-            &[Value::Var(buf_var), orig, Value::Int(rec_tp)],
-        );
-        *last = crate::data::v_block(
-            vec![clear, append, Value::Var(buf_var)],
-            Type::Vector(Box::new(elm_ty.clone()), Deps::frame1(buf_var)),
-            "borrow_tail_copy_104",
-        );
+        // loft#2585 — a NULLABLE answer (`-> vector<T>? { v[i] }`, `{ s.v }` of an `s: S?`)
+        // copies only where the value is present; an absent one stays absent (`(L-Null)`),
+        // since the copy of an absent vector is an empty vector.  The element is read once
+        // into a local that only views it (skip_free: P462's over-free was such a local's free
+        // of the borrowed source).
+        let guarded = self.data.def(self.context).returned().peel_optional().1;
+        let buf_tp = Type::Vector(Box::new(elm_ty.clone()), Deps::frame1(buf_var));
+        if guarded {
+            let fwd = self.create_unique(
+                "fwd_elm",
+                &Type::Vector(Box::new(elm_ty.clone()), Deps::none()),
+            );
+            self.vars.set_skip_free(fwd);
+            let append = self.cl(
+                "OpAppendVector",
+                &[Value::Var(buf_var), Value::Var(fwd), Value::Int(rec_tp)],
+            );
+            let copy = crate::data::v_block(
+                vec![clear, append, Value::Var(buf_var)],
+                buf_tp.clone(),
+                "borrow_tail_copy_104",
+            );
+            let absent = self.cl("OpVectorIsNull", &[Value::Var(fwd)]);
+            *last = crate::data::v_block(
+                vec![
+                    crate::data::v_set(fwd, orig),
+                    crate::data::v_if(absent, Value::Var(fwd), copy),
+                ],
+                buf_tp,
+                "borrow_tail_copy_104",
+            );
+        } else {
+            let append = self.cl(
+                "OpAppendVector",
+                &[Value::Var(buf_var), orig, Value::Int(rec_tp)],
+            );
+            *last = crate::data::v_block(
+                vec![clear, append, Value::Var(buf_var)],
+                buf_tp,
+                "borrow_tail_copy_104",
+            );
+        }
         // Every return delivers once the function is buffer-bound — the sibling of the
         // forwarder leg's delivery (loft#2443).
         let tail = l.len() - 1;
@@ -14871,7 +14906,12 @@ impl Parser {
                                 // which the raw literal is right and the caller frees it.
                                 || (!dep.is_empty()
                                     && dep.iter().all(|&d| self.vars.name(d).starts_with("__vdb_"))
-                                    && r_type.deps_ref().is_some_and(|d| !d.is_empty())))
+                                    && r_type.deps_ref().is_some_and(|d| !d.is_empty()))
+                                // A top-level CONSTANT's view (`return NUMS`): the write-locked
+                                // constant store, which `(F-Ret)` must not hand out — a caller
+                                // that wrote its result stopped on the lock (loft#2585).  The tail
+                                // spelling `{ NUMS }` copies it into the buffer the same way.
+                                || self.is_const_view(&v))
                         {
                             (a, bv)
                         } else {

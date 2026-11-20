@@ -1464,6 +1464,10 @@ pub fn keyed_for(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex) -> Ex {
   held_fill = ir::NdNull;
   if (ct is TySorted || ct is TyIndex) && el_ex_place::any_user_call(e, [x.code]) {
     held_src = el_vars::create_unique(vars, "vector", ct);
+    // (Typed as this pass's source: a `??` viewing a local borrows it, `["h"]`.)
+    if !e.first_pass {
+      el_vars::set_var_type(vars, held_src, ct);
+    }
     held_fill = el_ir::v_set(held_src, x.code);
     ct = el_types::with_deps(ct, [held_src]);
     x = ex(ir::NdVar { n: held_src }, ct);
@@ -1488,9 +1492,12 @@ pub fn keyed_for(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex) -> Ex {
   }
   idx = el_ex_pattern::loop_index(vars, h.id);
   base = if h.id == "_" { el_vars::name_of(vars, idx) } else { h.id };
-  state = el_vars::add_variable(vars, "{base}#iter_state", ir::TyInteger { spec: i32_spec() });
-  el_vars::set_defined(vars, state);
   lv = loop_var(vars, h.src_id, h.id, elem);
+  // (A source held on this pass is what the loop's variable borrows, whatever the first pass
+  // walked: `ref(P)["_vector_N"]`.)
+  if !e.first_pass && held_src >= 0 {
+    el_vars::set_var_type(vars, lv, elem);
+  }
   vars.active_loops += [lv];
   vars.active_values += [ir::NdNull];
   fc = el_ex_pattern::loop_filter(e, vars, h.filter);
@@ -1500,6 +1507,9 @@ pub fn keyed_for(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex) -> Ex {
   if e.first_pass {
     return ex(ir::NdNull, ir::TyVoid);
   }
+  // (`x#iter_state` is a second-pass mint: numbered after every first-pass variable.)
+  state = el_vars::add_variable(vars, "{base}#iter_state", ir::TyInteger { spec: i32_spec() });
+  el_vars::set_defined(vars, state);
   known = el_schema::keyed_type(e, ct);
   on = 128;
   arg = 4;
@@ -1938,6 +1948,7 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
   result = ir::TyVoid;
   out: vector<MArm> = [];
   null_arm = false;
+  tuple_joined = false;
   // `(M-Exhaust)` for a `boolean` (loft#1343): arms naming `true` and `false`, none of them `_`,
   // leave nothing to fall through to — the last arm is the fallback, as a trailing `_` would be.
   named_true = false;
@@ -2060,7 +2071,9 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
             _ => {}
           }
         }
-        expected = if unsettled(result) { ir::TyUnknown { n: 0 } } else { el_ex_null::arm_expectation(result) };
+        // (An open tuple result — a `null` member, loft#1682 — expects nothing of the next arm:
+        // the arms join member by member below.)
+        expected = if unsettled(result) || el_ex_null::open_tuple(result) { ir::TyUnknown { n: 0 } } else { el_ex_null::arm_expectation(result) };
         facts = el_ex_call::assume_guard(e, vars, ug);
         vars.proven += cap_proof;
         b = el_ex_pattern::arm_body(e, vars, body, expected);
@@ -2095,7 +2108,18 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
         if b.tp is TyNull || (!e.first_pass && el_ir::is_null(b.code)) {
           null_arm = true;
         }
-        if !unsettled(result) && sibling_variants(e, b.tp, result) && !el_types::is_equal(e, el_types::base(b.tp), el_types::base(result)) {
+        tuple_open_join = !unsettled(result) && (el_ex_null::open_tuple(result) || el_ex_null::open_tuple(b.tp)) && el_types::base(result) is TyTuple && el_types::base(b.tp) is TyTuple;
+        if tuple_open_join {
+          tj0 = el_ex_null::join_tuple_arms(e, result, b.tp);
+          if tj0 == null {
+            if !e.first_pass {
+              el::refuse(e, "match tuple arms that do not join: {type_kind(b.tp)}");
+            }
+          } else {
+            result = tj0!;
+            tuple_joined = true;
+          }
+        } else if !unsettled(result) && sibling_variants(e, b.tp, result) && !el_types::is_equal(e, el_types::base(b.tp), el_types::base(result)) {
           // Two variants of one enum join to the enum, borrowing nothing (`@FR-C-Var`).
           result = ir::TyEnum { n: struct_enum_of(e, el_types::base(b.tp)), is_ref: true, dep: [] };
         } else if arm_settles(result, b.tp) {
@@ -2176,6 +2200,14 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
         }
       },
       _ => {}
+    }
+  }
+  // `reconvert_null_tuple_arms` (loft#1682): every arm of an open tuple join is converted to the
+  // join it settled on — an earlier arm's `null` member included.
+  if tuple_joined {
+    for oa in out {
+      out[oa#index].code = el_ex_null::convert_arm_tail(e, oa.code, oa.tp, result);
+      out[oa#index].tp = result;
     }
   }
   // A record result with a `null` arm is `τ?` on both passes (`(N-Join)`).
@@ -3479,9 +3511,13 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
   has_rest = false;
   rest = "";
   sed = el_types::struct_enum_def(elm);
+  // A capture's literal test (`[x: 5, y]`), position by position: the literal node, -1 for none.
+  head_lit: vector<integer> = [];
+  tail_lit: vector<integer> = [];
   for el0 in elems {
     nm = "";
     pat = -1;
+    lit = -1;
     match e.p.nodes[el0] {
       PRest { name } => {
         if has_rest {
@@ -3493,6 +3529,35 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
         continue;
       },
       PWild => { nm = "_"; },
+      // A capture NAMES the element (`x: _`), a typed rest (`xs: integer*`), or an element a
+      // literal tests (`x: 5`, `field_sub`).
+      PCap { name: cn, pat: cp } => {
+        cpn = cp ?? -1;
+        match e.p.nodes[cpn] {
+          PWild => { nm = cn; },
+          PQuant { quant: cq } => {
+            if cq != "*" || has_rest {
+              el::refuse(e, "a slice pattern capture of a repetition of this kind");
+              return null;
+            }
+            has_rest = true;
+            rest = cn;
+            continue;
+          },
+          PLit { e: cle } => {
+            if cle == null || sed >= 0 {
+              el::refuse(e, "a slice pattern capture of a literal over this element");
+              return null;
+            }
+            nm = cn;
+            lit = cle!;
+          },
+          _ => {
+            el::refuse(e, "a slice pattern element of this form: {syn_kind(e, el0)}");
+            return null;
+          }
+        }
+      },
       _ => {
         nm = el_ex_pattern::rename_of(e, el0);
         if nm == "" && sed >= 0 && e.p.nodes[el0] is PName {
@@ -3506,9 +3571,11 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
     if has_rest {
       tail += [nm];
       tail_pat += [pat];
+      tail_lit += [lit];
     } else {
       head += [nm];
       head_pat += [pat];
+      head_lit += [lit];
     }
   }
   fixed = len(head) + len(tail);
@@ -3548,6 +3615,25 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
     } else if t != "_" {
       bv = pattern_bind(vars, t, named_t, names);
       binds += [el_ir::v_set(bv, slice_elem(e, elm, at))];
+    }
+  }
+  // Each capture's literal is tested (`#field_sub` over a `_fp_subj_N` read of the element),
+  // joined to the length test, the element bound with the rest.  (Its temp is minted after the
+  // captures' variables, as Rust numbers them.)
+  for hl in head_lit + tail_lit {
+    if hl >= 0 {
+      li = hl#index;
+      lpos = if li < len(head_lit) { li } else { li - len(head_lit) - len(tail_lit) };
+      lat = el_ir::cl(e, "OpGetVector", [ir::NdVar { n: sv }, ir::NdInt { n: es }, ir::NdInt { n: lpos }]);
+      fp = el_vars::create_unique(vars, "fp_subj", elm);
+      el_vars::set_defined(vars, fp);
+      lx = el_ex_assign::expression(e, vars, hl);
+      eqx = el_ex_null::builtin_op(e, vars, "==", ex(ir::NdVar { n: fp }, elm), lx);
+      if !e.first_pass && !(eqx.tp is TyBoolean) {
+        el::refuse(e, "a slice pattern capture of a literal of another type");
+        return null;
+      }
+      cond = el_ir::v_if(cond, el_ir::v_block([el_ir::v_set(fp, slice_elem(e, elm, lat)), eqx.code], ir::TyBoolean, "field_sub"), ir::NdBoolean { b: false });
     }
   }
   if rest != "" {

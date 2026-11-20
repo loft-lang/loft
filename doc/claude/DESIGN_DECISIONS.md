@@ -147,3 +147,4 @@ which entries nothing verifies, `./scripts/idx decision:C<n>` shows one.
 - [C165](DESIGN_DECISIONS_PLATFORM.md#c165--a-shim-includes-a-declared-dependencys-header-by-the-dependencys-name) — A shim includes a declared dependency's header by the dependency's name
 - [C166](DESIGN_DECISIONS_PLATFORM.md#c166--a-published-librarys-range-stays-in-the-api-line-of-its-floor) — A published library's range stays in the API line of its floor
 - [C167](DESIGN_DECISIONS_PLATFORM.md#c167--a-security_critical-advisory-refuses-the-package-release-it-names) — A `security_critical` advisory refuses the package release it names
+- [C169](DESIGN_DECISIONS_PLATFORM.md#c169--a-c-unit-carries-its-whole-runtime-no-build-compiles-the-runtime-apart) — A C unit carries its whole runtime; no build compiles the runtime apart

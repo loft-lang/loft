@@ -79,6 +79,19 @@ pub struct RebindFrame {
   pub names: vector<VarName>
 }
 
+// A keyed local a closure captured: the closure record it was stored in, and at which offset.
+pub struct CapSlot {
+  pub var: integer,
+  pub clos: integer,
+  pub pos: integer
+}
+
+pub struct LoopSpelling {
+  pub lv: integer,
+  pub name: text,
+  pub prior: integer
+}
+
 pub struct Vars {
   pub name: text,
   pub file: text,
@@ -139,6 +152,17 @@ pub struct Vars {
   // The `while` loops open: loops of their own in `#break`'s count, which `active_loops` (the
   // `for` loops) does not hold.
   pub whiles: integer = 0,
+  // `Variable::created_in_loop`: the variables made while any loop — a `for` or a `while` — was
+  // open (`new_var`); the first pass's list is kept on `El` (`loop_made`) for the second.
+  pub loop_made: vector<integer>,
+  // `ended_spelling`: per open loop, the spelling to give back to its ended binding.
+  pub loop_spellings: vector<LoopSpelling>,
+  // The subject node of a tuple member an assignment writes (`v[i].1 += 5`): its element is
+  // read dense there, the write's place.
+  pub place_tuple_subject: integer = -1,
+  // `MemberWalk::only_read`'s answer, approximated: the tuple shadows a body writes a heap
+  // member of (their seed is the copy; any other is the alias).
+  pub heap_member_written: vector<integer>,
   // The loop variables of the open `rev(…)` walks (`on`'s reverse bit, which `#remove` reads).
   pub reversed: vector<integer>,
   // `Iterator::value` of each open loop, beside `active_loops`: the vector a `for` walks, or
@@ -281,6 +305,15 @@ pub struct Vars {
   pub read_into: integer = -1,
   // Parsing the value of a plain local's `=` (`Parser::in_bind_rhs`).
   pub bind_rhs: boolean = false,
+  // The `??` being read is a bind's whole right side (`b = x ?? f()`): its join borrows nothing
+  // there (`coalesce` strips the subject's read), so no call arm is homed.
+  pub coalesce_is_bind: boolean = false,
+  // The leftmost syntax node of a record item a vector literal reads INTO its element, or -1.
+  pub item_into: integer = -1,
+  // The keyed locals a closure of this pass captured (`@FR-L-CapRebind`'s detach guard).
+  pub cap_slots: vector<CapSlot>,
+  // The bind being read placed its detach guard itself (a keyed join's `#keyed rebind`).
+  pub cap_guard_done: boolean = false,
   // Set while `rename_ret_buffer` judges a pass-1 match tail's arms (`arms_rename_candidate`).
   pub match_tail: boolean = false,
   // `mark_pass2_rebuilt`: the locals a second-pass call bind already re-derived the borrows of.
@@ -336,6 +369,9 @@ pub fn new_var(v: Vars, name: text, tp: ir::TypeT) -> integer {
   v.vars += [fresh_variable(name, tp)];
   v.defined += [false];
   v.viewed += [[]];
+  if len(v.active_loops) > 0 || v.whiles > 0 {
+    v.loop_made += [nr];
+  }
   nr
 }
 
@@ -1041,6 +1077,17 @@ pub fn promote_text_param(v: Vars, p: integer) -> integer {
   sh
 }
 
+// `Parser::promote_written_tuple_param` (`@FR-F-ParamScalar`): a tuple parameter written in the
+// body is the callee's own copy, `__tp_<name>`, seeded at entry; every later use names it.
+pub fn promote_tuple_param(v: Vars, p: integer) -> integer {
+  name = v.vars[p]!.name;
+  sh = new_var(v, "__tp_{name}", el_types::without_deps(tp(v, p)));
+  set_name(v, name, sh);
+  v.promoted_params += [p];
+  v.promoted_shadows += [sh];
+  sh
+}
+
 // `Function::rebind_orig`: the entry witness of parameter `p` a whole rebind took, or -1.
 pub fn rebind_orig(v: Vars, p: integer) -> integer {
   for x in v.rebind_params {
@@ -1181,6 +1228,12 @@ pub fn is_unknown(t: ir::TypeT) -> boolean {
 pub fn pop_loop(v: Vars) -> integer {
   lv = v.active_loops[-1] ?? -1;
   v.active_loops = v.active_loops[..-1];
+  for ls in v.loop_spellings {
+    if ls.lv == lv {
+      set_name(v, ls.name, ls.prior);
+    }
+  }
+  v.loop_spellings = [for ls2 in v.loop_spellings if ls2.lv != lv { ls2 }];
   if v.reversed.contains(lv) {
     v.reversed = [for r in v.reversed if r != lv { r }];
   }

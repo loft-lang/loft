@@ -1,0 +1,21 @@
+struct P { n: integer, s: text }
+fn walk(v: const vector<integer>, i: integer, acc: integer) -> integer {
+  if i >= len(v) { return acc; }
+  t = "x{i}";
+  walk(v, i + 1, acc + len(t) - len(t) + v[i])
+}
+fn deep(p: P, i: integer) -> text {
+  if i == 0 { return "{p.s}{p.n}"; }
+  deep(p, i - 1)
+}
+fn fresh(s: text, i: integer) -> integer {
+  if i == 0 { return len(s); }
+  fresh(s + "a", i - 1)
+}
+fn main() {
+  v: vector<integer> = [];
+  for i in 0..100000 { v += [1]; }
+  println("{walk(v, 0, 0)} expect 100000");
+  println("{deep(P { n: 7, s: "k" }, 100000)} expect k7");
+  println("{fresh("", 50)} expect 50");
+}

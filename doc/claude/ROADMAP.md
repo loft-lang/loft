@@ -155,7 +155,7 @@ open plan.  Silent-wrong defects are issues, not plans: `gh issue list --label s
 | [@PLN184](https://github.com/loft-lang/plans/issues/184) | future | loft fully functional on Windows — every routine, test and script, each count under a ratchet and proven by a Windows CI leg ([CODE.md § File access](CODE.md#file-access)) |
 | [@PLN148](https://github.com/loft-lang/plans/issues/148) | next | Better PHP end to end — a web client, an HTTPS server that renews its own certificate, and the libraries between them ([WEB_STACK.md](WEB_STACK.md)) |
 | [@PLN43](https://github.com/loft-lang/plans/issues/43) | parked | loft store durability — three-tier opt-in mmap durability |
-| [@PLN199](https://github.com/loft-lang/plans/issues/199) | next | A `use`d library compiles whole — only a generic keeps a loft function interpreted; a published library arrives compiled without `rustc` (`LOFT_TRACE_NATIVE_GATE=1` shows what is left; [plan](plans/199-library-compiles-whole.md)) |
+| [@PLN199](https://github.com/loft-lang/plans/issues/199) | parked | A `use`d library compiles whole — only a generic keeps a loft function interpreted; a published library arrives compiled without `rustc` (`LOFT_TRACE_NATIVE_GATE=1` shows what is left; [plan](plans/199-library-compiles-whole.md)) |
 
 ### U — Ease of use
 
@@ -182,7 +182,6 @@ open plan.  Silent-wrong defects are issues, not plans: `gh issue list --label s
 |---|---|---|
 | [@PLN210](https://github.com/loft-lang/plans/issues/210) | active | The worst C ship routines to 2× their Rust twin — each hand-priced form kept as the target, then the mechanisms in yield order ([plan](plans/210-c-worst-to-2x/README.md)) |
 | [@PLN211](https://github.com/loft-lang/plans/issues/211) | next | Every rewrite rule at its proper phase — the applied-by register derived from the census and gated, then each rule that removes work moved from a writer into the IR phase so the interpreter stops doing it too ([plan](plans/211-rule-phases/README.md)) |
-| [@PLN212](https://github.com/loft-lang/plans/issues/212) | active | The C backend caps the functions it emits in semantics builds, so `cl`'s optimiser time stays bounded and the MSVC sweep stops losing one program a night; `--ship` emits exactly what it does today |
 | [@PLN185](https://github.com/loft-lang/plans/issues/185) | next | A slow routine is an ordinary bug — the measurement, the 3× bar and the classes before issue-driven performance work |
 | [@PLN158](https://github.com/loft-lang/plans/issues/158) | future | Release performance pass — every routine against an industry reference twin ([PERF_PORTAL.md](PERF_PORTAL.md)) |
 | [@PLN179](https://github.com/loft-lang/plans/issues/179) | future | Scripts in loft — the repo's Python/bash tooling ported, each port proven against its original |
@@ -190,7 +189,6 @@ open plan.  Silent-wrong defects are issues, not plans: `gh issue list --label s
 | [@PLN200](https://github.com/loft-lang/plans/issues/200) | next | The interpreter and the code generators as defined parts — `opt` (what every backend asks, the interpreter's optimisations), `interp` (a contract), `lower` (a compiled target's decisions as data) apart from the Rust writer: the base for an ANSI-C backend ([plan](plans/200-backend-structure.md)) |
 | [@PLN206](https://github.com/loft-lang/plans/issues/206) | active | One store model — the interpreter and the C runtime implement the same stores (C's model the standard, the interpreter moving to it unless measurably better), so libraries ship C binaries the interpreter runs and no rustc is needed ([model](STORE_MODEL.md)) |
 | [@PLN203](https://github.com/loft-lang/plans/issues/203) | active | The C99 backend as the only compiled target — the driver, diagnostics parity, the stdlib census, `par` with threads, libraries and hosts without rustc, the wasm and browser targets from C, the perf lane, three platforms, then the flip that shelves the Rust writer ([plan](plans/203-c99-default-backend.md)) |
-| [@PLN202](https://github.com/loft-lang/plans/issues/202) | next | The OCaml bar, for the compiler — the rows a loft-written front end uses, measured on both backends; P1–P4 parser steps (`>>`, `..base` record update, the scalar-match hole warning, slice totality), P5 the self tail call as an `opt` pass, P7 the re-measure; child of @PLN91 1a |
 | [@PLN82](https://github.com/loft-lang/plans/issues/82) | parked | Constant store, phases B and C |
 
 ### N — Niche / opportunistic
@@ -198,7 +196,6 @@ open plan.  Silent-wrong defects are issues, not plans: `gh issue list --label s
 | Plan | status | What it is |
 |---|---|---|
 | [@PLN60](https://github.com/loft-lang/plans/issues/60) | future | Asset pipeline |
-| [@PLN67](https://github.com/loft-lang/plans/issues/67) | future | Process management library |
 | [@PLN68](https://github.com/loft-lang/plans/issues/68) | future | File-system watch |
 | [@PLN69](https://github.com/loft-lang/plans/issues/69) | future | Caching library |
 | [@PLN91](https://github.com/loft-lang/plans/issues/91) | future | Self-hosting epic — loft-in-loft, an ANSI-C backend, small-board portability |
