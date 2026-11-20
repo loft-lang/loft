@@ -186,7 +186,8 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
   if !e.first_pass && op != "=" && e.p.nodes[target] is SIndex {
     match el_ir::unspan(p.code) {
       NdCall { def_nr: gd, args: ga } => {
-        if starts_with(el::def(e, gd).name, "OpGet") && len(ga) == 2 && calls(e, el_ir::unspan(ga[0]!), "OpGetVector") && any_user_call(e, [el_ir::unspan(ga[0]!)]) && place_root(e, el_ir::unspan(ga[0]!)) >= 0 {
+        // (So where the accessor writes — a block index with a side effect, loft#2581.)
+        if starts_with(el::def(e, gd).name, "OpGet") && len(ga) == 2 && calls(e, el_ir::unspan(ga[0]!), "OpGetVector") && (any_user_call(e, [el_ir::unspan(ga[0]!)]) || addressing_has_effects(e, el_ir::unspan(ga[0]!))) && place_root(e, el_ir::unspan(ga[0]!)) >= 0 {
           // (Typed as the vector itself — `parent_tp.base()` — its element's own `?` kept.)
           f2vt = match el_ir::unspan(ga[0]!) { NdCall { args: f2a } => el_types::base(place_type(e, vars, f2a[0] ?? ir::NdNull)), _ => ir::TyVoid };
           f2in = match f2vt { TyVector { inner: f2i } => el_types::without_deps(f2i), _ => el_types::without_deps(el_types::base(p.tp)) };
@@ -1587,6 +1588,46 @@ pub fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
     }
   }
   place = el_ir::unspan(p.code);
+  // `vv[0] += [9]`, `h.ws[i] += [9]`: an ELEMENT of a vector of vectors is a place
+  // (`@FR-B-View`) — each plain item pushed onto the element read, as onto a field.  An index
+  // that is no plain variable or constant (a block, a call) runs once: the element held in a
+  // `__place_N` (typed as the outer vector, borrowing its root) and pushed onto that
+  // (`@FR-E-Asgn-Compound`, loft#2581).
+  ev_inner = match el_types::base(p.tp) { TyVector { inner: evi } => evi, _ => ir::TyVoid };
+  ev_items: vector<integer> = match e.p.nodes[n] { SVecLit { items: evits } => evits, _ => [] };
+  // (The element read as the port spells it, `OpGetField(OpGetVector(vv, 4, 0), 0, <row>)`:
+  // Rust pushes onto the `OpGetVector` itself.)
+  ev_place = match place { NdCall { def_nr: egd, args: ega } => if el::def(e, egd).name == "OpGetField" && len(ega) == 3 && calls(e, el_ir::unspan(ega[0]!), "OpGetVector") && match el_ir::unspan(ega[0]!) { NdCall { def_nr: egd2 } => el::def(e, egd2).name == "OpGetVector", _ => false } && el_ir::unspan(ega[1]!) == ir::NdInt { n: 0 } { el_ir::unspan(ega[0]!) } else { place }, _ => place };
+  match ev_place {
+    NdCall { def_nr: evd, args: eva } => {
+      if el::def(e, evd).name == "OpGetVector" && len(eva) == 3 && el_ex_pattern::push_op(ev_inner) != "" && el_convert::plain_scalar(ev_inner) && len(ev_items) > 0 && len([for evx in ev_items if (e.p.nodes[evx] is SRepeat) { 1 }]) == 0 {
+        evals: vector<Ex> = [for evx2 in ev_items { el_ex_assign::expression(e, vars, evx2) }];
+        if e.first_pass {
+          return ex(ir::NdNull, ir::TyVoid);
+        }
+        ops: vector<ir::Node> = [];
+        recv = ev_place;
+        idx = el_ir::unspan(eva[2]!);
+        if !(idx is NdInt || idx is NdVar) {
+          evroot = place_root(e, el_ir::unspan(eva[0]!));
+          evouter = el_types::without_deps(el_types::base(place_type(e, vars, el_ir::unspan(eva[0]!))));
+          evp = el_vars::create_unique(vars, "_place", el_types::with_deps(evouter, if evroot >= 0 { [evroot] } else { [] }));
+          ops += [el_ir::v_set(evp, ev_place)];
+          recv = ir::NdVar { n: evp };
+        }
+        for ev in evals {
+          evs = stored(e, vars, ev, ev_inner);
+          if evs == null {
+            refuse_known(e, ev.tp, "an item appended to an element of another type: {type_kind(ev.tp)}");
+            return ex(ir::NdNull, ir::TyVoid);
+          }
+          ops += [el_ir::cl(e, el_ex_pattern::push_op(ev_inner), el_ex_pattern::push_args(e, vars, ev_inner, recv, evs!))];
+        }
+        return ex(if len(ops) == 1 { ops[0]! } else { ir::NdInsert { items: ops } }, ir::TyVoid);
+      }
+    },
+    _ => {}
+  }
   // The record holding the field — a local, or itself a field or an element of one — and the
   // variable at its root, which the items' record borrows.
   holder = ir::NdNull;
