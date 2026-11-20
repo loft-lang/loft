@@ -2549,6 +2549,13 @@ pub fn call_op(e: el::El, vars: el_vars::Vars, op: text, list: vector<ir::Node>,
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
     }
   }
+  // `(C-Never)`: an operand that never arrives (a local bound to a diverging value, read in the
+  // statements after it that no run reaches) makes the operation never arrive either.
+  for t in types {
+    if t is TyNever {
+      return ex(ir::NdNull, ir::TyNever);
+    }
+  }
   // I8.1: an operand of a type variable takes its bound's stub, `t_<LEN><holder>#g<arity>_Op…`
   // (`Data::bound_stub_name`), never a builtin; the first pass types it as the variable.
   for t in types {

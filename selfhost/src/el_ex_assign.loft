@@ -231,6 +231,9 @@ fn block_body(e: el::El, vars: el_vars::Vars, n: integer, context: text, result:
   l: vector<ir::Node> = [];
   dz = len(vars.nonzero);
   dp = len(vars.present);
+  // `(C-Never)` (loft#2388): a statement whose value never arrives ends the block's reachable
+  // part — the statements after it are read, not kept.
+  unreachable_rest = false;
   for s in stmts {
     match e.p.nodes[s] {
       SStmt { at, e: se, semi, orelse } => {
@@ -249,7 +252,24 @@ fn block_body(e: el::El, vars: el_vars::Vars, n: integer, context: text, result:
           el_trace::state(e, vars, "stmt", at, se!);
         }
         x = el_ex_object::statement(e, vars, se ?? 0, orelse);
+        if unreachable_rest {
+          continue;
+        }
         t = x.tp;
+        // A local bound to a value that never arrives has no value to hold: the statement is
+        // the diverging value itself (second pass only, as Rust rewrites it).
+        if !e.first_pass {
+          match el_ir::unspan(x.code) {
+            NdSet { var: nv, inner: nrhs } => {
+              if el_types::base(el_vars::tp(vars, nv)) is TyNever && !(el_ir::unspan(nrhs) is NdNull) {
+                x = ex(nrhs, ir::TyNever);
+                t = ir::TyNever;
+                unreachable_rest = true;
+              }
+            },
+            _ => {}
+          }
+        }
         if el_trace::on() {
           el_trace::value(e, vars, at, t);
           el_trace::vars(e, vars, at);
@@ -307,6 +327,9 @@ fn block_body(e: el::El, vars: el_vars::Vars, n: integer, context: text, result:
       },
       _ => {}
     }
+  }
+  if unreachable_rest {
+    t = ir::TyNever;
   }
   // `parse_block_inner` leaves its loop at the `}` after a last statement with no `;` before
   // it reads the line again: only a `;`-ended last statement moves the line on to the `}`.
