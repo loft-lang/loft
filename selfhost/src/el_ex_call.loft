@@ -1614,6 +1614,12 @@ pub fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::N
       conv += [rx!.code];
       continue;
     }
+    // A `null` handed to a record parameter is the reference sentinel (`Parser::null` for a
+    // record type), whether the parameter is declared `S` or `S?`.
+    if at is TyNull && el_types::base(pt) is TyReference {
+      conv += [el_ir::cl(e, "OpNullRefSentinel", [])];
+      continue;
+    }
     c = el_convert::convert_store(e, vars, arg, at, pt);
     if c != null {
       conv += [c!];

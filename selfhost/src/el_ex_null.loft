@@ -2692,7 +2692,9 @@ pub fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -
   }
   // So is a call answering a view of its arguments (`return same(view(h, 0))`) where all it
   // borrows is visible parameters: `MergeAttr` for each, the call handed back as it is.
-  if w < 0 && x is NdCall && returns_argument_view(el::def(e, match x { NdCall { def_nr: xd } => xd, _ => 0 })) && len(el_types::deps(v.tp)) > 0 {
+  // (A FIELD of a call's result is no such call: it is copied out of the held result,
+  // `return_source`, below.)
+  if w < 0 && x is NdCall && !projection_op(el::def(e, match x { NdCall { def_nr: xd } => xd, _ => 0 }).name) && returns_argument_view(el::def(e, match x { NdCall { def_nr: xd } => xd, _ => 0 })) && len(el_types::deps(v.tp)) > 0 {
     vattrs: vector<integer> = [];
     for dv in el_types::deps(v.tp) {
       va = if vars.vars[dv].argument { attr_nr(el::def(e, d), el_vars::name_of(vars, dv)) } else { -1 };
@@ -2898,6 +2900,13 @@ pub fn materialised_return(e: el::El, vars: el_vars::Vars, v: Ex, w: integer, re
       rr = el_vars::create_unique(vars, "_ret_root", el_types::without_deps(el_types::base(match root_call { NdCall { def_nr } => el::def(e, def_nr).returned[0] ?? ir::TyVoid, _ => ir::TyVoid })));
       pre = [el_ir::v_set(rr, root_call)];
       src = el_ex_assign::replace_projection_root(e, x, ir::NdVar { n: rr });
+    }
+    // A local's view whose addressing has an effect (`w[next(c)].a`) is read ONCE into a
+    // `__ret_src_N`, which both the null test and the copy read (`bind_return_source`).
+    if proot >= 0 && !e.first_pass && el_ex_place::addressing_has_effects(e, x) {
+      rs = el_vars::create_unique(vars, "_ret_src", v.tp);
+      pre = [el_ir::v_set(rs, x)];
+      src = ir::NdVar { n: rs };
     }
     pw = el_vars::work_ref(vars, el_types::without_deps(el_types::base(result)));
     if e.first_pass {

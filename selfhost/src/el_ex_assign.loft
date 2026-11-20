@@ -157,7 +157,9 @@ pub fn call_rooted(e: el::El, vars: el_vars::Vars, n: ir::Node) -> boolean {
     return false;
   }
   match el_ir::unspan(root!) {
-    NdCall { def_nr, args } => !returns_argument_view(el::def(e, def_nr)) && hidden_ref_arg(vars, args) >= 0,
+    // (A callee that hands back a parameter's record too: Rust's `return_source` holds what the
+    // call answered in `__ret_root_N` and the field is copied out of it all the same.)
+    NdCall { def_nr: _, args } => hidden_ref_arg(vars, args) >= 0,
     _ => false
   }
 }
