@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	7664b959f903f6c8f216f5874d7e7285a9ab5b77
 
-layer	elab	agree	1280	of	2121
+layer	elab	agree	1283	of	2121
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -641,7 +641,6 @@ elab	refused	tests/docs/23-safety.loft
 elab	refused	tests/docs/24-json.loft
 elab	refused	tests/docs/25-generics.loft
 elab	refused	tests/docs/26-closures.loft
-elab	refused	tests/docs/28-tuples.loft
 elab	refused	tests/docs/29-match.loft
 elab	refused	tests/docs/30-formatting.loft
 elab	refused	tests/scripts/03-text.loft
@@ -725,7 +724,6 @@ elab	refused	tests/scripts/2255-a-text-tail-arm-that-ends-the-program-stays-a-st
 elab	refused	tests/scripts/22b-par-fold.loft
 elab	refused	tests/scripts/22c-par-sources.loft
 elab	refused	tests/scripts/22d-par-narrow.loft
-elab	refused	tests/scripts/23-field-overlap-structs.loft
 elab	refused	tests/scripts/24-field-overlap-enum-struct.loft
 elab	refused	tests/scripts/2414-a-null-record-copied-into-a-fresh-slot-is-absent.loft
 elab	refused	tests/scripts/2483-a-null-written-after-coalesce-return-is-the-return-types-null.loft
@@ -752,7 +750,6 @@ elab	refused	tests/scripts/434-pln87-scalar-reference.loft
 elab	refused	tests/scripts/445-generic-tree-walk.loft
 elab	refused	tests/scripts/46-caveats.loft
 elab	refused	tests/scripts/49-init-fields.loft
-elab	refused	tests/scripts/50-tuples.loft
 elab	refused	tests/scripts/505-collection-capture.loft
 elab	refused	tests/scripts/507-par-vector-fnref.loft
 elab	refused	tests/scripts/512-first-grade-format.loft
@@ -848,7 +845,7 @@ elab	refused	tests/scripts/store_digest_b0.loft
 elab	refused	tests/scripts/store_load_field_refusal.loft
 elab	refused	tests/scripts/store_paged_enum_field.loft
 
-layer	elab-functions	agree	14504	of	25141
+layer	elab-functions	agree	14609	of	25117
 elab-functions	agree	lib/docs.loft::Anchor
 elab-functions	agree	lib/docs.loft::Character
 elab-functions	agree	lib/docs.loft::Double
@@ -1581,16 +1578,29 @@ elab-functions	agree	loft-suite/rules/binding/B-Ref-Alias/a-null-written-to-a-co
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Alias/one-place-named-through-ref-parameters-and-links-is-one-place.loft::(schema)
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Alias/one-place-named-through-ref-parameters-and-links-is-one-place.loft::Box
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Alias/one-place-named-through-ref-parameters-and-links-is-one-place.loft::Ci
+elab-functions	agree	loft-suite/rules/binding/B-Ref-Alias/one-place-named-through-ref-parameters-and-links-is-one-place.loft::K
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Alias/one-place-named-through-ref-parameters-and-links-is-one-place.loft::Mp
+elab-functions	agree	loft-suite/rules/binding/B-Ref-Alias/one-place-named-through-ref-parameters-and-links-is-one-place.loft::S2Mp
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Alias/one-place-named-through-ref-parameters-and-links-is-one-place.loft::Sh
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Alias/one-place-named-through-ref-parameters-and-links-is-one-place.loft::Sq
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Alias/one-place-named-through-ref-parameters-and-links-is-one-place.loft::__tuple<integer,integer>
+elab-functions	agree	loft-suite/rules/binding/B-Ref-Alias/one-place-named-through-ref-parameters-and-links-is-one-place.loft::n_c6
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Alias/one-place-named-through-ref-parameters-and-links-is-one-place.loft::n_fwd
+elab-functions	agree	loft-suite/rules/binding/B-Ref-Alias/one-place-named-through-ref-parameters-and-links-is-one-place.loft::n_mixed
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Alias/one-place-named-through-ref-parameters-and-links-is-one-place.loft::n_rebind
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Alias/one-place-named-through-ref-parameters-and-links-is-one-place.loft::n_rebind_then_write
+elab-functions	agree	loft-suite/rules/binding/B-Ref-Alias/one-place-named-through-ref-parameters-and-links-is-one-place.loft::n_s2_rebind
+elab-functions	agree	loft-suite/rules/binding/B-Ref-Alias/one-place-named-through-ref-parameters-and-links-is-one-place.loft::n_s2_tv
+elab-functions	agree	loft-suite/rules/binding/B-Ref-Alias/one-place-named-through-ref-parameters-and-links-is-one-place.loft::n_s2_twice
+elab-functions	agree	loft-suite/rules/binding/B-Ref-Alias/one-place-named-through-ref-parameters-and-links-is-one-place.loft::n_te
+elab-functions	agree	loft-suite/rules/binding/B-Ref-Alias/one-place-named-through-ref-parameters-and-links-is-one-place.loft::n_test_a_link_to_a_ref_vector_parameter
+elab-functions	agree	loft-suite/rules/binding/B-Ref-Alias/one-place-named-through-ref-parameters-and-links-is-one-place.loft::n_test_one_place_handed_to_two_ref_parameters_is_one_place
+elab-functions	agree	loft-suite/rules/binding/B-Ref-Alias/one-place-named-through-ref-parameters-and-links-is-one-place.loft::n_test_the_controls
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Alias/one-place-named-through-ref-parameters-and-links-is-one-place.loft::n_three
+elab-functions	agree	loft-suite/rules/binding/B-Ref-Alias/one-place-named-through-ref-parameters-and-links-is-one-place.loft::n_tu
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Alias/one-place-named-through-ref-parameters-and-links-is-one-place.loft::n_tv
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Alias/one-place-named-through-ref-parameters-and-links-is-one-place.loft::n_twice
+elab-functions	agree	loft-suite/rules/binding/B-Ref-Alias/one-place-named-through-ref-parameters-and-links-is-one-place.loft::t_4S2Mp_grow
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Intro/1372-a-reference-links-a-nullable-slot.loft::(schema)
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Intro/1372-a-reference-links-a-nullable-slot.loft::S1372
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Intro/1372-a-reference-links-a-nullable-slot.loft::n_bump
@@ -1681,6 +1691,11 @@ elab-functions	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-stored-tuple-is-a-p
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-stored-tuple-is-a-place-a-link-names.loft::Wide
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-stored-tuple-is-a-place-a-link-names.loft::__tuple<integer(0, 255),integer,float,boolean,character,Hue,text,integer(0, 65535),integer>
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-stored-tuple-is-a-place-a-link-names.loft::__tuple<integer,integer>
+elab-functions	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-stored-tuple-is-a-place-a-link-names.loft::main_vector<(integer, integer)>
+elab-functions	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-stored-tuple-is-a-place-a-link-names.loft::n_bump
+elab-functions	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-stored-tuple-is-a-place-a-link-names.loft::n_forward
+elab-functions	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-stored-tuple-is-a-place-a-link-names.loft::n_swap
+elab-functions	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-stored-tuple-is-a-place-a-link-names.loft::vector<(integer, integer)>
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-tuple-member-is-a-place-a-link-names.loft::A
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-tuple-member-is-a-place-a-link-names.loft::B
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-tuple-member-is-a-place-a-link-names.loft::Col
@@ -1690,6 +1705,7 @@ elab-functions	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-tuple-member-is-a-p
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-tuple-member-is-a-place-a-link-names.loft::P
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-tuple-member-is-a-place-a-link-names.loft::Red
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-tuple-member-is-a-place-a-link-names.loft::W
+elab-functions	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-tuple-member-is-a-place-a-link-names.loft::__tuple<E,integer>
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-tuple-member-is-a-place-a-link-names.loft::__tuple<P,integer>
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-tuple-member-is-a-place-a-link-names.loft::__tuple<integer,integer>
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-tuple-member-is-a-place-a-link-names.loft::__tuple<integer?,integer>
@@ -1705,6 +1721,7 @@ elab-functions	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-tuple-member-is-a-p
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-tuple-member-is-a-place-a-link-names.loft::n_pushv
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-tuple-member-is-a-place-a-link-names.loft::n_s2_bump
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-tuple-member-is-a-place-a-link-names.loft::n_show_e
+elab-functions	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-tuple-member-is-a-place-a-link-names.loft::n_via_param
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-tuple-member-is-a-place-a-link-names.loft::vector<(integer, integer)>
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Lvalue/an-annotated-link-to-a-struct-place-is-its-view.loft::(schema)
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Lvalue/an-annotated-link-to-a-struct-place-is-its-view.loft::Holder
@@ -1764,10 +1781,28 @@ elab-functions	agree	loft-suite/rules/binding/B-Ref-Uniform/167-a-linked-narrow-
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Uniform/167-a-linked-narrow-local-holds-its-field-encoding.loft::n_wide
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Uniform/167-a-linked-narrow-local-holds-its-field-encoding.loft::vector<integer(0, 255)>
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Uniform/1673-a-tuple-link-is-read-and-written-whole-like-a-tuple.loft::(schema)
+elab-functions	agree	loft-suite/rules/binding/B-Ref-Uniform/1673-a-tuple-link-is-read-and-written-whole-like-a-tuple.loft::K1673
+elab-functions	agree	loft-suite/rules/binding/B-Ref-Uniform/1673-a-tuple-link-is-read-and-written-whole-like-a-tuple.loft::S1673
+elab-functions	agree	loft-suite/rules/binding/B-Ref-Uniform/1673-a-tuple-link-is-read-and-written-whole-like-a-tuple.loft::__tuple<S1673,integer>
+elab-functions	agree	loft-suite/rules/binding/B-Ref-Uniform/1673-a-tuple-link-is-read-and-written-whole-like-a-tuple.loft::__tuple<hash<K1673,["k"]>,integer>
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Uniform/1673-a-tuple-link-is-read-and-written-whole-like-a-tuple.loft::__tuple<integer,integer>
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Uniform/1673-a-tuple-link-is-read-and-written-whole-like-a-tuple.loft::__tuple<integer,text>
+elab-functions	agree	loft-suite/rules/binding/B-Ref-Uniform/1673-a-tuple-link-is-read-and-written-whole-like-a-tuple.loft::__tuple<text,text>
+elab-functions	agree	loft-suite/rules/binding/B-Ref-Uniform/1673-a-tuple-link-is-read-and-written-whole-like-a-tuple.loft::__tuple<vector<text>,integer>
+elab-functions	agree	loft-suite/rules/binding/B-Ref-Uniform/1673-a-tuple-link-is-read-and-written-whole-like-a-tuple.loft::__tuple<vector<text>,vector<text>>
+elab-functions	agree	loft-suite/rules/binding/B-Ref-Uniform/1673-a-tuple-link-is-read-and-written-whole-like-a-tuple.loft::__tuple<vector<vector<integer>>,integer>
+elab-functions	agree	loft-suite/rules/binding/B-Ref-Uniform/1673-a-tuple-link-is-read-and-written-whole-like-a-tuple.loft::main_vector<vector<integer>>
+elab-functions	agree	loft-suite/rules/binding/B-Ref-Uniform/1673-a-tuple-link-is-read-and-written-whole-like-a-tuple.loft::n_put_st
+elab-functions	agree	loft-suite/rules/binding/B-Ref-Uniform/1673-a-tuple-link-is-read-and-written-whole-like-a-tuple.loft::n_swap_s
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Uniform/1673-a-tuple-link-is-read-and-written-whole-like-a-tuple.loft::n_take1673
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Uniform/1673-a-tuple-link-is-read-and-written-whole-like-a-tuple.loft::n_takes1673
+elab-functions	agree	loft-suite/rules/binding/B-Ref-Uniform/1673-a-tuple-link-is-read-and-written-whole-like-a-tuple.loft::n_test_r2_a_whole_read_as_a_return
+elab-functions	agree	loft-suite/rules/binding/B-Ref-Uniform/1673-a-tuple-link-is-read-and-written-whole-like-a-tuple.loft::n_test_r3_a_whole_read_bound_to_a_local_is_a_copy
+elab-functions	agree	loft-suite/rules/binding/B-Ref-Uniform/1673-a-tuple-link-is-read-and-written-whole-like-a-tuple.loft::n_test_w1_a_whole_write_reaches_the_caller
+elab-functions	agree	loft-suite/rules/binding/B-Ref-Uniform/1673-a-tuple-link-is-read-and-written-whole-like-a-tuple.loft::n_test_w2_a_whole_write_that_reads_itself_swaps
+elab-functions	agree	loft-suite/rules/binding/B-Ref-Uniform/1673-a-tuple-link-is-read-and-written-whole-like-a-tuple.loft::n_write_r
+elab-functions	agree	loft-suite/rules/binding/B-Ref-Uniform/1673-a-tuple-link-is-read-and-written-whole-like-a-tuple.loft::n_write_s
+elab-functions	agree	loft-suite/rules/binding/B-Ref-Uniform/1673-a-tuple-link-is-read-and-written-whole-like-a-tuple.loft::vector<vector<integer>>
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Uniform/2144-a-null-test-through-a-link-asks-the-referents-question.loft::(schema)
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Uniform/2144-a-null-test-through-a-link-asks-the-referents-question.loft::Blue
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Uniform/2144-a-null-test-through-a-link-asks-the-referents-question.loft::Circle
@@ -7374,8 +7409,37 @@ elab-functions	agree	loft-suite/rules/layout/L-Struct/1718-a-virtual-field-has-n
 elab-functions	agree	loft-suite/rules/layout/L-Struct/1718-a-virtual-field-has-no-slot-on-native.loft::vector<Cell>
 elab-functions	agree	loft-suite/rules/layout/L-Tuple/a-stored-tuple-is-a-record-packed-like-a-struct-keeping-its-written-positions.loft::Host
 elab-functions	agree	loft-suite/rules/layout/L-Tuple/a-stored-tuple-is-a-record-packed-like-a-struct-keeping-its-written-positions.loft::Lab
+elab-functions	agree	loft-suite/rules/layout/L-Tuple/a-stored-tuple-is-a-record-packed-like-a-struct-keeping-its-written-positions.loft::S2Host
 elab-functions	agree	loft-suite/rules/layout/L-Tuple/a-stored-tuple-is-a-record-packed-like-a-struct-keeping-its-written-positions.loft::S9
+elab-functions	agree	loft-suite/rules/layout/L-Tuple/a-stored-tuple-is-a-record-packed-like-a-struct-keeping-its-written-positions.loft::__tuple<(integer(0, 255), integer(0, 65535)),integer(0, 255)>
+elab-functions	agree	loft-suite/rules/layout/L-Tuple/a-stored-tuple-is-a-record-packed-like-a-struct-keeping-its-written-positions.loft::__tuple<Lab,integer(0, 255)>
+elab-functions	agree	loft-suite/rules/layout/L-Tuple/a-stored-tuple-is-a-record-packed-like-a-struct-keeping-its-written-positions.loft::__tuple<boolean,float,character,text,integer,single>
+elab-functions	agree	loft-suite/rules/layout/L-Tuple/a-stored-tuple-is-a-record-packed-like-a-struct-keeping-its-written-positions.loft::__tuple<integer(0, 255),(integer, integer(0, 255))>
+elab-functions	agree	loft-suite/rules/layout/L-Tuple/a-stored-tuple-is-a-record-packed-like-a-struct-keeping-its-written-positions.loft::__tuple<integer(0, 255),integer(0, 65535)>
+elab-functions	agree	loft-suite/rules/layout/L-Tuple/a-stored-tuple-is-a-record-packed-like-a-struct-keeping-its-written-positions.loft::__tuple<integer(0, 255),integer,integer(0, 255)>
+elab-functions	agree	loft-suite/rules/layout/L-Tuple/a-stored-tuple-is-a-record-packed-like-a-struct-keeping-its-written-positions.loft::__tuple<integer(0, 255),integer,integer(0, 65535)>
+elab-functions	agree	loft-suite/rules/layout/L-Tuple/a-stored-tuple-is-a-record-packed-like-a-struct-keeping-its-written-positions.loft::__tuple<integer(0, 65535),integer>
+elab-functions	agree	loft-suite/rules/layout/L-Tuple/a-stored-tuple-is-a-record-packed-like-a-struct-keeping-its-written-positions.loft::__tuple<integer,integer(0, 255)>
+elab-functions	agree	loft-suite/rules/layout/L-Tuple/a-stored-tuple-is-a-record-packed-like-a-struct-keeping-its-written-positions.loft::__tuple<text,integer(0, 255)>
 elab-functions	agree	loft-suite/rules/layout/L-Tuple/a-stored-tuple-is-a-record-packed-like-a-struct-keeping-its-written-positions.loft::__tuple<text,integer>
+elab-functions	agree	loft-suite/rules/layout/L-Tuple/a-stored-tuple-is-a-record-packed-like-a-struct-keeping-its-written-positions.loft::main_vector<(Lab, integer(0, 255))>
+elab-functions	agree	loft-suite/rules/layout/L-Tuple/a-stored-tuple-is-a-record-packed-like-a-struct-keeping-its-written-positions.loft::main_vector<(boolean, float, character, text, integer, single)>
+elab-functions	agree	loft-suite/rules/layout/L-Tuple/a-stored-tuple-is-a-record-packed-like-a-struct-keeping-its-written-positions.loft::main_vector<(integer(0, 255), integer(0, 65535))>
+elab-functions	agree	loft-suite/rules/layout/L-Tuple/a-stored-tuple-is-a-record-packed-like-a-struct-keeping-its-written-positions.loft::main_vector<(integer(0, 255), integer, integer(0, 65535))>
+elab-functions	agree	loft-suite/rules/layout/L-Tuple/a-stored-tuple-is-a-record-packed-like-a-struct-keeping-its-written-positions.loft::main_vector<(text, integer)>
+elab-functions	agree	loft-suite/rules/layout/L-Tuple/a-stored-tuple-is-a-record-packed-like-a-struct-keeping-its-written-positions.loft::main_vector<S9>
+elab-functions	agree	loft-suite/rules/layout/L-Tuple/a-stored-tuple-is-a-record-packed-like-a-struct-keeping-its-written-positions.loft::n_arg_pair
+elab-functions	agree	loft-suite/rules/layout/L-Tuple/a-stored-tuple-is-a-record-packed-like-a-struct-keeping-its-written-positions.loft::n_bump
+elab-functions	agree	loft-suite/rules/layout/L-Tuple/a-stored-tuple-is-a-record-packed-like-a-struct-keeping-its-written-positions.loft::n_bump_pair
+elab-functions	agree	loft-suite/rules/layout/L-Tuple/a-stored-tuple-is-a-record-packed-like-a-struct-keeping-its-written-positions.loft::n_mk
+elab-functions	agree	loft-suite/rules/layout/L-Tuple/a-stored-tuple-is-a-record-packed-like-a-struct-keeping-its-written-positions.loft::n_test_a_stride_9_element
+elab-functions	agree	loft-suite/rules/layout/L-Tuple/a-stored-tuple-is-a-record-packed-like-a-struct-keeping-its-written-positions.loft::n_test_the_sizes
+elab-functions	agree	loft-suite/rules/layout/L-Tuple/a-stored-tuple-is-a-record-packed-like-a-struct-keeping-its-written-positions.loft::vector<(Lab, integer(0, 255))>
+elab-functions	agree	loft-suite/rules/layout/L-Tuple/a-stored-tuple-is-a-record-packed-like-a-struct-keeping-its-written-positions.loft::vector<(boolean, float, character, text, integer, single)>
+elab-functions	agree	loft-suite/rules/layout/L-Tuple/a-stored-tuple-is-a-record-packed-like-a-struct-keeping-its-written-positions.loft::vector<(integer(0, 255), integer(0, 65535))>
+elab-functions	agree	loft-suite/rules/layout/L-Tuple/a-stored-tuple-is-a-record-packed-like-a-struct-keeping-its-written-positions.loft::vector<(integer(0, 255), integer, integer(0, 65535))>
+elab-functions	agree	loft-suite/rules/layout/L-Tuple/a-stored-tuple-is-a-record-packed-like-a-struct-keeping-its-written-positions.loft::vector<(text, integer)>
+elab-functions	agree	loft-suite/rules/layout/L-Tuple/a-stored-tuple-is-a-record-packed-like-a-struct-keeping-its-written-positions.loft::vector<S9>
 elab-functions	agree	loft-suite/rules/matching/M-Exhaust/2390-a-match-whose-every-arm-returns-answers-on-every-backend.loft::(schema)
 elab-functions	agree	loft-suite/rules/matching/M-Exhaust/2390-a-match-whose-every-arm-returns-answers-on-every-backend.loft::Leaf
 elab-functions	agree	loft-suite/rules/matching/M-Exhaust/2390-a-match-whose-every-arm-returns-answers-on-every-backend.loft::N
@@ -9699,14 +9763,18 @@ elab-functions	agree	loft-suite/rules/rewrites/R-HostStore/a-result-built-in-its
 elab-functions	agree	loft-suite/rules/rewrites/R-InPlace/a-link-is-rebound-and-hoisted-around-as-its-place-allows.loft::Hv
 elab-functions	agree	loft-suite/rules/rewrites/R-InPlace/a-link-is-rebound-and-hoisted-around-as-its-place-allows.loft::Sc
 elab-functions	agree	loft-suite/rules/rewrites/R-InPlace/a-link-is-rebound-and-hoisted-around-as-its-place-allows.loft::__tuple<integer,integer>
+elab-functions	agree	loft-suite/rules/rewrites/R-InPlace/a-link-is-rebound-and-hoisted-around-as-its-place-allows.loft::__tuple<integer,text>
 elab-functions	agree	loft-suite/rules/rewrites/R-InPlace/a-link-is-rebound-and-hoisted-around-as-its-place-allows.loft::main_vector<Hv>
 elab-functions	agree	loft-suite/rules/rewrites/R-InPlace/a-link-is-rebound-and-hoisted-around-as-its-place-allows.loft::main_vector<Sc>
 elab-functions	agree	loft-suite/rules/rewrites/R-InPlace/a-link-is-rebound-and-hoisted-around-as-its-place-allows.loft::n_link_arm
 elab-functions	agree	loft-suite/rules/rewrites/R-InPlace/a-link-is-rebound-and-hoisted-around-as-its-place-allows.loft::n_link_link
 elab-functions	agree	loft-suite/rules/rewrites/R-InPlace/a-link-is-rebound-and-hoisted-around-as-its-place-allows.loft::n_link_nested
 elab-functions	agree	loft-suite/rules/rewrites/R-InPlace/a-link-is-rebound-and-hoisted-around-as-its-place-allows.loft::n_link_scalar
+elab-functions	agree	loft-suite/rules/rewrites/R-InPlace/a-link-is-rebound-and-hoisted-around-as-its-place-allows.loft::n_link_step
 elab-functions	agree	loft-suite/rules/rewrites/R-InPlace/a-link-is-rebound-and-hoisted-around-as-its-place-allows.loft::n_link_still
 elab-functions	agree	loft-suite/rules/rewrites/R-InPlace/a-link-is-rebound-and-hoisted-around-as-its-place-allows.loft::n_link_view
+elab-functions	agree	loft-suite/rules/rewrites/R-InPlace/a-link-is-rebound-and-hoisted-around-as-its-place-allows.loft::n_reset
+elab-functions	agree	loft-suite/rules/rewrites/R-InPlace/a-link-is-rebound-and-hoisted-around-as-its-place-allows.loft::n_tag
 elab-functions	agree	loft-suite/rules/rewrites/R-InPlace/a-link-is-rebound-and-hoisted-around-as-its-place-allows.loft::n_three
 elab-functions	agree	loft-suite/rules/rewrites/R-InPlace/a-link-is-rebound-and-hoisted-around-as-its-place-allows.loft::vector<Hv>
 elab-functions	agree	loft-suite/rules/rewrites/R-InPlace/a-link-is-rebound-and-hoisted-around-as-its-place-allows.loft::vector<Sc>
@@ -10173,6 +10241,9 @@ elab-functions	agree	loft-suite/rules/tuples/T-Cons/1674-a-tuple-literal-copies-
 elab-functions	agree	loft-suite/rules/tuples/T-Cons/1674-a-tuple-literal-copies-every-heap-member.loft::Ks1674
 elab-functions	agree	loft-suite/rules/tuples/T-Cons/1674-a-tuple-literal-copies-every-heap-member.loft::__tuple<vector<integer>,text>
 elab-functions	agree	loft-suite/rules/tuples/T-Cons/1674-a-tuple-literal-copies-every-heap-member.loft::__tuple<vector<text>,vector<text>>
+elab-functions	agree	loft-suite/rules/tuples/T-Cons/1674-a-tuple-literal-copies-every-heap-member.loft::main_vector<In1674>
+elab-functions	agree	loft-suite/rules/tuples/T-Cons/1674-a-tuple-literal-copies-every-heap-member.loft::n_main
+elab-functions	agree	loft-suite/rules/tuples/T-Cons/1674-a-tuple-literal-copies-every-heap-member.loft::vector<In1674>
 elab-functions	agree	loft-suite/rules/tuples/T-Cons/1675-a-keyed-tuple-member-filled-from-a-vector-holds-its-records.loft::(schema)
 elab-functions	agree	loft-suite/rules/tuples/T-Cons/1675-a-keyed-tuple-member-filled-from-a-vector-holds-its-records.loft::H1675
 elab-functions	agree	loft-suite/rules/tuples/T-Cons/1675-a-keyed-tuple-member-filled-from-a-vector-holds-its-records.loft::K1675
@@ -10263,8 +10334,11 @@ elab-functions	agree	loft-suite/rules/tuples/T-Record/a-link-to-a-text-tuple-mem
 elab-functions	agree	loft-suite/rules/tuples/T-Record/a-link-to-a-text-tuple-member-writes-the-member.loft::__tuple<integer(0, 255),text>
 elab-functions	agree	loft-suite/rules/tuples/T-Record/a-link-to-a-text-tuple-member-writes-the-member.loft::__tuple<text,integer>
 elab-functions	agree	loft-suite/rules/tuples/T-Record/a-link-to-a-text-tuple-member-writes-the-member.loft::__tuple<text?,integer>
+elab-functions	agree	loft-suite/rules/tuples/T-Record/a-link-to-a-text-tuple-member-writes-the-member.loft::n_linked_tuple_member
+elab-functions	agree	loft-suite/rules/tuples/T-Record/a-link-to-a-text-tuple-member-writes-the-member.loft::n_main
 elab-functions	agree	loft-suite/rules/tuples/T-Record/a-link-to-a-text-tuple-member-writes-the-member.loft::n_nb
 elab-functions	agree	loft-suite/rules/tuples/T-Record/a-link-to-a-text-tuple-member-writes-the-member.loft::n_tb
+elab-functions	agree	loft-suite/rules/tuples/T-Record/a-link-to-a-text-tuple-member-writes-the-member.loft::n_via
 elab-functions	agree	loft-suite/rules/tuples/T-Record/a-tuple-member-holds-its-value-everywhere-a-narrow-one-or-a-text.loft::Small
 elab-functions	agree	loft-suite/rules/tuples/T-Record/a-tuple-member-holds-its-value-everywhere-a-narrow-one-or-a-text.loft::__tuple<integer(-128, 127),integer>
 elab-functions	agree	loft-suite/rules/tuples/T-Record/a-tuple-member-holds-its-value-everywhere-a-narrow-one-or-a-text.loft::__tuple<integer(-32768, 32767),integer(-5, 5)>
@@ -10286,7 +10360,16 @@ elab-functions	agree	loft-suite/rules/tuples/T-Ref/a-destructure-unpacks-a-refer
 elab-functions	agree	loft-suite/rules/tuples/T-Ref/a-destructure-unpacks-a-reference-tuple.loft::Bar
 elab-functions	agree	loft-suite/rules/tuples/T-Ref/a-destructure-unpacks-a-reference-tuple.loft::Ring
 elab-functions	agree	loft-suite/rules/tuples/T-Ref/a-destructure-unpacks-a-reference-tuple.loft::Shape
+elab-functions	agree	loft-suite/rules/tuples/T-Ref/a-destructure-unpacks-a-reference-tuple.loft::__tuple<integer,Shape>
 elab-functions	agree	loft-suite/rules/tuples/T-Ref/a-destructure-unpacks-a-reference-tuple.loft::__tuple<integer,integer>
+elab-functions	agree	loft-suite/rules/tuples/T-Ref/a-destructure-unpacks-a-reference-tuple.loft::__tuple<integer,text>
+elab-functions	agree	loft-suite/rules/tuples/T-Ref/a-destructure-unpacks-a-reference-tuple.loft::__tuple<vector<text>,vector<text>>
+elab-functions	agree	loft-suite/rules/tuples/T-Ref/a-destructure-unpacks-a-reference-tuple.loft::n_element_pair
+elab-functions	agree	loft-suite/rules/tuples/T-Ref/a-destructure-unpacks-a-reference-tuple.loft::n_main
+elab-functions	agree	loft-suite/rules/tuples/T-Ref/a-destructure-unpacks-a-reference-tuple.loft::n_test_a_record_backed_reference_tuple_parameter
+elab-functions	agree	loft-suite/rules/tuples/T-Ref/a-destructure-unpacks-a-reference-tuple.loft::n_test_a_stack_backed_reference_tuple_parameter
+elab-functions	agree	loft-suite/rules/tuples/T-Ref/a-destructure-unpacks-a-reference-tuple.loft::n_test_the_destructure_reads_the_tuple_at_the_statement
+elab-functions	agree	loft-suite/rules/tuples/T-Ref/a-destructure-unpacks-a-reference-tuple.loft::n_test_the_two_controls_are_unaffected
 elab-functions	agree	loft-suite/rules/types/C-Never/2260-a-halt-is-a-value-of-any-type-in-every-value-position.loft::(schema)
 elab-functions	agree	loft-suite/rules/types/C-Never/2260-a-halt-is-a-value-of-any-type-in-every-value-position.loft::Leaf
 elab-functions	agree	loft-suite/rules/types/C-Never/2260-a-halt-is-a-value-of-any-type-in-every-value-position.loft::N
@@ -10395,11 +10478,40 @@ elab-functions	agree	loft-suite/rules/types/C-Var/2315-a-variant-or-null-arm-joi
 elab-functions	agree	loft-suite/rules/types/C-Var/2315-a-variant-or-null-arm-joins-an-optional-enum-result-over-any-subject.loft::n_by_int
 elab-functions	agree	loft-suite/rules/types/C-Var/2315-a-variant-or-null-arm-joins-an-optional-enum-result-over-any-subject.loft::vector<Fo>
 elab-functions	agree	loft-suite/rules/types/C-Var/2315-a-variant-or-null-arm-joins-an-optional-enum-result-over-any-subject.loft::vector<float>
+elab-functions	agree	loft-suite/rules/types/C-Var/a-tuple-member-is-typed-by-its-declaration-a-variant-one-included.loft::Circle
+elab-functions	agree	loft-suite/rules/types/C-Var/a-tuple-member-is-typed-by-its-declaration-a-variant-one-included.loft::Dot
 elab-functions	agree	loft-suite/rules/types/C-Var/a-tuple-member-is-typed-by-its-declaration-a-variant-one-included.loft::Entity
 elab-functions	agree	loft-suite/rules/types/C-Var/a-tuple-member-is-typed-by-its-declaration-a-variant-one-included.loft::Fireball
 elab-functions	agree	loft-suite/rules/types/C-Var/a-tuple-member-is-typed-by-its-declaration-a-variant-one-included.loft::IceWall
 elab-functions	agree	loft-suite/rules/types/C-Var/a-tuple-member-is-typed-by-its-declaration-a-variant-one-included.loft::Slot
+elab-functions	agree	loft-suite/rules/types/C-Var/a-tuple-member-is-typed-by-its-declaration-a-variant-one-included.loft::TmInner
+elab-functions	agree	loft-suite/rules/types/C-Var/a-tuple-member-is-typed-by-its-declaration-a-variant-one-included.loft::TmShape
+elab-functions	agree	loft-suite/rules/types/C-Var/a-tuple-member-is-typed-by-its-declaration-a-variant-one-included.loft::TrEntity
+elab-functions	agree	loft-suite/rules/types/C-Var/a-tuple-member-is-typed-by-its-declaration-a-variant-one-included.loft::TrFire
+elab-functions	agree	loft-suite/rules/types/C-Var/a-tuple-member-is-typed-by-its-declaration-a-variant-one-included.loft::TrHost
+elab-functions	agree	loft-suite/rules/types/C-Var/a-tuple-member-is-typed-by-its-declaration-a-variant-one-included.loft::TrWall
+elab-functions	agree	loft-suite/rules/types/C-Var/a-tuple-member-is-typed-by-its-declaration-a-variant-one-included.loft::__tuple<(integer, integer),text>
+elab-functions	agree	loft-suite/rules/types/C-Var/a-tuple-member-is-typed-by-its-declaration-a-variant-one-included.loft::__tuple<TmInner?,integer>
+elab-functions	agree	loft-suite/rules/types/C-Var/a-tuple-member-is-typed-by-its-declaration-a-variant-one-included.loft::__tuple<TmShape,integer>
+elab-functions	agree	loft-suite/rules/types/C-Var/a-tuple-member-is-typed-by-its-declaration-a-variant-one-included.loft::__tuple<TmShape?,integer>
+elab-functions	agree	loft-suite/rules/types/C-Var/a-tuple-member-is-typed-by-its-declaration-a-variant-one-included.loft::__tuple<float,integer>
+elab-functions	agree	loft-suite/rules/types/C-Var/a-tuple-member-is-typed-by-its-declaration-a-variant-one-included.loft::__tuple<integer(-128, 127),integer>
 elab-functions	agree	loft-suite/rules/types/C-Var/a-tuple-member-is-typed-by-its-declaration-a-variant-one-included.loft::__tuple<integer,Entity>
+elab-functions	agree	loft-suite/rules/types/C-Var/a-tuple-member-is-typed-by-its-declaration-a-variant-one-included.loft::__tuple<integer,Slot>
+elab-functions	agree	loft-suite/rules/types/C-Var/a-tuple-member-is-typed-by-its-declaration-a-variant-one-included.loft::__tuple<integer,TrEntity>
+elab-functions	agree	loft-suite/rules/types/C-Var/a-tuple-member-is-typed-by-its-declaration-a-variant-one-included.loft::__tuple<integer,integer>
+elab-functions	agree	loft-suite/rules/types/C-Var/a-tuple-member-is-typed-by-its-declaration-a-variant-one-included.loft::__tuple<integer?,integer>
+elab-functions	agree	loft-suite/rules/types/C-Var/a-tuple-member-is-typed-by-its-declaration-a-variant-one-included.loft::__tuple<text,Entity>
+elab-functions	agree	loft-suite/rules/types/C-Var/a-tuple-member-is-typed-by-its-declaration-a-variant-one-included.loft::__tuple<text?,integer>
+elab-functions	agree	loft-suite/rules/types/C-Var/a-tuple-member-is-typed-by-its-declaration-a-variant-one-included.loft::__tuple<vector<integer>,integer>
+elab-functions	agree	loft-suite/rules/types/C-Var/a-tuple-member-is-typed-by-its-declaration-a-variant-one-included.loft::__tuple<vector<integer>?,integer>
+elab-functions	agree	loft-suite/rules/types/C-Var/a-tuple-member-is-typed-by-its-declaration-a-variant-one-included.loft::n_bump
+elab-functions	agree	loft-suite/rules/types/C-Var/a-tuple-member-is-typed-by-its-declaration-a-variant-one-included.loft::n_bump_slot
+elab-functions	agree	loft-suite/rules/types/C-Var/a-tuple-member-is-typed-by-its-declaration-a-variant-one-included.loft::n_bump_text
+elab-functions	agree	loft-suite/rules/types/C-Var/a-tuple-member-is-typed-by-its-declaration-a-variant-one-included.loft::n_name
+elab-functions	agree	loft-suite/rules/types/C-Var/a-tuple-member-is-typed-by-its-declaration-a-variant-one-included.loft::n_tm_pair
+elab-functions	agree	loft-suite/rules/types/C-Var/a-tuple-member-is-typed-by-its-declaration-a-variant-one-included.loft::n_tr_bump
+elab-functions	agree	loft-suite/rules/types/C-Var/a-tuple-member-is-typed-by-its-declaration-a-variant-one-included.loft::n_tr_name
 elab-functions	agree	loft-suite/rules/types/C-Var/a-variant-takes-the-enum-that-owns-it-and-reaches-its-slot-in-one-step.loft::(schema)
 elab-functions	agree	loft-suite/rules/types/C-Var/a-variant-takes-the-enum-that-owns-it-and-reaches-its-slot-in-one-step.loft::Amber
 elab-functions	agree	loft-suite/rules/types/C-Var/a-variant-takes-the-enum-that-owns-it-and-reaches-its-slot-in-one-step.loft::Blue
@@ -11700,9 +11812,6 @@ elab-functions	agree	tests/docs/25-generics.loft::t_6T#7#g2_minus
 elab-functions	agree	tests/docs/25-generics.loft::t_6T#7#g2_times
 elab-functions	agree	tests/docs/26-closures.loft::Counter
 elab-functions	agree	tests/docs/26-closures.loft::Stepper
-elab-functions	agree	tests/docs/28-tuples.loft::(schema)
-elab-functions	agree	tests/docs/28-tuples.loft::__tuple<integer,integer>
-elab-functions	agree	tests/docs/28-tuples.loft::n_min_max
 elab-functions	agree	tests/docs/29-match.loft::(schema)
 elab-functions	agree	tests/docs/29-match.loft::Bare
 elab-functions	agree	tests/docs/29-match.loft::Circle
@@ -13892,11 +14001,6 @@ elab-functions	agree	tests/scripts/22d-par-narrow.loft::(schema)
 elab-functions	agree	tests/scripts/22d-par-narrow.loft::main_vector<integer(0, 255)>
 elab-functions	agree	tests/scripts/22d-par-narrow.loft::n_dbl
 elab-functions	agree	tests/scripts/22d-par-narrow.loft::vector<integer(0, 255)>
-elab-functions	agree	tests/scripts/23-field-overlap-structs.loft::(schema)
-elab-functions	agree	tests/scripts/23-field-overlap-structs.loft::IdxDb
-elab-functions	agree	tests/scripts/23-field-overlap-structs.loft::IdxElm
-elab-functions	agree	tests/scripts/23-field-overlap-structs.loft::SortDb
-elab-functions	agree	tests/scripts/23-field-overlap-structs.loft::SortElm
 elab-functions	agree	tests/scripts/24-field-overlap-enum-struct.loft::Entry
 elab-functions	agree	tests/scripts/24-field-overlap-enum-struct.loft::Shape
 elab-functions	agree	tests/scripts/24-field-overlap-enum-struct.loft::ShapeDb
@@ -14176,8 +14280,6 @@ elab-functions	agree	tests/scripts/445-generic-tree-walk.loft::vector<__typevar_
 elab-functions	agree	tests/scripts/46-caveats.loft::(schema)
 elab-functions	agree	tests/scripts/46-caveats.loft::n___lambda_test_c1_lambda_no_capture_0
 elab-functions	agree	tests/scripts/46-caveats.loft::n_test_c1_lambda_no_capture
-elab-functions	agree	tests/scripts/50-tuples.loft::(schema)
-elab-functions	agree	tests/scripts/50-tuples.loft::__tuple<integer,integer>
 elab-functions	agree	tests/scripts/505-collection-capture.loft::K
 elab-functions	agree	tests/scripts/505-collection-capture.loft::State
 elab-functions	agree	tests/scripts/505-collection-capture.loft::__closure_test_hash_lookup_0
@@ -15354,7 +15456,7 @@ elab-functions	agree	tests/scripts/store_paged_enum_field.loft::main_vector<inte
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::n_bytes
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::vector<integer(0, 255)>
 
-layer	elab-pass1	agree	11747	of	17546
+layer	elab-pass1	agree	11800	of	17607
 elab-pass1	agree	lib/code.loft::t_4Code_add_block
 elab-pass1	agree	lib/code.loft::t_4Code_add_if
 elab-pass1	agree	lib/code.loft::t_4Code_add_loop
@@ -15797,11 +15899,19 @@ elab-pass1	agree	loft-suite/rules/binding/B-Ref-Alias/2195-a-by-value-parameter-
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Alias/2195-a-by-value-parameter-keeps-the-record-a-ref-rebind-displaced.loft::n_norebind
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Alias/2195-a-by-value-parameter-keeps-the-record-a-ref-rebind-displaced.loft::n_pm
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Alias/a-link-composes-with-tuples-repoints-and-ref-params.loft::n_add
+elab-pass1	agree	loft-suite/rules/binding/B-Ref-Alias/one-place-named-through-ref-parameters-and-links-is-one-place.loft::n_c6
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Alias/one-place-named-through-ref-parameters-and-links-is-one-place.loft::n_fwd
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Alias/one-place-named-through-ref-parameters-and-links-is-one-place.loft::n_rebind_then_write
+elab-pass1	agree	loft-suite/rules/binding/B-Ref-Alias/one-place-named-through-ref-parameters-and-links-is-one-place.loft::n_s2_tv
+elab-pass1	agree	loft-suite/rules/binding/B-Ref-Alias/one-place-named-through-ref-parameters-and-links-is-one-place.loft::n_s2_twice
+elab-pass1	agree	loft-suite/rules/binding/B-Ref-Alias/one-place-named-through-ref-parameters-and-links-is-one-place.loft::n_te
+elab-pass1	agree	loft-suite/rules/binding/B-Ref-Alias/one-place-named-through-ref-parameters-and-links-is-one-place.loft::n_test_a_link_to_a_ref_vector_parameter
+elab-pass1	agree	loft-suite/rules/binding/B-Ref-Alias/one-place-named-through-ref-parameters-and-links-is-one-place.loft::n_test_one_place_handed_to_two_ref_parameters_is_one_place
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Alias/one-place-named-through-ref-parameters-and-links-is-one-place.loft::n_three
+elab-pass1	agree	loft-suite/rules/binding/B-Ref-Alias/one-place-named-through-ref-parameters-and-links-is-one-place.loft::n_tu
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Alias/one-place-named-through-ref-parameters-and-links-is-one-place.loft::n_tv
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Alias/one-place-named-through-ref-parameters-and-links-is-one-place.loft::n_twice
+elab-pass1	agree	loft-suite/rules/binding/B-Ref-Alias/one-place-named-through-ref-parameters-and-links-is-one-place.loft::t_4S2Mp_grow
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Intro/1372-a-reference-links-a-nullable-slot.loft::n_bump
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Intro/1372-a-reference-links-a-nullable-slot.loft::n_bump_dense
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Intro/1372-a-reference-links-a-nullable-slot.loft::n_clear
@@ -15841,6 +15951,9 @@ elab-pass1	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-generator-parameter-or-
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-generator-parameter-or-local-is-a-place-a-link-names.loft::n_main
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-generator-parameter-or-local-is-a-place-a-link-names.loft::n_param_argument
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-generator-parameter-or-local-is-a-place-a-link-names.loft::n_param_link
+elab-pass1	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-stored-tuple-is-a-place-a-link-names.loft::n_bump
+elab-pass1	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-stored-tuple-is-a-place-a-link-names.loft::n_forward
+elab-pass1	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-stored-tuple-is-a-place-a-link-names.loft::n_swap
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-tuple-member-is-a-place-a-link-names.loft::n_bump
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-tuple-member-is-a-place-a-link-names.loft::n_bump8
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-tuple-member-is-a-place-a-link-names.loft::n_dbl
@@ -15852,6 +15965,7 @@ elab-pass1	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-tuple-member-is-a-place
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-tuple-member-is-a-place-a-link-names.loft::n_pushv
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-tuple-member-is-a-place-a-link-names.loft::n_s2_bump
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-tuple-member-is-a-place-a-link-names.loft::n_show_e
+elab-pass1	agree	loft-suite/rules/binding/B-Ref-Lvalue/a-tuple-member-is-a-place-a-link-names.loft::n_via_param
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Lvalue/an-annotated-link-to-a-struct-place-is-its-view.loft::n_set_b
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Read/a-link-reads-its-source-as-it-is-at-the-read.loft::n_set_seven
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Read/a-link-reads-its-source-as-it-is-at-the-read.loft::n_test_a_field_link_reads_the_current_value
@@ -15928,8 +16042,16 @@ elab-pass1	agree	loft-suite/rules/binding/B-Ref-Uniform/167-a-linked-narrow-loca
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Uniform/167-a-linked-narrow-local-holds-its-field-encoding.loft::n_takes_u8
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Uniform/167-a-linked-narrow-local-holds-its-field-encoding.loft::n_unlinked_neighbour
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Uniform/167-a-linked-narrow-local-holds-its-field-encoding.loft::n_wide
+elab-pass1	agree	loft-suite/rules/binding/B-Ref-Uniform/1673-a-tuple-link-is-read-and-written-whole-like-a-tuple.loft::n_put_st
+elab-pass1	agree	loft-suite/rules/binding/B-Ref-Uniform/1673-a-tuple-link-is-read-and-written-whole-like-a-tuple.loft::n_swap_s
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Uniform/1673-a-tuple-link-is-read-and-written-whole-like-a-tuple.loft::n_take1673
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Uniform/1673-a-tuple-link-is-read-and-written-whole-like-a-tuple.loft::n_takes1673
+elab-pass1	agree	loft-suite/rules/binding/B-Ref-Uniform/1673-a-tuple-link-is-read-and-written-whole-like-a-tuple.loft::n_test_r2_a_whole_read_as_a_return
+elab-pass1	agree	loft-suite/rules/binding/B-Ref-Uniform/1673-a-tuple-link-is-read-and-written-whole-like-a-tuple.loft::n_test_r3_a_whole_read_bound_to_a_local_is_a_copy
+elab-pass1	agree	loft-suite/rules/binding/B-Ref-Uniform/1673-a-tuple-link-is-read-and-written-whole-like-a-tuple.loft::n_test_w1_a_whole_write_reaches_the_caller
+elab-pass1	agree	loft-suite/rules/binding/B-Ref-Uniform/1673-a-tuple-link-is-read-and-written-whole-like-a-tuple.loft::n_test_w2_a_whole_write_that_reads_itself_swaps
+elab-pass1	agree	loft-suite/rules/binding/B-Ref-Uniform/1673-a-tuple-link-is-read-and-written-whole-like-a-tuple.loft::n_write_r
+elab-pass1	agree	loft-suite/rules/binding/B-Ref-Uniform/1673-a-tuple-link-is-read-and-written-whole-like-a-tuple.loft::n_write_s
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Uniform/2144-a-null-test-through-a-link-asks-the-referents-question.loft::n_bound
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Uniform/2144-a-null-test-through-a-link-asks-the-referents-question.loft::n_same
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Uniform/2144-a-null-test-through-a-link-asks-the-referents-question.loft::n_t_bool
@@ -19310,6 +19432,11 @@ elab-pass1	agree	loft-suite/rules/layout/L-Total/a-fn-ref-field-no-capturing-lam
 elab-pass1	agree	loft-suite/rules/layout/L-Total/a-fn-ref-field-no-capturing-lambda-reaches-is-a-function-id.loft::n_test_a_plain_fn_ref_field_is_four_bytes
 elab-pass1	agree	loft-suite/rules/layout/L-Total/a-record-nothing-links-is-stored-inline.loft::n_main
 elab-pass1	agree	loft-suite/rules/layout/L-Total/a-record-the-program-links-is-stored-by-id.loft::n_main
+elab-pass1	agree	loft-suite/rules/layout/L-Tuple/a-stored-tuple-is-a-record-packed-like-a-struct-keeping-its-written-positions.loft::n_arg_pair
+elab-pass1	agree	loft-suite/rules/layout/L-Tuple/a-stored-tuple-is-a-record-packed-like-a-struct-keeping-its-written-positions.loft::n_bump
+elab-pass1	agree	loft-suite/rules/layout/L-Tuple/a-stored-tuple-is-a-record-packed-like-a-struct-keeping-its-written-positions.loft::n_bump_pair
+elab-pass1	agree	loft-suite/rules/layout/L-Tuple/a-stored-tuple-is-a-record-packed-like-a-struct-keeping-its-written-positions.loft::n_mk
+elab-pass1	agree	loft-suite/rules/layout/L-Tuple/a-stored-tuple-is-a-record-packed-like-a-struct-keeping-its-written-positions.loft::n_test_the_sizes
 elab-pass1	agree	loft-suite/rules/matching/M-Exhaust/2390-a-match-whose-every-arm-returns-answers-on-every-backend.loft::n_as_float
 elab-pass1	agree	loft-suite/rules/matching/M-Exhaust/2390-a-match-whose-every-arm-returns-answers-on-every-backend.loft::n_as_int
 elab-pass1	agree	loft-suite/rules/matching/M-Exhaust/2390-a-match-whose-every-arm-returns-answers-on-every-backend.loft::n_main
@@ -21259,8 +21386,11 @@ elab-pass1	agree	loft-suite/rules/rewrites/R-HostStore/a-result-built-in-its-hos
 elab-pass1	agree	loft-suite/rules/rewrites/R-InPlace/a-link-is-rebound-and-hoisted-around-as-its-place-allows.loft::n_link_arm
 elab-pass1	agree	loft-suite/rules/rewrites/R-InPlace/a-link-is-rebound-and-hoisted-around-as-its-place-allows.loft::n_link_link
 elab-pass1	agree	loft-suite/rules/rewrites/R-InPlace/a-link-is-rebound-and-hoisted-around-as-its-place-allows.loft::n_link_nested
+elab-pass1	agree	loft-suite/rules/rewrites/R-InPlace/a-link-is-rebound-and-hoisted-around-as-its-place-allows.loft::n_link_step
 elab-pass1	agree	loft-suite/rules/rewrites/R-InPlace/a-link-is-rebound-and-hoisted-around-as-its-place-allows.loft::n_link_still
 elab-pass1	agree	loft-suite/rules/rewrites/R-InPlace/a-link-is-rebound-and-hoisted-around-as-its-place-allows.loft::n_link_view
+elab-pass1	agree	loft-suite/rules/rewrites/R-InPlace/a-link-is-rebound-and-hoisted-around-as-its-place-allows.loft::n_reset
+elab-pass1	agree	loft-suite/rules/rewrites/R-InPlace/a-link-is-rebound-and-hoisted-around-as-its-place-allows.loft::n_tag
 elab-pass1	agree	loft-suite/rules/rewrites/R-InPlace/a-vector-field-rebuilt-in-place-in-a-loop-keeps-its-pushes.loft::n_c1
 elab-pass1	agree	loft-suite/rules/rewrites/R-InPlace/a-vector-field-rebuilt-in-place-in-a-loop-keeps-its-pushes.loft::n_c2
 elab-pass1	agree	loft-suite/rules/rewrites/R-InPlace/a-vector-field-rebuilt-in-place-in-a-loop-keeps-its-pushes.loft::n_c3
@@ -22460,6 +22590,7 @@ elab-pass1	agree	loft-suite/rules/tuples/T-Absent/an-exhausted-tuple-generator-a
 elab-pass1	agree	loft-suite/rules/tuples/T-Cons/1590-a-tuple-member-string-may-open-a-hole.loft::n_ok
 elab-pass1	agree	loft-suite/rules/tuples/T-Cons/1590-a-tuple-member-string-may-open-a-hole.loft::n_wrap
 elab-pass1	agree	loft-suite/rules/tuples/T-Cons/1590-a-tuple-whose-first-member-holds-a-string-binds.loft::n_ok
+elab-pass1	agree	loft-suite/rules/tuples/T-Cons/1674-a-tuple-literal-copies-every-heap-member.loft::n_main
 elab-pass1	agree	loft-suite/rules/tuples/T-Cons/1689-a-tuples-heap-member-is-its-own-copy.loft::n_from_param
 elab-pass1	agree	loft-suite/rules/tuples/T-Cons/1698-a-tuple-held-as-a-vector-element-is-a-place.loft::n_pick
 elab-pass1	agree	loft-suite/rules/tuples/T-Cons/2055-a-tuple-comparison-with-a-struct-member-is-its-functions-value.loft::n_test_equal_tuples_compare_equal
@@ -22487,8 +22618,10 @@ elab-pass1	agree	loft-suite/rules/tuples/T-Record/a-link-to-a-narrow-tuple-membe
 elab-pass1	agree	loft-suite/rules/tuples/T-Record/a-link-to-a-narrow-tuple-member-writes-the-member.loft::n_take
 elab-pass1	agree	loft-suite/rules/tuples/T-Record/a-link-to-a-narrow-tuple-member-writes-the-member.loft::n_text_neighbour
 elab-pass1	agree	loft-suite/rules/tuples/T-Record/a-link-to-a-narrow-tuple-member-writes-the-member.loft::n_whole_copy_and_equality
+elab-pass1	agree	loft-suite/rules/tuples/T-Record/a-link-to-a-text-tuple-member-writes-the-member.loft::n_linked_tuple_member
 elab-pass1	agree	loft-suite/rules/tuples/T-Record/a-link-to-a-text-tuple-member-writes-the-member.loft::n_nb
 elab-pass1	agree	loft-suite/rules/tuples/T-Record/a-link-to-a-text-tuple-member-writes-the-member.loft::n_tb
+elab-pass1	agree	loft-suite/rules/tuples/T-Record/a-link-to-a-text-tuple-member-writes-the-member.loft::n_via
 elab-pass1	agree	loft-suite/rules/tuples/T-Record/a-text-member-write-copies-its-source.loft::n_copy_then_loop
 elab-pass1	agree	loft-suite/rules/tuples/T-Record/a-text-member-write-copies-its-source.loft::n_from_param
 elab-pass1	agree	loft-suite/rules/tuples/T-Record/a-text-member-write-copies-its-source.loft::n_literal_in_loop
@@ -22502,6 +22635,12 @@ elab-pass1	agree	loft-suite/rules/tuples/T-Record/a-tuple-member-holds-its-value
 elab-pass1	agree	loft-suite/rules/tuples/T-Record/a-tuple-member-holds-its-value-everywhere-a-narrow-one-or-a-text.loft::n_first
 elab-pass1	agree	loft-suite/rules/tuples/T-Record/a-tuple-member-holds-its-value-everywhere-a-narrow-one-or-a-text.loft::n_pass
 elab-pass1	agree	loft-suite/rules/tuples/T-Record/a-tuple-member-holds-its-value-everywhere-a-narrow-one-or-a-text.loft::n_s2_ret
+elab-pass1	agree	loft-suite/rules/tuples/T-Ref/a-destructure-unpacks-a-reference-tuple.loft::n_element_pair
+elab-pass1	agree	loft-suite/rules/tuples/T-Ref/a-destructure-unpacks-a-reference-tuple.loft::n_main
+elab-pass1	agree	loft-suite/rules/tuples/T-Ref/a-destructure-unpacks-a-reference-tuple.loft::n_test_a_record_backed_reference_tuple_parameter
+elab-pass1	agree	loft-suite/rules/tuples/T-Ref/a-destructure-unpacks-a-reference-tuple.loft::n_test_a_stack_backed_reference_tuple_parameter
+elab-pass1	agree	loft-suite/rules/tuples/T-Ref/a-destructure-unpacks-a-reference-tuple.loft::n_test_the_destructure_reads_the_tuple_at_the_statement
+elab-pass1	agree	loft-suite/rules/tuples/T-Ref/a-destructure-unpacks-a-reference-tuple.loft::n_test_the_two_controls_are_unaffected
 elab-pass1	agree	loft-suite/rules/types/C-Never/2260-a-halt-is-a-value-of-any-type-in-every-value-position.loft::n_as_bool
 elab-pass1	agree	loft-suite/rules/types/C-Never/2260-a-halt-is-a-value-of-any-type-in-every-value-position.loft::n_as_float
 elab-pass1	agree	loft-suite/rules/types/C-Never/2260-a-halt-is-a-value-of-any-type-in-every-value-position.loft::n_as_text
@@ -22553,6 +22692,13 @@ elab-pass1	agree	loft-suite/rules/types/C-Var/2441-a-field-every-variant-declare
 elab-pass1	agree	loft-suite/rules/types/C-Var/2441-a-field-every-variant-declares-reads-the-variant-the-value-holds.loft::n_known
 elab-pass1	agree	loft-suite/rules/types/C-Var/2441-a-field-every-variant-declares-reads-the-variant-the-value-holds.loft::n_main
 elab-pass1	agree	loft-suite/rules/types/C-Var/2441-a-field-every-variant-declares-reads-the-variant-the-value-holds.loft::n_px
+elab-pass1	agree	loft-suite/rules/types/C-Var/a-tuple-member-is-typed-by-its-declaration-a-variant-one-included.loft::n_bump
+elab-pass1	agree	loft-suite/rules/types/C-Var/a-tuple-member-is-typed-by-its-declaration-a-variant-one-included.loft::n_bump_slot
+elab-pass1	agree	loft-suite/rules/types/C-Var/a-tuple-member-is-typed-by-its-declaration-a-variant-one-included.loft::n_bump_text
+elab-pass1	agree	loft-suite/rules/types/C-Var/a-tuple-member-is-typed-by-its-declaration-a-variant-one-included.loft::n_name
+elab-pass1	agree	loft-suite/rules/types/C-Var/a-tuple-member-is-typed-by-its-declaration-a-variant-one-included.loft::n_tm_pair
+elab-pass1	agree	loft-suite/rules/types/C-Var/a-tuple-member-is-typed-by-its-declaration-a-variant-one-included.loft::n_tr_bump
+elab-pass1	agree	loft-suite/rules/types/C-Var/a-tuple-member-is-typed-by-its-declaration-a-variant-one-included.loft::n_tr_name
 elab-pass1	agree	loft-suite/rules/types/C-Var/a-variant-is-more-specific-than-its-enum.loft::f_13Entity#Entity_at
 elab-pass1	agree	loft-suite/rules/types/C-Var/a-variant-is-more-specific-than-its-enum.loft::f_13Entity#Entity_hit
 elab-pass1	agree	loft-suite/rules/types/C-Var/a-variant-is-more-specific-than-its-enum.loft::f_14Entity#IceWall_hit
@@ -23484,7 +23630,10 @@ elab-pass1	agree	tests/docs/27-coroutines.loft::n_len_twice
 elab-pass1	agree	tests/docs/27-coroutines.loft::n_outer_combined
 elab-pass1	agree	tests/docs/27-coroutines.loft::n_scaled_by
 elab-pass1	agree	tests/docs/27-coroutines.loft::n_squares
+elab-pass1	agree	tests/docs/28-tuples.loft::n_doubled_first
+elab-pass1	agree	tests/docs/28-tuples.loft::n_label_and_score
 elab-pass1	agree	tests/docs/28-tuples.loft::n_min_max
+elab-pass1	agree	tests/docs/28-tuples.loft::n_swap_ints
 elab-pass1	agree	tests/docs/29-match.loft::n_size_of
 elab-pass1	agree	tests/docs/29-match.loft::n_total
 elab-pass1	agree	tests/docs/30-formatting.loft::t_5Query_hole_int
@@ -25247,6 +25396,12 @@ elab-pass1	agree	tests/scripts/46-caveats.loft::n_test_c1_lambda_no_capture
 elab-pass1	agree	tests/scripts/48-generics.loft::n_identity
 elab-pass1	agree	tests/scripts/48-generics.loft::n_main
 elab-pass1	agree	tests/scripts/48-generics.loft::n_pick_second
+elab-pass1	agree	tests/scripts/50-tuples.loft::n_add_pair
+elab-pass1	agree	tests/scripts/50-tuples.loft::n_double_nn
+elab-pass1	agree	tests/scripts/50-tuples.loft::n_make_pair
+elab-pass1	agree	tests/scripts/50-tuples.loft::n_read_pair
+elab-pass1	agree	tests/scripts/50-tuples.loft::n_swap
+elab-pass1	agree	tests/scripts/50-tuples.loft::n_swap_pair
 elab-pass1	agree	tests/scripts/501-map-filter-literal-receiver.loft::n___lambda_main_0
 elab-pass1	agree	tests/scripts/501-map-filter-literal-receiver.loft::n___lambda_main_1
 elab-pass1	agree	tests/scripts/501-map-filter-literal-receiver.loft::n___lambda_main_2
