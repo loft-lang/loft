@@ -128,7 +128,8 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
       NdCall { def_nr: tfd, args: tfa } => el::def(e, tfd).name == "OpGetField" && len(tfa) == 3 && el_ir::unspan(tfa[0]!) is NdIf,
       _ => false
     };
-    if !(x.code is NdVar) && !el_ex_call::buffered_loft_call(e, x.code) && (copies_whole_vector(e, vars, x.code) || field_path(e, x.code) || elem_subject || linked_field || tag_field) {
+    // (So is a vector field of a keyed lookup's record, `h[2].tags ?? []`.)
+    if !(x.code is NdVar) && !el_ex_call::buffered_loft_call(e, x.code) && (copies_whole_vector(e, vars, x.code) || field_path(e, x.code) || elem_subject || linked_field || tag_field || keyed_field_read(e, x.code)) {
       // The default's buffer borrows the record too: a work ref nulled at the head.
       if !e.first_pass {
         el_ex_call::borrowed_literal_buffer(vars, d.code);
