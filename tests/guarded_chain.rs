@@ -176,7 +176,7 @@ fn stdlib_functions() -> std::collections::HashSet<String> {
                 .strip_prefix("pub fn ")
                 .or_else(|| line.strip_prefix("fn "));
             if let Some(rest) = rest
-                && let Some(end) = rest.find(|c: char| c == '(' || c == '<')
+                && let Some(end) = rest.find(['(', '<'])
             {
                 names.insert(format!("n_{}", &rest[..end]));
             }
