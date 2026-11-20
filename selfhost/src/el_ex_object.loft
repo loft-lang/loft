@@ -1910,6 +1910,22 @@ pub fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?,
       return sz!;
     }
   }
+  // `deliver` / `expose` / `release(tag, value)` (control.rs, @PLN105): builtins by name, void
+  // on both passes; the second lowers each to its op with the value by VALUE and its type's
+  // store row (`get_type`): a record's, or a keyed collection's.
+  if d < 0 && source < 0 && len(list) == 2 && (name == "deliver" || name == "expose" || name == "release") {
+    if e.first_pass {
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    vt = el_types::base(types[1]!);
+    db_tp = match vt { TyReference { n: rn } => el::def(e, rn).known_type, _ => if el_ex_base::keyed_kind(vt) { el_schema::keyed_type(e, vt) } else { -1 } };
+    od = el::def_nr(e, if name == "deliver" { "OpDeliver" } else if name == "expose" { "OpExpose" } else { "OpRelease" });
+    if db_tp < 0 || db_tp == el_schema::NO_TYPE || od < 0 {
+      el::refuse(e, "a `{name}` of a value of this type: {type_kind(vt)}");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    return ex(ir::NdCall { def_nr: od, args: [list[0]!, list[1]!, ir::NdInt { n: db_tp }] }, ir::TyVoid);
+  }
   if d < 0 {
     // A receiver already refused (untyped on the second pass) chose no method: not refused again.
     if e.first_pass || (el_types::is_unknown(first) && len(types) > 0) {
