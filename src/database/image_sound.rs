@@ -388,13 +388,57 @@ impl Stores {
                     }
                 }
             }
-            // A RADIX / TRIE root word claims the tree record.  The LEAVES belong to the
-            // primary collection and are validated through it, so this checks the spine's
-            // own record and stops.
-            Parts::Radix(_, _) | Parts::Trie(_, _) => {
+            // A SPATIAL / TRIE slot names its tree record.  The tree's shape is checked whole
+            // before a node of it is believed (`radix_tree::sound`), and every record a leaf
+            // names — and the record a trie keeps for its null key — is then a record that
+            // holds an element, walked as one.
+            Parts::Radix(v, _) | Parts::Trie(v, _) => {
                 let cur = store.read::<u32>(rec.rec, rec.pos);
-                if cur != 0 && block(store, cur).is_none() {
+                if cur == 0 {
+                    return;
+                }
+                let Some(words) = block(store, cur) else {
                     bad(problems, format!("tree record {cur} is not a record"));
+                    return;
+                };
+                let mut rows = match crate::radix_tree::sound(store, cur, words) {
+                    Ok(rows) => rows,
+                    Err(why) => {
+                        bad(problems, why);
+                        return;
+                    }
+                };
+                if matches!(&self.types[tp as usize].parts, Parts::Trie(_, _)) {
+                    // The word is the record, tagged; untagged it is an older layout's
+                    // node capacity and names no record (`trie_db::slot_rec`).
+                    let null_key =
+                        crate::trie_db::slot_rec(store.read::<u32>(cur, crate::radix_tree::SLOT));
+                    if null_key != 0 {
+                        rows.push(null_key);
+                    }
+                }
+                let need = u64::from(crate::store::RECORD_PAYLOAD) + u64::from(self.size(*v));
+                for row in rows {
+                    match block(store, row) {
+                        Some(w) if need <= u64::from(w) * 8 => {
+                            step(
+                                Seg::Entry(row),
+                                &at(row, crate::store::RECORD_PAYLOAD),
+                                *v,
+                                problems,
+                            );
+                        }
+                        Some(w) => bad(
+                            problems,
+                            format!(
+                                "tree leaf record {row} holds {w} words, less than its element"
+                            ),
+                        ),
+                        None => bad(problems, format!("tree leaf record {row} is not a record")),
+                    }
+                    if *problems > 8 {
+                        return;
+                    }
                 }
             }
             // A stored reference: a store, a record and a place in it.  One into this store
@@ -418,7 +462,9 @@ impl Stores {
                             problems,
                             format!("stored reference names record {to}, which is not a record"),
                         ),
-                        Some(words) if at_byte < 8 || u64::from(at_byte) >= u64::from(words) * 8 => {
+                        Some(words)
+                            if at_byte < 8 || u64::from(at_byte) >= u64::from(words) * 8 =>
+                        {
                             bad(
                                 problems,
                                 format!(
@@ -432,7 +478,9 @@ impl Stores {
                 } else if matches!(own, Own::Image(_)) {
                     bad(
                         problems,
-                        format!("stored reference names store #{sn}, which is not part of the file"),
+                        format!(
+                            "stored reference names store #{sn}, which is not part of the file"
+                        ),
                     );
                 } else if sn != u32::from(u16::MAX) && sn as usize >= self.allocations.len() {
                     bad(
@@ -455,13 +503,14 @@ impl Stores {
                     bad(problems, format!("index arena {cur} is not a record"));
                     return;
                 };
-                let rows = match crate::btree::sound(store, cur, words, &self.types[tp as usize].keys) {
-                    Ok(rows) => rows,
-                    Err(why) => {
-                        bad(problems, why);
-                        return;
-                    }
-                };
+                let rows =
+                    match crate::btree::sound(store, cur, words, &self.types[tp as usize].keys) {
+                        Ok(rows) => rows,
+                        Err(why) => {
+                            bad(problems, why);
+                            return;
+                        }
+                    };
                 let need = u64::from(crate::store::RECORD_PAYLOAD) + u64::from(self.size(*v));
                 for row in rows {
                     match block(store, row) {

@@ -236,8 +236,16 @@ fn a_tree_or_a_reference_that_does_not_hold_refuses_the_load() {
     let first = u32_at(&image, header + 24) as usize;
     assert_eq!(u32_at(&image, header + 4), 1, "a root over leaves");
     assert_eq!(u32_at(&image, header + 8), 40, "forty records");
-    assert_eq!(u32_at(&image, node(root, 4)) & 0xFFFF, 0, "the root is an inner node");
-    assert_eq!(u32_at(&image, node(first, 4)) & 0xFFFF, 1, "the first leaf is a leaf");
+    assert_eq!(
+        u32_at(&image, node(root, 4)) & 0xFFFF,
+        0,
+        "the root is an inner node"
+    );
+    assert_eq!(
+        u32_at(&image, node(first, 4)) & 0xFFFF,
+        1,
+        "the first leaf is a leaf"
+    );
     let far = 0x00F0_0000u32;
     let cells: [(&str, usize, u32); 23] = [
         ("arena_past_the_image", 20, far),
@@ -288,7 +296,139 @@ fn a_tree_or_a_reference_that_does_not_hold_refuses_the_load() {
         );
         for (tag, _, _) in cells {
             let (out, err) = loft(&dir, backend, "read.loft", &format!("{tag}.store"), "");
-            assert_eq!(out, "loaded false name []", "{backend} {tag}: the image is refused\n{err}");
+            assert_eq!(
+                out, "loaded false name []",
+                "{backend} {tag}: the image is refused\n{err}"
+            );
+            assert!(
+                err.contains("[cr-check]") && err.contains("store_load_untrusted: refusing"),
+                "{backend} {tag}: and the refusal says which number\n{err}"
+            );
+        }
+    }
+    let _ = fa::remove_dir_all(&dir);
+}
+
+const KEYED_WRITER: &str = r#"struct P { x: integer, y: integer, tag: text }
+struct K { w: text, n: integer }
+struct W { name: text, at: spatial<P[x, y]>, words: trie<K[w]> }
+
+fn main() {
+  w = W { name: "seven77" };
+  for i in 0..60 { w.at += [P { x: (i * 37) % 50, y: (i * 11) % 40, tag: "p{i}" }]; }
+  for i in 0..60 { w.words += [K { w: "key/{i % 7}/{i}", n: i }]; }
+  for i in 0..60 { if i % 3 == 1 { w.words["key/{i % 7}/{i}"] = null; } }
+  for i in 0..10 { w.words += [K { w: "late{i}", n: 100 + i }]; }
+  println("wrote {store_persist_copy(w, "keyed.store")}");
+}
+"#;
+
+const KEYED_READER: &str = r#"struct P { x: integer, y: integer, tag: text }
+struct K { w: text, n: integer }
+struct W { name: text, at: spatial<P[x, y]>, words: trie<K[w]> }
+
+fn main() {
+  l = W { name: "" };
+  ok = store_load_untrusted(l, env_variable("IMG") ?? "");
+  if !ok { println("loaded false name [{l.name}]"); return; }
+  n = 0; s = 0;
+  for p in l.at { n += 1; s += p.x + p.y; }
+  m = 0; k = 0;
+  for e in l.words { m += 1; k += e.n; }
+  println("loaded true points {n} sum {s} words {m} sum {k} has {l.words["late3"].n}");
+}
+"#;
+
+/// `@FR-S-Sound` — the tree of a spatial and of a trie collection is walked too.
+///
+/// One image holds a spatial of 60 points and a trie that had 60 words, lost 20 and gained
+/// 10.  Each cell changes ONE number of it; the layout is `radix_tree.rs`'s (`@FR-S-Tree`):
+/// in the tree's record the root child at byte 4 (negative: a node), the record count at 8,
+/// the nodes minted at 12, the trie's tagged null-key record at 16, the free list at 20, and
+/// node `n` at byte `24 + 16 (n − 1)` as bit, parent, false child, true child.
+///
+/// Expected, fixed in advance: the sound image loads on both backends as
+/// `points 60 sum 2640 words 50 sum 2225 has 103` — the sums of `37i mod 50 + 11i mod 40`
+/// over 0..59, and of the 40 kept numbers (1770 − 590) plus 100..109 — and so does a copy
+/// whose spare header word holds an UNTAGGED number, which names no record; every other
+/// changed copy is refused with a line saying which number.
+#[test]
+fn a_spatial_or_trie_tree_that_does_not_hold_refuses_the_load() {
+    let dir = std::env::temp_dir().join(format!("loft_image_keyed_{}", std::process::id()));
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir).expect("scratch");
+    fa::write(dir.join("write.loft"), KEYED_WRITER).expect("writer");
+    fa::write(dir.join("read.loft"), KEYED_READER).expect("reader");
+    let (wrote, err) = loft(&dir, "--interpret", "write.loft", "", "");
+    assert_eq!(wrote, "wrote true", "{err}");
+    let image = fa::read(dir.join("keyed.store")).expect("the image");
+    let sidecar = fa::read(dir.join("keyed.store.dschema")).expect("its sidecar");
+
+    // The root's payload is at byte 16: name, the spatial's tree record, the trie's.
+    let name = u32_at(&image, 16);
+    let at = u32_at(&image, 20) as usize * 8;
+    let words = u32_at(&image, 24) as usize * 8;
+    let node = |tree: usize, n: usize, field: usize| tree + 24 + 16 * (n - 1) + field;
+    let minus = |n: u32| n.wrapping_neg();
+    assert_eq!(
+        u32_at(&image, at + 4),
+        minus(1),
+        "the spatial's root child is node 1"
+    );
+    assert_eq!(u32_at(&image, at + 8), 60, "sixty points");
+    assert_eq!(u32_at(&image, words + 8), 50, "fifty words");
+    // A node of the spatial whose false child is a record: follow false children down.
+    let mut low = 1usize;
+    while (u32_at(&image, node(at, low, 8)) as i32) < 0 {
+        low = (u32_at(&image, node(at, low, 8)) as i32).unsigned_abs() as usize;
+    }
+    let far = 0x00F0_0000u32;
+    let cells: [(&str, usize, u32); 17] = [
+        ("tree_past_the_image", 20, far),
+        ("tree_too_small", 20, name),
+        ("tree_inside_a_block", 20, u32_at(&image, 20) + 1),
+        ("root_child_is_no_node", at + 4, minus(9999)),
+        ("record_count", at + 8, 5000),
+        ("nodes_minted", at + 12, 100_000),
+        ("free_list_names_a_live_node", at + 20, 7),
+        ("child_is_no_node", node(at, 1, 8), minus(9999)),
+        ("child_is_its_own_node", node(at, 1, 8), minus(1)),
+        ("child_missing", node(at, 1, 12), 0),
+        ("bit_not_later_than_above", node(at, 2, 0), 0),
+        ("parent_wrong", node(at, 2, 4), 7),
+        ("leaf_record_past_the_image", node(at, low, 8), far),
+        ("leaf_record_inside_a_block", node(at, low, 8), name + 1),
+        ("trie_root_child_is_no_node", words + 4, minus(9999)),
+        ("trie_null_key_record", words + 16, far | 0x8000_0000),
+        ("trie_child_is_its_own_node", node(words, 1, 12), minus(1)),
+    ];
+    let write = |tag: &str, byte: usize, value: u32| {
+        let mut changed = image.clone();
+        changed[byte..byte + 4].copy_from_slice(&value.to_le_bytes());
+        fa::write(dir.join(format!("{tag}.store")), &changed).expect("an image");
+        fa::write(dir.join(format!("{tag}.store.dschema")), &sidecar).expect("a sidecar");
+    };
+    for (tag, byte, value) in cells {
+        write(tag, byte, value);
+    }
+    write("trie_untagged_word", words + 16, far);
+
+    let sound = "loaded true points 60 sum 2640 words 50 sum 2225 has 103";
+    let mut backends = vec!["--interpret"];
+    if loft::platform::c_runtime_posix_host() {
+        backends.push("--native-c");
+    }
+    for backend in backends {
+        for tag in ["keyed", "trie_untagged_word"] {
+            let (out, err) = loft(&dir, backend, "read.loft", &format!("{tag}.store"), "");
+            assert_eq!(out, sound, "{backend} {tag}: a sound image loads\n{err}");
+        }
+        for (tag, _, _) in cells {
+            let (out, err) = loft(&dir, backend, "read.loft", &format!("{tag}.store"), "");
+            assert_eq!(
+                out, "loaded false name []",
+                "{backend} {tag}: the image is refused\n{err}"
+            );
             assert!(
                 err.contains("[cr-check]") && err.contains("store_load_untrusted: refusing"),
                 "{backend} {tag}: and the refusal says which number\n{err}"

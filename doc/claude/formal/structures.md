@@ -204,6 +204,12 @@ it may place blocks differently, but it must write each kind of block the same w
                   finds them, the free nodes form a list, and each record a leaf names holds
                   an element.  The ORDER of the keys is not checked: a tree that is sound
                   here and badly sorted answers wrongly and stays inside its store;
+                - a spatial's or a trie's tree (S-Tree) has its shape likewise: each node id
+                  is one the tree minted, no node is reached twice, a node has both children,
+                  points back at the node above it and tests a later bit than that one, the
+                  records and nodes are as many as the header says, the free nodes form a
+                  list, and each record a leaf names — and a trie's tagged null-key record —
+                  holds an element.  The keys are not compared;
                 - a stored reference into its own store names a record of it and a byte
                   inside that record.  An image not yet adopted still carries the slot it was
                   written from, which the walk reads as "this store"; a reference into any
@@ -211,8 +217,8 @@ it may place blocks differently, but it must write each kind of block the same w
                 - a nest deeper than 4096 is records that name each other.
               It reads struct fields, enum values, texts, vectors, sorted vectors, child
               records, a hash's table and entries, an array's and an ordered's elements, an
-              index's nodes and records, a stored reference, and the record of a spatial's or
-              a trie's tree; it does not read that tree's nodes or leaves.  It runs when the
+              index's nodes and records, a spatial's and a trie's nodes and records, and a
+              stored reference.  It runs when the
               program asks: store_verify answers it for a value, and the loaders for a file
               from elsewhere — store_load_untrusted and the URL loaders — ask it before
               anything else reads the image, and refuse (S-Gate's answer) when it fails.
