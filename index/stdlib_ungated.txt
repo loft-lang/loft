@@ -371,7 +371,6 @@ n_fs_result
 n_get_store_lock
 n_hash_sorted
 n_hash_unsorted
-n_inside
 n_json_array
 n_json_bool
 n_json_errors
@@ -396,6 +395,7 @@ n_parallel_buf_get_ref
 n_parallel_buf_get_single
 n_parallel_buf_get_text
 n_parse_errors_of
+n_path_inside
 n_path_sep
 n_protect_store_frees
 n_radix_sorted

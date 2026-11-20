@@ -874,7 +874,7 @@ fn t_4text_ends_with(cell: &std::cell::UnsafeCell<Stores>, mut var_self: &str, m
 
 
 // loft:default/02_files.loft:1297
-fn n_inside(cell: &std::cell::UnsafeCell<Stores>, mut var_root: &str, mut var_path: &str, mut var_base: *mut String, mut var___work_5: *mut String, mut var___work_6: *mut String) -> Str { //block_1: text["first", "seg", "segs"]?
+fn n_path_inside(cell: &std::cell::UnsafeCell<Stores>, mut var_root: &str, mut var_path: &str, mut var_base: *mut String, mut var___work_5: *mut String, mut var___work_6: *mut String) -> Str { //block_1: text["first", "seg", "segs"]?
   let stores: &mut Stores = unsafe { &mut *cell.get() };
   let mut var__elm_1: DbRef = DbRef::NULL;
   let mut var___vdb_1: DbRef = DbRef::NULL;
@@ -1884,7 +1884,7 @@ pub extern "C" fn loft_shared_t_4text_split_text(
     }
 }
 
-pub extern "C" fn loft_shared_n_inside(
+pub extern "C" fn loft_shared_n_path_inside(
     stores: *mut Stores,
     args: *const loft::native_lib::LibArg,
     n: usize,
@@ -1899,7 +1899,7 @@ pub extern "C" fn loft_shared_n_inside(
     let mut p3: String = String::new();
     let mut p4: String = String::new();
     let __text_dest = unsafe { (&mut *cell.get()).bridge_text_dest.take() };
-    let __r = (n_inside(cell, p0, p1, &mut p2, &mut p3, &mut p4));
+    let __r = (n_path_inside(cell, p0, p1, &mut p2, &mut p3, &mut p4));
     let __t = __r.str();
     let __st: &mut Stores = unsafe { &mut *cell.get() };
     if let Some(__d) = __text_dest {
@@ -2123,7 +2123,7 @@ pub extern "C" fn loft_type_layout_fp_v1() -> u64 { 13689937510338309109u64 }
 
 /// `(function, bridge symbol, bridge)` for every compiled function, sorted by name.
 pub(crate) static BRIDGES: &[(&str, &str, super::Bridge)] = &[
-    ("n_inside", "loft_shared_n_inside", loft_shared_n_inside),
+    ("n_path_inside", "loft_shared_n_path_inside", loft_shared_n_path_inside),
     ("t_4File_lines", "loft_shared_t_4File_lines", loft_shared_t_4File_lines),
     ("t_4text_basename", "loft_shared_t_4text_basename", loft_shared_t_4text_basename),
     ("t_4text_char_slice", "loft_shared_t_4text_char_slice", loft_shared_t_4text_char_slice),
@@ -2145,4 +2145,4 @@ pub(crate) static BRIDGES: &[(&str, &str, super::Bridge)] = &[
 pub(crate) const PREFIX_TYPES: usize = 100;
 pub(crate) const PREFIX_FINGERPRINT: u64 = 9925269632125183879;
 /// The hash of the `default/*.loft` source these bodies were compiled from.
-pub(crate) const SOURCE_HASH: u64 = 15431521767731523417;
+pub(crate) const SOURCE_HASH: u64 = 16828482038236127409;
