@@ -32,7 +32,9 @@ use el_ex_object;
 // borrows, then `OpWriteFile(f, OpCreateStack(_wf_N), row)` with the value's store row
 // (`get_type`; a `character` or `boolean` its fixed-width base, `io_scalar_db_tp`; an `as`
 // cast's alias width).  A record value and a value with no byte layout are refused by name.
-pub fn file_append(e: el::El, vars: el_vars::Vars, f: integer, rhs: integer, x: Ex) -> Ex {
+// (`f` is the file local, or -1 where the file is a FIELD read, `place`: `b.h += "ab"` writes
+// to the file the field holds, `OpWriteFile(OpGetField(b, …), …)`.)
+pub fn file_append(e: el::El, vars: el_vars::Vars, f: integer, rhs: integer, x: Ex, place: ir::Node = ir::NdNull) -> Ex {
   vt = el_types::base(x.tp);
   // A cast to a sized alias in the value (`last_cast_alias`, the last to complete) writes at the
   // alias's width: its byte, short or 4-byte integer row (`database.byte` / `short`,
@@ -68,10 +70,13 @@ pub fn file_append(e: el::El, vars: el_vars::Vars, f: integer, rhs: integer, x: 
     el::refuse(e, "a file write of a value with no byte layout: {type_kind(x.tp)}");
     return ex(ir::NdNull, ir::TyVoid);
   }
-  el_vars::drop_use(vars, f);
+  if f >= 0 {
+    el_vars::drop_use(vars, f);
+  }
+  ftarget = if f >= 0 { ir::NdVar { n: f } } else { place };
   ex(ir::NdInsert { items: [
     el_ir::v_set(tmp, x.code),
-    el_ir::cl(e, "OpWriteFile", [ir::NdVar { n: f }, el_ir::cl(e, "OpCreateStack", [ir::NdVar { n: tmp }]), ir::NdInt { n: row }])
+    el_ir::cl(e, "OpWriteFile", [ftarget, el_ir::cl(e, "OpCreateStack", [ir::NdVar { n: tmp }]), ir::NdInt { n: row }])
   ] }, ir::TyVoid)
 }
 
