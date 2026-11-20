@@ -3838,6 +3838,26 @@ fn unspared_reads(e: el::El, n: ir::Node, root: integer, off: integer) -> intege
   }
 }
 
+// A `vector<i32>` / `vector<u32>` FIELD's own rows where the record is laid out —
+// `[vector<int<…>>, int<…>]` — as `field_get` reads it (`field_content`); a local of that type is
+// `vector<integer>`.  Empty for any other element, or before the layout.
+fn four_byte_field_rows(e: el::El, d: integer, fname: text, inner: ir::TypeT) -> vector<integer> {
+  four = match inner { TyInteger { spec } => el_types::int4(spec) || el_types::uint4(spec), _ => false };
+  k = el::def(e, d).known_type;
+  if !four || e.first_pass || k == el_schema::NO_TYPE {
+    return [];
+  }
+  for sf in el_schema::struct_fields(e, k) {
+    if sf.position == field_position(e, d, fname) && sf.content >= 0 && sf.content < len(e.b.types) {
+      match e.b.types[sf.content]!.parts[0] ?? ir::PtBase {
+        PtVector { content: fc } => { return [sf.content, fc]; },
+        _ => {}
+      }
+    }
+  }
+  []
+}
+
 // `Parser::keyed_group_clear` (loft#898): the clear before a whole-collection literal is built into
 // the keyed field `place` (`OpGetField(r, off, kt)`).  Ungrouped, the field alone; in a linked
 // group, every VIEW member's spine (`OpClearKeyed(…, kt | CLEAR_KEYED_VIEW)`), then the PRIMARY —
@@ -4491,6 +4511,10 @@ pub fn field_vector_copy(e: el::El, vars: el_vars::Vars, r: ir::Node, d: integer
       la = cd.attributes[len(cd.attributes) - 1];
       if w >= 0 && la != null && la!.hidden && el_types::base(la!.typedef[0] ?? ir::TyVoid) is TyVector && el_types::is_equal(e, el_types::without_deps(el_types::base(x.tp)), ir::TyVector { inner: inner, dep: [] }) {
         vk0 = vector_store(e, inner, el_types::elem_name(e, inner));
+        fr0 = four_byte_field_rows(e, d, fname, inner);
+        if len(fr0) == 2 {
+          vk0 = fr0[0]!;
+        }
         if vk0 >= 0 {
           // Nulled just before the statement that fills it (`mark_inline_ref`), not at the top.
           el_vars::mark_inline(vars, w);
@@ -4517,6 +4541,11 @@ pub fn field_vector_copy(e: el::El, vars: el_vars::Vars, r: ir::Node, d: integer
   nm = el_types::elem_name(e, inner);
   rec = match el_types::base(inner) { TyReference { n: rn } => el::def(e, rn).known_type, _ => if nm == "" { -1 } else { el_schema::schema_type(e, nm) } };
   vk = vector_store(e, inner, nm);
+  fr = four_byte_field_rows(e, d, fname, inner);
+  if len(fr) == 2 {
+    vk = fr[0]!;
+    rec = fr[1]!;
+  }
   if rec < 0 || vk < 0 {
     el::refuse(e, "a vector field of this element type written from a vector place: {type_kind(inner)}");
     return null;

@@ -294,14 +294,25 @@ pub fn guard_discharge(e: el::El, vars: el_vars::Vars, code: ir::Node, should: i
       bl.operators = [el_ir::v_set(held, dn4_cast(e, vars, subject, wide, should)), pick];
       return ir::NdBlock { block: [bl] };
     },
-    NdIf { cond, t, f: _ } => {
-      // `bare_variable_discharge`: `v ?? d` on a variable reads `v` in the test and the arm.
+    NdIf { cond, t, f } => {
+      // `bare_variable_discharge`: `v ?? d` on a variable reads `v` in the test and the arm —
+      // each read through its own checked cast, the arm's made first.
       match el_ir::unspan(t) {
         NdVar { n: v } => {
           match el_ir::unspan(cond) {
-            NdCall { args } => {
+            NdCall { def_nr: cd, args } => {
               if len(args) == 1 && el_ir::unspan(args[0] ?? ir::NdNull) == ir::NdVar { n: v } {
-                el::refuse(e, "a bare-variable `??` stored into a narrow slot");
+                bdefault = f;
+                bchained = guard_discharge(e, vars, f, should);
+                if bchained != null {
+                  bdefault = bchained!;
+                } else if !value_fits(e, vars, f, should) && !el_ir::is_null(f) {
+                  el::refuse(e, "a `??` default that may not fit its narrow slot");
+                }
+                bwide = ir::TyInteger { spec: ir::IntegerSpec { min: -2147483647, max: 2147483647, not_null: false, forced_size: 0 } };
+                barm = dn4_cast(e, vars, t, bwide, should);
+                btest = dn4_cast(e, vars, t, bwide, should);
+                return ir::NdIf { cond: ir::NdCall { def_nr: cd, args: [btest] }, t: barm, f: bdefault };
               }
             },
             _ => {}

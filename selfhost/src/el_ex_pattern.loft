@@ -2251,7 +2251,9 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
   // subject's `dn4cast` under the `ncc`).
   if !e.first_pass && match in_t { TyInteger { spec } => el_types::int4(spec), _ => false } {
     for x in xs {
-      if match el_ir::unspan(x.code) { NdBlock { block: nb } => nb[0].name == "ncc", _ => false } {
+      // (A bare-variable `??` too: `guard_discharge` casts both its reads.)
+      bare = match el_ir::unspan(x.code) { NdIf { cond: bc, t: bt } => el_ir::unspan(bt) is NdVar && match el_ir::unspan(bc) { NdCall { args: bca } => len(bca) == 1 && el_ir::unspan(bca[0] ?? ir::NdNull) == el_ir::unspan(bt), _ => false }, _ => false };
+      if bare || match el_ir::unspan(x.code) { NdBlock { block: nb } => nb[0].name == "ncc", _ => false } {
         gx = el_convert::guard_discharge(e, vars, x.code, in_t);
         if gx == null {
           el::refuse(e, "an `i32` vector item that is a `??`");
