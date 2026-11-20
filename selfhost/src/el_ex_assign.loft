@@ -2436,6 +2436,24 @@ fn discharge_seeded(e: el::El, code: ir::Node) -> ir::Node? {
   null
 }
 
+// The field number of a keyed (`hash`, `sorted`, `index`, …) field of a local record that
+// `target` names (`box.data`), by the local's declared type; -1 otherwise.
+fn keyed_field_of_local(e: el::El, vars: el_vars::Vars, target: integer) -> integer {
+  match e.p.nodes[target] {
+    SMember { e: be, name: fname, call } => {
+      if call || be == null {
+        return -1;
+      }
+      rv = match e.p.nodes[be!] { SName { name, member } => if member == "" { el_vars::var(vars, name) } else { -1 }, _ => -1 };
+      rd = if rv < 0 { -1 } else { struct_ref(e, el_types::base(el_vars::tp(vars, rv))) };
+      fa = if rd < 0 { -1 } else { attr_nr(el::def(e, rd), fname) };
+      ft = if fa < 0 { ir::TyVoid } else { el::def(e, rd).attributes[fa]!.typedef[0] ?? ir::TyVoid };
+      if fa >= 0 && keyed_kind(el_types::base(ft)) && !(ft is TyOptional) { fa } else { -1 }
+    },
+    _ => -1
+  }
+}
+
 // Is `target` a `File` field of a local record (`b.h`), by the local's declared type?
 fn file_field_of_local(e: el::El, vars: el_vars::Vars, target: integer) -> boolean {
   match e.p.nodes[target] {
@@ -3083,6 +3101,31 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
   member_of_place = match e.p.nodes[target] { STupleGet { e: tpe } => tpe != null && !(e.p.nodes[tpe!] is SName) && !(e.p.nodes[tpe!] is STupleGet), _ => false } || tuple_member_chain_of_place(e, target) || linked_tuple_record_member(e, vars, target);
   // `write_to_file` on a FIELD (`b.h += "ab"`): the file the field holds, read where it lies,
   // takes the write as a file local does.
+  // `c.f += R { … }` into a keyed field of a local record: each record built in the
+  // collection's store through the owner and the field's position (`keyed_items`).
+  if op == "+=" && (e.p.nodes[rhs!] is SStructLit || e.p.nodes[rhs!] is SVecLit) {
+    kfo = keyed_field_of_local(e, vars, target);
+    kown = match e.p.nodes[match e.p.nodes[target] { SMember { e: kbe0 } => kbe0 ?? -1, _ => -1 }] { SName { name: kbn0 } => kbn0, _ => "" };
+    // (An item that reads the owner — `c.h += [C { v: c.h[9]?.v … }]` — is built apart and
+    // filled in, `OpFillKeyed`: not this road.)
+    if kfo >= 0 && kown != "" && !el_ex_place::syntax_names(e, rhs!, kown) {
+      kfrv = match e.p.nodes[match e.p.nodes[target] { SMember { e: kbe } => kbe ?? -1, _ => -1 }] { SName { name: kbn } => el_vars::var(vars, kbn), _ => -1 };
+      kfd = struct_ref(e, el_types::base(el_vars::tp(vars, kfrv)));
+      // (The field append's road registers the element's `vector<…>` store row on the second
+      // pass, before the items, as Rust's `parse_append_vector` does.)
+      if !e.first_pass {
+        kel = el_types::keyed_elem(el_types::base(el::def(e, kfd).attributes[kfo]!.typedef[0] ?? ir::TyVoid));
+        if kel >= 0 {
+          el_schema::vector_type(e, el::def(e, kel).known_type);
+        }
+      }
+      kops = el_ex_vector::keyed_items(e, vars, kfrv, rhs!, fd: kfd, fnr: kfo);
+      if kops == null {
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      return ex(ir::NdInsert { items: kops! }, ir::TyVoid);
+    }
+  }
   if op == "+=" && file_field_of_local(e, vars, target) {
     fp = expression(e, vars, target);
     fx = expression(e, vars, rhs!);

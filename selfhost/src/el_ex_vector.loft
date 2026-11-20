@@ -772,8 +772,11 @@ pub fn index(e: el::El, vars: el_vars::Vars, at: integer, c: integer?, keys: vec
 // one record of a bare struct literal: each a
 // struct literal built as a record of the collection (`OpNewRecord(v, type, u16::MAX)`, its
 // fields, `OpFinishRecord`, which indexes it).  Any other item is refused by name.
-pub fn keyed_items(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> vector<ir::Node>? {
-  ct = el_types::base(el_vars::tp(vars, v));
+// A keyed FIELD of a local record (`box.data += R { … }`): `v` is the owner, `fd` its record
+// and `fnr` the field's number — each record made through the owner and the field's position,
+// `OpNewRecord(box, <Box>, 0)`, as Rust spells a field append; the element borrows the owner.
+pub fn keyed_items(e: el::El, vars: el_vars::Vars, v: integer, n: integer, fd: integer = -1, fnr: integer = -1) -> vector<ir::Node>? {
+  ct = if fd >= 0 { el_types::base(el::def(e, fd).attributes[fnr]!.typedef[0] ?? ir::TyVoid) } else { el_types::base(el_vars::tp(vars, v)) };
   // (Through a link — `c: &hash<Row[id]>` — the collection the link names.)
   match ct {
     TyRefVar { inner: li } => { ct = el_types::base(li); },
@@ -791,7 +794,8 @@ pub fn keyed_items(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> ve
   if len(items) > 0 {
     elm = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [v] });
   }
-  kt = if e.first_pass { 65535 } else { el_schema::keyed_type(e, ct) };
+  kt = if e.first_pass { 65535 } else if fd >= 0 { el::def(e, fd).known_type } else { el_schema::keyed_type(e, ct) };
+  kpos = if fd >= 0 { fnr } else { 65535 };
   w = ir::NdVar { n: v };
   at = ir::NdVar { n: elm };
   ls: vector<ir::Node> = [];
@@ -810,13 +814,13 @@ pub fn keyed_items(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> ve
         return null;
       }
       el_vars::set_var_type(vars, elm, ir::TyReference { n: el_d, dep: [v] });
-      ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: kt }, ir::NdInt { n: 65535 }]))];
+      ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: kt }, ir::NdInt { n: kpos }]))];
       kcopy = el_ex_match::record_item_copy(e, vars, elm, el_d, kx);
       if kcopy == null {
         return null;
       }
       ls += kcopy!;
-      ls += [el_ir::cl(e, "OpFinishRecord", [w, at, ir::NdInt { n: kt }, ir::NdInt { n: 65535 }])];
+      ls += [el_ir::cl(e, "OpFinishRecord", [w, at, ir::NdInt { n: kt }, ir::NdInt { n: kpos }])];
       continue;
     }
     if sd != el_d {
@@ -837,13 +841,13 @@ pub fn keyed_items(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> ve
     if fl == null {
       return null;
     }
-    ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: kt }, ir::NdInt { n: 65535 }]))];
+    ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: kt }, ir::NdInt { n: kpos }]))];
     for op in fl! {
       if op#index >= 2 {
         ls += [op];
       }
     }
-    ls += [el_ir::cl(e, "OpFinishRecord", [w, at, ir::NdInt { n: kt }, ir::NdInt { n: 65535 }])];
+    ls += [el_ir::cl(e, "OpFinishRecord", [w, at, ir::NdInt { n: kt }, ir::NdInt { n: kpos }])];
   }
   ls
 }
