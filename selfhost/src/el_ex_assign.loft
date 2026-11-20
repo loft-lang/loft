@@ -694,7 +694,7 @@ fn expression_node(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     SComprehension { at: _ } => el_ex_match::comprehension_value(e, vars, n),
     SAs { at, e: ae, tp: at_tp, checked } => el_ex_match::cast_expr(e, vars, ae, at_tp),
     SParen { e: pe } => if pe == null { ex(ir::NdNull, ir::TyUnknown { n: 0 }) } else { expression(e, vars, pe!) },
-    SSizeof { kind, tp: st, e: se } => if kind == "sizeof" { sizeof_of(e, vars, st, se) } else if kind == "type_name" { type_name_of(e, vars, st) } else { sizeof_expr(e, vars, kind, st) },
+    SSizeof { kind, tp: st, e: se } => if kind == "sizeof" { sizeof_of(e, vars, st, se) } else if kind == "type_name" { type_name_of(e, vars, st, se) } else { sizeof_expr(e, vars, kind, st) },
     STupleLit { elems } => tuple_lit(e, vars, elems),
     // `wrap_chain`: the member read wrapped in its `.`'s position on the second pass, as a
     // field read is.
@@ -1992,13 +1992,45 @@ pub fn sizeof_expr(e: el::El, vars: el_vars::Vars, kind: text, st: integer?) -> 
   ex(ir::NdInt { n: e.b.types[el::def(e, d).known_type]!.size }, int_t)
 }
 
+// `x.f` spelled where a type may stand (`sizeof(p.b)`, `type_name(p.b)`) reads as the type `x`
+// with an associated name; where `x` is a local of a record it is that record's field read,
+// Rust's expression: the field's declared type.  Null for anything else.
+fn assoc_field_type(e: el::El, vars: el_vars::Vars, st: integer) -> ir::TypeT? {
+  nm = match e.p.nodes[st] { STy { name: an, member: am, args: aa, assoc } => if assoc != "" && am == "" && len(aa) == 0 { an } else { "" }, _ => "" };
+  fld = match e.p.nodes[st] { STy { assoc } => assoc, _ => "" };
+  if nm == "" || el_vars::var(vars, nm) < 0 {
+    return null;
+  }
+  rd = match el_types::base(name_expression(e, vars, nm, "", false).tp) { TyReference { n: rn } => rn, _ => -1 };
+  if rd < 0 {
+    return null;
+  }
+  for ra in el::def(e, rd).attributes {
+    if ra.name == fld {
+      return ra.typedef[0] ?? null;
+    }
+  }
+  null
+}
+
 // port: control.rs parse_type_name
 // `type_name(…)` names a type the way its reader writes it (`Data::display_type_name`): a name
 // that is a declared type (not a variant) and any other type spelling is the type; a plain name
 // that is none is a value, which is not evaluated — its type is named.  A type variable (named
 // per instance) is refused by name.
-pub fn type_name_of(e: el::El, vars: el_vars::Vars, st: integer?) -> Ex {
+pub fn type_name_of(e: el::El, vars: el_vars::Vars, st: integer?, se: integer? = null) -> Ex {
   text_t = ir::TyText { dep: [] };
+  // Not a type: the expression is elaborated for its type, its code dropped (`parse_type_name`).
+  if st == null && se != null {
+    vt = expression(e, vars, se!).tp;
+    if e.first_pass {
+      return ex(ir::NdNull, text_t);
+    }
+    if el_types::is_unknown(vt) {
+      return ex(ir::NdNull, text_t);
+    }
+    return ex(ir::NdText { s: display_type_name(e, vt) }, text_t);
+  }
   if st == null {
     el::refuse(e, "a `type_name` with nothing to name");
     return ex(ir::NdNull, text_t);
@@ -2009,7 +2041,16 @@ pub fn type_name_of(e: el::El, vars: el_vars::Vars, st: integer?) -> Ex {
   };
   // `type_name(x.f)` is read as the type spelling `x` with an associated name: a value's field,
   // which Rust reads as an expression — not carried.
-  if match e.p.nodes[st!] { STy { assoc } => assoc != "", _ => false } {
+  // (Read as an expression where the name is a local: the field's declared type.)
+  sty_assoc = match e.p.nodes[st!] { STy { assoc } => assoc, _ => "" };
+  aft = assoc_field_type(e, vars, st!);
+  if aft != null {
+    if e.first_pass {
+      return ex(ir::NdNull, text_t);
+    }
+    return ex(ir::NdText { s: display_type_name(e, aft!) }, text_t);
+  }
+  if sty_assoc != "" {
     el::refuse(e, "a `type_name` of a field read");
     return ex(ir::NdNull, text_t);
   }
@@ -2068,6 +2109,10 @@ pub fn sizeof_of(e: el::El, vars: el_vars::Vars, st: integer?, se: integer?) -> 
   if value == null {
     el::refuse(e, "a `sizeof` with nothing to size");
     return ex(ir::NdNull, int_t);
+  }
+  aft = assoc_field_type(e, vars, value!);
+  if aft != null {
+    return sized(e, packed_size(e, aft!, -1), int_t);
   }
   x = match e.p.nodes[value!] { STy { name: nm } => name_expression(e, vars, nm, "", false), _ => expression(e, vars, value!) };
   en = match el_types::base(x.tp) { TyEnum { n, is_ref } => if is_ref { n } else { -1 }, _ => -1 };
