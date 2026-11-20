@@ -1,8 +1,9 @@
 # Security
 
 A security bug in loft is handled as a bug: fixed through the normal process and shipped in
-the next release. What differs is when we say why it mattered — after the release that fixes
-it is out, so that the explanation and the fix reach people together.
+the next release. What differs is when we say why it mattered: one week after the release
+that fixes it is out, so there is time to install the fix first. Nothing stays unpublished:
+hiding a defect does not fix it.
 
 ## Reporting one
 
@@ -19,8 +20,10 @@ the published report unless you ask not to be.
 1. The report is recorded privately and reproduced.
 2. It is fixed as an ordinary change, with a regression test, and merged the usual way.
 3. It ships in the next loft release, or the next version of the library it is in.
-4. Once that release can be installed, the report is published in this tracker as a closed
-   issue that names the fixing commit and the release, and the release's changelog says so.
+4. One week after that release can be installed, the report is published in this tracker as
+   a closed issue that names the fixing commit and the release, together with an in-depth
+   review of the batch it belongs to: what was examined, what was found and fixed, what was
+   found sound, and what is still open.
 
 When a published library version is unsafe to keep using, the package registry's advisory
 feed names it and the version that fixes it; `loft install` and a `--ship` build then say so.
@@ -31,8 +34,8 @@ shipped program, does not wait for the regular release.
 ## What to expect
 
 There is no embargo list and no announcement schedule. We do not request a CVE unless
-someone downstream asks for one. Every finding is published once its fix is installable,
-including the ones we find ourselves.
+someone downstream asks for one. Every finding is published a week after its fix is
+installable, including the ones we find ourselves.
 
 ## Supported versions
 
