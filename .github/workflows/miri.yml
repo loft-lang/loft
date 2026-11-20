@@ -939,6 +939,30 @@ jobs:
           LOFT: ${{ github.workspace }}/target/release/loft
         run: python3 scripts/slot_matrix.py gate --full
 
+  slot-matrix-rust:
+    # @windows-exempt: the matrix generates platform-free loft; the rustc writer's platform questions are the toolchain matrix's
+    # @nightly-class: report — a statement the rustc writer emits wrongly for one form of operand, which the language suite reads only once a day
+    name: Slot matrix, the sample on the rustc writer
+    if: github.event_name != 'pull_request'
+    needs: pr-ci-started
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install mold + sqlite
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold libsqlite3-0
+      - name: Build the release loft binary and the runtime library the rustc writer links
+        run: cargo build --release --lib --bin loft
+      # @PLN221 — the per-PR tests never run the rustc writer; this leg runs the matrix's C
+      # sample on it (every slot with its plain variable and its type's first filler), against
+      # its own baseline, `scripts/slot_matrix.rust.baseline` (SLOT_MATRIX.md § The gate).
+      - name: The gate, the sample on the rustc writer
+        env:
+          LOFT: ${{ github.workspace }}/target/release/loft
+        run: python3 scripts/slot_matrix.py gate --rust
+
   c-sweep-platforms:
     # @nightly-class: unsound — the C backend answering other than the interpreter on macOS or Windows
     # @PLN203 C8 — `ci.yml`'s `c-sweep` on the other two hosts and their compilers: Apple clang,
@@ -2139,7 +2163,7 @@ jobs:
     name: → tracked issue (red-steps digest)
     needs: [pr-ci-started, stale-plans-audit, stale-claims, miri, asan, asan-leak-gate, poison, native-poison, poison-claim, stack-shadow, tsan,
             native-asan, valgrind, c-sweep-unsound, c-sweep-platforms, c-sweep-android, bind-census, release-gate-sweeps, debug-asserts, audit,
-            toolchain-matrix, index-hygiene, library-health, slot-matrix-c]
+            toolchain-matrix, index-hygiene, library-health, slot-matrix-c, slot-matrix-rust]
     if: always() && github.event_name != 'pull_request' && !inputs.from_gate && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
     permissions:
@@ -2156,7 +2180,7 @@ jobs:
     name: Daily status (the one place to look)
     needs: [pr-ci-started, stale-plans-audit, stale-claims, miri, asan, asan-leak-gate, poison, native-poison, poison-claim, stack-shadow, tsan,
             native-asan, valgrind, c-sweep-unsound, c-sweep-platforms, c-sweep-android, bind-census, release-gate-sweeps, debug-asserts, audit,
-            toolchain-matrix, index-hygiene, library-health, slot-matrix-c]
+            toolchain-matrix, index-hygiene, library-health, slot-matrix-c, slot-matrix-rust]
     # The digest describes the default branch's nightlies, so it follows `notify`: not a
     # PR, not the release gate, and not a dispatch on another branch.
     if: always() && github.event_name != 'pull_request' && !inputs.from_gate && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)

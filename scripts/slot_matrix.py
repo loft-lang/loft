@@ -21,7 +21,9 @@ runs the product.
                give its type's plain value.
     run        run cells and say which fail.  Default: every slot with its plain variable,
                which validates the register itself.  `--filler all` is the matrix,
-               `--backend both` adds the C backend, `--slot` and `--kind` narrow it.
+               `--backend both` adds the C backend, `all` the rustc writer too (`rust`
+               alone is that writer), `--slot` and `--kind` narrow it.  A compiled backend's
+               batch that fails to compile is halved until the cell that breaks it is alone.
     cell       one shape tried at once, without touching a table:
                    cell 'for p in <S> { s += p.k; }' --type coll
                    cell 's = <S> + j;' --filler 'at(<C>, 1)' --plain i
@@ -53,7 +55,9 @@ runs the product.
                The interpreter runs every cell; the C backend, which compiles each one,
                a sample (every slot with its plain variable and its type's first filler)
                unless `--full`.  `--update` rewrites the baseline from a whole, full run.  On GitHub each fold is
-               an annotation on the table row it names.
+               an annotation on the table row it names.  `--rust` runs the rustc writer
+               (`--native-rust`) in place of the C backend and scores it against its own
+               baseline, scripts/slot_matrix.rust.baseline: the night run.
     walk       the matrix on an OLDER loft binary beside this one (`--old <binary>`): the
                cells that failed then and pass now are what the matrix would have caught,
                the ones that passed then and fail now are regressions.
@@ -106,6 +110,9 @@ OUTSIDE_TSV = os.path.join(HERE, "syntax_outside.tsv")
 CONTEXTS_TSV = os.path.join(HERE, "syntax_contexts.tsv")
 PRELUDE = os.path.join(HERE, "syntax_slots_prelude.loft")
 BASELINE = os.path.join(HERE, "slot_matrix.baseline")
+# The rustc writer's lines, apart: the PR gate never runs that writer, so its baseline must
+# not hold lines only the night run can confirm or clear.
+RUST_BASELINE = os.path.join(HERE, "slot_matrix.rust.baseline")
 EXPECT_TSV = os.path.join(HERE, "syntax_expect.tsv")
 
 COUNTS = ("once", "first", "cond", "step")
@@ -646,20 +653,32 @@ def program(kind_type, cells):
 # the interpreter ends the program naming the line, the C backend fails that one test and
 # goes on.  No outside timer: the compiler is the one that can name the cell.
 TIME_LIMIT = {"interp": int(os.environ.get("SLOT_MATRIX_INTERP_SECONDS", "40")),
-              "c": int(os.environ.get("SLOT_MATRIX_C_SECONDS", "60"))}
+              "c": int(os.environ.get("SLOT_MATRIX_C_SECONDS", "60")),
+              "rust": int(os.environ.get("SLOT_MATRIX_RUST_SECONDS", "240"))}
 # Once a program has had a cell stopped by the limit, what is left of it runs under this
 # one: a healthy cell answers in milliseconds, and a statement that loops for one form of
 # operand often loops for the next, each costing a whole limit.
-TIGHT_LIMIT = {"interp": 6, "c": 20}
+TIGHT_LIMIT = {"interp": 6, "c": 20, "rust": 60}
 TABLE_FAULT = re.compile(r"Unknown (variable|function)|Undefined type")
 # What a run cost: per backend, how many programs were run and the seconds they took,
 # summed over the threads that ran them (so more than the wall time).
-SPENT = {"interp": [0, 0.0], "c": [0, 0.0]}
+SPENT = {"interp": [0, 0.0], "c": [0, 0.0], "rust": [0, 0.0]}
 SPENT_LOCK = threading.Lock()
 
 
+# The flag each backend runs under.  `rust` is the rustc writer (`--native-rust`), which the
+# language suite runs once a day: the matrix runs it at night (`gate --rust`), against its
+# own baseline, so a fault only that writer has is seen before a suite cell meets it.
+FLAG = {"interp": [], "c": ["--native-c"], "rust": ["--native-rust"]}
+COMPILED = ("c", "rust")
+# A compiled backend builds a cell's whole program at once, so one cell its writer emits
+# wrongly fails every cell of the program with the same compile error; such a batch is
+# halved until the cell that breaks it stands alone.
+COMPILE_ERROR = re.compile(r"native compil|error\[E\d+\]|error: (expected|cannot|mismatched|could not)")
+
+
 def invoke(backend, path, limit=None):
-    cmd = [loft_binary()] + (["--native-c"] if backend == "c" else []) + ["--no-warnings", "--tests", path]
+    cmd = [loft_binary()] + FLAG[backend] + ["--no-warnings", "--tests", path]
     env = dict(os.environ, LOFT_LEAK_CHECK="1", LOFT_TIMEOUT=str(limit or TIME_LIMIT[backend]))
     began = time.monotonic()
     done = subprocess.run(cmd, capture_output=True, text=True, env=env, check=False)
@@ -703,6 +722,12 @@ def run_program(backend, cells, tmp, tag):
                 limit = TIGHT_LIMIT[backend]
                 continue
         failed = dict(re.findall(r"^\s*FAIL\s+\S+::(test_c\d+)\s+—\s+(.*)$", out, re.M))
+        if (backend in COMPILED and len(pending) > 1 and failed
+                and all(COMPILE_ERROR.search(why) for why in failed.values())):
+            half = (len(pending) + 1) // 2
+            for n, part in enumerate((pending[:half], pending[half:])):
+                results.update(run_program(backend, part, tmp, f"{tag}_{turn}{'ab'[n]}"))
+            break
         for fn, why in failed.items():
             if "exit 124" in why:               # the C backend's form of the same limit
                 failed[fn] = (f"it does not finish: loft's time limit ({limit} s) "
@@ -807,19 +832,19 @@ def evaluate(cells, backends, on_c=None):
             raise SystemExit(f"slot_matrix: {broken}")
         interp = run_backend("interp", cells, tmp)
         per = {"interp": interp}
-        if "c" in backends:
-            accepted = [c for c in cells if interp.get(c["name"], ("",))[0] != "REFUSED"
-                        and (on_c is None or c["name"] in on_c)]
-            per["c"] = run_backend("c", accepted, tmp)
+        accepted = [c for c in cells if interp.get(c["name"], ("",))[0] != "REFUSED"
+                    and (on_c is None or c["name"] in on_c)]
+        for backend in (b for b in COMPILED if b in backends):
+            per[backend] = run_backend(backend, accepted, tmp)
     out = {}
     for cell in cells:
         lines, worst = [], "ok"
         for backend in per:
-            if backend == "c" and (worst == "REFUSED" or (on_c is not None and cell["name"] not in on_c)):
+            if backend in COMPILED and (worst == "REFUSED" or (on_c is not None and cell["name"] not in on_c)):
                 continue
             v, why = verdict(cell, per[backend])
-            if backend == "c" and v == "REFUSED":
-                v, why = "FAIL", f"only the C backend refuses it: {why}"
+            if backend in COMPILED and v == "REFUSED":
+                v, why = "FAIL", f"only the {backend} backend refuses it: {why}"
             if v != "ok":
                 lines.append((backend, v, why))
                 worst = v if worst == "ok" or v == "FAIL" else worst
@@ -1024,19 +1049,24 @@ def cmd_gate(args):
             first_of.setdefault(f["type"], f["id"])
     sampled = lambda name: name.split(".")[1].endswith("-var") or name.split(".")[1] in first_of.values()
     on_c = None if full else {c["name"] for c in cells if c["slot"] == "_world" or sampled(c["name"])}
-    verdicts = evaluate(cells, ("interp", "c"), on_c)
+    leg = "rust" if args.rust else "c"
+    path = RUST_BASELINE if args.rust else BASELINE
+    verdicts = evaluate(cells, ("interp", leg), on_c)
     keys = baseline_keys(cells, verdicts)
+    if args.rust:
+        # The interpreter's lines are the PR gate's; this run answers for the rustc writer.
+        keys = {k for k in keys if k[1] == "rust"}
     if args.update:
-        with open(BASELINE, "w", encoding="utf-8") as f:
+        with open(path, "w", encoding="utf-8") as f:
             f.write(BASELINE_HEAD)
             for key in sorted(keys):
                 f.write(("~" if key[2] == "crash" else "") + "\t".join(key) + "\n")
         print(f"slot_matrix gate: baseline rewritten, {len(keys)} line(s)")
         return 0
-    stable, unstable = load_baseline()
+    stable, unstable = load_baseline(path)
     here = lambda key: family.get(key[0].split(".")[0]) == args.family if args.family else True
-    # A baseline line of a cell this run did not put on the C backend says nothing here.
-    ran = lambda key: key[1] != "c" or on_c is None or key[0] in on_c
+    # A baseline line of a cell this run did not put on a compiled backend says nothing here.
+    ran = lambda key: key[1] not in COMPILED or on_c is None or key[0] in on_c
     stable = {k for k in stable if here(k) and ran(k)}
     unstable = {k for k in unstable if here(k)}
     # A crash may also show as another channel on another machine; an unstable line
@@ -1044,7 +1074,7 @@ def cmd_gate(args):
     excused = {(n, b) for n, b, _ in unstable}
     new = sorted(k for k in keys - stable if (k[0], k[1]) not in excused)
     gone = sorted(stable - keys)
-    what = f"the `{args.family}` slots" if args.family else "the slot matrix"
+    what = (f"the `{args.family}` slots" if args.family else "the slot matrix") + (" on the rustc writer" if args.rust else "")
     if not new and not gone:
         print(f"slot_matrix gate: {what}: {len(cells)} cells, {len(keys)} not ok, all in the baseline  [{loft_binary()}]")
         return 0
@@ -1065,7 +1095,7 @@ def cmd_gate(args):
         for name, backend, ch in new:
             why = next((w for b, v, w in verdicts[name][1] if b == backend and v == "FAIL"), "")
             print(f"  NEW      {name} [{backend}] ({ch}): {why[:170]}")
-        print(f"  to see one slot: python3 scripts/slot_matrix.py run --filler all --backend both --slot <id> -v")
+        print(f"  to see one slot: python3 scripts/slot_matrix.py run --filler all --backend {'rust' if args.rust else 'both'} --slot <id> -v")
     if refused:
         # Not a failure of an evaluation: the compiler now refuses a statement it took, or
         # a new row is one it never takes.  Either is a claim the rules must back, so it
@@ -1078,7 +1108,7 @@ def cmd_gate(args):
             print(f"           {statement_of(next(c for c in cells if c['name'] == name))}")
     if gone:
         print(f"FIXED: {len(gone)} baseline line(s) of {what} pass now.  Nothing is broken: run "
-              f"`python3 scripts/slot_matrix.py gate --update`, read the diff (it must only remove "
+              f"`python3 scripts/slot_matrix.py gate{' --rust' if args.rust else ''} --update`, read the diff (it must only remove "
               f"lines), and commit it with the fix.")
         for name, backend, ch in gone:
             print(f"  PASSES   {name} [{backend}] ({ch})")
@@ -1287,7 +1317,7 @@ def cmd_explain(args):
     # Run it alone, with what loft can say about a store or a crash switched on.
     lines = {}
     for backend in backends_of(args):
-        cmd = [loft_binary()] + (["--native-c"] if backend == "c" else []) + ["--no-warnings", "--tests", path]
+        cmd = [loft_binary()] + FLAG[backend] + ["--no-warnings", "--tests", path]
         env = dict(os.environ, LOFT_LEAK_CHECK="1", LOFT_REFREE_FAILS="1", LOFT_LEAK_SITES="1",
                    LOFT_TIMEOUT=str(TIME_LIMIT[backend]))
         done = subprocess.run(cmd, capture_output=True, text=True, env=env, cwd=keep, check=False)
@@ -1482,7 +1512,7 @@ def axes_of(args):
 
 
 def backends_of(args):
-    return ("interp", "c") if args.backend == "both" else (args.backend,)
+    return {"both": ("interp", "c"), "all": ("interp", "c", "rust")}.get(args.backend, (args.backend,))
 
 
 def cmd_run(args):
@@ -1514,13 +1544,13 @@ def main():
     sub.add_parser("selftest").set_defaults(fn=cmd_selftest)
     sub.add_parser("list").set_defaults(fn=cmd_list)
     p = sub.add_parser("fillers")
-    p.add_argument("--backend", choices=("interp", "c", "both"), default="interp")
+    p.add_argument("--backend", choices=("interp", "c", "rust", "both", "all"), default="interp")
     p.add_argument("-v", "--verbose", action="store_true")
     p.add_argument("--depth", type=int, choices=(1, 2), default=1, help="2 adds every wrapper filler around every other filler")
     p.set_defaults(fn=cmd_fillers)
     p = sub.add_parser("run")
     p.add_argument("--filler", default="var", help="`var` (default), `all`, or one filler id")
-    p.add_argument("--backend", choices=("interp", "c", "both"), default="interp")
+    p.add_argument("--backend", choices=("interp", "c", "rust", "both", "all"), default="interp")
     p.add_argument("--slot", action="append", default=[], help="one slot id; may repeat")
     p.add_argument("--kind", choices=[k for k, _ in KINDS])
     p.add_argument("-v", "--verbose", action="store_true")
@@ -1540,7 +1570,7 @@ def main():
     p = sub.add_parser("explain")
     p.add_argument("cell", help="a cell's name, as a run prints it")
     p.add_argument("--out", metavar="DIR", help="where to keep its program and outputs (default: a new temp dir)")
-    p.add_argument("--backend", choices=("interp", "c", "both"), default="both")
+    p.add_argument("--backend", choices=("interp", "c", "rust", "both", "all"), default="both")
     p.add_argument("--lines", type=int, default=60, help="how much of the IR diff to print")
     p.set_defaults(fn=cmd_explain)
     p = sub.add_parser("expr")
@@ -1550,7 +1580,7 @@ def main():
     p.add_argument("--depth", type=int, choices=(1, 2), default=2, help="2 (default) also puts it inside every wrapper")
     p.add_argument("--slot", action="append", default=[], help="only these slots; may repeat")
     p.add_argument("--kind", choices=[k for k, _ in KINDS])
-    p.add_argument("--backend", choices=("interp", "c", "both"), default="both")
+    p.add_argument("--backend", choices=("interp", "c", "rust", "both", "all"), default="both")
     p.add_argument("--context", help="an id of syntax_contexts.tsv, or `all`")
     p.add_argument("--frame", help="a frame of the prelude, or `all`")
     p.add_argument("-v", "--verbose", action="store_true")
@@ -1570,18 +1600,20 @@ def main():
     p.add_argument("--family", choices=FAMILIES, default="read")
     p.add_argument("--rule", default="-")
     p.add_argument("--kind", choices=[k for k, _ in KINDS])
-    p.add_argument("--backend", choices=("interp", "c", "both"), default="both")
+    p.add_argument("--backend", choices=("interp", "c", "rust", "both", "all"), default="both")
     p.add_argument("--context", help="an id of syntax_contexts.tsv, or `all`")
     p.add_argument("--frame", help="a frame of the prelude, or `all`")
     p.set_defaults(fn=cmd_cell)
     p = sub.add_parser("gate")
     p.add_argument("--update", action="store_true", help="rewrite the baseline from this run")
     p.add_argument("--family", choices=FAMILIES, help="only the slots of one family, and their baseline lines")
-    p.add_argument("--full", action="store_true", help="every cell on the C backend too, not the sample")
+    p.add_argument("--full", action="store_true", help="every cell on the compiled backend too, not the sample")
+    p.add_argument("--rust", action="store_true", help="the rustc writer in place of the C backend, against "
+                   "scripts/slot_matrix.rust.baseline (the night run)")
     p.set_defaults(fn=cmd_gate)
     p = sub.add_parser("walk")
     p.add_argument("--old", required=True, help="the older loft binary")
-    p.add_argument("--backend", choices=("interp", "c", "both"), default="interp")
+    p.add_argument("--backend", choices=("interp", "c", "rust", "both", "all"), default="interp")
     p.add_argument("--slot", action="append", default=[])
     p.add_argument("--kind", choices=[k for k, _ in KINDS])
     p.add_argument("--context", help="where the statement stands: an id of syntax_contexts.tsv, or `all`")

@@ -46,13 +46,14 @@ The matrix is generated; the tables are what is kept and reviewed, never the cel
 
 | File under `scripts/` | Rows | What it holds |
 |---|---|---|
-| `syntax_slots.tsv` | 191 slots in 7 families | id, family, the rule that states the count, count class, expected runs, operand type, the statement, an optional declaration |
-| `syntax_fillers.tsv` | 96 fillers over 13 types | id, type, the expression; 19 are wrappers, 4 write what the statement works on and go only into `first` slots |
+| `syntax_slots.tsv` | 197 slots in 7 families | id, family, the rule that states the count, count class, expected runs, operand type, the statement, an optional declaration |
+| `syntax_fillers.tsv` | 100 fillers over 14 types | id, type, the expression; 18 are wrappers, 4 write what the statement works on and go only into `first` slots |
 | `syntax_contexts.tsv` | 4 contexts | id, how often the statement runs, the template around it |
 | `syntax_expect.tsv` | all 191 slots, a row a kind where the kind changes the answer | the anchor: slot, kind, the fields the plain statement must leave changed |
 | `syntax_outside.tsv` | 38 lexemes | every lexeme in no slot, with why: it takes no operand, it is a declaration, or the matrix cannot reach it yet (12) |
-| `syntax_slots_prelude.loft` | 3 frames | the world a cell runs in, and the functions a filler calls |
+| `syntax_slots_prelude.loft` | 3 frames | the world a cell runs in, and the functions a filler calls; its `sm` is a record of scalars only, bound by a call, so the value-record rewrites (`R-ValueRecord`, `R-ValueLocal`) carry it as a tuple |
 | `slot_matrix.baseline` | 379 lines | the cells that do not pass today; the gate lets it only shrink |
+| `slot_matrix.rust.baseline` | the rustc writer's lines | the same, for `gate --rust`, which only the night run reads |
 
 The lexicon is read from the lexer's tables and the parser's own lexer calls, so syntax
 added without a slot row or a reason fails `doc_hygiene`.
@@ -128,6 +129,12 @@ full run, which on a CI runner passed the per-test limit.  `gate --full` compile
 cell, and `gate --update` is a full run.  A regression only the C backend shows, with a
 filler outside the sample, is therefore caught by the full run and not by a PR.
 
+`gate --rust` runs the rustc writer (`--native-rust`) in place of the C backend, against
+`scripts/slot_matrix.rust.baseline`: the night's leg for a writer the language suite reads
+once a day.  A compiled program that does not build fails every cell in it with one error, so
+a compiled backend's batch that fails to compile is halved until the cell that breaks it
+stands alone; that cell is the one the run names.
+
 ## Debugging a failing cell
 
 `slot_matrix.py explain <cell>` keeps one program holding the cell, its bound-first twin,
@@ -174,14 +181,14 @@ on an older compiler: what failed then and passes now is what it would have caug
 
 | Item | What it is | When it is due |
 |---|---|---|
-| A nightly leg | `gate --full`, `--context all --frame all` and `--depth 2` scheduled; today only the sampled gate runs in CI | before the next release: a C-only regression outside the sample is otherwise unseen |
+| A nightly leg | `--context all --frame all` and `--depth 2` scheduled; the night runs `gate --full` and `gate --rust` | before the next release: a C-only regression outside the sample is otherwise unseen |
 | Two counted operands | a second counted operand in one statement, with a twin that binds them in the order the form's rule gives; seven issues of the ledger need it | when a defect of that shape is filed that the matrix cannot express |
 | The unreached lexemes | a file in the prelude (`#next`, `#read`, `#format`), field expressions (`init`, `computed`, `default`, `$`), `T.parse`, `yield from`, `#lock`, and a cell kind that expects the program to end (`panic`) | with the first defect in one of them |
-| A second prelude | declaration shapes: nullable fields, a struct-enum, a generic, a record that is an element of two collections; seven ledger issues | when the ledger's `shape of a declaration` lines outnumber the others |
+| A second prelude | declaration shapes: nullable fields, a struct-enum, a generic, a record that is an element of two collections; seven ledger issues (the record of scalars only is `sm`) | when the ledger's `shape of a declaration` lines outnumber the others |
 | More contexts | a closure body, an early return, a match arm | with the second prelude |
 | Slot rows naming several types | one statement run over float, text and the rest without a row a type | when the forty typed rows need a second statement shape |
 | Sampled depth three | a seeded random sample of three-deep compositions a night | with the nightly leg |
-| More backends at night | the rustc writer, wasm | with the nightly leg |
+| More backends at night | wasm (the rustc writer is `gate --rust`) | with the nightly leg |
 | The uncalibrated ledger lines | eighteen `fits-rows` verdicts never written as cells; a sample of October's issues never judged | at the next release's reach reading |
 | The cells as lockstep input | every cell fed to the Rust-against-loft comparison | when the port's harness takes generated programs (@PLN91) |
 | Suite cells for the new rules | `E-Once`, `E-Field`, `E-Index`, `E-Is`, `E-Record`, `E-Assert`, `I-While`: written and passing, on the suite's branch `slot-walk-rules`, not yet merged | when the branch is pushed |
