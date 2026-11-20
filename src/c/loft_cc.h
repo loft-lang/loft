@@ -328,12 +328,12 @@ LOFT_COLD static void loft_proof_failed(const char *site) {
  * compiler is told so, and folds the accessor's from-the-end wrap away; under LOFT_VERIFY the
  * claim is checked at `site` instead. */
 #if defined(LOFT_VERIFY)
-static inline int64_t loft_nonneg(int64_t x, const char *site) {
+static inline loft_int loft_nonneg(loft_int x, const char *site) {
     if (x < 0) loft_proof_failed(site);
     return x;
 }
 #else
-static inline int64_t loft_nonneg(int64_t x, const char *site) {
+static inline loft_int loft_nonneg(loft_int x, const char *site) {
     (void) site;
 #if defined(__GNUC__) || defined(__clang__)
     if (x < 0) __builtin_unreachable();

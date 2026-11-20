@@ -346,3 +346,61 @@ float false 0.30000000000000004 false
         "32-bit operations"
     );
 }
+
+const HELD: &str = "struct P { a: integer, b: float }
+fn wide(x: integer) -> i64? { if x == 0 { null } else { (x as i64) * 1000000000l } }
+fn pick(v: vector<integer>, i: i64?) -> integer { v[i] ?? -7 }
+fn pick32(v: vector<integer>, i: integer?) -> integer { v[i] ?? -7 }
+fn scan(v: vector<integer>, ps: vector<P>) -> integer? {
+  s = 0;
+  big = 4294967297l;
+  for k in 0..len(v) {
+    j = wide(k % 2);
+    s += (v[j] ?? 1000) + (v[big] ?? 500) + v[k] + (ps[k % len(ps)].a);
+  }
+  s
+}
+fn main() {
+  v = [10, 20, 30, 40];
+  ps = [P { a: 3, b: 0.5 }, P { a: 5, b: 1.5 }];
+  n = wide(0);
+  m: integer? = null;
+  println(\"{pick(v, n)} {pick(v, 1l)} {pick(v, -1l)} {pick(v, 4l)} {pick(v, 5000000000l)} {pick(v, 4294967297l)}\");
+  println(\"{pick32(v, m)} {pick32(v, 2)} {pick32(v, -4)} {pick32(v, -5)} {pick32(v, 4)}\");
+  println(\"{scan(v, ps)} {len(v)} {len(ps)}\");
+}
+";
+
+/// @PLN217 — the C runtime takes a vector's index and answers its length at the BUILD's width
+/// (`loft_int`, `loft_width.h`), so a 32-bit build does no 64-bit arithmetic for one.  An
+/// `i64` index is narrowed where it meets the accessor, and what does not fit is OUTSIDE the
+/// vector, never another element: a null index and 5000000000 read the `??` default, and so
+/// does 4294967297, whose low 32 bits are 1 (element 20).  In `scan` each of the four turns
+/// adds 1000 (a null or a 1000000000 index), 500 (4294967297), `v[k]` and `ps[k % 2].a`:
+/// 4 * 1500 + 100 + 16 = 6116; a truncated index would add `v[1]` instead, 4196.  The same
+/// answers on both backends and both widths.
+#[test]
+fn a_vector_index_past_the_build_s_width_is_outside_the_vector() {
+    let want = "-7 20 40 -7 -7 -7\n-7 30 10 -7 -7\n6116 4 2\n";
+    for backend in ["--interpret", "--native-c"] {
+        let b = &backend[2..5];
+        for width in [Some("32"), None] {
+            let name = format!("held{b}{}", width.unwrap_or("64"));
+            // The answer is the first three lines; the program's nullable index warns after.
+            let out = run_on(backend, &name, "", HELD, width);
+            let answer: String = out.lines().take(3).map(|l| format!("{l}\n")).collect();
+            assert_eq!(answer, want, "{backend} {width:?}");
+        }
+    }
+    let c32 = emit_c("held-c32", HELD, Some("32"));
+    assert!(
+        c32.starts_with("#ifndef LOFT_WIDTH32\n#define LOFT_WIDTH32\n"),
+        "a 32-bit unit compiles its runtime at 32 bits"
+    );
+    assert!(
+        c32.contains("loft_vh_addr(") && c32.contains(", loft_n32(v"),
+        "an i64 index is narrowed at the accessor"
+    );
+    let c64 = emit_c("held-c64", HELD, None);
+    assert!(!c64.contains("#define LOFT_WIDTH32"), "the 64-bit unit");
+}
