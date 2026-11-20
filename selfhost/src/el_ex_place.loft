@@ -2196,8 +2196,9 @@ pub fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: 
     }
     snm = el_types::elem_name(e, selem);
     srec = if snm == "" { -1 } else { el_schema::schema_type(e, snm) };
-    // (A narrow element's row is its CONTENT row — `byte`, `short_raw<…>`.)
-    if srec < 0 && snm != "" && selem is TyInteger {
+    // (A narrow or four-byte element's row is its CONTENT row — `byte`, `short_raw<…>`,
+    // `int<…>` — where `integer`'s name would answer the eight-byte row.)
+    if snm != "" && match selem { TyInteger { spec: ssp } => el_types::narrow_width(ssp) > 0 || el_types::int4(ssp) || el_types::uint4(ssp), _ => false } {
       srec = el_schema::content_type(e, selem);
     }
     if slo < 0 || shi < 0 || srec < 0 || !is_scalar(selem) {
