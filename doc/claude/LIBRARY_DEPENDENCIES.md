@@ -73,10 +73,12 @@ could not verify, when the registry cannot be read and nothing is cached, and wh
 release it still promises something about cannot be fetched. Its first line counts the
 releases it looked at: read it.
 
-Each kind of break is held against its own floor: a changed surface against
-`api_compatible_with`, a reshaped record against `data_compatible_with`. The failure names
-the floor to raise. A dependent of step 3 whose API did not change raises its data floor
-alone, and its consumers are not held back.
+A changed surface is held against `api_compatible_with`. A reshaped record is declared by
+either floor: the data floor for one behind an unchanged surface, and the API floor for one
+whose new field is itself the API break — a package may then keep its data floor, saying
+that the files it writes are still read. The failure names the floor to raise. A dependent
+of step 3 whose API did not change raises its data floor alone, and its consumers are not
+held back.
 
 The publishing checkout must be at a `main` that has every header and rule the libraries
 use: a refusal that names a file of loft's own (`loft_width.h`) is a stale checkout, not a

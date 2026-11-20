@@ -6250,9 +6250,14 @@ impl Floors<'_> {
     }
 
     /// Whether a break of these kinds against `v` breaks a promise: an API break at or above
-    /// the API floor, a layout break at or above the data floor.
+    /// the API floor, a layout break at or above BOTH floors.  Either floor declares a
+    /// reshaped record: the data floor for one behind an unchanged surface, and the API floor
+    /// for one whose new field is itself the API break — a package may then keep its data
+    /// floor where it was, saying that the files it writes are still read (a format of its
+    /// own is not its records' layout).
     fn violates(self, v: &str, api_broke: bool, layout_broke: bool) -> bool {
-        (api_broke && !Self::under(self.api, v)) || (layout_broke && !Self::under(self.data, v))
+        (api_broke && !Self::under(self.api, v))
+            || (layout_broke && !Self::under(self.data, v) && !Self::under(self.api, v))
     }
 
     /// The floor to raise for a break of these kinds, for a message.
