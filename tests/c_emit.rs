@@ -332,7 +332,8 @@ fn the_overflow_macros_answer_as_checked_arithmetic_in_every_mode() {
             }
         })
         .collect();
-    let mut c = String::from(include_str!("../src/c/loft_cc.h"));
+    let mut c = String::from(include_str!("../src/c/loft_width.h"));
+    c.push_str(include_str!("../src/c/loft_cc.h"));
     let _ = write!(
         c,
         "\nstatic const int64_t edges[] = {{ {} }};\nint main(void) {{\n    size_t n = sizeof edges / sizeof edges[0];\n    for (size_t i = 0; i < n; i++) for (size_t j = 0; j < n; j++) {{\n        int64_t a = edges[i], b = edges[j], r;\n        int o = LOFT_ADD_OVF(a, b, &r); printf(\"%d %lld \", o, o ? 0LL : (long long) r);\n        o = LOFT_SUB_OVF(a, b, &r); printf(\"%d %lld \", o, o ? 0LL : (long long) r);\n        o = LOFT_MUL_OVF(a, b, &r); printf(\"%d %lld\\n\", o, o ? 0LL : (long long) r);\n    }}\n    return 0;\n}}\n",
@@ -3924,6 +3925,7 @@ fn the_c_hash_table_files_every_entry_where_hash_does() {
     let _ = writeln!(want, "bytes {fnv:016x}");
     let mut c = String::new();
     for part in [
+        include_str!("../src/c/loft_width.h"),
         include_str!("../src/c/loft_cc.h"),
         include_str!("../src/c/loft_text.h"),
         include_str!("../src/c/loft_store.h"),
@@ -4221,6 +4223,7 @@ fn the_c_index_files_every_record_where_btree_does() {
     let _ = writeln!(want, "bytes {fnv:016x}");
     let mut c = String::new();
     for part in [
+        include_str!("../src/c/loft_width.h"),
         include_str!("../src/c/loft_cc.h"),
         include_str!("../src/c/loft_text.h"),
         include_str!("../src/c/loft_store.h"),
@@ -4524,6 +4527,7 @@ fn the_c_trees_place_every_record_where_radix_tree_does() {
     let _ = writeln!(want, "bytes {fnv:016x}");
     let mut c = String::new();
     for part in [
+        include_str!("../src/c/loft_width.h"),
         include_str!("../src/c/loft_cc.h"),
         include_str!("../src/c/loft_text.h"),
         include_str!("../src/c/loft_store.h"),
@@ -5165,6 +5169,7 @@ fn the_c_reads_json_as_json_rs_does() {
     }
     let mut c = String::from("#define LOFT_JSON 1\n");
     for part in [
+        include_str!("../src/c/loft_width.h"),
         include_str!("../src/c/loft_cc.h"),
         include_str!("../src/c/loft_text.h"),
         include_str!("../src/c/loft_store.h"),
@@ -8099,6 +8104,7 @@ fn the_transient_arena_gives_back_what_a_mark_took() {
     }
     let mut c = String::new();
     for part in [
+        include_str!("../src/c/loft_width.h"),
         include_str!("../src/c/loft_cc.h"),
         include_str!("../src/c/loft_text.h"),
         include_str!("../src/c/loft_store.h"),

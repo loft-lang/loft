@@ -269,8 +269,29 @@ fn emit_c(name: &str, main: &str, width: Option<&str>) -> String {
     if let Some(w) = width {
         cmd.env("LOFT_WIDTH", w);
     }
+    // @PLN217 — the unit's wide ledger beside it (`main.ledger`), read by `ledger`.
+    cmd.env("LOFT_WIDE_LEDGER", dir.join("main.ledger"));
     let _ = cmd.output().expect("run loft");
     fa::read_to_string(&out).expect("the emitted C")
+}
+
+/// The wide ledger of the unit `emit_c(name, …)` wrote: its lines as (function, class, what,
+/// count).  Empty for a 64-bit build, which writes none.
+fn ledger(name: &str) -> Vec<(String, String, String, u32)> {
+    let dir = std::env::temp_dir().join(format!("loft-width32-{}-{name}", std::process::id()));
+    fa::read_to_string(dir.join("main.ledger"))
+        .unwrap_or_default()
+        .lines()
+        .map(|l| {
+            let f: Vec<&str> = l.split('\t').collect();
+            (
+                f[0].to_string(),
+                f[1].to_string(),
+                f[2].to_string(),
+                f[3].parse().unwrap(),
+            )
+        })
+        .collect()
 }
 
 /// The C type `c` declares the local `name` with (`int32_t v0_m = …` → `int32_t`).
@@ -439,4 +460,54 @@ fn a_loop_counter_takes_the_files_width() {
     let c64 = emit_c("walk-c64", WALK, None);
     assert_eq!(local_ctype(&c32, "p_index"), "int32_t", "under the regime");
     assert_eq!(local_ctype(&c64, "p_index"), "int64_t", "the 64-bit build");
+}
+
+const WIDE: &str = "struct P { a: integer }
+fn key(p: P, salt: i64) -> i64 { (p.a as i64) * 1000003l + salt }
+fn walk(ps: vector<P>) -> integer {
+  s = 0;
+  for p in ps { s += p.a + p#index; }
+  s
+}
+fn main() {
+  ps = [P { a: 3 }, P { a: 5 }, P { a: 9 }];
+  println(\"{walk(ps)} {key(ps[1], 7l)}\");
+}
+";
+
+/// @PLN217 — the wide ledger (`LOFT_WIDE_LEDGER`) says where a 32-bit unit holds or computes
+/// 64 bits, and why.  `walk` is 32-bit throughout: it has no line.  `key` asks for 64 bits by
+/// its `i64` parameter and result, both `declared`; nothing is `undeclared` — the compiler made
+/// no wide value nobody asked for.  What is left names the runtime functions that still take
+/// 64 bits (`loft_format_long`, which prints both numbers).  A 64-bit build writes no ledger.
+#[test]
+fn the_wide_ledger_names_what_is_64_bit_and_why() {
+    let _ = emit_c("ledger32", WIDE, Some("32"));
+    let lines = ledger("ledger32");
+    assert!(!lines.is_empty(), "a 32-bit unit writes its ledger");
+    let of = |class: &str| -> Vec<String> {
+        lines
+            .iter()
+            .filter(|l| l.1 == class)
+            .map(|l| format!("{} {}", l.0, l.2))
+            .collect()
+    };
+    assert_eq!(of("undeclared"), Vec::<String>::new(), "{lines:?}");
+    assert_eq!(
+        of("declared"),
+        ["n_key salt", "n_key the result"],
+        "{lines:?}"
+    );
+    assert!(
+        lines.iter().all(|l| !l.0.starts_with("n_walk")),
+        "the walk is 32-bit throughout: {lines:?}"
+    );
+    assert!(
+        of("runtime")
+            .iter()
+            .any(|l| l.ends_with(" loft_format_long")),
+        "{lines:?}"
+    );
+    let _ = emit_c("ledger64", WIDE, None);
+    assert!(ledger("ledger64").is_empty(), "a 64-bit build writes none");
 }
