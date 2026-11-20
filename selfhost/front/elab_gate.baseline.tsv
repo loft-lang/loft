@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	7664b959f903f6c8f216f5874d7e7285a9ab5b77
 
-layer	elab	agree	1290	of	2121
+layer	elab	agree	1292	of	2121
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -166,7 +166,6 @@ elab	refused	loft-suite/rules/closures/L-Fn/1869-a-closure-captures-a-fn-ref-hol
 elab	refused	loft-suite/rules/closures/L-Fn/a-closure-captures-what-its-body-names.loft
 elab	refused	loft-suite/rules/closures/L-Fn/a-closure-is-judged-by-its-own-function.loft
 elab	refused	loft-suite/rules/closures/L-FnRef/2190-a-function-of-exactly-a-fn-type-converts-to-it.loft
-elab	refused	loft-suite/rules/collections/Col-Bucket/135-reserve-hash.loft
 elab	refused	loft-suite/rules/collections/Col-Concat/2406-a-literal-after-a-site-only-the-second-pass-builds-keeps-its-elements.loft
 elab	refused	loft-suite/rules/collections/Col-Concat/a-concatenation-is-a-new-vector-and-neither-operand-changes-wherever-it-stands.loft
 elab	refused	loft-suite/rules/collections/Col-Cons/2409-an-empty-literal-arm-keeps-its-type-past-a-call-in-the-test.loft
@@ -835,10 +834,9 @@ elab	refused	tests/scripts/sort-places-null-first-and-keeps-equal-floats-in-orde
 elab	refused	tests/scripts/store_compact_b2.loft
 elab	refused	tests/scripts/store_compact_slack_730.loft
 elab	refused	tests/scripts/store_digest_b0.loft
-elab	refused	tests/scripts/store_load_field_refusal.loft
 elab	refused	tests/scripts/store_paged_enum_field.loft
 
-layer	elab-functions	agree	14497	of	24990
+layer	elab-functions	agree	14489	of	24978
 elab-functions	agree	lib/docs.loft::Anchor
 elab-functions	agree	lib/docs.loft::Character
 elab-functions	agree	lib/docs.loft::Double
@@ -4204,11 +4202,6 @@ elab-functions	agree	loft-suite/rules/closures/L-FnRef/2190-a-function-of-exactl
 elab-functions	agree	loft-suite/rules/closures/L-FnRef/2190-a-function-of-exactly-a-fn-type-converts-to-it.loft::n_mi
 elab-functions	agree	loft-suite/rules/closures/L-FnRef/2190-a-function-of-exactly-a-fn-type-converts-to-it.loft::n_mk
 elab-functions	agree	loft-suite/rules/closures/L-FnRef/2190-a-function-of-exactly-a-fn-type-converts-to-it.loft::n_mt
-elab-functions	agree	loft-suite/rules/collections/Col-Bucket/135-reserve-hash.loft::RBox
-elab-functions	agree	loft-suite/rules/collections/Col-Bucket/135-reserve-hash.loft::RMulti
-elab-functions	agree	loft-suite/rules/collections/Col-Bucket/135-reserve-hash.loft::RRec
-elab-functions	agree	loft-suite/rules/collections/Col-Bucket/135-reserve-hash.loft::RText
-elab-functions	agree	loft-suite/rules/collections/Col-Bucket/135-reserve-hash.loft::n_agree
 elab-functions	agree	loft-suite/rules/collections/Col-Concat/2406-a-literal-after-a-site-only-the-second-pass-builds-keeps-its-elements.loft::(schema)
 elab-functions	agree	loft-suite/rules/collections/Col-Concat/2406-a-literal-after-a-site-only-the-second-pass-builds-keeps-its-elements.loft::Box
 elab-functions	agree	loft-suite/rules/collections/Col-Concat/2406-a-literal-after-a-site-only-the-second-pass-builds-keeps-its-elements.loft::Hold
@@ -14274,6 +14267,7 @@ elab-functions	agree	tests/scripts/505-collection-capture.loft::n_test_hash_look
 elab-functions	agree	tests/scripts/505-collection-capture.loft::n_test_iteration
 elab-functions	agree	tests/scripts/505-collection-capture.loft::n_test_multi_capture
 elab-functions	agree	tests/scripts/505-collection-capture.loft::n_test_point_assign
+elab-functions	agree	tests/scripts/505-collection-capture.loft::n_test_struct_field_mutation_through
 elab-functions	agree	tests/scripts/505-collection-capture.loft::n_test_vector_lookup
 elab-functions	agree	tests/scripts/507-par-vector-fnref.loft::(schema)
 elab-functions	agree	tests/scripts/507-par-vector-fnref.loft::main_vector<fn(integer) -> integer>
@@ -15320,10 +15314,6 @@ elab-functions	agree	tests/scripts/store_digest_b0.loft::n_make
 elab-functions	agree	tests/scripts/store_digest_b0.loft::n_rec_hash
 elab-functions	agree	tests/scripts/store_digest_b0.loft::n_report
 elab-functions	agree	tests/scripts/store_digest_b0.loft::n_xs_of
-elab-functions	agree	tests/scripts/store_load_field_refusal.loft::(schema)
-elab-functions	agree	tests/scripts/store_load_field_refusal.loft::FRec
-elab-functions	agree	tests/scripts/store_load_field_refusal.loft::FWrap
-elab-functions	agree	tests/scripts/store_load_field_refusal.loft::SWrap
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::Box
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::Bytes
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::Dot
@@ -15337,7 +15327,7 @@ elab-functions	agree	tests/scripts/store_paged_enum_field.loft::main_vector<inte
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::n_bytes
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::vector<integer(0, 255)>
 
-layer	elab-pass1	agree	11808	of	17620
+layer	elab-pass1	agree	11808	of	17623
 elab-pass1	agree	lib/code.loft::t_4Code_add_block
 elab-pass1	agree	lib/code.loft::t_4Code_add_if
 elab-pass1	agree	lib/code.loft::t_4Code_add_loop
