@@ -66,6 +66,21 @@ fn http(s: &mut TcpStream, head: &str) {
             .into_bytes(),
         ),
         "/sized" => ("200 OK", "Content-Length: 1234\r\n".into(), Vec::new()),
+        // Redirects to `/echo`: on this server, and on the one at the port the path names
+        // (another origin), the second also as a 307, which keeps the method and the body.
+        "/hop" => ("302 Found", "Location: /echo\r\n".into(), Vec::new()),
+        p if p.starts_with("/away/") || p.starts_with("/away307/") => (
+            if p.starts_with("/away307/") {
+                "307 Temporary Redirect"
+            } else {
+                "302 Found"
+            },
+            format!(
+                "Location: http://127.0.0.1:{}/echo\r\n",
+                p.rsplit('/').next().unwrap_or_default()
+            ),
+            Vec::new(),
+        ),
         _ => ("404 Not Found", String::new(), b"not here".to_vec()),
     };
     let length = if path == "/sized" {
