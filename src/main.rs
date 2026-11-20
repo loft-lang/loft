@@ -6250,7 +6250,7 @@ impl Floors<'_> {
 }
 
 /// The releases of `name` the REGISTRY lists (loft#2599), oldest first, without this
-/// working tree's own version and without the ones a consumer can no longer resolve to
+/// working tree's own version and without the ones a consumer cannot resolve to
 /// (yanked, deprecated).  `Err` when the registry could not be read.
 #[cfg(feature = "registry")]
 fn published_releases(name: &str, own_version: Option<&str>) -> Result<Vec<String>, String> {

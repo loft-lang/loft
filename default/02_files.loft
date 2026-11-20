@@ -439,7 +439,7 @@ pub fn mtime(path: text) -> i64 fs#read;
 /// The image is sized to its content, with none of the growth slack the live store
 /// keeps.  Beside it goes its layout (`<path>.dschema`).  A guard (`<path>.guard`,
 /// the SHA-256 of both files) is not written here: whoever wants one writes it, and
-/// a load then says when the file is no longer the one it was written for.
+/// a load then says when the file differs from the one it was written for.
 pub fn store_persist_copy(r: const reference, path: text) -> boolean fs#update;
 #rust"stores.persist_copy((@r).store_nr, std::path::Path::new(@path))"
 #impure(io)
@@ -550,7 +550,7 @@ pub fn store_load_url_trusted(r: reference, url: text) -> boolean fs#read;
 /// validated counterpart of store_load. Before it adopts the file it checks its
 /// block structure and walks the record numbers and lengths inside it (the walk
 /// `store_verify` runs), so a crafted or corrupt file cannot send a read outside
-/// its own data; it is rejected (false), as is a file that no longer matches a
+/// its own data; it is rejected (false), as is a file that does not match a
 /// guard beside it. store_load skips the walk and is faster for a file you
 /// produced yourself; use this for a file whose provenance you don't control.
 ///   h: hash<Rec[id]> = []
