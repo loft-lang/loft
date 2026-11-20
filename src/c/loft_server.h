@@ -102,12 +102,29 @@ static int loft_srv_header(const loft_text *heads, const char *name, const char 
  * sends right behind its upgrade request stays in the stream for the first frame read.  0 when
  * the stream ends, the head passes 16 KiB, the request line is not two words, or the request
  * takes longer than `budget_ms` to arrive (0: no bound, a caller that chose to wait). */
+/* Why the last request was not taken, as the status the peer is told before the connection
+ * closes: 413 a body above the limit, 408 a request that outran its budget, 0 anything else
+ * (a peer that went away or sent no request gets no answer). */
+static LOFT_TLS int loft_srv_refused = 0;
+
+/* Tell the peer why (`loft_srv_refused`), when there is a why. */
+static void loft_srv_say_refusal(loft_stream *s) {
+    const char *line = loft_srv_refused == 413 ? "413 Payload Too Large" : loft_srv_refused == 408 ? "408 Request Timeout" : 0;
+    if (!line) return;
+    char resp[96];
+    int n = snprintf(resp, sizeof resp, "HTTP/1.1 %s\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", line);
+    (void) loft_stream_write_all(s, resp, (size_t) n);
+}
+
 static int loft_srv_parse_request(loft_stream *s, int64_t budget_ms) {
     loft_text raw = { 0, 0, 0 };
     int64_t late = budget_ms ? loft_now_us() + budget_ms * 1000 : 0;
+    loft_srv_refused = 0;
     while (raw.len < 4 || memcmp(raw.p + raw.len - 4, "\r\n\r\n", 4) != 0) {
         char b;
-        if (loft_stream_read(s, &b, 1) != 1 || raw.len > LOFT_SRV_MAX_HEAD || (late && loft_now_us() > late)) {
+        int slow = late && loft_now_us() > late;
+        if (slow || loft_stream_read(s, &b, 1) != 1 || raw.len > LOFT_SRV_MAX_HEAD) {
+            if (slow) loft_srv_refused = 408;
             free(raw.p);
             return 0;
         }
@@ -163,13 +180,16 @@ static int loft_srv_parse_request(loft_stream *s, int64_t budget_ms) {
     char *body = length > LOFT_SRV_MAX_BODY ? NULL : (char *) malloc(length ? (size_t) length : 1);
     /* Too large, or no memory for it: this request is dropped, the server goes on. */
     if (!body) {
+        loft_srv_refused = 413;
         free(head.p);
         free(heads.p);
         return 0;
     }
     for (size_t got = 0; got < (size_t) length;) {
-        long r = (late && loft_now_us() > late) ? 0 : loft_stream_read(s, body + got, (size_t) length - got);
+        int slow = late && loft_now_us() > late;
+        long r = slow ? 0 : loft_stream_read(s, body + got, (size_t) length - got);
         if (r <= 0) {
+            if (slow) loft_srv_refused = 408;
             free(body);
             free(head.p);
             free(heads.p);
@@ -332,6 +352,7 @@ static uint8_t loft_srv_tcp_accept(int64_t h, int nonblocking) {
     if (loft_srv_accept(h, nonblocking, &conn) != 1) return 0;
     if (nonblocking) loft_sock_timeout(conn.fd, LOFT_SRV_REQUEST_READ_MS);
     if (!loft_srv_parse_request(&conn, nonblocking ? LOFT_SRV_REQUEST_TOTAL_MS : 0)) {
+        loft_srv_say_refusal(&conn);
         loft_stream_close(&conn);
         return 0;
     }
@@ -525,6 +546,7 @@ static int64_t loft_srv_accept_client(int64_t h) {
      * must cost it one read timeout, not the server. */
     loft_sock_timeout(conn.fd, LOFT_SRV_REQUEST_READ_MS);
     if (!loft_srv_parse_request(&conn, LOFT_SRV_REQUEST_TOTAL_MS)) {
+        loft_srv_say_refusal(&conn);
         loft_stream_close(&conn);
         return -2;
     }
