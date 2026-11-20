@@ -96,7 +96,9 @@ OpDivInt
 OpDivIntNullable
 OpDivSingle
 OpDivSingleNullable
+OpDropEnter
 OpDropFnRef
+OpDropLeave
 OpEorInt
 OpEqBool
 OpEqContent
@@ -358,7 +360,7 @@ __iface_34#2_OpMin
 __iface_34#2_minus
 __iface_37#2_scale
 __iface_39#1_to_text
-__iface_545#1_children
+__iface_547#1_children
 i_7integer_n_sum
 n___ledger
 n___ledger_div

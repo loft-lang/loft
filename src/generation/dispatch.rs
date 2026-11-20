@@ -974,6 +974,57 @@ impl Output<'_> {
             self.note_arm("rs-choice-join");
             return Ok(());
         }
+        // `@FR-B-Copy` — a generator field bound from a call that may answer a BORROW
+        // (`__lift_1 = box(c, h)` answering `h.ws[0]`) takes the call arm below, which copies
+        // or adopts the answer: written plainly, the field named the argument's store and the
+        // pass's own release of the field freed the caller's record (a double free on the
+        // rustc writer, `yield box(c, h).n` in a loop).  The call arm names locals, so the
+        // fields the bind reads or writes are held in locals of that name around it and
+        // written back.
+        if let Some(field) = self.coroutine_persistent_fields.get(&var).cloned()
+            && !matches!(variables.tp(var).base(), Type::Tuple(_))
+            && variables.tp(var).base().heap_def_nr().is_some()
+            && let Value::Call(fn_nr, _) = to.unspan()
+            && (*fn_nr as usize) < self.data.definitions.len()
+            && !self.data.def(*fn_nr).name().starts_with("Op")
+            && crate::use_analysis::may_return_a_borrow(self.data, *fn_nr)
+        {
+            let mut shadow: Vec<(u16, String)> = vec![(var, field)];
+            to.any_node(&mut |n| {
+                if let Value::Var(x) = n
+                    && !shadow.iter().any(|(v, _)| v == x)
+                    && let Some(f) = self.coroutine_persistent_fields.get(x)
+                    && !matches!(variables.tp(*x).base(), Type::Tuple(_))
+                {
+                    shadow.push((*x, f.clone()));
+                }
+                false
+            });
+            write!(w, "{{ ")?;
+            for (v, f) in &shadow {
+                write!(
+                    w,
+                    "let mut var_{} = self.var_{f}; ",
+                    sanitize(variables.name(*v))
+                )?;
+                self.coroutine_persistent_fields.remove(v);
+            }
+            let fresh = self.declared.insert(var);
+            let done = self.output_set_inner(w, var, to);
+            if fresh {
+                self.declared.remove(&var);
+            }
+            for (v, f) in &shadow {
+                self.coroutine_persistent_fields.insert(*v, f.clone());
+            }
+            done?;
+            for (v, f) in &shadow {
+                write!(w, "; self.var_{f} = var_{}", sanitize(variables.name(*v)))?;
+            }
+            write!(w, "; }}")?;
+            self.note_arm("rs-coroutine-call-bind");
+            return Ok(());
+        }
         // P224: writes to coroutine-persistent locals target the struct
         // field directly so the value survives across `next_*` calls.
         // The same Var/Set pair would otherwise produce a state-arm-scoped

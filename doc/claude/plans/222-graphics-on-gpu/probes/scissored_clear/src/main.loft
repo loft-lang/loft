@@ -1,0 +1,106 @@
+// PROBE (plan 222 step 2): a clear while a scissor is on.  OpenGL's clear obeys the scissor
+// for colour AND depth.  Can the layer give that through gpu, whose pass clears a whole target?
+use graphics;
+use gpu;
+use gpu_gl;
+
+const OLD_V: text = `
+#version 330 core
+layout(location = 0) in vec3 pos;
+uniform float z;
+void main() {{ gl_Position = vec4(pos.xy, z, 1.0); }}
+`;
+const OLD_F: text = `
+#version 330 core
+uniform vec4 color;
+out vec4 frag;
+void main() {{ frag = color; }}
+`;
+const NEW_V: text = `
+#version 330 core
+layout(location = 0) in vec3 pos;
+layout(std140) uniform Block {{ vec4 color; float z; }};
+void main() {{ gl_Position = vec4(pos.xy, z, 1.0); }}
+`;
+const NEW_F: text = `
+#version 330 core
+layout(std140) uniform Block {{ vec4 color; float z; }};
+out vec4 frag;
+void main() {{ frag = color; }}
+`;
+
+const W = 64;
+const H = 48;
+const BLUE = 0xff0000ff;
+const GREEN = 0xff00ff00;
+
+fn full() -> vector<single> {
+  [-1.0f, -1.0f, 0.0f, 1.0f, -1.0f, 0.0f, 1.0f, 1.0f, 0.0f, -1.0f, -1.0f, 0.0f, 1.0f, 1.0f, 0.0f, -1.0f, 1.0f, 0.0f]
+}
+
+// clear blue; a NEAR red quad everywhere; scissor the left half and clear green; scissor off;
+// a FAR yellow quad under the depth test.  The far quad shows only where the depth was cleared.
+fn through_graphics() -> vector<u32> {
+  w = graphics::open_window(W, H, "old") ?? return [];
+  s = w.shader(OLD_V, OLD_F) ?? return [];
+  q = w.upload(full(), 3);
+  w.enable(graphics::GL_DEPTH_TEST);
+  w.clear(BLUE);
+  s.set_float("z", -0.5);
+  s.set_vec4("color", 1.0, 0.0, 0.0, 1.0);
+  q.draw(s);
+  w.enable(graphics::GL_SCISSOR_TEST);
+  w.scissor(0, 0, 32, 48);
+  w.clear(GREEN);
+  w.disable(graphics::GL_SCISSOR_TEST);
+  s.set_float("z", 0.5);
+  s.set_vec4("color", 1.0, 1.0, 0.0, 1.0);
+  q.draw(s);
+  shot = w.capture();
+  out: vector<u32> = [];
+  for y in 0..H { for x in 0..W { out += [shot.get_pixel(x, y) as u32 ?? 0 as u32]; } }
+  out
+}
+
+// The same through gpu, the scissored clear as a quad.  `clear_depth` picks the quad's depth
+// state: gpu has DEPTH_OFF, DEPTH_TEST and DEPTH_TEST_WRITE, and no state that writes a depth
+// without testing it.
+fn through_gpu(clear_depth: integer, clear_z: float) -> vector<u32> {
+  dev = gpu::open(gpu_gl::table(), W, H, "new") ?? return [];
+  prog = gpu::Program { vertex: [gpu::F3], instance: [], block: [gpu::F4, gpu::F1], textures: 0, sources: [gpu::source("glsl-330", NEW_V, NEW_F)] };
+  draw = dev.pipeline(prog, gpu::State { depth: gpu::DEPTH_TEST_WRITE }) ?? return [];
+  wipe = dev.pipeline(prog, gpu::State { depth: clear_depth }) ?? return [];
+  q = dev.buffer(full());
+  u = draw.block();
+  dev.begin_window(gpu::CLEAR, BLUE);
+  dev.bind(draw);
+  u.f4(0, 1.0, 0.0, 0.0, 1.0); u.f1(1, -0.5);
+  dev.uniforms(u); dev.vertices(q); dev.draw(0, 6);
+  dev.bind(wipe);
+  dev.scissor(0, 0, 32, 48);
+  u.f4(0, 0.0, 1.0, 0.0, 1.0); u.f1(1, clear_z);
+  dev.uniforms(u); dev.vertices(q); dev.draw(0, 6);
+  dev.no_scissor();
+  dev.bind(draw);
+  u.f4(0, 1.0, 1.0, 0.0, 1.0); u.f1(1, 0.5);
+  dev.uniforms(u); dev.vertices(q); dev.draw(0, 6);
+  dev.end();
+  shot = dev.capture();
+  if len(dev.refusals()) > 0 { println("refusals: {dev.refusals()}"); }
+  shot
+}
+
+fn report(what: text, ref: const vector<u32>, got: const vector<u32>) {
+  if len(got) != len(ref) || len(ref) == 0 { println("{what}: not drawn"); return; }
+  differ = 0;
+  for i in 0..len(ref) { if (ref[i] & 0xffffff) != (got[i] & 0xffffff) { differ += 1; } }
+  println("{what}: left {got[24 * W + 16] & 0xffffff:#x} right {got[24 * W + 48] & 0xffffff:#x}; {differ} of {len(ref)} pixels differ from graphics");
+}
+
+fn main() {
+  old = through_graphics();
+  println("graphics: left {old[24 * W + 16] & 0xffffff:#x} right {old[24 * W + 48] & 0xffffff:#x}   (want left 0xffff00 yellow: depth cleared there; right 0xff0000 red: depth kept)");
+  report("quad, depth off          ", old, through_gpu(gpu::DEPTH_OFF, 0.0));
+  report("quad, depth test+write, z far ", old, through_gpu(gpu::DEPTH_TEST_WRITE, 1.0));
+  report("quad, depth test+write, z near", old, through_gpu(gpu::DEPTH_TEST_WRITE, -1.0));
+}

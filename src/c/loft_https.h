@@ -274,16 +274,34 @@ static int loft_http_open(loft_http *h, const char *method, const char *url, con
     size_t vn;
     if (h->status >= 300 && h->status < 400 && h->status != 304 && hops > 0 && loft_http_header(&h->head, "location", &v, &vn)) {
         loft_text next = { 0, 0, 0 };
-        if (vn && v[0] == '/') {
+        /* Does the redirect stay with the server the caller named: the same scheme, and the
+         * same authority as it was spelled.  The caller's headers (a token, a cookie) and its
+         * body were meant for that server, and a `Location` is the server's word — or that of
+         * whoever can make it redirect. */
+        int same = vn && v[0] == '/';
+        if (same) {
             loft_push_cstr(&next, tls ? "https://" : "http://");
             loft_push(&next, auth, alen);
+        } else {
+            size_t sn = tls ? 8 : 7;
+            same = vn >= sn + alen && strncasecmp(v, tls ? "https://" : "http://", sn) == 0
+                   && strncasecmp(v + sn, auth, alen) == 0 && (vn == sn + alen || v[sn + alen] == '/');
         }
         loft_push(&next, v, vn);
         loft_push(&next, "", 1);
         loft_stream_close(&h->st);
         free(h->head.p);
         int get = h->status == 303 || ((h->status == 301 || h->status == 302) && strcmp(method, "POST") == 0);
-        int r = loft_http_open(h, get ? "GET" : method, next.p, headers, get ? "" : body, hops - 1, err, cap);
+        /* Never from https to http, and never a body to another server: both are refused, as
+         * the request the caller made cannot be carried out there. */
+        int down = tls && vn >= 7 && strncasecmp(v, "http://", 7) == 0;
+        if (down || (!same && !get && *body)) {
+            snprintf(err, cap, "%s: Redirect Refused: %s", url,
+                     down ? "from https to http" : "a request body to another server");
+            free(next.p);
+            return 0;
+        }
+        int r = loft_http_open(h, get ? "GET" : method, next.p, same ? headers : "", get ? "" : body, hops - 1, err, cap);
         free(next.p);
         return r;
     }

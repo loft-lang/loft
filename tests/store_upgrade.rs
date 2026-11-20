@@ -2121,3 +2121,27 @@ fn an_added_or_removed_child_field_upgrades() {
     assert!(ok, "a child removed is an upgrade:\n{text}");
     assert!(text.contains("T.next"), "named as a removed field:\n{text}");
 }
+
+/// A struct with more fields of one type than the layout has types, four times over: 60 texts
+/// in a layout of five types.  The C converter's walk of the types a type reaches kept a work
+/// stack of `count * 4 + 8` entries and pushed a field's type once per FIELD that named it, so
+/// this layout wrote 32 entries past it.  The store converts — `a = 5` carried, the added `b`
+/// its zero, three items, the third item's first text `x2` — and under the compiled leg's
+/// allocator the overrun is what stops it.
+#[test]
+fn cell_a_struct_wider_than_its_layout_has_types() {
+    let texts: String = (0..60).map(|i| format!(", t{i:02}: text")).collect();
+    let t = format!("struct T {{ k: integer{texts} }}\n");
+    let writer = format!(
+        "{t}struct W {{ a: integer, items: vector<T> }}\nfn main() {{\n  w = W {{ a: 5 }};\n  for i in 0..3 {{ w.items += [T {{ k: i + 1, t00: \"x{{i}}\" }}]; }}\n  println(\"saved {{store_persist_copy(w, \\\"a.store\\\")}}\");\n}}\n"
+    );
+    upgrades(
+        "wide",
+        &writer,
+        &reader(
+            &format!("{t}struct W {{ a: integer, items: vector<T>, b: integer }}\n"),
+            "  println(\"{w.a} {w.b} {len(w.items)} {w.items[2].t00}\");\n",
+        ),
+        "5 0 3 x2\n",
+    );
+}

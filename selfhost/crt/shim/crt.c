@@ -1588,6 +1588,23 @@ int64_t loft_crt_get_dir(const char *path, int64_t bytes, int64_t store, int64_t
 
 /* `Stores::reference_removed` (`@FR-H-Removed`): does a reference to record `rec` of store
  * `store` name a record that was removed?  Such a reference reads as null. */
+/* `Stores::drop_leave` (`@FR-H-DropOnce`): the root record of `store`, a `tp` released by its
+ * `OpDrop`, is marked released. */
+int64_t loft_crt_drop_leave(int64_t store, int64_t tp) {
+    loft_ref r = loft_ref_null_reported();
+    r.store_nr = (uint16_t) store;
+    r.rec = LOFT_ST_PRIMARY;
+    r.pos = 8;
+    loft_drop_leave(r, (uint16_t) tp);
+    return 0;
+}
+
+/* `Store::released_root`: was the root record of `store` released by its `OpDrop`? */
+int64_t loft_crt_drop_released(int64_t store) {
+    return store >= 0 && (uint64_t) store < loft_nstores && loft_stores[store].live
+        && loft_stores[store].released_root;
+}
+
 int64_t loft_crt_ref_removed(int64_t store, int64_t rec) {
     return rec != 0 && store >= 0 && (uint64_t) store < loft_nstores
         && loft_st_is_removed(&loft_stores[store], (uint32_t) rec);

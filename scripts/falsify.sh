@@ -236,7 +236,7 @@ entry_modes() { # <guard> ; sets MODE_I / MODE_N
   # The compiled leg is the C backend, the per-change backend (@PLN203);
   # `FALSIFY_NATIVE=rust` scores a guard of the rustc-native writer on it instead.
   local nat=--native-c
-  [ "${FALSIFY_NATIVE:-c}" = rust ] && nat=--native
+  [ "${FALSIFY_NATIVE:-c}" = rust ] && nat=--native-rust
   if grep -qE '@EXPECT_ERROR|@EXPECT_FAIL' "$1"; then
     MODE_I=(--tests); MODE_N=(--tests "$nat")
   elif grep -qE '^[[:space:]]*fn main[[:space:]]*\(' "$1"; then

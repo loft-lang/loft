@@ -130,6 +130,7 @@ NET_EXPORT int64_t n_ws_broadcast(int64_t h, const uint8_t *m, size_t mn) {
 }
 NET_EXPORT void n_ws_idle_sleep_ms(int64_t ms) { loft_srv_sleep_ms(ms); }
 NET_EXPORT int64_t n_ssh_connect(const uint8_t *h, size_t hn, int64_t port) { return loft_ssh_connect(net_arg(h, hn), port); }
+NET_EXPORT loft_ffi_str n_ssh_host_key(int64_t h) { return net_text(loft_ssh_host_key_h(h)); }
 NET_EXPORT uint8_t n_ssh_login(int64_t h, const uint8_t *u, size_t un, const uint8_t *p, size_t pn) {
     return loft_ssh_login_h(h, net_arg(u, un), net_arg(p, pn));
 }
@@ -203,6 +204,7 @@ BRIDGE(ws_event_payload) { UNUSED; *r = loft_ffi_value_text(n_ws_event_payload()
 BRIDGE(ws_broadcast) { UNUSED; *r = loft_ffi_value_i64(n_ws_broadcast(I(0), T(1))); }
 BRIDGE(ws_idle_sleep_ms) { UNUSED; n_ws_idle_sleep_ms(I(0)); r->tag = LOFT_FFI_TAG_VOID; }
 BRIDGE(ssh_connect) { UNUSED; *r = loft_ffi_value_i64(n_ssh_connect(T(0), I(1))); }
+BRIDGE(ssh_host_key) { UNUSED; *r = loft_ffi_value_text(n_ssh_host_key(I(0))); }
 BRIDGE(ssh_login) { UNUSED; *r = loft_ffi_value_bool(n_ssh_login(I(0), T(1), T(2))); }
 BRIDGE(ssh_open_shell) { UNUSED; *r = loft_ffi_value_bool(n_ssh_open_shell(I(0), T(1), I(2), I(3))); }
 BRIDGE(ssh_send) { UNUSED; n_ssh_send(I(0), T(1)); r->tag = LOFT_FFI_TAG_VOID; }
@@ -220,7 +222,7 @@ BRIDGE(ssh_close) { UNUSED; n_ssh_close(I(0)); r->tag = LOFT_FFI_TAG_VOID; }
     X(tcp_respond_full) X(tcp_slice) X(tcp_close) X(ws_upgrade) X(ws_recv) X(ws_message) X(ws_opcode) X(ws_send) \
     X(ws_send_binary) X(ws_close) X(ws_accept_nonblocking) X(ws_clients_len) X(ws_client_active) X(ws_next_event) \
     X(ws_event_kind) X(ws_event_client_id) X(ws_event_payload) X(ws_broadcast) X(ws_idle_sleep_ms) \
-    X(ssh_connect) X(ssh_login) X(ssh_open_shell) X(ssh_send) X(ssh_recv) X(ssh_resize) X(ssh_is_open) X(ssh_close)
+    X(ssh_connect) X(ssh_host_key) X(ssh_login) X(ssh_open_shell) X(ssh_send) X(ssh_recv) X(ssh_resize) X(ssh_is_open) X(ssh_close)
 
 #define REG_TYPED(name) cb((const uint8_t *) "n_" #name, sizeof("n_" #name) - 1, (const void *) n_##name, ctx);
 #define REG_BRIDGE(name) cb((const uint8_t *) "n_" #name, sizeof("n_" #name) - 1, (const void *) b_##name, ctx);

@@ -316,6 +316,8 @@ pub const OPERATOR_NAMES: &[&str] = &[
     "OpSizeofRef",
     "OpEqContent",
     "OpNeContent",
+    "OpDropEnter",
+    "OpDropLeave",
     "OpSizeVector",
     "OpSizeStruct",
     "OpSizeScalar",

@@ -59,7 +59,7 @@ pub fn run_serve(
         let Ok(stream) = conn else { continue };
         // A bad connection (malformed request, abrupt close) must not take the server
         // down — drop it and keep serving.
-        let _ = serve_connection(&stream, &mut session, &shell);
+        let _ = serve_connection(&stream, &mut session, &shell, port);
     }
     crate::platform::capture_end();
     Ok(())
@@ -71,6 +71,7 @@ fn serve_connection(
     stream: &TcpStream,
     session: &mut ReplSession,
     shell: &str,
+    port: u16,
 ) -> std::io::Result<()> {
     let mut reader = BufReader::new(stream);
     let mut request_line = String::new();
@@ -84,6 +85,11 @@ fn serve_connection(
         .to_string();
     let mut ws_key = None;
     let mut is_upgrade = false;
+    // The session evaluates code with this user's file access, so it answers only a request
+    // addressed to this loopback server, and an upgrade only from the page it served: any
+    // site a browser has open can reach a loopback port, and names its own origin doing so.
+    let mut addressed_here = false;
+    let mut foreign_origin = false;
     loop {
         let mut line = String::new();
         if crate::net_profile::time("serve/header_line", None, || reader.read_line(&mut line))? == 0
@@ -98,11 +104,15 @@ fn serve_connection(
             match k.trim().to_ascii_lowercase().as_str() {
                 "upgrade" => is_upgrade = v.trim().eq_ignore_ascii_case("websocket"),
                 "sec-websocket-key" => ws_key = Some(v.trim().to_string()),
+                "host" => addressed_here = crate::ws_handshake::loopback_host(v, port),
+                "origin" => foreign_origin = !crate::ws_handshake::loopback_origin(v, port),
                 _ => {}
             }
         }
     }
-    if is_upgrade && let Some(key) = ws_key {
+    if !addressed_here || (is_upgrade && foreign_origin) {
+        http_respond(stream, "403 Forbidden", "text/plain", b"forbidden")?;
+    } else if is_upgrade && let Some(key) = ws_key {
         let accept = ws_accept_key(&key);
         let resp = format!(
             "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\
@@ -199,6 +209,15 @@ fn ws_read_frame(reader: &mut impl BufRead) -> std::io::Result<Option<(u8, Vec<u
     let mut mask = [0u8; 4];
     if masked {
         reader.read_exact(&mut mask)?;
+    }
+    // A request is a line of JSON; a frame claiming more than this is not one, and its
+    // length must not size an allocation.
+    const MAX_FRAME: u64 = 16 * 1024 * 1024;
+    if len > MAX_FRAME {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "frame too large",
+        ));
     }
     let mut payload = vec![0u8; usize::try_from(len).unwrap_or(0)];
     reader.read_exact(&mut payload)?;

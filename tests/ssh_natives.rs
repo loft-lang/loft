@@ -32,6 +32,7 @@ use std::process::Stdio;
 const WANT: &[&str] = &[
     "BADPW true false false",
     "CONNECT true true",
+    "KEY",
     "LOGIN true",
     "SHELL true true",
     "START READY vt100 80x24",
@@ -43,7 +44,7 @@ const WANT: &[&str] = &[
     "IDLE [] true",
     "EXIT false",
     "CLOSED [] false false false",
-    "UNKNOWN [] false false",
+    "UNKNOWN [] false false []",
     "REFUSED -1",
 ];
 
@@ -138,10 +139,37 @@ fn run(backend: &str) {
         .stderr(Stdio::inherit())
         .spawn()
         .expect("the test server starts");
+    let mut key_line = String::new();
     let mut first = String::new();
-    BufReader::new(srv.stdout.take().expect("the server's stdout"))
-        .read_line(&mut first)
-        .expect("the server's port line");
+    let mut said = BufReader::new(srv.stdout.take().expect("the server's stdout"));
+    said.read_line(&mut key_line)
+        .expect("the server's key line");
+    said.read_line(&mut first).expect("the server's port line");
+    // The name of the server's host key, worked out HERE from its public point: the blob
+    // SSH sends is three strings (the algorithm, the curve, the point), each behind its
+    // length, and OpenSSH names a key `SHA256:` + the unpadded base64 of the blob's SHA-256.
+    let point: Vec<u8> = key_line
+        .trim()
+        .strip_prefix("HOSTKEY ")
+        .unwrap_or_else(|| panic!("the server printed {key_line:?}"))
+        .as_bytes()
+        .chunks(2)
+        .map(|h| u8::from_str_radix(std::str::from_utf8(h).unwrap(), 16).unwrap())
+        .collect();
+    let mut blob = Vec::new();
+    for part in [&b"ecdsa-sha2-nistp256"[..], b"nistp256", &point] {
+        blob.extend_from_slice(&u32::try_from(part.len()).unwrap().to_be_bytes());
+        blob.extend_from_slice(part);
+    }
+    let digest: Vec<u8> = loft::integrity::sha256_hex(&blob)
+        .as_bytes()
+        .chunks(2)
+        .map(|h| u8::from_str_radix(std::str::from_utf8(h).unwrap(), 16).unwrap())
+        .collect();
+    let key = format!(
+        "KEY SHA256:{}",
+        loft::base64::encode(&digest).trim_end_matches('=')
+    );
     let port = first
         .trim()
         .strip_prefix("PORT ")
@@ -165,7 +193,11 @@ fn run(backend: &str) {
     let stdout = String::from_utf8_lossy(&out.stdout).to_string();
     let stderr = String::from_utf8_lossy(&out.stderr).to_string();
     let lines: Vec<&str> = stdout.lines().collect();
-    assert_eq!(lines, WANT, "{backend}\nstderr:\n{stderr}");
+    let want: Vec<&str> = WANT
+        .iter()
+        .map(|w| if *w == "KEY" { key.as_str() } else { *w })
+        .collect();
+    assert_eq!(lines, want, "{backend}\nstderr:\n{stderr}");
     let _ = fa::remove_dir_all(&dir);
 }
 

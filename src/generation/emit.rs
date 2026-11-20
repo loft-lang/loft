@@ -295,21 +295,21 @@ impl Output<'_> {
                     // enclosing single-iteration wrapper and leave it, so control reaches the
                     // consumer before the loop's next iteration runs (loft#836).
                     write!(w, "{{ __y = {open}")?;
-                    self.output_code_node(w, node.yield_inner())?;
+                    self.output_yield_value(w, node.yield_inner())?;
                     write!(w, "{close}; __exhausted = false; break 'iter; }}")?;
                 } else if let Some(msg) = self.yield_collect_refuse.clone() {
                     // The eager collector cannot carry this yield type.  Emit the value
                     // bound to `_` so nothing is cast and no rustc cascade drowns the
                     // message, then stop the build with the refusal itself (loft#1132).
                     write!(w, "{{ let _ = (")?;
-                    self.output_code_node(w, node.yield_inner())?;
+                    self.output_yield_value(w, node.yield_inner())?;
                     write!(w, "); compile_error!(\"{msg}\"); }}")?;
                 } else if self.yield_collect_fnref && self.yield_collect_kinds.is_some() {
                     // loft#1676 — a yielded fn-ref: two slot images, and the closure record it
                     // hands over is forgotten (`Output::eager_fnref_push`).
                     let inner = node.yield_inner();
                     let mut buf: Vec<u8> = Vec::new();
-                    self.output_code_node(&mut buf, inner)?;
+                    self.output_yield_value(&mut buf, inner)?;
                     let code = String::from_utf8_lossy(&buf).into_owned();
                     let owned = inner.to_owned_value();
                     let code = self.fn_number_code(&owned).unwrap_or(code);
@@ -336,7 +336,7 @@ impl Output<'_> {
                         // and read member by member: matched on the literal alone, it pushed
                         // nothing and the consumer read zeros.
                         let mut buf: Vec<u8> = Vec::new();
-                        self.output_code_node(&mut buf, node.yield_inner())?;
+                        self.output_yield_value(&mut buf, node.yield_inner())?;
                         let code = String::from_utf8_lossy(&buf).into_owned();
                         write!(w, "let __yt = {code}; ")?;
                         for (i, &kind) in kinds.iter().enumerate() {
@@ -357,7 +357,7 @@ impl Output<'_> {
                     // suspension hands out.  COROUTINE.md § Design: lazy loop yields.
                     if let Some(tp) = self.yield_collect_snapshot_tp {
                         let mut buf: Vec<u8> = Vec::new();
-                        self.output_code_node(&mut buf, node.yield_inner())?;
+                        self.output_yield_value(&mut buf, node.yield_inner())?;
                         let code = String::from_utf8_lossy(&buf).into_owned();
                         let push = self.eager_snapshot_push(
                             &node.yield_inner().to_owned_value(),
@@ -367,7 +367,7 @@ impl Output<'_> {
                         write!(w, "{push}")?;
                     } else {
                         write!(w, "__values.push((")?;
-                        self.output_code_node(w, node.yield_inner())?;
+                        self.output_yield_value(w, node.yield_inner())?;
                         if self.yield_collect_text {
                             write!(w, ").to_string())")?;
                         } else if self.yield_collect_dbref {
@@ -387,7 +387,7 @@ impl Output<'_> {
                     }
                 } else {
                     write!(w, "yield ")?;
-                    self.output_code_node(w, node.yield_inner())?;
+                    self.output_yield_value(w, node.yield_inner())?;
                 }
                 return Ok(());
             }
@@ -455,6 +455,30 @@ impl Output<'_> {
                     let init = default_native_value_in(tp, &Context::Variable);
                     use std::fmt::Write as _;
                     let _ = write!(preamble, "let mut var_{name}: {ty} = {eo}{init}{ec}; ");
+                }
+                // A compiler-made local an arm WRITES without an assignment — the store
+                // handle `OpDatabase` fills (`__vdb_N`), a text work buffer cleared and
+                // formatted in place (`__work_N`) — is declared at the function's top, so the
+                // closure captured it shared and could not write it (E0594, loft#2568's cell
+                // on this writer).  Each arm takes its own copy at the value the frame holds on
+                // entry: the interpreter's snapshot.  A user's local is left captured: an arm
+                // that writes one is refused by the parser (`170-parallel-capture-soundness`).
+                let mut temps: Vec<u16> = Vec::new();
+                for arm in arms.iter() {
+                    Self::collect_mentioned_vars(arm, &mut temps);
+                }
+                for &v in &temps {
+                    let tp = variables.tp(v);
+                    if arm_vars.contains(&v)
+                        || !self.declared.contains(&v)
+                        || !variables.name(v).starts_with('_')
+                        || matches!(tp.base(), Type::RefVar(_))
+                    {
+                        continue;
+                    }
+                    let name = sanitize(variables.name(v));
+                    use std::fmt::Write as _;
+                    let _ = write!(preamble, "let mut var_{name} = var_{name}.clone(); ");
                 }
                 write!(w, "n_parallel_block_native(cell, &[")?;
                 for arm in arms.iter() {
@@ -3179,6 +3203,41 @@ impl Output<'_> {
             }
         }
         node.for_each_child(&mut |child| Self::collect_assigned_vars(child, result));
+    }
+
+    /// A yielded VALUE as one Rust expression.  A statement list (`Insert` — a hoisted call
+    /// bound first, then the read of its field: `yield box(c, h).n`) is a block whose value
+    /// is its last statement; bare, its statements landed inside the parentheses a yield wraps
+    /// its value in (`__y = ( stmt; expr )`, `__values.push(( stmt; expr ) as i64)`), which
+    /// is no Rust.  The braces a `return` of such a list takes (`block_braces`).
+    fn output_yield_value(&mut self, w: &mut dyn Write, inner: IrNode) -> std::io::Result<()> {
+        let list = inner.unspan().kind() == ValueType::Insert;
+        if list {
+            write!(w, "{{ ")?;
+        }
+        self.output_code_node(w, inner)?;
+        if list {
+            write!(w, " }}")?;
+        }
+        Ok(())
+    }
+
+    /// Every variable `node` names as a `Var` or assigns, in first-seen order.  A variable
+    /// reached only through another variant that carries a number (`TuplePut`, `TupleGet`,
+    /// `CallRef`, `Iter`) is not listed: the one caller copies what an arm WRITES, and a
+    /// parallel arm's writes reach a temporary through an operator's operand or a `Set`.
+    fn collect_mentioned_vars(node: IrNode, result: &mut Vec<u16>) {
+        let v = match node.kind() {
+            ValueType::Var => Some(node.var_nr()),
+            ValueType::Set => Some(node.set_var()),
+            _ => None,
+        };
+        if let Some(v) = v
+            && !result.contains(&v)
+        {
+            result.push(v);
+        }
+        node.for_each_child(&mut |child| Self::collect_mentioned_vars(child, result));
     }
 
     fn collect_set_vars(node: IrNode, result: &mut Vec<u16>) {

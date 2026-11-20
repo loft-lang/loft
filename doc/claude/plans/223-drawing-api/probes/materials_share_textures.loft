@@ -1,0 +1,25 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Materials built in a function from parameters, kept in a vector in a record, two of them
+// naming the same textures.
+// Holds when: draws 3 sums 15 15 t 7, then each texture dropped once, after `end`.
+
+struct Kept { depth: boolean, blend: integer }
+struct Win { handle: integer, draws: integer, kept: Kept }
+fn OpDrop(self: Win) { println("close win {self.handle} after {self.draws} draws"); }
+struct Tex { id: integer }
+fn OpDrop(self: Tex) { println("drop tex {self.id}"); }
+struct Mesh { id: integer, win: reference<Win> }
+struct Slot { t: reference<Tex> }
+struct Mat { name: text, texs: vector<Slot> }
+fn open(h: integer) -> Win { Win { handle: h, draws: 0, kept: Kept { depth: true, blend: 0 } } }
+fn mesh(self: Win, id: integer) -> Mesh { Mesh { id: id, win: self } }
+fn tex(self: const Win, id: integer) -> Tex { Tex { id: id + self.handle * 0 } }
+fn total(m: const Mat) -> integer { s = 0; for x in m.texs { s += x.t.id; } s }
+
+fn mat(name: text, t: const Tex, u: const Tex) -> Mat { Mat { name: name, texs: [Slot { t: t }, Slot { t: u }] } }
+fn draw(self: Mesh, m: const Mat) { self.win.draws += 1 + total(m) * 0; }
+struct Scene { meshes: vector<Mesh>, mats: vector<Mat> }
+fn main() { w = open(3); t = w.tex(7); u = w.tex(8); sc = Scene { meshes: [], mats: [] }; sc.meshes += [w.mesh(1), w.mesh(2)]; sc.mats += [mat("a", t, u), mat("b", u, t)];
+  for i in 0..2 { sc.meshes[i].draw(sc.mats[i]); } { inner = mat("c", t, t); sc.meshes[0].draw(inner); } println("draws {w.draws} sums {total(sc.mats[0])} {total(sc.mats[1])} t {t.id}"); println("end"); }

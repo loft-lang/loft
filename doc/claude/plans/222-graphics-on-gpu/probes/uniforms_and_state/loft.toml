@@ -1,0 +1,9 @@
+[package]
+name = "p4"
+version = "0.0.1"
+loft = ">=0.8"
+[dependencies]
+graphics = ">=0.13.3"
+gpu = ">=0.3.1"
+gpu_gl = ">=0.2.3"
+gpu_vulkan = ">=0.1.2"

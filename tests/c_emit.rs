@@ -5846,6 +5846,79 @@ fn main() {\n\
     }
 }
 
+/// A library's compiled artifact names the C libraries of the packages whose code it carries,
+/// not those of the program that first built it (loft#2595).  `lctab` depends on nothing; a
+/// program that uses it beside `lctab_b` builds `lctab`'s artifact, which another program
+/// adopts by its key — so a second `lctab_b` that program took from elsewhere would be loaded
+/// twice, its C state in the process twice.  By hand: `lctab_b` is 4 * 5 + 11 = 31, and the
+/// artifact lists one library, `lctab`'s shim.
+///
+/// @falsified-at d268b48cc: the artifact lists `liblctab_b_shim_….so` beside `lctab`'s own.
+#[test]
+fn a_library_artifact_lists_only_its_own_packages_c_libraries() {
+    if !have_cc() {
+        eprintln!("skipped: no `cc` on PATH");
+        return;
+    }
+    let fixtures =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/c_abi/pkg");
+    let dir = scratch("own_c_libs");
+    let libdir = dir.join("pkg");
+    copy_package(&fixtures.join("lctab"), &libdir.join("lctab"));
+    copy_package(&fixtures.join("lctab_b"), &libdir.join("lctab_b"));
+    let file = dir.join("app.loft");
+    fa::write(
+        &file,
+        "use lctab;\nuse lctab_b;\nfn main() {\n  \
+         println(\"{lctab::use_backend(lctab_b::table())} {lctab::apply(4)}\");\n}\n",
+    )
+    .expect("write program");
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+        .env("LOFT_TIMEOUT", "600")
+        .arg("--interpret")
+        .arg("--lib")
+        .arg(&libdir)
+        .arg(&file)
+        .output()
+        .expect("run loft");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "true 31\n",
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let auto = libdir.join("lctab").join("native-auto");
+    let sources: Vec<String> = fa::read_dir(&auto)
+        .expect("lctab's native-auto: the run built no artifact")
+        .into_iter()
+        .filter(|p| {
+            fa::file_name(p).is_some_and(|n| n.starts_with("loft_auto_") && n.ends_with(".rs"))
+        })
+        .map(|p| fa::read_to_string(&p).expect("read the artifact's source"))
+        .collect();
+    assert!(
+        !sources.is_empty(),
+        "no `loft_auto_*.rs` in {}",
+        auto.display()
+    );
+    for src in sources {
+        let table = src
+            .split("static __C_LIBS")
+            .nth(1)
+            .and_then(|t| t.split("];").next())
+            .expect("the artifact has a __C_LIBS table")
+            .to_string();
+        assert!(
+            table.contains("liblctab_shim"),
+            "lctab's own shim is missing:{table}"
+        );
+        assert!(
+            !table.contains("lctab_b"),
+            "lctab's artifact lists lctab_b's C library:{table}"
+        );
+    }
+}
+
 /// Copy the package directory `from` to `to`, without what a build left in it.
 fn copy_package(from: &std::path::Path, to: &std::path::Path) {
     fa::create_dir_all(to).expect("package dir");

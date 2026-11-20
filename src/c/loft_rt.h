@@ -1971,6 +1971,36 @@ static int loft_refree_allowed(void) {
     return v;
 }
 
+/* `@FR-H-DropOnce` (`Stores::drop_enter` / `drop_leave`): the outermost release of a droppable
+ * `tp` releases its value once.  Leaving it marks the store's root released
+ * (`released_root`, cleared when the root is claimed again); entering it on a marked root ends
+ * the run as a store freed twice does.  Only the root record of a store of type `tp` is marked
+ * (`Stores::is_own_root`): a value held inline can share its position. */
+static int loft_drop_own_root(loft_ref r, uint16_t tp) {
+    return r.rec == LOFT_ST_PRIMARY && r.pos == 8 && r.store_nr < loft_nstores
+        && loft_stores[r.store_nr].live && loft_stores[r.store_nr].known == tp;
+}
+
+static void loft_drop_enter(loft_ref r, uint16_t tp) {
+    if (!loft_drop_own_root(r, tp) || !loft_stores[r.store_nr].released_root)
+        return;
+    char m[240];
+    snprintf(m, sizeof m,
+             "a value was released twice: its OpDrop ran again on record %u of store #%u — by a "
+             "call of `OpDrop` in the program, or by a defect in the loft compiler (please report it)",
+             (unsigned) r.rec, (unsigned) r.store_nr);
+    fflush(stdout);
+    fprintf(stderr, "error: %s\n", m);
+    loft_fail_msg.len = 0;
+    loft_push(&loft_fail_msg, m, strlen(m));
+    if (loft_in_test) { LOFT_RELEASE_HELD(0); LOFT_LONGJMP(loft_test_jmp); }
+    LOFT_EXIT(1);
+}
+
+static void loft_drop_leave(loft_ref r, uint16_t tp) {
+    if (loft_drop_own_root(r, tp)) loft_stores[r.store_nr].released_root = 1;
+}
+
 static void loft_refree_fail(uint32_t nr) {
     char m[160];
     snprintf(m, sizeof m,
@@ -2521,10 +2551,13 @@ static void loft_slice_take(const struct loft_tdesc_s *T, loft_ref *var, uint32_
 }
 
 /* `checked_vec_cap`: the header word and `count` elements of `size` bytes, in words, in 32 bits
- * (the store does no 64-bit arithmetic).  A count past what 32 bits hold answers the largest
- * size, which the store's growth refuses ("store offset overflow"). */
+ * (the store does no 64-bit arithmetic).  A count past what 32 bits hold stops the program, as
+ * `checked_vec_cap` panics: a clamped size would be a record smaller than its length says. */
 static uint32_t loft_vec_cap_words(uint32_t count, uint32_t size) {
-    if (size != 0 && count > (UINT32_MAX - 15) / size) return UINT32_MAX / 8;
+    if (size != 0 && count > (UINT32_MAX - 15) / size) {
+        fprintf(stderr, "loft: Vector capacity overflow: count=%u size=%u\n", count, size);
+        abort();
+    }
     return (count * size + 15) / 8;
 }
 
@@ -4612,8 +4645,12 @@ static void loft_vec_set_size(loft_ref v, uint32_t adding, uint32_t size) {
     loft_store_t *s = loft_store_of(v);
     uint32_t r = loft_u32(s, v.rec, v.pos);
     uint32_t len = loft_u32(s, r, 4);
+    if ((uint64_t) len + adding > UINT32_MAX) {
+        fprintf(stderr, "loft: Vector capacity overflow: count=%u+%u size=%u\n", len, adding, size);
+        abort();
+    }
     if (adding > 1) {
-        uint32_t nr = loft_st_resize(s, r, (uint32_t) (((uint64_t) (len + adding) * size + 15) / 8));
+        uint32_t nr = loft_st_resize(s, r, loft_vec_cap_words(len + adding, size));
         if (nr != r) {
             loft_set_u32(s, v.rec, v.pos, nr);
             r = nr;

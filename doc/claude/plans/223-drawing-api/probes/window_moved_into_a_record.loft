@@ -1,0 +1,17 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The shape that keeps a mesh from remembering its window: the window is moved into a record
+// after a mesh took a reference to it.
+// Today: "window 10 via mesh 2" — two records where the program has one window.
+// Wanted from loft: 12 and 12, or the move refused while a reference is live.
+
+struct Win { handle: integer, draws: integer }
+fn OpDrop(self: Win) { println("close win {self.handle} after {self.draws} draws"); }
+struct Mesh { id: integer, win: reference<Win> }
+fn open(h: integer) -> Win { Win { handle: h, draws: 0 } }
+fn mesh(self: Win, id: integer) -> Mesh { Mesh { id: id, win: self } }
+fn touch(self: Mesh) { self.win.draws += 1; }
+struct Game { w: Win, m: Mesh, score: integer }
+
+fn main() { w = open(3); m = w.mesh(1); g = Game { w: w, m: m, score: 0 }; g.m.touch(); g.w.draws += 10; g.m.touch(); println("window {g.w.draws} via mesh {g.m.win.draws}"); println("end"); }

@@ -68,6 +68,24 @@ impl Drop for Guard {
     }
 }
 
+/// Whether an upgrade sent as a browser page of `origin` would send it is answered with
+/// anything but `101` — the endpoint must be listening, so a refusal is a refusal.
+fn ws_refused_as(port: u16, origin: &str) -> bool {
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("the endpoint listens");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    let req = format!(
+        "GET /ws HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nOrigin: {origin}\r\n\
+         Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+         Sec-WebSocket-Version: 13\r\n\r\n"
+    );
+    stream.write_all(req.as_bytes()).unwrap();
+    let mut head = Vec::new();
+    let _ = stream.read_to_end(&mut head);
+    !String::from_utf8_lossy(&head).contains("101")
+}
+
 fn ws_connect(port: u16) -> TcpStream {
     let deadline = vm_deadline(15);
     let stream = loop {
@@ -1120,6 +1138,13 @@ fn main() {{
         std::thread::sleep(Duration::from_millis(200));
     };
 
+    // The control endpoint is not for a page of another site, which connects from loopback
+    // like the agent below: its upgrade is refused (the interpreter's kernel here, the C
+    // build's in `s5_c_client_swap_under_running_world`).
+    assert!(
+        ws_refused_as(ctl_port, "https://attacker.example"),
+        "the control endpoint took another site's page"
+    );
     // Drive the self-swap over the channel.
     let ctl = ws_connect(ctl_port);
     std::thread::sleep(Duration::from_millis(300)); // let some ticks land
@@ -1305,6 +1330,11 @@ fn main() {{
     };
 
     // Drive the self-swap over the channel.
+    // The same refusal by the C build's kernel, which this client is.
+    assert!(
+        ws_refused_as(ctl_port, "https://attacker.example"),
+        "the C build's control endpoint took another site's page"
+    );
     let ctl = ws_connect(ctl_port);
     std::thread::sleep(Duration::from_millis(300)); // let some ticks land
     ws_send(&ctl, "D!:rebuild");

@@ -238,6 +238,27 @@ When a CVE surfaces against a published version:
        --body "<advisory rationale + reference URLs>"
    ```
 
+5. **Sign the feed.**  A client reads `advisories.json` only when `advisories.json.sig`
+   verifies against the registry key, exactly as for `index.json`, so whoever holds the
+   key signs both files after any edit:
+
+   ```
+   $ target/release/loft-keygen sign --in advisories.json \
+       --key ~/.loft/trust-root/registry-signing-key.bin --out advisories.json.sig
+   $ target/release/loft-keygen verify --in advisories.json --sig advisories.json.sig \
+       --pub "$(cat ~/.loft/trust-root/registry-signing-key.pub)"
+   ```
+
+   The advisory alone already warns or refuses for every release in its `affected` range;
+   the `index.json` status (Edit 1) is needed only to yank a release outright, and an
+   index edit is signed with `scripts/registry-sign.sh`.
+
+An advisory with no GHSA or CVE of its own takes the next `LOFT-<year>-<nnnn>` id, newest
+first in the array.  Its `summary` is quoted mid-sentence in the install message, so it
+ends without a full stop; name upstream CVEs in `references`.  Check one from a fresh home
+before announcing it: `HOME=$(mktemp -d) loft install <pkg>@<affected version>` must warn
+or refuse, naming the id.
+
 Severity tiers — what installing a package release, and building or running a program that
 loads it, does when an advisory names that release (@C167; one verdict for both,
 `registry_advisories::assess`):
@@ -253,7 +274,8 @@ The override is the way to keep running a vulnerable release while porting off i
 fixes can break an API — and it names the advisory, so the choice is written down where it is
 made.  Only a VERIFIED feed counts: a feed whose signature does not verify could refuse any
 package or hide a refusal.  The install refreshes the cached feed when it is stale; a build or
-run reads the cache and never fetches.
+run reads the cache and never fetches — except a build that ships (`--ship`), which refreshes
+a stale cache before it reads it.
 
 ### 5c. Update the dep set
 
