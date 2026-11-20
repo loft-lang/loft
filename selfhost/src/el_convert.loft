@@ -353,7 +353,9 @@ pub fn declared_range(t: ir::TypeT, nullable: boolean, aliases: boolean = false)
         return DeclaredRange { some: false, lo: 0, hi: 0, dflt: 0 };
       }
       width = spec.max - spec.min + 1;
-      reserve = nullable && ((spec.forced_size == 1 && width == 256) || (spec.forced_size == 2 && width == 65536));
+      // (`reserves_narrow_sentinel`: a range filling its fixed 1-, 2- or 4-byte width keeps its
+      // top code for null — `u32?` as `u8?` does.)
+      reserve = nullable && ((spec.forced_size == 1 && width == 256) || (spec.forced_size == 2 && width == 65536) || (spec.forced_size == 4 && width == 4294967296));
       lo = if reserve && spec.min < 0 { spec.min + 1 } else { spec.min };
       hi = if reserve && spec.min >= 0 { spec.max - 1 } else { spec.max };
       dflt: integer? = if nullable { null } else if lo <= 0 && 0 <= hi { 0 } else if lo > 0 { lo } else { hi };
