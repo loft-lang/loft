@@ -20,7 +20,7 @@ Active.  S1 to S3 and S5 are in the tree; S4 is under way, family by family; S6 
 | S5 32-bit boundaries in the C backend | shipped: a parameter, a result, a tuple member and a function type are `int32_t` in a 32-bit build (`Cx::ctype`) |
 | the counters (found on the way) | a loop's, a pattern match's and a slice's counters take the file's width (`Parser::count_type`, `(W-Count)`) |
 | S6 libraries and `--native-esp` | open: the three `pln217-width32-tanmatsu` library branches, `--native-esp` 32-bit by default |
-| S7 the gate | the wide ledger is held to a baseline; the runtime's source check and the image gate are open |
+| S7 the gate | the wide ledger is held to a baseline, and a 32-bit `--native-esp` build refuses 64-bit helper calls without an exception (`src/esp_width64.rs`); the runtime's source check is open |
 
 ## The owner's rulings (2026-11-20)
 
@@ -81,10 +81,9 @@ taken of one, do not survive its narrowing.
 5. **The runtime's source check** — no plain `int64_t` or `double` in `src/c/*.h` outside
    `loft_width.h` and the `loft_word` / `loft_fword` names: the only check that sees an inline
    64-bit add, which calls no helper.
-6. **The image gate** — `--native-esp` reads the linked image and refuses a `double` or 64-bit
-   helper call from loft's side (the program, the runtime, a library's C), with an allow file
-   whose every line gives its reason.  Written and unit-tested outside the tree; it lands when a
-   reference image passes it, which needs the first ESP image built.
+6. **The image gate against the game** — it holds on a small reference app with thirteen
+   runtime exceptions; `tile-world-game` has not been built through it, and will need its own
+   `esp-width64.allow` for what it declares `i64` or `f64`.
 7. **`--native-esp` builds 32-bit by default** — a default change on a documented flag
    (`freeze:broken`).
 8. **On the device** — the demo world from a 32-bit build, measured against 60 frames.

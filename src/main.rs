@@ -43,6 +43,7 @@ mod android;
 mod app_files;
 mod c_driver;
 mod esp_app;
+mod esp_width64;
 mod native_utils;
 use loft::file_access;
 use loft::parser;
@@ -11230,7 +11231,7 @@ fn main() {
                 std::process::exit(1);
             }
         };
-        match esp_app::build_project(&out) {
+        match esp_app::build_project(&out, &app) {
             Ok(bin) => {
                 let size = fa::metadata(&bin).map(|m| m.len()).unwrap_or(0);
                 println!("{} ({size} bytes, {packed} of them assets)", bin.display());

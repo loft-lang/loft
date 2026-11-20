@@ -118,7 +118,7 @@ static uint64_t loft_rx_word(const loft_rx_key *k, uint32_t w) {
 
 /* radix_tree::composed_bit: bit `b` of `user bits ‖ 0x00 ‖ id ‖ zeros`. */
 static int loft_rx_bit(const loft_rx_key *k, uint32_t b) {
-    if (b < k->bits) return (int) ((loft_rx_word(k, b / 64) >> (63 - b % 64)) & 1);
+    if (b < k->bits) return loft_bit64_test(loft_rx_word(k, b / 64), 63 - b % 64);
     if (b < k->bits + LOFT_RX_TERM_BITS) return 0;
     if (b < k->bits + LOFT_RX_SUFFIX_BITS) return (int) ((k->id >> (LOFT_RX_ID_BITS - 1 - (b - k->bits - LOFT_RX_TERM_BITS))) & 1);
     return 0;

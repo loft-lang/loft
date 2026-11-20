@@ -260,7 +260,7 @@ static uint64_t loft_bt_word_below(const uint8_t *bytes, uint32_t k, uint32_t sk
     for (uint32_t i = 0; i < 8; i++) w = w << 8 | bytes[8 * k + i];
     if (keep == 8) return w;
     if (keep == 0) return 0;
-    return w & ~(UINT64_MAX >> (8 * keep));
+    return w & loft_bits64_from(64 - 8 * keep);
 }
 
 #define LOFT_BT_WHOLE 0

@@ -392,9 +392,12 @@ behind the same loft API it has everywhere.
 - **The C on a RISC-V 32-bit core:** `scripts/c_sweep.py --riscv32` builds each program with
   `zig cc -target riscv32-linux-musl` and runs it under `qemu-riscv32`.  `--m32` does the same
   for 32-bit x86.  Every library above passes its tests on both.  No CI workflow runs either
-  sweep yet: they become nightly jobs, with `scripts/width64_census.py` reporting where 64-bit
-  work is paid (a report, not a gate), once a game demo runs on the device at 60 fps
-  ([@PLN204](https://github.com/loft-lang/plans/issues/204) S8).
+  sweep yet.
+- **No 64-bit arithmetic that nobody asked for:** a 32-bit `--native-esp` build reads its own
+  linked image and refuses one in which the program, loft's runtime or a library's C calls a
+  `double` or 64-bit integer helper without an exception
+  ([WIDTH32.md § The image gate](WIDTH32.md#the-image-gate)); `scripts/width64_census.py` prints
+  the whole picture, ESP-IDF's own code and the inline 64-bit adds included.
 - **The Tanmatsu sections:** each library's `ESP_PLATFORM` code is type-checked against the real
   BSP headers, with small stand-ins for the FreeRTOS and ESP-IDF headers
   ([HARDWARE_BACKENDS.md § Checking a platform section](HARDWARE_BACKENDS.md#checking-a-platform-section)).
