@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// @I52 — Persistence: the one walk that says whether a store's numbers hold
+// @I70 — Database subsystem: the one walk that says whether a store's numbers hold
 
 //! `@FR-S-Sound` — the numbers INSIDE a store, followed from a value under its type and
 //! checked before they are believed.

@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// @I52 — Persistence: the guard beside a saved store
+// @I70 — Database subsystem: the guard beside a saved store
 
 //! `@FR-S-Guard` — the guard beside a store image: what the image and its sidecar hashed to
 //! when they were written, checked before a loader reads either.
