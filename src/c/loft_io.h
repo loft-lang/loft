@@ -1416,6 +1416,9 @@ static loft_ref loft_read_bytes(loft_str raw) {
     }
     fclose(h);
     if (!data) { fputs("loft: out of memory\n", stderr); abort(); }
+    /* A vector counts its elements in 32 bits. A file with more bytes than that is not cut to
+     * fit: the count is held at the largest one, which the capacity check refuses by name. */
+    if (len > UINT32_MAX) len = UINT32_MAX;
     loft_ref r = loft_ref_null();
     loft_vector_store(&r);
     loft_vec_prealloc(r, (uint32_t) len, 1);

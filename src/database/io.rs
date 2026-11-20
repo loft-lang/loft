@@ -877,7 +877,10 @@ impl Stores {
         // Owning field is a 4-byte vector pointer; the inner record holds the
         // bytes one-per-element (length at offset 4, payload at offset 8).
         let vec = self.database(4);
-        let count = data.len() as u32;
+        // A vector counts its elements in 32 bits.  A file with more bytes than that is not
+        // cut to fit: the count is held at the largest one, which the capacity check in
+        // `alloc_vector_from_bytes` refuses by name, as the compiled build does.
+        let count = u32::try_from(data.len()).unwrap_or(u32::MAX);
         let rec = vector::alloc_vector_from_bytes(self.store_mut(&vec), 1, count, &data);
         self.store_mut(&vec).set_u32_raw(vec.rec, vec.pos, rec);
         vec
