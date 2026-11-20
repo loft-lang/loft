@@ -5778,7 +5778,15 @@ impl Parser {
                     // `LOFT_NO_DN4` escape reverted to a SILENT 8-byte width-tag
                     // (`400 as u8 == 400`) — the very truncation the model eliminates — so it
                     // is retired. `as τ` errors (use `as τ?`); `as τ?` is the checked cast.
-                    if !self.first_pass && !self.int_value_fits(code, &tp) {
+                    // `@FR-I-Narrow-U32` — `as u32` is the same guarded narrowing as the
+                    // implicit one: 0 where the value does not fit.
+                    if !self.first_pass
+                        && !nullable_cast
+                        && !self.lexer.peek_token("??")
+                        && !self.int_value_fits(code, &tp)
+                        && self.narrow_into_u32_with_default(code, &tp)
+                    {
+                    } else if !self.first_pass && !self.int_value_fits(code, &tp) {
                         // A bare `e as N` immediately left of `??` is a CHECKED cast: the
                         // `??` supplies the out-of-range fallback, so treat it like `e as N?`
                         // rather than rejecting it (the diagnostic already advertised `?? d`).
