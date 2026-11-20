@@ -1,4 +1,4 @@
-# header	lines naming a plain int64_t or double — tests/width_source.rs; a count only goes down
+# header	lines naming a plain int64_t or double — tests/width32.rs; a count only goes down
 loft_btree.h	35
 loft_cc.h	20
 loft_engine.h	84

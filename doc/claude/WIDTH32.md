@@ -116,7 +116,7 @@ made about the 64-bit value does not hold for the narrowed one: the non-negative
 (`loft_nonneg`) is made for a narrowed index only when its range is proven inside the width.
 
 **What is left in fixed widths.**  A plain `int64_t` or `double` in the runtime is 64 bits on a
-32-bit core whether the value needs them or not.  `tests/width_source.rs` counts the lines
+32-bit core whether the value needs them or not.  `tests/width32.rs` counts the lines
 that name one, per header, against `tests/width_source.baseline`: a header above its count
 fails, so new runtime code is written in the width header's names.  It is the one check that
 sees an inline 64-bit add, which calls no helper.

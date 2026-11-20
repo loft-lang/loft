@@ -20,7 +20,7 @@ Active.  S1 to S3 and S5 are in the tree; S4 is under way, family by family; S6 
 | S5 32-bit boundaries in the C backend | shipped: a parameter, a result, a tuple member and a function type are `int32_t` in a 32-bit build (`Cx::ctype`) |
 | the counters (found on the way) | a loop's, a pattern match's and a slice's counters take the file's width (`Parser::count_type`, `(W-Count)`) |
 | S6 libraries and `--native-esp` | `--native-esp` builds 32-bit by default; open: the three `pln217-width32-tanmatsu` library branches |
-| S7 the gate | the wide ledger is held to a baseline, and a 32-bit `--native-esp` build refuses 64-bit helper calls without an exception (`src/esp_width64.rs`); the runtime's fixed widths are held to a baseline (`tests/width_source.rs`) |
+| S7 the gate | the wide ledger is held to a baseline, and a 32-bit `--native-esp` build refuses 64-bit helper calls without an exception (`src/esp_width64.rs`); the runtime's fixed widths are held to a baseline (`tests/width32.rs`) |
 
 ## The owner's rulings (2026-11-20)
 
@@ -78,7 +78,7 @@ taken of one, do not survive its narrowing.
 4. **The `value` and `op` classes judged** — the ledger does not yet check that an operand of
    such a conversion is a `declared` wide value; until it does a compiler-made 64-bit
    computation can stand in them (a negated literal is one: `LOFT_PLAIN_NEG(INT64_C(1))`).
-5. **The runtime's fixed widths to zero** — `tests/width_source.rs` holds the lines that name
+5. **The runtime's fixed widths to zero** — `tests/width32.rs` holds the lines that name
    a plain `int64_t` or `double` to a baseline, 1152 over 32 headers (`loft_rt.h` 422); each
    is to become `loft_int` / `loft_float`, or `loft_word` / `loft_fword` where the value is
    64 bits in every build.
