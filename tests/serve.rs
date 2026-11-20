@@ -64,13 +64,25 @@ fn start_server(port: u16, file: String) {
 
 /// Open a connection and perform the WebSocket upgrade handshake; returns the live stream.
 fn ws_connect(port: u16) -> BufReader<TcpStream> {
+    ws_connect_as(port, "")
+}
+
+/// [`ws_connect`] as a browser page of `origin` would (`""`: a tool, which sends none).
+fn ws_connect_as(port: u16, origin: &str) -> BufReader<TcpStream> {
     let stream = TcpStream::connect(("127.0.0.1", port)).expect("connect");
     stream
         .set_read_timeout(Some(Duration::from_secs(10)))
         .unwrap();
-    let req = "GET /ws HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\n\
-               Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
-               Sec-WebSocket-Version: 13\r\n\r\n";
+    let origin = if origin.is_empty() {
+        String::new()
+    } else {
+        format!("Origin: {origin}\r\n")
+    };
+    let req = format!(
+        "GET /ws HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\n{origin}\
+         Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+         Sec-WebSocket-Version: 13\r\n\r\n"
+    );
     (&stream).write_all(req.as_bytes()).unwrap();
     let mut reader = BufReader::new(stream);
     // Read the response head; the server replies 101 with the computed accept key.
@@ -748,8 +760,14 @@ fn serve_game_debug_control_end_to_end() {
     }
     assert!(announced, "the kernel game never announced its port");
 
-    // The control channel + a game client — the editor's two sockets.
-    let mut ctl = ws_connect(game_port);
+    // A page of another site reaches the game port as any peer does, and connects from
+    // loopback like the editor: its `D!:quit` must not stop the game.  Everything below
+    // needs the game still running, so it fails on a host that takes the command.
+    let page = ws_connect_as(game_port, "https://attacker.example");
+    ws_send(page.get_ref(), "D!:quit");
+    // The control channel + a game client — the editor's two sockets.  The editor's page
+    // is served from another loopback port, and is taken.
+    let mut ctl = ws_connect_as(game_port, "http://127.0.0.1:8770");
     let mut game = ws_connect(game_port);
     ws_send(ctl.get_ref(), "D!:bp bump_events");
     assert_eq!(ws_recv(&mut ctl), "D:ok bp bump_events");
