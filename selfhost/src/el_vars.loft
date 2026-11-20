@@ -282,6 +282,9 @@ pub struct Vars {
   // target holds, which an `if` there hands its arms (an untyped `[]` built in its place)
   pub expect_node: integer = -1,
   pub expect: ir::TypeT = ir::TyVoid,
+  // The vector type a `match` answering into an expected vector (a function's tail) hands its
+  // `if` arms (`@FR-T-Chk-Vec`); void outside such a match.
+  pub arm_expect: ir::TypeT = ir::TyVoid,
   // `Parser::lambda_hint` for a call's argument: the `fn(…)` its parameter takes, for the one
   // short lambda (`|x| …`) at `lambda_node` (-1: none)
   // `Parser::assign_target`: the local the statement being read assigns (-1: none) — a closure

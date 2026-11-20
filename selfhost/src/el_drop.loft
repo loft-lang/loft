@@ -140,6 +140,59 @@ fn synth_cascades(e: el::El, h: Hook) {
   for t in targets {
     fill(e, t, made[t#index] ?? -1, h);
   }
+  // After the cascades exist: the bracket goes around the outermost release.
+  if !h.forward {
+    arm_drop_marks(e, h);
+  }
+}
+
+// `arm_drop_marks` (`@FR-H-DropOnce`): the OUTERMOST release of a user struct with an `OpDrop`
+// — its cascade where it has one, the hook otherwise — is bracketed: `OpDropEnter(self, tp)`
+// first ends the run when the record is already released, `OpDropLeave(self, tp)` last marks
+// it released.  Not in a production run (`LOFT_PRODUCTION`).  (A shipped build, `--ship`, is no
+// tier the elaborator is run at.)
+fn arm_drop_marks(e: el::El, h: Hook) {
+  if (env_variable("LOFT_PRODUCTION") ?? "") != "" {
+    return;
+  }
+  enter = el::def_nr(e, "OpDropEnter");
+  leave = el::def_nr(e, "OpDropLeave");
+  if enter < 0 || leave < 0 {
+    return;
+  }
+  for d in e.b.data.definitions {
+    t = d#index;
+    hook = el_types::hook_of(e, t, h.own);
+    if hook < 0 || d.known_type == el::NO_TYPE || d.def_type != el::DT_STRUCT || starts_with(d.name, "__") {
+      continue;
+    }
+    tg = target(e, t, h);
+    self_var = -1;
+    for v in el::def(e, tg).variables.variables {
+      if v.name == "self" && self_var < 0 {
+        self_var = v#index;
+      }
+    }
+    if self_var < 0 || len(el::def(e, tg).code) == 0 {
+      continue;
+    }
+    code = el::def(e, tg).code[0]!;
+    armed = match code { NdBlock { block } => match block[0]!.operators[0] ?? ir::NdNull { NdCall { def_nr: fd } => fd == enter, _ => false }, _ => false };
+    if armed {
+      continue;
+    }
+    tp = ir::NdInt { n: d.known_type };
+    first = ir::NdCall { def_nr: enter, args: [ir::NdVar { n: self_var }, tp] };
+    last = ir::NdCall { def_nr: leave, args: [ir::NdVar { n: self_var }, tp] };
+    void_block = match code { NdBlock { block } => (block[0]!.result[0] ?? ir::TyVoid) is TyVoid, _ => false };
+    if void_block {
+      bl = match code { NdBlock { block } => block[0]!, _ => ir::Block { name: "", operators: [], result: [], scope: 0, var_size: 0 } };
+      bl.operators = [first] + bl.operators + [last];
+      e.b.data.definitions[tg].code = [ir::NdBlock { block: [bl] }];
+    } else {
+      e.b.data.definitions[tg].code = [el_ir::v_block([first, code, last], ir::TyVoid, "drop_once")];
+    }
+  }
 }
 
 // `any_drop_hook`: some function is a type's hook.
@@ -363,7 +416,16 @@ fn fill(e: el::El, t: integer, c: integer, h: Hook) {
       return;
     }
     live = el_ir::cl(e, "OpConvBoolFromRef", [field!]);
-    ops += [el_ir::v_if(live, ir::NdCall { def_nr: tg, args: [field!] }, ir::NdNull)];
+    call = ir::NdCall { def_nr: tg, args: [field!] };
+    // `@FR-H-RefHome` (loft#2597): a stored `reference<T>` names a record the holder owns only
+    // when it lies in the holder's own store; one of another store has an owner of its own, so
+    // the holder's end runs none of its hooks.  A closure record's capture is one it owns: its
+    // release stays unconditional.
+    pointer = match el_types::base(at.typedef[0] ?? ir::TyVoid) { TyReference { n: _, dep: pd } => pd.contains(el_types::MARKER), _ => false };
+    if !h.forward && pointer && !starts_with(el::def(e, t).name, "__closure_") {
+      call = el_ir::v_if(el_ir::cl(e, "OpDistinctStore", [field!, me]), ir::NdNull, call);
+    }
+    ops += [el_ir::v_if(live, call, ir::NdNull)];
   }
   // `push_closure_releases` (`@FR-L-CapOwn`): a fn field's closure record, built in this
   // record's store, runs its cascade before the store that holds it goes.
