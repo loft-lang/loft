@@ -114,7 +114,18 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       _ => {}
     }
   }
+  // (`@FR-T-Chk-Vec`: a vector result reaches a tail `if`'s arms, so an untyped `[]` arm is
+  // built as that vector and a `null` arm is its sentinel — as a declared local's type does.)
+  kept_node = vars.expect_node;
+  kept_tp = vars.expect;
+  ttail = el_ex_deliver::tail_syntax(e, body);
+  if ttail >= 0 && e.p.nodes[ttail] is SIf && el_types::base(result) is TyVector {
+    vars.expect_node = ttail;
+    vars.expect = el_types::without_deps(result);
+  }
   b = el_ex_assign::parse_block(e, vars, body, "return from block", result);
+  vars.expect_node = kept_node;
+  vars.expect = kept_tp;
   // A function value read off a field and ANSWERED takes a copy of the field's closure record,
   // as one bound to a local does (`(B-View)`).
   if !e.first_pass && el_types::base(result) is TyFunction {

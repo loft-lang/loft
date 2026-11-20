@@ -416,7 +416,16 @@ fn fill(e: el::El, t: integer, c: integer, h: Hook) {
       return;
     }
     live = el_ir::cl(e, "OpConvBoolFromRef", [field!]);
-    ops += [el_ir::v_if(live, ir::NdCall { def_nr: tg, args: [field!] }, ir::NdNull)];
+    call = ir::NdCall { def_nr: tg, args: [field!] };
+    // `@FR-H-RefHome` (loft#2597): a stored `reference<T>` names a record the holder owns only
+    // when it lies in the holder's own store; one of another store has an owner of its own, so
+    // the holder's end runs none of its hooks.  A closure record's capture is one it owns: its
+    // release stays unconditional.
+    pointer = match el_types::base(at.typedef[0] ?? ir::TyVoid) { TyReference { n: _, dep: pd } => pd.contains(el_types::MARKER), _ => false };
+    if !h.forward && pointer && !starts_with(el::def(e, t).name, "__closure_") {
+      call = el_ir::v_if(el_ir::cl(e, "OpDistinctStore", [field!, me]), ir::NdNull, call);
+    }
+    ops += [el_ir::v_if(live, call, ir::NdNull)];
   }
   // `push_closure_releases` (`@FR-L-CapOwn`): a fn field's closure record, built in this
   // record's store, runs its cascade before the store that holds it goes.

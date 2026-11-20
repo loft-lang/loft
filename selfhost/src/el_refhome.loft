@@ -99,6 +99,13 @@ fn bind_depths(n: ir::Node, depth: integer, depths: vector<integer>) {
       }
       return;
     },
+    // (A block is a scope of its own, as Rust's homes are judged by scope.)
+    NdBlock { block } => {
+      for x in block[0].operators {
+        bind_depths(x, depth + 1, depths);
+      }
+      return;
+    },
     _ => {}
   }
   for c in el_ir::children(n) {
@@ -118,6 +125,23 @@ fn lifted_home(e: el::El, vs: ir::Function, n: ir::Node, depths: vector<integer>
         clos = h >= 0 && h < len(vs.variables) && vs.variables[h].name.starts_with("___clos_");
         if !clos && h >= 0 && s >= 0 && h != s && s < len(depths) && h < len(depths) && depths[s] > depths[h] && depths[h] >= 0 {
           return true;
+        }
+      }
+      // (A callee's link, loft#2597: `f = build(t)` with `build(t: const Tex) -> Shared {
+      // Shared { tex: t } }` — the result, built in the caller's return buffer, holds `t`'s
+      // record; the buffer is a work variable of the function's head, so it outlives a `t`
+      // bound in a deeper block.)
+      fd = el::def(e, def_nr);
+      if fd.def_type == el::DT_FUNCTION && len(args) >= 2 {
+        buf = match el_ir::unspan(args[-1]) { NdVar { n: bv } => bv, _ => -1 };
+        kept = el_types::deps(fd.returned[0] ?? ir::TyVoid);
+        if buf >= 0 && buf < len(depths) && depths[buf] >= 0 && vs.variables[buf].name.starts_with("__ref_") {
+          for a in args[0..len(args) - 1] {
+            sa = match el_ir::unspan(a) { NdVar { n: av } => av, _ => -1 };
+            if sa >= 0 && sa < len(depths) && kept.contains(a#index) && depths[sa] > depths[buf] {
+              return true;
+            }
+          }
         }
       }
     },
