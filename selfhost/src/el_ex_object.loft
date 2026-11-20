@@ -3215,11 +3215,8 @@ pub fn find_fn(e: el::El, name: text, receiver: ir::TypeT, source: integer = -1)
 // as a second operand.  Null for any other call.
 pub fn by_receiver_type(e: el::El, name: text, list: vector<ir::Node>, t: ir::TypeT) -> Ex? {
   wide = ir::TyInteger { spec: wide_spec() };
+  // (A nullable index counts as its dense twin: an absent one has no entries.)
   if name == "len" && el_types::base(t) is TyIndex {
-    if t is TyOptional {
-      el::refuse(e, "a `len` of a nullable index");
-      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
-    }
     // (Rust's call route leaves the op inside a span of the call's own: one level deeper than
     // a plain call's read.)
     return ex(ir::NdSpan { pos: el::pos_at(e, if e.at >= 0 { e.at } else { 0 }), inner: el_ir::cl(e, "OpLengthIndex", list) }, wide);
