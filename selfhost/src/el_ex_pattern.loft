@@ -2247,12 +2247,17 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
   // (`convert_store_lenient`: a `null`, or a nullable value of the element's own base, is stored
   // as the slot's null — `@FR-N-Store` warns there); an undeclared literal whose later item is a
   // float where the earlier ones are integers widens them (`widen_literal_items`).
-  // An `i32` element given a `??` is narrowed inside it (`dn4cast` under the `ncc`): not carried.
+  // An `i32` element given a `??` is narrowed inside it (`range_guard_inside_discharge`: the
+  // subject's `dn4cast` under the `ncc`).
   if !e.first_pass && match in_t { TyInteger { spec } => el_types::int4(spec), _ => false } {
     for x in xs {
       if match el_ir::unspan(x.code) { NdBlock { block: nb } => nb[0].name == "ncc", _ => false } {
-        el::refuse(e, "an `i32` vector item that is a `??`");
-        return refused_build();
+        gx = el_convert::guard_discharge(e, vars, x.code, in_t);
+        if gx == null {
+          el::refuse(e, "an `i32` vector item that is a `??`");
+          return refused_build();
+        }
+        xs[x#index].code = gx!;
       }
     }
   }
