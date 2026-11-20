@@ -14,3 +14,16 @@ loft_h_ensure_table     a table's growth is sized in 64 bits so that it cannot w
 loft_h_inline_rebuild   the same, for a table held inline
 loft_resize_store       a store's growth is sized in 64 bits so that it cannot wrap; once per growth
 loft_heap_human         the heap-limit report writes a size with one decimal; printed when the limit is hit
+loft_u64_dec            the decimal digits of an i64
+loft_shl_at             `<<` of an i64 by a number of bits the program computes
+loft_shr_at             `>>` of an i64 by a number of bits the program computes
+loft_int_of_text_at     reads an integer from text as an i64, which a text may hold
+loft_jp_scan_number     a JSON number is read as a double, and an integer in it as an i64
+loft_jv_i64             a JSON integer is an i64
+loft_jv_as_number       a JSON number is a double
+loft_jsv_long           a JSON integer is an i64
+loft_jsv_struct         a record's i64 and f64 fields are written from JSON as they are declared
+loft_pw_walk            a record's i64 and f64 fields are written to JSON as they are declared
+loft_bt_kv_part         compares an index's f64 key
+loft_hk1_radix          sorts a keyed collection's 64-bit digests a byte at a time
+loft_panic              prints the line a program stopped at; once, as it ends
