@@ -366,7 +366,7 @@ struct World {
 /// by value (`c::Cx::vr_ptr_params`, `@FR-R-ValueRecord`).  Here, below both readers: the
 /// C passes such a parameter by pointer and [`World::lendable`] lends a carrier to it.
 pub(crate) fn vr_param_read_only(data: &crate::data::Data, body: &Value, a: u16) -> bool {
-    param_read_only(data, body, a, None)
+    param_read_only(data, body, a, None, None, 0)
 }
 
 /// [`vr_param_read_only`] for a RECORD parameter, which shares its caller's store
@@ -375,11 +375,20 @@ pub(crate) fn vr_param_read_only(data: &crate::data::Data, body: &Value, a: u16)
 /// that parameter is read-only too, so with `lent` (the parameters already known read-only)
 /// such a hand-off reads only where `lent` holds the callee's parameter; a call through a
 /// function reference, whose callee is not known, does not.
+///
+/// A local bound to a sub-record of `a` (`f = &a.inner`, `p = a.inner`) is a VIEW of `a`'s place:
+/// `a` stays read-only only where that view is, asked of it the same way (`view_of` names the
+/// root the view's own bind projects, which is not a write of it).  A view written through or
+/// kept past the call — stored as a reference, handed on to be kept — reaches the caller's
+/// record, which a lend makes a temporary's (loft#2596).  A chain deeper than four views
+/// answers false: conservative, it keeps the parameter by value.
 fn param_read_only(
     data: &crate::data::Data,
     body: &Value,
     a: u16,
     lent: Option<&HashSet<(u32, usize)>>,
+    view_of: Option<u16>,
+    depth: u8,
 ) -> bool {
     let is_a = |v: &Value| matches!(v.unspan(), Value::Var(x) if *x == a);
     let mentions = |v: &Value| v.any_node(&mut |n| matches!(n, Value::Var(x) if *x == a));
@@ -387,11 +396,16 @@ fn param_read_only(
     let mut ok = true;
     body.any_node(&mut |n| {
         match n {
+            // The view's own bind of the root's sub-record is no write of it.
+            Value::Set(v, x)
+                if *v == a && view_of.is_some_and(|r| yields_sub_place(x, r, get_field)) => {}
             Value::Set(v, _) | Value::TuplePut(v, _, _) if *v == a => ok = false,
-            // A `&` to a sub-record of `a` (`f = &a.inner`) binds a reference to the
-            // parameter's place, which a lend makes a temporary's: a write through it, or the
-            // reference kept past the call, misses the caller's record (loft#2596).
-            Value::Set(_, x) if yields_sub_place(x, a, get_field) => ok = false,
+            // A view of a sub-record of `a`: read-only only where the view is.
+            Value::Set(v, x) if yields_sub_place(x, a, get_field) => {
+                if depth >= 4 || !param_read_only(data, body, *v, lent, Some(a), depth + 1) {
+                    ok = false;
+                }
+            }
             Value::CallRef(_, args) if lent.is_some() && args.iter().any(&mentions) => ok = false,
             Value::Call(op, args) if (*op as usize) < data.definitions.len() => {
                 let def = data.def(*op);
@@ -411,11 +425,18 @@ fn param_read_only(
                         if shares && !ro.contains(&(*op, i)) {
                             ok = false;
                         }
-                    } else if is_a(x) || yields_sub_place(x, a, get_field) {
-                        // The parameter or a sub-record of it, as an operand: read only where
-                        // the operation reads it — a sub-record stored as a reference
-                        // (`OpSetDbRef(m, f, OpGetField(a, …))`, `Mesh { frame: &a.inner }`)
-                        // is a `&` kept past the call (loft#2596).
+                    } else if name == "OpSetDbRef"
+                        && i == 2
+                        && (yields_sub_place(x, a, get_field) || (view_of.is_some() && is_a(x)))
+                    {
+                        // A sub-record of `a` stored as a reference (`Mesh { frame: &a.inner }`,
+                        // `m.frame = &a.inner`) is a `&` kept past the call (loft#2596); any
+                        // other operation on a sub-record reads it, as its own operand rules say.
+                        ok = false;
+                    } else if is_a(x) && view_of.is_none() {
+                        // A VIEW is held to the writes and keeps above, not to this list: a
+                        // read of it through any operation (`OpGetVector` of a vector field's
+                        // view) is a read of `a`'s place, as the same read through `a.f` is.
                         let read = crate::opt::loop_records::SCALAR_GETTERS.contains(&name)
                             || matches!(
                                 name,
@@ -505,7 +526,7 @@ fn lendable_params(data: &Data) -> HashMap<(u32, usize), u32> {
         out.retain(|&(d, i), _| {
             let def = data.def(d);
             let p = def.variables.var(&def.attributes[i].name);
-            param_read_only(data, def.code(), p, Some(&ro))
+            param_read_only(data, def.code(), p, Some(&ro), None, 0)
         });
         if out.len() == before {
             break;

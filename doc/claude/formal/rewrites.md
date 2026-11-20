@@ -195,7 +195,6 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-Const)` | `R-Const` ir · `/fn` parse |
 | `(R-CopyView)` | `R-CopyView` ir · `/walk` ir |
 | `(R-Counter)` | `R-Counter` ir, c, native |
-| `(R-CTail)` | not counted — writer: where an exit's releases are written; no statement an exit runs changes |
 | `(R-CtorLiteral)` | `R-CtorLiteral` parse |
 | `(R-DeadResult)` | not counted — unbuilt: designed; its switch is planned |
 | `(R-DecodeView)` | counted; admitted on no bench program |
