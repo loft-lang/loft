@@ -660,6 +660,12 @@ pub fn arm_delivery(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer,
     pr = place_root(e, tail);
     param = pr >= 0 && vars.vars[pr]!.argument && !hidden_param(e, vars, pr);
   }
+  // (A `null` arm of a nullable vector result — a match's `_ => null` — is the reference null
+  // sentinel, as the match's join to the result makes it.)
+  if !e.first_pass && result is TyOptional && tail is NdIf {
+    tail = null_arms_as_sentinel(e, tail);
+    bl.operators[-1] = el_ir::respan(bl.operators[-1]!, tail);
+  }
   // The first pass's `if` is a placeholder: its arms are read off the syntax.
   // An arm may answer a whole vector parameter too (`materialize_vector_arms_into`): copied
   // into the buffer where the arm ends, the body borrowing the parameters its arms answer.
@@ -923,6 +929,15 @@ pub fn syntax_arm(e: el::El, n: integer) -> boolean {
 }
 
 // Each literal arm of `n` ends by copying itself into the buffer and releasing its own store.
+// The `if` chain with each bare `null` arm read as `OpNullRefSentinel()`.
+fn null_arms_as_sentinel(e: el::El, n: ir::Node) -> ir::Node {
+  match n {
+    NdIf { cond, t, f } => ir::NdIf { cond: cond, t: null_arms_as_sentinel(e, t), f: null_arms_as_sentinel(e, f) },
+    NdNull => el_ir::cl(e, "OpNullRefSentinel", []),
+    _ => n
+  }
+}
+
 pub fn deliver_arms(e: el::El, n: ir::Node, rb: integer, rec: integer) -> ir::Node {
   match n {
     NdIf { cond, t, f } => ir::NdIf { cond: cond, t: deliver_arms(e, t, rb, rec), f: deliver_arms(e, f, rb, rec) },

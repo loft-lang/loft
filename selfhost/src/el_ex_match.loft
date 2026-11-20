@@ -1981,7 +1981,17 @@ pub fn match_subject(e: el::El, vars: el_vars::Vars, t: ir::TypeT) -> integer {
   el_vars::create_unique(vars, "match_subj_late", t)
 }
 
+// (`@FR-T-Chk-Vec`: a match answering into an expected vector hands that type to its `if` arms,
+// `arm_expect`, for as long as its arms are read.)
 pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<integer>, node: integer = -1) -> Ex {
+  kept_arm = vars.arm_expect;
+  vars.arm_expect = if node >= 0 && vars.expect_node == node && el_types::base(vars.expect) is TyVector { vars.expect } else { ir::TyVoid };
+  r = match_expr_inner(e, vars, subject, arms, node);
+  vars.arm_expect = kept_arm;
+  r
+}
+
+fn match_expr_inner(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<integer>, node: integer = -1) -> Ex {
   if el_trace::on() {
     el_trace::route(e, "parse_match");
   }
