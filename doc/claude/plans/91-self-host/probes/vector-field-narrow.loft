@@ -1,0 +1,52 @@
+// A challenge for a NARROW-INTEGER VECTOR FIELD WRITTEN FROM A VECTOR PLACE (@PLN91): a struct
+// literal `S { b: m }` whose `vector<u8>` (or other narrow) field is given a vector local, a
+// parameter or a call's result.  One function per case, checked by its `chk_` caller; every value
+// hand-computed.  `bytes(n)` is [1, 2, …, n] as u8.
+//   the source:     from_local, from_param, from_call, returned (a record built and returned)
+//   the width:      w_i8, w_u16, w_i16
+//   two fields:     two_fields (a u8 field and an i32 field, both from locals)
+//   independence:   copy_kept (the source written after the build; the field keeps its bytes)
+//   control:        w_integer (a vector<integer> field: carried today)
+struct S { b: vector<u8>, tag: integer }
+struct S8 { b: vector<i8> }
+struct S16 { b: vector<u16> }
+struct Si16 { b: vector<i16> }
+struct SI { b: vector<integer> }
+struct ES { m: vector<u8>, sf: vector<i32> }
+
+fn bytes(n: integer) -> vector<u8> { v: vector<u8> = []; for i in 0..n { v += [((i + 1) & 255) as u8]; } v }
+fn sum8(v: vector<u8>) -> integer { t = 0; for x in v { t += x as integer; } t }
+
+fn from_local() -> S { m = bytes(3); S { b: m, tag: 1 } }
+fn from_param(m: vector<u8>) -> S { S { b: m, tag: 2 } }
+fn from_call() -> S { S { b: bytes(4), tag: 3 } }
+fn returned(n: integer) -> S { bs = bytes(n); return S { b: bs, tag: n }; }
+fn w_i8() -> S8 { m: vector<i8> = [-3, 4]; S8 { b: m } }
+fn w_u16() -> S16 { m: vector<u16> = [300, 400]; S16 { b: m } }
+fn w_i16() -> Si16 { m: vector<i16> = [-300, 5]; Si16 { b: m } }
+fn two_fields(n: integer) -> ES { m: vector<u8> = []; sf: vector<i32> = []; for _ in 0..n { m += [7 as u8]; sf += [-3 as i32]; } ES { m: m, sf: sf } }
+fn copy_kept() -> integer { m = bytes(3); s = S { b: m, tag: 0 }; m[0] = 90; sum8(s.b) * 100 + (m[0] as integer) }
+fn w_integer() -> SI { m: vector<integer> = [10, 20]; SI { b: m } }
+
+fn chk_from_local() -> integer { s = from_local(); sum8(s.b) * 10 + s.tag }
+fn chk_from_param() -> integer { s = from_param(bytes(2)); sum8(s.b) * 10 + s.tag }
+fn chk_from_call() -> integer { s = from_call(); sum8(s.b) * 10 + s.tag }
+fn chk_returned() -> integer { s = returned(5); sum8(s.b) * 10 + s.tag }
+fn chk_w_i8() -> integer { s = w_i8(); (s.b[0] as integer) * 100 + (s.b[1] as integer) }
+fn chk_w_u16() -> integer { s = w_u16(); (s.b[0] as integer) + (s.b[1] as integer) }
+fn chk_w_i16() -> integer { s = w_i16(); (s.b[0] as integer) + (s.b[1] as integer) }
+fn chk_two_fields() -> integer { e = two_fields(3); len(e.m) * 1000 + sum8(e.m) * 10 + len(e.sf) }
+fn chk_w_integer() -> integer { s = w_integer(); s.b[0] + s.b[1] }
+
+fn main() {
+  assert(chk_from_local() == 61, "from_local {chk_from_local()}");
+  assert(chk_from_param() == 32, "from_param {chk_from_param()}");
+  assert(chk_from_call() == 103, "from_call {chk_from_call()}");
+  assert(chk_returned() == 155, "returned {chk_returned()}");
+  assert(chk_w_i8() == -296, "w_i8 {chk_w_i8()}");
+  assert(chk_w_u16() == 700, "w_u16 {chk_w_u16()}");
+  assert(chk_w_i16() == -295, "w_i16 {chk_w_i16()}");
+  assert(chk_two_fields() == 3213, "two_fields {chk_two_fields()}");
+  assert(copy_kept() == 690, "copy_kept {copy_kept()}");
+  assert(chk_w_integer() == 30, "w_integer {chk_w_integer()}");
+}
