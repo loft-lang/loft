@@ -22,8 +22,8 @@
 //! - `>>` with a literal amount in `0..64` → plain `>>` (the template's
 //!   range check is compile-time dead for a literal; the MIN tests are what
 //!   the proof discharges).
-//! - `OpConvFloatFromInt` → `as f64`; `OpConvBoolFromInt` → `true` (the op
-//!   IS the non-sentinel test, and the proof already answered it).
+//! - `OpConvFloatFromInt` → `as f64`; `OpConvBoolFromInt` → `true` after its operand ran
+//!   (the op IS the non-sentinel test, and the proof already answered it).
 //!
 //! Anything unproven falls through to the template unchanged.  Division and
 //! remainder stay out: their null is minted by a ZERO divisor, which is not
@@ -376,7 +376,14 @@ impl OpEmitter for IntArithEmitter {
                     ctx.emit(&args[0])?;
                     write!(ctx.w, ") as f64)")
                 }
-                Fast::ConvBool => write!(ctx.w, "(true)"),
+                // The proof answers the null test, not the operand: an operand with an effect
+                // (`if yes(c, true) { 1 } else { 2 }` tested for truth) still runs once.  A pure
+                // one is a dead `let _` the optimiser drops.
+                Fast::ConvBool => {
+                    write!(ctx.w, "({{ let _ = (")?;
+                    ctx.emit(&args[0])?;
+                    write!(ctx.w, "); true }})")
+                }
             }
         }
     }
