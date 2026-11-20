@@ -158,3 +158,14 @@ leak:KeychainImpl::aboutToDestruct
 # client as the exit barrier above, with no loft or Rust frame on the stack.  First seen on
 # F-Surface's sibling-directory package cell (nightly run 44523131930); a macOS-only no-op.
 leak:CoreAnalytics::Client::initConnection
+# macOS CoreAnalytics' synchronous send: Security.framework counts a legacy keychain call
+# (`countLegacyAPI`, from `CSSM_DL_FreeUniqueRecord` while the root certificates are read) by
+# `+[SecCoreAnalytics sendEventLazy:]`, and `CoreAnalytics::Client::sendXpcMessage_sync`
+# `dispatch_async`s one 64-byte continuation Apple never frees — the same client as the two
+# entries above, no loft or Rust frame on the stack.  Seen on `net::retry_tests` (nightly run
+# 44735159234); a macOS-only no-op.
+leak:sendXpcMessage_sync
+# macOS libdispatch: registering for a mach reply (`_dispatch_mach_reply_kevent_register`, under
+# `_dispatch_mach_msg_send` on a workqueue thread) allocates an 80-byte unote that lives with
+# Apple's queue state — the reply side of the XPC traffic above, no loft or Rust frame.
+leak:_dispatch_mach_reply_kevent_register
