@@ -1371,12 +1371,14 @@ pub fn unary(e: el::El, vars: el_vars::Vars, op: text, n: integer?) -> Ex {
     present = el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpVectorIsNull", [x.code])]);
     return ex(el_ir::cl(e, "OpNot", [present]), ir::TyBoolean);
   }
+  // (A struct-enum VARIANT reference — a checked cast's answer — is a reference too.)
+  variant_ref = match el_types::base(x.tp) { TyReference { n: vrn } => vrn > 0 && el::def(e, vrn).def_type == el::DT_ENUM_VALUE, _ => false };
   if op == "!" && x.tp is TyOptional {
     if el_types::base(x.tp) is TyBoolean {
       return call_op(e, vars, op, [x.code], [ir::TyBoolean]);
     }
     // A struct reference converts as a `reference` (`convert`'s `check_type`).
-    if struct_ref(e, el_types::base(x.tp)) >= 0 {
+    if struct_ref(e, el_types::base(x.tp)) >= 0 || variant_ref {
       return ex(el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpConvBoolFromRef", [x.code])]), ir::TyBoolean);
     }
 
@@ -1387,7 +1389,7 @@ pub fn unary(e: el::El, vars: el_vars::Vars, op: text, n: integer?) -> Ex {
   }
   // A record that is not declared nullable is tested the same way (it may hold the sentinel);
   // a struct enum, nullable or not, by its own null test (`null_test`'s enum arm).
-  if op == "!" && struct_ref(e, el_types::base(x.tp)) >= 0 && !starts_with(el::def(e, struct_ref(e, el_types::base(x.tp))).name, "__tuple<") {
+  if op == "!" && (variant_ref || struct_ref(e, el_types::base(x.tp)) >= 0 && !starts_with(el::def(e, struct_ref(e, el_types::base(x.tp))).name, "__tuple<")) {
     return ex(el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpConvBoolFromRef", [x.code])]), ir::TyBoolean);
   }
   if op == "!" && el_convert::struct_enum(el_types::base(x.tp)) {
