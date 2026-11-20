@@ -108,6 +108,11 @@ pub fn fill_all(e: el::El) {
     }
   }
   for d in e.b.data.definitions {
+    // (`layout_blocked`: a field typed from an expression pass 1 could not type — a closure
+    // record's forward-typed capture, `Unknown(0)` — waits for pass 2, `lay_out_late`.)
+    if len([for ba in d.attributes if (ba.typedef[0] ?? ir::TyVoid) == ir::TyUnknown { n: 0 } { 1 }]) > 0 {
+      continue;
+    }
     if (d.def_type == el::DT_STRUCT || d.def_type == el::DT_ENUM_VALUE && len(d.attributes) > 0) && d.known_type == NO_TYPE {
       fill_database(e, d#index);
       // @PLN25 E2: a struct's `__nullable<S>` variants are laid out right after it, so their
@@ -425,6 +430,24 @@ pub fn fill_wrapper(e: el::El, d: integer) {
 
 // `typedef::fill_database` for a plain struct: a schema type under the struct's name, each
 // stored attribute a field of its content type, in declaration order.
+// `typedef::lay_out_late`: a struct whose layout waited for pass 2 (a closure record's
+// forward-typed capture, retyped at its lambda) laid out the moment nothing blocks it.
+pub fn lay_out_late(e: el::El, d: integer) {
+  if d < 0 || el::def(e, d).known_type != NO_TYPE || el::def(e, d).def_type != el::DT_STRUCT {
+    return;
+  }
+  // (Blocked by an unknown field only — not by `is_unknown`'s placeholder `Reference(0)`, which
+  // a shared `vector<boolean>` capture is stored as: loft#2496.)
+  if len([for ba in el::def(e, d).attributes if (ba.typedef[0] ?? ir::TyVoid) is TyUnknown { 1 }]) > 0 {
+    return;
+  }
+  fill_database(e, d);
+  kt = el::def(e, d).known_type;
+  if kt != NO_TYPE {
+    finish_type(e, kt);
+  }
+}
+
 fn fill_database(e: el::El, d: integer) {
   def = el::def(e, d);
   // A type variable's placeholder (`is_type_var_placeholder`: a struct with no fields answering
