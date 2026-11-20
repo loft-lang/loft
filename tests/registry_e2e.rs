@@ -1209,6 +1209,7 @@ fn a_shipped_build_asks_for_the_advisory_feed() {
 /// - no `.sig` at all — the install succeeds (the waiver's own case, and the control that
 ///   this index installs);
 /// - a one-byte `.sig` — refused, and nothing is extracted.
+///
 /// Fails on a build that waives a malformed signature (the second install succeeds).
 #[test]
 fn a_wrong_length_signature_is_not_an_unsigned_index() {

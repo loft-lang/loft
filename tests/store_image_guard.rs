@@ -27,6 +27,10 @@
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 
+/// One guard cell: its name, the image, the guard beside it, the sum a load reads, and what a
+/// mismatch says ("" for none).
+type GuardCell<'a> = (&'a str, &'a [u8], Option<&'a str>, u32, &'a str);
+
 const WRITER: &str = r#"struct R { label: text, v: integer }
 struct W { name: text, items: vector<R> }
 
@@ -123,7 +127,7 @@ fn the_guard_says_whether_a_store_is_the_one_that_was_written() {
         let later = format!("{guard}pages=a line a later writer added\n");
 
         // (name, image, guard, the sum a load reads, what a mismatch says — "" for none)
-        let cells: [(&str, &[u8], Option<&str>, u32, &str); 7] = [
+        let cells: [GuardCell; 7] = [
             ("written", &image, Some(&guard), 60, ""),
             (
                 "edited",

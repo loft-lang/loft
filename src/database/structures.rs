@@ -3018,6 +3018,11 @@ impl Stores {
         }
     }
 
+    /// Make room for `adding` more elements of `size` bytes in the vector at `db`.
+    ///
+    /// # Panics
+    /// When the new length or its byte size does not fit the store's 32-bit words: a vector
+    /// too large for a store stops the program.
     pub fn vector_set_size(&mut self, db: &DbRef, adding: u32, size: u32) {
         let store = keys::mut_store(db, &mut self.allocations);
         let mut vec_rec = store.get_u32_raw(db.rec, db.pos);

@@ -85,18 +85,17 @@ pub fn check(path: &Path, image: &[u8]) -> Result<(), String> {
         return Err("its guard names no image".to_string());
     };
     if !crate::integrity::sha256_hex(image).eq_ignore_ascii_case(of_image) {
-        return Err(format!(
-            "it is not the file its guard was written for: damaged, cut short, or changed \
-             since"
-        ));
+        return Err(
+            "it is not the file its guard was written for: damaged, cut short, or \
+                    changed since"
+                .to_string(),
+        );
     }
     if let Some(of_sidecar) = of_sidecar {
         let sidecar = crate::file_access::read(crate::schema_sidecar::dschema_path(path))
-            .map_err(|_| format!("its layout sidecar cannot be read"))?;
+            .map_err(|_| "its layout sidecar cannot be read".to_string())?;
         if !crate::integrity::sha256_hex(&sidecar).eq_ignore_ascii_case(of_sidecar) {
-            return Err(format!(
-                "its layout sidecar is not the one its guard was written for"
-            ));
+            return Err("its layout sidecar is not the one its guard was written for".to_string());
         }
     }
     Ok(())
