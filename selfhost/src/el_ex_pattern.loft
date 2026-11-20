@@ -286,6 +286,161 @@ pub fn slice_alt(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
   el_ex_match::SliceArm { binds: binds, cond: cond, shape: el_ex_match::SliceShape { min: head_len + tail_len, exact: false } }
 }
 
+// Is `n` a single-element alternation (`[(A | B)]`): a group of two or more branches, each one
+// element wide, with no quantifier?
+pub fn single_alt_group(e: el::El, n: integer) -> boolean {
+  match e.p.nodes[n] {
+    PGroup { seqs, quant } => quant == "" && len(seqs) > 1 && len([for q in seqs if match e.p.nodes[q] { PSeq { items } => len(items) != 1, _ => true } { 1 }]) == 0,
+    _ => false
+  }
+}
+
+// The join of two branches' integer capture types: the range holding both (no forced width
+// where they differ).
+fn alt_join(a: ir::TypeT, b: ir::TypeT) -> ir::TypeT {
+  sa = match a { TyInteger { spec } => spec, _ => i32_spec() };
+  sb = match b { TyInteger { spec } => spec, _ => i32_spec() };
+  if sa.min == sb.min && sa.max == sb.max && sa.forced_size == sb.forced_size && sa.not_null == sb.not_null {
+    return ir::TyInteger { spec: sa };
+  }
+  ir::TyInteger { spec: ir::IntegerSpec { min: if sa.min < sb.min { sa.min } else { sb.min }, max: if sa.max > sb.max { sa.max } else { sb.max }, not_null: sa.not_null && sb.not_null, forced_size: 0 } }
+}
+
+// The tag test of a single-element alternation's branch: the element `at` holds variant `d`.
+fn alt_tag(e: el::El, at: ir::Node, d: integer) -> ir::Node {
+  el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpConvIntFromEnum", [el_ir::cl(e, "OpGetEnum", [at, ir::NdInt { n: 0 }])]), ir::NdInt { n: d }])
+}
+
+// `parse_slice_alternation_element` (`@FR-P-Alt-Same`, `@FR-P-Alt-Diff`, `@FR-G-Pat-Prec`): the
+// group `g` at element `pos` of the slice `sv`.  Its test is the branches' tag tests joined by
+// `||` (`if t0 true else t1` …), each re-reading the element; each capture, in first-appearance
+// order, is one `_mv_<name>_N` read as a fold from the last branch backwards (`if t_k <read>
+// else <acc>`, from the type's null) — typed as the field where every branch binds it, `τ?`
+// where some does not.  A capture of the element itself views the subject.  Null where refused.
+pub fn single_alt(e: el::El, vars: el_vars::Vars, g: integer, sed: integer, elm: ir::TypeT, sv: integer, src: integer, pos: ir::Node, names: vector<el_vars::VarName>) -> VArm? {
+  seqs: vector<integer> = match e.p.nodes[g] { PGroup { seqs: gs } => gs, _ => [] };
+  if sed < 0 {
+    el::refuse(e, "a single-element alternation over this element");
+    return null;
+  }
+  es = element_stride(e, elm);
+  at = slice_elem(e, elm, el_ir::cl(e, "OpGetVector", [ir::NdVar { n: sv }, ir::NdInt { n: es }, pos]));
+  branches: vector<el_ex_match::AltBranch> = [];
+  for q in seqs {
+    it = match e.p.nodes[q] { PSeq { items } => items[0] ?? -1, _ => -1 };
+    br = el_ex_match::AltBranch { discs: [], caps: [] };
+    cap = "";
+    pn = it;
+    match e.p.nodes[it] { PCap { name, pat } => { cap = name; pn = pat ?? -1; }, _ => {} }
+    vname = "";
+    vfields: vector<integer> = [];
+    match e.p.nodes[pn] {
+      PName { name, member, fields } => { if member == "" { vname = name; vfields = fields; } },
+      _ => {}
+    }
+    a = if vname == "" { -1 } else { attr_nr(el::def(e, sed), vname) };
+    if a < 0 {
+      el::refuse(e, "an alternation element other than a variant");
+      return null;
+    }
+    disc = match el::def(e, sed).attributes[a].value[0] { NdEnum { ord: o } => o, _ => 0 };
+    vd = el::variant_of(e, sed, vname);
+    br.discs += [disc];
+    if cap != "" {
+      br.caps += [el_ex_match::AltCap { name: cap, pos: 0, vd: vd, fa: -1, ft: el_types::with_deps(elm, [src]) }];
+    }
+    for f in vfields {
+      match e.p.nodes[f] {
+        PFieldPat { name: fname, pat } => {
+          bind = fname;
+          wild = false;
+          if pat != null {
+            if e.p.nodes[pat!] is PWild {
+              wild = true;
+            } else {
+              bind = rename_of(e, pat!);
+              if bind == "" {
+                el::refuse(e, "a field pattern with a sub-pattern");
+                return null;
+              }
+            }
+          }
+          if !wild {
+            fa = if vd < 0 { -1 } else { attr_nr(el::def(e, vd), fname) };
+            if fa < 0 {
+              el::refuse(e, "a field the variant does not declare");
+              return null;
+            }
+            br.caps += [el_ex_match::AltCap { name: bind, pos: 0, vd: vd, fa: fa, ft: el::def(e, vd).attributes[fa]!.typedef[0] }];
+          }
+        },
+        _ => {}
+      }
+    }
+    branches += [br];
+  }
+  cond = alt_tag(e, at, branches[0]!.discs[0] ?? 0);
+  for bk in branches[1..] {
+    cond = el_ir::v_if(cond, ir::NdBoolean { b: true }, alt_tag(e, at, bk.discs[0] ?? 0));
+  }
+  binds: vector<ir::Node> = [];
+  seen: vector<text> = [];
+  for sb in branches {
+    for c in sb.caps {
+      if !seen.contains(c.name) {
+        seen += [c.name];
+      }
+    }
+  }
+  for nm in seen {
+    ft = ir::TyVoid;
+    in_all = true;
+    for sb in branches {
+      found = false;
+      for c in sb.caps {
+        if c.name == nm {
+          // (`@FR-P-Alt-Same`: the join of the branches' types — two integer widths join to
+          // the range holding both, `integer` beside `u8`.)
+          // (loft#2594: `alt_join` is called on the integer pair alone — a helper answering a
+          // parameter or a fresh value, called in these nested loops, freed a store twice.)
+          ft = if ft is TyInteger && c.ft is TyInteger { alt_join(ft, c.ft) } else { c.ft };
+          found = true;
+        }
+      }
+      if !found {
+        in_all = false;
+      }
+    }
+    vt = if in_all { ft } else { ir::TyOptional { inner: ft } };
+    // (The element itself, or a record field, is absent as the reference sentinel.)
+    absent = if el_types::struct_enum_def(el_types::base(vt)) >= 0 || heap_def(el_types::base(vt)) >= 0 { el_ir::cl(e, "OpNullRefSentinel", []) } else { el_convert::null_of(e, el_types::base(vt)) };
+    if absent == null {
+      el::refuse(e, "an alternation capture of this type: {type_kind(vt)}");
+      return null;
+    }
+    acc = absent!;
+    k = len(branches) - 1;
+    while k >= 0 {
+      for c in branches[k]!.caps {
+        if c.name == nm {
+          read = if c.fa < 0 { at } else { field_get(e, c.vd, c.fa, at) ?? ir::NdNull };
+          acc = el_ir::v_if(alt_tag(e, at, branches[k]!.discs[0] ?? 0), read, acc);
+        }
+      }
+      k -= 1;
+    }
+    mv = el_vars::create_unique(vars, "mv_{nm}", vt);
+    el_vars::set_defined(vars, mv);
+    if !(el_types::base(ft) is TyText) {
+      vars.vars[mv].skip_free = true;
+    }
+    binds += [el_ir::v_set(mv, acc)];
+    names += [el_vars::VarName { name: nm, nr: el_vars::var(vars, nm) }];
+    el_vars::set_name(vars, nm, mv);
+  }
+  VArm { cond: cond, binds: binds, aliases: [], alts: [], fcond: null }
+}
+
 // `elem_tag_int(read_slice_elem(…)) == d`: the element of `sv` at `pos` holds variant `d`.
 pub fn rep_tag(e: el::El, elm: ir::TypeT, sv: integer, pos: ir::Node, d: integer) -> ir::Node {
   at = el_ir::cl(e, "OpGetVector", [ir::NdVar { n: sv }, ir::NdInt { n: element_stride(e, elm) }, pos]);

@@ -3675,6 +3675,9 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
         nm = el_ex_pattern::rename_of(e, el0);
         if nm == "" && sed >= 0 && e.p.nodes[el0] is PName {
           pat = el0;
+        } else if nm == "" && el_ex_pattern::single_alt_group(e, el0) {
+          // (A single-element alternation, `[(A | B)]`: `single_alt`, at its position.)
+          pat = el0;
         } else if nm == "" {
           el::refuse(e, "a slice pattern element of this form: {syn_kind(e, el0)}");
           return null;
@@ -3705,15 +3708,22 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
   // A record element bound by name views the subject's element: it borrows what the subject does.
   named_t = if rec { el_types::with_deps(elm, [src]) } else { elm };
   binds: vector<ir::Node> = [];
+  // (A single-element alternation's captures are bound before the slice's other names.)
+  alt_binds: vector<ir::Node> = [];
   for h in head {
     at = el_ir::cl(e, "OpGetVector", [ir::NdVar { n: sv }, ir::NdInt { n: es }, if len(cur) > 0 { el_ir::cl(e, "OpAddInt", [ir::NdVar { n: cur[3]! }, ir::NdInt { n: h#index }]) } else { ir::NdInt { n: h#index } }]);
     if (head_pat[h#index] ?? -1) >= 0 {
-      va = el_ex_pattern::slice_variant(e, vars, head_pat[h#index] ?? -1, sed, slice_elem(e, elm, at), names);
+      hpn = head_pat[h#index] ?? -1;
+      va = if el_ex_pattern::single_alt_group(e, hpn) { el_ex_pattern::single_alt(e, vars, hpn, sed, elm, sv, src, if len(cur) > 0 { el_ir::cl(e, "OpAddInt", [ir::NdVar { n: cur[3]! }, ir::NdInt { n: h#index }]) } else { ir::NdInt { n: h#index } }, names) } else { el_ex_pattern::slice_variant(e, vars, hpn, sed, slice_elem(e, elm, at), names) };
       if va == null {
         return null;
       }
       cond = el_ir::v_if(cond, va!.cond ?? ir::NdBoolean { b: true }, ir::NdBoolean { b: false });
-      binds += va!.binds;
+      if el_ex_pattern::single_alt_group(e, hpn) {
+        alt_binds += va!.binds;
+      } else {
+        binds += va!.binds;
+      }
     } else if (head_blit[h#index] ?? -1) >= 0 {
       hbx = el_ex_assign::expression(e, vars, head_blit[h#index] ?? 0);
       hbe = el_ex_null::builtin_op(e, vars, "==", ex(slice_elem(e, elm, at), elm), hbx);
@@ -3726,12 +3736,17 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
   for t in tail {
     at = el_ir::cl(e, "OpGetVector", [ir::NdVar { n: sv }, ir::NdInt { n: es }, ir::NdInt { n: t#index - len(tail) }]);
     if (tail_pat[t#index] ?? -1) >= 0 {
-      va = el_ex_pattern::slice_variant(e, vars, tail_pat[t#index] ?? -1, sed, slice_elem(e, elm, at), names);
+      tpn = tail_pat[t#index] ?? -1;
+      va = if el_ex_pattern::single_alt_group(e, tpn) { el_ex_pattern::single_alt(e, vars, tpn, sed, elm, sv, src, ir::NdInt { n: t#index - len(tail) }, names) } else { el_ex_pattern::slice_variant(e, vars, tpn, sed, slice_elem(e, elm, at), names) };
       if va == null {
         return null;
       }
       cond = el_ir::v_if(cond, va!.cond ?? ir::NdBoolean { b: true }, ir::NdBoolean { b: false });
-      binds += va!.binds;
+      if el_ex_pattern::single_alt_group(e, tpn) {
+        alt_binds += va!.binds;
+      } else {
+        binds += va!.binds;
+      }
     } else if (tail_blit[t#index] ?? -1) >= 0 {
       tbx = el_ex_assign::expression(e, vars, tail_blit[t#index] ?? 0);
       tbe = el_ex_null::builtin_op(e, vars, "==", ex(slice_elem(e, elm, at), elm), tbx);
@@ -3741,6 +3756,7 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
       binds += [el_ir::v_set(bv, slice_elem(e, elm, at))];
     }
   }
+  binds = alt_binds + binds;
   // Each capture's literal is tested (`#field_sub` over a `_fp_subj_N` read of the element),
   // joined to the length test, the element bound with the rest.  (Its temp is minted after the
   // captures' variables, as Rust numbers them.)
