@@ -1279,11 +1279,18 @@ fn serve_refuses_another_sites_page() {
         "GET / HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
     ));
     let rebound = status("GET / HTTP/1.1\r\nHost: attacker.example\r\nConnection: close\r\n\r\n");
+    // A tunnel that lands on another local port names that port: refused too, which is
+    // why DEBUG.md says to forward the same number.
+    let other_port = status(&format!(
+        "GET / HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n",
+        port + 1
+    ));
     let foreign = status(&upgrade("Origin: https://attacker.example\r\n"));
     let tool = status(&upgrade(""));
     let _ = fa::remove_file(&path);
     assert_eq!(own_page, "200", "the page under its own name");
     assert_eq!(rebound, "403", "the page under a rebound name");
+    assert_eq!(other_port, "403", "the page under another port");
     assert_eq!(foreign, "403", "an upgrade from another site's page");
     assert_eq!(tool, "101", "an upgrade with no Origin");
 }
