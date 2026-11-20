@@ -150,3 +150,150 @@ fn a_number_inside_an_image_that_does_not_hold_refuses_the_load() {
     }
     let _ = fa::remove_dir_all(&dir);
 }
+
+const TREE_WRITER: &str = r#"struct R { label: text, v: integer }
+struct T { key: text, n: integer }
+struct W { name: text, by: index<R[v]>, pick: reference<R>? }
+struct Churned { by: index<R[v]>, words: index<T[key]>, pick: reference<R>? }
+
+fn main() {
+  w = W { name: "seven77" };
+  for i in 0..40 { w.by += [R { label: "r{i}", v: 100 + i }]; }
+  w.pick = w.by[117];
+  println("wrote {store_persist_copy(w, "tree.store")}");
+  // Trees that lived: removals leave free nodes and new separators, a text key a prefix.
+  c = Churned { };
+  for i in 0..600 { c.by += [R { label: "r{i}", v: (i * 7919) % 1000 }]; }
+  for i in 0..600 { if i % 3 != 0 { c.by[(i * 7919) % 1000] = null; } }
+  for i in 0..90 { c.by += [R { label: "again{i}", v: 2000 + i }]; }
+  for i in 0..300 { c.words += [T { key: "prefix/shared/key{i % 97}/{i}", n: i }]; }
+  for i in 0..300 { if i % 4 == 1 { c.words["prefix/shared/key{i % 97}/{i}"] = null; } }
+  c.pick = c.by[2005];
+  println("wrote {store_persist_copy(c, "churned.store")}");
+}
+"#;
+
+const TREE_READER: &str = r#"struct R { label: text, v: integer }
+struct T { key: text, n: integer }
+struct W { name: text, by: index<R[v]>, pick: reference<R>? }
+struct Churned { by: index<R[v]>, words: index<T[key]>, pick: reference<R>? }
+
+fn main() {
+  p = env_variable("IMG") ?? "";
+  if (env_variable("MODE") ?? "") == "churned" {
+    c = Churned { };
+    ok = store_load_untrusted(c, p);
+    n = 0; for _ in c.by { n += 1; }
+    m = 0; for _ in c.words { m += 1; }
+    println("loaded {ok} by {n} words {m} pick {c.pick.label}");
+    return;
+  }
+  l = W { name: "" };
+  ok = store_load_untrusted(l, p);
+  if !ok { println("loaded false name [{l.name}]"); return; }
+  n = 0; s = 0;
+  for r in l.by { n += 1; s += r.v; }
+  println("loaded true by[105] {l.by[105].label} walked {n} sum {s} pick {l.pick.label}");
+}
+"#;
+
+/// `@FR-S-Sound` — an index's tree and a stored reference are walked too.
+///
+/// One image holds an index of 40 records (keys 100..139: a root over four leaves) and a
+/// reference to the record under 117; a second holds two trees that went through removals,
+/// one keyed by text.  Each cell changes ONE number of the first image; the layout it is
+/// found by is `btree.rs`'s (`@FR-S-Index`): the arena's header at byte 8 of its record,
+/// node `n` at byte `8 + 296 n`, a node's count at 0, its kind at 4, its next leaf at 8, its
+/// records at 144 and its children at 208.
+///
+/// Expected, fixed in advance: both sound images load through `store_load_untrusted` on both
+/// backends — `by[105] r5 walked 40 sum 4780 pick r17` (the sum of 100..139), and
+/// `by 290 words 225 pick again5` (600 − 400 + 90, and 300 − 75) — and every changed copy
+/// is refused with a line saying which number.  Before the walk read a tree, the same copies
+/// loaded and then stopped the interpreter on a store bound, answered with other records'
+/// bytes, or never ended; a sound image holding a reference was refused, its reference still
+/// naming the slot it was written from.
+#[test]
+fn a_tree_or_a_reference_that_does_not_hold_refuses_the_load() {
+    // A directory of its own: `scratch()` empties the one the other test works in.
+    let dir = std::env::temp_dir().join(format!("loft_image_tree_{}", std::process::id()));
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir).expect("scratch");
+    fa::write(dir.join("write.loft"), TREE_WRITER).expect("writer");
+    fa::write(dir.join("read.loft"), TREE_READER).expect("reader");
+    let (wrote, err) = loft(&dir, "--interpret", "write.loft", "", "");
+    assert_eq!(wrote, "wrote true\nwrote true", "{err}");
+    let image = fa::read(dir.join("tree.store")).expect("the image");
+    let sidecar = fa::read(dir.join("tree.store.dschema")).expect("its sidecar");
+
+    // The root's payload is at byte 16: name, the index's arena record, then the reference
+    // (store, record, byte).
+    let name = u32_at(&image, 16);
+    let arena = u32_at(&image, 20) as usize;
+    let header = arena * 8 + 8;
+    let node = |n: usize, field: usize| header + n * 296 + field;
+    let root = u32_at(&image, header) as usize;
+    let first = u32_at(&image, header + 24) as usize;
+    assert_eq!(u32_at(&image, header + 4), 1, "a root over leaves");
+    assert_eq!(u32_at(&image, header + 8), 40, "forty records");
+    assert_eq!(u32_at(&image, node(root, 4)) & 0xFFFF, 0, "the root is an inner node");
+    assert_eq!(u32_at(&image, node(first, 4)) & 0xFFFF, 1, "the first leaf is a leaf");
+    let far = 0x00F0_0000u32;
+    let cells: [(&str, usize, u32); 23] = [
+        ("arena_past_the_image", 20, far),
+        ("arena_too_small", 20, name),
+        ("arena_inside_a_block", 20, arena as u32 + 1),
+        ("header_root", header, 9999),
+        ("header_height", header + 4, 1_000_000),
+        ("header_length", header + 8, 5000),
+        ("header_used", header + 12, 60_000),
+        ("header_first_leaf", header + 24, 9999),
+        ("header_last_leaf", header + 28, 9999),
+        ("root_child", node(root, 208 + 4), 9999),
+        ("root_child_is_the_root", node(root, 208 + 4), root as u32),
+        ("root_count", node(root, 0), 1000),
+        ("root_separator", node(root, 144 + 4), far),
+        ("leaf_count", node(first, 0), 1000),
+        ("leaf_record_past_the_image", node(first, 144), far),
+        ("leaf_record_inside_a_block", node(first, 144), name + 1),
+        ("leaf_next", node(first, 8), 9999),
+        ("leaf_next_is_itself", node(first, 8), first as u32),
+        ("leaf_marked_inner", node(first, 4), 0),
+        ("reference_record_past_the_image", 28, far),
+        ("reference_record_inside_a_block", 28, name + 1),
+        ("reference_byte_past_its_record", 32, 100_000),
+        ("reference_into_another_store", 24, 7),
+    ];
+    for (tag, byte, value) in cells {
+        let mut changed = image.clone();
+        changed[byte..byte + 4].copy_from_slice(&value.to_le_bytes());
+        fa::write(dir.join(format!("{tag}.store")), &changed).expect("an image");
+        fa::write(dir.join(format!("{tag}.store.dschema")), &sidecar).expect("a sidecar");
+    }
+
+    let mut backends = vec!["--interpret"];
+    if loft::platform::c_runtime_posix_host() {
+        backends.push("--native-c");
+    }
+    for backend in backends {
+        let (out, err) = loft(&dir, backend, "read.loft", "tree.store", "");
+        assert_eq!(
+            out, "loaded true by[105] r5 walked 40 sum 4780 pick r17",
+            "{backend}: a sound tree and reference load\n{err}"
+        );
+        let (out, err) = loft(&dir, backend, "read.loft", "churned.store", "churned");
+        assert_eq!(
+            out, "loaded true by 290 words 225 pick again5",
+            "{backend}: trees that went through removals load\n{err}"
+        );
+        for (tag, _, _) in cells {
+            let (out, err) = loft(&dir, backend, "read.loft", &format!("{tag}.store"), "");
+            assert_eq!(out, "loaded false name []", "{backend} {tag}: the image is refused\n{err}");
+            assert!(
+                err.contains("[cr-check]") && err.contains("store_load_untrusted: refusing"),
+                "{backend} {tag}: and the refusal says which number\n{err}"
+            );
+        }
+    }
+    let _ = fa::remove_dir_all(&dir);
+}

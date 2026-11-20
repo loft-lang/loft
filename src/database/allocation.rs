@@ -6733,11 +6733,14 @@ impl Stores {
         // `@FR-S-Sound` — a loader for a file from elsewhere asks the walk before anything
         // follows a number the image holds, the rebase below included.
         let sound = if checked
-            && !self.verify_graph_ok(&DbRef {
-                store_nr: slot,
-                rec: crate::store::PRIMARY,
-                pos: 8,
-            }) {
+            && !self.verify_image_ok(
+                &DbRef {
+                    store_nr: slot,
+                    rec: crate::store::PRIMARY,
+                    pos: 8,
+                },
+                recorded,
+            ) {
             Err("a number inside it does not hold (the lines above say which)".to_string())
         } else {
             Ok(())
@@ -7316,13 +7319,23 @@ impl Stores {
     /// (Phase 3b) *checkable*: after a `store_load*`, `store_verify(local)`
     /// proves the copy left no pointer aimed outside the store.
     pub fn verify_graph_ok(&self, r: &DbRef) -> bool {
+        self.verify_as(r, super::image_sound::Own::Live)
+    }
+
+    /// [`Self::verify_graph_ok`] for an image standing in its slot before it is adopted, its
+    /// stored references still naming the slot it was written from (`recorded`).
+    pub(super) fn verify_image_ok(&self, r: &DbRef, recorded: Option<u16>) -> bool {
+        self.verify_as(r, super::image_sound::Own::Image(recorded))
+    }
+
+    fn verify_as(&self, r: &DbRef, own: super::image_sound::Own) -> bool {
         let tp = self.allocations[r.store_nr as usize].known_type;
         if tp == u16::MAX {
             return false;
         }
         let tp = self.type_at(r, tp);
         let mut problems = 0u32;
-        self.validate_claims(r, tp, "store_verify", &mut problems);
+        self.validate_image_claims(r, tp, "store_verify", &mut problems, own);
         problems == 0
     }
 

@@ -197,11 +197,22 @@ it may place blocks differently, but it must write each kind of block the same w
                   length, a child record's and a table's size lie inside the block that holds
                   them;
                 - a text's bytes are UTF-8;
+                - an index's tree (S-Index) has the SHAPE every descent, step and insert can
+                  follow: each node number names a node of its arena, no node is reached
+                  twice, a node holds no more slots than it has, an inner node's separator is
+                  the first record below it, the leaves are chained in the order the descent
+                  finds them, the free nodes form a list, and each record a leaf names holds
+                  an element.  The ORDER of the keys is not checked: a tree that is sound
+                  here and badly sorted answers wrongly and stays inside its store;
+                - a stored reference into its own store names a record of it and a byte
+                  inside that record.  An image not yet adopted still carries the slot it was
+                  written from, which the walk reads as "this store"; a reference into any
+                  other store is not part of the file;
                 - a nest deeper than 4096 is records that name each other.
               It reads struct fields, enum values, texts, vectors, sorted vectors, child
-              records, a hash's table and entries, an array's and an ordered's elements, and
-              the record of a spatial's or a trie's tree; it does not read an index's nodes,
-              a tree's leaves or the record a stored reference names.  It runs when the
+              records, a hash's table and entries, an array's and an ordered's elements, an
+              index's nodes and records, a stored reference, and the record of a spatial's or
+              a trie's tree; it does not read that tree's nodes or leaves.  It runs when the
               program asks: store_verify answers it for a value, and the loaders for a file
               from elsewhere — store_load_untrusted and the URL loaders — ask it before
               anything else reads the image, and refuse (S-Gate's answer) when it fails.

@@ -50,6 +50,19 @@ impl std::fmt::Display for Path<'_> {
     }
 }
 
+/// What a stored reference's store number is read against.
+#[derive(Clone, Copy)]
+pub enum Own {
+    /// A value in use: a reference into its own store carries that store's number, and one
+    /// into another store is as sound as that store's number.
+    Live,
+    /// An image that is not adopted yet: its references still carry the number of the slot
+    /// it was written from, which the load re-points once the walk has passed
+    /// (`rebase_stored_refs`).  `None` is an image that records no such slot, and any
+    /// other store is not part of the file.
+    Image(Option<u16>),
+}
+
 /// A nest this deep is a ring of records naming each other, or as good as one.
 const MAX_DEPTH: u32 = 4096;
 
@@ -64,11 +77,23 @@ impl Stores {
     /// `[cr-check] <path>: …`) each number that does not hold, counting them in `problems`;
     /// the walk stops past eight.  It dereferences nothing it has not checked.
     pub fn validate_claims(&self, rec: &DbRef, tp: u16, path: &str, problems: &mut u32) {
+        self.validate_image_claims(rec, tp, path, problems, Own::Live);
+    }
+
+    /// [`Self::validate_claims`], told what a stored reference's store number means ([`Own`]).
+    pub fn validate_image_claims(
+        &self,
+        rec: &DbRef,
+        tp: u16,
+        path: &str,
+        problems: &mut u32,
+        own: Own,
+    ) {
         let root = Path {
             up: None,
             at: Seg::Root(path),
         };
-        self.claims_walk(rec, tp, &root, problems, 0);
+        self.claims_walk(rec, tp, &root, problems, 0, own);
     }
 
     /// Whether a value of `tp` holds anything the walk reads: a vector of plain numbers is
@@ -91,7 +116,16 @@ impl Stores {
     }
 
     #[expect(clippy::too_many_lines, reason = "one arm per kind of the type")]
-    fn claims_walk(&self, rec: &DbRef, tp: u16, path: &Path, problems: &mut u32, depth: u32) {
+    #[allow(clippy::too_many_arguments)] // the walk's position and what it knows of the image
+    fn claims_walk(
+        &self,
+        rec: &DbRef,
+        tp: u16,
+        path: &Path,
+        problems: &mut u32,
+        depth: u32,
+        own: Own,
+    ) {
         if *problems > 8 {
             return;
         }
@@ -155,7 +189,7 @@ impl Stores {
                 up: Some(path),
                 at: seg,
             };
-            self.claims_walk(to, tp, &next, problems, depth + 1);
+            self.claims_walk(to, tp, &next, problems, depth + 1, own);
         };
         match &self.types[tp as usize].parts {
             Parts::Base if tp == 5 => {
@@ -240,7 +274,7 @@ impl Stores {
                 if e_nr >= 0 && (e_nr as usize) < values.len() {
                     let etp = values[e_nr as usize].0;
                     if etp != u16::MAX {
-                        self.claims_walk(rec, etp, path, problems, depth + 1);
+                        self.claims_walk(rec, etp, path, problems, depth + 1, own);
                     }
                 }
             }
@@ -363,25 +397,96 @@ impl Stores {
                     bad(problems, format!("tree record {cur} is not a record"));
                 }
             }
-            // A stored 12-byte DbRef points OUT of this store, so the only thing checkable
-            // here without following it into another allocation is its store number.
+            // A stored reference: a store, a record and a place in it.  One into this store
+            // names a record of it and a place inside that record; the record itself is
+            // walked through the collection that holds it.  One into another store is
+            // checked for its store number, the only part readable from here — and an image
+            // that is not adopted yet holds none: the other store is not part of the file.
             Parts::DbRef => {
                 let sn = store.read::<u32>(rec.rec, rec.pos);
-                if sn != u32::from(u16::MAX) && sn as usize >= self.allocations.len() {
+                let to = store.read::<u32>(rec.rec, rec.pos + 4);
+                let at_byte = store.read::<u32>(rec.rec, rec.pos + 8);
+                let here = match own {
+                    Own::Image(from) => from.is_some_and(|from| sn == u32::from(from)),
+                    Own::Live => sn == u32::from(rec.store_nr),
+                };
+                if to == 0 {
+                    // A null reference, whatever its store number says.
+                } else if here {
+                    match block(store, to) {
+                        None => bad(
+                            problems,
+                            format!("stored reference names record {to}, which is not a record"),
+                        ),
+                        Some(words) if at_byte < 8 || u64::from(at_byte) >= u64::from(words) * 8 => {
+                            bad(
+                                problems,
+                                format!(
+                                    "stored reference names byte {at_byte} of record {to}, \
+                                     which holds {words} words"
+                                ),
+                            );
+                        }
+                        Some(_) => {}
+                    }
+                } else if matches!(own, Own::Image(_)) {
+                    bad(
+                        problems,
+                        format!("stored reference names store #{sn}, which is not part of the file"),
+                    );
+                } else if sn != u32::from(u16::MAX) && sn as usize >= self.allocations.len() {
                     bad(
                         problems,
                         format!("stored DbRef names store #{sn}, out of range"),
                     );
                 }
             }
-            // Deliberately nothing, and each for its own reason — not a catch-all.
-            //
-            // `Index` BORROWS its rows from the primary collection, so there is no claim of
-            // its own to check and walking into the primary's rows would report twice.
-            //
-            // The narrow-integer kinds and a non-text `Base` hold VALUES, not claims.
-            Parts::Index(_, _)
-            | Parts::Byte(_, _)
+            // An INDEX slot names the arena record its tree lives in.  The tree's shape is
+            // checked whole before a node of it is believed (`btree::sound`), and every
+            // record a leaf names is then a record that holds an element, walked as one —
+            // also where another collection of a group holds the same records, since a
+            // tree cannot say which of them it shares.
+            Parts::Index(v, _) => {
+                let cur = store.read::<u32>(rec.rec, rec.pos);
+                if cur == 0 {
+                    return;
+                }
+                let Some(words) = block(store, cur) else {
+                    bad(problems, format!("index arena {cur} is not a record"));
+                    return;
+                };
+                let rows = match crate::btree::sound(store, cur, words, &self.types[tp as usize].keys) {
+                    Ok(rows) => rows,
+                    Err(why) => {
+                        bad(problems, why);
+                        return;
+                    }
+                };
+                let need = u64::from(crate::store::RECORD_PAYLOAD) + u64::from(self.size(*v));
+                for row in rows {
+                    match block(store, row) {
+                        Some(w) if need <= u64::from(w) * 8 => {
+                            step(
+                                Seg::Entry(row),
+                                &at(row, crate::store::RECORD_PAYLOAD),
+                                *v,
+                                problems,
+                            );
+                        }
+                        Some(w) => bad(
+                            problems,
+                            format!("index record {row} holds {w} words, less than its element"),
+                        ),
+                        None => bad(problems, format!("index record {row} is not a record")),
+                    }
+                    if *problems > 8 {
+                        return;
+                    }
+                }
+            }
+            // Deliberately nothing: the narrow-integer kinds and a non-text `Base` hold
+            // VALUES, not claims.
+            Parts::Byte(_, _)
             | Parts::Short(_, _)
             | Parts::Int(_, _)
             | Parts::IntRaw(_, _)
