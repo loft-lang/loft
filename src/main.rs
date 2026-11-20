@@ -263,7 +263,7 @@ fn print_help() {
         "  --width 32                    a plain integer is 32-bit and a plain float a single, in every"
     );
     println!(
-        "                                file but the standard library (`#width 64` in a file keeps it)"
+        "                                file, the standard library too (`#width 64` in a file keeps it)"
     );
     println!(
         "  --timeout <secs>              hard-kill the process after <secs>+grace seconds (PLAN49)"
@@ -8286,7 +8286,7 @@ fn main() {
             // Env equivalent: LOFT_DENY_WARNINGS=1
             deny_warnings = true;
         } else if a == "--width" {
-            // @PLN204 — `--width 32` puts every source but the stdlib under the 32-bit regime
+            // @PLN204 — `--width 32` puts every source, the stdlib too, under the 32-bit regime
             // (a plain `integer` is an `i32`, a plain `float` a `single`), as `LOFT_WIDTH=32`
             // does; a file's own `#width 64` still keeps it out.
             let bits = argv

@@ -783,7 +783,9 @@ unchanged, since every type here is still an `Integer[a,b]`.
   (W-Regime)  each source file is under the 32-bit regime or not, decided once, before its
               first declaration: `#width 32` as its first line puts it under, `#width 64`
               keeps it out, and `LOFT_WIDTH=32` / `--width 32` puts every file under that has
-              no `#width 64` line.  The standard library is never under it.
+              no `#width 64` line — the standard library with them; a `#width 32` line in
+              a standard-library file does nothing, so it is under the regime only with
+              the whole program.
   (W-Name)    in a file under the regime, `integer` denotes Integer[i32::MIN+1, i32::MAX]
               (null is i32::MIN) and `float` denotes `single`; outside it they denote the
               64-bit types.  `i64` and `f64` denote the 64-bit types in EVERY file, and are

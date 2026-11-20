@@ -5154,7 +5154,7 @@ mod p355_large_str {
     }
 }
 
-/// @PLN204 — `LOFT_WIDTH=32` puts every source but the stdlib under the 32-bit regime, as
+/// @PLN204 — `LOFT_WIDTH=32` puts every source, the stdlib too (@PLN217), under the 32-bit regime, as
 /// if each file began with `#width 32` (a file's own `#width 64` still opts it out).  It is
 /// how a program and the libraries it uses are tried under the regime on an ordinary CPU,
 /// and how the C backend builds them for a 32-bit machine.
