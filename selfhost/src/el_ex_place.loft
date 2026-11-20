@@ -30,6 +30,7 @@ use el_ex_match;
 use el_ex_pattern;
 use el_ex_vector;
 use el_ex_copy;
+use el_ex_deliver;
 
 // `Parser::note_key_field_write`: a write to a key field through a local that views an element
 // of a keyed collection would leave the element under the wrong key, so the local stops viewing
@@ -703,6 +704,21 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
       wt = place_write(e, rd_place, if x.tp is TyNull { el_ir::cl(e, "OpConvTextFromNull", []) } else { x.code });
       if wt != null {
         return ex(wt!, ir::TyVoid);
+      }
+    }
+    // `(L-Null)` on a nullable FIELD: a struct enum's absence is tag 0 at the field
+    // (`OpSetInt4(owner, pos, 0)`); a vector's is its header `-1`, the elements released first
+    // (`OpClearVector`).  (A variant literal into such a field — built in place on Rust's first
+    // pass, apart on its second, the first's `_elm_N` left declared — is not carried.)
+    fowner = match rd_place { NdCall { args: fra } => if len(fra) == 3 { fra[0]! } else { ir::NdNull }, _ => ir::NdNull };
+    fpos = match rd_place { NdCall { args: fpa } => if len(fpa) == 3 { fpa[1]! } else { ir::NdNull }, _ => ir::NdNull };
+    if op == "=" && field_place && !(fowner is NdNull) && calls(e, rd_place, "OpGetField") {
+      fsed = el_types::struct_enum_def(pb);
+      if fsed >= 0 && x.tp is TyNull {
+        return ex(el_ir::cl(e, "OpSetInt4", [fowner, fpos, ir::NdInt { n: 0 }]), ir::TyVoid);
+      }
+      if pb is TyVector && x.tp is TyNull {
+        return ex(ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [rd_place]), el_ir::cl(e, "OpSetInt4", [fowner, fpos, ir::NdInt { n: -1 }])] }, ir::TyVoid);
       }
     }
     // A record into a vector's record element is copied into the element (`copy_ref`), whatever
@@ -4586,7 +4602,11 @@ pub fn field_vector_copy(e: el::El, vars: el_vars::Vars, r: ir::Node, d: integer
     return null;
   }
   place = el_ir::cl(e, "OpGetField", [r, ir::NdInt { n: field_position(e, d, fname) }, ir::NdInt { n: vk }]);
-  [el_ir::cl(e, "OpAppendVector", [place, x.code, ir::NdInt { n: rec }])]
+  // (A NULLABLE field takes the whole-value replace, `OpReplaceVector`: an absent source leaves
+  // it absent, as `lower_vec_copy_bind` writes a nullable destination.)
+  fna = attr_nr(el::def(e, d), fname);
+  fnull = fna >= 0 && (el::def(e, d).attributes[fna]!.typedef[0] ?? ir::TyVoid) is TyOptional;
+  [el_ir::cl(e, if fnull { "OpReplaceVector" } else { "OpAppendVector" }, [place, x.code, ir::NdInt { n: rec }])]
 }
 
 // The literal `n` written into field `fname` of the record `v` under construction (place `r`,
