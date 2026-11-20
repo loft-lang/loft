@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	7664b959f903f6c8f216f5874d7e7285a9ab5b77
 
-layer	elab	agree	1272	of	2121
+layer	elab	agree	1275	of	2121
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -507,7 +507,6 @@ elab	refused	loft-suite/rules/rewrites/R-PushFill/a-loop-pushing-to-several-vect
 elab	refused	loft-suite/rules/rewrites/R-PushFill/a-nested-comprehension-pushes-each-row-through-a-window.loft
 elab	refused	loft-suite/rules/rewrites/R-PushFill/vectors-built-side-by-side-each-push-through-a-window.loft
 elab	refused	loft-suite/rules/rewrites/R-PushRec/a-record-append-takes-its-growth-before-its-field-writes.loft
-elab	refused	loft-suite/rules/rewrites/R-Range/a-call-that-moves-its-arguments-by-a-literal-steps-them.loft
 elab	refused	loft-suite/rules/rewrites/R-RetAdopt/a-vector-built-in-the-return-buffer-is-the-vector-the-caller-reads.loft
 elab	refused	loft-suite/rules/rewrites/R-SameRead/a-slice-match-reads-its-subject-once.loft
 elab	refused	loft-suite/rules/rewrites/R-SliceInto/a-slice-appended-into-a-place-is-the-fresh-clamped-value-its-bounds-read-first.loft
@@ -827,7 +826,6 @@ elab	refused	tests/scripts/a-record-read-by-index-from-a-held-vector-is-addresse
 elab	refused	tests/scripts/a-repeated-element-fills-in-one-block.loft
 elab	refused	tests/scripts/a-slice-appended-to-a-place-is-sliced-into-it.loft
 elab	refused	tests/scripts/a-slice-handed-to-a-const-parameter-needs-no-store-of-its-own.loft
-elab	refused	tests/scripts/a-tail-recursive-small-record-function-is-a-loop.loft
 elab	refused	tests/scripts/a-text-choice-between-slices-is-a-view.loft
 elab	refused	tests/scripts/a-text-of-a-slice-reads-the-span-in-place.loft
 elab	refused	tests/scripts/a-tuple-parameter-is-declined-only-where-its-record-can-be-written.loft
@@ -835,7 +833,6 @@ elab	refused	tests/scripts/a-type-named-above-its-pub-declaration-is-published.l
 elab	refused	tests/scripts/a-value-read-and-dropped-is-built-outside-the-store.loft
 elab	refused	tests/scripts/a-variant-exit-builds-into-the-callers-buffer.loft
 elab	refused	tests/scripts/a-width32-file-keeps-its-arithmetic-in-32-bits.loft
-elab	refused	tests/scripts/a-window-walk-guards-its-bounds-once-and-calls-plain-helpers.loft
 elab	refused	tests/scripts/a-write-no-path-reads-after-is-a-lost-write.loft
 elab	refused	tests/scripts/an-append-loop-keeps-one-window.loft
 elab	refused	tests/scripts/an-append-twin-writes-through-its-callers-window.loft
@@ -856,7 +853,7 @@ elab	refused	tests/scripts/store_digest_b0.loft
 elab	refused	tests/scripts/store_load_field_refusal.loft
 elab	refused	tests/scripts/store_paged_enum_field.loft
 
-layer	elab-functions	agree	14586	of	25263
+layer	elab-functions	agree	14562	of	25234
 elab-functions	agree	lib/docs.loft::Anchor
 elab-functions	agree	lib/docs.loft::Character
 elab-functions	agree	lib/docs.loft::Double
@@ -10002,19 +9999,6 @@ elab-functions	agree	loft-suite/rules/rewrites/R-PushRec/a-record-append-takes-i
 elab-functions	agree	loft-suite/rules/rewrites/R-PushRec/a-record-append-takes-its-growth-before-its-field-writes.loft::vector<P>
 elab-functions	agree	loft-suite/rules/rewrites/R-PushRec/a-record-append-takes-its-growth-before-its-field-writes.loft::vector<Sh>
 elab-functions	agree	loft-suite/rules/rewrites/R-PushRec/a-record-append-takes-its-growth-before-its-field-writes.loft::vector<T>
-elab-functions	agree	loft-suite/rules/rewrites/R-Range/a-call-that-moves-its-arguments-by-a-literal-steps-them.loft::(schema)
-elab-functions	agree	loft-suite/rules/rewrites/R-Range/a-call-that-moves-its-arguments-by-a-literal-steps-them.loft::__tuple<integer,integer,integer>
-elab-functions	agree	loft-suite/rules/rewrites/R-Range/a-call-that-moves-its-arguments-by-a-literal-steps-them.loft::__tuple<integer,integer>
-elab-functions	agree	loft-suite/rules/rewrites/R-Range/a-call-that-moves-its-arguments-by-a-literal-steps-them.loft::__tuple<integer,integer?,integer?>
-elab-functions	agree	loft-suite/rules/rewrites/R-Range/a-call-that-moves-its-arguments-by-a-literal-steps-them.loft::n_below_top
-elab-functions	agree	loft-suite/rules/rewrites/R-Range/a-call-that-moves-its-arguments-by-a-literal-steps-them.loft::n_doubled
-elab-functions	agree	loft-suite/rules/rewrites/R-Range/a-call-that-moves-its-arguments-by-a-literal-steps-them.loft::n_main
-elab-functions	agree	loft-suite/rules/rewrites/R-Range/a-call-that-moves-its-arguments-by-a-literal-steps-them.loft::n_stale
-elab-functions	agree	loft-suite/rules/rewrites/R-Range/a-call-that-moves-its-arguments-by-a-literal-steps-them.loft::n_swap
-elab-functions	agree	loft-suite/rules/rewrites/R-Range/a-call-that-moves-its-arguments-by-a-literal-steps-them.loft::n_swapped
-elab-functions	agree	loft-suite/rules/rewrites/R-Range/a-call-that-moves-its-arguments-by-a-literal-steps-them.loft::n_twice
-elab-functions	agree	loft-suite/rules/rewrites/R-Range/a-call-that-moves-its-arguments-by-a-literal-steps-them.loft::n_up3
-elab-functions	agree	loft-suite/rules/rewrites/R-Range/a-call-that-moves-its-arguments-by-a-literal-steps-them.loft::n_walk
 elab-functions	agree	loft-suite/rules/rewrites/R-RetAdopt/a-vector-built-in-the-return-buffer-is-the-vector-the-caller-reads.loft::(schema)
 elab-functions	agree	loft-suite/rules/rewrites/R-RetAdopt/a-vector-built-in-the-return-buffer-is-the-vector-the-caller-reads.loft::Out
 elab-functions	agree	loft-suite/rules/rewrites/R-RetAdopt/a-vector-built-in-the-return-buffer-is-the-vector-the-caller-reads.loft::Pt
@@ -11378,6 +11362,7 @@ elab-functions	agree	loft-suite/rules/types/T-Chk/1682-a-null-member-in-the-firs
 elab-functions	agree	loft-suite/rules/types/T-Chk/1682-a-null-member-in-the-first-tuple-arm-does-not-pin-the-join.loft::n_different_members
 elab-functions	agree	loft-suite/rules/types/T-Chk/1682-a-null-member-in-the-first-tuple-arm-does-not-pin-the-join.loft::n_float_member
 elab-functions	agree	loft-suite/rules/types/T-Chk/1682-a-null-member-in-the-first-tuple-arm-does-not-pin-the-join.loft::n_narrow_member
+elab-functions	agree	loft-suite/rules/types/T-Chk/1682-a-null-member-in-the-first-tuple-arm-does-not-pin-the-join.loft::n_per_arm_return
 elab-functions	agree	loft-suite/rules/types/T-Chk/1682-a-null-member-in-the-first-tuple-arm-does-not-pin-the-join.loft::n_scalar_first
 elab-functions	agree	loft-suite/rules/types/T-Chk/1682-a-null-member-in-the-first-tuple-arm-does-not-pin-the-join.loft::n_second_member
 elab-functions	agree	loft-suite/rules/types/T-Chk/1682-a-null-member-in-the-first-tuple-arm-does-not-pin-the-join.loft::n_struct_member
@@ -15135,11 +15120,6 @@ elab-functions	agree	tests/scripts/a-slice-appended-to-a-place-is-sliced-into-it
 elab-functions	agree	tests/scripts/a-slice-appended-to-a-place-is-sliced-into-it.loft::vector<integer(0, 255)>
 elab-functions	agree	tests/scripts/a-slice-handed-to-a-const-parameter-needs-no-store-of-its-own.loft::n_test_eight_byte_elements
 elab-functions	agree	tests/scripts/a-slice-handed-to-a-const-parameter-needs-no-store-of-its-own.loft::n_test_nested_past_the_pool
-elab-functions	agree	tests/scripts/a-tail-recursive-small-record-function-is-a-loop.loft::(schema)
-elab-functions	agree	tests/scripts/a-tail-recursive-small-record-function-is-a-loop.loft::Scan
-elab-functions	agree	tests/scripts/a-tail-recursive-small-record-function-is-a-loop.loft::__tuple<integer,float>
-elab-functions	agree	tests/scripts/a-tail-recursive-small-record-function-is-a-loop.loft::n_count_down
-elab-functions	agree	tests/scripts/a-tail-recursive-small-record-function-is-a-loop.loft::n_main
 elab-functions	agree	tests/scripts/a-text-choice-between-slices-is-a-view.loft::n_test_slices_of_a_literal
 elab-functions	agree	tests/scripts/a-text-choice-between-slices-is-a-view.loft::n_test_slices_of_a_parameter
 elab-functions	agree	tests/scripts/a-text-choice-between-slices-is-a-view.loft::n_test_the_arm_not_taken_computes_nothing
@@ -15242,13 +15222,6 @@ elab-functions	agree	tests/scripts/a-variant-exit-builds-into-the-callers-buffer
 elab-functions	agree	tests/scripts/a-variant-exit-builds-into-the-callers-buffer.loft::n_weigh
 elab-functions	agree	tests/scripts/a-variant-exit-builds-into-the-callers-buffer.loft::vector<Hit>
 elab-functions	agree	tests/scripts/a-variant-exit-builds-into-the-callers-buffer.loft::vector<Holder>
-elab-functions	agree	tests/scripts/a-window-walk-guards-its-bounds-once-and-calls-plain-helpers.loft::(schema)
-elab-functions	agree	tests/scripts/a-window-walk-guards-its-bounds-once-and-calls-plain-helpers.loft::__tuple<integer,integer>
-elab-functions	agree	tests/scripts/a-window-walk-guards-its-bounds-once-and-calls-plain-helpers.loft::n_main
-elab-functions	agree	tests/scripts/a-window-walk-guards-its-bounds-once-and-calls-plain-helpers.loft::n_opaque
-elab-functions	agree	tests/scripts/a-window-walk-guards-its-bounds-once-and-calls-plain-helpers.loft::n_score
-elab-functions	agree	tests/scripts/a-window-walk-guards-its-bounds-once-and-calls-plain-helpers.loft::n_walk
-elab-functions	agree	tests/scripts/a-window-walk-guards-its-bounds-once-and-calls-plain-helpers.loft::n_walk_put
 elab-functions	agree	tests/scripts/a-write-no-path-reads-after-is-a-lost-write.loft::(schema)
 elab-functions	agree	tests/scripts/a-write-no-path-reads-after-is-a-lost-write.loft::Q
 elab-functions	agree	tests/scripts/a-write-no-path-reads-after-is-a-lost-write.loft::S
@@ -15444,7 +15417,7 @@ elab-functions	agree	tests/scripts/store_paged_enum_field.loft::main_vector<inte
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::n_bytes
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::vector<integer(0, 255)>
 
-layer	elab-pass1	agree	11715	of	17506
+layer	elab-pass1	agree	11719	of	17511
 elab-pass1	agree	lib/code.loft::t_4Code_add_block
 elab-pass1	agree	lib/code.loft::t_4Code_add_if
 elab-pass1	agree	lib/code.loft::t_4Code_add_loop
@@ -21783,6 +21756,7 @@ elab-pass1	agree	loft-suite/rules/rewrites/R-Range/2143-a-parameter-holds-what-i
 elab-pass1	agree	loft-suite/rules/rewrites/R-Range/2143-a-parameter-holds-what-its-caller-passed-until-the-body-assigns-it.loft::n_test_read_position
 elab-pass1	agree	loft-suite/rules/rewrites/R-Range/2143-a-parameter-holds-what-its-caller-passed-until-the-body-assigns-it.loft::n_test_through_a_link
 elab-pass1	agree	loft-suite/rules/rewrites/R-Range/2143-a-parameter-holds-what-its-caller-passed-until-the-body-assigns-it.loft::n_truth
+elab-pass1	agree	loft-suite/rules/rewrites/R-Range/a-call-that-moves-its-arguments-by-a-literal-steps-them.loft::n_nb
 elab-pass1	agree	loft-suite/rules/rewrites/R-Range/a-call-that-moves-its-arguments-by-a-literal-steps-them.loft::n_stale
 elab-pass1	agree	loft-suite/rules/rewrites/R-Range/a-call-that-moves-its-arguments-by-a-literal-steps-them.loft::n_swap
 elab-pass1	agree	loft-suite/rules/rewrites/R-Range/a-call-that-moves-its-arguments-by-a-literal-steps-them.loft::n_swapped
@@ -23232,6 +23206,7 @@ elab-pass1	agree	loft-suite/rules/types/T-Chk/1682-a-null-member-in-the-first-tu
 elab-pass1	agree	loft-suite/rules/types/T-Chk/1682-a-null-member-in-the-first-tuple-arm-does-not-pin-the-join.loft::n_different_members
 elab-pass1	agree	loft-suite/rules/types/T-Chk/1682-a-null-member-in-the-first-tuple-arm-does-not-pin-the-join.loft::n_float_member
 elab-pass1	agree	loft-suite/rules/types/T-Chk/1682-a-null-member-in-the-first-tuple-arm-does-not-pin-the-join.loft::n_narrow_member
+elab-pass1	agree	loft-suite/rules/types/T-Chk/1682-a-null-member-in-the-first-tuple-arm-does-not-pin-the-join.loft::n_per_arm_return
 elab-pass1	agree	loft-suite/rules/types/T-Chk/1682-a-null-member-in-the-first-tuple-arm-does-not-pin-the-join.loft::n_scalar_first
 elab-pass1	agree	loft-suite/rules/types/T-Chk/1682-a-null-member-in-the-first-tuple-arm-does-not-pin-the-join.loft::n_second_member
 elab-pass1	agree	loft-suite/rules/types/T-Chk/1682-a-null-member-in-the-first-tuple-arm-does-not-pin-the-join.loft::n_struct_member
@@ -26691,6 +26666,7 @@ elab-pass1	agree	tests/scripts/a-slice-handed-to-a-const-parameter-needs-no-stor
 elab-pass1	agree	tests/scripts/a-stdlib-one-op-wrapper-is-its-op.loft::n_grow
 elab-pass1	agree	tests/scripts/a-store-holds-every-hash-layout-side-by-side.loft::n_digest
 elab-pass1	agree	tests/scripts/a-store-holds-every-hash-layout-side-by-side.loft::n_main
+elab-pass1	agree	tests/scripts/a-tail-recursive-small-record-function-is-a-loop.loft::n_sum_pair
 elab-pass1	agree	tests/scripts/a-text-block-whose-tail-is-its-own-local-releases-it.loft::n_appended
 elab-pass1	agree	tests/scripts/a-text-block-whose-tail-is-its-own-local-releases-it.loft::n_arg_block
 elab-pass1	agree	tests/scripts/a-text-block-whose-tail-is-its-own-local-releases-it.loft::n_coalesce_default
@@ -26936,6 +26912,7 @@ elab-pass1	agree	tests/scripts/a-while-counter-steps-plain-below-its-bound.loft:
 elab-pass1	agree	tests/scripts/a-while-counter-steps-plain-below-its-bound.loft::n_opaque
 elab-pass1	agree	tests/scripts/a-window-walk-guards-its-bounds-once-and-calls-plain-helpers.loft::n_opaque
 elab-pass1	agree	tests/scripts/a-window-walk-guards-its-bounds-once-and-calls-plain-helpers.loft::n_score
+elab-pass1	agree	tests/scripts/a-window-walk-guards-its-bounds-once-and-calls-plain-helpers.loft::n_step
 elab-pass1	agree	tests/scripts/a-window-walk-guards-its-bounds-once-and-calls-plain-helpers.loft::n_walk_put
 elab-pass1	agree	tests/scripts/a-wrapper-placed-in-a-one-field-buffer-survives-its-clear.loft::n_c1
 elab-pass1	agree	tests/scripts/a-wrapper-placed-in-a-one-field-buffer-survives-its-clear.loft::n_c2
