@@ -793,7 +793,11 @@ unchanged, since every type here is still an `Integer[a,b]`.
               float literal the `single` type.  An integer literal outside the i32 range is
               refused, and the refusal names the `l` suffix and an `i64` binding as its cure.
               `123l` and `2.5d` are 64-bit literals in every file.  This refines (I-Lit):
-              the literal still checks at an expected width.
+              the literal still checks at an expected width — and a binary operator's
+              RIGHT operand is expected at its left operand's width when that type reaches
+              past i32 (a `u32`, an `i64`), so `c | 0xFF000000` and `c == 0xFF0000FF` on a
+              `u32` colour need no suffix.  A literal LEFT operand is read before the other
+              operand's type is known and keeps its `l`.
   (W-Op)      in a regime file an integer operation (+ - * / % << >> & | ^, a compound
               assignment, unary -) whose operands are both 32-bit — of a type whose range is
               inside i32 — is a 32-bit operation: its result has the i32 type, and a value

@@ -26,7 +26,7 @@ The standard library (`default/*.loft`) is never under the regime.
 |---|---|
 | `integer` | `i32`: 32 bits, `i32::MIN` is its null |
 | `float` | `single` |
-| `123` | an `i32` literal; a literal that does not fit is an error that names `123l` |
+| `123` | an `i32` literal; a literal that does not fit is an error that names `123l` — unless it stands where a wider type is expected: a `u32` or `i64` slot, or the right operand of an operator whose left operand is one (`c | 0xFF000000`) |
 | `2.5` | a `single` literal |
 | `i64`, `123l`, `0xFF000000l` | the 64-bit integer (`l` on a decimal, `0x`, `0b` or `0o` literal) |
 | `f64`, `2.5d` | the 64-bit float |
