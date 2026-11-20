@@ -62,7 +62,7 @@ pub fn reached_capacity(db: &DbRef, elem_size: u32, stores: &[Store]) -> u32 {
 /// Checked vector capacity — `(count * size + 15) / 8` words: the header word and the
 /// elements, rounded up to the word.  In 32 bits, as all store arithmetic is.
 #[inline]
-fn checked_vec_cap(count: u32, size: u32) -> u32 {
+pub(crate) fn checked_vec_cap(count: u32, size: u32) -> u32 {
     count
         .checked_mul(size)
         .and_then(|bytes| bytes.checked_add(15))

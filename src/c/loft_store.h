@@ -845,6 +845,8 @@ static void loft_resize_store(loft_store_t *s, uint32_t to_size) {
     uint64_t inc64 = (uint64_t) s->size * 7;
     uint32_t inc = inc64 > UINT32_MAX ? UINT32_MAX / 3 : (uint32_t) (inc64 / 3);
     uint32_t size = to_size > inc ? to_size : inc;
+    /* Where an address is 32 bits, the bytes of a store this size do not fit one. */
+    if ((uint64_t) size * 8 > (uint64_t) SIZE_MAX) { fputs("loft: store offset overflow\n", stderr); abort(); }
     /* `Store::resize_store`: a mapped store grows its file, which reads zero past the old end,
      * and is not counted against the heap ceiling — its bytes are the file's. */
     if (s->mapped) {
@@ -1198,6 +1200,9 @@ static void loft_grow_tail_for(loft_store_t *s, uint32_t rec, uint32_t next, int
 }
 
 static uint32_t loft_st_resize_inner(loft_store_t *s, uint32_t rec, uint32_t size) {
+    /* A record is at most INT32_MAX words (its header is a signed word count): a larger
+     * request read as a negative one, and "already large enough". */
+    if (size > (uint32_t) INT32_MAX) { fputs("loft: store offset overflow\n", stderr); abort(); }
     int32_t req = (int32_t) size;
     int32_t claim = loft_st_i32(s, rec, 0);
     if (claim >= req) return rec;

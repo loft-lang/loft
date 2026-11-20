@@ -2534,10 +2534,13 @@ static void loft_slice_take(const struct loft_tdesc_s *T, loft_ref *var, uint32_
 }
 
 /* `checked_vec_cap`: the header word and `count` elements of `size` bytes, in words, in 32 bits
- * (the store does no 64-bit arithmetic).  A count past what 32 bits hold answers the largest
- * size, which the store's growth refuses ("store offset overflow"). */
+ * (the store does no 64-bit arithmetic).  A count past what 32 bits hold stops the program, as
+ * `checked_vec_cap` panics: a clamped size would be a record smaller than its length says. */
 static uint32_t loft_vec_cap_words(uint32_t count, uint32_t size) {
-    if (size != 0 && count > (UINT32_MAX - 15) / size) return UINT32_MAX / 8;
+    if (size != 0 && count > (UINT32_MAX - 15) / size) {
+        fprintf(stderr, "loft: Vector capacity overflow: count=%u size=%u\n", count, size);
+        abort();
+    }
     return (count * size + 15) / 8;
 }
 
@@ -4625,8 +4628,12 @@ static void loft_vec_set_size(loft_ref v, uint32_t adding, uint32_t size) {
     loft_store_t *s = loft_store_of(v);
     uint32_t r = loft_u32(s, v.rec, v.pos);
     uint32_t len = loft_u32(s, r, 4);
+    if ((uint64_t) len + adding > UINT32_MAX) {
+        fprintf(stderr, "loft: Vector capacity overflow: count=%u+%u size=%u\n", len, adding, size);
+        abort();
+    }
     if (adding > 1) {
-        uint32_t nr = loft_st_resize(s, r, (uint32_t) (((uint64_t) (len + adding) * size + 15) / 8));
+        uint32_t nr = loft_st_resize(s, r, loft_vec_cap_words(len + adding, size));
         if (nr != r) {
             loft_set_u32(s, v.rec, v.pos, nr);
             r = nr;
