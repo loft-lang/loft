@@ -38,18 +38,18 @@ index 8af7528d6..f9226cc00 100644
              continue;
          }
 diff --git a/src/scopes/phase.rs b/src/scopes/phase.rs
-index d63ade81a..cb34a2edb 100644
+index 30e0d4949..146777538 100644
 --- a/src/scopes/phase.rs
 +++ b/src/scopes/phase.rs
-@@ -201,7 +201,6 @@ pub(super) fn run_scan_phase(
-         null_led_first: null_led_first_binds_in(orig_code, data),
-         literal_moves: literal_moves_in(orig_code, orig_vars, data),
+@@ -204,7 +204,6 @@ pub(super) fn run_scan_phase(
+         null_led_first,
+         literal_moves,
          moved_buffer: None,
 -        split_binds: HashMap::default(),
          mentions: var_mentions_in(orig_code),
          sunk: sunk.clone(),
          assigned: assigned_in(orig_code),
-@@ -668,7 +667,13 @@ pub(super) fn run_scan_phase(
+@@ -671,7 +670,13 @@ pub(super) fn run_scan_phase(
          d_nr,
          &scopes.witness_buffer,
          &scopes.minted_pairs,
@@ -64,7 +64,7 @@ index d63ade81a..cb34a2edb 100644
      );
      lazy_buffer_mints(&mut code, &mut function, data);
      function.set_capture_builds(std::mem::take(&mut scopes.capture_build_backing));
-@@ -758,32 +763,6 @@ pub(crate) fn assigned_in(node: &Value) -> HashSet<u16> {
+@@ -761,32 +766,6 @@ pub(crate) fn assigned_in(node: &Value) -> HashSet<u16> {
      out
  }
  
