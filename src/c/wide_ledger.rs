@@ -197,10 +197,12 @@ fn class_of(callee: &str) -> &'static str {
         "value"
     } else if is_wide_operator(callee) {
         "op"
-    } else if callee.starts_with("n_") || callee.starts_with("t_") {
-        "call"
-    } else {
+    } else if callee.starts_with("loft_") || callee.starts_with("LOFT_") {
         "runtime"
+    } else {
+        // The program's own: a function (`n_`, `t_`), a function value's body (`f_`), a
+        // worker (`__par_`).
+        "call"
     }
 }
 
