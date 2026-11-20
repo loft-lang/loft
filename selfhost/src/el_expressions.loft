@@ -4869,10 +4869,18 @@ pub fn finish_body(e: el::El, vars: el_vars::Vars, body: ir::Node) -> ir::Node {
       // (`work_ref_takes_preamble`): a promoted return buffer is an argument and takes none, nor
       // does one that borrows (a caller's hidden buffer and an `__ncc_` temp still do); a text
       // takes the empty text, anything else null.
+      // (`@C168`: the preamble by descending number — each entry put first — with every
+      // literal element temp `_elm_N` among them, ascending, directly after the highest entry:
+      // they are not the preamble loop's own, Rust inserts them after it.)
+      elm_ws: vector<integer> = [];
       for wr in vars.work_refs {
         wt = el_vars::tp(vars, wr);
         borrows = len(el_types::deps(wt)) > 0 && !vars.vars[wr].caller_hidden_buf && !starts_with(vars.vars[wr].name, "__ncc_");
         if vars.vars[wr].argument || vars.inline_refs.contains(wr) || borrows {
+          continue;
+        }
+        if starts_with(vars.vars[wr].name, "_elm_") {
+          elm_ws += [wr];
           continue;
         }
         init = if el_types::base(wt) is TyText { ir::NdText { s: "" } } else { ir::NdNull };
@@ -4881,6 +4889,16 @@ pub fn finish_body(e: el::El, vars: el_vars::Vars, body: ir::Node) -> ir::Node {
           ops += [op];
         }
         bl.operators = ops;
+      }
+      if len(elm_ws) > 0 {
+        elm_ws.sort();
+        first_n = len(vars.work_refs) > len(elm_ws) && len(bl.operators) > 0 && el_ir::unspan(bl.operators[0]) is NdSet;
+        eops: vector<ir::Node> = if first_n { [bl.operators[0]!] } else { [] };
+        for ew in elm_ws {
+          eops += [el_ir::v_set(ew, ir::NdNull)];
+        }
+        eops += if first_n { bl.operators[1..] } else { bl.operators };
+        bl.operators = eops;
       }
       // An inline container's buffer is nulled just before the first statement that assigns it
       // (`inline_ref_set_in`: a `Set` of it anywhere inside — a store only `OpDatabase` fills,
