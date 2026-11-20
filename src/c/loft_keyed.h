@@ -1298,6 +1298,14 @@ static void loft_vec_walk_remove(const loft_tdesc *T, uint16_t elem, int64_t *st
     if (!reverse) *state = *state - 1;
 }
 
+/* @PLN217 — the same for a walk whose index is held in 32 bits (a loop's counter under the
+ * 32-bit regime, `(W-Count)`): the index is handed over at 64 bits and taken back. */
+static void loft_vec_walk_remove32(const loft_tdesc *T, uint16_t elem, int32_t *state, loft_ref v, int reverse) {
+    int64_t wide = loft_w64(*state);
+    loft_vec_walk_remove(T, elem, &wide, v, reverse);
+    *state = loft_n32(wide);
+}
+
 /* OpRemove in a walk over an array — a vector of a linked element type (Stores::remove_vector_at's
  * linked branch): the slot is removed, then the record it named releases its claims and goes. */
 static void loft_array_walk_remove(const loft_tdesc *T, uint16_t elem, int64_t *state, loft_ref v, int reverse) {
@@ -1313,6 +1321,12 @@ static void loft_array_walk_remove(const loft_tdesc *T, uint16_t elem, int64_t *
         loft_st_delete(loft_store_of(v), rec);
     }
     if (!reverse) *state = *state - 1;
+}
+
+static void loft_array_walk_remove32(const loft_tdesc *T, uint16_t elem, int32_t *state, loft_ref v, int reverse) {
+    int64_t wide = loft_w64(*state);
+    loft_array_walk_remove(T, elem, &wide, v, reverse);
+    *state = loft_n32(wide);
 }
 
 /* OpRemove in a walk over a sorted (Stores::remove_vector_at): the element's claims released,
