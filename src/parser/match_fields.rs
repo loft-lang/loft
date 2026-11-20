@@ -7,8 +7,7 @@
 
 use super::control::{SepSpec, SliceSubject, SubruleGroup, match_arm_types_unify};
 use super::{
-    DefType, I32, Level, LexItem, Parser, Type, Value, diagnostic_format, v_block, v_if, v_loop,
-    v_set,
+    DefType, Level, LexItem, Parser, Type, Value, diagnostic_format, v_block, v_if, v_loop, v_set,
 };
 use crate::data::Deps;
 use crate::data::IntegerSpec;
@@ -1203,7 +1202,7 @@ impl Parser {
         let source_var = self.create_unique("cursor_src", &borrowed_vec_tp);
         self.vars.defined(source_var);
         self.vars.set_skip_free(source_var);
-        let pos_var = self.create_unique("cursor_pos", &I32);
+        let pos_var = self.create_unique("cursor_pos", &self.count_type());
         self.vars.defined(pos_var);
         let read_source = self.get_field(cursor_def, source_field, Value::Var(cursor_var));
         let read_pos = self.get_field(cursor_def, pos_field, Value::Var(cursor_var));
@@ -1365,15 +1364,15 @@ impl Parser {
                 .push((self.context, fn_nr, site, consuming));
         }
         self.slice_subrule = true;
-        let seg = self.create_unique("cursor_seg", &I32);
+        let seg = self.create_unique("cursor_seg", &self.count_type());
         self.vars.defined(seg);
         prechain.push(v_set(seg, Value::Int(0)));
         let start = self.conv_op(
             "+",
             Value::Var(base),
             Value::Int(k as i32),
-            I32.clone(),
-            I32.clone(),
+            self.count_type(),
+            self.count_type(),
         );
         let cursor_tp = self.vars.tp(cursor_var).clone();
         let mut call = Value::Null;
@@ -1525,7 +1524,13 @@ impl Parser {
         body.push(v_set(r, call));
         let present = self.subrule_present(fn_nr, r, ret_tp);
         let now = self.get_field(cursor_def, pos_field, Value::Var(cursor_var));
-        let moved = self.conv_op("<", Value::Var(seg), now, I32.clone(), I32.clone());
+        let moved = self.conv_op(
+            "<",
+            Value::Var(seg),
+            now,
+            self.count_type(),
+            self.count_type(),
+        );
         let taken = v_if(present, moved, Value::Boolean(false));
         // An answer that consumed nothing stops the run without reaching the copy: released
         // here as after the copy (a no-op on the null answer).  `LOFT_NO_SUBRULE_STOP_FREE=1`
@@ -1545,7 +1550,13 @@ impl Parser {
         ops.push(v_loop(body, "sub-rule run"));
         if quant == '+' {
             let taken = self.cl("OpLengthVector", &[Value::Var(xs)]);
-            ops.push(self.conv_op("<", Value::Int(0), taken, I32.clone(), I32.clone()));
+            ops.push(self.conv_op(
+                "<",
+                Value::Int(0),
+                taken,
+                self.count_type(),
+                self.count_type(),
+            ));
         } else {
             ops.push(Value::Boolean(true));
         }
@@ -1582,17 +1593,29 @@ impl Parser {
             ..
         } = *subject;
         let taken = self.cl("OpLengthVector", &[Value::Var(xs)]);
-        let some = self.conv_op("<", Value::Int(0), taken, I32.clone(), I32.clone());
+        let some = self.conv_op(
+            "<",
+            Value::Int(0),
+            taken,
+            self.count_type(),
+            self.count_type(),
+        );
         let len_c = self.cursor_len(v);
-        let room = self.conv_op("<", Value::Var(seg), len_c, I32.clone(), I32.clone());
+        let room = self.conv_op(
+            "<",
+            Value::Var(seg),
+            len_c,
+            self.count_type(),
+            self.count_type(),
+        );
         let at_sep = self.sep_match_cond(sep, v, elm_size, elm_tp, Value::Var(seg));
         let is_sep = v_if(room, at_sep, Value::Boolean(false));
         let past = self.conv_op(
             "+",
             Value::Var(seg),
             Value::Int(1),
-            I32.clone(),
-            I32.clone(),
+            self.count_type(),
+            self.count_type(),
         );
         let set_past = self.set_field(cursor_def, pos_field, 0, Value::Var(cursor_var), past);
         v_if(some, v_if(is_sep, set_past, Value::Break(0)), set_here)
@@ -1651,8 +1674,8 @@ impl Parser {
                 "+",
                 Value::Var(base),
                 Value::Int(k),
-                I32.clone(),
-                I32.clone(),
+                self.count_type(),
+                self.count_type(),
             );
             let len_call = self.cursor_len(v);
             let ispec = Type::Integer(IntegerSpec {
@@ -1730,7 +1753,7 @@ impl Parser {
         self.slice_subrule = true;
         let name_var = self.pattern_binding(name, ret_tp);
         self.vars.defined(name_var);
-        let seg = self.create_unique("cursor_seg", &I32);
+        let seg = self.create_unique("cursor_seg", &self.count_type());
         self.vars.defined(seg);
         let none = self.null_value(ret_tp);
         prechain.push(v_set(name_var, none));
@@ -1739,8 +1762,8 @@ impl Parser {
             "+",
             Value::Var(base),
             Value::Int(k as i32),
-            I32.clone(),
-            I32.clone(),
+            self.count_type(),
+            self.count_type(),
         );
         let set_pos = self.set_field(cursor_def, pos_field, 0, Value::Var(cursor_var), at);
         let cursor_tp = self.vars.tp(cursor_var).clone();

@@ -7,8 +7,7 @@
 
 use super::control::{SliceGroupKind, max_lookahead};
 use super::{
-    DefType, I32, Level, LexItem, Parser, Type, Value, diagnostic_format, v_block, v_if, v_loop,
-    v_set,
+    DefType, Level, LexItem, Parser, Type, Value, diagnostic_format, v_block, v_if, v_loop, v_set,
 };
 use crate::data::Deps;
 use std::collections::HashSet;
@@ -526,9 +525,13 @@ impl Parser {
         // `pos`, so it becomes `source[pos + i]`.  Only non-negative literal positions are offset
         // (a negative/tail read has no meaning for a prefix cursor and is rejected upstream).
         let pos = match self.match_cursor {
-            Some((_, _, _, pos_var)) if matches!(&pos, Value::Int(i) if *i >= 0) => {
-                self.conv_op("+", Value::Var(pos_var), pos, I32.clone(), I32.clone())
-            }
+            Some((_, _, _, pos_var)) if matches!(&pos, Value::Int(i) if *i >= 0) => self.conv_op(
+                "+",
+                Value::Var(pos_var),
+                pos,
+                self.count_type(),
+                self.count_type(),
+            ),
             _ => pos,
         };
         let get = self.cl("OpGetVector", &[Value::Var(v), elm_size.clone(), pos]);
@@ -667,7 +670,7 @@ impl Parser {
         // allocation that takes the machine down.
         let limit = max_lookahead();
         let append = if limit > 0 {
-            let n = self.create_unique("stream_n", &I32);
+            let n = self.create_unique("stream_n", &self.count_type());
             self.vars.defined(n);
             setup.push(v_set(n, Value::Int(0)));
             let bump = self.cl("OpAddInt", &[Value::Var(n), Value::Int(1)]);
@@ -735,10 +738,10 @@ impl Parser {
         // compile.  Starting from the owned type makes it the fresh bind it is.
         self.vars
             .set_type(rest_var, vec_tp.with_deps(&Deps::none()));
-        let lo_slot = self.create_unique("rest_lo", &I32);
-        let hi_slot = self.create_unique("rest_hi", &I32);
-        let idx = self.create_unique("rest_idx", &I32);
-        let null_idx = self.null(&I32);
+        let lo_slot = self.create_unique("rest_lo", &self.count_type());
+        let hi_slot = self.create_unique("rest_hi", &self.count_type());
+        let idx = self.create_unique("rest_idx", &self.count_type());
+        let null_idx = self.null(&self.count_type());
         let init = Value::Insert(vec![
             v_set(lo_slot, lo_val),
             v_set(hi_slot, hi_val),
@@ -753,22 +756,22 @@ impl Parser {
             "+",
             Value::Var(idx),
             Value::Int(step),
-            I32.clone(),
-            I32.clone(),
+            self.count_type(),
+            self.count_type(),
         );
-        let not_idx = self.single_op("!", Value::Var(idx), I32.clone());
+        let not_idx = self.single_op("!", Value::Var(idx), self.count_type());
         let advance = v_set(idx, v_if(not_idx, Value::Var(lo_slot), bump));
         let past_end = self.conv_op(
             "<=",
             Value::Var(hi_slot),
             Value::Var(idx),
-            I32.clone(),
-            I32.clone(),
+            self.count_type(),
+            self.count_type(),
         );
         let brk = v_if(past_end, Value::Break(0), Value::Null);
         let idx_block = v_block(
             vec![advance, brk, Value::Var(idx)],
-            I32.clone(),
+            self.count_type(),
             "Iter range",
         );
         // Element read must match the slice-subscript builder in `fields.rs`
@@ -854,10 +857,10 @@ impl Parser {
         // A fresh binding, for `materialize_named_rest`'s reason.
         self.vars
             .set_type(proj_var, proj_vec_tp.with_deps(&Deps::none()));
-        let lo_slot = self.create_unique("proj_lo", &I32);
-        let hi_slot = self.create_unique("proj_hi", &I32);
-        let idx = self.create_unique("proj_idx", &I32);
-        let null_idx = self.null(&I32);
+        let lo_slot = self.create_unique("proj_lo", &self.count_type());
+        let hi_slot = self.create_unique("proj_hi", &self.count_type());
+        let idx = self.create_unique("proj_idx", &self.count_type());
+        let null_idx = self.null(&self.count_type());
         let init = Value::Insert(vec![
             v_set(lo_slot, lo_val),
             v_set(hi_slot, hi_val),
@@ -869,22 +872,22 @@ impl Parser {
             "+",
             Value::Var(idx),
             Value::Int(step),
-            I32.clone(),
-            I32.clone(),
+            self.count_type(),
+            self.count_type(),
         );
-        let not_idx = self.single_op("!", Value::Var(idx), I32.clone());
+        let not_idx = self.single_op("!", Value::Var(idx), self.count_type());
         let advance = v_set(idx, v_if(not_idx, Value::Var(lo_slot), bump));
         let past_end = self.conv_op(
             "<=",
             Value::Var(hi_slot),
             Value::Var(idx),
-            I32.clone(),
-            I32.clone(),
+            self.count_type(),
+            self.count_type(),
         );
         let brk = v_if(past_end, Value::Break(0), Value::Null);
         let idx_block = v_block(
             vec![advance, brk, Value::Var(idx)],
-            I32.clone(),
+            self.count_type(),
             "Iter range",
         );
         // Read the enum element at `idx` the same way the head sub-pattern path does
