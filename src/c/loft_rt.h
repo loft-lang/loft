@@ -5210,6 +5210,11 @@ static float loft_f32(uint32_t bits) { float f; memcpy(&f, &bits, 4); return f; 
 static int loft_feq(double a, double b) { return (isnan(a) && isnan(b)) || (a <= b && b <= a); }
 static int loft_flt(double a, double b) { return !isnan(b) && !(a >= b); }
 static int loft_fle(double a, double b) { return isnan(a) || (!isnan(b) && a <= b); }
+/* @PLN217 — the same of two singles, compared as singles: the answers are the double forms',
+ * since a single widens to a double exactly, and no double is made on the way. */
+static int loft_feq32(float a, float b) { return (isnan(a) && isnan(b)) || (a <= b && b <= a); }
+static int loft_flt32(float a, float b) { return !isnan(b) && !(a >= b); }
+static int loft_fle32(float a, float b) { return isnan(a) || (!isnan(b) && a <= b); }
 
 /* op_conv_float_from_long: null becomes NaN. */
 static double loft_i2f(int64_t v) { return v == LOFT_NULL ? (double) NAN : (double) v; }
