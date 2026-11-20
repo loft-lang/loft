@@ -242,6 +242,21 @@ pub fn link_argument(e: el::El, vars: el_vars::Vars, arg: ir::Node, at: ir::Type
     return null;
   }
   vt = el_vars::tp(vars, v);
+  // `@FR-T-Ref-Rep` (`ref_linked_tuple_locals`): a tuple local handed to a `&(…)` parameter
+  // that links the `__tuple<…>` record is recorded on the first pass, and built as that record
+  // on the second (`ref_tuple_local_bind`), where it is linked as any record local is.
+  ltd = match el_types::base(inner) { TyReference { n: ln } => if starts_with(el::def(e, ln).name, "__tuple<") { ln } else { -1 }, _ => -1 };
+  if ltd >= 0 && el_types::base(vt) is TyTuple && !vars.vars[v].argument {
+    if e.first_pass {
+      lnm = el_vars::name_of(vars, v);
+      if len([for rl in e.ref_tuple_links if rl.d == e.context && rl.name == lnm { 1 }]) == 0 {
+        e.ref_tuple_links += [el::StepOver { d: e.context, name: lnm, site: -1 }];
+      }
+      return el_ir::cl(e, "OpCreateStack", [arg]);
+    }
+    el::refuse(e, "a tuple local handed to a `&` tuple parameter not built as its record");
+    return null;
+  }
   if vt is TyRefVar {
     // (A `&text` link is passed on as the variable itself, as every other link is.)
     if el_types::is_equal(e, vt, pt) {

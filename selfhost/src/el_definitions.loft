@@ -1286,12 +1286,20 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
         if t == null {
           return "";
         }
-        // `Parser::ref_var_type`: a `&T` parameter is a link to the caller's `T`.  A tuple's
-        // record form is not carried.
+        // `Parser::ref_var_type`: a `&T` parameter is a link to the caller's `T`.  A tuple
+        // whose every member a struct field can hold (`ref_tuple_is_record`: no `τ?`, no
+        // function, no nested tuple) is a link to its `__tuple<…>` RECORD, as a `&S` is
+        // (`@FR-T-Ref-Rep`); any other tuple is refused by name.
         if amp {
           if t! is TyTuple {
-            el::refuse(e, "a `&` parameter of a tuple");
-            return "";
+            rel = match t! { TyTuple { elems } => elems, _ => [] };
+            rok = len(rel) > 0 && len([for rm in rel if rm is TyOptional || el_types::base(rm) is TyRoutine || el_types::base(rm) is TyTuple { 1 }]) == 0;
+            rtd = if rok { el_types::tuple_def_of(e, rel) } else { -1 };
+            if rtd < 0 {
+              el::refuse(e, "a `&` parameter of a tuple");
+              return "";
+            }
+            t = ir::TyReference { n: rtd, dep: [] };
           }
           t = ir::TyRefVar { inner: t! };
         }
