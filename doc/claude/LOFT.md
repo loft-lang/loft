@@ -50,7 +50,7 @@ recorded in [LOFT-history.md](LOFT-history.md), not here.
 | `character` | A single Unicode character                       |
 | `text`      | A UTF-8 string; `len()` counts characters, `size()` bytes |
 
-A file that starts with `#width 32` (or every file but the standard library under
+A file that starts with `#width 32` (or every file, the standard library too, under
 `--width 32`) reads `integer` as `i32` and `float` as `single`, keeps arithmetic on 32-bit
 values 32-bit, and spells the 64-bit forms `i64` / `123l` and `f64` / `2.5d`:
 [WIDTH32.md](WIDTH32.md).

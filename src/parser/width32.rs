@@ -4,7 +4,7 @@
 
 //! @PLN204 — the 32-bit regime's boundary with 64-bit code.
 //!
-//! A file under the regime (`#width 32`, or every file but the stdlib under `LOFT_WIDTH=32`)
+//! A file under the regime (`#width 32`, or every file, the stdlib too, under `LOFT_WIDTH=32`)
 //! reads a plain `integer` as an `i32` and a plain `float` as a `single` (`parse_type_inner`),
 //! types its literals so (`parse_primary`), and keeps 32-bit arithmetic 32-bit
 //! (`handle_operator`).  What it still meets is a value typed by a 64-bit file: the result of a
@@ -17,7 +17,7 @@ use super::{Level, Parser, Type, Value, diagnostic_format};
 
 impl Parser {
     /// The regime of the file the lexer has just begun: under `LOFT_WIDTH=32` every source
-    /// but the stdlib, unless the file's first line is `#width 64`; elsewhere only a file
+    /// (the stdlib too), unless the file's first line is `#width 64`; elsewhere only a file
     /// whose first line is `#width 32`.  Decided once per source, so a file resumed after a
     /// `use` keeps it.  The `#width` line is consumed; any other `#` line is left in place.
     /// Enforces `@FR-W-Regime`.

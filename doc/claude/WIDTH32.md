@@ -15,10 +15,14 @@ so a program pays for 64 bits only where it asks for them.
 | How | Reach |
 |---|---|
 | `#width 32` as the first line of a file | that file |
-| `loft --width 32 …` or `LOFT_WIDTH=32` | every file except the standard library: the program and every library it uses |
+| `loft --width 32 …` or `LOFT_WIDTH=32` | every file: the program, every library it uses and the standard library |
 | `#width 64` as the first line of a file | keeps that file 64-bit under `--width 32` |
 
-The standard library (`default/*.loft`) is never under the regime.
+The standard library (`default/*.loft`) is under the regime only with the whole program: a
+`#width 32` file in a 64-bit build calls a 64-bit standard library, and its answers are narrowed
+at the call.  Its `fn Op…` declarations name machine widths (`word`, `fword`, `i32`, `single`)
+and its double functions say `f64`, so the regime changes what the library layer means and
+never which opcode an operation is.
 
 ## What changes in a 32-bit file
 

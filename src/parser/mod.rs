@@ -2630,7 +2630,8 @@ impl Parser {
     ///
     /// @PLN204 — `#width 32` puts this file under the 32-bit regime (`Data::width32`) and
     /// `#width 64` keeps it out of a whole-program `LOFT_WIDTH=32`; a file's own setting, so a
-    /// used file may say it too.  The stdlib never is.  A suspended file resumed after its
+    /// used file may say it too.  The stdlib is under it only with the whole program
+    /// (`LOFT_WIDTH=32`); a `#width 32` line of its own does nothing.  A suspended file resumed after its
     /// `use` re-enters here mid-file, so the default is only taken for a source not decided yet.
     pub(super) fn parse_file_directives(&mut self, entry: bool) {
         let src = self.data.source;
