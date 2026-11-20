@@ -1458,7 +1458,10 @@ fn unbox_tuple_element(e: el::El, vars: el_vars::Vars, x: Ex) -> Ex? {
     },
     _ => {}
   }
-  if root < 0 || len([for um in elems if !(el_convert::plain_scalar(el_types::base(um)) || el_types::base(um) is TyText) { um }]) > 0 {
+  // (A member that is itself a tuple of plain scalars and texts is read at its members'
+  // offsets inside the record, one level deep: `((OpGetInt(r, 0), OpGetText(r, 8)), …)`.)
+  flat = fn(t: ir::TypeT) -> boolean { el_convert::plain_scalar(el_types::base(t)) || el_types::base(t) is TyText };
+  if root < 0 || len([for um in elems if !(flat(um) || match el_types::base(um) { TyTuple { elems: une } => len([for un in une if !flat(un) { 1 }]) == 0, _ => false }) { um }]) > 0 {
     return null;
   }
   td = el_types::tuple_def_of(e, elems);
@@ -1473,13 +1476,34 @@ fn unbox_tuple_element(e: el::El, vars: el_vars::Vars, x: Ex) -> Ex? {
   dense = match el_ir::unspan(x.code) { NdCall { def_nr: dd, args: da } => if el::def(e, dd).name == "OpGetVectorNullable" { el_ir::cl(e, "OpGetVector", da) } else { el_ir::unspan(x.code) }, _ => x.code };
   items: vector<ir::Node> = [];
   for um2 in elems {
+    match el_types::base(um2) {
+      TyTuple { elems: ine } => {
+        itd = el_types::tuple_def_of(e, ine);
+        if itd < 0 {
+          return null;
+        }
+        base_pos = field_position(e, td, "_{um2#index}");
+        inner: vector<ir::Node> = [];
+        for im in ine {
+          rop = read_op(el_types::base(im));
+          if rop == "" {
+            return null;
+          }
+          inner += [el_ir::cl(e, rop, [ir::NdVar { n: tmp }, ir::NdInt { n: base_pos + field_position(e, itd, "_{im#index}") }])];
+        }
+        items += [ir::NdTuple { items: inner }];
+        continue;
+      },
+      _ => {}
+    }
     g = field_get(e, td, um2#index, ir::NdVar { n: tmp });
     if g == null {
       return null;
     }
     items += [g!];
   }
-  ex(el_ir::v_block([el_ir::v_set(tmp, dense), ir::NdTuple { items: items }], ir::TyTuple { elems: elems }, "tuple_unbox"), x.tp)
+  // (The block's members borrow nothing — the local keeps the read's borrows.)
+  ex(el_ir::v_block([el_ir::v_set(tmp, dense), ir::NdTuple { items: items }], ir::TyTuple { elems: [for be in elems { el_types::without_deps(be) }] }, "tuple_unbox"), x.tp)
 }
 
 fn nested_member_assign(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: integer) -> Ex? {
@@ -1768,6 +1792,16 @@ pub fn tuple_get(e: el::El, vars: el_vars::Vars, te: integer?, index: integer) -
                 om = oel[index]!;
                 return ex(ir::NdTupleGet { var: otv, idx: index }, if (om is TyOptional) { om } else { ir::TyOptional { inner: om } });
               }
+              // (A text member reads its slot as the dense tuple's does, a text borrowing the
+              // local: an absent element's member is the text null.)
+              if index >= 0 && index < len(oel) && el_types::base(oel[index]!) is TyText {
+                return ex(ir::NdTupleGet { var: otv, idx: index }, ir::TyText { dep: [otv] });
+              }
+              // (A tuple member is the member tuple, its members borrowing the local; a member of
+              // it is read through `tuple_tmp`, `τ?` there.)
+              if index >= 0 && index < len(oel) && el_types::base(oel[index]!) is TyTuple {
+                return ex(ir::NdTupleGet { var: otv, idx: index }, el_types::with_deps(el_types::base(oel[index]!), [otv]));
+              }
             },
             _ => {}
           }
@@ -1832,7 +1866,10 @@ pub fn tuple_get(e: el::El, vars: el_vars::Vars, te: integer?, index: integer) -
       // a work ref first (`tuple_tmp`).
       if el_ir::unspan(x.code) is NdTupleGet && index >= 0 && index < len(ee) && (mt is TyText || is_scalar(mt) || (el_types::base(mt) is TyReference && struct_ref(e, mt) >= 0)) {
         tw = el_vars::work_ref(vars, x.tp);
-        return ex(el_ir::v_block([el_ir::v_set(tw, x.code), ir::NdTupleGet { var: tw, idx: index }], mt, "tuple_tmp"), mt);
+        // (Through an OPTIONAL tuple local the member may be absent: `τ?`.)
+        outer_opt = match el_ir::unspan(x.code) { NdTupleGet { var: otg } => el_vars::tp(vars, otg) is TyOptional, _ => false };
+        tmt = if outer_opt && !(mt is TyOptional) { ir::TyOptional { inner: mt } } else { mt };
+        return ex(el_ir::v_block([el_ir::v_set(tw, x.code), ir::NdTupleGet { var: tw, idx: index }], tmt, "tuple_tmp"), tmt);
       }
       // A record member of an element is read where it lies, a view of the vector's local.
       rsd = struct_ref(e, mt);
