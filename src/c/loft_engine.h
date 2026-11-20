@@ -297,9 +297,30 @@ static int loft_eh_read_head(int fd, loft_text *head) {
     return 1;
 }
 
+/* `ws_handshake::foreign_origin`: an `Origin` that is anything but `http://` on a loopback name,
+ * at any port.  Any site a browser on this machine has open connects from loopback, and names
+ * itself here. */
+static int loft_eh_foreign_origin(const char *v, size_t n) {
+    static const char *const names[] = { "127.0.0.1", "localhost", "[::1]" };
+    if (n < 7 || memcmp(v, "http://", 7) != 0) return 1;
+    v += 7;
+    n -= 7;
+    size_t e = n;
+    unsigned long port = 0;
+    while (e > 0 && v[e - 1] >= '0' && v[e - 1] <= '9' && n - e < 5) e--;
+    for (size_t i = e; i < n; i++) port = port * 10 + (unsigned long) (v[i] - '0');
+    if (e > 0 && e < n && v[e - 1] == ':' && port <= 65535) n = e - 1;
+    for (size_t i = 0; i < sizeof names / sizeof *names; i++) {
+        if (strlen(names[i]) == n && memcmp(v, names[i], n) == 0) return 0;
+    }
+    return 1;
+}
+
 /* Upgrade a freshly accepted stream: read the request head (bounded), answer the handshake, the
- * cookie riding the 101 as `X-Loft-UDP` when there is one.  0 drops the connection. */
-static int loft_eh_ws_upgrade(int fd, const char *cookie) {
+ * cookie riding the 101 as `X-Loft-UDP` when there is one.  0 drops the connection;
+ * `*foreign_page` says whether the request came from a page of another site, which a game takes
+ * as a peer and the debug control channel does not: `control_only` drops it unanswered. */
+static int loft_eh_ws_upgrade(int fd, const char *cookie, int control_only, int *foreign_page) {
     loft_sock_blocking(fd, 1);
     loft_sock_timeout(fd, 500);
     loft_text head = { 0, 0, 0 };
@@ -313,8 +334,9 @@ static int loft_eh_ws_upgrade(int fd, const char *cookie) {
     } else {
         upgrade = 0;
     }
+    *foreign_page = ok && loft_http_header(&head, "origin", &v, &vn) && loft_eh_foreign_origin(v, vn);
     free(head.p);
-    if (!upgrade) return 0;
+    if (!upgrade || (control_only && *foreign_page)) return 0;
     char resp[512];
     int n = snprintf(resp, sizeof resp,
                      "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n"
@@ -492,6 +514,7 @@ typedef struct {
     loft_eh_slots slots;
     char *debug_name;  /* a debug client's registered name */
     int64_t relay_to;  /* the agent a forwarded command's reply goes to; -1 none */
+    int foreign_page;  /* the upgrade came from a page of another site */
 } loft_eh_conn;
 
 static struct {
@@ -745,7 +768,7 @@ static void loft_ehk_debug(size_t cid, const char *cmd, size_t n) {
         if (c->relay_to >= 0) loft_ehk_deliver((size_t) c->relay_to, msg, mn, 0);
         return;
     }
-    if (c->fd < 0 || !loft_eh_loopback(c->fd)) return;
+    if (c->fd < 0 || !loft_eh_loopback(c->fd) || c->foreign_page) return;
     if (n > 1 && cmd[0] == '@' && memchr(cmd, ':', n)) {
         const char *colon = (const char *) memchr(cmd, ':', n);
         const char *name = cmd + 1;
@@ -899,7 +922,8 @@ static int64_t loft_kernel_pump(void) {
         while (cid < loft_ehk.nconns && loft_ehk.conns[cid].fd >= 0) cid++;
         char cookie[17] = { 0 };
         if (loft_ehk.udp >= 0) loft_eh_cookie(cid, cookie);
-        if (!loft_eh_ws_upgrade(fd, cookie)) {
+        int foreign_page = 0;
+        if (!loft_eh_ws_upgrade(fd, cookie, 0, &foreign_page)) {
             loft_sock_close(fd);
             continue;
         }
@@ -912,6 +936,7 @@ static int64_t loft_kernel_pump(void) {
         }
         loft_eh_conn_reset(&loft_ehk.conns[cid]);
         loft_ehk.conns[cid].fd = fd;
+        loft_ehk.conns[cid].foreign_page = foreign_page;
         memcpy(loft_ehk.conns[cid].cookie, cookie, sizeof cookie);
         loft_eh_push(&loft_ehk.events, (int64_t) cid, 0, 0, "", 0);
         added++;
@@ -1151,7 +1176,9 @@ static void loft_ehc_pump_ctl(void) {
         int fd = loft_sock_accept(loft_ehc.ctl);
         if (fd < 0) break;
         loft_sock_cloexec(fd);
-        if (!loft_eh_ws_upgrade(fd, "")) {
+        /* This endpoint is the control channel alone: another site's page is not served. */
+        int foreign_page = 0;
+        if (!loft_eh_ws_upgrade(fd, "", 1, &foreign_page)) {
             loft_sock_close(fd);
             continue;
         }

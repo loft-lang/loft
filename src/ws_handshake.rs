@@ -36,6 +36,21 @@ pub fn loopback_origin(origin: &str, port: u16) -> bool {
         .is_some_and(|rest| rest.contains(':') && loopback_host(rest, port))
 }
 
+/// Whether an `Origin` is a page of another site: anything but `http://` on a loopback
+/// name, at any port.  A debug page served on one loopback port dials another, so the port
+/// is not compared here.
+#[must_use]
+pub fn foreign_origin(origin: &str) -> bool {
+    let Some(rest) = origin.trim().strip_prefix("http://") else {
+        return true;
+    };
+    let name = match rest.rsplit_once(':') {
+        Some((name, port)) if port.parse::<u16>().is_ok() => name,
+        _ => rest,
+    };
+    !matches!(name, "127.0.0.1" | "localhost" | "[::1]")
+}
+
 /// SHA-1 of `data` (RFC 3174).  Inlined rather than pulling a crate for the single
 /// handshake hash; covered by the `abc` + RFC 6455 test vectors below.  The single-letter
 /// working variables (`a`..`e`, `f`, `k`, `w`, `h`) are the algorithm's own names.
