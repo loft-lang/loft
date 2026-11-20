@@ -567,7 +567,8 @@ pub fn null_of(e: el::El, t: ir::TypeT) -> ir::Node? {
     },
     _ => {}
   }
-  if t is TyReference {
+  // (A keyed collection's null is the reference sentinel too.)
+  if t is TyReference || el_types::keyed_elem(t) >= 0 {
     d = el::def_nr(e, "OpNullRefSentinel");
     return if d < 0 { null } else { ir::NdCall { def_nr: d, args: [] } };
   }

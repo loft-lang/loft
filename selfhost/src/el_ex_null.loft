@@ -1530,6 +1530,11 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
     et = el_types::with_deps(f.tp, outside_deps(e, f.code, el_types::deps(f.tp)));
     t = ex(block_typed(tc, et), et);
     f = ex(f.code, et);
+    // DN1's literal arm (`null_arm_widens`): a keyed else beside the `{ null }` then arm joins
+    // to the collection `?`.
+    if keyed_kind(el_types::base(et)) && !(et is TyOptional) {
+      return ex(el_ir::v_if(c.code, t.code, f.code), ir::TyOptional { inner: et });
+    }
   }
   // `@FR-C-Never`: a then arm that never finishes answers nothing, so it takes the else's type
   // (`true_type = false_type`, its block re-typed).
