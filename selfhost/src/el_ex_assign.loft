@@ -1442,6 +1442,14 @@ fn tuple_member_chain_of_place(e: el::El, n: integer) -> boolean {
   }
 }
 
+// A tuple member that is a record of a plain struct (one with a known layout).
+fn plain_struct_member(e: el::El, t: ir::TypeT) -> boolean {
+  match el_types::base(t) {
+    TyReference { n: pn } => pn >= 0 && el::def(e, pn).def_type == el::DT_STRUCT,
+    _ => false
+  }
+}
+
 // `Parser::unbox_tuple_from_dbref` for an element of a vector of tuples bound to a local
 // (`y = v[1]`): the element held in a `__ref_N` borrowing the vector (never freed), each member
 // read at its field's position into the stack tuple ("tuple_unbox").  The local keeps the read's
@@ -1461,7 +1469,8 @@ fn unbox_tuple_element(e: el::El, vars: el_vars::Vars, x: Ex) -> Ex? {
   // (A member that is itself a tuple of plain scalars and texts is read at its members'
   // offsets inside the record, one level deep: `((OpGetInt(r, 0), OpGetText(r, 8)), …)`.)
   flat = fn(t: ir::TypeT) -> boolean { el_convert::plain_scalar(el_types::base(t)) || el_types::base(t) is TyText };
-  if root < 0 || len([for um in elems if !(flat(um) || match el_types::base(um) { TyTuple { elems: une } => len([for un in une if !flat(un) { 1 }]) == 0, _ => false }) { um }]) > 0 {
+  // (A plain-struct record member is copied into a `__ref_p2_N` of the bind's own, below.)
+  if root < 0 || len([for um in elems if !(flat(um) || plain_struct_member(e, um) || match el_types::base(um) { TyTuple { elems: une } => len([for un in une if !flat(un) { 1 }]) == 0, _ => false }) { um }]) > 0 {
     return null;
   }
   td = el_types::tuple_def_of(e, elems);
@@ -1504,6 +1513,15 @@ fn unbox_tuple_element(e: el::El, vars: el_vars::Vars, x: Ex) -> Ex? {
     // `@FR-B-Copy`: a text member of an element of a LOCAL vector is copied into a work text of
     // the bind's own (`tuple_member_copy`, `__work_p2_N`) — the local's member borrows that; one
     // of a parameter's vector stays a view of it.
+    if plain_struct_member(e, um2) {
+      rc = tuple_member_copy(e, vars, ex(g!, el_types::without_deps(el_types::base(um2))));
+      if rc == null {
+        return null;
+      }
+      items += [rc!.code];
+      local_tp_members[um2#index] = rc!.tp;
+      continue;
+    }
     if el_types::base(um2) is TyText && !vars.vars[root].argument {
       wt = el_vars::work_text_p2(vars);
       items += [el_ir::v_block([el_ir::v_set(wt, g!), ir::NdVar { n: wt }], ir::TyText { dep: [wt] }, "tuple_member_copy")];
@@ -1810,6 +1828,10 @@ pub fn tuple_get(e: el::El, vars: el_vars::Vars, te: integer?, index: integer) -
               }
               // (A tuple member is the member tuple, its members borrowing the local; a member of
               // it is read through `tuple_tmp`, `τ?` there.)
+              // (A record member is the record the bind copied, as the local's member type says.)
+              if index >= 0 && index < len(oel) && plain_struct_member(e, oel[index]!) {
+                return ex(ir::NdTupleGet { var: otv, idx: index }, oel[index]!);
+              }
               if index >= 0 && index < len(oel) && el_types::base(oel[index]!) is TyTuple {
                 return ex(ir::NdTupleGet { var: otv, idx: index }, el_types::with_deps(el_types::base(oel[index]!), [otv]));
               }
