@@ -29,6 +29,8 @@ fn main() {
   ssh_natives::ssh_close(bad);
   h = ssh_natives::ssh_connect("127.0.0.1", port);
   println("CONNECT {h >= 0} {h != bad}");
+  // The key the server proved it holds, known before the password goes out.
+  println("KEY {ssh_natives::ssh_host_key(h)}");
   println("LOGIN {ssh_natives::ssh_login(h, "u", "right")}");
   println("SHELL {ssh_natives::ssh_open_shell(h, "vt100", 80, 24)} {ssh_natives::ssh_is_open(h)}");
   // Bound before the interpolation: a view of a call's result inside one does not compile on
@@ -84,6 +86,6 @@ fn main() {
   ssh_natives::ssh_send(h, "after close\n");
   ssh_natives::ssh_resize(h, 1, 1);
   println("CLOSED [{ssh_natives::ssh_recv(h)}] {ssh_natives::ssh_is_open(h)} {ssh_natives::ssh_login(h, "u", "right")} {ssh_natives::ssh_open_shell(h, "vt100", 1, 1)}");
-  println("UNKNOWN [{ssh_natives::ssh_recv(99)}] {ssh_natives::ssh_is_open(-1)} {ssh_natives::ssh_login(99, "u", "right")}");
+  println("UNKNOWN [{ssh_natives::ssh_recv(99)}] {ssh_natives::ssh_is_open(-1)} {ssh_natives::ssh_login(99, "u", "right")} [{ssh_natives::ssh_host_key(99)}]");
   println("REFUSED {ssh_natives::ssh_connect("127.0.0.1", port)}");
 }

@@ -6,6 +6,9 @@
 pub fn ssh_connect(host: text, port: integer) -> integer;
 #native
 
+pub fn ssh_host_key(handle: integer) -> text;
+#native
+
 pub fn ssh_login(handle: integer, user: text, password: text) -> boolean;
 #native
 

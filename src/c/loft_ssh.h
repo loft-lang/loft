@@ -1,6 +1,7 @@
 /* ── The ssh library's natives, compiled into the `net` component (`src/c/components/net.c`) ──
  * A remote interactive shell over SSH: `ssh_connect` resolves and connects and runs the
- * transport handshake, `ssh_login` authenticates by password, `ssh_open_shell` opens a session
+ * transport handshake, `ssh_host_key` names the key the server proved it holds (to compare
+ * before the password goes out), `ssh_login` authenticates by password, `ssh_open_shell` opens a session
  * channel with a pty and a shell, and `ssh_send` / `ssh_recv` / `ssh_resize` drive it; `ssh_recv`
  * hands out what has arrived since the last call and never waits.  The protocol is
  * `tls/loft_ssh.c`'s, built into the TLS archive beside the TLS client from the same vendored
@@ -13,6 +14,7 @@
 struct loft_ssh;
 struct loft_ssh *loft_ssh_open(int fd, char *err, size_t cap);
 const char *loft_ssh_error(const struct loft_ssh *s);
+const char *loft_ssh_host_key(const struct loft_ssh *s);
 int loft_ssh_login(struct loft_ssh *s, const char *user, size_t ul, const char *pw, size_t pl);
 int loft_ssh_shell(struct loft_ssh *s, const char *term, size_t tl, uint32_t cols, uint32_t rows);
 int loft_ssh_write(struct loft_ssh *s, const void *data, size_t n);
@@ -89,6 +91,14 @@ static int64_t loft_ssh_connect(loft_str host, int64_t port) {
     }
     loft_ssh_tab[loft_ssh_n] = s;
     return (int64_t) loft_ssh_n++;
+}
+
+/* The server's host key as OpenSSH names it (`SHA256:…`), "" for an unknown handle. */
+static loft_text loft_ssh_host_key_h(int64_t h) {
+    loft_text t = { 0, 0, 0 };
+    struct loft_ssh *s = loft_ssh_at(h);
+    if (s) loft_push_cstr(&t, loft_ssh_host_key(s));
+    return t;
 }
 
 static uint8_t loft_ssh_login_h(int64_t h, loft_str user, loft_str pw) {
