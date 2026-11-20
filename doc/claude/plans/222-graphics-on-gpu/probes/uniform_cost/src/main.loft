@@ -1,0 +1,136 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Run from this package under a display:  loft --native bench/uniforms.loft
+// The first line warms the driver up (its shaders are compiled on their first draws): read the rest.
+// What one draw costs with its uniforms set by name (graphics) against
+// one block handed to the pipeline (gpu), on the same OpenGL.  Tiny triangles, so the calls and
+// not the pixels are what is timed.  Each draw changes the colour AND the depth: two uniforms.
+use graphics;
+use gpu;
+use gpu_gl;
+use gpu_vulkan;
+
+const OLD_V: text = `
+#version 330 core
+layout(location = 0) in vec3 pos;
+uniform float z;
+void main() {{ gl_Position = vec4(pos.xy, z, 1.0); }}
+`;
+const OLD_F: text = `
+#version 330 core
+uniform vec4 color;
+out vec4 frag;
+void main() {{ frag = color; }}
+`;
+const NEW_V: text = `
+#version 330 core
+layout(location = 0) in vec3 pos;
+layout(std140) uniform Block {{ vec4 color; float z; }};
+void main() {{ gl_Position = vec4(pos.xy, z, 1.0); }}
+`;
+const NEW_F: text = `
+#version 330 core
+layout(std140) uniform Block {{ vec4 color; float z; }};
+out vec4 frag;
+void main() {{ frag = color; }}
+`;
+
+// SPIR-V of NEW_V (vertex), written by gpu_vulkan/spirv.py: do not edit.
+const NEW_V_SPV: text = `AwIjBwADAQALAAgAIwAAAAAAAAARAAIAAQAAAAsABgABAAAAR0xTTC5zdGQuNDUwAAAAAA4AAwAA
+AAAAAQAAAA8ABwAAAAAABAAAAG1haW4AAAAADQAAABIAAABHAAMACwAAAAIAAABIAAUACwAAAAAA
+AAALAAAAAAAAAEgABQALAAAAAQAAAAsAAAABAAAASAAFAAsAAAACAAAACwAAAAMAAABIAAUACwAA
+AAMAAAALAAAABAAAAEcABAASAAAAHgAAAAAAAABHAAMAFgAAAAIAAABIAAUAFgAAAAAAAAAjAAAA
+AAAAAEgABQAWAAAAAQAAACMAAAAQAAAARwAEABgAAAAhAAAAAAAAAEcABAAYAAAAIgAAAAAAAAAT
+AAIAAgAAACEAAwADAAAAAgAAABYAAwAGAAAAIAAAABcABAAHAAAABgAAAAQAAAAVAAQACAAAACAA
+AAAAAAAAKwAEAAgAAAAJAAAAAQAAABwABAAKAAAABgAAAAkAAAAeAAYACwAAAAcAAAAGAAAACgAA
+AAoAAAAgAAQADAAAAAMAAAALAAAAOwAEAAwAAAANAAAAAwAAABUABAAOAAAAIAAAAAEAAAArAAQA
+DgAAAA8AAAAAAAAAFwAEABAAAAAGAAAAAwAAACAABAARAAAAAQAAABAAAAA7AAQAEQAAABIAAAAB
+AAAAFwAEABMAAAAGAAAAAgAAAB4ABAAWAAAABwAAAAYAAAAgAAQAFwAAAAIAAAAWAAAAOwAEABcA
+AAAYAAAAAgAAACsABAAOAAAAGQAAAAEAAAAgAAQAGgAAAAIAAAAGAAAAKwAEAAYAAAAdAAAAAACA
+PyAABAAhAAAAAwAAAAcAAAA2AAUAAgAAAAQAAAAAAAAAAwAAAPgAAgAFAAAAPQAEABAAAAAUAAAA
+EgAAAE8ABwATAAAAFQAAABQAAAAUAAAAAAAAAAEAAABBAAUAGgAAABsAAAAYAAAAGQAAAD0ABAAG
+AAAAHAAAABsAAABRAAUABgAAAB4AAAAVAAAAAAAAAFEABQAGAAAAHwAAABUAAAABAAAAUAAHAAcA
+AAAgAAAAHgAAAB8AAAAcAAAAHQAAAEEABQAhAAAAIgAAAA0AAAAPAAAAPgADACIAAAAgAAAA/QAB
+ADgAAQA=`;
+// SPIR-V of NEW_F (fragment), written by gpu_vulkan/spirv.py: do not edit.
+const NEW_F_SPV: text = `AwIjBwADAQALAAgAEgAAAAAAAAARAAIAAQAAAAsABgABAAAAR0xTTC5zdGQuNDUwAAAAAA4AAwAA
+AAAAAQAAAA8ABgAEAAAABAAAAG1haW4AAAAACQAAABAAAwAEAAAABwAAAEcABAAJAAAAHgAAAAAA
+AABHAAMACgAAAAIAAABIAAUACgAAAAAAAAAjAAAAAAAAAEgABQAKAAAAAQAAACMAAAAQAAAARwAE
+AAwAAAAhAAAAAAAAAEcABAAMAAAAIgAAAAAAAAATAAIAAgAAACEAAwADAAAAAgAAABYAAwAGAAAA
+IAAAABcABAAHAAAABgAAAAQAAAAgAAQACAAAAAMAAAAHAAAAOwAEAAgAAAAJAAAAAwAAAB4ABAAK
+AAAABwAAAAYAAAAgAAQACwAAAAIAAAAKAAAAOwAEAAsAAAAMAAAAAgAAABUABAANAAAAIAAAAAEA
+AAArAAQADQAAAA4AAAAAAAAAIAAEAA8AAAACAAAABwAAADYABQACAAAABAAAAAAAAAADAAAA+AAC
+AAUAAABBAAUADwAAABAAAAAMAAAADgAAAD0ABAAHAAAAEQAAABAAAAA+AAMACQAAABEAAAD9AAEA
+OAABAA==`;
+
+const W = 64;
+const H = 48;
+const FRAMES = 30;
+
+fn speck() -> vector<single> {
+  [-0.01f, -0.01f, 0.0f, 0.01f, -0.01f, 0.0f, 0.0f, 0.01f, 0.0f]
+}
+
+// Microseconds a frame, the first five frames left out.
+fn through_graphics(draws: integer) -> integer {
+  w = graphics::open_window(W, H, "old") ?? return -1;
+  s = w.shader(OLD_V, OLD_F) ?? return -1;
+  q = w.upload(speck(), 3);
+  w.disable(graphics::GL_DEPTH_TEST);
+  start = 0;
+  for f in 0..FRAMES {
+    if f == 5 { w.finish(); start = ticks(); }
+    w.clear(0xff000000);
+    for d in 0..draws {
+      c = (d % 256) as float / 255.0;
+      s.set_vec4("color", c, 1.0 - c, 0.5, 1.0);
+      s.set_float("z", c * 0.5);
+      q.draw(s);
+    }
+    w.swap();
+  }
+  w.finish();
+  (ticks() - start) / (FRAMES - 5)
+}
+
+fn through_gpu(table: i64, draws: integer, rebind: boolean, per_draw: boolean) -> integer {
+  dev = gpu::open(table, W, H, "new") ?? return -1;
+  prog = gpu::Program { vertex: [gpu::F3], instance: [], block: [gpu::F4, gpu::F1], textures: 0, sources: [gpu::source("glsl-330", NEW_V, NEW_F), gpu::source("spirv", NEW_V_SPV, NEW_F_SPV)] };
+  pipe = dev.pipeline(prog, gpu::State { depth: gpu::DEPTH_OFF }) ?? return -1;
+  q = dev.buffer(speck());
+  u = pipe.block();
+  start = 0;
+  for f in 0..FRAMES {
+    if f == 5 { _ = dev.capture(); start = ticks(); }
+    dev.begin_window(gpu::CLEAR, 0xff000000);
+    dev.bind(pipe);
+    dev.vertices(q);
+    dev.uniforms(u);
+    for d in 0..draws {
+      c = (d % 256) as float / 255.0;
+      u.f4(0, c, 1.0 - c, 0.5, 1.0);
+      u.f1(1, c * 0.5);
+      // what the layer does when it knows nothing about the draw before: name everything again
+      if rebind { dev.bind(pipe); dev.vertices(q); }
+      if per_draw { dev.uniforms(u); }
+      dev.draw(0, 3);
+    }
+    dev.end();
+    dev.present();
+  }
+  _ = dev.capture();
+  if len(dev.refusals()) > 0 { println("refusals: {dev.refusals()}"); }
+  (ticks() - start) / (FRAMES - 5)
+}
+
+fn main() {
+  for draws in [100, 100, 1000, 5000] {
+    a = through_graphics(draws);
+    b = through_gpu(gpu_gl::table(), draws, false, true);
+    c = through_gpu(gpu_gl::table(), draws, false, false);
+    d = through_gpu(gpu_vulkan::table(), draws, false, true);
+    e = through_gpu(gpu_vulkan::table(), draws, false, false);
+    println("{draws:5} draws: graphics {a:6} | gpu_gl each {b:7} shared {c:6} | gpu_vulkan each {d:7} shared {e:6}   (us a frame)");
+  }
+}
