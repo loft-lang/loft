@@ -416,7 +416,7 @@ fn param_read_only(
                         // the operation reads it — a sub-record stored as a reference
                         // (`OpSetDbRef(m, f, OpGetField(a, …))`, `Mesh { frame: &a.inner }`)
                         // is a `&` kept past the call (loft#2596).
-                        let read =crate::opt::loop_records::SCALAR_GETTERS.contains(&name)
+                        let read = crate::opt::loop_records::SCALAR_GETTERS.contains(&name)
                             || matches!(
                                 name,
                                 "OpGetField"
@@ -463,8 +463,13 @@ fn yields_sub_place(x: &Value, a: u16, get_field: u32) -> bool {
         Value::Call(op, args) if *op == get_field => {
             args.first().is_some_and(|b| rooted(b, a, get_field))
         }
-        Value::If(_, t, e) => yields_sub_place(t, a, get_field) || yields_sub_place(e, a, get_field),
-        Value::Block(b) => b.operators.last().is_some_and(|l| yields_sub_place(l, a, get_field)),
+        Value::If(_, t, e) => {
+            yields_sub_place(t, a, get_field) || yields_sub_place(e, a, get_field)
+        }
+        Value::Block(b) => b
+            .operators
+            .last()
+            .is_some_and(|l| yields_sub_place(l, a, get_field)),
         _ => false,
     }
 }
