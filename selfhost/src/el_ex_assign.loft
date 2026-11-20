@@ -790,6 +790,12 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
         // A record or a vector is shared through a pointer field of the record (`@FR-L-CapHeap`).
         // A nullable record or vector is shared the same way: the pointer may be the null one.
         // (A keyed collection the same way: its store's pointer.)
+        // A capture pass 1 cannot type yet (a struct declared below, `count = len(w.items)`):
+        // its record field is left `Unknown(0)` and retyped on pass 2 (`resolve_forward_captures`).
+        if e.first_pass && el_types::is_unknown(ct) {
+          caps += [el::Capture { name: c, tp: ir::TyUnknown { n: 0 } }];
+          continue;
+        }
         heap = record_type(e, ct) || el_types::base(ct) is TyVector || keyed_kind(el_types::base(ct));
         // A nullable plain scalar and a plain enum are captured as the value itself, as a dense
         // scalar is (`closure_attr_type`).
@@ -838,6 +844,20 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
       own_ld = el::def_nr(e, "n_{nm}");
       united = if own_ld >= 0 && el::def(e, own_ld).closure_record != el::NONE { el::def(e, own_ld).closure_record } else { -1 };
       e.closure_rec = if len(caps) > 0 && !e.first_pass { if united >= 0 { united } else { el::def_nr(e, rec_nm) } } else { -1 };
+      // `resolve_forward_captures`: a field pass 1 left `Unknown(0)` takes the capture's pass-2
+      // type, and the record is laid out here, before the body reads it (`lay_out_late`).
+      if e.closure_rec >= 0 {
+        fr = e.closure_rec;
+        for fa in el::def(e, fr).attributes {
+          if (fa.typedef[0] ?? ir::TyVoid) == ir::TyUnknown { n: 0 } {
+            fcv = el_vars::var(vars, fa.name);
+            if fcv >= 0 && !el_types::is_unknown(el_vars::tp(vars, fcv)) {
+              e.b.data.definitions[fr].attributes[fa#index].typedef = [closure_attr_type(e, el_vars::tp(vars, fcv))];
+            }
+          }
+        }
+        el_schema::lay_out_late(e, fr);
+      }
       e.closure_var = -1;
       key = el_definitions::parse_function(e, at, nm, params, ret, body, short_names: if short { names } else { [] }, hint: hint);
       e.captures = saved_caps;
