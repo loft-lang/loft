@@ -3314,7 +3314,8 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
     for fi in fields {
       match e.p.nodes[fi] {
         SFieldInit { name: fname, e: fe } => {
-          empty = match e.p.nodes[fe ?? 0] { SVecLit { items } => fe != null && len(items) == 0, _ => false };
+          // (A `null` fills nothing either: the member is marked absent.)
+          empty = match e.p.nodes[fe ?? 0] { SVecLit { items } => fe != null && len(items) == 0, SNull { at: _ } => fe != null, _ => false };
           // (A VECTOR member is filled as any vector field is — its header is zeroed with the
           // group's; a keyed member's bulk fill is not carried.)
           fa_nr = attr_nr(def, fname);
@@ -3377,6 +3378,21 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
         if at is TyOptional && el_types::base(at) is TyVector {
           if e.p.nodes[fe!] is SNull {
             list += [el_ir::cl(e, "OpSetInt4", [r, ir::NdInt { n: field_position(e, d, fname) }, ir::NdInt { n: -1 }])];
+            found += [fname];
+            continue;
+          }
+          at = el_types::base(at);
+        }
+        // A nullable KEYED field likewise: written as its dense twin, a `null` priming the header
+        // where the field stands (a group member's was primed with its group's) and marking it
+        // absent.
+        if at is TyOptional && keyed_kind(el_types::base(at)) && !(el_types::base(at) is TyVector) {
+          if e.p.nodes[fe!] is SNull {
+            kp0 = field_position(e, d, fname);
+            if !group.contains(kp0) {
+              list += [el_ir::cl(e, "OpSetInt4", [r, ir::NdInt { n: kp0 }, ir::NdInt { n: 0 }])];
+            }
+            list += [el_ir::cl(e, "OpSetInt4", [r, ir::NdInt { n: kp0 }, ir::NdInt { n: -1 }])];
             found += [fname];
             continue;
           }
