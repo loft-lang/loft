@@ -29,6 +29,7 @@ use el_ex_call;
 use el_ex_null;
 use el_ex_match;
 use el_ex_vector;
+use el_ex_deliver;
 
 // `parse_multi_element_alternation` over a vector (no cursor): the branches of the group, a `?`
 // adding the empty one, each a sequence of variants with their captures.  Whole slice, a branch's
@@ -2420,11 +2421,11 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
     }
     // `parse_item`'s variant join (`@FR-C-Var`): items that are variants of one struct enum
     // make the element that enum.
-    pe = el_expressions::variant_parent(e, in_t);
+    pe = el_ex_deliver::variant_parent(e, in_t);
     if pe >= 0 {
       for x in xs {
         // (A later item typed as the enum itself — a unit variant, a value of it — joins too.)
-        if (el_expressions::variant_parent(e, x.tp) == pe || el_types::struct_enum_def(x.tp) == pe && !(x.tp is TyOptional)) && !el_types::is_equal(e, in_t, x.tp) {
+        if (el_ex_deliver::variant_parent(e, x.tp) == pe || el_types::struct_enum_def(x.tp) == pe && !(x.tp is TyOptional)) && !el_types::is_equal(e, in_t, x.tp) {
           in_t = ir::TyEnum { n: pe, is_ref: true, dep: [] };
         }
       }
@@ -2455,7 +2456,7 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
   }
   conv: vector<Ex> = [];
   for x in xs {
-    if el_types::is_unknown(x.tp) || el_types::is_equal(e, in_t, x.tp) || (el_types::struct_enum_def(in_t) >= 0 && el_expressions::variant_parent(e, x.tp) == el_types::struct_enum_def(in_t)) {
+    if el_types::is_unknown(x.tp) || el_types::is_equal(e, in_t, x.tp) || (el_types::struct_enum_def(in_t) >= 0 && el_ex_deliver::variant_parent(e, x.tp) == el_types::struct_enum_def(in_t)) {
       conv += [x];
       continue;
     }
@@ -3223,7 +3224,7 @@ fn branch_bound_anywhere(e: el::El, n: integer, name: text, depth: integer) -> b
   if n < 0 || depth > 64 {
     return false;
   }
-  if e.p.nodes[n] is SBlock && el_expressions::branch_bound_syntax(e, n, name) {
+  if e.p.nodes[n] is SBlock && el_ex_deliver::branch_bound_syntax(e, n, name) {
     return true;
   }
   for c in el_length::children(e, n) {
