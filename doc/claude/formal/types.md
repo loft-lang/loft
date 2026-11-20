@@ -790,7 +790,10 @@ unchanged, since every type here is still an `Integer[a,b]`.
               (null is i32::MIN) and `float` denotes `single`; outside it they denote the
               64-bit types.  `i64` and `f64` denote the 64-bit types in EVERY file, and are
               the one way a regime file asks for 64 bits.  A `limit(…)` range and a narrow
-              alias (`u8`, `i16`, …) name their own range everywhere.
+              alias (`u8`, `i16`, …) name their own range everywhere.  The name means the
+              same in a CAST: `x as integer` of a float or a single in a regime file is
+              the i32 of it, null where the number does not fit one — at the cast, not
+              where its result is later stored.
   (W-Lit)     in a regime file an integer literal without a suffix has the i32 type and a
               float literal the `single` type.  An integer literal outside the i32 range is
               refused, and the refusal names the `l` suffix and an `i64` binding as its cure.

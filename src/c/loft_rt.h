@@ -90,6 +90,15 @@ typedef struct { int unused; } loft_no_jmp_buf;
 #include <float.h>
 #include <time.h>
 
+/* `isnan` of a `float` (a loft `single`, whose null is NaN): the C library's macro may widen its
+ * argument to a `double` first — newlib's does, and on a core with a single-precision FPU that
+ * is a soft-float conversion and a soft-float compare for every null test of a single (@PLN217).
+ * The compiler's own test compares the value in its own width, with the same answer. */
+#if defined(__GNUC__) || defined(__clang__)
+#undef isnan
+#define isnan(x) __builtin_isnan(x)
+#endif
+
 #define LOFT_NULL INT64_MIN
 
 #define LOFT_BOOL_NULL 255
@@ -7524,6 +7533,20 @@ static int64_t loft_f2i_at(double v, const char *file, uint32_t line) {
     int64_t r = loft_f2i(v);
     if (LOFT_UNLIKELY(r == LOFT_NULL) && !isnan(v)) loft_fault_report(LOFT_CAST_RANGE, file, line);
     return r;
+}
+
+/* @PLN217 — a single cast to an integer held in 32 bits, with no double on the way: NaN is
+ * null; a number outside an `i32` is null, and outside an `i64` it is reported first, as
+ * `loft_f2i_at` reports it; else truncated toward zero.  The answer of `loft_f2i_at` narrowed. */
+static int32_t loft_s2i32_at(float v, const char *file, uint32_t line) {
+    if (isnan(v)) return INT32_MIN;
+    if (!(v > -2147483648.0f && v < 2147483648.0f)) {
+        if (!(v >= -9223372036854775808.0f && v < 9223372036854775808.0f)) {
+            loft_fault_report(LOFT_CAST_RANGE, file, line);
+        }
+        return INT32_MIN;
+    }
+    return (int32_t) v;
 }
 
 /* An integer cast to a character that names no code point (`char::from_u32` of its low 32

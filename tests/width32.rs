@@ -615,6 +615,49 @@ fn the_32_bit_runtime_forms_answer_as_the_64_bit_ones() {
     }
 }
 
+const CAST: &str = "fn turn(a: float) -> integer { round(a / 30.0) as integer ?? -1 }
+fn big(a: float) -> integer { ((a as integer) / 1000) ?? -2 }
+fn main() {
+  println(\"{turn(95.0)} {turn(-95.0)} {big(5000000000.0)} {big(7000.0)}\");
+}
+";
+
+/// `@FR-W-Name` — the `integer` a cast names in a regime file is the `i32`, so a float that
+/// does not fit one reads null AT THE CAST: `(5000000000.0 as integer) / 1000` is null there
+/// (-2 by its `??`), where the 64-bit build divides 5000000000 and answers 5000000.  A value
+/// that fits is the same in both: 95 / 30 rounds to 3, 7000 / 1000 is 7.  Under the regime the
+/// C converts the single with no double on the way (`loft_s2i32_at`).  Both backends.
+#[test]
+fn a_cast_to_integer_is_an_i32_under_the_regime() {
+    for backend in ["--interpret", "--native-c"] {
+        let b = &backend[2..5];
+        assert_eq!(
+            run_on(backend, &format!("cast{b}32"), "", CAST, Some("32")),
+            "3 -3 -2 7\n",
+            "{backend}"
+        );
+        assert_eq!(
+            run_on(backend, &format!("cast{b}64"), "", CAST, None),
+            "3 -3 5000000 7\n",
+            "{backend}"
+        );
+    }
+    let c32 = emit_c("cast-c32", CAST, Some("32"));
+    assert!(
+        c32.contains("loft_s2i32_at("),
+        "a single converts in single precision"
+    );
+    let program = c32.rsplit("loft_tnames").next().unwrap_or("");
+    assert!(
+        !program.contains("loft_f2i_at((double)"),
+        "no double on the way: {}",
+        program
+            .lines()
+            .find(|l| l.contains("loft_f2i_at"))
+            .unwrap_or("")
+    );
+}
+
 // @PLN217 — the C runtime names a loft `integer` and a loft `float` by the build's width, and
 // the count below keeps what is not yet so from growing.  A plain `int64_t` or `double` is 64
 // bits on a 32-bit core whether the value needs them or not, and where it is added, subtracted
@@ -648,6 +691,8 @@ fn fixed_width_counts() -> BTreeMap<String, usize> {
         let text = fa::read_to_string(&path).expect("read a runtime header");
         let n = text
             .lines()
+            // A line of a block comment says what the code does; it holds no value.
+            .filter(|l| !l.trim_start().starts_with("/*") && !l.trim_start().starts_with('*'))
             .filter(|l| names_word(l, "int64_t") || names_word(l, "double"))
             .count();
         out.insert(name, n);
