@@ -371,17 +371,22 @@ pub(crate) struct JParser<'a> {
     value_end: usize,
     /// How many arrays and objects enclose the value being parsed ([`MAX_NESTING`]).
     depth: u32,
+    /// How deep this read may nest: [`MAX_NESTING`] for a document read as JSON
+    /// ([`parse_lexer`], whose recursion runs on the caller's stack), unbounded for a typed
+    /// read (`T.parse`, `Stores::read_text`), which gives a deep document a stack sized to
+    /// it so a chain of any length reads back (`@FR-F-Render-Child`, the C backend alike).
+    max_depth: u32,
 }
 
 impl<'a> JParser<'a> {
-    /// Parse an array or an object one level deeper, refusing past [`MAX_NESTING`].
+    /// Parse an array or an object one level deeper, refusing past this read's `max_depth`.
     fn nested(
         &mut self,
         at: usize,
         inner: impl FnOnce(&mut Self) -> Result<Parsed, Fault>,
     ) -> Result<Parsed, Fault> {
-        if self.depth >= MAX_NESTING {
-            return Err((format!("nested more than {MAX_NESTING} deep"), at));
+        if self.depth >= self.max_depth {
+            return Err((format!("nested more than {} deep", self.max_depth), at));
         }
         self.depth += 1;
         let parsed = inner(self);
@@ -397,6 +402,7 @@ impl<'a> JParser<'a> {
             err_path: Vec::new(),
             value_end: 0,
             depth: 0,
+            max_depth: u32::MAX,
         }
     }
 
@@ -858,6 +864,7 @@ impl<'a> JParser<'a> {
 /// `Number(f64)` until Phase 3).
 fn parse_lexer(input: &str, dialect: Dialect) -> Result<Parsed, ParseError> {
     let (mut p, at) = JParser::open(input, dialect);
+    p.max_depth = MAX_NESTING;
     let value = match p.parse_value(at) {
         Ok(v) => v,
         Err((message, byte_offset)) => {
