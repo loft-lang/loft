@@ -598,11 +598,14 @@ fn print_help() {
     println!("  --refresh                     force re-fetch the registry index");
     println!("  --offline                     use cache only; fail if anything's missing");
     println!("  --prerelease                  resolve prerelease versions too");
-    println!("  --allow-unsigned              proceed even if the index has no valid signature");
-    println!("                                (default while no trust root is embedded;");
-    println!("                                 flips after src/registry_keys.rs is populated)");
     println!(
-        "  --require-signature           refuse to proceed unless the index signature verifies"
+        "  --allow-unsigned              proceed when the index carries no signature (a mirror"
+    );
+    println!(
+        "                                you run); a signature that does not verify is refused"
+    );
+    println!(
+        "  --require-signature           refuse unless the index signature verifies (the default)"
     );
     println!("  doc [path|library] [-o dir]   generate HTML documentation for a package");
     println!("                                doc           — the package in the cwd");
@@ -8727,7 +8730,7 @@ fn main() {
             // Collect flags + positional in any order.
             #[cfg(feature = "registry")]
             let mut install_opts = loft::install::InstallOptions {
-                allow_unsigned: true,
+                allow_unsigned: false,
                 refresh: false,
                 offline: false,
                 allow_prerelease: false,
