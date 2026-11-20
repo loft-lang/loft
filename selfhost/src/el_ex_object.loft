@@ -1482,7 +1482,40 @@ pub fn call_ref(e: el::El, vars: el_vars::Vars, v: integer, args: vector<integer
     return ex(ir::NdCallRef { var: v, args: [for g in given { g.code }] }, rt);
   }
   list += push_fnref_text_buffers(e, work_vars);
-  ex(ir::NdCallRef { var: v, args: list }, rt)
+  call = ir::NdCallRef { var: v, args: list };
+  // A void call through a local holding a capturing lambda writes each BY-VALUE capture of the
+  // closure record back to its variable (`parse_call_ref`'s write-back): the caller observes
+  // what the body changed.  A shared capture (a reference with deps) is skipped.
+  cw = -1;
+  for cf in vars.clos_fn {
+    if cf == v {
+      cw = vars.clos_w[cf#index] ?? -1;
+    }
+  }
+  if rt is TyVoid && cw >= 0 {
+    crd = match el_vars::tp(vars, cw) { TyReference { n: crn } => crn, _ => -1 };
+    if crd >= 0 {
+      back: vector<ir::Node> = [call];
+      for ca in el::def(e, crd).attributes {
+        cat = ca.typedef[0] ?? ir::TyVoid;
+        if match cat { TyReference { dep: cdp } => len(cdp) > 0, _ => false } {
+          continue;
+        }
+        ov = el_vars::var(vars, ca.name);
+        if ov < 0 {
+          continue;
+        }
+        fv = field_get(e, crd, ca#index, ir::NdVar { n: cw });
+        if fv != null {
+          back += [el_ir::v_set(ov, fv!)];
+        }
+      }
+      if len(back) > 1 {
+        return ex(ir::NdInsert { items: back }, rt);
+      }
+    }
+  }
+  ex(call, rt)
 }
 
 // port: control.rs fnref_text_buffer_vars
@@ -1700,7 +1733,9 @@ pub fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?,
   }
   // A call through an ELEMENT of a vector of function values (`fs[1](4)`): the element read into
   // a `__fn_ref_tmp`, then called through it (`fn_call_tmp`), as a function-valued field is.
-  if name == "" && f != null && e.p.nodes[f!] is SIndex {
+  // (So is a call answering a function value, `pass(fn(x) { … })(2)`, `@FR-L-CapKeep`: the
+  // answer held in a `__fn_ref_tmp` that owns nothing.)
+  if name == "" && f != null && (e.p.nodes[f!] is SIndex || e.p.nodes[f!] is SCall) {
     ix = el_ex_assign::expression(e, vars, f!);
     if el_types::base(ix.tp) is TyFunction {
       iw = el_vars::create_unique(vars, "__fn_ref_tmp", el_types::with_deps(el_types::base(ix.tp), []));

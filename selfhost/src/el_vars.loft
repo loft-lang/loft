@@ -224,6 +224,11 @@ pub struct Vars {
   // (`__tp_<name>`) its name reads as from then on, pairwise
   pub promoted_params: vector<integer>,
   pub promoted_shadows: vector<integer>,
+  // `last_closure_work_var` / `closure_var_of`: the closure record the latest capturing lambda
+  // built (-1 for none), and each function-valued local's closure record, pairwise.
+  pub last_closure_w: integer = -1,
+  pub clos_fn: vector<integer>,
+  pub clos_w: vector<integer>,
   // the cast being read is the left side of a `??`, which makes a narrowing one checked
   pub dn4_coalesce: boolean = false,
   // A destructure's right-hand call may answer a BOXED tuple (`boxed_tuple_return`): its record.
