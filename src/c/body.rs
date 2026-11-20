@@ -10674,6 +10674,19 @@ impl<'a> FnWriter<'a> {
     }
 
     /// References as values: constants, whole references in fields, raw rebinds.
+    /// `@FR-H-DropOnce` — `OpDropEnter(r, tp)` / `OpDropLeave(r, tp)`, the bracket of the
+    /// outermost release of a droppable `tp`: the runtime's `loft_drop_enter` / `loft_drop_leave`.
+    fn drop_bracket(&mut self, name: &str, r: &Value, tp: &Value, ind: usize) -> Result<E, String> {
+        let tp = u16::try_from(Self::literal(tp, "type")?).map_err(|_| "a type out of range")?;
+        let r = self.expr(r, ind)?;
+        let f = if name == "OpDropEnter" {
+            "loft_drop_enter"
+        } else {
+            "loft_drop_leave"
+        };
+        Ok(E::new(format!("{f}({}, {tp})", as_ref(r)?), K::Void))
+    }
+
     fn ref_operator(&mut self, name: &str, args: &[Value], ind: usize) -> Result<E, String> {
         match (name, args) {
             ("OpConstRef", [d]) => {
@@ -10761,17 +10774,7 @@ impl<'a> FnWriter<'a> {
                     K::Void,
                 ))
             }
-            ("OpDropEnter" | "OpDropLeave", [r, tp]) => {
-                let tp =
-                    u16::try_from(Self::literal(tp, "type")?).map_err(|_| "a type out of range")?;
-                let r = self.expr(r, ind)?;
-                let f = if name == "OpDropEnter" {
-                    "loft_drop_enter"
-                } else {
-                    "loft_drop_leave"
-                };
-                Ok(E::new(format!("{f}({}, {tp})", as_ref(r)?), K::Void))
-            }
+            ("OpDropEnter" | "OpDropLeave", [r, tp]) => self.drop_bracket(name, r, tp, ind),
             ("OpStoreLive", [r]) => {
                 let r = self.expr(r, ind)?;
                 Ok(E::new(format!("loft_store_live({})", as_ref(r)?), K::Cond))
