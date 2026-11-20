@@ -460,8 +460,12 @@ fn ws_upgrade(
         .ok()?;
     let mut buf = Vec::with_capacity(1024);
     let mut byte = [0u8; 1];
+    let by = std::time::Instant::now() + MESSAGE_BUDGET;
     // Read header bytes until CRLFCRLF (unbuffered — no over-read).
     while !buf.ends_with(b"\r\n\r\n") {
+        if std::time::Instant::now() > by {
+            return None; // a head that keeps arriving a byte at a time
+        }
         match crate::net_profile::time(
             "ws_upgrade/header_read",
             Some(Duration::from_millis(500)),
@@ -510,6 +514,32 @@ fn ws_upgrade(
     Some((stream, foreign_page))
 }
 
+/// How long one message may take to arrive once its first bytes are here: the upgrade
+/// request's head, and a frame.  The socket's read timeout bounds ONE read, and the pump
+/// serves every peer from one thread — a peer that sends a byte per read would hold it for
+/// as long as it liked.
+#[cfg(not(target_arch = "wasm32"))]
+const MESSAGE_BUDGET: Duration = Duration::from_secs(5);
+
+/// `read_exact` that also ends when `by` passes: `false` on a closed socket, a read error or
+/// a timeout, or a message still arriving at `by`.
+#[cfg(not(target_arch = "wasm32"))]
+fn read_exact_by(stream: &mut impl Read, buf: &mut [u8], by: std::time::Instant) -> bool {
+    let mut got = 0;
+    while got < buf.len() {
+        if std::time::Instant::now() > by {
+            return false;
+        }
+        match stream.read(&mut buf[got..]) {
+            Ok(0) => return false,
+            Ok(n) => got += n,
+            Err(e) if e.kind() == ErrorKind::Interrupted => {}
+            Err(_) => return false,
+        }
+    }
+    true
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 enum FrameRead {
     None,
@@ -534,7 +564,8 @@ fn read_frame(stream: &mut TcpStream) -> FrameRead {
         }
         Err(_) => return FrameRead::Closed,
     }
-    if stream.read_exact(&mut hdr).is_err() {
+    let by = std::time::Instant::now() + MESSAGE_BUDGET;
+    if !read_exact_by(stream, &mut hdr, by) {
         return FrameRead::Closed;
     }
     let opcode = hdr[0] & 0x0F;
@@ -542,13 +573,13 @@ fn read_frame(stream: &mut TcpStream) -> FrameRead {
     let mut len = u64::from(hdr[1] & 0x7F);
     if len == 126 {
         let mut b = [0u8; 2];
-        if stream.read_exact(&mut b).is_err() {
+        if !read_exact_by(stream, &mut b, by) {
             return FrameRead::Closed;
         }
         len = u64::from(u16::from_be_bytes(b));
     } else if len == 127 {
         let mut b = [0u8; 8];
-        if stream.read_exact(&mut b).is_err() {
+        if !read_exact_by(stream, &mut b, by) {
             return FrameRead::Closed;
         }
         len = u64::from_be_bytes(b);
@@ -557,11 +588,11 @@ fn read_frame(stream: &mut TcpStream) -> FrameRead {
         return FrameRead::Closed; // bound a hostile length
     }
     let mut mask = [0u8; 4];
-    if masked && stream.read_exact(&mut mask).is_err() {
+    if masked && !read_exact_by(stream, &mut mask, by) {
         return FrameRead::Closed;
     }
     let mut payload = vec![0u8; usize::try_from(len).unwrap_or(0)];
-    if stream.read_exact(&mut payload).is_err() {
+    if !read_exact_by(stream, &mut payload, by) {
         return FrameRead::Closed;
     }
     if masked {
@@ -3093,5 +3124,47 @@ pub mod typed {
     }
     pub fn n_client_udp_bound(_cell: &UnsafeCell<Stores>) -> u8 {
         u8::from(with_client(|c| c.udp_bound).unwrap_or(false))
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod message_budget_tests {
+    use super::*;
+
+    /// A reader that hands out one byte per call, after a pause.
+    struct Trickle(std::time::Duration);
+
+    impl std::io::Read for Trickle {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            std::thread::sleep(self.0);
+            buf[0] = b'x';
+            Ok(1)
+        }
+    }
+
+    /// A message has a deadline of its own: fifty bytes arriving 20 ms apart take a second,
+    /// and a budget of 100 ms gives up on them, where each single read would have been well
+    /// inside any read timeout.  The same fifty bytes arriving at once are read whole.
+    #[test]
+    fn a_message_that_trickles_in_runs_out_of_budget() {
+        let mut buf = [0u8; 50];
+        let by = std::time::Instant::now() + std::time::Duration::from_millis(100);
+        let mut slow = Trickle(std::time::Duration::from_millis(20));
+        let started = std::time::Instant::now();
+        assert!(
+            !read_exact_by(&mut slow, &mut buf, by),
+            "the trickle is given up on"
+        );
+        assert!(
+            started.elapsed() < std::time::Duration::from_millis(600),
+            "and not after all fifty bytes: {:?}",
+            started.elapsed()
+        );
+        let mut all: &[u8] = &[7u8; 50];
+        let by = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        assert!(
+            read_exact_by(&mut all, &mut buf, by) && buf == [7u8; 50],
+            "bytes that are there are read"
+        );
     }
 }
