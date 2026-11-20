@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	7664b959f903f6c8f216f5874d7e7285a9ab5b77
 
-layer	elab	agree	1301	of	2121
+layer	elab	agree	1302	of	2121
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -818,7 +818,6 @@ elab	refused	tests/scripts/an-appended-source-is-built-as-often-as-the-append-ru
 elab	refused	tests/scripts/an-index-walk-steps-from-its-hint-only-while-it-holds.loft
 elab	refused	tests/scripts/an-operand-is-copied-only-when-a-later-operand-can-write-it.loft
 elab	refused	tests/scripts/link-safe-oracle.loft
-elab	refused	tests/scripts/pln105-expose-iterate.loft
 elab	refused	tests/scripts/pln125-a2c-companion.loft
 elab	refused	tests/scripts/pln133-optional-unify.loft
 elab	refused	tests/scripts/sort-places-null-first-and-keeps-equal-floats-in-order.loft
@@ -827,7 +826,7 @@ elab	refused	tests/scripts/store_compact_slack_730.loft
 elab	refused	tests/scripts/store_digest_b0.loft
 elab	refused	tests/scripts/store_paged_enum_field.loft
 
-layer	elab-functions	agree	14317	of	24744
+layer	elab-functions	agree	14314	of	24740
 elab-functions	agree	lib/docs.loft::Anchor
 elab-functions	agree	lib/docs.loft::Character
 elab-functions	agree	lib/docs.loft::Double
@@ -15056,9 +15055,6 @@ elab-functions	agree	tests/scripts/link-safe-oracle.loft::n_s1_safe
 elab-functions	agree	tests/scripts/link-safe-oracle.loft::n_s2_source_dead
 elab-functions	agree	tests/scripts/link-safe-oracle.loft::n_s3_source_reassigned
 elab-functions	agree	tests/scripts/link-safe-oracle.loft::n_s4_escape
-elab-functions	agree	tests/scripts/pln105-expose-iterate.loft::(schema)
-elab-functions	agree	tests/scripts/pln105-expose-iterate.loft::Tile
-elab-functions	agree	tests/scripts/pln105-expose-iterate.loft::n_first_over
 elab-functions	agree	tests/scripts/pln125-a2c-companion.loft::Cursor
 elab-functions	agree	tests/scripts/pln125-a2c-companion.loft::Source
 elab-functions	agree	tests/scripts/pln125-a2c-companion.loft::__iface_874#1_tag
@@ -15146,7 +15142,7 @@ elab-functions	agree	tests/scripts/store_paged_enum_field.loft::main_vector<inte
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::n_bytes
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::vector<integer(0, 255)>
 
-layer	elab-pass1	agree	11816	of	17650
+layer	elab-pass1	agree	11816	of	17651
 elab-pass1	agree	lib/code.loft::t_4Code_add_block
 elab-pass1	agree	lib/code.loft::t_4Code_add_if
 elab-pass1	agree	lib/code.loft::t_4Code_add_loop
