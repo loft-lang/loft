@@ -69,12 +69,8 @@ pub fn fetch_bundle(url: &str, sha256: &str, tmp: &Path) -> Result<PathBuf, Stri
             tmp.display()
         )
     })?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        file_access::set_permissions(tmp, std::fs::Permissions::from_mode(0o700))
-            .map_err(|e| format!("cannot make the staging directory private: {e}"))?;
-    }
+    crate::platform::set_permission_bits(tmp, 0o700)
+        .map_err(|e| format!("cannot make the staging directory private: {e}"))?;
     let extract = tmp.join("x");
     zip::ZipArchive::new(std::io::Cursor::new(&bytes[..]))
         .map_err(|e| format!("the bundle is not a readable zip: {e}"))?
