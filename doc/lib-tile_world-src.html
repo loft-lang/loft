@@ -386,7 +386,7 @@
 <span id="src-tile-world-loft-L283">}</span>
 <span id="src-tile-world-loft-L284"></span>
 <span id="src-tile-world-loft-L285"><span class="cm">/// v mod 32 in [0, 31]: the coordinate inside its chunk.</span></span>
-<span id="src-tile-world-loft-L286"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-path-helpers.html">inside</a></span>(v: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-tile-world-loft-L286"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">inside</span>(v: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
 <span id="src-tile-world-loft-L287">  v - <span class="fn-call">chunk_of</span>(v) * <span class="en">CHUNK</span></span>
 <span id="src-tile-world-loft-L288">}</span>
 <span id="src-tile-world-loft-L289"></span>
@@ -455,7 +455,7 @@
 <span id="src-tile-world-loft-L352">  <span class="fn-call">ensure_chunk</span>(w, x, y, z);</span>
 <span id="src-tile-world-loft-L353">  c = w.chunks[<span class="fn-call">chunk_of</span>(x), <span class="fn-call">chunk_of</span>(y), z];</span>
 <span id="src-tile-world-loft-L354">  v = <span class="kw">if</span> kind == <span class="en">VOID</span> { <span class="en">SET_VOID</span> } <span class="kw">else</span> { (kind &amp; <span class="nm">15</span>) * <span class="nm">4096</span> + (tile &amp; <span class="nm">4095</span>) };</span>
-<span id="src-tile-world-loft-L355">  i = <span class="fn-call"><a href="stdlib-path-helpers.html">inside</a></span>(y) * <span class="en">CHUNK</span> + <span class="fn-call"><a href="stdlib-path-helpers.html">inside</a></span>(x);</span>
+<span id="src-tile-world-loft-L355">  i = <span class="fn-call">inside</span>(y) * <span class="en">CHUNK</span> + <span class="fn-call">inside</span>(x);</span>
 <span id="src-tile-world-loft-L356">  <span class="kw">if</span> ((c.cells[i] ?? <span class="nm">0</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>) == (v &amp; <span class="nm">65535</span>) { <span class="kw">return</span>; }</span>
 <span id="src-tile-world-loft-L357">  c.cells[i] = (v &amp; <span class="nm">65535</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u16</a></span>;</span>
 <span id="src-tile-world-loft-L358">  <span class="fn-call">mark</span>(w, x, y, z);</span>
@@ -465,7 +465,7 @@
 <span id="src-tile-world-loft-L362"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call"><a href="stdlib-collections.html">clear</a></span>(w: <span class="en">World</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, z: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
 <span id="src-tile-world-loft-L363">  c = w.chunks[<span class="fn-call">chunk_of</span>(x), <span class="fn-call">chunk_of</span>(y), z];</span>
 <span id="src-tile-world-loft-L364">  <span class="kw">if</span> !c { <span class="kw">return</span>; }</span>
-<span id="src-tile-world-loft-L365">  i = <span class="fn-call"><a href="stdlib-path-helpers.html">inside</a></span>(y) * <span class="en">CHUNK</span> + <span class="fn-call"><a href="stdlib-path-helpers.html">inside</a></span>(x);</span>
+<span id="src-tile-world-loft-L365">  i = <span class="fn-call">inside</span>(y) * <span class="en">CHUNK</span> + <span class="fn-call">inside</span>(x);</span>
 <span id="src-tile-world-loft-L366">  <span class="kw">if</span> ((c.cells[i] ?? <span class="nm">0</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>) == <span class="en">UNSET</span> { <span class="kw">return</span>; }</span>
 <span id="src-tile-world-loft-L367">  c.cells[i] = <span class="en">UNSET</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u16</a></span>;</span>
 <span id="src-tile-world-loft-L368">  <span class="fn-call">mark</span>(w, x, y, z);</span>
@@ -520,7 +520,7 @@
 <span id="src-tile-world-loft-L417"><span class="kw">fn</span> <span class="fn-call">raw</span>(w: const <span class="en">World</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, z: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
 <span id="src-tile-world-loft-L418">  c = w.chunks[<span class="fn-call">chunk_of</span>(x), <span class="fn-call">chunk_of</span>(y), z];</span>
 <span id="src-tile-world-loft-L419">  <span class="kw">if</span> !c { <span class="kw">return</span> <span class="nm">0</span>; }</span>
-<span id="src-tile-world-loft-L420">  (c.cells[<span class="fn-call"><a href="stdlib-path-helpers.html">inside</a></span>(y) * <span class="en">CHUNK</span> + <span class="fn-call"><a href="stdlib-path-helpers.html">inside</a></span>(x)] ?? <span class="nm">0</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span></span>
+<span id="src-tile-world-loft-L420">  (c.cells[<span class="fn-call">inside</span>(y) * <span class="en">CHUNK</span> + <span class="fn-call">inside</span>(x)] ?? <span class="nm">0</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span></span>
 <span id="src-tile-world-loft-L421">}</span>
 <span id="src-tile-world-loft-L422"></span>
 <span id="src-tile-world-loft-L423"><span class="cm">/// A cell's terrain kind: what it was set to, or its layer's ground when it was not.</span></span>
@@ -546,7 +546,7 @@
 <span id="src-tile-world-loft-L443">  <span class="kw">if</span> !c { <span class="kw">return</span> <span class="nm">0</span>; }</span>
 <span id="src-tile-world-loft-L444">  <span class="kw">if</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(c.extra) == <span class="nm">0</span> { <span class="kw">return</span> <span class="nm">0</span>; }</span>
 <span id="src-tile-world-loft-L445">  <span class="cm">// Masked to the 31 bits a word holds (`set_word`): so it is an integer under `#width 32` too.</span></span>
-<span id="src-tile-world-loft-L446">  ((c.extra[<span class="fn-call"><a href="stdlib-path-helpers.html">inside</a></span>(y) * <span class="en">CHUNK</span> + <span class="fn-call"><a href="stdlib-path-helpers.html">inside</a></span>(x)] ?? <span class="nm">0</span>) &amp; <span class="nm">2147483647</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span></span>
+<span id="src-tile-world-loft-L446">  ((c.extra[<span class="fn-call">inside</span>(y) * <span class="en">CHUNK</span> + <span class="fn-call">inside</span>(x)] ?? <span class="nm">0</span>) &amp; <span class="nm">2147483647</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span></span>
 <span id="src-tile-world-loft-L447">}</span>
 <span id="src-tile-world-loft-L448"></span>
 <span id="src-tile-world-loft-L449"><span class="kw">fn</span> <span class="fn-call">set_word</span>(w: <span class="en">World</span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, z: <span class="ty"><a href="stdlib-types.html">integer</a></span>, v: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
@@ -554,7 +554,7 @@
 <span id="src-tile-world-loft-L451">  c = w.chunks[<span class="fn-call">chunk_of</span>(x), <span class="fn-call">chunk_of</span>(y), z];</span>
 <span id="src-tile-world-loft-L452">  <span class="kw">if</span> !c { <span class="kw">return</span>; }</span>
 <span id="src-tile-world-loft-L453">  <span class="kw">if</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(c.extra) == <span class="nm">0</span> { c.extra = [<span class="nm">0</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u32</a></span>; <span class="en">CHUNK</span> * <span class="en">CHUNK</span>]; }</span>
-<span id="src-tile-world-loft-L454">  i = <span class="fn-call"><a href="stdlib-path-helpers.html">inside</a></span>(y) * <span class="en">CHUNK</span> + <span class="fn-call"><a href="stdlib-path-helpers.html">inside</a></span>(x);</span>
+<span id="src-tile-world-loft-L454">  i = <span class="fn-call">inside</span>(y) * <span class="en">CHUNK</span> + <span class="fn-call">inside</span>(x);</span>
 <span id="src-tile-world-loft-L455">  <span class="kw">if</span> (((c.extra[i] ?? <span class="nm">0</span>) &amp; <span class="nm">2147483647</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>) == (v &amp; <span class="nm">2147483647</span>) { <span class="kw">return</span>; }</span>
 <span id="src-tile-world-loft-L456">  c.extra[i] = (v &amp; <span class="nm">2147483647</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u32</a></span>;</span>
 <span id="src-tile-world-loft-L457">  <span class="fn-call">mark</span>(w, x, y, z);</span>
@@ -669,7 +669,7 @@
 <span id="src-tile-world-loft-L566">  g = <span class="fn-call">ground</span>(w, z);</span>
 <span id="src-tile-world-loft-L567">  <span class="kw">for</span> y <span class="kw">in</span> y0..=y1 {</span>
 <span id="src-tile-world-loft-L568">    <span class="kw">for</span> x <span class="kw">in</span> x0..=x1 {</span>
-<span id="src-tile-world-loft-L569">      ix = <span class="fn-call"><a href="stdlib-path-helpers.html">inside</a></span>(y) * <span class="en">CHUNK</span> + <span class="fn-call"><a href="stdlib-path-helpers.html">inside</a></span>(x);</span>
+<span id="src-tile-world-loft-L569">      ix = <span class="fn-call">inside</span>(y) * <span class="en">CHUNK</span> + <span class="fn-call">inside</span>(x);</span>
 <span id="src-tile-world-loft-L570">      c = w.chunks[<span class="fn-call">chunk_of</span>(x), <span class="fn-call">chunk_of</span>(y), z];</span>
 <span id="src-tile-world-loft-L571">      r = <span class="en">UNSET</span>;</span>
 <span id="src-tile-world-loft-L572">      wd = <span class="nm">0</span>;</span>
@@ -1019,7 +1019,7 @@
 <span id="src-tile-world-loft-L916">    <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..</span>gw {</span>
 <span id="src-tile-world-loft-L917">      x = gx + i;</span>
 <span id="src-tile-world-loft-L918">      at = j * gw + i;</span>
-<span id="src-tile-world-loft-L919">      ix = <span class="fn-call"><a href="stdlib-path-helpers.html">inside</a></span>(y) * <span class="en">CHUNK</span> + <span class="fn-call"><a href="stdlib-path-helpers.html">inside</a></span>(x);</span>
+<span id="src-tile-world-loft-L919">      ix = <span class="fn-call">inside</span>(y) * <span class="en">CHUNK</span> + <span class="fn-call">inside</span>(x);</span>
 <span id="src-tile-world-loft-L920">      c = w.chunks[<span class="fn-call">chunk_of</span>(x), <span class="fn-call">chunk_of</span>(y), z];</span>
 <span id="src-tile-world-loft-L921">      r = <span class="en">UNSET</span>;</span>
 <span id="src-tile-world-loft-L922">      <span class="kw">if</span> c {</span>
@@ -1138,7 +1138,7 @@
 <span id="src-tile-world-loft-L1035">  <span class="fn-call">ensure_chunk</span>(w, x, y, z);</span>
 <span id="src-tile-world-loft-L1036">  c = w.chunks[<span class="fn-call">chunk_of</span>(x), <span class="fn-call">chunk_of</span>(y), z];</span>
 <span id="src-tile-world-loft-L1037">  <span class="kw">if</span> !c { <span class="kw">return</span>; }</span>
-<span id="src-tile-world-loft-L1038">  i = <span class="fn-call"><a href="stdlib-path-helpers.html">inside</a></span>(y) * <span class="en">CHUNK</span> + <span class="fn-call"><a href="stdlib-path-helpers.html">inside</a></span>(x);</span>
+<span id="src-tile-world-loft-L1038">  i = <span class="fn-call">inside</span>(y) * <span class="en">CHUNK</span> + <span class="fn-call">inside</span>(x);</span>
 <span id="src-tile-world-loft-L1039">  <span class="kw">if</span> ((c.cells[i] ?? <span class="nm">0</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>) == (r &amp; <span class="nm">65535</span>) { <span class="kw">return</span>; }</span>
 <span id="src-tile-world-loft-L1040">  c.cells[i] = (r &amp; <span class="nm">65535</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u16</a></span>;</span>
 <span id="src-tile-world-loft-L1041">  <span class="fn-call">mark</span>(w, x, y, z);</span>
@@ -2339,7 +2339,7 @@
 <span id="tests-world-loft-L43">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(tile_world::<span class="fn-call">chunk_of</span>(<span class="nm">0</span>) == <span class="nm">0</span> &amp;&amp; tile_world::<span class="fn-call">chunk_of</span>(<span class="nm">31</span>) == <span class="nm">0</span>, <span class="st">"0 and 31 in chunk 0"</span>);</span>
 <span id="tests-world-loft-L44">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(tile_world::<span class="fn-call">chunk_of</span>(<span class="nm">32</span>) == <span class="nm">1</span> &amp;&amp; tile_world::<span class="fn-call">chunk_of</span>(-<span class="nm">1</span>) == -<span class="nm">1</span>, <span class="st">"32 in 1, -1 in -1"</span>);</span>
 <span id="tests-world-loft-L45">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(tile_world::<span class="fn-call">chunk_of</span>(-<span class="nm">32</span>) == -<span class="nm">1</span> &amp;&amp; tile_world::<span class="fn-call">chunk_of</span>(-<span class="nm">33</span>) == -<span class="nm">2</span>, <span class="st">"-32 in -1, -33 in -2"</span>);</span>
-<span id="tests-world-loft-L46">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(tile_world::<span class="fn-call"><a href="stdlib-path-helpers.html">inside</a></span>(-<span class="nm">1</span>) == <span class="nm">31</span> &amp;&amp; tile_world::<span class="fn-call"><a href="stdlib-path-helpers.html">inside</a></span>(-<span class="nm">33</span>) == <span class="nm">31</span> &amp;&amp; tile_world::<span class="fn-call"><a href="stdlib-path-helpers.html">inside</a></span>(<span class="nm">33</span>) == <span class="nm">1</span>,</span>
+<span id="tests-world-loft-L46">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(tile_world::<span class="fn-call">inside</span>(-<span class="nm">1</span>) == <span class="nm">31</span> &amp;&amp; tile_world::<span class="fn-call">inside</span>(-<span class="nm">33</span>) == <span class="nm">31</span> &amp;&amp; tile_world::<span class="fn-call">inside</span>(<span class="nm">33</span>) == <span class="nm">1</span>,</span>
 <span id="tests-world-loft-L47">         <span class="st">"slots 31, 31, 1"</span>);</span>
 <span id="tests-world-loft-L48">}</span>
 <span id="tests-world-loft-L49"></span>

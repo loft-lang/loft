@@ -269,7 +269,7 @@ const SEARCH_INDEX=[
 {name:"store_memory",kind:"fn",url:"stdlib-memory-diagnostics.html"},
 {name:"starts_with",kind:"fn",url:"stdlib-path-helpers.html"},
 {name:"ends_with",kind:"fn",url:"stdlib-path-helpers.html"},
-{name:"inside",kind:"fn",url:"stdlib-path-helpers.html"},
+{name:"path_inside",kind:"fn",url:"stdlib-path-helpers.html"},
 {name:"dir",kind:"fn",url:"stdlib-path-helpers.html"},
 {name:"basename",kind:"fn",url:"stdlib-path-helpers.html"},
 {name:"join",kind:"fn",url:"stdlib-path-helpers.html"},

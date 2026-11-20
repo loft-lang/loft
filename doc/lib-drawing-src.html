@@ -23,8 +23,8 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <a href="https://loft-lang.org/blog/">Blog</a> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>drawing source</h1>
 <article>
-<p><a href="lib-drawing.html">← drawing</a> · <a href="lib-drawing-api.html">API reference</a> · version 0.5.2</p>
-<p class="lib-legend">11 file(s), 3718 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<p><a href="lib-drawing.html">← drawing</a> · <a href="lib-drawing-api.html">API reference</a> · version 0.5.3</p>
+<p class="lib-legend">11 file(s), 3727 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
 <table class="lib-table">
@@ -61,9 +61,9 @@
 <tr><td><code>Check</code> <span class="search-kind">struct</span></td><td><a href="#src-drawing-loft-L1067">1067</a></td><td>—</td><td><a href="#src-drawing-loft-L1196">1196</a> <a href="#src-drawing-loft-L1220">1220</a> <a href="#src-drawing-loft-L1229">1229</a> <a href="#src-drawing-loft-L1243">1243</a> <a href="#src-drawing-loft-L1249">1249</a> <a href="#src-drawing-loft-L1250">1250</a> … (8 total)</td></tr>
 <tr><td><code>DEFAULT_TOL</code> <span class="search-kind">const</span></td><td><a href="#src-drawing-loft-L1088">1088</a></td><td>—</td><td><a href="#src-drawing-loft-L1197">1197</a></td></tr>
 <tr><td><code>eval_check</code> <span class="search-kind">fn</span></td><td><a href="#src-drawing-loft-L1196">1196</a></td><td>—</td><td><a href="#src-drawing-loft-L1251">1251</a></td></tr>
-<tr><td><code>eval_checks</code> <span class="search-kind">fn</span></td><td><a href="#src-drawing-loft-L1249">1249</a></td><td><a href="#tests-worked-examples-loft-L38">DRW-003</a></td><td><a href="#tests-metric-loft-L38">38</a> <a href="#tests-metric-loft-L48">48</a> <a href="#tests-metric-loft-L62">62</a> <a href="#tests-metric-loft-L69">69</a> <a href="#tests-metric-loft-L79">79</a> <a href="#tests-metric-loft-L87">87</a> … (14 total)</td></tr>
-<tr><td><code>scene_ok</code> <span class="search-kind">fn</span></td><td><a href="#src-drawing-loft-L1262">1262</a></td><td>—</td><td><a href="#tests-metric-loft-L113">113</a> <a href="#tests-metric-loft-L117">117</a> <a href="#tests-metric-loft-L120">120</a> <a href="#tests-metric-loft-L123">123</a></td></tr>
-<tr><td><code>metric_report</code> <span class="search-kind">fn</span></td><td><a href="#src-drawing-loft-L1274">1274</a></td><td>—</td><td><a href="#tests-metric-loft-L103">103</a> <a href="#tests-metric-loft-L129">129</a> <a href="#tests-metric-loft-L137">137</a></td></tr>
+<tr><td><code>eval_checks</code> <span class="search-kind">fn</span></td><td><a href="#src-drawing-loft-L1249">1249</a></td><td><a href="#tests-worked-examples-loft-L38">DRW-003</a></td><td><a href="#tests-metric-loft-L38">38</a> <a href="#tests-metric-loft-L54">54</a> <a href="#tests-metric-loft-L71">71</a> <a href="#tests-metric-loft-L78">78</a> <a href="#tests-metric-loft-L88">88</a> <a href="#tests-metric-loft-L96">96</a> … (14 total)</td></tr>
+<tr><td><code>scene_ok</code> <span class="search-kind">fn</span></td><td><a href="#src-drawing-loft-L1262">1262</a></td><td>—</td><td><a href="#tests-metric-loft-L122">122</a> <a href="#tests-metric-loft-L126">126</a> <a href="#tests-metric-loft-L129">129</a> <a href="#tests-metric-loft-L132">132</a></td></tr>
+<tr><td><code>metric_report</code> <span class="search-kind">fn</span></td><td><a href="#src-drawing-loft-L1274">1274</a></td><td>—</td><td><a href="#tests-metric-loft-L112">112</a> <a href="#tests-metric-loft-L138">138</a> <a href="#tests-metric-loft-L146">146</a></td></tr>
 <tr><td><code>render</code> <span class="search-kind">fn</span></td><td><a href="#src-drawing-loft-L1540">1540</a></td><td>—</td><td><a href="#src-drawing-loft-L1564">1564</a> <a href="#tests-lock-loft-L49">49</a> <a href="#tests-lock-loft-L98">98</a> <a href="#tests-lock-loft-L206">206</a> <a href="#tests-lock-loft-L229">229</a> <a href="#tests-render-loft-L52">52</a> … (10 total)</td></tr>
 <tr><td><code>render_file</code> <span class="search-kind">fn</span></td><td><a href="#src-drawing-loft-L1559">1559</a></td><td>—</td><td>none in this package</td></tr>
 <tr><td><code>hash01</code> <span class="search-kind">fn</span></td><td><a href="#src-drawing-loft-L1575">1575</a></td><td>—</td><td><a href="#src-drawing-loft-L1632">1632</a> <a href="#src-drawing-loft-L1633">1633</a> <a href="#src-drawing-loft-L1636">1636</a></td></tr>
@@ -161,9 +161,9 @@
 <span id="src-brush-loft-L62">  <span class="kw">pub</span> seed: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">1</span>,</span>
 <span id="src-brush-loft-L63">  <span class="kw">pub</span> period: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">48.0</span>,</span>
 <span id="src-brush-loft-L64">  <span class="cm">/// The transverse colour ramp, packed: underside, crest, lit flank.</span></span>
-<span id="src-brush-loft-L65">  <span class="kw">pub</span> dark: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
-<span id="src-brush-loft-L66">  <span class="kw">pub</span> base: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
-<span id="src-brush-loft-L67">  <span class="kw">pub</span> lit: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
+<span id="src-brush-loft-L65">  <span class="kw">pub</span> dark: <span class="ty"><a href="stdlib-types.html">i64</a></span> = <span class="nm">0</span>,</span>
+<span id="src-brush-loft-L66">  <span class="kw">pub</span> base: <span class="ty"><a href="stdlib-types.html">i64</a></span> = <span class="nm">0</span>,</span>
+<span id="src-brush-loft-L67">  <span class="kw">pub</span> lit: <span class="ty"><a href="stdlib-types.html">i64</a></span> = <span class="nm">0</span>,</span>
 <span id="src-brush-loft-L68">  <span class="cm">/// The light's direction; `lz` points out of the paper.</span></span>
 <span id="src-brush-loft-L69">  <span class="kw">pub</span> lx: <span class="ty"><a href="stdlib-types.html">float</a></span> = -<span class="nm">0.5</span>,</span>
 <span id="src-brush-loft-L70">  <span class="kw">pub</span> ly: <span class="ty"><a href="stdlib-types.html">float</a></span> = -<span class="nm">0.8</span>,</span>
@@ -232,7 +232,7 @@
 <span id="src-brush-loft-L133">        }</span>
 <span id="src-brush-loft-L134">        hb_g = (<span class="nm">255.0</span> * hb_v + <span class="nm">0.5</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
 <span id="src-brush-loft-L135">        hb_ai = (<span class="nm">255.0</span> * hb_a + <span class="nm">0.5</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
-<span id="src-brush-loft-L136">        hb_img[y * bw + hb_xx] = ((hb_ai &lt;&lt; <span class="nm">24</span>) | (hb_g &lt;&lt; <span class="nm">16</span>) | (hb_g &lt;&lt; <span class="nm">8</span>) | hb_g) &amp; <span class="nm">4294967295</span>;</span>
+<span id="src-brush-loft-L136">        hb_img[y * bw + hb_xx] = (((hb_ai <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i64</a></span>) &lt;&lt; <span class="nm">24</span>) | (hb_g &lt;&lt; <span class="nm">16</span>) | (hb_g &lt;&lt; <span class="nm">8</span>) | hb_g) &amp; <span class="nm">4294967295l</span>;</span>
 <span id="src-brush-loft-L137">      }</span>
 <span id="src-brush-loft-L138">    }</span>
 <span id="src-brush-loft-L139">    hb_x += hb_cw;</span>
@@ -247,7 +247,7 @@
 <span id="src-brush-loft-L148"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">load_brush</span>(path: <span class="ty"><a href="stdlib-types.html">text</a></span>, bname: <span class="ty"><a href="stdlib-types.html">text</a></span>, period: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="en">Brush</span> {</span>
 <span id="src-brush-loft-L149">  lb_im = <span class="bi"><a href="stdlib-files-and-directories.html">file</a></span>(path).<span class="fn-call">png</span>();</span>
 <span id="src-brush-loft-L150">  <span class="kw">if</span> lb_im == <span class="kw">null</span> { <span class="kw">return</span> <span class="en">Brush</span> { bname: bname, bw: <span class="nm">0</span>, bh: <span class="nm">0</span>, period: <span class="nm">0.0</span>, img: [] } }</span>
-<span id="src-brush-loft-L151">  lb_px: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt; = [<span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..l</span><span class="fn-call">en</span>(lb_im.data) { imaging::<span class="fn-call">rgba</span>(lb_im.data[i]?) &amp; <span class="nm">4294967295</span> }];</span>
+<span id="src-brush-loft-L151">  lb_px: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt; = [<span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..l</span><span class="fn-call">en</span>(lb_im.data) { imaging::<span class="fn-call">rgba</span>(lb_im.data[i]?) &amp; <span class="nm">4294967295l</span> }];</span>
 <span id="src-brush-loft-L152">  <span class="en">Brush</span> { bname: bname, bw: lb_im.width, bh: lb_im.height,</span>
 <span id="src-brush-loft-L153">          period: <span class="kw">if</span> period &gt; <span class="nm">0.0</span> { period } <span class="kw">else</span> { lb_im.height <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span> }, img: lb_px }</span>
 <span id="src-brush-loft-L154">}</span>
@@ -477,7 +477,7 @@
 <span id="src-brush-loft-L378">  b: <span class="ty"><a href="stdlib-types.html">float</a></span> = <span class="nm">0.0</span>,</span>
 <span id="src-brush-loft-L379">}</span>
 <span id="src-brush-loft-L380"></span>
-<span id="src-brush-loft-L381"><span class="kw">fn</span> <span class="fn-call">chan</span>(c: <span class="ty"><a href="stdlib-types.html">integer</a></span>, sh: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> { ((c &gt;&gt; sh) &amp; <span class="nm">255</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span> }</span>
+<span id="src-brush-loft-L381"><span class="kw">fn</span> <span class="fn-call">chan</span>(c: <span class="ty"><a href="stdlib-types.html">i64</a></span>, sh: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> { (((c &gt;&gt; sh) &amp; <span class="nm">255</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span> }</span>
 <span id="src-brush-loft-L382"></span>
 <span id="src-brush-loft-L383"><span class="cm">/// Bilinear: clamp across (`fu`), wrap along (`fv`, already non-negative).</span></span>
 <span id="src-brush-loft-L384"><span class="cm">/// @FR-Brush-Image — the sampling half.</span></span>
@@ -602,8 +602,8 @@
 <span id="src-brush-loft-L503">    ll_r = <span class="fn-call">ramp</span>(graphics::<span class="fn-call">color_r</span>(ll_c0), graphics::<span class="fn-call">color_r</span>(ll_c1), ll_f, ll_smp.r);</span>
 <span id="src-brush-loft-L504">    ll_g = <span class="fn-call">ramp</span>(graphics::<span class="fn-call">color_g</span>(ll_c0), graphics::<span class="fn-call">color_g</span>(ll_c1), ll_f, ll_smp.g);</span>
 <span id="src-brush-loft-L505">    ll_b = <span class="fn-call">ramp</span>(graphics::<span class="fn-call">color_b</span>(ll_c0), graphics::<span class="fn-call">color_b</span>(ll_c1), ll_f, ll_smp.b);</span>
-<span id="src-brush-loft-L506">    ll_out[idx] = ((((ll_ia + <span class="nm">0.5</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>) &lt;&lt; <span class="nm">24</span>) | (<span class="fn-call">clampi</span>(ll_r, <span class="nm">0</span>, <span class="nm">255</span>) &lt;&lt; <span class="nm">16</span>)</span>
-<span id="src-brush-loft-L507">                  | (<span class="fn-call">clampi</span>(ll_g, <span class="nm">0</span>, <span class="nm">255</span>) &lt;&lt; <span class="nm">8</span>) | <span class="fn-call">clampi</span>(ll_b, <span class="nm">0</span>, <span class="nm">255</span>)) &amp; <span class="nm">4294967295</span>;</span>
+<span id="src-brush-loft-L506">    ll_out[idx] = (((((ll_ia + <span class="nm">0.5</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i64</a></span>) &lt;&lt; <span class="nm">24</span>) | (<span class="fn-call">clampi</span>(ll_r, <span class="nm">0</span>, <span class="nm">255</span>) &lt;&lt; <span class="nm">16</span>)</span>
+<span id="src-brush-loft-L507">                  | (<span class="fn-call">clampi</span>(ll_g, <span class="nm">0</span>, <span class="nm">255</span>) &lt;&lt; <span class="nm">8</span>) | <span class="fn-call">clampi</span>(ll_b, <span class="nm">0</span>, <span class="nm">255</span>)) &amp; <span class="nm">4294967295l</span>;</span>
 <span id="src-brush-loft-L508">  }</span>
 <span id="src-brush-loft-L509">  <span class="en">Layer</span> { x0: ll_x0, y0: ll_y0, lw: ll_lw, lh: ll_lh, px: ll_out }</span>
 <span id="src-brush-loft-L510">}</span>
@@ -729,8 +729,8 @@
 <span id="src-drawing-loft-L97"><span class="cm">/// `c2` the second colour of a `Linear` or `Radial` gradient.</span></span>
 <span id="src-drawing-loft-L98"><span class="kw">pub</span> <span class="kw">struct</span> <span class="en">Paint</span> {</span>
 <span id="src-drawing-loft-L99">  <span class="kw">pub</span> pk: <span class="en">PaintKind</span> = <span class="en">Stroked</span>,</span>
-<span id="src-drawing-loft-L100">  <span class="kw">pub</span> c1: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
-<span id="src-drawing-loft-L101">  <span class="kw">pub</span> c2: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
+<span id="src-drawing-loft-L100">  <span class="kw">pub</span> c1: <span class="ty"><a href="stdlib-types.html">i64</a></span> = <span class="nm">0</span>,</span>
+<span id="src-drawing-loft-L101">  <span class="kw">pub</span> c2: <span class="ty"><a href="stdlib-types.html">i64</a></span> = <span class="nm">0</span>,</span>
 <span id="src-drawing-loft-L102">  <span class="cm">/// `Linear`: `ax,ay,bx,by`.  `Radial`: `cx,cy,r`.  Empty means "derive it from</span></span>
 <span id="src-drawing-loft-L103">  <span class="cm">/// the shape's own bounding box", which is what a fill with no `dir=` / `at=`</span></span>
 <span id="src-drawing-loft-L104">  <span class="cm">/// asks for.</span></span>
@@ -754,9 +754,9 @@
 <span id="src-drawing-loft-L122">  <span class="kw">pub</span> widths: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;,</span>
 <span id="src-drawing-loft-L123">  <span class="kw">pub</span> w: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">3</span>,</span>
 <span id="src-drawing-loft-L124">  <span class="cm">/// Stroke ink, or `Sky`'s top colour.</span></span>
-<span id="src-drawing-loft-L125">  <span class="kw">pub</span> color: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
+<span id="src-drawing-loft-L125">  <span class="kw">pub</span> color: <span class="ty"><a href="stdlib-types.html">i64</a></span> = <span class="nm">0</span>,</span>
 <span id="src-drawing-loft-L126">  <span class="cm">/// `Sky`'s bottom colour.</span></span>
-<span id="src-drawing-loft-L127">  <span class="kw">pub</span> color2: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
+<span id="src-drawing-loft-L127">  <span class="kw">pub</span> color2: <span class="ty"><a href="stdlib-types.html">i64</a></span> = <span class="nm">0</span>,</span>
 <span id="src-drawing-loft-L128">  <span class="cm">/// `Lock`: the stroke's style, and the index of its brush in `Sketch.brushes`</span></span>
 <span id="src-drawing-loft-L129">  <span class="cm">/// (`-1` for every other kind).</span></span>
 <span id="src-drawing-loft-L130">  <span class="kw">pub</span> style: brush::<span class="en">LockStyle</span>,</span>
@@ -822,7 +822,7 @@
 <span id="src-drawing-loft-L190"><span class="cm">/// Python's `round` is half-to-even and `draw.py` uses it here, so `fill=0.5`</span></span>
 <span id="src-drawing-loft-L191"><span class="cm">/// is 128 and not 127 — a difference of one level that no eye would find and a</span></span>
 <span id="src-drawing-loft-L192"><span class="cm">/// byte diff would.</span></span>
-<span id="src-drawing-loft-L193"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">grey</span>(gl: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-drawing-loft-L193"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">grey</span>(gl: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">i64</a></span> {</span>
 <span id="src-drawing-loft-L194">  gy = <span class="fn-call">round_half_even</span>(gl * <span class="nm">255.0</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
 <span id="src-drawing-loft-L195">  <span class="kw">if</span> gy &lt; <span class="nm">0</span> { <span class="kw">return</span> graphics::<span class="fn-call">rgba</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">255</span>) }</span>
 <span id="src-drawing-loft-L196">  <span class="kw">if</span> gy &gt; <span class="nm">255</span> { <span class="kw">return</span> graphics::<span class="fn-call">rgba</span>(<span class="nm">255</span>, <span class="nm">255</span>, <span class="nm">255</span>, <span class="nm">255</span>) }</span>
@@ -837,7 +837,7 @@
 <span id="src-drawing-loft-L205">  <span class="kw">if</span> ((rh_f <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>) % <span class="nm">2</span> ?? <span class="nm">0</span>) == <span class="nm">0</span> { rh_f } <span class="kw">else</span> { rh_f + <span class="nm">1.0</span> }</span>
 <span id="src-drawing-loft-L206">}</span>
 <span id="src-drawing-loft-L207"></span>
-<span id="src-drawing-loft-L208"><span class="kw">fn</span> <span class="fn-call">default_ink</span>() -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-drawing-loft-L208"><span class="kw">fn</span> <span class="fn-call">default_ink</span>() -&gt; <span class="ty"><a href="stdlib-types.html">i64</a></span> {</span>
 <span id="src-drawing-loft-L209">  graphics::<span class="fn-call">rgba</span>(<span class="en">DEFAULT_INK_R</span>, <span class="en">DEFAULT_INK_G</span>, <span class="en">DEFAULT_INK_B</span>, <span class="nm">255</span>)</span>
 <span id="src-drawing-loft-L210">}</span>
 <span id="src-drawing-loft-L211"></span>
@@ -879,17 +879,17 @@
 <span id="src-drawing-loft-L247"><span class="kw">struct</span> <span class="en">Scan3</span> {</span>
 <span id="src-drawing-loft-L248">  ok: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>,</span>
 <span id="src-drawing-loft-L249">  at: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
-<span id="src-drawing-loft-L250">  color: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
+<span id="src-drawing-loft-L250">  color: <span class="ty"><a href="stdlib-types.html">i64</a></span> = <span class="nm">0</span>,</span>
 <span id="src-drawing-loft-L251">}</span>
 <span id="src-drawing-loft-L252"></span>
 <span id="src-drawing-loft-L253"><span class="kw">fn</span> <span class="fn-call">scan3_fail</span>() -&gt; <span class="en">Scan3</span> { <span class="en">Scan3</span> { ok: <span class="kw">false</span>, at: <span class="nm">0</span>, color: <span class="nm">0</span> } }</span>
 <span id="src-drawing-loft-L254"></span>
 <span id="src-drawing-loft-L255"><span class="cm">/// `\bstroke\s*=\s*R,G,B` — a pen colour.  `rgb=` still means FILL; this lets a</span></span>
 <span id="src-drawing-loft-L256"><span class="cm">/// stroke carry colour without becoming one.</span></span>
-<span id="src-drawing-loft-L257"><span class="kw">fn</span> <span class="fn-call">read_stroke_colour</span>(s: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> { <span class="fn-call">read_colour_opt</span>(s, <span class="st">"stroke"</span>, <span class="fn-call">default_ink</span>()) }</span>
+<span id="src-drawing-loft-L257"><span class="kw">fn</span> <span class="fn-call">read_stroke_colour</span>(s: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">i64</a></span> { <span class="fn-call">read_colour_opt</span>(s, <span class="st">"stroke"</span>, <span class="fn-call">default_ink</span>()) }</span>
 <span id="src-drawing-loft-L258"></span>
 <span id="src-drawing-loft-L259"><span class="cm">/// `\b&lt;key&gt;\s*=\s*R,G,B`, or `fallback` when the line does not say.</span></span>
-<span id="src-drawing-loft-L260"><span class="kw">fn</span> <span class="fn-call">read_colour_opt</span>(s: <span class="ty"><a href="stdlib-types.html">text</a></span>, key: <span class="ty"><a href="stdlib-types.html">text</a></span>, fallback: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-drawing-loft-L260"><span class="kw">fn</span> <span class="fn-call">read_colour_opt</span>(s: <span class="ty"><a href="stdlib-types.html">text</a></span>, key: <span class="ty"><a href="stdlib-types.html">text</a></span>, fallback: <span class="ty"><a href="stdlib-types.html">i64</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">i64</a></span> {</span>
 <span id="src-drawing-loft-L261">  rc_o = scan::<span class="fn-call">find_option</span>(s, key);</span>
 <span id="src-drawing-loft-L262">  <span class="kw">if</span> !rc_o.ok { <span class="kw">return</span> fallback }</span>
 <span id="src-drawing-loft-L263">  rc_c = <span class="fn-call">read_rgb_at</span>(s, rc_o.at);</span>
@@ -898,12 +898,12 @@
 <span id="src-drawing-loft-L266">}</span>
 <span id="src-drawing-loft-L267"></span>
 <span id="src-drawing-loft-L268"><span class="cm">/// `draw.py`'s default shadow for a `Lock`: each channel halved.</span></span>
-<span id="src-drawing-loft-L269"><span class="kw">fn</span> <span class="fn-call">half_colour</span>(c: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-drawing-loft-L269"><span class="kw">fn</span> <span class="fn-call">half_colour</span>(c: <span class="ty"><a href="stdlib-types.html">i64</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">i64</a></span> {</span>
 <span id="src-drawing-loft-L270">  graphics::<span class="fn-call">rgba</span>(graphics::<span class="fn-call">color_r</span>(c) / <span class="nm">2</span>, graphics::<span class="fn-call">color_g</span>(c) / <span class="nm">2</span>, graphics::<span class="fn-call">color_b</span>(c) / <span class="nm">2</span>, <span class="nm">255</span>)</span>
 <span id="src-drawing-loft-L271">}</span>
 <span id="src-drawing-loft-L272"></span>
 <span id="src-drawing-loft-L273"><span class="cm">/// `draw.py`'s default highlight: each channel lifted 35 % of the way to white.</span></span>
-<span id="src-drawing-loft-L274"><span class="kw">fn</span> <span class="fn-call">lifted_colour</span>(c: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-drawing-loft-L274"><span class="kw">fn</span> <span class="fn-call">lifted_colour</span>(c: <span class="ty"><a href="stdlib-types.html">i64</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">i64</a></span> {</span>
 <span id="src-drawing-loft-L275">  lc_r = graphics::<span class="fn-call">color_r</span>(c);</span>
 <span id="src-drawing-loft-L276">  lc_g = graphics::<span class="fn-call">color_g</span>(c);</span>
 <span id="src-drawing-loft-L277">  lc_b = graphics::<span class="fn-call">color_b</span>(c);</span>
@@ -946,8 +946,8 @@
 <span id="src-drawing-loft-L314"><span class="cm">/// Two colours either side of a `&gt;`.</span></span>
 <span id="src-drawing-loft-L315"><span class="kw">struct</span> <span class="en">ColourPair</span> {</span>
 <span id="src-drawing-loft-L316">  ok: <span class="ty"><a href="stdlib-types.html">boolean</a></span> = <span class="kw">false</span>,</span>
-<span id="src-drawing-loft-L317">  c1: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
-<span id="src-drawing-loft-L318">  c2: <span class="ty"><a href="stdlib-types.html">integer</a></span> = <span class="nm">0</span>,</span>
+<span id="src-drawing-loft-L317">  c1: <span class="ty"><a href="stdlib-types.html">i64</a></span> = <span class="nm">0</span>,</span>
+<span id="src-drawing-loft-L318">  c2: <span class="ty"><a href="stdlib-types.html">i64</a></span> = <span class="nm">0</span>,</span>
 <span id="src-drawing-loft-L319">}</span>
 <span id="src-drawing-loft-L320"></span>
 <span id="src-drawing-loft-L321"><span class="kw">fn</span> <span class="fn-call">read_colour_pair</span>(s: <span class="ty"><a href="stdlib-types.html">text</a></span>, i: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="en">ColourPair</span> {</span>
@@ -1954,7 +1954,7 @@
 <span id="src-drawing-loft-L1322"><span class="cm">/// The vertical background ramp, one Bresenham row at a time — which is what</span></span>
 <span id="src-drawing-loft-L1323"><span class="cm">/// `draw.py` does, and the row-by-row truncation of the interpolated colour is</span></span>
 <span id="src-drawing-loft-L1324"><span class="cm">/// visible in the result.</span></span>
-<span id="src-drawing-loft-L1325"><span class="kw">fn</span> <span class="fn-call">draw_sky</span>(cv: graphics::<span class="en">Canvas</span>, top: <span class="ty"><a href="stdlib-types.html">integer</a></span>, bot: <span class="ty"><a href="stdlib-types.html">integer</a></span>, bw: <span class="ty"><a href="stdlib-types.html">integer</a></span>, bh: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-drawing-loft-L1325"><span class="kw">fn</span> <span class="fn-call">draw_sky</span>(cv: graphics::<span class="en">Canvas</span>, top: <span class="ty"><a href="stdlib-types.html">i64</a></span>, bot: <span class="ty"><a href="stdlib-types.html">i64</a></span>, bw: <span class="ty"><a href="stdlib-types.html">integer</a></span>, bh: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
 <span id="src-drawing-loft-L1326">  dk_den = <span class="kw">if</span> bh - <span class="nm">1</span> &lt; <span class="nm">1</span> { <span class="nm">1</span> } <span class="kw">else</span> { bh - <span class="nm">1</span> };</span>
 <span id="src-drawing-loft-L1327">  dk_tr = graphics::<span class="fn-call">color_r</span>(top);</span>
 <span id="src-drawing-loft-L1328">  dk_tg = graphics::<span class="fn-call">color_g</span>(top);</span>
@@ -2109,7 +2109,7 @@
 <span id="src-drawing-loft-L1477"><span class="cm">/// between the two sides is what lets a hair strand be thick at the root and</span></span>
 <span id="src-drawing-loft-L1478"><span class="cm">/// thin at the tip — a pen cannot do that, and a polygon can.</span></span>
 <span id="src-drawing-loft-L1479"><span class="kw">fn</span> <span class="fn-call">ribbon</span>(cv: graphics::<span class="en">Canvas</span>, pxs: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;raster::<span class="en">Pt</span>&gt;, widths: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;,</span>
-<span id="src-drawing-loft-L1480">          color: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-drawing-loft-L1480">          color: <span class="ty"><a href="stdlib-types.html">i64</a></span>) {</span>
 <span id="src-drawing-loft-L1481">  rb_n = <span class="bi"><a href="stdlib-text.html">len</a></span>(pxs);</span>
 <span id="src-drawing-loft-L1482">  <span class="kw">if</span> rb_n &lt; <span class="nm">2</span> { <span class="kw">return</span> }</span>
 <span id="src-drawing-loft-L1483">  rb_left: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;raster::<span class="en">Pt</span>&gt; = [];</span>
@@ -2173,7 +2173,7 @@
 <span id="src-drawing-loft-L1541">  rn_bw = sc.sw * <span class="en">SUPERSAMPLE</span>;</span>
 <span id="src-drawing-loft-L1542">  rn_bh = sc.sh * <span class="en">SUPERSAMPLE</span>;</span>
 <span id="src-drawing-loft-L1543">  rn_cv = graphics::<span class="fn-call">canvas</span>(rn_bw, rn_bh,</span>
-<span id="src-drawing-loft-L1544">                           <span class="kw">if</span> sc.transparent { <span class="nm">0</span> } <span class="kw">else</span> { graphics::<span class="fn-call">rgba</span>(<span class="nm">255</span>, <span class="nm">255</span>, <span class="nm">255</span>, <span class="nm">255</span>) });</span>
+<span id="src-drawing-loft-L1544">                           <span class="kw">if</span> sc.transparent { <span class="nm">0</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i64</a></span> } <span class="kw">else</span> { graphics::<span class="fn-call">rgba</span>(<span class="nm">255</span>, <span class="nm">255</span>, <span class="nm">255</span>, <span class="nm">255</span>) });</span>
 <span id="src-drawing-loft-L1545">  <span class="kw">for</span> op <span class="kw">in</span> sc.ops {</span>
 <span id="src-drawing-loft-L1546">    match op.kind {</span>
 <span id="src-drawing-loft-L1547">      <span class="en">Sky</span> =&gt; <span class="fn-call">draw_sky</span>(rn_cv, op.color, op.color2, rn_bw, rn_bh),</span>
@@ -2350,9 +2350,9 @@
 <span id="src-noise-loft-L28"><span class="cm">/// and would give a perfectly smooth, entirely wrong field.</span></span>
 <span id="src-noise-loft-L29"><span class="cm">/// @FR-Seed-Hash</span></span>
 <span id="src-noise-loft-L30"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">seed_hash</span>(hseed: <span class="ty"><a href="stdlib-types.html">integer</a></span>, hidx: <span class="ty"><a href="stdlib-types.html">integer</a></span>, hsalt: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
-<span id="src-noise-loft-L31">  hx = ((hseed * <span class="nm">73856093</span>) ^ (hidx * <span class="nm">19349663</span>) ^ (hsalt * <span class="nm">83492791</span>)) &amp; <span class="nm">0xFFFFFFFF</span>;</span>
-<span id="src-noise-loft-L32">  hx = (hx ^ (hx &gt;&gt; <span class="nm">13</span>)) &amp; <span class="nm">0xFFFFFFFF</span>;</span>
-<span id="src-noise-loft-L33">  hx = (hx * <span class="nm">1274126177</span>) &amp; <span class="nm">0xFFFFFFFF</span>;</span>
+<span id="src-noise-loft-L31">  hx = (((hseed <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i64</a></span>) * <span class="nm">73856093</span>) ^ ((hidx <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i64</a></span>) * <span class="nm">19349663</span>) ^ ((hsalt <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">i64</a></span>) * <span class="nm">83492791</span>)) &amp; <span class="nm">0xFFFFFFFFl</span>;</span>
+<span id="src-noise-loft-L32">  hx = (hx ^ (hx &gt;&gt; <span class="nm">13</span>)) &amp; <span class="nm">0xFFFFFFFFl</span>;</span>
+<span id="src-noise-loft-L33">  hx = (hx * <span class="nm">1274126177</span>) &amp; <span class="nm">0xFFFFFFFFl</span>;</span>
 <span id="src-noise-loft-L34">  ((hx <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) / <span class="nm">4294967295.0</span> ?? <span class="nm">0.0</span>) * <span class="nm">2.0</span> - <span class="nm">1.0</span></span>
 <span id="src-noise-loft-L35">}</span>
 <span id="src-noise-loft-L36"></span>
@@ -2481,7 +2481,7 @@
 <span id="src-raster-loft-L109"><span class="cm">/// It STORES the ink rather than compositing it — `ImageDraw` on an RGBA image</span></span>
 <span id="src-raster-loft-L110"><span class="cm">/// replaces the pixel, alpha included, which is why a half-transparent mark does</span></span>
 <span id="src-raster-loft-L111"><span class="cm">/// not show what was under it.</span></span>
-<span id="src-raster-loft-L112"><span class="kw">fn</span> <span class="fn-call">pil_hline</span>(cv: graphics::<span class="en">Canvas</span>, hx0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, hy: <span class="ty"><a href="stdlib-types.html">integer</a></span>, hx1: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ink: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-raster-loft-L112"><span class="kw">fn</span> <span class="fn-call">pil_hline</span>(cv: graphics::<span class="en">Canvas</span>, hx0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, hy: <span class="ty"><a href="stdlib-types.html">integer</a></span>, hx1: <span class="ty"><a href="stdlib-types.html">integer</a></span>, ink: <span class="ty"><a href="stdlib-types.html">i64</a></span>) {</span>
 <span id="src-raster-loft-L113">  <span class="kw">if</span> hy &lt; <span class="nm">0</span> || hy &gt;= cv.height { <span class="kw">return</span> }</span>
 <span id="src-raster-loft-L114">  hl_lo = hx0;</span>
 <span id="src-raster-loft-L115">  hl_hi = hx1;</span>
@@ -2490,7 +2490,7 @@
 <span id="src-raster-loft-L118">  <span class="kw">if</span> hl_lo &gt; hl_hi { <span class="kw">return</span> }</span>
 <span id="src-raster-loft-L119">  hl_d = &amp;cv.data;</span>
 <span id="src-raster-loft-L120">  hl_base = hy * cv.width;</span>
-<span id="src-raster-loft-L121">  hl_ink: <span class="ty"><a href="stdlib-types.html">u32</a></span> = ink &amp; <span class="nm">4294967295</span>;</span>
+<span id="src-raster-loft-L121">  hl_ink: <span class="ty"><a href="stdlib-types.html">u32</a></span> = ink &amp; <span class="nm">4294967295l</span>;</span>
 <span id="src-raster-loft-L122">  <span class="kw">for</span> hl_x <span class="kw">in</span> hl_lo..=hl_hi {</span>
 <span id="src-raster-loft-L123">    hl_d[hl_base + hl_x] = hl_ink;</span>
 <span id="src-raster-loft-L124">  }</span>
@@ -2516,7 +2516,7 @@
 <span id="src-raster-loft-L144"><span class="cm">/// do is put the two side by side.  Splitting it would make the correspondence</span></span>
 <span id="src-raster-loft-L145"><span class="cm">/// unverifiable and would buy nothing — there is no second caller and no variation</span></span>
 <span id="src-raster-loft-L146"><span class="cm">/// to factor out.</span></span>
-<span id="src-raster-loft-L147"><span class="kw">fn</span> <span class="fn-call">polygon_generic</span>(cv: graphics::<span class="en">Canvas</span>, edges: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Edge</span>&gt;, ink: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-raster-loft-L147"><span class="kw">fn</span> <span class="fn-call">polygon_generic</span>(cv: graphics::<span class="en">Canvas</span>, edges: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Edge</span>&gt;, ink: <span class="ty"><a href="stdlib-types.html">i64</a></span>) {</span>
 <span id="src-raster-loft-L148">  <span class="kw">if</span> <span class="bi"><a href="stdlib-text.html">len</a></span>(edges) &lt;= <span class="nm">0</span> { <span class="kw">return</span> }</span>
 <span id="src-raster-loft-L149">  pg_table: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Edge</span>&gt; = [];</span>
 <span id="src-raster-loft-L150">  pg_ymin = cv.height - <span class="nm">1</span>;</span>
@@ -2610,7 +2610,7 @@
 <span id="src-raster-loft-L238"><span class="cm">/// The outline closes itself only when the last point is not already the first —</span></span>
 <span id="src-raster-loft-L239"><span class="cm">/// a circle handed in with its start repeated gets no extra edge, which is how</span></span>
 <span id="src-raster-loft-L240"><span class="cm">/// `draw.py` passes one.</span></span>
-<span id="src-raster-loft-L241"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">fill_poly</span>(cv: graphics::<span class="en">Canvas</span>, pts: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Pt</span>&gt;, ink: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-raster-loft-L241"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">fill_poly</span>(cv: graphics::<span class="en">Canvas</span>, pts: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Pt</span>&gt;, ink: <span class="ty"><a href="stdlib-types.html">i64</a></span>) {</span>
 <span id="src-raster-loft-L242">  fp_count = <span class="bi"><a href="stdlib-text.html">len</a></span>(pts);</span>
 <span id="src-raster-loft-L243">  <span class="kw">if</span> fp_count &lt;= <span class="nm">0</span> { <span class="kw">return</span> }</span>
 <span id="src-raster-loft-L244">  fp_xs: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
@@ -2665,7 +2665,7 @@
 <span id="src-raster-loft-L293"><span class="cm">/// polyline is therefore a series of independent quads with no joins, and the</span></span>
 <span id="src-raster-loft-L294"><span class="cm">/// overlap at a bend is what rounds the corner.</span></span>
 <span id="src-raster-loft-L295"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">wide_line</span>(cv: graphics::<span class="en">Canvas</span>, wx0: <span class="ty"><a href="stdlib-types.html">float</a></span>, wy0: <span class="ty"><a href="stdlib-types.html">float</a></span>, wx1: <span class="ty"><a href="stdlib-types.html">float</a></span>, wy1: <span class="ty"><a href="stdlib-types.html">float</a></span>,</span>
-<span id="src-raster-loft-L296">                 ink: <span class="ty"><a href="stdlib-types.html">integer</a></span>, wwidth: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-raster-loft-L296">                 ink: <span class="ty"><a href="stdlib-types.html">i64</a></span>, wwidth: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
 <span id="src-raster-loft-L297">  wl_x0 = wx0 <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
 <span id="src-raster-loft-L298">  wl_y0 = wy0 <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
 <span id="src-raster-loft-L299">  wl_x1 = wx1 <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
@@ -2700,7 +2700,7 @@
 <span id="src-raster-loft-L328"><span class="cm">/// `draw_lines` puts that missing pixel back after the last segment, which is</span></span>
 <span id="src-raster-loft-L329"><span class="cm">/// why this is a polyline call rather than a segment one: split it into</span></span>
 <span id="src-raster-loft-L330"><span class="cm">/// segments and each one grows a pixel Pillow never drew.</span></span>
-<span id="src-raster-loft-L331"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">thin_line</span>(cv: graphics::<span class="en">Canvas</span>, pts: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Pt</span>&gt;, ink: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-raster-loft-L331"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">thin_line</span>(cv: graphics::<span class="en">Canvas</span>, pts: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Pt</span>&gt;, ink: <span class="ty"><a href="stdlib-types.html">i64</a></span>) {</span>
 <span id="src-raster-loft-L332">  tl_n = <span class="bi"><a href="stdlib-text.html">len</a></span>(pts);</span>
 <span id="src-raster-loft-L333">  <span class="kw">if</span> tl_n &lt; <span class="nm">2</span> { <span class="kw">return</span> }</span>
 <span id="src-raster-loft-L334">  tl_lx = <span class="nm">0</span>;</span>
@@ -2717,7 +2717,7 @@
 <span id="src-raster-loft-L345"></span>
 <span id="src-raster-loft-L346"><span class="cm">/// The Bresenham walk itself, end-exclusive.</span></span>
 <span id="src-raster-loft-L347"><span class="kw">fn</span> <span class="fn-call">bresenham</span>(cv: graphics::<span class="en">Canvas</span>, bx0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, by0: <span class="ty"><a href="stdlib-types.html">integer</a></span>, bx1: <span class="ty"><a href="stdlib-types.html">integer</a></span>, by1: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-raster-loft-L348">             ink: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-raster-loft-L348">             ink: <span class="ty"><a href="stdlib-types.html">i64</a></span>) {</span>
 <span id="src-raster-loft-L349">  br_x = bx0;</span>
 <span id="src-raster-loft-L350">  br_y = by0;</span>
 <span id="src-raster-loft-L351">  br_dx = bx1 - bx0;</span>
@@ -3085,7 +3085,7 @@
 <span id="tests-lock-loft-L152">  rd_n</span>
 <span id="tests-lock-loft-L153">}</span>
 <span id="tests-lock-loft-L154"></span>
-<span id="tests-lock-loft-L155"><span class="kw">fn</span> <span class="fn-call">lum</span>(c: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
+<span id="tests-lock-loft-L155"><span class="kw">fn</span> <span class="fn-call">lum</span>(c: <span class="ty"><a href="stdlib-types.html">i64</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">float</a></span> {</span>
 <span id="tests-lock-loft-L156">  <span class="nm">0.299</span> * (graphics::<span class="fn-call">color_r</span>(c) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>) + <span class="nm">0.587</span> * (graphics::<span class="fn-call">color_g</span>(c) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>)</span>
 <span id="tests-lock-loft-L157">  + <span class="nm">0.114</span> * (graphics::<span class="fn-call">color_b</span>(c) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>)</span>
 <span id="tests-lock-loft-L158">}</span>
@@ -3222,101 +3222,110 @@
 <span id="tests-metric-loft-L43">  }</span>
 <span id="tests-metric-loft-L44">}</span>
 <span id="tests-metric-loft-L45"></span>
-<span id="tests-metric-loft-L46"><span class="kw">fn</span> <span class="fn-call">test_the_report_line_is_the_oracles</span>() {</span>
-<span id="tests-metric-loft-L47">  sc = <span class="fn-call">parse_scene</span>(<span class="fn-call">source</span>());</span>
-<span id="tests-metric-loft-L48">  rs = <span class="fn-call">eval_checks</span>(sc);</span>
-<span id="tests-metric-loft-L49">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(rs[<span class="nm">0</span>]?.report == <span class="st">"check: a.cx ~ 0.2  -&gt;  0.200 vs 0.200  d=+0.000  PASS"</span>,</span>
-<span id="tests-metric-loft-L50">         <span class="st">"got {rs[0]?.report}"</span>);</span>
-<span id="tests-metric-loft-L51">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(rs[<span class="nm">9</span>]?.report == <span class="st">"check: a.h ~ 0.25  -&gt;  0.200 vs 0.250  d=-0.050  FAIL"</span>,</span>
-<span id="tests-metric-loft-L52">         <span class="st">"got {rs[9]?.report}"</span>);</span>
-<span id="tests-metric-loft-L53">  <span class="cm">// The tolerance clause comes OFF the echoed claim, and a delta that is</span></span>
-<span id="tests-metric-loft-L54">  <span class="cm">// negative but tiny still renders with its sign.</span></span>
-<span id="tests-metric-loft-L55">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(rs[<span class="nm">1</span>]?.report == <span class="st">"check: a.w ~ 0.2  -&gt;  0.200 vs 0.200  d=-0.000  PASS"</span>,</span>
-<span id="tests-metric-loft-L56">         <span class="st">"got {rs[1]?.report}"</span>);</span>
-<span id="tests-metric-loft-L57">}</span>
-<span id="tests-metric-loft-L58"></span>
-<span id="tests-metric-loft-L59"><span class="kw">fn</span> <span class="fn-call">test_a_tolerance_clause_is_read</span>() {</span>
-<span id="tests-metric-loft-L60">  sc = <span class="fn-call">parse_scene</span>(<span class="st">"size 8x8\nname a\nPoly (0.1,0.1) (0.3,0.1) (0.3,0.3) rgb=1,2,3\n"</span></span>
-<span id="tests-metric-loft-L61">                   + <span class="st">"check a.cx ~ 0.25 tol 0.001\ncheck a.cx ~ 0.25 tol 0.06\n"</span>);</span>
-<span id="tests-metric-loft-L62">  rs = <span class="fn-call">eval_checks</span>(sc);</span>
-<span id="tests-metric-loft-L63">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(rs[<span class="nm">0</span>]?.tol == <span class="nm">0.001</span> &amp;&amp; !rs[<span class="nm">0</span>]?.ok, <span class="st">"0.2 is not 0.25 within 0.001"</span>);</span>
-<span id="tests-metric-loft-L64">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(rs[<span class="nm">1</span>]?.tol == <span class="nm">0.06</span> &amp;&amp; rs[<span class="nm">1</span>]?.ok, <span class="st">"…and is within 0.06"</span>);</span>
-<span id="tests-metric-loft-L65">}</span>
-<span id="tests-metric-loft-L66"></span>
-<span id="tests-metric-loft-L67"><span class="kw">fn</span> <span class="fn-call">test_a_landmark_and_arithmetic_on_the_right</span>() {</span>
-<span id="tests-metric-loft-L68">  sc = <span class="fn-call">parse_scene</span>(<span class="fn-call">source</span>());</span>
-<span id="tests-metric-loft-L69">  rs = <span class="fn-call">eval_checks</span>(sc);</span>
-<span id="tests-metric-loft-L70">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(rs[<span class="nm">7</span>]?.rhs == <span class="nm">0.7</span>, <span class="st">"mid + 0.2 is 0.7, got {rs[7]?.rhs}"</span>);</span>
-<span id="tests-metric-loft-L71">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(rs[<span class="nm">8</span>]?.rhs == <span class="nm">0.6</span>, <span class="st">"low - 0.15 is 0.6, got {rs[8]?.rhs}"</span>);</span>
-<span id="tests-metric-loft-L72">}</span>
-<span id="tests-metric-loft-L73"></span>
-<span id="tests-metric-loft-L74"><span class="kw">fn</span> <span class="fn-call">test_a_negative_literal_is_not_a_subtraction</span>() {</span>
-<span id="tests-metric-loft-L75">  <span class="cm">// `^(\S+)\s*([+-])\s*([\d.]+)$` needs a base on the left of the sign, so a</span></span>
-<span id="tests-metric-loft-L76">  <span class="cm">// bare `-0.1` has none and stays a number.</span></span>
-<span id="tests-metric-loft-L77">  sc = <span class="fn-call">parse_scene</span>(<span class="st">"size 8x8\nname a\nPoly (0.1,0.1) (0.3,0.1) (0.3,0.3) rgb=1,2,3\n"</span></span>
-<span id="tests-metric-loft-L78">                   + <span class="st">"check a.cx &gt; -0.1\n"</span>);</span>
-<span id="tests-metric-loft-L79">  rs = <span class="fn-call">eval_checks</span>(sc);</span>
-<span id="tests-metric-loft-L80">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(rs[<span class="nm">0</span>]?.ok &amp;&amp; rs[<span class="nm">0</span>]?.rhs == -<span class="nm">0.1</span>, <span class="st">"got {rs[0]?.report}"</span>);</span>
+<span id="tests-metric-loft-L46"><span class="cm">// Whether a `float` of this build is a double: it can tell 1 from 1 and a million-millionth.</span></span>
+<span id="tests-metric-loft-L47"><span class="cm">// In a 32-bit program a float is a single and cannot.</span></span>
+<span id="tests-metric-loft-L48"><span class="kw">fn</span> <span class="fn-call">float_is_a_double</span>() -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="tests-metric-loft-L49">  <span class="nm">1.0</span> + <span class="nm">0.000000000001</span> &gt; <span class="nm">1.0</span></span>
+<span id="tests-metric-loft-L50">}</span>
+<span id="tests-metric-loft-L51"></span>
+<span id="tests-metric-loft-L52"><span class="kw">fn</span> <span class="fn-call">test_the_report_line_is_the_oracles</span>() {</span>
+<span id="tests-metric-loft-L53">  sc = <span class="fn-call">parse_scene</span>(<span class="fn-call">source</span>());</span>
+<span id="tests-metric-loft-L54">  rs = <span class="fn-call">eval_checks</span>(sc);</span>
+<span id="tests-metric-loft-L55">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(rs[<span class="nm">0</span>]?.report == <span class="st">"check: a.cx ~ 0.2  -&gt;  0.200 vs 0.200  d=+0.000  PASS"</span>,</span>
+<span id="tests-metric-loft-L56">         <span class="st">"got {rs[0]?.report}"</span>);</span>
+<span id="tests-metric-loft-L57">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(rs[<span class="nm">9</span>]?.report == <span class="st">"check: a.h ~ 0.25  -&gt;  0.200 vs 0.250  d=-0.050  FAIL"</span>,</span>
+<span id="tests-metric-loft-L58">         <span class="st">"got {rs[9]?.report}"</span>);</span>
+<span id="tests-metric-loft-L59">  <span class="cm">// The tolerance clause comes OFF the echoed claim, and a delta that is</span></span>
+<span id="tests-metric-loft-L60">  <span class="cm">// negative but tiny still renders with its sign.</span></span>
+<span id="tests-metric-loft-L61">  <span class="cm">// (The delta here is the last bits of a double.  Where a float is a single, a 32-bit</span></span>
+<span id="tests-metric-loft-L62">  <span class="cm">// program, those bits are gone and it is zero from the other side.)</span></span>
+<span id="tests-metric-loft-L63">  tiny = <span class="kw">if</span> <span class="fn-call">float_is_a_double</span>() { <span class="st">"-"</span> } <span class="kw">else</span> { <span class="st">"+"</span> };</span>
+<span id="tests-metric-loft-L64">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(rs[<span class="nm">1</span>]?.report == <span class="st">"check: a.w ~ 0.2  -&gt;  0.200 vs 0.200  d={tiny}0.000  PASS"</span>,</span>
+<span id="tests-metric-loft-L65">         <span class="st">"got {rs[1]?.report}"</span>);</span>
+<span id="tests-metric-loft-L66">}</span>
+<span id="tests-metric-loft-L67"></span>
+<span id="tests-metric-loft-L68"><span class="kw">fn</span> <span class="fn-call">test_a_tolerance_clause_is_read</span>() {</span>
+<span id="tests-metric-loft-L69">  sc = <span class="fn-call">parse_scene</span>(<span class="st">"size 8x8\nname a\nPoly (0.1,0.1) (0.3,0.1) (0.3,0.3) rgb=1,2,3\n"</span></span>
+<span id="tests-metric-loft-L70">                   + <span class="st">"check a.cx ~ 0.25 tol 0.001\ncheck a.cx ~ 0.25 tol 0.06\n"</span>);</span>
+<span id="tests-metric-loft-L71">  rs = <span class="fn-call">eval_checks</span>(sc);</span>
+<span id="tests-metric-loft-L72">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(rs[<span class="nm">0</span>]?.tol == <span class="nm">0.001</span> &amp;&amp; !rs[<span class="nm">0</span>]?.ok, <span class="st">"0.2 is not 0.25 within 0.001"</span>);</span>
+<span id="tests-metric-loft-L73">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(rs[<span class="nm">1</span>]?.tol == <span class="nm">0.06</span> &amp;&amp; rs[<span class="nm">1</span>]?.ok, <span class="st">"…and is within 0.06"</span>);</span>
+<span id="tests-metric-loft-L74">}</span>
+<span id="tests-metric-loft-L75"></span>
+<span id="tests-metric-loft-L76"><span class="kw">fn</span> <span class="fn-call">test_a_landmark_and_arithmetic_on_the_right</span>() {</span>
+<span id="tests-metric-loft-L77">  sc = <span class="fn-call">parse_scene</span>(<span class="fn-call">source</span>());</span>
+<span id="tests-metric-loft-L78">  rs = <span class="fn-call">eval_checks</span>(sc);</span>
+<span id="tests-metric-loft-L79">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(rs[<span class="nm">7</span>]?.rhs == <span class="nm">0.7</span>, <span class="st">"mid + 0.2 is 0.7, got {rs[7]?.rhs}"</span>);</span>
+<span id="tests-metric-loft-L80">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(rs[<span class="nm">8</span>]?.rhs == <span class="nm">0.6</span>, <span class="st">"low - 0.15 is 0.6, got {rs[8]?.rhs}"</span>);</span>
 <span id="tests-metric-loft-L81">}</span>
 <span id="tests-metric-loft-L82"></span>
-<span id="tests-metric-loft-L83"><span class="kw">fn</span> <span class="fn-call">test_a_name_that_does_not_resolve_is_named</span>() {</span>
-<span id="tests-metric-loft-L84">  sc = <span class="fn-call">parse_scene</span>(<span class="st">"size 8x8\nname a\nPoly (0.1,0.1) (0.3,0.1) (0.3,0.3) rgb=1,2,3\n"</span></span>
-<span id="tests-metric-loft-L85">                   + <span class="st">"name ghost\ncheck ghost.cx ~ 0.5\ncheck nobody.cx ~ 0.5\n"</span></span>
-<span id="tests-metric-loft-L86">                   + <span class="st">"check a.middle ~ 0.5\ncheck somewhere ~ 0.5\ncheck a.cx\n"</span>);</span>
-<span id="tests-metric-loft-L87">  rs = <span class="fn-call">eval_checks</span>(sc);</span>
-<span id="tests-metric-loft-L88">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(rs[<span class="nm">0</span>]?.err == <span class="st">"ghost?"</span>, <span class="st">"an element named and never drawn has no box"</span>);</span>
-<span id="tests-metric-loft-L89">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(rs[<span class="nm">1</span>]?.err == <span class="st">"nobody?"</span>, <span class="st">"got {rs[1]?.err}"</span>);</span>
-<span id="tests-metric-loft-L90">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(rs[<span class="nm">2</span>]?.err == <span class="st">"a.middle?"</span>, <span class="st">"the property is named too"</span>);</span>
-<span id="tests-metric-loft-L91">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(rs[<span class="nm">3</span>]?.err == <span class="st">"somewhere?"</span>, <span class="st">"got {rs[3]?.err}"</span>);</span>
-<span id="tests-metric-loft-L92">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(rs[<span class="nm">4</span>]?.err == <span class="st">"(unparsed)"</span>, <span class="st">"a line with no operator is not a check"</span>);</span>
-<span id="tests-metric-loft-L93">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(rs[<span class="nm">4</span>]?.report == <span class="st">"check: a.cx  (unparsed)"</span>, <span class="st">"got {rs[4]?.report}"</span>);</span>
-<span id="tests-metric-loft-L94">  <span class="kw">for</span> r <span class="kw">in</span> rs { <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!r.ok, <span class="st">"an unresolved check never passes: {r.report}"</span>); }</span>
-<span id="tests-metric-loft-L95">}</span>
-<span id="tests-metric-loft-L96"></span>
-<span id="tests-metric-loft-L97"><span class="kw">fn</span> <span class="fn-call">test_the_element_report_is_in_ink_order</span>() {</span>
-<span id="tests-metric-loft-L98">  <span class="cm">// `late` is NAMED first and INKED second: the oracle keys its table by name in</span></span>
-<span id="tests-metric-loft-L99">  <span class="cm">// a dict, so its order is first-ink and not first-mention.</span></span>
-<span id="tests-metric-loft-L100">  sc = <span class="fn-call">parse_scene</span>(<span class="st">"size 8x8\nname late\nname early\n"</span></span>
-<span id="tests-metric-loft-L101">                   + <span class="st">"Poly (0.1,0.1) (0.3,0.1) (0.3,0.3) rgb=1,2,3\nname late\n"</span></span>
-<span id="tests-metric-loft-L102">                   + <span class="st">"Poly (0.5,0.5) (0.9,0.5) (0.9,0.7) rgb=1,2,3\n"</span>);</span>
-<span id="tests-metric-loft-L103">  rep = <span class="fn-call">metric_report</span>(sc, <span class="fn-call">eval_checks</span>(sc));</span>
-<span id="tests-metric-loft-L104">  early = rep.<span class="fn-call"><a href="stdlib-text.html">find</a></span>(<span class="st">"early"</span>);</span>
-<span id="tests-metric-loft-L105">  late = rep.<span class="fn-call"><a href="stdlib-text.html">find</a></span>(<span class="st">"  late"</span>);</span>
-<span id="tests-metric-loft-L106">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(early != <span class="kw">null</span> &amp;&amp; late != <span class="kw">null</span>, <span class="st">"both elements are reported"</span>);</span>
-<span id="tests-metric-loft-L107">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>((early ?? <span class="nm">0</span>) &lt; (late ?? <span class="nm">0</span>), <span class="st">"early took ink first, so it is reported first"</span>);</span>
-<span id="tests-metric-loft-L108">}</span>
-<span id="tests-metric-loft-L109"></span>
-<span id="tests-metric-loft-L110"><span class="kw">fn</span> <span class="fn-call">test_a_scene_is_whole_only_when_nothing_is_missing</span>() {</span>
-<span id="tests-metric-loft-L111">  ok = <span class="fn-call">parse_scene</span>(<span class="st">"size 8x8\nname a\nPoly (0.1,0.1) (0.3,0.1) (0.3,0.3) rgb=1,2,3\n"</span></span>
-<span id="tests-metric-loft-L112">                   + <span class="st">"check a.cx ~ 0.2\n"</span>);</span>
-<span id="tests-metric-loft-L113">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">scene_ok</span>(ok, <span class="fn-call">eval_checks</span>(ok)), <span class="st">"every line parsed and the check passes"</span>);</span>
-<span id="tests-metric-loft-L114"></span>
-<span id="tests-metric-loft-L115">  failed = <span class="fn-call">parse_scene</span>(<span class="st">"size 8x8\nname a\nPoly (0.1,0.1) (0.3,0.1) (0.3,0.3) rgb=1,2,3\n"</span></span>
-<span id="tests-metric-loft-L116">                       + <span class="st">"check a.cx ~ 0.9\n"</span>);</span>
-<span id="tests-metric-loft-L117">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="fn-call">scene_ok</span>(failed, <span class="fn-call">eval_checks</span>(failed)), <span class="st">"a failing check is not whole"</span>);</span>
+<span id="tests-metric-loft-L83"><span class="kw">fn</span> <span class="fn-call">test_a_negative_literal_is_not_a_subtraction</span>() {</span>
+<span id="tests-metric-loft-L84">  <span class="cm">// `^(\S+)\s*([+-])\s*([\d.]+)$` needs a base on the left of the sign, so a</span></span>
+<span id="tests-metric-loft-L85">  <span class="cm">// bare `-0.1` has none and stays a number.</span></span>
+<span id="tests-metric-loft-L86">  sc = <span class="fn-call">parse_scene</span>(<span class="st">"size 8x8\nname a\nPoly (0.1,0.1) (0.3,0.1) (0.3,0.3) rgb=1,2,3\n"</span></span>
+<span id="tests-metric-loft-L87">                   + <span class="st">"check a.cx &gt; -0.1\n"</span>);</span>
+<span id="tests-metric-loft-L88">  rs = <span class="fn-call">eval_checks</span>(sc);</span>
+<span id="tests-metric-loft-L89">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(rs[<span class="nm">0</span>]?.ok &amp;&amp; rs[<span class="nm">0</span>]?.rhs == -<span class="nm">0.1</span>, <span class="st">"got {rs[0]?.report}"</span>);</span>
+<span id="tests-metric-loft-L90">}</span>
+<span id="tests-metric-loft-L91"></span>
+<span id="tests-metric-loft-L92"><span class="kw">fn</span> <span class="fn-call">test_a_name_that_does_not_resolve_is_named</span>() {</span>
+<span id="tests-metric-loft-L93">  sc = <span class="fn-call">parse_scene</span>(<span class="st">"size 8x8\nname a\nPoly (0.1,0.1) (0.3,0.1) (0.3,0.3) rgb=1,2,3\n"</span></span>
+<span id="tests-metric-loft-L94">                   + <span class="st">"name ghost\ncheck ghost.cx ~ 0.5\ncheck nobody.cx ~ 0.5\n"</span></span>
+<span id="tests-metric-loft-L95">                   + <span class="st">"check a.middle ~ 0.5\ncheck somewhere ~ 0.5\ncheck a.cx\n"</span>);</span>
+<span id="tests-metric-loft-L96">  rs = <span class="fn-call">eval_checks</span>(sc);</span>
+<span id="tests-metric-loft-L97">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(rs[<span class="nm">0</span>]?.err == <span class="st">"ghost?"</span>, <span class="st">"an element named and never drawn has no box"</span>);</span>
+<span id="tests-metric-loft-L98">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(rs[<span class="nm">1</span>]?.err == <span class="st">"nobody?"</span>, <span class="st">"got {rs[1]?.err}"</span>);</span>
+<span id="tests-metric-loft-L99">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(rs[<span class="nm">2</span>]?.err == <span class="st">"a.middle?"</span>, <span class="st">"the property is named too"</span>);</span>
+<span id="tests-metric-loft-L100">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(rs[<span class="nm">3</span>]?.err == <span class="st">"somewhere?"</span>, <span class="st">"got {rs[3]?.err}"</span>);</span>
+<span id="tests-metric-loft-L101">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(rs[<span class="nm">4</span>]?.err == <span class="st">"(unparsed)"</span>, <span class="st">"a line with no operator is not a check"</span>);</span>
+<span id="tests-metric-loft-L102">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(rs[<span class="nm">4</span>]?.report == <span class="st">"check: a.cx  (unparsed)"</span>, <span class="st">"got {rs[4]?.report}"</span>);</span>
+<span id="tests-metric-loft-L103">  <span class="kw">for</span> r <span class="kw">in</span> rs { <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!r.ok, <span class="st">"an unresolved check never passes: {r.report}"</span>); }</span>
+<span id="tests-metric-loft-L104">}</span>
+<span id="tests-metric-loft-L105"></span>
+<span id="tests-metric-loft-L106"><span class="kw">fn</span> <span class="fn-call">test_the_element_report_is_in_ink_order</span>() {</span>
+<span id="tests-metric-loft-L107">  <span class="cm">// `late` is NAMED first and INKED second: the oracle keys its table by name in</span></span>
+<span id="tests-metric-loft-L108">  <span class="cm">// a dict, so its order is first-ink and not first-mention.</span></span>
+<span id="tests-metric-loft-L109">  sc = <span class="fn-call">parse_scene</span>(<span class="st">"size 8x8\nname late\nname early\n"</span></span>
+<span id="tests-metric-loft-L110">                   + <span class="st">"Poly (0.1,0.1) (0.3,0.1) (0.3,0.3) rgb=1,2,3\nname late\n"</span></span>
+<span id="tests-metric-loft-L111">                   + <span class="st">"Poly (0.5,0.5) (0.9,0.5) (0.9,0.7) rgb=1,2,3\n"</span>);</span>
+<span id="tests-metric-loft-L112">  rep = <span class="fn-call">metric_report</span>(sc, <span class="fn-call">eval_checks</span>(sc));</span>
+<span id="tests-metric-loft-L113">  early = rep.<span class="fn-call"><a href="stdlib-text.html">find</a></span>(<span class="st">"early"</span>);</span>
+<span id="tests-metric-loft-L114">  late = rep.<span class="fn-call"><a href="stdlib-text.html">find</a></span>(<span class="st">"  late"</span>);</span>
+<span id="tests-metric-loft-L115">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(early != <span class="kw">null</span> &amp;&amp; late != <span class="kw">null</span>, <span class="st">"both elements are reported"</span>);</span>
+<span id="tests-metric-loft-L116">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>((early ?? <span class="nm">0</span>) &lt; (late ?? <span class="nm">0</span>), <span class="st">"early took ink first, so it is reported first"</span>);</span>
+<span id="tests-metric-loft-L117">}</span>
 <span id="tests-metric-loft-L118"></span>
-<span id="tests-metric-loft-L119">  bad = <span class="fn-call">parse_scene</span>(<span class="st">"size 8x8\nWobble (0.1,0.2) r=3\n"</span>);</span>
-<span id="tests-metric-loft-L120">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="fn-call">scene_ok</span>(bad, <span class="fn-call">eval_checks</span>(bad)), <span class="st">"an unparsed line is not whole"</span>);</span>
-<span id="tests-metric-loft-L121"></span>
-<span id="tests-metric-loft-L122">  short = <span class="fn-call">parse_scene</span>(<span class="st">"size 8x8\nPetals (0.5,0.5) n=6 r=0.1 len=0.2 w=0.05\n"</span>);</span>
-<span id="tests-metric-loft-L123">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="fn-call">scene_ok</span>(short, <span class="fn-call">eval_checks</span>(short)),</span>
-<span id="tests-metric-loft-L124">         <span class="st">"a mark this build does not draw leaves the picture short"</span>);</span>
-<span id="tests-metric-loft-L125">}</span>
-<span id="tests-metric-loft-L126"></span>
-<span id="tests-metric-loft-L127"><span class="kw">fn</span> <span class="fn-call">test_the_report_counts_what_passed</span>() {</span>
-<span id="tests-metric-loft-L128">  sc = <span class="fn-call">parse_scene</span>(<span class="fn-call">source</span>());</span>
-<span id="tests-metric-loft-L129">  rep = <span class="fn-call">metric_report</span>(sc, <span class="fn-call">eval_checks</span>(sc));</span>
-<span id="tests-metric-loft-L130">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(rep.<span class="fn-call"><a href="stdlib-text.html">contains</a></span>(<span class="st">"CHECKS  9/10 pass:"</span>), <span class="st">"got:\n{rep}"</span>);</span>
-<span id="tests-metric-loft-L131">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(rep.<span class="fn-call"><a href="stdlib-text.html">contains</a></span>(<span class="st">"  a        x[0.10..0.30] y[0.10..0.30]"</span>), <span class="st">"the boxes are reported:\n{rep}"</span>);</span>
-<span id="tests-metric-loft-L132">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(rep.<span class="fn-call"><a href="stdlib-text.html">contains</a></span>(<span class="st">"ops: 2"</span>), <span class="st">"and how many marks were drawn:\n{rep}"</span>);</span>
-<span id="tests-metric-loft-L133">}</span>
-<span id="tests-metric-loft-L134"></span>
-<span id="tests-metric-loft-L135"><span class="kw">fn</span> <span class="fn-call">test_an_unparsed_line_is_reported_before_the_geometry</span>() {</span>
-<span id="tests-metric-loft-L136">  sc = <span class="fn-call">parse_scene</span>(<span class="st">"size 8x8\nWobble (0.1,0.2) r=3\n"</span>);</span>
-<span id="tests-metric-loft-L137">  rep = <span class="fn-call">metric_report</span>(sc, <span class="fn-call">eval_checks</span>(sc));</span>
-<span id="tests-metric-loft-L138">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(rep.<span class="fn-call"><a href="stdlib-path-helpers.html">starts_with</a></span>(<span class="st">"UNPARSED 1 line(s)"</span>), <span class="st">"got:\n{rep}"</span>);</span>
-<span id="tests-metric-loft-L139">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(rep.<span class="fn-call"><a href="stdlib-text.html">contains</a></span>(<span class="st">"line 2: Wobble (0.1,0.2) r=3"</span>), <span class="st">"naming the line:\n{rep}"</span>);</span>
-<span id="tests-metric-loft-L140">}</span>
+<span id="tests-metric-loft-L119"><span class="kw">fn</span> <span class="fn-call">test_a_scene_is_whole_only_when_nothing_is_missing</span>() {</span>
+<span id="tests-metric-loft-L120">  ok = <span class="fn-call">parse_scene</span>(<span class="st">"size 8x8\nname a\nPoly (0.1,0.1) (0.3,0.1) (0.3,0.3) rgb=1,2,3\n"</span></span>
+<span id="tests-metric-loft-L121">                   + <span class="st">"check a.cx ~ 0.2\n"</span>);</span>
+<span id="tests-metric-loft-L122">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">scene_ok</span>(ok, <span class="fn-call">eval_checks</span>(ok)), <span class="st">"every line parsed and the check passes"</span>);</span>
+<span id="tests-metric-loft-L123"></span>
+<span id="tests-metric-loft-L124">  failed = <span class="fn-call">parse_scene</span>(<span class="st">"size 8x8\nname a\nPoly (0.1,0.1) (0.3,0.1) (0.3,0.3) rgb=1,2,3\n"</span></span>
+<span id="tests-metric-loft-L125">                       + <span class="st">"check a.cx ~ 0.9\n"</span>);</span>
+<span id="tests-metric-loft-L126">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="fn-call">scene_ok</span>(failed, <span class="fn-call">eval_checks</span>(failed)), <span class="st">"a failing check is not whole"</span>);</span>
+<span id="tests-metric-loft-L127"></span>
+<span id="tests-metric-loft-L128">  bad = <span class="fn-call">parse_scene</span>(<span class="st">"size 8x8\nWobble (0.1,0.2) r=3\n"</span>);</span>
+<span id="tests-metric-loft-L129">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="fn-call">scene_ok</span>(bad, <span class="fn-call">eval_checks</span>(bad)), <span class="st">"an unparsed line is not whole"</span>);</span>
+<span id="tests-metric-loft-L130"></span>
+<span id="tests-metric-loft-L131">  short = <span class="fn-call">parse_scene</span>(<span class="st">"size 8x8\nPetals (0.5,0.5) n=6 r=0.1 len=0.2 w=0.05\n"</span>);</span>
+<span id="tests-metric-loft-L132">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!<span class="fn-call">scene_ok</span>(short, <span class="fn-call">eval_checks</span>(short)),</span>
+<span id="tests-metric-loft-L133">         <span class="st">"a mark this build does not draw leaves the picture short"</span>);</span>
+<span id="tests-metric-loft-L134">}</span>
+<span id="tests-metric-loft-L135"></span>
+<span id="tests-metric-loft-L136"><span class="kw">fn</span> <span class="fn-call">test_the_report_counts_what_passed</span>() {</span>
+<span id="tests-metric-loft-L137">  sc = <span class="fn-call">parse_scene</span>(<span class="fn-call">source</span>());</span>
+<span id="tests-metric-loft-L138">  rep = <span class="fn-call">metric_report</span>(sc, <span class="fn-call">eval_checks</span>(sc));</span>
+<span id="tests-metric-loft-L139">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(rep.<span class="fn-call"><a href="stdlib-text.html">contains</a></span>(<span class="st">"CHECKS  9/10 pass:"</span>), <span class="st">"got:\n{rep}"</span>);</span>
+<span id="tests-metric-loft-L140">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(rep.<span class="fn-call"><a href="stdlib-text.html">contains</a></span>(<span class="st">"  a        x[0.10..0.30] y[0.10..0.30]"</span>), <span class="st">"the boxes are reported:\n{rep}"</span>);</span>
+<span id="tests-metric-loft-L141">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(rep.<span class="fn-call"><a href="stdlib-text.html">contains</a></span>(<span class="st">"ops: 2"</span>), <span class="st">"and how many marks were drawn:\n{rep}"</span>);</span>
+<span id="tests-metric-loft-L142">}</span>
+<span id="tests-metric-loft-L143"></span>
+<span id="tests-metric-loft-L144"><span class="kw">fn</span> <span class="fn-call">test_an_unparsed_line_is_reported_before_the_geometry</span>() {</span>
+<span id="tests-metric-loft-L145">  sc = <span class="fn-call">parse_scene</span>(<span class="st">"size 8x8\nWobble (0.1,0.2) r=3\n"</span>);</span>
+<span id="tests-metric-loft-L146">  rep = <span class="fn-call">metric_report</span>(sc, <span class="fn-call">eval_checks</span>(sc));</span>
+<span id="tests-metric-loft-L147">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(rep.<span class="fn-call"><a href="stdlib-path-helpers.html">starts_with</a></span>(<span class="st">"UNPARSED 1 line(s)"</span>), <span class="st">"got:\n{rep}"</span>);</span>
+<span id="tests-metric-loft-L148">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(rep.<span class="fn-call"><a href="stdlib-text.html">contains</a></span>(<span class="st">"line 2: Wobble (0.1,0.2) r=3"</span>), <span class="st">"naming the line:\n{rep}"</span>);</span>
+<span id="tests-metric-loft-L149">}</span>
 </code></pre>
 <h2 id="tests-parse-loft">tests/parse.loft</h2>
 <pre class="src"><code><span id="tests-parse-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
@@ -3529,7 +3538,7 @@
 <span id="tests-raster-agreement-loft-L28">  m</span>
 <span id="tests-raster-agreement-loft-L29">}</span>
 <span id="tests-raster-agreement-loft-L30"></span>
-<span id="tests-raster-agreement-loft-L31"><span class="kw">fn</span> <span class="fn-call">ink</span>() -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> { graphics::<span class="fn-call">rgba</span>(<span class="nm">200</span>, <span class="nm">40</span>, <span class="nm">30</span>, <span class="nm">255</span>) }</span>
+<span id="tests-raster-agreement-loft-L31"><span class="kw">fn</span> <span class="fn-call">ink</span>() -&gt; <span class="ty"><a href="stdlib-types.html">i64</a></span> { graphics::<span class="fn-call">rgba</span>(<span class="nm">200</span>, <span class="nm">40</span>, <span class="nm">30</span>, <span class="nm">255</span>) }</span>
 <span id="tests-raster-agreement-loft-L32"></span>
 <span id="tests-raster-agreement-loft-L33"><span class="kw">fn</span> <span class="fn-call">test_polygon_matches_pillow</span>() {</span>
 <span id="tests-raster-agreement-loft-L34">  cv = graphics::<span class="fn-call">canvas</span>(<span class="en">N</span>, <span class="en">N</span>, <span class="nm">0</span>);</span>

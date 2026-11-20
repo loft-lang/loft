@@ -23,14 +23,14 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <a href="https://loft-lang.org/blog/">Blog</a> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>gpu_metal source</h1>
 <article>
-<p><a href="lib-gpu_metal.html">← gpu_metal</a> · <a href="lib-gpu_metal-api.html">API reference</a> · version 0.2.2</p>
-<p class="lib-legend">6 file(s), 1945 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<p><a href="lib-gpu_metal.html">← gpu_metal</a> · <a href="lib-gpu_metal-api.html">API reference</a> · version 0.2.3</p>
+<p class="lib-legend">6 file(s), 1949 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
 <table class="lib-table">
 <tr><th>Item</th><th>Defined</th><th>Worked example</th><th>Call sites</th></tr>
 <tr><td><code>table</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-metal-loft-L27">27</a></td><td>—</td><td><a href="#tests-after-close-loft-L15">15</a> <a href="#tests-after-close-loft-L93">93</a> <a href="#tests-after-close-loft-L100">100</a> <a href="#tests-after-close-loft-L114">114</a> <a href="#tests-after-close-loft-L120">120</a> <a href="#tests-checked-loft-L13">13</a> … (91 total)</td></tr>
-<tr><td><code>checked</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-metal-loft-L49">49</a></td><td>—</td><td><a href="#tests-checked-loft-L25">25</a> <a href="#tests-checked-loft-L29">29</a> <a href="#tests-checked-loft-L36">36</a> <a href="#tests-checked-loft-L45">45</a> <a href="#tests-checked-loft-L60">60</a> <a href="#tests-checked-loft-L62">62</a> … (10 total)</td></tr>
+<tr><td><code>checked</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-metal-loft-L49">49</a></td><td>—</td><td><a href="#tests-checked-loft-L25">25</a> <a href="#tests-checked-loft-L29">29</a> <a href="#tests-checked-loft-L36">36</a> <a href="#tests-checked-loft-L45">45</a> <a href="#tests-checked-loft-L60">60</a> <a href="#tests-checked-loft-L62">62</a> … (11 total)</td></tr>
 <tr><td><code>check</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-metal-loft-L55">55</a></td><td>—</td><td><a href="#tests-checked-loft-L84">84</a> <a href="#tests-checked-loft-L91">91</a></td></tr>
 <tr><td><code>faults</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-metal-loft-L60">60</a></td><td>—</td><td><a href="#tests-checked-loft-L37">37</a> <a href="#tests-checked-loft-L39">39</a> <a href="#tests-checked-loft-L64">64</a> <a href="#tests-checked-loft-L69">69</a> <a href="#tests-checked-loft-L77">77</a> <a href="#tests-checked-loft-L87">87</a> … (7 total)</td></tr>
 <tr><td><code>check_catches</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-metal-loft-L67">67</a></td><td>—</td><td><a href="#tests-checked-loft-L39">39</a> <a href="#tests-checked-loft-L48">48</a> <a href="#tests-checked-loft-L88">88</a></td></tr>
@@ -676,86 +676,90 @@
 <span id="tests-host-loft-L331">  dev.<span class="fn-call">end</span>();</span>
 <span id="tests-host-loft-L332">  dev.<span class="fn-call">close</span>();</span>
 <span id="tests-host-loft-L333">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(dev.<span class="fn-call">width</span>() == <span class="nm">0</span> &amp;&amp; !dev.<span class="fn-call">poll</span>(), <span class="st">"a closed device has no window"</span>);</span>
-<span id="tests-host-loft-L334">  quad.<span class="fn-call">update</span>(<span class="fn-call">frame</span>());</span>
-<span id="tests-host-loft-L335">  t.<span class="fn-call">put</span>(<span class="nm">0</span>, <span class="nm">0</span>, [<span class="nm">0xFF010203</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u32</a></span>], <span class="nm">1</span>, <span class="nm">1</span>);</span>
-<span id="tests-host-loft-L336">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(pipe.<span class="fn-call">block</span>().<span class="fn-call">floats</span>()) == <span class="nm">0</span>, <span class="st">"the pipeline's block is still its own"</span>);</span>
-<span id="tests-host-loft-L337">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(dev.<span class="fn-call">capture_of</span>(target)) == <span class="nm">16</span>, <span class="st">"and a closed device reads nothing into a target's size"</span>);</span>
-<span id="tests-host-loft-L338">}</span>
-<span id="tests-host-loft-L339"></span>
-<span id="tests-host-loft-L340"><span class="cm">// Frames shown one after another: each is drawn, captured as drawn and handed over.</span></span>
-<span id="tests-host-loft-L341"><span class="kw">fn</span> <span class="fn-call">test_frames_are_presented_one_after_another</span>() {</span>
-<span id="tests-host-loft-L342">  <span class="kw">if</span> !<span class="fn-call">display</span>() { <span class="kw">return</span>; }</span>
-<span id="tests-host-loft-L343">  dev = gpu::<span class="fn-call">open</span>(gpu_metal::<span class="fn-call">table</span>(), <span class="nm">64</span>, <span class="nm">48</span>, <span class="st">"host-present"</span>) ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"no device"</span>);</span>
-<span id="tests-host-loft-L344">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..5</span> {</span>
-<span id="tests-host-loft-L345">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(dev.<span class="fn-call">poll</span>(), <span class="st">"the window stays open"</span>);</span>
-<span id="tests-host-loft-L346">    dev.<span class="fn-call">begin_window</span>(gpu::<span class="en">CLEAR</span>, <span class="nm">0xFF000000</span> + <span class="nm">40</span> * i);</span>
-<span id="tests-host-loft-L347">    dev.<span class="fn-call">end</span>();</span>
-<span id="tests-host-loft-L348">    c = dev.<span class="fn-call">capture</span>();</span>
-<span id="tests-host-loft-L349">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>((c[<span class="nm">0</span>] ?? <span class="nm">0</span>) == ((<span class="nm">0xFF000000</span> + <span class="nm">40</span> * i) &amp; <span class="nm">4294967295</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u32</a></span>, <span class="st">"frame {i} holds its own colour: {c[0] ?? 0:x}"</span>);</span>
-<span id="tests-host-loft-L350">    dev.<span class="fn-call">present</span>();</span>
-<span id="tests-host-loft-L351">  }</span>
-<span id="tests-host-loft-L352">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(dev.<span class="fn-call">refusals</span>()) == <span class="nm">0</span>, <span class="st">"nothing refused: {dev.refusals()}"</span>);</span>
-<span id="tests-host-loft-L353">}</span>
-<span id="tests-host-loft-L354"></span>
-<span id="tests-host-loft-L355"><span class="cm">// ── a viewport that reaches outside what the pass draws into ──</span></span>
-<span id="tests-host-loft-L356"></span>
-<span id="tests-host-loft-L357">const <span class="en">PLAIN_V</span>: <span class="ty"><a href="stdlib-types.html">text</a></span> = `</span>
-<span id="tests-host-loft-L358"><span class="kw">struct</span> <span class="en">In</span> {{ float2 pos [[<span class="fn-call">attribute</span>(<span class="nm">0</span>)]]; }};</span>
-<span id="tests-host-loft-L359"><span class="kw">struct</span> <span class="en">Out</span> {{ float4 position [[position]]; }};</span>
-<span id="tests-host-loft-L360">vertex <span class="en">Out</span> <span class="fn-call">vertex_main</span>(<span class="en">In</span> <span class="kw">in</span> [[stage_in]]) {{</span>
-<span id="tests-host-loft-L361">  <span class="en">Out</span> o;</span>
-<span id="tests-host-loft-L362">  o.position = <span class="fn-call">gpu_position</span>(<span class="fn-call">float4</span>(<span class="kw">in</span>.pos, <span class="nm">0.0</span>, <span class="nm">1.0</span>));</span>
-<span id="tests-host-loft-L363">  <span class="kw">return</span> o;</span>
-<span id="tests-host-loft-L364">}}</span>
-<span id="tests-host-loft-L365">`;</span>
-<span id="tests-host-loft-L366"></span>
-<span id="tests-host-loft-L367"><span class="kw">fn</span> <span class="fn-call">plain</span>() -&gt; gpu::<span class="en">Program</span> {</span>
-<span id="tests-host-loft-L368">  gpu::<span class="en">Program</span> {</span>
-<span id="tests-host-loft-L369">    vertex: [gpu::<span class="en">F2</span>],</span>
-<span id="tests-host-loft-L370">    instance: [],</span>
-<span id="tests-host-loft-L371">    block: [],</span>
-<span id="tests-host-loft-L372">    textures: <span class="nm">0</span>,</span>
-<span id="tests-host-loft-L373">    sources: [gpu::<span class="fn-call">source</span>(<span class="st">"msl"</span>, <span class="en">PLAIN_V</span>, <span class="en">WHITE_F</span>)],</span>
-<span id="tests-host-loft-L374">  }</span>
-<span id="tests-host-loft-L375">}</span>
-<span id="tests-host-loft-L376"></span>
-<span id="tests-host-loft-L377"><span class="cm">// The white pixels of one triangle, corners (-1, -1), (1, -0.6) and (-0.2, 1), drawn through the</span></span>
-<span id="tests-host-loft-L378"><span class="cm">// viewport (x, y, width, height) into the window or a 64 x 48 target.</span></span>
-<span id="tests-host-loft-L379"><span class="kw">fn</span> <span class="fn-call">covered</span>(into_target: <span class="ty"><a href="stdlib-types.html">boolean</a></span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, width: <span class="ty"><a href="stdlib-types.html">integer</a></span>, height: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="tests-host-loft-L380">  dev = gpu::<span class="fn-call">open</span>(gpu_metal::<span class="fn-call">table</span>(), <span class="nm">64</span>, <span class="nm">48</span>, <span class="st">"host-viewport"</span>) ?? <span class="kw">return</span> -<span class="nm">1</span>;</span>
-<span id="tests-host-loft-L381">  pipe = dev.<span class="fn-call">pipeline</span>(<span class="fn-call">plain</span>(), gpu::<span class="en">State</span> { into: <span class="kw">if</span> into_target { gpu::<span class="en">INTO_COLOUR</span> } <span class="kw">else</span> { gpu::<span class="en">INTO_WINDOW</span> } }) ?? <span class="kw">return</span> -<span class="nm">2</span>;</span>
-<span id="tests-host-loft-L382">  corners = dev.<span class="fn-call">buffer</span>([-<span class="nm">1.0f</span>, -<span class="nm">1.0f</span>, <span class="nm">1.0f</span>, -<span class="nm">0.6f</span>, -<span class="nm">0.2f</span>, <span class="nm">1.0f</span>]);</span>
-<span id="tests-host-loft-L383">  colour = dev.<span class="fn-call">texture</span>(<span class="nm">64</span>, <span class="nm">48</span>);</span>
-<span id="tests-host-loft-L384">  target = dev.<span class="fn-call">colour_target</span>(colour);</span>
-<span id="tests-host-loft-L385">  <span class="kw">if</span> into_target { dev.<span class="fn-call">begin</span>(target, gpu::<span class="en">CLEAR</span>, <span class="nm">0xFF000000</span>); } <span class="kw">else</span> { dev.<span class="fn-call">begin_window</span>(gpu::<span class="en">CLEAR</span>, <span class="nm">0xFF000000</span>); }</span>
-<span id="tests-host-loft-L386">  dev.<span class="fn-call">bind</span>(pipe);</span>
-<span id="tests-host-loft-L387">  dev.<span class="fn-call">vertices</span>(corners);</span>
-<span id="tests-host-loft-L388">  dev.<span class="fn-call">viewport</span>(x, y, width, height);</span>
-<span id="tests-host-loft-L389">  dev.<span class="fn-call">draw</span>(<span class="nm">0</span>, <span class="nm">3</span>);</span>
-<span id="tests-host-loft-L390">  dev.<span class="fn-call">end</span>();</span>
-<span id="tests-host-loft-L391">  c = <span class="kw">if</span> into_target { dev.<span class="fn-call">capture_of</span>(target) } <span class="kw">else</span> { dev.<span class="fn-call">capture</span>() };</span>
-<span id="tests-host-loft-L392">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(dev.<span class="fn-call">refusals</span>()) == <span class="nm">0</span>, <span class="st">"nothing refused: {dev.refusals()}"</span>);</span>
-<span id="tests-host-loft-L393">  white = <span class="nm">0</span>;</span>
-<span id="tests-host-loft-L394">  <span class="kw">for</span> p <span class="kw">in</span> c {</span>
-<span id="tests-host-loft-L395">    <span class="kw">if</span> p == <span class="nm">0xFFFFFFFF</span> { white += <span class="nm">1</span>; }</span>
-<span id="tests-host-loft-L396">  }</span>
-<span id="tests-host-loft-L397">  white</span>
-<span id="tests-host-loft-L398">}</span>
-<span id="tests-host-loft-L399"></span>
-<span id="tests-host-loft-L400"><span class="cm">// The part inside is drawn, and it is the part the whole viewport puts there.  Counted by hand,</span></span>
-<span id="tests-host-loft-L401"><span class="cm">// a pixel drawn when its middle lies inside the triangle: the viewport (-100, 20, 300, 20) maps</span></span>
-<span id="tests-host-loft-L402"><span class="cm">// the 64 columns onto clip x from -1/3 to 7/75, and covers 1045 middles, one more lying on an</span></span>
-<span id="tests-host-loft-L403"><span class="cm">// edge, which the rasteriser's tie rule decides; the viewport (10, -4000, 20, 8000) maps the 48</span></span>
-<span id="tests-host-loft-L404"><span class="cm">// rows onto clip y from 0 to 0.012, where the triangle spans 11 columns: 11 x 48 = 528.</span></span>
-<span id="tests-host-loft-L405"><span class="kw">fn</span> <span class="fn-call">test_a_viewport_that_reaches_outside_draws_the_part_inside</span>() {</span>
-<span id="tests-host-loft-L406">  <span class="kw">if</span> !<span class="fn-call">display</span>() { <span class="kw">return</span>; }</span>
-<span id="tests-host-loft-L407">  <span class="kw">for</span> into_target <span class="kw">in</span> [<span class="kw">false</span>, <span class="kw">true</span>] {</span>
-<span id="tests-host-loft-L408">    wide = <span class="fn-call">covered</span>(into_target, -<span class="nm">100</span>, <span class="nm">20</span>, <span class="nm">300</span>, <span class="nm">20</span>);</span>
-<span id="tests-host-loft-L409">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(wide == <span class="nm">1045</span> || wide == <span class="nm">1046</span>, <span class="st">"the viewport 300 pixels wide: {wide} pixels drawn (1045, or 1046 with the edge one)"</span>);</span>
-<span id="tests-host-loft-L410">    tall = <span class="fn-call">covered</span>(into_target, <span class="nm">10</span>, -<span class="nm">4000</span>, <span class="nm">20</span>, <span class="nm">8000</span>);</span>
-<span id="tests-host-loft-L411">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(tall == <span class="nm">528</span>, <span class="st">"the viewport 8000 pixels tall: {tall} pixels drawn"</span>);</span>
-<span id="tests-host-loft-L412">  }</span>
-<span id="tests-host-loft-L413">}</span>
+<span id="tests-host-loft-L334">  <span class="cm">// Using what a closed device made does nothing in the library as it ships.  A checked</span></span>
+<span id="tests-host-loft-L335">  <span class="cm">// build reports it as a fault (tests/checked.loft holds that), so it is not done there.</span></span>
+<span id="tests-host-loft-L336">  <span class="kw">if</span> !gpu_metal::<span class="fn-call">checked</span>() {</span>
+<span id="tests-host-loft-L337">    quad.<span class="fn-call">update</span>(<span class="fn-call">frame</span>());</span>
+<span id="tests-host-loft-L338">    t.<span class="fn-call">put</span>(<span class="nm">0</span>, <span class="nm">0</span>, [<span class="nm">0xFF010203</span> <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u32</a></span>], <span class="nm">1</span>, <span class="nm">1</span>);</span>
+<span id="tests-host-loft-L339">  }</span>
+<span id="tests-host-loft-L340">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(pipe.<span class="fn-call">block</span>().<span class="fn-call">floats</span>()) == <span class="nm">0</span>, <span class="st">"the pipeline's block is still its own"</span>);</span>
+<span id="tests-host-loft-L341">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(dev.<span class="fn-call">capture_of</span>(target)) == <span class="nm">16</span>, <span class="st">"and a closed device reads nothing into a target's size"</span>);</span>
+<span id="tests-host-loft-L342">}</span>
+<span id="tests-host-loft-L343"></span>
+<span id="tests-host-loft-L344"><span class="cm">// Frames shown one after another: each is drawn, captured as drawn and handed over.</span></span>
+<span id="tests-host-loft-L345"><span class="kw">fn</span> <span class="fn-call">test_frames_are_presented_one_after_another</span>() {</span>
+<span id="tests-host-loft-L346">  <span class="kw">if</span> !<span class="fn-call">display</span>() { <span class="kw">return</span>; }</span>
+<span id="tests-host-loft-L347">  dev = gpu::<span class="fn-call">open</span>(gpu_metal::<span class="fn-call">table</span>(), <span class="nm">64</span>, <span class="nm">48</span>, <span class="st">"host-present"</span>) ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"no device"</span>);</span>
+<span id="tests-host-loft-L348">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..5</span> {</span>
+<span id="tests-host-loft-L349">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(dev.<span class="fn-call">poll</span>(), <span class="st">"the window stays open"</span>);</span>
+<span id="tests-host-loft-L350">    dev.<span class="fn-call">begin_window</span>(gpu::<span class="en">CLEAR</span>, <span class="nm">0xFF000000</span> + <span class="nm">40</span> * i);</span>
+<span id="tests-host-loft-L351">    dev.<span class="fn-call">end</span>();</span>
+<span id="tests-host-loft-L352">    c = dev.<span class="fn-call">capture</span>();</span>
+<span id="tests-host-loft-L353">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>((c[<span class="nm">0</span>] ?? <span class="nm">0</span>) == ((<span class="nm">0xFF000000</span> + <span class="nm">40</span> * i) &amp; <span class="nm">4294967295</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u32</a></span>, <span class="st">"frame {i} holds its own colour: {c[0] ?? 0:x}"</span>);</span>
+<span id="tests-host-loft-L354">    dev.<span class="fn-call">present</span>();</span>
+<span id="tests-host-loft-L355">  }</span>
+<span id="tests-host-loft-L356">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(dev.<span class="fn-call">refusals</span>()) == <span class="nm">0</span>, <span class="st">"nothing refused: {dev.refusals()}"</span>);</span>
+<span id="tests-host-loft-L357">}</span>
+<span id="tests-host-loft-L358"></span>
+<span id="tests-host-loft-L359"><span class="cm">// ── a viewport that reaches outside what the pass draws into ──</span></span>
+<span id="tests-host-loft-L360"></span>
+<span id="tests-host-loft-L361">const <span class="en">PLAIN_V</span>: <span class="ty"><a href="stdlib-types.html">text</a></span> = `</span>
+<span id="tests-host-loft-L362"><span class="kw">struct</span> <span class="en">In</span> {{ float2 pos [[<span class="fn-call">attribute</span>(<span class="nm">0</span>)]]; }};</span>
+<span id="tests-host-loft-L363"><span class="kw">struct</span> <span class="en">Out</span> {{ float4 position [[position]]; }};</span>
+<span id="tests-host-loft-L364">vertex <span class="en">Out</span> <span class="fn-call">vertex_main</span>(<span class="en">In</span> <span class="kw">in</span> [[stage_in]]) {{</span>
+<span id="tests-host-loft-L365">  <span class="en">Out</span> o;</span>
+<span id="tests-host-loft-L366">  o.position = <span class="fn-call">gpu_position</span>(<span class="fn-call">float4</span>(<span class="kw">in</span>.pos, <span class="nm">0.0</span>, <span class="nm">1.0</span>));</span>
+<span id="tests-host-loft-L367">  <span class="kw">return</span> o;</span>
+<span id="tests-host-loft-L368">}}</span>
+<span id="tests-host-loft-L369">`;</span>
+<span id="tests-host-loft-L370"></span>
+<span id="tests-host-loft-L371"><span class="kw">fn</span> <span class="fn-call">plain</span>() -&gt; gpu::<span class="en">Program</span> {</span>
+<span id="tests-host-loft-L372">  gpu::<span class="en">Program</span> {</span>
+<span id="tests-host-loft-L373">    vertex: [gpu::<span class="en">F2</span>],</span>
+<span id="tests-host-loft-L374">    instance: [],</span>
+<span id="tests-host-loft-L375">    block: [],</span>
+<span id="tests-host-loft-L376">    textures: <span class="nm">0</span>,</span>
+<span id="tests-host-loft-L377">    sources: [gpu::<span class="fn-call">source</span>(<span class="st">"msl"</span>, <span class="en">PLAIN_V</span>, <span class="en">WHITE_F</span>)],</span>
+<span id="tests-host-loft-L378">  }</span>
+<span id="tests-host-loft-L379">}</span>
+<span id="tests-host-loft-L380"></span>
+<span id="tests-host-loft-L381"><span class="cm">// The white pixels of one triangle, corners (-1, -1), (1, -0.6) and (-0.2, 1), drawn through the</span></span>
+<span id="tests-host-loft-L382"><span class="cm">// viewport (x, y, width, height) into the window or a 64 x 48 target.</span></span>
+<span id="tests-host-loft-L383"><span class="kw">fn</span> <span class="fn-call">covered</span>(into_target: <span class="ty"><a href="stdlib-types.html">boolean</a></span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>, width: <span class="ty"><a href="stdlib-types.html">integer</a></span>, height: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="tests-host-loft-L384">  dev = gpu::<span class="fn-call">open</span>(gpu_metal::<span class="fn-call">table</span>(), <span class="nm">64</span>, <span class="nm">48</span>, <span class="st">"host-viewport"</span>) ?? <span class="kw">return</span> -<span class="nm">1</span>;</span>
+<span id="tests-host-loft-L385">  pipe = dev.<span class="fn-call">pipeline</span>(<span class="fn-call">plain</span>(), gpu::<span class="en">State</span> { into: <span class="kw">if</span> into_target { gpu::<span class="en">INTO_COLOUR</span> } <span class="kw">else</span> { gpu::<span class="en">INTO_WINDOW</span> } }) ?? <span class="kw">return</span> -<span class="nm">2</span>;</span>
+<span id="tests-host-loft-L386">  corners = dev.<span class="fn-call">buffer</span>([-<span class="nm">1.0f</span>, -<span class="nm">1.0f</span>, <span class="nm">1.0f</span>, -<span class="nm">0.6f</span>, -<span class="nm">0.2f</span>, <span class="nm">1.0f</span>]);</span>
+<span id="tests-host-loft-L387">  colour = dev.<span class="fn-call">texture</span>(<span class="nm">64</span>, <span class="nm">48</span>);</span>
+<span id="tests-host-loft-L388">  target = dev.<span class="fn-call">colour_target</span>(colour);</span>
+<span id="tests-host-loft-L389">  <span class="kw">if</span> into_target { dev.<span class="fn-call">begin</span>(target, gpu::<span class="en">CLEAR</span>, <span class="nm">0xFF000000</span>); } <span class="kw">else</span> { dev.<span class="fn-call">begin_window</span>(gpu::<span class="en">CLEAR</span>, <span class="nm">0xFF000000</span>); }</span>
+<span id="tests-host-loft-L390">  dev.<span class="fn-call">bind</span>(pipe);</span>
+<span id="tests-host-loft-L391">  dev.<span class="fn-call">vertices</span>(corners);</span>
+<span id="tests-host-loft-L392">  dev.<span class="fn-call">viewport</span>(x, y, width, height);</span>
+<span id="tests-host-loft-L393">  dev.<span class="fn-call">draw</span>(<span class="nm">0</span>, <span class="nm">3</span>);</span>
+<span id="tests-host-loft-L394">  dev.<span class="fn-call">end</span>();</span>
+<span id="tests-host-loft-L395">  c = <span class="kw">if</span> into_target { dev.<span class="fn-call">capture_of</span>(target) } <span class="kw">else</span> { dev.<span class="fn-call">capture</span>() };</span>
+<span id="tests-host-loft-L396">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(dev.<span class="fn-call">refusals</span>()) == <span class="nm">0</span>, <span class="st">"nothing refused: {dev.refusals()}"</span>);</span>
+<span id="tests-host-loft-L397">  white = <span class="nm">0</span>;</span>
+<span id="tests-host-loft-L398">  <span class="kw">for</span> p <span class="kw">in</span> c {</span>
+<span id="tests-host-loft-L399">    <span class="kw">if</span> p == <span class="nm">0xFFFFFFFF</span> { white += <span class="nm">1</span>; }</span>
+<span id="tests-host-loft-L400">  }</span>
+<span id="tests-host-loft-L401">  white</span>
+<span id="tests-host-loft-L402">}</span>
+<span id="tests-host-loft-L403"></span>
+<span id="tests-host-loft-L404"><span class="cm">// The part inside is drawn, and it is the part the whole viewport puts there.  Counted by hand,</span></span>
+<span id="tests-host-loft-L405"><span class="cm">// a pixel drawn when its middle lies inside the triangle: the viewport (-100, 20, 300, 20) maps</span></span>
+<span id="tests-host-loft-L406"><span class="cm">// the 64 columns onto clip x from -1/3 to 7/75, and covers 1045 middles, one more lying on an</span></span>
+<span id="tests-host-loft-L407"><span class="cm">// edge, which the rasteriser's tie rule decides; the viewport (10, -4000, 20, 8000) maps the 48</span></span>
+<span id="tests-host-loft-L408"><span class="cm">// rows onto clip y from 0 to 0.012, where the triangle spans 11 columns: 11 x 48 = 528.</span></span>
+<span id="tests-host-loft-L409"><span class="kw">fn</span> <span class="fn-call">test_a_viewport_that_reaches_outside_draws_the_part_inside</span>() {</span>
+<span id="tests-host-loft-L410">  <span class="kw">if</span> !<span class="fn-call">display</span>() { <span class="kw">return</span>; }</span>
+<span id="tests-host-loft-L411">  <span class="kw">for</span> into_target <span class="kw">in</span> [<span class="kw">false</span>, <span class="kw">true</span>] {</span>
+<span id="tests-host-loft-L412">    wide = <span class="fn-call">covered</span>(into_target, -<span class="nm">100</span>, <span class="nm">20</span>, <span class="nm">300</span>, <span class="nm">20</span>);</span>
+<span id="tests-host-loft-L413">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(wide == <span class="nm">1045</span> || wide == <span class="nm">1046</span>, <span class="st">"the viewport 300 pixels wide: {wide} pixels drawn (1045, or 1046 with the edge one)"</span>);</span>
+<span id="tests-host-loft-L414">    tall = <span class="fn-call">covered</span>(into_target, <span class="nm">10</span>, -<span class="nm">4000</span>, <span class="nm">20</span>, <span class="nm">8000</span>);</span>
+<span id="tests-host-loft-L415">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(tall == <span class="nm">528</span>, <span class="st">"the viewport 8000 pixels tall: {tall} pixels drawn"</span>);</span>
+<span id="tests-host-loft-L416">  }</span>
+<span id="tests-host-loft-L417">}</span>
 </code></pre>
 <h2 id="tests-same-as-gl-loft">tests/same_as_gl.loft</h2>
 <pre class="src"><code><span id="tests-same-as-gl-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>

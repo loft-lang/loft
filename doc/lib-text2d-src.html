@@ -23,7 +23,7 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <a href="https://loft-lang.org/blog/">Blog</a> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>text2d source</h1>
 <article>
-<p><a href="lib-text2d.html">← text2d</a> · <a href="lib-text2d-api.html">API reference</a> · version 0.4.8</p>
+<p><a href="lib-text2d.html">← text2d</a> · <a href="lib-text2d-api.html">API reference</a> · version 0.4.9</p>
 <p class="lib-legend">7 file(s), 1124 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
@@ -163,7 +163,7 @@
 <span id="src-text2d-loft-L38"><span class="cm">// blitter and by the atlas, so the bit-walk has ONE home and the two can never</span></span>
 <span id="src-text2d-loft-L39"><span class="cm">// disagree about what a glyph looks like.</span></span>
 <span id="src-text2d-loft-L40"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">blit_glyph</span>(cv: graphics::<span class="en">Canvas</span>, code: <span class="ty"><a href="stdlib-types.html">integer</a></span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-text2d-loft-L41">                  colour: <span class="ty"><a href="stdlib-types.html">integer</a></span>, scale: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-text2d-loft-L41">                  colour: <span class="ty"><a href="stdlib-types.html">i64</a></span>, scale: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
 <span id="src-text2d-loft-L42">  at = <span class="fn-call">glyph_at</span>(code);</span>
 <span id="src-text2d-loft-L43">  <span class="kw">if</span> at &lt; <span class="nm">0</span> { <span class="kw">return</span>; }</span>
 <span id="src-text2d-loft-L44">  rows = face::<span class="fn-call">face_rows</span>();</span>
@@ -213,7 +213,7 @@
 <span id="src-text2d-loft-L88"><span class="cm">// same width rather than being skipped, so a string never changes length because</span></span>
 <span id="src-text2d-loft-L89"><span class="cm">// one character was missing.</span></span>
 <span id="src-text2d-loft-L90"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">write_text</span>(cv: graphics::<span class="en">Canvas</span>, s: <span class="ty"><a href="stdlib-types.html">text</a></span>, x: <span class="ty"><a href="stdlib-types.html">integer</a></span>, y: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-text2d-loft-L91">                 colour: <span class="ty"><a href="stdlib-types.html">integer</a></span>, scale: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-text2d-loft-L91">                 colour: <span class="ty"><a href="stdlib-types.html">i64</a></span>, scale: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
 <span id="src-text2d-loft-L92">  sc = <span class="fn-call">drawn_scale</span>(scale);</span>
 <span id="src-text2d-loft-L93">  pen = x;</span>
 <span id="src-text2d-loft-L94">  <span class="kw">for</span> ch <span class="kw">in</span> s {</span>
@@ -226,7 +226,7 @@
 <span id="src-text2d-loft-L101"><span class="cm">// Draw `s` centred in the box (bx, by, bw, bh).  The commonest thing a HUD wants,</span></span>
 <span id="src-text2d-loft-L102"><span class="cm">// and the commonest place an off-by-one lands.</span></span>
 <span id="src-text2d-loft-L103"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">write_centred</span>(cv: graphics::<span class="en">Canvas</span>, s: <span class="ty"><a href="stdlib-types.html">text</a></span>, bx: <span class="ty"><a href="stdlib-types.html">integer</a></span>, by: <span class="ty"><a href="stdlib-types.html">integer</a></span>,</span>
-<span id="src-text2d-loft-L104">                    bw: <span class="ty"><a href="stdlib-types.html">integer</a></span>, bh: <span class="ty"><a href="stdlib-types.html">integer</a></span>, colour: <span class="ty"><a href="stdlib-types.html">integer</a></span>, scale: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-text2d-loft-L104">                    bw: <span class="ty"><a href="stdlib-types.html">integer</a></span>, bh: <span class="ty"><a href="stdlib-types.html">integer</a></span>, colour: <span class="ty"><a href="stdlib-types.html">i64</a></span>, scale: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
 <span id="src-text2d-loft-L105">  w = <span class="fn-call">text_width</span>(s, scale);</span>
 <span id="src-text2d-loft-L106">  h = <span class="fn-call">line_height</span>(scale);</span>
 <span id="src-text2d-loft-L107">  <span class="fn-call">write_text</span>(cv, s, bx + (bw - w) / <span class="nm">2</span> ?? <span class="nm">0</span>, by + (bh - h) / <span class="nm">2</span> ?? <span class="nm">0</span>, colour, scale)</span>
@@ -301,7 +301,7 @@
 <span id="src-text2d-loft-L176">  cell = self.a_next;</span>
 <span id="src-text2d-loft-L177">  cx = (cell % self.a_cols ?? <span class="nm">0</span>) * face::<span class="en">GLYPH_W</span> * self.a_scale;</span>
 <span id="src-text2d-loft-L178">  cy = (cell / self.a_cols ?? <span class="nm">0</span>) * face::<span class="en">GLYPH_H</span> * self.a_scale;</span>
-<span id="src-text2d-loft-L179">  <span class="fn-call">blit_glyph</span>(self.a_cv, c, cx, cy, <span class="nm">0xffffffff</span>, self.a_scale);</span>
+<span id="src-text2d-loft-L179">  <span class="fn-call">blit_glyph</span>(self.a_cv, c, cx, cy, <span class="nm">0xffffffffl</span>, self.a_scale);</span>
 <span id="src-text2d-loft-L180">  self.a_codes += [c];</span>
 <span id="src-text2d-loft-L181">  self.a_next = cell + <span class="nm">1</span>;</span>
 <span id="src-text2d-loft-L182">  self.a_writes = self.a_writes + <span class="nm">1</span>;</span>
@@ -323,7 +323,7 @@
 <span id="src-text2d-loft-L198"></span>
 <span id="src-text2d-loft-L199"><span class="cm">// Blit laid-out quads from the sheet onto a canvas.</span></span>
 <span id="src-text2d-loft-L200"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">draw_quads</span>(cv: graphics::<span class="en">Canvas</span>, atlas: const <span class="en">Atlas</span>, quads: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Quad</span>&gt;,</span>
-<span id="src-text2d-loft-L201">                  colour: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-text2d-loft-L201">                  colour: <span class="ty"><a href="stdlib-types.html">i64</a></span>) {</span>
 <span id="src-text2d-loft-L202">  gw = face::<span class="en">GLYPH_W</span> * atlas.a_scale;</span>
 <span id="src-text2d-loft-L203">  gh = face::<span class="en">GLYPH_H</span> * atlas.a_scale;</span>
 <span id="src-text2d-loft-L204">  <span class="kw">for</span> q <span class="kw">in</span> quads {</span>
@@ -618,7 +618,7 @@
 <span id="tests-atlas-loft-L12"><span class="kw">use</span> text2d::*;</span>
 <span id="tests-atlas-loft-L13"><span class="kw">use</span> graphics::*;</span>
 <span id="tests-atlas-loft-L14"></span>
-<span id="tests-atlas-loft-L15"><span class="kw">fn</span> <span class="fn-call">ink</span>(cv: const graphics::<span class="en">Canvas</span>, colour: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="tests-atlas-loft-L15"><span class="kw">fn</span> <span class="fn-call">ink</span>(cv: const graphics::<span class="en">Canvas</span>, colour: <span class="ty"><a href="stdlib-types.html">i64</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
 <span id="tests-atlas-loft-L16">  n = <span class="nm">0</span>;</span>
 <span id="tests-atlas-loft-L17">  <span class="kw">for</span> v <span class="kw">in</span> cv.data { <span class="kw">if</span> v == colour { n = n + <span class="nm">1</span>; } }</span>
 <span id="tests-atlas-loft-L18">  n</span>
@@ -673,16 +673,16 @@
 <span id="tests-atlas-loft-L67"><span class="kw">fn</span> <span class="fn-call">test_the_sheet_reproduces_the_direct_blit</span>() {</span>
 <span id="tests-atlas-loft-L68">  s = <span class="st">"HELLO 42"</span>;</span>
 <span id="tests-atlas-loft-L69">  direct = graphics::<span class="fn-call">canvas</span>(<span class="nm">80</span>, <span class="nm">16</span>, <span class="nm">0xff000000</span>);</span>
-<span id="tests-atlas-loft-L70">  _ = text2d::<span class="fn-call">write_text</span>(direct, s, <span class="nm">2</span>, <span class="nm">3</span>, <span class="nm">0xffffffff</span>, <span class="nm">1</span>);</span>
+<span id="tests-atlas-loft-L70">  _ = text2d::<span class="fn-call">write_text</span>(direct, s, <span class="nm">2</span>, <span class="nm">3</span>, <span class="nm">0xffffffffl</span>, <span class="nm">1</span>);</span>
 <span id="tests-atlas-loft-L71"></span>
 <span id="tests-atlas-loft-L72">  at = text2d::<span class="fn-call">atlas_new</span>(<span class="nm">1</span>, <span class="nm">64</span>);</span>
 <span id="tests-atlas-loft-L73">  viaatlas = graphics::<span class="fn-call">canvas</span>(<span class="nm">80</span>, <span class="nm">16</span>, <span class="nm">0xff000000</span>);</span>
-<span id="tests-atlas-loft-L74">  text2d::<span class="fn-call">draw_quads</span>(viaatlas, at, at.<span class="fn-call">layout</span>(s, <span class="nm">2</span>, <span class="nm">3</span>), <span class="nm">0xffffffff</span>);</span>
+<span id="tests-atlas-loft-L74">  text2d::<span class="fn-call">draw_quads</span>(viaatlas, at, at.<span class="fn-call">layout</span>(s, <span class="nm">2</span>, <span class="nm">3</span>), <span class="nm">0xffffffffl</span>);</span>
 <span id="tests-atlas-loft-L75"></span>
 <span id="tests-atlas-loft-L76">  same = <span class="kw">true</span>;</span>
 <span id="tests-atlas-loft-L77">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..l</span><span class="fn-call">en</span>(direct.data) { <span class="kw">if</span> direct.data[i] != viaatlas.data[i] { same = <span class="kw">false</span>; } }</span>
 <span id="tests-atlas-loft-L78">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(same, <span class="st">"the atlas path draws exactly what the direct path draws"</span>);</span>
-<span id="tests-atlas-loft-L79">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">ink</span>(direct, <span class="nm">0xffffffff</span>) &gt; <span class="nm">0</span>, <span class="st">"and it is not two blank canvases agreeing"</span>);</span>
+<span id="tests-atlas-loft-L79">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">ink</span>(direct, <span class="nm">0xffffffffl</span>) &gt; <span class="nm">0</span>, <span class="st">"and it is not two blank canvases agreeing"</span>);</span>
 <span id="tests-atlas-loft-L80">}</span>
 <span id="tests-atlas-loft-L81"></span>
 <span id="tests-atlas-loft-L82"><span class="cm">// A full sheet refuses rather than corrupting: the quad carries -1 and draws</span></span>
@@ -694,18 +694,18 @@
 <span id="tests-atlas-loft-L88">  q = qs[<span class="nm">0</span>] ?? text2d::<span class="en">Quad</span> { q_x: <span class="nm">0</span>, q_y: <span class="nm">0</span>, q_cell: <span class="nm">0</span> };</span>
 <span id="tests-atlas-loft-L89">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(q.q_cell == -<span class="nm">1</span>, <span class="st">"the third glyph has no cell"</span>);</span>
 <span id="tests-atlas-loft-L90">  cv = graphics::<span class="fn-call">canvas</span>(<span class="nm">16</span>, <span class="nm">16</span>, <span class="nm">0xff000000</span>);</span>
-<span id="tests-atlas-loft-L91">  text2d::<span class="fn-call">draw_quads</span>(cv, at, qs, <span class="nm">0xffffffff</span>);</span>
-<span id="tests-atlas-loft-L92">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">ink</span>(cv, <span class="nm">0xffffffff</span>) == <span class="nm">0</span>, <span class="st">"and it draws nothing rather than the wrong glyph"</span>);</span>
+<span id="tests-atlas-loft-L91">  text2d::<span class="fn-call">draw_quads</span>(cv, at, qs, <span class="nm">0xffffffffl</span>);</span>
+<span id="tests-atlas-loft-L92">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">ink</span>(cv, <span class="nm">0xffffffffl</span>) == <span class="nm">0</span>, <span class="st">"and it draws nothing rather than the wrong glyph"</span>);</span>
 <span id="tests-atlas-loft-L93">}</span>
 <span id="tests-atlas-loft-L94"></span>
 <span id="tests-atlas-loft-L95"><span class="cm">// Scale is a property of the sheet, so a scaled sheet reproduces the scaled blit.</span></span>
 <span id="tests-atlas-loft-L96"><span class="kw">fn</span> <span class="fn-call">test_the_sheet_honours_its_scale</span>() {</span>
 <span id="tests-atlas-loft-L97">  at = text2d::<span class="fn-call">atlas_new</span>(<span class="nm">2</span>, <span class="nm">64</span>);</span>
 <span id="tests-atlas-loft-L98">  viaatlas = graphics::<span class="fn-call">canvas</span>(<span class="nm">64</span>, <span class="nm">32</span>, <span class="nm">0xff000000</span>);</span>
-<span id="tests-atlas-loft-L99">  text2d::<span class="fn-call">draw_quads</span>(viaatlas, at, at.<span class="fn-call">layout</span>(<span class="st">"7"</span>, <span class="nm">1</span>, <span class="nm">1</span>), <span class="nm">0xffffffff</span>);</span>
+<span id="tests-atlas-loft-L99">  text2d::<span class="fn-call">draw_quads</span>(viaatlas, at, at.<span class="fn-call">layout</span>(<span class="st">"7"</span>, <span class="nm">1</span>, <span class="nm">1</span>), <span class="nm">0xffffffffl</span>);</span>
 <span id="tests-atlas-loft-L100">  direct = graphics::<span class="fn-call">canvas</span>(<span class="nm">64</span>, <span class="nm">32</span>, <span class="nm">0xff000000</span>);</span>
-<span id="tests-atlas-loft-L101">  _ = text2d::<span class="fn-call">write_text</span>(direct, <span class="st">"7"</span>, <span class="nm">1</span>, <span class="nm">1</span>, <span class="nm">0xffffffff</span>, <span class="nm">2</span>);</span>
-<span id="tests-atlas-loft-L102">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">ink</span>(viaatlas, <span class="nm">0xffffffff</span>) == <span class="fn-call">ink</span>(direct, <span class="nm">0xffffffff</span>) <span class="kw">and</span> <span class="fn-call">ink</span>(direct, <span class="nm">0xffffffff</span>) &gt; <span class="nm">0</span>,</span>
+<span id="tests-atlas-loft-L101">  _ = text2d::<span class="fn-call">write_text</span>(direct, <span class="st">"7"</span>, <span class="nm">1</span>, <span class="nm">1</span>, <span class="nm">0xffffffffl</span>, <span class="nm">2</span>);</span>
+<span id="tests-atlas-loft-L102">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">ink</span>(viaatlas, <span class="nm">0xffffffffl</span>) == <span class="fn-call">ink</span>(direct, <span class="nm">0xffffffffl</span>) <span class="kw">and</span> <span class="fn-call">ink</span>(direct, <span class="nm">0xffffffffl</span>) &gt; <span class="nm">0</span>,</span>
 <span id="tests-atlas-loft-L103">         <span class="st">"same ink at scale 2"</span>);</span>
 <span id="tests-atlas-loft-L104">}</span>
 </code></pre>
@@ -877,7 +877,7 @@
 <span id="tests-text2d-loft-L10"><span class="kw">use</span> text2d::*;</span>
 <span id="tests-text2d-loft-L11"><span class="kw">use</span> graphics::*;</span>
 <span id="tests-text2d-loft-L12"></span>
-<span id="tests-text2d-loft-L13"><span class="kw">fn</span> <span class="fn-call">ink</span>(cv: const graphics::<span class="en">Canvas</span>, colour: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="tests-text2d-loft-L13"><span class="kw">fn</span> <span class="fn-call">ink</span>(cv: const graphics::<span class="en">Canvas</span>, colour: <span class="ty"><a href="stdlib-types.html">i64</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
 <span id="tests-text2d-loft-L14">  n = <span class="nm">0</span>;</span>
 <span id="tests-text2d-loft-L15">  <span class="kw">for</span> v <span class="kw">in</span> cv.data { <span class="kw">if</span> v == colour { n = n + <span class="nm">1</span>; } }</span>
 <span id="tests-text2d-loft-L16">  n</span>
@@ -887,8 +887,8 @@
 <span id="tests-text2d-loft-L20"><span class="cm">// with nothing loaded.</span></span>
 <span id="tests-text2d-loft-L21"><span class="kw">fn</span> <span class="fn-call">test_text_draws_with_nothing_loaded</span>() {</span>
 <span id="tests-text2d-loft-L22">  cv = graphics::<span class="fn-call">canvas</span>(<span class="nm">64</span>, <span class="nm">16</span>, <span class="nm">0xff000000</span>);</span>
-<span id="tests-text2d-loft-L23">  w = text2d::<span class="fn-call">write_text</span>(cv, <span class="st">"HELLO 123"</span>, <span class="nm">1</span>, <span class="nm">1</span>, <span class="nm">0xffffffff</span>, <span class="nm">1</span>);</span>
-<span id="tests-text2d-loft-L24">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">ink</span>(cv, <span class="nm">0xffffffff</span>) &gt; <span class="nm">0</span>, <span class="st">"the string put ink on the canvas"</span>);</span>
+<span id="tests-text2d-loft-L23">  w = text2d::<span class="fn-call">write_text</span>(cv, <span class="st">"HELLO 123"</span>, <span class="nm">1</span>, <span class="nm">1</span>, <span class="nm">0xffffffffl</span>, <span class="nm">1</span>);</span>
+<span id="tests-text2d-loft-L24">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">ink</span>(cv, <span class="nm">0xffffffffl</span>) &gt; <span class="nm">0</span>, <span class="st">"the string put ink on the canvas"</span>);</span>
 <span id="tests-text2d-loft-L25">  expect = text2d::<span class="fn-call">text_width</span>(<span class="st">"HELLO 123"</span>, <span class="nm">1</span>);</span>
 <span id="tests-text2d-loft-L26">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(w == expect, <span class="st">"the drawn width matches the measured one"</span>);</span>
 <span id="tests-text2d-loft-L27">}</span>
@@ -896,8 +896,8 @@
 <span id="tests-text2d-loft-L29"><span class="cm">// A blank string draws nothing and measures zero — the degenerate case proved.</span></span>
 <span id="tests-text2d-loft-L30"><span class="kw">fn</span> <span class="fn-call">test_an_empty_string_is_zero</span>() {</span>
 <span id="tests-text2d-loft-L31">  cv = graphics::<span class="fn-call">canvas</span>(<span class="nm">16</span>, <span class="nm">16</span>, <span class="nm">0xff000000</span>);</span>
-<span id="tests-text2d-loft-L32">  _ = text2d::<span class="fn-call">write_text</span>(cv, <span class="st">""</span>, <span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">0xffffffff</span>, <span class="nm">1</span>);</span>
-<span id="tests-text2d-loft-L33">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">ink</span>(cv, <span class="nm">0xffffffff</span>) == <span class="nm">0</span>, <span class="st">"nothing drawn"</span>);</span>
+<span id="tests-text2d-loft-L32">  _ = text2d::<span class="fn-call">write_text</span>(cv, <span class="st">""</span>, <span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">0xffffffffl</span>, <span class="nm">1</span>);</span>
+<span id="tests-text2d-loft-L33">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">ink</span>(cv, <span class="nm">0xffffffffl</span>) == <span class="nm">0</span>, <span class="st">"nothing drawn"</span>);</span>
 <span id="tests-text2d-loft-L34">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(text2d::<span class="fn-call">text_width</span>(<span class="st">""</span>, <span class="nm">1</span>) == <span class="nm">0</span>, <span class="st">"and nothing measured"</span>);</span>
 <span id="tests-text2d-loft-L35">}</span>
 <span id="tests-text2d-loft-L36"></span>
@@ -915,11 +915,11 @@
 <span id="tests-text2d-loft-L48"><span class="cm">// Scale 2 quadruples the ink: every lit pixel becomes a 2x2 block, exactly.</span></span>
 <span id="tests-text2d-loft-L49"><span class="kw">fn</span> <span class="fn-call">test_scale_quadruples_the_ink</span>() {</span>
 <span id="tests-text2d-loft-L50">  a = graphics::<span class="fn-call">canvas</span>(<span class="nm">64</span>, <span class="nm">32</span>, <span class="nm">0xff000000</span>);</span>
-<span id="tests-text2d-loft-L51">  _ = text2d::<span class="fn-call">write_text</span>(a, <span class="st">"42"</span>, <span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">0xffffffff</span>, <span class="nm">1</span>);</span>
+<span id="tests-text2d-loft-L51">  _ = text2d::<span class="fn-call">write_text</span>(a, <span class="st">"42"</span>, <span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">0xffffffffl</span>, <span class="nm">1</span>);</span>
 <span id="tests-text2d-loft-L52">  b = graphics::<span class="fn-call">canvas</span>(<span class="nm">64</span>, <span class="nm">32</span>, <span class="nm">0xff000000</span>);</span>
-<span id="tests-text2d-loft-L53">  _ = text2d::<span class="fn-call">write_text</span>(b, <span class="st">"42"</span>, <span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">0xffffffff</span>, <span class="nm">2</span>);</span>
-<span id="tests-text2d-loft-L54">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">ink</span>(b, <span class="nm">0xffffffff</span>) == <span class="fn-call">ink</span>(a, <span class="nm">0xffffffff</span>) * <span class="nm">4</span>,</span>
-<span id="tests-text2d-loft-L55">         <span class="st">"scale 2 is exactly 4x the ink: {ink(a, 0xffffffff)} -&gt; {ink(b, 0xffffffff)}"</span>);</span>
+<span id="tests-text2d-loft-L53">  _ = text2d::<span class="fn-call">write_text</span>(b, <span class="st">"42"</span>, <span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">0xffffffffl</span>, <span class="nm">2</span>);</span>
+<span id="tests-text2d-loft-L54">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">ink</span>(b, <span class="nm">0xffffffffl</span>) == <span class="fn-call">ink</span>(a, <span class="nm">0xffffffffl</span>) * <span class="nm">4</span>,</span>
+<span id="tests-text2d-loft-L55">         <span class="st">"scale 2 is exactly 4x the ink: {ink(a, 0xffffffffl)} -&gt; {ink(b, 0xffffffffl)}"</span>);</span>
 <span id="tests-text2d-loft-L56">}</span>
 <span id="tests-text2d-loft-L57"></span>
 <span id="tests-text2d-loft-L58"><span class="cm">// ⚠ A DIGIT IS THE CASE dryopea COULD NOT DRAW.  Each of 0-9 must put ink down,</span></span>
@@ -930,8 +930,8 @@
 <span id="tests-text2d-loft-L63">  seen: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt; = [];</span>
 <span id="tests-text2d-loft-L64">  <span class="kw">for</span> d <span class="kw">in</span> digits {</span>
 <span id="tests-text2d-loft-L65">    cv = graphics::<span class="fn-call">canvas</span>(<span class="nm">8</span>, <span class="nm">8</span>, <span class="nm">0xff000000</span>);</span>
-<span id="tests-text2d-loft-L66">    _ = text2d::<span class="fn-call">write_text</span>(cv, d, <span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">0xffffffff</span>, <span class="nm">1</span>);</span>
-<span id="tests-text2d-loft-L67">    n = <span class="fn-call">ink</span>(cv, <span class="nm">0xffffffff</span>);</span>
+<span id="tests-text2d-loft-L66">    _ = text2d::<span class="fn-call">write_text</span>(cv, d, <span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">0xffffffffl</span>, <span class="nm">1</span>);</span>
+<span id="tests-text2d-loft-L67">    n = <span class="fn-call">ink</span>(cv, <span class="nm">0xffffffffl</span>);</span>
 <span id="tests-text2d-loft-L68">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(n &gt; <span class="nm">0</span>, <span class="st">"digit {d} drew nothing"</span>);</span>
 <span id="tests-text2d-loft-L69">    seen += [n];</span>
 <span id="tests-text2d-loft-L70">  }</span>
@@ -943,18 +943,18 @@
 <span id="tests-text2d-loft-L76"><span class="cm">// Lowercase folds to uppercase rather than vanishing — the documented compromise.</span></span>
 <span id="tests-text2d-loft-L77"><span class="kw">fn</span> <span class="fn-call">test_lowercase_folds_rather_than_vanishing</span>() {</span>
 <span id="tests-text2d-loft-L78">  lower = graphics::<span class="fn-call">canvas</span>(<span class="nm">16</span>, <span class="nm">16</span>, <span class="nm">0xff000000</span>);</span>
-<span id="tests-text2d-loft-L79">  _ = text2d::<span class="fn-call">write_text</span>(lower, <span class="st">"a"</span>, <span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">0xffffffff</span>, <span class="nm">1</span>);</span>
+<span id="tests-text2d-loft-L79">  _ = text2d::<span class="fn-call">write_text</span>(lower, <span class="st">"a"</span>, <span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">0xffffffffl</span>, <span class="nm">1</span>);</span>
 <span id="tests-text2d-loft-L80">  upper = graphics::<span class="fn-call">canvas</span>(<span class="nm">16</span>, <span class="nm">16</span>, <span class="nm">0xff000000</span>);</span>
-<span id="tests-text2d-loft-L81">  _ = text2d::<span class="fn-call">write_text</span>(upper, <span class="st">"A"</span>, <span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">0xffffffff</span>, <span class="nm">1</span>);</span>
-<span id="tests-text2d-loft-L82">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">ink</span>(lower, <span class="nm">0xffffffff</span>) &gt; <span class="nm">0</span>, <span class="st">"lowercase draws something"</span>);</span>
-<span id="tests-text2d-loft-L83">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">ink</span>(lower, <span class="nm">0xffffffff</span>) == <span class="fn-call">ink</span>(upper, <span class="nm">0xffffffff</span>), <span class="st">"and it is the uppercase form"</span>);</span>
+<span id="tests-text2d-loft-L81">  _ = text2d::<span class="fn-call">write_text</span>(upper, <span class="st">"A"</span>, <span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">0xffffffffl</span>, <span class="nm">1</span>);</span>
+<span id="tests-text2d-loft-L82">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">ink</span>(lower, <span class="nm">0xffffffffl</span>) &gt; <span class="nm">0</span>, <span class="st">"lowercase draws something"</span>);</span>
+<span id="tests-text2d-loft-L83">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">ink</span>(lower, <span class="nm">0xffffffffl</span>) == <span class="fn-call">ink</span>(upper, <span class="nm">0xffffffffl</span>), <span class="st">"and it is the uppercase form"</span>);</span>
 <span id="tests-text2d-loft-L84">}</span>
 <span id="tests-text2d-loft-L85"></span>
 <span id="tests-text2d-loft-L86"><span class="cm">// An unknown character reserves its width instead of collapsing the run, so a</span></span>
 <span id="tests-text2d-loft-L87"><span class="cm">// string never changes length because one glyph was missing.</span></span>
 <span id="tests-text2d-loft-L88"><span class="kw">fn</span> <span class="fn-call">test_an_unknown_glyph_keeps_its_width</span>() {</span>
 <span id="tests-text2d-loft-L89">  cv = graphics::<span class="fn-call">canvas</span>(<span class="nm">64</span>, <span class="nm">16</span>, <span class="nm">0xff000000</span>);</span>
-<span id="tests-text2d-loft-L90">  w = text2d::<span class="fn-call">write_text</span>(cv, <span class="st">"A~B"</span>, <span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">0xffffffff</span>, <span class="nm">1</span>);</span>
+<span id="tests-text2d-loft-L90">  w = text2d::<span class="fn-call">write_text</span>(cv, <span class="st">"A~B"</span>, <span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">0xffffffffl</span>, <span class="nm">1</span>);</span>
 <span id="tests-text2d-loft-L91">  expect2 = text2d::<span class="fn-call">text_width</span>(<span class="st">"A~B"</span>, <span class="nm">1</span>);</span>
 <span id="tests-text2d-loft-L92">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(w == expect2, <span class="st">"the run is three glyphs wide either way"</span>);</span>
 <span id="tests-text2d-loft-L93">}</span>
@@ -962,12 +962,12 @@
 <span id="tests-text2d-loft-L95"><span class="cm">// Centring puts the run's own width in the middle of the box.</span></span>
 <span id="tests-text2d-loft-L96"><span class="kw">fn</span> <span class="fn-call">test_centred_text_is_centred</span>() {</span>
 <span id="tests-text2d-loft-L97">  cv = graphics::<span class="fn-call">canvas</span>(<span class="nm">32</span>, <span class="nm">16</span>, <span class="nm">0xff000000</span>);</span>
-<span id="tests-text2d-loft-L98">  _ = text2d::<span class="fn-call">write_centred</span>(cv, <span class="st">"A"</span>, <span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">32</span>, <span class="nm">16</span>, <span class="nm">0xffffffff</span>, <span class="nm">1</span>);</span>
+<span id="tests-text2d-loft-L98">  _ = text2d::<span class="fn-call">write_centred</span>(cv, <span class="st">"A"</span>, <span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">32</span>, <span class="nm">16</span>, <span class="nm">0xffffffffl</span>, <span class="nm">1</span>);</span>
 <span id="tests-text2d-loft-L99">  <span class="cm">// 5 wide in a 32 box -&gt; starts at 13; 7 tall in 16 -&gt; starts at 4.</span></span>
 <span id="tests-text2d-loft-L100">  found = <span class="kw">false</span>;</span>
 <span id="tests-text2d-loft-L101">  <span class="kw">for</span> y <span class="kw">in</span> <span class="nm">0..16</span> {</span>
 <span id="tests-text2d-loft-L102">    <span class="kw">for</span> x <span class="kw">in</span> <span class="nm">0..32</span> {</span>
-<span id="tests-text2d-loft-L103">      <span class="kw">if</span> cv.<span class="fn-call">get_pixel</span>(x, y) == <span class="nm">0xffffffff</span> <span class="kw">and</span> x &lt; <span class="nm">13</span> { found = <span class="kw">true</span>; }</span>
+<span id="tests-text2d-loft-L103">      <span class="kw">if</span> cv.<span class="fn-call">get_pixel</span>(x, y) == <span class="nm">0xffffffffl</span> <span class="kw">and</span> x &lt; <span class="nm">13</span> { found = <span class="kw">true</span>; }</span>
 <span id="tests-text2d-loft-L104">    }</span>
 <span id="tests-text2d-loft-L105">  }</span>
 <span id="tests-text2d-loft-L106">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(!found, <span class="st">"no ink left of the centred start column"</span>);</span>
@@ -991,9 +991,9 @@
 <span id="tests-worked-examples-loft-L15"><span class="kw">fn</span> <span class="fn-call">test_measured_is_drawn</span>() {</span>
 <span id="tests-worked-examples-loft-L16">  cv = <span class="fn-call">canvas</span>(<span class="nm">64</span>, <span class="nm">32</span>, <span class="nm">0</span>);</span>
 <span id="tests-worked-examples-loft-L17">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">text_width</span>(<span class="st">"HI"</span>, <span class="nm">1</span>) == <span class="nm">11</span> &amp;&amp; <span class="fn-call">text_width</span>(<span class="st">"HI"</span>, <span class="nm">2</span>) == <span class="nm">22</span>, <span class="st">"5 + 1 + 5, then doubled"</span>);</span>
-<span id="tests-worked-examples-loft-L18">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">write_text</span>(cv, <span class="st">"HI"</span>, <span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">0xFFFFFFFF</span>, <span class="nm">2</span>) == <span class="fn-call">text_width</span>(<span class="st">"HI"</span>, <span class="nm">2</span>), <span class="st">"drawn = measured"</span>);</span>
-<span id="tests-worked-examples-loft-L19">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">write_text</span>(cv, <span class="st">""</span>, <span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">0xFFFFFFFF</span>, <span class="nm">1</span>) == <span class="nm">0</span>, <span class="st">"an empty string draws 0 wide"</span>);</span>
-<span id="tests-worked-examples-loft-L20">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">write_text</span>(cv, <span class="st">"HI"</span>, <span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">0xFFFFFFFF</span>, <span class="nm">0</span>) == <span class="fn-call">text_width</span>(<span class="st">"HI"</span>, <span class="nm">0</span>), <span class="st">"scale 0 draws and measures at 1"</span>);</span>
+<span id="tests-worked-examples-loft-L18">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">write_text</span>(cv, <span class="st">"HI"</span>, <span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">0xFFFFFFFFl</span>, <span class="nm">2</span>) == <span class="fn-call">text_width</span>(<span class="st">"HI"</span>, <span class="nm">2</span>), <span class="st">"drawn = measured"</span>);</span>
+<span id="tests-worked-examples-loft-L19">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">write_text</span>(cv, <span class="st">""</span>, <span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">0xFFFFFFFFl</span>, <span class="nm">1</span>) == <span class="nm">0</span>, <span class="st">"an empty string draws 0 wide"</span>);</span>
+<span id="tests-worked-examples-loft-L20">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">write_text</span>(cv, <span class="st">"HI"</span>, <span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">0xFFFFFFFFl</span>, <span class="nm">0</span>) == <span class="fn-call">text_width</span>(<span class="st">"HI"</span>, <span class="nm">0</span>), <span class="st">"scale 0 draws and measures at 1"</span>);</span>
 <span id="tests-worked-examples-loft-L21">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">metrics_builtin</span>(<span class="nm">1</span>).<span class="fn-call">width</span>(<span class="st">"HI"</span>) == <span class="fn-call">text_width</span>(<span class="st">"HI"</span>, <span class="nm">1</span>) + <span class="nm">1</span>, <span class="st">"the advance extent has the trailing gap"</span>);</span>
 <span id="tests-worked-examples-loft-L22">}</span>
 <span id="tests-worked-examples-loft-L23"></span>
