@@ -1891,6 +1891,18 @@ pub fn op_ne_content(s: state::State) {
   s.put_stack_bool(new_value);
 }
 
+pub fn op_drop_enter(s: state::State) {
+  tp = s.code_u16();
+  r = s.get_stack_dbref();
+  s.drop_enter(r, tp);
+}
+
+pub fn op_drop_leave(s: state::State) {
+  tp = s.code_u16();
+  r = s.get_stack_dbref();
+  s.drop_leave(r, tp);
+}
+
 pub fn op_size_vector(s: state::State) {
   stride = s.code_u16();
   r = s.get_stack_dbref();
@@ -2545,65 +2557,67 @@ pub fn execute(s: state::State, op: integer) -> boolean {
     304 => op_sizeof_ref(s),
     305 => op_eq_content(s),
     306 => op_ne_content(s),
-    307 => op_size_vector(s),
-    308 => op_size_struct(s),
-    309 => op_size_scalar(s),
-    310 => op_length_sorted(s),
-    311 => op_cast_vector_from_text(s),
-    312 => op_remove_vector(s),
-    313 => op_keep_vector_range(s),
-    314 => op_insert_vector(s),
-    315 => op_adopt_vector(s),
-    316 => op_replace_vector(s),
-    317 => op_copy_closure(s),
-    318 => op_hash_remove(s),
-    319 => op_reserve_hash(s),
-    320 => op_size_hash(s),
-    321 => op_length_index(s),
-    322 => op_size_index(s),
-    323 => op_print(s),
-    324 => op_remove(s),
-    325 => op_clear(s),
-    326 => op_copy_record(s),
-    327 => op_evacuate(s),
-    328 => op_replace_keyed(s),
-    329 => op_clear_keyed(s),
-    330 => op_fill_keyed(s),
-    331 => op_length_spatial(s),
-    332 => op_size_spatial(s),
-    333 => op_length_trie(s),
-    334 => op_size_trie(s),
-    335 => op_fn_ref_detach_shared(s),
-    336 => op_parallel_begin(s),
-    337 => op_parallel_arm(s),
-    338 => op_parallel_join(s),
-    339 => op_pre_alloc_vector(s),
-    340 => op_reserve_vector(s),
-    341 => op_get_file(s),
-    342 => op_get_dir(s),
-    343 => op_get_file_text(s),
-    344 => op_write_file(s),
-    345 => op_read_file(s),
-    346 => op_seek_file(s),
-    347 => op_size_file(s),
-    348 => op_delete(s),
-    349 => op_move_file(s),
-    350 => op_truncate_file(s),
-    351 => op_sync_file(s),
-    352 => op_deliver(s),
-    353 => op_expose(s),
-    354 => op_release(s),
-    355 => op_mkdir(s),
-    356 => op_mkdir_all(s),
-    357 => op_rmdir(s),
-    358 => op_reverse_vector(s),
-    359 => op_sort_vector(s),
-    360 => op_coroutine_create(s),
-    361 => op_coroutine_return(s),
-    362 => op_coroutine_exhausted(s),
-    363 => op_coroutine_retain(s),
-    364 => op_set_child_rec(s),
-    365 => op_database_n_p(s),
+    307 => op_drop_enter(s),
+    308 => op_drop_leave(s),
+    309 => op_size_vector(s),
+    310 => op_size_struct(s),
+    311 => op_size_scalar(s),
+    312 => op_length_sorted(s),
+    313 => op_cast_vector_from_text(s),
+    314 => op_remove_vector(s),
+    315 => op_keep_vector_range(s),
+    316 => op_insert_vector(s),
+    317 => op_adopt_vector(s),
+    318 => op_replace_vector(s),
+    319 => op_copy_closure(s),
+    320 => op_hash_remove(s),
+    321 => op_reserve_hash(s),
+    322 => op_size_hash(s),
+    323 => op_length_index(s),
+    324 => op_size_index(s),
+    325 => op_print(s),
+    326 => op_remove(s),
+    327 => op_clear(s),
+    328 => op_copy_record(s),
+    329 => op_evacuate(s),
+    330 => op_replace_keyed(s),
+    331 => op_clear_keyed(s),
+    332 => op_fill_keyed(s),
+    333 => op_length_spatial(s),
+    334 => op_size_spatial(s),
+    335 => op_length_trie(s),
+    336 => op_size_trie(s),
+    337 => op_fn_ref_detach_shared(s),
+    338 => op_parallel_begin(s),
+    339 => op_parallel_arm(s),
+    340 => op_parallel_join(s),
+    341 => op_pre_alloc_vector(s),
+    342 => op_reserve_vector(s),
+    343 => op_get_file(s),
+    344 => op_get_dir(s),
+    345 => op_get_file_text(s),
+    346 => op_write_file(s),
+    347 => op_read_file(s),
+    348 => op_seek_file(s),
+    349 => op_size_file(s),
+    350 => op_delete(s),
+    351 => op_move_file(s),
+    352 => op_truncate_file(s),
+    353 => op_sync_file(s),
+    354 => op_deliver(s),
+    355 => op_expose(s),
+    356 => op_release(s),
+    357 => op_mkdir(s),
+    358 => op_mkdir_all(s),
+    359 => op_rmdir(s),
+    360 => op_reverse_vector(s),
+    361 => op_sort_vector(s),
+    362 => op_coroutine_create(s),
+    363 => op_coroutine_return(s),
+    364 => op_coroutine_exhausted(s),
+    365 => op_coroutine_retain(s),
+    366 => op_set_child_rec(s),
+    367 => op_database_n_p(s),
     _ => return false,
   }
   true
@@ -5850,7 +5864,7 @@ pub fn run(s: state::State, end: integer) {
         continue;
       }
     }
-    52 => {
+    54 => {
       ri0 = crt::peek_u16(cbase, ip + 2);
       if sp >= 16 {
         ri1 = crt::peek_u32(base, sp - 16);
@@ -5864,7 +5878,7 @@ pub fn run(s: state::State, end: integer) {
         continue;
       }
     }
-    53 => {
+    55 => {
       ri0 = crt::peek_u16(cbase, ip + 2);
       if sp >= 16 {
         sp -= 16;
@@ -5875,7 +5889,7 @@ pub fn run(s: state::State, end: integer) {
         continue;
       }
     }
-    54 => {
+    56 => {
       ri0 = crt::peek_u16(cbase, ip + 2);
       if sp >= 8 {
         sp -= 8;
@@ -5886,7 +5900,7 @@ pub fn run(s: state::State, end: integer) {
         continue;
       }
     }
-    55 => {
+    57 => {
       if sp >= 16 {
         ri0 = crt::peek_u32(base, sp - 16);
         ri1 = crt::peek_u32(base, sp - 12);
@@ -5899,7 +5913,7 @@ pub fn run(s: state::State, end: integer) {
         continue;
       }
     }
-    57 => {
+    59 => {
       ri0 = crt::peek_u16(cbase, ip + 2);
       if sp >= 24 {
         ri1 = crt::peek_i64(base, sp - 8);
@@ -5911,8 +5925,8 @@ pub fn run(s: state::State, end: integer) {
         s.code_pos = ip;
         s.stack_pos = sp;
         s.depth = fd;
-        nv_312: boolean? = s.vec_remove_at(ri2, ri3, ri4, ri0, ri1);
-        s.put_stack_bool(nv_312);
+        nv_314: boolean? = s.vec_remove_at(ri2, ri3, ri4, ri0, ri1);
+        s.put_stack_bool(nv_314);
         if s.stopped || s.native >= 0 {
           return;
         }
@@ -5926,7 +5940,7 @@ pub fn run(s: state::State, end: integer) {
         continue;
       }
     }
-    60 => {
+    62 => {
       ri0 = crt::peek_u16(cbase, ip + 2);
       if sp >= 32 {
         ri1 = crt::peek_u32(base, sp - 16);
@@ -5954,7 +5968,7 @@ pub fn run(s: state::State, end: integer) {
         continue;
       }
     }
-    64 => {
+    66 => {
       ri0 = crt::peek_u16(cbase, ip + 2);
       if sp >= 24 {
         ri1 = crt::peek_i64(base, sp - 8);
@@ -5980,7 +5994,7 @@ pub fn run(s: state::State, end: integer) {
         continue;
       }
     }
-    65 => {
+    67 => {
       if sp >= 16 {
         ri0 = crt::peek_u32(base, sp - 16);
         ri1 = crt::peek_u32(base, sp - 12);
@@ -5993,7 +6007,7 @@ pub fn run(s: state::State, end: integer) {
         continue;
       }
     }
-    66 => {
+    68 => {
       if sp >= 16 {
         ri0 = crt::peek_u32(base, sp - 16);
         ri1 = crt::peek_u32(base, sp - 12);
@@ -6006,7 +6020,7 @@ pub fn run(s: state::State, end: integer) {
         continue;
       }
     }
-    67 => {
+    69 => {
       if sp >= 16 {
         ri0 = crt::peek_u32(base, sp - 16);
         ri1 = crt::peek_u32(base, sp - 12);
@@ -6014,32 +6028,6 @@ pub fn run(s: state::State, end: integer) {
         sp -= 16;
         ip += 2;
         nvi: integer? = crt::index_len(ri0, ri1, ri2, 1);
-        crt::poke_i64(base, sp, nvi);
-        sp += 8;
-        continue;
-      }
-    }
-    76 => {
-      if sp >= 16 {
-        ri0 = crt::peek_u32(base, sp - 16);
-        ri1 = crt::peek_u32(base, sp - 12);
-        ri2 = crt::peek_u32(base, sp - 8);
-        sp -= 16;
-        ip += 2;
-        nvi: integer? = crt::index_len(ri0, ri1, ri2, 2);
-        crt::poke_i64(base, sp, nvi);
-        sp += 8;
-        continue;
-      }
-    }
-    77 => {
-      if sp >= 16 {
-        ri0 = crt::peek_u32(base, sp - 16);
-        ri1 = crt::peek_u32(base, sp - 12);
-        ri2 = crt::peek_u32(base, sp - 8);
-        sp -= 16;
-        ip += 2;
-        nvi: integer? = crt::index_len(ri0, ri1, ri2, 3);
         crt::poke_i64(base, sp, nvi);
         sp += 8;
         continue;
@@ -6071,7 +6059,33 @@ pub fn run(s: state::State, end: integer) {
         continue;
       }
     }
-    84 => {
+    80 => {
+      if sp >= 16 {
+        ri0 = crt::peek_u32(base, sp - 16);
+        ri1 = crt::peek_u32(base, sp - 12);
+        ri2 = crt::peek_u32(base, sp - 8);
+        sp -= 16;
+        ip += 2;
+        nvi: integer? = crt::index_len(ri0, ri1, ri2, 2);
+        crt::poke_i64(base, sp, nvi);
+        sp += 8;
+        continue;
+      }
+    }
+    81 => {
+      if sp >= 16 {
+        ri0 = crt::peek_u32(base, sp - 16);
+        ri1 = crt::peek_u32(base, sp - 12);
+        ri2 = crt::peek_u32(base, sp - 8);
+        sp -= 16;
+        ip += 2;
+        nvi: integer? = crt::index_len(ri0, ri1, ri2, 3);
+        crt::poke_i64(base, sp, nvi);
+        sp += 8;
+        continue;
+      }
+    }
+    86 => {
       ri0 = crt::peek_u16(cbase, ip + 2);
       ri1 = crt::peek_u16(cbase, ip + 4);
       if sp >= 16 {
@@ -6084,7 +6098,7 @@ pub fn run(s: state::State, end: integer) {
         continue;
       }
     }
-    85 => {
+    87 => {
       ri0 = crt::peek_u16(cbase, ip + 2);
       if sp >= 24 {
         ri1 = crt::peek_i64(base, sp - 8);
@@ -6097,7 +6111,7 @@ pub fn run(s: state::State, end: integer) {
         continue;
       }
     }
-    86 => {
+    88 => {
       if sp >= 16 {
         ri0 = crt::peek_u32(base, sp - 16);
         ri1 = crt::peek_u32(base, sp - 12);
@@ -6110,7 +6124,7 @@ pub fn run(s: state::State, end: integer) {
         continue;
       }
     }
-    98 => {
+    100 => {
       if sp >= 24 {
         ri1 = crt::peek_u32(base, sp - 16);
         ri2 = crt::peek_u32(base, sp - 12);
@@ -6121,7 +6135,7 @@ pub fn run(s: state::State, end: integer) {
         continue;
       }
     }
-    99 => {
+    101 => {
       if sp >= 24 {
         ri1 = crt::peek_u32(base, sp - 16);
         ri2 = crt::peek_u32(base, sp - 12);
@@ -6132,7 +6146,7 @@ pub fn run(s: state::State, end: integer) {
         continue;
       }
     }
-    103 => {
+    105 => {
       ri0 = crt::peek_u16(cbase, ip + 2);
       if sp >= 16 {
         ri1 = crt::peek_u32(base, sp - 16);
@@ -6144,7 +6158,7 @@ pub fn run(s: state::State, end: integer) {
         continue;
       }
     }
-    105 => {
+    107 => {
       ri0 = crt::peek_i64(cbase, ip + 2);
       ri1 = crt::peek_u16(cbase, ip + 10);
       ri2 = crt::peek_i64(cbase, ip + 12);
@@ -6167,7 +6181,7 @@ pub fn run(s: state::State, end: integer) {
         continue;
       }
     }
-    106 => {
+    108 => {
       ri0 = crt::peek_u16(cbase, ip + 2);
       if true {
         ip += 4;
