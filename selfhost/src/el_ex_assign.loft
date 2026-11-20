@@ -3248,6 +3248,16 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
     wpv = match e.p.nodes[target] { SName { name: wpn, member: wpm } => if wpm == "" { el_vars::var(vars, wpn) } else { -1 }, _ => -1 };
     wtd = if wpv < 0 { -1 } else { match el_vars::tp(vars, wpv) { TyRefVar { inner: wpi } => match el_types::base(wpi) { TyReference { n: wpd } => if starts_with(el::def(e, wpd).name, "__tuple<") { wpd } else { -1 }, _ => -1 }, _ => -1 } };
     if wtd >= 0 && e.p.nodes[rhs!] is STupleLit {
+      // (A KEYED member is refused by name BEFORE the value is read: reading its literal would
+      // register vector types Rust's keyed route never makes.  A vector member is read first,
+      // as Rust reads it, and refused by the builder.)
+      for wa in el::def(e, wtd).attributes {
+        wmt = el_types::base(wa.typedef[0] ?? ir::TyVoid);
+        if keyed_kind(wmt) {
+          el::refuse(e, "a whole write through a `&` tuple link with a member of this type: {type_kind(wmt)}");
+          return ex(ir::NdNull, ir::TyVoid);
+        }
+      }
       wx = expression(e, vars, rhs!);
       ww = el_vars::work_ref(vars, ir::TyReference { n: wtd, dep: [] });
       if e.first_pass {
