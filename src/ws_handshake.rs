@@ -16,6 +16,26 @@ pub fn ws_accept_key(key: &str) -> String {
     crate::base64::encode(&sha1(&input))
 }
 
+/// Whether a request's `Host` names this machine's loopback server on `port`: `127.0.0.1`,
+/// `localhost` or `[::1]`, with no port or this one.  A page whose name was rebound to a
+/// loopback address still sends its own name here.
+#[must_use]
+pub fn loopback_host(host: &str, port: u16) -> bool {
+    let host = host.trim();
+    let name = host.strip_suffix(&format!(":{port}")).unwrap_or(host);
+    matches!(name, "127.0.0.1" | "localhost" | "[::1]")
+}
+
+/// Whether an `Origin` is a page this machine's loopback server on `port` served.  A
+/// browser sends the page's origin with every WebSocket upgrade, whatever site opened it.
+#[must_use]
+pub fn loopback_origin(origin: &str, port: u16) -> bool {
+    origin
+        .trim()
+        .strip_prefix("http://")
+        .is_some_and(|rest| rest.contains(':') && loopback_host(rest, port))
+}
+
 /// SHA-1 of `data` (RFC 3174).  Inlined rather than pulling a crate for the single
 /// handshake hash; covered by the `abc` + RFC 6455 test vectors below.  The single-letter
 /// working variables (`a`..`e`, `f`, `k`, `w`, `h`) are the algorithm's own names.
