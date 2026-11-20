@@ -10036,11 +10036,21 @@ impl Parser {
             // and a drop is not, so a field on a record that was never written must not run
             // the author's release against a record that does not exist.
             let live = self.cl("OpConvBoolFromRef", std::slice::from_ref(&field));
-            let release = Value::If(
-                Box::new(live),
-                Box::new(Value::Call(target, vec![field])),
-                Box::new(Value::Null),
-            );
+            let mut call = Value::Call(target, vec![field.clone()]);
+            // `@FR-H-RefHome` — a stored `reference<T>` names a record the holder owns only
+            // when it lies in the holder's own store (a literal or call result built there);
+            // a record of another store has an owner of its own, whose end releases it, so
+            // the holder's end runs none of its hooks (loft#2597).
+            // A CLOSURE record's capture is not such a field: the capture it releases is one
+            // it owns, in whatever store it adopted (`@FR-L-CapOwn`), so that release stays
+            // unconditional.
+            if matches!(ftype.base(), Type::Reference(_, deps) if deps.is_pointer_marker())
+                && !self.data.def(t).name().starts_with("__closure_")
+            {
+                let elsewhere = self.cl("OpDistinctStore", &[field, Value::Var(self_var)]);
+                call = Value::If(Box::new(elsewhere), Box::new(Value::Null), Box::new(call));
+            }
+            let release = Value::If(Box::new(live), Box::new(call), Box::new(Value::Null));
             ops.push(release);
         }
         self.push_closure_releases(t, self_var, &mut ops);
