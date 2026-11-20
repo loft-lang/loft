@@ -734,11 +734,21 @@ fn verify_or_explain(content: &[u8], sig: &[u8], opts: &InstallOptions) -> Resul
              this is a hard failure even with --allow-unsigned (the signature \
              exists but doesn't verify against any known key)"
             .to_string()),
+        // `--allow-unsigned` is for an index that carries NO signature (a mirror, a
+        // fixture).  One that carries bytes which are not a signature is not unsigned: it
+        // is what a tampered index looks like when its author cannot sign, and waiving it
+        // would let any wrong-length `.sig` through the whole check.
+        VerifyResult::MalformedSignature if !sig.is_empty() => Err(
+            "registry index signature is malformed — refusing to install; \
+                 this is a hard failure even with --allow-unsigned (a signature \
+                 exists and is not one)"
+                .to_string(),
+        ),
         VerifyResult::MalformedSignature => {
             if opts.allow_unsigned {
                 Ok(())
             } else {
-                Err("registry index signature is malformed or missing; \
+                Err("registry index is unsigned; \
                      pass --allow-unsigned to proceed at your own risk"
                     .to_string())
             }

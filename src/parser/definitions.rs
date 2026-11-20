@@ -5613,6 +5613,22 @@ impl Parser {
                          elements are always dense (a key / slot denotes presence)"
                     );
                 }
+                // A QUALIFIED record element (`vector<lib::S?>`) writes its `?` after the
+                // `::S` that `parse_type` reads, past the identifier-adjacent test above, so
+                // it comes back as `Optional(S)`.  Left as that the element stayed DENSE and
+                // a stored null read back as a present record (`@FR-N-Shape`: one notion,
+                // `?` on a record element, whichever way the record is named).
+                let tp = match tp {
+                    Type::Optional(inner)
+                        if type_name == "vector"
+                            && !nullable_elem
+                            && matches!(inner.base(), Type::Reference(..) | Type::Unknown(_)) =>
+                    {
+                        nullable_elem = true;
+                        *inner
+                    }
+                    other => other,
+                };
                 let sub_nr = if let Type::Unknown(d) = tp {
                     d
                 } else {
@@ -8765,6 +8781,61 @@ impl Parser {
         self.finish_drop_cascade(c_nr, ops, outer_vars, outer_context);
     }
 
+    /// `@FR-H-DropOnce` — a droppable value is released once.  The OUTERMOST release of a user
+    /// struct with an `OpDrop` is bracketed — its synthesized cascade where it has one (which
+    /// runs the hook and then releases the fields, reading them from the record), the hook
+    /// otherwise: `OpDropEnter(self, tp)` first ends the run when the record is already
+    /// released, and `OpDropLeave(self, tp)` last marks it released.  Only a value that is the
+    /// root record of a store of its own type is marked: one held inline or as an element has
+    /// no record of its own, and can share the position of the record that holds it.  Not in a
+    /// production run (`--production`) nor a shipped build (`--ship`): a development and test
+    /// check, never a cost of the program that ships.
+    fn arm_drop_marks(&mut self) {
+        if std::env::var_os("LOFT_PRODUCTION").is_some() || crate::ship_tier::shipped_units() {
+            return;
+        }
+        let (enter, leave) = (
+            self.data.def_nr("OpDropEnter"),
+            self.data.def_nr("OpDropLeave"),
+        );
+        if enter == u32::MAX || leave == u32::MAX {
+            return;
+        }
+        for t in 0..self.data.definitions() {
+            let hook = self.data.drop_hook_nr(t);
+            let kt = self.data.def(t).known_type();
+            if hook == u32::MAX
+                || kt == u16::MAX
+                || self.data.def_type(t) != DefType::Struct
+                || self.data.def(t).name.starts_with("__")
+            {
+                continue;
+            }
+            let cascade = self.data.drop_cascade_nr(t);
+            let target = if cascade == u32::MAX { hook } else { cascade };
+            let self_var = self.data.def(target).variables.var("self");
+            let code = &mut self.data.definitions[target as usize].code;
+            let armed = matches!(code, Value::Block(bl)
+                if matches!(bl.operators.first(), Some(Value::Call(d, _)) if *d == enter));
+            if armed || self_var == u16::MAX {
+                continue;
+            }
+            let tp = Value::Int(i32::from(kt));
+            let first = Value::Call(enter, vec![Value::Var(self_var), tp.clone()]);
+            let last = Value::Call(leave, vec![Value::Var(self_var), tp]);
+            match code {
+                Value::Block(bl) if matches!(bl.result.base(), Type::Void) => {
+                    bl.operators.insert(0, first);
+                    bl.operators.push(last);
+                }
+                _ => {
+                    let body = std::mem::replace(code, Value::Null);
+                    *code = v_block(vec![first, body, last], Type::Void, "drop_once");
+                }
+            }
+        }
+    }
+
     pub(crate) fn synth_drop_cascades(&mut self) {
         // The parse unit is finished: what every fn field holds is known from here on.
         self.data.fn_fields_settled = self.data.definitions();
@@ -8868,6 +8939,8 @@ impl Parser {
                 self.fill_drop_cascade(t, c_nr);
             }
         }
+        // After the cascades exist: the bracket goes around the outermost release.
+        self.arm_drop_marks();
     }
 
     /// @PLN196 — the name of the function that fills field `a_nr` of struct `d_nr` with its
@@ -10020,11 +10093,21 @@ impl Parser {
             // and a drop is not, so a field on a record that was never written must not run
             // the author's release against a record that does not exist.
             let live = self.cl("OpConvBoolFromRef", std::slice::from_ref(&field));
-            let release = Value::If(
-                Box::new(live),
-                Box::new(Value::Call(target, vec![field])),
-                Box::new(Value::Null),
-            );
+            let mut call = Value::Call(target, vec![field.clone()]);
+            // `@FR-H-RefHome` — a stored `reference<T>` names a record the holder owns only
+            // when it lies in the holder's own store (a literal or call result built there);
+            // a record of another store has an owner of its own, whose end releases it, so
+            // the holder's end runs none of its hooks (loft#2597).
+            // A CLOSURE record's capture is not such a field: the capture it releases is one
+            // it owns, in whatever store it adopted (`@FR-L-CapOwn`), so that release stays
+            // unconditional.
+            if matches!(ftype.base(), Type::Reference(_, deps) if deps.is_pointer_marker())
+                && !self.data.def(t).name().starts_with("__closure_")
+            {
+                let elsewhere = self.cl("OpDistinctStore", &[field, Value::Var(self_var)]);
+                call = Value::If(Box::new(elsewhere), Box::new(Value::Null), Box::new(call));
+            }
+            let release = Value::If(Box::new(live), Box::new(call), Box::new(Value::Null));
             ops.push(release);
         }
         self.push_closure_releases(t, self_var, &mut ops);

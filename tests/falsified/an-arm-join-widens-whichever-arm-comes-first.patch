@@ -1,7 +1,8 @@
 diff --git a/src/parser/control.rs b/src/parser/control.rs
+index 28d87a512..e86b5ce9a 100644
 --- a/src/parser/control.rs
 +++ b/src/parser/control.rs
-@@ -2795,12 +2795,6 @@ impl Parser {
+@@ -2798,12 +2798,6 @@ impl Parser {
              // *"expected A, got B on else"* for a join `match` accepts (loft#1117).  The
              // arm keeps its own type and `parse_if` joins the two to their enum.
              let sibling_variant = arm_of_sibling && self.arm_joins_to_enum(t, result);
@@ -14,7 +15,7 @@ diff --git a/src/parser/control.rs b/src/parser/control.rs
              // @FR-F-Block — the arms of a construct in STATEMENT position yield nothing
              // anybody reads, so their types need not agree.  Only one ORDER used to compile:
              // a void THEN arm makes the expected type `void`, which accepts any else arm,
-@@ -2824,8 +2818,7 @@ impl Parser {
+@@ -2827,8 +2821,7 @@ impl Parser {
                  && !if_unified
                  && !vec_match_candidate
                  && !vec_arm_handled
@@ -24,7 +25,7 @@ diff --git a/src/parser/control.rs b/src/parser/control.rs
              // @FR-N-Store — the tail is a STORE into the return slot.  The store face asks
              // where the tail converts; a tail that does not convert (a rewritten tuple, a
              // unified `if`, a vector match, a sibling variant) is asked here.  Anchored to
-@@ -2936,7 +2929,7 @@ impl Parser {
+@@ -2939,7 +2932,7 @@ impl Parser {
                      // E0308.  The `if`'s own join is decided in `parse_if` from the THEN
                      // arm and is unaffected.
                      t.clone()
@@ -33,7 +34,7 @@ diff --git a/src/parser/control.rs b/src/parser/control.rs
                      t.clone()
                  } else if let Some(w) = boxed_arm_w {
                      // The arm was boxed into `w` (loft#1350): its value is that work-ref,
-@@ -6394,13 +6387,6 @@ impl Parser {
+@@ -6580,13 +6573,6 @@ impl Parser {
                      {
                          true_type = enum_tp.clone();
                      }
@@ -47,7 +48,7 @@ diff --git a/src/parser/control.rs b/src/parser/control.rs
                      // loft#978 — the chain's TYPE deliberately stays out of `false_type`
                      // (above), but what it BORROWS is still a value this if-expression can
                      // deliver, so it has to reach the join below.  Without it an
-@@ -6480,14 +6466,6 @@ impl Parser {
+@@ -6689,14 +6675,6 @@ impl Parser {
                  {
                      true_type = enum_tp.clone();
                  }
@@ -62,7 +63,7 @@ diff --git a/src/parser/control.rs b/src/parser/control.rs
              }
              if true_type == Type::Unknown(0)
                  && true_is_null
-@@ -9440,35 +9418,6 @@ impl Parser {
+@@ -9668,35 +9646,6 @@ impl Parser {
              .is_some_and(|e| self.joins_to_enum(&e, expected, arm))
      }
  
@@ -98,7 +99,7 @@ diff --git a/src/parser/control.rs b/src/parser/control.rs
      /// `@FR-I-Join` — the type an arm is parsed EXPECTING, given the type its siblings answered
      /// in.  An integer sibling's RANGE is that sibling's, not the construct's: an arithmetic
      /// arm (`@FR-N-Arith`) answers a range narrower than its siblings, and expecting it of the
-@@ -9784,17 +9733,6 @@ impl Parser {
+@@ -10020,17 +9969,6 @@ impl Parser {
          arm_body: &mut Value,
          arm_type: &mut Type,
      ) -> Option<Type> {
@@ -116,7 +117,7 @@ diff --git a/src/parser/control.rs b/src/parser/control.rs
          if !self.tuple_join_open(result_type) {
              return None;
          }
-@@ -9831,7 +9769,7 @@ impl Parser {
+@@ -10067,7 +10005,7 @@ impl Parser {
      /// loft#1682 — the `EnumArm` half of the reconversion `join_null_tuple_arm` documents.
      pub(super) fn reconvert_null_tuple_arms(&mut self, arms: &mut [EnumArm], joined: &Type) {
          for prev in arms.iter_mut() {
@@ -125,7 +126,7 @@ diff --git a/src/parser/control.rs b/src/parser/control.rs
                  let prev_orig = prev.tp.clone();
                  self.convert_arm_tail(&mut prev.code, &prev_orig, joined);
                  prev.tp = joined.clone();
-@@ -9839,13 +9777,6 @@ impl Parser {
+@@ -10075,15 +10013,6 @@ impl Parser {
          }
      }
  
@@ -133,16 +134,19 @@ diff --git a/src/parser/control.rs b/src/parser/control.rs
 -    /// that left a tuple member open (loft#1682), or one narrower than a numeric join a later
 -    /// arm widened to (loft#1793, `numeric_join`).
 -    pub(super) fn arm_takes_join(&self, arm_tp: &Type, joined: &Type) -> bool {
--        self.tuple_join_open(arm_tp) || Self::numeric_join(arm_tp, joined).is_some()
+-        self.tuple_join_open(arm_tp)
+-            || Self::numeric_join(arm_tp, joined).is_some()
+-            || self.arm_held_below(arm_tp, joined)
 -    }
 -
-     pub(super) fn join_arm_into(&self, so_far: &Type, arm: &Value, tp: &Type) -> Type {
-         let fitted = self.arm_fits_named_width(so_far, arm, tp);
-         let tp = fitted.as_ref().unwrap_or(tp);
+     /// `@FR-I-Join` under `@FR-W-Op` — does an integer arm whose range lies inside i32 have to
+     /// convert to a join that reaches past it?  Under the 32-bit regime such an arm is a 32-bit
+     /// value (the C backend holds it in an `int32_t`), so an `i32` literal arm beside a `u32`
 diff --git a/src/parser/match_expr.rs b/src/parser/match_expr.rs
+index b0436316c..eb8124683 100644
 --- a/src/parser/match_expr.rs
 +++ b/src/parser/match_expr.rs
-@@ -553,17 +553,14 @@ impl Parser {
+@@ -556,17 +556,14 @@ impl Parser {
              };
  
              if pattern_name == "_" {
@@ -164,7 +168,7 @@ diff --git a/src/parser/match_expr.rs b/src/parser/match_expr.rs
                      let joined = result_type.clone();
                      self.reconvert_null_tuple_arms(&mut arms, &joined);
                  }
-@@ -1547,11 +1544,6 @@ impl Parser {
+@@ -1550,11 +1547,6 @@ impl Parser {
          if self.arm_joins_to_enum(&t, expected) {
              return t;
          }
@@ -177,9 +181,10 @@ diff --git a/src/parser/match_expr.rs b/src/parser/match_expr.rs
          // `&text` — while a sibling arm commonly yields the owned twin (`_ => "none"`).  That
          // is one type modulo ownership: the caller reads the value either way, which is why
 diff --git a/src/parser/match_fields.rs b/src/parser/match_fields.rs
+index 812e7046b..e7e4cf377 100644
 --- a/src/parser/match_fields.rs
 +++ b/src/parser/match_fields.rs
-@@ -949,7 +949,7 @@ impl Parser {
+@@ -955,7 +955,7 @@ impl Parser {
              {
                  // loft#1682 — the scalar arms hold `(pattern, code, type, guard)`.
                  for prev in &mut arms {
@@ -189,9 +194,10 @@ diff --git a/src/parser/match_fields.rs b/src/parser/match_fields.rs
                          self.convert_arm_tail(&mut prev.1, &prev_orig, &joined);
                          prev.2 = joined.clone();
 diff --git a/src/parser/match_sequences.rs b/src/parser/match_sequences.rs
+index b409c3ecf..2faa36b0e 100644
 --- a/src/parser/match_sequences.rs
 +++ b/src/parser/match_sequences.rs
-@@ -274,7 +274,7 @@ impl Parser {
+@@ -275,7 +275,7 @@ impl Parser {
                  self.join_null_tuple_arm(&result_type, &mut arm_code, &mut arm_type)
              {
                  for (prev, prev_tp) in arms.iter_mut().zip(arm_types.iter_mut()) {
@@ -200,7 +206,7 @@ diff --git a/src/parser/match_sequences.rs b/src/parser/match_sequences.rs
                          let prev_orig = prev_tp.clone();
                          self.convert_arm_tail(&mut prev.code, &prev_orig, &joined);
                          *prev_tp = joined.clone();
-@@ -1626,7 +1626,7 @@ impl Parser {
+@@ -1628,7 +1628,7 @@ impl Parser {
                  self.join_null_tuple_arm(&result_type, &mut arm_body, &mut arm_type)
              {
                  for (prev, prev_tp) in arms.iter_mut().zip(arm_types.iter_mut()) {

@@ -225,6 +225,9 @@ typedef struct {
     int read_only;
     uint64_t serial;
     loft_bits claims, referenced, removed, lazy_free, parked_set;
+    /* `@FR-H-DropOnce` (`Store::released_root`): the root record's value was released by its
+     * `OpDrop`; cleared when the root position is claimed again. */
+    uint8_t released_root;
     uint32_t parked_heads[LOFT_PARK_MAX_WORDS + 1];
     uint32_t parked_count;
     uint32_t claimed_end, free_root, wild, dead_words;
@@ -845,6 +848,8 @@ static void loft_resize_store(loft_store_t *s, uint32_t to_size) {
     uint64_t inc64 = (uint64_t) s->size * 7;
     uint32_t inc = inc64 > UINT32_MAX ? UINT32_MAX / 3 : (uint32_t) (inc64 / 3);
     uint32_t size = to_size > inc ? to_size : inc;
+    /* Where an address is 32 bits, the bytes of a store this size do not fit one. */
+    if ((uint64_t) size * 8 > (uint64_t) SIZE_MAX) { fputs("loft: store offset overflow\n", stderr); abort(); }
     /* `Store::resize_store`: a mapped store grows its file, which reads zero past the old end,
      * and is not counted against the heap ceiling — its bytes are the file's. */
     if (s->mapped) {
@@ -1123,6 +1128,7 @@ static uint32_t loft_st_claim_discarded(loft_store_t *s, uint32_t size) {
 static uint32_t loft_st_claim(loft_store_t *s, uint32_t size) {
     if (LOFT_WRITE_REFUSED(s)) return loft_st_claim_discarded(s, size);
     uint32_t pos = loft_st_claim_inner(s, size);
+    if (pos == LOFT_ST_PRIMARY) s->released_root = 0;
     LOFT_TRACE("C %llu %d %u\n", (unsigned long long) s->serial, loft_st_i32(s, pos, 0), pos);
 #ifdef LOFT_POISON_CLAIM
     loft_st_poison_range(s, pos, 4, (uint32_t) loft_st_i32(s, pos, 0) * 8 - 4);
@@ -1198,6 +1204,9 @@ static void loft_grow_tail_for(loft_store_t *s, uint32_t rec, uint32_t next, int
 }
 
 static uint32_t loft_st_resize_inner(loft_store_t *s, uint32_t rec, uint32_t size) {
+    /* A record is at most INT32_MAX words (its header is a signed word count): a larger
+     * request read as a negative one, and "already large enough". */
+    if (size > (uint32_t) INT32_MAX) { fputs("loft: store offset overflow\n", stderr); abort(); }
     int32_t req = (int32_t) size;
     int32_t claim = loft_st_i32(s, rec, 0);
     if (claim >= req) return rec;
@@ -1256,6 +1265,7 @@ static void loft_st_init(loft_store_t *s) {
     loft_bits_clear(&s->claims);
     loft_bits_clear(&s->referenced);
     loft_bits_clear(&s->removed);
+    s->released_root = 0;
     s->lazy = LOFT_LAZY_START;
     s->dead_words = 0;
     loft_bits_clear(&s->lazy_free);
@@ -1444,6 +1454,7 @@ static uint32_t loft_st_reclaim_tail(loft_store_t *s) {
 /* `Store::claim_at`: the record at exactly `pos`, `size` words, carved out of the free blocks
  * that cover it (an image's tombstones are placed this way). */
 static uint32_t loft_st_claim_at(loft_store_t *s, uint32_t pos, uint32_t size) {
+    if (pos == LOFT_ST_PRIMARY) s->released_root = 0;
     uint32_t base = LOFT_ST_PRIMARY;
     for (;;) {
         int32_t h = loft_st_i32(s, base, 0);

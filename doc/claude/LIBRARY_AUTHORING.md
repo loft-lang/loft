@@ -705,6 +705,9 @@ capture it was performed to prevent.
 
 ## 3. Pre-release checklist
 
+A change that other libraries build on (a record's layout, a removed name) is released as a
+chain, base first: [LIBRARY_DEPENDENCIES.md](LIBRARY_DEPENDENCIES.md).
+
 **Declare your three compatibility levels first.** They are required before a package may be
 registered or open a registry PR, because they are what a consumer needs to decide whether an
 upgrade is safe on each axis it can be hurt on:

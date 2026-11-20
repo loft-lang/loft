@@ -447,6 +447,9 @@ pub struct Store {
     /// Each keeps its header word as a one-word block that no claim reuses, so a reference
     /// still naming it reads null ([`Store::is_removed`]) instead of whatever came next.
     removed: Claims,
+    /// `@FR-H-DropOnce` — the root record's value was released by its `OpDrop`
+    /// (`Stores::drop_leave`); cleared when the root position is claimed again.
+    pub(crate) released_root: bool,
     /// `@FR-R-StackBase` — this store holds the interpreter's stack, whose buffer `State`
     /// addresses through a cached base pointer: only `State::grow_stack` (and a checkpoint
     /// restore, which refreshes the cache) may move it, so every other buffer move refuses it.
@@ -1223,6 +1226,7 @@ impl Store {
             claims: Claims::default(),
             referenced: Claims::default(),
             removed: Claims::default(),
+            released_root: false,
             #[cfg(feature = "mmap")]
             file: None,
             free: true,
@@ -1418,6 +1422,7 @@ impl Store {
             claims: Claims::default(),
             referenced: Claims::default(),
             removed: Claims::default(),
+            released_root: false,
             size,
             // An opened FILE-BACKED store is in use by definition (it
             // carries real data and `open` itself validates it below,
@@ -1525,6 +1530,7 @@ impl Store {
             claims: Claims::default(),
             referenced: Claims::default(),
             removed: Claims::default(),
+            released_root: false,
             #[cfg(feature = "mmap")]
             file: None,
             // A loaded store carries real data (like `open`), so it is in use.
@@ -1649,6 +1655,7 @@ impl Store {
             claims: Claims::default(),
             referenced: Claims::default(),
             removed: Claims::default(),
+            released_root: false,
             #[cfg(feature = "mmap")]
             file: None,
             free: false,
@@ -1719,6 +1726,7 @@ impl Store {
         self.claims.clear();
         self.referenced.clear();
         self.removed.clear();
+        self.released_root = false;
         // A reset store holds no parsed root, so it answers no parse errors.
         self.parse_errors.clear();
         self.parse_type = u16::MAX;
@@ -1786,6 +1794,9 @@ impl Store {
     /// payload poisoned under `LOFT_POISON_CLAIM=1`, zeroed under `LOFT_ZERO_CLAIM=1`.
     #[inline]
     fn finish_claim(&mut self, pos: u32) -> u32 {
+        if pos == PRIMARY {
+            self.released_root = false;
+        }
         // `LOFT_ALLOC_TRACE` — every claim ends here; compiled only into the `op-census` build.
         #[cfg(feature = "op-census")]
         crate::store_census::alloc_event(format_args!(
@@ -2737,6 +2748,9 @@ impl Store {
     pub(crate) fn claim_at(&mut self, pos: u32, size: u32) -> u32 {
         debug_assert!(!self.read_only, "claim_at on read-only store");
         assert!(size >= 1, "claim_at: zero-size record");
+        if pos == PRIMARY {
+            self.released_root = false;
+        }
         // S28: a structural op — bump generation like claim/delete/resize.
         self.generation = self.generation.wrapping_add(1);
         // Walk the block chain to find the block physically covering `pos`.
@@ -3447,6 +3461,7 @@ impl Store {
             claims: self.claims.clone(),
             referenced: self.referenced.clone(),
             removed: self.removed.clone(),
+            released_root: self.released_root,
             #[cfg(feature = "mmap")]
             file: None,
             free: self.free,
@@ -3516,6 +3531,7 @@ impl Store {
             claims: self.claims.clone(),
             referenced: self.referenced.clone(),
             removed: self.removed.clone(),
+            released_root: self.released_root,
             #[cfg(feature = "mmap")]
             file: None,
             free: self.free,
@@ -3570,6 +3586,7 @@ impl Store {
             claims: Claims::default(),
             referenced: Claims::default(),
             removed: Claims::default(),
+            released_root: false,
             size: self.size,
             #[cfg(feature = "mmap")]
             file: None,
@@ -5344,6 +5361,20 @@ impl Store {
     #[must_use]
     pub fn is_claimed_record(&self, rec: u32) -> bool {
         rec > PRIMARY && rec < self.size && self.read::<i32>(rec, 0) > 0
+    }
+
+    /// The words of the claimed block that STARTS at `rec`, by the claim set the block chain
+    /// gave (`claims_rebuild`): `None` for a number that is past the store, inside a block,
+    /// or a free block's.  The header alone cannot say this — any word inside a record may
+    /// read as a positive number.
+    #[must_use]
+    pub fn claimed_words(&self, rec: u32) -> Option<u32> {
+        if rec < PRIMARY || rec >= self.size || !self.claims.contains(rec) {
+            return None;
+        }
+        u32::try_from(self.read::<i32>(rec, 0))
+            .ok()
+            .filter(|w| *w > 0)
     }
 
     /// Does this store hold a ROOT — record 1 claimed?  A store `init()` left as one free

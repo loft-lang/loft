@@ -160,6 +160,9 @@ pub(super) fn run_scan_phase(
             (at.file.as_str(), if w.line == 0 { at.line } else { w.line }),
         );
     }
+    // Read by `literal_moves_in` as well as kept in the scan's state: computed once.
+    let null_led_first = null_led_first_binds_in(orig_code, data);
+    let literal_moves = literal_moves_in(orig_code, orig_vars, data, &null_led_first);
     let mut scopes = Scopes {
         database,
         d_nr,
@@ -198,7 +201,9 @@ pub(super) fn run_scan_phase(
         whole_value_hoists: whole_value_hoists_in(orig_code, orig_vars, data),
         arm_projection_temps: arm_projection_temps_in(orig_code, orig_vars, data),
         null_led: null_led_in(orig_code, data),
-        null_led_first: null_led_first_binds_in(orig_code, data),
+        null_led_first,
+        literal_moves,
+        moved_buffer: None,
         split_binds: HashMap::default(),
         mentions: var_mentions_in(orig_code),
         sunk: sunk.clone(),
@@ -1185,4 +1190,77 @@ pub(crate) fn view_temps_in(node: &Value, vars: &Function, data: &Data) -> HashM
         }
     });
     out
+}
+
+/// loft#2594, `@FR-B-Copy` — the record locals a scope MOVES a literal's store into: bound two
+/// or more times (not counting the nulls that lead a single bind), every bind an owning one —
+/// `null`, the local itself, a call (whose answer the bind copies or adopts), or a literal's
+/// construction.  Such a local owns its store on every path, so where it adopts a literal built
+/// in an outer-scope buffer (`scan_set`), the buffer hands it the store at the bind and is reset
+/// to null behind it: the local is an ordinary owner, each rebind frees what it displaces, and
+/// no pairing with the buffer (its exit compare, its displacement veto, its self-read lift) is
+/// made.  A local with another kind of bind — a projection (`k = h.u`, a view, `@FR-B-View`),
+/// a `??` chain, a branch — keeps the pairing, as does a local bound once, which keeps the
+/// buffer's store reuse across passes.  Decided before the scan because the scan's own type
+/// of the local says whether it owns only after its last bind is read.
+///
+/// Only a local that can qualify — not an argument, not compiler-made, of a record or
+/// struct-enum type — is counted, and a function with none is answered empty without a walk:
+/// the pass runs on every function the scope pass sees, the standard library's among them.
+fn literal_moves_in(
+    code: &Value,
+    vars: &Function,
+    data: &Data,
+    null_led_first: &HashSet<u16>,
+) -> HashSet<u16> {
+    fn owning_bind(rhs: &Value, v: u16, vars: &Function, data: &Data) -> bool {
+        match rhs.unspan() {
+            Value::Null => true,
+            Value::Var(x) => *x == v,
+            Value::Call(d, _) => {
+                let def = data.def(*d);
+                def.name == "OpNullRefSentinel"
+                    || (def.name.starts_with("n_") && def.code != Value::Null)
+            }
+            Value::Block(_) | Value::Insert(_) => {
+                super::backings::construction_work_ref(rhs, vars).is_some()
+            }
+            _ => false,
+        }
+    }
+    fn walk(
+        n: &Value,
+        vars: &Function,
+        data: &Data,
+        candidate: &dyn Fn(u16) -> bool,
+        binds: &mut HashMap<u16, (usize, bool)>,
+    ) {
+        if let Value::Set(v, rhs) = n.unspan()
+            && candidate(*v)
+        {
+            let e = binds.entry(*v).or_insert((0, true));
+            e.0 += 1;
+            e.1 &= owning_bind(rhs, *v, vars, data);
+        }
+        n.for_each_child(&mut |c| walk(c, vars, data, candidate, binds));
+    }
+    let candidate = |v: u16| {
+        v < vars.count()
+            && !vars.is_argument(v)
+            && !vars.is_compiler_generated(v)
+            && matches!(
+                vars.tp(v).base(),
+                Type::Reference(_, _) | Type::Enum(_, true, _)
+            )
+    };
+    if !(0..vars.count()).any(candidate) {
+        return HashSet::default();
+    }
+    let mut binds = HashMap::default();
+    walk(code, vars, data, &candidate, &mut binds);
+    binds
+        .into_iter()
+        .filter(|&(v, (count, owning))| owning && count >= 2 && !null_led_first.contains(&v))
+        .map(|(v, _)| v)
+        .collect()
 }

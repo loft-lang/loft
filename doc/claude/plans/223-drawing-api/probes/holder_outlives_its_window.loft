@@ -1,0 +1,23 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A holder returned out of the block its owner lives in.
+// Today: "close win 4 after 0 draws" BEFORE "after the window ended: 1" — the holder draws on
+// a closed window.  Wanted: the window lives as long as the holder, or a refusal.
+
+struct Kept { depth: boolean, blend: integer }
+struct Win { handle: integer, draws: integer, kept: Kept }
+fn OpDrop(self: Win) { println("close win {self.handle} after {self.draws} draws"); }
+struct Tex { id: integer }
+fn OpDrop(self: Tex) { println("drop tex {self.id}"); }
+struct Mesh { id: integer, win: reference<Win> }
+struct Slot { t: reference<Tex> }
+struct Mat { name: text, texs: vector<Slot> }
+fn open(h: integer) -> Win { Win { handle: h, draws: 0, kept: Kept { depth: true, blend: 0 } } }
+fn mesh(self: Win, id: integer) -> Mesh { Mesh { id: id, win: self } }
+fn tex(self: const Win, id: integer) -> Tex { Tex { id: id + self.handle * 0 } }
+fn total(m: const Mat) -> integer { s = 0; for x in m.texs { s += x.t.id; } s }
+
+fn draw(self: Mesh) { self.win.draws += 1; }
+fn made(w: Win) -> Mesh { w.mesh(9) }
+fn main() { m = { w = open(4); made(w) }; m.draw(); println("after the window ended: {m.win.draws}"); }

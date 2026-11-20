@@ -1,0 +1,9 @@
+# The cells of the slot matrix that do not pass today (@PLN221) — the gate's baseline.
+# `python3 scripts/slot_matrix.py gate` runs the matrix (every filler, one context, one
+# frame, both backends) and fails on a cell that is not ok and not listed here, and on a
+# line here whose cell now passes.  So the file only SHRINKS: a fix removes its lines in the
+# same change (`gate --update` rewrites the file; read its diff before committing it), and
+# a new line is a defect being accepted, which wants a reason in the commit.
+# Columns, tab-separated: cell, backend, channel (count | order | value | leak | crash |
+# refused).  A line starting with `~` is UNSTABLE — the cell ends in a crash, which need not
+# repeat on another machine — and is allowed to pass.

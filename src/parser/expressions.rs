@@ -12054,6 +12054,45 @@ use a separate collection or add after the loop"
     /// `(N-Reserve)` is why a tuple member is a slot at all: it names "a local, a field, an
     /// element, a parameter and a return alike", and a member is one of those in everything
     /// but that list — `layout.md` `(L-Tuple)` makes it a field.
+    /// `@FR-I-Narrow-U32` — a value narrowed into a non-null `u32` that does not provably fit
+    /// is not refused: it is guarded, and where it does not fit it takes 0, the `u32`'s default
+    /// (a `u32` spends its whole four bytes on values, so it has no null to answer with), as a
+    /// store of a null into one already does.  The guard is `OpRangeDefault`, which logs the
+    /// miss (@C80: null or a default and a log, never a run-time error).  A CONSTANT that does
+    /// not fit is still refused — a literal the author can see is no value a run computed —
+    /// and a value whose range is proven gets no guard (`int_value_fits`, asked first).
+    /// Answers whether it guarded `code`.
+    pub(crate) fn narrow_into_u32_with_default(&mut self, code: &mut Value, dst: &Type) -> bool {
+        // A `u32?` has its null and keeps `@FR-I-Narrow-Opt`'s checked narrowing to it.
+        if matches!(dst, Type::Optional(_)) {
+            return false;
+        }
+        let Type::Integer(spec) = dst.base() else {
+            return false;
+        };
+        let is_u32 = spec.min == 0
+            && spec.max == i64::from(u32::MAX)
+            && spec.forced_size.map(std::num::NonZeroU8::get) == Some(4);
+        if !is_u32 || self.const_int(code).is_some() {
+            return false;
+        }
+        if let Value::Call(d, _) = code.unspan()
+            && self.data.def(*d).name() == "OpRangeDefault"
+        {
+            return true;
+        }
+        *code = self.cl(
+            "OpRangeDefault",
+            &[
+                code.clone(),
+                Value::Long(0),
+                Value::Long(i64::from(u32::MAX)),
+                Value::Long(0),
+            ],
+        );
+        true
+    }
+
     pub(crate) fn narrow_store_checks(
         &mut self,
         code: &mut Value,
@@ -12080,7 +12119,9 @@ use a separate collection or add after the loop"
             && !self.width32_narrow_store(code, s_type, store_tp)
         {
             let dst = self.int_type_name(store_tp);
-            if !self.int_value_fits(code, store_tp) {
+            if !self.int_value_fits(code, store_tp)
+                && !self.narrow_into_u32_with_default(code, store_tp)
+            {
                 // Refused where the author can choose what an unfitting value becomes (@C127).
                 let src = self.narrow_source_name(code, s_type);
                 let cures = self.narrowing_cures(code, store_tp, &dst, false);

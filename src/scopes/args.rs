@@ -1030,6 +1030,19 @@ impl Scopes<'_> {
                     let tmp = function.add_temp_var(&name, &tp);
                     self.var_scope.insert(tmp, self.scope);
                     self.var_order.push(tmp);
+                    // The temp is bound where the operand stood — inside an `&&`'s right side,
+                    // an `if` arm — but released at its scope's end on every path, so its slot
+                    // is initialised in the prologue as the other lifts' are: a text to "", a
+                    // reference to null (loft#2600: a text lift in a short-circuited operand
+                    // freed whatever an earlier frame left in its slot).
+                    match tp.base() {
+                        Type::Text(_) => self.lift_texts.push(tmp),
+                        Type::Reference(..) | Type::Vector(..) | Type::Enum(_, true, _) => {
+                            self.lift_decl_depth.insert(tmp, self.loops.len());
+                            self.lift_vars.push(tmp);
+                        }
+                        _ => {}
+                    }
                     let operand = std::mem::replace(&mut ls[j], Value::Var(tmp));
                     preamble.push(v_set(tmp, operand));
                 }

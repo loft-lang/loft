@@ -388,6 +388,8 @@ struct Kernel {
     /// (`--debug=<name>`) registers its NAME here (conn slot → name), so an
     /// agent's `D!:@<name>:<cmd>` frame forwards to that client's socket.
     debug_names: std::collections::HashMap<usize, String>,
+    /// The connections whose upgrade came from a page of another site.
+    foreign_pages: std::collections::HashSet<usize>,
     /// @PLN98 P3.4 — while a forwarded debug command is outstanding: the client
     /// conn slot → the agent conn slot that sent it, so the client's `D!:reply`
     /// routes back to the requesting agent.
@@ -432,7 +434,10 @@ fn with_kernel<R>(f: impl FnOnce(&mut Kernel) -> R) -> Option<R> {
 #[cfg(not(target_arch = "wasm32"))]
 /// Upgrade a freshly-accepted stream: parse the HTTP request head, answer the
 /// WebSocket handshake.  Returns the stream ready for frame traffic, or `None`
-/// (not an upgrade / malformed — the connection is dropped).
+/// (not an upgrade / malformed — the connection is dropped), with whether the request came
+/// from a page of another site (`ws_handshake::foreign_origin`): a game takes such a peer,
+/// the debug control channel does not — `control_only` refuses it before the handshake is
+/// answered.
 ///
 /// A non-empty `udp_cookie` rides the 101 response as an `X-Loft-UDP` header —
 /// the transport negotiation is **fully kernel-internal** (user directive,
@@ -440,7 +445,11 @@ fn with_kernel<R>(f: impl FnOnce(&mut Kernel) -> R) -> Option<R> {
 /// cannot read upgrade-response headers from JS and ignore it; a native
 /// client's kernel reads it and auto-hellos, earning the UDP fast path with
 /// zero meaning-level code on either side.
-fn ws_upgrade(mut stream: TcpStream, udp_cookie: &str) -> Option<TcpStream> {
+fn ws_upgrade(
+    mut stream: TcpStream,
+    udp_cookie: &str,
+    control_only: bool,
+) -> Option<(TcpStream, bool)> {
     // BSD/macOS accepted sockets INHERIT the listener's non-blocking flag
     // (Linux ones don't): force blocking before the bounded head read, or
     // the first byte EAGAINs instantly and every upgrade drops.
@@ -468,17 +477,19 @@ fn ws_upgrade(mut stream: TcpStream, udp_cookie: &str) -> Option<TcpStream> {
     let head = String::from_utf8_lossy(&buf);
     let mut key = None;
     let mut is_upgrade = false;
+    let mut foreign_page = false;
     for line in head.lines() {
         if let Some((k, v)) = line.split_once(':') {
             match k.trim().to_ascii_lowercase().as_str() {
                 "upgrade" => is_upgrade = v.trim().eq_ignore_ascii_case("websocket"),
                 "sec-websocket-key" => key = Some(v.trim().to_string()),
+                "origin" => foreign_page = crate::ws_handshake::foreign_origin(v),
                 _ => {}
             }
         }
     }
     let key = key?;
-    if !is_upgrade {
+    if !is_upgrade || (control_only && foreign_page) {
         return None;
     }
     let accept = crate::ws_handshake::ws_accept_key(&key);
@@ -496,7 +507,7 @@ fn ws_upgrade(mut stream: TcpStream, udp_cookie: &str) -> Option<TcpStream> {
     stream
         .set_read_timeout(Some(Duration::from_millis(20)))
         .ok()?;
-    Some(stream)
+    Some((stream, foreign_page))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -638,6 +649,7 @@ fn listen_impl(port: i64, tick_us: i64) -> bool {
                     warned_oversize: false,
                     alive: true,
                     debug_names: std::collections::HashMap::new(),
+                    foreign_pages: std::collections::HashSet::new(),
                     debug_relay: std::collections::HashMap::new(),
                 });
             });
@@ -750,7 +762,13 @@ fn pump_kernel(k: &mut Kernel) -> i64 {
                     // carries the same value `ClientNet` stores — the whole
                     // negotiation stays kernel-internal.
                     let cookie = k.fresh_cookie(cid);
-                    if let Some(s) = ws_upgrade(stream, &cookie) {
+                    if let Some((s, foreign_page)) = ws_upgrade(stream, &cookie, false) {
+                        // A reused cid starts fresh here too.
+                        if foreign_page {
+                            k.foreign_pages.insert(cid);
+                        } else {
+                            k.foreign_pages.remove(&cid);
+                        }
                         let net = ClientNet::new(cookie);
                         if cid == k.conns.len() {
                             k.conns.push(Some(s));
@@ -1451,7 +1469,8 @@ fn pump_ctl(c: &mut ClientKernel) {
         return;
     };
     while let Ok((stream, _)) = listener.accept() {
-        if let Some(upgraded) = ws_upgrade(stream, "") {
+        // This endpoint is the control channel alone: another site's page is not served.
+        if let Some((upgraded, _)) = ws_upgrade(stream, "", true) {
             let slot = c.ctl_conns.iter().position(Option::is_none);
             match slot {
                 Some(i) => c.ctl_conns[i] = Some(upgraded),
@@ -1886,12 +1905,14 @@ fn handle_debug_control(k: &mut Kernel, cid: usize, cmd: &str) {
         return;
     }
 
-    // Everything else is an AGENT command — trusted, so LOOPBACK-gated.
+    // Everything else is an AGENT command — trusted, so LOOPBACK-gated.  A loopback peer
+    // is not enough: any site a browser on this machine has open connects from loopback,
+    // and names itself in its `Origin`.
     let loopback = k.conns[cid]
         .as_ref()
         .and_then(|c| c.peer_addr().ok())
         .is_some_and(|a| a.ip().is_loopback());
-    if !loopback {
+    if !loopback || k.foreign_pages.contains(&cid) {
         return;
     }
 

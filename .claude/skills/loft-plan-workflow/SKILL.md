@@ -52,7 +52,8 @@ One model, stated once:
   issue number, once GitHub assigns it, is immutable, so the collision is expensive to
   unwind.  The tracker's auto-incremented issue number is the one global, collision-free
   source of truth; the local directory tree is not.
-- **A local plan file, when there is one, is flat**: `<id>-<slug>.md` or `<id>-<slug>/`.
+- **The plan's file is always there, at one level**: `<id>-<slug>.md`, or `<id>-<slug>/` with a
+  README and the files it is split into (a phase, a split of the work, `probes/`, a handoff).
   There are **no `future/`/`finished/`/`deferred/` subdirectories** — lifecycle **state
   lives on the issue** (a label), not in the path.
 - **The tracker is the source of truth; `ROADMAP.md` is the reading view and IS
@@ -76,10 +77,11 @@ Use when the deliverable is a feature ship or a fix landing.
    the directory; the number it returns is the plan's id.  Do **not** derive the number
    from the local directory tree — that misses unmerged plans on sibling branches and
    mints colliding duplicates (see [§ A plan's identity](#a-plans-identity-is-its-tracker-issue)).
-2. **The issue IS the plan** — its body takes the standard template's shape, and a small
-   plan lives there entirely.  Only a big multi-phase design adds a local file named for the
-   returned number: `<id>-<slug>.md`, or the directory form `<id>-<slug>/` with a README
-   when it has companions (a probe-bearing investigation always does).
+2. **The plan is a file in the repository, always** — named for the returned number:
+   `<id>-<slug>.md`, or the directory form `<id>-<slug>/` with a README when it has
+   companions (a probe-bearing design or investigation always does).  The issue carries the
+   number, the status and the discussion; a plan that exists only as an issue is not opened
+   yet.  A design too long for the file stays in the issue's body, linked from the file.
 3. **Fill Status + Goal first.**  Add Sub-arcs / Phase ordering / Open questions /
    Cross-arc dependencies / See-also as the design clarifies — and **Documentation**
    (REQUIRED): what the work must update OUTSIDE the plan when it finishes (the user

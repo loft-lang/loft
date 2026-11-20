@@ -55,6 +55,15 @@ Still refused, by name, so nothing is approximated: a function answering a text 
 (the buffer delivery, the conditional `OpFreeRefIfDistinct`), a collection local, a `&`
 variable local, a closure record, and a block whose value is a text or a reference.
 
+**To carry when the slice reaches a compiler-made reference** (the literal's construction
+buffer, `__ref_N`): `literal_moves_in` (scopes/phase.rs, loft#2594).  A record local bound two
+or more times whose every bind is `null`, the local itself, a user call or a literal, when it
+adopts a literal built in an outer-scope buffer, takes the store at the bind: `Set(v, <the
+construction>)` then `OpInitRefSentinel(buffer)`, no pairing (no `OpFreeRefIfDistinct(v,
+buffer)` at its exit, no displacement veto), a plain `OpFreeRef(v)` at its exit.  Cells:
+tests/scripts/1522-a-rebind-releases-the-buffer-it-adopted, a-join-arms-order-does-not-change-
+the-callers-lowering, a-rebound-literal-local-copies-a-call-answering-an-argument.
+
 ## Prediction
 
 Of the 8661 definitions whose kinds are only text and reference, those answering a scalar or

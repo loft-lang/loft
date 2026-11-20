@@ -29,6 +29,7 @@ use el_ex_null;
 use el_ex_match;
 use el_ex_pattern;
 use el_ex_vector;
+use el_ex_copy;
 
 // `Parser::note_key_field_write`: a write to a key field through a local that views an element
 // of a keyed collection would leave the element under the wrong key, so the local stops viewing
@@ -185,7 +186,10 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
     match el_ir::unspan(p.code) {
       NdCall { def_nr: gd, args: ga } => {
         if starts_with(el::def(e, gd).name, "OpGet") && len(ga) == 2 && calls(e, el_ir::unspan(ga[0]!), "OpGetVector") && any_user_call(e, [el_ir::unspan(ga[0]!)]) && place_root(e, el_ir::unspan(ga[0]!)) >= 0 {
-          f2 = el_vars::create_unique(vars, "_place", ir::TyVector { inner: el_types::without_deps(el_types::base(p.tp)), dep: [place_root(e, el_ir::unspan(ga[0]!))] });
+          // (Typed as the vector itself — `parent_tp.base()` — its element's own `?` kept.)
+          f2vt = match el_ir::unspan(ga[0]!) { NdCall { args: f2a } => el_types::base(place_type(e, vars, f2a[0] ?? ir::NdNull)), _ => ir::TyVoid };
+          f2in = match f2vt { TyVector { inner: f2i } => el_types::without_deps(f2i), _ => el_types::without_deps(el_types::base(p.tp)) };
+          f2 = el_vars::create_unique(vars, "_place", ir::TyVector { inner: f2in, dep: [place_root(e, el_ir::unspan(ga[0]!))] });
           vars.place_setup = [el_ir::v_set(f2, el_ir::unspan(ga[0]!))];
           p.code = ir::NdCall { def_nr: gd, args: [ir::NdVar { n: f2 }, ga[1]!] };
           // (Read through the bound place, the element is there: its base type.)
@@ -360,6 +364,22 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
       return ex(ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [fplace]), fa2.code] }, ir::TyVoid);
     }
   }
+  // A NULLABLE keyed field (`o.h = …`, `h: hash<…>?`) is written as its dense twin; a `null`
+  // empties it where it lies and marks it absent (`OpClearKeyed`, then the slot's -1).
+  if op == "=" && p.tp is TyOptional && keyed_kind(el_types::base(p.tp)) && !(el_types::base(p.tp) is TyVector) && calls(e, el_ir::unspan(p.code), "OpGetField") {
+    if e.p.nodes[rhs] is SNull {
+      if e.first_pass {
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      nkp = el_ir::unspan(p.code);
+      nkt = match nkp { NdCall { args } => if len(args) == 3 { args[2]! } else { ir::NdNull }, _ => ir::NdNull };
+      nclears = keyed_group_clear(e, vars, nkp);
+      if !el_ir::is_null(nkt) && nclears != null {
+        return ex(ir::NdInsert { items: nclears! + [el_ir::cl(e, "OpSetInt4", [nkp, ir::NdInt { n: 0 }, ir::NdInt { n: -1 }])] }, ir::TyVoid);
+      }
+    }
+    p.tp = el_types::base(p.tp);
+  }
   // An empty literal into a keyed FIELD empties it where it lies: `OpClearKeyed(field, tp)`, the
   // type the field read names (`parse_assign`'s keyed clear).
   if op == "=" && keyed_kind(p.tp) && !(p.tp is TyOptional) && vec_lit_len(e, rhs) == 0 {
@@ -372,7 +392,31 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
       el::refuse(e, "an empty literal into a keyed place that is not a field");
       return ex(ir::NdNull, ir::TyVoid);
     }
-    return ex(el_ir::cl(e, "OpClearKeyed", [place, kt]), ir::TyVoid);
+    // (A member of a linked group empties the group, `keyed_group_clear`.)
+    eclears = keyed_group_clear(e, vars, place);
+    if eclears == null {
+      el::refuse(e, "a keyed field of a group whose primary is a linked vector, given a literal");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    if len(eclears!) == 1 {
+      return ex(eclears![0]!, ir::TyVoid);
+    }
+    return ex(ir::NdInsert { items: eclears! }, ir::TyVoid);
+  }
+  // A literal WITH items bound whole to a keyed FIELD (`o.h = [Row { … }]`): the field's linked
+  // group is emptied as one (`keyed_group_clear`, loft#898: every view's spine reset, then the
+  // primary that owns the records), then each item appended as `+=` builds it.
+  if op == "=" && keyed_kind(p.tp) && !(p.tp is TyOptional) && vec_lit_len(e, rhs) > 0 && calls(e, el_ir::unspan(p.code), "OpGetField") {
+    kfa = field_append(e, vars, p, rhs);
+    if e.first_pass {
+      return kfa;
+    }
+    kclears = keyed_group_clear(e, vars, el_ir::unspan(p.code));
+    if kclears == null {
+      el::refuse(e, "a keyed field of a group whose primary is a linked vector, given a literal");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    return ex(ir::NdInsert { items: kclears! + [kfa.code] }, ir::TyVoid);
   }
   // An `S?` slot (`__nullable<S>`): an `S { … }` literal is built as the `Some` and copied in;
   // `null` sets it absent; any other `S` writes it (`nullable_elem_convert`).
@@ -666,6 +710,19 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
     // A literal is written field by field into the element instead: refused below.
     if op == "=" && !field_place && struct_ref(e, pb) >= 0 && !(x.tp is TyOptional) && struct_ref(e, el_types::base(x.tp)) >= 0 && (calls(e, rd_place, "OpGetVector") || calls(e, rd_place, "OpVectorRef")) && !(e.p.nodes[rhs] is SStructLit) {
       return record_place_write(e, vars, rd_place, pb, x);
+    }
+    // …and a NULLABLE record of the element's own struct (`v[i] = mp(0)`, `mp -> P?`): the
+    // non-null slot takes the type's default where it is absent (`convert`'s `?? S {}`, held as
+    // a record `??` holds it), then the copy.
+    if op == "=" && !field_place && struct_ref(e, pb) >= 0 && x.tp is TyOptional && struct_ref(e, el_types::base(x.tp)) == struct_ref(e, pb) && el::def(e, struct_ref(e, pb)).def_type == el::DT_STRUCT && (calls(e, rd_place, "OpGetVector") || calls(e, rd_place, "OpVectorRef")) {
+      xd = el_ex_null::coalesce_with(e, vars, x, el_ex_object::object_expr(e, vars, el::def(e, struct_ref(e, pb)).name, "", [], null));
+      if e.first_pass {
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      if el_types::is_unknown(xd.tp) {
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      return record_place_write(e, vars, rd_place, pb, xd);
     }
     el::refuse(e, "an assignment to a nullable place: {if field_place { "a field" } else { "an element" }} of {type_kind(pb)} given {type_kind(x.tp)}{if op == "=" { "" } else { " by {op}" }}");
     return ex(ir::NdNull, ir::TyVoid);
@@ -1190,7 +1247,7 @@ pub fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: i
     return ex(ir::NdInsert { items: lstage + built! }, ir::TyVoid);
   }
   ops = built;
-  viewers = el_expressions::store_viewers(vars, root) + [root];
+  viewers = el_ex_copy::store_viewers(vars, root) + [root];
   for op in ops! {
     match op {
       NdCall { args } => {
@@ -1822,6 +1879,19 @@ pub fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
     if e.first_pass {
       continue;
     }
+    // An `i32` item that is a `??` is narrowed inside it, as a literal's item is
+    // (`range_guard_inside_discharge`; a bare variable's two reads each cast).
+    if match inner { TyInteger { spec } => el_types::int4(spec), _ => false } {
+      fbare = match el_ir::unspan(x.code) { NdIf { cond: fbc, t: fbt } => el_ir::unspan(fbt) is NdVar && match el_ir::unspan(fbc) { NdCall { args: fbca } => len(fbca) == 1 && el_ir::unspan(fbca[0] ?? ir::NdNull) == el_ir::unspan(fbt), _ => false }, _ => false };
+      if fbare || match el_ir::unspan(x.code) { NdBlock { block: fnb } => fnb[0].name == "ncc", _ => false } {
+        fgx = el_convert::guard_discharge(e, vars, x.code, inner);
+        if fgx == null {
+          el::refuse(e, "an `i32` vector item that is a `??`");
+          return ex(ir::NdNull, ir::TyVoid);
+        }
+        x = ex(fgx!, x.tp);
+      }
+    }
     if push != "" {
       ls += [el_ir::cl(e, push, el_ex_pattern::push_args(e, vars, inner, place, x.code))];
     } else if inner is TyText || elem_size(inner) == 2 {
@@ -2057,7 +2127,8 @@ pub fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: 
   }
   // A link to a vector (`v: &vector<T>`) appends through the link as the vector would
   // (`@FR-B-Ref-Uniform`).
-  linked_vec = match vt { TyRefVar { inner } => inner is TyVector, _ => false };
+  // (A link to a `vector<T>?` too: the referent's `?` changes nothing an append writes.)
+  linked_vec = match vt { TyRefVar { inner } => el_types::base(inner) is TyVector, _ => false };
   // `absent_append_mint` (`@FR-Col-Insert-Absent`): an append onto a nullable vector LOCAL
   // builds the empty vector first where the local holds null, in a backing of its own.
   opt_elem = match vt { TyOptional { inner: oi } => match oi { TyVector { inner: oe } => oe, _ => ir::TyVoid }, _ => ir::TyVoid };
@@ -2142,6 +2213,11 @@ pub fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: 
     }
     snm = el_types::elem_name(e, selem);
     srec = if snm == "" { -1 } else { el_schema::schema_type(e, snm) };
+    // (A narrow or four-byte element's row is its CONTENT row — `byte`, `short_raw<…>`,
+    // `int<…>` — where `integer`'s name would answer the eight-byte row.)
+    if snm != "" && match selem { TyInteger { spec: ssp } => el_types::narrow_width(ssp) > 0 || el_types::int4(ssp) || el_types::uint4(ssp), _ => false } {
+      srec = el_schema::content_type(e, selem);
+    }
     if slo < 0 || shi < 0 || srec < 0 || !is_scalar(selem) {
       el::refuse(e, "a slice appended to a vector of this element type: {type_kind(selem)}");
       return ex(ir::NdNull, ir::TyVoid);
@@ -2541,6 +2617,12 @@ pub fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text,
   vars.expect_node = -1;
   vars.read_into = outer_into;
   vars.slice_node = outer_slice;
+  // `(C-Never)`: a declared local bound to a value that never arrives is typed so, as an
+  // inferred one is — the block then keeps the value alone and drops what follows.
+  if !e.first_pass && x.tp is TyNever {
+    el_vars::set_var_type(vars, v, ir::TyNever);
+    return ex(el_ir::v_set(v, x.code), ir::TyVoid);
+  }
   if x.code is NdIter {
     return el_ex_vector::slice_bind(e, vars, v, x);
   }
@@ -2714,7 +2796,7 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
   // the second pass, for a literal of the local's own record or a variant of its enum.
   watch_hit = false;
   if !e.first_pass && !el_vars::is_compiler_generated(vars, v) && !(el_types::base(vt) is TyUnknown) {
-    watch = el_expressions::store_viewers(vars, v) + [v];
+    watch = el_ex_copy::store_viewers(vars, v) + [v];
     for fi in fields {
       match e.p.nodes[fi] {
         SFieldInit { name: fname, e: fe } => {
@@ -2793,7 +2875,7 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
   // record is made; a collection or nested-literal field is built in place and never staged.
   staged: vector<ir::Node> = [];
   if !e.first_pass && !el_vars::is_compiler_generated(vars, v) {
-    viewers = el_expressions::store_viewers(vars, v) + [v];
+    viewers = el_ex_copy::store_viewers(vars, v) + [v];
     // A literal that hands the old record to its own out-of-line field while ANOTHER field
     // reads the record does not demote: the first attempt's scalar staging is abandoned (its
     // `__ref_N` stay declared, 1a-parser.md § Rust accidents) and the build starts again with
@@ -3249,22 +3331,26 @@ pub fn stage_self_reads(e: el::El, vars: el_vars::Vars, code: ir::Node, coll: in
 // store's free while the call runs, which is not carried), -1 for anything else.
 fn keyed_source(e: el::El, x: Ex, to: ir::TypeT) -> integer {
   xb = el_types::base(x.tp);
-  if !keyed_kind(xb) || x.tp is TyOptional || type_kind(xb) != type_kind(to) || el_types::keyed_elem(xb) != el_types::keyed_elem(to) {
+  if !keyed_kind(xb) || type_kind(xb) != type_kind(to) || el_types::keyed_elem(xb) != el_types::keyed_elem(to) {
     return -1;
   }
   xc = el_ir::unspan(x.code);
+  // (A nullable place — a `τ?` local or field — is replaced in as a dense one is: an absent
+  // source copies nothing.  A nullable call's answer is not carried.)
+  if x.tp is TyOptional && !(xc is NdVar || calls(e, xc, "OpGetField")) {
+    return -1;
+  }
   if xc is NdVar || calls(e, xc, "OpGetField") {
     return 0;
   }
   match xc {
+    // (`set_field_check`'s keyed arm: any call's value is replaced in, its store freed after
+    // only where the call gives it away, `call_gives_away_its_store`.)
     NdCall { def_nr: cd } => {
-      for ca in el::def(e, cd).attributes {
-        cb = el_types::base(ca.typedef[0] ?? ir::TyVoid);
-        if !(is_scalar(cb) || cb is TyText) {
-          return -1;
-        }
+      if starts_with(el::def(e, cd).name, "Op") {
+        return -1;
       }
-      if el_ex_match::gives_away_its_store(e, x.code) && len(el_types::deps(x.tp)) == 0 { 32768 } else { -1 }
+      if el_ex_match::gives_away_its_store(e, x.code) && len(el_types::deps(x.tp)) == 0 { 32768 } else { 0 }
     },
     _ => -1
   }
@@ -3308,7 +3394,8 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
     for fi in fields {
       match e.p.nodes[fi] {
         SFieldInit { name: fname, e: fe } => {
-          empty = match e.p.nodes[fe ?? 0] { SVecLit { items } => fe != null && len(items) == 0, _ => false };
+          // (A `null` fills nothing either: the member is marked absent.)
+          empty = match e.p.nodes[fe ?? 0] { SVecLit { items } => fe != null && len(items) == 0, SNull { at: _ } => fe != null, _ => false };
           // (A VECTOR member is filled as any vector field is — its header is zeroed with the
           // group's; a keyed member's bulk fill is not carried.)
           fa_nr = attr_nr(def, fname);
@@ -3371,6 +3458,21 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
         if at is TyOptional && el_types::base(at) is TyVector {
           if e.p.nodes[fe!] is SNull {
             list += [el_ir::cl(e, "OpSetInt4", [r, ir::NdInt { n: field_position(e, d, fname) }, ir::NdInt { n: -1 }])];
+            found += [fname];
+            continue;
+          }
+          at = el_types::base(at);
+        }
+        // A nullable KEYED field likewise: written as its dense twin, a `null` priming the header
+        // where the field stands (a group member's was primed with its group's) and marking it
+        // absent.
+        if at is TyOptional && keyed_kind(el_types::base(at)) && !(el_types::base(at) is TyVector) {
+          if e.p.nodes[fe!] is SNull {
+            kp0 = field_position(e, d, fname);
+            if !group.contains(kp0) {
+              list += [el_ir::cl(e, "OpSetInt4", [r, ir::NdInt { n: kp0 }, ir::NdInt { n: 0 }])];
+            }
+            list += [el_ir::cl(e, "OpSetInt4", [r, ir::NdInt { n: kp0 }, ir::NdInt { n: -1 }])];
             found += [fname];
             continue;
           }
@@ -3732,7 +3834,7 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
 // occurrence not spared as `OpGetField(root, <another offset>, …)` where the destination is a
 // field of the root — or a local that views the root's store?
 fn literal_place_read(e: el::El, vars: el_vars::Vars, value: ir::Node, root: integer, place: ir::Node) -> boolean {
-  for w in el_expressions::store_viewers(vars, root) {
+  for w in el_ex_copy::store_viewers(vars, root) {
     if w != root && el_ir::reads_var(value, w) {
       return true;
     }
@@ -3768,6 +3870,100 @@ fn unspared_reads(e: el::El, n: ir::Node, root: integer, off: integer) -> intege
       }
       c
     }
+  }
+}
+
+// A `vector<i32>` / `vector<u32>` FIELD's own rows where the record is laid out —
+// `[vector<int<…>>, int<…>]` — as `field_get` reads it (`field_content`); a local of that type is
+// `vector<integer>`.  Empty for any other element, or before the layout.
+fn four_byte_field_rows(e: el::El, d: integer, fname: text, inner: ir::TypeT) -> vector<integer> {
+  four = match inner { TyInteger { spec } => el_types::int4(spec) || el_types::uint4(spec), _ => false };
+  k = el::def(e, d).known_type;
+  if !four || e.first_pass || k == el_schema::NO_TYPE {
+    return [];
+  }
+  for sf in el_schema::struct_fields(e, k) {
+    if sf.position == field_position(e, d, fname) && sf.content >= 0 && sf.content < len(e.b.types) {
+      match e.b.types[sf.content]!.parts[0] ?? ir::PtBase {
+        PtVector { content: fc } => { return [sf.content, fc]; },
+        _ => {}
+      }
+    }
+  }
+  []
+}
+
+// `Parser::keyed_group_clear` (loft#898): the clear before a whole-collection literal is built into
+// the keyed field `place` (`OpGetField(r, off, kt)`).  Ungrouped, the field alone; in a linked
+// group, every VIEW member's spine (`OpClearKeyed(…, kt | CLEAR_KEYED_VIEW)`), then the PRIMARY —
+// the member owning the records (a keyed one `OpClearKeyed`, a plain vector `OpClearVector`).
+// Null for a linked-vector (`array`) primary, whose release is not carried.
+fn keyed_group_clear(e: el::El, vars: el_vars::Vars, place: ir::Node) -> vector<ir::Node>? {
+  args = match place { NdCall { args: pa } => pa, _ => [] };
+  if len(args) != 3 {
+    return [el_ir::cl(e, "OpClearKeyed", [place, ir::NdNull])];
+  }
+  kt = args[2]!;
+  single = [el_ir::cl(e, "OpClearKeyed", [place, kt])];
+  off = match el_ir::unspan(args[1]!) { NdInt { n } => n, _ => -1 };
+  rd = heap_def(el_types::base(place_type(e, vars, args[0]!)));
+  if off < 0 || rd < 0 || el::def(e, rd).known_type == el_schema::NO_TYPE {
+    return single;
+  }
+  fields = el_schema::struct_fields(e, el::def(e, rd).known_type);
+  me = -1;
+  for f in fields {
+    if f.position == off {
+      me = f#index;
+    }
+  }
+  if me < 0 || len(fields[me]!.other_indexes) == 0 {
+    return single;
+  }
+  nrs: vector<integer> = [me];
+  for o in fields[me]!.other_indexes {
+    if o != 65535 && !nrs.contains(o) {
+      nrs += [o];
+    }
+  }
+  nrs.sort();
+  ops: vector<ir::Node> = [];
+  primary = -1;
+  for n in nrs {
+    f = fields[n]!;
+    is_view = (f.other_indexes[0] ?? -1) == 65535;
+    if is_view {
+      ops += [el_ir::cl(e, "OpClearKeyed", [field_at_offset(place, f.position), ir::NdInt { n: f.content + 32768 }])];
+    } else if primary < 0 {
+      primary = n;
+    }
+  }
+  if primary >= 0 {
+    pf = fields[primary]!;
+    pparts = e.b.types[pf.content]!.parts[0] ?? ir::PtBase;
+    if pparts is PtArray {
+      return null;
+    }
+    if pparts is PtVector {
+      ops += [el_ir::cl(e, "OpClearVector", [field_at_offset(place, pf.position)])];
+    } else {
+      ops += [el_ir::cl(e, "OpClearKeyed", [field_at_offset(place, pf.position), ir::NdInt { n: pf.content }])];
+    }
+  }
+  ops
+}
+
+// `Parser::field_at`: the field read `to` at another offset of the same record.
+fn field_at_offset(to: ir::Node, off: integer) -> ir::Node {
+  match el_ir::unspan(to) {
+    NdCall { def_nr, args } => {
+      na = args;
+      if len(na) > 1 {
+        na[1] = ir::NdInt { n: off };
+      }
+      ir::NdCall { def_nr: def_nr, args: na }
+    },
+    _ => to
   }
 }
 
@@ -4350,6 +4546,10 @@ pub fn field_vector_copy(e: el::El, vars: el_vars::Vars, r: ir::Node, d: integer
       la = cd.attributes[len(cd.attributes) - 1];
       if w >= 0 && la != null && la!.hidden && el_types::base(la!.typedef[0] ?? ir::TyVoid) is TyVector && el_types::is_equal(e, el_types::without_deps(el_types::base(x.tp)), ir::TyVector { inner: inner, dep: [] }) {
         vk0 = vector_store(e, inner, el_types::elem_name(e, inner));
+        fr0 = four_byte_field_rows(e, d, fname, inner);
+        if len(fr0) == 2 {
+          vk0 = fr0[0]!;
+        }
         if vk0 >= 0 {
           // Nulled just before the statement that fills it (`mark_inline_ref`), not at the top.
           el_vars::mark_inline(vars, w);
@@ -4365,17 +4565,22 @@ pub fn field_vector_copy(e: el::El, vars: el_vars::Vars, r: ir::Node, d: integer
   whole = copies_whole_vector(e, vars, x.code) || (calls(e, x.code, "OpGetField") && el_ex_base::field_path(e, el_ir::unspan(x.code)));
   // A branch whose arms each build a vector in a store of their own (`{ if c { [] } else
   // { [2] } }`): appended from whichever it answers.
-  if !whole && (el_ir::unspan(x.code) is NdIf || el_expressions::tail_kind(e, vars, x.code) == "if") && len(el_types::deps(x.tp)) > 0 && fresh_vector_arms(vars, x.code) {
+  if !whole && (el_ir::unspan(x.code) is NdIf || el_ex_copy::tail_kind(e, vars, x.code) == "if") && len(el_types::deps(x.tp)) > 0 && fresh_vector_arms(vars, x.code) {
     whole = true;
   }
   if x.tp is TyOptional || !(el_types::base(x.tp) is TyVector) || !whole || !el_types::is_equal(e, x.tp, ir::TyVector { inner: inner, dep: [] }) {
-    what = if x.tp is TyOptional { "a nullable vector" } else if !(el_types::base(x.tp) is TyVector) { display_type_name(e, x.tp) } else if !copies_whole_vector(e, vars, x.code) { el_expressions::tail_kind(e, vars, x.code) } else { "a vector of {display_type_name(e, x.tp)}" };
+    what = if x.tp is TyOptional { "a nullable vector" } else if !(el_types::base(x.tp) is TyVector) { display_type_name(e, x.tp) } else if !copies_whole_vector(e, vars, x.code) { el_ex_copy::tail_kind(e, vars, x.code) } else { "a vector of {display_type_name(e, x.tp)}" };
     refuse_known(e, x.tp, "a vector field written from something other than a literal or a vector place: {what}");
     return null;
   }
   nm = el_types::elem_name(e, inner);
   rec = match el_types::base(inner) { TyReference { n: rn } => el::def(e, rn).known_type, _ => if nm == "" { -1 } else { el_schema::schema_type(e, nm) } };
   vk = vector_store(e, inner, nm);
+  fr = four_byte_field_rows(e, d, fname, inner);
+  if len(fr) == 2 {
+    vk = fr[0]!;
+    rec = fr[1]!;
+  }
   if rec < 0 || vk < 0 {
     el::refuse(e, "a vector field of this element type written from a vector place: {type_kind(inner)}");
     return null;

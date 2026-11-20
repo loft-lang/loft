@@ -5681,6 +5681,28 @@ impl Parser {
         }
     }
 
+    /// `@FR-W-Lit` — under the 32-bit regime a binary operator's right operand is expected at
+    /// its left operand's width when that type reaches past i32 (a `u32`, an `i64`), so a
+    /// literal there checks at that width: `c | 0xFF000000` and `c == 0xFF0000FF` on a `u32`
+    /// colour.  `None` leaves the expected type as it is — always outside the regime, where
+    /// every literal already fits `integer`.  A literal LEFT operand is read before the right
+    /// one's type is known and keeps its `l` suffix.
+    fn wide_operand_expected(&self, left: &Type) -> Option<Type> {
+        if !self.data.width32() {
+            return None;
+        }
+        // Past i32: a `u32` or `i64` (`is_wide`), or the full 64-bit `integer` an operation on
+        // one answers (`is_full_integer` — the regime's own `integer` is the 4-byte `i32`).
+        // The literal is expected at the plain 64-bit width either way, so it checks as the
+        // 64-bit value it is compared or combined with.
+        match left.base() {
+            Type::Integer(spec) if spec.is_wide() || spec.is_full_integer() => {
+                Some(Type::Integer(crate::data::IntegerSpec::wide()))
+            }
+            _ => None,
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn handle_operator(
@@ -5778,7 +5800,15 @@ impl Parser {
                     // `LOFT_NO_DN4` escape reverted to a SILENT 8-byte width-tag
                     // (`400 as u8 == 400`) — the very truncation the model eliminates — so it
                     // is retired. `as τ` errors (use `as τ?`); `as τ?` is the checked cast.
-                    if !self.first_pass && !self.int_value_fits(code, &tp) {
+                    // `@FR-I-Narrow-U32` — `as u32` is the same guarded narrowing as the
+                    // implicit one: 0 where the value does not fit.
+                    if !self.first_pass
+                        && !nullable_cast
+                        && !self.lexer.peek_token("??")
+                        && !self.int_value_fits(code, &tp)
+                        && self.narrow_into_u32_with_default(code, &tp)
+                    {
+                    } else if !self.first_pass && !self.int_value_fits(code, &tp) {
                         // A bare `e as N` immediately left of `??` is a CHECKED cast: the
                         // `??` supplies the out-of-range fallback, so treat it like `e as N?`
                         // rather than rejecting it (the diagnostic already advertised `?? d`).
@@ -6344,8 +6374,13 @@ impl Parser {
                 &mut self.eq_rhs_at,
                 is_eq.then_some((second_pos.line, second_pos.pos)),
             );
+            let wide = self.wide_operand_expected(ctp);
+            let outer_expected = wide.map(|w| std::mem::replace(&mut self.expected, w));
             let second_type =
                 self.parse_operators(var_tp, &mut second_code, parent_tp, precedence + 1);
+            if let Some(e) = outer_expected {
+                self.expected = e;
+            }
             self.eq_rhs_at = outer_rhs;
             self.known_var_or_type(&second_code, &second_pos);
             let right_amp = self.amp_identity.take().and_then(|amp| {
@@ -6705,8 +6740,13 @@ impl Parser {
             } else {
                 precedence + 1
             };
+            let wide = self.wide_operand_expected(ctp);
+            let outer_expected = wide.map(|w| std::mem::replace(&mut self.expected, w));
             let second_type =
                 self.parse_operators(var_tp, &mut second_code, parent_tp, rhs_precedence);
+            if let Some(e) = outer_expected {
+                self.expected = e;
+            }
             self.known_var_or_type(&second_code, &second_pos);
             if !self.first_pass
                 && (operator == "/" || operator == "%")

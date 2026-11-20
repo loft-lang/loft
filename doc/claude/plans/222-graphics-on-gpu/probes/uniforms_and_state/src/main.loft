@@ -1,0 +1,279 @@
+// PROBE: can a graphics-style shader (loose named uniforms, global render state, immediate
+// draws) be carried onto gpu by a MECHANICAL rewrite, and give graphics' own pixels?
+use graphics;
+use gpu;
+use gpu_gl;
+use gpu_vulkan;
+
+// A shader as a graphics 0.13 program writes it today (dryopea's ground shader, plus a sampler
+// and an int so every uniform kind the rewrite must handle is present).
+const USER_V: text = `
+#version 330 core
+layout (location = 0) in vec3 aPos;
+layout (location = 1) in vec3 aNormal;
+uniform mat4 uVP;
+void main() {{ gl_Position = uVP * vec4(aPos, 1.0); }}
+`;
+
+const USER_F: text = `
+#version 330 core
+uniform vec3 uColor;
+uniform int uMode;
+uniform sampler2D uTex;
+out vec4 FragColor;
+void main() {{
+  vec3 c = uColor;
+  if (uMode == 1) {{ c = c * texture(uTex, vec2(0.5, 0.5)).rgb; }}
+  FragColor = vec4(c, 1.0);
+}}
+`;
+
+// What the rewrite must produce, written by hand: the constants spirv.py reads.
+const WANT_V: text = `
+#version 330 core
+layout(std140) uniform Block {{ mat4 uVP; vec4 uColor_; float uMode_; }};
+#define uColor (uColor_.xyz)
+#define uMode int(uMode_)
+uniform sampler2D tex0;
+#define uTex tex0
+layout (location = 0) in vec3 aPos;
+layout (location = 1) in vec3 aNormal;
+void main() {{ gl_Position = uVP * vec4(aPos, 1.0); }}
+`;
+// SPIR-V of WANT_V (vertex), written by gpu_vulkan/spirv.py: do not edit.
+const WANT_V_SPV: text = `AwIjBwADAQALAAgAKAAAAAAAAAARAAIAAQAAAAsABgABAAAAR0xTTC5zdGQuNDUwAAAAAA4AAwAA
+AAAAAQAAAA8ACAAAAAAABAAAAG1haW4AAAAADQAAABkAAAAnAAAARwADAAsAAAACAAAASAAFAAsA
+AAAAAAAACwAAAAAAAABIAAUACwAAAAEAAAALAAAAAQAAAEgABQALAAAAAgAAAAsAAAADAAAASAAF
+AAsAAAADAAAACwAAAAQAAABHAAMAEQAAAAIAAABIAAQAEQAAAAAAAAAFAAAASAAFABEAAAAAAAAA
+BwAAABAAAABIAAUAEQAAAAAAAAAjAAAAAAAAAEgABQARAAAAAQAAACMAAABAAAAASAAFABEAAAAC
+AAAAIwAAAFAAAABHAAQAEwAAACEAAAAAAAAARwAEABMAAAAiAAAAAAAAAEcABAAZAAAAHgAAAAAA
+AABHAAQAJgAAACEAAAABAAAARwAEACYAAAAiAAAAAAAAAEcABAAnAAAAHgAAAAEAAAATAAIAAgAA
+ACEAAwADAAAAAgAAABYAAwAGAAAAIAAAABcABAAHAAAABgAAAAQAAAAVAAQACAAAACAAAAAAAAAA
+KwAEAAgAAAAJAAAAAQAAABwABAAKAAAABgAAAAkAAAAeAAYACwAAAAcAAAAGAAAACgAAAAoAAAAg
+AAQADAAAAAMAAAALAAAAOwAEAAwAAAANAAAAAwAAABUABAAOAAAAIAAAAAEAAAArAAQADgAAAA8A
+AAAAAAAAGAAEABAAAAAHAAAABAAAAB4ABQARAAAAEAAAAAcAAAAGAAAAIAAEABIAAAACAAAAEQAA
+ADsABAASAAAAEwAAAAIAAAAgAAQAFAAAAAIAAAAQAAAAFwAEABcAAAAGAAAAAwAAACAABAAYAAAA
+AQAAABcAAAA7AAQAGAAAABkAAAABAAAAKwAEAAYAAAAbAAAAAACAPyAABAAhAAAAAwAAAAcAAAAZ
+AAkAIwAAAAYAAAABAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAbAAMAJAAAACMAAAAgAAQAJQAAAAAA
+AAAkAAAAOwAEACUAAAAmAAAAAAAAADsABAAYAAAAJwAAAAEAAAA2AAUAAgAAAAQAAAAAAAAAAwAA
+APgAAgAFAAAAQQAFABQAAAAVAAAAEwAAAA8AAAA9AAQAEAAAABYAAAAVAAAAPQAEABcAAAAaAAAA
+GQAAAFEABQAGAAAAHAAAABoAAAAAAAAAUQAFAAYAAAAdAAAAGgAAAAEAAABRAAUABgAAAB4AAAAa
+AAAAAgAAAFAABwAHAAAAHwAAABwAAAAdAAAAHgAAABsAAACRAAUABwAAACAAAAAWAAAAHwAAAEEA
+BQAhAAAAIgAAAA0AAAAPAAAAPgADACIAAAAgAAAA/QABADgAAQA=`;
+
+const WANT_F: text = `
+#version 330 core
+layout(std140) uniform Block {{ mat4 uVP; vec4 uColor_; float uMode_; }};
+#define uColor (uColor_.xyz)
+#define uMode int(uMode_)
+uniform sampler2D tex0;
+#define uTex tex0
+out vec4 FragColor;
+void main() {{
+  vec3 c = uColor;
+  if (uMode == 1) {{ c = c * texture(uTex, vec2(0.5, 0.5)).rgb; }}
+  FragColor = vec4(c, 1.0);
+}}
+`;
+// SPIR-V of WANT_F (fragment), written by gpu_vulkan/spirv.py: do not edit.
+const WANT_F_SPV: text = `AwIjBwADAQALAAgAMgAAAAAAAAARAAIAAQAAAAsABgABAAAAR0xTTC5zdGQuNDUwAAAAAA4AAwAA
+AAAAAQAAAA8ABgAEAAAABAAAAG1haW4AAAAAKwAAABAAAwAEAAAABwAAAEcAAwAMAAAAAgAAAEgA
+BAAMAAAAAAAAAAUAAABIAAUADAAAAAAAAAAHAAAAEAAAAEgABQAMAAAAAAAAACMAAAAAAAAASAAF
+AAwAAAABAAAAIwAAAEAAAABIAAUADAAAAAIAAAAjAAAAUAAAAEcABAAOAAAAIQAAAAAAAABHAAQA
+DgAAACIAAAAAAAAARwAEACIAAAAhAAAAAQAAAEcABAAiAAAAIgAAAAAAAABHAAQAKwAAAB4AAAAA
+AAAAEwACAAIAAAAhAAMAAwAAAAIAAAAWAAMABgAAACAAAAAXAAQABwAAAAYAAAADAAAAIAAEAAgA
+AAAHAAAABwAAABcABAAKAAAABgAAAAQAAAAYAAQACwAAAAoAAAAEAAAAHgAFAAwAAAALAAAACgAA
+AAYAAAAgAAQADQAAAAIAAAAMAAAAOwAEAA0AAAAOAAAAAgAAABUABAAPAAAAIAAAAAEAAAArAAQA
+DwAAABAAAAABAAAAIAAEABEAAAACAAAACgAAACsABAAPAAAAFQAAAAIAAAAgAAQAFgAAAAIAAAAG
+AAAAFAACABoAAAAZAAkAHwAAAAYAAAABAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAbAAMAIAAAAB8A
+AAAgAAQAIQAAAAAAAAAgAAAAOwAEACEAAAAiAAAAAAAAABcABAAkAAAABgAAAAIAAAArAAQABgAA
+ACUAAAAAAAA/LAAFACQAAAAmAAAAJQAAACUAAAAgAAQAKgAAAAMAAAAKAAAAOwAEACoAAAArAAAA
+AwAAACsABAAGAAAALQAAAAAAgD82AAUAAgAAAAQAAAAAAAAAAwAAAPgAAgAFAAAAOwAEAAgAAAAJ
+AAAABwAAAEEABQARAAAAEgAAAA4AAAAQAAAAPQAEAAoAAAATAAAAEgAAAE8ACAAHAAAAFAAAABMA
+AAATAAAAAAAAAAEAAAACAAAAPgADAAkAAAAUAAAAQQAFABYAAAAXAAAADgAAABUAAAA9AAQABgAA
+ABgAAAAXAAAAbgAEAA8AAAAZAAAAGAAAAKoABQAaAAAAGwAAABkAAAAQAAAA9wADAB0AAAAAAAAA
++gAEABsAAAAcAAAAHQAAAPgAAgAcAAAAPQAEAAcAAAAeAAAACQAAAD0ABAAgAAAAIwAAACIAAABX
+AAUACgAAACcAAAAjAAAAJgAAAE8ACAAHAAAAKAAAACcAAAAnAAAAAAAAAAEAAAACAAAAhQAFAAcA
+AAApAAAAHgAAACgAAAA+AAMACQAAACkAAAD5AAIAHQAAAPgAAgAdAAAAPQAEAAcAAAAsAAAACQAA
+AFEABQAGAAAALgAAACwAAAAAAAAAUQAFAAYAAAAvAAAALAAAAAEAAABRAAUABgAAADAAAAAsAAAA
+AgAAAFAABwAKAAAAMQAAAC4AAAAvAAAAMAAAAC0AAAA+AAMAKwAAADEAAAD9AAEAOAABAA==`;
+
+struct Uni { name: text, kind: text }
+
+// The loose uniforms of one stage, in order.
+fn uniforms_of(src: text, into: vector<Uni>) {
+  for raw in src.split('\n') {
+    line = raw.trim();
+    if !line.starts_with("uniform ") || !line.ends_with(";") { continue; }
+    words = line[8..line.size() - 1].trim().split(' ');
+    if len(words) != 2 { continue; }
+    seen = false;
+    for u in into { if u.name == words[1] { seen = true; } }
+    if !seen { into += [Uni { name: words[1], kind: words[0] }]; }
+  }
+}
+
+// The preamble both stages get: one block, the names the source used, the samplers by slot.
+fn preamble(unis: const vector<Uni>) -> text {
+  block = "layout(std140) uniform Block {{";
+  defs = "";
+  slot = 0;
+  samplers = "";
+  for u in unis {
+    if u.kind == "sampler2D" {
+      samplers += "uniform sampler2D tex{slot};\n#define {u.name} tex{slot}\n";
+      slot += 1;
+    } else if u.kind == "vec3" {
+      block += " vec4 {u.name}_;";
+      defs += "#define {u.name} ({u.name}_.xyz)\n";
+    } else if u.kind == "int" {
+      block += " float {u.name}_;";
+      defs += "#define {u.name} int({u.name}_)\n";
+    } else {
+      block += " {u.kind} {u.name};";
+    }
+  }
+  "{block} }};\n{defs}{samplers}"
+}
+
+// One stage rewritten: its loose uniforms out, the preamble in after the version line.
+fn rewrite(src: text, unis: const vector<Uni>) -> text {
+  out = "";
+  for raw in src.split('\n') {
+    line = raw.trim();
+    if line.starts_with("uniform ") && line.ends_with(";") { continue; }
+    out += raw;
+    out += "\n";
+    if line.starts_with("#version") { out += preamble(unis); }
+  }
+  out[0..out.size() - 1]
+}
+
+// Two triangles that overlap at different depths (the nearer is drawn FIRST, so only a depth
+// test keeps it) and one wound clockwise (only culling drops it).  pos + normal, stride 6.
+fn scene_near() -> vector<single> {
+  [-0.8f, -0.8f, -0.5f, 0.0f, 0.0f, 1.0f, 0.6f, -0.8f, -0.5f, 0.0f, 0.0f, 1.0f, -0.8f, 0.6f, -0.5f, 0.0f, 0.0f, 1.0f]
+}
+fn scene_far() -> vector<single> {
+  [-0.4f, -0.9f, 0.5f, 0.0f, 0.0f, 1.0f, 0.9f, -0.4f, 0.5f, 0.0f, 0.0f, 1.0f, -0.4f, 0.9f, 0.5f, 0.0f, 0.0f, 1.0f]
+}
+fn scene_backward() -> vector<single> {
+  [0.2f, 0.2f, 0.0f, 0.0f, 0.0f, 1.0f, 0.2f, 0.9f, 0.0f, 0.0f, 0.0f, 1.0f, 0.9f, 0.2f, 0.0f, 0.0f, 0.0f, 1.0f]
+}
+
+const IDENT: vector<float> = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0];
+const W = 64;
+const H = 48;
+
+// The scene through graphics itself: named uniforms, window state, immediate draws.
+fn through_graphics() -> vector<u32> {
+  w = graphics::open_window(W, H, "old") ?? return [];
+  sh = w.shader(USER_V, USER_F) ?? return [];
+  half = graphics::canvas(2, 2, 0xff808080);
+  t = w.texture_from(half);
+  w.clear(0xff102030);
+  w.enable(graphics::GL_DEPTH_TEST);
+  w.enable(graphics::GL_CULL_FACE);
+  w.cull(0);
+  sh.set_mat4("uVP", IDENT);
+  t.bind(0);
+  sh.set_int("uTex", 0);
+  sh.set_int("uMode", 0);
+  sh.set_vec3("uColor", 1.0, 0.0, 0.0);
+  near = w.upload(scene_near(), 6);
+  near.draw(sh);
+  sh.set_vec3("uColor", 0.0, 1.0, 0.0);
+  far = w.upload(scene_far(), 6);
+  far.draw(sh);
+  sh.set_int("uMode", 1);
+  sh.set_vec3("uColor", 0.0, 0.0, 1.0);
+  back = w.upload(scene_backward(), 6);
+  back.draw(sh);
+  w.disable(graphics::GL_CULL_FACE);
+  sh.set_vec3("uColor", 1.0, 1.0, 0.0);
+  back.draw(sh);
+  shot = w.capture();
+  out: vector<u32> = [];
+  for y in 0..H { for x in 0..W { out += [shot.get_pixel(x, y) as u32 ?? 0 as u32]; } }
+  out
+}
+
+// The same calls lowered onto gpu: the block from the collected uniforms, the window state as
+// a pipeline chosen per draw (two states here, so two pipelines), one pass per frame.
+fn through_gpu(table: i64, title: text, v: text, f: text) -> vector<u32> {
+  dev = gpu::open(table, W, H, title) ?? return [];
+  prog = gpu::Program {
+    vertex: [gpu::F3, gpu::F3],
+    instance: [],
+    block: [gpu::MAT4, gpu::F4, gpu::F1],
+    textures: 1,
+    sources: [gpu::source("glsl-330", v, f), gpu::source("spirv", WANT_V_SPV, WANT_F_SPV)],
+  };
+  culled = dev.pipeline(prog, gpu::State { depth: gpu::DEPTH_TEST_WRITE, cull: gpu::CULL_BACK }) ?? return [];
+  open = dev.pipeline(prog, gpu::State { depth: gpu::DEPTH_TEST_WRITE, cull: gpu::CULL_NONE }) ?? return [];
+  px: vector<u32> = [0xff808080 as u32, 0xff808080 as u32, 0xff808080 as u32, 0xff808080 as u32];
+  t = dev.texture_from(px, 2, 2);
+  near = dev.buffer(scene_near());
+  far = dev.buffer(scene_far());
+  back = dev.buffer(scene_backward());
+  u = culled.block();
+  u.mat4(0, IDENT);
+  dev.begin_window(gpu::CLEAR, 0xff102030);
+  dev.bind(culled);
+  u.f1(2, 0.0);
+  u.f4(1, 1.0, 0.0, 0.0, 0.0);
+  dev.uniforms(u); dev.sample(0, t); dev.vertices(near); dev.draw(0, 3);
+  u.f4(1, 0.0, 1.0, 0.0, 0.0);
+  dev.uniforms(u); dev.vertices(far); dev.draw(0, 3);
+  u.f1(2, 1.0);
+  u.f4(1, 0.0, 0.0, 1.0, 0.0);
+  dev.uniforms(u); dev.vertices(back); dev.draw(0, 3);
+  dev.bind(open);
+  u.f4(1, 1.0, 1.0, 0.0, 0.0);
+  dev.uniforms(u); dev.sample(0, t); dev.vertices(back); dev.draw(0, 3);
+  dev.end();
+  shot = dev.capture();
+  if len(dev.refusals()) > 0 { println("{title} refusals: {dev.refusals()}"); }
+  shot
+}
+
+fn same_pixels(what: text, a: const vector<u32>, b: const vector<u32>) {
+  if len(a) == 0 || len(b) == 0 || len(a) != len(b) { println("{what}: sizes {len(a)} vs {len(b)}  — NOT COMPARED"); return; }
+  differ = 0;
+  colours: vector<integer> = [];
+  for i in 0..len(a) {
+    if (a[i] & 0xffffff) != (b[i] & 0xffffff) { differ += 1; }
+    c = a[i] & 0xffffff;
+    if !colours.contains(c) && len(colours) < 16 { colours += [c]; }
+  }
+  println("{what}: {differ} of {len(a)} pixels differ; the reference shows {len(colours)} colours");
+}
+
+fn main() {
+  unis: vector<Uni> = [];
+  uniforms_of(USER_V, unis);
+  uniforms_of(USER_F, unis);
+  v = rewrite(USER_V, unis);
+  f = rewrite(USER_F, unis);
+  println("rewrite gives the hand-written vertex source: {v == WANT_V}; fragment: {f == WANT_F}");
+  if v != WANT_V { println("---\n{v}\n---"); }
+  if f != WANT_F { println("---\n{f}\n---"); }
+  old = through_graphics();
+  gl = through_gpu(gpu_gl::table(), "gl", v, f);
+  vk = through_gpu(gpu_vulkan::table(), "vk", v, f);
+  same_pixels("graphics vs gpu on OpenGL", old, gl);
+  same_pixels("graphics vs gpu on Vulkan", old, vk);
+  mid = old[24 * W + 20];
+  println("a pixel of the textured triangle: graphics {old[12 * W + 44] & 0xffffff:#x} gl {gl[12 * W + 44] & 0xffffff:#x} vk {vk[12 * W + 44] & 0xffffff:#x} (want 0x808000: yellow times the half-grey texture)");
+  edge = 0;
+  for i in 0..len(old) {
+    if (old[i] & 0xffffff) != (vk[i] & 0xffffff) {
+      x = i % W; y = i / W;
+      same_around = true;
+      for d in [-1, 1, -W, W] { j = i + d; if j >= 0 && j < len(old) && (old[j] & 0xffffff) != (old[i] & 0xffffff) { same_around = false; } }
+      if !same_around { edge += 1; } else { println("interior difference at {x},{y}"); }
+    }
+  }
+  println("of the Vulkan differences, {edge} sit on a colour edge of the reference");
+  println("a pixel of the near triangle reads {mid & 0xffffff:#x} (want 0xff0000: depth kept the first draw)");
+}

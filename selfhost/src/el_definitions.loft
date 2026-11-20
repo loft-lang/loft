@@ -19,6 +19,7 @@ use el_dispatch;
 use el_schema;
 use el_cell;
 use el_trace;
+use el_ex_deliver;
 
 
 // `Parser::parse_file`'s definition loop, over the file's items in order.
@@ -835,6 +836,8 @@ fn flat_expression(n: ir::Node) -> boolean {
       }
       true
     },
+    // (`default_replayable_in_place`'s `If` arm: a `&&` / `||` over replayable operands.)
+    NdIf { cond, t, f } => flat_expression(cond) && flat_expression(t) && flat_expression(f),
     _ => false
   }
 }
@@ -1224,7 +1227,7 @@ fn const_twin_ok(e: el::El, d: integer, body: integer) -> boolean {
     _ => {}
   }
   lit = sole_literal_node(e, body);
-  lit >= 0 && el_expressions::constant_literal(e, lit)
+  lit >= 0 && el_ex_deliver::constant_literal(e, lit)
 }
 
 // `fn name(params) (-> type)? (; / block)`                    Parser::parse_function
@@ -1284,12 +1287,20 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
         if t == null {
           return "";
         }
-        // `Parser::ref_var_type`: a `&T` parameter is a link to the caller's `T`.  A tuple's
-        // record form is not carried.
+        // `Parser::ref_var_type`: a `&T` parameter is a link to the caller's `T`.  A tuple
+        // whose every member a struct field can hold (`ref_tuple_is_record`: no `τ?`, no
+        // function, no nested tuple) is a link to its `__tuple<…>` RECORD, as a `&S` is
+        // (`@FR-T-Ref-Rep`); any other tuple is refused by name.
         if amp {
           if t! is TyTuple {
-            el::refuse(e, "a `&` parameter of a tuple");
-            return "";
+            rel = match t! { TyTuple { elems } => elems, _ => [] };
+            rok = len(rel) > 0 && len([for rm in rel if rm is TyOptional || el_types::base(rm) is TyRoutine || el_types::base(rm) is TyTuple { 1 }]) == 0;
+            rtd = if rok { el_types::tuple_def_of(e, rel) } else { -1 };
+            if rtd < 0 {
+              el::refuse(e, "a `&` parameter of a tuple");
+              return "";
+            }
+            t = ir::TyReference { n: rtd, dep: [] };
           }
           t = ir::TyRefVar { inner: t! };
         }
@@ -1948,13 +1959,10 @@ fn fn_key(e: el::El, name: text, arguments: vector<Argument>) -> text {
   if len(arguments) == 0 || arguments[0].name != "self" {
     return "n_{name}";
   }
-  // An operator method (`OpAdd`) is its own port.  The `OpDrop` and `OpCopy` hooks are methods
-  // as any other; the cascades a type holding a droppable takes are refused after the passes
-  // (`refuse_drop_cascades`).
-  if starts_with(name, "Op") && name != "OpDrop" && name != "OpCopy" {
-    el::refuse(e, "a method named as an operator: {name}");
-    return "";
-  }
+  // (@C132: a method written `fn OpEq(self: W, …)` is an ordinary method, `t_1W_OpEq`, which
+  // `==` does not call; only `operator` declares an operator.  The `OpDrop` and `OpCopy` hooks
+  // are methods as any other; the cascades a type holding a droppable takes are refused after
+  // the passes, `refuse_drop_cascades`.)
   t = arguments[0].typedef;
   tn = el_ex_base::type_def_nr(e, match t { TyRefVar { inner } => inner, _ => t });
   if tn < 0 {
@@ -2018,7 +2026,8 @@ fn add_fn(e: el::El, key: text, name: text, arguments: vector<Argument>, pos: ir
           }
           // An overload of the slot's method (`Disp-Key`): the slot keeps the incumbent, the
           // set carries both.
-          if el_dispatch::own_set(e, name) >= 0 && slot >= 0 && el::def(e, slot).name != key {
+          // (So does a library set of the name, which carries the members then.)
+          if (el_dispatch::own_set(e, name) >= 0 || (el::def_nr(e, name) >= 0 && el::def(e, el::def_nr(e, name)).def_type == el::DT_DYNAMIC)) && slot >= 0 && el::def(e, slot).name != key {
             tn = -1;
             break;
           }

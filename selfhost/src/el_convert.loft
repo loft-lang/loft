@@ -222,6 +222,11 @@ pub fn plain_scalar(t: ir::TypeT) -> boolean {
 // `(C-Int)`), a `Never` anywhere, and the first `OpConv` whose parameter and result are the pair
 // (`Data::converts_with`).  A narrowing integer store is the author's to write as a cast (null
 // unless a constant provably fits); `explicit` is the `as` that does so.
+// `operators.rs`'s `int_literal`: an `i32` literal where the value fits, else an `i64` one.
+fn int_literal(n: integer) -> ir::Node {
+  if n >= -2147483648 && n <= 2147483647 { ir::NdInt { n: n } } else { ir::NdLong { n: n } }
+}
+
 // `Parser::dn4_checked_cast` (`@FR-N-Cast`'s checked half, DN4): the value bound once in a
 // `__dn4_N` and answered where it lies in the target's range, else the integer null — typed
 // `τ?`.  A constant has its answer now.
@@ -240,8 +245,9 @@ pub fn dn4_cast(e: el::El, vars: el_vars::Vars, code: ir::Node, src: ir::TypeT, 
   tmp = el_vars::create_unique(vars, "_dn4", src);
   t = ir::NdVar { n: tmp };
   nl = el_ir::cl(e, "OpConvIntFromNull", []);
-  inner = el_ir::v_if(el_ir::cl(e, "OpLeInt", [t, ir::NdInt { n: hi }]), t, nl);
-  outer = el_ir::v_if(el_ir::cl(e, "OpLeInt", [ir::NdInt { n: lo }, t]), inner, nl);
+  // (A bound past `i32` is a 64-bit literal, `int_literal`: `u32`'s `4294967295i64`.)
+  inner = el_ir::v_if(el_ir::cl(e, "OpLeInt", [t, int_literal(hi)]), t, nl);
+  outer = el_ir::v_if(el_ir::cl(e, "OpLeInt", [int_literal(lo), t]), inner, nl);
   el_ir::v_block([el_ir::v_set(tmp, code), outer], res, "dn4cast")
 }
 
@@ -294,14 +300,25 @@ pub fn guard_discharge(e: el::El, vars: el_vars::Vars, code: ir::Node, should: i
       bl.operators = [el_ir::v_set(held, dn4_cast(e, vars, subject, wide, should)), pick];
       return ir::NdBlock { block: [bl] };
     },
-    NdIf { cond, t, f: _ } => {
-      // `bare_variable_discharge`: `v ?? d` on a variable reads `v` in the test and the arm.
+    NdIf { cond, t, f } => {
+      // `bare_variable_discharge`: `v ?? d` on a variable reads `v` in the test and the arm —
+      // each read through its own checked cast, the arm's made first.
       match el_ir::unspan(t) {
         NdVar { n: v } => {
           match el_ir::unspan(cond) {
-            NdCall { args } => {
+            NdCall { def_nr: cd, args } => {
               if len(args) == 1 && el_ir::unspan(args[0] ?? ir::NdNull) == ir::NdVar { n: v } {
-                el::refuse(e, "a bare-variable `??` stored into a narrow slot");
+                bdefault = f;
+                bchained = guard_discharge(e, vars, f, should);
+                if bchained != null {
+                  bdefault = bchained!;
+                } else if !value_fits(e, vars, f, should) && !el_ir::is_null(f) {
+                  el::refuse(e, "a `??` default that may not fit its narrow slot");
+                }
+                bwide = ir::TyInteger { spec: ir::IntegerSpec { min: -2147483647, max: 2147483647, not_null: false, forced_size: 0 } };
+                barm = dn4_cast(e, vars, t, bwide, should);
+                btest = dn4_cast(e, vars, t, bwide, should);
+                return ir::NdIf { cond: ir::NdCall { def_nr: cd, args: [btest] }, t: barm, f: bdefault };
               }
             },
             _ => {}
@@ -336,7 +353,9 @@ pub fn declared_range(t: ir::TypeT, nullable: boolean, aliases: boolean = false)
         return DeclaredRange { some: false, lo: 0, hi: 0, dflt: 0 };
       }
       width = spec.max - spec.min + 1;
-      reserve = nullable && ((spec.forced_size == 1 && width == 256) || (spec.forced_size == 2 && width == 65536));
+      // (`reserves_narrow_sentinel`: a range filling its fixed 1-, 2- or 4-byte width keeps its
+      // top code for null — `u32?` as `u8?` does.)
+      reserve = nullable && ((spec.forced_size == 1 && width == 256) || (spec.forced_size == 2 && width == 65536) || (spec.forced_size == 4 && width == 4294967296));
       lo = if reserve && spec.min < 0 { spec.min + 1 } else { spec.min };
       hi = if reserve && spec.min >= 0 { spec.max - 1 } else { spec.max };
       dflt: integer? = if nullable { null } else if lo <= 0 && 0 <= hi { 0 } else if lo > 0 { lo } else { hi };
@@ -567,7 +586,8 @@ pub fn null_of(e: el::El, t: ir::TypeT) -> ir::Node? {
     },
     _ => {}
   }
-  if t is TyReference {
+  // (A keyed collection's null is the reference sentinel too.)
+  if t is TyReference || el_types::keyed_elem(t) >= 0 {
     d = el::def_nr(e, "OpNullRefSentinel");
     return if d < 0 { null } else { ir::NdCall { def_nr: d, args: [] } };
   }

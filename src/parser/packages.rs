@@ -911,15 +911,20 @@ impl Parser {
     /// and the fixed release, unless `LOFT_SECURITY_OVERRIDE` lists it; `security_high` warns
     /// (and refuses under `LOFT_STRICT_SECURITY=1`); `security_low`, `bug` and `deprecated`
     /// print one line.  Only a VERIFIED cached feed counts, read once per process and never
-    /// fetched mid-parse (the install refreshes it).  Once per (package, release), however
-    /// many `use` paths reach it.
+    /// fetched mid-parse (the install and a shipped build refresh it), unless the caller
+    /// supplied its own (`advisory_feed`).  Once per (package, release), however many `use`
+    /// paths reach it.
     #[cfg(feature = "registry")]
     pub(super) fn check_advisory(&mut self, name: &str, version: &str) {
         let key = (name.to_string(), version.to_string());
         if !self.advisory_checked.insert(key) {
             return;
         }
-        let Some(feed) = crate::registry_advisories::verified_cached_feed() else {
+        let Some(feed) = self
+            .advisory_feed
+            .as_ref()
+            .or_else(|| crate::registry_advisories::verified_cached_feed())
+        else {
             return;
         };
         let verdict = crate::registry_advisories::assess(name, version, feed);

@@ -340,6 +340,13 @@ struct Scopes<'s> {
     /// The locals whose one real bind follows an enclosing null on every path and every pass
     /// ([`null_led_first_binds_in`]): that bind displaces no store.
     null_led_first: HashSet<u16>,
+    /// loft#2594 — the locals whose literal store is MOVED in at the bind rather than paired
+    /// with its buffer (`literal_moves_in`), decided once before the scan.
+    literal_moves: HashSet<u16>,
+    /// loft#2594 — `(local, buffer)` of the bind being scanned that moves the buffer's store
+    /// into `local`; that bind's `Set` call site appends `OpInitRefSentinel(buffer)`.  Keyed by
+    /// the local: the literal's own `Set(buffer, null)` is scanned inside the bind.
+    moved_buffer: Option<(u16, u16)>,
     /// The scope pass's SPLIT COPIES (`var_mapping`) — each copy to the variable it was split
     /// from — with how many source binds each copy took.  The whole-body counts above are
     /// keyed by the ORIGINAL variable, so a copy is never in them; a question about the copy's

@@ -35,6 +35,13 @@ fn main() {
   st = web_natives::http_do("GET", "http://127.0.0.1:1/x", "", "");
   println("REFUSED {st}");
   println("SIZE {web_natives::http_head_size("{base}/sized")}");
+  other = env_variable("WN_OTHER") ?? "";
+  st = web_natives::http_do("GET", "{base}/hop", "", "X-Mine: v2\n");
+  println("HOP {st} [{web_natives::http_body()}]");
+  st = web_natives::http_do("GET", "{base}/away/{other}", "", "X-Mine: v3\n");
+  println("AWAY {st} [{web_natives::http_body()}]");
+  st = web_natives::http_do("POST", "{base}/away307/{other}", "secret", "X-Mine: v4\n");
+  println("AWAY307 {st}");
   web_natives::pack_reset();
   web_natives::pack_u8(0);
   web_natives::pack_u8(255);
@@ -92,13 +99,19 @@ fn main() {
 "#;
 
 /// The lines the program prints, fixed by the server's answers.
-const WANT: [&str; 13] = [
+const WANT: [&str; 16] = [
     "BIN 200 5 65 0 255 66 10",
     "HDR true",
     "POST 200 POST hello v1",
     "MISSING 404 not here",
     "REFUSED 0",
     "SIZE 1234",
+    // A redirect on the same server carries the caller's header; one to another server
+    // (the second test server) arrives without it; one that would carry the body there is
+    // refused.  With the header forwarded the second line reads `[GET  v3]`.
+    "HOP 200 [GET  v2]",
+    "AWAY 200 [GET  ]",
+    "AWAY307 0",
     "PACK 8 0 255 2 1 255",
     "PACK2 3 7 255 -1 -1 0",
     "WS echo:hi 1",
@@ -137,7 +150,7 @@ fn build_component() {
     );
 }
 
-fn run(backend: &str, dir: &Path, port: u16) -> (String, String) {
+fn run(backend: &str, dir: &Path, port: u16, other: u16) -> (String, String) {
     let file = dir.join("web.loft");
     fa::write(&file, PROGRAM).expect("write the program");
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
@@ -152,6 +165,7 @@ fn run(backend: &str, dir: &Path, port: u16) -> (String, String) {
         .env("LOFT_TIMEOUT", "120")
         .env("WN_BASE", format!("http://127.0.0.1:{port}"))
         .env("WN_WS", format!("ws://127.0.0.1:{port}"))
+        .env("WN_OTHER", other.to_string())
         .output()
         .expect("loft runs");
     (
@@ -175,7 +189,8 @@ fn the_web_natives_answer_the_same_on_every_backend() {
     for backend in backends() {
         let dir = scratch(&backend[2..]);
         let (port, seen) = web_server::start();
-        let (out, err) = run(backend, &dir, port);
+        let (other, _) = web_server::start();
+        let (out, err) = run(backend, &dir, port, other);
         for want in WANT {
             assert!(
                 out.lines().any(|l| l == want),

@@ -485,7 +485,12 @@ impl Parser {
                 || self.in_explicit_cast
                 || !self.width32_narrow_store(code, is_type, should));
         // A value that may not fit a narrow slot is refused where the author can choose (@C127).
-        if !discharged && !self.first_pass && narrows && !self.int_value_fits(code, should) {
+        if !discharged
+            && !self.first_pass
+            && narrows
+            && !self.int_value_fits(code, should)
+            && !self.narrow_into_u32_with_default(code, should)
+        {
             let src = self.narrow_source_name(code, is_type);
             let dst = self.int_type_name(should);
             let dense = self.store_ctx.last().is_some_and(|c| c.dense);

@@ -112,7 +112,7 @@ fn run_env(home: &Path, dir: &Path, script: &str, env: &[(&str, &str)]) -> Strin
 /// "it did not resolve" cannot tell them apart, and a first version of this test that
 /// asserted only that passed with arc A REVERTED. The two were measured:
 ///
-///   with arc A:    `registry index signature is malformed or missing; pass --allow-unsigned`
+///   with arc A:    `registry index is unsigned; pass --allow-unsigned`
 ///   without arc A: `no version of `probepkg` satisfies constraint `*``
 ///
 /// i.e. without the arc the run gets PAST the signature and fails later, on the index's
@@ -129,7 +129,7 @@ fn arc_a_auto_install_refuses_an_unsigned_index() {
     let _ = fa::remove_dir_all(&home);
 
     assert!(
-        all.contains("signature is malformed or missing"),
+        all.contains("registry index is unsigned"),
         "an unsigned index must be REFUSED by the signature gate on the auto-install \
          path — reaching any later failure means the gate was waived (@PLN143 arc A):\n{all}"
     );
@@ -445,7 +445,12 @@ fn arc_d_install_outside_a_package_declares_one_and_the_pin_holds() {
     let dir = home.join("scratch");
     fa::create_dir_all(&dir).expect("mkdir");
 
-    let installed = cli(&home, &dir, &url, &["install", "probepkg@0.1.0"]);
+    let installed = cli(
+        &home,
+        &dir,
+        &url,
+        &["install", "--allow-unsigned", "probepkg@0.1.0"],
+    );
     let manifest = fa::read_to_string(dir.join("loft.toml")).unwrap_or_default();
     let lock = fa::read_to_string(dir.join("loft.lock")).unwrap_or_default();
 
@@ -1105,7 +1110,7 @@ fn install_binds_a_transitive_package_to_the_project_declaration() {
         let pkg = project(&home, tag, deps, None, "chainpkg", "chainpkg::chain_id()");
         let url = "http://127.0.0.1:1/index.json";
         let out = loft::platform::process::harness_command(loft_bin())
-            .args(["install"])
+            .args(["install", "--allow-unsigned"])
             .env("LOFT_HOME", &home)
             .env("HOME", &home)
             .env("LOFT_REGISTRY_URL", url)
@@ -1199,7 +1204,7 @@ fn a_named_install_keeps_the_declared_pin_and_an_explicit_version_moves_it() {
     );
     let install = |arg: &str| {
         let out = loft::platform::process::harness_command(loft_bin())
-            .args(["install", arg])
+            .args(["install", "--allow-unsigned", arg])
             .env("LOFT_HOME", &home)
             .env("HOME", &home)
             .env("LOFT_REGISTRY_URL", "http://127.0.0.1:1/index.json")

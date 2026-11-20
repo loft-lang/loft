@@ -204,53 +204,111 @@ pub fn insert_evacuations(data: &mut Data, d_nr: u32) {
     if evacuations.is_empty() {
         return;
     }
-    let free_ref = data.def_nr("OpFreeRef");
-    let free_distinct = data.def_nr("OpFreeRefIfDistinct");
-    let evacuate = data.def_nr("OpEvacuate");
-    fn visit(node: &mut Value, evs: &[[u16; 4]], frees: (u32, u32), evacuate: u32) {
-        if let Some(operators) = statements(node) {
-            let mut i = 0;
-            while i < operators.len() {
-                visit(&mut operators[i], evs, frees, evacuate);
-                let owner = match operators[i].unspan() {
-                    Value::Call(d, args) if *d == frees.0 || *d == frees.1 => {
-                        match args.first().map(Value::unspan) {
-                            Some(Value::Var(o)) => Some(*o),
-                            _ => None,
-                        }
-                    }
-                    _ => None,
-                };
-                let mut before = Vec::new();
-                if let Some(owner) = owner {
-                    for [holder, fld, o, tp] in evs {
-                        if *o == owner {
-                            before.push(Value::Call(
-                                evacuate,
-                                vec![
-                                    Value::Var(*holder),
-                                    Value::Int(i32::from(*fld)),
-                                    Value::Var(owner),
-                                    Value::Int(i32::from(*tp)),
-                                ],
-                            ));
-                        }
-                    }
-                }
-                let n = before.len();
-                operators.splice(i..i, before);
-                i += n + 1;
-            }
-            return;
-        }
-        node.for_each_child_mut(&mut |c| visit(c, evs, frees, evacuate));
-    }
-    visit(
+    let ops = EvacOps {
+        free_ref: data.def_nr("OpFreeRef"),
+        free_distinct: data.def_nr("OpFreeRefIfDistinct"),
+        evacuate: data.def_nr("OpEvacuate"),
+        get_db_ref: data.def_nr("OpGetDbRef"),
+        distinct: data.def_nr("OpDistinctStore"),
+        drops: (0..data.definitions())
+            .filter(|&d| data.is_drop_function(d))
+            .collect(),
+    };
+    visit_evacuations(
         &mut data.definitions[d_nr as usize].code,
         &evacuations,
-        (free_ref, free_distinct),
-        evacuate,
+        &ops,
     );
+}
+
+/// The operations [`insert_evacuations`] writes and reads.
+struct EvacOps {
+    free_ref: u32,
+    free_distinct: u32,
+    evacuate: u32,
+    get_db_ref: u32,
+    distinct: u32,
+    /// Every `OpDrop` / `OpDropAll` / `OpDropAllExcept` of the program.
+    drops: Vec<u32>,
+}
+
+fn visit_evacuations(node: &mut Value, evs: &[[u16; 4]], ops: &EvacOps) {
+    if let Some(operators) = statements(node) {
+        let mut i = 0;
+        while i < operators.len() {
+            visit_evacuations(&mut operators[i], evs, ops);
+            let owner = match operators[i].unspan() {
+                Value::Call(d, args) if *d == ops.free_ref || *d == ops.free_distinct => {
+                    match args.first().map(Value::unspan) {
+                        Some(Value::Var(o)) => Some(*o),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
+            let mut before = Vec::new();
+            if let Some(owner) = owner {
+                let mine: Vec<[u16; 4]> = evs.iter().copied().filter(|e| e[2] == owner).collect();
+                for [holder, fld, o, tp] in &mine {
+                    before.push(Value::Call(
+                        ops.evacuate,
+                        vec![
+                            Value::Var(*holder),
+                            Value::Int(i32::from(*fld)),
+                            Value::Var(*o),
+                            Value::Int(i32::from(*tp)),
+                        ],
+                    ));
+                }
+                // loft#2597 — an evacuated record MOVES to the holder, whose end releases it
+                // (its cascade runs a stored reference's hooks for a record in its own store),
+                // so the owner's `OpDrop` just before this free runs only where no holder took
+                // the record: run twice, the value was released before the holder read it and
+                // again at the holder's end.
+                if !mine.is_empty() && i > 0 && drops_var(&operators[i - 1], owner, &ops.drops) {
+                    let drop = std::mem::replace(&mut operators[i - 1], Value::Null);
+                    operators[i - 1] = mine.iter().fold(drop, |stmt, [holder, fld, o, _]| {
+                        not_evacuated(stmt, *holder, *fld, *o, ops)
+                    });
+                }
+            }
+            let n = before.len();
+            operators.splice(i..i, before);
+            i += n + 1;
+        }
+        return;
+    }
+    node.for_each_child_mut(&mut |c| visit_evacuations(c, evs, ops));
+}
+
+/// Does `stmt` call a drop hook on `owner` itself (`t_3Tex_OpDrop(owner)`, within the guards a
+/// scope exit wraps it in)?  Any other statement answers no, which keeps the drop as it was.
+fn drops_var(stmt: &Value, owner: u16, drops: &[u32]) -> bool {
+    stmt.any_node(&mut |n| {
+        matches!(n, Value::Call(d, args) if drops.contains(d)
+            && matches!(args.first().map(Value::unspan), Some(Value::Var(v)) if *v == owner))
+    })
+}
+
+/// `stmt`, run only where `OpEvacuate(holder, fld, owner, _)` copies nothing: the holder's
+/// field names a record of another store, or the holder lies in the owner's own store (the
+/// two conditions `Stores::evacuate` copies under, negated).
+fn not_evacuated(stmt: Value, holder: u16, fld: u16, owner: u16, ops: &EvacOps) -> Value {
+    let target = Value::Call(
+        ops.get_db_ref,
+        vec![Value::Var(holder), Value::Int(i32::from(fld))],
+    );
+    let elsewhere = Value::Call(ops.distinct, vec![target, Value::Var(owner)]);
+    let holder_apart = Value::Call(ops.distinct, vec![Value::Var(holder), Value::Var(owner)]);
+    Value::If(
+        Box::new(elsewhere),
+        Box::new(stmt.clone()),
+        Box::new(Value::If(
+            Box::new(holder_apart),
+            Box::new(Value::Null),
+            Box::new(stmt),
+        )),
+    )
 }
 
 /// A named local's own record is claimed in ONE holder's store, whichever holders name it:

@@ -64,6 +64,21 @@ surface* is the canonical guide with a worked example; the wire contract is
 [plans/16-debugger/PROTOCOL.md](plans/16-debugger/PROTOCOL.md). Order matters
 there: `launch` loads, `run` starts, and breakpoints go between them.
 
+The same protocol in a browser: `loft debug prog.loft --serve [--port <n>]` (8770
+unless named) prints the page's address.  The session runs code with your file
+access, so the server answers only a page it served itself, addressed as
+`127.0.0.1:<port>` or `localhost:<port>`; any other name or port gets a 403.  From
+another machine, forward the SAME port number, so the address the browser uses is
+the one the server knows:
+
+```sh
+ssh -N -L 8770:127.0.0.1:8770 user@host        # then http://localhost:8770/
+```
+
+A forward to a different local port (`-L 9000:127.0.0.1:8770`) is refused; when
+8770 is taken locally, start the server on a port that is free on both ends
+(`--port 8771`, `-L 8771:127.0.0.1:8771`).
+
 **A local of a generic type** shows its instance beside a literal naming the template —
 `g: Grid<integer> = Grid{cells:[1,2],w:1}` — because the literal is what an evaluated
 expression is seeded from, and `Grid<integer>{…}` is no expression the parser reads; the

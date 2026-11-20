@@ -506,21 +506,26 @@ fn wasm_toolchain() -> &'static WasmToolchain {
     })
 }
 
-/// The dependency headers `shim_sources` include (@C165), under each dependency's name in a
-/// directory of this process under `scratch`; `None` when no shim of this program includes
-/// one, or the directory cannot be written (the compile then names the header it misses).
+/// What a shim may include that is not beside it: the build's width header (`loft_width.h`,
+/// as the host and the Android builds of a shim are given it) and the dependency headers
+/// `shim_sources` include (@C165), under each dependency's name — in a directory of this
+/// process under `scratch`.  `None` when the program has no shim, or the directory cannot be
+/// written (the compile then names the header it misses).
 fn staged_dep_headers(
     scratch: &std::path::Path,
     shim_sources: &[String],
 ) -> Option<std::path::PathBuf> {
-    if loft::c_shim::all_dep_headers().is_empty() {
+    if shim_sources.is_empty() {
         return None;
     }
     let dir = scratch.join(format!("loft_wasm_inc_{}", std::process::id()));
     let paths: Vec<std::path::PathBuf> =
         shim_sources.iter().map(std::path::PathBuf::from).collect();
     fa::create_dir_all(&dir).ok()?;
-    loft::c_shim::put_dep_headers_of(&dir, &paths).ok()?;
+    loft::c_shim::put_width_header(&dir).ok()?;
+    if !loft::c_shim::all_dep_headers().is_empty() {
+        loft::c_shim::put_dep_headers_of(&dir, &paths).ok()?;
+    }
     Some(dir)
 }
 
