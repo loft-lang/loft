@@ -2394,6 +2394,62 @@ pub fn discharge_copy_typed(e: el::El, rhs: integer, x: Ex) -> ir::Node {
   x.code
 }
 
+// `Parser::is_struct_returning_call`: a call of a loft function with a body (`n_…`), or a struct
+// literal's block — what allocates a store of its own.  (`answers_caller_buffer` is a collection
+// return handed a caller buffer: no keyed result has one.)
+fn struct_returning_call(e: el::El, n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdCall { def_nr } => starts_with(el::def(e, def_nr).name, "n_") && !el_ir::is_null(el::def(e, def_nr).code[0] ?? ir::NdNull),
+    NdBlock { block } => block[0].name == "Object",
+    _ => false
+  }
+}
+
+// `Parser::join_arms`: the terminal value of every arm an `if` chain can answer — a block's is
+// its last operator's; an `ncc` block's are its tail `if`'s, its subject's holder read as the
+// subject's assignment.
+fn join_arms(e: el::El, n: ir::Node, out: vector<ir::Node>) {
+  match el_ir::unspan(n) {
+    NdIf { cond: _, t, f } => {
+      join_arms(e, t, out);
+      join_arms(e, f, out);
+    },
+    NdBlock { block } => {
+      bl = block[0];
+      if len(bl.operators) == 0 {
+        return;
+      }
+      if bl.name == "ncc" {
+        sv = -1;
+        sval = ir::NdNull;
+        for op in bl.operators {
+          match el_ir::unspan(op) {
+            NdSet { var: hv, inner: hval } => {
+              if sv < 0 && !(el_ir::unspan(hval) is NdNull) {
+                sv = hv;
+                sval = hval;
+              }
+            },
+            _ => {}
+          }
+        }
+        raw: vector<ir::Node> = [];
+        join_arms(e, bl.operators[-1]!, raw);
+        for a in raw {
+          if sv >= 0 && el_ir::unspan(a) == ir::NdVar { n: sv } {
+            out += [sval];
+          } else {
+            out += [a];
+          }
+        }
+        return;
+      }
+      join_arms(e, bl.operators[-1]!, out);
+    },
+    _ => { out += [n]; }
+  }
+}
+
 // `bound_to_a_value_in`: the variables a value sets to something other than `null` inside it.
 fn bound_to_a_value_in(n: ir::Node, out: vector<integer>) {
   match n {
@@ -3770,11 +3826,16 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
         // is set the argument stores are protected from the replace's free while it runs
         // (`protectable_ref_args`, the @P290 bracket) — less a slot the value itself binds to a
         // value (`bound_to_a_value_in`: a vector literal's `_vec_N`).  The local borrows nothing.
-        if !plain_args && !self_only && pd >= 0 && ud >= 0 && !starts_with(el::def(e, cd).name, "Op") && cap_rebind_cond(e, vars, v) == null {
+        // (A call handed the local itself takes this form too where the self-only arm above,
+        // a callee that gives its store away, did not apply: `a = add(a, x)` with `add`
+        // answering its parameter.)
+        if !plain_args && pd >= 0 && ud >= 0 && !starts_with(el::def(e, cd).name, "Op") && cap_rebind_cond(e, vars, v) == null {
+          // (`is_struct_returning_call`: only a loft function with a body sets the bit.)
+          ksr = struct_returning_call(e, x.code);
           el_vars::drop_use(vars, v);
           kt = el_schema::keyed_type(e, el_types::base(kcur));
           kdefs = own::new_defs();
-          frees = binds::call_return_frees_source(e.b, own::ops_of(e.b), e.context, kdefs, x.code);
+          frees = ksr && binds::call_return_frees_source(e.b, own::ops_of(e.b), e.context, kdefs, x.code);
           guarded: vector<integer> = [];
           if frees {
             inner: vector<integer> = [];
@@ -3837,6 +3898,61 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
             return ex(el_ir::cl(e, "OpReplaceKeyed", [x.code, krb, ir::NdInt { n: kt }]), ir::TyVoid);
           }
           return ex(ir::NdInsert { items: kg + [el_ir::v_set(v, ir::NdNull), el_ir::cl(e, "OpReplaceKeyed", [x.code, ir::NdVar { n: v }, ir::NdInt { n: kt }])] }, ir::TyVoid);
+        }
+        // loft#1154 (`join_source_frees`): any other join is replaced in as a whole.  Where an
+        // arm is a call that may free its source, the source-free bit is set and every arm's
+        // stores are protected (the freeing call's `protectable_ref_args`, every other arm's
+        // `view_root_slots`); an arm that names no slot leaves the bit off and no bracket.
+        jpd = el::def_nr(e, "n_protect_store_frees");
+        jud = el::def_nr(e, "n_unprotect_store_frees");
+        if jpd >= 0 && jud >= 0 && cap_rebind_cond(e, vars, v) == null {
+          jarms: vector<ir::Node> = [];
+          join_arms(e, x.code, jarms);
+          if len(jarms) >= 2 {
+            el_vars::drop_use(vars, v);
+            jkt = el_schema::keyed_type(e, el_types::base(kcur));
+            jdefs = own::new_defs();
+            jops = own::ops_of(e.b);
+            jw: vector<integer> = [];
+            jfree = false;
+            jok = true;
+            for ja in jarms {
+              if struct_returning_call(e, ja) && binds::call_return_frees_source(e.b, jops, e.context, jdefs, ja) {
+                jfree = true;
+                jw += binds::protectable_ref_args(e.b, jdefs, ja).slots;
+                continue;
+              }
+              jvs: vector<integer> = [];
+              if !own::view_root_slots(e.b, ja, jvs) {
+                jok = false;
+              }
+              jw += jvs;
+            }
+            jfrees = jok && jfree;
+            jg: vector<integer> = [];
+            if jfrees {
+              jinner: vector<integer> = [];
+              bound_to_a_value_in(x.code, jinner);
+              for gs in jw {
+                if !jinner.contains(gs) {
+                  jg += [gs];
+                }
+              }
+            }
+            el_vars::set_var_type(vars, v, el_types::with_deps(el_vars::tp(vars, v), []));
+            jseq = kg;
+            if !el_ir::reads_var(x.code, v) {
+              jseq += [el_ir::v_set(v, ir::NdNull)];
+            }
+            for gs in jg {
+              jseq += [ir::NdCall { def_nr: jpd, args: [ir::NdVar { n: gs }] }];
+            }
+            jseq += [el_ir::cl(e, "OpReplaceKeyed", [x.code, ir::NdVar { n: v }, ir::NdInt { n: if jfrees { jkt + 32768 } else { jkt } }])];
+            for gs in jg {
+              jseq += [ir::NdCall { def_nr: jud, args: [ir::NdVar { n: gs }] }];
+            }
+            return ex(ir::NdInsert { items: jseq }, ir::TyVoid);
+          }
         }
         el::refuse(e, "a keyed local bound from something other than a local");
         return ex(ir::NdNull, ir::TyVoid);
