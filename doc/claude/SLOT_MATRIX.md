@@ -130,8 +130,8 @@ cell, and `gate --update` is a full run.  A regression only the C backend shows,
 filler outside the sample, is therefore caught by the full run and not by a PR.
 
 `gate --rust` runs the rustc writer (`--native-rust`) in place of the C backend, against
-`scripts/slot_matrix.rust.baseline`: the night's leg for a writer the language suite reads
-once a day.  A compiled program that does not build fails every cell in it with one error, so
+`scripts/slot_matrix.rust.baseline`; the night runs it `--full`, every cell, for a writer the
+language suite reads once a day.  A compiled program that does not build fails every cell in it with one error, so
 a compiled backend's batch that fails to compile is halved until the cell that breaks it
 stands alone; that cell is the one the run names.
 

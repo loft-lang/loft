@@ -942,7 +942,7 @@ jobs:
   slot-matrix-rust:
     # @windows-exempt: the matrix generates platform-free loft; the rustc writer's platform questions are the toolchain matrix's
     # @nightly-class: report — a statement the rustc writer emits wrongly for one form of operand, which the language suite reads only once a day
-    name: Slot matrix, the sample on the rustc writer
+    name: Slot matrix, every cell on the rustc writer
     if: github.event_name != 'pull_request'
     needs: pr-ci-started
     runs-on: ubuntu-latest
@@ -955,13 +955,13 @@ jobs:
         run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold libsqlite3-0
       - name: Build the release loft binary and the runtime library the rustc writer links
         run: cargo build --release --lib --bin loft
-      # @PLN221 — the per-PR tests never run the rustc writer; this leg runs the matrix's C
-      # sample on it (every slot with its plain variable and its type's first filler), against
-      # its own baseline, `scripts/slot_matrix.rust.baseline` (SLOT_MATRIX.md § The gate).
-      - name: The gate, the sample on the rustc writer
+      # @PLN221 — the per-PR tests never run the rustc writer; this leg runs every cell of the
+      # matrix on it, against its own baseline, `scripts/slot_matrix.rust.baseline`
+      # (SLOT_MATRIX.md § The gate).
+      - name: The gate, every cell on the rustc writer
         env:
           LOFT: ${{ github.workspace }}/target/release/loft
-        run: python3 scripts/slot_matrix.py gate --rust
+        run: python3 scripts/slot_matrix.py gate --rust --full
 
   c-sweep-platforms:
     # @nightly-class: unsound — the C backend answering other than the interpreter on macOS or Windows
