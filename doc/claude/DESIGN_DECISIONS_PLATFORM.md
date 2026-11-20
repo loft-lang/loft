@@ -486,22 +486,29 @@ or running a program that loads it follow one verdict (`registry_advisories::ass
 naming the advisory and the fixed release, unless `LOFT_SECURITY_OVERRIDE` lists the advisory
 id; `security_high` warns, and refuses under `LOFT_STRICT_SECURITY=1`; `security_low`, `bug` and
 `deprecated` print one line.  Only a verified feed counts; the install refreshes the cached feed
-when it is stale, and a build or run reads the cache and never fetches.
+when it is stale, and a build or run reads the cache and never fetches.  A build that ships
+(`--ship`) is the exception: it refreshes a stale cache first, on a machine that holds a
+registry package and at most once an hour, always parses its sources, and keys its cached
+binary on the feed, so an unchanged program is held against the advisories known at the time.
 **Why.** A security hole or a hardware failure in a release must stop a project that pins it,
 which the `deprecated` field (held for a pin) does not.  The advisory channel was built for this —
 affected ranges, the fixed release, a severity, its own signature and a 24-hour refresh — and
 refused only for the loft binary itself: a package's critical advisory printed a block and the
-program went on.  Refusing by default with an audited override keeps what the earlier warn-by-
+program went on.  A shipped build is the copy that leaves the machine and is not rebuilt when
+an advisory lands, and its author may not have installed anything since.  Refusing by default with an audited override keeps what the earlier warn-by-
 default was for — running a vulnerable release while porting off it — and writes the choice down
 where it is made.
 **Revisit when.** An advisory needs a tier between warning and refusal (a release that may run
 but not be newly installed), or a project needs a standing exception kept in its manifest
 rather than the environment.  Decided 2026-11-16 (owner).
 **Holds at:** `@C167` — `src/registry_advisories.rs` (`assess`, `assess_with`,
-`verified_cached_feed`), `src/install.rs` (`install_resolved`), `src/parser/packages.rs`
+`verified_cached_feed`, `refresh_cached_feed`), `src/main.rs` (the `--ship` refresh, the
+cache key and the cold parse), `src/install.rs` (`install_resolved`), `src/parser/packages.rs`
 (`check_advisory`); guards `an_advisory_refuses_or_warns_by_its_severity`,
 `security_high_refuses_only_when_strict` (`src/registry_advisories.rs`) and
-`a_security_critical_advisory_refuses_the_install` (`tests/registry_e2e.rs`).
+`a_security_critical_advisory_refuses_the_install`,
+`a_security_critical_advisory_refuses_the_load` and
+`a_shipped_build_asks_for_the_advisory_feed` (`tests/registry_e2e.rs`).
 
 ## C169 — A C unit carries its whole runtime; no build compiles the runtime apart
 
