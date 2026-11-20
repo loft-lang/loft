@@ -442,6 +442,14 @@ int main(int argc, char **argv) {
         fprintf(stderr, "test_sshd: cannot listen\n");
         return 1;
     }
+    {
+        /* The public half of the host key, for the test to name the key by itself. */
+        unsigned char pub[65];
+        br_ec_p256_m31.mulgen(pub, srv_key, 32, BR_EC_secp256r1);
+        printf("HOSTKEY ");
+        for (int i = 0; i < 65; i++) printf("%02x", pub[i]);
+        printf("\n");
+    }
     printf("PORT %d\n", (int) ntohs(a.sin_port));
     fflush(stdout);
     for (int i = 0; i < conns; i++) {

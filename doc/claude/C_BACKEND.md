@@ -779,8 +779,11 @@ BearSSL lacks), ecdsa-sha2-nistp256 and rsa-sha2-512/256; aes256/128-gcm@openssh
 AES-CTR with HMAC-SHA2-256/512 (encrypt-then-MAC first); password login; one session channel with
 a pty, a shell, window-change and flow control both ways.  Every blocking step has a 30 s
 deadline and `ssh_recv` never waits.  The host key's signature over the exchange is always
-verified; which key the server holds is not checked against a store — a first-use record is the
-hardening step left.  `LOFT_SSH_TRACE=1` prints why a connect, a login or a shell failed.
+verified, and `ssh_host_key` names the key the server proved it holds (`SHA256:` and the
+unpadded base64 of the key blob's SHA-256, as OpenSSH prints it) once the handshake is done and
+before a password is sent: the caller compares it and closes the session, which is what the
+ssh library's `connect_pinned` does.  A key that changes at a rekey ends the session.  No store
+of known hosts is kept: which key is the right one is the program's to know.  `LOFT_SSH_TRACE=1` prints why a connect, a login or a shell failed.
 
 Two instruments, for two questions:
 

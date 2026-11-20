@@ -116,3 +116,7 @@ char-index	char	x[at(<C>, 1)]
 int-byte	int	nbox(<C>, nr).one
 int-short	int	nbox(<C>, nr).one16
 int-int4	int	nbox(<C>, nr).one4
+sm-var	sm	sm
+sm-call	sm	smk(<C>)
+sm-alias	sm	smid(<C>, sm)
+sm-if	sm	if yes(<C>, true) { mksm() } else { sm }

@@ -160,6 +160,9 @@ pub(super) fn run_scan_phase(
             (at.file.as_str(), if w.line == 0 { at.line } else { w.line }),
         );
     }
+    // Read by `literal_moves_in` as well as kept in the scan's state: computed once.
+    let null_led_first = null_led_first_binds_in(orig_code, data);
+    let literal_moves = literal_moves_in(orig_code, orig_vars, data, &null_led_first);
     let mut scopes = Scopes {
         database,
         d_nr,
@@ -198,8 +201,8 @@ pub(super) fn run_scan_phase(
         whole_value_hoists: whole_value_hoists_in(orig_code, orig_vars, data),
         arm_projection_temps: arm_projection_temps_in(orig_code, orig_vars, data),
         null_led: null_led_in(orig_code, data),
-        null_led_first: null_led_first_binds_in(orig_code, data),
-        literal_moves: literal_moves_in(orig_code, orig_vars, data),
+        null_led_first,
+        literal_moves,
         moved_buffer: None,
         split_binds: HashMap::default(),
         mentions: var_mentions_in(orig_code),
@@ -1200,7 +1203,16 @@ pub(crate) fn view_temps_in(node: &Value, vars: &Function, data: &Data) -> HashM
 /// a `??` chain, a branch — keeps the pairing, as does a local bound once, which keeps the
 /// buffer's store reuse across passes.  Decided before the scan because the scan's own type
 /// of the local says whether it owns only after its last bind is read.
-fn literal_moves_in(code: &Value, vars: &Function, data: &Data) -> HashSet<u16> {
+///
+/// Only a local that can qualify — not an argument, not compiler-made, of a record or
+/// struct-enum type — is counted, and a function with none is answered empty without a walk:
+/// the pass runs on every function the scope pass sees, the standard library's among them.
+fn literal_moves_in(
+    code: &Value,
+    vars: &Function,
+    data: &Data,
+    null_led_first: &HashSet<u16>,
+) -> HashSet<u16> {
     fn owning_bind(rhs: &Value, v: u16, vars: &Function, data: &Data) -> bool {
         match rhs.unspan() {
             Value::Null => true,
@@ -1216,31 +1228,39 @@ fn literal_moves_in(code: &Value, vars: &Function, data: &Data) -> HashSet<u16> 
             _ => false,
         }
     }
-    fn walk(n: &Value, vars: &Function, data: &Data, binds: &mut HashMap<u16, (usize, bool)>) {
-        if let Value::Set(v, rhs) = n.unspan() {
+    fn walk(
+        n: &Value,
+        vars: &Function,
+        data: &Data,
+        candidate: &dyn Fn(u16) -> bool,
+        binds: &mut HashMap<u16, (usize, bool)>,
+    ) {
+        if let Value::Set(v, rhs) = n.unspan()
+            && candidate(*v)
+        {
             let e = binds.entry(*v).or_insert((0, true));
             e.0 += 1;
             e.1 &= owning_bind(rhs, *v, vars, data);
         }
-        n.for_each_child(&mut |c| walk(c, vars, data, binds));
+        n.for_each_child(&mut |c| walk(c, vars, data, candidate, binds));
+    }
+    let candidate = |v: u16| {
+        v < vars.count()
+            && !vars.is_argument(v)
+            && !vars.is_compiler_generated(v)
+            && matches!(
+                vars.tp(v).base(),
+                Type::Reference(_, _) | Type::Enum(_, true, _)
+            )
+    };
+    if !(0..vars.count()).any(candidate) {
+        return HashSet::default();
     }
     let mut binds = HashMap::default();
-    walk(code, vars, data, &mut binds);
-    let null_led = null_led_first_binds_in(code, data);
+    walk(code, vars, data, &candidate, &mut binds);
     binds
         .into_iter()
-        .filter(|&(v, (count, owning))| {
-            owning
-                && count >= 2
-                && !null_led.contains(&v)
-                && (v as usize) < vars.count() as usize
-                && !vars.is_argument(v)
-                && !vars.is_compiler_generated(v)
-                && matches!(
-                    vars.tp(v).base(),
-                    Type::Reference(_, _) | Type::Enum(_, true, _)
-                )
-        })
+        .filter(|&(v, (count, owning))| owning && count >= 2 && !null_led_first.contains(&v))
         .map(|(v, _)| v)
         .collect()
 }

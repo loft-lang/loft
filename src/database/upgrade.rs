@@ -1551,10 +1551,22 @@ fn swap_in_upgrade(
     let io = |e: std::io::Error| e.to_string();
     super::allocation::write_image_atomic(&next, image).map_err(io)?;
     current.write_beside(&next).map_err(io)?;
+    // `@FR-S-Guard` — a guard follows its pair: the kept store's moves with it (an earlier
+    // `.old`'s names another image, and goes), and a store that had one gets one for the
+    // upgraded pair.  A store without a guard is left without.
+    use crate::store_guard::guard_path;
+    let guarded = crate::file_access::exists(guard_path(path));
     crate::file_access::rename(path, &kept).map_err(io)?;
     crate::file_access::rename(&side, dschema_path(&kept)).map_err(io)?;
+    let _ = crate::file_access::remove_file(guard_path(&kept));
+    if guarded {
+        crate::file_access::rename(guard_path(path), guard_path(&kept)).map_err(io)?;
+    }
     crate::file_access::rename(&next, path).map_err(io)?;
     crate::file_access::rename(dschema_path(&next), &side).map_err(io)?;
+    if guarded {
+        crate::store_guard::write_beside(path, image).map_err(io)?;
+    }
     Ok(kept)
 }
 

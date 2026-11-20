@@ -13,7 +13,7 @@ R-Apart/vector	c,native	9	0	0	0	26	36
 R-AppendTwin	c,native	3	0	0	0	33	35
 R-AppendTwin/loop-window	c	3	0	0	0	4	0
 R-AppendTwin/mint	c	3	0	0	0	5	0
-R-Base	c,native	61	0	0	0	1220	6891
+R-Base	c,native	61	0	0	0	1220	6871
 R-Base/counter	c	44	0	0	0	388	0
 R-Base/grid	c	2	0	0	0	102	0
 R-Base/guard	c	56	0	0	0	90	0
@@ -73,7 +73,7 @@ R-GuardedChain	c,native	42	0	0	0	145	1199
 R-GuardedChain/operators	c,native	42	0	0	0	532	3617
 R-GuardedChain/versions	c	7	0	0	0	21	0
 R-HandOver/rotate	c,native	1	0	0	0	2	2
-R-Header	c,native	61	0	0	0	1241	8142
+R-Header	c,native	61	0	0	0	1241	8122
 R-Header/apart	c,native	25	0	0	0	263	290
 R-Header/apart-param	c,native	15	0	0	0	83	47
 R-Header/function	native	24	0	0	0	0	139
@@ -94,7 +94,7 @@ R-InRange/wrapped	parse	8	22	0	0	0	0
 R-Inline	c	61	0	0	0	686	0
 R-Inline/helper	c	35	0	0	0	243	0
 R-InlineLeaf	parse	61	2972	0	0	0	0
-R-Inputs	c,native	36	0	0	0	1087	10534
+R-Inputs	c,native	36	0	0	0	1087	10502
 R-Invariant	c,native	38	0	0	0	406	4112
 R-Invariant/hoist	c	35	0	0	0	402	0
 R-KeyedEntry	ir	9	0	17	0	0	0
@@ -143,7 +143,7 @@ R-Range/index	c	28	0	0	0	478	0
 R-RangedCall	c,native	43	0	0	0	584	871
 R-RangedCall/guard	c	9	0	0	0	32	0
 R-Rebind	ir	3	0	5	0	0	0
-R-RecPtr	c,native	49	0	0	0	522	2181
+R-RecPtr	c,native	49	0	0	0	522	2124
 R-RecPtr/held	c	37	0	0	0	198	0
 R-RecPtr/index	native	5	0	0	0	0	40
 R-RecPtr/nested	native	25	0	0	0	0	200

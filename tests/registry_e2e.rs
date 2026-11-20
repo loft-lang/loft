@@ -49,6 +49,8 @@ struct FixtureServer {
     shutdown: Arc<AtomicBool>,
     join: Option<thread::JoinHandle<()>>,
     files: Arc<Mutex<HashMap<String, Vec<u8>>>>,
+    /// Every path requested, in order.
+    asked: Arc<Mutex<Vec<String>>>,
 }
 
 impl FixtureServer {
@@ -61,6 +63,8 @@ impl FixtureServer {
         let files = Arc::new(Mutex::new(initial));
         let shutdown_clone = Arc::clone(&shutdown);
         let files_clone = Arc::clone(&files);
+        let asked = Arc::new(Mutex::new(Vec::new()));
+        let asked_clone = Arc::clone(&asked);
         let join = thread::spawn(move || {
             while !shutdown_clone.load(Ordering::Relaxed) {
                 match listener.accept() {
@@ -71,9 +75,10 @@ impl FixtureServer {
                         // half way, and the client saw "Unexpected EOF" under load.
                         stream.set_nonblocking(false).ok();
                         let f = Arc::clone(&files_clone);
+                        let asked = Arc::clone(&asked_clone);
                         thread::spawn(move || {
                             let map = f.lock().unwrap().clone();
-                            handle_request(stream, &map);
+                            handle_request(stream, &map, &asked);
                         });
                     }
                     Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
@@ -88,6 +93,7 @@ impl FixtureServer {
             shutdown,
             join: Some(join),
             files,
+            asked,
         }
     }
 
@@ -105,7 +111,11 @@ impl Drop for FixtureServer {
     }
 }
 
-fn handle_request(mut stream: TcpStream, files: &HashMap<String, Vec<u8>>) {
+fn handle_request(
+    mut stream: TcpStream,
+    files: &HashMap<String, Vec<u8>>,
+    asked: &Mutex<Vec<String>>,
+) {
     stream.set_read_timeout(Some(Duration::from_secs(2))).ok();
     let mut reader = BufReader::new(stream.try_clone().expect("clone"));
     let mut request_line = String::new();
@@ -117,6 +127,7 @@ fn handle_request(mut stream: TcpStream, files: &HashMap<String, Vec<u8>>) {
         .nth(1)
         .unwrap_or("/")
         .to_string();
+    asked.lock().unwrap().push(path.clone());
     // Drain headers.
     let mut hdr = String::new();
     loop {
@@ -1048,6 +1059,202 @@ fn a_security_critical_advisory_refuses_the_install() {
         "nothing of the refused release was extracted"
     );
     fixed.expect("the fixed release installs");
+}
+
+/// @C167 — a program that LOADS a release a `security_critical` advisory names does not
+/// build: the parse reports an error naming the advisory and the fixed release.  The pin is
+/// a script's sidecar lock on `ax` 0.1.0, which is installed.
+///
+/// Two cells, one pin, feeds that differ only in the affected range:
+/// - `<0.1.1` covers 0.1.0 — an error carrying `LOFT-TEST-0002` and `loft install ax@0.1.1`;
+/// - `<0.1.0` does not — no error, and `ax::id()` resolved, so the package was loaded and the
+///   first cell's error is the advisory's and not a failed `use`.
+///
+/// The feed is handed to the parser (`advisory_feed`): the cached one counts only when the
+/// registry's own keys signed it, which no test can do.  Fails on a build whose load does not
+/// read the advisories (the `check_advisory` call in `resolve_registry_installed` removed).
+#[test]
+fn a_security_critical_advisory_refuses_the_load() {
+    let tmp = tmpdir("advisory_refuses_the_load");
+    let home_dir = tmpdir("advisory_refuses_the_load_home");
+    let entries = publish_versions(&tmp, "ax", &["0.1.0", "0.1.1"], "");
+    let index = tmp.join("index.json");
+    write_file(&index, &index_of(&[("ax", &entries)]));
+    let sha = entries[0]
+        .split(r#""sha256":""#)
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .expect("the 0.1.0 row names its sha256")
+        .to_string();
+    let script = tmp.join("s.loft");
+    write_file(&script, "use ax;\n\nfn main() {\n  println(ax::id());\n}\n");
+    let sidecar = tmp.join("s.loft.lock");
+    write_file(
+        &sidecar,
+        &format!(
+            "schema_version = 1\n\n[[package]]\nname = \"ax\"\nversion = \"0.1.0\"\n\
+             url = \"file:///ax-0.1.0.tar.gz\"\nsha256 = \"{sha}\"\nsource = \"registry\"\n"
+        ),
+    );
+    let feed = |affected: &str| {
+        loft::registry_advisories::parse_advisories(&format!(
+            r#"{{"schema_version": 1, "updated": "2026-11-20T00:00:00Z", "retention_days": 90,
+                "advisories": [{{"id": "LOFT-TEST-0002",
+                  "packages": [{{"name": "ax", "affected": "{affected}", "fixed_in": "0.1.1"}}],
+                  "severity": "security_critical", "summary": "a test vulnerability",
+                  "published": "2026-11-20T00:00:00Z", "references": []}}]}}"#
+        ))
+        .expect("the test feed parses")
+    };
+
+    let (_home, _lh) = HomeGuard::set(&home_dir);
+    let (_reg, _lr) = RegUrlGuard::set(&common::file_url(&index));
+    let opts = loft::install::InstallOptions {
+        allow_unsigned: true,
+        refresh: true,
+        lock_path: Some(sidecar.clone()),
+        skip_lockfile: true,
+        ..Default::default()
+    };
+    let pin = loft::install::constraint_for(Some("0.1.0"), None);
+    let installed = loft::install::install_one("ax", pin.as_deref(), &opts);
+    let load = |affected: &str| {
+        let mut p = loft::parser::Parser::new();
+        p.parse_dir("default", true, true)
+            .expect("the standard library");
+        p.advisory_feed = Some(feed(affected));
+        p.parse(&script.to_string_lossy(), false);
+        (
+            p.diagnostics.level() >= loft::diagnostics::Level::Error,
+            p.diagnostics.lines().join("\n"),
+        )
+    };
+    let (covered_refused, covered_said) = load("<0.1.1");
+    let (clear_refused, clear_said) = load("<0.1.0");
+
+    drop(_reg);
+    drop(_home);
+    let _ = fa::remove_dir_all(&tmp);
+    let _ = fa::remove_dir_all(&home_dir);
+    installed.expect("ax 0.1.0 installs: no feed is hosted beside this index");
+    assert!(
+        !clear_refused,
+        "a release outside the affected range loads: {clear_said}"
+    );
+    assert!(
+        covered_refused,
+        "a release inside the affected range is refused: {covered_said}"
+    );
+    assert!(
+        covered_said.contains("LOFT-TEST-0002") && covered_said.contains("loft install ax@0.1.1"),
+        "the refusal names the advisory and the fix: {covered_said}"
+    );
+}
+
+/// @C167 — a build that ships asks the registry for the advisory feed before it reads the
+/// cached one; an ordinary build never asks.  The program stops at its first error, which
+/// comes after the feed was asked for, so no compiler is needed.  The home holds one
+/// installed registry package (a home with none is not asked for).
+///
+/// Three runs against one fixture registry, counting requests for `/advisories.json`:
+/// `--native` asks 0 times; `--ship --native` asks once; a second `--ship --native` within
+/// the hour adds none (the fixture hosts no feed, so there is no cache to be fresh — the
+/// record of having asked is what stops it).  Fails on a build with no refresh (1 → 0).
+#[test]
+fn a_shipped_build_asks_for_the_advisory_feed() {
+    let tmp = tmpdir("a_shipped_build_asks");
+    let home = tmp.join("home");
+    fa::create_dir_all(home.join(".loft/registry/ax-0.1.0")).unwrap();
+    let script = tmp.join("stops.loft");
+    write_file(&script, "fn main() {\n  no_such_function();\n}\n");
+    let server = FixtureServer::new(HashMap::new());
+    let asked_after = |args: &[&str]| {
+        let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
+        cmd.args(args)
+            .arg(&script)
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .env_remove("LOFT_OFFLINE")
+            .env("HOME", &home)
+            .env("LOFT_HOME", &home)
+            .env("XDG_CACHE_HOME", tmp.join("cache"))
+            .env("LOFT_REGISTRY_URL", server.url_for("/index.json"))
+            .env("LOFT_TIMEOUT", "120");
+        let out = cmd.output().expect("spawn loft");
+        assert!(
+            !out.status.success(),
+            "{args:?}: the program has an error and must not build"
+        );
+        server
+            .asked
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|p| p.as_str() == "/advisories.json")
+            .count()
+    };
+    let plain = asked_after(&["--native"]);
+    let shipped = asked_after(&["--ship", "--native"]);
+    let again = asked_after(&["--ship", "--native"]);
+    drop(server);
+    let _ = fa::remove_dir_all(&tmp);
+    assert_eq!(plain, 0, "an ordinary build reads the cache and never asks");
+    assert_eq!(shipped, 1, "a shipped build asks for the feed");
+    assert_eq!(again, 1, "and not again within the hour");
+}
+
+/// An index that carries bytes which are not a signature is not an UNSIGNED index, and
+/// `allow_unsigned` does not waive it: whoever serves a changed index and cannot sign it can
+/// always serve a `.sig` of the wrong length.  Two registries serving the same index, each
+/// installed into a fresh home with `allow_unsigned` on:
+/// - no `.sig` at all — the install succeeds (the waiver's own case, and the control that
+///   this index installs);
+/// - a one-byte `.sig` — refused, and nothing is extracted.
+///
+/// Fails on a build that waives a malformed signature (the second install succeeds).
+#[test]
+fn a_wrong_length_signature_is_not_an_unsigned_index() {
+    let tmp = tmpdir("wrong_length_signature");
+    let entries = publish_versions(&tmp, "sg", &["0.1.0"], "");
+    let index = index_of(&[("sg", &entries)]).into_bytes();
+    let opts = loft::install::InstallOptions {
+        allow_unsigned: true,
+        refresh: true,
+        skip_lockfile: true,
+        ..Default::default()
+    };
+    let install_from = |tag: &str, files: HashMap<String, Vec<u8>>| {
+        let server = FixtureServer::new(files);
+        let home = tmpdir(&format!("wrong_length_signature_{tag}"));
+        let (_home, _lh) = HomeGuard::set(&home);
+        let (_reg, _lr) = RegUrlGuard::set(&server.url_for("/index.json"));
+        let result = loft::install::install_one("sg", Some("0.1.0"), &opts).map(|_| ());
+        let extracted = fa::exists(home.join(".loft/registry/sg-0.1.0"));
+        drop(_reg);
+        drop(_home);
+        let _ = fa::remove_dir_all(&home);
+        (result, extracted)
+    };
+    let unsigned = install_from(
+        "none",
+        HashMap::from([("/index.json".to_string(), index.clone())]),
+    );
+    let wrong_length = install_from(
+        "one_byte",
+        HashMap::from([
+            ("/index.json".to_string(), index),
+            ("/index.json.sig".to_string(), vec![0x2a]),
+        ]),
+    );
+    let _ = fa::remove_dir_all(&tmp);
+    unsigned
+        .0
+        .expect("an index with no signature installs under the waiver");
+    assert!(unsigned.1, "and its package is extracted");
+    let why = wrong_length
+        .0
+        .expect_err("a one-byte signature is refused under the waiver too");
+    assert!(why.contains("malformed"), "the refusal says why: {why}");
+    assert!(!wrong_length.1, "and nothing of it is extracted");
 }
 
 // ── loft search S4 — offline cache fallback ───────────────────────

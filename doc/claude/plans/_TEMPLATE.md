@@ -6,7 +6,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 # Plan template
 
 Copy this file to `<N>-<slug>.md`, or to `<N>-<slug>/README.md` when the plan has
-companion files — **flat**, no `future/` subdir — when opening a new plan.  **`<N>` is the plan's
+companion files (no `future/` subdir; a file per phase or split, `probes/`) — when opening a new plan.  **`<N>` is the plan's
 [`loft-lang/plans`](https://github.com/loft-lang/plans/issues) issue number**
 (`@PLN<N>`), NOT the next local directory integer.  State lives on that issue, not the
 directory; there is **no ROADMAP row** (the overview is derived from the loft-lang
@@ -191,10 +191,10 @@ has a single concern.
 
 **On opening a new plan** (new model — full procedure in the loft-plan-workflow skill):
 1. Create the plan's [`loft-lang/plans`](https://github.com/loft-lang/plans/issues)
-   issue — its number is `@PLN<N>`, and the issue **is** the plan.  No local
-   slot.  Only a **big multi-phase design** adds an optional local dir, named for
-   the issue: `plans/<N>-<slug>/README.md` (or `lib_plans/<N>-<slug>/`), `<N>` =
-   the issue #, using this template's shape.  Small plans live in the issue alone.
+   issue — its number is `@PLN<N>` — and, in the same piece of work, the plan's file
+   here: `plans/<N>-<slug>.md`, or `plans/<N>-<slug>/README.md` when it has companions,
+   using this template's shape.  Every plan has one, however small: the issue carries the
+   number, the status and the discussion, the repository carries the plan.
 2. Fill in Status + Goal first; link the loft-lang issue + carry `@PLN<N>` in the body.
 3. **Label the loft-lang issue**: `subject:*` (loft / libs / audience) + `status:*`
    (future / active / finished).  (No `plan` label — every issue in the `plans`

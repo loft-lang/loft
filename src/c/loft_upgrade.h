@@ -692,6 +692,10 @@ static int loft_ld_facts(loft_ld *d, const char *facts, loft_ub *err) {
                 else if (loft_ld_prefix(fact, fl, "group=")) {
                     const char *g = fact + 6;
                     size_t gl = fl - 6, i = 0;
+                    /* A second `group=` for one field replaces the first, as the interpreter's
+                     * reader does: the count starts again with the room. */
+                    free(f->group);
+                    f->ngroup = 0;
                     f->group = (uint16_t *) malloc((gl / 2 + 2) * sizeof *f->group);
                     if (!f->group) { fputs("loft: out of memory\n", stderr); abort(); }
                     while (i <= gl) {
@@ -879,34 +883,35 @@ static const char *loft_um_closure(loft_upmap *m, int nw, uint16_t id) {
     }
     if (id < d->count && (*cache)[id]) return (*cache)[id];
     uint8_t *seen = (uint8_t *) calloc(d->count ? d->count : 1, 1);
-    uint16_t *stack = (uint16_t *) malloc(((size_t) d->count * 4 + 8) * sizeof *stack);
+    /* A type is marked when it is PUSHED, so it is pushed once and the stack never holds more
+     * than the layout has types — however many fields name one type.  A number that is not one
+     * of the layout's types is not followed. */
+    uint16_t *stack = (uint16_t *) malloc(((size_t) d->count + 1) * sizeof *stack);
     if (!seen || !stack) { fputs("loft: out of memory\n", stderr); abort(); }
     size_t sp = 0;
-    if (id < d->count) stack[sp++] = id;
+#define LOFT_UP_REACH(t) do { uint16_t loft_t_ = (t); \
+        if (loft_t_ != LOFT_LD_NONE && loft_t_ < d->count && !seen[loft_t_]) { seen[loft_t_] = 1; stack[sp++] = loft_t_; } } while (0)
+    LOFT_UP_REACH(id);
     while (sp) {
-        uint16_t t = stack[--sp];
-        if (t >= d->count || seen[t]) continue;
-        seen[t] = 1;
-        const loft_ln *n = &d->n[t];
+        const loft_ln *n = &d->n[stack[--sp]];
         switch (n->kind) {
         case LOFT_LN_RECORD:
         case LOFT_LN_EVALUE:
-            for (uint16_t k = 0; k < n->nf; k++)
-                if (n->f[k].content != LOFT_LD_NONE && !seen[n->f[k].content]) stack[sp++] = n->f[k].content;
+            for (uint16_t k = 0; k < n->nf; k++) LOFT_UP_REACH(n->f[k].content);
             break;
         case LOFT_LN_CHOICES:
-            for (uint16_t k = 0; k < n->nv; k++)
-                if (n->vt[k] != LOFT_LD_NONE && !seen[n->vt[k]]) stack[sp++] = n->vt[k];
+            for (uint16_t k = 0; k < n->nv; k++) LOFT_UP_REACH(n->vt[k]);
             break;
         case LOFT_LN_VECTOR:
         case LOFT_LN_ARRAY:
         case LOFT_LN_CHILD:
         case LOFT_LN_ITER:
-            if (n->elem != LOFT_LD_NONE && n->elem < d->count && !seen[n->elem]) stack[sp++] = n->elem;
+            LOFT_UP_REACH(n->elem);
             break;
         default: break;
         }
     }
+#undef LOFT_UP_REACH
     size_t cap = 16, nl = 0;
     char **lines = (char **) malloc(cap * sizeof *lines);
     if (!lines) { fputs("loft: out of memory\n", stderr); abort(); }

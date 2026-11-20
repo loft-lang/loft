@@ -6799,6 +6799,17 @@ impl Parser {
         let mut result_tp = merge_dependencies(&true_type, &false_type);
         // `@FR-I-Join` — the two arms' integer ranges join to their union.
         if let Some(union) = self.integer_arm_union(&true_type, &false_type) {
+            // An arm held in 32 bits cannot carry a union past i32 (`arm_held_below`).
+            if self.arm_held_below(&true_type, &union) {
+                let from = true_type.clone();
+                self.convert_arm_tail(&mut true_code, &from, &union);
+                true_type = union.clone();
+            }
+            if self.arm_held_below(&false_type, &union) {
+                let from = false_type.clone();
+                self.convert_arm_tail(&mut false_code, &from, &union);
+                false_type = union.clone();
+            }
             result_tp = union;
         }
         // ...and so does an `else if` CHAIN, which is an arm too (loft#2066): its arms are
@@ -6807,6 +6818,12 @@ impl Parser {
         if let Some(chain) = &chain_borrow
             && let Some(union) = self.integer_arm_union(&result_tp, chain)
         {
+            // The chain's own arms widened inside it; the then arm widens here.
+            if self.arm_held_below(&true_type, &union) {
+                let from = true_type.clone();
+                self.convert_arm_tail(&mut true_code, &from, &union);
+                true_type = union.clone();
+            }
             result_tp = union;
         }
         if let Some(chain) = &chain_borrow {
@@ -9736,15 +9753,23 @@ impl Parser {
         }
         // @PLN204 — under the 32-bit regime two 32-bit arms join to a 32-bit value: the
         // union of their ranges without a forced width would read as the plain (64-bit)
-        // `integer` whenever it spans the whole `i32` range.
-        let forced_size = if self.data.width32() && x.is_width32() && y.is_width32() {
+        // `integer` whenever it spans the whole `i32` range.  Only while that union stays
+        // inside i32 (`@FR-W-Op`'s "32-bit"): an `i32` arm and a `u32` arm are both four
+        // bytes, but their union needs 33 bits, and forced to four the C backend held it in
+        // an `int32_t` that cut the `u32` arm's value.
+        let (min, max) = (x.min.min(y.min), x.max.max(y.max));
+        let forced_size = if self.data.width32()
+            && x.is_width32()
+            && y.is_width32()
+            && max <= i64::from(i32::MAX)
+        {
             std::num::NonZeroU8::new(4)
         } else {
             None
         };
         let base = Type::Integer(crate::data::IntegerSpec {
-            min: x.min.min(y.min),
-            max: x.max.max(y.max),
+            min,
+            max,
             forced_size,
             ..*x
         });
@@ -10054,7 +10079,26 @@ impl Parser {
     /// that left a tuple member open (loft#1682), or one narrower than a numeric join a later
     /// arm widened to (loft#1793, `numeric_join`).
     pub(super) fn arm_takes_join(&self, arm_tp: &Type, joined: &Type) -> bool {
-        self.tuple_join_open(arm_tp) || Self::numeric_join(arm_tp, joined).is_some()
+        self.tuple_join_open(arm_tp)
+            || Self::numeric_join(arm_tp, joined).is_some()
+            || self.arm_held_below(arm_tp, joined)
+    }
+
+    /// `@FR-I-Join` under `@FR-W-Op` — does an integer arm whose range lies inside i32 have to
+    /// convert to a join that reaches past it?  Under the 32-bit regime such an arm is a 32-bit
+    /// value (the C backend holds it in an `int32_t`), so an `i32` literal arm beside a `u32`
+    /// arm (`if t { 0 } else { px }`) cut the `u32` arm's value to fit the first arm's width.
+    /// Converted, every arm carries the join's width.  Outside the regime every integer is
+    /// 64-bit and no arm is narrower than its join.
+    pub(super) fn arm_held_below(&self, arm_tp: &Type, joined: &Type) -> bool {
+        if !self.data.width32() {
+            return false;
+        }
+        let (Type::Integer(a), Type::Integer(j)) = (arm_tp.base(), joined.base()) else {
+            return false;
+        };
+        let inside = |lo: i64, hi: i64| lo > i64::from(i32::MIN) && hi <= i64::from(i32::MAX);
+        inside(i64::from(a.min), a.max) && !inside(i64::from(j.min), j.max)
     }
 
     pub(super) fn join_arm_into(&self, so_far: &Type, arm: &Value, tp: &Type) -> Type {

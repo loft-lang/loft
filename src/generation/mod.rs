@@ -8444,12 +8444,31 @@ extern crate loft;"
         // `c_library_available` — the very question a library is told to ask
         // before calling into C — fail to compile under `--html` (@PLN24 arc E).
         writeln!(w, "static __C_LIBS: &[(&str, &str)] = &[")?;
+        // loft#2595 — a library's artifact lists the C libraries of the packages whose code it
+        // carries (a function it reaches lies in the package), never the rest of the program
+        // that first built it: the artifact is keyed on its own packages and adopted by other
+        // programs, and loading another program's copy of a package beside this one put two
+        // copies of that package's C state in one process.  A program lists all of its own.
+        let own_libs: Vec<&crate::c_libs::CLibrary> = data
+            .c_libraries
+            .iter()
+            .filter(|lib| {
+                package_link != PackageLink::Library
+                    || lib.pkg_dir.is_empty()
+                    || reachable.iter().any(|&d| {
+                        crate::file_access::is_under(
+                            data.def(d).position().file.as_str(),
+                            &lib.pkg_dir,
+                        )
+                    })
+            })
+            .collect();
         // @PLN197 — a library the program binds itself goes in by name alone: it is found
         // through the bind search order, never through the package directory of this
         // machine, which is therefore not written into the binary.
         let bound_pkgs = Self::bound_c_packages(data, c_bind, !native_cabi);
         let linked_pkgs = Self::linked_c_packages(data, c_bind && !native_cabi);
-        for lib in &data.c_libraries {
+        for lib in own_libs.iter().copied() {
             let bound = !lib.optional
                 && (bound_pkgs.contains(&lib.pkg_dir) || linked_pkgs.contains(&lib.pkg_dir));
             writeln!(
@@ -8465,7 +8484,10 @@ extern crate loft;"
         // `native-extensions`. Without it nothing can be `dlopen`ed, so the
         // right table is the empty one rather than a build failure.
         #[cfg(feature = "native-extensions")]
-        for (lib, syms) in crate::c_signature::library_symbol_table(data) {
+        for (lib, syms) in crate::c_signature::library_symbol_table(data)
+            .into_iter()
+            .filter(|(lib, _)| own_libs.iter().any(|c| c.name == *lib))
+        {
             // A library linked into the binary lists no symbols: they are not in its dynamic
             // symbol table, so a lookup by name could only report them missing.
             let linked = data

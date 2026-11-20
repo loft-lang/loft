@@ -1,0 +1,14 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#2597: a record with a `reference<T>` field does not own T.
+// Holds when: in 7 / after the holder ended: 7 / drop 7   (one drop, after the last use).
+
+struct Tex { id: integer }
+fn OpDrop(self: Tex) { println("drop {self.id}"); }
+struct Shared { name: text, tex: reference<Tex> }
+fn main() {
+  t = Tex { id: 7 };
+  { m = Shared { name: "a", tex: t }; println("in {m.tex.id}"); }
+  println("after the holder ended: {t.id}");
+}

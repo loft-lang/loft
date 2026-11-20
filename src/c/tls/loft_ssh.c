@@ -9,10 +9,11 @@
  *   - key exchange curve25519-sha256 (RFC 8731), with the strict-kex extension that closes the
  *     prefix-truncation attack (`kex-strict-c-v00@openssh.com`), rekeying when the server asks;
  *   - host keys ssh-ed25519, ecdsa-sha2-nistp256, rsa-sha2-512 and rsa-sha2-256 — the
- *     signature over the exchange is always verified.  WHICH key the server holds is not
- *     checked against a known-hosts store: the session is authenticated by password over the
- *     encrypted transport, as the library's Rust client did (a recorded first-use check is the
- *     hardening step left);
+ *     signature over the exchange is always verified.  WHICH key the server holds is the
+ *     caller's to check: `loft_ssh_host_key` names it as OpenSSH does (`SHA256:` and the
+ *     unpadded base64 of the key blob's SHA-256) once the handshake is done and before
+ *     anything is sent under it, so a program compares it with the one it expects and closes
+ *     the session instead of logging in.  A key that changes at a rekey ends the session;
  *   - ciphers aes256-gcm@openssh.com and aes128-gcm@openssh.com, else AES-CTR with
  *     HMAC-SHA2-256/512 (encrypt-then-MAC preferred) — what OpenSSH, Dropbear and the common
  *     libraries all offer;
@@ -522,6 +523,7 @@ struct loft_ssh {
     int kexed;   /* the first key exchange completed */
     sbuf v_c, v_s; /* the two version strings, without their line ends */
     unsigned char session_id[32];
+    char host_key[52]; /* `SHA256:` + 43 base64 characters, of the key the server proved it holds */
     int service; /* ssh-userauth accepted */
     int authed;
     /* The shell channel. */
@@ -878,6 +880,28 @@ static int ssh_next_kex(struct loft_ssh *s, int64_t deadline, const unsigned cha
 
 /* One key exchange: `theirs` is the server's KEXINIT when the server started it (a rekey),
  * else this sends its own first and reads the server's. */
+/* A host key blob's name, as OpenSSH prints one: `SHA256:` and the base64 of its SHA-256
+ * without padding (43 characters for 32 bytes). */
+static void ssh_key_name(const unsigned char *blob, size_t n, char out[52]) {
+    static const char b64[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    unsigned char d[33];
+    br_sha256_context c;
+    br_sha256_init(&c);
+    br_sha256_update(&c, blob, n);
+    br_sha256_out(&c, d);
+    d[32] = 0;
+    memcpy(out, "SHA256:", 7);
+    char *o = out + 7;
+    for (int i = 0; i < 33; i += 3) {
+        uint32_t v = ((uint32_t) d[i] << 16) | ((uint32_t) d[i + 1] << 8) | d[i + 2];
+        *o++ = b64[v >> 18];
+        *o++ = b64[(v >> 12) & 63];
+        *o++ = b64[(v >> 6) & 63];
+        *o++ = b64[v & 63];
+    }
+    out[7 + 43] = 0; /* 32 bytes are 43 characters; the 44th encodes the padding byte */
+}
+
 static int ssh_kex(struct loft_ssh *s, const unsigned char *theirs, size_t tn) {
     int64_t deadline = ssh_now_ms() + SSH_STEP_MS;
     sbuf ic = { 0, 0, 0 }, is = { 0, 0, 0 }, pkt = { 0, 0, 0 }, hb = { 0, 0, 0 }, kenc = { 0, 0, 0 };
@@ -984,6 +1008,17 @@ static int ssh_kex(struct loft_ssh *s, const unsigned char *theirs, size_t tn) {
     if (!ssh_host_signed(a.hostkey, ks, ksn, sg, sgn, h, 32)) {
         ssh_fail(s, "the server's host key signature did not verify");
         goto done;
+    }
+    {
+        /* The key the server just proved it holds.  A session has one: the name is the
+         * caller's to compare before it logs in, and a rekey may not bring another. */
+        char name[52];
+        ssh_key_name(ks, ksn, name);
+        if (s->kexed && strcmp(name, s->host_key) != 0) {
+            ssh_fail(s, "the server's host key changed during the session");
+            goto done;
+        }
+        memcpy(s->host_key, name, sizeof name);
     }
     if (!s->kexed) memcpy(s->session_id, h, 32);
     sdir ntx, nrx;
@@ -1132,6 +1167,8 @@ static void ssh_pump(struct loft_ssh *s) {
 /* ── The API ── */
 
 const char *loft_ssh_error(const struct loft_ssh *s) { return s && s->err[0] ? s->err : ""; }
+
+const char *loft_ssh_host_key(const struct loft_ssh *s) { return s ? s->host_key : ""; }
 
 struct loft_ssh *loft_ssh_open(int fd, char *err, size_t cap) {
     struct loft_ssh *s = (struct loft_ssh *) calloc(1, sizeof *s);

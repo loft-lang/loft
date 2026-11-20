@@ -357,6 +357,23 @@ fn client(p: &Ports) {
     let (head, body) = read_response(&mut page);
     assert_eq!(header(&head, "content-type"), Some("text/html"));
     assert_eq!(body, b"page /page");
+    // A request that claims a body of nine petabytes: answered 413 and closed, and the pump
+    // serves on (everything below needs it to).  A server that sizes an allocation by the
+    // claim dies here.
+    let mut huge = connect(p.plain);
+    huge.write_all(b"POST /page HTTP/1.1\r\nContent-Length: 9000000000000000\r\n\r\n")
+        .expect("write");
+    let mut answer = Vec::new();
+    let _ = huge.read_to_end(&mut answer);
+    assert!(
+        answer.starts_with(b"HTTP/1.1 413 "),
+        "an oversized request is told so: {}",
+        String::from_utf8_lossy(&answer)
+    );
+    // A peer that connects and says nothing, held open across the next exchange: the pump
+    // gives it one read timeout and serves on.  A pump that waits for its request never
+    // answers `a1` (this client's own read timeout ends the test).
+    let silent = connect(p.plain);
     send(&mut a, OP_TEXT, b"a1");
     assert_eq!(text_frame(&mut a), "all 0");
     assert_eq!(text_frame(&mut b), "all 0");
@@ -367,6 +384,7 @@ fn client(p: &Ports) {
     assert_eq!(text_frame(&mut a), "clients 2 true false");
     send(&mut a, OP_CLOSE, &[]);
     drop(a);
+    drop(silent);
     assert_eq!(text_frame(&mut b), "gone 0");
     assert_eq!(frame(&mut b).0, OP_CLOSE);
     // TLS over the EC certificate: a request, then a WebSocket through the pump.

@@ -563,6 +563,7 @@ function buildLoftImports(canvas, output, getMem, asyncCtrl) {
       gg_glBlendFunc(s, d) { gl.blendFunc(s, d); },
       gg_glCullFace(f) { gl.cullFace(f); },
       gg_glDepthMask(m) { gl.depthMask(!!m); },
+      gg_glDepthFunc(f) { gl.depthFunc(f); },
       gg_glScissor(x, y, w, h) { gl.scissor(x, y, w, h); },
       gg_glFinish() { gl.finish(); },
       gg_glLineWidth(w) { gl.lineWidth(w); },

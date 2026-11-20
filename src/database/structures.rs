@@ -3018,12 +3018,22 @@ impl Stores {
         }
     }
 
+    /// Make room for `adding` more elements of `size` bytes in the vector at `db`.
+    ///
+    /// # Panics
+    /// When the new length or its byte size does not fit the store's 32-bit words: a vector
+    /// too large for a store stops the program.
     pub fn vector_set_size(&mut self, db: &DbRef, adding: u32, size: u32) {
         let store = keys::mut_store(db, &mut self.allocations);
         let mut vec_rec = store.get_u32_raw(db.rec, db.pos);
         let length = store.get_u32_raw(vec_rec, 4);
         if adding > 1 {
-            let new_vec = store.resize(vec_rec, ((length + adding) * size + 15) / 8);
+            // A count that comes from the program's input: the sum and the product are
+            // checked, where a wrapped one would resize to less than the length says.
+            let total = length.checked_add(adding).unwrap_or_else(|| {
+                panic!("Vector capacity overflow: count={length}+{adding} size={size}")
+            });
+            let new_vec = store.resize(vec_rec, vector::checked_vec_cap(total, size));
             if new_vec != vec_rec {
                 store.set_u32_raw(db.rec, db.pos, new_vec);
                 // track the relocation so the length write below lands

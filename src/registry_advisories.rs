@@ -165,6 +165,7 @@ pub fn parse_advisories(content: &str) -> Result<AdvisoryFeed, String> {
     let mut updated: Option<String> = None;
     let mut retention_days: Option<u32> = None;
     let mut advisories: Vec<Advisory> = Vec::new();
+    let mut listed = false;
     for (k, _, v) in &root {
         match k.as_str() {
             "schema_version" => {
@@ -192,6 +193,7 @@ pub fn parse_advisories(content: &str) -> Result<AdvisoryFeed, String> {
                 let Parsed::Array(arr) = v else {
                     return Err("advisories.json: `advisories` must be an array".to_string());
                 };
+                listed = true;
                 for entry in arr {
                     advisories.push(parse_advisory(entry)?);
                 }
@@ -207,6 +209,12 @@ pub fn parse_advisories(content: &str) -> Result<AdvisoryFeed, String> {
         return Err(format!(
             "advisories.json: schema_version {schema_version} unsupported — upgrade loft"
         ));
+    }
+    // A feed says what it lists, even when that is nothing.  The registry's index is signed
+    // by the same keys and also carries `schema_version: 1`: without this it reads as a
+    // valid feed of no advisories, and anyone can serve it in the feed's place.
+    if !listed {
+        return Err("advisories.json: missing `advisories`".to_string());
     }
     Ok(AdvisoryFeed {
         schema_version,
@@ -427,6 +435,39 @@ pub fn verified_cached_feed() -> Option<&'static AdvisoryFeed> {
     .as_ref()
 }
 
+/// @C167 — bring the cached feed up to date for a build that SHIPS: the copy that leaves this
+/// machine is held against what is known now, where an ordinary build reads the cache as it
+/// stands.  The registry is asked only when all of these hold: the cache is stale or absent;
+/// a registry package is installed at all (a program can load none otherwise, and installing
+/// one refreshes the feed itself); the registry was not asked within the last hour (a feed
+/// that is not hosted leaves no cache to be fresh); and `LOFT_OFFLINE` is not set.  A feed
+/// that cannot be had or does not verify leaves the cache as it was; `loft audit` reports why.
+pub fn refresh_cached_feed() {
+    const ASKED_TTL_SECS: u64 = 60 * 60;
+    let (cache, _) = advisories_paths();
+    let asked = registry_index::cache_dir().join("advisories.asked");
+    if std::env::var_os("LOFT_OFFLINE").is_some()
+        || !older_than(&cache, ADVISORIES_TTL_SECS)
+        || !older_than(&asked, ASKED_TTL_SECS)
+        || registry_index::installed_packages().is_empty()
+    {
+        return;
+    }
+    let _ = crate::file_access::write(&asked, b"");
+    let _ = load_or_fetch(&LoadOptions {
+        allow_unsigned: false,
+        offline: false,
+        refresh: false,
+    });
+}
+
+/// The cached feed's bytes, unverified: an input of a shipped build's cache key (@C167), so
+/// a binary built before the feed changed is not handed out as the build held against it.
+#[must_use]
+pub fn cached_feed_bytes() -> Option<Vec<u8>> {
+    crate::file_access::read(advisories_paths().0).ok()
+}
+
 /// Classify a single (name, version) tuple against the feed.
 ///
 /// Returns one [`Classification`] per matching advisory — multiple
@@ -487,6 +528,11 @@ pub fn advisories_paths() -> (PathBuf, PathBuf) {
 /// `install::index_stale` shape — caller uses mtime.
 #[must_use]
 pub fn cache_stale(path: &std::path::Path) -> bool {
+    older_than(path, ADVISORIES_TTL_SECS)
+}
+
+/// Whether `path` was last written more than `secs` ago; an absent or unreadable one was.
+fn older_than(path: &std::path::Path, secs: u64) -> bool {
     let Ok(meta) = crate::file_access::metadata(path) else {
         return true;
     };
@@ -496,7 +542,7 @@ pub fn cache_stale(path: &std::path::Path) -> bool {
     let Ok(age) = modified.elapsed() else {
         return true;
     };
-    age.as_secs() > ADVISORIES_TTL_SECS
+    age.as_secs() > secs
 }
 
 // ── Loader ────────────────────────────────────────────────────────
@@ -622,9 +668,10 @@ fn verify_feed(content: &[u8], sig: &[u8], opts: LoadOptions) -> Result<(), Stri
     let result = registry_signing::verify_index(content, sig);
     match result {
         VerifyResult::Valid => Ok(()),
-        VerifyResult::NoTrustRoot | VerifyResult::MalformedSignature if opts.allow_unsigned => {
-            Ok(())
-        }
+        // As for the index (`install::verify_or_explain`): the waiver is for a feed with no
+        // signature, never for one whose signature is the wrong shape.
+        VerifyResult::NoTrustRoot if opts.allow_unsigned => Ok(()),
+        VerifyResult::MalformedSignature if opts.allow_unsigned && sig.is_empty() => Ok(()),
         VerifyResult::Invalid => {
             Err("advisories.json signature INVALID — refusing to load".to_string())
         }
@@ -642,6 +689,25 @@ fn verify_feed(content: &[u8], sig: &[u8], opts: LoadOptions) -> Result<(), Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The registry's index is signed by the feed's keys and has the feed's
+    /// `schema_version`: served in the feed's place it must not read as a feed of no
+    /// advisories.  A feed that lists none says so, and still parses.
+    #[test]
+    fn an_index_is_not_a_feed_of_no_advisories() {
+        let index = r#"{"schema_version": 1, "updated": "2026-11-20T00:00:00Z",
+            "packages": {"web": {"versions": {}}}}"#;
+        let why = parse_advisories(index).expect_err("an index is not a feed");
+        assert!(why.contains("missing `advisories`"), "{why}");
+        let empty = r#"{"schema_version": 1, "advisories": []}"#;
+        assert_eq!(
+            parse_advisories(empty)
+                .expect("an empty feed")
+                .advisories
+                .len(),
+            0
+        );
+    }
 
     const FIXTURE: &str = r#"{
   "schema_version": 1,

@@ -335,6 +335,8 @@ pub static OPERATORS: &[fn(&mut State)] = &[
     sizeof_ref::<false>,
     eq_content::<false>,
     ne_content::<false>,
+    drop_enter::<false>,
+    drop_leave::<false>,
     size_vector::<false>,
     size_struct::<false>,
     size_scalar::<false>,
@@ -706,6 +708,8 @@ pub static OPERATORS_FAST: &[fn(&mut State)] = &[
     sizeof_ref::<true>,
     eq_content::<true>,
     ne_content::<true>,
+    drop_enter::<true>,
+    drop_leave::<true>,
     size_vector::<true>,
     size_struct::<true>,
     size_scalar::<true>,
@@ -1077,6 +1081,8 @@ pub static OPERATORS_REG: &[fn(&mut State, Regs) -> Regs] = &[
     sizeof_ref_r,
     eq_content_r,
     ne_content_r,
+    drop_enter_r,
+    drop_leave_r,
     size_vector_r,
     size_struct_r,
     size_scalar_r,
@@ -4864,6 +4870,34 @@ fn distinct_store<const F: bool>(s: &mut State) {
 fn distinct_store_r(s: &mut State, r: Regs) -> Regs {
     s.regs_in(r);
     distinct_store::<true>(s);
+    s.regs_out()
+}
+
+#[inline(always)]
+fn drop_enter<const F: bool>(s: &mut State) {
+    let operands = s.operands(2);
+    let v_tp = operands.get::<u16>(0);
+    let v_r = s.get_stack_m::<F, DbRef>();
+    s.database.drop_enter(&v_r, v_tp);
+}
+
+fn drop_enter_r(s: &mut State, r: Regs) -> Regs {
+    s.regs_in(r);
+    drop_enter::<true>(s);
+    s.regs_out()
+}
+
+#[inline(always)]
+fn drop_leave<const F: bool>(s: &mut State) {
+    let operands = s.operands(2);
+    let v_tp = operands.get::<u16>(0);
+    let v_r = s.get_stack_m::<F, DbRef>();
+    s.database.drop_leave(&v_r, v_tp);
+}
+
+fn drop_leave_r(s: &mut State, r: Regs) -> Regs {
+    s.regs_in(r);
+    drop_leave::<true>(s);
     s.regs_out()
 }
 

@@ -64,13 +64,25 @@ fn start_server(port: u16, file: String) {
 
 /// Open a connection and perform the WebSocket upgrade handshake; returns the live stream.
 fn ws_connect(port: u16) -> BufReader<TcpStream> {
+    ws_connect_as(port, "")
+}
+
+/// [`ws_connect`] as a browser page of `origin` would (`""`: a tool, which sends none).
+fn ws_connect_as(port: u16, origin: &str) -> BufReader<TcpStream> {
     let stream = TcpStream::connect(("127.0.0.1", port)).expect("connect");
     stream
         .set_read_timeout(Some(Duration::from_secs(10)))
         .unwrap();
-    let req = "GET /ws HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\n\
-               Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
-               Sec-WebSocket-Version: 13\r\n\r\n";
+    let origin = if origin.is_empty() {
+        String::new()
+    } else {
+        format!("Origin: {origin}\r\n")
+    };
+    let req = format!(
+        "GET /ws HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\n{origin}\
+         Connection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+         Sec-WebSocket-Version: 13\r\n\r\n"
+    );
     (&stream).write_all(req.as_bytes()).unwrap();
     let mut reader = BufReader::new(stream);
     // Read the response head; the server replies 101 with the computed accept key.
@@ -163,7 +175,7 @@ fn serve_http_shell_has_game_debug_strip() {
     use std::io::Write as _;
     write!(
         stream,
-        "GET / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"
+        "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
     )
     .unwrap();
     let mut body = String::new();
@@ -748,8 +760,14 @@ fn serve_game_debug_control_end_to_end() {
     }
     assert!(announced, "the kernel game never announced its port");
 
-    // The control channel + a game client — the editor's two sockets.
-    let mut ctl = ws_connect(game_port);
+    // A page of another site reaches the game port as any peer does, and connects from
+    // loopback like the editor: its `D!:quit` must not stop the game.  Everything below
+    // needs the game still running, so it fails on a host that takes the command.
+    let page = ws_connect_as(game_port, "https://attacker.example");
+    ws_send(page.get_ref(), "D!:quit");
+    // The control channel + a game client — the editor's two sockets.  The editor's page
+    // is served from another loopback port, and is taken.
+    let mut ctl = ws_connect_as(game_port, "http://127.0.0.1:8770");
     let mut game = ws_connect(game_port);
     ws_send(ctl.get_ref(), "D!:bp bump_events");
     assert_eq!(ws_recv(&mut ctl), "D:ok bp bump_events");
@@ -1226,4 +1244,53 @@ fn serve_apply_holds_saved_edits_and_carries_the_world() {
     ws_send(ctl.get_ref(), "D!:quit");
     assert_eq!(ws_recv(&mut ctl), "D:quitting");
     let _ = fa::remove_file(&path);
+}
+
+/// The session evaluates code with the user's file access, and any site open in a browser
+/// can reach a loopback port — so the server answers only what is addressed to it, and
+/// upgrades only for the page it served.  One server, four requests, the status line of each:
+/// the page under its own name is served (200) — the control that the server answers at all;
+/// the page under another name (a rebound DNS name) is refused (403); an upgrade from another
+/// site's page is refused (403); an upgrade with no `Origin` (a tool, not a browser) is
+/// accepted (101).  Fails on a server that reads neither header (403 → 200 and 101).
+#[test]
+fn serve_refuses_another_sites_page() {
+    let path = tmp_program("origin", "fn main() { print(\"x\") }\n");
+    let port = 18799;
+    start_server(port, path.to_string_lossy().into_owned());
+    let status = |request: &str| {
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        stream.write_all(request.as_bytes()).unwrap();
+        let mut line = String::new();
+        let _ = BufReader::new(stream).read_line(&mut line);
+        line.split_whitespace().nth(1).unwrap_or("").to_string()
+    };
+    let upgrade = |origin: &str| {
+        format!(
+            "GET /ws HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nUpgrade: websocket\r\n\
+             Connection: Upgrade\r\n{origin}Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+             Sec-WebSocket-Version: 13\r\n\r\n"
+        )
+    };
+    let own_page = status(&format!(
+        "GET / HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+    ));
+    let rebound = status("GET / HTTP/1.1\r\nHost: attacker.example\r\nConnection: close\r\n\r\n");
+    // A tunnel that lands on another local port names that port: refused too, which is
+    // why DEBUG.md says to forward the same number.
+    let other_port = status(&format!(
+        "GET / HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n",
+        port + 1
+    ));
+    let foreign = status(&upgrade("Origin: https://attacker.example\r\n"));
+    let tool = status(&upgrade(""));
+    let _ = fa::remove_file(&path);
+    assert_eq!(own_page, "200", "the page under its own name");
+    assert_eq!(rebound, "403", "the page under a rebound name");
+    assert_eq!(other_port, "403", "the page under another port");
+    assert_eq!(foreign, "403", "an upgrade from another site's page");
+    assert_eq!(tool, "101", "an upgrade with no Origin");
 }

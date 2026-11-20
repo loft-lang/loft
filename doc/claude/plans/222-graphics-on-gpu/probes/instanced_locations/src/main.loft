@@ -1,0 +1,339 @@
+// PROBE (plan 222 step 1): crawler's instanced hex shader, VERBATIM, whose per-copy inputs sit at
+// locations 5, 6, 7 — carried onto gpu, which numbers them straight after the per-vertex ones.
+use graphics;
+use gpu;
+use gpu_gl;
+use gpu_vulkan;
+
+const USER_V: text = `
+#version 330 core
+layout (location = 0) in vec3 aBase;    // (dx_lattice, dy_world, 0)
+layout (location = 5) in vec2 aLat;     // (column = q+0.5·par, row_y = 1.5·r) / instance
+layout (location = 6) in vec2 aVisUV;   // FOV texel / instance
+layout (location = 7) in vec3 aColor;   // R4-baked floor tone / instance
+uniform mat4 uMVP;
+out vec3 vColor;
+out vec2 vVisUV;
+void main() {{
+  vColor = aColor;
+  vVisUV = aVisUV;
+  float x = 1.7320508075688772 * (aLat.x + aBase.x);
+  float y = aLat.y + aBase.y;
+  gl_Position = uMVP * vec4(x, y, 0.0, 1.0);
+}}
+`;
+
+const USER_F: text = `
+#version 330 core
+in vec3 vColor;
+in vec2 vVisUV;
+out vec4 FragColor;
+uniform sampler2D uVis;
+void main() {{
+  float vis = texture(uVis, vVisUV).r;
+  if (vis < 0.02) discard;
+  FragColor = vec4(vColor * vis, 1.0);
+}}
+`;
+
+const WANT_V: text = `
+#version 330 core
+layout(std140) uniform Block {{ mat4 uMVP; }};
+uniform sampler2D tex0;
+#define uVis tex0
+layout (location = 0) in vec3 aBase;    // (dx_lattice, dy_world, 0)
+layout (location = 1) in vec2 aLat;     // (column = q+0.5·par, row_y = 1.5·r) / instance
+layout (location = 2) in vec2 aVisUV;   // FOV texel / instance
+layout (location = 3) in vec3 aColor;   // R4-baked floor tone / instance
+out vec3 vColor;
+out vec2 vVisUV;
+void main() {{
+  vColor = aColor;
+  vVisUV = aVisUV;
+  float x = 1.7320508075688772 * (aLat.x + aBase.x);
+  float y = aLat.y + aBase.y;
+  gl_Position = uMVP * vec4(x, y, 0.0, 1.0);
+}}
+`;
+// SPIR-V of WANT_V (vertex), written by gpu_vulkan/spirv.py: do not edit.
+const WANT_V_SPV: text = `AwIjBwADAQALAAgAQgAAAAAAAAARAAIAAQAAAAsABgABAAAAR0xTTC5zdGQuNDUwAAAAAA4AAwAA
+AAAAAQAAAA8ADAAAAAAABAAAAG1haW4AAAAACQAAAAsAAAAPAAAAEQAAABYAAAAcAAAALAAAAEcA
+BAAJAAAAHgAAAAAAAABHAAQACwAAAB4AAAADAAAARwAEAA8AAAAeAAAAAQAAAEcABAARAAAAHgAA
+AAIAAABHAAQAFgAAAB4AAAABAAAARwAEABwAAAAeAAAAAAAAAEcAAwAqAAAAAgAAAEgABQAqAAAA
+AAAAAAsAAAAAAAAASAAFACoAAAABAAAACwAAAAEAAABIAAUAKgAAAAIAAAALAAAAAwAAAEgABQAq
+AAAAAwAAAAsAAAAEAAAARwADADAAAAACAAAASAAEADAAAAAAAAAABQAAAEgABQAwAAAAAAAAAAcA
+AAAQAAAASAAFADAAAAAAAAAAIwAAAAAAAABHAAQAMgAAACEAAAAAAAAARwAEADIAAAAiAAAAAAAA
+AEcABABBAAAAIQAAAAEAAABHAAQAQQAAACIAAAAAAAAAEwACAAIAAAAhAAMAAwAAAAIAAAAWAAMA
+BgAAACAAAAAXAAQABwAAAAYAAAADAAAAIAAEAAgAAAADAAAABwAAADsABAAIAAAACQAAAAMAAAAg
+AAQACgAAAAEAAAAHAAAAOwAEAAoAAAALAAAAAQAAABcABAANAAAABgAAAAIAAAAgAAQADgAAAAMA
+AAANAAAAOwAEAA4AAAAPAAAAAwAAACAABAAQAAAAAQAAAA0AAAA7AAQAEAAAABEAAAABAAAAIAAE
+ABMAAAAHAAAABgAAACsABAAGAAAAFQAAANez3T87AAQAEAAAABYAAAABAAAAFQAEABcAAAAgAAAA
+AAAAACsABAAXAAAAGAAAAAAAAAAgAAQAGQAAAAEAAAAGAAAAOwAEAAoAAAAcAAAAAQAAACsABAAX
+AAAAIgAAAAEAAAAXAAQAKAAAAAYAAAAEAAAAHAAEACkAAAAGAAAAIgAAAB4ABgAqAAAAKAAAAAYA
+AAApAAAAKQAAACAABAArAAAAAwAAACoAAAA7AAQAKwAAACwAAAADAAAAFQAEAC0AAAAgAAAAAQAA
+ACsABAAtAAAALgAAAAAAAAAYAAQALwAAACgAAAAEAAAAHgADADAAAAAvAAAAIAAEADEAAAACAAAA
+MAAAADsABAAxAAAAMgAAAAIAAAAgAAQAMwAAAAIAAAAvAAAAKwAEAAYAAAA4AAAAAAAAACsABAAG
+AAAAOQAAAAAAgD8gAAQAPAAAAAMAAAAoAAAAGQAJAD4AAAAGAAAAAQAAAAAAAAAAAAAAAAAAAAEA
+AAAAAAAAGwADAD8AAAA+AAAAIAAEAEAAAAAAAAAAPwAAADsABABAAAAAQQAAAAAAAAA2AAUAAgAA
+AAQAAAAAAAAAAwAAAPgAAgAFAAAAOwAEABMAAAAUAAAABwAAADsABAATAAAAIQAAAAcAAAA9AAQA
+BwAAAAwAAAALAAAAPgADAAkAAAAMAAAAPQAEAA0AAAASAAAAEQAAAD4AAwAPAAAAEgAAAEEABQAZ
+AAAAGgAAABYAAAAYAAAAPQAEAAYAAAAbAAAAGgAAAEEABQAZAAAAHQAAABwAAAAYAAAAPQAEAAYA
+AAAeAAAAHQAAAIEABQAGAAAAHwAAABsAAAAeAAAAhQAFAAYAAAAgAAAAFQAAAB8AAAA+AAMAFAAA
+ACAAAABBAAUAGQAAACMAAAAWAAAAIgAAAD0ABAAGAAAAJAAAACMAAABBAAUAGQAAACUAAAAcAAAA
+IgAAAD0ABAAGAAAAJgAAACUAAACBAAUABgAAACcAAAAkAAAAJgAAAD4AAwAhAAAAJwAAAEEABQAz
+AAAANAAAADIAAAAuAAAAPQAEAC8AAAA1AAAANAAAAD0ABAAGAAAANgAAABQAAAA9AAQABgAAADcA
+AAAhAAAAUAAHACgAAAA6AAAANgAAADcAAAA4AAAAOQAAAJEABQAoAAAAOwAAADUAAAA6AAAAQQAF
+ADwAAAA9AAAALAAAAC4AAAA+AAMAPQAAADsAAAD9AAEAOAABAA==`;
+
+const WANT_F: text = `
+#version 330 core
+layout(std140) uniform Block {{ mat4 uMVP; }};
+uniform sampler2D tex0;
+#define uVis tex0
+in vec3 vColor;
+in vec2 vVisUV;
+out vec4 FragColor;
+void main() {{
+  float vis = texture(uVis, vVisUV).r;
+  if (vis < 0.02) discard;
+  FragColor = vec4(vColor * vis, 1.0);
+}}
+`;
+// SPIR-V of WANT_F (fragment), written by gpu_vulkan/spirv.py: do not edit.
+const WANT_F_SPV: text = `AwIjBwADAQALAAgALwAAAAAAAAARAAIAAQAAAAsABgABAAAAR0xTTC5zdGQuNDUwAAAAAA4AAwAA
+AAAAAQAAAA8ACAAEAAAABAAAAG1haW4AAAAAEAAAAB8AAAAiAAAAEAADAAQAAAAHAAAARwAEAAwA
+AAAhAAAAAQAAAEcABAAMAAAAIgAAAAAAAABHAAQAEAAAAB4AAAABAAAARwAEAB8AAAAeAAAAAAAA
+AEcABAAiAAAAHgAAAAAAAABHAAMALAAAAAIAAABIAAQALAAAAAAAAAAFAAAASAAFACwAAAAAAAAA
+BwAAABAAAABIAAUALAAAAAAAAAAjAAAAAAAAAEcABAAuAAAAIQAAAAAAAABHAAQALgAAACIAAAAA
+AAAAEwACAAIAAAAhAAMAAwAAAAIAAAAWAAMABgAAACAAAAAgAAQABwAAAAcAAAAGAAAAGQAJAAkA
+AAAGAAAAAQAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAGwADAAoAAAAJAAAAIAAEAAsAAAAAAAAACgAA
+ADsABAALAAAADAAAAAAAAAAXAAQADgAAAAYAAAACAAAAIAAEAA8AAAABAAAADgAAADsABAAPAAAA
+EAAAAAEAAAAXAAQAEgAAAAYAAAAEAAAAFQAEABQAAAAgAAAAAAAAACsABAAUAAAAFQAAAAAAAAAr
+AAQABgAAABgAAAAK16M8FAACABkAAAAgAAQAHgAAAAMAAAASAAAAOwAEAB4AAAAfAAAAAwAAABcA
+BAAgAAAABgAAAAMAAAAgAAQAIQAAAAEAAAAgAAAAOwAEACEAAAAiAAAAAQAAACsABAAGAAAAJgAA
+AAAAgD8YAAQAKwAAABIAAAAEAAAAHgADACwAAAArAAAAIAAEAC0AAAACAAAALAAAADsABAAtAAAA
+LgAAAAIAAAA2AAUAAgAAAAQAAAAAAAAAAwAAAPgAAgAFAAAAOwAEAAcAAAAIAAAABwAAAD0ABAAK
+AAAADQAAAAwAAAA9AAQADgAAABEAAAAQAAAAVwAFABIAAAATAAAADQAAABEAAABRAAUABgAAABYA
+AAATAAAAAAAAAD4AAwAIAAAAFgAAAD0ABAAGAAAAFwAAAAgAAAC4AAUAGQAAABoAAAAXAAAAGAAA
+APcAAwAcAAAAAAAAAPoABAAaAAAAGwAAABwAAAD4AAIAGwAAAPwAAQD4AAIAHAAAAD0ABAAgAAAA
+IwAAACIAAAA9AAQABgAAACQAAAAIAAAAjgAFACAAAAAlAAAAIwAAACQAAABRAAUABgAAACcAAAAl
+AAAAAAAAAFEABQAGAAAAKAAAACUAAAABAAAAUQAFAAYAAAApAAAAJQAAAAIAAABQAAcAEgAAACoA
+AAAnAAAAKAAAACkAAAAmAAAAPgADAB8AAAAqAAAA/QABADgAAQA=`;
+
+struct Uni { name: text, kind: text }
+
+// The loose uniforms of one stage, in order.
+fn uniforms_of(src: text, into: vector<Uni>) {
+  for raw in src.split('\n') {
+    line = raw.trim();
+    if !line.starts_with("uniform ") || !line.ends_with(";") { continue; }
+    words = line[8..line.size() - 1].trim().split(' ');
+    if len(words) != 2 { continue; }
+    seen = false;
+    for u in into { if u.name == words[1] { seen = true; } }
+    if !seen { into += [Uni { name: words[1], kind: words[0] }]; }
+  }
+}
+
+// The preamble both stages get: one block, the names the source used, the samplers by slot.
+fn preamble(unis: const vector<Uni>) -> text {
+  block = "layout(std140) uniform Block {{";
+  defs = "";
+  slot = 0;
+  samplers = "";
+  for u in unis {
+    if u.kind == "sampler2D" {
+      samplers += "uniform sampler2D tex{slot};\n#define {u.name} tex{slot}\n";
+      slot += 1;
+    } else if u.kind == "vec3" {
+      block += " vec4 {u.name}_;";
+      defs += "#define {u.name} ({u.name}_.xyz)\n";
+    } else if u.kind == "int" {
+      block += " float {u.name}_;";
+      defs += "#define {u.name} int({u.name}_)\n";
+    } else {
+      block += " {u.kind} {u.name};";
+    }
+  }
+  "{block} }};\n{defs}{samplers}"
+}
+
+// One stage rewritten: its loose uniforms out, the preamble in after the version line.
+// A line that declares an input at a location the program chose, moved to gpu's number for it.
+fn relocate(raw: text, line: text, locs: const vector<integer>) -> text {
+  if !line.starts_with("layout") || !line.contains(" in ") { return raw; }
+  eq = line.find("=") ?? return raw;
+  close = line.find(")") ?? return raw;
+  was = line[eq + 1..close].trim() as integer ?? return raw;
+  i = 0;
+  while i + 1 < len(locs) {
+    if locs[i] == was { return raw.replace("location = {was}", "location = {locs[i + 1]}"); }
+    i += 2;
+  }
+  raw
+}
+
+fn rewrite(src: text, unis: const vector<Uni>, locs: const vector<integer>) -> text {
+  out = "";
+  for raw in src.split('\n') {
+    line = raw.trim();
+    if line.starts_with("uniform ") && line.ends_with(";") { continue; }
+    out += relocate(raw, line, locs);
+    out += "\n";
+    if line.starts_with("#version") { out += preamble(unis); }
+  }
+  out[0..out.size() - 1]
+}
+
+
+const W = 96;
+const H = 64;
+const COLS = 4;
+const ROWS = 3;
+
+// One hexagon as a fan of six triangles around its centre: 18 corners of 3 floats.
+fn hexagon() -> vector<single> {
+  dx: vector<float> = [0.5, 0.5, 0.0, -0.5, -0.5, 0.0];
+  dy: vector<float> = [0.5, -0.5, -1.0, -0.5, 0.5, 1.0];
+  buf: vector<single> = [];
+  for k in 0..6 {
+    n = (k + 1) % 6 ?? 0;
+    buf += [0.0f, 0.0f, 0.0f];
+    buf += [dx[k] as single, dy[k] as single, 0.0f];
+    buf += [(dx[n] ?? 0.0) as single, (dy[n] ?? 0.0) as single, 0.0f];
+  }
+  buf
+}
+
+// One record per hex: column, row_y, visU, visV, r, g, b — crawler's seven floats.
+fn records() -> vector<single> {
+  buf: vector<single> = [];
+  for r in 0..ROWS {
+    for q in 0..COLS {
+      col = q as float + 0.5 * (r % 2) as float;
+      buf += [col as single, (1.5 * r as float) as single];
+      buf += [((q as float + 0.5) / COLS as float) as single, ((r as float + 0.5) / ROWS as float) as single];
+      buf += [(0.25 + 0.25 * q as float) as single, (0.3 + 0.3 * r as float) as single, 0.5f];
+    }
+  }
+  buf
+}
+
+// What each hex shows of itself: one texel a hex, its red the share; hex (1, 1) unseen (discarded).
+fn seen(q: integer, r: integer) -> integer {
+  if q == 1 && r == 1 { return 0; }
+  if (q + r) % 2 == 0 { 255 } else { 128 }
+}
+
+// Lattice x in 0..(COLS * 1.73 + 0.87), y in -1..(ROWS * 1.5): scaled into clip space.
+const MVP: vector<float> = [0.22, 0.0, 0.0, 0.0, 0.0, 0.36, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, -0.85, -0.55, 0.0, 1.0];
+
+fn through_graphics() -> vector<u32> {
+  w = graphics::open_window(W, H, "old") ?? return [];
+  sh = w.shader(USER_V, USER_F) ?? return [];
+  vis = graphics::canvas(COLS, ROWS, 0);
+  for r in 0..ROWS { for q in 0..COLS { vis.set_pixel(q, r, graphics::rgba(seen(q, r), 0, 0, 255)); } }
+  t = w.texture_from(vis);
+  t.filter(true);
+  hex = w.upload(hexagon(), 3);
+  per = w.instances(records());
+  hex.instance_attrib(per, 5, 2, 7, 0);
+  hex.instance_attrib(per, 6, 2, 7, 2);
+  hex.instance_attrib(per, 7, 3, 7, 4);
+  w.clear(0xff0e1018);
+  w.disable(graphics::GL_DEPTH_TEST);
+  sh.set_mat4("uMVP", MVP);
+  t.bind(0);
+  sh.set_int("uVis", 0);
+  hex.draw_instanced(sh, COLS * ROWS);
+  shot = w.capture();
+  out: vector<u32> = [];
+  for y in 0..H { for x in 0..W { out += [shot.get_pixel(x, y) as u32 ?? 0 as u32]; } }
+  out
+}
+
+fn through_gpu(table: i64, title: text, v: text, f: text) -> vector<u32> {
+  dev = gpu::open(table, W, H, title) ?? return [];
+  prog = gpu::Program {
+    vertex: [gpu::F3],
+    instance: [gpu::F2, gpu::F2, gpu::F3],
+    block: [gpu::MAT4],
+    textures: 1,
+    sources: [gpu::source("glsl-330", v, f), gpu::source("spirv", WANT_V_SPV, WANT_F_SPV)],
+  };
+  pipe = dev.pipeline(prog, gpu::State { depth: gpu::DEPTH_OFF }) ?? return [];
+  px: vector<u32> = [];
+  for r in 0..ROWS { for q in 0..COLS { px += [(0xff000000 + seen(q, r) * 65536) as u32 ?? 0 as u32]; } }
+  t = dev.texture_from(px, COLS, ROWS);
+  t.nearest(true);
+  hex = dev.buffer(hexagon());
+  per = dev.buffer(records());
+  u = pipe.block();
+  u.mat4(0, MVP);
+  dev.begin_window(gpu::CLEAR, 0xff0e1018);
+  dev.bind(pipe);
+  dev.uniforms(u); dev.sample(0, t); dev.vertices(hex); dev.instances(per, 0);
+  dev.draw_copies(18, COLS * ROWS);
+  dev.end();
+  shot = dev.capture();
+  if len(dev.refusals()) > 0 { println("{title} refusals: {dev.refusals()}"); }
+  shot
+}
+
+fn same_pixels(what: text, a: const vector<u32>, b: const vector<u32>) {
+  if len(a) == 0 || len(b) == 0 || len(a) != len(b) { println("{what}: sizes {len(a)} vs {len(b)}  — NOT COMPARED"); return; }
+  differ = 0;
+  edge = 0;
+  colours: vector<integer> = [];
+  for i in 0..len(a) {
+    c = a[i] & 0xffffff;
+    if !colours.contains(c) && len(colours) < 32 { colours += [c]; }
+    if c != (b[i] & 0xffffff) {
+      differ += 1;
+      for d in [-1, 1, -W, W] { j = i + d; if j >= 0 && j < len(a) && (a[j] & 0xffffff) != c { edge += 1; break; } }
+    }
+  }
+  println("{what}: {differ} of {len(a)} pixels differ ({edge} on a colour edge); the reference shows {len(colours)} colours");
+}
+
+fn main() {
+  unis: vector<Uni> = [];
+  uniforms_of(USER_V, unis);
+  uniforms_of(USER_F, unis);
+  locs = [5, 1, 6, 2, 7, 3];
+  v = rewrite(USER_V, unis, locs);
+  f = rewrite(USER_F, unis, locs);
+  println("rewrite gives the expected vertex source: {v == WANT_V}; fragment: {f == WANT_F}");
+  if v != WANT_V { println("---\n{v}\n---"); }
+  old = through_graphics();
+  gl = through_gpu(gpu_gl::table(), "gl", v, f);
+  vk = through_gpu(gpu_vulkan::table(), "vk", v, f);
+  same_pixels("graphics vs gpu on OpenGL", old, gl);
+  same_pixels("graphics vs gpu on Vulkan", old, vk);
+  big = 0; big_edge = 0;
+  for i in 0..len(old) {
+    worst = 0;
+    for sh in [0, 8, 16] {
+      d = ((old[i] >> sh) & 255) - ((vk[i] >> sh) & 255);
+      if d < 0 { d = -d; }
+      if d > worst { worst = d; }
+    }
+    if worst > 1 {
+      big += 1;
+      for d in [-1, 1, -W, W, -W - 1, -W + 1, W - 1, W + 1] { j = i + d; if j >= 0 && j < len(old) && (old[j] & 0xffffff) != (old[i] & 0xffffff) { big_edge += 1; break; } }
+    }
+  }
+  println("Vulkan: {big} pixels differ by more than 1 in a channel; {big_edge} of them touch another colour in the reference");
+  pairs: vector<text> = [];
+  for i in 0..len(old) {
+    if (old[i] & 0xffffff) != (vk[i] & 0xffffff) {
+      key = "{old[i] & 0xffffff:#x}->{vk[i] & 0xffffff:#x}";
+      if !pairs.contains(key) && len(pairs) < 14 { pairs += [key]; println("  {key} first at x {i % W} y {i / W}"); }
+    }
+  }
+  // hand-computed: hex (0,0) centre at lattice (0, 0) -> clip (-0.85, -0.55) -> pixel (7, 49);
+  // colour (0.25, 0.3, 0.5) fully seen -> 0x404d80 (64, 77, 128 after rounding).
+  println("hex (0,0) centre reads {old[49 * W + 7] & 0xffffff:#x} (want 0x404d80 or one off a channel)");
+  // hex (1,1): column 1.5, row_y 1.5 -> lattice x 2.598 -> clip (-0.278, -0.01) -> pixel (34, 32): unseen, discarded
+  println("hex (1,1) centre reads {old[32 * W + 34] & 0xffffff:#x} (want the clear colour 0xe1018)");
+}

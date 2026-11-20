@@ -5,6 +5,10 @@
 #            or a prelude helper is missing) | needs-axis (it turns on something the tool
 #            does not vary) | outside (not about evaluating an operand)
 #   missing  what the tables or the tool lacked for it
+2600	needs-axis	right operand of `&&` holding a call whose first argument is a text call kept ahead of a second hoisted call	a call with two call arguments, one answering text	axis: a sequence of statements	crash	Interpreter only: the kept text temporary is released at every exit but set only where bound; the crash needs its slot to hold another frame's bytes — an earlier statement that runs on some paths only, which no single-statement cell has.
+2597	needs-axis	the end of a record holding a stored reference (a block or scope exit)	a droppable record named by a `reference<T>` field	axis: shape of a declaration	value	Two gaps: no prelude type declares OpDrop or a stored reference, and no channel counts hook runs — on main d268b48cc the double drop passes LOFT_LEAK_CHECK and LOFT_POISON (a hook ran twice, no store was freed twice).
+2596	fits-now	ca-sm-link	sm-var	-	value	Calibrated 2026-11-20: fails in the locals and views frames on main d268b48cc (interpreter; `sm` bound by a call is lent a temporary record), passes with the fix and in the params frame.
+2593	needs-axis	any read of an element of a `vector<lib::S?>`	-	axis: shape of a declaration	value	The `?` of a record element named through a qualifier was dropped, so the vector was dense; wrong for every operand form.
 2577	fits-now	rd-coal-rec-left	nrec-tuple-call	-	value	Garbage on the interpreter, double free on C; the twin (tuple bound first) is right.
 2575	fits-rows	value of `f#next = <S>` on a file with no handle open	int-call	slot row; prelude helper	count	Listed unreached in the register; the prelude needs a file record.
 2573	fits-now	it-for	coll-call	-	count	Kinds sorted and index; the source runs N+2 times, sums right.
