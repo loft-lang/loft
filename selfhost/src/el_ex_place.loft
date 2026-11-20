@@ -707,6 +707,19 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
     if op == "=" && !field_place && struct_ref(e, pb) >= 0 && !(x.tp is TyOptional) && struct_ref(e, el_types::base(x.tp)) >= 0 && (calls(e, rd_place, "OpGetVector") || calls(e, rd_place, "OpVectorRef")) && !(e.p.nodes[rhs] is SStructLit) {
       return record_place_write(e, vars, rd_place, pb, x);
     }
+    // …and a NULLABLE record of the element's own struct (`v[i] = mp(0)`, `mp -> P?`): the
+    // non-null slot takes the type's default where it is absent (`convert`'s `?? S {}`, held as
+    // a record `??` holds it), then the copy.
+    if op == "=" && !field_place && struct_ref(e, pb) >= 0 && x.tp is TyOptional && struct_ref(e, el_types::base(x.tp)) == struct_ref(e, pb) && el::def(e, struct_ref(e, pb)).def_type == el::DT_STRUCT && (calls(e, rd_place, "OpGetVector") || calls(e, rd_place, "OpVectorRef")) {
+      xd = el_ex_null::coalesce_with(e, vars, x, el_ex_object::object_expr(e, vars, el::def(e, struct_ref(e, pb)).name, "", [], null));
+      if e.first_pass {
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      if el_types::is_unknown(xd.tp) {
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      return record_place_write(e, vars, rd_place, pb, xd);
+    }
     el::refuse(e, "an assignment to a nullable place: {if field_place { "a field" } else { "an element" }} of {type_kind(pb)} given {type_kind(x.tp)}{if op == "=" { "" } else { " by {op}" }}");
     return ex(ir::NdNull, ir::TyVoid);
   }
