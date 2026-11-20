@@ -383,10 +383,15 @@ fn param_read_only(
 ) -> bool {
     let is_a = |v: &Value| matches!(v.unspan(), Value::Var(x) if *x == a);
     let mentions = |v: &Value| v.any_node(&mut |n| matches!(n, Value::Var(x) if *x == a));
+    let get_field = data.def_nr("OpGetField");
     let mut ok = true;
     body.any_node(&mut |n| {
         match n {
             Value::Set(v, _) | Value::TuplePut(v, _, _) if *v == a => ok = false,
+            // A `&` to a sub-record of `a` (`f = &a.inner`) binds a reference to the
+            // parameter's place, which a lend makes a temporary's: a write through it, or the
+            // reference kept past the call, misses the caller's record (loft#2596).
+            Value::Set(_, x) if yields_sub_place(x, a, get_field) => ok = false,
             Value::CallRef(_, args) if lent.is_some() && args.iter().any(&mentions) => ok = false,
             Value::Call(op, args) if (*op as usize) < data.definitions.len() => {
                 let def = data.def(*op);
@@ -406,8 +411,12 @@ fn param_read_only(
                         if shares && !ro.contains(&(*op, i)) {
                             ok = false;
                         }
-                    } else if is_a(x) {
-                        let read = crate::opt::loop_records::SCALAR_GETTERS.contains(&name)
+                    } else if is_a(x) || yields_sub_place(x, a, get_field) {
+                        // The parameter or a sub-record of it, as an operand: read only where
+                        // the operation reads it — a sub-record stored as a reference
+                        // (`OpSetDbRef(m, f, OpGetField(a, …))`, `Mesh { frame: &a.inner }`)
+                        // is a `&` kept past the call (loft#2596).
+                        let read =crate::opt::loop_records::SCALAR_GETTERS.contains(&name)
                             || matches!(
                                 name,
                                 "OpGetField"
@@ -434,6 +443,30 @@ fn param_read_only(
         !ok
     });
     ok
+}
+
+/// Whether `x` evaluates to a SUB-RECORD of variable `a`: a field path `OpGetField(… a …)`,
+/// or a branch or block answering one.  `a` itself is not counted — the caller asks that
+/// apart — and anything else answers false: a value computed FROM such a place (a scalar
+/// read, a call's answer) is no reference into it.
+fn yields_sub_place(x: &Value, a: u16, get_field: u32) -> bool {
+    fn rooted(x: &Value, a: u16, get_field: u32) -> bool {
+        match x.unspan() {
+            Value::Var(v) => *v == a,
+            Value::Call(op, args) if *op == get_field => {
+                args.first().is_some_and(|b| rooted(b, a, get_field))
+            }
+            _ => false,
+        }
+    }
+    match x.unspan() {
+        Value::Call(op, args) if *op == get_field => {
+            args.first().is_some_and(|b| rooted(b, a, get_field))
+        }
+        Value::If(_, t, e) => yields_sub_place(t, a, get_field) || yields_sub_place(e, a, get_field),
+        Value::Block(b) => b.operators.last().is_some_and(|l| yields_sub_place(l, a, get_field)),
+        _ => false,
+    }
 }
 
 /// [`World::lendable`] over every function of the program.
