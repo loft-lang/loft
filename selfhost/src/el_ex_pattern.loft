@@ -1238,6 +1238,9 @@ pub fn pattern_literal(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
 // as false — any other scalar as its truth (`OpConvBoolFrom…`, through a `?`: present), and a
 // heap handle as its presence.  Null for a value with no truth.
 pub fn condition(e: el::El, c: Ex) -> Ex? {
+  if !e.first_pass && untyped_empty(c) {
+    return ex(ir::NdBoolean { b: true }, ir::TyBoolean);
+  }
   b = el_types::base(c.tp);
   if el_types::is_unknown(c.tp) || b is TyBoolean {
     return c;
@@ -2123,8 +2126,9 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
         literal_field_exprs(e, vars, it);
       }
       xs += [ex(ir::NdNull, ir::TyReference { n: sd, dep: [] })];
-    } else if el_ex_place::vec_lit_len(e, it) > 0 {
-      // A nested vector literal is built into its element (`parse_item` with `elm`).
+    } else if el_ex_place::vec_lit_len(e, it) > 0 || (e.p.nodes[it] is SVecLit && (el_types::base(nested_want) is TyVector || len([for oi in items if el_ex_place::vec_lit_len(e, oi) > 0 { oi }]) > 0)) {
+      // A nested vector literal is built into its element (`parse_item` with `elm`) — an empty
+      // one too (`[[1], []]`): its element made and zeroed, nothing appended.
       nested += [it];
       xs += [ex(ir::NdNull, nested_item_type(e, vars, it, nested_want))];
     } else if struct_ref(e, if el_types::is_unknown(declared) { held_elem } else { declared }) >= 0 {
@@ -2373,9 +2377,10 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
     }
     return Built { x: ex(ir::NdNull, if value { el_vars::tp(vars, v) } else { ir::TyVoid }), items: late_codes, elem: in_t };
   }
-  // A DECLARED literal has its element's `vector<…>` row made where its type was read, items
-  // or none (`g: vector<single> = []`).
-  if len(xs) > 0 || (!el_types::is_unknown(declared) && !append) {
+  // A literal with items has its element's `vector<…>` row made here; an empty one, declared
+  // or not (`g: vector<single> = []`), numbers nothing yet: its rows come at its store's mint,
+  // `main_vector<T>` before `vector<T>`, after the structs.
+  if len(xs) > 0 {
     vector_of(e, in_t);
   }
   rows = vector_rows(e, in_t, n, !el_types::is_unknown(declared) && !at_close);
@@ -2647,6 +2652,10 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
     for it in nested {
       ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }]))];
       ls += [el_ir::cl(e, "OpSetInt4", [at, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }])];
+      if el_ex_place::vec_lit_len(e, it) == 0 {
+        ls += [el_ir::cl(e, "OpFinishRecord", [w, at, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }])];
+        continue;
+      }
       b = vector_build(e, vars, elm, it, inner_t, append: true);
       match b.x.code {
         NdInsert { items: bi } => { ls += bi; },
@@ -2932,7 +2941,7 @@ pub fn empty_literal_to(e: el::El, vars: el_vars::Vars, t: ir::TypeT, borrows: v
 }
 
 // `vector_db`: a fresh `__vdb_N` store for vector local `v`, the local borrowing it.
-pub fn literal_store(e: el::El, vars: el_vars::Vars, v: integer, r: VecRows, rebind: boolean = false) -> vector<ir::Node> {
+pub fn literal_store(e: el::El, vars: el_vars::Vars, v: integer, r: VecRows, rebind: boolean = false, slot: integer = 0) -> vector<ir::Node> {
   db = el_vars::work_vec_db(vars, ir::TyReference { n: r.main_def, dep: [] });
   if rebind {
     vars.vars[db].skip_free = true;
@@ -2942,7 +2951,7 @@ pub fn literal_store(e: el::El, vars: el_vars::Vars, v: integer, r: VecRows, reb
   [
     el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: r.main_known }]),
     el_ir::v_set(v, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: r.vec_known }])),
-    el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }])
+    el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: slot }])
   ]
 }
 

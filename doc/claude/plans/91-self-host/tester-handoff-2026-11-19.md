@@ -100,6 +100,17 @@ that FELL is re-pinned in the same commit, `--write-ratchet`, and QUALITY.md's r
 and `cargo test --release --test doc_hygiene`.  62a90f9de lowered the count and the row went
 stale on two branches until loft3's run caught it.
 
+## The backlog at the porter's session change (2026-11-19 night)
+
+Prepared, untouched, judged on three backends (pages in this directory):
+`call-index-element-write.md` (an element written through an index that runs a call, 10 programs)
+and `postfix-default.md` (`e?` on a nullable collection: the `?? []` lowering, 18 programs).  In
+progress on the porter's side: record-return (`record-return-verdicts.md`, Bind group), the
+narrow declared-empty vector numbering (a declared-empty `vector<u8>` registers nothing on pass 1,
+its rows come at the append in source order: try b94e088a2's two regressions), and a `null`
+operand of `&&`/`||` (4c24c290d, not ready).  Last gated try: b94e088a2 (1226 of 2114, 2
+regressions above; NOT to be promoted).  The tester's tracker is `~/workspace/kr-tools/backlog.md`.
+
 ## Peers
 
 - The PORTER: `SendMessage` to `bridge:session_015fP1u2RTCyGqEvFJ5edvkL` (shown as

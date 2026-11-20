@@ -206,6 +206,9 @@ pub fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: 
     in2 = match inner { TyVector { inner: vi } => vi, _ => ir::TyVoid };
     if !(in2 is TyVoid) && e.p.nodes[it] is SVecLit && el_ex_pattern::push_op(in2) != "" && elm >= 0 {
       subs = match e.p.nodes[it] { SVecLit { items: si } => si, _ => [] };
+      // (The inner literal takes an element temp of its own, as `parse_vector` gives every
+      // nested literal — unused where its items are pushed.)
+      el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [elm] });
       sxs: vector<Ex> = [];
       for sb in subs {
         sxs += [el_ex_assign::expression(e, vars, sb)];
@@ -2524,6 +2527,22 @@ pub fn in_domain(e: el::El, name: text, args: vector<ir::Node>) -> boolean {
   false
 }
 
+// `Parser::reads_alike_anywhere`: a variable or a literal.
+fn reads_alike_anywhere(v: ir::Node) -> boolean {
+  match el_ir::unspan(v) {
+    NdVar { n: _ } => true,
+    NdNull => true,
+    NdInt { n: _ } => true,
+    NdLong { n: _ } => true,
+    NdFloat { f: _ } => true,
+    NdSingle { f: _ } => true,
+    NdBoolean { b: _ } => true,
+    NdText { s: _ } => true,
+    NdEnum { ord: _ } => true,
+    _ => false
+  }
+}
+
 pub fn null_transparent(e: el::El, vars: el_vars::Vars, call: ir::Node, types: vector<ir::TypeT>, ret: ir::TypeT, spanned: ir::Node) -> Ex {
   opt = ir::TyOptional { inner: ret };
   sets: vector<ir::Node> = [];
@@ -2534,12 +2553,29 @@ pub fn null_transparent(e: el::El, vars: el_vars::Vars, call: ir::Node, types: v
     NdCall { def_nr, args: a } => { d = def_nr; args = a; },
     _ => { return ex(spanned, opt); }
   }
+  // `(F-Args)`: the held arguments run before the call, so an argument AHEAD of the last
+  // nullable one is held too, in its place in the order — a text in a pass-2 work text (the
+  // answer may view it), anything else in a `__ntp_N`; held, not tested.  A variable or a
+  // literal reads alike anywhere and stays.
+  last = -1;
   for t in types {
     if t is TyOptional && t#index < len(args) {
+      last = t#index;
+    }
+  }
+  for t in types {
+    if t#index >= len(args) {
+      continue;
+    }
+    if t is TyOptional {
       tmp = el_vars::create_unique(vars, "_ntp", t);
       sets += [el_ir::v_set(tmp, args[t#index])];
       args[t#index] = ir::NdVar { n: tmp };
       checks += [tmp];
+    } else if t#index < last && !reads_alike_anywhere(args[t#index]!) {
+      ht = if el_types::base(t) is TyText { el_vars::work_text_p2(vars) } else { el_vars::create_unique(vars, "_ntp", t) };
+      sets += [el_ir::v_set(ht, args[t#index])];
+      args[t#index] = ir::NdVar { n: ht };
     }
   }
   inner = ir::NdNull;
@@ -2941,6 +2977,9 @@ pub fn intrinsic(e: el::El, vars: el_vars::Vars, at: integer, kind: text, args: 
           return ex(ir::NdNull, ir::TyVoid);
         }
         x = el_ex_assign::expression(e, vars, ae!);
+        if kind == "assert" && len(list) == 0 && !e.first_pass && untyped_empty(x) {
+          x = ex(ir::NdBoolean { b: true }, ir::TyBoolean);
+        }
         list += [x.code];
         types += [x.tp];
       },

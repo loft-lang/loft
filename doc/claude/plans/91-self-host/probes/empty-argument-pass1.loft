@@ -1,0 +1,26 @@
+// A challenge for the FIRST PASS of an empty `[]` handed to a call (@PLN91): Rust builds it on
+// pass 1 at the parameter's type (`expected=vector<…>`), naming `_vec_N` / `_elm_N` there, so a
+// `?? []` default later in the function keeps its pass-1 name.  One function per case; every
+// function answers a hand-computed value (the file does not exist: every read is absent).
+//   an empty argument, then a default:     arg_int (a loft parameter), arg_u8 (a native's),
+//                                          arg_first (no default before the argument)
+//   NOT this shape — the declared-empty NARROW local's rows (100/101 swapped): decl_u8
+//   controls (agree on b94e088a2):         decl_int (`e: vector<integer> = []`), nonempty_arg (`[6]`)
+fn total(v: vector<integer>) -> integer { t = 0; for x in v { t += x; } t }
+
+fn arg_int(p: text) -> integer { n1 = len(file_map(p) ?? []); ok = total([]); n2 = len(file_map(p) ?? []); n1 + n2 + ok + 1 }
+fn arg_u8(p: text) -> integer { n1 = len(file_map(p) ?? []); ok = write_bytes(p, []); n2 = len(file_map(p) ?? []); n1 + n2 + (if ok { 10 } else { 2 }) }
+fn decl_u8(p: text) -> integer { n1 = len(file_map(p) ?? []); e: vector<u8> = []; ok = write_bytes(p, e); n2 = len(file_map(p) ?? []); n1 + n2 + (if ok { 10 } else { 3 }) }
+fn arg_first(p: text) -> integer { ok = total([]); n2 = len(file_map(p) ?? []); n3 = len(file_map(p) ?? []); n2 + n3 + ok + 4 }
+fn decl_int(p: text) -> integer { n1 = len(file_map(p) ?? []); e: vector<integer> = []; ok = total(e); n2 = len(file_map(p) ?? []); n1 + n2 + ok + 5 }
+fn nonempty_arg(p: text) -> integer { n1 = len(file_map(p) ?? []); ok = total([6]); n2 = len(file_map(p) ?? []); n1 + n2 + ok }
+
+fn main() {
+  p = "/nonexistent-loft-probe-dir/x";
+  assert(arg_int(p) == 1, "arg_int {arg_int(p)}");
+  assert(arg_u8(p) == 2, "arg_u8 {arg_u8(p)}");
+  assert(decl_u8(p) == 3, "decl_u8 {decl_u8(p)}");
+  assert(arg_first(p) == 4, "arg_first {arg_first(p)}");
+  assert(decl_int(p) == 5, "decl_int {decl_int(p)}");
+  assert(nonempty_arg(p) == 6, "nonempty_arg {nonempty_arg(p)}");
+}

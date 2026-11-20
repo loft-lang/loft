@@ -1102,7 +1102,10 @@ impl Parser {
                 }
             }
             bindings.push(v_set(v_nr, acc));
-            self.name_capture(fname, v_nr);
+            // `@FR-B-Scope`: the name ends with the arm (loft#2591), as the single-element
+            // alternation's does.
+            let before = self.name_capture(fname, v_nr);
+            self.pattern_binds_pending.push((fname.clone(), before));
             // Heap capture = a borrowed view of the subject element (mirror the field-sub-pattern
             // path): skip its free, record the borrow dep — through an `option<T>` wrapper too.
             if !matches!(ftype.base(), Type::Text(_)) {
@@ -1247,8 +1250,8 @@ impl Parser {
     /// is the element value at this position; it is cloned for each tag test and field read.
     ///
     /// `parens` is false for a TUPLE element (`(Circle { r } | Square { r }, k)`, @PLN186 step
-    /// 4): the alternatives stand bare between the element separators, and each name joins the
-    /// arm's pending names so the arm's end restores what it meant before.
+    /// 4): the alternatives stand bare between the element separators.  In both forms each name
+    /// joins the arm's pending names, so the arm's end restores what it meant before.
     #[expect(
         clippy::too_many_lines,
         reason = "one tag disjunction: each alternative's condition and its conditional-offset captures are built from the same branch list"
@@ -1459,9 +1462,11 @@ impl Parser {
             }
             bindings.push(v_set(v_nr, acc));
             let before = self.name_capture(fname, v_nr); // stays in scope for the arm body (as sub-patterns do)
-            if !parens {
-                self.pattern_binds_pending.push((fname.clone(), before));
-            }
+            // `@FR-B-Scope`: the name ends with the arm, so the arm's end restores what it named
+            // before — in a slice element as in a tuple one.  Left unrestored, a local of the
+            // same name read after the `match` answered the capture (loft#2591), and a capture
+            // named like the SUBJECT made pass 2 read the capture as the subject.
+            self.pattern_binds_pending.push((fname.clone(), before));
             // A heap capture is a borrowed VIEW of the subject element: skip its free
             // and record the borrow dep on the subject source (mirrors the field-
             // sub-pattern path); a text payload is an OWNED copy (freed normally).
