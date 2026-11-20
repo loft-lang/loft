@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	7664b959f903f6c8f216f5874d7e7285a9ab5b77
 
-layer	elab	agree	1292	of	2121
+layer	elab	agree	1293	of	2121
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -805,7 +805,6 @@ elab	refused	tests/scripts/a-non-null-four-byte-element-reads-every-code-as-a-va
 elab	refused	tests/scripts/a-nullable-vector-result-returns-null-from-every-exit.loft
 elab	refused	tests/scripts/a-one-byte-slice-appended-is-the-general-slice.loft
 elab	refused	tests/scripts/a-placed-call-copies-an-answer-from-elsewhere.loft
-elab	refused	tests/scripts/a-pooled-buffers-vectors-are-emptied-in-place.loft
 elab	refused	tests/scripts/a-qualified-name-reaches-what-a-library-publishes.loft
 elab	refused	tests/scripts/a-record-built-into-a-callers-slot-needs-no-prefill.loft
 elab	refused	tests/scripts/a-record-read-by-index-from-a-held-vector-is-addressed-off-its-base.loft
@@ -836,7 +835,7 @@ elab	refused	tests/scripts/store_compact_slack_730.loft
 elab	refused	tests/scripts/store_digest_b0.loft
 elab	refused	tests/scripts/store_paged_enum_field.loft
 
-layer	elab-functions	agree	14489	of	24978
+layer	elab-functions	agree	14475	of	24962
 elab-functions	agree	lib/docs.loft::Anchor
 elab-functions	agree	lib/docs.loft::Character
 elab-functions	agree	lib/docs.loft::Double
@@ -14951,20 +14950,6 @@ elab-functions	agree	tests/scripts/a-one-byte-slice-appended-is-the-general-slic
 elab-functions	agree	tests/scripts/a-one-byte-slice-appended-is-the-general-slice.loft::n_test_indexes_at_and_before_the_ends
 elab-functions	agree	tests/scripts/a-one-byte-slice-appended-is-the-general-slice.loft::n_test_short_multi_byte_pieces
 elab-functions	agree	tests/scripts/a-placed-call-copies-an-answer-from-elsewhere.loft::(schema)
-elab-functions	agree	tests/scripts/a-pooled-buffers-vectors-are-emptied-in-place.loft::(schema)
-elab-functions	agree	tests/scripts/a-pooled-buffers-vectors-are-emptied-in-place.loft::F
-elab-functions	agree	tests/scripts/a-pooled-buffers-vectors-are-emptied-in-place.loft::O
-elab-functions	agree	tests/scripts/a-pooled-buffers-vectors-are-emptied-in-place.loft::P
-elab-functions	agree	tests/scripts/a-pooled-buffers-vectors-are-emptied-in-place.loft::T
-elab-functions	agree	tests/scripts/a-pooled-buffers-vectors-are-emptied-in-place.loft::main_vector<P>
-elab-functions	agree	tests/scripts/a-pooled-buffers-vectors-are-emptied-in-place.loft::n_grow
-elab-functions	agree	tests/scripts/a-pooled-buffers-vectors-are-emptied-in-place.loft::n_mk_or
-elab-functions	agree	tests/scripts/a-pooled-buffers-vectors-are-emptied-in-place.loft::n_mkf
-elab-functions	agree	tests/scripts/a-pooled-buffers-vectors-are-emptied-in-place.loft::n_mkt
-elab-functions	agree	tests/scripts/a-pooled-buffers-vectors-are-emptied-in-place.loft::n_pts
-elab-functions	agree	tests/scripts/a-pooled-buffers-vectors-are-emptied-in-place.loft::n_shape
-elab-functions	agree	tests/scripts/a-pooled-buffers-vectors-are-emptied-in-place.loft::n_sum_f
-elab-functions	agree	tests/scripts/a-pooled-buffers-vectors-are-emptied-in-place.loft::vector<P>
 elab-functions	agree	tests/scripts/a-qualified-name-reaches-what-a-library-publishes.loft::(schema)
 elab-functions	agree	tests/scripts/a-qualified-name-reaches-what-a-library-publishes.loft::C98Vec
 elab-functions	agree	tests/scripts/a-qualified-name-reaches-what-a-library-publishes.loft::HID_C
@@ -15327,7 +15312,7 @@ elab-functions	agree	tests/scripts/store_paged_enum_field.loft::main_vector<inte
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::n_bytes
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::vector<integer(0, 255)>
 
-layer	elab-pass1	agree	11808	of	17623
+layer	elab-pass1	agree	11808	of	17625
 elab-pass1	agree	lib/code.loft::t_4Code_add_block
 elab-pass1	agree	lib/code.loft::t_4Code_add_if
 elab-pass1	agree	lib/code.loft::t_4Code_add_loop
