@@ -48,10 +48,9 @@ binds, as above.  The capture unification is the multi-element path's own (`slic
 P-Alt-Same / P-Alt-Diff), so reuse it.  A guard after the slice (`P-Guard`) and a wildcard
 field (`f: _`) need nothing more.
 
-A trap for probes: a capture with the same name as the matched SUBJECT (`match v { [(Word { w }
-| Num { v })] … }`) sends the RUST parser into an endless loop that allocates diagnostics until
-memory runs out.  Measured on the installed main build, loft 2026.11.20261118; a loft defect, being fixed.  No corpus site has
-it; name the subject differently in any new probe, and run probes under `ulimit -v`.
+A capture named like the matched SUBJECT, or like a local read after the match, is no trap
+any more: the Rust parser now ends every alternation capture with its arm (loft#2591,
+f406c3312, `@FR-B-Scope`).  The port's names follow the same rule.
 
 ## The sites (try e27ec2076)
 
