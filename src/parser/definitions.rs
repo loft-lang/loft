@@ -5613,6 +5613,22 @@ impl Parser {
                          elements are always dense (a key / slot denotes presence)"
                     );
                 }
+                // A QUALIFIED record element (`vector<lib::S?>`) writes its `?` after the
+                // `::S` that `parse_type` reads, past the identifier-adjacent test above, so
+                // it comes back as `Optional(S)`.  Left as that the element stayed DENSE and
+                // a stored null read back as a present record (`@FR-N-Shape`: one notion,
+                // `?` on a record element, whichever way the record is named).
+                let tp = match tp {
+                    Type::Optional(inner)
+                        if type_name == "vector"
+                            && !nullable_elem
+                            && matches!(*inner, Type::Reference(..) | Type::Unknown(_)) =>
+                    {
+                        nullable_elem = true;
+                        *inner
+                    }
+                    other => other,
+                };
                 let sub_nr = if let Type::Unknown(d) = tp {
                     d
                 } else {

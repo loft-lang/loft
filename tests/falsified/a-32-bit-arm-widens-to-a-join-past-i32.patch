@@ -1,0 +1,13 @@
+diff --git a/src/parser/control.rs b/src/parser/control.rs
+index 28d87a512..5766cfdc0 100644
+--- a/src/parser/control.rs
++++ b/src/parser/control.rs
+@@ -10091,7 +10091,7 @@ impl Parser {
+     /// Converted, every arm carries the join's width.  Outside the regime every integer is
+     /// 64-bit and no arm is narrower than its join.
+     pub(super) fn arm_held_below(&self, arm_tp: &Type, joined: &Type) -> bool {
+-        if !self.data.width32() {
++        if true || !self.data.width32() {
+             return false;
+         }
+         let (Type::Integer(a), Type::Integer(j)) = (arm_tp.base(), joined.base()) else {
