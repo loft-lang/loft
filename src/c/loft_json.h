@@ -110,6 +110,7 @@ typedef struct {
     int lenient;
     size_t value_end;
     size_t cur;   /* the lexer's cursor */
+    uint32_t depth; /* the arrays and objects that enclose the value being parsed */
     loft_jtok pk; /* the token at the cursor */
     /* `err_path`: the JSON pointer segments of a failing value, innermost first. */
     loft_text *path;
@@ -419,6 +420,8 @@ static void loft_jp_advance_past(loft_jp *p, size_t end) {
 }
 
 static size_t loft_jp_after_value(const loft_jp *p) { return loft_jl_ws(p->b, p->len, p->value_end); }
+
+#define LOFT_JSON_MAX_NESTING 512u
 
 static int loft_jfail(loft_jfault *f, size_t at, const char *msg) {
     snprintf(f->msg, sizeof f->msg, "%s", msg);
@@ -814,8 +817,15 @@ static int loft_jp_value(loft_jp *p, size_t at, loft_jv *v, loft_jfault *f) {
         return loft_jp_ident_value(p, v, f);
     case LOFT_JT_TOK:
         if (p->pk.tok == '-') return loft_jp_number(p, v, f);
-        if (p->pk.tok == '[') return loft_jp_array(p, v, f);
-        if (p->pk.tok == '{') return loft_jp_object(p, v, f);
+        if (p->pk.tok == '[' || p->pk.tok == '{') {
+            /* `JParser::nested` (`MAX_NESTING`): the parser goes one call deeper per level, so
+             * the input decides how deep, and past 512 it is refused. */
+            if (p->depth >= LOFT_JSON_MAX_NESTING) return loft_jfail(f, at, "nested more than 512 deep");
+            p->depth++;
+            int ok = p->pk.tok == '[' ? loft_jp_array(p, v, f) : loft_jp_object(p, v, f);
+            p->depth--;
+            return ok;
+        }
         /* fall through - a misplaced structural token */
     default: {
         size_t off = loft_jp_at_token(p);

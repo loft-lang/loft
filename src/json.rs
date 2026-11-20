@@ -347,6 +347,11 @@ pub(crate) enum Opening {
 /// What stopped a read: the message and the byte offset it applies to.
 pub(crate) type Fault = (String, usize);
 
+/// How deep arrays and objects may nest.  The parser goes one call deeper per level, so the
+/// input decides how deep: two million `[` ended the process with a stack overflow.  512
+/// is far past any document a program builds, and shallow enough for a small stack.
+pub(crate) const MAX_NESTING: u32 = 512;
+
 /// The JSON reader over loft's lexer.  [`parse_with`] drives it to build a [`Parsed`];
 /// `T.parse` (`Stores::read_into`) drives the same steps and writes each value to the
 /// store as it is read — one grammar, whichever asks.
@@ -364,9 +369,26 @@ pub(crate) struct JParser<'a> {
     /// the trailing bytes the old scanner rejected.  Structural / trailing-byte
     /// checks read `skip_ws(value_end)` instead, matching the old scanner exactly.
     value_end: usize,
+    /// How many arrays and objects enclose the value being parsed ([`MAX_NESTING`]).
+    depth: u32,
 }
 
 impl<'a> JParser<'a> {
+    /// Parse an array or an object one level deeper, refusing past [`MAX_NESTING`].
+    fn nested(
+        &mut self,
+        at: usize,
+        inner: impl FnOnce(&mut Self) -> Result<Parsed, Fault>,
+    ) -> Result<Parsed, Fault> {
+        if self.depth >= MAX_NESTING {
+            return Err((format!("nested more than {MAX_NESTING} deep"), at));
+        }
+        self.depth += 1;
+        let parsed = inner(self);
+        self.depth -= 1;
+        parsed
+    }
+
     fn new(input: &'a str, dialect: Dialect) -> Self {
         JParser {
             lx: Lexer::from_str_with(input, "json", LexConfig::json()),
@@ -374,6 +396,7 @@ impl<'a> JParser<'a> {
             dialect,
             err_path: Vec::new(),
             value_end: 0,
+            depth: 0,
         }
     }
 
@@ -477,8 +500,8 @@ impl<'a> JParser<'a> {
             LexItem::Integer(..) | LexItem::Long(_) | LexItem::Float(..) | LexItem::Single(_) => {
                 self.parse_number()
             }
-            LexItem::Token(t) if *t == "[" => self.parse_array(),
-            LexItem::Token(t) if *t == "{" => self.parse_object(),
+            LexItem::Token(t) if *t == "[" => self.nested(at, Self::parse_array),
+            LexItem::Token(t) if *t == "{" => self.nested(at, Self::parse_object),
             LexItem::CString(_) => {
                 let s = self.take_string()?;
                 Ok(Parsed::Str(s))
