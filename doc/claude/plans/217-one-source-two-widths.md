@@ -82,20 +82,21 @@ taken of one, do not survive its narrowing.
    a plain `int64_t` or `double` to a baseline, 1152 over 32 headers (`loft_rt.h` 422); each
    is to become `loft_int` / `loft_float`, or `loft_word` / `loft_fword` where the value is
    64 bits in every build.
-6. **`tile-world-game` as a 32-bit app** — measured on a scratch copy of its tree (`cd9ee29`
-   plus its 24 local commits) with this branch's loft: `loft --native-esp --width 64` builds it
-   as before (5.8 MB), and the 32-bit default stops at 37 errors — 21 in the library copies
-   its `libs/` holds (graphics 0.13.0, gpu 0.3.0, audio 0.2.3, scene3d 0.6.0; graphics 0.13.4
-   and audio 0.2.4 are the releases written for the regime) and the rest in the game itself:
-   `Timing.since` holds `ticks()`, an `i64`; colour and bit literals past 32 bits; `f64`
-   arguments where a library takes a `single`.  The game is its own agent's to change
-   (`218-tanmatsu-stage-engine/kit/tile-world-game-width32.diff` was the report); the failing
-   build ends with the note that `--width 64` builds the program as written.  The image gate
-   has therefore not seen the game, only a small reference app.
+6. **`tile-world-game` as a 32-bit app** — its OWN source compiles under the regime since its
+   commit `888f1af` (the cell key, the draw generator and the frame timer say `i64`; its 536
+   tests pass at 64 bits before and after).  What stops the 32-bit build is the library copies
+   its `libs/` holds — 23 errors in graphics 0.13.0, gpu 0.3.0, audio 0.2.3 and scene3d 0.6.0;
+   graphics 0.13.4 and audio 0.2.4 are the releases written for the regime.  Until those are
+   fetched the 32-bit game has not been compiled whole, so further errors of its own may
+   stand behind the libraries', and the image gate has seen only a small reference app.
+   `loft --native-esp --width 64` builds the game as before.
    The libraries' own TEST files are not regime-clean either: under `LOFT_WIDTH=32` the suites
    of gpu, scene3d, graphics, gridmesh, tiles and imaging stop on literals past 32 bits, with
    this loft and with the installed one.
-7. **On the device** — the demo world from a 32-bit build, measured against 60 frames.
+7. **A message under the regime names an `i64` as `integer`** — "expected vector<i32>, got
+   vector<integer>" for a `vector<i64>` handed to a `vector<i32>` parameter: in a regime file
+   `integer` is the 32-bit one, so the wide type should print as `i64`.
+8. **On the device** — the demo world from a 32-bit build, measured against 60 frames.
 
 ## Not this plan's
 
