@@ -577,21 +577,10 @@ implication that reading `deps` is *sufficient*.
 
 ## Deviations
 
-**OPEN: 1.**  The record of every closed deviation — `D-own-56` back to the first — is in
-[ownership-history.md](ownership-history.md).  One shape keeps a store: a closure capturing a
-VECTOR inside a loop, because the witness is record-typed; the obvious widening answers wrong
-on `--native` (`D-own-38`).
-
-- **D-own-57** (loft#2594, `(O-Buffer)`'s adoption veto, `(O-Complete)`): a record local in an
-  inner scope that adopts a literal built in an outer work-ref (a struct-enum variant, a
-  nullable struct literal) never frees what a rebind displaces.  After its first rebind it
-  holds a store of its own, so a rebind in a loop leaks every displaced copy; and where the
-  right-hand side reads the local (`ft = join(ft, c.ft)`) the rebind binds the callee's answer
-  plainly, aliasing another argument's record, which the scope exit then frees: a double free
-  on every backend.  The cure being built is static: a kept local that is REBOUND takes the
-  buffer's store at its bind (the buffer's slot reset to null), so its rebinds are ordinary
-  owned rebinds; a kept local bound once keeps the buffer pairing and its store reuse.  The
-  whole entry, with its matrix: `D-own-57` in [ownership-history.md](ownership-history.md).
+**OPEN: 0.**  Every deviation this doc has carried is closed; the record — `D-own-57` back to
+the first — is in [ownership-history.md](ownership-history.md).  One shape keeps a store: a
+closure capturing a VECTOR inside a loop, because the witness is record-typed; the obvious
+widening answers wrong on `--native` (`D-own-38`).
 
 > **A zero here is a claim to re-measure, and this is what its oracle covers.**  The join
 > family is pinned by three files: `1323-every-arm-of-a-value-branch-has-its-own-binding`

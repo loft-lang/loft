@@ -7,7 +7,7 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **1** — D-own-57 OPENED 2026-11-20 (loft#2594: a kept local rebound in an inner scope leaks what it displaces, or aliases an argument and frees it twice, below); D-own-56 OPENED AND CLOSED 2026-11-01 (loft#2338: a view through a match capture of a call's result outlived the match, below); D-own-55 OPENED AND CLOSED 2026-11-01 (loft#2333: a witnessed local reassigned from a call that returns its argument adopted the view it held, below); D-own-54 OPENED AND CLOSED 2026-09-30 (a native's fresh vector had no owner at a slice's name, a borrowing local's bind, a returned local's bind and an early literal return, below); D-own-48 OPENED AND CLOSED 2026-09-22 (loft#1599: a returned vector local rebound by a call in a loop or a branch answered a store its caller never handed in, in ownership.md); D-own-38 CLOSED 2026-09-06 (loft#1388: the release is by STORE IDENTITY now, `@FR-O-Witness`, with the hand-off at the closure build; below); D-own-39 OPENED AND CLOSED 2026-09-06 (loft#1398: the `is` payload binding recorded no borrow in its TYPE, so the empty-deps proxy read it as OWNED and `--native` copied where the interpreter aliased — #429's cure applied to one of its two sites, below); D-own-38 OPEN 2026-09-06 (loft#1388 residual: the release of a store a closure record adopted, and of one orphaned beside it, is decided per BINDING where the question is per STORE, below); D-own-37 OPENED AND CLOSED 2026-09-06 (loft#1389: the degenerate self-dep was stripped for one of the two RECORD kinds, so an annotated struct-enum local read as borrowed and never freed what a join displaced, below); D-own-36 OPENED AND CLOSED 2026-09-06 (the `@FR-O-Detach` walk: a collection literal's detach ran before its reads on every destination, and `--native` declined a value-`if`'s displaced free, below); D-own-35 OPENED AND CLOSED 2026-09-05 (loft#1370: the per-path fact had no home for a VECTOR local — every value-branch bind aliased the chosen arm — closed at the parser's selector, below); D-own-34 OPENED AND CLOSED 2026-09-05 (the owner witness did not survive the cache, and a nullable bind from a borrow-returning call aliased); D-own-33 OPENED AND CLOSED 2026-09-05 (the per-path fact was short of four homes, every one a nullable local not treated as the heap local it is: a literal buffer adopted inside a loop, the branch pre-init, the loop hoist, a keyed `match` bind, below; a fifth face is loft#1367, owned by @PLN153); D-own-32 OPENED AND CLOSED 2026-09-05 (the oracle called a minted variable Owned regardless of its other definitions, and its shadow re-derived the base translation, below); D-own-31 OPENED AND CLOSED 2026-09-05 (the never-free contract named one spelling of five and forbade a release the language ships, below); D-own-30 OPENED AND CLOSED 2026-09-05 (a nullable local holding a projection VIEW freed the store it displaced, below), after D-own-29 2026-09-04 (loft#1346, below) and D-own-28 the same day (loft#1335).  D-own-8 CLOSED 2026-09-03 (opened 2026-08-24, NARROWED 2026-08-25 to a
+OPEN: **0** — D-own-57 OPENED AND CLOSED 2026-11-20 (loft#2594: a kept local rebound in an inner scope leaks what it displaces, or aliases an argument and frees it twice, below); D-own-56 OPENED AND CLOSED 2026-11-01 (loft#2338: a view through a match capture of a call's result outlived the match, below); D-own-55 OPENED AND CLOSED 2026-11-01 (loft#2333: a witnessed local reassigned from a call that returns its argument adopted the view it held, below); D-own-54 OPENED AND CLOSED 2026-09-30 (a native's fresh vector had no owner at a slice's name, a borrowing local's bind, a returned local's bind and an early literal return, below); D-own-48 OPENED AND CLOSED 2026-09-22 (loft#1599: a returned vector local rebound by a call in a loop or a branch answered a store its caller never handed in, in ownership.md); D-own-38 CLOSED 2026-09-06 (loft#1388: the release is by STORE IDENTITY now, `@FR-O-Witness`, with the hand-off at the closure build; below); D-own-39 OPENED AND CLOSED 2026-09-06 (loft#1398: the `is` payload binding recorded no borrow in its TYPE, so the empty-deps proxy read it as OWNED and `--native` copied where the interpreter aliased — #429's cure applied to one of its two sites, below); D-own-38 OPEN 2026-09-06 (loft#1388 residual: the release of a store a closure record adopted, and of one orphaned beside it, is decided per BINDING where the question is per STORE, below); D-own-37 OPENED AND CLOSED 2026-09-06 (loft#1389: the degenerate self-dep was stripped for one of the two RECORD kinds, so an annotated struct-enum local read as borrowed and never freed what a join displaced, below); D-own-36 OPENED AND CLOSED 2026-09-06 (the `@FR-O-Detach` walk: a collection literal's detach ran before its reads on every destination, and `--native` declined a value-`if`'s displaced free, below); D-own-35 OPENED AND CLOSED 2026-09-05 (loft#1370: the per-path fact had no home for a VECTOR local — every value-branch bind aliased the chosen arm — closed at the parser's selector, below); D-own-34 OPENED AND CLOSED 2026-09-05 (the owner witness did not survive the cache, and a nullable bind from a borrow-returning call aliased); D-own-33 OPENED AND CLOSED 2026-09-05 (the per-path fact was short of four homes, every one a nullable local not treated as the heap local it is: a literal buffer adopted inside a loop, the branch pre-init, the loop hoist, a keyed `match` bind, below; a fifth face is loft#1367, owned by @PLN153); D-own-32 OPENED AND CLOSED 2026-09-05 (the oracle called a minted variable Owned regardless of its other definitions, and its shadow re-derived the base translation, below); D-own-31 OPENED AND CLOSED 2026-09-05 (the never-free contract named one spelling of five and forbade a release the language ships, below); D-own-30 OPENED AND CLOSED 2026-09-05 (a nullable local holding a projection VIEW freed the store it displaced, below), after D-own-29 2026-09-04 (loft#1346, below) and D-own-28 the same day (loft#1335).  D-own-8 CLOSED 2026-09-03 (opened 2026-08-24, NARROWED 2026-08-25 to a
 single cell, its Face B CLOSED the same day, that cell's one known SYMPTOM closed 2026-08-26
 with the FACT still wrong, loft#1098, and the fact itself closed by giving every path of a
 value branch its own binding — below).  D-own-26 CLOSED 2026-09-03: its gate existed all
@@ -3611,7 +3611,7 @@ dangling chain of its own, recorded on loft#2338.  Found porting the self-host e
 (`match el_ir::unspan(code) { NdBlock { block } => { ops = block[0].operators; } … }`).  Guard
 `loft-suite rules/ownership/O-Borrow/2338-a-view-through-a-match-capture-outlives-the-match.loft`.
 
-### D-own-57 — OPENED (2026-11-20): a kept local rebound leaks what it displaces or aliases an argument
+### D-own-57 — OPENED AND CLOSED (2026-11-20): a kept local rebound leaks what it displaces or aliases an argument
 
 `(O-Buffer)`, `(O-Complete)`.  A record local declared in an inner scope whose first value is a
 literal built in an outer-scope work-ref (`{ ft = TyVoid; … }`, a struct-enum variant or a
@@ -3642,15 +3642,29 @@ loops, 200 passes; controls at function scope and with no rebind).  Fails on `an
 control passes, because there the scope pass hands the buffer to the local (`literal_buffer`)
 and drops the buffer's own free, so every rebind is an ordinary owned one.
 
-**The cure being built (static, no run-time check added).**  The split is a compile-time fact:
-is the kept local REBOUND (`reassigned_locals`)?  A kept local bound once keeps the pairing
-and the store reuse.  A rebound one takes the buffer's store at its bind, the buffer's slot
-reset to the null sentinel there (a move), so its rebinds are ordinary owned rebinds, its
-scope-exit free is unconditional, and the buffer's frame-exit free meets the sentinel.  A
-loop that rebuilds the literal mints a fresh store on a null slot, so the loft#1522 hazard (a
-rebuild in place into a released store) cannot arise.  The rebound kept local gives up the
-store reuse — one allocation per pass — which it never safely had.  A census of every kept
-local in the corpus (how many are rebound, whether any buffer is named after the local's bind)
-precedes the build.  Found porting the self-host elaborator (`el_match_alternation`'s type
-join).
+**Fix (static, no run-time check added).**  The scope pass decides once, before its scan,
+which locals take a literal's store at the bind (`literal_moves_in`, scopes/phase.rs): a record
+local bound two or more times whose every bind is `null`, the local itself, a call of a user
+function, or a literal's construction.  Where such a local adopts a literal built in an
+outer-scope buffer, `scan_set` moves the store instead of pairing: the buffer's slot is reset
+to the null sentinel behind the bind (`OpInitRefSentinel`, which frees nothing), so the local is
+an ordinary owner.  Each rebind copies what the call answers and frees what it displaces, and
+the exit free is plain.  Nothing of the pairing — the exit compare, the displacement veto, the
+self-read lift — is made for it, so no piece has to be undone.  A rebuild of the literal on the
+next pass mints on the null slot, so loft#1522's hazard (a rebuild in place into a released
+store) cannot arise.  A local with any other bind (a projection, a view by `(B-View)`; a `??`
+chain; a branch) keeps the pairing, as does a local bound once, which keeps the buffer's store
+reuse across passes.
 
+Why before the scan: the scan's own type of the local says whether it owns only after its last
+bind is read (the parser types `ft = f(ft, x)` as viewing `x`; the scan makes it a copy), and a
+decision taken at the scope exit came after the self-read lift had been emitted for the pairing
+— the lift and the rebind then both freed the old store.  Two shapes kept the narrower tests
+honest: a local bound once from a value branch, whose bind the scope pass sinks into each arm
+(H-Drop/2552, `multi_assigned` counted it twice), and a local whose first bind is a view
+(R-MoveLast/2148, `k = h.u; k = S { … }`).  Verified on `--interpret`, `--native-c` and
+`--native-rust` with `LOFT_POISON=1` and both leak checks: the 11-case matrix, the 3 kept-loop
+cells and the 17 programs holding a rebound kept local (the loft#1522, O-Complete/2384,
+H-Drop/2552, B-Copy and R-MoveLast cells).  Found porting the self-host elaborator
+(`el_match_alternation`'s type join).  Guard
+`loft-suite rules/ownership/O-Buffer/2594-a-local-rebound-after-adopting-a-literal-owns-what-it-holds.loft`.

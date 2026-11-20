@@ -5,7 +5,8 @@
 //! One ASSIGNMENT: `scan_set` decides what a `Set` owns, borrows, releases and witnesses.
 
 use super::backings::{
-    bind_backing_of, construction_work_refs, delivered_work_ref, member_backing,
+    bind_backing_of, construction_work_ref, construction_work_refs, delivered_work_ref,
+    member_backing,
 };
 use super::buffers::{coalesce_tail_calls, tail_calls};
 use super::capture_builds::adopted_work_refs;
@@ -1519,6 +1520,13 @@ impl Scopes<'_> {
                 let av_scope = self.var_scope.get(&av).copied().unwrap_or(u16::MAX);
                 if v_scope <= av_scope {
                     self.literal_buffer.entry(av).or_insert(v);
+                } else if av_scope != u16::MAX
+                    && (self.literal_moves.contains(&ov) || self.literal_moves.contains(&v))
+                    && construction_work_ref(unspanned_value, function) == Some(av)
+                {
+                    // loft#2594 — a MOVE, not a pairing (`literal_moves_in` says when and why):
+                    // the bind takes the literal's store and the buffer is reset to null behind it.
+                    self.moved_buffer = Some((ov, av));
                 } else if av_scope != u16::MAX {
                     let buffers = self.witness_buffer.entry(v).or_default();
                     if !buffers.contains(&av) {
