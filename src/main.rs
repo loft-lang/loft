@@ -5917,7 +5917,13 @@ fn run_compat_command(args: &[String]) -> i32 {
         return compat_check(
             &name,
             manifest.version.as_deref(),
-            manifest.api_compatible_with.as_deref(),
+            Floors {
+                api: manifest.api_compatible_with.as_deref(),
+                data: manifest
+                    .data_compatible_with
+                    .as_deref()
+                    .or(manifest.api_compatible_with.as_deref()),
+            },
             args.iter().any(|a| a == "--full"),
         );
     }
@@ -6181,7 +6187,102 @@ fn compat_floor(name: &str, own_version: Option<&str>, with_tests: bool) -> i32 
     0
 }
 
-/// Step 7 — verify a package's ENTIRE claim: every installed release, under a wall-clock
+#[cfg(feature = "registry")]
+/// The two floors a package declares, each held against its own kind of break (loft#2598): a
+/// change to the surface against `api_compatible_with`, a reshaped record against
+/// `data_compatible_with`.  A package that declares no data floor is held to its API floor on
+/// both.
+#[cfg(feature = "registry")]
+#[derive(Clone, Copy)]
+struct Floors<'a> {
+    api: Option<&'a str>,
+    data: Option<&'a str>,
+}
+
+#[cfg(feature = "registry")]
+impl Floors<'_> {
+    fn under(floor: Option<&str>, v: &str) -> bool {
+        floor.is_some_and(|f| {
+            matches!(
+                loft::registry_index::compare_semver(v, f),
+                std::cmp::Ordering::Less
+            )
+        })
+    }
+
+    /// Whether release `v` is one the package still promises something about: at or above
+    /// the lower of its floors.
+    fn promised(self, v: &str) -> bool {
+        !(Self::under(self.api, v) && Self::under(self.data, v))
+    }
+
+    /// Whether a break of these kinds against `v` breaks a promise: an API break at or above
+    /// the API floor, a layout break at or above the data floor.
+    fn violates(self, v: &str, api_broke: bool, layout_broke: bool) -> bool {
+        (api_broke && !Self::under(self.api, v)) || (layout_broke && !Self::under(self.data, v))
+    }
+
+    /// The floor to raise for a break of these kinds, for a message.
+    fn to_raise(api_broke: bool, layout_broke: bool) -> &'static str {
+        match (api_broke, layout_broke) {
+            (true, true) => "`api_compatible_with` and `data_compatible_with`",
+            (false, true) => "`data_compatible_with`",
+            _ => "`api_compatible_with`",
+        }
+    }
+}
+
+/// The releases of `name` the REGISTRY lists (loft#2599), oldest first, without this
+/// working tree's own version and without the ones a consumer can no longer resolve to
+/// (yanked, deprecated).  `Err` when the registry could not be read.
+#[cfg(feature = "registry")]
+fn published_releases(name: &str, own_version: Option<&str>) -> Result<Vec<String>, String> {
+    let opts = compat_install_opts();
+    let loaded = loft::install::load_index_reporting(&opts)?;
+    let Some(pkg) = loaded.index.packages.get(name) else {
+        return Ok(Vec::new());
+    };
+    let mut out: Vec<String> = pkg
+        .versions
+        .values()
+        .filter(|v| Some(v.semver.as_str()) != own_version)
+        .filter(|v| v.deprecated.is_none() && !pkg.yanked.contains(&v.semver))
+        .map(|v| v.semver.clone())
+        .collect();
+    out.sort_by(|a, b| loft::registry_index::compare_semver(a, b));
+    Ok(out)
+}
+
+/// How the check reads the registry and fetches a release: into the install cache, writing
+/// no lockfile — the package being checked is not a consumer of its own earlier releases.
+#[cfg(feature = "registry")]
+fn compat_install_opts() -> loft::install::InstallOptions {
+    loft::install::InstallOptions {
+        allow_unsigned: true,
+        offline: std::env::var("LOFT_OFFLINE").is_ok(),
+        allow_prerelease: true,
+        skip_lockfile: true,
+        ..Default::default()
+    }
+}
+
+/// Put release `v` of `name` in the install cache when it is not there; `Err` says why it
+/// could not be fetched.
+#[cfg(feature = "registry")]
+fn fetch_release_for_compat(name: &str, v: &str) -> Result<(), String> {
+    let dir = loft::registry_index::extract_dir(name, v);
+    if fa::exists(dir.join("loft.toml")) {
+        return Ok(());
+    }
+    loft::install::install_one(name, Some(v), &compat_install_opts()).map(|_| ())?;
+    if fa::exists(dir.join("loft.toml")) {
+        Ok(())
+    } else {
+        Err("it was not unpacked".to_string())
+    }
+}
+
+/// Step 7 — verify a package's ENTIRE claim: every release the registry lists at or above its floors, under a wall-clock
 /// budget, with overrun reported as failure rather than smuggled in as success.
 ///
 /// The gate a release passes through, where the O(1) per-PR sample is not enough. A sampled
@@ -6193,14 +6294,14 @@ fn compat_floor(name: &str, own_version: Option<&str>, with_tests: bool) -> i32 
 /// it carries the authority of one. Cost is proportional to the CLAIM, so the remedy is in the
 /// author's hands and is named in the message: narrow the floor, or make the suite faster.
 #[cfg(feature = "registry")]
-fn compat_check_full(name: &str, versions: &[String], floor: Option<&str>) -> i32 {
+fn compat_check_full(name: &str, versions: &[String], floors: Floors) -> i32 {
     let budget = std::env::var("LOFT_COMPAT_BUDGET")
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(RELEASE_WINDOW_BUDGET_SECS);
     let started = std::time::Instant::now();
     println!(
-        "compat check `{name}` --full: verifying all {} installed release(s), budget {budget}s",
+        "compat check `{name}` --full: verifying all {} release(s), budget {budget}s",
         versions.len()
     );
 
@@ -6214,14 +6315,12 @@ fn compat_check_full(name: &str, versions: &[String], floor: Option<&str>) -> i3
         return 2;
     };
 
-    let mut violated: Vec<String> = Vec::new();
-    let mut declared: Vec<String> = Vec::new();
-    let mut unreadable: Vec<String> = Vec::new();
-    let mut checked = 0usize;
+    let mut t = FullTally::default();
     // Oldest first, so a timeout leaves the DEEPEST part of the claim — the part a floor is
     // actually asserting, and the part nobody else looks at — already proven.
     for v in versions {
         if started.elapsed().as_secs() >= budget {
+            let checked = t.checked;
             let remaining = versions.len() - checked;
             eprintln!(
                 "\ncompat check `{name}` --full: BUDGET EXCEEDED after {checked} of {} \
@@ -6236,72 +6335,119 @@ fn compat_check_full(name: &str, versions: &[String], floor: Option<&str>) -> i3
             return 1;
         }
         let dir = loft::registry_index::extract_dir(name, v);
-        if !fa::exists(dir.join("loft.toml")) {
-            unreadable.push(v.clone());
+        // The cost of this gate follows the CLAIM: a release below both floors is compared
+        // when it is already cached and is not fetched for it.
+        if !floors.promised(v) && !fa::exists(dir.join("loft.toml")) {
+            t.below_uncached += 1;
+            continue;
+        }
+        if let Err(why) = fetch_release_for_compat(name, v) {
+            // A release the package still promises something about and that cannot be
+            // compared is a claim left unproved: a failure.
+            println!("  {v}: NOT FETCHED ({why})");
+            t.unfetched.push(v.clone());
             continue;
         }
         let old_entry = entry_file_of(&dir, name);
         let Ok((old_s, old_id)) = api_surface_of(&old_entry) else {
-            unreadable.push(v.clone());
+            t.unreadable.push(v.clone());
             continue;
         };
-        checked += 1;
+        t.checked += 1;
         let api = loft::api_diff::diff(&old_s, &new_s);
         let layout = loft::schema_sidecar::classify(&old_id, &new_id);
-        let broke = matches!(api, loft::api_diff::Verdict::Break(_)) || layout_reshaped(&layout);
-        // Below the declared floor a break is ANNOUNCED, not failed — the promise never
-        // covered it.  Above the floor it is the unclaimed break F1 exists for.
-        let below = floor.is_some_and(|f| {
-            matches!(
-                loft::registry_index::compare_semver(v, f),
-                std::cmp::Ordering::Less
-            )
-        });
-        let verdict = match (broke, below) {
-            (false, _) => "drop-in",
-            (true, true) => {
-                declared.push(v.clone());
-                "DECLARED BREAK (below the floor)"
+        let api_broke = matches!(api, loft::api_diff::Verdict::Break(_));
+        let layout_broke = layout_reshaped(&layout);
+        // Below the floor of its kind a break is ANNOUNCED, not failed — the promise never
+        // covered it.  At or above it, it is the unclaimed break F1 exists for.
+        let verdict = if !(api_broke || layout_broke) {
+            "drop-in"
+        } else if floors.violates(v, api_broke, layout_broke) {
+            t.violated.push(v.clone());
+            t.raise_api |= api_broke && !Floors::under(floors.api, v);
+            t.raise_data |= layout_broke && !Floors::under(floors.data, v);
+            match (api_broke, layout_broke) {
+                (true, true) => "BREAK (API and layout)",
+                (false, true) => "BREAK (layout)",
+                _ => "BREAK (API)",
             }
-            (true, false) => {
-                violated.push(v.clone());
-                "BREAK"
-            }
+        } else {
+            t.declared.push(v.clone());
+            "DECLARED BREAK (below the floor)"
         };
         println!("  {v}: {verdict}");
     }
 
-    let elapsed = started.elapsed().as_secs();
-    // Named, never silently dropped: a release that could not read part of its own history has
-    // not verified that part, and the report has to say so even when nothing failed.
-    if !unreadable.is_empty() {
-        println!(
-            "  note: {} release(s) could not be read and were NOT verified: {}",
-            unreadable.len(),
-            unreadable.join(", ")
+    t.report(name, started.elapsed().as_secs())
+}
+
+/// What the release gate found, release by release, and how it ends.
+#[cfg(feature = "registry")]
+#[derive(Default)]
+struct FullTally {
+    violated: Vec<String>,
+    declared: Vec<String>,
+    unreadable: Vec<String>,
+    unfetched: Vec<String>,
+    below_uncached: usize,
+    raise_api: bool,
+    raise_data: bool,
+    checked: usize,
+}
+
+#[cfg(feature = "registry")]
+impl FullTally {
+    /// Say what was and was not verified, and answer the gate's exit code.
+    fn report(&self, name: &str, elapsed: u64) -> i32 {
+        // Named, never silently dropped: a release that could not read part of its own history has
+        // not verified that part, and the report has to say so even when nothing failed.
+        if !self.unreadable.is_empty() {
+            println!(
+                "  note: {} release(s) could not be read and were NOT verified: {}",
+                self.unreadable.len(),
+                self.unreadable.join(", ")
+            );
+        }
+        if self.below_uncached > 0 {
+            println!(
+                "  {} release(s) below the declared floors are not cached and were not compared",
+                self.below_uncached
+            );
+        }
+        if !self.declared.is_empty() {
+            println!(
+                "  {} release(s) below the declared floor differ, as declared: {}",
+                self.declared.len(),
+                self.declared.join(", ")
+            );
+        }
+        if !self.unfetched.is_empty() {
+            eprintln!(
+                "\ncompat check `{name}` --full: {} published release(s) at or above the declared \
+                 floor could not be fetched, so the claim is NOT verified: {}\n  Fetch them \
+                 (`loft install {name}@<version>`) and run this again.",
+                self.unfetched.len(),
+                self.unfetched.join(", ")
+            );
+            return 1;
+        }
+        if self.violated.is_empty() {
+            println!(
+                "compat check `{name}` --full: whole claim verified in {elapsed}s ({} release(s))",
+                self.checked
+            );
+            return 0;
+        }
+        eprintln!(
+            "\ncompat check `{name}` --full: {} release(s) at or above the declared floor are NOT \
+             drop-in: {}\n  Either restore compatibility, or raise {} past them to declare the \
+             break.",
+            self.violated.len(),
+            self.violated.join(", "),
+            Floors::to_raise(self.raise_api, self.raise_data)
         );
+        1
     }
-    if !declared.is_empty() {
-        println!(
-            "  {} release(s) below the declared floor differ, as declared: {}",
-            declared.len(),
-            declared.join(", ")
-        );
-    }
-    if violated.is_empty() {
-        println!(
-            "compat check `{name}` --full: whole claim verified in {elapsed}s ({checked} release(s))"
-        );
-        return 0;
-    }
-    eprintln!(
-        "\ncompat check `{name}` --full: {} release(s) at or above the declared floor are NOT \
-         drop-in: {}\n  Either restore compatibility, or raise `api_compatible_with` past them \
-         to declare the break.",
-        violated.len(),
-        violated.join(", ")
-    );
-    1
 }
 
 /// Step 7 — how long the RELEASE gate may spend proving a package's whole claim.
@@ -6315,37 +6461,58 @@ const RELEASE_WINDOW_BUDGET_SECS: u64 = 600;
 
 #[cfg(feature = "registry")]
 #[expect(clippy::too_many_lines, reason = "inherited")]
-fn compat_check(name: &str, own_version: Option<&str>, floor: Option<&str>, full: bool) -> i32 {
-    // Candidates come from the install cache, because that is what `compat api` / `compat
-    // test` can actually read. Anything not installed is REPORTED as skipped, never silently
-    // dropped — a check that quietly narrows its own scope reports "clean" for work it did
-    // not do.
+fn compat_check(name: &str, own_version: Option<&str>, floors: Floors, full: bool) -> i32 {
+    let floor = floors.api;
+    // The candidates are the releases the REGISTRY lists, joined with whatever is in the
+    // install cache (a release built here and not published yet).  The cache alone is not the
+    // claim: on a machine that never installed the package it is empty, and a check over
+    // nothing reports "clean" for work it did not do (loft#2599).  A listed release that is
+    // not cached is fetched before it is compared.
     let mut versions: Vec<String> = loft::registry_index::installed_packages()
         .into_iter()
         .filter(|(n, v, _)| n == name && Some(v.as_str()) != own_version)
         .map(|(_, v, _)| v)
         .collect();
+    let installed_only = versions.len();
+    let registry_unread = match published_releases(name, own_version) {
+        Ok(listed) => {
+            for v in listed {
+                if !versions.contains(&v) {
+                    versions.push(v);
+                }
+            }
+            None
+        }
+        Err(e) => Some(e),
+    };
     versions.sort_by(|a, b| loft::registry_index::compare_semver(a, b));
+    if let Some(e) = &registry_unread {
+        // Which releases exist is not known, so what is compared is not the claim.  The
+        // release gate proves the whole claim or fails; and with nothing cached either,
+        // there is nothing a pass could mean.
+        if full || versions.is_empty() {
+            eprintln!(
+                "compat check `{name}`: the registry could not be read ({e}), so the releases \
+                 this package promises to stay compatible with are not known — nothing was \
+                 verified ({installed_only} cached)."
+            );
+            return 1;
+        }
+        println!(
+            "compat check `{name}`: the registry could not be read ({e}); comparing against \
+             the {installed_only} cached release(s) only"
+        );
+    }
     // Releases BELOW the declared floor stay in the comparison, reported but never gating.
     // Dropping them would make raising the floor buy SILENCE, which is the wrong gradient
     // entirely: the reflex to bump the number until the check shuts up is what turns floors
     // into decoration. Keeping the promise must be the quiet path and declaring a break the
     // loud one, so a raise converts a failure into an announcement rather than into nothing.
-    let below_floor: Vec<String> = match floor {
-        Some(f) => versions
-            .iter()
-            .filter(|v| {
-                matches!(
-                    loft::registry_index::compare_semver(v, f),
-                    std::cmp::Ordering::Less
-                )
-            })
-            .cloned()
-            .collect(),
-        None => Vec::new(),
-    };
     if versions.is_empty() {
-        println!("compat check `{name}`: no other release installed — nothing to compare against");
+        println!(
+            "compat check `{name}`: the registry lists no other release and none is cached — \
+             nothing to compare against"
+        );
         return 0;
     }
 
@@ -6354,7 +6521,7 @@ fn compat_check(name: &str, own_version: Option<&str>, floor: Option<&str>, full
     // this package promises actually true".  Sampling answers the first honestly and the
     // second not at all.
     if full {
-        return compat_check_full(name, &versions, floor);
+        return compat_check_full(name, &versions, floors);
     }
 
     let latest = versions.last().cloned().expect("non-empty");
@@ -6388,7 +6555,7 @@ fn compat_check(name: &str, own_version: Option<&str>, floor: Option<&str>, full
     }
 
     println!(
-        "compat check `{name}`: {} of {} installed release(s) sampled{}",
+        "compat check `{name}`: {} of {} release(s) sampled{}",
         sample.len(),
         versions.len(),
         if versions.len() > sample.len() {
@@ -6401,10 +6568,16 @@ fn compat_check(name: &str, own_version: Option<&str>, floor: Option<&str>, full
         }
     );
     let mut violated: Vec<String> = Vec::new();
+    let mut declared: Vec<String> = Vec::new();
+    let mut unfetched: Vec<String> = Vec::new();
+    let mut raise = (false, false);
     for v in &sample {
         let dir = loft::registry_index::extract_dir(name, v);
-        if !fa::exists(dir.join("loft.toml")) {
-            println!("  {v}: SKIPPED (not installed)");
+        if let Err(why) = fetch_release_for_compat(name, v) {
+            println!("  {v}: NOT FETCHED ({why})");
+            if floors.promised(v) {
+                unfetched.push(v.clone());
+            }
             continue;
         }
         let old_entry = entry_file_of(&dir, name);
@@ -6423,8 +6596,14 @@ fn compat_check(name: &str, own_version: Option<&str>, floor: Option<&str>, full
                     "data ok"
                 };
                 println!("  {v}: {api_word}, {layout_word}");
-                if matches!(api, loft::api_diff::Verdict::Break(_)) || layout_reshaped(&layout) {
+                let api_broke = matches!(api, loft::api_diff::Verdict::Break(_));
+                let layout_broke = layout_reshaped(&layout);
+                if floors.violates(v, api_broke, layout_broke) {
                     violated.push(v.clone());
+                    raise.0 |= api_broke && !Floors::under(floors.api, v);
+                    raise.1 |= layout_broke && !Floors::under(floors.data, v);
+                } else if api_broke || layout_broke {
+                    declared.push(v.clone());
                 }
             }
             (Err(e), _) | (_, Err(e)) => println!("  {v}: could not read ({e})"),
@@ -6432,7 +6611,7 @@ fn compat_check(name: &str, own_version: Option<&str>, floor: Option<&str>, full
     }
 
     let Some(f) = floor else {
-        if violated.is_empty() {
+        if violated.is_empty() && declared.is_empty() {
             println!(
                 "  `{name}` declares no `api_compatible_with`. Nothing is enforced: add one \
                  naming the oldest release this is still a drop-in for, and this becomes a \
@@ -6449,34 +6628,37 @@ fn compat_check(name: &str, own_version: Option<&str>, floor: Option<&str>, full
     // A break against a release the floor already excludes is the DECLARED one. Say so out
     // loud — it is the thing a reviewer most needs to see, and saying it is what keeps the
     // raise honest rather than a way to go quiet.
-    let declared: Vec<&String> = violated
-        .iter()
-        .filter(|v| below_floor.contains(v))
-        .collect();
     if !declared.is_empty() {
         println!(
-            "  DECLARED BREAK — `{name}` no longer works with {} (floor raised to {f}). \
+            "  DECLARED BREAK — `{name}` no longer works with {} (floors: API {f}, data {}). \
              Consumers on those releases keep resolving to the last version that suits them; \
              this is the supported move, but it is a promise withdrawn, not a free one.",
             declared
                 .iter()
                 .map(|v| v.as_str())
                 .collect::<Vec<_>>()
-                .join(", ")
+                .join(", "),
+            floors.data.unwrap_or(f)
         );
     }
-    let violated: Vec<String> = violated
-        .into_iter()
-        .filter(|v| !below_floor.contains(v))
-        .collect();
+    if !unfetched.is_empty() {
+        println!(
+            "  FAIL — {} published release(s) `{name}` still promises to work with could not be \
+             fetched, so nothing was compared against them: {}",
+            unfetched.len(),
+            unfetched.join(", ")
+        );
+        return 1;
+    }
     if violated.is_empty() {
         return 0;
     }
     println!(
         "  FAIL — `{name}` claims to be a drop-in for >= {f}, but breaks against {}. \
-         Either restore compatibility, or raise `api_compatible_with` past the release you \
-         broke — declaring the break is the supported move, hiding it is not.",
-        violated.join(", ")
+         Either restore compatibility, or raise {} past the release you broke — declaring \
+         the break is the supported move, hiding it is not.",
+        violated.join(", "),
+        Floors::to_raise(raise.0, raise.1)
     );
     1
 }

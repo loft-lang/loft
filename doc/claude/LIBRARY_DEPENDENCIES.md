@@ -8,9 +8,10 @@ declared levels are in [COMPATIBILITY.md](COMPATIBILITY.md).
 ## When a change reaches the dependents
 
 A dependent is reached when the change breaks the base library's own claim. Ask the base
-first, with every earlier release installed (§ The checks, and when they say nothing):
+first:
 
 ```bash
+loft install <base>@<its last release>               # `compat api` reads the install cache
 cd <base> && loft compat api <its last release>     # names each symbol and each reshaped type
 ```
 
@@ -58,26 +59,24 @@ Between 1 and 3 every dependent still resolves to the older base and still works
 declared break leaves no window in which something is broken, only one in which the
 change has not arrived.
 
-## The checks, and when they say nothing
+## The checks, and what each one compares
 
-| Check | Run by | Says nothing when |
+| Check | Run by | Compares against |
 |---|---|---|
-| `loft compat check` | the library CI, on every PR | no earlier release of the package is installed: it prints `no other release installed` and passes (loft#2599) <!-- doc-lint: ok --> |
-| `loft compat check --full` | the publish script, before the tag | the same: it verifies the releases the machine has, not the ones the registry lists |
-| `python3 scripts/thirdparty.py --gate --repo <pkg>` | the library CI and the publish script | never, but it reads every C file of the package, tests' helpers included |
+| `loft compat check` | the library CI, on every PR | a sample of the releases the registry lists: the newest, the API floor, one drawn at random |
+| `loft compat check --full` | the publish script, before the tag | every listed release at or above the lower of the two floors |
+| `python3 scripts/thirdparty.py --gate --repo <pkg>` | the library CI and the publish script | every C file of the package, the helpers of its tests included |
 
-So before a change to a base library, and before publishing one, install what the check
-is to compare against, and read its first line for how many releases it looked at:
+A release the registry lists is fetched when it is not in the install cache, so the check
+means the same on a machine that never installed the package. It fails, and says what it
+could not verify, when the registry cannot be read and nothing is cached, and when a
+release it still promises something about cannot be fetched. Its first line counts the
+releases it looked at: read it.
 
-```bash
-loft install <base>@<each published version>
-cd <base> && loft compat check --full      # "verifying all N installed release(s)": N is the claim
-```
-
-A layout break is held against `api_compatible_with`, not `data_compatible_with`
-(loft#2598): a dependent of step 3 whose API did not change raises both floors to pass. <!-- doc-lint: ok -->
-Write beside the API floor that the API is unchanged, so the next reader does not look for
-the break.
+Each kind of break is held against its own floor: a changed surface against
+`api_compatible_with`, a reshaped record against `data_compatible_with`. The failure names
+the floor to raise. A dependent of step 3 whose API did not change raises its data floor
+alone, and its consumers are not held back.
 
 The publishing checkout must be at a `main` that has every header and rule the libraries
 use: a refusal that names a file of loft's own (`loft_width.h`) is a stale checkout, not a

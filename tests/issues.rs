@@ -18001,11 +18001,18 @@ fn compat_full_window_budget_overrun_fails_the_release() {
         fa::write(d.join("src").join("s7pkg.loft"), source).unwrap();
     }
 
+    // The check asks the registry which releases exist (loft#2599): an index that lists
+    // none of this package's keeps the run off the network and the window as built above.
+    let index = root.join("index.json");
+    fa::write(&index, r#"{"schema_version":1,"packages":{}}"#).unwrap();
+    let index_url = format!("file://{}", index.display().to_string().replace('\\', "/"));
+
     let run = |budget: &str| {
         loft::platform::process::harness_command(loft)
             .args(["compat", "check", "--full"])
             .current_dir(&pkg)
             .env("LOFT_HOME", &root)
+            .env("LOFT_REGISTRY_URL", &index_url)
             .env("LOFT_COMPAT_BUDGET", budget)
             .output()
             .expect("run loft compat check --full")
