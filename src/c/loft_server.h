@@ -23,6 +23,9 @@ int loft_tls_poll(struct loft_tls *t, int ms);
 
 /* The longest frame a client may send; a longer one drops that client. */
 #define LOFT_SRV_MAX_FRAME (16u * 1024 * 1024)
+/* The largest request body taken: a `Content-Length` is the peer's word, and sizes an allocation
+ * before a byte of the body has arrived. */
+#define LOFT_SRV_MAX_BODY (16u * 1024 * 1024)
 /* The longest request head read before the connection is dropped. */
 #define LOFT_SRV_MAX_HEAD (16 * 1024)
 /* A pump client's frame read, once its header is here: a plain socket's bound, and a TLS
@@ -148,13 +151,13 @@ static int loft_srv_parse_request(loft_stream *s) {
         }
         length = ok ? n : 0;
     }
-    if (length > SIZE_MAX / 2) {
+    char *body = length > LOFT_SRV_MAX_BODY ? NULL : (char *) malloc(length ? (size_t) length : 1);
+    /* Too large, or no memory for it: this request is dropped, the server goes on. */
+    if (!body) {
         free(head.p);
         free(heads.p);
         return 0;
     }
-    char *body = (char *) malloc(length ? (size_t) length : 1);
-    if (!body) { fputs("loft: out of memory\n", stderr); abort(); }
     if (length && !loft_stream_read_exact(s, body, (size_t) length)) {
         free(body);
         free(head.p);
