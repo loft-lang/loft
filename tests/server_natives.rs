@@ -357,6 +357,19 @@ fn client(p: &Ports) {
     let (head, body) = read_response(&mut page);
     assert_eq!(header(&head, "content-type"), Some("text/html"));
     assert_eq!(body, b"page /page");
+    // A request that claims a body of nine petabytes: dropped unanswered, and the pump
+    // serves on (everything below needs it to).  A server that sizes an allocation by the
+    // claim dies here.
+    let mut huge = connect(p.plain);
+    huge.write_all(b"POST /page HTTP/1.1\r\nContent-Length: 9000000000000000\r\n\r\n")
+        .expect("write");
+    let mut answer = Vec::new();
+    let _ = huge.read_to_end(&mut answer);
+    assert!(
+        answer.is_empty(),
+        "an oversized request is not answered: {}",
+        String::from_utf8_lossy(&answer)
+    );
     send(&mut a, OP_TEXT, b"a1");
     assert_eq!(text_frame(&mut a), "all 0");
     assert_eq!(text_frame(&mut b), "all 0");
