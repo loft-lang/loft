@@ -1,5 +1,5 @@
 diff --git a/src/generation/coroutine.rs b/src/generation/coroutine.rs
-index 14f599247..a3aa938c3 100644
+index c3dfb2161..bf707fd42 100644
 --- a/src/generation/coroutine.rs
 +++ b/src/generation/coroutine.rs
 @@ -1236,13 +1236,9 @@ fn coroutine_persistent_locals(
@@ -262,7 +262,7 @@ index 14f599247..a3aa938c3 100644
 -                // Any other tuple-valued yield — a variable, a field, a call — is bound once
 -                // and written member by member.  Matched on the literal alone, it wrote no slot
 -                // and the consumer read zeros, with nothing reported.
--                let code = self.generate_expr_buf(val)?;
+-                let code = self.yield_value_code(val)?;
 -                writeln!(w, "                let __yt = {code};")?;
 -                let mut slot = 0usize;
 -                for (i, &kind) in kinds.iter().enumerate() {
@@ -272,7 +272,7 @@ index 14f599247..a3aa938c3 100644
              }
              // `(G-Own)`: the members' temps are handed over with the tuple.
              for field in self.handed_yield_fields(val) {
-@@ -3092,37 +2999,18 @@ impl Output<'_> {
+@@ -3106,37 +3013,18 @@ impl Output<'_> {
                  fields.insert(p, sanitize(&attr.name));
              }
          }
@@ -322,7 +322,7 @@ index 14f599247..a3aa938c3 100644
  
          // The outer `loop {}` in `next_*` is what lets a state hand over to the next one
          // without returning a value.  A lazily-lowered loop needs it for the same reason a
-@@ -3146,8 +3034,7 @@ impl Output<'_> {
+@@ -3160,8 +3048,7 @@ impl Output<'_> {
              &yield_tp,
              &persistent,
              &fields,
@@ -332,7 +332,7 @@ index 14f599247..a3aa938c3 100644
          )?;
  
          // ── 2. impl LoftCoroutine ────────────────────────────────────────────
-@@ -3165,21 +3052,10 @@ impl Output<'_> {
+@@ -3179,21 +3066,10 @@ impl Output<'_> {
          let prev_persistent = std::mem::take(&mut self.coroutine_persistent_fields);
          let prev_allocated = std::mem::take(&mut self.coroutine_allocated_vars);
          self.coroutine_persistent_fields.clone_from(&fields);
@@ -358,7 +358,7 @@ index 14f599247..a3aa938c3 100644
              }
          }
          writeln!(
-@@ -3230,7 +3106,6 @@ impl Output<'_> {
+@@ -3244,7 +3120,6 @@ impl Output<'_> {
          writeln!(w, "}}\n")?;
          self.in_coroutine_body = prev_in_coroutine;
          self.coroutine_persistent_fields = prev_persistent;
@@ -366,7 +366,7 @@ index 14f599247..a3aa938c3 100644
          self.coroutine_allocated_vars = prev_allocated;
          for v in newly_declared {
              self.declared.remove(&v);
-@@ -3248,8 +3123,7 @@ impl Output<'_> {
+@@ -3262,8 +3137,7 @@ impl Output<'_> {
              &segments,
              &persistent,
              &fields,
@@ -376,7 +376,7 @@ index 14f599247..a3aa938c3 100644
          )?;
          if has_for_body {
              self.emit_for_body_factory(
-@@ -3261,7 +3135,6 @@ impl Output<'_> {
+@@ -3275,7 +3149,6 @@ impl Output<'_> {
                  &yield_tp,
                  &persistent,
                  &fields,
@@ -384,7 +384,7 @@ index 14f599247..a3aa938c3 100644
                  &tail,
              )?;
          }
-@@ -3282,7 +3155,6 @@ impl Output<'_> {
+@@ -3296,7 +3169,6 @@ impl Output<'_> {
          yield_tp: &Type,
          persistent: &[(u16, Type)],
          fields: &std::collections::HashMap<u16, String>,
@@ -392,7 +392,7 @@ index 14f599247..a3aa938c3 100644
          tail: &[Value],
      ) -> std::io::Result<()> {
          let is_text = is_text_slot(yield_tp);
-@@ -3612,11 +3484,6 @@ impl Output<'_> {
+@@ -3626,11 +3498,6 @@ impl Output<'_> {
              let init = persistent_default(tp);
              writeln!(w, "        var_{n}: {init},")?;
          }
@@ -405,10 +405,10 @@ index 14f599247..a3aa938c3 100644
          writeln!(w, "        __values,")?;
          writeln!(w, "        __idx: 0,")?;
 diff --git a/src/generation/dispatch.rs b/src/generation/dispatch.rs
-index 9013f25e6..6d85ad38a 100644
+index 62eed2a29..b30ec6300 100644
 --- a/src/generation/dispatch.rs
 +++ b/src/generation/dispatch.rs
-@@ -32,12 +32,6 @@ impl Output<'_> {
+@@ -83,12 +83,6 @@ impl Output<'_> {
          let done = self.output_set_statement(w, var, to);
          self.if_value_type = prev_if_type;
          done?;
@@ -421,7 +421,7 @@ index 9013f25e6..6d85ad38a 100644
          Ok(())
      }
  
-@@ -739,11 +733,7 @@ impl Output<'_> {
+@@ -1029,11 +1023,7 @@ impl Output<'_> {
          // field directly so the value survives across `next_*` calls.
          // The same Var/Set pair would otherwise produce a state-arm-scoped
          // `let mut var_X = …` shadow that arm 1+ cannot see.
@@ -434,7 +434,7 @@ index 9013f25e6..6d85ad38a 100644
              // The struct's own spelling for this field, not the variable's name — two
              // `for i in …` loops in one generator put two `i`s on the struct (loft#928).
              let name = field.clone();
-@@ -2270,9 +2260,7 @@ impl Output<'_> {
+@@ -2782,9 +2772,7 @@ impl Output<'_> {
              self.narrow_local_enc(var)
          };
          if self.declared.contains(&var) && !discard_loop_var {
@@ -445,7 +445,7 @@ index 9013f25e6..6d85ad38a 100644
          } else {
              self.declared.insert(var);
              let var_tp = if discard_loop_var && let Value::Block(bl) = to.unspan() {
-@@ -2537,18 +2525,18 @@ impl Output<'_> {
+@@ -3049,18 +3037,18 @@ impl Output<'_> {
                  } else if tuple_text_elem_clone {
                      // P228: read through the same unspan as the detection above.
                      if let Value::TupleGet(v, idx) = to.unspan() {
@@ -471,7 +471,7 @@ index 9013f25e6..6d85ad38a 100644
                  } else if wrap_fn_ref {
                      self.emit_fn_number(w, to)?;
 diff --git a/src/generation/emit.rs b/src/generation/emit.rs
-index f3c093fab..057ea6f28 100644
+index c0fe4fe25..0313a47ac 100644
 --- a/src/generation/emit.rs
 +++ b/src/generation/emit.rs
 @@ -331,19 +331,6 @@ impl Output<'_> {
@@ -483,7 +483,7 @@ index f3c093fab..057ea6f28 100644
 -                        // and read member by member: matched on the literal alone, it pushed
 -                        // nothing and the consumer read zeros.
 -                        let mut buf: Vec<u8> = Vec::new();
--                        self.output_code_node(&mut buf, node.yield_inner())?;
+-                        self.output_yield_value(&mut buf, node.yield_inner())?;
 -                        let code = String::from_utf8_lossy(&buf).into_owned();
 -                        write!(w, "let __yt = {code}; ")?;
 -                        for (i, &kind) in kinds.iter().enumerate() {
@@ -494,7 +494,7 @@ index f3c093fab..057ea6f28 100644
                      }
                      write!(w, "}}")?;
                  } else if self.yield_collect {
-@@ -525,11 +512,6 @@ impl Output<'_> {
+@@ -549,11 +536,6 @@ impl Output<'_> {
                      if let Some(slot) = variables.linked_narrow_slot(var) {
                          return write!(w, "{}", slot.decode_rust(&format!("self.var_{field}")));
                      }
@@ -506,7 +506,7 @@ index f3c093fab..057ea6f28 100644
                      return write!(w, "self.var_{field}");
                  } else if self.text_borrowed(var) {
                      // A borrowed text reads as the `&str` it holds.
-@@ -732,8 +714,6 @@ impl Output<'_> {
+@@ -763,8 +745,6 @@ impl Output<'_> {
                  let idx = node.tupleget_idx();
                  let variables = self.data.def(self.def_nr).variables();
                  let (name, deref) = crate::generation::tuple_base(variables, var);
@@ -515,7 +515,7 @@ index f3c093fab..057ea6f28 100644
                  if deref {
                      // A `&`-bound tuple LOCAL: the element sits behind a raw pointer.
                      // `T-Ref-El` admits only scalars here, so none of the text/borrow
-@@ -778,8 +758,6 @@ impl Output<'_> {
+@@ -809,8 +789,6 @@ impl Output<'_> {
                  let idx = node.tupleput_idx();
                  let variables = self.data.def(self.def_nr).variables();
                  let (name, deref) = crate::generation::tuple_base(variables, var);
@@ -525,10 +525,10 @@ index f3c093fab..057ea6f28 100644
                  // the same rule the tuple LITERAL arm below obeys through this flag.
                  // Without it `t.0 = "X"` emitted `var_t.0 = "X";` and rustc refused the
 diff --git a/src/generation/mod.rs b/src/generation/mod.rs
-index ff33cf026..d3826f0da 100644
+index 707faf1c2..4d29d8b8e 100644
 --- a/src/generation/mod.rs
 +++ b/src/generation/mod.rs
-@@ -992,12 +992,6 @@ pub struct Output<'a> {
+@@ -1000,12 +1000,6 @@ pub struct Output<'a> {
      /// is derived — keeping membership and spelling in ONE lookup is what stops an emitter
      /// from reading a field under a name the struct definition never used.
      pub coroutine_persistent_fields: HashMap<u16, String>,
@@ -541,7 +541,7 @@ index ff33cf026..d3826f0da 100644
      /// Coroutine-persistent vars whose allocating initialiser has already been emitted inside
      /// the current `impl LoftCoroutine`.  A second `Set(v, Null)` on the same field is the
      /// @P302 in-place clear, which must NOT re-run `null_named` (that would orphan the store).
-@@ -1963,7 +1957,6 @@ impl<'a> Output<'a> {
+@@ -1975,7 +1969,6 @@ impl<'a> Output<'a> {
              yield_collect_refuse: None,
              yield_lazy_wrap: None,
              coroutine_persistent_fields: HashMap::new(),
@@ -549,7 +549,7 @@ index ff33cf026..d3826f0da 100644
              coroutine_allocated_vars: HashSet::new(),
              fn_ref_context: false,
              if_value_type: None,
-@@ -5913,32 +5906,6 @@ impl Output<'_> {
+@@ -5975,32 +5968,6 @@ impl Output<'_> {
          }
      }
  
