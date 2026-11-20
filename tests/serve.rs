@@ -121,6 +121,11 @@ fn ws_recv(reader: &mut BufReader<TcpStream>) -> String {
             reader.read_exact(&mut b).unwrap();
             u16::from_be_bytes(b) as usize
         }
+        127 => {
+            let mut b = [0u8; 8];
+            reader.read_exact(&mut b).unwrap();
+            usize::try_from(u64::from_be_bytes(b)).expect("a frame length that fits")
+        }
         n => n as usize,
     };
     let mut payload = vec![0u8; len];
@@ -874,6 +879,75 @@ fn serve_ws_game_launch_streams_and_stops() {
     );
     let _ = fa::remove_file(&path);
     let _ = fa::remove_file(&loop_path);
+}
+
+#[test]
+fn serve_ws_game_exit_reports_every_line_the_game_wrote() {
+    // The `gameStatus` that reports a game's exit carries the last of its output.  A line the
+    // game left unterminated (`print`, no newline) reaches the pipe reader only at end of file,
+    // which comes as the child ends, so a poll that sees the exit can come before the reader
+    // has appended it; reported then, the text was lost.  The game is launched many times and
+    // polled back to back, so polls land on that edge.
+    // @falsified-at: 2026-11-20 on tuxedo-pr2589-next — main's `game_status` (the chunk taken
+    //   before the exit is seen) lost the output in 13 to 19 of 40 rounds over three runs; with
+    //   the chunk taken after the exit but the readers not waited for
+    //   (tests/falsified/a-game-exit-reports-the-output-its-readers-still-hold.patch), 1 of 40;
+    //   with both, 0 of 40 over three runs.
+    let loft_bin = std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"));
+    if !fa::exists(&loft_bin) {
+        eprintln!("skipping: {} not built", loft_bin.display());
+        return;
+    }
+    // SAFETY: the same constant value `serve_ws_game_launch_streams_and_stops` sets.
+    unsafe { std::env::set_var("LOFT_BIN", &loft_bin) };
+    let path = tmp_program(
+        "gametail",
+        "fn main() {\n  print(\"tail-of-the-game\");\n}\n",
+    );
+    let file = path.to_string_lossy().into_owned();
+    let jfile = json_path(&path);
+    let port = 18796;
+    start_server(port, file.clone());
+    let mut ws = ws_connect(port);
+    let rounds = 40;
+    let mut lost = Vec::new();
+    let mut id = 1;
+    for round in 0..rounds {
+        ws_send(
+            ws.get_ref(),
+            &format!("{{\"id\":{id},\"req\":\"launchGame\",\"file\":\"{jfile}\"}}"),
+        );
+        id += 1;
+        assert!(
+            ws_recv(&mut ws).contains("\"ok\":true"),
+            "launch {round} ok"
+        );
+        let mut all = String::new();
+        let mut exited = false;
+        let deadline = vm_deadline(20);
+        while Instant::now() < deadline {
+            ws_send(
+                ws.get_ref(),
+                &format!("{{\"id\":{id},\"req\":\"gameStatus\"}}"),
+            );
+            id += 1;
+            let r = ws_recv(&mut ws);
+            all.push_str(&r);
+            if r.contains("\"running\":false") {
+                exited = true;
+                break;
+            }
+        }
+        assert!(exited, "round {round}: the game ended within the deadline");
+        if !all.contains("tail-of-the-game") {
+            lost.push(round);
+        }
+    }
+    assert!(
+        lost.is_empty(),
+        "rounds whose exit lost the game's output: {lost:?} of {rounds}"
+    );
+    let _ = fa::remove_file(&path);
 }
 
 /// The game a `--serve` Apply test runs: a world with a keyed collection, a counter the
