@@ -1537,6 +1537,12 @@ pub fn def_has_attr_prefix(def: ir::Definition, prefix: text) -> boolean {
   false
 }
 
+// `is_match_wrapper` (control.rs): the names a `match` lowers its block under — the one list
+// `if_tail_yields_text` and `text_branch_into` look through.
+pub fn is_match_wrapper(name: text) -> boolean {
+  name == "match" || name == "scalar_match" || name == "vector_match" || name == "struct_match" || name == "tuple_match" || name == "stream match" || name == "cursor match"
+}
+
 // `if_tail_yields_text`: an `if` (through a `return`, a `??` block or a match wrapper) whose
 // every arm answers a value.
 pub fn if_tail_yields_text(n: ir::Node) -> boolean {
@@ -1547,7 +1553,7 @@ pub fn if_tail_yields_text(n: ir::Node) -> boolean {
     NdIf { cond: _, t, f } => arm_yields_text(t) && arm_yields_text(f),
     NdBlock { block } => {
       nm = block[0].name;
-      wrapper = nm == "ncc" || nm == "ncr" || nm == "match" || nm == "scalar_match" || nm == "vector_match" || nm == "struct_match" || nm == "tuple_match";
+      wrapper = nm == "ncc" || nm == "ncr" || is_match_wrapper(nm);
       wrapper && len(block[0].operators) > 0 && if_tail_yields_text(block[0].operators[-1]!)
     },
     _ => false

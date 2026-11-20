@@ -2218,7 +2218,7 @@ pub fn text_branch_into(c: integer, code: ir::Node) -> ir::Node? {
     NdIf { cond: _ } => text_arms_into(c, code),
     NdBlock { block } => {
       bl = block[0];
-      if (bl.name != "ncc" && bl.name != "ncr" && bl.name != "match" && bl.name != "scalar_match") || len(bl.operators) == 0 {
+      if (bl.name != "ncc" && bl.name != "ncr" && !el_expressions::is_match_wrapper(bl.name)) || len(bl.operators) == 0 {
         return null;
       }
       tail = text_arms_into(c, el_ir::unspan(bl.operators[-1] ?? ir::NdNull));
@@ -2281,7 +2281,8 @@ pub fn text_arm_into(c: integer, arm: ir::Node) -> ir::Node? {
       }
       // A block at the tail (a format string's) takes the write at its own tail, as
       // `push_text_arms_into` recurses into it.
-      inner = if el_ir::unspan(last) is NdBlock { text_arm_into(c, el_ir::unspan(last)) } else { null };
+      // (So does an `if` there — a bare `w ?? "-"` — each of its arms.)
+      inner = if el_ir::unspan(last) is NdBlock { text_arm_into(c, el_ir::unspan(last)) } else if el_ir::unspan(last) is NdIf { text_arms_into(c, el_ir::unspan(last)) } else { null };
       ops += [el_ir::respan(last, inner ?? el_ir::v_set(c, el_ir::unspan(last)))];
       bl.operators = ops;
       bl.result = [ir::TyVoid];
