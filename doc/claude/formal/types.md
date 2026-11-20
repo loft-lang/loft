@@ -819,7 +819,9 @@ unchanged, since every type here is still an `Integer[a,b]`.
               unchosen width gets.  A target narrower than i32 (`u8`, a `limit`) is still
               refused as (I-Narrow) says, and so is an `i64` or `u32` source.
   (W-Count)   in a regime file a count — a collection's `len`, a text's `size` — has the i32
-              type.
+              type, and so has every counter the compiler makes for a loop there: `x#index`,
+              `x#count`, `x#next`, a walk's position and length, a comprehension's index.  No
+              collection under the regime holds more elements than an i32 counts.
 ```
 
 **In words.** Under `#width 32` the everyday names mean 32 bits, and a program that needs 64
