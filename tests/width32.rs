@@ -404,3 +404,39 @@ fn a_vector_index_past_the_build_s_width_is_outside_the_vector() {
     let c64 = emit_c("held-c64", HELD, None);
     assert!(!c64.contains("#define LOFT_WIDTH32"), "the 64-bit unit");
 }
+
+const WALK: &str = "struct P { a: integer }
+fn walk(ps: vector<P>) -> integer {
+  s = 0;
+  for p in ps { s += p.a + p#index; }
+  s
+}
+fn main() {
+  ps = [P { a: 3 }, P { a: 5 }, P { a: 9 }];
+  println(\"{walk(ps)} {sizeof(integer)}\");
+}
+";
+
+/// `@FR-W-Count` — a loop's own counter takes the file's width: in a 32-bit build the walk's
+/// `p#index` is an `int32_t` stepped by a 32-bit add, where the 64-bit build holds an
+/// `int64_t`.  The answer is the same, (3 + 0) + (5 + 1) + (9 + 2) = 20, on both backends.
+#[test]
+fn a_loop_counter_takes_the_files_width() {
+    for backend in ["--interpret", "--native-c"] {
+        let b = &backend[2..5];
+        assert_eq!(
+            run_on(backend, &format!("walk{b}32"), "", WALK, Some("32")),
+            "20 4\n",
+            "{backend}"
+        );
+        assert_eq!(
+            run_on(backend, &format!("walk{b}64"), "", WALK, None),
+            "20 8\n",
+            "{backend}"
+        );
+    }
+    let c32 = emit_c("walk-c32", WALK, Some("32"));
+    let c64 = emit_c("walk-c64", WALK, None);
+    assert_eq!(local_ctype(&c32, "p_index"), "int32_t", "under the regime");
+    assert_eq!(local_ctype(&c64, "p_index"), "int64_t", "the 64-bit build");
+}
