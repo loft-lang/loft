@@ -1537,6 +1537,27 @@ pub fn def_has_attr_prefix(def: ir::Definition, prefix: text) -> boolean {
   false
 }
 
+// `callee_forwards_foreign_store`: a function with no body (a native), or one whose body ends
+// in a call of such a function, answers a store of its own making.
+fn forwards_foreign_store(e: el::El, d: integer, depth: integer) -> boolean {
+  if depth > 8 || d < 0 {
+    return false;
+  }
+  def = el::def(e, d);
+  if !starts_with(def.name, "n_") && !starts_with(def.name, "t_") {
+    return false;
+  }
+  code = def.code[0] ?? ir::NdNull;
+  if code is NdNull {
+    return true;
+  }
+  t = match code { NdBlock { block } => if len(block[0].operators) > 0 { el_ir::unspan(el_ir::last(block[0].operators)) } else { ir::NdNull }, _ => ir::NdNull };
+  match t {
+    NdCall { def_nr } => forwards_foreign_store(e, def_nr, depth + 1),
+    _ => false
+  }
+}
+
 // `is_match_wrapper` (control.rs): the names a `match` lowers its block under — the one list
 // `if_tail_yields_text` and `text_branch_into` look through.
 pub fn is_match_wrapper(name: text) -> boolean {
@@ -3497,6 +3518,17 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
   // A vector field of a local record is copied into the buffer at the tail, as such a local is.
   field_tail = calls(e, tail, "OpGetField") && place_root(e, tail) >= 0 && !vars.vars[place_root(e, tail)]!.argument;
   ret = el::def(e, d).returned[0];
+  // (`AsIs` over a user function forwarding a foreign store: the call's own buffer is a vector
+  // of the result's element, its type made where the body ends — at its `}` — on the first pass.)
+  ftd = match tail { NdCall { def_nr: ftn } => ftn, _ => -1 };
+  if e.first_pass && ftd >= 0 && !((el::def(e, ftd).code[0] ?? ir::NdNull) is NdNull) && forwards_foreign_store(e, ftd, 0) {
+    fel = match el_types::base(result) { TyVector { inner } => inner, _ => ir::TyVoid };
+    fnm = el_types::elem_name(e, fel);
+    fbe = match e.p.nodes[vars.body] { SBlock { end } => end, _ => -1 };
+    if fnm != "" && fbe >= 0 && el::def_nr(e, "main_vector<{fnm}>") < 0 {
+      el_schema::make_vector_def(e, fel, fnm, el::pos_at(e, fbe), true, narrow_early: false);
+    }
+  }
   if e.first_pass {
     if (literal || local >= 0 || field_tail) && !el_types::deps(ret).contains(ba) {
       e.b.data.definitions[d].returned = [el_types::with_deps(ret, el_types::deps(ret) + [ba])];
@@ -3545,6 +3577,13 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
   // A body ending in a `return` that delivered into the buffer itself (`return q ?? […]`:
   // clear, append, `return __retbuf`) has nothing left to deliver.
   if el_types::deps(ret).contains(ba) && match tail { NdInsert { items: ti } => len(ti) > 0 && el_ir::unspan(ti[-1]!) == ir::NdReturn { inner: ir::NdVar { n: rb } }, NdReturn { inner: tri } => el_ir::unspan(tri) == ir::NdVar { n: rb } && len(bl.operators) > 1 && calls(e, el_ir::unspan(bl.operators[-2]!), "OpAppendVector"), _ => false } {
+    return code;
+  }
+  // `classify_vector_delivery`'s `AsIs`: a tail call whose answer is a store of the callee's
+  // own — a native's, or a function's that forwards one (`callee_forwards_foreign_store`) — is
+  // returned as it stands; the buffer goes unused.
+  tcd = match tail { NdCall { def_nr: tdn } => tdn, _ => -1 };
+  if tcd >= 0 && forwards_foreign_store(e, tcd, 0) {
     return code;
   }
   if len(bl.operators) == 0 || !el_types::deps(ret).contains(ba) {
