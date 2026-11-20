@@ -172,6 +172,11 @@ the port while the board starts still gets them.
 `src/esp_app.rs` names, installed for `esp32p4`, found through `IDF_PATH` or under
 `~/.espressif`).
 
+- **32-bit.**  The app is built under the 32-bit regime without being asked
+  ([WIDTH32.md](WIDTH32.md)): a plain `integer` is an `i32` and a plain `float` a `single`,
+  in the program, its libraries and the standard library.  `--width 64` builds the 64-bit
+  app, which the processor runs through library calls.
+
 - **No Rust.**  The project holds the C file the C backend writes (the program and the runtime)
   and the `[c]` parts of the libraries the program uses.  A C build loads no library's Rust part
   ([HARDWARE_BACKENDS.md § The processor](HARDWARE_BACKENDS.md#the-processor)).

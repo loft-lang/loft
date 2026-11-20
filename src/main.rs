@@ -267,6 +267,9 @@ fn print_help() {
         "                                file, the standard library too (`#width 64` in a file keeps it)"
     );
     println!(
+        "                                --native-esp builds so by default; `--width 64` there keeps 64 bits"
+    );
+    println!(
         "  --timeout <secs>              hard-kill the process after <secs>+grace seconds (PLAN49)"
     );
     println!(
@@ -8150,6 +8153,15 @@ fn main() {
                 i += 1;
             }
         } else if a == "--native-esp" {
+            // @PLN217 — the Tanmatsu's processor is 32-bit, so its app is built under the
+            // 32-bit regime unless a width was asked for: `--width 64` (before or after this
+            // flag) or `LOFT_WIDTH` keeps the choice.
+            if std::env::var_os("LOFT_WIDTH").is_none() {
+                // SAFETY: as for --width — set before any parse reads it.
+                unsafe {
+                    std::env::set_var("LOFT_WIDTH", "32");
+                }
+            }
             // The project directory is optional, as `--native-wasm`'s output is.
             native_esp = Some(
                 if argv
