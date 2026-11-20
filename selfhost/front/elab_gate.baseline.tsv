@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	7664b959f903f6c8f216f5874d7e7285a9ab5b77
 
-layer	elab	agree	1298	of	2121
+layer	elab	agree	1301	of	2121
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -609,8 +609,6 @@ elab	refused	loft-suite/rules/types/T-Chk-Vec/a-comprehension-body-is-checked-ag
 elab	refused	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft
 elab	refused	loft-suite/rules/types/T-Chk/1682-a-null-member-in-the-first-tuple-arm-does-not-pin-the-join.loft
 elab	refused	loft-suite/rules/types/T-Chk/2337-an-empty-literal-arm-builds-its-fields-collection.loft
-elab	refused	loft-suite/rules/types/T-Syn/a-struct-literal-inside-sizeof-or-type-name-synthesises-its-type.loft
-elab	refused	loft-suite/rules/types/T-Syn/an-expression-synthesises-its-own-type.loft
 elab	refused	loft-suite/rules/types/T-Syn/type-name-of-a-generic-instance-names-its-arguments-as-written.loft
 elab	refused	loft-suite/rules/types/W-Op/a-u32-operand-makes-the-operation-64-bit.loft
 elab	refused	tests/docs/01-keywords.loft
@@ -817,7 +815,6 @@ elab	refused	tests/scripts/an-append-loop-keeps-one-window.loft
 elab	refused	tests/scripts/an-append-twin-writes-through-its-callers-window.loft
 elab	refused	tests/scripts/an-appended-call-result-arrives-from-every-exit.loft
 elab	refused	tests/scripts/an-appended-source-is-built-as-often-as-the-append-runs.loft
-elab	refused	tests/scripts/an-arrived-absence-keeps-a-tuples-text-frees.loft
 elab	refused	tests/scripts/an-index-walk-steps-from-its-hint-only-while-it-holds.loft
 elab	refused	tests/scripts/an-operand-is-copied-only-when-a-later-operand-can-write-it.loft
 elab	refused	tests/scripts/link-safe-oracle.loft
@@ -830,7 +827,7 @@ elab	refused	tests/scripts/store_compact_slack_730.loft
 elab	refused	tests/scripts/store_digest_b0.loft
 elab	refused	tests/scripts/store_paged_enum_field.loft
 
-layer	elab-functions	agree	14355	of	24787
+layer	elab-functions	agree	14317	of	24744
 elab-functions	agree	lib/docs.loft::Anchor
 elab-functions	agree	lib/docs.loft::Character
 elab-functions	agree	lib/docs.loft::Double
@@ -2509,6 +2506,7 @@ elab-functions	agree	loft-suite/rules/calls/F-Recv/a-call-reaches-the-method-spe
 elab-functions	agree	loft-suite/rules/calls/F-Recv/a-call-reaches-the-method-spelled-for-its-receivers-nullability.loft::Wb
 elab-functions	agree	loft-suite/rules/calls/F-Recv/a-call-reaches-the-method-spelled-for-its-receivers-nullability.loft::__nullable<Duo1432>
 elab-functions	agree	loft-suite/rules/calls/F-Recv/a-call-reaches-the-method-spelled-for-its-receivers-nullability.loft::main_vector<__nullable<Duo1432>>
+elab-functions	agree	loft-suite/rules/calls/F-Recv/a-call-reaches-the-method-spelled-for-its-receivers-nullability.loft::n_test_a_narrow_receiver_reaches_the_definition_of_its_own_nullability
 elab-functions	agree	loft-suite/rules/calls/F-Recv/a-call-reaches-the-method-spelled-for-its-receivers-nullability.loft::n_test_a_wide_nullable_receiver_warns_into_the_dense_body
 elab-functions	agree	loft-suite/rules/calls/F-Recv/a-call-reaches-the-method-spelled-for-its-receivers-nullability.loft::t_2Ax_scale
 elab-functions	agree	loft-suite/rules/calls/F-Recv/a-call-reaches-the-method-spelled-for-its-receivers-nullability.loft::t_2Wa_label
@@ -11287,30 +11285,6 @@ elab-functions	agree	loft-suite/rules/types/T-Chk/2337-an-empty-literal-arm-buil
 elab-functions	agree	loft-suite/rules/types/T-Chk/2337-an-empty-literal-arm-builds-its-fields-collection.loft::n_chain
 elab-functions	agree	loft-suite/rules/types/T-Chk/2337-an-empty-literal-arm-builds-its-fields-collection.loft::n_mk
 elab-functions	agree	loft-suite/rules/types/T-Chk/2337-an-empty-literal-arm-builds-its-fields-collection.loft::n_words
-elab-functions	agree	loft-suite/rules/types/T-Syn/a-struct-literal-inside-sizeof-or-type-name-synthesises-its-type.loft::(schema)
-elab-functions	agree	loft-suite/rules/types/T-Syn/a-struct-literal-inside-sizeof-or-type-name-synthesises-its-type.loft::TCi
-elab-functions	agree	loft-suite/rules/types/T-Syn/a-struct-literal-inside-sizeof-or-type-name-synthesises-its-type.loft::TPt
-elab-functions	agree	loft-suite/rules/types/T-Syn/a-struct-literal-inside-sizeof-or-type-name-synthesises-its-type.loft::TSh
-elab-functions	agree	loft-suite/rules/types/T-Syn/a-struct-literal-inside-sizeof-or-type-name-synthesises-its-type.loft::TSq
-elab-functions	agree	loft-suite/rules/types/T-Syn/a-struct-literal-inside-sizeof-or-type-name-synthesises-its-type.loft::n_main
-elab-functions	agree	loft-suite/rules/types/T-Syn/an-expression-synthesises-its-own-type.loft::(schema)
-elab-functions	agree	loft-suite/rules/types/T-Syn/an-expression-synthesises-its-own-type.loft::Ci
-elab-functions	agree	loft-suite/rules/types/T-Syn/an-expression-synthesises-its-own-type.loft::Pt
-elab-functions	agree	loft-suite/rules/types/T-Syn/an-expression-synthesises-its-own-type.loft::Sh
-elab-functions	agree	loft-suite/rules/types/T-Syn/an-expression-synthesises-its-own-type.loft::Sq
-elab-functions	agree	loft-suite/rules/types/T-Syn/an-expression-synthesises-its-own-type.loft::f_15vector<integer>_ty
-elab-functions	agree	loft-suite/rules/types/T-Syn/an-expression-synthesises-its-own-type.loft::f_17integer(0, 255)s1_ty
-elab-functions	agree	loft-suite/rules/types/T-Syn/an-expression-synthesises-its-own-type.loft::f_18integer(0, 255)s1?_ty
-elab-functions	agree	loft-suite/rules/types/T-Syn/an-expression-synthesises-its-own-type.loft::f_2Sh_ty
-elab-functions	agree	loft-suite/rules/types/T-Syn/an-expression-synthesises-its-own-type.loft::f_5float_ty
-elab-functions	agree	loft-suite/rules/types/T-Syn/an-expression-synthesises-its-own-type.loft::f_7integer_ty
-elab-functions	agree	loft-suite/rules/types/T-Syn/an-expression-synthesises-its-own-type.loft::main_vector<Pt>
-elab-functions	agree	loft-suite/rules/types/T-Syn/an-expression-synthesises-its-own-type.loft::main_vector<integer(0, 255)>
-elab-functions	agree	loft-suite/rules/types/T-Syn/an-expression-synthesises-its-own-type.loft::n_main
-elab-functions	agree	loft-suite/rules/types/T-Syn/an-expression-synthesises-its-own-type.loft::n_mk
-elab-functions	agree	loft-suite/rules/types/T-Syn/an-expression-synthesises-its-own-type.loft::ty
-elab-functions	agree	loft-suite/rules/types/T-Syn/an-expression-synthesises-its-own-type.loft::vector<Pt>
-elab-functions	agree	loft-suite/rules/types/T-Syn/an-expression-synthesises-its-own-type.loft::vector<integer(0, 255)>
 elab-functions	agree	loft-suite/rules/types/W-Op/a-u32-operand-makes-the-operation-64-bit.loft::n_fold_wo
 elab-functions	agree	loft-suite/rules/types/W-Op/a-u32-operand-makes-the-operation-64-bit.loft::n_main
 elab-functions	agree	loft-suite/rules/types/W-Op/a-u32-operand-makes-the-operation-64-bit.loft::n_or_wo
@@ -15057,21 +15031,6 @@ elab-functions	agree	tests/scripts/an-appended-source-is-built-as-often-as-the-a
 elab-functions	agree	tests/scripts/an-appended-source-is-built-as-often-as-the-append-runs.loft::n_test_a_source_built_inside_the_loop_still_elides
 elab-functions	agree	tests/scripts/an-appended-source-is-built-as-often-as-the-append-runs.loft::n_test_the_appended_length_follows_the_iteration_count
 elab-functions	agree	tests/scripts/an-appended-source-is-built-as-often-as-the-append-runs.loft::n_test_the_straight_line_append_still_elides
-elab-functions	agree	tests/scripts/an-arrived-absence-keeps-a-tuples-text-frees.loft::(schema)
-elab-functions	agree	tests/scripts/an-arrived-absence-keeps-a-tuples-text-frees.loft::Rec
-elab-functions	agree	tests/scripts/an-arrived-absence-keeps-a-tuples-text-frees.loft::__tuple<integer,(text, integer)>
-elab-functions	agree	tests/scripts/an-arrived-absence-keeps-a-tuples-text-frees.loft::__tuple<integer,Rec>
-elab-functions	agree	tests/scripts/an-arrived-absence-keeps-a-tuples-text-frees.loft::__tuple<integer,text>
-elab-functions	agree	tests/scripts/an-arrived-absence-keeps-a-tuples-text-frees.loft::__tuple<text,integer>
-elab-functions	agree	tests/scripts/an-arrived-absence-keeps-a-tuples-text-frees.loft::main_vector<(integer, (text, integer))>
-elab-functions	agree	tests/scripts/an-arrived-absence-keeps-a-tuples-text-frees.loft::main_vector<(integer, Rec)>
-elab-functions	agree	tests/scripts/an-arrived-absence-keeps-a-tuples-text-frees.loft::main_vector<(integer, text)>
-elab-functions	agree	tests/scripts/an-arrived-absence-keeps-a-tuples-text-frees.loft::vector<(integer, (text, integer))>
-elab-functions	agree	tests/scripts/an-arrived-absence-keeps-a-tuples-text-frees.loft::vector<(integer, Rec)>
-elab-functions	agree	tests/scripts/an-arrived-absence-keeps-a-tuples-text-frees.loft::vector<(integer, text)>
-elab-functions	agree	tests/scripts/an-arrived-absence-keeps-a-tuples-text-frees.loft::vector<__tuple<integer,(text, integer)>>
-elab-functions	agree	tests/scripts/an-arrived-absence-keeps-a-tuples-text-frees.loft::vector<__tuple<integer,Rec>>
-elab-functions	agree	tests/scripts/an-arrived-absence-keeps-a-tuples-text-frees.loft::vector<__tuple<integer,text>>
 elab-functions	agree	tests/scripts/an-index-walk-steps-from-its-hint-only-while-it-holds.loft::(schema)
 elab-functions	agree	tests/scripts/an-index-walk-steps-from-its-hint-only-while-it-holds.loft::Db
 elab-functions	agree	tests/scripts/an-index-walk-steps-from-its-hint-only-while-it-holds.loft::Elm
@@ -15187,7 +15146,7 @@ elab-functions	agree	tests/scripts/store_paged_enum_field.loft::main_vector<inte
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::n_bytes
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::vector<integer(0, 255)>
 
-layer	elab-pass1	agree	11813	of	17644
+layer	elab-pass1	agree	11816	of	17650
 elab-pass1	agree	lib/code.loft::t_4Code_add_block
 elab-pass1	agree	lib/code.loft::t_4Code_add_if
 elab-pass1	agree	lib/code.loft::t_4Code_add_loop
@@ -16223,6 +16182,7 @@ elab-pass1	agree	loft-suite/rules/calls/F-Recv/1780-a-method-call-dispatches-on-
 elab-pass1	agree	loft-suite/rules/calls/F-Recv/1780-a-method-call-dispatches-on-every-argument-like-the-call.loft::t_9Rect#Rect_hits
 elab-pass1	agree	loft-suite/rules/calls/F-Recv/1817-an-operator-reaches-every-overload-of-its-second-operand.loft::t_1V_compare
 elab-pass1	agree	loft-suite/rules/calls/F-Recv/1817-an-operator-reaches-every-overload-of-its-second-operand.loft::t_9V#integer_compare
+elab-pass1	agree	loft-suite/rules/calls/F-Recv/a-call-reaches-the-method-spelled-for-its-receivers-nullability.loft::n_test_a_narrow_receiver_reaches_the_definition_of_its_own_nullability
 elab-pass1	agree	loft-suite/rules/calls/F-Recv/a-call-reaches-the-method-spelled-for-its-receivers-nullability.loft::n_test_a_wide_nullable_receiver_warns_into_the_dense_body
 elab-pass1	agree	loft-suite/rules/calls/F-Recv/a-call-reaches-the-method-spelled-for-its-receivers-nullability.loft::t_2Ax_scale
 elab-pass1	agree	loft-suite/rules/calls/F-Recv/a-call-reaches-the-method-spelled-for-its-receivers-nullability.loft::t_2Wa_label
@@ -23065,12 +23025,14 @@ elab-pass1	agree	loft-suite/rules/types/T-Sub/1932-a-declared-integer-local-take
 elab-pass1	agree	loft-suite/rules/types/T-Sub/1932-a-declared-integer-local-takes-an-enum-tag.loft::n_tag1932
 elab-pass1	agree	loft-suite/rules/types/T-Sub/1932-a-declared-integer-local-takes-an-enum-tag.loft::n_test_every_store_takes_the_tag
 elab-pass1	agree	loft-suite/rules/types/T-Syn/a-struct-literal-inside-sizeof-or-type-name-synthesises-its-type.loft::n_main
+elab-pass1	agree	loft-suite/rules/types/T-Syn/a-struct-literal-inside-sizeof-or-type-name-synthesises-its-type.loft::n_test_a_literal_argument_is_an_expression
 elab-pass1	agree	loft-suite/rules/types/T-Syn/an-expression-synthesises-its-own-type.loft::f_15vector<integer>_ty
 elab-pass1	agree	loft-suite/rules/types/T-Syn/an-expression-synthesises-its-own-type.loft::f_17integer(0, 255)s1_ty
 elab-pass1	agree	loft-suite/rules/types/T-Syn/an-expression-synthesises-its-own-type.loft::f_18integer(0, 255)s1?_ty
 elab-pass1	agree	loft-suite/rules/types/T-Syn/an-expression-synthesises-its-own-type.loft::f_2Sh_ty
 elab-pass1	agree	loft-suite/rules/types/T-Syn/an-expression-synthesises-its-own-type.loft::f_5float_ty
 elab-pass1	agree	loft-suite/rules/types/T-Syn/an-expression-synthesises-its-own-type.loft::n_main
+elab-pass1	agree	loft-suite/rules/types/T-Syn/an-expression-synthesises-its-own-type.loft::n_ty
 elab-pass1	agree	loft-suite/rules/types/W-Op/a-u32-operand-makes-the-operation-64-bit.loft::n_fold_wo
 elab-pass1	agree	loft-suite/rules/types/W-Op/a-u32-operand-makes-the-operation-64-bit.loft::n_main
 elab-pass1	agree	loft-suite/rules/types/W-Op/a-u32-operand-makes-the-operation-64-bit.loft::n_or_wo
