@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	7664b959f903f6c8f216f5874d7e7285a9ab5b77
 
-layer	elab	agree	1295	of	2121
+layer	elab	agree	1297	of	2121
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -139,14 +139,12 @@ elab	refused	loft-suite/rules/closures/L-CapHeap/1725-a-reassigned-join-capture-
 elab	refused	loft-suite/rules/closures/L-CapHeap/a-captured-heap-parameter-is-shared-with-the-caller-both-ways.loft
 elab	refused	loft-suite/rules/closures/L-CapHeap/a-lambda-reads-its-captures-inside-a-comprehension-and-leaves-them-alive.loft
 elab	refused	loft-suite/rules/closures/L-CapKeep/2272-a-fn-ref-bound-in-every-arm-keeps-the-arm-that-ran.loft
-elab	refused	loft-suite/rules/closures/L-CapKeep/2512-a-lambda-the-callee-hands-back-is-released-once.loft
 elab	refused	loft-suite/rules/closures/L-CapKeep/each-run-of-a-build-in-a-loop-is-its-own-record-and-a-kept-closure-keeps-its-pass.loft
 elab	refused	loft-suite/rules/closures/L-CapOne/2281-the-record-that-leaves-on-this-run-owns-the-capture.loft
 elab	refused	loft-suite/rules/closures/L-CapOwn/1606-a-closure-releases-what-it-captured-once-hooks-first.loft
 elab	refused	loft-suite/rules/closures/L-CapOwn/1609-a-closure-that-leaves-its-frame-runs-its-captures-hooks.loft
 elab	refused	loft-suite/rules/closures/L-CapOwn/1610-a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft
 elab	refused	loft-suite/rules/closures/L-CapOwn/2504-a-capture-relayed-by-a-nested-lambda-stays-its-owners.loft
-elab	refused	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft
 elab	refused	loft-suite/rules/closures/L-CapOwn/a-closure-over-a-branch-owns-only-the-arm-that-ran.loft
 elab	refused	loft-suite/rules/closures/L-CapOwn/a-closure-that-leaves-its-frame-takes-its-captures-with-it-and-releases-each-once.loft
 elab	refused	loft-suite/rules/closures/L-CapOwn/a-rebind-releases-the-closure-record-it-displaces-whatever-replaces-it.loft
@@ -833,7 +831,7 @@ elab	refused	tests/scripts/store_compact_slack_730.loft
 elab	refused	tests/scripts/store_digest_b0.loft
 elab	refused	tests/scripts/store_paged_enum_field.loft
 
-layer	elab-functions	agree	14435	of	24919
+layer	elab-functions	agree	14375	of	24810
 elab-functions	agree	lib/docs.loft::Anchor
 elab-functions	agree	lib/docs.loft::Character
 elab-functions	agree	lib/docs.loft::Double
@@ -3081,18 +3079,6 @@ elab-functions	agree	loft-suite/rules/closures/L-CapKeep/2272-a-fn-ref-bound-in-
 elab-functions	agree	loft-suite/rules/closures/L-CapKeep/2272-a-fn-ref-bound-in-every-arm-keeps-the-arm-that-ran.loft::n_trace_path
 elab-functions	agree	loft-suite/rules/closures/L-CapKeep/2272-a-fn-ref-bound-in-every-arm-keeps-the-arm-that-ran.loft::t_1H_OpDrop
 elab-functions	agree	loft-suite/rules/closures/L-CapKeep/2272-a-fn-ref-bound-in-every-arm-keeps-the-arm-that-ran.loft::vector<integer(0, 255)>
-elab-functions	agree	loft-suite/rules/closures/L-CapKeep/2512-a-lambda-the-callee-hands-back-is-released-once.loft::__closure_test_an_inline_lambda_handed_back_0
-elab-functions	agree	loft-suite/rules/closures/L-CapKeep/2512-a-lambda-the-callee-hands-back-is-released-once.loft::__closure_test_bound_first_and_on_the_spot_0
-elab-functions	agree	loft-suite/rules/closures/L-CapKeep/2512-a-lambda-the-callee-hands-back-is-released-once.loft::__closure_test_one_of_two_parameters_handed_back_0
-elab-functions	agree	loft-suite/rules/closures/L-CapKeep/2512-a-lambda-the-callee-hands-back-is-released-once.loft::n___lambda_test_an_inline_lambda_handed_back_0
-elab-functions	agree	loft-suite/rules/closures/L-CapKeep/2512-a-lambda-the-callee-hands-back-is-released-once.loft::n___lambda_test_bound_first_and_on_the_spot_0
-elab-functions	agree	loft-suite/rules/closures/L-CapKeep/2512-a-lambda-the-callee-hands-back-is-released-once.loft::n___lambda_test_one_of_two_parameters_handed_back_0
-elab-functions	agree	loft-suite/rules/closures/L-CapKeep/2512-a-lambda-the-callee-hands-back-is-released-once.loft::n_nop2512
-elab-functions	agree	loft-suite/rules/closures/L-CapKeep/2512-a-lambda-the-callee-hands-back-is-released-once.loft::n_other2512
-elab-functions	agree	loft-suite/rules/closures/L-CapKeep/2512-a-lambda-the-callee-hands-back-is-released-once.loft::n_pass2512
-elab-functions	agree	loft-suite/rules/closures/L-CapKeep/2512-a-lambda-the-callee-hands-back-is-released-once.loft::n_pick2512
-elab-functions	agree	loft-suite/rules/closures/L-CapKeep/2512-a-lambda-the-callee-hands-back-is-released-once.loft::n_test_an_inline_lambda_handed_back
-elab-functions	agree	loft-suite/rules/closures/L-CapKeep/2512-a-lambda-the-callee-hands-back-is-released-once.loft::n_test_one_of_two_parameters_handed_back
 elab-functions	agree	loft-suite/rules/closures/L-CapKeep/each-run-of-a-build-in-a-loop-is-its-own-record-and-a-kept-closure-keeps-its-pass.loft::(schema)
 elab-functions	agree	loft-suite/rules/closures/L-CapKeep/each-run-of-a-build-in-a-loop-is-its-own-record-and-a-kept-closure-keeps-its-pass.loft::H
 elab-functions	agree	loft-suite/rules/closures/L-CapKeep/each-run-of-a-build-in-a-loop-is-its-own-record-and-a-kept-closure-keeps-its-pass.loft::P
@@ -3435,54 +3421,6 @@ elab-functions	agree	loft-suite/rules/closures/L-CapOwn/1610-a-closure-confined-
 elab-functions	agree	loft-suite/rules/closures/L-CapOwn/2504-a-capture-relayed-by-a-nested-lambda-stays-its-owners.loft::S2504
 elab-functions	agree	loft-suite/rules/closures/L-CapOwn/2504-a-capture-relayed-by-a-nested-lambda-stays-its-owners.loft::n_make2504
 elab-functions	agree	loft-suite/rules/closures/L-CapOwn/2504-a-capture-relayed-by-a-nested-lambda-stays-its-owners.loft::n_once2504
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::Blk
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::In
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::Leaf
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::Memo
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::Nd
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::__closure_test_a_callee_that_hands_it_to_another_0
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::__closure_test_a_loop_local_call_result_beside_it_0
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::__closure_test_a_loop_local_literal_beside_it_0
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::__closure_test_a_loop_local_scalar_beside_it_0
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::__closure_test_a_recursive_callee_0
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::__closure_test_bound_first_in_a_loop_0
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::__closure_test_built_in_an_if_0
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::__closure_test_inline_in_a_loop_0
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::__closure_test_only_the_outer_store_0
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::__closure_test_two_loops_over_one_vector_0
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::__closure_test_two_loops_over_one_vector_1
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::__closure_test_two_values_captured_0
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::main_vector<Nd>
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n___lambda_test_a_callee_that_hands_it_to_another_0
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n___lambda_test_a_loop_local_call_result_beside_it_0
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n___lambda_test_a_loop_local_literal_beside_it_0
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n___lambda_test_a_loop_local_scalar_beside_it_0
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n___lambda_test_a_recursive_callee_0
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n___lambda_test_bound_first_in_a_loop_0
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n___lambda_test_built_in_an_if_0
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n___lambda_test_inline_in_a_loop_0
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n___lambda_test_only_the_outer_store_0
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n___lambda_test_two_loops_over_one_vector_0
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n___lambda_test_two_loops_over_one_vector_1
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n___lambda_test_two_values_captured_0
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n_each
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n_of
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n_pass2514
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n_test_a_callee_that_hands_it_to_another
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n_test_a_loop_local_call_result_beside_it
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n_test_a_loop_local_literal_beside_it
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n_test_a_loop_local_scalar_beside_it
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n_test_a_recursive_callee
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n_test_bound_first_in_a_loop
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n_test_built_in_an_if
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n_test_inline_in_a_loop
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n_test_only_the_outer_store
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n_test_two_loops_over_one_vector
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n_test_two_values_captured
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n_tree
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n_walk
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n_walk_all
-elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::vector<Nd>
 elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-over-a-branch-owns-only-the-arm-that-ran.loft::(schema)
 elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-over-a-branch-owns-only-the-arm-that-ran.loft::Ax
 elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-closure-over-a-branch-owns-only-the-arm-that-ran.loft::Box
@@ -15270,7 +15208,7 @@ elab-functions	agree	tests/scripts/store_paged_enum_field.loft::main_vector<inte
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::n_bytes
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::vector<integer(0, 255)>
 
-layer	elab-pass1	agree	11808	of	17628
+layer	elab-pass1	agree	11813	of	17641
 elab-pass1	agree	lib/code.loft::t_4Code_add_block
 elab-pass1	agree	lib/code.loft::t_4Code_add_if
 elab-pass1	agree	lib/code.loft::t_4Code_add_loop
@@ -16714,7 +16652,10 @@ elab-pass1	agree	loft-suite/rules/closures/L-CapKeep/2512-a-lambda-the-callee-ha
 elab-pass1	agree	loft-suite/rules/closures/L-CapKeep/2512-a-lambda-the-callee-hands-back-is-released-once.loft::n_other2512
 elab-pass1	agree	loft-suite/rules/closures/L-CapKeep/2512-a-lambda-the-callee-hands-back-is-released-once.loft::n_pass2512
 elab-pass1	agree	loft-suite/rules/closures/L-CapKeep/2512-a-lambda-the-callee-hands-back-is-released-once.loft::n_pick2512
+elab-pass1	agree	loft-suite/rules/closures/L-CapKeep/2512-a-lambda-the-callee-hands-back-is-released-once.loft::n_test_a_callee_that_hands_back_another
+elab-pass1	agree	loft-suite/rules/closures/L-CapKeep/2512-a-lambda-the-callee-hands-back-is-released-once.loft::n_test_a_rebind_and_an_integer_capture
 elab-pass1	agree	loft-suite/rules/closures/L-CapKeep/2512-a-lambda-the-callee-hands-back-is-released-once.loft::n_test_an_inline_lambda_handed_back
+elab-pass1	agree	loft-suite/rules/closures/L-CapKeep/2512-a-lambda-the-callee-hands-back-is-released-once.loft::n_test_bound_first_and_on_the_spot
 elab-pass1	agree	loft-suite/rules/closures/L-CapKeep/2512-a-lambda-the-callee-hands-back-is-released-once.loft::n_test_one_of_two_parameters_handed_back
 elab-pass1	agree	loft-suite/rules/closures/L-CapKeep/a-kept-closure-shares-the-heap-its-run-captured.loft::n___lambda_test_a_kept_run_over_a_record_0
 elab-pass1	agree	loft-suite/rules/closures/L-CapKeep/a-kept-closure-shares-the-heap-its-run-captured.loft::n___lambda_test_a_kept_run_sees_its_own_store_0
@@ -16951,9 +16892,11 @@ elab-pass1	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop
 elab-pass1	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n_of
 elab-pass1	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n_pass2514
 elab-pass1	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n_test_a_callee_that_hands_it_to_another
+elab-pass1	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n_test_a_holder_that_outlives_the_loop
 elab-pass1	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n_test_a_recursive_callee
 elab-pass1	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n_test_bound_first_in_a_loop
 elab-pass1	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n_test_inline_in_a_loop
+elab-pass1	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n_test_on_the_spot_in_a_loop
 elab-pass1	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n_test_two_loops_over_one_vector
 elab-pass1	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n_test_two_values_captured
 elab-pass1	agree	loft-suite/rules/closures/L-CapOwn/a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n_walk
