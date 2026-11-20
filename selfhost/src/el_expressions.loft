@@ -2796,12 +2796,37 @@ pub fn child_allocs(e: el::El, vars: el_vars::Vars, code: ir::Node, v: integer) 
 // The parameters an `if` tail's arms hand back, every other arm answering the null sentinel;
 // null when an arm answers anything else.
 pub fn if_tail_params(e: el::El, vars: el_vars::Vars, code: ir::Node) -> vector<integer>? {
+  // (The body's own binds are no arm's: a tail local bound in the body is no branch.)
+  if_tail_params_in(e, vars, code, [], false)
+}
+
+// `if_tail_params` with the binds the enclosing blocks made (`sets`), so a local arm — an `ncr`
+// temp (`h.ds[0]!`), a `??` temp (`__ncc_N`) — reads back to the parameter its bind views.
+fn if_tail_params_in(e: el::El, vars: el_vars::Vars, code: ir::Node, sets: vector<ir::Node>, in_arm: boolean) -> vector<integer>? {
   // A body's block is read at its tail; a record literal's block is the arm itself.
   tail = match code { NdBlock { block } => if block[0].name == "Object" { code } else { el_ir::unspan(el_ir::last(block[0].operators)) }, _ => code };
+  inner_sets: vector<ir::Node> = [for s0 in sets { s0 }];
+  match code {
+    NdBlock { block: cb } => {
+      if cb[0].name != "Object" && in_arm {
+        for op in cb[0].operators {
+          if el_ir::unspan(op) is NdSet {
+            inner_sets += [el_ir::unspan(op)];
+          }
+        }
+      }
+    },
+    _ => {}
+  }
   match tail {
     NdIf { cond: _, t, f } => {
-      a = call_arm_params(e, vars, t) ?? if_tail_params(e, vars, t);
-      b = call_arm_params(e, vars, f) ?? if_tail_params(e, vars, f);
+      // (A struct-enum match's arm — typed by its variant, beside a recursion's `["??"]` deps —
+      // is not carried.)
+      if is_match_arm(t) || is_match_arm(f) {
+        return null;
+      }
+      a = call_arm_params(e, vars, t) ?? if_tail_params_in(e, vars, t, inner_sets, true);
+      b = call_arm_params(e, vars, f) ?? if_tail_params_in(e, vars, f, inner_sets, true);
       if a == null || b == null {
         return null;
       }
@@ -2816,6 +2841,24 @@ pub fn if_tail_params(e: el::El, vars: el_vars::Vars, code: ir::Node) -> vector<
     NdVar { n } => {
       if vars.vars[n]!.argument {
         return [n];
+      }
+      // (A local the arm's block bound — an `ncr` or `??` temp — answers what its bind views:
+      // an element or a field of a parameter answers that parameter.)
+      k = len(inner_sets) - 1;
+      while k >= 0 {
+        match inner_sets[k]! {
+          NdSet { var: sv, inner: si } => {
+            if sv == n {
+              sr = read_param_root(e, el_ir::unspan(si));
+              if sr >= 0 && vars.vars[sr]!.argument {
+                return [sr];
+              }
+              return null;
+            }
+          },
+          _ => {}
+        }
+        k -= 1;
       }
       null
     },
@@ -2848,12 +2891,42 @@ pub fn if_tail_params(e: el::El, vars: el_vars::Vars, code: ir::Node) -> vector<
         return [];
       }
       if block[0].name == "scalar_match" {
-        mps = if_tail_params(e, vars, el_ir::last(block[0].operators));
+        mps = if_tail_params_in(e, vars, el_ir::last(block[0].operators), inner_sets, in_arm);
         return mps;
+      }
+      // A plain block, an `ncr` / `ncc` block: the value its last operator delivers, its binds
+      // known to the arm.  (A `match` arm — a struct-enum match's, typed by its variant, beside
+      // a recursion's `["??"]` deps — is not carried.)
+      bn = block[0].name;
+      if (bn == "block" || bn == "ncr" || bn == "ncc") && len(block[0].operators) > 0 {
+        return if_tail_params_in(e, vars, tail, inner_sets, in_arm);
       }
       null
     },
     _ => null
+  }
+}
+
+fn is_match_arm(n: ir::Node) -> boolean {
+  match el_ir::unspan(n) { NdBlock { block } => block[0].name == "match_arm", _ => false }
+}
+
+// The local a read of a field or an element is rooted at — through `OpGetField`, `OpGetVector`,
+// `OpGetVectorNullable` and `OpGetRecord` — or -1 where the value is no such read.
+fn read_param_root(e: el::El, n: ir::Node) -> integer {
+  match n {
+    NdSpan { inner } => read_param_root(e, inner),
+    NdCall { def_nr, args } => {
+      nm = el::def(e, def_nr).name;
+      if len(args) == 0 || !(nm == "OpGetField" || nm == "OpGetVector" || nm == "OpGetVectorNullable" || nm == "OpGetRecord") {
+        return -1;
+      }
+      match el_ir::unspan(args[0]!) {
+        NdVar { n: v } => v,
+        _ => read_param_root(e, el_ir::unspan(args[0]!))
+      }
+    },
+    _ => -1
   }
 }
 
