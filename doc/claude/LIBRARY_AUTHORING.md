@@ -706,7 +706,8 @@ capture it was performed to prevent.
 ## 3. Pre-release checklist
 
 A change that other libraries build on (a record's layout, a removed name) is released as a
-chain, base first: [LIBRARY_DEPENDENCIES.md](LIBRARY_DEPENDENCIES.md).
+chain, base first: [LIBRARY_DEPENDENCIES.md](LIBRARY_DEPENDENCIES.md).  A library a 32-bit
+device can use declares `width32 = true`: [LIBRARY_WIDTH32.md](LIBRARY_WIDTH32.md).
 
 **Declare your three compatibility levels first.** They are required before a package may be
 registered or open a registry PR, because they are what a consumer needs to decide whether an

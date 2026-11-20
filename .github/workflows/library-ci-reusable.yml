@@ -245,6 +245,31 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           exit $status
 
+      # A package that declares `[package] width32 = true` claims that it works in a 32-bit
+      # program (`--width 32`: a 32-bit device).  The claim is its own tests passing there, so
+      # they run there: on the interpreter, with no display — a device has none, and a test
+      # that draws through a window returns at once.  A package that does not declare it is
+      # not asked.  doc/claude/LIBRARY_WIDTH32.md.
+      - name: 32-bit — ${{ matrix.package }}
+        working-directory: ${{ matrix.package }}
+        env:
+          LOFT_STORE_GUARD: 1
+        run: |
+          set -o pipefail
+          if ! loft compat width32; then exit 0; fi
+          env -u DISPLAY LOFT_TIMEOUT=240 loft --width 32 --interpret --tests tests 2>&1 \
+            | tee "$RUNNER_TEMP/width32.log" && exit 0
+          status=$?
+          {
+            echo "### ❌ \`${{ matrix.package }}\` — under --width 32, which its manifest declares"
+            echo
+            echo '```'
+            grep -E '^[[:space:]]*(FAIL|Error|error)' "$RUNNER_TEMP/width32.log" | head -40 \
+              || echo "(no FAIL/Error line — see the job log)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $status
+
       - name: Native — ${{ matrix.package }}
         working-directory: ${{ matrix.package }}
         env:
