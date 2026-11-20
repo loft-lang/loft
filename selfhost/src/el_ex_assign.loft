@@ -762,6 +762,16 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
         ct = el_vars::tp(vars, cv);
         // A vector the lambda writes is shared through its pointer as a read one is
         // (`@FR-L-CapHeap`): the write goes through the capture, no cell.
+        // A capture pass 1 could not type is never boxed — `collect_mutated_captures` boxes by
+        // the pass-1 type — even where the lambda writes it: it is a plain field of the record,
+        // which a void call through the closure writes back (`parse_call_ref`).
+        if el_types::is_unknown(ct) && e.first_pass || !e.first_pass && forward_capture(e, vars, c) {
+          // (A forward reference to a type declared below, `Unknown(stub)`, is kept as it is:
+          // `copy_unknown_fields` resolves it between the passes to the dep-less record, stored
+          // inline, as Rust's `closure_attr_type` leaves it.)
+          caps += [el::Capture { name: c, tp: if e.first_pass { if (ct is TyUnknown) { ct } else { ir::TyUnknown { n: 0 } } } else { el_types::without_deps(ct) } }];
+          continue;
+        }
         if writes_a_name(e, body!, [el::Capture { name: c, tp: ct }]) && !(el_types::base(ct) is TyVector && !(ct is TyOptional)) {
           boxable = if e.first_pass { el_cell::cell_name(e, ct) != "" } else { el_cell::cell_of(e, ct) >= 0 };
           if !boxable {
@@ -790,12 +800,6 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
         // A record or a vector is shared through a pointer field of the record (`@FR-L-CapHeap`).
         // A nullable record or vector is shared the same way: the pointer may be the null one.
         // (A keyed collection the same way: its store's pointer.)
-        // A capture pass 1 cannot type yet (a struct declared below, `count = len(w.items)`):
-        // its record field is left `Unknown(0)` and retyped on pass 2 (`resolve_forward_captures`).
-        if e.first_pass && el_types::is_unknown(ct) {
-          caps += [el::Capture { name: c, tp: ir::TyUnknown { n: 0 } }];
-          continue;
-        }
         heap = record_type(e, ct) || el_types::base(ct) is TyVector || keyed_kind(el_types::base(ct));
         // A nullable plain scalar and a plain enum are captured as the value itself, as a dense
         // scalar is (`closure_attr_type`).
@@ -957,6 +961,14 @@ pub fn closure_value(e: el::El, vars: el_vars::Vars, d: integer, rec_nm: text, c
       if keyed_kind(el_types::base(c.tp)) {
         vars.cap_slots += [el_vars::CapSlot { var: cv, clos: w, pos: field_position(e, rd, c.name) }];
       }
+      // (A field a forward reference resolved to the dep-less record stores it INLINE: the
+      // captured record is copied in, `OpCopyRecord(v, OpGetField(clos, pos, kt), kt)`.)
+      cft = el::def(e, rd).attributes[a]!.typedef[0] ?? ir::TyVoid;
+      inline_rec = match cft { TyReference { n: ird, dep: idp } => if len(idp) == 0 && el::def(e, ird).def_type == el::DT_STRUCT { el::def(e, ird).known_type } else { -1 }, _ => -1 };
+      if inline_rec >= 0 && record_type(e, c.tp) {
+        ops += [el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: cv }, el_ir::cl(e, "OpGetField", [ir::NdVar { n: w }, ir::NdInt { n: field_position(e, rd, c.name) }, ir::NdInt { n: inline_rec }]), ir::NdInt { n: inline_rec }])];
+        continue;
+      }
       ops += [el_ir::cl(e, "OpSetDbRef", [ir::NdVar { n: w }, ir::NdInt { n: field_position(e, rd, c.name) }, ir::NdVar { n: cv }])];
       continue;
     }
@@ -997,6 +1009,77 @@ pub CALLEE_FRAME = 32768;
 // `closure_attr_type`: a record capture is held as a shared pointer to it (`Reference` with the
 // share marker), a vector's as a pointer typed by its element's definition; any other capture
 // is the value itself.
+// `x = v` / `x op= v` in a lambda where `x` is a capture held as a plain field of its closure
+// record (no cell): the field set from the value, a compound reading the field first.  Null
+// where the target is no such capture.
+fn plain_capture_write(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: integer) -> Ex? {
+  name = match e.p.nodes[target] { SName { name: tn, member: tm } => if tm == "" { tn } else { "" }, _ => "" };
+  if name == "" || el_vars::var(vars, name) >= 0 || len([for c in e.captures if c.name == name { 1 }]) == 0 {
+    return null;
+  }
+  // (On pass 1 only a capture registered untyped, `Unknown(0)`: any other written capture
+  // was boxed.)
+  if e.first_pass && len([for c in e.captures if c.name == name && c.tp == ir::TyUnknown { n: 0 } { 1 }]) == 0 {
+    return null;
+  }
+  if e.first_pass {
+    cur = name_expression(e, vars, name, "", false);
+    x = expression(e, vars, rhs);
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  if e.closure_var < 0 || e.closure_rec < 0 {
+    return null;
+  }
+  a = attr_nr(el::def(e, e.closure_rec), name);
+  if a < 0 || el_cell::cell_of(e, el::def(e, e.closure_rec).attributes[a]!.typedef[0] ?? ir::TyVoid) >= 0 {
+    return null;
+  }
+  ft = el::def(e, e.closure_rec).attributes[a]!.typedef[0] ?? ir::TyVoid;
+  if !el_convert::plain_scalar(el_types::base(ft)) {
+    return null;
+  }
+  cur = name_expression(e, vars, name, "", false);
+  x = expression(e, vars, rhs);
+  val = x.code;
+  vt = x.tp;
+  if op != "=" {
+    r = call_op(e, vars, op[..-1], [cur.code, x.code], [cur.tp, x.tp]);
+    if el_types::is_unknown(r.tp) {
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    val = r.code;
+    vt = r.tp;
+  }
+  conv = el_convert::convert(e, vars, val, vt, ft, false);
+  if conv == null {
+    refuse_known(e, vt, "a value of another type written to a captured local: {type_kind(vt)}");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  el_vars::in_use(vars, e.closure_var, true);
+  ex(el_ex_object::set_field(e, e.closure_rec, a, ir::NdVar { n: e.closure_var }, conv!), ir::TyVoid)
+}
+
+// A capture pass 1 could not type (`count = len(w.items)`, `w`'s struct declared below): the
+// record of the lambda being built still holds its field as `Unknown(0)` on pass 2, until
+// `resolve_forward_captures` retypes it at the lambda.
+fn forward_capture(e: el::El, vars: el_vars::Vars, c: text) -> boolean {
+  if e.context < 0 {
+    return false;
+  }
+  outer = el::def(e, e.context).name;
+  bare = if starts_with(outer, "n_") { outer[2..] } else { outer };
+  rd = el::def_nr(e, "__closure_{bare}_{vars.lambdas}");
+  if rd < 0 {
+    return false;
+  }
+  for a in el::def(e, rd).attributes {
+    if a.name == c && (a.typedef[0] ?? ir::TyVoid) == ir::TyUnknown { n: 0 } {
+      return true;
+    }
+  }
+  false
+}
+
 pub fn closure_attr_type(e: el::El, t: ir::TypeT) -> ir::TypeT {
   match el_types::base(t) {
     TyReference { n } => ir::TyReference { n: n, dep: [el_types::MARKER] },
@@ -3515,6 +3598,12 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
   boxed = el_cell::assign(e, vars, op, target, rhs!);
   if boxed != null {
     return boxed!;
+  }
+  // A plain (unboxed) capture the lambda writes — a forward-typed one, `forward_capture` — is
+  // its closure-record field, written through `__closure` (`OpSetInt(__closure, 0, …)`).
+  pc = plain_capture_write(e, vars, op, target, rhs!);
+  if pc != null {
+    return pc!;
   }
   if op != "=" {
     return el_ex_place::compound(e, vars, op, target, rhs!);
