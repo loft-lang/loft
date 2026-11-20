@@ -19,8 +19,8 @@ Active.  S1 to S3 and S5 are in the tree; S4 is under way, family by family; S6 
 | S4 the runtime at the build's width | the width header leads the runtime; the families below are moved; the rest is the ledger's `runtime` list |
 | S5 32-bit boundaries in the C backend | shipped: a parameter, a result, a tuple member and a function type are `int32_t` in a 32-bit build (`Cx::ctype`) |
 | the counters (found on the way) | a loop's, a pattern match's and a slice's counters take the file's width (`Parser::count_type`, `(W-Count)`) |
-| S6 libraries and `--native-esp` | open: the three `pln217-width32-tanmatsu` library branches, `--native-esp` 32-bit by default |
-| S7 the gate | the wide ledger is held to a baseline, and a 32-bit `--native-esp` build refuses 64-bit helper calls without an exception (`src/esp_width64.rs`); the runtime's source check is open |
+| S6 libraries and `--native-esp` | `--native-esp` builds 32-bit by default; open: the three `pln217-width32-tanmatsu` library branches |
+| S7 the gate | the wide ledger is held to a baseline, and a 32-bit `--native-esp` build refuses 64-bit helper calls without an exception (`src/esp_width64.rs`); the runtime's fixed widths are held to a baseline (`tests/width_source.rs`) |
 
 ## The owner's rulings (2026-11-20)
 
@@ -78,15 +78,14 @@ taken of one, do not survive its narrowing.
 4. **The `value` and `op` classes judged** — the ledger does not yet check that an operand of
    such a conversion is a `declared` wide value; until it does a compiler-made 64-bit
    computation can stand in them (a negated literal is one: `LOFT_PLAIN_NEG(INT64_C(1))`).
-5. **The runtime's source check** — no plain `int64_t` or `double` in `src/c/*.h` outside
-   `loft_width.h` and the `loft_word` / `loft_fword` names: the only check that sees an inline
-   64-bit add, which calls no helper.
+5. **The runtime's fixed widths to zero** — `tests/width_source.rs` holds the lines that name
+   a plain `int64_t` or `double` to a baseline, 1152 over 32 headers (`loft_rt.h` 422); each
+   is to become `loft_int` / `loft_float`, or `loft_word` / `loft_fword` where the value is
+   64 bits in every build.
 6. **The image gate against the game** — it holds on a small reference app with thirteen
    runtime exceptions; `tile-world-game` has not been built through it, and will need its own
    `esp-width64.allow` for what it declares `i64` or `f64`.
-7. **`--native-esp` builds 32-bit by default** — a default change on a documented flag
-   (`freeze:broken`).
-8. **On the device** — the demo world from a 32-bit build, measured against 60 frames.
+7. **On the device** — the demo world from a 32-bit build, measured against 60 frames.
 
 ## Not this plan's
 
