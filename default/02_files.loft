@@ -438,9 +438,10 @@ pub fn mtime(path: text) -> i64 fs#read;
 /// collection the image cannot carry — one holding a reference into another store.
 /// The image is sized to its content, with none of the growth slack the live store
 /// keeps.  Beside it go its layout (`<path>.dschema`) and a guard (`<path>.guard`),
-/// which records what the two files hashed to: `store_load` refuses a file that is
-/// no longer what was written — cut short, damaged, changed — and names the guard.
-/// A save changed on purpose loads once its guard is removed.
+/// which records what the two files hashed to.  When a file is no longer what was
+/// written — cut short, damaged, changed — `store_load` says so and reads it as it
+/// is, and `store_load_untrusted` refuses it; removing the guard ends both.
+/// `delete(path)` takes the guard with it.
 pub fn store_persist_copy(r: const reference, path: text) -> boolean fs#update;
 #rust"stores.persist_copy((@r).store_nr, std::path::Path::new(@path))"
 #impure(io)

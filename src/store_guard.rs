@@ -53,6 +53,15 @@ pub fn write_beside(path: &Path, image: &[u8]) -> std::io::Result<()> {
     crate::file_access::write(guard_path(path), render(image, &sidecar))
 }
 
+/// Remove the guard beside `path`, when what lies there is one: a guard describes the file
+/// it lies beside and nothing else, so it goes when that file is deleted.
+pub fn remove_beside(path: &Path) {
+    let guard = guard_path(path);
+    if crate::file_access::read_to_string(&guard).is_ok_and(|text| text.starts_with(MAGIC)) {
+        let _ = crate::file_access::remove_file(&guard);
+    }
+}
+
 /// Whether `image`, the bytes read from `path`, are what the guard beside `path` was written
 /// for; a store with no guard is not asked.
 ///
@@ -64,13 +73,12 @@ pub fn check(path: &Path, image: &[u8]) -> Result<(), String> {
     if !crate::file_access::exists(&guard) {
         return Ok(());
     }
-    let unlock = format!("; remove {} to load the file as it is", guard.display());
     let Ok(text) = crate::file_access::read_to_string(&guard) else {
-        return Err(format!("its guard cannot be read{unlock}"));
+        return Err("its guard cannot be read".to_string());
     };
     let mut lines = text.lines();
     if !lines.next().is_some_and(|first| first.starts_with(MAGIC)) {
-        return Err(format!("its guard is not a guard file{unlock}"));
+        return Err("its guard is not a guard file".to_string());
     }
     let (mut of_image, mut of_sidecar) = (None, None);
     for line in lines {
@@ -81,20 +89,20 @@ pub fn check(path: &Path, image: &[u8]) -> Result<(), String> {
         }
     }
     let Some(of_image) = of_image else {
-        return Err(format!("its guard names no image{unlock}"));
+        return Err("its guard names no image".to_string());
     };
     if !crate::integrity::sha256_hex(image).eq_ignore_ascii_case(of_image) {
         return Err(format!(
             "it is not the file its guard was written for: damaged, cut short, or changed \
-             since{unlock}"
+             since"
         ));
     }
     if let Some(of_sidecar) = of_sidecar {
         let sidecar = crate::file_access::read(crate::schema_sidecar::dschema_path(path))
-            .map_err(|_| format!("its layout sidecar cannot be read{unlock}"))?;
+            .map_err(|_| format!("its layout sidecar cannot be read"))?;
         if !crate::integrity::sha256_hex(&sidecar).eq_ignore_ascii_case(of_sidecar) {
             return Err(format!(
-                "its layout sidecar is not the one its guard was written for{unlock}"
+                "its layout sidecar is not the one its guard was written for"
             ));
         }
     }
