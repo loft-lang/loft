@@ -13,19 +13,19 @@ Source: `scripts/lib-branch-audit.sh` (@PLN112 / @PLN20 lib-health).
 
 ## loft-libs-game
 
-- `pln217-width32-tanmatsu` — PR no-PR · (5 files) — audio: the 32-bit regime; screen: the Tanmatsu  ⚠ orphan
-- `tuxedo-screen-esp-present` — PR no-PR · (5 files) — screen: the pointer, the wheel and typed text,  ⚠ orphan
+- `mac-screen-cocoa-next` — PR no-PR · (9 files) — screen: program_keys() - whether its keys are   ⚠ orphan
+- `pln217-audio-mixer-width32` — PR no-PR · (2 files) — audio: the mixer steps a voice in whole number  ⚠ orphan
 
 ## loft-libs-graphics
 
-- `firewall02-imaging-c99` — PR #60 closed · (12 files) — imaging 0.5.0: the PNG codec is C99 — a [c] sh  ⚠ orphan
-- `pln217-width32-tanmatsu` — PR no-PR · (3 files) — imaging, graphics: the 32-bit regime (@PLN217)  ⚠ orphan
-- `tuxedo-native-pixels` — PR no-PR · (7 files) — tiles: display surfaces — in a page the GPU dr  ⚠ orphan
+- `gpu-include-by-name` — PR #87 closed/draft · (11 files) — gpu_record, gpu_gl: include gpu's header by th  ⚠ orphan
+- `pln217-gpu-gl-width32` — PR no-PR · (6 files) — gpu, gpu_gl, graphics, scene3d, tiles: compile  ⚠ orphan
+- `tuxedo-graphics-u32-colours` — PR no-PR · (11 files) — graphics: colours are u32 — the same 32 bits u  ⚠ orphan
 
 ## loft-libs-net
 
-- `firewall02-web-in-binary` — PR no-PR · (15 files) — web 0.5.0: the natives are declared on loft's   ⚠ orphan
+- `security-hardening` — PR no-PR · (4 files) — ssh 0.1.6: connect_pinned keeps a session only  ⚠ orphan
 
 ## loft-libs-world
 
-- `pln217-width32-tanmatsu` — PR no-PR · (1 files) — tile_world: the 32-bit regime, and stack reads  ⚠ orphan
+- `pln217-hex-ground-width32` — PR no-PR · (1 files) — hex_ground: a corner index from an angle is a   ⚠ orphan
