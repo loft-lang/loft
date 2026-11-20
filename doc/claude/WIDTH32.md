@@ -81,18 +81,66 @@ for the C build on the device.
 
 ## The C backend
 
-The C backend holds a LOCAL as `int32_t` (null `LOFT_NULL32`) when its type fits 32 bits (`i32`,
-`u8`, `u16`, `i16`, `i8`, a `limit` range inside `i32`) and its function's body was written under
-the regime (`Data::body_width32`).  There every value is narrowed before it is held, so it fits.
-A 64-bit body's `i32` local keeps the wide value it was given, as the interpreter's 8-byte slot
-does, so it stays `int64_t`; and a parameter, a result, a tuple member and a function type stay
-`int64_t` in every program, so two bodies meet through `loft_w64` / `loft_n32`, which keep null
-as null.  A 32-bit operation is written in 32 bits (`loft_add32`, `loft_sub32`, `loft_mul32`,
-`loft_div32`, `loft_rem32` in `src/c/loft_rt.h`), and two 32-bit values compare in 32 bits.  The
-C runtime itself is written in `int64_t`, so a 32-bit value passed to it is widened.
+**What the program holds.**  A value whose type fits 32 bits (`i32`, `u8`, `u16`, `i16`, `i8`, a
+`limit` range inside `i32`) is an `int32_t` (null `LOFT_NULL32`) wherever its body was written
+under the regime (`Data::body_width32`): a local, and in a whole-program 32-bit build
+(`--width 32`) a parameter, a result, a tuple member and a function type too.  A 32-bit
+operation is written in 32 bits (`loft_add32`, `loft_sub32`, `loft_mul32`, `loft_div32`,
+`loft_rem32` in `src/c/loft_rt.h`), and two 32-bit values compare in 32 bits.  In a 64-bit build
+a `#width 32` file's locals are 32-bit and everything that crosses a call stays `int64_t`; the
+two meet through `loft_w64` / `loft_n32`, which keep null as null.
 
-`LOFT_NO_C_INT32=1` holds every integer as `int64_t` again.  It is the first bisect step for
-a C-only wrong answer.
+**What a loop counts in.**  A counter the compiler makes for a loop — `x#index`, `x#count`,
+`x#next`, a walk's position and length — has the file's `integer`, so it is an `int32_t`
+stepped by a 32-bit add under the regime (`Parser::count_type`, `(W-Count)`).
+
+**What the runtime takes.**  The C runtime is one source for both widths.  Its first header,
+`src/c/loft_width.h`, names the build's types, and a 32-bit unit defines `LOFT_WIDTH32` before
+it:
+
+| name | 64-bit build | 32-bit build | is |
+|---|---|---|---|
+| `loft_int`, `loft_uint` | `int64_t`, `uint64_t` | `int32_t`, `uint32_t` | a loft `integer`: a length, an index, a count |
+| `loft_float` | `double` | `float` | a loft `float` |
+| `loft_word`, `loft_fword` | `int64_t`, `double` | the same | what is 64 bits in every build: an `i64`, an `f64`, a file offset, a timestamp, a hash |
+| `LOFT_INT_NULL`, `LOFT_INT_MIN`, `LOFT_INT_MAX`, `LOFT_INT_C(v)`, `LOFT_INT_BITS` | | | `loft_int`'s null, range, literal and size |
+| `loft_int_wide(a)`, `loft_int_of(a)` | the value | `loft_w64(a)`, `loft_n32(a)` | a `loft_int` read as 64 bits, and a 64-bit value held in one |
+
+A runtime function that takes or answers a loft `integer` is being moved from `int64_t` to
+`loft_int`, one family at a time.  Moved: a vector's length (`loft_vec_len`, the held header's
+`len`) and every index of the held-vector accessors (`loft_vh_*`).  The emitter hands such a
+parameter its value through `as_wint` (`src/c/body.rs`): in a 32-bit build a 64-bit index is
+narrowed there, and one outside the width reads null, which is outside every vector.  A proof
+made about the 64-bit value does not hold for the narrowed one: the non-negative claim
+(`loft_nonneg`) is made for a narrowed index only when its range is proven inside the width.
+
+**Finding a call site that was missed.**  A 32-bit unit compiles without one
+`-Wshorten-64-to-32` warning in its program part (clang).  After retyping a runtime function,
+compile the corpus's 32-bit units with that warning: each report is a 64-bit value handed to a
+`loft_int` parameter without `as_wint`, where a null would arrive as 0.
+
+**The wide ledger.**  `LOFT_WIDE_LEDGER=<file>` on a 32-bit build writes where the unit holds
+or computes 64 bits, one line an entry: the function, a class, what, and a count
+(`src/c/wide_ledger.rs`).  The compiler wrote every one of them, so the list is exact for the
+program's own code.
+
+| class | is | what to do |
+|---|---|---|
+| `declared` | a variable or result whose type is wide by declaration (`i64`, `u32`, `f64`) | nothing: the source asked |
+| `temp` | a variable the compiler made, of a wide type | explained by a `declared` value of the same function, or a defect |
+| `undeclared` | a variable held in 64 bits whose type is the plain `integer` nobody declared wide | a compiler defect: type it by `Parser::count_type` |
+| `runtime` | a conversion where a runtime function takes or answers 64 bits | move that function to `loft_int` / `loft_float` |
+| `op` | a conversion at a 64-bit operator (`loft_mul`, `LOFT_PLAIN_NEG`) | one operand is a `declared` value; if none is, the compiler computed a 32-bit value in 64 bits |
+| `call` | a conversion where one of the program's functions takes or answers 64 bits | that function declares `i64`, or its file is `#width 64` |
+| `value` | a conversion in the function's own expression | one of its wide values |
+
+Summed over the corpus it is the worklist: the `runtime` lines by function name say which
+runtime family is used most, and the `undeclared` lines which counters are still wide.  It
+reads what the compiler wrote, not what the C compiler made of it; a library's hand-written C
+and the linked image are outside it.
+
+`LOFT_NO_C_INT32=1` holds every integer of the program as `int64_t` again.  It is the first
+bisect step for a C-only wrong answer.
 
 ## Verifying it
 

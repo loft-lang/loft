@@ -21,6 +21,7 @@ pub const NAMES: &[&str] = &["net"];
 /// The sources of `libloft_net`, by the flat name each is written under.
 const NET: &[(&str, &str)] = &[
     ("net.c", include_str!("components/net.c")),
+    ("loft_width.h", include_str!("loft_width.h")),
     ("loft_cc.h", include_str!("loft_cc.h")),
     ("loft_text.h", include_str!("loft_text.h")),
     ("loft_sock.h", include_str!("loft_sock.h")),

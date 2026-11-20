@@ -31,6 +31,7 @@ mod tail;
 mod tidy;
 pub(crate) mod tls;
 mod unicode;
+mod wide_ledger;
 
 use crate::data::{Data, DefType, Type, Value};
 use crate::database::Stores;
@@ -2143,6 +2144,10 @@ pub fn emit_unit_for(
         let written = tidy::tidy_unit(&out[at..]);
         out.truncate(at);
         out.push_str(&written);
+    }
+    // @PLN217 — where this unit holds or computes 64 bits (`LOFT_WIDE_LEDGER`).
+    if let Some(at) = out.find(RUNTIME_END) {
+        wide_ledger::write(data, &fns, &out[at..]);
     }
     trace_tables(&cx);
     Ok(out)
