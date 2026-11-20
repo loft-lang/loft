@@ -133,6 +133,11 @@ pub fn slice(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   x = el_ex_assign::expression(e, vars, c!);
+  // `@FR-B-Ref-Uniform`: a `&text` (a text local renamed onto the result's buffer) is sliced as
+  // the text it links.
+  if x.tp is TyRefVar && match x.tp { TyRefVar { inner: ri } => el_types::base(ri) is TyText, _ => false } {
+    x = ex(x.code, match x.tp { TyRefVar { inner: ri } => ri, _ => x.tp });
+  }
   if x.tp is TyTrie || x.tp is TyRadix {
     return keyed_slice(e, vars, x, lo, hi, null);
   }
