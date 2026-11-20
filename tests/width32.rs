@@ -478,8 +478,9 @@ fn main() {
 /// @PLN217 — the wide ledger (`LOFT_WIDE_LEDGER`) says where a 32-bit unit holds or computes
 /// 64 bits, and why.  `walk` is 32-bit throughout: it has no line.  `key` asks for 64 bits by
 /// its `i64` parameter and result, both `declared`; nothing is `undeclared` — the compiler made
-/// no wide value nobody asked for.  What is left names the runtime functions that still take
-/// 64 bits (`loft_format_long`, which prints both numbers).  A 64-bit build writes no ledger.
+/// no wide value nobody asked for.  No runtime function is handed a widened value: the 32-bit
+/// number is printed by the runtime's 32-bit form.  The one conversion left is at the 64-bit
+/// multiply of `key`, whose `i64` operands asked for it.  A 64-bit build writes no ledger.
 #[test]
 fn the_wide_ledger_names_what_is_64_bit_and_why() {
     let _ = emit_c("ledger32", WIDE, Some("32"));
@@ -502,11 +503,15 @@ fn the_wide_ledger_names_what_is_64_bit_and_why() {
         lines.iter().all(|l| !l.0.starts_with("n_walk")),
         "the walk is 32-bit throughout: {lines:?}"
     );
-    assert!(
-        of("runtime")
-            .iter()
-            .any(|l| l.ends_with(" loft_format_long")),
-        "{lines:?}"
+    assert_eq!(
+        of("runtime"),
+        Vec::<String>::new(),
+        "no runtime function is handed a widened value: {lines:?}"
+    );
+    assert_eq!(
+        of("op"),
+        ["n_key__fr loft_mul"],
+        "the i64 product: {lines:?}"
     );
     let _ = emit_c("ledger64", WIDE, None);
     assert!(ledger("ledger64").is_empty(), "a 64-bit build writes none");
@@ -557,4 +562,54 @@ fn a_removal_in_a_walk_steps_a_32_bit_index_back() {
         c64.contains("loft_vec_walk_remove(") && !c64.contains("loft_vec_walk_remove32(l"),
         "the 64-bit index"
     );
+}
+
+const EDGES: &str = "struct R { a: integer, b: integer }
+fn at(v: vector<integer>, i: integer?) -> integer { v[i] ?? -9 }
+fn main() {
+  hi = 2147483647;
+  lo = -2147483647;
+  z = 0;
+  n: integer? = null;
+  println(\"{hi} {lo} {z} {n} {-1} {10} {-10} {1000000000}\");
+  println(\"[{hi:12}] [{lo:<14}] [{7:05}] [{-7:05}] [{7:+}] [{z:+}] [{n:6}]\");
+  println(\"{255:x} {255:#x} {-1:x} {5:b} {8:o} {lo:x}\");
+  r = R { a: hi, b: lo };
+  r.a = lo;
+  r.b = 12345;
+  v = [hi, lo, z];
+  v += [-5];
+  v += [hi];
+  println(\"{r.a} {r.b} {len(v)} {v[0]} {v[1]} {v[3]} {v[-1]} {v[-5]}\");
+  println(\"{at(v, n)} {at(v, 5)} {at(v, -6)} {at(v, 4)} {at(v, -1)} {at(v, lo)} {at(v, hi)}\");
+}
+";
+
+/// @PLN217 — the runtime's 32-bit forms answer what its 64-bit ones do, at the edges of an
+/// `i32`: a decimal print (`loft_format_int32`) of the largest and smallest values, zero and
+/// null, padded, signed and zero-filled; the bit-pattern radixes, which still print the 64 bits
+/// a negative value widens to (`-1` is sixteen `f`); a 4-byte field written and read back
+/// (`loft_set_int4_32`); and an element read by an index from either end, one past either
+/// end, the null index and the two extreme ones (`loft_vec_get32`).  One answer on both
+/// backends and both widths.
+#[test]
+fn the_32_bit_runtime_forms_answer_as_the_64_bit_ones() {
+    let want = "2147483647 -2147483647 0 null -1 10 -10 1000000000\n[  2147483647] [-2147483647   ] [00007] [-0007] [+7] [+0] [  null]\nff 0xff ffffffffffffffff 101 10 ffffffff80000001\n-2147483647 12345 5 2147483647 -2147483647 -5 2147483647 2147483647\n-9 -9 -9 2147483647 2147483647 -9 -9\n";
+    for backend in ["--interpret", "--native-c"] {
+        let b = &backend[2..5];
+        for width in [Some("32"), None] {
+            let name = format!("edges{b}{}", width.unwrap_or("64"));
+            let out = run_on(backend, &name, "", EDGES, width);
+            let answer: String = out.lines().take(5).map(|l| format!("{l}\n")).collect();
+            assert_eq!(answer, want, "{backend} {width:?}");
+        }
+    }
+    let c32 = emit_c("edges-c32", EDGES, Some("32"));
+    for form in [
+        "loft_format_int32(&",
+        "loft_set_int4_32_at(",
+        "loft_vec_get32(",
+    ] {
+        assert!(c32.contains(form), "the 32-bit unit calls {form}");
+    }
 }

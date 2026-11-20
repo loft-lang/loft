@@ -323,6 +323,32 @@ static void loft_format_long(loft_text *s, int64_t val, uint8_t radix, int64_t w
                          dir, token);
 }
 
+/* @PLN217 — the same for a value held in 32 bits.  Its decimal digits are taken in 32 bits:
+ * a 64-bit divide by ten is a library call on a 32-bit core.  Null, and the bit-pattern
+ * radixes, which print the 64 bits a negative value widens to, go to `loft_format_long`. */
+static void loft_format_int32(loft_text *s, int32_t val, uint8_t radix, int64_t width,
+                              uint8_t token, int plus, int note, int dir) {
+    if (val == INT32_MIN || radix != 10) {
+        loft_format_long(s, val == INT32_MIN ? LOFT_NULL : (int64_t) val, radix, width, token, plus, note, dir);
+        return;
+    }
+    if (dir == 2) dir = 1;
+    uint32_t abs = val < 0 ? 0u - (uint32_t) val : (uint32_t) val;
+    size_t start = s->len;
+    if (val < 0) loft_push_char(s, '-');
+    else if (plus) loft_push_char(s, '+');
+    size_t sign = s->len - start;
+    char tmp[10], buf[10];
+    int n = 0;
+    do {
+        tmp[n++] = (char) ('0' + (int) (abs % 10u));
+        abs /= 10u;
+    } while (abs);
+    for (int i = 0; i < n; i++) buf[i] = tmp[n - 1 - i];
+    loft_push(s, buf, (size_t) n);
+    loft_pad_rendered(s, start, sign, width, dir, token);
+}
+
 /* print (codegen_runtime::host_print): a reader that stopped reading ends the program quietly
  * with 0 — `prog | head` is the ordinary end of a pipeline, not a fault.  A POSIX host ignores
  * SIGPIPE (`loft_start`), so the closed pipe arrives here as EPIPE.  A text holding a newline is
@@ -2309,6 +2335,14 @@ static void loft_set_int4(loft_ref r, uint32_t fld, int64_t v) {
     memcpy(loft_at(loft_store_of(r), r.rec, r.pos + fld), &x, 4);
 }
 
+/* @PLN217 — the same for a value held in 32 bits: its null is the field's own (INT32_MIN), so
+ * the four bytes are written as they stand. */
+static void loft_set_int4_32(loft_ref r, uint32_t fld, int32_t v) {
+    if (r.rec == 0) return;
+    if (LOFT_WRITE_REFUSED(loft_store_of(r))) return;
+    memcpy(loft_at(loft_store_of(r), r.rec, r.pos + fld), &v, 4);
+}
+
 /* The narrow integer fields: a byte biased by `min` (255 the nullable form's null), a short
  * in the `+1` encoding (0 is null), a raw short (0xFFFF its null), a 4-byte int (INT32_MIN).
  * A value a field cannot hold takes its default: the nullable forms' is null. */
@@ -2709,6 +2743,20 @@ static void loft_vec_push_int4(loft_ref v, int64_t x) {
     loft_ref e = loft_vec_append(v, 4);
     if (e.rec == 0) return;
     loft_set_u32(loft_store_of(e), e.rec, e.pos, x == LOFT_NULL ? 0x80000000u : (uint32_t) (uint64_t) x);
+    loft_vec_finish(v);
+}
+
+/* @PLN217 — the same for a value held in 32 bits: its null is the element's own bit pattern. */
+static void loft_vec_push_int4_32(loft_ref v, int32_t x) {
+    uint32_t w = (uint32_t) x;
+    uint8_t *slot = loft_vec_push_slot(v, 4);
+    if (slot) {
+        memcpy(slot, &w, 4);
+        return;
+    }
+    loft_ref e = loft_vec_append(v, 4);
+    if (e.rec == 0) return;
+    loft_set_u32(loft_store_of(e), e.rec, e.pos, w);
     loft_vec_finish(v);
 }
 
@@ -5298,6 +5346,7 @@ static void loft_set_single(loft_ref r, uint32_t fld, float v) {
     }
 LOFT_SET_AT(loft_set_int, int64_t)
 LOFT_SET_AT(loft_set_int4, int64_t)
+LOFT_SET_AT(loft_set_int4_32, int32_t)
 LOFT_SET_AT(loft_set_int4_raw, int64_t)
 LOFT_SET_AT(loft_set_float, double)
 LOFT_SET_AT(loft_set_single, float)
@@ -7554,6 +7603,34 @@ LOFT_HOT_INLINE loft_ref loft_vec_get_at(loft_ref v, uint32_t size, int64_t from
     loft_ref e = loft_vec_get(v, size, from);
     if (LOFT_UNLIKELY(e.rec == 0)) {
         loft_index_miss(from, loft_vec_len(v), file, line);
+        return loft_ref_null_reported();
+    }
+    return e;
+}
+
+/* @PLN217 — `loft_vec_get` at an index held in 32 bits: the wrap from the end and the one
+ * unsigned compare are 32-bit arithmetic.  A null index is the most negative one, and wraps to
+ * past the end of any vector an `i32` can count; a longer one takes the 64-bit path. */
+LOFT_HOT_INLINE loft_ref loft_vec_get32(loft_ref v, uint32_t size, int32_t from) {
+    loft_ref e = loft_ref_null();
+    if (v.store_nr == 0xFFFF || v.rec == 0 || v.pos == 0) return e;
+    loft_store_t *s = loft_store_of(v);
+    uint32_t r = loft_collection_rec(s, v.rec, v.pos);
+    if (r == 0) return e;
+    uint32_t len = loft_u32(s, r, 4);
+    if (LOFT_UNLIKELY(len > (uint32_t) INT32_MAX)) return loft_vec_get(v, size, loft_w64(from));
+    uint32_t f = from < 0 ? (uint32_t) from + len : (uint32_t) from;
+    if (f >= len) return e;
+    e.store_nr = v.store_nr;
+    e.rec = r;
+    e.pos = (uint32_t) (8 + (uint64_t) f * size);
+    return e;
+}
+LOFT_HOT_INLINE loft_ref loft_vec_get32_at(loft_ref v, uint32_t size, int32_t from, const char *file,
+                                           uint32_t line) {
+    loft_ref e = loft_vec_get32(v, size, from);
+    if (LOFT_UNLIKELY(e.rec == 0)) {
+        loft_index_miss(loft_w64(from), loft_vec_len(v), file, line);
         return loft_ref_null_reported();
     }
     return e;

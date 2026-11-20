@@ -9844,10 +9844,16 @@ impl<'a> FnWriter<'a> {
             return Err(format!("{name} with a computed format"));
         };
         let (val, width) = self.two(name, &[val, width], ind)?;
+        // @PLN217 — a value held in 32 bits is formatted in 32 bits (`loft_format_int32`).
+        let (f, val) = if val.kind == K::Int32 {
+            ("loft_format_int32", val.code)
+        } else {
+            ("loft_format_long", as_int(val)?)
+        };
         Ok(E::new(
             format!(
-                "loft_format_long(&{dest}, {}, {radix}, {}, {token}, {}, {}, {dir})",
-                as_int(val)?,
+                "{f}(&{dest}, {}, {radix}, {}, {token}, {}, {}, {dir})",
+                val,
                 as_int(width)?,
                 u8::from(*plus),
                 u8::from(*note)
@@ -10535,6 +10541,13 @@ impl<'a> FnWriter<'a> {
             ("OpSetInt" | "OpSetInt4", [r, fld, val]) => {
                 let fld = Self::literal(fld, "field")?;
                 let (r, val) = self.two(name, &[r, val], ind)?;
+                // @PLN217 — a 4-byte field takes a value held in 32 bits as it stands.
+                if name == "OpSetInt4" && val.kind == K::Int32 {
+                    return Ok(self.set_at(
+                        "loft_set_int4_32_at",
+                        &[as_ref(r)?, fld.to_string(), val.code],
+                    ));
+                }
                 let f = if name == "OpSetInt" {
                     "loft_set_int_at"
                 } else {
@@ -10966,10 +10979,13 @@ impl<'a> FnWriter<'a> {
             }
             ("OpPushInt4", [v, val]) => {
                 let (v, val) = self.two(name, &[v, val], ind)?;
-                Ok(E::new(
-                    format!("loft_vec_push_int4({}, {})", as_ref(v)?, as_int(val)?),
-                    K::Void,
-                ))
+                // @PLN217 — a 4-byte element takes a value held in 32 bits as it stands.
+                let (f, val) = if val.kind == K::Int32 {
+                    ("loft_vec_push_int4_32", val.code)
+                } else {
+                    ("loft_vec_push_int4", as_int(val)?)
+                };
+                Ok(E::new(format!("{f}({}, {val})", as_ref(v)?), K::Void))
             }
             ("OpSizeVector", [v, stride]) => {
                 let stride = Self::literal(stride, "stride")?;
@@ -11215,11 +11231,13 @@ impl<'a> FnWriter<'a> {
         let size = Self::literal(size, "element size")?;
         let (v, idx) = self.two(name, &[v, idx], ind)?;
         let (at, t) = self.fault_at(name == "OpGetVector");
-        let c = format!(
-            "loft_vec_get{at}({}, {size}, {}{t})",
-            as_ref(v)?,
-            as_int(idx)?
-        );
+        // @PLN217 — an index held in 32 bits is wrapped and tested in 32 bits.
+        let (f, idx) = if idx.kind == K::Int32 {
+            ("loft_vec_get32", idx.code)
+        } else {
+            ("loft_vec_get", as_int(idx)?)
+        };
+        let c = format!("{f}{at}({}, {size}, {idx}{t})", as_ref(v)?);
         Ok(E::new(c, K::Ref))
     }
 
