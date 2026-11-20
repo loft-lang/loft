@@ -134,8 +134,11 @@ program's own code.
 | `call` | a conversion where one of the program's functions takes or answers 64 bits | that function declares `i64`, or its file is `#width 64` |
 | `value` | a conversion in the function's own expression | one of its wide values |
 
-Summed over the corpus it is the worklist: the `runtime` lines by function name say which
-runtime family is used most, and the `undeclared` lines which counters are still wide.  It
+`make wide-ledger` sums it over the corpus and holds the `undeclared` and `runtime` classes to
+`scripts/wide_ledger.baseline`: a line that is new or above its count fails, so 64-bit work
+removed from a 32-bit build stays removed.  `make wide-ledger ARGS="--top 30"` prints the
+worklist — the runtime functions used most, and the compiler-made values still wide;
+`make wide-ledger-bless` records a count that fell.  It
 reads what the compiler wrote, not what the C compiler made of it; a library's hand-written C
 and the linked image are outside it.
 
