@@ -10,6 +10,7 @@ pub use allocation::SLICE_UNCAPPED;
 mod descriptor;
 mod equality;
 mod field_groups;
+mod image_sound;
 mod layout_parse;
 mod release;
 pub use release::{Release, version_triple};

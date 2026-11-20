@@ -1101,6 +1101,183 @@ static int loft_image_load(loft_ref r, loft_str path, const loft_sidecar *sc, in
     return ok;
 }
 
+/* ── `Stores::image_sound` (`@FR-S-Sound`) ───────────────────────────────────────────────────
+ * The numbers INSIDE an image, checked on its bytes before it is adopted.  The frame check says
+ * the file is a chain of blocks; every read after the load believes what the blocks hold — a
+ * record number in a field, a vector's length, a text's length — and no store access here is
+ * bounded.  The walk follows the root's type and refuses the image unless every record number
+ * it meets names a claimed block and what each kind keeps in a block lies inside it.  It reads
+ * what a type owns in line — struct fields, texts, vectors, child records — and stops at a keyed
+ * collection and at a stored reference, as the interpreter's does. */
+typedef struct { uint32_t rec, pos, words; uint16_t tp; } loft_snd_item;
+typedef struct { loft_snd_item *p; size_t n, cap; } loft_snd_work;
+
+static void loft_snd_push(loft_snd_work *w, uint32_t rec, uint32_t pos, uint16_t tp, uint32_t words) {
+    if (w->n == w->cap) {
+        w->cap = w->cap ? w->cap * 2 : 64;
+        w->p = (loft_snd_item *) realloc(w->p, w->cap * sizeof *w->p);
+        if (!w->p) { fputs("loft: out of memory\n", stderr); abort(); }
+    }
+    loft_snd_item it = { rec, pos, words, tp };
+    w->p[w->n++] = it;
+}
+
+static uint32_t loft_snd_u32(const uint8_t *b, uint32_t rec, uint32_t byte) {
+    uint32_t v;
+    memcpy(&v, b + (size_t) rec * 8 + byte, 4);
+    return v;
+}
+
+/* The words of the claimed block that STARTS at `rec`, 0 for a number that is past the image,
+ * inside a block, or a free block's. */
+static uint32_t loft_snd_block(const uint8_t *b, const uint64_t *starts, uint32_t words, uint32_t rec) {
+    if (rec < LOFT_ST_PRIMARY || rec >= words || !((starts[rec >> 6] >> (rec & 63)) & 1)) return 0;
+    return loft_snd_u32(b, rec, 0);
+}
+
+/* Whether a value of `tp` holds anything the walk reads: a vector of plain numbers is sound by
+ * its length alone. */
+static int loft_snd_holds_numbers(const loft_tdesc *T, uint32_t nt, uint16_t tp) {
+    if (tp >= nt) return 1;
+    const loft_tdesc *d = &T[tp];
+    if (d->kind == LOFT_T_SCALAR) return 0;
+    if (d->kind != LOFT_T_STRUCT) return 1;
+    for (uint16_t i = 0; i < d->n; i++) {
+        if (loft_snd_holds_numbers(T, nt, d->fields[i].type)) return 1;
+    }
+    return 0;
+}
+
+/* 1 when the image may be read under `root_tp`; 0 with `why` naming the first number that does
+ * not hold.  `b` passed `loft_image_refusal`: its chain tiles its `words`. */
+static int loft_image_sound(const loft_tdesc *T, uint32_t nt, uint16_t root_tp, const uint8_t *b, uint32_t words,
+                            char *why, size_t cap) {
+    if (!T || root_tp >= nt || words <= LOFT_ST_PRIMARY) return 1;
+    size_t nw = ((size_t) words + 63) / 64;
+    uint64_t *starts = (uint64_t *) calloc(nw * 2, sizeof *starts);
+    if (!starts) { fputs("loft: out of memory\n", stderr); abort(); }
+    /* A record is walked once: a second field naming it has nothing new to say, and records
+     * that name each other in a ring would otherwise never end. */
+    uint64_t *walked = starts + nw;
+    for (uint32_t pos = LOFT_ST_PRIMARY; pos < words;) {
+        int32_t h;
+        memcpy(&h, b + (size_t) pos * 8, 4);
+        if (h > 0) starts[pos >> 6] |= (uint64_t) 1 << (pos & 63);
+        if (h == 0 || h == INT32_MIN) break;
+        pos += (uint32_t) (h < 0 ? -h : h);
+    }
+    loft_snd_work w = { 0, 0, 0 };
+    int ok = 1;
+    uint32_t root_words = loft_snd_block(b, starts, words, LOFT_ST_PRIMARY);
+    if (!root_words) goto done; /* no root record: nothing is read */
+    if ((uint64_t) 8 + T[root_tp].size > (uint64_t) root_words * 8) {
+        snprintf(why, cap, "the root needs %u bytes and its record is %u words", 8u + T[root_tp].size, root_words);
+        ok = 0;
+        goto done;
+    }
+    loft_snd_push(&w, LOFT_ST_PRIMARY, 8, root_tp, root_words);
+    while (ok && w.n) {
+        loft_snd_item it = w.p[--w.n];
+        if (it.tp >= nt) {
+            snprintf(why, cap, "type %u is not one of this program's", (unsigned) it.tp);
+            ok = 0;
+            break;
+        }
+        const loft_tdesc *d = &T[it.tp];
+        switch (d->kind) {
+        case LOFT_T_TEXT: {
+            uint32_t t = loft_snd_u32(b, it.rec, it.pos);
+            if (t == 0 || t > (uint32_t) INT32_MAX) break;
+            uint32_t tw = loft_snd_block(b, starts, words, t);
+            if (!tw) {
+                snprintf(why, cap, "a text is said to be record %u, which is not a record", t);
+                ok = 0;
+                break;
+            }
+            uint32_t len = loft_snd_u32(b, t, 4);
+            if ((uint64_t) 8 + len > (uint64_t) tw * 8) {
+                snprintf(why, cap, "text record %u says %u bytes and is %u words", t, len, tw);
+                ok = 0;
+            } else if (!loft_utf8_valid(b + (size_t) t * 8 + 8, len)) {
+                snprintf(why, cap, "text record %u is not UTF-8", t);
+                ok = 0;
+            }
+            break;
+        }
+        case LOFT_T_STRUCT:
+            for (uint16_t i = 0; i < d->n; i++) loft_snd_push(&w, it.rec, it.pos + d->fields[i].pos, d->fields[i].type, it.words);
+            break;
+        case LOFT_T_ENUM: {
+            int e = (int) b[(size_t) it.rec * 8 + it.pos] - 1;
+            if (e < 0 || e >= d->n || d->variants[e] == 0xFFFF) break;
+            uint16_t vt = d->variants[e];
+            if (vt < nt && (uint64_t) it.pos + T[vt].size > (uint64_t) it.words * 8) {
+                snprintf(why, cap, "an enum value needs %u bytes and its record is %u words", it.pos + T[vt].size, it.words);
+                ok = 0;
+                break;
+            }
+            loft_snd_push(&w, it.rec, it.pos, vt, it.words);
+            break;
+        }
+        case LOFT_T_VECTOR: {
+            uint32_t v = loft_snd_u32(b, it.rec, it.pos);
+            if (v == 0) break;
+            uint32_t vw = loft_snd_block(b, starts, words, v);
+            if (!vw) {
+                snprintf(why, cap, "a vector is said to be record %u, which is not a record", v);
+                ok = 0;
+                break;
+            }
+            uint32_t len = loft_snd_u32(b, v, 4);
+            uint32_t size = d->elem < nt ? T[d->elem].size : 0;
+            if ((uint64_t) 8 + (uint64_t) len * size > (uint64_t) vw * 8) {
+                snprintf(why, cap, "vector record %u says %u elements of %u bytes and is %u words", v, len, size, vw);
+                ok = 0;
+                break;
+            }
+            if ((walked[v >> 6] >> (v & 63)) & 1) break;
+            walked[v >> 6] |= (uint64_t) 1 << (v & 63);
+            if (!loft_snd_holds_numbers(T, nt, d->elem)) break;
+            for (uint32_t i = 0; i < len; i++) loft_snd_push(&w, v, 8 + i * size, d->elem, vw);
+            break;
+        }
+        case LOFT_T_CHILD: {
+            uint32_t c = loft_snd_u32(b, it.rec, it.pos);
+            if (c == 0) break;
+            uint32_t cw = loft_snd_block(b, starts, words, c);
+            uint32_t need = 8u + (d->elem < nt ? T[d->elem].size : 0);
+            if (!cw) {
+                snprintf(why, cap, "a child record is said to be record %u, which is not a record", c);
+                ok = 0;
+            } else if ((uint64_t) need > (uint64_t) cw * 8) {
+                snprintf(why, cap, "a child record needs %u bytes and its record is %u words", need, cw);
+                ok = 0;
+            } else if (!((walked[c >> 6] >> (c & 63)) & 1)) {
+                walked[c >> 6] |= (uint64_t) 1 << (c & 63);
+                loft_snd_push(&w, c, 8, d->elem, cw);
+            }
+            break;
+        }
+        /* Not read yet, each named so that a new kind is a decision made here: a keyed
+         * collection's own tables and nodes (and so what it holds), and a stored reference,
+         * which the load rebases after this walk. */
+        case LOFT_T_HASH:
+        case LOFT_T_INDEX:
+        case LOFT_T_ORDERED:
+        case LOFT_T_RADIX:
+        case LOFT_T_TRIE:
+        case LOFT_T_DBREF:
+        /* A value: no record number and no length to be wrong. */
+        case LOFT_T_SCALAR:
+            break;
+        }
+    }
+done:
+    free(w.p);
+    free(starts);
+    return ok;
+}
+
 /* `load_bytes_from` / `Store::load`: image `bytes` (malloc'd, `n` long, taken over) adopted as the
  * store `r` names — a store keeps its type and its liveness, its allocator state re-derived from
  * the image's own blocks; with `validate` an image whose block structure does not hold is
@@ -1116,6 +1293,13 @@ static int loft_image_adopt(loft_ref r, uint8_t *bytes, size_t n, int untrusted,
         return 0;
     }
     uint32_t words = (uint32_t) (n / 8), unrecorded = 1;
+    /* `@FR-S-Sound` — before anything follows a number the image holds, the rebase below
+     * included. */
+    if (!loft_image_sound(loft_T, loft_T_n, loft_stores[r.store_nr].known, bytes, words, reason, sizeof reason)) {
+        fprintf(stderr, "%s: refusing %s \xe2\x80\x94 %s.\n", who, what, reason);
+        free(bytes);
+        return 0;
+    }
     /* A store in memory records no length: only a written image does (`(S-Frame)`). */
     memcpy(bytes + 4, &unrecorded, 4);
     loft_store_t *s = &loft_stores[r.store_nr];
