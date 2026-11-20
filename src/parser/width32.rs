@@ -208,6 +208,10 @@ impl Parser {
     /// `x#next`: the file's own `integer`, so an `i32` in a file under the regime, as a
     /// collection's `len` is.  No collection there is longer than an `i32` counts.  Enforces
     /// `@FR-W-Count`.
+    ///
+    /// It is what the compiler COUNTS in, not what an index is converted to: a program's own
+    /// index expression keeps the plain `integer` as its target, so an `i64` index is taken as
+    /// it is and narrowed where it meets the vector, a value past the width reading as outside.
     pub(crate) fn count_type(&self) -> Type {
         if self.data.width32() {
             Type::Integer(crate::narrow::IntegerSpec::i32())

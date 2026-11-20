@@ -3,8 +3,7 @@
 // @I58 — Parser (two-pass recursive descent)
 
 use super::{
-    DefType, I32, Level, Parser, Parts, Position, Type, Value, diagnostic_format, v_block, v_if,
-    v_set,
+    DefType, Level, Parser, Parts, Position, Type, Value, diagnostic_format, v_block, v_if, v_set,
 };
 
 // Field access, indexing, and iterator operations.
@@ -1473,7 +1472,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             let (tps, ls) = self.parse_parameters();
             let mut cd = ls[0].clone();
             // validate types
-            if tps.len() != 1 || !self.convert(&mut cd, &tps[0], &I32) {
+            if tps.len() != 1 || !self.convert(&mut cd, &tps[0], &crate::data::I32) {
                 diagnostic!(self.lexer, Level::Error, "Invalid index in remove");
             }
             let elem = self.cl("OpVectorRef", &[code.clone(), cd.clone()]);
@@ -1496,7 +1495,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                 *code = v_block(ops, Type::Boolean, "group_elem_remove");
             } else if !self.first_pass
                 && self.data.type_holds_generator(&elem_tp)
-                && let at = self.create_unique("rm_at", &I32)
+                && let at = self.create_unique("rm_at", &self.count_type())
                 // The element read `v[i]` makes: a linked record through its pointer, an
                 // inline one — a handle included — at its stride.  The index is bound once:
                 // the element's release and its removal both read it.
@@ -1581,7 +1580,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             return false;
         }
         let size = i32::from(self.database.size(db_elm));
-        let i = self.create_unique("rel_i", &I32);
+        let i = self.create_unique("rel_i", &self.count_type());
         let item = self.cl(
             "OpGetVector",
             &[vec.clone(), Value::Int(size), Value::Var(i)],
@@ -1859,7 +1858,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             let index_start = *self.lexer.peek_pos();
             let index_t = if self.lexer.peek_token("..") {
                 p = Value::Int(0);
-                I32.clone()
+                self.count_type()
             } else {
                 self.expression(&mut p)
             };
@@ -2561,7 +2560,13 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         // @FR-N-Store — an index is a slot: `v[i]` with `i: integer?` reads null on a null
         // index, and nothing said so (the eighth hole of @PLN153 phase 3's census).
         if !self.first_pass
-            && !self.convert_store_lenient(&mut p, &index_t, &I32, "the index", Some(&index_start))
+            && !self.convert_store_lenient(
+                &mut p,
+                &index_t,
+                &crate::data::I32,
+                "the index",
+                Some(&index_start),
+            )
         {
             diagnostic!(
                 self.lexer,
@@ -3217,7 +3222,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             return (dest, Vec::new());
         }
         let (d_nr, mut args) = (*d_nr, args.clone());
-        let tmp = self.create_unique("__elm_idx", &crate::data::I32);
+        let tmp = self.create_unique("__elm_idx", &self.count_type());
         self.vars.defined(tmp);
         let bind = crate::data::v_set(tmp, args.pop().unwrap_or(Value::Null));
         args.push(Value::Var(tmp));
@@ -3332,8 +3337,13 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         // non-integer index, which is the case this message is for.
         let deferred = self.first_pass && index_t.is_unknown();
         // @FR-N-Store — the index is a slot (see the vector index above).
-        if !self.convert_store_lenient(p, index_t, &I32, "the index", Some(index_start))
-            && !deferred
+        if !self.convert_store_lenient(
+            p,
+            index_t,
+            &crate::data::I32,
+            "the index",
+            Some(index_start),
+        ) && !deferred
         {
             // Name the offending type: the bare "invalid index" this used to
             // print reads as "indexing text is unsupported" and sent a consumer
@@ -3349,7 +3359,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         if self.lexer.has_token("..") {
             let incl = self.lexer.has_token("=");
             // The end bound's type; an open end is the non-null `i32::MAX`.
-            let mut end_t = I32.clone();
+            let mut end_t = self.count_type();
             if self.lexer.peek_token("]") {
                 *code = self.cl(
                     "OpGetTextSub",
@@ -3385,7 +3395,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                 if !self.convert_store_lenient(
                     &mut other,
                     &ot_type,
-                    &I32,
+                    &crate::data::I32,
                     "the index",
                     Some(&bound_start),
                 ) && !end_deferred

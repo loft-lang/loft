@@ -6,8 +6,8 @@
 //! Including type checking.
 
 use crate::data::{
-    Argument, Context, Data, DefType, Deps, I32, IntegerSpec, Type, Value, to_default, v_block,
-    v_if, v_loop, v_set,
+    Argument, Context, Data, DefType, Deps, IntegerSpec, Type, Value, to_default, v_block, v_if,
+    v_loop, v_set,
 };
 use crate::database::{Parts, Stores};
 use crate::diagnostics::{DiagEntry, Diagnostics, Level, diagnostic_format};

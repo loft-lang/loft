@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use super::{
-    Argument, DefType, Function, I32, Level, Parser, ToString, Type, Value, diagnostic_format,
-    v_block, v_if, v_loop, v_set,
+    Argument, DefType, Function, Level, Parser, ToString, Type, Value, diagnostic_format, v_block,
+    v_if, v_loop, v_set,
 };
 use crate::data::Deps;
 pub(crate) use crate::data::{is_collection, is_keyed};
@@ -1405,7 +1405,7 @@ impl Parser {
             if self.data.width32() {
                 Type::Integer(crate::narrow::IntegerSpec::i32())
             } else {
-                I32.clone()
+                self.count_type()
             }
         } else if let Some(nr) = self.lexer.has_long() {
             // `@FR-W-Lit` — a literal past i32 in a regime file is refused with its cure, unless
@@ -3998,9 +3998,9 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         // comprehension's `_#index` was one variable, and a nested one advanced the outer's.
         let counter = |p: &mut Self, suffix: &str| {
             if id == "_" {
-                p.create_unique(suffix, &I32)
+                p.create_unique(suffix, &p.count_type())
             } else {
-                p.create_var(&format!("{id}#{suffix}"), &I32)
+                p.create_var(&format!("{id}#{suffix}"), &p.count_type())
             }
         };
         let (iter_var, pre_var) = if super::collections::walks_text(&in_type) {
@@ -5425,7 +5425,13 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         ) {
             till.clone()
         } else {
-            self.conv_op("-", till.clone(), from.clone(), I32.clone(), I32.clone())
+            self.conv_op(
+                "-",
+                till.clone(),
+                from.clone(),
+                self.count_type(),
+                self.count_type(),
+            )
         };
         Some(vec![value, Value::Return(Box::new(count))])
     }

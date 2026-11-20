@@ -10,7 +10,6 @@ use super::{
     DefType, Deps, Level, Parser, Type, Value, diagnostic_format, rename, v_block, v_if, v_loop,
     v_set,
 };
-use crate::data::I32;
 
 impl Parser {
     /// Compare two tuples, element by element — `==`, `!=`, `<`, `<=`, `>`, `>=`.
@@ -164,7 +163,7 @@ impl Parser {
         let rhs = side(self, 1, &mut ops);
         let res = self.create_unique("veq_r", &Type::Boolean);
         self.vars.defined(res);
-        let idx = self.create_unique("veq_i", &I32);
+        let idx = self.create_unique("veq_i", &self.count_type());
         self.vars.defined(idx);
         let la = self.cl("OpLengthVector", &[Value::Var(lhs)]);
         let lb = self.cl("OpLengthVector", &[Value::Var(rhs)]);

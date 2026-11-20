@@ -9,7 +9,7 @@ use super::control::{
     PatternArm, SliceGroupKind, SliceShape, SliceSubject, SubruleGroup, chain_pattern_arms,
     guarded_arm, mark_forward_call, match_subject_borrows_off, slice_arms_cover_every_length,
 };
-use super::{I32, Level, Parser, Type, Value, diagnostic_format, v_block, v_if, v_set};
+use super::{Level, Parser, Type, Value, diagnostic_format, v_block, v_if, v_set};
 use crate::data::Deps;
 use crate::data::IntegerSpec;
 use std::collections::HashSet;
@@ -932,8 +932,8 @@ impl Parser {
                     "+",
                     Value::Var(pos_var),
                     Value::Int(fixed),
-                    I32.clone(),
-                    I32.clone(),
+                    self.count_type(),
+                    self.count_type(),
                 );
                 // ANDed after what the earlier segments tested (`@FR-P-Rule`), when a sub-rule
                 // ended one.
@@ -947,8 +947,8 @@ impl Parser {
                     "+",
                     Value::Var(pos_var),
                     Value::Int(fixed),
-                    I32.clone(),
-                    I32.clone(),
+                    self.count_type(),
+                    self.count_type(),
                 );
                 let adv = self.set_field(
                     cursor_def,
@@ -968,8 +968,8 @@ impl Parser {
                         "<",
                         old_far.clone(),
                         new_pos.clone(),
-                        I32.clone(),
-                        I32.clone(),
+                        self.count_type(),
+                        self.count_type(),
                     );
                     let maxed = v_if(is_less, new_pos, old_far);
                     let set_far = self.set_field(cursor_def, ff, 0, Value::Var(cursor_var), maxed);
@@ -1065,8 +1065,8 @@ impl Parser {
                         "-",
                         len_c,
                         Value::Int(tail.len() as i32),
-                        I32.clone(),
-                        I32.clone(),
+                        self.count_type(),
+                        self.count_type(),
                     );
                     self.materialize_named_rest(
                         v, elm_tp, elm_size, rest_var, &vec_tp, lo_val, hi_val, 1, bindings,
