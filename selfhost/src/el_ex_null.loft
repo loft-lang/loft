@@ -730,6 +730,11 @@ pub fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: intege
         if rd > 0 && el::def(e, rd).def_type == el::DT_STRUCT {
           return coalesce_with(e, vars, x, el_ex_object::object_expr(e, vars, el::def(e, rd).name, "", [], null));
         }
+        // A struct-enum VARIANT (`(n as Bin?)?`) defaults to that variant, its fields at their
+        // defaults (`build_default`'s enum arm at the variant), held as a record `??` holds it.
+        if rd > 0 && el::def(e, rd).def_type == el::DT_ENUM_VALUE {
+          return coalesce_with(e, vars, x, el_ex_assign::unit_variant(e, vars, el::def(e, rd).parent, rd));
+        }
       },
       _ => {}
     }

@@ -3009,7 +3009,11 @@ pub fn record_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   lhs = el_types::base(x.tp);
   rd = match lhs { TyReference { n } => n, _ => -1 };
   dd = match el_types::base(d.tp) { TyReference { n } => n, _ => -2 };
-  if rd <= 0 || el::def(e, rd).def_type != el::DT_STRUCT || dd != rd {
+  // (A struct-enum VARIANT subject — a checked cast's `n as Bin?` — takes a default of its own
+  // variant or a value of its enum: `(n as Bin?)?`'s `EnumUnitLit`.)
+  variant = rd > 0 && el::def(e, rd).def_type == el::DT_ENUM_VALUE;
+  variant_fits = variant && (dd == rd || el_types::struct_enum_def(el_types::base(d.tp)) == el::def(e, rd).parent);
+  if rd <= 0 || (!variant_fits && (el::def(e, rd).def_type != el::DT_STRUCT || dd != rd)) {
     refuse_known(e, d.tp, "a `??` on a record with a default of another type: {type_kind(d.tp)}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
@@ -3046,6 +3050,10 @@ pub fn record_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
     rjt = el_types::with_deps(lhs, [rxv]);
     rdc = if !e.first_pass && rxv >= 0 && !vars.coalesce_is_bind { el_ex_null::own_join_arm(e, vars, d.code, rjt) } else { d.code };
     return ex(el_ir::v_if(el_ir::cl(e, "OpConvBoolFromRef", [x.code]), x.code, rdc), if d.tp is TyOptional { ir::TyOptional { inner: lhs } } else { lhs });
+  }
+  // (A variant subject's holder is the second pass's alone: Rust's first pass mints none.)
+  if variant && e.first_pass {
+    return ex(ir::NdNull, lhs);
   }
   // Minted on both passes, as the Rust mints it, so it numbers before the second pass's buffers.
   held = el_vars::create_unique(vars, "_ncc", lhs);
