@@ -3587,6 +3587,7 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
   // element read inline (`OpEq…(<element>, <literal>)`); -1 for none.
   head_blit: vector<integer> = [];
   tail_blit: vector<integer> = [];
+  plus_rest = 0;
   for el0 in elems {
     nm = "";
     pat = -1;
@@ -3618,9 +3619,14 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
         match e.p.nodes[cpn] {
           PWild => { nm = cn; },
           PQuant { quant: cq } => {
-            if cq != "*" || has_rest {
+            if (cq != "*" && cq != "+") || has_rest {
               el::refuse(e, "a slice pattern capture of a repetition of this kind");
               return null;
+            }
+            // (`xs: integer+` is the rest that holds one element at least: the length test
+            // counts it.)
+            if cq == "+" {
+              plus_rest = 1;
             }
             has_rest = true;
             rest = cn;
@@ -3664,7 +3670,7 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
   }
   fixed = len(head) + len(tail);
   ln = el_ir::cl(e, "OpLengthVector", [ir::NdVar { n: sv }]);
-  cond = if has_rest { el_ir::cl(e, "OpLeInt", [ir::NdInt { n: fixed }, ln]) } else { el_ir::cl(e, "OpEqInt", [ln, ir::NdInt { n: fixed }]) };
+  cond = if has_rest { el_ir::cl(e, "OpLeInt", [ir::NdInt { n: fixed + plus_rest }, ln]) } else { el_ir::cl(e, "OpEqInt", [ln, ir::NdInt { n: fixed }]) };
   // A cursor pattern is a prefix read from the entry position.
   if len(cur) > 0 {
     cond = el_ir::cl(e, "OpLeInt", [el_ir::cl(e, "OpAddInt", [ir::NdVar { n: cur[3]! }, ir::NdInt { n: fixed }]), ln]);
