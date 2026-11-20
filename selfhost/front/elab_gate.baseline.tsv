@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	7664b959f903f6c8f216f5874d7e7285a9ab5b77
 
-layer	elab	agree	1297	of	2121
+layer	elab	agree	1298	of	2121
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -562,7 +562,6 @@ elab	refused	loft-suite/rules/types/N-Decl/a-null-test-on-an-inline-nullable-str
 elab	refused	loft-suite/rules/types/N-Decl/a-vector-literal-argument-takes-its-parameters-nullable-element.loft
 elab	refused	loft-suite/rules/types/N-Domain/1450-a-projection-is-not-more-non-null-than-its-receiver.loft
 elab	refused	loft-suite/rules/types/N-Domain/1450h-the-math-guard-is-read-in-every-spelling.loft
-elab	refused	loft-suite/rules/types/N-Domain/1478-a-text-tuple-member-fits-its-owned-slot.loft
 elab	refused	loft-suite/rules/types/N-Idem/1771-a-nullable-type-argument-collapses-t-optional.loft
 elab	refused	loft-suite/rules/types/N-Index/a-length-local-and-a-loop-counter-read-non-null.loft
 elab	refused	loft-suite/rules/types/N-Index/a-length-local-the-vector-outgrew-is-not-trusted-warns.loft
@@ -831,7 +830,7 @@ elab	refused	tests/scripts/store_compact_slack_730.loft
 elab	refused	tests/scripts/store_digest_b0.loft
 elab	refused	tests/scripts/store_paged_enum_field.loft
 
-layer	elab-functions	agree	14377	of	24810
+layer	elab-functions	agree	14355	of	24787
 elab-functions	agree	lib/docs.loft::Anchor
 elab-functions	agree	lib/docs.loft::Character
 elab-functions	agree	lib/docs.loft::Double
@@ -10586,28 +10585,6 @@ elab-functions	agree	loft-suite/rules/types/N-Domain/1450-a-projection-is-not-mo
 elab-functions	agree	loft-suite/rules/types/N-Domain/1450h-the-math-guard-is-read-in-every-spelling.loft::n_divisor_control
 elab-functions	agree	loft-suite/rules/types/N-Domain/1450h-the-math-guard-is-read-in-every-spelling.loft::n_index_control
 elab-functions	agree	loft-suite/rules/types/N-Domain/1450h-the-math-guard-is-read-in-every-spelling.loft::n_main
-elab-functions	agree	loft-suite/rules/types/N-Domain/1478-a-text-tuple-member-fits-its-owned-slot.loft::(schema)
-elab-functions	agree	loft-suite/rules/types/N-Domain/1478-a-text-tuple-member-fits-its-owned-slot.loft::__tuple<(integer, text),integer>
-elab-functions	agree	loft-suite/rules/types/N-Domain/1478-a-text-tuple-member-fits-its-owned-slot.loft::__tuple<boolean,text>
-elab-functions	agree	loft-suite/rules/types/N-Domain/1478-a-text-tuple-member-fits-its-owned-slot.loft::__tuple<integer,integer>
-elab-functions	agree	loft-suite/rules/types/N-Domain/1478-a-text-tuple-member-fits-its-owned-slot.loft::__tuple<integer,text>
-elab-functions	agree	loft-suite/rules/types/N-Domain/1478-a-text-tuple-member-fits-its-owned-slot.loft::__tuple<text,text>
-elab-functions	agree	loft-suite/rules/types/N-Domain/1478-a-text-tuple-member-fits-its-owned-slot.loft::main_vector<((integer, text), integer)>
-elab-functions	agree	loft-suite/rules/types/N-Domain/1478-a-text-tuple-member-fits-its-owned-slot.loft::main_vector<(boolean, text)>
-elab-functions	agree	loft-suite/rules/types/N-Domain/1478-a-text-tuple-member-fits-its-owned-slot.loft::main_vector<(integer, integer)>
-elab-functions	agree	loft-suite/rules/types/N-Domain/1478-a-text-tuple-member-fits-its-owned-slot.loft::main_vector<(integer, text)>
-elab-functions	agree	loft-suite/rules/types/N-Domain/1478-a-text-tuple-member-fits-its-owned-slot.loft::main_vector<(text, text)>
-elab-functions	agree	loft-suite/rules/types/N-Domain/1478-a-text-tuple-member-fits-its-owned-slot.loft::n_pick78
-elab-functions	agree	loft-suite/rules/types/N-Domain/1478-a-text-tuple-member-fits-its-owned-slot.loft::vector<((integer, text), integer)>
-elab-functions	agree	loft-suite/rules/types/N-Domain/1478-a-text-tuple-member-fits-its-owned-slot.loft::vector<(boolean, text)>
-elab-functions	agree	loft-suite/rules/types/N-Domain/1478-a-text-tuple-member-fits-its-owned-slot.loft::vector<(integer, integer)>
-elab-functions	agree	loft-suite/rules/types/N-Domain/1478-a-text-tuple-member-fits-its-owned-slot.loft::vector<(integer, text)>
-elab-functions	agree	loft-suite/rules/types/N-Domain/1478-a-text-tuple-member-fits-its-owned-slot.loft::vector<(text, text)>
-elab-functions	agree	loft-suite/rules/types/N-Domain/1478-a-text-tuple-member-fits-its-owned-slot.loft::vector<__tuple<(integer, text),integer>>
-elab-functions	agree	loft-suite/rules/types/N-Domain/1478-a-text-tuple-member-fits-its-owned-slot.loft::vector<__tuple<boolean,text>>
-elab-functions	agree	loft-suite/rules/types/N-Domain/1478-a-text-tuple-member-fits-its-owned-slot.loft::vector<__tuple<integer,integer>>
-elab-functions	agree	loft-suite/rules/types/N-Domain/1478-a-text-tuple-member-fits-its-owned-slot.loft::vector<__tuple<integer,text>>
-elab-functions	agree	loft-suite/rules/types/N-Domain/1478-a-text-tuple-member-fits-its-owned-slot.loft::vector<__tuple<text,text>>
 elab-functions	agree	loft-suite/rules/types/N-Idem/1771-a-nullable-type-argument-collapses-t-optional.loft::(schema)
 elab-functions	agree	loft-suite/rules/types/N-Idem/1771-a-nullable-type-argument-collapses-t-optional.loft::i_6float?_n_sum
 elab-functions	agree	loft-suite/rules/types/N-Idem/1771-a-nullable-type-argument-collapses-t-optional.loft::main_vector<float?>
@@ -15210,7 +15187,7 @@ elab-functions	agree	tests/scripts/store_paged_enum_field.loft::main_vector<inte
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::n_bytes
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::vector<integer(0, 255)>
 
-layer	elab-pass1	agree	11813	of	17643
+layer	elab-pass1	agree	11813	of	17644
 elab-pass1	agree	lib/code.loft::t_4Code_add_block
 elab-pass1	agree	lib/code.loft::t_4Code_add_if
 elab-pass1	agree	lib/code.loft::t_4Code_add_loop
