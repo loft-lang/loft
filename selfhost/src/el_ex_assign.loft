@@ -951,6 +951,7 @@ pub fn closure_value(e: el::El, vars: el_vars::Vars, d: integer, rec_nm: text, c
     ops += [wr!];
   }
   ops += [ir::NdFnRef { def_nr: d, var: w, t: [] }];
+  vars.last_closure_w = w;
   ft = el_types::with_deps(closure_fn_type(e, d), [w]);
   // A closure built in a function answering a function: that result names this frame's closure
   // slot (`Deps::callee_frame1(w)`, 32768 + w) and answers the lambda's own result.
@@ -3002,6 +3003,21 @@ fn place_through_discharge(e: el::El, vars: el_vars::Vars, op: text, target: int
 }
 
 pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: text, target: integer, rhs: integer?) -> Ex {
+  r = assignment_inner(e, vars, at, fixed, op, target, rhs);
+  // (`set_closure_var_of`: a local assigned while a capturing lambda's record is pending holds
+  // that record — what a void call through it writes its by-value captures back from.)
+  if op == "=" && vars.last_closure_w >= 0 {
+    av = match e.p.nodes[target] { SName { name: an, member: am } => if am == "" { el_vars::var(vars, an) } else { -1 }, _ => -1 };
+    if av >= 0 {
+      vars.clos_fn += [av];
+      vars.clos_w += [vars.last_closure_w];
+      vars.last_closure_w = -1;
+    }
+  }
+  r
+}
+
+fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: text, target: integer, rhs: integer?) -> Ex {
   // loft#1205 (`@FR-E-Asgn-Discharge`): `n[i]? += 1` — the `?` is peeled to the element it
   // reads, the compound written through that place (bound once where its index has an effect),
   // and an integer element seeded with its default where it is null first (`discharge_seed`:
