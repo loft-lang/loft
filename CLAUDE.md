@@ -80,7 +80,8 @@ For any multi-failure refactor, start `find_problems.sh --bg` before editing (de
 is canonical; `index/features.json` + `doc/features/` + `tests/docs/features/*.loft` are its
 GENERATED shadow (never edit them: edit the issue, then `make features-fetch && make features-gen`;
 the `features-check` drift guard fails on hand-edits).
-File a NEW plan as a `loft-lang/plans` issue with one `status:*` + one `subject:*` label. Look refs
+File a NEW plan as a `loft-lang/plans` issue with one `status:*` + one `subject:*` label AND its
+file in the repo, always: `doc/claude/plans/<n>-<slug>.md` or `<n>-<slug>/README.md` (plans/README.md). Look refs
 up with `./scripts/idx` (`make index` first if stale; `./scripts/idx help` for queries).
 
 **A DESIGN DECISION is `@C<n>`-tagged** (@PLN175): its sites — code, doc, and at least one guard

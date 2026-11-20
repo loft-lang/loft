@@ -1,0 +1,35 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A pass as a value that holds its window: two passes in blocks per frame, a pass handed to a
+// helper, materials sharing a shader and textures.
+// Holds when: each `end pass` prints before the next `begin pass`, and the last lines are
+//   end / drop tex 8 / drop tex 7 / close: 10 draws, 4 passes, 2 frames, refused []
+
+enum Depth { DepthOff, DepthTest, DepthWrite }
+struct Dev { handle: integer, open_pass: integer, draws: integer, ended: integer, refused: vector<text> }
+struct Win { dev: Dev, frames: integer }
+fn OpDrop(self: Win) { println("close: {self.dev.draws} draws, {self.dev.ended} passes, {self.frames} frames, refused {self.dev.refused}"); }
+struct Tex { id: integer }
+fn OpDrop(self: Tex) { println("drop tex {self.id}"); }
+struct Sh { id: integer }
+struct Slot { t: reference<Tex> }
+struct Mat { shader: reference<Sh>, texs: vector<Slot>, block: vector<float>, depth: Depth }
+struct Mesh { id: integer }
+struct Pass { win: reference<Win>, into: integer }
+fn OpDrop(self: Pass) { self.win.dev.open_pass = 0; self.win.dev.ended += 1; println("  end pass {self.into}"); }
+fn open(h: integer) -> Win { Win { dev: Dev { handle: h, open_pass: 0, draws: 0, ended: 0, refused: [] }, frames: 0 } }
+fn pass(self: Win, into: integer) -> Pass { if self.dev.open_pass != 0 { self.dev.refused += ["pass {into} begun inside pass {self.dev.open_pass}"]; } self.dev.open_pass = into; println("  begin pass {into}"); Pass { win: self, into: into } }
+fn present(self: Win) { if self.dev.open_pass != 0 { self.dev.refused += ["present inside pass {self.dev.open_pass}"]; } self.frames += 1; }
+fn material(sh: const Sh, t: const Tex, depth: Depth) -> Mat { Mat { shader: sh, texs: [Slot { t: t }], block: [0.0], depth: depth } }
+fn set(self: Mat, v: float) { self.block[0] = v; }
+fn draw(self: Pass, mesh: const Mesh, mat: const Mat) { self.win.dev.draws += 1; println("    draw mesh {mesh.id} sh {mat.shader.id} tex {mat.texs[0].t.id} u {mat.block[0]} in pass {self.into}"); }
+fn world(p: Pass, meshes: const vector<Mesh>, mat: Mat) { for m in meshes { mat.set(m.id as float); p.draw(m, mat); } }
+
+fn frame(w: Win, meshes: const vector<Mesh>, a: Mat, b: Mat) {
+  { shadow = w.pass(1); world(shadow, meshes, a); }
+  { main = w.pass(2); world(main, meshes, b); main.draw(meshes[0], a); }
+  w.present();
+}
+fn main() { w = open(3); sh = Sh { id: 5 }; t = Tex { id: 7 }; u = Tex { id: 8 }; a = material(sh, t, DepthWrite); b = material(sh, u, DepthTest);
+  meshes = [Mesh { id: 1 }, Mesh { id: 2 }]; frame(w, meshes, a, b); frame(w, meshes, a, b); println("end"); }
