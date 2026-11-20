@@ -2548,8 +2548,9 @@ pub fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -
   }
   // A `??` borrowing visible parameters alone is returned as that view (`MergeAttr`): the
   // signature borrows them, nothing is delivered into the buffer.
+  // (Not one over a stored reference, `h.link ?? S { … }`: copied, `materialised_return`.)
   is_ncc = match x { NdBlock { block } => block[0].name == "ncc", _ => false };
-  if is_ncc && len(el_types::deps(v.tp)) > 0 {
+  if is_ncc && len(el_types::deps(v.tp)) > 0 && !el_expressions::reads_stored_reference(e, x, []) {
     attrs: vector<integer> = [];
     for dv in el_types::deps(v.tp) {
       a0 = if vars.vars[dv].argument { attr_nr(el::def(e, d), el_vars::name_of(vars, dv)) } else { -1 };
@@ -2905,11 +2906,14 @@ pub fn materialised_return(e: el::El, vars: el_vars::Vars, v: Ex, w: integer, re
   // call's fresh record held in `__ret_root_N` (`return_source`): copied into a work ref the
   // first pass renames the buffer onto (`materialize_view_return`), behind the source's null
   // test.
-  if w < 0 && x is NdCall && heap_def(el_types::base(result)) >= 0 && (proot >= 0 && !vars.vars[proot].argument || el_ex_assign::call_rooted(e, vars, x)) {
+  // (loft#1977: a stored reference — `h.link`, `OpGetDbRef` — names a record no argument owns:
+  // copied out the same way, whatever its holder is.)
+  dbref_src = match x { NdCall { def_nr: xdr } => el::def(e, xdr).name == "OpGetDbRef", _ => false };
+  if w < 0 && x is NdCall && heap_def(el_types::base(result)) >= 0 && (proot >= 0 && !vars.vars[proot].argument || el_ex_assign::call_rooted(e, vars, x) || dbref_src) {
     src = x;
     pre: vector<ir::Node> = [];
     // (`bind_return_source` runs on the second pass alone: `_ret_root_N` is minted there.)
-    if proot < 0 && !e.first_pass {
+    if proot < 0 && !e.first_pass && !dbref_src {
       root_call = el_ir::unspan(el_ex_assign::projection_root(e, x) ?? ir::NdNull);
       rr = el_vars::create_unique(vars, "_ret_root", el_types::without_deps(el_types::base(match root_call { NdCall { def_nr } => el::def(e, def_nr).returned[0] ?? ir::TyVoid, _ => ir::TyVoid })));
       pre = [el_ir::v_set(rr, root_call)];
@@ -3026,8 +3030,11 @@ pub fn materialised_return(e: el::El, vars: el_vars::Vars, v: Ex, w: integer, re
       // A subject that views a local which itself views another (`c` of `for c in …`) takes
       // the work ref (`return_views_local`); one read off a local that OWNS its record is no
       // such view, and the buffer is bound and takes the copy itself (`Bind`, no work ref).
-      deep = el_expressions::ls_views_local(e, vars, el_types::deps(v.tp));
-      if nb[0].name == "ncc" && views && el_types::base(result) is TyReference && !(result is TyOptional) {
+      // (loft#1977: so does a subject read off a stored reference, `h.link ?? S { … }`: the
+      // record it names is no argument's — `reads_a_stored_reference`.)
+      stored = el_expressions::reads_stored_reference(e, x, []);
+      deep = stored || el_expressions::ls_views_local(e, vars, el_types::deps(v.tp));
+      if nb[0].name == "ncc" && (views || stored) && el_types::base(result) is TyReference && !(result is TyOptional) {
         nw = -1;
         if deep {
           nw = el_vars::work_ref(vars, el_types::without_deps(el_types::base(result)));

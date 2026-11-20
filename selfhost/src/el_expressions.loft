@@ -1073,7 +1073,7 @@ fn tail_is_join(n: ir::Node) -> boolean {
 
 // `Parser::reads_a_stored_reference` (loft#1977): does the tail hand up, on some arm, the record
 // a stored `reference<T>` names (`OpGetDbRef`), or a local of `bound` a block set to such a read?
-fn reads_stored_reference(e: el::El, n: ir::Node, bound: vector<integer>) -> boolean {
+pub fn reads_stored_reference(e: el::El, n: ir::Node, bound: vector<integer>) -> boolean {
   match el_ir::unspan(n) {
     NdReturn { inner } => reads_stored_reference(e, inner, bound),
     NdDrop { inner } => reads_stored_reference(e, inner, bound),

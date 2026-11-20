@@ -3064,6 +3064,12 @@ pub fn record_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
     // function ending in it merges that borrow on this pass (`merge_view_call`) and its
     // callers read the view.
     if !owned {
+      // (A stored reference, `h.link` — `OpGetDbRef` — is read into the holder already: the
+      // tail then reads a record no argument owns, `reads_a_stored_reference`, and is copied
+      // into the buffer rather than merged.)
+      if match el_ir::unspan(x.code) { NdCall { def_nr: sdr } => el::def(e, sdr).name == "OpGetDbRef", _ => false } {
+        return ex(el_ir::v_block([el_ir::v_set(held, x.code), ir::NdVar { n: held }], lhs, "ncc"), lhs);
+      }
       return ex(el_ir::v_block([ir::NdNull], lhs, "ncc"), lhs);
     }
     return ex(ir::NdNull, el_types::with_deps(el_types::without_deps(lhs), [held]));
