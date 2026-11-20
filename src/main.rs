@@ -5857,9 +5857,12 @@ fn run_compat_command(args: &[String]) -> i32 {
     let positional: Vec<&String> = args.iter().filter(|a| !a.starts_with("--")).collect();
     // The dispatcher strips `compat`, so positional[0] is the sub-verb.
     let sub = positional.first().map(|s| s.as_str()).unwrap_or("");
-    if !matches!(sub, "api" | "test" | "check" | "levels" | "floor") {
+    if !matches!(
+        sub,
+        "api" | "test" | "check" | "levels" | "floor" | "width32"
+    ) {
         eprintln!(
-            "loft compat: usage: loft compat <api|test|check|levels|floor> [<version>] \
+            "loft compat: usage: loft compat <api|test|check|levels|floor|width32> [<version>] \
              [--json] [--with-tests] [--full]"
         );
         return 2;
@@ -5876,6 +5879,19 @@ fn run_compat_command(args: &[String]) -> i32 {
         eprintln!("loft compat: `loft.toml` has no [package] name");
         return 2;
     };
+
+    // `width32` — does this package declare that it works in a 32-bit program?  Exit 0 when
+    // it does (`[package] width32 = true`) and 1 when it does not: what the library CI and the
+    // publish script ask before they run its tests under `--width 32`, so the claim is read
+    // by the manifest's own parser and by nothing else.
+    if sub == "width32" {
+        if manifest.width32 {
+            println!("{name}: declares width32 — its tests run under --width 32");
+            return 0;
+        }
+        println!("{name}: does not declare width32");
+        return 1;
+    }
 
     // `levels` — the REGISTRY-ADMISSION gate, and the only place the three-level
     // requirement is fatal.  It is deliberately its own verb rather than a side effect of
