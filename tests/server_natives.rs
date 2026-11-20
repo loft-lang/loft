@@ -370,6 +370,10 @@ fn client(p: &Ports) {
         "an oversized request is not answered: {}",
         String::from_utf8_lossy(&answer)
     );
+    // A peer that connects and says nothing, held open across the next exchange: the pump
+    // gives it one read timeout and serves on.  A pump that waits for its request never
+    // answers `a1` (this client's own read timeout ends the test).
+    let silent = connect(p.plain);
     send(&mut a, OP_TEXT, b"a1");
     assert_eq!(text_frame(&mut a), "all 0");
     assert_eq!(text_frame(&mut b), "all 0");
@@ -380,6 +384,7 @@ fn client(p: &Ports) {
     assert_eq!(text_frame(&mut a), "clients 2 true false");
     send(&mut a, OP_CLOSE, &[]);
     drop(a);
+    drop(silent);
     assert_eq!(text_frame(&mut b), "gone 0");
     assert_eq!(frame(&mut b).0, OP_CLOSE);
     // TLS over the EC certificate: a request, then a WebSocket through the pump.
