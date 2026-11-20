@@ -1287,14 +1287,14 @@ pub fn ends_with(self: text, value: text) -> boolean;
 /// `delete`: loft opens whatever path it is given (`../../etc/passwd` and `/etc/passwd`
 /// included), and this is the check that keeps such a path inside the directory it was
 /// meant for.
-///   at = inside("public", request_path);
+///   at = path_inside("public", request_path);
 ///   if at == null { respond(403, "outside") } else { serve(file(at)) }
 /// The path is read as loft reads every path: `/` and `\` both separate, `.` stays where
 /// it is and `..` steps up.  A `..` that stays inside is fine (`a/../b` is `root/b`); one
 /// that steps above the root is null, as are an absolute path and one naming a drive
 /// (`C:`).  Null means OUTSIDE, which is not "no such file": answer it as a refusal.  A
 /// symbolic link inside the root is followed where it leads, as the file system does.
-pub fn inside(root: text, path: text) -> text? {
+pub fn path_inside(root: text, path: text) -> text? {
   segs: vector<text> = [];
   seg = "";
   first = true;

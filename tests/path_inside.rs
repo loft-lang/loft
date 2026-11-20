@@ -5,7 +5,7 @@
 //!
 //! loft opens whatever path it is given, so a path a program did not write itself — a
 //! request's, an archive member's — is held against the directory it was meant for before it
-//! is used.  `inside(root, path)` answers where the path lies under the root, or null when it
+//! is used.  `path_inside(root, path)` answers where the path lies under the root, or null when it
 //! would lie outside.
 //!
 //! Varied: the path — plain, with `.`, with a `..` that stays inside, with one that leaves,
@@ -28,19 +28,19 @@
 //! | `C:/windows` | null (a drive) |
 //! | `..\secret`, `a\..\..\secret` | null (`\` separates too) |
 //!
-//! The program asserts each and prints `inside: 16 held`; it fails on a build without
-//! `inside` (the name does not resolve) and on one whose walk misses a row.
+//! The program asserts each and prints `path_inside: 16 held`; it fails on a build without
+//! `path_inside` (the name does not resolve) and on one whose walk misses a row.
 
 use loft::file_access as fa;
 
 const PROGRAM: &str = r#"fn at(root: text, path: text) -> text {
-  found = inside(root, path);
+  found = path_inside(root, path);
   if found == null { "null" } else { "{found}" }
 }
 
 fn holds(root: text, path: text, want: text) {
   got = at(root, path);
-  assert(got == want, "inside(\"{root}\", \"{path}\") is {got}, not {want}");
+  assert(got == want, "path_inside(\"{root}\", \"{path}\") is {got}, not {want}");
 }
 
 fn main() {
@@ -61,7 +61,7 @@ fn main() {
   holds("public/", "x", "public/x");
   holds("/", "x/y", "/x/y");
   holds("", "x", "x");
-  println("inside: 16 held");
+  println("path_inside: 16 held");
 }
 "#;
 
@@ -84,7 +84,7 @@ fn a_path_from_elsewhere_stays_inside_its_root() {
             .expect("loft runs");
         assert_eq!(
             String::from_utf8_lossy(&out.stdout).trim_end(),
-            "inside: 16 held",
+            "path_inside: 16 held",
             "{backend}\n{}",
             String::from_utf8_lossy(&out.stderr)
         );

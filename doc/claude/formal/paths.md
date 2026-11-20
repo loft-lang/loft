@@ -51,7 +51,7 @@ hold is refused everywhere; a path loft hands out is in that same form.
   (Path-Inside) loft opens the path it is given: no operation holds a path to a directory,
                 and `..` and an absolute path mean what they say (a check on the path's text
                 is not a boundary, and a refusal there reads as a missing file).  A program
-                that takes a path from elsewhere asks: `inside(root, path)` answers the path
+                that takes a path from elsewhere asks: `path_inside(root, path)` answers the path
                 under `root`, read by these rules — both separators, `.`, `..` — or null
                 when it leaves `root`, is absolute, or names a drive.  Null is OUTSIDE, an
                 answer of its own and not Path-Refuse's.  A link inside `root` is followed.

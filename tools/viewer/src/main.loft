@@ -573,7 +573,7 @@ fn page_tree(rel: text) -> text {
 // outside it (`inside`): the pages below open what they are given, and the request line
 // is whoever sent it's to write.  "" is the root itself.
 fn under_root(request: text) -> text? {
-    at = inside(".", request);
+    at = path_inside(".", request);
     if at == null { return null; }
     if at == "." { return ""; }
     at[2..len(at)]
