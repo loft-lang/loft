@@ -9,7 +9,9 @@ hiding a defect does not fix it.
 
 Please do not open a public issue for something that could be used against people running
 loft programs. Use **Security → Report a vulnerability** on this repository, which reaches
-the maintainers privately. Say what you ran and what happened; a small program or file that
+the maintainers privately. That is also the place for a defect in one of the published
+libraries (`loft-libs-*`): they are maintained here, and this policy covers them. A library
+maintained by someone else names its own contact. Say what you ran and what happened; a small program or file that
 shows it is the most useful thing you can send.
 
 You will get an answer, and you will be told when the fix is released. You are credited in
