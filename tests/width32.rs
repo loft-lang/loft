@@ -12,6 +12,7 @@
 //! `@FR-W-Store` (a 64-bit field into an `i32` slot) and `@FR-W-Count` (`sizeof(len(v))` is 4).
 
 use loft::file_access as fa;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 fn write(path: &Path, body: &str) {
@@ -612,4 +613,102 @@ fn the_32_bit_runtime_forms_answer_as_the_64_bit_ones() {
     ] {
         assert!(c32.contains(form), "the 32-bit unit calls {form}");
     }
+}
+
+// @PLN217 — the C runtime names a loft `integer` and a loft `float` by the build's width, and
+// the count below keeps what is not yet so from growing.  A plain `int64_t` or `double` is 64
+// bits on a 32-bit core whether the value needs them or not, and where it is added, subtracted
+// or compared no library call betrays it, so neither the image gate nor the wide ledger sees
+// it.  `tests/width_source.baseline` holds, per header, how many lines still name one.  A
+// header above its count fails: write the new code in `src/c/loft_width.h`'s names.  A header
+// below its count passes; record it with
+// `LOFT_BLESS_WIDTH_SOURCE=1 cargo test --test width32 the_runtime_names`.
+
+/// Does `line` name `word` as a whole identifier?
+fn names_word(line: &str, word: &str) -> bool {
+    line.match_indices(word).any(|(i, _)| {
+        let ident = |c: char| c.is_ascii_alphanumeric() || c == '_';
+        !line[..i].ends_with(ident) && !line[i + word.len()..].starts_with(ident)
+    })
+}
+
+/// Per runtime header, the lines that name a plain `int64_t` or `double`.  The width header
+/// itself is where the two are given their names.
+fn fixed_width_counts() -> BTreeMap<String, usize> {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src").join("c");
+    let mut out = BTreeMap::new();
+    for entry in fa::read_dir(&dir).expect("read src/c") {
+        let path: PathBuf = entry.os_spelling();
+        let Some(name) = fa::file_name(&path) else {
+            continue;
+        };
+        if !fa::has_extension(&path, "h") || name == "loft_width.h" {
+            continue;
+        }
+        let text = fa::read_to_string(&path).expect("read a runtime header");
+        let n = text
+            .lines()
+            .filter(|l| names_word(l, "int64_t") || names_word(l, "double"))
+            .count();
+        out.insert(name, n);
+    }
+    out
+}
+
+fn baseline_path() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("width_source.baseline")
+}
+
+#[test]
+fn the_runtime_names_no_more_fixed_widths_than_its_baseline() {
+    let now = fixed_width_counts();
+    if std::env::var_os("LOFT_BLESS_WIDTH_SOURCE").is_some() {
+        let mut text = String::from(
+            "# header\tlines naming a plain int64_t or double — tests/width_source.rs; a count only goes down\n",
+        );
+        for (name, n) in &now {
+            if *n > 0 {
+                text.push_str(&format!("{name}\t{n}\n"));
+            }
+        }
+        fa::write(baseline_path(), text).expect("write the baseline");
+        return;
+    }
+    let base: BTreeMap<String, usize> = fa::read_to_string(baseline_path())
+        .expect("tests/width_source.baseline")
+        .lines()
+        .filter(|l| !l.starts_with('#') && !l.is_empty())
+        .map(|l| {
+            let (name, n) = l.split_once('\t').expect("header<TAB>count");
+            (name.to_string(), n.parse().expect("a count"))
+        })
+        .collect();
+    let rose: Vec<String> = now
+        .iter()
+        .filter(|(name, n)| **n > base.get(*name).copied().unwrap_or(0))
+        .map(|(name, n)| {
+            format!(
+                "src/c/{name}: {} -> {n}",
+                base.get(name).copied().unwrap_or(0)
+            )
+        })
+        .collect();
+    assert!(
+        rose.is_empty(),
+        "the runtime names a plain `int64_t` or `double` on more lines than its baseline — a loft \
+         `integer` is `loft_int`, a loft `float` is `loft_float`, and a value that is 64 bits in \
+         every build is `loft_word` / `loft_fword` (src/c/loft_width.h):\n  {}",
+        rose.join("\n  ")
+    );
+}
+
+#[test]
+fn a_fixed_width_is_found_as_a_whole_word() {
+    assert!(names_word("static int64_t f(void) {", "int64_t"));
+    assert!(names_word("    double d = 0;", "double"));
+    assert!(!names_word("uint64_t u;", "int64_t"));
+    assert!(!names_word("loft_double_x(1);", "double"));
+    assert!(!names_word("my_int64_t_alias v;", "int64_t"));
 }
