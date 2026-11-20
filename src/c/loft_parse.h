@@ -663,7 +663,11 @@ static LOFT_TLS int loft_rd_on;
 static LOFT_TLS loft_text loft_rd_path;            /* "/leaves/1" */
 static LOFT_TLS size_t *loft_rd_marks;
 static LOFT_TLS size_t loft_rd_nmarks, loft_rd_cmarks;
-typedef struct { size_t at, len; loft_ref r; } loft_rd_place;
+typedef struct { size_t at, len; loft_ref r; uint16_t tp; } loft_rd_place;
+/* The records this read marked as named (`@FR-H-Removed`), so the marks no reference ends up
+ * needing are taken back when the read ends. */
+static LOFT_TLS loft_ref *loft_rd_marked;
+static LOFT_TLS size_t loft_rd_nmarked, loft_rd_cmarked;
 static LOFT_TLS loft_rd_place *loft_rd_at;
 static LOFT_TLS size_t loft_rd_nat, loft_rd_cat;
 static LOFT_TLS size_t *loft_rd_tab;
@@ -718,12 +722,43 @@ static const loft_rd_place *loft_rd_find(const char *p, size_t n) {
     }
 }
 
-/* A record is read here: the path names it, unless an earlier record took the path. */
-static void loft_rd_record(loft_ref r) {
+static int loft_rd_removed(loft_ref r) {
+    return r.store_nr < loft_nstores && loft_stores[r.store_nr].live && loft_st_is_removed(&loft_stores[r.store_nr], r.rec);
+}
+
+/* `@FR-H-Removed` — a pointer may name this record before the read ends, so it is marked as
+ * named now: a removal during the read then keeps its position, no later record takes it, and
+ * the pointer finds a removed record instead of a stranger. */
+static void loft_rd_mark(loft_ref r) {
+    if (r.store_nr >= loft_nstores || !loft_stores[r.store_nr].live) return;
+    loft_store_t *s = &loft_stores[r.store_nr];
+    if (r.rec < LOFT_ST_PRIMARY || r.rec >= s->size || loft_bits_contains(&s->referenced, r.rec)) return;
+    loft_bits_insert(&s->referenced, r.rec);
+    if (loft_rd_nmarked == loft_rd_cmarked) {
+        loft_rd_cmarked = loft_rd_cmarked ? loft_rd_cmarked * 2 : 64;
+        loft_rd_marked = (loft_ref *) realloc(loft_rd_marked, loft_rd_cmarked * sizeof(loft_ref));
+        if (!loft_rd_marked) abort();
+    }
+    loft_rd_marked[loft_rd_nmarked++] = r;
+}
+
+/* A record of type `tp` is read here: the path names it.  The first record read at a path
+ * keeps it, unless that record has been removed since — a member the document states twice
+ * replaces what the first one built — and then the path names the record that took its place
+ * (`Stores::read_place`). */
+static void loft_rd_record(loft_ref r, uint16_t tp) {
     if (!loft_rd_on) return;
     const char *p = loft_rd_path.len ? loft_rd_path.p : "";
     size_t n = loft_rd_path.len;
-    if (loft_rd_find(p, n)) return;
+    loft_rd_place *had = (loft_rd_place *) loft_rd_find(p, n);
+    if (had) {
+        if (!loft_rd_removed(had->r)) return;
+        had->r = r;
+        had->tp = tp;
+        loft_rd_mark(r);
+        return;
+    }
+    loft_rd_mark(r);
     if (loft_rd_nat == loft_rd_cat) {
         loft_rd_cat = loft_rd_cat ? loft_rd_cat * 2 : 64;
         loft_rd_at = (loft_rd_place *) realloc(loft_rd_at, loft_rd_cat * sizeof(loft_rd_place));
@@ -742,7 +777,7 @@ static void loft_rd_record(loft_ref r) {
             loft_rd_tab[i] = k + 1;
         }
     }
-    loft_rd_place e = { loft_rd_pool.len, n, r };
+    loft_rd_place e = { loft_rd_pool.len, n, r, tp };
     if (n) loft_push(&loft_rd_pool, p, n);
     loft_rd_at[loft_rd_nat++] = e;
     size_t i = loft_rd_hash(p, n) & (loft_rd_ctab - 1);
@@ -767,32 +802,50 @@ static void loft_rd_start(void) {
     loft_rd_path.len = 0;
     loft_rd_nmarks = 0;
     loft_rd_nat = 0;
+    loft_rd_nmarked = 0;
     loft_rd_npend = 0;
     loft_rd_pool.len = 0;
     if (loft_rd_ctab) memset(loft_rd_tab, 0, loft_rd_ctab * sizeof(size_t));
 }
 
 /* `resolve_read_refs`: every parked reference takes the record its pointer names, or a misfit
- * names the pointer nothing in the document holds. */
+ * for a pointer that names no record, a record of another type than the reference's, or one
+ * the document itself replaced.  A reference is stored through `loft_set_dbref`, as every
+ * other one is, so its record is marked as named. */
 static void loft_rd_resolve(loft_werrs *errs) {
     for (size_t k = 0; k < loft_rd_npend; k++) {
         const loft_rd_pend *e = &loft_rd_pending[k];
         const char *ptr = e->len ? loft_rd_pool.p + e->at : "";
         const loft_rd_place *t = 0;
         if (e->len >= 1 && ptr[0] == '#') t = loft_rd_find(ptr + 1, e->len - 1);
-        if (t) {
-            uint32_t w[3] = { t->r.store_nr, t->r.rec, t->r.pos };
-            memcpy(loft_at(loft_store_of(e->slot), e->slot.rec, e->slot.pos), w, 12);
+        const char *why = 0;
+        if (!t) why = "\" names no record of the document";
+        else if (t->tp != e->tp) why = "\" names a record of another type";
+        else if (loft_rd_removed(t->r)) why = "\" names a record the document replaced";
+        if (!why) {
+            loft_set_dbref(e->slot, 0, t->r);
+            /* Named now: taken out of the marks this read gives back below. */
+            for (size_t i = 0; i < loft_rd_nmarked; i++) {
+                if (loft_rd_marked[i].store_nr == t->r.store_nr && loft_rd_marked[i].rec == t->r.rec) loft_rd_marked[i].rec = 0;
+            }
         } else {
             loft_werr *we = loft_werrs_push(errs, 0);
             loft_text m = { 0, 0, 0 };
             loft_push_cstr(&m, "$ref \"");
             if (e->len) loft_push(&m, ptr, e->len);
-            loft_push_cstr(&m, "\" names no record of the document");
+            loft_push_cstr(&m, why);
             loft_werr_front(we, m.p, m.len);
             loft_text_free(&m);
         }
     }
+    /* A record no reference came to name gives its mark back: it is removed as any other
+     * record is.  One removed during the read keeps its position. */
+    for (size_t i = 0; i < loft_rd_nmarked; i++) {
+        loft_ref r = loft_rd_marked[i];
+        if (r.rec != 0 && r.store_nr < loft_nstores && loft_stores[r.store_nr].live && !loft_rd_removed(r))
+            loft_bits_remove(&loft_stores[r.store_nr].referenced, r.rec);
+    }
+    loft_rd_nmarked = 0;
     loft_rd_on = 0;
 }
 
@@ -990,7 +1043,7 @@ static void loft_pr_frame_open(loft_pw *w, loft_pr_frame *fr, loft_jp *p, uint16
     /* `@FR-F-Read-Ref` — this record's pointer is the path it is read at, first one wins. */
     if (loft_rd_on) {
         loft_ref me = { to.store_nr, fr->rec, fr->fld, 0 };
-        loft_rd_record(me);
+        loft_rd_record(me, tp);
         fr->top = loft_rd_path.len == 0;
     }
     if (t->n > sizeof fr->found_local) {
