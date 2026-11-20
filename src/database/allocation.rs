@@ -5526,6 +5526,16 @@ impl Stores {
             f.sync_all()
         })();
         let sidecar = image.and_then(|()| id.stage_beside(path));
+        // `@FR-S-Guard` — the guard is the third file of the same write, staged like the
+        // other two and moved into place last: what the image and the sidecar hashed to.
+        let guard = crate::store_guard::guard_path(path);
+        let mut guard_staged = guard.as_os_str().to_owned();
+        guard_staged.push(".tmp");
+        let guard_staged = std::path::PathBuf::from(guard_staged);
+        let sidecar = sidecar.and_then(|side| {
+            let text = crate::store_guard::render(&padded, &crate::file_access::read(&side)?);
+            crate::file_access::write(&guard_staged, text).map(|()| side)
+        });
         let Ok(sidecar) = sidecar else {
             let _ = crate::file_access::remove_file(&staged);
             if std::env::var_os("LOFT_LOADER_STATS").is_some() {
@@ -5536,6 +5546,7 @@ impl Stores {
         if crate::file_access::rename(&staged, path).is_err()
             || crate::file_access::rename(&sidecar, crate::schema_sidecar::dschema_path(path))
                 .is_err()
+            || crate::file_access::rename(&guard_staged, &guard).is_err()
         {
             return false;
         }
@@ -5583,6 +5594,9 @@ impl Stores {
         let path = std::path::Path::new(&resolved);
         let slot_idx = slot as usize;
         if slot_idx >= self.allocations.len() {
+            return false;
+        }
+        if !Self::guard_holds(path, "store_load") {
             return false;
         }
         // A file written under an older layout is converted in memory (@PLN196, open
@@ -7047,6 +7061,22 @@ impl Stores {
         }
     }
 
+    /// `@FR-S-Guard` — whether the store file at `path` is the one its guard was written
+    /// for, asked before a loader reads the image or its sidecar; the refusal is printed.
+    /// A file with no guard, or one that cannot be read at all, is the loader's to answer.
+    fn guard_holds(path: &std::path::Path, builtin: &str) -> bool {
+        let Some(image) = path.to_str().and_then(crate::store::image_bytes) else {
+            return true;
+        };
+        match crate::store_guard::check(path, &image) {
+            Ok(()) => true,
+            Err(why) => {
+                crate::loft_eprintln!("{builtin}: refusing {} — {why}.", path.display());
+                false
+            }
+        }
+    }
+
     /// The slot a store file's sidecar says it was written from.
     pub(super) fn recorded_slot(path: &std::path::Path) -> Option<u16> {
         let side = crate::schema_sidecar::dschema_path(path);
@@ -7192,6 +7222,9 @@ impl Stores {
             return false;
         };
         let path = std::path::Path::new(&resolved);
+        if !Self::guard_holds(path, "store_load_untrusted") {
+            return false;
+        }
         // An older layout converts in memory, as `store_load` does (@PLN196); the converter
         // validates the image's structure before it reads a record.
         if self.layout_changed(slot, path) {

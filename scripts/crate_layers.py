@@ -76,7 +76,8 @@ LAYERS: list[tuple[str, list[str]]] = [
         "resolution_scope", "return_field", "rewrite_census", "runtime_abi", "runtime_error",
         "rust_spelling", "sandbox", "schema_sidecar", "self_update", "shared_call", "siphash",
         "slice_text", "slot_alias", "spatial", "stack_census", "stack_verify", "stdlib_ops",
-        "stdlib_sources", "store", "store_budget", "store_census", "store_trace", "take_local",
+        "stdlib_sources", "store", "store_budget", "store_census", "store_guard", "store_trace",
+        "take_local",
         "text_calls", "text_run", "timeout", "tls", "toolchain", "trace", "trie_db", "triggers",
         "tuple_links", "type_schema", "variables", "vec_copy", "vector", "verify_self", "wasm",
         "wasm_assets", "web_browser", "web_bytes", "wrapper_inline", "ws_handshake",
@@ -146,7 +147,8 @@ RUNTIME: list[str] = [
     "native_bind", "net", "net_profile", "op_census", "ops", "page_metrics", "paged_reader",
     "par_pool", "placement", "platform", "png_store", "process_run", "radix_db", "radix_tree",
     "resolution_scope", "rewrite_census", "runtime_abi", "runtime_error", "schema_sidecar",
-    "siphash", "stack_verify", "store", "store_budget", "store_census", "store_trace", "timeout",
+    "siphash", "stack_verify", "store", "store_budget", "store_census", "store_guard",
+    "store_trace", "timeout",
     "tls", "trie_db", "vector", "wasm", "wasm_assets", "web_browser", "web_bytes", "ws_handshake",
 ]
 

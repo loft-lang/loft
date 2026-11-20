@@ -535,6 +535,7 @@ pub mod schema_sidecar;
 pub mod self_update;
 mod stack;
 pub mod stdlib_codegen;
+pub mod store_guard;
 pub mod timeout;
 pub mod toolchain;
 pub mod triggers;
