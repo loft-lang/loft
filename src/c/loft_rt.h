@@ -612,6 +612,19 @@ LOFT_HOT_INLINE int64_t loft_w64(int32_t a) { return a == LOFT_NULL32 ? LOFT_NUL
 LOFT_HOT_INLINE int32_t loft_n32(int64_t a) {
     return (a > (int64_t) INT32_MIN && a <= (int64_t) INT32_MAX) ? (int32_t) a : LOFT_NULL32;
 }
+/* @PLN217 — the build's integer (`loft_int`, loft_width.h) against the 64-bit one, null kept
+ * as null: `loft_int_wide` reads a `loft_int` where 64 bits are wanted, `loft_int_of` holds a
+ * 64-bit value in one (a value outside it reads null).  Both are the value itself in a 64-bit
+ * build.  The runtime takes and answers `loft_int` wherever the value is a loft `integer` — a
+ * length, an index, a count — so in a 32-bit build no 64-bit arithmetic is done for one; what
+ * is 64 bits in every build (an `i64`, a file offset, a timestamp, a hash) is `loft_word`. */
+#if defined(LOFT_WIDTH32)
+#define loft_int_wide(a) loft_w64(a)
+#define loft_int_of(a) loft_n32(a)
+#else
+#define loft_int_wide(a) (a)
+#define loft_int_of(a) (a)
+#endif
 LOFT_HOT_INLINE int32_t loft_add32(int32_t a, int32_t b) {
     if (a == LOFT_NULL32 || b == LOFT_NULL32) return LOFT_NULL32;
     if ((b > 0 && a > INT32_MAX - b) || (b < 0 && a <= INT32_MIN - b)) return LOFT_NULL32;

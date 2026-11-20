@@ -11772,6 +11772,28 @@ fn as_int32(e: E) -> Result<String, String> {
     }
 }
 
+/// @PLN217 — `e` as the BUILD's integer, `loft_int` (`loft_width.h`): what a runtime function
+/// takes where the value is a loft `integer` — a length, an index, a count.  `int32_t` in a
+/// 32-bit build (`--width 32`), where a 64-bit value outside it reads null, and `int64_t`
+/// otherwise.  Keyed on the build and not on how this unit holds its locals
+/// (`LOFT_NO_C_INT32`), because the runtime's width is the build's.
+fn as_wint(e: E) -> Result<String, String> {
+    if crate::keys::width32_all() {
+        as_int32(e)
+    } else {
+        as_int(e)
+    }
+}
+
+/// @PLN217 — the kind of a runtime answer typed `loft_int`: see [`as_wint`].
+fn wint() -> K {
+    if crate::keys::width32_all() {
+        K::Int32
+    } else {
+        K::Int
+    }
+}
+
 fn as_shape(cx: &Cx, e: E, c: CType) -> Result<String, String> {
     match c {
         CType::Int => as_int(e),
