@@ -976,6 +976,12 @@ pub fn variant_arm(e: el::El, vars: el_vars::Vars, pats: vector<integer>, sd: in
         r.cond = null;
         return r;
       },
+      // `null` over a nullable struct enum: the reference null, or a record whose tag word is
+      // 0 (`if OpRefIsNull(t) true else OpGetInt4(t, 0) == 0`).
+      PNull => {
+        c = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [subj]), ir::NdBoolean { b: true }, el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpGetInt4", [subj, ir::NdInt { n: 0 }]), ir::NdInt { n: 0 }]));
+        r.cond = if r.cond == null { c } else { el_ir::v_if(r.cond!, ir::NdBoolean { b: true }, c) };
+      },
       PName { name, member, fields, braces } => {
         if member != "" {
           el::refuse(e, "a qualified variant pattern");
