@@ -76,6 +76,31 @@ recorded layout differs from the loading program's collection type is REFUSED
 sidecar (a legacy store) falls back to the `store_verify` backstop. Set
 `LOFT_LOADER_STATS=1` to observe `bytes_fetched` vs file size.
 
+#### What a whole-image load checks, and what it does not
+
+`store_load` and `store_load_untrusted` read a file a program did not necessarily write, so
+"the load answered true" means exactly this (`formal/structures.md` S-Frame, S-Gate,
+S-Sound, S-Guard):
+
+| Checked | By |
+|---|---|
+| the file is a chain of blocks that tiles it | both |
+| its `.dschema` layout is this program's, or converts to it | both |
+| a record number names a record, and a vector's or text's length lies inside its record — through structs, enum values, texts, vectors, sorted vectors and child records | both |
+| a text is UTF-8 | both |
+| the file is the one its `.guard` was written for | `store_load` warns and reads on; `store_load_untrusted` refuses |
+
+NOT checked: the tables and nodes of a hash, index, spatial, trie, array or ordered
+collection, and so what such a collection holds; the record a stored reference names; and
+any of this for the paged, lazy and URL loaders, which read no guard either.  A file from a
+source you do not trust is safe to open only as far as this table goes.
+
+The guard (`<path>.guard`) is three lines — `LOFT-GUARD v1`, `image=<SHA-256 of the image>`,
+`sidecar=<SHA-256 of the .dschema>` — written by every writer of an image and removed with the
+file by `delete(path)`.  It says whether the bytes are the ones that were written, not who
+may change them: a tool that edits a store writes those three lines again, or removes the
+file, and the store loads without comment.
+
 #### A changed definition: the store upgrade
 
 The WHOLE-IMAGE loaders read the file through the program's types, and records are
