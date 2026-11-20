@@ -80,6 +80,9 @@ fn main() {
     println("WS {ws}{got}");
     server_natives::ws_close_native(ws);
   }
+  // The pump's listener takes WebSockets from one site's pages (and from clients that name
+  // no origin, which are not browsers).
+  server_natives::ws_allow_origins_native(h, "http://game.example\nhttp://other.example");
   events = "";
   for i in 0..20000 {
     if !server_natives::ws_next_event_native(h) {
@@ -91,7 +94,9 @@ fn main() {
     p = server_natives::ws_event_payload_native();
     if kind == 0 {
       events += " c{cid}";
-      server_natives::ws_send_native(cid, "welcome {cid}");
+      // A connect's payload is the upgrade request's headers.
+      seen = if p.contains("X-Probe: 7") { " probe" } else { "" };
+      server_natives::ws_send_native(cid, "welcome {cid}{seen}");
     } else if kind == 3 {
       events += " h{p}";
       server_natives::tcp_respond_typed(200, "page {p}", "text/html");
@@ -239,10 +244,15 @@ fn text_frame<S: Read>(s: &mut S) -> String {
 
 /// The upgrade request; `then` goes out in the same write, before the 101 is read.
 fn upgrade<S: Read + Write>(s: &mut S, then: &[u8]) {
+    upgrade_with(s, "", then);
+}
+
+/// [`upgrade`] with `extra` header lines (each ending in CRLF) in the request.
+fn upgrade_with<S: Read + Write>(s: &mut S, extra: &str, then: &[u8]) {
     let key = "dGhlIHNhbXBsZSBub25jZQ==";
     let mut req = format!(
         "GET /ws HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\
-         Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n"
+         {extra}Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n"
     )
     .into_bytes();
     req.extend_from_slice(then);
@@ -345,12 +355,34 @@ fn client(p: &Ports) {
     assert_eq!(frame(&mut s), (OP_BINARY, b"bin:\x01\x02\x03".to_vec()));
     assert_eq!(frame(&mut s).0, OP_CLOSE);
     // The event pump: two clients and a plain request on one port.
+    // The listener allows two origins.  A page of another site is answered 403 and is no
+    // client; a client that names no origin is taken, as is a page of an allowed one, whose
+    // header the program reads off the connect event.
+    let mut stranger = connect(p.plain);
+    stranger
+        .write_all(
+            b"GET /ws HTTP/1.1\r\nHost: 127.0.0.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\
+              Origin: http://attacker.example\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\
+              Sec-WebSocket-Version: 13\r\n\r\n",
+        )
+        .expect("write");
+    let mut refusal = Vec::new();
+    let _ = stranger.read_to_end(&mut refusal);
+    assert!(
+        refusal.starts_with(b"HTTP/1.1 403 "),
+        "another site's page is refused: {}",
+        String::from_utf8_lossy(&refusal)
+    );
     let mut a = connect(p.plain);
     upgrade(&mut a, &[]);
     assert_eq!(text_frame(&mut a), "welcome 0");
     let mut b = connect(p.plain);
-    upgrade(&mut b, &[]);
-    assert_eq!(text_frame(&mut b), "welcome 1");
+    upgrade_with(
+        &mut b,
+        "Origin: http://other.example\r\nX-Probe: 7\r\n",
+        &[],
+    );
+    assert_eq!(text_frame(&mut b), "welcome 1 probe");
     let mut page = connect(p.plain);
     page.write_all(b"GET /page HTTP/1.1\r\n\r\n")
         .expect("write");
