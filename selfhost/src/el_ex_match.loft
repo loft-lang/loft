@@ -2979,7 +2979,10 @@ pub fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>
   elm = match el_types::base(x.tp) { TyVector { inner } => inner, _ => ir::TyVoid };
   narrow = match elm { TyInteger { spec } => el_types::narrow_width(spec) > 0 || spec.forced_size != 0, _ => false };
   sed = el_types::struct_enum_def(elm);
-  if !(el_convert::plain_scalar(elm) || elm is TyText || sed >= 0) || narrow || (elm is TyEnum && sed < 0) {
+  // (A plain struct element is matched as a struct enum's is, bound as a view of its slot; a
+  // linked one — held by id — is not carried.)
+  pstruct = el_ex_base::struct_ref(e, el_types::base(elm)) >= 0 && !el_ex_base::linked_record(e, elm);
+  if !(el_convert::plain_scalar(elm) || elm is TyText || sed >= 0 || pstruct) || narrow || (elm is TyEnum && sed < 0) {
     el::refuse(e, "a vector match over this element type: {type_kind(elm)}");
     return void;
   }
@@ -3054,7 +3057,7 @@ pub fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>
         expected = if unsettled(result) { ir::TyUnknown { n: 0 } } else { el_ex_null::arm_expectation(result) };
         arm_cursor = vars.cursor;
         vars.cursor = [];
-        b = el_ex_pattern::arm_body(e, vars, body, expected);
+        b = el_ex_pattern::empty_vector_arm(e, vars, body, expected) ?? el_ex_pattern::arm_body(e, vars, body, expected);
         vars.cursor = arm_cursor;
         // `@FR-C-Never`'s typed halt in a vector match (`type_null_arms` over the slice arms) is
         // not carried.
@@ -3190,6 +3193,8 @@ fn buffer_arms(e: el::El, vars: el_vars::Vars, out: vector<SMArm>, elm: ir::Type
             deps += [wv];
           }
           bl.operators[-1] = ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [b]), el_ir::cl(e, "OpAppendVector", [b, last, ir::NdInt { n: row }]), b] };
+          // (The arm keeps the type of the capture it answered: `["whole#1"]`.)
+          bl.result = [ir::TyVector { inner: el_types::without_deps(elm), dep: [wv] }];
         } else {
           el::refuse(e, "a vector match tail arm of this form: block {bl.name}");
           return null;
@@ -3689,9 +3694,10 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
   if len(cur) > 0 {
     cond = el_ir::cl(e, "OpLeInt", [el_ir::cl(e, "OpAddInt", [ir::NdVar { n: cur[3]! }, ir::NdInt { n: fixed }]), ln]);
   }
-  es = if sed >= 0 { element_stride(e, elm) } else { elem_size(elm) };
+  rec = sed >= 0 || el_ex_base::struct_ref(e, el_types::base(elm)) >= 0;
+  es = if rec { element_stride(e, elm) } else { elem_size(elm) };
   // A record element bound by name views the subject's element: it borrows what the subject does.
-  named_t = if sed >= 0 { el_types::with_deps(elm, [src]) } else { elm };
+  named_t = if rec { el_types::with_deps(elm, [src]) } else { elm };
   binds: vector<ir::Node> = [];
   for h in head {
     at = el_ir::cl(e, "OpGetVector", [ir::NdVar { n: sv }, ir::NdInt { n: es }, if len(cur) > 0 { el_ir::cl(e, "OpAddInt", [ir::NdVar { n: cur[3]! }, ir::NdInt { n: h#index }]) } else { ir::NdInt { n: h#index } }]);
