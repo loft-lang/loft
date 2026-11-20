@@ -145,6 +145,40 @@ and the linked image are outside it.
 `LOFT_NO_C_INT32=1` holds every integer of the program as `int64_t` again.  It is the first
 bisect step for a C-only wrong answer.
 
+## The image gate
+
+`loft --native-esp --width 32` disassembles the app it linked and refuses it when a function
+on loft's side — the program, loft's runtime, the C of a library the program uses — calls a
+`double` helper (`__adddf3`, `__muldf3`, `__extendsfdf2`, …) or a 64-bit integer one
+(`__muldi3`, `__divdi3`, `__ashldi3`, …): the ESP32-P4 has no instruction for either.  The
+refusal names each function, where it came from and the helpers it calls.  ESP-IDF's own
+archives are not judged.
+
+An exception is one line in an allow file: the function, or a prefix ending in `*`, then the
+reason it needs 64 bits.  A line without a reason is refused.
+
+```text
+n_cell_key     the cell key is a 64-bit hash
+```
+
+| file | covers |
+|---|---|
+| `src/c/esp_width64.allow` | loft's runtime: a log line's time, an `i64` print, a keyed collection's digest and `f64` key, a table's growth |
+| `esp-width64.allow` beside the program's entry file | the program |
+| `esp-width64.allow` in a library's package | that library's C |
+
+The build's report (`loft-esp-report.txt`) lists what each exception allowed, and a program's
+or a library's exception that allows nothing any more, to remove.
+
+Two limits.  A function is named as the C compiler left it: what it inlined into a caller is
+charged to the caller, so a small program can appear as `app_main` alone.  And a 64-bit add,
+subtract or compare calls no helper, so the gate does not see one: the wide ledger does for
+the program's code, and `scripts/width64_census.py` reports the pattern in the image.
+
+A 64-bit shift by a variable amount is such a call too.  The runtime's bitmaps take the half
+a bit lies in (`loft_bit64`, `loft_bit64_test`, `loft_bits64_from`, `loft_bits64_through` in
+`src/c/loft_store.h`), which is two 32-bit shifts.
+
 ## Verifying it
 
 - The probes under `tests/scripts/` tagged `@PLN204` carry hand-computed values at the `i32`
