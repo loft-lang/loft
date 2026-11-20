@@ -52,7 +52,8 @@ One model, stated once:
   issue number, once GitHub assigns it, is immutable, so the collision is expensive to
   unwind.  The tracker's auto-incremented issue number is the one global, collision-free
   source of truth; the local directory tree is not.
-- **A local plan file, when there is one, is flat**: `<id>-<slug>.md` or `<id>-<slug>/`.
+- **The plan's file is always there, at one level**: `<id>-<slug>.md`, or `<id>-<slug>/` with a
+  README and the files it is split into (a phase, a split of the work, `probes/`, a handoff).
   There are **no `future/`/`finished/`/`deferred/` subdirectories** — lifecycle **state
   lives on the issue** (a label), not in the path.
 - **The tracker is the source of truth; `ROADMAP.md` is the reading view and IS
