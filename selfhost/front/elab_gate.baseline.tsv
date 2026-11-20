@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	7664b959f903f6c8f216f5874d7e7285a9ab5b77
 
-layer	elab	agree	1283	of	2121
+layer	elab	agree	1285	of	2121
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -425,7 +425,6 @@ elab	refused	loft-suite/rules/ownership/O-Complete/a-closure-over-a-joined-local
 elab	refused	loft-suite/rules/ownership/O-Complete/a-coalesce-fallback-read-inline-is-released.loft
 elab	refused	loft-suite/rules/ownership/O-Deps/1335-a-fn-ref-return-of-any-shape-maps-its-deps-into-the-caller.loft
 elab	refused	loft-suite/rules/ownership/O-Deps/1414-a-nullable-element-binding-borrows-its-subject.loft
-elab	refused	loft-suite/rules/ownership/O-Deps/2376-an-element-read-off-a-borrowing-calls-field-names-no-callee-dep.loft
 elab	refused	loft-suite/rules/ownership/O-Derived/1683-a-field-hoisted-out-of-a-literal-is-a-view-and-is-never-freed.loft
 elab	refused	loft-suite/rules/ownership/O-Derived/1701-a-carried-record-passed-through-an-inline-rebuild-survives-the-next-allocation.loft
 elab	refused	loft-suite/rules/ownership/O-Derived/a-call-argument-a-recursive-join-answers-is-not-freed-before-the-return.loft
@@ -773,7 +772,6 @@ elab	refused	tests/scripts/923-nullable-vector-element-schema.loft
 elab	refused	tests/scripts/947-feature-worked-examples.loft
 elab	refused	tests/scripts/953-call-result-into-nested-vector.loft
 elab	refused	tests/scripts/962-const-initialised-from-a-later-name.loft
-elab	refused	tests/scripts/978-branch-join-carries-both-arms-borrows.loft
 elab	refused	tests/scripts/980-variant-field-answers-its-own-variant.loft
 elab	refused	tests/scripts/987-par-empty-body-discard.loft
 elab	refused	tests/scripts/a-byte-range-of-a-vector-copied-one-at-a-time-is-one-append.loft
@@ -845,7 +843,7 @@ elab	refused	tests/scripts/store_digest_b0.loft
 elab	refused	tests/scripts/store_load_field_refusal.loft
 elab	refused	tests/scripts/store_paged_enum_field.loft
 
-layer	elab-functions	agree	14609	of	25117
+layer	elab-functions	agree	14563	of	25069
 elab-functions	agree	lib/docs.loft::Anchor
 elab-functions	agree	lib/docs.loft::Character
 elab-functions	agree	lib/docs.loft::Double
@@ -8560,27 +8558,6 @@ elab-functions	agree	loft-suite/rules/ownership/O-Deps/1414-a-nullable-element-b
 elab-functions	agree	loft-suite/rules/ownership/O-Deps/1414-a-nullable-element-binding-borrows-its-subject.loft::vector<Tok>
 elab-functions	agree	loft-suite/rules/ownership/O-Deps/1414-a-nullable-element-binding-borrows-its-subject.loft::vector<Tok?>
 elab-functions	agree	loft-suite/rules/ownership/O-Deps/1414-a-nullable-element-binding-borrows-its-subject.loft::vector<__nullable<S>>
-elab-functions	agree	loft-suite/rules/ownership/O-Deps/2376-an-element-read-off-a-borrowing-calls-field-names-no-callee-dep.loft::(schema)
-elab-functions	agree	loft-suite/rules/ownership/O-Deps/2376-an-element-read-off-a-borrowing-calls-field-names-no-callee-dep.loft::A
-elab-functions	agree	loft-suite/rules/ownership/O-Deps/2376-an-element-read-off-a-borrowing-calls-field-names-no-callee-dep.loft::D
-elab-functions	agree	loft-suite/rules/ownership/O-Deps/2376-an-element-read-off-a-borrowing-calls-field-names-no-callee-dep.loft::H
-elab-functions	agree	loft-suite/rules/ownership/O-Deps/2376-an-element-read-off-a-borrowing-calls-field-names-no-callee-dep.loft::W
-elab-functions	agree	loft-suite/rules/ownership/O-Deps/2376-an-element-read-off-a-borrowing-calls-field-names-no-callee-dep.loft::main_vector<A>
-elab-functions	agree	loft-suite/rules/ownership/O-Deps/2376-an-element-read-off-a-borrowing-calls-field-names-no-callee-dep.loft::main_vector<D>
-elab-functions	agree	loft-suite/rules/ownership/O-Deps/2376-an-element-read-off-a-borrowing-calls-field-names-no-callee-dep.loft::n_fresh
-elab-functions	agree	loft-suite/rules/ownership/O-Deps/2376-an-element-read-off-a-borrowing-calls-field-names-no-callee-dep.loft::n_main
-elab-functions	agree	loft-suite/rules/ownership/O-Deps/2376-an-element-read-off-a-borrowing-calls-field-names-no-callee-dep.loft::n_mk
-elab-functions	agree	loft-suite/rules/ownership/O-Deps/2376-an-element-read-off-a-borrowing-calls-field-names-no-callee-dep.loft::n_mkh
-elab-functions	agree	loft-suite/rules/ownership/O-Deps/2376-an-element-read-off-a-borrowing-calls-field-names-no-callee-dep.loft::n_second
-elab-functions	agree	loft-suite/rules/ownership/O-Deps/2376-an-element-read-off-a-borrowing-calls-field-names-no-callee-dep.loft::n_second_of_local
-elab-functions	agree	loft-suite/rules/ownership/O-Deps/2376-an-element-read-off-a-borrowing-calls-field-names-no-callee-dep.loft::n_test_controls
-elab-functions	agree	loft-suite/rules/ownership/O-Deps/2376-an-element-read-off-a-borrowing-calls-field-names-no-callee-dep.loft::n_test_operand_and_loop
-elab-functions	agree	loft-suite/rules/ownership/O-Deps/2376-an-element-read-off-a-borrowing-calls-field-names-no-callee-dep.loft::n_test_other_bases
-elab-functions	agree	loft-suite/rules/ownership/O-Deps/2376-an-element-read-off-a-borrowing-calls-field-names-no-callee-dep.loft::n_test_returned
-elab-functions	agree	loft-suite/rules/ownership/O-Deps/2376-an-element-read-off-a-borrowing-calls-field-names-no-callee-dep.loft::n_total
-elab-functions	agree	loft-suite/rules/ownership/O-Deps/2376-an-element-read-off-a-borrowing-calls-field-names-no-callee-dep.loft::n_view
-elab-functions	agree	loft-suite/rules/ownership/O-Deps/2376-an-element-read-off-a-borrowing-calls-field-names-no-callee-dep.loft::vector<A>
-elab-functions	agree	loft-suite/rules/ownership/O-Deps/2376-an-element-read-off-a-borrowing-calls-field-names-no-callee-dep.loft::vector<D>
 elab-functions	agree	loft-suite/rules/ownership/O-Derived/1683-a-field-hoisted-out-of-a-literal-is-a-view-and-is-never-freed.loft::(schema)
 elab-functions	agree	loft-suite/rules/ownership/O-Derived/1683-a-field-hoisted-out-of-a-literal-is-a-view-and-is-never-freed.loft::Flat
 elab-functions	agree	loft-suite/rules/ownership/O-Derived/1683-a-field-hoisted-out-of-a-literal-is-a-view-and-is-never-freed.loft::Inner
@@ -14468,31 +14445,6 @@ elab-functions	agree	tests/scripts/953-call-result-into-nested-vector.loft::main
 elab-functions	agree	tests/scripts/953-call-result-into-nested-vector.loft::main_vector<vector<single>>
 elab-functions	agree	tests/scripts/953-call-result-into-nested-vector.loft::vector<single>
 elab-functions	agree	tests/scripts/953-call-result-into-nested-vector.loft::vector<vector<single>>
-elab-functions	agree	tests/scripts/978-branch-join-carries-both-arms-borrows.loft::(schema)
-elab-functions	agree	tests/scripts/978-branch-join-carries-both-arms-borrows.loft::I978Bag
-elab-functions	agree	tests/scripts/978-branch-join-carries-both-arms-borrows.loft::I978Item
-elab-functions	agree	tests/scripts/978-branch-join-carries-both-arms-borrows.loft::I978Sink
-elab-functions	agree	tests/scripts/978-branch-join-carries-both-arms-borrows.loft::main_vector<I978Item>
-elab-functions	agree	tests/scripts/978-branch-join-carries-both-arms-borrows.loft::main_vector<float>
-elab-functions	agree	tests/scripts/978-branch-join-carries-both-arms-borrows.loft::n_i978_both_fresh
-elab-functions	agree	tests/scripts/978-branch-join-carries-both-arms-borrows.loft::n_i978_both_views
-elab-functions	agree	tests/scripts/978-branch-join-carries-both-arms-borrows.loft::n_i978_else_if
-elab-functions	agree	tests/scripts/978-branch-join-carries-both-arms-borrows.loft::n_i978_get
-elab-functions	agree	tests/scripts/978-branch-join-carries-both-arms-borrows.loft::n_i978_if
-elab-functions	agree	tests/scripts/978-branch-join-carries-both-arms-borrows.loft::n_i978_if_reversed
-elab-functions	agree	tests/scripts/978-branch-join-carries-both-arms-borrows.loft::n_i978_match
-elab-functions	agree	tests/scripts/978-branch-join-carries-both-arms-borrows.loft::n_i978_nested
-elab-functions	agree	tests/scripts/978-branch-join-carries-both-arms-borrows.loft::n_i978_pick
-elab-functions	agree	tests/scripts/978-branch-join-carries-both-arms-borrows.loft::n_i978_returned
-elab-functions	agree	tests/scripts/978-branch-join-carries-both-arms-borrows.loft::n_i978_scalar_read
-elab-functions	agree	tests/scripts/978-branch-join-carries-both-arms-borrows.loft::n_i978_seed
-elab-functions	agree	tests/scripts/978-branch-join-carries-both-arms-borrows.loft::n_i978_struct_field
-elab-functions	agree	tests/scripts/978-branch-join-carries-both-arms-borrows.loft::n_i978_vector_elem
-elab-functions	agree	tests/scripts/978-branch-join-carries-both-arms-borrows.loft::n_i978_via_accessor
-elab-functions	agree	tests/scripts/978-branch-join-carries-both-arms-borrows.loft::n_i978_via_param
-elab-functions	agree	tests/scripts/978-branch-join-carries-both-arms-borrows.loft::n_main
-elab-functions	agree	tests/scripts/978-branch-join-carries-both-arms-borrows.loft::vector<I978Item>
-elab-functions	agree	tests/scripts/978-branch-join-carries-both-arms-borrows.loft::vector<float>
 elab-functions	agree	tests/scripts/980-variant-field-answers-its-own-variant.loft::(schema)
 elab-functions	agree	tests/scripts/980-variant-field-answers-its-own-variant.loft::A
 elab-functions	agree	tests/scripts/980-variant-field-answers-its-own-variant.loft::Anon
@@ -15456,7 +15408,7 @@ elab-functions	agree	tests/scripts/store_paged_enum_field.loft::main_vector<inte
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::n_bytes
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::vector<integer(0, 255)>
 
-layer	elab-pass1	agree	11800	of	17607
+layer	elab-pass1	agree	11800	of	17609
 elab-pass1	agree	lib/code.loft::t_4Code_add_block
 elab-pass1	agree	lib/code.loft::t_4Code_add_if
 elab-pass1	agree	lib/code.loft::t_4Code_add_loop
