@@ -476,9 +476,29 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       e.b.data.definitions[e.context].returned = [el_types::with_deps(kr0, kds)];
     }
   }
+  // A tail that is a keyed field of a local record (`b.fr_h`) is copied out first
+  // (`keyed_field_copy_out`, loft#2562); the body answers the copy, typed without a borrow.
+  kcopied = false;
+  if keyed_kind(el_types::base(result)) && !kparam && !(result is TyOptional) && len(el_types::deps(b.tp)) > 0 {
+    match code {
+      NdBlock { block } => {
+        kcb = block[0];
+        if len(kcb.operators) > 0 {
+          kco = keyed_field_copy_out(e, vars, kcb.operators[-1]!, result);
+          if kco != null {
+            kcb.operators[len(kcb.operators) - 1] = kco!;
+            kcb.result = [el_types::without_deps(el_types::base(result))];
+            code = ir::NdBlock { block: [kcb] };
+            kcopied = true;
+          }
+        }
+      },
+      _ => {}
+    }
+  }
   // (A body whose type borrows nothing — a fresh call, a join of one and a null — answers the
   // collection as it is.)
-  if !e.first_pass && keyed_kind(el_types::base(result)) && !kparam && len(el_types::deps(b.tp)) > 0 {
+  if !e.first_pass && keyed_kind(el_types::base(result)) && !kparam && !kcopied && len(el_types::deps(b.tp)) > 0 {
     kv = match body_tail(code) { NdVar { n } => if !vars.vars[n].argument && keyed_kind(el_types::base(el_vars::tp(vars, n))) && !(result is TyOptional) { n } else { -1 }, _ => -1 };
     // A literal tail was built as the collection where it was read (`keyed_tail_literal`).
     klit = match body_tail(code) { NdBlock { block } => block[0].name == "Vector" && keyed_kind(block[0].result[0] ?? ir::TyVoid), _ => false };
@@ -1069,6 +1089,77 @@ fn tail_is_join(n: ir::Node) -> boolean {
     NdIf { cond: _ } => true,
     _ => false
   }
+}
+
+// `Parser::keyed_local_field_copy_out` (loft#2562, `@FR-F-Ret`): a returned keyed collection
+// that is a FIELD of a local record (or of a call's result) owns no store — it lies inside the
+// record the frame frees — so each such leaf of the tail (through `return`, blocks and `if`
+// arms) is copied out into a local that owns its store (`materialize_keyed_value`:
+// `__blk_val_N = null; OpReplaceKeyed(<field>, __blk_val_N, kt); __blk_val_N`), minted on
+// both passes.  A field of a PARAMETER is the caller's: left alone.  Null where no leaf was
+// copied.
+pub fn keyed_field_copy_out(e: el::El, vars: el_vars::Vars, n: ir::Node, t: ir::TypeT) -> ir::Node? {
+  match n {
+    NdReturn { inner } => {
+      r = keyed_field_copy_out(e, vars, inner, t);
+      return if r == null { null } else { ir::NdReturn { inner: r! } };
+    },
+    NdDrop { inner } => {
+      r = keyed_field_copy_out(e, vars, inner, t);
+      return if r == null { null } else { ir::NdDrop { inner: r! } };
+    },
+    NdSpan { pos, inner } => {
+      r = keyed_field_copy_out(e, vars, inner, t);
+      return if r == null { null } else { ir::NdSpan { pos: pos, inner: r! } };
+    },
+    NdIf { cond, t: ta, f: fa } => {
+      rt = keyed_field_copy_out(e, vars, ta, t);
+      rf = keyed_field_copy_out(e, vars, fa, t);
+      if rt == null && rf == null {
+        return null;
+      }
+      return ir::NdIf { cond: cond, t: rt ?? ta, f: rf ?? fa };
+    },
+    NdBlock { block } => {
+      bl = block[0];
+      if len(bl.operators) == 0 {
+        return null;
+      }
+      r = keyed_field_copy_out(e, vars, bl.operators[-1]!, t);
+      if r == null {
+        return null;
+      }
+      bl.operators[len(bl.operators) - 1] = r!;
+      return ir::NdBlock { block: [bl] };
+    },
+    NdInsert { items } => {
+      if len(items) == 0 {
+        return null;
+      }
+      r = keyed_field_copy_out(e, vars, items[-1]!, t);
+      if r == null {
+        return null;
+      }
+      return ir::NdInsert { items: items[..-1] + [r!] };
+    },
+    NdCall { def_nr, args: ka } => {
+      if el::def(e, def_nr).name != "OpGetField" || len(ka) != 3 {
+        return null;
+      }
+      root = place_root(e, n);
+      if root >= 0 && vars.vars[root].argument {
+        return null;
+      }
+      // (The collection's type is the one the field read names: no schema lookup, which would
+      // number types early.)
+      kt = match el_ir::unspan(ka[2]!) { NdInt { n: kn } => kn, _ => 0 };
+      tmp = el_vars::create_unique(vars, "__blk_val", el_types::without_deps(el_types::base(t)));
+      el_vars::set_defined(vars, tmp);
+      return ir::NdInsert { items: [el_ir::v_set(tmp, ir::NdNull), el_ir::cl(e, "OpReplaceKeyed", [n, ir::NdVar { n: tmp }, ir::NdInt { n: kt }]), ir::NdVar { n: tmp }] };
+    },
+    _ => {}
+  }
+  null
 }
 
 // `Parser::reads_a_stored_reference` (loft#1977): does the tail hand up, on some arm, the record

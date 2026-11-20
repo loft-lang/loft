@@ -2462,6 +2462,14 @@ pub fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
         _ => {}
       }
     }
+    // loft#2562: a keyed field of a local record returned is copied out first
+    // (`keyed_local_field_copy_out`).
+    if keyed_kind(el_types::base(result)) && !(result is TyOptional) {
+      kco = el_expressions::keyed_field_copy_out(e, vars, el_ir::unspan(v.code), result);
+      if kco != null {
+        return ex(ir::NdReturn { inner: kco! }, ir::TyNever);
+      }
+    }
     // A scalar result, nullable or not, takes the value converted to it.
     if !el_ex_call::scalar(el_types::base(result)) || result is TyVoid {
       el::refuse(e, "a `return` with a value of this type: {type_kind(result)}");
