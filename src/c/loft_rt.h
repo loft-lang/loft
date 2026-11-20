@@ -2606,6 +2606,17 @@ static void loft_slice_take(const struct loft_tdesc_s *T, loft_ref *var, uint32_
     *var = r;
 }
 
+/* The elements of `size` bytes a record of `words` 8-byte words holds past its 8-byte header.
+ * In a 32-bit address space the bytes fit 32 bits and the division is the core's own (@PLN217);
+ * elsewhere a record may pass 4 GiB, so the bytes are counted in 64 bits. */
+LOFT_HOT_INLINE uint32_t loft_rec_elems(uint32_t words, uint32_t size) {
+#if UINTPTR_MAX == 0xFFFFFFFFu
+    return (words * 8u - 8u) / size;
+#else
+    return (uint32_t) (((uint64_t) words * 8 - 8) / size);
+#endif
+}
+
 /* `checked_vec_cap`: the header word and `count` elements of `size` bytes, in words, in 32 bits
  * (the store does no 64-bit arithmetic).  A count past what 32 bits hold stops the program, as
  * `checked_vec_cap` panics: a clamped size would be a record smaller than its length says. */
@@ -4002,7 +4013,7 @@ static loft_win loft_win_of(loft_ref v, uint32_t size) {
     w.len = loft_u32(s, r, 4);
     int32_t claimed;
     memcpy(&claimed, loft_at(s, r, 0), 4);
-    if (!s->read_only && claimed > 0 && size != 0) w.cap = (uint32_t) (((uint64_t) claimed * 8 - 8) / size);
+    if (!s->read_only && claimed > 0 && size != 0) w.cap = loft_rec_elems((uint32_t) claimed, size);
     w.base = loft_at(s, r, 8);
     return w;
 }
@@ -4158,7 +4169,7 @@ LOFT_HOT_INLINE loft_ph loft_ph_of(loft_ref v, uint32_t size) {
     if (s->read_only) return h;
     int32_t claimed;
     memcpy(&claimed, loft_at(s, r, 0), 4);
-    h.cap = claimed < 1 ? 0 : (uint32_t) (((uint64_t) claimed * 8 - 8) / size);
+    h.cap = claimed < 1 ? 0 : loft_rec_elems((uint32_t) claimed, size);
     return h;
 }
 
@@ -4604,7 +4615,7 @@ static uint32_t loft_vec_reached(loft_ref v, uint32_t size) {
     uint32_t r = loft_collection_rec(s, v.rec, v.pos);
     if (r == 0) return 0;
     int32_t words = loft_st_i32(s, r, 0);
-    return words <= 0 ? 0 : (uint32_t) (((uint64_t) words * 8 - 8) / size);
+    return words <= 0 ? 0 : loft_rec_elems((uint32_t) words, size);
 }
 
 /* OpClearVector (Stores::clear_vector_release): `v` emptied, releasing what its elements own.
@@ -4750,7 +4761,7 @@ static void loft_vec_add(const loft_tdesc *T, uint16_t tp, loft_ref v, loft_ref 
         && !(v.store_nr == o.store_nr && d_rec == o_rec)) {
         int32_t claimed = loft_st_i32(s, d_rec, 0);
         uint32_t len = loft_u32(s, d_rec, 4);
-        uint32_t cap = (uint32_t) (((uint64_t) (claimed > 0 ? claimed : 0) * 8 - 8) / size);
+        uint32_t cap = claimed > 0 ? loft_rec_elems((uint32_t) claimed, size) : 0;
         if (claimed > 0 && (uint64_t) len + n <= cap) {
             loft_ref dst = { v.store_nr, d_rec, 0, 0 }, src = { o.store_nr, o_rec, 0, 0 };
             loft_copy_bytes(dst, 8 + len * size, src, 8, (size_t) n * size);

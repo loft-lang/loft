@@ -47,10 +47,14 @@ pub(crate) struct Allow {
 impl Allow {
     fn covers(&self, function: &str) -> bool {
         if self.prefix {
-            function.starts_with(&self.name)
-        } else {
-            function == self.name
+            return function.starts_with(&self.name);
         }
+        // A loft function is written to C under its name and under its twins' (`n_f__fr`,
+        // `n_f__inv`): one exception names them all.
+        function == self.name
+            || function
+                .strip_prefix(self.name.as_str())
+                .is_some_and(|rest| rest.starts_with("__"))
     }
 }
 
@@ -510,6 +514,16 @@ mod tests {
             "loft_format_float (loft runtime (loft_app.c)) calls __adddf3, __extendsfdf2"
         ));
         assert!(said.contains("in 1 function "));
+    }
+
+    /// A loft function's exception covers the twins it is written to C under.
+    #[test]
+    fn an_exception_covers_a_functions_twins() {
+        let a = &parse_allow("n_words_from  a JSON number is a double\n", "x.allow").unwrap()[0];
+        assert!(a.covers("n_words_from"));
+        assert!(a.covers("n_words_from__fr"));
+        assert!(a.covers("n_words_from__inv__fr"));
+        assert!(!a.covers("n_words_from_json"));
     }
 
     /// An exception says why: a bare name is refused with its line.

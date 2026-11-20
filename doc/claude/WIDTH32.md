@@ -162,7 +162,9 @@ refusal names each function, where it came from and the helpers it calls.  ESP-I
 archives are not judged.
 
 An exception is one line in an allow file: the function, or a prefix ending in `*`, then the
-reason it needs 64 bits.  A line without a reason is refused.
+reason it needs 64 bits.  A line without a reason is refused.  A loft function is named as the C
+names it (`n_` before a function's name, as the refusal prints it), and its line covers the
+twins it is written under (`n_f__fr`).
 
 ```text
 n_cell_key     the cell key is a 64-bit hash
