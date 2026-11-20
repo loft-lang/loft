@@ -25,6 +25,7 @@ use el_ex_call;
 use el_ex_null;
 use el_ex_pattern;
 use el_ex_vector;
+use el_ex_copy;
 
 // `Parser::chain_return_buffer_var` (@PLN164 B2): the buffer only chain exits renamed — a hidden
 // `__ref_N` the body names nowhere but inside a `one_buffer_chain` — is the caller's too, so a
@@ -3221,7 +3222,7 @@ fn buffer_arms(e: el::El, vars: el_vars::Vars, out: vector<SMArm>, elm: ir::Type
   if len(out) == 0 {
     return null;
   }
-  cap = el_expressions::match_tail_capture(vars, el_ir::v_block([out[0]!.code], ir::TyVoid, "vector_match"));
+  cap = el_ex_copy::match_tail_capture(vars, el_ir::v_block([out[0]!.code], ir::TyVoid, "vector_match"));
   d = e.context;
   if cap < 0 || !vars.vars[cap].argument || attr_nr(el::def(e, d), el_vars::name_of(vars, cap)) < 0 {
     return null;

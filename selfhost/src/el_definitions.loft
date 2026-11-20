@@ -19,6 +19,7 @@ use el_dispatch;
 use el_schema;
 use el_cell;
 use el_trace;
+use el_ex_deliver;
 
 
 // `Parser::parse_file`'s definition loop, over the file's items in order.
@@ -1226,7 +1227,7 @@ fn const_twin_ok(e: el::El, d: integer, body: integer) -> boolean {
     _ => {}
   }
   lit = sole_literal_node(e, body);
-  lit >= 0 && el_expressions::constant_literal(e, lit)
+  lit >= 0 && el_ex_deliver::constant_literal(e, lit)
 }
 
 // `fn name(params) (-> type)? (; / block)`                    Parser::parse_function
