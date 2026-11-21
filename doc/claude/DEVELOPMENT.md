@@ -581,6 +581,10 @@ Keep the **installed** loft current: a stale one builds consumer libraries again
 set in the classic branch protection, not in the `Use branches` ruleset (which holds linear
 history), so the ruleset endpoint does not list them; read them with
 `gh api repos/loft-lang/loft/branches/main/protection --jq '.required_status_checks.contexts'`.
+On a pull request four of them can go red: `Test (macos-latest)` and `Test (windows-latest)`
+are placeholders there that always pass (those platforms run on the push to `main` and
+daily), and `Test (ubuntu-latest)` gathers the Linux shards, so a red shard holds the merge
+too.
 `ci.yml` runs many more jobs, most advisory;
 what runs when, and the 20-minute PR budget, are [CI_BUDGET.md](CI_BUDGET.md).  A failure on one
 platform only is usually a path separator or timing; reproduce it on that platform through
