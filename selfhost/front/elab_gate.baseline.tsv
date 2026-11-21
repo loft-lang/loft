@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	0fe1a930c1a7f169457b2e8ca48ec8f762903595
 
-layer	elab	agree	1309	of	2132
+layer	elab	agree	1310	of	2132
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -165,7 +165,6 @@ elab	refused	loft-suite/rules/closures/L-Fn/a-closure-is-judged-by-its-own-funct
 elab	refused	loft-suite/rules/closures/L-FnRef/2190-a-function-of-exactly-a-fn-type-converts-to-it.loft
 elab	refused	loft-suite/rules/collections/Col-Concat/2406-a-literal-after-a-site-only-the-second-pass-builds-keeps-its-elements.loft
 elab	refused	loft-suite/rules/collections/Col-Concat/a-concatenation-is-a-new-vector-and-neither-operand-changes-wherever-it-stands.loft
-elab	refused	loft-suite/rules/collections/Col-Cons/2409-an-empty-literal-arm-keeps-its-type-past-a-call-in-the-test.loft
 elab	refused	loft-suite/rules/collections/Col-Cons/a-nullable-keyed-collection-can-hold-a-value.loft
 elab	refused	loft-suite/rules/collections/Col-Copy/a-vector-field-keeps-its-absence.loft
 elab	refused	loft-suite/rules/collections/Col-Group/1160-a-variant-binding-write-means-the-field-write.loft
@@ -830,7 +829,7 @@ elab	refused	tests/scripts/store_compact_slack_730.loft
 elab	refused	tests/scripts/store_digest_b0.loft
 elab	refused	tests/scripts/store_paged_enum_field.loft
 
-layer	elab-functions	agree	14421	of	24786
+layer	elab-functions	agree	14411	of	24773
 elab-functions	agree	lib/docs.loft::Anchor
 elab-functions	agree	lib/docs.loft::Character
 elab-functions	agree	lib/docs.loft::Double
@@ -4123,17 +4122,6 @@ elab-functions	agree	loft-suite/rules/collections/Col-Concat/a-concatenation-is-
 elab-functions	agree	loft-suite/rules/collections/Col-Concat/a-concatenation-is-a-new-vector-and-neither-operand-changes-wherever-it-stands.loft::vector<vector<integer>>
 elab-functions	agree	loft-suite/rules/collections/Col-Concat/a-concatenation-is-a-new-vector-and-neither-operand-changes-wherever-it-stands.loft::vector<vector<text>>
 elab-functions	agree	loft-suite/rules/collections/Col-Concat/a-concatenation-is-a-new-vector-and-neither-operand-changes-wherever-it-stands.loft::vector<vector<vector<integer>>>
-elab-functions	agree	loft-suite/rules/collections/Col-Cons/2409-an-empty-literal-arm-keeps-its-type-past-a-call-in-the-test.loft::(schema)
-elab-functions	agree	loft-suite/rules/collections/Col-Cons/2409-an-empty-literal-arm-keeps-its-type-past-a-call-in-the-test.loft::Empty
-elab-functions	agree	loft-suite/rules/collections/Col-Cons/2409-an-empty-literal-arm-keeps-its-type-past-a-call-in-the-test.loft::Other
-elab-functions	agree	loft-suite/rules/collections/Col-Cons/2409-an-empty-literal-arm-keeps-its-type-past-a-call-in-the-test.loft::Pick
-elab-functions	agree	loft-suite/rules/collections/Col-Cons/2409-an-empty-literal-arm-keeps-its-type-past-a-call-in-the-test.loft::n_by_call
-elab-functions	agree	loft-suite/rules/collections/Col-Cons/2409-an-empty-literal-arm-keeps-its-type-past-a-call-in-the-test.loft::n_by_length
-elab-functions	agree	loft-suite/rules/collections/Col-Cons/2409-an-empty-literal-arm-keeps-its-type-past-a-call-in-the-test.loft::n_by_method
-elab-functions	agree	loft-suite/rules/collections/Col-Cons/2409-an-empty-literal-arm-keeps-its-type-past-a-call-in-the-test.loft::n_declared
-elab-functions	agree	loft-suite/rules/collections/Col-Cons/2409-an-empty-literal-arm-keeps-its-type-past-a-call-in-the-test.loft::n_in_arm
-elab-functions	agree	loft-suite/rules/collections/Col-Cons/2409-an-empty-literal-arm-keeps-its-type-past-a-call-in-the-test.loft::n_no_call
-elab-functions	agree	loft-suite/rules/collections/Col-Cons/2409-an-empty-literal-arm-keeps-its-type-past-a-call-in-the-test.loft::n_sq
 elab-functions	agree	loft-suite/rules/collections/Col-Cons/a-nullable-keyed-collection-can-hold-a-value.loft::(schema)
 elab-functions	agree	loft-suite/rules/collections/Col-Cons/a-nullable-keyed-collection-can-hold-a-value.loft::NkH
 elab-functions	agree	loft-suite/rules/collections/Col-Cons/a-nullable-keyed-collection-can-hold-a-value.loft::NkI
@@ -13976,6 +13964,7 @@ elab-functions	agree	tests/scripts/2486-an-early-return-of-a-match-bound-vector-
 elab-functions	agree	tests/scripts/2486-an-early-return-of-a-match-bound-vector-is-copied-out.loft::V
 elab-functions	agree	tests/scripts/2486-an-early-return-of-a-match-bound-vector-is-copied-out.loft::n_mk
 elab-functions	agree	tests/scripts/2486-an-early-return-of-a-match-bound-vector-is-copied-out.loft::n_test_a_caller_that_leaves_early_reads_it_too
+elab-functions	agree	tests/scripts/2486-an-early-return-of-a-match-bound-vector-is-copied-out.loft::n_test_the_early_return_is_the_callers_own_vector
 elab-functions	agree	tests/scripts/2493-a-block-arm-ending-in-a-local-joins-an-optional-result.loft::(schema)
 elab-functions	agree	tests/scripts/2493-a-block-arm-ending-in-a-local-joins-an-optional-result.loft::A
 elab-functions	agree	tests/scripts/2493-a-block-arm-ending-in-a-local-joins-an-optional-result.loft::B
@@ -15253,7 +15242,7 @@ elab-functions	agree	tests/scripts/store_paged_enum_field.loft::main_vector<inte
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::n_bytes
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::vector<integer(0, 255)>
 
-layer	elab-pass1	agree	11954	of	17830
+layer	elab-pass1	agree	11955	of	17833
 elab-pass1	agree	lib/code.loft::t_4Code_add_block
 elab-pass1	agree	lib/code.loft::t_4Code_add_if
 elab-pass1	agree	lib/code.loft::t_4Code_add_loop
@@ -17104,6 +17093,7 @@ elab-pass1	agree	loft-suite/rules/collections/Col-Concat/2406-a-literal-after-a-
 elab-pass1	agree	loft-suite/rules/collections/Col-Concat/2406-a-literal-after-a-site-only-the-second-pass-builds-keeps-its-elements.loft::n_cnt
 elab-pass1	agree	loft-suite/rules/collections/Col-Concat/a-concatenation-is-a-new-vector-and-neither-operand-changes-wherever-it-stands.loft::n_names
 elab-pass1	agree	loft-suite/rules/collections/Col-Concat/a-concatenation-is-a-new-vector-and-neither-operand-changes-wherever-it-stands.loft::n_total
+elab-pass1	agree	loft-suite/rules/collections/Col-Cons/2409-an-empty-literal-arm-keeps-its-type-past-a-call-in-the-test.loft::n_main
 elab-pass1	agree	loft-suite/rules/collections/Col-Cons/2409-an-empty-literal-arm-keeps-its-type-past-a-call-in-the-test.loft::n_sq
 elab-pass1	agree	loft-suite/rules/collections/Col-Cons/a-nullable-keyed-collection-can-hold-a-value.loft::n_main
 elab-pass1	agree	loft-suite/rules/collections/Col-Cons/a-nullable-keyed-collection-can-hold-a-value.loft::n_nk_i_null
