@@ -414,7 +414,8 @@ impl FnWriter<'_> {
         // out); the trusted twin takes neither.
         let mut sha = String::new();
         for e in es {
-            sha.push_str(&format!("{}, ", as_view(e)?));
+            sha += as_view(e)?.as_str();
+            sha += ", ";
         }
         let f = if name == "n_store_load_url" {
             "loft_store_load_url"

@@ -6805,12 +6805,11 @@ impl Stores {
         // The sidecar the gate already read (and, for a pinned load, checked) — a second fetch
         // could answer other bytes than the ones the pin vouched for.
         let fetched;
-        let text = match sidecar {
-            Some(t) => t,
-            None => {
-                fetched = crate::net::fetch_bytes(&format!("{url}.dschema")).ok()?;
-                std::str::from_utf8(&fetched).ok()?
-            }
+        let text = if let Some(t) = sidecar {
+            t
+        } else {
+            fetched = crate::net::fetch_bytes(&format!("{url}.dschema")).ok()?;
+            std::str::from_utf8(&fetched).ok()?
         };
         crate::schema_sidecar::LayoutIdentity::from_sidecar(text)?.slot
     }
