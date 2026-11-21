@@ -1620,7 +1620,8 @@ pub fn range_walk(e: el::El, vars: el_vars::Vars, id: text, source: integer) -> 
     lo_node = ir::NdVar { n: rs };
   }
   if hc == null {
-    re = el_vars::create_unique(vars, "range_end", int_t);
+    // (Typed as the end bound is, `till_tp`: `0..arg` over a `u8` holds `integer(0, 255)`.)
+    re = el_vars::create_unique(vars, "range_end", if h.tp is TyInteger { el_types::without_deps(h.tp) } else { int_t });
     prelude += [el_ir::v_set(re, h.code)];
     hi_node = ir::NdVar { n: re };
   }
