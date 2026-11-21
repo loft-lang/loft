@@ -65,7 +65,7 @@ Start with the enum forms (N-Match:173 / :159 / :200 / :215, the T-Chk-Vec `tail
 ```
 kr-suite/rules/types/N-Match/a-null-arm-matches-a-null-subject-of-any-kind.loft:159, :173, :200, :215
 kr-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft:42, :46
-kr-try/tests/scripts/1739-a-null-inner-vector-element-is-absent-on-every-round-trip.loft:32
+kr-suite/rules/types/N-Shape/1739-a-null-inner-vector-element-is-absent-on-every-route.loft:32
 ```
 (Run `where.tsv` for the family after the change: the tuple forms, such as `(integer, T8S?) then (…`,
 are the next layer.)
