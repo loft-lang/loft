@@ -1,7 +1,6 @@
-diff --git b/src/c/loft_hash.h a/src/c/loft_hash.h
-index 05b24705b..b67ce535e 100644
---- b/src/c/loft_hash.h
-+++ a/src/c/loft_hash.h
+diff --git a/src/c/loft_hash.h b/src/c/loft_hash.h
+--- a/src/c/loft_hash.h
++++ b/src/c/loft_hash.h
 @@ -1609,14 +1609,13 @@ static void loft_hash_remove_i64(const loft_tdesc *T, uint16_t elem, loft_ref c,
  }
  
@@ -32,11 +31,10 @@ index 05b24705b..b67ce535e 100644
          loft_h_filed = rec;
          return p.entry;
      }
-diff --git b/src/database/search.rs a/src/database/search.rs
-index a3530e7e6..9686eeabf 100644
---- b/src/database/search.rs
-+++ a/src/database/search.rs
-@@ -896,28 +896,6 @@ impl Stores {
+diff --git a/src/database/search.rs b/src/database/search.rs
+--- a/src/database/search.rs
++++ b/src/database/search.rs
+@@ -896,34 +896,6 @@ impl Stores {
          None
      }
  
@@ -44,10 +42,16 @@ index a3530e7e6..9686eeabf 100644
 -    /// insert that displaced it, the one way for both: an entry the table's arena owns goes
 -    /// back to the arena; an entry with a record of its own (a table that borrows its records)
 -    /// goes through the store's own removal, which leaves the mark a stored reference to it
--    /// reads as null.  A displacement used to send every entry to the arena, which declines a
--    /// record it does not own, so a reference kept reading the displaced entry — its texts
+-    /// reads as null.  Sending every entry to the arena is wrong: the arena declines a record
+-    /// it does not own, so a reference would keep reading the displaced entry — its texts
 -    /// freed, its numbers left — and its position could be claimed again.
--    pub(crate) fn release_hash_entry(&mut self, data: &DbRef, entry: &DbRef, slot: u32, content: u16) {
+-    pub(crate) fn release_hash_entry(
+-        &mut self,
+-        data: &DbRef,
+-        entry: &DbRef,
+-        slot: u32,
+-        content: u16,
+-    ) {
 -        if self.hash_owns_entries(data) {
 -            self.remove_claims(entry, content);
 -            self.free_hash_entry(data, entry, slot);
@@ -65,7 +69,7 @@ index a3530e7e6..9686eeabf 100644
      /// Release a hash entry the unlink just named: through the bucket value it answered
      /// where there is one, and by looking the entry up (`hash::free_entry`) where the table
      /// did not hold it — which keeps an entry that was allocated but never filed from
-@@ -947,10 +925,10 @@ impl Stores {
+@@ -953,10 +925,10 @@ impl Stores {
      ) {
          let slot = self.unlink(data, existing, db);
          if !secondary {
@@ -78,10 +82,9 @@ index a3530e7e6..9686eeabf 100644
                  self.store_mut(data).delete(existing.rec);
              }
          }
-diff --git b/src/database/structures.rs a/src/database/structures.rs
-index ed09f3f72..15e0d5f3f 100644
---- b/src/database/structures.rs
-+++ a/src/database/structures.rs
+diff --git a/src/database/structures.rs b/src/database/structures.rs
+--- a/src/database/structures.rs
++++ b/src/database/structures.rs
 @@ -1542,7 +1542,8 @@ impl Stores {
                          self.forget_in_scratches(data, &existing);
                          let gone = hash::replace_at(data, bucket, index, &mut self.allocations);

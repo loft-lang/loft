@@ -6,8 +6,8 @@ index 48c1fdba0..6f79a4d2f 100644
          // helpers around this read fold (hex_field's `edgeset_count`).
          return write!(
              ctx.w,
--            "; let __bl = i64::from({header}.len); let __bf = if __bi < 0 {{ __bi + __bl }} else {{ __bi }}; if __bf >= 0 && __bf < __bl {{ i64::from(unsafe {{ {base}.add(__bf as usize * {size}usize + {fld}usize).read() }}) + ({min}_i64) }} else {{ {fault}i64::MIN }} }} /*@FR-R-Base byte read*/"
-+            "; let __bl = i64::from({header}.len); let __bf = if __bi < 0 {{ __bi + __bl }} else {{ __bi }}; if __bf >= 0 && __bf < __bl {{ i64::from(unsafe {{ {base}.add(__bf as usize * {size}usize + {fld}usize).read() }}) }} else {{ {fault}i64::MIN }} }} /*@FR-R-Base byte read*/"
+-            "; let __bl = i64::from({header}.elems({size}_u32)); let __bf = if __bi < 0 {{ __bi + __bl }} else {{ __bi }}; if __bf >= 0 && __bf < __bl {{ i64::from(unsafe {{ {base}.add(__bf as usize * {size}usize + {fld}usize).read() }}) + ({min}_i64) }} else {{ {fault}i64::MIN }} }} /*@FR-R-Base byte read*/"
++            "; let __bl = i64::from({header}.elems({size}_u32)); let __bf = if __bi < 0 {{ __bi + __bl }} else {{ __bi }}; if __bf >= 0 && __bf < __bl {{ i64::from(unsafe {{ {base}.add(__bf as usize * {size}usize + {fld}usize).read() }}) }} else {{ {fault}i64::MIN }} }} /*@FR-R-Base byte read*/"
          )
          .map(|()| true);
      }

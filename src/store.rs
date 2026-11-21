@@ -5262,11 +5262,11 @@ impl Store {
             let to_limit = self.read::<i32>(to_rec, 0) as isize * 8;
             debug_assert!(
                 from_pos + size <= from_limit,
-                "copy_block src OOB: rec={from_rec} [{from_pos}..+{size}] > {from_limit} bytes"
+                "copy_block source out of bounds: rec={from_rec} [{from_pos}..+{size}] > {from_limit} bytes"
             );
             debug_assert!(
                 to_pos + size <= to_limit,
-                "copy_block dst OOB: rec={to_rec} [{to_pos}..+{size}] > {to_limit} bytes"
+                "copy_block target out of bounds: rec={to_rec} [{to_pos}..+{size}] > {to_limit} bytes"
             );
         }
         #[cfg(feature = "op-census")]
@@ -5330,11 +5330,11 @@ impl Store {
             let to_limit = to_store.read::<i32>(to_rec, 0) as isize * 8;
             debug_assert!(
                 from_pos + len <= from_limit,
-                "copy_block_between src OOB: rec={from_rec} [{from_pos}..+{len}] > {from_limit} bytes"
+                "copy_block_between source out of bounds: rec={from_rec} [{from_pos}..+{len}] > {from_limit} bytes"
             );
             debug_assert!(
                 to_pos + len <= to_limit,
-                "copy_block_between dst OOB: rec={to_rec} [{to_pos}..+{len}] > {to_limit} bytes"
+                "copy_block_between target out of bounds: rec={to_rec} [{to_pos}..+{len}] > {to_limit} bytes"
             );
         }
         #[cfg(feature = "op-census")]
