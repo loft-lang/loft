@@ -1481,7 +1481,7 @@ fn n_store_load_keys_text(stores: &mut Stores, stack: &mut DbRef) {
 /// caller-pinned digest, and (only on a match) HEAP-load it into the collection's
 /// slot.  A fetch error or hash mismatch refuses (returns false, adopts nothing).
 /// Args pop in reverse: schema_sha256 ("" when left out: the sidecar unpinned), sha256, url,
-/// local.  @PLN97 arc G Phase 0.
+/// local.
 #[cfg(any(
     feature = "registry",
     all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm"))

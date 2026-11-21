@@ -1846,7 +1846,7 @@ fn branch_commit(advertisement: &[u8], tail: &str) -> Option<(String, String)> {
 }
 
 /// The `updated` stamp of an index or advisory feed, read without parsing the rest; empty when
-/// it has none.  Both are written as RFC 3339 UTC (`2026-11-21T00:00:00Z`), which orders as
+/// it has none.  Both are written as RFC 3339 UTC (`YYYY-MM-DDThh:mm:ssZ`), which orders as
 /// text.
 #[must_use]
 pub fn updated_stamp(content: &[u8]) -> String {

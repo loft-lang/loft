@@ -900,8 +900,8 @@ impl Stores {
     /// insert that displaced it, the one way for both: an entry the table's arena owns goes
     /// back to the arena; an entry with a record of its own (a table that borrows its records)
     /// goes through the store's own removal, which leaves the mark a stored reference to it
-    /// reads as null.  A displacement used to send every entry to the arena, which declines a
-    /// record it does not own, so a reference kept reading the displaced entry — its texts
+    /// reads as null.  Sending every entry to the arena is wrong: the arena declines a record
+    /// it does not own, so a reference would keep reading the displaced entry — its texts
     /// freed, its numbers left — and its position could be claimed again.
     pub(crate) fn release_hash_entry(
         &mut self,

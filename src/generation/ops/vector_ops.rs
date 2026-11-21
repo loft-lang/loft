@@ -90,27 +90,34 @@ impl OpEmitter for ViewFieldReadEmitter {
     }
 }
 
+/// @PLN157 § V-aa (`@FR-R-ValueRecord`) — a field read off a local that holds a VALUE-RETURNED
+/// record is a tuple index: there is no record in a store to read.  The field is the local's
+/// own or one reached through INLINE sub-records (`p.pos.x`), at the summed offset
+/// (`hoist::view_field`) — the key the layout indexed a nested record's scalar under.
+/// Answers whether it wrote the read.
+fn emit_value_record_read(ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<bool> {
+    if let [base, fld, ..] = args
+        && let Some((v, off)) = super::super::hoist::view_field(ctx.output.data, base, fld)
+        && let Some(tp) = ctx.output.value_record_locals.get(&v).copied()
+        && let Some(idx) = ctx.output.plan.value_records.index.get(&(tp, off)).copied()
+    {
+        let name =
+            super::super::sanitize(ctx.output.data.def(ctx.output.def_nr).variables().name(v));
+        write!(ctx.w, "var_{name}.{idx}")?;
+        return Ok(true);
+    }
+    Ok(false)
+}
+
 pub struct FusedElementReadEmitter;
 
 impl OpEmitter for FusedElementReadEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
-        // @PLN157 § V-aa (`@FR-R-ValueRecord`) — a field read off a local that holds a
-        // VALUE-RETURNED record is a tuple index: there is no record in a store to read.
         // Checked here rather than from a second registration, because this emitter owns
         // every scalar getter and a later insert would silently replace it.
-        // The field is the local's own or one reached through INLINE sub-records
-        // (`p.pos.x`), at the summed offset (`hoist::view_field`) — the key the layout
-        // indexed a nested record's scalar under.
-        if let [base, fld, ..] = args
-            && let Some((v, off)) = super::super::hoist::view_field(ctx.output.data, base, fld)
-            && let Some(tp) = ctx.output.value_record_locals.get(&v).copied()
-            && let Some(idx) = ctx.output.plan.value_records.index.get(&(tp, off)).copied()
-        {
-            let name =
-                super::super::sanitize(ctx.output.data.def(ctx.output.def_nr).variables().name(v));
-            return write!(ctx.w, "var_{name}.{idx}");
+        if emit_value_record_read(ctx, args)? {
+            return Ok(());
         }
-
         if emit_byte_read(ctx, args)? {
             return Ok(());
         }

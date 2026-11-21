@@ -316,8 +316,8 @@ pub fn private_temp_dir() -> std::path::PathBuf {
         // SAFETY: `geteuid` reads a process attribute and cannot fail.
         let uid = unsafe { libc::geteuid() };
         let ours = |dir: &std::path::Path| {
-            crate::file_access::symlink_metadata(dir)
-                .is_ok_and(|md| md.is_dir() && is_private_to_owner(&md, false))
+            crate::file_access::own_dir_metadata(dir)
+                .is_some_and(|md| is_private_to_owner(&md, false))
         };
         let make = |dir: &std::path::Path| {
             crate::file_access::create_dir(dir).is_ok() && set_permission_bits(dir, 0o700).is_ok()

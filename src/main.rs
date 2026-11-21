@@ -2622,32 +2622,9 @@ fn bundle_export(
         return 1;
     }
 
-    // Copy index.json + sig.
-    let (idx_path, sig_path, _) = registry_index::index_paths();
-    if fa::exists(&idx_path) {
-        if let Err(e) = fa::copy(&idx_path, out.join("index.json")) {
-            eprintln!("loft bundle export: copy index.json: {e}");
-            return 1;
-        }
-    }
-    if fa::exists(&sig_path) {
-        let _ = fa::copy(&sig_path, out.join("index.json.sig"));
-        let _ = fa::copy(
-            registry_index::sig2_path(&sig_path),
-            out.join("index.json.sig2"),
-        );
-    }
-    // Advisories (optional — registry may not host one yet).
-    let (adv_path, adv_sig_path) = loft::registry_advisories::advisories_paths();
-    if fa::exists(&adv_path) {
-        let _ = fa::copy(&adv_path, out.join("advisories.json"));
-        if fa::exists(&adv_sig_path) {
-            let _ = fa::copy(&adv_sig_path, out.join("advisories.json.sig"));
-            let _ = fa::copy(
-                registry_index::sig2_path(&adv_sig_path),
-                out.join("advisories.json.sig2"),
-            );
-        }
+    if let Err(e) = bundle_copy_feeds(out) {
+        eprintln!("loft bundle export: {e}");
+        return 1;
     }
 
     // For each requested package: pick its latest active version,
@@ -2702,6 +2679,37 @@ fn bundle_export(
         out.display()
     );
     0
+}
+
+/// The signed feeds a bundle carries into `out`: the index with its signatures, and the
+/// advisory feed with its own when the registry hosts one.  Only a failed copy of the index
+/// itself is an error.
+#[cfg(feature = "registry")]
+fn bundle_copy_feeds(out: &std::path::Path) -> Result<(), String> {
+    use loft::registry_index;
+    let (idx_path, sig_path, _) = registry_index::index_paths();
+    if fa::exists(&idx_path) {
+        fa::copy(&idx_path, out.join("index.json")).map_err(|e| format!("copy index.json: {e}"))?;
+    }
+    if fa::exists(&sig_path) {
+        let _ = fa::copy(&sig_path, out.join("index.json.sig"));
+        let _ = fa::copy(
+            registry_index::sig2_path(&sig_path),
+            out.join("index.json.sig2"),
+        );
+    }
+    let (adv_path, adv_sig_path) = loft::registry_advisories::advisories_paths();
+    if fa::exists(&adv_path) {
+        let _ = fa::copy(&adv_path, out.join("advisories.json"));
+        if fa::exists(&adv_sig_path) {
+            let _ = fa::copy(&adv_sig_path, out.join("advisories.json.sig"));
+            let _ = fa::copy(
+                registry_index::sig2_path(&adv_sig_path),
+                out.join("advisories.json.sig2"),
+            );
+        }
+    }
+    Ok(())
 }
 
 /// @PLAN12 Phase 6.11 — `loft bundle import <indir>` installs a
