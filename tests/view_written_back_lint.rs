@@ -185,3 +185,79 @@ fn a_write_back_that_restores_what_the_view_was_bound_to_is_quiet() {
         ),
     ]);
 }
+
+/// The fix line names a cure that exists for the view's TYPE (`@FR-B-Copy`, loft#2605): a
+/// struct place takes the record update with its own type name; an enum-typed place, which the
+/// update cannot take, the plain bind of a call's answer.  And the enum cure it names compiles,
+/// runs and restores the value: a call's answer is copied, so the view's write-back keeps it.
+#[test]
+fn the_fix_names_a_copy_that_exists_for_the_views_type() {
+    const ENUM: &str = "enum T { Int { min: integer }, Vec { inner: integer }, Void }\n\
+         struct V { pub expect: T = T::Void }\n\
+         fn show(t: T) -> text { match t { Vec { inner } => \"vec {inner}\", \
+         Int { min } => \"int {min}\", Void => \"void\" } }\n";
+    let explain = |name: &str, src: &str| -> (bool, String) {
+        let dir = std::env::temp_dir().join("loft_view_written_back_lint");
+        fa::create_dir_all(&dir).expect("probe dir");
+        let path = dir.join(format!("{name}.loft"));
+        fa::write(&path, src).expect("write probe");
+        let out =
+            loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
+                .arg("--explain")
+                .arg("--interpret")
+                .arg(&path)
+                .env("LOFT_NO_CACHE", "1")
+                .output()
+                .expect("spawn loft");
+        let all = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        (out.status.success(), all)
+    };
+    let (_, err) = explain(
+        "fix_enum",
+        &format!(
+            "{ENUM}fn bind(v: V) {{ outer = v.expect; v.expect = T::Int {{ min: 7 }}; \
+             v.expect = outer; }}\nfn main() {{ v = V {{ expect: T::Vec {{ inner: 3 }} }}; \
+             bind(v); println(show(v.expect)); }}\n"
+        ),
+    );
+    assert!(
+        err.contains("fn keep(t: T) -> T { t }") && err.contains("outer = keep(<place>)"),
+        "the enum fix names the call copy:\n{err}"
+    );
+    assert!(
+        !err.contains("T { ..<place> }"),
+        "no update spelling for an enum:\n{err}"
+    );
+    let (_, err) = explain(
+        "fix_struct",
+        &format!(
+            "{TYPES}fn main() {{ st = mk(); keep = st.lib; st.lib = Lib {{ name: \"g\" }}; \
+             st.lib = keep; println(\"{{st.lib.name}}\"); }}\n"
+        ),
+    );
+    assert!(
+        err.contains("keep = Lib { ..<place> }"),
+        "the struct fix names its own type:\n{err}"
+    );
+    let (ok, out) = explain(
+        "cure_enum",
+        &format!(
+            "{ENUM}fn keep(t: T) -> T {{ t }}\nfn bind(v: V) {{ outer = keep(v.expect); \
+             v.expect = T::Int {{ min: 7 }}; v.expect = outer; }}\nfn main() {{ v = V {{ expect: \
+             T::Vec {{ inner: 3 }} }}; bind(v); r = show(v.expect); assert(r == \"vec 3\", r); \
+             println(\"restored {{r}}\"); }}\n"
+        ),
+    );
+    assert!(
+        ok && out.contains("restored vec 3"),
+        "the named enum cure restores:\n{out}"
+    );
+    assert!(
+        !out.contains(CODE),
+        "the named enum cure draws no warning:\n{out}"
+    );
+}
