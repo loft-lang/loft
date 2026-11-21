@@ -5196,6 +5196,23 @@ impl Store {
         unsafe { std::ptr::copy_nonoverlapping(img.as_ptr(), ptr, img.len()) }
     }
 
+    /// The byte offset of `[pos, pos + len)` in record `rec`, held inside this store: the
+    /// bound every accessor keeps ([`Self::offset_in_bounds`]), for a block move whose place
+    /// and length are signed.  A move that would leave the store stops the program as an
+    /// out-of-range read does.
+    #[inline]
+    pub(crate) fn block_in_bounds(&self, rec: u32, pos: isize, len: isize) -> isize {
+        let at = rec as isize * 8 + pos;
+        if pos < 0 || len < 0 || at + len > self.size as isize * 8 {
+            self.raise_out_of_bounds(
+                rec,
+                u32::try_from(pos).unwrap_or(u32::MAX),
+                usize::try_from(len).unwrap_or(usize::MAX),
+            );
+        }
+        at
+    }
+
     #[inline]
     pub fn copy_block(
         &mut self,
@@ -5209,6 +5226,8 @@ impl Store {
             self.refuse_locked_write(to_rec, to_pos as u32);
             return;
         }
+        let from_at = self.block_in_bounds(from_rec, from_pos, size);
+        let to_at = self.block_in_bounds(to_rec, to_pos, size);
         #[cfg(debug_assertions)]
         {
             let from_limit = self.read::<i32>(from_rec, 0) as isize * 8;
@@ -5226,10 +5245,11 @@ impl Store {
         crate::op_census::moved(crate::op_census::Moved::Copy, size as usize);
         #[cfg(feature = "op-census")]
         crate::store_census::copied_into(self.store_nr, size as u64);
+        // SAFETY: both spans were just held inside this store's allocation.
         unsafe {
             std::ptr::copy(
-                self.ptr.offset(from_rec as isize * 8 + from_pos),
-                self.ptr.offset(to_rec as isize * 8 + to_pos),
+                self.ptr.offset(from_at),
+                self.ptr.offset(to_at),
                 size as usize,
             );
         }
@@ -5257,9 +5277,9 @@ impl Store {
                 usize::try_from(len).unwrap_or(0),
             );
         }
-        // SAFETY: `rec` is a word index below `size`, so the offset stays within (or one
-        // past) the allocation `ptr` was made for; the debug bound above says so.
-        unsafe { self.ptr.offset(rec as isize * 8 + pos) }
+        let at = self.block_in_bounds(rec, pos, len);
+        // SAFETY: the span was just held inside this store's allocation.
+        unsafe { self.ptr.offset(at) }
     }
 
     #[inline]
@@ -5293,10 +5313,12 @@ impl Store {
         crate::op_census::moved(crate::op_census::Moved::Copy, len as usize);
         #[cfg(feature = "op-census")]
         crate::store_census::copied_into(to_store.store_nr, len as u64);
+        let to_at = to_store.block_in_bounds(to_rec, to_pos, len);
+        // SAFETY: `block_src` and `block_in_bounds` held each span inside its own store.
         unsafe {
             std::ptr::copy(
                 self.block_src(from_rec, from_pos, len),
-                to_store.ptr.offset(to_rec as isize * 8 + to_pos),
+                to_store.ptr.offset(to_at),
                 len as usize,
             );
         }
@@ -5954,6 +5976,29 @@ mod tests {
     use super::{
         Claims, FOREIGN_REC, ForeignOwner, ForeignSpan, MAX_STORE_WORDS, Store, slack_target,
     };
+
+    /// A block move stays inside its store in every build: a length or a place from a store
+    /// that was loaded and never walked stops the program, as an out-of-range read does,
+    /// instead of copying across whatever lies beside the store.  The debug build's stricter
+    /// test — inside the RECORD — is unchanged.
+    #[test]
+    #[should_panic(expected = "out of bounds")]
+    fn a_block_copy_that_leaves_the_store_stops() {
+        let mut s = Store::new(16);
+        let a = s.claim(2);
+        let b = s.claim(2);
+        s.copy_block(a, 8, b, 8, 4096);
+    }
+
+    #[test]
+    #[should_panic(expected = "out of bounds")]
+    fn a_block_copy_between_stores_that_leaves_its_target_stops() {
+        let mut from = Store::new(1024);
+        let mut to = Store::new(16);
+        let a = from.claim(600);
+        let b = to.claim(2);
+        from.copy_block_between(a, 8, &mut to, b, 8, 4096);
+    }
 
     /// A span over a byte slice the TEST owns (it outlives every store here).
     fn foreign_span_of(bytes: &[u8]) -> ForeignSpan {
