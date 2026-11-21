@@ -842,12 +842,37 @@ pub fn keyed_items(e: el::El, vars: el_vars::Vars, v: integer, n: integer, fd: i
     if fl == null {
       return null;
     }
-    ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: kt }, ir::NdInt { n: kpos }]))];
-    for op in fl! {
-      if op#index >= 2 {
-        ls += [op];
+    // `@FR-E-Asgn-Compound`'s staging clause: a value that reads the collection itself
+    // (`h += [P { k: 1, a: h[1].b ?? 0 }]`) is read BEFORE the entry is made — every
+    // non-constant scalar or text value staged into a work reference first, as Rust's insert
+    // stages them; the record is then made through the owner with no vector built.
+    vals: vector<ir::Node> = [for op in fl! if op#index >= 2 { op }];
+    if len([for op in vals if el_ir::reads_var(op, v) { 1 }]) > 0 {
+      staged: vector<ir::Node> = [];
+      for op in vals {
+        match el_ir::unspan(op) {
+          NdCall { def_nr: wd, args: wa } => {
+            svi = len(wa) - 1;
+            val = el_ir::unspan(wa[svi]!);
+            constant = val is NdInt || val is NdLong || val is NdFloat || val is NdSingle || val is NdBoolean || val is NdText || val is NdNull || val is NdEnum;
+            pt = el::def(e, wd).attributes[svi]!.typedef[0] ?? ir::TyVoid;
+            if !constant && (el_ex_call::scalar(el_types::base(pt)) || el_types::base(pt) is TyText) {
+              tmp = el_vars::work_ref(vars, pt);
+              ls += [el_ir::v_set(tmp, wa[svi]!)];
+              sa = wa;
+              sa[svi] = ir::NdVar { n: tmp };
+              staged += [ir::NdCall { def_nr: wd, args: sa }];
+            } else {
+              staged += [op];
+            }
+          },
+          _ => { staged += [op]; }
+        }
       }
+      vals = staged;
     }
+    ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: kt }, ir::NdInt { n: kpos }]))];
+    ls += vals;
     ls += [el_ir::cl(e, "OpFinishRecord", [w, at, ir::NdInt { n: kt }, ir::NdInt { n: kpos }])];
   }
   ls

@@ -1578,6 +1578,24 @@ pub fn record_def(t: ir::TypeT) -> integer {
 // `is_field`): no room made first; a scalar item pushed onto the field's place; a text or a
 // struct literal item a record made through the owning struct's field (`OpNewRecord(r, struct,
 // field)`, its value or fields, `OpFinishRecord`) — a keyed collection indexes it there.
+// Does `n` build a record or a vector in place anywhere inside (an "Object" or "Vector" block)?
+fn builds_record(n: ir::Node) -> boolean {
+  match n {
+    NdBlock { block } => {
+      if block[0].name == "Object" || block[0].name == "Vector" {
+        return true;
+      }
+    },
+    _ => {}
+  }
+  for c in el_ir::children(n) {
+    if builds_record(c) {
+      return true;
+    }
+  }
+  false
+}
+
 pub fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
   // (An append that pushes names the field's vector row on the first pass, ahead of the struct
   // that holds it — as a literal that fills the field does.)
@@ -1862,7 +1880,20 @@ pub fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
           }
         }
       }
-      staged_ok = local && len(items) == 1 && plain_values && !loft_call_reads(e, [for op in fl! if op#index >= 2 { op }], rec);
+      // (A call that may write the field — handed the record — is staged too, and the field
+      // snapshotted first, as Rust's form has it: `_build_src_N` filled from the field, then every
+      // value, the call's answer among them, read before the element is made.)
+      call_reads = loft_call_reads(e, [for op in fl! if op#index >= 2 { op }], rec);
+      // (A KEYED field builds no vector: the values are staged, the record made through the
+      // owner, and nothing snapshotted.)
+      keyed_field = el_ex_base::keyed_kind(el_types::base(p.tp));
+      // (A keyed field's value that builds a record anywhere inside — a `?` default's `Object` —
+      // is built apart in a vector of its own and filled in by Rust (`OpFillKeyed`), the
+      // own-buffer road, not carried: still refused.)
+      if keyed_field && len([for op in fl! if op#index >= 2 && builds_record(op) { 1 }]) > 0 {
+        plain_values = false;
+      }
+      staged_ok = local && len(items) == 1 && plain_values;
       if (reads_rec || reads_fld) && !staged_ok {
         why = if !local { "through a place that is no local" } else if len(items) != 1 { "among several items" } else if !plain_values { "beside a value built in place" } else { "through a call that may write it" };
         el::refuse(e, "a field append whose item reads the field: {why}");
@@ -1870,7 +1901,7 @@ pub fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
       }
       writes: vector<ir::Node> = [for op in fl! if op#index >= 2 { op }];
       if reads_rec || reads_fld {
-        if reads_fld {
+        if (reads_fld || call_reads) && !keyed_field {
           // (Asked only where the element's vector type is declared already: `vector_rows`
           // would declare it here, at a place Rust does not.)
           known_elem = el_types::elem_name(e, inner) != "" && el::def_nr(e, "main_vector<{el_types::elem_name(e, inner)}>") >= 0;
