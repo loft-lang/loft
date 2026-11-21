@@ -1131,12 +1131,12 @@ fn op_rename(tok: text) -> text {
 }
 
 // One parameter as `parse_arguments` collects it (src/data.rs `Argument`).
-struct Argument {
-  name: text,
-  typedef: ir::TypeT,
-  constant: boolean,
+pub struct Argument {
+  pub name: text,
+  pub typedef: ir::TypeT,
+  pub constant: boolean,
   // the declared `= default`, converted to the parameter's type; NdNull for none
-  dflt: ir::Node = ir::NdNull
+  pub dflt: ir::Node = ir::NdNull
 }
 
 // A block whose one statement is a vector literal.
@@ -1955,7 +1955,7 @@ fn takes_ret_buffer(e: el::El, t: ir::TypeT) -> boolean {
 // `Data::fn_key`: a function's definition key — `n_<name>`, or for a method (a first `self`
 // parameter) `t_<LEN><receiver>_<name>`, the receiver spelled `T?` when it is nullable.  A
 // receiver that is a variant, a generic instance or a bound holder is refused by name ("").
-fn fn_key(e: el::El, name: text, arguments: vector<Argument>) -> text {
+pub fn fn_key(e: el::El, name: text, arguments: vector<Argument>) -> text {
   if len(arguments) == 0 || arguments[0].name != "self" {
     return "n_{name}";
   }
@@ -2007,7 +2007,7 @@ fn add_op(e: el::El, name: text, arguments: vector<Argument>, pos: ir::Position)
   d
 }
 
-fn add_fn(e: el::El, key: text, name: text, arguments: vector<Argument>, pos: ir::Position) -> integer {
+pub fn add_fn(e: el::El, key: text, name: text, arguments: vector<Argument>, pos: ir::Position) -> integer {
   tn = -1;
   // The receiver's slot this definition takes over, as the nullability twin's dense half.
   take_slot = -1;
