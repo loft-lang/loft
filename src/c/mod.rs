@@ -2961,7 +2961,7 @@ fn emit_program_counted(
     if main >= data.definitions() {
         return emit_tests(data, stores, expected);
     }
-    let (main, call) = program_main(data, main)?;
+    let (main, call) = program_main(data, stores, main)?;
     let mut out = emit_unit(data, stores, &[main])?;
     let _ = write!(
         out,
@@ -2972,30 +2972,64 @@ fn emit_program_counted(
     Ok(tidy::drop_unnamed(&out, RUNTIME_END))
 }
 
-/// The program's `main` and the C statement that calls it: with nothing, or — as the
-/// interpreter's `State::execute_argv` and native's entry hand it — the program's arguments as
-/// a `vector<text>` (`loft_arguments`, the ones after its name), freed when `main` returns.
-/// Any other parameter is refused.
-fn program_main(data: &Data, main: u32) -> Result<(u32, String), Refusal> {
-    let attrs = data.def(main).attributes();
+/// The program's `main` and the C statement that calls it, as the interpreter's
+/// `State::execute_argv` and the other backends' entries call it: a declared `vector<text>`
+/// parameter receives the program's arguments (`loft_arguments`, the ones after its name); the
+/// HIDDEN return buffer `ref_return` adds to a heap-returning `main` is supplied as an ordinary
+/// caller supplies it — a vector's as a real record of `main_vector<T>`, since a vector body
+/// writes straight into its caller's record; a struct's or a data enum's as null, which its body
+/// mints; a text's as a work buffer the caller owns.  Each is freed when `main` returns.  Any
+/// other parameter is refused.
+fn program_main(data: &Data, stores: &Stores, main: u32) -> Result<(u32, String), Refusal> {
     let name = c_name(data, main);
-    match attrs {
-        [] => Ok((main, format!("{name}();"))),
-        [a] if !a.hidden
-            && matches!(a.typedef.base(), Type::Vector(e, _) if matches!(e.base(), Type::Text(_))) =>
-        {
-            Ok((
-                main,
-                format!(
-                    "{{ loft_ref loft_main_args = loft_arguments(); {name}(loft_main_args); loft_free_ref(loft_main_args); }}"
-                ),
-            ))
+    let refuse = || Refusal {
+        function: "main".into(),
+        why: "a main that takes arguments other than `vector<text>`".into(),
+    };
+    let (mut pre, mut args, mut post) = (String::new(), Vec::new(), String::new());
+    for (i, a) in data.def(main).attributes().iter().enumerate() {
+        if !a.hidden {
+            if !matches!(a.typedef.base(), Type::Vector(e, _) if matches!(e.base(), Type::Text(_)))
+            {
+                return Err(refuse());
+            }
+            let _ = write!(pre, "loft_ref loft_main_args = loft_arguments(); ");
+            args.push("loft_main_args".to_string());
+            post.push_str("loft_free_ref(loft_main_args); ");
+            continue;
         }
-        _ => Err(Refusal {
-            function: "main".into(),
-            why: "a main that takes arguments other than `vector<text>`".into(),
-        }),
+        match a.typedef.base() {
+            Type::Vector(elm, _) => {
+                let tp = data.name_type(&format!("main_vector<{}>", elm.name(data)), 0);
+                if tp == u16::MAX {
+                    args.push("loft_ref_null()".to_string());
+                    continue;
+                }
+                let size = stores.enum_parent_size(tp);
+                let b = format!("loft_main_ret{i}");
+                let _ = write!(
+                    pre,
+                    "loft_ref {b} = loft_ref_null(); loft_database_typed(&{b}, {size}, {tp}); "
+                );
+                args.push(b.clone());
+                let _ = write!(post, "loft_free_ref({b}); ");
+            }
+            Type::Reference(..) | Type::Enum(_, true, _) => {
+                args.push("loft_ref_null()".to_string())
+            }
+            Type::RefVar(t) if matches!(t.base(), Type::Text(_)) => {
+                let b = format!("loft_main_text{i}");
+                let _ = write!(pre, "loft_text {b} = {{ 0, 0, 0 }}; ");
+                args.push(format!("&{b}"));
+                let _ = write!(post, "loft_text_free(&{b}); ");
+            }
+            _ => return Err(refuse()),
+        }
     }
+    Ok((
+        main,
+        format!("{{ {pre}{name}({}); {post}}}", args.join(", ")),
+    ))
 }
 
 /// C99 for a browser page's module (`--native-c --html`, @PLN203 C6): the unit as
@@ -3015,7 +3049,7 @@ pub fn emit_browser_program(data: &Data, stores: &Stores) -> Result<String, Refu
             why: "a page without a main".into(),
         });
     }
-    let (main, call) = program_main(data, main)?;
+    let (main, call) = program_main(data, stores, main)?;
     let mut out = emit_unit_for(data, stores, &[main], true)?;
     out.push_str(ASYNCIFY_REGION);
     let _ = write!(
@@ -3053,7 +3087,7 @@ pub fn emit_esp_program(data: &Data, stores: &Stores) -> Result<String, Refusal>
     }
     ESP_UNIT.with(|s| s.set(true));
     let _reset = Reset;
-    let (main, call) = program_main(data, main)?;
+    let (main, call) = program_main(data, stores, main)?;
     let mut out = emit_unit(data, stores, &[main])?;
     let _ = write!(
         out,
