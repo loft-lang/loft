@@ -55,5 +55,5 @@ element (`as vector<P>`, 899-temp :80) stays out of this page.
 ```
 kr-try/tests/scripts/158-scalar-file-read.loft:114
 kr-try/tests/scripts/899-unbound-file-read-only-vector.loft:25
-kr-try/tests/scripts/13-file.loft:149
+kr-try/tests/docs/13-file.loft:149
 ```
