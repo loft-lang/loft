@@ -1,8 +1,8 @@
 diff --git a/src/codegen_runtime.rs b/src/codegen_runtime.rs
-index deaf1d343..13790b9ee 100644
+index 7206e19d0..a429c8261 100644
 --- a/src/codegen_runtime.rs
 +++ b/src/codegen_runtime.rs
-@@ -4820,12 +4820,6 @@ where
+@@ -5433,12 +5433,6 @@ where
      let mut refs: Vec<DbRef> = vec![DbRef::NULL; n];
      for (batch, mut worker_stores) in batches {
          for (i, src_ref) in batch {
@@ -16,10 +16,10 @@ index deaf1d343..13790b9ee 100644
                  store_nr: result_store_nr,
                  rec: result_rec,
 diff --git a/src/generation/ops/parallel.rs b/src/generation/ops/parallel.rs
-index 66dee1a73..e53062f63 100644
+index 841829efb..b78e82d45 100644
 --- a/src/generation/ops/parallel.rs
 +++ b/src/generation/ops/parallel.rs
-@@ -54,24 +54,6 @@ enum ClosureShape {
+@@ -55,24 +55,6 @@ enum ClosureShape {
      Fn,
  }
  
@@ -44,7 +44,7 @@ index 66dee1a73..e53062f63 100644
  fn closure_shape(ret: &Type) -> ClosureShape {
      if matches!(ret, Type::Text(_)) {
          ClosureShape::Text
-@@ -179,6 +161,31 @@ fn queue_narrow_helper_name() -> &'static str {
+@@ -180,6 +162,31 @@ fn queue_narrow_helper_name() -> &'static str {
      "n_parallel_queue_narrow_native"
  }
  
@@ -76,7 +76,7 @@ index 66dee1a73..e53062f63 100644
  /// Emit the Rust expression that reads one by-value tuple element out of the
  /// store record `elm` at byte offset `off`.  Mirrors the scalar read helpers
  /// the interpreter uses for tuple-typed worker arguments; `_ts` is the
-@@ -352,7 +359,7 @@ impl OpEmitter for ParallelForEmitter {
+@@ -360,7 +367,7 @@ impl OpEmitter for ParallelForEmitter {
  
          let worker_def = ctx.output.data.def(fn_d_nr);
          let worker_name = worker_def.name().to_string();
@@ -85,7 +85,7 @@ index 66dee1a73..e53062f63 100644
          let shape = closure_shape(&worker_ret);
          // A literal / bufferless text worker (@P205 nwb) returns an owned `String`
          // and takes NO `&mut String` work-buffer param — so its closure must NOT
-@@ -447,8 +454,7 @@ impl OpEmitter for ParallelForEmitter {
+@@ -459,8 +466,7 @@ impl OpEmitter for ParallelForEmitter {
              )?,
              ClosureShape::Text => write!(
                  ctx.w,
@@ -95,7 +95,7 @@ index 66dee1a73..e53062f63 100644
              )?,
              ClosureShape::HeapRef => write!(
                  ctx.w,
-@@ -523,7 +529,7 @@ impl OpEmitter for ParallelQueueEmitter {
+@@ -535,7 +541,7 @@ impl OpEmitter for ParallelQueueEmitter {
  
          let worker_def = ctx.output.data.def(fn_d_nr);
          let worker_name = worker_def.name().to_string();
@@ -104,7 +104,7 @@ index 66dee1a73..e53062f63 100644
          let shape = closure_shape(&worker_ret);
          // A literal / bufferless text worker (@P205 nwb) returns an owned `String`
          // and takes NO `&mut String` work-buffer param — so its closure must NOT
-@@ -543,13 +549,7 @@ impl OpEmitter for ParallelQueueEmitter {
+@@ -555,13 +561,7 @@ impl OpEmitter for ParallelQueueEmitter {
          // Plan-06 ARC.md A3 — narrow-Integer returns route through
          // `n_parallel_queue_narrow_native` (byte-packed buffer);
          // wide / non-Integer scalars stay on `n_parallel_queue_native`.
@@ -119,7 +119,7 @@ index 66dee1a73..e53062f63 100644
              queue_narrow_helper_name()
          } else {
              queue_helper_name(shape)
-@@ -614,8 +614,7 @@ impl OpEmitter for ParallelQueueEmitter {
+@@ -630,8 +630,7 @@ impl OpEmitter for ParallelQueueEmitter {
              )?,
              ClosureShape::Text => write!(
                  ctx.w,
@@ -129,7 +129,7 @@ index 66dee1a73..e53062f63 100644
              )?,
              ClosureShape::HeapRef => write!(
                  ctx.w,
-@@ -689,7 +688,7 @@ impl OpEmitter for ParallelDiscardEmitter {
+@@ -705,7 +704,7 @@ impl OpEmitter for ParallelDiscardEmitter {
  
          let worker_def = ctx.output.data.def(fn_d_nr);
          let worker_name = worker_def.name().to_string();
@@ -139,10 +139,10 @@ index 66dee1a73..e53062f63 100644
              && !crate::generation::returns_owned_string(worker_def);
  
 diff --git a/src/parallel.rs b/src/parallel.rs
-index 8be3989f6..f0f6dba83 100644
+index df81e89fb..21249e1d2 100644
 --- a/src/parallel.rs
 +++ b/src/parallel.rs
-@@ -1038,9 +1038,6 @@ pub fn run_parallel_queue_ref(
+@@ -652,9 +652,6 @@ pub fn run_parallel_queue_ref(
      // reassignment workers like `if neg { v = Fail{...} }` fall
      // into this case because their codegen unconditionally
      // `OpFreeRef`s every variant temp at end-of-fn).
@@ -152,7 +152,7 @@ index 8be3989f6..f0f6dba83 100644
      let mut visited: std::collections::HashSet<u16> = std::collections::HashSet::new();
      for r in &refs {
          if r.store_nr == u16::MAX {
-@@ -1050,6 +1047,7 @@ pub fn run_parallel_queue_ref(
+@@ -664,6 +661,7 @@ pub fn run_parallel_queue_ref(
              stores,
              r,
              ret_type,
@@ -160,7 +160,7 @@ index 8be3989f6..f0f6dba83 100644
              &mut visited,
              &mut adopted,
              parent_store_count,
-@@ -1080,6 +1078,7 @@ fn revive_record_chain(
+@@ -694,6 +692,7 @@ fn revive_record_chain(
      stores: &mut Stores,
      record_ref: &DbRef,
      record_type: &crate::data::Type,
@@ -168,7 +168,7 @@ index 8be3989f6..f0f6dba83 100644
      visited: &mut std::collections::HashSet<u16>,
      adopted: &mut Vec<u16>,
      parent_store_count: u16,
-@@ -1122,14 +1121,23 @@ fn revive_record_chain(
+@@ -736,14 +735,23 @@ fn revive_record_chain(
          adopted.push(store_nr);
      }
  
@@ -199,7 +199,7 @@ index 8be3989f6..f0f6dba83 100644
          Type::Tuple(elems) => elems.clone(),
          _ => return,
      };
-@@ -1146,7 +1154,15 @@ fn revive_record_chain(
+@@ -760,7 +768,15 @@ fn revive_record_chain(
          let cur: DbRef =
              stores.allocations[store_nr as usize].read::<DbRef>(record_ref.rec, field_pos);
          if cur.store_nr != u16::MAX && (cur.store_nr as usize) < stores.allocations.len() {
@@ -217,10 +217,10 @@ index 8be3989f6..f0f6dba83 100644
      }
  }
 diff --git a/src/parser/collections.rs b/src/parser/collections.rs
-index 574bc4b3f..e49b9e1fa 100644
+index 55787c8e9..3baeb2943 100644
 --- a/src/parser/collections.rs
 +++ b/src/parser/collections.rs
-@@ -93,8 +93,7 @@ enum NarrowWrap {
+@@ -94,8 +94,7 @@ enum NarrowWrap {
      /// `OpConvBoolFromInt` has null-check semantics (v != i64::MIN),
      /// not value semantics (v != 0) — the buf_get always returns
      /// 0 or 1, never i64::MIN, so the conv would yield true for
@@ -230,7 +230,7 @@ index 574bc4b3f..e49b9e1fa 100644
      NeZero,
      /// ARC.md A3.6 — use a different buf_get fn-name instead of
      /// `n_parallel_buf_get_narrow`, and skip the wrap (the named
-@@ -177,28 +176,6 @@ struct NarrowRoute {
+@@ -178,28 +177,6 @@ struct NarrowRoute {
  /// (wide u64 rows; Float reads via `parallel_buf_get_float`).
  /// Single routes here with `TypedBufGet` — its f32 bit pattern fits
  /// stride 4 and `parallel_buf_get_single` recovers the typed value.
@@ -259,7 +259,7 @@ index 574bc4b3f..e49b9e1fa 100644
  fn narrow_route_for(ret_type: &Type) -> Option<NarrowRoute> {
      match ret_type {
          Type::Integer(spec) => match spec.byte_width(true) {
-@@ -5488,12 +5465,7 @@ use #count instead"
+@@ -5690,12 +5667,7 @@ use #count instead"
      /// and `-1` for a heap value (the worker builds it in its own store and the main
      /// thread deep-copies).  One home, because a monomorph re-derives it when it lowers a
      /// clause its template could not (loft#1040).
@@ -273,7 +273,7 @@ index 574bc4b3f..e49b9e1fa 100644
          if matches!(ret_type, Type::Text(_)) {
              0 // sentinel: text mode — workers collect Strings, main thread stores refs
          } else if crate::data::is_dbref(ret_type) {
-@@ -5526,7 +5498,7 @@ use #count instead"
+@@ -5728,7 +5700,7 @@ use #count instead"
                      self.lexer,
                      Level::Error,
                      "Parallel worker return type '{}' (size {sz}) is not supported",
@@ -282,7 +282,7 @@ index 574bc4b3f..e49b9e1fa 100644
                  );
              }
              // A non-capturing fn-ref return (e.g. `return add5;`) is fine, but a
-@@ -5655,7 +5627,7 @@ use #count instead"
+@@ -5863,7 +5835,7 @@ use #count instead"
          code: &mut Value,
          result_name: &str,
          fn_d_nr: u32,
@@ -291,7 +291,7 @@ index 574bc4b3f..e49b9e1fa 100644
          elem_size: i32,
          return_size: i32,
          vec_expr: &Value,
-@@ -5666,12 +5638,6 @@ use #count instead"
+@@ -5874,12 +5846,6 @@ use #count instead"
          elem_var: u16,
          elem_tp: &Type,
      ) {
@@ -304,7 +304,7 @@ index 574bc4b3f..e49b9e1fa 100644
          let ref_d_nr = self.data.def_nr("reference");
          let results_ref_type = Type::Reference(ref_d_nr, crate::data::Deps::none());
          let par_for_d_nr = self.data.def_nr("n_parallel_for");
-@@ -5733,7 +5699,7 @@ use #count instead"
+@@ -5941,7 +5907,7 @@ use #count instead"
          //   Character — A3.5, wrap with OpConvCharacterFromInt.
          //   Enum (no payload) — A3.5, wrap with OpCastEnumFromInt.
          //   Single / Float — A3.6, deferred (no bit-cast IR Op).
@@ -313,8 +313,8 @@ index 574bc4b3f..e49b9e1fa 100644
          let early_route_int_queue = early_is_primitive_return
              && fn_d_nr != u32::MAX
              && early_ret_size_8
-@@ -5827,15 +5793,9 @@ use #count instead"
-             I32.clone()
+@@ -6035,15 +6001,9 @@ use #count instead"
+             self.count_type()
          } else if let Type::Text(_) = ret_type {
              // Strip worker-internal deps — they reference variables in the worker scope.
 -            // The marker is kept: a `text?` result is still read as nullable.
@@ -331,7 +331,7 @@ index 574bc4b3f..e49b9e1fa 100644
          };
          // Plan-04 B.3 follow-up v2 (b3-par-inline.md): each par block gets
          // its OWN uniquely-named `b_var`, so two par blocks sharing the
-@@ -6093,7 +6053,7 @@ use #count instead"
+@@ -6301,7 +6261,7 @@ use #count instead"
          // Plan-06 ARC.md A3 / A3.5 — narrow primitive return routing.
          // Mirrors the early-gate logic; see comment above for shape
          // coverage.
@@ -340,7 +340,7 @@ index 574bc4b3f..e49b9e1fa 100644
          // 8b: integer-i64 returns route through `n_parallel_queue` +
          // `par_buffer_stack`.
          // 8c: text returns route through `n_parallel_queue_text` +
-@@ -6228,23 +6188,12 @@ use #count instead"
+@@ -6436,23 +6396,12 @@ use #count instead"
                          }
                      }
                      NarrowWrap::NeZero => {
