@@ -4257,6 +4257,15 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
   vars.read_into = outer_into;
   vars.concat_dest = -1;
   vars.slice_node = outer_slice;
+  // A vector match that sank this bind into its arms (`sink_bind_arms`) wrote the local in each:
+  // the local is declared null ahead of it and typed as the match answered.
+  if vars.sunk_bind == v && v >= 0 {
+    vars.sunk_bind = -1;
+    if !el_vars::change_var_type(e, vars, v, vars.sunk_tp) {
+      el::refuse(e, "a local that changes type: {retype_note(e, vars)}");
+    }
+    return ex(ir::NdInsert { items: [el_ir::v_set(v, ir::NdNull), x.code] }, ir::TyVoid);
+  }
   if concat && x.tp is TyRewritten {
     if !el_vars::change_var_type(e, vars, v, el_types::unrewritten(x.tp)) {
       el::refuse(e, "a local that changes type: {retype_note(e, vars)}");
