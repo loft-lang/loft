@@ -459,14 +459,6 @@ pub struct Stores {
     /// @PLN196 step 9 — the `upgrade` routine of each record type, registered by the drain's
     /// wrapper before a converting load ([`Stores::upgrade_routine`]).
     pub(crate) upgrade_routines: upgrade::Routines,
-    /// `@FR-G-Arg-Rebind` — the stores a live generator frame names as an ARGUMENT:
-    /// `(store_nr, frames holding it, orphaned)`.  The caller and the frame share the value
-    /// (`@FR-G-Arg-Share`), and it is released when BOTH are done with it: a free while a
-    /// frame holds the store only orphans it, and the last frame's release frees it
-    /// ([`Stores::release_frame_hold`]).  A whole rebind that would re-mint the store in
-    /// place takes a fresh one instead ([`Stores::detach_if_frame_held`]), so the frame keeps
-    /// the value it was handed.  Runtime-only: `clone` starts it empty.
-    pub(crate) frame_held: Vec<(u16, u32, bool)>,
     /// loft#2273 — the closure-copy share count, and NOTHING else: see `closure_share.rs`
     /// before touching it.  Runtime-only: `clone` starts it empty.
     closure_shares: closure_share::ClosureShares,
@@ -811,7 +803,6 @@ impl Clone for Stores {
             evacuated: Vec::new(),
             owed: upgrade::Owed::default(),
             upgrade_routines: self.upgrade_routines.clone(),
-            frame_held: Vec::new(),
             closure_shares: closure_share::ClosureShares::default(),
             lazy_driver_allocs: None,
             files: Vec::new(),
@@ -1609,7 +1600,6 @@ impl Stores {
             evacuated: Vec::new(),
             owed: upgrade::Owed::default(),
             upgrade_routines: upgrade::Routines::new(),
-            frame_held: Vec::new(),
             closure_shares: closure_share::ClosureShares::default(),
             lazy_driver_allocs: None,
             files: Vec::new(),

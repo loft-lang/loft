@@ -56,7 +56,7 @@ the shared core below.
 | records placed from a foreign source | `placed_foreign` | `placed`, `nplaced`, `placed_cap` | same |
 | a foreign store (`file_map`, adopted) | `foreign` | `foreign` | same (locking converged, D1) |
 | backed by a mapped file (`@FR-S-Mapped`) | `file` (`MmapStorage`) | `mapped`, `map_file` (`loft_mapped.h`) | same (D23) |
-| held by a live generator frame (`@FR-G-Arg-Rebind`) | — (asked elsewhere) | `frame_holds`, `orphaned` | D24 |
+| held by a live generator frame (`@FR-G-Arg-Rebind`) | `frame_holds`, `orphaned` | `frame_holds`, `orphaned` | same (D24) |
 | allocator policy flags | `wilderness`, `carve`, `move_on_grow`, `borrowed` | compile-time switches (`-DLOFT_NO_*`) | D25 closed; `wilderness` is D35 |
 | the interpreter's stack | `stack_buffer` | — (the C stack) | D26 |
 | instruments | `generation`, `recording`, `tag`, `created_at`, `last_op_at`, `init_shadow`, `parse_errors`, `parse_type`, `store_nr` | — | D27 |
@@ -100,7 +100,7 @@ fixes name a row the same way.  D20 onward come from the field-by-field comparis
 from P0b (what the C runtime lacks).  State: **open**, **fixing** (on the branch named), or
 **decided** (the decision and its measurement).  A closed row moves to
 [STORE_MODEL-history.md](STORE_MODEL-history.md) with its commit; D1–D8, D9a–D17,
-D18–D19j, D20–D23, D25, D29–D31, D33, D34 and D36–D38 are there.  (D8's second half, the gates
+D18–D19j, D20–D25, D29–D31, D33, D34 and D36–D38 are there.  (D8's second half, the gates
 stated in `(H-SwapIn)`, closed with it.)
 
 ### Correctness
@@ -129,7 +129,6 @@ stated in `(H-SwapIn)`, closed with it.)
 
 | # | Divergence | State |
 |---|---|---|
-| D24 | a store held by a generator frame: C marks it (`frame_holds`, `orphaned`), the interpreter answers elsewhere | open |
 | D26 | the interpreter's stack lives in a store; C's is the C stack | open — not a store property for a C unit; P4 decides |
 | D27 | the interpreter's store instruments (generation, recording, tag, timestamps, init shadow) | P0b |
 | D28 | the store table: a `Vec<Store>` beside the type table against a thread-local array | open — P3 |

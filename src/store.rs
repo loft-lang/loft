@@ -611,6 +611,12 @@ pub struct Store {
     /// frees them (they live for the whole program).  Replaced the Stores
     /// ref-count (deleted) as the only per-store free gate.
     pub pinned: bool,
+    /// `@FR-G-Arg-Rebind` — the live generator frames that name this store as an argument.
+    /// A free while one does only orphans the store ([`Store::orphaned`]); the last frame's
+    /// release frees it (`Stores::release_frame_hold`).  Runtime-only: a copy starts at 0.
+    pub frame_holds: u32,
+    /// `@FR-G-Arg-Rebind` — the owner let go of this store while a frame held it.
+    pub orphaned: bool,
     /// Plan-22 02d-vii follow-up — identifier of the call site that
     /// most recently locked this store.  Empty when the store is
     /// unlocked or was locked without an origin (legacy callers).
@@ -1259,6 +1265,8 @@ impl Store {
             recording: None,
             tag: 0,
             pinned: false,
+            frame_holds: 0,
+            orphaned: false,
             lock_origin: std::borrow::Cow::Borrowed(""),
             known_type: u16::MAX,
             parse_errors: Vec::new(),
@@ -1461,6 +1469,8 @@ impl Store {
             freed_at: 0,
             last_op_at: 0,
             pinned: false,
+            frame_holds: 0,
+            orphaned: false,
             lock_origin: std::borrow::Cow::Borrowed(""),
             known_type: u16::MAX,
             parse_errors: Vec::new(),
@@ -1566,6 +1576,8 @@ impl Store {
             recording: None,
             tag: 0,
             pinned: false,
+            frame_holds: 0,
+            orphaned: false,
             lock_origin: std::borrow::Cow::Borrowed(""),
             known_type: u16::MAX,
             parse_errors: Vec::new(),
@@ -1688,6 +1700,8 @@ impl Store {
             recording: None,
             tag: 0,
             pinned: false,
+            frame_holds: 0,
+            orphaned: false,
             lock_origin: std::borrow::Cow::Borrowed(""),
             known_type: u16::MAX,
             parse_errors: Vec::new(),
@@ -3510,6 +3524,8 @@ impl Store {
             freed_at: 0,
             last_op_at: 0,
             pinned: self.pinned,
+            frame_holds: 0,
+            orphaned: false,
             lock_origin: std::borrow::Cow::Borrowed("clone_locked"),
             known_type: self.known_type,
             parse_errors: self.parse_errors.clone(),
@@ -3577,6 +3593,8 @@ impl Store {
             recording: None,
             tag: self.tag,
             pinned: self.pinned,
+            frame_holds: 0,
+            orphaned: false,
             lock_origin: std::borrow::Cow::Borrowed(""),
             known_type: self.known_type,
             parse_errors: self.parse_errors.clone(),
@@ -3637,6 +3655,8 @@ impl Store {
             freed_at: 0,
             last_op_at: 0,
             pinned: self.pinned,
+            frame_holds: 0,
+            orphaned: false,
             lock_origin: std::borrow::Cow::Borrowed("borrow_locked_for_light_worker"),
             known_type: self.known_type,
             parse_errors: self.parse_errors.clone(),

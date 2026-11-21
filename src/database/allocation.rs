@@ -1063,22 +1063,22 @@ impl Stores {
         {
             return false;
         }
-        if let Some(e) = self.frame_held.iter_mut().find(|e| e.0 == al) {
-            e.1 += 1;
-        } else {
-            self.frame_held.push((al, 1, false));
-        }
+        self.allocations[al as usize].frame_holds += 1;
         true
     }
 
     /// `@FR-G-Arg-Rebind` — a frame gives back the hold [`Self::hold_for_frame`] took.  The
     /// last hold on a store its caller has already released frees it.
     pub fn release_frame_hold(&mut self, db: &DbRef) {
-        let Some(i) = self.frame_held.iter().position(|e| e.0 == db.store_nr) else {
+        let Some(st) = self.allocations.get_mut(db.store_nr as usize) else {
             return;
         };
-        self.frame_held[i].1 -= 1;
-        if self.frame_held[i].1 == 0 && self.frame_held.swap_remove(i).2 {
+        if st.frame_holds == 0 {
+            return;
+        }
+        st.frame_holds -= 1;
+        if st.frame_holds == 0 && st.orphaned {
+            st.orphaned = false;
             self.free_named(db, "");
         }
     }
@@ -1087,18 +1087,20 @@ impl Stores {
     #[must_use]
     #[inline]
     pub fn is_frame_held(&self, store_nr: u16) -> bool {
-        !self.frame_held.is_empty() && self.frame_held.iter().any(|e| e.0 == store_nr)
+        self.allocations
+            .get(store_nr as usize)
+            .is_some_and(|st| st.frame_holds != 0)
     }
 
     /// `free_named`'s half of `@FR-G-Arg-Rebind`: a store a frame still holds is orphaned
     /// rather than freed.  Answers whether it was.
     fn orphan_if_frame_held(&mut self, store_nr: u16) -> bool {
-        match self.frame_held.iter_mut().find(|e| e.0 == store_nr) {
-            Some(e) => {
-                e.2 = true;
+        match self.allocations.get_mut(store_nr as usize) {
+            Some(st) if st.frame_holds != 0 => {
+                st.orphaned = true;
                 true
             }
-            None => false,
+            _ => false,
         }
     }
 
@@ -1106,7 +1108,7 @@ impl Stores {
     /// holds would clear the value the frame reads, so the store is handed to the frames
     /// (orphaned) and the caller answers `true` and mints into a FRESH store.
     pub fn detach_if_frame_held(&mut self, db: &DbRef) -> bool {
-        !self.frame_held.is_empty() && self.orphan_if_frame_held(db.store_nr)
+        self.orphan_if_frame_held(db.store_nr)
     }
 
     /// `@FR-H-SwapIn` — the deep copy of a store's ROOT record into the root of another
@@ -1812,7 +1814,7 @@ impl Stores {
         }
         // `@FR-G-Arg-Rebind` — a store a live generator frame names is released when the
         // frame is done with it too: this free only orphans it.
-        if !self.frame_held.is_empty() && self.orphan_if_frame_held(db.store_nr) {
+        if self.orphan_if_frame_held(db.store_nr) {
             return;
         }
         // loft#2273 — a store a closure COPY shares with its source record is released by the
@@ -3293,7 +3295,6 @@ impl Stores {
             evacuated: Vec::new(),
             owed: super::upgrade::Owed::default(),
             upgrade_routines: self.upgrade_routines.clone(),
-            frame_held: Vec::new(),
             closure_shares: super::closure_share::ClosureShares::default(),
             lazy_driver_allocs: None,
             files: Vec::new(),
