@@ -631,6 +631,10 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       // arm is copied into the buffer (`materialized_view_return`), a `null` arm the sentinel.
       if built == null {
         built = materialize_match_arms(e, vars, code, rb, result);
+        // (Copied arm by arm: the body is typed as the buffer, as an `if` tail's is.)
+        if built != null && vars.mat_binding {
+          view_answer = true;
+        }
       }
       // A scalar `match` tail whose join borrows a local of the body (`["t"]`) is copied whole
       // into the buffer (`MaterializeView` on the join).
@@ -1947,6 +1951,8 @@ pub fn materialize_match_value(e: el::El, vars: el_vars::Vars, tail: ir::Node, r
   }
   kt = el::def(e, td).known_type;
   owned = el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb]);
+  vars.mat_binding = false;
+  vars.mat_dense = false;
   arms = materialize_arm(e, vars, mb.operators[-1], rb, kt, owned);
   if arms == null {
     return null;
@@ -1954,7 +1960,14 @@ pub fn materialize_match_value(e: el::El, vars: el_vars::Vars, tail: ir::Node, r
   if has_null_arm(mb.operators[-1]) && !((mb.result[0] ?? ir::TyVoid) is TyOptional) {
     mb.result = [ir::TyOptional { inner: mb.result[0] ?? ir::TyVoid }];
   }
+  // (An element binding answered through its own null check: the match answers the buffer
+  // itself, `S["__retbuf"]`, its `?` the function block's.)
   mb.operators[-1] = arms!;
+  // (A DENSE element binding copied in: the match answers the buffer; a nullable one keeps the
+  // binding's type, `S["a#1"]?`.)
+  if vars.mat_dense {
+    mb.result = [owned];
+  }
   // (The result names the buffer it is delivered in, as a vector's does.)
   rba = attr_nr(el::def(e, e.context), "__retbuf");
   if rba >= 0 {
@@ -1992,6 +2005,18 @@ fn materialize_arm(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, kt:
         return null;
       }
       b = ir::NdVar { n: rb };
+      // (An arm ending in a slice `match` that delivers itself — its element bindings copied in
+      // arm by arm, `materialize_match_value` — is a plain block typed as the buffer, no second
+      // copy around it: R-ValueRecord/1992's `else { match p { [a, ..] => a, … } }`.)
+      inner_last = el_ir::unspan(el_ir::last(ab.operators));
+      if any_block && match inner_last { NdBlock { block: ib } => ib[0].name == "vector_match", _ => false } {
+        imv = materialize_match_value(e, vars, inner_last, rb, owned);
+        if imv != null {
+          ab.operators[-1] = el_ir::respan(el_ir::last(ab.operators), imv!);
+          ab.result = [owned];
+          return ir::NdBlock { block: [ab] };
+        }
+      }
       // (A whole block copied in is typed without the store its own literal mints.)
       if any_block && !(el_ir::unspan(el_ir::last(ab.operators)) is NdVar) {
         ab.result = [el_types::without_deps(ab.result[0] ?? owned)];
@@ -1999,6 +2024,21 @@ fn materialize_arm(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, kt:
       }
       // A NULLABLE binding is copied where present, inside its block: the sentinel where absent.
       av = match el_ir::unspan(el_ir::last(ab.operators)) { NdVar { n: an } => an, _ => -1 };
+      // (A DENSE element binding of a slice arm is null-checked the same way — Rust keeps the
+      // check — its block then answering the buffer: `{#slice_binding … }: S["__retbuf"]`.)
+      dense_bind = av >= 0 && !(el_vars::tp(vars, av) is TyOptional) && ab.name == "slice_binding" && struct_ref(e, el_types::base(el_vars::tp(vars, av))) >= 0;
+      if dense_bind || (av >= 0 && el_vars::tp(vars, av) is TyOptional && ab.name == "slice_binding") {
+        vars.mat_binding = true;
+      }
+      if dense_bind {
+        vars.mat_dense = true;
+      }
+      if dense_bind {
+        dcp = el_ir::v_block([el_ir::v_set(rb, ir::NdNull), el_ir::cl(e, "OpDatabase", [b, ir::NdInt { n: kt }]), el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: av }, b, ir::NdInt { n: kt }]), b], owned, "materialized_view_return");
+        ab.operators[-1] = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [ir::NdVar { n: av }]), el_ir::cl(e, "OpNullRefSentinel", []), dcp);
+        ab.result = [owned];
+        return ir::NdBlock { block: [ab] };
+      }
       if av >= 0 && el_vars::tp(vars, av) is TyOptional {
         cp = el_ir::v_block([el_ir::v_set(rb, ir::NdNull), el_ir::cl(e, "OpDatabase", [b, ir::NdInt { n: kt }]), el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: av }, b, ir::NdInt { n: kt }]), b], owned, "materialized_view_return");
         ab.operators[-1] = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [ir::NdVar { n: av }]), el_ir::cl(e, "OpNullRefSentinel", []), cp);

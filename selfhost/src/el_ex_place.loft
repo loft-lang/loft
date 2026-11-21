@@ -1233,6 +1233,25 @@ pub fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: i
     }
     return ex(el_ir::cl(e, "OpCopyRecord", [built.code, place, ir::NdInt { n: el::def(e, rd).known_type }]), ir::TyVoid);
   }
+  // `@FR-H-RefSet`: a `reference<T>` field (`h.r`, the pointer read `OpGetDbRef(<owner>,
+  // <pos>)`) is RE-POINTED by a literal: the record built apart in its own `__ref_p2_N` — its
+  // fields free to read the old target — and the field set to name it; the old record is left
+  // as it is.
+  match el_ir::unspan(place) {
+    NdCall { def_nr: gd, args: ga } => {
+      if el::def(e, gd).name == "OpGetDbRef" && len(ga) == 2 {
+        rp = object_fresh_into_pointer(e, vars, rd, fields);
+        if rp == null {
+          return ex(ir::NdNull, ir::TyVoid);
+        }
+        if e.first_pass {
+          return ex(ir::NdNull, ir::TyVoid);
+        }
+        return ex(el_ir::cl(e, "OpSetDbRef", [ga[0]!, ga[1]!, rp!]), ir::TyVoid);
+      }
+    },
+    _ => {}
+  }
   root = place_root(e, place);
   element = calls(e, place, "OpGetVector");
   index_ok = match el_ir::unspan(el_ir::last(match place { NdCall { args } => args, _ => [] })) {
@@ -1578,6 +1597,15 @@ pub fn record_def(t: ir::TypeT) -> integer {
 // `is_field`): no room made first; a scalar item pushed onto the field's place; a text or a
 // struct literal item a record made through the owning struct's field (`OpNewRecord(r, struct,
 // field)`, its value or fields, `OpFinishRecord`) — a keyed collection indexes it there.
+// The literal of `rd` built apart for a pointer field (`object_fresh`); null where it was refused.
+fn object_fresh_into_pointer(e: el::El, vars: el_vars::Vars, rd: integer, fields: vector<integer>) -> ir::Node? {
+  built = el_ex_object::object_fresh(e, vars, rd, fields, ir::TyReference { n: rd, dep: [] });
+  if !e.first_pass && el_types::is_unknown(built.tp) {
+    return null;
+  }
+  built.code
+}
+
 // The own-buffer build of one record item: a `_vec_N` of the element's vector type with a backing
 // of its own, room for one element, the element `elm` made in it (`OpNewRecord(_vec_N, <vector
 // row>, 65535)`), its field `writes`, `OpFinishRecord` — the block answering the vector.

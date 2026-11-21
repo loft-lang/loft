@@ -3187,7 +3187,14 @@ pub fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>
       sunk = true;
     }
   }
-  if !sunk {
+  // (A RECORD answered at a function's tail is delivered by the tail's own materialisation
+  // (`materialize_match_value`: each element binding copied into the buffer where present, a
+  // `null` arm the sentinel) — `@FR-O-Buffer` / `@FR-B-View`; only a vector goes through here.)
+  // (Only over a PARAMETER: over a local vector Rust renames the return buffer onto a work
+  // reference of its own, `__ref_1`, which is not carried — that stays refused below.)
+  subj_param = match el_ir::unspan(x.code) { NdVar { n: xs } => vars.vars[xs].argument, _ => false };
+  record_tail = el_types::base(result) is TyReference && !bind && subj_param;
+  if !sunk && !record_tail {
   if !e.first_pass && len(vars.cursor) == 0 && (el_types::base(result) is TyReference || el_types::base(result) is TyVector) {
     tb = buffer_arms(e, vars, out, elm);
     if tb == null {
