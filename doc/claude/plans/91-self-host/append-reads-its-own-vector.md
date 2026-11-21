@@ -57,6 +57,19 @@ Two independent widenings of the guard at el_ex_pattern ~2829:
   <pos>, <vec row>), __ref_N)`).  Note the declaration order at the top: `__ref_2` comes before
   `__ref_1`.
 
+## Each form judged
+
+- **The snapshot** (`_build_src_N`, the item's reads renamed onto it): a RULE.  The item reads
+  the vector as the statement began.
+- **The same snapshot for the returned vector** (157): a RULE.  A vector does not read
+  differently because it is renamed onto the return buffer.
+- **The header zeroed first, the items staged into `__ref_N`, then pushed** (R-PushRec): a RULE
+  of order.  Every value is read before the field it lands in grows.
+- **`__ref_2` declared before `__ref_1`**: an ACCIDENT of internal numbers (@C168); carry it.
+- **The snapshot's store is minted in each iteration** (`OpDatabase(__vdb_N)` inside the loop):
+  its release is the scope pass's work, not visible in this oracle.  It is not judged here;
+  scope_survey shows it before the port's scope pass carries it.
+
 ## Probes (the two sole programs)
 
 ```
