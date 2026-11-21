@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	0fe1a930c1a7f169457b2e8ca48ec8f762903595
 
-layer	elab	agree	1314	of	2132
+layer	elab	agree	1315	of	2132
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -43,7 +43,6 @@ elab	refused	loft-suite/rules/binding/B-Ref-Alias/one-place-named-through-ref-pa
 elab	refused	loft-suite/rules/binding/B-Ref-Intro/1372-a-reference-links-a-nullable-slot.loft
 elab	refused	loft-suite/rules/binding/B-Ref-Intro/a-link-to-a-fn-value-is-a-link-like-any-other.loft
 elab	refused	loft-suite/rules/binding/B-Ref-Lvalue/1602-a-ref-text-parameter-links-a-text-field-or-element.loft
-elab	refused	loft-suite/rules/binding/B-Ref-Lvalue/167-a-text-link-into-a-store.loft
 elab	refused	loft-suite/rules/binding/B-Ref-Lvalue/2146-a-nullable-struct-slot-links-to-a-nullable-parameter.loft
 elab	refused	loft-suite/rules/binding/B-Ref-Lvalue/2149-a-struct-enum-place-takes-a-write-through-a-link.loft
 elab	refused	loft-suite/rules/binding/B-Ref-Lvalue/a-generator-parameter-or-local-is-a-place-a-link-names.loft
@@ -825,7 +824,7 @@ elab	refused	tests/scripts/store_compact_slack_730.loft
 elab	refused	tests/scripts/store_digest_b0.loft
 elab	refused	tests/scripts/store_paged_enum_field.loft
 
-layer	elab-functions	agree	14371	of	24702
+layer	elab-functions	agree	14362	of	24687
 elab-functions	agree	lib/docs.loft::Anchor
 elab-functions	agree	lib/docs.loft::Character
 elab-functions	agree	lib/docs.loft::Double
@@ -1577,18 +1576,6 @@ elab-functions	agree	loft-suite/rules/binding/B-Ref-Lvalue/1602-a-ref-text-param
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Lvalue/1602-a-ref-text-parameter-links-a-text-field-or-element.loft::vector<R>
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Lvalue/1602-a-ref-text-parameter-links-a-text-field-or-element.loft::vector<fn(&text) -> text>
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Lvalue/1602-a-ref-text-parameter-links-a-text-field-or-element.loft::vector<i32>
-elab-functions	agree	loft-suite/rules/binding/B-Ref-Lvalue/167-a-text-link-into-a-store.loft::(schema)
-elab-functions	agree	loft-suite/rules/binding/B-Ref-Lvalue/167-a-text-link-into-a-store.loft::O
-elab-functions	agree	loft-suite/rules/binding/B-Ref-Lvalue/167-a-text-link-into-a-store.loft::Q
-elab-functions	agree	loft-suite/rules/binding/B-Ref-Lvalue/167-a-text-link-into-a-store.loft::R
-elab-functions	agree	loft-suite/rules/binding/B-Ref-Lvalue/167-a-text-link-into-a-store.loft::main_vector<R>
-elab-functions	agree	loft-suite/rules/binding/B-Ref-Lvalue/167-a-text-link-into-a-store.loft::n_show
-elab-functions	agree	loft-suite/rules/binding/B-Ref-Lvalue/167-a-text-link-into-a-store.loft::n_test_a_re_point_and_a_link_to_a_link
-elab-functions	agree	loft-suite/rules/binding/B-Ref-Lvalue/167-a-text-link-into-a-store.loft::n_test_a_text_variable_link_is_unchanged
-elab-functions	agree	loft-suite/rules/binding/B-Ref-Lvalue/167-a-text-link-into-a-store.loft::n_test_an_element_and_an_element_field
-elab-functions	agree	loft-suite/rules/binding/B-Ref-Lvalue/167-a-text-link-into-a-store.loft::n_test_in_a_loop
-elab-functions	agree	loft-suite/rules/binding/B-Ref-Lvalue/167-a-text-link-into-a-store.loft::n_test_read_as_a_value
-elab-functions	agree	loft-suite/rules/binding/B-Ref-Lvalue/167-a-text-link-into-a-store.loft::vector<R>
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Lvalue/2146-a-nullable-struct-slot-links-to-a-nullable-parameter.loft::(schema)
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Lvalue/2146-a-nullable-struct-slot-links-to-a-nullable-parameter.loft::B
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Lvalue/2146-a-nullable-struct-slot-links-to-a-nullable-parameter.loft::Null
@@ -3787,6 +3774,7 @@ elab-functions	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-clos
 elab-functions	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft::__closure_two_0
 elab-functions	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft::__closure_u___closure_field_0
 elab-functions	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft::__closure_w_0
+elab-functions	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft::n___lambda_nullable_0
 elab-functions	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft::n___lambda_parameter_0
 elab-functions	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft::n___lambda_test_a_captured_text_the_closure_writes_is_the_functions_result_0
 elab-functions	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft::n___lambda_through_a_local_0
@@ -10672,6 +10660,8 @@ elab-functions	agree	loft-suite/rules/types/N-Join/153-n-join-a-bare-null-widens
 elab-functions	agree	loft-suite/rules/types/N-Join/153-n-join-a-bare-null-widens-an-inferred-local.loft::n_main
 elab-functions	agree	loft-suite/rules/types/N-Join/153-n-join-a-bare-null-widens-an-inferred-local.loft::n_proven
 elab-functions	agree	loft-suite/rules/types/N-Join/153-n-join-a-bare-null-widens-an-inferred-local.loft::n_rec_after
+elab-functions	agree	loft-suite/rules/types/N-Join/153-n-join-a-bare-null-widens-an-inferred-local.loft::n_text_after
+elab-functions	agree	loft-suite/rules/types/N-Join/153-n-join-a-bare-null-widens-an-inferred-local.loft::n_text_first
 elab-functions	agree	loft-suite/rules/types/N-Join/153-n-join-a-bare-null-widens-an-inferred-local.loft::n_vec_after
 elab-functions	agree	loft-suite/rules/types/N-Join/153-n-join-a-bare-null-widens-an-inferred-local.loft::n_vec_first
 elab-functions	agree	loft-suite/rules/types/N-Join/153-n-join-an-inferred-local-widens-to-nullable.loft::(schema)
@@ -15198,7 +15188,7 @@ elab-functions	agree	tests/scripts/store_paged_enum_field.loft::main_vector<inte
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::n_bytes
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::vector<integer(0, 255)>
 
-layer	elab-pass1	agree	11970	of	17850
+layer	elab-pass1	agree	11975	of	17856
 elab-pass1	agree	lib/code.loft::t_4Code_add_block
 elab-pass1	agree	lib/code.loft::t_4Code_add_if
 elab-pass1	agree	lib/code.loft::t_4Code_add_loop
@@ -15672,8 +15662,11 @@ elab-pass1	agree	loft-suite/rules/binding/B-Ref-Lvalue/1602-a-ref-text-parameter
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Lvalue/1602-a-ref-text-parameter-links-a-text-field-or-element.loft::n_tagged
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Lvalue/1602-a-ref-text-parameter-links-a-text-field-or-element.loft::n_test_directory_reads_its_argument
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Lvalue/167-a-text-link-into-a-store.loft::n_show
+elab-pass1	agree	loft-suite/rules/binding/B-Ref-Lvalue/167-a-text-link-into-a-store.loft::n_test_a_nullable_field
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Lvalue/167-a-text-link-into-a-store.loft::n_test_a_re_point_and_a_link_to_a_link
+elab-pass1	agree	loft-suite/rules/binding/B-Ref-Lvalue/167-a-text-link-into-a-store.loft::n_test_a_read_of_the_store_written_back_into_it
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Lvalue/167-a-text-link-into-a-store.loft::n_test_a_text_variable_link_is_unchanged
+elab-pass1	agree	loft-suite/rules/binding/B-Ref-Lvalue/167-a-text-link-into-a-store.loft::n_test_an_absent_place
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Lvalue/167-a-text-link-into-a-store.loft::n_test_read_as_a_value
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Lvalue/2146-a-nullable-struct-slot-links-to-a-nullable-parameter.loft::n_bump
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Lvalue/2146-a-nullable-struct-slot-links-to-a-nullable-parameter.loft::n_check
@@ -22816,6 +22809,8 @@ elab-pass1	agree	loft-suite/rules/types/N-Join/153-n-join-a-bare-null-widens-an-
 elab-pass1	agree	loft-suite/rules/types/N-Join/153-n-join-a-bare-null-widens-an-inferred-local.loft::n_main
 elab-pass1	agree	loft-suite/rules/types/N-Join/153-n-join-a-bare-null-widens-an-inferred-local.loft::n_proven
 elab-pass1	agree	loft-suite/rules/types/N-Join/153-n-join-a-bare-null-widens-an-inferred-local.loft::n_rec_after
+elab-pass1	agree	loft-suite/rules/types/N-Join/153-n-join-a-bare-null-widens-an-inferred-local.loft::n_text_after
+elab-pass1	agree	loft-suite/rules/types/N-Join/153-n-join-a-bare-null-widens-an-inferred-local.loft::n_text_first
 elab-pass1	agree	loft-suite/rules/types/N-Join/153-n-join-a-bare-null-widens-an-inferred-local.loft::n_vec_after
 elab-pass1	agree	loft-suite/rules/types/N-Join/153-n-join-a-bare-null-widens-an-inferred-local.loft::n_vec_first
 elab-pass1	agree	loft-suite/rules/types/N-Join/153-n-join-an-inferred-local-widens-to-nullable.loft::n_join_bool
