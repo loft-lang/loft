@@ -675,9 +675,25 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       }
       // A cursor match whose every arm is a literal built in a work ref of its own, or the
       // null sentinel, delivers nothing either: a rule's answer.
-      if built == null && cursor_tail(body_tail(code)) && cursor_arms_answer(e, body_tail(code)) {
+      if built == null && cursor_tail(body_tail(code)) && cursor_arms_answer(e, vars, body_tail(code)) {
         built = code;
         arms_answer = true;
+        // (An arm that views a parameter makes the result borrow it — `-> N["p"]?` — and every
+        // enclosing block of the rule is typed so: the cursor match, the vector match, the slice
+        // binding, the body.)
+        vp = view_arm_param(e, vars, body_tail(code));
+        if vp >= 0 {
+          va = attr_nr(el::def(e, e.context), el_vars::name_of(vars, vp));
+          rt = el::def(e, e.context).returned[0];
+          if va >= 0 && !el_types::deps(rt).contains(va) {
+            e.b.data.definitions[e.context].returned = [el_types::with_deps(rt, el_types::deps(rt) + [va])];
+          }
+          vbl = match code { NdBlock { block } => block[0], _ => ir::Block { name: "", operators: [], result: [], scope: 0, var_size: 0 } };
+          vbl.operators[-1] = view_blocks_typed(vbl.operators[-1], vp);
+          vbl.result = [borrowing(vbl.result[0] ?? result, vp)];
+          built = ir::NdBlock { block: [vbl] };
+          view_answer = true;
+        }
       }
       // A `#native` callee's struct-enum answer is a store of its own, handed up as it is
       // (`classify_reference_delivery` is the struct's; a struct enum's tail call stays `AsIs`).
@@ -2165,13 +2181,65 @@ pub fn cursor_tail(n: ir::Node) -> boolean {
   match el_ir::unspan(n) { NdBlock { block } => block[0].name == "cursor match", _ => false }
 }
 
-pub fn cursor_arms_answer(e: el::El, n: ir::Node) -> boolean {
+// (`@FR-O-Buffer`'s view half: an arm answering a VIEW of a parameter — a field or element read
+// rooted at it, `p.nodes[0]` — is handed back as it is, the result borrowing the parameter.)
+pub fn cursor_arms_answer(e: el::El, vars: el_vars::Vars, n: ir::Node) -> boolean {
   match n {
-    NdSpan { pos: _, inner } => cursor_arms_answer(e, inner),
-    NdIf { cond: _, t, f } => cursor_arms_answer(e, t) && cursor_arms_answer(e, f),
-    NdBlock { block } => block[0].name == "Object" || (len(block[0].operators) > 0 && cursor_arms_answer(e, block[0].operators[-1])),
-    NdCall { def_nr, args } => len(args) == 0 && el::def(e, def_nr).name == "OpNullRefSentinel",
+    NdSpan { pos: _, inner } => cursor_arms_answer(e, vars, inner),
+    NdIf { cond: _, t, f } => cursor_arms_answer(e, vars, t) && cursor_arms_answer(e, vars, f),
+    NdBlock { block } => block[0].name == "Object" || (len(block[0].operators) > 0 && cursor_arms_answer(e, vars, block[0].operators[-1])),
+    NdCall { def_nr, args } => {
+      nm = el::def(e, def_nr).name;
+      if len(args) == 0 {
+        return nm == "OpNullRefSentinel";
+      }
+      pr = place_root(e, n);
+      (nm == "OpGetVector" || nm == "OpGetField") && pr >= 0 && vars.vars[pr].argument && !hidden_param(e, vars, pr)
+    },
     _ => false
+  }
+}
+
+// The parameter a view arm of the rule reads, or -1.
+fn view_arm_param(e: el::El, vars: el_vars::Vars, n: ir::Node) -> integer {
+  match n {
+    NdSpan { pos: _, inner } => view_arm_param(e, vars, inner),
+    NdIf { cond: _, t, f } => { a = view_arm_param(e, vars, t); if a >= 0 { a } else { view_arm_param(e, vars, f) } },
+    NdBlock { block } => if len(block[0].operators) > 0 { view_arm_param(e, vars, block[0].operators[-1]) } else { -1 },
+    NdCall { def_nr, args } => {
+      nm = el::def(e, def_nr).name;
+      pr = if len(args) > 0 && (nm == "OpGetVector" || nm == "OpGetField") { place_root(e, n) } else { -1 };
+      if pr >= 0 && vars.vars[pr].argument && !hidden_param(e, vars, pr) { pr } else { -1 }
+    },
+    _ => -1
+  }
+}
+
+// `t` borrowing `p` as well, its nullability kept.
+fn borrowing(t: ir::TypeT, p: integer) -> ir::TypeT {
+  match t {
+    TyOptional { inner } => ir::TyOptional { inner: el_types::with_deps(el_types::without_deps(inner), [p]) },
+    _ => el_types::with_deps(el_types::without_deps(t), [p])
+  }
+}
+
+// The rule's own blocks — the cursor match, the vector match, a slice binding — typed as borrowing
+// `p`; an inner `if`'s arms keep their own types.
+fn view_blocks_typed(n: ir::Node, p: integer) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: view_blocks_typed(inner, p) },
+    NdIf { cond, t, f } => ir::NdIf { cond: cond, t: view_blocks_typed(t, p), f: view_blocks_typed(f, p) },
+    NdBlock { block } => {
+      bl = block[0];
+      if bl.name == "cursor match" || bl.name == "vector_match" || bl.name == "slice_binding" {
+        bl.result = [borrowing(bl.result[0] ?? ir::TyVoid, p)];
+        if len(bl.operators) > 0 {
+          bl.operators[-1] = view_blocks_typed(bl.operators[-1], p);
+        }
+      }
+      ir::NdBlock { block: [bl] }
+    },
+    _ => n
   }
 }
 
