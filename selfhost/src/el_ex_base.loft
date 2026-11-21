@@ -559,6 +559,17 @@ pub fn hidden_ref_arg(vars: el_vars::Vars, args: vector<ir::Node>) -> integer {
 // stops being an argument, `v` becomes one, and the result's deps add the attribute.
 pub fn rename_onto(e: el::El, vars: el_vars::Vars, rb: integer, v: integer) {
   d = e.context;
+  // (A lambda's late buffer, reserved between the passes, is never renamed onto a local: Rust's
+  // `ref_return` ran on the first pass, when the lambda had no buffer, and its delivery keeps
+  // `__retbuf` — an early literal returned as built, a capture copied in.)
+  if starts_with(el::def(e, d).name, "n___lambda_") {
+    la = attr_nr(el::def(e, d), "__retbuf");
+    lrt = el::def(e, d).returned[0];
+    if la >= 0 && !el_types::deps(lrt).contains(la) {
+      e.b.data.definitions[d].returned = [el_types::with_deps(lrt, el_types::deps(lrt) + [la])];
+    }
+    return;
+  }
   a = attr_nr(el::def(e, d), "__retbuf");
   e.b.data.definitions[d].attributes[a].name = el_vars::name_of(vars, v);
   vars.vars[rb].argument = false;

@@ -1381,6 +1381,111 @@ pub fn capture_tail_copy(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: int
   ir::NdBlock { block: [bl] }
 }
 
+// A lambda body whose tail is a `??` over its capture (`capn ?? S { … }`, an "ncc" block): each
+// arm of its `if` copied into the buffer `rb` — the capture behind its null test, the literal
+// built apart — as `materialized_view_return` blocks, the block and the result borrowing `rb`
+// (`@FR-O-Buffer`, the view half).  Null for any other shape.
+pub fn ncc_capture_copy(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer) -> ir::Node? {
+  bl = match code { NdBlock { block } => block[0], _ => return null };
+  if len(bl.operators) == 0 {
+    return null;
+  }
+  nb = match el_ir::unspan(bl.operators[-1]!) { NdBlock { block } => block[0], _ => return null };
+  if nb.name != "ncc" || len(nb.operators) == 0 {
+    return null;
+  }
+  td = heap_def(el_vars::tp(vars, rb));
+  if td < 0 {
+    return null;
+  }
+  kt = ir::NdInt { n: el::def(e, td).known_type };
+  b = ir::NdVar { n: rb };
+  owned = el_types::with_deps(el_types::without_deps(el_vars::tp(vars, rb)), [rb]);
+  match el_ir::unspan(nb.operators[-1]!) {
+    NdIf { cond, t, f } => {
+      ct = el_ir::v_block([el_ir::v_set(rb, ir::NdNull), el_ir::cl(e, "OpDatabase", [b, kt]), el_ir::cl(e, "OpCopyRecord", [t, b, kt]), b], owned, "materialized_view_return");
+      cf = el_ir::v_block([el_ir::v_set(rb, ir::NdNull), el_ir::cl(e, "OpDatabase", [b, kt]), el_ir::cl(e, "OpCopyRecord", [f, b, kt]), b], owned, "materialized_view_return");
+      nb.operators[-1] = el_ir::v_if(cond, ct, cf);
+    },
+    _ => { return null; }
+  }
+  nb.result = [owned];
+  bl.operators[-1] = ir::NdBlock { block: [nb] };
+  d = e.context;
+  ba = attr_nr(el::def(e, d), el_vars::name_of(vars, rb));
+  ret = el::def(e, d).returned[0];
+  if ba >= 0 && !el_types::deps(ret).contains(ba) {
+    e.b.data.definitions[d].returned = [el_types::with_deps(ret, el_types::deps(ret) + [ba])];
+  }
+  ir::NdBlock { block: [bl] }
+}
+
+// A lambda body whose tail is an `if` (or `return if`) answering its capture in an arm —
+// `if c { cap } else { S { … } }`, `if c { capn } else { null }`: each capture arm copied into
+// the buffer `rb` behind its null test, a record arm (a literal built apart) copied in whole, a
+// null arm the sentinel; every arm typed as borrowing `rb` (`@FR-O-Buffer`, the view half).
+// Null for any other shape.
+pub fn capture_if_copy(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer) -> ir::Node? {
+  bl = match code { NdBlock { block } => block[0], _ => return null };
+  if len(bl.operators) == 0 {
+    return null;
+  }
+  last = el_ir::unspan(bl.operators[-1]!);
+  returned = last is NdReturn;
+  body = match last { NdReturn { inner } => el_ir::unspan(inner), _ => last };
+  td = heap_def(el_vars::tp(vars, rb));
+  if td < 0 {
+    return null;
+  }
+  kt = ir::NdInt { n: el::def(e, td).known_type };
+  b = ir::NdVar { n: rb };
+  owned = el_types::with_deps(el_types::without_deps(el_vars::tp(vars, rb)), [rb]);
+  captures = 0;
+  arms: vector<ir::Node> = [];
+  cond = ir::NdNull;
+  match body {
+    NdIf { cond: c, t, f } => {
+      cond = c;
+      for arm in [t, f] {
+        ab = match el_ir::unspan(arm) { NdBlock { block } => block[0], _ => return null };
+        if len(ab.operators) == 0 {
+          return null;
+        }
+        al = el_ir::unspan(ab.operators[-1]!);
+        cap = match al { NdCall { def_nr, args } => el::def(e, def_nr).name == "OpGetDbRef" && len(args) > 0 && el_ir::unspan(args[0]!) == ir::NdVar { n: e.closure_var }, _ => false };
+        sentinel = match al { NdCall { def_nr, args } => len(args) == 0 && el::def(e, def_nr).name == "OpNullRefSentinel", _ => false };
+        if cap {
+          copy = el_ir::v_block([el_ir::v_set(rb, ir::NdNull), el_ir::cl(e, "OpDatabase", [b, kt]), el_ir::cl(e, "OpCopyRecord", [al, b, kt]), b], owned, "materialized_view_return");
+          ab.operators[-1] = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [al]), el_ir::cl(e, "OpNullRefSentinel", []), copy);
+          ab.result = [owned];
+          arms += [ir::NdBlock { block: [ab] }];
+          captures += 1;
+        } else if sentinel {
+          ab.result = [owned];
+          arms += [ir::NdBlock { block: [ab] }];
+        } else if heap_def(ab.result[0] ?? ir::TyVoid) == td && len(el_types::deps(ab.result[0] ?? ir::TyVoid)) == 0 {
+          arms += [el_ir::v_block([el_ir::v_set(rb, ir::NdNull), el_ir::cl(e, "OpDatabase", [b, kt]), el_ir::cl(e, "OpCopyRecord", [arm, b, kt]), b], owned, "materialized_view_return")];
+        } else {
+          return null;
+        }
+      }
+    },
+    _ => { return null; }
+  }
+  if captures == 0 {
+    return null;
+  }
+  ni = el_ir::v_if(cond, arms[0]!, arms[1]!);
+  bl.operators[-1] = if returned { ir::NdReturn { inner: ni } } else { ni };
+  d = e.context;
+  ba = attr_nr(el::def(e, d), el_vars::name_of(vars, rb));
+  ret = el::def(e, d).returned[0];
+  if ba >= 0 && !el_types::deps(ret).contains(ba) {
+    e.b.data.definitions[d].returned = [el_types::with_deps(ret, el_types::deps(ret) + [ba])];
+  }
+  ir::NdBlock { block: [bl] }
+}
+
 // The work ref of a FRESH record literal — an `Object` (or a unit variant's `EnumUnitLit`) block
 // that opens by nulling its own buffer and answers it — or -1 (`tail_fresh_object_workref`).
 pub fn fresh_literal_ref(x: ir::Node) -> integer {
