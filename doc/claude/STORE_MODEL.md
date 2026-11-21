@@ -16,6 +16,14 @@ the interpreter moves to the C one, unless the interpreter's is measurably bette
 smaller, or stricter at no cost); then the C runtime takes the interpreter's.  Each decision
 names its measurement.
 
+**A rewrite's difference is not a divergence.**  A rewrite the C writer applies and the
+interpreter does not (`(R-PushFill)`, `(R-Apart)`, `(R-ValueRecord)`, …) may claim other room,
+keep a value out of the store, or write in another place.  A program cannot observe any of it, so
+it is the rewrite's, not the model's (@C122; a store trace reports the build, @C135).
+`scripts/c_alloc_diff.py --attribute` runs a program that differs again with each C-only rewrite
+switched off, and names the one under which it agrees; only what no switch accounts for is a row
+below.
+
 ## Contents
 - [The store](#the-store) — the record a store is, field by field
 - [The store table](#the-store-table)
@@ -101,7 +109,7 @@ fixes name a row the same way.  D20 onward come from the field-by-field comparis
 from P0b (what the C runtime lacks).  State: **open**, **fixing** (on the branch named), or
 **decided** (the decision and its measurement).  A closed row moves to
 [STORE_MODEL-history.md](STORE_MODEL-history.md) with its commit; D1–D8, D9a–D17,
-D18–D19j, D20–D25, D27, D29–D31, D33, D34 and D36–D38 are there.  (D8's second half, the gates
+D18–D19j, D20–D25, D27, D29–D31, D33, D34 and D36–D38, D40 are there.  (D8's second half, the gates
 stated in `(H-SwapIn)`, closed with it.)
 
 ### Correctness
@@ -118,7 +126,10 @@ stated in `(H-SwapIn)`, closed with it.)
 
 | # | Divergence | State |
 |---|---|---|
-| D40 | a collection's claim size: the first difference of 40 programs of a 140-script sample is a claim's word count or a resize, while the make and free order agrees.  Attributed by re-running `scripts/c_alloc_diff.py` with one rewrite switch at a time (20 switches): **W** (20 programs) is `R-PushFill`, which the C applies and the interpreter does not — it reserves a loop's pushes before the loop (`158-join-read`: 301 words at once where the interpreter claims 4 and grows); under `LOFT_NO_PUSH_FILL` 17 of them agree event for event.  Three of W (`124-vector-amortised-growth`, `1511-a-call-result-in-a-tuple-member-releases-once`, `158-scalar-file-read`) are the window dropping the per-push `OpPreAllocVector(v, 1, w)` the interpreter honours (2 words, then 12) and claiming the growth step at once.  **R** (10) is the run clause of `R-PushFill`, a run of pushes into an empty vector reserved exactly (a record's field literal is one case: 3 words in C, 12 on the interpreter); under `LOFT_NO_PUSH_RUN_RESERVE` 6 agree.  **O** (10) moves under none of the switches and is no claim-size question: records kept out of the store (`@FR-R-ValueRecord`: `a-decoded-value-is-read-at-its-position`, `a-value-read-and-dropped-is-built-outside-the-store`, `a-pure-call-made-twice-is-computed-once`), a caller's buffer written in place (`an-append-twin-writes-through-its-callers-window`, `a-result-read-in-place-is-a-caller-buffer`), a rebind that adopts where the interpreter copies (`a-rebound-literal-local-copies-a-call-answering-an-argument`), a `par` result reserved whole on the interpreter (`507-par-vector-fnref`), and claims in another order or store (`157-push-hoist`, `157-retbuf-adopt`, `pln125-a2c-companion`) | open — W and R: `R-PushFill` is a C-only rewrite whose reservation `(Col-Capacity)` calls capacity, observably nothing; the interpreter takes it or the difference is recorded as the rewrite's.  W's three window cases: the window honours the reservation as `loft_ph_prealloc` does (`(Col-Capacity)`: a reservation is exact).  O: each family its own row |
+| D41 | an exact reservation the interpreter makes and the C drops, on paths other than the push window and header: `507-par-vector-fnref` and `a-non-escaping-vector-local-is-a-caller-buffer` reserve 1000 words at once on the interpreter where C grows from 2; `a-walk-of-a-built-vector-streams-its-elements`, `1549-a-pooled-buffer-releases-its-previous-occupant` and `164-adopt-first-bind` reserve one element where C claims the growth step (each beside an `R-PushFill` difference) | open — `(Col-Capacity)`: a reservation is exact; find the C path that drops it, as D40 found the window's |
+| D42 | a call result's delivery: the same IR, built into a buffer on one side and claimed fresh on the other — `a-decoded-value-is-read-at-its-position` agrees under any of `LOFT_NO_VALUE_RETURN`, `LOFT_NO_PLACE_RESULT`, `LOFT_NO_REBIND_PLACE`, `LOFT_NO_RETBUF_REUSE` (both-backend switches); `a-value-read-and-dropped-is-built-outside-the-store`, `a-pure-call-made-twice-is-computed-once`, `157-retbuf-adopt` and `an-append-twin-writes-through-its-callers-window` move later under one of them | open — which delivery each backend takes for the IR's one answer (`@FR-O-NoDiverge`) |
+| D43 | a rebind that adopts in C where the interpreter copies: `a-rebound-literal-local-copies-a-call-answering-an-argument` (the interpreter copies a 3-word record, C takes the callee's vector) | open — `bind_lowering::re_bind`'s arm against what C emits |
+| D44 | unexplained, one program each: `a-result-read-in-place-is-a-caller-buffer` (C claims in the caller's record), `a-vector-only-read-keeps-its-header-beside-a-writer` (a store's first record 4 words on the interpreter, 2 in C), `37-stress` (the interpreter claims 2-word records C never makes) | open — `scripts/c_alloc_diff.py --attribute` names no switch |
 | D39 | a returned root record holding a keyed collection: C exchanges the stores (`swap_safe`), the interpreter copies (`tree_holds_no_stored_refs`), as `(H-SwapIn)` says for "the keyed collections" though `(H-SwapKeyed)`'s reasoning admits them | open — the rule first (@PLN91 1b-reference.md E-2) |
 
 ### Edges
