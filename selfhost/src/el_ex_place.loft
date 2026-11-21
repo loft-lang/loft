@@ -1689,6 +1689,14 @@ fn builds_record(n: ir::Node) -> boolean {
   false
 }
 
+// Is `n` a vector whose elements are vectors (`vv` of `vv[0] += [9]`)?
+fn vector_of_vectors(e: el::El, vars: el_vars::Vars, n: ir::Node) -> boolean {
+  match el_types::base(place_type(e, vars, n)) {
+    TyVector { inner } => el_types::base(inner) is TyVector,
+    _ => false
+  }
+}
+
 pub fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
   // (An append that pushes names the field's vector row on the first pass, ahead of the struct
   // that holds it — as a literal that fills the field does.)
@@ -1707,8 +1715,10 @@ pub fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
   ev_inner = match el_types::base(p.tp) { TyVector { inner: evi } => evi, _ => ir::TyVoid };
   ev_items: vector<integer> = match e.p.nodes[n] { SVecLit { items: evits } => evits, _ => [] };
   // (The element read as the port spells it, `OpGetField(OpGetVector(vv, 4, 0), 0, <row>)`:
-  // Rust pushes onto the `OpGetVector` itself.)
-  ev_place = match place { NdCall { def_nr: egd, args: ega } => if el::def(e, egd).name == "OpGetField" && len(ega) == 3 && calls(e, el_ir::unspan(ega[0]!), "OpGetVector") && match el_ir::unspan(ega[0]!) { NdCall { def_nr: egd2 } => el::def(e, egd2).name == "OpGetVector", _ => false } && el_ir::unspan(ega[1]!) == ir::NdInt { n: 0 } { el_ir::unspan(ega[0]!) } else { place }, _ => place };
+  // Rust pushes onto the `OpGetVector` itself.  Only where the outer vector's element IS a
+  // vector: a record element's first field (`ds[0].xs`, offset 0) has the same shape, and is
+  // the field Rust pushes onto.)
+  ev_place = match place { NdCall { def_nr: egd, args: ega } => if el::def(e, egd).name == "OpGetField" && len(ega) == 3 && calls(e, el_ir::unspan(ega[0]!), "OpGetVector") && match el_ir::unspan(ega[0]!) { NdCall { def_nr: egd2, args: ega2 } => el::def(e, egd2).name == "OpGetVector" && len(ega2) > 0 && vector_of_vectors(e, vars, ega2[0]!), _ => false } && el_ir::unspan(ega[1]!) == ir::NdInt { n: 0 } { el_ir::unspan(ega[0]!) } else { place }, _ => place };
   match ev_place {
     NdCall { def_nr: evd, args: eva } => {
       if el::def(e, evd).name == "OpGetVector" && len(eva) == 3 && el_ex_pattern::push_op(ev_inner) != "" && el_convert::plain_scalar(ev_inner) && len(ev_items) > 0 && len([for evx in ev_items if (e.p.nodes[evx] is SRepeat) { 1 }]) == 0 {
@@ -2075,6 +2085,12 @@ pub fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
       return ex(ir::NdNull, ir::TyVoid);
     }
     if e.first_pass {
+      // The first pass makes each item through the record (`OpNewRecord(<holder>, …)`), scalars
+      // too: a store `else` on the append reads its place off that claim on this pass, and the
+      // second pass keeps the `_store_target_N` type it gave (the holder's).
+      if elm >= 0 && it#index == 0 {
+        ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [r, ir::NdInt { n: pkt }, ir::NdInt { n: fnr }]))];
+      }
       continue;
     }
     // An `i32` item that is a `??` is narrowed inside it, as a literal's item is
