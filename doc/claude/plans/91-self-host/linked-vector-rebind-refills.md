@@ -8,7 +8,8 @@ through-swaps-and-placements now stops at :35 (after the loop half, c3f3e1328):
 :35   v = extend(v, 9);
 :36   assert(len(l) == 6 && l[5].t == "e9" && l[0].t == "e0", "a link sees the exchanged store");
 ```
-**The rule:** `@FR-B-Ref-Write` / `@FR-B-Ref-Uniform` (formal/binding.md, D-bind-43): a vector
+**The rule:** `@FR-B-Ref-Write` / `@FR-B-Ref-Uniform` (formal/binding.md; Rust's comment also names a deviation entry D-bind-43, no longer in the
+working chapter): a vector
 that a `&` link shares is written THROUGH by `=`.  The store keeps its identity and gets the new
 contents, so the link sees them.  It is never rebound to a copy (loft#1836).  The clear runs
 BEFORE the copy, so a right-hand side that may read the vector is materialised first
