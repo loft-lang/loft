@@ -14,6 +14,7 @@ use el_ir;
 use fold;
 use el_vars;
 use el_types;
+use el_refhome;
 use el_schema;
 use el_convert;
 use frame;
@@ -431,13 +432,21 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   // behind its null test, the result borrowing the buffer.
   if lambda && !e.first_pass && rb >= 0 && e.closure_var >= 0 && el_types::base(result) is TyReference {
     cc = el_ex_deliver::capture_tail_copy(e, vars, code, rb);
+    if cc == null {
+      cc = el_ex_deliver::capture_if_copy(e, vars, code, rb);
+    }
     if cc != null {
       code = cc!;
     } else if el_ex_deliver::ncc_over_capture(e, code) {
-      // Rust materialises each arm into a work ref the late buffer is renamed onto, the body
-      // borrowing the lambda's placeholder for the capture — a variable this port's lambdas do
-      // not keep: refused by name.
-      el::refuse(e, "a lambda answering a `??` over its capture");
+      // A nullable result keeps `__retbuf`, each arm materialised into it.  A dense one
+      // renames the buffer onto a work ref, the body borrowing the lambda's placeholder for the
+      // capture — a variable this port's lambdas do not keep: refused by name.
+      nc = if result is TyOptional { el_ex_deliver::ncc_capture_copy(e, vars, code, rb) } else { null };
+      if nc != null {
+        code = nc!;
+      } else {
+        el::refuse(e, "a lambda answering a `??` over its capture");
+      }
     }
   }
   // A lambda's late buffer is delivered nothing else: its body builds the record it answers as
@@ -2437,6 +2446,9 @@ pub fn present_tested(e: el::El, c: ir::Node) -> integer {
 // highest comes first.
 pub fn finish_body(e: el::El, vars: el_vars::Vars, body: ir::Node) -> ir::Node {
   code = if e.first_pass { body } else { text_dest(e, vars, body) };
+  if !e.first_pass {
+    code = el_refhome::rotate_loop_retbufs(e, vars, code);
+  }
   match code {
     NdBlock { block } => {
       bl = block[0];
@@ -2500,7 +2512,7 @@ pub fn finish_body(e: el::El, vars: el_vars::Vars, body: ir::Node) -> ir::Node {
       for wr in vars.work_refs {
         wt = el_vars::tp(vars, wr);
         borrows = len(el_types::deps(wt)) > 0 && !vars.vars[wr].caller_hidden_buf && !starts_with(vars.vars[wr].name, "__ncc_");
-        if vars.vars[wr].argument || vars.inline_refs.contains(wr) || borrows {
+        if vars.vars[wr].argument || vars.inline_refs.contains(wr) || borrows || rot_partner(vars, wr) {
           continue;
         }
         if starts_with(vars.vars[wr].name, "_elm_") {
@@ -2513,6 +2525,17 @@ pub fn finish_body(e: el::El, vars: el_vars::Vars, body: ir::Node) -> ir::Node {
           ops += [op];
         }
         bl.operators = ops;
+      }
+      // (H7: each loop buffer's partner nulled right after the buffer, the two adjacent.)
+      for rp in vars.rot_partners {
+        rbuf = rp / 65536;
+        at = 0;
+        for op in bl.operators {
+          if at == 0 && el_ir::unspan(op) == el_ir::v_set(rbuf, ir::NdNull) {
+            at = op#index + 1;
+          }
+        }
+        bl.operators = bl.operators[..at] + [el_ir::v_set(rp % 65536, ir::NdNull)] + bl.operators[at..];
       }
       if len(elm_ws) > 0 {
         elm_ws.sort();
@@ -2588,4 +2611,14 @@ fn diverges(n: ir::Node) -> boolean {
     },
     _ => false
   }
+}
+
+// A loop buffer's partner (`rotate_loop_retbufs`): nulled beside its buffer, not in the preamble.
+fn rot_partner(vars: el_vars::Vars, v: integer) -> boolean {
+  for rp in vars.rot_partners {
+    if rp % 65536 == v {
+      return true;
+    }
+  }
+  false
 }
