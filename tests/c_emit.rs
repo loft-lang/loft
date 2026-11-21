@@ -219,6 +219,8 @@ fn compiled() -> Vec<String> {
         .collect()
 }
 
+/// `@C170` — the backends answer alike: the C backend's values and the interpreter's are both
+/// held to the hand-computed ones, so a build on which either departs fails here.
 #[test]
 fn a_scalar_program_written_as_c_answers_what_the_interpreter_answers() {
     if !have_cc() {

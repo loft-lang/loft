@@ -148,3 +148,4 @@ which entries nothing verifies, `./scripts/idx decision:C<n>` shows one.
 - [C166](DESIGN_DECISIONS_PLATFORM.md#c166--a-published-librarys-range-stays-in-the-api-line-of-its-floor) — A published library's range stays in the API line of its floor
 - [C167](DESIGN_DECISIONS_PLATFORM.md#c167--a-security_critical-advisory-refuses-the-package-release-it-names) — A `security_critical` advisory refuses the package release it names
 - [C169](DESIGN_DECISIONS_PLATFORM.md#c169--a-c-unit-carries-its-whole-runtime-no-build-compiles-the-runtime-apart) — A C unit carries its whole runtime; no build compiles the runtime apart
+- [C170](DESIGN_DECISIONS_PLATFORM.md#c170--a-backend-stays-only-while-it-is-semantically-equal-to-the-others) — A backend stays only while it is semantically equal to the others

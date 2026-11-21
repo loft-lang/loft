@@ -5178,3 +5178,18 @@ runtime unoptimised in place (the pragma) was weighed and declined with it: it w
 runtime out of `cl`'s optimiser in the one sweep that runs it there.
 
 **Revisit trigger.** As the entry states.
+
+## C170 — A backend stays only while it is semantically equal to the others
+
+**Question.** Security #61 makes a null text an identity instead of the one-byte content
+`"\0"`.  The interpreter and the C backend can spell that (a dedicated static, a NULL pointer, an
+`Option<String>` of the same size); the rustc writer emits `String` for every owned text, so it
+would have to convert every text operation it writes.  The alternative was to leave the writer on
+`"\0"` and record a deviation: a one-NUL text reads as null on `--native-rust` only.
+
+**Decision (owner, 2026-11-21).** "We keep it semantically equal or we retire": no deviation is
+recorded; the writer retires (@PLN225), together with every rewrite only it applies.  A follow-up
+ruling the same day settled what the writer's other route becomes: every library stays compiled,
+through the C backend instead of rustc (@C71's mechanism changes, not its model).
+
+**Revisit trigger.** As the entry states.

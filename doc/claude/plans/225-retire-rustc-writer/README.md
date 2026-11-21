@@ -65,7 +65,7 @@ is the work list every later phase shrinks; R7 may start only when it is empty.
 | Phase | What | Validated by | Effort |
 |---|---|---|---|
 | **R0** | Record `@C170`.  Run the whole test suite, the language suite, `revalidate-libs` and the corpus with `LOFT_NO_RUSTC=1` (nothing builds through rustc; a request for it is refused) on Linux and macOS, and file the result as the rust-free census: every test, cell, library and target that fails or refuses. | The census is a list that can be non-empty: it is the plan's measured work list. | S |
-| **R1** | The library route (`@C71`) and the compiled stdlib: measure first, then build the answer O1 chooses. | Interpreted programs with their libraries compiled vs interpreted, on the library test corpus: the same answers (parallel run) and the measured time ratio, recorded before the choice. | M–L |
+| **R1** | The library route (`@C71`) and the compiled stdlib through the C backend (O1): a probe of the store bridge first, then the C-built shared library beside the rustc one, then the switch. | Parallel run on the library test corpus: every interpreted program answers the same with its libraries built by C and by rustc (value, length, leak), and the time ratio C / rustc is recorded. | L |
 | **R2** | Targets: `--html` / `--native-wasm` without the writer fallback; `--native-android` without its rust path; `--native-rust` and `LOFT_NATIVE_BACKEND=rust` refused with a message that names `--native`. | The html, wasm and android test binaries pass under `LOFT_NO_RUSTC=1`; the refusals are tests. | M |
 | **R3** | Libraries: a registry census of published releases that need rustc (a Rust native part, a `#rust` body in library source).  Each gets a C successor or is deprecated in the registry, as `crypto` 0.3.x was. | `revalidate-libs` green under `LOFT_NO_RUSTC=1`; the census list empty. | S–M |
 | **R4** | Tests and guards: each of the 165 test files keeps its interpreter and C halves and loses its rust leg; tests that exist only for the writer go; the 125 receipts are classified (writer-only → retire with that half; also guarding C or the interpreter → re-derived against that code); the 11 suite cells lose `ARMED: FALSIFY_NATIVE=rust` and are re-falsified on C or the interpreter, or lose their native half. | `make rule-coverage`: no rule loses its last guard except the rewrites R5 removes; the R0 census has no test left. | L |
@@ -79,13 +79,14 @@ as a trailing docs pass.
 
 ## Open design questions
 
-- **O1 — the compiled route for libraries and the stdlib (`@C71`).**  (a) Interpret libraries and
-  the stdlib bodies: no new code, a measured slowdown for interpreted programs that lean on a
-  library.  (b) Build a used library through the C backend into a shared object bridged to the
-  interpreter's `Stores`: the C runtime keeps loft's own store layout, but a live Rust `Stores`
-  is not a C store, so the bridge is real work.  (c) Wait for @PLN91, where the interpreter runs
-  on C and libraries share its runtime.  R1 measures (a) with `LOFT_NO_COMPILED_STDLIB=1` and an
-  interpreted-library switch before the choice; `@C71` is reopened or amended with the result.
+- **O1 — the compiled route for libraries and the stdlib (`@C71`): DECIDED (owner, 2026-11-21).**
+  Every library stays compiled, through the C backend instead of rustc: a used library is built
+  into a shared object by the C backend and called from the interpreter over the shared store,
+  as the writer's cdylib is today.  `@C71`'s model holds; its mechanism (the rustc fingerprint,
+  `libloft.rlib`) is amended in R1.  The design question left is the bridge: the C runtime keeps
+  loft's own store layout, but a live Rust `Stores` is not a C store, so R1 starts with a probe
+  of how the C code reads and writes the interpreter's stores.  The compiled stdlib takes the
+  same route.
 - **O2 — `--html` / `--native-wasm` without a WASI clang.**  Refuse with install instructions
   (cheapest), fetch the toolchain on first use, or ship it in the bundle (size).  Any of the
   three breaks PR #2516's promise; the change carries `freeze:broken`.
