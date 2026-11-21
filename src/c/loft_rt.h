@@ -3759,15 +3759,31 @@ static int loft_swap_in(uint16_t tp, loft_ref src, loft_ref dst, int reset_dest)
  * `x = f(…)` whose result the bind gives up EXCHANGES the result's store into `*dst` without
  * the reset the copy would run first — `x`'s previous tree leaves with the released slot.
  * The emitter calls it only for a direct call whose result is given up and whose type keeps no
- * stored reference (`Cx::swap_safe`); a destination that is not its store's typed root (a first
- * bind, a witnessed local) declines here, and the caller resets and copies.  Answers 1 when it
- * exchanged.  `-DLOFT_NO_SWAP_REBIND` keeps the reset and the copy. */
-static int loft_swap_rebind(uint16_t tp, loft_ref src, loft_ref *dst) {
+ * stored reference (`Cx::swap_safe`); a destination that holds no store takes a fresh one
+ * first, and one that is not its store's typed root (a witnessed local's view) declines here,
+ * and the caller resets and copies.  Answers 1 when the result was bound (exchanged, or copied
+ * into the fresh store and given up).  `-DLOFT_NO_SWAP_REBIND` keeps the reset and the copy. */
+static int loft_swap_rebind(const loft_tdesc *T, uint16_t tp, loft_ref src, loft_ref *dst) {
 #ifdef LOFT_NO_SWAP_REBIND
-    (void) tp; (void) src; (void) dst;
+    (void) T; (void) tp; (void) src; (void) dst;
     return 0;
 #else
-    if (dst->store_nr == 0xFFFF || dst->rec != 1 || dst->pos != 8) return 0;
+    if (dst->store_nr == 0xFFFF) {
+        /* `@FR-H-SwapIn`: a destination that holds no store takes a fresh typed one and the
+         * exchange into it, reset — the bytecode's `OpDatabase` then its free-source copy.  An
+         * exchange refused copies into that store and gives the result up, as the copy does. */
+        if (src.store_nr == 0xFFFF || src.rec == 0) return 0;
+        loft_database_typed(dst, T[tp].size, tp);
+        if (loft_swap_in(tp, src, *dst, 1)) return 1;
+#ifdef LOFT_PARSE
+        loft_perrs_deliver(src, *dst, tp, 1);
+#endif
+        loft_copy_bytes(*dst, 0, src, 0, T[tp].size);
+        loft_copy_claims(T, tp, src, *dst);
+        loft_free_ref(src);
+        return 1;
+    }
+    if (dst->rec != 1 || dst->pos != 8) return 0;
     return loft_swap_in(tp, src, *dst, 0);
 #endif
 }

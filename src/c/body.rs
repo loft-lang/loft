@@ -6827,7 +6827,7 @@ impl<'a> FnWriter<'a> {
                     self.line(
                         ind,
                         &format!(
-                            "{null_keeps_entry}if (!({keep} && loft_swap_rebind({bytes}, {r}, &{name}))) {{ \
+                            "{null_keeps_entry}if (!({keep} && loft_swap_rebind(loft_types, {bytes}, {r}, &{name}))) {{ \
                              loft_bind_copy(loft_types, {bytes}, &{name}, {r}); \
                              if ({keep}) loft_free_ref({r}); }}"
                         ),

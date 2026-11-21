@@ -291,3 +291,27 @@ fn a_record_holding_keyed_collections_or_children_moves_whole_on_both_backends()
         }
     }
 }
+
+/// A local bound from a call and then returned is the caller's buffer, and holds no store when
+/// the caller hands a null one: `mk_loc`'s answer is exchanged into a fresh store, reset, on
+/// both backends (`@FR-H-SwapIn`) rather than copied into it.  `via(4)` is 4 + 100 with the
+/// two points `mk_loc` pushed, the first 4.
+const RETURNED: &str = "struct P { pts: vector<float>, n: integer = 0 }
+fn mk_loc(i: integer) -> P { o = P { pts: [], n: i }; o.pts += [i as float, 0.25]; o }
+fn via(i: integer) -> P { n = mk_loc(i); n.n += 100; n }
+fn main() { r = via(4); println(\"{r.n} {len(r.pts)} {r.pts[0]?}\"); }
+";
+
+/// @falsified-at: none — the interpreter always exchanged here, so the receipt is a SABOTAGE
+///   (2026-11-21): with `loft_swap_rebind` declining a destination that holds no store again
+///   (`src/c/loft_rt.h`), the C copies `mk_loc`'s answer into the store it makes.
+///   CHANNEL: the `[swap-in]` count.  WITNESS: 0 on `--native` against 1.
+///   HOLDS: `104 2 4` either way.
+#[test]
+fn a_returned_local_bound_from_a_call_takes_the_answer_whole_on_both_backends() {
+    for mode in ["--interpret", "--native"] {
+        let (n, out) = strict_swaps(mode, "returned", RETURNED);
+        assert_eq!(out.trim(), "104 2 4", "{mode}: the answer");
+        assert_eq!(n, 1, "{mode}: {n} exchanges, 1 expected");
+    }
+}
