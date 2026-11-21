@@ -819,7 +819,7 @@ elab	refused	tests/scripts/store_compact_slack_730.loft
 elab	refused	tests/scripts/store_digest_b0.loft
 elab	refused	tests/scripts/store_paged_enum_field.loft
 
-layer	elab-functions	agree	14247	of	24560
+layer	elab-functions	agree	14254	of	24560
 elab-functions	agree	lib/docs.loft::Anchor
 elab-functions	agree	lib/docs.loft::Character
 elab-functions	agree	lib/docs.loft::Double
@@ -2152,8 +2152,14 @@ elab-functions	agree	loft-suite/rules/binding/P-Cap-Fresh/a-rest-or-a-repetition
 elab-functions	agree	loft-suite/rules/binding/P-Cap-Fresh/a-rest-or-a-repetition-is-a-fresh-store-and-deeply-so.loft::n_rest_of_param
 elab-functions	agree	loft-suite/rules/binding/P-Cap-Fresh/a-rest-or-a-repetition-is-a-fresh-store-and-deeply-so.loft::n_sum_x
 elab-functions	agree	loft-suite/rules/binding/P-Cap-Fresh/a-rest-or-a-repetition-is-a-fresh-store-and-deeply-so.loft::n_test_a_bind_of_a_rest_is_a_copy_of_its_own
+elab-functions	agree	loft-suite/rules/binding/P-Cap-Fresh/a-rest-or-a-repetition-is-a-fresh-store-and-deeply-so.loft::n_test_a_comprehension_over_a_rest
+elab-functions	agree	loft-suite/rules/binding/P-Cap-Fresh/a-rest-or-a-repetition-is-a-fresh-store-and-deeply-so.loft::n_test_a_field_subject_and_text_elements
+elab-functions	agree	loft-suite/rules/binding/P-Cap-Fresh/a-rest-or-a-repetition-is-a-fresh-store-and-deeply-so.loft::n_test_a_repetition_accumulator
 elab-functions	agree	loft-suite/rules/binding/P-Cap-Fresh/a-rest-or-a-repetition-is-a-fresh-store-and-deeply-so.loft::n_test_a_rest_is_fresh_all_the_way_down
 elab-functions	agree	loft-suite/rules/binding/P-Cap-Fresh/a-rest-or-a-repetition-is-a-fresh-store-and-deeply-so.loft::n_test_a_rest_of_a_parameter
+elab-functions	agree	loft-suite/rules/binding/P-Cap-Fresh/a-rest-or-a-repetition-is-a-fresh-store-and-deeply-so.loft::n_test_a_rest_per_pass_and_out_of_its_arm
+elab-functions	agree	loft-suite/rules/binding/P-Cap-Fresh/a-rest-or-a-repetition-is-a-fresh-store-and-deeply-so.loft::n_test_in_a_loop
+elab-functions	agree	loft-suite/rules/binding/P-Cap-Fresh/a-rest-or-a-repetition-is-a-fresh-store-and-deeply-so.loft::n_test_records_both_ways
 elab-functions	agree	loft-suite/rules/binding/P-Cap-Fresh/a-rest-or-a-repetition-is-a-fresh-store-and-deeply-so.loft::vector<Pt>
 elab-functions	agree	loft-suite/rules/binding/P-Cap-Fresh/a-rest-or-a-repetition-is-a-fresh-store-and-deeply-so.loft::vector<S>
 elab-functions	agree	loft-suite/rules/binding/P-Cap-Fresh/a-rest-or-a-repetition-is-a-fresh-store-and-deeply-so.loft::vector<Tk>
@@ -7670,6 +7676,7 @@ elab-functions	agree	loft-suite/rules/matching/P-Rest/a-rest-is-a-fresh-capture-
 elab-functions	agree	loft-suite/rules/matching/P-Rest/a-rest-is-a-fresh-capture-wherever-it-stands.loft::n_tail_p
 elab-functions	agree	loft-suite/rules/matching/P-Rest/a-rest-is-a-fresh-capture-wherever-it-stands.loft::n_tail_t
 elab-functions	agree	loft-suite/rules/matching/P-Rest/a-rest-is-a-fresh-capture-wherever-it-stands.loft::n_test_35c_rest_capture
+elab-functions	agree	loft-suite/rules/matching/P-Rest/a-rest-is-a-fresh-capture-wherever-it-stands.loft::n_test_a_rest_is_fresh
 elab-functions	agree	loft-suite/rules/matching/P-Rest/a-rest-is-a-fresh-capture-wherever-it-stands.loft::n_test_where_a_rest_stands
 elab-functions	agree	loft-suite/rules/matching/P-Rest/a-rest-is-a-fresh-capture-wherever-it-stands.loft::n_typed
 elab-functions	agree	loft-suite/rules/matching/P-Rest/a-rest-is-a-fresh-capture-wherever-it-stands.loft::vector<P>
@@ -15068,7 +15075,7 @@ elab-functions	agree	tests/scripts/store_paged_enum_field.loft::main_vector<inte
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::n_bytes
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::vector<integer(0, 255)>
 
-layer	elab-pass1	agree	11977	of	17864
+layer	elab-pass1	agree	11977	of	17871
 elab-pass1	agree	lib/code.loft::t_4Code_add_block
 elab-pass1	agree	lib/code.loft::t_4Code_add_if
 elab-pass1	agree	lib/code.loft::t_4Code_add_loop
