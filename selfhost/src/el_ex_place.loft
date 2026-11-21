@@ -555,7 +555,9 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
       el::refuse(e, "a vector append of this element type: {type_kind(elem)}");
       return ex(ir::NdNull, ir::TyVoid);
     }
-    return ex(el_ir::cl(e, "OpAppendVector", [el_ir::unspan(p.code), x.code, ir::NdInt { n: row }]), ir::TyVoid);
+    // (Answered as a one-statement insert, as Rust's is: spliced, its end takes the line marker
+    // a following statement on the same line keeps.)
+    return ex(ir::NdInsert { items: [el_ir::cl(e, "OpAppendVector", [el_ir::unspan(p.code), x.code, ir::NdInt { n: row }])] }, ir::TyVoid);
   }
   // `(E-Asgn-Compound)` at a RECORD place (loft#1819): `v₁ op v₂` composed through the record's
   // `operator` member and copied INTO the place (`copy_ref`).  A place whose addressing runs a
@@ -3222,7 +3224,19 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
   // apart in a `__ref_p2_N` of its own, then bound.
   if watch_hit {
     vars.own_buffer_hit = false;
-    if vars.vars[v].argument {
+    // (The function's RETURNED local, renamed onto the hidden buffer, takes the plain local's
+    // bind: the literal built apart, each collection field copied in, the local bound to it.)
+    // (Not yet where a field is itself a record literal — `tiles: Tiles { … }`: the abandoned
+    // attempt numbers its staged `__ref_N` and the nested literal's `__ref_p2_N` in another
+    // order than Rust's, refused by name.)
+    nested_lit = false;
+    for nf in fields {
+      match e.p.nodes[nf] {
+        SFieldInit { e: nfe } => { if nfe != null && struct_literal_def(e, nfe!) >= 0 { nested_lit = true; } },
+        _ => {}
+      }
+    }
+    if vars.vars[v].argument && (!hidden_param(e, vars, v) || nested_lit) {
       el::refuse(e, "a parameter rebuilt in place by a literal whose collection field reads it");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
     }

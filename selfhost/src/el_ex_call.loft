@@ -1689,7 +1689,8 @@ pub fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::N
       el::refuse(e, "a call answering a boxed tuple outside a destructure");
       return null;
     }
-    buf = el_vars::work_ref(vars, el_types::without_deps(rp));
+    // (A callee's one-buffer marker, `["??"]`, is no borrow of the caller's buffer.)
+    buf = el_vars::work_ref(vars, el_types::with_deps(rp, []));
     vars.vars[buf].caller_hidden_buf = true;
     args = list + [ir::NdVar { n: buf }];
     ds: vector<integer> = [];
