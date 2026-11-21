@@ -794,7 +794,7 @@ elab	refused	tests/scripts/store_compact_slack_730.loft
 elab	refused	tests/scripts/store_digest_b0.loft
 elab	refused	tests/scripts/store_paged_enum_field.loft
 
-layer	elab-functions	agree	14075	of	24176
+layer	elab-functions	agree	14093	of	24174
 elab-functions	agree	lib/docs.loft::Anchor
 elab-functions	agree	lib/docs.loft::Character
 elab-functions	agree	lib/docs.loft::Double
@@ -11113,8 +11113,26 @@ elab-functions	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-r
 elab-functions	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::X#2
 elab-functions	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::Y
 elab-functions	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::Z
+elab-functions	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::__const_n_tail_f
+elab-functions	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::__tuple<float,integer>
 elab-functions	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::main_vector<B>
+elab-functions	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::main_vector<float>
+elab-functions	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::n___dflt_FD_v
+elab-functions	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::n___dflt_FD_w
+elab-functions	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::n___dflt_dflt_e_v
+elab-functions	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::n___dflt_dflt_f_v
+elab-functions	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::n_arg_b
+elab-functions	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::n_arg_e
+elab-functions	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::n_arg_f
+elab-functions	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::n_arg_o
+elab-functions	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::n_arg_s
+elab-functions	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::n_arg_st
+elab-functions	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::n_arg_u
+elab-functions	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::n_dflt_f
+elab-functions	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::n_tail_e
+elab-functions	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::n_tail_f
 elab-functions	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::vector<B>
+elab-functions	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::vector<float>
 elab-functions	agree	loft-suite/rules/types/T-Chk/1682-a-null-member-in-the-first-tuple-arm-does-not-pin-the-join.loft::(schema)
 elab-functions	agree	loft-suite/rules/types/T-Chk/1682-a-null-member-in-the-first-tuple-arm-does-not-pin-the-join.loft::A
 elab-functions	agree	loft-suite/rules/types/T-Chk/1682-a-null-member-in-the-first-tuple-arm-does-not-pin-the-join.loft::B
@@ -14871,7 +14889,7 @@ elab-functions	agree	tests/scripts/store_paged_enum_field.loft::main_vector<inte
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::n_bytes
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::vector<integer(0, 255)>
 
-layer	elab-pass1	agree	12062	of	18012
+layer	elab-pass1	agree	12070	of	18026
 elab-pass1	agree	lib/code.loft::t_4Code_add_block
 elab-pass1	agree	lib/code.loft::t_4Code_add_if
 elab-pass1	agree	lib/code.loft::t_4Code_add_loop
@@ -22893,6 +22911,14 @@ elab-pass1	agree	loft-suite/rules/types/T-Chk-Lam/a-lambda-body-converts-into-it
 elab-pass1	agree	loft-suite/rules/types/T-Chk-Lam/a-lambda-body-converts-into-its-expected-return.loft::n_app_t
 elab-pass1	agree	loft-suite/rules/types/T-Chk-Lam/a-lambda-body-converts-into-its-expected-return.loft::n_area
 elab-pass1	agree	loft-suite/rules/types/T-Chk-Lam/a-lambda-body-converts-into-its-expected-return.loft::n_make
+elab-pass1	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::n_arg_b
+elab-pass1	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::n_arg_e
+elab-pass1	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::n_arg_f
+elab-pass1	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::n_arg_o
+elab-pass1	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::n_arg_s
+elab-pass1	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::n_arg_st
+elab-pass1	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::n_arg_u
+elab-pass1	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::n_dflt_f
 elab-pass1	agree	loft-suite/rules/types/T-Chk/1682-a-null-member-in-the-first-tuple-arm-does-not-pin-the-join.loft::n_chain
 elab-pass1	agree	loft-suite/rules/types/T-Chk/1682-a-null-member-in-the-first-tuple-arm-does-not-pin-the-join.loft::n_different_members
 elab-pass1	agree	loft-suite/rules/types/T-Chk/1682-a-null-member-in-the-first-tuple-arm-does-not-pin-the-join.loft::n_float_member
