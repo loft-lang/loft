@@ -2628,11 +2628,22 @@ impl<'a> FnWriter<'a> {
             let path = crate::opt::writes::vector_path(data, v)?;
             by_path(w, &path)
         };
+        // `@FR-Col-Capacity`: the reservation is exact through the window too, as the bytecode
+        // and the push header (`loft_ph_prealloc`) make it — it claims only while the vector has
+        // no record, so a window over one tests and goes on.
         if name == "OpPreAllocVector" {
-            return Ok(args
-                .first()
-                .and_then(|v| window_of(self, v))
-                .map(|_| E::new("((void) 0)", K::Void)));
+            let Some((w, pv, _)) = args.first().and_then(|v| window_of(self, v)) else {
+                return Ok(None);
+            };
+            let [_, count, size] = args else {
+                return Err("OpPreAllocVector without its count and size".into());
+            };
+            let count = Self::literal(count, "count")?;
+            let size = Self::literal(size, "element size")?;
+            return Ok(Some(E::new(
+                format!("loft_win_prealloc(&{w}, {pv}, {count}, {size})"),
+                K::Void,
+            )));
         }
         if matches!(name, "OpNewRecord" | "OpNewRecordNP" | "OpFinishRecord")
             && let Some(t) =

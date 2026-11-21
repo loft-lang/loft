@@ -4085,6 +4085,21 @@ LOFT_HOT_INLINE void loft_win_grow_into(loft_win *w, loft_ref v, uint32_t size, 
     *w = t;
 }
 
+/* `@FR-Col-Capacity` through a push window: `OpPreAllocVector`'s count, reserved exactly as
+ * `loft_vec_prealloc` reserves it — which acts only while the vector has no record — and the
+ * window derived again over the record it claimed.  A window over a record takes one test; the
+ * reservation is out of line, through a copy, for the reason `loft_win_grow_into` gives. */
+LOFT_COLD static loft_win loft_win_prealloced(loft_ref v, uint32_t count, uint32_t size) {
+    loft_vec_prealloc(v, count, size);
+    return loft_win_of(v, size);
+}
+
+LOFT_HOT_INLINE void loft_win_prealloc(loft_win *w, loft_ref v, uint32_t count, uint32_t size) {
+    if (LOFT_LIKELY(w->rec != 0)) return;
+    loft_win t = loft_win_prealloced(v, count, size);
+    *w = t;
+}
+
 /* A push through the window: one comparison, one store and a bump while it fits (the element's
  * bytes as the ordinary push writes them, encoded by the caller), the growth arm otherwise. */
 LOFT_HOT_INLINE void loft_win_put8(loft_win *w, loft_ref v, uint64_t bits) {

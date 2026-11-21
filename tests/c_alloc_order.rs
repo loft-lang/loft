@@ -151,3 +151,37 @@ fn main() {
         "no record is deleted: {ev:?}"
     );
 }
+
+/// `@FR-Col-Capacity` through a push window: a loop's `v += [x]` reserves its one element
+/// exactly while the vector has no record (`OpPreAllocVector`), as the bytecode does, and the
+/// second push takes the growth step — the window does not skip the reservation and claim the
+/// growth step at once.
+///
+/// @falsified-at: none — the bytecode always reserved here, so the receipt is a SABOTAGE
+///   (2026-11-21): with the window's `OpPreAllocVector` emitted as `((void) 0)` again
+///   (`windowed` in `src/c/body.rs`), the vector's first claim is the growth step.
+///   CHANNEL: the trace's claim sizes.  WITNESS: `C 1 12 3` for `C 1 2 3`.
+///   HOLDS: `20 57` on either form.
+#[test]
+fn a_windowed_push_keeps_the_reservation_before_the_growth_step() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let (out, ev) = traced(
+        "window",
+        r#"
+fn main() {
+  out: vector<integer> = [];
+  i = 0;
+  while i < 20 { out += [i * 3]; i = i + 1; }
+  println("{len(out)} {out[19]?}");
+}
+"#,
+    );
+    assert_eq!(out, "20 57\n");
+    assert!(
+        at(&ev, "C 1 2 3") < at(&ev, "R 1 3 12 3"),
+        "one element reserved, then the growth step: {ev:?}"
+    );
+}
