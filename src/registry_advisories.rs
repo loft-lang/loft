@@ -676,7 +676,8 @@ fn read_cached_feed_verified(
 /// # Errors
 /// What is wrong with the pair.
 pub fn verify_feed(content: &[u8], sig: &[u8], opts: LoadOptions) -> Result<(), String> {
-    let result = registry_signing::verify_index(content, sig);
+    let result =
+        registry_signing::verify_document(registry_signing::Purpose::Advisories, content, sig);
     match result {
         VerifyResult::Valid => Ok(()),
         // As for the index (`install::verify_or_explain`): the waiver is for a feed with no

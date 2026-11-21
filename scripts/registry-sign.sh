@@ -86,8 +86,9 @@
 # must verify under a key in src/registry_keys.rs::TRUSTED_PUBLIC_KEYS or it is
 # NOT committed/pushed — so a wrong key/module fails safe.
 #
-# On confirm it signs, commits index.json + index.json.sig together (so HEAD's
-# index always matches its signature — #377), pushes, and (for an auto-clone)
+# On confirm it signs, commits index.json + index.json.sig + index.json.sig2 together (so
+# HEAD's index always matches its signatures — #377; .sig2 is the purpose-prefixed form,
+# src/registry_signing.rs), pushes, and (for an auto-clone)
 # deletes the temp checkout.  A failed push keeps the clone so the signed commit
 # is never lost.
 #
@@ -773,6 +774,22 @@ fi
 SIGNED=1
 echo "signed: $SIG  (via $SIGNED_VIA)"
 
+# The purpose-prefixed signature (`index.json.sig2`, src/registry_signing.rs): the same key,
+# over "loft-registry-index-v1\0" + index.json, so it cannot be read as any other document's.
+# Published beside the raw `.sig` while older clients read only that one.  Signed by the same
+# route as the raw one: a card signs twice (two touches), a key file twice in a row.
+SIG2="$REG_DIR/index.json.sig2"
+MSG2=$(mktemp -t loft-index-msg.XXXXXX)
+"$KG" message --purpose index --in "$INDEX" --out "$MSG2"
+case "$SIGNED_VIA" in
+    YubiKey*)
+        echo "  now the purpose-prefixed signature — TOUCH THE YUBIKEY once more." >&2
+        yubikey_sign "$MSG2" "$SIG2" || { echo "!! card sign of index.json.sig2 failed — NOT committing." >&2; rm -f "$MSG2"; exit 4; } ;;
+    *)
+        "$KG" sign --in "$MSG2" --key "$KEY" --out "$SIG2" ;;
+esac
+echo "signed: $SIG2  (purpose-prefixed, via $SIGNED_VIA)"
+
 # Trust gate — the signature must verify under a key that CLIENTS trust
 # (src/registry_keys.rs::TRUSTED_PUBLIC_KEYS), not merely under the key we
 # signed with.  Signing with an untrusted key yields a sig that every
@@ -785,9 +802,13 @@ if [ -f "$KEYS_RS" ]; then
     trusted_hex=$(grep -oE '0x[0-9A-Fa-f]{2}' "$KEYS_RS" | sed 's/0x//' | tr -d '\n')
     ok=0; i=0
     while [ "$i" -lt "${#trusted_hex}" ]; do
-        if "$KG" verify --in "$INDEX" --sig "$SIG" --pub "${trusted_hex:$i:64}" >/dev/null 2>&1; then ok=1; break; fi
+        # BOTH signatures under one trusted key: the raw one over the index, the prefixed
+        # one over its message.
+        if "$KG" verify --in "$INDEX" --sig "$SIG" --pub "${trusted_hex:$i:64}" >/dev/null 2>&1 \
+            && "$KG" verify --in "$MSG2" --sig "$SIG2" --pub "${trusted_hex:$i:64}" >/dev/null 2>&1; then ok=1; break; fi
         i=$((i + 64))
     done
+    rm -f "$MSG2"
     if [ "$ok" != 1 ]; then
         echo "!! registry-sign: the new signature verifies under NONE of the trusted" >&2
         echo "   keys in $KEYS_RS — every 'loft install' would reject this index." >&2
@@ -800,7 +821,9 @@ if [ -f "$KEYS_RS" ]; then
     echo "  trust gate OK — signature verifies under a client-trusted key"
 else
     echo "  WARNING: $KEYS_RS not found — skipping trust-set verification" >&2
-    [ -f "$PUB" ] && "$KG" verify --in "$INDEX" --sig "$SIG" --pub "$(cat "$PUB")"
+    [ -f "$PUB" ] && "$KG" verify --in "$INDEX" --sig "$SIG" --pub "$(cat "$PUB")" \
+        && "$KG" verify --in "$MSG2" --sig "$SIG2" --pub "$(cat "$PUB")"
+    rm -f "$MSG2"
 fi
 
 # Automated git: stage index.json AND its signature together, commit, push.
@@ -810,7 +833,7 @@ fi
 # committed .sig verified against content that never landed, and the new version
 # was never published.  Staging BOTH keeps HEAD self-consistent: its committed
 # index.json always matches its committed index.json.sig.
-git -C "$REG_DIR" add index.json index.json.sig
+git -C "$REG_DIR" add index.json index.json.sig index.json.sig2
 if git -C "$REG_DIR" diff --cached --quiet; then
     echo "index.json.sig unchanged — nothing to commit."
     PUSHED=1   # nothing outstanding → safe to clean up the clone

@@ -527,6 +527,8 @@ struct IndexMemoKey {
     sig: PathBuf,
     idx_stamp: (u64, u128),
     sig_stamp: (u64, u128),
+    /// The purpose-prefixed `.sig2`, which may be absent.
+    sig2_stamp: Option<(u64, u128)>,
     allow_unsigned: bool,
 }
 
@@ -550,6 +552,7 @@ fn index_memo_key(idx: &Path, sig: &Path, opts: &InstallOptions) -> Option<Index
         sig: sig.to_path_buf(),
         idx_stamp: file_stamp(idx)?,
         sig_stamp: file_stamp(sig)?,
+        sig2_stamp: file_stamp(&registry_index::sig2_path(sig)),
         allow_unsigned: opts.allow_unsigned,
     })
 }
@@ -688,7 +691,7 @@ fn fetched_pair_verdict(
     url: &str,
 ) -> String {
     if !matches!(
-        registry_signing::verify_index(&fetched.content, sig),
+        registry_signing::verify_document(registry_signing::Purpose::Index, &fetched.content, sig),
         VerifyResult::Invalid
     ) {
         return verdict;
@@ -716,7 +719,7 @@ fn fetched_pair_verdict(
 /// # Errors
 /// What is wrong with the pair, in words the user can act on.
 pub fn verify_or_explain(content: &[u8], sig: &[u8], opts: &InstallOptions) -> Result<(), String> {
-    let result = registry_signing::verify_index(content, sig);
+    let result = registry_signing::verify_document(registry_signing::Purpose::Index, content, sig);
     match result {
         VerifyResult::Valid => Ok(()),
         VerifyResult::NoTrustRoot => {

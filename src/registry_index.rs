@@ -1097,10 +1097,36 @@ pub fn write_signed_pair(
         file_access::create_dir_all(parent)?;
     }
     replace_atomically(content_path, content)?;
-    if !signature.is_empty() {
-        replace_atomically(sig_path, signature)?;
+    let (raw, prefixed) = crate::registry_signing::split_signatures(signature);
+    if !raw.is_empty() {
+        replace_atomically(sig_path, raw)?;
+    }
+    let sig2 = sig2_path(sig_path);
+    if !prefixed.is_empty() {
+        replace_atomically(&sig2, prefixed)?;
+    } else if !raw.is_empty() {
+        // A new raw-only signature must not stand beside the previous document's `.sig2`.
+        let _ = file_access::remove_file(&sig2);
     }
     Ok(())
+}
+
+/// Where the purpose-prefixed signature beside `sig_path` (`<doc>.sig`) is kept: `<doc>.sig2`.
+#[must_use]
+pub fn sig2_path(sig_path: &std::path::Path) -> std::path::PathBuf {
+    let mut p = sig_path.as_os_str().to_owned();
+    p.push("2");
+    std::path::PathBuf::from(p)
+}
+
+/// The signatures cached beside a document, as one value: the raw `.sig` and the
+/// purpose-prefixed `.sig2` ([`crate::registry_signing::join_signatures`]); missing files read
+/// as empty.
+#[must_use]
+pub fn read_signatures(sig_path: &std::path::Path) -> Vec<u8> {
+    let raw = file_access::read(sig_path).unwrap_or_default();
+    let prefixed = file_access::read(sig2_path(sig_path)).unwrap_or_default();
+    crate::registry_signing::join_signatures(&raw, &prefixed)
 }
 
 /// How many times [`read_signed_pair_settling`] reads the pair before believing
@@ -1144,7 +1170,7 @@ pub fn read_signed_pair_settling(
 ) -> std::io::Result<SettledPair> {
     for attempt in 0..SETTLE_ATTEMPTS {
         let content = file_access::read(content_path)?;
-        let signature = file_access::read(sig_path).unwrap_or_default();
+        let signature = read_signatures(sig_path);
         if accept(&content, &signature) {
             return Ok(SettledPair {
                 content,
@@ -1664,10 +1690,11 @@ pub struct FetchedIndex {
     pub commit: Option<String>,
 }
 
-/// Fetch `index.json` + `index.json.sig` from the given URL prefix.
+/// Fetch `index.json` + `index.json.sig` (+ `index.json.sig2`) from the given URL prefix.
 ///
-/// The URL passed in points at the `index.json` itself; the signature
-/// is fetched from the same URL with `.sig` appended.
+/// The URL passed in points at the `index.json` itself; the signatures are fetched from the
+/// same URL with `.sig` (raw) and `.sig2` (purpose-prefixed) appended, and answered as one
+/// value ([`crate::registry_signing::join_signatures`]).
 ///
 /// The two files are one signed PAIR, so they are read from one commit wherever the
 /// URL allows it ([`pin_to_commit`]).  A branch address is cached per file by the host,
@@ -1714,11 +1741,16 @@ fn fetch_index_through(
     // The error names the address the caller asked for: the pinned one is this
     // function's own business, and a file missing at the commit is missing at the branch.
     let content = get(&from).map_err(|miss| format!("fetching {url}: {}", miss.message()))?;
-    let signature = match get(&format!("{from}.sig")) {
-        Ok(signature) => signature,
-        Err(Miss::Absent(_)) => Vec::new(),
-        Err(Miss::Failed(why)) => return Err(format!("fetching {url}.sig: {why}")),
-    };
+    let mut signatures = Vec::with_capacity(2);
+    for ext in ["sig", "sig2"] {
+        signatures.push(match get(&format!("{from}.{ext}")) {
+            Ok(signature) => signature,
+            Err(Miss::Absent(_)) => Vec::new(),
+            Err(Miss::Failed(why)) => return Err(format!("fetching {url}.{ext}: {why}")),
+        });
+    }
+    // The raw signature and the purpose-prefixed one (`registry_signing`), carried as one.
+    let signature = crate::registry_signing::join_signatures(&signatures[0], &signatures[1]);
     Ok(FetchedIndex {
         content,
         signature,
@@ -3232,8 +3264,9 @@ mod tests {
         assert_eq!(fetched.content, b"new index");
         assert_eq!(fetched.signature, b"new signature");
         assert_eq!(fetched.commit.as_deref(), Some(COMMIT_A));
-        // Three requests, and neither of them through the branch address.
-        assert_eq!(host.asked.len(), 3, "asked: {:?}", host.asked);
+        // Four requests (the advertisement, the index and its two signatures), and none
+        // of the reads through the branch address.
+        assert_eq!(host.asked.len(), 4, "asked: {:?}", host.asked);
         assert_eq!(host.asked[0], ADVERT_URL);
         assert!(
             host.asked[1..].iter().all(|u| u.contains(COMMIT_A)),
@@ -3288,8 +3321,72 @@ mod tests {
         assert_eq!(fetched.commit.as_deref(), Some(COMMIT_A));
         assert_eq!(
             host.asked,
-            vec![at_commit.clone(), format!("{at_commit}.sig")]
+            vec![
+                at_commit.clone(),
+                format!("{at_commit}.sig"),
+                format!("{at_commit}.sig2")
+            ]
         );
+    }
+
+    /// The purpose-prefixed `.sig2` is fetched beside `.sig` and carried with it as one
+    /// value; a host without it answers the raw signature alone, and one whose `.sig2`
+    /// request fails is an error, as a failed `.sig` is.
+    #[test]
+    fn the_prefixed_signature_travels_beside_the_raw_one() {
+        use crate::registry_signing::split_signatures;
+        let url = "https://mirror.example.org/registry/index.json";
+        let raw = [7u8; 64];
+        let prefixed = [9u8; 64];
+        let mut host = Host::new(&[
+            (url, b"index"),
+            (&format!("{url}.sig"), &raw),
+            (&format!("{url}.sig2"), &prefixed),
+        ]);
+        let fetched = host.fetch(url).expect("fetch");
+        assert_eq!(
+            split_signatures(&fetched.signature),
+            (&raw[..], &prefixed[..])
+        );
+        let mut old = Host::new(&[(url, b"index"), (&format!("{url}.sig"), &raw)]);
+        let fetched = old.fetch(url).expect("fetch");
+        assert_eq!(
+            fetched.signature,
+            raw.to_vec(),
+            "no .sig2: the raw signature alone"
+        );
+        let mut down = Host::new(&[(url, b"index"), (&format!("{url}.sig"), &raw)]);
+        down.down.push(format!("{url}.sig2"));
+        assert!(
+            down.fetch(url).is_err(),
+            "a .sig2 that cannot be read is an error"
+        );
+    }
+
+    /// The cache keeps the two signatures as two files — `.sig` for every loft that reads
+    /// only the raw one — and reads them back as the value they were written from.  A new
+    /// raw-only signature removes the previous document's `.sig2`.
+    #[test]
+    fn the_cache_writes_and_reads_both_signatures() {
+        use crate::registry_signing::join_signatures;
+        let dir = std::env::temp_dir().join(format!("loft_sig2_cache_{}", std::process::id()));
+        let _ = file_access::remove_dir_all(&dir);
+        let (idx, sig) = (dir.join("index.json"), dir.join("index.json.sig"));
+        let both = join_signatures(&[1u8; 64], &[2u8; 64]);
+        write_signed_pair(&idx, &sig, b"index", &both).expect("write");
+        assert_eq!(file_access::read(&sig).expect("raw"), vec![1u8; 64]);
+        assert_eq!(
+            file_access::read(sig2_path(&sig)).expect("prefixed"),
+            vec![2u8; 64]
+        );
+        assert_eq!(read_signatures(&sig), both);
+        write_signed_pair(&idx, &sig, b"index 2", &[3u8; 64]).expect("write");
+        assert!(
+            !file_access::exists(sig2_path(&sig)),
+            "the stale .sig2 is gone"
+        );
+        assert_eq!(read_signatures(&sig), vec![3u8; 64]);
+        let _ = file_access::remove_dir_all(&dir);
     }
 
     #[test]
@@ -3305,7 +3402,7 @@ mod tests {
             assert_eq!(fetched.commit, None, "{url}");
             assert_eq!(
                 host.asked,
-                vec![url.to_string(), format!("{url}.sig")],
+                vec![url.to_string(), format!("{url}.sig"), format!("{url}.sig2")],
                 "{url}"
             );
         }
@@ -3384,7 +3481,8 @@ mod tests {
             vec![
                 ADVERT_URL.to_string(),
                 BRANCH_URL.to_string(),
-                format!("{BRANCH_URL}.sig")
+                format!("{BRANCH_URL}.sig"),
+                format!("{BRANCH_URL}.sig2")
             ]
         );
     }

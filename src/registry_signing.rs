@@ -12,11 +12,119 @@
 //! matching tarball sha256s.  Signing the index file with a key NOT
 //! under the registry host's control closes that gap.
 //!
-//! The signature format is the **raw 64-byte Ed25519 signature** over
-//! the bytes of `index.json` (no encoding wrapper).  Clients receive
-//! it as `index.json.sig` from the same URL prefix as `index.json`.
+//! The signature format is the **raw 64-byte Ed25519 signature**, in two forms during a
+//! transition:
+//!
+//! - `index.json.sig2` / `advisories.json.sig2` — over the document's bytes PREFIXED with its
+//!   purpose ([`Purpose::domain`]: `loft-registry-index-v1\0` or
+//!   `loft-registry-advisories-v1\0`), so a signature made for one document cannot be read as
+//!   the other's, nor as any future document's the same keys sign;
+//! - `index.json.sig` / `advisories.json.sig` — over the raw bytes, as every loft before the
+//!   prefix reads it.
+//!
+//! The registry publishes both until the clients that read only the raw form are gone; a
+//! client verifies the prefixed one when it is there, and the raw one only while
+//! [`RAW_SIGNATURE_ACCEPTED`] holds.  Inside a client the two travel as ONE value through the
+//! code that fetches, caches and checks them ([`join_signatures`] / [`split_signatures`]); only
+//! the file readers and writers know there are two files.
 
 #![cfg(feature = "registry")]
+
+/// What a registry signature vouches for: the prefix of the message the keys sign.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Purpose {
+    Index,
+    Advisories,
+}
+
+impl Purpose {
+    /// The bytes signed before the document's own: its purpose, a version, a NUL.
+    #[must_use]
+    pub fn domain(self) -> &'static [u8] {
+        match self {
+            Purpose::Index => b"loft-registry-index-v1\0",
+            Purpose::Advisories => b"loft-registry-advisories-v1\0",
+        }
+    }
+}
+
+/// The message a prefixed signature (`.sig2`) is made over: the purpose, then the document.
+#[must_use]
+pub fn signed_message(purpose: Purpose, document: &[u8]) -> Vec<u8> {
+    let mut m = purpose.domain().to_vec();
+    m.extend_from_slice(document);
+    m
+}
+
+/// Whether an index or feed carrying only the RAW signature (no `.sig2`) is still accepted:
+/// the transition clause.  True while the registry publishes both forms and older clients
+/// read only the raw one; set to false in the first loft release after every registry
+/// document carries a `.sig2` and the release before it shipped this reader.
+pub const RAW_SIGNATURE_ACCEPTED: bool = true;
+
+/// The marker that opens a joined pair in memory: never the start of a raw signature in
+/// practice and, more to the point, never 64 bytes long with it.
+const PAIR_MARK: &[u8] = b"LOFTSIG2";
+
+/// The raw (`.sig`) and prefixed (`.sig2`) signatures as one value: the raw one alone when
+/// there is no prefixed one, so an older cache or bundle reads as it always did.
+#[must_use]
+pub fn join_signatures(raw: &[u8], prefixed: &[u8]) -> Vec<u8> {
+    if prefixed.is_empty() {
+        return raw.to_vec();
+    }
+    let mut v = PAIR_MARK.to_vec();
+    v.extend_from_slice(prefixed);
+    v.extend_from_slice(raw);
+    v
+}
+
+/// The two signatures [`join_signatures`] made: `(raw, prefixed)`, the second empty when the
+/// value is a raw signature alone.
+#[must_use]
+pub fn split_signatures(sig: &[u8]) -> (&[u8], &[u8]) {
+    match sig.strip_prefix(PAIR_MARK) {
+        Some(rest) if rest.len() >= SIGNATURE_LENGTH => {
+            let (prefixed, raw) = rest.split_at(SIGNATURE_LENGTH);
+            (raw, prefixed)
+        }
+        _ => (sig, &[]),
+    }
+}
+
+/// The verdict on a registry document and its signatures ([`join_signatures`]): the prefixed
+/// signature decides whenever it is there — a valid raw one beside a wrong prefixed one is a
+/// wrong signature — and the raw one only while [`RAW_SIGNATURE_ACCEPTED`] holds; after that,
+/// a document with only a raw signature reads as unsigned.
+#[must_use]
+pub fn verify_document(purpose: Purpose, document: &[u8], sig: &[u8]) -> VerifyResult {
+    verify_document_with_keys(
+        TRUSTED_PUBLIC_KEYS,
+        purpose,
+        document,
+        sig,
+        RAW_SIGNATURE_ACCEPTED,
+    )
+}
+
+fn verify_document_with_keys(
+    keys: &[[u8; 32]],
+    purpose: Purpose,
+    document: &[u8],
+    sig: &[u8],
+    raw_accepted: bool,
+) -> VerifyResult {
+    let (raw, prefixed) = split_signatures(sig);
+    if !prefixed.is_empty() {
+        return verify_index_with_keys(keys, &signed_message(purpose, document), prefixed);
+    }
+    if raw_accepted || raw.is_empty() {
+        return verify_index_with_keys(keys, document, raw);
+    }
+    // Past the transition a raw signature alone is not a signature this client reads: it
+    // answers as a malformed one, which every caller refuses even with `--allow-unsigned`.
+    verify_index_with_keys(keys, document, &[])
+}
 
 use ed25519_dalek::{SIGNATURE_LENGTH, Signature, VerifyingKey};
 
@@ -86,6 +194,45 @@ fn verify_index_with_keys(keys: &[[u8; 32]], index_bytes: &[u8], sig_bytes: &[u8
 mod tests {
     use super::*;
     use ed25519_dalek::{Signer, SigningKey};
+
+    /// The contract of the transition: the prefixed signature decides when it is there,
+    /// the raw one while the transition lasts, and a signature made for one purpose never
+    /// verifies a document of the other.
+    #[test]
+    fn a_prefixed_signature_binds_its_purpose() {
+        let signing = SigningKey::from_bytes(&[0x42u8; 32]);
+        let keys = [signing.verifying_key().to_bytes()];
+        let doc = b"{\"schema_version\": 1}";
+        let raw = signing.sign(doc).to_bytes();
+        let for_index = signing
+            .sign(&signed_message(Purpose::Index, doc))
+            .to_bytes();
+        let both = join_signatures(&raw, &for_index);
+        assert_eq!(split_signatures(&both), (&raw[..], &for_index[..]));
+        assert_eq!(
+            split_signatures(&raw),
+            (&raw[..], &[][..]),
+            "a raw signature alone"
+        );
+        let v = |p, s: &[u8], raw_ok| verify_document_with_keys(&keys, p, doc, s, raw_ok);
+        assert_eq!(v(Purpose::Index, &both, true), VerifyResult::Valid);
+        assert_eq!(v(Purpose::Index, &both, false), VerifyResult::Valid);
+        // The index's prefixed signature is no signature of the same bytes as a feed.
+        assert_eq!(v(Purpose::Advisories, &both, true), VerifyResult::Invalid);
+        // A wrong prefixed signature beside a right raw one is wrong, not a fallback.
+        let mut bad = for_index;
+        bad[0] ^= 1;
+        assert_eq!(
+            v(Purpose::Index, &join_signatures(&raw, &bad), true),
+            VerifyResult::Invalid
+        );
+        // The raw signature alone: accepted during the transition, unsigned after it.
+        assert_eq!(v(Purpose::Index, &raw, true), VerifyResult::Valid);
+        assert_eq!(
+            v(Purpose::Index, &raw, false),
+            VerifyResult::MalformedSignature
+        );
+    }
 
     #[test]
     fn malformed_signature_detected() {

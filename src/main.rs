@@ -2632,6 +2632,10 @@ fn bundle_export(
     }
     if fa::exists(&sig_path) {
         let _ = fa::copy(&sig_path, out.join("index.json.sig"));
+        let _ = fa::copy(
+            registry_index::sig2_path(&sig_path),
+            out.join("index.json.sig2"),
+        );
     }
     // Advisories (optional — registry may not host one yet).
     let (adv_path, adv_sig_path) = loft::registry_advisories::advisories_paths();
@@ -2639,6 +2643,10 @@ fn bundle_export(
         let _ = fa::copy(&adv_path, out.join("advisories.json"));
         if fa::exists(&adv_sig_path) {
             let _ = fa::copy(&adv_sig_path, out.join("advisories.json.sig"));
+            let _ = fa::copy(
+                registry_index::sig2_path(&adv_sig_path),
+                out.join("advisories.json.sig2"),
+            );
         }
     }
 
@@ -2745,7 +2753,7 @@ fn bundle_import(indir: &str, allow_unsigned: bool) -> i32 {
     };
 
     // The index and the feed are verified BEFORE anything is written, and land as pairs.
-    let idx_sig = fa::read(inp.join("index.json.sig")).unwrap_or_default();
+    let idx_sig = registry_index::read_signatures(&inp.join("index.json.sig"));
     let opts = loft::install::InstallOptions {
         allow_unsigned,
         ..Default::default()
@@ -2763,7 +2771,7 @@ fn bundle_import(indir: &str, allow_unsigned: bool) -> i32 {
                 return 1;
             }
         };
-        let sig = fa::read(inp.join("advisories.json.sig")).unwrap_or_default();
+        let sig = registry_index::read_signatures(&inp.join("advisories.json.sig"));
         let fopts = loft::registry_advisories::LoadOptions {
             allow_unsigned,
             ..Default::default()
