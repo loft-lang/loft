@@ -517,6 +517,21 @@ static void loft_sha256_hex(const uint8_t *p, size_t n, char hex[65]) {
     for (int i = 0; i < 8; i++) snprintf(hex + 8 * i, 9, "%08x", (unsigned) h[i]);
 }
 
+/* Whether the SHA-256 of `p[0..n)` is the 64 hex digits `want` names, in either case, and
+ * nothing after them: a pin is all or nothing. */
+static int loft_sha256_matches(const uint8_t *p, size_t n, const char *want) {
+    char hex[65];
+    loft_sha256_hex(p, n, hex);
+    size_t i = 0;
+    while (want[i] && i < 64) {
+        char c = want[i];
+        if (c >= 'A' && c <= 'Z') c = (char) (c - 'A' + 'a');
+        if (c != hex[i]) return 0;
+        i++;
+    }
+    return i == 64 && want[64] == 0;
+}
+
 /* ── The guard beside an image (`store_guard`, `@FR-S-Guard`) ────────────────────────────────
  * `<image>.guard`: what the image and its sidecar hashed to when they were written, checked
  * before a loader reads either.  A reader takes the lines it knows and passes over the rest:

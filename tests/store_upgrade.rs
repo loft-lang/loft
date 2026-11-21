@@ -1219,6 +1219,59 @@ fn cell_every_whole_image_loader_converts() {
     let _ = loft::file_access::remove_dir_all(&dir);
 }
 
+/// `store_load_url`'s fourth argument pins the layout sidecar beside the image: the
+/// `.dschema` decides how the pinned bytes are read, so whoever can change it on the host
+/// could change what the image means.  Expected, both backends: the image pin alone loads
+/// (the sidecar unpinned, as before); both pins load; a wrong sidecar pin, a sidecar that
+/// was edited after it was pinned, and a pinned sidecar that is missing each refuse the
+/// load and leave the collection empty.
+#[test]
+fn cell_store_load_url_pins_the_sidecar_when_asked() {
+    let writer = "struct Item { id: integer, title: text }\nfn main() {\n  h: hash<Item[id]> = [];\n  h += [Item { id: 1, title: \"one1\" }, Item { id: 2, title: \"two2\" }];\n  println(\"saved {store_persist_copy(h, \\\"a.store\\\")}\");\n}\n";
+    let dir = write_store("url_sidecar_pin", writer);
+    let (image, sidecar) = store_bytes(&dir);
+    let url = format!(
+        "file://{}",
+        dir.join("a.store").display().to_string().replace('\\', "/")
+    );
+    let pin = loft::integrity::sha256_hex(&image);
+    let schema = loft::integrity::sha256_hex(&sidecar);
+    let wrong = "0".repeat(64);
+    let reader = |extra: &str| {
+        format!(
+            "struct Item {{ id: integer, title: text }}\nfn main() {{\n  h: hash<Item[id]> = [];\n  ok = store_load_url(h, \"{url}\", \"{pin}\"{extra});\n  println(\"{{ok}} {{len(h)}} {{h[2]?.title}}\");\n}}\n"
+        )
+    };
+    let cases = [
+        ("image_pin_only", String::new(), "true 2 two2\n"),
+        ("both_pins", format!(", \"{schema}\""), "true 2 two2\n"),
+        ("wrong_schema_pin", format!(", \"{wrong}\""), "false 0 \n"),
+    ];
+    for (name, extra, expect) in &cases {
+        loft::file_access::write(dir.join("b.loft"), reader(extra)).unwrap();
+        reads(name, &dir, expect, name);
+    }
+    // The sidecar edited after it was pinned: a trailing byte the layout reader ignores.
+    let mut edited = sidecar.clone();
+    edited.push(b'\n');
+    loft::file_access::write(dir.join("a.store.dschema"), &edited).unwrap();
+    loft::file_access::write(dir.join("b.loft"), reader(&format!(", \"{schema}\""))).unwrap();
+    reads(
+        "edited_sidecar",
+        &dir,
+        "false 0 \n",
+        "a sidecar changed after its pin",
+    );
+    loft::file_access::remove_file(dir.join("a.store.dschema")).unwrap();
+    reads(
+        "missing_sidecar",
+        &dir,
+        "false 0 \n",
+        "a pinned sidecar that is missing",
+    );
+    let _ = loft::file_access::remove_dir_all(&dir);
+}
+
 /// The live build swap's restore (@PLN196 step 8, open question 4): `swap_world` takes the
 /// previous build's world from `LOFT_RESUME` as a store image and converts it into this
 /// build's types.  The world holds a hash and a REFERENCE into it, which survive the load into

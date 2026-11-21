@@ -380,7 +380,7 @@ impl FnWriter<'_> {
         }
     }
 
-    /// `store_load_url(r, url, sha)` and `store_load_url_trusted(r, url)` (`loft_net.h`): the
+    /// `store_load_url(r, url, sha, schema_sha)` and `store_load_url_trusted(r, url)` (`loft_net.h`): the
     /// gate reads the layout of the store's root type, as `store_load`'s does.
     fn load_url(
         &mut self,
@@ -410,10 +410,12 @@ impl FnWriter<'_> {
         let mut es = es.into_iter();
         let r = as_ref(es.next().ok_or("a URL load without its value")?)?;
         let url = as_view(es.next().ok_or("a URL load without its URL")?)?;
-        let sha = match es.next() {
-            Some(e) => format!("{}, ", as_view(e)?),
-            None => String::new(),
-        };
+        // `store_load_url`'s image pin and its sidecar pin (`schema_sha256`, "" when left
+        // out); the trusted twin takes neither.
+        let mut sha = String::new();
+        for e in es {
+            sha.push_str(&format!("{}, ", as_view(e)?));
+        }
         let f = if name == "n_store_load_url" {
             "loft_store_load_url"
         } else {

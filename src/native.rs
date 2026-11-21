@@ -1480,16 +1480,18 @@ fn n_store_load_keys_text(stores: &mut Stores, stack: &mut DbRef) {
 /// HTTP(S) (or `file://`) from a TRUSTED source, verify its SHA-256 against the
 /// caller-pinned digest, and (only on a match) HEAP-load it into the collection's
 /// slot.  A fetch error or hash mismatch refuses (returns false, adopts nothing).
-/// Args pop in reverse: sha256, url, local.  @PLN97 arc G Phase 0.
+/// Args pop in reverse: schema_sha256 ("" when left out: the sidecar unpinned), sha256, url,
+/// local.  @PLN97 arc G Phase 0.
 #[cfg(any(
     feature = "registry",
     all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm"))
 ))]
 fn n_store_load_url(stores: &mut Stores, stack: &mut DbRef) {
+    let v_schema = stores.get::<Str>(stack);
     let v_sha = stores.get::<Str>(stack);
     let v_url = stores.get::<Str>(stack);
     let v_ref = stores.get::<DbRef>(stack);
-    let ok = stores.load_url_verified(v_ref.store_nr, v_url.str(), v_sha.str());
+    let ok = stores.load_url_verified(v_ref.store_nr, v_url.str(), v_sha.str(), v_schema.str());
     stores.put(stack, ok);
 }
 
