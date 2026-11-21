@@ -794,7 +794,7 @@ elab	refused	tests/scripts/store_compact_slack_730.loft
 elab	refused	tests/scripts/store_digest_b0.loft
 elab	refused	tests/scripts/store_paged_enum_field.loft
 
-layer	elab-functions	agree	14075	of	24176
+layer	elab-functions	agree	14112	of	24172
 elab-functions	agree	lib/docs.loft::Anchor
 elab-functions	agree	lib/docs.loft::Character
 elab-functions	agree	lib/docs.loft::Double
@@ -10586,6 +10586,7 @@ elab-functions	agree	loft-suite/rules/types/N-Join/a-compound-assignment-does-no
 elab-functions	agree	loft-suite/rules/types/N-Join/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::n_mkv_b
 elab-functions	agree	loft-suite/rules/types/N-Join/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::n_val
 elab-functions	agree	loft-suite/rules/types/N-Join/a-compound-assignment-does-not-type-a-local-bound-from-a-later-function.loft::vector<R>
+elab-functions	agree	loft-suite/rules/types/N-Match/a-null-arm-matches-a-null-subject-of-any-kind.loft::(schema)
 elab-functions	agree	loft-suite/rules/types/N-Match/a-null-arm-matches-a-null-subject-of-any-kind.loft::A
 elab-functions	agree	loft-suite/rules/types/N-Match/a-null-arm-matches-a-null-subject-of-any-kind.loft::B
 elab-functions	agree	loft-suite/rules/types/N-Match/a-null-arm-matches-a-null-subject-of-any-kind.loft::C
@@ -10593,15 +10594,26 @@ elab-functions	agree	loft-suite/rules/types/N-Match/a-null-arm-matches-a-null-su
 elab-functions	agree	loft-suite/rules/types/N-Match/a-null-arm-matches-a-null-subject-of-any-kind.loft::Fn
 elab-functions	agree	loft-suite/rules/types/N-Match/a-null-arm-matches-a-null-subject-of-any-kind.loft::H
 elab-functions	agree	loft-suite/rules/types/N-Match/a-null-arm-matches-a-null-subject-of-any-kind.loft::Id
+elab-functions	agree	loft-suite/rules/types/N-Match/a-null-arm-matches-a-null-subject-of-any-kind.loft::K
+elab-functions	agree	loft-suite/rules/types/N-Match/a-null-arm-matches-a-null-subject-of-any-kind.loft::KV
+elab-functions	agree	loft-suite/rules/types/N-Match/a-null-arm-matches-a-null-subject-of-any-kind.loft::O
 elab-functions	agree	loft-suite/rules/types/N-Match/a-null-arm-matches-a-null-subject-of-any-kind.loft::S
+elab-functions	agree	loft-suite/rules/types/N-Match/a-null-arm-matches-a-null-subject-of-any-kind.loft::S3S
 elab-functions	agree	loft-suite/rules/types/N-Match/a-null-arm-matches-a-null-subject-of-any-kind.loft::Tok
 elab-functions	agree	loft-suite/rules/types/N-Match/a-null-arm-matches-a-null-subject-of-any-kind.loft::i_4text_n_assert_eq
 elab-functions	agree	loft-suite/rules/types/N-Match/a-null-arm-matches-a-null-subject-of-any-kind.loft::i_7integer_n_assert_eq
+elab-functions	agree	loft-suite/rules/types/N-Match/a-null-arm-matches-a-null-subject-of-any-kind.loft::main_vector<C>
+elab-functions	agree	loft-suite/rules/types/N-Match/a-null-arm-matches-a-null-subject-of-any-kind.loft::main_vector<C?>
+elab-functions	agree	loft-suite/rules/types/N-Match/a-null-arm-matches-a-null-subject-of-any-kind.loft::main_vector<S3S>
 elab-functions	agree	loft-suite/rules/types/N-Match/a-null-arm-matches-a-null-subject-of-any-kind.loft::n_a_match_without_a_null_arm_is_unchanged
 elab-functions	agree	loft-suite/rules/types/N-Match/a-null-arm-matches-a-null-subject-of-any-kind.loft::n_a_null_arm_matches_an_absent_struct_enum
 elab-functions	agree	loft-suite/rules/types/N-Match/a-null-arm-matches-a-null-subject-of-any-kind.loft::n_a_present_struct_enum_still_reaches_its_variant
 elab-functions	agree	loft-suite/rules/types/N-Match/a-null-arm-matches-a-null-subject-of-any-kind.loft::n_mk
+elab-functions	agree	loft-suite/rules/types/N-Match/a-null-arm-matches-a-null-subject-of-any-kind.loft::n_s2_a_match_without_a_null_arm_is_unchanged
 elab-functions	agree	loft-suite/rules/types/N-Match/a-null-arm-matches-a-null-subject-of-any-kind.loft::n_the_scalar_spelling_is_unchanged
+elab-functions	agree	loft-suite/rules/types/N-Match/a-null-arm-matches-a-null-subject-of-any-kind.loft::vector<C>
+elab-functions	agree	loft-suite/rules/types/N-Match/a-null-arm-matches-a-null-subject-of-any-kind.loft::vector<C?>
+elab-functions	agree	loft-suite/rules/types/N-Match/a-null-arm-matches-a-null-subject-of-any-kind.loft::vector<S3S>
 elab-functions	agree	loft-suite/rules/types/N-Opt/has-null-is-owed-by-every-rule-that-constructs-an-optional.loft::(schema)
 elab-functions	agree	loft-suite/rules/types/N-Opt/has-null-is-owed-by-every-rule-that-constructs-an-optional.loft::Bag78
 elab-functions	agree	loft-suite/rules/types/N-Opt/has-null-is-owed-by-every-rule-that-constructs-an-optional.loft::RS78
@@ -11113,8 +11125,26 @@ elab-functions	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-r
 elab-functions	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::X#2
 elab-functions	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::Y
 elab-functions	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::Z
+elab-functions	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::__const_n_tail_f
+elab-functions	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::__tuple<float,integer>
 elab-functions	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::main_vector<B>
+elab-functions	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::main_vector<float>
+elab-functions	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::n___dflt_FD_v
+elab-functions	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::n___dflt_FD_w
+elab-functions	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::n___dflt_dflt_e_v
+elab-functions	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::n___dflt_dflt_f_v
+elab-functions	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::n_arg_b
+elab-functions	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::n_arg_e
+elab-functions	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::n_arg_f
+elab-functions	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::n_arg_o
+elab-functions	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::n_arg_s
+elab-functions	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::n_arg_st
+elab-functions	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::n_arg_u
+elab-functions	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::n_dflt_f
+elab-functions	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::n_tail_e
+elab-functions	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::n_tail_f
 elab-functions	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::vector<B>
+elab-functions	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::vector<float>
 elab-functions	agree	loft-suite/rules/types/T-Chk/1682-a-null-member-in-the-first-tuple-arm-does-not-pin-the-join.loft::(schema)
 elab-functions	agree	loft-suite/rules/types/T-Chk/1682-a-null-member-in-the-first-tuple-arm-does-not-pin-the-join.loft::A
 elab-functions	agree	loft-suite/rules/types/T-Chk/1682-a-null-member-in-the-first-tuple-arm-does-not-pin-the-join.loft::B
@@ -12526,11 +12556,18 @@ elab-functions	agree	tests/scripts/1357-every-text-buffer-a-frame-mints-is-relea
 elab-functions	agree	tests/scripts/1357-every-text-buffer-a-frame-mints-is-released.loft::n_same
 elab-functions	agree	tests/scripts/1357-every-text-buffer-a-frame-mints-is-released.loft::n_text_src
 elab-functions	agree	tests/scripts/14-formatting.loft::n_nullable_float
+elab-functions	agree	tests/scripts/1416-a-value-enum-element-may-be-absent.loft::(schema)
 elab-functions	agree	tests/scripts/1416-a-value-enum-element-may-be-absent.loft::Blue
 elab-functions	agree	tests/scripts/1416-a-value-enum-element-may-be-absent.loft::Color
 elab-functions	agree	tests/scripts/1416-a-value-enum-element-may-be-absent.loft::Green
 elab-functions	agree	tests/scripts/1416-a-value-enum-element-may-be-absent.loft::Holder
 elab-functions	agree	tests/scripts/1416-a-value-enum-element-may-be-absent.loft::Red
+elab-functions	agree	tests/scripts/1416-a-value-enum-element-may-be-absent.loft::i_4text_n_assert_eq
+elab-functions	agree	tests/scripts/1416-a-value-enum-element-may-be-absent.loft::main_vector<Color>
+elab-functions	agree	tests/scripts/1416-a-value-enum-element-may-be-absent.loft::main_vector<Color?>
+elab-functions	agree	tests/scripts/1416-a-value-enum-element-may-be-absent.loft::n_a_dense_value_enum_vector_is_unchanged
+elab-functions	agree	tests/scripts/1416-a-value-enum-element-may-be-absent.loft::vector<Color>
+elab-functions	agree	tests/scripts/1416-a-value-enum-element-may-be-absent.loft::vector<Color?>
 elab-functions	agree	tests/scripts/1511-a-call-result-in-a-tuple-member-releases-once.loft::(schema)
 elab-functions	agree	tests/scripts/1511-a-call-result-in-a-tuple-member-releases-once.loft::Box
 elab-functions	agree	tests/scripts/1511-a-call-result-in-a-tuple-member-releases-once.loft::H
@@ -14871,7 +14908,7 @@ elab-functions	agree	tests/scripts/store_paged_enum_field.loft::main_vector<inte
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::n_bytes
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::vector<integer(0, 255)>
 
-layer	elab-pass1	agree	12062	of	18012
+layer	elab-pass1	agree	12071	of	18028
 elab-pass1	agree	lib/code.loft::t_4Code_add_block
 elab-pass1	agree	lib/code.loft::t_4Code_add_if
 elab-pass1	agree	lib/code.loft::t_4Code_add_loop
@@ -22571,6 +22608,7 @@ elab-pass1	agree	loft-suite/rules/types/N-Join/a-parse-in-one-assignment-makes-t
 elab-pass1	agree	loft-suite/rules/types/N-Match/a-null-arm-matches-a-null-subject-of-any-kind.loft::n_a_match_without_a_null_arm_is_unchanged
 elab-pass1	agree	loft-suite/rules/types/N-Match/a-null-arm-matches-a-null-subject-of-any-kind.loft::n_a_null_arm_matches_an_absent_struct_enum
 elab-pass1	agree	loft-suite/rules/types/N-Match/a-null-arm-matches-a-null-subject-of-any-kind.loft::n_a_present_struct_enum_still_reaches_its_variant
+elab-pass1	agree	loft-suite/rules/types/N-Match/a-null-arm-matches-a-null-subject-of-any-kind.loft::n_s2_a_match_without_a_null_arm_is_unchanged
 elab-pass1	agree	loft-suite/rules/types/N-Match/a-null-arm-matches-a-null-subject-of-any-kind.loft::n_the_scalar_spelling_is_unchanged
 elab-pass1	agree	loft-suite/rules/types/N-Opt/has-null-is-owed-by-every-rule-that-constructs-an-optional.loft::n_dec78
 elab-pass1	agree	loft-suite/rules/types/N-Opt/has-null-is-owed-by-every-rule-that-constructs-an-optional.loft::n_inc78
@@ -22893,6 +22931,14 @@ elab-pass1	agree	loft-suite/rules/types/T-Chk-Lam/a-lambda-body-converts-into-it
 elab-pass1	agree	loft-suite/rules/types/T-Chk-Lam/a-lambda-body-converts-into-its-expected-return.loft::n_app_t
 elab-pass1	agree	loft-suite/rules/types/T-Chk-Lam/a-lambda-body-converts-into-its-expected-return.loft::n_area
 elab-pass1	agree	loft-suite/rules/types/T-Chk-Lam/a-lambda-body-converts-into-its-expected-return.loft::n_make
+elab-pass1	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::n_arg_b
+elab-pass1	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::n_arg_e
+elab-pass1	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::n_arg_f
+elab-pass1	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::n_arg_o
+elab-pass1	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::n_arg_s
+elab-pass1	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::n_arg_st
+elab-pass1	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::n_arg_u
+elab-pass1	agree	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft::n_dflt_f
 elab-pass1	agree	loft-suite/rules/types/T-Chk/1682-a-null-member-in-the-first-tuple-arm-does-not-pin-the-join.loft::n_chain
 elab-pass1	agree	loft-suite/rules/types/T-Chk/1682-a-null-member-in-the-first-tuple-arm-does-not-pin-the-join.loft::n_different_members
 elab-pass1	agree	loft-suite/rules/types/T-Chk/1682-a-null-member-in-the-first-tuple-arm-does-not-pin-the-join.loft::n_float_member
