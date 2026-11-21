@@ -2005,6 +2005,18 @@ fn materialize_arm(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, kt:
         return null;
       }
       b = ir::NdVar { n: rb };
+      // (An arm ending in a slice `match` that delivers itself — its element bindings copied in
+      // arm by arm, `materialize_match_value` — is a plain block typed as the buffer, no second
+      // copy around it: R-ValueRecord/1992's `else { match p { [a, ..] => a, … } }`.)
+      inner_last = el_ir::unspan(el_ir::last(ab.operators));
+      if any_block && match inner_last { NdBlock { block: ib } => ib[0].name == "vector_match", _ => false } {
+        imv = materialize_match_value(e, vars, inner_last, rb, owned);
+        if imv != null {
+          ab.operators[-1] = el_ir::respan(el_ir::last(ab.operators), imv!);
+          ab.result = [owned];
+          return ir::NdBlock { block: [ab] };
+        }
+      }
       // (A whole block copied in is typed without the store its own literal mints.)
       if any_block && !(el_ir::unspan(el_ir::last(ab.operators)) is NdVar) {
         ab.result = [el_types::without_deps(ab.result[0] ?? owned)];
