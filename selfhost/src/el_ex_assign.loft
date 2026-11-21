@@ -1444,7 +1444,9 @@ pub fn tuple_lit(e: el::El, vars: el_vars::Vars, elems: vector<integer>) -> Ex {
     if boxed_rec && !e.first_pass {
       el_vars::work_ref_p2(vars, el_types::with_deps(x.tp, []));
     }
-    if !in_boxed_tail && !(x.tp is TyOptional) && (x.tp is TyReference || x.tp is TyVector) && el_ir::unspan(x.code) is NdVar {
+    // (A member read off a PARAMETER is left alone, `@FR-B-Ref-Alias`: the tuple holds a view.)
+    param_member = match el_ir::unspan(x.code) { NdVar { n: pmv } => vars.vars[pmv].argument, _ => false };
+    if !in_boxed_tail && !(x.tp is TyOptional) && (x.tp is TyReference || x.tp is TyVector) && el_ir::unspan(x.code) is NdVar && !param_member {
       c = tuple_member_copy(e, vars, x);
       if c == null {
         return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -1509,6 +1511,13 @@ pub fn tuple_lit(e: el::El, vars: el_vars::Vars, elems: vector<integer>) -> Ex {
     if call_rec {
       items += [x.code];
       tps += [el_types::without_deps(x.tp)];
+      continue;
+    }
+    // A record or vector PARAMETER member is the parameter itself, a view of it (`ref(P)["p"]`).
+    if param_member && !(x.tp is TyOptional) && (x.tp is TyReference || x.tp is TyVector) {
+      pmn = match el_ir::unspan(x.code) { NdVar { n: pmv2 } => pmv2, _ => -1 };
+      items += [x.code];
+      tps += [el_types::with_deps(el_types::without_deps(x.tp), [pmn])];
       continue;
     }
     if !(is_scalar(x.tp) || x.tp is TyText || nullable_scalar || vec_lit || boxed_rec || plain_inner || call_rec) {
