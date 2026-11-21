@@ -846,7 +846,8 @@ static void loft_stack_overflow(const char *file, uint32_t line) {
 /* `stack_trace()` reads the frames, so a unit that reaches it keeps them in every build; any
  * other unit keeps them where the build asks for the call chain a fault prints
  * (`-DLOFT_CALL_CHAIN`, the semantics tier) and compiles the pushes away where it does not. */
-#if (defined(LOFT_FRAMES) || defined(LOFT_LEAK_SITES) || defined(LOFT_STRICT_STORES) || defined(LOFT_DOUBLE_FREE)) \
+#if (defined(LOFT_FRAMES) || defined(LOFT_LEAK_SITES) || defined(LOFT_STRICT_STORES) || defined(LOFT_DOUBLE_FREE) \
+     || defined(LOFT_ALLOC_TRACE)) \
     && !defined(LOFT_CALL_CHAIN)
 #define LOFT_CALL_CHAIN 1
 #endif
@@ -889,6 +890,22 @@ static void loft_frame_pop(void) {
 static void loft_frame_site(uint32_t line) {
     if (loft_nframes) loft_frames[loft_nframes - 1].site = line;
 }
+#ifdef LOFT_ALLOC_TRACE
+/* `LOFT_ALLOC_TRACE`'s sites (`store_census::alloc_event`): `@ <line>` before an event whose
+ * source line — the running function's — is not the last one written.  The writer records a
+ * line only before a statement that can fault, so a function that has none gives its
+ * declaration instead, written `~<line>`. */
+static void loft_trace_site(FILE *f) {
+    static LOFT_TLS uint32_t last = 0;
+    if (!loft_nframes) return;
+    const loft_frame *fr = &loft_frames[loft_nframes - 1];
+    uint32_t key = fr->site ? fr->site : fr->decl | 0x80000000u;
+    if ((key & 0x7FFFFFFFu) == 0 || key == last) return;
+    last = key;
+    fprintf(f, fr->site ? "@ %u\n" : "@ ~%u\n", (unsigned) (key & 0x7FFFFFFFu));
+}
+static void (*loft_trace_site_hook)(FILE *f) = loft_trace_site;
+#endif
 /* A test that failed left its frames pushed (`longjmp`); the next starts from none. */
 #define LOFT_FRAMES_RESET() (loft_nframes = 0)
 #else

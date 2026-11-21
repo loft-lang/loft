@@ -15,9 +15,11 @@ exactly as the interpreter does, so every record sits where the interpreter puts
 write `LOFT_ALLOC_TRACE` — the interpreter from the `op-census` build (`cargo build --release
 --lib --bin loft --features op-census --target-dir target/op-census`, the default `LOFT_BIN`),
 the C built with `-DLOFT_ALLOC_TRACE`.  Only what follows the `M` line (the program starts)
-counts, on stores made after it, each named by the order it first appears: the interpreter's
-value stack, its constant store and the stores it builds constants in are its own setup.  A
-program without `main` is skipped.
+counts, on stores made after it, each named by the order it first appears, and each shown with
+the source line it ran at (the `@ <line>` lines both traces write when the line changes): the interpreter's
+value stack, its constant store and the stores it builds constants in are its own setup, and
+so are a par worker's stack and constant store, which the trace marks `S`.  A program without
+`main` is skipped.
 
 A rewrite the C writer applies and the interpreter does not (`C_ONLY_REWRITES`) may ask for
 other room: `(R-PushFill)` reserves a loop's pushes before the loop, where the interpreter grows
@@ -39,25 +41,49 @@ C_ONLY_REWRITES = [
     ("R-AppendTwin", "LOFT_NO_APPEND_TWIN"),
 ]
 
+class Event(str):
+    """One event line, compared as its text, with the source line it ran at (`@`, `?` unknown)."""
+    def __new__(cls, text, line):
+        e = super().__new__(cls, text)
+        e.line = line
+        return e
+
 def program_events(lines):
     """The events after the program starts (`M`), on stores made after it, each store named by
-    the order it first appears."""
-    out, names, started = [], {}, False
-    for line in lines:
-        f = line.split()
+    the order it first appears.  A store the interpreter marks as its own (`S`: a state's value
+    stack and constant store, which a par worker makes too) is left out — a C unit has neither."""
+    rows = [l.split() for l in lines]
+    # A serial can name more than one store over a run (a par worker counts its own), so an
+    # `S` marks the store made LAST under its serial: its `N` and every event up to the next.
+    own, last = set(), {}
+    for i, f in enumerate(rows):
+        if len(f) >= 2 and f[0] == "N":
+            last[f[1]] = i
+        elif len(f) == 2 and f[0] == "S" and f[1] in last:
+            own.add(last[f[1]])
+    out, names, started, dropped, at = [], {}, False, set(), "?"
+    for i, f in enumerate(rows):
         if not f:
+            continue
+        if f[0] == "@":
+            at = f[1] if len(f) > 1 else "?"
             continue
         if f[0] == "M":
             started = True
             continue
-        if not started or len(f) < 2:
+        if len(f) >= 2 and f[0] == "N":
+            if i in own:
+                dropped.add(f[1])
+            else:
+                dropped.discard(f[1])
+        if not started or len(f) < 2 or f[0] == "S" or f[1] in dropped:
             continue
         if f[0] == "N":
             names[f[1]] = str(len(names) + 1)
         if f[1] not in names:
             continue
         f[1] = names[f[1]]
-        out.append(" ".join(f))
+        out.append(Event(" ".join(f), at))
     return out
 
 def interp(prog, d, env):
@@ -131,8 +157,8 @@ def main():
             continue
         print(f"{prog}: differs at event {i} of {len(want)} / {len(got)}")
         for k in range(max(0, i - 4), i + 4):
-            a = want[k] if k < len(want) else "-"
-            b = got[k] if k < len(got) else "-"
+            a = f"{want[k]:<18} @{want[k].line}" if k < len(want) else "-"
+            b = f"{got[k]:<18} @{got[k].line}" if k < len(got) else "-"
             print(f"   {'>' if k == i else ' '} {a:<28} {b}")
         if attr:
             who = attribute(prog)

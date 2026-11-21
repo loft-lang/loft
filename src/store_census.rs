@@ -162,7 +162,9 @@ pub fn at_ticks(value: i64) {
 /// a store freed, `C <store> <words> <position>` a claim (the words the record CLAIMED, which a
 /// whole free block can make more than were asked), `D <store> <position>` a delete,
 /// `R <store> <position> <words> <position>` a resize that grew in place or moved the record
-/// (the moving one after the claim and delete it makes).  A store is named by the order it was made (`alloc_serial`), not
+/// (the moving one after the claim and delete it makes), `S <store>` a store the interpreter
+/// state makes for itself (its value stack, its constant store), which a C unit has no twin of,
+/// and `@ <line>` the source line of the events after it, written when it changes.  A store is named by the order it was made (`alloc_serial`), not
 /// by its slot: the interpreter's slot 0 is its value stack, native's an ordinary store, so
 /// the two number stores differently while placing every record alike.  It is what a second
 /// runtime compares itself against to keep loft's memory model rather than one of its own
@@ -170,15 +172,67 @@ pub fn at_ticks(value: i64) {
 /// file is written line by line, unbuffered, so a run that aborts keeps what it did.  Every
 /// call site is itself `#[cfg(feature = "op-census")]`: a build without the feature compiles
 /// no trace code at all.
+/// `LOFT_ALLOC_TRACE`'s sites: the bytecode position of the op running on this thread, and the
+/// interpreter's line table (`State::line_numbers`, handed over when the program starts), so an
+/// event can be preceded by `@ <line>` when its source line is not the last one written — the
+/// line a comparison names beside a difference (the C runtime writes the same).  A worker
+/// thread has no table and writes no site.
+#[cfg(feature = "op-census")]
+thread_local! {
+    static SITE_PC: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    static SITE_LINES: std::cell::RefCell<Option<(std::collections::BTreeMap<u32, u32>, u32)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Is `LOFT_ALLOC_TRACE` set?  The interpreter then runs its full loop, which publishes every
+/// op's position ([`at_pc`]).
+#[cfg(feature = "op-census")]
+pub fn alloc_trace_on() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| crate::platform::env_output("LOFT_ALLOC_TRACE").is_some())
+}
+
+/// The op at `pc` is about to run on this thread.
+#[cfg(feature = "op-census")]
+#[inline]
+pub fn at_pc(pc: u32) {
+    SITE_PC.with(|c| c.set(pc));
+}
+
+/// The program's line table, for the sites of the events that follow.
+#[cfg(feature = "op-census")]
+pub fn set_lines(lines: std::collections::BTreeMap<u32, u32>) {
+    SITE_LINES.with_borrow_mut(|l| *l = Some((lines, 0)));
+}
+
+/// The `@ <line>` to write before an event, when this thread's line moved since the last one.
+#[cfg(feature = "op-census")]
+fn site_line() -> Option<u32> {
+    let pc = SITE_PC.with(std::cell::Cell::get);
+    SITE_LINES.with_borrow_mut(|l| {
+        let (lines, last) = l.as_mut()?;
+        let line = lines.range(..=pc).next_back().map_or(0, |(_, &l)| l);
+        (line != 0 && line != *last).then(|| {
+            *last = line;
+            line
+        })
+    })
+}
+
 #[cfg(feature = "op-census")]
 pub fn alloc_event(line: std::fmt::Arguments) {
     use std::sync::Mutex;
+    let text = line.to_string();
+    let site = if text.starts_with(['M', 'S']) { None } else { site_line() };
     static FILE: OnceLock<Option<Mutex<crate::file_access::File>>> = OnceLock::new();
     static STDERR: OnceLock<bool> = OnceLock::new();
     if *STDERR
         .get_or_init(|| crate::platform::env_output("LOFT_ALLOC_TRACE").is_some_and(|p| p == "-"))
     {
-        eprintln!("{line}");
+        if let Some(at) = site {
+            eprintln!("@ {at}");
+        }
+        eprintln!("{text}");
         return;
     }
     let file = FILE.get_or_init(|| {
@@ -190,6 +244,9 @@ pub fn alloc_event(line: std::fmt::Arguments) {
     if let Some(f) = file
         && let Ok(mut f) = f.lock()
     {
-        let _ = writeln!(f, "{line}");
+        if let Some(at) = site {
+            let _ = writeln!(f, "@ {at}");
+        }
+        let _ = writeln!(f, "{text}");
     }
 }

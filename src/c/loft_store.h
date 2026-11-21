@@ -421,7 +421,16 @@ static FILE *loft_trace_file(void) {
     }
     return f;
 }
-#define LOFT_TRACE(...) do { FILE *loft_tf_ = loft_trace_file(); if (loft_tf_) fprintf(loft_tf_, __VA_ARGS__); } while (0)
+/* The line of the events that follow (loft_rt.h, which sets it once the frames exist). */
+static void (*loft_trace_site_hook)(FILE *f);
+#define LOFT_TRACE(...)                                                                     \
+    do {                                                                                    \
+        FILE *loft_tf_ = loft_trace_file();                                                 \
+        if (loft_tf_) {                                                                     \
+            if (loft_trace_site_hook) loft_trace_site_hook(loft_tf_);                       \
+            fprintf(loft_tf_, __VA_ARGS__);                                                 \
+        }                                                                                   \
+    } while (0)
 #else
 #define LOFT_TRACE(...) do { } while (0)
 #endif

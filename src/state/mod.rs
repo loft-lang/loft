@@ -986,6 +986,13 @@ impl State {
         // Allocate the constant store (CONST_STORE = 1). Starts empty,
         // populated during byte_code(), locked before execution.
         let _const_store = db.database(100);
+        // `LOFT_ALLOC_TRACE` — the two stores every interpreter state makes for itself, a par
+        // worker's included: a C unit has neither (STORE_MODEL D26), so the trace marks them
+        // as the interpreter's own and a comparison leaves them out.
+        #[cfg(feature = "op-census")]
+        for r in [&stack_cur, &_const_store] {
+            crate::store_census::alloc_event(format_args!("S {}", db.store(r).alloc_serial));
+        }
         debug_assert_eq!(
             _const_store.store_nr,
             crate::database::CONST_STORE,
@@ -6060,6 +6067,12 @@ impl State {
     /// keys every op.  One home for the question, which the lean loop's entry and its stop
     /// path both ask.
     fn needs_full_loop(&self) -> bool {
+        // `LOFT_ALLOC_TRACE` names each event's source line, from the position the full loop
+        // publishes per op.
+        #[cfg(feature = "op-census")]
+        if crate::store_census::alloc_trace_on() {
+            return true;
+        }
         crate::op_census::armed()
             || self
                 .debug
@@ -7454,7 +7467,10 @@ impl State {
         crate::timeout::checkpoint_fn("run-interpret", "<entry>", "", 0);
         // `LOFT_ALLOC_TRACE` — the program starts: what came before was the run's own setup.
         #[cfg(feature = "op-census")]
-        crate::store_census::alloc_event(format_args!("M"));
+        {
+            crate::store_census::set_lines(self.line_numbers.clone());
+            crate::store_census::alloc_event(format_args!("M"));
+        }
         // loft#952 — and the vocabulary its per-call breadcrumb reports in.  `"<entry>"`
         // above is a placeholder that names nothing; from here on a hard-kill names the
         // loft function the run was in.  Skipped entirely when no watchdog is armed.
@@ -7808,6 +7824,8 @@ impl State {
             // allocated while executing this op records it as its `created_at` (one u32
             // write per op, alongside the existing crash-report context publish below).
             self.database.alloc_pc = op_pos_rt;
+            #[cfg(feature = "op-census")]
+            crate::store_census::at_pc(op_pos_rt);
             // @PLN16 debugger — at a registered breakpoint, capture the frame (and
             // in stepping mode, suspend: return to the driver with the frame in
             // `debug.paused`, to be resumed via `resume`).  Inert (one branch) when
@@ -9127,6 +9145,9 @@ impl State {
         // DEFINED: the stack census reads the stack store whole (`Store::defined`).
         let stack_cur = db.database_defined(1000);
         crate::store_census::set_stack_store(stack_cur.store_nr);
+        // `LOFT_ALLOC_TRACE` — the worker's value stack is the interpreter's own (`State::new`).
+        #[cfg(feature = "op-census")]
+        crate::store_census::alloc_event(format_args!("S {}", db.store(&stack_cur).alloc_serial));
         // @PLN154 — a worker runs the same bytecode on its own frame, so it gets its own
         // shadow; without this the detector would be blind to exactly the `par` arms.
         if crate::stack_verify::enabled() {
