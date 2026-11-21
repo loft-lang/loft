@@ -2804,6 +2804,16 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   vt = el_vars::tp(vars, v);
+  // (A LINK to a record local — `pd = &d`, `d: S?` — is written through: the literal is built
+  // in a fresh buffer of its own and the link set to it, `pd = {#Object __ref_p2_N …}`, loft#1372.)
+  link_rec = match vt { TyRefVar { inner: lri } => match el_types::base(lri) { TyReference { n: lrd } => lrd == d, _ => false }, _ => false };
+  if link_rec {
+    o = el_ex_object::object_fresh(e, vars, d, fields, ir::TyReference { n: d, dep: [] });
+    if !e.first_pass && el_ir::is_null(o.code) {
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    return ex(el_ir::v_set(v, o.code), ir::TyRewritten { inner: vt });
+  }
   // `@FR-R-InPlaceLiteral`'s variant clause (`variant_rebinds_local`): a variant literal
   // rebuilds a local of its struct enum in place, as a struct literal does a local of its struct.
   matches = match el_types::base(vt) {
