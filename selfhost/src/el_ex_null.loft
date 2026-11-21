@@ -867,6 +867,9 @@ pub fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: intege
     NdVar { n: _ } => {},
     _ => {
       held = el_vars::create_unique(vars, "ncr", b);
+      // (Its second-pass type: a call's answer borrows the buffer this pass minted for it,
+      // `vector<integer>["__ref_2"]`, which the first pass's type could not name.)
+      el_vars::set_var_type(vars, held, b);
       subject = ir::NdVar { n: held };
     }
   }
@@ -2324,6 +2327,8 @@ pub fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
     // result, its deps left out (`parse_return`, @P365): an empty `return []` is that vector.
     hinted = el_types::is_collection(el_types::base(result)) && e.p.nodes[x!] is SVecLit;
     // `parent_tp` is `Null` there: the literal's element temp takes no context's type.
+    outer_expect_node = vars.expect_node;
+    outer_expect = ex(ir::NdNull, vars.expect);
     if hinted {
       vars.expect_node = x!;
       vars.expect = el_types::without_deps(el_types::base(result));
@@ -2349,7 +2354,8 @@ pub fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
       el_ex_assign::expression(e, vars, x!)
     };
     if hinted {
-      vars.expect_node = -1;
+      vars.expect_node = outer_expect_node;
+      vars.expect = outer_expect.tp;
     }
     // `convert`'s tagged arm (`@FR-L-Null-Tag`) at a `return`, as at a body's tail: a
     // `__nullable<S>` value of a `-> S?` function is read through its tag, absence the

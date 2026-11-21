@@ -4114,6 +4114,10 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
   }
   outer_into = vars.read_into;
   vars.read_into = leftmost(e, rhs!);
+  // (The expectation a statement around this bind set — a function tail's — comes back after
+  // it.)
+  outer_expect_node = vars.expect_node;
+  outer_expect = ex(ir::NdNull, vars.expect);
   vars.expect_node = rhs!;
   vars.expect = el_vars::tp(vars, v);
   outer_bind = vars.bind_rhs;
@@ -4188,7 +4192,8 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
     return ex(ir::NdNull, ir::TyVoid);
   }
   vars.bind_rhs = outer_bind;
-  vars.expect_node = -1;
+  vars.expect_node = outer_expect_node;
+  vars.expect = outer_expect.tp;
   vars.read_into = outer_into;
   vars.concat_dest = -1;
   vars.slice_node = outer_slice;
