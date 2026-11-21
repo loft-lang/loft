@@ -633,7 +633,7 @@ fn unhex32(hex: &str) -> Option<[u8; 32]> {
 /// store-format `.store` bundle written by `ir_store::save_bundle`).
 ///
 /// Uses `$XDG_CACHE_HOME/loft/` (or `$HOME/.cache/loft/`), falling back to
-/// the system temp dir if neither is set.  The filename embeds the full
+/// this user's private temp directory if neither is set.  The filename embeds the full
 /// 64-hex key so distinct builds / feature-sets / stdlib-content never
 /// collide.
 #[must_use]
@@ -642,7 +642,9 @@ pub fn stdlib_cache_path(key: &[u8; 32]) -> std::path::PathBuf {
 }
 
 /// The loft cache directory: `$XDG_CACHE_HOME/loft/` (or `$HOME/.cache/loft/`),
-/// falling back to the system temp dir.
+/// falling back to this user's private directory under the system temp dir
+/// ([`crate::platform::private_temp_dir`]): a cache in the shared temp dir is one another
+/// local user can fill first, and loft loads images and runs binaries from it.
 ///
 /// Also the value the stdlib `cache_dir()` returns (`Stores::os_cache_dir_native`).
 #[must_use]
@@ -650,7 +652,7 @@ pub fn cache_base_dir() -> std::path::PathBuf {
     std::env::var_os("XDG_CACHE_HOME")
         .map(std::path::PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".cache")))
-        .unwrap_or_else(std::env::temp_dir)
+        .unwrap_or_else(crate::platform::private_temp_dir)
         .join("loft")
 }
 

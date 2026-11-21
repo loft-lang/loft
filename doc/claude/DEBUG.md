@@ -491,7 +491,8 @@ bytecode — and if codegen itself loops, there is no complete bytecode to read.
 
 `loft --check --native <file>` runs the **native** backend, which emits readable Rust and
 stops at the `rustc` diagnostics (a bare `--check` compiles the loft only). The generated source persists at `loft_native_*.rs` in the
-build temp dir (`$LOFT_TMPDIR`, default the system temp; the path is printed in any
+build temp dir (`$LOFT_TMPDIR`, default `loft-<uid>` under the system temp, a directory only
+you can enter; the path is printed in any
 `E0xxx`). It encodes the same for-loop / yield / dispatch logic the interpreter
 compiles to bytecode, but as named-variable Rust — so a type mismatch, a wrong
 sentinel, or a doomed loop condition is visible directly.

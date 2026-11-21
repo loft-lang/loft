@@ -286,11 +286,56 @@ pub fn other_sep() -> &'static str {
 /// a `TMPDIR` override, so it relocates only loft's own artefacts — never
 /// every other tool's temp.  Created if missing, since rustc and loft both
 /// assume the directory exists before writing into it.
+///
+/// Without `LOFT_TMPDIR` it is [`private_temp_dir`], not the system temp dir itself: what is
+/// written here is executed (a native binary) or read back (a staged page, a placement wire),
+/// and on a machine whose temp dir is shared a name another user can guess is a name they can
+/// take first.
 #[must_use]
 pub fn scratch_dir() -> std::path::PathBuf {
-    let dir = scratch_from(std::env::var_os("LOFT_TMPDIR"), std::env::temp_dir());
+    let dir = scratch_from(std::env::var_os("LOFT_TMPDIR"), private_temp_dir());
     let _ = crate::file_access::create_dir_all(&dir);
     dir
+}
+
+/// This user's own directory under the system temp dir: `loft-<uid>`, made with mode `0700`
+/// and used only while it is a real directory (not a link) owned by this user with no group
+/// or other bits ([`is_private_to_owner`]).  When the name is taken by anything else, a fresh
+/// `loft-<uid>-<random>` is made instead, created by this call or not at all, so nothing in
+/// it can have been placed there by someone else.  The system temp dir itself when neither
+/// can be made.
+///
+/// Windows: the system temp dir — it is already the user's own (`%LOCALAPPDATA%\Temp`);
+/// approved exemption: there is no uid to name the directory by.
+#[must_use]
+pub fn private_temp_dir() -> std::path::PathBuf {
+    let system = std::env::temp_dir();
+    #[cfg(unix)]
+    {
+        use std::hash::{BuildHasher as _, Hasher as _};
+        // SAFETY: `geteuid` reads a process attribute and cannot fail.
+        let uid = unsafe { libc::geteuid() };
+        let ours = |dir: &std::path::Path| {
+            crate::file_access::symlink_metadata(dir)
+                .is_ok_and(|md| md.is_dir() && is_private_to_owner(&md, false))
+        };
+        let make = |dir: &std::path::Path| {
+            crate::file_access::create_dir(dir).is_ok() && set_permission_bits(dir, 0o700).is_ok()
+        };
+        let stable = system.join(format!("loft-{uid}"));
+        if make(&stable) || ours(&stable) {
+            return stable;
+        }
+        for _ in 0..8 {
+            let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+            h.write_u32(std::process::id());
+            let fresh = system.join(format!("loft-{uid}-{:016x}", h.finish()));
+            if make(&fresh) {
+                return fresh;
+            }
+        }
+    }
+    system
 }
 
 /// [`scratch_dir`]'s choice, apart from the environment: `loft` (the `LOFT_TMPDIR` value) when

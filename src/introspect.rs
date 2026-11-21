@@ -453,7 +453,7 @@ fn run_diff_against_baseline(baseline: &str, buffer: &[u8]) -> std::io::Result<(
             format!("baseline file '{baseline}' not found"),
         ));
     }
-    let tmp = std::env::temp_dir().join(format!("loft_introspect_diff_{}.txt", std::process::id()));
+    let tmp = crate::platform::scratch_dir().join(format!("loft_introspect_diff_{}.txt", std::process::id()));
     crate::file_access::write(&tmp, buffer)?;
     let status =
         crate::platform::process::Spawn::new(crate::platform::process::Program::search("diff"))
