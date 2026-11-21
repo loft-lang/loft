@@ -150,6 +150,39 @@ def reverse_applies(commit, files, index_env):
     return r.returncode == 0
 
 
+def forward_applies(commit, files, index_env):
+    """Does `commit`'s diff of `files` apply as written to the tree in the scratch index — so
+    what it adds is not there yet?"""
+    patch = subprocess.run(["git", "diff", "--binary", f"{commit}^", commit, "--", *files],
+                           cwd=ROOT, capture_output=True, check=True).stdout
+    r = subprocess.run(["git", "apply", "--cached", "--check", "-"], cwd=ROOT,
+                       input=patch, capture_output=True, env=index_env)
+    return r.returncode == 0
+
+
+def uncarried(commits, registry, index_env):
+    """The commits below a squash point that the squash did NOT carry.
+
+    A squash carries the branch's tree only when it squashed that branch; a JOIN's squash
+    carries the commits the join picked, and a join that stopped at a source's `wip`
+    checkpoint left that checkpoint and the run after it out.  So a commit here whose diff
+    still applies FORWARD, and not in reverse, is not in this tree; and one that applies
+    neither way but changes a file such a commit changes builds on it.  Both go back to the
+    ordinary ladder (and its WIP rule), instead of being skipped unseen."""
+    out, touched = [], set()
+    for c in commits:
+        if len(git("rev-list", "--parents", "-n1", c).split()) > 2:
+            continue
+        code = [f for f in git("diff-tree", "--no-commit-id", "--name-only", "-r", "--root",
+                               c).splitlines() if f and not is_derived(f, registry)]
+        if not code or reverse_applies(c, code, index_env):
+            continue
+        if forward_applies(c, code, index_env) or touched.intersection(code):
+            out.append(c)
+            touched.update(code)
+    return out
+
+
 def patch_id(diff_args):
     """`git patch-id --stable` of the diff `git diff <diff_args>` — the identity of a change,
     independent of where it sits."""
@@ -296,20 +329,24 @@ def cmd_survey(args):
             if not on_base:
                 # A PRE-SQUASH branch: a squash on the base carried its TREE as of some commit,
                 # so every commit up to the newest one a squash lists is in — however the base
-                # rewrote those lines since, and whatever WIP checkpoint sits among them (it was
-                # finished before the squash took it).  Read every squash since the branch left
-                # the base, not the last 40, and classify only the commits after that point.
+                # rewrote those lines since.  Read every squash since the branch left the base,
+                # not the last 40, and classify only the commits after that point — except the
+                # ones a JOIN's squash left out (`uncarried`), which the ladder classifies too.
                 fork = git("merge-base", base, sha).strip()
                 carried = squashed | {l[2:].strip() for l in git(
                     "log", "--format=%b", f"{fork}..{base}").splitlines() if l.startswith("* ")}
                 subjects = git("log", "--reverse", "--format=%s", f"{head}..{sha}").splitlines()
                 point = max((i for i, s in enumerate(subjects) if s in carried or s in ours),
                             default=-1)
-                for c, s in zip(commits[:point + 1], subjects[:point + 1]):
-                    rows.append({"sha": c, "subject": s, "files": 0,
-                                 "class": "SQUASHED" if s in carried else
-                                 "SUBJECT" if s in ours else "CARRIED"})
-                commits = commits[point + 1:]
+                below = list(zip(commits[:point + 1], subjects[:point + 1]))
+                left = set(uncarried([c for c, s in below if s not in carried and s not in ours],
+                                     registry, env))
+                for c, s in below:
+                    if c not in left:
+                        rows.append({"sha": c, "subject": s, "files": 0,
+                                     "class": "SQUASHED" if s in carried else
+                                     "SUBJECT" if s in ours else "CARRIED"})
+                commits = [c for c, _ in below if c in left] + commits[point + 1:]
             for c in commits:
                 if wip:
                     rows.append({"sha": c, "subject": git("log", "-1", "--format=%s", c).strip(),

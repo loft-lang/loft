@@ -56,10 +56,15 @@ whole), else `NEW`, or `PARTIAL` when only some of its files are here.
 
 A source NOT on the base (a pre-squash branch) is cut first at its **squash point**: the
 newest of its commits that a squash on the base lists, read from every squash since the branch
-left the base.  A squash carries the branch's tree, so every commit up to that point is in —
-`SQUASHED` when a squash lists it, `CARRIED` when it does not (a WIP checkpoint, a commit the
-squash's body left out) — and the ladder classifies only the commits after it.  Without the cut,
-a long branch stopped at its oldest WIP checkpoint and skipped everything after it.
+left the base.  A squash of the branch itself carries its tree, so a commit up to that point is
+in — `SQUASHED` when a squash lists it, `CARRIED` when it does not (a commit the squash's body
+left out) — and the ladder classifies the commits after it.  A JOIN's squash carries only what
+the join picked: one that stopped at the source's WIP checkpoint left that checkpoint and the
+run after it out, below a squash point a later pick moved past them.  So a commit below the
+point whose diff applies forward and not in reverse, or one that changes a file such a commit
+changes, goes through the ladder as well, and its WIP rule stops the join there in plain view.
+Without the cut, a long branch stopped at its oldest WIP checkpoint and skipped everything after
+it.
 
 The suite-backed checks of `verify` and `after.py` read the suite the tree PINS:
 `scripts/suite_pin.py` keeps an explicit `LOFT_SUITE_DIR`, else takes `../loft-suite` when it is
