@@ -62,3 +62,41 @@ the local bound to it.  A true parameter rebuilt in place stays refused.
 kr-try/tests/scripts/164-adopt-first-bind.loft:134
 kr-suite/rules/ownership/O-Derived/1701-a-carried-record-passed-through-an-inline-rebuild-survives-the-next-allocation.loft:43
 ```
+
+## The three neighbours the patch reaches (measured on try 709915c85, judged)
+
+The one-line patch (`&& !hidden_param(e, vars, v)`) carries `grow`.  It then turns 164 and
+1701 from refused into DIFF, on three forms the refusal had hidden:
+
+**(1) 164 `mk_box`: a STRUCT-ENUM local returned** (`fn mk_box(w: integer) -> Shape { o = Box { w: w, h: 2 }; o }`).
+```
+  __retbuf: ref(Shape) hidden    -> ref(Shape)
+  [94] o: ref(Box) = null;  OpDatabase(o, 107);  OpSetInt(o, 8, w);  OpSetInt(o, 16, 2);  OpSetEnum(o, 0, 2u8);
+  [94] if OpRefIsNull(o) OpNullRefSentinel()
+       else {#materialized_view_return  __retbuf = null; OpDatabase(__retbuf, 101); OpCopyRecord(o, __retbuf, 101); __retbuf }
+```
+The local is typed by its VARIANT (`ref(Box)`, store type 107), while the result is the ENUM
+(`Shape`, 101).  Because the store types differ, the buffer is not renamed onto the local: the
+local is built in its own store and copied in at the tail.  Judged a RULE: a rename needs
+the local's store type to be the result's.  This is the same fact the dispatcher and lambda
+pages met (a struct enum keeps `__retbuf`).  Leak-checked: 164 passes `LOFT_LEAK_CHECK=1` on
+the interpreter and `--native-c`.
+
+**(2) 164 `P::twice`: a line marker per STATEMENT, not per line**
+(`fn twice(self: P) -> P { o = P { pts: [], n: self.n * 2 }; o.pts += self.pts; o.pts += self.pts; o }`).
+```
+  [164] __ref_1 = OpMulInt(OpGetInt(self, 0), 2);     <- statement 1 (its staged value) …
+        if … OpDatabase(o, 102);  OpSetInt4(o, 8, 0);  OpSetInt(o, 0, __ref_1);   <- …its literal built in place: no marker
+  [164] OpAppendVector(OpGetField(o, 8, 100), OpGetField(self, 8, 100), 3);   <- statement 2
+  [164] OpAppendVector(…);                                                    <- statement 3
+  [164] o;                                                                     <- statement 4
+```
+Every source statement opens with its line's marker, even when the previous statement was on
+the same line.  The ops a statement expands into stay inside its marker.  Judged a RULE of
+positions: each statement is a stop for `loft debug` and a line for a stack trace.  Carry it.
+(Here the literal reads no collection of a parameter (`pts: []`), so it is built IN PLACE in
+the renamed `o`, unlike `grow`.)
+
+**(3) 1701 `rebuild`: head order** (`__ref_1: integer`, from the abandoned in-place attempt,
+numbered before `__ref_p2_1: ref(Tiles)`): an ACCIDENT of internal numbers (@C168).  Carry it
+as the porter measured it.
