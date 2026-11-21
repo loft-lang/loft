@@ -942,11 +942,9 @@ impl VecHeader {
     #[inline(always)]
     #[allow(clippy::inline_always)] // a bound the loop must see whole to move it out
     pub fn elems(&self, size: u32) -> u32 {
-        if size == 0 {
-            self.len
-        } else {
-            self.len.min(self.room / size)
-        }
+        self.room
+            .checked_div(size)
+            .map_or(self.len, |held| self.len.min(held))
     }
 }
 

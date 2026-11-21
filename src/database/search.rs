@@ -903,7 +903,13 @@ impl Stores {
     /// reads as null.  A displacement used to send every entry to the arena, which declines a
     /// record it does not own, so a reference kept reading the displaced entry — its texts
     /// freed, its numbers left — and its position could be claimed again.
-    pub(crate) fn release_hash_entry(&mut self, data: &DbRef, entry: &DbRef, slot: u32, content: u16) {
+    pub(crate) fn release_hash_entry(
+        &mut self,
+        data: &DbRef,
+        entry: &DbRef,
+        slot: u32,
+        content: u16,
+    ) {
         if self.hash_owns_entries(data) {
             self.remove_claims(entry, content);
             self.free_hash_entry(data, entry, slot);

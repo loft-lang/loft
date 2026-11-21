@@ -493,14 +493,20 @@ fn a_hoisted_loop_reads_no_further_than_the_record_holds() {
     let v = u32_at(&image, 20) as usize;
     assert_eq!(u32_at(&image, v * 8 + 4), 3, "the vector's length");
     let held = (u32_at(&image, v * 8) as usize * 8 - 8) / 8;
-    assert!((3..2000).contains(&held), "the record holds {held} elements");
+    assert!(
+        (3..2000).contains(&held),
+        "the record holds {held} elements"
+    );
     let mut changed = image.clone();
     changed[v * 8 + 4..v * 8 + 8].copy_from_slice(&1_000_000u32.to_le_bytes());
     fa::write(dir.join("bad.store"), &changed).expect("an image");
     fa::write(dir.join("bad.store.dschema"), &sidecar).expect("a sidecar");
 
     let (out, err) = loft(&dir, "--native-rust", "read.loft", "img.store", "");
-    assert_eq!(out, "loaded true len 3 present 3 sum 60", "a sound image\n{err}");
+    assert_eq!(
+        out, "loaded true len 3 present 3 sum 60",
+        "a sound image\n{err}"
+    );
     // The record's own slack past element 3 is zero-filled, so it reads as present zeros.
     let (out, err) = loft(&dir, "--native-rust", "read.loft", "bad.store", "");
     assert_eq!(
