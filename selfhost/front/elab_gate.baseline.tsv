@@ -825,7 +825,7 @@ elab	refused	tests/scripts/store_compact_slack_730.loft
 elab	refused	tests/scripts/store_digest_b0.loft
 elab	refused	tests/scripts/store_paged_enum_field.loft
 
-layer	elab-functions	agree	14370	of	24702
+layer	elab-functions	agree	14371	of	24702
 elab-functions	agree	lib/docs.loft::Anchor
 elab-functions	agree	lib/docs.loft::Character
 elab-functions	agree	lib/docs.loft::Double
@@ -13937,6 +13937,7 @@ elab-functions	agree	tests/scripts/2494-a-tuple-text-member-read-off-a-tuple-bor
 elab-functions	agree	tests/scripts/2494-a-tuple-text-member-read-off-a-tuple-borrows-in-a-str-slot.loft::main_vector<(integer, integer, text)>
 elab-functions	agree	tests/scripts/2494-a-tuple-text-member-read-off-a-tuple-borrows-in-a-str-slot.loft::n_side
 elab-functions	agree	tests/scripts/2494-a-tuple-text-member-read-off-a-tuple-borrows-in-a-str-slot.loft::vector<(integer, integer, text)>
+elab-functions	agree	tests/scripts/2494-a-tuple-text-member-read-off-a-tuple-borrows-in-a-str-slot.loft::vector<__tuple<integer,integer,text>>
 elab-functions	agree	tests/scripts/2497-a-return-naming-a-record-declared-below-is-that-record.loft::Memo
 elab-functions	agree	tests/scripts/25-nullable-sequences.loft::(schema)
 elab-functions	agree	tests/scripts/25-nullable-sequences.loft::Circle
