@@ -300,6 +300,11 @@ pub struct Vars {
   pub sunk_bind: integer = -1,
   // …and the type the local takes from it (the match itself is a statement, `void`).
   pub sunk_tp: ir::TypeT = ir::TyVoid,
+  // A slice arm's element binding was copied into the buffer through its own null check
+  // (`materialize_arm`): the match and the body answer the buffer.
+  pub mat_binding: boolean = false,
+  // …and that binding was DENSE: the match itself is then typed as the buffer.
+  pub mat_dense: boolean = false,
   // `Variable::captured`: the locals a closure built in this body reads (second pass)
   pub captured: vector<integer>,
   pub lambda_node: integer = -1,
