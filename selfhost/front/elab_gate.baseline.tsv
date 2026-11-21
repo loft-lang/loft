@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	0fe1a930c1a7f169457b2e8ca48ec8f762903595
 
-layer	elab	agree	1325	of	2132
+layer	elab	agree	1326	of	2132
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -218,7 +218,6 @@ elab	refused	loft-suite/rules/formatting/F-Target-Pos/every-position-with-an-exp
 elab	refused	loft-suite/rules/grammar/G-Amp-Infix/a-vector-of-and-results-is-a-plain-integer-vector-compared-by-value.loft
 elab	refused	loft-suite/rules/grammar/G-Amp-Prefix/a-prefix-amp-binds-a-link.loft
 elab	refused	loft-suite/rules/heap/H-Alloc/an-omitted-field-is-written-to-its-default-in-a-reused-block.loft
-elab	refused	loft-suite/rules/heap/H-Claim/1995-a-parsed-record-has-every-field-written.loft
 elab	refused	loft-suite/rules/heap/H-Claim/a-par-text-result-leaves-its-output-record-intact.loft
 elab	refused	loft-suite/rules/heap/H-ClearRelease/a-reused-vector-or-place-releases-what-it-held.loft
 elab	refused	loft-suite/rules/heap/H-Copy-Refuse/a-link-a-view-and-an-argument-make-no-second-structure.loft
@@ -814,7 +813,7 @@ elab	refused	tests/scripts/store_compact_slack_730.loft
 elab	refused	tests/scripts/store_digest_b0.loft
 elab	refused	tests/scripts/store_paged_enum_field.loft
 
-layer	elab-functions	agree	14230	of	24525
+layer	elab-functions	agree	14217	of	24503
 elab-functions	agree	lib/docs.loft::Anchor
 elab-functions	agree	lib/docs.loft::Character
 elab-functions	agree	lib/docs.loft::Double
@@ -5070,6 +5069,7 @@ elab-functions	agree	loft-suite/rules/formatting/F-Render-Ref/2268-a-reference-r
 elab-functions	agree	loft-suite/rules/formatting/F-Render-Ref/2268-a-reference-renders-as-a-pointer-to-its-target-and-reads-back.loft::main_vector<Tree>
 elab-functions	agree	loft-suite/rules/formatting/F-Render-Ref/2268-a-reference-renders-as-a-pointer-to-its-target-and-reads-back.loft::n_q
 elab-functions	agree	loft-suite/rules/formatting/F-Render-Ref/2268-a-reference-renders-as-a-pointer-to-its-target-and-reads-back.loft::n_test_a_reference_inside_a_chained_child_reads_back
+elab-functions	agree	loft-suite/rules/formatting/F-Render-Ref/2268-a-reference-renders-as-a-pointer-to-its-target-and-reads-back.loft::n_test_read_misfits
 elab-functions	agree	loft-suite/rules/formatting/F-Render-Ref/2268-a-reference-renders-as-a-pointer-to-its-target-and-reads-back.loft::n_test_shapes
 elab-functions	agree	loft-suite/rules/formatting/F-Render-Ref/2268-a-reference-renders-as-a-pointer-to-its-target-and-reads-back.loft::vector<Leaf>
 elab-functions	agree	loft-suite/rules/formatting/F-Render-Ref/2268-a-reference-renders-as-a-pointer-to-its-target-and-reads-back.loft::vector<Tree>
@@ -5146,25 +5146,6 @@ elab-functions	agree	loft-suite/rules/heap/H-Alloc/an-omitted-field-is-written-t
 elab-functions	agree	loft-suite/rules/heap/H-Alloc/an-omitted-field-is-written-to-its-default-in-a-reused-block.loft::n_test_full_and_partial_literals_alternating_in_a_loop
 elab-functions	agree	loft-suite/rules/heap/H-Alloc/an-omitted-field-is-written-to-its-default-in-a-reused-block.loft::vector<P>
 elab-functions	agree	loft-suite/rules/heap/H-Alloc/an-omitted-field-is-written-to-its-default-in-a-reused-block.loft::vector<Sh>
-elab-functions	agree	loft-suite/rules/heap/H-Claim/1995-a-parsed-record-has-every-field-written.loft::(schema)
-elab-functions	agree	loft-suite/rules/heap/H-Claim/1995-a-parsed-record-has-every-field-written.loft::Circle
-elab-functions	agree	loft-suite/rules/heap/H-Claim/1995-a-parsed-record-has-every-field-written.loft::Dot
-elab-functions	agree	loft-suite/rules/heap/H-Claim/1995-a-parsed-record-has-every-field-written.loft::In95
-elab-functions	agree	loft-suite/rules/heap/H-Claim/1995-a-parsed-record-has-every-field-written.loft::Label
-elab-functions	agree	loft-suite/rules/heap/H-Claim/1995-a-parsed-record-has-every-field-written.loft::Many95
-elab-functions	agree	loft-suite/rules/heap/H-Claim/1995-a-parsed-record-has-every-field-written.loft::Null
-elab-functions	agree	loft-suite/rules/heap/H-Claim/1995-a-parsed-record-has-every-field-written.loft::Out95
-elab-functions	agree	loft-suite/rules/heap/H-Claim/1995-a-parsed-record-has-every-field-written.loft::Rect
-elab-functions	agree	loft-suite/rules/heap/H-Claim/1995-a-parsed-record-has-every-field-written.loft::Shape95
-elab-functions	agree	loft-suite/rules/heap/H-Claim/1995-a-parsed-record-has-every-field-written.loft::Some
-elab-functions	agree	loft-suite/rules/heap/H-Claim/1995-a-parsed-record-has-every-field-written.loft::__nullable<In95>
-elab-functions	agree	loft-suite/rules/heap/H-Claim/1995-a-parsed-record-has-every-field-written.loft::main_vector<Shape95>
-elab-functions	agree	loft-suite/rules/heap/H-Claim/1995-a-parsed-record-has-every-field-written.loft::n_a_bare_tag_answers_the_payloads_defaults
-elab-functions	agree	loft-suite/rules/heap/H-Claim/1995-a-parsed-record-has-every-field-written.loft::n_a_nullable_record_cut_short_leaves_the_rest_absent
-elab-functions	agree	loft-suite/rules/heap/H-Claim/1995-a-parsed-record-has-every-field-written.loft::n_a_payload_cut_short_leaves_the_rest_absent
-elab-functions	agree	loft-suite/rules/heap/H-Claim/1995-a-parsed-record-has-every-field-written.loft::n_a_vector_of_bare_tags_holds_defaults
-elab-functions	agree	loft-suite/rules/heap/H-Claim/1995-a-parsed-record-has-every-field-written.loft::n_main
-elab-functions	agree	loft-suite/rules/heap/H-Claim/1995-a-parsed-record-has-every-field-written.loft::vector<Shape95>
 elab-functions	agree	loft-suite/rules/heap/H-Claim/a-par-text-result-leaves-its-output-record-intact.loft::n_main
 elab-functions	agree	loft-suite/rules/heap/H-Claim/a-par-text-result-leaves-its-output-record-intact.loft::n_word
 elab-functions	agree	loft-suite/rules/heap/H-ClearRelease/a-reused-vector-or-place-releases-what-it-held.loft::(schema)
@@ -7924,6 +7905,7 @@ elab-functions	agree	loft-suite/rules/operational/E-Left/1987-an-earlier-operand
 elab-functions	agree	loft-suite/rules/operational/E-Left/1987-an-earlier-operand-is-evaluated-before-a-lifted-call.loft::OrdHolder
 elab-functions	agree	loft-suite/rules/operational/E-Left/1987-an-earlier-operand-is-evaluated-before-a-lifted-call.loft::OrdMade
 elab-functions	agree	loft-suite/rules/operational/E-Left/1987-an-earlier-operand-is-evaluated-before-a-lifted-call.loft::OrdWrap
+elab-functions	agree	loft-suite/rules/operational/E-Left/1987-an-earlier-operand-is-evaluated-before-a-lifted-call.loft::n_an_earlier_write_is_seen_by_the_lifted_call
 elab-functions	agree	loft-suite/rules/operational/E-Left/1987-an-earlier-operand-is-evaluated-before-a-lifted-call.loft::n_ord_both
 elab-functions	agree	loft-suite/rules/operational/E-Left/1987-an-earlier-operand-is-evaluated-before-a-lifted-call.loft::n_ord_bump
 elab-functions	agree	loft-suite/rules/operational/E-Left/1987-an-earlier-operand-is-evaluated-before-a-lifted-call.loft::n_ord_doc
@@ -13521,6 +13503,10 @@ elab-functions	agree	tests/scripts/2028-both-parse-forms-name-every-mismatch-on-
 elab-functions	agree	tests/scripts/2028-both-parse-forms-name-every-mismatch-on-the-record.loft::S
 elab-functions	agree	tests/scripts/2028-both-parse-forms-name-every-mismatch-on-the-record.loft::U
 elab-functions	agree	tests/scripts/2028-both-parse-forms-name-every-mismatch-on-the-record.loft::V
+elab-functions	agree	tests/scripts/2028-both-parse-forms-name-every-mismatch-on-the-record.loft::n_nested
+elab-functions	agree	tests/scripts/2028-both-parse-forms-name-every-mismatch-on-the-record.loft::n_none_and_one
+elab-functions	agree	tests/scripts/2028-both-parse-forms-name-every-mismatch-on-the-record.loft::n_one_step_three
+elab-functions	agree	tests/scripts/2028-both-parse-forms-name-every-mismatch-on-the-record.loft::n_staged_three
 elab-functions	agree	tests/scripts/2028-both-parse-forms-name-every-mismatch-on-the-record.loft::n_three
 elab-functions	agree	tests/scripts/2038-a-slice-first-bind-holds-its-slice-whatever-the-local-is-rebound-to.loft::(schema)
 elab-functions	agree	tests/scripts/2038-a-slice-first-bind-holds-its-slice-whatever-the-local-is-rebound-to.loft::H
@@ -15046,7 +15032,7 @@ elab-functions	agree	tests/scripts/store_paged_enum_field.loft::main_vector<inte
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::n_bytes
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::vector<integer(0, 255)>
 
-layer	elab-pass1	agree	11980	of	17882
+layer	elab-pass1	agree	11989	of	17891
 elab-pass1	agree	lib/code.loft::t_4Code_add_block
 elab-pass1	agree	lib/code.loft::t_4Code_add_if
 elab-pass1	agree	lib/code.loft::t_4Code_add_loop
@@ -17652,6 +17638,7 @@ elab-pass1	agree	loft-suite/rules/formatting/F-Render-Fields/57-json.loft::n_tes
 elab-pass1	agree	loft-suite/rules/formatting/F-Render-Fields/a-record-renders-its-null-fields.loft::n_test_a_flat_record_shows_its_null_fields
 elab-pass1	agree	loft-suite/rules/formatting/F-Render-Ref/2268-a-reference-renders-as-a-pointer-to-its-target-and-reads-back.loft::n_q
 elab-pass1	agree	loft-suite/rules/formatting/F-Render-Ref/2268-a-reference-renders-as-a-pointer-to-its-target-and-reads-back.loft::n_test_a_reference_inside_a_chained_child_reads_back
+elab-pass1	agree	loft-suite/rules/formatting/F-Render-Ref/2268-a-reference-renders-as-a-pointer-to-its-target-and-reads-back.loft::n_test_read_misfits
 elab-pass1	agree	loft-suite/rules/formatting/F-Render/1270-an-absent-text-is-one-absence.loft::n_a_null_text_is_stable_under_a_round_trip
 elab-pass1	agree	loft-suite/rules/formatting/F-Render/1270-an-absent-text-is-one-absence.loft::n_a_present_text_still_writes_itself
 elab-pass1	agree	loft-suite/rules/formatting/F-Render/1270-an-absent-text-is-one-absence.loft::n_absent_text_1270
@@ -17740,6 +17727,9 @@ elab-pass1	agree	loft-suite/rules/heap/H-Claim/1995-a-parsed-record-has-every-fi
 elab-pass1	agree	loft-suite/rules/heap/H-Claim/1995-a-parsed-record-has-every-field-written.loft::n_a_payload_cut_short_leaves_the_rest_absent
 elab-pass1	agree	loft-suite/rules/heap/H-Claim/1995-a-parsed-record-has-every-field-written.loft::n_a_vector_of_bare_tags_holds_defaults
 elab-pass1	agree	loft-suite/rules/heap/H-Claim/1995-a-parsed-record-has-every-field-written.loft::n_main
+elab-pass1	agree	loft-suite/rules/heap/H-Claim/1995-a-parsed-record-has-every-field-written.loft::n_many
+elab-pass1	agree	loft-suite/rules/heap/H-Claim/1995-a-parsed-record-has-every-field-written.loft::n_outer
+elab-pass1	agree	loft-suite/rules/heap/H-Claim/1995-a-parsed-record-has-every-field-written.loft::n_shape
 elab-pass1	agree	loft-suite/rules/heap/H-Claim/a-freed-file-leaves-no-type-for-the-next-store-in-its-slot.loft::n_bait
 elab-pass1	agree	loft-suite/rules/heap/H-Claim/a-freed-file-leaves-no-type-for-the-next-store-in-its-slot.loft::n_by_bytes
 elab-pass1	agree	loft-suite/rules/heap/H-Claim/a-freed-file-leaves-no-type-for-the-next-store-in-its-slot.loft::n_by_listing
@@ -19495,6 +19485,7 @@ elab-pass1	agree	loft-suite/rules/operational/E-IfT/an-if-picks-the-arm-its-cond
 elab-pass1	agree	loft-suite/rules/operational/E-IfT/an-if-picks-the-arm-its-condition-selected.loft::n_test_an_else_if_chain_skips_a_null_link
 elab-pass1	agree	loft-suite/rules/operational/E-IfT/an-if-picks-the-arm-its-condition-selected.loft::n_test_an_if_without_else_on_false_leaves_state
 elab-pass1	agree	loft-suite/rules/operational/E-IfT/an-if-picks-the-arm-its-condition-selected.loft::n_zero
+elab-pass1	agree	loft-suite/rules/operational/E-Left/1987-an-earlier-operand-is-evaluated-before-a-lifted-call.loft::n_an_earlier_write_is_seen_by_the_lifted_call
 elab-pass1	agree	loft-suite/rules/operational/E-Left/1987-an-earlier-operand-is-evaluated-before-a-lifted-call.loft::n_ord_both
 elab-pass1	agree	loft-suite/rules/operational/E-Left/1987-an-earlier-operand-is-evaluated-before-a-lifted-call.loft::n_ord_bump
 elab-pass1	agree	loft-suite/rules/operational/E-Left/1987-an-earlier-operand-is-evaluated-before-a-lifted-call.loft::n_ord_doc
@@ -24832,6 +24823,10 @@ elab-pass1	agree	tests/scripts/2021-a-returned-branch-arm-that-borrows-a-lifted-
 elab-pass1	agree	tests/scripts/2021-a-returned-branch-arm-that-borrows-a-lifted-argument-copies-what-it-hands-up.loft::n_match_null
 elab-pass1	agree	tests/scripts/2021-a-returned-branch-arm-that-borrows-a-lifted-argument-copies-what-it-hands-up.loft::n_nested
 elab-pass1	agree	tests/scripts/2024-an-integer-power-answers-an-integer.loft::n_main
+elab-pass1	agree	tests/scripts/2028-both-parse-forms-name-every-mismatch-on-the-record.loft::n_nested
+elab-pass1	agree	tests/scripts/2028-both-parse-forms-name-every-mismatch-on-the-record.loft::n_none_and_one
+elab-pass1	agree	tests/scripts/2028-both-parse-forms-name-every-mismatch-on-the-record.loft::n_one_step_three
+elab-pass1	agree	tests/scripts/2028-both-parse-forms-name-every-mismatch-on-the-record.loft::n_staged_three
 elab-pass1	agree	tests/scripts/2028-both-parse-forms-name-every-mismatch-on-the-record.loft::n_three
 elab-pass1	agree	tests/scripts/2038-a-slice-first-bind-holds-its-slice-whatever-the-local-is-rebound-to.loft::n_isum
 elab-pass1	agree	tests/scripts/2038-a-slice-first-bind-holds-its-slice-whatever-the-local-is-rebound-to.loft::n_psum
