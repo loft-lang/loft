@@ -3726,6 +3726,14 @@ static int loft_swap_in(uint16_t tp, loft_ref src, loft_ref dst, int reset_dest)
 #ifdef LOFT_PARSE
     loft_perrs_swap(src.store_nr, dst.store_nr);
 #endif
+    /* `LOFT_TRACE_STORE_SWAP=1` names each exchange as the interpreter does (`[swap-in]`). */
+    {
+        static int trace = -1;
+        if (trace < 0) trace = getenv("LOFT_TRACE_STORE_SWAP") != NULL;
+        if (trace)
+            fprintf(stderr, "[swap-in] store #%u takes the content of #%u (tp=%u); #%u released\n",
+                    (unsigned) dst.store_nr, (unsigned) src.store_nr, (unsigned) tp, (unsigned) src.store_nr);
+    }
     loft_free_ref(src);
     return 1;
 }

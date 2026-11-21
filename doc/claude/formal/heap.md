@@ -565,7 +565,11 @@ the record it points at, not a place of the holder's.
                  do the keyed collections, arrays and child records.  A store pinned to its
                  slot — a file, foreign bytes, a recording, a lock, a borrow, a constant,
                  a lazy binding, the interpreter's stack — keeps the copy; a free
-                 protection refuses only the side the exchange releases.
+                 protection refuses only the side the exchange releases.  And no exchange
+                 is made, in any store, while the program has a live walk scratch (a walk
+                 of a hash or a radix tree names its source by store) or a lazy binding or
+                 a lazy refusal recorded (each names a collection by store): those keep the
+                 copy, whose answer the exchange's equals.
   (H-SwapRebind) on both compiled backends (`--native`, the C), the rebind `x = f(…)` whose
                  copy would follow a reset of `x`'s store is the exchange of `(H-SwapIn)`
                  WITHOUT the reset: `x`'s previous tree moves to the released slot with
