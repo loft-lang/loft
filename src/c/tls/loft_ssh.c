@@ -8,7 +8,8 @@
  * What it speaks — the slice of SSH-2 a remote interactive shell needs, and nothing more:
  *   - key exchange curve25519-sha256 (RFC 8731), with the strict-kex extension that closes the
  *     prefix-truncation attack (`kex-strict-c-v00@openssh.com`), rekeying when the server asks;
- *   - host keys ssh-ed25519, ecdsa-sha2-nistp256, rsa-sha2-512 and rsa-sha2-256 — the
+ *   - host keys ssh-ed25519, ecdsa-sha2-nistp256, rsa-sha2-512 and rsa-sha2-256 (an RSA key of
+ *     at least 2048 bits) — the
  *     signature over the exchange is always verified.  WHICH key the server holds is the
  *     caller's to check: `loft_ssh_host_key` names it as OpenSSH does (`SHA256:` and the
  *     unpadded base64 of the key blob's SHA-256) once the handshake is done and before
@@ -768,7 +769,10 @@ static int ssh_host_signed(const char *alg, const unsigned char *ks, size_t kn, 
         if (k.bad || !str_is(kt, ktn, "ssh-rsa") || !str_is(st, stn, alg)) return 0;
         while (en && *e == 0) { e++; en--; }
         while (nnn && *nn == 0) { nn++; nnn--; }
-        if (nnn < 128 || nnn > 1024 || svn > nnn || en == 0) return 0;
+        /* An RSA host key of fewer than 2048 bits (256 bytes) is refused: 1024-bit RSA has been
+         * below the recommended strength for a decade, and `ssh-keygen` has made 3072-bit keys
+         * by default since OpenSSH 8.0. */
+        if (nnn < 256 || nnn > 1024 || svn > nnn || en == 0) return 0;
         unsigned char *sig = (unsigned char *) calloc(1, nnn);
         if (!sig) return 0;
         memcpy(sig + nnn - svn, sv, svn);
