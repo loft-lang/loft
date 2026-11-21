@@ -548,9 +548,10 @@ enum FrameRead {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-/// Read one client frame if pending — **peek first** (idle costs µs, the
+/// Read one frame if pending — **peek first** (idle costs µs, the
 /// phase-00 lesson), then unbuffered `read_exact` for the in-flight frame.
-fn read_frame(stream: &mut TcpStream) -> FrameRead {
+/// `from_client`: it comes from a client of ours, and must be masked.
+fn read_frame(stream: &mut TcpStream, from_client: bool) -> FrameRead {
     let mut hdr = [0u8; 2];
     let _ = stream.set_nonblocking(true);
     let peeked = stream.peek(&mut hdr);
@@ -570,6 +571,10 @@ fn read_frame(stream: &mut TcpStream) -> FrameRead {
     }
     let opcode = hdr[0] & 0x0F;
     let masked = hdr[1] & 0x80 != 0;
+    // A client's frame is masked or the connection ends (RFC 6455 § 5.1).
+    if from_client && !masked {
+        return FrameRead::Closed;
+    }
     let mut len = u64::from(hdr[1] & 0x7F);
     if len == 126 {
         let mut b = [0u8; 2];
@@ -826,7 +831,7 @@ fn pump_kernel(k: &mut Kernel) -> i64 {
         // the queue — the kernel never blocks on a quiet socket).
         for cid in 0..k.conns.len() {
             while let Some(stream) = k.conns[cid].as_mut() {
-                match read_frame(stream) {
+                match read_frame(stream, true) {
                     FrameRead::None => break,
                     FrameRead::Text(payload) => {
                         // @PLN18 08-S7 — the debug control channel: `D!:`
@@ -1284,10 +1289,10 @@ fn with_client<R>(f: impl FnOnce(&mut ClientKernel) -> R) -> Option<R> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-/// Client→server frames are masked (RFC 6455 requires it; `read_frame` on the
-/// listener side already handles both).  The mask key needs no randomness for
-/// security — it exists to defeat broken transparent proxies — so a cheap
-/// counter-derived key is fine.
+/// Client→server frames are masked (RFC 6455 requires it, and the listener's
+/// `read_frame` refuses one that is not).  The key must be unpredictable (§ 5.3): one an
+/// observer can work out lets a page choose the bytes an intermediary sees, so each is a
+/// SipHash, under keys the standard library draws from the OS once per thread, of a counter.
 fn write_frame_masked(stream: &mut TcpStream, opcode: u8, payload: &[u8]) -> std::io::Result<()> {
     let mut frame = Vec::with_capacity(payload.len() + 14);
     frame.push(0x80 | opcode);
@@ -1300,9 +1305,19 @@ fn write_frame_masked(stream: &mut TcpStream, opcode: u8, payload: &[u8]) -> std
         frame.push(0x80 | 0x7F);
         frame.extend_from_slice(&(payload.len() as u64).to_be_bytes());
     }
-    let mask = (payload.len() as u32)
-        .wrapping_mul(0x9E37_79B9)
-        .to_be_bytes();
+    let mask = {
+        use std::hash::{BuildHasher as _, Hasher as _};
+        thread_local! {
+            static KEYS: (std::collections::hash_map::RandomState, std::cell::Cell<u64>) =
+                (std::collections::hash_map::RandomState::new(), std::cell::Cell::new(0));
+        }
+        KEYS.with(|(keys, n)| {
+            n.set(n.get().wrapping_add(1));
+            let mut h = keys.build_hasher();
+            h.write_u64(n.get());
+            (h.finish() as u32).to_be_bytes()
+        })
+    };
     frame.extend_from_slice(&mask);
     frame.extend(payload.iter().enumerate().map(|(i, b)| b ^ mask[i % 4]));
     stream.write_all(&frame)
@@ -1511,7 +1526,7 @@ fn pump_ctl(c: &mut ClientKernel) {
     }
     for i in 0..c.ctl_conns.len() {
         while let Some(stream) = c.ctl_conns[i].as_mut() {
-            match read_frame(stream) {
+            match read_frame(stream, true) {
                 FrameRead::None => break,
                 FrameRead::Text(payload) => {
                     if let Some(cmd) = payload.strip_prefix("D!:") {
@@ -1558,7 +1573,7 @@ fn pump_client(c: &mut ClientKernel) -> i64 {
         // an in-flight older datagram becomes stale), never queue.
         while c.alive {
             let Some(conn) = c.conn.as_mut() else { break };
-            match read_frame(conn) {
+            match read_frame(conn, false) {
                 FrameRead::None => break,
                 FrameRead::Text(payload) => {
                     if let Some(rest) = payload.strip_prefix("S:")

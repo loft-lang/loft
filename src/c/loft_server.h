@@ -547,7 +547,7 @@ static uint8_t loft_srv_ws_recv(int64_t id) {
     loft_text p = { 0, 0, 0 };
     for (;;) {
         int op;
-        if (!loft_ws_read_frame(c, &op, &p, LOFT_SRV_MAX_FRAME) || op == 0x8) {
+        if (!loft_ws_read_frame(c, &op, &p, LOFT_SRV_MAX_FRAME, 1) || op == 0x8) {
             free(p.p);
             return 0;
         }
@@ -648,7 +648,7 @@ static int loft_srv_poll_client(loft_stream *c) {
             return 0;
         }
         int op;
-        if (!loft_ws_read_frame(c, &op, &p, LOFT_SRV_MAX_FRAME) || op == 0x8) {
+        if (!loft_ws_read_frame(c, &op, &p, LOFT_SRV_MAX_FRAME, 1) || op == 0x8) {
             free(p.p);
             return 2;
         }

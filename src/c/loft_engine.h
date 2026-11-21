@@ -396,26 +396,29 @@ static int loft_eh_write_frame(int fd, uint8_t opcode, const char *p, size_t n, 
 
 /* One frame if pending: peek first (idle costs a syscall), then the in-flight frame within the
  * short read timeout.  0 none, 1 a text frame (into `out`), 2 closed. */
-static int loft_eh_read_frame_in(int fd, loft_text *out);
+static int loft_eh_read_frame_in(int fd, loft_text *out, int from_client);
 
-static int loft_eh_read_frame(int fd, loft_text *out) {
+/* `from_client`: the frame comes from a client of ours, and must be masked. */
+static int loft_eh_read_frame(int fd, loft_text *out, int from_client) {
     uint8_t hdr[2];
     long peeked = loft_sock_peek(fd, hdr, 2);
     if (peeked == 0 || peeked == -2) return 2;
     if (peeked < 0) return 0;
     if (peeked < 2) return 0;
     loft_eh_by = loft_now_us() + LOFT_EH_MESSAGE_US;
-    int answer = loft_eh_read_frame_in(fd, out);
+    int answer = loft_eh_read_frame_in(fd, out, from_client);
     loft_eh_by = 0;
     return answer;
 }
 
 /* The frame whose first two bytes are waiting, read within `loft_eh_by`. */
-static int loft_eh_read_frame_in(int fd, loft_text *out) {
+static int loft_eh_read_frame_in(int fd, loft_text *out, int from_client) {
     uint8_t hdr[2];
     if (!loft_eh_read_exact(fd, hdr, 2)) return 2;
     uint8_t opcode = hdr[0] & 0x0F;
     int masked = (hdr[1] & 0x80) != 0;
+    /* A client's frame is masked or the connection ends (RFC 6455 § 5.1). */
+    if (from_client && !masked) return 2;
     uint64_t len = hdr[1] & 0x7F;
     if (len == 126) {
         uint8_t b[2];
@@ -965,7 +968,7 @@ static int64_t loft_kernel_pump(void) {
     for (size_t cid = 0; cid < loft_ehk.nconns; cid++) {
         while (loft_ehk.conns[cid].fd >= 0) {
             loft_text msg = { 0, 0, 0 };
-            int got = loft_eh_read_frame(loft_ehk.conns[cid].fd, &msg);
+            int got = loft_eh_read_frame(loft_ehk.conns[cid].fd, &msg, 1);
             if (got == 0) {
                 free(msg.p);
                 break;
@@ -1215,7 +1218,7 @@ static void loft_ehc_pump_ctl(void) {
     for (size_t i = 0; i < loft_ehc.nctl; i++) {
         while (loft_ehc.ctl_conns[i] >= 0) {
             loft_text msg = { 0, 0, 0 };
-            int got = loft_eh_read_frame(loft_ehc.ctl_conns[i], &msg);
+            int got = loft_eh_read_frame(loft_ehc.ctl_conns[i], &msg, 1);
             if (got == 0) {
                 free(msg.p);
                 break;
@@ -1411,7 +1414,7 @@ static int64_t loft_kernel_client_pump(void) {
 #if defined(LOFT_SOCKETS)
     while (loft_ehc.alive && loft_ehc.conn >= 0) {
         loft_text msg = { 0, 0, 0 };
-        int got = loft_eh_read_frame(loft_ehc.conn, &msg);
+        int got = loft_eh_read_frame(loft_ehc.conn, &msg, 0);
         if (got == 0) {
             free(msg.p);
             break;

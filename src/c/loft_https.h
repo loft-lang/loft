@@ -497,10 +497,12 @@ static int loft_ws_write_frame(loft_stream *s, int opcode, const char *p, size_t
     return ok;
 }
 
-/* One frame of at most `cap` payload bytes, masked or not: 1 with its opcode and payload, 0 when
- * the stream failed or ended, or the frame claims more than `cap` (refused before it is
- * allocated, so a peer cannot claim a length that aborts the process). */
-static int loft_ws_read_frame(loft_stream *s, int *opcode, loft_text *payload, uint64_t cap) {
+/* One frame of at most `cap` payload bytes: 1 with its opcode and payload, 0 when the stream
+ * failed or ended, or the frame claims more than `cap` (refused before it is allocated, so a
+ * peer cannot claim a length that aborts the process).  With `from_client` an unmasked frame
+ * is refused too: RFC 6455 § 5.1 has a server close on one, since a client's masking is what
+ * keeps a page from choosing the bytes an intermediary sees. */
+static int loft_ws_read_frame(loft_stream *s, int *opcode, loft_text *payload, uint64_t cap, int from_client) {
     uint8_t h[2];
     if (!loft_stream_read_exact(s, h, 2)) return 0;
     uint64_t len = h[1] & 0x7F;
@@ -515,6 +517,7 @@ static int loft_ws_read_frame(loft_stream *s, int *opcode, loft_text *payload, u
         for (int i = 0; i < 8; i++) len = len << 8 | b[i];
     }
     if (len > cap) return 0;
+    if (from_client && !(h[1] & 0x80)) return 0;
     uint8_t mask[4] = { 0, 0, 0, 0 };
     if ((h[1] & 0x80) && !loft_stream_read_exact(s, mask, 4)) return 0;
     payload->len = 0;
