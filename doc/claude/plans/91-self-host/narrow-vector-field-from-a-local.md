@@ -46,6 +46,18 @@ narrow store type: `el_schema`'s `int_part` road, which `store_type` already tak
 integer (el_schema ~651).  Take `vk` from the field's vector type, as for any element.  Check
 the `i32` field beside it: `four_byte_field_rows` should already give `(102, 101)`.
 
+## Each form judged
+
+- **The element row** (row 30, the narrow store type): a RULE, `@FR-B-Copy`.  The elements are
+  stored at the field's own width.
+- **The work-buffer rank** the porter met next (`pooled_work_buffer`, src/parser/call_args.rs
+  ~936): an ACCIDENT.  The pool's key prints `forced_size`, but its rank counts by `==`, which
+  ignores it, so `empty(a: vector<integer>, b: vector<i32>)` gives `b` rank 1 and a fresh
+  `__ref_N`.  Only an internal number changes (@C168).  Buffers of different widths never share
+  a key either way.  It may be carried.
+- **`_range_end_N` typed as its bound** (`integer(0, 255)` for a `u8` bound): a RULE.  The bound
+  keeps its type.
+
 ## Probes (the three sole programs; each asserts its vectors by hand)
 
 ```
