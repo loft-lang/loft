@@ -2437,6 +2437,13 @@ pub fn repeatable_place(e: el::El, n: ir::Node) -> boolean {
 pub fn global_name(e: el::El, vars: el_vars::Vars, source: integer, name: text) -> Ex {
   // A plain enum's value: its ordinal under the enum's store type (the attribute's value).
   d = el_ex_object::look(e, source, name);
+  // (An expected enum declaring the name takes it first: `enum_hint`.)
+  if d >= 0 && el::def(e, d).def_type == el::DT_ENUM_VALUE && vars.enum_hint >= 0 && el::def(e, d).parent != vars.enum_hint {
+    hd = el::variant_of(e, vars.enum_hint, name);
+    if hd >= 0 {
+      d = hd;
+    }
+  }
   if d >= 0 && el::def(e, d).def_type == el::DT_ENUM_VALUE && el::def(e, d).parent >= 0 {
     pd = el::def(e, d).parent;
     if (el::def(e, pd).returned[0]) == ir::TyEnum { n: pd, is_ref: false, dep: [] } {
