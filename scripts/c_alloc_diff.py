@@ -26,7 +26,11 @@ other room or keep a value out of the store: `(R-PushFill)` reserves a loop's pu
 loop, where the interpreter grows push by push; `(R-Transient)` builds a value that is read and
 dropped outside the store.  Room is capacity and observably nothing (`(Col-Capacity)`), so such a difference
 is the rewrite's, not a divergence of the store model (@C122; STORE_MODEL.md); `--attribute`
-names it, and what no switch accounts for is the allocator's to explain."""
+names it, and what no switch accounts for is the allocator's to explain.
+
+Inside a `par` region the comparison is approximate: the workers' events interleave in the
+trace, and each interpreter worker numbers its stores on its own, so the order there is not
+the program's."""
 import os, re, subprocess, sys, tempfile
 
 LOFT = os.environ.get("LOFT_BIN", "target/op-census/release/loft")
@@ -43,6 +47,8 @@ C_ONLY_REWRITES = [
     ("R-Transient", "LOFT_NO_TRANSIENT"),
     ("R-DecodeView", "LOFT_NO_DECODE_VIEW"),
     ("R-DecodeView/structure", "LOFT_NO_DECODE_STRUCTURE"),
+    ("R-Destination", "LOFT_NO_DESTINATION"),
+    ("R-RangedCall", "LOFT_NO_RANGED_CALLS"),
 ]
 
 class Event(str):
@@ -107,12 +113,17 @@ def c(prog, d, env):
     # fetches over a URL or pages an image), as c_sweep.py links them.
     with open(src, encoding="utf-8", errors="replace") as f:
         links = re.findall(r"^/\* link: (.*) \*/$", f.read(), re.M)
-    r = subprocess.run(["cc", "-std=c11", "-O1", "-DLOFT_ALLOC_TRACE", src, "-o", exe, "-lm", *links],
+    # `LOFT_C_DEFINES` adds the C runtime's compile-time switches (`-DLOFT_NO_KEEP_ROOM`, …), the
+    # policies a C unit fixes when it is built rather than when it runs.
+    defines = env.get("LOFT_C_DEFINES", "").split()
+    r = subprocess.run(["cc", "-std=c11", "-O1", "-DLOFT_ALLOC_TRACE", *defines, src, "-o", exe, "-lm", *links],
                        capture_output=True, text=True)
     if r.returncode != 0:
         return None, "cc: " + r.stderr[:300]
+    # Run where the interpreter runs: a program that opens a file by a relative path reads the
+    # same file on both sides.
     subprocess.run([exe], env={**env, "LOFT_ALLOC_TRACE": t}, stdout=subprocess.DEVNULL,
-                   stderr=subprocess.DEVNULL, timeout=120, cwd=d)
+                   stderr=subprocess.DEVNULL, timeout=120)
     return program_events(open(t, encoding="utf-8")), None
 
 def compare(prog, env):

@@ -941,7 +941,36 @@ impl State {
             db = self.database.null();
             *self.mut_var::<DbRef>(var) = db;
         }
+        // `@FR-H-KeepRoom` — a store whose root is the `main_vector<T>` wrapper minted again:
+        // the room its vector reached, read before the mint drops it.
+        let room = if fresh {
+            None
+        } else {
+            self.database.wrapper_room(&db, db_tp)
+        };
         let r = self.alloc_record_into(&db, db_tp, size, code_pos, fresh, prefill);
+        if let Some((field, reached, elem_size)) = room {
+            let v = DbRef {
+                store_nr: r.store_nr,
+                rec: r.rec,
+                pos: field,
+            };
+            crate::vector::pre_alloc_vector(&v, reached, elem_size, &mut self.database.allocations);
+            // The mint is the buffer's clear (the prologue clause drops the clear itself), so
+            // `LOFT_TRACE_CLEAR` reports it as the clear's reset: the position it read and the
+            // capacity it kept.
+            if crate::env_once!(std::env::var("LOFT_TRACE_CLEAR").is_ok()) {
+                eprintln!(
+                    "[clear] store={} rec=1 pos={field} kt={db_tp} (a mint keeping the room)",
+                    r.store_nr
+                );
+                eprintln!(
+                    "[clear] reset store={} size={elem_size} cap={}",
+                    r.store_nr,
+                    crate::vector::reached_capacity(&v, elem_size, &self.database.allocations)
+                );
+            }
+        }
         if crate::keys::trace_db() {
             eprintln!("[db]   -> var={var} now #{}", r.store_nr);
         }

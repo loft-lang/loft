@@ -3022,7 +3022,7 @@ impl Stores {
                 crate::vector::pre_alloc_vector(db, reached, elem_size, &mut self.allocations);
                 if trace_enabled() {
                     eprintln!(
-                        "[clear] reset store={} cap={}",
+                        "[clear] reset store={} size={elem_size} cap={}",
                         db.store_nr,
                         crate::vector::reached_capacity(db, elem_size, &self.allocations)
                     );

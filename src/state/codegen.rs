@@ -5812,6 +5812,87 @@ impl State {
         self.insert_types(stack.function.tp(variable).clone(), code, stack)
     }
 
+    /// `@FR-H-KeepRoom`'s prologue clause on the bytecode writer: statement `k` of `ops` clears
+    /// a buffer that the next statement mints again as a vector wrapper
+    /// (`opt::writes::clear_before_mint`, the clause both backends ask).  Only a clear is
+    /// looked at further, so the statements are spelled as values for that one question.
+    fn clear_before_mint(&self, stack: &Stack, ops: &IrNodeList, k: usize) -> bool {
+        let Some(v) = ops.iter().nth(k) else {
+            return false;
+        };
+        if stack.data.def(v.call_to()).name() != "OpClearVector" {
+            return false;
+        }
+        let mut tail: Vec<Value> = Vec::new();
+        for n in ops.iter().skip(k) {
+            let line = n.kind() == ValueType::Line;
+            tail.push(n.to_owned_value());
+            if !line && tail.len() > 1 {
+                break;
+            }
+        }
+        crate::opt::writes::clear_before_mint(stack.data, &self.database, &tail, 0).is_some()
+    }
+
+    /// `@FR-H-KeepRoom` — the zero of a wrapper's vector field right after its mint is not
+    /// written: the mint left the vector empty, with the room it had reached (the C's
+    /// `keep_room_operator`).  `room` holds the buffers just minted as a wrapper while only
+    /// line markers and bindings of their fields follow.  Answers whether `v` is that zero.
+    fn keep_room_step(&self, stack: &Stack, v: &IrNode, room: &mut Vec<(u16, u16)>) -> bool {
+        let call = |v: &Value| -> Option<(String, Vec<Value>)> {
+            match v.unspan() {
+                Value::Call(d, a) => Some((stack.data.def(*d).name().to_string(), a.clone())),
+                _ => None,
+            }
+        };
+        match v.kind() {
+            ValueType::Line => return false,
+            ValueType::Call => {
+                let name = stack.data.def(v.call_to()).name();
+                if name == "OpDatabase" || (name == "OpSetInt4" && !room.is_empty()) {
+                    let value = v.to_owned_value();
+                    let Some((name, args)) = call(&value) else {
+                        return false;
+                    };
+                    match (name.as_str(), args.as_slice()) {
+                        ("OpDatabase", [Value::Var(x), Value::Int(tp)]) => {
+                            room.retain(|(w, _)| w != x);
+                            if let Ok(tp) = u16::try_from(*tp)
+                                && self.database.is_vector_wrapper(tp)
+                            {
+                                room.push((*x, tp));
+                            }
+                            return false;
+                        }
+                        ("OpSetInt4", [Value::Var(w), Value::Int(off), Value::Int(0)]) => {
+                            if let Some(i) = room.iter().position(|(x, _)| x == w)
+                                && self.database.wrapper_field_pos(room[i].1) == Some(*off)
+                            {
+                                room.remove(i);
+                                return true;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            ValueType::Set if !room.is_empty() => {
+                // A binding of a minted wrapper's field keeps the vector the mint's.
+                if let Value::Set(_, rhs) = v.to_owned_value().unspan()
+                    && let Some((name, args)) = call(rhs)
+                    && name == "OpGetField"
+                    && matches!(args.first().map(Value::unspan),
+                        Some(Value::Var(w)) if room.iter().any(|(x, _)| x == w))
+                {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+        room.clear();
+        false
+    }
+
     pub(super) fn generate_block(&mut self, stack: &mut Stack, block: IrBlock, top: bool) -> Type {
         let ops = block.operators();
         if ops.is_empty() {
@@ -5831,8 +5912,19 @@ impl State {
         let mut has_return = false;
         let free_ops = stack.data.op_sets();
         let delivery = self.adopted_delivery(stack, &ops);
+        // `@FR-H-KeepRoom`: the buffers just minted as a vector wrapper, with the wrapper type,
+        // while only line markers and bindings of their fields follow the mint.
+        let mut room_minted: Vec<(u16, u16)> = Vec::new();
         for (k, v) in ops.iter().enumerate() {
             if delivery.contains(&k) {
+                continue;
+            }
+            // `@FR-H-KeepRoom`'s prologue clause: a clear of a buffer the next statement mints
+            // again as a vector wrapper is the mint's own work, and is not written.
+            if v.kind() == ValueType::Call && self.clear_before_mint(stack, &ops, k) {
+                continue;
+            }
+            if self.keep_room_step(stack, &v, &mut room_minted) {
                 continue;
             }
             let s_pos = self.stack_pos;

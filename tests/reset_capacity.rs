@@ -8,7 +8,7 @@
 //! one freed block took every later claim off `bump_tail` and into the free tree.
 //!
 //! The values are the language's either way, so the observable is the capacity itself:
-//! `LOFT_TRACE_CLEAR=1` prints `[clear] reset store=N cap=C` at every reset.  The ON half
+//! `LOFT_TRACE_CLEAR=1` prints `[clear] reset store=N size=S cap=C` at every reset.  The ON half
 //! must show the ladder's rungs above the minimum; the OFF half (`LOFT_NO_RESET_CAPACITY=1`,
 //! the pre-unit behaviour) must show the minimum at every reset — the positive control
 //! that proves the trace can see the difference — and both halves must print the same
@@ -21,6 +21,7 @@ const SHAPE: &str = "tests/scripts/157-reset-capacity.loft";
 /// The START room of `@FR-Col-Capacity` for the shape's 8-byte elements: 88 bytes, eleven
 /// elements — what a fresh vector's first push takes (`vector::grown_elems(1, 8)`).
 const MINIMUM: u32 = 11;
+const START_BYTES: u32 = 88;
 
 fn run(unit_off: bool) -> String {
     let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
@@ -41,6 +42,18 @@ fn run(unit_off: bool) -> String {
 }
 
 /// Every `cap=` a reset re-established, in order.
+/// Each reset's element size and re-established capacity, in order.
+fn reset_sized(out: &str) -> Vec<(u32, u32)> {
+    out.lines()
+        .filter(|l| l.starts_with("[clear] reset "))
+        .filter_map(|l| {
+            let size = l.split("size=").nth(1)?.split(' ').next()?.parse().ok()?;
+            let cap = l.split("cap=").nth(1)?.trim().parse().ok()?;
+            Some((size, cap))
+        })
+        .collect()
+}
+
 fn reset_caps(out: &str) -> Vec<u32> {
     out.lines()
         .filter(|l| l.starts_with("[clear] reset "))
@@ -81,10 +94,16 @@ fn a_reset_buffer_keeps_the_capacity_it_reached() {
         caps.len(),
         "both halves must reset the same number of times"
     );
+    // The START room is 88 bytes of elements, one element at the least (`@FR-Col-Capacity`):
+    // eleven 8-byte elements, five 16-byte ones.
+    let sized = reset_sized(&off);
     assert!(
-        off_caps.iter().all(|&c| c == MINIMUM),
-        "with LOFT_NO_RESET_CAPACITY=1 every reset must re-establish the minimum {MINIMUM} — \
-         got {off_caps:?}"
+        sized.iter().any(|&(size, _)| size == 8)
+            && sized
+                .iter()
+                .all(|&(size, cap)| cap == (START_BYTES / size.max(1)).max(1)),
+        "with LOFT_NO_RESET_CAPACITY=1 every reset must re-establish the start room of its \
+         element size ({MINIMUM} for 8 bytes) — got {sized:?}"
     );
 }
 
@@ -95,7 +114,7 @@ fn a_reset_buffer_keeps_the_capacity_it_reached() {
 // `loft_vec_clear_release` does not (STORE_MODEL's rule: the C model is the standard;
 // `doc/claude/plans/91-self-host/1b-reference.md` E-3).
 // The values are the language's either way, so the observable is the reset itself:
-// `LOFT_TRACE_CLEAR=1` prints `[clear] reset store=N cap=C` at every reset.  A buffer minted
+// `LOFT_TRACE_CLEAR=1` prints `[clear] reset store=N size=S cap=C` at every reset.  A buffer minted
 // fresh for each call is cleared empty at the callee's entry; with the skip ON no reset of an
 // empty vector (`cap=0`) is made, while the reset of a reused buffer that holds the previous
 // call's elements still is.  The OFF half (`LOFT_NO_EMPTY_CLEAR_SKIP=1`, the behaviour

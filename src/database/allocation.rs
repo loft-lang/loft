@@ -1328,6 +1328,40 @@ impl Stores {
         }
     }
 
+    /// `@FR-H-KeepRoom` — `db` names the root of a live store minted as the vector wrapper
+    /// `tp`, about to be minted again: the position of its vector's handle, the elements that
+    /// vector's record has room for, and the element size — what the mint re-establishes, as
+    /// the C runtime's `loft_database_room` does.  `None` for any other store, a vector with no
+    /// record, or an element of no size.
+    pub(crate) fn wrapper_room(&self, db: &DbRef, tp: u16) -> Option<(u32, u32, u32)> {
+        if db.rec != 1
+            || (db.store_nr as usize) >= self.allocations.len()
+            || self.allocations[db.store_nr as usize].free
+            || self.allocations[db.store_nr as usize].known_type != tp
+        {
+            return None;
+        }
+        let field = u32::try_from(self.wrapper_field_pos(tp)?).ok()? + 8;
+        let elem = self.content(self.field_type(tp, 0));
+        let elem_size = u32::from(self.size(elem));
+        if elem == u16::MAX || elem_size == 0 {
+            return None;
+        }
+        let v = DbRef {
+            store_nr: db.store_nr,
+            rec: 1,
+            pos: field,
+        };
+        let reached = crate::vector::reached_capacity(&v, elem_size, &self.allocations);
+        // `LOFT_NO_RESET_CAPACITY=1` gives the start room instead, as the clear's reset does.
+        let reached = if reached != 0 && !crate::keys::reset_capacity_enabled() {
+            crate::vector::grown_elems(1, elem_size)
+        } else {
+            reached
+        };
+        (reached != 0).then_some((field, reached, elem_size))
+    }
+
     /// `@FR-R-Place` — a wrapper mint (`OpDatabase(b, main_vector<T>)`, a returned collection
     /// literal's) into a LIVE buffer that is not that wrapper's own store: the caller handed
     /// the callee a PLACE, a collection field of a record of its own ("the buffer IS the

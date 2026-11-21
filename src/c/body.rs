@@ -3381,42 +3381,10 @@ impl<'a> FnWriter<'a> {
     /// vector wrapper — a mint that empties the vector and releases what its elements owned, so
     /// the clear is that work done twice.  `LOFT_NO_PROLOGUE_CLEAR_DROP=1` writes it.
     fn clear_before_mint(&self, ops: &[Value], i: usize) -> bool {
-        let data = self.cx.data;
-        let named = |v: &Value, n: &str| -> Option<Vec<Value>> {
-            match v.unspan() {
-                Value::Call(d, a)
-                    if (*d as usize) < data.definitions.len() && data.def(*d).name() == n =>
-                {
-                    Some(a.clone())
-                }
-                _ => None,
-            }
-        };
-        let Some(args) = ops.get(i).and_then(|o| named(o, "OpClearVector")) else {
-            return false;
-        };
-        let Some(Value::Var(x)) = args.first().map(Value::unspan) else {
-            return false;
-        };
-        if self.ap_views.contains(x)
-            || std::env::var("LOFT_NO_PROLOGUE_CLEAR_DROP").is_ok_and(|v| v != "0")
-        {
-            return false;
-        }
-        let Some(next) = ops[i + 1..]
-            .iter()
-            .find(|o| !matches!(o.unspan(), Value::Line(_)))
-        else {
-            return false;
-        };
-        let Some(m) = named(next, "OpDatabase") else {
-            return false;
-        };
-        match (m.first().map(Value::unspan), m.get(1).map(Value::unspan)) {
-            (Some(Value::Var(y)), Some(Value::Int(tp))) if y == x => u16::try_from(*tp)
-                .is_ok_and(|tp| self.cx.stores.is_vector_wrapper(tp) && !self.lr_kept(*x)),
-            _ => false,
-        }
+        // The shared clause, then what the C alone knows of `x`: a value held apart, or a loop
+        // record the port keeps.
+        crate::opt::writes::clear_before_mint(self.cx.data, self.cx.stores, ops, i)
+            .is_some_and(|x| !self.ap_views.contains(&x) && !self.lr_kept(x))
     }
 
     /// `@FR-R-PushFill`'s run clause on the C: a straight-line RUN of `k >= 2` scalar pushes onto
