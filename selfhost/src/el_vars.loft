@@ -190,6 +190,9 @@ pub struct Vars {
   // `bind_text_link_kind`: the locals bound as text links, and of those the store kind (a text
   // field or element, read and written through `OpVarRef`)
   pub text_links: vector<integer>,
+  // Vector locals bound by `&` of a vector (`pe = &e`): the view of the vector they name, written
+  // THROUGH (`@FR-B-Ref-Alias`).
+  pub vec_links: vector<integer>,
   pub store_links: vector<integer>,
   // Vector locals a `&` names (`g = &v`): their whole-value rebind refills the shared store in
   // place (`amp_vector_locals`), which the elaboration does not carry yet.
