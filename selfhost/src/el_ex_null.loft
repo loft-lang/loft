@@ -1340,8 +1340,8 @@ pub fn builtin_op(e: el::El, vars: el_vars::Vars, op: text, a: Ex, b: Ex) -> Ex 
     if ad >= 0 && ad == struct_ref(e, el_types::base(b.tp)) && !starts_with(el::def(e, ad).name, "__tuple<") && !has_operator_method(e, ad) {
       return ex(el_ir::cl(e, if op == "==" { "OpEqContent" } else { "OpNeContent" }, [a.code, b.code, ir::NdInt { n: el::def(e, ad).known_type }]), ir::TyBoolean);
     }
-    // Two vectors of one element type compare by content too, with the vector's own row
-    // (`vector_of`); two element types are compared pair by pair (`mixed_vector_eq`) — refused.
+    // Two vectors of one element layout compare by content too, with the vector's own row
+    // (`vector_of`); two layouts are compared pair by pair (`mixed_vector_eq`).
     av = match a.tp { TyRefVar { inner } => inner, _ => a.tp };
     bv = match b.tp { TyRefVar { inner } => inner, _ => b.tp };
     // `content_eq_type`'s keyed arm: two keyed collections of one type by their records, at
@@ -1370,9 +1370,18 @@ pub fn builtin_op(e: el::El, vars: el_vars::Vars, op: text, a: Ex, b: Ex) -> Ex 
           if el_types::is_unknown(ea) || el_types::is_unknown(eb) {
             return ex(ir::NdNull, ir::TyBoolean);
           }
-          if !el_types::is_equal(e, ea, eb) || el_types::elem_name(e, ea) != el_types::elem_name(e, eb) {
-            el::refuse(e, "a comparison of vectors of two element types");
-            return ex(ir::NdNull, ir::TyBoolean);
+          if !same_element_layout(e, ea, eb) {
+            // `@FR-E-Eq`, loft#2062: two vectors of different element types compare pair by pair
+            // (`mixed_vector_eq`).  The first pass mints nothing for it.
+            if e.first_pass {
+              return ex(ir::NdNull, ir::TyBoolean);
+            }
+            mv = mixed_vector_eq(e, vars, op, a, b, ea, eb);
+            if mv == null {
+              el::refuse(e, "a comparison of vectors of two element types");
+              return ex(ir::NdNull, ir::TyBoolean);
+            }
+            return ex(mv!, ir::TyBoolean);
           }
           if e.first_pass {
             return ex(ir::NdNull, ir::TyBoolean);
@@ -1409,6 +1418,78 @@ pub fn builtin_op(e: el::El, vars: el_vars::Vars, op: text, a: Ex, b: Ex) -> Ex 
 // `call_op_as`'s first question: two tuples compare element by element (`tuple_compare`),
 // BEFORE the candidates — which would match `OpEqRef` for two stored tuples and answer whether
 // they are one record.  Then the builtin candidates (`call_op`).
+// `Parser::mixed_vector_eq` (`@FR-E-Eq`, loft#2062): `a == b` over two vectors of different
+// element types — equal lengths, then each pair compared with its own `==`, stopping at the
+// first that differs.  An operand that is a local is read in place; any other is bound once
+// (`_veq_a_N` / `_veq_b_N`); each pair is bound to a view of its element (`_veq_x_N`,
+// `_veq_y_N`), read at its own width.  Null for pairs this port does not compare: elements that
+// are no plain numbers (a nested vector), or that would need an `as` (Rust's error).
+fn mixed_vector_eq(e: el::El, vars: el_vars::Vars, op: text, a: Ex, b: Ex, ea: ir::TypeT, eb: ir::TypeT) -> ir::Node? {
+  if !plain_number(ea) || !plain_number(eb) || elem_size(ea) < 0 || elem_size(eb) < 0 {
+    return null;
+  }
+  ops: vector<ir::Node> = [];
+  lhs = match el_ir::unspan(a.code) { NdVar { n } => n, _ => -1 };
+  if lhs < 0 {
+    lhs = el_vars::create_unique(vars, "veq_a", a.tp);
+    el_vars::set_defined(vars, lhs);
+    ops += [el_ir::v_set(lhs, a.code)];
+  }
+  rhs = match el_ir::unspan(b.code) { NdVar { n } => n, _ => -1 };
+  if rhs < 0 {
+    rhs = el_vars::create_unique(vars, "veq_b", b.tp);
+    el_vars::set_defined(vars, rhs);
+    ops += [el_ir::v_set(rhs, b.code)];
+  }
+  res = el_vars::create_unique(vars, "veq_r", ir::TyBoolean);
+  el_vars::set_defined(vars, res);
+  idx = el_vars::create_unique(vars, "veq_i", ir::TyInteger { spec: i32_spec() });
+  el_vars::set_defined(vars, idx);
+  len_a = el_ir::cl(e, "OpLengthVector", [ir::NdVar { n: lhs }]);
+  ops += [el_ir::v_set(res, el_ir::cl(e, "OpEqInt", [len_a, el_ir::cl(e, "OpLengthVector", [ir::NdVar { n: rhs }])]))];
+  ops += [el_ir::v_set(idx, ir::NdInt { n: 0 })];
+  read_a = elem_read(e, ea, el_ir::cl(e, "OpGetVector", [ir::NdVar { n: lhs }, ir::NdInt { n: elem_size(ea) }, ir::NdVar { n: idx }]));
+  read_b = elem_read(e, eb, el_ir::cl(e, "OpGetVector", [ir::NdVar { n: rhs }, ir::NdInt { n: elem_size(eb) }, ir::NdVar { n: idx }]));
+  pa = el_vars::create_unique(vars, "veq_x", ea);
+  el_vars::set_defined(vars, pa);
+  vars.vars[pa].skip_free = true;
+  pb = el_vars::create_unique(vars, "veq_y", eb);
+  el_vars::set_defined(vars, pb);
+  vars.vars[pb].skip_free = true;
+  pair = call_op(e, vars, "==", [ir::NdVar { n: pa }, ir::NdVar { n: pb }], [ea, eb]);
+  more = el_ir::cl(e, "OpLtInt", [ir::NdVar { n: idx }, el_ir::cl(e, "OpLengthVector", [ir::NdVar { n: lhs }])]);
+  go_on = el_ir::v_if(ir::NdVar { n: res }, more, ir::NdBoolean { b: false });
+  step: vector<ir::Node> = [
+    el_ir::v_if(go_on, ir::NdNull, ir::NdBreak { n: 0 }),
+    el_ir::v_set(pa, read_a),
+    el_ir::v_set(pb, read_b),
+    el_ir::v_set(res, pair.code),
+    el_ir::v_set(idx, el_ir::cl(e, "OpAddInt", [ir::NdVar { n: idx }, ir::NdInt { n: 1 }]))
+  ];
+  ops += [el_ir::v_loop(step, "vector content ==")];
+  ops += [if op == "!=" { el_ir::cl(e, "OpNot", [ir::NdVar { n: res }]) } else { ir::NdVar { n: res } }];
+  el_ir::v_block(ops, ir::TyBoolean, "vector content ==")
+}
+
+// `same_element_layout`: do two vector element types share one stored layout, so the content
+// comparison can walk both by one schema?  `is_equal` says yes for `i32` against `integer` — it
+// ignores the width — so the stored size is asked too, at every nesting level.
+fn same_element_layout(e: el::El, a: ir::TypeT, b: ir::TypeT) -> boolean {
+  match el_types::base(a) {
+    TyVector { inner: x } => match el_types::base(b) {
+      TyVector { inner: y } => same_element_layout(e, x, y),
+      _ => false
+    },
+    _ => el_types::is_equal(e, a, b) && elem_size(a) == elem_size(b)
+  }
+}
+
+// `elements_compare_soundly`'s numbers: every integer width, `float` and `single` meet by the
+// listed widenings (`@FR-C-Int`, `@FR-C-Num`).
+fn plain_number(t: ir::TypeT) -> boolean {
+  el_types::base(t) is TyInteger || el_types::base(t) is TyFloat || el_types::base(t) is TySingle
+}
+
 fn compare_or_call(e: el::El, vars: el_vars::Vars, op: text, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex {
   for t in types {
     if el_types::is_unknown(t) {
