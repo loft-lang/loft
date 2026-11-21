@@ -3564,7 +3564,11 @@ pub fn cursor_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm
       // (A record answer the rule owns is copied into the run's vector and freed — a rule
       // answering a view of its cursor releases by witnesses instead: not carried.)
       rsd = match rt { TyReference { n: rsn } => if el::def(e, rsn).def_type == el::DT_STRUCT { rsn } else { -1 }, _ => -1 };
-      if quant != "?" && !int_rule && (rsd < 0 || len(el_types::deps(el::def(e, rule).returned[0] ?? ir::TyVoid)) > 0) {
+      // (A rule answering a VIEW — its result borrowing an argument — is carried below: the
+      // answer copied into the run's element without freeing its source, and released by
+      // witnesses where it is no store of the subject's or of the rule's buffer.)
+      view_rule = !int_rule && rsd >= 0 && len(el_types::deps(el::def(e, rule).returned[0] ?? ir::TyVoid)) > 0;
+      if quant != "?" && !int_rule && (rsd < 0 || len(el_types::deps(el::def(e, rule).returned[0] ?? ir::TyVoid)) > 0) && !view_rule {
         el::refuse(e, "a cursor pattern element that is a rest, a group or a rule: a repeated sub-rule answering a view or a value that is no plain record");
         return null;
       }
@@ -3635,6 +3639,21 @@ pub fn cursor_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm
         stop = if int_rule { ir::NdBreak { n: 0 } } else { ir::NdInsert { items: [el_ir::cl(e, "OpFreeRefIfDistinct", [ir::NdVar { n: rx }, el_ir::cl(e, "OpNullRefSentinel", [])]), ir::NdBreak { n: 0 }] } };
         rk = if rsd >= 0 { el::def(e, rsd).known_type } else { 0 };
         store = if int_rule { el_ir::cl(e, "OpSetInt", [ir::NdVar { n: relm }, ir::NdInt { n: 0 }, ir::NdVar { n: rx }]) } else { el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: rx }, el_ir::cl(e, "OpGetField", [ir::NdVar { n: relm }, ir::NdInt { n: 0 }, ir::NdInt { n: rk }]), ir::NdInt { n: rk + 32768 }]) };
+        after_elm: vector<ir::Node> = [];
+        if view_rule {
+          // The answer borrows what the call's result does (`["d"]`), the run's elements too.
+          vdeps = el_types::deps(ocall!.tp);
+          el_vars::set_var_type(vars, rx, el_types::with_deps(rt, vdeps));
+          el_vars::set_var_type(vars, xs, ir::TyVector { inner: el_types::with_deps(rt, vdeps), dep: el_types::deps(el_vars::tp(vars, xs)) });
+          cargs = match el_ir::unspan(ocall!.code) { NdCall { args: ca } => ca, _ => [] };
+          wsubj = if len(cargs) > 0 { cargs[0]! } else { ir::NdNull };
+          wbuf = if len(cargs) > 1 { cargs[-1]! } else { ir::NdNull };
+          sent = el_ir::cl(e, "OpNullRefSentinel", []);
+          rel = el_ir::v_if(el_ir::cl(e, "OpDistinctStore", [ir::NdVar { n: rx }, wsubj]), el_ir::v_if(el_ir::cl(e, "OpDistinctStore", [ir::NdVar { n: rx }, wbuf]), el_ir::cl(e, "OpFreeRefIfDistinct", [ir::NdVar { n: rx }, sent]), ir::NdNull), ir::NdNull);
+          stop = ir::NdInsert { items: [rel, ir::NdBreak { n: 0 }] };
+          store = el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: rx }, el_ir::cl(e, "OpGetField", [ir::NdVar { n: relm }, ir::NdInt { n: 0 }, ir::NdInt { n: rk }]), ir::NdInt { n: rk }]);
+          after_elm = [rel];
+        }
         // `subrule_separator_step`: after the first answer the separator must stand where the
         // last one left the cursor, and the rule is tried past it; without one the run ends.
         set_here = el_ex_object::set_field(e, cur[1]!, cur[2]!, ir::NdVar { n: cur[0]! }, ir::NdVar { n: osg });
@@ -3651,7 +3670,8 @@ pub fn cursor_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm
           el_ir::v_if(taken, ir::NdNull, stop),
           el_ir::v_set(relm, el_ir::cl(e, "OpNewRecord", [ir::NdVar { n: xs }, vk, ir::NdInt { n: 65535 }])),
           store,
-          el_ir::cl(e, "OpFinishRecord", [ir::NdVar { n: xs }, ir::NdVar { n: relm }, vk, ir::NdInt { n: 65535 }]),
+          el_ir::cl(e, "OpFinishRecord", [ir::NdVar { n: xs }, ir::NdVar { n: relm }, vk, ir::NdInt { n: 65535 }])
+        ] + after_elm + [
           el_ir::v_set(osg, rnow!)
         ], "sub-rule run");
         some = if quant == "+" { el_ir::cl(e, "OpLtInt", [ir::NdInt { n: 0 }, el_ir::cl(e, "OpLengthVector", [ir::NdVar { n: xs }])]) } else { ir::NdBoolean { b: true } };
