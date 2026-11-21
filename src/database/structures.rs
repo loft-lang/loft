@@ -1542,8 +1542,7 @@ impl Stores {
                         self.forget_in_scratches(data, &existing);
                         let gone = hash::replace_at(data, bucket, index, &mut self.allocations);
                         if !secondary {
-                            self.remove_claims(&existing, c);
-                            self.free_hash_entry(data, &existing, gone);
+                            self.release_hash_entry(data, &existing, gone, c);
                         }
                         if keys::keyed_verify() {
                             let key = keys::get_key(
