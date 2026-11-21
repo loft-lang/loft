@@ -195,13 +195,12 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-Const)` | `R-Const` ir · `/fn` parse |
 | `(R-CopyView)` | `R-CopyView` ir · `/walk` ir |
 | `(R-Counter)` | `R-Counter` ir, c, native |
-| `(R-CTail)` | not counted — writer: where an exit's releases are written; no statement an exit runs changes |
 | `(R-CtorLiteral)` | `R-CtorLiteral` parse |
 | `(R-DeadResult)` | not counted — unbuilt: designed; its switch is planned |
 | `(R-DecodeView)` | counted; admitted on no bench program |
 | `(R-DeferredCopy)` | counted; admitted on no bench program |
 | `(R-Demote)` | `R-Demote` parse · `/place` parse |
-| `(R-Destination)` | `R-Destination` c, native |
+| `(R-Destination)` | counted; admitted on no bench program |
 | `(R-DischargeInto)` | `R-DischargeInto` parse |
 | `(R-DispatchPublish)` | not counted — executor: the lean loop publishes one position per op |
 | `(R-DispatchStop)` | not counted — executor: the lean loop tests one flag per op |
