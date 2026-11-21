@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	0fe1a930c1a7f169457b2e8ca48ec8f762903595
 
-layer	elab	agree	1340	of	2132
+layer	elab	agree	1345	of	2132
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -117,7 +117,6 @@ elab	refused	loft-suite/rules/calls/F-Ret/a-part-of-a-calls-result-returned-is-t
 elab	refused	loft-suite/rules/calls/F-Ret/a-recursive-call-after-an-early-fresh-return-may-still-answer-its-argument.loft
 elab	refused	loft-suite/rules/calls/F-Ret/a-text-match-tail-answers-each-arms-value-whatever-its-lowering-or-declaration-order.loft
 elab	refused	loft-suite/rules/calls/F-Return/2551-a-coalesce-return-answers-its-own-value.loft
-elab	refused	loft-suite/rules/calls/F-Return/2555-a-return-nested-in-a-binds-value-releases-its-literal.loft
 elab	refused	loft-suite/rules/calls/F-Return/a-coalesce-return-in-a-void-function-runs-a-void-call.loft
 elab	refused	loft-suite/rules/calls/F-Return/a-function-answers-the-value-its-return-or-its-tail-names.loft
 elab	refused	loft-suite/rules/calls/F-Surface/2331-a-librarys-own-function-below-its-call-wins-over-the-stdlib.loft
@@ -722,7 +721,6 @@ elab	refused	tests/scripts/59-locks.loft
 elab	refused	tests/scripts/624-nested-narrow-width.loft
 elab	refused	tests/scripts/687-mutated-text-param-capture.loft
 elab	refused	tests/scripts/689-keyed-range-slice.loft
-elab	refused	tests/scripts/81-iterator-protocol.loft
 elab	refused	tests/scripts/845-generic-format.loft
 elab	refused	tests/scripts/85-temp-subject-borrow-return-uaf.loft
 elab	refused	tests/scripts/850-cross-package-method-name-collision.loft
@@ -744,8 +742,6 @@ elab	refused	tests/scripts/a-chain-exit-hands-the-placed-buffer-through.loft
 elab	refused	tests/scripts/a-comprehension-element-goes-straight-into-its-push.loft
 elab	refused	tests/scripts/a-comprehension-over-a-keyed-collection-walks-its-snapshot.loft
 elab	refused	tests/scripts/a-counted-loop-variable-shares-its-index-slot.loft
-elab	refused	tests/scripts/a-decoded-text-is-read-where-it-lies.loft
-elab	refused	tests/scripts/a-decoded-value-is-read-at-its-position.loft
 elab	refused	tests/scripts/a-file-lines-keeps-its-line-rules.loft
 elab	refused	tests/scripts/a-forgotten-amp-in-a-walk-warns-walk-or-write.loft
 elab	refused	tests/scripts/a-function-value-fills-its-callers-record.loft
@@ -776,7 +772,6 @@ elab	refused	tests/scripts/a-record-built-into-a-callers-slot-needs-no-prefill.l
 elab	refused	tests/scripts/a-record-read-by-index-from-a-held-vector-is-addressed-off-its-base.loft
 elab	refused	tests/scripts/a-repeated-element-fills-in-one-block.loft
 elab	refused	tests/scripts/a-slice-appended-to-a-place-is-sliced-into-it.loft
-elab	refused	tests/scripts/a-slice-handed-to-a-const-parameter-needs-no-store-of-its-own.loft
 elab	refused	tests/scripts/a-text-choice-between-slices-is-a-view.loft
 elab	refused	tests/scripts/a-tuple-parameter-is-declined-only-where-its-record-can-be-written.loft
 elab	refused	tests/scripts/a-type-named-above-its-pub-declaration-is-published.loft
@@ -799,7 +794,7 @@ elab	refused	tests/scripts/store_compact_slack_730.loft
 elab	refused	tests/scripts/store_digest_b0.loft
 elab	refused	tests/scripts/store_paged_enum_field.loft
 
-layer	elab-functions	agree	14142	of	24286
+layer	elab-functions	agree	14075	of	24176
 elab-functions	agree	lib/docs.loft::Anchor
 elab-functions	agree	lib/docs.loft::Character
 elab-functions	agree	lib/docs.loft::Double
@@ -2808,6 +2803,11 @@ elab-functions	agree	loft-suite/rules/calls/F-Return/2551-a-coalesce-return-answ
 elab-functions	agree	loft-suite/rules/calls/F-Return/2551-a-coalesce-return-answers-its-own-value.loft::Res
 elab-functions	agree	loft-suite/rules/calls/F-Return/2551-a-coalesce-return-answers-its-own-value.loft::n_half
 elab-functions	agree	loft-suite/rules/calls/F-Return/2551-a-coalesce-return-answers-its-own-value.loft::n_open
+elab-functions	agree	loft-suite/rules/calls/F-Return/2551-a-coalesce-return-answers-its-own-value.loft::n_sa
+elab-functions	agree	loft-suite/rules/calls/F-Return/2551-a-coalesce-return-answers-its-own-value.loft::n_sc
+elab-functions	agree	loft-suite/rules/calls/F-Return/2551-a-coalesce-return-answers-its-own-value.loft::n_sd
+elab-functions	agree	loft-suite/rules/calls/F-Return/2551-a-coalesce-return-answers-its-own-value.loft::n_sf
+elab-functions	agree	loft-suite/rules/calls/F-Return/2551-a-coalesce-return-answers-its-own-value.loft::n_sh
 elab-functions	agree	loft-suite/rules/calls/F-Return/2551-a-coalesce-return-answers-its-own-value.loft::n_show
 elab-functions	agree	loft-suite/rules/calls/F-Return/2551-a-coalesce-return-answers-its-own-value.loft::n_si
 elab-functions	agree	loft-suite/rules/calls/F-Return/2551-a-coalesce-return-answers-its-own-value.loft::n_test_a_record_subject_and_a_call_argument
@@ -9334,6 +9334,7 @@ elab-functions	agree	loft-suite/rules/rewrites/R-DecodeView/a-decoded-view-answe
 elab-functions	agree	loft-suite/rules/rewrites/R-DecodeView/a-decoded-view-answers-what-its-copy-would-across-every-rule-it-meets.loft::n_keep
 elab-functions	agree	loft-suite/rules/rewrites/R-DecodeView/a-decoded-view-answers-what-its-copy-would-across-every-rule-it-meets.loft::n_lookup
 elab-functions	agree	loft-suite/rules/rewrites/R-DecodeView/a-decoded-view-answers-what-its-copy-would-across-every-rule-it-meets.loft::n_measure
+elab-functions	agree	loft-suite/rules/rewrites/R-DecodeView/a-decoded-view-answers-what-its-copy-would-across-every-rule-it-meets.loft::n_ping
 elab-functions	agree	loft-suite/rules/rewrites/R-DecodeView/a-decoded-view-answers-what-its-copy-would-across-every-rule-it-meets.loft::n_read_v
 elab-functions	agree	loft-suite/rules/rewrites/R-DecodeView/a-decoded-view-answers-what-its-copy-would-across-every-rule-it-meets.loft::n_s2_dec
 elab-functions	agree	loft-suite/rules/rewrites/R-DecodeView/a-decoded-view-answers-what-its-copy-would-across-every-rule-it-meets.loft::n_s2_get
@@ -13931,10 +13932,6 @@ elab-functions	agree	tests/scripts/687-mutated-text-param-capture.loft::t_38__cl
 elab-functions	agree	tests/scripts/689-keyed-range-slice.loft::(schema)
 elab-functions	agree	tests/scripts/689-keyed-range-slice.loft::R689
 elab-functions	agree	tests/scripts/689-keyed-range-slice.loft::T689
-elab-functions	agree	tests/scripts/81-iterator-protocol.loft::(schema)
-elab-functions	agree	tests/scripts/81-iterator-protocol.loft::Counter
-elab-functions	agree	tests/scripts/81-iterator-protocol.loft::n_new_counter
-elab-functions	agree	tests/scripts/81-iterator-protocol.loft::t_7Counter_next
 elab-functions	agree	tests/scripts/845-generic-format.loft::(schema)
 elab-functions	agree	tests/scripts/845-generic-format.loft::P
 elab-functions	agree	tests/scripts/845-generic-format.loft::T#6
@@ -14279,79 +14276,6 @@ elab-functions	agree	tests/scripts/a-counted-loop-variable-shares-its-index-slot
 elab-functions	agree	tests/scripts/a-counted-loop-variable-shares-its-index-slot.loft::n_test_same_name_twice
 elab-functions	agree	tests/scripts/a-counted-loop-variable-shares-its-index-slot.loft::n_test_variable_start
 elab-functions	agree	tests/scripts/a-counted-loop-variable-shares-its-index-slot.loft::n_test_written_in_body
-elab-functions	agree	tests/scripts/a-decoded-text-is-read-where-it-lies.loft::(schema)
-elab-functions	agree	tests/scripts/a-decoded-text-is-read-where-it-lies.loft::Dec
-elab-functions	agree	tests/scripts/a-decoded-text-is-read-where-it-lies.loft::Entry
-elab-functions	agree	tests/scripts/a-decoded-text-is-read-where-it-lies.loft::VBytes
-elab-functions	agree	tests/scripts/a-decoded-text-is-read-where-it-lies.loft::VInt
-elab-functions	agree	tests/scripts/a-decoded-text-is-read-where-it-lies.loft::VMap
-elab-functions	agree	tests/scripts/a-decoded-text-is-read-where-it-lies.loft::VNull
-elab-functions	agree	tests/scripts/a-decoded-text-is-read-where-it-lies.loft::VText
-elab-functions	agree	tests/scripts/a-decoded-text-is-read-where-it-lies.loft::Val
-elab-functions	agree	tests/scripts/a-decoded-text-is-read-where-it-lies.loft::__const_n_op_frame
-elab-functions	agree	tests/scripts/a-decoded-text-is-read-where-it-lies.loft::main_vector<Entry>
-elab-functions	agree	tests/scripts/a-decoded-text-is-read-where-it-lies.loft::main_vector<Val>
-elab-functions	agree	tests/scripts/a-decoded-text-is-read-where-it-lies.loft::main_vector<integer(0, 255)>
-elab-functions	agree	tests/scripts/a-decoded-text-is-read-where-it-lies.loft::n_bytes_len
-elab-functions	agree	tests/scripts/a-decoded-text-is-read-where-it-lies.loft::n_copied
-elab-functions	agree	tests/scripts/a-decoded-text-is-read-where-it-lies.loft::n_count_unread
-elab-functions	agree	tests/scripts/a-decoded-text-is-read-where-it-lies.loft::n_dec
-elab-functions	agree	tests/scripts/a-decoded-text-is-read-where-it-lies.loft::n_first_key
-elab-functions	agree	tests/scripts/a-decoded-text-is-read-where-it-lies.loft::n_get
-elab-functions	agree	tests/scripts/a-decoded-text-is-read-where-it-lies.loft::n_keep
-elab-functions	agree	tests/scripts/a-decoded-text-is-read-where-it-lies.loft::n_lookup
-elab-functions	agree	tests/scripts/a-decoded-text-is-read-where-it-lies.loft::n_main
-elab-functions	agree	tests/scripts/a-decoded-text-is-read-where-it-lies.loft::n_measure
-elab-functions	agree	tests/scripts/a-decoded-text-is-read-where-it-lies.loft::n_mixed
-elab-functions	agree	tests/scripts/a-decoded-text-is-read-where-it-lies.loft::n_mixed_alone
-elab-functions	agree	tests/scripts/a-decoded-text-is-read-where-it-lies.loft::n_nested
-elab-functions	agree	tests/scripts/a-decoded-text-is-read-where-it-lies.loft::n_read_v
-elab-functions	agree	tests/scripts/a-decoded-text-is-read-where-it-lies.loft::n_scribble
-elab-functions	agree	tests/scripts/a-decoded-text-is-read-where-it-lies.loft::n_shout
-elab-functions	agree	tests/scripts/a-decoded-text-is-read-where-it-lies.loft::n_text_of
-elab-functions	agree	tests/scripts/a-decoded-text-is-read-where-it-lies.loft::n_walk_values
-elab-functions	agree	tests/scripts/a-decoded-text-is-read-where-it-lies.loft::vector<Entry>
-elab-functions	agree	tests/scripts/a-decoded-text-is-read-where-it-lies.loft::vector<Val>
-elab-functions	agree	tests/scripts/a-decoded-text-is-read-where-it-lies.loft::vector<integer(0, 255)>
-elab-functions	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft::(schema)
-elab-functions	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft::Dec
-elab-functions	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft::Entry
-elab-functions	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft::VArr
-elab-functions	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft::VBool
-elab-functions	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft::VBytes
-elab-functions	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft::VInt
-elab-functions	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft::VLabel
-elab-functions	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft::VMap
-elab-functions	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft::VNull
-elab-functions	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft::VText
-elab-functions	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft::Val
-elab-functions	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft::__const_n_f1
-elab-functions	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft::main_vector<Entry>
-elab-functions	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft::main_vector<Val>
-elab-functions	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft::main_vector<integer(0, 255)>
-elab-functions	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft::n_checked
-elab-functions	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft::n_dec
-elab-functions	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft::n_deep
-elab-functions	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft::n_each
-elab-functions	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft::n_find
-elab-functions	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft::n_find_in
-elab-functions	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft::n_flag
-elab-functions	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft::n_flag_num
-elab-functions	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft::n_get
-elab-functions	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft::n_keep
-elab-functions	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft::n_lookup
-elab-functions	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft::n_main
-elab-functions	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft::n_num
-elab-functions	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft::n_num_of
-elab-functions	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft::n_rd
-elab-functions	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft::n_status
-elab-functions	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft::n_sum_items
-elab-functions	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft::n_text_of
-elab-functions	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft::n_total
-elab-functions	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft::n_two
-elab-functions	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft::vector<Entry>
-elab-functions	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft::vector<Val>
-elab-functions	agree	tests/scripts/a-decoded-value-is-read-at-its-position.loft::vector<integer(0, 255)>
 elab-functions	agree	tests/scripts/a-file-lines-keeps-its-line-rules.loft::n_shown
 elab-functions	agree	tests/scripts/a-forgotten-amp-in-a-walk-warns-walk-or-write.loft::(schema)
 elab-functions	agree	tests/scripts/a-forgotten-amp-in-a-walk-warns-walk-or-write.loft::Node
@@ -14690,8 +14614,6 @@ elab-functions	agree	tests/scripts/a-slice-appended-to-a-place-is-sliced-into-it
 elab-functions	agree	tests/scripts/a-slice-appended-to-a-place-is-sliced-into-it.loft::n_total
 elab-functions	agree	tests/scripts/a-slice-appended-to-a-place-is-sliced-into-it.loft::n_vlen
 elab-functions	agree	tests/scripts/a-slice-appended-to-a-place-is-sliced-into-it.loft::vector<integer(0, 255)>
-elab-functions	agree	tests/scripts/a-slice-handed-to-a-const-parameter-needs-no-store-of-its-own.loft::n_test_eight_byte_elements
-elab-functions	agree	tests/scripts/a-slice-handed-to-a-const-parameter-needs-no-store-of-its-own.loft::n_test_nested_past_the_pool
 elab-functions	agree	tests/scripts/a-text-choice-between-slices-is-a-view.loft::n_test_slices_of_a_literal
 elab-functions	agree	tests/scripts/a-text-choice-between-slices-is-a-view.loft::n_test_slices_of_a_parameter
 elab-functions	agree	tests/scripts/a-text-choice-between-slices-is-a-view.loft::n_test_the_arm_not_taken_computes_nothing
@@ -14739,10 +14661,15 @@ elab-functions	agree	tests/scripts/a-value-read-and-dropped-is-built-outside-the
 elab-functions	agree	tests/scripts/a-value-read-and-dropped-is-built-outside-the-store.loft::CV
 elab-functions	agree	tests/scripts/a-value-read-and-dropped-is-built-outside-the-store.loft::DEPTH
 elab-functions	agree	tests/scripts/a-value-read-and-dropped-is-built-outside-the-store.loft::Dec
+elab-functions	agree	tests/scripts/a-value-read-and-dropped-is-built-outside-the-store.loft::__const_n_frame
 elab-functions	agree	tests/scripts/a-value-read-and-dropped-is-built-outside-the-store.loft::main_vector<CE>
 elab-functions	agree	tests/scripts/a-value-read-and-dropped-is-built-outside-the-store.loft::main_vector<CV>
+elab-functions	agree	tests/scripts/a-value-read-and-dropped-is-built-outside-the-store.loft::main_vector<integer(0, 255)>
 elab-functions	agree	tests/scripts/a-value-read-and-dropped-is-built-outside-the-store.loft::main_vector<vector<integer(0, 255)>>
 elab-functions	agree	tests/scripts/a-value-read-and-dropped-is-built-outside-the-store.loft::n_decode
+elab-functions	agree	tests/scripts/a-value-read-and-dropped-is-built-outside-the-store.loft::n_frame
+elab-functions	agree	tests/scripts/a-value-read-and-dropped-is-built-outside-the-store.loft::n_next_of
+elab-functions	agree	tests/scripts/a-value-read-and-dropped-is-built-outside-the-store.loft::n_ok_of
 elab-functions	agree	tests/scripts/a-value-read-and-dropped-is-built-outside-the-store.loft::n_pa_decode
 elab-functions	agree	tests/scripts/a-value-read-and-dropped-is-built-outside-the-store.loft::n_pa_decode_ok
 elab-functions	agree	tests/scripts/a-value-read-and-dropped-is-built-outside-the-store.loft::n_pa_get
@@ -14751,6 +14678,7 @@ elab-functions	agree	tests/scripts/a-value-read-and-dropped-is-built-outside-the
 elab-functions	agree	tests/scripts/a-value-read-and-dropped-is-built-outside-the-store.loft::n_walk
 elab-functions	agree	tests/scripts/a-value-read-and-dropped-is-built-outside-the-store.loft::vector<CE>
 elab-functions	agree	tests/scripts/a-value-read-and-dropped-is-built-outside-the-store.loft::vector<CV>
+elab-functions	agree	tests/scripts/a-value-read-and-dropped-is-built-outside-the-store.loft::vector<integer(0, 255)>
 elab-functions	agree	tests/scripts/a-variant-exit-builds-into-the-callers-buffer.loft::(schema)
 elab-functions	agree	tests/scripts/a-variant-exit-builds-into-the-callers-buffer.loft::Button
 elab-functions	agree	tests/scripts/a-variant-exit-builds-into-the-callers-buffer.loft::Dot
@@ -14943,7 +14871,7 @@ elab-functions	agree	tests/scripts/store_paged_enum_field.loft::main_vector<inte
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::n_bytes
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::vector<integer(0, 255)>
 
-layer	elab-pass1	agree	12045	of	17979
+layer	elab-pass1	agree	12062	of	18012
 elab-pass1	agree	lib/code.loft::t_4Code_add_block
 elab-pass1	agree	lib/code.loft::t_4Code_add_if
 elab-pass1	agree	lib/code.loft::t_4Code_add_loop
@@ -16242,6 +16170,10 @@ elab-pass1	agree	loft-suite/rules/calls/F-Return/2551-a-coalesce-return-answers-
 elab-pass1	agree	loft-suite/rules/calls/F-Return/2551-a-coalesce-return-answers-its-own-value.loft::n_test_an_empty_return_first_then_a_normal_call
 elab-pass1	agree	loft-suite/rules/calls/F-Return/2551-a-coalesce-return-answers-its-own-value.loft::n_test_text_record_and_bare_returns
 elab-pass1	agree	loft-suite/rules/calls/F-Return/2551-a-coalesce-return-answers-its-own-value.loft::n_wrap
+elab-pass1	agree	loft-suite/rules/calls/F-Return/2555-a-return-nested-in-a-binds-value-releases-its-literal.loft::n_s4
+elab-pass1	agree	loft-suite/rules/calls/F-Return/2555-a-return-nested-in-a-binds-value-releases-its-literal.loft::n_show
+elab-pass1	agree	loft-suite/rules/calls/F-Return/2555-a-return-nested-in-a-binds-value-releases-its-literal.loft::n_test_a_block_bind_and_the_statement_form
+elab-pass1	agree	loft-suite/rules/calls/F-Return/2555-a-return-nested-in-a-binds-value-releases-its-literal.loft::n_test_a_branch_bind
 elab-pass1	agree	loft-suite/rules/calls/F-Return/a-coalesce-return-in-a-void-function-runs-a-void-call.loft::n_mk
 elab-pass1	agree	loft-suite/rules/calls/F-Return/a-coalesce-return-in-a-void-function-runs-a-void-call.loft::n_test_it_leaves_the_function_from_inside_a_loop
 elab-pass1	agree	loft-suite/rules/calls/F-Return/a-coalesce-return-in-a-void-function-runs-a-void-call.loft::n_test_the_call_runs_on_the_null_path_only
@@ -26512,8 +26444,19 @@ elab-pass1	agree	tests/scripts/a-slice-appended-to-a-place-is-sliced-into-it.lof
 elab-pass1	agree	tests/scripts/a-slice-bound-before-its-local-is-emptied-holds-the-slice.loft::n_a2
 elab-pass1	agree	tests/scripts/a-slice-bound-before-its-local-is-emptied-holds-the-slice.loft::n_a4
 elab-pass1	agree	tests/scripts/a-slice-bound-before-its-local-is-emptied-holds-the-slice.loft::n_main
+elab-pass1	agree	tests/scripts/a-slice-handed-to-a-const-parameter-needs-no-store-of-its-own.loft::n_joined
+elab-pass1	agree	tests/scripts/a-slice-handed-to-a-const-parameter-needs-no-store-of-its-own.loft::n_nested
+elab-pass1	agree	tests/scripts/a-slice-handed-to-a-const-parameter-needs-no-store-of-its-own.loft::n_plain_len
+elab-pass1	agree	tests/scripts/a-slice-handed-to-a-const-parameter-needs-no-store-of-its-own.loft::n_test_a_kept_copy
+elab-pass1	agree	tests/scripts/a-slice-handed-to-a-const-parameter-needs-no-store-of-its-own.loft::n_test_a_plain_parameter
+elab-pass1	agree	tests/scripts/a-slice-handed-to-a-const-parameter-needs-no-store-of-its-own.loft::n_test_a_user_callee
 elab-pass1	agree	tests/scripts/a-slice-handed-to-a-const-parameter-needs-no-store-of-its-own.loft::n_test_eight_byte_elements
+elab-pass1	agree	tests/scripts/a-slice-handed-to-a-const-parameter-needs-no-store-of-its-own.loft::n_test_empty_and_clamped_bounds
 elab-pass1	agree	tests/scripts/a-slice-handed-to-a-const-parameter-needs-no-store-of-its-own.loft::n_test_nested_past_the_pool
+elab-pass1	agree	tests/scripts/a-slice-handed-to-a-const-parameter-needs-no-store-of-its-own.loft::n_test_one_site_run_again_and_again
+elab-pass1	agree	tests/scripts/a-slice-handed-to-a-const-parameter-needs-no-store-of-its-own.loft::n_test_two_slices_in_one_call
+elab-pass1	agree	tests/scripts/a-slice-handed-to-a-const-parameter-needs-no-store-of-its-own.loft::n_total
+elab-pass1	agree	tests/scripts/a-slice-handed-to-a-const-parameter-needs-no-store-of-its-own.loft::n_total8
 elab-pass1	agree	tests/scripts/a-stdlib-one-op-wrapper-is-its-op.loft::n_grow
 elab-pass1	agree	tests/scripts/a-store-holds-every-hash-layout-side-by-side.loft::n_digest
 elab-pass1	agree	tests/scripts/a-store-holds-every-hash-layout-side-by-side.loft::n_main
@@ -26650,6 +26593,8 @@ elab-pass1	agree	tests/scripts/a-twin-record-address-is-its-arguments-own.loft::
 elab-pass1	agree	tests/scripts/a-type-named-above-its-pub-declaration-is-published.loft::n_takes
 elab-pass1	agree	tests/scripts/a-type-named-above-its-pub-declaration-is-published.loft::n_test_library_reaches_its_private_half
 elab-pass1	agree	tests/scripts/a-value-read-and-dropped-is-built-outside-the-store.loft::n_decode
+elab-pass1	agree	tests/scripts/a-value-read-and-dropped-is-built-outside-the-store.loft::n_next_of
+elab-pass1	agree	tests/scripts/a-value-read-and-dropped-is-built-outside-the-store.loft::n_ok_of
 elab-pass1	agree	tests/scripts/a-value-read-and-dropped-is-built-outside-the-store.loft::n_pa_decode
 elab-pass1	agree	tests/scripts/a-value-read-and-dropped-is-built-outside-the-store.loft::n_pa_decode_ok
 elab-pass1	agree	tests/scripts/a-value-read-and-dropped-is-built-outside-the-store.loft::n_pa_text
