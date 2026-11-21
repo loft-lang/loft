@@ -120,9 +120,9 @@ static void loft_srv_say_refusal(loft_stream *s) {
     (void) loft_stream_write_all(s, resp, (size_t) n);
 }
 
-static int loft_srv_parse_request(loft_stream *s, int64_t budget_ms) {
+static int loft_srv_parse_request(loft_stream *s, loft_word budget_ms) {
     loft_text raw = { 0, 0, 0 };
-    int64_t late = budget_ms ? loft_now_us() + budget_ms * 1000 : 0;
+    loft_word late = budget_ms ? loft_now_us() + budget_ms * 1000 : 0;
     loft_srv_refused = 0;
     while (raw.len < 4 || memcmp(raw.p + raw.len - 4, "\r\n\r\n", 4) != 0) {
         char b;
@@ -366,7 +366,7 @@ static uint8_t loft_srv_tcp_accept(int64_t h, int nonblocking) {
 }
 
 /* `ws_allow_origins`: the listener's allowed origins become `list` (one per line; empty: any). */
-static void loft_srv_allow_origins(int64_t h, loft_str list) {
+static void loft_srv_allow_origins(loft_word h, loft_str list) {
     loft_srv_listener *l = loft_srv_listener_at(h);
     if (!l) return;
     free(l->origins);

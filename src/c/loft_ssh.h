@@ -94,7 +94,7 @@ static int64_t loft_ssh_connect(loft_str host, int64_t port) {
 }
 
 /* The server's host key as OpenSSH names it (`SHA256:…`), "" for an unknown handle. */
-static loft_text loft_ssh_host_key_h(int64_t h) {
+static loft_text loft_ssh_host_key_h(loft_word h) {
     loft_text t = { 0, 0, 0 };
     struct loft_ssh *s = loft_ssh_at(h);
     if (s) loft_push_cstr(&t, loft_ssh_host_key(s));

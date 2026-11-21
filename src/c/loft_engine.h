@@ -275,7 +275,7 @@ static int loft_eh_write_all(int fd, const char *p, size_t n) {
  * serves every peer from one thread: a peer that sends a byte per read would hold it for as long
  * as it liked.  `loft_eh_by` is when the message being read must be whole; 0 outside one. */
 #define LOFT_EH_MESSAGE_US 5000000
-static LOFT_TLS int64_t loft_eh_by;
+static LOFT_TLS loft_word loft_eh_by;
 
 /* Exactly `n` bytes, within the socket's read timeout and the message's budget, or 0. */
 static int loft_eh_read_exact(int fd, void *buf, size_t n) {
@@ -294,7 +294,7 @@ static int loft_eh_read_exact(int fd, void *buf, size_t n) {
 /* Read an HTTP head to its blank line, a byte at a time (no over-read past it); 0 on a closed or
  * silent socket, or a head past 16 KiB. */
 static int loft_eh_read_head(int fd, loft_text *head) {
-    int64_t by = loft_now_us() + LOFT_EH_MESSAGE_US;
+    loft_word by = loft_now_us() + LOFT_EH_MESSAGE_US;
     while (head->len < 4 || memcmp(head->p + head->len - 4, "\r\n\r\n", 4) != 0) {
         char b;
         if (loft_now_us() > by) return 0;

@@ -29,7 +29,7 @@ rewrites make about the loop they sit in (doc/claude/formal/rewrites.md):
             input `__ip_k` with that as its null fallback) is a holder
             for the rest of its block, and every `rec_get`/`rec_set` through one names a live one.
             (base clause) an address taken from a held element base — `if (idx as u64) <
-            u64::from(H.len) { B.add(idx * size) }` — names a live header H and a live base B
+            u64::from(H.elems(size)) { B.add(idx * size) }` — names a live header H and a live base B
             of the SAME path.
 
 A runtime read on a held path (`vec_get_or_raise_runtime`, `length_vector`) is reported as a
@@ -64,10 +64,10 @@ BIND_RECPTR = re.compile(r"^\s*let (__pa_\d+): \*const u8 = vector::rec_ptr\(&\(
 BIND_RECPTR_CALLER = re.compile(r"^\s*let (__pa_\d+): \*const u8 = if (__ip_\d+)\.is_null\(\) \{ vector::rec_ptr\(&\((.+?)\), &stores\.allocations\) \} else \{ \2 \}; //@FR-R-RecPtr record view address for (\S+?), from the caller")
 # R-RecPtr's base clause: the loop variable of `for e in v` takes its address from the element
 # base the loop holds — the header and the base it names must both be live, on one path.
-BIND_RECPTR_BASE = re.compile(r"^\s*let (__pa_\d+): \*const u8 = if \(var_\w+ as u64\) < u64::from\(([\w.]+)\.len\) \{ unsafe \{ vector::held_elem_ptr\((__vb_\d+), var_\w+ as usize \* \d+(?: \+ \d+)?, (?:true|false)\) \} \} else \{ std::ptr::null\(\) \}; //@FR-R-RecPtr record view address for (\S+?),")
+BIND_RECPTR_BASE = re.compile(r"^\s*let (__pa_\d+): \*const u8 = if \(var_\w+ as u64\) < u64::from\(([\w.]+)\.elems\(\(\d+\) as u32\)\) \{ unsafe \{ vector::held_elem_ptr\((__vb_\d+), var_\w+ as usize \* \d+(?: \+ \d+)?, (?:true|false)\) \} \} else \{ std::ptr::null\(\) \}; //@FR-R-RecPtr record view address for (\S+?),")
 # `@FR-R-RecPtr`'s index clause: the prelude names the index and its range test against a
 # header; the address reads that test.  A multi-line index ends its prelude on the test's line.
-INDEX_PRELUDE = re.compile(r"let (__in_\d+): bool = \((__ix_\d+) as u64\) < u64::from\(([\w.]+)\.len\); //@FR-R-RecPtr index clause")
+INDEX_PRELUDE = re.compile(r"let (__in_\d+): bool = \((__ix_\d+) as u64\) < u64::from\(([\w.]+)\.elems\(\(\d+\) as u32\)\); //@FR-R-RecPtr index clause")
 BIND_RECPTR_INDEX = re.compile(r"^\s*let (__pa_\d+): \*const u8 = if (__in_\d+) \{ unsafe \{ vector::held_elem_ptr\((__[vi]b_\d+), (__ix_\d+) as usize \* \d+, (?:true|false)\) \} \} else \{ vector::rec_ptr\(&\((.+?)\), &stores\.allocations\) \}; //@FR-R-RecPtr record view address for (\S+?), from the held base by index")
 USE_RECPTR = re.compile(r"vector::rec_(get|set)::<[^>]*>\((__pa_\d+), ")
 BIND_SCALAR = re.compile(r"^\s*let (__vs_\d+) = (.*);")

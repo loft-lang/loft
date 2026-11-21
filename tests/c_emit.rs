@@ -3760,17 +3760,35 @@ fn hash_insert(
             index,
         } => {
             let gone = hash::replace_at(h, bucket, index, stores);
-            hash_free_entry(stores, h, &entry, gone);
+            hash_release(stores, h, &entry, gone);
         }
         Probed::Unknown => {
             let key = loft::keys::get_key(e, stores, keys);
             let existing = hash::find(h, stores, keys, &key);
             if existing.rec != 0 && (existing.rec, existing.pos) != (e.rec, e.pos) {
                 let slot = hash::remove(h, &existing, stores, keys);
-                hash_free_entry(stores, h, &existing, slot);
+                hash_release(stores, h, &existing, slot);
             }
             hash::add(h, e, stores, keys);
         }
+    }
+}
+
+/// Stores::release_hash_entry (`@FR-H-Removed`): an entry the table's arena owns goes back to
+/// it; an entry with a record of its own (a table that borrows its records) is deleted from
+/// the store.  A removal and a displacing insert release alike.
+fn hash_release(
+    stores: &mut [loft::store::Store],
+    h: &loft::keys::DbRef,
+    e: &loft::keys::DbRef,
+    slot: u32,
+) {
+    let store = &stores[h.store_nr as usize];
+    let claim = store.get_u32_raw(h.rec, h.pos);
+    if claim != 0 && loft::hash::owns_entries(store, claim) {
+        hash_free_entry(stores, h, e, slot);
+    } else {
+        stores[e.store_nr as usize].delete(e.rec);
     }
 }
 
@@ -3889,11 +3907,7 @@ fn the_c_hash_table_files_every_entry_where_hash_does() {
             if pick < 75 {
                 if found.rec != 0 {
                     let slot = hash::remove(&h[t], &found, &mut stores, keys[t]);
-                    if strides[t] != 0 {
-                        hash_free_entry(&mut stores, &h[t], &found, slot);
-                    } else {
-                        stores[0].delete(found.rec);
-                    }
+                    hash_release(&mut stores, &h[t], &found, slot);
                 }
                 let _ = writeln!(script, "R {t} {k}");
             } else if pick < 97 {
