@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	0fe1a930c1a7f169457b2e8ca48ec8f762903595
 
-layer	elab	agree	1351	of	2132
+layer	elab	agree	1354	of	2132
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -204,7 +204,6 @@ elab	refused	loft-suite/rules/coroutines/G-Yield/a-yielded-value-converts-into-i
 elab	refused	loft-suite/rules/facts/Fact-Direction/a-fact-the-compiler-cannot-establish-costs-a-rewrite-never-a-value.loft
 elab	refused	loft-suite/rules/formatting/F-FaultSafe/a-hole-whose-value-faults-or-is-null-renders-plain-null.loft
 elab	refused	loft-suite/rules/formatting/F-Interp/a-format-hole-may-open-with-whitespace.loft
-elab	refused	loft-suite/rules/formatting/F-Render-Child/a-child-renders-and-parses-as-its-value.loft
 elab	refused	loft-suite/rules/formatting/F-Render-Fields/57-json.loft
 elab	refused	loft-suite/rules/formatting/F-Render-Fields/a-record-renders-its-null-fields.loft
 elab	refused	loft-suite/rules/formatting/F-Render-Ref/2268-a-reference-renders-as-a-pointer-to-its-target-and-reads-back.loft
@@ -381,7 +380,6 @@ elab	refused	loft-suite/rules/operators/Op-Back/an-operator-plus-minus-or-times-
 elab	refused	loft-suite/rules/operators/Op-Back/every-operator-form-reaches-the-definition-that-compiles.loft
 elab	refused	loft-suite/rules/operators/Op-Conv/513-first-grade-conversions.loft
 elab	refused	loft-suite/rules/operators/Op-Conv/a-conversion-into-a-type-of-this-source-is-named-for-what-it-answers.loft
-elab	refused	loft-suite/rules/operators/Op-Eq/a-user-op-eq-on-an-inner-type-changes-no-outer-comparison.loft
 elab	refused	loft-suite/rules/operators/Op-Fold/operator-next-to-text-and-to-type-drive-for-format-and-as.loft
 elab	refused	loft-suite/rules/operators/Op-Mark/1950b-an-operator-next-below-its-use-drives-for.loft
 elab	refused	loft-suite/rules/operators/Op-Name/an-operator-definition-is-also-an-ordinary-method.loft
@@ -497,7 +495,6 @@ elab	refused	loft-suite/rules/tuples/T-Cons/1674-a-tuple-literal-copies-every-he
 elab	refused	loft-suite/rules/tuples/T-Cons/1675-a-keyed-tuple-member-filled-from-a-vector-holds-its-records.loft
 elab	refused	loft-suite/rules/tuples/T-Cons/1689-a-tuples-heap-member-is-its-own-copy.loft
 elab	refused	loft-suite/rules/tuples/T-Cons/1698-a-tuple-held-as-a-vector-element-is-a-place.loft
-elab	refused	loft-suite/rules/tuples/T-Cons/2055-a-tuple-comparison-with-a-struct-member-is-its-functions-value.loft
 elab	refused	loft-suite/rules/tuples/T-Cons/2253-a-compound-member-copies-the-local-it-answers.loft
 elab	refused	loft-suite/rules/tuples/T-Cons/2256-a-text-member-branch-is-copied-per-arm.loft
 elab	refused	loft-suite/rules/tuples/T-Destr/a-returned-tuple-is-destructured-once-into-any-place.loft
@@ -788,7 +785,7 @@ elab	refused	tests/scripts/store_compact_slack_730.loft
 elab	refused	tests/scripts/store_digest_b0.loft
 elab	refused	tests/scripts/store_paged_enum_field.loft
 
-layer	elab-functions	agree	13990	of	24028
+layer	elab-functions	agree	13966	of	23988
 elab-functions	agree	lib/docs.loft::Anchor
 elab-functions	agree	lib/docs.loft::Character
 elab-functions	agree	lib/docs.loft::Double
@@ -4997,14 +4994,6 @@ elab-functions	agree	loft-suite/rules/formatting/F-Interp/a-format-hole-may-open
 elab-functions	agree	loft-suite/rules/formatting/F-Interp/a-format-hole-may-open-with-whitespace.loft::P
 elab-functions	agree	loft-suite/rules/formatting/F-Interp/a-format-hole-may-open-with-whitespace.loft::n_build
 elab-functions	agree	loft-suite/rules/formatting/F-Interp/a-format-hole-may-open-with-whitespace.loft::n_ok
-elab-functions	agree	loft-suite/rules/formatting/F-Render-Child/a-child-renders-and-parses-as-its-value.loft::(schema)
-elab-functions	agree	loft-suite/rules/formatting/F-Render-Child/a-child-renders-and-parses-as-its-value.loft::Add
-elab-functions	agree	loft-suite/rules/formatting/F-Render-Child/a-child-renders-and-parses-as-its-value.loft::Expr
-elab-functions	agree	loft-suite/rules/formatting/F-Render-Child/a-child-renders-and-parses-as-its-value.loft::List
-elab-functions	agree	loft-suite/rules/formatting/F-Render-Child/a-child-renders-and-parses-as-its-value.loft::Neg
-elab-functions	agree	loft-suite/rules/formatting/F-Render-Child/a-child-renders-and-parses-as-its-value.loft::Num
-elab-functions	agree	loft-suite/rules/formatting/F-Render-Child/a-child-renders-and-parses-as-its-value.loft::Tree
-elab-functions	agree	loft-suite/rules/formatting/F-Render-Child/a-child-renders-and-parses-as-its-value.loft::n_test_a_tree_renders_and_reads_back
 elab-functions	agree	loft-suite/rules/formatting/F-Render-Fields/57-json.loft::JInner
 elab-functions	agree	loft-suite/rules/formatting/F-Render-Fields/57-json.loft::JItem
 elab-functions	agree	loft-suite/rules/formatting/F-Render-Fields/57-json.loft::JOptUser
@@ -7852,6 +7841,7 @@ elab-functions	agree	loft-suite/rules/operational/E-Eq/c91-a-struct-compares-by-
 elab-functions	agree	loft-suite/rules/operational/E-Eq/c91-a-struct-compares-by-content-through-its-references.loft::V
 elab-functions	agree	loft-suite/rules/operational/E-Eq/c91-a-struct-compares-by-content-through-its-references.loft::n_test_a_struct_and_its_copy
 elab-functions	agree	loft-suite/rules/operational/E-Eq/c91-a-struct-compares-by-content-through-its-references.loft::n_test_a_struct_holding_a_struct
+elab-functions	agree	loft-suite/rules/operational/E-Eq/c91-a-struct-compares-by-content-through-its-references.loft::n_test_a_tuple_of_structs
 elab-functions	agree	loft-suite/rules/operational/E-Eq/c91-a-struct-compares-by-content-through-its-references.loft::n_test_a_value_struct_follows_its_reference
 elab-functions	agree	loft-suite/rules/operational/E-Eq/c91-a-struct-compares-by-content-through-its-references.loft::n_test_cycles_terminate
 elab-functions	agree	loft-suite/rules/operational/E-Eq/c91-a-struct-compares-by-content-through-its-references.loft::n_test_nullable_pairs
@@ -8044,21 +8034,6 @@ elab-functions	agree	loft-suite/rules/operators/Op-Conv/a-conversion-into-a-type
 elab-functions	agree	loft-suite/rules/operators/Op-Conv/a-conversion-into-a-type-of-this-source-is-named-for-what-it-answers.loft::t_5OcCel_to_text
 elab-functions	agree	loft-suite/rules/operators/Op-Conv/a-conversion-into-a-type-of-this-source-is-named-for-what-it-answers.loft::t_5OcCel_to_vec2
 elab-functions	agree	loft-suite/rules/operators/Op-Conv/a-conversion-into-a-type-of-this-source-is-named-for-what-it-answers.loft::t_7integer_to_dist
-elab-functions	agree	loft-suite/rules/operators/Op-Eq/a-user-op-eq-on-an-inner-type-changes-no-outer-comparison.loft::(schema)
-elab-functions	agree	loft-suite/rules/operators/Op-Eq/a-user-op-eq-on-an-inner-type-changes-no-outer-comparison.loft::Box
-elab-functions	agree	loft-suite/rules/operators/Op-Eq/a-user-op-eq-on-an-inner-type-changes-no-outer-comparison.loft::Ev
-elab-functions	agree	loft-suite/rules/operators/Op-Eq/a-user-op-eq-on-an-inner-type-changes-no-outer-comparison.loft::Sec
-elab-functions	agree	loft-suite/rules/operators/Op-Eq/a-user-op-eq-on-an-inner-type-changes-no-outer-comparison.loft::Tick
-elab-functions	agree	loft-suite/rules/operators/Op-Eq/a-user-op-eq-on-an-inner-type-changes-no-outer-comparison.loft::Tock
-elab-functions	agree	loft-suite/rules/operators/Op-Eq/a-user-op-eq-on-an-inner-type-changes-no-outer-comparison.loft::main_vector<Sec>
-elab-functions	agree	loft-suite/rules/operators/Op-Eq/a-user-op-eq-on-an-inner-type-changes-no-outer-comparison.loft::n_main
-elab-functions	agree	loft-suite/rules/operators/Op-Eq/a-user-op-eq-on-an-inner-type-changes-no-outer-comparison.loft::n_test_a_field_and_a_vector_field_compare_structurally
-elab-functions	agree	loft-suite/rules/operators/Op-Eq/a-user-op-eq-on-an-inner-type-changes-no-outer-comparison.loft::n_test_identity_is_asked_apart
-elab-functions	agree	loft-suite/rules/operators/Op-Eq/a-user-op-eq-on-an-inner-type-changes-no-outer-comparison.loft::n_test_the_user_functions_answer_only_by_name
-elab-functions	agree	loft-suite/rules/operators/Op-Eq/a-user-op-eq-on-an-inner-type-changes-no-outer-comparison.loft::t_3Sec_OpEq
-elab-functions	agree	loft-suite/rules/operators/Op-Eq/a-user-op-eq-on-an-inner-type-changes-no-outer-comparison.loft::t_3Sec_OpNe
-elab-functions	agree	loft-suite/rules/operators/Op-Eq/a-user-op-eq-on-an-inner-type-changes-no-outer-comparison.loft::t_3Sec_equals
-elab-functions	agree	loft-suite/rules/operators/Op-Eq/a-user-op-eq-on-an-inner-type-changes-no-outer-comparison.loft::vector<Sec>
 elab-functions	agree	loft-suite/rules/operators/Op-Fold/operator-next-to-text-and-to-type-drive-for-format-and-as.loft::(schema)
 elab-functions	agree	loft-suite/rules/operators/Op-Fold/operator-next-to-text-and-to-type-drive-for-format-and-as.loft::Cnt
 elab-functions	agree	loft-suite/rules/operators/Op-Fold/operator-next-to-text-and-to-type-drive-for-format-and-as.loft::DateTime
@@ -9907,10 +9882,6 @@ elab-functions	agree	loft-suite/rules/tuples/T-Cons/1698-a-tuple-held-as-a-vecto
 elab-functions	agree	loft-suite/rules/tuples/T-Cons/1698-a-tuple-held-as-a-vector-element-is-a-place.loft::S
 elab-functions	agree	loft-suite/rules/tuples/T-Cons/1698-a-tuple-held-as-a-vector-element-is-a-place.loft::__tuple<integer,vector<integer>>
 elab-functions	agree	loft-suite/rules/tuples/T-Cons/1698-a-tuple-held-as-a-vector-element-is-a-place.loft::n_pick
-elab-functions	agree	loft-suite/rules/tuples/T-Cons/2055-a-tuple-comparison-with-a-struct-member-is-its-functions-value.loft::(schema)
-elab-functions	agree	loft-suite/rules/tuples/T-Cons/2055-a-tuple-comparison-with-a-struct-member-is-its-functions-value.loft::P
-elab-functions	agree	loft-suite/rules/tuples/T-Cons/2055-a-tuple-comparison-with-a-struct-member-is-its-functions-value.loft::n_mk
-elab-functions	agree	loft-suite/rules/tuples/T-Cons/2055-a-tuple-comparison-with-a-struct-member-is-its-functions-value.loft::n_test_equal_tuples_compare_equal
 elab-functions	agree	loft-suite/rules/tuples/T-Cons/2253-a-compound-member-copies-the-local-it-answers.loft::(schema)
 elab-functions	agree	loft-suite/rules/tuples/T-Cons/2253-a-compound-member-copies-the-local-it-answers.loft::H2253
 elab-functions	agree	loft-suite/rules/tuples/T-Cons/2253-a-compound-member-copies-the-local-it-answers.loft::K2253
@@ -10188,6 +10159,8 @@ elab-functions	agree	loft-suite/rules/types/D-NoEnumF/a-checked-parse-answers-nu
 elab-functions	agree	loft-suite/rules/types/D-NoEnumF/a-checked-parse-answers-null-for-an-enum-field-it-cannot-fill.loft::CpDefault
 elab-functions	agree	loft-suite/rules/types/D-NoEnumF/a-checked-parse-answers-null-for-an-enum-field-it-cannot-fill.loft::Red
 elab-functions	agree	loft-suite/rules/types/D-NoEnumF/a-checked-parse-answers-null-for-an-enum-field-it-cannot-fill.loft::n_main
+elab-functions	agree	loft-suite/rules/types/D-NoEnumF/a-checked-parse-answers-null-for-an-enum-field-it-cannot-fill.loft::n_test_a_named_variant_is_kept
+elab-functions	agree	loft-suite/rules/types/D-NoEnumF/a-checked-parse-answers-null-for-an-enum-field-it-cannot-fill.loft::n_test_an_unfilled_bare_enum_field_answers_null
 elab-functions	agree	loft-suite/rules/types/D-Rec/a-second-variant-default-builds-in-a-store-of-its-own.loft::P
 elab-functions	agree	loft-suite/rules/types/D-Rec/a-second-variant-default-builds-in-a-store-of-its-own.loft::Ty
 elab-functions	agree	loft-suite/rules/types/D-Rec/a-second-variant-default-builds-in-a-store-of-its-own.loft::TyInt
@@ -14780,7 +14753,7 @@ elab-functions	agree	tests/scripts/store_paged_enum_field.loft::main_vector<inte
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::n_bytes
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::vector<integer(0, 255)>
 
-layer	elab-pass1	agree	12081	of	18050
+layer	elab-pass1	agree	12097	of	18066
 elab-pass1	agree	lib/code.loft::t_4Code_add_block
 elab-pass1	agree	lib/code.loft::t_4Code_add_if
 elab-pass1	agree	lib/code.loft::t_4Code_add_loop
@@ -17383,7 +17356,10 @@ elab-pass1	agree	loft-suite/rules/formatting/F-Interp/a-format-hole-may-open-wit
 elab-pass1	agree	loft-suite/rules/formatting/F-Interp/a-format-hole-may-open-with-whitespace.loft::n_ok
 elab-pass1	agree	loft-suite/rules/formatting/F-Render-Child/2430-a-chain-of-any-length-takes-no-stack-per-link.loft::n_main
 elab-pass1	agree	loft-suite/rules/formatting/F-Render-Child/2430-a-chain-of-any-length-takes-no-stack-per-link.loft::n_text_of
+elab-pass1	agree	loft-suite/rules/formatting/F-Render-Child/a-child-renders-and-parses-as-its-value.loft::n_test_a_long_chain_is_a_loop
+elab-pass1	agree	loft-suite/rules/formatting/F-Render-Child/a-child-renders-and-parses-as-its-value.loft::n_test_a_long_enum_chain_reads_back
 elab-pass1	agree	loft-suite/rules/formatting/F-Render-Child/a-child-renders-and-parses-as-its-value.loft::n_test_a_tree_renders_and_reads_back
+elab-pass1	agree	loft-suite/rules/formatting/F-Render-Child/a-child-renders-and-parses-as-its-value.loft::n_test_an_expression_renders_and_reads_back
 elab-pass1	agree	loft-suite/rules/formatting/F-Render-Fields/57-json.loft::n_test_json_parse_from_variable
 elab-pass1	agree	loft-suite/rules/formatting/F-Render-Fields/57-json.loft::n_test_json_parse_loft_native
 elab-pass1	agree	loft-suite/rules/formatting/F-Render-Fields/57-json.loft::n_test_json_parse_missing_field
@@ -19230,6 +19206,7 @@ elab-pass1	agree	loft-suite/rules/operational/E-Eq/a-value-struct-with-methods-c
 elab-pass1	agree	loft-suite/rules/operational/E-Eq/c91-a-collection-and-an-enum-value-compare-by-content.loft::n_test_struct_enum_values
 elab-pass1	agree	loft-suite/rules/operational/E-Eq/c91-a-struct-compares-by-content-through-its-references.loft::n_test_a_struct_and_its_copy
 elab-pass1	agree	loft-suite/rules/operational/E-Eq/c91-a-struct-compares-by-content-through-its-references.loft::n_test_a_struct_holding_a_struct
+elab-pass1	agree	loft-suite/rules/operational/E-Eq/c91-a-struct-compares-by-content-through-its-references.loft::n_test_a_tuple_of_structs
 elab-pass1	agree	loft-suite/rules/operational/E-Eq/c91-a-struct-compares-by-content-through-its-references.loft::n_test_a_value_struct_follows_its_reference
 elab-pass1	agree	loft-suite/rules/operational/E-Eq/c91-a-struct-compares-by-content-through-its-references.loft::n_test_cycles_terminate
 elab-pass1	agree	loft-suite/rules/operational/E-Eq/c91-a-struct-compares-by-content-through-its-references.loft::n_test_nullable_pairs
@@ -19429,6 +19406,7 @@ elab-pass1	agree	loft-suite/rules/operators/Op-Def/every-user-type-of-this-sourc
 elab-pass1	agree	loft-suite/rules/operators/Op-Def/every-user-type-of-this-source-may-be-an-operators-self.loft::t_2Sh_plus
 elab-pass1	agree	loft-suite/rules/operators/Op-Def/every-user-type-of-this-source-may-be-an-operators-self.loft::t_3Col_negate
 elab-pass1	agree	loft-suite/rules/operators/Op-Eq/a-user-op-eq-on-an-inner-type-changes-no-outer-comparison.loft::n_main
+elab-pass1	agree	loft-suite/rules/operators/Op-Eq/a-user-op-eq-on-an-inner-type-changes-no-outer-comparison.loft::n_test_a_variant_payload_and_a_tuple_member_compare_structurally
 elab-pass1	agree	loft-suite/rules/operators/Op-Eq/a-user-op-eq-on-an-inner-type-changes-no-outer-comparison.loft::n_test_identity_is_asked_apart
 elab-pass1	agree	loft-suite/rules/operators/Op-Eq/a-user-op-eq-on-an-inner-type-changes-no-outer-comparison.loft::n_test_the_user_functions_answer_only_by_name
 elab-pass1	agree	loft-suite/rules/operators/Op-Eq/a-user-op-eq-on-an-inner-type-changes-no-outer-comparison.loft::t_3Sec_OpEq
@@ -22073,7 +22051,16 @@ elab-pass1	agree	loft-suite/rules/tuples/T-Cons/1590-a-tuple-whose-first-member-
 elab-pass1	agree	loft-suite/rules/tuples/T-Cons/1674-a-tuple-literal-copies-every-heap-member.loft::n_main
 elab-pass1	agree	loft-suite/rules/tuples/T-Cons/1689-a-tuples-heap-member-is-its-own-copy.loft::n_from_param
 elab-pass1	agree	loft-suite/rules/tuples/T-Cons/1698-a-tuple-held-as-a-vector-element-is-a-place.loft::n_pick
+elab-pass1	agree	loft-suite/rules/tuples/T-Cons/2055-a-tuple-comparison-with-a-struct-member-is-its-functions-value.loft::n_call_right
+elab-pass1	agree	loft-suite/rules/tuples/T-Cons/2055-a-tuple-comparison-with-a-struct-member-is-its-functions-value.loft::n_differ
+elab-pass1	agree	loft-suite/rules/tuples/T-Cons/2055-a-tuple-comparison-with-a-struct-member-is-its-functions-value.loft::n_lit_left
+elab-pass1	agree	loft-suite/rules/tuples/T-Cons/2055-a-tuple-comparison-with-a-struct-member-is-its-functions-value.loft::n_lit_right
+elab-pass1	agree	loft-suite/rules/tuples/T-Cons/2055-a-tuple-comparison-with-a-struct-member-is-its-functions-value.loft::n_not_equal
+elab-pass1	agree	loft-suite/rules/tuples/T-Cons/2055-a-tuple-comparison-with-a-struct-member-is-its-functions-value.loft::n_not_equal_differ
+elab-pass1	agree	loft-suite/rules/tuples/T-Cons/2055-a-tuple-comparison-with-a-struct-member-is-its-functions-value.loft::n_struct_both
 elab-pass1	agree	loft-suite/rules/tuples/T-Cons/2055-a-tuple-comparison-with-a-struct-member-is-its-functions-value.loft::n_test_equal_tuples_compare_equal
+elab-pass1	agree	loft-suite/rules/tuples/T-Cons/2055-a-tuple-comparison-with-a-struct-member-is-its-functions-value.loft::n_test_the_complement_and_a_difference
+elab-pass1	agree	loft-suite/rules/tuples/T-Cons/2055-a-tuple-comparison-with-a-struct-member-is-its-functions-value.loft::n_text_member
 elab-pass1	agree	loft-suite/rules/tuples/T-Cons/2253-a-compound-member-copies-the-local-it-answers.loft::n_main
 elab-pass1	agree	loft-suite/rules/tuples/T-Cons/2256-a-text-member-branch-is-copied-per-arm.loft::n_main
 elab-pass1	agree	loft-suite/rules/tuples/T-Cons/2256-a-text-member-branch-is-copied-per-arm.loft::n_mk2256
@@ -22200,6 +22187,8 @@ elab-pass1	agree	loft-suite/rules/types/C-Var/a-variant-takes-the-enum-that-owns
 elab-pass1	agree	loft-suite/rules/types/C-Var/a-variant-takes-the-enum-that-owns-it-and-reaches-its-slot-in-one-step.loft::n_test_a_plain_enum_is_its_one_based_tag
 elab-pass1	agree	loft-suite/rules/types/D-Json/2557-a-jsonvalue-given-no-value-holds-jnull-wherever-the-null-is-written.loft::n_is_jnull
 elab-pass1	agree	loft-suite/rules/types/D-NoEnumF/a-checked-parse-answers-null-for-an-enum-field-it-cannot-fill.loft::n_main
+elab-pass1	agree	loft-suite/rules/types/D-NoEnumF/a-checked-parse-answers-null-for-an-enum-field-it-cannot-fill.loft::n_test_a_named_variant_is_kept
+elab-pass1	agree	loft-suite/rules/types/D-NoEnumF/a-checked-parse-answers-null-for-an-enum-field-it-cannot-fill.loft::n_test_an_unfilled_bare_enum_field_answers_null
 elab-pass1	agree	loft-suite/rules/types/D-NoEnumF/a-variant-cast-takes-the-default-its-fields-choose.loft::n_main
 elab-pass1	agree	loft-suite/rules/types/D-NoEnumF/a-variant-cast-takes-the-default-its-fields-choose.loft::n_test_a_cast_after_is_is_a_hit
 elab-pass1	agree	loft-suite/rules/types/D-NoEnumF/a-variant-cast-takes-the-default-its-fields-choose.loft::n_test_a_checked_cast_needs_no_default
