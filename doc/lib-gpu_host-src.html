@@ -23,16 +23,16 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <a href="https://loft-lang.org/blog/">Blog</a> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>gpu_host source</h1>
 <article>
-<p><a href="lib-gpu_host.html">← gpu_host</a> · <a href="lib-gpu_host-api.html">API reference</a> · version 0.1.0</p>
-<p class="lib-legend">2 file(s), 152 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<p><a href="lib-gpu_host.html">← gpu_host</a> · <a href="lib-gpu_host-api.html">API reference</a> · version 0.1.1</p>
+<p class="lib-legend">2 file(s), 159 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
 <table class="lib-table">
 <tr><th>Item</th><th>Defined</th><th>Worked example</th><th>Call sites</th></tr>
-<tr><td><code>backends</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-host-loft-L38">38</a></td><td>—</td><td><a href="#tests-host-loft-L16">16</a> <a href="#tests-host-loft-L17">17</a> <a href="#tests-host-loft-L47">47</a> <a href="#tests-host-loft-L70">70</a> <a href="#tests-host-loft-L71">71</a></td></tr>
-<tr><td><code>open</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-host-loft-L54">54</a></td><td>—</td><td><a href="#src-gpu-host-loft-L45">45</a> <a href="#tests-host-loft-L45">45</a></td></tr>
+<tr><td><code>backends</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-host-loft-L38">38</a></td><td>—</td><td><a href="#tests-host-loft-L23">23</a> <a href="#tests-host-loft-L24">24</a> <a href="#tests-host-loft-L54">54</a> <a href="#tests-host-loft-L77">77</a> <a href="#tests-host-loft-L78">78</a></td></tr>
+<tr><td><code>open</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-host-loft-L54">54</a></td><td>—</td><td><a href="#src-gpu-host-loft-L45">45</a> <a href="#tests-host-loft-L52">52</a></td></tr>
 <tr><td><code>open_fullscreen</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-host-loft-L60">60</a></td><td>—</td><td><a href="#src-gpu-host-loft-L45">45</a></td></tr>
-<tr><td><code>open_on</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-host-loft-L66">66</a></td><td>—</td><td><a href="#tests-host-loft-L25">25</a> <a href="#tests-host-loft-L39">39</a></td></tr>
+<tr><td><code>open_on</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-host-loft-L66">66</a></td><td>—</td><td><a href="#tests-host-loft-L32">32</a> <a href="#tests-host-loft-L46">46</a></td></tr>
 </table>
 <h2 id="src-gpu-host-loft">src/gpu_host.loft</h2>
 <pre class="src"><code><span id="src-gpu-host-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
@@ -117,78 +117,85 @@
 <span id="tests-host-loft-L9"><span class="kw">use</span> gpu_paint;</span>
 <span id="tests-host-loft-L10"></span>
 <span id="tests-host-loft-L11"><span class="kw">fn</span> <span class="fn-call">display</span>() -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
-<span id="tests-host-loft-L12">  (<span class="fn-call"><a href="stdlib-environment.html">env_variable</a></span>(<span class="st">"DISPLAY"</span>) ?? <span class="st">""</span>) != <span class="st">""</span> || (<span class="fn-call"><a href="stdlib-environment.html">env_variable</a></span>(<span class="st">"GRAPHICS_TEST_WINDOW"</span>) ?? <span class="st">""</span>) == <span class="st">"1"</span></span>
+<span id="tests-host-loft-L12">  <span class="fn-call">must_draw</span>((<span class="fn-call"><a href="stdlib-environment.html">env_variable</a></span>(<span class="st">"DISPLAY"</span>) ?? <span class="st">""</span>) != <span class="st">""</span> || (<span class="fn-call"><a href="stdlib-environment.html">env_variable</a></span>(<span class="st">"GRAPHICS_TEST_WINDOW"</span>) ?? <span class="st">""</span>) == <span class="st">"1"</span>)</span>
 <span id="tests-host-loft-L13">}</span>
 <span id="tests-host-loft-L14"></span>
-<span id="tests-host-loft-L15"><span class="kw">fn</span> <span class="fn-call">test_the_backends_are_asked_in_one_order</span>() {</span>
-<span id="tests-host-loft-L16">  names = gpu_host::<span class="fn-call">backends</span>();</span>
-<span id="tests-host-loft-L17">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(names) &lt;= <span class="nm">3</span>, <span class="st">"three backends are known: {names}"</span>);</span>
-<span id="tests-host-loft-L18">  <span class="cm">// whichever this machine has, in the one order: Metal, OpenGL, Vulkan</span></span>
-<span id="tests-host-loft-L19">  order = [<span class="st">"gpu_metal"</span>, <span class="st">"gpu_gl"</span>, <span class="st">"gpu_vulkan"</span>];</span>
-<span id="tests-host-loft-L20">  at = <span class="nm">0</span>;</span>
-<span id="tests-host-loft-L21">  <span class="kw">for</span> n <span class="kw">in</span> names {</span>
-<span id="tests-host-loft-L22">    while at &lt; <span class="bi"><a href="stdlib-text.html">len</a></span>(order) &amp;&amp; (order[at] ?? <span class="st">""</span>) != n { at += <span class="nm">1</span>; }</span>
-<span id="tests-host-loft-L23">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(at &lt; <span class="bi"><a href="stdlib-text.html">len</a></span>(order), <span class="st">"{n} is asked in the order Metal, OpenGL, Vulkan: {names}"</span>);</span>
-<span id="tests-host-loft-L24">  }</span>
-<span id="tests-host-loft-L25">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(gpu_host::<span class="fn-call">open_on</span>(<span class="st">""</span>, <span class="nm">8</span>, <span class="nm">8</span>, <span class="st">"none"</span>) == <span class="kw">null</span> &amp;&amp; gpu_host::<span class="fn-call">open_on</span>(<span class="st">"gpu_none"</span>, <span class="nm">8</span>, <span class="nm">8</span>, <span class="st">"none"</span>) == <span class="kw">null</span>, <span class="st">"a backend nobody knows opens nothing"</span>);</span>
-<span id="tests-host-loft-L26">}</span>
-<span id="tests-host-loft-L27"></span>
-<span id="tests-host-loft-L28"><span class="cm">// A painter's picture, by a program that names no backend.</span></span>
-<span id="tests-host-loft-L29"><span class="kw">fn</span> <span class="fn-call">painted</span>(dev: gpu::<span class="en">Device</span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt; {</span>
-<span id="tests-host-loft-L30">  paint = gpu_paint::<span class="fn-call">painter</span>(dev, gpu::<span class="en">INTO_WINDOW</span>) ?? <span class="kw">return</span> [];</span>
-<span id="tests-host-loft-L31">  dev.<span class="fn-call">begin_window</span>(gpu::<span class="en">CLEAR</span>, <span class="nm">0xFF102030</span>);</span>
-<span id="tests-host-loft-L32">  paint.<span class="fn-call">rect</span>(dev, <span class="nm">8.0</span>, <span class="nm">4.0</span>, <span class="nm">16.0</span>, <span class="nm">10.0</span>, <span class="nm">1.0</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">1.0</span>);</span>
-<span id="tests-host-loft-L33">  paint.<span class="fn-call">rect</span>(dev, <span class="nm">20.5</span>, <span class="nm">9.25</span>, <span class="nm">30.0</span>, <span class="nm">20.5</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">1.0</span>, <span class="nm">0.5</span>);</span>
-<span id="tests-host-loft-L34">  dev.<span class="fn-call">end</span>();</span>
-<span id="tests-host-loft-L35">  dev.<span class="fn-call">capture</span>()</span>
-<span id="tests-host-loft-L36">}</span>
-<span id="tests-host-loft-L37"></span>
-<span id="tests-host-loft-L38"><span class="kw">fn</span> <span class="fn-call">on</span>(backend: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt; {</span>
-<span id="tests-host-loft-L39">  dev = gpu_host::<span class="fn-call">open_on</span>(backend, <span class="nm">64</span>, <span class="nm">48</span>, <span class="st">"host-{backend}"</span>) ?? <span class="kw">return</span> [];</span>
-<span id="tests-host-loft-L40">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(gpu::<span class="fn-call">backend_name</span>() == backend, <span class="st">"the backend asked for serves the program: {gpu::backend_name()}"</span>);</span>
-<span id="tests-host-loft-L41">  <span class="fn-call">painted</span>(dev)</span>
-<span id="tests-host-loft-L42">}</span>
-<span id="tests-host-loft-L43"></span>
-<span id="tests-host-loft-L44"><span class="kw">fn</span> <span class="fn-call">first</span>() -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt; {</span>
-<span id="tests-host-loft-L45">  dev = gpu_host::<span class="fn-call">open</span>(<span class="nm">64</span>, <span class="nm">48</span>, <span class="st">"host-first"</span>) ?? <span class="kw">return</span> [];</span>
-<span id="tests-host-loft-L46">  wanted = <span class="fn-call"><a href="stdlib-environment.html">env_variable</a></span>(<span class="st">"GPU_HOST"</span>) ?? <span class="st">""</span>;</span>
-<span id="tests-host-loft-L47">  <span class="kw">if</span> wanted == <span class="st">""</span> { wanted = gpu_host::<span class="fn-call">backends</span>()[<span class="nm">0</span>] ?? <span class="st">""</span>; }</span>
-<span id="tests-host-loft-L48">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(gpu::<span class="fn-call">backend_name</span>() == wanted, <span class="st">"the first backend this machine has, or the one GPU_HOST names: {gpu::backend_name()}"</span>);</span>
-<span id="tests-host-loft-L49">  <span class="fn-call">painted</span>(dev)</span>
-<span id="tests-host-loft-L50">}</span>
-<span id="tests-host-loft-L51"></span>
-<span id="tests-host-loft-L52"><span class="cm">// The largest gap between two pixels in any one channel.</span></span>
-<span id="tests-host-loft-L53"><span class="kw">fn</span> <span class="fn-call">gap</span>(a: <span class="ty"><a href="stdlib-types.html">u32</a></span>, b: <span class="ty"><a href="stdlib-types.html">u32</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="tests-host-loft-L54">  worst = <span class="nm">0</span>;</span>
-<span id="tests-host-loft-L55">  <span class="kw">for</span> shift <span class="kw">in</span> [<span class="nm">0</span>, <span class="nm">8</span>, <span class="nm">16</span>, <span class="nm">24</span>] {</span>
-<span id="tests-host-loft-L56">    x = ((a <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>) &gt;&gt; shift) &amp; <span class="nm">255</span>;</span>
-<span id="tests-host-loft-L57">    y = ((b <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>) &gt;&gt; shift) &amp; <span class="nm">255</span>;</span>
-<span id="tests-host-loft-L58">    d = <span class="kw">if</span> x &gt; y { x - y } <span class="kw">else</span> { y - x };</span>
-<span id="tests-host-loft-L59">    <span class="kw">if</span> d &gt; worst { worst = d; }</span>
-<span id="tests-host-loft-L60">  }</span>
-<span id="tests-host-loft-L61">  worst</span>
-<span id="tests-host-loft-L62">}</span>
-<span id="tests-host-loft-L63"></span>
-<span id="tests-host-loft-L64"><span class="kw">fn</span> <span class="fn-call">test_a_program_that_names_no_backend_draws_one_picture_on_each</span>() {</span>
-<span id="tests-host-loft-L65">  <span class="kw">if</span> !<span class="fn-call">display</span>() { <span class="kw">return</span>; }</span>
-<span id="tests-host-loft-L66">  shown = <span class="fn-call">first</span>();</span>
-<span id="tests-host-loft-L67">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(shown) == <span class="nm">64</span> * <span class="nm">48</span>, <span class="st">"the host opened a window: {len(shown)} pixels"</span>);</span>
-<span id="tests-host-loft-L68">  <span class="cm">// by hand: the red rectangle is opaque, the sky shows beside it</span></span>
-<span id="tests-host-loft-L69">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>((shown[<span class="nm">6</span> * <span class="nm">64</span> + <span class="nm">10</span>] ?? <span class="nm">0</span>) == <span class="nm">0xFFFF0000</span> &amp;&amp; (shown[<span class="nm">0</span>] ?? <span class="nm">0</span>) == <span class="nm">0xFF102030</span>, <span class="st">"the picture: {shown[6 * 64 + 10] ?? 0:x} {shown[0] ?? 0:x}"</span>);</span>
-<span id="tests-host-loft-L70">  first_name = gpu_host::<span class="fn-call">backends</span>()[<span class="nm">0</span>] ?? <span class="st">""</span>;</span>
-<span id="tests-host-loft-L71">  <span class="kw">for</span> name <span class="kw">in</span> gpu_host::<span class="fn-call">backends</span>() {</span>
-<span id="tests-host-loft-L72">    one = <span class="fn-call">on</span>(name);</span>
-<span id="tests-host-loft-L73">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(one) == <span class="bi"><a href="stdlib-text.html">len</a></span>(shown), <span class="st">"{name} opened a window: {len(one)} pixels"</span>);</span>
-<span id="tests-host-loft-L74">    <span class="cm">// Byte for byte, but that another stack may round the half-transparent blend the other</span></span>
-<span id="tests-host-loft-L75">    <span class="cm">// way: a channel off by 1 (RADV against llvmpipe's OpenGL: 630 pixels).</span></span>
-<span id="tests-host-loft-L76">    differ = <span class="nm">0</span>;</span>
-<span id="tests-host-loft-L77">    <span class="kw">for</span> p <span class="kw">in</span> one {</span>
-<span id="tests-host-loft-L78">      q = shown[p#<span class="ty">index</span>] ?? <span class="nm">0</span>;</span>
-<span id="tests-host-loft-L79">      <span class="kw">if</span> p != q &amp;&amp; (name == first_name || <span class="fn-call">gap</span>(p, q) &gt; <span class="nm">1</span>) { differ += <span class="nm">1</span>; }</span>
-<span id="tests-host-loft-L80">    }</span>
-<span id="tests-host-loft-L81">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(differ == <span class="nm">0</span>, <span class="st">"{differ} pixels on {name} differ from the first backend's"</span>);</span>
-<span id="tests-host-loft-L82">  }</span>
-<span id="tests-host-loft-L83">}</span>
+<span id="tests-host-loft-L15"><span class="cm">// A run that says its tests must draw (`GRAPHICS_TEST_MUST_DRAW=1`: the library CI, on a runner</span></span>
+<span id="tests-host-loft-L16"><span class="cm">// it gave a display) fails here, where a test would otherwise return having drawn nothing.</span></span>
+<span id="tests-host-loft-L17"><span class="kw">fn</span> <span class="fn-call">must_draw</span>(can: <span class="ty"><a href="stdlib-types.html">boolean</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="tests-host-loft-L18">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(can || (<span class="fn-call"><a href="stdlib-environment.html">env_variable</a></span>(<span class="st">"GRAPHICS_TEST_MUST_DRAW"</span>) ?? <span class="st">""</span>) != <span class="st">"1"</span>, <span class="st">"this run's tests must draw (GRAPHICS_TEST_MUST_DRAW=1) and found no display to draw on"</span>);</span>
+<span id="tests-host-loft-L19">  can</span>
+<span id="tests-host-loft-L20">}</span>
+<span id="tests-host-loft-L21"></span>
+<span id="tests-host-loft-L22"><span class="kw">fn</span> <span class="fn-call">test_the_backends_are_asked_in_one_order</span>() {</span>
+<span id="tests-host-loft-L23">  names = gpu_host::<span class="fn-call">backends</span>();</span>
+<span id="tests-host-loft-L24">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(names) &lt;= <span class="nm">3</span>, <span class="st">"three backends are known: {names}"</span>);</span>
+<span id="tests-host-loft-L25">  <span class="cm">// whichever this machine has, in the one order: Metal, OpenGL, Vulkan</span></span>
+<span id="tests-host-loft-L26">  order = [<span class="st">"gpu_metal"</span>, <span class="st">"gpu_gl"</span>, <span class="st">"gpu_vulkan"</span>];</span>
+<span id="tests-host-loft-L27">  at = <span class="nm">0</span>;</span>
+<span id="tests-host-loft-L28">  <span class="kw">for</span> n <span class="kw">in</span> names {</span>
+<span id="tests-host-loft-L29">    while at &lt; <span class="bi"><a href="stdlib-text.html">len</a></span>(order) &amp;&amp; (order[at] ?? <span class="st">""</span>) != n { at += <span class="nm">1</span>; }</span>
+<span id="tests-host-loft-L30">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(at &lt; <span class="bi"><a href="stdlib-text.html">len</a></span>(order), <span class="st">"{n} is asked in the order Metal, OpenGL, Vulkan: {names}"</span>);</span>
+<span id="tests-host-loft-L31">  }</span>
+<span id="tests-host-loft-L32">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(gpu_host::<span class="fn-call">open_on</span>(<span class="st">""</span>, <span class="nm">8</span>, <span class="nm">8</span>, <span class="st">"none"</span>) == <span class="kw">null</span> &amp;&amp; gpu_host::<span class="fn-call">open_on</span>(<span class="st">"gpu_none"</span>, <span class="nm">8</span>, <span class="nm">8</span>, <span class="st">"none"</span>) == <span class="kw">null</span>, <span class="st">"a backend nobody knows opens nothing"</span>);</span>
+<span id="tests-host-loft-L33">}</span>
+<span id="tests-host-loft-L34"></span>
+<span id="tests-host-loft-L35"><span class="cm">// A painter's picture, by a program that names no backend.</span></span>
+<span id="tests-host-loft-L36"><span class="kw">fn</span> <span class="fn-call">painted</span>(dev: gpu::<span class="en">Device</span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt; {</span>
+<span id="tests-host-loft-L37">  paint = gpu_paint::<span class="fn-call">painter</span>(dev, gpu::<span class="en">INTO_WINDOW</span>) ?? <span class="kw">return</span> [];</span>
+<span id="tests-host-loft-L38">  dev.<span class="fn-call">begin_window</span>(gpu::<span class="en">CLEAR</span>, <span class="nm">0xFF102030</span>);</span>
+<span id="tests-host-loft-L39">  paint.<span class="fn-call">rect</span>(dev, <span class="nm">8.0</span>, <span class="nm">4.0</span>, <span class="nm">16.0</span>, <span class="nm">10.0</span>, <span class="nm">1.0</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">1.0</span>);</span>
+<span id="tests-host-loft-L40">  paint.<span class="fn-call">rect</span>(dev, <span class="nm">20.5</span>, <span class="nm">9.25</span>, <span class="nm">30.0</span>, <span class="nm">20.5</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">1.0</span>, <span class="nm">0.5</span>);</span>
+<span id="tests-host-loft-L41">  dev.<span class="fn-call">end</span>();</span>
+<span id="tests-host-loft-L42">  dev.<span class="fn-call">capture</span>()</span>
+<span id="tests-host-loft-L43">}</span>
+<span id="tests-host-loft-L44"></span>
+<span id="tests-host-loft-L45"><span class="kw">fn</span> <span class="fn-call">on</span>(backend: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt; {</span>
+<span id="tests-host-loft-L46">  dev = gpu_host::<span class="fn-call">open_on</span>(backend, <span class="nm">64</span>, <span class="nm">48</span>, <span class="st">"host-{backend}"</span>) ?? <span class="kw">return</span> [];</span>
+<span id="tests-host-loft-L47">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(gpu::<span class="fn-call">backend_name</span>() == backend, <span class="st">"the backend asked for serves the program: {gpu::backend_name()}"</span>);</span>
+<span id="tests-host-loft-L48">  <span class="fn-call">painted</span>(dev)</span>
+<span id="tests-host-loft-L49">}</span>
+<span id="tests-host-loft-L50"></span>
+<span id="tests-host-loft-L51"><span class="kw">fn</span> <span class="fn-call">first</span>() -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt; {</span>
+<span id="tests-host-loft-L52">  dev = gpu_host::<span class="fn-call">open</span>(<span class="nm">64</span>, <span class="nm">48</span>, <span class="st">"host-first"</span>) ?? <span class="kw">return</span> [];</span>
+<span id="tests-host-loft-L53">  wanted = <span class="fn-call"><a href="stdlib-environment.html">env_variable</a></span>(<span class="st">"GPU_HOST"</span>) ?? <span class="st">""</span>;</span>
+<span id="tests-host-loft-L54">  <span class="kw">if</span> wanted == <span class="st">""</span> { wanted = gpu_host::<span class="fn-call">backends</span>()[<span class="nm">0</span>] ?? <span class="st">""</span>; }</span>
+<span id="tests-host-loft-L55">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(gpu::<span class="fn-call">backend_name</span>() == wanted, <span class="st">"the first backend this machine has, or the one GPU_HOST names: {gpu::backend_name()}"</span>);</span>
+<span id="tests-host-loft-L56">  <span class="fn-call">painted</span>(dev)</span>
+<span id="tests-host-loft-L57">}</span>
+<span id="tests-host-loft-L58"></span>
+<span id="tests-host-loft-L59"><span class="cm">// The largest gap between two pixels in any one channel.</span></span>
+<span id="tests-host-loft-L60"><span class="kw">fn</span> <span class="fn-call">gap</span>(a: <span class="ty"><a href="stdlib-types.html">u32</a></span>, b: <span class="ty"><a href="stdlib-types.html">u32</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="tests-host-loft-L61">  worst = <span class="nm">0</span>;</span>
+<span id="tests-host-loft-L62">  <span class="kw">for</span> shift <span class="kw">in</span> [<span class="nm">0</span>, <span class="nm">8</span>, <span class="nm">16</span>, <span class="nm">24</span>] {</span>
+<span id="tests-host-loft-L63">    x = ((a <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>) &gt;&gt; shift) &amp; <span class="nm">255</span>;</span>
+<span id="tests-host-loft-L64">    y = ((b <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>) &gt;&gt; shift) &amp; <span class="nm">255</span>;</span>
+<span id="tests-host-loft-L65">    d = <span class="kw">if</span> x &gt; y { x - y } <span class="kw">else</span> { y - x };</span>
+<span id="tests-host-loft-L66">    <span class="kw">if</span> d &gt; worst { worst = d; }</span>
+<span id="tests-host-loft-L67">  }</span>
+<span id="tests-host-loft-L68">  worst</span>
+<span id="tests-host-loft-L69">}</span>
+<span id="tests-host-loft-L70"></span>
+<span id="tests-host-loft-L71"><span class="kw">fn</span> <span class="fn-call">test_a_program_that_names_no_backend_draws_one_picture_on_each</span>() {</span>
+<span id="tests-host-loft-L72">  <span class="kw">if</span> !<span class="fn-call">display</span>() { <span class="kw">return</span>; }</span>
+<span id="tests-host-loft-L73">  shown = <span class="fn-call">first</span>();</span>
+<span id="tests-host-loft-L74">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(shown) == <span class="nm">64</span> * <span class="nm">48</span>, <span class="st">"the host opened a window: {len(shown)} pixels"</span>);</span>
+<span id="tests-host-loft-L75">  <span class="cm">// by hand: the red rectangle is opaque, the sky shows beside it</span></span>
+<span id="tests-host-loft-L76">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>((shown[<span class="nm">6</span> * <span class="nm">64</span> + <span class="nm">10</span>] ?? <span class="nm">0</span>) == <span class="nm">0xFFFF0000</span> &amp;&amp; (shown[<span class="nm">0</span>] ?? <span class="nm">0</span>) == <span class="nm">0xFF102030</span>, <span class="st">"the picture: {shown[6 * 64 + 10] ?? 0:x} {shown[0] ?? 0:x}"</span>);</span>
+<span id="tests-host-loft-L77">  first_name = gpu_host::<span class="fn-call">backends</span>()[<span class="nm">0</span>] ?? <span class="st">""</span>;</span>
+<span id="tests-host-loft-L78">  <span class="kw">for</span> name <span class="kw">in</span> gpu_host::<span class="fn-call">backends</span>() {</span>
+<span id="tests-host-loft-L79">    one = <span class="fn-call">on</span>(name);</span>
+<span id="tests-host-loft-L80">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(one) == <span class="bi"><a href="stdlib-text.html">len</a></span>(shown), <span class="st">"{name} opened a window: {len(one)} pixels"</span>);</span>
+<span id="tests-host-loft-L81">    <span class="cm">// Byte for byte, but that another stack may round the half-transparent blend the other</span></span>
+<span id="tests-host-loft-L82">    <span class="cm">// way: a channel off by 1 (RADV against llvmpipe's OpenGL: 630 pixels).</span></span>
+<span id="tests-host-loft-L83">    differ = <span class="nm">0</span>;</span>
+<span id="tests-host-loft-L84">    <span class="kw">for</span> p <span class="kw">in</span> one {</span>
+<span id="tests-host-loft-L85">      q = shown[p#<span class="ty">index</span>] ?? <span class="nm">0</span>;</span>
+<span id="tests-host-loft-L86">      <span class="kw">if</span> p != q &amp;&amp; (name == first_name || <span class="fn-call">gap</span>(p, q) &gt; <span class="nm">1</span>) { differ += <span class="nm">1</span>; }</span>
+<span id="tests-host-loft-L87">    }</span>
+<span id="tests-host-loft-L88">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(differ == <span class="nm">0</span>, <span class="st">"{differ} pixels on {name} differ from the first backend's"</span>);</span>
+<span id="tests-host-loft-L89">  }</span>
+<span id="tests-host-loft-L90">}</span>
 </code></pre>
 
   </article>

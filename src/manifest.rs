@@ -197,6 +197,11 @@ pub struct Manifest {
     /// when the floor is raised, so a refused store names the release that carries it
     /// forward.  `None` when the floor was never raised past a release that wrote stores.
     pub data_bridge: Option<String>,
+    /// Whether this package declares that it works in a 32-bit program (`#width 32`,
+    /// `--width 32`: a 32-bit device), from `[package] width32 = true`.  The claim is that
+    /// its own tests pass under that regime; the library CI and the publish script run them
+    /// there for a package that makes it (doc/claude/LIBRARY_WIDTH32.md).
+    pub width32: bool,
     /// GitHub repository that publishes this package's releases, from
     /// `[package] repository = "..."`.  Either a bare repo name under the
     /// `loft-lang` org (`"loft-libs-core"`) or a full `"owner/repo"`.  When
@@ -807,6 +812,7 @@ fn apply_kv(m: &mut Manifest, section: &str, key: &str, value: &MValue) {
         ("package", "api_compatible_with") => m.api_compatible_with = Some(value.scalar()),
         ("package", "data_compatible_with") => m.data_compatible_with = Some(value.scalar()),
         ("package", "data_bridge") => m.data_bridge = Some(value.scalar()),
+        ("package", "width32") => m.width32 = value.is_true(),
         ("package", "repository") => m.repository = Some(value.scalar()),
         ("package", "description") => m.description = Some(value.scalar()),
         ("library", "entry") => m.entry = Some(value.scalar()),
@@ -1354,6 +1360,23 @@ mod tests {
         let mut f = crate::file_access::create(&path).unwrap();
         f.write_all(content.as_bytes()).unwrap();
         path
+    }
+
+    /// `[package] width32 = true` is the claim that a package works in a 32-bit program; a
+    /// package that says nothing, or `false`, makes none.
+    #[test]
+    fn width32_is_declared_in_the_package_table() {
+        let says = |body: &str| parse_manifest(body, "loft.toml").width32;
+        assert!(
+            says("[package]\nname = \"p\"\nwidth32 = true\n"),
+            "declared"
+        );
+        assert!(
+            !says("[package]\nname = \"p\"\nwidth32 = false\n"),
+            "declared off"
+        );
+        assert!(!says("[package]\nname = \"p\"\n"), "not declared");
+        assert!(!says("[library]\nwidth32 = true\n"), "not in another table");
     }
 
     /// A daily or development build answers `<last release's YYYY.M>.<yyyymmdd>` (`build.rs`

@@ -23,8 +23,8 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <a href="https://loft-lang.org/blog/">Blog</a> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>gpu_paint source</h1>
 <article>
-<p><a href="lib-gpu_paint.html">← gpu_paint</a> · <a href="lib-gpu_paint-api.html">API reference</a> · version 0.2.0</p>
-<p class="lib-legend">4 file(s), 971 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<p><a href="lib-gpu_paint.html">← gpu_paint</a> · <a href="lib-gpu_paint-api.html">API reference</a> · version 0.2.1</p>
+<p class="lib-legend">4 file(s), 1032 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
 <table class="lib-table">
@@ -32,14 +32,14 @@
 <tr><td><code>Sprites</code> <span class="search-kind">struct</span></td><td><a href="#src-gpu-paint-loft-L306">306</a></td><td>—</td><td><a href="#src-gpu-paint-loft-L328">328</a> <a href="#src-gpu-paint-loft-L330">330</a> <a href="#src-gpu-paint-loft-L341">341</a> <a href="#src-gpu-paint-loft-L352">352</a> <a href="#src-gpu-paint-loft-L450">450</a></td></tr>
 <tr><td><code>cols</code> <span class="search-kind">const</span></td><td><a href="#src-gpu-paint-loft-L308">308</a></td><td>—</td><td><a href="#src-gpu-paint-loft-L325">325</a> <a href="#src-gpu-paint-loft-L332">332</a> <a href="#src-gpu-paint-loft-L343">343</a> <a href="#src-gpu-paint-loft-L344">344</a> <a href="#src-gpu-paint-loft-L345">345</a> <a href="#src-gpu-paint-loft-L347">347</a> … (8 total)</td></tr>
 <tr><td><code>rows</code> <span class="search-kind">const</span></td><td><a href="#src-gpu-paint-loft-L309">309</a></td><td>—</td><td><a href="#src-gpu-paint-loft-L326">326</a> <a href="#src-gpu-paint-loft-L333">333</a> <a href="#src-gpu-paint-loft-L346">346</a> <a href="#src-gpu-paint-loft-L347">347</a> <a href="#src-gpu-paint-loft-L353">353</a> <a href="#src-gpu-paint-loft-L457">457</a></td></tr>
-<tr><td><code>sprites</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-paint-loft-L320">320</a></td><td>—</td><td><a href="#tests-record-loft-L71">71</a> <a href="#tests-same-as-graphics-loft-L169">169</a> <a href="#tests-same-as-graphics-loft-L172">172</a> <a href="#tests-same-as-graphics-loft-L180">180</a> <a href="#tests-same-as-graphics-loft-L195">195</a> <a href="#tests-same-as-graphics-loft-L204">204</a> … (10 total)</td></tr>
-<tr><td><code>draw</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-paint-loft-L352">352</a></td><td>—</td><td><a href="#src-gpu-paint-loft-L360">360</a> <a href="#src-gpu-paint-loft-L433">433</a> <a href="#src-gpu-paint-loft-L443">443</a> <a href="#src-gpu-paint-loft-L464">464</a> <a href="#tests-record-loft-L54">54</a> <a href="#tests-record-loft-L59">59</a> … (14 total)</td></tr>
+<tr><td><code>sprites</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-paint-loft-L320">320</a></td><td>—</td><td><a href="#tests-record-loft-L71">71</a> <a href="#tests-same-as-graphics-loft-L191">191</a> <a href="#tests-same-as-graphics-loft-L204">204</a> <a href="#tests-same-as-graphics-loft-L221">221</a> <a href="#tests-same-as-graphics-loft-L224">224</a> <a href="#tests-same-as-graphics-loft-L233">233</a> … (10 total)</td></tr>
+<tr><td><code>draw</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-paint-loft-L352">352</a></td><td>—</td><td><a href="#src-gpu-paint-loft-L360">360</a> <a href="#src-gpu-paint-loft-L433">433</a> <a href="#src-gpu-paint-loft-L443">443</a> <a href="#src-gpu-paint-loft-L464">464</a> <a href="#tests-record-loft-L54">54</a> <a href="#tests-record-loft-L59">59</a> … (16 total)</td></tr>
 <tr><td><code>Painter</code> <span class="search-kind">struct</span></td><td><a href="#src-gpu-paint-loft-L366">366</a></td><td>—</td><td><a href="#src-gpu-paint-loft-L386">386</a> <a href="#src-gpu-paint-loft-L393">393</a> <a href="#src-gpu-paint-loft-L411">411</a> <a href="#src-gpu-paint-loft-L417">417</a> <a href="#src-gpu-paint-loft-L437">437</a> <a href="#src-gpu-paint-loft-L448">448</a></td></tr>
-<tr><td><code>painter</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-paint-loft-L386">386</a></td><td>—</td><td><a href="#tests-record-loft-L22">22</a> <a href="#tests-record-loft-L39">39</a> <a href="#tests-same-as-graphics-loft-L105">105</a> <a href="#tests-same-as-graphics-loft-L106">106</a> <a href="#tests-same-as-graphics-loft-L140">140</a> <a href="#tests-same-as-graphics-loft-L141">141</a> … (19 total)</td></tr>
-<tr><td><code>resize</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-paint-loft-L411">411</a></td><td>—</td><td><a href="#tests-same-as-graphics-loft-L114">114</a> <a href="#tests-same-as-graphics-loft-L124">124</a> <a href="#tests-same-as-graphics-loft-L230">230</a> <a href="#tests-same-as-graphics-loft-L235">235</a> <a href="#tests-same-as-graphics-loft-L243">243</a> <a href="#tests-same-on-metal-loft-L62">62</a> … (7 total)</td></tr>
-<tr><td><code>rect</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-paint-loft-L416">416</a></td><td>—</td><td><a href="#tests-record-loft-L43">43</a> <a href="#tests-same-as-graphics-loft-L101">101</a> <a href="#tests-same-as-graphics-loft-L104">104</a> <a href="#tests-same-as-graphics-loft-L110">110</a> <a href="#tests-same-as-graphics-loft-L111">111</a> <a href="#tests-same-as-graphics-loft-L113">113</a> … (20 total)</td></tr>
-<tr><td><code>image</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-paint-loft-L437">437</a></td><td>—</td><td><a href="#tests-record-loft-L45">45</a> <a href="#tests-record-loft-L63">63</a> <a href="#tests-same-as-graphics-loft-L136">136</a> <a href="#tests-same-as-graphics-loft-L139">139</a> <a href="#tests-same-as-graphics-loft-L149">149</a> <a href="#tests-same-as-graphics-loft-L150">150</a> … (14 total)</td></tr>
-<tr><td><code>sprite</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-paint-loft-L447">447</a></td><td>—</td><td><a href="#tests-record-loft-L86">86</a> <a href="#tests-same-as-graphics-loft-L190">190</a> <a href="#tests-same-as-graphics-loft-L191">191</a> <a href="#tests-same-as-graphics-loft-L201">201</a> <a href="#tests-same-as-graphics-loft-L202">202</a> <a href="#tests-same-on-metal-loft-L106">106</a> … (7 total)</td></tr>
+<tr><td><code>painter</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-paint-loft-L386">386</a></td><td>—</td><td><a href="#tests-record-loft-L22">22</a> <a href="#tests-record-loft-L39">39</a> <a href="#tests-same-as-graphics-loft-L116">116</a> <a href="#tests-same-as-graphics-loft-L131">131</a> <a href="#tests-same-as-graphics-loft-L158">158</a> <a href="#tests-same-as-graphics-loft-L173">173</a> … (19 total)</td></tr>
+<tr><td><code>resize</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-paint-loft-L411">411</a></td><td>—</td><td><a href="#tests-same-as-graphics-loft-L124">124</a> <a href="#tests-same-as-graphics-loft-L139">139</a> <a href="#tests-same-as-graphics-loft-L259">259</a> <a href="#tests-same-as-graphics-loft-L264">264</a> <a href="#tests-same-as-graphics-loft-L278">278</a> <a href="#tests-same-on-metal-loft-L88">88</a> … (7 total)</td></tr>
+<tr><td><code>rect</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-paint-loft-L416">416</a></td><td>—</td><td><a href="#tests-record-loft-L43">43</a> <a href="#tests-same-as-graphics-loft-L109">109</a> <a href="#tests-same-as-graphics-loft-L120">120</a> <a href="#tests-same-as-graphics-loft-L121">121</a> <a href="#tests-same-as-graphics-loft-L123">123</a> <a href="#tests-same-as-graphics-loft-L125">125</a> … (20 total)</td></tr>
+<tr><td><code>image</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-paint-loft-L437">437</a></td><td>—</td><td><a href="#tests-record-loft-L45">45</a> <a href="#tests-record-loft-L63">63</a> <a href="#tests-same-as-graphics-loft-L151">151</a> <a href="#tests-same-as-graphics-loft-L166">166</a> <a href="#tests-same-as-graphics-loft-L167">167</a> <a href="#tests-same-as-graphics-loft-L172">172</a> … (14 total)</td></tr>
+<tr><td><code>sprite</code> <span class="search-kind">fn</span></td><td><a href="#src-gpu-paint-loft-L447">447</a></td><td>—</td><td><a href="#tests-record-loft-L86">86</a> <a href="#tests-same-as-graphics-loft-L214">214</a> <a href="#tests-same-as-graphics-loft-L215">215</a> <a href="#tests-same-as-graphics-loft-L230">230</a> <a href="#tests-same-as-graphics-loft-L231">231</a> <a href="#tests-same-on-metal-loft-L132">132</a> … (7 total)</td></tr>
 </table>
 <h2 id="src-gpu-paint-loft">src/gpu_paint.loft</h2>
 <pre class="src"><code><span id="src-gpu-paint-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
@@ -624,255 +624,290 @@
 <span id="tests-same-as-graphics-loft-L23">}</span>
 <span id="tests-same-as-graphics-loft-L24"></span>
 <span id="tests-same-as-graphics-loft-L25"><span class="kw">fn</span> <span class="fn-call">display</span>() -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
-<span id="tests-same-as-graphics-loft-L26">  (<span class="fn-call"><a href="stdlib-environment.html">env_variable</a></span>(<span class="st">"DISPLAY"</span>) ?? <span class="st">""</span>) != <span class="st">""</span> || (<span class="fn-call"><a href="stdlib-environment.html">env_variable</a></span>(<span class="st">"GRAPHICS_TEST_WINDOW"</span>) ?? <span class="st">""</span>) == <span class="st">"1"</span></span>
+<span id="tests-same-as-graphics-loft-L26">  <span class="fn-call">must_draw</span>((<span class="fn-call"><a href="stdlib-environment.html">env_variable</a></span>(<span class="st">"DISPLAY"</span>) ?? <span class="st">""</span>) != <span class="st">""</span> || (<span class="fn-call"><a href="stdlib-environment.html">env_variable</a></span>(<span class="st">"GRAPHICS_TEST_WINDOW"</span>) ?? <span class="st">""</span>) == <span class="st">"1"</span>)</span>
 <span id="tests-same-as-graphics-loft-L27">}</span>
 <span id="tests-same-as-graphics-loft-L28"></span>
-<span id="tests-same-as-graphics-loft-L29">const <span class="en">BLACK</span> = <span class="nm">0xFF000000</span>;</span>
-<span id="tests-same-as-graphics-loft-L30">const <span class="en">RED</span> = <span class="nm">0xFFFF0000</span>;</span>
-<span id="tests-same-as-graphics-loft-L31">const <span class="en">GREEN</span> = <span class="nm">0xFF00FF00</span>;</span>
-<span id="tests-same-as-graphics-loft-L32">const <span class="en">BLUE</span> = <span class="nm">0xFF0000FF</span>;</span>
-<span id="tests-same-as-graphics-loft-L33"></span>
-<span id="tests-same-as-graphics-loft-L34"><span class="cm">// The largest gap between two pixels in any one channel.</span></span>
-<span id="tests-same-as-graphics-loft-L35"><span class="kw">fn</span> <span class="fn-call">channel_gap</span>(a: <span class="ty"><a href="stdlib-types.html">u32</a></span>, b: <span class="ty"><a href="stdlib-types.html">u32</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="tests-same-as-graphics-loft-L36">  worst = <span class="nm">0</span>;</span>
-<span id="tests-same-as-graphics-loft-L37">  <span class="kw">for</span> shift <span class="kw">in</span> [<span class="nm">0</span>, <span class="nm">8</span>, <span class="nm">16</span>, <span class="nm">24</span>] {</span>
-<span id="tests-same-as-graphics-loft-L38">    x = ((a <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>) &gt;&gt; shift) &amp; <span class="nm">255</span>;</span>
-<span id="tests-same-as-graphics-loft-L39">    y = ((b <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>) &gt;&gt; shift) &amp; <span class="nm">255</span>;</span>
-<span id="tests-same-as-graphics-loft-L40">    gap = <span class="kw">if</span> x &gt; y { x - y } <span class="kw">else</span> { y - x };</span>
-<span id="tests-same-as-graphics-loft-L41">    <span class="kw">if</span> gap &gt; worst { worst = gap; }</span>
-<span id="tests-same-as-graphics-loft-L42">  }</span>
-<span id="tests-same-as-graphics-loft-L43">  worst</span>
-<span id="tests-same-as-graphics-loft-L44">}</span>
-<span id="tests-same-as-graphics-loft-L45"></span>
-<span id="tests-same-as-graphics-loft-L46"><span class="cm">// The same pixels, byte for byte, through OpenGL: graphics draws on OpenGL too.  Through another</span></span>
-<span id="tests-same-as-graphics-loft-L47"><span class="cm">// stack two differences are measured and allowed, the rest held byte for byte:</span></span>
-<span id="tests-same-as-graphics-loft-L48"><span class="cm">//   - a channel off by 1, where a stack rounds a blend or a filter's weights its own way (RADV</span></span>
-<span id="tests-same-as-graphics-loft-L49"><span class="cm">//     against llvmpipe's OpenGL: 504 pixels of the rectangles, 223 of the images);</span></span>
-<span id="tests-same-as-graphics-loft-L50"><span class="cm">//   - `edges` pixels more, where an edge passes within a quarter of a pixel of pixels' middles</span></span>
-<span id="tests-same-as-graphics-loft-L51"><span class="cm">//     and llvmpipe's OpenGL places it a quarter of a pixel off where Vulkan places it by the</span></span>
-<span id="tests-same-as-graphics-loft-L52"><span class="cm">//     spec's arithmetic (the sprites: their one top row, 11 pixels, on lavapipe and RADV).</span></span>
-<span id="tests-same-as-graphics-loft-L53"><span class="kw">fn</span> <span class="fn-call">same</span>(old: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt;, new: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt;, what: <span class="ty"><a href="stdlib-types.html">text</a></span>, edges: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
-<span id="tests-same-as-graphics-loft-L54">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(old) == <span class="bi"><a href="stdlib-text.html">len</a></span>(new) &amp;&amp; <span class="bi"><a href="stdlib-text.html">len</a></span>(old) &gt; <span class="nm">0</span>, <span class="st">"{what}: {len(old)} pixels through graphics, {len(new)} through {gpu::backend_name()}"</span>);</span>
-<span id="tests-same-as-graphics-loft-L55">  other = gpu::<span class="fn-call">backend_name</span>() != <span class="st">"gpu_gl"</span>;</span>
-<span id="tests-same-as-graphics-loft-L56">  differ = <span class="nm">0</span>;</span>
-<span id="tests-same-as-graphics-loft-L57">  first = -<span class="nm">1</span>;</span>
-<span id="tests-same-as-graphics-loft-L58">  colours = <span class="nm">0</span>;</span>
-<span id="tests-same-as-graphics-loft-L59">  <span class="kw">for</span> p <span class="kw">in</span> old {</span>
-<span id="tests-same-as-graphics-loft-L60">    q = new[p#<span class="ty">index</span>] ?? <span class="nm">0</span>;</span>
-<span id="tests-same-as-graphics-loft-L61">    <span class="kw">if</span> p != q {</span>
-<span id="tests-same-as-graphics-loft-L62">      gap = <span class="fn-call">channel_gap</span>(p, q);</span>
-<span id="tests-same-as-graphics-loft-L63">      <span class="kw">if</span> !other || gap &gt; <span class="nm">1</span> {</span>
-<span id="tests-same-as-graphics-loft-L64">        differ += <span class="nm">1</span>;</span>
-<span id="tests-same-as-graphics-loft-L65">        <span class="kw">if</span> first &lt; <span class="nm">0</span> { first = p#<span class="ty">index</span>; }</span>
-<span id="tests-same-as-graphics-loft-L66">      }</span>
-<span id="tests-same-as-graphics-loft-L67">    }</span>
-<span id="tests-same-as-graphics-loft-L68">    <span class="kw">if</span> p != old[<span class="nm">0</span>] { colours += <span class="nm">1</span>; }</span>
-<span id="tests-same-as-graphics-loft-L69">  }</span>
-<span id="tests-same-as-graphics-loft-L70">  allowed = <span class="kw">if</span> other { edges } <span class="kw">else</span> { <span class="nm">0</span> };</span>
-<span id="tests-same-as-graphics-loft-L71">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(colours &gt; <span class="nm">0</span>, <span class="st">"{what}: the scene shows one colour only"</span>);</span>
-<span id="tests-same-as-graphics-loft-L72">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(differ &lt;= allowed, <span class="st">"{what}: {differ} pixels differ ({allowed} allowed), the first at {first}: {old[first] ?? 0:x} through graphics, {new[first] ?? 0:x} through {gpu::backend_name()}"</span>);</span>
-<span id="tests-same-as-graphics-loft-L73">}</span>
-<span id="tests-same-as-graphics-loft-L74"></span>
-<span id="tests-same-as-graphics-loft-L75"><span class="cm">// The old painter blends where its window does: plain transparency, as the new one blends.</span></span>
-<span id="tests-same-as-graphics-loft-L76"><span class="kw">fn</span> <span class="fn-call">blending</span>(w: const graphics::<span class="en">Window</span>, on: <span class="ty"><a href="stdlib-types.html">boolean</a></span>) {</span>
-<span id="tests-same-as-graphics-loft-L77">  <span class="kw">if</span> on {</span>
-<span id="tests-same-as-graphics-loft-L78">    w.<span class="fn-call">enable</span>(graphics::<span class="en">GL_BLEND</span>);</span>
-<span id="tests-same-as-graphics-loft-L79">    w.<span class="fn-call">blend</span>(graphics::<span class="en">BLEND_SRC_ALPHA</span>, graphics::<span class="en">BLEND_ONE_MINUS_SRC_ALPHA</span>);</span>
-<span id="tests-same-as-graphics-loft-L80">  } <span class="kw">else</span> {</span>
-<span id="tests-same-as-graphics-loft-L81">    w.<span class="fn-call">disable</span>(graphics::<span class="en">GL_BLEND</span>);</span>
-<span id="tests-same-as-graphics-loft-L82">  }</span>
-<span id="tests-same-as-graphics-loft-L83">}</span>
-<span id="tests-same-as-graphics-loft-L84"></span>
-<span id="tests-same-as-graphics-loft-L85"><span class="cm">// A 4 x 2 picture: two cells of 2 x 2, each pixel its own colour, one of them see-through.</span></span>
-<span id="tests-same-as-graphics-loft-L86"><span class="kw">fn</span> <span class="fn-call">sheet_pixels</span>() -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt; {</span>
-<span id="tests-same-as-graphics-loft-L87">  out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt; = [];</span>
-<span id="tests-same-as-graphics-loft-L88">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..8</span> {</span>
-<span id="tests-same-as-graphics-loft-L89">    alpha = <span class="kw">if</span> i == <span class="nm">5</span> { <span class="nm">0</span> } <span class="kw">else</span> { <span class="nm">255</span> };</span>
-<span id="tests-same-as-graphics-loft-L90">    out += [(graphics::<span class="fn-call">rgba</span>(<span class="nm">30</span> + <span class="nm">25</span> * i, <span class="nm">240</span> - <span class="nm">22</span> * i, <span class="nm">60</span> + <span class="nm">9</span> * (i % <span class="nm">3</span>), alpha) &amp; <span class="nm">4294967295</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u32</a></span>];</span>
-<span id="tests-same-as-graphics-loft-L91">  }</span>
-<span id="tests-same-as-graphics-loft-L92">  out</span>
-<span id="tests-same-as-graphics-loft-L93">}</span>
-<span id="tests-same-as-graphics-loft-L94"></span>
-<span id="tests-same-as-graphics-loft-L95"><span class="cm">// The unit quad stretched to `sx` x `sy` around the middle of the target, at depth `z`.</span></span>
-<span id="tests-same-as-graphics-loft-L96"><span class="kw">fn</span> <span class="fn-call">placed</span>(sx: <span class="ty"><a href="stdlib-types.html">float</a></span>, sy: <span class="ty"><a href="stdlib-types.html">float</a></span>, z: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt; {</span>
-<span id="tests-same-as-graphics-loft-L97">  [sx, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>, sy, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">1.0</span>, <span class="nm">0.0</span>, -sx / <span class="nm">2.0</span>, -sy / <span class="nm">2.0</span>, z, <span class="nm">1.0</span>]</span>
-<span id="tests-same-as-graphics-loft-L98">}</span>
-<span id="tests-same-as-graphics-loft-L99"></span>
-<span id="tests-same-as-graphics-loft-L100"><span class="kw">fn</span> <span class="fn-call">rectangles_opaque_blended_and_after_a_resize_on</span>(table: <span class="ty"><a href="stdlib-types.html">i64</a></span>) {</span>
-<span id="tests-same-as-graphics-loft-L101">  wo = graphics::<span class="fn-call">open_window</span>(<span class="nm">64</span>, <span class="nm">48</span>, <span class="st">"old-rect"</span>);</span>
-<span id="tests-same-as-graphics-loft-L102">  <span class="kw">if</span> !<span class="fn-call">display</span>() { <span class="kw">return</span>; }</span>
-<span id="tests-same-as-graphics-loft-L103">  w = wo ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"a display is set and no window opened"</span>);</span>
-<span id="tests-same-as-graphics-loft-L104">  dev = gpu::<span class="fn-call">open</span>(table, <span class="nm">64</span>, <span class="nm">48</span>, <span class="st">"new-rect"</span>) ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"no device"</span>);</span>
-<span id="tests-same-as-graphics-loft-L105">  op = w.<span class="fn-call">painter</span>() ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"the old painter"</span>);</span>
-<span id="tests-same-as-graphics-loft-L106">  np = gpu_paint::<span class="fn-call">painter</span>(dev, gpu::<span class="en">INTO_WINDOW</span>) ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"the new painter"</span>);</span>
+<span id="tests-same-as-graphics-loft-L29"><span class="cm">// A run that says its tests must draw (`GRAPHICS_TEST_MUST_DRAW=1`: the library CI, on a runner</span></span>
+<span id="tests-same-as-graphics-loft-L30"><span class="cm">// it gave a display) fails here, where a test would otherwise return having drawn nothing.</span></span>
+<span id="tests-same-as-graphics-loft-L31"><span class="kw">fn</span> <span class="fn-call">must_draw</span>(can: <span class="ty"><a href="stdlib-types.html">boolean</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="tests-same-as-graphics-loft-L32">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(can || (<span class="fn-call"><a href="stdlib-environment.html">env_variable</a></span>(<span class="st">"GRAPHICS_TEST_MUST_DRAW"</span>) ?? <span class="st">""</span>) != <span class="st">"1"</span>, <span class="st">"this run's tests must draw (GRAPHICS_TEST_MUST_DRAW=1) and found no display to draw on"</span>);</span>
+<span id="tests-same-as-graphics-loft-L33">  can</span>
+<span id="tests-same-as-graphics-loft-L34">}</span>
+<span id="tests-same-as-graphics-loft-L35"></span>
+<span id="tests-same-as-graphics-loft-L36">const <span class="en">BLACK</span> = <span class="nm">0xFF000000</span>;</span>
+<span id="tests-same-as-graphics-loft-L37">const <span class="en">RED</span> = <span class="nm">0xFFFF0000</span>;</span>
+<span id="tests-same-as-graphics-loft-L38">const <span class="en">GREEN</span> = <span class="nm">0xFF00FF00</span>;</span>
+<span id="tests-same-as-graphics-loft-L39">const <span class="en">BLUE</span> = <span class="nm">0xFF0000FF</span>;</span>
+<span id="tests-same-as-graphics-loft-L40"></span>
+<span id="tests-same-as-graphics-loft-L41"><span class="cm">// The largest gap between two pixels in any one channel.</span></span>
+<span id="tests-same-as-graphics-loft-L42"><span class="kw">fn</span> <span class="fn-call">channel_gap</span>(a: <span class="ty"><a href="stdlib-types.html">u32</a></span>, b: <span class="ty"><a href="stdlib-types.html">u32</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="tests-same-as-graphics-loft-L43">  worst = <span class="nm">0</span>;</span>
+<span id="tests-same-as-graphics-loft-L44">  <span class="kw">for</span> shift <span class="kw">in</span> [<span class="nm">0</span>, <span class="nm">8</span>, <span class="nm">16</span>, <span class="nm">24</span>] {</span>
+<span id="tests-same-as-graphics-loft-L45">    x = ((a <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>) &gt;&gt; shift) &amp; <span class="nm">255</span>;</span>
+<span id="tests-same-as-graphics-loft-L46">    y = ((b <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>) &gt;&gt; shift) &amp; <span class="nm">255</span>;</span>
+<span id="tests-same-as-graphics-loft-L47">    gap = <span class="kw">if</span> x &gt; y { x - y } <span class="kw">else</span> { y - x };</span>
+<span id="tests-same-as-graphics-loft-L48">    <span class="kw">if</span> gap &gt; worst { worst = gap; }</span>
+<span id="tests-same-as-graphics-loft-L49">  }</span>
+<span id="tests-same-as-graphics-loft-L50">  worst</span>
+<span id="tests-same-as-graphics-loft-L51">}</span>
+<span id="tests-same-as-graphics-loft-L52"></span>
+<span id="tests-same-as-graphics-loft-L53"><span class="cm">// The same pixels, byte for byte, through OpenGL: graphics draws on OpenGL too.  Through another</span></span>
+<span id="tests-same-as-graphics-loft-L54"><span class="cm">// stack two differences are measured and allowed, the rest held byte for byte:</span></span>
+<span id="tests-same-as-graphics-loft-L55"><span class="cm">//   - a channel off by 1, where a stack rounds a blend or a filter's weights its own way (RADV</span></span>
+<span id="tests-same-as-graphics-loft-L56"><span class="cm">//     against llvmpipe's OpenGL: 504 pixels of the rectangles, 223 of the images);</span></span>
+<span id="tests-same-as-graphics-loft-L57"><span class="cm">//   - `edges` pixels more, where an edge passes within a quarter of a pixel of pixels' middles</span></span>
+<span id="tests-same-as-graphics-loft-L58"><span class="cm">//     and llvmpipe's OpenGL places it a quarter of a pixel off where Vulkan places it by the</span></span>
+<span id="tests-same-as-graphics-loft-L59"><span class="cm">//     spec's arithmetic (the sprites: their one top row, 11 pixels, on lavapipe and RADV).</span></span>
+<span id="tests-same-as-graphics-loft-L60"><span class="kw">fn</span> <span class="fn-call">same</span>(old: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt;, new: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt;, what: <span class="ty"><a href="stdlib-types.html">text</a></span>, edges: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="tests-same-as-graphics-loft-L61">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(old) == <span class="bi"><a href="stdlib-text.html">len</a></span>(new) &amp;&amp; <span class="bi"><a href="stdlib-text.html">len</a></span>(old) &gt; <span class="nm">0</span>, <span class="st">"{what}: {len(old)} pixels through graphics, {len(new)} through {gpu::backend_name()}"</span>);</span>
+<span id="tests-same-as-graphics-loft-L62">  other = gpu::<span class="fn-call">backend_name</span>() != <span class="st">"gpu_gl"</span>;</span>
+<span id="tests-same-as-graphics-loft-L63">  differ = <span class="nm">0</span>;</span>
+<span id="tests-same-as-graphics-loft-L64">  first = -<span class="nm">1</span>;</span>
+<span id="tests-same-as-graphics-loft-L65">  colours = <span class="nm">0</span>;</span>
+<span id="tests-same-as-graphics-loft-L66">  <span class="kw">for</span> p <span class="kw">in</span> old {</span>
+<span id="tests-same-as-graphics-loft-L67">    q = new[p#<span class="ty">index</span>] ?? <span class="nm">0</span>;</span>
+<span id="tests-same-as-graphics-loft-L68">    <span class="cm">// a window of `gpu` reads back opaque; graphics' alpha, where its window has one, is not compared</span></span>
+<span id="tests-same-as-graphics-loft-L69">    <span class="kw">if</span> (p <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>) | <span class="nm">0xFF000000</span> != (q <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="tests-same-as-graphics-loft-L70">      gap = <span class="fn-call">channel_gap</span>((((p <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>) | <span class="nm">0xFF000000</span>) &amp; <span class="nm">4294967295</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u32</a></span>, q);</span>
+<span id="tests-same-as-graphics-loft-L71">      <span class="kw">if</span> !other || gap &gt; <span class="nm">1</span> {</span>
+<span id="tests-same-as-graphics-loft-L72">        differ += <span class="nm">1</span>;</span>
+<span id="tests-same-as-graphics-loft-L73">        <span class="kw">if</span> first &lt; <span class="nm">0</span> { first = p#<span class="ty">index</span>; }</span>
+<span id="tests-same-as-graphics-loft-L74">      }</span>
+<span id="tests-same-as-graphics-loft-L75">    }</span>
+<span id="tests-same-as-graphics-loft-L76">    <span class="kw">if</span> p != old[<span class="nm">0</span>] { colours += <span class="nm">1</span>; }</span>
+<span id="tests-same-as-graphics-loft-L77">  }</span>
+<span id="tests-same-as-graphics-loft-L78">  allowed = <span class="kw">if</span> other { edges } <span class="kw">else</span> { <span class="nm">0</span> };</span>
+<span id="tests-same-as-graphics-loft-L79">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(colours &gt; <span class="nm">0</span>, <span class="st">"{what}: the scene shows one colour only"</span>);</span>
+<span id="tests-same-as-graphics-loft-L80">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(differ &lt;= allowed, <span class="st">"{what}: {differ} pixels differ ({allowed} allowed), the first at {first}: {old[first] ?? 0:x} through graphics, {new[first] ?? 0:x} through {gpu::backend_name()}"</span>);</span>
+<span id="tests-same-as-graphics-loft-L81">}</span>
+<span id="tests-same-as-graphics-loft-L82"></span>
+<span id="tests-same-as-graphics-loft-L83"><span class="cm">// The old painter blends where its window does: plain transparency, as the new one blends.</span></span>
+<span id="tests-same-as-graphics-loft-L84"><span class="kw">fn</span> <span class="fn-call">blending</span>(w: graphics::<span class="en">Window</span>, on: <span class="ty"><a href="stdlib-types.html">boolean</a></span>) {</span>
+<span id="tests-same-as-graphics-loft-L85">  <span class="kw">if</span> on {</span>
+<span id="tests-same-as-graphics-loft-L86">    w.<span class="fn-call">enable</span>(graphics::<span class="en">GL_BLEND</span>);</span>
+<span id="tests-same-as-graphics-loft-L87">    w.<span class="fn-call">blend</span>(graphics::<span class="en">BLEND_SRC_ALPHA</span>, graphics::<span class="en">BLEND_ONE_MINUS_SRC_ALPHA</span>);</span>
+<span id="tests-same-as-graphics-loft-L88">  } <span class="kw">else</span> {</span>
+<span id="tests-same-as-graphics-loft-L89">    w.<span class="fn-call">disable</span>(graphics::<span class="en">GL_BLEND</span>);</span>
+<span id="tests-same-as-graphics-loft-L90">  }</span>
+<span id="tests-same-as-graphics-loft-L91">}</span>
+<span id="tests-same-as-graphics-loft-L92"></span>
+<span id="tests-same-as-graphics-loft-L93"><span class="cm">// A 4 x 2 picture: two cells of 2 x 2, each pixel its own colour, one of them see-through.</span></span>
+<span id="tests-same-as-graphics-loft-L94"><span class="kw">fn</span> <span class="fn-call">sheet_pixels</span>() -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt; {</span>
+<span id="tests-same-as-graphics-loft-L95">  out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt; = [];</span>
+<span id="tests-same-as-graphics-loft-L96">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..8</span> {</span>
+<span id="tests-same-as-graphics-loft-L97">    alpha = <span class="kw">if</span> i == <span class="nm">5</span> { <span class="nm">0</span> } <span class="kw">else</span> { <span class="nm">255</span> };</span>
+<span id="tests-same-as-graphics-loft-L98">    out += [(graphics::<span class="fn-call">rgba</span>(<span class="nm">30</span> + <span class="nm">25</span> * i, <span class="nm">240</span> - <span class="nm">22</span> * i, <span class="nm">60</span> + <span class="nm">9</span> * (i % <span class="nm">3</span>), alpha) &amp; <span class="nm">4294967295</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u32</a></span>];</span>
+<span id="tests-same-as-graphics-loft-L99">  }</span>
+<span id="tests-same-as-graphics-loft-L100">  out</span>
+<span id="tests-same-as-graphics-loft-L101">}</span>
+<span id="tests-same-as-graphics-loft-L102"></span>
+<span id="tests-same-as-graphics-loft-L103"><span class="cm">// The unit quad stretched to `sx` x `sy` around the middle of the target, at depth `z`.</span></span>
+<span id="tests-same-as-graphics-loft-L104"><span class="kw">fn</span> <span class="fn-call">placed</span>(sx: <span class="ty"><a href="stdlib-types.html">float</a></span>, sy: <span class="ty"><a href="stdlib-types.html">float</a></span>, z: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt; {</span>
+<span id="tests-same-as-graphics-loft-L105">  [sx, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>, sy, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">1.0</span>, <span class="nm">0.0</span>, -sx / <span class="nm">2.0</span>, -sy / <span class="nm">2.0</span>, z, <span class="nm">1.0</span>]</span>
+<span id="tests-same-as-graphics-loft-L106">}</span>
 <span id="tests-same-as-graphics-loft-L107"></span>
-<span id="tests-same-as-graphics-loft-L108">  w.<span class="fn-call"><a href="stdlib-collections.html">clear</a></span>(<span class="en">BLACK</span>);</span>
-<span id="tests-same-as-graphics-loft-L109">  <span class="fn-call">blending</span>(w, <span class="kw">false</span>);</span>
-<span id="tests-same-as-graphics-loft-L110">  op.<span class="fn-call">rect</span>(<span class="nm">8.0</span>, <span class="nm">4.0</span>, <span class="nm">16.0</span>, <span class="nm">10.0</span>, <span class="nm">1.0</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0.3</span>);</span>
-<span id="tests-same-as-graphics-loft-L111">  op.<span class="fn-call">rect</span>(<span class="nm">20.5</span>, <span class="nm">9.25</span>, <span class="nm">30.0</span>, <span class="nm">20.5</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">1.0</span>, <span class="nm">1.0</span>);</span>
-<span id="tests-same-as-graphics-loft-L112">  <span class="fn-call">blending</span>(w, <span class="kw">true</span>);</span>
-<span id="tests-same-as-graphics-loft-L113">  op.<span class="fn-call">rect</span>(<span class="nm">4.0</span>, <span class="nm">8.0</span>, <span class="nm">40.0</span>, <span class="nm">30.0</span>, <span class="nm">0.2</span>, <span class="nm">1.0</span>, <span class="nm">0.4</span>, <span class="nm">0.35</span>);</span>
-<span id="tests-same-as-graphics-loft-L114">  op.<span class="fn-call">resize</span>(<span class="nm">32</span>, <span class="nm">24</span>);</span>
-<span id="tests-same-as-graphics-loft-L115">  op.<span class="fn-call">rect</span>(<span class="nm">24.0</span>, <span class="nm">18.0</span>, <span class="nm">8.0</span>, <span class="nm">6.0</span>, <span class="nm">1.0</span>, <span class="nm">1.0</span>, <span class="nm">0.0</span>, <span class="nm">0.5</span>);</span>
-<span id="tests-same-as-graphics-loft-L116">  old = w.<span class="fn-call">capture</span>();</span>
+<span id="tests-same-as-graphics-loft-L108"><span class="kw">fn</span> <span class="fn-call">rectangles_opaque_blended_and_after_a_resize_on</span>(table: <span class="ty"><a href="stdlib-types.html">i64</a></span>) {</span>
+<span id="tests-same-as-graphics-loft-L109">  wo = graphics::<span class="fn-call">open_window</span>(<span class="nm">64</span>, <span class="nm">48</span>, <span class="st">"old-rect"</span>);</span>
+<span id="tests-same-as-graphics-loft-L110">  <span class="kw">if</span> !<span class="fn-call">display</span>() { <span class="kw">return</span>; }</span>
+<span id="tests-same-as-graphics-loft-L111">  <span class="cm">// Everything the window made is let go before the device opens: a program has one backend</span></span>
+<span id="tests-same-as-graphics-loft-L112">  <span class="cm">// at a time, and a release goes to the one that is there.</span></span>
+<span id="tests-same-as-graphics-loft-L113">  old_px: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt; = [];</span>
+<span id="tests-same-as-graphics-loft-L114">  {</span>
+<span id="tests-same-as-graphics-loft-L115">    w = wo ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"a display is set and no window opened"</span>);</span>
+<span id="tests-same-as-graphics-loft-L116">    op = w.<span class="fn-call">painter</span>() ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"the old painter"</span>);</span>
 <span id="tests-same-as-graphics-loft-L117"></span>
-<span id="tests-same-as-graphics-loft-L118">  dev.<span class="fn-call">begin_window</span>(gpu::<span class="en">CLEAR</span>, <span class="en">BLACK</span>);</span>
-<span id="tests-same-as-graphics-loft-L119">  np.blend = <span class="kw">false</span>;</span>
-<span id="tests-same-as-graphics-loft-L120">  np.<span class="fn-call">rect</span>(dev, <span class="nm">8.0</span>, <span class="nm">4.0</span>, <span class="nm">16.0</span>, <span class="nm">10.0</span>, <span class="nm">1.0</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0.3</span>);</span>
-<span id="tests-same-as-graphics-loft-L121">  np.<span class="fn-call">rect</span>(dev, <span class="nm">20.5</span>, <span class="nm">9.25</span>, <span class="nm">30.0</span>, <span class="nm">20.5</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">1.0</span>, <span class="nm">1.0</span>);</span>
-<span id="tests-same-as-graphics-loft-L122">  np.blend = <span class="kw">true</span>;</span>
-<span id="tests-same-as-graphics-loft-L123">  np.<span class="fn-call">rect</span>(dev, <span class="nm">4.0</span>, <span class="nm">8.0</span>, <span class="nm">40.0</span>, <span class="nm">30.0</span>, <span class="nm">0.2</span>, <span class="nm">1.0</span>, <span class="nm">0.4</span>, <span class="nm">0.35</span>);</span>
-<span id="tests-same-as-graphics-loft-L124">  np.<span class="fn-call">resize</span>(<span class="nm">32</span>, <span class="nm">24</span>);</span>
-<span id="tests-same-as-graphics-loft-L125">  np.<span class="fn-call">rect</span>(dev, <span class="nm">24.0</span>, <span class="nm">18.0</span>, <span class="nm">8.0</span>, <span class="nm">6.0</span>, <span class="nm">1.0</span>, <span class="nm">1.0</span>, <span class="nm">0.0</span>, <span class="nm">0.5</span>);</span>
-<span id="tests-same-as-graphics-loft-L126">  dev.<span class="fn-call">end</span>();</span>
-<span id="tests-same-as-graphics-loft-L127">  <span class="fn-call">same</span>(old.data, dev.<span class="fn-call">capture</span>(), <span class="st">"rectangles"</span>, <span class="nm">0</span>);</span>
-<span id="tests-same-as-graphics-loft-L128">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(dev.<span class="fn-call">refusals</span>()) == <span class="nm">0</span>, <span class="st">"nothing refused: {dev.refusals()} [{gpu::backend_name()}]"</span>);</span>
-<span id="tests-same-as-graphics-loft-L129">}</span>
-<span id="tests-same-as-graphics-loft-L130"></span>
-<span id="tests-same-as-graphics-loft-L131"><span class="kw">fn</span> <span class="fn-call">test_rectangles_opaque_blended_and_after_a_resize</span>() {</span>
-<span id="tests-same-as-graphics-loft-L132">  <span class="kw">for</span> t <span class="kw">in</span> <span class="fn-call">backends</span>() { <span class="fn-call">rectangles_opaque_blended_and_after_a_resize_on</span>(t); }</span>
-<span id="tests-same-as-graphics-loft-L133">}</span>
-<span id="tests-same-as-graphics-loft-L134"></span>
-<span id="tests-same-as-graphics-loft-L135"><span class="kw">fn</span> <span class="fn-call">an_image_keeps_its_rows_and_skips_the_transparent_on</span>(table: <span class="ty"><a href="stdlib-types.html">i64</a></span>) {</span>
-<span id="tests-same-as-graphics-loft-L136">  wo = graphics::<span class="fn-call">open_window</span>(<span class="nm">64</span>, <span class="nm">48</span>, <span class="st">"old-image"</span>);</span>
-<span id="tests-same-as-graphics-loft-L137">  <span class="kw">if</span> !<span class="fn-call">display</span>() { <span class="kw">return</span>; }</span>
-<span id="tests-same-as-graphics-loft-L138">  w = wo ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"a display is set and no window opened"</span>);</span>
-<span id="tests-same-as-graphics-loft-L139">  dev = gpu::<span class="fn-call">open</span>(table, <span class="nm">64</span>, <span class="nm">48</span>, <span class="st">"new-image"</span>) ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"no device"</span>);</span>
-<span id="tests-same-as-graphics-loft-L140">  op = w.<span class="fn-call">painter</span>() ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"the old painter"</span>);</span>
-<span id="tests-same-as-graphics-loft-L141">  np = gpu_paint::<span class="fn-call">painter</span>(dev, gpu::<span class="en">INTO_WINDOW</span>) ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"the new painter"</span>);</span>
-<span id="tests-same-as-graphics-loft-L142">  px = <span class="fn-call">sheet_pixels</span>();</span>
-<span id="tests-same-as-graphics-loft-L143"></span>
-<span id="tests-same-as-graphics-loft-L144">  ot = w.<span class="fn-call">texture_from</span>(graphics::<span class="en">Canvas</span> { width: <span class="nm">4</span>, height: <span class="nm">2</span>, data: px });</span>
-<span id="tests-same-as-graphics-loft-L145">  ot.<span class="fn-call"><a href="stdlib-vector-aggregates.html">filter</a></span>(<span class="kw">true</span>);</span>
-<span id="tests-same-as-graphics-loft-L146">  ol = w.<span class="fn-call">texture_from</span>(graphics::<span class="en">Canvas</span> { width: <span class="nm">4</span>, height: <span class="nm">2</span>, data: px });</span>
-<span id="tests-same-as-graphics-loft-L147">  w.<span class="fn-call"><a href="stdlib-collections.html">clear</a></span>(<span class="en">BLUE</span>);</span>
-<span id="tests-same-as-graphics-loft-L148">  <span class="fn-call">blending</span>(w, <span class="kw">true</span>);</span>
-<span id="tests-same-as-graphics-loft-L149">  op.<span class="fn-call">image</span>(ot, <span class="nm">30.0</span>, <span class="nm">2.0</span>, <span class="nm">32.0</span>, <span class="nm">40.0</span>);</span>
-<span id="tests-same-as-graphics-loft-L150">  op.<span class="fn-call">image</span>(ol, <span class="nm">2.0</span>, <span class="nm">20.0</span>, <span class="nm">24.0</span>, <span class="nm">24.0</span>);</span>
-<span id="tests-same-as-graphics-loft-L151">  old = w.<span class="fn-call">capture</span>();</span>
-<span id="tests-same-as-graphics-loft-L152"></span>
-<span id="tests-same-as-graphics-loft-L153">  nt = dev.<span class="fn-call">texture_from</span>(px, <span class="nm">4</span>, <span class="nm">2</span>);</span>
-<span id="tests-same-as-graphics-loft-L154">  nt.<span class="fn-call">nearest</span>(<span class="kw">true</span>);</span>
-<span id="tests-same-as-graphics-loft-L155">  nl = dev.<span class="fn-call">texture_from</span>(px, <span class="nm">4</span>, <span class="nm">2</span>);</span>
-<span id="tests-same-as-graphics-loft-L156">  dev.<span class="fn-call">begin_window</span>(gpu::<span class="en">CLEAR</span>, <span class="en">BLUE</span>);</span>
-<span id="tests-same-as-graphics-loft-L157">  np.<span class="fn-call">image</span>(dev, nt, <span class="nm">30.0</span>, <span class="nm">2.0</span>, <span class="nm">32.0</span>, <span class="nm">40.0</span>);</span>
-<span id="tests-same-as-graphics-loft-L158">  np.<span class="fn-call">image</span>(dev, nl, <span class="nm">2.0</span>, <span class="nm">20.0</span>, <span class="nm">24.0</span>, <span class="nm">24.0</span>);</span>
-<span id="tests-same-as-graphics-loft-L159">  dev.<span class="fn-call">end</span>();</span>
-<span id="tests-same-as-graphics-loft-L160">  <span class="fn-call">same</span>(old.data, dev.<span class="fn-call">capture</span>(), <span class="st">"images"</span>, <span class="nm">0</span>);</span>
-<span id="tests-same-as-graphics-loft-L161">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(dev.<span class="fn-call">refusals</span>()) == <span class="nm">0</span>, <span class="st">"nothing refused: {dev.refusals()} [{gpu::backend_name()}]"</span>);</span>
-<span id="tests-same-as-graphics-loft-L162">}</span>
-<span id="tests-same-as-graphics-loft-L163"></span>
-<span id="tests-same-as-graphics-loft-L164"><span class="kw">fn</span> <span class="fn-call">test_an_image_keeps_its_rows_and_skips_the_transparent</span>() {</span>
-<span id="tests-same-as-graphics-loft-L165">  <span class="kw">for</span> t <span class="kw">in</span> <span class="fn-call">backends</span>() { <span class="fn-call">an_image_keeps_its_rows_and_skips_the_transparent_on</span>(t); }</span>
-<span id="tests-same-as-graphics-loft-L166">}</span>
-<span id="tests-same-as-graphics-loft-L167"></span>
-<span id="tests-same-as-graphics-loft-L168"><span class="kw">fn</span> <span class="fn-call">sprites_at_pixel_positions_and_in_a_scene_with_depth_on</span>(table: <span class="ty"><a href="stdlib-types.html">i64</a></span>) {</span>
-<span id="tests-same-as-graphics-loft-L169">  wo = graphics::<span class="fn-call">open_window</span>(<span class="nm">64</span>, <span class="nm">48</span>, <span class="st">"old-sprites"</span>);</span>
-<span id="tests-same-as-graphics-loft-L170">  <span class="kw">if</span> !<span class="fn-call">display</span>() { <span class="kw">return</span>; }</span>
-<span id="tests-same-as-graphics-loft-L171">  w = wo ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"a display is set and no window opened"</span>);</span>
-<span id="tests-same-as-graphics-loft-L172">  dev = gpu::<span class="fn-call">open</span>(table, <span class="nm">64</span>, <span class="nm">48</span>, <span class="st">"new-sprites"</span>) ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"no device"</span>);</span>
-<span id="tests-same-as-graphics-loft-L173">  op = w.<span class="fn-call">painter</span>() ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"the old painter"</span>);</span>
-<span id="tests-same-as-graphics-loft-L174">  np = gpu_paint::<span class="fn-call">painter</span>(dev, gpu::<span class="en">INTO_WINDOW</span>) ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"the new painter"</span>);</span>
-<span id="tests-same-as-graphics-loft-L175">  px = <span class="fn-call">sheet_pixels</span>();</span>
-<span id="tests-same-as-graphics-loft-L176"></span>
-<span id="tests-same-as-graphics-loft-L177">  <span class="cm">// Two sprites in a scene: the near one drawn first, so the far one is hidden where they</span></span>
-<span id="tests-same-as-graphics-loft-L178">  <span class="cm">// overlap only if depth is tested and written.  Then two by the painter, over them, in</span></span>
-<span id="tests-same-as-graphics-loft-L179">  <span class="cm">// call order whatever the depth.</span></span>
-<span id="tests-same-as-graphics-loft-L180">  os = w.<span class="fn-call">sprites</span>(graphics::<span class="en">Canvas</span> { width: <span class="nm">4</span>, height: <span class="nm">2</span>, data: px }, <span class="nm">2</span>, <span class="nm">1</span>) ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"the old sheet"</span>);</span>
-<span id="tests-same-as-graphics-loft-L181">  os.texture.<span class="fn-call"><a href="stdlib-vector-aggregates.html">filter</a></span>(<span class="kw">true</span>);</span>
-<span id="tests-same-as-graphics-loft-L182">  <span class="cm">// In a page the two libraries draw in the page's one context, and graphics takes the state</span></span>
-<span id="tests-same-as-graphics-loft-L183">  <span class="cm">// it finds: say what this scene relies on, which a painter before it turned off.</span></span>
-<span id="tests-same-as-graphics-loft-L184">  w.<span class="fn-call">enable</span>(graphics::<span class="en">GL_DEPTH_TEST</span>);</span>
-<span id="tests-same-as-graphics-loft-L185">  w.<span class="fn-call">depth_write</span>(<span class="kw">true</span>);</span>
-<span id="tests-same-as-graphics-loft-L186">  w.<span class="fn-call"><a href="stdlib-collections.html">clear</a></span>(<span class="en">BLACK</span>);</span>
-<span id="tests-same-as-graphics-loft-L187">  <span class="fn-call">blending</span>(w, <span class="kw">false</span>);</span>
-<span id="tests-same-as-graphics-loft-L188">  os.<span class="fn-call">draw</span>(<span class="fn-call">placed</span>(<span class="nm">1.2</span>, <span class="nm">1.4</span>, -<span class="nm">0.5</span>), <span class="nm">1</span>);</span>
-<span id="tests-same-as-graphics-loft-L189">  os.<span class="fn-call">draw</span>(<span class="fn-call">placed</span>(<span class="nm">1.9</span>, <span class="nm">0.8</span>, <span class="nm">0.5</span>), <span class="nm">0</span>);</span>
-<span id="tests-same-as-graphics-loft-L190">  op.<span class="fn-call">sprite</span>(os, <span class="nm">2.0</span>, <span class="nm">30.0</span>, <span class="nm">20.0</span>, <span class="nm">16.0</span>, <span class="nm">0</span>);</span>
-<span id="tests-same-as-graphics-loft-L191">  op.<span class="fn-call">sprite</span>(os, <span class="nm">12.0</span>, <span class="nm">34.0</span>, <span class="nm">20.0</span>, <span class="nm">12.0</span>, <span class="nm">1</span>);</span>
-<span id="tests-same-as-graphics-loft-L192">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(w.<span class="fn-call">enabled</span>(graphics::<span class="en">GL_DEPTH_TEST</span>), <span class="st">"the old painter handed depth testing back on [{gpu::backend_name()}]"</span>);</span>
-<span id="tests-same-as-graphics-loft-L193">  old = w.<span class="fn-call">capture</span>();</span>
-<span id="tests-same-as-graphics-loft-L194"></span>
-<span id="tests-same-as-graphics-loft-L195">  ns = gpu_paint::<span class="fn-call">sprites</span>(dev, px, <span class="nm">4</span>, <span class="nm">2</span>, <span class="nm">2</span>, <span class="nm">1</span>, gpu::<span class="en">INTO_WINDOW</span>) ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"the new sheet"</span>);</span>
-<span id="tests-same-as-graphics-loft-L196">  ns.texture.<span class="fn-call">nearest</span>(<span class="kw">true</span>);</span>
-<span id="tests-same-as-graphics-loft-L197">  np.blend = <span class="kw">false</span>;</span>
-<span id="tests-same-as-graphics-loft-L198">  dev.<span class="fn-call">begin_window</span>(gpu::<span class="en">CLEAR</span>, <span class="en">BLACK</span>);</span>
-<span id="tests-same-as-graphics-loft-L199">  ns.<span class="fn-call">draw</span>(dev, <span class="fn-call">placed</span>(<span class="nm">1.2</span>, <span class="nm">1.4</span>, -<span class="nm">0.5</span>), <span class="nm">1</span>);</span>
-<span id="tests-same-as-graphics-loft-L200">  ns.<span class="fn-call">draw</span>(dev, <span class="fn-call">placed</span>(<span class="nm">1.9</span>, <span class="nm">0.8</span>, <span class="nm">0.5</span>), <span class="nm">0</span>);</span>
-<span id="tests-same-as-graphics-loft-L201">  np.<span class="fn-call">sprite</span>(dev, ns, <span class="nm">2.0</span>, <span class="nm">30.0</span>, <span class="nm">20.0</span>, <span class="nm">16.0</span>, <span class="nm">0</span>);</span>
-<span id="tests-same-as-graphics-loft-L202">  np.<span class="fn-call">sprite</span>(dev, ns, <span class="nm">12.0</span>, <span class="nm">34.0</span>, <span class="nm">20.0</span>, <span class="nm">12.0</span>, <span class="nm">1</span>);</span>
-<span id="tests-same-as-graphics-loft-L203">  dev.<span class="fn-call">end</span>();</span>
-<span id="tests-same-as-graphics-loft-L204">  <span class="fn-call">same</span>(old.data, dev.<span class="fn-call">capture</span>(), <span class="st">"sprites"</span>, <span class="nm">11</span>);</span>
-<span id="tests-same-as-graphics-loft-L205">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(dev.<span class="fn-call">refusals</span>()) == <span class="nm">0</span>, <span class="st">"nothing refused: {dev.refusals()} [{gpu::backend_name()}]"</span>);</span>
-<span id="tests-same-as-graphics-loft-L206">}</span>
-<span id="tests-same-as-graphics-loft-L207"></span>
-<span id="tests-same-as-graphics-loft-L208"><span class="kw">fn</span> <span class="fn-call">test_sprites_at_pixel_positions_and_in_a_scene_with_depth</span>() {</span>
-<span id="tests-same-as-graphics-loft-L209">  <span class="kw">for</span> t <span class="kw">in</span> <span class="fn-call">backends</span>() { <span class="fn-call">sprites_at_pixel_positions_and_in_a_scene_with_depth_on</span>(t); }</span>
-<span id="tests-same-as-graphics-loft-L210">}</span>
-<span id="tests-same-as-graphics-loft-L211"></span>
-<span id="tests-same-as-graphics-loft-L212"><span class="kw">fn</span> <span class="fn-call">a_painter_draws_into_a_texture_that_another_shows_on</span>(table: <span class="ty"><a href="stdlib-types.html">i64</a></span>) {</span>
-<span id="tests-same-as-graphics-loft-L213">  wo = graphics::<span class="fn-call">open_window</span>(<span class="nm">64</span>, <span class="nm">48</span>, <span class="st">"old-into"</span>);</span>
-<span id="tests-same-as-graphics-loft-L214">  <span class="kw">if</span> !<span class="fn-call">display</span>() { <span class="kw">return</span>; }</span>
-<span id="tests-same-as-graphics-loft-L215">  w = wo ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"a display is set and no window opened"</span>);</span>
-<span id="tests-same-as-graphics-loft-L216">  dev = gpu::<span class="fn-call">open</span>(table, <span class="nm">64</span>, <span class="nm">48</span>, <span class="st">"new-into"</span>) ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"no device"</span>);</span>
-<span id="tests-same-as-graphics-loft-L217">  op = w.<span class="fn-call">painter</span>() ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"the old painter"</span>);</span>
-<span id="tests-same-as-graphics-loft-L218">  inner = gpu_paint::<span class="fn-call">painter</span>(dev, gpu::<span class="en">INTO_COLOUR</span>) ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"a painter into a texture"</span>);</span>
-<span id="tests-same-as-graphics-loft-L219">  outer = gpu_paint::<span class="fn-call">painter</span>(dev, gpu::<span class="en">INTO_WINDOW</span>) ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"a painter into the window"</span>);</span>
-<span id="tests-same-as-graphics-loft-L220"></span>
-<span id="tests-same-as-graphics-loft-L221">  <span class="cm">// A 32 x 24 picture painted first, then shown over part of the window.</span></span>
-<span id="tests-same-as-graphics-loft-L222">  oc = w.<span class="fn-call">texture</span>(<span class="nm">32</span>, <span class="nm">24</span>);</span>
-<span id="tests-same-as-graphics-loft-L223">  oc.<span class="fn-call"><a href="stdlib-vector-aggregates.html">filter</a></span>(<span class="kw">true</span>);</span>
-<span id="tests-same-as-graphics-loft-L224">  of = w.<span class="fn-call">framebuffer</span>();</span>
-<span id="tests-same-as-graphics-loft-L225">  of.<span class="fn-call">attach</span>(oc);</span>
-<span id="tests-same-as-graphics-loft-L226">  w.<span class="fn-call">render_to</span>(of);</span>
-<span id="tests-same-as-graphics-loft-L227">  w.<span class="fn-call">viewport</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">32</span>, <span class="nm">24</span>);</span>
-<span id="tests-same-as-graphics-loft-L228">  w.<span class="fn-call"><a href="stdlib-collections.html">clear</a></span>(<span class="en">RED</span>);</span>
-<span id="tests-same-as-graphics-loft-L229">  <span class="fn-call">blending</span>(w, <span class="kw">false</span>);</span>
-<span id="tests-same-as-graphics-loft-L230">  op.<span class="fn-call">resize</span>(<span class="nm">32</span>, <span class="nm">24</span>);</span>
-<span id="tests-same-as-graphics-loft-L231">  op.<span class="fn-call">rect</span>(<span class="nm">4.0</span>, <span class="nm">3.0</span>, <span class="nm">12.0</span>, <span class="nm">8.0</span>, <span class="nm">0.0</span>, <span class="nm">1.0</span>, <span class="nm">0.0</span>, <span class="nm">1.0</span>);</span>
-<span id="tests-same-as-graphics-loft-L232">  w.<span class="fn-call">render_to_window</span>();</span>
-<span id="tests-same-as-graphics-loft-L233">  w.<span class="fn-call">viewport</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">64</span>, <span class="nm">48</span>);</span>
-<span id="tests-same-as-graphics-loft-L234">  w.<span class="fn-call"><a href="stdlib-collections.html">clear</a></span>(<span class="en">BLACK</span>);</span>
-<span id="tests-same-as-graphics-loft-L235">  op.<span class="fn-call">resize</span>(<span class="nm">64</span>, <span class="nm">48</span>);</span>
-<span id="tests-same-as-graphics-loft-L236">  op.<span class="fn-call">image</span>(oc, <span class="nm">8.0</span>, <span class="nm">6.0</span>, <span class="nm">48.0</span>, <span class="nm">36.0</span>);</span>
-<span id="tests-same-as-graphics-loft-L237">  old = w.<span class="fn-call">capture</span>();</span>
-<span id="tests-same-as-graphics-loft-L238"></span>
-<span id="tests-same-as-graphics-loft-L239">  nc = dev.<span class="fn-call">texture</span>(<span class="nm">32</span>, <span class="nm">24</span>);</span>
-<span id="tests-same-as-graphics-loft-L240">  nc.<span class="fn-call">nearest</span>(<span class="kw">true</span>);</span>
-<span id="tests-same-as-graphics-loft-L241">  nf = dev.<span class="fn-call">colour_target</span>(nc);</span>
-<span id="tests-same-as-graphics-loft-L242">  inner.blend = <span class="kw">false</span>;</span>
-<span id="tests-same-as-graphics-loft-L243">  inner.<span class="fn-call">resize</span>(<span class="nm">32</span>, <span class="nm">24</span>);</span>
-<span id="tests-same-as-graphics-loft-L244">  dev.<span class="fn-call">begin</span>(nf, gpu::<span class="en">CLEAR</span>, <span class="en">RED</span>);</span>
-<span id="tests-same-as-graphics-loft-L245">  inner.<span class="fn-call">rect</span>(dev, <span class="nm">4.0</span>, <span class="nm">3.0</span>, <span class="nm">12.0</span>, <span class="nm">8.0</span>, <span class="nm">0.0</span>, <span class="nm">1.0</span>, <span class="nm">0.0</span>, <span class="nm">1.0</span>);</span>
-<span id="tests-same-as-graphics-loft-L246">  dev.<span class="fn-call">end</span>();</span>
-<span id="tests-same-as-graphics-loft-L247">  outer.blend = <span class="kw">false</span>;</span>
-<span id="tests-same-as-graphics-loft-L248">  dev.<span class="fn-call">begin_window</span>(gpu::<span class="en">CLEAR</span>, <span class="en">BLACK</span>);</span>
-<span id="tests-same-as-graphics-loft-L249">  outer.<span class="fn-call">image</span>(dev, nc, <span class="nm">8.0</span>, <span class="nm">6.0</span>, <span class="nm">48.0</span>, <span class="nm">36.0</span>);</span>
-<span id="tests-same-as-graphics-loft-L250">  dev.<span class="fn-call">end</span>();</span>
-<span id="tests-same-as-graphics-loft-L251">  <span class="fn-call">same</span>(old.data, dev.<span class="fn-call">capture</span>(), <span class="st">"a painted texture shown"</span>, <span class="nm">0</span>);</span>
-<span id="tests-same-as-graphics-loft-L252">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(dev.<span class="fn-call">refusals</span>()) == <span class="nm">0</span>, <span class="st">"nothing refused: {dev.refusals()} [{gpu::backend_name()}]"</span>);</span>
-<span id="tests-same-as-graphics-loft-L253">}</span>
-<span id="tests-same-as-graphics-loft-L254"></span>
-<span id="tests-same-as-graphics-loft-L255"><span class="kw">fn</span> <span class="fn-call">test_a_painter_draws_into_a_texture_that_another_shows</span>() {</span>
-<span id="tests-same-as-graphics-loft-L256">  <span class="kw">for</span> t <span class="kw">in</span> <span class="fn-call">backends</span>() { <span class="fn-call">a_painter_draws_into_a_texture_that_another_shows_on</span>(t); }</span>
-<span id="tests-same-as-graphics-loft-L257">}</span>
-<span id="tests-same-as-graphics-loft-L258"></span>
-<span id="tests-same-as-graphics-loft-L259"><span class="kw">fn</span> <span class="fn-call">a_painter_for_the_window_is_refused_in_a_pass_into_a_texture_on</span>(table: <span class="ty"><a href="stdlib-types.html">i64</a></span>) {</span>
-<span id="tests-same-as-graphics-loft-L260">  <span class="kw">if</span> !<span class="fn-call">display</span>() { <span class="kw">return</span>; }</span>
-<span id="tests-same-as-graphics-loft-L261">  dev = gpu::<span class="fn-call">open</span>(table, <span class="nm">64</span>, <span class="nm">48</span>, <span class="st">"new-kind"</span>) ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"no device"</span>);</span>
-<span id="tests-same-as-graphics-loft-L262">  np = gpu_paint::<span class="fn-call">painter</span>(dev, gpu::<span class="en">INTO_WINDOW</span>) ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"the new painter"</span>);</span>
-<span id="tests-same-as-graphics-loft-L263">  t = dev.<span class="fn-call">texture</span>(<span class="nm">16</span>, <span class="nm">16</span>);</span>
-<span id="tests-same-as-graphics-loft-L264">  f = dev.<span class="fn-call">colour_target</span>(t);</span>
-<span id="tests-same-as-graphics-loft-L265">  dev.<span class="fn-call">begin</span>(f, gpu::<span class="en">CLEAR</span>, <span class="en">GREEN</span>);</span>
-<span id="tests-same-as-graphics-loft-L266">  np.<span class="fn-call">rect</span>(dev, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">8.0</span>, <span class="nm">8.0</span>, <span class="nm">1.0</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">1.0</span>);</span>
-<span id="tests-same-as-graphics-loft-L267">  dev.<span class="fn-call">end</span>();</span>
-<span id="tests-same-as-graphics-loft-L268">  got = dev.<span class="fn-call">refusals</span>();</span>
-<span id="tests-same-as-graphics-loft-L269">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>((got[<span class="nm">0</span>] ?? <span class="st">""</span>) == <span class="st">"bind: the pipeline was built for another kind of target than this pass draws into"</span>, <span class="st">"the painter's pipeline is the window's: {got} [{gpu::backend_name()}]"</span>);</span>
-<span id="tests-same-as-graphics-loft-L270">}</span>
-<span id="tests-same-as-graphics-loft-L271"></span>
-<span id="tests-same-as-graphics-loft-L272"><span class="kw">fn</span> <span class="fn-call">test_a_painter_for_the_window_is_refused_in_a_pass_into_a_texture</span>() {</span>
-<span id="tests-same-as-graphics-loft-L273">  <span class="kw">for</span> t <span class="kw">in</span> <span class="fn-call">backends</span>() { <span class="fn-call">a_painter_for_the_window_is_refused_in_a_pass_into_a_texture_on</span>(t); }</span>
-<span id="tests-same-as-graphics-loft-L274">}</span>
+<span id="tests-same-as-graphics-loft-L118">    w.<span class="fn-call"><a href="stdlib-collections.html">clear</a></span>(<span class="en">BLACK</span>);</span>
+<span id="tests-same-as-graphics-loft-L119">    <span class="fn-call">blending</span>(w, <span class="kw">false</span>);</span>
+<span id="tests-same-as-graphics-loft-L120">    op.<span class="fn-call">rect</span>(w, <span class="nm">8.0</span>, <span class="nm">4.0</span>, <span class="nm">16.0</span>, <span class="nm">10.0</span>, <span class="nm">1.0</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0.3</span>);</span>
+<span id="tests-same-as-graphics-loft-L121">    op.<span class="fn-call">rect</span>(w, <span class="nm">20.5</span>, <span class="nm">9.25</span>, <span class="nm">30.0</span>, <span class="nm">20.5</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">1.0</span>, <span class="nm">1.0</span>);</span>
+<span id="tests-same-as-graphics-loft-L122">    <span class="fn-call">blending</span>(w, <span class="kw">true</span>);</span>
+<span id="tests-same-as-graphics-loft-L123">    op.<span class="fn-call">rect</span>(w, <span class="nm">4.0</span>, <span class="nm">8.0</span>, <span class="nm">40.0</span>, <span class="nm">30.0</span>, <span class="nm">0.2</span>, <span class="nm">1.0</span>, <span class="nm">0.4</span>, <span class="nm">0.35</span>);</span>
+<span id="tests-same-as-graphics-loft-L124">    op.<span class="fn-call">resize</span>(<span class="nm">32</span>, <span class="nm">24</span>);</span>
+<span id="tests-same-as-graphics-loft-L125">    op.<span class="fn-call">rect</span>(w, <span class="nm">24.0</span>, <span class="nm">18.0</span>, <span class="nm">8.0</span>, <span class="nm">6.0</span>, <span class="nm">1.0</span>, <span class="nm">1.0</span>, <span class="nm">0.0</span>, <span class="nm">0.5</span>);</span>
+<span id="tests-same-as-graphics-loft-L126">    old = w.<span class="fn-call">capture</span>();</span>
+<span id="tests-same-as-graphics-loft-L127">    old_px += old.data;</span>
+<span id="tests-same-as-graphics-loft-L128">    w.<span class="fn-call">close</span>();</span>
+<span id="tests-same-as-graphics-loft-L129">  }</span>
+<span id="tests-same-as-graphics-loft-L130">  dev = gpu::<span class="fn-call">open</span>(table, <span class="nm">64</span>, <span class="nm">48</span>, <span class="st">"new-rect"</span>) ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"no device"</span>);</span>
+<span id="tests-same-as-graphics-loft-L131">  np = gpu_paint::<span class="fn-call">painter</span>(dev, gpu::<span class="en">INTO_WINDOW</span>) ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"the new painter"</span>);</span>
+<span id="tests-same-as-graphics-loft-L132"></span>
+<span id="tests-same-as-graphics-loft-L133">  dev.<span class="fn-call">begin_window</span>(gpu::<span class="en">CLEAR</span>, <span class="en">BLACK</span>);</span>
+<span id="tests-same-as-graphics-loft-L134">  np.blend = <span class="kw">false</span>;</span>
+<span id="tests-same-as-graphics-loft-L135">  np.<span class="fn-call">rect</span>(dev, <span class="nm">8.0</span>, <span class="nm">4.0</span>, <span class="nm">16.0</span>, <span class="nm">10.0</span>, <span class="nm">1.0</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0.3</span>);</span>
+<span id="tests-same-as-graphics-loft-L136">  np.<span class="fn-call">rect</span>(dev, <span class="nm">20.5</span>, <span class="nm">9.25</span>, <span class="nm">30.0</span>, <span class="nm">20.5</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">1.0</span>, <span class="nm">1.0</span>);</span>
+<span id="tests-same-as-graphics-loft-L137">  np.blend = <span class="kw">true</span>;</span>
+<span id="tests-same-as-graphics-loft-L138">  np.<span class="fn-call">rect</span>(dev, <span class="nm">4.0</span>, <span class="nm">8.0</span>, <span class="nm">40.0</span>, <span class="nm">30.0</span>, <span class="nm">0.2</span>, <span class="nm">1.0</span>, <span class="nm">0.4</span>, <span class="nm">0.35</span>);</span>
+<span id="tests-same-as-graphics-loft-L139">  np.<span class="fn-call">resize</span>(<span class="nm">32</span>, <span class="nm">24</span>);</span>
+<span id="tests-same-as-graphics-loft-L140">  np.<span class="fn-call">rect</span>(dev, <span class="nm">24.0</span>, <span class="nm">18.0</span>, <span class="nm">8.0</span>, <span class="nm">6.0</span>, <span class="nm">1.0</span>, <span class="nm">1.0</span>, <span class="nm">0.0</span>, <span class="nm">0.5</span>);</span>
+<span id="tests-same-as-graphics-loft-L141">  dev.<span class="fn-call">end</span>();</span>
+<span id="tests-same-as-graphics-loft-L142">  <span class="fn-call">same</span>(old_px, dev.<span class="fn-call">capture</span>(), <span class="st">"rectangles"</span>, <span class="nm">0</span>);</span>
+<span id="tests-same-as-graphics-loft-L143">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(dev.<span class="fn-call">refusals</span>()) == <span class="nm">0</span>, <span class="st">"nothing refused: {dev.refusals()} [{gpu::backend_name()}]"</span>);</span>
+<span id="tests-same-as-graphics-loft-L144">}</span>
+<span id="tests-same-as-graphics-loft-L145"></span>
+<span id="tests-same-as-graphics-loft-L146"><span class="kw">fn</span> <span class="fn-call">test_rectangles_opaque_blended_and_after_a_resize</span>() {</span>
+<span id="tests-same-as-graphics-loft-L147">  <span class="kw">for</span> t <span class="kw">in</span> <span class="fn-call">backends</span>() { <span class="fn-call">rectangles_opaque_blended_and_after_a_resize_on</span>(t); }</span>
+<span id="tests-same-as-graphics-loft-L148">}</span>
+<span id="tests-same-as-graphics-loft-L149"></span>
+<span id="tests-same-as-graphics-loft-L150"><span class="kw">fn</span> <span class="fn-call">an_image_keeps_its_rows_and_skips_the_transparent_on</span>(table: <span class="ty"><a href="stdlib-types.html">i64</a></span>) {</span>
+<span id="tests-same-as-graphics-loft-L151">  wo = graphics::<span class="fn-call">open_window</span>(<span class="nm">64</span>, <span class="nm">48</span>, <span class="st">"old-image"</span>);</span>
+<span id="tests-same-as-graphics-loft-L152">  <span class="kw">if</span> !<span class="fn-call">display</span>() { <span class="kw">return</span>; }</span>
+<span id="tests-same-as-graphics-loft-L153">  <span class="cm">// Everything the window made is let go before the device opens: a program has one backend</span></span>
+<span id="tests-same-as-graphics-loft-L154">  <span class="cm">// at a time, and a release goes to the one that is there.</span></span>
+<span id="tests-same-as-graphics-loft-L155">  old_px: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt; = [];</span>
+<span id="tests-same-as-graphics-loft-L156">  {</span>
+<span id="tests-same-as-graphics-loft-L157">    w = wo ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"a display is set and no window opened"</span>);</span>
+<span id="tests-same-as-graphics-loft-L158">    op = w.<span class="fn-call">painter</span>() ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"the old painter"</span>);</span>
+<span id="tests-same-as-graphics-loft-L159">    px = <span class="fn-call">sheet_pixels</span>();</span>
+<span id="tests-same-as-graphics-loft-L160"></span>
+<span id="tests-same-as-graphics-loft-L161">    ot = w.<span class="fn-call">texture_from</span>(graphics::<span class="en">Canvas</span> { width: <span class="nm">4</span>, height: <span class="nm">2</span>, data: px });</span>
+<span id="tests-same-as-graphics-loft-L162">    ot.<span class="fn-call"><a href="stdlib-vector-aggregates.html">filter</a></span>(<span class="kw">true</span>);</span>
+<span id="tests-same-as-graphics-loft-L163">    ol = w.<span class="fn-call">texture_from</span>(graphics::<span class="en">Canvas</span> { width: <span class="nm">4</span>, height: <span class="nm">2</span>, data: px });</span>
+<span id="tests-same-as-graphics-loft-L164">    w.<span class="fn-call"><a href="stdlib-collections.html">clear</a></span>(<span class="en">BLUE</span>);</span>
+<span id="tests-same-as-graphics-loft-L165">    <span class="fn-call">blending</span>(w, <span class="kw">true</span>);</span>
+<span id="tests-same-as-graphics-loft-L166">    op.<span class="fn-call">image</span>(w, ot, <span class="nm">30.0</span>, <span class="nm">2.0</span>, <span class="nm">32.0</span>, <span class="nm">40.0</span>);</span>
+<span id="tests-same-as-graphics-loft-L167">    op.<span class="fn-call">image</span>(w, ol, <span class="nm">2.0</span>, <span class="nm">20.0</span>, <span class="nm">24.0</span>, <span class="nm">24.0</span>);</span>
+<span id="tests-same-as-graphics-loft-L168">    old = w.<span class="fn-call">capture</span>();</span>
+<span id="tests-same-as-graphics-loft-L169">    old_px += old.data;</span>
+<span id="tests-same-as-graphics-loft-L170">    w.<span class="fn-call">close</span>();</span>
+<span id="tests-same-as-graphics-loft-L171">  }</span>
+<span id="tests-same-as-graphics-loft-L172">  dev = gpu::<span class="fn-call">open</span>(table, <span class="nm">64</span>, <span class="nm">48</span>, <span class="st">"new-image"</span>) ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"no device"</span>);</span>
+<span id="tests-same-as-graphics-loft-L173">  np = gpu_paint::<span class="fn-call">painter</span>(dev, gpu::<span class="en">INTO_WINDOW</span>) ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"the new painter"</span>);</span>
+<span id="tests-same-as-graphics-loft-L174"></span>
+<span id="tests-same-as-graphics-loft-L175">  nt = dev.<span class="fn-call">texture_from</span>(<span class="fn-call">sheet_pixels</span>(), <span class="nm">4</span>, <span class="nm">2</span>);</span>
+<span id="tests-same-as-graphics-loft-L176">  nt.<span class="fn-call">nearest</span>(<span class="kw">true</span>);</span>
+<span id="tests-same-as-graphics-loft-L177">  nl = dev.<span class="fn-call">texture_from</span>(<span class="fn-call">sheet_pixels</span>(), <span class="nm">4</span>, <span class="nm">2</span>);</span>
+<span id="tests-same-as-graphics-loft-L178">  dev.<span class="fn-call">begin_window</span>(gpu::<span class="en">CLEAR</span>, <span class="en">BLUE</span>);</span>
+<span id="tests-same-as-graphics-loft-L179">  np.<span class="fn-call">image</span>(dev, nt, <span class="nm">30.0</span>, <span class="nm">2.0</span>, <span class="nm">32.0</span>, <span class="nm">40.0</span>);</span>
+<span id="tests-same-as-graphics-loft-L180">  np.<span class="fn-call">image</span>(dev, nl, <span class="nm">2.0</span>, <span class="nm">20.0</span>, <span class="nm">24.0</span>, <span class="nm">24.0</span>);</span>
+<span id="tests-same-as-graphics-loft-L181">  dev.<span class="fn-call">end</span>();</span>
+<span id="tests-same-as-graphics-loft-L182">  <span class="fn-call">same</span>(old_px, dev.<span class="fn-call">capture</span>(), <span class="st">"images"</span>, <span class="nm">0</span>);</span>
+<span id="tests-same-as-graphics-loft-L183">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(dev.<span class="fn-call">refusals</span>()) == <span class="nm">0</span>, <span class="st">"nothing refused: {dev.refusals()} [{gpu::backend_name()}]"</span>);</span>
+<span id="tests-same-as-graphics-loft-L184">}</span>
+<span id="tests-same-as-graphics-loft-L185"></span>
+<span id="tests-same-as-graphics-loft-L186"><span class="kw">fn</span> <span class="fn-call">test_an_image_keeps_its_rows_and_skips_the_transparent</span>() {</span>
+<span id="tests-same-as-graphics-loft-L187">  <span class="kw">for</span> t <span class="kw">in</span> <span class="fn-call">backends</span>() { <span class="fn-call">an_image_keeps_its_rows_and_skips_the_transparent_on</span>(t); }</span>
+<span id="tests-same-as-graphics-loft-L188">}</span>
+<span id="tests-same-as-graphics-loft-L189"></span>
+<span id="tests-same-as-graphics-loft-L190"><span class="kw">fn</span> <span class="fn-call">sprites_at_pixel_positions_and_in_a_scene_with_depth_on</span>(table: <span class="ty"><a href="stdlib-types.html">i64</a></span>) {</span>
+<span id="tests-same-as-graphics-loft-L191">  wo = graphics::<span class="fn-call">open_window</span>(<span class="nm">64</span>, <span class="nm">48</span>, <span class="st">"old-sprites"</span>);</span>
+<span id="tests-same-as-graphics-loft-L192">  <span class="kw">if</span> !<span class="fn-call">display</span>() { <span class="kw">return</span>; }</span>
+<span id="tests-same-as-graphics-loft-L193">  <span class="cm">// Everything the window made is let go before the device opens: a program has one backend</span></span>
+<span id="tests-same-as-graphics-loft-L194">  <span class="cm">// at a time, and a release goes to the one that is there.</span></span>
+<span id="tests-same-as-graphics-loft-L195">  old_px: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt; = [];</span>
+<span id="tests-same-as-graphics-loft-L196">  {</span>
+<span id="tests-same-as-graphics-loft-L197">    w = wo ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"a display is set and no window opened"</span>);</span>
+<span id="tests-same-as-graphics-loft-L198">    op = w.<span class="fn-call">painter</span>() ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"the old painter"</span>);</span>
+<span id="tests-same-as-graphics-loft-L199">    px = <span class="fn-call">sheet_pixels</span>();</span>
+<span id="tests-same-as-graphics-loft-L200"></span>
+<span id="tests-same-as-graphics-loft-L201">    <span class="cm">// Two sprites in a scene: the near one drawn first, so the far one is hidden where they</span></span>
+<span id="tests-same-as-graphics-loft-L202">    <span class="cm">// overlap only if depth is tested and written.  Then two by the painter, over them, in</span></span>
+<span id="tests-same-as-graphics-loft-L203">    <span class="cm">// call order whatever the depth.</span></span>
+<span id="tests-same-as-graphics-loft-L204">    os = w.<span class="fn-call">sprites</span>(graphics::<span class="en">Canvas</span> { width: <span class="nm">4</span>, height: <span class="nm">2</span>, data: px }, <span class="nm">2</span>, <span class="nm">1</span>) ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"the old sheet"</span>);</span>
+<span id="tests-same-as-graphics-loft-L205">    os.texture.<span class="fn-call"><a href="stdlib-vector-aggregates.html">filter</a></span>(<span class="kw">true</span>);</span>
+<span id="tests-same-as-graphics-loft-L206">    <span class="cm">// In a page the two libraries draw in the page's one context, and graphics takes the state</span></span>
+<span id="tests-same-as-graphics-loft-L207">    <span class="cm">// it finds: say what this scene relies on, which a painter before it turned off.</span></span>
+<span id="tests-same-as-graphics-loft-L208">    w.<span class="fn-call">enable</span>(graphics::<span class="en">GL_DEPTH_TEST</span>);</span>
+<span id="tests-same-as-graphics-loft-L209">    w.<span class="fn-call">depth_write</span>(<span class="kw">true</span>);</span>
+<span id="tests-same-as-graphics-loft-L210">    w.<span class="fn-call"><a href="stdlib-collections.html">clear</a></span>(<span class="en">BLACK</span>);</span>
+<span id="tests-same-as-graphics-loft-L211">    <span class="fn-call">blending</span>(w, <span class="kw">false</span>);</span>
+<span id="tests-same-as-graphics-loft-L212">    os.<span class="fn-call">draw</span>(w, <span class="fn-call">placed</span>(<span class="nm">1.2</span>, <span class="nm">1.4</span>, -<span class="nm">0.5</span>), <span class="nm">1</span>);</span>
+<span id="tests-same-as-graphics-loft-L213">    os.<span class="fn-call">draw</span>(w, <span class="fn-call">placed</span>(<span class="nm">1.9</span>, <span class="nm">0.8</span>, <span class="nm">0.5</span>), <span class="nm">0</span>);</span>
+<span id="tests-same-as-graphics-loft-L214">    op.<span class="fn-call">sprite</span>(w, os, <span class="nm">2.0</span>, <span class="nm">30.0</span>, <span class="nm">20.0</span>, <span class="nm">16.0</span>, <span class="nm">0</span>);</span>
+<span id="tests-same-as-graphics-loft-L215">    op.<span class="fn-call">sprite</span>(w, os, <span class="nm">12.0</span>, <span class="nm">34.0</span>, <span class="nm">20.0</span>, <span class="nm">12.0</span>, <span class="nm">1</span>);</span>
+<span id="tests-same-as-graphics-loft-L216">    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(w.<span class="fn-call">enabled</span>(graphics::<span class="en">GL_DEPTH_TEST</span>), <span class="st">"the old painter handed depth testing back on [{gpu::backend_name()}]"</span>);</span>
+<span id="tests-same-as-graphics-loft-L217">    old = w.<span class="fn-call">capture</span>();</span>
+<span id="tests-same-as-graphics-loft-L218">    old_px += old.data;</span>
+<span id="tests-same-as-graphics-loft-L219">    w.<span class="fn-call">close</span>();</span>
+<span id="tests-same-as-graphics-loft-L220">  }</span>
+<span id="tests-same-as-graphics-loft-L221">  dev = gpu::<span class="fn-call">open</span>(table, <span class="nm">64</span>, <span class="nm">48</span>, <span class="st">"new-sprites"</span>) ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"no device"</span>);</span>
+<span id="tests-same-as-graphics-loft-L222">  np = gpu_paint::<span class="fn-call">painter</span>(dev, gpu::<span class="en">INTO_WINDOW</span>) ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"the new painter"</span>);</span>
+<span id="tests-same-as-graphics-loft-L223"></span>
+<span id="tests-same-as-graphics-loft-L224">  ns = gpu_paint::<span class="fn-call">sprites</span>(dev, <span class="fn-call">sheet_pixels</span>(), <span class="nm">4</span>, <span class="nm">2</span>, <span class="nm">2</span>, <span class="nm">1</span>, gpu::<span class="en">INTO_WINDOW</span>) ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"the new sheet"</span>);</span>
+<span id="tests-same-as-graphics-loft-L225">  ns.texture.<span class="fn-call">nearest</span>(<span class="kw">true</span>);</span>
+<span id="tests-same-as-graphics-loft-L226">  np.blend = <span class="kw">false</span>;</span>
+<span id="tests-same-as-graphics-loft-L227">  dev.<span class="fn-call">begin_window</span>(gpu::<span class="en">CLEAR</span>, <span class="en">BLACK</span>);</span>
+<span id="tests-same-as-graphics-loft-L228">  ns.<span class="fn-call">draw</span>(dev, <span class="fn-call">placed</span>(<span class="nm">1.2</span>, <span class="nm">1.4</span>, -<span class="nm">0.5</span>), <span class="nm">1</span>);</span>
+<span id="tests-same-as-graphics-loft-L229">  ns.<span class="fn-call">draw</span>(dev, <span class="fn-call">placed</span>(<span class="nm">1.9</span>, <span class="nm">0.8</span>, <span class="nm">0.5</span>), <span class="nm">0</span>);</span>
+<span id="tests-same-as-graphics-loft-L230">  np.<span class="fn-call">sprite</span>(dev, ns, <span class="nm">2.0</span>, <span class="nm">30.0</span>, <span class="nm">20.0</span>, <span class="nm">16.0</span>, <span class="nm">0</span>);</span>
+<span id="tests-same-as-graphics-loft-L231">  np.<span class="fn-call">sprite</span>(dev, ns, <span class="nm">12.0</span>, <span class="nm">34.0</span>, <span class="nm">20.0</span>, <span class="nm">12.0</span>, <span class="nm">1</span>);</span>
+<span id="tests-same-as-graphics-loft-L232">  dev.<span class="fn-call">end</span>();</span>
+<span id="tests-same-as-graphics-loft-L233">  <span class="fn-call">same</span>(old_px, dev.<span class="fn-call">capture</span>(), <span class="st">"sprites"</span>, <span class="nm">11</span>);</span>
+<span id="tests-same-as-graphics-loft-L234">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(dev.<span class="fn-call">refusals</span>()) == <span class="nm">0</span>, <span class="st">"nothing refused: {dev.refusals()} [{gpu::backend_name()}]"</span>);</span>
+<span id="tests-same-as-graphics-loft-L235">}</span>
+<span id="tests-same-as-graphics-loft-L236"></span>
+<span id="tests-same-as-graphics-loft-L237"><span class="kw">fn</span> <span class="fn-call">test_sprites_at_pixel_positions_and_in_a_scene_with_depth</span>() {</span>
+<span id="tests-same-as-graphics-loft-L238">  <span class="kw">for</span> t <span class="kw">in</span> <span class="fn-call">backends</span>() { <span class="fn-call">sprites_at_pixel_positions_and_in_a_scene_with_depth_on</span>(t); }</span>
+<span id="tests-same-as-graphics-loft-L239">}</span>
+<span id="tests-same-as-graphics-loft-L240"></span>
+<span id="tests-same-as-graphics-loft-L241"><span class="kw">fn</span> <span class="fn-call">a_painter_draws_into_a_texture_that_another_shows_on</span>(table: <span class="ty"><a href="stdlib-types.html">i64</a></span>) {</span>
+<span id="tests-same-as-graphics-loft-L242">  wo = graphics::<span class="fn-call">open_window</span>(<span class="nm">64</span>, <span class="nm">48</span>, <span class="st">"old-into"</span>);</span>
+<span id="tests-same-as-graphics-loft-L243">  <span class="kw">if</span> !<span class="fn-call">display</span>() { <span class="kw">return</span>; }</span>
+<span id="tests-same-as-graphics-loft-L244">  <span class="cm">// Everything the window made is let go before the device opens: a program has one backend</span></span>
+<span id="tests-same-as-graphics-loft-L245">  <span class="cm">// at a time, and a release goes to the one that is there.</span></span>
+<span id="tests-same-as-graphics-loft-L246">  old_px: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt; = [];</span>
+<span id="tests-same-as-graphics-loft-L247">  {</span>
+<span id="tests-same-as-graphics-loft-L248">    w = wo ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"a display is set and no window opened"</span>);</span>
+<span id="tests-same-as-graphics-loft-L249">    op = w.<span class="fn-call">painter</span>() ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"the old painter"</span>);</span>
+<span id="tests-same-as-graphics-loft-L250"></span>
+<span id="tests-same-as-graphics-loft-L251">    <span class="cm">// A 32 x 24 picture painted first, then shown over part of the window.</span></span>
+<span id="tests-same-as-graphics-loft-L252">    oc = w.<span class="fn-call">texture</span>(<span class="nm">32</span>, <span class="nm">24</span>);</span>
+<span id="tests-same-as-graphics-loft-L253">    oc.<span class="fn-call"><a href="stdlib-vector-aggregates.html">filter</a></span>(<span class="kw">true</span>);</span>
+<span id="tests-same-as-graphics-loft-L254">    of = w.<span class="fn-call">framebuffer</span>(oc);</span>
+<span id="tests-same-as-graphics-loft-L255">    w.<span class="fn-call">render_to</span>(of);</span>
+<span id="tests-same-as-graphics-loft-L256">    w.<span class="fn-call">viewport</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">32</span>, <span class="nm">24</span>);</span>
+<span id="tests-same-as-graphics-loft-L257">    w.<span class="fn-call"><a href="stdlib-collections.html">clear</a></span>(<span class="en">RED</span>);</span>
+<span id="tests-same-as-graphics-loft-L258">    <span class="fn-call">blending</span>(w, <span class="kw">false</span>);</span>
+<span id="tests-same-as-graphics-loft-L259">    op.<span class="fn-call">resize</span>(<span class="nm">32</span>, <span class="nm">24</span>);</span>
+<span id="tests-same-as-graphics-loft-L260">    op.<span class="fn-call">rect</span>(w, <span class="nm">4.0</span>, <span class="nm">3.0</span>, <span class="nm">12.0</span>, <span class="nm">8.0</span>, <span class="nm">0.0</span>, <span class="nm">1.0</span>, <span class="nm">0.0</span>, <span class="nm">1.0</span>);</span>
+<span id="tests-same-as-graphics-loft-L261">    w.<span class="fn-call">render_to_window</span>();</span>
+<span id="tests-same-as-graphics-loft-L262">    w.<span class="fn-call">viewport</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">64</span>, <span class="nm">48</span>);</span>
+<span id="tests-same-as-graphics-loft-L263">    w.<span class="fn-call"><a href="stdlib-collections.html">clear</a></span>(<span class="en">BLACK</span>);</span>
+<span id="tests-same-as-graphics-loft-L264">    op.<span class="fn-call">resize</span>(<span class="nm">64</span>, <span class="nm">48</span>);</span>
+<span id="tests-same-as-graphics-loft-L265">    op.<span class="fn-call">image</span>(w, oc, <span class="nm">8.0</span>, <span class="nm">6.0</span>, <span class="nm">48.0</span>, <span class="nm">36.0</span>);</span>
+<span id="tests-same-as-graphics-loft-L266">    old = w.<span class="fn-call">capture</span>();</span>
+<span id="tests-same-as-graphics-loft-L267">    old_px += old.data;</span>
+<span id="tests-same-as-graphics-loft-L268">    w.<span class="fn-call">close</span>();</span>
+<span id="tests-same-as-graphics-loft-L269">  }</span>
+<span id="tests-same-as-graphics-loft-L270">  dev = gpu::<span class="fn-call">open</span>(table, <span class="nm">64</span>, <span class="nm">48</span>, <span class="st">"new-into"</span>) ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"no device"</span>);</span>
+<span id="tests-same-as-graphics-loft-L271">  inner = gpu_paint::<span class="fn-call">painter</span>(dev, gpu::<span class="en">INTO_COLOUR</span>) ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"a painter into a texture"</span>);</span>
+<span id="tests-same-as-graphics-loft-L272">  outer = gpu_paint::<span class="fn-call">painter</span>(dev, gpu::<span class="en">INTO_WINDOW</span>) ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"a painter into the window"</span>);</span>
+<span id="tests-same-as-graphics-loft-L273"></span>
+<span id="tests-same-as-graphics-loft-L274">  nc = dev.<span class="fn-call">texture</span>(<span class="nm">32</span>, <span class="nm">24</span>);</span>
+<span id="tests-same-as-graphics-loft-L275">  nc.<span class="fn-call">nearest</span>(<span class="kw">true</span>);</span>
+<span id="tests-same-as-graphics-loft-L276">  nf = dev.<span class="fn-call">colour_target</span>(nc);</span>
+<span id="tests-same-as-graphics-loft-L277">  inner.blend = <span class="kw">false</span>;</span>
+<span id="tests-same-as-graphics-loft-L278">  inner.<span class="fn-call">resize</span>(<span class="nm">32</span>, <span class="nm">24</span>);</span>
+<span id="tests-same-as-graphics-loft-L279">  dev.<span class="fn-call">begin</span>(nf, gpu::<span class="en">CLEAR</span>, <span class="en">RED</span>);</span>
+<span id="tests-same-as-graphics-loft-L280">  inner.<span class="fn-call">rect</span>(dev, <span class="nm">4.0</span>, <span class="nm">3.0</span>, <span class="nm">12.0</span>, <span class="nm">8.0</span>, <span class="nm">0.0</span>, <span class="nm">1.0</span>, <span class="nm">0.0</span>, <span class="nm">1.0</span>);</span>
+<span id="tests-same-as-graphics-loft-L281">  dev.<span class="fn-call">end</span>();</span>
+<span id="tests-same-as-graphics-loft-L282">  outer.blend = <span class="kw">false</span>;</span>
+<span id="tests-same-as-graphics-loft-L283">  dev.<span class="fn-call">begin_window</span>(gpu::<span class="en">CLEAR</span>, <span class="en">BLACK</span>);</span>
+<span id="tests-same-as-graphics-loft-L284">  outer.<span class="fn-call">image</span>(dev, nc, <span class="nm">8.0</span>, <span class="nm">6.0</span>, <span class="nm">48.0</span>, <span class="nm">36.0</span>);</span>
+<span id="tests-same-as-graphics-loft-L285">  dev.<span class="fn-call">end</span>();</span>
+<span id="tests-same-as-graphics-loft-L286">  <span class="fn-call">same</span>(old_px, dev.<span class="fn-call">capture</span>(), <span class="st">"a painted texture shown"</span>, <span class="nm">0</span>);</span>
+<span id="tests-same-as-graphics-loft-L287">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(dev.<span class="fn-call">refusals</span>()) == <span class="nm">0</span>, <span class="st">"nothing refused: {dev.refusals()} [{gpu::backend_name()}]"</span>);</span>
+<span id="tests-same-as-graphics-loft-L288">}</span>
+<span id="tests-same-as-graphics-loft-L289"></span>
+<span id="tests-same-as-graphics-loft-L290"><span class="kw">fn</span> <span class="fn-call">test_a_painter_draws_into_a_texture_that_another_shows</span>() {</span>
+<span id="tests-same-as-graphics-loft-L291">  <span class="kw">for</span> t <span class="kw">in</span> <span class="fn-call">backends</span>() { <span class="fn-call">a_painter_draws_into_a_texture_that_another_shows_on</span>(t); }</span>
+<span id="tests-same-as-graphics-loft-L292">}</span>
+<span id="tests-same-as-graphics-loft-L293"></span>
+<span id="tests-same-as-graphics-loft-L294"><span class="kw">fn</span> <span class="fn-call">a_painter_for_the_window_is_refused_in_a_pass_into_a_texture_on</span>(table: <span class="ty"><a href="stdlib-types.html">i64</a></span>) {</span>
+<span id="tests-same-as-graphics-loft-L295">  <span class="kw">if</span> !<span class="fn-call">display</span>() { <span class="kw">return</span>; }</span>
+<span id="tests-same-as-graphics-loft-L296">  dev = gpu::<span class="fn-call">open</span>(table, <span class="nm">64</span>, <span class="nm">48</span>, <span class="st">"new-kind"</span>) ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"no device"</span>);</span>
+<span id="tests-same-as-graphics-loft-L297">  np = gpu_paint::<span class="fn-call">painter</span>(dev, gpu::<span class="en">INTO_WINDOW</span>) ?? <span class="kw">return</span> <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="kw">false</span>, <span class="st">"the new painter"</span>);</span>
+<span id="tests-same-as-graphics-loft-L298">  t = dev.<span class="fn-call">texture</span>(<span class="nm">16</span>, <span class="nm">16</span>);</span>
+<span id="tests-same-as-graphics-loft-L299">  f = dev.<span class="fn-call">colour_target</span>(t);</span>
+<span id="tests-same-as-graphics-loft-L300">  dev.<span class="fn-call">begin</span>(f, gpu::<span class="en">CLEAR</span>, <span class="en">GREEN</span>);</span>
+<span id="tests-same-as-graphics-loft-L301">  np.<span class="fn-call">rect</span>(dev, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">8.0</span>, <span class="nm">8.0</span>, <span class="nm">1.0</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">1.0</span>);</span>
+<span id="tests-same-as-graphics-loft-L302">  dev.<span class="fn-call">end</span>();</span>
+<span id="tests-same-as-graphics-loft-L303">  got = dev.<span class="fn-call">refusals</span>();</span>
+<span id="tests-same-as-graphics-loft-L304">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>((got[<span class="nm">0</span>] ?? <span class="st">""</span>) == <span class="st">"bind: the pipeline was built for another kind of target than this pass draws into"</span>, <span class="st">"the painter's pipeline is the window's: {got} [{gpu::backend_name()}]"</span>);</span>
+<span id="tests-same-as-graphics-loft-L305">}</span>
+<span id="tests-same-as-graphics-loft-L306"></span>
+<span id="tests-same-as-graphics-loft-L307"><span class="kw">fn</span> <span class="fn-call">test_a_painter_for_the_window_is_refused_in_a_pass_into_a_texture</span>() {</span>
+<span id="tests-same-as-graphics-loft-L308">  <span class="kw">for</span> t <span class="kw">in</span> <span class="fn-call">backends</span>() { <span class="fn-call">a_painter_for_the_window_is_refused_in_a_pass_into_a_texture_on</span>(t); }</span>
+<span id="tests-same-as-graphics-loft-L309">}</span>
 </code></pre>
 <h2 id="tests-same-on-metal-loft">tests/same_on_metal.loft</h2>
 <pre class="src"><code><span id="tests-same-on-metal-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
@@ -889,136 +924,162 @@
 <span id="tests-same-on-metal-loft-L12"><span class="kw">use</span> gpu_paint;</span>
 <span id="tests-same-on-metal-loft-L13"></span>
 <span id="tests-same-on-metal-loft-L14"><span class="kw">fn</span> <span class="fn-call">display</span>() -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
-<span id="tests-same-on-metal-loft-L15">  gpu_metal::<span class="fn-call">table</span>() != <span class="nm">0</span> &amp;&amp; (<span class="fn-call"><a href="stdlib-environment.html">env_variable</a></span>(<span class="st">"GRAPHICS_TEST_WINDOW"</span>) ?? <span class="st">""</span>) == <span class="st">"1"</span></span>
+<span id="tests-same-on-metal-loft-L15">  gpu_metal::<span class="fn-call">table</span>() != <span class="nm">0</span> &amp;&amp; <span class="fn-call">must_draw</span>((<span class="fn-call"><a href="stdlib-environment.html">env_variable</a></span>(<span class="st">"GRAPHICS_TEST_WINDOW"</span>) ?? <span class="st">""</span>) == <span class="st">"1"</span>)</span>
 <span id="tests-same-on-metal-loft-L16">}</span>
 <span id="tests-same-on-metal-loft-L17"></span>
-<span id="tests-same-on-metal-loft-L18">const <span class="en">BLACK</span> = <span class="nm">0xFF000000</span>;</span>
-<span id="tests-same-on-metal-loft-L19">const <span class="en">RED</span> = <span class="nm">0xFFFF0000</span>;</span>
-<span id="tests-same-on-metal-loft-L20">const <span class="en">BLUE</span> = <span class="nm">0xFF0000FF</span>;</span>
-<span id="tests-same-on-metal-loft-L21"></span>
-<span id="tests-same-on-metal-loft-L22"><span class="kw">fn</span> <span class="fn-call">same</span>(gl: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt;, metal: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt;, what: <span class="ty"><a href="stdlib-types.html">text</a></span>) {</span>
-<span id="tests-same-on-metal-loft-L23">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(gl) == <span class="bi"><a href="stdlib-text.html">len</a></span>(metal) &amp;&amp; <span class="bi"><a href="stdlib-text.html">len</a></span>(gl) &gt; <span class="nm">0</span>, <span class="st">"{what}: {len(gl)} pixels through OpenGL, {len(metal)} through Metal"</span>);</span>
-<span id="tests-same-on-metal-loft-L24">  differ = <span class="nm">0</span>;</span>
-<span id="tests-same-on-metal-loft-L25">  first = -<span class="nm">1</span>;</span>
-<span id="tests-same-on-metal-loft-L26">  colours = <span class="nm">0</span>;</span>
-<span id="tests-same-on-metal-loft-L27">  <span class="kw">for</span> p <span class="kw">in</span> gl {</span>
-<span id="tests-same-on-metal-loft-L28">    <span class="kw">if</span> p != (metal[p#<span class="ty">index</span>] ?? <span class="nm">0</span>) {</span>
-<span id="tests-same-on-metal-loft-L29">      differ += <span class="nm">1</span>;</span>
-<span id="tests-same-on-metal-loft-L30">      <span class="kw">if</span> first &lt; <span class="nm">0</span> { first = p#<span class="ty">index</span>; }</span>
-<span id="tests-same-on-metal-loft-L31">    }</span>
-<span id="tests-same-on-metal-loft-L32">    <span class="kw">if</span> p != gl[<span class="nm">0</span>] { colours += <span class="nm">1</span>; }</span>
-<span id="tests-same-on-metal-loft-L33">  }</span>
-<span id="tests-same-on-metal-loft-L34">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(colours &gt; <span class="nm">0</span>, <span class="st">"{what}: the scene shows one colour only"</span>);</span>
-<span id="tests-same-on-metal-loft-L35">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(differ == <span class="nm">0</span>, <span class="st">"{what}: {differ} pixels differ, the first at {first}: {gl[first] ?? 0:x} through OpenGL, {metal[first] ?? 0:x} through Metal"</span>);</span>
-<span id="tests-same-on-metal-loft-L36">}</span>
-<span id="tests-same-on-metal-loft-L37"></span>
-<span id="tests-same-on-metal-loft-L38"><span class="cm">// A 4 x 2 picture: two cells of 2 x 2, each pixel its own colour, one of them see-through.</span></span>
-<span id="tests-same-on-metal-loft-L39"><span class="kw">fn</span> <span class="fn-call">sheet_pixels</span>() -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt; {</span>
-<span id="tests-same-on-metal-loft-L40">  out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt; = [];</span>
-<span id="tests-same-on-metal-loft-L41">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..8</span> {</span>
-<span id="tests-same-on-metal-loft-L42">    alpha = <span class="kw">if</span> i == <span class="nm">5</span> { <span class="nm">0</span> } <span class="kw">else</span> { <span class="nm">255</span> };</span>
-<span id="tests-same-on-metal-loft-L43">    out += [(((alpha &lt;&lt; <span class="nm">24</span>) | ((<span class="nm">30</span> + <span class="nm">25</span> * i) &lt;&lt; <span class="nm">16</span>) | ((<span class="nm">240</span> - <span class="nm">22</span> * i) &lt;&lt; <span class="nm">8</span>) | (<span class="nm">60</span> + <span class="nm">9</span> * (i % <span class="nm">3</span>))) &amp; <span class="nm">4294967295</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u32</a></span>];</span>
-<span id="tests-same-on-metal-loft-L44">  }</span>
-<span id="tests-same-on-metal-loft-L45">  out</span>
-<span id="tests-same-on-metal-loft-L46">}</span>
-<span id="tests-same-on-metal-loft-L47"></span>
-<span id="tests-same-on-metal-loft-L48"><span class="cm">// The unit quad stretched to `sx` x `sy` around the middle of the target, at depth `z`.</span></span>
-<span id="tests-same-on-metal-loft-L49"><span class="kw">fn</span> <span class="fn-call">placed</span>(sx: <span class="ty"><a href="stdlib-types.html">float</a></span>, sy: <span class="ty"><a href="stdlib-types.html">float</a></span>, z: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt; {</span>
-<span id="tests-same-on-metal-loft-L50">  [sx, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>, sy, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">1.0</span>, <span class="nm">0.0</span>, -sx / <span class="nm">2.0</span>, -sy / <span class="nm">2.0</span>, z, <span class="nm">1.0</span>]</span>
-<span id="tests-same-on-metal-loft-L51">}</span>
-<span id="tests-same-on-metal-loft-L52"></span>
-<span id="tests-same-on-metal-loft-L53"><span class="kw">fn</span> <span class="fn-call">rectangles</span>(table: <span class="ty"><a href="stdlib-types.html">i64</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt; {</span>
-<span id="tests-same-on-metal-loft-L54">  dev = gpu::<span class="fn-call">open</span>(table, <span class="nm">64</span>, <span class="nm">48</span>, <span class="st">"paint-rect"</span>) ?? <span class="kw">return</span> [];</span>
-<span id="tests-same-on-metal-loft-L55">  np = gpu_paint::<span class="fn-call">painter</span>(dev, gpu::<span class="en">INTO_WINDOW</span>) ?? <span class="kw">return</span> [];</span>
-<span id="tests-same-on-metal-loft-L56">  dev.<span class="fn-call">begin_window</span>(gpu::<span class="en">CLEAR</span>, <span class="en">BLACK</span>);</span>
-<span id="tests-same-on-metal-loft-L57">  np.blend = <span class="kw">false</span>;</span>
-<span id="tests-same-on-metal-loft-L58">  np.<span class="fn-call">rect</span>(dev, <span class="nm">8.0</span>, <span class="nm">4.0</span>, <span class="nm">16.0</span>, <span class="nm">10.0</span>, <span class="nm">1.0</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0.3</span>);</span>
-<span id="tests-same-on-metal-loft-L59">  np.<span class="fn-call">rect</span>(dev, <span class="nm">20.5</span>, <span class="nm">9.25</span>, <span class="nm">30.0</span>, <span class="nm">20.5</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">1.0</span>, <span class="nm">1.0</span>);</span>
-<span id="tests-same-on-metal-loft-L60">  np.blend = <span class="kw">true</span>;</span>
-<span id="tests-same-on-metal-loft-L61">  np.<span class="fn-call">rect</span>(dev, <span class="nm">4.0</span>, <span class="nm">8.0</span>, <span class="nm">40.0</span>, <span class="nm">30.0</span>, <span class="nm">0.2</span>, <span class="nm">1.0</span>, <span class="nm">0.4</span>, <span class="nm">0.35</span>);</span>
-<span id="tests-same-on-metal-loft-L62">  np.<span class="fn-call">resize</span>(<span class="nm">32</span>, <span class="nm">24</span>);</span>
-<span id="tests-same-on-metal-loft-L63">  np.<span class="fn-call">rect</span>(dev, <span class="nm">24.0</span>, <span class="nm">18.0</span>, <span class="nm">8.0</span>, <span class="nm">6.0</span>, <span class="nm">1.0</span>, <span class="nm">1.0</span>, <span class="nm">0.0</span>, <span class="nm">0.5</span>);</span>
-<span id="tests-same-on-metal-loft-L64">  dev.<span class="fn-call">end</span>();</span>
-<span id="tests-same-on-metal-loft-L65">  c = dev.<span class="fn-call">capture</span>();</span>
-<span id="tests-same-on-metal-loft-L66">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(dev.<span class="fn-call">refusals</span>()) == <span class="nm">0</span>, <span class="st">"nothing refused: {dev.refusals()}"</span>);</span>
-<span id="tests-same-on-metal-loft-L67">  c</span>
-<span id="tests-same-on-metal-loft-L68">}</span>
-<span id="tests-same-on-metal-loft-L69"></span>
-<span id="tests-same-on-metal-loft-L70"><span class="kw">fn</span> <span class="fn-call">test_rectangles_opaque_blended_and_after_a_resize</span>() {</span>
-<span id="tests-same-on-metal-loft-L71">  <span class="kw">if</span> !<span class="fn-call">display</span>() { <span class="kw">return</span>; }</span>
-<span id="tests-same-on-metal-loft-L72">  <span class="fn-call">same</span>(<span class="fn-call">rectangles</span>(gpu_gl::<span class="fn-call">table</span>()), <span class="fn-call">rectangles</span>(gpu_metal::<span class="fn-call">table</span>()), <span class="st">"rectangles"</span>);</span>
-<span id="tests-same-on-metal-loft-L73">}</span>
-<span id="tests-same-on-metal-loft-L74"></span>
-<span id="tests-same-on-metal-loft-L75"><span class="kw">fn</span> <span class="fn-call">images</span>(table: <span class="ty"><a href="stdlib-types.html">i64</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt; {</span>
-<span id="tests-same-on-metal-loft-L76">  dev = gpu::<span class="fn-call">open</span>(table, <span class="nm">64</span>, <span class="nm">48</span>, <span class="st">"paint-image"</span>) ?? <span class="kw">return</span> [];</span>
-<span id="tests-same-on-metal-loft-L77">  np = gpu_paint::<span class="fn-call">painter</span>(dev, gpu::<span class="en">INTO_WINDOW</span>) ?? <span class="kw">return</span> [];</span>
-<span id="tests-same-on-metal-loft-L78">  px = <span class="fn-call">sheet_pixels</span>();</span>
-<span id="tests-same-on-metal-loft-L79">  nt = dev.<span class="fn-call">texture_from</span>(px, <span class="nm">4</span>, <span class="nm">2</span>);</span>
-<span id="tests-same-on-metal-loft-L80">  nt.<span class="fn-call">nearest</span>(<span class="kw">true</span>);</span>
-<span id="tests-same-on-metal-loft-L81">  nl = dev.<span class="fn-call">texture_from</span>(px, <span class="nm">4</span>, <span class="nm">2</span>);</span>
-<span id="tests-same-on-metal-loft-L82">  dev.<span class="fn-call">begin_window</span>(gpu::<span class="en">CLEAR</span>, <span class="en">BLUE</span>);</span>
-<span id="tests-same-on-metal-loft-L83">  np.<span class="fn-call">image</span>(dev, nt, <span class="nm">30.0</span>, <span class="nm">2.0</span>, <span class="nm">32.0</span>, <span class="nm">40.0</span>);</span>
-<span id="tests-same-on-metal-loft-L84">  np.<span class="fn-call">image</span>(dev, nl, <span class="nm">2.0</span>, <span class="nm">20.0</span>, <span class="nm">24.0</span>, <span class="nm">24.0</span>);</span>
-<span id="tests-same-on-metal-loft-L85">  dev.<span class="fn-call">end</span>();</span>
-<span id="tests-same-on-metal-loft-L86">  c = dev.<span class="fn-call">capture</span>();</span>
-<span id="tests-same-on-metal-loft-L87">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(dev.<span class="fn-call">refusals</span>()) == <span class="nm">0</span>, <span class="st">"nothing refused: {dev.refusals()}"</span>);</span>
-<span id="tests-same-on-metal-loft-L88">  c</span>
-<span id="tests-same-on-metal-loft-L89">}</span>
-<span id="tests-same-on-metal-loft-L90"></span>
-<span id="tests-same-on-metal-loft-L91"><span class="kw">fn</span> <span class="fn-call">test_an_image_keeps_its_rows_and_skips_the_transparent</span>() {</span>
-<span id="tests-same-on-metal-loft-L92">  <span class="kw">if</span> !<span class="fn-call">display</span>() { <span class="kw">return</span>; }</span>
-<span id="tests-same-on-metal-loft-L93">  <span class="fn-call">same</span>(<span class="fn-call">images</span>(gpu_gl::<span class="fn-call">table</span>()), <span class="fn-call">images</span>(gpu_metal::<span class="fn-call">table</span>()), <span class="st">"images"</span>);</span>
+<span id="tests-same-on-metal-loft-L18"><span class="cm">// A run that says its tests must draw (`GRAPHICS_TEST_MUST_DRAW=1`: the library CI, on a runner</span></span>
+<span id="tests-same-on-metal-loft-L19"><span class="cm">// it gave a display) fails here, where a test would otherwise return having drawn nothing.</span></span>
+<span id="tests-same-on-metal-loft-L20"><span class="kw">fn</span> <span class="fn-call">must_draw</span>(can: <span class="ty"><a href="stdlib-types.html">boolean</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="tests-same-on-metal-loft-L21">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(can || (<span class="fn-call"><a href="stdlib-environment.html">env_variable</a></span>(<span class="st">"GRAPHICS_TEST_MUST_DRAW"</span>) ?? <span class="st">""</span>) != <span class="st">"1"</span>, <span class="st">"this run's tests must draw (GRAPHICS_TEST_MUST_DRAW=1) and found no display to draw on"</span>);</span>
+<span id="tests-same-on-metal-loft-L22">  can</span>
+<span id="tests-same-on-metal-loft-L23">}</span>
+<span id="tests-same-on-metal-loft-L24"></span>
+<span id="tests-same-on-metal-loft-L25">const <span class="en">BLACK</span> = <span class="nm">0xFF000000</span>;</span>
+<span id="tests-same-on-metal-loft-L26">const <span class="en">RED</span> = <span class="nm">0xFFFF0000</span>;</span>
+<span id="tests-same-on-metal-loft-L27">const <span class="en">BLUE</span> = <span class="nm">0xFF0000FF</span>;</span>
+<span id="tests-same-on-metal-loft-L28"></span>
+<span id="tests-same-on-metal-loft-L29"><span class="cm">// How far two channels of a pixel lie apart at most.</span></span>
+<span id="tests-same-on-metal-loft-L30"><span class="kw">fn</span> <span class="fn-call">apart</span>(a: <span class="ty"><a href="stdlib-types.html">integer</a></span>, b: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="tests-same-on-metal-loft-L31">  most = <span class="nm">0</span>;</span>
+<span id="tests-same-on-metal-loft-L32">  <span class="kw">for</span> shift <span class="kw">in</span> [<span class="nm">0</span>, <span class="nm">8</span>, <span class="nm">16</span>, <span class="nm">24</span>] {</span>
+<span id="tests-same-on-metal-loft-L33">    d = ((a &gt;&gt; shift) &amp; <span class="nm">255</span>) - ((b &gt;&gt; shift) &amp; <span class="nm">255</span>);</span>
+<span id="tests-same-on-metal-loft-L34">    <span class="kw">if</span> d &lt; <span class="nm">0</span> { d = -d; }</span>
+<span id="tests-same-on-metal-loft-L35">    <span class="kw">if</span> d &gt; most { most = d; }</span>
+<span id="tests-same-on-metal-loft-L36">  }</span>
+<span id="tests-same-on-metal-loft-L37">  most</span>
+<span id="tests-same-on-metal-loft-L38">}</span>
+<span id="tests-same-on-metal-loft-L39"></span>
+<span id="tests-same-on-metal-loft-L40"><span class="cm">// What two pictures may lie apart in a channel: nothing on a Mac's own GPU.  Apple's software</span></span>
+<span id="tests-same-on-metal-loft-L41"><span class="cm">// renderer, the OpenGL of a Mac with no GPU to give it (a CI runner), rounds a colour its own</span></span>
+<span id="tests-same-on-metal-loft-L42"><span class="cm">// way, by 1 or 2 of 255.</span></span>
+<span id="tests-same-on-metal-loft-L43"><span class="kw">fn</span> <span class="fn-call">rounding</span>() -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="tests-same-on-metal-loft-L44">  <span class="kw">if</span> gpu_gl::<span class="fn-call">renderer</span>() == <span class="st">"Apple Software Renderer"</span> { <span class="nm">2</span> } <span class="kw">else</span> { <span class="nm">0</span> }</span>
+<span id="tests-same-on-metal-loft-L45">}</span>
+<span id="tests-same-on-metal-loft-L46"></span>
+<span id="tests-same-on-metal-loft-L47"><span class="kw">fn</span> <span class="fn-call">same</span>(gl: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt;, metal: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt;, what: <span class="ty"><a href="stdlib-types.html">text</a></span>) {</span>
+<span id="tests-same-on-metal-loft-L48">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(gl) == <span class="bi"><a href="stdlib-text.html">len</a></span>(metal) &amp;&amp; <span class="bi"><a href="stdlib-text.html">len</a></span>(gl) &gt; <span class="nm">0</span>, <span class="st">"{what}: {len(gl)} pixels through OpenGL, {len(metal)} through Metal"</span>);</span>
+<span id="tests-same-on-metal-loft-L49">  allowed = <span class="fn-call">rounding</span>();</span>
+<span id="tests-same-on-metal-loft-L50">  differ = <span class="nm">0</span>;</span>
+<span id="tests-same-on-metal-loft-L51">  first = -<span class="nm">1</span>;</span>
+<span id="tests-same-on-metal-loft-L52">  colours = <span class="nm">0</span>;</span>
+<span id="tests-same-on-metal-loft-L53">  <span class="kw">for</span> p <span class="kw">in</span> gl {</span>
+<span id="tests-same-on-metal-loft-L54">    <span class="kw">if</span> <span class="fn-call">apart</span>(p <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>, (metal[p#<span class="ty">index</span>] ?? <span class="nm">0</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">integer</a></span>) &gt; allowed {</span>
+<span id="tests-same-on-metal-loft-L55">      differ += <span class="nm">1</span>;</span>
+<span id="tests-same-on-metal-loft-L56">      <span class="kw">if</span> first &lt; <span class="nm">0</span> { first = p#<span class="ty">index</span>; }</span>
+<span id="tests-same-on-metal-loft-L57">    }</span>
+<span id="tests-same-on-metal-loft-L58">    <span class="kw">if</span> p != gl[<span class="nm">0</span>] { colours += <span class="nm">1</span>; }</span>
+<span id="tests-same-on-metal-loft-L59">  }</span>
+<span id="tests-same-on-metal-loft-L60">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(colours &gt; <span class="nm">0</span>, <span class="st">"{what}: the scene shows one colour only"</span>);</span>
+<span id="tests-same-on-metal-loft-L61">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(differ == <span class="nm">0</span>, <span class="st">"{what}: {differ} pixels differ by more than {allowed}, the first at {first}: {gl[first] ?? 0:x} through OpenGL, {metal[first] ?? 0:x} through Metal"</span>);</span>
+<span id="tests-same-on-metal-loft-L62">}</span>
+<span id="tests-same-on-metal-loft-L63"></span>
+<span id="tests-same-on-metal-loft-L64"><span class="cm">// A 4 x 2 picture: two cells of 2 x 2, each pixel its own colour, one of them see-through.</span></span>
+<span id="tests-same-on-metal-loft-L65"><span class="kw">fn</span> <span class="fn-call">sheet_pixels</span>() -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt; {</span>
+<span id="tests-same-on-metal-loft-L66">  out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt; = [];</span>
+<span id="tests-same-on-metal-loft-L67">  <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..8</span> {</span>
+<span id="tests-same-on-metal-loft-L68">    alpha = <span class="kw">if</span> i == <span class="nm">5</span> { <span class="nm">0</span> } <span class="kw">else</span> { <span class="nm">255</span> };</span>
+<span id="tests-same-on-metal-loft-L69">    out += [(((alpha &lt;&lt; <span class="nm">24</span>) | ((<span class="nm">30</span> + <span class="nm">25</span> * i) &lt;&lt; <span class="nm">16</span>) | ((<span class="nm">240</span> - <span class="nm">22</span> * i) &lt;&lt; <span class="nm">8</span>) | (<span class="nm">60</span> + <span class="nm">9</span> * (i % <span class="nm">3</span>))) &amp; <span class="nm">4294967295</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u32</a></span>];</span>
+<span id="tests-same-on-metal-loft-L70">  }</span>
+<span id="tests-same-on-metal-loft-L71">  out</span>
+<span id="tests-same-on-metal-loft-L72">}</span>
+<span id="tests-same-on-metal-loft-L73"></span>
+<span id="tests-same-on-metal-loft-L74"><span class="cm">// The unit quad stretched to `sx` x `sy` around the middle of the target, at depth `z`.</span></span>
+<span id="tests-same-on-metal-loft-L75"><span class="kw">fn</span> <span class="fn-call">placed</span>(sx: <span class="ty"><a href="stdlib-types.html">float</a></span>, sy: <span class="ty"><a href="stdlib-types.html">float</a></span>, z: <span class="ty"><a href="stdlib-types.html">float</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt; {</span>
+<span id="tests-same-on-metal-loft-L76">  [sx, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>, sy, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">1.0</span>, <span class="nm">0.0</span>, -sx / <span class="nm">2.0</span>, -sy / <span class="nm">2.0</span>, z, <span class="nm">1.0</span>]</span>
+<span id="tests-same-on-metal-loft-L77">}</span>
+<span id="tests-same-on-metal-loft-L78"></span>
+<span id="tests-same-on-metal-loft-L79"><span class="kw">fn</span> <span class="fn-call">rectangles</span>(table: <span class="ty"><a href="stdlib-types.html">i64</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt; {</span>
+<span id="tests-same-on-metal-loft-L80">  dev = gpu::<span class="fn-call">open</span>(table, <span class="nm">64</span>, <span class="nm">48</span>, <span class="st">"paint-rect"</span>) ?? <span class="kw">return</span> [];</span>
+<span id="tests-same-on-metal-loft-L81">  np = gpu_paint::<span class="fn-call">painter</span>(dev, gpu::<span class="en">INTO_WINDOW</span>) ?? <span class="kw">return</span> [];</span>
+<span id="tests-same-on-metal-loft-L82">  dev.<span class="fn-call">begin_window</span>(gpu::<span class="en">CLEAR</span>, <span class="en">BLACK</span>);</span>
+<span id="tests-same-on-metal-loft-L83">  np.blend = <span class="kw">false</span>;</span>
+<span id="tests-same-on-metal-loft-L84">  np.<span class="fn-call">rect</span>(dev, <span class="nm">8.0</span>, <span class="nm">4.0</span>, <span class="nm">16.0</span>, <span class="nm">10.0</span>, <span class="nm">1.0</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">0.3</span>);</span>
+<span id="tests-same-on-metal-loft-L85">  np.<span class="fn-call">rect</span>(dev, <span class="nm">20.5</span>, <span class="nm">9.25</span>, <span class="nm">30.0</span>, <span class="nm">20.5</span>, <span class="nm">0.0</span>, <span class="nm">0.0</span>, <span class="nm">1.0</span>, <span class="nm">1.0</span>);</span>
+<span id="tests-same-on-metal-loft-L86">  np.blend = <span class="kw">true</span>;</span>
+<span id="tests-same-on-metal-loft-L87">  np.<span class="fn-call">rect</span>(dev, <span class="nm">4.0</span>, <span class="nm">8.0</span>, <span class="nm">40.0</span>, <span class="nm">30.0</span>, <span class="nm">0.2</span>, <span class="nm">1.0</span>, <span class="nm">0.4</span>, <span class="nm">0.35</span>);</span>
+<span id="tests-same-on-metal-loft-L88">  np.<span class="fn-call">resize</span>(<span class="nm">32</span>, <span class="nm">24</span>);</span>
+<span id="tests-same-on-metal-loft-L89">  np.<span class="fn-call">rect</span>(dev, <span class="nm">24.0</span>, <span class="nm">18.0</span>, <span class="nm">8.0</span>, <span class="nm">6.0</span>, <span class="nm">1.0</span>, <span class="nm">1.0</span>, <span class="nm">0.0</span>, <span class="nm">0.5</span>);</span>
+<span id="tests-same-on-metal-loft-L90">  dev.<span class="fn-call">end</span>();</span>
+<span id="tests-same-on-metal-loft-L91">  c = dev.<span class="fn-call">capture</span>();</span>
+<span id="tests-same-on-metal-loft-L92">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(dev.<span class="fn-call">refusals</span>()) == <span class="nm">0</span>, <span class="st">"nothing refused: {dev.refusals()}"</span>);</span>
+<span id="tests-same-on-metal-loft-L93">  c</span>
 <span id="tests-same-on-metal-loft-L94">}</span>
 <span id="tests-same-on-metal-loft-L95"></span>
-<span id="tests-same-on-metal-loft-L96"><span class="cm">// Two sprites in a scene, the near one drawn first, then two by the painter over them.</span></span>
-<span id="tests-same-on-metal-loft-L97"><span class="kw">fn</span> <span class="fn-call">sprites</span>(table: <span class="ty"><a href="stdlib-types.html">i64</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt; {</span>
-<span id="tests-same-on-metal-loft-L98">  dev = gpu::<span class="fn-call">open</span>(table, <span class="nm">64</span>, <span class="nm">48</span>, <span class="st">"paint-sprites"</span>) ?? <span class="kw">return</span> [];</span>
-<span id="tests-same-on-metal-loft-L99">  np = gpu_paint::<span class="fn-call">painter</span>(dev, gpu::<span class="en">INTO_WINDOW</span>) ?? <span class="kw">return</span> [];</span>
-<span id="tests-same-on-metal-loft-L100">  ns = gpu_paint::<span class="fn-call">sprites</span>(dev, <span class="fn-call">sheet_pixels</span>(), <span class="nm">4</span>, <span class="nm">2</span>, <span class="nm">2</span>, <span class="nm">1</span>, gpu::<span class="en">INTO_WINDOW</span>) ?? <span class="kw">return</span> [];</span>
-<span id="tests-same-on-metal-loft-L101">  ns.texture.<span class="fn-call">nearest</span>(<span class="kw">true</span>);</span>
-<span id="tests-same-on-metal-loft-L102">  np.blend = <span class="kw">false</span>;</span>
-<span id="tests-same-on-metal-loft-L103">  dev.<span class="fn-call">begin_window</span>(gpu::<span class="en">CLEAR</span>, <span class="en">BLACK</span>);</span>
-<span id="tests-same-on-metal-loft-L104">  ns.<span class="fn-call">draw</span>(dev, <span class="fn-call">placed</span>(<span class="nm">1.2</span>, <span class="nm">1.4</span>, -<span class="nm">0.5</span>), <span class="nm">1</span>);</span>
-<span id="tests-same-on-metal-loft-L105">  ns.<span class="fn-call">draw</span>(dev, <span class="fn-call">placed</span>(<span class="nm">1.9</span>, <span class="nm">0.8</span>, <span class="nm">0.5</span>), <span class="nm">0</span>);</span>
-<span id="tests-same-on-metal-loft-L106">  np.<span class="fn-call">sprite</span>(dev, ns, <span class="nm">2.0</span>, <span class="nm">30.0</span>, <span class="nm">20.0</span>, <span class="nm">16.0</span>, <span class="nm">0</span>);</span>
-<span id="tests-same-on-metal-loft-L107">  np.<span class="fn-call">sprite</span>(dev, ns, <span class="nm">12.0</span>, <span class="nm">34.0</span>, <span class="nm">20.0</span>, <span class="nm">12.0</span>, <span class="nm">1</span>);</span>
-<span id="tests-same-on-metal-loft-L108">  dev.<span class="fn-call">end</span>();</span>
-<span id="tests-same-on-metal-loft-L109">  c = dev.<span class="fn-call">capture</span>();</span>
-<span id="tests-same-on-metal-loft-L110">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(dev.<span class="fn-call">refusals</span>()) == <span class="nm">0</span>, <span class="st">"nothing refused: {dev.refusals()}"</span>);</span>
-<span id="tests-same-on-metal-loft-L111">  c</span>
-<span id="tests-same-on-metal-loft-L112">}</span>
-<span id="tests-same-on-metal-loft-L113"></span>
-<span id="tests-same-on-metal-loft-L114"><span class="kw">fn</span> <span class="fn-call">test_sprites_at_pixel_positions_and_in_a_scene_with_depth</span>() {</span>
-<span id="tests-same-on-metal-loft-L115">  <span class="kw">if</span> !<span class="fn-call">display</span>() { <span class="kw">return</span>; }</span>
-<span id="tests-same-on-metal-loft-L116">  <span class="fn-call">same</span>(<span class="fn-call">sprites</span>(gpu_gl::<span class="fn-call">table</span>()), <span class="fn-call">sprites</span>(gpu_metal::<span class="fn-call">table</span>()), <span class="st">"sprites"</span>);</span>
-<span id="tests-same-on-metal-loft-L117">}</span>
-<span id="tests-same-on-metal-loft-L118"></span>
-<span id="tests-same-on-metal-loft-L119"><span class="cm">// A 32 x 24 picture painted first, then shown over part of the window.</span></span>
-<span id="tests-same-on-metal-loft-L120"><span class="kw">fn</span> <span class="fn-call">painted_texture</span>(table: <span class="ty"><a href="stdlib-types.html">i64</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt; {</span>
-<span id="tests-same-on-metal-loft-L121">  dev = gpu::<span class="fn-call">open</span>(table, <span class="nm">64</span>, <span class="nm">48</span>, <span class="st">"paint-into"</span>) ?? <span class="kw">return</span> [];</span>
-<span id="tests-same-on-metal-loft-L122">  inner = gpu_paint::<span class="fn-call">painter</span>(dev, gpu::<span class="en">INTO_COLOUR</span>) ?? <span class="kw">return</span> [];</span>
-<span id="tests-same-on-metal-loft-L123">  outer = gpu_paint::<span class="fn-call">painter</span>(dev, gpu::<span class="en">INTO_WINDOW</span>) ?? <span class="kw">return</span> [];</span>
-<span id="tests-same-on-metal-loft-L124">  nc = dev.<span class="fn-call">texture</span>(<span class="nm">32</span>, <span class="nm">24</span>);</span>
-<span id="tests-same-on-metal-loft-L125">  nc.<span class="fn-call">nearest</span>(<span class="kw">true</span>);</span>
-<span id="tests-same-on-metal-loft-L126">  nf = dev.<span class="fn-call">colour_target</span>(nc);</span>
-<span id="tests-same-on-metal-loft-L127">  inner.blend = <span class="kw">false</span>;</span>
-<span id="tests-same-on-metal-loft-L128">  inner.<span class="fn-call">resize</span>(<span class="nm">32</span>, <span class="nm">24</span>);</span>
-<span id="tests-same-on-metal-loft-L129">  dev.<span class="fn-call">begin</span>(nf, gpu::<span class="en">CLEAR</span>, <span class="en">RED</span>);</span>
-<span id="tests-same-on-metal-loft-L130">  inner.<span class="fn-call">rect</span>(dev, <span class="nm">4.0</span>, <span class="nm">3.0</span>, <span class="nm">12.0</span>, <span class="nm">8.0</span>, <span class="nm">0.0</span>, <span class="nm">1.0</span>, <span class="nm">0.0</span>, <span class="nm">1.0</span>);</span>
-<span id="tests-same-on-metal-loft-L131">  dev.<span class="fn-call">end</span>();</span>
-<span id="tests-same-on-metal-loft-L132">  outer.blend = <span class="kw">false</span>;</span>
-<span id="tests-same-on-metal-loft-L133">  dev.<span class="fn-call">begin_window</span>(gpu::<span class="en">CLEAR</span>, <span class="en">BLACK</span>);</span>
-<span id="tests-same-on-metal-loft-L134">  outer.<span class="fn-call">image</span>(dev, nc, <span class="nm">8.0</span>, <span class="nm">6.0</span>, <span class="nm">48.0</span>, <span class="nm">36.0</span>);</span>
-<span id="tests-same-on-metal-loft-L135">  dev.<span class="fn-call">end</span>();</span>
-<span id="tests-same-on-metal-loft-L136">  c = dev.<span class="fn-call">capture</span>();</span>
-<span id="tests-same-on-metal-loft-L137">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(dev.<span class="fn-call">refusals</span>()) == <span class="nm">0</span>, <span class="st">"nothing refused: {dev.refusals()}"</span>);</span>
-<span id="tests-same-on-metal-loft-L138">  c</span>
-<span id="tests-same-on-metal-loft-L139">}</span>
-<span id="tests-same-on-metal-loft-L140"></span>
-<span id="tests-same-on-metal-loft-L141"><span class="kw">fn</span> <span class="fn-call">test_a_painter_draws_into_a_texture_that_another_shows</span>() {</span>
-<span id="tests-same-on-metal-loft-L142">  <span class="kw">if</span> !<span class="fn-call">display</span>() { <span class="kw">return</span>; }</span>
-<span id="tests-same-on-metal-loft-L143">  <span class="fn-call">same</span>(<span class="fn-call">painted_texture</span>(gpu_gl::<span class="fn-call">table</span>()), <span class="fn-call">painted_texture</span>(gpu_metal::<span class="fn-call">table</span>()), <span class="st">"a painted texture shown"</span>);</span>
-<span id="tests-same-on-metal-loft-L144">}</span>
+<span id="tests-same-on-metal-loft-L96"><span class="kw">fn</span> <span class="fn-call">test_rectangles_opaque_blended_and_after_a_resize</span>() {</span>
+<span id="tests-same-on-metal-loft-L97">  <span class="kw">if</span> !<span class="fn-call">display</span>() { <span class="kw">return</span>; }</span>
+<span id="tests-same-on-metal-loft-L98">  <span class="fn-call">same</span>(<span class="fn-call">rectangles</span>(gpu_gl::<span class="fn-call">table</span>()), <span class="fn-call">rectangles</span>(gpu_metal::<span class="fn-call">table</span>()), <span class="st">"rectangles"</span>);</span>
+<span id="tests-same-on-metal-loft-L99">}</span>
+<span id="tests-same-on-metal-loft-L100"></span>
+<span id="tests-same-on-metal-loft-L101"><span class="kw">fn</span> <span class="fn-call">images</span>(table: <span class="ty"><a href="stdlib-types.html">i64</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt; {</span>
+<span id="tests-same-on-metal-loft-L102">  dev = gpu::<span class="fn-call">open</span>(table, <span class="nm">64</span>, <span class="nm">48</span>, <span class="st">"paint-image"</span>) ?? <span class="kw">return</span> [];</span>
+<span id="tests-same-on-metal-loft-L103">  np = gpu_paint::<span class="fn-call">painter</span>(dev, gpu::<span class="en">INTO_WINDOW</span>) ?? <span class="kw">return</span> [];</span>
+<span id="tests-same-on-metal-loft-L104">  px = <span class="fn-call">sheet_pixels</span>();</span>
+<span id="tests-same-on-metal-loft-L105">  nt = dev.<span class="fn-call">texture_from</span>(px, <span class="nm">4</span>, <span class="nm">2</span>);</span>
+<span id="tests-same-on-metal-loft-L106">  nt.<span class="fn-call">nearest</span>(<span class="kw">true</span>);</span>
+<span id="tests-same-on-metal-loft-L107">  nl = dev.<span class="fn-call">texture_from</span>(px, <span class="nm">4</span>, <span class="nm">2</span>);</span>
+<span id="tests-same-on-metal-loft-L108">  dev.<span class="fn-call">begin_window</span>(gpu::<span class="en">CLEAR</span>, <span class="en">BLUE</span>);</span>
+<span id="tests-same-on-metal-loft-L109">  np.<span class="fn-call">image</span>(dev, nt, <span class="nm">30.0</span>, <span class="nm">2.0</span>, <span class="nm">32.0</span>, <span class="nm">40.0</span>);</span>
+<span id="tests-same-on-metal-loft-L110">  np.<span class="fn-call">image</span>(dev, nl, <span class="nm">2.0</span>, <span class="nm">20.0</span>, <span class="nm">24.0</span>, <span class="nm">24.0</span>);</span>
+<span id="tests-same-on-metal-loft-L111">  dev.<span class="fn-call">end</span>();</span>
+<span id="tests-same-on-metal-loft-L112">  c = dev.<span class="fn-call">capture</span>();</span>
+<span id="tests-same-on-metal-loft-L113">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(dev.<span class="fn-call">refusals</span>()) == <span class="nm">0</span>, <span class="st">"nothing refused: {dev.refusals()}"</span>);</span>
+<span id="tests-same-on-metal-loft-L114">  c</span>
+<span id="tests-same-on-metal-loft-L115">}</span>
+<span id="tests-same-on-metal-loft-L116"></span>
+<span id="tests-same-on-metal-loft-L117"><span class="kw">fn</span> <span class="fn-call">test_an_image_keeps_its_rows_and_skips_the_transparent</span>() {</span>
+<span id="tests-same-on-metal-loft-L118">  <span class="kw">if</span> !<span class="fn-call">display</span>() { <span class="kw">return</span>; }</span>
+<span id="tests-same-on-metal-loft-L119">  <span class="fn-call">same</span>(<span class="fn-call">images</span>(gpu_gl::<span class="fn-call">table</span>()), <span class="fn-call">images</span>(gpu_metal::<span class="fn-call">table</span>()), <span class="st">"images"</span>);</span>
+<span id="tests-same-on-metal-loft-L120">}</span>
+<span id="tests-same-on-metal-loft-L121"></span>
+<span id="tests-same-on-metal-loft-L122"><span class="cm">// Two sprites in a scene, the near one drawn first, then two by the painter over them.</span></span>
+<span id="tests-same-on-metal-loft-L123"><span class="kw">fn</span> <span class="fn-call">sprites</span>(table: <span class="ty"><a href="stdlib-types.html">i64</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt; {</span>
+<span id="tests-same-on-metal-loft-L124">  dev = gpu::<span class="fn-call">open</span>(table, <span class="nm">64</span>, <span class="nm">48</span>, <span class="st">"paint-sprites"</span>) ?? <span class="kw">return</span> [];</span>
+<span id="tests-same-on-metal-loft-L125">  np = gpu_paint::<span class="fn-call">painter</span>(dev, gpu::<span class="en">INTO_WINDOW</span>) ?? <span class="kw">return</span> [];</span>
+<span id="tests-same-on-metal-loft-L126">  ns = gpu_paint::<span class="fn-call">sprites</span>(dev, <span class="fn-call">sheet_pixels</span>(), <span class="nm">4</span>, <span class="nm">2</span>, <span class="nm">2</span>, <span class="nm">1</span>, gpu::<span class="en">INTO_WINDOW</span>) ?? <span class="kw">return</span> [];</span>
+<span id="tests-same-on-metal-loft-L127">  ns.texture.<span class="fn-call">nearest</span>(<span class="kw">true</span>);</span>
+<span id="tests-same-on-metal-loft-L128">  np.blend = <span class="kw">false</span>;</span>
+<span id="tests-same-on-metal-loft-L129">  dev.<span class="fn-call">begin_window</span>(gpu::<span class="en">CLEAR</span>, <span class="en">BLACK</span>);</span>
+<span id="tests-same-on-metal-loft-L130">  ns.<span class="fn-call">draw</span>(dev, <span class="fn-call">placed</span>(<span class="nm">1.2</span>, <span class="nm">1.4</span>, -<span class="nm">0.5</span>), <span class="nm">1</span>);</span>
+<span id="tests-same-on-metal-loft-L131">  ns.<span class="fn-call">draw</span>(dev, <span class="fn-call">placed</span>(<span class="nm">1.9</span>, <span class="nm">0.8</span>, <span class="nm">0.5</span>), <span class="nm">0</span>);</span>
+<span id="tests-same-on-metal-loft-L132">  np.<span class="fn-call">sprite</span>(dev, ns, <span class="nm">2.0</span>, <span class="nm">30.0</span>, <span class="nm">20.0</span>, <span class="nm">16.0</span>, <span class="nm">0</span>);</span>
+<span id="tests-same-on-metal-loft-L133">  np.<span class="fn-call">sprite</span>(dev, ns, <span class="nm">12.0</span>, <span class="nm">34.0</span>, <span class="nm">20.0</span>, <span class="nm">12.0</span>, <span class="nm">1</span>);</span>
+<span id="tests-same-on-metal-loft-L134">  dev.<span class="fn-call">end</span>();</span>
+<span id="tests-same-on-metal-loft-L135">  c = dev.<span class="fn-call">capture</span>();</span>
+<span id="tests-same-on-metal-loft-L136">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(dev.<span class="fn-call">refusals</span>()) == <span class="nm">0</span>, <span class="st">"nothing refused: {dev.refusals()}"</span>);</span>
+<span id="tests-same-on-metal-loft-L137">  c</span>
+<span id="tests-same-on-metal-loft-L138">}</span>
+<span id="tests-same-on-metal-loft-L139"></span>
+<span id="tests-same-on-metal-loft-L140"><span class="kw">fn</span> <span class="fn-call">test_sprites_at_pixel_positions_and_in_a_scene_with_depth</span>() {</span>
+<span id="tests-same-on-metal-loft-L141">  <span class="kw">if</span> !<span class="fn-call">display</span>() { <span class="kw">return</span>; }</span>
+<span id="tests-same-on-metal-loft-L142">  <span class="fn-call">same</span>(<span class="fn-call">sprites</span>(gpu_gl::<span class="fn-call">table</span>()), <span class="fn-call">sprites</span>(gpu_metal::<span class="fn-call">table</span>()), <span class="st">"sprites"</span>);</span>
+<span id="tests-same-on-metal-loft-L143">}</span>
+<span id="tests-same-on-metal-loft-L144"></span>
+<span id="tests-same-on-metal-loft-L145"><span class="cm">// A 32 x 24 picture painted first, then shown over part of the window.</span></span>
+<span id="tests-same-on-metal-loft-L146"><span class="kw">fn</span> <span class="fn-call">painted_texture</span>(table: <span class="ty"><a href="stdlib-types.html">i64</a></span>) -&gt; <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">u32</a></span>&gt; {</span>
+<span id="tests-same-on-metal-loft-L147">  dev = gpu::<span class="fn-call">open</span>(table, <span class="nm">64</span>, <span class="nm">48</span>, <span class="st">"paint-into"</span>) ?? <span class="kw">return</span> [];</span>
+<span id="tests-same-on-metal-loft-L148">  inner = gpu_paint::<span class="fn-call">painter</span>(dev, gpu::<span class="en">INTO_COLOUR</span>) ?? <span class="kw">return</span> [];</span>
+<span id="tests-same-on-metal-loft-L149">  outer = gpu_paint::<span class="fn-call">painter</span>(dev, gpu::<span class="en">INTO_WINDOW</span>) ?? <span class="kw">return</span> [];</span>
+<span id="tests-same-on-metal-loft-L150">  nc = dev.<span class="fn-call">texture</span>(<span class="nm">32</span>, <span class="nm">24</span>);</span>
+<span id="tests-same-on-metal-loft-L151">  nc.<span class="fn-call">nearest</span>(<span class="kw">true</span>);</span>
+<span id="tests-same-on-metal-loft-L152">  nf = dev.<span class="fn-call">colour_target</span>(nc);</span>
+<span id="tests-same-on-metal-loft-L153">  inner.blend = <span class="kw">false</span>;</span>
+<span id="tests-same-on-metal-loft-L154">  inner.<span class="fn-call">resize</span>(<span class="nm">32</span>, <span class="nm">24</span>);</span>
+<span id="tests-same-on-metal-loft-L155">  dev.<span class="fn-call">begin</span>(nf, gpu::<span class="en">CLEAR</span>, <span class="en">RED</span>);</span>
+<span id="tests-same-on-metal-loft-L156">  inner.<span class="fn-call">rect</span>(dev, <span class="nm">4.0</span>, <span class="nm">3.0</span>, <span class="nm">12.0</span>, <span class="nm">8.0</span>, <span class="nm">0.0</span>, <span class="nm">1.0</span>, <span class="nm">0.0</span>, <span class="nm">1.0</span>);</span>
+<span id="tests-same-on-metal-loft-L157">  dev.<span class="fn-call">end</span>();</span>
+<span id="tests-same-on-metal-loft-L158">  outer.blend = <span class="kw">false</span>;</span>
+<span id="tests-same-on-metal-loft-L159">  dev.<span class="fn-call">begin_window</span>(gpu::<span class="en">CLEAR</span>, <span class="en">BLACK</span>);</span>
+<span id="tests-same-on-metal-loft-L160">  outer.<span class="fn-call">image</span>(dev, nc, <span class="nm">8.0</span>, <span class="nm">6.0</span>, <span class="nm">48.0</span>, <span class="nm">36.0</span>);</span>
+<span id="tests-same-on-metal-loft-L161">  dev.<span class="fn-call">end</span>();</span>
+<span id="tests-same-on-metal-loft-L162">  c = dev.<span class="fn-call">capture</span>();</span>
+<span id="tests-same-on-metal-loft-L163">  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(dev.<span class="fn-call">refusals</span>()) == <span class="nm">0</span>, <span class="st">"nothing refused: {dev.refusals()}"</span>);</span>
+<span id="tests-same-on-metal-loft-L164">  c</span>
+<span id="tests-same-on-metal-loft-L165">}</span>
+<span id="tests-same-on-metal-loft-L166"></span>
+<span id="tests-same-on-metal-loft-L167"><span class="kw">fn</span> <span class="fn-call">test_a_painter_draws_into_a_texture_that_another_shows</span>() {</span>
+<span id="tests-same-on-metal-loft-L168">  <span class="kw">if</span> !<span class="fn-call">display</span>() { <span class="kw">return</span>; }</span>
+<span id="tests-same-on-metal-loft-L169">  <span class="fn-call">same</span>(<span class="fn-call">painted_texture</span>(gpu_gl::<span class="fn-call">table</span>()), <span class="fn-call">painted_texture</span>(gpu_metal::<span class="fn-call">table</span>()), <span class="st">"a painted texture shown"</span>);</span>
+<span id="tests-same-on-metal-loft-L170">}</span>
 </code></pre>
 
   </article>

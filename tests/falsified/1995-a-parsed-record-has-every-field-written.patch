@@ -1,8 +1,8 @@
 diff --git a/src/database/structures.rs b/src/database/structures.rs
-index c88426044..688aa12bd 100644
+index 84becf0a8..5a77406aa 100644
 --- a/src/database/structures.rs
 +++ b/src/database/structures.rs
-@@ -2929,12 +2929,10 @@ impl Stores {
+@@ -3093,12 +3093,10 @@ impl Stores {
              (Some(c), _, Opening::Array) => {
                  return self.read_array(rd, failed, tp, c, rec_tp, field, to, at);
              }
@@ -17,7 +17,7 @@ index c88426044..688aa12bd 100644
                  (word, _, _) => self.walk_parsed_into(&word, tp, rec_tp, field, to, &mut path, at),
              },
              _ => {
-@@ -3009,14 +3007,9 @@ impl Stores {
+@@ -3169,14 +3167,9 @@ impl Stores {
          rd: &mut crate::json::JParser,
          failed: &mut Vec<WalkErr>,
          tp: u16,
@@ -32,7 +32,7 @@ index c88426044..688aa12bd 100644
          let fld = if to.rec == 0 { 0 } else { to.pos };
          let rec = if to.rec == 0 {
              let size = self.types[tp as usize].size;
-@@ -3118,12 +3111,28 @@ impl Stores {
+@@ -3271,12 +3264,28 @@ impl Stores {
              with_read_refs(|r| r.path.pop());
              more = rd.next_member(start)?;
          }
@@ -67,7 +67,7 @@ index c88426044..688aa12bd 100644
          Ok(())
      }
  
-@@ -3272,12 +3281,6 @@ impl Stores {
+@@ -3477,12 +3486,6 @@ impl Stores {
      /// Together they form the only `text → struct` path in the
      /// crate; the legacy hand-rolled scanner was removed when
      /// every Parts arm gained walker coverage.
@@ -80,7 +80,7 @@ index c88426044..688aa12bd 100644
      #[allow(clippy::ptr_arg, clippy::too_many_arguments)] // arg-count is intrinsic to the dispatch
      #[expect(clippy::too_many_lines, reason = "inherited")]
      pub(super) fn walk_parsed_into(
-@@ -3364,11 +3367,6 @@ impl Stores {
+@@ -3569,11 +3572,6 @@ impl Stores {
                      crate::json::Parsed::Constructor(_tag, _, inner) => inner.as_ref(),
                      other => other,
                  };
@@ -92,7 +92,7 @@ index c88426044..688aa12bd 100644
                  self.walk_parsed_struct(body, tp, to, &object, path, at)
              }
              Parts::Enum(fields) => {
-@@ -3473,15 +3471,12 @@ impl Stores {
+@@ -3678,15 +3676,12 @@ impl Stores {
                      return Ok(());
                  }
                  // Variant-with-payload (hand-written struct-enum): recurse so the payload
@@ -114,7 +114,7 @@ index c88426044..688aa12bd 100644
                  }
                  Ok(())
              }
-@@ -3562,9 +3557,9 @@ impl Stores {
+@@ -3767,9 +3762,9 @@ impl Stores {
          } else {
              to.rec
          };
@@ -126,8 +126,8 @@ index c88426044..688aa12bd 100644
 +        let mut found_fields: crate::fxhash::FxHashSet<&str> = crate::fxhash::FxHashSet::default();
          // `@FR-F-Read-Ref` — the tree walk (an out-of-line child's members, a `JsonValue`
          // read) keeps the same path and parks the same references as `read_struct`.
-         let tracked = with_read_refs(|r| {
-@@ -3595,11 +3590,6 @@ impl Stores {
+         self.read_place(to.store_nr, rec, fld, tp);
+@@ -3793,11 +3788,6 @@ impl Stores {
                          store.set_u32_raw(slot.rec, slot.pos, u32::from(u16::MAX));
                          store.set_u32_raw(slot.rec, slot.pos + 4, 0);
                          store.set_u32_raw(slot.rec, slot.pos + 8, 0);
@@ -139,7 +139,7 @@ index c88426044..688aa12bd 100644
                          if let [(key, _, crate::json::Parsed::Str(ptr))] = members.as_slice()
                              && key == "$ref"
                          {
-@@ -3632,11 +3622,6 @@ impl Stores {
+@@ -3830,11 +3820,6 @@ impl Stores {
                          self.walk_parsed_into(value, f.content, tp, f_nr as u16, to, path, *key_at)
                      };
                      with_read_refs(|r| r.path.pop());
@@ -151,7 +151,7 @@ index c88426044..688aa12bd 100644
                      // The key's segment joins the error's path as it unwinds (see the array arm).
                      res.map_err(|mut e| {
                          e.path.insert(0, name.clone());
-@@ -3645,49 +3630,24 @@ impl Stores {
+@@ -3843,49 +3828,24 @@ impl Stores {
                      break;
                  }
              }

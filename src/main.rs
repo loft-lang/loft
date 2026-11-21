@@ -5874,9 +5874,12 @@ fn run_compat_command(args: &[String]) -> i32 {
     let positional: Vec<&String> = args.iter().filter(|a| !a.starts_with("--")).collect();
     // The dispatcher strips `compat`, so positional[0] is the sub-verb.
     let sub = positional.first().map(|s| s.as_str()).unwrap_or("");
-    if !matches!(sub, "api" | "test" | "check" | "levels" | "floor") {
+    if !matches!(
+        sub,
+        "api" | "test" | "check" | "levels" | "floor" | "width32"
+    ) {
         eprintln!(
-            "loft compat: usage: loft compat <api|test|check|levels|floor> [<version>] \
+            "loft compat: usage: loft compat <api|test|check|levels|floor|width32> [<version>] \
              [--json] [--with-tests] [--full]"
         );
         return 2;
@@ -5893,6 +5896,19 @@ fn run_compat_command(args: &[String]) -> i32 {
         eprintln!("loft compat: `loft.toml` has no [package] name");
         return 2;
     };
+
+    // `width32` — does this package declare that it works in a 32-bit program?  Exit 0 when
+    // it does (`[package] width32 = true`) and 1 when it does not: what the library CI and the
+    // publish script ask before they run its tests under `--width 32`, so the claim is read
+    // by the manifest's own parser and by nothing else.
+    if sub == "width32" {
+        if manifest.width32 {
+            println!("{name}: declares width32 — its tests run under --width 32");
+            return 0;
+        }
+        println!("{name}: does not declare width32");
+        return 1;
+    }
 
     // `levels` — the REGISTRY-ADMISSION gate, and the only place the three-level
     // requirement is fatal.  It is deliberately its own verb rather than a side effect of
@@ -6234,9 +6250,14 @@ impl Floors<'_> {
     }
 
     /// Whether a break of these kinds against `v` breaks a promise: an API break at or above
-    /// the API floor, a layout break at or above the data floor.
+    /// the API floor, a layout break at or above BOTH floors.  Either floor declares a
+    /// reshaped record: the data floor for one behind an unchanged surface, and the API floor
+    /// for one whose new field is itself the API break — a package may then keep its data
+    /// floor where it was, saying that the files it writes are still read (a format of its
+    /// own is not its records' layout).
     fn violates(self, v: &str, api_broke: bool, layout_broke: bool) -> bool {
-        (api_broke && !Self::under(self.api, v)) || (layout_broke && !Self::under(self.data, v))
+        (api_broke && !Self::under(self.api, v))
+            || (layout_broke && !Self::under(self.data, v) && !Self::under(self.api, v))
     }
 
     /// The floor to raise for a break of these kinds, for a message.
@@ -12158,7 +12179,13 @@ fn main() {
         };
         // The asyncify async→sync bridge (AsyncifyCtrl), shared by the GL and the
         // headless templates.  gl_js references it, so it is emitted FIRST.
-        let env_js = include_str!("../doc/loft-env.js");
+        // A page built to ship takes no `LOFT_*` switch from its URL: the query string is
+        // whoever made the link's to write, and the switches are a developer's instrument.
+        let env_js = if ship_build {
+            "function loftInstallEnv() {}\n"
+        } else {
+            include_str!("../doc/loft-env.js")
+        };
         let asyncify_js =
             include_str!("../doc/loft-asyncify.js").replace("export { AsyncifyCtrl };", "");
         // loft#851 — the page's filesystem.  Emitted BEFORE gl_js, whose

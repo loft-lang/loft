@@ -42,6 +42,10 @@ fn main() {
   println("AWAY {st} [{web_natives::http_body()}]");
   st = web_natives::http_do("POST", "{base}/away307/{other}", "secret", "X-Mine: v4\n");
   println("AWAY307 {st}");
+  st = web_natives::http_do("GET", "{base}/fits", "", "");
+  println("FITS {st} {web_natives::http_body().size()}");
+  st = web_natives::http_do("GET", "{base}/over", "", "");
+  println("OVER {st} {web_natives::http_body().size()}");
   web_natives::pack_reset();
   web_natives::pack_u8(0);
   web_natives::pack_u8(255);
@@ -99,7 +103,7 @@ fn main() {
 "#;
 
 /// The lines the program prints, fixed by the server's answers.
-const WANT: [&str; 16] = [
+const WANT: [&str; 18] = [
     "BIN 200 5 65 0 255 66 10",
     "HDR true",
     "POST 200 POST hello v1",
@@ -112,6 +116,10 @@ const WANT: [&str; 16] = [
     "HOP 200 [GET  v2]",
     "AWAY 200 [GET  ]",
     "AWAY307 0",
+    // The run's ceiling on a response body is 2000 bytes (`LOFT_MAX_DOWNLOAD`): a body of
+    // exactly that arrives whole, and one byte more is refused — no status, no body.
+    "FITS 200 2000",
+    "OVER 0 0",
     "PACK 8 0 255 2 1 255",
     "PACK2 3 7 255 -1 -1 0",
     "WS echo:hi 1",
@@ -166,6 +174,7 @@ fn run(backend: &str, dir: &Path, port: u16, other: u16) -> (String, String) {
         .env("WN_BASE", format!("http://127.0.0.1:{port}"))
         .env("WN_WS", format!("ws://127.0.0.1:{port}"))
         .env("WN_OTHER", other.to_string())
+        .env("LOFT_MAX_DOWNLOAD", "2000")
         .output()
         .expect("loft runs");
     (

@@ -24,6 +24,7 @@
 <h1>hex_place guide</h1>
 <article>
 <p><a href="lib-hex_place.html">← hex_place</a> · <a href="lib-hex_place-api.html">API reference</a> · <a href="lib-hex_place-src.html">source</a></p>
+<h2>Put two buildings side by side without a wall between them, seat one on a slope, and pose a body.</h2>
 <p><code>hex_place</code> answers what happens where two things MEET on the hex lattice.  Two stencils (footprints) placed side by side should become one building, not two with a wall down the middle.  A stencil placed on sloping ground should keep its footprint and report how badly it fits.  A body that moves (a rotated, translated "pose") must be tested in its own frame, so float error lives in one place only.</p>
 <p>It is not the cell set and not the shape.  <code>hex_field</code> holds which cells are filled and which edges are walls (<code>HexSet</code>, <code>EdgeSet</code>, <code>Heights</code>); <code>hex_form</code> describes a shape by its sides. Reach for <code>hex_place</code> when you combine stencils, seat them on terrain, or test a posed body.</p>
 <p>Coordinates are <code>hex_field</code>'s: odd-r offset <code>(q, r)</code>, every cell with six edges.</p>
@@ -117,6 +118,109 @@
 <li><code>tests/02-worked-examples.loft</code> — <code>@HXP-001</code> … <code>@HXP-006</code>: the shared edge, order and overlap, levels, seating, why one sample of the pose error is not a bound, and arbitration.</li>
 <li><code>USAGE.md</code> — the map of the package, and the rules that bite.</li>
 </ul>
+<h2>Turn a house by 30 degrees, carry its door and a point on it through the turn, and seat it without a step in the ground.</h2>
+<p>A hex lattice has six-fold symmetry.  Turn a set of cells by 60 degrees and every cell lands on a cell: <code>hex_field::stencil_rotate</code> does that, exactly, and <code>stencil_rotate_deg</code> refuses any other angle — rightly, for an exact routine must not round.</p>
+<p>But a house is wanted at twelve angles, not six, and "refused" is no answer to somebody placing one.  <code>cells_turn</code> is the answer: exact where the lattice allows it, and where it does not, the closest structure that still looks like the one drawn — the same walls, each straight, each square to the next — with what it had to give up reported, not hidden.</p>
+<pre><code><span class="kw">use</span> hex_place::*;
+<span class="kw">use</span> hex_draw::*;
+<span class="kw">use</span> hex_form::*;
+<span class="kw">use</span> hex_field::*;</code></pre>
+<p>A house as cells: 10 hex steps by 8, about cell (0, 0), drawn at 0 degrees.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">a_house</span>() -&gt; <span class="en">HexSet</span> {
+  cells = <span class="fn-call">hexset_chunk</span>(-<span class="nm">20</span>, -<span class="nm">20</span>, <span class="nm">41</span>, <span class="nm">41</span>);
+  types = <span class="fn-call">labels_new</span>(-<span class="nm">20</span>, -<span class="nm">20</span>, <span class="nm">41</span>, <span class="nm">41</span>);
+  <span class="fn-call">draw_floor</span>(<span class="fn-call">plan_new</span>(<span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">10</span>, <span class="nm">8</span>, <span class="nm">0</span>, <span class="kw">false</span>), cells, types, <span class="nm">1</span>);
+  cells
+}</code></pre>
+<pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {
+  drawn = <span class="fn-call">a_house</span>();
+  <span class="kw">for</span> steps <span class="kw">in</span> [<span class="nm">2</span>, <span class="nm">1</span>] {
+    t = <span class="fn-call">cells_turn</span>(drawn, <span class="nm">0</span>, <span class="nm">0</span>, steps);
+    walls = <span class="bi"><a href="stdlib-text.html">len</a></span>(<span class="fn-call">cells_built</span>(t.tn_cells, <span class="nm">7</span>, steps).cw_walls);
+    <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"{30 * steps} degrees: {hexset_count(t.tn_cells)} cells, {walls} walls, moved by ({t.tn_sx:.3}, {t.tn_sy:.3})"</span>);
+  }</code></pre>
+<p>Every section below is a function, and <code>main</code> calls each one: a section nothing calls still compiles, but its assertions never run.</p>
+<pre><code>  <span class="fn-call">what_an_odd_step_gives_up</span>();
+  <span class="fn-call">a_point_through_the_turn</span>();
+  <span class="fn-call">a_door_through_the_turn</span>();
+  <span class="fn-call">seated_without_a_step</span>();
+}</code></pre>
+<p>That prints (the drawn house has 95 cells):</p>
+<pre><code>  60 degrees: 95 cells, 4 walls, moved by (0.000, 0.000)
+  30 degrees: 96 cells, 4 walls, moved by (0.433, 0.750)
+</code></pre>
+<h2 id="what-an-odd-step-gives-up">What an odd step gives up</h2>
+<p>Sixty degrees: the same 95 cells, each where the lattice's own turn puts it.  Thirty degrees: 96.  The walls of the turned house cannot stand where the drawn ones would land — a wall stands midway between two rows of cell centres, and the turned lattice's rows lie elsewhere — so each wall goes to the nearest line it CAN stand on, and the cells inside are the house.  A wall may move by up to half a row, so the room between two walls may be a row wider or narrower, and the count of cells changes with it.</p>
+<p>What is kept, at every step: as many walls, each exactly along a heading, each square to the next, and every cell centre clearly inside or outside them.</p>
+<p>⚠ Turn from the drawing, every time.  Two odd steps are two approximations; <code>cells_turn</code> of the drawing by 2 is exact, <code>cells_turn</code> of a 30-degree result by another 1 is not it.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">what_an_odd_step_gives_up</span>() {
+  drawn = <span class="fn-call">a_house</span>();
+  <span class="kw">for</span> steps <span class="kw">in</span> <span class="nm">0..12</span> {
+    t = <span class="fn-call">cells_turn</span>(drawn, <span class="nm">0</span>, <span class="nm">0</span>, steps);
+    b = <span class="fn-call">cells_built</span>(t.tn_cells, <span class="nm">7</span>, steps);
+    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(b.cw_walls) == <span class="nm">4</span>, <span class="st">"{30 * steps} degrees: four walls"</span>);
+    <span class="kw">for</span> i <span class="kw">in</span> <span class="nm">0..4</span> {
+      w = b.cw_walls[i]!;
+      nx = b.cw_walls[(i + <span class="nm">1</span>) % <span class="nm">4</span> ?? <span class="nm">0</span>]!;
+      <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">vec_dot_4</span>(w.ws_dk, w.ws_dm, nx.ws_dk, nx.ws_dm) == <span class="nm">0</span>, <span class="st">"{30 * steps} degrees: square corners"</span>);
+    }
+    <span class="kw">if</span> steps % <span class="nm">2</span> == <span class="nm">0</span> { <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">hexset_count</span>(t.tn_cells) == <span class="fn-call">hexset_count</span>(drawn), <span class="st">"an even step keeps every cell"</span>); }
+  }
+}</code></pre>
+<h2 id="a-point-through-the-turn">A point through the turn</h2>
+<p>To bring its walls nearest their lines an odd step may MOVE the structure: by nothing, or by half a row, along each of its two axes.  That offset comes back in the <code>Turned</code> (<code>tn_sx</code>, <code>tn_sy</code>), and <code>turned_point</code> uses it: give it a point of the drawn structure — a lamp by the door, the corner of a yard — and it answers where that point is once the structure is turned.</p>
+<p>The turn is worked out once.  <code>turned_point</code> is a few multiplications, so carry a hundred points through one <code>Turned</code> rather than turning a hundred times.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">a_point_through_the_turn</span>() {
+  drawn = <span class="fn-call">a_house</span>();
+  t = <span class="fn-call">cells_turn</span>(drawn, <span class="nm">0</span>, <span class="nm">0</span>, <span class="nm">3</span>);                     <span class="cm">// a quarter turn: three steps of 30 degrees</span>
+  (x, y) = <span class="fn-call">turned_point</span>(t, <span class="nm">4.0</span>, <span class="nm">0.0</span>);                 <span class="cm">// a point 4 units east of the pivot</span>
+  (px, py) = <span class="fn-call">turned_point</span>(t, <span class="nm">0.0</span>, <span class="nm">0.0</span>);               <span class="cm">// the pivot itself</span>
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"the pivot lands at ({px:.3}, {py:.3}); 4 east of it lands {x - px:.3} east, {y - py:.3} north of that"</span>);
+  d = <span class="bi"><a href="stdlib-math.html">sqrt</a></span>((x - px) * (x - px) + (y - py) * (y - py)) ?? <span class="nm">0.0</span>;
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(d &gt; <span class="nm">3.999999</span> &amp;&amp; d &lt; <span class="nm">4.000001</span>, <span class="st">"a turn keeps distances"</span>);
+}</code></pre>
+<p>That prints — a quarter turn takes east to north, and this house's odd step moved it by half a row, which the pivot shows:</p>
+<pre><code>  the pivot lands at (-0.433, 0.750); 4 east of it lands 0.000 east, 4.000 north of that
+</code></pre>
+<h2 id="a-door-through-the-turn">A door through the turn</h2>
+<p>Doors and windows are marks on wall edges (<code>hex_draw</code>'s second guide).  <code>marked_turn</code> turns the structure and its marks together.  Through 60 degrees the very edges turn with their cells.  Through an odd step each opening's centre is carried through the turn and placed again on the turned wall, so it stays on its wall and keeps its kind and its width; it may slide a little along the wall, and the distance between two openings may change a little.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">a_door_through_the_turn</span>() {
+  cells = <span class="fn-call">a_house</span>();
+  drawn = <span class="fn-call">cells_built</span>(cells, <span class="nm">7</span>, <span class="nm">0</span>);
+  d = <span class="en">Marked</span> { mk_cells: cells, mk_marks: <span class="fn-call">cells_no_marks</span>(cells) };
+  sizes = <span class="fn-call">opening_sizes_default</span>();
+  a = drawn.cw_corners[<span class="nm">3</span>] ?? (<span class="nm">0.0</span>, <span class="nm">0.0</span>);
+  b = drawn.cw_corners[<span class="nm">0</span>] ?? (<span class="nm">0.0</span>, <span class="nm">0.0</span>);
+  <span class="fn-call">cells_place_opening</span>(drawn, d.mk_marks, <span class="en">OPEN_DOOR</span>, (a.<span class="nm">0</span> + b.<span class="nm">0</span>) * <span class="nm">0.5</span>, (a.<span class="nm">1</span> + b.<span class="nm">1</span>) * <span class="nm">0.5</span>, sizes);
+  <span class="kw">for</span> steps <span class="kw">in</span> [<span class="nm">0</span>, <span class="nm">1</span>, <span class="nm">2</span>, <span class="nm">5</span>] {
+    t = <span class="fn-call">marked_turn</span>(d, <span class="nm">0</span>, <span class="nm">0</span>, steps, <span class="en">TURN_BY_WALLS</span>, <span class="nm">0</span>, sizes);
+    built = <span class="fn-call">cells_built</span>(t.mk_cells, <span class="nm">7</span>, steps);
+    found = <span class="fn-call">cells_openings</span>(built.cw_boundary, built.cw_runs, built.cw_walls, t.mk_marks, sizes);
+    <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(found) == <span class="nm">1</span> &amp;&amp; found[<span class="nm">0</span>]!.op_kind == <span class="en">OPEN_DOOR</span>, <span class="st">"{30 * steps} degrees: the door came through"</span>);
+    <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"{30 * steps} degrees: the door on a wall along heading {surface_heading(built.cw_walls[found[0]!.op_wall]!)}"</span>);
+  }
+}</code></pre>
+<p>That prints — the door's wall turns a heading a step:</p>
+<pre><code>  0 degrees: the door on a wall along heading 0
+  30 degrees: the door on a wall along heading 1
+  60 degrees: the door on a wall along heading 2
+  150 degrees: the door on a wall along heading 5
+</code></pre>
+<h2 id="seated-without-a-step">Seated without a step</h2>
+<p><code>seat_write</code> (the first guide) levels a footprint and leaves a step all round it.  A house on a hillside stands on a levelled plot the hill runs smoothly into: <code>seat_blend</code> writes the footprint the same way and then blends the ground round it, from the seat's height at the footprint's edge back to the ground's own height <code>blend</code> away.  It answers the LOWEST the ground was under the footprint — where the walls have to go down to.</p>
+<p>Distances are in your unit: <code>step</code> is the distance between two neighbouring cell centres in it (1.5 for metres where a hex step is 1.5 m; sqrt(3) for the lattice's own unit).</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">seated_without_a_step</span>() {
+  cells = <span class="fn-call">a_house</span>();
+  ground = <span class="fn-call">heights_new</span>(-<span class="nm">20</span>, -<span class="nm">20</span>, <span class="nm">41</span>, <span class="nm">41</span>);
+  <span class="kw">for</span> r <span class="kw">in</span> -<span class="nm">20..21</span> { <span class="kw">for</span> q <span class="kw">in</span> -<span class="nm">20..21</span> { <span class="fn-call">height_set</span>(ground, q, r, <span class="nm">0.1</span> * (<span class="fn-call">lattice_k</span>(q, r) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>)); } }   <span class="cm">// a slope rising east</span>
+  lowest = <span class="fn-call">seat_blend</span>(cells, ground, <span class="nm">2.0</span>, <span class="nm">3.0</span>, <span class="nm">1.5</span>);   <span class="cm">// seat at 2.0, blend over 3.0, a hex step 1.5</span>
+  <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"lowest ground under the house {lowest:.2}; inside {height_get(ground, 0, 0):.2}, just outside {height_get(ground, 7, 0):.2}, far off {height_get(ground, 16, 0):.2}"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">height_get</span>(ground, <span class="nm">0</span>, <span class="nm">0</span>) == <span class="nm">2.0</span>, <span class="st">"the footprint is level at the seat"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">height_get</span>(ground, <span class="nm">16</span>, <span class="nm">0</span>) == <span class="nm">0.1</span> * (<span class="fn-call">lattice_k</span>(<span class="nm">16</span>, <span class="nm">0</span>) <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">float</a></span>), <span class="st">"far off the ground is its own"</span>);
+}</code></pre>
+<p>That prints:</p>
+<pre><code>  lowest ground under the house -1.00; inside 2.00, just outside 1.49, far off 3.20
+</code></pre>
 
   </article>
 <script src="search-index.js"></script>

@@ -328,9 +328,11 @@ static long loft_http_read(loft_http *h, void *buf, size_t n) {
             loft_push(&line, &b, 1);
         }
         loft_push(&line, "", 1);
-        unsigned long size = strtoul(line.p, 0, 16);
+        unsigned long long size = strtoull(line.p, 0, 16);
         free(line.p);
         if (size == 0) { h->ended = 1; return 0; }
+        /* A chunk no response holds: its size read as a negative count below. */
+        if (size > (unsigned long long) INT64_MAX) return -1;
         h->left = (int64_t) size;
         h->in_chunk = 1;
     }

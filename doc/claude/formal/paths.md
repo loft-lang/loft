@@ -48,6 +48,14 @@ hold is refused everywhere; a path loft hands out is in that same form.
                 exist) and for writing (it is not created) — so `b.txt` and `B.txt` are never
                 one file on one platform and two on another.
 
+  (Path-Inside) loft opens the path it is given: no operation holds a path to a directory,
+                and `..` and an absolute path mean what they say (a check on the path's text
+                is not a boundary, and a refusal there reads as a missing file).  A program
+                that takes a path from elsewhere asks: `path_inside(root, path)` answers the path
+                under `root`, read by these rules — both separators, `.`, `..` — or null
+                when it leaves `root`, is absolute, or names a drive.  Null is OUTSIDE, an
+                answer of its own and not Path-Refuse's.  A link inside `root` is followed.
+
   (Path-Refuse) A refused path is the operation's own failure answer — `exists` false,
                 `list_dir` / `content` / `read_bytes` null, `write` / `delete` / `move` /
                 `mkdir` FileResult.Other — and one log line naming the path and the rule.
@@ -63,7 +71,9 @@ that works on Linux works on Windows, and one that fails, fails the same way.
 operation of both backends routes through — and `file_access::program_path`
 (`src/file_access/mod.rs`); `tests/scripts/a-program-cannot-tell-which-platform-it-runs-on.loft`,
 and for Path-Utf8 `file_access::read_dir`, `PathText::from_os` and
-`tests/windows_rules.rs::a_name_that_is_not_text_is_listed_and_never_reached`.
+`tests/windows_rules.rs::a_name_that_is_not_text_is_listed_and_never_reached`; for Path-Inside
+`inside` (`default/02_files.loft`) and
+`tests/path_inside.rs`.
 
 ## Deviations
 

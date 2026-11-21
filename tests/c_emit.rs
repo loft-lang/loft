@@ -5908,8 +5908,10 @@ fn a_library_artifact_lists_only_its_own_packages_c_libraries() {
             .and_then(|t| t.split("];").next())
             .expect("the artifact has a __C_LIBS table")
             .to_string();
+        // `lctab_shim_<hash>`: `liblctab_shim_…` on Unix, `lctab_shim_….dll` on Windows,
+        // which gives a library no `lib` prefix.  lctab_b's is `…lctab_b_shim_…`.
         assert!(
-            table.contains("liblctab_shim"),
+            table.contains("lctab_shim_"),
             "lctab's own shim is missing:{table}"
         );
         assert!(
@@ -6742,6 +6744,63 @@ fn native_c_html_page_runs_its_program() {
     assert!(
         stderr.contains("exited with status 3"),
         "the page reports the program's exit status\n{stderr}"
+    );
+}
+
+/// A page takes `LOFT_*` switches from its query string so a developer can arm one in the
+/// browser; a page built to ship does not — its URL is whoever made the link's to write.  The
+/// same program exported both ways: the development page reads `location.search`, the shipped
+/// one carries an installer that does nothing.  Skipped where clang or `wasm-ld` is missing.
+#[test]
+fn a_shipped_page_takes_no_switch_from_its_url() {
+    let have = |tool: &str| {
+        loft::platform::process::harness_command(tool)
+            .arg("--version")
+            .output()
+            .is_ok_and(|o| o.status.success())
+    };
+    if !have("clang") || !have("wasm-ld") {
+        eprintln!("skipped: needs clang and wasm-ld");
+        return;
+    }
+    let dir = scratch("html_env");
+    let file = dir.join("page.loft");
+    fa::write(&file, "fn main() {\n  println(\"page\");\n}\n").expect("write program");
+    let page = |ship: bool| -> Option<String> {
+        let html = dir.join(if ship { "ship.html" } else { "dev.html" });
+        let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
+        if ship {
+            cmd.arg("--ship");
+        }
+        let build = cmd
+            .args(["--native-c", "--html"])
+            .arg(&html)
+            .arg(&file)
+            .output()
+            .expect("run loft --html");
+        if String::from_utf8_lossy(&build.stderr).contains("toolchain is incomplete") {
+            return None;
+        }
+        assert!(
+            build.status.success(),
+            "the page builds (ship {ship}): {}",
+            String::from_utf8_lossy(&build.stderr)
+        );
+        Some(fa::read_to_string(&html).expect("read the page"))
+    };
+    let (Some(dev), Some(ship)) = (page(false), page(true)) else {
+        eprintln!("skipped: no WASI sysroot for clang");
+        return;
+    };
+    // The reader is the loop that forwards every `LOFT_`-prefixed parameter.
+    let reader = "k.startsWith(\"LOFT_\")";
+    assert!(
+        dev.contains(reader) && dev.contains("loftInstallEnv(instance"),
+        "a development page reads its switches from the URL"
+    );
+    assert!(
+        !ship.contains(reader) && ship.contains("function loftInstallEnv() {}"),
+        "a shipped page does not"
     );
 }
 
