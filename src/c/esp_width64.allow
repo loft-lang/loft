@@ -1,3 +1,6 @@
+# Copyright (c) 2026 Jurjen Stellingwerff
+# SPDX-License-Identifier: LGPL-3.0-or-later
+#
 # The 64-bit work of loft's own runtime in a 32-bit device image (@PLN217; `src/esp_width64.rs`).
 # One line an exception: the function, or a prefix ending in `*`, then why it needs 64 bits.
 # A line that allows nothing any more is reported in the build's report: remove it.

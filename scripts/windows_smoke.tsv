@@ -115,6 +115,7 @@ scripts/unreleased-work.py	--help
 scripts/validator-dryrun.py	--help
 scripts/wait_for.sh	--help
 scripts/warm_diff.sh	--help
+scripts/wide_ledger.py	--help
 scripts/width64_census.py	--help
 scripts/windows_parity.py	--help
 scripts/work-issues.sh	--help
