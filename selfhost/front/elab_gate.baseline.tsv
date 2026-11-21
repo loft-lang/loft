@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	0fe1a930c1a7f169457b2e8ca48ec8f762903595
 
-layer	elab	agree	1310	of	2132
+layer	elab	agree	1312	of	2132
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -216,9 +216,7 @@ elab	refused	loft-suite/rules/formatting/F-Render-Ref/2268-a-reference-renders-a
 elab	refused	loft-suite/rules/formatting/F-Render/1921-a-null-float-element-renders-as-null.loft
 elab	refused	loft-suite/rules/formatting/F-Spec-Fill/2428-a-fill-is-one-character-whatever-follows-it.loft
 elab	refused	loft-suite/rules/formatting/F-Spec/a-format-spec-tunes-what-every-value-renders-as-its-null-included.loft
-elab	refused	loft-suite/rules/formatting/F-Target-Kind/a-nullable-hole-into-a-non-null-parameter-warns.loft
 elab	refused	loft-suite/rules/formatting/F-Target-Pos/every-position-with-an-expected-type-builds-the-target.loft
-elab	refused	loft-suite/rules/formatting/F-Target/each-hole-kind-calls-its-own-method.loft
 elab	refused	loft-suite/rules/grammar/G-Amp-Infix/a-vector-of-and-results-is-a-plain-integer-vector-compared-by-value.loft
 elab	refused	loft-suite/rules/grammar/G-Amp-Prefix/a-prefix-amp-binds-a-link.loft
 elab	refused	loft-suite/rules/heap/H-Alloc/an-omitted-field-is-written-to-its-default-in-a-reused-block.loft
@@ -829,7 +827,7 @@ elab	refused	tests/scripts/store_compact_slack_730.loft
 elab	refused	tests/scripts/store_digest_b0.loft
 elab	refused	tests/scripts/store_paged_enum_field.loft
 
-layer	elab-functions	agree	14412	of	24773
+layer	elab-functions	agree	14396	of	24742
 elab-functions	agree	lib/docs.loft::Anchor
 elab-functions	agree	lib/docs.loft::Character
 elab-functions	agree	lib/docs.loft::Double
@@ -5026,6 +5024,7 @@ elab-functions	agree	loft-suite/rules/formatting/F-FaultSafe/a-hole-whose-value-
 elab-functions	agree	loft-suite/rules/formatting/F-FaultSafe/a-hole-whose-value-faults-or-is-null-renders-plain-null.loft::n_test_a_character_overrun_renders_nothing
 elab-functions	agree	loft-suite/rules/formatting/F-FaultSafe/a-hole-whose-value-faults-or-is-null-renders-plain-null.loft::n_test_a_division_by_zero_renders_null
 elab-functions	agree	loft-suite/rules/formatting/F-FaultSafe/a-hole-whose-value-faults-or-is-null-renders-plain-null.loft::n_test_a_fault_under_other_arithmetic_renders_null
+elab-functions	agree	loft-suite/rules/formatting/F-FaultSafe/a-hole-whose-value-faults-or-is-null-renders-plain-null.loft::n_test_a_target_hole_receives_the_null
 elab-functions	agree	loft-suite/rules/formatting/F-FaultSafe/a-hole-whose-value-faults-or-is-null-renders-plain-null.loft::n_test_an_inherited_null_renders_null
 elab-functions	agree	loft-suite/rules/formatting/F-FaultSafe/a-hole-whose-value-faults-or-is-null-renders-plain-null.loft::n_test_control_present_values_the_next_hole_and_a_discharge
 elab-functions	agree	loft-suite/rules/formatting/F-FaultSafe/a-hole-whose-value-faults-or-is-null-renders-plain-null.loft::n_test_every_element_kind_renders_its_overrun_as_null
@@ -5110,11 +5109,6 @@ elab-functions	agree	loft-suite/rules/formatting/F-Spec/a-format-spec-tunes-what
 elab-functions	agree	loft-suite/rules/formatting/F-Spec/a-format-spec-tunes-what-every-value-renders-as-its-null-included.loft::Q
 elab-functions	agree	loft-suite/rules/formatting/F-Spec/a-format-spec-tunes-what-every-value-renders-as-its-null-included.loft::n_test_a_null_takes_no_sign_and_no_zero_pad
 elab-functions	agree	loft-suite/rules/formatting/F-Spec/a-format-spec-tunes-what-every-value-renders-as-its-null-included.loft::n_test_precision_and_flag_order
-elab-functions	agree	loft-suite/rules/formatting/F-Target-Kind/a-nullable-hole-into-a-non-null-parameter-warns.loft::(schema)
-elab-functions	agree	loft-suite/rules/formatting/F-Target-Kind/a-nullable-hole-into-a-non-null-parameter-warns.loft::Q
-elab-functions	agree	loft-suite/rules/formatting/F-Target-Kind/a-nullable-hole-into-a-non-null-parameter-warns.loft::t_1Q_hole_int
-elab-functions	agree	loft-suite/rules/formatting/F-Target-Kind/a-nullable-hole-into-a-non-null-parameter-warns.loft::t_1Q_hole_text
-elab-functions	agree	loft-suite/rules/formatting/F-Target-Kind/a-nullable-hole-into-a-non-null-parameter-warns.loft::t_1Q_lit
 elab-functions	agree	loft-suite/rules/formatting/F-Target-Pos/every-position-with-an-expected-type-builds-the-target.loft::(schema)
 elab-functions	agree	loft-suite/rules/formatting/F-Target-Pos/every-position-with-an-expected-type-builds-the-target.loft::Db
 elab-functions	agree	loft-suite/rules/formatting/F-Target-Pos/every-position-with-an-expected-type-builds-the-target.loft::E
@@ -5126,30 +5120,14 @@ elab-functions	agree	loft-suite/rules/formatting/F-Target-Pos/every-position-wit
 elab-functions	agree	loft-suite/rules/formatting/F-Target-Pos/every-position-with-an-expected-type-builds-the-target.loft::n_s3_take
 elab-functions	agree	loft-suite/rules/formatting/F-Target-Pos/every-position-with-an-expected-type-builds-the-target.loft::n_take
 elab-functions	agree	loft-suite/rules/formatting/F-Target-Pos/every-position-with-an-expected-type-builds-the-target.loft::n_take2
+elab-functions	agree	loft-suite/rules/formatting/F-Target-Pos/every-position-with-an-expected-type-builds-the-target.loft::n_test_a_reassignment_of_a_typed_local
+elab-functions	agree	loft-suite/rules/formatting/F-Target-Pos/every-position-with-an-expected-type-builds-the-target.loft::n_test_an_annotated_binding
 elab-functions	agree	loft-suite/rules/formatting/F-Target-Pos/every-position-with-an-expected-type-builds-the-target.loft::n_test_an_unannotated_binding_is_text
+elab-functions	agree	loft-suite/rules/formatting/F-Target-Pos/every-position-with-an-expected-type-builds-the-target.loft::n_test_lookups_inside_a_target_hole
 elab-functions	agree	loft-suite/rules/formatting/F-Target-Pos/every-position-with-an-expected-type-builds-the-target.loft::t_1Q_hole_int
 elab-functions	agree	loft-suite/rules/formatting/F-Target-Pos/every-position-with-an-expected-type-builds-the-target.loft::t_1Q_hole_text
 elab-functions	agree	loft-suite/rules/formatting/F-Target-Pos/every-position-with-an-expected-type-builds-the-target.loft::t_1Q_lit
 elab-functions	agree	loft-suite/rules/formatting/F-Target-Pos/every-position-with-an-expected-type-builds-the-target.loft::t_1W_sink
-elab-functions	agree	loft-suite/rules/formatting/F-Target/each-hole-kind-calls-its-own-method.loft::(schema)
-elab-functions	agree	loft-suite/rules/formatting/F-Target/each-hole-kind-calls-its-own-method.loft::High
-elab-functions	agree	loft-suite/rules/formatting/F-Target/each-hole-kind-calls-its-own-method.loft::Level
-elab-functions	agree	loft-suite/rules/formatting/F-Target/each-hole-kind-calls-its-own-method.loft::Low
-elab-functions	agree	loft-suite/rules/formatting/F-Target/each-hole-kind-calls-its-own-method.loft::Name
-elab-functions	agree	loft-suite/rules/formatting/F-Target/each-hole-kind-calls-its-own-method.loft::Q
-elab-functions	agree	loft-suite/rules/formatting/F-Target/each-hole-kind-calls-its-own-method.loft::SQLIdent
-elab-functions	agree	loft-suite/rules/formatting/F-Target/each-hole-kind-calls-its-own-method.loft::n_cat
-elab-functions	agree	loft-suite/rules/formatting/F-Target/each-hole-kind-calls-its-own-method.loft::n_test_the_same_template_into_text_renders
-elab-functions	agree	loft-suite/rules/formatting/F-Target/each-hole-kind-calls-its-own-method.loft::t_1Q_hole_boolean
-elab-functions	agree	loft-suite/rules/formatting/F-Target/each-hole-kind-calls-its-own-method.loft::t_1Q_hole_character
-elab-functions	agree	loft-suite/rules/formatting/F-Target/each-hole-kind-calls-its-own-method.loft::t_1Q_hole_float
-elab-functions	agree	loft-suite/rules/formatting/F-Target/each-hole-kind-calls-its-own-method.loft::t_1Q_hole_int
-elab-functions	agree	loft-suite/rules/formatting/F-Target/each-hole-kind-calls-its-own-method.loft::t_1Q_hole_level
-elab-functions	agree	loft-suite/rules/formatting/F-Target/each-hole-kind-calls-its-own-method.loft::t_1Q_hole_name
-elab-functions	agree	loft-suite/rules/formatting/F-Target/each-hole-kind-calls-its-own-method.loft::t_1Q_hole_single
-elab-functions	agree	loft-suite/rules/formatting/F-Target/each-hole-kind-calls-its-own-method.loft::t_1Q_hole_sql_ident
-elab-functions	agree	loft-suite/rules/formatting/F-Target/each-hole-kind-calls-its-own-method.loft::t_1Q_hole_text
-elab-functions	agree	loft-suite/rules/formatting/F-Target/each-hole-kind-calls-its-own-method.loft::t_1Q_lit
 elab-functions	agree	loft-suite/rules/grammar/G-Amp-Infix/a-vector-of-and-results-is-a-plain-integer-vector-compared-by-value.loft::(schema)
 elab-functions	agree	loft-suite/rules/grammar/G-Amp-Infix/a-vector-of-and-results-is-a-plain-integer-vector-compared-by-value.loft::main_vector<integer(0, 255)>
 elab-functions	agree	loft-suite/rules/grammar/G-Amp-Infix/a-vector-of-and-results-is-a-plain-integer-vector-compared-by-value.loft::n_test_any_order_builds_an_integer_vector
@@ -6462,12 +6440,16 @@ elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/c91-every-type-is-equa
 elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/c91-every-type-is-equatable.loft::Shape
 elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/c91-every-type-is-equatable.loft::U
 elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/c91-every-type-is-equatable.loft::V
+elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/c91-every-type-is-equatable.loft::__tuple<integer,text>
+elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/c91-every-type-is-equatable.loft::i_13hash<E,["k"]>_n_same
 elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/c91-every-type-is-equatable.loft::i_15vector<integer>_n_same
 elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/c91-every-type-is-equatable.loft::i_1P_n_differs
 elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/c91-every-type-is-equatable.loft::i_1P_n_same
+elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/c91-every-type-is-equatable.loft::i_24__tuple<integer,integer>_n_same
 elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/c91-every-type-is-equatable.loft::i_5Shape_n_same
 elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/c91-every-type-is-equatable.loft::n_differs
 elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/c91-every-type-is-equatable.loft::n_same
+elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/c91-every-type-is-equatable.loft::n_test_a_keyed_collection
 elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/c91-every-type-is-equatable.loft::n_test_a_struct
 elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/c91-every-type-is-equatable.loft::n_test_a_struct_enum
 elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/c91-every-type-is-equatable.loft::n_test_a_value_struct_and_a_vector
@@ -15243,7 +15225,7 @@ elab-functions	agree	tests/scripts/store_paged_enum_field.loft::main_vector<inte
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::n_bytes
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::vector<integer(0, 255)>
 
-layer	elab-pass1	agree	11956	of	17834
+layer	elab-pass1	agree	11966	of	17846
 elab-pass1	agree	lib/code.loft::t_4Code_add_block
 elab-pass1	agree	lib/code.loft::t_4Code_add_if
 elab-pass1	agree	lib/code.loft::t_4Code_add_loop
@@ -17857,6 +17839,7 @@ elab-pass1	agree	loft-suite/rules/formatting/F-Spec/a-format-spec-tunes-what-eve
 elab-pass1	agree	loft-suite/rules/formatting/F-Spec/a-format-spec-tunes-what-every-value-renders-as-its-null-included.loft::n_test_precision_and_flag_order
 elab-pass1	agree	loft-suite/rules/formatting/F-Spec/a-json-spec-spelling-is-one-decision.loft::n_main
 elab-pass1	agree	loft-suite/rules/formatting/F-Spec/a-width-may-precede-any-base-letter.loft::n_main
+elab-pass1	agree	loft-suite/rules/formatting/F-Target-Kind/a-nullable-hole-into-a-non-null-parameter-warns.loft::n_test_a_null_into_a_non_null_hole
 elab-pass1	agree	loft-suite/rules/formatting/F-Target-Kind/a-nullable-hole-into-a-non-null-parameter-warns.loft::t_1Q_hole_int
 elab-pass1	agree	loft-suite/rules/formatting/F-Target-Kind/a-nullable-hole-into-a-non-null-parameter-warns.loft::t_1Q_hole_text
 elab-pass1	agree	loft-suite/rules/formatting/F-Target-Kind/a-nullable-hole-into-a-non-null-parameter-warns.loft::t_1Q_lit
@@ -17865,12 +17848,21 @@ elab-pass1	agree	loft-suite/rules/formatting/F-Target-Pos/every-position-with-an
 elab-pass1	agree	loft-suite/rules/formatting/F-Target-Pos/every-position-with-an-expected-type-builds-the-target.loft::n_s3_take
 elab-pass1	agree	loft-suite/rules/formatting/F-Target-Pos/every-position-with-an-expected-type-builds-the-target.loft::n_take
 elab-pass1	agree	loft-suite/rules/formatting/F-Target-Pos/every-position-with-an-expected-type-builds-the-target.loft::n_take2
+elab-pass1	agree	loft-suite/rules/formatting/F-Target-Pos/every-position-with-an-expected-type-builds-the-target.loft::n_test_a_reassignment_of_a_typed_local
+elab-pass1	agree	loft-suite/rules/formatting/F-Target-Pos/every-position-with-an-expected-type-builds-the-target.loft::n_test_an_annotated_binding
 elab-pass1	agree	loft-suite/rules/formatting/F-Target-Pos/every-position-with-an-expected-type-builds-the-target.loft::n_test_an_unannotated_binding_is_text
+elab-pass1	agree	loft-suite/rules/formatting/F-Target-Pos/every-position-with-an-expected-type-builds-the-target.loft::n_test_lookups_inside_a_target_hole
 elab-pass1	agree	loft-suite/rules/formatting/F-Target-Pos/every-position-with-an-expected-type-builds-the-target.loft::t_1Q_hole_int
 elab-pass1	agree	loft-suite/rules/formatting/F-Target-Pos/every-position-with-an-expected-type-builds-the-target.loft::t_1Q_hole_text
 elab-pass1	agree	loft-suite/rules/formatting/F-Target-Pos/every-position-with-an-expected-type-builds-the-target.loft::t_1Q_lit
 elab-pass1	agree	loft-suite/rules/formatting/F-Target-Pos/every-position-with-an-expected-type-builds-the-target.loft::t_1W_sink
 elab-pass1	agree	loft-suite/rules/formatting/F-Target/each-hole-kind-calls-its-own-method.loft::n_cat
+elab-pass1	agree	loft-suite/rules/formatting/F-Target/each-hole-kind-calls-its-own-method.loft::n_test_a_literal_inside_a_hole_is_a_value
+elab-pass1	agree	loft-suite/rules/formatting/F-Target/each-hole-kind-calls-its-own-method.loft::n_test_a_null_text_is_a_text_hole
+elab-pass1	agree	loft-suite/rules/formatting/F-Target/each-hole-kind-calls-its-own-method.loft::n_test_a_struct_an_enum_and_an_acronym
+elab-pass1	agree	loft-suite/rules/formatting/F-Target/each-hole-kind-calls-its-own-method.loft::n_test_every_other_scalar_kind
+elab-pass1	agree	loft-suite/rules/formatting/F-Target/each-hole-kind-calls-its-own-method.loft::n_test_narrow_integers_are_one_kind
+elab-pass1	agree	loft-suite/rules/formatting/F-Target/each-hole-kind-calls-its-own-method.loft::n_test_no_holes_and_no_text
 elab-pass1	agree	loft-suite/rules/formatting/F-Target/each-hole-kind-calls-its-own-method.loft::n_test_the_same_template_into_text_renders
 elab-pass1	agree	loft-suite/rules/formatting/F-Target/each-hole-kind-calls-its-own-method.loft::t_1Q_hole_boolean
 elab-pass1	agree	loft-suite/rules/formatting/F-Target/each-hole-kind-calls-its-own-method.loft::t_1Q_hole_character
