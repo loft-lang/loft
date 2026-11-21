@@ -84,11 +84,9 @@ a known-equal baseline.
   `(H-SwapIn)`'s *"a free protection refuses only the side the exchange releases"* holds on
   both backends (`loft_swap_in` refuses `a->protect`, the released source, as
   `swap_stores_in_as` does).  The live-state gates agree between the backends
-  (`loft_swap_blocked_hook` mirrors them) and not with the rule, which is the open half and
-  the owner's call: `(H-SwapIn)` pins a constant and a lazy binding per STORE, where both
-  backends refuse every exchange while ANY lazy source or error exists, and refuse while any
-  scratch walk is live, which no rule states.  Either the rule states the gates (a store a live
-  walk reads is pinned, as a lazy binding's is) and the code narrows to them, or the gates go.
+  (`loft_swap_blocked_hook` mirrors them), and since 2026-11-21 the rule states them as they
+  are (the owner's call): no exchange in any store while a walk scratch is live or a lazy
+  binding or refusal is recorded.  A port keeps those program-wide gates.
 
 Each step is one PR-sized unit; a step whose cell shows a defect on `main` is that defect's fix
 and follows the bug-filing policy.

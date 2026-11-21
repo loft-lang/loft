@@ -100,13 +100,13 @@ fixes name a row the same way.  D20 onward come from the field-by-field comparis
 from P0b (what the C runtime lacks).  State: **open**, **fixing** (on the branch named), or
 **decided** (the decision and its measurement).  A closed row moves to
 [STORE_MODEL-history.md](STORE_MODEL-history.md) with its commit; D1–D8, D9a–D17,
-D18–D19j, D20–D23, D25, D29–D31, D34 and D36 are there.
+D18–D19j, D20–D23, D25, D29–D31, D34 and D36 are there.  (D8's second half, the gates
+stated in `(H-SwapIn)`, closed with it.)
 
 ### Correctness
 
 | # | Divergence | State |
 |---|---|---|
-| D8 | the swap-in gates: both backends refuse a protected RELEASED store only, and refuse any exchange while a lazy source or error exists, while any scratch walk is live, or when either store is a constant | open — the code agrees; the RULE does not: `(H-SwapIn)` pins a constant and a lazy binding per STORE, the code gates on any live one, and the scratch-walk gate is in no rule — the rule states the gates or they go (@PLN91 1b-reference.md E-4, the owner's call) |
 
 ### Contract and diagnostics
 
