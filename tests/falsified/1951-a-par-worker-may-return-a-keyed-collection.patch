@@ -1,5 +1,4 @@
 diff --git a/src/generation/ops/parallel.rs b/src/generation/ops/parallel.rs
-index 841829efb..ecf159356 100644
 --- a/src/generation/ops/parallel.rs
 +++ b/src/generation/ops/parallel.rs
 @@ -35,7 +35,6 @@
@@ -55,10 +54,9 @@ index 841829efb..ecf159356 100644
      (i32::from(ctx.output.stores.size(kt)), i32::from(kt))
  }
 diff --git a/src/parser/mod.rs b/src/parser/mod.rs
-index 9510c9317..29ef42fe2 100644
 --- a/src/parser/mod.rs
 +++ b/src/parser/mod.rs
-@@ -3774,3 +3774,16 @@ mod plan86_nesting_guard_tests;
+@@ -3799,3 +3799,16 @@ mod plan86_nesting_guard_tests;
  mod plan86_reachable_set_tests;
  #[cfg(test)]
  mod plan86_sandbox_designation_tests;
@@ -76,14 +74,15 @@ index 9510c9317..29ef42fe2 100644
 +}
 +
 diff --git a/src/parser/vectors.rs b/src/parser/vectors.rs
-index 3db467f3f..11378024a 100644
 --- a/src/parser/vectors.rs
 +++ b/src/parser/vectors.rs
-@@ -3,11 +3,10 @@
+@@ -2,12 +2,11 @@
+ // SPDX-License-Identifier: LGPL-3.0-or-later
  
  use super::{
-     Argument, DefType, Function, I32, Level, Parser, ToString, Type, Value, diagnostic_format,
--    v_block, v_if, v_loop, v_set,
+-    Argument, DefType, Function, Level, Parser, ToString, Type, Value, diagnostic_format, v_block,
+-    v_if, v_loop, v_set,
++    Argument, DefType, Function, Level, Parser, ToString, Type, Value, diagnostic_format,
 +    field_id, v_block, v_if, v_loop, v_set,
  };
  use crate::data::Deps;
@@ -92,7 +91,7 @@ index 3db467f3f..11378024a 100644
  
  /// The neutral record type of a captured fn-ref's closure half (loft#1869).
  pub(crate) const FN_RECORD: &str = "__fn_record";
-@@ -9181,7 +9180,10 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+@@ -9224,7 +9223,10 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
              Type::Function(..) => self.database.int(0, false),
              Type::Reference(r, _) | Type::Enum(r, _, _) => self.data.def(*r).known_type(),
              Type::Hash(tp, key, _) => {
@@ -104,7 +103,7 @@ index 3db467f3f..11378024a 100644
                  if r != u16::MAX {
                      return r;
                  }
-@@ -9196,7 +9198,10 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+@@ -9239,7 +9241,10 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                  // @PLN48 — mirror Hash: resolve the spatial<T[…]> db type id, and
                  // register it on demand for a local-only var (whose type would else
                  // be absent from the schema, so iteration/`get_type` sees u16::MAX).
@@ -116,7 +115,7 @@ index 3db467f3f..11378024a 100644
                  if r != u16::MAX {
                      return r;
                  }
-@@ -9210,7 +9215,8 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+@@ -9253,7 +9258,8 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                  // The Radix shape, for a trie: resolve the registered id, and register
                  // on demand for a local-only var whose type is otherwise absent from
                  // the schema.  Same spelling `Stores::trie` uses.
@@ -126,7 +125,7 @@ index 3db467f3f..11378024a 100644
                  if r != u16::MAX {
                      return r;
                  }
-@@ -9221,7 +9227,15 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+@@ -9264,7 +9270,15 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                  self.database.trie(c_tp, key)
              }
              Type::Sorted(tp, key, _) => {
@@ -143,7 +142,7 @@ index 3db467f3f..11378024a 100644
                  if r != u16::MAX {
                      return r;
                  }
-@@ -9237,7 +9251,9 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+@@ -9280,7 +9294,9 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                  self.database.sorted(c_tp, key)
              }
              Type::Index(tp, key, _) => {
@@ -155,7 +154,6 @@ index 3db467f3f..11378024a 100644
                      return r;
                  }
 diff --git a/src/type_schema.rs b/src/type_schema.rs
-index e2a707b2a..bcba6908d 100644
 --- a/src/type_schema.rs
 +++ b/src/type_schema.rs
 @@ -14,15 +14,6 @@ use crate::database::Stores;
