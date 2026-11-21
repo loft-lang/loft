@@ -432,8 +432,18 @@ static void loft_srv_send_and_close(const char *p, size_t n) {
 }
 
 /* A response with the library's fixed headers: no caching, the connection closed. */
+/* The length of `p[0..n)` up to its first control character (a tab excepted): what of a header
+ * value may be written.  A CR or LF in it would end the header there and start another the
+ * caller never wrote — a value echoed from a request could add headers, or a body. */
+static size_t loft_srv_header_safe(const char *p, size_t n) {
+    size_t i = 0;
+    while (i < n && ((unsigned char) p[i] >= 0x20 || p[i] == '\t') && (unsigned char) p[i] != 0x7f) i++;
+    return i;
+}
+
 static void loft_srv_respond(int64_t status, const char *ct, size_t ctn, const char *body, size_t bn) {
     status = (int64_t) (uint16_t) status;
+    ctn = loft_srv_header_safe(ct, ctn);
     char head[1024];
     int hn = snprintf(head, sizeof head,
                       "HTTP/1.1 %d %s\r\nContent-Length: %zu\r\nContent-Type: %.*s\r\n"
@@ -448,7 +458,9 @@ static void loft_srv_respond(int64_t status, const char *ct, size_t ctn, const c
 }
 
 /* A response with the caller's headers (`Key: Value` lines): `Content-Length` is added from the
- * body unless the caller gave one (a HEAD reply), `Connection: close` always. */
+ * body unless the caller gave one (a HEAD reply), `Connection: close` always.  A line holding a
+ * control character (a CR, a NUL; a tab is allowed) is left out whole: written, it would end
+ * the header inside the line and begin one the caller did not write. */
 static void loft_srv_respond_full(int64_t status, loft_str body, loft_str heads) {
     status = (int64_t) (uint16_t) status;
     loft_text out = { 0, 0, 0 };
@@ -462,7 +474,7 @@ static void loft_srv_respond_full(int64_t status, loft_str body, loft_str heads)
         const char *s = p, *e = eol ? eol : end;
         while (s < e && isspace((unsigned char) *s)) s++;
         while (e > s && isspace((unsigned char) e[-1])) e--;
-        if (e > s) {
+        if (e > s && loft_srv_header_safe(s, (size_t) (e - s)) == (size_t) (e - s)) {
             if ((size_t) (e - s) >= 15 && strncasecmp(s, "content-length:", 15) == 0) has_len = 1;
             loft_push(&out, s, (size_t) (e - s));
             loft_push(&out, "\r\n", 2);
