@@ -1,0 +1,74 @@
+diff --git a/selfhost/src/el_ex_deliver.loft b/selfhost/src/el_ex_deliver.loft
+index 465201c76..e37b455b4 100644
+--- a/selfhost/src/el_ex_deliver.loft
++++ b/selfhost/src/el_ex_deliver.loft
+@@ -1381,6 +1381,45 @@ pub fn capture_tail_copy(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: int
+   ir::NdBlock { block: [bl] }
+ }
+ 
++// A lambda body whose tail is a `??` over its capture (`capn ?? S { … }`, an "ncc" block): each
++// arm of its `if` copied into the buffer `rb` — the capture behind its null test, the literal
++// built apart — as `materialized_view_return` blocks, the block and the result borrowing `rb`
++// (`@FR-O-Buffer`, the view half).  Null for any other shape.
++pub fn ncc_capture_copy(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer) -> ir::Node? {
++  bl = match code { NdBlock { block } => block[0], _ => return null };
++  if len(bl.operators) == 0 {
++    return null;
++  }
++  nb = match el_ir::unspan(bl.operators[-1]!) { NdBlock { block } => block[0], _ => return null };
++  if nb.name != "ncc" || len(nb.operators) == 0 {
++    return null;
++  }
++  td = heap_def(el_vars::tp(vars, rb));
++  if td < 0 {
++    return null;
++  }
++  kt = ir::NdInt { n: el::def(e, td).known_type };
++  b = ir::NdVar { n: rb };
++  owned = el_types::with_deps(el_types::without_deps(el_vars::tp(vars, rb)), [rb]);
++  match el_ir::unspan(nb.operators[-1]!) {
++    NdIf { cond, t, f } => {
++      ct = el_ir::v_block([el_ir::v_set(rb, ir::NdNull), el_ir::cl(e, "OpDatabase", [b, kt]), el_ir::cl(e, "OpCopyRecord", [t, b, kt]), b], owned, "materialized_view_return");
++      cf = el_ir::v_block([el_ir::v_set(rb, ir::NdNull), el_ir::cl(e, "OpDatabase", [b, kt]), el_ir::cl(e, "OpCopyRecord", [f, b, kt]), b], owned, "materialized_view_return");
++      nb.operators[-1] = el_ir::v_if(cond, ct, cf);
++    },
++    _ => { return null; }
++  }
++  nb.result = [owned];
++  bl.operators[-1] = ir::NdBlock { block: [nb] };
++  d = e.context;
++  ba = attr_nr(el::def(e, d), el_vars::name_of(vars, rb));
++  ret = el::def(e, d).returned[0];
++  if ba >= 0 && !el_types::deps(ret).contains(ba) {
++    e.b.data.definitions[d].returned = [el_types::with_deps(ret, el_types::deps(ret) + [ba])];
++  }
++  ir::NdBlock { block: [bl] }
++}
++
+ // The work ref of a FRESH record literal — an `Object` (or a unit variant's `EnumUnitLit`) block
+ // that opens by nulling its own buffer and answers it — or -1 (`tail_fresh_object_workref`).
+ pub fn fresh_literal_ref(x: ir::Node) -> integer {
+diff --git a/selfhost/src/el_expressions.loft b/selfhost/src/el_expressions.loft
+index 257095052..0a94c9f5b 100644
+--- a/selfhost/src/el_expressions.loft
++++ b/selfhost/src/el_expressions.loft
+@@ -434,10 +434,15 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
+     if cc != null {
+       code = cc!;
+     } else if el_ex_deliver::ncc_over_capture(e, code) {
+-      // Rust materialises each arm into a work ref the late buffer is renamed onto, the body
+-      // borrowing the lambda's placeholder for the capture — a variable this port's lambdas do
+-      // not keep: refused by name.
+-      el::refuse(e, "a lambda answering a `??` over its capture");
++      // A nullable result keeps `__retbuf`, each arm materialised into it.  A dense one
++      // renames the buffer onto a work ref, the body borrowing the lambda's placeholder for the
++      // capture — a variable this port's lambdas do not keep: refused by name.
++      nc = if result is TyOptional { el_ex_deliver::ncc_capture_copy(e, vars, code, rb) } else { null };
++      if nc != null {
++        code = nc!;
++      } else {
++        el::refuse(e, "a lambda answering a `??` over its capture");
++      }
+     }
+   }
+   // A lambda's late buffer is delivered nothing else: its body builds the record it answers as
