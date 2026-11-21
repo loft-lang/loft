@@ -1,0 +1,15 @@
+diff --git a/selfhost/src/el_ex_place.loft b/selfhost/src/el_ex_place.loft
+index 913c4972f..612e95931 100644
+--- a/selfhost/src/el_ex_place.loft
++++ b/selfhost/src/el_ex_place.loft
+@@ -3222,7 +3222,9 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
+   // apart in a `__ref_p2_N` of its own, then bound.
+   if watch_hit {
+     vars.own_buffer_hit = false;
+-    if vars.vars[v].argument {
++    // (The function's RETURNED local, renamed onto the hidden buffer, takes the plain local's
++    // bind: the literal built apart, each collection field copied in, the local bound to it.)
++    if vars.vars[v].argument && !hidden_param(e, vars, v) {
+       el::refuse(e, "a parameter rebuilt in place by a literal whose collection field reads it");
+       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+     }
