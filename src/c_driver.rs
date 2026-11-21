@@ -297,10 +297,7 @@ fn release_shim_lto(
         let inc =
             loft::platform::scratch_dir().join(format!("loft_shim_inc_{}", std::process::id()));
         let paths: Vec<std::path::PathBuf> = sources.iter().map(std::path::PathBuf::from).collect();
-        if fa::create_dir_all(&inc).is_ok()
-            && loft::c_shim::put_width_header(&inc).is_ok()
-            && loft::c_shim::put_bodies(&inc, &paths).is_ok()
-            && loft::c_shim::put_dep_headers_of(&inc, &paths).is_ok()
+        if fa::create_dir_all(&inc).is_ok() && loft::c_shim::put_shim_includes(&inc, &paths).is_ok()
         {
             flags.push("-I".to_string());
             flags.push(inc.to_string_lossy().into_owned());
@@ -808,14 +805,13 @@ pub(crate) fn build_android(
     let tier = if ship { Tier::Release } else { Tier::Check };
     let mut flags = cc_flags(tier);
     flags.extend(["-fPIC".to_string(), "-DLOFT_ANDROID".to_string()]);
-    // A shim's sources include the build's width header and the compiled-bodies fragment, as
-    // the host's link-time build of them does (`release_shim_lto`).
+    // A shim's sources search what the host's link-time build of them does (`release_shim_lto`):
+    // the width header, the compiled bodies and its dependencies' headers.
     if !sources.is_empty() {
         let inc = dir.join("inc");
         let paths: Vec<std::path::PathBuf> = links.iter().map(std::path::PathBuf::from).collect();
         fa::create_dir_all(&inc).map_err(|e| format!("cannot create {}: {e}", inc.display()))?;
-        loft::c_shim::put_width_header(&inc)?;
-        loft::c_shim::put_bodies(&inc, &paths)?;
+        loft::c_shim::put_shim_includes(&inc, &paths)?;
         flags.push("-I".to_string());
         flags.push(inc.to_string_lossy().into_owned());
     }

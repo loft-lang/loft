@@ -114,6 +114,23 @@ fn bodies_text() -> &'static str {
     })
 }
 
+/// Everything a compile of the shim sources `paths` searches beyond the shims' own directories,
+/// written into `dir`: the build's width header, the compiled-bodies fragment when a shim names
+/// it, and the headers of the dependencies each shim's package declares (`gpu_gl`'s
+/// `#include "gpu/gpu_backend.h"`).  The ONE list every build that compiles shims in a single
+/// command stages, so a target cannot leave one out.
+///
+/// # Errors
+/// When a file cannot be written.
+pub fn put_shim_includes(
+    dir: &std::path::Path,
+    paths: &[std::path::PathBuf],
+) -> Result<(), String> {
+    put_width_header(dir)?;
+    put_bodies(dir, paths)?;
+    put_dep_headers_of(dir, paths)
+}
+
 /// Write [`BODIES`] into `dir` when one of `paths` names it.
 ///
 /// # Errors
