@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	0fe1a930c1a7f169457b2e8ca48ec8f762903595
 
-layer	elab	agree	1349	of	2132
+layer	elab	agree	1351	of	2132
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -250,7 +250,6 @@ elab	refused	loft-suite/rules/heap/H-RefHome/a-generic-recursive-enum-links-its-
 elab	refused	loft-suite/rules/heap/H-RefHome/a-record-a-stored-reference-names-lives-as-long-as-its-holder-however-it-was-built.loft
 elab	refused	loft-suite/rules/heap/H-RefHome/a-stored-reference-its-record-outlives-reads-it.loft
 elab	refused	loft-suite/rules/heap/H-Removed/a-cleared-vector-releases-the-records-a-reference-named.loft
-elab	refused	loft-suite/rules/heap/H-RootExtent/a-vector-stores-extent-is-its-collection-through-swaps-and-placements.loft
 elab	refused	loft-suite/rules/heap/H-Stride/a-narrow-vector-element-keeps-its-width-in-every-operation.loft
 elab	refused	loft-suite/rules/heap/H-SwapIn/a-rebind-from-a-call-may-exchange-the-stores-and-answers-what-the-copy-answers.loft
 elab	refused	loft-suite/rules/heap/H-TextReplace/1873-an-assigned-text-field-releases-the-text-it-replaces.loft
@@ -658,7 +657,6 @@ elab	refused	tests/scripts/158-guard-free.loft
 elab	refused	tests/scripts/158-iteration-base.loft
 elab	refused	tests/scripts/158-keyed-fast-paths.loft
 elab	refused	tests/scripts/158-push-window.loft
-elab	refused	tests/scripts/164-adopt-first-bind.loft
 elab	refused	tests/scripts/164-buffer-is-the-place.loft
 elab	refused	tests/scripts/164-in-place-literal.loft
 elab	refused	tests/scripts/174-a-slice-is-a-vector-wherever-a-vector-is-expected.loft
@@ -790,7 +788,7 @@ elab	refused	tests/scripts/store_compact_slack_730.loft
 elab	refused	tests/scripts/store_digest_b0.loft
 elab	refused	tests/scripts/store_paged_enum_field.loft
 
-layer	elab-functions	agree	14040	of	24084
+layer	elab-functions	agree	13990	of	24028
 elab-functions	agree	lib/docs.loft::Anchor
 elab-functions	agree	lib/docs.loft::Character
 elab-functions	agree	lib/docs.loft::Double
@@ -5931,17 +5929,6 @@ elab-functions	agree	loft-suite/rules/heap/H-Removed/a-cleared-vector-releases-t
 elab-functions	agree	loft-suite/rules/heap/H-Removed/a-cleared-vector-releases-the-records-a-reference-named.loft::n_main
 elab-functions	agree	loft-suite/rules/heap/H-Removed/a-cleared-vector-releases-the-records-a-reference-named.loft::vector<P>
 elab-functions	agree	loft-suite/rules/heap/H-Removed/a-cleared-vector-releases-the-records-a-reference-named.loft::vector<vector<P>>
-elab-functions	agree	loft-suite/rules/heap/H-RootExtent/a-vector-stores-extent-is-its-collection-through-swaps-and-placements.loft::(schema)
-elab-functions	agree	loft-suite/rules/heap/H-RootExtent/a-vector-stores-extent-is-its-collection-through-swaps-and-placements.loft::H
-elab-functions	agree	loft-suite/rules/heap/H-RootExtent/a-vector-stores-extent-is-its-collection-through-swaps-and-placements.loft::P
-elab-functions	agree	loft-suite/rules/heap/H-RootExtent/a-vector-stores-extent-is-its-collection-through-swaps-and-placements.loft::main_vector<P>
-elab-functions	agree	loft-suite/rules/heap/H-RootExtent/a-vector-stores-extent-is-its-collection-through-swaps-and-placements.loft::main_vector<vector<P>>
-elab-functions	agree	loft-suite/rules/heap/H-RootExtent/a-vector-stores-extent-is-its-collection-through-swaps-and-placements.loft::n_build
-elab-functions	agree	loft-suite/rules/heap/H-RootExtent/a-vector-stores-extent-is-its-collection-through-swaps-and-placements.loft::n_extend
-elab-functions	agree	loft-suite/rules/heap/H-RootExtent/a-vector-stores-extent-is-its-collection-through-swaps-and-placements.loft::n_test_a_call_built_into_a_field_and_a_clear
-elab-functions	agree	loft-suite/rules/heap/H-RootExtent/a-vector-stores-extent-is-its-collection-through-swaps-and-placements.loft::n_test_a_vector_of_built_vectors
-elab-functions	agree	loft-suite/rules/heap/H-RootExtent/a-vector-stores-extent-is-its-collection-through-swaps-and-placements.loft::vector<P>
-elab-functions	agree	loft-suite/rules/heap/H-RootExtent/a-vector-stores-extent-is-its-collection-through-swaps-and-placements.loft::vector<vector<P>>
 elab-functions	agree	loft-suite/rules/heap/H-Stride/a-narrow-vector-element-keeps-its-width-in-every-operation.loft::n_hint
 elab-functions	agree	loft-suite/rules/heap/H-Stride/a-narrow-vector-element-keeps-its-width-in-every-operation.loft::n_idx_i16
 elab-functions	agree	loft-suite/rules/heap/H-Stride/a-narrow-vector-element-keeps-its-width-in-every-operation.loft::n_idx_u8
@@ -8393,6 +8380,7 @@ elab-functions	agree	loft-suite/rules/ownership/O-Derived/1683-a-field-hoisted-o
 elab-functions	agree	loft-suite/rules/ownership/O-Derived/1683-a-field-hoisted-out-of-a-literal-is-a-view-and-is-never-freed.loft::n_make_flat
 elab-functions	agree	loft-suite/rules/ownership/O-Derived/1683-a-field-hoisted-out-of-a-literal-is-a-view-and-is-never-freed.loft::n_make_scalar
 elab-functions	agree	loft-suite/rules/ownership/O-Derived/1683-a-field-hoisted-out-of-a-literal-is-a-view-and-is-never-freed.loft::n_rebuild_direct
+elab-functions	agree	loft-suite/rules/ownership/O-Derived/1683-a-field-hoisted-out-of-a-literal-is-a-view-and-is-never-freed.loft::n_rebuild_flat
 elab-functions	agree	loft-suite/rules/ownership/O-Derived/1683-a-field-hoisted-out-of-a-literal-is-a-view-and-is-never-freed.loft::vector<Outer>
 elab-functions	agree	loft-suite/rules/ownership/O-Derived/1701-a-carried-record-passed-through-an-inline-rebuild-survives-the-next-allocation.loft::(schema)
 elab-functions	agree	loft-suite/rules/ownership/O-Derived/1701-a-carried-record-passed-through-an-inline-rebuild-survives-the-next-allocation.loft::Carry
@@ -12974,47 +12962,6 @@ elab-functions	agree	tests/scripts/158-push-window.loft::vector<float>
 elab-functions	agree	tests/scripts/158-push-window.loft::vector<integer(0, 255)>
 elab-functions	agree	tests/scripts/158-push-window.loft::vector<single>
 elab-functions	agree	tests/scripts/158-push-window.loft::vector<vector<integer>>
-elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::(schema)
-elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::Box
-elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::Canvas
-elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::Dot
-elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::Node
-elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::P
-elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::Q
-elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::Shape
-elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::T
-elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::main_vector<Node>
-elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::main_vector<float>
-elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::n_alloc_canvas
-elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::n_build
-elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::n_c1
-elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::n_c10
-elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::n_c11
-elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::n_c12
-elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::n_c14
-elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::n_c15
-elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::n_c17
-elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::n_c2
-elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::n_c3
-elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::n_c4
-elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::n_c5
-elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::n_c6
-elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::n_c7
-elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::n_c8
-elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::n_c9
-elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::n_count
-elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::n_main
-elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::n_maybe
-elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::n_mk_lit
-elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::n_mk_loc
-elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::n_mk_mix
-elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::n_mk_ret
-elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::n_mk_t
-elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::n_render_direct
-elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::n_render_lit_then_call
-elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::n_via
-elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::vector<Node>
-elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::vector<float>
 elab-functions	agree	tests/scripts/164-buffer-is-the-place.loft::(schema)
 elab-functions	agree	tests/scripts/164-buffer-is-the-place.loft::GIn
 elab-functions	agree	tests/scripts/164-buffer-is-the-place.loft::GW
@@ -14717,6 +14664,7 @@ elab-functions	agree	tests/scripts/an-appended-source-is-built-as-often-as-the-a
 elab-functions	agree	tests/scripts/an-appended-source-is-built-as-often-as-the-append-runs.loft::n_test_a_branch_taken_appends_once
 elab-functions	agree	tests/scripts/an-appended-source-is-built-as-often-as-the-append-runs.loft::n_test_a_loop_appends_once_per_turn
 elab-functions	agree	tests/scripts/an-appended-source-is-built-as-often-as-the-append-runs.loft::n_test_a_source_built_inside_the_loop_still_elides
+elab-functions	agree	tests/scripts/an-appended-source-is-built-as-often-as-the-append-runs.loft::n_test_a_while_loop_appends_once_per_turn
 elab-functions	agree	tests/scripts/an-appended-source-is-built-as-often-as-the-append-runs.loft::n_test_the_appended_length_follows_the_iteration_count
 elab-functions	agree	tests/scripts/an-appended-source-is-built-as-often-as-the-append-runs.loft::n_test_the_straight_line_append_still_elides
 elab-functions	agree	tests/scripts/an-index-walk-steps-from-its-hint-only-while-it-holds.loft::(schema)
@@ -14832,7 +14780,7 @@ elab-functions	agree	tests/scripts/store_paged_enum_field.loft::main_vector<inte
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::n_bytes
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::vector<integer(0, 255)>
 
-layer	elab-pass1	agree	12077	of	18044
+layer	elab-pass1	agree	12081	of	18050
 elab-pass1	agree	lib/code.loft::t_4Code_add_block
 elab-pass1	agree	lib/code.loft::t_4Code_add_if
 elab-pass1	agree	lib/code.loft::t_4Code_add_loop
@@ -19752,6 +19700,7 @@ elab-pass1	agree	loft-suite/rules/ownership/O-Deps/2376-an-element-read-off-a-bo
 elab-pass1	agree	loft-suite/rules/ownership/O-Deps/2376-an-element-read-off-a-borrowing-calls-field-names-no-callee-dep.loft::n_test_returned
 elab-pass1	agree	loft-suite/rules/ownership/O-Deps/2376-an-element-read-off-a-borrowing-calls-field-names-no-callee-dep.loft::n_total
 elab-pass1	agree	loft-suite/rules/ownership/O-Deps/2376-an-element-read-off-a-borrowing-calls-field-names-no-callee-dep.loft::n_view
+elab-pass1	agree	loft-suite/rules/ownership/O-Derived/1683-a-field-hoisted-out-of-a-literal-is-a-view-and-is-never-freed.loft::n_rebuild_flat
 elab-pass1	agree	loft-suite/rules/ownership/O-Derived/1701-a-carried-record-passed-through-an-inline-rebuild-survives-the-next-allocation.loft::n_at
 elab-pass1	agree	loft-suite/rules/ownership/O-Derived/1701-a-carried-record-passed-through-an-inline-rebuild-survives-the-next-allocation.loft::n_check
 elab-pass1	agree	loft-suite/rules/ownership/O-Derived/1701-a-carried-record-passed-through-an-inline-rebuild-survives-the-next-allocation.loft::n_first
@@ -24366,6 +24315,7 @@ elab-pass1	agree	tests/scripts/164-adopt-first-bind.loft::n_c7
 elab-pass1	agree	tests/scripts/164-adopt-first-bind.loft::n_c8
 elab-pass1	agree	tests/scripts/164-adopt-first-bind.loft::n_c9
 elab-pass1	agree	tests/scripts/164-adopt-first-bind.loft::n_count
+elab-pass1	agree	tests/scripts/164-adopt-first-bind.loft::n_grow
 elab-pass1	agree	tests/scripts/164-adopt-first-bind.loft::n_main
 elab-pass1	agree	tests/scripts/164-adopt-first-bind.loft::n_maybe
 elab-pass1	agree	tests/scripts/164-adopt-first-bind.loft::n_mk_loc
@@ -24375,6 +24325,7 @@ elab-pass1	agree	tests/scripts/164-adopt-first-bind.loft::n_mk_t
 elab-pass1	agree	tests/scripts/164-adopt-first-bind.loft::n_render_direct
 elab-pass1	agree	tests/scripts/164-adopt-first-bind.loft::n_render_lit_then_call
 elab-pass1	agree	tests/scripts/164-adopt-first-bind.loft::n_via
+elab-pass1	agree	tests/scripts/164-adopt-first-bind.loft::t_1P_twice
 elab-pass1	agree	tests/scripts/164-buffer-is-the-place.loft::n_a1
 elab-pass1	agree	tests/scripts/164-buffer-is-the-place.loft::n_a3
 elab-pass1	agree	tests/scripts/164-buffer-is-the-place.loft::n_d1
@@ -26716,6 +26667,7 @@ elab-pass1	agree	tests/scripts/an-appended-source-is-built-as-often-as-the-appen
 elab-pass1	agree	tests/scripts/an-appended-source-is-built-as-often-as-the-append-runs.loft::n_test_a_branch_taken_appends_once
 elab-pass1	agree	tests/scripts/an-appended-source-is-built-as-often-as-the-append-runs.loft::n_test_a_loop_appends_once_per_turn
 elab-pass1	agree	tests/scripts/an-appended-source-is-built-as-often-as-the-append-runs.loft::n_test_a_source_built_inside_the_loop_still_elides
+elab-pass1	agree	tests/scripts/an-appended-source-is-built-as-often-as-the-append-runs.loft::n_test_a_while_loop_appends_once_per_turn
 elab-pass1	agree	tests/scripts/an-appended-source-is-built-as-often-as-the-append-runs.loft::n_test_the_appended_length_follows_the_iteration_count
 elab-pass1	agree	tests/scripts/an-appended-source-is-built-as-often-as-the-append-runs.loft::n_test_the_straight_line_append_still_elides
 elab-pass1	agree	tests/scripts/an-appending-leaf-is-inlined-into-its-callers-loop.loft::n_check_emit
