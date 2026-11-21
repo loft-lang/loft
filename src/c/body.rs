@@ -7195,11 +7195,29 @@ impl<'a> FnWriter<'a> {
         // one the bytecode writer and the store records read: a compiler temporary reset to
         // null has released or handed over its store already (`DisplacedFree::None`), so a
         // free here could only release that store a second time (`@FR-H-FreeTwice`).  @PLN220.
+        let rb = crate::bind_lowering::re_bind(self.cx.data, self.d, self.vars, var, x);
         if !crate::keys::c_own_displaced_free()
-            && crate::bind_lowering::re_bind(self.cx.data, self.d, self.vars, var, x).free
-                == crate::bind_lowering::DisplacedFree::None
+            && rb.free == crate::bind_lowering::DisplacedFree::None
         {
             return Ok(false);
+        }
+        // `DisplacedFree::Pre`: the value reads nothing the displaced store holds, so the store
+        // is released BEFORE the value is built, as the bytecode writer does — the new value's
+        // store then takes the freed one's place (@FR-O-NoDiverge).  Kept where it is the
+        // witness's store: the projection's container, the call's hidden buffer, or a promoted
+        // buffer's entry store.
+        if let crate::bind_lowering::DisplacedFree::Pre { witness } = rb.free {
+            let mut keep = vec![format!("{name}.store_nr != 0xFFFF")];
+            for w in witness.into_iter().chain(rb.entry_w) {
+                keep.push(format!("{name}.store_nr != {}.store_nr", self.var(w)));
+            }
+            self.line(
+                ind,
+                &format!("if ({}) loft_free_ref({name});", keep.join(" && ")),
+            );
+            self.assign(x, name, CType::Ref, ind)?;
+            self.flush(ind);
+            return Ok(true);
         }
         let old = self.temp(CType::Ref);
         self.line(ind, &format!("{old} = {name};"));

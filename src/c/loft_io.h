@@ -715,12 +715,80 @@ static void loft_file_release(loft_ref f) {
     loft_file_close(f);
 }
 
-/* `Stores::release_file_leases`: the store `nr` is being freed — every `File` its records hold,
- * reached from its root through the type the root names, closes its descriptor.  Walked only
- * where the root's type can hold one; the store dies, so the walk is the owned-claims release
- * (its locks no longer matter).  A build without descriptors has none to close. */
-static void loft_remove_claims_mode(const loft_tdesc *T, uint16_t tp, loft_ref r, int borrowed);
+/* `Stores::release_files_in`: every `File` reached from `r` (of type `tp`) through what it owns
+ * closes its descriptor.  Nothing is deleted: the store is about to be freed whole.  A view
+ * member is skipped, as the record that owns it releases it; a type that cannot hold a `File`
+ * is not entered. */
+static void loft_release_files_in(const loft_tdesc *T, uint16_t tp, loft_ref r) {
+    if (r.store_nr == 0xFFFF || r.rec == 0) return;
+    const loft_tdesc *d = &T[tp];
+    if (!d->file) return;
+    if (d->file == 2) { loft_file_release(r); return; }
+    loft_store_t *s = loft_store_of(r);
+    switch (d->kind) {
+    case LOFT_T_STRUCT:
+        for (uint16_t i = 0; i < d->n; i++)
+            if (!d->fields[i].view) loft_release_files_in(T, d->fields[i].type, loft_field(r, d->fields[i].pos));
+        return;
+    case LOFT_T_ENUM: {
+        int e = (int) *loft_at(s, r.rec, r.pos) - 1;
+        if (e >= 0 && e < d->n && d->variants[e] != 0xFFFF) loft_release_files_in(T, d->variants[e], r);
+        return;
+    }
+    default:
+        break;
+    }
+    uint32_t cur = loft_u32(s, r.rec, r.pos);
+    if (cur == 0 || cur == 0xFFFFFFFFu) return;
+    switch (d->kind) {
+    case LOFT_T_VECTOR: {
+        uint32_t len = loft_u32(s, cur, 4), size = T[d->elem].size;
+        for (uint32_t i = 0; i < len; i++) {
+            loft_ref e = { r.store_nr, cur, 8 + i * size, 0 };
+            loft_release_files_in(T, d->elem, e);
+        }
+        return;
+    }
+    case LOFT_T_CHILD: {
+        loft_ref c = { r.store_nr, cur, 8, 0 };
+        loft_release_files_in(T, d->elem, c);
+        return;
+    }
+    case LOFT_T_ORDERED:
+        for (uint32_t i = 0; i < loft_u32(s, cur, 4); i++) {
+            uint32_t elm = loft_u32(s, cur, 8 + 4 * i);
+            if (elm == 0) continue;
+            loft_ref e = { r.store_nr, elm, 8, 0 };
+            loft_release_files_in(T, d->elem, e);
+        }
+        return;
+    case LOFT_T_HASH: {
+        uint32_t n;
+        loft_hent *all = loft_h_entries_of(r, &n);
+        for (uint32_t i = 0; i < n; i++) loft_release_files_in(T, d->elem, all[i].e);
+        free(all);
+        return;
+    }
+    case LOFT_T_INDEX:
+    case LOFT_T_RADIX:
+    case LOFT_T_TRIE: {
+        uint32_t n;
+        uint32_t *recs = d->kind == LOFT_T_INDEX ? loft_bt_records(r, &n) : loft_rx_records(r, &n);
+        for (uint32_t i = 0; i < n; i++) {
+            loft_ref e = { r.store_nr, recs[i], 8, 0 };
+            loft_release_files_in(T, d->elem, e);
+        }
+        free(recs);
+        return;
+    }
+    default:
+        return;
+    }
+}
 
+/* `Stores::release_file_leases`: the store `nr` is being freed — every `File` its records hold,
+ * reached from its root through the type the root names, closes its descriptor.  A build
+ * without descriptors has none to close. */
 static void loft_release_file_leases(uint16_t nr) {
 #if defined(LOFT_FD)
     if (!loft_T) return;
@@ -728,8 +796,7 @@ static void loft_release_file_leases(uint16_t nr) {
     uint16_t tp = s->known;
     if (tp >= loft_T_n || !loft_T[tp].file || s->size < 3 || loft_u32(s, 1, 4) != tp) return;
     loft_ref root = { nr, 1, 8, 0 };
-    s->read_only = 0;
-    loft_remove_claims_mode(loft_T, tp, root, 0);
+    loft_release_files_in(loft_T, tp, root);
 #else
     (void) nr;
 #endif
