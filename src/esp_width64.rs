@@ -502,7 +502,7 @@ mod tests {
         )
         .unwrap();
         let v = judge(&wide, &allow);
-        assert!(v.refused.is_empty());
+        assert_eq!(v.refused, Vec::<Wide>::new());
         assert_eq!(v.allowed.len(), 3);
         assert_eq!(v.unused.len(), 1);
         assert_eq!(v.unused[0].name, "n_gone");

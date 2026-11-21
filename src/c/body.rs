@@ -10513,6 +10513,32 @@ impl<'a> FnWriter<'a> {
         Some(E::new("((void) 0)", K::Void))
     }
 
+    /// `OpSetInt` / `OpSetInt4`: an integer written into a record field of 8 or 4 bytes.
+    fn set_int_operator(
+        &mut self,
+        name: &str,
+        r: &Value,
+        fld: &Value,
+        val: &Value,
+        ind: usize,
+    ) -> Result<E, String> {
+        let fld = Self::literal(fld, "field")?;
+        let (r, val) = self.two(name, &[r, val], ind)?;
+        // @PLN217 — a 4-byte field takes a value held in 32 bits as it stands.
+        if name == "OpSetInt4" && val.kind == K::Int32 {
+            return Ok(self.set_at(
+                "loft_set_int4_32_at",
+                &[as_ref(r)?, fld.to_string(), val.code],
+            ));
+        }
+        let f = if name == "OpSetInt" {
+            "loft_set_int_at"
+        } else {
+            "loft_set_int4_at"
+        };
+        Ok(self.set_at(f, &[as_ref(r)?, fld.to_string(), as_int(val)?]))
+    }
+
     fn store_operator(&mut self, name: &str, args: &[Value], ind: usize) -> Result<E, String> {
         if let Some(e) = self.free_operator(name, args, ind)? {
             return Ok(e);
@@ -10558,21 +10584,7 @@ impl<'a> FnWriter<'a> {
                 ))
             }
             ("OpSetInt" | "OpSetInt4", [r, fld, val]) => {
-                let fld = Self::literal(fld, "field")?;
-                let (r, val) = self.two(name, &[r, val], ind)?;
-                // @PLN217 — a 4-byte field takes a value held in 32 bits as it stands.
-                if name == "OpSetInt4" && val.kind == K::Int32 {
-                    return Ok(self.set_at(
-                        "loft_set_int4_32_at",
-                        &[as_ref(r)?, fld.to_string(), val.code],
-                    ));
-                }
-                let f = if name == "OpSetInt" {
-                    "loft_set_int_at"
-                } else {
-                    "loft_set_int4_at"
-                };
-                Ok(self.set_at(f, &[as_ref(r)?, fld.to_string(), as_int(val)?]))
+                self.set_int_operator(name, r, fld, val, ind)
             }
             ("OpCopyRecord", [src, dst, tp]) => {
                 let raw = Self::literal(tp, "type")?;
