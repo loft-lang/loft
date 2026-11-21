@@ -1048,6 +1048,12 @@ static int64_t loft_fs_mkdir(loft_str raw, int all) {
     char *path = loft_resolve(raw);
     if (!path) return LOFT_FS_OTHER;
     int64_t code = LOFT_FS_OTHER;
+    /* A path that resolves to nothing names no directory; the walks below start one past
+     * its first character. */
+    if (!path[0]) {
+        free(path);
+        return loft_fs_code(ENOENT);
+    }
 #if defined(LOFT_POSIX)
     if (all) {
         for (char *p = path + 1; *p; p++) {

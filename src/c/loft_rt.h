@@ -239,7 +239,8 @@ static void loft_format_prefixed(loft_text *s, loft_str prefix, loft_str digits,
                                  int dir, uint8_t token) {
     if (token == '0' && prefix.len > 0) {
         loft_text_append(s, prefix);
-        loft_format_text(s, digits, width - (int64_t) loft_chars(prefix), dir, token);
+        /* a null width is no width: subtracting from it would wrap */
+        loft_format_text(s, digits, width == LOFT_NULL ? width : width - (int64_t) loft_chars(prefix), dir, token);
         return;
     }
     loft_text res = { 0, 0, 0 };
