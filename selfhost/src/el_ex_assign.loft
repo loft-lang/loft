@@ -693,7 +693,9 @@ fn expression_node(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     // (`Insert([Null])`), which the position it is converted to builds (`empty_literal_to`).
     SVecLit { items } => {
       kl = if len(items) == 0 { null } else { el_ex_vector::keyed_tail_literal(e, vars, n) };
-      if kl != null { kl! } else if len(items) == 0 { ex(ir::NdInsert { items: [ir::NdNull] }, ir::TyUnknown { n: 0 }) } else { el_ex_pattern::vector_value(e, vars, n).x }
+      // (A tail literal is checked at the result's element, `@FR-T-Chk-Vec`.)
+      tail_elem = if vars.expect_node == n { match el_types::base(vars.expect) { TyVector { inner } => inner, _ => ir::TyUnknown { n: 0 } } } else { ir::TyUnknown { n: 0 } };
+      if kl != null { kl! } else if len(items) == 0 { ex(ir::NdInsert { items: [ir::NdNull] }, ir::TyUnknown { n: 0 }) } else if !el_types::is_unknown(tail_elem) { el_ex_pattern::vector_value(e, vars, n, elem: tail_elem).x } else { el_ex_pattern::vector_value(e, vars, n).x }
     },
     SYield { from, e: ye } => el_ex_match::yield_expr(e, vars, from, ye),
     SComprehension { at: _ } => el_ex_match::comprehension_value(e, vars, n),

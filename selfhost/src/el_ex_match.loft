@@ -445,6 +445,22 @@ pub fn for_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
   if x.tp is TyText {
     return text_for(e, vars, h, x);
   }
+  // A record whose type declares `operator next` (`@FR-Op-Mark`: never a plain `fn next`) is
+  // walked by that operator, the iterator protocol.
+  match el_types::base(x.tp) {
+    TyReference { n: rn } => {
+      nm = el::def(e, rn).name;
+      nd = el::def_nr(e, "t_{len(nm)}{nm}_next");
+      if nd >= 0 && !(x.tp is TyOptional) {
+        if !el::def(e, nd).operator_form {
+          el::refuse(e, "a `for` over a type whose `next` is no `operator`");
+          return ex(ir::NdNull, ir::TyVoid);
+        }
+        return user_next_for(e, vars, h, x, nd);
+      }
+    },
+    _ => {}
+  }
   match el_types::base(x.tp) {
     TyVector { inner: _ } => {},
     TyUnknown { n: _ } => {
@@ -663,6 +679,48 @@ pub fn generator_for(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex) -> Ex {
   steps += [b.code];
   setup = if held >= 0 { ir::NdNull } else { el_ir::v_set(g, x.code) };
   el_ex_null::counted(e, cnt, ex(el_ir::v_block([setup, el_ir::v_loop(steps, "For loop")], ir::TyVoid, "For block"), ir::TyVoid))
+}
+
+// `parse_for` over a type's own `operator next` (@F32): the source held in `___iter_obj_N`, a
+// view of it; each step binds the loop's variable to `next(___iter_obj_N)` and leaves at the
+// element type's null, then runs the body.  A `next` taking hidden buffers (a heap item), a
+// destructured or filtered walk, and an element whose null is no plain integer's are refused by
+// name.
+pub fn user_next_for(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex, nd: integer) -> Ex {
+  it_t = el_types::base(x.tp);
+  match el_ir::unspan(x.code) {
+    NdVar { n } => { it_t = el_types::with_deps(it_t, [n]); },
+    _ => {}
+  }
+  io = el_vars::create_unique(vars, "__iter_obj", it_t);
+  el_vars::set_defined(vars, io);
+  nrt = el::def(e, nd).returned[0] ?? ir::TyVoid;
+  step = el_types::without_deps(match nrt { TyOptional { inner } => inner, _ => nrt });
+  if len(h.binds) > 1 || h.filter != null || len(el::def(e, nd).attributes) != 1 {
+    el::refuse(e, "a `for` over a user `next` that destructures, filters or takes a buffer");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  lv = loop_var(vars, h.src_id, h.id, step);
+  vars.active_loops += [lv];
+  vars.active_values += [ir::NdNull];
+  b = el_ex_assign::parse_block(e, vars, h.body, "for", ir::TyVoid);
+  cnt = el_vars::pop_loop(vars);
+  vars.active_values = vars.active_values[..-1];
+  if e.first_pass {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  plain_int = match step { TyInteger { spec } => el_types::narrow_width(spec) == 0 && spec.forced_size == 0, _ => false };
+  if !plain_int {
+    el::refuse(e, "a `for` over a user `next` of this element type: {type_kind(step)}");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  brk = el_ir::v_block([ir::NdBreak { n: 0 }], ir::TyVoid, "break");
+  steps: vector<ir::Node> = [
+    el_ir::v_set(lv, ir::NdCall { def_nr: nd, args: [ir::NdVar { n: io }] }),
+    el_ir::v_if(el_ir::cl(e, "OpEqInt", [ir::NdVar { n: lv }, el_ir::cl(e, "OpConvIntFromNull", [])]), brk, ir::NdNull),
+    b.code
+  ];
+  el_ex_null::counted(e, cnt, ex(el_ir::v_block([el_ir::v_set(io, x.code), el_ir::v_loop(steps, "For loop")], ir::TyVoid, "For block"), ir::TyVoid))
 }
 
 // A destructuring `for`'s named members, made before the body is read so it resolves them —
