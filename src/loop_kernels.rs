@@ -47,9 +47,9 @@ pub fn vector_sum_int(stores: &[Store], v: &DbRef, acc: i64) -> i64 {
         if !crate::keys::bounded_sum_enabled() {
             (acc, 0)
         } else if verify() {
-            vector::sum_blocks_i64::<true>(base, header.len, 0, len, acc)
+            vector::sum_blocks_i64::<true>(base, header.elems(8), 0, len, acc)
         } else {
-            vector::sum_blocks_i64::<false>(base, header.len, 0, len, acc)
+            vector::sum_blocks_i64::<false>(base, header.elems(8), 0, len, acc)
         }
     };
     for i in at..len {

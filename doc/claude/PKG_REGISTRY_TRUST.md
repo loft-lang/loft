@@ -55,14 +55,18 @@ Borrowed from Debian's `Release.gpg` / `InRelease`.
      re-downloaded tarball sha256) before confirming.
    - The script signs (on-card, or `loft-keygen sign --in index.json
      --key <private>.bin --out index.json.sig` for the local-key
-     path) to produce a raw 64-byte Ed25519 signature.
-   - **Trust gate**: the new signature must verify against a key
+     path) to produce a raw 64-byte Ed25519 signature, then signs the
+     **purpose-prefixed** message the same way (`loft-keygen message
+     --purpose index` writes it: `loft-registry-index-v1\0` + the index) into
+     `index.json.sig2` — on a card, a second touch.  See § Purpose-prefixed
+     signatures below.
+   - **Trust gate**: both new signatures must verify against one key
      already listed in `src/registry_keys.rs::TRUSTED_PUBLIC_KEYS`
      — if it doesn't, `registry-sign.sh` refuses to commit or push
      (a wrong/untrusted key would otherwise ship a signature every
      `loft install` rejects).
-   - Maintainer commits `index.json` + `index.json.sig` **together**
-     (so HEAD's index always matches its signature) and pushes.
+   - Maintainer commits `index.json` + `index.json.sig` + `index.json.sig2`
+     **together** (so HEAD's index always matches its signatures) and pushes.
 4. Clients fetch both files **from one commit**: the client asks the
    registry repository which commit `main` is at (its ref advertisement,
    which is never cached) and reads `index.json` and `index.json.sig`
@@ -70,9 +74,37 @@ Borrowed from Debian's `Release.gpg` / `InRelease`.
    reads through it can be a new index beside the previous signature
    (`registry_index::pin_to_commit`).  A mirror, a `file://` URL, or a
    registry whose advertisement cannot be reached is read through the
-   address as given.  Verify the signature over the bytes
-   of `index.json`.  Refuse to use an unsigned/invalid-sig index
-   unless `--allow-unsigned` is passed.
+   address as given.  The client reads `index.json.sig2` beside `.sig` and
+   verifies it over the purpose-prefixed message; without one it verifies
+   `.sig` over the bytes of `index.json`, during the transition only.  Refuse
+   to use an unsigned/invalid-sig index unless `--allow-unsigned` is passed
+   (an invalid signature is refused even then).
+
+### Purpose-prefixed signatures — `.sig2`
+
+One key set signs the index and the advisory feed.  Signed raw, the bytes say nothing
+about what they are, so a signature made for one document could be offered for another;
+the parsers keep the two apart today (a feed must carry `advisories`), but any future
+document the same keys sign reopens the question.  So each signature is made over the
+document's PURPOSE followed by the document (`registry_signing::Purpose`):
+`loft-registry-index-v1\0` + `index.json`, `loft-registry-advisories-v1\0` +
+`advisories.json`.
+
+The transition, so that no client stops working:
+
+1. **Now**: the registry publishes `<doc>.sig` (raw, what every older loft reads) AND
+   `<doc>.sig2` (prefixed).  A client that knows the prefix verifies `.sig2` when it is
+   there — a wrong `.sig2` beside a right `.sig` is a wrong signature, not a fallback —
+   and `.sig` alone only while `registry_signing::RAW_SIGNATURE_ACCEPTED` holds.  The
+   cache and a bundle keep the two as two files; inside the client they travel as one
+   value (`join_signatures` / `split_signatures`).
+2. **End of the window**: the first loft release after every published document carries
+   a `.sig2`, and after a release that reads it, sets `RAW_SIGNATURE_ACCEPTED = false`:
+   a raw signature alone is then refused like a malformed one.
+3. **Later**: the registry may stop publishing `.sig` once no supported loft reads it.
+
+An advisory feed, when the registry starts publishing one, is signed the same two ways
+(`loft-keygen message --purpose advisories`).
 
 ### The third route — `--expect`, a confirmation that CHECKS
 

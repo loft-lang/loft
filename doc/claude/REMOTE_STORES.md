@@ -102,7 +102,7 @@ a game's scenes and silently none of its art.
 | | fetches | use when |
 |---|---|---|
 | `store_load_url_trusted(r, url)` | the **whole** image, once | it is small, or you need all of it anyway |
-| `store_load_url(r, url, sha256)` | the whole image, **pinned** to a hash | the origin is not trusted |
+| `store_load_url(r, url, sha256, schema_sha256)` | the whole image, **pinned** to a hash; with the optional fourth argument its `.dschema` is pinned too (the layout file decides how the image is read) | the origin is not trusted — pin both |
 | `store_load_key(local, url, key)` | only the pages that ONE lookup touches | the dataset is large and reads are sparse |
 | `store_load_key_text(local, url, key)` | same, for a text-keyed hash or trie | |
 | `store_load_keys(local, url, keys)` | several keys, reader opened once | a batch — cheaper than N calls |

@@ -6733,11 +6733,14 @@ impl Stores {
         // `@FR-S-Sound` — a loader for a file from elsewhere asks the walk before anything
         // follows a number the image holds, the rebase below included.
         let sound = if checked
-            && !self.verify_graph_ok(&DbRef {
-                store_nr: slot,
-                rec: crate::store::PRIMARY,
-                pos: 8,
-            }) {
+            && !self.verify_image_ok(
+                &DbRef {
+                    store_nr: slot,
+                    rec: crate::store::PRIMARY,
+                    pos: 8,
+                },
+                recorded,
+            ) {
             Err("a number inside it does not hold (the lines above say which)".to_string())
         } else {
             Ok(())
@@ -6795,12 +6798,20 @@ impl Stores {
         feature = "registry",
         all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm"))
     ))]
-    fn url_recorded_slot(&self, slot: u16, url: &str) -> Option<u16> {
+    fn url_recorded_slot(&self, slot: u16, url: &str, sidecar: Option<&str>) -> Option<u16> {
         if !self.holds_stored_refs(self.allocations[slot as usize].known_type) {
             return None;
         }
-        let bytes = crate::net::fetch_bytes(&format!("{url}.dschema")).ok()?;
-        crate::schema_sidecar::LayoutIdentity::from_sidecar(std::str::from_utf8(&bytes).ok()?)?.slot
+        // The sidecar the gate already read (and, for a pinned load, checked) — a second fetch
+        // could answer other bytes than the ones the pin vouched for.
+        let fetched;
+        let text = if let Some(t) = sidecar {
+            t
+        } else {
+            fetched = crate::net::fetch_bytes(&format!("{url}.dschema")).ok()?;
+            std::str::from_utf8(&fetched).ok()?
+        };
+        crate::schema_sidecar::LayoutIdentity::from_sidecar(text)?.slot
     }
 
     /// @PLN97 arc G Phase 0 — load a persisted store IMAGE over HTTP(S) from a
@@ -6824,8 +6835,16 @@ impl Stores {
         feature = "registry",
         all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm"))
     ))]
-    pub fn load_url_verified(&mut self, slot: u16, url: &str, sha256_hex: &str) -> bool {
-        let Ok(older) = self.url_layout_gate(slot, url, "store_load_url") else {
+    pub fn load_url_verified(
+        &mut self,
+        slot: u16,
+        url: &str,
+        sha256_hex: &str,
+        schema_sha256_hex: &str,
+    ) -> bool {
+        let Ok((older, sidecar)) =
+            self.url_layout_gate(slot, url, "store_load_url", schema_sha256_hex)
+        else {
             return false;
         };
         let bytes = match crate::net::fetch_bytes(url) {
@@ -6844,7 +6863,7 @@ impl Stores {
             let done = self.load_upgraded_from(slot, &sidecar, &bytes, url);
             return Self::conversion_took(done, url, "store_load_url");
         }
-        let recorded = self.url_recorded_slot(slot, url);
+        let recorded = self.url_recorded_slot(slot, url, sidecar.as_deref());
         self.load_bytes_from(slot, &bytes, recorded, url, "store_load_url")
     }
 
@@ -6866,7 +6885,8 @@ impl Stores {
         all(target_arch = "wasm32", not(target_os = "wasi"), not(feature = "wasm"))
     ))]
     pub fn load_url(&mut self, slot: u16, url: &str) -> bool {
-        let Ok(older) = self.url_layout_gate(slot, url, "store_load_url_trusted") else {
+        let Ok((older, sidecar)) = self.url_layout_gate(slot, url, "store_load_url_trusted", "")
+        else {
             return false;
         };
         let bytes = match crate::net::fetch_bytes(url) {
@@ -6880,7 +6900,7 @@ impl Stores {
             let done = self.load_upgraded_from(slot, &sidecar, &bytes, url);
             return Self::conversion_took(done, url, "store_load_url_trusted");
         }
-        let recorded = self.url_recorded_slot(slot, url);
+        let recorded = self.url_recorded_slot(slot, url, sidecar.as_deref());
         self.load_bytes_from(slot, &bytes, recorded, url, "store_load_url_trusted")
     }
 
@@ -7025,11 +7045,37 @@ impl Stores {
     /// `Ok(None)` reads the image raw; `Ok(Some(sidecar))` converts it from the older layout
     /// that sidecar records (@PLN196), once the caller has the bytes; `Err(())` refuses it,
     /// with the reason on stderr.
-    fn url_layout_gate(&self, slot: u16, url: &str, builtin: &str) -> Result<Option<String>, ()> {
+    fn url_layout_gate(
+        &self,
+        slot: u16,
+        url: &str,
+        builtin: &str,
+        schema_sha256_hex: &str,
+    ) -> Result<(Option<String>, Option<String>), ()> {
         let Some(current) = self.slot_layout_identity(slot) else {
-            return Ok(None); // untyped store — no identity to compare against
+            return Ok((None, None)); // untyped store — no identity to compare against
         };
-        let (verdict, text) = match crate::net::fetch_beside(&format!("{url}.dschema")) {
+        let fetched = crate::net::fetch_beside(&format!("{url}.dschema"));
+        // A pinned sidecar: the layout file decides how the pinned image is read, so it is held
+        // to its own pin before it is read — missing or different, the load is refused.
+        if !schema_sha256_hex.is_empty() {
+            let why = match &fetched {
+                Ok(bytes) => crate::integrity::verify_sha256(bytes, schema_sha256_hex)
+                    .err()
+                    .map(|e| {
+                        format!("its layout sidecar (`.dschema`) does not match the pin: {e}")
+                    }),
+                Err(_) => Some(
+                    "its layout sidecar (`.dschema`) is pinned and could not be fetched"
+                        .to_string(),
+                ),
+            };
+            if let Some(why) = why {
+                crate::loft_eprintln!("{builtin}: refusing {url} — {why}.");
+                return Err(());
+            }
+        }
+        let (verdict, text) = match fetched {
             Ok(bytes) => match String::from_utf8(bytes) {
                 Ok(text) => (
                     crate::schema_sidecar::verdict_for_sidecar_text(
@@ -7053,10 +7099,10 @@ impl Stores {
             }
         };
         if matches!(verdict, crate::schema_sidecar::SchemaVerdict::Changed(_)) {
-            return Ok(text);
+            return Ok((text.clone(), text));
         }
         if Self::layout_verdict_ok(&verdict, url, builtin) {
-            Ok(None)
+            Ok((None, text))
         } else {
             Err(())
         }
@@ -7316,13 +7362,23 @@ impl Stores {
     /// (Phase 3b) *checkable*: after a `store_load*`, `store_verify(local)`
     /// proves the copy left no pointer aimed outside the store.
     pub fn verify_graph_ok(&self, r: &DbRef) -> bool {
+        self.verify_as(r, super::image_sound::Own::Live)
+    }
+
+    /// [`Self::verify_graph_ok`] for an image standing in its slot before it is adopted, its
+    /// stored references still naming the slot it was written from (`recorded`).
+    pub(super) fn verify_image_ok(&self, r: &DbRef, recorded: Option<u16>) -> bool {
+        self.verify_as(r, super::image_sound::Own::Image(recorded))
+    }
+
+    fn verify_as(&self, r: &DbRef, own: super::image_sound::Own) -> bool {
         let tp = self.allocations[r.store_nr as usize].known_type;
         if tp == u16::MAX {
             return false;
         }
         let tp = self.type_at(r, tp);
         let mut problems = 0u32;
-        self.validate_claims(r, tp, "store_verify", &mut problems);
+        self.validate_image_claims(r, tp, "store_verify", &mut problems, own);
         problems == 0
     }
 

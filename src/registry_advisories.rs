@@ -606,6 +606,13 @@ pub fn load_or_fetch(opts: &LoadOptions) -> Result<Option<AdvisoryFeed>, String>
                     fetched.signature.clone()
                 };
                 verify_feed(&fetched.content, &sig_bytes, *opts)?;
+                // Signed is not fresh: a feed older than the verified one cached is refused.
+                if let Ok(cached) = read_cached_feed_verified(&cache_path, &sig_path, *opts)
+                    && let Some(why) =
+                        registry_index::rollback_refusal("advisory feed", &fetched.content, &cached)
+                {
+                    return Err(why);
+                }
                 // Verified: now it is safe to keep.  Atomically, and as a pair —
                 // another process reading this cache mid-refresh must not get a half
                 // feed or the new feed beside the old signature (loft#1045).
@@ -664,8 +671,13 @@ fn read_cached_feed_verified(
     Ok(settled.content)
 }
 
-fn verify_feed(content: &[u8], sig: &[u8], opts: LoadOptions) -> Result<(), String> {
-    let result = registry_signing::verify_index(content, sig);
+/// The verdict on an advisory feed and its signature, with the index's waiver rules.
+///
+/// # Errors
+/// What is wrong with the pair.
+pub fn verify_feed(content: &[u8], sig: &[u8], opts: LoadOptions) -> Result<(), String> {
+    let result =
+        registry_signing::verify_document(registry_signing::Purpose::Advisories, content, sig);
     match result {
         VerifyResult::Valid => Ok(()),
         // As for the index (`install::verify_or_explain`): the waiver is for a feed with no

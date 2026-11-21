@@ -12,6 +12,7 @@
 //! `@FR-W-Store` (a 64-bit field into an `i32` slot) and `@FR-W-Count` (`sizeof(len(v))` is 4).
 
 use loft::file_access as fa;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 fn write(path: &Path, body: &str) {
@@ -269,8 +270,29 @@ fn emit_c(name: &str, main: &str, width: Option<&str>) -> String {
     if let Some(w) = width {
         cmd.env("LOFT_WIDTH", w);
     }
+    // @PLN217 — the unit's wide ledger beside it (`main.ledger`), read by `ledger`.
+    cmd.env("LOFT_WIDE_LEDGER", dir.join("main.ledger"));
     let _ = cmd.output().expect("run loft");
     fa::read_to_string(&out).expect("the emitted C")
+}
+
+/// The wide ledger of the unit `emit_c(name, …)` wrote: its lines as (function, class, what,
+/// count).  Empty for a 64-bit build, which writes none.
+fn ledger(name: &str) -> Vec<(String, String, String, u32)> {
+    let dir = std::env::temp_dir().join(format!("loft-width32-{}-{name}", std::process::id()));
+    fa::read_to_string(dir.join("main.ledger"))
+        .unwrap_or_default()
+        .lines()
+        .map(|l| {
+            let f: Vec<&str> = l.split('\t').collect();
+            (
+                f[0].to_string(),
+                f[1].to_string(),
+                f[2].to_string(),
+                f[3].parse().unwrap(),
+            )
+        })
+        .collect()
 }
 
 /// The C type `c` declares the local `name` with (`int32_t v0_m = …` → `int32_t`).
@@ -345,4 +367,393 @@ float false 0.30000000000000004 false
         c32.contains("loft_add32(") && c32.contains("loft_mul32("),
         "32-bit operations"
     );
+}
+
+const HELD: &str = "struct P { a: integer, b: float }
+fn wide(x: integer) -> i64? { if x == 0 { null } else { (x as i64) * 1000000000l } }
+fn pick(v: vector<integer>, i: i64?) -> integer { v[i] ?? -7 }
+fn pick32(v: vector<integer>, i: integer?) -> integer { v[i] ?? -7 }
+fn scan(v: vector<integer>, ps: vector<P>) -> integer? {
+  s = 0;
+  big = 4294967297l;
+  for k in 0..len(v) {
+    j = wide(k % 2);
+    s += (v[j] ?? 1000) + (v[big] ?? 500) + v[k] + (ps[k % len(ps)].a);
+  }
+  s
+}
+fn main() {
+  v = [10, 20, 30, 40];
+  ps = [P { a: 3, b: 0.5 }, P { a: 5, b: 1.5 }];
+  n = wide(0);
+  m: integer? = null;
+  println(\"{pick(v, n)} {pick(v, 1l)} {pick(v, -1l)} {pick(v, 4l)} {pick(v, 5000000000l)} {pick(v, 4294967297l)}\");
+  println(\"{pick32(v, m)} {pick32(v, 2)} {pick32(v, -4)} {pick32(v, -5)} {pick32(v, 4)}\");
+  println(\"{scan(v, ps)} {len(v)} {len(ps)}\");
+}
+";
+
+/// @PLN217 — the C runtime takes a vector's index and answers its length at the BUILD's width
+/// (`loft_int`, `loft_width.h`), so a 32-bit build does no 64-bit arithmetic for one.  An
+/// `i64` index is narrowed where it meets the accessor, and what does not fit is OUTSIDE the
+/// vector, never another element: a null index and 5000000000 read the `??` default, and so
+/// does 4294967297, whose low 32 bits are 1 (element 20).  In `scan` each of the four turns
+/// adds 1000 (a null or a 1000000000 index), 500 (4294967297), `v[k]` and `ps[k % 2].a`:
+/// 4 * 1500 + 100 + 16 = 6116; a truncated index would add `v[1]` instead, 4196.  The same
+/// answers on both backends and both widths.
+#[test]
+fn a_vector_index_past_the_build_s_width_is_outside_the_vector() {
+    let want = "-7 20 40 -7 -7 -7\n-7 30 10 -7 -7\n6116 4 2\n";
+    for backend in ["--interpret", "--native-c"] {
+        let b = &backend[2..5];
+        for width in [Some("32"), None] {
+            let name = format!("held{b}{}", width.unwrap_or("64"));
+            // The answer is the first three lines; the program's nullable index warns after.
+            let out = run_on(backend, &name, "", HELD, width);
+            let answer: String = out.lines().take(3).map(|l| format!("{l}\n")).collect();
+            assert_eq!(answer, want, "{backend} {width:?}");
+        }
+    }
+    let c32 = emit_c("held-c32", HELD, Some("32"));
+    assert!(
+        c32.starts_with("#ifndef LOFT_WIDTH32\n#define LOFT_WIDTH32\n"),
+        "a 32-bit unit compiles its runtime at 32 bits"
+    );
+    assert!(
+        c32.contains("loft_vh_addr(") && c32.contains(", loft_n32(v"),
+        "an i64 index is narrowed at the accessor"
+    );
+    let c64 = emit_c("held-c64", HELD, None);
+    assert!(!c64.contains("#define LOFT_WIDTH32"), "the 64-bit unit");
+}
+
+const WALK: &str = "struct P { a: integer }
+fn walk(ps: vector<P>) -> integer {
+  s = 0;
+  for p in ps { s += p.a + p#index; }
+  s
+}
+fn main() {
+  ps = [P { a: 3 }, P { a: 5 }, P { a: 9 }];
+  println(\"{walk(ps)} {sizeof(integer)}\");
+}
+";
+
+/// `@FR-W-Count` — a loop's own counter takes the file's width: in a 32-bit build the walk's
+/// `p#index` is an `int32_t` stepped by a 32-bit add, where the 64-bit build holds an
+/// `int64_t`.  The answer is the same, (3 + 0) + (5 + 1) + (9 + 2) = 20, on both backends.
+#[test]
+fn a_loop_counter_takes_the_files_width() {
+    for backend in ["--interpret", "--native-c"] {
+        let b = &backend[2..5];
+        assert_eq!(
+            run_on(backend, &format!("walk{b}32"), "", WALK, Some("32")),
+            "20 4\n",
+            "{backend}"
+        );
+        assert_eq!(
+            run_on(backend, &format!("walk{b}64"), "", WALK, None),
+            "20 8\n",
+            "{backend}"
+        );
+    }
+    let c32 = emit_c("walk-c32", WALK, Some("32"));
+    let c64 = emit_c("walk-c64", WALK, None);
+    assert_eq!(local_ctype(&c32, "p_index"), "int32_t", "under the regime");
+    assert_eq!(local_ctype(&c64, "p_index"), "int64_t", "the 64-bit build");
+}
+
+const WIDE: &str = "struct P { a: integer }
+fn key(p: P, salt: i64) -> i64 { (p.a as i64) * 1000003l + salt }
+fn walk(ps: vector<P>) -> integer {
+  s = 0;
+  for p in ps { s += p.a + p#index; }
+  s
+}
+fn main() {
+  ps = [P { a: 3 }, P { a: 5 }, P { a: 9 }];
+  println(\"{walk(ps)} {key(ps[1], 7l)}\");
+}
+";
+
+/// @PLN217 — the wide ledger (`LOFT_WIDE_LEDGER`) says where a 32-bit unit holds or computes
+/// 64 bits, and why.  `walk` is 32-bit throughout: it has no line.  `key` asks for 64 bits by
+/// its `i64` parameter and result, both `declared`; nothing is `undeclared` — the compiler made
+/// no wide value nobody asked for.  No runtime function is handed a widened value: the 32-bit
+/// number is printed by the runtime's 32-bit form.  The one conversion left is at the 64-bit
+/// multiply of `key`, whose `i64` operands asked for it.  A 64-bit build writes no ledger.
+#[test]
+fn the_wide_ledger_names_what_is_64_bit_and_why() {
+    let _ = emit_c("ledger32", WIDE, Some("32"));
+    let lines = ledger("ledger32");
+    assert!(!lines.is_empty(), "a 32-bit unit writes its ledger");
+    let of = |class: &str| -> Vec<String> {
+        lines
+            .iter()
+            .filter(|l| l.1 == class)
+            .map(|l| format!("{} {}", l.0, l.2))
+            .collect()
+    };
+    assert_eq!(of("undeclared"), Vec::<String>::new(), "{lines:?}");
+    assert_eq!(
+        of("declared"),
+        ["n_key salt", "n_key the result"],
+        "{lines:?}"
+    );
+    assert!(
+        lines.iter().all(|l| !l.0.starts_with("n_walk")),
+        "the walk is 32-bit throughout: {lines:?}"
+    );
+    assert_eq!(
+        of("runtime"),
+        Vec::<String>::new(),
+        "no runtime function is handed a widened value: {lines:?}"
+    );
+    assert_eq!(
+        of("op"),
+        ["n_key__fr loft_mul"],
+        "the i64 product: {lines:?}"
+    );
+    let _ = emit_c("ledger64", WIDE, None);
+    assert!(ledger("ledger64").is_empty(), "a 64-bit build writes none");
+}
+
+const REMOVE: &str = "struct B { n: integer }
+fn thin(bs: vector<B>) -> integer {
+  seen = 0;
+  for b in bs {
+    seen += b.n;
+    if b.n % 2 == 0 { b#remove; }
+  }
+  seen
+}
+fn main() {
+  bs = [B { n: 2 }, B { n: 4 }, B { n: 5 }, B { n: 6 }, B { n: 7 }];
+  guard = 77;
+  seen = thin(bs);
+  left = 0;
+  for b in bs { left = left * 10 + b.n; }
+  println(\"{seen} {len(bs)} {left} {guard}\");
+}
+";
+
+/// @PLN217 — a removal inside a vector walk steps the walk's index back through its address.
+/// Under the 32-bit regime that index is held in 32 bits (`@FR-W-Count`), so the runtime is
+/// handed it at its own width (`loft_vec_walk_remove32`): written as 64 bits it would overrun
+/// the counter.  Every element is visited once — 2 + 4 + 5 + 6 + 7 = 24 — the three even ones
+/// go, 5 and 7 stay (57), and the local beside the walk keeps its 77.  Both widths, both
+/// backends; the C must compile with no pointer of the wrong width.
+#[test]
+fn a_removal_in_a_walk_steps_a_32_bit_index_back() {
+    for backend in ["--interpret", "--native-c"] {
+        let b = &backend[2..5];
+        for width in [Some("32"), None] {
+            let name = format!("remove{b}{}", width.unwrap_or("64"));
+            assert_eq!(
+                run_on(backend, &name, "", REMOVE, width),
+                "24 2 57 77\n",
+                "{backend} {width:?}"
+            );
+        }
+    }
+    let c32 = emit_c("remove-c32", REMOVE, Some("32"));
+    assert!(c32.contains("loft_vec_walk_remove32("), "the 32-bit index");
+    let c64 = emit_c("remove-c64", REMOVE, None);
+    assert!(
+        c64.contains("loft_vec_walk_remove(") && !c64.contains("loft_vec_walk_remove32(l"),
+        "the 64-bit index"
+    );
+}
+
+const EDGES: &str = "struct R { a: integer, b: integer }
+fn at(v: vector<integer>, i: integer?) -> integer { v[i] ?? -9 }
+fn main() {
+  hi = 2147483647;
+  lo = -2147483647;
+  z = 0;
+  n: integer? = null;
+  println(\"{hi} {lo} {z} {n} {-1} {10} {-10} {1000000000}\");
+  println(\"[{hi:12}] [{lo:<14}] [{7:05}] [{-7:05}] [{7:+}] [{z:+}] [{n:6}]\");
+  println(\"{255:x} {255:#x} {-1:x} {5:b} {8:o} {lo:x}\");
+  r = R { a: hi, b: lo };
+  r.a = lo;
+  r.b = 12345;
+  v = [hi, lo, z];
+  v += [-5];
+  v += [hi];
+  println(\"{r.a} {r.b} {len(v)} {v[0]} {v[1]} {v[3]} {v[-1]} {v[-5]}\");
+  println(\"{at(v, n)} {at(v, 5)} {at(v, -6)} {at(v, 4)} {at(v, -1)} {at(v, lo)} {at(v, hi)}\");
+}
+";
+
+/// @PLN217 — the runtime's 32-bit forms answer what its 64-bit ones do, at the edges of an
+/// `i32`: a decimal print (`loft_format_int32`) of the largest and smallest values, zero and
+/// null, padded, signed and zero-filled; the bit-pattern radixes, which still print the 64 bits
+/// a negative value widens to (`-1` is sixteen `f`); a 4-byte field written and read back
+/// (`loft_set_int4_32`); and an element read by an index from either end, one past either
+/// end, the null index and the two extreme ones (`loft_vec_get32`).  One answer on both
+/// backends and both widths.
+#[test]
+fn the_32_bit_runtime_forms_answer_as_the_64_bit_ones() {
+    let want = "2147483647 -2147483647 0 null -1 10 -10 1000000000\n[  2147483647] [-2147483647   ] [00007] [-0007] [+7] [+0] [  null]\nff 0xff ffffffffffffffff 101 10 ffffffff80000001\n-2147483647 12345 5 2147483647 -2147483647 -5 2147483647 2147483647\n-9 -9 -9 2147483647 2147483647 -9 -9\n";
+    for backend in ["--interpret", "--native-c"] {
+        let b = &backend[2..5];
+        for width in [Some("32"), None] {
+            let name = format!("edges{b}{}", width.unwrap_or("64"));
+            let out = run_on(backend, &name, "", EDGES, width);
+            let answer: String = out.lines().take(5).map(|l| format!("{l}\n")).collect();
+            assert_eq!(answer, want, "{backend} {width:?}");
+        }
+    }
+    let c32 = emit_c("edges-c32", EDGES, Some("32"));
+    for form in [
+        "loft_format_int32(&",
+        "loft_set_int4_32_at(",
+        "loft_vec_get32(",
+    ] {
+        assert!(c32.contains(form), "the 32-bit unit calls {form}");
+    }
+}
+
+const CAST: &str = "fn turn(a: float) -> integer { round(a / 30.0) as integer ?? -1 }
+fn big(a: float) -> integer { ((a as integer) / 1000) ?? -2 }
+fn main() {
+  println(\"{turn(95.0)} {turn(-95.0)} {big(5000000000.0)} {big(7000.0)}\");
+}
+";
+
+/// `@FR-W-Name` — the `integer` a cast names in a regime file is the `i32`, so a float that
+/// does not fit one reads null AT THE CAST: `(5000000000.0 as integer) / 1000` is null there
+/// (-2 by its `??`), where the 64-bit build divides 5000000000 and answers 5000000.  A value
+/// that fits is the same in both: 95 / 30 rounds to 3, 7000 / 1000 is 7.  Under the regime the
+/// C converts the single with no double on the way (`loft_s2i32_at`).  Both backends.
+#[test]
+fn a_cast_to_integer_is_an_i32_under_the_regime() {
+    for backend in ["--interpret", "--native-c"] {
+        let b = &backend[2..5];
+        assert_eq!(
+            run_on(backend, &format!("cast{b}32"), "", CAST, Some("32")),
+            "3 -3 -2 7\n",
+            "{backend}"
+        );
+        assert_eq!(
+            run_on(backend, &format!("cast{b}64"), "", CAST, None),
+            "3 -3 5000000 7\n",
+            "{backend}"
+        );
+    }
+    let c32 = emit_c("cast-c32", CAST, Some("32"));
+    assert!(
+        c32.contains("loft_s2i32_at("),
+        "a single converts in single precision"
+    );
+    let program = c32.rsplit("loft_tnames").next().unwrap_or("");
+    assert!(
+        !program.contains("loft_f2i_at((double)"),
+        "no double on the way: {}",
+        program
+            .lines()
+            .find(|l| l.contains("loft_f2i_at"))
+            .unwrap_or("")
+    );
+}
+
+// @PLN217 — the C runtime names a loft `integer` and a loft `float` by the build's width, and
+// the count below keeps what is not yet so from growing.  A plain `int64_t` or `double` is 64
+// bits on a 32-bit core whether the value needs them or not, and where it is added, subtracted
+// or compared no library call betrays it, so neither the image gate nor the wide ledger sees
+// it.  `tests/width_source.baseline` holds, per header, how many lines still name one.  A
+// header above its count fails: write the new code in `src/c/loft_width.h`'s names.  A header
+// below its count passes; record it with
+// `LOFT_BLESS_WIDTH_SOURCE=1 cargo test --test width32 the_runtime_names`.
+
+/// Does `line` name `word` as a whole identifier?
+fn names_word(line: &str, word: &str) -> bool {
+    line.match_indices(word).any(|(i, _)| {
+        let ident = |c: char| c.is_ascii_alphanumeric() || c == '_';
+        !line[..i].ends_with(ident) && !line[i + word.len()..].starts_with(ident)
+    })
+}
+
+/// Per runtime header, the lines that name a plain `int64_t` or `double`.  The width header
+/// itself is where the two are given their names.
+fn fixed_width_counts() -> BTreeMap<String, usize> {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src").join("c");
+    let mut out = BTreeMap::new();
+    for entry in fa::read_dir(&dir).expect("read src/c") {
+        let path: PathBuf = entry.os_spelling();
+        let Some(name) = fa::file_name(&path) else {
+            continue;
+        };
+        if !fa::has_extension(&path, "h") || name == "loft_width.h" {
+            continue;
+        }
+        let text = fa::read_to_string(&path).expect("read a runtime header");
+        let n = text
+            .lines()
+            // A line of a block comment says what the code does; it holds no value.
+            .filter(|l| !l.trim_start().starts_with("/*") && !l.trim_start().starts_with('*'))
+            .filter(|l| names_word(l, "int64_t") || names_word(l, "double"))
+            .count();
+        out.insert(name, n);
+    }
+    out
+}
+
+fn baseline_path() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("width_source.baseline")
+}
+
+#[test]
+fn the_runtime_names_no_more_fixed_widths_than_its_baseline() {
+    let now = fixed_width_counts();
+    if std::env::var_os("LOFT_BLESS_WIDTH_SOURCE").is_some() {
+        let mut text = String::from(
+            "# header\tlines naming a plain int64_t or double — tests/width_source.rs; a count only goes down\n",
+        );
+        for (name, n) in &now {
+            if *n > 0 {
+                text.push_str(&format!("{name}\t{n}\n"));
+            }
+        }
+        fa::write(baseline_path(), text).expect("write the baseline");
+        return;
+    }
+    let base: BTreeMap<String, usize> = fa::read_to_string(baseline_path())
+        .expect("tests/width_source.baseline")
+        .lines()
+        .filter(|l| !l.starts_with('#') && !l.is_empty())
+        .map(|l| {
+            let (name, n) = l.split_once('\t').expect("header<TAB>count");
+            (name.to_string(), n.parse().expect("a count"))
+        })
+        .collect();
+    let rose: Vec<String> = now
+        .iter()
+        .filter(|(name, n)| **n > base.get(*name).copied().unwrap_or(0))
+        .map(|(name, n)| {
+            format!(
+                "src/c/{name}: {} -> {n}",
+                base.get(name).copied().unwrap_or(0)
+            )
+        })
+        .collect();
+    assert!(
+        rose.is_empty(),
+        "the runtime names a plain `int64_t` or `double` on more lines than its baseline — a loft \
+         `integer` is `loft_int`, a loft `float` is `loft_float`, and a value that is 64 bits in \
+         every build is `loft_word` / `loft_fword` (src/c/loft_width.h):\n  {}",
+        rose.join("\n  ")
+    );
+}
+
+#[test]
+fn a_fixed_width_is_found_as_a_whole_word() {
+    assert!(names_word("static int64_t f(void) {", "int64_t"));
+    assert!(names_word("    double d = 0;", "double"));
+    assert!(!names_word("uint64_t u;", "int64_t"));
+    assert!(!names_word("loft_double_x(1);", "double"));
+    assert!(!names_word("my_int64_t_alias v;", "int64_t"));
 }

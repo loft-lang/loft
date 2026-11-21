@@ -4,7 +4,7 @@
 
 //! @PLN204 — the 32-bit regime's boundary with 64-bit code.
 //!
-//! A file under the regime (`#width 32`, or every file but the stdlib under `LOFT_WIDTH=32`)
+//! A file under the regime (`#width 32`, or every file, the stdlib too, under `LOFT_WIDTH=32`)
 //! reads a plain `integer` as an `i32` and a plain `float` as a `single` (`parse_type_inner`),
 //! types its literals so (`parse_primary`), and keeps 32-bit arithmetic 32-bit
 //! (`handle_operator`).  What it still meets is a value typed by a 64-bit file: the result of a
@@ -17,7 +17,7 @@ use super::{Level, Parser, Type, Value, diagnostic_format};
 
 impl Parser {
     /// The regime of the file the lexer has just begun: under `LOFT_WIDTH=32` every source
-    /// but the stdlib, unless the file's first line is `#width 64`; elsewhere only a file
+    /// (the stdlib too), unless the file's first line is `#width 64`; elsewhere only a file
     /// whose first line is `#width 32`.  Decided once per source, so a file resumed after a
     /// `use` keeps it.  The `#width` line is consumed; any other `#` line is left in place.
     /// Enforces `@FR-W-Regime`.
@@ -200,6 +200,23 @@ impl Parser {
             }
             "float" => "single",
             other => other,
+        }
+    }
+
+    /// The type of a count or a counter the compiler makes itself — a loop's `x#index`, its
+    /// `x#count`, a walk's position and length, a comprehension's index, a text loop's
+    /// `x#next`: the file's own `integer`, so an `i32` in a file under the regime, as a
+    /// collection's `len` is.  No collection there is longer than an `i32` counts.  Enforces
+    /// `@FR-W-Count`.
+    ///
+    /// It is what the compiler COUNTS in, not what an index is converted to: a program's own
+    /// index expression keeps the plain `integer` as its target, so an `i64` index is taken as
+    /// it is and narrowed where it meets the vector, a value past the width reading as outside.
+    pub(crate) fn count_type(&self) -> Type {
+        if self.data.width32() {
+            Type::Integer(crate::narrow::IntegerSpec::i32())
+        } else {
+            crate::data::I32.clone()
         }
     }
 

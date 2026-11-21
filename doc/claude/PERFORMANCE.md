@@ -913,6 +913,10 @@ design of each is in the record; the delivered items are listed below the table.
 | **W1** — wasm string representation | wasm | not built | [§ Design: W1](PERFORMANCE-history.md#design-w1--wasm-string-representation) |
 | **O8.1b / O8.2 / O8.3** — packed bytes, bulk struct vectors, zero-fill defaults | both | "not started" in O8's phase table | [§ Design: O8](PERFORMANCE-history.md#design-o8--bulk-initialisation-of-constant-data) |
 | **Worker clone** — `Stores::types` / `names` copied per `par` worker | parallel | the fields are not `Arc`-wrapped | [§ Runtime optimisation audit](PERFORMANCE-history.md#runtime-optimisation-audit) |
+| **A library's scalar function is not inlined across units** — random `get`, the one C ship routine at the 2.7× line | C | the library's function is emitted in its own unit, so the caller's loop keeps the generator's state in memory where the twin holds it in registers | [@PLN219 § Left to the performance loop](plans/219-rust-slot-links/README.md#left-to-the-performance-loop) |
+| **`out += f(…)` for a text `f`** — `(R-AppendTwin)` has no text clause (zttext `materialise`) | C | the rule's clauses name vector buffers only | the same section |
+| **A keyed removal shifts its bucket run back** — `lru_mixed` | both | `loft_h_remove_at` shifts; `(Col-RemoveKeyed)` asks only that every other key stays reachable.  A tombstone removal changes the table in both runtimes and in the image: the owner's decision | the same section |
+| **Pixels are `vector<integer>`, 8 bytes each** — graphics `canvas`, `clear` | both | `u32` cannot hold opaque white (`(N-Reserve)` keeps its top code), so the width is a language question, not a rewrite | the same section |
 
 **Delivered, for reference:** P1 (operand fusion — [INTERPRETER_PERFORMANCE.md § Operand fusion](INTERPRETER_PERFORMANCE.md#operand-fusion--superinstructions)), N4 (`cr_call_push` suppressed on `#pure` leaves), N6 (no rustc
 probe on a cache hit), F1 (the front end's hot spots), F2 (the allocation gate's two pins), BUILD1 (no lib/bin double compile),

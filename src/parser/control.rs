@@ -355,8 +355,8 @@ enum RefDelivery {
 }
 
 use super::{
-    DefType, I32, Level, LexItem, Parser, Position, Type, Value, diagnostic_format,
-    merge_dependencies, v_block, v_if, v_loop, v_set,
+    DefType, Level, LexItem, Parser, Position, Type, Value, diagnostic_format, merge_dependencies,
+    v_block, v_if, v_loop, v_set,
 };
 
 /// Why an enclosing-scope capture inside a `parallel {}` arm is rejected.
@@ -7363,7 +7363,7 @@ impl Parser {
             }
         } else if let Type::Iterator(i_tp, _) = &in_type {
             if **i_tp == Type::Null {
-                I32.clone()
+                self.count_type()
             } else {
                 *i_tp.clone()
             }
@@ -16720,7 +16720,7 @@ impl Parser {
         let vec_copy_var = self.create_unique("reduce_vec", &in_type);
         in_type = in_type.depending(vec_copy_var);
 
-        let iter_var = self.create_unique("reduce_idx", &I32);
+        let iter_var = self.create_unique("reduce_idx", &self.count_type());
         self.vars.defined(iter_var);
 
         let var_tp = self.for_type(&in_type);
@@ -16905,7 +16905,7 @@ impl Parser {
             );
         }
         self.lexer.token(")");
-        I32.clone()
+        self.count_type()
     }
 
     /// `sizeof` of a struct-enum value: the size of the variant it holds (@F45).
@@ -16918,7 +16918,7 @@ impl Parser {
     /// is known here, so the answer is a chain over it; an absent value (discriminant 0, no
     /// variant) answers `absent`, its type's size.
     fn variant_size(&mut self, value: Value, enum_nr: u32, absent: i32) -> Value {
-        let d = self.create_unique("sizeof_disc", &I32);
+        let d = self.create_unique("sizeof_disc", &self.count_type());
         self.vars.defined(d);
         let get_enum = self.cl("OpGetEnum", &[value, Value::Int(0)]);
         let disc = self.cl("OpConvIntFromEnum", &[get_enum]);
@@ -16937,7 +16937,11 @@ impl Parser {
             let test = self.cl("OpEqInt", &[Value::Var(d), Value::Int(nr)]);
             chain = v_if(test, Value::Int(size), chain);
         }
-        v_block(vec![v_set(d, disc), chain], I32.clone(), "sizeof variant")
+        v_block(
+            vec![v_set(d, disc), chain],
+            self.count_type(),
+            "sizeof variant",
+        )
     }
 
     /// The packed size `tp` takes as a struct field or vector element — THE size `sizeof`

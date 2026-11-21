@@ -1649,7 +1649,9 @@ fn interpreted_and_native_c_bindings_agree() -> std::io::Result<()> {
          pub fn c_atoi(s: text) -> integer;     #c \"atoi\" \"int(const char*)\"\n\
          pub fn c_abs(v: integer) -> integer;   #c \"abs\" \"int(int)\"\n\
          pub fn c_write(fd: integer, v: vector<u8>) -> integer;  #c \"write\" \"long(int, const void*, size_t)\"\n\
+         pub fn c_memcmp(a: text, b: text, n: integer) -> integer;  #c \"memcmp\" \"int(const void*, const void*, size_t)\"\n\
          fn main() {\n\
+         \x20 println(\"past {c_memcmp(\"ab\\0cd\", \"ab\\0ce\", 5) != 0} {c_memcmp(\"ab\\0cd\", \"ab\\0cd\", 5)}\");\n\
          \x20 println(\"len {c_strlen(\"hello\")}\");\n\
          \x20 println(\"neg {c_atoi(\"-1\")}\");\n\
          \x20 println(\"abs {c_abs(-7)}\");\n\
@@ -1673,6 +1675,14 @@ fn interpreted_and_native_c_bindings_agree() -> std::io::Result<()> {
          width this is 4294967295: {out}"
     );
     assert!(out.contains("abs 7") && out.contains("wrote 3"), "{out}");
+    // A text holds a length and may hold a NUL; the crossing hands C every byte of it and
+    // then one NUL, so a callee that takes the byte count beside the pointer reads past an
+    // interior NUL. `strlen` on that pointer stops there: a library that hashes or matches
+    // a text takes `size(t)` as an argument instead.
+    assert!(
+        out.contains("past true 0"),
+        "the bytes after an interior NUL must cross with the text: {out}"
+    );
 
     // The parity half. `prepare_native_test` may skip (no rustc / low space),
     // and a skipped comparison must not read as agreement.

@@ -9329,10 +9329,10 @@ pub operator to_text(self: Release) -> text
 `major.minor.patch`.
 
 ```rust
-pub fn store_load_url(r: reference, url: text, sha256: text) -> boolean fs#read
+pub fn store_load_url(r: reference, url: text, sha256: text, schema_sha256: text = "") -> boolean fs#read
 ```
 
-Load a persisted store IMAGE over HTTP(S) from a TRUSTED source, establishing authenticity BEFORE the bytes are adopted: fetch the whole image at `url`, verify its SHA-256 against the caller-pinned `sha256` (lowercase hex), and only on a match heap-load it into `r` — the bytes never touch disk. A fetch error or a hash mismatch REFUSES the load (returns false, loads nothing). The fetch→verify→trust discipline the registry install uses, bridged onto the store loader; `url` may be `http(s)://` or `file://`. Like `store\_load`, it refuses an image whose `\<url\>.dschema` records a different layout than `r`'s type, and an image with no `.dschema` at all. Whole-file counterpart of the paged `store\_load\_key(s)`/`store\_load\_range` loaders. h: hash\<Rec\[id\]\> = \[\] store\_load\_url(h, "https://cdn.example/world.store", "\<sha256-hex\>")
+Load a persisted store IMAGE over HTTP(S) from a TRUSTED source, establishing authenticity BEFORE the bytes are adopted: fetch the whole image at `url`, verify its SHA-256 against the caller-pinned `sha256` (lowercase hex), and only on a match heap-load it into `r` — the bytes never touch disk. A fetch error or a hash mismatch REFUSES the load (returns false, loads nothing). The fetch→verify→trust discipline the registry install uses, bridged onto the store loader; `url` may be `http(s)://` or `file://`. Like `store\_load`, it refuses an image whose `\<url\>.dschema` records a different layout than `r`'s type, and an image with no `.dschema` at all. Whole-file counterpart of the paged `store\_load\_key(s)`/`store\_load\_range` loaders. `schema\_sha256` pins that `.dschema` too: the layout file decides how the pinned bytes are read, so whoever can change it on the host (or on the path, for `http://`) can change what the image means.  Given, a sidecar whose SHA-256 differs, or that is missing, refuses the load; left out, the sidecar is read unpinned, as before.  Pin both for a source you do not control (`shasum -a 256 world.store world.store.dschema` gives the two). h: hash\<Rec\[id\]\> = \[\] store\_load\_url(h, "https://cdn.example/world.store", "\<sha256-hex\>", "\<dschema-sha256-hex\>")
 
 ```rust
 pub fn store_load_url_trusted(r: reference, url: text) -> boolean fs#read

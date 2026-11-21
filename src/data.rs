@@ -5865,7 +5865,7 @@ pub struct Data {
     /// parse across the test files that `use` exactly it — ever fills it.
     preloaded_uses: HashMap<String, u16>,
     /// @PLN204 — the sources parsed under the 32-bit regime (`#width 32`, or `LOFT_WIDTH=32`
-    /// for every source but the stdlib): there a plain `integer` is an `i32`, a plain `float`
+    /// for every source, the stdlib too): there a plain `integer` is an `i32`, a plain `float`
     /// a `single`, and arithmetic on 32-bit operands stays 32-bit ([`Self::width32`]).
     width32_sources: std::collections::BTreeSet<u16>,
     /// @PLN204 — the generic instances whose TEMPLATE is in a 64-bit source: registered under

@@ -173,7 +173,17 @@ static int loft_fetch(const char *url, loft_bytes *out, char *err, size_t cap) {
 /* The sidecar text a URL gate kept for a converting load (gate 3). */
 static LOFT_TLS char *loft_net_gate_kept;
 
+static int loft_net_gate_pinned(const char *u, const loft_sidecar *sc, const char *who, long *recorded, int convert,
+                                const char *schema_sha);
 static int loft_net_gate(const char *u, const loft_sidecar *sc, const char *who, long *recorded, int convert) {
+    return loft_net_gate_pinned(u, sc, who, recorded, convert, 0);
+}
+
+/* `loft_net_gate` with the sidecar held to `schema_sha` (lowercase or uppercase hex) when one is
+ * given: the layout file decides how the pinned image is read, so a missing or different one
+ * refuses the load (`url_layout_gate`'s pin). */
+static int loft_net_gate_pinned(const char *u, const loft_sidecar *sc, const char *who, long *recorded, int convert,
+                                const char *schema_sha) {
     char err[1024];
     loft_bytes b;
     size_t ulen = strlen(u);
@@ -190,8 +200,19 @@ static int loft_net_gate(const char *u, const loft_sidecar *sc, const char *who,
         return 0;
     }
     if (!got) {
-        loft_gate_refuse(who, u, "it has no layout sidecar (`.dschema`) beside it, so nothing records the layout "
-                         "its records were written with; write it with store_persist_copy, which writes both");
+        loft_gate_refuse(who, u, schema_sha && *schema_sha
+                                     ? "its layout sidecar (`.dschema`) is pinned and could not be fetched"
+                                     : "it has no layout sidecar (`.dschema`) beside it, so nothing records the layout "
+                                       "its records were written with; write it with store_persist_copy, which writes both");
+        return 0;
+    }
+    if (schema_sha && *schema_sha && !loft_sha256_matches(b.p, b.n, schema_sha)) {
+        char hex[65], why[256];
+        loft_sha256_hex(b.p, b.n, hex);
+        snprintf(why, sizeof why, "its layout sidecar (`.dschema`) does not match the pin: expected `%.64s`, got `%s`",
+                 schema_sha, hex);
+        loft_gate_refuse(who, u, why);
+        free(b.p);
         return 0;
     }
     char *text = (char *) realloc(b.p, b.n + 1);
@@ -212,7 +233,8 @@ static int loft_net_gate(const char *u, const loft_sidecar *sc, const char *who,
  * — a typed store refuses an image whose sidecar cannot be fetched, as a bare file — then the
  * bytes fetched, pinned by their SHA-256 when one is given, and adopted structurally validated
  * (`Store::from_bytes`). */
-static int loft_image_load_url(loft_ref r, loft_str url, const char *sha, const loft_sidecar *sc) {
+static int loft_image_load_url(loft_ref r, loft_str url, const char *sha, const char *schema_sha,
+                               const loft_sidecar *sc) {
     const char *who = sha ? "store_load_url" : "store_load_url_trusted";
     if (r.store_nr == 0xFFFF || r.store_nr >= loft_nstores) return 0;
     char *u = loft_cstr_own(url);
@@ -220,7 +242,7 @@ static int loft_image_load_url(loft_ref r, loft_str url, const char *sha, const 
     loft_bytes b;
     long recorded = -1;
     loft_gate_trie_v1 = 0;
-    int gate = sc && loft_stores[r.store_nr].known == sc->tp ? loft_net_gate(u, sc, who, &recorded, 1) : 1;
+    int gate = sc && loft_stores[r.store_nr].known == sc->tp ? loft_net_gate_pinned(u, sc, who, &recorded, 1, schema_sha) : 1;
     if (gate == 0) {
         free(u);
         return 0;
@@ -236,14 +258,7 @@ static int loft_image_load_url(loft_ref r, loft_str url, const char *sha, const 
         char hex[65];
         /* The pin is the fetched image's own, checked before anything is converted. */
         loft_sha256_hex(b.p, b.n, hex);
-        size_t i = 0;
-        while (sha[i] && i < 64) {
-            char c = sha[i];
-            if (c >= 'A' && c <= 'Z') c = (char) (c - 'A' + 'a');
-            if (c != hex[i]) break;
-            i++;
-        }
-        if (i != 64 || sha[64] != 0) {
+        if (!loft_sha256_matches(b.p, b.n, sha)) {
             fprintf(stderr, "store loader: refusing %s — sha256 mismatch: expected `%s`, got `%s`\n", u, sha, hex);
             free(b.p);
             free(u);
@@ -280,15 +295,17 @@ static int loft_image_load_url(loft_ref r, loft_str url, const char *sha, const 
     return ok;
 }
 
-static uint8_t loft_store_load_url(loft_ref r, loft_str url, loft_str sha, const loft_sidecar *sc) {
+static uint8_t loft_store_load_url(loft_ref r, loft_str url, loft_str sha, loft_str schema_sha, const loft_sidecar *sc) {
     char *s = loft_cstr_own(sha);
-    int ok = loft_image_load_url(r, url, s, sc);
+    char *ss = loft_cstr_own(schema_sha);
+    int ok = loft_image_load_url(r, url, s, ss, sc);
     free(s);
+    free(ss);
     return (uint8_t) ok;
 }
 
 static uint8_t loft_store_load_url_trusted(loft_ref r, loft_str url, const loft_sidecar *sc) {
-    return (uint8_t) loft_image_load_url(r, url, 0, sc);
+    return (uint8_t) loft_image_load_url(r, url, 0, 0, sc);
 }
 
 #endif

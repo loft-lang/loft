@@ -1430,7 +1430,8 @@ fn loft_ffi_candidate_links(
     let Some(stem) = crate::file_access::file_stem(cand) else {
         return false;
     };
-    let dir = std::env::temp_dir().join(format!("loft_ffi_probe_{}_{stem}", std::process::id()));
+    let dir = crate::platform::scratch_dir()
+        .join(format!("loft_ffi_probe_{}_{stem}", std::process::id()));
     if crate::file_access::create_dir_all(&dir).is_err() {
         return false;
     }

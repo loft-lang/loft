@@ -2103,3 +2103,235 @@ fn a_released_library_artifact_runs_compiled_without_rustc() {
     let _ = fa::remove_dir_all(&tmp);
     let _ = fa::remove_dir_all(&home);
 }
+
+// ── `loft bundle import`: nothing in a bundle is trusted for having arrived ──────────────
+//
+// A bundle travels by hand, so its index must verify before it is written into the cache,
+// and each tarball must be packed as `<pkg>-<ver>/` — one packed without that directory
+// unpacked straight into the cache root, beside the index, the advisory feed and every other
+// package, and could replace any of them.
+
+/// A gzipped tarball of `files` (path, contents).
+fn tar_gz(files: &[(&str, &str)]) -> Vec<u8> {
+    let mut b = tar::Builder::new(flate2::write::GzEncoder::new(
+        Vec::new(),
+        flate2::Compression::default(),
+    ));
+    for (path, body) in files {
+        let mut h = tar::Header::new_gnu();
+        h.set_size(body.len() as u64);
+        h.set_mode(0o644);
+        h.set_cksum();
+        b.append_data(&mut h, path, body.as_bytes()).unwrap();
+    }
+    b.into_inner().unwrap().finish().unwrap()
+}
+
+/// A bundle directory holding an UNSIGNED index that names `demo 1.0.0` with the tarball's
+/// hash, and that tarball.
+fn unsigned_bundle(dir: &Path, tarball: &[u8]) {
+    use sha2::Digest as _;
+    let sha = format!("{:x}", sha2::Sha256::digest(tarball));
+    let index = format!(
+        r#"{{"schema_version": 1, "updated": "2026-11-21T00:00:00Z", "packages": {{"demo": {{"versions": {{"1.0.0": {{"url": "https://example.invalid/demo-1.0.0.tar.gz", "sha256": "{sha}", "size": {size}, "loft": ">=2026.1.0", "published": "2026-11-21T00:00:00Z"}}}}}}}}}}"#,
+        size = tarball.len()
+    );
+    fa::create_dir_all(dir.join("packages")).unwrap();
+    fa::write(dir.join("index.json"), index).unwrap();
+    fa::write(dir.join("packages").join("demo-1.0.0.tar.gz"), tarball).unwrap();
+}
+
+fn bundle_import(home: &Path, args: &[&str]) -> std::process::Output {
+    loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+        .arg("bundle")
+        .arg("import")
+        .args(args)
+        .env("HOME", home)
+        .env("LOFT_HOME", home)
+        .output()
+        .expect("run loft bundle import")
+}
+
+#[test]
+fn bundle_import_refuses_an_unsigned_index() {
+    let tmp = tmpdir("bundle_unsigned");
+    let bundle = tmp.join("bundle");
+    unsigned_bundle(
+        &bundle,
+        &tar_gz(&[("demo-1.0.0/loft.toml", "[package]\nname = \"demo\"\n")]),
+    );
+    let home = tmp.join("home");
+    let out = bundle_import(&home, &[bundle.to_str().unwrap()]);
+    assert!(
+        !out.status.success(),
+        "an unsigned index is refused without --allow-unsigned"
+    );
+    let cache = home.join(".loft").join("registry");
+    assert!(
+        !fa::exists(cache.join("index.json")),
+        "and nothing reached the cache"
+    );
+    assert!(
+        !fa::exists(cache.join("demo-1.0.0")),
+        "not the package either"
+    );
+    let ok = bundle_import(&home, &["--allow-unsigned", bundle.to_str().unwrap()]);
+    assert!(
+        ok.status.success(),
+        "with --allow-unsigned it imports: {}",
+        String::from_utf8_lossy(&ok.stderr)
+    );
+    assert!(
+        fa::exists(cache.join("demo-1.0.0").join("loft.toml")),
+        "the package is placed"
+    );
+    let _ = fa::remove_dir_all(&tmp);
+}
+
+#[test]
+fn bundle_import_refuses_a_tarball_without_its_directory() {
+    let tmp = tmpdir("bundle_flat");
+    let bundle = tmp.join("bundle");
+    // Packed flat: its files would land in the cache root, one of them over the feed.
+    unsigned_bundle(
+        &bundle,
+        &tar_gz(&[
+            ("loft.toml", "[package]\nname = \"demo\"\n"),
+            ("advisories.json", "{}"),
+        ]),
+    );
+    let home = tmp.join("home");
+    let out = bundle_import(&home, &["--allow-unsigned", bundle.to_str().unwrap()]);
+    assert!(
+        !out.status.success(),
+        "a tarball not packed as demo-1.0.0/ is refused"
+    );
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("not packed as demo-1.0.0/loft.toml"),
+        "for that reason: {err}"
+    );
+    let cache = home.join(".loft").join("registry");
+    assert!(
+        !fa::exists(cache.join("advisories.json")),
+        "nothing landed in the cache root"
+    );
+    assert!(
+        !fa::exists(cache.join("loft.toml")),
+        "not its manifest either"
+    );
+    let _ = fa::remove_dir_all(&tmp);
+}
+
+// `loft pin`, like `loft install`, holds the index to its signature: it writes the versions
+// and hashes the index names into a lockfile that later runs install from.  An index with no
+// signature is read only with `--allow-unsigned`.
+#[test]
+fn pin_refuses_an_unsigned_index_without_the_flag() {
+    let tmp = tmpdir("pin_unsigned");
+    let index = tmp.join("index.json");
+    fa::write(
+        &index,
+        r#"{"schema_version": 1, "updated": "2026-11-21T00:00:00Z", "packages": {}}"#,
+    )
+    .unwrap();
+    let url = format!("file://{}", index.display().to_string().replace('\\', "/"));
+    let script = tmp.join("app.loft");
+    fa::write(&script, "use demo;\nfn main() { println(\"hi\"); }\n").unwrap();
+    let home = tmp.join("home");
+    let pin = |extra: &[&str]| {
+        loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+            .arg("pin")
+            .args(extra)
+            .arg(&script)
+            .env("HOME", &home)
+            .env("LOFT_HOME", &home)
+            .env("LOFT_REGISTRY_URL", &url)
+            .env_remove("LOFT_OFFLINE")
+            .output()
+            .expect("run loft pin")
+    };
+    let strict = pin(&[]);
+    let err = String::from_utf8_lossy(&strict.stderr);
+    assert!(
+        !strict.status.success(),
+        "an unsigned index is refused: {err}"
+    );
+    assert!(
+        err.contains("--allow-unsigned"),
+        "and the refusal names the waiver: {err}"
+    );
+    // With the waiver the index is read, and pin goes on to the script (whose `demo` the
+    // empty index does not list).
+    let waived = pin(&["--allow-unsigned"]);
+    let err = String::from_utf8_lossy(&waived.stderr);
+    assert!(
+        !err.contains("pass --allow-unsigned"),
+        "with --allow-unsigned the index is read: {err}"
+    );
+    assert!(
+        err.contains("no registry libraries"),
+        "and the script is what pin answers about: {err}"
+    );
+    let _ = fa::remove_dir_all(&tmp);
+}
+
+// A download is checked against the index's hash while it is still in memory: one that does
+// not match never exists at its destination, where the next run would load a prebuilt
+// library from.  The check used to come after the write, and a kill between the two left the
+// unchecked file in place.
+#[test]
+fn a_download_that_fails_its_hash_never_reaches_its_destination() {
+    use sha2::Digest as _;
+    let tmp = tmpdir("download_verified");
+    let src = tmp.join("libdemo.so");
+    fa::write(&src, b"not the library the index names").unwrap();
+    let url = format!("file://{}", src.display().to_string().replace('\\', "/"));
+    let dest = tmp.join("prebuilt").join("libdemo.so");
+    let wrong = format!("{:x}", sha2::Sha256::digest(b"the library the index names"));
+    let r = loft::registry_index::download_verified(&url, &wrong, &dest);
+    assert!(r.is_err(), "a mismatch is refused");
+    assert!(
+        !fa::exists(&dest),
+        "and nothing was written where it would be loaded from"
+    );
+    let right = format!(
+        "{:x}",
+        sha2::Sha256::digest(b"not the library the index names")
+    );
+    loft::registry_index::download_verified(&url, &right, &dest).expect("a match is placed");
+    assert!(fa::exists(&dest), "a match lands at its destination");
+    let _ = fa::remove_dir_all(&tmp);
+}
+
+// A signature proves who wrote an index, not when: a validly signed but OLDER index served
+// again would roll the cache back to fewer yanks and older hashes.  It is refused against
+// the verified copy already cached; a newer one, or one without a stamp, is not.
+#[test]
+fn an_index_older_than_the_cached_one_is_refused() {
+    use loft::registry_index::{rollback_refusal, updated_stamp};
+    let old = br#"{"schema_version": 1, "updated": "2026-10-01T00:00:00Z", "packages": {}}"#;
+    let new = br#"{"schema_version":1,"updated" : "2026-11-21T00:00:00Z","packages":{}}"#;
+    let none = br#"{"schema_version": 1, "packages": {}}"#;
+    assert_eq!(
+        updated_stamp(new),
+        "2026-11-21T00:00:00Z",
+        "the stamp is read with any spacing"
+    );
+    assert!(
+        rollback_refusal("index", old, new).is_some(),
+        "older than the cache: refused"
+    );
+    assert!(
+        rollback_refusal("index", new, old).is_none(),
+        "newer: taken"
+    );
+    assert!(
+        rollback_refusal("index", new, new).is_none(),
+        "the same: taken"
+    );
+    assert!(
+        rollback_refusal("index", none, new).is_none(),
+        "no stamp: nothing to compare"
+    );
+}

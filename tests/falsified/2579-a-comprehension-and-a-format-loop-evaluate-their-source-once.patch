@@ -1,8 +1,8 @@
-diff --git b/src/parser/collections.rs a/src/parser/collections.rs
-index 2875e4485..21d57420b 100644
---- b/src/parser/collections.rs
-+++ a/src/parser/collections.rs
-@@ -3929,32 +3929,6 @@ use #count instead"
+diff --git a/src/parser/collections.rs b/src/parser/collections.rs
+index 55787c8e9..67967e873 100644
+--- a/src/parser/collections.rs
++++ b/src/parser/collections.rs
+@@ -3935,32 +3935,6 @@ use #count instead"
          Some(Type::Iterator(Box::new(elem), Box::new(Type::Null)))
      }
  
@@ -35,7 +35,7 @@ index 2875e4485..21d57420b 100644
      /// The snapshot a walk over a keyed kind reads: a `hash`, `spatial` or `trie` source is
      /// walked through an ordered scratch of its records, built here as `fill` into a fresh
      /// `hash_scratch` variable that `expr` is rewritten to name.  `None` for every other kind.
-@@ -4515,7 +4489,22 @@ use #count instead"
+@@ -4521,7 +4495,22 @@ use #count instead"
                  // `for p in mk(c)` over three records called `mk` five times.  Held in the loop's
                  // source temp as a vector's is; a variable or a pure projection reads the same
                  // place each step and is left as it is.
@@ -59,10 +59,10 @@ index 2875e4485..21d57420b 100644
              }
              // Optional parallel clause: par(result=worker(elem), threads)
              if let LexItem::Identifier(kw) = &self.lexer.peek().has.clone()
-diff --git b/src/parser/objects.rs a/src/parser/objects.rs
-index 5539dd19e..683d8a946 100644
---- b/src/parser/objects.rs
-+++ a/src/parser/objects.rs
+diff --git a/src/parser/objects.rs b/src/parser/objects.rs
+index 442dc4d17..024d55b1d 100644
+--- a/src/parser/objects.rs
++++ b/src/parser/objects.rs
 @@ -4481,22 +4481,6 @@ impl Parser {
          }
      }
@@ -96,11 +96,11 @@ index 5539dd19e..683d8a946 100644
 +                .map(|(_, fill)| fill);
              // For text loops: {id}#next drives the loop; {id}#index is saved per-iteration.
              let (iter_var, pre_var) = if super::collections::walks_text(&in_type) {
-                 let pos_var = self.create_var(&format!("{id}#next"), &I32);
-diff --git b/src/parser/vectors.rs a/src/parser/vectors.rs
-index dfa0d0b19..a6c07f9ea 100644
---- b/src/parser/vectors.rs
-+++ a/src/parser/vectors.rs
+                 let pos_var = self.create_var(&format!("{id}#next"), &self.count_type());
+diff --git a/src/parser/vectors.rs b/src/parser/vectors.rs
+index 932ceccf6..ea08c0707 100644
+--- a/src/parser/vectors.rs
++++ b/src/parser/vectors.rs
 @@ -3986,12 +3986,6 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
          } else if let Some((_, snapshot)) = self.keyed_snapshot(&mut expr, &mut in_type, false) {
              // A keyed source is walked through its ordered snapshot, as a `for` walks it.

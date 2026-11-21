@@ -896,6 +896,34 @@ impl Stores {
         None
     }
 
+    /// `@FR-H-Removed` — release a hash entry that has left its table, by a removal or by an
+    /// insert that displaced it, the one way for both: an entry the table's arena owns goes
+    /// back to the arena; an entry with a record of its own (a table that borrows its records)
+    /// goes through the store's own removal, which leaves the mark a stored reference to it
+    /// reads as null.  Sending every entry to the arena is wrong: the arena declines a record
+    /// it does not own, so a reference would keep reading the displaced entry — its texts
+    /// freed, its numbers left — and its position could be claimed again.
+    pub(crate) fn release_hash_entry(
+        &mut self,
+        data: &DbRef,
+        entry: &DbRef,
+        slot: u32,
+        content: u16,
+    ) {
+        if self.hash_owns_entries(data) {
+            self.remove_claims(entry, content);
+            self.free_hash_entry(data, entry, slot);
+        } else {
+            let elem = DbRef {
+                store_nr: entry.store_nr,
+                rec: entry.rec,
+                pos: RECORD_PAYLOAD,
+            };
+            self.remove_claims(&elem, content);
+            self.store_mut(data).delete(entry.rec);
+        }
+    }
+
     /// Release a hash entry the unlink just named: through the bucket value it answered
     /// where there is one, and by looking the entry up (`hash::free_entry`) where the table
     /// did not hold it — which keeps an entry that was allocated but never filed from
@@ -925,10 +953,10 @@ impl Stores {
     ) {
         let slot = self.unlink(data, existing, db);
         if !secondary {
-            self.remove_claims(existing, content_tp);
             if matches!(self.types[db as usize].parts, Parts::Hash(_, _)) {
-                self.free_hash_entry(data, existing, slot);
+                self.release_hash_entry(data, existing, slot, content_tp);
             } else {
+                self.remove_claims(existing, content_tp);
                 self.store_mut(data).delete(existing.rec);
             }
         }

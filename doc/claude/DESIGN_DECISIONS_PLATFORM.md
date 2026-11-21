@@ -528,3 +528,21 @@ over the split budget.  Decided 2026-11-19 — [record](DESIGN_DECISIONS-history
 **Holds at:** `@C169` — `src/c/mod.rs` (`RUNTIME`, written at the head of every unit);
 [C_BACKEND.md](C_BACKEND.md) § Large functions are split into parts; guard
 `a_unit_carries_its_runtime_and_compiles_alone` (`tests/c_split.rs`).
+
+## C170 — A backend stays only while it is semantically equal to the others
+
+**Decision.** Every backend answers every program the same.  When keeping a backend would need
+a choice between that equality and the backend — a language change it cannot carry without
+rewriting what it emits — the backend retires; the language does not bend to it, and no
+deviation is recorded for it.  Applied first to the rustc writer, which retires (@PLN225), and
+with it every rewrite only that writer applies.  Libraries stay compiled, through the C backend.
+**Why.** Two backends that disagree make every answer conditional on the build, and a recorded
+deviation is a promise nobody keeps.  The rustc writer holds an owned text as a `String`, which
+has no spelling for an absent text other than a content; making a null text an identity
+(security #61) would mean converting every text operation it emits, for a backend the C backend
+already replaces on every target.
+**Revisit when.** A backend is needed for a target no other backend reaches, and keeping it equal
+costs less than reaching that target another way.  Decided 2026-11-21 — [record](DESIGN_DECISIONS-history.md#c170--a-backend-stays-only-while-it-is-semantically-equal-to-the-others).
+**Holds at:** `@C170` — [plans/225-retire-rustc-writer/](plans/225-retire-rustc-writer/README.md),
+which removes the writer; the sites and the guard (a CI job with no `rustc` beyond building
+loft) land with its phases.

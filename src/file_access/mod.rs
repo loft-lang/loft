@@ -494,6 +494,16 @@ pub fn symlink_metadata(path: impl HostPath) -> io::Result<std::fs::Metadata> {
     run(path, |p| std::fs::symlink_metadata(p))
 }
 
+/// The metadata of a path that is itself a directory — not a link to one — from ONE look
+/// (`lstat`), so a check of its owner and mode reads the entry that was tested; `None` for
+/// anything else or an error.
+#[must_use]
+pub fn own_dir_metadata(path: impl HostPath) -> Option<std::fs::Metadata> {
+    symlink_metadata(path)
+        .ok()
+        .filter(std::fs::Metadata::is_dir)
+}
+
 /// Set the file's permissions.
 ///
 /// # Errors

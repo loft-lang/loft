@@ -61,7 +61,7 @@ pub RUNTIME_END = "\n#if defined(__GNUC__) && !defined(LOFT_LINT_RUNTIME_UNUSED)
 // order `RUNTIME` holds them in src/c/mod.rs.  Null where one cannot be read, named in `missing`.
 pub fn runtime(dir: text, missing: &text) -> text? {
   out = "";
-  for name in ["loft_cc.h", "loft_text.h", "loft_store.h", "loft_rt.h", "loft_keys.h", "loft_hash.h", "loft_btree.h", "loft_radix.h", "loft_radix_walk.h", "loft_radix_db.h", "loft_image.h", "loft_paged.h", "loft_radix_walk.h", "loft_paged_load.h", "loft_keyed.h", "loft_json.h", "loft_parse.h", "loft_upgrade.h", "loft_reflect.h", "loft_io.h", "loft_host_io.h", "loft_web_page.h", "loft_log.h", "loft_lazy.h", "loft_sock.h", "loft_https.h", "loft_net.h", "loft_process.h", "loft_mapped.h", "loft_engine.h"] {
+  for name in ["loft_width.h", "loft_cc.h", "loft_text.h", "loft_store.h", "loft_rt.h", "loft_keys.h", "loft_hash.h", "loft_btree.h", "loft_radix.h", "loft_radix_walk.h", "loft_radix_db.h", "loft_image.h", "loft_paged.h", "loft_radix_walk.h", "loft_paged_load.h", "loft_keyed.h", "loft_json.h", "loft_parse.h", "loft_upgrade.h", "loft_reflect.h", "loft_io.h", "loft_host_io.h", "loft_web_page.h", "loft_log.h", "loft_lazy.h", "loft_sock.h", "loft_https.h", "loft_net.h", "loft_process.h", "loft_mapped.h", "loft_engine.h"] {
     part = file("{dir}/{name}").content();
     if part == null {
       missing = "{dir}/{name}";

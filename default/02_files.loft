@@ -528,10 +528,15 @@ fn store_upgrade_routine(tp: integer, old: integer, version: integer);
 /// an image whose `<url>.dschema` records a different layout than `r`'s type, and
 /// an image with no `.dschema` at all. Whole-file counterpart of the paged
 /// `store_load_key(s)`/`store_load_range` loaders.
+/// `schema_sha256` pins that `.dschema` too: the layout file decides how the pinned bytes
+/// are read, so whoever can change it on the host (or on the path, for `http://`) can change
+/// what the image means.  Given, a sidecar whose SHA-256 differs, or that is missing, refuses
+/// the load; left out, the sidecar is read unpinned, as before.  Pin both for a source you do
+/// not control (`shasum -a 256 world.store world.store.dschema` gives the two).
 ///   h: hash<Rec[id]> = []
-///   store_load_url(h, "https://cdn.example/world.store", "<sha256-hex>")
-pub fn store_load_url(r: reference, url: text, sha256: text) -> boolean fs#read;
-#rust"stores.load_url_verified((@r).store_nr, @url, @sha256)"
+///   store_load_url(h, "https://cdn.example/world.store", "<sha256-hex>", "<dschema-sha256-hex>")
+pub fn store_load_url(r: reference, url: text, sha256: text, schema_sha256: text = "") -> boolean fs#read;
+#rust"stores.load_url_verified((@r).store_nr, @url, @sha256, @schema_sha256)"
 #impure(io)
 
 /// Load a whole store IMAGE over HTTP(S)/file:// from a TRUSTED source into `r` —

@@ -143,6 +143,33 @@ pub enum RuntimeErrorKind {
 }
 
 impl RuntimeErrorKind {
+    /// A fault that ends the run in every mode, as opposed to a recoverable one that answers
+    /// null and lets the program continue (a division by zero, an index out of range): a
+    /// panic, a stack overflow, a fault relayed from a library, and a store or a value
+    /// released twice (`@FR-H-DropOnce`).  The one list the logger's severity and a test
+    /// harness's verdict both read.
+    #[must_use]
+    pub fn is_fatal(&self) -> bool {
+        // Exhaustive on purpose: a new kind is classified here, once.
+        match self {
+            RuntimeErrorKind::UserPanic { .. }
+            | RuntimeErrorKind::StackOverflow
+            | RuntimeErrorKind::Relayed { .. }
+            | RuntimeErrorKind::StoreFreedTwice { .. }
+            | RuntimeErrorKind::ValueReleasedTwice { .. } => true,
+            RuntimeErrorKind::DivideByZero
+            | RuntimeErrorKind::IndexOutOfBounds { .. }
+            | RuntimeErrorKind::NegativeIndex { .. }
+            | RuntimeErrorKind::ShiftOutOfRange
+            | RuntimeErrorKind::CastOutOfRange
+            | RuntimeErrorKind::RangeDefaulted { .. }
+            | RuntimeErrorKind::WriteDropped
+            | RuntimeErrorKind::WriteToLockedStore { .. }
+            | RuntimeErrorKind::AssertionFailed { .. }
+            | RuntimeErrorKind::Exit { .. } => false,
+        }
+    }
+
     /// Stable, machine-readable kind label for log / test output.
     /// Mirrors the variant name verbatim in lower_snake_case.
     #[must_use]

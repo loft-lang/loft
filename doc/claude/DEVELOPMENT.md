@@ -192,9 +192,8 @@ union is not green before the checks the PR exists for have run, so a red first 
 design working.  Every red it shows — the tests, the informational and advisory steps, and
 main's nightly reds (step 5) — is fixed on the next branch before the second run, and the
 SECOND run is meant to be entirely green: it lands the PR on `main`.  What slips through to
-it is sorted by whether it blocks the merge, which only a REQUIRED check does (`Test` on the
-three platforms — the Linux one gathers every test shard — `Clippy`, `Format`, `Language
-suite`; the list is `gh api repos/{owner}/{repo}/rules/branches/main`).  A red required check
+it is sorted by whether it blocks the merge, which only a REQUIRED check does (the six of
+[§ Remote CI](#remote-ci); the Linux `Test` gathers every test shard).  A red required check
 holds auto-merge, so its fix is pushed for a third run.  Anything else red does not stop
 auto-merge from landing the PR: its fix stays on the next branch and goes with the NEXT PR,
 as does any fix left there at the merge: fixed, just not on `main` yet.  The same holds when
@@ -577,15 +576,24 @@ Keep the **installed** loft current: a stale one builds consumer libraries again
 
 ### Remote CI
 
-`main` requires five checks: **Test (ubuntu-latest)**, **Test (macos-latest)**, **Test
-(windows-latest)**, **Clippy** and **Format**.  `ci.yml` runs many more jobs, most advisory;
+`main` requires six checks: **Test (ubuntu-latest)**, **Test (macos-latest)**, **Test
+(windows-latest)**, **Clippy**, **Format** and **Language suite (ubuntu-latest)**.  They are
+set in the classic branch protection, not in the `Use branches` ruleset (which holds linear
+history), so the ruleset endpoint does not list them; read them with
+`gh api repos/loft-lang/loft/branches/main/protection --jq '.required_status_checks.contexts'`.
+On a pull request four of them can go red: `Test (macos-latest)` and `Test (windows-latest)`
+are placeholders there that always pass (those platforms run on the push to `main` and
+daily), and `Test (ubuntu-latest)` gathers the Linux shards, so a red shard holds the merge
+too.
+`ci.yml` runs many more jobs, most advisory;
 what runs when, and the 20-minute PR budget, are [CI_BUDGET.md](CI_BUDGET.md).  A failure on one
 platform only is usually a path separator or timing; reproduce it on that platform through
 `gh workflow run ci.yml --ref <branch> -f os=<os>`.
 
-Pushing a green branch needs no ask; opening a PR does, and with a PR open only a push that
-unblocks a red required check goes without consent ([CLAUDE.md § Branch policy](../../CLAUDE.md)
-rule 4).
+Pushing a green branch needs no ask; opening a PR does.  With a PR open, nothing is pushed to
+it while its run is in flight: the fixes wait on the next branch and go out together with
+`scripts/pr_push.py`, which refuses an early push ([CLAUDE.md § Branch policy](../../CLAUDE.md)
+rule 4, [§ The PR cycle](#the-pr-cycle) step 6).
 
 ---
 

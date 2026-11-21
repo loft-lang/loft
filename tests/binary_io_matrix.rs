@@ -389,6 +389,27 @@ cross_mode!(
     "#
 );
 
+// A text read with `f#read(n) as text` is UTF-8 or nothing: bytes that are not valid UTF-8
+// leave the target empty, as `text_from_bytes` answers for them — the interpreter built a
+// text out of them unchecked.  The read after it, at the next position, shows the empty
+// answer is about those bytes alone.
+cross_mode!(
+    w7_text_not_utf8_is_empty,
+    r#"
+    fn test() {
+        delete("biom_w7_bad.bin");
+        write_bytes("biom_w7_bad.bin", [97 as u8, 255 as u8, 98 as u8, 99 as u8, 100 as u8]);
+       { f = file("biom_w7_bad.bin"); f#format = LittleEndian;
+         s = f#read(3) as text;
+         assert(size(s) == 0, "a\\xFFb is not a text: {s}");
+         t = f#read(2) as text;
+         assert(t == "cd", "the next read is unaffected: {t}");
+         print("w7_text_not_utf8 empty\n"); }
+        delete("biom_w7_bad.bin");
+    }
+    "#
+);
+
 // ── W8 — vector<scalar>, `f#read(N)` counts N BYTES (element_count * width) ──
 
 cross_mode!(

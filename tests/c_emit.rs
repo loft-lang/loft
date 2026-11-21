@@ -219,6 +219,8 @@ fn compiled() -> Vec<String> {
         .collect()
 }
 
+/// `@C170` — the backends answer alike: the C backend's values and the interpreter's are both
+/// held to the hand-computed ones, so a build on which either departs fails here.
 #[test]
 fn a_scalar_program_written_as_c_answers_what_the_interpreter_answers() {
     if !have_cc() {
@@ -332,7 +334,9 @@ fn the_overflow_macros_answer_as_checked_arithmetic_in_every_mode() {
             }
         })
         .collect();
-    let mut c = String::from(include_str!("../src/c/loft_cc.h"));
+    let mut c = String::from(include_str!("../src/c/loft_os.h"));
+    c.push_str(include_str!("../src/c/loft_width.h"));
+    c.push_str(include_str!("../src/c/loft_cc.h"));
     let _ = write!(
         c,
         "\nstatic const int64_t edges[] = {{ {} }};\nint main(void) {{\n    size_t n = sizeof edges / sizeof edges[0];\n    for (size_t i = 0; i < n; i++) for (size_t j = 0; j < n; j++) {{\n        int64_t a = edges[i], b = edges[j], r;\n        int o = LOFT_ADD_OVF(a, b, &r); printf(\"%d %lld \", o, o ? 0LL : (long long) r);\n        o = LOFT_SUB_OVF(a, b, &r); printf(\"%d %lld \", o, o ? 0LL : (long long) r);\n        o = LOFT_MUL_OVF(a, b, &r); printf(\"%d %lld\\n\", o, o ? 0LL : (long long) r);\n    }}\n    return 0;\n}}\n",
@@ -3758,17 +3762,35 @@ fn hash_insert(
             index,
         } => {
             let gone = hash::replace_at(h, bucket, index, stores);
-            hash_free_entry(stores, h, &entry, gone);
+            hash_release(stores, h, &entry, gone);
         }
         Probed::Unknown => {
             let key = loft::keys::get_key(e, stores, keys);
             let existing = hash::find(h, stores, keys, &key);
             if existing.rec != 0 && (existing.rec, existing.pos) != (e.rec, e.pos) {
                 let slot = hash::remove(h, &existing, stores, keys);
-                hash_free_entry(stores, h, &existing, slot);
+                hash_release(stores, h, &existing, slot);
             }
             hash::add(h, e, stores, keys);
         }
+    }
+}
+
+/// Stores::release_hash_entry (`@FR-H-Removed`): an entry the table's arena owns goes back to
+/// it; an entry with a record of its own (a table that borrows its records) is deleted from
+/// the store.  A removal and a displacing insert release alike.
+fn hash_release(
+    stores: &mut [loft::store::Store],
+    h: &loft::keys::DbRef,
+    e: &loft::keys::DbRef,
+    slot: u32,
+) {
+    let store = &stores[h.store_nr as usize];
+    let claim = store.get_u32_raw(h.rec, h.pos);
+    if claim != 0 && loft::hash::owns_entries(store, claim) {
+        hash_free_entry(stores, h, e, slot);
+    } else {
+        stores[e.store_nr as usize].delete(e.rec);
     }
 }
 
@@ -3887,11 +3909,7 @@ fn the_c_hash_table_files_every_entry_where_hash_does() {
             if pick < 75 {
                 if found.rec != 0 {
                     let slot = hash::remove(&h[t], &found, &mut stores, keys[t]);
-                    if strides[t] != 0 {
-                        hash_free_entry(&mut stores, &h[t], &found, slot);
-                    } else {
-                        stores[0].delete(found.rec);
-                    }
+                    hash_release(&mut stores, &h[t], &found, slot);
                 }
                 let _ = writeln!(script, "R {t} {k}");
             } else if pick < 97 {
@@ -3924,6 +3942,8 @@ fn the_c_hash_table_files_every_entry_where_hash_does() {
     let _ = writeln!(want, "bytes {fnv:016x}");
     let mut c = String::new();
     for part in [
+        include_str!("../src/c/loft_os.h"),
+        include_str!("../src/c/loft_width.h"),
         include_str!("../src/c/loft_cc.h"),
         include_str!("../src/c/loft_text.h"),
         include_str!("../src/c/loft_store.h"),
@@ -4221,6 +4241,8 @@ fn the_c_index_files_every_record_where_btree_does() {
     let _ = writeln!(want, "bytes {fnv:016x}");
     let mut c = String::new();
     for part in [
+        include_str!("../src/c/loft_os.h"),
+        include_str!("../src/c/loft_width.h"),
         include_str!("../src/c/loft_cc.h"),
         include_str!("../src/c/loft_text.h"),
         include_str!("../src/c/loft_store.h"),
@@ -4524,6 +4546,8 @@ fn the_c_trees_place_every_record_where_radix_tree_does() {
     let _ = writeln!(want, "bytes {fnv:016x}");
     let mut c = String::new();
     for part in [
+        include_str!("../src/c/loft_os.h"),
+        include_str!("../src/c/loft_width.h"),
         include_str!("../src/c/loft_cc.h"),
         include_str!("../src/c/loft_text.h"),
         include_str!("../src/c/loft_store.h"),
@@ -5165,6 +5189,8 @@ fn the_c_reads_json_as_json_rs_does() {
     }
     let mut c = String::from("#define LOFT_JSON 1\n");
     for part in [
+        include_str!("../src/c/loft_os.h"),
+        include_str!("../src/c/loft_width.h"),
         include_str!("../src/c/loft_cc.h"),
         include_str!("../src/c/loft_text.h"),
         include_str!("../src/c/loft_store.h"),
@@ -8231,6 +8257,8 @@ fn the_transient_arena_gives_back_what_a_mark_took() {
     }
     let mut c = String::new();
     for part in [
+        include_str!("../src/c/loft_os.h"),
+        include_str!("../src/c/loft_width.h"),
         include_str!("../src/c/loft_cc.h"),
         include_str!("../src/c/loft_text.h"),
         include_str!("../src/c/loft_store.h"),
@@ -9113,5 +9141,51 @@ fn an_early_exit_that_builds_a_text_is_a_cold_helper() {
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
         "true false position 9 past 10\n"
+    );
+}
+
+/// loft#2603 — a `#c` binding that declares a libc function with pointer types other than its
+/// system header's is refused by `cc` (C allows no second, different declaration), and the
+/// refusal names the binding, the header's declaration and the cure, not "a defect of the C
+/// backend".  The interpreter, which looks the symbol up by name, runs it.
+#[test]
+fn a_binding_with_other_pointer_types_than_the_header_is_named() {
+    if !have_cc() {
+        return;
+    }
+    let dir = scratch("binding-clash");
+    let src = dir.join("clash.loft");
+    fa::write(
+        &src,
+        "fn c_memcmp(a: text, b: text, n: integer) -> integer;\n\
+         #c \"memcmp\" \"int(const char*, const char*, size_t)\"\n\
+         fn main() {\n  println(\"same {c_memcmp(\"abcd\", \"abcd\", 4)}\");\n}\n",
+    )
+    .expect("write the program");
+    let run = |args: &[&str]| {
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+            .args(args)
+            .arg(&src)
+            .env("LOFT_TIMEOUT", "120")
+            .output()
+            .expect("run loft");
+        (
+            out.status.success(),
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+    let (ok, stdout, _) = run(&["--interpret"]);
+    assert!(
+        ok && stdout.contains("same 0"),
+        "the interpreter runs it: {stdout}"
+    );
+    let (ok, _, stderr) = run(&["--native-c"]);
+    assert!(!ok, "cc refuses the clashing declaration");
+    assert!(
+        stderr.contains("`#c` binding `c_memcmp` declares `memcmp`")
+            && stderr.contains("header's types")
+            && !stderr.contains("a defect of the C backend"),
+        "the refusal names the binding and the cure: {stderr}"
     );
 }

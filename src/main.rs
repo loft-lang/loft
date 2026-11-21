@@ -43,6 +43,7 @@ mod android;
 mod app_files;
 mod c_driver;
 mod esp_app;
+mod esp_width64;
 mod native_utils;
 use loft::file_access;
 use loft::parser;
@@ -263,7 +264,10 @@ fn print_help() {
         "  --width 32                    a plain integer is 32-bit and a plain float a single, in every"
     );
     println!(
-        "                                file but the standard library (`#width 64` in a file keeps it)"
+        "                                file, the standard library too (`#width 64` in a file keeps it)"
+    );
+    println!(
+        "                                --native-esp builds so by default; `--width 64` there keeps 64 bits"
     );
     println!(
         "  --timeout <secs>              hard-kill the process after <secs>+grace seconds (PLAN49)"
@@ -491,6 +495,7 @@ fn print_help() {
     println!("  pin <script.loft>             pin every registry library the script uses");
     println!("                                writes <script>.loft.lock next to the script;");
     println!("                                subsequent runs use the pinned versions");
+    println!("                                (--allow-unsigned: an index with no signature)");
     println!(
         "  self-update [--dry-run]       report whether a newer release is published for this"
     );
@@ -529,12 +534,16 @@ fn print_help() {
     println!("  update [pkg]                  refresh lockfile to latest active versions");
     println!("                                that satisfy each dep's loft.toml range;");
     println!("                                --dry-run reports changes without writing;");
-    println!("                                --check exits 1 if any updates are available");
+    println!("                                --check exits 1 if any updates are available;");
+    println!("                                --allow-unsigned reads an index with no signature");
     println!("  bundle export [opts] <dir>    write a self-contained offline bundle of");
     println!("                                registry packages (--all or --packages X,Y,Z);");
     println!("                                ship via USB/scp; import on the target machine");
+    println!("                                (--allow-unsigned: an index with no signature)");
     println!("  bundle import <dir>           install a bundle into ~/.loft/registry/");
-    println!("                                (verifies sha256 + signature per artifact)");
+    println!("                                (verifies the index and feed signatures, then");
+    println!("                                each tarball's sha256; --allow-unsigned waives a");
+    println!("                                MISSING signature, never a wrong one)");
     println!("  publish [pkg]                 author helper: repackage locally + verify the");
     println!("                                GitHub release exists + emit the index.json");
     println!("                                entry to paste into a registry PR");
@@ -550,6 +559,7 @@ fn print_help() {
     println!(
         "                                sync             — pull latest registry from source URL"
     );
+    println!("                                                   (--allow-unsigned: no signature)");
     println!(
         "                                check            — report updates, deprecations, yanks"
     );
@@ -1105,21 +1115,13 @@ fn manifest_for_new_package(dir: &std::path::Path, manifest: &std::path::Path) -
 
 /// REG.2: Install a package from the registry by name (optionally with `@version`).
 ///
-/// PKG.REG R4 (2026-05-24): the `loft install <name>` entry point in
-/// `main` calls [`install_from_registry_with_opts`] directly with the
-/// parsed flag bag.  When `LOFT_LEGACY_REGISTRY` is set, that helper
-/// delegates to [`install_from_registry_legacy`] (the older
-/// text-format flow).
+/// The `loft install <name>` entry point in `main` calls this with the parsed flag bag.  Every
+/// install goes through the signed index and the hash it publishes for each version: there is
+/// no second, unverified route (the flat `registry.txt` serves `loft registry list` and
+/// `check`, never an install).
 #[cfg(feature = "registry")]
 fn install_from_registry_with_opts(args: &[String], opts: &loft::install::InstallOptions) {
     use loft::install::{format_report, install_one};
-
-    if std::env::var("LOFT_LEGACY_REGISTRY").is_ok() {
-        for arg in args {
-            install_from_registry_legacy(arg);
-        }
-        return;
-    }
 
     if args.is_empty() {
         eprintln!("loft install: no package name given");
@@ -2281,6 +2283,8 @@ struct UpdateOpts {
     /// Exit non-zero if any updates are available (CI gate).
     /// Implies dry_run.
     check_only: bool,
+    /// `--allow-unsigned`: read an index that carries no signature.
+    allow_unsigned: bool,
 }
 
 /// @PLAN12 Phase 6.8 — `loft update` driver.
@@ -2380,10 +2384,10 @@ fn update_packages(opts: &UpdateOpts) -> i32 {
         return 1;
     }
 
-    // Load index (offline-respecting, allow_unsigned for the
-    // bootstrap window).
+    // Load index (offline-respecting; an unsigned one only with `--allow-unsigned`, as for
+    // `loft install` — this command installs what it reads).
     let install_opts = InstallOptions {
-        allow_unsigned: true,
+        allow_unsigned: opts.allow_unsigned,
         refresh: false,
         offline: std::env::var("LOFT_OFFLINE").is_ok(),
         allow_prerelease: false,
@@ -2575,8 +2579,12 @@ fn update_packages(opts: &UpdateOpts) -> i32 {
 /// - `--packages X,Y,Z` → just those (transitive deps not yet
 ///   auto-resolved; transitive harvest is a follow-up if useful).
 #[cfg(feature = "registry")]
-#[expect(clippy::too_many_lines, reason = "inherited")]
-fn bundle_export(outdir: &str, packages: Option<&[String]>, all: bool) -> i32 {
+fn bundle_export(
+    outdir: &str,
+    packages: Option<&[String]>,
+    all: bool,
+    allow_unsigned: bool,
+) -> i32 {
     use loft::install::InstallOptions;
     use loft::registry_index;
     use std::path::Path;
@@ -2588,7 +2596,7 @@ fn bundle_export(outdir: &str, packages: Option<&[String]>, all: bool) -> i32 {
     }
 
     let opts = InstallOptions {
-        allow_unsigned: true,
+        allow_unsigned,
         refresh: false,
         offline: false,
         allow_prerelease: false,
@@ -2614,24 +2622,9 @@ fn bundle_export(outdir: &str, packages: Option<&[String]>, all: bool) -> i32 {
         return 1;
     }
 
-    // Copy index.json + sig.
-    let (idx_path, sig_path, _) = registry_index::index_paths();
-    if fa::exists(&idx_path) {
-        if let Err(e) = fa::copy(&idx_path, out.join("index.json")) {
-            eprintln!("loft bundle export: copy index.json: {e}");
-            return 1;
-        }
-    }
-    if fa::exists(&sig_path) {
-        let _ = fa::copy(&sig_path, out.join("index.json.sig"));
-    }
-    // Advisories (optional — registry may not host one yet).
-    let (adv_path, adv_sig_path) = loft::registry_advisories::advisories_paths();
-    if fa::exists(&adv_path) {
-        let _ = fa::copy(&adv_path, out.join("advisories.json"));
-        if fa::exists(&adv_sig_path) {
-            let _ = fa::copy(&adv_sig_path, out.join("advisories.json.sig"));
-        }
+    if let Err(e) = bundle_copy_feeds(out) {
+        eprintln!("loft bundle export: {e}");
+        return 1;
     }
 
     // For each requested package: pick its latest active version,
@@ -2653,14 +2646,7 @@ fn bundle_export(outdir: &str, packages: Option<&[String]>, all: bool) -> i32 {
         let dest = out.join("packages").join(&tarball);
         // Download to the bundle's packages/.
         eprintln!("[bundle] fetching {} {}", name, ver.semver);
-        let bytes = match registry_index::download_tarball(&ver.url, &dest) {
-            Ok(b) => b,
-            Err(e) => {
-                eprintln!("  FAILED: {e}");
-                return 1;
-            }
-        };
-        if let Err(e) = loft::integrity::verify_sha256(&bytes, &ver.sha256) {
+        if let Err(e) = registry_index::download_verified(&ver.url, &ver.sha256, &dest) {
             eprintln!("  FAILED: {e}");
             return 1;
         }
@@ -2695,20 +2681,52 @@ fn bundle_export(outdir: &str, packages: Option<&[String]>, all: bool) -> i32 {
     0
 }
 
+/// The signed feeds a bundle carries into `out`: the index with its signatures, and the
+/// advisory feed with its own when the registry hosts one.  Only a failed copy of the index
+/// itself is an error.
+#[cfg(feature = "registry")]
+fn bundle_copy_feeds(out: &std::path::Path) -> Result<(), String> {
+    use loft::registry_index;
+    let (idx_path, sig_path, _) = registry_index::index_paths();
+    if fa::exists(&idx_path) {
+        fa::copy(&idx_path, out.join("index.json")).map_err(|e| format!("copy index.json: {e}"))?;
+    }
+    if fa::exists(&sig_path) {
+        let _ = fa::copy(&sig_path, out.join("index.json.sig"));
+        let _ = fa::copy(
+            registry_index::sig2_path(&sig_path),
+            out.join("index.json.sig2"),
+        );
+    }
+    let (adv_path, adv_sig_path) = loft::registry_advisories::advisories_paths();
+    if fa::exists(&adv_path) {
+        let _ = fa::copy(&adv_path, out.join("advisories.json"));
+        if fa::exists(&adv_sig_path) {
+            let _ = fa::copy(&adv_sig_path, out.join("advisories.json.sig"));
+            let _ = fa::copy(
+                registry_index::sig2_path(&adv_sig_path),
+                out.join("advisories.json.sig2"),
+            );
+        }
+    }
+    Ok(())
+}
+
 /// @PLAN12 Phase 6.11 — `loft bundle import <indir>` installs a
 /// previously-exported bundle into `~/.loft/registry/`.
 ///
-/// Steps per artifact:
-/// 1. Copy `index.json` + `.sig` (sig kept; loader verifies via
-///    `allow_unsigned` for the bootstrap window).
-/// 2. Copy `advisories.json` + `.sig` (when present).
-/// 3. For each `packages/<pkg>-<ver>.tar.gz`:
-///    - Verify sha256 matches the index entry.
-///    - Extract to `~/.loft/registry/<pkg>-<ver>/`.
-/// 4. Print summary.
+/// A bundle travels by hand (a USB stick, a mirror, a CI artefact), so nothing in it is
+/// trusted for having arrived:
+/// 1. `index.json` must verify against its `.sig` (an unsigned one only with
+///    `--allow-unsigned`), and `advisories.json`, when present, against its own; only then
+///    are they written into the cache, as one atomic pair each.
+/// 2. Each `packages/<pkg>-<ver>.tar.gz` must match the sha256 that verified index names,
+///    and is placed through [`registry_index::place_package`], which refuses a tarball that
+///    is not packed as `<pkg>-<ver>/`.
+/// 3. A summary is printed.
 #[cfg(feature = "registry")]
 #[expect(clippy::too_many_lines, reason = "inherited")]
-fn bundle_import(indir: &str) -> i32 {
+fn bundle_import(indir: &str, allow_unsigned: bool) -> i32 {
     use loft::registry_index;
     use std::path::Path;
 
@@ -2742,23 +2760,54 @@ fn bundle_import(indir: &str) -> i32 {
         }
     };
 
-    // Copy index + sig + (optional) advisories into the cache.
+    // The index and the feed are verified BEFORE anything is written, and land as pairs.
+    let idx_sig = registry_index::read_signatures(&inp.join("index.json.sig"));
+    let opts = loft::install::InstallOptions {
+        allow_unsigned,
+        ..Default::default()
+    };
+    if let Err(e) = loft::install::verify_or_explain(&idx_bytes, &idx_sig, &opts) {
+        eprintln!("loft bundle import: {e}\n  nothing was imported.");
+        return 1;
+    }
+    let bundle_adv = inp.join("advisories.json");
+    let feed = if fa::exists(&bundle_adv) {
+        let content = match fa::read(&bundle_adv) {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!("loft bundle import: read advisories: {e}");
+                return 1;
+            }
+        };
+        let sig = registry_index::read_signatures(&inp.join("advisories.json.sig"));
+        let fopts = loft::registry_advisories::LoadOptions {
+            allow_unsigned,
+            ..Default::default()
+        };
+        if let Err(e) = loft::registry_advisories::verify_feed(&content, &sig, fopts) {
+            eprintln!("loft bundle import: {e}\n  nothing was imported.");
+            return 1;
+        }
+        Some((content, sig))
+    } else {
+        None
+    };
     let cache = registry_index::cache_dir();
     if let Err(e) = fa::create_dir_all(&cache) {
         eprintln!("loft bundle import: cannot create {e}");
         return 1;
     }
-    let _ = fa::copy(&bundle_index, cache.join("index.json"));
-    let bundle_sig = inp.join("index.json.sig");
-    if fa::exists(&bundle_sig) {
-        let _ = fa::copy(&bundle_sig, cache.join("index.json.sig"));
+    let (idx_path, sig_path, _) = registry_index::index_paths();
+    if let Err(e) = registry_index::write_signed_pair(&idx_path, &sig_path, &idx_bytes, &idx_sig) {
+        eprintln!("loft bundle import: cannot write the index: {e}");
+        return 1;
     }
-    let bundle_adv = inp.join("advisories.json");
-    if fa::exists(&bundle_adv) {
-        let _ = fa::copy(&bundle_adv, cache.join("advisories.json"));
-        let bundle_adv_sig = inp.join("advisories.json.sig");
-        if fa::exists(&bundle_adv_sig) {
-            let _ = fa::copy(&bundle_adv_sig, cache.join("advisories.json.sig"));
+    if let Some((content, sig)) = feed {
+        let (adv_path, adv_sig_path) = loft::registry_advisories::advisories_paths();
+        if let Err(e) = registry_index::write_signed_pair(&adv_path, &adv_sig_path, &content, &sig)
+        {
+            eprintln!("loft bundle import: cannot write the advisories: {e}");
+            return 1;
         }
     }
 
@@ -2817,7 +2866,7 @@ fn bundle_import(indir: &str) -> i32 {
             eprintln!("  sha256 MISMATCH for {fname}: {e}");
             return 1;
         }
-        if let Err(e) = registry_index::extract_tarball(&path, &cache) {
+        if let Err(e) = registry_index::place_package(&bytes, name, version) {
             eprintln!("  extract {fname}: {e}");
             return 1;
         }
@@ -3842,7 +3891,7 @@ fn dir_size_bytes(dir: &std::path::Path) -> Option<u64> {
 /// else either lives in the workspace or is part of loft itself.
 #[cfg(feature = "registry")]
 #[expect(clippy::too_many_lines, reason = "inherited")]
-fn pin_script(script: &str) {
+fn pin_script(script: &str, allow_unsigned: bool) {
     use loft::install::{InstallOptions, install_one};
     use loft::registry_index;
     use std::path::PathBuf;
@@ -3910,7 +3959,7 @@ fn pin_script(script: &str) {
     // (path-deps + stdlib + sibling packages) before invoking
     // install_one — saves a network hit + a confusing error.
     let opts_for_index = InstallOptions {
-        allow_unsigned: true,
+        allow_unsigned,
         refresh: false,
         offline: false,
         allow_prerelease: false,
@@ -3926,7 +3975,7 @@ fn pin_script(script: &str) {
     };
 
     let opts = InstallOptions {
-        allow_unsigned: true,
+        allow_unsigned,
         refresh: false,
         offline: false,
         allow_prerelease: false,
@@ -3986,88 +4035,6 @@ fn pin_script(script: &str) {
     let _ = registry_index::cache_dir();
 }
 
-#[cfg(feature = "registry")]
-fn install_from_registry_legacy(arg: &str) {
-    use loft::registry;
-
-    // Parse name[@version].
-    let (name, version) = if let Some((n, v)) = arg.split_once('@') {
-        (n, Some(v))
-    } else {
-        (arg, None)
-    };
-
-    // Find and read registry file.
-    let Some(reg_path) = registry::registry_path() else {
-        eprintln!(
-            "loft install: no registry file found.\n  \
-             Run 'loft registry sync' to download the package registry.\n  \
-             Or set LOFT_REGISTRY to a local registry file path."
-        );
-        std::process::exit(1);
-    };
-    let (entries, _) = registry::read_registry(reg_path.to_str().unwrap_or(""));
-
-    // Find matching entry.
-    let Some(entry) = registry::find_package(&entries, name, version) else {
-        let available: Vec<&str> = entries
-            .iter()
-            .filter(|e| e.name == name && !e.is_yanked())
-            .map(|e| e.version.as_str())
-            .collect();
-        if available.is_empty() {
-            eprintln!("loft install: package '{name}' not found in registry.");
-        } else {
-            eprintln!(
-                "loft install: package '{name}@{}' not found in registry.\n  Available versions: {}",
-                version.unwrap_or("?"),
-                available.join(", ")
-            );
-        }
-        std::process::exit(1);
-    };
-
-    if entry.is_yanked() && version.is_some() {
-        eprintln!(
-            "warning: {name}@{} is yanked ({})",
-            entry.version,
-            entry.status_slug()
-        );
-    }
-
-    // Check if already installed.
-    let lib = registry::lib_dir();
-    let installed_toml = lib.join(name).join("loft.toml");
-    if fa::exists(&installed_toml)
-        && let Ok(content) = fa::read_to_string(&installed_toml)
-    {
-        let installed_ver = extract_toml_version(&content);
-        if installed_ver == entry.version {
-            println!(
-                "loft install: {name} {} is already installed.",
-                entry.version
-            );
-            return;
-        }
-    }
-
-    // Download and extract.
-    let tmp = std::env::temp_dir().join("loft_install");
-    let _ = fa::create_dir_all(&tmp);
-    match registry::download_and_extract(entry, &tmp) {
-        Ok(pkg_root) => {
-            install_package(&pkg_root);
-            // Clean up temp.
-            let _ = fa::remove_dir_all(&tmp);
-        }
-        Err(e) => {
-            eprintln!("loft install: {e}");
-            let _ = fa::remove_dir_all(&tmp);
-            std::process::exit(1);
-        }
-    }
-}
-
 #[cfg(not(feature = "registry"))]
 fn install_from_registry(arg: &str) {
     eprintln!(
@@ -4076,21 +4043,6 @@ fn install_from_registry(arg: &str) {
          Trying to install: {arg}"
     );
     std::process::exit(1);
-}
-
-/// Extract version string from `loft.toml` content.
-#[cfg(feature = "registry")]
-fn extract_toml_version(content: &str) -> String {
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_prefix("version") {
-            let rest = rest.trim();
-            if let Some(rest) = rest.strip_prefix('=') {
-                return rest.trim().trim_matches('"').to_string();
-            }
-        }
-    }
-    String::new()
 }
 
 /// PKG.6a: Generate Rust stubs for all `#native` declarations in a package.
@@ -4559,6 +4511,14 @@ fn report_parse_diagnostics(
             }
         }
         if diags.level() >= Level::Error {
+            // @PLN217 — a build that took the 32-bit regime without being asked says how to
+            // build the program as it was written.
+            if let Some(by) = loft::keys::width32_implied_by() {
+                eprintln!(
+                    "note: `{by}` builds a 32-bit app, where a plain `integer` is an `i32` and a \
+                     plain `float` a `single`; `--width 64` builds this program as a 64-bit one"
+                );
+            }
             std::process::exit(1);
         }
     }
@@ -5125,7 +5085,7 @@ fn handle_registry(argv: &[String], i: &mut usize) {
     };
 
     match sub {
-        "sync" => registry_sync(),
+        "sync" => registry_sync(argv[*i..].iter().any(|a| a == "--allow-unsigned")),
         "check" => registry_check(),
         "list" => {
             let installed_only = argv.get(*i).is_some_and(|s| s == "--installed");
@@ -5156,7 +5116,7 @@ fn handle_registry(argv: &[String], i: &mut usize) {
 /// or a `source:` header in a local `registry.txt` — because that is the only case where such
 /// a file exists to fetch.
 #[cfg(feature = "registry")]
-fn registry_sync() {
+fn registry_sync(allow_unsigned: bool) {
     use loft::registry;
 
     let existing_source = registry::registry_path().and_then(|p| {
@@ -5167,7 +5127,7 @@ fn registry_sync() {
         || existing_source.as_deref().is_some_and(|u| !u.is_empty());
     if !custom {
         let opts = loft::install::InstallOptions {
-            allow_unsigned: true,
+            allow_unsigned,
             refresh: true,
             offline: false,
             allow_prerelease: false,
@@ -5191,7 +5151,7 @@ fn registry_sync() {
 }
 
 #[cfg(not(feature = "registry"))]
-fn registry_sync() {
+fn registry_sync(_allow_unsigned: bool) {
     eprintln!("loft registry sync: registry feature not compiled in.");
     std::process::exit(1);
 }
@@ -5871,6 +5831,9 @@ fn run_maintain_registry_command(args: &[String]) -> i32 {
 #[expect(clippy::too_many_lines, reason = "inherited")]
 fn run_compat_command(args: &[String]) -> i32 {
     let json = args.iter().any(|a| a == "--json");
+    if args.iter().any(|a| a == "--allow-unsigned") {
+        COMPAT_ALLOW_UNSIGNED.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
     let positional: Vec<&String> = args.iter().filter(|a| !a.starts_with("--")).collect();
     // The dispatcher strips `compat`, so positional[0] is the sub-verb.
     let sub = positional.first().map(|s| s.as_str()).unwrap_or("");
@@ -5880,7 +5843,7 @@ fn run_compat_command(args: &[String]) -> i32 {
     ) {
         eprintln!(
             "loft compat: usage: loft compat <api|test|check|levels|floor|width32> [<version>] \
-             [--json] [--with-tests] [--full]"
+             [--json] [--with-tests] [--full] [--allow-unsigned]"
         );
         return 2;
     }
@@ -6291,12 +6254,18 @@ fn published_releases(name: &str, own_version: Option<&str>) -> Result<Vec<Strin
     Ok(out)
 }
 
+/// `loft compat --allow-unsigned`: the check may read an index that carries no signature.
+#[cfg(feature = "registry")]
+static COMPAT_ALLOW_UNSIGNED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 /// How the check reads the registry and fetches a release: into the install cache, writing
 /// no lockfile — the package being checked is not a consumer of its own earlier releases.
+/// The releases it fetches are built and run, so the index is held to `loft install`'s rule.
 #[cfg(feature = "registry")]
 fn compat_install_opts() -> loft::install::InstallOptions {
     loft::install::InstallOptions {
-        allow_unsigned: true,
+        allow_unsigned: COMPAT_ALLOW_UNSIGNED.load(std::sync::atomic::Ordering::Relaxed),
         offline: std::env::var("LOFT_OFFLINE").is_ok(),
         allow_prerelease: true,
         skip_lockfile: true,
@@ -8363,6 +8332,16 @@ fn main() {
                 i += 1;
             }
         } else if a == "--native-esp" {
+            // @PLN217 — the Tanmatsu's processor is 32-bit, so its app is built under the
+            // 32-bit regime unless a width was asked for: `--width 64` (before or after this
+            // flag) or `LOFT_WIDTH` keeps the choice.
+            if std::env::var_os("LOFT_WIDTH").is_none() {
+                // SAFETY: as for --width — set before any parse reads it.
+                unsafe {
+                    std::env::set_var("LOFT_WIDTH", "32");
+                    std::env::set_var("LOFT_WIDTH_IMPLIED_BY", "--native-esp");
+                }
+            }
             // The project directory is optional, as `--native-wasm`'s output is.
             native_esp = Some(
                 if argv
@@ -8506,7 +8485,7 @@ fn main() {
             // Env equivalent: LOFT_DENY_WARNINGS=1
             deny_warnings = true;
         } else if a == "--width" {
-            // @PLN204 — `--width 32` puts every source but the stdlib under the 32-bit regime
+            // @PLN204 — `--width 32` puts every source, the stdlib too, under the 32-bit regime
             // (a plain `integer` is an `i32`, a plain `float` a `single`), as `LOFT_WIDTH=32`
             // does; a file's own `#width 64` still keeps it out.
             let bits = argv
@@ -8522,6 +8501,7 @@ fn main() {
             // SAFETY: as for --dev-soft-halt — set before any parse reads it.
             unsafe {
                 std::env::set_var("LOFT_WIDTH", &bits);
+                std::env::remove_var("LOFT_WIDTH_IMPLIED_BY");
             }
         } else if a == "--timeout" {
             // @PLAN49 T3 — `--timeout <secs>` arms the watchdog.  The
@@ -8933,11 +8913,15 @@ fn main() {
                 if sub == "export" {
                     let mut packages: Option<Vec<String>> = None;
                     let mut all = false;
+                    let mut allow_unsigned = false;
                     let mut outdir: Option<String> = None;
                     while i < argv.len() {
                         let a2 = argv[i].as_str();
                         if a2 == "--all" {
                             all = true;
+                            i += 1;
+                        } else if a2 == "--allow-unsigned" {
+                            allow_unsigned = true;
                             i += 1;
                         } else if a2 == "--packages" {
                             i += 1;
@@ -8966,14 +8950,26 @@ fn main() {
                         eprintln!("loft bundle export: <outdir> required");
                         std::process::exit(1);
                     };
-                    let code = bundle_export(&out, packages.as_deref(), all);
+                    let code = bundle_export(&out, packages.as_deref(), all, allow_unsigned);
                     std::process::exit(code);
                 } else if sub == "import" {
-                    let Some(indir) = argv.get(i) else {
+                    let mut indir: Option<&String> = None;
+                    let mut allow_unsigned = false;
+                    for a2 in &argv[i..] {
+                        if a2 == "--allow-unsigned" {
+                            allow_unsigned = true;
+                        } else if !a2.starts_with('-') && indir.is_none() {
+                            indir = Some(a2);
+                        } else {
+                            eprintln!("loft bundle import: unknown argument `{a2}`");
+                            std::process::exit(1);
+                        }
+                    }
+                    let Some(indir) = indir else {
                         eprintln!("loft bundle import: <indir> required");
                         std::process::exit(1);
                     };
-                    let code = bundle_import(indir);
+                    let code = bundle_import(indir, allow_unsigned);
                     std::process::exit(code);
                 }
                 eprintln!("loft bundle: unknown subcommand `{sub}`");
@@ -8998,6 +8994,9 @@ fn main() {
                         i += 1;
                     } else if a2 == "--check" {
                         update_opts.check_only = true;
+                        i += 1;
+                    } else if a2 == "--allow-unsigned" {
+                        update_opts.allow_unsigned = true;
                         i += 1;
                     } else if !a2.starts_with('-') && target.is_none() {
                         target = Some(a2.to_string());
@@ -9274,11 +9273,12 @@ fn main() {
             // regardless of cwd or registry drift.
             #[cfg(feature = "registry")]
             {
-                let Some(script) = argv.get(i) else {
+                let allow_unsigned = argv[i..].iter().any(|a| a == "--allow-unsigned");
+                let Some(script) = argv[i..].iter().find(|a| !a.starts_with("--")) else {
                     eprintln!("loft pin: script path required");
                     std::process::exit(1);
                 };
-                pin_script(script);
+                pin_script(script, allow_unsigned);
                 return;
             }
             #[cfg(not(feature = "registry"))]
@@ -11230,7 +11230,7 @@ fn main() {
                 std::process::exit(1);
             }
         };
-        match esp_app::build_project(&out) {
+        match esp_app::build_project(&out, &app) {
             Ok(bin) => {
                 let size = fa::metadata(&bin).map(|m| m.len()).unwrap_or(0);
                 println!("{} ({size} bytes, {packed} of them assets)", bin.display());

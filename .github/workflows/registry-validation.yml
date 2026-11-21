@@ -80,7 +80,9 @@ jobs:
       - name: Every loft-libs-* package is in the nightly matrix
         env:
           GH_TOKEN: ${{ github.token }}
-          # LIB_COVERAGE_IGNORE: "name1 name2"   # intentionally-unpublished packages
+          # Intentionally unpublished packages.  asan_selftest (loft-libs-graphics/asan/selftest)
+          # is the program asan/run.sh runs to see the sanitizer is live — never a library.
+          LIB_COVERAGE_IGNORE: "asan_selftest"
         run: scripts/lib_coverage_check.sh
 
   # Retention guard: the matrix below only ever tests versions that are STILL

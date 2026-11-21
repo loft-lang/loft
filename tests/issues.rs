@@ -18009,7 +18009,7 @@ fn compat_full_window_budget_overrun_fails_the_release() {
 
     let run = |budget: &str| {
         loft::platform::process::harness_command(loft)
-            .args(["compat", "check", "--full"])
+            .args(["compat", "check", "--full", "--allow-unsigned"])
             .current_dir(&pkg)
             .env("LOFT_HOME", &root)
             .env("LOFT_REGISTRY_URL", &index_url)

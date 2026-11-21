@@ -1782,6 +1782,96 @@ pub fn rtree_validate<K: KeyOracle + Copy>(store: &Store, tree: u32, spec: K) {
     );
 }
 
+/// `@FR-S-Sound` — whether the tree record `tree`, a claimed block of `words` words, is a
+/// tree every descent, step and insert can follow without leaving it; the records its leaves
+/// name, in key order, or the first number that does not hold.
+///
+/// Asked of an image from elsewhere, before anything follows a number in it: it panics on
+/// nothing, reads no record and keeps no call stack per level (a trie is as deep as its
+/// longest key).  It checks the SHAPE — every node id is one the tree minted, no node is
+/// reached twice, a node has both children, points back at the node above it and tests a
+/// later bit than that one (I1, I3), the leaves and nodes are as many as the header says,
+/// the free nodes form a list — and leaves the KEYS alone: a tree that is sound here and
+/// wrongly keyed answers wrongly, and stays inside its store doing so.
+pub(crate) fn sound(store: &Store, tree: u32, words: u32) -> Result<Vec<u32>, String> {
+    if u64::from(words) * 8 < u64::from(HDR) {
+        return Err(format!(
+            "tree record {tree} holds {words} words, less than its header"
+        ));
+    }
+    let room = cap_for_words(words);
+    let minted = store.get_u32_raw(tree, NODES);
+    if minted > room {
+        return Err(format!(
+            "tree record {tree} says {minted} nodes; it has room for {room}"
+        ));
+    }
+    let len = store.get_u32_raw(tree, LEN);
+    let mut seen = vec![false; minted as usize + 1];
+    let mut recs: Vec<u32> = Vec::new();
+    let mut live = 0u32;
+    // What is still to visit: a child slot, the bit of the node it hangs under and that node.
+    let mut todo: Vec<(Child, Option<u32>, u32)> = vec![(top(store, tree), None, 0)];
+    while let Some((slot, above_bit, above)) = todo.pop() {
+        match slot {
+            Child::Empty => {
+                if above != 0 {
+                    return Err(format!("tree node {above} lacks a child"));
+                }
+            }
+            Child::Rec(r) => recs.push(r),
+            Child::Node(n) => {
+                if n == 0 || n > minted {
+                    return Err(format!("tree node {n} is not a node of its tree"));
+                }
+                if seen[n as usize] {
+                    return Err(format!("tree node {n} is reached twice"));
+                }
+                seen[n as usize] = true;
+                live += 1;
+                let bit = node_bit(store, tree, n);
+                if above_bit.is_some_and(|b| bit <= b) {
+                    return Err(format!(
+                        "tree node {n} tests bit {bit}, no later than the node above it"
+                    ));
+                }
+                if node_parent(store, tree, n) != above {
+                    return Err(format!(
+                        "tree node {n} does not point back at the node above it"
+                    ));
+                }
+                // The TRUE side is pushed first, so the FALSE side is walked first: key order.
+                todo.push((child(store, tree, n, true), Some(bit), n));
+                todo.push((child(store, tree, n, false), Some(bit), n));
+            }
+        }
+    }
+    if recs.len() as u64 != u64::from(len) || live != len.saturating_sub(1) {
+        return Err(format!(
+            "tree record {tree} says it holds {len} records; its {live} nodes lead to {}",
+            recs.len()
+        ));
+    }
+    let mut freed = 0u32;
+    let mut f = store.get_u32_raw(tree, FREE);
+    while f != 0 {
+        if f > minted || seen[f as usize] {
+            return Err(format!(
+                "tree record {tree} lists node {f} as free, which it is not"
+            ));
+        }
+        seen[f as usize] = true;
+        freed += 1;
+        f = store.get_i32_raw(tree, child_off(f, false)) as u32;
+    }
+    if live + freed != minted {
+        return Err(format!(
+            "tree record {tree} minted {minted} nodes; {live} are in the tree and {freed} are free"
+        ));
+    }
+    Ok(recs)
+}
+
 // ---------------------------------------------------------------------------
 // Tests — the steps of doc/claude/plans/48-spacial-index/RADIX_TREE.md §7
 // ---------------------------------------------------------------------------

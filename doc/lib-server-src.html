@@ -23,8 +23,8 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <a href="report.html">Report a problem</a> · <span class="cur">Libraries</span> · <a href="https://loft-lang.org/blog/">Blog</a> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-files-and-directories.html">Files and directories</a> · <a href="stdlib-binary-file-i-o.html">Binary file I/O</a> · <a href="stdlib-persistent-stores.html">Persistent stores</a> · <a href="stdlib-lazy-stores.html">Lazy stores</a> · <a href="stdlib-paged-store-loading.html">Paged store loading</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-path-helpers.html">Path helpers</a> · <a href="stdlib-text-case-and-classification.html">Text: case and classification</a> · <a href="stdlib-text-bytes-and-code-points.html">Text: bytes and code points</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-json-reading-values.html">JSON: reading values</a> · <a href="stdlib-json-building-values.html">JSON: building values</a> · <a href="stdlib-json-the-struct-bridge.html">JSON: the struct bridge</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>server source</h1>
 <article>
-<p><a href="lib-server.html">← server</a> · <a href="lib-server-api.html">API reference</a> · version 0.7.6</p>
-<p class="lib-legend">5 file(s), 922 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
+<p><a href="lib-server.html">← server</a> · <a href="lib-server-api.html">API reference</a> · version 0.7.7</p>
+<p class="lib-legend">5 file(s), 924 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
 <table class="lib-table">
@@ -42,18 +42,18 @@
 <tr><td><code>bound</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L236">236</a></td><td>—</td><td><a href="#src-server-loft-L176">176</a> <a href="#src-server-loft-L197">197</a> <a href="#src-server-loft-L217">217</a> <a href="#tests-c84-surface-loft-L26">26</a> <a href="#tests-server-loft-L25">25</a> <a href="#tests-server-loft-L39">39</a> … (7 total)</td></tr>
 <tr><td><code>next_nonblocking</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L244">244</a></td><td>—</td><td><a href="#tests-c84-surface-loft-L26">26</a></td></tr>
 <tr><td><code>respond</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L273">273</a></td><td>—</td><td><a href="#tests-c84-surface-loft-L27">27</a></td></tr>
-<tr><td><code>respond_typed</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L281">281</a></td><td>—</td><td><a href="#src-server-loft-L664">664</a> <a href="#tests-c84-surface-loft-L27">27</a></td></tr>
+<tr><td><code>respond_typed</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L281">281</a></td><td>—</td><td><a href="#src-server-loft-L666">666</a> <a href="#tests-c84-surface-loft-L27">27</a></td></tr>
 <tr><td><code>respond_bytes</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L299">299</a></td><td>—</td><td><a href="#tests-c84-surface-loft-L27">27</a></td></tr>
 <tr><td><code>header</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L314">314</a></td><td><a href="#tests-worked-examples-loft-L18">SRV-002</a></td><td><a href="#src-server-loft-L363">363</a> <a href="#src-server-loft-L412">412</a> <a href="#tests-c84-surface-loft-L28">28</a> <a href="#tests-worked-examples-loft-L35">35</a> <a href="#tests-worked-examples-loft-L36">36</a> <a href="#tests-worked-examples-loft-L38">38</a> … (19 total)</td></tr>
 <tr><td><code>respond_with_headers</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L340">340</a></td><td>—</td><td><a href="#src-server-loft-L369">369</a> <a href="#src-server-loft-L374">374</a> <a href="#src-server-loft-L382">382</a> <a href="#src-server-loft-L389">389</a> <a href="#src-server-loft-L404">404</a> <a href="#src-server-loft-L414">414</a> … (9 total)</td></tr>
 <tr><td><code>cors_headers</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L348">348</a></td><td>—</td><td><a href="#src-server-loft-L400">400</a> <a href="#tests-c84-surface-loft-L28">28</a></td></tr>
 <tr><td><code>serve_range</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L362">362</a></td><td><a href="#tests-worked-examples-loft-L70">SRV-003</a></td><td><a href="#src-server-loft-L418">418</a> <a href="#tests-c84-surface-loft-L29">29</a> <a href="#tests-worked-examples-loft-L84">84</a> <a href="#tests-worked-examples-loft-L85">85</a> <a href="#tests-worked-examples-loft-L89">89</a> <a href="#tests-worked-examples-loft-L90">90</a> … (7 total)</td></tr>
 <tr><td><code>serve_data</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L397">397</a></td><td><a href="#tests-worked-examples-loft-L70">SRV-003</a></td><td><a href="#tests-c84-surface-loft-L29">29</a> <a href="#tests-worked-examples-loft-L100">100</a> <a href="#tests-worked-examples-loft-L102">102</a> <a href="#tests-worked-examples-loft-L105">105</a> <a href="#tests-worked-examples-loft-L107">107</a></td></tr>
-<tr><td><code>respond_html</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L431">431</a></td><td>—</td><td><a href="#src-server-loft-L658">658</a> <a href="#tests-c84-surface-loft-L27">27</a></td></tr>
+<tr><td><code>respond_html</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L431">431</a></td><td>—</td><td><a href="#src-server-loft-L660">660</a> <a href="#tests-c84-surface-loft-L27">27</a></td></tr>
 <tr><td><code>respond_css</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L441">441</a></td><td>—</td><td><a href="#tests-c84-surface-loft-L28">28</a></td></tr>
 <tr><td><code>respond_js</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L448">448</a></td><td>—</td><td><a href="#tests-c84-surface-loft-L28">28</a></td></tr>
 <tr><td><code>respond_loft</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L456">456</a></td><td>—</td><td><a href="#tests-c84-surface-loft-L28">28</a></td></tr>
-<tr><td><code>respond_404</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L465">465</a></td><td>—</td><td><a href="#src-server-loft-L669">669</a> <a href="#tests-c84-surface-loft-L28">28</a></td></tr>
+<tr><td><code>respond_404</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L465">465</a></td><td>—</td><td><a href="#src-server-loft-L671">671</a> <a href="#tests-c84-surface-loft-L28">28</a></td></tr>
 <tr><td><code>close</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L472">472</a></td><td>—</td><td><a href="#src-server-loft-L521">521</a> <a href="#tests-c84-surface-loft-L26">26</a> <a href="#tests-server-loft-L45">45</a> <a href="#tests-server-loft-L48">48</a></td></tr>
 <tr><td><code>ws_upgrade</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L483">483</a></td><td>—</td><td><a href="#tests-c84-surface-loft-L30">30</a></td></tr>
 <tr><td><code>send</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L500">500</a></td><td>—</td><td><a href="#tests-c84-surface-loft-L30">30</a></td></tr>
@@ -63,12 +63,12 @@
 <tr><td><code>WsEvent</code> <span class="search-kind">struct</span></td><td><a href="#src-server-loft-L590">590</a></td><td>—</td><td><a href="#src-server-loft-L603">603</a> <a href="#src-server-loft-L625">625</a> <a href="#src-server-loft-L630">630</a> <a href="#src-server-loft-L634">634</a> <a href="#src-server-loft-L644">644</a> <a href="#tests-c84-surface-loft-L24">24</a> … (7 total)</td></tr>
 <tr><td><code>run</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L603">603</a></td><td>—</td><td><a href="#tests-c84-surface-loft-L31">31</a></td></tr>
 <tr><td><code>poll_event</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L625">625</a></td><td>—</td><td><a href="#src-server-loft-L607">607</a> <a href="#tests-c84-surface-loft-L31">31</a></td></tr>
-<tr><td><code>respond_html</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L658">658</a></td><td>—</td><td><a href="#src-server-loft-L431">431</a> <a href="#tests-c84-surface-loft-L27">27</a></td></tr>
-<tr><td><code>respond_typed</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L664">664</a></td><td>—</td><td><a href="#src-server-loft-L281">281</a> <a href="#tests-c84-surface-loft-L27">27</a></td></tr>
-<tr><td><code>respond_404</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L669">669</a></td><td>—</td><td><a href="#src-server-loft-L465">465</a> <a href="#tests-c84-surface-loft-L28">28</a></td></tr>
-<tr><td><code>send_to</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L675">675</a></td><td>—</td><td><a href="#tests-c84-surface-loft-L31">31</a></td></tr>
-<tr><td><code>broadcast</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L682">682</a></td><td>—</td><td><a href="#tests-c84-surface-loft-L31">31</a></td></tr>
-<tr><td><code>disconnect</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L688">688</a></td><td>—</td><td><a href="#tests-c84-surface-loft-L31">31</a></td></tr>
+<tr><td><code>respond_html</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L660">660</a></td><td>—</td><td><a href="#src-server-loft-L431">431</a> <a href="#tests-c84-surface-loft-L27">27</a></td></tr>
+<tr><td><code>respond_typed</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L666">666</a></td><td>—</td><td><a href="#src-server-loft-L281">281</a> <a href="#tests-c84-surface-loft-L27">27</a></td></tr>
+<tr><td><code>respond_404</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L671">671</a></td><td>—</td><td><a href="#src-server-loft-L465">465</a> <a href="#tests-c84-surface-loft-L28">28</a></td></tr>
+<tr><td><code>send_to</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L677">677</a></td><td>—</td><td><a href="#tests-c84-surface-loft-L31">31</a></td></tr>
+<tr><td><code>broadcast</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L684">684</a></td><td>—</td><td><a href="#tests-c84-surface-loft-L31">31</a></td></tr>
+<tr><td><code>disconnect</code> <span class="search-kind">fn</span></td><td><a href="#src-server-loft-L690">690</a></td><td>—</td><td><a href="#tests-c84-surface-loft-L31">31</a></td></tr>
 </table>
 <h2 id="src-server-loft">src/server.loft</h2>
 <pre class="src"><code><span id="src-server-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>
@@ -81,7 +81,7 @@
 <span id="src-server-loft-L8"><span class="cm">//      time: `next` blocks until a client arrives and `respond` closes it.</span></span>
 <span id="src-server-loft-L9"><span class="cm">//   2. Multi-client WebSocket: `srv.run(on_event)`.</span></span>
 <span id="src-server-loft-L10"><span class="cm">//      The clean event-driven surface used by multiplayer servers.</span></span>
-<span id="src-server-loft-L11"><span class="cm">//      Loft programs register ONE handler `fn(WsEvent)` and Rust</span></span>
+<span id="src-server-loft-L11"><span class="cm">//      Loft programs register ONE handler `fn(WsEvent)` and the runtime</span></span>
 <span id="src-server-loft-L12"><span class="cm">//      drives the accept loop, per-client polling, and disconnect</span></span>
 <span id="src-server-loft-L13"><span class="cm">//      detection.  Disconnects are silently absorbed — the loft</span></span>
 <span id="src-server-loft-L14"><span class="cm">//      program is not notified.  See the `run` doc block below.</span></span>
@@ -635,7 +635,7 @@
 <span id="src-server-loft-L562"><span class="cm">// --- Multi-client WebSocket API (clean) ---</span></span>
 <span id="src-server-loft-L563"><span class="cm">//</span></span>
 <span id="src-server-loft-L564"><span class="cm">// The public surface for multi-client servers.  Loft programs</span></span>
-<span id="src-server-loft-L565"><span class="cm">// register a single event handler via `run` and Rust drives the</span></span>
+<span id="src-server-loft-L565"><span class="cm">// register a single event handler via `run` and the runtime drives the</span></span>
 <span id="src-server-loft-L566"><span class="cm">// rest: accept, per-client polling, frame parsing, disconnect</span></span>
 <span id="src-server-loft-L567"><span class="cm">// detection.</span></span>
 <span id="src-server-loft-L568"><span class="cm">//</span></span>
@@ -689,7 +689,7 @@
 <span id="src-server-loft-L616"><span class="cm">// Non-blocking single-event drain — returns the next WsEvent, or null</span></span>
 <span id="src-server-loft-L617"><span class="cm">// when nothing is pending.  Lets a server that also needs a periodic</span></span>
 <span id="src-server-loft-L618"><span class="cm">// tick (timers, decay, snapshots) run its OWN loop while still using the</span></span>
-<span id="src-server-loft-L619"><span class="cm">// efficient Rust-side event pump: drain `poll_event` in a batch, do the</span></span>
+<span id="src-server-loft-L619"><span class="cm">// efficient runtime-side event pump: drain `poll_event` in a batch, do the</span></span>
 <span id="src-server-loft-L620"><span class="cm">// periodic work, idle-sleep when a pass produced nothing.  `run` above is</span></span>
 <span id="src-server-loft-L621"><span class="cm">// the convenience wrapper for servers that only react to events.</span></span>
 <span id="src-server-loft-L622"><span class="cm">//</span></span>
@@ -719,49 +719,51 @@
 <span id="src-server-loft-L646">                           payload: raw[i + <span class="nm">1..</span>], path: <span class="st">""</span> };</span>
 <span id="src-server-loft-L647">        }</span>
 <span id="src-server-loft-L648">      }</span>
-<span id="src-server-loft-L649">      <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">log_warn</a></span>(<span class="st">"server: dropped malformed frame from {cid}: {raw}"</span>);</span>
-<span id="src-server-loft-L650">    }</span>
-<span id="src-server-loft-L651">    <span class="cm">// kind == 2 (Disconnected) absorbed silently; keep draining.</span></span>
-<span id="src-server-loft-L652">  }</span>
-<span id="src-server-loft-L653">  <span class="kw">null</span></span>
-<span id="src-server-loft-L654">}</span>
-<span id="src-server-loft-L655"></span>
-<span id="src-server-loft-L656"><span class="cm">// Reply to the HTTP request currently parked by a `http` WsEvent and</span></span>
-<span id="src-server-loft-L657"><span class="cm">// close it.  Call exactly once from the handler for an `ev.http` event.</span></span>
-<span id="src-server-loft-L658"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">respond_html</span>(self: <span class="en">Server</span>, body: <span class="ty"><a href="stdlib-types.html">text</a></span>) {</span>
-<span id="src-server-loft-L659">  _ = self;</span>
-<span id="src-server-loft-L660">  <span class="fn-call">tcp_respond_typed</span>(<span class="nm">200</span>, body, <span class="st">"text/html; charset=utf-8"</span>);</span>
-<span id="src-server-loft-L661">}</span>
-<span id="src-server-loft-L662"><span class="cm">// The `Server` twin of `Request::respond_typed`, for replying to the request</span></span>
-<span id="src-server-loft-L663"><span class="cm">// parked by an `http` WsEvent inside a `run` handler.</span></span>
-<span id="src-server-loft-L664"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">respond_typed</span>(self: <span class="en">Server</span>, status: <span class="ty"><a href="stdlib-types.html">integer</a></span>, body: <span class="ty"><a href="stdlib-types.html">text</a></span>, content_type: <span class="ty"><a href="stdlib-types.html">text</a></span>) {</span>
-<span id="src-server-loft-L665">  _ = self;</span>
-<span id="src-server-loft-L666">  <span class="fn-call">tcp_respond_typed</span>(status, body, content_type);</span>
-<span id="src-server-loft-L667">}</span>
-<span id="src-server-loft-L668"><span class="cm">// The same not-found answer, from inside a `run` handler.</span></span>
-<span id="src-server-loft-L669"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">respond_404</span>(self: <span class="en">Server</span>) {</span>
-<span id="src-server-loft-L670">  _ = self;</span>
-<span id="src-server-loft-L671">  <span class="fn-call">tcp_respond_typed</span>(<span class="nm">404</span>, <span class="st">"Not Found"</span>, <span class="st">"text/plain; charset=utf-8"</span>);</span>
-<span id="src-server-loft-L672">}</span>
-<span id="src-server-loft-L673"></span>
-<span id="src-server-loft-L674"><span class="cm">// Send a frame to a specific client.  Returns true on success.</span></span>
-<span id="src-server-loft-L675"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">send_to</span>(self: <span class="en">Server</span>, client_id: <span class="ty"><a href="stdlib-types.html">integer</a></span>, msg: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
-<span id="src-server-loft-L676">  _ = self;</span>
-<span id="src-server-loft-L677">  <span class="fn-call">ws_send_native</span>(client_id, msg)</span>
-<span id="src-server-loft-L678">}</span>
-<span id="src-server-loft-L679"></span>
-<span id="src-server-loft-L680"><span class="cm">// Send a frame to every active client.  Returns the count of</span></span>
-<span id="src-server-loft-L681"><span class="cm">// successful sends.  Iteration happens entirely in Rust.</span></span>
-<span id="src-server-loft-L682"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">broadcast</span>(self: <span class="en">Server</span>, msg: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="src-server-loft-L683">  <span class="fn-call">ws_broadcast_native</span>(self.handle, msg)</span>
-<span id="src-server-loft-L684">}</span>
-<span id="src-server-loft-L685"></span>
-<span id="src-server-loft-L686"><span class="cm">// Forcefully close one client's connection.  The slot is freed</span></span>
-<span id="src-server-loft-L687"><span class="cm">// for reuse by future accepts.</span></span>
-<span id="src-server-loft-L688"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">disconnect</span>(self: <span class="en">Server</span>, client_id: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
-<span id="src-server-loft-L689">  _ = self;</span>
-<span id="src-server-loft-L690">  <span class="fn-call">ws_close_native</span>(client_id);</span>
-<span id="src-server-loft-L691">}</span>
+<span id="src-server-loft-L649">      <span class="cm">// The frame's size and not its text: what a peer sent is the peer's to choose, and</span></span>
+<span id="src-server-loft-L650">      <span class="cm">// up to 16 MiB of it, control characters and all, does not belong in a log line.</span></span>
+<span id="src-server-loft-L651">      <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">log_warn</a></span>(<span class="st">"server: dropped malformed frame from {cid} ({raw.size()} bytes)"</span>);</span>
+<span id="src-server-loft-L652">    }</span>
+<span id="src-server-loft-L653">    <span class="cm">// kind == 2 (Disconnected) absorbed silently; keep draining.</span></span>
+<span id="src-server-loft-L654">  }</span>
+<span id="src-server-loft-L655">  <span class="kw">null</span></span>
+<span id="src-server-loft-L656">}</span>
+<span id="src-server-loft-L657"></span>
+<span id="src-server-loft-L658"><span class="cm">// Reply to the HTTP request currently parked by a `http` WsEvent and</span></span>
+<span id="src-server-loft-L659"><span class="cm">// close it.  Call exactly once from the handler for an `ev.http` event.</span></span>
+<span id="src-server-loft-L660"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">respond_html</span>(self: <span class="en">Server</span>, body: <span class="ty"><a href="stdlib-types.html">text</a></span>) {</span>
+<span id="src-server-loft-L661">  _ = self;</span>
+<span id="src-server-loft-L662">  <span class="fn-call">tcp_respond_typed</span>(<span class="nm">200</span>, body, <span class="st">"text/html; charset=utf-8"</span>);</span>
+<span id="src-server-loft-L663">}</span>
+<span id="src-server-loft-L664"><span class="cm">// The `Server` twin of `Request::respond_typed`, for replying to the request</span></span>
+<span id="src-server-loft-L665"><span class="cm">// parked by an `http` WsEvent inside a `run` handler.</span></span>
+<span id="src-server-loft-L666"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">respond_typed</span>(self: <span class="en">Server</span>, status: <span class="ty"><a href="stdlib-types.html">integer</a></span>, body: <span class="ty"><a href="stdlib-types.html">text</a></span>, content_type: <span class="ty"><a href="stdlib-types.html">text</a></span>) {</span>
+<span id="src-server-loft-L667">  _ = self;</span>
+<span id="src-server-loft-L668">  <span class="fn-call">tcp_respond_typed</span>(status, body, content_type);</span>
+<span id="src-server-loft-L669">}</span>
+<span id="src-server-loft-L670"><span class="cm">// The same not-found answer, from inside a `run` handler.</span></span>
+<span id="src-server-loft-L671"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">respond_404</span>(self: <span class="en">Server</span>) {</span>
+<span id="src-server-loft-L672">  _ = self;</span>
+<span id="src-server-loft-L673">  <span class="fn-call">tcp_respond_typed</span>(<span class="nm">404</span>, <span class="st">"Not Found"</span>, <span class="st">"text/plain; charset=utf-8"</span>);</span>
+<span id="src-server-loft-L674">}</span>
+<span id="src-server-loft-L675"></span>
+<span id="src-server-loft-L676"><span class="cm">// Send a frame to a specific client.  Returns true on success.</span></span>
+<span id="src-server-loft-L677"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">send_to</span>(self: <span class="en">Server</span>, client_id: <span class="ty"><a href="stdlib-types.html">integer</a></span>, msg: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {</span>
+<span id="src-server-loft-L678">  _ = self;</span>
+<span id="src-server-loft-L679">  <span class="fn-call">ws_send_native</span>(client_id, msg)</span>
+<span id="src-server-loft-L680">}</span>
+<span id="src-server-loft-L681"></span>
+<span id="src-server-loft-L682"><span class="cm">// Send a frame to every active client.  Returns the count of</span></span>
+<span id="src-server-loft-L683"><span class="cm">// successful sends.  Iteration happens entirely in the runtime.</span></span>
+<span id="src-server-loft-L684"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">broadcast</span>(self: <span class="en">Server</span>, msg: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
+<span id="src-server-loft-L685">  <span class="fn-call">ws_broadcast_native</span>(self.handle, msg)</span>
+<span id="src-server-loft-L686">}</span>
+<span id="src-server-loft-L687"></span>
+<span id="src-server-loft-L688"><span class="cm">// Forcefully close one client's connection.  The slot is freed</span></span>
+<span id="src-server-loft-L689"><span class="cm">// for reuse by future accepts.</span></span>
+<span id="src-server-loft-L690"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">disconnect</span>(self: <span class="en">Server</span>, client_id: <span class="ty"><a href="stdlib-types.html">integer</a></span>) {</span>
+<span id="src-server-loft-L691">  _ = self;</span>
+<span id="src-server-loft-L692">  <span class="fn-call">ws_close_native</span>(client_id);</span>
+<span id="src-server-loft-L693">}</span>
 </code></pre>
 <h2 id="tests-c84-surface-loft">tests/c84_surface.loft</h2>
 <pre class="src"><code><span id="tests-c84-surface-loft-L1"><span class="cm">// Copyright (c) 2026 Jurjen Stellingwerff</span></span>

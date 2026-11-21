@@ -487,19 +487,17 @@ fn stack_image(slots: Vec<u64>, params: &[CType]) -> Vec<u64> {
             CType::Int { bits, .. } => usize::from(*bits / 8).clamp(1, 8),
             _ => 8,
         };
-        while image.len() % size != 0 {
+        while !image.len().is_multiple_of(size) {
             image.push(0);
         }
         image.extend_from_slice(&value.to_le_bytes()[..size]);
     }
-    while image.len() % 8 != 0 {
+    while !image.len().is_multiple_of(8) {
         image.push(0);
     }
     let mut out = slots[..IN_REGISTERS].to_vec();
-    for word in image.chunks_exact(8) {
-        let mut w = [0u8; 8];
-        w.copy_from_slice(word);
-        out.push(u64::from_le_bytes(w));
+    for word in image.as_chunks::<8>().0 {
+        out.push(u64::from_le_bytes(*word));
     }
     out
 }

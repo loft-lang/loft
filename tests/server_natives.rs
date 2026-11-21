@@ -10,9 +10,10 @@
 //! in advance:
 //!
 //! - a bind that works, the same port bound twice (-1), an idle listener (nothing to accept);
-//! - a POST with a header and a body, answered with a status and type of the program's choice;
-//!   a binary body carrying a NUL and a 0xff byte; caller headers with their own length; a
-//!   plain 404; `tcp_slice` clamped by byte;
+//! - a POST with a header and a body, answered with a status and type of the program's choice
+//!   (written up to a CR LF in it); a binary body carrying a NUL and a 0xff byte; caller
+//!   headers with their own length, a line holding a CR left out; a plain 404; `tcp_slice`
+//!   clamped by byte;
 //! - one WebSocket after a blocking accept, its first frame sent right behind the upgrade
 //!   request, a ping answered and read past, a binary frame, the server's close;
 //! - the event pump on one port: two clients, a plain request answered between them, a
@@ -50,14 +51,14 @@ fn main() {
   if server_natives::tcp_accept(h) {
     b = server_natives::tcp_body();
     println("REQ {server_natives::tcp_method()} {server_natives::tcp_path()} {b} {server_natives::tcp_headers().to_lowercase().contains("x-mine: v1")}");
-    server_natives::tcp_respond_typed(201, "made {b}", "text/x-test");
+    server_natives::tcp_respond_typed(201, "made {b}", "text/x-test\r\nX-Typed: 1");
   }
   if server_natives::tcp_accept(h) {
     bytes: vector<u8> = [0, 255, 65, 10];
     server_natives::tcp_respond_bytes(200, bytes, "");
   }
   if server_natives::tcp_accept(h) {
-    server_natives::tcp_respond_full(200, "", "Content-Length: 1234\nX-Extra: yes\n");
+    server_natives::tcp_respond_full(200, "", "Content-Length: 1234\nX-Extra: yes\nX-Bad: a\rInjected: 1\n");
   }
   if server_natives::tcp_accept(h) {
     server_natives::tcp_respond(404, "nope");
@@ -311,7 +312,10 @@ fn client(p: &Ports) {
         .expect("write");
     let (head, body) = read_response(&mut s);
     assert!(head.starts_with("HTTP/1.1 201 Created\r\n"), "{head}");
+    // A content type is written up to its first control character: the CR LF the program
+    // put in it (a value echoed from a request, say) does not start a header of its own.
     assert_eq!(header(&head, "content-type"), Some("text/x-test"));
+    assert_eq!(header(&head, "x-typed"), None, "{head}");
     assert_eq!(header(&head, "connection"), Some("close"));
     assert_eq!(body, b"made hello");
     // A binary body.
@@ -331,6 +335,10 @@ fn client(p: &Ports) {
     assert!(head.starts_with("HTTP/1.1 200 OK\r\n"), "{head}");
     assert_eq!(header(&head, "content-length"), Some("1234"));
     assert_eq!(header(&head, "x-extra"), Some("yes"));
+    // A caller's line holding a bare CR is left out whole: a client that ends a line at a CR
+    // would read a header the program never wrote.
+    assert!(!head.contains("Injected"), "{head}");
+    assert!(!head.contains("X-Bad"), "{head}");
     assert_eq!(header(&head, "connection"), Some("close"));
     assert!(body.is_empty());
     // A plain respond.

@@ -1542,8 +1542,7 @@ impl Stores {
                         self.forget_in_scratches(data, &existing);
                         let gone = hash::replace_at(data, bucket, index, &mut self.allocations);
                         if !secondary {
-                            self.remove_claims(&existing, c);
-                            self.free_hash_entry(data, &existing, gone);
+                            self.release_hash_entry(data, &existing, gone, c);
                         }
                         if keys::keyed_verify() {
                             let key = keys::get_key(
@@ -4780,13 +4779,15 @@ impl Stores {
         crate::op_census::moved(crate::op_census::Moved::Copy, len as usize);
         #[cfg(feature = "op-census")]
         crate::store_census::copied_into(to.store_nr, u64::from(len));
+        let to_at = self
+            .store(to)
+            .block_in_bounds(to.rec, to.pos as isize, len as isize);
+        // SAFETY: `block_src` and `block_in_bounds` held each span inside its own store.
         unsafe {
             std::ptr::copy(
                 self.store(from)
                     .block_src(from.rec, from.pos as isize, len as isize),
-                self.store_mut(to)
-                    .ptr
-                    .offset(to.rec as isize * 8 + to.pos as isize),
+                self.store_mut(to).ptr.offset(to_at),
                 len as usize,
             );
         }

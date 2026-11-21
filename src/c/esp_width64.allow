@@ -1,0 +1,32 @@
+# Copyright (c) 2026 Jurjen Stellingwerff
+# SPDX-License-Identifier: LGPL-3.0-or-later
+#
+# The 64-bit work of loft's own runtime in a 32-bit device image (@PLN217; `src/esp_width64.rs`).
+# One line an exception: the function, or a prefix ending in `*`, then why it needs 64 bits.
+# A line that allows nothing any more is reported in the build's report: remove it.
+loft_log_clock          a log line's time is milliseconds since 1970, an i64
+loft_push_decimal       prints an i64; a 32-bit value is printed by loft_format_int32
+loft_format_long        prints an i64, and the 64 bits of a hex, octal or binary form
+loft_sip_write          a keyed collection's digest is a 64-bit SipHash, the table's own format
+loft_digest_str         the same digest, over a text key
+loft_kv_cmp             compares a keyed collection's f64 key
+loft_bt_record_part     compares an index's f64 key
+loft_rx_word            a radix key is cut into 64-bit words, the tree's own format
+loft_h_home             a table whose size is no power of two takes its bucket by a 64-bit remainder; a table loft sizes is a power of two and takes a mask
+loft_h_ensure_table     a table's growth is sized in 64 bits so that it cannot wrap; once per growth
+loft_h_inline_rebuild   the same, for a table held inline
+loft_resize_store       a store's growth is sized in 64 bits so that it cannot wrap; once per growth
+loft_heap_human         the heap-limit report writes a size with one decimal; printed when the limit is hit
+loft_u64_dec            the decimal digits of an i64
+loft_shl_at             `<<` of an i64 by a number of bits the program computes
+loft_shr_at             `>>` of an i64 by a number of bits the program computes
+loft_int_of_text_at     reads an integer from text as an i64, which a text may hold
+loft_jp_scan_number     a JSON number is read as a double, and an integer in it as an i64
+loft_jv_i64             a JSON integer is an i64
+loft_jv_as_number       a JSON number is a double
+loft_jsv_long           a JSON integer is an i64
+loft_jsv_struct         a record's i64 and f64 fields are written from JSON as they are declared
+loft_pw_walk            a record's i64 and f64 fields are written to JSON as they are declared
+loft_bt_kv_part         compares an index's f64 key
+loft_hk1_radix          sorts a keyed collection's 64-bit digests a byte at a time
+loft_panic              prints the line a program stopped at; once, as it ends

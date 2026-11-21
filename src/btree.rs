@@ -1554,6 +1554,158 @@ pub fn validate(data: &DbRef, stores: &[Store], keys: &[Key]) {
     }
 }
 
+/// `@FR-S-Sound` — whether the arena record `arena`, a claimed block of `words` words, is a
+/// tree every descent, step and insert can follow without leaving it; the records its leaves
+/// name, in order, or the first number that does not hold.
+///
+/// Unlike [`validate`] this panics on nothing and reads no record: it is asked of an image
+/// from elsewhere, before anything follows a number in it.  It checks the SHAPE — every node
+/// number names a node of the arena, no node is reached twice, a node holds no more slots
+/// than it has, the leaves are chained in the order the descent finds them, the free nodes
+/// form a list — and leaves the ORDER of the keys alone: a tree that is sound here and badly
+/// sorted answers wrongly, and stays inside its store doing so.
+pub(crate) fn sound(
+    store: &Store,
+    arena: u32,
+    words: u32,
+    keys: &[Key],
+) -> Result<Vec<u32>, String> {
+    let text_key = is_text(keys);
+    let a = Arena(arena);
+    let fit = (u64::from(words) * 8).saturating_sub(8) / u64::from(NODE);
+    if fit < u64::from(FIRST_CAP) {
+        return Err(format!(
+            "index arena {arena} holds {words} words, less than a tree needs"
+        ));
+    }
+    let used = a.hdr(store, H_USED);
+    let cap = a.hdr(store, H_CAP);
+    if used < 2 || u64::from(used) > fit || u64::from(cap) > fit || used > cap {
+        return Err(format!(
+            "index arena {arena} says {used} of {cap} nodes are used; it has room for {fit}"
+        ));
+    }
+    let height = a.hdr(store, H_HEIGHT);
+    if height as usize > MAX_HEIGHT {
+        return Err(format!(
+            "index arena {arena} says the tree is {height} levels high"
+        ));
+    }
+    let mut seen = vec![false; used as usize];
+    let mut leaves: Vec<u32> = Vec::new();
+    let mut recs: Vec<u32> = Vec::new();
+    let root = a.hdr(store, H_ROOT);
+    sound_node(
+        a,
+        store,
+        root,
+        height,
+        text_key,
+        &mut seen,
+        &mut leaves,
+        &mut recs,
+    )?;
+    if recs.len() as u64 != u64::from(a.hdr(store, H_LEN)) {
+        return Err(format!(
+            "index arena {arena} says it holds {} records; its leaves hold {}",
+            a.hdr(store, H_LEN),
+            recs.len()
+        ));
+    }
+    if a.hdr(store, H_FIRST) != leaves[0] || a.hdr(store, H_LAST) != leaves[leaves.len() - 1] {
+        return Err(format!(
+            "index arena {arena} names another first or last leaf than its tree has"
+        ));
+    }
+    for (k, &n) in leaves.iter().enumerate() {
+        let prev = if k == 0 { 0 } else { leaves[k - 1] };
+        let next = leaves.get(k + 1).copied().unwrap_or(0);
+        if a.get(store, n, N_PREV) != prev || a.get(store, n, N_NEXT) != next {
+            return Err(format!("index leaf {n} is not chained to its neighbours"));
+        }
+    }
+    // The free nodes: a list through `N_NEXT`, each a node of the arena the tree does not use.
+    let mut free = a.hdr(store, H_FREE);
+    while free != 0 {
+        if free >= used
+            || seen[free as usize]
+            || store.read::<u16>(arena, node_at(free) + N_LEAF) != 2
+        {
+            return Err(format!(
+                "index arena {arena} lists node {free} as free, which it is not"
+            ));
+        }
+        seen[free as usize] = true;
+        free = a.get(store, free, N_NEXT);
+    }
+    Ok(recs)
+}
+
+/// [`sound`] for the subtree at `n`, `depth` levels above the leaves; its smallest record.
+#[allow(clippy::too_many_arguments)]
+fn sound_node(
+    a: Arena,
+    store: &Store,
+    n: u32,
+    depth: u32,
+    text_key: bool,
+    seen: &mut [bool],
+    leaves: &mut Vec<u32>,
+    recs: &mut Vec<u32>,
+) -> Result<u32, String> {
+    if n == 0 || n as usize >= seen.len() {
+        return Err(format!("index node {n} is not a node of its arena"));
+    }
+    if seen[n as usize] {
+        return Err(format!("index node {n} is reached twice"));
+    }
+    seen[n as usize] = true;
+    let c = a.count(store, n);
+    if c > FANOUT {
+        return Err(format!("index node {n} says it holds {c} slots"));
+    }
+    let skip = store.read::<u16>(a.0, node_at(n) + N_SKIP) as usize;
+    if skip > MAX_SKIP || (skip > 0 && !text_key) {
+        return Err(format!("index node {n} keeps a {skip}-byte prefix"));
+    }
+    let kind = store.read::<u16>(a.0, node_at(n) + N_LEAF);
+    if depth == 0 {
+        if kind != 1 {
+            return Err(format!("index node {n} at leaf depth is no leaf"));
+        }
+        leaves.push(n);
+        for i in 0..c {
+            recs.push(a.rec(store, n, i));
+        }
+        return Ok(if c == 0 { 0 } else { a.rec(store, n, 0) });
+    }
+    if kind != 0 || c == 0 {
+        return Err(format!("index node {n} above leaf depth is no inner node"));
+    }
+    let mut least = 0;
+    for i in 0..c {
+        let min = sound_node(
+            a,
+            store,
+            a.child(store, n, i),
+            depth - 1,
+            text_key,
+            seen,
+            leaves,
+            recs,
+        )?;
+        if i == 0 {
+            least = min;
+        } else if a.rec(store, n, i) != min {
+            return Err(format!(
+                "index node {n} slot {i} names record {}, not the first record below it",
+                a.rec(store, n, i)
+            ));
+        }
+    }
+    Ok(least)
+}
+
 /// Validate the subtree at `n`, `depth` levels above the leaves; answers its minimum and
 /// maximum record and its record count, and collects its leaves in order.
 #[allow(clippy::too_many_arguments)]

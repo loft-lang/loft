@@ -1048,6 +1048,12 @@ static int64_t loft_fs_mkdir(loft_str raw, int all) {
     char *path = loft_resolve(raw);
     if (!path) return LOFT_FS_OTHER;
     int64_t code = LOFT_FS_OTHER;
+    /* A path that resolves to nothing names no directory; the walks below start one past
+     * its first character. */
+    if (!path[0]) {
+        free(path);
+        return loft_fs_code(ENOENT);
+    }
 #if defined(LOFT_POSIX)
     if (all) {
         for (char *p = path + 1; *p; p++) {
@@ -1416,6 +1422,9 @@ static loft_ref loft_read_bytes(loft_str raw) {
     }
     fclose(h);
     if (!data) { fputs("loft: out of memory\n", stderr); abort(); }
+    /* A vector counts its elements in 32 bits. A file with more bytes than that is not cut to
+     * fit: the count is held at the largest one, which the capacity check refuses by name. */
+    if (len > UINT32_MAX) len = UINT32_MAX;
     loft_ref r = loft_ref_null();
     loft_vector_store(&r);
     loft_vec_prealloc(r, (uint32_t) len, 1);

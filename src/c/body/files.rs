@@ -396,7 +396,9 @@ impl FnWriter<'_> {
         );
         self.line(ind + 1, &format!("int loft_le = loft_file_le({fr});"));
         let ok = if text {
-            "loft_n >= 0".to_string()
+            // A text is UTF-8: bytes that are not leave it as the read declared it (empty), as
+            // `State::dispatch_read_data` does and as `text_from_bytes` answers for them.
+            "loft_n >= 0 && loft_utf8_valid(loft_d, (size_t) loft_n)".to_string()
         } else {
             format!("loft_n >= {width} && loft_n == {nr}")
         };

@@ -2175,8 +2175,8 @@ impl Stores {
         // `@FR-H-WriteLocked` — a locked store has no writable element: the bound the
         // fast path tests is 0 for it, so the write takes the cold path, whose setter
         // refuses it.  One compare answers range and lock together, and the element write
-        // carries no call.
-        let writable = if h.locked { 0 } else { h.len };
+        // carries no call.  The bound is the length held to the record (`@FR-R-Header`).
+        let writable = if h.locked { 0 } else { h.elems(size) };
         if index >= 0 && index < i64::from(writable) {
             if VERIFY {
                 assert_eq!(

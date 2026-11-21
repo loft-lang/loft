@@ -297,10 +297,7 @@ fn release_shim_lto(
         let inc =
             loft::platform::scratch_dir().join(format!("loft_shim_inc_{}", std::process::id()));
         let paths: Vec<std::path::PathBuf> = sources.iter().map(std::path::PathBuf::from).collect();
-        if fa::create_dir_all(&inc).is_ok()
-            && loft::c_shim::put_width_header(&inc).is_ok()
-            && loft::c_shim::put_bodies(&inc, &paths).is_ok()
-            && loft::c_shim::put_dep_headers_of(&inc, &paths).is_ok()
+        if fa::create_dir_all(&inc).is_ok() && loft::c_shim::put_shim_includes(&inc, &paths).is_ok()
         {
             flags.push("-I".to_string());
             flags.push(inc.to_string_lossy().into_owned());
@@ -358,6 +355,78 @@ fn shims_as_sources(
         }
     }
     (out, sources)
+}
+
+/// What to tell the author when `cc` refused the unit because a `#c` binding declares a
+/// function a system header the unit includes already declares with other types
+/// (loft#2603): `int(const char*, …)` where `<string.h>` says `int(const void*, …)`.  The
+/// two are one function to the machine, but C refuses two declarations that differ, so the
+/// cure is the binding's, not the C backend's: spell the signature as the header does.
+///
+/// Read from what both gcc and clang print: `<file>:<line>:<col>: error: conflicting types
+/// for '<name>'`, where `<line>` of the unit is the binding's `extern` in its wrapper
+/// (`n_<loft name>`), then a note whose next quoted source line is the header's declaration.
+/// Any other refusal answers `None` and keeps the general report: this one names a cure, so
+/// it is given only where the unit's own line shows it is a binding's declaration.
+fn binding_clash(c: &str, stderr: &str) -> Option<String> {
+    let lines: Vec<&str> = stderr.lines().collect();
+    let at = lines
+        .iter()
+        .position(|l| l.contains("error: conflicting types for "))?;
+    let err = lines[at];
+    let rest = &err[err.find("conflicting types for ")? + "conflicting types for ".len()..];
+    let symbol: String = rest
+        .trim_start_matches(['\'', '‘', '"'])
+        .chars()
+        .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
+        .collect();
+    // `<path>:<line>:<col>: error: …`, the path itself possibly holding `:`.
+    let head = &err[..err.find(": error: ")?];
+    let mut parts = head.rsplitn(3, ':');
+    let _col = parts.next()?;
+    let line_no: usize = parts.next()?.trim().parse().ok()?;
+    let unit: Vec<&str> = c.lines().collect();
+    let decl = unit.get(line_no.checked_sub(1)?)?.trim();
+    if symbol.is_empty() || !decl.starts_with("extern ") || !decl.contains(&format!("({symbol})("))
+    {
+        return None;
+    }
+    // The wrapper the declaration sits in: `… n_<loft name>(…) {`.
+    let binding = unit[..line_no - 1].iter().rev().find_map(|l| {
+        let l = l.trim_end();
+        if !l.ends_with('{') || l.starts_with(' ') {
+            return None;
+        }
+        let name = l[l.find(" n_")? + 3..].split('(').next()?;
+        (!name.is_empty()).then(|| name.to_string())
+    })?;
+    // The header's own line: the first quoted source line after the note.
+    let header = lines[at..]
+        .iter()
+        .skip_while(|l| !l.contains("note: previous declaration"))
+        .skip(1)
+        .find_map(|l| {
+            let (num, text) = l.split_once('|')?;
+            num.trim()
+                .parse::<usize>()
+                .ok()
+                .map(|_| text.trim().to_string())
+        });
+    let declared = decl.trim_start_matches("extern ").trim_end_matches(';');
+    let mut msg = format!(
+        "the `#c` binding `{binding}` declares `{symbol}` as `{declared}`, but a system \
+         header already declares `{symbol}` with other types"
+    );
+    if let Some(header) = header {
+        msg.push_str(&format!(":\n    {header}\n"));
+    } else {
+        msg.push_str(".\n");
+    }
+    msg.push_str(
+        "C refuses two declarations of one function that differ, even where only a pointer \
+         type does.  Spell the binding's `#c` signature with the header's types.",
+    );
+    Some(msg)
 }
 
 fn marked(c: &str, kind: &str) -> std::collections::HashSet<String> {
@@ -736,14 +805,13 @@ pub(crate) fn build_android(
     let tier = if ship { Tier::Release } else { Tier::Check };
     let mut flags = cc_flags(tier);
     flags.extend(["-fPIC".to_string(), "-DLOFT_ANDROID".to_string()]);
-    // A shim's sources include the build's width header and the compiled-bodies fragment, as
-    // the host's link-time build of them does (`release_shim_lto`).
+    // A shim's sources search what the host's link-time build of them does (`release_shim_lto`):
+    // the width header, the compiled bodies and its dependencies' headers.
     if !sources.is_empty() {
         let inc = dir.join("inc");
         let paths: Vec<std::path::PathBuf> = links.iter().map(std::path::PathBuf::from).collect();
         fa::create_dir_all(&inc).map_err(|e| format!("cannot create {}: {e}", inc.display()))?;
-        loft::c_shim::put_width_header(&inc)?;
-        loft::c_shim::put_bodies(&inc, &paths)?;
+        loft::c_shim::put_shim_includes(&inc, &paths)?;
         flags.push("-I".to_string());
         flags.push(inc.to_string_lossy().into_owned());
     }
@@ -1144,6 +1212,10 @@ pub(crate) fn build(
     })?;
     if !out.status.success() {
         let _ = fa::remove_file(&binary);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        if let Some(clash) = binding_clash(&text, &stderr) {
+            return Err(BuildError::Rejected(clash));
+        }
         return Err(BuildError::Rejected(format!(
             "`{cc}` rejected the C this program was written as — a defect of the C backend \
              (LOFT_KEEP_NATIVE_C=1 keeps the source).\n{}",
@@ -1275,6 +1347,51 @@ pub(crate) fn loft_written_unit(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The unit around a `#c` binding's declaration, as the C writer emits it, with the
+    /// `extern` both compilers point at (line 4).
+    const CLASH_UNIT: &str = "static inline void n_other(void) {\n}\n\
+        LOFT_HOT_INLINE int64_t n_c_memcmp(loft_str a0, loft_str a1, int64_t a2) {\n\
+            extern int (memcmp)(const char*, const char*, size_t);\n}\n";
+
+    /// loft#2603 — a binding whose declaration clashes with a system header's is named, with
+    /// the header's line, from gcc's report and from clang's alike; any other refusal keeps
+    /// the general report.
+    #[test]
+    fn a_binding_that_clashes_with_a_header_is_named_with_the_headers_line() {
+        let gcc = "/t/u.c: In function ‘n_c_memcmp’:\n\
+            /t/u.c:4:17: error: conflicting types for ‘memcmp’; have ‘int(const char *, const char *, size_t)’\n\
+            \x20   4 |     extern int (memcmp)(const char*, const char*, size_t);\n\
+            In file included from /t/u.c:1:\n\
+            /usr/include/string.h:75:12: note: previous declaration of ‘memcmp’ with type ‘int(const void *, const void *, long unsigned int)’\n\
+            \x20  75 | extern int memcmp (const void *__s1, const void *__s2, size_t __n)\n";
+        let clang = "/t/u.c:4:17: error: conflicting types for 'memcmp'\n\
+            \x20   4 |     extern int (memcmp)(const char*, const char*, size_t);\n\
+            /usr/include/string.h:75:12: note: previous declaration is here\n\
+            \x20  75 | extern int memcmp (const void *__s1, const void *__s2, size_t __n)\n";
+        for (cc, stderr) in [("gcc", gcc), ("clang", clang)] {
+            let msg = binding_clash(CLASH_UNIT, stderr).unwrap_or_else(|| panic!("{cc}: not read"));
+            assert!(msg.contains("`#c` binding `c_memcmp`"), "{cc}: {msg}");
+            assert!(
+                msg.contains(
+                    "declares `memcmp` as `int (memcmp)(const char*, const char*, size_t)`"
+                ),
+                "{cc}: {msg}"
+            );
+            assert!(
+                msg.contains("extern int memcmp (const void *__s1"),
+                "{cc}: {msg}"
+            );
+            assert!(!msg.contains("defect"), "{cc}: {msg}");
+        }
+        // The same error at a line that is no binding's declaration, and another error.
+        let elsewhere = gcc.replace("u.c:4:17", "u.c:2:1");
+        assert_eq!(binding_clash(CLASH_UNIT, &elsewhere), None);
+        assert_eq!(
+            binding_clash(CLASH_UNIT, "/t/u.c:4:5: error: expected ';'\n"),
+            None
+        );
+    }
 
     /// The release tier compiles each `[c] shim` the unit links from the sources it names after
     /// that archive; an archive with no sources named, or a lazy one (not marked

@@ -100,9 +100,38 @@ typedef struct { uint64_t *bits; uint32_t nwords; uint32_t live; uint32_t cap; }
 #define LOFT_EXIT(code) exit(code)
 #endif
 
+/* @PLN217 — a 64-bit word's bits by position.  A 32-bit core shifts a 64-bit value by a variable
+ * amount through a library call (`__ashldi3`, `__lshrdi3`); taking the half the bit lies in is two
+ * 32-bit shifts and no call.  The 64-bit build writes the plain shift. */
+#if defined(LOFT_WIDTH32)
+/* Bit `n` (0..63) alone. */
+LOFT_HOT_INLINE uint64_t loft_bit64(uint32_t n) {
+    return n < 32 ? (uint64_t) ((uint32_t) 1 << n) : (uint64_t) ((uint32_t) 1 << (n - 32)) << 32;
+}
+/* Is bit `n` (0..63) of `w` set? */
+LOFT_HOT_INLINE int loft_bit64_test(uint64_t w, uint32_t n) {
+    return n < 32 ? (int) (((uint32_t) w >> n) & 1u) : (int) (((uint32_t) (w >> 32) >> (n - 32)) & 1u);
+}
+/* The bits from `n` (0..63) up. */
+LOFT_HOT_INLINE uint64_t loft_bits64_from(uint32_t n) {
+    return n < 32 ? (((uint64_t) 0xFFFFFFFFu << 32) | (uint64_t) (0xFFFFFFFFu << n))
+                  : ((uint64_t) (0xFFFFFFFFu << (n - 32)) << 32);
+}
+/* The bits up to and with `n` (0..63). */
+LOFT_HOT_INLINE uint64_t loft_bits64_through(uint32_t n) {
+    return n < 32 ? (uint64_t) (0xFFFFFFFFu >> (31 - n))
+                  : (((uint64_t) (0xFFFFFFFFu >> (63 - n)) << 32) | (uint64_t) 0xFFFFFFFFu);
+}
+#else
+LOFT_HOT_INLINE uint64_t loft_bit64(uint32_t n) { return (uint64_t) 1 << n; }
+LOFT_HOT_INLINE int loft_bit64_test(uint64_t w, uint32_t n) { return (int) ((w >> n) & 1u); }
+LOFT_HOT_INLINE uint64_t loft_bits64_from(uint32_t n) { return ~(uint64_t) 0 << n; }
+LOFT_HOT_INLINE uint64_t loft_bits64_through(uint32_t n) { return UINT64_MAX >> (63 - n); }
+#endif
+
 LOFT_HOT_INLINE int loft_bits_contains(const loft_bits *b, uint32_t pos) {
     uint32_t w = pos >> 6;
-    return w < b->nwords && ((b->bits[w] >> (pos & 63)) & 1u);
+    return w < b->nwords && loft_bit64_test(b->bits[w], pos & 63);
 }
 
 static int loft_bits_insert(loft_bits *b, uint32_t pos) {
@@ -119,7 +148,7 @@ static int loft_bits_insert(loft_bits *b, uint32_t pos) {
         memset(b->bits + b->nwords, 0, (size_t) (n - b->nwords) * 8);
         b->nwords = n;
     }
-    uint64_t mask = (uint64_t) 1 << (pos & 63);
+    uint64_t mask = loft_bit64(pos & 63);
     int fresh = (b->bits[w] & mask) == 0;
     b->bits[w] |= mask;
     b->live += (uint32_t) fresh;
@@ -128,7 +157,7 @@ static int loft_bits_insert(loft_bits *b, uint32_t pos) {
 
 static int loft_bits_remove(loft_bits *b, uint32_t pos) {
     uint32_t w = pos >> 6;
-    uint64_t mask = (uint64_t) 1 << (pos & 63);
+    uint64_t mask = loft_bit64(pos & 63);
     if (w < b->nwords && (b->bits[w] & mask)) {
         b->bits[w] &= ~mask;
         b->live--;
@@ -163,7 +192,7 @@ static uint32_t loft_bits_prev_start(const loft_bits *b, uint32_t end, int *foun
     uint32_t last = end - 1;
     uint32_t w = last >> 6;
     if (w > b->nwords - 1) w = b->nwords - 1;
-    uint64_t word = w == (last >> 6) ? b->bits[w] & (UINT64_MAX >> (63 - (last & 63))) : b->bits[w];
+    uint64_t word = w == (last >> 6) ? b->bits[w] & loft_bits64_through(last & 63) : b->bits[w];
     for (;;) {
         if (word) { *found = 1; return w * 64 + 63 - (uint32_t) loft_lz64(word); }
         if (w == 0) return 0;
@@ -177,7 +206,7 @@ static uint32_t loft_bits_next_at_or_after(const loft_bits *b, uint32_t from, in
     uint32_t w = from >> 6;
     *found = 0;
     if (w >= b->nwords) return 0;
-    uint64_t bits = b->bits[w] & (~(uint64_t) 0 << (from & 63));
+    uint64_t bits = b->bits[w] & loft_bits64_from(from & 63);
     for (;;) {
         if (bits) { *found = 1; return (w << 6) | (uint32_t) loft_tz64(bits); }
         w++;
@@ -1497,7 +1526,7 @@ static uint32_t *loft_st_kept_positions(const loft_store_t *s, uint32_t *n) {
     uint32_t words = s->referenced.nwords > s->removed.nwords ? s->referenced.nwords : s->removed.nwords;
     for (uint32_t w = 0; w < words; w++) {
         uint64_t bits = (w < s->referenced.nwords ? s->referenced.bits[w] : 0) | (w < s->removed.nwords ? s->removed.bits[w] : 0);
-        for (uint32_t b = 0; b < 64; b++) if ((bits >> b) & 1u) out[k++] = w * 64 + b;
+        for (uint32_t b = 0; b < 64; b++) if (loft_bit64_test(bits, b)) out[k++] = w * 64 + b;
     }
     *n = k;
     return out;
