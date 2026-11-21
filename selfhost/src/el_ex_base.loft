@@ -2398,6 +2398,11 @@ pub fn vector_store(e: el::El, t: ir::TypeT, nm: text) -> integer {
     },
     _ => {}
   }
+  // (So is a `vector<C?>` of a plain enum, as the `vector<C>` it is.)
+  match t {
+    TyOptional { inner: pe } => match pe { TyEnum { n: pen, is_ref } => if !is_ref { return el_schema::schema_type(e, "vector<{el::def(e, pen).name}>"); }, _ => {} },
+    _ => {}
+  }
   // A `vector<integer?>` (`float?`, `boolean?`) is laid out as the `vector<integer>` it is.
   bn = el_types::nullable_scalar_elem(e, t);
   if bn != "" {
