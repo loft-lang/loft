@@ -1277,10 +1277,12 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
   }
   for pn in params {
     match e.p.nodes[pn] {
-      SParam { name: an, amp, fixed, tp, init, cap: pcap } => {
-        if pcap != null || tp == null {
-          kind = if pcap != null { "a capability" } else { "no type" };
-          el::refuse(e, "a parameter with a default, a capability or no type: {kind}");
+      SParam { name: an, amp, fixed, tp, init, cap: _ } => {
+        // (A capability on a parameter — `count: integer = 1 spawn.count#default` — is checked
+        // at each call (`@FR-Cap-Set`: the argument is the default or a granted lock) and
+        // leaves the parameter itself as it is: nothing of it reaches the image.)
+        if tp == null {
+          el::refuse(e, "a parameter with a default, a capability or no type: no type");
           return "";
         }
         t = el_types::parse_type(e, tp ?? 0);
