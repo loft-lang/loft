@@ -8,7 +8,8 @@ it alone:
 
 The port PARSES the block (`syntax.loft` ~1143: `SParallel { at, items }`) and its back end
 already carries the IR node (`NdParallel { arms }` in bgen, binds, cgen_cold).  But the
-elaborator has no case for `SParallel`, so the expression dispatch refuses it as a form.
+elaborator has no case for `SParallel`, so the expression dispatch refuses it as a form
+(`el_ex_assign.loft` ~714).
 
 **The rule:** `@F33` (`par`): each arm runs in an isolated worker.  An arm may READ an enclosing
 local, whose value is copied in.  Writing an enclosing local, or capturing a parameter at all,
