@@ -138,6 +138,13 @@ fn fix_place_before_value(e: el::El, vars: el_vars::Vars, code: ir::Node, to: ir
 }
 
 pub fn place_assignment(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: integer) -> Ex {
+  kept_read = ex(ir::NdNull, vars.read_target);
+  r = place_assignment_inner(e, vars, op, target, rhs);
+  vars.read_target = kept_read.tp;
+  r
+}
+
+fn place_assignment_inner(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: integer) -> Ex {
   vars.last_place = [];
   vars.place_setup = [];
   x = place_assignment_to(e, vars, op, target, rhs);
@@ -160,6 +167,8 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
   keep_pts = vars.place_tuple_subject;
   vars.place_tuple_subject = match e.p.nodes[target] { STupleGet { e: pte } => pte ?? -1, _ => -1 };
   p = el_ex_assign::expression(e, vars, target);
+  // (`read_target_type`: a `#read` in the value reads the field's type.)
+  vars.read_target = ex(ir::NdNull, el_types::without_deps(el_types::base(p.tp))).tp;
   vars.place_tuple_subject = keep_pts;
   // A tuple member of an element whose index runs a user call (`v[tick(c)].1 += 5`): the
   // element is bound ONCE to a `__place_N` view of its `__tuple<…>` record, read and written

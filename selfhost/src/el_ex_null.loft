@@ -528,7 +528,12 @@ pub fn file_read(e: el::El, vars: el_vars::Vars, fv: integer, arg: integer?, tp:
   if rt0 == null {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
-  rt = rt0!;
+  file_read_as(e, vars, fv, arg, rt0!)
+}
+
+// The read itself, of type `rt` — the cast's, or (`read_target_type`) the type its destination
+// expects.
+pub fn file_read_as(e: el::El, vars: el_vars::Vars, fv: integer, arg: integer?, rt: ir::TypeT) -> Ex {
   // `f#read(n) as vector<T>` of a plain scalar `T`: `n` bytes into a fresh vector local, by the
   // vector's store type, its definitions already made (`vector_def`).
   match rt {
@@ -598,6 +603,15 @@ pub fn var_attr(e: el::El, vars: el_vars::Vars, var: text, attr: text, arg: inte
   if fv >= 0 && el_ex_pattern::is_file(e, el_vars::tp(vars, fv)) {
     if attr == "read" && tp != null {
       return file_read(e, vars, fv, arg, tp!);
+    }
+    // `read_target_type`: with no cast and no size, the read is of the type its destination
+    // expects (`s.a = f#read`, `magic: u32 = (f#read & 0x7FFFFFFF) as u32`) — an integer, a float
+    // or a single, by that type's width and row, the block `f#read as T` builds.
+    if attr == "read" && tp == null && arg == null && (vars.expect_node >= 0 || !(vars.read_target is TyVoid)) {
+      xt = el_types::without_deps(el_types::base(if vars.expect_node >= 0 { vars.expect } else { vars.read_target }));
+      if xt is TyInteger || xt is TyFloat || xt is TySingle {
+        return file_read_as(e, vars, fv, arg, xt);
+      }
     }
     if arg == null && tp == null {
       return file_attr(e, vars, fv, attr);
