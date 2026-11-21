@@ -1,8 +1,8 @@
 diff --git a/default/02_files.loft b/default/02_files.loft
-index 91f635715..79a0c9f22 100644
+index d55af8469..cbc5a5490 100644
 --- a/default/02_files.loft
 +++ b/default/02_files.loft
-@@ -996,8 +996,7 @@
+@@ -950,8 +950,7 @@ pub fn files(self: const File) -> vector<File> fs#read {
  fn write_text_raw(file: File, v: text) -> boolean fs#update;
  #rust"{{ let __wf_v = @v; stores.write_file(&@file, __wf_v) }}"
  #impure(io)
@@ -13,10 +13,10 @@ index 91f635715..79a0c9f22 100644
  /// full, permission denied, a bad path) — a failed write is OBSERVABLE, not
  /// silently swallowed.  Discarding callers (`f.write(s)` as a statement) are
 diff --git a/src/codegen_runtime.rs b/src/codegen_runtime.rs
-index 5778750da..6d3d3f3e9 100644
+index 7206e19d0..fc821c355 100644
 --- a/src/codegen_runtime.rs
 +++ b/src/codegen_runtime.rs
-@@ -2171,9 +2171,7 @@
+@@ -2563,9 +2563,7 @@ fn file_handle_read(stores: &mut Stores, file: &DbRef, initial_pos: i64) -> i32
                  .set_i32_raw(file.rec, file.pos + 28, f_nr);
              stores
                  .files
@@ -28,10 +28,10 @@ index 5778750da..6d3d3f3e9 100644
          }
          Err(e) => {
 diff --git a/src/database/io.rs b/src/database/io.rs
-index 747a7338f..1fad8e618 100644
+index 655fd6911..8db7122c9 100644
 --- a/src/database/io.rs
 +++ b/src/database/io.rs
-@@ -8,7 +8,7 @@
+@@ -8,7 +8,7 @@ use crate::keys::DbRef;
  use crate::store::Store;
  use crate::vector;
  #[cfg(not(host_fs))]
@@ -40,7 +40,7 @@ index 747a7338f..1fad8e618 100644
  
  enum Format {
      TextFile = 1,
-@@ -749,19 +749,8 @@
+@@ -747,19 +747,8 @@ impl Stores {
              };
              let s = self.store_mut(file);
              let mut file_ref = s.get_i32_raw(file.rec, file.pos + 28);
@@ -61,7 +61,7 @@ index 747a7338f..1fad8e618 100644
                      Ok(f) => {
                          s.set_i32_raw(file.rec, file.pos + 28, f_nr);
                          self.files
-@@ -781,24 +770,11 @@
+@@ -779,24 +768,11 @@ impl Stores {
                      }
                  }
              }
@@ -78,24 +78,23 @@ index 747a7338f..1fad8e618 100644
 -            };
 -            if f.write_all(v.as_bytes()).is_err() {
 -                return false;
--            }
--            let s = self.store_mut(file);
--            s.set_long(file.rec, file.pos + 8, start as i64);
--            s.set_long(file.rec, file.pos + 16, (start + v.len() as u64) as i64);
--            true
 +            if let Some(Some(f)) = self.files.get_mut(file_ref as usize) {
 +                f.write_all(v.as_bytes()).is_ok()
 +            } else {
 +                false
-+            }
+             }
+-            let s = self.store_mut(file);
+-            s.set_long(file.rec, file.pos + 8, start as i64);
+-            s.set_long(file.rec, file.pos + 16, (start + v.len() as u64) as i64);
+-            true
          }
      }
  
 diff --git a/src/state/io.rs b/src/state/io.rs
-index f02f51fe7..cdfd0e672 100644
+index f99b0ec57..f2b186bb9 100644
 --- a/src/state/io.rs
 +++ b/src/state/io.rs
-@@ -323,14 +323,8 @@
+@@ -323,14 +323,8 @@ impl State {
          data: Vec<u8>,
          n: usize,
      ) {
@@ -108,9 +107,9 @@ index f02f51fe7..cdfd0e672 100644
 -            return;
 -        }
          if is_text {
-             let s = unsafe { String::from_utf8_unchecked(data) };
-             *self
-@@ -489,9 +483,9 @@
+             // A text is UTF-8: bytes that are not leave it as the read declared it (empty), as
+             // on `--native` and as `text_from_bytes` answers for them.
+@@ -507,9 +501,9 @@ impl State {
                              let _ = f.seek(SeekFrom::Start(next_pos as u64));
                          }
                          store.set_i32_raw(file.rec, file.pos + 28, f_nr);
@@ -123,7 +122,7 @@ index f02f51fe7..cdfd0e672 100644
                          file_ref = f_nr;
                      }
                      Err(e) => {
-@@ -530,7 +524,9 @@
+@@ -550,7 +544,9 @@ impl State {
                  file.pos + 16,
                  next_pos + actual as i64,
              );
