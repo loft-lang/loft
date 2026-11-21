@@ -1,0 +1,11 @@
+// A vector literal written through a `&` link to a vector local.
+fn dense_literal() -> integer { e: vector<integer> = [1]; pe = &e; pe = [2, 2]; len(e) * 10 + e[1] }
+fn dense_local() -> integer { e: vector<integer> = [1]; w: vector<integer> = [3, 4, 5]; pe = &e; pe = w; len(e) * 10 + e[2] }
+fn dense_append() -> integer { e: vector<integer> = [1]; pe = &e; pe += [7]; len(e) * 10 + e[1] }
+fn nullable_literal() -> integer { e: vector<integer>? = [1]; pe = &e; pe = [6, 6, 6]; len(e ?? []) }
+fn main() {
+  assert(dense_literal() == 22, "dense_literal {dense_literal()}");
+  assert(dense_local() == 35, "dense_local {dense_local()}");
+  assert(dense_append() == 27, "dense_append {dense_append()}");
+  assert(nullable_literal() == 3, "nullable_literal {nullable_literal()}");
+}
