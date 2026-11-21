@@ -140,3 +140,139 @@ fn no_store_is_exchanged_while_a_walk_is_live_on_both_backends() {
         );
     }
 }
+
+/// A root record holding `COLL<Item[k]>`, rebound in a loop from a call that answers one of
+/// its arguments (copied into the call's buffer, then into `x`).  Per iteration on `q` (three
+/// items): 10 + 5 + 6 + 77 + 3 + 3 = 104; on `p` (two): 10 + 5 + 4 + 77 + 3 + 2 = 101; three
+/// of each is 615.  `p` and `q` keep their 2 and 3 items; the last pick is `p`, `inv2`.
+const KEYED: &str = "struct Item { k: integer, name: text }
+struct Inv { title: text, stock: COLL<Item[k]> }
+fn load(n: integer) -> Inv {
+  r = Inv { title: \"inv{n}\", stock: [] };
+  for i in 0..n { r.stock += [Item { k: i * 10, name: \"i{i}\" }]; }
+  r
+}
+fn pick(a: Inv, b: Inv, i: integer) -> Inv { if i % 2 == 1 { a } else { b } }
+fn main() {
+  p = load(2);
+  q = load(3);
+  x = load(1);
+  total = 0;
+  for r in 0..6 {
+    x = pick(p, q, r);
+    total += if x.stock[10] { x.stock[10].k } else { -1 };
+    total += if x.stock[999] { 1 } else { 5 };
+    for it in x.stock { total += len(it.name); }
+    x.stock += [Item { k: 77, name: \"new\" }];
+    total += if x.stock[77] { x.stock[77].k } else { -1 };
+    x.stock[0] = null;
+    total += (if x.stock[0] { 1 } else { 3 }) + len(x.stock);
+  }
+  println(\"{total} {len(p.stock)} {len(q.stock)} {x.title}\");
+}
+";
+
+/// The same rebind of a record holding child records (`Node?` fields of a non-null root).
+/// Per iteration 111n + 2, then 7 + 5 after a child is replaced: 236 on `q` (n = 2), 125 on
+/// `p` (n = 1); three of each is 1083.  `p` and `q` keep their left keys 10 and 20.
+const CHILDREN: &str = "struct Node { key: integer, name: text, left: Node?, right: Node? }
+struct Holder { title: text, root: Node }
+fn grow(n: integer) -> Holder {
+  h = Holder { title: \"h{n}\", root: Node { key: n, name: \"r{n}\" } };
+  h.root.left = Node { key: n * 10, name: \"L\" };
+  h.root.right = Node { key: n * 100, name: \"RR\" };
+  h
+}
+fn pick(a: Holder, b: Holder, i: integer) -> Holder { if i % 2 == 1 { a } else { b } }
+fn main() {
+  p = grow(1);
+  q = grow(2);
+  x = grow(3);
+  total = 0;
+  for r in 0..6 {
+    x = pick(p, q, r);
+    total += x.root.key + x.root.left.key + x.root.right.key + len(x.root.right.name);
+    x.root.left = Node { key: 7, name: \"seven\" };
+    total += x.root.left.key + len(x.root.left.name);
+  }
+  println(\"{total} {p.root.left.key} {q.root.left.key} {x.title}\");
+}
+";
+
+/// The same rebind of a record holding a `reference<T>`, which names a slot and so keeps the
+/// copy: on `q`, fav 6 + 2 + 2 items = 10; on `p`, 2 + 2 + 2 = 6; three of each is 48.
+const REFERENCE: &str = "struct Item { k: integer, name: text }
+struct Holder { title: text, items: vector<Item>, fav: reference<Item>? }
+fn mk(n: integer) -> Holder {
+  h = Holder { title: \"h{n}\", items: [Item { k: n, name: \"a\" }, Item { k: n + 1, name: \"bb\" }] };
+  h.fav = h.items[1];
+  h
+}
+fn pick(a: Holder, b: Holder, i: integer) -> Holder { if i % 2 == 1 { a } else { b } }
+fn main() {
+  p = mk(1);
+  q = mk(5);
+  x = mk(9);
+  total = 0;
+  for r in 0..6 {
+    x = pick(p, q, r);
+    total += x.fav.k + len(x.fav.name) + len(x.items);
+  }
+  println(\"{total} {p.fav.k} {q.fav.k} {x.title}\");
+}
+";
+
+/// The exchanges one run of `program` makes under `LOFT_STRICT_STORES` (a stale slot number
+/// faults rather than reading another store), and its output.
+fn strict_swaps(mode: &str, tag: &str, program: &str) -> (usize, String) {
+    let dir = std::env::temp_dir().join(format!("loft_swap_whole_{}", std::process::id()));
+    loft::file_access::create_dir_all(&dir).expect("probe dir");
+    let src = dir.join(format!("{tag}_{}.loft", &mode[2..]));
+    loft::file_access::write(&src, program).expect("write probe");
+    let out = loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")))
+        .arg(mode)
+        .arg(&src)
+        .env("LOFT_TIMEOUT", "240")
+        .env("LOFT_NO_CACHE", "1")
+        .env("LOFT_STRICT_STORES", "1")
+        .env("LOFT_TRACE_STORE_SWAP", "1")
+        .env_remove("LOFT_NO_STORE_SWAP")
+        .output()
+        .expect("spawn loft");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    (
+        stderr
+            .lines()
+            .filter(|l| l.starts_with("[swap-in]"))
+            .count(),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+    )
+}
+
+/// `@FR-H-SwapIn` (STORE_MODEL D39): a root record whose keyed collections and child records
+/// keep their pointers as record numbers inside its store moves whole — exchanged on both
+/// backends, once per rebind — and one holding a `reference<T>` keeps the copy on both.
+///
+/// @falsified-at: none — the C always exchanged here, so the receipt is a SABOTAGE
+///   (2026-11-21): with the interpreter's walk the old one again (`swap_stores_in_as` asking
+///   `tree_holds_no_stored_refs`, which declines every keyed part and child record), the
+///   interpreter copies where the C exchanges.
+///   CHANNEL: the `[swap-in]` count.  WITNESS: 0 on `--interpret` against 6 on `--native`.
+///   HOLDS: every cell's answer, exchange or copy.
+#[test]
+fn a_record_holding_keyed_collections_or_children_moves_whole_on_both_backends() {
+    let cells: Vec<(String, String, &str, usize)> = vec![
+        ("hash".into(), KEYED.replace("COLL", "hash"), "615 2 3 inv2", 6),
+        ("sorted".into(), KEYED.replace("COLL", "sorted"), "615 2 3 inv2", 6),
+        ("index".into(), KEYED.replace("COLL", "index"), "615 2 3 inv2", 6),
+        ("children".into(), CHILDREN.to_string(), "1083 10 20 h1", 6),
+        ("reference".into(), REFERENCE.to_string(), "48 2 6 h1", 0),
+    ];
+    for (tag, program, want, swaps) in &cells {
+        for mode in ["--interpret", "--native"] {
+            let (n, out) = strict_swaps(mode, tag, program);
+            assert_eq!(out.trim(), *want, "{tag} {mode}: the answer");
+            assert_eq!(n, *swaps, "{tag} {mode}: {n} exchanges, {swaps} expected");
+        }
+    }
+}
