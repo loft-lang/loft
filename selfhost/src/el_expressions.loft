@@ -726,6 +726,25 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
         built = materialize_if_tail(e, vars, code, rb, result);
         if_copied = built != null;
       }
+      // A VARIANT local answered by its enum's function (`o = Box { … }; o` → `Shape`), built in
+      // its own store as its variant: copied into the buffer behind its null test, the result
+      // taking the one-buffer marker (`["??"]`).
+      if built == null && el_types::struct_enum_def(result) >= 0 && !(result is TyOptional) {
+        vt = match el_ir::unspan(body_tail(code)) { NdVar { n: tv } => tv, _ => -1 };
+        if vt >= 0 && !vars.vars[vt].argument && match el_types::base(el_vars::tp(vars, vt)) { TyReference { n: tvd } => el::def(e, tvd).def_type == el::DT_ENUM_VALUE, _ => false } {
+          ed = el_types::struct_enum_def(result);
+          kt = ir::NdInt { n: el::def(e, ed).known_type };
+          vb = ir::NdVar { n: rb };
+          owned = el_types::with_deps(el_types::without_deps(el_vars::tp(vars, rb)), [rb]);
+          vbl = match code { NdBlock { block } => block[0], _ => ir::Block { name: "", operators: [], result: [], scope: 0, var_size: 0 } };
+          copy = el_ir::v_block([el_ir::v_set(rb, ir::NdNull), el_ir::cl(e, "OpDatabase", [vb, kt]), el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: vt }, vb, kt]), vb], owned, "materialized_view_return");
+          vbl.operators[-1] = el_ir::respan(vbl.operators[-1]!, el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [ir::NdVar { n: vt }]), el_ir::cl(e, "OpNullRefSentinel", []), copy));
+          vbl.result = [owned];
+          built = ir::NdBlock { block: [vbl] };
+          if_copied = true;
+          e.b.data.definitions[e.context].returned = [el_types::with_deps(el_types::without_deps(result), [el_types::MARKER])];
+        }
+      }
       kind = el_ex_copy::tail_kind(e, vars, code);
       // A tail already refused is no second refusal.
       if built != null && if_copied {
@@ -1719,6 +1738,12 @@ pub fn rename_ret_buffer(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: int
   vars.match_tail = was_match;
   v = if tail is NdIf { arms_rename_candidate(e, vars, code, tail) } else { rename_candidate(e, vars, code, tail) };
   vars.match_tail = false;
+  // (Renamed only where the local's store type is the result's: a VARIANT local under its
+  // enum's result — `o = Box { … }; o` answering `Shape` — is built in its own store and copied
+  // into the buffer at the tail.)
+  if v >= 0 && match el_types::base(el_vars::tp(vars, v)) { TyReference { n: vd } => el::def(e, vd).def_type == el::DT_ENUM_VALUE && el_types::struct_enum_def(el::def(e, e.context).returned[0] ?? ir::TyVoid) >= 0, _ => false } {
+    v = -1;
+  }
   if v >= 0 {
     // Each parameter an arm hands back beside the renamed local is `MergeAttr`: the result
     // borrows it too.
