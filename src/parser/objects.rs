@@ -8590,6 +8590,20 @@ impl Parser {
                 if default == Value::Null {
                     default = to_default(&tp, &self.data);
                 }
+            } else if !self.first_pass
+                && let Value::Enum(tag, _) = default
+                && tag > 0
+                && let Type::Enum(e, true, _) = tp.base()
+            {
+                // `@FR-F-Default-Field` — a struct enum's unit-variant default (`d: Node =
+                // NdNull`) is stored as pass 1 parsed it, a bare `Enum`, until pass 2 re-parses
+                // the struct; a construction pass 2 reaches FIRST (a function above the
+                // struct, or in a module the struct's file imports) read that form and copied
+                // an enum constant as a record — garbage on the interpreter, refused by the C
+                // backend.  Built here as the literal `NdNull` written in the construction is.
+                let e = *e;
+                let name = self.data.attr_name(e, usize::from(tag) - 1);
+                self.emit_variant_value(e, &name, &mut default);
             } else if let Some(own) = Self::variant_default_ref(&default) {
                 // @PLN22 Phase 1 — a mixed struct-enum unit-variant default
                 // (`mode: Mode = Idle`) is a SELF-CONTAINED allocation block whose
