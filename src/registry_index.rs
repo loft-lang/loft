@@ -1813,14 +1813,18 @@ fn branch_commit(advertisement: &[u8], tail: &str) -> Option<(String, String)> {
     Some((commit.to_string(), tail[branch.len() + 1..].to_string()))
 }
 
-/// Download `url` to the local path `dest`, returning the bytes
-/// fetched so the caller can hash them.
+/// Download `url`, check it against `sha256` (the hash the signed index publishes) while it
+/// is still in memory, and only then place it at `dest`, atomically.  A file that does not
+/// match never exists on disk, not even for the moment between a write and a check: a
+/// prebuilt library lands where the next run loads it from, and a kill in that moment left
+/// the unchecked file there.
 ///
 /// # Errors
 ///
-/// Returns a `String` error on HTTP / IO failure.
-pub fn download_tarball(url: &str, dest: &std::path::Path) -> Result<Vec<u8>, String> {
+/// Returns a `String` error on HTTP / IO failure, or when the bytes do not match.
+pub fn download_verified(url: &str, sha256: &str, dest: &std::path::Path) -> Result<Vec<u8>, String> {
     let bytes = fetch_bytes(url)?;
+    crate::integrity::verify_sha256(&bytes, sha256).map_err(|e| format!("{url}: {e}"))?;
     // A bare file name has the empty parent, which names no directory to create.
     if let Some(parent) = dest.parent()
         && !parent.as_os_str().is_empty()

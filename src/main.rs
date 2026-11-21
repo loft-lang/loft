@@ -2659,14 +2659,7 @@ fn bundle_export(outdir: &str, packages: Option<&[String]>, all: bool, allow_uns
         let dest = out.join("packages").join(&tarball);
         // Download to the bundle's packages/.
         eprintln!("[bundle] fetching {} {}", name, ver.semver);
-        let bytes = match registry_index::download_tarball(&ver.url, &dest) {
-            Ok(b) => b,
-            Err(e) => {
-                eprintln!("  FAILED: {e}");
-                return 1;
-            }
-        };
-        if let Err(e) = loft::integrity::verify_sha256(&bytes, &ver.sha256) {
+        if let Err(e) = registry_index::download_verified(&ver.url, &ver.sha256, &dest) {
             eprintln!("  FAILED: {e}");
             return 1;
         }
@@ -4031,21 +4024,6 @@ fn install_from_registry(arg: &str) {
          Trying to install: {arg}"
     );
     std::process::exit(1);
-}
-
-/// Extract version string from `loft.toml` content.
-#[cfg(feature = "registry")]
-fn extract_toml_version(content: &str) -> String {
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_prefix("version") {
-            let rest = rest.trim();
-            if let Some(rest) = rest.strip_prefix('=') {
-                return rest.trim().trim_matches('"').to_string();
-            }
-        }
-    }
-    String::new()
 }
 
 /// PKG.6a: Generate Rust stubs for all `#native` declarations in a package.

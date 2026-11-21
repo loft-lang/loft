@@ -2233,3 +2233,25 @@ fn pin_refuses_an_unsigned_index_without_the_flag() {
     assert!(err.contains("no registry libraries"), "and the script is what pin answers about: {err}");
     let _ = fa::remove_dir_all(&tmp);
 }
+
+// A download is checked against the index's hash while it is still in memory: one that does
+// not match never exists at its destination, where the next run would load a prebuilt
+// library from.  The check used to come after the write, and a kill between the two left the
+// unchecked file in place.
+#[test]
+fn a_download_that_fails_its_hash_never_reaches_its_destination() {
+    use sha2::Digest as _;
+    let tmp = tmpdir("download_verified");
+    let src = tmp.join("libdemo.so");
+    fa::write(&src, b"not the library the index names").unwrap();
+    let url = format!("file://{}", src.display().to_string().replace('\\', "/"));
+    let dest = tmp.join("prebuilt").join("libdemo.so");
+    let wrong = format!("{:x}", sha2::Sha256::digest(b"the library the index names"));
+    let r = loft::registry_index::download_verified(&url, &wrong, &dest);
+    assert!(r.is_err(), "a mismatch is refused");
+    assert!(!fa::exists(&dest), "and nothing was written where it would be loaded from");
+    let right = format!("{:x}", sha2::Sha256::digest(b"not the library the index names"));
+    loft::registry_index::download_verified(&url, &right, &dest).expect("a match is placed");
+    assert!(fa::exists(&dest), "a match lands at its destination");
+    let _ = fa::remove_dir_all(&tmp);
+}

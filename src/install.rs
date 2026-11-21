@@ -112,11 +112,7 @@ fn fetch_prebuilt(r: &ResolvedPackage, opts: &InstallOptions) -> bool {
     }
     let filename = crate::platform::cdylib_file_name(&stem);
     let dest = dir.join(&filename);
-    let Ok(bytes) = registry_index::download_tarball(&bin.url, &dest) else {
-        return false;
-    };
-    if crate::integrity::verify_sha256(&bytes, &bin.sha256).is_err() {
-        let _ = crate::file_access::remove_file(&dest);
+    if registry_index::download_verified(&bin.url, &bin.sha256, &dest).is_err() {
         return false;
     }
     // Stamp the sidecar so Phase 1's fp-gated resolve accepts the binary.
@@ -170,11 +166,7 @@ fn fetch_auto_artifact(
         return false;
     }
     let dest = dir.join(crate::platform::cdylib_file_name(stem));
-    let Ok(bytes) = registry_index::download_tarball(&bin.url, &dest) else {
-        return false;
-    };
-    if crate::integrity::verify_sha256(&bytes, &bin.sha256).is_err() {
-        let _ = crate::file_access::remove_file(&dest);
+    if registry_index::download_verified(&bin.url, &bin.sha256, &dest).is_err() {
         return false;
     }
     true
