@@ -1385,7 +1385,8 @@ pub fn unary(e: el::El, vars: el_vars::Vars, op: text, n: integer?) -> Ex {
     }
     // A link to a vector is the vector's view itself — a local or a field of one, typed as
     // borrowing it — where a bare bind would copy (`@FR-B-Copy`).
-    if a.tp is TyVector && (a.code is NdVar || calls(e, a.code, "OpGetField")) && len(el_types::deps(a.tp)) > 0 {
+    // (A nullable vector local links as its dense twin, the view as nullable as it: loft#1372.)
+    if el_types::base(a.tp) is TyVector && (a.tp is TyVector || (a.tp is TyOptional && a.code is NdVar)) && (a.code is NdVar || calls(e, a.code, "OpGetField")) && len(el_types::deps(a.tp)) > 0 {
       if lv >= 0 && !vars.amp_vectors.contains(lv) {
         vars.amp_vectors += [lv];
       }
