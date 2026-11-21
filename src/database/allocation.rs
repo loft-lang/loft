@@ -1225,7 +1225,7 @@ impl Stores {
                 None => false,
             }
         } else if known == 0 {
-            let safe = self.tree_holds_no_stored_refs(tp, &mut Vec::new());
+            let safe = self.tree_moves_whole(tp, &mut Vec::new());
             if self.swap_safe_types.len() <= tp as usize {
                 self.swap_safe_types.resize(tp as usize + 1, 0);
             }
@@ -1441,6 +1441,51 @@ impl Stores {
             rec: 1,
             pos: 8,
         })
+    }
+
+    /// `@FR-H-SwapIn` — may a root record of type `tp` move to another slot with its store's
+    /// whole content?  Yes unless its tree holds a stored reference, which names a slot: the
+    /// keyed collections, arrays and child records keep their own pointers as record numbers
+    /// inside the store, so they move with it (the reasoning of `(H-SwapKeyed)`); their
+    /// ELEMENT trees are asked the same.  The C runtime's `swap_safe` answers the same walk.
+    fn tree_moves_whole(&self, tp: u16, walking: &mut Vec<u16>) -> bool {
+        use crate::database::Parts;
+        if walking.contains(&tp) {
+            return true;
+        }
+        let Some(t) = self.types.get(tp as usize) else {
+            return false;
+        };
+        walking.push(tp);
+        let ok = match &t.parts {
+            Parts::Enum(values) => values.iter().all(|(v, _)| {
+                !matches!(
+                    self.types.get(*v as usize).map(|t| &t.parts),
+                    Some(Parts::EnumValue(..))
+                ) || self.tree_moves_whole(*v, walking)
+            }),
+            Parts::Base
+            | Parts::Byte(..)
+            | Parts::Short(..)
+            | Parts::Int(..)
+            | Parts::ShortRaw(..)
+            | Parts::IntRaw(..) => true,
+            Parts::Struct(fields) | Parts::EnumValue(_, fields) => fields
+                .iter()
+                .all(|f| self.tree_moves_whole(f.content, walking)),
+            Parts::Vector(e)
+            | Parts::Array(e)
+            | Parts::Sorted(e, _)
+            | Parts::Ordered(e, _)
+            | Parts::Hash(e, _)
+            | Parts::Index(e, _)
+            | Parts::Radix(e, _)
+            | Parts::Trie(e, _)
+            | Parts::ChildRec(e) => self.tree_moves_whole(*e, walking),
+            _ => false,
+        };
+        walking.pop();
+        ok
     }
 
     /// Does a record of type `tp` keep every pointer it holds as a record number INSIDE its
