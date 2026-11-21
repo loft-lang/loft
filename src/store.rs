@@ -2538,6 +2538,18 @@ impl Store {
         }
     }
 
+    /// [`Self::note_referenced`], answering whether this call set the mark: a caller that marks
+    /// ahead of a reference it may not come to store takes back only its own marks.
+    pub fn note_referenced_new(&mut self, rec: u32) -> bool {
+        rec >= PRIMARY && rec < self.size && self.referenced.insert(rec)
+    }
+
+    /// Take back a mark [`Self::note_referenced_new`] set, for a record no reference came to
+    /// name.
+    pub fn forget_referenced(&mut self, rec: u32) {
+        self.referenced.remove(rec);
+    }
+
     /// `@FR-H-Removed` — the positions a reinitialisation of this store must keep out of every
     /// claim: the records a stored reference named, which it removes with the rest, and the
     /// ones already removed.  Ascending; empty when nothing was named.

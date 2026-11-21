@@ -27,6 +27,22 @@ static loft_text loft_web_copy(const loft_text *t) { return loft_text_own(loft_l
 /* `http_do(method, url, body, headers) -> status`: the body and the headers (`Key: Value` lines)
  * wait for `http_body` / `http_headers`.  An HTTP error status carries its body; a transport
  * failure is status 0. */
+/* `net::max_download_bytes`: the most a response body may hold — `LOFT_MAX_DOWNLOAD` (bytes, or
+ * a number with K, M or G; 0 for no limit), else 512 MiB.  A body is the server's to end, and
+ * it is collected in memory. */
+static uint64_t loft_web_max_body(void) {
+    const uint64_t standard = (uint64_t) 512 << 20;
+    const char *v = getenv("LOFT_MAX_DOWNLOAD");
+    if (!v || !*v) return standard;
+    char *end;
+    unsigned long long n = strtoull(v, &end, 10);
+    if (end == v) return standard;
+    if (*end == 'K' || *end == 'k') { n <<= 10; end++; }
+    else if (*end == 'M' || *end == 'm') { n <<= 20; end++; }
+    else if (*end == 'G' || *end == 'g') { n <<= 30; end++; }
+    return *end ? standard : (uint64_t) n;
+}
+
 static int64_t loft_web_http_do(loft_str method, loft_str url, loft_str body, loft_str headers) {
     loft_web_body.len = 0;
     loft_web_heads.len = 0;
@@ -77,8 +93,19 @@ static int64_t loft_web_http_do(loft_str method, loft_str url, loft_str body, lo
         }
         char buf[65536];
         long r;
-        while ((r = loft_http_read(&h, buf, sizeof buf)) > 0) loft_push(&loft_web_body, buf, (size_t) r);
+        uint64_t most = loft_web_max_body();
+        int over = 0;
+        while (!over && (r = loft_http_read(&h, buf, sizeof buf)) > 0) {
+            over = most && (uint64_t) loft_web_body.len + (uint64_t) r > most;
+            if (!over) loft_push(&loft_web_body, buf, (size_t) r);
+        }
         loft_http_close(&h);
+        /* A body past the ceiling is refused, not cut short: half a response reads as a whole
+         * one of something else. */
+        if (over) {
+            loft_web_body.len = 0;
+            status = 0;
+        }
     }
     free(lines.p);
     free(m);

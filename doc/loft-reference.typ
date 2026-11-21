@@ -9601,6 +9601,12 @@ pub fn ends_with(self: text, value: text) -> boolean
 Returns true if self ends with value. Use for suffix matching (e.g., file extension checks).
 
 ```rust
+pub fn path_inside(root: text, path: text) -> text?
+```
+
+Where `path` lies under `root`, or null when it would lie outside it (`\@FR-Path-Inside`). Use it for a path a program did not write itself — the path of a request, a name out of an archive, a file name a user typed — before handing it to `file`, `read\_bytes` or `delete`: loft opens whatever path it is given (`../../etc/passwd` and `/etc/passwd` included), and this is the check that keeps such a path inside the directory it was meant for. at = path\_inside("public", request\_path); if at == null { respond(403, "outside") } else { serve(file(at)) } The path is read as loft reads every path: `/` and `\\` both separate, `.` stays where it is and `..` steps up.  A `..` that stays inside is fine (`a/../b` is `root/b`); one that steps above the root is null, as are an absolute path and one naming a drive (`C:`).  Null means OUTSIDE, which is not "no such file": answer it as a refusal.  A symbolic link inside the root is followed where it leads, as the file system does.
+
+```rust
 pub fn dir(self: text) -> text
 ```
 

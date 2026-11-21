@@ -37,12 +37,22 @@ That is `gpu`'s own model with names instead of positions.
 | B3 | `stage` on the new calls | its 166 tests | |
 | B4 | The 0.14 calls removed; `gpu::Texture` and `gpu::Target` unwrapped: `graphics` 0.15.0 | the four predictions below | |
 | B5 | crawler and dryopea on 0.15 | their pixel probes | |
+| B6 | **Decals**: a depth bias in `gpu`'s pipeline state (`State.bias`, units of depth the backend's own way: OpenGL's polygon offset, Vulkan's depth bias, Metal's `setDepthBias`), carried by a material as `Depth.Test` with a bias; `scene3d` and `graphics` draw a decal as a blended quad that tests depth and does not write it | a decal on a wall at a grazing angle: no pixel of the wall shows through it and none of it shows through a nearer wall, the same pixels on OpenGL and Vulkan; `gpu_record` logs the bias | after B1; the three-texture draw (base, light, decal in one shader) comes with B1's material |
 | C1 | `canvas` split out of `graphics`, which hands its names on | a canvas-only program building without `gpu_gl` | unprobed: can a library pass on another package's names whole? |
 | C2 | A window on any backend (@PLN222 steps 17–23) | — | |
 
 Predictions the build is held against: the pipeline key is integers known when a material
 and a mesh are made (0.14 builds a text per draw); no test changes its expected pixels;
 `graphics.loft` gets shorter; each consumer's port removes more lines than it adds.
+
+## Why decals want a step of their own
+
+A decal as its own blended draw needs one texture, so the two textures a 0.14 draw takes do
+not stop it; what does is that it lies exactly on its surface and fights it for depth.
+`gpu`'s state has shape, depth mode, blend, cull and target, and no bias.  Until B6 a decal's
+vertex stage moves it towards the eye by hand, tuned per game.  A bias is set differently by
+each backend, so it belongs in `gpu`.  One draw that samples three textures or more (base,
+light map, decal) waits for B1's material.
 
 ## The probes
 

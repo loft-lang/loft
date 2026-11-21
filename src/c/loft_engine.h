@@ -270,10 +270,18 @@ static int loft_eh_write_all(int fd, const char *p, size_t n) {
     return 1;
 }
 
-/* Exactly `n` bytes, within the socket's read timeout, or 0. */
+/* `MESSAGE_BUDGET`: how long one message may take to arrive once its first bytes are here — the
+ * upgrade request's head, and a frame.  The socket's read timeout bounds ONE read, and the pump
+ * serves every peer from one thread: a peer that sends a byte per read would hold it for as long
+ * as it liked.  `loft_eh_by` is when the message being read must be whole; 0 outside one. */
+#define LOFT_EH_MESSAGE_US 5000000
+static LOFT_TLS int64_t loft_eh_by;
+
+/* Exactly `n` bytes, within the socket's read timeout and the message's budget, or 0. */
 static int loft_eh_read_exact(int fd, void *buf, size_t n) {
     uint8_t *p = (uint8_t *) buf;
     while (n > 0) {
+        if (loft_eh_by && loft_now_us() > loft_eh_by) return 0;
         long r = loft_sock_recv(fd, p, n, 0);
         if (r < 0 && loft_sock_interrupted()) continue;
         if (r <= 0) return 0;
@@ -286,8 +294,10 @@ static int loft_eh_read_exact(int fd, void *buf, size_t n) {
 /* Read an HTTP head to its blank line, a byte at a time (no over-read past it); 0 on a closed or
  * silent socket, or a head past 16 KiB. */
 static int loft_eh_read_head(int fd, loft_text *head) {
+    int64_t by = loft_now_us() + LOFT_EH_MESSAGE_US;
     while (head->len < 4 || memcmp(head->p + head->len - 4, "\r\n\r\n", 4) != 0) {
         char b;
+        if (loft_now_us() > by) return 0;
         long r = loft_sock_recv(fd, &b, 1, 0);
         if (r < 0 && loft_sock_interrupted()) continue;
         if (r != 1) return 0;
@@ -386,12 +396,23 @@ static int loft_eh_write_frame(int fd, uint8_t opcode, const char *p, size_t n, 
 
 /* One frame if pending: peek first (idle costs a syscall), then the in-flight frame within the
  * short read timeout.  0 none, 1 a text frame (into `out`), 2 closed. */
+static int loft_eh_read_frame_in(int fd, loft_text *out);
+
 static int loft_eh_read_frame(int fd, loft_text *out) {
     uint8_t hdr[2];
     long peeked = loft_sock_peek(fd, hdr, 2);
     if (peeked == 0 || peeked == -2) return 2;
     if (peeked < 0) return 0;
     if (peeked < 2) return 0;
+    loft_eh_by = loft_now_us() + LOFT_EH_MESSAGE_US;
+    int answer = loft_eh_read_frame_in(fd, out);
+    loft_eh_by = 0;
+    return answer;
+}
+
+/* The frame whose first two bytes are waiting, read within `loft_eh_by`. */
+static int loft_eh_read_frame_in(int fd, loft_text *out) {
+    uint8_t hdr[2];
     if (!loft_eh_read_exact(fd, hdr, 2)) return 2;
     uint8_t opcode = hdr[0] & 0x0F;
     int masked = (hdr[1] & 0x80) != 0;

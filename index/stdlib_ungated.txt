@@ -395,6 +395,7 @@ n_parallel_buf_get_ref
 n_parallel_buf_get_single
 n_parallel_buf_get_text
 n_parse_errors_of
+n_path_inside
 n_path_sep
 n_protect_store_frees
 n_radix_sorted
