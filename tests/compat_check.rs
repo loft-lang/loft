@@ -82,7 +82,8 @@ impl Bench {
 
     /// `loft compat check [--full]` in the working tree: whether it passed, and what it said.
     fn check(&self, url: &str, full: bool) -> (bool, String) {
-        let mut args = vec!["compat", "check"];
+        // The fixture index is unsigned: the check holds an index to `loft install`'s rule.
+        let mut args = vec!["compat", "check", "--allow-unsigned"];
         if full {
             args.push("--full");
         }

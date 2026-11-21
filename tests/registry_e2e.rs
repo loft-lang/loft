@@ -2192,3 +2192,44 @@ fn bundle_import_refuses_a_tarball_without_its_directory() {
     assert!(!fa::exists(cache.join("loft.toml")), "not its manifest either");
     let _ = fa::remove_dir_all(&tmp);
 }
+
+// `loft pin`, like `loft install`, holds the index to its signature: it writes the versions
+// and hashes the index names into a lockfile that later runs install from.  An index with no
+// signature is read only with `--allow-unsigned`.
+#[test]
+fn pin_refuses_an_unsigned_index_without_the_flag() {
+    let tmp = tmpdir("pin_unsigned");
+    let index = tmp.join("index.json");
+    fa::write(
+        &index,
+        r#"{"schema_version": 1, "updated": "2026-11-21T00:00:00Z", "packages": {}}"#,
+    )
+    .unwrap();
+    let url = format!("file://{}", index.display().to_string().replace('\\', "/"));
+    let script = tmp.join("app.loft");
+    fa::write(&script, "use demo;\nfn main() { println(\"hi\"); }\n").unwrap();
+    let home = tmp.join("home");
+    let pin = |extra: &[&str]| {
+        loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+            .arg("pin")
+            .args(extra)
+            .arg(&script)
+            .env("HOME", &home)
+            .env("LOFT_HOME", &home)
+            .env("LOFT_REGISTRY_URL", &url)
+            .env_remove("LOFT_OFFLINE")
+            .output()
+            .expect("run loft pin")
+    };
+    let strict = pin(&[]);
+    let err = String::from_utf8_lossy(&strict.stderr);
+    assert!(!strict.status.success(), "an unsigned index is refused: {err}");
+    assert!(err.contains("--allow-unsigned"), "and the refusal names the waiver: {err}");
+    // With the waiver the index is read, and pin goes on to the script (whose `demo` the
+    // empty index does not list).
+    let waived = pin(&["--allow-unsigned"]);
+    let err = String::from_utf8_lossy(&waived.stderr);
+    assert!(!err.contains("pass --allow-unsigned"), "with --allow-unsigned the index is read: {err}");
+    assert!(err.contains("no registry libraries"), "and the script is what pin answers about: {err}");
+    let _ = fa::remove_dir_all(&tmp);
+}

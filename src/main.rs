@@ -495,6 +495,7 @@ fn print_help() {
     println!("  pin <script.loft>             pin every registry library the script uses");
     println!("                                writes <script>.loft.lock next to the script;");
     println!("                                subsequent runs use the pinned versions");
+    println!("                                (--allow-unsigned: an index with no signature)");
     println!(
         "  self-update [--dry-run]       report whether a newer release is published for this"
     );
@@ -533,12 +534,16 @@ fn print_help() {
     println!("  update [pkg]                  refresh lockfile to latest active versions");
     println!("                                that satisfy each dep's loft.toml range;");
     println!("                                --dry-run reports changes without writing;");
-    println!("                                --check exits 1 if any updates are available");
+    println!("                                --check exits 1 if any updates are available;");
+    println!("                                --allow-unsigned reads an index with no signature");
     println!("  bundle export [opts] <dir>    write a self-contained offline bundle of");
     println!("                                registry packages (--all or --packages X,Y,Z);");
     println!("                                ship via USB/scp; import on the target machine");
+    println!("                                (--allow-unsigned: an index with no signature)");
     println!("  bundle import <dir>           install a bundle into ~/.loft/registry/");
-    println!("                                (verifies sha256 + signature per artifact)");
+    println!("                                (verifies the index and feed signatures, then");
+    println!("                                each tarball's sha256; --allow-unsigned waives a");
+    println!("                                MISSING signature, never a wrong one)");
     println!("  publish [pkg]                 author helper: repackage locally + verify the");
     println!("                                GitHub release exists + emit the index.json");
     println!("                                entry to paste into a registry PR");
@@ -553,6 +558,9 @@ fn print_help() {
     println!("  registry <subcommand>         manage the local package registry");
     println!(
         "                                sync             — pull latest registry from source URL"
+    );
+    println!(
+        "                                                   (--allow-unsigned: no signature)"
     );
     println!(
         "                                check            — report updates, deprecations, yanks"
@@ -2277,6 +2285,8 @@ struct UpdateOpts {
     /// Exit non-zero if any updates are available (CI gate).
     /// Implies dry_run.
     check_only: bool,
+    /// `--allow-unsigned`: read an index that carries no signature.
+    allow_unsigned: bool,
 }
 
 /// @PLAN12 Phase 6.8 — `loft update` driver.
@@ -2376,10 +2386,10 @@ fn update_packages(opts: &UpdateOpts) -> i32 {
         return 1;
     }
 
-    // Load index (offline-respecting, allow_unsigned for the
-    // bootstrap window).
+    // Load index (offline-respecting; an unsigned one only with `--allow-unsigned`, as for
+    // `loft install` — this command installs what it reads).
     let install_opts = InstallOptions {
-        allow_unsigned: true,
+        allow_unsigned: opts.allow_unsigned,
         refresh: false,
         offline: std::env::var("LOFT_OFFLINE").is_ok(),
         allow_prerelease: false,
@@ -2572,7 +2582,7 @@ fn update_packages(opts: &UpdateOpts) -> i32 {
 ///   auto-resolved; transitive harvest is a follow-up if useful).
 #[cfg(feature = "registry")]
 #[expect(clippy::too_many_lines, reason = "inherited")]
-fn bundle_export(outdir: &str, packages: Option<&[String]>, all: bool) -> i32 {
+fn bundle_export(outdir: &str, packages: Option<&[String]>, all: bool, allow_unsigned: bool) -> i32 {
     use loft::install::InstallOptions;
     use loft::registry_index;
     use std::path::Path;
@@ -2584,7 +2594,7 @@ fn bundle_export(outdir: &str, packages: Option<&[String]>, all: bool) -> i32 {
     }
 
     let opts = InstallOptions {
-        allow_unsigned: true,
+        allow_unsigned,
         refresh: false,
         offline: false,
         allow_prerelease: false,
@@ -3869,7 +3879,7 @@ fn dir_size_bytes(dir: &std::path::Path) -> Option<u64> {
 /// else either lives in the workspace or is part of loft itself.
 #[cfg(feature = "registry")]
 #[expect(clippy::too_many_lines, reason = "inherited")]
-fn pin_script(script: &str) {
+fn pin_script(script: &str, allow_unsigned: bool) {
     use loft::install::{InstallOptions, install_one};
     use loft::registry_index;
     use std::path::PathBuf;
@@ -3937,7 +3947,7 @@ fn pin_script(script: &str) {
     // (path-deps + stdlib + sibling packages) before invoking
     // install_one — saves a network hit + a confusing error.
     let opts_for_index = InstallOptions {
-        allow_unsigned: true,
+        allow_unsigned,
         refresh: false,
         offline: false,
         allow_prerelease: false,
@@ -3953,7 +3963,7 @@ fn pin_script(script: &str) {
     };
 
     let opts = InstallOptions {
-        allow_unsigned: true,
+        allow_unsigned,
         refresh: false,
         offline: false,
         allow_prerelease: false,
@@ -5078,7 +5088,7 @@ fn handle_registry(argv: &[String], i: &mut usize) {
     };
 
     match sub {
-        "sync" => registry_sync(),
+        "sync" => registry_sync(argv[*i..].iter().any(|a| a == "--allow-unsigned")),
         "check" => registry_check(),
         "list" => {
             let installed_only = argv.get(*i).is_some_and(|s| s == "--installed");
@@ -5109,7 +5119,7 @@ fn handle_registry(argv: &[String], i: &mut usize) {
 /// or a `source:` header in a local `registry.txt` — because that is the only case where such
 /// a file exists to fetch.
 #[cfg(feature = "registry")]
-fn registry_sync() {
+fn registry_sync(allow_unsigned: bool) {
     use loft::registry;
 
     let existing_source = registry::registry_path().and_then(|p| {
@@ -5120,7 +5130,7 @@ fn registry_sync() {
         || existing_source.as_deref().is_some_and(|u| !u.is_empty());
     if !custom {
         let opts = loft::install::InstallOptions {
-            allow_unsigned: true,
+            allow_unsigned,
             refresh: true,
             offline: false,
             allow_prerelease: false,
@@ -5144,7 +5154,7 @@ fn registry_sync() {
 }
 
 #[cfg(not(feature = "registry"))]
-fn registry_sync() {
+fn registry_sync(_allow_unsigned: bool) {
     eprintln!("loft registry sync: registry feature not compiled in.");
     std::process::exit(1);
 }
@@ -5824,6 +5834,9 @@ fn run_maintain_registry_command(args: &[String]) -> i32 {
 #[expect(clippy::too_many_lines, reason = "inherited")]
 fn run_compat_command(args: &[String]) -> i32 {
     let json = args.iter().any(|a| a == "--json");
+    if args.iter().any(|a| a == "--allow-unsigned") {
+        COMPAT_ALLOW_UNSIGNED.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
     let positional: Vec<&String> = args.iter().filter(|a| !a.starts_with("--")).collect();
     // The dispatcher strips `compat`, so positional[0] is the sub-verb.
     let sub = positional.first().map(|s| s.as_str()).unwrap_or("");
@@ -5833,7 +5846,7 @@ fn run_compat_command(args: &[String]) -> i32 {
     ) {
         eprintln!(
             "loft compat: usage: loft compat <api|test|check|levels|floor|width32> [<version>] \
-             [--json] [--with-tests] [--full]"
+             [--json] [--with-tests] [--full] [--allow-unsigned]"
         );
         return 2;
     }
@@ -6244,12 +6257,17 @@ fn published_releases(name: &str, own_version: Option<&str>) -> Result<Vec<Strin
     Ok(out)
 }
 
+/// `loft compat --allow-unsigned`: the check may read an index that carries no signature.
+#[cfg(feature = "registry")]
+static COMPAT_ALLOW_UNSIGNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// How the check reads the registry and fetches a release: into the install cache, writing
 /// no lockfile — the package being checked is not a consumer of its own earlier releases.
+/// The releases it fetches are built and run, so the index is held to `loft install`'s rule.
 #[cfg(feature = "registry")]
 fn compat_install_opts() -> loft::install::InstallOptions {
     loft::install::InstallOptions {
-        allow_unsigned: true,
+        allow_unsigned: COMPAT_ALLOW_UNSIGNED.load(std::sync::atomic::Ordering::Relaxed),
         offline: std::env::var("LOFT_OFFLINE").is_ok(),
         allow_prerelease: true,
         skip_lockfile: true,
@@ -8897,11 +8915,15 @@ fn main() {
                 if sub == "export" {
                     let mut packages: Option<Vec<String>> = None;
                     let mut all = false;
+                    let mut allow_unsigned = false;
                     let mut outdir: Option<String> = None;
                     while i < argv.len() {
                         let a2 = argv[i].as_str();
                         if a2 == "--all" {
                             all = true;
+                            i += 1;
+                        } else if a2 == "--allow-unsigned" {
+                            allow_unsigned = true;
                             i += 1;
                         } else if a2 == "--packages" {
                             i += 1;
@@ -8930,7 +8952,7 @@ fn main() {
                         eprintln!("loft bundle export: <outdir> required");
                         std::process::exit(1);
                     };
-                    let code = bundle_export(&out, packages.as_deref(), all);
+                    let code = bundle_export(&out, packages.as_deref(), all, allow_unsigned);
                     std::process::exit(code);
                 } else if sub == "import" {
                     let mut indir: Option<&String> = None;
@@ -8974,6 +8996,9 @@ fn main() {
                         i += 1;
                     } else if a2 == "--check" {
                         update_opts.check_only = true;
+                        i += 1;
+                    } else if a2 == "--allow-unsigned" {
+                        update_opts.allow_unsigned = true;
                         i += 1;
                     } else if !a2.starts_with('-') && target.is_none() {
                         target = Some(a2.to_string());
@@ -9250,11 +9275,12 @@ fn main() {
             // regardless of cwd or registry drift.
             #[cfg(feature = "registry")]
             {
-                let Some(script) = argv.get(i) else {
+                let allow_unsigned = argv[i..].iter().any(|a| a == "--allow-unsigned");
+                let Some(script) = argv[i..].iter().find(|a| !a.starts_with("--")) else {
                     eprintln!("loft pin: script path required");
                     std::process::exit(1);
                 };
-                pin_script(script);
+                pin_script(script, allow_unsigned);
                 return;
             }
             #[cfg(not(feature = "registry"))]
