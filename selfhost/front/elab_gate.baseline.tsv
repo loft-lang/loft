@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	0fe1a930c1a7f169457b2e8ca48ec8f762903595
 
-layer	elab	agree	1323	of	2132
+layer	elab	agree	1325	of	2132
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -640,9 +640,7 @@ elab	refused	tests/scripts/1026-generic-discharged-null-return.loft
 elab	refused	tests/scripts/1044-par-element-view-borrows-its-vector.loft
 elab	refused	tests/scripts/1092-lexer-revert-restores-the-cursor.loft
 elab	refused	tests/scripts/11-vectors.loft
-elab	refused	tests/scripts/113-fread-inferred-size.loft
 elab	refused	tests/scripts/1132-a-generator-yield-rides-a-channel-that-carries-it.loft
-elab	refused	tests/scripts/115-snapshot-roundtrip.loft
 elab	refused	tests/scripts/12-collections.loft
 elab	refused	tests/scripts/1200-a-nullable-record-local-frees-what-it-displaces.loft
 elab	refused	tests/scripts/1259-the-parser-library-accepts-the-language-it-documents.loft
@@ -816,7 +814,7 @@ elab	refused	tests/scripts/store_compact_slack_730.loft
 elab	refused	tests/scripts/store_digest_b0.loft
 elab	refused	tests/scripts/store_paged_enum_field.loft
 
-layer	elab-functions	agree	14235	of	24532
+layer	elab-functions	agree	14230	of	24525
 elab-functions	agree	lib/docs.loft::Anchor
 elab-functions	agree	lib/docs.loft::Character
 elab-functions	agree	lib/docs.loft::Double
@@ -12026,9 +12024,6 @@ elab-functions	agree	tests/scripts/11-vectors.loft::Item
 elab-functions	agree	tests/scripts/11-vectors.loft::main_vector<Item>
 elab-functions	agree	tests/scripts/11-vectors.loft::n_set_val
 elab-functions	agree	tests/scripts/11-vectors.loft::vector<Item>
-elab-functions	agree	tests/scripts/113-fread-inferred-size.loft::(schema)
-elab-functions	agree	tests/scripts/113-fread-inferred-size.loft::LhsTarget
-elab-functions	agree	tests/scripts/113-fread-inferred-size.loft::n_cleanup
 elab-functions	agree	tests/scripts/1132-a-generator-yield-rides-a-channel-that-carries-it.loft::Ck
 elab-functions	agree	tests/scripts/1132-a-generator-yield-rides-a-channel-that-carries-it.loft::__tuple<integer,boolean>
 elab-functions	agree	tests/scripts/1132-a-generator-yield-rides-a-channel-that-carries-it.loft::__tuple<integer,float,boolean,character>
@@ -12037,8 +12032,6 @@ elab-functions	agree	tests/scripts/1132-a-generator-yield-rides-a-channel-that-c
 elab-functions	agree	tests/scripts/1132-a-generator-yield-rides-a-channel-that-carries-it.loft::n_test_a_boolean_tuple_member_reads_back
 elab-functions	agree	tests/scripts/1132-a-generator-yield-rides-a-channel-that-carries-it.loft::n_test_a_by_value_tuple_from_a_loop_body
 elab-functions	agree	tests/scripts/1132-a-generator-yield-rides-a-channel-that-carries-it.loft::n_tuple_gen
-elab-functions	agree	tests/scripts/115-snapshot-roundtrip.loft::(schema)
-elab-functions	agree	tests/scripts/115-snapshot-roundtrip.loft::n_cleanup
 elab-functions	agree	tests/scripts/12-collections.loft::(schema)
 elab-functions	agree	tests/scripts/12-collections.loft::Count
 elab-functions	agree	tests/scripts/12-collections.loft::Counting
@@ -15053,7 +15046,7 @@ elab-functions	agree	tests/scripts/store_paged_enum_field.loft::main_vector<inte
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::n_bytes
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::vector<integer(0, 255)>
 
-layer	elab-pass1	agree	11978	of	17880
+layer	elab-pass1	agree	11980	of	17882
 elab-pass1	agree	lib/code.loft::t_4Code_add_block
 elab-pass1	agree	lib/code.loft::t_4Code_add_if
 elab-pass1	agree	lib/code.loft::t_4Code_add_loop
@@ -23613,6 +23606,7 @@ elab-pass1	agree	tests/scripts/1092-lexer-revert-restores-the-cursor.loft::t_6Pa
 elab-pass1	agree	tests/scripts/1092-lexer-revert-restores-the-cursor.loft::t_6Parser_nested_expression
 elab-pass1	agree	tests/scripts/11-vectors.loft::n_set_val
 elab-pass1	agree	tests/scripts/113-fread-inferred-size.loft::n_cleanup
+elab-pass1	agree	tests/scripts/113-fread-inferred-size.loft::n_main
 elab-pass1	agree	tests/scripts/1132-a-generator-yield-rides-a-channel-that-carries-it.loft::n_bool_gen
 elab-pass1	agree	tests/scripts/1132-a-generator-yield-rides-a-channel-that-carries-it.loft::n_main
 elab-pass1	agree	tests/scripts/1132-a-generator-yield-rides-a-channel-that-carries-it.loft::n_test_a_boolean_tuple_member_reads_back
@@ -23621,6 +23615,7 @@ elab-pass1	agree	tests/scripts/1132-a-generator-yield-rides-a-channel-that-carri
 elab-pass1	agree	tests/scripts/114-file-sync.loft::n_cleanup
 elab-pass1	agree	tests/scripts/114-file-sync.loft::n_main
 elab-pass1	agree	tests/scripts/115-snapshot-roundtrip.loft::n_cleanup
+elab-pass1	agree	tests/scripts/115-snapshot-roundtrip.loft::n_main
 elab-pass1	agree	tests/scripts/116-file-append-log.loft::n_cleanup
 elab-pass1	agree	tests/scripts/117-deep-stack.loft::n_main
 elab-pass1	agree	tests/scripts/117-deep-stack.loft::n_sum_to
