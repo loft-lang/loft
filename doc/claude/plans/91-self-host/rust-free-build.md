@@ -303,8 +303,9 @@ the seed, the documentation, the tooling in loft.  The language suite is a repos
 own already (`loft-suite`) and judges both implementations.
 
 **What goes to the reference's own repository:** `src/*.rs` and Cargo — the Rust front end,
-the bytecode interpreter, the rustc writer (`src/generation/`), the Rust C writer and driver —
-and the Rust tests (`tests/*.rs`).
+the bytecode interpreter, the Rust C writer and driver — and the Rust tests (`tests/*.rs`).
+The rustc writer is not among them: it retires before this stage (@PLN225, `@C170`), and no
+gate here reads its output.
 
 **What has to be untangled first**, each a step of its own:
 

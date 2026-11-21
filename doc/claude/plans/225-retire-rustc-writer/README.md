@@ -65,7 +65,7 @@ is the work list every later phase shrinks; R7 may start only when it is empty.
 | Phase | What | Validated by | Effort |
 |---|---|---|---|
 | **R0** | Record `@C170`.  Run the whole test suite, the language suite, `revalidate-libs` and the corpus with `LOFT_NO_RUSTC=1` (nothing builds through rustc; a request for it is refused) on Linux and macOS, and file the result as the rust-free census: every test, cell, library and target that fails or refuses. | The census is a list that can be non-empty: it is the plan's measured work list. | S |
-| **R1** | The library route (`@C71`) and the compiled stdlib through the C backend (O1): a probe of the store bridge first, then the C-built shared library beside the rustc one, then the switch. | Parallel run on the library test corpus: every interpreted program answers the same with its libraries built by C and by rustc (value, length, leak), and the time ratio C / rustc is recorded. | L |
+| **R1** | The library route (`@C71`) and the compiled stdlib through the C backend (O1): **@PLN206 P3–P6** (one layout, the hosted C unit, libraries' C artifacts adopted by the interpreter, the rustc artifact path removed). | Parallel run on the library test corpus: every interpreted program answers the same with its libraries built by C and by rustc (value, length, leak), and the time ratio C / rustc is recorded. | L+ (in @PLN206) |
 | **R2** | Targets: `--html` / `--native-wasm` without the writer fallback; `--native-android` without its rust path; `--native-rust` and `LOFT_NATIVE_BACKEND=rust` refused with a message that names `--native`. | The html, wasm and android test binaries pass under `LOFT_NO_RUSTC=1`; the refusals are tests. | M |
 | **R3** | Libraries: a registry census of published releases that need rustc (a Rust native part, a `#rust` body in library source).  Each gets a C successor or is deprecated in the registry, as `crypto` 0.3.x was. | `revalidate-libs` green under `LOFT_NO_RUSTC=1`; the census list empty. | S–M |
 | **R4** | Tests and guards: each of the 165 test files keeps its interpreter and C halves and loses its rust leg; tests that exist only for the writer go; the 125 receipts are classified (writer-only → retire with that half; also guarding C or the interpreter → re-derived against that code); the 11 suite cells lose `ARMED: FALSIFY_NATIVE=rust` and are re-falsified on C or the interpreter, or lose their native half. | `make rule-coverage`: no rule loses its last guard except the rewrites R5 removes; the R0 census has no test left. | L |
@@ -83,10 +83,11 @@ as a trailing docs pass.
   Every library stays compiled, through the C backend instead of rustc: a used library is built
   into a shared object by the C backend and called from the interpreter over the shared store,
   as the writer's cdylib is today.  `@C71`'s model holds; its mechanism (the rustc fingerprint,
-  `libloft.rlib`) is amended in R1.  The design question left is the bridge: the C runtime keeps
-  loft's own store layout, but a live Rust `Stores` is not a C store, so R1 starts with a probe
-  of how the C code reads and writes the interpreter's stores.  The compiled stdlib takes the
-  same route.
+  `libloft.rlib`) is amended in R1.  **That route is @PLN206** ("one store model", active): its
+  P3 makes one store layout, P4 the hosted C unit (a C body working on the interpreter's
+  stores — the bridge), P5 has libraries build their C artifact and the interpreter adopt it,
+  P6 removes the rustc artifact path.  R1 is @PLN206 P3–P6, designed there, not here.  The
+  compiled stdlib takes the same route.
 - **O2 — `--html` / `--native-wasm` without a WASI clang.**  Refuse with install instructions
   (cheapest), fetch the toolchain on first use, or ship it in the bundle (size).  Any of the
   three breaks PR #2516's promise; the change carries `freeze:broken`.
@@ -96,6 +97,7 @@ as a trailing docs pass.
 ## Cross-arc dependencies
 
 - **Unblocks** security #61 (a null text is an identity on every representation).
+- **Depends on** @PLN206 P3–P6 for R1 (libraries compiled through C, run by the interpreter).
 - **Reconciles** @PLN181 (compiled stdlib, reverted or replaced by O1), @PLN219 (rust slot
   links: moot), @PLN211 (rule phases: the native column goes), @PLN91 (`rust-free-build.md`),
   @PLN199 / @PLN203 (C carries every program; the C default).

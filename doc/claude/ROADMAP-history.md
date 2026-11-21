@@ -14,6 +14,17 @@ are kept as they were, so links to their anchors still resolve.
 
 ---
 
+## The rustc backend — the order as it read until 2026-11-21
+
+Until 2026-11-21 the shelved writer was to stay in the tree, reachable as `--native-rust`, as the
+reference the self-hosted ports are compared with byte for byte, so a defect it shared with the
+language was still fixed in it; `--native` flipped to the C backend at @PLN203's last phase, and
+the writer was to leave the tree at @PLN91's stage 6, with Cargo, when that plan's
+double-implementation ledger said so.  On 2026-11-21 the owner ruled that a backend stays only
+while it is semantically equal to the others (`@C170`), with security #61 as the trigger; the
+writer retires under @PLN225.  No @PLN91 gate read the writer's output: the harness calls
+`--interpret`, `--emit-image`, `--emit-run-image` and `--emit-c`.
+
 ## The rustc backend — the order as it read until 2026-11-12
 
 Until 2026-11-12 § The order of the large arcs read *"the rustc backend in good shape before

@@ -46,21 +46,19 @@ implementation compared byte for byte with the Rust one at every level (@PLN91 �
 whatever is decided at the front is verified twice, and the intrinsic problems a single
 implementation hides surface as disagreements.
 
-**The rustc backend is shelved.**  The C99 backend (`src/c/`, [C_BACKEND.md](C_BACKEND.md)) is
+**The rustc backend retires.**  The C99 backend (`src/c/`, [C_BACKEND.md](C_BACKEND.md)) is
 the compiled target: every performance bar is measured on its lanes and the Rust writer is no
 longer judged ([PERFORMANCE.md](PERFORMANCE.md) § the lanes), no new rewrite lands in
 `src/generation/` — an optimisation is decided once, in the IR phase ([@PLN211](https://github.com/loft-lang/plans/issues/211)),
 or in the C writer — and a compiled library ships C, never a rustc-built cdylib
-([@PLN206](https://github.com/loft-lang/plans/issues/206)).  The Rust writer stays in the tree,
-reachable as `--native-rust`, for one purpose: it is the reference the self-hosted ports are
-compared with byte for byte ([@PLN91 § The port method](plans/91-self-host/README.md#the-port-method--the-diff-is-the-work-the-reference-is-the-truth)),
-so a defect it shares with the language is still fixed in it under that method.  `--native` flips to
-the C backend at [@PLN203](https://github.com/loft-lang/plans/issues/203)'s last phase, and the
-writer leaves the tree at @PLN91's stage 6, with Cargo — a stage its
-[double-implementation ledger](plans/91-self-host/README.md#the-double-implementation--why-the-rust-side-stays-live)
-decides, not a date.  The reasons are measured in
-[plans/203-c99-default-backend.md](plans/203-c99-default-backend.md) § The position and
-[ROADMAP-history.md § The rustc backend](ROADMAP-history.md#the-rustc-backend--the-order-as-it-read-until-2026-11-12).
+([@PLN206](https://github.com/loft-lang/plans/issues/206)).  A backend stays only while it answers
+every program as the others do (`@C170`), so the writer, `--native-rust`, leaves the tree under
+[@PLN225](plans/225-retire-rustc-writer/README.md), with every rewrite only it applies; the
+libraries it compiles for interpreted programs are built by the C backend instead (@PLN206
+P3–P6).  No @PLN91 gate reads the writer's output.  The reasons are measured in
+[plans/203-c99-default-backend.md](plans/203-c99-default-backend.md) § The position; the order
+as it read before is in
+[ROADMAP-history.md § The rustc backend](ROADMAP-history.md#the-rustc-backend--the-order-as-it-read-until-2026-11-21).
 
 **Games and the Tanmatsu: 2D first, 3D grown from it.**  The 3D stack exists, but using it to the
 fullest needs a large body of consistent art: world models (buildings, trees, hills, roads,
