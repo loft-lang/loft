@@ -1213,6 +1213,20 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
   }
   src_id = binds[0];
   id = el_vars::loop_binding(vars, src_id);
+  // `rev(src)` walks the hoisted vector from its end, as the `for` statement's reversed walk does
+  // (the index starts at the length, the "rev step", both exits); `unordered(…)` is refused.
+  rev = false;
+  match e.p.nodes[source] {
+    SIterWrap { kind, e: inner } => {
+      if kind != "rev" || inner == null {
+        el::refuse(e, "a comprehension over an `unordered(…)` walk");
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      rev = true;
+      source = inner!;
+    },
+    _ => {}
+  }
   ranged = e.p.nodes[source] is SRange;
   // The walk: a range's own step, or the source hoisted into `_vector_N` and walked as a `for`
   // walks it.
@@ -1240,13 +1254,19 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
     }
     outer_slice = vars.slice_node;
     vars.slice_node = el_ex_vector::slice_target(e, source);
+    vars.rev_slice = rev && vars.slice_node >= 0;
     x = el_ex_assign::expression(e, vars, source);
+    vars.rev_slice = false;
     vars.slice_node = outer_slice;
   }
   if keyed {
     elem = kr!.elem;
   }
   sliced = !keyed && x.code is NdIter;
+  if rev && (ranged || keyed) {
+    el::refuse(e, "a comprehension over a reversed range or key range");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
   ss: el_ex_vector::SliceStart? = null;
   if sliced {
     ss = el_ex_vector::slice_start(vars, x, id);
@@ -1353,7 +1373,7 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
   }
   nx: ir::Node? = if keyed && kr!.whole {
     el_ir::v_block([el_ir::v_set(idx, el_ir::cl(e, "OpAddInt", [ir::NdVar { n: idx }, ir::NdInt { n: 1 }])), el_ir::cl(e, "OpStep", [ir::NdVar { n: kr!.iter }, kr!.coll, ir::NdInt { n: kr!.on }, ir::NdInt { n: kr!.arg }])], elem, "sorted iter next")
-  } else if keyed { key_range_step(e, kr!) } else if ranged { el_ir::v_block(rw!.steps, elem, "Iter range") } else if sliced { el_ex_vector::slice_read(e, vars, ss!) } else { vector_step(e, vec, idx, elem) };
+  } else if keyed { key_range_step(e, kr!) } else if ranged { el_ir::v_block(rw!.steps, elem, "Iter range") } else if sliced { el_ex_vector::slice_read(e, vars, ss!, rev: rev) } else { vector_step(e, vec, idx, elem, rev: rev) };
   if nx == null || rows == null {
     el::refuse(e, "a comprehension over a vector of records");
     return ex(ir::NdNull, ir::TyVoid);
@@ -1365,6 +1385,9 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
     steps += [el_ir::v_if(el_ir::cl(e, "OpEqRef", [ir::NdVar { n: lv }, el_ir::cl(e, "OpNullRefSentinel", [])]), el_ir::v_block([ir::NdBreak { n: 0 }], ir::TyVoid, "break"), ir::NdNull)];
   } else if !ranged && !sliced {
     steps += [vector_past_end(e, vec, idx)];
+    if rev {
+      steps += [el_ir::v_if(el_ir::cl(e, "OpLtInt", [ir::NdVar { n: idx }, ir::NdInt { n: 0 }]), el_ir::v_block([ir::NdBreak { n: 0 }], ir::TyVoid, "break"), ir::NdNull)];
+    }
   }
   if fc != null {
     steps += [fc!];
@@ -1453,7 +1476,7 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
     items += [ir::NdInsert { items: el_ex_pattern::range_init(rw!) }, el_ir::v_loop(steps, "For comprehension")];
     return ex(ir::NdInsert { items: items }, ir::TyVoid);
   }
-  items += if keyed && kr!.whole { [el_ir::v_set(kr!.iter, kr!.start), el_ir::v_set(idx, ir::NdInt { n: -1 })] } else if keyed { [el_ir::v_set(kr!.iter, kr!.start)] } else if ranged { el_ex_pattern::range_init(rw!) } else if sliced { match ss!.init { NdInsert { items: si } => si, _ => [] } } else { [el_ir::v_set(vec, x.code), el_ir::v_set(idx, ir::NdInt { n: -1 })] };
+  items += if keyed && kr!.whole { [el_ir::v_set(kr!.iter, kr!.start), el_ir::v_set(idx, ir::NdInt { n: -1 })] } else if keyed { [el_ir::v_set(kr!.iter, kr!.start)] } else if ranged { el_ex_pattern::range_init(rw!) } else if sliced { match ss!.init { NdInsert { items: si } => si, _ => [] } } else { [el_ir::v_set(vec, x.code), el_ir::v_set(idx, if rev { el_ir::cl(e, "OpLengthVector", [ir::NdVar { n: vec }]) } else { ir::NdInt { n: -1 } })] };
   items += [el_ir::v_loop(steps, "For comprehension")];
   ex(ir::NdInsert { items: items }, ir::TyVoid)
 }

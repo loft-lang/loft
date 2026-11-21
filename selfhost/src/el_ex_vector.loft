@@ -287,9 +287,17 @@ pub fn vector_slice(e: el::El, vars: el_vars::Vars, x: Ex, lo: vector<integer>, 
     el_ir::v_set(hiv, bounds[1]!),
     el_ir::v_set(hiv, slice_clamp(e, hiv, lv, inclusive))
   ];
+  // (A reversed walk — `rev(v[..k])` — starts at the top and steps down to the start: no
+  // `_next`, as Rust's reversed exclusive range has none.)
+  rev_walk = vars.rev_slice;
+  vars.rev_slice = false;
   idx = el_vars::create_unique(vars, "index", int_t);
-  nxt = el_vars::create_unique(vars, "next", int_t);
-  items += [el_ir::v_set(nxt, ir::NdVar { n: lov }), el_ir::v_set(idx, el_ir::cl(e, "OpConvIntFromNull", []))];
+  if rev_walk {
+    items += [el_ir::v_set(idx, ir::NdVar { n: hiv })];
+  } else {
+    nxt = el_vars::create_unique(vars, "next", int_t);
+    items += [el_ir::v_set(nxt, ir::NdVar { n: lov }), el_ir::v_set(idx, el_ir::cl(e, "OpConvIntFromNull", []))];
+  }
   ex(ir::NdIter { var: idx, create: subj, next: ir::NdNull, init: ir::NdInsert { items: items } }, ir::TyIterator { step: elem, inner: ir::TyNull })
 }
 
@@ -352,9 +360,10 @@ pub fn slice_start(vars: el_vars::Vars, x: Ex, id: text) -> SliceStart {
 // Each step of a walk over a vector slice: the element at the walk's next position, the range
 // step inside the element read — a break past the clamped end, the index taking the position
 // (`Vector Index`).  Null for an element type with no plain read.
-pub fn slice_read(e: el::El, vars: el_vars::Vars, st: SliceStart) -> ir::Node? {
+pub fn slice_read(e: el::El, vars: el_vars::Vars, st: SliceStart, rev: boolean = false) -> ir::Node? {
   hiv = -1;
   nxt = -1;
+  lov = -1;
   match st.init {
     NdInsert { items } => {
       for x in items {
@@ -362,6 +371,7 @@ pub fn slice_read(e: el::El, vars: el_vars::Vars, st: SliceStart) -> ir::Node? {
           NdSet { var } => {
             if starts_with(el_vars::name_of(vars, var), "_slice_hi") { hiv = var; }
             if starts_with(el_vars::name_of(vars, var), "_next") { nxt = var; }
+            if starts_with(el_vars::name_of(vars, var), "_slice_lo") { lov = var; }
           },
           _ => {}
         }
@@ -382,16 +392,26 @@ pub fn slice_read(e: el::El, vars: el_vars::Vars, st: SliceStart) -> ir::Node? {
   if inner_vt >= 0 {
     size = 4;
   }
-  if hiv < 0 || nxt < 0 || size < 0 || (op == "" && !record && inner_vt < 0) {
+  if hiv < 0 || (nxt < 0 && !rev) || (rev && lov < 0) || size < 0 || (op == "" && !record && inner_vt < 0) {
     return null;
   }
-  n_v = ir::NdVar { n: nxt };
-  step = el_ir::v_block([
-    el_ir::v_if(el_ir::cl(e, "OpLeInt", [ir::NdVar { n: hiv }, n_v]), ir::NdBreak { n: 0 }, ir::NdNull),
-    el_ir::v_set(st.idx, n_v),
-    el_ir::v_set(nxt, el_ir::cl(e, "OpAddInt", [n_v, ir::NdInt { n: 1 }])),
-    ir::NdVar { n: st.idx }
-  ], ir::TyInteger { spec: i32_spec() }, "Iter range");
+  i_v = ir::NdVar { n: st.idx };
+  step = if rev {
+    // Down one, and past the start the walk ends.
+    el_ir::v_block([
+      el_ir::v_set(st.idx, el_ir::cl(e, "OpMinInt", [i_v, ir::NdInt { n: 1 }])),
+      el_ir::v_if(el_ir::cl(e, "OpLtInt", [i_v, ir::NdVar { n: lov }]), ir::NdBreak { n: 0 }, ir::NdNull),
+      i_v
+    ], ir::TyInteger { spec: i32_spec() }, "Iter range")
+  } else {
+    n_v = ir::NdVar { n: nxt };
+    el_ir::v_block([
+      el_ir::v_if(el_ir::cl(e, "OpLeInt", [ir::NdVar { n: hiv }, n_v]), ir::NdBreak { n: 0 }, ir::NdNull),
+      el_ir::v_set(st.idx, n_v),
+      el_ir::v_set(nxt, el_ir::cl(e, "OpAddInt", [n_v, ir::NdInt { n: 1 }])),
+      i_v
+    ], ir::TyInteger { spec: i32_spec() }, "Iter range")
+  };
   if record {
     return el_ir::v_block([el_ir::cl(e, "OpGetVectorNullable", [st.subj, ir::NdInt { n: size }, step])], el_types::with_deps(st.elem, []), "Vector Index");
   }

@@ -308,6 +308,9 @@ pub struct Vars {
   // The type a field assignment's destination has, for a `#read` with no cast in its value
   // (`s.a = f#read`, `read_target_type`); void outside one.
   pub read_target: ir::TypeT = ir::TyVoid,
+  // A slice about to be walked reversed (`rev(v[..k])` in a comprehension, `reverse_iterator`):
+  // the slice's walk starts at its top and needs no `_next`.  Consumed by the slice.
+  pub rev_slice: boolean = false,
   // `Variable::captured`: the locals a closure built in this body reads (second pass)
   pub captured: vector<integer>,
   pub lambda_node: integer = -1,
