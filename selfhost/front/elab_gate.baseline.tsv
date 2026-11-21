@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	0fe1a930c1a7f169457b2e8ca48ec8f762903595
 
-layer	elab	agree	1317	of	2132
+layer	elab	agree	1318	of	2132
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -40,7 +40,6 @@ elab	refused	loft-suite/rules/binding/B-Ref-Alias/1433-a-keyed-alias-is-a-link-n
 elab	refused	loft-suite/rules/binding/B-Ref-Alias/a-link-composes-with-tuples-repoints-and-ref-params.loft
 elab	refused	loft-suite/rules/binding/B-Ref-Alias/a-null-written-to-a-collection-reaches-every-name-for-it.loft
 elab	refused	loft-suite/rules/binding/B-Ref-Alias/one-place-named-through-ref-parameters-and-links-is-one-place.loft
-elab	refused	loft-suite/rules/binding/B-Ref-Intro/1372-a-reference-links-a-nullable-slot.loft
 elab	refused	loft-suite/rules/binding/B-Ref-Intro/a-link-to-a-fn-value-is-a-link-like-any-other.loft
 elab	refused	loft-suite/rules/binding/B-Ref-Lvalue/1602-a-ref-text-parameter-links-a-text-field-or-element.loft
 elab	refused	loft-suite/rules/binding/B-Ref-Lvalue/2146-a-nullable-struct-slot-links-to-a-nullable-parameter.loft
@@ -822,7 +821,7 @@ elab	refused	tests/scripts/store_compact_slack_730.loft
 elab	refused	tests/scripts/store_digest_b0.loft
 elab	refused	tests/scripts/store_paged_enum_field.loft
 
-layer	elab-functions	agree	14307	of	24627
+layer	elab-functions	agree	14303	of	24621
 elab-functions	agree	lib/docs.loft::Anchor
 elab-functions	agree	lib/docs.loft::Character
 elab-functions	agree	lib/docs.loft::Double
@@ -1542,11 +1541,6 @@ elab-functions	agree	loft-suite/rules/binding/B-Ref-Alias/one-place-named-throug
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Alias/one-place-named-through-ref-parameters-and-links-is-one-place.loft::n_tv
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Alias/one-place-named-through-ref-parameters-and-links-is-one-place.loft::n_twice
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Alias/one-place-named-through-ref-parameters-and-links-is-one-place.loft::t_4S2Mp_grow
-elab-functions	agree	loft-suite/rules/binding/B-Ref-Intro/1372-a-reference-links-a-nullable-slot.loft::(schema)
-elab-functions	agree	loft-suite/rules/binding/B-Ref-Intro/1372-a-reference-links-a-nullable-slot.loft::S1372
-elab-functions	agree	loft-suite/rules/binding/B-Ref-Intro/1372-a-reference-links-a-nullable-slot.loft::n_bump
-elab-functions	agree	loft-suite/rules/binding/B-Ref-Intro/1372-a-reference-links-a-nullable-slot.loft::n_bump_dense
-elab-functions	agree	loft-suite/rules/binding/B-Ref-Intro/1372-a-reference-links-a-nullable-slot.loft::n_clear
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Intro/a-link-to-a-fn-value-is-a-link-like-any-other.loft::S1443
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Intro/a-link-to-a-fn-value-is-a-link-like-any-other.loft::n_nine1443
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Intro/a-link-to-a-fn-value-is-a-link-like-any-other.loft::n_one1443
@@ -1848,6 +1842,7 @@ elab-functions	agree	loft-suite/rules/binding/B-Ref-Write/a-vector-link-follows-
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Write/a-vector-link-follows-a-rebind-of-its-source.loft::n_test_a_source_element_write_reaches_the_link
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Write/a-vector-link-follows-a-rebind-of-its-source.loft::n_test_a_text_link_follows_a_source_rebind
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Write/a-vector-link-follows-a-rebind-of-its-source.loft::n_test_a_vector_with_no_link_still_mints
+elab-functions	agree	loft-suite/rules/binding/B-Ref-Write/a-vector-link-follows-a-rebind-of-its-source.loft::n_test_a_whole_write_through_the_link_reaches_the_source
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Write/a-vector-link-follows-a-rebind-of-its-source.loft::n_test_an_append_through_the_link_reaches_the_source
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Write/a-vector-link-follows-a-rebind-of-its-source.loft::n_test_an_element_write_through_the_link_reaches_the_source
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Write/a-whole-value-write-through-a-link-reaches-what-the-link-names.loft::(schema)
@@ -15131,7 +15126,7 @@ elab-functions	agree	tests/scripts/store_paged_enum_field.loft::main_vector<inte
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::n_bytes
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::vector<integer(0, 255)>
 
-layer	elab-pass1	agree	11975	of	17860
+layer	elab-pass1	agree	11977	of	17862
 elab-pass1	agree	lib/code.loft::t_4Code_add_block
 elab-pass1	agree	lib/code.loft::t_4Code_add_if
 elab-pass1	agree	lib/code.loft::t_4Code_add_loop
@@ -15590,6 +15585,7 @@ elab-pass1	agree	loft-suite/rules/binding/B-Ref-Alias/one-place-named-through-re
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Intro/1372-a-reference-links-a-nullable-slot.loft::n_bump
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Intro/1372-a-reference-links-a-nullable-slot.loft::n_bump_dense
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Intro/1372-a-reference-links-a-nullable-slot.loft::n_clear
+elab-pass1	agree	loft-suite/rules/binding/B-Ref-Intro/1372-a-reference-links-a-nullable-slot.loft::n_main
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Intro/a-link-to-a-fn-value-is-a-link-like-any-other.loft::n_nine1443
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Intro/a-link-to-a-fn-value-is-a-link-like-any-other.loft::n_one1443
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Intro/a-link-to-a-fn-value-is-a-link-like-any-other.loft::n_two1443
@@ -15800,6 +15796,7 @@ elab-pass1	agree	loft-suite/rules/binding/B-Ref-Write/a-vector-link-follows-a-re
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Write/a-vector-link-follows-a-rebind-of-its-source.loft::n_test_a_source_element_write_reaches_the_link
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Write/a-vector-link-follows-a-rebind-of-its-source.loft::n_test_a_text_link_follows_a_source_rebind
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Write/a-vector-link-follows-a-rebind-of-its-source.loft::n_test_a_vector_with_no_link_still_mints
+elab-pass1	agree	loft-suite/rules/binding/B-Ref-Write/a-vector-link-follows-a-rebind-of-its-source.loft::n_test_a_whole_write_through_the_link_reaches_the_source
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Write/a-vector-link-follows-a-rebind-of-its-source.loft::n_test_an_append_through_the_link_reaches_the_source
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Write/a-vector-link-follows-a-rebind-of-its-source.loft::n_test_an_element_write_through_the_link_reaches_the_source
 elab-pass1	agree	loft-suite/rules/binding/B-Ref-Write/a-whole-value-write-through-a-link-reaches-what-the-link-names.loft::n_clear_left
