@@ -2012,9 +2012,9 @@ impl<'a> FnWriter<'a> {
                 .and_then(|p| self.push_head(&p))
                 .map(|(h, _)| E::new(format!("((int64_t) {h}.len)"), K::Int)));
         }
-        // `@FR-Col-Capacity`: a group's known count is reserved exactly, as the bytecode does it;
-        // the header held for the path is derived again after the reservation, so its mints
-        // fill the record the reservation claimed instead of growing one of their own.
+        // `@FR-Col-Capacity`: a known count is reserved exactly, as the bytecode does it, through
+        // the header held for the path (`loft_ph_prealloc`), so its mints fill the record the
+        // reservation claimed instead of growing one of their own.
         if name == "OpPreAllocVector"
             && let [v, count, size] = args
             && let Some((h, _)) =
@@ -2022,11 +2022,8 @@ impl<'a> FnWriter<'a> {
         {
             let count = Self::literal(count, "count")?;
             let size = Self::literal(size, "element size")?;
-            let v = as_ref(self.expr(v, ind)?)?;
             return Ok(Some(E::new(
-                format!(
-                    "((void) (loft_vec_prealloc({v}, {count}, {size}), {h} = loft_ph_of({v}, {size})))"
-                ),
+                format!("loft_ph_prealloc(&{h}, {count}, {size})"),
                 K::Void,
             )));
         }

@@ -4250,6 +4250,16 @@ LOFT_HOT_INLINE loft_ph loft_ph_reserved(loft_ph h, int64_t k, uint32_t size) {
     return loft_ph_of(h.v, size);
 }
 
+/* `@FR-Col-Capacity` through a held push header: `OpPreAllocVector`'s known count, reserved
+ * exactly as `loft_vec_prealloc` reserves it — which acts only while the vector has no record —
+ * and the header derived again so its mints fill that record.  A header already holding the
+ * record takes one test and nothing else. */
+LOFT_HOT_INLINE void loft_ph_prealloc(loft_ph *h, uint32_t count, uint32_t size) {
+    if (LOFT_LIKELY(h->rec != 0)) return;
+    loft_vec_prealloc(h->v, count, size);
+    *h = loft_ph_of(h->v, size);
+}
+
 /* A loop's push header read as a held vector header: its record and length are current — every
  * growth and cut of the path inside the loop goes through it (`loft_ph_keep` below) — and the
  * element base is derived from the record, as `loft_vh_fresh` derives it, since a growth may
