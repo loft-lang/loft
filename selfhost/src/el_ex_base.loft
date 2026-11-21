@@ -602,7 +602,8 @@ pub fn alloc_temps(e: el::El, n: ir::Node, v: integer, temps: vector<integer>) {
 }
 
 // `deliver_mid_vector_walk`: each `return v` of a vector local other than the buffer becomes
-// `{ OpReplaceVector(buf, v, row); return buf }`, through blocks, loops, `if` arms and inserts.
+// `{ OpReplaceVector(buf, v, row); return buf }`, through blocks, loops, `if` arms, inserts and
+// a bind's value.
 pub fn mid_deliver(e: el::El, vars: el_vars::Vars, n: ir::Node, buf: integer, row: integer) -> ir::Node {
   match n {
     NdReturn { inner } => match el_ir::unspan(inner) {
@@ -623,6 +624,8 @@ pub fn mid_deliver(e: el::El, vars: el_vars::Vars, n: ir::Node, buf: integer, ro
     },
     NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: mid_deliver(e, vars, inner, buf, row) },
     NdIf { cond, t, f } => ir::NdIf { cond: cond, t: mid_deliver(e, vars, t, buf, row), f: mid_deliver(e, vars, f, buf, row) },
+    // (Through a bind's value too: `h = if n == 0 { return [] } else { n / 2 }`.)
+    NdSet { var, inner } => ir::NdSet { var: var, inner: mid_deliver(e, vars, inner, buf, row) },
     NdInsert { items } => ir::NdInsert { items: [for x in items { mid_deliver(e, vars, x, buf, row) }] },
     NdBlock { block } => {
       b = block[0];
