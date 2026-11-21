@@ -216,7 +216,9 @@ BOOLEAN WINAPI SystemFunction036(PVOID buffer, ULONG length);
 #if defined(_MSC_VER)
 #pragma comment(lib, "advapi32.lib")
 #endif
-#elif defined(__APPLE__)
+#elif defined(__APPLE__) || defined(__linux__)
+/* `getentropy`: glibc's <unistd.h> declares it only outside the unit's strict POSIX request
+ * (`loft_os.h`); <sys/random.h> declares it on every request. */
 #include <sys/random.h>
 #endif
 static void loft_web_random(uint8_t *out, size_t n) {

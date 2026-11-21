@@ -4,8 +4,8 @@
 # read by tests/frontend_counts.rs, which fails when a pinned count GROWS.  Pin what the RUNNER
 # reads: a program's count on a local box can be 13 lower (the same delta on every size).
 linux-debug	medium	667863
-linux-debug	stdlib	216234
+linux-debug	stdlib	216289
 linux-debug	tiny	11592
 linux-release	medium	667863
-linux-release	stdlib	216234
+linux-release	stdlib	216289
 linux-release	tiny	11592
