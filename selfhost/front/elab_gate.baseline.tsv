@@ -824,7 +824,7 @@ elab	refused	tests/scripts/store_compact_slack_730.loft
 elab	refused	tests/scripts/store_digest_b0.loft
 elab	refused	tests/scripts/store_paged_enum_field.loft
 
-layer	elab-functions	agree	14362	of	24687
+layer	elab-functions	agree	14363	of	24687
 elab-functions	agree	lib/docs.loft::Anchor
 elab-functions	agree	lib/docs.loft::Character
 elab-functions	agree	lib/docs.loft::Double
@@ -1871,6 +1871,7 @@ elab-functions	agree	loft-suite/rules/binding/B-Ref-Write/a-whole-value-write-th
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Write/a-whole-value-write-through-a-link-reaches-what-the-link-names.loft::n_set_text
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Write/a-whole-value-write-through-a-link-reaches-what-the-link-names.loft::n_set_vector
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Write/a-whole-value-write-through-a-link-reaches-what-the-link-names.loft::n_size
+elab-functions	agree	loft-suite/rules/binding/B-Ref-Write/a-whole-value-write-through-a-link-reaches-what-the-link-names.loft::n_test_a_whole_value_write_through_a_link_to_a_place_reaches_the_place
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Write/a-whole-value-write-through-a-link-reaches-what-the-link-names.loft::n_walk
 elab-functions	agree	loft-suite/rules/binding/B-Ref-Write/a-whole-value-write-through-a-link-reaches-what-the-link-names.loft::vector<S1376>
 elab-functions	agree	loft-suite/rules/binding/B-RefType/a-link-variable-reads-and-writes-its-place.loft::Col
@@ -15188,7 +15189,7 @@ elab-functions	agree	tests/scripts/store_paged_enum_field.loft::main_vector<inte
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::n_bytes
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::vector<integer(0, 255)>
 
-layer	elab-pass1	agree	11975	of	17856
+layer	elab-pass1	agree	11975	of	17857
 elab-pass1	agree	lib/code.loft::t_4Code_add_block
 elab-pass1	agree	lib/code.loft::t_4Code_add_if
 elab-pass1	agree	lib/code.loft::t_4Code_add_loop
