@@ -4247,13 +4247,34 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
   if el_ex_place::promotes_text_param(e, vars, v) {
     v = el_vars::promote_text_param(vars, v);
   }
-  // A vector local rebound from a call that takes that local is staged through a
-  // `__refvec_rhs_N` (cleared, then refilled) where a link names it — not carried: refused by
-  // name.  Inside a loop it rotates its buffers (`OpPutRef`, `el_refhome::rotate_loop_retbufs`
+  // A vector local a `&` link names, rebound from a call that takes it (`l = &v; v = extend(v,
+  // 9)`), is refilled IN PLACE so the link sees the new elements: the call's answer staged in a
+  // `__refvec_rhs_N` of its own store, then `v` cleared and refilled from it (the clear runs
+  // before the copy, so the call's reading `v` must come first).  Minted on both passes.
+  // Inside a loop it rotates its buffers instead (`OpPutRef`, `el_refhome::rotate_loop_retbufs`
   // after the body).  The plain rebind is the call bound as any other.
-  if !e.first_pass && vars.amp_vectors.contains(v) && el_types::base(el_vars::tp(vars, v)) is TyVector && len(el_types::deps(el_vars::tp(vars, v))) > 0 && match el_ir::unspan(x.code) { NdCall { def_nr: rc } => starts_with(el::def(e, rc).name, "n_") && el_ir::reads_var(x.code, v), _ => false } {
-    el::refuse(e, "a vector local rebound from a call that takes it");
-    return ex(ir::NdNull, ir::TyVoid);
+  if vars.amp_vectors.contains(v) && el_types::base(el_vars::tp(vars, v)) is TyVector && (e.first_pass || len(el_types::deps(el_vars::tp(vars, v))) > 0) && match el_ir::unspan(x.code) { NdCall { def_nr: rc } => starts_with(el::def(e, rc).name, "n_") && el_ir::reads_var(x.code, v), _ => false } {
+    rvt = el_types::base(el_vars::tp(vars, v));
+    rvi = match rvt { TyVector { inner: rvi0 } => rvi0, _ => ir::TyVoid };
+    rtmp = el_vars::create_unique(vars, "_refvec_rhs", ir::TyVector { inner: rvi, dep: [] });
+    el_vars::set_defined(vars, rtmp);
+    if e.first_pass {
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    rrec = el_ex_vector::append_row(e, rvi);
+    rrows = vector_rows(e, rvi, 0, true);
+    if rrows == null || rrec < 0 {
+      el::refuse(e, "a vector local rebound from a call that takes it, of this element type");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    // (The local takes the call's borrow first, as Rust's `change_var` does before the split:
+    // `v: …["__ref_2"]`, the buffer of this call.)
+    if len(el_types::deps(x.tp)) > 0 {
+      el_vars::set_var_type(vars, v, el_types::with_deps(el_types::without_deps(el_vars::tp(vars, v)), el_types::deps(x.tp)));
+    }
+    rls = el_ex_pattern::literal_store(e, vars, rtmp, rrows!);
+    rls += [el_ir::cl(e, "OpAppendVector", [ir::NdVar { n: rtmp }, x.code, ir::NdInt { n: rrec }]), el_ir::cl(e, "OpClearVector", [ir::NdVar { n: v }]), el_ir::cl(e, "OpAppendVector", [ir::NdVar { n: v }, ir::NdVar { n: rtmp }, ir::NdInt { n: rrec }])];
+    return ex(ir::NdInsert { items: rls }, ir::TyVoid);
   }
   // A call's vector bound to a local a closure shares rotates the call's buffer afterwards
   // (`OpPutRef`, loft#1447's collection half): not carried.
