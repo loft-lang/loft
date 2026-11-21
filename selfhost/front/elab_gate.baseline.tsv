@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	0fe1a930c1a7f169457b2e8ca48ec8f762903595
 
-layer	elab	agree	1312	of	2132
+layer	elab	agree	1314	of	2132
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -292,7 +292,6 @@ elab	refused	loft-suite/rules/interfaces/G-Mono/filter-and-map-inside-a-generic-
 elab	refused	loft-suite/rules/interfaces/G-Mono/sizeof-inside-a-generic-is-its-instances-size.loft
 elab	refused	loft-suite/rules/interfaces/G-Regular/2546-a-generic-closes-no-other-templates-self-reference.loft
 elab	refused	loft-suite/rules/interfaces/G-Regular/a-template-that-names-itself-at-its-own-variables-compiles-on-its-own.loft
-elab	refused	loft-suite/rules/interfaces/G-Sat-Eq/an-equatable-bound-compares-content-in-the-monomorph.loft
 elab	refused	loft-suite/rules/interfaces/G-Sat-Eq/c91-every-type-is-equatable.loft
 elab	refused	loft-suite/rules/interfaces/G-Sat/1818-a-bound-is-satisfied-only-by-a-member-that-takes-its-parameters.loft
 elab	refused	loft-suite/rules/interfaces/G-Select/a-generic-ranks-below-a-concrete-match.loft
@@ -327,7 +326,6 @@ elab	refused	loft-suite/rules/layout/L-Null-Tag/a-nullable-struct-is-tagged-into
 elab	refused	loft-suite/rules/layout/L-Null-Tag/a-pattern-binds-a-nullable-record-field-through-its-tag.loft
 elab	refused	loft-suite/rules/layout/L-Null-Which/1367-a-tagged-projection-bound-to-a-local-is-the-pointer.loft
 elab	refused	loft-suite/rules/layout/L-Null-Which/2443-a-struct-enum-element-read-off-a-call-borrows-the-vector.loft
-elab	refused	loft-suite/rules/layout/L-Null-Which/2572-a-join-of-a-nullable-field-with-null-reads-its-tag.loft
 elab	refused	loft-suite/rules/layout/L-Null-Which/a-multi-pattern-arm-binds-a-nullable-field-of-each-variant.loft
 elab	refused	loft-suite/rules/layout/L-Null/1782-an-omitted-nullable-struct-enum-field-is-absent.loft
 elab	refused	loft-suite/rules/layout/L-Null/a-nested-block-that-binds-the-buffer-from-a-call-delivers-into-it.loft
@@ -827,7 +825,7 @@ elab	refused	tests/scripts/store_compact_slack_730.loft
 elab	refused	tests/scripts/store_digest_b0.loft
 elab	refused	tests/scripts/store_paged_enum_field.loft
 
-layer	elab-functions	agree	14396	of	24742
+layer	elab-functions	agree	14370	of	24702
 elab-functions	agree	lib/docs.loft::Anchor
 elab-functions	agree	lib/docs.loft::Character
 elab-functions	agree	lib/docs.loft::Double
@@ -6417,22 +6415,7 @@ elab-functions	agree	loft-suite/rules/interfaces/G-Mono/sizeof-inside-a-generic-
 elab-functions	agree	loft-suite/rules/interfaces/G-Mono/sizeof-inside-a-generic-is-its-instances-size.loft::P
 elab-functions	agree	loft-suite/rules/interfaces/G-Mono/sizeof-inside-a-generic-is-its-instances-size.loft::n_test_sizeof_of_a_parameter
 elab-functions	agree	loft-suite/rules/interfaces/G-Mono/sizeof-inside-a-generic-is-its-instances-size.loft::n_test_sizeof_of_the_type_variable
-elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/an-equatable-bound-compares-content-in-the-monomorph.loft::Circ
-elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/an-equatable-bound-compares-content-in-the-monomorph.loft::P
-elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/an-equatable-bound-compares-content-in-the-monomorph.loft::Sh
-elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/an-equatable-bound-compares-content-in-the-monomorph.loft::Sq
-elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/an-equatable-bound-compares-content-in-the-monomorph.loft::i_15vector<integer>_n_same
-elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/an-equatable-bound-compares-content-in-the-monomorph.loft::i_1P_n_differ
-elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/an-equatable-bound-compares-content-in-the-monomorph.loft::i_1P_n_same
-elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/an-equatable-bound-compares-content-in-the-monomorph.loft::i_2Sh_n_differ
-elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/an-equatable-bound-compares-content-in-the-monomorph.loft::i_2Sh_n_same
-elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/an-equatable-bound-compares-content-in-the-monomorph.loft::i_9vector<P>_n_differ
-elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/an-equatable-bound-compares-content-in-the-monomorph.loft::main_vector<P>
-elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/an-equatable-bound-compares-content-in-the-monomorph.loft::n_differ
-elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/an-equatable-bound-compares-content-in-the-monomorph.loft::n_same
-elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/an-equatable-bound-compares-content-in-the-monomorph.loft::n_test_a_struct_and_a_vector
-elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/an-equatable-bound-compares-content-in-the-monomorph.loft::n_test_scalars_and_nulls
-elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/an-equatable-bound-compares-content-in-the-monomorph.loft::vector<P>
+elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/c91-every-type-is-equatable.loft::(schema)
 elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/c91-every-type-is-equatable.loft::Circle
 elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/c91-every-type-is-equatable.loft::Dot
 elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/c91-every-type-is-equatable.loft::E
@@ -6440,11 +6423,14 @@ elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/c91-every-type-is-equa
 elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/c91-every-type-is-equatable.loft::Shape
 elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/c91-every-type-is-equatable.loft::U
 elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/c91-every-type-is-equatable.loft::V
+elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/c91-every-type-is-equatable.loft::__tuple<P,float>
+elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/c91-every-type-is-equatable.loft::__tuple<integer,integer>
 elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/c91-every-type-is-equatable.loft::__tuple<integer,text>
 elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/c91-every-type-is-equatable.loft::i_13hash<E,["k"]>_n_same
 elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/c91-every-type-is-equatable.loft::i_15vector<integer>_n_same
 elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/c91-every-type-is-equatable.loft::i_1P_n_differs
 elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/c91-every-type-is-equatable.loft::i_1P_n_same
+elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/c91-every-type-is-equatable.loft::i_21__tuple<integer,text>_n_differs
 elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/c91-every-type-is-equatable.loft::i_24__tuple<integer,integer>_n_same
 elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/c91-every-type-is-equatable.loft::i_5Shape_n_same
 elab-functions	agree	loft-suite/rules/interfaces/G-Sat-Eq/c91-every-type-is-equatable.loft::n_differs
@@ -7106,19 +7092,6 @@ elab-functions	agree	loft-suite/rules/layout/L-Null-Which/2443-a-struct-enum-ele
 elab-functions	agree	loft-suite/rules/layout/L-Null-Which/2443-a-struct-enum-element-read-off-a-call-borrows-the-vector.loft::Ty
 elab-functions	agree	loft-suite/rules/layout/L-Null-Which/2443-a-struct-enum-element-read-off-a-call-borrows-the-vector.loft::main_vector<A>
 elab-functions	agree	loft-suite/rules/layout/L-Null-Which/2443-a-struct-enum-element-read-off-a-call-borrows-the-vector.loft::vector<A>
-elab-functions	agree	loft-suite/rules/layout/L-Null-Which/2572-a-join-of-a-nullable-field-with-null-reads-its-tag.loft::(schema)
-elab-functions	agree	loft-suite/rules/layout/L-Null-Which/2572-a-join-of-a-nullable-field-with-null-reads-its-tag.loft::H
-elab-functions	agree	loft-suite/rules/layout/L-Null-Which/2572-a-join-of-a-nullable-field-with-null-reads-its-tag.loft::Null
-elab-functions	agree	loft-suite/rules/layout/L-Null-Which/2572-a-join-of-a-nullable-field-with-null-reads-its-tag.loft::R
-elab-functions	agree	loft-suite/rules/layout/L-Null-Which/2572-a-join-of-a-nullable-field-with-null-reads-its-tag.loft::Some
-elab-functions	agree	loft-suite/rules/layout/L-Null-Which/2572-a-join-of-a-nullable-field-with-null-reads-its-tag.loft::__nullable<R>
-elab-functions	agree	loft-suite/rules/layout/L-Null-Which/2572-a-join-of-a-nullable-field-with-null-reads-its-tag.loft::n_alone
-elab-functions	agree	loft-suite/rules/layout/L-Null-Which/2572-a-join-of-a-nullable-field-with-null-reads-its-tag.loft::n_chain_start
-elab-functions	agree	loft-suite/rules/layout/L-Null-Which/2572-a-join-of-a-nullable-field-with-null-reads-its-tag.loft::n_main
-elab-functions	agree	loft-suite/rules/layout/L-Null-Which/2572-a-join-of-a-nullable-field-with-null-reads-its-tag.loft::n_null_first
-elab-functions	agree	loft-suite/rules/layout/L-Null-Which/2572-a-join-of-a-nullable-field-with-null-reads-its-tag.loft::n_null_last
-elab-functions	agree	loft-suite/rules/layout/L-Null-Which/2572-a-join-of-a-nullable-field-with-null-reads-its-tag.loft::n_show
-elab-functions	agree	loft-suite/rules/layout/L-Null-Which/2572-a-join-of-a-nullable-field-with-null-reads-its-tag.loft::n_two_fields
 elab-functions	agree	loft-suite/rules/layout/L-Null-Which/a-multi-pattern-arm-binds-a-nullable-field-of-each-variant.loft::(schema)
 elab-functions	agree	loft-suite/rules/layout/L-Null-Which/a-multi-pattern-arm-binds-a-nullable-field-of-each-variant.loft::Null
 elab-functions	agree	loft-suite/rules/layout/L-Null-Which/a-multi-pattern-arm-binds-a-nullable-field-of-each-variant.loft::Pb
@@ -13964,7 +13937,6 @@ elab-functions	agree	tests/scripts/2494-a-tuple-text-member-read-off-a-tuple-bor
 elab-functions	agree	tests/scripts/2494-a-tuple-text-member-read-off-a-tuple-borrows-in-a-str-slot.loft::main_vector<(integer, integer, text)>
 elab-functions	agree	tests/scripts/2494-a-tuple-text-member-read-off-a-tuple-borrows-in-a-str-slot.loft::n_side
 elab-functions	agree	tests/scripts/2494-a-tuple-text-member-read-off-a-tuple-borrows-in-a-str-slot.loft::vector<(integer, integer, text)>
-elab-functions	agree	tests/scripts/2494-a-tuple-text-member-read-off-a-tuple-borrows-in-a-str-slot.loft::vector<__tuple<integer,integer,text>>
 elab-functions	agree	tests/scripts/2497-a-return-naming-a-record-declared-below-is-that-record.loft::Memo
 elab-functions	agree	tests/scripts/25-nullable-sequences.loft::(schema)
 elab-functions	agree	tests/scripts/25-nullable-sequences.loft::Circle
@@ -15225,7 +15197,7 @@ elab-functions	agree	tests/scripts/store_paged_enum_field.loft::main_vector<inte
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::n_bytes
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::vector<integer(0, 255)>
 
-layer	elab-pass1	agree	11966	of	17846
+layer	elab-pass1	agree	11970	of	17850
 elab-pass1	agree	lib/code.loft::t_4Code_add_block
 elab-pass1	agree	lib/code.loft::t_4Code_add_if
 elab-pass1	agree	lib/code.loft::t_4Code_add_loop
@@ -18976,6 +18948,7 @@ elab-pass1	agree	loft-suite/rules/interfaces/G-Mono/g_mono_fixture_lib.loft::n_l
 elab-pass1	agree	loft-suite/rules/interfaces/G-Mono/sizeof-inside-a-generic-is-its-instances-size.loft::n_test_sizeof_of_a_parameter
 elab-pass1	agree	loft-suite/rules/interfaces/G-Mono/sizeof-inside-a-generic-is-its-instances-size.loft::n_test_sizeof_of_the_type_variable
 elab-pass1	agree	loft-suite/rules/interfaces/G-Sat-Eq/a-plain-enum-is-equatable.loft::n_test_a_plain_enum
+elab-pass1	agree	loft-suite/rules/interfaces/G-Sat-Eq/an-equatable-bound-compares-content-in-the-monomorph.loft::n_test_a_struct_enum_and_a_tuple
 elab-pass1	agree	loft-suite/rules/interfaces/G-Sat-Eq/an-equatable-bound-compares-content-in-the-monomorph.loft::n_test_scalars_and_nulls
 elab-pass1	agree	loft-suite/rules/interfaces/G-Sat-Eq/c91-every-type-is-equatable.loft::n_test_a_struct
 elab-pass1	agree	loft-suite/rules/interfaces/G-Sat-Eq/c91-every-type-is-equatable.loft::n_test_a_struct_enum
@@ -19137,8 +19110,11 @@ elab-pass1	agree	loft-suite/rules/layout/L-Null-Which/1367-a-tagged-projection-b
 elab-pass1	agree	loft-suite/rules/layout/L-Null-Which/1367-a-tagged-projection-bound-to-a-local-is-the-pointer.loft::n_takes
 elab-pass1	agree	loft-suite/rules/layout/L-Null-Which/1367-a-tagged-projection-bound-to-a-local-is-the-pointer.loft::n_w1
 elab-pass1	agree	loft-suite/rules/layout/L-Null-Which/2572-a-join-of-a-nullable-field-with-null-reads-its-tag.loft::n_alone
+elab-pass1	agree	loft-suite/rules/layout/L-Null-Which/2572-a-join-of-a-nullable-field-with-null-reads-its-tag.loft::n_by_match
+elab-pass1	agree	loft-suite/rules/layout/L-Null-Which/2572-a-join-of-a-nullable-field-with-null-reads-its-tag.loft::n_chain_end
 elab-pass1	agree	loft-suite/rules/layout/L-Null-Which/2572-a-join-of-a-nullable-field-with-null-reads-its-tag.loft::n_chain_start
 elab-pass1	agree	loft-suite/rules/layout/L-Null-Which/2572-a-join-of-a-nullable-field-with-null-reads-its-tag.loft::n_main
+elab-pass1	agree	loft-suite/rules/layout/L-Null-Which/2572-a-join-of-a-nullable-field-with-null-reads-its-tag.loft::n_match_null_first
 elab-pass1	agree	loft-suite/rules/layout/L-Null-Which/2572-a-join-of-a-nullable-field-with-null-reads-its-tag.loft::n_null_first
 elab-pass1	agree	loft-suite/rules/layout/L-Null-Which/2572-a-join-of-a-nullable-field-with-null-reads-its-tag.loft::n_null_last
 elab-pass1	agree	loft-suite/rules/layout/L-Null-Which/2572-a-join-of-a-nullable-field-with-null-reads-its-tag.loft::n_two_fields
