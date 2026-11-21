@@ -1,0 +1,87 @@
+diff --git a/selfhost/src/el_ex_match.loft b/selfhost/src/el_ex_match.loft
+index 8154c7333..d4a440df4 100644
+--- a/selfhost/src/el_ex_match.loft
++++ b/selfhost/src/el_ex_match.loft
+@@ -3193,7 +3193,7 @@ pub fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>
+   // (Only over a PARAMETER: over a local vector Rust renames the return buffer onto a work
+   // reference of its own, `__ref_1`, which is not carried — that stays refused below.)
+   subj_param = match el_ir::unspan(x.code) { NdVar { n: xs } => vars.vars[xs].argument, _ => false };
+-  record_tail = el_types::base(result) is TyReference && !bind && subj_param;
++  record_tail = el_types::base(result) is TyReference && !bind && (subj_param || match el_ir::unspan(x.code) { NdVar { n: _ } => true, _ => false });
+   if !sunk && !record_tail {
+   if !e.first_pass && len(vars.cursor) == 0 && (el_types::base(result) is TyReference || el_types::base(result) is TyVector) {
+     tb = buffer_arms(e, vars, out, elm);
+diff --git a/selfhost/src/el_expressions.loft b/selfhost/src/el_expressions.loft
+index 69f5cc2d5..b484c68d7 100644
+--- a/selfhost/src/el_expressions.loft
++++ b/selfhost/src/el_expressions.loft
+@@ -630,9 +630,25 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
+       // A slice `match` tail whose arms answer an element they bound (`[a, ..] => a`): each such
+       // arm is copied into the buffer (`materialized_view_return`), a `null` arm the sentinel.
+       if built == null {
+-        built = materialize_match_arms(e, vars, code, rb, result);
+-        // (Copied arm by arm: the body is typed as the buffer, as an `if` tail's is.)
+-        if built != null && vars.mat_binding {
++        // (Over a LOCAL vector the return buffer is renamed onto a work reference of its own,
++        // `__ref_N` — the hidden parameter takes its name, the result and the match name it — and
++        // the arms deliver into it; the body keeps the `__retbuf` placeholder's type.)
++        // (A plain STRUCT result only: a struct enum's buffer keeps its name, `first_d`.)
++        local_subj = local_match_subject(vars, code) && struct_ref(e, el_types::base(result)) >= 0 && el::def(e, struct_ref(e, el_types::base(result))).def_type == el::DT_STRUCT && el_types::struct_enum_def(el_types::base(result)) < 0;
++        mrb = rb;
++        if local_subj && attr_nr(el::def(e, e.context), "__retbuf") >= 0 {
++          mrb = el_vars::work_ref(vars, el_types::without_deps(el_types::base(result)));
++          rename_onto(e, vars, rb, mrb);
++        }
++        built = materialize_match_arms(e, vars, code, mrb, result);
++        if built != null && local_subj && mrb != rb {
++          bl0 = match built! { NdBlock { block } => block[0], _ => ir::Block { name: "", operators: [], result: [], scope: 0, var_size: 0 } };
++          kept = el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb]);
++          bl0.result = [if result is TyOptional { ir::TyOptional { inner: kept } } else { kept }];
++          built = ir::NdBlock { block: [bl0] };
++          view_answer = true;
++        } else if built != null && vars.mat_binding {
++          // (Copied arm by arm: the body is typed as the buffer, as an `if` tail's is.)
+           view_answer = true;
+         }
+       }
+@@ -2055,6 +2071,40 @@ fn materialize_arm(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, kt:
+   null
+ }
+ 
++// Is the body's tail a `vector_match` over a LOCAL (no parameter) vector?
++fn local_match_subject(vars: el_vars::Vars, code: ir::Node) -> boolean {
++  match body_tail(code) {
++    NdBlock { block } => {
++      if block[0].name != "vector_match" {
++        return false;
++      }
++      // (The subject the arms test: the first `OpLengthVector(<v>)` of the chain.)
++      sv = first_length_subject(el_ir::last(block[0].operators));
++      sv >= 0 && !vars.vars[sv].argument
++    },
++    _ => false
++  }
++}
++
++fn first_length_subject(n: ir::Node) -> integer {
++  match el_ir::unspan(n) {
++    NdCall { def_nr: _, args } => {
++      if len(args) == 1 {
++        match el_ir::unspan(args[0]) { NdVar { n: lv } => { return lv; }, _ => {} }
++      }
++      for a in args {
++        r = first_length_subject(a);
++        if r >= 0 {
++          return r;
++        }
++      }
++      -1
++    },
++    NdIf { cond, t: _, f: _ } => first_length_subject(cond),
++    _ => -1
++  }
++}
++
+ // The last statement of a body block, unspanned; null for an empty body or no block.
+ pub fn body_tail(code: ir::Node) -> ir::Node {
+   match code {
