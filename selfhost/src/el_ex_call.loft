@@ -96,8 +96,8 @@ fn bound_refused(e: el::El, bound: ir::TypeT) -> text {
   struct_enum = match bound { TyEnum { n: _, is_ref } => is_ref, _ => false };
   // A vector of plain scalars or texts is bound as the collection it is.
   scalar_vec = match bound { TyVector { inner: vi } => el_ex_object::scalar_type(vi) || vi is TyText || struct_ref(e, vi) >= 0, _ => false };
-  // A tuple of plain scalars is bound as the value it is.
-  scalar_tuple = match bound { TyTuple { elems: te } => len(te) > 0 && len([for m in te if !el_ex_object::scalar_type(m) || el_types::base(m) is TyText || (m is TyOptional) { m }]) == 0, _ => false };
+  // A tuple of plain scalars and texts is bound as the value it is.
+  scalar_tuple = match bound { TyTuple { elems: te } => len(te) > 0 && len([for m in te if !(el_ex_object::scalar_type(m) && !(el_types::base(m) is TyText) || el_types::base(m) is TyText && !(m is TyOptional)) || (m is TyOptional) { m }]) == 0, _ => false };
   // A keyed collection is bound as the collection it is (`@FR-G-Sat-Eq`: `==` compares its
   // content, `OpEqContent`).
   keyed = match bound { TyHash { n: _ } => true, _ => false };
@@ -147,6 +147,17 @@ pub fn instantiate(e: el::El, g: integer, types: vector<ir::TypeT>) -> integer {
       return -1;
     }
   }
+  // (A tuple holding a text is answered BOXED, in its `__tuple<…>` record (`boxed_tuple_return`):
+  // an instance at one whose result names the variable — `fn first<T>(v) -> T?` — is not
+  // carried; one answering something else, `same` / `differ`, is.)
+  for bh in b!.vars {
+    btt = b!.types[bh#index] ?? ir::TyVoid;
+    texty = match el_types::base(btt) { TyTuple { elems: bte } => len([for m in bte if el_types::base(m) is TyText { 1 }]) > 0, _ => false };
+    if texty && type_mentions(tmpl.returned[0] ?? ir::TyVoid, bh) {
+      el::refuse(e, "a generic instance answering a tuple with a text member (boxed)");
+      return -1;
+    }
+  }
   nm = el_ex_object::instance_name(e, g, b!);
   for hv in b!.vars {
     for a in tmpl.attributes {
@@ -185,10 +196,6 @@ pub fn instantiate(e: el::El, g: integer, types: vector<ir::TypeT>) -> integer {
       continue;
     }
     el_schema::vector_type(e, el::def(e, type_def_nr(e, el_types::base(bt))).known_type);
-    // (A tuple's record is laid out here, after that row: the instance reads its members by it.)
-    if el_types::base(bt) is TyTuple {
-      el_schema::content_type(e, el_types::without_deps(el_types::base(bt)));
-    }
   }
   // `stale_monomorphs`: a template whose second-pass body is not read yet (declared below the
   // call) is filled once the pass is through (`rebuild_stale_monomorphs`).
@@ -263,7 +270,9 @@ pub fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::T
   // (An instance at a narrow integer width has that width's `vector<…>` row made with it, as a
   // parameter of that type has, `int4_rows`.)
   int4_rows(e, el_types::base(bound));
-  rows_known = stale_row != el::NO_TYPE && fresh_row >= 0 && fresh_row != el::NO_TYPE;
+  // (A tuple's record is laid out where the pass ends, as Rust's is — `db_type` only reads its
+  // number — so its row is not known here; its `==` is member by member and reads none.)
+  rows_known = stale_row != el::NO_TYPE && ((fresh_row >= 0 && fresh_row != el::NO_TYPE) || el_types::base(bound) is TyTuple);
   why = el_ex_object::instance_carried(e, tmpl.code[0] ?? ir::NdNull, h, if rows_known { el::NO_TYPE } else { stale_row }, tmpl.variables, writes: writes_carried(e, bound), lowers: tv_lowered(bound));
   if why != "" {
     el::refuse(e, "a generic body holding {why}");

@@ -1632,6 +1632,25 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
       return ex(if f.tp is TyNull { el_ir::v_if(c.code, sl!, nl!) } else { el_ir::v_if(c.code, nl!, sl!) }, pt);
     }
   }
+  // `@FR-L-Null-Which` along a chain (`if … { h.a } else if … { h.b } else { null }`): a tagged
+  // slot arm beside an arm already the POINTER `S?` of the same payload (an inner join of a slot
+  // and `null`) is read through its tag at its leaves too, and the join is that pointer.
+  if is_nullable_wrapper(e, t.tp) != is_nullable_wrapper(e, f.tp) {
+    slot_c = if is_nullable_wrapper(e, t.tp) { t } else { f };
+    ptr_c = if is_nullable_wrapper(e, t.tp) { f } else { t };
+    payload = el_ex_place::nullable_payload(e, el_types::struct_enum_def(slot_c.tp));
+    same_payload = match ptr_c.tp { TyOptional { inner: pi } => match pi { TyReference { n: pn } => pn == payload, _ => false }, _ => false };
+    if same_payload {
+      cpt = ir::TyOptional { inner: ir::TyReference { n: payload, dep: el_types::deps(slot_c.tp) } };
+      if e.first_pass {
+        return ex(el_ir::v_if(c.code, t.code, f.code), cpt);
+      }
+      csl = tag_leaves(e, vars, slot_c.code, slot_c.tp, cpt);
+      if csl != null {
+        return ex(if is_nullable_wrapper(e, t.tp) { el_ir::v_if(c.code, csl!, f.code) } else { el_ir::v_if(c.code, t.code, csl!) }, cpt);
+      }
+    }
+  }
   // (A keyed collection is a collection here too: its null the reference sentinel.)
   vector_null = f.tp is TyNull && !(t.tp is TyOptional) && (t.tp is TyVector || keyed_kind(t.tp));
   // A struct enum's variant beside a `null` arm joins to the enum `?` (`variant_parent_enum`),
@@ -3321,8 +3340,12 @@ pub fn merge_view_call(e: el::El, vars: el_vars::Vars, code: ir::Node) -> ir::No
 // `@FR-L-Null-Which`'s leaves: each leaf of `n` (a block's tail, both arms of an `if`) holding
 // a `__nullable<S>` slot of type `slot` read through its tag (`read_through_tag`), each block
 // retyped as the pointer `pt`.  Null where a leaf cannot be read so.
-fn tag_leaves(e: el::El, vars: el_vars::Vars, n: ir::Node, slot: ir::TypeT, pt: ir::TypeT) -> ir::Node? {
+pub fn tag_leaves(e: el::El, vars: el_vars::Vars, n: ir::Node, slot: ir::TypeT, pt: ir::TypeT) -> ir::Node? {
   match n {
+    // (A `null` leaf — a match's `_ => null` — is the reference null sentinel.)
+    NdNull => {
+      return el_ir::cl(e, "OpNullRefSentinel", []);
+    },
     // (The leaf's span is dropped with the read it was: the tag test stands in its place.)
     NdSpan { pos: _, inner } => {
       return tag_leaves(e, vars, inner, slot, pt);

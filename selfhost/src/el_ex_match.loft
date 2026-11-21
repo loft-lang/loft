@@ -2491,6 +2491,17 @@ fn match_expr_inner(e: el::El, vars: el_vars::Vars, subject: integer, arms: vect
   if result is TyNever && void_arm {
     result = ir::TyVoid;
   }
+  // `@FR-L-Null-Which` (loft#2572): arms joined to a tagged `__nullable<S>` slot beside a `null`
+  // arm are each read through their OWN tag, at the arm — the `null` arm the sentinel — and the
+  // match is the POINTER `S?`, viewing the slot's owner; nothing is read after the join.
+  if !e.first_pass && el_ex_base::is_nullable_wrapper(e, result) && len([for a in out if a.tp is TyNull { 1 }]) > 0 {
+    npt = ir::TyOptional { inner: ir::TyReference { n: el_ex_place::nullable_payload(e, el_types::struct_enum_def(result)), dep: el_types::deps(result) } };
+    tl = el_ex_null::tag_leaves(e, vars, chain, result, npt);
+    if tl != null {
+      chain = tl!;
+      result = npt;
+    }
+  }
   if scalar_subject {
     // `dn1_widen_branch_null`: a non-null scalar result that a branch answers as null is `τ?`;
     // the block keeps the type the arms settled on.
