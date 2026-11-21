@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	0fe1a930c1a7f169457b2e8ca48ec8f762903595
 
-layer	elab	agree	1327	of	2132
+layer	elab	agree	1332	of	2132
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -186,7 +186,6 @@ elab	refused	loft-suite/rules/collections/Slice-KeyedIter/a-keyed-range-walks-it
 elab	refused	loft-suite/rules/collections/Slice-Value/a-negative-slice-bound-counts-from-the-end.loft
 elab	refused	loft-suite/rules/collections/Slice-Value/a-slice-is-a-fresh-vector-at-every-vector-position.loft
 elab	refused	loft-suite/rules/collections/Slice-Value/a-slice-is-a-vector-to-the-builtins-that-walk-one-and-to-an-index.loft
-elab	refused	loft-suite/rules/concurrency/C-Arms/2568-parallel-arms-run-at-once.loft
 elab	refused	loft-suite/rules/concurrency/C-Det/1917-a-par-worker-reads-a-vector-constant.loft
 elab	refused	loft-suite/rules/concurrency/C-Det/a-function-returning-par-worker-gets-its-row-as-a-value.loft
 elab	refused	loft-suite/rules/concurrency/C-Order/a-par-loop-keeps-its-sources-order.loft
@@ -613,7 +612,6 @@ elab	refused	tests/docs/09-enum.loft
 elab	refused	tests/docs/10-sorted.loft
 elab	refused	tests/docs/11-index.loft
 elab	refused	tests/docs/12-hash.loft
-elab	refused	tests/docs/13-file.loft
 elab	refused	tests/docs/15-lexer.loft
 elab	refused	tests/docs/16-parser.loft
 elab	refused	tests/docs/17-libraries.loft
@@ -671,7 +669,6 @@ elab	refused	tests/scripts/158-guard-free.loft
 elab	refused	tests/scripts/158-iteration-base.loft
 elab	refused	tests/scripts/158-keyed-fast-paths.loft
 elab	refused	tests/scripts/158-push-window.loft
-elab	refused	tests/scripts/158-scalar-file-read.loft
 elab	refused	tests/scripts/164-adopt-first-bind.loft
 elab	refused	tests/scripts/164-buffer-is-the-place.loft
 elab	refused	tests/scripts/164-in-place-literal.loft
@@ -689,7 +686,6 @@ elab	refused	tests/scripts/2016-a-chain-site-whose-callee-returns-its-parameter-
 elab	refused	tests/scripts/2028-both-parse-forms-name-every-mismatch-on-the-record.loft
 elab	refused	tests/scripts/2038-a-slice-first-bind-holds-its-slice-whatever-the-local-is-rebound-to.loft
 elab	refused	tests/scripts/2097-a-qualified-variant-is-its-own-enums-variant.loft
-elab	refused	tests/scripts/2112-a-parallel-arm-stops-at-its-own-frame.loft
 elab	refused	tests/scripts/2177-a-malformed-image-answers-every-paged-load.loft
 elab	refused	tests/scripts/22-threading.loft
 elab	refused	tests/scripts/2206-a-generic-match-returning-its-parameter-is-lifted-inline.loft
@@ -742,7 +738,6 @@ elab	refused	tests/scripts/850b-collision-import-order.loft
 elab	refused	tests/scripts/850c-two-packages-one-enum-name.loft
 elab	refused	tests/scripts/882-keyed-element-read-borrows-its-container.loft
 elab	refused	tests/scripts/889-collection-through-a-call-s-field.loft
-elab	refused	tests/scripts/899-unbound-file-read-only-vector.loft
 elab	refused	tests/scripts/899-unbound-file-read-temp.loft
 elab	refused	tests/scripts/923-nullable-vector-element-schema.loft
 elab	refused	tests/scripts/947-feature-worked-examples.loft
@@ -812,7 +807,7 @@ elab	refused	tests/scripts/store_compact_slack_730.loft
 elab	refused	tests/scripts/store_digest_b0.loft
 elab	refused	tests/scripts/store_paged_enum_field.loft
 
-layer	elab-functions	agree	14197	of	24479
+layer	elab-functions	agree	14164	of	24417
 elab-functions	agree	lib/docs.loft::Anchor
 elab-functions	agree	lib/docs.loft::Character
 elab-functions	agree	lib/docs.loft::Double
@@ -4733,15 +4728,6 @@ elab-functions	agree	loft-suite/rules/collections/Slice-Value/a-slice-is-a-vecto
 elab-functions	agree	loft-suite/rules/collections/Slice-Value/a-slice-is-a-vector-to-the-builtins-that-walk-one-and-to-an-index.loft::n_inc1
 elab-functions	agree	loft-suite/rules/collections/Slice-Value/a-slice-is-a-vector-to-the-builtins-that-walk-one-and-to-an-index.loft::n_mkv
 elab-functions	agree	loft-suite/rules/collections/Slice-Value/a-slice-is-a-vector-to-the-builtins-that-walk-one-and-to-an-index.loft::n_test_a_slice_of_a_call_runs_the_call_once
-elab-functions	agree	loft-suite/rules/concurrency/C-Arms/2568-parallel-arms-run-at-once.loft::(schema)
-elab-functions	agree	loft-suite/rules/concurrency/C-Arms/2568-parallel-arms-run-at-once.loft::Pt2568
-elab-functions	agree	loft-suite/rules/concurrency/C-Arms/2568-parallel-arms-run-at-once.loft::n_answer2568
-elab-functions	agree	loft-suite/rules/concurrency/C-Arms/2568-parallel-arms-run-at-once.loft::n_double2568
-elab-functions	agree	loft-suite/rules/concurrency/C-Arms/2568-parallel-arms-run-at-once.loft::n_main
-elab-functions	agree	loft-suite/rules/concurrency/C-Arms/2568-parallel-arms-run-at-once.loft::n_round2568
-elab-functions	agree	loft-suite/rules/concurrency/C-Arms/2568-parallel-arms-run-at-once.loft::n_take2568
-elab-functions	agree	loft-suite/rules/concurrency/C-Arms/2568-parallel-arms-run-at-once.loft::n_test_what_an_arm_builds_and_reads
-elab-functions	agree	loft-suite/rules/concurrency/C-Arms/2568-parallel-arms-run-at-once.loft::n_wait2568
 elab-functions	agree	loft-suite/rules/concurrency/C-Det/1917-a-par-worker-reads-a-vector-constant.loft::(schema)
 elab-functions	agree	loft-suite/rules/concurrency/C-Det/1917-a-par-worker-reads-a-vector-constant.loft::P1917
 elab-functions	agree	loft-suite/rules/concurrency/C-Det/a-function-returning-par-worker-gets-its-row-as-a-value.loft::(schema)
@@ -11268,9 +11254,6 @@ elab-functions	agree	tests/docs/12-hash.loft::Data
 elab-functions	agree	tests/docs/12-hash.loft::Keyword
 elab-functions	agree	tests/docs/12-hash.loft::main_vector<Count>
 elab-functions	agree	tests/docs/12-hash.loft::vector<Count>
-elab-functions	agree	tests/docs/13-file.loft::(schema)
-elab-functions	agree	tests/docs/13-file.loft::Buffer
-elab-functions	agree	tests/docs/13-file.loft::n_cleanup
 elab-functions	agree	tests/docs/15-lexer.loft::Anchor
 elab-functions	agree	tests/docs/15-lexer.loft::Character
 elab-functions	agree	tests/docs/15-lexer.loft::Double
@@ -13078,16 +13061,6 @@ elab-functions	agree	tests/scripts/158-push-window.loft::vector<float>
 elab-functions	agree	tests/scripts/158-push-window.loft::vector<integer(0, 255)>
 elab-functions	agree	tests/scripts/158-push-window.loft::vector<single>
 elab-functions	agree	tests/scripts/158-push-window.loft::vector<vector<integer>>
-elab-functions	agree	tests/scripts/158-scalar-file-read.loft::N
-elab-functions	agree	tests/scripts/158-scalar-file-read.loft::n_path
-elab-functions	agree	tests/scripts/158-scalar-file-read.loft::n_r1
-elab-functions	agree	tests/scripts/158-scalar-file-read.loft::n_r2
-elab-functions	agree	tests/scripts/158-scalar-file-read.loft::n_r3
-elab-functions	agree	tests/scripts/158-scalar-file-read.loft::n_r4
-elab-functions	agree	tests/scripts/158-scalar-file-read.loft::n_read_all
-elab-functions	agree	tests/scripts/158-scalar-file-read.loft::n_read_one
-elab-functions	agree	tests/scripts/158-scalar-file-read.loft::n_total
-elab-functions	agree	tests/scripts/158-scalar-file-read.loft::n_write_i16
 elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::(schema)
 elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::Box
 elab-functions	agree	tests/scripts/164-adopt-first-bind.loft::Canvas
@@ -13505,19 +13478,6 @@ elab-functions	agree	tests/scripts/2097-a-qualified-variant-is-its-own-enums-var
 elab-functions	agree	tests/scripts/2097-a-qualified-variant-is-its-own-enums-variant.loft::Pq2
 elab-functions	agree	tests/scripts/2097-a-qualified-variant-is-its-own-enums-variant.loft::Pr1
 elab-functions	agree	tests/scripts/2097-a-qualified-variant-is-its-own-enums-variant.loft::Pr2
-elab-functions	agree	tests/scripts/2112-a-parallel-arm-stops-at-its-own-frame.loft::(schema)
-elab-functions	agree	tests/scripts/2112-a-parallel-arm-stops-at-its-own-frame.loft::Pt
-elab-functions	agree	tests/scripts/2112-a-parallel-arm-stops-at-its-own-frame.loft::n_check
-elab-functions	agree	tests/scripts/2112-a-parallel-arm-stops-at-its-own-frame.loft::n_check_text
-elab-functions	agree	tests/scripts/2112-a-parallel-arm-stops-at-its-own-frame.loft::n_outer_call
-elab-functions	agree	tests/scripts/2112-a-parallel-arm-stops-at-its-own-frame.loft::n_test_a_function_returning_a_value_with_two_arms
-elab-functions	agree	tests/scripts/2112-a-parallel-arm-stops-at-its-own-frame.loft::n_test_a_function_without_parameters
-elab-functions	agree	tests/scripts/2112-a-parallel-arm-stops-at-its-own-frame.loft::n_test_a_lambda
-elab-functions	agree	tests/scripts/2112-a-parallel-arm-stops-at-its-own-frame.loft::n_test_a_loop_that_joins_several_times
-elab-functions	agree	tests/scripts/2112-a-parallel-arm-stops-at-its-own-frame.loft::n_test_a_method
-elab-functions	agree	tests/scripts/2112-a-parallel-arm-stops-at-its-own-frame.loft::n_test_a_text_parameter
-elab-functions	agree	tests/scripts/2112-a-parallel-arm-stops-at-its-own-frame.loft::n_test_a_void_function_with_a_parameter
-elab-functions	agree	tests/scripts/2112-a-parallel-arm-stops-at-its-own-frame.loft::n_test_two_calls_deep
 elab-functions	agree	tests/scripts/2177-a-malformed-image-answers-every-paged-load.loft::(schema)
 elab-functions	agree	tests/scripts/2177-a-malformed-image-answers-every-paged-load.loft::Item
 elab-functions	agree	tests/scripts/2177-a-malformed-image-answers-every-paged-load.loft::Pt
@@ -14116,7 +14076,9 @@ elab-functions	agree	tests/scripts/889-collection-through-a-call-s-field.loft::n
 elab-functions	agree	tests/scripts/889-collection-through-a-call-s-field.loft::vector<I889Cell>
 elab-functions	agree	tests/scripts/899-unbound-file-read-temp.loft::B
 elab-functions	agree	tests/scripts/899-unbound-file-read-temp.loft::P
+elab-functions	agree	tests/scripts/899-unbound-file-read-temp.loft::main_vector<single>
 elab-functions	agree	tests/scripts/899-unbound-file-read-temp.loft::n_r899_take
+elab-functions	agree	tests/scripts/899-unbound-file-read-temp.loft::vector<single>
 elab-functions	agree	tests/scripts/947-feature-worked-examples.loft::Acct947
 elab-functions	agree	tests/scripts/947-feature-worked-examples.loft::Box947
 elab-functions	agree	tests/scripts/947-feature-worked-examples.loft::Canvas947
@@ -15011,7 +14973,7 @@ elab-functions	agree	tests/scripts/store_paged_enum_field.loft::main_vector<inte
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::n_bytes
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::vector<integer(0, 255)>
 
-layer	elab-pass1	agree	11989	of	17895
+layer	elab-pass1	agree	12004	of	17913
 elab-pass1	agree	lib/code.loft::t_4Code_add_block
 elab-pass1	agree	lib/code.loft::t_4Code_add_if
 elab-pass1	agree	lib/code.loft::t_4Code_add_loop
@@ -16990,6 +16952,9 @@ elab-pass1	agree	loft-suite/rules/concurrency/C-Arms/2568-parallel-arms-run-at-o
 elab-pass1	agree	loft-suite/rules/concurrency/C-Arms/2568-parallel-arms-run-at-once.loft::n_main
 elab-pass1	agree	loft-suite/rules/concurrency/C-Arms/2568-parallel-arms-run-at-once.loft::n_round2568
 elab-pass1	agree	loft-suite/rules/concurrency/C-Arms/2568-parallel-arms-run-at-once.loft::n_take2568
+elab-pass1	agree	loft-suite/rules/concurrency/C-Arms/2568-parallel-arms-run-at-once.loft::n_test_a_chain_of_three_arms
+elab-pass1	agree	loft-suite/rules/concurrency/C-Arms/2568-parallel-arms-run-at-once.loft::n_test_arms_open_files_at_once
+elab-pass1	agree	loft-suite/rules/concurrency/C-Arms/2568-parallel-arms-run-at-once.loft::n_test_the_first_arm_waits_for_the_second
 elab-pass1	agree	loft-suite/rules/concurrency/C-Arms/2568-parallel-arms-run-at-once.loft::n_wait2568
 elab-pass1	agree	loft-suite/rules/concurrency/C-Det/a-function-returning-par-worker-gets-its-row-as-a-value.loft::n_add5
 elab-pass1	agree	loft-suite/rules/concurrency/C-Det/a-function-returning-par-worker-gets-its-row-as-a-value.loft::n_add7
@@ -24369,10 +24334,13 @@ elab-pass1	agree	tests/scripts/158-rotate.loft::n_c7
 elab-pass1	agree	tests/scripts/158-rotate.loft::n_c9
 elab-pass1	agree	tests/scripts/158-rotate.loft::n_main
 elab-pass1	agree	tests/scripts/158-rotate.loft::n_show
+elab-pass1	agree	tests/scripts/158-scalar-file-read.loft::n_main
 elab-pass1	agree	tests/scripts/158-scalar-file-read.loft::n_path
 elab-pass1	agree	tests/scripts/158-scalar-file-read.loft::n_r2
 elab-pass1	agree	tests/scripts/158-scalar-file-read.loft::n_r3
 elab-pass1	agree	tests/scripts/158-scalar-file-read.loft::n_r4
+elab-pass1	agree	tests/scripts/158-scalar-file-read.loft::n_r5
+elab-pass1	agree	tests/scripts/158-scalar-file-read.loft::n_r6
 elab-pass1	agree	tests/scripts/158-scalar-file-read.loft::n_read_all
 elab-pass1	agree	tests/scripts/158-scalar-file-read.loft::n_read_one
 elab-pass1	agree	tests/scripts/158-scalar-file-read.loft::n_total
@@ -24838,9 +24806,14 @@ elab-pass1	agree	tests/scripts/2090-a-passing-assert-builds-no-message.loft::n_t
 elab-pass1	agree	tests/scripts/2090-a-passing-assert-builds-no-message.loft::n_test_a_quote_in_a_backtick_literal_on_the_assert_line
 elab-pass1	agree	tests/scripts/21-binary-ops.loft::n_cleanup
 elab-pass1	agree	tests/scripts/21-binary-ops.loft::n_main
+elab-pass1	agree	tests/scripts/2112-a-parallel-arm-stops-at-its-own-frame.loft::n___lambda_test_a_lambda_0
 elab-pass1	agree	tests/scripts/2112-a-parallel-arm-stops-at-its-own-frame.loft::n_check
 elab-pass1	agree	tests/scripts/2112-a-parallel-arm-stops-at-its-own-frame.loft::n_check_text
+elab-pass1	agree	tests/scripts/2112-a-parallel-arm-stops-at-its-own-frame.loft::n_inner_block
+elab-pass1	agree	tests/scripts/2112-a-parallel-arm-stops-at-its-own-frame.loft::n_no_params
 elab-pass1	agree	tests/scripts/2112-a-parallel-arm-stops-at-its-own-frame.loft::n_outer_call
+elab-pass1	agree	tests/scripts/2112-a-parallel-arm-stops-at-its-own-frame.loft::n_returns_value
+elab-pass1	agree	tests/scripts/2112-a-parallel-arm-stops-at-its-own-frame.loft::n_test_a_block_in_a_test_body
 elab-pass1	agree	tests/scripts/2112-a-parallel-arm-stops-at-its-own-frame.loft::n_test_a_function_returning_a_value_with_two_arms
 elab-pass1	agree	tests/scripts/2112-a-parallel-arm-stops-at-its-own-frame.loft::n_test_a_function_without_parameters
 elab-pass1	agree	tests/scripts/2112-a-parallel-arm-stops-at-its-own-frame.loft::n_test_a_lambda
@@ -24849,6 +24822,9 @@ elab-pass1	agree	tests/scripts/2112-a-parallel-arm-stops-at-its-own-frame.loft::
 elab-pass1	agree	tests/scripts/2112-a-parallel-arm-stops-at-its-own-frame.loft::n_test_a_text_parameter
 elab-pass1	agree	tests/scripts/2112-a-parallel-arm-stops-at-its-own-frame.loft::n_test_a_void_function_with_a_parameter
 elab-pass1	agree	tests/scripts/2112-a-parallel-arm-stops-at-its-own-frame.loft::n_test_two_calls_deep
+elab-pass1	agree	tests/scripts/2112-a-parallel-arm-stops-at-its-own-frame.loft::n_void_with_param
+elab-pass1	agree	tests/scripts/2112-a-parallel-arm-stops-at-its-own-frame.loft::n_with_text
+elab-pass1	agree	tests/scripts/2112-a-parallel-arm-stops-at-its-own-frame.loft::t_2Pt_span
 elab-pass1	agree	tests/scripts/2121-a-halted-frame-releases-the-texts-it-holds.loft::n_deep
 elab-pass1	agree	tests/scripts/2121-a-halted-frame-releases-the-texts-it-holds.loft::n_tail
 elab-pass1	agree	tests/scripts/2121-a-halted-frame-releases-the-texts-it-holds.loft::n_test_a_halt_at_the_frame_top
@@ -25379,6 +25355,7 @@ elab-pass1	agree	tests/scripts/890-consumed-lift-double-free.loft::n_i890_set_ke
 elab-pass1	agree	tests/scripts/890-consumed-lift-double-free.loft::n_i890_sorted
 elab-pass1	agree	tests/scripts/890-consumed-lift-double-free.loft::n_i890_trie
 elab-pass1	agree	tests/scripts/890-consumed-lift-double-free.loft::n_main
+elab-pass1	agree	tests/scripts/899-unbound-file-read-only-vector.loft::n_main
 elab-pass1	agree	tests/scripts/899-unbound-file-read-temp.loft::n_r899_take
 elab-pass1	agree	tests/scripts/915-loop-variable-per-loop.loft::n_c12_helper
 elab-pass1	agree	tests/scripts/915-loop-variable-per-loop.loft::n_c2_outlives_two
