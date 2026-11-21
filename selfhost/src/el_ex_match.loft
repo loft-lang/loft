@@ -1831,6 +1831,14 @@ pub fn cast_expr(e: el::El, vars: el_vars::Vars, ae: integer?, tn: integer?) -> 
         // its null fails the range test and casts to null.)
         return if e.first_pass { ex(ir::NdNull, to) } else { dn4_cast(e, vars, ex(x.code, src), inner) };
       }
+      // A text cast to a record or a struct enum (`s as List?`) interns it into a store of its
+      // own (`cast_allocates`): the lenient parse `T.parse` runs, `OpCastVectorFromText(text,
+      // <the target's known type>)`, answering the plain record reference — its own null.
+      ctd = match inner { TyReference { n: crn } => if el::def(e, crn).def_type == el::DT_STRUCT { crn } else { -1 }, TyEnum { n: cen, is_ref } => if is_ref { cen } else { -1 }, _ => -1 };
+      if src is TyText && ctd >= 0 {
+        crt = if el::def(e, ctd).def_type == el::DT_ENUM { ir::TyEnum { n: ctd, is_ref: true, dep: [] } } else { ir::TyReference { n: ctd, dep: [] } };
+        return ex(if e.first_pass { ir::NdNull } else { el_ir::cl(e, "OpCastVectorFromText", [x.code, ir::NdInt { n: el::def(e, ctd).known_type }]) }, crt);
+      }
       el::refuse(e, "a checked narrowing cast");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
     },
