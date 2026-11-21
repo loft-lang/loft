@@ -223,7 +223,11 @@ fn site_line() -> Option<u32> {
 pub fn alloc_event(line: std::fmt::Arguments) {
     use std::sync::Mutex;
     let text = line.to_string();
-    let site = if text.starts_with(['M', 'S']) { None } else { site_line() };
+    let site = if text.starts_with(['M', 'S']) {
+        None
+    } else {
+        site_line()
+    };
     static FILE: OnceLock<Option<Mutex<crate::file_access::File>>> = OnceLock::new();
     static STDERR: OnceLock<bool> = OnceLock::new();
     if *STDERR
