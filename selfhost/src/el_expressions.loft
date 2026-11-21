@@ -431,13 +431,21 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   // behind its null test, the result borrowing the buffer.
   if lambda && !e.first_pass && rb >= 0 && e.closure_var >= 0 && el_types::base(result) is TyReference {
     cc = el_ex_deliver::capture_tail_copy(e, vars, code, rb);
+    if cc == null {
+      cc = el_ex_deliver::capture_if_copy(e, vars, code, rb);
+    }
     if cc != null {
       code = cc!;
     } else if el_ex_deliver::ncc_over_capture(e, code) {
-      // Rust materialises each arm into a work ref the late buffer is renamed onto, the body
-      // borrowing the lambda's placeholder for the capture — a variable this port's lambdas do
-      // not keep: refused by name.
-      el::refuse(e, "a lambda answering a `??` over its capture");
+      // A nullable result keeps `__retbuf`, each arm materialised into it.  A dense one
+      // renames the buffer onto a work ref, the body borrowing the lambda's placeholder for the
+      // capture — a variable this port's lambdas do not keep: refused by name.
+      nc = if result is TyOptional { el_ex_deliver::ncc_capture_copy(e, vars, code, rb) } else { null };
+      if nc != null {
+        code = nc!;
+      } else {
+        el::refuse(e, "a lambda answering a `??` over its capture");
+      }
     }
   }
   // A lambda's late buffer is delivered nothing else: its body builds the record it answers as

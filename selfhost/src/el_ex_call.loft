@@ -3237,6 +3237,11 @@ pub fn record_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   if variant && e.first_pass {
     return ex(ir::NdNull, lhs);
   }
+  // (In a lambda the holder is the second pass's alone: it numbers after the default's
+  // buffers, as Rust's `__ncc_1` follows the literal's `__ref_p2_1`.)
+  if e.first_pass && !owned && starts_with(el::def(e, e.context).name, "n___lambda_") {
+    return ex(el_ir::v_block([ir::NdNull], lhs, "ncc"), lhs);
+  }
   // Minted on both passes, as the Rust mints it, so it numbers before the second pass's buffers.
   held = el_vars::create_unique(vars, "_ncc", lhs);
   vars.vars[held].skip_free = true;
