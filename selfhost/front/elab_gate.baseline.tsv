@@ -830,7 +830,7 @@ elab	refused	tests/scripts/store_compact_slack_730.loft
 elab	refused	tests/scripts/store_digest_b0.loft
 elab	refused	tests/scripts/store_paged_enum_field.loft
 
-layer	elab-functions	agree	14409	of	24786
+layer	elab-functions	agree	14421	of	24786
 elab-functions	agree	lib/docs.loft::Anchor
 elab-functions	agree	lib/docs.loft::Character
 elab-functions	agree	lib/docs.loft::Double
@@ -3077,6 +3077,7 @@ elab-functions	agree	loft-suite/rules/closures/L-CapKeep/2272-a-fn-ref-bound-in-
 elab-functions	agree	loft-suite/rules/closures/L-CapKeep/2272-a-fn-ref-bound-in-every-arm-keeps-the-arm-that-ran.loft::n_ok
 elab-functions	agree	loft-suite/rules/closures/L-CapKeep/2272-a-fn-ref-bound-in-every-arm-keeps-the-arm-that-ran.loft::n_rec
 elab-functions	agree	loft-suite/rules/closures/L-CapKeep/2272-a-fn-ref-bound-in-every-arm-keeps-the-arm-that-ran.loft::n_trace_path
+elab-functions	agree	loft-suite/rules/closures/L-CapKeep/2272-a-fn-ref-bound-in-every-arm-keeps-the-arm-that-ran.loft::t_1H_OpDrop
 elab-functions	agree	loft-suite/rules/closures/L-CapKeep/2272-a-fn-ref-bound-in-every-arm-keeps-the-arm-that-ran.loft::vector<integer(0, 255)>
 elab-functions	agree	loft-suite/rules/closures/L-CapKeep/each-run-of-a-build-in-a-loop-is-its-own-record-and-a-kept-closure-keeps-its-pass.loft::(schema)
 elab-functions	agree	loft-suite/rules/closures/L-CapKeep/each-run-of-a-build-in-a-loop-is-its-own-record-and-a-kept-closure-keeps-its-pass.loft::H
@@ -3228,6 +3229,7 @@ elab-functions	agree	loft-suite/rules/closures/L-CapKeep/each-run-of-a-build-in-
 elab-functions	agree	loft-suite/rules/closures/L-CapKeep/each-run-of-a-build-in-a-loop-is-its-own-record-and-a-kept-closure-keeps-its-pass.loft::n_test_zero_passes
 elab-functions	agree	loft-suite/rules/closures/L-CapKeep/each-run-of-a-build-in-a-loop-is-its-own-record-and-a-kept-closure-keeps-its-pass.loft::n_trace_path
 elab-functions	agree	loft-suite/rules/closures/L-CapKeep/each-run-of-a-build-in-a-loop-is-its-own-record-and-a-kept-closure-keeps-its-pass.loft::n_variable
+elab-functions	agree	loft-suite/rules/closures/L-CapKeep/each-run-of-a-build-in-a-loop-is-its-own-record-and-a-kept-closure-keeps-its-pass.loft::t_1H_OpDrop
 elab-functions	agree	loft-suite/rules/closures/L-CapKeep/each-run-of-a-build-in-a-loop-is-its-own-record-and-a-kept-closure-keeps-its-pass.loft::vector<H>
 elab-functions	agree	loft-suite/rules/closures/L-CapKeep/each-run-of-a-build-in-a-loop-is-its-own-record-and-a-kept-closure-keeps-its-pass.loft::vector<integer(0, 255)>
 elab-functions	agree	loft-suite/rules/closures/L-CapOne/2281-the-record-that-leaves-on-this-run-owns-the-capture.loft::(schema)
@@ -3315,6 +3317,7 @@ elab-functions	agree	loft-suite/rules/closures/L-CapOne/2281-the-record-that-lea
 elab-functions	agree	loft-suite/rules/closures/L-CapOne/2281-the-record-that-leaves-on-this-run-owns-the-capture.loft::n_wm1
 elab-functions	agree	loft-suite/rules/closures/L-CapOne/2281-the-record-that-leaves-on-this-run-owns-the-capture.loft::n_wm2
 elab-functions	agree	loft-suite/rules/closures/L-CapOne/2281-the-record-that-leaves-on-this-run-owns-the-capture.loft::n_wm3
+elab-functions	agree	loft-suite/rules/closures/L-CapOne/2281-the-record-that-leaves-on-this-run-owns-the-capture.loft::t_1H_OpDrop
 elab-functions	agree	loft-suite/rules/closures/L-CapOne/2281-the-record-that-leaves-on-this-run-owns-the-capture.loft::vector<integer(0, 255)>
 elab-functions	agree	loft-suite/rules/closures/L-CapOwn/1606-a-closure-releases-what-it-captured-once-hooks-first.loft::(schema)
 elab-functions	agree	loft-suite/rules/closures/L-CapOwn/1606-a-closure-releases-what-it-captured-once-hooks-first.loft::B
@@ -3348,6 +3351,7 @@ elab-functions	agree	loft-suite/rules/closures/L-CapOwn/1606-a-closure-releases-
 elab-functions	agree	loft-suite/rules/closures/L-CapOwn/1606-a-closure-releases-what-it-captured-once-hooks-first.loft::n_note
 elab-functions	agree	loft-suite/rules/closures/L-CapOwn/1606-a-closure-releases-what-it-captured-once-hooks-first.loft::n_ok
 elab-functions	agree	loft-suite/rules/closures/L-CapOwn/1606-a-closure-releases-what-it-captured-once-hooks-first.loft::n_trace_path
+elab-functions	agree	loft-suite/rules/closures/L-CapOwn/1606-a-closure-releases-what-it-captured-once-hooks-first.loft::t_1H_OpDrop
 elab-functions	agree	loft-suite/rules/closures/L-CapOwn/1606-a-closure-releases-what-it-captured-once-hooks-first.loft::vector<H>
 elab-functions	agree	loft-suite/rules/closures/L-CapOwn/1606-a-closure-releases-what-it-captured-once-hooks-first.loft::vector<integer(0, 255)>
 elab-functions	agree	loft-suite/rules/closures/L-CapOwn/1609-a-closure-that-leaves-its-frame-runs-its-captures-hooks.loft::H
@@ -3362,6 +3366,7 @@ elab-functions	agree	loft-suite/rules/closures/L-CapOwn/1609-a-closure-that-leav
 elab-functions	agree	loft-suite/rules/closures/L-CapOwn/1609-a-closure-that-leaves-its-frame-runs-its-captures-hooks.loft::n_note
 elab-functions	agree	loft-suite/rules/closures/L-CapOwn/1609-a-closure-that-leaves-its-frame-runs-its-captures-hooks.loft::n_ok
 elab-functions	agree	loft-suite/rules/closures/L-CapOwn/1609-a-closure-that-leaves-its-frame-runs-its-captures-hooks.loft::n_trace_path
+elab-functions	agree	loft-suite/rules/closures/L-CapOwn/1609-a-closure-that-leaves-its-frame-runs-its-captures-hooks.loft::t_1H_OpDrop
 elab-functions	agree	loft-suite/rules/closures/L-CapOwn/1609-a-closure-that-leaves-its-frame-runs-its-captures-hooks.loft::vector<H>
 elab-functions	agree	loft-suite/rules/closures/L-CapOwn/1609-a-closure-that-leaves-its-frame-runs-its-captures-hooks.loft::vector<integer(0, 255)>
 elab-functions	agree	loft-suite/rules/closures/L-CapOwn/1610-a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::(schema)
@@ -3410,6 +3415,7 @@ elab-functions	agree	loft-suite/rules/closures/L-CapOwn/1610-a-closure-confined-
 elab-functions	agree	loft-suite/rules/closures/L-CapOwn/1610-a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n_ok
 elab-functions	agree	loft-suite/rules/closures/L-CapOwn/1610-a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n_run
 elab-functions	agree	loft-suite/rules/closures/L-CapOwn/1610-a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n_trace_path
+elab-functions	agree	loft-suite/rules/closures/L-CapOwn/1610-a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::t_1H_OpDrop
 elab-functions	agree	loft-suite/rules/closures/L-CapOwn/1610-a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::vector<H>
 elab-functions	agree	loft-suite/rules/closures/L-CapOwn/1610-a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::vector<integer(0, 255)>
 elab-functions	agree	loft-suite/rules/closures/L-CapOwn/2504-a-capture-relayed-by-a-nested-lambda-stays-its-owners.loft::S2504
@@ -3620,6 +3626,7 @@ elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-rebuild-in-a-loop-keep
 elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-rebuild-in-a-loop-keeps-the-capture-it-takes-again.loft::n_test_a_vector_of_droppables
 elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-rebuild-in-a-loop-keeps-the-capture-it-takes-again.loft::n_test_the_same_capture_rebuilt_three_times
 elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-rebuild-in-a-loop-keeps-the-capture-it-takes-again.loft::n_trace_path
+elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-rebuild-in-a-loop-keeps-the-capture-it-takes-again.loft::t_1H_OpDrop
 elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-rebuild-in-a-loop-keeps-the-capture-it-takes-again.loft::vector<H>
 elab-functions	agree	loft-suite/rules/closures/L-CapOwn/a-rebuild-in-a-loop-keeps-the-capture-it-takes-again.loft::vector<integer(0, 255)>
 elab-functions	agree	loft-suite/rules/closures/L-CapRebind/a-rebind-of-a-captured-local-leaves-the-record-the-store-its-build-named.loft::(schema)
@@ -3754,6 +3761,7 @@ elab-functions	agree	loft-suite/rules/closures/L-CapRebind/a-rebind-of-a-capture
 elab-functions	agree	loft-suite/rules/closures/L-CapRebind/a-rebind-of-a-captured-local-leaves-the-record-the-store-its-build-named.loft::n_trace_path
 elab-functions	agree	loft-suite/rules/closures/L-CapRebind/a-rebind-of-a-captured-local-leaves-the-record-the-store-its-build-named.loft::n_twice
 elab-functions	agree	loft-suite/rules/closures/L-CapRebind/a-rebind-of-a-captured-local-leaves-the-record-the-store-its-build-named.loft::n_twice_self
+elab-functions	agree	loft-suite/rules/closures/L-CapRebind/a-rebind-of-a-captured-local-leaves-the-record-the-store-its-build-named.loft::t_3RbH_OpDrop
 elab-functions	agree	loft-suite/rules/closures/L-CapRebind/a-rebind-of-a-captured-local-leaves-the-record-the-store-its-build-named.loft::vector<RbH>
 elab-functions	agree	loft-suite/rules/closures/L-CapRebind/a-rebind-of-a-captured-local-leaves-the-record-the-store-its-build-named.loft::vector<integer(0, 255)>
 elab-functions	agree	loft-suite/rules/closures/L-CapRef/a-captured-ref-parameter-shares-its-heap-pointee-and-copies-its-scalar-in-every-spelling.loft::S
@@ -11134,6 +11142,9 @@ elab-functions	agree	loft-suite/rules/types/N-Shape/a-tuple-member-releases-once
 elab-functions	agree	loft-suite/rules/types/N-Shape/a-tuple-member-releases-once-whatever-it-is-declared-and-beside.loft::n_test_a_tuple_member_declared_nullable_releases_once
 elab-functions	agree	loft-suite/rules/types/N-Shape/a-tuple-member-releases-once-whatever-it-is-declared-and-beside.loft::n_test_a_tuple_member_releases_once_beside_any_neighbour
 elab-functions	agree	loft-suite/rules/types/N-Shape/a-tuple-member-releases-once-whatever-it-is-declared-and-beside.loft::n_trace_path
+elab-functions	agree	loft-suite/rules/types/N-Shape/a-tuple-member-releases-once-whatever-it-is-declared-and-beside.loft::t_3NbH_OpDrop
+elab-functions	agree	loft-suite/rules/types/N-Shape/a-tuple-member-releases-once-whatever-it-is-declared-and-beside.loft::t_3NmH_OpDrop
+elab-functions	agree	loft-suite/rules/types/N-Shape/a-tuple-member-releases-once-whatever-it-is-declared-and-beside.loft::t_3NtH_OpDrop
 elab-functions	agree	loft-suite/rules/types/N-Shape/a-tuple-member-releases-once-whatever-it-is-declared-and-beside.loft::vector<integer(0, 255)>
 elab-functions	agree	loft-suite/rules/types/N-Shape/an-append-after-a-fn-ref-call-releases-its-backing.loft::n_g
 elab-functions	agree	loft-suite/rules/types/N-Shape/an-append-after-a-fn-ref-call-releases-its-backing.loft::n_main
@@ -12829,6 +12840,7 @@ elab-functions	agree	tests/scripts/1512-a-tuple-argument-call-member-releases-on
 elab-functions	agree	tests/scripts/1512-a-tuple-argument-call-member-releases-once.loft::n_trace_path
 elab-functions	agree	tests/scripts/1512-a-tuple-argument-call-member-releases-once.loft::n_two_members
 elab-functions	agree	tests/scripts/1512-a-tuple-argument-call-member-releases-once.loft::n_via_local
+elab-functions	agree	tests/scripts/1512-a-tuple-argument-call-member-releases-once.loft::t_1H_OpDrop
 elab-functions	agree	tests/scripts/1512-a-tuple-argument-call-member-releases-once.loft::vector<integer(0, 255)>
 elab-functions	agree	tests/scripts/157-a-fresh-element-text-keeps-the-loop-hold.loft::(schema)
 elab-functions	agree	tests/scripts/157-a-fresh-element-text-keeps-the-loop-hold.loft::Doc
@@ -15241,7 +15253,7 @@ elab-functions	agree	tests/scripts/store_paged_enum_field.loft::main_vector<inte
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::n_bytes
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::vector<integer(0, 255)>
 
-layer	elab-pass1	agree	11942	of	17818
+layer	elab-pass1	agree	11954	of	17830
 elab-pass1	agree	lib/code.loft::t_4Code_add_block
 elab-pass1	agree	lib/code.loft::t_4Code_add_if
 elab-pass1	agree	lib/code.loft::t_4Code_add_loop
@@ -16667,6 +16679,7 @@ elab-pass1	agree	loft-suite/rules/closures/L-CapKeep/2272-a-fn-ref-bound-in-ever
 elab-pass1	agree	loft-suite/rules/closures/L-CapKeep/2272-a-fn-ref-bound-in-every-arm-keeps-the-arm-that-ran.loft::n_ok
 elab-pass1	agree	loft-suite/rules/closures/L-CapKeep/2272-a-fn-ref-bound-in-every-arm-keeps-the-arm-that-ran.loft::n_rec
 elab-pass1	agree	loft-suite/rules/closures/L-CapKeep/2272-a-fn-ref-bound-in-every-arm-keeps-the-arm-that-ran.loft::n_trace_path
+elab-pass1	agree	loft-suite/rules/closures/L-CapKeep/2272-a-fn-ref-bound-in-every-arm-keeps-the-arm-that-ran.loft::t_1H_OpDrop
 elab-pass1	agree	loft-suite/rules/closures/L-CapKeep/2273-a-fn-ref-copied-out-of-a-field-is-a-copy.loft::n___lambda_c8_0
 elab-pass1	agree	loft-suite/rules/closures/L-CapKeep/2273-a-fn-ref-copied-out-of-a-field-is-a-copy.loft::n___lambda_d3_0
 elab-pass1	agree	loft-suite/rules/closures/L-CapKeep/2273-a-fn-ref-copied-out-of-a-field-is-a-copy.loft::n___lambda_f5_1
@@ -16756,6 +16769,7 @@ elab-pass1	agree	loft-suite/rules/closures/L-CapKeep/each-run-of-a-build-in-a-lo
 elab-pass1	agree	loft-suite/rules/closures/L-CapKeep/each-run-of-a-build-in-a-loop-is-its-own-record-and-a-kept-closure-keeps-its-pass.loft::n_test_zero_passes
 elab-pass1	agree	loft-suite/rules/closures/L-CapKeep/each-run-of-a-build-in-a-loop-is-its-own-record-and-a-kept-closure-keeps-its-pass.loft::n_trace_path
 elab-pass1	agree	loft-suite/rules/closures/L-CapKeep/each-run-of-a-build-in-a-loop-is-its-own-record-and-a-kept-closure-keeps-its-pass.loft::n_variable
+elab-pass1	agree	loft-suite/rules/closures/L-CapKeep/each-run-of-a-build-in-a-loop-is-its-own-record-and-a-kept-closure-keeps-its-pass.loft::t_1H_OpDrop
 elab-pass1	agree	loft-suite/rules/closures/L-CapOne/2281-the-record-that-leaves-on-this-run-owns-the-capture.loft::n_lv
 elab-pass1	agree	loft-suite/rules/closures/L-CapOne/2281-the-record-that-leaves-on-this-run-owns-the-capture.loft::n_main
 elab-pass1	agree	loft-suite/rules/closures/L-CapOne/2281-the-record-that-leaves-on-this-run-owns-the-capture.loft::n_ok
@@ -16784,6 +16798,7 @@ elab-pass1	agree	loft-suite/rules/closures/L-CapOne/2281-the-record-that-leaves-
 elab-pass1	agree	loft-suite/rules/closures/L-CapOne/2281-the-record-that-leaves-on-this-run-owns-the-capture.loft::n_wm1
 elab-pass1	agree	loft-suite/rules/closures/L-CapOne/2281-the-record-that-leaves-on-this-run-owns-the-capture.loft::n_wm2
 elab-pass1	agree	loft-suite/rules/closures/L-CapOne/2281-the-record-that-leaves-on-this-run-owns-the-capture.loft::n_wm3
+elab-pass1	agree	loft-suite/rules/closures/L-CapOne/2281-the-record-that-leaves-on-this-run-owns-the-capture.loft::t_1H_OpDrop
 elab-pass1	agree	loft-suite/rules/closures/L-CapOne/2363-an-owner-slot-passes-its-store-to-the-record-that-outlives-it.loft::n_escaper_first
 elab-pass1	agree	loft-suite/rules/closures/L-CapOne/2363-an-owner-slot-passes-its-store-to-the-record-that-outlives-it.loft::n_kept_called_after
 elab-pass1	agree	loft-suite/rules/closures/L-CapOne/2363-an-owner-slot-passes-its-store-to-the-record-that-outlives-it.loft::n_main
@@ -16835,14 +16850,17 @@ elab-pass1	agree	loft-suite/rules/closures/L-CapOwn/1606-a-closure-releases-what
 elab-pass1	agree	loft-suite/rules/closures/L-CapOwn/1606-a-closure-releases-what-it-captured-once-hooks-first.loft::n_mk
 elab-pass1	agree	loft-suite/rules/closures/L-CapOwn/1606-a-closure-releases-what-it-captured-once-hooks-first.loft::n_ok
 elab-pass1	agree	loft-suite/rules/closures/L-CapOwn/1606-a-closure-releases-what-it-captured-once-hooks-first.loft::n_trace_path
+elab-pass1	agree	loft-suite/rules/closures/L-CapOwn/1606-a-closure-releases-what-it-captured-once-hooks-first.loft::t_1H_OpDrop
 elab-pass1	agree	loft-suite/rules/closures/L-CapOwn/1609-a-closure-that-leaves-its-frame-runs-its-captures-hooks.loft::n_ok
 elab-pass1	agree	loft-suite/rules/closures/L-CapOwn/1609-a-closure-that-leaves-its-frame-runs-its-captures-hooks.loft::n_trace_path
+elab-pass1	agree	loft-suite/rules/closures/L-CapOwn/1609-a-closure-that-leaves-its-frame-runs-its-captures-hooks.loft::t_1H_OpDrop
 elab-pass1	agree	loft-suite/rules/closures/L-CapOwn/1610-a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n___lambda_c10_0
 elab-pass1	agree	loft-suite/rules/closures/L-CapOwn/1610-a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n___lambda_c9_0
 elab-pass1	agree	loft-suite/rules/closures/L-CapOwn/1610-a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n_keep
 elab-pass1	agree	loft-suite/rules/closures/L-CapOwn/1610-a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n_ok
 elab-pass1	agree	loft-suite/rules/closures/L-CapOwn/1610-a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n_run
 elab-pass1	agree	loft-suite/rules/closures/L-CapOwn/1610-a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::n_trace_path
+elab-pass1	agree	loft-suite/rules/closures/L-CapOwn/1610-a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft::t_1H_OpDrop
 elab-pass1	agree	loft-suite/rules/closures/L-CapOwn/2284-overwriting-a-fn-field-leaves-the-frames-captures-to-the-frame.loft::n___lambda_factory_0
 elab-pass1	agree	loft-suite/rules/closures/L-CapOwn/2284-overwriting-a-fn-field-leaves-the-frames-captures-to-the-frame.loft::n___lambda_in_a_loop_0
 elab-pass1	agree	loft-suite/rules/closures/L-CapOwn/2284-overwriting-a-fn-field-leaves-the-frames-captures-to-the-frame.loft::n___lambda_leaves_on_one_path_1
@@ -16973,6 +16991,7 @@ elab-pass1	agree	loft-suite/rules/closures/L-CapOwn/a-rebuild-in-a-loop-keeps-th
 elab-pass1	agree	loft-suite/rules/closures/L-CapOwn/a-rebuild-in-a-loop-keeps-the-capture-it-takes-again.loft::n_test_a_vector_of_droppables
 elab-pass1	agree	loft-suite/rules/closures/L-CapOwn/a-rebuild-in-a-loop-keeps-the-capture-it-takes-again.loft::n_test_the_same_capture_rebuilt_three_times
 elab-pass1	agree	loft-suite/rules/closures/L-CapOwn/a-rebuild-in-a-loop-keeps-the-capture-it-takes-again.loft::n_trace_path
+elab-pass1	agree	loft-suite/rules/closures/L-CapOwn/a-rebuild-in-a-loop-keeps-the-capture-it-takes-again.loft::t_1H_OpDrop
 elab-pass1	agree	loft-suite/rules/closures/L-CapRebind/a-rebind-of-a-captured-local-leaves-the-record-the-store-its-build-named.loft::n___lambda_looped_0
 elab-pass1	agree	loft-suite/rules/closures/L-CapRebind/a-rebind-of-a-captured-local-leaves-the-record-the-store-its-build-named.loft::n___lambda_rot_0
 elab-pass1	agree	loft-suite/rules/closures/L-CapRebind/a-rebind-of-a-captured-local-leaves-the-record-the-store-its-build-named.loft::n___lambda_test_a_closure_kept_past_the_loop_0
@@ -17004,6 +17023,7 @@ elab-pass1	agree	loft-suite/rules/closures/L-CapRebind/a-rebind-of-a-captured-lo
 elab-pass1	agree	loft-suite/rules/closures/L-CapRebind/a-rebind-of-a-captured-local-leaves-the-record-the-store-its-build-named.loft::n_trace_path
 elab-pass1	agree	loft-suite/rules/closures/L-CapRebind/a-rebind-of-a-captured-local-leaves-the-record-the-store-its-build-named.loft::n_twice
 elab-pass1	agree	loft-suite/rules/closures/L-CapRebind/a-rebind-of-a-captured-local-leaves-the-record-the-store-its-build-named.loft::n_twice_self
+elab-pass1	agree	loft-suite/rules/closures/L-CapRebind/a-rebind-of-a-captured-local-leaves-the-record-the-store-its-build-named.loft::t_3RbH_OpDrop
 elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft::n_parameter
 elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft::n_run
 elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft::n_test_a_frame_and_its_closure_both_write_a_captured_text
@@ -23038,6 +23058,9 @@ elab-pass1	agree	loft-suite/rules/types/N-Shape/a-tuple-member-releases-once-wha
 elab-pass1	agree	loft-suite/rules/types/N-Shape/a-tuple-member-releases-once-whatever-it-is-declared-and-beside.loft::n_s2_trace_path
 elab-pass1	agree	loft-suite/rules/types/N-Shape/a-tuple-member-releases-once-whatever-it-is-declared-and-beside.loft::n_s3_trace_path
 elab-pass1	agree	loft-suite/rules/types/N-Shape/a-tuple-member-releases-once-whatever-it-is-declared-and-beside.loft::n_trace_path
+elab-pass1	agree	loft-suite/rules/types/N-Shape/a-tuple-member-releases-once-whatever-it-is-declared-and-beside.loft::t_3NbH_OpDrop
+elab-pass1	agree	loft-suite/rules/types/N-Shape/a-tuple-member-releases-once-whatever-it-is-declared-and-beside.loft::t_3NmH_OpDrop
+elab-pass1	agree	loft-suite/rules/types/N-Shape/a-tuple-member-releases-once-whatever-it-is-declared-and-beside.loft::t_3NtH_OpDrop
 elab-pass1	agree	loft-suite/rules/types/N-Shape/an-append-after-a-fn-ref-call-releases-its-backing.loft::n_main
 elab-pass1	agree	loft-suite/rules/types/N-Shape/an-append-after-a-fn-ref-call-releases-its-backing.loft::n_tot
 elab-pass1	agree	loft-suite/rules/types/N-Shape/an-operator-reads-the-type-under-a-literal-operand.loft::n_least
@@ -24092,6 +24115,7 @@ elab-pass1	agree	tests/scripts/1512-a-tuple-argument-call-member-releases-once.l
 elab-pass1	agree	tests/scripts/1512-a-tuple-argument-call-member-releases-once.loft::n_trace_path
 elab-pass1	agree	tests/scripts/1512-a-tuple-argument-call-member-releases-once.loft::n_two_members
 elab-pass1	agree	tests/scripts/1512-a-tuple-argument-call-member-releases-once.loft::n_via_local
+elab-pass1	agree	tests/scripts/1512-a-tuple-argument-call-member-releases-once.loft::t_1H_OpDrop
 elab-pass1	agree	tests/scripts/1513-a-rebound-adoption-hooks-live-memory.loft::n_mk_dense
 elab-pass1	agree	tests/scripts/1513-a-rebound-adoption-hooks-live-memory.loft::n_mk_two
 elab-pass1	agree	tests/scripts/1513-a-rebound-adoption-hooks-live-memory.loft::n_trace_path
