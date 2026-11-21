@@ -24,8 +24,8 @@ fn main() {
   for frame in 0..3 {
     w.poll();
     w.clear(rgb(0, 0, 0));
-    p.image(img, 0.0, 0.0, 93.0, 93.0);
-    p.image(t, 120.0, 0.0, tw as float, th as float);
+    p.image(w, img, 0.0, 0.0, 93.0, 93.0);
+    p.image(w, t, 120.0, 0.0, tw as float, th as float);
     if frame == 2 {
       c = w.capture();
       for row in 0..3 {
