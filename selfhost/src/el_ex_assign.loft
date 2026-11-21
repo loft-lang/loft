@@ -3659,7 +3659,9 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
   // such types are refused at their declaration here.)
   match e.p.nodes[rhs!] {
     SName { name: rn, member: rm } => {
-      if rm == "" && rn == written && el_vars::var(vars, rn) == v && el_vars::was_defined(vars, v) {
+      // (Not for a store-kind text link: its mention is the field it names, `OpGetText(OpVarRef(t),
+      // 0)`, no bare variable, so `t = t` writes the text back through the link as Rust's does.)
+      if rm == "" && rn == written && el_vars::var(vars, rn) == v && el_vars::was_defined(vars, v) && !el_ex_vector::store_text_link(vars, v) {
         return ex(ir::NdInsert { items: [] }, ir::TyVoid);
       }
     },
@@ -4640,7 +4642,8 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
   }
   // `bind_text_link_kind`: a local bound to a text link records its kind — the store kind for
   // a text field or element, the variable kind for a text local's slot.
-  if x.tp is TyRefVar && !vars.vars[v].argument && match x.tp { TyRefVar { inner } => inner is TyText, _ => false } {
+  // (A link to a nullable text local, `&text?`, is a text link of the variable kind too.)
+  if x.tp is TyRefVar && !vars.vars[v].argument && match x.tp { TyRefVar { inner } => el_types::base(inner) is TyText, _ => false } {
     // A copy of a store-kind link (`OpVarRef(t)`) is the store kind too.
     store = match el_ir::unspan(x.code) {
       NdCall { def_nr, args } => {
