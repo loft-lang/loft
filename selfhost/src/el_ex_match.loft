@@ -2070,7 +2070,7 @@ fn match_expr_inner(e: el::El, vars: el_vars::Vars, subject: integer, arms: vect
     };
   }
   if st is TyVector {
-    return vector_match(e, vars, x, arms);
+    return vector_match(e, vars, x, arms, bind: at_bind);
   }
 
   if st is TyTuple {
@@ -3057,7 +3057,7 @@ pub fn cursor_match(e: el::El, vars: el_vars::Vars, x: Ex, cs: vector<integer>, 
   ex(el_ir::v_block(setup + [m.code], m.tp, "cursor match"), m.tp)
 }
 
-pub fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>) -> Ex {
+pub fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>, bind: boolean = false) -> Ex {
   if el_trace::on() {
     el_trace::route(e, "parse_vector_match");
   }
@@ -3172,6 +3172,22 @@ pub fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>
     }
   }
   // Built on the first pass too: what the body answers there decides its text delivery.
+  // `@FR-P-Rest` / `@FR-B-Copy`: a vector match BOUND to a local (`r = match …`) sinks the bind
+  // into each arm — a rest capture materialised fresh and copied into a store of the local's
+  // own, a literal arm binding the local to the literal's store (`sink_bind_arms`).
+  sink_to = vars.assign_target;
+  sunk = false;
+  if !e.first_pass && bind && len(vars.cursor) == 0 && el_types::base(result) is TyVector && sink_to >= 0 && !vars.vars[sink_to].argument {
+    sb = sink_bind_arms(e, vars, out, elm, sink_to);
+    if sb != null {
+      out = sb!.arms;
+      result = ir::TyVoid;
+      vars.sunk_tp = sb!.tp;
+      vars.sunk_bind = sink_to;
+      sunk = true;
+    }
+  }
+  if !sunk {
   if !e.first_pass && len(vars.cursor) == 0 && (el_types::base(result) is TyReference || el_types::base(result) is TyVector) {
     tb = buffer_arms(e, vars, out, elm);
     if tb == null {
@@ -3180,6 +3196,7 @@ pub fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>
     }
     out = tb!.arms;
     result = tb!.tp;
+  }
   }
   // A cursor match answering a record: each arm answers its own record, a `null` arm the
   // sentinel, and the match is nullable where an arm is `null` (`type_null_arms`).
@@ -3235,6 +3252,63 @@ pub fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>
 }
 
 pub struct BufferArms { pub arms: vector<SMArm>, pub tp: ir::TypeT }
+
+// The arms of a vector match bound to local `r`, the bind sunk into each: an untyped `[]` arm is
+// the vector's empty literal (made first, as Rust's arm parse minted its store first), a literal
+// arm binds `r` to it (`r = {#Vector …}`), and an arm answering a capture it bound (a rest,
+// materialised fresh) gives `r` a store of its own and copies the capture in
+// (`OpAppendVector(r, t#1, row)`).  The match answers `r`, borrowing that store.  Null for an arm
+// of another form.
+fn sink_bind_arms(e: el::El, vars: el_vars::Vars, out: vector<SMArm>, elm: ir::TypeT, r: integer) -> BufferArms? {
+  if len(out) == 0 {
+    return null;
+  }
+  row = el_ex_vector::append_row(e, elm);
+  rows = vector_rows(e, el_types::without_deps(elm), 0, true);
+  if row < 0 || rows == null {
+    return null;
+  }
+  vt = ir::TyVector { inner: el_types::without_deps(elm), dep: [] };
+  codes: vector<ir::Node> = [];
+  for a in out {
+    c = el_ir::unspan(a.code);
+    if el_ex_pattern::is_empty_literal(c) {
+      c = el_ir::unspan(el_ex_pattern::empty_literal_to(e, vars, vt));
+    }
+    codes += [c];
+  }
+  // Every arm of a carried form before anything is minted for the local.
+  for c in codes {
+    ok = match c { NdBlock { block } => block[0].name == "Vector" || (block[0].name == "slice_binding" && len(block[0].operators) > 0 && el_ir::unspan(el_ir::last(block[0].operators)) is NdVar), _ => false };
+    if !ok {
+      return null;
+    }
+  }
+  rdb = -1;
+  arms: vector<SMArm> = [];
+  for c in codes {
+    bl = match c { NdBlock { block } => block[0], _ => return null };
+    if bl.name == "Vector" {
+      arms += [SMArm { guard: out[c#index]!.guard, code: el_ir::v_set(r, c) }];
+      continue;
+    }
+    last = el_ir::unspan(el_ir::last(bl.operators));
+    st = el_ex_pattern::literal_store(e, vars, r, rows!);
+    if rdb < 0 {
+      rdb = len(vars.vars) - 1;
+      for sv in st {
+        match sv { NdCall { def_nr: sd, args: sa } => { if el::def(e, sd).name == "OpDatabase" { rdb = match el_ir::unspan(sa[0]!) { NdVar { n: dn } => dn, _ => rdb }; } }, _ => {} }
+      }
+      // (Rust's `vector_db` for the local's store mints its element temp too, named nowhere in
+      // the code: `_elm_N` borrowing that store.)
+      el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [rdb] });
+    }
+    bl.operators[-1] = ir::NdInsert { items: st + [el_ir::cl(e, "OpAppendVector", [ir::NdVar { n: r }, last, ir::NdInt { n: row }])] };
+    bl.result = [ir::TyVoid];
+    arms += [SMArm { guard: out[c#index]!.guard, code: ir::NdBlock { block: [bl] } }];
+  }
+  BufferArms { arms: arms, tp: ir::TyVector { inner: el_types::without_deps(elm), dep: if rdb >= 0 { [rdb] } else { [] } } }
+}
 
 // A slice `match` at a vector function's tail whose first arm answers its rest capture, the
 // return buffer renamed onto it (the capture is the hidden parameter): every other arm's vector
