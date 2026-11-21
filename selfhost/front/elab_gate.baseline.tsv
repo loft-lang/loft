@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	0fe1a930c1a7f169457b2e8ca48ec8f762903595
 
-layer	elab	agree	1332	of	2132
+layer	elab	agree	1333	of	2132
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -293,7 +293,6 @@ elab	refused	loft-suite/rules/interfaces/G-Sat/1818-a-bound-is-satisfied-only-by
 elab	refused	loft-suite/rules/interfaces/G-Select/a-generic-ranks-below-a-concrete-match.loft
 elab	refused	loft-suite/rules/interfaces/G-Type/a-compound-on-a-generic-structs-field-writes-that-field-once.loft
 elab	refused	loft-suite/rules/interfaces/G-Type/a-template-instance-is-its-hand-written-twin-its-variants-included.loft
-elab	refused	loft-suite/rules/iteration/I-Comp/2345-a-comprehension-over-rev-stops-at-the-first-element.loft
 elab	refused	loft-suite/rules/iteration/I-Comp/a-build-that-reads-its-destination-reads-what-it-held.loft
 elab	refused	loft-suite/rules/iteration/I-Comp/a-comprehension-builds-fresh-records.loft
 elab	refused	loft-suite/rules/iteration/I-Comp/a-comprehension-destructures-its-element.loft
@@ -807,7 +806,7 @@ elab	refused	tests/scripts/store_compact_slack_730.loft
 elab	refused	tests/scripts/store_digest_b0.loft
 elab	refused	tests/scripts/store_paged_enum_field.loft
 
-layer	elab-functions	agree	14164	of	24417
+layer	elab-functions	agree	14164	of	24409
 elab-functions	agree	lib/docs.loft::Anchor
 elab-functions	agree	lib/docs.loft::Character
 elab-functions	agree	lib/docs.loft::Double
@@ -14973,7 +14972,7 @@ elab-functions	agree	tests/scripts/store_paged_enum_field.loft::main_vector<inte
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::n_bytes
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::vector<integer(0, 255)>
 
-layer	elab-pass1	agree	12004	of	17913
+layer	elab-pass1	agree	12005	of	17915
 elab-pass1	agree	lib/code.loft::t_4Code_add_block
 elab-pass1	agree	lib/code.loft::t_4Code_add_if
 elab-pass1	agree	lib/code.loft::t_4Code_add_loop
@@ -18758,6 +18757,7 @@ elab-pass1	agree	loft-suite/rules/interfaces/G-Select/a-generic-ranks-below-a-co
 elab-pass1	agree	loft-suite/rules/interfaces/G-Select/a-generic-ranks-below-a-concrete-match.loft::t_4Rock_tag
 elab-pass1	agree	loft-suite/rules/iteration/I-Comp/2344-a-comprehension-over-a-slice-reads-its-bounds-as-positions.loft::n_test_a_constant_body_counts_the_slice
 elab-pass1	agree	loft-suite/rules/iteration/I-Comp/2344-a-comprehension-over-a-slice-reads-its-bounds-as-positions.loft::n_test_negative_and_clamped_bounds
+elab-pass1	agree	loft-suite/rules/iteration/I-Comp/2345-a-comprehension-over-rev-stops-at-the-first-element.loft::n_test_rev_walks_back_once
 elab-pass1	agree	loft-suite/rules/iteration/I-Comp/a-build-that-reads-its-destination-reads-what-it-held.loft::n_first
 elab-pass1	agree	loft-suite/rules/iteration/I-Comp/a-build-that-reads-its-destination-reads-what-it-held.loft::n_total
 elab-pass1	agree	loft-suite/rules/iteration/I-Comp/a-build-that-reads-its-destination-reads-what-it-held.loft::n_val
