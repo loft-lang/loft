@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	0fe1a930c1a7f169457b2e8ca48ec8f762903595
 
-layer	elab	agree	1315	of	2132
+layer	elab	agree	1317	of	2132
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -680,7 +680,6 @@ elab	refused	tests/scripts/158-field-mint.loft
 elab	refused	tests/scripts/158-guard-free.loft
 elab	refused	tests/scripts/158-iteration-base.loft
 elab	refused	tests/scripts/158-keyed-fast-paths.loft
-elab	refused	tests/scripts/158-mint-window.loft
 elab	refused	tests/scripts/158-push-window.loft
 elab	refused	tests/scripts/158-scalar-file-read.loft
 elab	refused	tests/scripts/164-adopt-first-bind.loft
@@ -778,7 +777,6 @@ elab	refused	tests/scripts/a-generic-body-writes-a-narrow-element-as-its-vector-
 elab	refused	tests/scripts/a-guarded-row-fill-writes-what-its-guard-admits.loft
 elab	refused	tests/scripts/a-hash-walked-in-a-format-string-is-in-key-order.loft
 elab	refused	tests/scripts/a-hash-walked-unordered-repeats-its-order.loft
-elab	refused	tests/scripts/a-keyed-insert-stages-its-values-before-the-entry-is-found.loft
 elab	refused	tests/scripts/a-leaf-early-exit-is-decided-toward-its-access.loft
 elab	refused	tests/scripts/a-library-carries-generic-types-across-the-boundary.loft
 elab	refused	tests/scripts/a-library-carries-generics-across-the-boundary.loft
@@ -824,7 +822,7 @@ elab	refused	tests/scripts/store_compact_slack_730.loft
 elab	refused	tests/scripts/store_digest_b0.loft
 elab	refused	tests/scripts/store_paged_enum_field.loft
 
-layer	elab-functions	agree	14363	of	24687
+layer	elab-functions	agree	14307	of	24627
 elab-functions	agree	lib/docs.loft::Anchor
 elab-functions	agree	lib/docs.loft::Character
 elab-functions	agree	lib/docs.loft::Double
@@ -13099,6 +13097,7 @@ elab-functions	agree	tests/scripts/158-iteration-base.loft::vector<Ent>
 elab-functions	agree	tests/scripts/158-iteration-base.loft::vector<Named>
 elab-functions	agree	tests/scripts/158-iteration-base.loft::vector<Pt>
 elab-functions	agree	tests/scripts/158-iteration-base.loft::vector<Seg>
+elab-functions	agree	tests/scripts/158-keyed-fast-paths.loft::(schema)
 elab-functions	agree	tests/scripts/158-keyed-fast-paths.loft::ByDesc
 elab-functions	agree	tests/scripts/158-keyed-fast-paths.loft::ByFour
 elab-functions	agree	tests/scripts/158-keyed-fast-paths.loft::ByHash
@@ -13141,55 +13140,8 @@ elab-functions	agree	tests/scripts/158-keyed-fast-paths.loft::n_test_158_index_d
 elab-functions	agree	tests/scripts/158-keyed-fast-paths.loft::n_test_158_index_integer
 elab-functions	agree	tests/scripts/158-keyed-fast-paths.loft::n_test_158_index_text
 elab-functions	agree	tests/scripts/158-keyed-fast-paths.loft::n_test_158_ordered_by_reference
+elab-functions	agree	tests/scripts/158-keyed-fast-paths.loft::n_test_158_sorted_inline
 elab-functions	agree	tests/scripts/158-keyed-fast-paths.loft::vector<G>
-elab-functions	agree	tests/scripts/158-mint-window.loft::(schema)
-elab-functions	agree	tests/scripts/158-mint-window.loft::Big
-elab-functions	agree	tests/scripts/158-mint-window.loft::Box
-elab-functions	agree	tests/scripts/158-mint-window.loft::Dot
-elab-functions	agree	tests/scripts/158-mint-window.loft::Ev
-elab-functions	agree	tests/scripts/158-mint-window.loft::Mix
-elab-functions	agree	tests/scripts/158-mint-window.loft::Named
-elab-functions	agree	tests/scripts/158-mint-window.loft::P
-elab-functions	agree	tests/scripts/158-mint-window.loft::Poly
-elab-functions	agree	tests/scripts/158-mint-window.loft::Pt2
-elab-functions	agree	tests/scripts/158-mint-window.loft::Shape
-elab-functions	agree	tests/scripts/158-mint-window.loft::Two
-elab-functions	agree	tests/scripts/158-mint-window.loft::main_vector<Big>
-elab-functions	agree	tests/scripts/158-mint-window.loft::main_vector<Mix>
-elab-functions	agree	tests/scripts/158-mint-window.loft::main_vector<Named>
-elab-functions	agree	tests/scripts/158-mint-window.loft::main_vector<P>
-elab-functions	agree	tests/scripts/158-mint-window.loft::main_vector<Poly>
-elab-functions	agree	tests/scripts/158-mint-window.loft::main_vector<Pt2>
-elab-functions	agree	tests/scripts/158-mint-window.loft::main_vector<Shape>
-elab-functions	agree	tests/scripts/158-mint-window.loft::n_m1
-elab-functions	agree	tests/scripts/158-mint-window.loft::n_m10
-elab-functions	agree	tests/scripts/158-mint-window.loft::n_m11
-elab-functions	agree	tests/scripts/158-mint-window.loft::n_m12
-elab-functions	agree	tests/scripts/158-mint-window.loft::n_m12_pt
-elab-functions	agree	tests/scripts/158-mint-window.loft::n_m13
-elab-functions	agree	tests/scripts/158-mint-window.loft::n_m13_big
-elab-functions	agree	tests/scripts/158-mint-window.loft::n_m14
-elab-functions	agree	tests/scripts/158-mint-window.loft::n_m15
-elab-functions	agree	tests/scripts/158-mint-window.loft::n_m2
-elab-functions	agree	tests/scripts/158-mint-window.loft::n_m3
-elab-functions	agree	tests/scripts/158-mint-window.loft::n_m4
-elab-functions	agree	tests/scripts/158-mint-window.loft::n_m4b
-elab-functions	agree	tests/scripts/158-mint-window.loft::n_m5_side
-elab-functions	agree	tests/scripts/158-mint-window.loft::n_m5b
-elab-functions	agree	tests/scripts/158-mint-window.loft::n_m5b_side
-elab-functions	agree	tests/scripts/158-mint-window.loft::n_m6
-elab-functions	agree	tests/scripts/158-mint-window.loft::n_m7
-elab-functions	agree	tests/scripts/158-mint-window.loft::n_main
-elab-functions	agree	tests/scripts/158-mint-window.loft::n_pt2
-elab-functions	agree	tests/scripts/158-mint-window.loft::n_sx
-elab-functions	agree	tests/scripts/158-mint-window.loft::n_sy
-elab-functions	agree	tests/scripts/158-mint-window.loft::vector<Big>
-elab-functions	agree	tests/scripts/158-mint-window.loft::vector<Mix>
-elab-functions	agree	tests/scripts/158-mint-window.loft::vector<Named>
-elab-functions	agree	tests/scripts/158-mint-window.loft::vector<P>
-elab-functions	agree	tests/scripts/158-mint-window.loft::vector<Poly>
-elab-functions	agree	tests/scripts/158-mint-window.loft::vector<Pt2>
-elab-functions	agree	tests/scripts/158-mint-window.loft::vector<Shape>
 elab-functions	agree	tests/scripts/158-push-window.loft::(schema)
 elab-functions	agree	tests/scripts/158-push-window.loft::Bag
 elab-functions	agree	tests/scripts/158-push-window.loft::FPt
@@ -14648,16 +14600,6 @@ elab-functions	agree	tests/scripts/a-hash-walked-unordered-repeats-its-order.lof
 elab-functions	agree	tests/scripts/a-hash-walked-unordered-repeats-its-order.loft::n_filled
 elab-functions	agree	tests/scripts/a-hash-walked-unordered-repeats-its-order.loft::n_filled_t
 elab-functions	agree	tests/scripts/a-hash-walked-unordered-repeats-its-order.loft::n_ordered
-elab-functions	agree	tests/scripts/a-keyed-insert-stages-its-values-before-the-entry-is-found.loft::(schema)
-elab-functions	agree	tests/scripts/a-keyed-insert-stages-its-values-before-the-entry-is-found.loft::Dark
-elab-functions	agree	tests/scripts/a-keyed-insert-stages-its-values-before-the-entry-is-found.loft::Holder
-elab-functions	agree	tests/scripts/a-keyed-insert-stages-its-values-before-the-entry-is-found.loft::Light
-elab-functions	agree	tests/scripts/a-keyed-insert-stages-its-values-before-the-entry-is-found.loft::Mid
-elab-functions	agree	tests/scripts/a-keyed-insert-stages-its-values-before-the-entry-is-found.loft::P
-elab-functions	agree	tests/scripts/a-keyed-insert-stages-its-values-before-the-entry-is-found.loft::Q
-elab-functions	agree	tests/scripts/a-keyed-insert-stages-its-values-before-the-entry-is-found.loft::Shade
-elab-functions	agree	tests/scripts/a-keyed-insert-stages-its-values-before-the-entry-is-found.loft::W
-elab-functions	agree	tests/scripts/a-keyed-insert-stages-its-values-before-the-entry-is-found.loft::n_note
 elab-functions	agree	tests/scripts/a-leaf-early-exit-is-decided-toward-its-access.loft::(schema)
 elab-functions	agree	tests/scripts/a-leaf-early-exit-is-decided-toward-its-access.loft::Hz
 elab-functions	agree	tests/scripts/a-leaf-early-exit-is-decided-toward-its-access.loft::main_vector<float>
@@ -15189,7 +15131,7 @@ elab-functions	agree	tests/scripts/store_paged_enum_field.loft::main_vector<inte
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::n_bytes
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::vector<integer(0, 255)>
 
-layer	elab-pass1	agree	11975	of	17857
+layer	elab-pass1	agree	11975	of	17860
 elab-pass1	agree	lib/code.loft::t_4Code_add_block
 elab-pass1	agree	lib/code.loft::t_4Code_add_if
 elab-pass1	agree	lib/code.loft::t_4Code_add_loop
