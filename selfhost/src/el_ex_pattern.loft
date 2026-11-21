@@ -2340,7 +2340,12 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
       xs += [el_ex_assign::expression(e, vars, it)];
       vars.item_into = keep_into;
     } else {
+      // (`@FR-T-Chk-Var`: an item checked at a plain enum element resolves a bare variant name
+      // in that enum — `[X, Z]` against `vector<B>` is `B::X`, though `A` declares an `X`.)
+      keep_hint = vars.enum_hint;
+      vars.enum_hint = match el_types::base(declared) { TyEnum { n: hn, is_ref } => if is_ref { -1 } else { hn }, _ => -1 };
       xs += [el_ex_assign::expression(e, vars, it)];
+      vars.enum_hint = keep_hint;
     }
   }
   mixed = len(recs) > 0 && len(recs) != len(xs);

@@ -121,7 +121,7 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   ttail = el_ex_deliver::tail_syntax(e, body);
   // (So does a tail literal of numbers: each item is built AT the result's element — `fn f() ->
   // vector<u8> { [104, 101] }` pushes bytes.)
-  scalar_elem = match el_types::base(result) { TyVector { inner } => inner is TyInteger || inner is TyFloat || inner is TySingle, _ => false };
+  scalar_elem = match el_types::base(result) { TyVector { inner } => inner is TyInteger || inner is TyFloat || inner is TySingle || match inner { TyEnum { is_ref } => !is_ref, _ => false }, _ => false };
   lit_tail = ttail >= 0 && scalar_elem && match e.p.nodes[ttail] { SVecLit { items } => len(items) > 0, _ => false };
   if ttail >= 0 && (e.p.nodes[ttail] is SIf || e.p.nodes[ttail] is SMatch || lit_tail) && el_types::base(result) is TyVector {
     vars.expect_node = ttail;
