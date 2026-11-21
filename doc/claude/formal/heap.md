@@ -560,9 +560,10 @@ the record it points at, not a place of the holder's.
                  the destination reads the source's records as it would read their copy,
                  and the released slot holds what the copy would have released.  Exact
                  only when the copied type keeps every pointer as a record number inside
-                 its own store (scalars, texts, enums, inline structs and enum values,
-                 vectors of those): a stored reference names a slot and keeps the copy, as
-                 do the keyed collections, arrays and child records.  A store pinned to its
+                 its own store (scalars, texts, enums, inline structs and enum values, and
+                 the vectors, arrays, keyed collections and child records of those, whose
+                 own pointers are record numbers too — `(H-SwapKeyed)`'s reasoning): a
+                 stored reference names a slot and keeps the copy.  A store pinned to its
                  slot — a file, foreign bytes, a recording, a lock, a borrow, a constant,
                  a lazy binding, the interpreter's stack — keeps the copy; a free
                  protection refuses only the side the exchange releases.  And no exchange

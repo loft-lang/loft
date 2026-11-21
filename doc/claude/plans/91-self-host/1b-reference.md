@@ -60,7 +60,8 @@ a known-equal baseline.
   the cost was the capacity carry and the `(1, 8)` root tests, not a value.  The null-init now
   leaves the slot at 8 and `(H-ClearRelease)` states one position; guard
   `tests/reset_capacity.rs` `a_buffer_is_cleared_where_its_callee_filled_it`.
-- **E-2 — the store exchange for a record that holds a keyed collection.**  Rule:
+- **E-2 — the store exchange for a record that holds a keyed collection** — **SETTLED**
+  (STORE_MODEL D39): `(H-SwapIn)` takes `(H-SwapKeyed)`'s reasoning; both backends exchange.  Rule:
   `(H-SwapIn)` keeps the copy for "the keyed collections", which `(H-SwapKeyed)`'s own
   reasoning contradicts (a keyed collection's pointers are record numbers inside its store);
   the rule is extended first — the owner's call, as it widens a contract — and the C, which

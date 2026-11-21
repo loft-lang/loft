@@ -262,9 +262,24 @@ fn strict_swaps(mode: &str, tag: &str, program: &str) -> (usize, String) {
 #[test]
 fn a_record_holding_keyed_collections_or_children_moves_whole_on_both_backends() {
     let cells: Vec<(String, String, &str, usize)> = vec![
-        ("hash".into(), KEYED.replace("COLL", "hash"), "615 2 3 inv2", 6),
-        ("sorted".into(), KEYED.replace("COLL", "sorted"), "615 2 3 inv2", 6),
-        ("index".into(), KEYED.replace("COLL", "index"), "615 2 3 inv2", 6),
+        (
+            "hash".into(),
+            KEYED.replace("COLL", "hash"),
+            "615 2 3 inv2",
+            6,
+        ),
+        (
+            "sorted".into(),
+            KEYED.replace("COLL", "sorted"),
+            "615 2 3 inv2",
+            6,
+        ),
+        (
+            "index".into(),
+            KEYED.replace("COLL", "index"),
+            "615 2 3 inv2",
+            6,
+        ),
         ("children".into(), CHILDREN.to_string(), "1083 10 20 h1", 6),
         ("reference".into(), REFERENCE.to_string(), "48 2 6 h1", 0),
     ];
