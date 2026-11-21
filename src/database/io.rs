@@ -403,13 +403,11 @@ impl Stores {
                 store.set_byte(r.rec, r.pos, 0, i32::from(v));
             }
             5 => {
-                // text
-                let v = unsafe {
-                    let mut v = Vec::new();
-                    v.extend_from_slice(data);
-                    String::from_utf8_unchecked(v)
+                // text: UTF-8 only; bytes that are not leave the field as it was
+                let Ok(v) = std::str::from_utf8(data) else {
+                    return;
                 };
-                let s = store.set_str(v.as_str());
+                let s = store.set_str(v);
                 store.set_u32_raw(r.rec, r.pos, s);
             }
             _ => match self.types[tp as usize].parts.clone() {
