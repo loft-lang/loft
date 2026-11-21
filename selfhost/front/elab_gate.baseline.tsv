@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	0fe1a930c1a7f169457b2e8ca48ec8f762903595
 
-layer	elab	agree	1347	of	2132
+layer	elab	agree	1349	of	2132
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -26,7 +26,6 @@ elab	refused	loft-suite/rules/binding/B-Copy/2521-a-place-assigned-a-literal-tha
 elab	refused	loft-suite/rules/binding/B-Copy/a-binding-from-a-value-branch-copies-the-arm-it-takes.loft
 elab	refused	loft-suite/rules/binding/B-Copy/a-copy-of-a-compound-value-copies-every-member.loft
 elab	refused	loft-suite/rules/binding/B-Copy/a-deferred-copy-keeps-the-value-it-was-bound-to-whatever-the-source-does.loft
-elab	refused	loft-suite/rules/binding/B-Copy/a-keyed-local-rebound-from-a-call-that-reads-it-keeps-its-records.loft
 elab	refused	loft-suite/rules/binding/B-Copy/a-projection-into-a-kept-local-in-a-loop-is-a-copy.loft
 elab	refused	loft-suite/rules/binding/B-Copy/a-record-update-copies-its-base-then-writes-the-named-fields.loft
 elab	refused	loft-suite/rules/binding/B-Copy/a-struct-enum-value-copies-like-a-struct-at-every-bind-and-widening.loft
@@ -443,7 +442,6 @@ elab	refused	loft-suite/rules/ownership/O-Proxy/a-literal-after-a-map-keeps-its-
 elab	refused	loft-suite/rules/ownership/O-Proxy/a-vector-taken-from-another-variable-leaves-its-source.loft
 elab	refused	loft-suite/rules/ownership/O-Proxy/an-is-payload-binding-borrows-its-subject-like-its-match-twin.loft
 elab	refused	loft-suite/rules/ownership/O-SliceView/a-slice-answers-what-its-copy-would-on-every-half.loft
-elab	refused	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft
 elab	refused	loft-suite/rules/ownership/O-Witness/1446-a-capture-reassigned-after-the-build-is-freed-by-store-identity.loft
 elab	refused	loft-suite/rules/ownership/O-Witness/1466-a-call-result-takes-the-callees-pass-two-borrow-list.loft
 elab	refused	loft-suite/rules/ownership/O-Witness/2290-a-rebound-local-releases-a-branch-joined-call-result.loft
@@ -792,7 +790,7 @@ elab	refused	tests/scripts/store_compact_slack_730.loft
 elab	refused	tests/scripts/store_digest_b0.loft
 elab	refused	tests/scripts/store_paged_enum_field.loft
 
-layer	elab-functions	agree	14096	of	24150
+layer	elab-functions	agree	14040	of	24084
 elab-functions	agree	lib/docs.loft::Anchor
 elab-functions	agree	lib/docs.loft::Character
 elab-functions	agree	lib/docs.loft::Double
@@ -1210,15 +1208,6 @@ elab-functions	agree	loft-suite/rules/binding/B-Copy/a-deferred-copy-keeps-the-v
 elab-functions	agree	loft-suite/rules/binding/B-Copy/a-deferred-copy-keeps-the-value-it-was-bound-to-whatever-the-source-does.loft::vector<Op>
 elab-functions	agree	loft-suite/rules/binding/B-Copy/a-deferred-copy-keeps-the-value-it-was-bound-to-whatever-the-source-does.loft::vector<P>
 elab-functions	agree	loft-suite/rules/binding/B-Copy/a-deferred-copy-keeps-the-value-it-was-bound-to-whatever-the-source-does.loft::vector<boolean>
-elab-functions	agree	loft-suite/rules/binding/B-Copy/a-keyed-local-rebound-from-a-call-that-reads-it-keeps-its-records.loft::(schema)
-elab-functions	agree	loft-suite/rules/binding/B-Copy/a-keyed-local-rebound-from-a-call-that-reads-it-keeps-its-records.loft::Box
-elab-functions	agree	loft-suite/rules/binding/B-Copy/a-keyed-local-rebound-from-a-call-that-reads-it-keeps-its-records.loft::Rec
-elab-functions	agree	loft-suite/rules/binding/B-Copy/a-keyed-local-rebound-from-a-call-that-reads-it-keeps-its-records.loft::n_addh
-elab-functions	agree	loft-suite/rules/binding/B-Copy/a-keyed-local-rebound-from-a-call-that-reads-it-keeps-its-records.loft::n_addi
-elab-functions	agree	loft-suite/rules/binding/B-Copy/a-keyed-local-rebound-from-a-call-that-reads-it-keeps-its-records.loft::n_adds
-elab-functions	agree	loft-suite/rules/binding/B-Copy/a-keyed-local-rebound-from-a-call-that-reads-it-keeps-its-records.loft::n_addv
-elab-functions	agree	loft-suite/rules/binding/B-Copy/a-keyed-local-rebound-from-a-call-that-reads-it-keeps-its-records.loft::n_merge
-elab-functions	agree	loft-suite/rules/binding/B-Copy/a-keyed-local-rebound-from-a-call-that-reads-it-keeps-its-records.loft::n_other
 elab-functions	agree	loft-suite/rules/binding/B-Copy/a-projection-into-a-kept-local-in-a-loop-is-a-copy.loft::(schema)
 elab-functions	agree	loft-suite/rules/binding/B-Copy/a-projection-into-a-kept-local-in-a-loop-is-a-copy.loft::Ex
 elab-functions	agree	loft-suite/rules/binding/B-Copy/a-projection-into-a-kept-local-in-a-loop-is-a-copy.loft::MC
@@ -5325,6 +5314,7 @@ elab-functions	agree	loft-suite/rules/heap/H-Drop/1596-a-vector-rebound-from-a-c
 elab-functions	agree	loft-suite/rules/heap/H-Drop/1596-a-vector-rebound-from-a-call-result-releases-it.loft::n_g5
 elab-functions	agree	loft-suite/rules/heap/H-Drop/1596-a-vector-rebound-from-a-call-result-releases-it.loft::n_g6
 elab-functions	agree	loft-suite/rules/heap/H-Drop/1596-a-vector-rebound-from-a-call-result-releases-it.loft::n_g7
+elab-functions	agree	loft-suite/rules/heap/H-Drop/1596-a-vector-rebound-from-a-call-result-releases-it.loft::n_g8
 elab-functions	agree	loft-suite/rules/heap/H-Drop/1596-a-vector-rebound-from-a-call-result-releases-it.loft::n_k1
 elab-functions	agree	loft-suite/rules/heap/H-Drop/1596-a-vector-rebound-from-a-call-result-releases-it.loft::n_main
 elab-functions	agree	loft-suite/rules/heap/H-Drop/1596-a-vector-rebound-from-a-call-result-releases-it.loft::n_note
@@ -5447,6 +5437,7 @@ elab-functions	agree	loft-suite/rules/heap/H-Free/a-call-frees-the-record-it-mad
 elab-functions	agree	loft-suite/rules/heap/H-Free/a-call-frees-the-record-it-made-for-an-argument-however-it-was-built.loft::n_test_literal_field_and_block_arguments
 elab-functions	agree	loft-suite/rules/heap/H-Free/a-call-frees-the-record-it-made-for-an-argument-however-it-was-built.loft::n_test_the_guard_shape
 elab-functions	agree	loft-suite/rules/heap/H-Free/a-call-frees-the-record-it-made-for-an-argument-however-it-was-built.loft::n_test_what_the_callee_answers
+elab-functions	agree	loft-suite/rules/heap/H-Free/a-call-frees-the-record-it-made-for-an-argument-however-it-was-built.loft::n_test_what_the_callee_hands_back
 elab-functions	agree	loft-suite/rules/heap/H-Free/a-call-frees-the-record-it-made-for-an-argument-however-it-was-built.loft::vector<B>
 elab-functions	agree	loft-suite/rules/heap/H-Free/a-call-frees-the-record-it-made-for-an-argument-however-it-was-built.loft::vector<Bl>
 elab-functions	agree	loft-suite/rules/heap/H-Free/a-call-frees-the-record-it-made-for-an-argument-however-it-was-built.loft::vector<MArm>
@@ -8912,56 +8903,6 @@ elab-functions	agree	loft-suite/rules/ownership/O-SliceView/a-slice-answers-what
 elab-functions	agree	loft-suite/rules/ownership/O-SliceView/a-slice-answers-what-its-copy-would-on-every-half.loft::n_test_the_plain_case_reads_the_copy
 elab-functions	agree	loft-suite/rules/ownership/O-SliceView/a-slice-answers-what-its-copy-would-on-every-half.loft::n_total
 elab-functions	agree	loft-suite/rules/ownership/O-SliceView/a-slice-answers-what-its-copy-would-on-every-half.loft::n_tslice
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::(schema)
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::Ci1659
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::S1659
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::Sh1659
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::Sq1659
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::__closure_test_a_bound_capture_written_through_is_a_copy_0
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::__closure_test_a_capture_or_mint_bound_leaves_the_capture_0
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::__closure_test_a_capture_or_mint_inline_leaves_the_capture_0
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::__closure_test_a_coalesced_capture_0
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::__closure_test_a_nullable_capture_or_null_0
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::__closure_test_a_rebound_capture_is_a_copy_0
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::main_vector<S1659>
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::n___lambda_test_an_argument_handed_back_is_left_to_its_owner_0
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::n___lambda_test_an_inline_result_handed_to_another_fn_ref_0
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::n_area1659
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::n_bound1659
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::n_boundn1659
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::n_discard1659
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::n_fwd1659
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::n_height1659
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::n_hn1659
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::n_inline1659
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::n_inlinen1659
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::n_mk1659
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::n_nested1659
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::n_rebind1659
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::n_shape1659
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::n_shapes1659
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::n_test_a_bound_capture_written_through_is_a_copy
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::n_test_a_bound_result_is_released_per_call
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::n_test_a_capture_or_mint_bound_leaves_the_capture
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::n_test_a_capture_or_mint_inline_leaves_the_capture
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::n_test_a_coalesced_capture
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::n_test_a_discarded_result_is_released
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::n_test_a_forwarded_result_is_released_per_call
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::n_test_a_nullable_capture_or_null
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::n_test_a_rebound_capture_is_a_copy
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::n_test_a_rebound_local_releases_what_it_displaces
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::n_test_a_struct_enum_result_is_released_per_call
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::n_test_an_argument_handed_back_is_left_to_its_owner
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::n_test_an_inline_result_handed_to_another_fn_ref
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::n_test_an_inline_result_is_released_per_call
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::n_through1659
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::t_36__closure_test_a_coalesced_capture_0_OpDropAll
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::t_43__closure_test_a_nullable_capture_or_null_0_OpDropAll
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::t_44__closure_test_a_rebound_capture_is_a_copy_0_OpDropAll
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::t_58__closure_test_a_bound_capture_written_through_is_a_copy_0_OpDropAll
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::t_59__closure_test_a_capture_or_mint_bound_leaves_the_capture_0_OpDropAll
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::t_60__closure_test_a_capture_or_mint_inline_leaves_the_capture_0_OpDropAll
-elab-functions	agree	loft-suite/rules/ownership/O-Unknown/1659-an-opaque-fn-ref-record-result-is-owned-once.loft::vector<S1659>
 elab-functions	agree	loft-suite/rules/ownership/O-Witness/1446-a-capture-reassigned-after-the-build-is-freed-by-store-identity.loft::(schema)
 elab-functions	agree	loft-suite/rules/ownership/O-Witness/1446-a-capture-reassigned-after-the-build-is-freed-by-store-identity.loft::C46
 elab-functions	agree	loft-suite/rules/ownership/O-Witness/1446-a-capture-reassigned-after-the-build-is-freed-by-store-identity.loft::__closure_built_in_loop_1
@@ -12979,6 +12920,7 @@ elab-functions	agree	tests/scripts/158-push-window.loft::main_vector<float>
 elab-functions	agree	tests/scripts/158-push-window.loft::main_vector<integer(0, 255)>
 elab-functions	agree	tests/scripts/158-push-window.loft::main_vector<single>
 elab-functions	agree	tests/scripts/158-push-window.loft::main_vector<vector<integer>>
+elab-functions	agree	tests/scripts/158-push-window.loft::n_a1
 elab-functions	agree	tests/scripts/158-push-window.loft::n_d1
 elab-functions	agree	tests/scripts/158-push-window.loft::n_d2
 elab-functions	agree	tests/scripts/158-push-window.loft::n_d3_last
@@ -14890,7 +14832,7 @@ elab-functions	agree	tests/scripts/store_paged_enum_field.loft::main_vector<inte
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::n_bytes
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::vector<integer(0, 255)>
 
-layer	elab-pass1	agree	12075	of	18034
+layer	elab-pass1	agree	12077	of	18044
 elab-pass1	agree	lib/code.loft::t_4Code_add_block
 elab-pass1	agree	lib/code.loft::t_4Code_add_if
 elab-pass1	agree	lib/code.loft::t_4Code_add_loop
@@ -17838,6 +17780,7 @@ elab-pass1	agree	loft-suite/rules/heap/H-Drop/1594-a-tuple-member-is-released-on
 elab-pass1	agree	loft-suite/rules/heap/H-Drop/1596-a-vector-rebound-from-a-call-result-releases-it.loft::n_check
 elab-pass1	agree	loft-suite/rules/heap/H-Drop/1596-a-vector-rebound-from-a-call-result-releases-it.loft::n_g1
 elab-pass1	agree	loft-suite/rules/heap/H-Drop/1596-a-vector-rebound-from-a-call-result-releases-it.loft::n_g5
+elab-pass1	agree	loft-suite/rules/heap/H-Drop/1596-a-vector-rebound-from-a-call-result-releases-it.loft::n_g8
 elab-pass1	agree	loft-suite/rules/heap/H-Drop/1596-a-vector-rebound-from-a-call-result-releases-it.loft::n_k1
 elab-pass1	agree	loft-suite/rules/heap/H-Drop/1596-a-vector-rebound-from-a-call-result-releases-it.loft::n_main
 elab-pass1	agree	loft-suite/rules/heap/H-Drop/1596-a-vector-rebound-from-a-call-result-releases-it.loft::n_trace_path
@@ -24237,6 +24180,7 @@ elab-pass1	agree	tests/scripts/158-nested-field.loft::n_n8_len2
 elab-pass1	agree	tests/scripts/158-push-run.loft::n_main
 elab-pass1	agree	tests/scripts/158-push-run.loft::n_r4
 elab-pass1	agree	tests/scripts/158-push-run.loft::n_tot
+elab-pass1	agree	tests/scripts/158-push-window.loft::n_a1
 elab-pass1	agree	tests/scripts/158-push-window.loft::n_d1
 elab-pass1	agree	tests/scripts/158-push-window.loft::n_d2
 elab-pass1	agree	tests/scripts/158-push-window.loft::n_d3_last
