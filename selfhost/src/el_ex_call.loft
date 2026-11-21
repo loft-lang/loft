@@ -98,7 +98,10 @@ fn bound_refused(e: el::El, bound: ir::TypeT) -> text {
   scalar_vec = match bound { TyVector { inner: vi } => el_ex_object::scalar_type(vi) || vi is TyText || struct_ref(e, vi) >= 0, _ => false };
   // A tuple of plain scalars is bound as the value it is.
   scalar_tuple = match bound { TyTuple { elems: te } => len(te) > 0 && len([for m in te if !el_ex_object::scalar_type(m) || el_types::base(m) is TyText || (m is TyOptional) { m }]) == 0, _ => false };
-  if !(el_ex_object::scalar_type(bound) || bound is TyText || record || plain_enum || struct_enum || scalar_vec || scalar_tuple) || (bound is TyOptional && !nullable_scalar) || el_dispatch::identity(e, bound) == "" {
+  // A keyed collection is bound as the collection it is (`@FR-G-Sat-Eq`: `==` compares its
+  // content, `OpEqContent`).
+  keyed = match bound { TyHash { n: _ } => true, _ => false };
+  if !(el_ex_object::scalar_type(bound) || bound is TyText || record || plain_enum || struct_enum || scalar_vec || scalar_tuple || keyed) || (bound is TyOptional && !nullable_scalar) || el_dispatch::identity(e, bound) == "" {
     // A reference says which definition kind it names: a struct-enum variant, a tuple's or a
     // nullable's synthetic record, a type variable not yet bound.
     kind = match bound { TyReference { n } => "TyReference of a {def_kind(el::def(e, n))}", _ => type_kind(bound) };
@@ -178,7 +181,7 @@ pub fn instantiate(e: el::El, g: integer, types: vector<ir::TypeT>) -> integer {
   for bt in b!.types {
     // (`is_rewritable_vector_element_target`: a primitive, a record or a tuple — not a vector
     // or a struct enum, whose element write is never rewritten.)
-    if el_types::base(bt) is TyVector || el_types::struct_enum_def(bt) >= 0 {
+    if el_types::base(bt) is TyVector || el_types::struct_enum_def(bt) >= 0 || el_ex_base::keyed_kind(el_types::base(bt)) {
       continue;
     }
     el_schema::vector_type(e, el::def(e, type_def_nr(e, el_types::base(bt))).known_type);
@@ -253,6 +256,8 @@ pub fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::T
     TyTuple { elems: fte } => if el_types::tuple_def_of(e, [for m in fte { el_types::without_deps(m) }]) < 0 { -1 } else { el::def(e, el_types::tuple_def_of(e, [for m in fte { el_types::without_deps(m) }])).known_type },
     // (A vector is its own row: what a content comparison walks it by.)
     TyVector { inner: _ } => el_schema::content_type(e, el_types::without_deps(el_types::base(bound))),
+    // (A keyed collection is its store type's row, `OpEqContent(a, b, kt)`.)
+    TyHash { n: _ } => el_schema::keyed_type(e, el_types::without_deps(el_types::base(bound))),
     _ => el_ex_vector::append_row(e, el_types::base(bound))
   };
   // (An instance at a narrow integer width has that width's `vector<…>` row made with it, as a
@@ -338,7 +343,7 @@ pub fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::T
   // `resolve_content_eq` (`@FR-G-Sat-Eq`): a bound `==` over the variable becomes the concrete
   // `a == b` for the bound type — `call_op`, the one lowering a concrete site gets.
   if rows_known {
-    heap_bound = el_types::base(bound) is TyReference || el_types::base(bound) is TyVector || el_types::struct_enum_def(bound) >= 0;
+    heap_bound = el_types::base(bound) is TyReference || el_types::base(bound) is TyVector || el_types::struct_enum_def(bound) >= 0 || el_ex_base::keyed_kind(el_types::base(bound));
     iv = el_vars::load(f);
     code = resolve_content_eq(e, iv, code, stale_row, bound, heap_bound);
     f = el_vars::stored(iv);
