@@ -40,6 +40,7 @@ use std::fmt::Write as _;
 /// The C runtime every unit starts with — whole, on every tier: a unit compiles alone and no
 /// build compiles the runtime apart (`@C169`).
 const RUNTIME: &str = concat!(
+    include_str!("loft_os.h"),
     include_str!("loft_width.h"),
     include_str!("loft_cc.h"),
     include_str!("loft_text.h"),

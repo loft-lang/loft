@@ -17,6 +17,7 @@
  * (`loft_start`, which calls the `loft_init` only a program's unit defines).  MSVC's `cl` refuses
  * a static function called and never defined even where nothing calls the caller (C2129). */
 #define LOFT_SHIM_UNIT 1
+#include "loft_os.h"
 #include "loft_width.h"
 #include "loft_cc.h"
 #include "loft_text.h"

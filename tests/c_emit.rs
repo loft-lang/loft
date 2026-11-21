@@ -332,7 +332,8 @@ fn the_overflow_macros_answer_as_checked_arithmetic_in_every_mode() {
             }
         })
         .collect();
-    let mut c = String::from(include_str!("../src/c/loft_width.h"));
+    let mut c = String::from(include_str!("../src/c/loft_os.h"));
+    c.push_str(include_str!("../src/c/loft_width.h"));
     c.push_str(include_str!("../src/c/loft_cc.h"));
     let _ = write!(
         c,
@@ -3925,6 +3926,7 @@ fn the_c_hash_table_files_every_entry_where_hash_does() {
     let _ = writeln!(want, "bytes {fnv:016x}");
     let mut c = String::new();
     for part in [
+        include_str!("../src/c/loft_os.h"),
         include_str!("../src/c/loft_width.h"),
         include_str!("../src/c/loft_cc.h"),
         include_str!("../src/c/loft_text.h"),
@@ -4223,6 +4225,7 @@ fn the_c_index_files_every_record_where_btree_does() {
     let _ = writeln!(want, "bytes {fnv:016x}");
     let mut c = String::new();
     for part in [
+        include_str!("../src/c/loft_os.h"),
         include_str!("../src/c/loft_width.h"),
         include_str!("../src/c/loft_cc.h"),
         include_str!("../src/c/loft_text.h"),
@@ -4527,6 +4530,7 @@ fn the_c_trees_place_every_record_where_radix_tree_does() {
     let _ = writeln!(want, "bytes {fnv:016x}");
     let mut c = String::new();
     for part in [
+        include_str!("../src/c/loft_os.h"),
         include_str!("../src/c/loft_width.h"),
         include_str!("../src/c/loft_cc.h"),
         include_str!("../src/c/loft_text.h"),
@@ -5169,6 +5173,7 @@ fn the_c_reads_json_as_json_rs_does() {
     }
     let mut c = String::from("#define LOFT_JSON 1\n");
     for part in [
+        include_str!("../src/c/loft_os.h"),
         include_str!("../src/c/loft_width.h"),
         include_str!("../src/c/loft_cc.h"),
         include_str!("../src/c/loft_text.h"),
@@ -8236,6 +8241,7 @@ fn the_transient_arena_gives_back_what_a_mark_took() {
     }
     let mut c = String::new();
     for part in [
+        include_str!("../src/c/loft_os.h"),
         include_str!("../src/c/loft_width.h"),
         include_str!("../src/c/loft_cc.h"),
         include_str!("../src/c/loft_text.h"),

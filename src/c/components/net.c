@@ -7,6 +7,7 @@
  * (`loft_https.h`, which a C unit also pastes; `loft_web.h`, `loft_server.h`, `loft_ssh.h`,
  * `tls/loft_tls.c`, `tls/loft_ssh.c`).  Built ahead of time by `loft-components`
  * (`src/c/component.rs`), never where it is used. */
+#include "loft_os.h"
 #include "loft_width.h"
 #include "loft_cc.h"
 #include "loft_text.h"
