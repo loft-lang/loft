@@ -663,7 +663,12 @@ fn expression_node(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     },
     SLet { fixed, name, amp, tfixed, tp, e: rhs } => noted_bind(e, vars, el_ex_place::declaration(e, vars, fixed || amp || tfixed, name, tp, rhs)),
     SCall { at, f, args } => el_ex_object::call_expression(e, vars, at, f, args),
-    SString { parts } => el_ex_call::string_expression(e, vars, parts),
+    SString { parts } => {
+      // (`@FR-F-Target`: a template whose expected type is a struct with a `lit` method builds
+      // that value, `interpolation_target`.)
+      tg = if n == vars.expect_node { el_ex_call::interpolation_target(e, vars.expect) } else { -1 };
+      if tg >= 0 && len(parts) >= 1 { el_ex_call::template_object(e, vars, parts, tg) } else { el_ex_call::string_expression(e, vars, parts) }
+    },
     SIntrinsic { at, kind, args } => el_ex_object::intrinsic(e, vars, at, kind, args),
     SMember { at, e: re, name, args, call } => tuple_field_copy(e, vars, n, el_ex_object::member(e, vars, at, re, name, args, call)),
     SBin { at, op, l, r } => el_ex_call::binary(e, vars, at, op, l, r),

@@ -1870,6 +1870,163 @@ pub fn scalar(t: ir::TypeT) -> boolean {
   }
 }
 
+// `Parser::interpolation_target` (`@FR-F-Target`): the struct a template checked against `t`
+// builds — one with a method `lit` — or -1, the template then text.
+pub fn interpolation_target(e: el::El, t: ir::TypeT) -> integer {
+  d = match el_types::base(t) { TyReference { n: rn } => rn, _ => -1 };
+  if d < 0 || el::def(e, d).def_type != el::DT_STRUCT {
+    return -1;
+  }
+  if type_method(e, d, "lit") < 0 { -1 } else { d }
+}
+
+// `Parser::type_method`: the method `name` of type `d` (`t_<LEN><Type>_<name>`), looked up in the
+// type's own source first; -1 for none.
+pub fn type_method(e: el::El, d: integer, name: text) -> integer {
+  nm = el::def(e, d).name;
+  key = "t_{len(nm)}{nm}_{name}";
+  m = el::source_nr(e, el::def(e, d).source, key);
+  if m >= 0 { m } else { el::def_nr(e, key) }
+}
+
+// `Parser::hole_kind`: the hole kind a value of type `name` asks for, its name in the case a
+// method is written in — a word starts at a capital after a lower-case letter or a digit, or
+// at the last capital of an acronym run (`SQLIdent` -> `sql_ident`, `Name` -> `name`).
+pub fn hole_kind(name: text) -> text {
+  out = "";
+  cs: vector<character> = [for c in name { c }];
+  for c in cs {
+    i = c#index;
+    up = c >= 'A' && c <= 'Z';
+    if i > 0 && up {
+      prev = cs[i - 1]!;
+      prev_lower = prev >= 'a' && prev <= 'z';
+      prev_digit = prev >= '0' && prev <= '9';
+      prev_upper = prev >= 'A' && prev <= 'Z';
+      next_lower = i + 1 < len(cs) && cs[i + 1]! >= 'a' && cs[i + 1]! <= 'z';
+      if prev_lower || prev_digit || (prev_upper && next_lower) {
+        out += "_";
+      }
+    }
+    out += if up { "{c}".to_lowercase() } else { "{c}" };
+  }
+  out
+}
+
+// `Parser::parse_string` against a target (`@FR-F-Target`, `begin_format_object`, `format_lit`,
+// `format_hole`): a fresh `__fmt_N` record of the target — nulled, given its store, its fields
+// initialised as a literal's are — then `lit(s)` for every NON-EMPTY literal run and
+// `hole_<kind>(v)` for every hole, in source order, each a call of the target's method; the
+// block answers the record ("Formatted object").  A hole's kind is its type's (`text`, `int`,
+// `float`, …, a struct or enum by its name); nullability is not a kind.  A format spec on such
+// a hole, a kind the target has no method for, and a `lit` of another shape are refused by name.
+pub fn template_object(e: el::El, vars: el_vars::Vars, parts: vector<integer>, target: integer) -> Ex {
+  rt = ir::TyReference { n: target, dep: [] };
+  var = el_vars::work_format(vars, rt);
+  list: vector<ir::Node> = [];
+  if e.first_pass {
+    list = [el_ir::v_set(var, ir::NdNull), el_ir::cl(e, "OpDatabase", [ir::NdVar { n: var }, ir::NdInt { n: el::def(e, target).known_type }])];
+  } else {
+    fl = el_ex_place::object_fields(e, vars, var, target, []);
+    if fl == null {
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    list = fl!;
+  }
+  last = parts[-1];
+  first_text = if len(parts) == 1 { text_part(e, last) } else { text_part(e, (parts[0]) - 1) };
+  if !template_lit(e, vars, target, var, first_text, list) {
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  if len(parts) > 1 {
+    for h in parts {
+      match e.p.nodes[h] {
+        SHole { e: he, spec, spec_end } => {
+          if he == null {
+            el::refuse(e, "a hole with no value");
+            return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+          }
+          if spec < spec_end {
+            el::refuse(e, "a format spec on a hole of a template that builds a value");
+            return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+          }
+          x = el_ex_assign::expression(e, vars, he!);
+          if !template_hole(e, vars, target, var, x, list) {
+            return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+          }
+          after = if h#index + 1 < len(parts) - 1 { (parts[h#index + 1] ?? 1) - 1 } else { last };
+          if !template_lit(e, vars, target, var, text_part(e, after), list) {
+            return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+          }
+        },
+        _ => {}
+      }
+    }
+  }
+  list += [ir::NdVar { n: var }];
+  tp = ir::TyReference { n: target, dep: [var] };
+  ex(el_ir::v_block(list, tp, "Formatted object"), tp)
+}
+
+// `format_lit`: `lit(var, s)` for a non-empty run.
+fn template_lit(e: el::El, vars: el_vars::Vars, target: integer, var: integer, s: text, list: vector<ir::Node>) -> boolean {
+  if s == "" {
+    return true;
+  }
+  d = type_method(e, target, "lit");
+  if d < 0 || len(el::def(e, d).attributes) != 2 {
+    el::refuse(e, "a format target's `lit` of another shape");
+    return false;
+  }
+  c = call_args(e, vars, d, [ir::NdVar { n: var }, ir::NdText { s: s }], [el_vars::tp(vars, var), ir::TyText { dep: [] }]);
+  if c == null {
+    return false;
+  }
+  if !e.first_pass {
+    list += [c!.code];
+  }
+  true
+}
+
+// `format_hole`: `hole_<kind>(var, v)`, the kind the hole's type names.
+fn template_hole(e: el::El, vars: el_vars::Vars, target: integer, var: integer, x: Ex, list: vector<ir::Node>) -> boolean {
+  t = el_types::base(x.tp);
+  kind = match t {
+    TyText { dep: _ } => "text",
+    TyInteger { spec: _ } => "int",
+    TyFloat => "float",
+    TySingle => "single",
+    TyBoolean => "boolean",
+    TyCharacter => "character",
+    TyReference { n: hd } => if el::def(e, hd).def_type == el::DT_STRUCT { hole_kind(el::def(e, hd).name) } else { "" },
+    TyEnum { n: he } => hole_kind(el::def(e, he).name),
+    _ => ""
+  };
+  if e.first_pass && kind == "" {
+    return true;
+  }
+  if kind == "" {
+    el::refuse(e, "a hole of this type in a template that builds a value: {type_kind(t)}");
+    return false;
+  }
+  d = type_method(e, target, "hole_{kind}");
+  if d < 0 || len(el::def(e, d).attributes) != 2 {
+    if e.first_pass {
+      return true;
+    }
+    el::refuse(e, "a template hole the target has no method for: hole_{kind}");
+    return false;
+  }
+  c = call_args(e, vars, d, [ir::NdVar { n: var }, x.code], [el_vars::tp(vars, var), x.tp]);
+  if c == null {
+    return false;
+  }
+  if !e.first_pass {
+    list += [c!.code];
+  }
+  true
+}
+
 // `Parser::parse_string`: a string with no hole is its text; one with holes renders into a
 // `__work_N` text — set to the text before the first hole, each hole's value formatted onto it
 // (`append_data`), each literal part after a hole appended — and the block answers the work
