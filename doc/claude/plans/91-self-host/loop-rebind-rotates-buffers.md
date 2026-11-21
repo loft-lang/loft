@@ -33,7 +33,8 @@ B-Copy:68   for x in [3, 1, 2] { d = addv(d, x); }
 The partner is a fresh `__ref_N` minted per call site.  Its null-init goes right after the
 buffer's own null-init (rotate_loop_retbufs: "so the two stay adjacent in `var_order`").  The
 two ops are spliced in right after the self-feeding call's statement.  The rewrite runs over
-the whole body after it is parsed (expressions.rs ~1017).
+the whole body after it is parsed, on the SECOND pass only (expressions.rs ~1017, just before
+`own_fresh_binds`).
 
 ## Each form judged
 
