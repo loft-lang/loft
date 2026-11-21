@@ -45,9 +45,12 @@ Let `buffer_arms` (or a sibling of it) take a record result.  For each arm:
 - a record literal is built in its own `__ref_p2_N` and copied into the buffer the same way;
 - `null` answers `OpNullRefSentinel()`.
 
-The match answers the buffer, typed `S[<buffer>]` (with `?` for a nullable result).  **Open:** in
-1414 the buffer is named `__ref_1`, not `__retbuf`.  Its subject is a LOCAL vector the function
-declares, which may decide the name.  Measure the cause before you rely on either name.
+The match answers the buffer, typed `S[<buffer>]` (with `?` for a nullable result).  **The
+buffer's name follows the subject** (measured by the porter): over a PARAMETER, Rust keeps
+`__retbuf`; over a LOCAL vector (1414's `first_struct`), it renames the return buffer onto a work
+ref, `__ref_1`.  And the slice block and the match are typed as the buffer for a DENSE binding
+(`S["__retbuf"]`), but keep the binding's own type for a nullable one (`S["a#1"]?`, 1414's
+`head_n`).
 
 ## Probes (the sole programs, each with hand-computed answers)
 
