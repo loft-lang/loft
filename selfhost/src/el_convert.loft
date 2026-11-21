@@ -650,14 +650,22 @@ pub fn convert_store(e: el::El, vars: el_vars::Vars, code: ir::Node, src: ir::Ty
       if cn != null {
         return cn;
       }
+      // (`convert` guards the slot's declared range whatever the conversion was: a `u8?` value
+      // into a `u8?` slot is still checked against `0..=254`, loft#984.)
       if el_types::is_equal(e, src, should) {
-        return code;
+        return if e.first_pass || null_source(e, code) { code } else { guard_range(e, code, should, guard_source(vars, code, src), true) };
       }
       match src {
         TyOptional { inner: si } => return convert_store(e, vars, code, si, inner),
         _ => {}
       }
-      return convert_store(e, vars, code, src, inner);
+      // (…and a value converted to the base is guarded against the NULLABLE slot's range, as
+      // `convert` asks it: a `u8` into a `u8?` meets `0..=254`.)
+      cs = convert_store(e, vars, code, src, inner);
+      if cs == null || e.first_pass || null_source(e, code) {
+        return cs;
+      }
+      return guard_range(e, cs!, should, guard_source(vars, code, src), true);
     },
     _ => {}
   }

@@ -120,6 +120,7 @@ NET_EXPORT void n_ws_close(int64_t id) { loft_srv_ws_close(id); }
 NET_EXPORT int64_t n_ws_accept_nonblocking(int64_t h) { return loft_srv_ws_accept_nonblocking(h); }
 NET_EXPORT int64_t n_ws_clients_len(void) { return loft_srv_clients_len(); }
 NET_EXPORT uint8_t n_ws_client_active(int64_t id) { return loft_srv_client_active(id); }
+NET_EXPORT void n_ws_allow_origins(int64_t h, const uint8_t *o, size_t on) { loft_srv_allow_origins(h, net_arg(o, on)); }
 NET_EXPORT uint8_t n_ws_next_event(int64_t h) { return loft_srv_ws_next_event(h); }
 NET_EXPORT int64_t n_ws_event_kind(void) { return loft_srv_ev_kind; }
 NET_EXPORT int64_t n_ws_event_client_id(void) { return loft_srv_ev_cid; }
@@ -197,6 +198,7 @@ BRIDGE(ws_close) { UNUSED; n_ws_close(I(0)); r->tag = LOFT_FFI_TAG_VOID; }
 BRIDGE(ws_accept_nonblocking) { UNUSED; *r = loft_ffi_value_i64(n_ws_accept_nonblocking(I(0))); }
 BRIDGE(ws_clients_len) { UNUSED; *r = loft_ffi_value_i64(n_ws_clients_len()); }
 BRIDGE(ws_client_active) { UNUSED; *r = loft_ffi_value_bool(n_ws_client_active(I(0))); }
+BRIDGE(ws_allow_origins) { UNUSED; n_ws_allow_origins(I(0), T(1)); r->tag = LOFT_FFI_TAG_VOID; }
 BRIDGE(ws_next_event) { UNUSED; *r = loft_ffi_value_bool(n_ws_next_event(I(0))); }
 BRIDGE(ws_event_kind) { UNUSED; *r = loft_ffi_value_i64(n_ws_event_kind()); }
 BRIDGE(ws_event_client_id) { UNUSED; *r = loft_ffi_value_i64(n_ws_event_client_id()); }
@@ -220,7 +222,7 @@ BRIDGE(ssh_close) { UNUSED; n_ssh_close(I(0)); r->tag = LOFT_FFI_TAG_VOID; }
     X(tcp_listen) X(tcp_listen_on) X(tcp_listen_tls) X(tcp_listen_tls_on) X(tcp_accept) X(tcp_accept_nonblocking) \
     X(tcp_method) X(tcp_path) X(tcp_body) X(tcp_headers) X(tcp_respond) X(tcp_respond_typed) X(tcp_respond_bytes) \
     X(tcp_respond_full) X(tcp_slice) X(tcp_close) X(ws_upgrade) X(ws_recv) X(ws_message) X(ws_opcode) X(ws_send) \
-    X(ws_send_binary) X(ws_close) X(ws_accept_nonblocking) X(ws_clients_len) X(ws_client_active) X(ws_next_event) \
+    X(ws_send_binary) X(ws_close) X(ws_accept_nonblocking) X(ws_clients_len) X(ws_client_active) X(ws_allow_origins) X(ws_next_event) \
     X(ws_event_kind) X(ws_event_client_id) X(ws_event_payload) X(ws_broadcast) X(ws_idle_sleep_ms) \
     X(ssh_connect) X(ssh_host_key) X(ssh_login) X(ssh_open_shell) X(ssh_send) X(ssh_recv) X(ssh_resize) X(ssh_is_open) X(ssh_close)
 

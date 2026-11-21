@@ -55,6 +55,9 @@ pub fn ws_clients_len_native() -> integer;
 #native "n_ws_clients_len"
 pub fn ws_client_active_native(id: integer) -> boolean;
 #native "n_ws_client_active"
+pub fn ws_allow_origins_native(handle: integer, origins: text);
+#native "n_ws_allow_origins"
+
 pub fn ws_next_event_native(handle: integer) -> boolean;
 #native "n_ws_next_event"
 pub fn ws_event_kind_native() -> integer;

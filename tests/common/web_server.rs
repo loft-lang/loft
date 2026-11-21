@@ -66,6 +66,9 @@ fn http(s: &mut TcpStream, head: &str) {
             .into_bytes(),
         ),
         "/sized" => ("200 OK", "Content-Length: 1234\r\n".into(), Vec::new()),
+        // Bodies at and one past the ceiling the web test runs under (2000 bytes).
+        "/fits" => ("200 OK", String::new(), vec![b'f'; 2000]),
+        "/over" => ("200 OK", String::new(), vec![b'o'; 2001]),
         // Redirects to `/echo`: on this server, and on the one at the port the path names
         // (another origin), the second also as a 307, which keeps the method and the body.
         "/hop" => ("302 Found", "Location: /echo\r\n".into(), Vec::new()),

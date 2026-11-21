@@ -376,7 +376,7 @@ the better-PHP design · [lib_plans/README.md](doc/claude/lib_plans/README.md) (
 
 **Libraries / registry / packages:** any library work starts at [LIBRARY_AUTHORING.md § The library
 contract](doc/claude/LIBRARY_AUTHORING.md); publishing is the `loft-library` skill ·
-[LIBRARY_CHECKLIST.md](doc/claude/LIBRARY_CHECKLIST.md) · [LIBRARY_DEPENDENCIES.md](doc/claude/LIBRARY_DEPENDENCIES.md) a change that reaches dependents: floors, order, checks · [THIRDPARTY.md](doc/claude/THIRDPARTY.md) third-party code we ship · a library's API: `LIBRARIES.md` (`make libcatalogue`) ·
+[LIBRARY_CHECKLIST.md](doc/claude/LIBRARY_CHECKLIST.md) · [LIBRARY_DEPENDENCIES.md](doc/claude/LIBRARY_DEPENDENCIES.md) a change that reaches dependents: floors, order, checks · [LIBRARY_WIDTH32.md](doc/claude/LIBRARY_WIDTH32.md) the `width32` claim, what checks it, what to write · [THIRDPARTY.md](doc/claude/THIRDPARTY.md) third-party code we ship · a library's API: `LIBRARIES.md` (`make libcatalogue`) ·
 [LIBRARY_BRANCHES.md](doc/claude/LIBRARY_BRANCHES.md) · [PACKAGES.md](doc/claude/PACKAGES.md) · [API_SURFACE.md](doc/claude/API_SURFACE.md) ·
 [REGISTRY_SUBMIT.md](doc/claude/REGISTRY_SUBMIT.md) / [REGISTRY_BOOTSTRAP.md](doc/claude/REGISTRY_BOOTSTRAP.md) /
 [REGISTRY_RECOVERY.md](doc/claude/REGISTRY_RECOVERY.md) · [PKG_REGISTRY.md](doc/claude/PKG_REGISTRY.md) · [REPL.md](doc/claude/REPL.md).

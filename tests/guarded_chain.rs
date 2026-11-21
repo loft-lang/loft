@@ -143,6 +143,48 @@ fn counts(rust: &str) -> HashMap<String, [usize; 10]> {
     map
 }
 
+/// The emitted Rust cut at each top-level `fn`, keyed by the function's name; what comes
+/// before the first one is keyed by the empty name.  A coroutine's methods are indented, so
+/// they stay with the function that precedes them.
+fn rust_by_function(rust: &str) -> Vec<(String, String)> {
+    let mut parts: Vec<(String, String)> = vec![(String::new(), String::new())];
+    for line in rust.lines() {
+        if let Some(rest) = line.strip_prefix("fn ")
+            && let Some(paren) = rest.find('(')
+        {
+            parts.push((rest[..paren].to_string(), String::new()));
+        }
+        let body = &mut parts.last_mut().expect("one part at least").1;
+        body.push_str(line);
+        body.push('\n');
+    }
+    parts
+}
+
+/// The emitted names (`n_<name>`) of the functions `default/*.loft` defines.
+fn stdlib_functions() -> std::collections::HashSet<String> {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("default");
+    let mut names = std::collections::HashSet::new();
+    for file in fa::read_dir(&dir).expect("list default/") {
+        if !fa::has_extension(&file, "loft") {
+            continue;
+        }
+        let text = fa::read_to_string(&file).expect("read a default/ file");
+        for line in text.lines() {
+            let line = line.trim_start();
+            let rest = line
+                .strip_prefix("pub fn ")
+                .or_else(|| line.strip_prefix("fn "));
+            if let Some(rest) = rest
+                && let Some(end) = rest.find(['(', '<'])
+            {
+                names.insert(format!("n_{}", &rest[..end]));
+            }
+        }
+    }
+    names
+}
+
 fn run(args: &[&str], env: &[(&str, &str)]) -> String {
     let mut a: Vec<&str> = args.to_vec();
     let s = cells().to_str().unwrap().to_string();
@@ -260,9 +302,18 @@ fn a_coroutine_body_carries_no_loop_entry_guard_and_still_compiles() {
     );
     let rust = fa::read_to_string(&out).expect("read the emitted Rust");
     let _ = fa::remove_file(&out);
+    // The program's own code: every emitted function but the standard library's, whose loft
+    // functions are written into each program and guard their own loops as any loop does.
+    let stdlib = stdlib_functions();
+    let mine = rust_by_function(&rust)
+        .into_iter()
+        .filter(|(name, _)| !stdlib.contains(name))
+        .map(|(_, body)| body)
+        .collect::<Vec<_>>()
+        .join("\n");
     for marker in ["GuardedChain guard", "BoundedNest guard"] {
         assert_eq!(
-            rust.matches(marker).count(),
+            mine.matches(marker).count(),
             0,
             "a generator's emission carries no `{marker}`"
         );

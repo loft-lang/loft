@@ -1,0 +1,14 @@
+diff --git a/selfhost/src/el_ex_place.loft b/selfhost/src/el_ex_place.loft
+index 54ebff4b0..af976cbb1 100644
+--- a/selfhost/src/el_ex_place.loft
++++ b/selfhost/src/el_ex_place.loft
+@@ -3876,7 +3876,8 @@ fn unspared_reads(e: el::El, n: ir::Node, root: integer, off: integer) -> intege
+ // `[vector<int<…>>, int<…>]` — as `field_get` reads it (`field_content`); a local of that type is
+ // `vector<integer>`.  Empty for any other element, or before the layout.
+ fn four_byte_field_rows(e: el::El, d: integer, fname: text, inner: ir::TypeT) -> vector<integer> {
+-  four = match inner { TyInteger { spec } => el_types::int4(spec) || el_types::uint4(spec), _ => false };
++  // (So does a narrow one — `vector<u8>`, `vector<i16>` — its `byte` / `short_raw` content row.)
++  four = match inner { TyInteger { spec } => el_types::int4(spec) || el_types::uint4(spec) || el_types::narrow_width(spec) > 0, _ => false };
+   k = el::def(e, d).known_type;
+   if !four || e.first_pass || k == el_schema::NO_TYPE {
+     return [];

@@ -41,14 +41,16 @@
 <pre><code>  type ChatMessage, from alice: hi there
 </code></pre>
 <h2 id="on-the-wire">On the wire</h2>
-<p>Format an envelope with <code>:j</code> and it is JSON text, ready for any transport; on the other side, <code>GameEnvelope.parse(text)</code> reads it back into the same structure.  The payload is text too — a game decides what goes in it (a move, a serialized state, a line of chat).</p>
+<p>Format an envelope with <code>:j</code> and it is JSON text, ready for any transport; on the other side, <code>text as GameEnvelope?</code> reads it back into the same structure.  The payload is text too — a game decides what goes in it (a move, a serialized state, a line of chat).</p>
 <pre><code><span class="kw">fn</span> <span class="fn-call">on_the_wire</span>() {
   out = <span class="fn-call">msg_input</span>(<span class="st">"player1"</span>, <span class="st">"move:left"</span>);
   out.timestamp = <span class="nm">0</span>;  <span class="cm">// pinned, so the text below is exact</span>
   wire = <span class="st">"{out:j}"</span>;
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(wire == <span class="st">"{{\"</span>sender\<span class="st">":\"</span>player1\<span class="st">",\"</span>recipient\<span class="st">":\"</span>\<span class="st">",\"</span>sequence\<span class="st">":0,\"</span>timestamp\<span class="st">":0,\"</span>message\<span class="st">":{{\"</span>msg_type\<span class="st">":{{\"</span><span class="en">PlayerInput</span>\<span class="st">":{{}}}},\"</span>payload\<span class="st">":\"</span>move:left\<span class="st">"}}}}"</span>,
-         <span class="st">"the envelope as JSON text"</span>);
-  got = <span class="en">GameEnvelope</span>.<span class="fn-call">parse</span>(wire);
+         <span class="st">"the envelope as JSON text"</span>);</code></pre>
+<p><code>as GameEnvelope?</code>: a text that leaves the message's type out answers null rather than an envelope with a type nobody sent.</p>
+<pre><code>  got = wire <span class="kw">as</span> <span class="en">GameEnvelope</span>?;
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(got != <span class="kw">null</span>, <span class="st">"the text carries every field"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(got.sender == <span class="st">"player1"</span> &amp;&amp; got.message.payload == <span class="st">"move:left"</span>, <span class="st">"read back"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(got.message.msg_type == <span class="en">MsgType</span>.<span class="en">PlayerInput</span>, <span class="st">"and its type with it"</span>);
   <span class="fn-call"><a href="stdlib-output-and-diagnostics.html">println</a></span>(<span class="st">"wire    : {len(wire)} bytes of JSON, read back as a PlayerInput"</span>);

@@ -33,7 +33,9 @@ use el_ex_deliver;
 // borrows, then `OpWriteFile(f, OpCreateStack(_wf_N), row)` with the value's store row
 // (`get_type`; a `character` or `boolean` its fixed-width base, `io_scalar_db_tp`; an `as`
 // cast's alias width).  A record value and a value with no byte layout are refused by name.
-pub fn file_append(e: el::El, vars: el_vars::Vars, f: integer, rhs: integer, x: Ex) -> Ex {
+// (`f` is the file local, or -1 where the file is a FIELD read, `place`: `b.h += "ab"` writes
+// to the file the field holds, `OpWriteFile(OpGetField(b, …), …)`.)
+pub fn file_append(e: el::El, vars: el_vars::Vars, f: integer, rhs: integer, x: Ex, place: ir::Node = ir::NdNull) -> Ex {
   vt = el_types::base(x.tp);
   // A cast to a sized alias in the value (`last_cast_alias`, the last to complete) writes at the
   // alias's width: its byte, short or 4-byte integer row (`database.byte` / `short`,
@@ -69,10 +71,13 @@ pub fn file_append(e: el::El, vars: el_vars::Vars, f: integer, rhs: integer, x: 
     el::refuse(e, "a file write of a value with no byte layout: {type_kind(x.tp)}");
     return ex(ir::NdNull, ir::TyVoid);
   }
-  el_vars::drop_use(vars, f);
+  if f >= 0 {
+    el_vars::drop_use(vars, f);
+  }
+  ftarget = if f >= 0 { ir::NdVar { n: f } } else { place };
   ex(ir::NdInsert { items: [
     el_ir::v_set(tmp, x.code),
-    el_ir::cl(e, "OpWriteFile", [ir::NdVar { n: f }, el_ir::cl(e, "OpCreateStack", [ir::NdVar { n: tmp }]), ir::NdInt { n: row }])
+    el_ir::cl(e, "OpWriteFile", [ftarget, el_ir::cl(e, "OpCreateStack", [ir::NdVar { n: tmp }]), ir::NdInt { n: row }])
   ] }, ir::TyVoid)
 }
 
@@ -768,8 +773,11 @@ pub fn index(e: el::El, vars: el_vars::Vars, at: integer, c: integer?, keys: vec
 // one record of a bare struct literal: each a
 // struct literal built as a record of the collection (`OpNewRecord(v, type, u16::MAX)`, its
 // fields, `OpFinishRecord`, which indexes it).  Any other item is refused by name.
-pub fn keyed_items(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> vector<ir::Node>? {
-  ct = el_types::base(el_vars::tp(vars, v));
+// A keyed FIELD of a local record (`box.data += R { … }`): `v` is the owner, `fd` its record
+// and `fnr` the field's number — each record made through the owner and the field's position,
+// `OpNewRecord(box, <Box>, 0)`, as Rust spells a field append; the element borrows the owner.
+pub fn keyed_items(e: el::El, vars: el_vars::Vars, v: integer, n: integer, fd: integer = -1, fnr: integer = -1) -> vector<ir::Node>? {
+  ct = if fd >= 0 { el_types::base(el::def(e, fd).attributes[fnr]!.typedef[0] ?? ir::TyVoid) } else { el_types::base(el_vars::tp(vars, v)) };
   // (Through a link — `c: &hash<Row[id]>` — the collection the link names.)
   match ct {
     TyRefVar { inner: li } => { ct = el_types::base(li); },
@@ -787,7 +795,8 @@ pub fn keyed_items(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> ve
   if len(items) > 0 {
     elm = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [v] });
   }
-  kt = if e.first_pass { 65535 } else { el_schema::keyed_type(e, ct) };
+  kt = if e.first_pass { 65535 } else if fd >= 0 { el::def(e, fd).known_type } else { el_schema::keyed_type(e, ct) };
+  kpos = if fd >= 0 { fnr } else { 65535 };
   w = ir::NdVar { n: v };
   at = ir::NdVar { n: elm };
   ls: vector<ir::Node> = [];
@@ -806,13 +815,13 @@ pub fn keyed_items(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> ve
         return null;
       }
       el_vars::set_var_type(vars, elm, ir::TyReference { n: el_d, dep: [v] });
-      ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: kt }, ir::NdInt { n: 65535 }]))];
+      ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: kt }, ir::NdInt { n: kpos }]))];
       kcopy = el_ex_match::record_item_copy(e, vars, elm, el_d, kx);
       if kcopy == null {
         return null;
       }
       ls += kcopy!;
-      ls += [el_ir::cl(e, "OpFinishRecord", [w, at, ir::NdInt { n: kt }, ir::NdInt { n: 65535 }])];
+      ls += [el_ir::cl(e, "OpFinishRecord", [w, at, ir::NdInt { n: kt }, ir::NdInt { n: kpos }])];
       continue;
     }
     if sd != el_d {
@@ -833,13 +842,13 @@ pub fn keyed_items(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> ve
     if fl == null {
       return null;
     }
-    ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: kt }, ir::NdInt { n: 65535 }]))];
+    ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: kt }, ir::NdInt { n: kpos }]))];
     for op in fl! {
       if op#index >= 2 {
         ls += [op];
       }
     }
-    ls += [el_ir::cl(e, "OpFinishRecord", [w, at, ir::NdInt { n: kt }, ir::NdInt { n: 65535 }])];
+    ls += [el_ir::cl(e, "OpFinishRecord", [w, at, ir::NdInt { n: kt }, ir::NdInt { n: kpos }])];
   }
   ls
 }

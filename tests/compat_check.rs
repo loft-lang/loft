@@ -254,6 +254,42 @@ fn a_layout_break_is_held_against_the_data_floor() {
     );
 }
 
+/// A record that gained a public field is an API break AND a reshaped record.  The API floor
+/// raised past it declares both: the package may keep its data floor where it was, which says
+/// the files it writes are still read (hex_body 0.2.0 did exactly this, and a format of a
+/// package's own is not its records' layout).
+#[test]
+fn a_reshaped_public_record_is_declared_by_the_api_floor_alone() {
+    let b = Bench::new("api_declares_layout");
+    let url = b.publish_first(
+        "recpkg",
+        "pub struct Rig { pub a: integer }\npub fn rig() -> Rig { Rig { a: 1 } }\n",
+    );
+    let wider = "pub struct Rig { pub a: integer, pub b: integer }\n\
+                 pub fn rig() -> Rig { Rig { a: 1, b: 2 } }\n";
+
+    package(&b.tree(), "recpkg", "0.2.0", "0.2.0", "0.1.0", wider);
+    for full in [false, true] {
+        let (ok, said) = b.check(&url, full);
+        assert!(
+            ok,
+            "full={full}: the API floor raised declares the reshaped record:\n{said}"
+        );
+        assert!(
+            said.contains("DECLARED BREAK"),
+            "full={full}: and the break is still reported:\n{said}"
+        );
+    }
+
+    // The control: with neither floor raised it is the unclaimed break.
+    package(&b.tree(), "recpkg", "0.2.0", "0.1.0", "0.1.0", wider);
+    let (ok, said) = b.check(&url, true);
+    assert!(
+        !ok,
+        "neither floor raised: a break nobody declared:\n{said}"
+    );
+}
+
 /// The other direction of loft#2598: raising the DATA floor does not declare an API break.
 #[test]
 fn an_api_break_is_not_declared_by_the_data_floor() {

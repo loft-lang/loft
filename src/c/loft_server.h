@@ -45,6 +45,10 @@ int loft_tls_poll(struct loft_tls *t, int ms);
 typedef struct {
     int fd; /* -1: a closed slot */
     void *tls; /* a `struct loft_tls_server *` for a TLS listener */
+    /* The origins whose pages may open a WebSocket here, one per line; 0 or "": any.  A browser
+     * names the page's origin on every upgrade, whatever site the page is of; a client that is
+     * not a browser sends none and is not asked. */
+    char *origins;
 } loft_srv_listener;
 
 static LOFT_TLS loft_srv_listener *loft_srv_ls;
@@ -284,6 +288,7 @@ static int64_t loft_srv_bind(const char *addr, size_t an, int64_t port, void *tl
     loft_srv_ls = grown;
     loft_srv_ls[loft_srv_nls].fd = fd;
     loft_srv_ls[loft_srv_nls].tls = tls;
+    loft_srv_ls[loft_srv_nls].origins = 0;
     return (int64_t) loft_srv_nls++;
 }
 
@@ -360,9 +365,36 @@ static uint8_t loft_srv_tcp_accept(int64_t h, int nonblocking) {
     return 1;
 }
 
+/* `ws_allow_origins`: the listener's allowed origins become `list` (one per line; empty: any). */
+static void loft_srv_allow_origins(int64_t h, loft_str list) {
+    loft_srv_listener *l = loft_srv_listener_at(h);
+    if (!l) return;
+    free(l->origins);
+    l->origins = loft_cstr_own(list);
+}
+
+/* Whether a request with these headers may upgrade on `l`: it names no origin, the listener
+ * lists none, or the origin is a line of the list (compared whole, case-insensitively). */
+static int loft_srv_origin_allowed(const loft_srv_listener *l, const loft_text *heads) {
+    const char *v;
+    size_t vn;
+    if (!l || !l->origins || !*l->origins || !loft_srv_header(heads, "origin", &v, &vn)) return 1;
+    for (const char *p = l->origins; *p;) {
+        const char *e = strchr(p, '\n');
+        size_t n = e ? (size_t) (e - p) : strlen(p);
+        while (n && (p[n - 1] == '\r' || p[n - 1] == ' ')) n--;
+        if (n == vn && strncasecmp(p, v, n) == 0) return 1;
+        if (!e) break;
+        p = e + 1;
+    }
+    return 0;
+}
+
 static void loft_srv_tcp_close(int64_t h) {
     loft_srv_listener *l = loft_srv_listener_at(h);
     if (!l) return;
+    free(l->origins);
+    l->origins = 0;
     loft_sock_close(l->fd);
     l->fd = -1;
 #ifdef LOFT_HTTPS
@@ -556,6 +588,12 @@ static int64_t loft_srv_accept_client(int64_t h) {
         loft_srv_park(conn);
         return -3;
     }
+    if (!loft_srv_origin_allowed(loft_srv_listener_at(h), &loft_srv_heads)) {
+        static const char no[] = "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+        (void) loft_stream_write_all(&conn, no, sizeof no - 1);
+        loft_stream_close(&conn);
+        return -2;
+    }
     if (!loft_srv_upgrade(&conn, &loft_srv_heads)) {
         loft_stream_close(&conn);
         return -2;
@@ -626,7 +664,9 @@ static uint8_t loft_srv_event(int64_t kind, int64_t cid) {
 static uint8_t loft_srv_ws_next_event(int64_t h) {
     int64_t got = loft_srv_accept_client(h);
     if (got >= 0) {
-        loft_srv_ev_payload.len = 0;
+        /* A connect carries the upgrade request's headers (`Key: Value` lines), so a program
+         * can decide about a client by what it sent — its origin, a cookie, a token. */
+        loft_srv_set(&loft_srv_ev_payload, loft_srv_heads.p, loft_srv_heads.len);
         return loft_srv_event(0, got);
     }
     if (got == -3) {

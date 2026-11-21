@@ -481,6 +481,15 @@ while IFS=$'\t' read -r name ver repo libdir _why; do
         sed -n '1,20p' "$tmp/thirdparty_$name.log" | sed 's/^/      /'
         SKIPPED_LIBS+=("$name-$ver"); continue
     fi
+    # A package that declares `width32 = true` claims it works in a 32-bit program: its tests
+    # pass under --width 32, or it does not enter the registry saying so (LIBRARY_WIDTH32.md).
+    if ( cd "$libdir" && "$LOFT" compat width32 ) > /dev/null 2>&1; then
+        if ! ( cd "$libdir" && env -u DISPLAY LOFT_TIMEOUT=600 "$LOFT" --width 32 --interpret --tests tests ) > "$tmp/width32_$name.log" 2>&1; then
+            echo "  ⚠ $name $ver — declares width32 and its tests do not pass under --width 32."
+            grep -E '^[[:space:]]*(FAIL|Error|error)' "$tmp/width32_$name.log" | sed -n '1,12p' | sed 's/^/      /'
+            SKIPPED_LIBS+=("$name-$ver"); continue
+        fi
+    fi
     # Step 7 — the RELEASE gate proves the WHOLE claim, not the O(1) sample a PR pays
     # for.  A PR asks "did this change break something"; publishing asks "is everything
     # this package promises actually true", and only the second is a promise to people

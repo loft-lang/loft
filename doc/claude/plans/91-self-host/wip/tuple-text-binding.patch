@@ -1,0 +1,15 @@
+diff --git a/selfhost/src/el_ex_call.loft b/selfhost/src/el_ex_call.loft
+index 9897802e2..56604c7b2 100644
+--- a/selfhost/src/el_ex_call.loft
++++ b/selfhost/src/el_ex_call.loft
+@@ -96,8 +96,8 @@ fn bound_refused(e: el::El, bound: ir::TypeT) -> text {
+   struct_enum = match bound { TyEnum { n: _, is_ref } => is_ref, _ => false };
+   // A vector of plain scalars or texts is bound as the collection it is.
+   scalar_vec = match bound { TyVector { inner: vi } => el_ex_object::scalar_type(vi) || vi is TyText || struct_ref(e, vi) >= 0, _ => false };
+-  // A tuple of plain scalars is bound as the value it is.
+-  scalar_tuple = match bound { TyTuple { elems: te } => len(te) > 0 && len([for m in te if !el_ex_object::scalar_type(m) || el_types::base(m) is TyText || (m is TyOptional) { m }]) == 0, _ => false };
++  // A tuple of plain scalars and texts is bound as the value it is.
++  scalar_tuple = match bound { TyTuple { elems: te } => len(te) > 0 && len([for m in te if !(el_ex_object::scalar_type(m) && !(el_types::base(m) is TyText) || el_types::base(m) is TyText && !(m is TyOptional)) || (m is TyOptional) { m }]) == 0, _ => false };
+   if !(el_ex_object::scalar_type(bound) || bound is TyText || record || plain_enum || struct_enum || scalar_vec || scalar_tuple) || (bound is TyOptional && !nullable_scalar) || el_dispatch::identity(e, bound) == "" {
+     // A reference says which definition kind it names: a struct-enum variant, a tuple's or a
+     // nullable's synthetic record, a type variable not yet bound.

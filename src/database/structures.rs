@@ -110,8 +110,12 @@ fn prefill_trace_enabled() -> bool {
 #[derive(Default)]
 pub(super) struct ReadRefs {
     pub path: Vec<String>,
-    pub at: std::collections::HashMap<String, DbRef>,
+    /// The record each pointer names, with the type it was read as.
+    pub at: std::collections::HashMap<String, (DbRef, u16)>,
     pub pending: Vec<(DbRef, String, u16)>,
+    /// The records this read marked as named (`@FR-H-Removed`), so the marks no reference
+    /// ends up needing are taken back when the read ends.
+    pub marked: Vec<(u16, u32)>,
 }
 
 thread_local! {
@@ -3160,10 +3164,6 @@ impl Stores {
     /// its field by name and read into it, a key the type does not have is read and
     /// dropped, the last of a repeated key stands, and a field no member named
     /// takes its absent value.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "the member loop with its `@FR-F-Read-Ref` arms ($refs, a reference field)"
-    )]
     fn read_struct(
         &mut self,
         rd: &mut crate::json::JParser,
@@ -3188,16 +3188,9 @@ impl Stores {
         // vector only for a record with more.
         let mut found = 0u64;
         let mut found_more: Vec<u16> = Vec::new();
-        // `@FR-F-Read-Ref` — this record's pointer is the path it is read at, first one wins.
-        let top_level = with_read_refs(|r| {
-            let p = read_pointer(&r.path);
-            r.at.entry(p).or_insert(DbRef {
-                store_nr: to.store_nr,
-                rec,
-                pos: fld,
-            });
-            r.path.is_empty()
-        });
+        // `@FR-F-Read-Ref` — this record's pointer is the path it is read at.
+        self.read_place(to.store_nr, rec, fld, tp);
+        let top_level = with_read_refs(|r| r.path.is_empty());
         while more {
             let (name, key_at, value_at) = rd.member(start)?;
             if top_level == Some(true) && name == "$refs" {
@@ -3332,24 +3325,76 @@ impl Stores {
         Ok(())
     }
 
+    /// `@FR-F-Read-Ref` — the record read at the current path is the one its pointer names.
+    /// The first record read at a path keeps it, unless that record has been removed since —
+    /// a member or a key the document states twice replaces what the first one built — and
+    /// then the path names the record that took its place.
+    ///
+    /// `@FR-H-Removed` — a pointer may name this record before the read ends, so it is marked
+    /// as named now: a removal during the read then keeps its position, no later record takes
+    /// it, and the pointer finds a removed record instead of a stranger.
+    fn read_place(&mut self, store_nr: u16, rec: u32, pos: u32, tp: u16) {
+        let Some((path, old)) = with_read_refs(|r| {
+            let p = read_pointer(&r.path);
+            let old = r.at.get(&p).map(|(d, _)| *d);
+            (p, old)
+        }) else {
+            return;
+        };
+        if let Some(old) = old
+            && !self.reference_removed(old.store_nr, old.rec)
+        {
+            return;
+        }
+        let fresh = self
+            .allocations
+            .get_mut(store_nr as usize)
+            .is_some_and(|s| s.note_referenced_new(rec));
+        with_read_refs(|r| {
+            r.at.insert(path, (DbRef { store_nr, rec, pos }, tp));
+            if fresh {
+                r.marked.push((store_nr, rec));
+            }
+        });
+    }
+
     /// `@FR-F-Read-Ref` — write every parked reference: the record its pointer names, or a
-    /// misfit naming the pointer nothing in the document holds.
+    /// misfit for a pointer that names no record, a record of another type than the
+    /// reference's, or one the document itself replaced.  A reference is stored through
+    /// [`Self::set_db_ref`], as every other one is, so its record is marked as named.
     pub(super) fn resolve_read_refs(&mut self, failed: &mut Vec<WalkErr>) {
         let Some(ctx) = READ_REFS.with(|c| c.borrow_mut().take()) else {
             return;
         };
-        for (slot, ptr, _) in &ctx.pending {
-            match ctx.at.get(ptr) {
-                Some(target) => {
-                    let store = self.store_mut(slot);
-                    store.set_u32_raw(slot.rec, slot.pos, u32::from(target.store_nr));
-                    store.set_u32_raw(slot.rec, slot.pos + 4, target.rec);
-                    store.set_u32_raw(slot.rec, slot.pos + 8, target.pos);
+        let mut named: std::collections::HashSet<(u16, u32)> = std::collections::HashSet::new();
+        for (slot, ptr, wanted) in &ctx.pending {
+            let misfit = match ctx.at.get(ptr) {
+                None => Some("names no record of the document"),
+                Some((_, tp)) if tp != wanted => Some("names a record of another type"),
+                Some((target, _)) if self.reference_removed(target.store_nr, target.rec) => {
+                    Some("names a record the document replaced")
                 }
-                None => failed.push(WalkErr {
+                Some((target, _)) => {
+                    named.insert((target.store_nr, target.rec));
+                    self.set_db_ref(slot, 0, *target);
+                    None
+                }
+            };
+            if let Some(why) = misfit {
+                failed.push(WalkErr {
                     at: 0,
-                    path: vec![format!("$ref \"{ptr}\" names no record of the document")],
-                }),
+                    path: vec![format!("$ref \"{ptr}\" {why}")],
+                });
+            }
+        }
+        // A record no reference came to name gives its mark back: it is removed as any
+        // other record is.  One removed during the read keeps its position.
+        for (store_nr, rec) in ctx.marked {
+            if !named.contains(&(store_nr, rec))
+                && !self.reference_removed(store_nr, rec)
+                && let Some(store) = self.allocations.get_mut(store_nr as usize)
+            {
+                store.forget_referenced(rec);
             }
         }
     }
@@ -3727,15 +3772,8 @@ impl Stores {
         let mut found_more: Vec<u16> = Vec::new();
         // `@FR-F-Read-Ref` — the tree walk (an out-of-line child's members, a `JsonValue`
         // read) keeps the same path and parks the same references as `read_struct`.
-        let tracked = with_read_refs(|r| {
-            let p = read_pointer(&r.path);
-            r.at.entry(p).or_insert(DbRef {
-                store_nr: to.store_nr,
-                rec,
-                pos: fld,
-            });
-        })
-        .is_some();
+        self.read_place(to.store_nr, rec, fld, tp);
+        let tracked = with_read_refs(|_| ()).is_some();
         for (name, key_at, value) in entries {
             // A key no field has matches nothing here and is skipped, not refused — as
             // the `JsonValue` walker (`populate_struct_from_jsonvalue`) does.  Refusing it

@@ -1650,6 +1650,7 @@ fn primary(p: Syntax) -> integer? {
     [KwSizeof, LParen, t: ty, RParen] => add(p, SSizeof { at: at, kind: "sizeof", tp: t, e: null }),
     [KwSizeof, LParen, e: expr, RParen] => add(p, SSizeof { at: at, kind: "sizeof", tp: null, e: e }),
     ["type_name", LParen, t: ty, RParen] => add(p, SSizeof { at: at, kind: "type_name", tp: t, e: null }),
+    ["type_name", LParen, e: expr, RParen] => add(p, SSizeof { at: at, kind: "type_name", tp: null, e: e }),
     [KwAssert, a: call_args] => add(p, SIntrinsic { at: at, kind: "assert", args: items(p, a) }),
     [KwPanic, a: call_args] => add(p, SIntrinsic { at: at, kind: "panic", args: items(p, a) }),
     ["vector", Lt, Ident { name }, _g: close_angle, Dot, "parse", a: call_args] =>
