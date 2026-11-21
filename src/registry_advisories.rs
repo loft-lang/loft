@@ -606,6 +606,13 @@ pub fn load_or_fetch(opts: &LoadOptions) -> Result<Option<AdvisoryFeed>, String>
                     fetched.signature.clone()
                 };
                 verify_feed(&fetched.content, &sig_bytes, *opts)?;
+                // Signed is not fresh: a feed older than the verified one cached is refused.
+                if let Ok(cached) = read_cached_feed_verified(&cache_path, &sig_path, *opts)
+                    && let Some(why) =
+                        registry_index::rollback_refusal("advisory feed", &fetched.content, &cached)
+                {
+                    return Err(why);
+                }
                 // Verified: now it is safe to keep.  Atomically, and as a pair —
                 // another process reading this cache mid-refresh must not get a half
                 // feed or the new feed beside the old signature (loft#1045).

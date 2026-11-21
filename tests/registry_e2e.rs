@@ -2255,3 +2255,19 @@ fn a_download_that_fails_its_hash_never_reaches_its_destination() {
     assert!(fa::exists(&dest), "a match lands at its destination");
     let _ = fa::remove_dir_all(&tmp);
 }
+
+// A signature proves who wrote an index, not when: a validly signed but OLDER index served
+// again would roll the cache back to fewer yanks and older hashes.  It is refused against
+// the verified copy already cached; a newer one, or one without a stamp, is not.
+#[test]
+fn an_index_older_than_the_cached_one_is_refused() {
+    use loft::registry_index::{rollback_refusal, updated_stamp};
+    let old = br#"{"schema_version": 1, "updated": "2026-10-01T00:00:00Z", "packages": {}}"#;
+    let new = br#"{"schema_version":1,"updated" : "2026-11-21T00:00:00Z","packages":{}}"#;
+    let none = br#"{"schema_version": 1, "packages": {}}"#;
+    assert_eq!(updated_stamp(new), "2026-11-21T00:00:00Z", "the stamp is read with any spacing");
+    assert!(rollback_refusal("index", old, new).is_some(), "older than the cache: refused");
+    assert!(rollback_refusal("index", new, old).is_none(), "newer: taken");
+    assert!(rollback_refusal("index", new, new).is_none(), "the same: taken");
+    assert!(rollback_refusal("index", none, new).is_none(), "no stamp: nothing to compare");
+}

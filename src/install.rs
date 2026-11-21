@@ -617,6 +617,13 @@ fn load_index_inner(
                 };
                 verify_or_explain(&fetched.content, &sig_bytes, opts)
                     .map_err(|verdict| fetched_pair_verdict(verdict, &fetched, &sig_bytes, &url))?;
+                // Signed is not fresh: an index older than the verified one cached is refused.
+                if let Ok(cached) = read_cached_index_verified(&idx_path, &sig_path, opts)
+                    && let Some(why) =
+                        registry_index::rollback_refusal("index", &fetched.content, &cached)
+                {
+                    return Err(why);
+                }
                 // Verified: now it is safe to keep.  Both files land atomically,
                 // because a plain write truncates first and another process
                 // reading this cache mid-refresh would get a half index or the

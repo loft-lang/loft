@@ -1813,6 +1813,43 @@ fn branch_commit(advertisement: &[u8], tail: &str) -> Option<(String, String)> {
     Some((commit.to_string(), tail[branch.len() + 1..].to_string()))
 }
 
+/// The `updated` stamp of an index or advisory feed, read without parsing the rest; empty when
+/// it has none.  Both are written as RFC 3339 UTC (`2026-11-21T00:00:00Z`), which orders as
+/// text.
+#[must_use]
+pub fn updated_stamp(content: &[u8]) -> String {
+    let Ok(text) = std::str::from_utf8(content) else {
+        return String::new();
+    };
+    let Some(at) = text.find("\"updated\"") else {
+        return String::new();
+    };
+    let rest = text[at + 9..].trim_start();
+    let Some(rest) = rest.strip_prefix(':') else {
+        return String::new();
+    };
+    let rest = rest.trim_start();
+    let Some(rest) = rest.strip_prefix('"') else {
+        return String::new();
+    };
+    rest.split('"').next().unwrap_or("").to_string()
+}
+
+/// Why a freshly fetched, validly signed `what` (an index or a feed) is refused: it is older
+/// than the verified copy already cached.  A signature proves who wrote the bytes, not when,
+/// so an old signed copy served again would otherwise roll the cache back to a state with
+/// fewer yanks, fewer advisories and older hashes.  `None` when either has no stamp.
+#[must_use]
+pub fn rollback_refusal(what: &str, fetched: &[u8], cached: &[u8]) -> Option<String> {
+    let (new, old) = (updated_stamp(fetched), updated_stamp(cached));
+    (!new.is_empty() && !old.is_empty() && new < old).then(|| {
+        format!(
+            "the registry served a {what} older than the one already verified here \
+             (served {new}, cached {old}); it is refused and the cache is unchanged"
+        )
+    })
+}
+
 /// Download `url`, check it against `sha256` (the hash the signed index publishes) while it
 /// is still in memory, and only then place it at `dest`, atomically.  A file that does not
 /// match never exists on disk, not even for the moment between a write and a check: a
