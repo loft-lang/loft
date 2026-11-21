@@ -29,7 +29,7 @@ globalThis.localStorage = {
   removeItem: (k) => store.delete(k),
 };
 
-const { LoftPageFS } = await import('../doc/loft-fs.js');
+const { LoftPageFS, loftFS } = await import('../doc/loft-fs.js');
 
 let failures = 0;
 function check(name, got, want) {
@@ -109,6 +109,40 @@ console.log('persistence');
   check('a created directory survives', reloaded.isDirectory('/work/saves'), true);
   check('a deletion survives', reloaded.exists('/base.txt'), false);
   check('the base tree is still there', reloaded.isDirectory('/work'), true);
+}
+
+// ── Two games on one origin keep two saves ────────────────────────────────────
+
+console.log('one save per page');
+{
+  // With no `loftFSKey` the key is the page's path: one key for every page made the games
+  // on an origin read and overwrite each other's saves.
+  delete globalThis.loftFSKey;
+  globalThis.location = { pathname: '/games/moros/' };
+  // A save from before saves were kept per page: carried over, not lost.
+  store.set('loft-fs-delta', JSON.stringify(new LoftPageFS({}, null, '/').getDelta()));
+  const legacy = new LoftPageFS({}, null, '/');
+  legacy.write('/save.txt', new TextEncoder().encode('old save'));
+  store.set('loft-fs-delta', JSON.stringify(legacy.getDelta()));
+  delete globalThis.__loftFS;
+  const moros = loftFS();
+  check('an older shared save is carried over', text(moros.read('/save.txt')), 'old save');
+  check('under the page\'s own key', store.has('loft-fs-delta:/games/moros/'), true);
+  moros.write('/save.txt', new TextEncoder().encode('moros'));
+  moros.flush();
+  globalThis.location = { pathname: '/games/dryopea/' };
+  store.delete('loft-fs-delta');
+  delete globalThis.__loftFS;
+  const dryopea = loftFS();
+  check('another page does not see it', dryopea.exists('/save.txt'), false);
+  dryopea.write('/save.txt', new TextEncoder().encode('dryopea'));
+  dryopea.flush();
+  check('nor overwrite it', JSON.parse(store.get('loft-fs-delta:/games/moros/')) !== null, true);
+  globalThis.location = { pathname: '/games/moros/' };
+  delete globalThis.__loftFS;
+  check('the first page reads its own back', text(loftFS().read('/save.txt')), 'moros');
+  delete globalThis.location;
+  delete globalThis.__loftFS;
 }
 
 // ── Paths, and the cursor the loft side leans on ──────────────────────────────

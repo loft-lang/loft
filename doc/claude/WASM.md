@@ -198,7 +198,7 @@ Four page globals tune it, all optional:
 | global | meaning |
 |---|---|
 | `loftBaseFS` | `{"/abs/path": string \| Uint8Array}` — the read-only base tree (default empty).  `--html` seeds it from each `[[embed]]` in `loft.toml` (@PLN146 F4), adding to whatever the page already set |
-| `loftFSKey` | `localStorage` key for the delta (default `loft-fs-delta`) |
+| `loftFSKey` | `localStorage` key for the delta (default `loft-fs-delta:` + the page's path, so games on one origin keep separate saves; a save under the older shared `loft-fs-delta` is carried over on first load) |
 | `loftFSPersist` | `false` keeps the delta in memory for the tab's lifetime |
 | `loftFSCwd` | what a relative path resolves against (default `/`) |
 
