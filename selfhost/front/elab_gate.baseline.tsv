@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	0fe1a930c1a7f169457b2e8ca48ec8f762903595
 
-layer	elab	agree	1326	of	2132
+layer	elab	agree	1327	of	2132
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -361,7 +361,6 @@ elab	refused	loft-suite/rules/matching/P-Rest/a-rest-is-a-fresh-capture-wherever
 elab	refused	loft-suite/rules/matching/P-Revert/a-reverted-alternative-drops-the-bindings-it-wrote.loft
 elab	refused	loft-suite/rules/matching/P-Rule/a-rule-runs-only-in-the-arm-tried-in-arm-order.loft
 elab	refused	loft-suite/rules/matching/P-Rule/a-sub-rule-reads-between-fixed-elements.loft
-elab	refused	loft-suite/rules/matching/P-Rule/a-sub-rule-run-releases-its-answers-and-never-the-subjects.loft
 elab	refused	loft-suite/rules/matching/P-Seq/a-tail-after-a-repetition-follows-the-run.loft
 elab	refused	loft-suite/rules/operational/E-Asgn-Compound/1819-a-compound-assignment-computes-its-operator-on-both-operand-types.loft
 elab	refused	loft-suite/rules/operational/E-Asgn-Compound/1827-a-text-compound-appends-the-rendering-of-any-value.loft
@@ -813,7 +812,7 @@ elab	refused	tests/scripts/store_compact_slack_730.loft
 elab	refused	tests/scripts/store_digest_b0.loft
 elab	refused	tests/scripts/store_paged_enum_field.loft
 
-layer	elab-functions	agree	14217	of	24503
+layer	elab-functions	agree	14197	of	24479
 elab-functions	agree	lib/docs.loft::Anchor
 elab-functions	agree	lib/docs.loft::Character
 elab-functions	agree	lib/docs.loft::Double
@@ -7710,26 +7709,6 @@ elab-functions	agree	loft-suite/rules/matching/P-Rule/a-sub-rule-reads-between-f
 elab-functions	agree	loft-suite/rules/matching/P-Rule/a-sub-rule-reads-between-fixed-elements.loft::n_test_two_rules_and_a_bare_name_and_the_next_arm
 elab-functions	agree	loft-suite/rules/matching/P-Rule/a-sub-rule-reads-between-fixed-elements.loft::vector<Node>
 elab-functions	agree	loft-suite/rules/matching/P-Rule/a-sub-rule-reads-between-fixed-elements.loft::vector<Tok>
-elab-functions	agree	loft-suite/rules/matching/P-Rule/a-sub-rule-run-releases-its-answers-and-never-the-subjects.loft::(schema)
-elab-functions	agree	loft-suite/rules/matching/P-Rule/a-sub-rule-run-releases-its-answers-and-never-the-subjects.loft::End
-elab-functions	agree	loft-suite/rules/matching/P-Rule/a-sub-rule-run-releases-its-answers-and-never-the-subjects.loft::LP
-elab-functions	agree	loft-suite/rules/matching/P-Rule/a-sub-rule-run-releases-its-answers-and-never-the-subjects.loft::N
-elab-functions	agree	loft-suite/rules/matching/P-Rule/a-sub-rule-run-releases-its-answers-and-never-the-subjects.loft::Num
-elab-functions	agree	loft-suite/rules/matching/P-Rule/a-sub-rule-run-releases-its-answers-and-never-the-subjects.loft::P
-elab-functions	agree	loft-suite/rules/matching/P-Rule/a-sub-rule-run-releases-its-answers-and-never-the-subjects.loft::RP
-elab-functions	agree	loft-suite/rules/matching/P-Rule/a-sub-rule-run-releases-its-answers-and-never-the-subjects.loft::Semi
-elab-functions	agree	loft-suite/rules/matching/P-Rule/a-sub-rule-run-releases-its-answers-and-never-the-subjects.loft::Tok
-elab-functions	agree	loft-suite/rules/matching/P-Rule/a-sub-rule-run-releases-its-answers-and-never-the-subjects.loft::main_vector<N>
-elab-functions	agree	loft-suite/rules/matching/P-Rule/a-sub-rule-run-releases-its-answers-and-never-the-subjects.loft::main_vector<Tok>
-elab-functions	agree	loft-suite/rules/matching/P-Rule/a-sub-rule-run-releases-its-answers-and-never-the-subjects.loft::n_fresh
-elab-functions	agree	loft-suite/rules/matching/P-Rule/a-sub-rule-run-releases-its-answers-and-never-the-subjects.loft::n_main
-elab-functions	agree	loft-suite/rules/matching/P-Rule/a-sub-rule-run-releases-its-answers-and-never-the-subjects.loft::n_none_consumed
-elab-functions	agree	loft-suite/rules/matching/P-Rule/a-sub-rule-run-releases-its-answers-and-never-the-subjects.loft::n_plus
-elab-functions	agree	loft-suite/rules/matching/P-Rule/a-sub-rule-run-releases-its-answers-and-never-the-subjects.loft::n_rec
-elab-functions	agree	loft-suite/rules/matching/P-Rule/a-sub-rule-run-releases-its-answers-and-never-the-subjects.loft::n_tot
-elab-functions	agree	loft-suite/rules/matching/P-Rule/a-sub-rule-run-releases-its-answers-and-never-the-subjects.loft::n_zero
-elab-functions	agree	loft-suite/rules/matching/P-Rule/a-sub-rule-run-releases-its-answers-and-never-the-subjects.loft::vector<N>
-elab-functions	agree	loft-suite/rules/matching/P-Rule/a-sub-rule-run-releases-its-answers-and-never-the-subjects.loft::vector<Tok>
 elab-functions	agree	loft-suite/rules/matching/P-Seq/a-tail-after-a-repetition-follows-the-run.loft::(schema)
 elab-functions	agree	loft-suite/rules/matching/P-Seq/a-tail-after-a-repetition-follows-the-run.loft::Cur
 elab-functions	agree	loft-suite/rules/matching/P-Seq/a-tail-after-a-repetition-follows-the-run.loft::End
@@ -15032,7 +15011,7 @@ elab-functions	agree	tests/scripts/store_paged_enum_field.loft::main_vector<inte
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::n_bytes
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::vector<integer(0, 255)>
 
-layer	elab-pass1	agree	11989	of	17891
+layer	elab-pass1	agree	11989	of	17895
 elab-pass1	agree	lib/code.loft::t_4Code_add_block
 elab-pass1	agree	lib/code.loft::t_4Code_add_if
 elab-pass1	agree	lib/code.loft::t_4Code_add_loop
