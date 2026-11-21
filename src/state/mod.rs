@@ -1419,8 +1419,12 @@ impl State {
                 if tp_id == u16::MAX {
                     return Some(self.database.null());
                 }
+                // `Stores::database` claims the root in WORDS: the wrapper's payload bytes and
+                // the header word, as `OpDatabase` claims it (`alloc_record_into`) and the C
+                // runtime's `loft_database_wrapper` does.  The byte count passed raw claimed a
+                // root twice that size (STORE_MODEL D44).
                 let sz = u32::from(self.database.size(tp_id));
-                let r = self.database.database(sz);
+                let r = self.database.database(1 + sz.div_ceil(8));
                 self.database.allocations[r.store_nr as usize].set_known_type(tp_id);
                 self.database
                     .store_mut(&r)

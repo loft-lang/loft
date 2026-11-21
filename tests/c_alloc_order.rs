@@ -185,3 +185,64 @@ fn main() {
         "one element reserved, then the growth step: {ev:?}"
     );
 }
+
+/// The store a call through a function value makes for a vector answer claims its root as any
+/// vector's store does (`State::hidden_return_buffer`, `loft_database_wrapper`): the wrapper's
+/// payload and its header word, two words.  With `R-PushFill` off, the 5 elements take the
+/// growth step (12 words), so the store's 100 words are 14 % used on both backends.
+///
+/// @falsified-at: none — a SABOTAGE (2026-11-22): with the byte size passed to
+///   `Stores::database` as words again (`hidden_return_buffer`), the interpreter's root claims
+///   4 words.  CHANNEL: `store_memory()`'s use of the store.  WITNESS: `used  16%` on
+///   `--interpret` against 14 % on `--native`.  HOLDS: `5` either way.
+#[test]
+fn a_function_values_vector_buffer_claims_its_root_as_any_vector_does() {
+    let dir = std::env::temp_dir().join(format!("loft-fnbuf-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("scratch dir");
+    let prog = dir.join("fnbuf.loft");
+    std::fs::write(
+        &prog,
+        r#"
+fn grown(seed: integer, n: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  for i in 0..n { out += [seed + i]; }
+  out
+}
+fn main() {
+  f = grown;
+  g = f(1, 5);
+  println("{len(g)}");
+  println(store_memory());
+}
+"#,
+    )
+    .expect("write the program");
+    let modes: &[&str] = if have_cc() {
+        &["--interpret", "--native"]
+    } else {
+        &["--interpret"]
+    };
+    for mode in modes {
+        let out = harness_command(env!("CARGO_BIN_EXE_loft"))
+            .arg(mode)
+            .arg(&prog)
+            .env("LOFT_NO_PUSH_FILL", "1")
+            .env("LOFT_NO_CACHE", "1")
+            .output()
+            .expect("run loft");
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(text.starts_with("5\n"), "{mode}: {text}");
+        let line = text
+            .lines()
+            .find(|l| l.contains("type main_vector<integer>"))
+            .unwrap_or_else(|| panic!("{mode}: no vector store in {text}"));
+        let used: String = line
+            .split("used")
+            .nth(1)
+            .and_then(|r| r.split('%').next())
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        assert_eq!(used, "14", "{mode}: {line}");
+    }
+}
