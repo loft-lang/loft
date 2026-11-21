@@ -9115,3 +9115,49 @@ fn an_early_exit_that_builds_a_text_is_a_cold_helper() {
         "true false position 9 past 10\n"
     );
 }
+
+/// loft#2603 — a `#c` binding that declares a libc function with pointer types other than its
+/// system header's is refused by `cc` (C allows no second, different declaration), and the
+/// refusal names the binding, the header's declaration and the cure, not "a defect of the C
+/// backend".  The interpreter, which looks the symbol up by name, runs it.
+#[test]
+fn a_binding_with_other_pointer_types_than_the_header_is_named() {
+    if !have_cc() {
+        return;
+    }
+    let dir = scratch("binding-clash");
+    let src = dir.join("clash.loft");
+    fa::write(
+        &src,
+        "fn c_memcmp(a: text, b: text, n: integer) -> integer;\n\
+         #c \"memcmp\" \"int(const char*, const char*, size_t)\"\n\
+         fn main() {\n  println(\"same {c_memcmp(\"abcd\", \"abcd\", 4)}\");\n}\n",
+    )
+    .expect("write the program");
+    let run = |args: &[&str]| {
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+            .args(args)
+            .arg(&src)
+            .env("LOFT_TIMEOUT", "120")
+            .output()
+            .expect("run loft");
+        (
+            out.status.success(),
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+    let (ok, stdout, _) = run(&["--interpret"]);
+    assert!(
+        ok && stdout.contains("same 0"),
+        "the interpreter runs it: {stdout}"
+    );
+    let (ok, _, stderr) = run(&["--native-c"]);
+    assert!(!ok, "cc refuses the clashing declaration");
+    assert!(
+        stderr.contains("`#c` binding `c_memcmp` declares `memcmp`")
+            && stderr.contains("header's types")
+            && !stderr.contains("a defect of the C backend"),
+        "the refusal names the binding and the cure: {stderr}"
+    );
+}
