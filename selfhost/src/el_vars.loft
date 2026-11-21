@@ -311,6 +311,9 @@ pub struct Vars {
   // A slice about to be walked reversed (`rev(v[..k])` in a comprehension, `reverse_iterator`):
   // the slice's walk starts at its top and needs no `_next`.  Consumed by the slice.
   pub rev_slice: boolean = false,
+  // The plain enum a bare variant name resolves in first (`enum_hint`, `@FR-T-Chk-Var`): set
+  // while an item is checked at an enum element; -1 elsewhere.
+  pub enum_hint: integer = -1,
   // `Variable::captured`: the locals a closure built in this body reads (second pass)
   pub captured: vector<integer>,
   pub lambda_node: integer = -1,
