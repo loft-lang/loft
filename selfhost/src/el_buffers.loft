@@ -808,14 +808,29 @@ fn patch_list(e: el::El, ctx: integer, vars: el_vars::Vars, l: vector<ir::Node>,
   out
 }
 
+// A vector type with its integer element's storage width left out.
+fn width_blind(t: ir::TypeT) -> ir::TypeT {
+  match t {
+    TyVector { inner, dep } => match inner {
+      TyInteger { spec } => ir::TyVector { inner: ir::TyInteger { spec: ir::IntegerSpec { min: spec.min, max: spec.max, not_null: spec.not_null, forced_size: 0 } }, dep: dep },
+      _ => t
+    },
+    _ => t
+  }
+}
+
 // `pooled_work_buffer`: one `__ref_N` per frame, element type and the slot's rank among the
 // callee's work buffers of that element.
 fn pooled(ctx: integer, vars: el_vars::Vars, def: ir::Definition, a_nr: integer, pool: vector<Pool>) -> integer {
   t = el_types::without_deps(def.attributes[a_nr]!.typedef[0] ?? ir::TyVoid);
   key = "{t}";
+  // The rank is counted by Rust's `==` on the element, which ignores an integer's
+  // `forced_size` (`IntegerSpec::eq`: `vector<i32>` ranks with `vector<integer>`); the key is
+  // its debug form, which does not (`format!("{content:?}")`).
+  rank_key = "{width_blind(t)}";
   k = 0;
   for a in def.attributes {
-    if a#index < a_nr && a.work_buffer && "{el_types::without_deps(a.typedef[0] ?? ir::TyVoid)}" == key {
+    if a#index < a_nr && a.work_buffer && "{width_blind(el_types::without_deps(a.typedef[0] ?? ir::TyVoid))}" == rank_key {
       k += 1;
     }
   }

@@ -4784,6 +4784,12 @@ pub fn field_vector_copy(e: el::El, vars: el_vars::Vars, r: ir::Node, d: integer
   }
   nm = el_types::elem_name(e, inner);
   rec = match el_types::base(inner) { TyReference { n: rn } => el::def(e, rn).known_type, _ => if nm == "" { -1 } else { el_schema::schema_type(e, nm) } };
+  // A narrow integer element is appended at its narrow store type (`byte`, `short_raw`, …), the
+  // row a push into the field takes (`@FR-B-Copy`).
+  match inner {
+    TyInteger { spec } => { if el_types::narrow_width(spec) > 0 { rec = el_schema::content_type(e, inner); } },
+    _ => {}
+  }
   vk = vector_store(e, inner, nm);
   fr = four_byte_field_rows(e, d, fname, inner);
   if len(fr) == 2 {
