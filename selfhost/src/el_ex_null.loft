@@ -528,20 +528,40 @@ pub fn file_read(e: el::El, vars: el_vars::Vars, fv: integer, arg: integer?, tp:
   if rt0 == null {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
-  file_read_as(e, vars, fv, arg, rt0!)
+  tat = match e.p.nodes[tp] { STy { at: ta } => ta, _ => 0 };
+  file_read_as(e, vars, fv, arg, rt0!, at: tat)
 }
 
 // The read itself, of type `rt` — the cast's, or (`read_target_type`) the type its destination
 // expects.
-pub fn file_read_as(e: el::El, vars: el_vars::Vars, fv: integer, arg: integer?, rt: ir::TypeT) -> Ex {
+pub fn file_read_as(e: el::El, vars: el_vars::Vars, fv: integer, arg: integer?, rt: ir::TypeT, at: integer = 0) -> Ex {
   // `f#read(n) as vector<T>` of a plain scalar `T`: `n` bytes into a fresh vector local, by the
   // vector's store type, its definitions already made (`vector_def`).
   match rt {
     TyVector { inner } => {
       nm = el_types::elem_name(e, inner);
-      if arg == null || !el_convert::plain_scalar(inner) || el_convert::plain_enum(inner) || nm == "" || el::def_nr(e, "main_vector<{nm}>") < 0 {
+      if arg == null || !el_convert::plain_scalar(inner) || el_convert::plain_enum(inner) || nm == "" {
         el::refuse(e, "a file read of a vector with no size, or of this element type: {type_kind(inner)}");
         return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+      }
+      // (loft#899: the read declares its vector here — `vector_def` — where nothing declared it.)
+      if el::def_nr(e, "main_vector<{nm}>") < 0 {
+        // (At the lexer's place once the cast is read, the token after its `>`; `vector_def`
+        // registers no store type of its own, a narrow element's either.)
+        ci = at;
+        depth = 0;
+        while ci < len(e.p.src) {
+          if e.p.src[ci]! is Lt {
+            depth += 1;
+          } else if e.p.src[ci]! is Gt {
+            depth -= 1;
+            if depth <= 0 {
+              break;
+            }
+          }
+          ci += 1;
+        }
+        el_schema::make_vector_def(e, inner, nm, el::pos_at(e, ci + 1), true, narrow_early: false);
       }
       n_code = el_ex_assign::expression(e, vars, arg!).code;
       el_vars::in_use(vars, fv, true);
