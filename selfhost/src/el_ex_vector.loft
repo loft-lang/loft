@@ -1319,10 +1319,17 @@ pub fn unary(e: el::El, vars: el_vars::Vars, op: text, n: integer?) -> Ex {
       lv = match a.code { NdVar { n: x } => x, _ => -1 };
       return ex(el_ir::cl(e, "OpCreateStack", [a.code]), ir::TyRefVar { inner: el_types::with_deps(el_types::without_deps(el_types::base(a.tp)), [lv]) });
     }
+    // (A NULLABLE text local links the same way, the link as nullable as the local:
+    // `pc: &text["c"]? = OpCreateStack(c)`, loft#1372.)
+    if a.code is NdVar && a.tp is TyOptional && el_types::base(a.tp) is TyText {
+      lv = match a.code { NdVar { n: x } => x, _ => -1 };
+      return ex(el_ir::cl(e, "OpCreateStack", [a.code]), ir::TyRefVar { inner: ir::TyOptional { inner: ir::TyText { dep: [lv] } } });
+    }
     // A link to a text in a store — a record's field, a vector's element — is that place
     // (`OpGetField(r, pos)`, `OpGetVector(v, 4, i)`), typed as a text link borrowing the place's
     // root (the store kind of text link).
-    if el_types::base(a.tp) is TyText && !(a.tp is TyOptional) {
+    // (A nullable text field links as its dense twin: the slot holds the text's own null.)
+    if el_types::base(a.tp) is TyText && !(a.code is NdVar) {
       place = text_place(e, a.code);
       if place != null {
         root = place_root(e, place!);

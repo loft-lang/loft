@@ -65,9 +65,8 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
           return ex(ir::NdNull, ir::TyUnknown { n: 0 });
         }
         tt = ir::TyText { dep: [tv] };
-        if e.first_pass {
-          return ex(ir::NdNull, tt);
-        }
+        // (Built on both passes, as the held subject's below: a text tail's accumulator,
+        // `do_if_acc`, is decided on the first, from this `if`.)
         has_text = el_ir::cl(e, "OpConvBoolFromText", [x.code]);
         return ex(el_ir::v_if(has_text, x.code, d.code), tt);
       },
