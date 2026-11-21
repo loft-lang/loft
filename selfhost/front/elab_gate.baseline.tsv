@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	0fe1a930c1a7f169457b2e8ca48ec8f762903595
 
-layer	elab	agree	1350	of	2132
+layer	elab	agree	1351	of	2132
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -250,7 +250,6 @@ elab	refused	loft-suite/rules/heap/H-RefHome/a-generic-recursive-enum-links-its-
 elab	refused	loft-suite/rules/heap/H-RefHome/a-record-a-stored-reference-names-lives-as-long-as-its-holder-however-it-was-built.loft
 elab	refused	loft-suite/rules/heap/H-RefHome/a-stored-reference-its-record-outlives-reads-it.loft
 elab	refused	loft-suite/rules/heap/H-Removed/a-cleared-vector-releases-the-records-a-reference-named.loft
-elab	refused	loft-suite/rules/heap/H-RootExtent/a-vector-stores-extent-is-its-collection-through-swaps-and-placements.loft
 elab	refused	loft-suite/rules/heap/H-Stride/a-narrow-vector-element-keeps-its-width-in-every-operation.loft
 elab	refused	loft-suite/rules/heap/H-SwapIn/a-rebind-from-a-call-may-exchange-the-stores-and-answers-what-the-copy-answers.loft
 elab	refused	loft-suite/rules/heap/H-TextReplace/1873-an-assigned-text-field-releases-the-text-it-replaces.loft
@@ -789,7 +788,7 @@ elab	refused	tests/scripts/store_compact_slack_730.loft
 elab	refused	tests/scripts/store_digest_b0.loft
 elab	refused	tests/scripts/store_paged_enum_field.loft
 
-layer	elab-functions	agree	14001	of	24040
+layer	elab-functions	agree	13990	of	24028
 elab-functions	agree	lib/docs.loft::Anchor
 elab-functions	agree	lib/docs.loft::Character
 elab-functions	agree	lib/docs.loft::Double
@@ -5930,17 +5929,6 @@ elab-functions	agree	loft-suite/rules/heap/H-Removed/a-cleared-vector-releases-t
 elab-functions	agree	loft-suite/rules/heap/H-Removed/a-cleared-vector-releases-the-records-a-reference-named.loft::n_main
 elab-functions	agree	loft-suite/rules/heap/H-Removed/a-cleared-vector-releases-the-records-a-reference-named.loft::vector<P>
 elab-functions	agree	loft-suite/rules/heap/H-Removed/a-cleared-vector-releases-the-records-a-reference-named.loft::vector<vector<P>>
-elab-functions	agree	loft-suite/rules/heap/H-RootExtent/a-vector-stores-extent-is-its-collection-through-swaps-and-placements.loft::(schema)
-elab-functions	agree	loft-suite/rules/heap/H-RootExtent/a-vector-stores-extent-is-its-collection-through-swaps-and-placements.loft::H
-elab-functions	agree	loft-suite/rules/heap/H-RootExtent/a-vector-stores-extent-is-its-collection-through-swaps-and-placements.loft::P
-elab-functions	agree	loft-suite/rules/heap/H-RootExtent/a-vector-stores-extent-is-its-collection-through-swaps-and-placements.loft::main_vector<P>
-elab-functions	agree	loft-suite/rules/heap/H-RootExtent/a-vector-stores-extent-is-its-collection-through-swaps-and-placements.loft::main_vector<vector<P>>
-elab-functions	agree	loft-suite/rules/heap/H-RootExtent/a-vector-stores-extent-is-its-collection-through-swaps-and-placements.loft::n_build
-elab-functions	agree	loft-suite/rules/heap/H-RootExtent/a-vector-stores-extent-is-its-collection-through-swaps-and-placements.loft::n_extend
-elab-functions	agree	loft-suite/rules/heap/H-RootExtent/a-vector-stores-extent-is-its-collection-through-swaps-and-placements.loft::n_test_a_call_built_into_a_field_and_a_clear
-elab-functions	agree	loft-suite/rules/heap/H-RootExtent/a-vector-stores-extent-is-its-collection-through-swaps-and-placements.loft::n_test_a_vector_of_built_vectors
-elab-functions	agree	loft-suite/rules/heap/H-RootExtent/a-vector-stores-extent-is-its-collection-through-swaps-and-placements.loft::vector<P>
-elab-functions	agree	loft-suite/rules/heap/H-RootExtent/a-vector-stores-extent-is-its-collection-through-swaps-and-placements.loft::vector<vector<P>>
 elab-functions	agree	loft-suite/rules/heap/H-Stride/a-narrow-vector-element-keeps-its-width-in-every-operation.loft::n_hint
 elab-functions	agree	loft-suite/rules/heap/H-Stride/a-narrow-vector-element-keeps-its-width-in-every-operation.loft::n_idx_i16
 elab-functions	agree	loft-suite/rules/heap/H-Stride/a-narrow-vector-element-keeps-its-width-in-every-operation.loft::n_idx_u8
@@ -14792,7 +14780,7 @@ elab-functions	agree	tests/scripts/store_paged_enum_field.loft::main_vector<inte
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::n_bytes
 elab-functions	agree	tests/scripts/store_paged_enum_field.loft::vector<integer(0, 255)>
 
-layer	elab-pass1	agree	12081	of	18049
+layer	elab-pass1	agree	12081	of	18050
 elab-pass1	agree	lib/code.loft::t_4Code_add_block
 elab-pass1	agree	lib/code.loft::t_4Code_add_if
 elab-pass1	agree	lib/code.loft::t_4Code_add_loop
