@@ -4793,11 +4793,39 @@ impl Store {
         );
     }
 
+    /// The bytes the elements of vector record `rec` may span from [`Self::elem_base`]: the
+    /// record's claim (its size header, in words) less the 8-byte header, held inside this
+    /// store; a foreign record's payload.  0 for a record past the store or a header that is
+    /// not a claim.  `@FR-R-Header`'s bound: a hoisted length is held to this once, where the
+    /// header is derived, because a length word read from a store that was loaded and never
+    /// walked is a claim, and the raw element paths trust whatever bounds them.
+    #[must_use]
+    pub fn elem_room(&self, rec: u32) -> u32 {
+        if Self::is_foreign_rec(rec) {
+            return self
+                .foreign
+                .as_ref()
+                .map_or(0, |f| u32::try_from(f.bytes()).unwrap_or(u32::MAX));
+        }
+        if rec == 0 || rec >= self.size {
+            return 0;
+        }
+        let Ok(words) = u32::try_from(self.read::<i32>(rec, 0)) else {
+            return 0;
+        };
+        // The claim, cut at the end of the store: a header word larger than what is left
+        // of the store names bytes that are not there.
+        let words = words.min(self.size - rec);
+        words.saturating_mul(8).saturating_sub(8)
+    }
+
     /// The address of ELEMENT 0 of the vector record `rec` — the record's word plus the
     /// 8-byte length header — for a loop that proved this store cannot grow while it holds
     /// the pointer (@PLN157 § V-ak, `@FR-R-Base`).  Pointer arithmetic only: `rec` is a
     /// claimed record, so `rec * 8 + 8` is inside the allocation or one past its end, and
-    /// every read through the result is bounded by the header's length before it happens.
+    /// every read through the result is bounded by [`VecHeader::elems`] before it happens.
+    ///
+    /// [`VecHeader::elems`]: crate::vector::VecHeader::elems
     #[inline]
     #[must_use]
     pub fn elem_base(&self, rec: u32) -> *const u8 {

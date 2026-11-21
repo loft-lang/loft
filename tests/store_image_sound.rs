@@ -437,3 +437,76 @@ fn a_spatial_or_trie_tree_that_does_not_hold_refuses_the_load() {
     }
     let _ = fa::remove_dir_all(&dir);
 }
+
+// `@FR-R-Header` — a hoisted loop of the rustc writer takes a vector's length once and reads
+// elements through a raw base; the length comes from the record's own word, so in a store
+// loaded with a plain `store_load` (no walk) a word that claims more than the record holds
+// read, and written, past it: 2,000 reads of a three-element vector whose word was changed
+// to 1,000,000 walked 16 KB past an 8 KB image.  The header now holds the length to the
+// record's claim, once, so the elements past what the record holds read as past the end.
+// (The interpreter's accessors stop at the store's end, and the C build reads inside its
+// store's allocation: a plain load of a changed file answers differently per backend, as
+// `@FR-S-Sound` allows, but no backend reads outside its memory.)
+const HOIST_WRITER: &str = r#"struct W { name: text, v: vector<integer> }
+fn main() {
+  w = W { name: "n63", v: [10, 20, 30] };
+  println("wrote {store_persist_copy(w, "img.store")}");
+}
+"#;
+
+const HOIST_READER: &str = r#"struct W { name: text, v: vector<integer> }
+fn main() {
+  l = W { name: "", v: [] };
+  ok = store_load(l, env_variable("IMG") ?? "");
+  n = 0;
+  s = 0;
+  for i in 0..2000 {
+    x = l.v[i];
+    if x != null { n += 1; s += x; }
+  }
+  println("loaded {ok} len {len(l.v)} present {n} sum {s}");
+}
+"#;
+
+#[test]
+fn a_hoisted_loop_reads_no_further_than_the_record_holds() {
+    if !loft::platform::process::harness_command("rustc")
+        .arg("--version")
+        .output()
+        .is_ok_and(|o| o.status.success())
+    {
+        eprintln!("SKIP: no rustc for --native-rust");
+        return;
+    }
+    // Its own directory: `scratch()` empties the one the other tests share.
+    let dir = std::env::temp_dir().join(format!("loft_image_hoist_{}", std::process::id()));
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir).expect("scratch");
+    fa::write(dir.join("write.loft"), HOIST_WRITER).expect("writer");
+    fa::write(dir.join("read.loft"), HOIST_READER).expect("reader");
+    let (wrote, err) = loft(&dir, "--interpret", "write.loft", "", "");
+    assert_eq!(wrote, "wrote true", "{err}");
+    let image = fa::read(dir.join("img.store")).expect("the image");
+    let sidecar = fa::read(dir.join("img.store.dschema")).expect("its sidecar");
+    // The root's payload at word 1 byte 8 (`W`: name at 0, v at 4); the vector record holds
+    // its claim in words at byte 0 and its length at byte 4.
+    let v = u32_at(&image, 20) as usize;
+    assert_eq!(u32_at(&image, v * 8 + 4), 3, "the vector's length");
+    let held = (u32_at(&image, v * 8) as usize * 8 - 8) / 8;
+    assert!((3..2000).contains(&held), "the record holds {held} elements");
+    let mut changed = image.clone();
+    changed[v * 8 + 4..v * 8 + 8].copy_from_slice(&1_000_000u32.to_le_bytes());
+    fa::write(dir.join("bad.store"), &changed).expect("an image");
+    fa::write(dir.join("bad.store.dschema"), &sidecar).expect("a sidecar");
+
+    let (out, err) = loft(&dir, "--native-rust", "read.loft", "img.store", "");
+    assert_eq!(out, "loaded true len 3 present 3 sum 60", "a sound image\n{err}");
+    // The record's own slack past element 3 is zero-filled, so it reads as present zeros.
+    let (out, err) = loft(&dir, "--native-rust", "read.loft", "bad.store", "");
+    assert_eq!(
+        out,
+        format!("loaded true len 1000000 present {held} sum 60"),
+        "the reads stop where the record does\n{err}"
+    );
+    let _ = fa::remove_dir_all(&dir);
+}

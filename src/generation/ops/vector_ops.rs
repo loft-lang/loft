@@ -200,9 +200,10 @@ impl OpEmitter for FusedElementReadEmitter {
         }
         if fused.raises {
             let line = ctx.output.ckpt_cur_line;
+            let size = ctx.output.generate_expr_buf(fused.size)?;
             write!(
                 ctx.w,
-                "; if vector::elem_index(__fi, {header}.len).is_none() {{ let _ = stores.vec_get_or_raise_at_runtime({line}, &("
+                "; if vector::elem_index(__fi, {header}.elems(({size}) as u32)).is_none() {{ let _ = stores.vec_get_or_raise_at_runtime({line}, &("
             )?;
             match ctx.output.header_dbrefs.get(&header) {
                 Some(vd) => write!(ctx.w, "{vd}")?,
@@ -248,14 +249,14 @@ fn emit_byte_read(ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<bool>
         // and `0` (`'\0'`) for an absent element — the template's `rec == 0` arm.
         return write!(
             ctx.w,
-            "; let __bl = i64::from({header}.len); let __bf = if __bi < 0 {{ __bi + __bl }} else {{ __bi }}; if __bf >= 0 && __bf < __bl {{ char::from_u32(unsafe {{ ({base}.add(__bf as usize * {size}usize + {fld}usize) as *const u32).read_unaligned() }}).unwrap_or(char::from(0)) as u32 as i32 }} else {{ {fault}0_i32 }} }} /*@FR-R-Base byte read*/"
+            "; let __bl = i64::from({header}.elems({size}_u32)); let __bf = if __bi < 0 {{ __bi + __bl }} else {{ __bi }}; if __bf >= 0 && __bf < __bl {{ char::from_u32(unsafe {{ ({base}.add(__bf as usize * {size}usize + {fld}usize) as *const u32).read_unaligned() }}).unwrap_or(char::from(0)) as u32 as i32 }} else {{ {fault}0_i32 }} }} /*@FR-R-Base byte read*/"
         )
         .map(|()| true);
     }
     if b.character {
         write!(
             ctx.w,
-            "; if (__bi as u64) < u64::from({header}.len) {{ char::from_u32(unsafe {{ ({base}.add(__bi as usize * {size}usize + {fld}usize) as *const u32).read_unaligned() }}).unwrap_or(char::from(0)) as u32 as i32 }} else {{ "
+            "; if (__bi as u64) < u64::from({header}.elems({size}_u32)) {{ char::from_u32(unsafe {{ ({base}.add(__bi as usize * {size}usize + {fld}usize) as *const u32).read_unaligned() }}).unwrap_or(char::from(0)) as u32 as i32 }} else {{ "
         )?;
         let mut elem = b.elem_args.to_vec();
         elem[2] = Value::RawExpr("__bi".to_string());
@@ -270,14 +271,14 @@ fn emit_byte_read(ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<bool>
         // absent element — the template's `rec == 0` arm.
         return write!(
             ctx.w,
-            "; let __bl = i64::from({header}.len); let __bf = if __bi < 0 {{ __bi + __bl }} else {{ __bi }}; if __bf >= 0 && __bf < __bl {{ unsafe {{ {base}.add(__bf as usize * {size}usize + {fld}usize).read() }} }} else {{ {fault}255u8 }} }} /*@FR-R-Base byte read*/"
+            "; let __bl = i64::from({header}.elems({size}_u32)); let __bf = if __bi < 0 {{ __bi + __bl }} else {{ __bi }}; if __bf >= 0 && __bf < __bl {{ unsafe {{ {base}.add(__bf as usize * {size}usize + {fld}usize).read() }} }} else {{ {fault}255u8 }} }} /*@FR-R-Base byte read*/"
         )
         .map(|()| true);
     }
     if b.boolean {
         write!(
             ctx.w,
-            "; if (__bi as u64) < u64::from({header}.len) {{ unsafe {{ {base}.add(__bi as usize * {size}usize + {fld}usize).read() }} }} else {{ "
+            "; if (__bi as u64) < u64::from({header}.elems({size}_u32)) {{ unsafe {{ {base}.add(__bi as usize * {size}usize + {fld}usize).read() }} }} else {{ "
         )?;
         let mut elem = b.elem_args.to_vec();
         elem[2] = Value::RawExpr("__bi".to_string());
@@ -295,13 +296,13 @@ fn emit_byte_read(ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<bool>
         // helpers around this read fold (hex_field's `edgeset_count`).
         return write!(
             ctx.w,
-            "; let __bl = i64::from({header}.len); let __bf = if __bi < 0 {{ __bi + __bl }} else {{ __bi }}; if __bf >= 0 && __bf < __bl {{ i64::from(unsafe {{ {base}.add(__bf as usize * {size}usize + {fld}usize).read() }}) + ({min}_i64) }} else {{ {fault}i64::MIN }} }} /*@FR-R-Base byte read*/"
+            "; let __bl = i64::from({header}.elems({size}_u32)); let __bf = if __bi < 0 {{ __bi + __bl }} else {{ __bi }}; if __bf >= 0 && __bf < __bl {{ i64::from(unsafe {{ {base}.add(__bf as usize * {size}usize + {fld}usize).read() }}) + ({min}_i64) }} else {{ {fault}i64::MIN }} }} /*@FR-R-Base byte read*/"
         )
         .map(|()| true);
     }
     write!(
         ctx.w,
-        "; if (__bi as u64) < u64::from({header}.len) {{ i64::from(unsafe {{ {base}.add(__bi as usize * {size}usize + {fld}usize).read() }}) + ({min}_i64) }} else {{ "
+        "; if (__bi as u64) < u64::from({header}.elems({size}_u32)) {{ i64::from(unsafe {{ {base}.add(__bi as usize * {size}usize + {fld}usize).read() }}) + ({min}_i64) }} else {{ "
     )?;
     // The template, over the index already evaluated.
     let mut elem = b.elem_args.to_vec();
