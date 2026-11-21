@@ -505,8 +505,10 @@ pub fn slice_copy(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> ir::Node
   nm = el_types::elem_name(e, elem);
   rows = vector_rows(e, elem, 0, true);
   rec = if nm == "" { -1 } else { el_schema::schema_type(e, nm) };
-  // (A narrow element is laid out as its width's row — `byte`, `short_raw<…>` — not by its name.)
-  if rec < 0 && is_scalar(elem) {
+  // (A narrow element is laid out as its width's row — `byte`, `short_raw<…>` — not by its name;
+  // so is a four-byte one, `i32` / `u32` (`int<…>`), whose name is the eight-byte `integer`.)
+  sized = match elem { TyInteger { spec } => el_types::narrow_width(spec) > 0 || el_types::int4(spec) || el_types::uint4(spec), _ => false };
+  if (rec < 0 && is_scalar(elem)) || sized {
     rec = el_schema::content_type(e, elem);
   }
   if rows == null || rec < 0 || lov < 0 || hiv < 0 {
