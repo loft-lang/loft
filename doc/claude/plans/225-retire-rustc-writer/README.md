@@ -34,7 +34,7 @@ ruling is recorded as design decision `@C170` in R0, with its sites and a guard.
 | Writer-only source (`src/generation/`, `codegen_runtime.rs`, `stdlib_codegen.rs`, `compiled_stdlib*.rs`, `native_build.rs`, `native_lib.rs`) | ~53 000 lines |
 | Other `src/` files with a writer part (`main.rs` 159 mentions, `native_utils.rs`, `cache.rs`, `platform.rs`, `toolchain.rs`, `cargo_layout.rs`, …) | 16 files |
 | `#rust` bodies in `default/*.loft` | 369 |
-| Rewrites applied only by the writer | 21 ([rewrite-audit.md](rewrite-audit.md)) |
+| Rewrites applied only by the writer | 22 ([rewrite-audit.md](rewrite-audit.md)) |
 | Test files that drive the writer or name its leg | 165 |
 | Patch receipts that patch the writer | 125 of 863 |
 | Suite cells armed for its leg (`FALSIFY_NATIVE=rust`) | 11 |
@@ -69,7 +69,7 @@ is the work list every later phase shrinks; R7 may start only when it is empty.
 | **R2** | Targets: `--html` / `--native-wasm` without the writer fallback; `--native-android` without its rust path; `--native-rust` and `LOFT_NATIVE_BACKEND=rust` refused with a message that names `--native`. | The html, wasm and android test binaries pass under `LOFT_NO_RUSTC=1`; the refusals are tests. | M |
 | **R3** | Libraries: a registry census of published releases that need rustc (a Rust native part, a `#rust` body in library source).  Each gets a C successor or is deprecated in the registry, as `crypto` 0.3.x was. | `revalidate-libs` green under `LOFT_NO_RUSTC=1`; the census list empty. | S–M |
 | **R4** | Tests and guards: each of the 165 test files keeps its interpreter and C halves and loses its rust leg; tests that exist only for the writer go; the 125 receipts are classified (writer-only → retire with that half; also guarding C or the interpreter → re-derived against that code); the 11 suite cells lose `ARMED: FALSIFY_NATIVE=rust` and are re-falsified on C or the interpreter, or lose their native half. | `make rule-coverage`: no rule loses its last guard except the rewrites R5 removes; the R0 census has no test left. | L |
-| **R5** | The 21 writer-only rewrites: their formal definitions, decision code in the IR pass, the interpreter and the C backend, census names, `REWRITE_REASONS.md` entries and guard cells ([rewrite-audit.md](rewrite-audit.md)).  The shared rewrites lose only their rust half (with R7). | The C backend's emission over the whole corpus is byte-identical before and after (`scripts/c_sweep.py` emission diff), and the rewrite census of every kept rule is unchanged. | M |
+| **R5** | The 22 writer-only rewrites: their formal definitions, decision code in the IR pass, the interpreter and the C backend, census names, `REWRITE_REASONS.md` entries and guard cells ([rewrite-audit.md](rewrite-audit.md)).  The shared rewrites lose only their rust half (with R7). | The C backend's emission over the whole corpus is byte-identical before and after (`scripts/c_sweep.py` emission diff), and the rewrite census of every kept rule is unchanged. | M |
 | **R6** | Tooling and CI: the rustc lanes of 5 workflows, ~27 scripts (rewrite census, `rule_phases` native column, `slot_matrix.rust.baseline`, `falsify.sh` `FALSIFY_NATIVE`, `emission_audit.py`, `native_ratio.sh`, the perf portal's native columns), release bundles without the runtime rlib, `make check-rlib` and `make compiled-stdlib`, `src/toolchain.rs`'s rustc checks. | A CI job with no `rustc` on `PATH` beyond building loft itself runs the full gate green. | M |
 | **R7** | Delete the writer: the writer-only source, the 369 `#rust` bodies and the parser's `#rust` support (an annotation left in a library becomes an error naming the cure), the writer parts of the 16 shared files, `LOFT_NO_RUSTC` (moot). | Full CI green; the rust-free census still empty; binary size and build time measured before and after. | M |
 | **R8** | Documentation, phase by phase (see Documentation below), and security #61 unblocked. | `make docs-lint`, `scripts/check_doc_drift.sh`, `make features-check`. | M |
@@ -116,7 +116,7 @@ as a trailing docs pass.
   `C_BACKEND.md`, `INTERMEDIATE.md`, `REWRITE_REASONS.md`, `KERNELS.md`, `PERFORMANCE.md`,
   `PROFILING.md`, `TESTING.md`, `SLOT_MATRIX.md`, `CI_BUDGET.md`, `HTML_EXPORT.md`, `WASM.md`,
   `PACKAGES_TARGETS.md`: the writer's parts removed or moved to their `-history.md`.
-- `doc/claude/formal/rewrites.md` (the 21 rules and every rust half), `VERIFICATION.md`,
+- `doc/claude/formal/rewrites.md` (the 22 rules and every rust half), `VERIFICATION.md`,
   `facts.md`, `heap.md`, `layout.md`, `operational.md`.
 - `DESIGN_DECISIONS_PLATFORM.md` (`@C71` amended), the `@C170` entry.
 - `DIAGNOSTICS.md` (O3), `CHANGELOG.md` (user-visible: `--native-rust` gone; O2's requirement),

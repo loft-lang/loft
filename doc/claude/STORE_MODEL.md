@@ -100,7 +100,7 @@ fixes name a row the same way.  D20 onward come from the field-by-field comparis
 from P0b (what the C runtime lacks).  State: **open**, **fixing** (on the branch named), or
 **decided** (the decision and its measurement).  A closed row moves to
 [STORE_MODEL-history.md](STORE_MODEL-history.md) with its commit; D1–D8, D9a–D17,
-D18–D19j, D20–D23, D25, D29–D31, D34 and D36–D38 are there.  (D8's second half, the gates
+D18–D19j, D20–D23, D25, D29–D31, D33, D34 and D36–D38 are there.  (D8's second half, the gates
 stated in `(H-SwapIn)`, closed with it.)
 
 ### Correctness
@@ -117,6 +117,7 @@ stated in `(H-SwapIn)`, closed with it.)
 
 | # | Divergence | State |
 |---|---|---|
+| D40 | a collection's claim size: the first difference of 37 of 97 differing programs in a 140-script sample is one claim's word count, in both directions (a two-element vector field `[k, k + 1]` claims 12 words on the interpreter and 3, exactly, in C; `158-scalar-file-read` claims 2 on the interpreter and 12 in C) — the writers' reservations (`(Col-Capacity)`, `R-PushFill`) answer differently, while the make and free order agrees | open — `scripts/c_alloc_diff.py` names each; the direction per writer is `(Col-Capacity)`'s |
 | D39 | a returned root record holding a keyed collection: C exchanges the stores (`swap_safe`), the interpreter copies (`tree_holds_no_stored_refs`), as `(H-SwapIn)` says for "the keyed collections" though `(H-SwapKeyed)`'s reasoning admits them | open — the rule first (@PLN91 1b-reference.md E-2) |
 
 ### Edges
@@ -132,7 +133,6 @@ stated in `(H-SwapIn)`, closed with it.)
 | D26 | the interpreter's stack lives in a store; C's is the C stack | open — not a store property for a C unit; P4 decides |
 | D27 | the interpreter's store instruments (generation, recording, tag, timestamps, init shadow) | P0b |
 | D28 | the store table: a `Vec<Store>` beside the type table against a thread-local array | open — P3 |
-| D33 | a call result rebound in a loop (`x = mul(a, x)`): native rotates the call's return buffer (`__rbb`, `@FR-O-Buffer`) and makes no store; the C adopts the result and frees the old store, so it makes and frees one store per iteration; the interpreter exchanges (`@FR-H-SwapRebind`) and also makes one, freeing the TOP slot.  Under `LOFT_STRICT_STORES` the C therefore runs out of numbers in a long loop (`c_sweep.py --strict-stores` files it as beyond the mode) | open — C moves (`@FR-R-RebindBuffer` in the C writer; the performance stream's).  Measured by hand on the emitted unit: the rotation saves about 7 % on a 3 000 000-iteration `x = mul(a, x)` loop at `-O3` (0.14 s → 0.13 s, same answer) — a C store's make and free are cheap |
 
 ## How a divergence is closed
 
