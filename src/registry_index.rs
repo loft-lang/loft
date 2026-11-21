@@ -1859,7 +1859,11 @@ pub fn rollback_refusal(what: &str, fetched: &[u8], cached: &[u8]) -> Option<Str
 /// # Errors
 ///
 /// Returns a `String` error on HTTP / IO failure, or when the bytes do not match.
-pub fn download_verified(url: &str, sha256: &str, dest: &std::path::Path) -> Result<Vec<u8>, String> {
+pub fn download_verified(
+    url: &str,
+    sha256: &str,
+    dest: &std::path::Path,
+) -> Result<Vec<u8>, String> {
     let bytes = fetch_bytes(url)?;
     crate::integrity::verify_sha256(&bytes, sha256).map_err(|e| format!("{url}: {e}"))?;
     // A bare file name has the empty parent, which names no directory to create.

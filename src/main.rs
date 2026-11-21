@@ -559,9 +559,7 @@ fn print_help() {
     println!(
         "                                sync             — pull latest registry from source URL"
     );
-    println!(
-        "                                                   (--allow-unsigned: no signature)"
-    );
+    println!("                                                   (--allow-unsigned: no signature)");
     println!(
         "                                check            — report updates, deprecations, yanks"
     );
@@ -2581,8 +2579,12 @@ fn update_packages(opts: &UpdateOpts) -> i32 {
 /// - `--packages X,Y,Z` → just those (transitive deps not yet
 ///   auto-resolved; transitive harvest is a follow-up if useful).
 #[cfg(feature = "registry")]
-#[expect(clippy::too_many_lines, reason = "inherited")]
-fn bundle_export(outdir: &str, packages: Option<&[String]>, all: bool, allow_unsigned: bool) -> i32 {
+fn bundle_export(
+    outdir: &str,
+    packages: Option<&[String]>,
+    all: bool,
+    allow_unsigned: bool,
+) -> i32 {
     use loft::install::InstallOptions;
     use loft::registry_index;
     use std::path::Path;
@@ -2786,7 +2788,8 @@ fn bundle_import(indir: &str, allow_unsigned: bool) -> i32 {
     }
     if let Some((content, sig)) = feed {
         let (adv_path, adv_sig_path) = loft::registry_advisories::advisories_paths();
-        if let Err(e) = registry_index::write_signed_pair(&adv_path, &adv_sig_path, &content, &sig) {
+        if let Err(e) = registry_index::write_signed_pair(&adv_path, &adv_sig_path, &content, &sig)
+        {
             eprintln!("loft bundle import: cannot write the advisories: {e}");
             return 1;
         }
@@ -6237,7 +6240,8 @@ fn published_releases(name: &str, own_version: Option<&str>) -> Result<Vec<Strin
 
 /// `loft compat --allow-unsigned`: the check may read an index that carries no signature.
 #[cfg(feature = "registry")]
-static COMPAT_ALLOW_UNSIGNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static COMPAT_ALLOW_UNSIGNED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
 
 /// How the check reads the registry and fetches a release: into the install cache, writing
 /// no lockfile — the package being checked is not a consumer of its own earlier releases.

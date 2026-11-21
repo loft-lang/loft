@@ -166,10 +166,7 @@ fn fetch_auto_artifact(
         return false;
     }
     let dest = dir.join(crate::platform::cdylib_file_name(stem));
-    if registry_index::download_verified(&bin.url, &bin.sha256, &dest).is_err() {
-        return false;
-    }
-    true
+    registry_index::download_verified(&bin.url, &bin.sha256, &dest).is_ok()
 }
 
 /// @PLN21 Phase 5 — the prebuilt-availability one-liner for a package: given the
