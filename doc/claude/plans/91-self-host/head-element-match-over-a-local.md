@@ -32,12 +32,31 @@ Three things to copy as they stand:
 - the result type and the match's type name `__ref_1`;
 - the function's body block keeps `["__retbuf"]?`.
 
+## The buffer's name is minted on the FIRST pass (measured by the porter, confirmed on try b55f97520)
+
+`__ref_1` is a work ref Rust mints during the first pass, ahead of every work ref the second pass
+mints.  `first_struct` has no other work ref, so a second-pass mint happens to give the same
+name there.  `first_tagged` (a `vector<S?>` subject) shows the difference: its literal's own
+`__ref_2`/`__ref_3` come AFTER the buffer, and a second-pass mint gives `__ref_4`:
+```
+n_first_tagged   oracle:  __ref_1: S mutable nullable hidden      port (a second-pass mint):  __ref_4
+```
+Two more facts that bound the road:
+- only a plain STRUCT result is renamed.  A struct-ENUM result (`first_n`, `first_d`, `-> Tok?`)
+  keeps `__retbuf`;
+- `first_tagged` also needs the tagged-binding arm: `if <tag> != 0 { the payload copied into the
+  buffer } else { OpNullRefSentinel() }`.
+
+The porter's work in progress is `wip/head-element-match-over-a-local.patch`, with its notes in
+the porter's handoff.
+
 ## What to code
 
 In the record-answer road of head-element-match-answer (the port's `buffer_arms` sibling): when
-the match's subject is a LOCAL rather than a parameter, rename the hidden return buffer onto a
-fresh work ref (`__ref_N`, the parameter attribute renamed), type the result and the match by
-it, and deliver into it.  Leave the body block's own type naming `__retbuf`.
+the match's subject is a LOCAL and the result is a plain struct, the hidden return buffer is
+renamed onto a work ref that is minted on the FIRST pass, so its number comes before every
+second-pass work ref.  Type the result and the match by that name and deliver into it.  Leave
+the body block's own type naming `__retbuf`.
 
 ## Probe
 
