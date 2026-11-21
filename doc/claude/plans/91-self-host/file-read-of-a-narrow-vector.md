@@ -22,7 +22,9 @@ by the vector's store row.  But it guards the road with four conditions:
 the store definition a vector LOCAL's `__vdb` needs.  The read's `_read_N` is set to null and
 filled by `OpReadFile`; it gets no `__vdb`.  None of the three sole programs declares a
 `vector<single>` or `vector<u8>` local any other way, so no `main_vector` exists to satisfy the
-check.  (Not measured by patching the port: confirm by removing the check first.)
+check.  (Confirmed by the porter: dropping it carries all three.  The read declares `vector<T>` itself
+where nothing has, at the token after the cast's `>`, and registers no early narrow store type,
+so `main_vector<u8>` takes its row before `vector<byte>`, as in Rust.)
 
 ## Rust's form
 
