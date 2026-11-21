@@ -2012,14 +2012,23 @@ impl<'a> FnWriter<'a> {
                 .and_then(|p| self.push_head(&p))
                 .map(|(h, _)| E::new(format!("((int64_t) {h}.len)"), K::Int)));
         }
-        // A group's reservation is capacity, observably nothing; the header's mint grows the
-        // record itself, and a reservation made beside it would claim a record it does not hold.
-        if name == "OpPreAllocVector" {
-            return Ok(args
-                .first()
-                .and_then(|v| crate::opt::writes::vector_path(data, v))
-                .and_then(|p| self.push_head(&p))
-                .map(|_| E::new("((void) 0)", K::Void)));
+        // `@FR-Col-Capacity`: a group's known count is reserved exactly, as the bytecode does it;
+        // the header held for the path is derived again after the reservation, so its mints
+        // fill the record the reservation claimed instead of growing one of their own.
+        if name == "OpPreAllocVector"
+            && let [v, count, size] = args
+            && let Some((h, _)) =
+                crate::opt::writes::vector_path(data, v).and_then(|p| self.push_head(&p))
+        {
+            let count = Self::literal(count, "count")?;
+            let size = Self::literal(size, "element size")?;
+            let v = as_ref(self.expr(v, ind)?)?;
+            return Ok(Some(E::new(
+                format!(
+                    "((void) (loft_vec_prealloc({v}, {count}, {size}), {h} = loft_ph_of({v}, {size})))"
+                ),
+                K::Void,
+            )));
         }
         if let Some(fp) = crate::opt::writes::fused_push(data, name, args)
             && let Some((h, size, based)) = self.push_head_based(&fp.path)
