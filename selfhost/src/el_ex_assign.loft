@@ -710,6 +710,7 @@ fn expression_node(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     SIs { e: ie, variant, caps, has_caps } => is_expr(e, vars, ie, variant, caps, has_caps),
     SLambda { at: _ } => lambda_expr(e, vars, n),
     SDestructure { places, e: de } => el_ex_object::destructure_assign(e, vars, places, de),
+    SParallel { items } => el_ex_pattern::parallel_expr(e, vars, items),
     _ => {
       el::refuse(e, "an expression form: {syn_kind(e, n)}");
       ex(ir::NdNull, ir::TyUnknown { n: 0 })

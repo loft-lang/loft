@@ -3284,3 +3284,40 @@ fn hands_to_writer(e: el::El, n: ir::Node, v: integer) -> boolean {
     }
   }
 }
+
+// `Parser::parse_parallel` (`@F33`): each arm an expression, a null arm dropped, the block
+// `Parallel(arms)` typed void.  An arm runs in a worker of its own: it may read an enclosing
+// local (copied in), but writing one — a local defined at the opening brace — or naming a
+// parameter is Rust's error (`reject_unsound_parallel_captures`), refused here by name.
+pub fn parallel_expr(e: el::El, vars: el_vars::Vars, items: vector<integer>) -> el_ex_base::Ex {
+  outer: vector<integer> = [];
+  for vi in 0..len(vars.vars) {
+    if vars.defined[vi] ?? false {
+      outer += [vi];
+    }
+  }
+  arms: vector<ir::Node> = [];
+  for it in items {
+    a = el_ex_assign::expression(e, vars, it).code;
+    if !(a is NdNull) {
+      arms += [a];
+    }
+  }
+  if !e.first_pass {
+    for a in arms {
+      for vi in 0..len(vars.vars) {
+        if vars.vars[vi].argument && el_ir::reads_var(a, vi) {
+          el::refuse(e, "a parallel arm naming a parameter");
+          return el_ex_base::ex(ir::NdNull, ir::TyUnknown { n: 0 });
+        }
+      }
+      for vi in outer {
+        if el_ir::sets_var(a, vi) {
+          el::refuse(e, "a parallel arm writing an enclosing local");
+          return el_ex_base::ex(ir::NdNull, ir::TyUnknown { n: 0 });
+        }
+      }
+    }
+  }
+  el_ex_base::ex(ir::NdParallel { arms: arms }, ir::TyVoid)
+}

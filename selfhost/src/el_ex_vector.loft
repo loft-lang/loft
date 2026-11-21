@@ -52,8 +52,9 @@ pub fn file_append(e: el::El, vars: el_vars::Vars, f: integer, rhs: integer, x: 
   if e.first_pass {
     return ex(ir::NdNull, ir::TyVoid);
   }
-  // It borrows what the value borrows as this pass reads it (a literal's own backing).
-  el_vars::set_var_type(vars, tmp, x.tp);
+  // It borrows what the value borrows as this pass reads it (a literal's own backing); a text
+  // variable read whole is borrowed itself (`text["payload"]`, as `text_for`'s source is).
+  el_vars::set_var_type(vars, tmp, match el_ir::unspan(x.code) { NdVar { n } => if vt is TyText { ir::TyText { dep: [n] } } else { x.tp }, _ => x.tp });
   // Made on the second pass only, as Rust's `db_tp` is.
   cast_row = -1;
   alias = last_width_cast(e, rhs);
