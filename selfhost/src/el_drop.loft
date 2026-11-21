@@ -170,11 +170,21 @@ fn arm_drop_marks(e: el::El, h: Hook) {
   }
   for d in e.b.data.definitions {
     t = d#index;
-    hook = el_types::hook_of(e, t, h.own);
+    // (`drop_hook_nr` / `drop_cascade_nr`: looked up in the type's own source first — a
+    // library's struct has its hook and its cascade there, which neither this source nor the
+    // standard library holds.)
+    hook = el::source_nr(e, d.source, "t_{len(d.name)}{d.name}_{h.own}");
+    if hook < 0 {
+      hook = el_types::hook_of(e, t, h.own);
+    }
     if hook < 0 || d.known_type == el::NO_TYPE || d.def_type != el::DT_STRUCT || starts_with(d.name, "__") {
       continue;
     }
-    tg = target(e, t, h);
+    own_c = el::source_nr(e, d.source, cascade_name(e, t, h));
+    tg = if own_c >= 0 { own_c } else { el::def_nr(e, cascade_name(e, t, h)) };
+    if tg < 0 {
+      tg = hook;
+    }
     self_var = -1;
     for v in el::def(e, tg).variables.variables {
       if v.name == "self" && self_var < 0 {
