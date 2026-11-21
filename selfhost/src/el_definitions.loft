@@ -1467,7 +1467,10 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
               pb = el_types::base(pm);
               // (A vector member is carried: read through the parameter, or copied into the
               // `__tp_<name>` a write promotes.)
-              if pb is TyReference || (pb is TyEnum && el_types::struct_enum_def(pb) >= 0) {
+              // (A record member is carried too, `@FR-F-ParamTuple`: the shadow, seeded with a
+              // copy or, where the body only reads, the parameter itself.  A struct-enum member
+              // is not yet.)
+              if pb is TyEnum && el_types::struct_enum_def(pb) >= 0 {
                 el::refuse(e, "a tuple parameter with a heap member");
               }
             }
@@ -1537,6 +1540,27 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
     if !e.first_pass && !starts_with(name, "__lambda_") {
       seeds = el_cell::flip(e, vars);
     }
+    // `@FR-F-ParamTuple`: on pass 2 a record-carrying tuple shadow's copy seed is built before
+    // the body (`tuple_whole_bind_copy`), its `__ref_p2_N` numbered first, as Rust's is — and
+    // minted even where the body only reads and the seed is the plain alias.
+    if !e.first_pass {
+      for tsh in vars.promoted_shadows {
+        tpp = vars.promoted_params[tsh#index] ?? -1;
+        match el_vars::tp(vars, tpp) {
+          TyTuple { elems: tpe } => {
+            if len([for tm in tpe if (el_types::base(tm) is TyReference) { tm }]) > 0 {
+              tpc = el_ex_assign::tuple_whole_bind_copy(e, vars, tpp, tpe);
+              if tpc != null {
+                vars.tp_seed_shadows += [tsh];
+                vars.tp_seed_codes += [tpc!.code];
+                vars.tp_seed_types += [tpc!.tp];
+              }
+            }
+          },
+          _ => {}
+        }
+      }
+    }
     code = el_cell::seed_cells(el_expressions::parse_code(e, vars, body ?? 0), seeds);
     if e.first_pass {
       for lm in vars.loop_made {
@@ -1604,7 +1628,7 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
         hv = el_vars::var(vars, ha.name);
         match ha.typedef {
           TyTuple { elems: hpe } => {
-            if hv >= 0 && len([for hm in hpe if (el_types::base(hm) is TyVector) { hm }]) > 0 && el_vars::var(vars, "__tp_{ha.name}") < 0 {
+            if hv >= 0 && len([for hm in hpe if (el_types::base(hm) is TyVector || el_types::base(hm) is TyReference) { hm }]) > 0 && el_vars::var(vars, "__tp_{ha.name}") < 0 {
               el_vars::promote_tuple_param(vars, hv);
             }
           },

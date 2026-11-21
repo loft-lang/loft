@@ -2385,6 +2385,15 @@ pub fn branch_view_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: in
       _ => {}
     }
   }
+  // (A tail the work-ref rename answered through a `return` — `return if …` — is copied inside
+  // it, the `return` kept.)
+  was_return = false;
+  if len(bl.operators) > 0 {
+    match el_ir::unspan(el_ir::last(bl.operators)) {
+      NdReturn { inner: wri } => { if el_ir::unspan(wri) is NdIf && reads_tuple_shadow(vars, wri) { was_return = true; bl.operators[-1] = el_ir::unspan(wri); } },
+      _ => {}
+    }
+  }
   if len(bl.operators) == 0 || !(el_ir::unspan(el_ir::last(bl.operators)) is NdIf) {
     return null;
   }
@@ -2424,7 +2433,7 @@ pub fn branch_view_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: in
   if copied == null {
     return null;
   }
-  bl.operators[-1] = copied!;
+  bl.operators[-1] = if was_return { ir::NdReturn { inner: copied! } } else { copied! };
   bl.result = [if ret is TyOptional { ir::TyOptional { inner: owned } } else { owned }];
   ir::NdBlock { block: [bl] }
 }
@@ -2503,7 +2512,21 @@ pub fn finish_body(e: el::El, vars: el_vars::Vars, body: ir::Node) -> ir::Node {
         // store of its own (`tuple_param_seed`, `tuple_member_move`).
         match el_vars::tp(vars, pp) {
           TyTuple { elems: pel } => {
-            pc = el_ex_assign::tuple_whole_bind_copy(e, vars, pp, pel);
+            // (A record-carrying shadow's copy was built at the start of the pass; whether it
+            // seeds is the body's walk, `MemberWalk::only_read`.)
+            si = -1;
+            for ss in vars.tp_seed_shadows {
+              if ss == sh {
+                si = ss#index;
+              }
+            }
+            pc = if si >= 0 { el_ex_base::ex(vars.tp_seed_codes[si]!, vars.tp_seed_types[si]!) } else { el_ex_assign::tuple_whole_bind_copy(e, vars, pp, pel) };
+            if si >= 0 && !vars.heap_member_written.contains(sh) {
+              rhr = match el_types::base(el::def(e, e.context).returned[0] ?? ir::TyVoid) { TyTuple { elems: rte } => len([for rm in rte if !is_scalar(el_types::base(rm)) && !(el_types::base(rm) is TyText) { rm }]) > 0, _ => false };
+              if !el_refhome::tuple_only_read(e, vars, ir::NdBlock { block: [bl] }, sh, rhr) {
+                vars.heap_member_written += [sh];
+              }
+            }
             // (Where no member needed a copy the seed is the plain alias, `__tp_t = t`.)
             copied = pc != null && match pc!.code { NdTuple { items: pit } => len([for pi in pit if (pi is NdBlock) { pi }]) > 0, _ => true };
             if pc != null && copied && vars.heap_member_written.contains(sh) {
@@ -2646,4 +2669,19 @@ fn rot_partner(vars: el_vars::Vars, v: integer) -> boolean {
     }
   }
   false
+}
+
+// Does the tree read a member of a by-value tuple parameter's shadow (`__tp_p.0`)?
+fn reads_tuple_shadow(vars: el_vars::Vars, n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdTupleGet { var, idx: _ } => starts_with(el_vars::name_of(vars, var), "__tp_"),
+    _ => {
+      for ch in el_ir::children(el_ir::unspan(n)) {
+        if reads_tuple_shadow(vars, ch) {
+          return true;
+        }
+      }
+      false
+    }
+  }
 }
