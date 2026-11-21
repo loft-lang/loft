@@ -2158,7 +2158,9 @@ pub fn first_pass_fields(e: el::El, vars: el_vars::Vars, d: integer, fields: vec
         }
         a = if d >= 0 { attr_nr(el::def(e, d), fname) } else { -1 };
         at = if a >= 0 { el::def(e, d).attributes[a]!.typedef[0] } else { ir::TyVoid };
-        if el_types::is_collection(at) && e.p.nodes[fe!] is SVecLit {
+        // (A nullable KEYED field's literal fills it as the dense twin's does: no vector of its own.)
+        opt_keyed = at is TyOptional && el_types::is_collection(el_types::base(at)) && !(el_types::base(at) is TyVector);
+        if (el_types::is_collection(at) || opt_keyed) && e.p.nodes[fe!] is SVecLit {
           match e.p.nodes[fe!] {
             SVecLit { items } => {
               // The field literal's element temp is minted on this pass too (`unique_elm_var`),
