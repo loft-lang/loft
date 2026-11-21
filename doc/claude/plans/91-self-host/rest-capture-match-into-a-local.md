@@ -50,7 +50,9 @@ bind into each arm, as Rust does:
 ## Probes
 
 ```
-kr-suite/rules/matching/P-Rest/a-rest-is-a-fresh-capture-wherever-it-stands.loft:89, :188   (sole)
+kr-suite/rules/matching/P-Rest/a-rest-is-a-fresh-capture-wherever-it-stands.loft:188   (sole; its :89 is the
+    OTHER cluster, a match at a `-> Stmt` tail answering a record built from the rest, so the
+    program agrees whole only when both are carried)
 kr-suite/rules/binding/P-Cap-Fresh/a-rest-or-a-repetition-is-a-fresh-store-and-deeply-so.loft:49, :59, :70, :83, :94, :163
 kr-suite/rules/binding/P-Cap-View/a-pattern-capture-is-a-view-and-a-rest-is-fresh.loft:84
 ```
