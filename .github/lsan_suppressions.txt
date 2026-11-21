@@ -140,6 +140,18 @@ leak:SecTrustSettingsCopyCertificates
 # at exit; loft sends no mach messages of its own, so nothing of loft's can match it.
 leak:_dispatch_mach_msg_async_reply_wrap
 
+# macOS libdispatch: the same XPC traffic registers its reply port on a kevent worker thread,
+# and `_dispatch_mach_reply_kevent_register` allocates an 80-byte unote there — a stack of
+# libdispatch and pthread frames only (`net::retry_tests::three_504s_fail_after_three_asks`,
+# nightly run 44735159234).
+leak:_dispatch_mach_reply_kevent_register
+
+# macOS Security.framework counts a legacy keychain call (`countLegacyAPI`, once per process
+# under `dispatch_once`) by sending a CoreAnalytics event, whose 64-byte continuation
+# `dispatch_async` allocates and Apple never frees.  Reached from the keychain lookup a TLS
+# verification makes; no loft frame is on the stack (the same test and run).
+leak:countLegacyAPI
+
 # macOS CoreAnalytics' at-exit barrier: `CoreAnalytics::Client::sendExitBarrierWithTimeoutSync`
 # `dispatch_async`s one 64-byte block from Apple's own `atExitHandler`, after which nothing
 # runs to free it.  Allocated during exit by the OS, not by loft (the 15th allocation above).
