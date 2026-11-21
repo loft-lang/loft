@@ -617,6 +617,22 @@ pub fn var_attr(e: el::El, vars: el_vars::Vars, var: text, attr: text, arg: inte
       return file_attr(e, vars, fv, attr);
     }
   }
+  // `@C148`: `x#errors` is the errors of the parse that built the value `x` holds —
+  // `n_parse_errors_of(x)`, typed as that function answers (`vector<text>`), the variable marked
+  // used.  A variable that holds no record, struct enum or vector is refused by name.
+  if attr == "errors" && arg == null && tp == null && fv >= 0 {
+    el_vars::in_use(vars, fv, true);
+    pf = el::def_nr(e, "n_parse_errors_of");
+    xb = el_types::base(el_vars::tp(vars, fv));
+    held_ok = xb is TyReference || xb is TyVector || match xb { TyEnum { is_ref } => is_ref, _ => false };
+    if !e.first_pass && !held_ok {
+      el::refuse(e, "a `#errors` of a variable holding no parsed record or vector");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    if pf >= 0 {
+      return ex(ir::NdCall { def_nr: pf, args: [ir::NdVar { n: fv }] }, el::def(e, pf).returned[0] ?? ir::TyUnknown { n: 0 });
+    }
+  }
   if attr == "index" && arg == null && tp == null {
     lv = el_vars::var(vars, var);
     if lv >= 0 {
