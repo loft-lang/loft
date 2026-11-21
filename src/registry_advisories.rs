@@ -664,7 +664,11 @@ fn read_cached_feed_verified(
     Ok(settled.content)
 }
 
-fn verify_feed(content: &[u8], sig: &[u8], opts: LoadOptions) -> Result<(), String> {
+/// The verdict on an advisory feed and its signature, with the index's waiver rules.
+///
+/// # Errors
+/// What is wrong with the pair.
+pub fn verify_feed(content: &[u8], sig: &[u8], opts: LoadOptions) -> Result<(), String> {
     let result = registry_signing::verify_index(content, sig);
     match result {
         VerifyResult::Valid => Ok(()),

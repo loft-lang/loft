@@ -714,7 +714,12 @@ fn fetched_pair_verdict(
     }
 }
 
-fn verify_or_explain(content: &[u8], sig: &[u8], opts: &InstallOptions) -> Result<(), String> {
+/// The verdict on an index and its signature, as every command that reads an index gives it:
+/// `Ok` for a valid signature, and for a missing one only with `allow_unsigned`.
+///
+/// # Errors
+/// What is wrong with the pair, in words the user can act on.
+pub fn verify_or_explain(content: &[u8], sig: &[u8], opts: &InstallOptions) -> Result<(), String> {
     let result = registry_signing::verify_index(content, sig);
     match result {
         VerifyResult::Valid => Ok(()),

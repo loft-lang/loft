@@ -1889,12 +1889,13 @@ pub fn unpack_tarball_bytes(bytes: &[u8], dest_parent: &std::path::Path) -> Resu
 /// wins; a later one finds the directory complete and answers `false`, and that install
 /// counts the package as already cached.
 ///
-/// A tarball whose top-level directory is not `<pkg>-<version>/`, and a directory left
-/// without its `loft.toml` by an interrupted older install, are unpacked straight into the
-/// cache as before: the rename has nothing it can promise for either.
+/// A tarball whose top-level directory is not `<pkg>-<version>/` with a `loft.toml` in it is
+/// refused: unpacked anywhere else it would land beside the other packages, the index and the
+/// advisory feed, and could replace any of them.  A directory an interrupted older install
+/// left without its `loft.toml` is removed and the rename tried once more.
 ///
 /// # Errors
-/// IO errors propagate as `String`.
+/// IO errors propagate as `String`, and a tarball of another shape is refused.
 pub fn place_package(bytes: &[u8], pkg: &str, version: &str) -> Result<bool, String> {
     static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let cache = cache_dir();
@@ -1907,12 +1908,23 @@ pub fn place_package(bytes: &[u8], pkg: &str, version: &str) -> Result<bool, Str
     let placed = unpack_tarball_bytes(bytes, &staging).and_then(|()| {
         let top = staging.join(format!("{pkg}-{version}"));
         if !file_access::exists(top.join("loft.toml")) {
-            return unpack_tarball_bytes(bytes, &cache).map(|()| true);
+            return Err(format!(
+                "the package {pkg} {version} is not packed as {pkg}-{version}/loft.toml; \
+                 nothing was installed"
+            ));
         }
         match file_access::rename(&top, &dest) {
             Ok(()) => Ok(true),
             Err(_) if file_access::exists(dest.join("loft.toml")) => Ok(false),
-            Err(_) => unpack_tarball_bytes(bytes, &cache).map(|()| true),
+            Err(_) => {
+                // A directory without its manifest: an older install that was interrupted.
+                let _ = file_access::remove_dir_all(&dest);
+                match file_access::rename(&top, &dest) {
+                    Ok(()) => Ok(true),
+                    Err(_) if file_access::exists(dest.join("loft.toml")) => Ok(false),
+                    Err(e) => Err(format!("place {pkg} {version}: {e}")),
+                }
+            }
         }
     });
     let _ = file_access::remove_dir_all(&staging);

@@ -309,68 +309,6 @@ pub fn download_file(url: &str, dst: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Download and extract a package zip.  Returns the path to the package root
-/// (directory containing `loft.toml`).
-///
-/// # Errors
-///
-/// Returns an error string if the download fails, the temp directory cannot
-/// be created, the zip is malformed, extraction fails, or no `loft.toml`
-/// is found in the extracted contents.
-#[cfg(feature = "registry")]
-pub fn download_and_extract(entry: &RegistryEntry, tmp_base: &Path) -> Result<PathBuf, String> {
-    // Download zip to temp file.
-    let zip_path = tmp_base.join(format!("{}-{}.zip", entry.name, entry.version));
-    download_file(&entry.url, &zip_path)?;
-
-    // Extract zip.
-    let extract_dir = tmp_base.join(format!("{}-{}", entry.name, entry.version));
-    crate::file_access::create_dir_all(&extract_dir)
-        .map_err(|e| format!("cannot create temp dir: {e}"))?;
-
-    let file = crate::file_access::open(&zip_path).map_err(|e| format!("cannot open zip: {e}"))?;
-    let mut archive =
-        zip::ZipArchive::new(file).map_err(|e| format!("invalid zip archive: {e}"))?;
-    archive
-        .extract(&extract_dir)
-        .map_err(|e| format!("zip extraction failed: {e}"))?;
-
-    // Find package root — directory containing loft.toml.
-    find_package_root(&extract_dir).ok_or_else(|| {
-        "could not find package root in downloaded zip.\n  \
-             Expected loft.toml or src/ directory inside the archive."
-            .to_string()
-    })
-}
-
-/// Recursively find a directory containing `loft.toml` (depth-first, first match).
-/// Falls back to a directory containing `src/` if no `loft.toml` is found.
-#[cfg(feature = "registry")]
-fn find_package_root(dir: &Path) -> Option<PathBuf> {
-    if crate::file_access::exists(dir.join("loft.toml")) {
-        return Some(dir.to_path_buf());
-    }
-    // Check immediate children first, in name order.
-    if let Ok(entries) = crate::file_access::read_dir(dir) {
-        for entry in entries {
-            let Some(name) = entry.os_name() else {
-                continue;
-            };
-            let path = dir.join(name);
-            if crate::file_access::is_dir(&path)
-                && crate::file_access::exists(path.join("loft.toml"))
-            {
-                return Some(path);
-            }
-        }
-    }
-    // Fallback: check for src/ at root.
-    if crate::file_access::is_dir(dir.join("src")) {
-        return Some(dir.to_path_buf());
-    }
-    None
-}
-
 /// Format the registry staleness warning if applicable.
 pub fn staleness_warning(registry_path: &Path) -> Option<String> {
     let metadata = crate::file_access::metadata(registry_path).ok()?;
