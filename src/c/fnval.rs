@@ -295,6 +295,9 @@ impl Cx<'_> {
         }
         let vec_tp = vec_buf.filter(|_| uses_vec_buf && ret == CType::Ref);
         if let Some(tp) = vec_tp {
+            // The wrapper is made through the unit's type table, which a unit writes only for
+            // the types it registers: one whose only use of the table is this call wrote none.
+            self.copy_type(tp)?;
             let _ = write!(
                 out,
                 " loft_ref hb = loft_ref_null(); loft_database_wrapper(loft_types, &hb, {}, {tp});",
