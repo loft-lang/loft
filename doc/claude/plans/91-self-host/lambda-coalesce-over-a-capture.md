@@ -44,21 +44,24 @@ a-function-value:48   -> Sty  (a DENSE result: the buffer renamed onto a work re
 - **Each arm materialised into the buffer (`OpCopyRecord` behind `OpConvBoolFromRef` for the
   capture, the literal built apart and copied):** a RULE, `@FR-O-Buffer`.  `LOFT_LEAK_CHECK=1`
   passes on both programs (interpreter, exit 0).
-- **The buffer's name: `__retbuf` for a nullable result, a work ref `__ref_1` for a dense one,** as
-  the dispatcher page found for struct enums.  An ACCIDENT of internal naming (@C168).  The
-  dense case's name is minted on the first pass (see head-element-match-over-a-local.md);
-  carry it as measured.
+- **The buffer's name (CORRECTED; the first version of this page said "dense renames"):** in all
+  six lambdas of 1659, dense or nullable, the buffer stays `__retbuf`.  Only
+  a-function-value-fills renames it, onto `__ref_1`.  That lambda's body reads an ELEMENT of a
+  captured VECTOR (`styles[id]`), and its body is typed by the capture.  The cause of the
+  rename is not measured: do not generalise from it.  An internal name either way (@C168).
 - **The dense body typed with the capture's name (`ref(Sty)["styles"]`):** the blocker the port
   names.  It is a dep on a name, so internal, but the port needs the capture's placeholder to
   write it.  Not a behaviour: carry it once the placeholder is kept.
 
 ## What to code
 
-Start with 1659, the nullable result: there is no capture dep, and the buffer stays `__retbuf`.
+Start with 1659: there is no capture dep, and the buffer stays `__retbuf`.  For the program to
+agree whole, its five other lambdas must be carried too; they are on
+lambda-answers-a-capture.md.
 At ~440, build the `#ncc` block over `OpGetDbRef(__closure, 0)` and materialise each arm into
-the buffer, as above, instead of refusing.  Then the dense case: keep the lambda's placeholder
-variable for the capture so that the body can be typed `[<capture>]`, and rename the buffer
-onto its first-pass work ref.
+the buffer, as above, instead of refusing.  Then a-function-value-fills: keep the lambda's
+placeholder variable for the capture so that the body can be typed `[<capture>]`, and rename the
+buffer onto its first-pass work ref.  Measure why it renames first.
 
 ## Probes (the two sole programs; both leak-checked)
 
