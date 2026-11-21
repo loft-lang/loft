@@ -22,8 +22,9 @@ so are a par worker's stack and constant store, which the trace marks `S`.  A pr
 `main` is skipped.
 
 A rewrite the C writer applies and the interpreter does not (`C_ONLY_REWRITES`) may ask for
-other room: `(R-PushFill)` reserves a loop's pushes before the loop, where the interpreter grows
-push by push.  Room is capacity and observably nothing (`(Col-Capacity)`), so such a difference
+other room or keep a value out of the store: `(R-PushFill)` reserves a loop's pushes before the
+loop, where the interpreter grows push by push; `(R-Transient)` builds a value that is read and
+dropped outside the store.  Room is capacity and observably nothing (`(Col-Capacity)`), so such a difference
 is the rewrite's, not a divergence of the store model (@C122; STORE_MODEL.md); `--attribute`
 names it, and what no switch accounts for is the allocator's to explain."""
 import os, re, subprocess, sys, tempfile
@@ -39,6 +40,9 @@ C_ONLY_REWRITES = [
     ("R-ValueRecord", "LOFT_NO_VALUE_RECORD"),
     ("R-ValueLocal", "LOFT_NO_VALUE_LOCAL"),
     ("R-AppendTwin", "LOFT_NO_APPEND_TWIN"),
+    ("R-Transient", "LOFT_NO_TRANSIENT"),
+    ("R-DecodeView", "LOFT_NO_DECODE_VIEW"),
+    ("R-DecodeView/structure", "LOFT_NO_DECODE_STRUCTURE"),
 ]
 
 class Event(str):
@@ -53,14 +57,16 @@ def program_events(lines):
     the order it first appears.  A store the interpreter marks as its own (`S`: a state's value
     stack and constant store, which a par worker makes too) is left out — a C unit has neither."""
     rows = [l.split() for l in lines]
-    # A serial can name more than one store over a run (a par worker counts its own), so an
-    # `S` marks the store made LAST under its serial: its `N` and every event up to the next.
-    own, last = set(), {}
+    # A serial can name more than one store over a run (each par worker counts its own), so an
+    # `S` marks the latest store made under its serial that no `S` marked yet — two workers'
+    # stacks, made and marked interleaved, are both marked — and the mark covers its `N` and
+    # every event up to the next `N` of that serial.
+    own, made = set(), {}
     for i, f in enumerate(rows):
         if len(f) >= 2 and f[0] == "N":
-            last[f[1]] = i
-        elif len(f) == 2 and f[0] == "S" and f[1] in last:
-            own.add(last[f[1]])
+            made.setdefault(f[1], []).append(i)
+        elif len(f) == 2 and f[0] == "S" and made.get(f[1]):
+            own.add(made[f[1]].pop())
     out, names, started, dropped, at = [], {}, False, set(), "?"
     for i, f in enumerate(rows):
         if not f:

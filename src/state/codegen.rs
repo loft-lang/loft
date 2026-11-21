@@ -3046,14 +3046,16 @@ impl State {
                     // re-init stays here, before the copy sequence.
                     // A witnessed local whose value READS it keeps its slot until the
                     // call has run (@FR-O-Detach) and takes the fresh store afterwards.
+                    //
+                    // The slot is reset here, before the call, so `v` names no store a callee
+                    // could be handed again; the store itself is made once, after the call, by
+                    // the `OpDatabase` the copy lands in — as the C backend makes it.  Made here
+                    // too, it was claimed, reset and claimed again (STORE_MODEL D43).
                     let alloc_after = stash_old_for_post_free || (witnessed && rhs_reads_v);
                     if !alloc_after {
                         let slot_offset = stack.var_pos(v);
                         stack.add_op("OpInitRef", self);
                         self.code_add(slot_offset);
-                        stack.add_op("OpDatabase", self);
-                        self.code_add(slot_offset);
-                        self.code_add(tp_nr);
                     }
                     // Cluster-A A.4: ONE return-ownership query, shared with
                     // the native backend (`generation/dispatch.rs`).  Hidden-only
