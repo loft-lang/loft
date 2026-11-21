@@ -124,6 +124,8 @@ pub struct Vars {
   pub unique: hash<UniqueCount[name]>,
   // `Function::work_vdb` and `work_references`: the `__vdb_N` vector stores this body minted
   pub work_vdb: integer = 0,
+  // `Function::work_fmt`: the `__fmt_N` records a template checked against a `lit` type builds
+  pub work_fmt: integer = 0,
   // `Function::work_ref` and its second-pass twin: the `__ref_N` / `__ref_p2_N` record buffers
   pub work_ref: integer = 0,
   pub work_ref_p2: integer = 0,
@@ -846,6 +848,7 @@ pub fn take_over(v: Vars, kept: ir::Function) {
   v.captured = [];
   v.unique = [];
   v.work_vdb = 0;
+  v.work_fmt = 0;
   v.work_ref = 0;
   v.work_ref_p2 = 0;
   v.work_refs = [];
@@ -1007,6 +1010,14 @@ fn shape(t: ir::TypeT) -> ir::TypeT {
 
 // `Function::work_vec_db`: the next `__vdb_N` store a vector literal builds in, noted among the
 // work references the body's head sets to null.
+// `Function::work_format`: the next `__fmt_N`, a work reference.
+pub fn work_format(v: Vars, t: ir::TypeT) -> integer {
+  v.work_fmt += 1;
+  nr = add_variable(v, "__fmt_{v.work_fmt}", t);
+  v.work_refs = sorted_in(v.work_refs, nr);
+  nr
+}
+
 pub fn work_vec_db(v: Vars, t: ir::TypeT) -> integer {
   v.work_vdb += 1;
   nr = add_variable(v, "__vdb_{v.work_vdb}", t);
