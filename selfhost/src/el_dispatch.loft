@@ -350,6 +350,7 @@ pub fn enum_fn(e: el::El) {
   }
   join_enum_lattice_sets(e);
   members: vector<ir::NameNr> = [];
+  todo: vector<ir::NameNr> = [];
   for d in e.b.data.definitions {
     if d.def_type != el::DT_FUNCTION || len(d.attributes) == 0 {
       continue;
@@ -376,7 +377,40 @@ pub fn enum_fn(e: el::El) {
       }
       continue;
     }
-    el::refuse(e, "a variant method its enum answers nowhere (the @F20 dispatcher)");
+    // Keyed by the enum AND the method name: one dispatcher per method.
+    todo += [ir::NameNr { name: "{en}\u{1}{name}\u{1}{d#index}", nr: en }];
+  }
+  // (Sorted by enum, then name, as Rust's keys are; within a key in definition order.)
+  keys: vector<text> = [];
+  for t in todo {
+    parts = t.name.split('\u{1}');
+    k = "{parts[0]}\u{1}{parts[1]}";
+    if !keys.contains(k) {
+      keys += [k];
+    }
+  }
+  sorted_keys: vector<text> = [];
+  for k in keys {
+    kp = k.split('\u{1}');
+    at = len(sorted_keys);
+    for sk in sorted_keys {
+      sp = sk.split('\u{1}');
+      if at == len(sorted_keys) && ((kp[0] as integer ?? 0) < (sp[0] as integer ?? 0) || ((kp[0] as integer ?? 0) == (sp[0] as integer ?? 0) && kp[1] < sp[1])) {
+        at = sk#index;
+      }
+    }
+    sorted_keys = sorted_keys[..at] + [k] + sorted_keys[at..];
+  }
+  for k in sorted_keys {
+    kp = k.split('\u{1}');
+    nrs: vector<integer> = [];
+    for t in todo {
+      tp = t.name.split('\u{1}');
+      if tp[0] == kp[0] && tp[1] == kp[1] {
+        nrs += [tp[2] as integer ?? -1];
+      }
+    }
+    create_enum_dispatch(e, kp[0] as integer ?? -1, one_implementation_per_variant(e, nrs));
   }
   for m in members {
     set = el::def_nr(e, m.name);
@@ -1613,4 +1647,127 @@ fn visible_attr(e: el::El, d: integer, i: integer) -> ir::Attribute? {
     n += 1;
   }
   null
+}
+
+// port: definitions.rs one_implementation_per_variant — one definition per variant, the dense
+// receiver spelling (`self: V`) taking the place of a nullable one (`self: V?`).
+fn one_implementation_per_variant(e: el::El, nrs: vector<integer>) -> vector<integer> {
+  kept: vector<integer> = [];
+  for nr in nrs {
+    variant = receiver_def_nr(e, nr);
+    dense = !((el::def(e, nr).attributes[0]!.typedef[0] ?? ir::TyVoid) is TyOptional);
+    at = -1;
+    for k in kept {
+      if at < 0 && receiver_def_nr(e, k) == variant {
+        at = k#index;
+      }
+    }
+    if at >= 0 {
+      if dense {
+        kept[at] = nr;
+      }
+    } else {
+      kept += [nr];
+    }
+  }
+  kept
+}
+
+// port: definitions.rs create_enum_dispatch_fn (@F20) — `t_<n><Enum>_<m>` over the variants'
+// implementations: `self` the enum, the parameters every implementation shares, the hidden ones
+// of the first implementation that has any; one `if tag == k { return <variant's m>(self, …) }`
+// per implementation in order, then the result's typed null, which only an absent receiver
+// reaches (`@FR-M-Variant`).  Made at the end of the first pass, numbered after every source
+// definition.
+fn create_enum_dispatch(e: el::El, en: integer, nrs: vector<integer>) {
+  if en < 0 || len(nrs) == 0 {
+    return;
+  }
+  from = nrs[0]!;
+  name = original_name(el::def(e, from).name);
+  visible = [for a in el::def(e, from).attributes if a#index > 0 && !a.hidden { a }];
+  common = len(visible);
+  for nr in nrs[1..] {
+    c = 0;
+    for a in el::def(e, nr).attributes {
+      if a#index > 0 && !a.hidden {
+        for o in visible {
+          if a.name == o.name && "{a.typedef}" == "{o.typedef}" {
+            c += 1;
+          }
+        }
+      }
+    }
+    if c < common {
+      common = c;
+    }
+  }
+  for nr in nrs {
+    extra = [for a in el::def(e, nr).attributes if a#index > 0 && !a.hidden { a }];
+    for a in extra[common..] {
+      if (a.value[0] ?? ir::NdNull) is NdNull {
+        el::refuse(e, "a variant method with a required parameter the other variants' lack");
+        return;
+      }
+    }
+  }
+  hidden: vector<ir::Attribute> = [];
+  for nr in nrs {
+    if len(hidden) == 0 {
+      hidden = [for a in el::def(e, nr).attributes if a#index > 0 && a.hidden { a }];
+    }
+  }
+  self_t = ir::TyEnum { n: en, is_ref: true, dep: [] };
+  args: vector<el_definitions::Argument> = [el_definitions::Argument { name: "self", typedef: self_t, constant: false, dflt: ir::NdNull }];
+  for a in visible[..common] {
+    args += [el_definitions::Argument { name: a.name, typedef: a.typedef[0] ?? ir::TyVoid, constant: false, dflt: a.value[0] ?? ir::NdNull }];
+  }
+  // (The arms write into the caller's buffers: the first implementation's hidden ones are the
+  // dispatcher's own parameters, a text result's `___tret_N` added as any text function's is.)
+  for a in hidden {
+    args += [el_definitions::Argument { name: a.name, typedef: a.typedef[0] ?? ir::TyVoid, constant: false, dflt: a.value[0] ?? ir::NdNull }];
+  }
+  pos = el::pos_at(e, len(e.p.src) - 1);
+  key = el_definitions::fn_key(e, name, args);
+  if key == "" {
+    return;
+  }
+  fd = el_definitions::add_fn(e, key, name, args, pos);
+  if fd < 0 {
+    return;
+  }
+  e.b.data.definitions[fd].synthetic = "enum_dispatcher";
+  ret = el::def(e, from).returned[0] ?? ir::TyVoid;
+  el::set_returned(e, fd, ret);
+  vars = el_vars::new_vars(name, pos.file);
+  av: vector<integer> = [];
+  for a in args {
+    v = el_vars::add_variable(vars, a.name, a.typedef);
+    el_vars::become_argument(vars, v);
+    av += [v];
+  }
+  tag = el_ir::cl(e, "OpConvIntFromEnum", [el_ir::cl(e, "OpGetEnum", [ir::NdVar { n: av[0]! }, ir::NdInt { n: 0 }])]);
+  ls: vector<ir::Node> = [];
+  for nr in nrs {
+    vr = receiver_def_nr(e, nr);
+    ord = if vr < 0 { 0 } else { match el::def(e, vr).attributes[0]!.value[0] ?? ir::NdNull { NdEnum { ord } => ord, _ => 0 } };
+    // (Visible parameters go to every arm, the hidden buffers only to an arm that declares any.)
+    has_hidden = len([for a in el::def(e, nr).attributes if a#index > 0 && a.hidden { a }]) > 0;
+    passed = if has_hidden { av } else { av[..common + 1] };
+    call = ir::NdCall { def_nr: nr, args: [for v in passed { ir::NdVar { n: v } }] };
+    ls += [el_ir::v_if(el_ir::cl(e, "OpEqInt", [tag, ir::NdInt { n: ord }]), el_ir::v_block([ir::NdReturn { inner: call }], ir::TyVoid, "ret"), ir::NdNull)];
+  }
+  // `null_value`: a collection's and a struct enum's null is the reference sentinel.
+  rb = el_types::base(ret);
+  ref_null = rb is TyVector || el_types::keyed_elem(rb) >= 0 || match rb { TyEnum { is_ref } => is_ref, _ => false };
+  ls += [ir::NdReturn { inner: if ref_null { el_ir::cl(e, "OpNullRefSentinel", []) } else { el_convert::null_of(e, ret) ?? ir::NdNull } }];
+  e.b.data.definitions[fd].code = [el_ir::v_block(ls, ret, "dynamic_fn")];
+  // (The between-passes return-buffer sweep finds the forwarded `__retbuf` and marks it hidden,
+  // as a signature's own is.)
+  for a in el::def(e, fd).attributes {
+    if a.name == "__retbuf" {
+      e.b.data.definitions[fd].attributes[a#index].hidden = true;
+    }
+  }
+  e.b.data.definitions[fd].variables = el_vars::stored(vars);
 }
