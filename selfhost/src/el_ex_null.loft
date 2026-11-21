@@ -2501,11 +2501,16 @@ pub fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
       }
       // A fresh literal is returned as it is; the tail's delivery copies it into the buffer.  The
       // first pass builds no literal block yet: the syntax says what it is.
-      if e.first_pass && (e.p.nodes[x!] is SVecLit || e.p.nodes[x!] is SComprehension) {
+      if e.first_pass && (e.p.nodes[x!] is SVecLit || e.p.nodes[x!] is SComprehension || (v.code is NdNull && match e.p.nodes[x!] { SVarAttr { attr: ra } => ra == "read", _ => false })) {
         return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
       }
       match el_ir::unspan(v.code) {
         NdBlock { block } => {
+          // A file read (`return f#read(n) as vector<T>`) is a fresh vector of its own: returned
+          // as it is, the tail's delivery copying it.
+          if block[0].name == "reading file" {
+            return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
+          }
           if literal_backing_store(block[0]) >= 0 {
             // The buffer renamed onto a local on the first pass: the literal is copied into it
             // where it is returned (`parse_return`'s `clear + append + Return(buf)`).
