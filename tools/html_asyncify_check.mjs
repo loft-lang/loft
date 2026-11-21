@@ -82,8 +82,14 @@ const fileServer = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': ct }); res.end(data);
   });
 });
-const httpPort = cdpPort + 1;
-fileServer.listen(httpPort);
+// The file server takes the port the OS hands it.  `cdpPort + 1` was a guess nothing had
+// checked, and another run's port could already hold it (EADDRINUSE when two harnesses ran at
+// once, a test that passed only on retry).
+await new Promise((resolve, reject) => {
+  fileServer.once('error', reject);
+  fileServer.listen(0, resolve);
+});
+const httpPort = fileServer.address().port;
 const URL_ARG = `http://localhost:${httpPort}/${serveName}`;
 
 const chrome = spawn(CHROME, [

@@ -16,7 +16,8 @@ runs it again.  It also exits when the run is over and at its deadline: it alway
 
 On its first call for a head sha it also prints main's red scheduled runs (`--no-nightly`
 skips that): the PR cycle fixes those in the same pass.  A red REQUIRED check is marked, since
-only that one holds auto-merge.  The reported jobs and their logs live under
+only that one holds auto-merge; so is a red shard of one (`Test (ubuntu-latest) [rest-a]`),
+whose required aggregator turns red only once every shard has ended.  The reported jobs and their logs live under
 `.git/loft-pr-watch/<PR>/`; a new push starts a fresh list.
 
 Exit codes: 10 a new red job (its log path printed) · 0 the run ended green · 2 the run ended
@@ -87,6 +88,12 @@ def required_checks(rp):
     if r.returncode == 0:
         names.update(json.loads(r.stdout or "{}").get("contexts", []))
     return names
+
+
+def is_required(name, required):
+    """A required check, or a shard whose result a required aggregator gathers
+    (`Test (ubuntu-latest) [rest-a]` feeds `Test (ubuntu-latest)`)."""
+    return name in required or name.split(" [", 1)[0] in required
 
 
 def fetch_log(rp, job_id, logs_dir):
@@ -171,7 +178,7 @@ def main():
         red = [r for r in runs if r.get("conclusion") in FAILED]
         pending = [r for r in runs if r.get("status") != "completed"]
         new = [r for r in red if str(r["id"]) not in reported]
-        mark = lambda r: " [required]" if r["name"] in required else ""
+        mark = lambda r: " [required]" if is_required(r["name"], required) else ""
 
         if a.once:
             print(f"PR #{a.pr} @ {sha[:9]}: {len(red)} red, {len(pending)} pending, "
@@ -193,7 +200,7 @@ def main():
             return 10
         if runs and not pending:
             if red:
-                req = [r["name"] for r in red if r["name"] in required]
+                req = [r["name"] for r in red if is_required(r["name"], required)]
                 print(f"PR #{a.pr} @ {sha[:9]}: run ended, {len(red)} red (all reported)"
                       + (f"; required red: {', '.join(req)} — holds auto-merge" if req
                          else "; no required check red — auto-merge can land it"))

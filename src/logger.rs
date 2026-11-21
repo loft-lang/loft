@@ -362,6 +362,9 @@ impl Logger {
         let severity = match kind {
             // A relayed fault halted the library it fired in, whatever kind it
             // started as — only halting faults cross a placement boundary.
+            k if k.is_fatal() => Severity::Fatal,
+            // `is_fatal` names these; listed again only because a guarded arm does not count
+            // towards the match being exhaustive.
             Rk::UserPanic { .. }
             | Rk::StackOverflow
             | Rk::Relayed { .. }

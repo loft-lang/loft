@@ -82,6 +82,19 @@ static int loft_pg_open(loft_pg *r, const char *path, char *err, size_t cap) {
         r->size = end < 0 ? 0 : (uint64_t) end;
     }
     r->npages = (r->size + LOFT_PG_PAGE - 1) / LOFT_PG_PAGE;
+    /* The page table holds a pointer per page: a size the server states whose table does not
+     * fit this target's sizes (a 32-bit one) is refused, not cut to a table that the 64-bit
+     * page numbers then index past. */
+    if (r->npages > SIZE_MAX / sizeof(uint8_t *)) {
+        snprintf(err, cap, "the store is larger than this build can address (%llu pages)",
+                 (unsigned long long) r->npages);
+        if (r->f) fclose(r->f);
+        free(r->url);
+        r->f = 0;
+        r->url = 0;
+        r->npages = 0;
+        return 0;
+    }
     r->pages = (uint8_t **) calloc(r->npages ? (size_t) r->npages : 1, sizeof(uint8_t *));
     if (!r->pages) { fputs("loft: out of memory\n", stderr); abort(); }
     return 1;

@@ -166,6 +166,30 @@ typedef struct {
     int64_t left; /* body bytes left (of the chunk, when chunked); -1 reads to the close */
 } loft_http;
 
+/* Whether two authorities (`host[:port]`, an IPv6 host in brackets) name one server: the host
+ * compared without case, a port left out read as the scheme's default — `example.com` and
+ * `example.com:443` are one server under https. */
+static int loft_http_same_server(const char *a, size_t an, const char *b, size_t bn, int tls) {
+    const char *dflt = tls ? "443" : "80";
+    const char *hp[2] = { a, b }, *pp[2];
+    size_t hn[2], pn[2], n[2] = { an, bn };
+    for (int i = 0; i < 2; i++) {
+        const char *s = hp[i], *colon = 0;
+        if (n[i] && s[0] == '[') {
+            const char *close_ = (const char *) memchr(s, ']', n[i]);
+            if (!close_) return 0;
+            if ((size_t) (close_ + 1 - s) < n[i] && close_[1] == ':') colon = close_ + 1;
+        } else {
+            colon = (const char *) memchr(s, ':', n[i]);
+        }
+        hn[i] = colon ? (size_t) (colon - s) : n[i];
+        pp[i] = colon ? colon + 1 : dflt;
+        pn[i] = colon ? n[i] - hn[i] - 1 : strlen(dflt);
+    }
+    return hn[0] == hn[1] && strncasecmp(hp[0], hp[1], hn[0]) == 0 && pn[0] == pn[1]
+           && memcmp(pp[0], pp[1], pn[0]) == 0;
+}
+
 /* One HTTP/1.1 request — `headers` complete `Name: value\r\n` lines, `body` sent with its length
  * — and the response's head read: 1, else 0 with `err` saying why as the Rust client (`ureq`)
  * words it.  `hops` redirects are followed, a 303 (and a POST's 301 or 302) as a GET, as the Rust
@@ -175,6 +199,22 @@ static int loft_http_open(loft_http *h, const char *method, const char *url, con
                           int hops, char *err, size_t cap) {
     memset(h, 0, sizeof *h);
     h->st.fd = -1;
+    /* The URL and the header lines are written into the request as they are, so a control
+     * character in either (a CR LF above all) would end a line the caller did not end. */
+    for (const char *q = url; *q; q++) {
+        if ((unsigned char) *q <= 0x20 || (unsigned char) *q == 0x7f) {
+            snprintf(err, cap, "%s: Bad URL: a space or control character", url);
+            return 0;
+        }
+    }
+    for (const char *q = headers; *q; q++) {
+        unsigned char c = (unsigned char) *q;
+        if (c == '\r' && q[1] == '\n') { q++; continue; }
+        if ((c < 0x20 && c != '\t') || c == 0x7f) {
+            snprintf(err, cap, "%s: Bad Header: a control character in a header", url);
+            return 0;
+        }
+    }
     int tls = strncmp(url, "https://", 8) == 0;
     if (!tls && strncmp(url, "http://", 7) != 0) {
         snprintf(err, cap, "%s: Bad URL: unknown scheme", url);
@@ -283,9 +323,11 @@ static int loft_http_open(loft_http *h, const char *method, const char *url, con
             loft_push_cstr(&next, tls ? "https://" : "http://");
             loft_push(&next, auth, alen);
         } else {
-            size_t sn = tls ? 8 : 7;
-            same = vn >= sn + alen && strncasecmp(v, tls ? "https://" : "http://", sn) == 0
-                   && strncasecmp(v + sn, auth, alen) == 0 && (vn == sn + alen || v[sn + alen] == '/');
+            size_t sn = tls ? 8 : 7, ln = 0;
+            if (vn >= sn && strncasecmp(v, tls ? "https://" : "http://", sn) == 0) {
+                while (sn + ln < vn && v[sn + ln] != '/' && v[sn + ln] != '?' && v[sn + ln] != '#') ln++;
+                same = loft_http_same_server(v + sn, ln, auth, alen, tls);
+            }
         }
         loft_push(&next, v, vn);
         loft_push(&next, "", 1);
@@ -455,10 +497,12 @@ static int loft_ws_write_frame(loft_stream *s, int opcode, const char *p, size_t
     return ok;
 }
 
-/* One frame of at most `cap` payload bytes, masked or not: 1 with its opcode and payload, 0 when
- * the stream failed or ended, or the frame claims more than `cap` (refused before it is
- * allocated, so a peer cannot claim a length that aborts the process). */
-static int loft_ws_read_frame(loft_stream *s, int *opcode, loft_text *payload, uint64_t cap) {
+/* One frame of at most `cap` payload bytes: 1 with its opcode and payload, 0 when the stream
+ * failed or ended, or the frame claims more than `cap` (refused before it is allocated, so a
+ * peer cannot claim a length that aborts the process).  With `from_client` an unmasked frame
+ * is refused too: RFC 6455 § 5.1 has a server close on one, since a client's masking is what
+ * keeps a page from choosing the bytes an intermediary sees. */
+static int loft_ws_read_frame(loft_stream *s, int *opcode, loft_text *payload, uint64_t cap, int from_client) {
     uint8_t h[2];
     if (!loft_stream_read_exact(s, h, 2)) return 0;
     uint64_t len = h[1] & 0x7F;
@@ -473,6 +517,7 @@ static int loft_ws_read_frame(loft_stream *s, int *opcode, loft_text *payload, u
         for (int i = 0; i < 8; i++) len = len << 8 | b[i];
     }
     if (len > cap) return 0;
+    if (from_client && !(h[1] & 0x80)) return 0;
     uint8_t mask[4] = { 0, 0, 0, 0 };
     if ((h[1] & 0x80) && !loft_stream_read_exact(s, mask, 4)) return 0;
     payload->len = 0;

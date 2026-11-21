@@ -332,7 +332,11 @@ impl State {
             return;
         }
         if is_text {
-            let s = unsafe { String::from_utf8_unchecked(data) };
+            // A text is UTF-8: bytes that are not leave it as the read declared it (empty), as
+            // on `--native` and as `text_from_bytes` answers for them.
+            let Ok(s) = String::from_utf8(data) else {
+                return;
+            };
             *self
                 .database
                 .store_mut(&val)

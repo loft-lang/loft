@@ -1,8 +1,8 @@
-diff --git b/src/generation/mod.rs a/src/generation/mod.rs
-index 62e26d506..63848d80c 100644
---- b/src/generation/mod.rs
-+++ a/src/generation/mod.rs
-@@ -3322,7 +3322,8 @@ impl Output<'_> {
+diff --git a/src/generation/mod.rs b/src/generation/mod.rs
+index 707faf1c2..b5209d484 100644
+--- a/src/generation/mod.rs
++++ b/src/generation/mod.rs
+@@ -3302,7 +3302,8 @@ impl Output<'_> {
          let idx = format!("var_{}", sanitize(variables.name(f.index_var)));
          let lo = match f.next_var {
              Some(nx) => format!("var_{}", sanitize(variables.name(nx))),
@@ -12,7 +12,7 @@ index 62e26d506..63848d80c 100644
          };
          let vec = self.expr_string(f.vector)?;
          let base = match f.base {
-@@ -3368,35 +3369,20 @@ impl Output<'_> {
+@@ -3370,35 +3371,20 @@ impl Output<'_> {
          let variables = self.data.def(self.def_nr).variables();
          let idx = format!("var_{}", sanitize(variables.name(index_var)));
          let hi = self.expr_string(hi)?;
@@ -53,7 +53,7 @@ index 62e26d506..63848d80c 100644
          }
      }
  
-@@ -3420,7 +3406,8 @@ impl Output<'_> {
+@@ -3422,7 +3408,8 @@ impl Output<'_> {
          let idx = format!("var_{}", sanitize(variables.name(index_var)));
          let lo = match next_var {
              Some(nx) => format!("var_{}", sanitize(variables.name(nx))),
@@ -63,13 +63,13 @@ index 62e26d506..63848d80c 100644
          };
          let hi = self.expr_string(hi)?;
          let incl = if inclusive { "1_i64" } else { "0_i64" };
-diff --git b/src/parser/objects.rs a/src/parser/objects.rs
-index 763122b0a..c58304830 100644
---- b/src/parser/objects.rs
-+++ a/src/parser/objects.rs
-@@ -3916,12 +3916,12 @@ impl Parser {
+diff --git a/src/parser/objects.rs b/src/parser/objects.rs
+index 442dc4d17..3bc746cc4 100644
+--- a/src/parser/objects.rs
++++ b/src/parser/objects.rs
+@@ -5182,12 +5182,12 @@ impl Parser {
                  in_type.clone(),
-                 I32.clone(),
+                 self.count_type(),
              );
 -            // `@FR-I-RangeIncl` (loft#1525) — an INCLUSIVE range stops on the value it just
 -            // yielded, BEFORE the step, so it never has to represent `till + 1`.  The overshoot

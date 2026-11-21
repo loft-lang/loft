@@ -206,10 +206,15 @@ fn ws_read_frame(reader: &mut impl BufRead) -> std::io::Result<Option<(u8, Vec<u
         }
         n => u64::from(n),
     };
-    let mut mask = [0u8; 4];
-    if masked {
-        reader.read_exact(&mut mask)?;
+    // A client's frame is masked or the connection ends (RFC 6455 § 5.1).
+    if !masked {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "a WebSocket client frame without a mask",
+        ));
     }
+    let mut mask = [0u8; 4];
+    reader.read_exact(&mut mask)?;
     // A request is a line of JSON; a frame claiming more than this is not one, and its
     // length must not size an allocation.
     const MAX_FRAME: u64 = 16 * 1024 * 1024;

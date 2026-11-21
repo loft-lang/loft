@@ -200,7 +200,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-DecodeView)` | counted; admitted on no bench program |
 | `(R-DeferredCopy)` | counted; admitted on no bench program |
 | `(R-Demote)` | `R-Demote` parse · `/place` parse |
-| `(R-Destination)` | `R-Destination` c, native |
+| `(R-Destination)` | counted; admitted on no bench program |
 | `(R-DischargeInto)` | `R-DischargeInto` parse |
 | `(R-DispatchPublish)` | not counted — executor: the lean loop publishes one position per op |
 | `(R-DispatchStop)` | not counted — executor: the lean loop tests one flag per op |

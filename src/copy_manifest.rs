@@ -297,6 +297,10 @@ pub fn note_reassigned_view(
 /// `view-written-back`.  `row` is `(view, container, function)`, deduped as a copied view's is.
 struct WriteBackNote {
     row: (String, String, String),
+    /// The view's type as the author spells it, and whether it is a struct ENUM: the cure the
+    /// fix line names depends on it (loft#2605).
+    type_name: String,
+    is_enum: bool,
     written_at: u32,
     file: String,
     line: u32,
@@ -315,6 +319,7 @@ pub fn note_written_back_view(
     var: &str,
     container: &str,
     function: &str,
+    view_type: (&str, bool),
     written_at: u32,
     at: (&str, u32),
 ) {
@@ -324,6 +329,8 @@ pub fn note_written_back_view(
         if !m.iter().any(|n| n.row == row && n.line == at.1) {
             m.push(WriteBackNote {
                 row,
+                type_name: view_type.0.to_string(),
+                is_enum: view_type.1,
                 written_at,
                 file: at.0.to_string(),
                 line: at.1,
@@ -355,6 +362,8 @@ pub fn drain_written_back_views(diags: &mut crate::diagnostics::Diagnostics) {
     let backs = WRITTEN_BACK.with(|m| std::mem::take(&mut *m.borrow_mut()));
     for WriteBackNote {
         row,
+        type_name,
+        is_enum,
         written_at,
         file,
         line,
@@ -376,7 +385,18 @@ pub fn drain_written_back_views(diags: &mut crate::diagnostics::Diagnostics) {
         );
         diags.fix_last(crate::diagnostics::Fix {
             kind: crate::diagnostics::FixKind::Conditional,
-            title: format!("bind `{name}` as a copy: `{name} = T {{ ..<place> }}`"),
+            // `@FR-B-Copy` — the copy spelling that exists for the view's type.  A struct place
+            // takes the record update `S { ..<place> }`; an ENUM-typed place does not (an update
+            // takes a variant only when its base is statically that variant), so the cure is
+            // the plain bind of a call's answer, which copies (loft#2605).
+            title: if is_enum {
+                format!(
+                    "bind `{name}` as a copy: a call's answer is copied, so \
+                     `fn keep(t: {type_name}) -> {type_name} {{ t }}` and `{name} = keep(<place>)`"
+                )
+            } else {
+                format!("bind `{name}` as a copy: `{name} = {type_name} {{ ..<place> }}`")
+            },
             condition: Some(format!(
                 "`{name}` is meant to keep the value the place in `{container}` held when it \
                  was bound"

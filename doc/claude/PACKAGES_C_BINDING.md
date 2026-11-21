@@ -54,7 +54,7 @@ correct everywhere.  An unknown type is refused, never guessed.
 | loft | C | notes |
 |---|---|---|
 | `integer`, narrow ints, `boolean`, `character` | one C integer | any width; the value is passed full-width |
-| `text` argument | one `const char*` | **NUL-terminated**, unlike the `#native` path's `ptr, len` |
+| `text` argument | one `const char*` | **NUL-terminated**, unlike the `#native` path's `ptr, len`.  Every byte of the text crosses, then one NUL — see *A text that may hold a NUL* below |
 | `text` / `text?` RETURN | `char*` | the bytes are **copied** up to the first NUL; loft never frees the pointer |
 | `vector<T>` | element pointer, plus a count where the C signature has one (@C107) | C carries no length.  The pointer is valid *for the call only* — see the retention hazard below |
 | `vector<float>` | `double*` + count | C may **write through it**; the writes are visible to loft |
@@ -321,6 +321,23 @@ same expression that sized the allocation.
 There is no annotation for "C keeps this pointer"; until there is, the rule is the
 one at the top of this paragraph, and it is a rule about *your* code, not a
 guarantee loft enforces.
+
+**A text that may hold a NUL.**  A loft `text` carries a length and may hold a NUL byte
+(`"ab\0cd"` has five).  The crossing hands C all of those bytes and then one NUL, on every
+backend, so the pointer is a valid C string *and* a valid buffer of `size(t)` bytes.  A callee
+that calls `strlen` on it sees `ab`.  For most C APIs that is the right answer — a file name,
+a flag — but a binding that hashes, signs, matches or validates a text must not stop there:
+the bytes it skipped were never checked.  Declare the byte count as its own argument and pass
+`size(t)`:
+
+```loft
+fn c_sha256(data: text, n: integer, out: vector<u8>) -> integer;
+#c "cr_sha256" "int(const void*, int64_t, void*)"
+// … c_sha256(data, size(data), out)
+```
+
+`tests/native.rs` (`interpreted_and_native_c_bindings_agree`, the `past` cell) holds both
+backends to it.
 
 **The `char *` return — three answers C's type system cannot give**, so the
 binding gives them, the same way on every backend:

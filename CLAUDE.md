@@ -8,8 +8,9 @@
 
 **loft** is a tree-walking interpreter (Rust) for the **loft** language: statically typed,
 expression-oriented, struct/enum, store-based heap, stdlib from `default/*.loft`. Two backends:
-the interpreter and `--native` (compiles through C; the rustc writer, `--native-rust`, waits for an
-attic). It's the **language** layer of a stack:
+the interpreter and `--native` (compiles through C). A backend stays only while it answers every
+program as the others do (`@C170`), so the rustc writer, `--native-rust`, is being retired
+(@PLN225). It's the **language** layer of a stack:
 **lavition** (the engine/brand) → **loft** (this repo) → games **moros**/**dryopea** + consumer
 libs (crawler, `lib/markdown`) that dogfood the language. History: [LAVITION.md](doc/claude/LAVITION.md).
 Developed almost entirely by AI agents (steered; docs + tooling prioritized above code), so

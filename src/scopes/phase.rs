@@ -152,10 +152,16 @@ pub(super) fn run_scan_phase(
     for w in write_backs {
         let def = data.def(d_nr);
         let at = def.position();
+        let view_tp = orig_vars.tp(w.view).base();
+        let view_type = (
+            data.display_type_name(view_tp),
+            matches!(view_tp, Type::Enum(_, true, _)),
+        );
         crate::copy_manifest::note_written_back_view(
             orig_vars.name(w.view),
             orig_vars.name(w.container),
             &def.original_name(),
+            (view_type.0.as_str(), view_type.1),
             w.written_at,
             (at.file.as_str(), if w.line == 0 { at.line } else { w.line }),
         );

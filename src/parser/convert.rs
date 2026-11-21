@@ -1580,6 +1580,16 @@ impl Parser {
                     );
                 } else {
                     *code = Value::Call(dnr, vec![code.clone()]);
+                    // `@FR-W-Name` — in a file under the 32-bit regime the `integer` a cast
+                    // names is the `i32`: a float or a single that does not fit one reads null
+                    // at the cast, not at whatever later stores the result (@PLN217).
+                    if self.data.width32()
+                        && matches!(is_type.base(), Type::Float | Type::Single)
+                        && matches!(should.base(), Type::Integer(spec) if spec.is_width32())
+                    {
+                        let inner = std::mem::replace(code, Value::Null);
+                        *code = self.cl("OpNarrow32", &[inner]);
+                    }
                 }
                 return true;
             } else if self.data.attributes(dnr) == 2

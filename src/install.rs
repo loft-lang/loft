@@ -112,11 +112,7 @@ fn fetch_prebuilt(r: &ResolvedPackage, opts: &InstallOptions) -> bool {
     }
     let filename = crate::platform::cdylib_file_name(&stem);
     let dest = dir.join(&filename);
-    let Ok(bytes) = registry_index::download_tarball(&bin.url, &dest) else {
-        return false;
-    };
-    if crate::integrity::verify_sha256(&bytes, &bin.sha256).is_err() {
-        let _ = crate::file_access::remove_file(&dest);
+    if registry_index::download_verified(&bin.url, &bin.sha256, &dest).is_err() {
         return false;
     }
     // Stamp the sidecar so Phase 1's fp-gated resolve accepts the binary.
@@ -170,14 +166,7 @@ fn fetch_auto_artifact(
         return false;
     }
     let dest = dir.join(crate::platform::cdylib_file_name(stem));
-    let Ok(bytes) = registry_index::download_tarball(&bin.url, &dest) else {
-        return false;
-    };
-    if crate::integrity::verify_sha256(&bytes, &bin.sha256).is_err() {
-        let _ = crate::file_access::remove_file(&dest);
-        return false;
-    }
-    true
+    registry_index::download_verified(&bin.url, &bin.sha256, &dest).is_ok()
 }
 
 /// @PLN21 Phase 5 — the prebuilt-availability one-liner for a package: given the
@@ -538,6 +527,8 @@ struct IndexMemoKey {
     sig: PathBuf,
     idx_stamp: (u64, u128),
     sig_stamp: (u64, u128),
+    /// The purpose-prefixed `.sig2`, which may be absent.
+    sig2_stamp: Option<(u64, u128)>,
     allow_unsigned: bool,
 }
 
@@ -561,6 +552,7 @@ fn index_memo_key(idx: &Path, sig: &Path, opts: &InstallOptions) -> Option<Index
         sig: sig.to_path_buf(),
         idx_stamp: file_stamp(idx)?,
         sig_stamp: file_stamp(sig)?,
+        sig2_stamp: file_stamp(&registry_index::sig2_path(sig)),
         allow_unsigned: opts.allow_unsigned,
     })
 }
@@ -625,6 +617,13 @@ fn load_index_inner(
                 };
                 verify_or_explain(&fetched.content, &sig_bytes, opts)
                     .map_err(|verdict| fetched_pair_verdict(verdict, &fetched, &sig_bytes, &url))?;
+                // Signed is not fresh: an index older than the verified one cached is refused.
+                if let Ok(cached) = read_cached_index_verified(&idx_path, &sig_path, opts)
+                    && let Some(why) =
+                        registry_index::rollback_refusal("index", &fetched.content, &cached)
+                {
+                    return Err(why);
+                }
                 // Verified: now it is safe to keep.  Both files land atomically,
                 // because a plain write truncates first and another process
                 // reading this cache mid-refresh would get a half index or the
@@ -692,7 +691,7 @@ fn fetched_pair_verdict(
     url: &str,
 ) -> String {
     if !matches!(
-        registry_signing::verify_index(&fetched.content, sig),
+        registry_signing::verify_document(registry_signing::Purpose::Index, &fetched.content, sig),
         VerifyResult::Invalid
     ) {
         return verdict;
@@ -714,8 +713,13 @@ fn fetched_pair_verdict(
     }
 }
 
-fn verify_or_explain(content: &[u8], sig: &[u8], opts: &InstallOptions) -> Result<(), String> {
-    let result = registry_signing::verify_index(content, sig);
+/// The verdict on an index and its signature, as every command that reads an index gives it:
+/// `Ok` for a valid signature, and for a missing one only with `allow_unsigned`.
+///
+/// # Errors
+/// What is wrong with the pair, in words the user can act on.
+pub fn verify_or_explain(content: &[u8], sig: &[u8], opts: &InstallOptions) -> Result<(), String> {
+    let result = registry_signing::verify_document(registry_signing::Purpose::Index, content, sig);
     match result {
         VerifyResult::Valid => Ok(()),
         VerifyResult::NoTrustRoot => {

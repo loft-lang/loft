@@ -117,7 +117,7 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   // (`@FR-T-Chk-Vec`: a vector result reaches a tail `if`'s arms, so an untyped `[]` arm is
   // built as that vector and a `null` arm is its sentinel — as a declared local's type does.)
   kept_node = vars.expect_node;
-  kept_tp = vars.expect;
+  kept_tp = ex(ir::NdNull, vars.expect);
   ttail = el_ex_deliver::tail_syntax(e, body);
   if ttail >= 0 && (e.p.nodes[ttail] is SIf || e.p.nodes[ttail] is SMatch) && el_types::base(result) is TyVector {
     vars.expect_node = ttail;
@@ -125,7 +125,7 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   }
   b = el_ex_assign::parse_block(e, vars, body, "return from block", result);
   vars.expect_node = kept_node;
-  vars.expect = kept_tp;
+  vars.expect = kept_tp.tp;
   // A function value read off a field and ANSWERED takes a copy of the field's closure record,
   // as one bound to a local does (`(B-View)`).
   if !e.first_pass && el_types::base(result) is TyFunction {
@@ -631,6 +631,10 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       // arm is copied into the buffer (`materialized_view_return`), a `null` arm the sentinel.
       if built == null {
         built = materialize_match_arms(e, vars, code, rb, result);
+        // (Copied arm by arm: the body is typed as the buffer, as an `if` tail's is.)
+        if built != null && vars.mat_binding {
+          view_answer = true;
+        }
       }
       // A scalar `match` tail whose join borrows a local of the body (`["t"]`) is copied whole
       // into the buffer (`MaterializeView` on the join).
@@ -671,9 +675,25 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       }
       // A cursor match whose every arm is a literal built in a work ref of its own, or the
       // null sentinel, delivers nothing either: a rule's answer.
-      if built == null && cursor_tail(body_tail(code)) && cursor_arms_answer(e, body_tail(code)) {
+      if built == null && cursor_tail(body_tail(code)) && cursor_arms_answer(e, vars, body_tail(code)) {
         built = code;
         arms_answer = true;
+        // (An arm that views a parameter makes the result borrow it — `-> N["p"]?` — and every
+        // enclosing block of the rule is typed so: the cursor match, the vector match, the slice
+        // binding, the body.)
+        vp = view_arm_param(e, vars, body_tail(code));
+        if vp >= 0 {
+          va = attr_nr(el::def(e, e.context), el_vars::name_of(vars, vp));
+          rt = el::def(e, e.context).returned[0];
+          if va >= 0 && !el_types::deps(rt).contains(va) {
+            e.b.data.definitions[e.context].returned = [el_types::with_deps(rt, el_types::deps(rt) + [va])];
+          }
+          vbl = match code { NdBlock { block } => block[0], _ => ir::Block { name: "", operators: [], result: [], scope: 0, var_size: 0 } };
+          vbl.operators[-1] = view_blocks_typed(vbl.operators[-1], vp);
+          vbl.result = [borrowing(vbl.result[0] ?? result, vp)];
+          built = ir::NdBlock { block: [vbl] };
+          view_answer = true;
+        }
       }
       // A `#native` callee's struct-enum answer is a store of its own, handed up as it is
       // (`classify_reference_delivery` is the struct's; a struct enum's tail call stays `AsIs`).
@@ -1947,6 +1967,8 @@ pub fn materialize_match_value(e: el::El, vars: el_vars::Vars, tail: ir::Node, r
   }
   kt = el::def(e, td).known_type;
   owned = el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb]);
+  vars.mat_binding = false;
+  vars.mat_dense = false;
   arms = materialize_arm(e, vars, mb.operators[-1], rb, kt, owned);
   if arms == null {
     return null;
@@ -1954,7 +1976,14 @@ pub fn materialize_match_value(e: el::El, vars: el_vars::Vars, tail: ir::Node, r
   if has_null_arm(mb.operators[-1]) && !((mb.result[0] ?? ir::TyVoid) is TyOptional) {
     mb.result = [ir::TyOptional { inner: mb.result[0] ?? ir::TyVoid }];
   }
+  // (An element binding answered through its own null check: the match answers the buffer
+  // itself, `S["__retbuf"]`, its `?` the function block's.)
   mb.operators[-1] = arms!;
+  // (A DENSE element binding copied in: the match answers the buffer; a nullable one keeps the
+  // binding's type, `S["a#1"]?`.)
+  if vars.mat_dense {
+    mb.result = [owned];
+  }
   // (The result names the buffer it is delivered in, as a vector's does.)
   rba = attr_nr(el::def(e, e.context), "__retbuf");
   if rba >= 0 {
@@ -1992,6 +2021,18 @@ fn materialize_arm(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, kt:
         return null;
       }
       b = ir::NdVar { n: rb };
+      // (An arm ending in a slice `match` that delivers itself — its element bindings copied in
+      // arm by arm, `materialize_match_value` — is a plain block typed as the buffer, no second
+      // copy around it: R-ValueRecord/1992's `else { match p { [a, ..] => a, … } }`.)
+      inner_last = el_ir::unspan(el_ir::last(ab.operators));
+      if any_block && match inner_last { NdBlock { block: ib } => ib[0].name == "vector_match", _ => false } {
+        imv = materialize_match_value(e, vars, inner_last, rb, owned);
+        if imv != null {
+          ab.operators[-1] = el_ir::respan(el_ir::last(ab.operators), imv!);
+          ab.result = [owned];
+          return ir::NdBlock { block: [ab] };
+        }
+      }
       // (A whole block copied in is typed without the store its own literal mints.)
       if any_block && !(el_ir::unspan(el_ir::last(ab.operators)) is NdVar) {
         ab.result = [el_types::without_deps(ab.result[0] ?? owned)];
@@ -1999,6 +2040,21 @@ fn materialize_arm(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, kt:
       }
       // A NULLABLE binding is copied where present, inside its block: the sentinel where absent.
       av = match el_ir::unspan(el_ir::last(ab.operators)) { NdVar { n: an } => an, _ => -1 };
+      // (A DENSE element binding of a slice arm is null-checked the same way — Rust keeps the
+      // check — its block then answering the buffer: `{#slice_binding … }: S["__retbuf"]`.)
+      dense_bind = av >= 0 && !(el_vars::tp(vars, av) is TyOptional) && ab.name == "slice_binding" && struct_ref(e, el_types::base(el_vars::tp(vars, av))) >= 0;
+      if dense_bind || (av >= 0 && el_vars::tp(vars, av) is TyOptional && ab.name == "slice_binding") {
+        vars.mat_binding = true;
+      }
+      if dense_bind {
+        vars.mat_dense = true;
+      }
+      if dense_bind {
+        dcp = el_ir::v_block([el_ir::v_set(rb, ir::NdNull), el_ir::cl(e, "OpDatabase", [b, ir::NdInt { n: kt }]), el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: av }, b, ir::NdInt { n: kt }]), b], owned, "materialized_view_return");
+        ab.operators[-1] = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [ir::NdVar { n: av }]), el_ir::cl(e, "OpNullRefSentinel", []), dcp);
+        ab.result = [owned];
+        return ir::NdBlock { block: [ab] };
+      }
       if av >= 0 && el_vars::tp(vars, av) is TyOptional {
         cp = el_ir::v_block([el_ir::v_set(rb, ir::NdNull), el_ir::cl(e, "OpDatabase", [b, ir::NdInt { n: kt }]), el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: av }, b, ir::NdInt { n: kt }]), b], owned, "materialized_view_return");
         ab.operators[-1] = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [ir::NdVar { n: av }]), el_ir::cl(e, "OpNullRefSentinel", []), cp);
@@ -2125,13 +2181,65 @@ pub fn cursor_tail(n: ir::Node) -> boolean {
   match el_ir::unspan(n) { NdBlock { block } => block[0].name == "cursor match", _ => false }
 }
 
-pub fn cursor_arms_answer(e: el::El, n: ir::Node) -> boolean {
+// (`@FR-O-Buffer`'s view half: an arm answering a VIEW of a parameter — a field or element read
+// rooted at it, `p.nodes[0]` — is handed back as it is, the result borrowing the parameter.)
+pub fn cursor_arms_answer(e: el::El, vars: el_vars::Vars, n: ir::Node) -> boolean {
   match n {
-    NdSpan { pos: _, inner } => cursor_arms_answer(e, inner),
-    NdIf { cond: _, t, f } => cursor_arms_answer(e, t) && cursor_arms_answer(e, f),
-    NdBlock { block } => block[0].name == "Object" || (len(block[0].operators) > 0 && cursor_arms_answer(e, block[0].operators[-1])),
-    NdCall { def_nr, args } => len(args) == 0 && el::def(e, def_nr).name == "OpNullRefSentinel",
+    NdSpan { pos: _, inner } => cursor_arms_answer(e, vars, inner),
+    NdIf { cond: _, t, f } => cursor_arms_answer(e, vars, t) && cursor_arms_answer(e, vars, f),
+    NdBlock { block } => block[0].name == "Object" || (len(block[0].operators) > 0 && cursor_arms_answer(e, vars, block[0].operators[-1])),
+    NdCall { def_nr, args } => {
+      nm = el::def(e, def_nr).name;
+      if len(args) == 0 {
+        return nm == "OpNullRefSentinel";
+      }
+      pr = place_root(e, n);
+      (nm == "OpGetVector" || nm == "OpGetField") && pr >= 0 && vars.vars[pr].argument && !hidden_param(e, vars, pr)
+    },
     _ => false
+  }
+}
+
+// The parameter a view arm of the rule reads, or -1.
+fn view_arm_param(e: el::El, vars: el_vars::Vars, n: ir::Node) -> integer {
+  match n {
+    NdSpan { pos: _, inner } => view_arm_param(e, vars, inner),
+    NdIf { cond: _, t, f } => { a = view_arm_param(e, vars, t); if a >= 0 { a } else { view_arm_param(e, vars, f) } },
+    NdBlock { block } => if len(block[0].operators) > 0 { view_arm_param(e, vars, block[0].operators[-1]) } else { -1 },
+    NdCall { def_nr, args } => {
+      nm = el::def(e, def_nr).name;
+      pr = if len(args) > 0 && (nm == "OpGetVector" || nm == "OpGetField") { place_root(e, n) } else { -1 };
+      if pr >= 0 && vars.vars[pr].argument && !hidden_param(e, vars, pr) { pr } else { -1 }
+    },
+    _ => -1
+  }
+}
+
+// `t` borrowing `p` as well, its nullability kept.
+fn borrowing(t: ir::TypeT, p: integer) -> ir::TypeT {
+  match t {
+    TyOptional { inner } => ir::TyOptional { inner: el_types::with_deps(el_types::without_deps(inner), [p]) },
+    _ => el_types::with_deps(el_types::without_deps(t), [p])
+  }
+}
+
+// The rule's own blocks — the cursor match, the vector match, a slice binding — typed as borrowing
+// `p`; an inner `if`'s arms keep their own types.
+fn view_blocks_typed(n: ir::Node, p: integer) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: view_blocks_typed(inner, p) },
+    NdIf { cond, t, f } => ir::NdIf { cond: cond, t: view_blocks_typed(t, p), f: view_blocks_typed(f, p) },
+    NdBlock { block } => {
+      bl = block[0];
+      if bl.name == "cursor match" || bl.name == "vector_match" || bl.name == "slice_binding" {
+        bl.result = [borrowing(bl.result[0] ?? ir::TyVoid, p)];
+        if len(bl.operators) > 0 {
+          bl.operators[-1] = view_blocks_typed(bl.operators[-1], p);
+        }
+      }
+      ir::NdBlock { block: [bl] }
+    },
+    _ => n
   }
 }
 

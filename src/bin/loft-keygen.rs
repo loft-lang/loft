@@ -59,6 +59,7 @@ fn main() {
         "generate" => cmd_generate(&args[2..]),
         "format" => cmd_format(&args[2..]),
         "sign" => cmd_sign(&args[2..]),
+        "message" => cmd_message(&args[2..]),
         "verify" => cmd_verify(&args[2..]),
         _ => {
             print_help();
@@ -85,6 +86,12 @@ fn print_help() {
     eprintln!("                            Writes a raw 64-byte Ed25519 signature.");
     eprintln!("                            Maintainer workflow: sign `index.json`");
     eprintln!("                            locally during PR review.");
+    eprintln!();
+    eprintln!("  message --purpose index|advisories --in <doc> --out <msg>");
+    eprintln!("                            Write the message a purpose-prefixed signature");
+    eprintln!("                            (<doc>.sig2) is made over: the purpose, then the");
+    eprintln!("                            document.  Sign <msg> with `sign` or the card and");
+    eprintln!("                            store that signature as <doc>.sig2.");
     eprintln!();
     eprintln!("  verify --in <data> --sig <data>.sig --pub <hex>");
     eprintln!("                            Verify a signature against a public key.");
@@ -269,6 +276,52 @@ fn cmd_sign(extra: &[String]) {
 /// (file containing 64 hex chars).  Exits 0 on valid, 1 on invalid /
 /// any failure.  Used during the annual recovery drill to confirm a
 /// restored key matches the embedded public key.
+/// `message --purpose index|advisories --in <doc> --out <msg>`: the bytes a `.sig2` signs
+/// (`registry_signing::signed_message`), so every signer — the key file or the card — signs a
+/// file as it always has.
+fn cmd_message(extra: &[String]) {
+    let mut purpose = None;
+    let mut input = None;
+    let mut output = None;
+    let mut i = 0;
+    while i < extra.len() {
+        let value = extra.get(i + 1).cloned();
+        match extra[i].as_str() {
+            "--purpose" => purpose = value,
+            "--in" => input = value,
+            "--out" => output = value,
+            other => {
+                eprintln!("loft-keygen message: unexpected argument `{other}`");
+                std::process::exit(2);
+            }
+        }
+        i += 2;
+    }
+    let purpose = match purpose.as_deref() {
+        Some("index") => loft::registry_signing::Purpose::Index,
+        Some("advisories") => loft::registry_signing::Purpose::Advisories,
+        _ => {
+            eprintln!("loft-keygen message: --purpose index|advisories is required");
+            std::process::exit(2);
+        }
+    };
+    let (Some(input), Some(output)) = (input, output) else {
+        eprintln!("loft-keygen message: --in <doc> and --out <msg> are required");
+        std::process::exit(2);
+    };
+    let doc = file_access::read(&input).unwrap_or_else(|e| {
+        eprintln!("loft-keygen message: cannot read {input}: {e}");
+        std::process::exit(1);
+    });
+    if let Err(e) = file_access::write(
+        &output,
+        loft::registry_signing::signed_message(purpose, &doc),
+    ) {
+        eprintln!("loft-keygen message: cannot write {output}: {e}");
+        std::process::exit(1);
+    }
+}
+
 fn cmd_verify(extra: &[String]) {
     let in_path = arg_value(extra, "--in").unwrap_or_else(|| die("verify: missing --in"));
     let sig_path = arg_value(extra, "--sig").unwrap_or_else(|| die("verify: missing --sig"));

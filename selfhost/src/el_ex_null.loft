@@ -65,9 +65,8 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
           return ex(ir::NdNull, ir::TyUnknown { n: 0 });
         }
         tt = ir::TyText { dep: [tv] };
-        if e.first_pass {
-          return ex(ir::NdNull, tt);
-        }
+        // (Built on both passes, as the held subject's below: a text tail's accumulator,
+        // `do_if_acc`, is decided on the first, from this `if`.)
         has_text = el_ir::cl(e, "OpConvBoolFromText", [x.code]);
         return ex(el_ir::v_if(has_text, x.code, d.code), tt);
       },
@@ -529,15 +528,40 @@ pub fn file_read(e: el::El, vars: el_vars::Vars, fv: integer, arg: integer?, tp:
   if rt0 == null {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
-  rt = rt0!;
+  tat = match e.p.nodes[tp] { STy { at: ta } => ta, _ => 0 };
+  file_read_as(e, vars, fv, arg, rt0!, at: tat)
+}
+
+// The read itself, of type `rt` — the cast's, or (`read_target_type`) the type its destination
+// expects.
+pub fn file_read_as(e: el::El, vars: el_vars::Vars, fv: integer, arg: integer?, rt: ir::TypeT, at: integer = 0) -> Ex {
   // `f#read(n) as vector<T>` of a plain scalar `T`: `n` bytes into a fresh vector local, by the
   // vector's store type, its definitions already made (`vector_def`).
   match rt {
     TyVector { inner } => {
       nm = el_types::elem_name(e, inner);
-      if arg == null || !el_convert::plain_scalar(inner) || el_convert::plain_enum(inner) || nm == "" || el::def_nr(e, "main_vector<{nm}>") < 0 {
+      if arg == null || !el_convert::plain_scalar(inner) || el_convert::plain_enum(inner) || nm == "" {
         el::refuse(e, "a file read of a vector with no size, or of this element type: {type_kind(inner)}");
         return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+      }
+      // (loft#899: the read declares its vector here — `vector_def` — where nothing declared it.)
+      if el::def_nr(e, "main_vector<{nm}>") < 0 {
+        // (At the lexer's place once the cast is read, the token after its `>`; `vector_def`
+        // registers no store type of its own, a narrow element's either.)
+        ci = at;
+        depth = 0;
+        while ci < len(e.p.src) {
+          if e.p.src[ci]! is Lt {
+            depth += 1;
+          } else if e.p.src[ci]! is Gt {
+            depth -= 1;
+            if depth <= 0 {
+              break;
+            }
+          }
+          ci += 1;
+        }
+        el_schema::make_vector_def(e, inner, nm, el::pos_at(e, ci + 1), true, narrow_early: false);
       }
       n_code = el_ex_assign::expression(e, vars, arg!).code;
       el_vars::in_use(vars, fv, true);
@@ -600,8 +624,33 @@ pub fn var_attr(e: el::El, vars: el_vars::Vars, var: text, attr: text, arg: inte
     if attr == "read" && tp != null {
       return file_read(e, vars, fv, arg, tp!);
     }
+    // `read_target_type`: with no cast and no size, the read is of the type its destination
+    // expects (`s.a = f#read`, `magic: u32 = (f#read & 0x7FFFFFFF) as u32`) — an integer, a float
+    // or a single, by that type's width and row, the block `f#read as T` builds.
+    if attr == "read" && tp == null && arg == null && (vars.expect_node >= 0 || !(vars.read_target is TyVoid)) {
+      xt = el_types::without_deps(el_types::base(if vars.expect_node >= 0 { vars.expect } else { vars.read_target }));
+      if xt is TyInteger || xt is TyFloat || xt is TySingle {
+        return file_read_as(e, vars, fv, arg, xt);
+      }
+    }
     if arg == null && tp == null {
       return file_attr(e, vars, fv, attr);
+    }
+  }
+  // `@C148`: `x#errors` is the errors of the parse that built the value `x` holds —
+  // `n_parse_errors_of(x)`, typed as that function answers (`vector<text>`), the variable marked
+  // used.  A variable that holds no record, struct enum or vector is refused by name.
+  if attr == "errors" && arg == null && tp == null && fv >= 0 {
+    el_vars::in_use(vars, fv, true);
+    pf = el::def_nr(e, "n_parse_errors_of");
+    xb = el_types::base(el_vars::tp(vars, fv));
+    held_ok = xb is TyReference || xb is TyVector || match xb { TyEnum { is_ref } => is_ref, _ => false };
+    if !e.first_pass && !held_ok {
+      el::refuse(e, "a `#errors` of a variable holding no parsed record or vector");
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    if pf >= 0 {
+      return ex(ir::NdCall { def_nr: pf, args: [ir::NdVar { n: fv }] }, el::def(e, pf).returned[0] ?? ir::TyUnknown { n: 0 });
     }
   }
   if attr == "index" && arg == null && tp == null {
@@ -867,6 +916,9 @@ pub fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: intege
     NdVar { n: _ } => {},
     _ => {
       held = el_vars::create_unique(vars, "ncr", b);
+      // (Its second-pass type: a call's answer borrows the buffer this pass minted for it,
+      // `vector<integer>["__ref_2"]`, which the first pass's type could not name.)
+      el_vars::set_var_type(vars, held, b);
       subject = ir::NdVar { n: held };
     }
   }
@@ -1629,6 +1681,25 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
       return ex(if f.tp is TyNull { el_ir::v_if(c.code, sl!, nl!) } else { el_ir::v_if(c.code, nl!, sl!) }, pt);
     }
   }
+  // `@FR-L-Null-Which` along a chain (`if … { h.a } else if … { h.b } else { null }`): a tagged
+  // slot arm beside an arm already the POINTER `S?` of the same payload (an inner join of a slot
+  // and `null`) is read through its tag at its leaves too, and the join is that pointer.
+  if is_nullable_wrapper(e, t.tp) != is_nullable_wrapper(e, f.tp) {
+    slot_c = if is_nullable_wrapper(e, t.tp) { t } else { f };
+    ptr_c = if is_nullable_wrapper(e, t.tp) { f } else { t };
+    payload = el_ex_place::nullable_payload(e, el_types::struct_enum_def(slot_c.tp));
+    same_payload = match ptr_c.tp { TyOptional { inner: pi } => match pi { TyReference { n: pn } => pn == payload, _ => false }, _ => false };
+    if same_payload {
+      cpt = ir::TyOptional { inner: ir::TyReference { n: payload, dep: el_types::deps(slot_c.tp) } };
+      if e.first_pass {
+        return ex(el_ir::v_if(c.code, t.code, f.code), cpt);
+      }
+      csl = tag_leaves(e, vars, slot_c.code, slot_c.tp, cpt);
+      if csl != null {
+        return ex(if is_nullable_wrapper(e, t.tp) { el_ir::v_if(c.code, csl!, f.code) } else { el_ir::v_if(c.code, t.code, csl!) }, cpt);
+      }
+    }
+  }
   // (A keyed collection is a collection here too: its null the reference sentinel.)
   vector_null = f.tp is TyNull && !(t.tp is TyOptional) && (t.tp is TyVector || keyed_kind(t.tp));
   // A struct enum's variant beside a `null` arm joins to the enum `?` (`variant_parent_enum`),
@@ -2324,6 +2395,8 @@ pub fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
     // result, its deps left out (`parse_return`, @P365): an empty `return []` is that vector.
     hinted = el_types::is_collection(el_types::base(result)) && e.p.nodes[x!] is SVecLit;
     // `parent_tp` is `Null` there: the literal's element temp takes no context's type.
+    outer_expect_node = vars.expect_node;
+    outer_expect = ex(ir::NdNull, vars.expect);
     if hinted {
       vars.expect_node = x!;
       vars.expect = el_types::without_deps(el_types::base(result));
@@ -2349,7 +2422,8 @@ pub fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
       el_ex_assign::expression(e, vars, x!)
     };
     if hinted {
-      vars.expect_node = -1;
+      vars.expect_node = outer_expect_node;
+      vars.expect = outer_expect.tp;
     }
     // `convert`'s tagged arm (`@FR-L-Null-Tag`) at a `return`, as at a body's tail: a
     // `__nullable<S>` value of a `-> S?` function is read through its tag, absence the
@@ -2427,11 +2501,16 @@ pub fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
       }
       // A fresh literal is returned as it is; the tail's delivery copies it into the buffer.  The
       // first pass builds no literal block yet: the syntax says what it is.
-      if e.first_pass && (e.p.nodes[x!] is SVecLit || e.p.nodes[x!] is SComprehension) {
+      if e.first_pass && (e.p.nodes[x!] is SVecLit || e.p.nodes[x!] is SComprehension || (v.code is NdNull && match e.p.nodes[x!] { SVarAttr { attr: ra } => ra == "read", _ => false })) {
         return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
       }
       match el_ir::unspan(v.code) {
         NdBlock { block } => {
+          // A file read (`return f#read(n) as vector<T>`) is a fresh vector of its own: returned
+          // as it is, the tail's delivery copying it.
+          if block[0].name == "reading file" {
+            return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
+          }
           if literal_backing_store(block[0]) >= 0 {
             // The buffer renamed onto a local on the first pass: the literal is copied into it
             // where it is returned (`parse_return`'s `clear + append + Return(buf)`).
@@ -3315,8 +3394,12 @@ pub fn merge_view_call(e: el::El, vars: el_vars::Vars, code: ir::Node) -> ir::No
 // `@FR-L-Null-Which`'s leaves: each leaf of `n` (a block's tail, both arms of an `if`) holding
 // a `__nullable<S>` slot of type `slot` read through its tag (`read_through_tag`), each block
 // retyped as the pointer `pt`.  Null where a leaf cannot be read so.
-fn tag_leaves(e: el::El, vars: el_vars::Vars, n: ir::Node, slot: ir::TypeT, pt: ir::TypeT) -> ir::Node? {
+pub fn tag_leaves(e: el::El, vars: el_vars::Vars, n: ir::Node, slot: ir::TypeT, pt: ir::TypeT) -> ir::Node? {
   match n {
+    // (A `null` leaf — a match's `_ => null` — is the reference null sentinel.)
+    NdNull => {
+      return el_ir::cl(e, "OpNullRefSentinel", []);
+    },
     // (The leaf's span is dropped with the read it was: the tag test stands in its place.)
     NdSpan { pos: _, inner } => {
       return tag_leaves(e, vars, inner, slot, pt);

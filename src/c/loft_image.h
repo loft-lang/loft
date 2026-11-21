@@ -517,6 +517,21 @@ static void loft_sha256_hex(const uint8_t *p, size_t n, char hex[65]) {
     for (int i = 0; i < 8; i++) snprintf(hex + 8 * i, 9, "%08x", (unsigned) h[i]);
 }
 
+/* Whether the SHA-256 of `p[0..n)` is the 64 hex digits `want` names, in either case, and
+ * nothing after them: a pin is all or nothing. */
+static int loft_sha256_matches(const uint8_t *p, size_t n, const char *want) {
+    char hex[65];
+    loft_sha256_hex(p, n, hex);
+    size_t i = 0;
+    while (want[i] && i < 64) {
+        char c = want[i];
+        if (c >= 'A' && c <= 'Z') c = (char) (c - 'A' + 'a');
+        if (c != hex[i]) return 0;
+        i++;
+    }
+    return i == 64 && want[64] == 0;
+}
+
 /* ── The guard beside an image (`store_guard`, `@FR-S-Guard`) ────────────────────────────────
  * `<image>.guard`: what the image and its sidecar hashed to when they were written, checked
  * before a loader reads either.  A reader takes the lines it knows and passes over the rest:
@@ -1175,6 +1190,12 @@ static int loft_rebase_refs(const loft_sidecar *sc, uint16_t nr, long recorded, 
 }
 
 static uint8_t loft_store_verify(const loft_tdesc *T, uint32_t nt, loft_ref r);
+/* What a stored reference's store number is read against (`image_sound::Own`): -2 for a value
+ * in use, whose own references carry its store's number; otherwise an image that is not
+ * adopted yet, whose references still carry the slot it was written from — that slot, or -1
+ * for an image that records none. */
+#define LOFT_VC_LIVE (-2L)
+static LOFT_TLS long loft_vc_own = LOFT_VC_LIVE;
 static int loft_image_adopt(loft_ref r, uint8_t *bytes, size_t n, int untrusted, const loft_sidecar *sc,
                             long recorded, const char *what, const char *who);
 
@@ -1304,7 +1325,9 @@ static int loft_image_adopt(loft_ref r, uint8_t *bytes, size_t n, int untrusted,
         t->buf = bytes;
         t->size = words;
         loft_ref root = { r.store_nr, LOFT_ST_PRIMARY, 8, 0 };
+        loft_vc_own = recorded >= 0 ? recorded : -1L;
         int sound = loft_store_verify(loft_T, loft_T_n, root);
+        loft_vc_own = LOFT_VC_LIVE;
         t->buf = held_buf;
         t->size = held_size;
         if (!sound) {
@@ -1408,6 +1431,235 @@ static int loft_vc_holds_numbers(const loft_tdesc *T, uint32_t nt, uint16_t tp) 
 #define LOFT_VC_BAD(...) do { fprintf(stderr, "[cr-check] store_verify: " __VA_ARGS__); fputc('\n', stderr); (*problems)++; } while (0)
 
 static void loft_validate_claims_at(const loft_tdesc *T, uint32_t nt, uint16_t tp, loft_ref r, uint32_t *problems);
+
+/* `radix_tree::sound` — the shape of the tree in record `tree`, a claimed block of `words`
+ * words: every node id is one the tree minted, no node is reached twice, a node has both
+ * children, points back at the node above it and tests a later bit than that one, the leaves
+ * and nodes are as many as the header says, the free nodes form a list.  No call stack per
+ * level: a trie is as deep as its longest key.  The records its leaves name, in key order, then
+ * a trie's null-key record (`*n` of them, the caller's to free), or NULL with the first number
+ * that does not hold reported. */
+static uint32_t *loft_vc_tree_recs(loft_store_t *s, uint32_t tree, uint32_t words, int trie, uint32_t *n, uint32_t *problems) {
+    if ((uint64_t) words * 8 < LOFT_RX_HDR) {
+        LOFT_VC_BAD("tree record %u holds %u words, less than its header", tree, words);
+        return 0;
+    }
+    uint32_t room = (words * 8 - LOFT_RX_HDR) / LOFT_RX_NODE_SIZE;
+    uint32_t minted = loft_u32(s, tree, LOFT_RX_NODES), len = loft_u32(s, tree, LOFT_RX_LEN);
+    if (minted > room) {
+        LOFT_VC_BAD("tree record %u says %u nodes; it has room for %u", tree, minted, room);
+        return 0;
+    }
+    typedef struct { int32_t slot; uint32_t above_bit, above; uint8_t has_bit; } loft_vc_todo;
+    uint8_t *seen = (uint8_t *) calloc((size_t) minted + 1, 1);
+    /* A node pushes two and pops one, so the stack never holds more than a slot per node and
+     * one; the records are a node's children at most. */
+    loft_vc_todo *todo = (loft_vc_todo *) malloc(((size_t) minted + 2) * sizeof *todo);
+    uint32_t *recs = (uint32_t *) malloc(((size_t) minted + 3) * sizeof(uint32_t));
+    if (!seen || !todo || !recs) { fputs("loft: out of memory\n", stderr); abort(); }
+    size_t ntodo = 0;
+    uint32_t nrecs = 0, live = 0;
+    int ok = 1;
+    int32_t top;
+    memcpy(&top, loft_at(s, tree, LOFT_RX_TOP), 4);
+    todo[ntodo++] = (loft_vc_todo){ top, 0, 0, 0 };
+    while (ok && ntodo > 0) {
+        loft_vc_todo t = todo[--ntodo];
+        if (t.slot == 0) {
+            if (t.above != 0) {
+                LOFT_VC_BAD("tree node %u lacks a child", t.above);
+                ok = 0;
+            }
+        } else if (t.slot > 0) {
+            if (nrecs > minted + 1) {
+                LOFT_VC_BAD("tree record %u leads to more records than its nodes can", tree);
+                ok = 0;
+            } else recs[nrecs++] = (uint32_t) t.slot;
+        } else {
+            uint32_t node = t.slot == INT32_MIN ? 0 : (uint32_t) -t.slot;
+            if (node == 0 || node > minted) {
+                LOFT_VC_BAD("tree node %u is not a node of its tree", node);
+                ok = 0;
+            } else if (seen[node]) {
+                LOFT_VC_BAD("tree node %u is reached twice", node);
+                ok = 0;
+            } else {
+                seen[node] = 1;
+                live++;
+                uint32_t bit = loft_u32(s, tree, loft_rx_node_off(node));
+                int32_t f, tr;
+                memcpy(&f, loft_at(s, tree, loft_rx_child_off(node, 0)), 4);
+                memcpy(&tr, loft_at(s, tree, loft_rx_child_off(node, 1)), 4);
+                if (t.has_bit && bit <= t.above_bit) {
+                    LOFT_VC_BAD("tree node %u tests bit %u, no later than the node above it", node, bit);
+                    ok = 0;
+                } else if (loft_u32(s, tree, loft_rx_node_off(node) + 4) != t.above) {
+                    LOFT_VC_BAD("tree node %u does not point back at the node above it", node);
+                    ok = 0;
+                } else {
+                    /* The true side is pushed first, so the false side is walked first. */
+                    todo[ntodo++] = (loft_vc_todo){ tr, bit, node, 1 };
+                    todo[ntodo++] = (loft_vc_todo){ f, bit, node, 1 };
+                }
+            }
+        }
+    }
+    if (ok && (nrecs != len || live != (len ? len - 1 : 0))) {
+        LOFT_VC_BAD("tree record %u says it holds %u records; its %u nodes lead to %u", tree, len, live, nrecs);
+        ok = 0;
+    }
+    uint32_t freed = 0;
+    for (uint32_t f = loft_u32(s, tree, LOFT_RX_FREE); ok && f != 0;) {
+        if (f > minted || seen[f]) {
+            LOFT_VC_BAD("tree record %u lists node %u as free, which it is not", tree, f);
+            ok = 0;
+            break;
+        }
+        seen[f] = 1;
+        freed++;
+        f = loft_u32(s, tree, loft_rx_child_off(f, 0));
+    }
+    if (ok && live + freed != minted) {
+        LOFT_VC_BAD("tree record %u minted %u nodes; %u are in the tree and %u are free", tree, minted, live, freed);
+        ok = 0;
+    }
+    free(seen);
+    free(todo);
+    if (!ok) {
+        free(recs);
+        return 0;
+    }
+    if (trie) {
+        uint32_t w = loft_u32(s, tree, LOFT_RX_SLOT);
+        if (w & LOFT_RX_SLOT_TAG) recs[nrecs++] = w & ~LOFT_RX_SLOT_TAG;
+    }
+    *n = nrecs;
+    return recs;
+}
+
+/* `btree::sound` — the shape of the tree in arena record `a`, a claimed block of `words` words:
+ * every node number names a node of the arena, no node is reached twice, a node holds no more
+ * slots than it has, the leaves are chained in the order the descent finds them, the free
+ * nodes form a list.  The order of the keys is left alone: a badly sorted tree answers wrongly
+ * and stays inside its store doing so. */
+typedef struct {
+    loft_store_t *s;
+    uint32_t a, used;
+    int text_key;
+    uint8_t *seen;
+    uint32_t *leaves, nleaves;
+    uint32_t *recs, nrecs;
+    uint32_t *problems;
+} loft_vc_tree;
+
+/* The subtree at `n`, `depth` levels above the leaves: 1 when it holds, its smallest record in
+ * `least`. */
+static int loft_vc_tree_node(loft_vc_tree *t, uint32_t n, uint32_t depth, uint32_t *least) {
+    uint32_t *problems = t->problems;
+    if (n == 0 || n >= t->used) {
+        LOFT_VC_BAD("index node %u is not a node of its arena", n);
+        return 0;
+    }
+    if (t->seen[n]) {
+        LOFT_VC_BAD("index node %u is reached twice", n);
+        return 0;
+    }
+    t->seen[n] = 1;
+    uint32_t c = loft_bt_count(t->s, t->a, n);
+    if (c > LOFT_BT_FANOUT) {
+        LOFT_VC_BAD("index node %u says it holds %u slots", n, c);
+        return 0;
+    }
+    uint32_t skip = loft_bt_get16(t->s, t->a, n, LOFT_BT_N_SKIP);
+    if (skip > LOFT_BT_MAX_SKIP || (skip > 0 && !t->text_key)) {
+        LOFT_VC_BAD("index node %u keeps a %u-byte prefix", n, skip);
+        return 0;
+    }
+    uint32_t kind = loft_bt_get16(t->s, t->a, n, LOFT_BT_N_LEAF);
+    if (depth == 0) {
+        if (kind != 1) {
+            LOFT_VC_BAD("index node %u at leaf depth is no leaf", n);
+            return 0;
+        }
+        t->leaves[t->nleaves++] = n;
+        for (uint32_t i = 0; i < c; i++) t->recs[t->nrecs++] = loft_bt_rec(t->s, t->a, n, i);
+        *least = c == 0 ? 0 : loft_bt_rec(t->s, t->a, n, 0);
+        return 1;
+    }
+    if (kind != 0 || c == 0) {
+        LOFT_VC_BAD("index node %u above leaf depth is no inner node", n);
+        return 0;
+    }
+    for (uint32_t i = 0; i < c; i++) {
+        uint32_t min = 0;
+        if (!loft_vc_tree_node(t, loft_bt_child(t->s, t->a, n, i), depth - 1, &min)) return 0;
+        if (i == 0) *least = min;
+        else if (loft_bt_rec(t->s, t->a, n, i) != min) {
+            LOFT_VC_BAD("index node %u slot %u names record %u, not the first record below it", n, i, loft_bt_rec(t->s, t->a, n, i));
+            return 0;
+        }
+    }
+    return 1;
+}
+
+/* The records the leaves of arena `a` name, in order (`*n` of them, the caller's to free), or
+ * NULL with the first number that does not hold reported. */
+static uint32_t *loft_vc_index(loft_store_t *s, uint32_t a, uint32_t words, int text_key, uint32_t *n, uint32_t *problems) {
+    uint64_t fit = ((uint64_t) words * 8 - 8) / LOFT_BT_NODE;
+    if (fit < LOFT_BT_FIRST_CAP) {
+        LOFT_VC_BAD("index arena %u holds %u words, less than a tree needs", a, words);
+        return 0;
+    }
+    uint32_t used = loft_bt_hdr(s, a, LOFT_BT_H_USED), cap = loft_bt_hdr(s, a, LOFT_BT_H_CAP);
+    if (used < 2 || used > fit || cap > fit || used > cap) {
+        LOFT_VC_BAD("index arena %u says %u of %u nodes are used; it has room for %llu", a, used, cap, (unsigned long long) fit);
+        return 0;
+    }
+    uint32_t height = loft_bt_hdr(s, a, LOFT_BT_H_HEIGHT);
+    if (height > LOFT_BT_MAX_HEIGHT) {
+        LOFT_VC_BAD("index arena %u says the tree is %u levels high", a, height);
+        return 0;
+    }
+    loft_vc_tree t = { s, a, used, text_key, 0, 0, 0, 0, 0, problems };
+    t.seen = (uint8_t *) calloc(used, 1);
+    t.leaves = (uint32_t *) malloc((size_t) used * sizeof(uint32_t));
+    t.recs = (uint32_t *) malloc(((size_t) used * LOFT_BT_FANOUT + 1) * sizeof(uint32_t));
+    if (!t.seen || !t.leaves || !t.recs) { fputs("loft: out of memory\n", stderr); abort(); }
+    uint32_t least = 0;
+    int ok = loft_vc_tree_node(&t, loft_bt_hdr(s, a, LOFT_BT_H_ROOT), height, &least);
+    if (ok && t.nrecs != loft_bt_hdr(s, a, LOFT_BT_H_LEN)) {
+        LOFT_VC_BAD("index arena %u says it holds %u records; its leaves hold %u", a, loft_bt_hdr(s, a, LOFT_BT_H_LEN), t.nrecs);
+        ok = 0;
+    }
+    if (ok && (loft_bt_hdr(s, a, LOFT_BT_H_FIRST) != t.leaves[0] || loft_bt_hdr(s, a, LOFT_BT_H_LAST) != t.leaves[t.nleaves - 1])) {
+        LOFT_VC_BAD("index arena %u names another first or last leaf than its tree has", a);
+        ok = 0;
+    }
+    for (uint32_t k = 0; ok && k < t.nleaves; k++) {
+        uint32_t prev = k == 0 ? 0 : t.leaves[k - 1], next = k + 1 < t.nleaves ? t.leaves[k + 1] : 0;
+        if (loft_bt_get(s, a, t.leaves[k], LOFT_BT_N_PREV) != prev || loft_bt_get(s, a, t.leaves[k], LOFT_BT_N_NEXT) != next) {
+            LOFT_VC_BAD("index leaf %u is not chained to its neighbours", t.leaves[k]);
+            ok = 0;
+        }
+    }
+    /* The free nodes: a list through the next link, each a node the tree does not use. */
+    for (uint32_t f = loft_bt_hdr(s, a, LOFT_BT_H_FREE); ok && f != 0; f = loft_bt_get(s, a, f, LOFT_BT_N_NEXT)) {
+        if (f >= used || t.seen[f] || loft_bt_get16(s, a, f, LOFT_BT_N_LEAF) != 2) {
+            LOFT_VC_BAD("index arena %u lists node %u as free, which it is not", a, f);
+            ok = 0;
+            break;
+        }
+        t.seen[f] = 1;
+    }
+    free(t.seen);
+    free(t.leaves);
+    if (!ok) {
+        free(t.recs);
+        return 0;
+    }
+    *n = t.nrecs;
+    return t.recs;
+}
 
 static void loft_validate_claims(const loft_tdesc *T, uint32_t nt, uint16_t tp, loft_ref r, uint32_t *problems) {
     if (*problems > 8) return;
@@ -1582,14 +1834,76 @@ static void loft_validate_claims_at(const loft_tdesc *T, uint32_t nt, uint16_t t
     }
     case LOFT_T_RADIX:
     case LOFT_T_TRIE: {
-        /* The leaves belong to the primary collection; the spine's own record is checked. */
+        /* A spatial / trie slot names its tree record.  The tree's shape is checked whole
+         * before a node of it is believed, and every record a leaf names — and the record a
+         * trie keeps for its null key — is then a record that holds an element, walked as one. */
         uint32_t cur = loft_u32(s, r.rec, r.pos);
-        if (cur != 0 && !loft_vc_block(s, cur)) LOFT_VC_BAD("tree record %u is not a record", cur);
+        if (cur == 0) return;
+        uint32_t words = loft_vc_block(s, cur);
+        if (!words) {
+            LOFT_VC_BAD("tree record %u is not a record", cur);
+            return;
+        }
+        uint32_t n = 0, *rows = loft_vc_tree_recs(s, cur, words, d->kind == LOFT_T_TRIE, &n, problems);
+        if (!rows) return;
+        uint64_t need = (uint64_t) 8 + (d->elem < nt ? T[d->elem].size : 0);
+        for (uint32_t i = 0; i < n && *problems <= 8; i++) {
+            uint32_t w = loft_vc_block(s, rows[i]);
+            if (!w) LOFT_VC_BAD("tree leaf record %u is not a record", rows[i]);
+            else if (need > (uint64_t) w * 8) LOFT_VC_BAD("tree leaf record %u holds %u words, less than its element", rows[i], w);
+            else {
+                loft_ref e = { r.store_nr, rows[i], 8, 0 };
+                loft_validate_claims(T, nt, d->elem, e, problems);
+            }
+        }
+        free(rows);
         return;
     }
     case LOFT_T_DBREF: {
+        /* A stored reference: a store, a record and a place in it.  One into this store names
+         * a record of it and a place inside that record; one into another store is checked
+         * for its store number — and an image that is not adopted yet holds none. */
         uint32_t sn = loft_u32(s, r.rec, r.pos);
-        if (sn != 0xFFFFu && sn >= loft_nstores) LOFT_VC_BAD("stored DbRef names store #%u, out of range", sn);
+        uint32_t to = loft_u32(s, r.rec, r.pos + 4);
+        uint32_t at_byte = loft_u32(s, r.rec, r.pos + 8);
+        int here = loft_vc_own == LOFT_VC_LIVE ? sn == r.store_nr : (loft_vc_own >= 0 && sn == (uint32_t) loft_vc_own);
+        if (to == 0) return;
+        if (here) {
+            uint32_t words = loft_vc_block(s, to);
+            if (!words) LOFT_VC_BAD("stored reference names record %u, which is not a record", to);
+            else if (at_byte < 8 || (uint64_t) at_byte >= (uint64_t) words * 8)
+                LOFT_VC_BAD("stored reference names byte %u of record %u, which holds %u words", at_byte, to, words);
+        } else if (loft_vc_own != LOFT_VC_LIVE) {
+            LOFT_VC_BAD("stored reference names store #%u, which is not part of the file", sn);
+        } else if (sn != 0xFFFFu && sn >= loft_nstores) {
+            LOFT_VC_BAD("stored DbRef names store #%u, out of range", sn);
+        }
+        return;
+    }
+    case LOFT_T_INDEX: {
+        /* An index slot names the arena record its tree lives in.  The tree's shape is checked
+         * whole before a node of it is believed, and every record a leaf names is then a
+         * record that holds an element, walked as one. */
+        uint32_t cur = loft_u32(s, r.rec, r.pos);
+        if (cur == 0) return;
+        uint32_t words = loft_vc_block(s, cur);
+        if (!words) {
+            LOFT_VC_BAD("index arena %u is not a record", cur);
+            return;
+        }
+        uint32_t n = 0, *rows = loft_vc_index(s, cur, words, d->keys && loft_bt_is_text(d->keys), &n, problems);
+        if (!rows) return;
+        uint64_t need = (uint64_t) 8 + (d->elem < nt ? T[d->elem].size : 0);
+        for (uint32_t i = 0; i < n && *problems <= 8; i++) {
+            uint32_t w = loft_vc_block(s, rows[i]);
+            if (!w) LOFT_VC_BAD("index record %u is not a record", rows[i]);
+            else if (need > (uint64_t) w * 8) LOFT_VC_BAD("index record %u holds %u words, less than its element", rows[i], w);
+            else {
+                loft_ref e = { r.store_nr, rows[i], 8, 0 };
+                loft_validate_claims(T, nt, d->elem, e, problems);
+            }
+        }
+        free(rows);
         return;
     }
     default:

@@ -6,7 +6,7 @@
 
 <!-- Tick what applies; add specifics. -->
 
-- [ ] `make ci` (fmt + clippy + test) passes locally
+- [ ] The head is current on `origin/main`; the PR's own `ci.yml` is the full gate
 - [ ] New behaviour has a regression test under `tests/`
 - [ ] Doc tests under `tests/docs/` updated if user-facing
 - [ ] `make wasm-html-test` passes if browser/WASM is touched
@@ -14,4 +14,4 @@
 
 ## Notes for the reviewer
 
-<!-- Anything non-obvious about the approach, trade-offs you considered, follow-ups you deliberately deferred. -->
+<!-- Anything non-obvious about the approach and the trade-offs you considered.  Open issues this PR does not close: the `make work` output. -->

@@ -1210,14 +1210,14 @@ pub fn arm_body(e: el::El, vars: el_vars::Vars, body: integer?, expected: ir::Ty
   }
   // (An `if` arm of a match answering into an expected vector takes that vector, `arm_expect`.)
   kept_node = vars.expect_node;
-  kept_tp = vars.expect;
+  kept_tp = ex(ir::NdNull, vars.expect);
   if e.p.nodes[body!] is SIf && el_types::base(vars.arm_expect) is TyVector {
     vars.expect_node = body!;
     vars.expect = vars.arm_expect;
   }
   x = el_ex_assign::expression(e, vars, body!);
   vars.expect_node = kept_node;
-  vars.expect = kept_tp;
+  vars.expect = kept_tp.tp;
   // An arm answering a call that may hand back an argument, in a bind's value: its copy.
   lifted = el_ex_null::lift_borrowing_call(e, vars, x.code, x.tp);
   if lifted != null {
@@ -1620,7 +1620,8 @@ pub fn range_walk(e: el::El, vars: el_vars::Vars, id: text, source: integer) -> 
     lo_node = ir::NdVar { n: rs };
   }
   if hc == null {
-    re = el_vars::create_unique(vars, "range_end", int_t);
+    // (Typed as the end bound is, `till_tp`: `0..arg` over a `u8` holds `integer(0, 255)`.)
+    re = el_vars::create_unique(vars, "range_end", if h.tp is TyInteger { el_types::without_deps(h.tp) } else { int_t });
     prelude += [el_ir::v_set(re, h.code)];
     hi_node = ir::NdVar { n: re };
   }
@@ -2826,9 +2827,17 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
           row = el_ex_vector::append_row(e, in_t);
           // (An item with a vector literal of its own stages that literal's items first,
           // `stage_append_fields`: not carried.)
-          if len(order) != 1 || linked || row < 0 || vars.vars[v].argument || holds_vector_literal(e, it) {
+          // (The function's RETURNED vector, renamed onto the hidden buffer, is snapshotted as a
+          // local is; a true parameter is not carried.)
+          if len(order) != 1 || linked || row < 0 || (vars.vars[v].argument && !hidden_param(e, vars, v)) {
             el::refuse(e, "an appended record item that reads the vector it is appended to (a snapshot)");
             return refused_build();
+          }
+          // `stage_append_fields`: where the item's vector-literal field pushes a value reading the
+          // vector, every value those pushes take (no literal) is staged into a `__ref_N` first,
+          // in source order, ahead of the first push.
+          if !e.first_pass && holds_vector_literal(e, it) {
+            fl = stage_pushes(e, vars, fl!, elm, v);
           }
           src = el_vars::create_unique(vars, "build_src", ir::TyVector { inner: in_t, dep: [] });
           if !e.first_pass {
@@ -3283,4 +3292,111 @@ fn hands_to_writer(e: el::El, n: ir::Node, v: integer) -> boolean {
       false
     }
   }
+}
+
+// `Parser::parse_parallel` (`@F33`): each arm an expression, a null arm dropped, the block
+// `Parallel(arms)` typed void.  An arm runs in a worker of its own: it may read an enclosing
+// local (copied in), but writing one — a local defined at the opening brace — or naming a
+// parameter is Rust's error (`reject_unsound_parallel_captures`), refused here by name.
+pub fn parallel_expr(e: el::El, vars: el_vars::Vars, items: vector<integer>) -> el_ex_base::Ex {
+  outer: vector<integer> = [];
+  for vi in 0..len(vars.vars) {
+    if vars.defined[vi] ?? false {
+      outer += [vi];
+    }
+  }
+  arms: vector<ir::Node> = [];
+  for it in items {
+    a = el_ex_assign::expression(e, vars, it).code;
+    if !(a is NdNull) {
+      arms += [a];
+    }
+  }
+  if !e.first_pass {
+    for a in arms {
+      for vi in 0..len(vars.vars) {
+        if vars.vars[vi].argument && el_ir::reads_var(a, vi) {
+          el::refuse(e, "a parallel arm naming a parameter");
+          return el_ex_base::ex(ir::NdNull, ir::TyUnknown { n: 0 });
+        }
+      }
+      for vi in outer {
+        if el_ir::sets_var(a, vi) {
+          el::refuse(e, "a parallel arm writing an enclosing local");
+          return el_ex_base::ex(ir::NdNull, ir::TyUnknown { n: 0 });
+        }
+      }
+    }
+  }
+  el_ex_base::ex(ir::NdParallel { arms: arms }, ir::TyVoid)
+}
+
+// `stage_append_fields` for the pushes of an appended item's vector-literal field (each field's
+// build an `NdInsert` of its pushes): triggered when a pushed value reads the vector `v` the item
+// is appended to; then each value argument of those pushes — not the element's own place, not a
+// literal — goes into a work ref of its parameter's type, the sets placed before the first push.
+fn stage_pushes(e: el::El, vars: el_vars::Vars, fl: vector<ir::Node>, elm: integer, v: integer) -> vector<ir::Node> {
+  [for op in fl { match op { NdInsert { items } => if op#index >= 2 { ir::NdInsert { items: stage_field_pushes(e, vars, items, elm, v) } } else { op }, _ => op } }]
+}
+
+fn is_field_push(e: el::El, op: ir::Node, elm: integer) -> boolean {
+  match el_ir::unspan(op) {
+    NdCall { def_nr, args } => starts_with(el::def(e, def_nr).name, "OpPush") && len(args) > 1 && el_ir::reads_var(args[0]!, elm),
+    _ => false
+  }
+}
+
+fn stage_field_pushes(e: el::El, vars: el_vars::Vars, items: vector<ir::Node>, elm: integer, v: integer) -> vector<ir::Node> {
+  first = -1;
+  triggered = false;
+  for op in items {
+    if is_field_push(e, op, elm) {
+      if first < 0 {
+        first = op#index;
+      }
+      match el_ir::unspan(op) {
+        NdCall { args } => {
+          for a in args {
+            if a#index >= 1 && !el_ir::reads_var(a, elm) && el_ir::reads_var(a, v) {
+              triggered = true;
+            }
+          }
+        },
+        _ => {}
+      }
+    }
+  }
+  if !triggered {
+    return items;
+  }
+  staged: vector<ir::Node> = [];
+  out: vector<ir::Node> = [];
+  for op in items {
+    nop = op;
+    if is_field_push(e, op, elm) {
+      match el_ir::unspan(op) {
+        NdCall { def_nr, args } => {
+          nargs: vector<ir::Node> = [];
+          for a in args {
+            literal = match el_ir::unspan(a) { NdInt { n: _ } => true, NdLong { n: _ } => true, NdFloat { f: _ } => true, NdSingle { f: _ } => true, NdBoolean { b: _ } => true, NdText { s: _ } => true, NdNull => true, NdEnum { ord: _ } => true, _ => false };
+            at = el::def(e, def_nr).attributes[a#index];
+            if a#index >= 1 && !el_ir::reads_var(a, elm) && !literal && at != null && !at!.constant {
+              pt = at!.typedef[0] ?? ir::TyVoid;
+              tmp = el_vars::work_ref(vars, pt);
+              el_vars::set_var_type(vars, tmp, pt);
+              staged += [el_ir::v_set(tmp, a)];
+              nargs += [ir::NdVar { n: tmp }];
+            } else {
+              nargs += [a];
+            }
+          }
+          nop = ir::NdCall { def_nr: def_nr, args: nargs };
+        },
+        _ => {}
+      }
+    }
+    out += [nop];
+  }
+  // (The staged sets, gathered over every push, go before the first.)
+  out[..first] + staged + out[first..]
 }

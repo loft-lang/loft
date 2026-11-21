@@ -1,7 +1,7 @@
 diff --git a/src/parser/match_captures.rs b/src/parser/match_captures.rs
 --- a/src/parser/match_captures.rs
 +++ b/src/parser/match_captures.rs
-@@ -710,15 +710,6 @@ impl Parser {
+@@ -729,15 +729,6 @@ impl Parser {
          step: i32,
          bindings: &mut Vec<Value>,
      ) {
@@ -14,16 +14,16 @@ diff --git a/src/parser/match_captures.rs b/src/parser/match_captures.rs
 -        // compile.  Starting from the owned type makes it the fresh bind it is.
 -        self.vars
 -            .set_type(rest_var, vec_tp.with_deps(&Deps::none()));
-         let lo_slot = self.create_unique("rest_lo", &I32);
-         let hi_slot = self.create_unique("rest_hi", &I32);
-         let idx = self.create_unique("rest_idx", &I32);
-@@ -835,9 +826,6 @@ impl Parser {
+         let lo_slot = self.create_unique("rest_lo", &self.count_type());
+         let hi_slot = self.create_unique("rest_hi", &self.count_type());
+         let idx = self.create_unique("rest_idx", &self.count_type());
+@@ -854,9 +845,6 @@ impl Parser {
          step: i32,
          bindings: &mut Vec<Value>,
      ) {
 -        // A fresh binding, for `materialize_named_rest`'s reason.
 -        self.vars
 -            .set_type(proj_var, proj_vec_tp.with_deps(&Deps::none()));
-         let lo_slot = self.create_unique("proj_lo", &I32);
-         let hi_slot = self.create_unique("proj_hi", &I32);
-         let idx = self.create_unique("proj_idx", &I32);
+         let lo_slot = self.create_unique("proj_lo", &self.count_type());
+         let hi_slot = self.create_unique("proj_hi", &self.count_type());
+         let idx = self.create_unique("proj_idx", &self.count_type());

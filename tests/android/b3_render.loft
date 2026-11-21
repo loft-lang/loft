@@ -22,7 +22,7 @@ fn main() {
     w.poll();
     w.clear(rgb(0, 0, 0));
     sh.set_vec3("uColor", 0.2, 0.4, 0.6);
-    m.draw(sh);
+    m.draw(w, sh);
     if frame == 2 {
       c = w.capture();
       y = c.height / 2;

@@ -358,7 +358,7 @@ pub(crate) fn write_project(app: &EspApp<'_>, out: &Path) -> Result<usize, Strin
 ///
 /// # Errors
 /// No ESP-IDF, or a build that fails, with its output's tail.
-pub(crate) fn build_project(out: &Path) -> Result<PathBuf, String> {
+pub(crate) fn build_project(out: &Path, app: &EspApp<'_>) -> Result<PathBuf, String> {
     let Some((idf, tools)) = idf_paths() else {
         return Err(format!("--native-esp needs ESP-IDF; {}", idf_cure()));
     };
@@ -392,12 +392,76 @@ pub(crate) fn build_project(out: &Path) -> Result<PathBuf, String> {
         ));
     }
     let map = fa::read_to_string(out.join("build").join("application.map")).unwrap_or_default();
+    // @PLN217 — a 32-bit app does 64-bit arithmetic only where an exception allows it.
+    let wide = if loft::keys::width32_all() {
+        Some(width64_gate(out, app, &idf, tools.as_deref(), &map)?)
+    } else {
+        None
+    };
     let report = out.join("loft-esp-report.txt");
     if let Ok(mut text) = fa::read_to_string(&report) {
         text.push_str(&size_report(&map));
+        if let Some(wide) = &wide {
+            text.push_str(wide);
+        }
         let _ = fa::write(&report, text);
     }
     Ok(out.join("build").join("application.bin"))
+}
+
+/// @PLN217 — the 64-bit gate of a 32-bit app (`esp_width64`): the linked image is disassembled
+/// with the toolchain that built it and read for calls of the `double` and 64-bit integer
+/// helpers.  Answers the report's part.
+///
+/// # Errors
+/// The image cannot be disassembled, or it does 64-bit arithmetic where no exception allows
+/// it — the refusal names each function.
+fn width64_gate(
+    out: &Path,
+    app: &EspApp<'_>,
+    idf: &Path,
+    tools: Option<&Path>,
+    map: &str,
+) -> Result<String, String> {
+    let elf = out.join("build").join("application.elf");
+    let script = format!(
+        "set -e\n. \"{}/export.sh\" >/dev/null\nriscv32-esp-elf-objdump -d --no-show-raw-insn \"{}\"\n",
+        idf.display(),
+        elf.display()
+    );
+    let mut cmd = Spawn::new(Program::bash());
+    cmd.push_arg("-c").push_arg(&script);
+    cmd.push_env("IDF_PATH", idf);
+    if let Some(t) = tools {
+        cmd.push_env("IDF_TOOLS_PATH", t);
+    }
+    let ran = cmd
+        .run(b"")
+        .map_err(|e| format!("--native-esp: cannot disassemble the app ({e})"))?;
+    if !ran.status.success() {
+        return Err(format!(
+            "--native-esp: cannot disassemble {}: {}",
+            elf.display(),
+            String::from_utf8_lossy(&ran.stderr).trim()
+        ));
+    }
+    let disasm = String::from_utf8_lossy(&ran.stdout);
+    // The program's exceptions beside its entry file, and one file per library that ships C.
+    let own = app.program_dir.join(crate::esp_width64::ALLOW_FILE);
+    let mut places = vec![own.clone()];
+    for shim in app.shims {
+        if let Some(package) = Path::new(shim).parent().and_then(Path::parent) {
+            let file = package.join(crate::esp_width64::ALLOW_FILE);
+            if !places.contains(&file) {
+                places.push(file);
+            }
+        }
+    }
+    let files: Vec<(String, String)> = places
+        .iter()
+        .filter_map(|p| Some((p.display().to_string(), fa::read_to_string(p).ok()?)))
+        .collect();
+    crate::esp_width64::gate(&disasm, map, &origin, &files, &own.display().to_string())
 }
 
 /// Where a section of the app came from, as the linker's map names its object: a member of the

@@ -20,7 +20,8 @@
 //
 // Page-tunable globals, all optional:
 //   loftBaseFS     {"/abs/path": string | Uint8Array}  the read-only base tree
-//   loftFSKey      localStorage key for the delta   (default 'loft-fs-delta')
+//   loftFSKey      localStorage key for the delta   (default 'loft-fs-delta:' + the page's
+//                  path, so two games served from one origin keep two saves)
 //   loftFSPersist  false to keep the delta in memory only
 //   loftFSCwd      what a relative path resolves against  (default '/')
 
@@ -279,7 +280,7 @@ class LoftPageFS {
     if (typeof localStorage === 'undefined') return;
     this._dirty = false;
     try {
-      localStorage.setItem(globalThis.loftFSKey || 'loft-fs-delta', JSON.stringify(this.getDelta()));
+      localStorage.setItem(_loftFSKey(), JSON.stringify(this.getDelta()));
     } catch (e) {
       if (!this._quotaWarned) {
         this._quotaWarned = true;
@@ -300,12 +301,26 @@ class LoftPageFS {
 }
 
 /** The page's filesystem, created on first use from the page-tunable globals. */
+// The key this page's delta is kept under: the page's own `loftFSKey`, else one per page path.
+// One key for every page made all games on an origin read and overwrite each other's saves.
+function _loftFSKey() {
+  if (globalThis.loftFSKey) return globalThis.loftFSKey;
+  const path = typeof location !== 'undefined' && location.pathname ? location.pathname : '/';
+  return 'loft-fs-delta:' + path;
+}
+
 function loftFS() {
   if (!globalThis.__loftFS) {
     let delta = null;
     if (globalThis.loftFSPersist !== false && typeof localStorage !== 'undefined') {
       try {
-        const raw = localStorage.getItem(globalThis.loftFSKey || 'loft-fs-delta');
+        let raw = localStorage.getItem(_loftFSKey());
+        // A save made before saves were kept per page is still this player's: carried over
+        // once, under the page's own key, and never lost.
+        if (!raw && !globalThis.loftFSKey) {
+          raw = localStorage.getItem('loft-fs-delta');
+          if (raw) localStorage.setItem(_loftFSKey(), raw);
+        }
         if (raw) delta = JSON.parse(raw);
       } catch (e) { delta = null; }
     }

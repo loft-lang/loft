@@ -403,13 +403,11 @@ impl Stores {
                 store.set_byte(r.rec, r.pos, 0, i32::from(v));
             }
             5 => {
-                // text
-                let v = unsafe {
-                    let mut v = Vec::new();
-                    v.extend_from_slice(data);
-                    String::from_utf8_unchecked(v)
+                // text: UTF-8 only; bytes that are not leave the field as it was
+                let Ok(v) = std::str::from_utf8(data) else {
+                    return;
                 };
-                let s = store.set_str(v.as_str());
+                let s = store.set_str(v);
                 store.set_u32_raw(r.rec, r.pos, s);
             }
             _ => match self.types[tp as usize].parts.clone() {
@@ -877,7 +875,10 @@ impl Stores {
         // Owning field is a 4-byte vector pointer; the inner record holds the
         // bytes one-per-element (length at offset 4, payload at offset 8).
         let vec = self.database(4);
-        let count = data.len() as u32;
+        // A vector counts its elements in 32 bits.  A file with more bytes than that is not
+        // cut to fit: the count is held at the largest one, which the capacity check in
+        // `alloc_vector_from_bytes` refuses by name, as the compiled build does.
+        let count = u32::try_from(data.len()).unwrap_or(u32::MAX);
         let rec = vector::alloc_vector_from_bytes(self.store_mut(&vec), 1, count, &data);
         self.store_mut(&vec).set_u32_raw(vec.rec, vec.pos, rec);
         vec

@@ -1,8 +1,8 @@
 diff --git a/src/parser/collections.rs b/src/parser/collections.rs
-index f9832e51f..994190ac3 100644
+index 55787c8e9..eb6b2d4cf 100644
 --- a/src/parser/collections.rs
 +++ b/src/parser/collections.rs
-@@ -3554,35 +3554,6 @@ use #count instead"
+@@ -3630,35 +3630,6 @@ use #count instead"
      /// program wrote.  They differ only from the second loop over a name onward, and the
      /// two are read for different questions: companions and the binding itself are keyed
      /// off `id`, while the shadow guards ask what `src_id` denotes right now.
@@ -38,11 +38,11 @@ index f9832e51f..994190ac3 100644
      /// `@FR-B-Scope` — a loop variable (a `for` statement's or a comprehension's) may not take
      /// the name of a local still in scope: the loop would clobber it, whatever the two types
      /// are.  Two shapes, both silently wrong once:
-@@ -3673,7 +3644,6 @@ use #count instead"
+@@ -3749,7 +3720,6 @@ use #count instead"
          destructure_names: Option<&[String]>,
      ) -> (u16, Option<u16>, u16, Value, Value, Value, Vec<Value>) {
          let var_tp = self.for_type(in_type);
 -        let var_tp = self.struct_value_loop_type(in_type, &expr, var_tp);
          // For text loops: {id}#next drives the loop; {id}#index is saved per-iteration.
          let (iter_var, pre_var) = if walks_text(in_type) {
-             let pos_var = self.create_var(&format!("{id}#next"), &I32);
+             let pos_var = self.create_var(&format!("{id}#next"), &self.count_type());

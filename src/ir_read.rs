@@ -683,7 +683,8 @@ pub fn open_bundle_into(path: &str, database: &mut Stores) -> std::io::Result<Da
 /// The bundle could not be written or read back.
 #[cfg(feature = "mmap")]
 pub fn image_round_trip(data: &Data, stores: &Stores) -> std::io::Result<(Data, Stores)> {
-    let path = std::env::temp_dir().join(format!("loft_image_{}.bundle", std::process::id()));
+    let path =
+        crate::platform::scratch_dir().join(format!("loft_image_{}.bundle", std::process::id()));
     let path = path.to_string_lossy().to_string();
     crate::ir_store::save_bundle(data, stores, &path)?;
     let mut fresh = Stores::new();

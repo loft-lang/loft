@@ -20,33 +20,10 @@
 #ifndef LOFT_CC_H
 #define LOFT_CC_H
 
-/* The OS beyond ISO C — a monotonic clock, a path's kind, directories, truncate — is POSIX where
- * the platform is one (`LOFT_POSIX`); `-DLOFT_NO_POSIX` builds against ISO C alone, where the
- * clock is `clock()` and the directory operations answer Other.  The request precedes every
- * system header.  WASI (wasm32-wasi) is POSIX for files, directories and clocks, and has no
- * sockets, `mmap` or `realpath`: those stand under `LOFT_POSIX_HOST`, a POSIX host OS. */
-#if !defined(LOFT_NO_POSIX) && (defined(__unix__) || defined(__unix) || defined(__APPLE__) || defined(__wasi__) || defined(ESP_PLATFORM))
-#define LOFT_POSIX 1
-/* ESP-IDF (newlib with its VFS) is POSIX for files, directories and clocks, as WASI is, and
- * has no `mmap`, processes or `realpath` either: it is no POSIX host.  Its headers declare
- * what it has without the request, which would hide newlib's extensions the drivers use. */
-#if !defined(ESP_PLATFORM)
-#define _POSIX_C_SOURCE 200809L
-#endif
-#if !defined(__wasi__) && !defined(ESP_PLATFORM)
-#define LOFT_POSIX_HOST 1
-#endif
-/* `realpath` is XSI, not base POSIX: glibc declares it only under _XOPEN_SOURCE (or by accident
- * through _FORTIFY_SOURCE, which Ubuntu turns on from -O1 — so an -O0 build failed). */
-#if defined(LOFT_POSIX_HOST) && !defined(__APPLE__)
-#define _XOPEN_SOURCE 700
-#endif
-/* Darwin's headers, asked for base POSIX, hide everything outside it — `INADDR_LOOPBACK` and
- * `MSG_DONTWAIT` the sockets use among them; `_DARWIN_C_SOURCE` is Apple's request for the
- * rest of its API beside POSIX. */
-#if defined(__APPLE__)
-#define _DARWIN_C_SOURCE 1
-#endif
+/* The OS the unit asks for (`LOFT_POSIX`, `LOFT_POSIX_HOST`) is `loft_os.h`'s, the unit's first
+ * text: a request after a system header is not heard. */
+#ifndef LOFT_OS_H
+#error "loft_os.h precedes every other header of loft's C runtime"
 #endif
 #include <stdarg.h>
 #include <stdint.h>
@@ -328,12 +305,12 @@ LOFT_COLD static void loft_proof_failed(const char *site) {
  * compiler is told so, and folds the accessor's from-the-end wrap away; under LOFT_VERIFY the
  * claim is checked at `site` instead. */
 #if defined(LOFT_VERIFY)
-static inline int64_t loft_nonneg(int64_t x, const char *site) {
+static inline loft_int loft_nonneg(loft_int x, const char *site) {
     if (x < 0) loft_proof_failed(site);
     return x;
 }
 #else
-static inline int64_t loft_nonneg(int64_t x, const char *site) {
+static inline loft_int loft_nonneg(loft_int x, const char *site) {
     (void) site;
 #if defined(__GNUC__) || defined(__clang__)
     if (x < 0) __builtin_unreachable();

@@ -206,8 +206,27 @@ static int loft_web_parse(const char *url, int *tls, char *host, size_t hcap, ch
     return 1;
 }
 
-/* A nonce or a frame mask: entropy-mixed, not cryptographic, as RFC 6455 asks of neither. */
+/* A frame mask or a handshake nonce, from the operating system's generator: RFC 6455 § 5.3
+ * asks that a client's masks be unpredictable, since a mask an observer can work out lets a
+ * page choose the bytes an intermediary sees.  The clock-seeded generator below is only for a
+ * host with no such source. */
+#if defined(_WIN32)
+/* `RtlGenRandom`, as `ntsecapi.h` declares it (that header wants types `windows.h` lacks). */
+BOOLEAN WINAPI SystemFunction036(PVOID buffer, ULONG length);
+#if defined(_MSC_VER)
+#pragma comment(lib, "advapi32.lib")
+#endif
+#elif defined(__APPLE__) || defined(__linux__)
+/* `getentropy`: glibc's <unistd.h> declares it only outside the unit's strict POSIX request
+ * (`loft_os.h`); <sys/random.h> declares it on every request. */
+#include <sys/random.h>
+#endif
 static void loft_web_random(uint8_t *out, size_t n) {
+#if defined(_WIN32)
+    if (SystemFunction036(out, (ULONG) n)) return;
+#elif defined(__APPLE__) || defined(__linux__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
+    if (n <= 256 && getentropy(out, n) == 0) return;
+#endif
     static LOFT_TLS uint64_t seed = 0;
     if (!seed) seed = (uint64_t) loft_now_us() ^ 0xDEADBEEFull;
     for (size_t i = 0; i < n; i++) {
@@ -224,7 +243,7 @@ static int loft_web_write_frame(loft_stream *s, int opcode, const char *p, size_
 
 /* One frame: 1 with its opcode and payload, 0 when the stream failed or ended. */
 static int loft_web_read_frame(loft_stream *s, int *opcode, loft_text *payload) {
-    return loft_ws_read_frame(s, opcode, payload, 256u * 1024 * 1024);
+    return loft_ws_read_frame(s, opcode, payload, 256u * 1024 * 1024, 0);
 }
 
 /* The upgrade; the head is read a byte at a time, so a frame sent right after the 101 stays

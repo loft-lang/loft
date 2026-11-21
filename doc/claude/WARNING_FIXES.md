@@ -85,7 +85,7 @@ one of the index constructions above, or `v[nr]!.name`.
 | `shadowed-by-method` | If the method does the same work, delete your function and call the method; otherwise rename it, or call it qualified as `lib::f(…)`. |
 | `linked-group-double-fill` | Fill the group through one member: the other route sees the same records.  If the fields were meant to be two separate collections, give each its own element type. |
 | `else-never-runs` | Drop the `?` (or the `?? T { … }`) from the place: `k[5].f = v else { … }` names nothing when the element is absent, so the write does not take and the arm runs.  If writing into a default record was the point, drop the `else`. |
-| `view-written-back` | Bind the saved value as a copy, `keep = Lib { ..st.lib }`, so it keeps what the place held at the bind; the write-back then restores it.  If the view was meant to follow the place, drop the write-back: it copies the place onto itself. |
+| `view-written-back` | Bind the saved value as a copy, so it keeps what the place held at the bind; the write-back then restores it.  A struct place: `keep = Lib { ..st.lib }`.  An enum-typed place, which the record update cannot take: bind it from a call, whose answer is copied, `fn keep(t: T) -> T { t }` and `saved = keep(v.expect)`.  If the view was meant to follow the place, drop the write-back: it copies the place onto itself. |
 | `avoidable-copy` (advice) | Move the line that reads the source again above the copy, or drop that line when its value is never read.  When neither holds the copy is necessary and nothing is reported. |
 
 ## Where the caret stands

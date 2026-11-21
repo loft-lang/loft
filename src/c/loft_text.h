@@ -83,8 +83,12 @@ static void loft_tp_give(char *p, size_t cap) {
 static void loft_reserve(loft_text *t, size_t extra) {
     size_t need = t->len + extra;
     if (need <= t->cap) return;
+    /* On a 32-bit target a size can wrap: a sum below the length, or a doubling past the
+     * largest size, which ended in a loop that never ends. */
+    if (need < t->len) { fputs("loft: out of memory\n", stderr); abort(); }
     size_t cap = t->cap ? t->cap * 2 : 16;
-    while (cap < need) cap *= 2;
+    if (cap < t->cap) cap = need;
+    while (cap < need) cap = cap > SIZE_MAX / 2 ? need : cap * 2;
     char *p = loft_tp_take(cap);
     if (!p) { fputs("loft: out of memory\n", stderr); abort(); }
     if (t->p) {

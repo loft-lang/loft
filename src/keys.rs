@@ -5154,13 +5154,23 @@ mod p355_large_str {
     }
 }
 
-/// @PLN204 — `LOFT_WIDTH=32` puts every source but the stdlib under the 32-bit regime, as
+/// @PLN204 — `LOFT_WIDTH=32` puts every source, the stdlib too (@PLN217), under the 32-bit regime, as
 /// if each file began with `#width 32` (a file's own `#width 64` still opts it out).  It is
 /// how a program and the libraries it uses are tried under the regime on an ordinary CPU,
 /// and how the C backend builds them for a 32-bit machine.
 #[must_use]
 pub fn width32_all() -> bool {
     std::env::var("LOFT_WIDTH").is_ok_and(|v| v.trim() == "32")
+}
+
+/// @PLN217 — the flag that put this build under the 32-bit regime when no width was asked for
+/// (`--native-esp`: its processor is 32-bit), so a program that does not compile there is told
+/// how to build as it was written.  `None` when the width was chosen.
+#[must_use]
+pub fn width32_implied_by() -> Option<String> {
+    std::env::var("LOFT_WIDTH_IMPLIED_BY")
+        .ok()
+        .filter(|by| !by.is_empty() && width32_all())
 }
 
 /// `@FR-B-Copy` — a projection rebound into a KEPT local (loft#1522's veto) is copied as into an

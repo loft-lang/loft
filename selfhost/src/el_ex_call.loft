@@ -96,9 +96,12 @@ fn bound_refused(e: el::El, bound: ir::TypeT) -> text {
   struct_enum = match bound { TyEnum { n: _, is_ref } => is_ref, _ => false };
   // A vector of plain scalars or texts is bound as the collection it is.
   scalar_vec = match bound { TyVector { inner: vi } => el_ex_object::scalar_type(vi) || vi is TyText || struct_ref(e, vi) >= 0, _ => false };
-  // A tuple of plain scalars is bound as the value it is.
-  scalar_tuple = match bound { TyTuple { elems: te } => len(te) > 0 && len([for m in te if !el_ex_object::scalar_type(m) || el_types::base(m) is TyText || (m is TyOptional) { m }]) == 0, _ => false };
-  if !(el_ex_object::scalar_type(bound) || bound is TyText || record || plain_enum || struct_enum || scalar_vec || scalar_tuple) || (bound is TyOptional && !nullable_scalar) || el_dispatch::identity(e, bound) == "" {
+  // A tuple of plain scalars and texts is bound as the value it is.
+  scalar_tuple = match bound { TyTuple { elems: te } => len(te) > 0 && len([for m in te if !(el_ex_object::scalar_type(m) && !(el_types::base(m) is TyText) || el_types::base(m) is TyText && !(m is TyOptional)) || (m is TyOptional) { m }]) == 0, _ => false };
+  // A keyed collection is bound as the collection it is (`@FR-G-Sat-Eq`: `==` compares its
+  // content, `OpEqContent`).
+  keyed = match bound { TyHash { n: _ } => true, _ => false };
+  if !(el_ex_object::scalar_type(bound) || bound is TyText || record || plain_enum || struct_enum || scalar_vec || scalar_tuple || keyed) || (bound is TyOptional && !nullable_scalar) || el_dispatch::identity(e, bound) == "" {
     // A reference says which definition kind it names: a struct-enum variant, a tuple's or a
     // nullable's synthetic record, a type variable not yet bound.
     kind = match bound { TyReference { n } => "TyReference of a {def_kind(el::def(e, n))}", _ => type_kind(bound) };
@@ -144,6 +147,28 @@ pub fn instantiate(e: el::El, g: integer, types: vector<ir::TypeT>) -> integer {
       return -1;
     }
   }
+  // (A tuple holding a text is answered BOXED, in its `__tuple<…>` record (`boxed_tuple_return`):
+  // an instance at one whose result names the variable — `fn first<T>(v) -> T?` — is not
+  // carried; one answering something else, `same` / `differ`, is.)
+  for bh in b!.vars {
+    btt = b!.types[bh#index] ?? ir::TyVoid;
+    texty = match el_types::base(btt) { TyTuple { elems: bte } => len([for m in bte if el_types::base(m) is TyText { 1 }]) > 0, _ => false };
+    if texty && type_mentions(tmpl.returned[0] ?? ir::TyVoid, bh) {
+      el::refuse(e, "a generic instance answering a tuple with a text member (boxed)");
+      return -1;
+    }
+  }
+  // (Asked before the instance is declared — a refusal after `add_def` leaves a definition Rust
+  // does not have, and every later one is numbered one off: a bound's method this binding has
+  // no builtin for.)
+  if has_body(e, g) {
+    for sh in b!.vars {
+      if !el_ex_object::stubs_resolve(e, code_of(tmpl), sh, b!.types[sh#index] ?? ir::TyVoid) {
+        el::refuse(e, "a generic body calling a bound's method this binding answers with no builtin");
+        return -1;
+      }
+    }
+  }
   nm = el_ex_object::instance_name(e, g, b!);
   for hv in b!.vars {
     for a in tmpl.attributes {
@@ -178,14 +203,10 @@ pub fn instantiate(e: el::El, g: integer, types: vector<ir::TypeT>) -> integer {
   for bt in b!.types {
     // (`is_rewritable_vector_element_target`: a primitive, a record or a tuple — not a vector
     // or a struct enum, whose element write is never rewritten.)
-    if el_types::base(bt) is TyVector || el_types::struct_enum_def(bt) >= 0 {
+    if el_types::base(bt) is TyVector || el_types::struct_enum_def(bt) >= 0 || el_ex_base::keyed_kind(el_types::base(bt)) {
       continue;
     }
     el_schema::vector_type(e, el::def(e, type_def_nr(e, el_types::base(bt))).known_type);
-    // (A tuple's record is laid out here, after that row: the instance reads its members by it.)
-    if el_types::base(bt) is TyTuple {
-      el_schema::content_type(e, el_types::without_deps(el_types::base(bt)));
-    }
   }
   // `stale_monomorphs`: a template whose second-pass body is not read yet (declared below the
   // call) is filled once the pass is through (`rebuild_stale_monomorphs`).
@@ -253,12 +274,16 @@ pub fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::T
     TyTuple { elems: fte } => if el_types::tuple_def_of(e, [for m in fte { el_types::without_deps(m) }]) < 0 { -1 } else { el::def(e, el_types::tuple_def_of(e, [for m in fte { el_types::without_deps(m) }])).known_type },
     // (A vector is its own row: what a content comparison walks it by.)
     TyVector { inner: _ } => el_schema::content_type(e, el_types::without_deps(el_types::base(bound))),
+    // (A keyed collection is its store type's row, `OpEqContent(a, b, kt)`.)
+    TyHash { n: _ } => el_schema::keyed_type(e, el_types::without_deps(el_types::base(bound))),
     _ => el_ex_vector::append_row(e, el_types::base(bound))
   };
   // (An instance at a narrow integer width has that width's `vector<…>` row made with it, as a
   // parameter of that type has, `int4_rows`.)
   int4_rows(e, el_types::base(bound));
-  rows_known = stale_row != el::NO_TYPE && fresh_row >= 0 && fresh_row != el::NO_TYPE;
+  // (A tuple's record is laid out where the pass ends, as Rust's is — `db_type` only reads its
+  // number — so its row is not known here; its `==` is member by member and reads none.)
+  rows_known = stale_row != el::NO_TYPE && ((fresh_row >= 0 && fresh_row != el::NO_TYPE) || el_types::base(bound) is TyTuple);
   why = el_ex_object::instance_carried(e, tmpl.code[0] ?? ir::NdNull, h, if rows_known { el::NO_TYPE } else { stale_row }, tmpl.variables, writes: writes_carried(e, bound), lowers: tv_lowered(bound));
   if why != "" {
     el::refuse(e, "a generic body holding {why}");
@@ -338,7 +363,7 @@ pub fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::T
   // `resolve_content_eq` (`@FR-G-Sat-Eq`): a bound `==` over the variable becomes the concrete
   // `a == b` for the bound type — `call_op`, the one lowering a concrete site gets.
   if rows_known {
-    heap_bound = el_types::base(bound) is TyReference || el_types::base(bound) is TyVector || el_types::struct_enum_def(bound) >= 0;
+    heap_bound = el_types::base(bound) is TyReference || el_types::base(bound) is TyVector || el_types::struct_enum_def(bound) >= 0 || el_ex_base::keyed_kind(el_types::base(bound));
     iv = el_vars::load(f);
     code = resolve_content_eq(e, iv, code, stale_row, bound, heap_bound);
     f = el_vars::stored(iv);
@@ -1863,6 +1888,163 @@ pub fn scalar(t: ir::TypeT) -> boolean {
     TyCharacter => true,
     _ => false
   }
+}
+
+// `Parser::interpolation_target` (`@FR-F-Target`): the struct a template checked against `t`
+// builds — one with a method `lit` — or -1, the template then text.
+pub fn interpolation_target(e: el::El, t: ir::TypeT) -> integer {
+  d = match el_types::base(t) { TyReference { n: rn } => rn, _ => -1 };
+  if d < 0 || el::def(e, d).def_type != el::DT_STRUCT {
+    return -1;
+  }
+  if type_method(e, d, "lit") < 0 { -1 } else { d }
+}
+
+// `Parser::type_method`: the method `name` of type `d` (`t_<LEN><Type>_<name>`), looked up in the
+// type's own source first; -1 for none.
+pub fn type_method(e: el::El, d: integer, name: text) -> integer {
+  nm = el::def(e, d).name;
+  key = "t_{len(nm)}{nm}_{name}";
+  m = el::source_nr(e, el::def(e, d).source, key);
+  if m >= 0 { m } else { el::def_nr(e, key) }
+}
+
+// `Parser::hole_kind`: the hole kind a value of type `name` asks for, its name in the case a
+// method is written in — a word starts at a capital after a lower-case letter or a digit, or
+// at the last capital of an acronym run (`SQLIdent` -> `sql_ident`, `Name` -> `name`).
+pub fn hole_kind(name: text) -> text {
+  out = "";
+  cs: vector<character> = [for c in name { c }];
+  for c in cs {
+    i = c#index;
+    up = c >= 'A' && c <= 'Z';
+    if i > 0 && up {
+      prev = cs[i - 1]!;
+      prev_lower = prev >= 'a' && prev <= 'z';
+      prev_digit = prev >= '0' && prev <= '9';
+      prev_upper = prev >= 'A' && prev <= 'Z';
+      next_lower = i + 1 < len(cs) && cs[i + 1]! >= 'a' && cs[i + 1]! <= 'z';
+      if prev_lower || prev_digit || (prev_upper && next_lower) {
+        out += "_";
+      }
+    }
+    out += if up { "{c}".to_lowercase() } else { "{c}" };
+  }
+  out
+}
+
+// `Parser::parse_string` against a target (`@FR-F-Target`, `begin_format_object`, `format_lit`,
+// `format_hole`): a fresh `__fmt_N` record of the target — nulled, given its store, its fields
+// initialised as a literal's are — then `lit(s)` for every NON-EMPTY literal run and
+// `hole_<kind>(v)` for every hole, in source order, each a call of the target's method; the
+// block answers the record ("Formatted object").  A hole's kind is its type's (`text`, `int`,
+// `float`, …, a struct or enum by its name); nullability is not a kind.  A format spec on such
+// a hole, a kind the target has no method for, and a `lit` of another shape are refused by name.
+pub fn template_object(e: el::El, vars: el_vars::Vars, parts: vector<integer>, target: integer) -> Ex {
+  rt = ir::TyReference { n: target, dep: [] };
+  var = el_vars::work_format(vars, rt);
+  list: vector<ir::Node> = [];
+  if e.first_pass {
+    list = [el_ir::v_set(var, ir::NdNull), el_ir::cl(e, "OpDatabase", [ir::NdVar { n: var }, ir::NdInt { n: el::def(e, target).known_type }])];
+  } else {
+    fl = el_ex_place::object_fields(e, vars, var, target, []);
+    if fl == null {
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
+    list = fl!;
+  }
+  last = parts[-1];
+  first_text = if len(parts) == 1 { text_part(e, last) } else { text_part(e, (parts[0]) - 1) };
+  if !template_lit(e, vars, target, var, first_text, list) {
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  if len(parts) > 1 {
+    for h in parts {
+      match e.p.nodes[h] {
+        SHole { e: he, spec, spec_end } => {
+          if he == null {
+            el::refuse(e, "a hole with no value");
+            return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+          }
+          if spec < spec_end {
+            el::refuse(e, "a format spec on a hole of a template that builds a value");
+            return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+          }
+          x = el_ex_assign::expression(e, vars, he!);
+          if !template_hole(e, vars, target, var, x, list) {
+            return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+          }
+          after = if h#index + 1 < len(parts) - 1 { (parts[h#index + 1] ?? 1) - 1 } else { last };
+          if !template_lit(e, vars, target, var, text_part(e, after), list) {
+            return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+          }
+        },
+        _ => {}
+      }
+    }
+  }
+  list += [ir::NdVar { n: var }];
+  tp = ir::TyReference { n: target, dep: [var] };
+  ex(el_ir::v_block(list, tp, "Formatted object"), tp)
+}
+
+// `format_lit`: `lit(var, s)` for a non-empty run.
+fn template_lit(e: el::El, vars: el_vars::Vars, target: integer, var: integer, s: text, list: vector<ir::Node>) -> boolean {
+  if s == "" {
+    return true;
+  }
+  d = type_method(e, target, "lit");
+  if d < 0 || len(el::def(e, d).attributes) != 2 {
+    el::refuse(e, "a format target's `lit` of another shape");
+    return false;
+  }
+  c = call_args(e, vars, d, [ir::NdVar { n: var }, ir::NdText { s: s }], [el_vars::tp(vars, var), ir::TyText { dep: [] }]);
+  if c == null {
+    return false;
+  }
+  if !e.first_pass {
+    list += [c!.code];
+  }
+  true
+}
+
+// `format_hole`: `hole_<kind>(var, v)`, the kind the hole's type names.
+fn template_hole(e: el::El, vars: el_vars::Vars, target: integer, var: integer, x: Ex, list: vector<ir::Node>) -> boolean {
+  t = el_types::base(x.tp);
+  kind = match t {
+    TyText { dep: _ } => "text",
+    TyInteger { spec: _ } => "int",
+    TyFloat => "float",
+    TySingle => "single",
+    TyBoolean => "boolean",
+    TyCharacter => "character",
+    TyReference { n: hd } => if el::def(e, hd).def_type == el::DT_STRUCT { hole_kind(el::def(e, hd).name) } else { "" },
+    TyEnum { n: he } => hole_kind(el::def(e, he).name),
+    _ => ""
+  };
+  if e.first_pass && kind == "" {
+    return true;
+  }
+  if kind == "" {
+    el::refuse(e, "a hole of this type in a template that builds a value: {type_kind(t)}");
+    return false;
+  }
+  d = type_method(e, target, "hole_{kind}");
+  if d < 0 || len(el::def(e, d).attributes) != 2 {
+    if e.first_pass {
+      return true;
+    }
+    el::refuse(e, "a template hole the target has no method for: hole_{kind}");
+    return false;
+  }
+  c = call_args(e, vars, d, [ir::NdVar { n: var }, x.code], [el_vars::tp(vars, var), x.tp]);
+  if c == null {
+    return false;
+  }
+  if !e.first_pass {
+    list += [c!.code];
+  }
+  true
 }
 
 // `Parser::parse_string`: a string with no hole is its text; one with holes renders into a

@@ -628,7 +628,7 @@ CI_LIVE_GATES = $$( n=0; seen=""; for f in .ci-running ../*/.ci-running; do [ -f
 # mostly contention), best of two runs, and prints what drifted.  `speed-discover`
 # is the wide parallel pass that finds which tests deserve an annotation.
 # Nothing here fails: correctness fails a build, speed is what you read.
-.PHONY: c-sweep c-lint-census seed seed-check gate-census speed profile profile-corpus speed-gate interp-gap gap-report janitor-install reason-census rewrite-census rewrite-census-bless runtime-surface decline-census speed-discover speed-bless sweep-scratch sweep-target native-ratio native-ratio-gate claims fences sections
+.PHONY: wide-ledger wide-ledger-bless c-sweep c-lint-census seed seed-check gate-census speed profile profile-corpus speed-gate interp-gap gap-report janitor-install reason-census rewrite-census rewrite-census-bless runtime-surface decline-census speed-discover speed-bless sweep-scratch sweep-target native-ratio native-ratio-gate claims fences sections
 
 sweep-scratch:  ## Reclaim loft's scratch: dead-process native artefacts, aged test caches, old sessions
 	@# What loft writes to a temp dir and what removes it — RUN_BOUNDS.md § Scratch hygiene.
@@ -695,6 +695,12 @@ bind-census:  ## Fail when the C writer lowers an assignment with another store 
 c-sweep:  ## The C backend against the interpreter over the corpus, three macro modes (@PLN203; ARGS="--shard 0/4", "--poison", "--asan", FILE…)
 	cargo build --release --bin loft -q
 	python3 scripts/c_sweep.py $(ARGS)
+wide-ledger:  ## Fail when a 32-bit build holds or converts more 64-bit values than its baseline (WIDTH32.md § The wide ledger; ARGS="--top 30", FILE…)
+	cargo build --release --bin loft -q
+	python3 scripts/wide_ledger.py $(ARGS)
+wide-ledger-bless:  ## Record the current wide-ledger counts as the baseline (after a count fell)
+	cargo build --release --bin loft -q
+	python3 scripts/wide_ledger.py --bless
 decline-census:  ## Per rewrite rule: sites admitted vs refused, the refusals by reason (a report; ARGS="--record")
 	cargo build --release --bin loft -q
 	python3 scripts/decline_census.py $(ARGS)

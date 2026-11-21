@@ -42,6 +42,10 @@ fn main() {
   println("AWAY {st} [{web_natives::http_body()}]");
   st = web_natives::http_do("POST", "{base}/away307/{other}", "secret", "X-Mine: v4\n");
   println("AWAY307 {st}");
+  st = web_natives::http_do("GET", "{base}/echo", "", "X-Mine: a\rInjected: 1\n");
+  println("CTRL {st}");
+  st = web_natives::http_do("GET", "{base}/a b", "", "");
+  println("SPACE {st}");
   st = web_natives::http_do("GET", "{base}/fits", "", "");
   println("FITS {st} {web_natives::http_body().size()}");
   st = web_natives::http_do("GET", "{base}/over", "", "");
@@ -103,7 +107,7 @@ fn main() {
 "#;
 
 /// The lines the program prints, fixed by the server's answers.
-const WANT: [&str; 18] = [
+const WANT: [&str; 20] = [
     "BIN 200 5 65 0 255 66 10",
     "HDR true",
     "POST 200 POST hello v1",
@@ -116,6 +120,10 @@ const WANT: [&str; 18] = [
     "HOP 200 [GET  v2]",
     "AWAY 200 [GET  ]",
     "AWAY307 0",
+    // A header holding a bare CR, and a URL holding a space, are refused before anything is
+    // sent: written as they are, each would end a request line the program did not end.
+    "CTRL 0",
+    "SPACE 0",
     // The run's ceiling on a response body is 2000 bytes (`LOFT_MAX_DOWNLOAD`): a body of
     // exactly that arrives whole, and one byte more is refused — no status, no body.
     "FITS 200 2000",

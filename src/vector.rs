@@ -926,6 +926,26 @@ pub struct VecHeader {
     pub rec: u32,
     pub len: u32,
     pub locked: bool,
+    /// The bytes the elements may span ([`Store::elem_room`]), taken once with the header.
+    pub room: u32,
+}
+
+impl VecHeader {
+    /// The elements of `size` bytes a raw path may address: the length, held to the record's
+    /// room (`@FR-R-Header`).  For a vector the runtime wrote the two agree — its claim always
+    /// covers `len * size` — so this answers `len`; a length word that claims more than the
+    /// record holds (a store loaded with `store_load` and never walked) is cut to what is
+    /// there, and the elements past it read as past the end.  Loop-invariant: the header is
+    /// a local the loop does not write and `size` a constant, so in a hoisted loop it is
+    /// worked out once, before the loop.
+    #[must_use]
+    #[inline(always)]
+    #[allow(clippy::inline_always)] // a bound the loop must see whole to move it out
+    pub fn elems(&self, size: u32) -> u32 {
+        self.room
+            .checked_div(size)
+            .map_or(self.len, |held| self.len.min(held))
+    }
 }
 
 /// The scalar types a fused element WRITE stores (@PLN157 P4b), with the typed
@@ -1041,16 +1061,12 @@ pub fn verify_kept_header(held: &VecHeader, db: &DbRef, stores: &[Store]) {
 #[must_use]
 pub fn push_header(db: &DbRef, stores: &[Store]) -> PushHeader {
     let h = vec_header(db, stores);
-    let cap = if h.rec == 0 {
-        0
-    } else {
-        // The claim header (a positive i32 word count) is what `vector_append` reads for
-        // the same number: words → bytes, minus the 8-byte header, over the element size
-        // — which the CALLER knows and this does not, so the capacity is kept in BYTES
-        // here and compared against `len * size` at the push.
-        let words = *keys::store(db, stores).addr::<i32>(h.rec, 0);
-        u32::try_from(words).map_or(0, |w| w.saturating_mul(8).saturating_sub(8))
-    };
+    // The claim header (a positive i32 word count) is what `vector_append` reads for the same
+    // number: words → bytes, minus the 8-byte header, over the element size — which the
+    // CALLER knows and this does not, so the capacity is kept in BYTES here and compared
+    // against `len * size` at the push.  It is the header's room, held inside the store: a
+    // window writes up to it through a raw pointer.
+    let cap = h.room;
     PushHeader { h, cap }
 }
 
@@ -1125,20 +1141,22 @@ pub fn vec_header(db: &DbRef, stores: &[Store]) -> VecHeader {
             rec: 0,
             len: 0,
             locked: false,
+            room: 0,
         };
     }
     let store = keys::store(db, stores);
     let v_rec = store.collection_rec(db.rec, db.pos);
-    let len = if v_rec == 0 {
-        0
+    let (len, room) = if v_rec == 0 {
+        (0, 0)
     } else {
-        store.get_u32_raw(v_rec, 4)
+        (store.get_u32_raw(v_rec, 4), store.elem_room(v_rec))
     };
     VecHeader {
         store_nr: db.store_nr,
         rec: v_rec,
         len,
         locked: store.is_locked(),
+        room,
     }
 }
 
@@ -1168,7 +1186,7 @@ pub fn get_vector_hoisted<const VERIFY: bool>(
     from: i64,
     stores: &[Store],
 ) -> DbRef {
-    if from >= 0 && from < i64::from(h.len) {
+    if from >= 0 && from < i64::from(h.elems(size)) {
         if VERIFY {
             assert_eq!(
                 *h,
@@ -1371,22 +1389,25 @@ pub unsafe fn field_header<const VERIFY: bool>(
             rec: 0,
             len: 0,
             locked: false,
+            room: 0,
         }
     } else {
         // SAFETY: the caller's block proof — `ptr` addresses a live record whose store has
         // not moved, and `fld` is a field of it.
         let raw = unsafe { ptr.add(fld as usize).cast::<u32>().read_unaligned() };
         let rec = if raw == DbRef::ABSENT_REC { 0 } else { raw };
-        let len = if rec == 0 {
-            0
+        let (len, room) = if rec == 0 {
+            (0, 0)
         } else {
-            stores[db.store_nr as usize].get_u32_raw(rec, 4)
+            let store = &stores[db.store_nr as usize];
+            (store.get_u32_raw(rec, 4), store.elem_room(rec))
         };
         VecHeader {
             store_nr: db.store_nr,
             rec,
             len,
             locked,
+            room,
         }
     };
     if VERIFY {
@@ -1473,7 +1494,8 @@ fn rec_set_refused(null: bool, store_nr: u16, rec: u32, at: u32, stores: &[Store
 /// An absent or empty vector bounds at 0.
 #[must_use]
 pub fn abs_bound_i64(h: &VecHeader, stores: &[Store]) -> Option<i64> {
-    if h.rec == 0 || h.len == 0 {
+    let elems = h.elems(8);
+    if h.rec == 0 || elems == 0 {
         return Some(0);
     }
     let base = vec_base(h, stores);
@@ -1482,8 +1504,8 @@ pub fn abs_bound_i64(h: &VecHeader, stores: &[Store]) -> Option<i64> {
     // the test runs once at the end.  Written this way the loop vectorises; with an early exit
     // on the sentinel it did not, and the scan itself was 5.6 % of a resample-bound row.
     let mut bound: u64 = 0;
-    for i in 0..h.len as usize {
-        // SAFETY: `base` is element 0 of a live vector record of `len` eight-byte elements
+    for i in 0..elems as usize {
+        // SAFETY: `base` is element 0 of a live vector record of `elems` eight-byte elements
         // (the header was derived from it in this same prelude); `read_unaligned` because an
         // element offset need not be aligned for `i64` (loft#1481).
         let v = unsafe { base.add(i * 8).cast::<i64>().read_unaligned() };
@@ -1522,7 +1544,7 @@ pub unsafe fn get_elem_at<T: Copy, const VERIFY: bool>(
     absent: T,
     stores: &[Store],
 ) -> T {
-    let val = match elem_index(from, h.len) {
+    let val = match elem_index(from, h.elems(size)) {
         Some(f) => {
             if VERIFY {
                 assert_eq!(
@@ -1677,7 +1699,7 @@ pub unsafe fn elem_field_at<T: Copy, const VERIFY: bool>(
     fld: u32,
     stores: &[Store],
 ) -> Option<(DbRef, T)> {
-    if from < 0 || from >= i64::from(h.len) {
+    if from < 0 || from >= i64::from(h.elems(size)) {
         return None;
     }
     if VERIFY {
@@ -1749,7 +1771,7 @@ pub fn get_elem_hoisted<T: Copy, const VERIFY: bool>(
     absent: T,
     stores: &[Store],
 ) -> T {
-    let val = match elem_index(from, h.len) {
+    let val = match elem_index(from, h.elems(size)) {
         Some(f) => {
             if VERIFY {
                 assert_eq!(
@@ -1878,7 +1900,7 @@ pub unsafe fn text_elem_at<const VERIFY: bool>(
     from: i64,
     stores: &[Store],
 ) -> &'static str {
-    if from >= 0 && from < i64::from(h.len) {
+    if from >= 0 && from < i64::from(h.elems(4)) {
         if VERIFY {
             assert_eq!(
                 *h,

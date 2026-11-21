@@ -31,6 +31,7 @@ mod tail;
 mod tidy;
 pub(crate) mod tls;
 mod unicode;
+mod wide_ledger;
 
 use crate::data::{Data, DefType, Type, Value};
 use crate::database::Stores;
@@ -39,6 +40,8 @@ use std::fmt::Write as _;
 /// The C runtime every unit starts with — whole, on every tier: a unit compiles alone and no
 /// build compiles the runtime apart (`@C169`).
 const RUNTIME: &str = concat!(
+    include_str!("loft_os.h"),
+    include_str!("loft_width.h"),
     include_str!("loft_cc.h"),
     include_str!("loft_text.h"),
     include_str!("loft_store.h"),
@@ -2142,18 +2145,10 @@ pub fn emit_unit_for(
         let written = tidy::tidy_unit(&out[at..]);
         out.truncate(at);
         out.push_str(&written);
-        // @PLN217 — a `#c` binding is declared in the C its library's shim is written in, which
-        // spells a loft `integer` / `float` as the build's width (`loft_width.h`).  The header
-        // goes in with the runtime, before the bindings, and only where a binding names it, so
-        // a program that binds none is written as it was.
-        if names_a_width(&out[at..]) {
-            let mut width = String::new();
-            if crate::keys::width32_all() {
-                width.push_str("#ifndef LOFT_WIDTH32\n#define LOFT_WIDTH32\n#endif\n");
-            }
-            width.push_str(include_str!("loft_width.h"));
-            out.insert_str(at - RUNTIME_END.len(), &width);
-        }
+    }
+    // @PLN217 — where this unit holds or computes 64 bits (`LOFT_WIDE_LEDGER`).
+    if let Some(at) = out.find(RUNTIME_END) {
+        wide_ledger::write(data, &fns, &out[at..]);
     }
     trace_tables(&cx);
     Ok(out)
@@ -2193,16 +2188,6 @@ fn trace_tables(cx: &Cx) {
             .collect::<Vec<_>>()
             .join(","),
     );
-}
-
-/// Whether `code` names one of `loft_width.h`'s types as a whole identifier.
-fn names_a_width(code: &str) -> bool {
-    ["loft_int", "loft_uint", "loft_float"].iter().any(|name| {
-        code.match_indices(name).any(|(i, _)| {
-            let ident = |c: char| c.is_ascii_alphanumeric() || c == '_';
-            !code[..i].ends_with(ident) && !code[i + name.len()..].starts_with(ident)
-        })
-    })
 }
 
 /// The program's lazy drivers as the runtime calls them (`loft_lazy_miss`): an adapter per
@@ -2703,6 +2688,11 @@ fn unit_defines(
     reached: &std::collections::HashSet<u32>,
 ) -> (String, bool, bool) {
     let mut out = String::new();
+    // @PLN217 — a 32-bit build (`--width 32`): the runtime that follows is compiled at that
+    // width (`loft_width.h`, its first header), as every library's shim is.
+    if crate::keys::width32_all() {
+        out.push_str("#ifndef LOFT_WIDTH32\n#define LOFT_WIDTH32\n#endif\n");
+    }
     if reached.iter().any(|&d| data.def(d).name() == "n_file_map") {
         out.push_str("#define LOFT_FOREIGN 1\n");
     }

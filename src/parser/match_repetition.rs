@@ -7,8 +7,7 @@
 
 use super::control::{AltSpan, SepSpec, match_arm_types_unify};
 use super::{
-    DefType, I32, Level, LexItem, Parser, Type, Value, diagnostic_format, v_block, v_if, v_loop,
-    v_set,
+    DefType, Level, LexItem, Parser, Type, Value, diagnostic_format, v_block, v_if, v_loop, v_set,
 };
 use crate::data::Deps;
 
@@ -187,7 +186,7 @@ impl Parser {
             n
         };
         // `end` = the cursor after the last matched V; a forward tail reads relative to it.
-        let end_var = self.create_unique("rep_end", &I32);
+        let end_var = self.create_unique("rep_end", &self.count_type());
         self.vars.defined(end_var);
         let tail_forward = rest_follows || self.match_cursor.is_some();
         // Parse the tail with known positions.  A literal / variant sub-pattern contributes a
@@ -208,8 +207,8 @@ impl Parser {
                     "+",
                     Value::Var(end_var),
                     Value::Int(j),
-                    I32.clone(),
-                    I32.clone(),
+                    self.count_type(),
+                    self.count_type(),
                 )
             } else {
                 Value::Int(-(tail_len - j))
@@ -281,14 +280,14 @@ impl Parser {
         // follows the run (`tail_forward`), and the cursor advances past it too.
         let cursor_ctx = self.match_cursor;
         let (base_val, base_setup) = if let Some((_, _, _, pos_var)) = cursor_ctx {
-            let b = self.create_unique("rep_base", &I32);
+            let b = self.create_unique("rep_base", &self.count_type());
             self.vars.defined(b);
             let add = self.conv_op(
                 "+",
                 Value::Var(pos_var),
                 Value::Int(head_len),
-                I32.clone(),
-                I32.clone(),
+                self.count_type(),
+                self.count_type(),
             );
             (Value::Var(b), Some(v_set(b, add)))
         } else {
@@ -305,7 +304,13 @@ impl Parser {
             // First V: `if head_len < len && tag(v[head_len]) == disc { end = head_len + 1 }`.
             let first_v = {
                 let lc = self.cursor_len(v);
-                let non_empty = self.conv_op("<", base_val.clone(), lc, I32.clone(), I32.clone());
+                let non_empty = self.conv_op(
+                    "<",
+                    base_val.clone(),
+                    lc,
+                    self.count_type(),
+                    self.count_type(),
+                );
                 let elem = self.read_slice_elem(v, elm_size, elm_tp, base_val.clone());
                 let tag = self.elem_tag_int(elem);
                 let is_v = self.cl("OpEqInt", &[tag, Value::Int(disc)]);
@@ -314,8 +319,8 @@ impl Parser {
                         "+",
                         base_val.clone(),
                         Value::Int(1),
-                        I32.clone(),
-                        I32.clone(),
+                        self.count_type(),
+                        self.count_type(),
                     )
                 } else {
                     Value::Int(head_len + 1)
@@ -334,10 +339,10 @@ impl Parser {
                     "+",
                     Value::Var(end_var),
                     Value::Int(1),
-                    I32.clone(),
-                    I32.clone(),
+                    self.count_type(),
+                    self.count_type(),
                 );
-                let short = self.conv_op("<=", lc, next, I32.clone(), I32.clone());
+                let short = self.conv_op("<=", lc, next, self.count_type(), self.count_type());
                 v_if(short, Value::Break(0), Value::Null)
             };
             let sep_brk = {
@@ -349,8 +354,8 @@ impl Parser {
                     "+",
                     Value::Var(end_var),
                     Value::Int(1),
-                    I32.clone(),
-                    I32.clone(),
+                    self.count_type(),
+                    self.count_type(),
                 );
                 let elem = self.read_slice_elem(v, elm_size, elm_tp, next);
                 let tag = self.elem_tag_int(elem);
@@ -362,8 +367,8 @@ impl Parser {
                     "+",
                     Value::Var(end_var),
                     Value::Int(2),
-                    I32.clone(),
-                    I32.clone(),
+                    self.count_type(),
+                    self.count_type(),
                 );
                 v_set(end_var, b)
             };
@@ -374,7 +379,13 @@ impl Parser {
             // Contiguous `V*`: `loop { if len <= end break; if tag(v[end]) != disc break; end += 1 }`.
             let len_brk = {
                 let lc = self.cursor_len(v);
-                let at_end = self.conv_op("<=", lc, Value::Var(end_var), I32.clone(), I32.clone());
+                let at_end = self.conv_op(
+                    "<=",
+                    lc,
+                    Value::Var(end_var),
+                    self.count_type(),
+                    self.count_type(),
+                );
                 v_if(at_end, Value::Break(0), Value::Null)
             };
             let tag_brk = {
@@ -388,8 +399,8 @@ impl Parser {
                     "+",
                     Value::Var(end_var),
                     Value::Int(1),
-                    I32.clone(),
-                    I32.clone(),
+                    self.count_type(),
+                    self.count_type(),
                 );
                 v_set(end_var, bump)
             };
@@ -406,10 +417,10 @@ impl Parser {
                 "+",
                 Value::Var(end_var),
                 Value::Int(tail_len),
-                I32.clone(),
-                I32.clone(),
+                self.count_type(),
+                self.count_type(),
             );
-            self.conv_op("<=", need, lc, I32.clone(), I32.clone())
+            self.conv_op("<=", need, lc, self.count_type(), self.count_type())
         } else if has_rest || cursor_ctx.is_some() {
             // A cursor PREFIX-consumes: the run took the maximal V prefix and any
             // non-V tail simply stays unconsumed, so the arm matches whenever the head
@@ -417,10 +428,22 @@ impl Parser {
             // head" test.  Only a vector WITHOUT a rest must reach the fixed tail
             // exactly (`end == len - tail_len`, the whole-consume boundary).
             let lc = self.cursor_len(v);
-            self.conv_op("<=", base_val.clone(), lc, I32.clone(), I32.clone())
+            self.conv_op(
+                "<=",
+                base_val.clone(),
+                lc,
+                self.count_type(),
+                self.count_type(),
+            )
         } else {
             let lc = self.cursor_len(v);
-            let boundary = self.conv_op("-", lc, Value::Int(tail_len), I32.clone(), I32.clone());
+            let boundary = self.conv_op(
+                "-",
+                lc,
+                Value::Int(tail_len),
+                self.count_type(),
+                self.count_type(),
+            );
             self.cl("OpEqInt", &[Value::Var(end_var), boundary])
         };
         let match_bool = if plus {
@@ -429,8 +452,8 @@ impl Parser {
                 "<",
                 base_val.clone(),
                 Value::Var(end_var),
-                I32.clone(),
-                I32.clone(),
+                self.count_type(),
+                self.count_type(),
             );
             v_if(base, gt, Value::Boolean(false))
         } else {
@@ -503,8 +526,8 @@ impl Parser {
                 "+",
                 Value::Var(end_var),
                 Value::Int(tail_len),
-                I32.clone(),
-                I32.clone(),
+                self.count_type(),
+                self.count_type(),
             )
         } else {
             Value::Var(end_var)
@@ -537,7 +560,7 @@ impl Parser {
             let _ = pos_var;
             let advance_to = if has_rest {
                 let lc = self.cursor_len(v);
-                let t = self.create_unique("rep_adv", &I32);
+                let t = self.create_unique("rep_adv", &self.count_type());
                 self.vars.defined(t);
                 bindings.push(v_set(t, lc));
                 Value::Var(t)
@@ -558,8 +581,8 @@ impl Parser {
                     "<",
                     old_far.clone(),
                     advance_to.clone(),
-                    I32.clone(),
-                    I32.clone(),
+                    self.count_type(),
+                    self.count_type(),
                 );
                 let maxed = v_if(is_less, advance_to, old_far);
                 let set_far = self.set_field(cursor_def, ff, 0, Value::Var(cursor_var), maxed);
@@ -836,8 +859,13 @@ impl Parser {
             for branch in &branches {
                 let w = branch.len() as i32;
                 let lc = self.cursor_len(v);
-                let mut c =
-                    self.conv_op("<=", Value::Int(head_len + w), lc, I32.clone(), I32.clone());
+                let mut c = self.conv_op(
+                    "<=",
+                    Value::Int(head_len + w),
+                    lc,
+                    self.count_type(),
+                    self.count_type(),
+                );
                 for (j, (disc, _, _)) in branch.iter().enumerate() {
                     let elem =
                         self.read_slice_elem(v, elm_size, elm_tp, Value::Int(head_len + j as i32));
@@ -854,9 +882,21 @@ impl Parser {
                 let need = head_len + branch.len() as i32 + tail_len;
                 let lc = self.cursor_len(v);
                 let ok = if has_rest {
-                    self.conv_op("<=", Value::Int(need), lc, I32.clone(), I32.clone())
+                    self.conv_op(
+                        "<=",
+                        Value::Int(need),
+                        lc,
+                        self.count_type(),
+                        self.count_type(),
+                    )
                 } else {
-                    self.conv_op("==", lc, Value::Int(need), I32.clone(), I32.clone())
+                    self.conv_op(
+                        "==",
+                        lc,
+                        Value::Int(need),
+                        self.count_type(),
+                        self.count_type(),
+                    )
                 };
                 fits = v_if(branch_conds[i].clone(), ok, fits);
             }
@@ -912,9 +952,21 @@ impl Parser {
             let w = branch.len() as i32;
             let lc = self.cursor_len(v);
             let mut c = if has_rest {
-                self.conv_op("<=", Value::Int(w), lc, I32.clone(), I32.clone())
+                self.conv_op(
+                    "<=",
+                    Value::Int(w),
+                    lc,
+                    self.count_type(),
+                    self.count_type(),
+                )
             } else {
-                self.conv_op("==", lc, Value::Int(w), I32.clone(), I32.clone())
+                self.conv_op(
+                    "==",
+                    lc,
+                    Value::Int(w),
+                    self.count_type(),
+                    self.count_type(),
+                )
             };
             for (j, (disc, _, _)) in branch.iter().enumerate() {
                 let elem = self.read_slice_elem(v, elm_size, elm_tp, Value::Int(j as i32));
@@ -1134,7 +1186,7 @@ impl Parser {
         elm_tp: &Type,
         bindings: &mut Vec<Value>,
     ) {
-        let end_var = self.create_unique("grp_end", &I32);
+        let end_var = self.create_unique("grp_end", &self.count_type());
         self.vars.defined(end_var);
         // end = head + the width of the FIRST branch that holds (ordered choice, `(P-Alt)`).
         let mut end_acc = Value::Int(span.head_len);
@@ -1175,8 +1227,8 @@ impl Parser {
                     "==",
                     Value::Var(end_var),
                     Value::Int(span.head_len),
-                    I32.clone(),
-                    I32.clone(),
+                    self.count_type(),
+                    self.count_type(),
                 );
                 let null_header = self.cl(
                     "OpSetInt4",
@@ -1202,7 +1254,7 @@ impl Parser {
         elm_tp: &Type,
         bindings: &mut Vec<Value>,
     ) {
-        let pos_var = self.create_unique("alt_pos", &I32);
+        let pos_var = self.create_unique("alt_pos", &self.count_type());
         self.vars.defined(pos_var);
         // pos = if b0 { w0 } else if b1 { w1 } … else 0 (0 unreachable — cond already gated).
         let mut pos_acc = Value::Int(0);

@@ -1,8 +1,7 @@
-diff --git b/src/parser/control.rs a/src/parser/control.rs
-index b8b6d98ef..1ec714fac 100644
---- b/src/parser/control.rs
-+++ a/src/parser/control.rs
-@@ -20346,15 +20346,13 @@ impl Parser {
+diff --git a/src/parser/control.rs b/src/parser/control.rs
+--- a/src/parser/control.rs
++++ b/src/parser/control.rs
+@@ -16876,15 +16876,13 @@ impl Parser {
              let mut drop = Value::Null;
              self.lexer.revert(lnk);
              let tp = self.expression(&mut drop);
@@ -23,8 +22,8 @@ index b8b6d98ef..1ec714fac 100644
                  }
              } else if matches!(tp.base(), Type::Tuple(_)) || self.data.type_elm(&tp) != u32::MAX {
                  found = true;
-@@ -20378,38 +20376,6 @@ impl Parser {
-         I32.clone()
+@@ -16908,42 +16906,6 @@ impl Parser {
+         self.count_type()
      }
  
 -    /// `sizeof` of a struct-enum value: the size of the variant it holds (@F45).
@@ -37,7 +36,7 @@ index b8b6d98ef..1ec714fac 100644
 -    /// is known here, so the answer is a chain over it; an absent value (discriminant 0, no
 -    /// variant) answers `absent`, its type's size.
 -    fn variant_size(&mut self, value: Value, enum_nr: u32, absent: i32) -> Value {
--        let d = self.create_unique("sizeof_disc", &I32);
+-        let d = self.create_unique("sizeof_disc", &self.count_type());
 -        self.vars.defined(d);
 -        let get_enum = self.cl("OpGetEnum", &[value, Value::Int(0)]);
 -        let disc = self.cl("OpConvIntFromEnum", &[get_enum]);
@@ -56,7 +55,11 @@ index b8b6d98ef..1ec714fac 100644
 -            let test = self.cl("OpEqInt", &[Value::Var(d), Value::Int(nr)]);
 -            chain = v_if(test, Value::Int(size), chain);
 -        }
--        v_block(vec![v_set(d, disc), chain], I32.clone(), "sizeof variant")
+-        v_block(
+-            vec![v_set(d, disc), chain],
+-            self.count_type(),
+-            "sizeof variant",
+-        )
 -    }
 -
      /// The packed size `tp` takes as a struct field or vector element — THE size `sizeof`

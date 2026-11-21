@@ -1609,13 +1609,14 @@ static void loft_hash_remove_i64(const loft_tdesc *T, uint16_t elem, loft_ref c,
 }
 
 /* Stores::displace_keyed: the entry `existing` makes room for an insert under its key — unlinked,
- * and released unless a `secondary` member only borrows it. */
+ * and released unless a `secondary` member only borrows it.  Released as a removal releases it
+ * (`loft_h_release_removed`): an entry with a record of its own goes through the store's removal,
+ * which leaves the mark a stored reference reads as null (`@FR-H-Removed`). */
 static void loft_hash_displace(const loft_tdesc *T, uint16_t elem, loft_ref c, loft_ref existing, const loft_key *keys,
                                int nk, int secondary) {
     uint32_t slot = loft_hash_unlink(c, existing, keys, nk);
     if (secondary) return;
-    loft_remove_claims(T, elem, existing);
-    loft_free_hash_entry(c, existing, slot);
+    loft_h_release_removed(T, elem, c, 0, existing, slot);
 }
 
 /* Stores::insert_record on a hash (`@FR-Col-Insert`: latest insert wins): `rec` filed under its
@@ -1739,10 +1740,7 @@ static loft_ref loft_hash_insert(const loft_tdesc *T, uint16_t elem, loft_ref c,
         /* The new entry takes the displaced one's bucket. */
         loft_forget_in_scratches(c, p.entry);
         uint32_t gone = loft_h_replace_at(c, p.bucket, p.index);
-        if (!secondary) {
-            loft_remove_claims(T, elem, p.entry);
-            loft_free_hash_entry(c, p.entry, gone);
-        }
+        if (!secondary) loft_h_release_removed(T, elem, c, 0, p.entry, gone);
         loft_h_filed = rec;
         return p.entry;
     }

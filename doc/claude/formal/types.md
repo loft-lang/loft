@@ -783,12 +783,17 @@ unchanged, since every type here is still an `Integer[a,b]`.
   (W-Regime)  each source file is under the 32-bit regime or not, decided once, before its
               first declaration: `#width 32` as its first line puts it under, `#width 64`
               keeps it out, and `LOFT_WIDTH=32` / `--width 32` puts every file under that has
-              no `#width 64` line.  The standard library is never under it.
+              no `#width 64` line — the standard library with them; a `#width 32` line in
+              a standard-library file does nothing, so it is under the regime only with
+              the whole program.
   (W-Name)    in a file under the regime, `integer` denotes Integer[i32::MIN+1, i32::MAX]
               (null is i32::MIN) and `float` denotes `single`; outside it they denote the
               64-bit types.  `i64` and `f64` denote the 64-bit types in EVERY file, and are
               the one way a regime file asks for 64 bits.  A `limit(…)` range and a narrow
-              alias (`u8`, `i16`, …) name their own range everywhere.
+              alias (`u8`, `i16`, …) name their own range everywhere.  The name means the
+              same in a CAST: `x as integer` of a float or a single in a regime file is
+              the i32 of it, null where the number does not fit one — at the cast, not
+              where its result is later stored.
   (W-Lit)     in a regime file an integer literal without a suffix has the i32 type and a
               float literal the `single` type.  An integer literal outside the i32 range is
               refused, and the refusal names the `l` suffix and an `i64` binding as its cure.
@@ -817,7 +822,9 @@ unchanged, since every type here is still an `Integer[a,b]`.
               unchosen width gets.  A target narrower than i32 (`u8`, a `limit`) is still
               refused as (I-Narrow) says, and so is an `i64` or `u32` source.
   (W-Count)   in a regime file a count — a collection's `len`, a text's `size` — has the i32
-              type.
+              type, and so has every counter the compiler makes for a loop there: `x#index`,
+              `x#count`, `x#next`, a walk's position and length, a comprehension's index.  No
+              collection under the regime holds more elements than an i32 counts.
 ```
 
 **In words.** Under `#width 32` the everyday names mean 32 bits, and a program that needs 64

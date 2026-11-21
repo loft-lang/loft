@@ -1213,6 +1213,20 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
   }
   src_id = binds[0];
   id = el_vars::loop_binding(vars, src_id);
+  // `rev(src)` walks the hoisted vector from its end, as the `for` statement's reversed walk does
+  // (the index starts at the length, the "rev step", both exits); `unordered(…)` is refused.
+  rev = false;
+  match e.p.nodes[source] {
+    SIterWrap { kind, e: inner } => {
+      if kind != "rev" || inner == null {
+        el::refuse(e, "a comprehension over an `unordered(…)` walk");
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      rev = true;
+      source = inner!;
+    },
+    _ => {}
+  }
   ranged = e.p.nodes[source] is SRange;
   // The walk: a range's own step, or the source hoisted into `_vector_N` and walked as a `for`
   // walks it.
@@ -1240,13 +1254,19 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
     }
     outer_slice = vars.slice_node;
     vars.slice_node = el_ex_vector::slice_target(e, source);
+    vars.rev_slice = rev && vars.slice_node >= 0;
     x = el_ex_assign::expression(e, vars, source);
+    vars.rev_slice = false;
     vars.slice_node = outer_slice;
   }
   if keyed {
     elem = kr!.elem;
   }
   sliced = !keyed && x.code is NdIter;
+  if rev && (ranged || keyed) {
+    el::refuse(e, "a comprehension over a reversed range or key range");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
   ss: el_ex_vector::SliceStart? = null;
   if sliced {
     ss = el_ex_vector::slice_start(vars, x, id);
@@ -1353,7 +1373,7 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
   }
   nx: ir::Node? = if keyed && kr!.whole {
     el_ir::v_block([el_ir::v_set(idx, el_ir::cl(e, "OpAddInt", [ir::NdVar { n: idx }, ir::NdInt { n: 1 }])), el_ir::cl(e, "OpStep", [ir::NdVar { n: kr!.iter }, kr!.coll, ir::NdInt { n: kr!.on }, ir::NdInt { n: kr!.arg }])], elem, "sorted iter next")
-  } else if keyed { key_range_step(e, kr!) } else if ranged { el_ir::v_block(rw!.steps, elem, "Iter range") } else if sliced { el_ex_vector::slice_read(e, vars, ss!) } else { vector_step(e, vec, idx, elem) };
+  } else if keyed { key_range_step(e, kr!) } else if ranged { el_ir::v_block(rw!.steps, elem, "Iter range") } else if sliced { el_ex_vector::slice_read(e, vars, ss!, rev: rev) } else { vector_step(e, vec, idx, elem, rev: rev) };
   if nx == null || rows == null {
     el::refuse(e, "a comprehension over a vector of records");
     return ex(ir::NdNull, ir::TyVoid);
@@ -1365,6 +1385,9 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
     steps += [el_ir::v_if(el_ir::cl(e, "OpEqRef", [ir::NdVar { n: lv }, el_ir::cl(e, "OpNullRefSentinel", [])]), el_ir::v_block([ir::NdBreak { n: 0 }], ir::TyVoid, "break"), ir::NdNull)];
   } else if !ranged && !sliced {
     steps += [vector_past_end(e, vec, idx)];
+    if rev {
+      steps += [el_ir::v_if(el_ir::cl(e, "OpLtInt", [ir::NdVar { n: idx }, ir::NdInt { n: 0 }]), el_ir::v_block([ir::NdBreak { n: 0 }], ir::TyVoid, "break"), ir::NdNull)];
+    }
   }
   if fc != null {
     steps += [fc!];
@@ -1453,7 +1476,7 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
     items += [ir::NdInsert { items: el_ex_pattern::range_init(rw!) }, el_ir::v_loop(steps, "For comprehension")];
     return ex(ir::NdInsert { items: items }, ir::TyVoid);
   }
-  items += if keyed && kr!.whole { [el_ir::v_set(kr!.iter, kr!.start), el_ir::v_set(idx, ir::NdInt { n: -1 })] } else if keyed { [el_ir::v_set(kr!.iter, kr!.start)] } else if ranged { el_ex_pattern::range_init(rw!) } else if sliced { match ss!.init { NdInsert { items: si } => si, _ => [] } } else { [el_ir::v_set(vec, x.code), el_ir::v_set(idx, ir::NdInt { n: -1 })] };
+  items += if keyed && kr!.whole { [el_ir::v_set(kr!.iter, kr!.start), el_ir::v_set(idx, ir::NdInt { n: -1 })] } else if keyed { [el_ir::v_set(kr!.iter, kr!.start)] } else if ranged { el_ex_pattern::range_init(rw!) } else if sliced { match ss!.init { NdInsert { items: si } => si, _ => [] } } else { [el_ir::v_set(vec, x.code), el_ir::v_set(idx, if rev { el_ir::cl(e, "OpLengthVector", [ir::NdVar { n: vec }]) } else { ir::NdInt { n: -1 } })] };
   items += [el_ir::v_loop(steps, "For comprehension")];
   ex(ir::NdInsert { items: items }, ir::TyVoid)
 }
@@ -1984,10 +2007,12 @@ pub fn match_subject(e: el::El, vars: el_vars::Vars, t: ir::TypeT) -> integer {
 // (`@FR-T-Chk-Vec`: a match answering into an expected vector hands that type to its `if` arms,
 // `arm_expect`, for as long as its arms are read.)
 pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector<integer>, node: integer = -1) -> Ex {
-  kept_arm = vars.arm_expect;
+  // (Kept in an `Ex`: a struct-enum field read into a local is a VIEW the write below
+  // overwrites, `view-written-back`.)
+  kept_arm = ex(ir::NdNull, vars.arm_expect);
   vars.arm_expect = if node >= 0 && vars.expect_node == node && el_types::base(vars.expect) is TyVector { vars.expect } else { ir::TyVoid };
   r = match_expr_inner(e, vars, subject, arms, node);
-  vars.arm_expect = kept_arm;
+  vars.arm_expect = kept_arm.tp;
   r
 }
 
@@ -2068,7 +2093,7 @@ fn match_expr_inner(e: el::El, vars: el_vars::Vars, subject: integer, arms: vect
     };
   }
   if st is TyVector {
-    return vector_match(e, vars, x, arms);
+    return vector_match(e, vars, x, arms, bind: at_bind);
   }
 
   if st is TyTuple {
@@ -2488,6 +2513,17 @@ fn match_expr_inner(e: el::El, vars: el_vars::Vars, subject: integer, arms: vect
   // arm that finishes without a value it is a statement that finishes.
   if result is TyNever && void_arm {
     result = ir::TyVoid;
+  }
+  // `@FR-L-Null-Which` (loft#2572): arms joined to a tagged `__nullable<S>` slot beside a `null`
+  // arm are each read through their OWN tag, at the arm — the `null` arm the sentinel — and the
+  // match is the POINTER `S?`, viewing the slot's owner; nothing is read after the join.
+  if !e.first_pass && el_ex_base::is_nullable_wrapper(e, result) && len([for a in out if a.tp is TyNull { 1 }]) > 0 {
+    npt = ir::TyOptional { inner: ir::TyReference { n: el_ex_place::nullable_payload(e, el_types::struct_enum_def(result)), dep: el_types::deps(result) } };
+    tl = el_ex_null::tag_leaves(e, vars, chain, result, npt);
+    if tl != null {
+      chain = tl!;
+      result = npt;
+    }
   }
   if scalar_subject {
     // `dn1_widen_branch_null`: a non-null scalar result that a branch answers as null is `τ?`;
@@ -3044,7 +3080,7 @@ pub fn cursor_match(e: el::El, vars: el_vars::Vars, x: Ex, cs: vector<integer>, 
   ex(el_ir::v_block(setup + [m.code], m.tp, "cursor match"), m.tp)
 }
 
-pub fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>) -> Ex {
+pub fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>, bind: boolean = false) -> Ex {
   if el_trace::on() {
     el_trace::route(e, "parse_vector_match");
   }
@@ -3159,6 +3195,29 @@ pub fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>
     }
   }
   // Built on the first pass too: what the body answers there decides its text delivery.
+  // `@FR-P-Rest` / `@FR-B-Copy`: a vector match BOUND to a local (`r = match …`) sinks the bind
+  // into each arm — a rest capture materialised fresh and copied into a store of the local's
+  // own, a literal arm binding the local to the literal's store (`sink_bind_arms`).
+  sink_to = vars.assign_target;
+  sunk = false;
+  if !e.first_pass && bind && len(vars.cursor) == 0 && el_types::base(result) is TyVector && sink_to >= 0 && !vars.vars[sink_to].argument {
+    sb = sink_bind_arms(e, vars, out, elm, sink_to);
+    if sb != null {
+      out = sb!.arms;
+      result = ir::TyVoid;
+      vars.sunk_tp = sb!.tp;
+      vars.sunk_bind = sink_to;
+      sunk = true;
+    }
+  }
+  // (A RECORD answered at a function's tail is delivered by the tail's own materialisation
+  // (`materialize_match_value`: each element binding copied into the buffer where present, a
+  // `null` arm the sentinel) — `@FR-O-Buffer` / `@FR-B-View`; only a vector goes through here.)
+  // (Only over a PARAMETER: over a local vector Rust renames the return buffer onto a work
+  // reference of its own, `__ref_1`, which is not carried — that stays refused below.)
+  subj_param = match el_ir::unspan(x.code) { NdVar { n: xs } => vars.vars[xs].argument, _ => false };
+  record_tail = el_types::base(result) is TyReference && !bind && subj_param;
+  if !sunk && !record_tail {
   if !e.first_pass && len(vars.cursor) == 0 && (el_types::base(result) is TyReference || el_types::base(result) is TyVector) {
     tb = buffer_arms(e, vars, out, elm);
     if tb == null {
@@ -3167,6 +3226,7 @@ pub fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>
     }
     out = tb!.arms;
     result = tb!.tp;
+  }
   }
   // A cursor match answering a record: each arm answers its own record, a `null` arm the
   // sentinel, and the match is nullable where an arm is `null` (`type_null_arms`).
@@ -3222,6 +3282,63 @@ pub fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>
 }
 
 pub struct BufferArms { pub arms: vector<SMArm>, pub tp: ir::TypeT }
+
+// The arms of a vector match bound to local `r`, the bind sunk into each: an untyped `[]` arm is
+// the vector's empty literal (made first, as Rust's arm parse minted its store first), a literal
+// arm binds `r` to it (`r = {#Vector …}`), and an arm answering a capture it bound (a rest,
+// materialised fresh) gives `r` a store of its own and copies the capture in
+// (`OpAppendVector(r, t#1, row)`).  The match answers `r`, borrowing that store.  Null for an arm
+// of another form.
+fn sink_bind_arms(e: el::El, vars: el_vars::Vars, out: vector<SMArm>, elm: ir::TypeT, r: integer) -> BufferArms? {
+  if len(out) == 0 {
+    return null;
+  }
+  row = el_ex_vector::append_row(e, elm);
+  rows = vector_rows(e, el_types::without_deps(elm), 0, true);
+  if row < 0 || rows == null {
+    return null;
+  }
+  vt = ir::TyVector { inner: el_types::without_deps(elm), dep: [] };
+  codes: vector<ir::Node> = [];
+  for a in out {
+    c = el_ir::unspan(a.code);
+    if el_ex_pattern::is_empty_literal(c) {
+      c = el_ir::unspan(el_ex_pattern::empty_literal_to(e, vars, vt));
+    }
+    codes += [c];
+  }
+  // Every arm of a carried form before anything is minted for the local.
+  for c in codes {
+    ok = match c { NdBlock { block } => block[0].name == "Vector" || (block[0].name == "slice_binding" && len(block[0].operators) > 0 && el_ir::unspan(el_ir::last(block[0].operators)) is NdVar), _ => false };
+    if !ok {
+      return null;
+    }
+  }
+  rdb = -1;
+  arms: vector<SMArm> = [];
+  for c in codes {
+    bl = match c { NdBlock { block } => block[0], _ => return null };
+    if bl.name == "Vector" {
+      arms += [SMArm { guard: out[c#index]!.guard, code: el_ir::v_set(r, c) }];
+      continue;
+    }
+    last = el_ir::unspan(el_ir::last(bl.operators));
+    st = el_ex_pattern::literal_store(e, vars, r, rows!);
+    if rdb < 0 {
+      rdb = len(vars.vars) - 1;
+      for sv in st {
+        match sv { NdCall { def_nr: sd, args: sa } => { if el::def(e, sd).name == "OpDatabase" { rdb = match el_ir::unspan(sa[0]!) { NdVar { n: dn } => dn, _ => rdb }; } }, _ => {} }
+      }
+      // (Rust's `vector_db` for the local's store mints its element temp too, named nowhere in
+      // the code: `_elm_N` borrowing that store.)
+      el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [rdb] });
+    }
+    bl.operators[-1] = ir::NdInsert { items: st + [el_ir::cl(e, "OpAppendVector", [ir::NdVar { n: r }, last, ir::NdInt { n: row }])] };
+    bl.result = [ir::TyVoid];
+    arms += [SMArm { guard: out[c#index]!.guard, code: ir::NdBlock { block: [bl] } }];
+  }
+  BufferArms { arms: arms, tp: ir::TyVector { inner: el_types::without_deps(elm), dep: if rdb >= 0 { [rdb] } else { [] } } }
+}
 
 // A slice `match` at a vector function's tail whose first arm answers its rest capture, the
 // return buffer renamed onto it (the capture is the hidden parameter): every other arm's vector
@@ -3470,7 +3587,11 @@ pub fn cursor_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm
       // (A record answer the rule owns is copied into the run's vector and freed — a rule
       // answering a view of its cursor releases by witnesses instead: not carried.)
       rsd = match rt { TyReference { n: rsn } => if el::def(e, rsn).def_type == el::DT_STRUCT { rsn } else { -1 }, _ => -1 };
-      if quant != "?" && !int_rule && (rsd < 0 || len(el_types::deps(el::def(e, rule).returned[0] ?? ir::TyVoid)) > 0) {
+      // (A rule answering a VIEW — its result borrowing an argument — is carried below: the
+      // answer copied into the run's element without freeing its source, and released by
+      // witnesses where it is no store of the subject's or of the rule's buffer.)
+      view_rule = !int_rule && rsd >= 0 && len(el_types::deps(el::def(e, rule).returned[0] ?? ir::TyVoid)) > 0;
+      if quant != "?" && !int_rule && (rsd < 0 || len(el_types::deps(el::def(e, rule).returned[0] ?? ir::TyVoid)) > 0) && !view_rule {
         el::refuse(e, "a cursor pattern element that is a rest, a group or a rule: a repeated sub-rule answering a view or a value that is no plain record");
         return null;
       }
@@ -3541,6 +3662,21 @@ pub fn cursor_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm
         stop = if int_rule { ir::NdBreak { n: 0 } } else { ir::NdInsert { items: [el_ir::cl(e, "OpFreeRefIfDistinct", [ir::NdVar { n: rx }, el_ir::cl(e, "OpNullRefSentinel", [])]), ir::NdBreak { n: 0 }] } };
         rk = if rsd >= 0 { el::def(e, rsd).known_type } else { 0 };
         store = if int_rule { el_ir::cl(e, "OpSetInt", [ir::NdVar { n: relm }, ir::NdInt { n: 0 }, ir::NdVar { n: rx }]) } else { el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: rx }, el_ir::cl(e, "OpGetField", [ir::NdVar { n: relm }, ir::NdInt { n: 0 }, ir::NdInt { n: rk }]), ir::NdInt { n: rk + 32768 }]) };
+        after_elm: vector<ir::Node> = [];
+        if view_rule {
+          // The answer borrows what the call's result does (`["d"]`), the run's elements too.
+          vdeps = el_types::deps(ocall!.tp);
+          el_vars::set_var_type(vars, rx, el_types::with_deps(rt, vdeps));
+          el_vars::set_var_type(vars, xs, ir::TyVector { inner: el_types::with_deps(rt, vdeps), dep: el_types::deps(el_vars::tp(vars, xs)) });
+          cargs = match el_ir::unspan(ocall!.code) { NdCall { args: ca } => ca, _ => [] };
+          wsubj = if len(cargs) > 0 { cargs[0]! } else { ir::NdNull };
+          wbuf = if len(cargs) > 1 { cargs[-1]! } else { ir::NdNull };
+          sent = el_ir::cl(e, "OpNullRefSentinel", []);
+          rel = el_ir::v_if(el_ir::cl(e, "OpDistinctStore", [ir::NdVar { n: rx }, wsubj]), el_ir::v_if(el_ir::cl(e, "OpDistinctStore", [ir::NdVar { n: rx }, wbuf]), el_ir::cl(e, "OpFreeRefIfDistinct", [ir::NdVar { n: rx }, sent]), ir::NdNull), ir::NdNull);
+          stop = ir::NdInsert { items: [rel, ir::NdBreak { n: 0 }] };
+          store = el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: rx }, el_ir::cl(e, "OpGetField", [ir::NdVar { n: relm }, ir::NdInt { n: 0 }, ir::NdInt { n: rk }]), ir::NdInt { n: rk }]);
+          after_elm = [rel];
+        }
         // `subrule_separator_step`: after the first answer the separator must stand where the
         // last one left the cursor, and the rule is tried past it; without one the run ends.
         set_here = el_ex_object::set_field(e, cur[1]!, cur[2]!, ir::NdVar { n: cur[0]! }, ir::NdVar { n: osg });
@@ -3557,7 +3693,8 @@ pub fn cursor_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm
           el_ir::v_if(taken, ir::NdNull, stop),
           el_ir::v_set(relm, el_ir::cl(e, "OpNewRecord", [ir::NdVar { n: xs }, vk, ir::NdInt { n: 65535 }])),
           store,
-          el_ir::cl(e, "OpFinishRecord", [ir::NdVar { n: xs }, ir::NdVar { n: relm }, vk, ir::NdInt { n: 65535 }]),
+          el_ir::cl(e, "OpFinishRecord", [ir::NdVar { n: xs }, ir::NdVar { n: relm }, vk, ir::NdInt { n: 65535 }])
+        ] + after_elm + [
           el_ir::v_set(osg, rnow!)
         ], "sub-rule run");
         some = if quant == "+" { el_ir::cl(e, "OpLtInt", [ir::NdInt { n: 0 }, el_ir::cl(e, "OpLengthVector", [ir::NdVar { n: xs }])]) } else { ir::NdBoolean { b: true } };

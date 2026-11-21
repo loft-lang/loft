@@ -52,8 +52,9 @@ pub fn file_append(e: el::El, vars: el_vars::Vars, f: integer, rhs: integer, x: 
   if e.first_pass {
     return ex(ir::NdNull, ir::TyVoid);
   }
-  // It borrows what the value borrows as this pass reads it (a literal's own backing).
-  el_vars::set_var_type(vars, tmp, x.tp);
+  // It borrows what the value borrows as this pass reads it (a literal's own backing); a text
+  // variable read whole is borrowed itself (`text["payload"]`, as `text_for`'s source is).
+  el_vars::set_var_type(vars, tmp, match el_ir::unspan(x.code) { NdVar { n } => if vt is TyText { ir::TyText { dep: [n] } } else { x.tp }, _ => x.tp });
   // Made on the second pass only, as Rust's `db_tp` is.
   cast_row = -1;
   alias = last_width_cast(e, rhs);
@@ -286,9 +287,17 @@ pub fn vector_slice(e: el::El, vars: el_vars::Vars, x: Ex, lo: vector<integer>, 
     el_ir::v_set(hiv, bounds[1]!),
     el_ir::v_set(hiv, slice_clamp(e, hiv, lv, inclusive))
   ];
+  // (A reversed walk — `rev(v[..k])` — starts at the top and steps down to the start: no
+  // `_next`, as Rust's reversed exclusive range has none.)
+  rev_walk = vars.rev_slice;
+  vars.rev_slice = false;
   idx = el_vars::create_unique(vars, "index", int_t);
-  nxt = el_vars::create_unique(vars, "next", int_t);
-  items += [el_ir::v_set(nxt, ir::NdVar { n: lov }), el_ir::v_set(idx, el_ir::cl(e, "OpConvIntFromNull", []))];
+  if rev_walk {
+    items += [el_ir::v_set(idx, ir::NdVar { n: hiv })];
+  } else {
+    nxt = el_vars::create_unique(vars, "next", int_t);
+    items += [el_ir::v_set(nxt, ir::NdVar { n: lov }), el_ir::v_set(idx, el_ir::cl(e, "OpConvIntFromNull", []))];
+  }
   ex(ir::NdIter { var: idx, create: subj, next: ir::NdNull, init: ir::NdInsert { items: items } }, ir::TyIterator { step: elem, inner: ir::TyNull })
 }
 
@@ -351,9 +360,10 @@ pub fn slice_start(vars: el_vars::Vars, x: Ex, id: text) -> SliceStart {
 // Each step of a walk over a vector slice: the element at the walk's next position, the range
 // step inside the element read — a break past the clamped end, the index taking the position
 // (`Vector Index`).  Null for an element type with no plain read.
-pub fn slice_read(e: el::El, vars: el_vars::Vars, st: SliceStart) -> ir::Node? {
+pub fn slice_read(e: el::El, vars: el_vars::Vars, st: SliceStart, rev: boolean = false) -> ir::Node? {
   hiv = -1;
   nxt = -1;
+  lov = -1;
   match st.init {
     NdInsert { items } => {
       for x in items {
@@ -361,6 +371,7 @@ pub fn slice_read(e: el::El, vars: el_vars::Vars, st: SliceStart) -> ir::Node? {
           NdSet { var } => {
             if starts_with(el_vars::name_of(vars, var), "_slice_hi") { hiv = var; }
             if starts_with(el_vars::name_of(vars, var), "_next") { nxt = var; }
+            if starts_with(el_vars::name_of(vars, var), "_slice_lo") { lov = var; }
           },
           _ => {}
         }
@@ -381,16 +392,26 @@ pub fn slice_read(e: el::El, vars: el_vars::Vars, st: SliceStart) -> ir::Node? {
   if inner_vt >= 0 {
     size = 4;
   }
-  if hiv < 0 || nxt < 0 || size < 0 || (op == "" && !record && inner_vt < 0) {
+  if hiv < 0 || (nxt < 0 && !rev) || (rev && lov < 0) || size < 0 || (op == "" && !record && inner_vt < 0) {
     return null;
   }
-  n_v = ir::NdVar { n: nxt };
-  step = el_ir::v_block([
-    el_ir::v_if(el_ir::cl(e, "OpLeInt", [ir::NdVar { n: hiv }, n_v]), ir::NdBreak { n: 0 }, ir::NdNull),
-    el_ir::v_set(st.idx, n_v),
-    el_ir::v_set(nxt, el_ir::cl(e, "OpAddInt", [n_v, ir::NdInt { n: 1 }])),
-    ir::NdVar { n: st.idx }
-  ], ir::TyInteger { spec: i32_spec() }, "Iter range");
+  i_v = ir::NdVar { n: st.idx };
+  step = if rev {
+    // Down one, and past the start the walk ends.
+    el_ir::v_block([
+      el_ir::v_set(st.idx, el_ir::cl(e, "OpMinInt", [i_v, ir::NdInt { n: 1 }])),
+      el_ir::v_if(el_ir::cl(e, "OpLtInt", [i_v, ir::NdVar { n: lov }]), ir::NdBreak { n: 0 }, ir::NdNull),
+      i_v
+    ], ir::TyInteger { spec: i32_spec() }, "Iter range")
+  } else {
+    n_v = ir::NdVar { n: nxt };
+    el_ir::v_block([
+      el_ir::v_if(el_ir::cl(e, "OpLeInt", [ir::NdVar { n: hiv }, n_v]), ir::NdBreak { n: 0 }, ir::NdNull),
+      el_ir::v_set(st.idx, n_v),
+      el_ir::v_set(nxt, el_ir::cl(e, "OpAddInt", [n_v, ir::NdInt { n: 1 }])),
+      i_v
+    ], ir::TyInteger { spec: i32_spec() }, "Iter range")
+  };
   if record {
     return el_ir::v_block([el_ir::cl(e, "OpGetVectorNullable", [st.subj, ir::NdInt { n: size }, step])], el_types::with_deps(st.elem, []), "Vector Index");
   }
@@ -842,12 +863,37 @@ pub fn keyed_items(e: el::El, vars: el_vars::Vars, v: integer, n: integer, fd: i
     if fl == null {
       return null;
     }
-    ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: kt }, ir::NdInt { n: kpos }]))];
-    for op in fl! {
-      if op#index >= 2 {
-        ls += [op];
+    // `@FR-E-Asgn-Compound`'s staging clause: a value that reads the collection itself
+    // (`h += [P { k: 1, a: h[1].b ?? 0 }]`) is read BEFORE the entry is made — every
+    // non-constant scalar or text value staged into a work reference first, as Rust's insert
+    // stages them; the record is then made through the owner with no vector built.
+    vals: vector<ir::Node> = [for op in fl! if op#index >= 2 { op }];
+    if len([for op in vals if el_ir::reads_var(op, v) { 1 }]) > 0 {
+      staged: vector<ir::Node> = [];
+      for op in vals {
+        match el_ir::unspan(op) {
+          NdCall { def_nr: wd, args: wa } => {
+            svi = len(wa) - 1;
+            val = el_ir::unspan(wa[svi]!);
+            constant = val is NdInt || val is NdLong || val is NdFloat || val is NdSingle || val is NdBoolean || val is NdText || val is NdNull || val is NdEnum;
+            pt = el::def(e, wd).attributes[svi]!.typedef[0] ?? ir::TyVoid;
+            if !constant && (el_ex_call::scalar(el_types::base(pt)) || el_types::base(pt) is TyText) {
+              tmp = el_vars::work_ref(vars, pt);
+              ls += [el_ir::v_set(tmp, wa[svi]!)];
+              sa = wa;
+              sa[svi] = ir::NdVar { n: tmp };
+              staged += [ir::NdCall { def_nr: wd, args: sa }];
+            } else {
+              staged += [op];
+            }
+          },
+          _ => { staged += [op]; }
+        }
       }
+      vals = staged;
     }
+    ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: kt }, ir::NdInt { n: kpos }]))];
+    ls += vals;
     ls += [el_ir::cl(e, "OpFinishRecord", [w, at, ir::NdInt { n: kt }, ir::NdInt { n: kpos }])];
   }
   ls
@@ -1319,10 +1365,17 @@ pub fn unary(e: el::El, vars: el_vars::Vars, op: text, n: integer?) -> Ex {
       lv = match a.code { NdVar { n: x } => x, _ => -1 };
       return ex(el_ir::cl(e, "OpCreateStack", [a.code]), ir::TyRefVar { inner: el_types::with_deps(el_types::without_deps(el_types::base(a.tp)), [lv]) });
     }
+    // (A NULLABLE text local links the same way, the link as nullable as the local:
+    // `pc: &text["c"]? = OpCreateStack(c)`, loft#1372.)
+    if a.code is NdVar && a.tp is TyOptional && el_types::base(a.tp) is TyText {
+      lv = match a.code { NdVar { n: x } => x, _ => -1 };
+      return ex(el_ir::cl(e, "OpCreateStack", [a.code]), ir::TyRefVar { inner: ir::TyOptional { inner: ir::TyText { dep: [lv] } } });
+    }
     // A link to a text in a store — a record's field, a vector's element — is that place
     // (`OpGetField(r, pos)`, `OpGetVector(v, 4, i)`), typed as a text link borrowing the place's
     // root (the store kind of text link).
-    if el_types::base(a.tp) is TyText && !(a.tp is TyOptional) {
+    // (A nullable text field links as its dense twin: the slot holds the text's own null.)
+    if el_types::base(a.tp) is TyText && !(a.code is NdVar) {
       place = text_place(e, a.code);
       if place != null {
         root = place_root(e, place!);
@@ -1353,7 +1406,8 @@ pub fn unary(e: el::El, vars: el_vars::Vars, op: text, n: integer?) -> Ex {
     }
     // A link to a vector is the vector's view itself — a local or a field of one, typed as
     // borrowing it — where a bare bind would copy (`@FR-B-Copy`).
-    if a.tp is TyVector && (a.code is NdVar || calls(e, a.code, "OpGetField")) && len(el_types::deps(a.tp)) > 0 {
+    // (A nullable vector local links as its dense twin, the view as nullable as it: loft#1372.)
+    if el_types::base(a.tp) is TyVector && (a.tp is TyVector || (a.tp is TyOptional && a.code is NdVar)) && (a.code is NdVar || calls(e, a.code, "OpGetField")) && len(el_types::deps(a.tp)) > 0 {
       if lv >= 0 && !vars.amp_vectors.contains(lv) {
         vars.amp_vectors += [lv];
       }
@@ -1365,6 +1419,11 @@ pub fn unary(e: el::El, vars: el_vars::Vars, op: text, n: integer?) -> Ex {
       NdVar { n: rv } => {
         if !(a.tp is TyOptional) && struct_ref(e, rb) >= 0 && el::def(e, struct_ref(e, rb)).def_type == el::DT_STRUCT && !vars.vars[rv].argument && !(el_vars::tp(vars, rv) is TyRefVar) {
           return ex(el_ir::cl(e, "OpCreateStack", [a.code]), ir::TyRefVar { inner: el_types::with_deps(rb, [rv]) });
+        }
+        // (A NULLABLE record local the same way, the link as nullable as the local:
+        // `pd: &ref(S)["d"]? = OpCreateStack(d)`, loft#1372.)
+        if a.tp is TyOptional && struct_ref(e, rb) >= 0 && el::def(e, struct_ref(e, rb)).def_type == el::DT_STRUCT && !vars.vars[rv].argument && !(el_vars::tp(vars, rv) is TyRefVar) {
+          return ex(el_ir::cl(e, "OpCreateStack", [a.code]), ir::TyRefVar { inner: ir::TyOptional { inner: el_types::with_deps(el_types::without_deps(rb), [rv]) } });
         }
       },
       _ => {}

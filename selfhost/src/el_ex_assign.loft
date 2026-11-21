@@ -663,7 +663,12 @@ fn expression_node(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     },
     SLet { fixed, name, amp, tfixed, tp, e: rhs } => noted_bind(e, vars, el_ex_place::declaration(e, vars, fixed || amp || tfixed, name, tp, rhs)),
     SCall { at, f, args } => el_ex_object::call_expression(e, vars, at, f, args),
-    SString { parts } => el_ex_call::string_expression(e, vars, parts),
+    SString { parts } => {
+      // (`@FR-F-Target`: a template whose expected type is a struct with a `lit` method builds
+      // that value, `interpolation_target`.)
+      tg = if n == vars.expect_node { el_ex_call::interpolation_target(e, vars.expect) } else { -1 };
+      if tg >= 0 && len(parts) >= 1 { el_ex_call::template_object(e, vars, parts, tg) } else { el_ex_call::string_expression(e, vars, parts) }
+    },
     SIntrinsic { at, kind, args } => el_ex_object::intrinsic(e, vars, at, kind, args),
     SMember { at, e: re, name, args, call } => tuple_field_copy(e, vars, n, el_ex_object::member(e, vars, at, re, name, args, call)),
     SBin { at, op, l, r } => el_ex_call::binary(e, vars, at, op, l, r),
@@ -705,6 +710,7 @@ fn expression_node(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     SIs { e: ie, variant, caps, has_caps } => is_expr(e, vars, ie, variant, caps, has_caps),
     SLambda { at: _ } => lambda_expr(e, vars, n),
     SDestructure { places, e: de } => el_ex_object::destructure_assign(e, vars, places, de),
+    SParallel { items } => el_ex_pattern::parallel_expr(e, vars, items),
     _ => {
       el::refuse(e, "an expression form: {syn_kind(e, n)}");
       ex(ir::NdNull, ir::TyUnknown { n: 0 })
@@ -3654,7 +3660,9 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
   // such types are refused at their declaration here.)
   match e.p.nodes[rhs!] {
     SName { name: rn, member: rm } => {
-      if rm == "" && rn == written && el_vars::var(vars, rn) == v && el_vars::was_defined(vars, v) {
+      // (Not for a store-kind text link: its mention is the field it names, `OpGetText(OpVarRef(t),
+      // 0)`, no bare variable, so `t = t` writes the text back through the link as Rust's does.)
+      if rm == "" && rn == written && el_vars::var(vars, rn) == v && el_vars::was_defined(vars, v) && !el_ex_vector::store_text_link(vars, v) {
         return ex(ir::NdInsert { items: [] }, ir::TyVoid);
       }
     },
@@ -3920,8 +3928,20 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
   // contents in the vector's own store — cleared, then the literal appended as `+=` appends it.
   // A literal that reads the link is not carried.
   linked_vec = match el_vars::tp(vars, v) { TyRefVar { inner } => el_types::base(inner) is TyVector, _ => false };
-  if link && linked_vec && !declaring && e.p.nodes[rhs!] is SVecLit && !mentions_name(e, rhs!, el_vars::name_of(vars, v)) {
+  // (A vector local bound by `&` — `pe = &e`, the view of `e` — is written through the same way:
+  // `OpClearVector(pe)`, then the literal's pushes, never a store of its own.)
+  vec_link = vars.vec_links.contains(v) && el_types::base(el_vars::tp(vars, v)) is TyVector;
+  if (link && linked_vec || vec_link) && !declaring && e.p.nodes[rhs!] is SVecLit && !mentions_name(e, rhs!, el_vars::name_of(vars, v)) {
     el_vars::drop_use(vars, v);
+    // (Rust reads the literal as a value first, so its backing `__vdb_N` is minted — declared at
+    // the head, never filled — and the link's type takes that backing's borrow.)
+    if vec_link {
+      lt = el_types::base(el_vars::tp(vars, v));
+      lin = match lt { TyVector { inner: li } => li, _ => ir::TyVoid };
+      ldb = el_vars::work_vec_db(vars, ir::TyReference { n: el::def_nr(e, "main_vector<{el_types::elem_name(e, lin)}>"), dep: [] });
+      lnt = el_types::with_deps(el_types::without_deps(lt), [ldb]);
+      el_vars::set_var_type(vars, v, if el_vars::tp(vars, v) is TyOptional { ir::TyOptional { inner: lnt } } else { lnt });
+    }
     app = el_ex_pattern::vector_append(e, vars, v, rhs!);
     if e.first_pass {
       return app;
@@ -3932,6 +3952,47 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
       _ => { items += [app.code]; }
     }
     return ex(ir::NdInsert { items: items }, ir::TyVoid);
+  }
+  // A whole VECTOR written to a `&`-bound vector local (`pe = w`): written through, as Rust's
+  // `&`-vector replacement — a variable owning its store (no deps) appended straight after the
+  // clear; anything else staged first in a `_refvec_rhs_N` of its own (the clear runs before
+  // the copy, so a source that reads the link must not be read after it).  The link's type takes
+  // the source's borrow (`["w"]`).
+  if vec_link && !declaring && !(e.p.nodes[rhs!] is SVecLit) && !(match e.p.nodes[rhs!] { SUnary { op: ro } => ro == "&", _ => false }) {
+    x = expression(e, vars, rhs!);
+    if el_types::base(x.tp) is TyVector {
+      vt0 = el_types::base(el_vars::tp(vars, v));
+      vinner = match vt0 { TyVector { inner: vi } => vi, _ => ir::TyVoid };
+      src = match el_ir::unspan(x.code) { NdVar { n: sv } => sv, _ => -1 };
+      if src >= 0 {
+        snt = el_types::with_deps(el_types::without_deps(vt0), [src]);
+        el_vars::set_var_type(vars, v, if el_vars::tp(vars, v) is TyOptional { ir::TyOptional { inner: snt } } else { snt });
+      }
+      if e.first_pass {
+        if src < 0 || len(el_types::deps(el_vars::tp(vars, src))) > 0 {
+          el_vars::create_unique(vars, "_refvec_rhs", ir::TyVector { inner: vinner, dep: [] });
+        }
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      if src == v {
+        return ex(ir::NdInsert { items: [] }, ir::TyVoid);
+      }
+      rec = el_ex_vector::append_row(e, vinner);
+      clear = el_ir::cl(e, "OpClearVector", [ir::NdVar { n: v }]);
+      if src >= 0 && len(el_types::deps(el_vars::tp(vars, src))) == 0 {
+        return ex(ir::NdInsert { items: [clear, el_ir::cl(e, "OpAppendVector", [ir::NdVar { n: v }, x.code, ir::NdInt { n: rec }])] }, ir::TyVoid);
+      }
+      tmp = el_vars::create_unique(vars, "_refvec_rhs", ir::TyVector { inner: vinner, dep: [] });
+      el_vars::set_defined(vars, tmp);
+      rows = vector_rows(e, vinner, 0, true);
+      if rows == null || rec < 0 {
+        el::refuse(e, "a vector written through a `&` link of this element type");
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      ls = el_ex_pattern::literal_store(e, vars, tmp, rows!);
+      ls += [el_ir::cl(e, "OpAppendVector", [ir::NdVar { n: tmp }, x.code, ir::NdInt { n: rec }]), clear, el_ir::cl(e, "OpAppendVector", [ir::NdVar { n: v }, ir::NdVar { n: tmp }, ir::NdInt { n: rec }])];
+      return ex(ir::NdInsert { items: ls }, ir::TyVoid);
+    }
   }
   if link && !el_ex_match::scalar_link(vars, v) && !declaring {
     el::refuse(e, "a whole value written through a `&` link");
@@ -4114,6 +4175,10 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
   }
   outer_into = vars.read_into;
   vars.read_into = leftmost(e, rhs!);
+  // (The expectation a statement around this bind set — a function tail's — comes back after
+  // it.)
+  outer_expect_node = vars.expect_node;
+  outer_expect = ex(ir::NdNull, vars.expect);
   vars.expect_node = rhs!;
   vars.expect = el_vars::tp(vars, v);
   outer_bind = vars.bind_rhs;
@@ -4188,10 +4253,20 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
     return ex(ir::NdNull, ir::TyVoid);
   }
   vars.bind_rhs = outer_bind;
-  vars.expect_node = -1;
+  vars.expect_node = outer_expect_node;
+  vars.expect = outer_expect.tp;
   vars.read_into = outer_into;
   vars.concat_dest = -1;
   vars.slice_node = outer_slice;
+  // A vector match that sank this bind into its arms (`sink_bind_arms`) wrote the local in each:
+  // the local is declared null ahead of it and typed as the match answered.
+  if vars.sunk_bind == v && v >= 0 {
+    vars.sunk_bind = -1;
+    if !el_vars::change_var_type(e, vars, v, vars.sunk_tp) {
+      el::refuse(e, "a local that changes type: {retype_note(e, vars)}");
+    }
+    return ex(ir::NdInsert { items: [el_ir::v_set(v, ir::NdNull), x.code] }, ir::TyVoid);
+  }
   if concat && x.tp is TyRewritten {
     if !el_vars::change_var_type(e, vars, v, el_types::unrewritten(x.tp)) {
       el::refuse(e, "a local that changes type: {retype_note(e, vars)}");
@@ -4628,9 +4703,14 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
       el_ir::v_set(v, ir::NdVar { n: w })
     ] }, ir::TyVoid);
   }
+  // A local bound by `&` of a vector is that vector's link (`vec_links`).
+  if match e.p.nodes[rhs!] { SUnary { op: vo } => vo == "&", _ => false } && el_types::base(x.tp) is TyVector && !(x.tp is TyRefVar) && !vars.vec_links.contains(v) {
+    vars.vec_links += [v];
+  }
   // `bind_text_link_kind`: a local bound to a text link records its kind — the store kind for
   // a text field or element, the variable kind for a text local's slot.
-  if x.tp is TyRefVar && !vars.vars[v].argument && match x.tp { TyRefVar { inner } => inner is TyText, _ => false } {
+  // (A link to a nullable text local, `&text?`, is a text link of the variable kind too.)
+  if x.tp is TyRefVar && !vars.vars[v].argument && match x.tp { TyRefVar { inner } => el_types::base(inner) is TyText, _ => false } {
     // A copy of a store-kind link (`OpVarRef(t)`) is the store kind too.
     store = match el_ir::unspan(x.code) {
       NdCall { def_nr, args } => {

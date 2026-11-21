@@ -2049,11 +2049,11 @@ fn run_test_inner(
                 // a recoverable fault must not by itself fail the test.
                 let fault_is_failure = state.database.had_fatal
                     && state.database.runtime_error.as_ref().is_none_or(|e| {
-                        matches!(
-                            e.kind,
-                            loft::runtime_error::RuntimeErrorKind::UserPanic { .. }
-                                | loft::runtime_error::RuntimeErrorKind::AssertionFailed { .. }
-                        )
+                        e.kind.is_fatal()
+                            || matches!(
+                                e.kind,
+                                loft::runtime_error::RuntimeErrorKind::AssertionFailed { .. }
+                            )
                     });
                 let fault_msg = state
                     .database

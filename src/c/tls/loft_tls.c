@@ -13,7 +13,9 @@
  *   - the server's chain is always validated and its name always checked — a DNS name by
  *     BearSSL, an IP address against the certificate's iPAddress names here (BearSSL matches
  *     DNS names only); nothing turns either off;
- *   - TLS 1.2 with forward-secret suites only (ECDHE, AES-GCM, ChaCha20-Poly1305, AES-CBC).
+ *   - TLS 1.2 with forward-secret AEAD suites only (ECDHE with AES-GCM or ChaCha20-Poly1305), on
+ *     the client and on the server listener alike: the CBC suites, SHA-1's among them, are not
+ *     offered, as rustls offers none in the Rust build.
  *     BearSSL has no TLS 1.3, so a server that speaks only 1.3 refuses the handshake.
  * Unlike the Rust build there are no bundled roots: a machine with no trust store refuses every
  * server, saying where it looked. */
@@ -479,16 +481,12 @@ static int loft_tls_sock_write(void *ctx, const unsigned char *buf, size_t len) 
     }
 }
 
-/* The engine's profile: `br_ssl_client_init_full` cut to TLS 1.2 and forward-secret suites. */
+/* The engine's profile: `br_ssl_client_init_full` cut to TLS 1.2 and forward-secret AEAD suites. */
 static void loft_tls_profile(struct loft_tls *t) {
     static const uint16_t suites[] = {
         BR_TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256, BR_TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,
         BR_TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,       BR_TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
         BR_TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,       BR_TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-        BR_TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256,       BR_TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256,
-        BR_TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA384,       BR_TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384,
-        BR_TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA,          BR_TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA,
-        BR_TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA,          BR_TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,
     };
     static const br_hash_class *const hashes[] = {
         &br_sha1_vtable, &br_sha224_vtable, &br_sha256_vtable, &br_sha384_vtable, &br_sha512_vtable,
@@ -532,7 +530,7 @@ static void loft_tls_why(int code, char *err, size_t cap) {
         return;
     case BR_ERR_BAD_VERSION:
     case BR_ERR_BAD_CIPHER_SUITE:
-        snprintf(err, cap, "the server shares no TLS version or cipher suite with this client (TLS 1.2, forward-secret suites)");
+        snprintf(err, cap, "the server shares no TLS version or cipher suite with this client (TLS 1.2, forward-secret AEAD suites)");
         return;
     default:
         break;
@@ -541,7 +539,7 @@ static void loft_tls_why(int code, char *err, size_t cap) {
         int alert = code - BR_ERR_RECV_FATAL_ALERT;
         if (alert == 40 || alert == 70 || alert == 71)
             snprintf(err, cap, "the server refused the handshake (alert %d): it shares no TLS version or cipher suite with "
-                     "this client (TLS 1.2, forward-secret suites)", alert);
+                     "this client (TLS 1.2, forward-secret AEAD suites)", alert);
         else
             snprintf(err, cap, "the server ended the handshake (TLS alert %d)", alert);
         return;
@@ -789,15 +787,11 @@ struct loft_tls_server *loft_tls_server_new(const char *cert, size_t cert_len, c
 struct loft_tls *loft_tls_accept(int fd, const struct loft_tls_server *cfg, char *err, size_t cap) {
     static const uint16_t ec_suites[] = {
         BR_TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256, BR_TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-        BR_TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,       BR_TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256,
-        BR_TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA384,       BR_TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA,
-        BR_TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA,
+        BR_TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
     };
     static const uint16_t rsa_suites[] = {
         BR_TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256, BR_TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-        BR_TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,       BR_TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256,
-        BR_TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384,       BR_TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA,
-        BR_TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA,
+        BR_TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
     };
     static const br_hash_class *const hashes[] = {
         &br_sha1_vtable, &br_sha224_vtable, &br_sha256_vtable, &br_sha384_vtable, &br_sha512_vtable,

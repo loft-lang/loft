@@ -124,6 +124,8 @@ pub struct Vars {
   pub unique: hash<UniqueCount[name]>,
   // `Function::work_vdb` and `work_references`: the `__vdb_N` vector stores this body minted
   pub work_vdb: integer = 0,
+  // `Function::work_fmt`: the `__fmt_N` records a template checked against a `lit` type builds
+  pub work_fmt: integer = 0,
   // `Function::work_ref` and its second-pass twin: the `__ref_N` / `__ref_p2_N` record buffers
   pub work_ref: integer = 0,
   pub work_ref_p2: integer = 0,
@@ -188,6 +190,9 @@ pub struct Vars {
   // `bind_text_link_kind`: the locals bound as text links, and of those the store kind (a text
   // field or element, read and written through `OpVarRef`)
   pub text_links: vector<integer>,
+  // Vector locals bound by `&` of a vector (`pe = &e`): the view of the vector they name, written
+  // THROUGH (`@FR-B-Ref-Alias`).
+  pub vec_links: vector<integer>,
   pub store_links: vector<integer>,
   // Vector locals a `&` names (`g = &v`): their whole-value rebind refills the shared store in
   // place (`amp_vector_locals`), which the elaboration does not carry yet.
@@ -290,6 +295,22 @@ pub struct Vars {
   // `Parser::assign_target`: the local the statement being read assigns (-1: none) — a closure
   // built in its right-hand side does not release that local's previous capture
   pub assign_target: integer = -1,
+  // The local a vector match sank its bind into (`r = match v { [_, ..t] => t, _ => [] }`): each
+  // arm wrote it, so the bind declares it and takes the match as it stands; -1 for none.
+  pub sunk_bind: integer = -1,
+  // …and the type the local takes from it (the match itself is a statement, `void`).
+  pub sunk_tp: ir::TypeT = ir::TyVoid,
+  // A slice arm's element binding was copied into the buffer through its own null check
+  // (`materialize_arm`): the match and the body answer the buffer.
+  pub mat_binding: boolean = false,
+  // …and that binding was DENSE: the match itself is then typed as the buffer.
+  pub mat_dense: boolean = false,
+  // The type a field assignment's destination has, for a `#read` with no cast in its value
+  // (`s.a = f#read`, `read_target_type`); void outside one.
+  pub read_target: ir::TypeT = ir::TyVoid,
+  // A slice about to be walked reversed (`rev(v[..k])` in a comprehension, `reverse_iterator`):
+  // the slice's walk starts at its top and needs no `_next`.  Consumed by the slice.
+  pub rev_slice: boolean = false,
   // `Variable::captured`: the locals a closure built in this body reads (second pass)
   pub captured: vector<integer>,
   pub lambda_node: integer = -1,
@@ -846,6 +867,7 @@ pub fn take_over(v: Vars, kept: ir::Function) {
   v.captured = [];
   v.unique = [];
   v.work_vdb = 0;
+  v.work_fmt = 0;
   v.work_ref = 0;
   v.work_ref_p2 = 0;
   v.work_refs = [];
@@ -1007,6 +1029,14 @@ fn shape(t: ir::TypeT) -> ir::TypeT {
 
 // `Function::work_vec_db`: the next `__vdb_N` store a vector literal builds in, noted among the
 // work references the body's head sets to null.
+// `Function::work_format`: the next `__fmt_N`, a work reference.
+pub fn work_format(v: Vars, t: ir::TypeT) -> integer {
+  v.work_fmt += 1;
+  nr = add_variable(v, "__fmt_{v.work_fmt}", t);
+  v.work_refs = sorted_in(v.work_refs, nr);
+  nr
+}
+
 pub fn work_vec_db(v: Vars, t: ir::TypeT) -> integer {
   v.work_vdb += 1;
   nr = add_variable(v, "__vdb_{v.work_vdb}", t);

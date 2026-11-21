@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use super::{
-    AmpHead, DefType, HashSet, I32, IntegerSpec, Level, LexItem, LexResult, Mode, OUTPUT_DEFAULT,
+    AmpHead, DefType, HashSet, IntegerSpec, Level, LexItem, LexResult, Mode, OUTPUT_DEFAULT,
     OutputState, Parser, Position, SKIP_TOKEN, SKIP_WIDTH, ToString, Type, Value,
     diagnostic_format, to_default, v_block, v_if, v_set,
 };
@@ -4504,7 +4504,7 @@ impl Parser {
             // loft#915 — the name this loop BINDS; its companions hang off it too.
             let id = self.vars.loop_binding(&src_id);
             // Create {id}#index first (always needed, regardless of type).
-            let index_var = self.create_var(&format!("{id}#index"), &I32);
+            let index_var = self.create_var(&format!("{id}#index"), &self.count_type());
             self.vars.defined(index_var);
             self.lexer.token("in");
             let loop_nr = self.vars.start_loop();
@@ -4518,7 +4518,7 @@ impl Parser {
             let snapshot = self.format_loop_source(&mut expr, &mut in_type);
             // For text loops: {id}#next drives the loop; {id}#index is saved per-iteration.
             let (iter_var, pre_var) = if super::collections::walks_text(&in_type) {
-                let pos_var = self.create_var(&format!("{id}#next"), &I32);
+                let pos_var = self.create_var(&format!("{id}#next"), &self.count_type());
                 self.vars.defined(pos_var);
                 (pos_var, Some(index_var))
             } else {
@@ -4666,17 +4666,29 @@ impl Parser {
     /// `Var` so the duplicated reads below cost nothing and re-run no effects.
     fn slice_clamp_bound(&mut self, bound: Value, len_var: u16, inclusive_end: bool) -> Value {
         // from-end: (b < 0) ? b + len : b
-        let is_neg = self.conv_op("<", bound.clone(), Value::Int(0), I32.clone(), I32.clone());
+        let is_neg = self.conv_op(
+            "<",
+            bound.clone(),
+            Value::Int(0),
+            self.count_type(),
+            self.count_type(),
+        );
         let add_len = self.conv_op(
             "+",
             bound.clone(),
             Value::Var(len_var),
-            I32.clone(),
-            I32.clone(),
+            self.count_type(),
+            self.count_type(),
         );
         let resolved = v_if(is_neg, add_len, bound);
         let resolved = if inclusive_end {
-            self.conv_op("+", resolved, Value::Int(1), I32.clone(), I32.clone())
+            self.conv_op(
+                "+",
+                resolved,
+                Value::Int(1),
+                self.count_type(),
+                self.count_type(),
+            )
         } else {
             resolved
         };
@@ -4685,12 +4697,18 @@ impl Parser {
             "<",
             Value::Var(len_var),
             resolved.clone(),
-            I32.clone(),
-            I32.clone(),
+            self.count_type(),
+            self.count_type(),
         );
         let hi = v_if(gt_len, Value::Var(len_var), resolved);
         // clamp low: (r < 0) ? 0 : r
-        let lt_zero = self.conv_op("<", hi.clone(), Value::Int(0), I32.clone(), I32.clone());
+        let lt_zero = self.conv_op(
+            "<",
+            hi.clone(),
+            Value::Int(0),
+            self.count_type(),
+            self.count_type(),
+        );
         v_if(lt_zero, Value::Int(0), hi)
     }
 
@@ -4959,9 +4977,9 @@ impl Parser {
         // temps (evaluated once) and clamped; the slice then runs as a plain
         // exclusive range, so pure ranges keep their raw bounds untouched.
         if *data != Value::Null {
-            let len_var = self.create_unique("slice_len", &I32);
-            let lo_var = self.create_unique("slice_lo", &I32);
-            let hi_var = self.create_unique("slice_hi", &I32);
+            let len_var = self.create_unique("slice_len", &self.count_type());
+            let lo_var = self.create_unique("slice_lo", &self.count_type());
+            let hi_var = self.create_unique("slice_hi", &self.count_type());
             iter_prelude.push(v_set(
                 len_var,
                 self.cl("OpLengthVector", std::slice::from_ref(data)),
@@ -4983,7 +5001,13 @@ impl Parser {
                     // none).  The start is asked where it is parsed, in `parse_in_range`.
                     if let Some(at) = at {
                         let mut probe = bound.clone();
-                        self.convert_store_lenient(&mut probe, tp, &I32, "the index", Some(&at));
+                        self.convert_store_lenient(
+                            &mut probe,
+                            tp,
+                            &crate::data::I32,
+                            "the index",
+                            Some(&at),
+                        );
                     }
                     let raw = self.create_unique(name, tp);
                     iter_prelude.push(v_set(raw, std::mem::replace(bound, Value::Var(raw))));
@@ -5018,7 +5042,7 @@ impl Parser {
             }
             *expr = Value::Var(lo_var);
             till = Value::Var(hi_var);
-            till_tp = I32.clone();
+            till_tp = self.count_type();
             incl = false;
         }
         // The loop counter is named after the binder — which COLLIDES for `_`, the one
@@ -5084,7 +5108,7 @@ impl Parser {
                     Value::Var(nxt),
                     Value::Int(1),
                     in_type.clone(),
-                    I32.clone(),
+                    self.count_type(),
                 );
                 ls.push(v_set(nxt, step));
             } else {
@@ -5099,7 +5123,7 @@ impl Parser {
                                 Value::Var(ivar),
                                 Value::Int(1),
                                 in_type.clone(),
-                                I32.clone(),
+                                self.count_type(),
                             ),
                         ),
                     ));
@@ -5120,7 +5144,7 @@ impl Parser {
                         Value::Var(ivar),
                         Value::Int(1),
                         in_type.clone(),
-                        I32.clone(),
+                        self.count_type(),
                     );
                     ls.push(v_set(ivar, step));
                 }
@@ -5156,7 +5180,7 @@ impl Parser {
                 Value::Var(ivar),
                 Value::Int(1),
                 in_type.clone(),
-                I32.clone(),
+                self.count_type(),
             );
             // `@FR-I-RangeIncl` (loft#1525) — an INCLUSIVE range stops on the value it just
             // yielded, BEFORE the step, so it never has to represent `till + 1`.  The overshoot
@@ -5208,7 +5232,7 @@ impl Parser {
                     Value::Var(nxt),
                     Value::Int(1),
                     in_type.clone(),
-                    I32.clone(),
+                    self.count_type(),
                 );
                 ls.push(v_set(nxt, next_step));
             } else {
@@ -5349,7 +5373,7 @@ impl Parser {
         let in_type = if self.lexer.peek_token("..") || self.lexer.peek_token("..=") {
             // Open-start range: treat missing start as 0.
             *expr = Value::Int(0);
-            I32.clone()
+            self.count_type()
         } else {
             start_at = Some(*self.lexer.peek_pos());
             self.expression(expr)
@@ -5416,7 +5440,13 @@ impl Parser {
             && let Some(at) = start_at
         {
             let mut probe = expr.clone();
-            self.convert_store_lenient(&mut probe, &in_type, &I32, "the index", Some(&at));
+            self.convert_store_lenient(
+                &mut probe,
+                &in_type,
+                &crate::data::I32,
+                "the index",
+                Some(&at),
+            );
         }
         self.parse_in_range_body(expr, data, subject_tp, name, in_type, reverse)
     }
