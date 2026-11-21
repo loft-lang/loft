@@ -158,6 +158,17 @@ pub fn instantiate(e: el::El, g: integer, types: vector<ir::TypeT>) -> integer {
       return -1;
     }
   }
+  // (Asked before the instance is declared — a refusal after `add_def` leaves a definition Rust
+  // does not have, and every later one is numbered one off: a bound's method this binding has
+  // no builtin for.)
+  if has_body(e, g) {
+    for sh in b!.vars {
+      if !el_ex_object::stubs_resolve(e, code_of(tmpl), sh, b!.types[sh#index] ?? ir::TyVoid) {
+        el::refuse(e, "a generic body calling a bound's method this binding answers with no builtin");
+        return -1;
+      }
+    }
+  }
   nm = el_ex_object::instance_name(e, g, b!);
   for hv in b!.vars {
     for a in tmpl.attributes {
