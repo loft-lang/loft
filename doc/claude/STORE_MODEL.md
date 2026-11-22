@@ -109,7 +109,7 @@ fixes name a row the same way.  D20 onward come from the field-by-field comparis
 from P0b (what the C runtime lacks).  State: **open**, **fixing** (on the branch named), or
 **decided** (the decision and its measurement).  A closed row moves to
 [STORE_MODEL-history.md](STORE_MODEL-history.md) with its commit; D1–D8, D9a–D17,
-D18–D19j, D20–D25, D27, D29–D31, D33, D34, D36–D42 and D44 are there.  (D8's second half, the gates
+D18–D19j, D20–D25, D27, D29–D31, D33, D34 and D36–D44 are there.  (D8's second half, the gates
 stated in `(H-SwapIn)`, closed with it.)
 
 ### Correctness
@@ -126,7 +126,6 @@ stated in `(H-SwapIn)`, closed with it.)
 
 | # | Divergence | State |
 |---|---|---|
-| D43 | a rebind from a call whose answer must be copied (`bind_lowering::re_bind`'s R2b, `x = either(u, w, i)`): the interpreter frees `x`'s store before the call (`DisplacedFree::Pre`), makes a fresh one after it and exchanges the callee's answer in — three stores an iteration; C keeps `x`'s store and exchanges the answer into it — two | decided — C's form (fewer stores, the same answer): `re_bind` gives this arm no `Pre` free, and the interpreter exchanges into the store `x` holds.  The redundant make R2b emitted before the call (made, reset and claimed again) is gone (`a-rebound-literal-local-copies-a-call-answering-an-argument`'s probe agrees event for event) |
 
 ### Edges
 
@@ -137,8 +136,8 @@ stated in `(H-SwapIn)`, closed with it.)
 
 | # | Divergence | State |
 |---|---|---|
-| D26 | the interpreter's stack lives in a store; C's is the C stack | open — not a store property for a C unit; P4 decides |
-| D28 | the store table: a `Vec<Store>` beside the type table against a thread-local array | open — P3 |
+| D26 | the interpreter's stack lives in a store; C's is the C stack | decided — each runtime's own: the value stack is how the interpreter executes, not a heap store of the program.  `LOFT_ALLOC_TRACE` marks it (`S`, a state's stack and constant store, a par worker's stack too) and `scripts/c_alloc_diff.py` leaves it out, under which the two agree; P4's hosted C unit meets it at the frame boundary |
+| D28 | the store table: a `Vec<Store>` beside the type table against a thread-local array | decided — one model: a numbered table of stores, a `DbRef`'s `store_nr` its index, the type table beside it; only the layout of that table differs, which P3 (one layout) builds |
 
 ## How a divergence is closed
 

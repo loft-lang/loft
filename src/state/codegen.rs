@@ -2831,6 +2831,12 @@ impl State {
                 // pre-build free cannot re-free a reused slot (moros glb H4 UAF).
                 stack.owned_reassigned.insert(v);
             }
+            // An exchange keeps the store, but a free the scope pass puts before the statement
+            // still releases it: that free resets the slot as this one's would
+            // (`ReBind::exchange`, STORE_MODEL D43), and the copy then makes a fresh store.
+            if rb.exchange {
+                stack.owned_reassigned.insert(v);
+            }
             // @PLN85 unification (first chokepoint collapse, LOFT_JOIN_OWN): read the
             // ONE carried fact instead of the type-shape proxy below. A `??`-JOIN call
             // return bound into an owned slot (`__lift_1 = pick(t,i)`, `pick` returns
@@ -3052,7 +3058,9 @@ impl State {
                     // the `OpDatabase` the copy lands in — as the C backend makes it.  Made here
                     // too, it was claimed, reset and claimed again (STORE_MODEL D43).
                     let alloc_after = stash_old_for_post_free || (witnessed && rhs_reads_v);
-                    if !alloc_after {
+                    // An exchange keeps `v`'s store: the slot keeps naming it, and the copy
+                    // below exchanges the answer into it (`ReBind::exchange`, STORE_MODEL D43).
+                    if !alloc_after && !rb.exchange {
                         let slot_offset = stack.var_pos(v);
                         stack.add_op("OpInitRef", self);
                         self.code_add(slot_offset);
@@ -3240,9 +3248,11 @@ impl State {
                         stack.add_op("OpInitRef", self);
                         self.code_add(stack.var_pos(v));
                     }
-                    stack.add_op("OpDatabase", self);
-                    self.code_add(stack.var_pos(v));
-                    self.code_add(tp_nr);
+                    if !rb.exchange {
+                        stack.add_op("OpDatabase", self);
+                        self.code_add(stack.var_pos(v));
+                        self.code_add(tp_nr);
+                    }
                     note_bind("R2b");
                     stack.add_op("OpCopyRefOrNull", self);
                     self.code_add(stack.var_pos(v));

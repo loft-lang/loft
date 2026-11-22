@@ -315,3 +315,69 @@ fn a_returned_local_bound_from_a_call_takes_the_answer_whole_on_both_backends() 
         assert_eq!(n, 1, "{mode}: {n} exchanges, 1 expected");
     }
 }
+
+/// A rebind from a call whose answer is copied (R2b) and given up, into a local that holds a
+/// literal: the answer is exchanged into the local's own store on both backends (STORE_MODEL
+/// D43).  `either` answers `w` (i = 0) then `u` (i = 1): 1 + 8 + 1 + 6 = 16, and `u`, `w` keep
+/// 5 and 7.  The interpreter makes six stores: `u`, `w`, and per iteration the literal and the
+/// call's buffer.  The copy into a fresh store it took before made one more per iteration.
+const ANSWER_COPIED: &str = "struct S { v: integer, t: text }
+fn either(a: S, b: S, i: integer) -> S { if i % 2 == 1 { a } else { b } }
+fn one_of_two(u: S, w: S) -> integer {
+  tot = 0;
+  for i in 0..2 {
+    x = S { v: 1, t: \"x{i}\" };
+    tot += x.v;
+    x = either(u, w, i);
+    x.v += 1;
+    tot += x.v;
+  }
+  tot
+}
+fn main() { u = S { v: 5, t: \"u\" }; w = S { v: 7, t: \"w\" }; println(\"{one_of_two(u, w)} {u.v} {w.v}\"); }
+";
+
+/// The interpreter's store makes for `ANSWER_COPIED` (`LOFT_TRACE_DB`'s `OpDatabase` lines)
+/// under `env`, and its output.
+fn interpreter_makes(env: &[(&str, &str)]) -> (usize, String) {
+    let dir = std::env::temp_dir().join(format!("loft_swap_copied_{}", std::process::id()));
+    loft::file_access::create_dir_all(&dir).expect("probe dir");
+    let src = dir.join("copied.loft");
+    loft::file_access::write(&src, ANSWER_COPIED).expect("write probe");
+    let mut cmd =
+        loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
+    cmd.arg("--interpret")
+        .arg(&src)
+        .env("LOFT_TRACE_DB", "1")
+        .env("LOFT_STRICT_STORES", "1")
+        .env("LOFT_NO_CACHE", "1");
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    let out = cmd.output().expect("spawn loft");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    (
+        stderr.lines().filter(|l| l.contains("OpDatabase")).count(),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+    )
+}
+
+/// @falsified-at: none — the receipt is the switch the test runs itself:
+///   `LOFT_NO_SWAP_REBIND=1` frees the local first and copies into a fresh store, 8 makes.
+///   CHANNEL: `LOFT_TRACE_DB`'s make count.  WITNESS: 8 against 6.  HOLDS: `16 5 7`.
+#[test]
+fn a_copied_answer_is_exchanged_into_the_store_the_local_holds() {
+    let (on, out) = interpreter_makes(&[]);
+    assert_eq!(out.trim(), "16 5 7", "--interpret: the answer");
+    assert_eq!(on, 6, "--interpret: the stores made with the exchange");
+    let (off, out) = interpreter_makes(&[("LOFT_NO_SWAP_REBIND", "1")]);
+    assert_eq!(
+        out.trim(),
+        "16 5 7",
+        "--interpret under the switch: the answer"
+    );
+    assert_eq!(off, 8, "--interpret: the stores made without the exchange");
+    let (n, out) = strict_swaps("--native", "copied", ANSWER_COPIED);
+    assert_eq!(out.trim(), "16 5 7", "--native: the answer");
+    assert_eq!(n, 2, "--native: one exchange per iteration");
+}

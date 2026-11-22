@@ -2069,6 +2069,49 @@ impl State {
             }
             _ => raw_tp,
         };
+        // STORE_MODEL D43 — `ReBind::exchange`: no `OpDatabase` reset the destination, which
+        // still holds `v`'s old value.  A given-up answer is exchanged into it as it stands,
+        // `v`'s old tree leaving with the released slot (`@FR-H-SwapRebind`); refused, the store
+        // is reset here as `OpDatabase` would reset it, and the copy lands in it.  A destination
+        // holding its root alone is the copy's ordinary case.
+        let tp = raw_tp & crate::keys::COPY_TP_MASK;
+        // An exchange whose variable the statement before released (a free the scope pass put
+        // there, which resets the slot) has no store to exchange into: the copy makes a fresh
+        // one first, as the `OpDatabase` an ordinary copy is preceded by does.
+        let mut dst = dst;
+        if raw_tp & crate::keys::COPY_FREE_SOURCE != 0
+            && (dst.store_nr == u16::MAX
+                || (dst.store_nr as usize) >= self.database.allocations.len()
+                || self.database.allocations[dst.store_nr as usize].free)
+        {
+            *self.mut_var::<DbRef>(pos) = DbRef::NULL;
+            let code_pos = self.code_pos;
+            self.alloc_record_at(pos, tp, code_pos);
+            dst = self.get_var::<DbRef>(pos);
+        }
+        if raw_tp & crate::keys::COPY_FREE_SOURCE != 0
+            && dst.store_nr != u16::MAX
+            && (dst.rec, dst.pos) == (1, 8)
+            && (dst.store_nr as usize) < self.database.allocations.len()
+            && !self.database.allocations[dst.store_nr as usize].free
+            && !self.database.allocations[dst.store_nr as usize].holds_only_root()
+        {
+            if src.store_nr == dst.store_nr {
+                return;
+            }
+            if self.database.try_swap_rebind(&src, &dst, tp) {
+                // The released slot holds `v`'s old tree, freed as the C runtime's
+                // `loft_swap_in` frees it: no buffer refill on this backend takes a spare up.
+                if self.database.spare_store == Some(src.store_nr) {
+                    self.database.spare_store = None;
+                    self.database.free(&src);
+                }
+                return;
+            }
+            let code_pos = self.code_pos;
+            let size = self.database.enum_parent_size(tp);
+            self.alloc_record_into(&dst, tp, size, code_pos, false, true);
+        }
         self.do_copy_record(src, dst, raw_tp);
     }
 

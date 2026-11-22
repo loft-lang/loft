@@ -449,6 +449,10 @@ pub struct ReBind {
     pub buffer_kept: bool,
     /// The hidden buffer the right-hand call is handed, as a witness of the displaced free.
     pub buffer_witness: Option<u16>,
+    /// `@FR-H-SwapRebind` on the bytecode (STORE_MODEL D43): the copy (R2b) of a call that gives
+    /// its answer up lands in the store `v` holds, exchanged into it without a reset, as the C
+    /// binds it — so that store is not freed before the call, and no other is made after it.
+    pub exchange: bool,
 }
 
 impl ReBind {
@@ -468,6 +472,7 @@ impl ReBind {
         let b2 = match self.free {
             DisplacedFree::Stash => "stash",
             DisplacedFree::Pre { .. } => "pre",
+            DisplacedFree::None if self.exchange => "exchange",
             DisplacedFree::None => "none",
         };
         let mut facts = vec![format!(
@@ -936,22 +941,25 @@ pub fn re_bind(data: &Data, d_nr: u32, function: &Function, v: u16, value: &Valu
     let null_reset_of_temp = function.is_compiler_generated(v)
         && is_null_value(data, value)
         && !crate::keys::temp_null_reset_frees();
-    let free = if null_reset_of_temp {
-        DisplacedFree::None
-    } else if owned_ref
-        && (rhs_reads_v
-            || rhs_is_new_record
-            || nullable_local
-            || rhs_reads_a_view_of(function, value, v))
-    {
-        DisplacedFree::Stash
-    } else if frees_displaced && !s1_substituted {
-        let witness = if crate::keys::displaced_witness_enabled() {
+    let reads_view = rhs_reads_a_view_of(function, value, v);
+    // The free that goes first, with its witness, where nothing asks for the stash.
+    let pre = (frees_displaced && !s1_substituted).then(|| {
+        if crate::keys::displaced_witness_enabled() {
             crate::use_analysis::projection_container_var(data, value)
         } else {
             None
         }
-        .or(buffer_witness);
+        .or(buffer_witness)
+    });
+    // A nullable local's stash, when nothing but the null it may hold asks for one: the
+    // exchange below serves it as it serves the dense twin (@PLN160, one road).
+    let stash_for_null_only =
+        owned_ref && nullable_local && !rhs_reads_v && !rhs_is_new_record && !reads_view;
+    let free = if null_reset_of_temp {
+        DisplacedFree::None
+    } else if owned_ref && (rhs_reads_v || rhs_is_new_record || nullable_local || reads_view) {
+        DisplacedFree::Stash
+    } else if let Some(witness) = pre {
         DisplacedFree::Pre { witness }
     } else {
         DisplacedFree::None
@@ -971,8 +979,32 @@ pub fn re_bind(data: &Data, d_nr: u32, function: &Function, v: u16, value: &Valu
         witnessed,
         buffer_kept,
         buffer_witness,
+        exchange: false,
     };
     rb.arm = re_arm(data, d_nr, function, v, value, &rb);
+    // The exchange takes the place of the displaced free: `v` owns its store and keeps it, the
+    // call's answer moves in, and `v`'s old tree leaves with the released slot.  Only where the
+    // free went first with no witness but the call's own buffer (or would have, for a nullable
+    // local stashed only for the null it may hold), the answer is given up, and `v` is a plain
+    // owner (no entry witness or owner witness).
+    // `LOFT_NO_SWAP_REBIND=1` frees first and copies, as before.
+    let first = match rb.free {
+        DisplacedFree::Pre { witness } => Some(witness),
+        DisplacedFree::Stash if stash_for_null_only => pre,
+        _ => None,
+    };
+    if matches!(rb.arm, ReArm::CallCopy { .. })
+        && let Some(witness) = first
+        && witness.is_none_or(|w| Some(w) == rb.buffer_witness)
+        && rb.entry_w.is_none()
+        && rb.owned_ref
+        && !rb.witnessed
+        && crate::keys::swap_rebind_enabled()
+        && crate::use_analysis::call_return_frees_source(data, d_nr, value)
+    {
+        rb.free = DisplacedFree::None;
+        rb.exchange = true;
+    }
     rb
 }
 

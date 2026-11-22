@@ -232,6 +232,9 @@ fn the_store_census_drops_by_one_per_adopting_bind() {
     // `render_lit_then_call_apart`, added to keep the promoted-buffer path under test, adds its
     // own share: 62/126 → 86/156.  A rebind whose answer is copied (R2b) makes its store
     // once, after the call, instead of before it as well (STORE_MODEL D43): 86/156 → 79/136.
+    // Such a rebind whose call gives its answer up exchanges it into the local's own store
+    // (`ReBind::exchange`, D43): six fewer with adoption off, 79/136 → 79/130
+    // (`LOFT_NO_SWAP_REBIND=1` gives back 136).
     let (i_on, i_off) = (
         store_mints("--interpret", &[]),
         store_mints("--interpret", OFF),
@@ -240,7 +243,7 @@ fn the_store_census_drops_by_one_per_adopting_bind() {
         i_on < i_off,
         "interpret: {i_on} mints with adoption, {i_off} without"
     );
-    assert_eq!((i_on, i_off), (79, 136), "interpret mints (on, off)");
+    assert_eq!((i_on, i_off), (79, 130), "interpret mints (on, off)");
     let (n_on, n_off) = (
         store_mints("--native-rust", &[]),
         store_mints("--native-rust", OFF),

@@ -1403,11 +1403,12 @@ impl State {
         // Through `base()`, though a hidden buffer is spelled bare even for a nullable return
         // (`__retbuf: P` for `-> P?`, measured): the `?` is the value's, not the storage's.
         match typedef.base() {
-            // For struct returns, the body's `cv = Type{...}` OpDatabase reuses the slot
-            // (clear + claim).  `null()` provides a real slot with rec=0 — the claim succeeds
-            // and sets rec=1.
+            // For struct returns, the null sentinel: the body's `cv = Type{...}` mints a store
+            // for it only where it builds one (`OpDatabase` takes the sentinel as a fresh
+            // store), and a body answering an argument mints none — as the C dispatch hands a
+            // null buffer (STORE_MODEL D43).  Its release frees nothing.
             crate::data::Type::Reference(_, _) | crate::data::Type::Enum(_, true, _) => {
-                Some(self.database.null())
+                Some(DbRef::NULL)
             }
             // Vector body's `v = []` does NOT OpDatabase var_v; it expects rec != 0 (else
             // pre_alloc_vector is a no-op, leaving the vector empty — probe 59 INT would read

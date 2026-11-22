@@ -1021,7 +1021,10 @@ impl Run<'_> {
                 // A stashed local re-initialises its own store in place after the call unless
                 // the copy lands in a fresh store (`ReBind::copies_into_fresh`, the code
                 // generator's own answer); anything else starts from a fresh one.
-                let in_place = rb.free == DisplacedFree::Stash && !rb.copies_into_fresh();
+                // An exchange (`ReBind::exchange`, STORE_MODEL D43) keeps `x`'s store too: the
+                // answer moves into it and the old tree leaves with the released slot.
+                let in_place =
+                    (rb.free == DisplacedFree::Stash && !rb.copies_into_fresh()) || rb.exchange;
                 if in_place && Self::stores_of(&old).len() == 1 && old.len() == 1 {
                     Val {
                         pts: old.clone(),
