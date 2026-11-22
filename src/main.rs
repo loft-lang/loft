@@ -9457,9 +9457,11 @@ fn main() {
                     let default_dir = file_access::PathText::host(&project_dir())
                         .join("default")
                         .native();
+                    // The `use` search path a run gives with `--lib`: a dependency resolves where
+                    // the consumer's run resolves it, so the artifact takes the name it computes.
                     let context = loft::native_artifact::LibraryContext {
                         default_dir: default_dir.clone(),
-                        lib_dirs: Vec::new(),
+                        lib_dirs: lib_dirs.clone(),
                     };
                     let alone = match loft::native_artifact::parse_library_alone(
                         &pkg_str,

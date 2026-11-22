@@ -348,22 +348,21 @@ static void loft_map_types(const unsigned char *loft_t, const void *loft_ids) {
 /// # Errors
 /// When the unit refuses a function, or the C compiler fails.
 pub fn build_artifact(
-    pkg_dir: &str,
-    default_dir: &str,
-    lib_dirs: &[String],
+    data: &mut Data,
+    stores: &mut Stores,
+    library: &HashSet<u32>,
     out_dir: &std::path::Path,
     stem: &str,
     fp: u64,
 ) -> Result<std::path::PathBuf, String> {
     use crate::file_access as fa;
-    // `@PLN206 P5` — the unit is the library's: generated from the library alone, so every
-    // program that adopts it adopts the same code, whichever built it first.  Its constants
-    // are built here, as a program's compile builds its own.
-    let mut alone = crate::native_artifact::parse_library_alone(pkg_dir, default_dir, lib_dirs)?;
-    let p = &mut alone.parser;
-    crate::const_literal::build_const_vectors(&mut p.database, &mut p.data, None);
-    let (data, stores) = (&p.data, &p.database);
-    let export = hosted_exports(data, stores, &alone.export);
+    // `@PLN206 P5` — the unit is the library's: `data` and `stores` are the library parsed alone
+    // (`native_artifact::parse_library_alone`), so every program that adopts it adopts the same
+    // code, whichever built it first.  Its constants are built here, as a program's compile
+    // builds its own.
+    crate::const_literal::build_const_vectors(stores, data, None);
+    let (data, stores) = (&*data, &*stores);
+    let export = hosted_exports(data, stores, library);
     let mut carried: Vec<u32> = export.iter().copied().collect();
     carried.sort_unstable();
     if carried.is_empty() {

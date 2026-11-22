@@ -2497,7 +2497,12 @@ fn c_libraries(
             );
         } else if let Some(so) = hosted
             .then(|| std::path::Path::new(&lib.pkg_dir).join(&lib.name))
-            .filter(|so| !cfg!(windows) && crate::file_access::exists(so))
+            // Linked by name where a run path finds it (`platform::c_rpath_arg`; none on
+            // Windows, which takes the archive below).
+            .filter(|so| {
+                crate::platform::c_rpath_arg(so.parent()).is_some()
+                    && crate::file_access::exists(so)
+            })
         {
             // `@PLN206 P5` — a hosted unit runs in the interpreter's process, which has the
             // shim's shared library loaded already (`name`, the library `c_shim::build` made
