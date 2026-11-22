@@ -1541,6 +1541,12 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
   if made && v < 0 {
     // (A field's element borrows the record the field lies in.)
     el_vars::set_var_type(vars, celm, ir::TyReference { n: if made_d >= 0 { made_d } else { 0 }, dep: [el_ex_base::place_root(e, dest)] });
+  } else if v < 0 {
+    // (`unique_elm_var`: any element of a field's vector borrows what the field's place does.)
+    froot = el_ex_base::place_root(e, dest);
+    if froot >= 0 {
+      el_vars::depend(vars, celm, froot);
+    }
   }
   if v >= 0 {
     // (A local that held a store already keeps its element borrowing the local, as Rust's
@@ -1550,6 +1556,10 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
     el_vars::depend(vars, v, db);
     if made {
       el_vars::set_var_type(vars, celm, ir::TyReference { n: if made_d >= 0 { made_d } else { 0 }, dep: [if had_store { v } else { db }] });
+    } else if !had_store {
+      // (`insert_new`: a fresh local's element borrows the backing minted for it, whatever the
+      // element's type.)
+      el_vars::depend(vars, celm, db);
     }
     items = [
       el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: r.main_known }]),
