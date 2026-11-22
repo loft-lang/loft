@@ -315,16 +315,111 @@ fn tombstones_enabled() -> bool {
 /// build reads from the set and a walk to answer it would scale with the
 /// arena, not with the records in it.  Nothing iterates the set, so the
 /// representation owes no order.
-#[derive(Clone, Default)]
+/// `@PLN206 P3` — the C runtime's `loft_bits`, field for field (`#[repr(C)]`): the words live
+/// in the system allocator's memory (`A`, as the store's buffer), which on a POSIX host is
+/// `malloc`, `realloc` and `free` — the calls the C runtime makes — so a C body working on this
+/// store keeps the set as the interpreter does.
+#[repr(C)]
 struct Claims {
-    bits: Vec<u64>,
+    bits: *mut u64,
+    nwords: u32,
     live: u32,
+    cap: u32,
 }
 
+impl Default for Claims {
+    fn default() -> Self {
+        Claims {
+            bits: std::ptr::null_mut(),
+            nwords: 0,
+            live: 0,
+            cap: 0,
+        }
+    }
+}
+
+impl Clone for Claims {
+    fn clone(&self) -> Self {
+        let mut c = Claims::default();
+        if self.nwords > 0 {
+            c.reserve(self.nwords);
+            // SAFETY: both hold at least `nwords` words; the two allocations are distinct.
+            unsafe { std::ptr::copy_nonoverlapping(self.bits, c.bits, self.nwords as usize) };
+            c.nwords = self.nwords;
+        }
+        c.live = self.live;
+        c
+    }
+}
+
+impl Drop for Claims {
+    fn drop(&mut self) {
+        if !self.bits.is_null() {
+            // SAFETY: `bits` is the block `reserve` allocated for `cap` words.
+            unsafe { A.dealloc(self.bits.cast(), Claims::layout(self.cap)) };
+        }
+    }
+}
+
+// SAFETY: the set owns its block outright, as a `Vec<u64>` would.
+unsafe impl Send for Claims {}
+unsafe impl Sync for Claims {}
+
 impl Claims {
+    /// The words in use, as a slice.
+    #[inline]
+    fn words(&self) -> &[u64] {
+        if self.nwords == 0 {
+            &[]
+        } else {
+            // SAFETY: `bits` holds `nwords` initialised words.
+            unsafe { std::slice::from_raw_parts(self.bits, self.nwords as usize) }
+        }
+    }
+
+    #[inline]
+    fn words_mut(&mut self) -> &mut [u64] {
+        if self.nwords == 0 {
+            &mut []
+        } else {
+            // SAFETY: `bits` holds `nwords` initialised words, owned by this set.
+            unsafe { std::slice::from_raw_parts_mut(self.bits, self.nwords as usize) }
+        }
+    }
+
+    fn layout(words: u32) -> Layout {
+        Layout::array::<u64>(words as usize).expect("bit-set layout")
+    }
+
+    /// Room for `n` words, grown as `loft_bits_insert` grows it: to twice the room, or to `n`.
+    fn reserve(&mut self, n: u32) {
+        if n <= self.cap {
+            return;
+        }
+        let cap = if self.cap * 2 > n { self.cap * 2 } else { n };
+        // SAFETY: `bits` is null, or the block allocated for `self.cap` words.
+        #[expect(
+            clippy::cast_ptr_alignment,
+            reason = "the block is allocated with u64's alignment (`Claims::layout`)"
+        )]
+        let nb = unsafe {
+            if self.bits.is_null() {
+                A.alloc(Claims::layout(cap))
+            } else {
+                A.realloc(self.bits.cast(), Claims::layout(self.cap), cap as usize * 8)
+            }
+        }
+        .cast::<u64>();
+        if nb.is_null() {
+            std::alloc::handle_alloc_error(Claims::layout(cap));
+        }
+        self.bits = nb;
+        self.cap = cap;
+    }
+
     #[inline]
     fn contains(&self, pos: u32) -> bool {
-        self.bits
+        self.words()
             .get((pos >> 6) as usize)
             .is_some_and(|w| (w >> (pos & 63)) & 1 == 1)
     }
@@ -332,11 +427,21 @@ impl Claims {
     /// Mark `pos` claimed; `true` when it was not already.
     #[inline]
     fn insert(&mut self, pos: u32) -> bool {
-        let (word, mask) = ((pos >> 6) as usize, 1u64 << (pos & 63));
-        if word >= self.bits.len() {
-            self.bits.resize(word + 1, 0);
+        let (word, mask) = (pos >> 6, 1u64 << (pos & 63));
+        if word >= self.nwords {
+            let n = word + 1;
+            self.reserve(n);
+            // SAFETY: `reserve` made room for `n` words; the new ones are zeroed.
+            unsafe {
+                std::ptr::write_bytes(
+                    self.bits.add(self.nwords as usize),
+                    0,
+                    (n - self.nwords) as usize,
+                );
+            }
+            self.nwords = n;
         }
-        let w = &mut self.bits[word];
+        let w = &mut self.words_mut()[word as usize];
         let new = *w & mask == 0;
         *w |= mask;
         self.live += u32::from(new);
@@ -346,15 +451,16 @@ impl Claims {
     /// The highest claimed position below `end`, if any: one masked word for an adjacent
     /// block, and a backward scan over empty words across free space.
     fn prev_start(&self, end: u32) -> Option<u32> {
-        if end == 0 || self.bits.is_empty() {
+        let bits = self.words();
+        if end == 0 || bits.is_empty() {
             return None;
         }
         let last = end - 1;
-        let mut w = ((last >> 6) as usize).min(self.bits.len() - 1);
+        let mut w = ((last >> 6) as usize).min(bits.len() - 1);
         let mut word = if w == (last >> 6) as usize {
-            self.bits[w] & (u64::MAX >> (63 - (last & 63)))
+            bits[w] & (u64::MAX >> (63 - (last & 63)))
         } else {
-            self.bits[w]
+            bits[w]
         };
         loop {
             if word != 0 {
@@ -364,7 +470,7 @@ impl Claims {
                 return None;
             }
             w -= 1;
-            word = self.bits[w];
+            word = bits[w];
         }
     }
 
@@ -372,7 +478,7 @@ impl Claims {
     #[inline]
     fn remove(&mut self, pos: u32) -> bool {
         let (word, mask) = ((pos >> 6) as usize, 1u64 << (pos & 63));
-        match self.bits.get_mut(word) {
+        match self.words_mut().get_mut(word) {
             Some(w) if *w & mask != 0 => {
                 *w &= !mask;
                 self.live -= 1;
@@ -384,19 +490,19 @@ impl Claims {
 
     /// Forget every claim, keeping the allocation for the store's next layout.
     ///
-    /// The WIDTH resets with the claims.  `Vec::clear` keeps the capacity, so the next
-    /// occupant re-grows into the same allocation without inheriting the previous one's
+    /// The WIDTH resets with the claims, as `loft_bits_clear` resets it: the room stays, so the
+    /// next occupant re-grows into the same allocation without inheriting the previous one's
     /// width.  Carrying the width across occupants is what makes reusing a slot cost
     /// O(the widest that slot has ever been) instead of O(what it now holds): the set is
     /// indexed by record POSITION and only ever grows, so a slot that once held a large
     /// collection charged every later occupant for it (loft#1507).
     ///
     /// This is a cost change, not a semantic one.  `contains` and `remove` read a missing
-    /// word and a zero word alike (`Vec::get` answers `None`), and `insert` re-grows on
-    /// demand — so after a clear the width again describes the highest position claimed,
-    /// which is what this type's own description promises.
+    /// word and a zero word alike, and `insert` re-grows on demand — so after a clear the
+    /// width again describes the highest position claimed, which is what this type's own
+    /// description promises.
     fn clear(&mut self) {
-        self.bits.clear();
+        self.nwords = 0;
         self.live = 0;
     }
 
@@ -406,7 +512,7 @@ impl Claims {
 
     /// Every marked position, ascending.
     fn positions(&self) -> impl Iterator<Item = u32> + '_ {
-        self.bits.iter().enumerate().flat_map(|(w, &bits)| {
+        self.words().iter().enumerate().flat_map(|(w, &bits)| {
             (0..64u32)
                 .filter(move |b| (bits >> b) & 1 == 1)
                 .map(move |b| (w as u32) * 64 + b)
@@ -416,14 +522,15 @@ impl Claims {
     /// The lowest member at or after `from` — a word of 64 positions per step, so a walk
     /// over the members skips everything between them.
     fn next_at_or_after(&self, from: u32) -> Option<u32> {
+        let words = self.words();
         let mut word = (from >> 6) as usize;
-        let mut bits = self.bits.get(word)? & (!0u64 << (from & 63));
+        let mut bits = words.get(word)? & (!0u64 << (from & 63));
         loop {
             if bits != 0 {
                 return Some(((word as u32) << 6) | bits.trailing_zeros());
             }
             word += 1;
-            bits = *self.bits.get(word)?;
+            bits = *words.get(word)?;
         }
     }
 
@@ -6413,22 +6520,22 @@ mod tests {
         for pos in [1u32, 64, 4096, 65_536] {
             claims.insert(pos);
         }
-        let wide = claims.bits.len();
+        let wide = claims.nwords;
         assert!(
             wide > 1024,
             "the set grew to describe position 65536: {wide} words"
         );
 
         claims.clear();
-        assert_eq!(claims.bits.len(), 0, "a cleared set describes no position");
+        assert_eq!(claims.nwords, 0, "a cleared set describes no position");
         assert!(
-            claims.bits.capacity() >= wide,
+            claims.cap >= wide,
             "and it keeps the allocation for the slot's next occupant"
         );
 
         // The next occupant pays for what IT holds, not for what the slot once held.
         claims.insert(1);
-        assert_eq!(claims.bits.len(), 1, "one low claim needs one word");
+        assert_eq!(claims.nwords, 1, "one low claim needs one word");
     }
 
     /// The control for the guard above: resetting the width changes no answer the set gives.
@@ -6446,7 +6553,7 @@ mod tests {
                 set.insert(pos);
             }
         }
-        zeroed.bits.fill(0); // what `clear` used to do
+        zeroed.words_mut().fill(0); // what `clear` used to do
         zeroed.live = 0;
         cleared.clear(); // what it does now
 
