@@ -317,6 +317,47 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           exit $status
 
+      # The package as the interpreter adopts it (@PLN206 P5): its hosted C unit, built by
+      # `loft build-native` on the C backend, then its tests run interpreted and adopted from
+      # that unit with NO C compiler on the path (`hosted_suite.py --prebuilt`, which also runs
+      # every call into the unit interpreted and compares the two, LOFT_HOSTED_VERIFY).  Red when
+      # a test answers differently adopted.  A library the C writer declines has no unit and
+      # passes, said; a package whose native part is a Rust crate (`[native]`) has none until
+      # it has a `[c] shim` (@PLN206 P6).
+      - name: Hosted C — ${{ matrix.package }}
+        working-directory: ${{ matrix.package }}
+        env:
+          LOFT_LIB_BACKEND: c
+          LOFT_NO_RUSTC: 1
+          LOFT_POISON_CLAIM: 1
+        run: |
+          set -o pipefail
+          if grep -q '^\[native\]' loft.toml; then
+            echo "a Rust native crate: no C unit until it has a [c] shim (@PLN206 P6)"
+            exit 0
+          fi
+          if ! LOFT_TIMEOUT=600 loft --lib .. build-native . 2>&1 | tee "$RUNNER_TEMP/hosted-build.log"; then
+            {
+              echo "### ❌ \`${{ matrix.package }}\` — its hosted C unit does not build"
+              echo
+              echo '```'
+              tail -20 "$RUNNER_TEMP/hosted-build.log"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          python3 "$GITHUB_WORKSPACE/loft-src/scripts/hosted_suite.py" --prebuilt --timeout 300 \
+            --lib .. "$PWD" 2>&1 | tee "$RUNNER_TEMP/hosted.log" && exit 0
+          status=$?
+          {
+            echo "### ❌ \`${{ matrix.package }}\` — answers differently adopted as a C unit"
+            echo
+            echo '```'
+            grep -E '^(differs|total)' "$RUNNER_TEMP/hosted.log" | head -40
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $status
+
       # ── The guide, which is a program ──────────────────────────────────────
       #
       # `docs/*.loft` is the package's getting-started guide (LIBRARY_AUTHORING § 2c):
