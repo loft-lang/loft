@@ -9484,6 +9484,22 @@ fn main() {
                         );
                         std::process::exit(1);
                     }
+                    // `@PLN206` coverage — on the C backend, each public function the unit does
+                    // not carry, with why: `interpreted: <name>\t<why>`, one line each, for
+                    // `scripts/hosted_coverage.py`.  Printed whether the unit builds or the
+                    // whole library is declined.
+                    let interpreted: Vec<String> = if loft::c::hosted::selected() {
+                        loft::c::hosted::hosted_split(&p.data, &p.database, &export)
+                            .1
+                            .into_iter()
+                            .map(|(fn_name, why)| format!("interpreted: {fn_name}\t{why}"))
+                            .collect()
+                    } else {
+                        Vec::new()
+                    };
+                    for line in &interpreted {
+                        println!("{line}");
+                    }
                     match loft::native_artifact::cached_or_build_shared_cdylib(
                         &p.data,
                         &p.database,
