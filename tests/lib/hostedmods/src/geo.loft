@@ -1,0 +1,11 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+pub struct V3 {
+  pub x: float,
+  pub y: float,
+  pub z: float
+}
+
+pub fn v3(vx: float, vy: float, vz: float) -> V3 {
+  V3 { x: vx, y: vy, z: vz }
+}

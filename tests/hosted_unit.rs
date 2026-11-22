@@ -348,3 +348,48 @@ fn a_hosted_unit_shares_its_shim_with_the_interpreter() {
         "the unit carries no copy of the shim: {links:?}"
     );
 }
+
+/// `@PLN206 P5` — the verify's interpreted twin answers where an interpreted caller reads: a
+/// library of two modules (`tests/lib/hostedmods`, as `mesh3d` is) whose `quad` builds each
+/// corner from `geo::v3` answers handed to `vtx`.  The twin interprets those calls too and hands
+/// each the caller's hidden buffer (`State::call_back_into`); answered into a store of its own,
+/// the interpreted caller read an unwritten buffer.
+///
+/// @falsified-at: none — a SABOTAGE (2026-11-22): with the twin handed no buffers
+///   (`twin_call` passing `&dests[..0]`), the sound run stops.  CHANNEL: the exit status and
+///   the message.  WITNESS: "`quad` leaves another world compiled than interpreted: the answer
+///   is {name:\"quad\",vs:[{pos:{x:0,y:0,z:0}".  HOLDS: the compiled answer.
+#[test]
+fn the_verify_twin_answers_where_an_interpreted_caller_reads() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let lib = std::env::temp_dir().join(format!("loft-hosted-unit-mods-{}", std::process::id()));
+    let _ = fa::remove_dir_all(&lib);
+    let pkg = lib.join("hostedmods");
+    for f in ["loft.toml", "src/hostedmods.loft", "src/geo.loft", "src/shape.loft"] {
+        let to = pkg.join(f);
+        fa::create_dir_all(to.parent().expect("parent")).expect("package dir");
+        let text = fa::read_to_string(root.join("tests/lib/hostedmods").join(f)).expect("read");
+        fa::write(to, text).expect("write");
+    }
+    let out = harness_command(env!("CARGO_BIN_EXE_loft"))
+        .arg("--interpret")
+        .arg("--lib")
+        .arg(&lib)
+        .arg(root.join("tests/lib/hostedmods_main.loft"))
+        .env("LOFT_NO_CACHE", "1")
+        .env("LOFT_LIB_BACKEND", "c")
+        .env("LOFT_NO_RUSTC", "1")
+        .env("LOFT_POISON_CLAIM", "1")
+        .env("LOFT_HOSTED_VERIFY", "1")
+        .output()
+        .expect("run loft");
+    let _ = fa::remove_dir_all(&lib);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{err}");
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "quad -0.5 0.5\n");
+    assert!(err.contains("call(s) compiled and interpreted alike"), "{err}");
+}
