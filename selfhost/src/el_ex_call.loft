@@ -3460,6 +3460,13 @@ pub fn register_default_literal(vars: el_vars::Vars, d: ir::Node, lhs: ir::TypeT
             vars.vars[w].skip_free = true;
           } else {
             el_vars::mark_inline(vars, w);
+            // loft#1322 (`(O-Borrow)`: one owner, one free) — `_vec_N` and its backing `__vdb_N`
+            // name ONE store; the view's free is the one that runs, so the backing goes quiet —
+            // only where the view is freed at all (the flags are cumulative across passes).
+            bk = el_ex_base::literal_backing_store(block[0]);
+            if !vars.vars[w].skip_free && bk >= 0 && bk < len(vars.vars) {
+              vars.vars[bk].skip_free = true;
+            }
           }
         },
         _ => {}

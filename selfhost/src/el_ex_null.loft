@@ -179,6 +179,15 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
         }
         return ex(ir::NdNull, ht);
       }
+      // `@PLN102` (`build_null_coalesce`): an OWNED vector subject — every borrow one of this
+      // frame's caller-minted buffers, or none — is the value the `??` block must free: the
+      // holder is no never-freed hand-off but an inline ref (nulled before the statement, not
+      // allocated), which the scope pass frees.  The pass that sees the subject decides.
+      owned_vector = len([for od in el_types::deps(lhs) if od < 0 || od >= len(vars.vars) || !vars.vars[od].caller_hidden_buf { od }]) == 0;
+      if owned_vector {
+        vars.vars[held].skip_free = false;
+        el_vars::mark_inline(vars, held);
+      }
       if fresh {
         el_vars::register_work_ref(vars, held);
         el_vars::mark_inline(vars, held);
