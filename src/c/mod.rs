@@ -202,6 +202,10 @@ pub(crate) fn passed(c: CType) -> String {
 
 /// What every function of a unit shares: the program, its stores' layouts and the tuple
 /// structs the unit's functions name.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each flag is one independent fact about the unit being written"
+)]
 pub(crate) struct Cx<'a> {
     pub(crate) data: &'a Data,
     /// The `#c_twin`s, whose bodies `data` does not hold (`Data::with_c_twins_bound`).

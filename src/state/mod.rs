@@ -8643,6 +8643,10 @@ impl State {
     /// heap result in attribute order, in place of buffers set up for the call: the callee
     /// answers where an interpreted caller reads it, as a direct call does
     /// (`LOFT_HOSTED_VERIFY`'s interpreted twin, `@PLN206 P5`).  Empty: as `call_back`.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one frame set up, entered and answered per result shape, in order"
+    )]
     pub(crate) fn call_back_into(
         &mut self,
         d_nr: u32,

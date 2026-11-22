@@ -115,27 +115,27 @@ pub(crate) fn report() {
     if !enabled() {
         return;
     }
-    let (v, t, f, n) = (
+    let (verified, tuple, file, outside) = (
         VERIFIED.swap(0, Relaxed),
         UNVERIFIED_TUPLE.swap(0, Relaxed),
         UNVERIFIED_FILE.swap(0, Relaxed),
         UNVERIFIED_NATIVE.swap(0, Relaxed),
     );
     let mut why = Vec::new();
-    if n > 0 {
+    if outside > 0 {
         why.push(format!(
-            "{n} reaching state outside the stores (a C function, a file, the clock)"
+            "{outside} reaching state outside the stores (a C function, a file, the clock)"
         ));
     }
     let sampled_out = UNVERIFIED_SAMPLED.swap(0, Relaxed);
     if sampled_out > 0 {
         why.push(format!("{sampled_out} past each function's sample"));
     }
-    if t > 0 {
-        why.push(format!("{t} with a tuple argument"));
+    if tuple > 0 {
+        why.push(format!("{tuple} with a tuple argument"));
     }
-    if f > 0 {
-        why.push(format!("{f} with a file-backed store live"));
+    if file > 0 {
+        why.push(format!("{file} with a file-backed store live"));
     }
     let placed = PLACED_OTHERWISE.swap(0, Relaxed);
     let placed = if placed > 0 {
@@ -144,7 +144,7 @@ pub(crate) fn report() {
         String::new()
     };
     eprintln!(
-        "loft: LOFT_HOSTED_VERIFY: {v} call(s) compiled and interpreted alike{placed}{}",
+        "loft: LOFT_HOSTED_VERIFY: {verified} call(s) compiled and interpreted alike{placed}{}",
         if why.is_empty() {
             String::new()
         } else {
@@ -271,56 +271,7 @@ impl State {
         self.fnref_bufs.truncate(fb);
         self.fnref_calls.truncate(fc);
         let (interp, compiled): (&Stores, &Stores) = (&twin, &self.database);
-        let mut diff: Option<String> = None;
-        let mut placed_otherwise = false;
-        for nr in before {
-            let (a, b) = (
-                &interp.allocations[nr as usize],
-                &compiled.allocations[nr as usize],
-            );
-            if a.live != b.live {
-                let held = if a.live { a } else { b };
-                diff = Some(format!(
-                    "store {nr} (type {}, made #{}) is live only {}",
-                    held.known_type,
-                    held.alloc_serial,
-                    if a.live { "interpreted" } else { "compiled" }
-                ));
-                break;
-            }
-            // `@PLN206 P5` — the root's type, which a hosted unit writes through its translation
-            // by key (`loft_tp_out`): another type here is a crossing left untranslated.
-            if a.known_type != b.known_type {
-                diff = Some(format!(
-                    "store {nr} holds type {} interpreted, {} compiled",
-                    a.known_type, b.known_type
-                ));
-                break;
-            }
-            let (x, y) = (a.claimed_image(), b.claimed_image());
-            if x != y {
-                // The same value placed otherwise — a record claimed elsewhere, a text written
-                // anew where the other side wrote it in place (`@FR-H-TextReplace` is admitted
-                // by whole-program facts an open unit does not have) — is no wrong value: the
-                // root, rendered through its type, follows references, not record numbers.
-                if a.known_type != u16::MAX {
-                    let root = DbRef {
-                        store_nr: nr,
-                        rec: 1,
-                        pos: 8,
-                    };
-                    let (mut p, mut q) = (String::new(), String::new());
-                    interp.show(&mut p, &root, a.known_type, false);
-                    compiled.show(&mut q, &root, b.known_type, false);
-                    if p == q {
-                        placed_otherwise = true;
-                        continue;
-                    }
-                }
-                diff = Some(first_difference(nr, &x, &y));
-                break;
-            }
-        }
+        let (mut diff, placed_otherwise) = stores_difference(&before, interp, compiled);
         if diff.is_none() {
             diff = answer_difference(data, d_nr, (&ret_i, interp), (&ret_c, compiled));
         }
@@ -356,6 +307,72 @@ impl State {
         TWIN.with(|t| t.set(t.get() - 1));
         r
     }
+}
+
+/// The first store of `before` the two worlds hold otherwise — live on one side only, of another
+/// root type, or with other bytes that render another value — and whether a store held the same
+/// value placed otherwise.
+fn stores_difference(before: &[u16], interp: &Stores, compiled: &Stores) -> (Option<String>, bool) {
+    let mut placed_otherwise = false;
+    for &nr in before {
+        let (on_twin, on_world) = (
+            &interp.allocations[nr as usize],
+            &compiled.allocations[nr as usize],
+        );
+        if on_twin.live != on_world.live {
+            let held = if on_twin.live { on_twin } else { on_world };
+            return (
+                Some(format!(
+                    "store {nr} (type {}, made #{}) is live only {}",
+                    held.known_type,
+                    held.alloc_serial,
+                    if on_twin.live {
+                        "interpreted"
+                    } else {
+                        "compiled"
+                    }
+                )),
+                placed_otherwise,
+            );
+        }
+        // `@PLN206 P5` — the root's type, which a hosted unit writes through its translation by
+        // key (`loft_tp_out`): another type here is a crossing left untranslated.
+        if on_twin.known_type != on_world.known_type {
+            return (
+                Some(format!(
+                    "store {nr} holds type {} interpreted, {} compiled",
+                    on_twin.known_type, on_world.known_type
+                )),
+                placed_otherwise,
+            );
+        }
+        let (image_twin, image_world) = (on_twin.claimed_image(), on_world.claimed_image());
+        if image_twin != image_world {
+            // The same value placed otherwise — a record claimed elsewhere, a text written anew
+            // where the other side wrote it in place (`@FR-H-TextReplace` is admitted by
+            // whole-program facts an open unit does not have) — is no wrong value: the root,
+            // rendered through its type, follows references, not record numbers.
+            if on_twin.known_type != u16::MAX {
+                let root = DbRef {
+                    store_nr: nr,
+                    rec: 1,
+                    pos: 8,
+                };
+                let (mut shown_twin, mut shown_world) = (String::new(), String::new());
+                interp.show(&mut shown_twin, &root, on_twin.known_type, false);
+                compiled.show(&mut shown_world, &root, on_world.known_type, false);
+                if shown_twin == shown_world {
+                    placed_otherwise = true;
+                    continue;
+                }
+            }
+            return (
+                Some(first_difference(nr, &image_twin, &image_world)),
+                placed_otherwise,
+            );
+        }
+    }
+    (None, placed_otherwise)
 }
 
 /// Exchange the interpreter's stack stores between `a` and `b`: the live ones go to the world
@@ -404,15 +421,17 @@ fn answer_difference(
             if tp == u16::MAX {
                 return None;
             }
-            let (mut a, mut b) = (String::new(), String::new());
+            let (mut shown_twin, mut shown_world) = (String::new(), String::new());
             if interp.dbref.rec != 0 {
-                interp_world.show(&mut a, &interp.dbref, tp, false);
+                interp_world.show(&mut shown_twin, &interp.dbref, tp, false);
             }
             if comp.dbref.rec != 0 {
-                compiled.show(&mut b, &comp.dbref, tp, false);
+                compiled.show(&mut shown_world, &comp.dbref, tp, false);
             }
-            if a != b {
-                return Some(format!("the answer is {a} interpreted, {b} compiled"));
+            if shown_twin != shown_world {
+                return Some(format!(
+                    "the answer is {shown_twin} interpreted, {shown_world} compiled"
+                ));
             }
             // `@PLN206 P5` — the store the answer is the root of holds its type, which a
             // hosted unit writes through its translation by key: the answer's store is the

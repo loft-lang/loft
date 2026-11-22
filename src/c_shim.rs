@@ -487,9 +487,7 @@ pub fn build(pkg_dir: &str, sources: &[String]) -> Result<std::path::PathBuf, St
 
 /// The file beside a built shim naming its sources key ([`source_key`]).
 fn sidecar_of(so: &std::path::Path) -> std::path::PathBuf {
-    let mut name = so.as_os_str().to_os_string();
-    name.push(".src");
-    std::path::PathBuf::from(name)
+    std::path::PathBuf::from(format!("{}.src", so.to_string_lossy()))
 }
 
 /// A shim in `out_dir` built for exactly these sources, by whichever compiler built it.
@@ -502,10 +500,12 @@ fn built_for_sources(
     crate::file_access::read_dir(out_dir)
         .ok()?
         .into_iter()
-        .map(|p| std::path::PathBuf::from(p.native()))
-        .filter(|p| p.extension().is_some_and(|e| e == "src"))
-        .find(|p| crate::file_access::read_to_string(p).is_ok_and(|k| k == key))
-        .map(|p| p.with_extension(""))
+        .map(|p| p.native().clone())
+        .filter(|p| {
+            p.len() > ".src".len() && p[p.len() - ".src".len()..].eq_ignore_ascii_case(".src")
+        })
+        .find(|p| crate::file_access::read_to_string(p.as_str()).is_ok_and(|k| k == key))
+        .map(|p| std::path::PathBuf::from(&p[..p.len() - ".src".len()]))
         .filter(|so| crate::file_access::exists(so))
 }
 
