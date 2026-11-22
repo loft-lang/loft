@@ -81,3 +81,10 @@ pub fn twice(name: text) -> Bag {
   b.total = b.total + c.total;
   b
 }
+
+// A write to a file: run twice, the bytes land twice, so the verify makes such a call once.
+pub fn append_word(p: text, n: integer) {
+  f = file(p);
+  f#format = LittleEndian;
+  f += (n as i32);
+}

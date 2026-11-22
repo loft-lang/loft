@@ -57,6 +57,13 @@ fn main() {
   // a record built by the library from its own calls: 3 + 4
   w = twice("w");
   assert(w.total == 7 && w.name == "w", "twice {w.total} {w.name}");
+  // two words appended to a file through the unit: 8 bytes
+  wp = "{temp_dir() ?? "/tmp"}/loft_hostedlib_{ticks()}.bin";
+  append_word(wp, 7);
+  append_word(wp, 9);
+  wf = file(wp);
+  assert(wf#size == 8, "file {wf#size} bytes");
+  delete(wp);
   // a generator the library answers, driven here: 1 + 2 + 3 + 4 = 10
   u = 0;
   for x in upto(4) { u += x; }

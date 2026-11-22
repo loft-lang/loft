@@ -105,6 +105,8 @@ fn a_hosted_c_library_works_on_the_interpreters_stores() {
 /// @falsified-at: none — the receipt is the plant itself: without the verify the planted byte
 ///   surfaces three statements later as a wrong total; with it, at `fill`.
 ///   CHANNEL: the exit status and the message.  WITNESS: "`fill` leaves another world".
+///   A SABOTAGE (2026-11-22): with the file layer struck from what reaches outside the stores
+///   (`hosted_verify::reaches_outside`), `append_word` runs twice.  WITNESS: "file 16 bytes".
 ///   A SABOTAGE (2026-11-22): with the comparison by value struck (`hosted_verify.rs`), the
 ///   sound run stops at `rename`.  WITNESS: "`rename` leaves another world".
 ///   And a SABOTAGE (2026-11-22): with the verify going on in the compiled COPY of the world
@@ -369,7 +371,12 @@ fn the_verify_twin_answers_where_an_interpreted_caller_reads() {
     let lib = std::env::temp_dir().join(format!("loft-hosted-unit-mods-{}", std::process::id()));
     let _ = fa::remove_dir_all(&lib);
     let pkg = lib.join("hostedmods");
-    for f in ["loft.toml", "src/hostedmods.loft", "src/geo.loft", "src/shape.loft"] {
+    for f in [
+        "loft.toml",
+        "src/hostedmods.loft",
+        "src/geo.loft",
+        "src/shape.loft",
+    ] {
         let to = pkg.join(f);
         fa::create_dir_all(to.parent().expect("parent")).expect("package dir");
         let text = fa::read_to_string(root.join("tests/lib/hostedmods").join(f)).expect("read");
@@ -391,5 +398,8 @@ fn the_verify_twin_answers_where_an_interpreted_caller_reads() {
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "{err}");
     assert_eq!(String::from_utf8_lossy(&out.stdout), "quad -0.5 0.5\n");
-    assert!(err.contains("call(s) compiled and interpreted alike"), "{err}");
+    assert!(
+        err.contains("call(s) compiled and interpreted alike"),
+        "{err}"
+    );
 }

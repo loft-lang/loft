@@ -67,8 +67,9 @@ fn sampled(d: u32) -> bool {
 /// Of the calls compared alike, those whose stores hold the same values placed otherwise.
 static PLACED_OTHERWISE: AtomicU64 = AtomicU64::new(0);
 
-/// Does a call to `d` reach code outside loft — a `#c` binding or a library's native — whose
-/// state no copy of the stores holds (a generator, a handle counter, a device)?  Run twice,
+/// Does a call to `d` reach code outside loft — a `#c` binding, a library's native, a standard
+/// native that touches the host — whose state no copy of the stores holds (a file, a generator,
+/// a handle counter, a device)?  Run twice,
 /// such a call answers differently by itself, so it is made once and counted, not compared.
 fn reaches_outside(data: &crate::data::Data, d: u32) -> bool {
     use std::collections::HashMap;
@@ -85,8 +86,22 @@ fn reaches_outside(data: &crate::data::Data, d: u32) -> bool {
             // A library function an artifact carries is marked with its bridge's symbol
             // (`native_adopt::mark_exports`): loft code, not a native of its own.
             let bridged = f.native().starts_with("loft_shared_");
-            f.is_c_binding()
-                || (!f.native().is_empty() && !bridged && f.source != crate::data::STD_SOURCE)
+            let native = !f.native().is_empty() && !bridged;
+            // A standard native that reaches the host — the clock, the generator — by its
+            // `#impure` category; and anything the file layer defines, its operators included
+            // (`OpWriteFile`, `OpReadFile`: a write lands twice, a read moves the position).
+            // The marks are not complete (`pure_reuse::reads_only`), the layer is.
+            let host = (native
+                && matches!(
+                    f.purity,
+                    crate::data::Purity::Impure(
+                        crate::data::ImpureCategory::HostIo
+                            | crate::data::ImpureCategory::Prng
+                            | crate::data::ImpureCategory::Io
+                    )
+                ))
+                || f.position().file.ends_with("02_files.loft");
+            f.is_c_binding() || host || (native && f.source != crate::data::STD_SOURCE)
         });
     if let Ok(mut m) = seen.lock() {
         m.insert(d, outside);
@@ -108,7 +123,9 @@ pub(crate) fn report() {
     );
     let mut why = Vec::new();
     if n > 0 {
-        why.push(format!("{n} reaching a C function's own state"));
+        why.push(format!(
+            "{n} reaching state outside the stores (a C function, a file, the clock)"
+        ));
     }
     let sampled_out = UNVERIFIED_SAMPLED.swap(0, Relaxed);
     if sampled_out > 0 {
@@ -440,9 +457,7 @@ fn first_difference(nr: u16, x: &str, y: &str) -> String {
             let rec = field(a, 1);
             let (wa, wb) = (field(a, 2), field(b, 2));
             if wa != wb {
-                return format!(
-                    "store {nr} record {rec} is {wa} words interpreted, {wb} compiled"
-                );
+                return format!("store {nr} record {rec} is {wa} words interpreted, {wb} compiled");
             }
             let (ha, hb) = (field(a, 3), field(b, 3));
             let at = ha
