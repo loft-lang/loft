@@ -853,12 +853,19 @@ pub fn state_report(b: ir::Bundle, from: integer) -> text {
       if v.owner_witness >= 0 && v.owner_witness < len(f.variables) { fl += " owner_witness={f.variables[v.owner_witness].name}"; }
       if v.rebind_orig >= 0 && v.rebind_orig < len(f.variables) { fl += " rebind_orig={f.variables[v.rebind_orig].name}"; }
       // What it borrows — its type's deps, by name — which decides what the scope pass frees.
+      // (In variable order: the set is the fact, the order a join met its arms in is not.)
       vd = type_deps(v.type_def[0] ?? ir::TyVoid);
       if len(vd) > 0 {
         dn = "";
+        for dv in f.variables {
+          if vd.contains(dv#index) {
+            dn += if dn == "" { dv.name } else { ",{dv.name}" };
+          }
+        }
         for x in vd {
-          dn += if dn == "" { "" } else { "," };
-          dn += if x >= 0 && x < len(f.variables) { f.variables[x].name } else { "#{x}" };
+          if x < 0 || x >= len(f.variables) {
+            dn += if dn == "" { "#{x}" } else { ",#{x}" };
+          }
         }
         fl += " deps={dn}";
       }
