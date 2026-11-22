@@ -644,13 +644,13 @@ pub fn adopt_shared_cdylib(
     // A literal build (`LOFT_NO_LIB_IDS=1`) still serves one program, and keeps both.
     // A hosted C unit (`@PLN206 P4`) names types and functions by this program's numbers, as a
     // literal build does, and is a different artifact from a rustc one: its own key.
-    let hosted = crate::c::hosted::selected();
+    let hosted = crate::keys::lib_backend_c();
     let program_fp = if std::env::var_os("LOFT_NO_LIB_IDS").is_some() || hosted {
         mix_fp(
             mix_fp(layout_fp, fn_numbering_fingerprint(data, export_set)),
             u64::from(hosted)
-                | (u64::from(hosted && crate::c::hosted::poison_claim()) << 1)
-                | (u64::from(hosted && crate::c::hosted::planted()) << 2),
+                | (u64::from(hosted && crate::keys::poison_claim()) << 1)
+                | (u64::from(hosted && crate::keys::hosted_planted()) << 2),
         )
     } else {
         0

@@ -19,6 +19,8 @@ use crate::native_gate::BridgeAttrKind;
 use std::collections::HashSet;
 use std::fmt::Write as _;
 
+pub use crate::keys::{hosted_planted as planted, lib_backend_c as selected, poison_claim};
+
 /// What the unit is told about the interpreter it runs in, as `#define`s before the runtime:
 /// the length of a `Store`'s own fields, the `HostTable` it is handed, and where a `LibArg`
 /// keeps each part.  The host writes them from its own layout, so the unit reads that layout
@@ -246,25 +248,6 @@ pub(crate) fn exports(
          __attribute__((visibility(\"default\"))) uint64_t loft_type_layout_fp_v1(void) {{ return UINT64_C({layout_fp}); }}\n"
     );
     Ok(out)
-}
-
-/// Is `LOFT_POISON_CLAIM` set: is a hosted unit built to fill its claims as the interpreter does?
-#[must_use]
-pub fn poison_claim() -> bool {
-    std::env::var_os("LOFT_POISON_CLAIM").is_some()
-}
-
-/// Is `LOFT_HOSTED_PLANT` set: is the unit built with the verify's planted write?
-#[must_use]
-pub fn planted() -> bool {
-    std::env::var_os("LOFT_HOSTED_PLANT").is_some()
-}
-
-/// Is a library's artifact to be a hosted C unit rather than a rustc one this run
-/// (`LOFT_LIB_BACKEND=c`)?
-#[must_use]
-pub fn selected() -> bool {
-    std::env::var("LOFT_LIB_BACKEND").is_ok_and(|v| v == "c")
 }
 
 /// Build the hosted unit for the library functions `export` (each one the C bridge carries,

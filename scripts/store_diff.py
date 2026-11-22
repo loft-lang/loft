@@ -208,7 +208,64 @@ def compare(prog, env, plant=False):
         except Exception as e:  # noqa: BLE001 — a probe that cannot run says why and moves on
             return None, f"error {type(e).__name__}: {e}"
     records = sum(len(v[1]) for k, v in want.items() if k != "__slots")
+    got, gsites = repair(want, wsites, got, gsites)
     return differences(want, got, wsites, gsites, noise_of(want, again)), len(want) - 1, records
+
+
+def site_keys(sites):
+    """`{history name: (making line, its count at that line)}`: what a store is besides the
+    order it was made in.  A C site written as a declaration line (`~54`) keys as itself."""
+    count, out = {}, {}
+    for name in sorted(sites, key=lambda n: [int(x) if x.isdigit() else x for x in re.split(r"(\d+)", n)]):
+        line = str(sites[name])
+        k = count.get(line, 0)
+        count[line] = k + 1
+        out[name] = (line, k)
+    return out
+
+
+def repair(want, wsites, got, gsites):
+    """The C's stores renamed to the interpreter's names they pair with: by making line and count
+    at that line first, then — for those left — in making order.  Two runtimes that make the same
+    stores in another order (a C-only rewrite's, or another call order) pair by what each store
+    is, not by when it was made; a name kept by order alone would shift every store after the
+    first one out of place."""
+    wk, gk = site_keys(wsites), site_keys(gsites)
+    by_key = {k: n for n, k in wk.items()}
+    rename, taken = {}, set()
+    for gname, key in gk.items():
+        w = by_key.get(key)
+        if w is not None and w not in taken:
+            rename[gname] = w
+            taken.add(w)
+    order = lambda n: [int(x) if x.isdigit() else x for x in re.split(r"(\d+)", n)]
+    # Then by the root's type and its count within that type: a store made at a line one
+    # runtime names by its statement and the other by its function's declaration is still the
+    # store of that type it is.
+    def by_type(side, left):
+        count, out = {}, {}
+        for n in sorted(left, key=order):
+            t = side[n][0][0]
+            out[(t, count.get(t, 0))] = n
+            count[t] = count.get(t, 0) + 1
+        return out
+    wleft = [n for n in want if n != "__slots" and n not in taken]
+    gleft = [n for n in got if n != "__slots" and n not in rename]
+    wt, gt = by_type(want, wleft), by_type(got, gleft)
+    for key, g in gt.items():
+        w = wt.get(key)
+        if w is not None and w not in taken:
+            rename[g] = w
+            taken.add(w)
+    wleft = [n for n in sorted(want, key=order) if n != "__slots" and n not in taken]
+    gleft = [n for n in sorted(got, key=order) if n != "__slots" and n not in rename]
+    for g, w in zip(gleft, wleft):
+        rename[g] = w
+    new = {"__slots": {slot: rename.get(n, n) for slot, n in got.get("__slots", {}).items()}}
+    for n, v in got.items():
+        if n != "__slots":
+            new[rename.get(n, "c:" + n)] = v
+    return new, {rename.get(n, "c:" + n): line for n, line in gsites.items()}
 
 
 def noise_of(a, b):
@@ -237,6 +294,9 @@ def attribute(prog):
 
 def main():
     args = sys.argv[1:]
+    if "--help" in args or "-h" in args:
+        print(__doc__)
+        return 0
     attr = "--attribute" in args
     plant = "--plant" in args
     files = [a for a in args if not a.startswith("--")]

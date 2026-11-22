@@ -797,6 +797,8 @@ impl Stores {
         // the slack a small struct has.
         let words = std::cmp::max(8, 1 + u32::from(self.size(tp)).div_ceil(8));
         let db = self.database(words);
+        // The store's root is a `tp` record (STORE_MODEL D48, as the C's `loft_text_target`).
+        self.allocations[db.store_nr as usize].set_known_type(tp);
         let into = DbRef {
             store_nr: db.store_nr,
             rec: db.rec,

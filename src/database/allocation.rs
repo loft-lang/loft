@@ -949,6 +949,11 @@ impl Stores {
         // `State::release_fnref_bufs` compares it against a per-call snapshot to tell a store
         // the callee MINTED from one that was already there (loft#1185).
         store.alloc_serial = serial;
+        // A slot made again holds no type until the mint names one (`set_known_type`), as the C
+        // runtime's `loft_store_make` resets `known`: the previous occupant's type, left behind,
+        // was read by a free (`free_named`'s closure test) and by the memory breakdown as the new
+        // store's (STORE_MODEL D48).
+        store.set_known_type(u16::MAX);
         #[cfg(feature = "op-census")]
         {
             store.trace_worker = crate::store_census::worker();

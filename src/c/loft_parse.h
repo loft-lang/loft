@@ -1513,6 +1513,9 @@ static loft_ref loft_text_target(loft_pw *w, uint16_t tp) {
     if (words < 8) words = 8;
     loft_ref r = loft_ref_null();
     loft_database(&r, (words - 1) * 8);
+    /* The store's root is a `tp` record, which `known` says (STORE_MODEL D48): the interpreter
+     * reads it for a store it frees, a hosted unit's stores included. */
+    loft_stores[r.store_nr].known = tp;
     loft_perrs_clear(loft_perrs_of(r.store_nr));
     loft_pw_default(w, tp, 1, 1, r);
     return r;
@@ -1843,6 +1846,7 @@ static loft_ref loft_struct_from_jsonvalue(const loft_ptype *P, loft_ref src, ui
     if (words < 2) words = 2;
     loft_ref r = loft_ref_null();
     loft_database(&r, (words - 1) * 8);
+    loft_stores[r.store_nr].known = kt; /* the root's type, as `loft_text_target` (D48) */
     size_t seen = loft_jerr_n;
     loft_jsv_struct(&w, r, kt, src);
     loft_perrs *pe = loft_perrs_of(r.store_nr);

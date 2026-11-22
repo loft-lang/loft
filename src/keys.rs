@@ -5182,3 +5182,22 @@ pub fn kept_element_copy() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| !env_set("LOFT_NO_KEPT_ELEMENT_COPY"))
 }
+
+/// `@PLN206 P4` — is a `use`d library's artifact a hosted C unit this run (`LOFT_LIB_BACKEND=c`)?
+#[must_use]
+pub fn lib_backend_c() -> bool {
+    std::env::var("LOFT_LIB_BACKEND").is_ok_and(|v| v == "c")
+}
+
+/// Is `LOFT_POISON_CLAIM` set: is a hosted unit built to fill its claims as the interpreter does
+/// (what `LOFT_HOSTED_VERIFY` compares by)?
+#[must_use]
+pub fn poison_claim() -> bool {
+    std::env::var_os("LOFT_POISON_CLAIM").is_some()
+}
+
+/// Is `LOFT_HOSTED_PLANT` set: is a hosted unit built with the verify's planted write?
+#[must_use]
+pub fn hosted_planted() -> bool {
+    std::env::var_os("LOFT_HOSTED_PLANT").is_some()
+}

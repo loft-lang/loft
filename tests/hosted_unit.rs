@@ -16,7 +16,7 @@
 use loft::file_access as fa;
 use loft::platform::process::harness_command;
 
-const SCRIPT: &str = "tests/scripts/a-hosted-c-library-works-on-the-interpreters-stores.loft";
+const SCRIPT: &str = "tests/lib/hostedlib_main.loft";
 
 fn have_cc() -> bool {
     harness_command("cc")

@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // @PLN206 P4 — the consumer `tests/hosted_unit.rs` runs against `tests/lib/hostedlib`, interpreted
-// and adopted through a hosted C unit.  Values hand-computed.
+// and adopted through a hosted C unit.  Values hand-computed.  It lives beside its library, not
+// in tests/scripts: it needs `--lib`, which the script sweeps do not pass.
+//
+// @falsified-at: none — the receipt is `tests/hosted_unit.rs`'s (the table refresh struck).
 use hostedlib::*;
 
 fn main() {
