@@ -3832,6 +3832,18 @@ impl Store {
     /// store resumes *execution* and will `claim`/`delete`, unlike a worker borrow which never
     /// allocates.  The caller guarantees `!self.is_file_backed()`; the copy is heap-owned
     /// (`file = None`, `borrowed = false`) so `Drop` deallocates it correctly.
+    /// `@PLN206 P4d` — [`snapshot_copy`](Self::snapshot_copy) that keeps the store's locks: a
+    /// copy that stands in for this store in a second world (`Stores::world_copy`), where the
+    /// constant store is read-only as it is here.
+    #[must_use]
+    pub(crate) fn exact_copy(&self) -> Store {
+        let mut c = self.snapshot_copy();
+        c.read_only = self.read_only;
+        c.user_locked = self.user_locked;
+        c.lock_origin.clone_from(&self.lock_origin);
+        c
+    }
+
     #[must_use]
     pub(crate) fn snapshot_copy(&self) -> Store {
         let l = Layout::from_size_align(self.size as usize * 8, 8).expect("snapshot layout");

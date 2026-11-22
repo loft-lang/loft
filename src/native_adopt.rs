@@ -648,7 +648,9 @@ pub fn adopt_shared_cdylib(
     let program_fp = if std::env::var_os("LOFT_NO_LIB_IDS").is_some() || hosted {
         mix_fp(
             mix_fp(layout_fp, fn_numbering_fingerprint(data, export_set)),
-            u64::from(hosted),
+            u64::from(hosted)
+                | (u64::from(hosted && crate::c::hosted::poison_claim()) << 1)
+                | (u64::from(hosted && crate::c::hosted::planted()) << 2),
         )
     } else {
         0

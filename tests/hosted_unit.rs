@@ -26,9 +26,9 @@ fn have_cc() -> bool {
 }
 
 /// A private copy of the package, so the artifact this run builds is its own.
-fn private_lib() -> std::path::PathBuf {
+fn private_lib(tag: &str) -> std::path::PathBuf {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let lib = std::env::temp_dir().join(format!("loft-hosted-unit-{}", std::process::id()));
+    let lib = std::env::temp_dir().join(format!("loft-hosted-unit-{tag}-{}", std::process::id()));
     let _ = fa::remove_dir_all(&lib);
     let pkg = lib.join("hostedlib");
     fa::create_dir_all(pkg.join("src")).expect("package dir");
@@ -71,7 +71,7 @@ fn a_hosted_c_library_works_on_the_interpreters_stores() {
         eprintln!("skipped: no cc on PATH");
         return;
     }
-    let lib = private_lib();
+    let lib = private_lib("answers");
     let (ok, want, err) = run(&lib, false);
     assert!(ok, "interpreted: {err}");
     assert_eq!(want, "alpha 27 54 20100 201 2 32\n");
@@ -93,4 +93,53 @@ fn a_hosted_c_library_works_on_the_interpreters_stores() {
         .any(|e| fa::has_extension(e.os_spelling(), "c"));
     assert!(built, "a hosted C unit was built");
     let _ = fa::remove_dir_all(&lib);
+}
+
+/// `@PLN206 P4d` — `LOFT_HOSTED_VERIFY` runs each adopted call compiled and interpreted and finds
+/// the two worlds alike; with a write planted in the unit (`LOFT_HOSTED_PLANT`) it stops at the
+/// call that made it, naming the function and the record.
+///
+/// @falsified-at: none — the receipt is the plant itself: without the verify the planted byte
+///   surfaces three statements later as a wrong total; with it, at `fill`.
+///   CHANNEL: the exit status and the message.  WITNESS: "`fill` leaves another world".
+#[test]
+fn the_hosted_verify_passes_a_sound_unit_and_names_a_planted_write() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let run_verify = |plant: bool| {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let lib = private_lib(if plant { "plant" } else { "verify" });
+        let mut cmd = harness_command(env!("CARGO_BIN_EXE_loft"));
+        cmd.arg("--interpret")
+            .arg("--lib")
+            .arg(&lib)
+            .arg(root.join(SCRIPT))
+            .env("LOFT_NO_CACHE", "1")
+            .env("LOFT_LIB_BACKEND", "c")
+            .env("LOFT_NO_RUSTC", "1")
+            .env("LOFT_POISON_CLAIM", "1")
+            .env("LOFT_STRICT_STORES", "1")
+            .env("LOFT_HOSTED_VERIFY", "1");
+        if plant {
+            cmd.env("LOFT_HOSTED_PLANT", "1");
+        }
+        let out = cmd.output().expect("run loft");
+        let _ = fa::remove_dir_all(&lib);
+        (
+            out.status.success(),
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+    let (ok, out, err) = run_verify(false);
+    assert!(ok, "a sound unit verifies: {err}");
+    assert_eq!(out, "alpha 27 54 20100 201 2 32\n");
+    let (ok, _, err) = run_verify(true);
+    assert!(!ok, "a planted write is caught");
+    assert!(
+        err.contains("`fill` leaves another world compiled than interpreted"),
+        "the verify names the call that wrote it: {err}"
+    );
 }

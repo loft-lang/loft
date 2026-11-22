@@ -280,6 +280,8 @@ struct SharedSig {
     /// attribution instrument to check the retbuf-vs-return orphan (@PLN118 arc F).
     hidden_dest: Option<usize>,
     ret: Option<ArgT>,
+    /// The function the bridge is for: what `LOFT_HOSTED_VERIFY` runs interpreted beside it.
+    d_nr: u32,
     /// @PLN199 — a returned tuple of scalars: its leaves, in element order, one `ret[i]` each
     /// (`ret` is then `None`).  Empty for any other return.
     ret_leaves: Vec<ArgT>,
@@ -473,6 +475,7 @@ fn compute_shared_sig(data: &crate::data::Data, d_nr: u32) -> Option<SharedSig> 
         text_workbuf,
         hidden_dest,
         ret,
+        d_nr,
         ret_leaves,
     })
 }
@@ -1421,7 +1424,17 @@ fn shared_store_dispatch_raw(
         usize,
         *mut LibArg,
     ) = unsafe { std::mem::transmute(bridge_ptr) };
-    unsafe { bridge(stores_ptr, args.as_ptr(), args.len(), ret_ptr) };
+    // `@PLN206 P4d` — `LOFT_HOSTED_VERIFY`: the compiled call and the interpreted one, compared.
+    let host = if crate::state::hosted_verify_enabled() && !text_dest_mode && self_dest.is_none() {
+        host_state()
+    } else {
+        std::ptr::null_mut()
+    };
+    if host.is_null() {
+        unsafe { bridge(stores_ptr, args.as_ptr(), args.len(), ret_ptr) };
+    } else {
+        unsafe { (*host).verify_compiled_call(sig.d_nr, bridge, &args, ret_ptr, popped) };
+    }
     let ret = unsafe { *ret_ptr };
     // Reborrowed after the call: the bridge may have called back into the interpreter.
     let stores: &mut crate::database::Stores = unsafe { &mut *stores_raw };

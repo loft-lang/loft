@@ -5,7 +5,9 @@
 #![allow(dead_code)]
 
 pub(crate) mod codegen;
+pub(crate) use hosted_verify::enabled as hosted_verify_enabled;
 pub mod debug;
+mod hosted_verify;
 mod io;
 mod text;
 pub use text::{text_leak_violations, text_timeline_summary};

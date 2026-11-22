@@ -25,6 +25,15 @@ impl Store {
         }
     }
 
+    /// Every claimed block of this store with its bytes, one `R` line each — what
+    /// `LOFT_HOSTED_VERIFY` compares (`state/hosted_verify.rs`).
+    pub(crate) fn claimed_image(&self) -> String {
+        let mut out = String::new();
+        self.dump_into(&mut out);
+        out.split_once('\n')
+            .map_or(String::new(), |(_, rest)| rest.to_string())
+    }
+
     /// This store's lines: its header, then each claimed block's bytes.
     fn dump_into(&self, out: &mut String) {
         let _ = writeln!(

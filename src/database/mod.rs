@@ -1132,6 +1132,29 @@ impl Stores {
         })
     }
 
+    /// `@PLN206 P4d` — a whole second world for `LOFT_HOSTED_VERIFY`: the schema
+    /// ([`Clone`]), a writable copy of every store, and the table's bookkeeping a call reads —
+    /// the free-slot bitmap, the store counter, the constants — so a call run on the copy makes
+    /// the stores the same call makes on `self`.  `None` with a file-backed store live, which no
+    /// copy can stand for (as [`snapshot_heap`](Self::snapshot_heap) refuses).
+    #[must_use]
+    pub fn world_copy(&self) -> Option<Stores> {
+        if self.allocations.iter().any(Store::is_file_backed) {
+            return None;
+        }
+        let mut w = self.clone();
+        w.allocations = self.allocations.iter().map(Store::exact_copy).collect();
+        w.free_bits.clone_from(&self.free_bits);
+        w.stores_allocated = self.stores_allocated;
+        w.peak = self.peak;
+        w.records_created = self.records_created;
+        w.const_refs.clone_from(&self.const_refs);
+        w.const_texts.clone_from(&self.const_texts);
+        w.evacuated.clone_from(&self.evacuated);
+        w.alloc_pc = self.alloc_pc;
+        Some(w)
+    }
+
     /// @PLN63 RX1 — restore a [`snapshot_heap`](Self::snapshot_heap): replace the live
     /// allocations with fresh writable copies of the snapshot's bytes (the old ones drop +
     /// free), so the heap is byte-identical to when the snapshot was taken.  The snapshot is

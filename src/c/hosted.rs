@@ -98,6 +98,18 @@ static void *loft_host_enter(void *stores) {
     }
     return prev;
 }
+#ifdef LOFT_HOSTED_PLANT
+/* The positive control of `LOFT_HOSTED_VERIFY` (`LOFT_HOSTED_PLANT`): the first bridge call that
+ * takes a record writes one byte of it the function's body never writes — a defect the verify
+ * must report. */
+static void loft_hosted_plant(loft_ref r) {
+    static int planted = 0;
+    if (planted || r.store_nr >= loft_nstores || r.rec == 0 || !loft_stores[r.store_nr].live) return;
+    if (r.rec >= loft_stores[r.store_nr].size) return;
+    planted = 1;
+    loft_stores[r.store_nr].buf[(size_t) r.rec * 8 + r.pos] ^= 0x5A;
+}
+#endif
 static void loft_host_leave(void *prev) {
     loft_host_stores = prev;
     if (prev) loft_host_sync();
@@ -159,6 +171,12 @@ fn bridge(cx: &Cx<'_>, d: u32, symbol: &str) -> Result<String, String> {
         }
     }
     let call = format!("{}({})", c_name(data, d), args.join(", "));
+    let plant = match def.attributes().iter().position(|a| !a.hidden) {
+        Some(0) if cx.ctype(&def.attributes()[0].typedef) == Some(CType::Ref) => {
+            "#ifdef LOFT_HOSTED_PLANT\n    loft_hosted_plant(loft_la_ref(loft_a, 0));\n#endif\n"
+        }
+        _ => "",
+    };
     let ret = cx
         .ctype(def.returned())
         .ok_or_else(|| "a result of no C shape".to_string())?;
@@ -183,7 +201,7 @@ fn bridge(cx: &Cx<'_>, d: u32, symbol: &str) -> Result<String, String> {
     };
     Ok(format!(
         "\n__attribute__((visibility(\"default\"))) void {symbol}(void *loft_st, const unsigned char *loft_a, size_t loft_n, unsigned char *loft_r) {{\n    \
-         void *loft_prev = loft_host_enter(loft_st);\n    (void) loft_n;\n{store}    loft_host_leave(loft_prev);\n}}\n"
+         void *loft_prev = loft_host_enter(loft_st);\n    (void) loft_n;\n{store}{plant}    loft_host_leave(loft_prev);\n}}\n"
     ))
 }
 
@@ -228,6 +246,18 @@ pub(crate) fn exports(
          __attribute__((visibility(\"default\"))) uint64_t loft_type_layout_fp_v1(void) {{ return UINT64_C({layout_fp}); }}\n"
     );
     Ok(out)
+}
+
+/// Is `LOFT_POISON_CLAIM` set: is a hosted unit built to fill its claims as the interpreter does?
+#[must_use]
+pub fn poison_claim() -> bool {
+    std::env::var_os("LOFT_POISON_CLAIM").is_some()
+}
+
+/// Is `LOFT_HOSTED_PLANT` set: is the unit built with the verify's planted write?
+#[must_use]
+pub fn planted() -> bool {
+    std::env::var_os("LOFT_HOSTED_PLANT").is_some()
 }
 
 /// Is a library's artifact to be a hosted C unit rather than a rustc one this run
@@ -276,7 +306,13 @@ pub fn build_artifact(
         )
         .collect();
     let cc = crate::platform::c_unit_compiler();
+    // A claim's unwritten bytes read as the interpreter's do under `LOFT_POISON_CLAIM`, which
+    // `LOFT_HOSTED_VERIFY` compares by (the artifact's key carries the switch).
+    let poison = poison_claim().then_some("-DLOFT_POISON_CLAIM");
+    let plant = planted().then_some("-DLOFT_HOSTED_PLANT");
     let ran = crate::platform::process::Spawn::new(crate::platform::process::Program::search(&cc))
+        .args(poison)
+        .args(plant)
         .args(["-std=c11", "-O2", "-shared", "-fPIC", "-w", "-o"])
         .arg(&tmp)
         .arg(&c)
