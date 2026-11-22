@@ -311,6 +311,9 @@ pub struct Vars {
   // A slice about to be walked reversed (`rev(v[..k])` in a comprehension, `reverse_iterator`):
   // the slice's walk starts at its top and needs no `_next`.  Consumed by the slice.
   pub rev_slice: boolean = false,
+  // `unordered_iterator` (`@FR-Col-Unordered`): the `for` source was written `unordered(c)`; the
+  // keyed walk takes it (a hash's slot-order snapshot, `n_hash_unsorted`).
+  pub unordered_walk: boolean = false,
   // The plain enum a bare variant name resolves in first (`enum_hint`, `@FR-T-Chk-Var`): set
   // while an item is checked at an enum element; -1 elsewhere.
   pub enum_hint: integer = -1,
