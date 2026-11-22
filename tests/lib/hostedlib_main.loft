@@ -37,6 +37,8 @@ fn main() {
     seen = "{seen}{label_of(t)}={k.total};";
   }
   assert(seen == "hosted:4=467;stores:4=467;", "views {seen}");
+  // a text made of two nested text answers: "ab" is 2 bytes, WIDTHS[2] = 4
+  assert(tag("ab") == "<ab:4|ab:4>", "tag {tag("ab")}");
   // the same view, held across two calls into the unit inside a nested loop: each answer
   // reads the loop's text where the vector holds it
   got = "";

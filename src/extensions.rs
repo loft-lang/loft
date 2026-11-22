@@ -1424,6 +1424,11 @@ fn shared_store_dispatch_raw(
         usize,
         *mut LibArg,
     ) = unsafe { std::mem::transmute(bridge_ptr) };
+    let text_dest_of_call = if matches!(sig.ret, Some(ArgT::Text)) {
+        stores.bridge_text_dest
+    } else {
+        None
+    };
     // `@PLN206 P4d` — `LOFT_HOSTED_VERIFY`: the compiled call and the interpreted one, compared.
     let host = if crate::state::hosted_verify_enabled() {
         host_state()
@@ -1445,9 +1450,17 @@ fn shared_store_dispatch_raw(
     // `@PLN206` coverage — a hosted C unit answers a text as its bytes (`loft_la_set_text`) and
     // leaves the destination to the dispatcher, which writes them into it here, before the unit
     // runs again.  A rustc artifact writes the destination itself and answers no bytes.
-    if matches!(sig.ret, Some(ArgT::Text))
+    // The destination is this call's own, read before the call: a nested call made while it ran
+    // (an interpreted body, the verify's twin) sets and takes the shared field for itself.
+    if let Some(dest) = text_dest_of_call
         && !ret.text_ptr.is_null()
-        && let Some(dest) = stores.bridge_text_dest.take()
+    {
+        if stores.bridge_text_dest == Some(dest) {
+            stores.bridge_text_dest = None;
+        }
+    }
+    if let Some(dest) = text_dest_of_call
+        && !ret.text_ptr.is_null()
         && ret.text_len > 0
     {
         let text = unsafe {

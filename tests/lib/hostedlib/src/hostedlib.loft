@@ -73,6 +73,13 @@ pub fn rename(self: Bag, n: text) {
   self.name = n;
 }
 
+// A text built from another carried function's text answers: its interpreted twin calls
+// `label_of` interpreted too, each nested answer landing in this call's own text, not the outer
+// one's destination.
+pub fn tag(t: text) -> text {
+  "<{label_of(t)}|{label_of(t)}>"
+}
+
 // A carried function whose answer is built from another carried function's records: its
 // interpreted twin calls `bag_new` interpreted too, answering into the caller's buffer.
 pub fn twice(name: text) -> Bag {
