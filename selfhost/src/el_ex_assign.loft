@@ -892,6 +892,7 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
             fcv = el_vars::var(vars, fa.name);
             if fcv >= 0 && !el_types::is_unknown(el_vars::tp(vars, fcv)) {
               e.b.data.definitions[fr].attributes[fa#index].typedef = [closure_attr_type(e, el_vars::tp(vars, fcv))];
+              note_shared_vector(e, fr, fa.name, el_vars::tp(vars, fcv));
             }
           }
         }
@@ -955,6 +956,7 @@ pub fn closure_value(e: el::El, vars: el_vars::Vars, d: integer, rec_nm: text, c
         ft = el_types::base(el_vars::tp(vars, el_vars::var(vars, c.name)));
       }
       e.b.data.definitions[rd].attributes += [el::attribute(c.name, ft)];
+      note_shared_vector(e, rd, c.name, c.tp);
     }
     e.b.data.definitions[d].closure_record = rd;
     return ex(ir::NdNull, lambda_value_type(e, d));
@@ -975,12 +977,27 @@ pub fn closure_value(e: el::El, vars: el_vars::Vars, d: integer, rec_nm: text, c
   el_vars::register_work_ref(vars, w);
   ops: vector<ir::Node> = [];
   // A record capture a previous build of this closure shared is released first, where it is not
-  // the record this build shares (`OpFreeRefIfDistinct`).
+  // the record this build shares (`OpFreeRefIfDistinct`).  A record that owns a droppable is
+  // released by its snapshot's cascade instead (`@FR-L-CapOwn`, `displaced_drop`): each held
+  // slot — a record, a shared vector, a cell — lets go of the store it is filled with again, so
+  // the cascade skips it (`snapshot_keeps_refill`).
+  snap = el_types::type_owns_hook(e, ir::TyReference { n: rd, dep: [] }, "OpDrop", []);
   for c in caps {
-    if record_type(e, c.tp) && el_vars::var(vars, c.name) != vars.assign_target {
-      cv = el_vars::var(vars, c.name);
-      built = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [ir::NdVar { n: w }]), ir::NdBoolean { b: false }, el_ir::cl(e, "OpConvBoolFromRef", [ir::NdVar { n: w }]));
-      held = el_ir::cl(e, "OpGetDbRef", [ir::NdVar { n: w }, ir::NdInt { n: field_position(e, rd, c.name) }]);
+    cv = el_vars::var(vars, c.name);
+    if cv < 0 || cv == vars.assign_target {
+      continue;
+    }
+    built = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [ir::NdVar { n: w }]), ir::NdBoolean { b: false }, el_ir::cl(e, "OpConvBoolFromRef", [ir::NdVar { n: w }]));
+    at = ir::NdInt { n: field_position(e, rd, c.name) };
+    held = el_ir::cl(e, "OpGetDbRef", [ir::NdVar { n: w }, at]);
+    if snap {
+      ca = attr_nr(el::def(e, rd), c.name);
+      slot_ref = ca >= 0 && match el_types::base(el::def(e, rd).attributes[ca]!.typedef[0] ?? ir::TyVoid) { TyReference { n: _ } => true, TyEnum { n: _, is_ref: sr } => sr, _ => false };
+      if slot_ref {
+        detach = el_ir::cl(e, "OpSetDbRef", [ir::NdVar { n: w }, at, el_ir::cl(e, "OpNullRefSentinel", [])]);
+        ops += [el_ir::v_if(built, el_ir::v_if(el_ir::cl(e, "OpDistinctStore", [held, ir::NdVar { n: cv }]), ir::NdNull, detach), ir::NdNull)];
+      }
+    } else if record_type(e, c.tp) {
       ops += [el_ir::v_if(built, el_ir::cl(e, "OpFreeRefIfDistinct", [held, ir::NdVar { n: cv }]), ir::NdNull)];
     }
   }
@@ -1113,6 +1130,22 @@ fn forward_capture(e: el::El, vars: el_vars::Vars, c: text) -> boolean {
     }
   }
   false
+}
+
+// `note_shared_vector`: closure record `rec`'s attribute `name` shares the captured vector of
+// type `t` (a `&vector<τ>` capture shares its pointee).
+pub fn note_shared_vector(e: el::El, rec: integer, name: text, t: ir::TypeT) {
+  vt = match t { TyRefVar { inner } => inner, _ => t };
+  if !(vt is TyVector) {
+    return;
+  }
+  for sv in e.shared_vecs {
+    if sv.rec == rec && sv.name == name {
+      e.shared_vecs[sv#index] = el::SharedVec { rec: rec, name: name, tp: vt };
+      return;
+    }
+  }
+  e.shared_vecs += [el::SharedVec { rec: rec, name: name, tp: vt }];
 }
 
 pub fn closure_attr_type(e: el::El, t: ir::TypeT) -> ir::TypeT {
