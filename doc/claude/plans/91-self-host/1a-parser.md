@@ -229,6 +229,16 @@ program was found for stays listed with what was tried.
   variable in a tuple, tuple-member write, field append, loop, vector and text copy, match and
   return ends user-named and answers as its plain-named twin (`is_compiler_generated` reads
   the name), so the split is in which path marks, never in the flag; no wrong program found.
+- `collect_mutated_captures` takes its candidate names from the lambda's whole variable table
+  (it runs before the closure record exists), so a capturing lambda's `mutated_captures` lists
+  its own written locals and temporaries (`i`, `i#index`, `_range_end_1`, `__ncc_1`) beside
+  the captures it writes — its comment calls the over-inclusion "safe (just spurious work)".
+  Tried: an outer scalar and an outer vector parameter named as the lambda's own loop variable
+  (`for i` inside, `i` outside), with and without a capture — the readers intersect with the
+  real captures or read "written" conservatively: right answers on both backends, no
+  diagnostic; no wrong program found.  The port asks per capture (`writes_a_name`) and so
+  differs on `mutated_capture` in 21 programs: porting Rust's rule is the IR walk
+  `walk_for_mutations` over the variable table.
 - `unbox_tuple_from_dbref` marks its temp `skip_free` and leaves it a work ref, where the
   parallel paths unregister theirs (`unregister_work_ref`).  Not observable: the image is
   identical either way (gate E agrees on the 7 functions it occurs in).

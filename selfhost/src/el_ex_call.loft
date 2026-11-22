@@ -30,6 +30,7 @@ use el_ex_match;
 use el_ex_pattern;
 use el_ex_vector;
 use el_ex_name;
+use binds;
 
 // Does `n` read a variable whose template type names placeholder `h`?
 pub fn reads_over(n: ir::Node, tv: ir::Function, h: integer) -> boolean {
@@ -3217,6 +3218,30 @@ pub fn coalesce(e: el::El, vars: el_vars::Vars, l: integer, r: integer) -> Ex {
 // block — the result a view of the holder where a loft function answered the record
 // (`owned_record_subject`).  A default of another record type, or a call answering no buffer of
 // its own, is refused by name.
+// `owned_record_subject` → `every_tail_is_an_owned_call`: every value the subject can answer is
+// a loft function's (or a fn-ref call's) result — a value branch or a block whose every tail is
+// one — so the record it answers is fresh, and the holder owns it.
+fn every_tail_is_an_owned_call(e: el::El, n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdCall { def_nr } => binds::is_loft_defined(el::def(e, def_nr)),
+    NdCallRef { var: _ } => true,
+    NdIf { cond: _, t, f } => every_tail_is_an_owned_call(e, t) && every_tail_is_an_owned_call(e, f),
+    NdBlock { block } => len(block[0].operators) > 0 && every_tail_is_an_owned_call(e, block[0].operators[-1]!),
+    _ => false
+  }
+}
+
+// `build_null_coalesce_default_inner`'s holder of a record or a struct-enum subject: never freed
+// unless it owns the record (`owned_record_subject`), then freed — the mark cleared, as the flags
+// are cumulative across passes.
+fn holder_free(e: el::El, vars: el_vars::Vars, held: integer, subject: ir::Node) {
+  if every_tail_is_an_owned_call(e, subject) {
+    vars.vars[held].skip_free = false;
+  } else {
+    el_vars::set_skip_free(vars, held, "build_null_coalesce_default_inner");
+  }
+}
+
 pub fn record_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   lhs = el_types::base(x.tp);
   rd = match lhs { TyReference { n } => n, _ => -1 };
@@ -3231,7 +3256,7 @@ pub fn record_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   }
   // A record a loft function answers is a fresh one the holder owns: the result views the
   // holder (`owned_record_subject`).
-  owned = match el_ir::unspan(x.code) { NdCall { def_nr } => !starts_with(el::def(e, def_nr).name, "Op"), NdCallRef { var: _ } => true, _ => false };
+  owned = every_tail_is_an_owned_call(e, x.code);
   // A call default answers a record in its own buffer; beside a held subject that arm owns it
   // (`join-arm-owner`: the buffer bound to the call, then answered).
   dbuf = match el_ir::unspan(d.code) { NdCall { args } => hidden_ref_arg(vars, args), _ => -2 };
@@ -3276,7 +3301,7 @@ pub fn record_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   }
   // Minted on both passes, as the Rust mints it, so it numbers before the second pass's buffers.
   held = el_vars::create_unique(vars, "_ncc", lhs);
-  el_vars::set_skip_free(vars, held, "build_null_coalesce_default_inner");
+  holder_free(e, vars, held, x.code);
   el_vars::register_work_ref(vars, held);
   if e.first_pass {
     // A view of what the subject borrows is answered as the "ncc" block it becomes, so a
@@ -3386,7 +3411,7 @@ pub fn enum_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   held = el_vars::create_unique(vars, "_ncc", el_types::without_deps(lhs));
-  el_vars::set_skip_free(vars, held, "build_null_coalesce_default_inner");
+  holder_free(e, vars, held, x.code);
   el_vars::register_work_ref(vars, held);
   rt = el_types::with_deps(el_types::without_deps(lhs), [held]);
   if e.first_pass {
