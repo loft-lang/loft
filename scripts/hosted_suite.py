@@ -21,9 +21,10 @@ A file is
                 the stores (a C function, a file), so none was compared call by call;
   not reached — the same output, but no call crossed the unit (nothing carried was called);
   skipped     — it did not run interpreted (refused, or failing on its own).
-A generated program is written beside its test file for the run (a test names its fixtures
-from its own directory), and an adopted run builds `native-auto/` in each package: run this on
-an exported copy of the libraries (`git archive origin/main`), never on a checkout.
+A program runs in a shadow of its package (links to its entries but the manifest and the
+sources), so a fixture named from the test's directory resolves while the library is adopted
+through `--lib`.  An adopted run builds `native-auto/` in each package: run this on an exported
+copy of the libraries (`git archive origin/main`), never on a checkout.
 
 The per-library line says how many of the library's public functions the unit carries, and
 why the rest stay interpreted.  Exit 1 when any file differs.
@@ -66,20 +67,42 @@ def one(loft, libs, pkg, test, work, timeout):
     name = os.path.relpath(test, os.path.dirname(pkg))
     if prog is None:
         return name, "skipped", "no main and no test_* function", None
-    # Beside the test file: a test names its fixtures by their path from its own directory.
-    # A file with its own `main` runs as it is; a generated one is removed afterwards.
-    if prog is src:
-        path, made = test, None
-    else:
-        path = os.path.join(os.path.dirname(test), f".hosted_suite_{os.getpid()}_{os.path.basename(test)}")
-        made = path
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(prog)
+    # In the package's shadow: a test names its fixtures by their path from its own directory,
+    # and from inside the package the library would be the program's own source, never
+    # adopted (as under `loft test`).
+    shadow = shadow_of(pkg, work)
+    path = os.path.join(shadow, "tests", f"{os.getpid()}_{os.path.basename(test)}")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(prog)
     try:
-        return judge(loft, libs, pkg, name, path, timeout)
+        return judge(loft, libs, shadow, name, path, timeout)
     finally:
-        if made:
-            os.remove(made)
+        os.remove(path)
+
+
+_SHADOWS = {}
+_SHADOW_LOCK = __import__("threading").Lock()
+
+
+def shadow_of(pkg, work):
+    """A directory beside no package that looks like `pkg` from its `tests/`: a link to each of
+    its entries but its manifest, its sources and its caches, so a fixture path resolves and
+    `use` finds the library through `--lib`."""
+    with _SHADOW_LOCK:
+        if pkg in _SHADOWS:
+            return _SHADOWS[pkg]
+        shadow = os.path.join(work, "shadow_" + str(len(_SHADOWS)), os.path.basename(pkg))
+        os.makedirs(os.path.join(shadow, "tests"))
+        for e in os.listdir(pkg):
+            if e in ("loft.toml", "src", "tests", "native-auto", ".loft"):
+                continue
+            os.symlink(os.path.join(pkg, e), os.path.join(shadow, e))
+        tdir = os.path.join(pkg, "tests")
+        for e in os.listdir(tdir):
+            if not e.startswith("."):
+                os.symlink(os.path.join(tdir, e), os.path.join(shadow, "tests", e))
+        _SHADOWS[pkg] = shadow
+        return shadow
 
 
 def judge(loft, libs, pkg, name, path, timeout):
