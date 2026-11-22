@@ -831,7 +831,7 @@ pub fn arm_delivery(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer,
     if result is TyOptional {
       fwd = el_vars::create_unique(vars, "fwd_elm", el_types::without_deps(el_types::base(result)));
       el_vars::set_defined(vars, fwd);
-      vars.vars[fwd].skip_free = true;
+      el_vars::set_skip_free(vars, fwd, "copy_borrow_tail_into_retbuf");
       fv = ir::NdVar { n: fwd };
       inner = el_ir::v_block([el_ir::cl(e, "OpClearVector", [b]), el_ir::cl(e, "OpAppendVector", [b, fv, ir::NdInt { n: rec }]), b], own, "borrow_tail_copy_104");
       copy_in = el_ir::v_block([el_ir::v_set(fwd, tail), el_ir::v_if(el_ir::cl(e, "OpVectorIsNull", [fv]), fv, inner)], own, "borrow_tail_copy_104");
@@ -1413,7 +1413,9 @@ pub fn build_into_buffer(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: int
       // buffer, where no other exit stands beside it.
       if object == null && el_ex_copy::returns_in(bl.operators[..-1]) == 0 {
         match el_ir::unspan(bl.operators[-1]) {
-          NdReturn { inner } => {
+          // Decided before any arm is built (`exit_literal_workrefs`), so no arm's work ref is
+          // marked for a delivery another arm then refuses.
+          NdReturn { inner } => if exit_literal_refs(inner, []) {
             arms = literal_arms_into_buffer(e, vars, inner, rb, result);
             if arms != null {
               object = el_ir::respan(bl.operators[-1], ir::NdReturn { inner: arms! });
@@ -1860,7 +1862,7 @@ pub fn object_into_buffer(e: el::El, vars: el_vars::Vars, x: ir::Node, rb: integ
   }
   // (`build_into_return_buffer`: the literal's work ref is left with no store of its own —
   // the buffer took its place — which `skip_free` records.)
-  vars.vars[w].skip_free = true;
+  el_vars::set_skip_free(vars, w, "build_into_return_buffer");
   // Typed as the literal — a variant's own record where the result is its enum.
   el_ir::v_block(built, el_types::with_deps(el_types::without_deps(lit_t), [rb]), kind)
 }

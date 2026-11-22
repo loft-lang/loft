@@ -2565,7 +2565,7 @@ pub fn finish_body(e: el::El, vars: el_vars::Vars, body: ir::Node) -> ir::Node {
       if !e.first_pass {
         for ev in vars.vars {
           if starts_with(ev.name, "_elm_") && len(el_types::deps(ev.type_def[0] ?? ir::TyVoid)) > 0 {
-            el_vars::mark_inline(vars, ev#index);
+            el_vars::mark_inline(vars, ev#index, "unique_elm_var");
           }
         }
       }

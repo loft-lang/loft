@@ -316,7 +316,7 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
       crec = el_schema::child_rec(e, el::def(e, rrd).known_type);
       rroot = place_root(e, fargs[0]!);
       old = el_vars::create_unique(vars, "__oldrec", ir::TyReference { n: rrd, dep: if rroot >= 0 { [rroot] } else { [] } });
-      vars.vars[old].skip_free = true;
+      el_vars::set_skip_free(vars, old, "bind_displaced_closure");
       el_vars::set_defined(vars, old);
       return ex(el_ir::v_block([
         el_ir::v_set(old, el_ir::cl(e, "OpRefFromChildRec", [el_ir::cl(e, "OpGetField", [fargs[0]!, ir::NdInt { n: rpos + 4 }, ir::NdInt { n: 0 }])])),
@@ -1098,8 +1098,8 @@ pub fn staged_place_source(e: el::El, vars: el_vars::Vars, place: ir::Node, code
     return el_ir::v_block([el_ir::v_set(w, code), ir::NdVar { n: w }], ir::TyReference { n: rd, dep: [w] }, "staged_place_source");
   }
   view = el_vars::work_ref_p2(vars, ir::TyReference { n: rd, dep: [root] });
-  vars.vars[view].skip_free = true;
-  el_vars::mark_inline(vars, view);
+  el_vars::set_skip_free(vars, view, "stage_source_inside_place");
+  el_vars::mark_inline(vars, view, "stage_source_inside_place");
   w = el_vars::work_ref_p2(vars, ir::TyReference { n: rd, dep: [] });
   k = ir::NdInt { n: kt };
   copy = el_ir::v_block([el_ir::v_set(w, ir::NdNull), el_ir::cl(e, "OpDatabase", [ir::NdVar { n: w }, k]), el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: view }, ir::NdVar { n: w }, k]), ir::NdVar { n: w }], ir::TyReference { n: rd, dep: [w] }, "staged_place_source");
@@ -1389,9 +1389,9 @@ pub fn vector_field_bind(e: el::El, vars: el_vars::Vars, place: ir::Node, pt: ir
               if !reads_base {
                 // `place_buffer_of`: the field is emptied, the call's buffer pointed at it (nulled
                 // just before the statement, `mark_inline_ref`), and the call fills it in place.
-                el_vars::mark_inline(vars, bv);
+                el_vars::mark_inline(vars, bv, "buffer_is_the_place");
                 // (The buffer names the field, which the record owns: never freed itself.)
-                vars.vars[bv].skip_free = true;
+                el_vars::set_skip_free(vars, bv, "buffer_is_the_place");
                 return ex(ir::NdInsert { items: [clear, el_ir::v_set(bv, place), x.code] }, ir::TyVoid);
               }
             }
@@ -1822,7 +1822,7 @@ pub fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
     elm = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [rec] });
     // (`parse_vector`'s `is_field`: the element is a reference INTO the field's store, which the
     // owning record frees — the element's own free is suppressed.)
-    vars.vars[elm].skip_free = true;
+    el_vars::set_skip_free(vars, elm, "parse_vector_inner");
   }
   r = holder;
   at = ir::NdVar { n: elm };
@@ -2334,7 +2334,7 @@ pub fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: 
     el::refuse(e, "a compound assignment to a place that is not a known local");
     return ex(ir::NdNull, ir::TyVoid);
   }
-  el_vars::mark_user_named(vars, v);
+  el_vars::mark_user_named(vars, v, "parse_var_inner");
   el_vars::in_use(vars, v, true);
   vt = el_vars::tp(vars, v);
   bin = op[..-1];
@@ -2369,9 +2369,9 @@ pub fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: 
     odb = el_vars::work_vec_db(vars, ir::TyReference { n: orows!.main_def, dep: [] });
     el_vars::depend(vars, v, odb);
     // (`mark_inline_ref`: the mint is conditional, so the backing is nulled as an inline ref.)
-    el_vars::mark_inline(vars, odb);
+    el_vars::mark_inline(vars, odb, if fresh_local { "build_vector_list" } else { "absent_append_mint" });
     if fresh_local {
-      vars.vars[odb].skip_free = true;
+      el_vars::set_skip_free(vars, odb, "build_vector_list");
     }
     guard = el_ir::v_if(el_ir::cl(e, if fresh_local { "OpVectorIsNull" } else { "OpRefIsNull" }, [ir::NdVar { n: v }]), ir::NdInsert { items: [
       el_ir::cl(e, "OpDatabase", [ir::NdVar { n: odb }, ir::NdInt { n: orows!.main_known }]),
@@ -3221,7 +3221,7 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
             }
             vt = el_types::with_deps(el_types::without_deps(el_types::base(el_vars::tp(vars, v))), [v]);
             vtmp = el_vars::work_ref(vars, vt);
-            vars.vars[vtmp].skip_free = true;
+            el_vars::set_skip_free(vars, vtmp, "parse_object_field");
             staged += [el_ir::v_set(vtmp, args[1]!)];
             ops[op#index] = ir::NdCall { def_nr: def_nr, args: [args[0]!, ir::NdVar { n: vtmp }, args[2]!] };
           }
@@ -3233,7 +3233,7 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
             if cvw >= 0 && cvw != v && viewers.contains(cvw) {
               cvt = el_types::with_deps(el_types::without_deps(el_types::base(el_vars::tp(vars, cvw))), [cvw]);
               cvtmp = el_vars::work_ref(vars, cvt);
-              vars.vars[cvtmp].skip_free = true;
+              el_vars::set_skip_free(vars, cvtmp, "parse_object_field");
               staged += [el_ir::v_set(cvtmp, args[0]!)];
               ops[op#index] = ir::NdCall { def_nr: def_nr, args: [ir::NdVar { n: cvtmp }, args[1]!, args[2]!] };
             }
@@ -3278,7 +3278,7 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
               }
               tmp = el_vars::work_ref(vars, tp);
               if text_view {
-                vars.vars[tmp].skip_free = true;
+                el_vars::set_skip_free(vars, tmp, "parse_object_field");
               }
               staged += [el_ir::v_set(tmp, args[-1])];
               ops[op#index] = ir::NdCall { def_nr: def_nr, args: args[..-1] + [ir::NdVar { n: tmp }] };
@@ -3538,7 +3538,7 @@ pub fn demote_field(e: el::El, vars: el_vars::Vars, v: integer, d: integer, fiel
 pub fn skip_free_named(vars: el_vars::Vars, n: text) {
   nr = el_vars::var(vars, n);
   if nr >= 0 && !vars.vars[nr].argument {
-    vars.vars[nr].skip_free = true;
+    el_vars::set_skip_free(vars, nr, "mark_skip_free_by_name");
   }
 }
 
@@ -4377,8 +4377,8 @@ pub fn read_through_tag(e: el::El, vars: el_vars::Vars, x: Ex) -> Ex? {
   }
   // Anything else is named first, in a work-ref that borrows the slot's store.
   named = el_vars::work_ref(vars, x.tp);
-  vars.vars[named].skip_free = true;
-  el_vars::mark_inline(vars, named);
+  el_vars::set_skip_free(vars, named, "emit_nullable_slot_read");
+  el_vars::mark_inline(vars, named, "emit_nullable_slot_read");
   ex(el_ir::v_block([el_ir::v_set(named, x.code), nullable_pick(e, ir::NdVar { n: named }, pp, s_kt)], rt, "nullable_slot_read"), rt)
 }
 
@@ -4561,7 +4561,7 @@ pub fn out_of_line_set(e: el::El, vars: el_vars::Vars, field: ir::Node, kt: inte
       ops += [op];
     }
   }
-  vars.vars[w].skip_free = true;
+  el_vars::set_skip_free(vars, w, "literal_in_child");
   ir::NdInsert { items: ops }
 }
 
@@ -4587,7 +4587,7 @@ fn write_back_call(e: el::El, vars: el_vars::Vars, field: ir::Node, k: ir::Node,
   }
   r = el_vars::create_unique(vars, "written_back", ir::TyReference { n: d, dep: [host] });
   el_vars::set_defined(vars, r);
-  vars.vars[r].skip_free = true;
+  el_vars::set_skip_free(vars, r, "write_back_call");
   rv = ir::NdVar { n: r };
   release = el_ir::v_if(el_ir::cl(e, "OpDistinctStore", [rv, ir::NdVar { n: host }]), el_ir::cl(e, "OpFreeRefIfDistinct", [rv, ir::NdVar { n: buf }]), ir::NdNull);
   el_ir::v_block([el_ir::v_set(r, call), el_ir::cl(e, "OpSetChildRec", [field, rv, k]), release], ir::TyVoid, "write_back_call")
@@ -4847,8 +4847,8 @@ pub fn field_vector_copy(e: el::El, vars: el_vars::Vars, r: ir::Node, d: integer
         if vk0 >= 0 {
           // Nulled just before the statement that fills it (`mark_inline_ref`), not at the top;
           // it names the field, which the record owns, so it is never freed itself.
-          el_vars::mark_inline(vars, w);
-          vars.vars[w].skip_free = true;
+          el_vars::mark_inline(vars, w, "handle_field");
+          el_vars::set_skip_free(vars, w, "handle_field");
           fp = el_ir::cl(e, "OpGetField", [r, ir::NdInt { n: field_position(e, d, fname) }, ir::NdInt { n: vk0 }]);
           return [el_ir::v_set(w, fp), x.code];
         }

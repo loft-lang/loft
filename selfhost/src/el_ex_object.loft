@@ -48,11 +48,11 @@ pub fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: 
     dep: vector<integer> = if r is NdVar { [v] } else { [] };
     elm = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: dep });
     if len(dep) == 0 {
-      el_vars::mark_inline(vars, elm);
+      el_vars::mark_inline(vars, elm, "unique_elm_var");
     }
     // (`parse_vector`'s `is_field`: the element is a reference INTO the field's store, which the
     // owning record frees — its own free suppressed.)
-    vars.vars[elm].skip_free = true;
+    el_vars::set_skip_free(vars, elm, "parse_vector_inner");
   }
   // `parse_vector`'s own-buffer arm (loft#2397, @FR-E-Asgn-Compound): a record-element literal
   // whose items read the destination under another name — a local viewing the record — is built
@@ -505,7 +505,7 @@ pub fn fn_number_write(e: el::El, vars: el_vars::Vars, r: ir::Node, pos: ir::Nod
   }
   tmp = el_vars::create_unique(vars, "__fn_ref_tmp", el_types::with_deps(el_types::base(ft), []));
   el_vars::set_defined(vars, tmp);
-  vars.vars[tmp].skip_free = true;
+  el_vars::set_skip_free(vars, tmp, "fn_ref_slot_dnr");
   el_ir::v_block([el_ir::v_set(tmp, val), el_ir::cl(e, "OpSetInt4", [r, pos, ir::NdFnRefDnr { n: tmp }])], ir::TyVoid, "fn_number_write")
 }
 
@@ -677,7 +677,7 @@ pub fn closure_field_write(e: el::El, vars: el_vars::Vars, hd: integer, fname: t
       ops += [el_ir::replace_subtree(op, ir::NdVar { n: w }, old)];
     }
   }
-  vars.vars[w].skip_free = true;
+  el_vars::set_skip_free(vars, w, "emit_fn_ref_field_write");
   // (The temporary is typed as the lambda's own function type — the closure block's, which
   // lists a text answer's hidden `&text` buffer — not as the field's.)
   nw = fn_number_write(e, vars, r, ir::NdInt { n: pos }, ir::NdInt { n: ld }, bl.result[0] ?? ft);
@@ -920,7 +920,7 @@ pub fn member(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: t
       if e.first_pass || el_types::is_unknown(cr.tp) {
         return cr;
       }
-      vars.vars[fw].skip_free = true;
+      el_vars::set_skip_free(vars, fw, "parse_part_inner");
       // (The read bound for the call borrows nothing: the temporary lives for the call alone.)
       return ex(el_ir::v_block([el_ir::v_set(fw, el_ex_null::block_typed(read.code, el_types::with_deps(read.tp, []))), cr.code], cr.tp, "fn_call_tmp"), cr.tp);
     }
@@ -943,7 +943,7 @@ pub fn member(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: t
       if e.first_pass || el_types::is_unknown(cr.tp) {
         return cr;
       }
-      vars.vars[fw].skip_free = true;
+      el_vars::set_skip_free(vars, fw, "parse_part_inner");
       // (A split field's closure half is its child record, read where it lies.)
       half = if fn_field_split(e, hd, name) { el_ir::cl(e, "OpRefFromChildRec", [el_ir::cl(e, "OpGetField", [ir::NdVar { n: hw }, ir::NdInt { n: field_position(e, hd, name) + 4 }, ir::NdInt { n: 0 }])]) } else { el_ir::cl(e, "OpNullRefSentinel", []) };
       read = el_ir::v_block([el_ir::cl(e, "OpGetInt4", [ir::NdVar { n: hw }, ir::NdInt { n: field_position(e, hd, name) }]), half], ft, "fn_ref_field_read");
@@ -1189,7 +1189,7 @@ pub fn chain_hold(e: el::El, vars: el_vars::Vars, x: Ex, more: boolean) -> Ex {
     }
   }
   w = el_vars::work_ref(vars, x.tp);
-  el_vars::mark_inline(vars, w);
+  el_vars::mark_inline(vars, w, "parse_part_inner");
   kt = el::def(e, d).known_type;
   if projection && kt != el::NO_TYPE {
     tp = ir::TyReference { n: d, dep: if more { [w] } else { [] } };
@@ -1245,7 +1245,7 @@ pub fn call_member_view(e: el::El, vars: el_vars::Vars, proj: ir::Node, d: integ
             return null;
           }
           holder = el_vars::work_ref(vars, call_tp);
-          el_vars::mark_inline(vars, holder);
+          el_vars::mark_inline(vars, holder, "call_member_view");
           tp = ir::TyReference { n: d, dep: [holder] };
           na = [ir::NdVar { n: holder }] + pargs[1..];
           return ex(el_ir::v_block([el_ir::v_set(holder, pargs[0]), ir::NdCall { def_nr: pd, args: na }], tp, "inline ref view"), tp);
@@ -1374,10 +1374,10 @@ pub fn binding_var(e: el::El, vars: el_vars::Vars, name: text) -> integer {
       return -1;
     }
     v = el_vars::add_variable(vars, name, ir::TyUnknown { n: 0 });
-    el_vars::mark_user_named(vars, v);
+    el_vars::mark_user_named(vars, v, "parse_var_inner");
     return v;
   }
-  el_vars::mark_user_named(vars, v);
+  el_vars::mark_user_named(vars, v, "parse_var_inner");
   el_vars::in_use(vars, v, true);
   if !e.first_pass {
     el_vars::set_defined(vars, v);
@@ -1757,7 +1757,7 @@ pub fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?,
         return icr;
       }
       if !owns {
-        vars.vars[iw].skip_free = true;
+        el_vars::set_skip_free(vars, iw, "parse_part_inner");
       }
       return ex(el_ir::v_block([el_ir::v_set(iw, ix.code), icr.code], icr.tp, "fn_call_tmp"), icr.tp);
     }
@@ -2013,8 +2013,8 @@ pub fn keyed_field_remove(e: el::El, vars: el_vars::Vars, coll: ir::Node, db_tp:
   // The record is a borrow of the collection: never freed as a store of its own.  It is the
   // record the key names, so the dense type the place resolved to (its `?` is the miss's).
   found = el_vars::work_ref(vars, el_types::base(f_type));
-  el_vars::mark_inline(vars, found);
-  vars.vars[found].skip_free = true;
+  el_vars::mark_inline(vars, found, "keyed_group_remove");
+  el_vars::set_skip_free(vars, found, "keyed_group_remove");
   ops = [el_ir::v_set(found, get_rec)];
   for m in members {
     if m.off != site!.off {
@@ -2460,7 +2460,7 @@ pub fn store_else(e: el::El, vars: el_vars::Vars, code: ir::Node, orelse: intege
 fn store_target(e: el::El, vars: el_vars::Vars, target: ir::Node) -> integer {
   wt = el_vars::create_unique(vars, "store_target", store_target_type(e, vars, target));
   el_vars::set_defined(vars, wt);
-  vars.vars[wt].skip_free = true;
+  el_vars::set_skip_free(vars, wt, "parse_store_else");
   src = borrow_source(target);
   if src >= 0 {
     el_vars::depend(vars, wt, src);

@@ -1447,18 +1447,21 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
         v = el_vars::add_variable(vars, a.name, a.typedef);
         el_vars::become_argument(vars, v);
         // (`mark_declared_parameters`: a parameter the signature declares is named by the user,
-        // whether or not the body mentions it.)
-        el_vars::mark_user_named(vars, v);
+        // whether or not the body mentions it.  `parse_function` asks it, `parse_lambda` does
+        // not: a lambda's parameter is user-named where the body mentions it.)
+        if !starts_with(name, "__lambda_") {
+          el_vars::mark_user_named(vars, v, "mark_declared_parameters");
+        }
 
         if vars.vars[v].uses > 0 {
           el_vars::in_use(vars, v, false);
         }
         if a.constant {
-          el_vars::set_value_const(vars, v);
+          el_vars::set_value_const(vars, v, "parse_function");
         }
       } else {
         if a.constant {
-          el_vars::set_value_const(vars, a#index);
+          el_vars::set_value_const(vars, a#index, "parse_function");
         }
         // `Parser::change_var_type` re-types each parameter where the second pass enters the
         // body: a `vector<T>` one has `vector<T>` and `main_vector<T>` defined there (the

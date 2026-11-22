@@ -259,7 +259,7 @@ pub fn slice_alt(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
     mv = el_vars::create_unique(vars, "mv_{nm}", vt);
     el_vars::set_defined(vars, mv);
     if !(el_types::base(ft) is TyText) {
-      vars.vars[mv].skip_free = true;
+      el_vars::set_skip_free(vars, mv, "bind_alternation_captures");
     }
     binds += [el_ir::v_set(mv, acc)];
     names += [el_vars::VarName { name: nm, nr: el_vars::var(vars, nm) }];
@@ -433,7 +433,7 @@ pub fn single_alt(e: el::El, vars: el_vars::Vars, g: integer, sed: integer, elm:
     mv = el_vars::create_unique(vars, "mv_{nm}", vt);
     el_vars::set_defined(vars, mv);
     if !(el_types::base(ft) is TyText) {
-      vars.vars[mv].skip_free = true;
+      el_vars::set_skip_free(vars, mv, "parse_slice_alternation_element");
     }
     binds += [el_ir::v_set(mv, acc)];
     names += [el_vars::VarName { name: nm, nr: el_vars::var(vars, nm) }];
@@ -1083,7 +1083,7 @@ pub fn variant_arm(e: el::El, vars: el_vars::Vars, pats: vector<integer>, sd: in
               if mv < 0 {
                 mv = el_vars::create_unique(vars, "mv_{bname}", ft);
                 el_vars::set_defined(vars, mv);
-                vars.vars[mv].skip_free = true;
+                el_vars::set_skip_free(vars, mv, "bind_match_field_capture");
                 r.aliases += [el_vars::VarName { name: bname, nr: el_vars::var(vars, bname) }];
                 el_vars::set_name(vars, bname, mv);
               }
@@ -2175,7 +2175,7 @@ pub fn first_pass_fields(e: el::El, vars: el_vars::Vars, d: integer, fields: vec
               if len(items) > 0 {
                 // (`is_field`: a reference into the field's store, never freed itself.)
                 fpe = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [] });
-                vars.vars[fpe].skip_free = true;
+                el_vars::set_skip_free(vars, fpe, "parse_vector_inner");
                 // (A literal that fills the field names its vector's row on this pass, ahead
                 // of the struct that holds it; an empty one names nothing.)
                 match at {
@@ -3177,8 +3177,8 @@ pub fn empty_literal_to(e: el::El, vars: el_vars::Vars, t: ir::TypeT, borrows: v
 pub fn literal_store(e: el::El, vars: el_vars::Vars, v: integer, r: VecRows, rebind: boolean = false, slot: integer = 0) -> vector<ir::Node> {
   db = el_vars::work_vec_db(vars, ir::TyReference { n: r.main_def, dep: [] });
   if rebind {
-    vars.vars[db].skip_free = true;
-    el_vars::mark_inline(vars, db);
+    el_vars::set_skip_free(vars, db, "vector_db_init");
+    el_vars::mark_inline(vars, db, "vector_db_init");
   }
   el_vars::depend(vars, v, db);
   [

@@ -262,9 +262,9 @@ pub fn vector_slice(e: el::El, vars: el_vars::Vars, x: Ex, lo: vector<integer>, 
   held_at: vector<ir::Node> = [];
   if sv < 0 && !place && !(x.tp is TyOptional) && (is_scalar(elem) || plain_record || elem is TyText) && el_ex_assign::minting_call(e, x.code) {
     cw = el_vars::work_ref_p2(vars, x.tp);
-    el_vars::mark_inline(vars, cw);
+    el_vars::mark_inline(vars, cw, "bind_inline_container");
     held = el_vars::work_ref(vars, el_types::without_deps(x.tp));
-    el_vars::mark_inline(vars, held);
+    el_vars::mark_inline(vars, held, "parse_in_range_body");
     // (Its `= null` is declared where the statement's other inline work refs are.)
     held_at = [el_ir::v_set(held, el_ir::v_block([el_ir::v_set(cw, x.code), ir::NdVar { n: cw }], el_types::with_deps(x.tp, [cw]), "inline_container"))];
     sv = held;
@@ -283,7 +283,7 @@ pub fn vector_slice(e: el::El, vars: el_vars::Vars, x: Ex, lo: vector<integer>, 
             if sliced_subject(e, x) == 1 && el_ex_assign::minting_call(e, pa[0]!) {
               rt = el::def(e, cd).returned[0] ?? ir::TyVoid;
               cw = el_vars::work_ref_p2(vars, el_types::without_deps(rt));
-              el_vars::mark_inline(vars, cw);
+              el_vars::mark_inline(vars, cw, "bind_inline_container");
               box = el_ir::v_block([el_ir::v_set(cw, pa[0]!), ir::NdVar { n: cw }], el_types::with_deps(rt, [cw]), "inline_container");
               named = ir::NdCall { def_nr: pd, args: [for a in pa { if a#index == 0 { box } else { a } }] };
             }
@@ -295,8 +295,8 @@ pub fn vector_slice(e: el::El, vars: el_vars::Vars, x: Ex, lo: vector<integer>, 
     }
     held = el_vars::work_ref(vars, el_types::without_deps(x.tp));
     if sliced_subject(e, x) == 1 {
-      el_vars::mark_inline(vars, held);
-      vars.vars[held].skip_free = true;
+      el_vars::mark_inline(vars, held, "parse_in_range_body");
+      el_vars::set_skip_free(vars, held, "parse_in_range_body");
     }
     held_at = [el_ir::v_set(held, named)];
     sv = held;
@@ -790,7 +790,7 @@ pub fn index(e: el::El, vars: el_vars::Vars, at: integer, c: integer?, keys: vec
     // `container_dep`'s own case: the subscript is on a loft function's fresh result, bound to
     // a `__ref_p2_N` the element then borrows (`bind_inline_container`, on both passes).
     cw = el_vars::work_ref_p2(vars, x.tp);
-    el_vars::mark_inline(vars, cw);
+    el_vars::mark_inline(vars, cw, "bind_inline_container");
     x = ex(el_ir::v_block([el_ir::v_set(cw, x.code), ir::NdVar { n: cw }], el_types::with_deps(x.tp, [cw]), "inline_container"), x.tp);
   }
   i = el_ex_assign::expression(e, vars, keys[0]);
@@ -901,7 +901,7 @@ pub fn keyed_items(e: el::El, vars: el_vars::Vars, v: integer, n: integer, fd: i
     // (`is_field`: into a keyed FIELD the element is a reference into the field's store, which
     // the owning record frees — never freed itself.)
     if fd >= 0 {
-      vars.vars[elm].skip_free = true;
+      el_vars::set_skip_free(vars, elm, "parse_vector_inner");
     }
   }
   kt = if e.first_pass { 65535 } else if fd >= 0 { el::def(e, fd).known_type } else { el_schema::keyed_type(e, ct) };
@@ -1097,7 +1097,7 @@ pub fn keyed_index(e: el::El, vars: el_vars::Vars, at: integer, x: Ex, keys: vec
   lifted = -1;
   if el_ex_assign::minting_call(e, x.code) {
     lifted = el_vars::work_ref_p2(vars, x.tp);
-    el_vars::mark_inline(vars, lifted);
+    el_vars::mark_inline(vars, lifted, "bind_inline_container");
     subject = el_ir::v_block([el_ir::v_set(lifted, x.code), ir::NdVar { n: lifted }], el_types::with_deps(x.tp, [lifted]), "inline_container");
   }
   args: vector<ir::Node> = [subject, ir::NdInt { n: if e.first_pass { 65535 } else { el_schema::keyed_type(e, ct) } }, ir::NdInt { n: len(names) }];

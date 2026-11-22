@@ -27,7 +27,7 @@ def reports(o, path):
     env = dict(os.environ, LOFT_NO_CACHE="1")
     with tempfile.TemporaryDirectory(prefix="loft-probe-") as tmp:
         img = os.path.join(tmp, "p.store")
-        made = subprocess.run([o.loft, path], env=dict(env, LOFT_EMIT_PARSED=img, LOFT_TRACE_RETPROMO="1", LOFT_REPORT_CONTRACT="1"),
+        made = subprocess.run([o.loft, path], env=dict(env, LOFT_EMIT_PARSED=img, LOFT_TRACE_RETPROMO="1", LOFT_REPORT_CONTRACT="1", LOFT_TRACE_VARFLAGS="*"),
                               capture_output=True, text=True, errors="replace", timeout=180)
         if not os.path.exists(img):
             return None, None, []
@@ -36,7 +36,7 @@ def reports(o, path):
                             env=dict(env, LOFT_REPORT_STATE="1"), capture_output=True, text=True,
                             errors="replace", timeout=300)
         want = dr.stdout.splitlines()
-        m = subprocess.run([o.elab, img, path, std], env=dict(env, LOFT_ELAB_WHERE="1", LOFT_TRACE_RETPROMO="1", LOFT_REPORT_STATE="1", LOFT_REPORT_CONTRACT="1"),
+        m = subprocess.run([o.elab, img, path, std], env=dict(env, LOFT_ELAB_WHERE="1", LOFT_TRACE_RETPROMO="1", LOFT_REPORT_STATE="1", LOFT_REPORT_CONTRACT="1", LOFT_TRACE_VARFLAGS="*"),
                            capture_output=True, text=True, errors="replace", timeout=300)
     o.decisions = (made.stderr.splitlines(), m.stderr.splitlines())
     o.state = ([l for l in dr.stderr.splitlines() if l.startswith("[state] ")],
@@ -126,6 +126,28 @@ def show_contract(diffs, limit):
         print("contract facts this port does not derive yet: " + ", ".join(f"{k} ({v})" for k, v in gaps.most_common()))
 
 
+def reason_differences(o, want):
+    """The image flags (`LOFT_TRACE_VARFLAGS`) of the program's own functions the two front ends
+    set by different rules, or only one sets: [(fn, var, flag, rust rules, loft rules)]."""
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import elab_gate
+    rust_lines, loft_lines = getattr(o, "decisions", ([], []))
+    own = {m.group(1) for m in (re.match(r"^#\d+ (\S+) type=1 ", l) for l in want or []) if m}
+    own = {f[2:] if f.startswith("n_") else f for f in own}
+    rust = elab_gate.flag_reasons("\n".join(rust_lines), True)
+    loft = elab_gate.flag_reasons("\n".join(loft_lines), False)
+    show = lambda rs: ",".join(sorted(rs)) or "-"
+    return [k + (show(rust.get(k, ())), show(loft.get(k, ()))) for k in sorted(set(rust) | set(loft))
+            if k[0] in own and rust.get(k, set()) != loft.get(k, set())]
+
+
+def show_reasons(diffs, limit):
+    if diffs:
+        print(f"image flags set by another rule (LOFT_TRACE_VARFLAGS: {len(diffs)}; fn var flag: rust | loft):")
+        for f, v, fl, r, l in diffs[:limit]:
+            print(f"  {f} {v} {fl}: {r} | {l}")
+
+
 def show_state(diffs, limit):
     if diffs:
         print(f"function state that differs (LOFT_REPORT_STATE: {len(diffs)}; fn var: rust | loft):")
@@ -178,6 +200,7 @@ def main():
         show_decisions(conflicts, missing, want != mine)
         show_contract(contract_differences(o, want), o.max)
         show_state(state_differences(o), o.max)
+        show_reasons(reason_differences(o, want), o.max)
         if want == mine:
             print("AGREE")
             return

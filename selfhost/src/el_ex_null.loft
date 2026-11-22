@@ -83,7 +83,7 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
         // borrow of the holder, nor of the block typed as it.)
         lhs = el_types::with_deps(lhs, [for hd in el_types::deps(lhs) if !starts_with(el_vars::name_of(vars, hd), "__ref_p2_") { hd }]);
         held = el_vars::create_unique(vars, "_ncc", lhs);
-        vars.vars[held].skip_free = true;
+        el_vars::set_skip_free(vars, held, "build_null_coalesce_default_inner");
         h = ir::NdVar { n: held };
         test = el_ir::v_if(el_ir::cl(e, "OpConvBoolFromText", [h]), h, d.code);
         return ex(el_ir::v_block([el_ir::v_set(held, if e.first_pass { x.code } else { nullable_arith(e, x.code, true) }), test], lhs, "ncc"), lhs);
@@ -136,7 +136,7 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
         el_ex_call::borrowed_literal_buffer(vars, d.code);
       }
       held = el_vars::create_unique(vars, "_ncc", lhs);
-      vars.vars[held].skip_free = true;
+      el_vars::set_skip_free(vars, held, "build_null_coalesce_default_inner");
       el_vars::register_work_ref(vars, held);
       if e.first_pass {
         return ex(ir::NdNull, lhs);
@@ -166,7 +166,7 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
     }
     if !(x.code is NdVar) {
       held = el_vars::create_unique(vars, "_ncc", lhs);
-      vars.vars[held].skip_free = true;
+      el_vars::set_skip_free(vars, held, "build_null_coalesce_default_inner");
       ht = el_types::with_deps(el_types::without_deps(lhs), [held]);
       // (A loft call whose result borrows nothing — not even the buffer it was handed — is a
       // fresh store as a native's is: `owned_vector` with no deps, the holder nulled before the
@@ -186,11 +186,11 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
       owned_vector = len([for od in el_types::deps(lhs) if od < 0 || od >= len(vars.vars) || !vars.vars[od].caller_hidden_buf { od }]) == 0;
       if owned_vector {
         vars.vars[held].skip_free = false;
-        el_vars::mark_inline(vars, held);
+        el_vars::mark_inline(vars, held, "build_null_coalesce_default_inner");
       }
       if fresh {
         el_vars::register_work_ref(vars, held);
-        el_vars::mark_inline(vars, held);
+        el_vars::mark_inline(vars, held, "build_null_coalesce_default_inner");
         el_vars::set_var_type(vars, held, el_types::without_deps(lhs));
         el_ex_call::register_default_literal(vars, d.code, el_types::without_deps(lhs));
         h = ir::NdVar { n: held };
@@ -221,11 +221,11 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
         return ex(ir::NdNull, ir::TyUnknown { n: 0 });
       }
       kheld = el_vars::create_unique(vars, "_ncc", lhs);
-      vars.vars[kheld].skip_free = true;
+      el_vars::set_skip_free(vars, kheld, "build_null_coalesce_default_inner");
       el_vars::register_work_ref(vars, kheld);
       // (found.md row 8: the holder VIEWS the place, an inline ref — its null init mints no
       // store.)
-      el_vars::mark_inline(vars, kheld);
+      el_vars::mark_inline(vars, kheld, "build_null_coalesce_default_inner");
       // (On the first pass too the holder is bound — Rust builds the block on both — so a
       // consumer that asks whether the value runs a bind, a `for`'s source hold, sees it.)
       if e.first_pass {
@@ -631,7 +631,7 @@ pub fn var_attr(e: el::El, vars: el_vars::Vars, var: text, attr: text, arg: inte
   // (A `name#attr` read is a mention of `name`, loft#1834's `mark_user_named`.)
   mv = el_vars::var(vars, var);
   if mv >= 0 && el_vars::name_of(vars, mv) == var {
-    el_vars::mark_user_named(vars, mv);
+    el_vars::mark_user_named(vars, mv, "parse_var_inner");
   }
   fv = el_vars::var(vars, var);
   if fv >= 0 && el_ex_pattern::is_file(e, el_vars::tp(vars, fv)) {
@@ -1466,10 +1466,10 @@ fn mixed_vector_eq(e: el::El, vars: el_vars::Vars, op: text, a: Ex, b: Ex, ea: i
   read_b = elem_read(e, eb, el_ir::cl(e, "OpGetVector", [ir::NdVar { n: rhs }, ir::NdInt { n: elem_size(eb) }, ir::NdVar { n: idx }]));
   pa = el_vars::create_unique(vars, "veq_x", ea);
   el_vars::set_defined(vars, pa);
-  vars.vars[pa].skip_free = true;
+  el_vars::set_skip_free(vars, pa, "mixed_vector_eq");
   pb = el_vars::create_unique(vars, "veq_y", eb);
   el_vars::set_defined(vars, pb);
-  vars.vars[pb].skip_free = true;
+  el_vars::set_skip_free(vars, pb, "mixed_vector_eq");
   pair = call_op(e, vars, "==", [ir::NdVar { n: pa }, ir::NdVar { n: pb }], [ea, eb]);
   more = el_ir::cl(e, "OpLtInt", [ir::NdVar { n: idx }, el_ir::cl(e, "OpLengthVector", [ir::NdVar { n: lhs }])]);
   go_on = el_ir::v_if(ir::NdVar { n: res }, more, ir::NdBoolean { b: false });
@@ -2076,7 +2076,7 @@ pub fn own_join_arm(e: el::El, vars: el_vars::Vars, arm: ir::Node, tp: ir::TypeT
       buf = hidden_ref_arg(vars, args);
       if buf < 0 {
         buf = el_vars::work_ref_p2(vars, el_types::without_deps(el_types::base(tp)));
-        el_vars::mark_inline(vars, buf);
+        el_vars::mark_inline(vars, buf, "materialise_owned_call");
       }
       el_ir::v_block([el_ir::v_set(buf, arm), ir::NdVar { n: buf }], tp, "join-arm-owner")
     },
