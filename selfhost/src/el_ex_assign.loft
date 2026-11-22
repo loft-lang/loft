@@ -3037,6 +3037,24 @@ pub fn sink_ncc(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> ir::Node? 
         return null;
       }
       held = match bl.operators[0] { NdSet { var, inner } => if copies_whole_vector(e, vars, inner) { var } else { -1 }, _ => -1 };
+      // (A `??` holding a loft call's answer — its buffer the call's own — whose default is a
+      // LOCAL (`pick(h, 9) ?? d`) sinks too: the present arm adopts the held answer, the absent
+      // one copies the local into a store of the bound local's own (`sink_vec_bind_into_arms`).)
+      adopted = match bl.operators[0] { NdSet { var, inner } => if el_ex_call::buffered_loft_call(e, inner) { var } else { -1 }, _ => -1 };
+      if held < 0 && adopted >= 0 {
+        match bl.operators[1] {
+          NdIf { cond, t, f } => {
+            fa = el_ir::unspan(f);
+            if !(fa is NdVar) || !(el_types::base(el_vars::tp(vars, match fa { NdVar { n } => n, _ => 0 })) is TyVector) {
+              return null;
+            }
+            bl.operators[1] = ir::NdIf { cond: cond, t: el_ir::v_set(v, t), f: sink_arm(e, vars, v, f, x.tp) };
+          },
+          _ => { return null; }
+        }
+        bl.result = [ir::TyVoid];
+        return ir::NdBlock { block: [bl] };
+      }
       if held < 0 {
         return null;
       }

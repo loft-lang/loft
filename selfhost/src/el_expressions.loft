@@ -427,6 +427,12 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   if lambda && !lam_done && !e.first_pass && rb >= 0 && el_types::base(result) is TyVector && !(result is TyOptional) {
     code = el_ex_deliver::lambda_vector_copy(e, code, rb, result);
   }
+  // A nullable vector a CALL answers at the tail (`fn(k) -> vector<integer>? { g(k) }`): Rust
+  // renames the buffer onto the call's work ref (`__ref_N` the hidden parameter, the result
+  // `["??"]`), as `vector_return` refuses it for a named function — refused here alike.
+  if lambda && !lam_done && !e.first_pass && rb >= 0 && el_types::base(result) is TyVector && result is TyOptional && starts_with(el_ex_copy::tail_kind(e, vars, code), "call") {
+    el::refuse(e, "a function returning a nullable vector from this tail: {el_ex_copy::tail_kind(e, vars, code)}");
+  }
   // `MaterializeView` for a lambda's tail that reads a capture (`return_views_a_capture`): the
   // record belongs to the frame that built the closure, so it is copied into the late buffer
   // behind its null test, the result borrowing the buffer.

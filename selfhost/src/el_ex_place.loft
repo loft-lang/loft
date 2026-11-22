@@ -2352,7 +2352,8 @@ pub fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: 
       return el_ex_pattern::vector_append(e, vars, v, rhs);
     }
     orows = el_ex_base::vector_rows(e, opt_elem, 0, true);
-    if orows == null || len(vars.active_loops) > 0 || vars.whiles > 0 {
+    // (Inside a loop the mint is the same: the guard tests the local each pass.)
+    if orows == null {
       el::refuse(e, "an append to a nullable vector local in a loop, or of an element with no row");
       return ex(ir::NdNull, ir::TyVoid);
     }
