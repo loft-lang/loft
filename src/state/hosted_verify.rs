@@ -28,6 +28,13 @@ pub(crate) fn enabled() -> bool {
     *ON.get_or_init(crate::keys::hosted_verify)
 }
 
+/// Is `LOFT_HOSTED_VERIFY_CONTROL` set: is the "compiled" side interpreted as well, so the
+/// verify compares two interpreted runs and any difference is its copy's?
+fn control() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("LOFT_HOSTED_VERIFY_CONTROL").is_some())
+}
+
 use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 
 /// The calls compared alike, and those made without a comparison, by why: a silent run is a
@@ -36,6 +43,8 @@ static VERIFIED: AtomicU64 = AtomicU64::new(0);
 static UNVERIFIED_TUPLE: AtomicU64 = AtomicU64::new(0);
 static UNVERIFIED_FILE: AtomicU64 = AtomicU64::new(0);
 static UNVERIFIED_NATIVE: AtomicU64 = AtomicU64::new(0);
+/// Of the calls compared alike, those whose stores hold the same values placed otherwise.
+static PLACED_OTHERWISE: AtomicU64 = AtomicU64::new(0);
 
 /// Does a call to `d` reach code outside loft — a `#c` binding or a library's native — whose
 /// state no copy of the stores holds (a generator, a handle counter, a device)?  Run twice,
@@ -86,8 +95,14 @@ pub(crate) fn report() {
     if f > 0 {
         why.push(format!("{f} with a file-backed store live"));
     }
+    let placed = PLACED_OTHERWISE.swap(0, Relaxed);
+    let placed = if placed > 0 {
+        format!(" ({placed} of them alike in value, placed otherwise)")
+    } else {
+        String::new()
+    };
     eprintln!(
-        "loft: LOFT_HOSTED_VERIFY: {v} call(s) compiled and interpreted alike{}",
+        "loft: LOFT_HOSTED_VERIFY: {v} call(s) compiled and interpreted alike{placed}{}",
         if why.is_empty() {
             String::new()
         } else {
@@ -168,8 +183,19 @@ impl State {
         // The compiled run, on the world itself — what the program goes on with, as it does
         // without the switch: the caller's views into its stores stay where they point, and
         // what the unit makes once (its constants) lives in the world the program keeps.
-        unsafe { bridge(&raw mut self.database, args.as_ptr(), args.len(), ret) };
-        let ret_c = unsafe { *ret };
+        // `LOFT_HOSTED_VERIFY_CONTROL` — the verify's own control: the call interpreted on the
+        // world too, so a difference is the copy's, not the unit's.
+        let ret_c = if control() {
+            let (fb, fc) = (self.fnref_bufs.len(), self.fnref_calls.len());
+            let r = self.call_back(d_nr, DbRef::NULL, &visible);
+            self.fnref_bufs.truncate(fb);
+            self.fnref_calls.truncate(fc);
+            unsafe { *ret = r };
+            r
+        } else {
+            unsafe { bridge(&raw mut self.database, args.as_ptr(), args.len(), ret) };
+            unsafe { *ret }
+        };
         // The interpreted twin, on the copy taken before the call.  The interpreter's own
         // stacks are lent to it (its frames run on them), and handed back after; the
         // call-back's bookkeeping is put back, as the compiled world is the one kept.
@@ -185,6 +211,7 @@ impl State {
         self.fnref_calls.truncate(fc);
         let (interp, compiled): (&Stores, &Stores) = (&twin, &self.database);
         let mut diff: Option<String> = None;
+        let mut placed_otherwise = false;
         for nr in before {
             let (a, b) = (
                 &interp.allocations[nr as usize],
@@ -208,6 +235,24 @@ impl State {
             }
             let (x, y) = (a.claimed_image(), b.claimed_image());
             if x != y {
+                // The same value placed otherwise — a record claimed elsewhere, a text written
+                // anew where the other side wrote it in place (`@FR-H-TextReplace` is admitted
+                // by whole-program facts an open unit does not have) — is no wrong value: the
+                // root, rendered through its type, follows references, not record numbers.
+                if a.known_type != u16::MAX {
+                    let root = DbRef {
+                        store_nr: nr,
+                        rec: 1,
+                        pos: 8,
+                    };
+                    let (mut p, mut q) = (String::new(), String::new());
+                    interp.show(&mut p, &root, a.known_type, false);
+                    compiled.show(&mut q, &root, b.known_type, false);
+                    if p == q {
+                        placed_otherwise = true;
+                        continue;
+                    }
+                }
                 diff = Some(first_difference(nr, &x, &y));
                 break;
             }
@@ -223,6 +268,9 @@ impl State {
             std::process::exit(1);
         }
         VERIFIED.fetch_add(1, Relaxed);
+        if placed_otherwise {
+            PLACED_OTHERWISE.fetch_add(1, Relaxed);
+        }
     }
 }
 
@@ -319,9 +367,44 @@ fn answer_difference(
 fn first_difference(nr: u16, x: &str, y: &str) -> String {
     for (a, b) in x.lines().zip(y.lines()) {
         if a != b {
-            let rec = a.split(' ').nth(1).unwrap_or("?");
+            // `R <rec> <words> <hex>`: name the record and the first byte that differs, with
+            // the 16 bytes from there on each side.
+            let field = |l: &str, i: usize| l.split(' ').nth(i).unwrap_or("").to_string();
+            let rec = field(a, 1);
+            let (wa, wb) = (field(a, 2), field(b, 2));
+            if wa != wb {
+                return format!(
+                    "store {nr} record {rec} is {wa} words interpreted, {wb} compiled"
+                );
+            }
+            let (ha, hb) = (field(a, 3), field(b, 3));
+            let at = ha
+                .as_bytes()
+                .chunks(2)
+                .zip(hb.as_bytes().chunks(2))
+                .position(|(p, q)| p != q)
+                .unwrap_or(0);
+            // Every 4-byte word that differs, as `@byte interpreted/compiled` (little-endian
+            // hex as stored), so a field written elsewhere reads as one entry per field.
+            let words: Vec<String> = ha
+                .as_bytes()
+                .chunks(8)
+                .zip(hb.as_bytes().chunks(8))
+                .enumerate()
+                .filter(|(_, (p, q))| p != q)
+                .take(8)
+                .map(|(i, (p, q))| {
+                    format!(
+                        "@{} {}/{}",
+                        i * 4,
+                        String::from_utf8_lossy(p),
+                        String::from_utf8_lossy(q)
+                    )
+                })
+                .collect();
             return format!(
-                "store {nr} record {rec} differs: `{a:.80}` interpreted, `{b:.80}` compiled"
+                "store {nr} record {rec} differs from byte {at}: {}",
+                words.join(", ")
             );
         }
     }

@@ -105,6 +105,8 @@ fn a_hosted_c_library_works_on_the_interpreters_stores() {
 /// @falsified-at: none — the receipt is the plant itself: without the verify the planted byte
 ///   surfaces three statements later as a wrong total; with it, at `fill`.
 ///   CHANNEL: the exit status and the message.  WITNESS: "`fill` leaves another world".
+///   A SABOTAGE (2026-11-22): with the comparison by value struck (`hosted_verify.rs`), the
+///   sound run stops at `rename`.  WITNESS: "`rename` leaves another world".
 ///   And a SABOTAGE (2026-11-22): with the verify going on in the compiled COPY of the world
 ///   (`hosted_verify.rs` before the twin ran on the copy), the caller's loop text points into
 ///   a buffer the swap freed.  WITNESS: the "nested views" assertion of `hostedlib_main.loft`.
@@ -142,6 +144,12 @@ fn the_hosted_verify_passes_a_sound_unit_and_names_a_planted_write() {
     let (ok, out, err) = run_verify(false);
     assert!(ok, "a sound unit verifies: {err}");
     assert_eq!(out, "alpha 27 54 20100 201 2 32\n");
+    // `rename` writes a text the interpreter writes in place and the open unit writes anew:
+    // the same value placed otherwise, accepted by value (`@FR-H-TextReplace`).
+    assert!(
+        err.contains("alike in value, placed otherwise"),
+        "the verify compares a store by value when its bytes differ: {err}"
+    );
     let (ok, _, err) = run_verify(true);
     assert!(!ok, "a planted write is caught");
     assert!(

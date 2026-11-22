@@ -3850,6 +3850,13 @@ impl Store {
         c.read_only = self.read_only;
         c.user_locked = self.user_locked;
         c.lock_origin.clone_from(&self.lock_origin);
+        // What steers the next claim and free: the lazy sweep fires on `claimed_end`, so a
+        // copy that restarted it would sweep where the store itself does not, and place a
+        // record elsewhere (`LOFT_HOSTED_VERIFY`'s twin, @PLN206 P5).
+        c.claimed_end = self.claimed_end;
+        c.frame_holds = self.frame_holds;
+        c.c_share_count = self.c_share_count;
+        c.hgen = self.hgen;
         c
     }
 

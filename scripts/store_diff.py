@@ -12,6 +12,8 @@
                                             # (`-DLOFT_STORE_DUMP_PLANT`), which must be reported
     scripts/store_diff.py --every-rewrite-off FILE  # the two runtimes' own model: every
                                             # C-only rewrite switched off
+    scripts/store_diff.py --lib DIR ... FILE        # a program that uses a library: its
+                                            # `use` search path, for both runs
 
 Both runtimes share one store layout (STORE_MODEL.md, P3), so the stores a run leaves can be
 compared by their bytes.  Each side writes every live store at exit (`LOFT_STORE_DUMP`: the
@@ -76,8 +78,11 @@ def read_dump(path, names):
 
 def run_interp(prog, d, env):
     t, dump = os.path.join(d, "i.trace"), os.path.join(d, "i.dump")
-    subprocess.run([LOFT, "--interpret", prog],
-                   env={**env, "LOFT_ALLOC_TRACE": t, "LOFT_STORE_DUMP": dump, "LOFT_POISON_CLAIM": "1"},
+    # The whole program interpreted, a library too: the C side compiles the whole program, and
+    # a library artifact built for this run would write its own trace over this one.
+    subprocess.run([LOFT, "--interpret", *LIBS, prog],
+                   env={**env, "LOFT_ALLOC_TRACE": t, "LOFT_STORE_DUMP": dump, "LOFT_POISON_CLAIM": "1",
+                        "LOFT_NO_NATIVE_LIBS": "1"},
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=300)
     names, sites = trace_of(t)
     return read_dump(dump, names), sites
@@ -87,7 +92,7 @@ def run_c(prog, d, env, plant):
     src, exe = os.path.join(d, "p.c"), os.path.join(d, "p")
     t, dump = os.path.join(d, "c.trace"), os.path.join(d, "c.dump")
     # Every statement records its line, so each store is named by the line that made it.
-    r = subprocess.run([LOFT, "--emit-c", src, prog], capture_output=True, text=True, timeout=300,
+    r = subprocess.run([LOFT, "--emit-c", src, *LIBS, prog], capture_output=True, text=True, timeout=300,
                        env={**env, "LOFT_C_TRACE_SITES": "1"})
     if r.returncode != 0:
         last = r.stderr.strip().splitlines()[-1] if r.stderr.strip() else ""
@@ -348,8 +353,16 @@ def attribute(prog):
     return None
 
 
+# `--lib DIR` (repeatable): the `use` search path of both runs, for a program that uses a library.
+LIBS = []
+
+
 def main():
     args = sys.argv[1:]
+    while "--lib" in args:
+        i = args.index("--lib")
+        LIBS.extend(["--lib", os.path.abspath(args[i + 1])])
+        del args[i:i + 2]
     if "--help" in args or "-h" in args:
         print(__doc__)
         return 0

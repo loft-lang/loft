@@ -49,6 +49,11 @@ fn main() {
     }
   }
   assert(got == "A1/1;ABCDE5/5;A0.5/1;ABCDE2.5/5;", "nested views {got}");
+  // a text field renamed twice through the unit: "gamma" then "delta"
+  g = bag_new("old", 0);
+  g.rename("gamma");
+  g.rename("delta");
+  assert(g.name == "delta", "rename {g.name}");
   // a generator the library answers, driven here: 1 + 2 + 3 + 4 = 10
   u = 0;
   for x in upto(4) { u += x; }

@@ -65,3 +65,10 @@ WIDTHS = [5, 3, 4, 2];
 pub fn label_of(t: text) -> text {
   "{t}:{WIDTHS[len(t) % 4]}"
 }
+
+// A text field written anew: the interpreter writes it in place where its program proves no
+// caller borrows the old text (`@FR-H-TextReplace`), a unit, which knows no caller, writes a new
+// one — the same value placed otherwise, which the verify accepts by value.
+pub fn rename(self: Bag, n: text) {
+  self.name = n;
+}
