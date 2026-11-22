@@ -3203,6 +3203,17 @@ pub fn cursor_match(e: el::El, vars: el_vars::Vars, x: Ex, cs: vector<integer>, 
   ex(el_ir::v_block(setup + [m.code], m.tp, "cursor match"), m.tp)
 }
 
+// `Parser::mark_slice_element_view`: a slice binding of a record, a vector or a struct enum (a
+// `?` one alike, `(L-Null)`) reads a DbRef INTO the subject's store — never freed itself.
+fn slice_element_view(vars: el_vars::Vars, bv: integer, t: ir::TypeT) {
+  if bv < 0 || bv >= len(vars.vars) {
+    return;
+  }
+  if match el_types::base(t) { TyReference { n: _ } => true, TyVector { inner: _ } => true, TyEnum { n: _, is_ref } => is_ref, _ => false } {
+    vars.vars[bv].skip_free = true;
+  }
+}
+
 pub fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>, bind: boolean = false) -> Ex {
   if el_trace::on() {
     el_trace::route(e, "parse_vector_match");
@@ -3681,6 +3692,7 @@ pub fn cursor_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm
         binds += va!.binds;
       } else if sn != "_" {
         bv = pattern_bind(vars, sn, named_t, names);
+        slice_element_view(vars, bv, named_t);
         binds += [el_ir::v_set(bv, slice_elem(e, elm, at))];
       }
     }
@@ -4057,6 +4069,7 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
       cond = el_ir::v_if(cond, hbe.code, ir::NdBoolean { b: false });
     } else if h != "_" {
       bv = pattern_bind(vars, h, named_t, names);
+      slice_element_view(vars, bv, named_t);
       binds += [el_ir::v_set(bv, slice_elem(e, elm, at))];
     }
   }
