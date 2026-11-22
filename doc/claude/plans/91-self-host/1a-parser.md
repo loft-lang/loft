@@ -154,6 +154,7 @@ consuming, or null (`brace_next`, `no_else`, `empty_literal_allowed`).
 | **S** syntax | every corpus file parses with no error; the tree's tokens, in order, are the file's tokens | the syntax tree printer, round-tripped against the token stream |
 | **E** elaboration | the image equals `--emit-image`: each definition, and the program's part of the schema | `selfhost/compare/`; HOW MANY programs agree |
 | **E** contract | each function of an agreeing program carries the same behaviour contract (§ The behaviour contract) | `LOFT_REPORT_CONTRACT=1` on both front ends; `elab_gate.py`'s `contract:` line and the verdicts file's `contract` column; `elab_probe.py one` lists each fact |
+| **E** state | each function of an agreeing program carries the same image state: the flags the later passes read, each variable's deps, the inline refs | `LOFT_REPORT_STATE=1`; `elab_gate.py`'s `state:` line (by kind), the verdicts file's `state` column, `LOFT_ELAB_STATE_FILE=<file>` for each differing item |
 
 The corpus for every gate: `default/*.loft`, `tests/scripts/`, `tests/docs/`, `lib/`, and the
 language suite (`../loft-suite-91`).
