@@ -219,6 +219,10 @@ fn a_hosted_unit_built_by_one_program_runs_in_another() {
 /// `known` is marked `LOFT_RAW_KNOWN` with why it may see the store as it is in memory.  A raw
 /// one unmarked is a crossing the translation never sees: in a program that numbers types
 /// otherwise it reads or writes another type, and nothing says so.
+///
+/// @falsified-at: none — a SABOTAGE (2026-11-22): with `loft_rt.h`'s image mint writing
+///   `s->known = tp;` again, the scan names that line.  CHANNEL: the assertion.  WITNESS:
+///   "src/c/loft_rt.h:2694: s->known = tp;".
 #[test]
 fn the_c_runtime_reaches_a_stores_type_only_through_its_translation() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/c");
