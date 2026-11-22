@@ -66,7 +66,7 @@ pub fn inline_container(e: el::El, vars: el_vars::Vars, x: Ex) -> integer {
         }
       }
       w = el_vars::work_ref_p2(vars, el_types::with_deps(el_types::without_deps(d.returned[0]), buffers));
-      el_vars::mark_inline(vars, w);
+      el_vars::mark_inline(vars, w, "bind_inline_container");
     },
     _ => {}
   }
@@ -1013,12 +1013,8 @@ pub fn closure_value(e: el::El, vars: el_vars::Vars, d: integer, rec_nm: text, c
   for c in caps {
     a = attr_nr(el::def(e, rd), c.name);
     cv = el_vars::var(vars, c.name);
-    if cv >= 0 && !vars.captured.contains(cv) {
-      vars.captured += [cv];
-    }
-    // (`set_captured`: on the variable itself, which every later store of the table carries.)
     if cv >= 0 {
-      vars.vars[cv].captured = true;
+      el_vars::set_captured(vars, cv, "emit_lambda_code_in");
     }
     if record_type(e, c.tp) || el_types::base(c.tp) is TyVector || keyed_kind(el_types::base(c.tp)) {
       el_vars::in_use(vars, cv, true);
@@ -1673,7 +1669,7 @@ fn unbox_tuple_element(e: el::El, vars: el_vars::Vars, x: Ex) -> Ex? {
   if e.first_pass {
     return null;
   }
-  vars.vars[tmp].skip_free = true;
+  el_vars::set_skip_free(vars, tmp, "unbox_tuple_from_dbref");
   dense = match el_ir::unspan(x.code) { NdCall { def_nr: dd, args: da } => if el::def(e, dd).name == "OpGetVectorNullable" { el_ir::cl(e, "OpGetVector", da) } else { el_ir::unspan(x.code) }, _ => x.code };
   items: vector<ir::Node> = [];
   local_tp_members: vector<ir::TypeT> = match el_types::base(x.tp) { TyTuple { elems: lme } => lme, _ => [] };
@@ -2118,7 +2114,7 @@ pub fn tuple_get(e: el::El, vars: el_vars::Vars, te: integer?, index: integer) -
       rsd = struct_ref(e, mt);
       if td >= 0 && elem_read && index >= 0 && index < len(ee) && rsd >= 0 && !(mt is TyOptional) && el_ex_object::literal_def(e, rsd) {
         uw2 = el_vars::work_ref(vars, ir::TyReference { n: td, dep: [] });
-        vars.vars[uw2].skip_free = true;
+        el_vars::set_skip_free(vars, uw2, "unbox_tuple_from_dbref");
         el_vars::unregister_work_ref(vars, uw2);
         if e.first_pass {
           return ex(ir::NdNull, mt);
@@ -2129,7 +2125,7 @@ pub fn tuple_get(e: el::El, vars: el_vars::Vars, te: integer?, index: integer) -
       // A narrow member of an element is read at its width (`OpGetByte`, `OpGetShortRaw`).
       if td >= 0 && elem_read && index >= 0 && index < len(ee) && match mt { TyInteger { spec: nsp } => el_types::narrow_width(nsp) > 0, _ => false } {
         nw = el_vars::work_ref(vars, ir::TyReference { n: td, dep: [] });
-        vars.vars[nw].skip_free = true;
+        el_vars::set_skip_free(vars, nw, "unbox_tuple_from_dbref");
         el_vars::unregister_work_ref(vars, nw);
         if e.first_pass {
           return ex(ir::NdNull, mt);
@@ -2143,7 +2139,7 @@ pub fn tuple_get(e: el::El, vars: el_vars::Vars, te: integer?, index: integer) -
         // Rust holds the element in a work ref here (the unbox it then drops): the name is
         // taken on both passes, so later buffers number past it.
         uw = el_vars::work_ref(vars, ir::TyReference { n: td, dep: [] });
-        vars.vars[uw].skip_free = true;
+        el_vars::set_skip_free(vars, uw, "unbox_tuple_from_dbref");
         el_vars::unregister_work_ref(vars, uw);
         if e.first_pass {
           return ex(ir::NdNull, mt);
@@ -2480,7 +2476,7 @@ pub fn capture_test(e: el::El, vars: el_vars::Vars, x: Ex, vd: integer, test: ir
     // A text payload is bound as its own copy of the characters (`record_text_payload_view`
     // is the scope pass's note); a scalar owns nothing.
     if !is_text {
-      vars.vars[v].skip_free = true;
+      el_vars::set_skip_free(vars, v, "parse_is_variant");
     }
     if read == null {
       el::refuse(e, "an `is` capture of a field this port reads no value of");
@@ -2587,7 +2583,7 @@ pub fn name_expression(e: el::El, vars: el_vars::Vars, name: text, member: text,
   // A user's mention names the variable (loft#1834) — only where it IS the name written: a
   // user's `s` can resolve to the compiler's own `_mv_s_1`, which stays the compiler's.
   if v >= 0 && el_vars::name_of(vars, v) == name {
-    el_vars::mark_user_named(vars, v);
+    el_vars::mark_user_named(vars, v, "parse_var_inner");
   }
   // A local the lambda being read captures: on the second pass its field of the closure record,
   // read through the `__closure` parameter (`capture_context`).
@@ -2931,7 +2927,7 @@ pub fn vec_copy_bind(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> Ex {
   // nothing reads is a lost write (`mark_copy_bound`, read by the `lost-write` lint).  Not for
   // the self-assign, which copies nothing.
   if !(el_ir::unspan(x.code) == ir::NdVar { n: v }) && copied_place(e, x.code) {
-    vars.vars[v].copy_bound = true;
+    el_vars::mark_copy_bound(vars, v, "lower_vec_copy_bind");
   }
   field_read = !(el_ir::unspan(x.code) is NdVar);
   if vars.amp_vectors.contains(v) {
@@ -3429,7 +3425,7 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
   if op == "+=" {
     pl = append_place(e, vars, target);
     if pl.root >= 0 && (el_types::is_collection(el_types::base(pl.tp)) || el_types::base(pl.tp) is TyText) {
-      vars.vars[pl.root].user_appended = true;
+      el_vars::mark_user_appended(vars, pl.root, "parse_assign_inner");
     }
   }
   // loft#1205 (`@FR-E-Asgn-Discharge`): `n[i]? += 1` — the `?` is peeled to the element it
@@ -4083,7 +4079,7 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
     }
     rec_tp = if is_senum { ir::TyEnum { n: link_rd, is_ref: true, dep: [] } } else { ir::TyReference { n: link_rd, dep: [] } };
     tmp = el_vars::work_ref(vars, rec_tp);
-    vars.vars[tmp].skip_free = true;
+    el_vars::set_skip_free(vars, tmp, "assign_refvar_reference");
     if e.first_pass {
       return ex(ir::NdNull, ir::TyVoid);
     }
@@ -4380,10 +4376,12 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
   // `@FR-B-Ref-Alias`, `@FR-H-FreeTwice`: a `&` link to a collection shares its source's store
   // and every whole-value write goes through it, so it never owns one — never freed.
   if op == "=" && v >= 0 && !e.first_pass && match e.p.nodes[rhs!] { SUnary { op: ao } => ao == "&", _ => false } && el_types::is_collection(el_types::base(x.tp)) {
-    vars.vars[v].skip_free = true;
+    el_vars::set_skip_free(vars, v, "parse_assign_op_inner");
   }
-  if op == "=" && v >= 0 && !amp_bind && !(el_ir::unspan(x.code) == ir::NdVar { n: v }) && (el_types::base(x.tp) is TyText || el_types::is_collection(el_types::base(x.tp))) && copied_place(e, x.code) {
-    vars.vars[v].copy_bound = true;
+  // (A vector's is recorded by its own lowering, `lower_vec_copy_bind`; here a text's and a
+  // keyed collection's, as `parse_assign_op_inner` records them.)
+  if op == "=" && v >= 0 && !amp_bind && !(el_ir::unspan(x.code) == ir::NdVar { n: v }) && (el_types::base(x.tp) is TyText || (el_types::is_collection(el_types::base(x.tp)) && !(el_types::base(x.tp) is TyVector))) && copied_place(e, x.code) {
+    el_vars::mark_copy_bound(vars, v, "parse_assign_op_inner");
   }
   // loft#1540 — a whole-variable bind that VIEWS a value-const value makes the variable
   // read-only too (`mark_const_view`; a bare variable copies, so it is no view).

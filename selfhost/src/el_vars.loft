@@ -497,8 +497,52 @@ pub fn set_defined(v: Vars, nr: integer) {
   v.defined[nr] = true;
 }
 
-pub fn set_value_const(v: Vars, nr: integer) {
+// `Function::trace_flag` (`LOFT_TRACE_VARFLAGS=<name>|*`): the line the Rust front end prints
+// where a flag the image carries is set, in its format, `why` standing in its location: the name
+// of the Rust rule (the function enclosing its setter call) this site mirrors.  The rule that set
+// a flag is part of the reimplementation contract (`elab_gate.py`), so every write of one of
+// these flags goes through a setter below.
+fn trace_flag(v: Vars, flag: text, nr: integer, why: text) {
+  want = env_variable("LOFT_TRACE_VARFLAGS");
+  if len(want) > 0 && nr >= 0 && nr < len(v.vars) {
+    nm = name_of(v, nr);
+    if want == "*" || want == nm {
+      eprintln("[varflag] {flag} {nm} (var={nr}) in {v.name} @ {why}");
+    }
+  }
+}
+
+// `Function::set_value_const`
+pub fn set_value_const(v: Vars, nr: integer, why: text) {
+  trace_flag(v, "value_const", nr, why);
   v.vars[nr].value_const = true;
+}
+
+// `Function::set_skip_free`: the variable's store is not this frame's to free.
+pub fn set_skip_free(v: Vars, nr: integer, why: text) {
+  trace_flag(v, "skip_free", nr, why);
+  v.vars[nr].skip_free = true;
+}
+
+// `Function::set_captured`: a closure built in this body captures the variable.
+pub fn set_captured(v: Vars, nr: integer, why: text) {
+  trace_flag(v, "captured", nr, why);
+  if !v.captured.contains(nr) {
+    v.captured += [nr];
+  }
+  v.vars[nr].captured = true;
+}
+
+// `Function::mark_user_appended`: the program's own `+=` wrote into the variable's content.
+pub fn mark_user_appended(v: Vars, nr: integer, why: text) {
+  trace_flag(v, "user_appended", nr, why);
+  v.vars[nr].user_appended = true;
+}
+
+// `Function::mark_copy_bound`: the variable was bound by a copy of another value.
+pub fn mark_copy_bound(v: Vars, nr: integer, why: text) {
+  trace_flag(v, "copy_bound", nr, why);
+  v.vars[nr].copy_bound = true;
 }
 
 // `Function::in_use`: count a use (or take one back).
@@ -594,7 +638,7 @@ pub fn unregister_work_ref(v: Vars, nr: integer) {
   v.work_refs = kept;
   // A work ref substituted out names no storage: no free, and no leaked store (loft#906).
   if nr >= 0 && nr < len(v.vars) {
-    v.vars[nr].skip_free = true;
+    set_skip_free(v, nr, "unregister_work_ref");
   }
 }
 
@@ -620,7 +664,8 @@ pub fn drop_use(v: Vars, nr: integer) {
   }
 }
 
-pub fn mark_user_named(v: Vars, nr: integer) {
+pub fn mark_user_named(v: Vars, nr: integer, why: text) {
+  trace_flag(v, "user_named", nr, why);
   v.vars[nr].user_named = true;
 }
 
@@ -1173,8 +1218,8 @@ pub fn rebind_witness(v: Vars, p: integer) -> integer {
     }
   }
   orig = work_ref(v, tp(v, p));
-  v.vars[orig].skip_free = true;
-  mark_inline(v, orig);
+  set_skip_free(v, orig, "ensure_rebind_witness");
+  mark_inline(v, orig, "ensure_rebind_witness");
   v.rebind_params += [p];
   v.rebind_origs += [orig];
   orig
@@ -1183,7 +1228,8 @@ pub fn rebind_witness(v: Vars, p: integer) -> integer {
 // `Function::work_refs_p2`: the second pass's `__ref_p2_N`, a record literal's own buffer.
 // `Function::mark_inline_ref`: the work-ref is nulled where it is first used, never at the top
 // — a set, so a mark the first pass made and the second makes again counts once.
-pub fn mark_inline(v: Vars, nr: integer) {
+pub fn mark_inline(v: Vars, nr: integer, why: text) {
+  trace_flag(v, "inline_ref", nr, why);
   if !v.inline_refs.contains(nr) {
     v.inline_refs += [nr];
   }

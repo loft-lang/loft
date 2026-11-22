@@ -576,7 +576,7 @@ pub fn rename_onto(e: el::El, vars: el_vars::Vars, rb: integer, v: integer) {
   el_trace::retpromo(e, vars, v, "Rename");
   e.b.data.definitions[d].attributes[a].name = el_vars::name_of(vars, v);
   vars.vars[rb].argument = false;
-  vars.vars[rb].skip_free = true;
+  el_vars::set_skip_free(vars, rb, "ref_return");
   el_vars::become_argument(vars, v);
   // The buffer joins what the result borrows already (a parameter a mid-body `return` merged).
   rt = el::def(e, d).returned[0];
@@ -2164,7 +2164,7 @@ pub fn loop_var(vars: el_vars::Vars, src_id: text, id: text, t: ir::TypeT) -> in
   // loft#1540 — a loop variable over a value-const value's elements is a view of it.
   if vars.const_loop_root >= 0 {
     if view_type(el_vars::tp(vars, lv)) {
-      vars.vars[lv].value_const = true;
+      el_vars::set_value_const(vars, lv, "mark_const_view");
     }
     vars.const_loop_root = -1;
   }
@@ -2225,7 +2225,7 @@ pub fn mark_const_view(e: el::El, vars: el_vars::Vars, view: integer, source: ir
   }
   root = const_view_root(e, source, bare);
   if root >= 0 && root < len(vars.vars) && vars.vars[root].value_const {
-    vars.vars[view].value_const = true;
+    el_vars::set_value_const(vars, view, "mark_const_view");
   }
 }
 

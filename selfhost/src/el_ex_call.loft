@@ -3275,7 +3275,7 @@ pub fn record_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   }
   // Minted on both passes, as the Rust mints it, so it numbers before the second pass's buffers.
   held = el_vars::create_unique(vars, "_ncc", lhs);
-  vars.vars[held].skip_free = true;
+  el_vars::set_skip_free(vars, held, "build_null_coalesce_default_inner");
   el_vars::register_work_ref(vars, held);
   if e.first_pass {
     // A view of what the subject borrows is answered as the "ncc" block it becomes, so a
@@ -3356,7 +3356,7 @@ pub fn enum_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   if root >= 0 && !(slot is NdNull) {
     pt = el_types::with_deps(el_types::without_deps(lhs), [root]);
     ph = el_vars::create_unique(vars, "_ncc", pt);
-    vars.vars[ph].skip_free = true;
+    el_vars::set_skip_free(vars, ph, "build_null_coalesce_default_inner");
     el_vars::register_work_ref(vars, ph);
     if e.first_pass {
       return ex(ir::NdNull, pt);
@@ -3385,7 +3385,7 @@ pub fn enum_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   held = el_vars::create_unique(vars, "_ncc", el_types::without_deps(lhs));
-  vars.vars[held].skip_free = true;
+  el_vars::set_skip_free(vars, held, "build_null_coalesce_default_inner");
   el_vars::register_work_ref(vars, held);
   rt = el_types::with_deps(el_types::without_deps(lhs), [held]);
   if e.first_pass {
@@ -3437,7 +3437,7 @@ pub fn borrowed_literal_buffer(vars: el_vars::Vars, d: ir::Node) {
       match el_ir::unspan(block[0].operators[-1]!) {
         NdVar { n: w } => {
           el_vars::register_work_ref(vars, w);
-          vars.vars[w].skip_free = true;
+          el_vars::set_skip_free(vars, w, "build_null_coalesce_default_inner");
         },
         _ => {}
       }
@@ -3457,15 +3457,15 @@ pub fn register_default_literal(vars: el_vars::Vars, d: ir::Node, lhs: ir::TypeT
           el_vars::register_work_ref(vars, w);
           el_vars::set_var_type(vars, w, el_types::with_deps(el_vars::tp(vars, w), []));
           if lhs is TyVector && len(el_types::deps(lhs)) == 0 {
-            vars.vars[w].skip_free = true;
+            el_vars::set_skip_free(vars, w, "build_null_coalesce_default_inner");
           } else {
-            el_vars::mark_inline(vars, w);
+            el_vars::mark_inline(vars, w, "build_null_coalesce_default_inner");
             // loft#1322 (`(O-Borrow)`: one owner, one free) — `_vec_N` and its backing `__vdb_N`
             // name ONE store; the view's free is the one that runs, so the backing goes quiet —
             // only where the view is freed at all (the flags are cumulative across passes).
             bk = el_ex_base::literal_backing_store(block[0]);
             if !vars.vars[w].skip_free && bk >= 0 && bk < len(vars.vars) {
-              vars.vars[bk].skip_free = true;
+              el_vars::set_skip_free(vars, bk, "build_null_coalesce_default_inner");
             }
           }
         },

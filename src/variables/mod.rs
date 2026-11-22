@@ -6138,6 +6138,7 @@ impl Function {
 
     #[track_caller]
     pub fn set_skip_free(&mut self, v: u16) {
+        self.trace_flag("skip_free", v);
         if let Some(want) =
             crate::env_once!(@value Option<String>, std::env::var("LOFT_SKIPFREE_TRACE").ok())
             && (want == "*" || self.variables[v as usize].name == *want)
@@ -6166,9 +6167,12 @@ impl Function {
     }
 
     /// `LOFT_TRACE_VARFLAGS=<name>|*` — which line set a variable flag the image carries
-    /// (`value_const`, `inline_ref`, `captured`, `user_named`, `user_appended`, `copy_bound`):
-    /// the flags `LOFT_REPORT_STATE` compares, each traced to its setter as
-    /// `LOFT_SKIPFREE_TRACE` traces `skip_free`.
+    /// (`skip_free`, `value_const`, `inline_ref`, `captured`, `user_named`, `user_appended`,
+    /// `copy_bound`): the flags `LOFT_REPORT_STATE` compares.  The function enclosing the
+    /// printed line is the flag's REASON, which the reimplementation contract compares
+    /// (`elab_gate.py` resolves it; the loft-written front end prints the name of the rule it
+    /// mirrors in its place) — so every setter here is `#[track_caller]`, and a new writer of
+    /// one of these flags goes through its setter.
     #[track_caller]
     fn trace_flag(&self, flag: &str, v: u16) {
         if let Some(want) =
@@ -6239,9 +6243,11 @@ impl Function {
     /// The parameters the signature of `d_nr` declares are named by the user (loft#1834) —
     /// including one the body never mentions.
     pub fn mark_declared_parameters(&mut self, data: &Data, d_nr: u32) {
-        for var in &mut self.variables {
+        for v in 0..self.variables.len() {
+            let var = &self.variables[v];
             if var.argument && Self::declared_parameter(data, d_nr, &var.name) {
-                var.user_named = true;
+                self.trace_flag("user_named", v as u16);
+                self.variables[v].user_named = true;
             }
         }
     }

@@ -155,6 +155,7 @@ consuming, or null (`brace_next`, `no_else`, `empty_literal_allowed`).
 | **E** elaboration | the image equals `--emit-image`: each definition, and the program's part of the schema | `selfhost/compare/`; HOW MANY programs agree |
 | **E** contract | each function of an agreeing program carries the same behaviour contract (§ The behaviour contract) | `LOFT_REPORT_CONTRACT=1` on both front ends; `elab_gate.py`'s `contract:` line and the verdicts file's `contract` column; `elab_probe.py one` lists each fact |
 | **E** state | each function of an agreeing program carries the same image state: the flags the later passes read, each variable's deps, the inline refs | `LOFT_REPORT_STATE=1`; `elab_gate.py`'s `state:` line (by kind), the verdicts file's `state` column, `LOFT_ELAB_STATE_FILE=<file>` for each differing item |
+| **E** reasons | each image flag both front ends set on a variable is set by the same Rust rule | `LOFT_TRACE_VARFLAGS=*` on both front ends; `elab_gate.py`'s `reasons:` line (by flag), the verdicts file's `reasons` column, `LOFT_ELAB_REASON_FILE=<file>` for each differing flag |
 
 The corpus for every gate: `default/*.loft`, `tests/scripts/`, `tests/docs/`, `lib/`, and the
 language suite (`../loft-suite-91`).
@@ -174,10 +175,12 @@ triaged, never just copied:
 
 ### The behaviour contract
 
-The comparisons are of what the front end HANDS ON — how the resulting code behaves — never of
-how Rust's parser got there: its parser fields and side tables are no oracle, and a port that
-reaches the same output another way is as good.  What is handed on is part of the
-reimplementation contract, and a difference in it is triaged as a gate E difference:
+The port follows Rust's REASONING, not its in-memory data structures: unless Rust is clearly
+wrong, a conclusion is reached by the rule Rust reaches it by, because a port that gets the same
+answer another way diverges where the corpus does not look.  Rust's rules carry months of
+edge-case debugging; a port rule reached another way has to repeat it.  Rust's parser fields and side
+tables are not compared one by one.  What is compared is the reimplementation contract below,
+and a difference in it is triaged as a gate E difference:
 
 - **the code** — the image's definitions and schema (gate E itself);
 - **the image's function state** — per function its purity, what its result promises
@@ -196,13 +199,19 @@ reimplementation contract, and a difference in it is triaged as a gate E differe
   of the predicate Rust's own call sites ask; `selfhost/src/el_contract.loft` asks this port's,
   and prints `?` for a fact it does not derive yet — a gap the gate counts apart, never a
   value guessed.
+- **the rule behind each image flag** — which Rust function set a variable's `skip_free`,
+  `value_const`, `inline_ref`, `captured`, `user_named`, `user_appended` or `copy_bound`.
+  `LOFT_TRACE_VARFLAGS=*` prints a `[varflag]` line at each set: Rust gives its setter call's
+  `file:line` (`trace_flag`, every setter `#[track_caller]`), which `elab_gate.py` resolves to
+  the enclosing function; the port's setters (`el_vars::set_skip_free`, …) take the name of the
+  Rust rule the site mirrors and print it in that place.
 
 The reports are permanent features of both front ends, not gate scaffolding: they show a
 function's conclusions early, which is what bug hunting in these algorithms needs (home doc:
-`DEBUG_TRACE.md` § A function's contract and state).  The contract grows with the port: a fact about the correct behaviour that internal state
-hides — computed at a call site, kept in a side table, decided across the passes — is added to
-it where it is met (a `[contract]` fact on both front ends, or a `[state]` line), so the parts
-are held to it before they have to fit together.  Decision traces (`LOFT_TRACE_RETPROMO`,
+`DEBUG_TRACE.md` § A function's contract and state).  The contract does not grow further unless a
+concrete mismatch shows that a hidden fact is needed; then it goes where it fits (a
+`[contract]` fact on both front ends, or a `[state]` line).  Small differences from Rust may
+remain; a port rule that decides by a different reasoning than Rust's is a defect.  Decision traces (`LOFT_TRACE_RETPROMO`,
 `LOFT_STATE_TRACE`) explain why an output differs; they are no part of the contract.
 
 ### Rust accidents

@@ -579,7 +579,7 @@ fn vector_element(t: ir::TypeT) -> ir::TypeT {
 fn elements_loop(e: el::El, vars: el_vars::Vars, field: ir::Node, idx: integer, elem: ir::TypeT, tg: integer, start: ir::Node = ir::NdInt { n: 0 }) -> ir::Node {
   iv = el_vars::add_variable(vars, "__dc_i{idx}", el::def(e, el::def_nr(e, "integer")).returned[0] ?? ir::TyVoid);
   ev = el_vars::add_variable(vars, "__dc_e{idx}", elem);
-  vars.vars[ev].skip_free = true;
+  el_vars::set_skip_free(vars, ev, "elements_loop_from");
   i = ir::NdVar { n: iv };
   past_end = el_ir::cl(e, "OpLeInt", [el_ir::cl(e, "OpLengthVector", [field]), i]);
   read = el_ir::cl(e, "OpGetVectorNullable", [field, ir::NdInt { n: el_ex_base::element_stride(e, elem) }, i]);
