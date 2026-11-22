@@ -4368,7 +4368,8 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
   // (`is_copied_place`) leaves the local holding a COPY — a `+=` into it that nothing reads is a
   // lost write (`mark_copy_bound`, at the text bind, `lower_vec_copy_bind` and the keyed
   // replace alike).
-  if op == "=" && v >= 0 && !(el_ir::unspan(x.code) == ir::NdVar { n: v }) && (el_types::base(x.tp) is TyText || el_types::is_collection(el_types::base(x.tp))) && copied_place(e, x.code) {
+  amp_bind = match e.p.nodes[rhs!] { SUnary { op: ro } => ro == "&", _ => false } || x.tp is TyRefVar;
+  if op == "=" && v >= 0 && !amp_bind && !(el_ir::unspan(x.code) == ir::NdVar { n: v }) && (el_types::base(x.tp) is TyText || el_types::is_collection(el_types::base(x.tp))) && copied_place(e, x.code) {
     vars.vars[v].copy_bound = true;
   }
   // loft#1540 — a whole-variable bind that VIEWS a value-const value makes the variable

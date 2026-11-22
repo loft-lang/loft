@@ -592,6 +592,10 @@ pub fn unregister_work_ref(v: Vars, nr: integer) {
     }
   }
   v.work_refs = kept;
+  // A work ref substituted out names no storage: no free, and no leaked store (loft#906).
+  if nr >= 0 && nr < len(v.vars) {
+    v.vars[nr].skip_free = true;
+  }
 }
 
 pub fn mark_built(v: Vars, nr: integer) {

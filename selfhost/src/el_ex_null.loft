@@ -628,6 +628,11 @@ pub fn file_read_as(e: el::El, vars: el_vars::Vars, fv: integer, arg: integer?, 
 // `x#index` of a loop variable: the loop's own counter (the `x#index` local its `for` made).
 // The other attributes (`#first`, `#remove`, `#break`, a file's `#read`…) are refused by name.
 pub fn var_attr(e: el::El, vars: el_vars::Vars, var: text, attr: text, arg: integer?, tp: integer?) -> Ex {
+  // (A `name#attr` read is a mention of `name`, loft#1834's `mark_user_named`.)
+  mv = el_vars::var(vars, var);
+  if mv >= 0 && el_vars::name_of(vars, mv) == var {
+    el_vars::mark_user_named(vars, mv);
+  }
   fv = el_vars::var(vars, var);
   if fv >= 0 && el_ex_pattern::is_file(e, el_vars::tp(vars, fv)) {
     if attr == "read" && tp != null {
