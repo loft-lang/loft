@@ -1858,6 +1858,9 @@ pub fn object_into_buffer(e: el::El, vars: el_vars::Vars, x: ir::Node, rb: integ
   if stage && el_types::base(result) is TyReference {
     built = el_ex_copy::rebind_safe_literal(e, vars, built, rb);
   }
+  // (`build_into_return_buffer`: the literal's work ref is left with no store of its own —
+  // the buffer took its place — which `skip_free` records.)
+  vars.vars[w].skip_free = true;
   // Typed as the literal — a variant's own record where the result is its enum.
   el_ir::v_block(built, el_types::with_deps(el_types::without_deps(lit_t), [rb]), kind)
 }

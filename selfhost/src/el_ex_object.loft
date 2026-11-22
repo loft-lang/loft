@@ -50,6 +50,9 @@ pub fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: 
     if len(dep) == 0 {
       el_vars::mark_inline(vars, elm);
     }
+    // (`parse_vector`'s `is_field`: the element is a reference INTO the field's store, which the
+    // owning record frees — its own free suppressed.)
+    vars.vars[elm].skip_free = true;
   }
   // `parse_vector`'s own-buffer arm (loft#2397, @FR-E-Asgn-Compound): a record-element literal
   // whose items read the destination under another name — a local viewing the record — is built

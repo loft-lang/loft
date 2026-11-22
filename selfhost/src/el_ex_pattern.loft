@@ -2173,7 +2173,9 @@ pub fn first_pass_fields(e: el::El, vars: el_vars::Vars, d: integer, fields: vec
               // so the variables number as Rust's do — a call through a function value names
               // its temporary by that number.
               if len(items) > 0 {
-                el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [] });
+                // (`is_field`: a reference into the field's store, never freed itself.)
+                fpe = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [] });
+                vars.vars[fpe].skip_free = true;
                 // (A literal that fills the field names its vector's row on this pass, ahead
                 // of the struct that holds it; an empty one names nothing.)
                 match at {
