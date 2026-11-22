@@ -1,0 +1,22 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN206 P5 — `hostedlib_main.loft`'s calls in a program that loads `hostedshift` first, so its
+// type numbers are not those of the program that built `hostedlib`'s unit (`tests/hosted_unit.rs`
+// adopts that unit here).  Values hand-computed as there.
+use hostedshift::*;
+use hostedlib::*;
+
+fn main() {
+  s = Span { from: Mark { label: "a", at: 3 }, to: Mark { label: "b", at: 10 } };
+  assert(span_len(s) == 7, "span");
+  b = bag_new("alpha", 5);
+  b.fill(4, 3);
+  assert(b.total == 27, "total {b.total}");
+  assert(b.weight() == 54, "weight {b.weight()}");
+  c = bag_new("beta", 0);
+  c.fill(200, 1);
+  assert(c.total == 20100, "total {c.total}");
+  assert(deep(400) == 80200, "deep {deep(400)}");
+  println("{b.name} {b.total} {b.weight()} {c.total} {len(c.items)} {ratio(c.name, 2)} {mix(1, 1)} {span_len(s)}");
+}

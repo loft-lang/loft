@@ -143,3 +143,117 @@ fn the_hosted_verify_passes_a_sound_unit_and_names_a_planted_write() {
         "the verify names the call that wrote it: {err}"
     );
 }
+
+/// `@PLN206 P5` — a hosted unit runs in any program, not only the one that built it: built by
+/// `hostedlib_main.loft`, it is adopted by `hostedlib_shift_main.loft`, which loads
+/// `tests/lib/hostedshift` first and so numbers `hostedlib`'s types otherwise.  The unit names
+/// a type by the building program's number and translates it by key where it crosses into a
+/// store (`loft_tp_out`, `loft_tp_in`); the verify compares every store's root type and the
+/// answer's, so a crossing left untranslated stops the run.
+///
+/// @falsified-at: none — a SABOTAGE (2026-11-22): with `loft_tp_out` answering its argument
+///   (`src/c/loft_store.h`), the shifted program stops at the first record answer.
+///   CHANNEL: the exit status and the message.  WITNESS: "`bag_new` leaves another world
+///   compiled than interpreted: the answer's store holds type 107 interpreted, 100 compiled"
+///   (the numbers of that build).  HOLDS: the building program, whose numbers are the unit's.
+#[test]
+fn a_hosted_unit_built_by_one_program_runs_in_another() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let lib = private_lib("shift");
+    let pkg = lib.join("hostedshift");
+    fa::create_dir_all(pkg.join("src")).expect("package dir");
+    for f in ["loft.toml", "src/hostedshift.loft"] {
+        let text = fa::read_to_string(root.join("tests/lib/hostedshift").join(f)).expect("read");
+        fa::write(pkg.join(f), text).expect("write");
+    }
+    let run_one = |script: &str| {
+        let out = harness_command(env!("CARGO_BIN_EXE_loft"))
+            .arg("--interpret")
+            .arg("--lib")
+            .arg(&lib)
+            .arg(root.join(script))
+            .env("LOFT_NO_CACHE", "1")
+            .env("LOFT_LIB_BACKEND", "c")
+            .env("LOFT_NO_RUSTC", "1")
+            .env("LOFT_POISON_CLAIM", "1")
+            .env("LOFT_STRICT_STORES", "1")
+            .env("LOFT_HOSTED_VERIFY", "1")
+            .output()
+            .expect("run loft");
+        (
+            out.status.success(),
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+    let (ok, out, err) = run_one(SCRIPT);
+    assert!(ok, "the building program: {err}");
+    assert_eq!(out, "alpha 27 54 20100 201 2 32\n");
+    let units = |lib: &std::path::Path| {
+        fa::read_dir(lib.join("hostedlib/native-auto"))
+            .map(|d| {
+                d.iter()
+                    .filter_map(|p| p.file_name())
+                    .filter(|n| n.ends_with(".dylib") || n.ends_with(".so") || n.ends_with(".dll"))
+                    .count()
+            })
+            .unwrap_or(0)
+    };
+    assert_eq!(units(&lib), 1, "the building program built one unit");
+    let (ok, out, err) = run_one("tests/lib/hostedlib_shift_main.loft");
+    let _ = fa::remove_dir_all(&lib);
+    assert!(ok, "the shifted program adopts the unit and verifies: {err}");
+    assert_eq!(out, "alpha 27 54 20100 201 2 32 7\n");
+    assert!(
+        err.contains("call(s) compiled and interpreted alike") && !err.contains(": 0 call(s)"),
+        "calls crossed the unit: {err}"
+    );
+}
+
+/// `@PLN206 P5` — the C runtime reads and writes a store's root type only through `LOFT_KNOWN`
+/// and `LOFT_SET_KNOWN`, which a hosted unit translates by key (`src/c/loft_store.h`); a raw
+/// `known` is marked `LOFT_RAW_KNOWN` with why it may see the store as it is in memory.  A raw
+/// one unmarked is a crossing the translation never sees: in a program that numbers types
+/// otherwise it reads or writes another type, and nothing says so.
+#[test]
+fn the_c_runtime_reaches_a_stores_type_only_through_its_translation() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/c");
+    let mut raw = Vec::new();
+    for p in fa::read_dir(&root).expect("src/c") {
+        let Some(name) = p.file_name().map(str::to_string) else {
+            continue;
+        };
+        if !name.ends_with(".h") {
+            continue;
+        }
+        let text = fa::read_to_string(root.join(&name)).expect("read");
+        for (i, line) in text.lines().enumerate() {
+            let t = line.trim_start();
+            if t.starts_with("/*") || t.starts_with('*') || line.contains("LOFT_RAW_KNOWN") {
+                continue;
+            }
+            if t.starts_with("#define LOFT_KNOWN") || t.starts_with("#define LOFT_SET_KNOWN") {
+                continue;
+            }
+            let hit = line.match_indices("known").any(|(at, _)| {
+                let before = &line[..at];
+                let after = line[at + 5..].chars().next();
+                (before.ends_with('.') || before.ends_with("->"))
+                    && !after.is_some_and(|c| c.is_alphanumeric() || c == '_')
+            });
+            if hit {
+                raw.push(format!("src/c/{name}:{}: {}", i + 1, line.trim()));
+            }
+        }
+    }
+    assert!(
+        raw.is_empty(),
+        "a store's type reached without LOFT_KNOWN / LOFT_SET_KNOWN (mark a deliberate one \
+         LOFT_RAW_KNOWN):\n{}",
+        raw.join("\n")
+    );
+}
