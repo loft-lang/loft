@@ -236,6 +236,9 @@ fn block_body(e: el::El, vars: el_vars::Vars, n: integer, context: text, result:
   // `(C-Never)` (loft#2388): a statement whose value never arrives ends the block's reachable
   // part — the statements after it are read, not kept.
   unreachable_rest = false;
+  // The armed fit fusion's step: its index in `l`, and the statement that follows it.
+  fit_at = -1;
+  fit_next = -1;
   for s in stmts {
     match e.p.nodes[s] {
       SStmt { at, e: se, semi, orelse } => {
@@ -254,6 +257,23 @@ fn block_body(e: el::El, vars: el_vars::Vars, n: integer, context: text, result:
           el_trace::state(e, vars, "stmt", at, se!);
         }
         x = el_ex_object::statement(e, vars, se ?? 0, orelse);
+        // The `if` after an armed step has been read: where its condition took the fit temp,
+        // the step is split — the checked cast binds the temp, and the step's range guard reads
+        // it (`parse_block`'s fit rewrite).  Values are unchanged by construction.
+        if fit_at >= 0 && s#index == fit_next {
+          if vars.fit_var >= 0 && fit_at < len(l) {
+            fb = el_ex_object::range_default_bounds(l[fit_at]!);
+            tk = el_ex_object::take_range_operand(l[fit_at]!, ir::NdVar { n: vars.fit_var });
+            if tk.taken != null && fb != null {
+              to = ir::TyInteger { spec: ir::IntegerSpec { min: fb!.lo, max: fb!.hi, not_null: false, forced_size: 0 } };
+              cast = el_convert::dn4_cast(e, vars, tk.taken!, ir::TyInteger { spec: wide_spec() }, to);
+              l = l[..fit_at] + [el_ir::v_set(vars.fit_var, cast), tk.node] + l[fit_at + 1..];
+            }
+          }
+          vars.fit_read = [];
+          vars.fit_var = -1;
+          fit_at = -1;
+        }
         if unreachable_rest {
           continue;
         }
@@ -278,10 +298,16 @@ fn block_body(e: el::El, vars: el_vars::Vars, n: integer, context: text, result:
         }
         el_ex_call::statement_proofs(e, vars, x.code);
         // `@FR-E-Uncomp-Seen`: a compound step into a dense narrow local (its guard's default a
-        // value, not the null) followed by `if !local` fuses with that test (`fuse_fit_test`, a
-        // `__fit_N` checked cast) — not carried: refused by name.
-        if !e.first_pass && s#index < len(stmts) - 1 && el_ex_pattern::fit_armed(e, se ?? 0, x.code) != "" && el_ex_pattern::if_not_names(e, stmts[s#index + 1] ?? 0, el_ex_pattern::fit_armed(e, se ?? 0, x.code)) {
-          el::refuse(e, "a narrow compound step the next `if !` tests (the fit fusion)");
+        // value, not the null) followed by `if !local` fuses with that test (`fuse_fit_test`):
+        // armed here, the step's place in `l` kept for the rewrite after the `if`.
+        if !e.first_pass && s#index < len(stmts) - 1 && (el_ir::unspan(x.code) is NdSet || el_ir::unspan(x.code) is NdCall || match x.code { NdInsert { items: fi } => len(fi) == 1, _ => false }) && el_ex_pattern::next_is_if(e, stmts[s#index + 1] ?? 0) {
+          frd = el_ex_pattern::fit_read_of(e, se ?? 0, x.code);
+          if frd != null {
+            vars.fit_read = [frd!];
+            vars.fit_var = -1;
+            fit_at = len(l);
+            fit_next = s#index + 1;
+          }
         }
         match x.code {
           NdInsert { items } => {

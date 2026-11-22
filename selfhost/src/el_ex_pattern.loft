@@ -3204,6 +3204,63 @@ pub fn fit_armed(e: el::El, se: integer, code: ir::Node) -> text {
   }
 }
 
+// Is statement `st` an `if` (`fit_armed`'s candidate lives until the next statement, which must
+// open with `if`)?
+pub fn next_is_if(e: el::El, st: integer) -> boolean {
+  match e.p.nodes[st] {
+    SStmt { e: x } => x != null && e.p.nodes[x!] is SIf,
+    _ => false
+  }
+}
+
+// `fit_armed`: the read of the place a narrow compound step at `se` stores into — the first
+// operand of the composed value its range guard checks (`OpRangeDefault(composed, lo, hi, d)`),
+// where the guard's default is a value (a slot keeping a code for its own failure needs no
+// fusion) — or null.
+pub fn fit_read_of(e: el::El, se: integer, code: ir::Node) -> ir::Node? {
+  compound = match e.p.nodes[se] { SAssign { op } => op != "=", _ => false };
+  if !compound {
+    return null;
+  }
+  g = range_guard_call(e, code);
+  if g == null {
+    return null;
+  }
+  match g! {
+    NdCall { args } => {
+      if args[3] == ir::NdLong { n: -9223372036854775807 - 1 } {
+        return null;
+      }
+      match el_ir::unspan(args[0]!) {
+        NdCall { args: ca } => if len(ca) > 0 { ca[0] } else { null },
+        _ => null
+      }
+    },
+    _ => null
+  }
+}
+
+// The `OpRangeDefault(v, lo, hi, d)` call inside `n`, or null.
+fn range_guard_call(e: el::El, n: ir::Node) -> ir::Node? {
+  match el_ir::unspan(n) {
+    NdSet { inner } => range_guard_call(e, inner),
+    NdInsert { items } => if len(items) == 1 { range_guard_call(e, items[0]!) } else { null },
+    NdCall { def_nr, args } => {
+      if el::def(e, def_nr).name == "OpRangeDefault" && len(args) == 4 {
+        return el_ir::unspan(n);
+      }
+      for a in args {
+        g = range_guard_call(e, a);
+        if g != null {
+          return g;
+        }
+      }
+      null
+    },
+    _ => null
+  }
+}
+
 // Whether statement `st` is an `if` whose condition is `!name`.
 pub fn if_not_names(e: el::El, st: integer, name: text) -> boolean {
   se = match e.p.nodes[st] { SStmt { e: x } => x ?? -1, _ => -1 };

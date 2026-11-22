@@ -314,6 +314,12 @@ pub struct Vars {
   // `unordered_iterator` (`@FR-Col-Unordered`): the `for` source was written `unordered(c)`; the
   // keyed walk takes it (a hash's slot-order snapshot, `n_hash_unsorted`).
   pub unordered_walk: boolean = false,
+  // `fit_armed` / `fuse_fit_test` (`@FR-E-Uncomp-Seen`): the read of the narrow place a compound
+  // step just stored into (empty for none), the `_fit_N` temp a `!place` in the next `if`'s
+  // condition took (-1 until one did), and whether that condition is being read.
+  pub fit_read: vector<ir::Node> = [],
+  pub fit_var: integer = -1,
+  pub fit_cond: boolean = false,
   // The plain enum a bare variant name resolves in first (`enum_hint`, `@FR-T-Chk-Var`): set
   // while an item is checked at an enum element; -1 elsewhere.
   pub enum_hint: integer = -1,

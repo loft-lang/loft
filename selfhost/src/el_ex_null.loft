@@ -1554,7 +1554,10 @@ pub fn has_operator_method(e: el::El, d: integer) -> boolean {
 // null, arms of different types and a value without an `else` are refused by name.
 pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, other: integer?, expected: ir::TypeT) -> Ex {
   vars.capture_ok = true;
+  // (`fit_in_condition`: a `!local` here may take an armed fit temp; the body's may not.)
+  vars.fit_cond = len(vars.fit_read) > 0;
   c = el_ex_assign::expression(e, vars, cond);
+  vars.fit_cond = false;
   vars.capture_ok = false;
   bindings = vars.is_bindings;
   aliases = vars.is_aliases;
