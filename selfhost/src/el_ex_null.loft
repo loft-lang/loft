@@ -131,14 +131,13 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
     };
     // (So is a vector field of a keyed lookup's record, `h[2].tags ?? []`.)
     if !(x.code is NdVar) && !el_ex_call::buffered_loft_call(e, x.code) && (copies_whole_vector(e, vars, x.code) || field_path(e, x.code) || elem_subject || linked_field || tag_field || keyed_field_read(e, x.code)) {
-      // The default's buffer borrows the record too: a work ref nulled at the head.
-      if !e.first_pass {
-        el_ex_call::borrowed_literal_buffer(vars, d.code);
-      }
       held = el_vars::create_unique(vars, "_ncc", lhs);
       el_vars::set_skip_free(vars, held, "build_null_coalesce_default_inner");
       el_vars::register_work_ref(vars, held);
       if e.first_pass {
+        // (The default's arm is asked on both passes, its flags cumulative, as
+        // `build_null_coalesce_default_inner` asks it.)
+        el_ex_call::register_default_literal(e, vars, d.code, el_types::with_deps(el_types::without_deps(lhs), [held]));
         return ex(ir::NdNull, lhs);
       }
       h = ir::NdVar { n: held };
@@ -147,7 +146,7 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
       read = if elem_subject { el_ir::cl(e, "OpGetField", [nullable_arith(e, el_ir::unspan(x.code), false), ir::NdInt { n: 0 }, ir::NdInt { n: element_place_type(e, lhs) }]) } else { nullable_arith(e, x.code, true) };
       // (loft#2567: the default builds a store of its own for every subject; its `_vec_N` is
       // the registered buffer a call subject's is, declared in the statement.)
-      el_ex_call::register_default_literal(vars, d.code, el_types::with_deps(el_types::without_deps(lhs), [held]));
+      el_ex_call::register_default_literal(e, vars, d.code, el_types::with_deps(el_types::without_deps(lhs), [held]));
       return ex(el_ir::v_block([el_ir::v_set(held, read), el_ir::v_if(present, h, d.code)], lhs, "ncc"), lhs);
     }
     // A native call answers a fresh vector: held in a `__ncc_N` of its own type (nulled before
@@ -173,10 +172,8 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
       // statement and the default's buffer a work ref.)
       fresh = native || len(el_types::deps(lhs)) == 0;
       if e.first_pass {
-        // A native call's default: its buffer is a work ref from this pass on.
-        if fresh {
-          el_ex_call::borrowed_literal_buffer(vars, d.code);
-        }
+        // (The default's arm is asked on both passes, its flags cumulative.)
+        el_ex_call::register_default_literal(e, vars, d.code, if fresh { lhs } else { ht });
         return ex(ir::NdNull, ht);
       }
       // `@PLN102` (`build_null_coalesce`): an OWNED vector subject — every borrow one of this
@@ -192,19 +189,21 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
         el_vars::register_work_ref(vars, held);
         el_vars::mark_inline(vars, held, "build_null_coalesce_default_inner");
         el_vars::set_var_type(vars, held, el_types::without_deps(lhs));
-        el_ex_call::register_default_literal(vars, d.code, el_types::without_deps(lhs));
+        // (The default's arm is chosen on the subject's type as read — a native result that
+        // borrows takes the backed arm — as `build_null_coalesce_default_inner` is handed it.)
+        el_ex_call::register_default_literal(e, vars, d.code, lhs);
         h = ir::NdVar { n: held };
         present = el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpVectorIsNull", [h])]);
         return ex(el_ir::v_block([el_ir::v_set(held, x.code), el_ir::v_if(present, h, d.code)], ht, "ncc"), ht);
       }
       // Typed as this pass's subject, peeled: the borrow its call's buffer gives it.
       el_vars::set_var_type(vars, held, lhs);
-      el_ex_call::register_default_literal(vars, d.code, ht);
+      el_ex_call::register_default_literal(e, vars, d.code, ht);
       h = ir::NdVar { n: held };
       present = el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpVectorIsNull", [h])]);
       return ex(el_ir::v_block([el_ir::v_set(held, x.code), el_ir::v_if(present, h, d.code)], ht, "ncc"), ht);
     }
-    el_ex_call::register_default_literal(vars, d.code, x.tp);
+    el_ex_call::register_default_literal(e, vars, d.code, x.tp);
     vt = el_types::without_deps(lhs);
     present = el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpVectorIsNull", [x.code])]);
     return ex(el_ir::v_if(present, x.code, d.code), el_types::with_deps(vt, el_types::deps(lhs)));

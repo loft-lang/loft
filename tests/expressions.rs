@@ -162,6 +162,39 @@ fn stack_trace_function_names() {
     .result(Value::Int(1));
 }
 
+/// loft#2614 — a lambda's declared parameters are the user's, as a function's are: a `_` name
+/// the body never reads still lists in its frame's `arguments` and `variables`, in each lambda
+/// form, and a capturing lambda's hidden `__closure` does not.  By hand: every lambda lists
+/// `p,_u,`.  (`--native` frames carry no lists, STACKTRACE.md ST-6: an interpreter test.)
+///
+/// @falsified-at 037e92272: without `mark_declared_parameters` on the lambda paths the three
+/// unread cells list `p,` only (measured on main @ e6d995a7a); the read `_u` is the control.
+#[test]
+fn a_lambdas_unread_underscore_parameter_lists_in_its_frame() {
+    code!(
+        "fn frame_args() -> text {
+    frames = stack_trace();
+    f = frames[len(frames) - 2];
+    args = \"\";
+    for a in f.arguments { args += \"{a.name},\"; }
+    vars = \"\";
+    for v in f.variables { vars += \"{v.name},\"; }
+    \"{args}|{vars}\"
+}
+fn apply(f: fn(integer, integer) -> text) -> text { f(1, 2) }
+fn test() {
+    k = 40;
+    plain = fn(p: integer, _u: integer) -> text { frame_args() };
+    capturing = fn(p: integer, _u: integer) -> text { \"{frame_args()}{k}\" };
+    assert(plain(1, 2) == \"p,_u,|p,_u,\", \"fn literal: {plain(1, 2)}\");
+    assert(capturing(1, 2) == \"p,_u,|p,_u,40\", \"capturing: {capturing(1, 2)}\");
+    assert(apply(|p, _u| { frame_args() }) == \"p,_u,|p,_u,\", \"short form\");
+    assert(apply(|p, _u| { \"{frame_args()}{_u}\" }) == \"p,_u,|p,_u,2\", \"read control\");
+}"
+    )
+    .result(Value::Null);
+}
+
 // ── TR1.4 — Call-site line numbers ───────────────────────────────────────────
 
 #[test]

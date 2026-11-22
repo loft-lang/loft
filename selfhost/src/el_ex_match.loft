@@ -3180,6 +3180,8 @@ pub fn cursor_match(e: el::El, vars: el_vars::Vars, x: Ex, cs: vector<integer>, 
   el_vars::set_defined(vars, cv);
   vt = ir::TyVector { inner: elm, dep: [cv] };
   srcv = el_vars::create_unique(vars, "cursor_src", vt);
+  // (A view of the source inside the caller's cursor record: freeing it frees the record.)
+  el_vars::set_skip_free(vars, srcv, "parse_cursor_match");
   el_vars::set_defined(vars, srcv);
   posv = el_vars::create_unique(vars, "cursor_pos", ir::TyInteger { spec: i32_spec() });
   el_vars::set_defined(vars, posv);

@@ -1447,11 +1447,8 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
         v = el_vars::add_variable(vars, a.name, a.typedef);
         el_vars::become_argument(vars, v);
         // (`mark_declared_parameters`: a parameter the signature declares is named by the user,
-        // whether or not the body mentions it.  `parse_function` asks it, `parse_lambda` does
-        // not: a lambda's parameter is user-named where the body mentions it.)
-        if !starts_with(name, "__lambda_") {
-          el_vars::mark_user_named(vars, v, "mark_declared_parameters");
-        }
+        // whether or not the body mentions it — a function's and a lambda's alike, loft#2614.)
+        el_vars::mark_user_named(vars, v, "mark_declared_parameters");
 
         if vars.vars[v].uses > 0 {
           el_vars::in_use(vars, v, false);
