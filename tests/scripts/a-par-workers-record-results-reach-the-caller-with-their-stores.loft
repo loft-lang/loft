@@ -1,0 +1,100 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// STORE_MODEL D46, loft#2611 — a `par` worker's record result reaches the loop with the store the worker
+// made it in, taken into the caller's store table on both backends; every stored reference it
+// reaches is renumbered with it.  Run threaded (more than one thread, several rows per worker),
+// where the C takes a worker's stores after it joined.  Values hand-computed; each cell checks
+// the value and the length.
+//
+// @falsified-at: 8ae4c334c^ — before the C took the stores, the copy carried a reference over as
+//   it stood, naming a slot of the worker's freed table: c1 exits 1 with no message on the C.
+//   CHANNEL: the exit status and the assertions.
+
+struct Doc { name: text, n: integer }
+struct Linked { label: text, other: reference<Doc> }
+struct Leaf { v: integer }
+struct Mid { tag: text, leaf: reference<Leaf> }
+struct Top { name: text, leaves: vector<Leaf>, mids: vector<Mid>, mid: reference<Mid>? }
+struct Maybe { label: text, other: reference<Doc>? }
+struct Bag { name: text, xs: vector<integer>, ks: hash<Doc[name]> }
+enum Shape { Dot { at: integer }, Pin { label: text, docs: vector<Doc> } }
+
+fn own(i: integer) -> Linked {
+  d = Doc { name: "own{i}", n: i * 7 };
+  Linked { label: "l{i}", other: d }
+}
+fn nested(i: integer) -> Top {
+  t = Top { name: "t{i}", leaves: [Leaf { v: i * 100 }], mids: [], mid: null };
+  t.mids += [Mid { tag: "m{i}", leaf: t.leaves[0] }];
+  t.mid = t.mids[0];
+  t
+}
+fn maybe(i: integer) -> Maybe {
+  if i % 2 == 0 { return Maybe { label: "none{i}", other: null }; }
+  d = Doc { name: "some{i}", n: i };
+  Maybe { label: "m{i}", other: d }
+}
+fn shape(i: integer) -> Shape {
+  if i % 2 == 0 { return Dot { at: i }; }
+  Pin { label: "p{i}", docs: [Doc { name: "pin{i}", n: i * 3 }, Doc { name: "q{i}", n: 1 }] }
+}
+fn bag(i: integer) -> Bag {
+  b = Bag { name: "b{i}", xs: [], ks: [] };
+  for k in 0..i { b.xs += [k * i]; }
+  b.ks += [Doc { name: "k{i}", n: i }];
+  b
+}
+
+fn main() {
+  // c1: a reference to a record in the result's own store: 7 + 14 + 21 + 28
+  t1 = 0;
+  s1 = "";
+  for a in [1, 2, 3, 4] par(b = own(a), 2) { s1 += "{b.label}:{b.other.name} "; t1 += b.other.n; }
+  assert(s1 == "l1:own1 l2:own2 l3:own3 l4:own4 ", "c1 {s1}");
+  assert(t1 == 70, "c1 total {t1}");
+
+  // c2: a reference whose target holds a reference: 100 + 200 + 300 + 400 + 500
+  t2 = 0;
+  s2 = "";
+  for a in [1, 2, 3, 4, 5] par(b = nested(a), 3) {
+    if b.mid != null { s2 += "{b.name}{b.mid.tag} "; t2 += b.mid.leaf.v; }
+  }
+  assert(s2 == "t1m1 t2m2 t3m3 t4m4 t5m5 ", "c2 {s2}");
+  assert(t2 == 1500, "c2 total {t2}");
+
+  // c3: a nullable reference, null on the even rows: 1 + 3 + 5
+  t3 = 0;
+  s3 = "";
+  for a in [1, 2, 3, 4, 5, 6] par(b = maybe(a), 3) {
+    if b.other != null { t3 += b.other.n; s3 += "{b.label}:{b.other.name} "; } else { s3 += "{b.label} "; }
+  }
+  assert(s3 == "m1:some1 none2 m3:some3 none4 m5:some5 none6 ", "c3 {s3}");
+  assert(t3 == 9, "c3 total {t3}");
+
+  // c4: a struct-enum result: (3 + 1) + (9 + 1) + (15 + 1) + (21 + 1) + 2 + 4 + 6
+  t4 = 0;
+  n4 = 0;
+  for a in [1, 2, 3, 4, 5, 6, 7] par(b = shape(a), 3) {
+    match b {
+      Dot { at } => { t4 += at; n4 += 1; },
+      Pin { label, docs } => { for d in docs { t4 += d.n; n4 += 1; } }
+    }
+  }
+  assert(t4 == 64, "c4 total {t4}");
+  assert(n4 == 11, "c4 rows {n4}");
+
+  // c5: nine rows on four threads, each result holding a vector and a hash:
+  // lengths 1 + … + 9 = 45, elements Σ i·i(i−1)/2 = 870
+  l5 = 0;
+  t5 = 0;
+  s5 = "";
+  for a in [1, 2, 3, 4, 5, 6, 7, 8, 9] par(b = bag(a), 4) {
+    l5 += len(b.xs);
+    for x in b.xs { t5 += x; }
+    s5 += "{b.ks["k{a}"].n}";
+  }
+  assert(l5 == 45, "c5 lengths {l5}");
+  assert(t5 == 870, "c5 total {t5}");
+  assert(s5 == "123456789", "c5 keys {s5}");
+}

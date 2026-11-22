@@ -299,3 +299,72 @@ fn the_allocation_comparison_holds_its_verdicts() {
         String::from_utf8_lossy(&out.stdout)
     );
 }
+
+/// STORE_MODEL D46, loft#2611 — a `par` worker's record result reaches the loop with the store the
+/// worker made it in, on both backends, its stored references renumbered: every cell of the script,
+/// threaded, freed bytes poisoned and every store accounted for.
+///
+/// @falsified-at: 8ae4c334c^ — the C copied each result into a results store, a reference carried
+///   over as it stood: `--native` exits 1 with no message at c1.
+///   CHANNEL: the exit status.
+#[test]
+fn a_par_workers_record_results_reach_the_caller_with_their_stores() {
+    let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/scripts/a-par-workers-record-results-reach-the-caller-with-their-stores.loft");
+    let modes: &[&str] = if have_cc() {
+        &["--interpret", "--native"]
+    } else {
+        &["--interpret"]
+    };
+    for mode in modes {
+        let out = harness_command(env!("CARGO_BIN_EXE_loft"))
+            .arg(mode)
+            .arg(&script)
+            .env("LOFT_NO_CACHE", "1")
+            .env("LOFT_POISON", "1")
+            .env("LOFT_NATIVE_LEAK_CHECK", "1")
+            .output()
+            .expect("run loft");
+        assert!(
+            out.status.success(),
+            "{mode}: {}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}
+
+/// STORE_MODEL D46 — the C gathers a threaded `par` loop's record results as the interpreter
+/// does: each row's store is taken into the caller's table and freed when the loop's buffer is
+/// dropped, and no results store is made.  Four rows, each answer one store: four stores made
+/// inside the region, four freed there.
+///
+/// @falsified-at: 8ae4c334c^ — the C made a results store beside the four rows' (five made, three
+///   freed in the region: `(5, 3)`); the rows' stores went with the workers' tables, untraced.
+///   CHANNEL: the trace's `N` and `F` events between `P` and `Q`.
+#[test]
+fn a_par_regions_record_results_are_the_workers_stores() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let (out, ev) = traced(
+        "par-adopt",
+        r#"
+struct Doc { name: text, n: integer }
+fn mk(i: integer) -> Doc { Doc { name: "d{i}", n: i * 5 } }
+fn main() {
+  t = 0;
+  for a in [1, 2, 3, 4] par(b = mk(a), 2) { t += b.n; }
+  println("{t}");
+}
+"#,
+    );
+    assert_eq!(out, "50\n");
+    let p = at(&ev, "P");
+    let q = at(&ev, "Q");
+    let region = &ev[p..q];
+    let made = region.iter().filter(|e| e.starts_with("N ")).count();
+    let freed = region.iter().filter(|e| e.starts_with("F ")).count();
+    assert_eq!((made, freed), (4, 4), "the region: {region:?}");
+}
