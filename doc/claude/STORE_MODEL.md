@@ -37,6 +37,12 @@ event.  `scripts/c_alloc_diff.py` holds everything outside a region to the model
 store; a store the region touched may be freed in another place but as often on both sides, at
 most once.  Its `--self-test` holds those verdicts (`tests/c_alloc_order.rs`).
 
+**A store's bytes.**  Two runtimes with one store layout (P3) are compared by what they leave,
+not only by their events: `scripts/store_diff.py` sets every store's final bytes side by side,
+paired by history, under one hash seed and `LOFT_POISON_CLAIM`; a stored reference agrees when it
+names the same store, and padding one side zeroes is set apart.  A difference no C-only rewrite
+explains is a row below.
+
 ## Contents
 - [The store](#the-store) — the record a store is, field by field
 - [The store table](#the-store-table)
@@ -149,6 +155,7 @@ stated in `(H-SwapIn)`, closed with it.)
 
 | # | Divergence | State |
 |---|---|---|
+| D48 | the stores fifteen programs leave differ byte for byte, and no C-only rewrite accounts for it: `05-enums`, `1549-a-pooled-buffer-releases-its-previous-occupant`, `158-join-read`, `2177-a-malformed-image-answers-every-paged-load`, `37-stress`, `981-split-ownership-return`, `a-chain-exit-hands-the-placed-buffer-through`, `a-kept-vector-field-follows-its-appends-across-calls`, `a-record-that-owns-no-heap-is-copied-as-its-bytes`, `a-result-read-in-place-is-a-caller-buffer`, `a-value-read-and-dropped-is-built-outside-the-store`, `a-vector-field-of-a-view-reads-through-its-address`, `a-vector-only-read-keeps-its-header-beside-a-writer`, `a-walk-of-a-built-vector-streams-its-elements`, `an-append-twin-writes-through-its-callers-window` | open — found by the store differential (`scripts/store_diff.py --attribute`, `p3-p4-design.md`), which compares what the allocator trace cannot: a record's bytes.  The classes: a record of another size or claimed on one side only, a write one side makes and the other does not, a parsed root's type (`05-enums`: 123 against none).  Each is converged or decided as P1's rows were |
 | D26 | the interpreter's stack lives in a store; C's is the C stack | decided — each runtime's own: the value stack is how the interpreter executes, not a heap store of the program.  `LOFT_ALLOC_TRACE` marks it (`S`, a state's stack and constant store, a par worker's stack too) and `scripts/c_alloc_diff.py` leaves it out, under which the two agree; P4's hosted C unit meets it at the frame boundary |
 | D28 | the store table: a `Vec<Store>` beside the type table against a thread-local array | decided — one model: a numbered table of stores, a `DbRef`'s `store_nr` its index, the type table beside it; only the layout of that table differs, which P3 (one layout) builds |
 

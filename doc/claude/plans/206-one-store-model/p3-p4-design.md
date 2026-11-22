@@ -86,19 +86,32 @@ for the run that reads it.  Two instruments compare the stores themselves, and e
 positive control: a planted difference it must report, so a silent run is a measurement and not
 a blind spot.
 
-- **The store differential (`LOFT_STORE_DUMP=<file>`, `scripts/store_diff.py`).**  At the end of a
-  run — or at a named line — each runtime writes every live store: its history name (as
-  `c_alloc_diff.py` names it, so the two sides pair by what happened to them rather than by slot
-  number), its claimed records, and each record's bytes.  The diff lists every difference as
-  store, record, offset and the field the type table names there, and runs the C-only rewrites'
-  attribution (`--attribute`) so a difference a rewrite explains is named as that rewrite's.
-  Unclaimed bytes are not compared: a claim promises no value (`@FR-H-Claim`).
-- **The hosted verify (`LOFT_HOSTED_VERIFY=1`).**  Each call into a hosted unit runs twice: the C
-  on the interpreter's stores, and the function's own bytecode on a copy taken before the call.
-  The two worlds after the call — the answer and every store, compared as above — must be equal;
-  the first call that differs stops the run and names the function, its arguments and the first
-  differing record.  It finds a divergence at the call that makes it, in a real program, which is
-  where a production defect is found late.
+- **The store differential (`LOFT_STORE_DUMP=<file>`, `scripts/store_diff.py`).**  Each runtime
+  writes every store's final content — as it is freed, and a store still live at the end — with
+  its history name (as `c_alloc_diff.py` names it, so the two sides pair by what happened to a
+  store, not by its slot), its slot, its claimed records and each record's bytes.  A dump taken
+  only at the end was blind: a sound program frees everything first, which the positive control
+  showed at once.  The diff lists every store live on one side only, every record claimed on one
+  side only or of another size, and every run of differing bytes, each with the line that made
+  the store on each side.  `--attribute` reruns with each C-only rewrite off.  Both sides run
+  under `LOFT_POISON_CLAIM`, so a byte nothing wrote reads the same, and with one
+  `LOFT_HASH_SEED`: a hash table is pseudo-random, and seeded alike its seed and its entries'
+  places agree.  Two readings keep it from crying wolf: a stored reference names a store by its
+  slot, so a word naming the same store by history on both sides agrees; and a byte one side
+  zeroes where the other leaves it unwritten is padding no field reads, listed apart.  A second
+  interpreter run is the noise control: what still varies from run to run is named, not hidden —
+  over the sample, nothing does.  `--plant` flips one byte of the C's dump, which must add a
+  difference.
+- **The hosted verify (`LOFT_HOSTED_VERIFY=1`).**  Each call into a compiled library artifact —
+  a hosted C unit or a rustc one — runs twice: compiled, on an exact copy of the world taken
+  before the call (`Stores::world_copy`, `Store::exact_copy`), and the function's own bytecode
+  on the world itself (`State::call_back`).  Every store that existed before the call must hold
+  the same claimed bytes, and the answer must be the same (a record as `Stores::show` renders
+  it); the hidden return buffer is not compared, because the compiled bridge fills the caller's
+  where the call-back makes its own.  The first call that differs stops the run and names the
+  function and the record; otherwise the program goes on in the compiled world, as it does
+  without the switch.  `LOFT_HOSTED_PLANT` builds a unit with a planted write: with the verify the
+  run stops at the call that made it, without it the wrong value surfaces statements later.
 
 ## Phases
 
@@ -109,7 +122,7 @@ a blind spot.
 | P3c | A hosted `loft_store_t` is padded to `sizeof(Store)` (`LOFT_HOST_STORE_SIZE`). | The layout test, sizes included. | `sizeof(loft_store_t)` differs from `size_of::<Store>()`. |
 | P4a | The C writer emits a hosted unit: the table, birth, death and mapped growth through the host, `loft_shared_<name>` bridges over `LibArg`. | A hosted unit called from a Rust test on a live `Stores`. | Its answer or the stores after it differ from the interpreter's. |
 | P4b | The interpreter adopts a hosted unit for one pure-loft library. | The library's suite interpreted, then adopted; the timings. | An answer differs, or adopted is not faster. |
-| P4c | The store differential: `LOFT_STORE_DUMP` on both runtimes, `scripts/store_diff.py`. | The corpus sample, interpreted against `--native`; a planted wrong byte. | The planted byte is not reported, or a difference no rewrite explains appears. |
+| P4c | The store differential: `LOFT_STORE_DUMP` on both runtimes, `scripts/store_diff.py`. | The corpus sample, interpreted against `--native`; a planted wrong byte. | The planted byte is not reported.  What it finds becomes `STORE_MODEL.md` rows, each converged or decided as P1's were. |
 | P4d | The hosted verify (`LOFT_HOSTED_VERIFY=1`). | tween's and `hostedlib`'s programs; a planted wrong store write in a unit. | The planted write is not reported, or a real call differs. |
 
 ## Measured
