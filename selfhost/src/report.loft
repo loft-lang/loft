@@ -852,19 +852,51 @@ pub fn state_report(b: ir::Bundle, from: integer) -> text {
       if v.value_const { fl += " value_const"; }
       if v.owner_witness >= 0 && v.owner_witness < len(f.variables) { fl += " owner_witness={f.variables[v.owner_witness].name}"; }
       if v.rebind_orig >= 0 && v.rebind_orig < len(f.variables) { fl += " rebind_orig={f.variables[v.rebind_orig].name}"; }
+      // What it borrows — its type's deps, by name — which decides what the scope pass frees.
+      vd = type_deps(v.type_def[0] ?? ir::TyVoid);
+      if len(vd) > 0 {
+        dn = "";
+        for x in vd {
+          dn += if dn == "" { "" } else { "," };
+          dn += if x >= 0 && x < len(f.variables) { f.variables[x].name } else { "#{x}" };
+        }
+        fl += " deps={dn}";
+      }
       if fl != "" {
         r += "[state] fn={d.name} var={v.name}{fl}\n";
       }
     }
+    // (In variable order: the set is a fact, the order it was met in is not.)
     if len(f.inline_refs) > 0 {
       names = "";
-      for ir_v in f.inline_refs {
-        names += " {if ir_v >= 0 && ir_v < len(f.variables) { f.variables[ir_v].name } else { "{ir_v}" }}";
+      for iv in f.variables {
+        if f.inline_refs.contains(iv#index) {
+          names += " {iv.name}";
+        }
       }
       r += "[state] fn={d.name} inline_refs{names}\n";
     }
   }
   r
+}
+
+// The deps a type names at its top: a collection's, a record's, a text's, through a `?` or a link.
+fn type_deps(t: ir::TypeT) -> vector<integer> {
+  match t {
+    TyOptional { inner } => type_deps(inner),
+    TyRefVar { inner } => type_deps(inner),
+    TyText { dep } => dep,
+    TyEnum { dep } => dep,
+    TyReference { dep } => dep,
+    TyVector { dep } => dep,
+    TySorted { dep } => dep,
+    TyIndex { dep } => dep,
+    TyRadix { dep } => dep,
+    TyHash { dep } => dep,
+    TyFunction { dep } => dep,
+    TyTrie { dep } => dep,
+    _ => []
+  }
 }
 
 pub fn defs_report(b: ir::Bundle, from: integer, templates: boolean = false) -> text {
