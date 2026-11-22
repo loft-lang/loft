@@ -212,7 +212,27 @@ impl State {
                 if comp.dbref.rec != 0 {
                     compiled.show(&mut b, &comp.dbref, tp, false);
                 }
-                (a != b).then(|| format!("the answer is {a} interpreted, {b} compiled"))
+                if a != b {
+                    return Some(format!("the answer is {a} interpreted, {b} compiled"));
+                }
+                // `@PLN206 P5` — the store the answer is the root of holds its type, which a
+                // hosted unit writes through its translation by key: the answer's store is the
+                // hidden buffer the stores' comparison leaves out, so its type is compared here.
+                let root_type = |s: &Stores, r: &DbRef| {
+                    (r.rec == 1)
+                        .then(|| s.allocations.get(usize::from(r.store_nr)))
+                        .flatten()
+                        .map(|st| st.known_type)
+                };
+                match (
+                    root_type(&self.database, &interp.dbref),
+                    root_type(compiled, &comp.dbref),
+                ) {
+                    (Some(x), Some(y)) if x != y => Some(format!(
+                        "the answer's store holds type {x} interpreted, {y} compiled"
+                    )),
+                    _ => None,
+                }
             }
             _ => (interp.scalar != comp.scalar).then(|| {
                 format!(
