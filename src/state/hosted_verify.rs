@@ -400,9 +400,14 @@ fn stores_difference(before: &[u16], interp: &Stores, compiled: &Stores) -> (Opt
                 }
             }
             let what = first_difference(nr, &image_twin, &image_world);
+            let named = if on_twin.known_type == u16::MAX {
+                String::new()
+            } else {
+                format!(" `{}`", interp.type_name(on_twin.known_type))
+            };
             return (
                 Some(format!(
-                    "{what} (store {nr}: type {}, made #{})",
+                    "{what} (store {nr}: type {}{named}, made #{})",
                     on_twin.known_type, on_twin.alloc_serial
                 )),
                 placed_otherwise,
