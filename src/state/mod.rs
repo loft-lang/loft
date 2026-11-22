@@ -8670,12 +8670,13 @@ impl State {
         let depth = u32::try_from(self.call_stack.len()).unwrap_or(u32::MAX);
         let fnref_bufs_before = self.fnref_bufs.len();
         let mut heap_bufs: Vec<DbRef> = Vec::new();
+        // With the caller's buffers given, each hidden attribute but a text work buffer takes
+        // the caller's next one — an answer buffer or a vector work buffer alike.
+        let given = !dests.is_empty();
         for a in def.attributes() {
-            if a.hidden && !a.work_buffer && !dests.is_empty() {
+            if given && a.hidden && !crate::native_gate::is_text_work_buffer(&a.typedef) {
                 // The caller's own buffer: its to release, not the call's.
-                if heap_bufs.len() < dests.len()
-                    && !crate::native_gate::is_text_work_buffer(&a.typedef)
-                {
+                if heap_bufs.len() < dests.len() {
                     heap_bufs.push(dests[heap_bufs.len()]);
                 }
                 continue;
@@ -8706,7 +8707,7 @@ impl State {
                     buf += 1;
                     continue;
                 }
-                if a.hidden && !a.work_buffer && heap < heap_bufs.len() {
+                if a.hidden && (given || !a.work_buffer) && heap < heap_bufs.len() {
                     st.put_stack(heap_bufs[heap]);
                     heap += 1;
                     continue;

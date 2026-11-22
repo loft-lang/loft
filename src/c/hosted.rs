@@ -82,6 +82,17 @@ static loft_str loft_la_text(const unsigned char *a, size_t i) {
 static void loft_la_set_bits(unsigned char *a, int64_t v) {
     memcpy(a + LOFT_LA_SCALAR, &v, 8);
 }
+/* A text answer: its bytes, valid until the unit's next call — the dispatcher copies them at
+ * once.  The work buffer a text result is written into is the unit's own (`loft_br_text`). */
+static LOFT_TLS loft_text loft_br_text;
+/* The text a function answers, owned: held until the unit's next text answer. */
+static LOFT_TLS loft_text loft_br_answer;
+static const char loft_br_empty[1] = { 0 };
+static void loft_la_set_text(unsigned char *a, loft_str s) {
+    const char *p = s.len ? s.p : loft_br_empty;
+    memcpy(a + LOFT_LA_TPTR, &p, sizeof p);
+    memcpy(a + LOFT_LA_TLEN, &s.len, sizeof s.len);
+}
 static void loft_la_set_ref(unsigned char *a, loft_ref r) {
     unsigned char *d = a + LOFT_LA_DBREF;
     uint16_t nr = r.store_nr;
@@ -127,9 +138,6 @@ fn bridge(cx: &Cx<'_>, d: u32, symbol: &str) -> Result<String, String> {
     let data = cx.data;
     let def = data.def(d);
     let ret_text = matches!(def.returned().base(), Type::Text(_));
-    if ret_text {
-        return Err("a text result".into());
-    }
     // A generator lives in its runtime's coroutine table: one the unit makes is not the
     // interpreter's to drive, and one the interpreter made is not the unit's.  The rustc
     // artifact forwards its coroutines to the host (`HostTable::coroutines`); a hosted C unit
@@ -148,7 +156,12 @@ fn bridge(cx: &Cx<'_>, d: u32, symbol: &str) -> Result<String, String> {
         let kind = crate::native_gate::classify_bridge_attr(a, ret_text)
             .ok_or_else(|| format!("parameter `{}` crosses no bridge", a.name))?;
         match kind {
-            BridgeAttrKind::WorkText => return Err("a text work buffer".into()),
+            // The result's work buffer: the unit's own, emptied per call; the answer is read
+            // from it by the dispatcher before the unit runs again (`loft_la_set_text`).
+            BridgeAttrKind::WorkText => {
+                args.push("(loft_br_text.len = 0, &loft_br_text)".to_string());
+                slot += 1;
+            }
             BridgeAttrKind::HiddenDest => {
                 // The caller's record or vector when it handed one; a null otherwise, which the
                 // body mints, as a C caller hands it.  A vector the caller handed is a place the
@@ -216,6 +229,12 @@ fn bridge(cx: &Cx<'_>, d: u32, symbol: &str) -> Result<String, String> {
             )
         }
         CType::Ref => format!("    loft_la_set_ref(loft_r, {call});\n"),
+        // A text answer crosses as its bytes, which the dispatcher copies into the caller's
+        // destination at once (`extensions::shared_store_dispatch_raw`).
+        CType::Text => format!(
+            "    loft_text_free(&loft_br_answer);\n    loft_br_answer = {call};\n    \
+             loft_la_set_text(loft_r, loft_view(&loft_br_answer));\n"
+        ),
         _ => return Err("a result of a shape the bridge does not carry".into()),
     };
     Ok(format!(

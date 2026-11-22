@@ -2,15 +2,15 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! `@PLN206` coverage — `scripts/hosted_coverage.py`, the check that every library runs compiled:
 //! the public functions a library's hosted C unit leaves interpreted, against a baseline that only
-//! shrinks.  `tests/lib/hostedlib` leaves two (`label_of`, a text result; `upto`, an iterator):
-//! a baseline naming both passes, one missing a function goes red (coverage lost), one naming a
-//! function the unit carries goes red (coverage won and not written down), and `--strict` goes
-//! red while anything stays interpreted.
+//! shrinks.  `tests/lib/hostedlib` leaves one (`upto`, an iterator): a baseline naming it passes,
+//! one missing it goes red (coverage lost), one naming a function the unit carries goes red
+//! (coverage won and not written down), and `--strict` goes red while anything stays
+//! interpreted.
 //!
 //! @falsified-at: none — a SABOTAGE (2026-11-22): with `build-native` printing no `interpreted:`
 //!   lines (`src/main.rs`), every library reads as compiled whole and the measured baseline no
 //!   longer holds.  CHANNEL: the script's exit status.  WITNESS: "now compiled, still in the
-//!   baseline (write it down: --update): label_of".
+//!   baseline (write it down: --update): upto".
 use loft::file_access as fa;
 use loft::platform::process::harness_command;
 
@@ -54,11 +54,11 @@ fn the_coverage_check_holds_its_baseline_both_ways() {
         let out = cmd.arg(&pkg).env("LOFT_NO_CACHE", "1").output().expect("run the check");
         (out.status.success(), String::from_utf8_lossy(&out.stdout).into_owned())
     };
-    let both = "hostedlib\tlabel_of\ta text result\nhostedlib\tupto\tan iterator\n";
+    let both = "hostedlib\tupto\tan iterator\n";
     let (ok, out) = check(both, false);
     assert!(ok, "the measured baseline holds: {out}");
-    assert!(out.contains("hostedlib: 2 interpreted"), "{out}");
-    let (ok, out) = check("hostedlib\tlabel_of\ta text result\n", false);
+    assert!(out.contains("hostedlib: 1 interpreted"), "{out}");
+    let (ok, out) = check("", false);
     assert!(!ok, "a function interpreted and not listed is red: {out}");
     assert!(out.contains("now interpreted, not in the baseline: upto"), "{out}");
     let (ok, out) = check(&format!("{both}hostedlib\tbag_new\ta record\n"), false);

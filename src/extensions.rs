@@ -1425,7 +1425,7 @@ fn shared_store_dispatch_raw(
         *mut LibArg,
     ) = unsafe { std::mem::transmute(bridge_ptr) };
     // `@PLN206 P4d` — `LOFT_HOSTED_VERIFY`: the compiled call and the interpreted one, compared.
-    let host = if crate::state::hosted_verify_enabled() && !text_dest_mode && self_dest.is_none() {
+    let host = if crate::state::hosted_verify_enabled() {
         host_state()
     } else {
         std::ptr::null_mut()
@@ -1442,6 +1442,22 @@ fn shared_store_dispatch_raw(
     let ret = unsafe { *ret_ptr };
     // Reborrowed after the call: the bridge may have called back into the interpreter.
     let stores: &mut crate::database::Stores = unsafe { &mut *stores_raw };
+    // `@PLN206` coverage — a hosted C unit answers a text as its bytes (`loft_la_set_text`) and
+    // leaves the destination to the dispatcher, which writes them into it here, before the unit
+    // runs again.  A rustc artifact writes the destination itself and answers no bytes.
+    if matches!(sig.ret, Some(ArgT::Text))
+        && !ret.text_ptr.is_null()
+        && let Some(dest) = stores.bridge_text_dest.take()
+        && ret.text_len > 0
+    {
+        let text = unsafe {
+            std::str::from_utf8_unchecked(std::slice::from_raw_parts(ret.text_ptr, ret.text_len))
+        };
+        stores
+            .store_mut(&dest)
+            .addr_mut::<String>(dest.rec, dest.pos)
+            .push_str(text);
+    }
 
     // @PLN118 arc F — non-perturbing attribution of the shared-return orphan.
     // For a struct/vector return the caller pre-allocates a retbuf and forwards

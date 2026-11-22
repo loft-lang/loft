@@ -87,20 +87,20 @@ fn reaches_outside(data: &crate::data::Data, d: u32) -> bool {
             // (`native_adopt::mark_exports`): loft code, not a native of its own.
             let bridged = f.native().starts_with("loft_shared_");
             let native = !f.native().is_empty() && !bridged;
-            // A standard native that reaches the host — the clock, the generator — by its
-            // `#impure` category; and anything the file layer defines, its operators included
-            // (`OpWriteFile`, `OpReadFile`: a write lands twice, a read moves the position).
-            // The marks are not complete (`pure_reuse::reads_only`), the layer is.
-            let host = (native
-                && matches!(
-                    f.purity,
-                    crate::data::Purity::Impure(
-                        crate::data::ImpureCategory::HostIo
-                            | crate::data::ImpureCategory::Prng
-                            | crate::data::ImpureCategory::Io
-                    )
-                ))
-                || f.position().file.ends_with("02_files.loft");
+            // What reaches the host: a definition gated by a capability (`fs#update` on
+            // `OpWriteFile`, `fs#read` — the sandbox's mark: a write lands twice, a read moves
+            // the position), and a standard native `#impure` toward it (the clock, the
+            // generator), whose marks are not complete (`pure_reuse::reads_only`).
+            let host = !f.cap.is_empty()
+                || (native
+                    && matches!(
+                        f.purity,
+                        crate::data::Purity::Impure(
+                            crate::data::ImpureCategory::HostIo
+                                | crate::data::ImpureCategory::Prng
+                                | crate::data::ImpureCategory::Io
+                        )
+                    ));
             f.is_c_binding() || host || (native && f.source != crate::data::STD_SOURCE)
         });
     if let Ok(mut m) = seen.lock() {
@@ -199,7 +199,7 @@ impl State {
         let mut dests: Vec<DbRef> = Vec::new();
         for (a, p) in def.attributes().iter().zip(popped) {
             if a.hidden {
-                if !a.work_buffer && !crate::native_gate::is_text_work_buffer(&a.typedef) {
+                if !crate::native_gate::is_text_work_buffer(&a.typedef) {
                     dests.push(p.dbref);
                 } else {
                     // A text work buffer the twin replaces with its own: not compared.
@@ -236,6 +236,9 @@ impl State {
             return;
         };
         let mut twin = Box::new(copy);
+        // The caller's text destination is the program's, which the dispatcher fills after
+        // the compiled call: the twin answers its text through its own buffer.
+        twin.bridge_text_dest = None;
         // A text argument views the bytes of the store it lies in: the twin reads the same
         // bytes in its own copy of that store.
         let rebased: Vec<LibArg> = visible
@@ -418,7 +421,28 @@ fn answer_difference(
     use crate::data::Type;
     let ret = data.def(d_nr).returned();
     match ret.base() {
-        Type::Void | Type::Null | Type::Text(_) => None,
+        Type::Void | Type::Null => None,
+        // A text answer: the compiled call's bytes (a hosted unit's, `loft_la_set_text`) against
+        // the twin's; a rustc artifact writes its destination itself and answers none.
+        Type::Text(_) => {
+            if comp.text_ptr.is_null() {
+                return None;
+            }
+            let read = |a: &LibArg| {
+                if a.text_ptr.is_null() || a.text_len == 0 {
+                    String::new()
+                } else {
+                    String::from_utf8_lossy(unsafe {
+                        std::slice::from_raw_parts(a.text_ptr, a.text_len)
+                    })
+                    .into_owned()
+                }
+            };
+            let (said_twin, said_world) = (read(interp), read(comp));
+            (said_twin != said_world).then(|| {
+                format!("the answer is {said_twin:?} interpreted, {said_world:?} compiled")
+            })
+        }
         t if crate::data::is_dbref(t) => {
             let tp = ret
                 .heap_def_nr()
