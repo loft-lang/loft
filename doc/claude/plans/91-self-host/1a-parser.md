@@ -245,6 +245,19 @@ program was found for stays listed with what was tried.
 
 ### Rust accidents
 
+- A capture read on pass 1 makes a placeholder variable of the capture's name in the lambda's
+  table (`create_var` + `mark_user_named`, objects.rs `parse_var_inner`'s capture arm), and the
+  table keeps it into pass 2, where the read goes through the closure record instead.  The port
+  makes no placeholder: the `user_named` difference on capture names (`e`, `s`, `v` … in
+  lambdas, about 60 items).  Probed: `stack_trace()` inside a capturing lambda lists its
+  parameters and locals only — the placeholder is not live in the frame; no wrong program.
+- `fn pick(p: (R, integer)) -> R { if p.1 > 0 { p.0 } else { R { … } } }`: on pass 2 the tuple
+  shadow `__tp_p` depends on `__ref_p2_1`, apparently pass 1's literal work ref, kept by name
+  across passes, where pass 2 numbers the literal `__ref_p2_2` and leaves `__ref_p2_1` an
+  unused leftover (where the dep is written is not traced yet).  So the pass-2 selector reads
+  the tail as viewing a local (`return_views_local`) and takes `MaterializeView`, minting and
+  unregistering `__ref_1`; the code is the same copy either way.  The port copies without the
+  work ref: the one difference left is `__ref_1`'s `skip_free` (2471-…, a handful of programs).
 - A call answering a record `τ?` that borrows a parameter (`fn whole(s: S) -> S? { s }`) is
   typed borrowing a VARIABLE argument but not a literal one: `whole(S { a: 7 })` is `ref(S)?`
   with no dep on the literal's store, where the dense `-> S` names it.  Reproduced; probed
