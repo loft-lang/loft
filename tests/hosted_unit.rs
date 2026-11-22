@@ -119,6 +119,9 @@ fn a_hosted_c_library_works_on_the_interpreters_stores() {
 ///   A SABOTAGE (2026-11-23): with every text work slot of a bridge call handed one buffer
 ///   (`hosted::bridge`), `framed`'s local is emptied while its answer is built.  WITNESS: "the
 ///   answer is \"ab:4\\n#4\" interpreted, \"\\n#0\" compiled".
+///   A SABOTAGE (2026-11-23): with a constant's store left holding an earlier store's words
+///   past the constant's (`loft_const_store`), the unit's first call walks them as blocks.
+///   WITNESS: "SIGBUS caught" (`hostedlib_main.loft`'s `churn`).
 ///   And a SABOTAGE (2026-11-22): with the verify going on in the compiled COPY of the world
 ///   (`hosted_verify.rs` before the twin ran on the copy), the caller's loop text points into
 ///   a buffer the swap freed.  WITNESS: the "nested views" assertion of `hostedlib_main.loft`.
