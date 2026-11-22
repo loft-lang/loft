@@ -1738,13 +1738,24 @@ pub fn call_expression(e: el::El, vars: el_vars::Vars, at: integer, f: integer?,
   if name == "" && f != null && (e.p.nodes[f!] is SIndex || e.p.nodes[f!] is SCall) {
     ix = el_ex_assign::expression(e, vars, f!);
     if el_types::base(ix.tp) is TyFunction {
-      iw = el_vars::create_unique(vars, "__fn_ref_tmp", el_types::with_deps(el_types::base(ix.tp), []));
+      // (`owns_closure`: a closure factory's answer names a slot of the callee's frame — a
+      // `CalleeFrame` dep — and the temporary is its sole owner: it keeps that dep and is freed
+      // at scope exit.  A borrowed one owns nothing.)
+      ideps = el_types::deps(ix.tp);
+      owns = len([for idp in ideps if idp >= el_ex_assign::CALLEE_FRAME && idp != el_types::MARKER { idp }]) > 0;
+      it = el_types::with_deps(el_types::base(ix.tp), if owns { ideps } else { [] });
+      iw = el_vars::create_unique(vars, "__fn_ref_tmp", it);
+      if !e.first_pass {
+        el_vars::set_var_type(vars, iw, it);
+      }
       el_vars::set_defined(vars, iw);
       icr = call_ref(e, vars, iw, args);
       if e.first_pass || el_types::is_unknown(icr.tp) {
         return icr;
       }
-      vars.vars[iw].skip_free = true;
+      if !owns {
+        vars.vars[iw].skip_free = true;
+      }
       return ex(el_ir::v_block([el_ir::v_set(iw, ix.code), icr.code], icr.tp, "fn_call_tmp"), icr.tp);
     }
   }

@@ -4090,6 +4090,15 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
       return ex(ir::NdInsert { items: ls }, ir::TyVoid);
     }
   }
+  // A function value written through a `&fn` link (`out = fn() { … }`) is set whole, as a
+  // scalar's is: the slot holds the fn-ref and its closure record.
+  fn_link = match el_vars::tp(vars, v) { TyRefVar { inner: fli } => el_types::base(fli) is TyFunction, _ => false };
+  if link && fn_link && !declaring {
+    fx = expression(e, vars, rhs!);
+    if fx.tp is TyFunction {
+      return ex(if e.first_pass { ir::NdNull } else { el_ir::v_set(v, fx.code) }, ir::TyVoid);
+    }
+  }
   if link && !el_ex_match::scalar_link(vars, v) && !declaring {
     el::refuse(e, "a whole value written through a `&` link");
     return ex(ir::NdNull, ir::TyVoid);
