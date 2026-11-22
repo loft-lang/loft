@@ -2510,6 +2510,18 @@ pub fn amp_operand(e: el::El, n: integer) -> integer {
   }
 }
 
+// An identity comparison's side is a PLACE (`AmpIdentity::place`): a variable, a struct field
+// or a vector element — a pointer field (`a.next`, read as `OpGetDbRef(a, …)`) included.
+fn identity_place(e: el::El, n: ir::Node) -> boolean {
+  if place_root(e, n) >= 0 {
+    return true;
+  }
+  match el_ir::unspan(n) {
+    NdCall { def_nr, args } => el::def(e, def_nr).name == "OpGetDbRef" && len(args) > 0 && place_root(e, args[0]!) >= 0,
+    _ => false
+  }
+}
+
 // `Parser::identity_compare` (`@FR-E-Eq`, @C91): `&a == &b` asks whether two places are ONE
 // record — `OpEqRef` / `OpNeRef` of the two handles as they are.  Both sides must be a place
 // (a variable or a projection) of one heap type; anything else is refused by name.
@@ -2520,9 +2532,12 @@ pub fn identity_compare(e: el::El, vars: el_vars::Vars, op: text, l: integer, r:
   if e.first_pass {
     return ex(code, ir::TyBoolean);
   }
-  places = place_root(e, a.code) >= 0 && place_root(e, b.code) >= 0;
-  at = el_types::base(a.tp);
-  if !places || !(at is TyReference || at is TyVector || keyed_kind(at)) || !el_types::is_equal(e, at, el_types::base(b.tp)) {
+  places = identity_place(e, a.code) && identity_place(e, b.code);
+  // (`@FR-B-Ref-Uniform`: a link side, `c = &a`, is the record it names — its handle compared
+  // as it is.)
+  at = el_types::base(match a.tp { TyRefVar { inner } => inner, _ => a.tp });
+  bt = el_types::base(match b.tp { TyRefVar { inner } => inner, _ => b.tp });
+  if !places || !(at is TyReference || at is TyVector || keyed_kind(at)) || !el_types::is_equal(e, at, bt) {
     el::refuse(e, "an identity comparison of something other than two places of one heap type");
     return ex(ir::NdNull, ir::TyBoolean);
   }
