@@ -147,3 +147,7 @@ a blind spot.
   `value` C 143–152, rustc 146–154; `ease` C 80–84, rustc 78–84 (level in the third round); the
   per-call depth check (`LOFT_MAX_CALL_DEPTH`) changes nothing.  Against interpreting: 3.1x on
   `value`, 2.6x on `ease`.
+- **P4c** — over the 122-script sample, interpreted against `--native` with `--attribute`: 59
+  the same, 38 differing only by a named C-only rewrite, none unaccounted (25 have no `main` or
+  are refused); `--plant` is reported in each of four programs.  What it found is STORE_MODEL
+  D47 and D48, closed.
