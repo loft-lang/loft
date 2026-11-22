@@ -43,6 +43,27 @@ static VERIFIED: AtomicU64 = AtomicU64::new(0);
 static UNVERIFIED_TUPLE: AtomicU64 = AtomicU64::new(0);
 static UNVERIFIED_FILE: AtomicU64 = AtomicU64::new(0);
 static UNVERIFIED_NATIVE: AtomicU64 = AtomicU64::new(0);
+static UNVERIFIED_SAMPLED: AtomicU64 = AtomicU64::new(0);
+
+/// Is this call of `d` one the verify compares?  Each copies the whole world, so a function
+/// called tens of thousands of times would take the run's time: its first 64 calls are
+/// compared, then its 128th, 256th, … — every function's early calls and a thinning sample
+/// after.  `LOFT_HOSTED_VERIFY=all` compares every call.
+fn sampled(d: u32) -> bool {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    static ALL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *ALL.get_or_init(|| std::env::var("LOFT_HOSTED_VERIFY").is_ok_and(|v| v == "all")) {
+        return true;
+    }
+    static CALLS: std::sync::OnceLock<Mutex<HashMap<u32, u64>>> = std::sync::OnceLock::new();
+    let Ok(mut calls) = CALLS.get_or_init(|| Mutex::new(HashMap::new())).lock() else {
+        return true;
+    };
+    let n = calls.entry(d).or_insert(0);
+    *n += 1;
+    *n <= 64 || n.is_power_of_two()
+}
 /// Of the calls compared alike, those whose stores hold the same values placed otherwise.
 static PLACED_OTHERWISE: AtomicU64 = AtomicU64::new(0);
 
@@ -88,6 +109,10 @@ pub(crate) fn report() {
     let mut why = Vec::new();
     if n > 0 {
         why.push(format!("{n} reaching a C function's own state"));
+    }
+    let sampled_out = UNVERIFIED_SAMPLED.swap(0, Relaxed);
+    if sampled_out > 0 {
+        why.push(format!("{sampled_out} past each function's sample"));
     }
     if t > 0 {
         why.push(format!("{t} with a tuple argument"));
@@ -140,6 +165,11 @@ impl State {
         }
         // A tuple argument crosses as several slots: not lined up with the attributes, so the
         // call is made unverified.
+        if !in_twin() && !sampled(d_nr) {
+            UNVERIFIED_SAMPLED.fetch_add(1, Relaxed);
+            unsafe { bridge(&raw mut self.database, args.as_ptr(), args.len(), ret) };
+            return;
+        }
         if def.attributes().len() != popped.len() {
             UNVERIFIED_TUPLE.fetch_add(1, Relaxed);
             unsafe { bridge(&raw mut self.database, args.as_ptr(), args.len(), ret) };
