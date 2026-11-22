@@ -229,6 +229,34 @@ fn bridge(cx: &Cx<'_>, d: u32, symbol: &str) -> Result<String, String> {
             )
         }
         CType::Ref => format!("    loft_la_set_ref(loft_r, {call});\n"),
+        // A tuple of scalars crosses as its leaves, one slot each, as the dispatcher reads them
+        // (`SharedSig::ret_leaves`): a float as its bits, the rest as an integer.  A tuple with
+        // a text, a record or a tuple inside is not carried.
+        CType::Tuple(id) => {
+            let shapes = cx.tuples.borrow()[id as usize].clone();
+            let mut out = format!("    {{ loft_tup{id} loft_v = {call};\n");
+            for (i, c) in shapes.iter().enumerate() {
+                let slot = format!("loft_r + {i} * LOFT_LA_SIZE");
+                let _ = writeln!(
+                    out,
+                    "{}",
+                    match c {
+                        CType::Int | CType::Int32 | CType::Bool | CType::Enum | CType::Char => {
+                            format!("      loft_la_set_bits({slot}, (int64_t) loft_v.f{i});")
+                        }
+                        CType::Float => format!(
+                            "      {{ int64_t loft_b; memcpy(&loft_b, &loft_v.f{i}, 8); loft_la_set_bits({slot}, loft_b); }}"
+                        ),
+                        CType::Single => format!(
+                            "      {{ uint32_t loft_b; memcpy(&loft_b, &loft_v.f{i}, 4); loft_la_set_bits({slot}, (int64_t) loft_b); }}"
+                        ),
+                        _ => return Err("a tuple with a text, a record or a tuple inside".into()),
+                    }
+                );
+            }
+            out.push_str("    }\n");
+            out
+        }
         // A text answer crosses as its bytes, which the dispatcher copies into the caller's
         // destination at once (`extensions::shared_store_dispatch_raw`).
         CType::Text => format!(

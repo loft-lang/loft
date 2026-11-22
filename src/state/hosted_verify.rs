@@ -132,7 +132,7 @@ pub(crate) fn report() {
         why.push(format!("{sampled_out} past each function's sample"));
     }
     if tuple > 0 {
-        why.push(format!("{tuple} with a tuple argument"));
+        why.push(format!("{tuple} with a tuple argument or answer"));
     }
     if file > 0 {
         why.push(format!("{file} with a file-backed store live"));
@@ -180,14 +180,17 @@ impl State {
             unsafe { bridge(&raw mut self.database, args.as_ptr(), args.len(), ret) };
             return;
         }
-        // A tuple argument crosses as several slots: not lined up with the attributes, so the
-        // call is made unverified.
         if !in_twin() && !sampled(d_nr) {
             UNVERIFIED_SAMPLED.fetch_add(1, Relaxed);
             unsafe { bridge(&raw mut self.database, args.as_ptr(), args.len(), ret) };
             return;
         }
-        if def.attributes().len() != popped.len() {
+        // A tuple argument crosses as several slots, not lined up with the attributes; a tuple
+        // answer has no case in the call-back the twin runs: such a call is made unverified
+        // (inside a twin too, where it then runs compiled).
+        if def.attributes().len() != popped.len()
+            || matches!(def.returned().base(), crate::data::Type::Tuple(_))
+        {
             UNVERIFIED_TUPLE.fetch_add(1, Relaxed);
             unsafe { bridge(&raw mut self.database, args.as_ptr(), args.len(), ret) };
             return;
@@ -199,10 +202,16 @@ impl State {
         let mut dests: Vec<DbRef> = Vec::new();
         for (a, p) in def.attributes().iter().zip(popped) {
             if a.hidden {
-                if !crate::native_gate::is_text_work_buffer(&a.typedef) {
+                let text_work = crate::native_gate::is_text_work_buffer(&a.typedef);
+                // The twin takes every caller buffer but a text work buffer (its own), so its
+                // parameters line up with the call's.
+                if !text_work {
                     dests.push(p.dbref);
-                } else {
-                    // A text work buffer the twin replaces with its own: not compared.
+                }
+                // A work buffer is the call's scratch (a table a body builds, a text it writes
+                // into), which a compiled body may keep elsewhere: not compared.  An answer
+                // buffer is.
+                if text_work || a.work_buffer {
                     hidden.push(p.dbref.store_nr);
                 }
             } else {
@@ -280,6 +289,22 @@ impl State {
         self.fnref_calls.truncate(fc);
         let (interp, compiled): (&Stores, &Stores) = (&twin, &self.database);
         let (mut diff, placed_otherwise) = stores_difference(&before, interp, compiled);
+        // Which function's code made the store that differs: its bytecode position, mapped to
+        // the function whose code holds it.
+        if let Some(why) = &mut diff
+            && let Some(nr) = why
+                .strip_prefix("store ")
+                .and_then(|r| r.split(' ').next())
+                .and_then(|n| n.parse::<usize>().ok())
+            && let Some(st) = interp.allocations.get(nr)
+        {
+            let at = st.created_at;
+            let maker = (0..self.fn_positions.len())
+                .filter(|&f| self.fn_positions[f] != u32::MAX && self.fn_positions[f] <= at)
+                .max_by_key(|&f| self.fn_positions[f])
+                .map_or_else(|| "?".to_string(), |f| data.def(f as u32).original_name().clone());
+            why.push_str(&format!(" — made at bytecode {at}, in `{maker}`"));
+        }
         if diff.is_none() {
             diff = answer_difference(data, d_nr, (&ret_i, interp), (&ret_c, compiled));
         }
@@ -374,8 +399,12 @@ fn stores_difference(before: &[u16], interp: &Stores, compiled: &Stores) -> (Opt
                     continue;
                 }
             }
+            let what = first_difference(nr, &image_twin, &image_world);
             return (
-                Some(first_difference(nr, &image_twin, &image_world)),
+                Some(format!(
+                    "{what} (store {nr}: type {}, made #{})",
+                    on_twin.known_type, on_twin.alloc_serial
+                )),
                 placed_otherwise,
             );
         }

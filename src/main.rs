@@ -9431,7 +9431,14 @@ fn main() {
                         println!("{k}");
                     }
                 };
-                if let Some(stem) = manifest.as_ref().and_then(|m| m.native.clone()) {
+                // On the C backend a package's Rust crate is not what is built: its loft is
+                // compiled into a hosted unit, which reaches the crate's natives as a C program
+                // does (loft's C runtime, or the package's component) — `@PLN206`.
+                if let Some(stem) = manifest
+                    .as_ref()
+                    .and_then(|m| m.native.clone())
+                    .filter(|_| !loft::c::hosted::selected())
+                {
                     // Hand-written `native/` crate — links the loft-ffi C ABI, so the
                     // wide loft-ffi key is the correct compatibility gate.
                     let keys = [format!(
