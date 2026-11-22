@@ -10606,27 +10606,41 @@ fn main() {
             let (carried, declined) = loft::c::hosted::hosted_split(&p.data, &p.database, &export);
             // The unit's reach, under the switch that reads what crossed it.
             if loft::keys::hosted_verify() {
-                let shown: Vec<String> = declined
+                // By reason: how many each declines, and the first few by name.
+                let mut by_why: std::collections::BTreeMap<&str, Vec<&str>> =
+                    std::collections::BTreeMap::new();
+                for (name, why) in &declined {
+                    by_why.entry(why.as_str()).or_default().push(name.as_str());
+                }
+                let mut reasons: Vec<(&str, Vec<&str>)> = by_why.into_iter().collect();
+                reasons.sort_by_key(|(_, names)| std::cmp::Reverse(names.len()));
+                let listed: Vec<String> = reasons
                     .iter()
-                    .take(6)
-                    .map(|(n, why)| format!("{n} ({why})"))
+                    .map(|(why, names)| {
+                        let more = names.len().saturating_sub(3);
+                        format!(
+                            "{} {why} ({}{})",
+                            names.len(),
+                            names.iter().take(3).copied().collect::<Vec<_>>().join(", "),
+                            if more > 0 {
+                                format!(", +{more}")
+                            } else {
+                                String::new()
+                            }
+                        )
+                    })
                     .collect();
                 eprintln!(
                     "loft: LOFT_HOSTED_VERIFY: library '{pkg_dir}': the unit carries {} of {} \
                      function(s){}{}",
                     carried.len(),
                     export.len(),
-                    if shown.is_empty() {
+                    if listed.is_empty() {
                         ""
                     } else {
                         "; interpreted: "
                     },
-                    shown.join(", ")
-                        + &if declined.len() > shown.len() {
-                            format!(", +{} more", declined.len() - shown.len())
-                        } else {
-                            String::new()
-                        }
+                    listed.join("; ")
                 );
             }
             carried
