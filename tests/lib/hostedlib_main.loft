@@ -64,6 +64,11 @@ fn main() {
   wf = file(wp);
   assert(wf#size == 8, "file {wf#size} bytes");
   delete(wp);
+  // vectors the library answers: 0 2 4 6 8 (sum 20), and b's items 5 1 4 7 10 each + 100
+  ev = evens(10);
+  assert(len(ev) == 5 && ev[4] == 8, "evens {ev}");
+  gr = b.grown(100);
+  assert(len(gr) == 5 && gr[0] == 105 && gr[4] == 110, "grown {gr}");
   // a generator the library answers, driven here: 1 + 2 + 3 + 4 = 10
   u = 0;
   for x in upto(4) { u += x; }

@@ -88,3 +88,19 @@ pub fn append_word(p: text, n: integer) {
   f#format = LittleEndian;
   f += (n as i32);
 }
+
+// A vector answered into the caller's buffer: the evens below `n`, and the bag's items grown
+// by `k` each (a vector built from a record's field).
+pub fn evens(n: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  for i in 0..n {
+    if i % 2 == 0 { out += [i]; }
+  }
+  out
+}
+
+pub fn grown(self: const Bag, k: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  for v in self.items { out += [v + k]; }
+  out
+}

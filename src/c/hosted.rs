@@ -150,13 +150,14 @@ fn bridge(cx: &Cx<'_>, d: u32, symbol: &str) -> Result<String, String> {
         match kind {
             BridgeAttrKind::WorkText => return Err("a text work buffer".into()),
             BridgeAttrKind::HiddenDest => {
-                // The caller's record when it handed one; a null otherwise, which the body
-                // mints, as a C caller hands it.
+                // The caller's record or vector when it handed one; a null otherwise, which the
+                // body mints, as a C caller hands it.  A vector the caller handed is a place the
+                // body fills (`loft_database_wrapper` empties it and builds in it).
                 if !matches!(
                     a.typedef.base(),
-                    Type::Reference(..) | Type::Enum(_, true, _)
+                    Type::Reference(..) | Type::Enum(_, true, _) | Type::Vector(..)
                 ) {
-                    return Err("a vector answer".into());
+                    return Err("an answer of a shape the bridge does not carry".into());
                 }
                 args.push(format!(
                     "(loft_n > {slot} && loft_la_ref(loft_a, {slot}).rec != 0 ? loft_la_ref(loft_a, {slot}) : loft_ref_null())"

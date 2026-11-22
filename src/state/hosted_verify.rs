@@ -199,9 +199,11 @@ impl State {
         let mut dests: Vec<DbRef> = Vec::new();
         for (a, p) in def.attributes().iter().zip(popped) {
             if a.hidden {
-                hidden.push(p.dbref.store_nr);
                 if !a.work_buffer && !crate::native_gate::is_text_work_buffer(&a.typedef) {
                     dests.push(p.dbref);
+                } else {
+                    // A text work buffer the twin replaces with its own: not compared.
+                    hidden.push(p.dbref.store_nr);
                 }
             } else {
                 visible.push(*p);
@@ -215,6 +217,9 @@ impl State {
             unsafe { *ret = r };
             return;
         }
+        // The caller's answer buffers are compared too: the twin answers into them as the
+        // compiled call does (`State::call_back_into`), so a vector answer is held to the
+        // compiled one by its store.
         let before: Vec<u16> = self
             .database
             .allocations
