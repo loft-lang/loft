@@ -1433,7 +1433,7 @@ fn shared_store_dispatch_raw(
     if host.is_null() {
         unsafe { bridge(stores_ptr, args.as_ptr(), args.len(), ret_ptr) };
     } else {
-        unsafe { (*host).verify_compiled_call(sig.d_nr, bridge, &args, ret_ptr, popped) };
+        unsafe { (*host).verify_compiled_call(sig.d_nr, bridge, args, ret_ptr, popped) };
     }
     let ret = unsafe { *ret_ptr };
     // Reborrowed after the call: the bridge may have called back into the interpreter.
