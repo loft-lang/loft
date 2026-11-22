@@ -184,12 +184,19 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
-// `LOFT_ALLOC_TRACE`'s par workers: each worker thread numbers its stores on its own, so the
-// trace names a worker's store `<worker>.<serial>` — one name per store however the threads
-// interleave (0 is the main thread, whose names stay bare).
+// `LOFT_ALLOC_TRACE`'s par workers: each worker thread numbers its stores on its own, so a
+// store a worker makes records the worker (`Store::trace_worker`) and is named
+// `<worker>.<serial>` wherever its events are written (0 is the main thread, whose names stay
+// bare).
 #[cfg(feature = "op-census")]
 thread_local! {
     static WORKER: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// The `par` worker running on this thread, 0 on the main thread (`Store::trace_worker`).
+#[cfg(feature = "op-census")]
+pub fn worker() -> u32 {
+    WORKER.with(std::cell::Cell::get)
 }
 
 /// A par worker's state is being built on this thread: its stores take a worker's names.
@@ -262,15 +269,7 @@ fn site_line() -> Option<u32> {
 #[cfg(feature = "op-census")]
 pub fn alloc_event(line: std::fmt::Arguments) {
     use std::sync::Mutex;
-    let mut text = line.to_string();
-    let worker = WORKER.with(std::cell::Cell::get);
-    if worker != 0 && !text.starts_with(['M', 'P', 'Q']) {
-        let mut parts = text.splitn(3, ' ');
-        if let (Some(kind), Some(store)) = (parts.next(), parts.next()) {
-            let rest = parts.next().map_or(String::new(), |r| format!(" {r}"));
-            text = format!("{kind} {worker}.{store}{rest}");
-        }
-    }
+    let text = line.to_string();
     let site = if text.starts_with(['M', 'S', 'P', 'Q']) {
         None
     } else {

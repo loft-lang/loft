@@ -1644,9 +1644,12 @@ static uint32_t loft_store_make(int counted) {
     s->orphaned = 0;
     s->closure_shares = 0;
     s->serial = 0;
+#ifdef LOFT_ALLOC_TRACE
+    s->trace_worker = loft_trace_worker;
+#endif
     if (counted) {
         s->serial = ++loft_stores_allocated;
-        LOFT_TRACE("N %llu %u\n", (unsigned long long) s->serial, s->size);
+        LOFT_TRACE("N %s %u\n", loft_trace_name(s), s->size);
     }
     return nr;
 }
@@ -2124,7 +2127,7 @@ static void loft_free_ref(loft_ref r) {
     if (r.store_nr + 1u == loft_strict_floor)
         while (loft_strict_floor > 0 && !loft_stores[loft_strict_floor - 1].live) loft_strict_floor--;
 #endif
-    LOFT_TRACE("F %llu\n", (unsigned long long) s->serial);
+    LOFT_TRACE("F %s\n", loft_trace_name(s));
 #ifdef LOFT_FOREIGN
     /* A foreign store's bytes go with the handle: the owner drops here. */
     loft_st_release_foreign(s);
@@ -3481,9 +3484,10 @@ typedef struct { int8_t type; uint16_t pos; int32_t start; } loft_key;
  * hidden (a `#`-named field, which `type_at` passes over). */
 /* A struct's field: its byte position, its type, whether it is a view member of a linked group
  * (it borrows its records; 2 when they are `vector<S?>` elements, whose null ones it does not
- * file), whether it is hidden (`#`-named), and the group it is in — 1 + the field number of the
- * group's owner (the member that holds the records), 0 for none. */
-typedef struct { uint16_t pos; uint16_t type; uint8_t view; uint8_t hidden; uint16_t group; } loft_fld;
+ * file), whether it is hidden (`#`-named), the group it is in — 1 + the field number of the
+ * group's owner (the member that holds the records), 0 for none — and a stored reference's
+ * target type (`Field::target`), 0xFFFF for any other field. */
+typedef struct { uint16_t pos; uint16_t type; uint8_t view; uint8_t hidden; uint16_t group; uint16_t target; } loft_fld;
 typedef struct loft_tdesc_s {
     uint8_t kind;
     uint16_t size;             /* the type's bytes */

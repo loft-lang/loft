@@ -373,8 +373,7 @@ impl FnWriter<'_> {
             _ => format!("{call};"),
         };
         let (row_c, push) = dense.unwrap_or(("loft_par_slot", "loft_par_push"));
-        let mut decl =
-            format!("typedef struct {{\n    loft_ref in;\n    {row_c} *b;\n    loft_ref res;\n");
+        let mut decl = format!("typedef struct {{\n    loft_ref in;\n    {row_c} *b;\n");
         for (i, c) in shapes.iter().take(extra.len()).enumerate() {
             let _ = writeln!(decl, "    {} x{i};", crate::c::held(*c));
         }
@@ -403,9 +402,11 @@ impl FnWriter<'_> {
             let _ = writeln!(body, "        loft_text_free(&{w});");
         }
         body.push_str("    }\n}\n");
-        if let Some((kt, size)) = record {
+        // STORE_MODEL D46: a record result moves with its store into the caller's table, as the
+        // interpreter adopts a worker's stores, its stored references renumbered.
+        if let Some((kt, _)) = record {
             cx.describe_type(kt);
-            body.push_str(&par_adopt_fn(id, kt, size));
+            body.push_str(&par_move_fn(id, kt));
         }
         cx.gen_bodies.borrow_mut().push_str(&body);
         let t = self.expr(threads, ind)?;
@@ -418,36 +419,21 @@ impl FnWriter<'_> {
         } else {
             format!("{push}({n})")
         };
-        // A record site's result store, made before the workers fork (loft_par_run), released
-        // with the buffer.
-        let res = if let Some((_, size)) = record {
-            self.line(ind + 1, "loft_ref loft_res = loft_ref_null();");
-            self.line(
-                ind + 1,
-                &format!("loft_database(&loft_res, (uint32_t) ({n} * {size}));"),
-            );
-            "loft_res"
-        } else {
-            "{ 0xFFFF, 0, 0, 0 }"
-        };
-        let mut init = format!("loft_parctx{id} loft_c = {{ {input}, {slots}, {res}");
+        let mut init = format!("loft_parctx{id} loft_c = {{ {input}, {slots}");
         for x in extra {
             let _ = write!(init, ", {x}");
         }
         init.push_str(" };");
         self.line(ind + 1, &init);
         if record.is_some() {
-            self.line(ind + 1, "loft_par_hold(loft_res);");
             self.line(
                 ind + 1,
-                &format!(
-                    "loft_par_run({n}, {t}, loft_parbody{id}, &loft_c, loft_paradopt{id}, loft_res.store_nr);"
-                ),
+                &format!("loft_par_run({n}, {t}, loft_parbody{id}, &loft_c, loft_paradopt{id});"),
             );
         } else {
             self.line(
                 ind + 1,
-                &format!("loft_par_run({n}, {t}, loft_parbody{id}, &loft_c, 0, 0);"),
+                &format!("loft_par_run({n}, {t}, loft_parbody{id}, &loft_c, 0);"),
             );
         }
         self.line(ind, "}");
@@ -659,20 +645,12 @@ fn stored_value(cx: &crate::c::Cx<'_>, at: &str, tp: &Type) -> Option<String> {
     })
 }
 
-/// `@PLN203 C4` tier 2 — a record site's adopt step (`loft_par_adopt`): a row whose record lies in
-/// a store the worker made is copied into the result store, its bytes and the claims it owns; a
-/// pass-through of a store the caller had, or a null, stays as it is.
-fn par_adopt_fn(id: u32, kt: u16, size: u32) -> String {
+/// STORE_MODEL D46 — a record site's adopt step: each row whose record lies in a store the worker
+/// made takes that store into the caller's table, its stored references renumbered
+/// (`loft_par_move_rows`), as the interpreter's `adopt_worker_excess` + `rebase_walk_record`.
+fn par_move_fn(id: u32, kt: u16) -> String {
     format!(
         "\nstatic void loft_paradopt{id}(void *loft_vc, int64_t loft_lo, int64_t loft_hi, uint32_t loft_pn) {{\n    \
-                 loft_parctx{id} *loft_c = (loft_parctx{id} *) loft_vc;\n    loft_par_slot *loft_b = loft_c->b;\n    \
-                 for (int64_t loft_i = loft_lo; loft_i < loft_hi; loft_i++) {{\n        \
-                 loft_ref loft_r = loft_b[loft_i].r;\n        \
-                 if (loft_r.store_nr == 0xFFFF || loft_r.rec == 0 || loft_r.store_nr < loft_pn) {{ loft_b[loft_i].adopted = 0; continue; }}\n        \
-                 loft_ref loft_d = {{ loft_c->res.store_nr, loft_c->res.rec, loft_c->res.pos + (uint32_t) loft_i * {size}u, 0 }};\n        \
-                 loft_copy_bytes(loft_d, 0, loft_r, 0, {size});\n        \
-                 loft_copy_claims(loft_types, {kt}, loft_r, loft_d);\n        \
-                 loft_b[loft_i].r = loft_d;\n        \
-                 loft_b[loft_i].adopted = 0;\n    }}\n}}\n"
+                 loft_par_move_rows(loft_types, loft_ntypes, {kt}, ((loft_parctx{id} *) loft_vc)->b, loft_lo, loft_hi, loft_pn);\n}}\n"
     )
 }

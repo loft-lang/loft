@@ -1081,7 +1081,15 @@ static void loft_kind_slots(const loft_tdesc *T, uint16_t tp, loft_ref at, loft_
         if (want == LOFT_T_DBREF) loft_refs_push(out, at);
         return;
     case LOFT_T_STRUCT:
-        for (uint16_t i = 0; i < d->n; i++) loft_kind_slots(T, d->fields[i].type, loft_field(at, d->fields[i].pos), out, depth + 1, want);
+        for (uint16_t i = 0; i < d->n; i++) {
+            const loft_fld *f = &d->fields[i];
+            /* A stored reference field is pushed with its target's type, for a walk that
+             * follows it (`loft_par_move_rows`). */
+            if (want == LOFT_T_DBREF && T[f->type].kind == LOFT_T_DBREF)
+                loft_refs_push_tp(out, loft_field(at, f->pos), f->target);
+            else
+                loft_kind_slots(T, f->type, loft_field(at, f->pos), out, depth + 1, want);
+        }
         return;
     case LOFT_T_ENUM: {
         int e = (int) *loft_at(s, at.rec, at.pos) - 1;

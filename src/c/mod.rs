@@ -1073,6 +1073,11 @@ impl<'a> Cx<'a> {
             Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
                 for f in fields {
                     self.describe_type(f.content);
+                    // A stored reference's target, which a walk that follows it reads
+                    // (`loft_par_move_rows`).
+                    if f.target != u16::MAX {
+                        self.describe_type(f.target);
+                    }
                 }
             }
             Parts::Vector(c)
@@ -1129,8 +1134,8 @@ impl<'a> Cx<'a> {
     }
 
     /// A struct's field rows, `loft_fields{tp}`: each field's byte position, its type, whether it
-    /// is a view member of a linked group (it borrows its records) and whether it is hidden (a
-    /// `#`-named field).
+    /// is a view member of a linked group (it borrows its records), whether it is hidden (a
+    /// `#`-named field), its group, and a stored reference's target type (`Field::target`).
     fn field_rows(&self, tp: u16, fields: &[crate::database::Field]) -> String {
         let list: Vec<String> = fields
             .iter()
@@ -1148,15 +1153,15 @@ impl<'a> Cx<'a> {
                     None => (0, 0),
                 };
                 format!(
-                    "{{ {}, {}, {view}, {hidden}, {group} }}",
-                    f.position, f.content
+                    "{{ {}, {}, {view}, {hidden}, {group}, {} }}",
+                    f.position, f.content, f.target
                 )
             })
             .collect();
         format!(
             "static const loft_fld loft_fields{tp}[] = {{ {} }};",
             if list.is_empty() {
-                "{ 0, 0, 0, 0, 0 }".into()
+                "{ 0, 0, 0, 0, 0, 0xFFFF }".into()
             } else {
                 list.join(", ")
             }

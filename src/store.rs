@@ -598,6 +598,11 @@ pub struct Store {
     /// Stamped where the slot goes live, beside `created_at`, which records WHERE rather than
     /// WHEN.
     pub alloc_serial: u64,
+    /// `LOFT_ALLOC_TRACE`: the `par` worker that made the store (0 the main thread), so every
+    /// event on it carries one name — `<worker>.<serial>` — whichever thread writes it, an
+    /// adopted worker store's free on the main thread included (`Store::trace_name`).
+    #[cfg(feature = "op-census")]
+    pub trace_worker: u32,
     /// Bytecode position that allocated this store (via OpDatabase).
     /// Used for diagnostics when a store is leaked at program exit.
     pub created_at: u32,
@@ -901,6 +906,18 @@ fn discard_sink(len: usize) -> *mut u8 {
 }
 
 impl Store {
+    /// The store's name in `LOFT_ALLOC_TRACE`: its serial, prefixed with the `par` worker that
+    /// made it (`<worker>.<serial>`) — a worker numbers its stores on its own.
+    #[cfg(feature = "op-census")]
+    #[must_use]
+    pub fn trace_name(&self) -> String {
+        if self.trace_worker == 0 {
+            self.alloc_serial.to_string()
+        } else {
+            format!("{}.{}", self.trace_worker, self.alloc_serial)
+        }
+    }
+
     /// True when this store's memory IS a memory-mapped file ([`Store::open_mapped`]).
     #[must_use]
     pub fn is_file_backed(&self) -> bool {
@@ -1244,6 +1261,8 @@ impl Store {
             stack_buffer: false,
             store_nr: u16::MAX,
             alloc_serial: 0,
+            #[cfg(feature = "op-census")]
+            trace_worker: 0,
             created_at: 0,
             freed_at: 0,
             last_op_at: 0,
@@ -1465,6 +1484,8 @@ impl Store {
             stack_buffer: false,
             store_nr: u16::MAX,
             alloc_serial: 0,
+            #[cfg(feature = "op-census")]
+            trace_worker: 0,
             created_at: 0,
             freed_at: 0,
             last_op_at: 0,
@@ -1553,6 +1574,8 @@ impl Store {
             stack_buffer: false,
             store_nr: u16::MAX,
             alloc_serial: 0,
+            #[cfg(feature = "op-census")]
+            trace_worker: 0,
             created_at: 0,
             freed_at: 0,
             last_op_at: 0,
@@ -1679,6 +1702,8 @@ impl Store {
             stack_buffer: false,
             store_nr: u16::MAX,
             alloc_serial: 0,
+            #[cfg(feature = "op-census")]
+            trace_worker: 0,
             created_at: 0,
             freed_at: 0,
             last_op_at: 0,
@@ -1815,7 +1840,7 @@ impl Store {
         #[cfg(feature = "op-census")]
         crate::store_census::alloc_event(format_args!(
             "C {} {} {pos}",
-            self.alloc_serial,
+            self.trace_name(),
             self.read::<i32>(pos, 0)
         ));
         // `LOFT_POISON_CLAIM=1` — the dual of `LOFT_POISON`'s poison-on-FREE, and the
@@ -2441,7 +2466,7 @@ impl Store {
                 #[cfg(feature = "op-census")]
                 crate::store_census::alloc_event(format_args!(
                     "R {} {rec} {} {rec}",
-                    self.alloc_serial,
+                    self.trace_name(),
                     self.read::<i32>(rec, 0)
                 ));
                 return rec;
@@ -2461,7 +2486,7 @@ impl Store {
         #[cfg(feature = "op-census")]
         crate::store_census::alloc_event(format_args!(
             "R {} {rec} {} {new}",
-            self.alloc_serial,
+            self.trace_name(),
             self.read::<i32>(new, 0)
         ));
         new
@@ -2657,7 +2682,7 @@ impl Store {
             return;
         }
         #[cfg(feature = "op-census")]
-        crate::store_census::alloc_event(format_args!("D {} {rec}", self.alloc_serial));
+        crate::store_census::alloc_event(format_args!("D {} {rec}", self.trace_name()));
         // CO1.9/S28: increment generation so coroutine_next can detect deletions that
         // may free a record still referenced by a suspended generator.
         self.generation = self.generation.wrapping_add(1);
@@ -3520,6 +3545,8 @@ impl Store {
             stack_buffer: false,
             store_nr: u16::MAX,
             alloc_serial: 0,
+            #[cfg(feature = "op-census")]
+            trace_worker: 0,
             created_at: 0,
             freed_at: 0,
             last_op_at: 0,
@@ -3572,6 +3599,8 @@ impl Store {
             stack_buffer: self.stack_buffer,
             store_nr: self.store_nr,
             alloc_serial: self.alloc_serial,
+            #[cfg(feature = "op-census")]
+            trace_worker: self.trace_worker,
             created_at: self.created_at,
             freed_at: self.freed_at,
             last_op_at: self.last_op_at,
@@ -3651,6 +3680,8 @@ impl Store {
             stack_buffer: false,
             store_nr: u16::MAX,
             alloc_serial: 0,
+            #[cfg(feature = "op-census")]
+            trace_worker: 0,
             created_at: 0,
             freed_at: 0,
             last_op_at: 0,

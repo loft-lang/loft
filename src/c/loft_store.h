@@ -294,6 +294,11 @@ typedef struct {
      * another value resolves again.  Never persisted.  Last: the
      * fields the hot paths read keep their offsets. */
     uint64_t hgen;
+#ifdef LOFT_ALLOC_TRACE
+    /* `LOFT_ALLOC_TRACE`: the `par` worker that made the store (0 the caller's thread), so each
+     * event names it `<worker>.<serial>` whichever thread writes it (`Store::trace_worker`). */
+    uint32_t trace_worker;
+#endif
 } loft_store_t;
 
 /* A header built without `loft_cc.h` (the replays of tests/c_emit.rs) keeps one copy of its
@@ -424,17 +429,25 @@ static FILE *loft_trace_file(void) {
 /* The line of the events that follow (loft_rt.h, which sets it once the frames exist). */
 static void (*loft_trace_site_hook)(FILE *f);
 /* A `par` worker's name (`loft_par_job_run`; 0 on the main thread): a worker's table is a copy
- * of its caller's, so its stores' serials repeat another thread's, and the trace names them
- * `<worker>.<serial>` as the interpreter's does — one name per store however threads
- * interleave. */
+ * of its caller's, so its stores' serials repeat another thread's.  A store records the worker
+ * that made it (`trace_worker`), and the trace names it `<worker>.<serial>` as the
+ * interpreter's does — one name per store however threads interleave, and after its adoption
+ * into the caller's table. */
 static LOFT_TLS uint32_t loft_trace_worker = 0;
-/* One event, written whole (its line formatted first), the worker's name before its store. */
+/* One event, written whole (its line formatted first). */
 static void loft_trace_emit(FILE *f, const char *line) {
     if (loft_trace_site_hook) loft_trace_site_hook(f);
-    if (loft_trace_worker && line[0] != 'M' && line[0] != '\0' && line[1] == ' ')
-        fprintf(f, "%c %u.%s", line[0], (unsigned) loft_trace_worker, line + 2);
+    fputs(line, f);
+}
+/* A store's name in the trace: its serial, prefixed with the worker that made it
+ * (`Store::trace_name`).  One buffer per thread, read before the next call. */
+static const char *loft_trace_name(const loft_store_t *s) {
+    static LOFT_TLS char loft_tn_[48];
+    if (s->trace_worker)
+        snprintf(loft_tn_, sizeof loft_tn_, "%u.%llu", (unsigned) s->trace_worker, (unsigned long long) s->serial);
     else
-        fputs(line, f);
+        snprintf(loft_tn_, sizeof loft_tn_, "%llu", (unsigned long long) s->serial);
+    return loft_tn_;
 }
 /* A `par` region's bounds (`P`, `Q`), marked where the loop's queue starts and its buffer is
  * dropped, as the interpreter marks them (`store_census::par_mark`); usable in an expression. */
@@ -1190,7 +1203,7 @@ static uint32_t loft_st_claim(loft_store_t *s, uint32_t size) {
     if (LOFT_WRITE_REFUSED(s)) return loft_st_claim_discarded(s, size);
     uint32_t pos = loft_st_claim_inner(s, size);
     if (pos == LOFT_ST_PRIMARY) s->released_root = 0;
-    LOFT_TRACE("C %llu %d %u\n", (unsigned long long) s->serial, loft_st_i32(s, pos, 0), pos);
+    LOFT_TRACE("C %s %d %u\n", loft_trace_name(s), loft_st_i32(s, pos, 0), pos);
 #ifdef LOFT_POISON_CLAIM
     loft_st_poison_range(s, pos, 4, (uint32_t) loft_st_i32(s, pos, 0) * 8 - 4);
 #endif
@@ -1219,7 +1232,7 @@ static void loft_st_delete(loft_store_t *s, uint32_t rec) {
     /* `read_only` is immutability: nothing in a locked store changes, deletes included
      * (`Store::delete`). */
     if (LOFT_WRITE_REFUSED(s)) return;
-    LOFT_TRACE("D %llu %u\n", (unsigned long long) s->serial, rec);
+    LOFT_TRACE("D %s %u\n", loft_trace_name(s), rec);
     for (uint32_t i = 0; i < s->nplaced;) {
         if (s->placed[i] == rec) s->placed[i] = s->placed[--s->nplaced];
         else i++;
@@ -1292,14 +1305,14 @@ static uint32_t loft_st_resize_inner(loft_store_t *s, uint32_t rec, uint32_t siz
             /* The absorbed region promises nothing, as a claim's payload does not. */
             loft_st_poison_range(s, rec, (uint32_t) claim * 8, (uint32_t) (loft_st_i32(s, rec, 0) - claim) * 8);
 #endif
-            LOFT_TRACE("R %llu %u %d %u\n", (unsigned long long) s->serial, rec, loft_st_i32(s, rec, 0), rec);
+            LOFT_TRACE("R %s %u %d %u\n", loft_trace_name(s), rec, loft_st_i32(s, rec, 0), rec);
             return rec;
         }
     }
     uint32_t nw = loft_st_claim(s, size);
     memcpy(s->buf + (size_t) nw * 8 + 4, s->buf + (size_t) rec * 8 + 4, (size_t) claim * 8 - 4);
     loft_st_delete(s, rec);
-    LOFT_TRACE("R %llu %u %d %u\n", (unsigned long long) s->serial, rec, loft_st_i32(s, nw, 0), nw);
+    LOFT_TRACE("R %s %u %d %u\n", loft_trace_name(s), rec, loft_st_i32(s, nw, 0), nw);
     return nw;
 }
 

@@ -991,7 +991,7 @@ impl State {
         // as the interpreter's own and a comparison leaves them out.
         #[cfg(feature = "op-census")]
         for r in [&stack_cur, &_const_store] {
-            crate::store_census::alloc_event(format_args!("S {}", db.store(r).alloc_serial));
+            crate::store_census::alloc_event(format_args!("S {}", db.store(r).trace_name()));
         }
         debug_assert_eq!(
             _const_store.store_nr,
@@ -9167,7 +9167,7 @@ impl State {
         crate::store_census::set_stack_store(stack_cur.store_nr);
         // `LOFT_ALLOC_TRACE` — the worker's value stack is the interpreter's own (`State::new`).
         #[cfg(feature = "op-census")]
-        crate::store_census::alloc_event(format_args!("S {}", db.store(&stack_cur).alloc_serial));
+        crate::store_census::alloc_event(format_args!("S {}", db.store(&stack_cur).trace_name()));
         // @PLN154 — a worker runs the same bytecode on its own frame, so it gets its own
         // shadow; without this the detector would be blind to exactly the `par` arms.
         if crate::stack_verify::enabled() {
