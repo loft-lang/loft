@@ -31,6 +31,7 @@ use el_ex_vector;
 use el_compare;
 use el_ex_copy;
 use el_ex_deliver;
+use el_ex_name;
 
 pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   // `@FR-B-Ref-Uniform`: a link to a scalar place is read as the value it names (`p ?? 0`
@@ -798,7 +799,7 @@ pub fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: intege
         // A struct-enum VARIANT (`(n as Bin?)?`) defaults to that variant, its fields at their
         // defaults (`build_default`'s enum arm at the variant), held as a record `??` holds it.
         if rd > 0 && el::def(e, rd).def_type == el::DT_ENUM_VALUE {
-          return coalesce_with(e, vars, x, el_ex_assign::unit_variant(e, vars, el::def(e, rd).parent, rd));
+          return coalesce_with(e, vars, x, el_ex_name::unit_variant(e, vars, el::def(e, rd).parent, rd));
         }
       },
       _ => {}
@@ -861,7 +862,7 @@ pub fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: intege
         }
       }
       if first >= 0 {
-        return el_ex_call::enum_coalesce(e, vars, x, el_ex_assign::unit_variant(e, vars, sen, first));
+        return el_ex_call::enum_coalesce(e, vars, x, el_ex_name::unit_variant(e, vars, sen, first));
       }
     }
     if !el_convert::plain_scalar(b) {

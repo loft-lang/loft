@@ -20,6 +20,7 @@ use el_schema;
 use el_cell;
 use el_trace;
 use el_ex_deliver;
+use el_ex_tuple;
 
 
 // `Parser::parse_file`'s definition loop, over the file's items in order.
@@ -1554,7 +1555,7 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
         match el_vars::tp(vars, tpp) {
           TyTuple { elems: tpe } => {
             if len([for tm in tpe if (el_types::base(tm) is TyReference) { tm }]) > 0 {
-              tpc = el_ex_assign::tuple_whole_bind_copy(e, vars, tpp, tpe);
+              tpc = el_ex_tuple::tuple_whole_bind_copy(e, vars, tpp, tpe);
               if tpc != null {
                 vars.tp_seed_shadows += [tsh];
                 vars.tp_seed_codes += [tpc!.code];

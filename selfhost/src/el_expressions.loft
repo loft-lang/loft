@@ -30,6 +30,7 @@ use el_ex_match;
 use el_ex_vector;
 use el_ex_copy;
 use el_ex_deliver;
+use el_ex_tuple;
 
 // `Parser::parse_code`: the body of the current definition, its result its declared return.
 // `rewrite_tail_tuple_with_work_ref`: the tail of a function answering a boxed tuple, built
@@ -2526,7 +2527,7 @@ pub fn finish_body(e: el::El, vars: el_vars::Vars, body: ir::Node) -> ir::Node {
                 si = ss#index;
               }
             }
-            pc = if si >= 0 { el_ex_base::ex(vars.tp_seed_codes[si]!, vars.tp_seed_types[si]!) } else { el_ex_assign::tuple_whole_bind_copy(e, vars, pp, pel) };
+            pc = if si >= 0 { el_ex_base::ex(vars.tp_seed_codes[si]!, vars.tp_seed_types[si]!) } else { el_ex_tuple::tuple_whole_bind_copy(e, vars, pp, pel) };
             if si >= 0 && !vars.heap_member_written.contains(sh) {
               rhr = match el_types::base(el::def(e, e.context).returned[0] ?? ir::TyVoid) { TyTuple { elems: rte } => len([for rm in rte if !is_scalar(el_types::base(rm)) && !(el_types::base(rm) is TyText) { rm }]) > 0, _ => false };
               if !el_refhome::tuple_only_read(e, vars, ir::NdBlock { block: [bl] }, sh, rhr) {
