@@ -5,6 +5,11 @@
 //! headers up to `loft_store.h` are compiled with a `main` that prints each field's `offsetof`,
 //! and every offset, the bit set's inner layout and the end of the prefix must equal this
 //! struct's.  A field added, moved or retyped on one side fails here.
+//!
+//! @falsified-at: none — the shared layout is new, so the receipt is a SABOTAGE (2026-11-22):
+//!   with `loft_store_t.live` an `int` again (`src/c/loft_store.h`), every field after it moves.
+//!   CHANNEL: the assertion.  WITNESS: "`known`: C offset against Store's".
+//!   HOLDS: every offset before `live`.
 
 use super::{Claims, Store, U32List};
 use std::fmt::Write as _;
