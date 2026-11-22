@@ -642,6 +642,14 @@ pub fn unregister_work_ref(v: Vars, nr: integer) {
   }
 }
 
+// `Function::retire_work_buffer_ref` (`@FR-R-WorkBuffer`'s transitive clause): work ref `nr`
+// became this function's own work-buffer parameter, so it leaves the refs this frame mints for
+// its callees — no work ref, no caller's hidden buffer.
+pub fn retire_work_buffer_ref(v: Vars, nr: integer) {
+  v.work_refs = [for w in v.work_refs if w != nr { w }];
+  v.vars[nr].caller_hidden_buf = false;
+}
+
 pub fn mark_built(v: Vars, nr: integer) {
   v.built += [nr];
 }

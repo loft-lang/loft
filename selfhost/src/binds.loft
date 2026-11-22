@@ -638,7 +638,7 @@ fn split_key_kind(nm: text) -> integer {
 }
 
 // src/data.rs:5309 fn is_loft_defined — `n_`/`t_`, an instance or a free overload, with a body.
-fn is_loft_defined(d: ir::Definition) -> boolean {
+pub fn is_loft_defined(d: ir::Definition) -> boolean {
   k = split_key_kind(d.name);
   (d.name.starts_with("n_") || d.name.starts_with("t_") || k == KEY_INSTANCE || k == KEY_FREE_OVERLOAD)
     && has_code(d)
