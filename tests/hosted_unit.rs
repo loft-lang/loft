@@ -105,6 +105,9 @@ fn a_hosted_c_library_works_on_the_interpreters_stores() {
 /// @falsified-at: none — the receipt is the plant itself: without the verify the planted byte
 ///   surfaces three statements later as a wrong total; with it, at `fill`.
 ///   CHANNEL: the exit status and the message.  WITNESS: "`fill` leaves another world".
+///   A SABOTAGE (2026-11-22): with a unit's text answers one byte short (`loft_la_set_text`),
+///   the run stops at `label_of`.  WITNESS: "the answer is \"hosted:4\" interpreted,
+///   \"hosted:\" compiled".
 ///   A SABOTAGE (2026-11-22): with the file layer struck from what reaches outside the stores
 ///   (`hosted_verify::reaches_outside`), `append_word` runs twice.  WITNESS: "file 16 bytes".
 ///   A SABOTAGE (2026-11-22): with the comparison by value struck (`hosted_verify.rs`), the
