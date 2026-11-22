@@ -26,6 +26,8 @@ use el_ex_null;
 use el_ex_pattern;
 use el_ex_vector;
 use el_ex_copy;
+use el_ex_bind;
+use el_ex_closure;
 
 // `Parser::chain_return_buffer_var` (@PLN164 B2): the buffer only chain exits renamed — a hidden
 // `__ref_N` the body names nowhere but inside a `one_buffer_chain` — is the caller's too, so a
@@ -1476,7 +1478,7 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
   // (`vector_db`: a local that holds a store already takes a fresh one, as its first bind did —
   // unless the comprehension reads it, by name or through a `&` link, which Rust snapshots
   // first: not carried.)
-  if v >= 0 && (vars.vars[v].argument || (len(el_types::deps(el_vars::tp(vars, v))) > 0 && (keyed_kind(el_vars::tp(vars, v)) || vars.amp_vectors.contains(v) || el_ex_assign::mentions_name(e, n, el_vars::name_of(vars, v))))) {
+  if v >= 0 && (vars.vars[v].argument || (len(el_types::deps(el_vars::tp(vars, v))) > 0 && (keyed_kind(el_vars::tp(vars, v)) || vars.amp_vectors.contains(v) || el_ex_closure::mentions_name(e, n, el_vars::name_of(vars, v))))) {
     el::refuse(e, "a comprehension into a local that has a store");
     return ex(ir::NdNull, ir::TyVoid);
   }
@@ -2386,7 +2388,7 @@ fn match_expr_inner(e: el::El, vars: el_vars::Vars, subject: integer, arms: vect
           void_arm = true;
         }
         if sd >= 0 {
-          owned = el_ex_assign::jo_arm_copy(e, vars, b);
+          owned = el_ex_bind::jo_arm_copy(e, vars, b);
           if owned != null {
             b = owned!;
           }

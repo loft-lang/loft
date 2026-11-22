@@ -29,6 +29,7 @@ use el_ex_null;
 use el_ex_match;
 use el_ex_pattern;
 use el_ex_vector;
+use el_ex_name;
 
 // Does `n` read a variable whose template type names placeholder `h`?
 pub fn reads_over(n: ir::Node, tv: ir::Function, h: integer) -> boolean {
@@ -2184,7 +2185,7 @@ pub fn hole_spec(e: el::El, vars: el_vars::Vars, from: integer, to: integer) -> 
       },
       Ident { name } => {
         if radix_for(name) == null {
-          f.width = el_ex_assign::name_expression(e, vars, name, "", false).code;
+          f.width = el_ex_name::name_expression(e, vars, name, "", false).code;
           i += 1;
         }
       },

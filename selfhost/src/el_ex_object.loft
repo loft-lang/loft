@@ -25,6 +25,7 @@ use el_ex_place;
 use el_ex_call;
 use el_ex_match;
 use el_ex_pattern;
+use el_ex_name;
 
 pub fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: integer, fname: text, n: integer) -> vector<ir::Node>? {
   def = el::def(e, d);
@@ -889,7 +890,7 @@ pub fn member(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name: t
     qd = if qn != "" { el::def_nr(e, qn) } else { -1 };
     if qd >= 0 && el_ex_place::qualified_variant(e, qn, name) != "" && (el::def(e, qd).returned[0] ?? ir::TyVoid) == ir::TyEnum { n: qd, is_ref: true, dep: [] } {
       // (Read through the member access, the value carries its position as any member's does.)
-      qv = el_ex_assign::global_name(e, vars, -1, name);
+      qv = el_ex_name::global_name(e, vars, -1, name);
       if e.first_pass || qv.code is NdNull {
         return qv;
       }
@@ -3400,7 +3401,7 @@ pub fn elem_stride(e: el::El, t: ir::TypeT) -> integer {
 }
 
 pub fn scalar_stored_size(e: el::El, t: ir::TypeT) -> integer {
-  d = el_ex_assign::elm_def(e, t);
+  d = el_ex_name::elm_def(e, t);
   kt = if d < 0 { el::NO_TYPE } else { el::def(e, d).known_type };
   if kt == el::NO_TYPE { -1 } else { e.b.types[kt]!.size }
 }
