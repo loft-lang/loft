@@ -77,6 +77,29 @@ hosted unit is built with the run's switches, or it is not adopted.
 7. **Type numbers differ.**  A unit is adopted only when its type-layout fingerprint is the
    program's (`artifact_matches_layout`), as a rustc artifact is.
 
+## Finding what the suite cannot see
+
+Two runtimes that share a store's bytes can be compared BY those bytes.  A suite cell compares an
+answer; an answer can be right while a store beside it is wrong — a claim left behind, a field
+written in the wrong record, a free one side does and the other skips — and such a defect waits
+for the run that reads it.  Two instruments compare the stores themselves, and each is held to a
+positive control: a planted difference it must report, so a silent run is a measurement and not
+a blind spot.
+
+- **The store differential (`LOFT_STORE_DUMP=<file>`, `scripts/store_diff.py`).**  At the end of a
+  run — or at a named line — each runtime writes every live store: its history name (as
+  `c_alloc_diff.py` names it, so the two sides pair by what happened to them rather than by slot
+  number), its claimed records, and each record's bytes.  The diff lists every difference as
+  store, record, offset and the field the type table names there, and runs the C-only rewrites'
+  attribution (`--attribute`) so a difference a rewrite explains is named as that rewrite's.
+  Unclaimed bytes are not compared: a claim promises no value (`@FR-H-Claim`).
+- **The hosted verify (`LOFT_HOSTED_VERIFY=1`).**  Each call into a hosted unit runs twice: the C
+  on the interpreter's stores, and the function's own bytecode on a copy taken before the call.
+  The two worlds after the call — the answer and every store, compared as above — must be equal;
+  the first call that differs stops the run and names the function, its arguments and the first
+  differing record.  It finds a divergence at the call that makes it, in a real program, which is
+  where a production defect is found late.
+
 ## Phases
 
 | | Work | Compared against | Goes red when |
@@ -86,3 +109,17 @@ hosted unit is built with the run's switches, or it is not adopted.
 | P3c | A hosted `loft_store_t` is padded to `sizeof(Store)` (`LOFT_HOST_STORE_SIZE`). | The layout test, sizes included. | `sizeof(loft_store_t)` differs from `size_of::<Store>()`. |
 | P4a | The C writer emits a hosted unit: the table, birth, death and mapped growth through the host, `loft_shared_<name>` bridges over `LibArg`. | A hosted unit called from a Rust test on a live `Stores`. | Its answer or the stores after it differ from the interpreter's. |
 | P4b | The interpreter adopts a hosted unit for one pure-loft library. | The library's suite interpreted, then adopted; the timings. | An answer differs, or adopted is not faster. |
+| P4c | The store differential: `LOFT_STORE_DUMP` on both runtimes, `scripts/store_diff.py`. | The corpus sample, interpreted against `--native`; a planted wrong byte. | The planted byte is not reported, or a difference no rewrite explains appears. |
+| P4d | The hosted verify (`LOFT_HOSTED_VERIFY=1`). | tween's and `hostedlib`'s programs; a planted wrong store write in a unit. | The planted write is not reported, or a real call differs. |
+
+## Measured
+
+- **P3** — the interpreter's allocation traces over the 140-script sample are byte-identical
+  before and after (114 of 118; the rest differ only in an order that varies run to run).  The
+  layout test fails on a C field retyped (`src/store/layout.rs`'s receipt).
+- **P4** — tween's four test files and two probes answer alike interpreted, adopted, and adopted
+  under `LOFT_POISON`.  The bench: interpreted 475 / 212 ns per item, hosted C 148–152 / 81–82,
+  rustc artifact 143–148 / 78.  `-O3` changes nothing.  **Decision:** the 2–4 % the rustc artifact
+  keeps is accepted for P4; the likeliest cause is per call — the bridge asks the host for the
+  table on entry and on exit — and P5 measures the cure (a refresh only when the host's table
+  changed) before the C artifact replaces the rustc one.
