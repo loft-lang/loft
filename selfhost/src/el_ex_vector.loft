@@ -588,6 +588,8 @@ pub fn slice_copy(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> ir::Node
     ] };
   }
   db = el_vars::work_vec_db(vars, ir::TyReference { n: r.main_def, dep: [] });
+  // (`insert_new`: the element and the local both borrow the store minted for the slice.)
+  el_vars::depend(vars, elm_v, db);
   el_vars::depend(vars, v, db);
   // `slice_copy_form`'s loop for a text or a record element: each element read whole
   // (`Vector Index`), made through the local and written in — the local's elements, and the

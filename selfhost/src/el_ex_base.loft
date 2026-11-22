@@ -16,6 +16,7 @@ use narrow;
 use el_convert;
 use el_definitions;
 use el_trace;
+use binds;
 
 // An expression's IR and type.
 pub struct Ex {
@@ -2160,7 +2161,72 @@ pub fn loop_var(vars: el_vars::Vars, src_id: text, id: text, t: ir::TypeT) -> in
   }
   el_vars::set_defined(vars, lv);
   vars.loop_vars += [lv];
+  // loft#1540 — a loop variable over a value-const value's elements is a view of it.
+  if vars.const_loop_root >= 0 {
+    if view_type(el_vars::tp(vars, lv)) {
+      vars.vars[lv].value_const = true;
+    }
+    vars.const_loop_root = -1;
+  }
   lv
+}
+
+// `Parser::const_view_root`: the variable `n` reads out of — a bare variable where `bare` (a
+// loop's elements), the variable a `&` link names, the container a projection reads (`p = ps[0]`,
+// `q = w.p`) — through the one-operator wrappers a right-hand side arrives in; -1 for none.
+pub fn const_view_root(e: el::El, n: ir::Node, bare: boolean) -> integer {
+  node = el_ir::unspan(n);
+  done = false;
+  while !done {
+    match node {
+      NdInsert { items } => if len(items) == 1 { node = el_ir::unspan(items[0]!); } else { done = true; },
+      NdBlock { block } => if len(block[0].operators) == 1 { node = el_ir::unspan(block[0].operators[0]!); } else { done = true; },
+      _ => { done = true; }
+    }
+  }
+  match node {
+    NdVar { n: v } => if bare { v } else { -1 },
+    NdCall { def_nr, args } => {
+      nm = el::def(e, def_nr).name;
+      if nm == "OpCreateStack" || nm == "OpVarRef" {
+        return match el_ir::unspan(args[0] ?? ir::NdNull) { NdVar { n: lv } => lv, _ => -1 };
+      }
+      binds::projection_container_var(e.b, node) ?? -1
+    },
+    _ => -1
+  }
+}
+
+// `mark_const_view`'s type test: only a record, a struct enum, a collection — or a `&` link at
+// any type — can be a view; a scalar or a text read out of one is its own copy.
+pub fn view_type(t: ir::TypeT) -> boolean {
+  if t is TyRefVar {
+    return true;
+  }
+  match el_types::base(t) {
+    TyReference { n: _ } => true,
+    TyEnum { n: _, is_ref } => is_ref,
+    TyVector { inner: _ } => true,
+    TyHash { n: _ } => true,
+    TySorted { n: _ } => true,
+    TyIndex { n: _ } => true,
+    TyRadix { n: _ } => true,
+    TyTrie { n: _ } => true,
+    _ => false
+  }
+}
+
+// `Parser::mark_const_view` (loft#1540): `view` reads out of a value-const place — a projection,
+// a `&` link, a loop's elements (`bare`) — so it is read-only too.  (The foreign-data and the
+// const-field reaches, `@FR-Const-Foreign` and `frozen_through`, are not carried yet.)
+pub fn mark_const_view(e: el::El, vars: el_vars::Vars, view: integer, source: ir::Node, bare: boolean) {
+  if view < 0 || view >= len(vars.vars) || !view_type(el_vars::tp(vars, view)) {
+    return;
+  }
+  root = const_view_root(e, source, bare);
+  if root >= 0 && root < len(vars.vars) && vars.vars[root].value_const {
+    vars.vars[view].value_const = true;
+  }
 }
 
 // An `i32` element's own store types (`int<-2147483647,false>` and its vector), made where a
