@@ -926,6 +926,14 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
 pub fn closure_value(e: el::El, vars: el_vars::Vars, d: integer, rec_nm: text, caps: vector<el::Capture>, body: integer, written: vector<text>) -> Ex {
   vars.last_closure = d;
   vars.last_closure_body = body;
+  // `collect_mutated_captures`: the captures the lambda's body writes, on its definition — the
+  // fact a call through it (`fn_ref_call` choosing the cell-reading form) and the closure's
+  // release read.
+  // (Asked of every capture, not of `written`: a written parameter boxed through a shadow
+  // reaches the second pass as a forward capture and is no cell of this build.)
+  if d >= 0 {
+    e.b.data.definitions[d].mutated_captures = [for mc in caps if writes_a_name(e, body, [mc]) { ir::NameRef { name: mc.name } }];
+  }
   // A closure answering a text is not carried: the borrows of its body's answer (a parameter's
   // view) and of its capture fields are not reproduced yet.
   // A closure answering a text delivers it through its hidden `&text` buffer, as any lambda.  One
@@ -4369,6 +4377,11 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
   // lost write (`mark_copy_bound`, at the text bind, `lower_vec_copy_bind` and the keyed
   // replace alike).
   amp_bind = match e.p.nodes[rhs!] { SUnary { op: ro } => ro == "&", _ => false } || x.tp is TyRefVar;
+  // `@FR-B-Ref-Alias`, `@FR-H-FreeTwice`: a `&` link to a collection shares its source's store
+  // and every whole-value write goes through it, so it never owns one — never freed.
+  if op == "=" && v >= 0 && !e.first_pass && match e.p.nodes[rhs!] { SUnary { op: ao } => ao == "&", _ => false } && el_types::is_collection(el_types::base(x.tp)) {
+    vars.vars[v].skip_free = true;
+  }
   if op == "=" && v >= 0 && !amp_bind && !(el_ir::unspan(x.code) == ir::NdVar { n: v }) && (el_types::base(x.tp) is TyText || el_types::is_collection(el_types::base(x.tp))) && copied_place(e, x.code) {
     vars.vars[v].copy_bound = true;
   }
