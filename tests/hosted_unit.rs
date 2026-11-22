@@ -9,8 +9,10 @@
 //!
 //! @falsified-at: none — the route is new, so the receipt is a SABOTAGE (2026-11-22): with
 //!   `loft_store_make`'s `loft_host_sync()` struck (`src/c/loft_rt.h`), the unit keeps the table it
-//!   read before the interpreter added the store, and the run fails.
-//!   CHANNEL: the exit status and the answer.
+//!   read before the interpreter added the store; `deep(400)` makes it move.
+//!   CHANNEL: the exit status.  WITNESS: "hosted: error: write to a locked store".
+//!   HOLDS: the interpreted run.  Without `deep` the table never moved and the sabotage passed:
+//!   a stale length only skipped frees, which `LOFT_STRICT_STORES` now fails too.
 use loft::file_access as fa;
 use loft::platform::process::harness_command;
 
