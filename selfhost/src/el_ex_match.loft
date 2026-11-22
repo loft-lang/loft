@@ -433,8 +433,8 @@ pub fn for_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
   }
   if unordered {
     // (Any keyed collection — a sorted or index one walks in its own order, unchanged; the walk
-    // takes the mark.)
-    if !keyed_kind(x.tp) || x.tp is TyOptional || x.code is NdIter {
+    // takes the mark.  A vector walks as it always does: only a keyed walk reads the mark.)
+    if !(keyed_kind(x.tp) || el_types::base(x.tp) is TyVector) || x.tp is TyOptional || x.code is NdIter {
       el::refuse(e, "an `unordered(…)` walk, or a reversed one that destructures or runs `par`");
       return ex(ir::NdNull, ir::TyVoid);
     }
