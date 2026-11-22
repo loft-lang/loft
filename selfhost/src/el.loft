@@ -31,6 +31,14 @@ pub struct Capture {
   pub tp: ir::TypeT
 }
 
+// `closure_shared_vectors`: a closure record's attribute that shares a captured VECTOR (its
+// attribute wears the element's `Reference` spelling), with the vector's type.
+pub struct SharedVec {
+  pub rec: integer,
+  pub name: text,
+  pub tp: ir::TypeT
+}
+
 // A work ref the first pass made a parameter (the return buffer renamed onto it), by function
 // and name, with the site that minted it: the second pass steps over its name at any other site
 // (`Function::argument_of_another_site`, loft#848).
@@ -150,6 +158,7 @@ pub struct El {
   // The lambda being read: the enclosing function's locals it captures, its closure record and
   // the `__closure` parameter they are read through (-1 where there is none yet).
   pub captures: vector<Capture>,
+  pub shared_vecs: vector<SharedVec>,
   pub closure_rec: integer,
   pub closure_var: integer,
   pub step_over: vector<StepOver>,
@@ -241,6 +250,7 @@ pub fn new_el(p: syntax::Syntax, file: text, default: boolean) -> El {
     bodies2: [],
     stale: [],
     captures: [],
+    shared_vecs: [],
     closure_rec: -1,
     closure_var: -1,
     step_over: [],
