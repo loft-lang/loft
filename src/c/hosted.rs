@@ -34,12 +34,14 @@ pub(crate) fn defines() -> String {
          #define LOFT_HOST_STORE_TAIL {}\n\
          #define LOFT_HOST_ABI {}\n\
          #define LOFT_HT_HOSTED {}\n\
+         #define LOFT_STORES_VIEW_AT {}\n\
          #define LOFT_LA_SIZE {}\n#define LOFT_LA_SCALAR {}\n#define LOFT_LA_DBREF {}\n\
          #define LOFT_LA_TPTR {}\n#define LOFT_LA_TLEN {}\n\
          #define LOFT_DB_STORE {}\n#define LOFT_DB_REC {}\n#define LOFT_DB_POS {}\n",
         crate::store::HOST_STORE_TAIL,
         crate::host_abi::HOST_ABI,
         offset_of!(HostTable, hosted),
+        offset_of!(crate::database::Stores, hosted_view),
         size_of::<LibArg>(),
         offset_of!(LibArg, scalar),
         offset_of!(LibArg, dbref),

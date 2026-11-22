@@ -131,8 +131,13 @@ a blind spot.
   before and after (114 of 118; the rest differ only in an order that varies run to run).  The
   layout test fails on a C field retyped (`src/store/layout.rs`'s receipt).
 - **P4** — tween's four test files and two probes answer alike interpreted, adopted, and adopted
-  under `LOFT_POISON`.  The bench: interpreted 475 / 212 ns per item, hosted C 148–152 / 81–82,
-  rustc artifact 143–148 / 78.  `-O3` changes nothing.  **Decision:** the 2–4 % the rustc artifact
-  keeps is accepted for P4; the likeliest cause is per call — the bridge asks the host for the
-  table on entry and on exit — and P5 measures the cure (a refresh only when the host's table
-  changed) before the C artifact replaces the rustc one.
+  under `LOFT_POISON`.  The rustc artifact first ran 2–4 % faster (`value` 143–148 ns per item
+  against the C's 148–152, `ease` 78 against 81–82; `-O3` changed nothing).  **The reason,
+  measured:** each bridge call asked the host for the table by a call back — with the refresh
+  struck, `value` fell by 5–6 ns and `ease` by 2.5.  **The cure:** the interpreter keeps a
+  `#[repr(C)]` view of its table inside `Stores` (`host_abi::TableView`), set before each bridge
+  call and after each store birth and death — the only times the table changes while a unit
+  runs — and the unit reads it in place at `LOFT_STORES_VIEW_AT`.  Interleaved, three rounds:
+  `value` C 143–152, rustc 146–154; `ease` C 80–84, rustc 78–84 (level in the third round); the
+  per-call depth check (`LOFT_MAX_CALL_DEPTH`) changes nothing.  Against interpreting: 3.1x on
+  `value`, 2.6x on `ease`.

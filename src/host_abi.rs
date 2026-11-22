@@ -100,6 +100,44 @@ pub struct HostTable {
 /// The [`HostTable`] layout version; a cdylib refuses a table of another.
 pub const HOST_ABI: u32 = 6;
 
+/// `@PLN206 P4` — the store table as a hosted C unit reads it, kept inside `Stores`
+/// (`Stores::hosted_view`) at an offset the unit is built with (`LOFT_STORES_VIEW_AT`): set
+/// before each bridge call and after each act the unit leaves to the interpreter, the only times
+/// the table changes while a unit runs, so the unit reads it without a call back.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct TableView {
+    pub table: *mut u8,
+    pub n: u32,
+    pub serial: u64,
+}
+
+impl Default for TableView {
+    fn default() -> Self {
+        TableView {
+            table: std::ptr::null_mut(),
+            n: 0,
+            serial: 0,
+        }
+    }
+}
+
+// SAFETY: a copy of the table's address, read only on the thread whose `Stores` holds it.
+unsafe impl Send for TableView {}
+unsafe impl Sync for TableView {}
+
+impl TableView {
+    /// The view of `stores`' table as it stands.
+    #[must_use]
+    pub fn of(stores: &mut Stores) -> TableView {
+        TableView {
+            table: stores.allocations.as_mut_ptr().cast(),
+            n: stores.allocations.len() as u32,
+            serial: stores.stores_allocated,
+        }
+    }
+}
+
 /// `@PLN206 P4` — the acts a hosted C unit leaves to the interpreter (`p3-p4-design.md`): the
 /// store table itself, and a store's birth and death, which touch the interpreter's own fields
 /// and its table's bookkeeping.  Everything inside a store the unit does itself, on the shared

@@ -80,6 +80,7 @@ impl State {
             return;
         };
         let mut compiled = Box::new(copy);
+        compiled.hosted_view = crate::host_abi::TableView::of(&mut compiled);
         unsafe { bridge(&raw mut *compiled, args.as_ptr(), args.len(), ret) };
         let ret_c = unsafe { *ret };
         // The interpreted run, on the world itself; the call-back's bookkeeping is put back.

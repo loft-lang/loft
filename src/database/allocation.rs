@@ -3397,6 +3397,7 @@ impl Stores {
             peak: (self.allocations.len() + scratch_stores) as u16,
             free_bits,
             bridge_text_dest: None,
+            hosted_view: crate::host_abi::TableView::default(),
             const_refs: self.const_refs.clone(),
             const_texts: self.const_texts.clone(),
             last_json_errors: Vec::new(),

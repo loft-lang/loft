@@ -519,6 +519,8 @@ pub struct Stores {
     /// bridge pushes nothing (the record IS the result).  Transient — lives only
     /// across the two adjacent `OpStaticCall`s.
     pub bridge_text_dest: Option<crate::keys::DbRef>,
+    /// `@PLN206 P4` — the table as a hosted C unit reads it (`host_abi::TableView`).
+    pub hosted_view: crate::host_abi::TableView,
     /// per-definition DbRef into the CONST_STORE for vector
     /// constants (e.g. `pub HEIGHT_STEP_LABELS: vector<text> = […]`).
     /// Indexed by `d_nr`; a null DbRef (store_nr = u16::MAX) means
@@ -814,6 +816,7 @@ impl Clone for Stores {
             alloc_pc: 0,
             free_bits: Vec::new(),
             bridge_text_dest: None,
+            hosted_view: crate::host_abi::TableView::default(),
             const_refs: Vec::new(),
             const_texts: Vec::new(),
             last_json_errors: Vec::new(),
@@ -1634,6 +1637,7 @@ impl Stores {
             alloc_pc: 0,
             free_bits: Vec::new(),
             bridge_text_dest: None,
+            hosted_view: crate::host_abi::TableView::default(),
             const_refs: Vec::new(),
             const_texts: Vec::new(),
             last_json_errors: Vec::new(),

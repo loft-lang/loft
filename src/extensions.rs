@@ -1430,6 +1430,10 @@ fn shared_store_dispatch_raw(
     } else {
         std::ptr::null_mut()
     };
+    // `@PLN206 P4` — the table a hosted unit reads (`TableView`), as it stands at the call.
+    unsafe {
+        (*stores_ptr).hosted_view = crate::host_abi::TableView::of(&mut *stores_ptr);
+    }
     if host.is_null() {
         unsafe { bridge(stores_ptr, args.as_ptr(), args.len(), ret_ptr) };
     } else {

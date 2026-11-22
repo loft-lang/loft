@@ -234,7 +234,9 @@ unsafe extern "C" fn hosted_table(stores: *mut Stores, n: *mut u32, serial: *mut
 unsafe extern "C" fn hosted_store_new(stores: *mut Stores) -> u32 {
     // SAFETY: as `hosted_table`.
     let stores = unsafe { &mut *stores };
-    u32::from(stores.null_named("__hosted").store_nr)
+    let nr = u32::from(stores.null_named("__hosted").store_nr);
+    stores.hosted_view = crate::host_abi::TableView::of(stores);
+    nr
 }
 
 /// The unit's `loft_free_ref`, past its own checks: the interpreter's release.
@@ -247,6 +249,7 @@ unsafe extern "C" fn hosted_store_free(stores: *mut Stores, nr: u32) {
         pos: 0,
     };
     stores.free_named(&r, "__hosted");
+    stores.hosted_view = crate::host_abi::TableView::of(stores);
 }
 
 /// @PLN199 D2 / D3 — the host's coroutine table as a library cdylib sees it: the runtime's

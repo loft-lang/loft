@@ -1607,11 +1607,22 @@ static LOFT_TLS void *loft_host_stores = 0;
 /* The table as the interpreter holds it now: after a bridge call starts and after every act
  * the interpreter does for the unit, either of which may move it. */
 static void loft_host_sync(void) {
+#ifdef LOFT_STORES_VIEW_AT
+    /* `host_abi::TableView`, kept current inside the interpreter's `Stores` before each bridge
+     * call and after each act the unit leaves to it: read in place, no call back. */
+    typedef struct { uint8_t *table; uint32_t n; uint64_t serial; } loft_table_view;
+    loft_table_view v;
+    memcpy(&v, (const char *) loft_host_stores + LOFT_STORES_VIEW_AT, sizeof v);
+    loft_stores = (loft_store_t *) v.table;
+    loft_nstores = v.n;
+    loft_stores_allocated = v.serial;
+#else
     uint32_t n = 0;
     uint64_t serial = 0;
     loft_stores = (loft_store_t *) loft_hosted->table(loft_host_stores, &n, &serial);
     loft_nstores = n;
     loft_stores_allocated = serial;
+#endif
     loft_hint_table = 0;
 }
 #endif
