@@ -15,6 +15,9 @@ divergence between the two runtimes with its decision, is
   interpreter's stores): the invariant, the shared prefix, the failure paths, the phases, the
   two instruments that compare the runtimes by their stores (`scripts/store_diff.py`,
   `LOFT_HOSTED_VERIFY`), and what was measured.
+- [`p5-design.md`](p5-design.md) — P5 (a library's own C artifact, adopted by any program): the
+  type crossings by key, the open unit, the shared shim, and the sub-phases.
+- [`handoff-2026-11-22.md`](handoff-2026-11-22.md) — where P5 stands and how to resume.
 
 The instruments, run by hand:
 
@@ -22,6 +25,7 @@ The instruments, run by hand:
 python3 scripts/c_alloc_diff.py --attribute FILE…   # allocator events, interpreter against C
 python3 scripts/store_diff.py --attribute FILE…     # every store's final bytes, the same pair
 python3 scripts/store_diff.py --plant FILE          # its positive control
+python3 scripts/hosted_suite.py --lib ROOT… PKG…   # a library's tests, interpreted and adopted
 LOFT_LIB_BACKEND=c LOFT_HOSTED_VERIFY=1 LOFT_POISON_CLAIM=1 loft --interpret --lib DIR prog.loft
 ```
 
