@@ -1471,6 +1471,13 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
       return ex(ir::NdNull, ir::TyVoid);
     }
     if !bare_var && !calls(e, view, "OpGetField") {
+      // (`parse_object_inner`, @PLN87 P2.2: a record literal written through the link is handed
+      // to the link's referent — its owner frees it — so its own buffer is never freed here.)
+      if !e.first_pass && e.p.nodes[rhs!] is SStructLit {
+        for ow in el_types::deps(el_types::unrewritten(x.tp)) {
+          el_vars::set_skip_free(vars, ow, "parse_object_inner");
+        }
+      }
       return ex(if e.first_pass { ir::NdNull } else { el_ir::v_set(v, x.code) }, ir::TyVoid);
     }
     rec_tp = if is_senum { ir::TyEnum { n: link_rd, is_ref: true, dep: [] } } else { ir::TyReference { n: link_rd, dep: [] } };

@@ -2980,6 +2980,9 @@ fn link_handover(e: el::El, vars: el_vars::Vars, vt: ir::TypeT, o: Ex) {
 }
 
 pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex {
+  if el_trace::on() {
+    el_trace::route(e, "parse_object");
+  }
   name = "";
   qual = "";
   fields: vector<integer> = [];
