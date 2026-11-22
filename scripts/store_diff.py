@@ -251,7 +251,8 @@ def site_keys(sites, side):
 def repair(want, wsites, got, gsites):
     """The C's stores renamed to the interpreter's names they pair with: by making line and root
     type first, then — for those left — by root type alone.  Within either group a store pairs
-    with the one holding the most equal records, ties going by making order.  Two runtimes that
+    with one holding exactly its records first, then one claiming the same records at the same
+    sizes (padding apart), the rest by making order.  Two runtimes that
     make the same stores in another order (a C-only rewrite's, another call order, a loop's
     stores freed in another order) pair by what each store is, not by when it was made; a name
     kept by order alone would shift every store after the first one out of place.  The pairing
@@ -261,17 +262,40 @@ def repair(want, wsites, got, gsites):
     wk, gk = site_keys(wsites, want), site_keys(gsites, got)
     rename, taken = {}, set()
 
-    def likeness(w, g):
-        a, b = want[w][1], got[g][1]
-        return sum(1 for r in set(a) & set(b) if a[r] == b[r]) - len(set(a) ^ set(b))
+    def content(side, n):
+        return hash(tuple(sorted(side[n][1].items())))
+
+    def shape(side, n):
+        # Which records are claimed, at what size: what a store holds with its padding apart.
+        return hash(tuple(sorted((r, v[0]) for r, v in side[n][1].items())))
 
     def pair(key_w, key_g):
-        wleft = [n for n in sorted(want, key=order) if n != "__slots" and n not in taken]
-        gleft = [n for n in sorted(got, key=order) if n != "__slots" and n not in rename]
-        for g in gleft:
-            cands = [w for w in wleft if w not in taken and key_w(w) is not None and key_w(w) == key_g(g)]
-            if cands:
-                w = max(cands, key=lambda w: (likeness(w, g), -cands.index(w)))
+        # Linear: a run can leave ten thousand stores of one line.
+        groups = {}
+        for n in sorted(want, key=order):
+            if n != "__slots" and n not in taken and key_w(n) is not None:
+                groups.setdefault(key_w(n), ([], []))[0].append(n)
+        for n in sorted(got, key=order):
+            if n != "__slots" and n not in rename and key_g(n) in groups:
+                groups[key_g(n)][1].append(n)
+        for ws, gs in groups.values():
+            rest = gs
+            for sig in (content, shape):
+                alike = {}
+                for w in ws:
+                    if w not in taken:
+                        alike.setdefault(sig(want, w), []).append(w)
+                left = []
+                for g in rest:
+                    same = alike.get(sig(got, g))
+                    if same:
+                        w = same.pop(0)
+                        rename[g] = w
+                        taken.add(w)
+                    else:
+                        left.append(g)
+                rest = left
+            for g, w in zip(rest, [w for w in ws if w not in taken]):
                 rename[g] = w
                 taken.add(w)
 

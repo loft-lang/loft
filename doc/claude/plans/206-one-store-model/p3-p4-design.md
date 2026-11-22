@@ -93,11 +93,17 @@ a blind spot.
   only at the end was blind: a sound program frees everything first, which the positive control
   showed at once.  The diff lists every store live on one side only, every record claimed on one
   side only or of another size, and every run of differing bytes, each with the line that made
-  the store on each side.  `--attribute` reruns with each C-only rewrite off.  Both sides run
+  the store on each side.  A store pairs with its twin by the line that made it and its root
+  type, then by type alone, and among candidates by the records they hold; the C is emitted
+  with `LOFT_C_TRACE_SITES`, so it records every statement's line (otherwise only one that
+  calls a frame), and names each store by the line the interpreter does.  `--attribute` reruns
+  with each C-only rewrite off, padding apart as in the report; `--every-rewrite-off` compares
+  the two runtimes' own model.  Both sides run
   under `LOFT_POISON_CLAIM`, so a byte nothing wrote reads the same, and with one
   `LOFT_HASH_SEED`: a hash table is pseudo-random, and seeded alike its seed and its entries'
   places agree.  Two readings keep it from crying wolf: a stored reference names a store by its
-  slot, so a word naming the same store by history on both sides agrees; and a byte one side
+  slot, so a word naming the same store by history on both sides agrees — and so does the
+  `slot=<n>` line of a store image's sidecar, read back as bytes; and a byte one side
   zeroes where the other leaves it unwritten is padding no field reads, listed apart.  A second
   interpreter run is the noise control: what still varies from run to run is named, not hidden —
   over the sample, nothing does.  `--plant` flips one byte of the C's dump, which must add a
@@ -122,7 +128,7 @@ a blind spot.
 | P3c | A hosted `loft_store_t` is padded to `sizeof(Store)` (`LOFT_HOST_STORE_SIZE`). | The layout test, sizes included. | `sizeof(loft_store_t)` differs from `size_of::<Store>()`. |
 | P4a | The C writer emits a hosted unit: the table, birth, death and mapped growth through the host, `loft_shared_<name>` bridges over `LibArg`. | A hosted unit called from a Rust test on a live `Stores`. | Its answer or the stores after it differ from the interpreter's. |
 | P4b | The interpreter adopts a hosted unit for one pure-loft library. | The library's suite interpreted, then adopted; the timings. | An answer differs, or adopted is not faster. |
-| P4c | The store differential: `LOFT_STORE_DUMP` on both runtimes, `scripts/store_diff.py`. | The corpus sample, interpreted against `--native`; a planted wrong byte. | The planted byte is not reported.  What it finds becomes `STORE_MODEL.md` rows, each converged or decided as P1's were. |
+| P4c | The store differential: `LOFT_STORE_DUMP` on both runtimes, `scripts/store_diff.py`. | The corpus sample, interpreted against `--native`; a planted wrong byte. | A difference no C-only rewrite explains appears, or the planted byte is not reported.  What it finds becomes `STORE_MODEL.md` rows, each converged or decided as P1's were. |
 | P4d | The hosted verify (`LOFT_HOSTED_VERIFY=1`). | tween's and `hostedlib`'s programs; a planted wrong store write in a unit. | The planted write is not reported, or a real call differs. |
 
 ## Measured
