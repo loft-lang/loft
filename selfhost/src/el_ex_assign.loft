@@ -2572,6 +2572,11 @@ pub fn name_expression(e: el::El, vars: el_vars::Vars, name: text, member: text,
     return global_name(e, vars, el::get_source(e, name), member);
   }
   v = el_vars::var(vars, name);
+  // A user's mention names the variable (loft#1834) — only where it IS the name written: a
+  // user's `s` can resolve to the compiler's own `_mv_s_1`, which stays the compiler's.
+  if v >= 0 && el_vars::name_of(vars, v) == name {
+    el_vars::mark_user_named(vars, v);
+  }
   // A local the lambda being read captures: on the second pass its field of the closure record,
   // read through the `__closure` parameter (`capture_context`).
   if v < 0 {
@@ -3356,6 +3361,20 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
 }
 
 fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: text, target: integer, rhs: integer?) -> Ex {
+  // loft#1840 — the program's own append into a collection or a text local, recorded on that
+  // local for the `lost-write` lint (`mark_user_appended`).  (A field or element target is
+  // rooted at its local in Rust too — not carried yet.)
+  if op == "+=" {
+    match e.p.nodes[target] {
+      SName { name: an, member: am } => {
+        av = if am == "" { el_vars::var(vars, an) } else { -1 };
+        if av >= 0 && (el_types::is_collection(el_types::base(el_vars::tp(vars, av))) || el_types::base(el_vars::tp(vars, av)) is TyText) {
+          vars.vars[av].user_appended = true;
+        }
+      },
+      _ => {}
+    }
+  }
   // loft#1205 (`@FR-E-Asgn-Discharge`): `n[i]? += 1` — the `?` is peeled to the element it
   // reads, the compound written through that place (bound once where its index has an effect),
   // and an integer element seeded with its default where it is null first (`discharge_seed`:

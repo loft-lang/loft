@@ -35,9 +35,50 @@ pub fn report(e: el::El, from: integer) -> text {
         rebinds += if rebinds == "" { a.name } else { ",{a.name}" };
       }
     }
-    r += "[contract] fn={d.name} buffer={buffer} bufferless_text={bit(bufferless_text(d))} borrowed_view={bit(own::returns_borrowed_view(d))} fnref_return={bit(fnref_return(d))} adopts_fresh={bit(binds::return_adopts_fresh_store(d))} store_text_instance={bit(starts_with(d.name, "n_") && d.name.contains("@"))} one_of_several={bit(own::returns_one_of_several_args(e.b, d#index))} forwards_foreign={bit(el_expressions::forwards_foreign_store(e, d#index, 0))} buffer_exits=? wrapper={wrapper} rebinds={if rebinds == "" { "-" } else { rebinds }}\n";
+    r += "[contract] fn={d.name} buffer={buffer} bufferless_text={bit(bufferless_text(d))} borrowed_view={bit(own::returns_borrowed_view(d))} fnref_return={bit(fnref_return(d))} adopts_fresh={bit(binds::return_adopts_fresh_store(d))} store_text_instance={bit(starts_with(d.name, "n_") && d.name.contains("@"))} one_of_several={bit(own::returns_one_of_several_args(e.b, d#index))} forwards_foreign={bit(callee_forwards_foreign_store(e, d))} buffer_exits=? wrapper={wrapper} rebinds={if rebinds == "" { "-" } else { rebinds }}\n";
   }
   r
+}
+
+// `Parser::callee_forwards_foreign_store`: the body's tail is a call that answers a heap value
+// (a record, a vector, a struct enum — the declared type itself, no `?`) and is handed no hidden
+// heap buffer: the store it answers is the callee's, not one this function fills.  (Not the
+// port's `el_expressions::forwards_foreign_store`, which follows a tail chain to a native.)
+fn callee_forwards_foreign_store(e: el::El, d: ir::Definition) -> boolean {
+  code = d.code[0] ?? ir::NdNull;
+  if code is NdNull {
+    return false;
+  }
+  tail_forwards(e, code)
+}
+
+fn tail_forwards(e: el::El, n: ir::Node) -> boolean {
+  match unspan(n) {
+    NdCall { def_nr, args } => !hands_hidden_heap_buffer(e, def_nr, args) && heap_answer(el::def(e, def_nr).returned[0] ?? ir::TyVoid),
+    NdBlock { block } => len(block[0].operators) > 0 && tail_forwards(e, block[0].operators[-1]!),
+    NdInsert { items } => len(items) > 0 && tail_forwards(e, items[-1]!),
+    NdReturn { inner } => tail_forwards(e, inner),
+    _ => false
+  }
+}
+
+// `collect_hidden_ref_args` is not empty: a hidden parameter of a heap type handed a variable.
+fn hands_hidden_heap_buffer(e: el::El, d: integer, args: vector<ir::Node>) -> boolean {
+  for a in el::def(e, d).attributes {
+    if a.hidden && heap_answer(a.typedef[0] ?? ir::TyVoid) && (args[a#index] ?? ir::NdNull) is NdVar {
+      return true;
+    }
+  }
+  false
+}
+
+fn heap_answer(t: ir::TypeT) -> boolean {
+  match t {
+    TyReference { n: _ } => true,
+    TyVector { inner: _ } => true,
+    TyEnum { n: _, is_ref } => is_ref,
+    _ => false
+  }
 }
 
 fn bit(b: boolean) -> integer {
