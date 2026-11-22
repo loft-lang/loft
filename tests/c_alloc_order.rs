@@ -246,3 +246,29 @@ fn main() {
         assert_eq!(used, "14", "{mode}: {line}");
     }
 }
+
+/// loft#2610 — a call through a function value answering a vector is carried by every backend:
+/// the C unit writes the type table that call makes the answer's buffer through.
+#[test]
+fn a_function_value_answering_a_vector_is_carried_by_every_backend() {
+    let script = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/scripts/a-function-value-answering-a-vector-is-carried-by-every-backend.loft");
+    let modes: &[&str] = if have_cc() {
+        &["--interpret", "--native"]
+    } else {
+        &["--interpret"]
+    };
+    for mode in modes {
+        let out = harness_command(env!("CARGO_BIN_EXE_loft"))
+            .arg(mode)
+            .arg(&script)
+            .env("LOFT_NO_CACHE", "1")
+            .output()
+            .expect("run loft");
+        assert!(
+            out.status.success(),
+            "{mode}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+}
