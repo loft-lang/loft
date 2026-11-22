@@ -569,7 +569,9 @@ fn identity(
 /// built shim (`.src`), so a run that has no compiler can still find a shim built for these
 /// sources (a prebuilt one, `@PLN206 P5`), where the full key needs `cc` to be run.
 fn source_key(pkg_dir: &str, sources: &[String]) -> Option<String> {
-    identity_with(pkg_dir, sources, false).ok().map(|(stem, _, _)| stem)
+    identity_with(pkg_dir, sources, false)
+        .ok()
+        .map(|(stem, _, _)| stem)
 }
 
 fn identity_with(

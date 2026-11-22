@@ -64,6 +64,7 @@ pub fn cached_or_build_shared_cdylib(
                 &mut p.data,
                 &mut p.database,
                 &export,
+                &alone.pkg_dir,
                 &key.out_dir,
                 &key.stem,
                 key.fp,

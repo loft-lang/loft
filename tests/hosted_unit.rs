@@ -455,6 +455,69 @@ fn a_library_built_once_is_adopted_with_no_c_compiler() {
     assert_eq!(out, "9 count 9\n");
     let (ok, out, err) = run(Some(&empty));
     let _ = fa::remove_dir_all(&lib);
-    assert!(ok, "the run without a compiler adopts what was built: {err}");
+    assert!(
+        ok,
+        "the run without a compiler adopts what was built: {err}"
+    );
     assert_eq!(out, "9 count 9\n");
+}
+
+/// `@PLN206 P5` — a hosted unit is the library's, the same text wherever it is built: generated
+/// from the library alone (`native_artifact::parse_library_alone`) and naming its sources from
+/// the package's parent directory (`Cx::source_name`), so a unit built by a library's CI is the
+/// unit a user's machine would build.  The same package built by `loft build-native` in two
+/// directories writes byte-identical C.
+///
+/// @falsified-at: none — a SABOTAGE (2026-11-22): with `Cx::source_name` answering the file as
+///   it was found, the two units differ in every fault site and frame.  CHANNEL: the comparison
+///   of the two `.c` files.  WITNESS: "the units differ".
+#[test]
+fn a_hosted_unit_is_the_same_text_wherever_it_is_built() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let build = |tag: &str| {
+        let lib = std::env::temp_dir().join(format!(
+            "loft-hosted-unit-text-{tag}-{}",
+            std::process::id()
+        ));
+        let _ = fa::remove_dir_all(&lib);
+        let pkg = lib.join("hostedlib");
+        fa::create_dir_all(pkg.join("src")).expect("package dir");
+        for f in ["loft.toml", "src/hostedlib.loft"] {
+            let text = fa::read_to_string(root.join("tests/lib/hostedlib").join(f)).expect("read");
+            fa::write(pkg.join(f), text).expect("write");
+        }
+        let out = harness_command(env!("CARGO_BIN_EXE_loft"))
+            .arg("build-native")
+            .arg(&pkg)
+            .env("LOFT_NO_CACHE", "1")
+            .env("LOFT_LIB_BACKEND", "c")
+            .env("LOFT_NO_RUSTC", "1")
+            .output()
+            .expect("run loft build-native");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let report = String::from_utf8_lossy(&out.stdout).into_owned();
+        assert!(report.contains("backend: c"), "a C unit says so: {report}");
+        let unit: String = fa::read_dir(pkg.join("native-auto"))
+            .unwrap_or_default()
+            .iter()
+            .filter(|p| {
+                p.file_name()
+                    .is_some_and(|n| n.starts_with("loft_auto") && n.ends_with(".c"))
+            })
+            .map(|p| fa::read_to_string(p.native()).unwrap_or_default())
+            .collect();
+        let _ = fa::remove_dir_all(&lib);
+        unit
+    };
+    let (a, b) = (build("a"), build("b"));
+    assert!(!a.is_empty(), "the unit was written");
+    assert!(a == b, "the units differ");
 }

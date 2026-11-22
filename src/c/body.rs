@@ -4676,7 +4676,11 @@ impl<'a> FnWriter<'a> {
             if self.cx.source_lines && *n != 0 && *n != self.marked_line {
                 self.marked_line = *n;
                 if self.marked_file.is_empty() {
-                    self.marked_file = c_string(&self.cx.data.def(self.d).position().file);
+                    self.marked_file = c_string(
+                        &self
+                            .cx
+                            .source_name(&self.cx.data.def(self.d).position().file),
+                    );
                 }
             }
         } else if self.cur_line != 0
@@ -4704,7 +4708,7 @@ impl<'a> FnWriter<'a> {
         } else {
             self.cur_line
         };
-        format!("{}, {line}", c_string(&pos.file))
+        format!("{}, {line}", c_string(&self.cx.source_name(&pos.file)))
     }
 
     /// Write `inner` with `pos` as the site its faults report at (`Self::site`).
@@ -4716,7 +4720,8 @@ impl<'a> FnWriter<'a> {
         let saved = if pos.line == 0 {
             self.span_site.clone()
         } else {
-            self.span_site.replace((c_string(&pos.file), pos.line))
+            self.span_site
+                .replace((c_string(&self.cx.source_name(&pos.file)), pos.line))
         };
         let r = inner(self);
         self.span_site = saved;

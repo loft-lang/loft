@@ -285,6 +285,12 @@ pub(crate) fn exports(
     Ok(out)
 }
 
+/// The C compiler a hosted unit is built with, as `build-native` reports it beside the unit.
+#[must_use]
+pub fn compiler_identity() -> String {
+    crate::c_shim::cc_identity()
+}
+
 /// What a hosted build's error starts with when the C writer declined the library — a shape
 /// it does not carry yet, like a function its bridge declines — rather than failed to build
 /// one: the library then interprets, which answers the same, only slower.
@@ -351,6 +357,7 @@ pub fn build_artifact(
     data: &mut Data,
     stores: &mut Stores,
     library: &HashSet<u32>,
+    pkg_dir: &str,
     out_dir: &std::path::Path,
     stem: &str,
     fp: u64,
@@ -370,7 +377,11 @@ pub fn build_artifact(
             "{REFUSED}no function of the library crosses the C bridge"
         ));
     }
-    let unit = super::emit_hosted_unit(data, stores, &carried, &export, fp)
+    // A source is named from the package's parent directory (`Cx::source_name`).
+    let root = std::path::Path::new(pkg_dir)
+        .parent()
+        .map_or_else(String::new, |p| p.to_string_lossy().into_owned());
+    let unit = super::emit_hosted_unit(data, stores, &carried, &export, fp, &root)
         .map_err(|r| format!("{REFUSED}{}", r.message()))?;
     fa::create_dir_all(out_dir).map_err(|e| format!("create {}: {e}", out_dir.display()))?;
     let c = out_dir.join(format!("{stem}.c"));

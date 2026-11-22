@@ -9507,6 +9507,25 @@ fn main() {
                             let full_stem = file_access::file_stem(&so)
                                 .map(|s| s.strip_prefix("lib").unwrap_or(&s).to_string())
                                 .unwrap_or_default();
+                            // `@PLN206 P5` — a hosted C unit: the loft it runs in (its name
+                            // carries it), the host interface it was built against and the
+                            // compiler; no rustc took part.
+                            if loft::c::hosted::selected() {
+                                report(
+                                    so.to_string_lossy().to_string(),
+                                    full_stem,
+                                    &[
+                                        "backend: c".to_string(),
+                                        format!(
+                                            "loft_exe_id: {}",
+                                            loft::cache::loft_exe_identity()
+                                        ),
+                                        format!("host_abi: {}", loft::host_abi::HOST_ABI),
+                                        format!("cc: {}", loft::c::hosted::compiler_identity()),
+                                    ],
+                                );
+                                return;
+                            }
                             report(
                                 so.to_string_lossy().to_string(),
                                 full_stem,
@@ -9528,6 +9547,14 @@ fn main() {
                                 "loft build-native: `{name}` is being edited (dev-interpret); no cdylib produced"
                             );
                             std::process::exit(1);
+                        }
+                        // `@PLN206 P5` — a library the C writer declines has no unit: it runs
+                        // interpreted, answering the same.  Said, and not a failure.
+                        Err(e)
+                            if loft::c::hosted::selected()
+                                && e.starts_with(loft::c::hosted::REFUSED) =>
+                        {
+                            println!("interpreted: {e}");
                         }
                         Err(e) => {
                             eprintln!(
