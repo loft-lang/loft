@@ -1377,10 +1377,43 @@ pub fn store_link_mention(e: el::El, vars: el_vars::Vars, n: ir::Node) -> intege
 // (`Parser::parse_assign_op`'s `&` lowering): a scalar local or tuple member by its slot
 // (`OpCreateStack`, typed `&τ`), a link by the link it holds (`OpVarRef`), a scalar, text or
 // record in a store by the place itself.  Any other `&` is refused by name.
+// `same_place`: two reads of one place, whatever source positions their spans carry.
+fn same_read(a: ir::Node, b: ir::Node) -> boolean {
+  ua = el_ir::unspan(a);
+  ub = el_ir::unspan(b);
+  match ua {
+    NdCall { def_nr: da, args: aa } => match ub {
+      NdCall { def_nr: db, args: ab } => {
+        if da != db || len(aa) != len(ab) {
+          return false;
+        }
+        for x in aa {
+          if !same_read(x, ab[x#index] ?? ir::NdNull) {
+            return false;
+          }
+        }
+        true
+      },
+      _ => false
+    },
+    _ => ua == ub
+  }
+}
+
 pub fn unary(e: el::El, vars: el_vars::Vars, op: text, n: integer?) -> Ex {
   if n == null {
     el::refuse(e, "a prefix operator with no operand");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  // `fuse_fit_test`: `!place` in the condition of the `if` right after a narrow compound step
+  // into that SAME place (`same_place`: its read is the step's) reads the step's checked value
+  // (`_fit_N`, minted here once), not the slot, which already holds the type's default.
+  if op == "!" && vars.fit_cond && !e.first_pass && (e.p.nodes[n!] is SName || e.p.nodes[n!] is SIndex || match e.p.nodes[n!] { SMember { call: fmc } => !fmc, _ => false }) && same_read(el_ex_assign::expression(e, vars, n!).code, vars.fit_read[0] ?? ir::NdNull) {
+    if vars.fit_var < 0 {
+      vars.fit_var = el_vars::create_unique(vars, "_fit", ir::TyOptional { inner: ir::TyInteger { spec: wide_spec() } });
+      el_vars::set_defined(vars, vars.fit_var);
+    }
+    return ex(el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpConvBoolFromInt", [ir::NdVar { n: vars.fit_var }])]), ir::TyBoolean);
   }
   if op == "&" {
     a = el_ex_assign::expression(e, vars, n!);
