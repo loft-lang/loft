@@ -23,7 +23,12 @@ pub const UNDECIDED = -1;
 // local `base`, in the body `body`.
 pub fn verdict(e: el::El, vars: el_vars::Vars, body: integer, name: text, base: integer) -> integer {
   bname = el_vars::name_of(vars, base);
-  if assignments(e, body, name) != 1 || mentions_in_lambda(e, body, name) || mentions_in_lambda(e, body, bname) {
+  // (A length local assigned again — `n = n - 1` — is no length local after it
+  // (`len_bound_locals` keeps the `len` assignment only): its index is an ordinary read.)
+  if assignments(e, body, name) != 1 {
+    return UNTRUSTED;
+  }
+  if mentions_in_lambda(e, body, name) || mentions_in_lambda(e, body, bname) {
     return UNDECIDED;
   }
   after: vector<integer> = [];
@@ -175,7 +180,9 @@ fn writes(e: el::El, vars: el_vars::Vars, i: integer, bname: text, base: integer
   own = match e.p.nodes[i] {
     SAssign { target } => {
       t = root(e, target);
-      if t == bname { UNTRUSTED } else if views(vars, t, base) { UNDECIDED } else { TRUSTED }
+      // (`stable_after`: binding a new view of the vector — the whole local, `e = v[i]` —
+      // writes nothing; a write THROUGH a local viewing it is not decided here.)
+      if t == bname { UNTRUSTED } else if views(vars, t, base) && !is_name(e, target) { UNDECIDED } else { TRUSTED }
     },
     SLet { name: n } => if n == bname { UNTRUSTED } else { TRUSTED },
     SDestructure { places } => {
@@ -199,7 +206,9 @@ fn writes(e: el::El, vars: el_vars::Vars, i: integer, bname: text, base: integer
       }
       v
     },
-    SMember { e: recv, name: m, call } => if call && m != "len" && recv != null && handed(e, vars, recv!, bname, base) { UNDECIDED } else { TRUSTED },
+    // (A removing method called on the vector itself — `v.remove(0)`, `v.clear()` — writes it:
+    // its first argument is written, `op_writes_first_arg`.)
+    SMember { e: recv, name: m, call } => if call && (m == "remove" || m == "clear") && recv != null && root(e, recv!) == bname { UNTRUSTED } else if call && m != "len" && recv != null && handed(e, vars, recv!, bname, base) { UNDECIDED } else { TRUSTED },
     SUnary { op, e: x } => if op == "&" && x != null && handed(e, vars, x!, bname, base) { UNDECIDED } else { TRUSTED },
     SName { member } => if member == "remove" { UNDECIDED } else { TRUSTED },
     SVarAttr { attr } => if attr == "remove" { UNDECIDED } else { TRUSTED },
