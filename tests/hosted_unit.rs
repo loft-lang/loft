@@ -261,3 +261,64 @@ fn the_c_runtime_reaches_a_stores_type_only_through_its_translation() {
         raw.join("\n")
     );
 }
+
+/// `@PLN206 P5` — a library's `[c] shim` is one image in the process: the hosted unit links the
+/// shim's shared library, the one the interpreter opened for the parse, so a shim's state (a
+/// counter, a generator, a device table) is one whichever side calls it.  A copy linked in from
+/// the shim's archive is a second state; which copy an interpreted `#c` call then reaches is the
+/// platform's lookup order, so the writer's choice is what this holds: the unit names the
+/// shared library and carries no archive.  `bump` runs in the unit and `label` interprets.
+///
+/// @falsified-at: none — a SABOTAGE (2026-11-22): with the hosted branch of `c_libraries`
+///   switched off (`src/c/mod.rs`), the unit links `libhostedshim_shim_….a` whole.  CHANNEL:
+///   the unit's link lines.  WITNESS: no link line names the shim's shared library.  HOLDS:
+///   `9 count 9` (this platform's lookup reached the unit's copy).
+#[test]
+fn a_hosted_unit_shares_its_shim_with_the_interpreter() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let lib = std::env::temp_dir().join(format!("loft-hosted-unit-shim-{}", std::process::id()));
+    let _ = fa::remove_dir_all(&lib);
+    let pkg = lib.join("hostedshim");
+    for f in ["loft.toml", "src/hostedshim.loft", "c/hostedshim.c"] {
+        let to = pkg.join(f);
+        fa::create_dir_all(to.parent().expect("parent")).expect("package dir");
+        let text = fa::read_to_string(root.join("tests/lib/hostedshim").join(f)).expect("read");
+        fa::write(to, text).expect("write");
+    }
+    let out = harness_command(env!("CARGO_BIN_EXE_loft"))
+        .arg("--interpret")
+        .arg("--lib")
+        .arg(&lib)
+        .arg(root.join("tests/lib/hostedshim_main.loft"))
+        .env("LOFT_NO_CACHE", "1")
+        .env("LOFT_LIB_BACKEND", "c")
+        .env("LOFT_NO_RUSTC", "1")
+        .output()
+        .expect("run loft");
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    let unit: String = fa::read_dir(pkg.join("native-auto"))
+        .unwrap_or_default()
+        .iter()
+        .filter(|p| p.file_name().is_some_and(|n| n.starts_with("loft_auto") && n.ends_with(".c")))
+        .map(|p| fa::read_to_string(p.native()).unwrap_or_default())
+        .collect();
+    let _ = fa::remove_dir_all(&lib);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(stdout, "9 count 9\n");
+    let links: Vec<&str> = unit
+        .lines()
+        .filter_map(|l| l.strip_prefix("/* link: ")?.strip_suffix(" */"))
+        .collect();
+    assert!(
+        links.iter().any(|l| l.contains("hostedshim_shim") && !l.ends_with(".a")),
+        "the unit links the shim's shared library: {links:?}"
+    );
+    assert!(
+        !unit.contains("/* shim-archive:") && !links.iter().any(|l| l.ends_with(".a")),
+        "the unit carries no copy of the shim: {links:?}"
+    );
+}

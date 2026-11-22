@@ -1,0 +1,13 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN206 P5 — the consumer of `tests/lib/hostedshim` (`tests/hosted_unit.rs`): three bumps made
+// through the hosted unit, read back by a function that interprets.  Hand-computed: 2 + 3 + 4.
+use hostedshim::*;
+
+fn main() {
+  bump(2);
+  bump(3);
+  n = bump(4);
+  println("{n} {label()}");
+}
