@@ -24,6 +24,19 @@ fn main() {
   assert(mix(2, 3) == 65, "mix");
   // 400 stores alive at once inside the unit: 1 + … + 400 = 80200
   assert(deep(400) == 80200, "deep {deep(400)}");
+  // texts a loop views in a vector's store, each handed to the unit while records are made:
+  // "hosted" and "stores" are 6 bytes, ratio 6 / 4 = 1.5; a view the verify left pointing
+  // into a world it threw away reads another text
+  seen = "";
+  for t in ["hosted", "stores"] {
+    r = ratio(t, 4);
+    assert(deep(50) == 1275, "deep 50");
+    k = bag_new(t, 2);
+    k.fill(30, 1);
+    assert(ratio(t, 4) == r && r == 1.5, "ratio {t}");
+    seen = "{seen}{t}{k.total};";
+  }
+  assert(seen == "hosted467;stores467;", "views {seen}");
   // a generator the library answers, driven here: 1 + 2 + 3 + 4 = 10
   u = 0;
   for x in upto(4) { u += x; }

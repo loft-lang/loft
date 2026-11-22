@@ -297,8 +297,14 @@ pub const REFUSED: &str = "the C writer does not carry this library: ";
 fn type_keys(cx: &Cx<'_>) -> String {
     let names = crate::lib_ids::TypeNames::new(cx.data, cx.stores);
     let n = cx.stores.types.len();
-    let mut out = String::from("\n/* `@PLN206 P5` — each type number's key, for the interpreter's numbers. */\n");
-    let _ = writeln!(out, "static const char *const loft_tkeys[{}] = {{", n.max(1));
+    let mut out = String::from(
+        "\n/* `@PLN206 P5` — each type number's key, for the interpreter's numbers. */\n",
+    );
+    let _ = writeln!(
+        out,
+        "static const char *const loft_tkeys[{}] = {{",
+        n.max(1)
+    );
     for tp in 0..n {
         let key = names.key(tp as u16);
         let _ = writeln!(out, "    {},", super::body::c_string(&key));
@@ -361,7 +367,9 @@ pub fn build_artifact(
     let mut carried: Vec<u32> = export.iter().copied().collect();
     carried.sort_unstable();
     if carried.is_empty() {
-        return Err(format!("{REFUSED}no function of the library crosses the C bridge"));
+        return Err(format!(
+            "{REFUSED}no function of the library crosses the C bridge"
+        ));
     }
     let unit = super::emit_hosted_unit(data, stores, &carried, &export, fp)
         .map_err(|r| format!("{REFUSED}{}", r.message()))?;

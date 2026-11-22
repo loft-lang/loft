@@ -209,7 +209,10 @@ fn a_hosted_unit_built_by_one_program_runs_in_another() {
     assert_eq!(units(&lib), 1, "the building program built one unit");
     let (ok, out, err) = run_one("tests/lib/hostedlib_shift_main.loft");
     let _ = fa::remove_dir_all(&lib);
-    assert!(ok, "the shifted program adopts the unit and verifies: {err}");
+    assert!(
+        ok,
+        "the shifted program adopts the unit and verifies: {err}"
+    );
     assert_eq!(out, "alpha 27 54 20100 201 2 32 7\n");
     assert!(
         err.contains("call(s) compiled and interpreted alike") && !err.contains(": 0 call(s)"),
@@ -306,18 +309,27 @@ fn a_hosted_unit_shares_its_shim_with_the_interpreter() {
     let unit: String = fa::read_dir(pkg.join("native-auto"))
         .unwrap_or_default()
         .iter()
-        .filter(|p| p.file_name().is_some_and(|n| n.starts_with("loft_auto") && n.ends_with(".c")))
+        .filter(|p| {
+            p.file_name()
+                .is_some_and(|n| n.starts_with("loft_auto") && n.ends_with(".c"))
+        })
         .map(|p| fa::read_to_string(p.native()).unwrap_or_default())
         .collect();
     let _ = fa::remove_dir_all(&lib);
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(stdout, "9 count 9\n");
     let links: Vec<&str> = unit
         .lines()
         .filter_map(|l| l.strip_prefix("/* link: ")?.strip_suffix(" */"))
         .collect();
     assert!(
-        links.iter().any(|l| l.contains("hostedshim_shim") && !l.ends_with(".a")),
+        links
+            .iter()
+            .any(|l| l.contains("hostedshim_shim") && !l.ends_with(".a")),
         "the unit links the shim's shared library: {links:?}"
     );
     assert!(

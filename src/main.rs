@@ -10574,8 +10574,7 @@ fn main() {
         // `@PLN206 P4` — a hosted C unit carries the functions its bridge carries; the rest
         // of the library interprets, and is neither built nor marked.
         let export = if loft::c::hosted::selected() {
-            let (carried, declined) =
-                loft::c::hosted::hosted_split(&p.data, &p.database, &export);
+            let (carried, declined) = loft::c::hosted::hosted_split(&p.data, &p.database, &export);
             // The unit's reach, under the switch that reads what crossed it.
             if loft::keys::hosted_verify() {
                 let shown: Vec<String> = declined
@@ -10588,7 +10587,11 @@ fn main() {
                      function(s){}{}",
                     carried.len(),
                     export.len(),
-                    if shown.is_empty() { "" } else { "; interpreted: " },
+                    if shown.is_empty() {
+                        ""
+                    } else {
+                        "; interpreted: "
+                    },
                     shown.join(", ")
                         + &if declined.len() > shown.len() {
                             format!(", +{} more", declined.len() - shown.len())

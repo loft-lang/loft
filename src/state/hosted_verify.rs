@@ -154,19 +154,40 @@ impl State {
             unsafe { bridge(&raw mut self.database, args.as_ptr(), args.len(), ret) };
             return;
         };
-        let mut compiled = Box::new(copy);
-        compiled.hosted_view = crate::host_abi::TableView::of(&mut compiled);
-        unsafe { bridge(&raw mut *compiled, args.as_ptr(), args.len(), ret) };
+        let mut twin = Box::new(copy);
+        // A text argument views the bytes of the store it lies in: the twin reads the same
+        // bytes in its own copy of that store.
+        let rebased: Vec<LibArg> = visible
+            .iter()
+            .map(|a| {
+                let mut a = *a;
+                a.text_ptr = rebase(&self.database, &twin, a.text_ptr);
+                a
+            })
+            .collect();
+        // The compiled run, on the world itself — what the program goes on with, as it does
+        // without the switch: the caller's views into its stores stay where they point, and
+        // what the unit makes once (its constants) lives in the world the program keeps.
+        unsafe { bridge(&raw mut self.database, args.as_ptr(), args.len(), ret) };
         let ret_c = unsafe { *ret };
-        // The interpreted run, on the world itself; the call-back's bookkeeping is put back.
+        // The interpreted twin, on the copy taken before the call.  The interpreter's own
+        // stacks are lent to it (its frames run on them), and handed back after; the
+        // call-back's bookkeeping is put back, as the compiled world is the one kept.
         let (fb, fc) = (self.fnref_bufs.len(), self.fnref_calls.len());
-        let ret_i = self.call_back(d_nr, DbRef::NULL, &visible);
+        lend_stacks(&mut self.database, &mut twin);
+        std::mem::swap(&mut self.database, &mut *twin);
+        let ret_i = self.call_back(d_nr, DbRef::NULL, &rebased);
+        std::mem::swap(&mut self.database, &mut *twin);
+        lend_stacks(&mut self.database, &mut twin);
+        self.stack_base = super::stack_base_of(&self.database, &self.stack_cur);
+        self.database.hosted_view = crate::host_abi::TableView::of(&mut self.database);
         self.fnref_bufs.truncate(fb);
         self.fnref_calls.truncate(fc);
+        let (interp, compiled): (&Stores, &Stores) = (&twin, &self.database);
         let mut diff: Option<String> = None;
         for nr in before {
             let (a, b) = (
-                &self.database.allocations[nr as usize],
+                &interp.allocations[nr as usize],
                 &compiled.allocations[nr as usize],
             );
             if a.live != b.live {
@@ -192,7 +213,7 @@ impl State {
             }
         }
         if diff.is_none() {
-            diff = self.answer_difference(data, d_nr, &ret_i, &ret_c, &compiled);
+            diff = answer_difference(data, d_nr, (&ret_i, interp), (&ret_c, compiled));
         }
         if let Some(why) = diff {
             eprintln!(
@@ -202,88 +223,94 @@ impl State {
             std::process::exit(1);
         }
         VERIFIED.fetch_add(1, Relaxed);
-        // The program goes on in the compiled world, as it does without the switch.  The
-        // interpreter's own stacks are the run's, not the call's: the compiled world takes them
-        // over as they stand, and the cached stack base is read again (`restore_checkpoint`).
-        for k in 0..self
-            .database
-            .allocations
-            .len()
-            .min(compiled.allocations.len())
-        {
-            if self.database.allocations[k].stack_buffer {
-                std::mem::swap(
-                    &mut self.database.allocations[k],
-                    &mut compiled.allocations[k],
-                );
+    }
+}
+
+/// Exchange the interpreter's stack stores between `a` and `b`: the live ones go to the world
+/// the interpreter runs on next, the copies to the other.
+fn lend_stacks(a: &mut Stores, b: &mut Stores) {
+    for k in 0..a.allocations.len().min(b.allocations.len()) {
+        if a.allocations[k].stack_buffer || b.allocations[k].stack_buffer {
+            std::mem::swap(&mut a.allocations[k], &mut b.allocations[k]);
+        }
+    }
+}
+
+/// `p` moved from a store of `from` into the same place of the same store of `to`; a pointer
+/// into no store (a constant, a text of the interpreter's own) is left as it is.
+fn rebase(from: &Stores, to: &Stores, p: *const u8) -> *const u8 {
+    if p.is_null() {
+        return p;
+    }
+    for (a, b) in from.allocations.iter().zip(&to.allocations) {
+        let base = a.ptr as usize;
+        let at = p as usize;
+        let len = usize::try_from(a.byte_capacity()).unwrap_or(0);
+        if a.live && at >= base && at < base + len {
+            return unsafe { b.ptr.add(at - base) };
+        }
+    }
+    p
+}
+
+/// The answers of the two runs, each with the world it was made in, compared by the returned
+/// type.
+fn answer_difference(
+    data: &crate::data::Data,
+    d_nr: u32,
+    (interp, interp_world): (&LibArg, &Stores),
+    (comp, compiled): (&LibArg, &Stores),
+) -> Option<String> {
+    use crate::data::Type;
+    let ret = data.def(d_nr).returned();
+    match ret.base() {
+        Type::Void | Type::Null | Type::Text(_) => None,
+        t if crate::data::is_dbref(t) => {
+            let tp = ret
+                .heap_def_nr()
+                .map_or(u16::MAX, |r| data.def(r).known_type());
+            if tp == u16::MAX {
+                return None;
+            }
+            let (mut a, mut b) = (String::new(), String::new());
+            if interp.dbref.rec != 0 {
+                interp_world.show(&mut a, &interp.dbref, tp, false);
+            }
+            if comp.dbref.rec != 0 {
+                compiled.show(&mut b, &comp.dbref, tp, false);
+            }
+            if a != b {
+                return Some(format!("the answer is {a} interpreted, {b} compiled"));
+            }
+            // `@PLN206 P5` — the store the answer is the root of holds its type, which a
+            // hosted unit writes through its translation by key: the answer's store is the
+            // hidden buffer the stores' comparison leaves out, so its type is compared here.
+            let root_type = |s: &Stores, r: &DbRef| {
+                (r.rec == 1)
+                    .then(|| s.allocations.get(usize::from(r.store_nr)))
+                    .flatten()
+                    .map(|st| st.known_type)
+            };
+            match (
+                root_type(interp_world, &interp.dbref),
+                root_type(compiled, &comp.dbref),
+            ) {
+                (Some(x), Some(y)) if x != y => Some(format!(
+                    "the answer's store holds type {x} interpreted, {y} compiled"
+                )),
+                _ => None,
             }
         }
-        std::mem::swap(&mut self.database, &mut *compiled);
-        self.stack_base = super::stack_base_of(&self.database, &self.stack_cur);
-    }
-
-    /// The answers of the two runs, compared by the returned type.
-    fn answer_difference(
-        &self,
-        data: &crate::data::Data,
-        d_nr: u32,
-        interp: &LibArg,
-        comp: &LibArg,
-        compiled: &Stores,
-    ) -> Option<String> {
-        use crate::data::Type;
-        let ret = data.def(d_nr).returned();
-        match ret.base() {
-            Type::Void | Type::Null | Type::Text(_) => None,
-            t if crate::data::is_dbref(t) => {
-                let tp = ret
-                    .heap_def_nr()
-                    .map_or(u16::MAX, |r| data.def(r).known_type());
-                if tp == u16::MAX {
-                    return None;
-                }
-                let (mut a, mut b) = (String::new(), String::new());
-                if interp.dbref.rec != 0 {
-                    self.database.show(&mut a, &interp.dbref, tp, false);
-                }
-                if comp.dbref.rec != 0 {
-                    compiled.show(&mut b, &comp.dbref, tp, false);
-                }
-                if a != b {
-                    return Some(format!("the answer is {a} interpreted, {b} compiled"));
-                }
-                // `@PLN206 P5` — the store the answer is the root of holds its type, which a
-                // hosted unit writes through its translation by key: the answer's store is the
-                // hidden buffer the stores' comparison leaves out, so its type is compared here.
-                let root_type = |s: &Stores, r: &DbRef| {
-                    (r.rec == 1)
-                        .then(|| s.allocations.get(usize::from(r.store_nr)))
-                        .flatten()
-                        .map(|st| st.known_type)
-                };
-                match (
-                    root_type(&self.database, &interp.dbref),
-                    root_type(compiled, &comp.dbref),
-                ) {
-                    (Some(x), Some(y)) if x != y => Some(format!(
-                        "the answer's store holds type {x} interpreted, {y} compiled"
-                    )),
-                    _ => None,
-                }
-            }
-            t => {
-                // A value crosses in its own width: a boolean or a plain enum is its byte, a
-                // character or a single its 32 bits; the slot's bits above are not the answer.
-                let mask: u64 = match t {
-                    Type::Boolean | Type::Enum(_, false, _) => 0xFF,
-                    Type::Character | Type::Single => 0xFFFF_FFFF,
-                    _ => u64::MAX,
-                };
-                let (x, y) = (interp.scalar as u64 & mask, comp.scalar as u64 & mask);
-                (x != y).then(|| {
-                    format!("the answer's bits are {x:#x} interpreted, {y:#x} compiled")
-                })
-            }
+        t => {
+            // A value crosses in its own width: a boolean or a plain enum is its byte, a
+            // character or a single its 32 bits; the slot's bits above are not the answer.
+            let mask: u64 = match t {
+                Type::Boolean | Type::Enum(_, false, _) => 0xFF,
+                Type::Character | Type::Single => 0xFFFF_FFFF,
+                _ => u64::MAX,
+            };
+            let (x, y) = (interp.scalar as u64 & mask, comp.scalar as u64 & mask);
+            (x != y).then(|| format!("the answer's bits are {x:#x} interpreted, {y:#x} compiled"))
         }
     }
 }

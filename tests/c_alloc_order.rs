@@ -417,5 +417,9 @@ fn main() {
         headers.push(header);
     }
     headers.dedup();
-    assert_eq!(headers.len(), 1, "the backends report differently: {headers:?}");
+    assert_eq!(
+        headers.len(),
+        1,
+        "the backends report differently: {headers:?}"
+    );
 }
