@@ -3426,27 +3426,16 @@ pub fn view_borrows(e: el::El, vars: el_vars::Vars, x: Ex) -> vector<integer> {
   []
 }
 
-// The buffer of a default literal built against a field's view (`vector_value` with
-// `borrows`): a work ref of its own type, holding no store.
-pub fn borrowed_literal_buffer(vars: el_vars::Vars, d: ir::Node) {
-  match el_ir::unspan(d) {
-    NdBlock { block } => {
-      if block[0].name != "Vector" || len(block[0].operators) == 0 {
-        return;
-      }
-      match el_ir::unspan(block[0].operators[-1]!) {
-        NdVar { n: w } => {
-          el_vars::register_work_ref(vars, w);
-          el_vars::set_skip_free(vars, w, "build_null_coalesce_default_inner");
-        },
-        _ => {}
-      }
-    },
-    _ => {}
+// `Parser::inline_slot_word`: an `OpGetField(record, position, …)` read — a slot word of a
+// record, as a vector literal's buffer is bound to its backing's field.
+fn inline_slot_word(e: el::El, n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdCall { def_nr, args } => el::def(e, def_nr).name == "OpGetField" && len(args) >= 2,
+    _ => false
   }
 }
 
-pub fn register_default_literal(vars: el_vars::Vars, d: ir::Node, lhs: ir::TypeT) {
+pub fn register_default_literal(e: el::El, vars: el_vars::Vars, d: ir::Node, lhs: ir::TypeT) {
   match el_ir::unspan(d) {
     NdBlock { block } => {
       if block[0].name != "Vector" || len(block[0].operators) == 0 {
@@ -3455,15 +3444,26 @@ pub fn register_default_literal(vars: el_vars::Vars, d: ir::Node, lhs: ir::TypeT
       match el_ir::unspan(block[0].operators[-1]!) {
         NdVar { n: w } => {
           el_vars::register_work_ref(vars, w);
+          // (`backed`: the literal's buffer is set from an inline slot word — a view of a
+          // backing record's vector field; `backing`: the buffer's first borrow, read before the
+          // borrows are dropped.)
+          backed = false;
+          for op in block[0].operators {
+            match el_ir::unspan(op) {
+              NdSet { var: sv, inner: sval } => if sv == w && inline_slot_word(e, sval) { backed = true; },
+              _ => {}
+            }
+          }
+          wds = el_types::deps(el_vars::tp(vars, w));
+          bk = if el_vars::tp(vars, w) is TyVector && len(wds) > 0 { wds[0] } else { -1 };
           el_vars::set_var_type(vars, w, el_types::with_deps(el_vars::tp(vars, w), []));
           if lhs is TyVector && len(el_types::deps(lhs)) == 0 {
             el_vars::set_skip_free(vars, w, "build_null_coalesce_default_inner");
-          } else {
+          } else if backed {
             el_vars::mark_inline(vars, w, "build_null_coalesce_default_inner");
             // loft#1322 (`(O-Borrow)`: one owner, one free) — `_vec_N` and its backing `__vdb_N`
             // name ONE store; the view's free is the one that runs, so the backing goes quiet —
             // only where the view is freed at all (the flags are cumulative across passes).
-            bk = el_ex_base::literal_backing_store(block[0]);
             if !vars.vars[w].skip_free && bk >= 0 && bk < len(vars.vars) {
               el_vars::set_skip_free(vars, bk, "build_null_coalesce_default_inner");
             }

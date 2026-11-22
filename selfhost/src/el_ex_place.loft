@@ -2966,6 +2966,17 @@ pub fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text,
 // declaration order (`object_init`).  The value is the build, typed as a record of the struct
 // rewritten in place.  A qualified name, an update (`..base`), a quoted field name, a field
 // value its type converts and a literal rebinding a local of another type are refused by name.
+// `parse_object_inner` (@PLN87 P2.2): a record literal built fresh for a local that LINKS to
+// its record (`o = Obj { … }`, `o: &Obj`) is handed to the link's referent, whose owner frees it,
+// so the literal's own buffer is never freed here.
+fn link_handover(e: el::El, vars: el_vars::Vars, vt: ir::TypeT, o: Ex) {
+  if !e.first_pass && vt is TyRefVar {
+    for ow in el_types::deps(o.tp) {
+      el_vars::set_skip_free(vars, ow, "parse_object_inner");
+    }
+  }
+}
+
 pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex {
   name = "";
   qual = "";
@@ -3015,6 +3026,7 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
   link_rec = match vt { TyRefVar { inner: lri } => match el_types::base(lri) { TyReference { n: lrd } => lrd == d, _ => false }, _ => false };
   if link_rec {
     o = el_ex_object::object_fresh(e, vars, d, fields, ir::TyReference { n: d, dep: [] });
+    link_handover(e, vars, vt, o);
     if !e.first_pass && el_ir::is_null(o.code) {
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
     }
@@ -3064,6 +3076,7 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
     // A variant's buffer is typed as its enum (`object_expr`'s `wt`), the record as the variant.
     wt = if el::def(e, d).def_type == el::DT_ENUM_VALUE { ir::TyEnum { n: el::def(e, d).parent, is_ref: true, dep: [] } } else { ir::TyReference { n: d, dep: [] } };
     o = el_ex_object::object_fresh(e, vars, d, fields, wt);
+    link_handover(e, vars, vt, o);
     return ex(el_ir::v_set(v, o.code), ir::TyRewritten { inner: ir::TyReference { n: d, dep: [] } });
   }
   // `rebuild_watch` (`arm_rebuild_watch`): a collection field whose value names the local, or a
@@ -3149,6 +3162,7 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
     abandon_work_refs(vars, ref_mark, p2_mark);
     // Its own store is typed as the definition answers (`returned`): a variant's is its enum.
     o = el_ex_object::object_fresh(e, vars, d, fields, el_types::without_deps(el::def(e, d).returned[0] ?? ir::TyReference { n: d, dep: [] }));
+    link_handover(e, vars, vt, o);
     return ex(el_ir::v_set(v, o.code), ir::TyRewritten { inner: ir::TyReference { n: d, dep: [] } });
   }
   // `self_read_root` of an in-place build into a local the program names: a field value that
@@ -3346,6 +3360,7 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
       }
     }
     o = el_ex_object::object_fresh(e, vars, d, fields, el_types::without_deps(el::def(e, d).returned[0] ?? ir::TyReference { n: d, dep: [] }));
+    link_handover(e, vars, vt, o);
     return ex(el_ir::v_set(v, o.code), ir::TyRewritten { inner: ir::TyReference { n: d, dep: [] } });
   }
   // `demote_prelude` (`@FR-R-Demote`): where the local holds a record, its payload moves into

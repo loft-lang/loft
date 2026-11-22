@@ -214,6 +214,25 @@ concrete mismatch shows that a hidden fact is needed; then it goes where it fits
 remain; a port rule that decides by a different reasoning than Rust's is a defect.  Decision traces (`LOFT_TRACE_RETPROMO`,
 `LOFT_STATE_TRACE`) explain why an output differs; they are no part of the contract.
 
+### Rust suspects
+
+Rust rules whose reasoning does not hold together, seen while porting them or where the
+varflag trace sets two rules side by side.  For each, try to write loft programs that are
+actually wrong because of it (a silent wrong value, a leak, a double free, a lint wrongly fired
+or silent) on both backends; a wrong program found is filed as an issue (ISSUE_TRACKING.md) and
+fixed in Rust with it as the suite cell, and the port then follows the fix.  A suspect no wrong
+program was found for stays listed with what was tried.
+
+- `parse_var_inner`'s mention mark: a parameter is mentioned in a field append (`s.h += …`) and
+  a tuple member write (`t.0 += …`) but not as a tuple argument read (`pick(p)`) — the two front
+  ends split these differently (13 flags over the corpus).  Tried: every `_`-named user
+  variable in a tuple, tuple-member write, field append, loop, vector and text copy, match and
+  return ends user-named and answers as its plain-named twin (`is_compiler_generated` reads
+  the name), so the split is in which path marks, never in the flag; no wrong program found.
+- `unbox_tuple_from_dbref` marks its temp `skip_free` and leaves it a work ref, where the
+  parallel paths unregister theirs (`unregister_work_ref`).  Not observable: the image is
+  identical either way (gate E agrees on the 7 functions it occurs in).
+
 ### Rust accidents
 
 - A call answering a record `τ?` that borrows a parameter (`fn whole(s: S) -> S? { s }`) is
