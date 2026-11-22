@@ -2120,6 +2120,9 @@ static void loft_refree_fail(uint32_t nr) {
     LOFT_EXIT(1);
 }
 
+#if defined(LOFT_STORE_DUMP) && defined(LOFT_ALLOC_TRACE)
+static void loft_store_dump_one(loft_store_t *s); /* loft_log.h */
+#endif
 static void loft_free_ref(loft_ref r) {
     if (r.store_nr == 0xFFFE) {
         loft_gen_free(r);
@@ -2161,6 +2164,10 @@ static void loft_free_ref(loft_ref r) {
     }
 #endif
     if (loft_release_file_leases_hook) loft_release_file_leases_hook(r.store_nr);
+#if defined(LOFT_STORE_DUMP) && defined(LOFT_ALLOC_TRACE)
+    /* `@PLN206 P4c` — the store's final content, for `scripts/store_diff.py`. */
+    loft_store_dump_one(s);
+#endif
     s->live = 0;
     loft_store_freed(r.store_nr);
 #if defined(LOFT_STRICT_STORES) || defined(LOFT_DOUBLE_FREE)

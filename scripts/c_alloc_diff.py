@@ -69,6 +69,15 @@ def program_events(lines):
     """The events after the program starts (`M`), on stores made after it, each store named by
     the order it first appears.  A store the interpreter marks as its own (`S`: a state's value
     stack and constant store, which a par worker makes too) is left out — a C unit has neither."""
+    return program_walk(lines)[0]
+
+def program_names(lines):
+    """Each store's trace name → the name `program_events` gives it: the latest store under that
+    trace name, for a reader of the stores as a run leaves them (`store_diff.py`)."""
+    return program_walk(lines)[1]
+
+def program_walk(lines):
+    """`program_events`, and the map from a trace name to the name it was given."""
     rows = [l.split() for l in lines]
     # A serial can name more than one store over a run (each par worker counts its own), so an
     # `S` marks the latest store made under its serial that no `S` marked yet — two workers'
@@ -109,7 +118,7 @@ def program_events(lines):
             continue
         f[1] = names[f[1]]
         out.append(Event(" ".join(f), at, par > 0))
-    return out
+    return out, names
 
 def interp(prog, d, env):
     t = os.path.join(d, "i.txt")

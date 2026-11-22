@@ -6332,6 +6332,7 @@ pub(crate) fn refuse_stack_buffer(is_stack: bool, what: &str) {
 pub const HOST_STORE_TAIL: usize =
     std::mem::size_of::<Store>() - std::mem::offset_of!(Store, stack_buffer);
 
+pub(crate) mod dump;
 #[cfg(test)]
 mod layout;
 

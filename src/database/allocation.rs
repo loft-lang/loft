@@ -2124,6 +2124,8 @@ impl Stores {
         }
         // S36: clear the lock before marking free.
         let store = &mut self.allocations[al as usize];
+        // `@PLN206 P4c` — the store's final content, for `scripts/store_diff.py`.
+        crate::store::dump::on_free(store);
         store.unlock();
         // LOFT_POISON=1 (@PLN54 S3) or LOFT_LOG=poison_free: overwrite the
         // freed buffer with a recognisable pattern so subsequent stale-DbRef
