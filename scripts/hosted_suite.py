@@ -17,8 +17,14 @@ call into the unit is also run interpreted on a copy of the world and compared (
 A file is
   same        — the same output and exit both ways, and the verify compared its calls;
   differs     — another output or exit, or the verify stopped at a call (named);
+  output only — the same output; the calls that crossed the unit all reached state outside
+                the stores (a C function, a file), so none was compared call by call;
   not reached — the same output, but no call crossed the unit (nothing carried was called);
   skipped     — it did not run interpreted (refused, or failing on its own).
+A generated program is written beside its test file for the run (a test names its fixtures
+from its own directory), and an adopted run builds `native-auto/` in each package: run this on
+an exported copy of the libraries (`git archive origin/main`), never on a checkout.
+
 The per-library line says how many of the library's public functions the unit carries, and
 why the rest stay interpreted.  Exit 1 when any file differs.
 """
@@ -40,13 +46,15 @@ def program(src):
     return src + "\nfn main() {\n" + "".join(f"  {t}();\n" for t in tests) + "}\n"
 
 
-def run(loft, libs, path, env, timeout):
+def run(loft, libs, path, env, timeout, cwd):
     args = [loft, "--interpret"]
     for lib in libs:
         args += ["--lib", lib]
     try:
+        # From the package directory, as `loft test` runs a test: a fixture is named by its
+        # path from there.
         r = subprocess.run(args + [path], capture_output=True, text=True, timeout=timeout,
-                           env=env, cwd=os.path.dirname(path))
+                           env=env, cwd=cwd)
     except subprocess.TimeoutExpired:
         return None, "", "timeout"
     return r.returncode, r.stdout, r.stderr
@@ -58,19 +66,32 @@ def one(loft, libs, pkg, test, work, timeout):
     name = os.path.relpath(test, os.path.dirname(pkg))
     if prog is None:
         return name, "skipped", "no main and no test_* function", None
-    d = tempfile.mkdtemp(dir=work)
-    path = os.path.join(d, os.path.basename(test))
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(prog)
+    # Beside the test file: a test names its fixtures by their path from its own directory.
+    # A file with its own `main` runs as it is; a generated one is removed afterwards.
+    if prog is src:
+        path, made = test, None
+    else:
+        path = os.path.join(os.path.dirname(test), f".hosted_suite_{os.getpid()}_{os.path.basename(test)}")
+        made = path
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(prog)
+    try:
+        return judge(loft, libs, pkg, name, path, timeout)
+    finally:
+        if made:
+            os.remove(made)
+
+
+def judge(loft, libs, pkg, name, path, timeout):
     base = {**os.environ, "LOFT_NO_RUSTC": "1", "LOFT_HASH_SEED": "0x9E3779B97F4A7C15"}
     for k in ("LOFT_LIB_BACKEND", "LOFT_HOSTED_VERIFY", "LOFT_POISON_CLAIM"):
         base.pop(k, None)
-    code_i, out_i, err_i = run(loft, libs, path, base, timeout)
+    code_i, out_i, err_i = run(loft, libs, path, base, timeout, pkg)
     if code_i != 0:
         tail = (err_i.strip().splitlines() or ["?"])[-1][:160]
         return name, "skipped", f"interpreted exit {code_i}: {tail}", None
     adopted = {**base, "LOFT_LIB_BACKEND": "c", "LOFT_HOSTED_VERIFY": "1", "LOFT_POISON_CLAIM": "1"}
-    code_c, out_c, err_c = run(loft, libs, path, adopted, timeout)
+    code_c, out_c, err_c = run(loft, libs, path, adopted, timeout, pkg)
     lines = [l[len(VERIFY):] for l in err_c.splitlines() if l.startswith(VERIFY)]
     reach = [l for l in lines if l.startswith("library ")]
     calls = sum(int(m.group(1)) for l in lines for m in [re.match(r"(\d+) call\(s\)", l)] if m)
@@ -80,6 +101,9 @@ def one(loft, libs, pkg, test, work, timeout):
         if not stopped and code_c != 0:
             why += ": " + ((err_c.strip().splitlines() or ["?"])[-1][:200])
         return name, "differs", why, reach
+    made = sum(int(m.group(1)) for l in lines for m in re.finditer(r"(\d+) (?:reaching|past|with)", l))
+    if calls == 0 and made > 0:
+        return name, "output only", f"{made} call(s) crossed the unit, none comparable (state outside the stores); the output agrees", reach
     if calls == 0:
         return name, "not reached", "no call crossed the unit", reach
     unverified = [l for l in lines if "without a comparison" in l]
