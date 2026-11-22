@@ -10,6 +10,8 @@
                                             # rewrite's difference (`c_alloc_diff.py`'s list)
     scripts/store_diff.py --plant FILE      # the positive control: the C dump flips one byte
                                             # (`-DLOFT_STORE_DUMP_PLANT`), which must be reported
+    scripts/store_diff.py --every-rewrite-off FILE  # the two runtimes' own model: every
+                                            # C-only rewrite switched off
 
 Both runtimes share one store layout (STORE_MODEL.md, P3), so the stores a run leaves can be
 compared by their bytes.  Each side writes every live store at exit (`LOFT_STORE_DUMP`: the
@@ -328,6 +330,9 @@ def main():
         print(__doc__)
         return 0
     attr = "--attribute" in args
+    if "--every-rewrite-off" in args:
+        # The runtimes' own model, compared with no C-only rewrite in the way.
+        os.environ.update({s: "1" for _, s in cad.C_ONLY_REWRITES})
     plant = "--plant" in args
     files = [a for a in args if not a.startswith("--")]
     if not files:
