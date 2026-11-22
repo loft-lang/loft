@@ -116,6 +116,9 @@ fn a_hosted_c_library_works_on_the_interpreters_stores() {
 ///   field holds after the call (`extensions.rs`, `bridge_text_dest.take()`), a nested call
 ///   inside the interpreted twin takes the outer call's.  WITNESS: "`to_text` leaves another
 ///   world compiled than interpreted: the answer is \"\" interpreted".
+///   A SABOTAGE (2026-11-23): with every text work slot of a bridge call handed one buffer
+///   (`hosted::bridge`), `framed`'s local is emptied while its answer is built.  WITNESS: "the
+///   answer is \"ab:4\\n#4\" interpreted, \"\\n#0\" compiled".
 ///   And a SABOTAGE (2026-11-22): with the verify going on in the compiled COPY of the world
 ///   (`hosted_verify.rs` before the twin ran on the copy), the caller's loop text points into
 ///   a buffer the swap freed.  WITNESS: the "nested views" assertion of `hostedlib_main.loft`.
