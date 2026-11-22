@@ -369,19 +369,26 @@ pub fn for_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
   src_id = if destructure { "__destructure_t_{e.p.line[in_tok] ?? 0}_{e.p.col[in_tok] ?? 0}" } else { binds[0] };
   id = if src_id == "_" { "_" } else { el_vars::loop_binding(vars, src_id) };
   h = ForHead { binds: binds, src_id: src_id, id: id, body: body!, filter: filter };
-  // `rev(src)` walks a vector from its end, a range from its top (`reverse_iterator`); an
-  // `unordered(…)` walk is refused by name.
+  // `rev(src)` walks a vector from its end, a range from its top (`reverse_iterator`);
+  // `unordered(c)` (`@FR-Col-Unordered`) walks a keyed collection without its key sort — any
+  // other source of it is refused by name, as is a reversed walk that destructures or runs `par`.
   rev = false;
+  unordered = false;
   match e.p.nodes[source] {
     SIterWrap { kind, e: inner } => {
-      if kind != "rev" || inner == null || par != null || destructure {
+      if inner == null || par != null || destructure || (kind != "rev" && kind != "unordered") {
         el::refuse(e, "an `unordered(…)` walk, or a reversed one that destructures or runs `par`");
         return ex(ir::NdNull, ir::TyVoid);
       }
-      rev = true;
+      rev = kind == "rev";
+      unordered = kind == "unordered";
       source = inner!;
     },
     _ => {}
+  }
+  if unordered && (e.p.nodes[source] is SRange || e.p.nodes[source] is SVecLit) {
+    el::refuse(e, "an `unordered(…)` walk, or a reversed one that destructures or runs `par`");
+    return ex(ir::NdNull, ir::TyVoid);
   }
   if e.p.nodes[source] is SRange {
     return el_ex_pattern::range_for(e, vars, h, source, rev: rev);
@@ -406,7 +413,7 @@ pub fn for_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     }
     x = lit.x;
   } else {
-    if !rev && par == null {
+    if !rev && !unordered && par == null {
       fkr = key_range(e, vars, source);
       if fkr != null {
         return key_range_for(e, vars, h, fkr!);
@@ -423,6 +430,15 @@ pub fn for_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
       }
       return el_ex_vector::slice_for(e, vars, h, x);
     }
+  }
+  if unordered {
+    // (Any keyed collection — a sorted or index one walks in its own order, unchanged; the walk
+    // takes the mark.)
+    if !keyed_kind(x.tp) || x.tp is TyOptional || x.code is NdIter {
+      el::refuse(e, "an `unordered(…)` walk, or a reversed one that destructures or runs `par`");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    vars.unordered_walk = true;
   }
   // `@FR-B-Ref-Uniform`: a `&vector` walks as the vector it links (`peel_link`).
   lx = ex(x.code, el_ex_vector::linked_vector(x.tp));
@@ -1650,6 +1666,9 @@ fn held_on_first_pass(e: el::El, vars: el_vars::Vars, n: ir::Node) -> boolean {
 // (`OpIterate(c, on, arg, keys, 0, 0)` into `x#iter_state`), each step `OpStep` — the record,
 // borrowing what the collection does, or the null sentinel past the last.
 pub fn keyed_for(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex) -> Ex {
+  // (`unordered_iterator`, taken here once: it cannot reach the next walk.)
+  unordered = vars.unordered_walk;
+  vars.unordered_walk = false;
   ct = el_types::base(x.tp);
   // `@FR-I-For` (loft#2573): the source is evaluated once — a sorted or index source that runs
   // a call (a call answering the collection, a lookup with a computed key, a `??` discharge) is
@@ -1741,7 +1760,7 @@ pub fn keyed_for(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex) -> Ex {
     // A range slice's call builds the scratch itself (`keyed_slice`); a whole collection is
     // copied into one.
     built = match el_ir::unspan(x.code) { NdCall { def_nr } => el::def(e, def_nr).name == "n_trie_prefix" || el::def(e, def_nr).name == "n_spatial_range", _ => false };
-    pre += [el_ir::v_set(scratch, if built { x.code } else { el_ir::cl(e, if ct is TyHash { "n_hash_sorted" } else { "n_radix_sorted" }, [x.code, ir::NdInt { n: known }]) })];
+    pre += [el_ir::v_set(scratch, if built { x.code } else { el_ir::cl(e, if ct is TyHash { if unordered { "n_hash_unsorted" } else { "n_hash_sorted" } } else { "n_radix_sorted" }, [x.code, ir::NdInt { n: known }]) })];
     src = ir::NdVar { n: scratch };
   }
   start = el_ir::cl(e, "OpIterate", [src, ir::NdInt { n: on }, ir::NdInt { n: arg }, ir::NdKeys { keys: el_schema::key_descriptors(e, known) }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }]);
