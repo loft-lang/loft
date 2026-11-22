@@ -403,3 +403,58 @@ fn the_verify_twin_answers_where_an_interpreted_caller_reads() {
         "{err}"
     );
 }
+
+/// `@PLN206 P5` — a library adopted with no C compiler: what one run built (the hosted unit, the
+/// `[c] shim`) serves a run that cannot run `cc`, as a prebuilt library does.  A shim's name
+/// carries the compiler's identity, which a run without one cannot compute: the shim is found by
+/// its sources key (`c_shim::source_key`, the `.src` beside it).
+///
+/// @falsified-at: none — a SABOTAGE (2026-11-22): with the `.src` beside a built shim not written
+///   (`c_shim::build`), the run without a compiler stops at the parse.  CHANNEL: the exit status.
+///   WITNESS: "`[c] shim` needs a C compiler and `cc` could not be run".
+#[test]
+fn a_library_built_once_is_adopted_with_no_c_compiler() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let lib = std::env::temp_dir().join(format!("loft-hosted-unit-nocc-{}", std::process::id()));
+    let _ = fa::remove_dir_all(&lib);
+    let pkg = lib.join("hostedshim");
+    for f in ["loft.toml", "src/hostedshim.loft", "c/hostedshim.c"] {
+        let to = pkg.join(f);
+        fa::create_dir_all(to.parent().expect("parent")).expect("package dir");
+        let text = fa::read_to_string(root.join("tests/lib/hostedshim").join(f)).expect("read");
+        fa::write(to, text).expect("write");
+    }
+    let empty = lib.join("no-cc");
+    fa::create_dir_all(&empty).expect("empty dir");
+    let run = |path: Option<&std::path::Path>| {
+        let mut cmd = harness_command(env!("CARGO_BIN_EXE_loft"));
+        cmd.arg("--interpret")
+            .arg("--lib")
+            .arg(&lib)
+            .arg(root.join("tests/lib/hostedshim_main.loft"))
+            .env("LOFT_NO_CACHE", "1")
+            .env("LOFT_LIB_BACKEND", "c")
+            .env("LOFT_NO_RUSTC", "1")
+            .env("LOFT_REQUIRE_NATIVE", "1");
+        if let Some(p) = path {
+            cmd.env("PATH", p);
+        }
+        let out = cmd.output().expect("run loft");
+        (
+            out.status.success(),
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+    let (ok, out, err) = run(None);
+    assert!(ok, "the run that builds: {err}");
+    assert_eq!(out, "9 count 9\n");
+    let (ok, out, err) = run(Some(&empty));
+    let _ = fa::remove_dir_all(&lib);
+    assert!(ok, "the run without a compiler adopts what was built: {err}");
+    assert_eq!(out, "9 count 9\n");
+}

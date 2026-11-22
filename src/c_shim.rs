@@ -432,13 +432,22 @@ pub fn build(pkg_dir: &str, sources: &[String]) -> Result<std::path::PathBuf, St
     // `platform::c_system_link_libs`), as a C backend program's own link names them.  None
     // elsewhere.
     cmd.push_args(crate::platform::c_system_link_libs());
-    let out = cmd.run(b"").map_err(|e| {
-        format!(
-            "`[c] shim` needs a C compiler and `{}` could not be run ({e}). Install one \
-             (`cc`/`gcc`/`clang`), or set CC to the one to use",
-            cc_program()
-        )
-    })?;
+    let out = match cmd.run(b"") {
+        Ok(out) => out,
+        Err(e) => {
+            let _ = crate::file_access::remove_dir_all(&stage);
+            // No compiler: a shim already built for these sources serves (one a release or
+            // `loft build-native` made, with another `cc`).
+            if let Some(found) = built_for_sources(pkg_dir, sources, &out_dir) {
+                return Ok(found);
+            }
+            return Err(format!(
+                "`[c] shim` needs a C compiler and `{}` could not be run ({e}). Install one \
+                 (`cc`/`gcc`/`clang`), or set CC to the one to use",
+                cc_program()
+            ));
+        }
+    };
     if !out.status.success() {
         let _ = crate::file_access::remove_dir_all(&stage);
         // The caller already names the package; repeating it here only pushed
@@ -470,7 +479,34 @@ pub fn build(pkg_dir: &str, sources: &[String]) -> Result<std::path::PathBuf, St
     // empty directory per build.
     let _ = crate::file_access::remove_dir_all(&stage);
     published?;
+    if let Some(key) = source_key(pkg_dir, sources) {
+        let _ = crate::file_access::write(sidecar_of(&so), key);
+    }
     Ok(so)
+}
+
+/// The file beside a built shim naming its sources key ([`source_key`]).
+fn sidecar_of(so: &std::path::Path) -> std::path::PathBuf {
+    let mut name = so.as_os_str().to_os_string();
+    name.push(".src");
+    std::path::PathBuf::from(name)
+}
+
+/// A shim in `out_dir` built for exactly these sources, by whichever compiler built it.
+fn built_for_sources(
+    pkg_dir: &str,
+    sources: &[String],
+    out_dir: &std::path::Path,
+) -> Option<std::path::PathBuf> {
+    let key = source_key(pkg_dir, sources)?;
+    crate::file_access::read_dir(out_dir)
+        .ok()?
+        .into_iter()
+        .map(|p| std::path::PathBuf::from(p.native()))
+        .filter(|p| p.extension().is_some_and(|e| e == "src"))
+        .find(|p| crate::file_access::read_to_string(p).is_ok_and(|k| k == key))
+        .map(|p| p.with_extension(""))
+        .filter(|so| crate::file_access::exists(so))
 }
 
 /// Hash every file `bytes` (the text of `file`) reaches through `#include "…"`, resolved against
@@ -525,6 +561,22 @@ fn identity(
     pkg_dir: &str,
     sources: &[String],
 ) -> Result<(String, Vec<std::path::PathBuf>, std::path::PathBuf), String> {
+    identity_with(pkg_dir, sources, true)
+}
+
+/// The shim's key over what it is compiled FROM — its sources, their headers, the width, the
+/// bodies and the dependencies' headers — without the compiler that built it: written beside a
+/// built shim (`.src`), so a run that has no compiler can still find a shim built for these
+/// sources (a prebuilt one, `@PLN206 P5`), where the full key needs `cc` to be run.
+fn source_key(pkg_dir: &str, sources: &[String]) -> Option<String> {
+    identity_with(pkg_dir, sources, false).ok().map(|(stem, _, _)| stem)
+}
+
+fn identity_with(
+    pkg_dir: &str,
+    sources: &[String],
+    with_compiler: bool,
+) -> Result<(String, Vec<std::path::PathBuf>, std::path::PathBuf), String> {
     if sources.is_empty() {
         return Err("no shim sources".to_string());
     }
@@ -553,7 +605,9 @@ fn identity(
     // The compiler identity belongs in the key: the same source built by a
     // different `cc` is a different artifact, and reusing one across a toolchain
     // change is how a stale ABI survives an upgrade.
-    hasher.update(cc_identity().as_bytes());
+    if with_compiler {
+        hasher.update(cc_identity().as_bytes());
+    }
     // @PLN217 — a 32-bit build compiles the same source to other code (`loft_width.h`); a
     // 64-bit build's identity, and so its archive's name, stays what it was.
     if crate::keys::width32_all() {

@@ -7,6 +7,8 @@
     scripts/hosted_suite.py --lib ROOT... PKG...   # each PKG's tests/*.loft, both ways
     scripts/hosted_suite.py --loft PATH ...        # the loft binary (default target/release/loft)
     scripts/hosted_suite.py --jobs N ...           # files run at once (default 4)
+    scripts/hosted_suite.py --prebuilt ...         # adopted runs with no C compiler: only units
+                                                   # `loft build-native` made beforehand
 
 `loft test` interprets a library from its source, so a library's own suite never crosses the
 compiled unit.  This runs each test file as a consumer program instead: a file with no `main`
@@ -114,6 +116,9 @@ def judge(loft, libs, pkg, name, path, timeout):
         tail = (err_i.strip().splitlines() or ["?"])[-1][:160]
         return name, "skipped", f"interpreted exit {code_i}: {tail}", None
     adopted = {**base, "LOFT_LIB_BACKEND": "c", "LOFT_HOSTED_VERIFY": "1", "LOFT_POISON_CLAIM": "1"}
+    if PREBUILT:
+        # No C compiler: only a unit `loft build-native` made beforehand can be adopted.
+        adopted["PATH"] = NO_CC
     code_c, out_c, err_c = run(loft, libs, path, adopted, timeout, pkg)
     lines = [l[len(VERIFY):] for l in err_c.splitlines() if l.startswith(VERIFY)]
     reach = [l for l in lines if l.startswith("library ")]
@@ -133,11 +138,20 @@ def judge(loft, libs, pkg, name, path, timeout):
     return name, "same", f"{calls} call(s)" + (f"; {unverified[0].split('; ', 1)[1]}" if unverified else ""), reach
 
 
+PREBUILT = False
+NO_CC = ""
+
+
 def main():
+    global PREBUILT, NO_CC
     args = sys.argv[1:]
     if not args or "-h" in args or "--help" in args:
         print(__doc__)
         return 2
+    if "--prebuilt" in args:
+        args.remove("--prebuilt")
+        PREBUILT = True
+        NO_CC = tempfile.mkdtemp(prefix="hosted_suite_nocc_")
     loft, jobs, timeout, libs, pkgs = os.path.join(HERE, "target/release/loft"), 4, 600, [], []
     it = iter(args)
     for a in it:
