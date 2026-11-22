@@ -467,7 +467,9 @@ impl AnswerDest {
     fn of(ret: &crate::data::Type) -> AnswerDest {
         match ret.base() {
             crate::data::Type::Vector(..) => AnswerDest::Wrapper,
-            crate::data::Type::Reference(..) | crate::data::Type::Enum(_, true, _) => AnswerDest::Null,
+            crate::data::Type::Reference(..) | crate::data::Type::Enum(_, true, _) => {
+                AnswerDest::Null
+            }
             _ => AnswerDest::Seeded,
         }
     }

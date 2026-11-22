@@ -456,6 +456,14 @@ pub struct ReBind {
 }
 
 impl ReBind {
+    /// Does the code generator reset `v` to null after its frees?  It does for an owner whose
+    /// displaced store goes first or is exchanged (`stack.owned_reassigned`), and the store
+    /// records follow it.
+    #[must_use]
+    pub fn displaces_owned(&self) -> bool {
+        self.exchange || matches!(self.free, DisplacedFree::Pre { .. })
+    }
+
     /// Every fact this reassignment's lowering read, for `LOFT_TRACE_BIND`: the displaced free
     /// (`b2`) and the facts behind it, then the value's oracle base, whether it may name `v`'s
     /// own store, the copy's source and the callee's facts (`trace_call_facts`).  The arm itself
@@ -982,20 +990,25 @@ pub fn re_bind(data: &Data, d_nr: u32, function: &Function, v: u16, value: &Valu
         exchange: false,
     };
     rb.arm = re_arm(data, d_nr, function, v, value, &rb);
-    // The exchange takes the place of the displaced free: `v` owns its store and keeps it, the
-    // call's answer moves in, and `v`'s old tree leaves with the released slot.  Only where the
-    // free went first with no witness but the call's own buffer (or would have, for a nullable
-    // local stashed only for the null it may hold), the answer is given up, and `v` is a plain
-    // owner (no entry witness or owner witness).
-    // `LOFT_NO_SWAP_REBIND=1` frees first and copies, as before.
     let first = match rb.free {
         DisplacedFree::Pre { witness } => Some(witness),
         DisplacedFree::Stash if stash_for_null_only => pre,
         _ => None,
-    };
-    if matches!(rb.arm, ReArm::CallCopy { .. })
-        && let Some(witness) = first
-        && witness.is_none_or(|w| Some(w) == rb.buffer_witness)
+    }
+    .is_some_and(|witness| witness.is_none_or(|w| Some(w) == rb.buffer_witness));
+    exchange_if_free(data, d_nr, value, &mut rb, first);
+    rb
+}
+
+/// The rebind exchanges the call's answer into the store `v` holds, in place of the displaced
+/// free, where it may.  `v` owns its store and keeps it, the call's answer moves in, and `v`'s old
+/// tree leaves with the released slot.  Only where the free went first (`first`) with no
+/// witness but the call's own buffer (or would have, for a nullable local stashed only for the
+/// null it may hold), the answer is given up, and `v` is a plain owner (no entry witness or
+/// owner witness).  `LOFT_NO_SWAP_REBIND=1` frees first and copies, as before.
+fn exchange_if_free(data: &Data, d_nr: u32, value: &Value, rb: &mut ReBind, first: bool) {
+    if first
+        && matches!(rb.arm, ReArm::CallCopy { .. })
         && rb.entry_w.is_none()
         && rb.owned_ref
         && !rb.witnessed
@@ -1005,7 +1018,6 @@ pub fn re_bind(data: &Data, d_nr: u32, function: &Function, v: u16, value: &Valu
         rb.free = DisplacedFree::None;
         rb.exchange = true;
     }
-    rb
 }
 
 /// `@FR-O-Unknown` — may `v` take a closure call's answer through the runtime copy-or-adopt

@@ -4,6 +4,7 @@
 //! gives them (`doc/claude/STORE_MODEL.md`, D38).  The values pass on either order, so only the
 //! trace sees a difference.  `scripts/c_alloc_diff.py` sets a whole program's events beside the
 //! interpreter's; these pin two of them by hand.
+use loft::file_access as fa;
 use loft::platform::process::harness_command;
 use std::path::PathBuf;
 
@@ -18,9 +19,9 @@ fn have_cc() -> bool {
 /// the store events after the program starts (`M`).
 fn traced(name: &str, src: &str) -> (String, Vec<String>) {
     let dir = std::env::temp_dir().join(format!("loft-c-alloc-{}-{name}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("scratch dir");
+    fa::create_dir_all(&dir).expect("scratch dir");
     let prog = dir.join(format!("{name}.loft"));
-    std::fs::write(&prog, src).expect("write the program");
+    fa::write(&prog, src).expect("write the program");
     let c: PathBuf = dir.join(format!("{name}.c"));
     let emit = harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg("--emit-c")
@@ -33,7 +34,7 @@ fn traced(name: &str, src: &str) -> (String, Vec<String>) {
         "{name}: not carried: {}",
         String::from_utf8_lossy(&emit.stderr)
     );
-    let links: Vec<String> = std::fs::read_to_string(&c)
+    let links: Vec<String> = fa::read_to_string(&c)
         .expect("read the C")
         .lines()
         .filter_map(|l| l.strip_prefix("/* link: ")?.strip_suffix(" */"))
@@ -65,7 +66,7 @@ fn traced(name: &str, src: &str) -> (String, Vec<String>) {
         .env("LOFT_ALLOC_TRACE", &trace)
         .output()
         .expect("run the program");
-    let events = std::fs::read_to_string(&trace)
+    let events = fa::read_to_string(&trace)
         .expect("read the trace")
         .lines()
         .skip_while(|l| *l != "M")
@@ -198,9 +199,9 @@ fn main() {
 #[test]
 fn a_function_values_vector_buffer_claims_its_root_as_any_vector_does() {
     let dir = std::env::temp_dir().join(format!("loft-fnbuf-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("scratch dir");
+    fa::create_dir_all(&dir).expect("scratch dir");
     let prog = dir.join("fnbuf.loft");
-    std::fs::write(
+    fa::write(
         &prog,
         r#"
 fn grown(seed: integer, n: integer) -> vector<integer> {

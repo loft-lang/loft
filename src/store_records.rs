@@ -1377,9 +1377,7 @@ fn run_fn<'a>(
                     run.first_sets.insert(at);
                 } else {
                     let rb = crate::bind_lowering::re_bind(data, d_nr, vars, *x, val);
-                    if matches!(rb.free, crate::bind_lowering::DisplacedFree::Pre { .. })
-                        || rb.exchange
-                    {
+                    if rb.displaces_owned() {
                         owned_reassigned.insert(*x);
                     }
                     run.rebinds.insert(at, rb);

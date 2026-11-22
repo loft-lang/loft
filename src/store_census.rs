@@ -157,26 +157,26 @@ pub fn at_ticks(value: i64) {
     }
 }
 
-/// `LOFT_ALLOC_TRACE=<file>` — every allocator EVENT of the run, one line each, in the order
-/// they happen: `N <store> <capacity>` a store made (or a freed slot made again), `F <store>`
-/// a store freed, `C <store> <words> <position>` a claim (the words the record CLAIMED, which a
-/// whole free block can make more than were asked), `D <store> <position>` a delete,
-/// `R <store> <position> <words> <position>` a resize that grew in place or moved the record
-/// (the moving one after the claim and delete it makes), `S <store>` a store the interpreter
-/// state makes for itself (its value stack, its constant store), which a C unit has no twin of,
-/// and `@ <line>` the source line of the events after it, written when it changes.  A store is named by the order it was made (`alloc_serial`), not
-/// by its slot: the interpreter's slot 0 is its value stack, native's an ordinary store, so
-/// the two number stores differently while placing every record alike.  It is what a second
-/// runtime compares itself against to keep loft's memory model rather than one of its own
-/// (@PLN200 B5) — the C runtime writes the same lines.  Compiled only with `op-census`; the
-/// file is written line by line, unbuffered, so a run that aborts keeps what it did.  Every
-/// call site is itself `#[cfg(feature = "op-census")]`: a build without the feature compiles
-/// no trace code at all.
-/// `LOFT_ALLOC_TRACE`'s sites: the bytecode position of the op running on this thread, and the
-/// interpreter's line table (`State::line_numbers`, handed over when the program starts), so an
-/// event can be preceded by `@ <line>` when its source line is not the last one written — the
-/// line a comparison names beside a difference (the C runtime writes the same).  A worker
-/// thread has no table and writes no site.
+// `LOFT_ALLOC_TRACE=<file>` — every allocator EVENT of the run, one line each, in the order
+// they happen: `N <store> <capacity>` a store made (or a freed slot made again), `F <store>`
+// a store freed, `C <store> <words> <position>` a claim (the words the record CLAIMED, which a
+// whole free block can make more than were asked), `D <store> <position>` a delete,
+// `R <store> <position> <words> <position>` a resize that grew in place or moved the record
+// (the moving one after the claim and delete it makes), `S <store>` a store the interpreter
+// state makes for itself (its value stack, its constant store), which a C unit has no twin of,
+// and `@ <line>` the source line of the events after it, written when it changes.  A store is named by the order it was made (`alloc_serial`), not
+// by its slot: the interpreter's slot 0 is its value stack, native's an ordinary store, so
+// the two number stores differently while placing every record alike.  It is what a second
+// runtime compares itself against to keep loft's memory model rather than one of its own
+// (@PLN200 B5) — the C runtime writes the same lines.  Compiled only with `op-census`; the
+// file is written line by line, unbuffered, so a run that aborts keeps what it did.  Every
+// call site is itself `#[cfg(feature = "op-census")]`: a build without the feature compiles
+// no trace code at all.
+// `LOFT_ALLOC_TRACE`'s sites: the bytecode position of the op running on this thread, and the
+// interpreter's line table (`State::line_numbers`, handed over when the program starts), so an
+// event can be preceded by `@ <line>` when its source line is not the last one written — the
+// line a comparison names beside a difference (the C runtime writes the same).  A par worker
+// thread takes the program's table when it enters (`enter_worker`).
 #[cfg(feature = "op-census")]
 thread_local! {
     static SITE_PC: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
@@ -184,9 +184,9 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
-/// `LOFT_ALLOC_TRACE`'s par workers: each worker thread numbers its stores on its own, so the
-/// trace names a worker's store `<worker>.<serial>` — one name per store however the threads
-/// interleave (0 is the main thread, whose names stay bare).
+// `LOFT_ALLOC_TRACE`'s par workers: each worker thread numbers its stores on its own, so the
+// trace names a worker's store `<worker>.<serial>` — one name per store however the threads
+// interleave (0 is the main thread, whose names stay bare).
 #[cfg(feature = "op-census")]
 thread_local! {
     static WORKER: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
@@ -197,7 +197,18 @@ thread_local! {
 pub fn enter_worker() {
     static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
     WORKER.with(|w| w.set(NEXT.fetch_add(1, Ordering::Relaxed)));
+    // A worker built from the par natives' context has an empty line table of its own, so the
+    // thread takes the program's: its events then name the lines they ran at.
+    let lines = PROGRAM_LINES.lock().ok().and_then(|l| l.clone());
+    if let Some(lines) = lines {
+        SITE_LINES.with_borrow_mut(|l| *l = Some((lines, 0)));
+    }
 }
+
+/// The line table `set_lines` was last handed, for the worker threads (`enter_worker`).
+#[cfg(feature = "op-census")]
+static PROGRAM_LINES: std::sync::Mutex<Option<std::collections::BTreeMap<u32, u32>>> =
+    std::sync::Mutex::new(None);
 
 /// `LOFT_ALLOC_TRACE`'s par regions: `P` where a `par` loop's queue starts (`n_parallel_queue…`)
 /// and `Q` where its buffer is dropped (`n_parallel_buf_drop…`), as the C runtime marks the same
@@ -228,6 +239,9 @@ pub fn at_pc(pc: u32) {
 /// The program's line table, for the sites of the events that follow.
 #[cfg(feature = "op-census")]
 pub fn set_lines(lines: std::collections::BTreeMap<u32, u32>) {
+    if let Ok(mut p) = PROGRAM_LINES.lock() {
+        *p = Some(lines.clone());
+    }
     SITE_LINES.with_borrow_mut(|l| *l = Some((lines, 0)));
 }
 

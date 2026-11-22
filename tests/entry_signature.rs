@@ -214,7 +214,7 @@ fn entry_declaring_argv_both_backends() {
 #[test]
 fn plain_entry_is_unchanged() {
     let path = write_probe("plain.loft", "fn main() {\n  println(\"plain\");\n}\n");
-    let c = path.with_extension("c");
+    let c = fa::with_extension(&path, "c");
     let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
         .arg("--emit-c")
         .arg(&c)

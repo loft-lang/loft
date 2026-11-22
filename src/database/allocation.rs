@@ -1516,7 +1516,9 @@ impl Stores {
             | Parts::Radix(e, _)
             | Parts::Trie(e, _)
             | Parts::ChildRec(e) => self.tree_moves_whole(*e, walking),
-            _ => false,
+            // A reference names a record in another store, which a whole move would leave
+            // pointing at the store it left (`(H-SwapIn)`).
+            Parts::DbRef => false,
         };
         walking.pop();
         ok

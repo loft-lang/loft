@@ -6705,6 +6705,8 @@ impl State {
         }
         let mut step: u64 = 0;
         while self.code_pos < bytecode_len {
+            #[cfg(feature = "op-census")]
+            crate::store_census::at_pc(self.code_pos);
             let op = self.code::<u8>();
             if op == 255 {
                 let ext = self.code::<u8>();
@@ -6907,6 +6909,17 @@ impl State {
             && !crate::keys::uaf_check_enabled()
             && !crate::keys::uaf_src_enabled()
             && !crate::keys::uaf_gen_enabled()
+            && !Self::alloc_trace_sites()
+    }
+
+    /// `LOFT_ALLOC_TRACE` writes each event's source line, from the position the checked
+    /// loop publishes per op — on a worker as on the main run (`needs_full_loop`).
+    fn alloc_trace_sites() -> bool {
+        #[cfg(feature = "op-census")]
+        let on = crate::store_census::alloc_trace_on();
+        #[cfg(not(feature = "op-census"))]
+        let on = false;
+        on
     }
 
     /// `LOFT_NO_WORKER_LEAN=1` — every worker frame runs the plain checked loop
