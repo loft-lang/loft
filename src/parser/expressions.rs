@@ -3491,7 +3491,7 @@ use a separate collection or add after the loop"
     /// constant (`OpConstRef`), a parameter, a field of either — which the call site copies
     /// in after the call ([`Self::place_answer_copy`]).  A store the callee minted is never
     /// such an answer: it would be the caller's to free, and placed it would be nobody's.
-    fn callee_buffer_exits(&self, d_nr: u32, active: &mut Vec<u32>) -> Option<bool> {
+    pub(super) fn callee_buffer_exits(&self, d_nr: u32, active: &mut Vec<u32>) -> Option<bool> {
         if active.contains(&d_nr) {
             return None;
         }

@@ -2026,6 +2026,7 @@ mod calls;
 mod closure_flow;
 mod closures;
 mod compare;
+mod contract;
 mod convert;
 mod generic_writes;
 mod generics;

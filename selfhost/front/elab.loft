@@ -19,6 +19,7 @@ use el_tret;
 use el_drop;
 use el_upgrade;
 use el_refhome;
+use el_contract;
 
 fn main() {
   files = arguments();
@@ -94,6 +95,12 @@ fn program(image: text, f: text, std_image: text) {
   el_upgrade::synth_upgrade_drain(e);
   el_drop::synth_drop_cascades(e);
   print(report::defs_report(e.b, upto, templates: env_variable("LOFT_DEFS_TEMPLATES") == "1"));
+  if env_variable("LOFT_REPORT_STATE") == "1" {
+    eprintln(report::state_report(e.b, upto));
+  }
+  if env_variable("LOFT_REPORT_CONTRACT") == "1" {
+    eprint(el_contract::report(e, upto));
+  }
   if len(std_image) > 0 {
     print(report::schema_from(e.b, types_upto));
   }

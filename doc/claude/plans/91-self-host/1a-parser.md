@@ -153,19 +153,56 @@ consuming, or null (`brace_next`, `no_else`, `empty_literal_allowed`).
 | **T** tokens | the C lexer's stream equals `src/lexer.rs`'s, per file | `LOFT_TRACE_TOKENS=<file>` (the Rust stream the parser scanned) against `selfhost/front/tokens.loft`; `selfhost/front/tokens_gate.py` counts files that agree |
 | **S** syntax | every corpus file parses with no error; the tree's tokens, in order, are the file's tokens | the syntax tree printer, round-tripped against the token stream |
 | **E** elaboration | the image equals `--emit-image`: each definition, and the program's part of the schema | `selfhost/compare/`; HOW MANY programs agree |
+| **E** contract | each function of an agreeing program carries the same behaviour contract (§ The behaviour contract) | `LOFT_REPORT_CONTRACT=1` on both front ends; `elab_gate.py`'s `contract:` line and the verdicts file's `contract` column; `elab_probe.py one` lists each fact |
 
 The corpus for every gate: `default/*.loft`, `tests/scripts/`, `tests/docs/`, `lib/`, and the
 language suite (`../loft-suite-91`).
 
-The port has two purposes: a front end on C with no rustc to bootstrap, and a second
-implementation that VALIDATES the Rust one.  So a gate E difference is triaged, never just
-copied:
+The port has three purposes: the main implementation — a front end on C with no rustc to
+bootstrap; a second implementation that VALIDATES the Rust one, finding loft's internal
+problems; and a front end whose internal conclusions are visible early and easily — the
+behaviour contract and state reports (§ The behaviour contract), which make these algorithms
+debuggable and are a deliverable of the rewrite, not a by-product.  So a gate E difference is
+triaged, never just copied:
 - the port is incomplete → port what Rust does (1b-interpreter.md rule 5);
 - Rust answers wrong (a silent wrong value, a refusal the formal rules say must work, a
   backend that does not build) → fix Rust, with a falsified suite cell;
 - Rust carries an accident with no meaning (a variable minted and never used, an order that
   falls out of the pass structure) → log it under § Rust accidents and reproduce it only
   while gate E compares images byte for byte.
+
+### The behaviour contract
+
+The comparisons are of what the front end HANDS ON — how the resulting code behaves — never of
+how Rust's parser got there: its parser fields and side tables are no oracle, and a port that
+reaches the same output another way is as good.  What is handed on is part of the
+reimplementation contract, and a difference in it is triaged as a gate E difference:
+
+- **the code** — the image's definitions and schema (gate E itself);
+- **the image's function state** — per function its purity, what its result promises
+  (`returned_not_null`, `returned_const`), the 32-bit regime, its closure's captures; per
+  parameter a `const` read at every call and a default; per variable the flags the scope pass
+  and the emitters read (`skip_free`, `deferred_first_bind`, the witnesses, `inline_refs`, …):
+  `LOFT_REPORT_STATE=1` (`report::state_report`, printed by `defs` for Rust's image and by
+  `elab` for its own);
+- **the facts a caller acts on** — computed, not stored, so a mismatch shows only where some
+  caller in the corpus exercises it: the buffer the result is delivered through, a bufferless
+  text answer, a result that views a parameter, a fn-ref answered, a result the caller adopts
+  fresh, a store-text instance, one of several arguments answered, a store forwarded that the
+  function does not own, whether every exit fills the buffer, the operator a one-op wrapper
+  forwards to, the parameters rebound with a store the body owns.  `LOFT_REPORT_CONTRACT=1`
+  prints one `[contract]` line per program function: `src/parser/contract.rs` asks each fact
+  of the predicate Rust's own call sites ask; `selfhost/src/el_contract.loft` asks this port's,
+  and prints `?` for a fact it does not derive yet — a gap the gate counts apart, never a
+  value guessed.
+
+The reports are permanent features of both front ends, not gate scaffolding: they show a
+function's conclusions early, which is what bug hunting in these algorithms needs (home doc:
+`DEBUG_TRACE.md` § A function's contract and state).  The contract grows with the port: a fact about the correct behaviour that internal state
+hides — computed at a call site, kept in a side table, decided across the passes — is added to
+it where it is met (a `[contract]` fact on both front ends, or a `[state]` line), so the parts
+are held to it before they have to fit together.  Decision traces (`LOFT_TRACE_RETPROMO`,
+`LOFT_STATE_TRACE`) explain why an output differs; they are no part of the contract.
 
 ### Rust accidents
 
