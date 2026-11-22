@@ -69,7 +69,8 @@ the shared core below.
 | backed by a mapped file (`@FR-S-Mapped`) | `file` (`MmapStorage`) | `mapped`, `map_file` (`loft_mapped.h`) | same (D23) |
 | held by a live generator frame (`@FR-G-Arg-Rebind`) | `frame_holds`, `orphaned` | `frame_holds`, `orphaned` | same (D24) |
 | allocator policy flags | `wilderness`, `carve`, `move_on_grow`, `borrowed` | compile-time switches (`-DLOFT_NO_*`) | D25 closed; `wilderness` is D35 |
-| the interpreter's stack | `stack_buffer` | — (the C stack) | D26 |
+| the interpreter's stack | `stack_buffer` | — (the C stack) | D46 | a `par` region's machinery: the interpreter's worker result buffer (100 words) and its hand-over of a worker's stores to the parent at the join, which frees them there, against the C's results vector and its frees in the worker | decided — C's model (no measurement favours the interpreter's); the interpreter converges in P2.  Meanwhile `LOFT_ALLOC_TRACE` marks the region (`P` at `n_parallel_queue…`, `Q` at `n_parallel_buf_drop…`) and names a worker's store `<worker>.<serial>` on both backends, and `scripts/c_alloc_diff.py` holds everything outside it to the model — every event before the first region event for event, every store made after one per store; a real difference injected before or after an allocating region is reported unaccounted (the positive controls) |
+| D26 |
 | a parse's errors and type | `parse_errors`, `parse_type` | `loft_store_perrs` (by store: reset at a mint, exchanged with the content) | same (D27) |
 | the interpreter's instruments | `generation`, `recording`, `tag`, `created_at`, `last_op_at`, `init_shadow` | the C's own: `loft_free_site`, `loft_leak_site` | decided (D27) |
 
@@ -112,7 +113,7 @@ fixes name a row the same way.  D20 onward come from the field-by-field comparis
 from P0b (what the C runtime lacks).  State: **open**, **fixing** (on the branch named), or
 **decided** (the decision and its measurement).  A closed row moves to
 [STORE_MODEL-history.md](STORE_MODEL-history.md) with its commit; D1–D8, D9a–D17,
-D18–D19j, D20–D25, D27, D29–D31, D33, D34 and D36–D46 are there.  (D8's second half, the gates
+D18–D19j, D20–D25, D27, D29–D31, D33, D34 and D36–D45 are there.  (D8's second half, the gates
 stated in `(H-SwapIn)`, closed with it.)
 
 ### Correctness
