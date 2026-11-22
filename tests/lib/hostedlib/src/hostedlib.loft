@@ -82,6 +82,15 @@ pub fn tag(t: text) -> text {
   "<{a}|{b}>"
 }
 
+// A text local returned on one path and held while the answer is built on the other: the
+// compiler gives the local a text slot of its own beside the result's work slot, each one the
+// bridge must hand a buffer of its own.
+pub fn framed(t: text) -> text {
+  base = label_of(t);
+  if len(base) > 20 { return base; }
+  base + "\n#{len(base)}"
+}
+
 // The same, a level deeper and through a format hook (`"{bag}"`), as `time`'s `DateTime` is.
 pub operator to_text(self: Bag, spec: text) -> text {
   r = if spec == "short" { "{label_of(self.name)}" } else { "{tag(self.name)}" };

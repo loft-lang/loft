@@ -83,9 +83,7 @@ static void loft_la_set_bits(unsigned char *a, int64_t v) {
     memcpy(a + LOFT_LA_SCALAR, &v, 8);
 }
 /* A text answer: its bytes, valid until the unit's next call — the dispatcher copies them at
- * once.  The work buffer a text result is written into is the unit's own (`loft_br_text`). */
-static LOFT_TLS loft_text loft_br_text;
-/* The text a function answers, owned: held until the unit's next text answer. */
+ * once.  The text a function answers, owned: held until the unit's next text answer. */
 static LOFT_TLS loft_text loft_br_answer;
 static const char loft_br_empty[1] = { 0 };
 static void loft_la_set_text(unsigned char *a, loft_str s) {
@@ -151,15 +149,19 @@ fn bridge(cx: &Cx<'_>, d: u32, symbol: &str) -> Result<String, String> {
         return Err("an iterator".into());
     }
     let mut args = Vec::new();
+    // A text work slot is the call's own: one per slot, as a C caller holds one local per slot
+    // — two slots sharing a buffer write over each other (a local held in one while the result
+    // is built in the other), and a bridge reached again through a call back would empty the
+    // outer call's.
+    let mut work = 0usize;
     let mut slot = 0usize;
     for a in def.attributes() {
         let kind = crate::native_gate::classify_bridge_attr(a, ret_text)
             .ok_or_else(|| format!("parameter `{}` crosses no bridge", a.name))?;
         match kind {
-            // The result's work buffer: the unit's own, emptied per call; the answer is read
-            // from it by the dispatcher before the unit runs again (`loft_la_set_text`).
             BridgeAttrKind::WorkText => {
-                args.push("(loft_br_text.len = 0, &loft_br_text)".to_string());
+                args.push(format!("&loft_w{work}"));
+                work += 1;
                 slot += 1;
             }
             BridgeAttrKind::HiddenDest => {
@@ -265,9 +267,15 @@ fn bridge(cx: &Cx<'_>, d: u32, symbol: &str) -> Result<String, String> {
         ),
         _ => return Err("a result of a shape the bridge does not carry".into()),
     };
+    let mut held = String::new();
+    let mut freed = String::new();
+    for k in 0..work {
+        let _ = writeln!(held, "    loft_text loft_w{k} = {{ 0 }};");
+        let _ = writeln!(freed, "    loft_text_free(&loft_w{k});");
+    }
     Ok(format!(
         "\n__attribute__((visibility(\"default\"))) void {symbol}(void *loft_st, const unsigned char *loft_a, size_t loft_n, unsigned char *loft_r) {{\n    \
-         void *loft_prev = loft_host_enter(loft_st);\n    (void) loft_n;\n{store}{plant}    loft_host_leave(loft_prev);\n}}\n"
+         void *loft_prev = loft_host_enter(loft_st);\n    (void) loft_n;\n{held}{store}{freed}{plant}    loft_host_leave(loft_prev);\n}}\n"
     ))
 }
 
