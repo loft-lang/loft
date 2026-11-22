@@ -2340,6 +2340,11 @@ static loft_ref loft_const_store(const uint32_t *words, uint32_t n) {
         s->size = n;
     }
     memcpy(s->buf, words, (size_t) n * 8);
+    /* The words past the constant's are zero, as in a fresh store: a hosted unit makes its
+     * constants at its first call, in a store the interpreter may hand back from an earlier
+     * use, whose old words would read as blocks.  (`n` drops the constant's trailing zero
+     * words, so its last record may reach past `n`.) */
+    if (n < s->size) memset(s->buf + (size_t) n * 8, 0, (size_t) (s->size - n) * 8);
     loft_st_resync(s);
     s->pinned = 1;
     s->read_only = 1; /* `Store::lock_constant`: constant data is read-only, as on the interpreter */
