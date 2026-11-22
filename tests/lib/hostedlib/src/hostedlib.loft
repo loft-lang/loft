@@ -49,3 +49,11 @@ pub fn deep(n: integer) -> integer {
   b = bag_new("d", n);
   deep(n - 1) + b.total
 }
+
+// A generator: one crossing the bridge would live in the unit's coroutine table, not the
+// interpreter's, so the bridge leaves it interpreted (`hosted::bridge`).
+pub fn upto(n: integer) -> iterator<integer> {
+  for i in 1..n + 1 {
+    yield i;
+  }
+}

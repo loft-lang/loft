@@ -43,6 +43,29 @@ A source path in a fault site is the third program-specific text: it names the p
 by the library's name (`<lib>/src/<file>.loft`), as the interpreter's report names a library
 file.
 
+## What else the unit must share with the interpreter
+
+Two more things a unit built for any program has to hold, both found by the sweep (P5a):
+
+- **It is an OPEN unit.**  Its exports are called by an interpreter the writer never sees, so
+  it takes no whole-program rewrite that changes a signature (`Cx::open`, as an `open_world`
+  program takes none): a value record returned as a struct by value is not what the bridge
+  calls.
+- **A `[c] shim` is one image.**  The interpreter opened the shim's shared library for the
+  parse; the unit links that library by its name, never a copy from the shim's archive, so a
+  shim's state (a generator, a device table, a handle counter) is one in the process.
+- **Its constants are its own.**  A library constant is built where the unit is generated (the
+  library alone), not taken from a consumer's compile, which builds only what it reaches.
+
+## What the verify cannot compare
+
+A call run twice — compiled on a copy of the world, interpreted on the world — answers alike
+only when everything it touches is in the stores.  A call that reaches a C function (a `#c`
+binding, a library native) touches that function's own state, which no copy holds: it is made
+once, and counted under "made without a comparison", as a call with a tuple argument and one
+with a file-backed store live are.  Such a library is checked by its suite's own answers
+(P5a's interpreted-against-adopted output), not by the per-call comparison.
+
 ## Failure paths
 
 1. **A crossing that is not translated.**  The unit writes its own number into a store's
@@ -72,7 +95,7 @@ it; any other rebuilds it, or interprets where no `cc` is found.
 | | Work | Compared against | Goes red when |
 |---|---|---|---|
 | P5a | `scripts/hosted_suite.py`: every library's tests as consumer programs, interpreted and adopted under the verify; the verify reports its reach (calls compared, the unit's coverage). | Each test file's output and exit, interpreted. | A file answers differently adopted, or the verify stops at a call. |
-| P5b | The unit is generated from the library alone and translates the type crossings by key; the verify also compares root types. | A consumer that loads another library first, adopted under the verify; two consumers' units byte for byte. | A store's type or bytes differ, or two consumers build different units. |
+| P5b | The unit is generated from the library alone (`native_artifact::parse_library_alone`, shared with `loft build-native`) and translates the type crossings by key; its key carries no program; the verify also compares root types, the answer's included. | A consumer that loads another library first adopts the unit another consumer built, under the verify. | A store's type, its bytes or an answer differs, or the second consumer builds its own unit. |
 | P5c | `loft build-native` with `LOFT_LIB_BACKEND=c` builds the unit; `library-ci-reusable.yml` builds and tests it beside "Native C" and publishes it under `prebuilt/<triple>/`; the interpreter adopts a matching prebuilt with no `cc`. | The library's suite with the prebuilt adopted, `cc` absent. | The prebuilt is not adopted, or an answer differs. |
 
 ## Measured

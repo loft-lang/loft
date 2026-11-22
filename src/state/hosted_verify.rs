@@ -52,7 +52,11 @@ fn reaches_outside(data: &crate::data::Data, d: u32) -> bool {
         .into_iter()
         .map(|f| data.def(f))
         .any(|f| {
-            f.is_c_binding() || (!f.native().is_empty() && f.source != crate::data::STD_SOURCE)
+            // A library function an artifact carries is marked with its bridge's symbol
+            // (`native_adopt::mark_exports`): loft code, not a native of its own.
+            let bridged = f.native().starts_with("loft_shared_");
+            f.is_c_binding()
+                || (!f.native().is_empty() && !bridged && f.source != crate::data::STD_SOURCE)
         });
     if let Ok(mut m) = seen.lock() {
         m.insert(d, outside);

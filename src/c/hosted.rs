@@ -130,6 +130,18 @@ fn bridge(cx: &Cx<'_>, d: u32, symbol: &str) -> Result<String, String> {
     if ret_text {
         return Err("a text result".into());
     }
+    // A generator lives in its runtime's coroutine table: one the unit makes is not the
+    // interpreter's to drive, and one the interpreter made is not the unit's.  The rustc
+    // artifact forwards its coroutines to the host (`HostTable::coroutines`); a hosted C unit
+    // does not yet, so an iterator crossing either way stays interpreted.
+    if matches!(def.returned().base(), Type::Iterator(..))
+        || def
+            .attributes()
+            .iter()
+            .any(|a| matches!(a.typedef.base(), Type::Iterator(..)))
+    {
+        return Err("an iterator".into());
+    }
     let mut args = Vec::new();
     let mut slot = 0usize;
     for a in def.attributes() {

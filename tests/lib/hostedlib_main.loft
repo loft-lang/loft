@@ -24,5 +24,9 @@ fn main() {
   assert(mix(2, 3) == 65, "mix");
   // 400 stores alive at once inside the unit: 1 + … + 400 = 80200
   assert(deep(400) == 80200, "deep {deep(400)}");
+  // a generator the library answers, driven here: 1 + 2 + 3 + 4 = 10
+  u = 0;
+  for x in upto(4) { u += x; }
+  assert(u == 10, "upto {u}");
   println("{b.name} {b.total} {b.weight()} {c.total} {len(c.items)} {ratio(c.name, 2)} {mix(1, 1)}");
 }
