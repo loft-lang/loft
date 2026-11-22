@@ -188,7 +188,9 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
       }
       if fresh {
         el_vars::register_work_ref(vars, held);
-        el_vars::mark_inline(vars, held, "build_null_coalesce_default_inner");
+        // (`build_null_coalesce_default_inner` marks the holder an inline ref for an OWNED vector
+        // subject only — above; a native result borrowing a store of another stays nulled at the
+        // head.)
         el_vars::set_var_type(vars, held, el_types::without_deps(lhs));
         // (The default's arm is chosen on the subject's type as read — a native result that
         // borrows takes the backed arm — as `build_null_coalesce_default_inner` is handed it.)
