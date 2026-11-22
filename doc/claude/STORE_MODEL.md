@@ -69,8 +69,7 @@ the shared core below.
 | backed by a mapped file (`@FR-S-Mapped`) | `file` (`MmapStorage`) | `mapped`, `map_file` (`loft_mapped.h`) | same (D23) |
 | held by a live generator frame (`@FR-G-Arg-Rebind`) | `frame_holds`, `orphaned` | `frame_holds`, `orphaned` | same (D24) |
 | allocator policy flags | `wilderness`, `carve`, `move_on_grow`, `borrowed` | compile-time switches (`-DLOFT_NO_*`) | D25 closed; `wilderness` is D35 |
-| the interpreter's stack | `stack_buffer` | — (the C stack) | D46 | a `par` region's machinery: the interpreter's worker result buffer (100 words) and its hand-over of a worker's stores to the parent at the join, which frees them there, against the C's results vector and its frees in the worker | decided — C's model (no measurement favours the interpreter's); the interpreter converges in P2.  Meanwhile `LOFT_ALLOC_TRACE` marks the region (`P` at `n_parallel_queue…`, `Q` at `n_parallel_buf_drop…`) and names a worker's store `<worker>.<serial>` on both backends, and `scripts/c_alloc_diff.py` holds everything outside it to the model — every event before the first region event for event, every store made after one per store; a real difference injected before or after an allocating region is reported unaccounted (the positive controls) |
-| D26 |
+| the interpreter's stack | `stack_buffer` | — (the C stack) | D26 |
 | a parse's errors and type | `parse_errors`, `parse_type` | `loft_store_perrs` (by store: reset at a mint, exchanged with the content) | same (D27) |
 | the interpreter's instruments | `generation`, `recording`, `tag`, `created_at`, `last_op_at`, `init_shadow` | the C's own: `loft_free_site`, `loft_leak_site` | decided (D27) |
 
@@ -140,6 +139,7 @@ stated in `(H-SwapIn)`, closed with it.)
 
 | # | Divergence | State |
 |---|---|---|
+| D46 | a `par` region's machinery: the interpreter's worker result buffer (100 words) and its hand-over of a worker's stores to the parent at the join, which frees them there, against the C's results vector and its frees in the worker | decided — C's model (no measurement favours the interpreter's); the interpreter converges in P2.  Meanwhile `LOFT_ALLOC_TRACE` marks the region (`P` at `n_parallel_queue…`, `Q` at `n_parallel_buf_drop…`) and names a worker's store `<worker>.<serial>` on both backends, and `scripts/c_alloc_diff.py` holds everything outside it to the model — every event before the first region event for event, every store made after one per store; a real difference injected before or after an allocating region is reported unaccounted (the positive controls) |
 | D26 | the interpreter's stack lives in a store; C's is the C stack | decided — each runtime's own: the value stack is how the interpreter executes, not a heap store of the program.  `LOFT_ALLOC_TRACE` marks it (`S`, a state's stack and constant store, a par worker's stack too) and `scripts/c_alloc_diff.py` leaves it out, under which the two agree; P4's hosted C unit meets it at the frame boundary |
 | D28 | the store table: a `Vec<Store>` beside the type table against a thread-local array | decided — one model: a numbered table of stores, a `DbRef`'s `store_nr` its index, the type table beside it; only the layout of that table differs, which P3 (one layout) builds |
 
