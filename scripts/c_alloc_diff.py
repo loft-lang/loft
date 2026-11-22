@@ -191,15 +191,18 @@ def order_only(want, got):
         return "the same events per store, interleaved in another order"
     return None
 
+def agrees(r):
+    """A comparison that agrees: event for event, or by order only."""
+    return len(r) == 3 and (r[0] is None or order_only(r[1], r[2]) is not None)
+
 def attribute(prog):
-    """The C-only rewrite under whose switch the program agrees, or None."""
+    """The C-only rewrite under whose switch the program agrees (event for event or by order
+    only), or None."""
     for rule, switch in C_ONLY_REWRITES:
-        r = compare(prog, {**os.environ, switch: "1"})
-        if r[0] is None and len(r) == 3:
+        if agrees(compare(prog, {**os.environ, switch: "1"})):
             return rule, f"{switch}=1"
     # A program can carry more than one: then only all of them off together agree.
-    r = compare(prog, {**os.environ, **{sw: "1" for _, sw in C_ONLY_REWRITES}})
-    if r[0] is None and len(r) == 3:
+    if agrees(compare(prog, {**os.environ, **{sw: "1" for _, sw in C_ONLY_REWRITES}})):
         return (" + ".join(rule for rule, _ in C_ONLY_REWRITES),
                 " ".join(f"{sw}=1" for _, sw in C_ONLY_REWRITES))
     return None
