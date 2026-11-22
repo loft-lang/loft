@@ -4524,7 +4524,9 @@ impl Function {
 
     /// Mark `var_nr` value-const (`const` before the TYPE): the value is a
     /// read-only borrow — mutation through this name is rejected.
+    #[track_caller]
     pub fn set_value_const(&mut self, var_nr: u16) {
+        self.trace_flag("value_const", var_nr);
         self.variables[var_nr as usize].value_const = true;
     }
 
@@ -5686,7 +5688,9 @@ impl Function {
     /// ref-returning calls).  These get their null-init inserted AFTER the first
     /// user statement in `parse_code` so they appear in `var_order` after user-scope
     /// reference variables, giving the correct LIFO-reversed free order.
+    #[track_caller]
     pub fn mark_inline_ref(&mut self, v: u16) {
+        self.trace_flag("inline_ref", v);
         self.inline_ref_vars.insert(v);
     }
 
@@ -6155,8 +6159,30 @@ impl Function {
     /// [`rebind_must_mint`](Self::rebind_must_mint) reads it to deny in-place store reuse
     /// on a rebind (loft#1447).  Narrowing where it is set to quiet a warning would
     /// silently restore a wrong VALUE, not just a lint.
+    #[track_caller]
     pub fn set_captured(&mut self, v: u16) {
+        self.trace_flag("captured", v);
         self.variables[v as usize].captured = true;
+    }
+
+    /// `LOFT_TRACE_VARFLAGS=<name>|*` — which line set a variable flag the image carries
+    /// (`value_const`, `inline_ref`, `captured`, `user_named`, `user_appended`, `copy_bound`):
+    /// the flags `LOFT_REPORT_STATE` compares, each traced to its setter as
+    /// `LOFT_SKIPFREE_TRACE` traces `skip_free`.
+    #[track_caller]
+    fn trace_flag(&self, flag: &str, v: u16) {
+        if let Some(want) =
+            crate::env_once!(@value Option<String>, std::env::var("LOFT_TRACE_VARFLAGS").ok())
+            && let Some(var) = self.variables.get(v as usize)
+            && (want == "*" || var.name == *want)
+        {
+            eprintln!(
+                "[varflag] {flag} {} (var={v}) in {} @ {}",
+                var.name,
+                self.name,
+                std::panic::Location::caller()
+            );
+        }
     }
 
     /// Undo [`Self::set_captured`]: every record that captured `v` took a copy instead
@@ -6222,7 +6248,9 @@ impl Function {
 
     /// The program's own `+=` wrote into `v`'s content (loft#1840) — see
     /// [`Variable::user_appended`].
+    #[track_caller]
     pub fn mark_user_appended(&mut self, v: u16) {
+        self.trace_flag("user_appended", v);
         if let Some(var) = self.variables.get_mut(v as usize) {
             var.user_appended = true;
         }
@@ -6237,7 +6265,9 @@ impl Function {
     }
 
     /// A whole-value bind copied a place into `v` (loft#1840) — see [`Variable::copy_bound`].
+    #[track_caller]
     pub fn mark_copy_bound(&mut self, v: u16) {
+        self.trace_flag("copy_bound", v);
         if let Some(var) = self.variables.get_mut(v as usize) {
             var.copy_bound = true;
         }
@@ -6254,7 +6284,9 @@ impl Function {
     }
 
     /// A user identifier names `v` (loft#1834).
+    #[track_caller]
     pub fn mark_user_named(&mut self, v: u16) {
+        self.trace_flag("user_named", v);
         if let Some(var) = self.variables.get_mut(v as usize) {
             var.user_named = true;
         }
