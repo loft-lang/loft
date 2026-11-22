@@ -793,7 +793,10 @@ fn append_place(e: el::El, vars: el_vars::Vars, n: integer) -> AppendPlace {
   match e.p.nodes[n] {
     SName { name, member } => {
       v = if member == "" { el_vars::var(vars, name) } else { -1 };
-      AppendPlace { root: v, tp: if v >= 0 { el_vars::tp(vars, v) } else { ir::TyVoid } }
+      // (A link local — `h: &T` — is its referent's place: `lhs_root_var` reads the lowered
+      // target, which writes through the link.)
+      vt = if v >= 0 { el_vars::tp(vars, v) } else { ir::TyVoid };
+      AppendPlace { root: v, tp: match vt { TyRefVar { inner } => inner, _ => vt } }
     },
     SMember { e: inner, name, call } => {
       if call || inner == null {
@@ -1348,6 +1351,9 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
     }
     if !(inner_get is NdNull) && el_vars::change_var_type(e, vars, v, bx.tp) {
       sv = el_vars::create_unique(vars, "slot_{el_vars::name_of(vars, v)}", bx.tp);
+      // (`bind_slot_link`: the slot names a child record of the field it was read from, which the
+      // record owns.)
+      el_vars::set_skip_free(vars, sv, "bind_slot_link");
       el_vars::set_defined(vars, sv);
       el_vars::set_defined(vars, v);
       vars.slot_vars += [sv];
