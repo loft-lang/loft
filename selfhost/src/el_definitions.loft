@@ -1446,6 +1446,9 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
       if e.first_pass {
         v = el_vars::add_variable(vars, a.name, a.typedef);
         el_vars::become_argument(vars, v);
+        // (`mark_declared_parameters`: a parameter the signature declares is named by the user,
+        // whether or not the body mentions it.)
+        el_vars::mark_user_named(vars, v);
 
         if vars.vars[v].uses > 0 {
           el_vars::in_use(vars, v, false);
