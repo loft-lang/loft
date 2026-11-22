@@ -127,3 +127,15 @@ it; any other rebuilds it, or interprets where no `cc` is found.
   and in the verify: a world it went on in after freeing the caller's views, a twin answering
   where no caller reads, a copy that restarted the lazy sweep, a nested verify, calls touching a
   file or a generator run twice, and placement taken for a wrong value.
+- **P5c** — every package of the five repositories built by `loft build-native` on the C
+  backend (46 of 50; `crypto` declined whole, passing as interpreted; `server`, `ssh`, `web`
+  have a Rust native crate, owed a `[c] shim` in P6), then every test file run adopted with
+  **no C compiler on the path** (`hosted_suite.py --prebuilt`): 114 the same call by call, 43 by
+  output, 37 not reaching a unit, 5 package-only, none differing.  The run found that a `[c]
+  shim` could not be found without a compiler (its name carries the compiler's identity): it is
+  now found by its sources key.  A unit built in two directories is byte-identical
+  (`Cx::source_name`), so the unit a library's CI builds is the one a user's machine would.
+  Library CI's **Hosted C** step (`library-ci-reusable.yml`) is the gate; tried on `drawing` in
+  that shape (its own repository on `--lib`, its other dependencies from the registry): 6 of 6
+  the same.  Shipping the units with a release (the release's artifacts, the registry, `loft
+  install`) is P6.

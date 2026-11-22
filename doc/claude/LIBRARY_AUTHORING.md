@@ -114,7 +114,10 @@ the detail, and that place wins if the two ever differ — fix this line, not th
     not optional**: every library's own CI runs its suite through `--native-c`
     (`library-ci-reusable.yml`) and is red where it fails; a native part written as a Rust
     crate does not load in a C build, so it needs a `[c] shim`
-    ([PACKAGES_C_BINDING.md](PACKAGES_C_BINDING.md)).
+    ([PACKAGES_C_BINDING.md](PACKAGES_C_BINDING.md)).  The same CI builds the library's hosted
+    C unit — what the interpreter runs of it — and runs its tests adopted from that unit with no
+    C compiler, red where an answer differs ([C_BACKEND.md](C_BACKEND.md) § A library as a
+    hosted unit).
 20. **Ship lean**: every cdylib is built `--ship` (`opt-level=3`,
     `codegen-units=1`), and a performance number comes from that tier only.
     [NATIVE.md](NATIVE.md) § Optimisation tiers

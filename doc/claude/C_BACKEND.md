@@ -645,6 +645,52 @@ prints `FAIL <name>` and exits 1 when any test failed.  A test annotated `@EXPEC
 only by failing with one of its messages — the annotations are read by the same parser
 `loft --tests` uses (`test_runner::parse_annotations`).
 
+## A library as a hosted unit (`LOFT_LIB_BACKEND=c`)
+
+A `use`d library runs under the interpreter as a **hosted unit**: its functions compiled through
+this writer into a shared library that works on the interpreter's own stores, with no rustc
+(@PLN206; design in `plans/206-one-store-model/p3-p4-design.md` and `p5-design.md`).  A store
+is one `#[repr(C)]` layout on both sides (`Store` begins with `loft_store_t`), so the unit reads
+and writes the records the interpreter holds; a store's birth and death go through the
+interpreter (`HostTable::hosted`), and the unit reads the store table in place
+(`host_abi::TableView`).
+
+- **Built** by `loft build-native <package>` with `LOFT_LIB_BACKEND=c` (it reports `backend: c`,
+  `loft_exe_id`, `host_abi`, `cc`), or by the first run that adopts the library.  It lands in
+  the package's `native-auto/` under a name that carries the loft binary, the library's sources
+  and the build switches; any program run by that loft adopts it, whichever built it.
+- **Generated from the library alone** (`native_artifact::parse_library_alone`, the program
+  `use <name>;`), so the unit is the same text wherever it is built: its sources are named from
+  the package's parent directory (`Cx::source_name`), its constants built with it.  Its types
+  are that program's numbers; where one crosses into a shared store — a store's root type
+  (`known`) and a root record's tag — it is translated by key (`lib_ids`) through
+  `loft_tp_out` / `loft_tp_in`, which the runtime reaches only by `LOFT_KNOWN` /
+  `LOFT_SET_KNOWN` (a raw one is marked `LOFT_RAW_KNOWN`).
+- **An open unit** (`Cx::open`): its exports are called by an interpreter the writer never
+  sees, so it takes no whole-program rewrite that changes a signature (value records), and a
+  text field rewritten keeps the text it replaced until its store dies
+  (`@FR-H-TextReplace` is admitted by facts about every caller).
+- **A `[c] shim` is one image**: the unit links the shim's shared library the parse built
+  (the one the interpreter opened), never a copy from its archive.  A run with no compiler
+  finds a built shim by its sources key (`c_shim::source_key`, the `.src` beside it).
+- **What crosses the bridge** (`hosted::bridge`, one `loft_shared_<name>` per export over
+  `LibArg`): scalars, records (the caller's buffer), texts in.  A text answer, a vector answer,
+  a tuple, an iterator or a function value is not carried: that function interprets, answering
+  the same.  A library the writer declines whole runs interpreted, with a note; `build-native`
+  passes it.  Library CI's **Hosted C** step builds each package's unit and runs its tests
+  adopted with no compiler (`library-ci-reusable.yml`).
+
+| Switch / tool | What it does |
+|---|---|
+| `LOFT_LIB_BACKEND=c` | build and adopt a `use`d library as a hosted unit (the rustc artifact otherwise) |
+| `LOFT_HOSTED_VERIFY=1` | each call into a compiled library artifact also runs interpreted, on a copy of the world taken before it; the stores (bytes, then value, then root type) and the answer must agree.  Reports the unit's reach and the calls compared.  Compares each function's first 64 calls, then its 128th, 256th, …; `=all` compares every call.  A call reaching state outside the stores (a C function, a file, the clock) is made once and counted |
+| `LOFT_HOSTED_VERIFY_CONTROL=1` | the verify's control: the call interpreted on both sides, so a difference is the copy's |
+| `LOFT_HOSTED_PLANT=1` | builds a unit whose first record call writes one stray byte: the verify must name that call |
+| `LOFT_POISON_CLAIM=1` | a unit fills a claim's unwritten bytes as the interpreter does, which the verify compares by |
+| `LOFT_STORE_DUMP=<file>` | every store's bytes as it is freed and at exit, on either runtime (`scripts/store_diff.py`) |
+| `LOFT_C_TRACE_SITES=1` | an emitted unit records every statement's line, so `LOFT_ALLOC_TRACE` names each store by the line that made it |
+| `scripts/hosted_suite.py` | a library's tests interpreted and adopted under the verify; `--prebuilt` with no compiler |
+
 ## Adding a construct
 
 1. Take the top reason of `c_sweep.py`'s refusal ranking.

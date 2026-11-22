@@ -700,7 +700,10 @@ both of them:
 - **A decision that needs both halves** is composed by the driver.  The interpreter adopts
   an artifact (`native_adopt::adopt_shared_cdylib`), the Rust writer builds one
   (`native_lib::build_shared_artifact`), and `native_artifact::cached_or_build_shared_cdylib`
-  puts the two together.  In the same way, `introspect`'s Rust section is a function that
+  puts the two together.  A hosted C unit (`LOFT_LIB_BACKEND=c`, C_BACKEND.md § A library as a
+  hosted unit) is the other build the driver composes: it parses the library alone
+  (`native_artifact::parse_library_alone`) and hands the tables to `c::hosted::build_artifact`.
+  In the same way, `introspect`'s Rust section is a function that
   the driver hands in (`introspect::Options::rust`).
 
 ---

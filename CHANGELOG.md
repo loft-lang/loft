@@ -33,6 +33,17 @@ before the block (`qx = 0.0;` ahead of the `if`) or give the block a value
 
 ### New
 
+**A library can run as compiled C under the interpreter.**  Set `LOFT_LIB_BACKEND=c` and a
+library your program `use`s is compiled through the C backend, with no Rust toolchain, and the
+interpreter calls into it, working on the same data.  `loft build-native <package>` compiles it
+ahead of time; a machine with no C compiler then runs that build, its `[c] shim` included.  A
+function whose answer the compiled code does not carry yet (a text, a vector, a tuple, an
+iterator) keeps running interpreted, with the same result.  `LOFT_HOSTED_VERIFY=1` runs each
+call both ways and stops at the first that differs.
+
+**`store_memory()` reports your program's stores, the same on every backend.**  It no longer
+counts the interpreter's own value stack and constant store.
+
 **Tree code in Rust's shape.**  A `&Tree?` parameter takes a field of a tree as its argument
 and writes that field: `take_min(t.right)` with `slot = &slot.left` to walk down and
 `slot = slot.right` to unlink a node is the helper a Rust programmer writes with
