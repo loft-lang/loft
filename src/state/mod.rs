@@ -8636,6 +8636,20 @@ impl State {
         closure: DbRef,
         args: &[crate::host_abi::LibArg],
     ) -> crate::host_abi::LibArg {
+        self.call_back_into(d_nr, closure, args, &[])
+    }
+
+    /// [`Self::call_back`] with the caller's own hidden return buffers `dests`, one per hidden
+    /// heap result in attribute order, in place of buffers set up for the call: the callee
+    /// answers where an interpreted caller reads it, as a direct call does
+    /// (`LOFT_HOSTED_VERIFY`'s interpreted twin, `@PLN206 P5`).  Empty: as `call_back`.
+    pub(crate) fn call_back_into(
+        &mut self,
+        d_nr: u32,
+        closure: DbRef,
+        args: &[crate::host_abi::LibArg],
+        dests: &[DbRef],
+    ) -> crate::host_abi::LibArg {
         use crate::data::Type;
         let handle = self.data_ptr.clone();
         let data = handle
@@ -8653,6 +8667,15 @@ impl State {
         let fnref_bufs_before = self.fnref_bufs.len();
         let mut heap_bufs: Vec<DbRef> = Vec::new();
         for a in def.attributes() {
+            if a.hidden && !a.work_buffer && !dests.is_empty() {
+                // The caller's own buffer: its to release, not the call's.
+                if heap_bufs.len() < dests.len()
+                    && !crate::native_gate::is_text_work_buffer(&a.typedef)
+                {
+                    heap_bufs.push(dests[heap_bufs.len()]);
+                }
+                continue;
+            }
             if a.hidden
                 && !a.work_buffer
                 && let Some(b) = self.hidden_return_buffer(data, &a.typedef)

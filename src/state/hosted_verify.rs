@@ -133,13 +133,13 @@ impl State {
             return;
         };
         let def = data.def(d_nr);
-        // A tuple argument crosses as several slots: not lined up with the attributes, so the
-        // call is made unverified.
         if reaches_outside(data, d_nr) {
             UNVERIFIED_NATIVE.fetch_add(1, Relaxed);
             unsafe { bridge(&raw mut self.database, args.as_ptr(), args.len(), ret) };
             return;
         }
+        // A tuple argument crosses as several slots: not lined up with the attributes, so the
+        // call is made unverified.
         if def.attributes().len() != popped.len() {
             UNVERIFIED_TUPLE.fetch_add(1, Relaxed);
             unsafe { bridge(&raw mut self.database, args.as_ptr(), args.len(), ret) };
@@ -147,12 +147,26 @@ impl State {
         }
         let mut visible = Vec::new();
         let mut hidden: Vec<u16> = Vec::new();
+        // The caller's hidden return buffers, which the interpreted twin answers into as an
+        // interpreted call does (`State::call_back_into`).
+        let mut dests: Vec<DbRef> = Vec::new();
         for (a, p) in def.attributes().iter().zip(popped) {
             if a.hidden {
                 hidden.push(p.dbref.store_nr);
+                if !a.work_buffer && !crate::native_gate::is_text_work_buffer(&a.typedef) {
+                    dests.push(p.dbref);
+                }
             } else {
                 visible.push(*p);
             }
+        }
+        // Inside an interpreted twin every library call is interpreted too: the twin is what
+        // the interpreter alone answers, so a call it makes is neither compiled nor verified
+        // again (a carried function that calls another, `mesh3d`'s `cube` its `vec3`).
+        if in_twin() {
+            let r = self.twin_call(d_nr, &visible, &dests);
+            unsafe { *ret = r };
+            return;
         }
         let before: Vec<u16> = self
             .database
@@ -187,7 +201,7 @@ impl State {
         // world too, so a difference is the copy's, not the unit's.
         let ret_c = if control() {
             let (fb, fc) = (self.fnref_bufs.len(), self.fnref_calls.len());
-            let r = self.call_back(d_nr, DbRef::NULL, &visible);
+            let r = self.twin_call(d_nr, &visible, &dests);
             self.fnref_bufs.truncate(fb);
             self.fnref_calls.truncate(fc);
             unsafe { *ret = r };
@@ -202,7 +216,7 @@ impl State {
         let (fb, fc) = (self.fnref_bufs.len(), self.fnref_calls.len());
         lend_stacks(&mut self.database, &mut twin);
         std::mem::swap(&mut self.database, &mut *twin);
-        let ret_i = self.call_back(d_nr, DbRef::NULL, &rebased);
+        let ret_i = self.twin_call(d_nr, &rebased, &dests);
         std::mem::swap(&mut self.database, &mut *twin);
         lend_stacks(&mut self.database, &mut twin);
         self.stack_base = super::stack_base_of(&self.database, &self.stack_cur);
@@ -218,8 +232,11 @@ impl State {
                 &compiled.allocations[nr as usize],
             );
             if a.live != b.live {
+                let held = if a.live { a } else { b };
                 diff = Some(format!(
-                    "store {nr} is live only {}",
+                    "store {nr} (type {}, made #{}) is live only {}",
+                    held.known_type,
+                    held.alloc_serial,
                     if a.live { "interpreted" } else { "compiled" }
                 ));
                 break;
@@ -271,6 +288,26 @@ impl State {
         if placed_otherwise {
             PLACED_OTHERWISE.fetch_add(1, Relaxed);
         }
+    }
+}
+
+thread_local! {
+    /// How deep the interpreted twins running on this thread are nested.
+    static TWIN: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+fn in_twin() -> bool {
+    TWIN.with(std::cell::Cell::get) > 0
+}
+
+impl State {
+    /// Function `d_nr` interpreted with `args`, answering into the caller's buffers `dests`
+    /// (`State::call_back_into`), every library call it makes interpreted as well (`in_twin`).
+    fn twin_call(&mut self, d_nr: u32, args: &[LibArg], dests: &[DbRef]) -> LibArg {
+        TWIN.with(|t| t.set(t.get() + 1));
+        let r = self.call_back_into(d_nr, DbRef::NULL, args, dests);
+        TWIN.with(|t| t.set(t.get() - 1));
+        r
     }
 }
 

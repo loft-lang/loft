@@ -54,6 +54,9 @@ fn main() {
   g.rename("gamma");
   g.rename("delta");
   assert(g.name == "delta", "rename {g.name}");
+  // a record built by the library from its own calls: 3 + 4
+  w = twice("w");
+  assert(w.total == 7 && w.name == "w", "twice {w.total} {w.name}");
   // a generator the library answers, driven here: 1 + 2 + 3 + 4 = 10
   u = 0;
   for x in upto(4) { u += x; }

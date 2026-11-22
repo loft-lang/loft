@@ -72,3 +72,12 @@ pub fn label_of(t: text) -> text {
 pub fn rename(self: Bag, n: text) {
   self.name = n;
 }
+
+// A carried function whose answer is built from another carried function's records: its
+// interpreted twin calls `bag_new` interpreted too, answering into the caller's buffer.
+pub fn twice(name: text) -> Bag {
+  b = bag_new(name, 3);
+  c = bag_new(name, 4);
+  b.total = b.total + c.total;
+  b
+}
