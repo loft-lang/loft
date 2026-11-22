@@ -35,6 +35,30 @@ use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 static VERIFIED: AtomicU64 = AtomicU64::new(0);
 static UNVERIFIED_TUPLE: AtomicU64 = AtomicU64::new(0);
 static UNVERIFIED_FILE: AtomicU64 = AtomicU64::new(0);
+static UNVERIFIED_NATIVE: AtomicU64 = AtomicU64::new(0);
+
+/// Does a call to `d` reach code outside loft — a `#c` binding or a library's native — whose
+/// state no copy of the stores holds (a generator, a handle counter, a device)?  Run twice,
+/// such a call answers differently by itself, so it is made once and counted, not compared.
+fn reaches_outside(data: &crate::data::Data, d: u32) -> bool {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    static SEEN: std::sync::OnceLock<Mutex<HashMap<u32, bool>>> = std::sync::OnceLock::new();
+    let seen = SEEN.get_or_init(|| Mutex::new(HashMap::new()));
+    if let Some(&known) = seen.lock().ok().and_then(|m| m.get(&d).copied()).as_ref() {
+        return known;
+    }
+    let outside = crate::opt::names::reachable_functions(data, &[d])
+        .into_iter()
+        .map(|f| data.def(f))
+        .any(|f| {
+            f.is_c_binding() || (!f.native().is_empty() && f.source != crate::data::STD_SOURCE)
+        });
+    if let Ok(mut m) = seen.lock() {
+        m.insert(d, outside);
+    }
+    outside
+}
 
 /// The calls this run compared, as one line on stderr, and the counts reset: under the switch
 /// at the end of each run, nothing without it.
@@ -42,12 +66,16 @@ pub(crate) fn report() {
     if !enabled() {
         return;
     }
-    let (v, t, f) = (
+    let (v, t, f, n) = (
         VERIFIED.swap(0, Relaxed),
         UNVERIFIED_TUPLE.swap(0, Relaxed),
         UNVERIFIED_FILE.swap(0, Relaxed),
+        UNVERIFIED_NATIVE.swap(0, Relaxed),
     );
     let mut why = Vec::new();
+    if n > 0 {
+        why.push(format!("{n} reaching a C function's own state"));
+    }
     if t > 0 {
         why.push(format!("{t} with a tuple argument"));
     }
@@ -88,6 +116,11 @@ impl State {
         let def = data.def(d_nr);
         // A tuple argument crosses as several slots: not lined up with the attributes, so the
         // call is made unverified.
+        if reaches_outside(data, d_nr) {
+            UNVERIFIED_NATIVE.fetch_add(1, Relaxed);
+            unsafe { bridge(&raw mut self.database, args.as_ptr(), args.len(), ret) };
+            return;
+        }
         if def.attributes().len() != popped.len() {
             UNVERIFIED_TUPLE.fetch_add(1, Relaxed);
             unsafe { bridge(&raw mut self.database, args.as_ptr(), args.len(), ret) };
@@ -234,12 +267,19 @@ impl State {
                     _ => None,
                 }
             }
-            _ => (interp.scalar != comp.scalar).then(|| {
-                format!(
-                    "the answer's bits are {:#x} interpreted, {:#x} compiled",
-                    interp.scalar, comp.scalar
-                )
-            }),
+            t => {
+                // A value crosses in its own width: a boolean or a plain enum is its byte, a
+                // character or a single its 32 bits; the slot's bits above are not the answer.
+                let mask: u64 = match t {
+                    Type::Boolean | Type::Enum(_, false, _) => 0xFF,
+                    Type::Character | Type::Single => 0xFFFF_FFFF,
+                    _ => u64::MAX,
+                };
+                let (x, y) = (interp.scalar as u64 & mask, comp.scalar as u64 & mask);
+                (x != y).then(|| {
+                    format!("the answer's bits are {x:#x} interpreted, {y:#x} compiled")
+                })
+            }
         }
     }
 }

@@ -273,6 +273,11 @@ pub(crate) fn exports(
     Ok(out)
 }
 
+/// What a hosted build's error starts with when the C writer declined the library — a shape
+/// it does not carry yet, like a function its bridge declines — rather than failed to build
+/// one: the library then interprets, which answers the same, only slower.
+pub const REFUSED: &str = "the C writer does not carry this library: ";
+
 /// `@PLN206 P5` — the key of each of the unit's type numbers (`lib_ids::TypeNames::key`), and
 /// `loft_map_types`, which asks the interpreter for its number of each at `loft_shared_init` and
 /// fills the two maps a store's root type crosses by (`loft_tp_out`, `loft_tp_in`).  A key the
@@ -325,21 +330,29 @@ static void loft_map_types(const unsigned char *loft_t, const void *loft_ids) {
 /// # Errors
 /// When the unit refuses a function, or the C compiler fails.
 pub fn build_artifact(
-    data: &Data,
-    stores: &Stores,
-    export: &HashSet<u32>,
+    pkg_dir: &str,
+    default_dir: &str,
+    lib_dirs: &[String],
     out_dir: &std::path::Path,
     stem: &str,
     fp: u64,
 ) -> Result<std::path::PathBuf, String> {
     use crate::file_access as fa;
+    // `@PLN206 P5` — the unit is the library's: generated from the library alone, so every
+    // program that adopts it adopts the same code, whichever built it first.  Its constants
+    // are built here, as a program's compile builds its own.
+    let mut alone = crate::native_artifact::parse_library_alone(pkg_dir, default_dir, lib_dirs)?;
+    let p = &mut alone.parser;
+    crate::const_literal::build_const_vectors(&mut p.database, &mut p.data, None);
+    let (data, stores) = (&p.data, &p.database);
+    let export = hosted_exports(data, stores, &alone.export);
     let mut carried: Vec<u32> = export.iter().copied().collect();
     carried.sort_unstable();
     if carried.is_empty() {
-        return Err("no function of the library crosses the C bridge".into());
+        return Err(format!("{REFUSED}no function of the library crosses the C bridge"));
     }
-    let unit =
-        super::emit_hosted_unit(data, stores, &carried, export, fp).map_err(|r| r.message())?;
+    let unit = super::emit_hosted_unit(data, stores, &carried, &export, fp)
+        .map_err(|r| format!("{REFUSED}{}", r.message()))?;
     fa::create_dir_all(out_dir).map_err(|e| format!("create {}: {e}", out_dir.display()))?;
     let c = out_dir.join(format!("{stem}.c"));
     fa::write(&c, &unit).map_err(|e| format!("write {}: {e}", c.display()))?;

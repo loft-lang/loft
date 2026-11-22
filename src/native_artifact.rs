@@ -47,6 +47,7 @@ pub fn cached_or_build_shared_cdylib(
     export_set: &HashSet<u32>,
     pkg_dir: &str,
     pending: &[String],
+    context: &LibraryContext,
 ) -> Result<Option<std::path::PathBuf>, String> {
     match crate::interp::native_adopt::adopt_shared_cdylib(
         data, stores, export_set, pkg_dir, pending,
@@ -56,9 +57,9 @@ pub fn cached_or_build_shared_cdylib(
         // `@PLN206 P4` — a hosted C unit, which works on this interpreter's stores, instead of
         // a rustc artifact (`LOFT_LIB_BACKEND=c`).
         Adopt::Build(key) if crate::c::hosted::selected() => crate::c::hosted::build_artifact(
-            data,
-            stores,
-            export_set,
+            pkg_dir,
+            &context.default_dir,
+            &context.lib_dirs,
             &key.out_dir,
             &key.stem,
             key.fp,
@@ -75,4 +76,88 @@ pub fn cached_or_build_shared_cdylib(
         )
         .map(Some),
     }
+}
+
+/// Where a library's own build finds what it is parsed with: the standard library's directory
+/// (or none, for the one this binary embeds) and the `use` search path of the run.
+#[derive(Default)]
+pub struct LibraryContext {
+    pub default_dir: String,
+    pub lib_dirs: Vec<String>,
+}
+
+/// A library parsed alone: the program `use <name>;` over the standard library, the way every
+/// program that uses the library sees its definitions.  What a library's own artifact is built
+/// from (`loft build-native`, a hosted C unit — `@PLN206 P5`), so the artifact is the library's
+/// and not the program's that happened to build it first.
+pub struct LibraryAlone {
+    pub parser: crate::parser::Parser,
+    /// The package directory, canonical: what `native_lib::library_export_set` filters by.
+    pub pkg_dir: String,
+    /// The library's public functions an artifact carries.
+    pub export: HashSet<u32>,
+    /// The libraries compiled with it (its dependencies), as a program's run lists them.
+    pub pending: Vec<String>,
+}
+
+/// Parse the library at `pkg_dir` alone, its dependencies resolved through `lib_dirs` and the
+/// package's own parent directory (before the registry), over the standard library at
+/// `default_dir` (or the one this binary embeds), with the slot and scope analysis a writer
+/// reads.
+///
+/// # Errors
+/// The package has no `[package] name`, the standard library does not load, or the library
+/// does not parse.
+pub fn parse_library_alone(
+    pkg_dir: &str,
+    default_dir: &str,
+    lib_dirs: &[String],
+) -> Result<LibraryAlone, String> {
+    let pkg_path = crate::file_access::plain_canonical(std::path::Path::new(pkg_dir));
+    let pkg_dir = pkg_path.to_string_lossy().to_string();
+    let name = crate::manifest::read_manifest(&pkg_path.join("loft.toml").to_string_lossy())
+        .and_then(|m| m.name)
+        .ok_or_else(|| format!("{pkg_dir} is not a loft package (no [package] name)"))?;
+    let mut p = crate::parser::Parser::new();
+    // The package's own parent first: `use <name>` must find THIS checkout before a
+    // same-named registry package, or `library_export_set` (by `pkg_dir` prefix) sees none.
+    if let Some(parent) = pkg_path.parent() {
+        p.lib_dirs.push(parent.to_string_lossy().to_string());
+    }
+    for d in lib_dirs {
+        if !p.lib_dirs.contains(d) {
+            p.lib_dirs.push(d.clone());
+        }
+    }
+    p.parse_stdlib(default_dir)
+        .map_err(|e| format!("the standard library: {e}"))?;
+    let tmp = std::env::temp_dir().join(format!(
+        "loft_library_alone_{}_{}.loft",
+        std::process::id(),
+        name
+    ));
+    crate::file_access::write(&tmp, format!("use {name};\n"))
+        .map_err(|e| format!("write {}: {e}", tmp.display()))?;
+    p.parse(&tmp.to_string_lossy(), false);
+    let _ = crate::file_access::remove_file(&tmp);
+    if p.diagnostics.level() >= crate::diagnostics::Level::Error {
+        return Err(format!("`{name}` does not parse alone"));
+    }
+    // The slot and scope analysis the writers depend on, as the run path does before its build.
+    crate::scopes::check(&mut p.data, &mut p.database);
+    let export = crate::native_lib::library_export_set(&p.data, &pkg_dir);
+    let mut pending = std::mem::take(&mut p.pending_native_compile);
+    if !pending.iter().any(|d| d == &pkg_dir) {
+        pending.push(pkg_dir.clone());
+    }
+    // The natives it calls resolved to their implementations, as the run path does
+    // (`extensions::preload_native_libs`).
+    let hand_written = p.pending_native_libs.clone();
+    crate::interp::extensions::preload_native_libs(&mut p.data, &hand_written);
+    Ok(LibraryAlone {
+        parser: p,
+        pkg_dir,
+        export,
+        pending,
+    })
 }

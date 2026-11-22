@@ -2125,7 +2125,7 @@ fn emit_unit_with(
     );
     out.push_str(RUNTIME);
     out.push_str(RUNTIME_END);
-    out.push_str(&c_libraries(data, &cx.ffi_libs.borrow()));
+    out.push_str(&c_libraries(data, &cx.ffi_libs.borrow(), cx.open));
     out.push_str(&cx.tr_typedefs()); // runtime types alone; a tuple may point at one
     out.push_str(&cx.typedefs());
     out.push_str(&cx.tr_protos());
@@ -2306,7 +2306,11 @@ fn lazy_driver_table(
     clippy::too_many_lines,
     reason = "one pass over the declared libraries: the header, the shim's three forms, the link lines"
 )]
-fn c_libraries(data: &Data, ffi_libs: &std::collections::BTreeSet<(String, String)>) -> String {
+fn c_libraries(
+    data: &Data,
+    ffi_libs: &std::collections::BTreeSet<(String, String)>,
+    hosted: bool,
+) -> String {
     let mut out = String::new();
     // A required library is linked: the file the package ships, else its soname in the system
     // linker's spelling.  An optional one (`[c] optional-libs`) never is — it is
@@ -2491,6 +2495,26 @@ fn c_libraries(data: &Data, ffi_libs: &std::collections::BTreeSet<(String, Strin
                 "/* `#c` library {} (package {}) */",
                 lib.name, lib.pkg_dir
             );
+        } else if let Some(so) = hosted
+            .then(|| std::path::Path::new(&lib.pkg_dir).join(&lib.name))
+            .filter(|so| !cfg!(windows) && crate::file_access::exists(so))
+        {
+            // `@PLN206 P5` — a hosted unit runs in the interpreter's process, which has the
+            // shim's shared library loaded already (`name`, the library `c_shim::build` made
+            // for the parse): linked by its own name, the unit reaches
+            // that one image, so a shim's state (a generator, a table, a handle counter) is
+            // one in the process.  A copy linked in from the archive would be a second.
+            let _ = writeln!(
+                out,
+                "/* `[c] shim` of package {}, the interpreter's shared image */",
+                lib.pkg_dir
+            );
+            for a in crate::platform::c_link_shared_args(&so)
+                .into_iter()
+                .chain(crate::platform::c_rpath_arg(so.parent()))
+            {
+                let _ = writeln!(out, "/* link: {a} */");
+            }
         } else if let Ok(archive) = crate::c_shim::cc_archive(&lib.pkg_dir, &lib.shim) {
             // Archived for the compiler that links this unit (`c_shim::cc_archive`), whatever
             // the host's static-link archiver for rustc is.  The sources are named

@@ -9454,53 +9454,41 @@ fn main() {
                     // cdylib (`loft_auto_<dir>`, exporting `loft_shared_<fn>`
                     // wrappers) FROM the loft source — so a pure-loft compute
                     // library also ships a toolchain-free prebuilt.
-                    let mut p = parser::Parser::new();
-                    // Resolve the library FROM the handed package path (a fresh
-                    // checkout, not necessarily registry-installed): its parent dir
-                    // lets `use <name>` resolve `<parent>/<name>` (and sibling deps)
-                    // BEFORE the registry fallback.  Without it `use <name>` finds a
-                    // same-named registry package and `library_export_set` (filtering
-                    // by `pkg_str` prefix) sees none of its defs.
-                    if let Some(parent) = pkg_path.parent() {
-                        p.lib_dirs.push(parent.to_string_lossy().to_string());
-                    }
                     let default_dir = file_access::PathText::host(&project_dir())
                         .join("default")
                         .native();
-                    let _ = p.parse_dir(&default_dir, true, false);
-                    let tmp = std::env::temp_dir()
-                        .join(format!("loft_build_native_{}.loft", std::process::id()));
-                    let _ = fa::write(&tmp, format!("use {name};\n"));
-                    p.parse(&tmp.to_string_lossy(), false);
-                    let _ = fa::remove_file(&tmp);
-                    // Slot/scope analysis the cdylib codegen depends on — the run
-                    // path runs this before its auto-native build (main.rs), and
-                    // without it codegen emits undeclared locals (e.g. `var_me`).
-                    scopes::check(&mut p.data, &mut p.database);
-                    let export = loft::native_lib::library_export_set(&p.data, &pkg_str);
+                    let context = loft::native_artifact::LibraryContext {
+                        default_dir: default_dir.clone(),
+                        lib_dirs: Vec::new(),
+                    };
+                    let alone = match loft::native_artifact::parse_library_alone(
+                        &pkg_str,
+                        &default_dir,
+                        &context.lib_dirs,
+                    ) {
+                        Ok(a) => a,
+                        Err(e) => {
+                            eprintln!("loft build-native: {e}");
+                            std::process::exit(1);
+                        }
+                    };
+                    let p = &alone.parser;
+                    let export = alone.export.clone();
+                    let pending = alone.pending.clone();
+                    let pkg_str = alone.pkg_dir.clone();
                     if export.is_empty() {
                         eprintln!(
                             "loft build-native: `{name}` has no native-compilable public functions"
                         );
                         std::process::exit(1);
                     }
-                    // @PLN199 G2b — the libraries a program that `use`s this one compiles
-                    // with it (its dependencies), so the artifact takes the name that
-                    // program's run computes for it.
-                    let mut pending = std::mem::take(&mut p.pending_native_compile);
-                    if !pending.iter().any(|d| d == &pkg_str) {
-                        pending.push(pkg_str.clone());
-                    }
-                    // The natives it calls resolved to their implementations first, as the
-                    // run path does (`extensions::preload_native_libs`).
-                    let hand_written = p.pending_native_libs.clone();
-                    loft::interp::extensions::preload_native_libs(&mut p.data, &hand_written);
                     match loft::native_artifact::cached_or_build_shared_cdylib(
                         &p.data,
                         &p.database,
                         &export,
                         &pkg_str,
                         &pending,
+                        &context,
                     ) {
                         Ok(Some(so)) => {
                             // This cdylib `extern crate loft`s — it statically embeds
@@ -10616,6 +10604,12 @@ fn main() {
         if export.is_empty() {
             continue;
         }
+        // `@PLN206 P5` — what a library's own build is parsed with (a hosted unit is generated
+        // from the library alone).
+        let lib_context = loft::native_artifact::LibraryContext {
+            default_dir: default_str.clone(),
+            lib_dirs: p.lib_dirs.clone(),
+        };
         let mut built = if force_build_fail {
             Err("LOFT_FORCE_NATIVE_BUILD_FAIL".to_string())
         } else {
@@ -10625,6 +10619,7 @@ fn main() {
                 &export,
                 pkg_dir,
                 &pending_native,
+                &lib_context,
             )
         };
         if let Err(e) = &built
@@ -10643,6 +10638,7 @@ fn main() {
                     &export,
                     pkg_dir,
                     &pending_native,
+                    &lib_context,
                 );
             }
         }
@@ -10736,6 +10732,19 @@ fn main() {
                 // runtime) while the caller asked for native.  So hard-fail when a
                 // toolchain is present (and always under LOFT_REQUIRE_NATIVE); fall back
                 // only when there is genuinely no toolchain to build with.
+                // `@PLN206 P5` — a hosted C unit the writer declined: the library interprets,
+                // as each function the bridge declines does (only `LOFT_REQUIRE_NATIVE` asks
+                // otherwise).  A unit `cc` refused is a writer defect, and fails below.
+                if !native_required
+                    && loft::c::hosted::selected()
+                    && e.starts_with(loft::c::hosted::REFUSED)
+                {
+                    eprintln!(
+                        "loft: library '{pkg_dir}' runs interpreted this run — {e}.  Results \
+                         are unchanged, only slower."
+                    );
+                    continue;
+                }
                 if native_required || loft::native_lib::rustc_available() {
                     let why = if native_required {
                         "LOFT_REQUIRE_NATIVE is set"
