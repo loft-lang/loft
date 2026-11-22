@@ -1083,7 +1083,11 @@ pub fn variant_arm(e: el::El, vars: el_vars::Vars, pats: vector<integer>, sd: in
               if mv < 0 {
                 mv = el_vars::create_unique(vars, "mv_{bname}", ft);
                 el_vars::set_defined(vars, mv);
-                el_vars::set_skip_free(vars, mv, "bind_match_field_capture");
+                // (`bind_match_field_capture`: a text payload is its capture's own — Rust records
+                // it as a text payload view — and any other capture views the subject's record.)
+                if !(el_types::base(ft) is TyText) {
+                  el_vars::set_skip_free(vars, mv, "bind_match_field_capture");
+                }
                 r.aliases += [el_vars::VarName { name: bname, nr: el_vars::var(vars, bname) }];
                 el_vars::set_name(vars, bname, mv);
               }

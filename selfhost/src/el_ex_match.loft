@@ -3078,8 +3078,15 @@ pub fn stream_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>
   el_vars::set_defined(vars, done);
   xv = el_vars::create_unique(vars, "stream_x", elem);
   el_vars::set_defined(vars, xv);
+  // (`collect_iterator_subject`: a record or vector yield names the coroutine's own frame record,
+  // deep-copied into the buffer — `x` owns nothing; a text yield is the caller's to free.  The
+  // element is the slot in the buffer.)
+  if match el_types::base(elem) { TyReference { n: _, dep: _ } => true, TyEnum { n: _, is_ref, dep: _ } => is_ref, TyVector { inner: _ } => true, _ => false } {
+    el_vars::set_skip_free(vars, xv, "collect_iterator_subject");
+  }
   elm = el_vars::create_unique(vars, "stream_elm", ir::TyReference { n: el_ex_base::type_def_nr(e, elem), dep: [] });
   el_vars::set_defined(vars, elm);
+  el_vars::set_skip_free(vars, elm, "collect_iterator_subject");
   cnt = el_vars::create_unique(vars, "stream_n", int_t);
   el_vars::set_defined(vars, cnt);
   setup: vector<ir::Node> = [];
@@ -3804,8 +3811,14 @@ pub fn cursor_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm
         el_vars::depend(vars, xs, db);
         rx = el_vars::create_unique(vars, "rule_x", rt);
         el_vars::set_defined(vars, rx);
+        // (`subrule_run`: a record or vector result hands its store over to `xs` — the copy frees
+        // it — so its own scope end releases nothing; the element is the slot in `xs`.)
+        if match el_types::base(rt) { TyReference { n: _, dep: _ } => true, TyEnum { n: _, is_ref, dep: _ } => is_ref, TyVector { inner: _ } => true, _ => false } {
+          el_vars::set_skip_free(vars, rx, "subrule_run");
+        }
         relm = el_vars::create_unique(vars, "rule_elm", ir::TyReference { n: el_ex_base::type_def_nr(e, rt), dep: [] });
         el_vars::set_defined(vars, relm);
+        el_vars::set_skip_free(vars, relm, "subrule_run");
         pre += [
           el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: vr.main_known }]),
           el_ir::v_set(xs, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: vr.vec_known }])),
