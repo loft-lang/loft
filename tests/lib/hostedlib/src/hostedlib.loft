@@ -57,3 +57,11 @@ pub fn upto(n: integer) -> iterator<integer> {
     yield i;
   }
 }
+
+// A constant table, read by a function that interprets (its text result does not cross the
+// bridge): a view the interpreter holds into a constant's store must outlive a verified call.
+WIDTHS = [5, 3, 4, 2];
+
+pub fn label_of(t: text) -> text {
+  "{t}:{WIDTHS[len(t) % 4]}"
+}

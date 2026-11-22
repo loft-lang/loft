@@ -105,6 +105,9 @@ fn a_hosted_c_library_works_on_the_interpreters_stores() {
 /// @falsified-at: none — the receipt is the plant itself: without the verify the planted byte
 ///   surfaces three statements later as a wrong total; with it, at `fill`.
 ///   CHANNEL: the exit status and the message.  WITNESS: "`fill` leaves another world".
+///   And a SABOTAGE (2026-11-22): with the verify going on in the compiled COPY of the world
+///   (`hosted_verify.rs` before the twin ran on the copy), the caller's loop text points into
+///   a buffer the swap freed.  WITNESS: the "nested views" assertion of `hostedlib_main.loft`.
 #[test]
 fn the_hosted_verify_passes_a_sound_unit_and_names_a_planted_write() {
     if !have_cc() {
