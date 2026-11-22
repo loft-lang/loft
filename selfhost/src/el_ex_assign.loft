@@ -2991,13 +2991,15 @@ pub fn vec_copy_bind(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> Ex {
     el::refuse(e, "a whole-vector copy bind of this element type: {type_kind(elm)}");
     return ex(ir::NdNull, ir::TyVoid);
   }
-  el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [v] });
+  cel = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [v] });
   rows = vector_rows(e, elm, 0, true);
   if rows == null {
     return ex(ir::NdNull, ir::TyVoid);
   }
   r = rows!;
   db = el_vars::work_vec_db(vars, ir::TyReference { n: r.main_def, dep: [] });
+  // (`insert_new`: the element and the local both borrow the store minted for the copy.)
+  el_vars::depend(vars, cel, db);
   el_vars::depend(vars, v, db);
   ex(ir::NdInsert { items: [
     el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: r.main_known }]),
@@ -4368,6 +4370,11 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
   // replace alike).
   if op == "=" && v >= 0 && !(el_ir::unspan(x.code) == ir::NdVar { n: v }) && (el_types::base(x.tp) is TyText || el_types::is_collection(el_types::base(x.tp))) && copied_place(e, x.code) {
     vars.vars[v].copy_bound = true;
+  }
+  // loft#1540 — a whole-variable bind that VIEWS a value-const value makes the variable
+  // read-only too (`mark_const_view`; a bare variable copies, so it is no view).
+  if op == "=" && v >= 0 {
+    el_ex_base::mark_const_view(e, vars, v, x.code, false);
   }
   if op == "=" {
     ux = unbox_tuple_element(e, vars, x);
