@@ -222,6 +222,26 @@ pub fn slice(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
   ex(code, ir::TyText { dep: el_types::deps(x.tp) })
 }
 
+// How a sliced subject that is no local is named (`parse_in_range_body`): 1 for a projection of
+// a call's answer kept in its inline container (the name borrows it), 2 for a call that is no
+// operator and whose answer borrows nothing (`fresh`: the name owns it), 0 for neither.
+fn sliced_subject(e: el::El, x: Ex) -> integer {
+  match el_ir::unspan(x.code) {
+    NdCall { def_nr, args } => {
+      nm = el::def(e, def_nr).name;
+      // (On the first pass the call's answer has no inline container yet: the call itself.)
+      if nm == "OpGetField" && len(args) > 0 && match el_ir::unspan(args[0]!) { NdBlock { block } => block[0].name == "inline_container", NdCall { def_nr: ad } => !starts_with(el::def(e, ad).name, "Op"), _ => false } {
+        return 1;
+      }
+      if !starts_with(nm, "Op") && len(el_types::deps(x.tp)) == 0 && !(el_types::base(x.tp) is TyText) {
+        return 2;
+      }
+      0
+    },
+    _ => 0
+  }
+}
+
 // `parse_in_range_body` for a slice of a vector local with plain scalar elements, read where an
 // assignment binds it: the range's preamble — the length, the two bounds as written and then
 // clamped (`slice_clamp_bound`), the walk's `_next_N` and `_index_N` — carried as an `NdIter`
@@ -240,13 +260,45 @@ pub fn vector_slice(e: el::El, vars: el_vars::Vars, x: Ex, lo: vector<integer>, 
   // subject wherever a local would be: `__ref_N = null; __ref_N = {#inline_container …}`.
   held = -1;
   held_at: vector<ir::Node> = [];
-  if sv < 0 && !place && !(x.tp is TyOptional) && (is_scalar(elem) || plain_record || elem is TyText) && (el_ex_assign::minting_call(e, x.code) || el_ex_call::fresh_native_call(e, x.code)) {
+  if sv < 0 && !place && !(x.tp is TyOptional) && (is_scalar(elem) || plain_record || elem is TyText) && el_ex_assign::minting_call(e, x.code) {
     cw = el_vars::work_ref_p2(vars, x.tp);
     el_vars::mark_inline(vars, cw);
     held = el_vars::work_ref(vars, el_types::without_deps(x.tp));
     el_vars::mark_inline(vars, held);
     // (Its `= null` is declared where the statement's other inline work refs are.)
     held_at = [el_ir::v_set(held, el_ir::v_block([el_ir::v_set(cw, x.code), ir::NdVar { n: cw }], el_types::with_deps(x.tp, [cw]), "inline_container"))];
+    sv = held;
+  } else if sv < 0 && !place && !(x.tp is TyOptional) && (is_scalar(elem) || plain_record || elem is TyText) && sliced_subject(e, x) != 0 {
+    // `parse_in_range_body`'s naming (loft#1521): a subject that is no repeatable place is
+    // named once.  A projection of a call's answer (`held(c, h).v[1..3]`) is a VIEW of the store
+    // the call's inline container keeps — the name borrows (skip-free, inline); any other call
+    // whose answer borrows nothing (`j.keys()`) hands back a fresh store the name owns.
+    named = x.code;
+    // (A projection of a loft call's answer reads it out of the inline container that holds
+    // the answer, `__ref_p2_N = call(…)`, as a call bound in place does.)
+    match el_ir::unspan(x.code) {
+      NdCall { def_nr: pd, args: pa } => {
+        match el_ir::unspan(pa[0] ?? ir::NdNull) {
+          NdCall { def_nr: cd } => {
+            if sliced_subject(e, x) == 1 && el_ex_assign::minting_call(e, pa[0]!) {
+              rt = el::def(e, cd).returned[0] ?? ir::TyVoid;
+              cw = el_vars::work_ref_p2(vars, el_types::without_deps(rt));
+              el_vars::mark_inline(vars, cw);
+              box = el_ir::v_block([el_ir::v_set(cw, pa[0]!), ir::NdVar { n: cw }], el_types::with_deps(rt, [cw]), "inline_container");
+              named = ir::NdCall { def_nr: pd, args: [for a in pa { if a#index == 0 { box } else { a } }] };
+            }
+          },
+          _ => {}
+        }
+      },
+      _ => {}
+    }
+    held = el_vars::work_ref(vars, el_types::without_deps(x.tp));
+    if sliced_subject(e, x) == 1 {
+      el_vars::mark_inline(vars, held);
+      vars.vars[held].skip_free = true;
+    }
+    held_at = [el_ir::v_set(held, named)];
     sv = held;
   }
   // (A FIELD of records is the same loop, the field read written out again as the subject.)
@@ -565,7 +617,18 @@ pub fn slice_copy(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> ir::Node
       },
       _ => {}
     }
-    viewed = el_types::with_deps(elem, [root]);
+    // (A root named straight from a call whose answer borrows nothing owns that fresh store
+    // (`__ref_N = j.keys()`): its elements are plain, as Rust's `_slice_elm_N: text`.)
+    fresh_root = false;
+    match init {
+      NdInsert { items: fr_items } => {
+        for fr in fr_items {
+          match fr { NdSet { var: frv, inner: fri } => { if frv == root && match el_ir::unspan(fri) { NdCall { def_nr: frd } => !starts_with(el::def(e, frd).name, "Op"), _ => false } { fresh_root = true; } }, _ => {} }
+        }
+      },
+      _ => {}
+    }
+    viewed = if fresh_root { el_types::without_deps(elem) } else { el_types::with_deps(elem, [root]) };
     el_vars::set_var_type(vars, se, viewed);
     el_vars::set_defined(vars, se);
     // (A DECLARED local keeps the element its declaration names: `s: vector<text> = big[0..2]`.)
