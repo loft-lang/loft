@@ -1390,6 +1390,8 @@ pub fn vector_field_bind(e: el::El, vars: el_vars::Vars, place: ir::Node, pt: ir
                 // `place_buffer_of`: the field is emptied, the call's buffer pointed at it (nulled
                 // just before the statement, `mark_inline_ref`), and the call fills it in place.
                 el_vars::mark_inline(vars, bv);
+                // (The buffer names the field, which the record owns: never freed itself.)
+                vars.vars[bv].skip_free = true;
                 return ex(ir::NdInsert { items: [clear, el_ir::v_set(bv, place), x.code] }, ir::TyVoid);
               }
             }
@@ -4843,8 +4845,10 @@ pub fn field_vector_copy(e: el::El, vars: el_vars::Vars, r: ir::Node, d: integer
           vk0 = fr0[0]!;
         }
         if vk0 >= 0 {
-          // Nulled just before the statement that fills it (`mark_inline_ref`), not at the top.
+          // Nulled just before the statement that fills it (`mark_inline_ref`), not at the top;
+          // it names the field, which the record owns, so it is never freed itself.
           el_vars::mark_inline(vars, w);
+          vars.vars[w].skip_free = true;
           fp = el_ir::cl(e, "OpGetField", [r, ir::NdInt { n: field_position(e, d, fname) }, ir::NdInt { n: vk0 }]);
           return [el_ir::v_set(w, fp), x.code];
         }

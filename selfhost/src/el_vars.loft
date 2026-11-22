@@ -1266,6 +1266,12 @@ pub fn stored(v: Vars) -> ir::Function {
   for p in v.rebind_params {
     f.variables[p].rebind_orig = v.rebind_origs[p#index] ?? 65535;
   }
+  // `Variable::captured`: a local a closure built in this body captures (`set_captured`).
+  for c in v.captured {
+    if c >= 0 && c < len(f.variables) {
+      f.variables[c].captured = true;
+    }
+  }
   for n in v.names {
     f.names += [ir::NameNr { name: n.name, nr: n.nr }];
   }
