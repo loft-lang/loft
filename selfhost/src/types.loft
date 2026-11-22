@@ -27,13 +27,15 @@ T_DBREF = 11;
 
 // One field of a struct's row: its byte offset, its type, whether it is a view member of a
 // linked group (0 no, 1 a view, 2 a view over nullable elements), whether it is hidden (a
-// `#` name), and its group (the owner's index plus one, 0 outside a group).
+// `#` name), its group (the owner's index plus one, 0 outside a group), and a stored
+// reference's target type (`Field::target`, 65535 for any other field).
 pub struct FieldRow {
   pub pos: integer,
   pub tp: integer,
   pub view: integer,
   pub hidden: integer,
   pub group: integer,
+  pub target: integer,
 }
 
 // One key part of a keyed collection: the key field's type, its byte position and, for a
@@ -470,6 +472,7 @@ fn field_rows(ts: vector<ir::DbType>, fields: vector<ir::DbField>) -> vector<Fie
       view: view,
       hidden: if f.name.starts_with("#") { 1 } else { 0 },
       group: group,
+      target: f.target,
     }];
   }
   out
@@ -547,7 +550,7 @@ pub fn row(ts: vector<ir::DbType>, tp: integer) -> Row {
 pub fn render(r: Row) -> text {
   out = "{r.tp} {r.kind} {r.size} {r.elem} {r.n} {if r.owns_heap { 1 } else { 0 }} {if r.linked { 1 } else { 0 }}";
   for f in r.fields {
-    out += " {f.pos},{f.tp},{f.view},{f.hidden},{f.group}";
+    out += " {f.pos},{f.tp},{f.view},{f.hidden},{f.group},{f.target}";
   }
   if len(r.variants) > 0 {
     out += " variants=";

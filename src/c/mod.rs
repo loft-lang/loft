@@ -57,6 +57,7 @@ const RUNTIME: &str = concat!(
     include_str!("loft_radix_walk.h"),
     include_str!("loft_paged_load.h"),
     include_str!("loft_keyed.h"),
+    include_str!("loft_par_move.h"),
     include_str!("loft_json.h"),
     include_str!("loft_parse.h"),
     include_str!("loft_upgrade.h"),

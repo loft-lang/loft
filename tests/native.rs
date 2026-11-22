@@ -70,6 +70,11 @@ const SCRIPTS_NATIVE_SKIP: &[&str] = &[
     // entry ends when the generator answers a missing library per FUNCTION, so the file's
     // other functions compile and only the stub fails as `@EXPECT_FAIL` says.
     "75-native-stub.loft",
+    // The rustc writer (`--native-rust`, retiring under @PLN225) answers a threaded `par`
+    // worker's record that holds a `reference<T>` with the reference reading null (c1: `l1:null`),
+    // measured on a build that predates STORE_MODEL D46's work too.  The interpreter and the C
+    // backend carry the file (`tests/c_alloc_order.rs`).  The entry ends with the writer.
+    "a-par-workers-record-results-reach-the-caller-with-their-stores.loft",
 ];
 
 /// The `libloft.rlib` this test binary links and its dependency dirs, for a standalone

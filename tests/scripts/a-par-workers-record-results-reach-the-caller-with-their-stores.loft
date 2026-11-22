@@ -9,7 +9,8 @@
 //
 // @falsified-at: 8ae4c334c^ — before the C took the stores, the copy carried a reference over as
 //   it stood, naming a slot of the worker's freed table: c1 exits 1 with no message on the C.
-//   CHANNEL: the exit status and the assertions.
+//   CHANNEL: the exit status and the assertions.  WITNESS: `--native` exit 1, no output.
+//   HOLDS: every cell on `--interpret`; c4 and c5 (no stored reference) on the C before the fix.
 
 struct Doc { name: text, n: integer }
 struct Linked { label: text, other: reference<Doc> }

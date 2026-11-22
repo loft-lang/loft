@@ -72,8 +72,9 @@ pub fn describe_type(x: Cx, tp: integer) {
   }
   x.tables.described[tp] = true;
   match x.b.types[tp]!.parts[0]! {
-    PtStruct { fields } => { for f in fields { describe_type(x, f.content); } },
-    PtEnumValue { value: _, fields } => { for f in fields { describe_type(x, f.content); } },
+    // A stored reference's target too, which a walk that follows it reads (`loft_par_move_rows`).
+    PtStruct { fields } => { for f in fields { describe_field(x, f); } },
+    PtEnumValue { value: _, fields } => { for f in fields { describe_field(x, f); } },
     PtVector { content } => describe_type(x, content),
     PtArray { content } => describe_type(x, content),
     PtChildRec { content } => describe_type(x, content),
@@ -83,6 +84,14 @@ pub fn describe_type(x: Cx, tp: integer) {
     PtIndex { content, keys: _ } => describe_type(x, content),
     PtEnum { values } => { for v in values { if v.nr != 65535 { describe_type(x, v.nr); } } },
     _ => {},
+  }
+}
+
+// A struct field's types for `describe_type`: its content, and a stored reference's target.
+fn describe_field(x: Cx, f: ir::DbField) {
+  describe_type(x, f.content);
+  if f.target != 65535 {
+    describe_type(x, f.target);
   }
 }
 
@@ -213,8 +222,8 @@ fn copy_table(x: Cx) -> text {
     }
     r = types::row(x.b.types, tp);
     head = if r.kind == types::T_STRUCT {
-      list: vector<text> = [for f in r.fields { "{{ {f.pos}, {f.tp}, {f.view}, {f.hidden}, {f.group} }}" }];
-      body = if len(list) == 0 { "{{ 0, 0, 0, 0, 0 }}" } else { list.join(", ") };
+      list: vector<text> = [for f in r.fields { "{{ {f.pos}, {f.tp}, {f.view}, {f.hidden}, {f.group}, {f.target} }}" }];
+      body = if len(list) == 0 { "{{ 0, 0, 0, 0, 0, 0xFFFF }}" } else { list.join(", ") };
       out += "static const loft_fld loft_fields{tp}[] = {{ {body} }};\n";
       "{tdesc_kind(r.kind)}, {r.size}, 0, {r.n}, loft_fields{tp}, 0"
     } else if r.kind == types::T_ENUM {
