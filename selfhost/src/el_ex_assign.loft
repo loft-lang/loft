@@ -757,8 +757,62 @@ fn expression_node(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
   }
 }
 
+// `value_is_foreign`: the value is read-only data the program does not own — a `-> const T`
+// producer's answer, a branch or a block ending in one, or a local bound to one.
+fn value_is_foreign(e: el::El, vars: el_vars::Vars, n: ir::Node, scope: vector<ir::Node>, asked: vector<integer>) -> boolean {
+  match n {
+    NdSpan { pos: _, inner } => value_is_foreign(e, vars, inner, scope, asked),
+    NdCall { def_nr } => def_nr >= 0 && def_nr < len(e.b.data.definitions) && el::def(e, def_nr).returned_const,
+    NdIf { cond: _, t, f } => value_is_foreign(e, vars, t, scope, asked) || value_is_foreign(e, vars, f, scope, asked),
+    NdBlock { block } => len(block[0].operators) > 0 && value_is_foreign(e, vars, block[0].operators[-1]!, block[0].operators, asked),
+    NdVar { n: x } => {
+      if asked.contains(x) {
+        return false;
+      }
+      asked += [x];
+      if vars.foreign_bound.contains(x) {
+        return true;
+      }
+      for op in scope {
+        match el_ir::unspan(op) {
+          NdSet { var: y, inner } => if y == x && value_is_foreign(e, vars, inner, scope, asked) { return true; },
+          _ => {}
+        }
+      }
+      false
+    },
+    _ => false
+  }
+}
+
+// `binds_foreign_value`: does the statement bind `target` to foreign data — a value that is no
+// other local's (a whole-local bind copies), or a slice view of a foreign-bound local?
+fn binds_foreign_value(e: el::El, vars: el_vars::Vars, n: ir::Node, target: integer) -> boolean {
+  match el_ir::unspan(n) {
+    NdSet { var, inner } => var == target && !(el_ir::unspan(inner) is NdVar) && value_is_foreign(e, vars, inner, [], []),
+    NdCall { def_nr, args } => el::def(e, def_nr).name == "OpSliceView" && len(args) >= 2 && el_ir::unspan(args[0]!) == ir::NdVar { n: target } && match el_ir::unspan(args[1]!) { NdVar { n: src } => vars.foreign_bound.contains(src), _ => false },
+    NdInsert { items } => { for o in items { if binds_foreign_value(e, vars, o, target) { return true; } } false },
+    NdBlock { block } => { for o in block[0].operators { if binds_foreign_value(e, vars, o, target) { return true; } } false },
+    _ => false
+  }
+}
+
 pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: text, target: integer, rhs: integer?) -> Ex {
+  // (`bind_foreign_value`'s `first_bind`: the bind that declares the local.)
+  fb_known = match e.p.nodes[target] { SName { name: fbn, member: fbm } => if fbm == "" { el_vars::var(vars, fbn) } else { -2 }, _ => -2 };
+  first_bind = fb_known == -1 || (fb_known >= 0 && !el_vars::was_defined(vars, fb_known) && !vars.vars[fb_known].argument);
   r = assignment_inner(e, vars, at, fixed, op, target, rhs);
+  // `@FR-Const-Foreign` (`bind_foreign_value`): a local whose FIRST binding is foreign data is
+  // value-const, so every write through it is refused.
+  if op == "=" && fb_known != -2 {
+    fv = match e.p.nodes[target] { SName { name: fvn, member: _ } => el_vars::var(vars, fvn), _ => -1 };
+    if fv >= 0 && first_bind && binds_foreign_value(e, vars, r.code, fv) {
+      el_vars::set_value_const(vars, fv, "bind_foreign_value");
+      if !vars.foreign_bound.contains(fv) {
+        vars.foreign_bound += [fv];
+      }
+    }
+  }
   // (`set_closure_var_of`: a local assigned while a capturing lambda's record is pending holds
   // that record — what a void call through it writes its by-value captures back from.)
   if op == "=" && vars.last_closure_w >= 0 {
@@ -793,17 +847,18 @@ fn append_place(e: el::El, vars: el_vars::Vars, n: integer) -> AppendPlace {
   match e.p.nodes[n] {
     SName { name, member } => {
       v = if member == "" { el_vars::var(vars, name) } else { -1 };
-      // (A link local — `h: &T` — is its referent's place: `lhs_root_var` reads the lowered
-      // target, which writes through the link.)
-      vt = if v >= 0 { el_vars::tp(vars, v) } else { ir::TyVoid };
-      AppendPlace { root: v, tp: match vt { TyRefVar { inner } => inner, _ => vt } }
+      // (A bare link local keeps its link type: `+=` on a `&text` itself records nothing, as
+      // Rust's `f_type.base()` does not see through the link; a member or an element reached
+      // through it is its referent's place — below.)
+      AppendPlace { root: v, tp: if v >= 0 { el_vars::tp(vars, v) } else { ir::TyVoid } }
     },
     SMember { e: inner, name, call } => {
       if call || inner == null {
         return AppendPlace { root: -1, tp: ir::TyVoid };
       }
       b = append_place(e, vars, inner!);
-      sd = struct_ref(e, el_types::base(b.tp));
+      bt = match b.tp { TyRefVar { inner: bi } => bi, _ => b.tp };
+      sd = struct_ref(e, el_types::base(bt));
       fa = if sd >= 0 { attr_nr(el::def(e, sd), name) } else { -1 };
       AppendPlace { root: if fa >= 0 { b.root } else { -1 }, tp: if fa >= 0 { el::def(e, sd).attributes[fa].typedef[0] ?? ir::TyVoid } else { ir::TyVoid } }
     },
@@ -812,7 +867,8 @@ fn append_place(e: el::El, vars: el_vars::Vars, n: integer) -> AppendPlace {
         return AppendPlace { root: -1, tp: ir::TyVoid };
       }
       b = append_place(e, vars, inner!);
-      AppendPlace { root: b.root, tp: match el_types::base(b.tp) { TyVector { inner: vi } => vi, _ => ir::TyVoid } }
+      bt = match b.tp { TyRefVar { inner: bi } => bi, _ => b.tp };
+      AppendPlace { root: b.root, tp: match el_types::base(bt) { TyVector { inner: vi } => vi, _ => ir::TyVoid } }
     },
     _ => AppendPlace { root: -1, tp: ir::TyVoid }
   }
@@ -1796,7 +1852,9 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
   }
   // (A vector's is recorded by its own lowering, `lower_vec_copy_bind`; here a text's and a
   // keyed collection's, as `parse_assign_op_inner` records them.)
-  if op == "=" && v >= 0 && !amp_bind && !(el_ir::unspan(x.code) == ir::NdVar { n: v }) && (el_types::base(x.tp) is TyText || (el_types::is_collection(el_types::base(x.tp)) && !(el_types::base(x.tp) is TyVector))) && copied_place(e, x.code) {
+  // (A text `&` bind — `c = &s`, a view of the text — is a copied place too; a collection `&`
+  // link never reaches this rule in Rust.)
+  if op == "=" && v >= 0 && (!amp_bind || el_types::base(x.tp) is TyText) && !(el_ir::unspan(x.code) == ir::NdVar { n: v }) && (el_types::base(x.tp) is TyText || (el_types::is_collection(el_types::base(x.tp)) && !(el_types::base(x.tp) is TyVector))) && copied_place(e, x.code) {
     el_vars::mark_copy_bound(vars, v, "parse_assign_op_inner");
   }
   // loft#1540 — a whole-variable bind that VIEWS a value-const value makes the variable
@@ -1821,7 +1879,19 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
   }
   // A function value read off a field and bound takes a copy of the field's closure record.
   if op == "=" {
+    ffr = el_types::base(x.tp) is TyFunction && match el_ir::unspan(x.code) { NdBlock { block: fb } => fb[0].name == "fn_ref_field_read", _ => false };
     x = el_ex_object::copied_field_closure(e, vars, x);
+    // (`parse_assign_op_inner`: a bound copy owns its own record — its view mark cleared, the
+    // flags being cumulative — while a read left a view, as the first pass's always is, is never
+    // freed.)
+    if ffr && v >= 0 {
+      copied = match el_ir::unspan(x.code) { NdBlock { block: cb } => len(cb[0].operators) == 2 && match el_ir::unspan(cb[0].operators[1]!) { NdCall { def_nr: cd } => el::def(e, cd).name == "OpCopyClosure", _ => false }, _ => false };
+      if copied {
+        vars.vars[v].skip_free = false;
+      } else {
+        el_vars::set_skip_free(vars, v, "parse_assign_op_inner");
+      }
+    }
     // (On the first pass too the bound value borrows nothing: the local is typed by it.)
     if e.first_pass && el_types::base(x.tp) is TyFunction && e.p.nodes[rhs!] is SMember && match e.p.nodes[rhs!] { SMember { call } => !call, _ => false } {
       x = ex(x.code, el_types::with_deps(x.tp, []));

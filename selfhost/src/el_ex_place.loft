@@ -2897,6 +2897,11 @@ pub fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text,
   // A declared local copies a whole record or vector local as an inferred one does.
   x.tp = el_ex_bind::record_copy_type(e, vars, v, rhs!, x.tp);
   x.code = el_ex_bind::discharge_copy_typed(e, rhs!, x);
+  // (`parse_assign_op_inner`'s `(B-Copy)` mark, which a declared bind reaches as an inferred one
+  // does: a text or a keyed collection read out of a place is a COPY of it.)
+  if !(el_ir::unspan(x.code) == ir::NdVar { n: v }) && (el_types::base(x.tp) is TyText || (el_types::is_collection(el_types::base(x.tp)) && !(el_types::base(x.tp) is TyVector))) && el_ex_assign::copied_place(e, x.code) {
+    el_vars::mark_copy_bound(vars, v, "parse_assign_op_inner");
+  }
   if el_types::base(x.tp) is TyVector && copies_whole_vector(e, vars, x.code) && !el_ex_bind::is_link(e, rhs!) {
     return el_ex_bind::vec_copy_bind(e, vars, v, x);
   }

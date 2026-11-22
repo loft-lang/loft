@@ -1437,6 +1437,8 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
   if e.first_pass {
     // (Read against no declared result, so the body's own answer shows.)
     el::set_returned(e, e.context, if infers { ir::TyUnknown { n: 0 } } else { rt });
+    // `@FR-Const-Foreign` (@C139): `-> const T` hands out value-const data.
+    e.b.data.definitions[e.context].returned_const = ret_const;
   } else if hint is TyFunction && !(rt is TyVoid) && !el_types::is_unknown(rt) {
     // `parse_lambda_short_body`: on the second pass a short lambda's result is reset to the
     // hint's, so its body is parsed against the bare result the first pass met.

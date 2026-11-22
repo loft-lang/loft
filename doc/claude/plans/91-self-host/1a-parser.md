@@ -160,6 +160,13 @@ consuming, or null (`brace_next`, `no_else`, `empty_literal_allowed`).
 The corpus for every gate: `default/*.loft`, `tests/scripts/`, `tests/docs/`, `lib/`, and the
 language suite (`../loft-suite-91`).
 
+Before an elaborator build, `selfhost/front/elab_pregate.py` runs `loft check` on
+`selfhost/front/elab.loft` (front end only, a couple of minutes against a build-and-gate cycle
+of about half an hour): any error fails it, and a warning or advice fails it only where it points
+at a line `git diff` marks as changed — the lint of the edit.  The whole elaborator is checked:
+a module checked as its own entry types its `use` graph in another order and reports errors
+the real build does not.
+
 The port has three purposes: the main implementation — a front end on C with no rustc to
 bootstrap; a second implementation that VALIDATES the Rust one, finding loft's internal
 problems; and a front end whose internal conclusions are visible early and easily — the
