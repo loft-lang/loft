@@ -1499,15 +1499,40 @@ fn collapse_defining_call(vars: el_vars::Vars, bl: ir::Block, v: integer) -> ir:
         if len(args) == 0 || hidden_ref_arg(vars, args) < 0 {
           return null;
         }
+        cw = hidden_ref_arg(vars, args);
         a2 = args;
         a2[len(a2) - 1] = ir::NdVar { n: v };
         out.operators[at] = respan(bl.operators[at]!, ir::NdSet { var: var, inner: ir::NdCall { def_nr: def_nr, args: a2 } });
+        // (`suppress_collapsed_workrefs`: the call's own buffer, now unused, owns nothing — a
+        // vector one is never freed, its null-init allocating nothing.)
+        if el_vars::tp(vars, cw) is TyVector && !live_use(ir::NdBlock { block: [out] }, cw) {
+          el_vars::set_skip_free(vars, cw, "suppress_collapsed_workrefs");
+        }
       },
       _ => return null
     },
     _ => return null
   }
   out
+}
+
+// `ir_var_has_live_use`: does `n` read `w`, or set it to anything but its null-init?
+fn live_use(n: ir::Node, w: integer) -> boolean {
+  el_ir::reads_var(n, w) || sets_not_null(n, w)
+}
+
+fn sets_not_null(n: ir::Node, w: integer) -> boolean {
+  match n {
+    NdSet { var, inner } => (var == w && !(el_ir::unspan(inner) is NdNull)) || sets_not_null(inner, w),
+    NdSpan { pos: _, inner } => sets_not_null(inner, w),
+    NdReturn { inner } => sets_not_null(inner, w),
+    NdIf { cond, t, f } => sets_not_null(cond, w) || sets_not_null(t, w) || sets_not_null(f, w),
+    NdBlock { block } => { for o in block[0].operators { if sets_not_null(o, w) { return true; } } false },
+    NdLoop { block } => { for o in block[0].operators { if sets_not_null(o, w) { return true; } } false },
+    NdInsert { items } => { for o in items { if sets_not_null(o, w) { return true; } } false },
+    NdCall { def_nr: _, args } => { for o in args { if sets_not_null(o, w) { return true; } } false },
+    _ => false
+  }
 }
 
 // `n` with its innermost node replaced by `inner`, its position spans kept.
