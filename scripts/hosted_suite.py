@@ -134,7 +134,7 @@ def main():
         tdir = os.path.join(pkg, "tests")
         if os.path.isdir(tdir):
             for f in sorted(os.listdir(tdir)):
-                if f.endswith(".loft"):
+                if f.endswith(".loft") and not f.startswith(".") and os.path.isfile(os.path.join(tdir, f)):
                     tasks.append((pkg, os.path.join(tdir, f)))
     with ThreadPoolExecutor(jobs) as ex:
         results = list(ex.map(lambda t: (t[0], one(loft, libs, t[0], t[1], work, timeout)), tasks))
