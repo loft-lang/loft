@@ -13,6 +13,9 @@
 //!   CHANNEL: the exit status.  WITNESS: "hosted: error: write to a locked store".
 //!   HOLDS: the interpreted run.  Without `deep` the table never moved and the sabotage passed:
 //!   a stale length only skipped frees, which `LOFT_STRICT_STORES` now fails too.
+//!   A second SABOTAGE (2026-11-22): with `hosted::bridge` carrying an iterator again, the unit
+//!   answers `upto` from its own coroutine table.  WITNESS: "assertion failed: upto 0" and a
+//!   refused free of store #65534.
 use loft::file_access as fa;
 use loft::platform::process::harness_command;
 
