@@ -314,6 +314,33 @@ typedef struct {
 #endif
 } loft_store_t;
 
+/* `@PLN206 P5` — a store's root type, as `known` and the root record's tag hold it.  A hosted
+ * unit is generated from its library alone, so its code names types by that program's numbers;
+ * the interpreter that adopts it numbers them by its own.  The two meet only here: what the unit
+ * writes into a shared store goes out through `loft_tp_out`, and what it reads comes in through
+ * `loft_tp_in`, by the maps `loft_shared_init` fills from the types' keys (`lib_ids`).  Every
+ * other build is the identity.  A raw `known` outside these macros is marked `LOFT_RAW_KNOWN`
+ * (`tests/hosted_unit.rs` holds the rule). */
+#ifdef LOFT_HOSTED
+static uint16_t *loft_tp_host;   /* the unit's type number -> the interpreter's */
+static uint32_t loft_tp_host_n;
+static uint16_t *loft_tp_unit;   /* the interpreter's -> the unit's */
+static uint32_t loft_tp_unit_n;
+static inline uint16_t loft_tp_out(uint16_t t) {
+    if (!loft_tp_host || t == 0xFFFF) return t;
+    return t < loft_tp_host_n ? loft_tp_host[t] : 0xFFFF;
+}
+static inline uint16_t loft_tp_in(uint16_t t) {
+    if (!loft_tp_unit || t == 0xFFFF) return t;
+    return t < loft_tp_unit_n ? loft_tp_unit[t] : 0xFFFF;
+}
+#else
+#define loft_tp_out(t) (t)
+#define loft_tp_in(t) (t)
+#endif
+#define LOFT_KNOWN(st) loft_tp_in((st).known)
+#define LOFT_SET_KNOWN(st, tp) ((st).known = loft_tp_out(tp))
+
 /* A header built without `loft_cc.h` (the replays of tests/c_emit.rs) keeps one copy of its
  * state: no threads. */
 #ifndef LOFT_TLS
@@ -404,7 +431,7 @@ static void loft_heap_moved(const loft_store_t *s, uint32_t old_words, uint32_t 
     }
     if (loft_heap_limit && loft_heap_total + (new_b - old_b) > loft_heap_limit) {
         char used[32], cap[32], from[32], to[32];
-        uint16_t kt = s->known;
+        uint16_t kt = LOFT_KNOWN(*s);
         loft_heap_human(used, loft_heap_total);
         loft_heap_human(cap, loft_heap_limit);
         loft_heap_human(from, old_b);

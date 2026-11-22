@@ -25,7 +25,43 @@ pub(crate) type Bridge = unsafe extern "C" fn(*mut Stores, *const LibArg, usize,
 /// Is `LOFT_HOSTED_VERIFY` set?
 pub(crate) fn enabled() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("LOFT_HOSTED_VERIFY").is_some())
+    *ON.get_or_init(crate::keys::hosted_verify)
+}
+
+use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+
+/// The calls compared alike, and those made without a comparison, by why: a silent run is a
+/// reading only when it says how many calls it read ([`report`]).
+static VERIFIED: AtomicU64 = AtomicU64::new(0);
+static UNVERIFIED_TUPLE: AtomicU64 = AtomicU64::new(0);
+static UNVERIFIED_FILE: AtomicU64 = AtomicU64::new(0);
+
+/// The calls this run compared, as one line on stderr, and the counts reset: under the switch
+/// at the end of each run, nothing without it.
+pub(crate) fn report() {
+    if !enabled() {
+        return;
+    }
+    let (v, t, f) = (
+        VERIFIED.swap(0, Relaxed),
+        UNVERIFIED_TUPLE.swap(0, Relaxed),
+        UNVERIFIED_FILE.swap(0, Relaxed),
+    );
+    let mut why = Vec::new();
+    if t > 0 {
+        why.push(format!("{t} with a tuple argument"));
+    }
+    if f > 0 {
+        why.push(format!("{f} with a file-backed store live"));
+    }
+    eprintln!(
+        "loft: LOFT_HOSTED_VERIFY: {v} call(s) compiled and interpreted alike{}",
+        if why.is_empty() {
+            String::new()
+        } else {
+            format!("; made without a comparison: {}", why.join(", "))
+        }
+    );
 }
 
 impl State {
@@ -53,6 +89,7 @@ impl State {
         // A tuple argument crosses as several slots: not lined up with the attributes, so the
         // call is made unverified.
         if def.attributes().len() != popped.len() {
+            UNVERIFIED_TUPLE.fetch_add(1, Relaxed);
             unsafe { bridge(&raw mut self.database, args.as_ptr(), args.len(), ret) };
             return;
         }
@@ -76,6 +113,7 @@ impl State {
         // The compiled run, on a copy of the world.  A world holding a file-backed store has
         // no copy: that call is made unverified.
         let Some(copy) = self.database.world_copy() else {
+            UNVERIFIED_FILE.fetch_add(1, Relaxed);
             unsafe { bridge(&raw mut self.database, args.as_ptr(), args.len(), ret) };
             return;
         };
@@ -101,6 +139,15 @@ impl State {
                 ));
                 break;
             }
+            // `@PLN206 P5` — the root's type, which a hosted unit writes through its translation
+            // by key (`loft_tp_out`): another type here is a crossing left untranslated.
+            if a.known_type != b.known_type {
+                diff = Some(format!(
+                    "store {nr} holds type {} interpreted, {} compiled",
+                    a.known_type, b.known_type
+                ));
+                break;
+            }
             let (x, y) = (a.claimed_image(), b.claimed_image());
             if x != y {
                 diff = Some(first_difference(nr, &x, &y));
@@ -117,6 +164,7 @@ impl State {
             );
             std::process::exit(1);
         }
+        VERIFIED.fetch_add(1, Relaxed);
         // The program goes on in the compiled world, as it does without the switch.  The
         // interpreter's own stacks are the run's, not the call's: the compiled world takes them
         // over as they stand, and the cached stack base is read again (`restore_checkpoint`).

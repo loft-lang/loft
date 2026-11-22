@@ -656,7 +656,7 @@ static char *loft_cpath(loft_str p, const char *suffix) {
  * beside it.  0 on a store with no root, a type no sidecar was prepared for, or an I/O error. */
 static int loft_image_write(const loft_tdesc *T, uint32_t ntypes, loft_ref r, loft_str path, const loft_sidecar *sc) {
     if (r.store_nr == 0xFFFF || r.store_nr >= loft_nstores || !loft_stores[r.store_nr].live) return 0;
-    uint16_t tp = loft_stores[r.store_nr].known;
+    uint16_t tp = LOFT_KNOWN(loft_stores[r.store_nr]);
     int32_t header = loft_st_i32(&loft_stores[r.store_nr], 1, 0);
     if (tp == 0xFFFF || header <= 0 || sc == 0 || sc->tp != tp) return 0;
     uint16_t dst;
@@ -696,7 +696,7 @@ static int loft_image_write(const loft_tdesc *T, uint32_t ntypes, loft_ref r, lo
         loft_copy_claims(T, tp, src, to);
     }
     loft_store_t *d = &loft_stores[dst];
-    d->known = tp;
+    LOFT_SET_KNOWN(*d, tp);
     if (loft_type_has_tree(T, ntypes, tp, 0)) {
         uint32_t budget = 200000;
         (void) loft_relayout_walk(T, ntypes, tp, to, &budget);
@@ -1221,7 +1221,7 @@ static int loft_image_load(loft_ref r, loft_str path, const loft_sidecar *sc, in
     if (r.store_nr == 0xFFFF || r.store_nr >= loft_nstores || loft_path_refused(path)) return 0;
     char *p = loft_cpath(path, 0);
     loft_gate_trie_v1 = 0;
-    int gate = sc && loft_stores[r.store_nr].known == sc->tp ? loft_image_gate(p, sc, who, 1) : 1;
+    int gate = sc && LOFT_KNOWN(loft_stores[r.store_nr]) == sc->tp ? loft_image_gate(p, sc, who, 1) : 1;
     if (p[0] == 0 || gate == 0) {
         free(p);
         return 0;
@@ -1326,7 +1326,7 @@ static int loft_image_adopt(loft_ref r, uint8_t *bytes, size_t n, int untrusted,
     /* `@FR-S-Sound` — a loader for a file from elsewhere asks the walk before anything follows
      * a number the image holds, the rebase below included.  The image stands in the slot for
      * the walk and is taken out again: nothing is adopted yet. */
-    if (untrusted && loft_T && loft_stores[r.store_nr].known != 0xFFFF) {
+    if (untrusted && loft_T && LOFT_KNOWN(loft_stores[r.store_nr]) != 0xFFFF) {
         loft_store_t *t = &loft_stores[r.store_nr];
         uint8_t *held_buf = t->buf;
         uint32_t held_size = t->size;
@@ -1349,7 +1349,7 @@ static int loft_image_adopt(loft_ref r, uint8_t *bytes, size_t n, int untrusted,
     loft_store_t *s = &loft_stores[r.store_nr];
     /* `adopt_image`: the image's references re-pointed at this slot, read off its own bytes; a
      * refusal leaves the store as it was. */
-    if (sc && sc->types && loft_stores[r.store_nr].known == sc->tp) {
+    if (sc && sc->types && LOFT_KNOWN(loft_stores[r.store_nr]) == sc->tp) {
         uint8_t *old_buf = s->buf;
         uint32_t old_size = s->size;
         s->buf = bytes;
@@ -1926,7 +1926,7 @@ static void loft_validate_claims_at(const loft_tdesc *T, uint32_t nt, uint16_t t
  * minted as no type. */
 static uint8_t loft_store_verify(const loft_tdesc *T, uint32_t nt, loft_ref r) {
     if (r.store_nr >= loft_nstores) return 0;
-    uint16_t tp = loft_stores[r.store_nr].known;
+    uint16_t tp = LOFT_KNOWN(loft_stores[r.store_nr]);
     if (tp == 0xFFFF || tp >= nt) return 0;
     if (r.pos > 8 && T[tp].kind == LOFT_T_STRUCT) {
         for (uint16_t i = 0; i < T[tp].n; i++)

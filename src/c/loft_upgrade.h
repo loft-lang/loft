@@ -1854,7 +1854,7 @@ static uint16_t loft_uc_scratch(loft_urun *r, uint16_t version_tp) {
         if (r->P[vt->fields[f].content].size == 4) { int32_t v = (int32_t) t[f]; memcpy(at, &v, 4); }
         else memcpy(at, &t[f], 8);
     }
-    s->known = version_tp;
+    LOFT_SET_KNOWN(*s, version_tp);
     loft_uo_scratch = nr;
     loft_ref from = { nr, rec, 8, 0 };
     loft_uo_from = from;
@@ -2058,7 +2058,7 @@ static uint16_t loft_up_convert(loft_urun *run, const loft_upmap *m, const loft_
         loft_store_drop(dst_nr);
         return 0xFFFF;
     }
-    loft_stores[dst_nr].known = tp;
+    LOFT_SET_KNOWN(loft_stores[dst_nr], tp);
     return dst_nr;
 }
 

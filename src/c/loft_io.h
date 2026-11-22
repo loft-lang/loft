@@ -793,7 +793,7 @@ static void loft_release_file_leases(uint16_t nr) {
 #if defined(LOFT_FD)
     if (!loft_T) return;
     loft_store_t *s = &loft_stores[nr];
-    uint16_t tp = s->known;
+    uint16_t tp = LOFT_KNOWN(*s);
     if (tp >= loft_T_n || !loft_T[tp].file || s->size < 3 || loft_u32(s, 1, 4) != tp) return;
     loft_ref root = { nr, 1, 8, 0 };
     loft_release_files_in(loft_T, tp, root);

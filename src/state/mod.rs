@@ -8109,6 +8109,8 @@ impl State {
     pub fn check_store_leaks_in(&self, data: Option<&crate::data::Data>) {
         // `@PLN206 P4c` — the stores as the run leaves them, for `scripts/store_diff.py`.
         crate::store::dump::write_if_asked(&self.database.allocations);
+        // `@PLN206 P4d` — how many calls the hosted verify compared this run.
+        hosted_verify::report();
         // @PLN101 Slice 0 — alloc-count harness: report total heap record allocations at
         // exit. A `value struct` program (Slice 1+) must drive its struct's contribution to
         // zero vs the reference-struct baseline. Gated so normal runs are unaffected.

@@ -5205,6 +5205,13 @@ pub fn c_trace_sites() -> bool {
     std::env::var_os("LOFT_C_TRACE_SITES").is_some()
 }
 
+/// Is `LOFT_HOSTED_VERIFY` set: is each call into a compiled library artifact run compiled and
+/// interpreted and compared (`state::hosted_verify`)?
+#[must_use]
+pub fn hosted_verify() -> bool {
+    std::env::var_os("LOFT_HOSTED_VERIFY").is_some()
+}
+
 /// Is `LOFT_HOSTED_PLANT` set: is a hosted unit built with the verify's planted write?
 #[must_use]
 pub fn hosted_planted() -> bool {

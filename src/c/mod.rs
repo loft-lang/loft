@@ -310,6 +310,10 @@ pub(crate) struct Cx<'a> {
     /// Every statement records its line as the frame's site (`LOFT_C_TRACE_SITES`), for the
     /// allocation trace's store sites; otherwise only a statement that calls a frame does.
     pub(crate) trace_sites: bool,
+    /// The unit's functions are called from outside it (a hosted unit's exports, `@PLN206 P5`):
+    /// an OPEN unit, which takes no whole-program rewrite that changes a signature, as an
+    /// `open_world` program takes none (NATIVE.md § Optimisation tiers).
+    pub(crate) open: bool,
     pub(crate) browser: bool,
     /// The unit is compiled to wasm32 — a page's module or a `--native-wasm` program
     /// ([`emit_wasm_program`]): no shared library can be opened there.
@@ -434,6 +438,7 @@ impl<'a> Cx<'a> {
             wasm: browser || WASM_UNIT.with(std::cell::Cell::get),
             source_lines: SOURCE_LINES.with(std::cell::Cell::get),
             trace_sites: crate::keys::c_trace_sites(),
+            open: false,
             tuples: std::cell::RefCell::new(Vec::new()),
             tuple_casts: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             copy_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
@@ -542,7 +547,7 @@ impl<'a> Cx<'a> {
                 use crate::opt::value_records::layout as vl;
                 // An OPEN program takes no whole-program rewrite (NATIVE.md § Optimisation
                 // tiers): no value records.
-                let vr = if self.data.open_world {
+                let vr = if self.data.open_world || self.open {
                     vl::ValueRecords::default()
                 } else {
                     crate::opt::value_records::value_records(self.data, self.stores, false)
@@ -2071,6 +2076,7 @@ fn emit_unit_with(
     trace_reach(data, roots, &all, &fns);
     let mut cx = Cx::new(data, stores, browser);
     cx.c_twins = twins;
+    cx.open = hosted.is_some();
     cx.frames
         .set(reachable_has(data, &all, |n| n == "n_stack_trace"));
     cx.lazy

@@ -35,7 +35,7 @@ static int loft_pg_begin(loft_pg *r, loft_ref local, loft_str path, const loft_s
         free(p);
         return 0;
     }
-    uint16_t known = loft_stores[local.store_nr].known;
+    uint16_t known = LOFT_KNOWN(loft_stores[local.store_nr]);
     char err[1100];
     loft_gate_paged = 1;
     loft_gate_trie_v1 = 0;

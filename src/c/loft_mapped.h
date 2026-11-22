@@ -172,7 +172,7 @@ static void loft_st_bind_mapped(loft_store_t *s, intptr_t f, uint8_t *b, size_t 
     s->map_file = f;
     s->live = 1;
     s->read_only = 0;
-    s->known = 0xFFFF;
+    LOFT_SET_KNOWN(*s, 0xFFFF);
     s->defined = 1;
     s->no_park = 1;
     s->lazy = 0;

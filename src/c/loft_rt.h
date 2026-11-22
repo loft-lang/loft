@@ -146,7 +146,7 @@ static loft_text loft_store_memory(const char *const *names, uint32_t nnames) {
     for (uint32_t k = 0; k < live && k < 8; k++) {
         uint32_t i = rows[k];
         loft_usage u = us[i];
-        uint16_t kt = loft_stores[i].known;
+        uint16_t kt = LOFT_KNOWN(loft_stores[i]);
         const char *tname = kt < nnames && names[kt] ? names[kt] : "?";
         char idx[16];
         snprintf(idx, sizeof idx, "%u", i);
@@ -1466,7 +1466,7 @@ static LOFT_TLS uint32_t loft_strict_floor = 0;
 static LOFT_COLD void loft_strict_use_after_free(loft_ref r) {
     uint64_t n = loft_strict_violations++;
     if (n < 20) {
-        uint16_t kt = loft_stores[r.store_nr].known;
+        uint16_t kt = LOFT_KNOWN(loft_stores[r.store_nr]);
         const loft_free_site *w = loft_freed_site(r.store_nr);
         loft_free_site here = loft_site_here();
         fflush(stdout);
@@ -1685,7 +1685,7 @@ static uint32_t loft_store_make(int counted) {
     }
     loft_st_init(s);
     s->live = 1;
-    s->known = 0xFFFF;
+    LOFT_SET_KNOWN(*s, 0xFFFF);
     s->pinned = 0;
     s->protect = 0;
     s->frame_holds = 0;
@@ -1876,7 +1876,7 @@ static void loft_database(loft_ref *var, uint32_t bytes) {
     loft_set_u32(s, rec, 4, 0xFFFFu);
     loft_st_entomb_kept(s, kept, nkept);
     free(kept);
-    s->known = 0xFFFF;
+    LOFT_SET_KNOWN(*s, 0xFFFF);
 #ifdef LOFT_PARSE
     loft_perrs_reset((uint16_t) nr);
 #endif
@@ -1907,8 +1907,8 @@ static void loft_database_typed(loft_ref *var, uint32_t bytes, uint16_t tp) {
         return;
     }
     loft_database(var, bytes);
-    loft_stores[var->store_nr].known = tp;
-    loft_set_u32(&loft_stores[var->store_nr], var->rec, 4, tp);
+    LOFT_SET_KNOWN(loft_stores[var->store_nr], tp);
+    loft_set_u32(&loft_stores[var->store_nr], var->rec, 4, loft_tp_out(tp));
 }
 
 /* OpDatabase of a vector wrapper (`main_vector<T>`, Stores::mint_at_place, @FR-R-Place): a
@@ -1921,18 +1921,18 @@ static void loft_remove_claims(const struct loft_tdesc_s *T, uint16_t tp, loft_r
 
 static void loft_database_wrapper(const struct loft_tdesc_s *T, loft_ref *var, uint32_t bytes, uint16_t tp) {
     if (var->store_nr != 0xFFFF && var->rec != 0 && var->store_nr < loft_nstores
-        && !(var->rec == 1 && loft_stores[var->store_nr].known == tp)) {
+        && !(var->rec == 1 && LOFT_KNOWN(loft_stores[var->store_nr]) == tp)) {
         /* The collection the place held is released, then its handle emptied. */
         loft_remove_claims(T, tp, *var);
         loft_set_u32(&loft_stores[var->store_nr], var->rec, var->pos, 0);
         return;
     }
     loft_database(var, bytes);
-    loft_stores[var->store_nr].known = tp;
+    LOFT_SET_KNOWN(loft_stores[var->store_nr], tp);
     /* The root carries its type at byte 4, as `OpDatabase` writes it and the typed mint does
      * (`loft_database_typed`): `sizeof` of a reference reads it (`OpSizeofRef`), on the
      * interpreter's side of a hosted unit too (STORE_MODEL D47). */
-    loft_set_u32(&loft_stores[var->store_nr], var->rec, 4, tp);
+    loft_set_u32(&loft_stores[var->store_nr], var->rec, 4, loft_tp_out(tp));
 }
 
 static loft_fn loft_fn_make(int64_t d, loft_ref clos) {
@@ -2099,7 +2099,7 @@ static int loft_refree_allowed(void) {
  * (`Stores::is_own_root`): a value held inline can share its position. */
 static int loft_drop_own_root(loft_ref r, uint16_t tp) {
     return r.rec == LOFT_ST_PRIMARY && r.pos == 8 && r.store_nr < loft_nstores
-        && loft_stores[r.store_nr].live && loft_stores[r.store_nr].known == tp;
+        && loft_stores[r.store_nr].live && LOFT_KNOWN(loft_stores[r.store_nr]) == tp;
 }
 
 static void loft_drop_enter(loft_ref r, uint16_t tp) {
@@ -2691,7 +2691,7 @@ static void loft_slice_take(const struct loft_tdesc_s *T, loft_ref *var, uint32_
     if (v != 0) loft_set_u32(s, v, 4, 0);
     loft_sp_used[i] = 1;
     s->pinned = 0;
-    s->known = tp;
+    LOFT_SET_KNOWN(*s, tp);
     *var = r;
 }
 
@@ -3790,7 +3790,7 @@ static int loft_swap_in(uint16_t tp, loft_ref src, loft_ref dst, int reset_dest)
     if (src.store_nr == dst.store_nr || src.store_nr >= loft_nstores || dst.store_nr >= loft_nstores) return 0;
     if (src.rec != 1 || src.pos != 8 || dst.rec != 1 || dst.pos != 8) return 0;
     loft_store_t *a = &loft_stores[src.store_nr], *b = &loft_stores[dst.store_nr];
-    if (!a->live || !b->live || a->known != tp || b->known != tp || a->pinned || b->pinned) return 0;
+    if (!a->live || !b->live || LOFT_KNOWN(*a) != tp || LOFT_KNOWN(*b) != tp || a->pinned || b->pinned) return 0;
     /* `Store::content_swappable`: neither store locked (a lock is the slot's, and would move
      * with the content) nor serving foreign bytes nor bound to a file; only the RELEASED store's
      * protection refuses (`free_protect_depth`), a protected destination takes the content. */
@@ -4795,7 +4795,7 @@ static void loft_vec_clear_release_body(const loft_tdesc *T, uint32_t loft_ntype
         if (r0 != 0 && loft_u32(s, r0, 4) == 0) return;
     }
     if (v.rec == 1) {
-        uint16_t kt = s->known;
+        uint16_t kt = LOFT_KNOWN(*s);
         int one_field = kt < loft_ntypes && T[kt].kind == LOFT_T_STRUCT && T[kt].n == 1;
         uint16_t vec_tp = 0xFFFF;
         if (one_field) vec_tp = T[kt].fields[0].type;
@@ -4837,7 +4837,7 @@ static void loft_database_room(const loft_tdesc *T, uint32_t nt, loft_ref *var, 
 #ifndef LOFT_NO_KEEP_ROOM
     if (var->store_nr != 0xFFFF && var->rec == 1 && var->store_nr < loft_nstores
         && loft_stores[var->store_nr].live && !loft_stores[var->store_nr].frame_holds
-        && loft_stores[var->store_nr].known == tp && tp < nt && T[tp].kind == LOFT_T_STRUCT
+        && LOFT_KNOWN(loft_stores[var->store_nr]) == tp && tp < nt && T[tp].kind == LOFT_T_STRUCT
         && T[tp].n == 1) {
         uint16_t vt = T[tp].fields[0].type;
         uint16_t elem = vt < nt && T[vt].kind == LOFT_T_VECTOR ? T[vt].elem : 0xFFFF;
@@ -7652,7 +7652,7 @@ static int loft_reset_pool_root(loft_ref r, uint16_t tp, uint32_t size, const ui
 #else
     if (r.store_nr == 0xFFFF || r.rec != 1 || r.pos != 8 || r.store_nr >= loft_nstores) return 0;
     loft_store_t *s = &loft_stores[r.store_nr];
-    if (!s->live || s->pinned || s->known != tp || s->frame_holds) return 0;
+    if (!s->live || s->pinned || LOFT_KNOWN(*s) != tp || s->frame_holds) return 0;
     /* A locked store is not re-minted, nor one bound to a file or serving foreign bytes: the
      * caller walks. */
     if (s->read_only || s->mapped) return 0;

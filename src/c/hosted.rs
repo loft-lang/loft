@@ -34,6 +34,7 @@ pub(crate) fn defines() -> String {
          #define LOFT_HOST_STORE_TAIL {}\n\
          #define LOFT_HOST_ABI {}\n\
          #define LOFT_HT_HOSTED {}\n\
+         #define LOFT_HT_TYPE_ID {}\n\
          #define LOFT_STORES_VIEW_AT {}\n\
          #define LOFT_LA_SIZE {}\n#define LOFT_LA_SCALAR {}\n#define LOFT_LA_DBREF {}\n\
          #define LOFT_LA_TPTR {}\n#define LOFT_LA_TLEN {}\n\
@@ -41,6 +42,7 @@ pub(crate) fn defines() -> String {
         crate::store::HOST_STORE_TAIL,
         crate::host_abi::HOST_ABI,
         offset_of!(HostTable, hosted),
+        offset_of!(HostTable, type_id),
         offset_of!(crate::database::Stores, hosted_view),
         size_of::<LibArg>(),
         offset_of!(LibArg, scalar),
@@ -212,12 +214,30 @@ fn bridge(cx: &Cx<'_>, d: u32, symbol: &str) -> Result<String, String> {
 /// The exports of `export` the C bridge carries: the ones a hosted unit writes.
 #[must_use]
 pub fn hosted_exports(data: &Data, stores: &Stores, export: &HashSet<u32>) -> HashSet<u32> {
-    let cx = Cx::new(data, stores, false);
-    export
-        .iter()
-        .copied()
-        .filter(|&d| bridge(&cx, d, "x").is_ok())
-        .collect()
+    hosted_split(data, stores, export).0
+}
+
+/// [`hosted_exports`], and each export the bridge does not carry with why, by name: what
+/// `LOFT_HOSTED_VERIFY` reports a unit's reach with.
+#[must_use]
+pub fn hosted_split(
+    data: &Data,
+    stores: &Stores,
+    export: &HashSet<u32>,
+) -> (HashSet<u32>, Vec<(String, String)>) {
+    let mut cx = Cx::new(data, stores, false);
+    cx.open = true;
+    let (mut carried, mut declined) = (HashSet::new(), Vec::new());
+    for &d in export {
+        match bridge(&cx, d, "x") {
+            Ok(_) => {
+                carried.insert(d);
+            }
+            Err(why) => declined.push((data.def(d).original_name().clone(), why)),
+        }
+    }
+    declined.sort_unstable();
+    (carried, declined)
 }
 
 /// The unit's exports: a bridge per function of `carried`, named over the library's whole
@@ -237,6 +257,7 @@ pub(crate) fn exports(
         );
         out.push_str(&bridge(cx, d, &symbol)?);
     }
+    out.push_str(&type_keys(cx));
     let _ = write!(
         out,
         "\n/* The interpreter's `loft_shared_init`: the table it hands every artifact, whose hosted\n \
@@ -246,10 +267,54 @@ pub(crate) fn exports(
          memcpy(&abi, loft_t, 4);\n    if (abi != LOFT_HOST_ABI) return 0;\n    \
          memcpy(&h, loft_t + LOFT_HT_HOSTED, sizeof h);\n    \
          if (h->store_tail != LOFT_HOST_STORE_TAIL) return 0;\n    \
-         loft_hosted = h;\n    loft_bind_tables();\n    return 1;\n}}\n\
+         loft_hosted = h;\n    loft_map_types(loft_t, loft_ids);\n    loft_bind_tables();\n    return 1;\n}}\n\
          __attribute__((visibility(\"default\"))) uint64_t loft_type_layout_fp_v1(void) {{ return UINT64_C({layout_fp}); }}\n"
     );
     Ok(out)
+}
+
+/// `@PLN206 P5` — the key of each of the unit's type numbers (`lib_ids::TypeNames::key`), and
+/// `loft_map_types`, which asks the interpreter for its number of each at `loft_shared_init` and
+/// fills the two maps a store's root type crosses by (`loft_tp_out`, `loft_tp_in`).  A key the
+/// interpreter has no type for maps to none: the unit never writes such a type into its stores.
+fn type_keys(cx: &Cx<'_>) -> String {
+    let names = crate::lib_ids::TypeNames::new(cx.data, cx.stores);
+    let n = cx.stores.types.len();
+    let mut out = String::from("\n/* `@PLN206 P5` — each type number's key, for the interpreter's numbers. */\n");
+    let _ = writeln!(out, "static const char *const loft_tkeys[{}] = {{", n.max(1));
+    for tp in 0..n {
+        let key = names.key(tp as u16);
+        let _ = writeln!(out, "    {},", super::body::c_string(&key));
+    }
+    let _ = writeln!(out, "}};\nstatic const uint32_t loft_ntkeys = {n};");
+    out.push_str(
+        "typedef uint16_t (*loft_type_id_fn)(const void *ids, const uint8_t *key, size_t len);
+static void loft_map_types(const unsigned char *loft_t, const void *loft_ids) {
+    loft_type_id_fn id;
+    uint32_t i, top = 0;
+    memcpy(&id, loft_t + LOFT_HT_TYPE_ID, sizeof id);
+    free(loft_tp_host);
+    free(loft_tp_unit);
+    loft_tp_host = (uint16_t *) malloc((loft_ntkeys + 1) * sizeof *loft_tp_host);
+    for (i = 0; i < loft_ntkeys; i++) {
+        const char *k = loft_tkeys[i];
+        uint16_t h = id(loft_ids, (const uint8_t *) k, strlen(k));
+        loft_tp_host[i] = h;
+        if (h != 0xFFFF && (uint32_t) h + 1 > top) top = (uint32_t) h + 1;
+    }
+    loft_tp_host_n = loft_ntkeys;
+    loft_tp_unit = (uint16_t *) malloc((top + 1) * sizeof *loft_tp_unit);
+    for (i = 0; i < top; i++) loft_tp_unit[i] = 0xFFFF;
+    /* The first unit type of a key is its type: a later one of the same key (a type variable's
+     * placeholder, a structural twin) is the same type to the interpreter. */
+    for (i = loft_ntkeys; i-- > 0;) {
+        if (loft_tp_host[i] != 0xFFFF) loft_tp_unit[loft_tp_host[i]] = (uint16_t) i;
+    }
+    loft_tp_unit_n = top;
+}
+",
+    );
+    out
 }
 
 /// Build the hosted unit for the library functions `export` (each one the C bridge carries,

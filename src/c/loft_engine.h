@@ -1658,7 +1658,7 @@ static void loft_sw_remove_snapshot(const char *snap) {
 /* `swap_world(w)`: register `w` as the snapshot root and, in a swap target, restore the previous
  * build's world into it in place; 1 when a restore happened. */
 static uint8_t loft_swap_world(loft_ref w, const loft_sidecar *sc, loft_swap_show_fn show) {
-    uint16_t kt = w.store_nr < loft_nstores ? loft_stores[w.store_nr].known : 0xFFFF;
+    uint16_t kt = w.store_nr < loft_nstores ? LOFT_KNOWN(loft_stores[w.store_nr]) : 0xFFFF;
     if (w.store_nr == 0xFFFF || kt == 0xFFFF) {
         fputs("loft-swap: swap_world got a record with no known type; swaps disabled\n", stderr);
         return 0;
@@ -1740,7 +1740,7 @@ static uint8_t loft_swap_world_untyped(loft_ref w) { return loft_swap_world(w, 0
  * store of its own (`LOFT_NO_SWAP_IMAGE` sends it as JSON), else as JSON; the path, malloc'd. */
 static char *loft_sw_snapshot(const char *base) {
     loft_ref w = loft_sw.w;
-    int own = w.store_nr < loft_nstores && loft_stores[w.store_nr].known == loft_sw.tp;
+    int own = w.store_nr < loft_nstores && LOFT_KNOWN(loft_stores[w.store_nr]) == loft_sw.tp;
     if (own && !getenv("LOFT_NO_SWAP_IMAGE")) {
         if (loft_sw.sc) {
             char *snap = loft_sw_join(base, ".snap.store");

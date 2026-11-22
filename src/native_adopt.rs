@@ -645,16 +645,16 @@ pub fn adopt_shared_cdylib(
     // that has those keys, so neither the program's type table nor its function numbering is
     // part of what it is built for: the loft that built it and the sources it carries are.
     // A literal build (`LOFT_NO_LIB_IDS=1`) still serves one program, and keeps both.
-    // A hosted C unit (`@PLN206 P4`) names types and functions by this program's numbers, as a
-    // literal build does, and is a different artifact from a rustc one: its own key.
+    // A hosted C unit (`@PLN206 P5`) names types by the numbers of the program that generated it
+    // and translates them by key where they cross into the stores (`loft_tp_out`, `loft_tp_in`),
+    // so it runs in any program, as a keyed rustc artifact does; it is a different artifact
+    // from a rustc one, and from a unit built with the verify's switches: its own key.
     let hosted = crate::keys::lib_backend_c();
-    let program_fp = if std::env::var_os("LOFT_NO_LIB_IDS").is_some() || hosted {
-        mix_fp(
-            mix_fp(layout_fp, fn_numbering_fingerprint(data, export_set)),
-            u64::from(hosted)
-                | (u64::from(hosted && crate::keys::poison_claim()) << 1)
-                | (u64::from(hosted && crate::keys::hosted_planted()) << 2),
-        )
+    let program_fp = if hosted {
+        1 | (u64::from(crate::keys::poison_claim()) << 1)
+            | (u64::from(crate::keys::hosted_planted()) << 2)
+    } else if std::env::var_os("LOFT_NO_LIB_IDS").is_some() {
+        mix_fp(layout_fp, fn_numbering_fingerprint(data, export_set))
     } else {
         0
     };
