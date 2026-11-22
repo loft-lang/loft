@@ -77,7 +77,15 @@ pub fn rename(self: Bag, n: text) {
 // `label_of` interpreted too, each nested answer landing in this call's own text, not the outer
 // one's destination.
 pub fn tag(t: text) -> text {
-  "<{label_of(t)}|{label_of(t)}>"
+  a = label_of(t);
+  b = label_of(t);
+  "<{a}|{b}>"
+}
+
+// The same, a level deeper and through a format hook (`"{bag}"`), as `time`'s `DateTime` is.
+pub operator to_text(self: Bag, spec: text) -> text {
+  r = if spec == "short" { "{label_of(self.name)}" } else { "{tag(self.name)}" };
+  r
 }
 
 // A carried function whose answer is built from another carried function's records: its

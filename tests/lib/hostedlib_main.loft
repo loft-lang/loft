@@ -56,6 +56,8 @@ fn main() {
   g.rename("gamma");
   g.rename("delta");
   assert(g.name == "delta", "rename {g.name}");
+  // "delta" is 5 bytes, WIDTHS[1] = 3
+  assert("{g}" == "<delta:3|delta:3>" && "{g:short}" == "delta:3", "hook {g} {g:short}");
   // a record built by the library from its own calls: 3 + 4
   w = twice("w");
   assert(w.total == 7 && w.name == "w", "twice {w.total} {w.name}");
