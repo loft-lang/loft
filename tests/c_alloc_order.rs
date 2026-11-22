@@ -368,3 +368,54 @@ fn main() {
     let freed = region.iter().filter(|e| e.starts_with("F ")).count();
     assert_eq!((made, freed), (4, 4), "the region: {region:?}");
 }
+
+/// `store_memory()` reports the program's heap stores, the same on both backends: the
+/// interpreter's value stack and constant store are how it executes (STORE_MODEL D26) and a
+/// compiled program has neither, so they are left out, while a constant vector's store is
+/// the program's on both.
+///
+/// @falsified-at: none — a SABOTAGE (2026-11-22): with `Stores::memory_report` counting a
+///   store the interpreter makes for itself again, the interpreter's header reads `3 live`
+///   and `records 4` against the C's `1 live` and `records 2`.  CHANNEL: the report's header
+///   line.  WITNESS: the two headers differ.  HOLDS: `28` either way.
+#[test]
+fn the_store_report_counts_the_programs_stores_on_every_backend() {
+    let dir = std::env::temp_dir().join(format!("loft-report-{}", std::process::id()));
+    fa::create_dir_all(&dir).expect("scratch dir");
+    let prog = dir.join("report.loft");
+    fa::write(
+        &prog,
+        r#"
+PRIMES = [2, 3, 5, 7, 11];
+fn main() {
+  t = 0;
+  for p in PRIMES { t += p; }
+  println("{t}");
+  println(store_memory());
+}
+"#,
+    )
+    .expect("write the program");
+    let modes: &[&str] = if have_cc() {
+        &["--interpret", "--native"]
+    } else {
+        &["--interpret"]
+    };
+    let mut headers = Vec::new();
+    for mode in modes {
+        let out = harness_command(env!("CARGO_BIN_EXE_loft"))
+            .arg(mode)
+            .arg(&prog)
+            .env("LOFT_NO_CACHE", "1")
+            .output()
+            .expect("run loft");
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(text.starts_with("28\n"), "{mode}: {text}");
+        let header = text.lines().nth(1).unwrap_or_default().to_string();
+        assert!(header.starts_with("stores: 1 live"), "{mode}: {header}");
+        assert!(header.contains("| records 2 |"), "{mode}: {header}");
+        headers.push(header);
+    }
+    headers.dedup();
+    assert_eq!(headers.len(), 1, "the backends report differently: {headers:?}");
+}

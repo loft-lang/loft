@@ -1395,7 +1395,10 @@ impl Stores {
         // (store index, usage, created_at bytecode pos, known_type)
         let mut rows: Vec<(usize, crate::store::StoreUsage, u32, u16)> = Vec::new();
         for (i, s) in self.allocations.iter().enumerate() {
-            if !s.live {
+            // The program's heap stores only: a state's value stack and its constant store are
+            // how the interpreter executes (STORE_MODEL D26), and a compiled program has
+            // neither, so the report answers the same on both backends.
+            if !s.live || s.runtime_own {
                 continue;
             }
             let u = s.usage();

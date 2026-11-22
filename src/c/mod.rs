@@ -307,6 +307,9 @@ pub(crate) struct Cx<'a> {
     /// The unit marks each statement with its loft line (`#line`), for a debugger
     /// ([`emit_program_with_source_lines`]).
     pub(crate) source_lines: bool,
+    /// Every statement records its line as the frame's site (`LOFT_C_TRACE_SITES`), for the
+    /// allocation trace's store sites; otherwise only a statement that calls a frame does.
+    pub(crate) trace_sites: bool,
     pub(crate) browser: bool,
     /// The unit is compiled to wasm32 — a page's module or a `--native-wasm` program
     /// ([`emit_wasm_program`]): no shared library can be opened there.
@@ -430,6 +433,7 @@ impl<'a> Cx<'a> {
             browser,
             wasm: browser || WASM_UNIT.with(std::cell::Cell::get),
             source_lines: SOURCE_LINES.with(std::cell::Cell::get),
+            trace_sites: crate::keys::c_trace_sites(),
             tuples: std::cell::RefCell::new(Vec::new()),
             tuple_casts: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             copy_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),

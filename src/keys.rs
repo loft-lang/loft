@@ -5196,6 +5196,15 @@ pub fn poison_claim() -> bool {
     std::env::var_os("LOFT_POISON_CLAIM").is_some()
 }
 
+/// Is `LOFT_C_TRACE_SITES` set: does an emitted C unit record every statement's line as its
+/// frame's site, so `LOFT_ALLOC_TRACE` names each store by the line that made it, as the
+/// interpreter does (`scripts/store_diff.py`, `scripts/c_alloc_diff.py` pair stores by it)?
+/// Without it a line is recorded only before a statement that calls a frame.
+#[must_use]
+pub fn c_trace_sites() -> bool {
+    std::env::var_os("LOFT_C_TRACE_SITES").is_some()
+}
+
 /// Is `LOFT_HOSTED_PLANT` set: is a hosted unit built with the verify's planted write?
 #[must_use]
 pub fn hosted_planted() -> bool {

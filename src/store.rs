@@ -800,6 +800,10 @@ pub struct Store {
     /// addresses through a cached base pointer: only `State::grow_stack` (and a checkpoint
     /// restore, which refreshes the cache) may move it, so every other buffer move refuses it.
     pub(crate) stack_buffer: bool,
+    /// A store an interpreter state makes for itself — its value stack and its constant store
+    /// (STORE_MODEL D26): how the interpreter executes, not a store of the program, so
+    /// `store_memory()` leaves it out and a compiled program, which has neither, reports the same.
+    pub(crate) runtime_own: bool,
     #[cfg(feature = "mmap")]
     file: Option<MmapStorage>,
     /// Is the `read_only` above the AUTHOR's lock (`d#lock = true`) rather than an
@@ -1484,6 +1488,7 @@ impl Store {
             free_protect_depth: 0,
             borrowed: false,
             stack_buffer: false,
+            runtime_own: false,
             store_nr: u16::MAX,
             alloc_serial: 0,
             #[cfg(feature = "op-census")]
@@ -1719,6 +1724,7 @@ impl Store {
             tag: 0,
             borrowed: false,
             stack_buffer: false,
+            runtime_own: false,
             store_nr: u16::MAX,
             alloc_serial: 0,
             #[cfg(feature = "op-census")]
@@ -1809,6 +1815,7 @@ impl Store {
             free_protect_depth: 0,
             borrowed: false,
             stack_buffer: false,
+            runtime_own: false,
             store_nr: u16::MAX,
             alloc_serial: 0,
             #[cfg(feature = "op-census")]
@@ -1943,6 +1950,7 @@ impl Store {
             free_protect_depth: 0,
             borrowed: false,
             stack_buffer: false,
+            runtime_own: false,
             store_nr: u16::MAX,
             alloc_serial: 0,
             #[cfg(feature = "op-census")]
@@ -3807,6 +3815,7 @@ impl Store {
             tag: self.tag,
             borrowed: false,
             stack_buffer: false,
+            runtime_own: false,
             store_nr: u16::MAX,
             alloc_serial: 0,
             #[cfg(feature = "op-census")]
@@ -3873,6 +3882,7 @@ impl Store {
             free_protect_depth: self.free_protect_depth,
             borrowed: false,
             stack_buffer: self.stack_buffer,
+            runtime_own: self.runtime_own,
             store_nr: self.store_nr,
             alloc_serial: self.alloc_serial,
             #[cfg(feature = "op-census")]
@@ -3966,6 +3976,7 @@ impl Store {
             tag: self.tag,
             borrowed: true,
             stack_buffer: false,
+            runtime_own: false,
             store_nr: u16::MAX,
             alloc_serial: 0,
             #[cfg(feature = "op-census")]

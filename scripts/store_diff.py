@@ -84,7 +84,9 @@ def run_interp(prog, d, env):
 def run_c(prog, d, env, plant):
     src, exe = os.path.join(d, "p.c"), os.path.join(d, "p")
     t, dump = os.path.join(d, "c.trace"), os.path.join(d, "c.dump")
-    r = subprocess.run([LOFT, "--emit-c", src, prog], capture_output=True, text=True, timeout=300, env=env)
+    # Every statement records its line, so each store is named by the line that made it.
+    r = subprocess.run([LOFT, "--emit-c", src, prog], capture_output=True, text=True, timeout=300,
+                       env={**env, "LOFT_C_TRACE_SITES": "1"})
     if r.returncode != 0:
         last = r.stderr.strip().splitlines()[-1] if r.stderr.strip() else ""
         return None, "refused: " + last
@@ -143,6 +145,29 @@ def same_store_refs(a, b, lo, hi, wslots, gslots):
     return True
 
 
+SLOT_KEY = b"slot="
+
+
+def same_slot_text(a, b, lo, hi, wslots, gslots):
+    """Is the run `lo..hi` inside the decimal number of a `slot=<n>` line — the slot a store
+    image's sidecar records for the store it was written from (`schema_sidecar.rs`, whose
+    loader rewrites references to it when it lands in another slot) — and does that number on
+    each side name the same store by history?"""
+    x, y = bytes.fromhex(a), bytes.fromhex(b)
+    def number(buf):
+        start = lo
+        while start > 0 and chr(buf[start - 1]).isdigit():
+            start -= 1
+        end = lo
+        while end < len(buf) and chr(buf[end]).isdigit():
+            end += 1
+        if end < hi or start == end or buf[max(0, start - len(SLOT_KEY)):start] != SLOT_KEY:
+            return None
+        return int(buf[start:end])
+    sx, sy = number(x), number(y)
+    return sx is not None and sy is not None and sx in wslots and sy in gslots and wslots[sx] == gslots[sy]
+
+
 def differences(want, got, wsites=None, gsites=None, noise=None):
     """Every difference, as lines: a store one side lacks, a record one side lacks, a record of
     another size, and each run of differing bytes — each store named with the line it was made
@@ -172,6 +197,8 @@ def differences(want, got, wsites=None, gsites=None, noise=None):
                 masked = (noise or {}).get((name, rec), set())
                 for lo, hi, x, y in byte_runs(wr[rec][1], gr[rec][1]):
                     if same_store_refs(wr[rec][1], gr[rec][1], lo, hi, wslots, gslots):
+                        continue
+                    if same_slot_text(wr[rec][1], gr[rec][1], lo, hi, wslots, gslots):
                         continue
                     if is_unwritten(x) != is_unwritten(y) and (is_zero(x) or is_zero(y)):
                         span = f"byte {lo}" if hi == lo + 1 else f"bytes {lo}..{hi - 1}"
@@ -212,51 +239,42 @@ def compare(prog, env, plant=False):
     return differences(want, got, wsites, gsites, noise_of(want, again)), len(want) - 1, records
 
 
-def site_keys(sites):
-    """`{history name: (making line, its count at that line)}`: what a store is besides the
-    order it was made in.  A C site written as a declaration line (`~54`) keys as itself."""
-    count, out = {}, {}
-    for name in sorted(sites, key=lambda n: [int(x) if x.isdigit() else x for x in re.split(r"(\d+)", n)]):
-        line = str(sites[name])
-        k = count.get(line, 0)
-        count[line] = k + 1
-        out[name] = (line, k)
-    return out
+def site_keys(sites, side):
+    """`{history name: (making line, root type)}`: what a store is besides the order it was made
+    in.  One line can make stores of several types, in another order on each runtime; its type
+    tells them apart."""
+    return {name: (str(sites[name]), side[name][0][0] if name in side else None) for name in sites}
 
 
 def repair(want, wsites, got, gsites):
-    """The C's stores renamed to the interpreter's names they pair with: by making line and count
-    at that line first, then — for those left — in making order.  Two runtimes that make the same
-    stores in another order (a C-only rewrite's, or another call order) pair by what each store
-    is, not by when it was made; a name kept by order alone would shift every store after the
-    first one out of place."""
-    wk, gk = site_keys(wsites), site_keys(gsites)
-    by_key = {k: n for n, k in wk.items()}
-    rename, taken = {}, set()
-    for gname, key in gk.items():
-        w = by_key.get(key)
-        if w is not None and w not in taken:
-            rename[gname] = w
-            taken.add(w)
+    """The C's stores renamed to the interpreter's names they pair with: by making line and root
+    type first, then — for those left — by root type alone.  Within either group a store pairs
+    with the one holding the most equal records, ties going by making order.  Two runtimes that
+    make the same stores in another order (a C-only rewrite's, another call order, a loop's
+    stores freed in another order) pair by what each store is, not by when it was made; a name
+    kept by order alone would shift every store after the first one out of place.  The pairing
+    is one to one: a store whose bytes differ still pairs with some store and still reports
+    the difference."""
     order = lambda n: [int(x) if x.isdigit() else x for x in re.split(r"(\d+)", n)]
-    # Then by the root's type and its count within that type: a store made at a line one
-    # runtime names by its statement and the other by its function's declaration is still the
-    # store of that type it is.
-    def by_type(side, left):
-        count, out = {}, {}
-        for n in sorted(left, key=order):
-            t = side[n][0][0]
-            out[(t, count.get(t, 0))] = n
-            count[t] = count.get(t, 0) + 1
-        return out
-    wleft = [n for n in want if n != "__slots" and n not in taken]
-    gleft = [n for n in got if n != "__slots" and n not in rename]
-    wt, gt = by_type(want, wleft), by_type(got, gleft)
-    for key, g in gt.items():
-        w = wt.get(key)
-        if w is not None and w not in taken:
-            rename[g] = w
-            taken.add(w)
+    wk, gk = site_keys(wsites, want), site_keys(gsites, got)
+    rename, taken = {}, set()
+
+    def likeness(w, g):
+        a, b = want[w][1], got[g][1]
+        return sum(1 for r in set(a) & set(b) if a[r] == b[r]) - len(set(a) ^ set(b))
+
+    def pair(key_w, key_g):
+        wleft = [n for n in sorted(want, key=order) if n != "__slots" and n not in taken]
+        gleft = [n for n in sorted(got, key=order) if n != "__slots" and n not in rename]
+        for g in gleft:
+            cands = [w for w in wleft if w not in taken and key_w(w) is not None and key_w(w) == key_g(g)]
+            if cands:
+                w = max(cands, key=lambda w: (likeness(w, g), -cands.index(w)))
+                rename[g] = w
+                taken.add(w)
+
+    pair(lambda w: wk.get(w), lambda g: gk.get(g))
+    pair(lambda w: want[w][0][0], lambda g: got[g][0][0])
     wleft = [n for n in sorted(want, key=order) if n != "__slots" and n not in taken]
     gleft = [n for n in sorted(got, key=order) if n != "__slots" and n not in rename]
     for g, w in zip(gleft, wleft):
@@ -279,15 +297,27 @@ def noise_of(a, b):
     return out
 
 
+PADDING = "(padding, if no field covers it)"
+
+
+def substantive(lines):
+    """The differences that are not padding: a byte only one side zeroed, which no field
+    covers, is listed apart and never makes two runs differ."""
+    return [x for x in lines if not x.endswith(PADDING)]
+
+
+def agrees(r):
+    """A comparison that ran and found nothing but padding."""
+    return r[0] is not None and not substantive(r[0])
+
+
 def attribute(prog):
     """The first C-only rewrite whose switch makes the stores agree, or None."""
     for rule, switch in cad.C_ONLY_REWRITES:
-        r = compare(prog, {**os.environ, switch: "1"})
-        if r[0] is not None and not r[0]:
+        if agrees(compare(prog, {**os.environ, switch: "1"})):
             return rule, switch
     every = {**os.environ, **{s: "1" for _, s in cad.C_ONLY_REWRITES}}
-    r = compare(prog, every)
-    if r[0] is not None and not r[0]:
+    if agrees(compare(prog, every)):
         return " + ".join(x for x, _ in cad.C_ONLY_REWRITES), "every C-only rewrite off"
     return None
 
@@ -323,8 +353,8 @@ def main():
                 print(f"{prog}: the planted byte was NOT reported: the comparison is blind")
                 failed += 1
             continue
-        padding = [x for x in lines if x.endswith("(padding, if no field covers it)")]
-        lines = [x for x in lines if x not in padding]
+        padding = [x for x in lines if x.endswith(PADDING)]
+        lines = substantive(lines)
         if not lines:
             extra = f", apart from {len(padding)} run(s) of padding" if padding else ""
             print(f"{prog}: same ({stores} stores, {records} records{extra})")

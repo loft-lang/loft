@@ -983,11 +983,13 @@ impl State {
             db.store_mut(&stack_cur).arm_init_shadow();
         }
         db.store_mut(&stack_cur).stack_buffer = true;
+        db.store_mut(&stack_cur).runtime_own = true;
         let stack_cap_bytes = db.store(&stack_cur).byte_capacity() as u32;
         let stack_base = stack_base_of(&db, &stack_cur);
         // Allocate the constant store (CONST_STORE = 1). Starts empty,
         // populated during byte_code(), locked before execution.
         let _const_store = db.database(100);
+        db.store_mut(&_const_store).runtime_own = true;
         // `LOFT_ALLOC_TRACE` — the two stores every interpreter state makes for itself, a par
         // worker's included: a C unit has neither (STORE_MODEL D26), so the trace marks them
         // as the interpreter's own and a comparison leaves them out.
@@ -9178,6 +9180,7 @@ impl State {
             db.store_mut(&stack_cur).arm_init_shadow();
         }
         db.store_mut(&stack_cur).stack_buffer = true;
+        db.store_mut(&stack_cur).runtime_own = true;
         let stack_cap_bytes = db.store(&stack_cur).byte_capacity() as u32;
         let stack_base = stack_base_of(&db, &stack_cur);
         State {

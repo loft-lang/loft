@@ -4668,6 +4668,9 @@ impl<'a> FnWriter<'a> {
     fn note_site(&mut self, v: &Value, ind: usize) {
         if let Value::Line(n) = v.unspan() {
             self.cur_line = *n;
+            if self.cx.trace_sites && *n != 0 {
+                self.line(ind, &format!("loft_frame_site({n});"));
+            }
             // A debugger's line table (`Cx::source_lines`): the statements that follow are this
             // loft line's.  A directive starts its own line; `statement_count` passes over it.
             if self.cx.source_lines && *n != 0 && *n != self.marked_line {

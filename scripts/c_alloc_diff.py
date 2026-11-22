@@ -128,7 +128,9 @@ def interp(prog, d, env):
 
 def c(prog, d, env):
     src, exe, t = (os.path.join(d, x) for x in ("p.c", "p", "c.txt"))
-    r = subprocess.run([LOFT, "--emit-c", src, prog], capture_output=True, text=True, timeout=120, env=env)
+    # Every statement records its line, so each event carries the line that made it.
+    r = subprocess.run([LOFT, "--emit-c", src, prog], capture_output=True, text=True, timeout=120,
+                       env={**env, "LOFT_C_TRACE_SITES": "1"})
     if r.returncode != 0:
         return None, "refused: " + r.stderr.strip().splitlines()[-1] if r.stderr.strip() else "refused"
     # The archives the unit names (`/* link: … */`: a `[c] shim`, the TLS client of a unit that
