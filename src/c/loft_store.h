@@ -240,18 +240,21 @@ typedef struct { const uint8_t *base; uint32_t len, elem; loft_fowner *owner; } 
 typedef struct { loft_fspan span; uint8_t header[8]; uint32_t slot_rec, slot_pos; } loft_foreign;
 #endif
 
-/* `loft_store_t`: the `Store` fields the allocator reads, and the C runtime's own beside them
- * (`known`: the type a wrapper mint gave the store's first record, 0xFFFF for any other;
- * `protect`: the calls in flight that hold this store as an argument). */
+/* `loft_store_t` (`@PLN206 P3`): the fields up to `hgen` are the interpreter's `Store`, in its
+ * order and with its types (`#[repr(C)]`), so both allocators read and write one store with one
+ * meaning — `tests/store_layout.rs` compares every offset; a flag is a `uint8_t` holding 0 or 1,
+ * a Rust `bool`.  The fields after `hgen` are this runtime's alone.  (`known`: the type of the
+ * store's root record, 0xFFFF for none; `protect`: the calls in flight that hold this store as
+ * an argument.) */
 typedef struct {
     uint8_t *buf;
     uint32_t size;
-    int live;
+    uint8_t live;
     uint16_t known;
-    int pinned;
-    int protect;
+    uint8_t pinned;
+    uint32_t protect;
     /* `Store::read_only` set by the author's `#lock = true` (`@FR-H-WriteLocked`). */
-    int read_only;
+    uint8_t read_only;
     uint64_t serial;
     loft_bits claims, referenced, removed, lazy_free, parked_set;
     /* `@FR-H-DropOnce` (`Store::released_root`): the root record's value was released by its
@@ -260,22 +263,23 @@ typedef struct {
     uint32_t parked_heads[LOFT_PARK_MAX_WORDS + 1];
     uint32_t parked_count;
     uint32_t claimed_end, free_root, wild, dead_words;
-    int needs_coalesce, lazy;
+    uint8_t needs_coalesce, lazy;
     /* `Store::defined`: the buffer was zeroed when made, and a growth zeroes its new tail. */
-    int defined;
-    /* `Store::park` off — a store loaded from an image parks nothing (`Store::load`). */
-    int no_park;
-    /* `Store::placed_foreign` (`@FR-H-RootExtent`): the live records placed here that are not
-     * elements of the root collection; while any lives, a clear does not reset the store and
-     * no exchange takes its content. */
+    uint8_t defined;
+    /* `Store::no_park` — a store loaded from an image parks nothing (`Store::load`). */
+    uint8_t no_park;
+    /* `Store::placed` (`@FR-H-RootExtent`): the live records placed here that are not elements
+     * of the root collection; while any lives, a clear does not reset the store and no exchange
+     * takes its content. */
     uint32_t *placed, nplaced, placed_cap;
-    /* `Stores::frame_held` (`@FR-G-Arg-Rebind`): the live generator frames holding this store
+    /* `Store::frame_holds` (`@FR-G-Arg-Rebind`): the live generator frames holding this store
      * as an argument, and whether its owner released it while they did. */
     uint32_t frame_holds;
-    int orphaned;
-    /* `Store::file` (`@FR-S-Mapped`, loft_mapped.h): the length in bytes of the file `buf`
-     * maps, shared — grown and cut with the file and unmapped when the store is released — and
-     * 0 for a store in memory; `map_file` is the open file (a descriptor, or a Windows handle). */
+    uint8_t orphaned;
+    /* `@FR-S-Mapped` (loft_mapped.h): the length in bytes of the file `buf` maps, shared — grown
+     * and cut with the file and unmapped when the store is released — and 0 for a store in
+     * memory; `map_file` is the open file (a descriptor, or a Windows handle).  The interpreter's
+     * own file-backed store keeps 0 here (its mapping is `Store::file`). */
     size_t mapped;
     intptr_t map_file;
     /* `src/database/closure_share.rs` — the closure-copy share count, the one reference count in
@@ -284,16 +288,15 @@ typedef struct {
      * `loft_copy_closure` alone, taken back by `loft_free_ref` alone; nothing else may read or
      * write it — find the store's owner instead. */
     uint32_t closure_shares;
+    /* `@FR-R-TableHandle`: the store's table generation — a new value whenever a table in it
+     * changes shape or its content is replaced (`loft_h_reshaped`).  A handle resolved under
+     * another value resolves again.  Never persisted. */
+    uint64_t hgen;
 #ifdef LOFT_FOREIGN
     /* `Store::foreign`: the bytes this store serves under `LOFT_FOREIGN_REC`; an owner of 0 for
      * every ordinary store. */
     loft_foreign foreign;
 #endif
-    /* `@FR-R-TableHandle`: the store's table generation — a new value whenever a table in it
-     * changes shape or its content is replaced (`loft_h_reshaped`).  A handle resolved under
-     * another value resolves again.  Never persisted.  Last: the
-     * fields the hot paths read keep their offsets. */
-    uint64_t hgen;
 #ifdef LOFT_ALLOC_TRACE
     /* `LOFT_ALLOC_TRACE`: the `par` worker that made the store (0 the caller's thread), so each
      * event names it `<worker>.<serial>` whichever thread writes it (`Store::trace_worker`). */

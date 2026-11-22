@@ -1287,7 +1287,7 @@ impl State {
         // (allocated at pc=…)]` lines around each opcode.
         let mut alloc_pcs: HashMap<u16, (u32, String)> = HashMap::new();
         let mut prev_free: Vec<bool> = if config.trace_alloc_free {
-            self.database.allocations.iter().map(|s| s.free).collect()
+            self.database.allocations.iter().map(|s| !s.live).collect()
         } else {
             Vec::new()
         };
@@ -1353,7 +1353,7 @@ impl State {
                         .database
                         .allocations
                         .get(usize::from(n))
-                        .is_some_and(|s| !s.free);
+                        .is_some_and(|s| s.live);
                     if live && holder_depth == Some(prev_depth) {
                         let in_fn = if cur_d_nr == u32::MAX {
                             "?"
@@ -1401,7 +1401,7 @@ impl State {
                         continue;
                     }
                     let was_free = prev_free.get(s_nr).copied().unwrap_or(true);
-                    if was_free && !s.free {
+                    if was_free && s.live {
                         let in_fn = if cur_d_nr == u32::MAX {
                             "?"
                         } else {
@@ -1429,7 +1429,7 @@ impl State {
                             log.flush()?;
                         }
                         alloc_pcs.insert(s_nr as u16, (code, op_name.clone()));
-                    } else if !was_free && s.free {
+                    } else if !was_free && !s.live {
                         let origin = alloc_pcs
                             .get(&(s_nr as u16))
                             .map_or_else(|| "<unknown>".to_string(), |(p, n)| format!("{n}@{p}"));
@@ -1460,7 +1460,7 @@ impl State {
                         }
                     }
                     if let Some(slot) = prev_free.get_mut(s_nr) {
-                        *slot = s.free;
+                        *slot = !s.live;
                     }
                 }
             }
@@ -1499,17 +1499,17 @@ impl State {
                 );
                 // Free the stack store. Mark constant stores (pre-built by
                 // build_const_vectors) as free — they are program-lifetime.
-                self.database.allocations[0].free = true;
+                self.database.allocations[0].live = false;
                 let const_store = crate::database::CONST_STORE as usize;
                 if const_store < self.database.allocations.len() {
-                    self.database.allocations[const_store].free = true;
+                    self.database.allocations[const_store].live = false;
                 }
                 // Mark all stores referenced by const_refs as free.
                 for cr in &self.const_refs {
                     if cr.store_nr != u16::MAX
                         && (cr.store_nr as usize) < self.database.allocations.len()
                     {
-                        self.database.allocations[cr.store_nr as usize].free = true;
+                        self.database.allocations[cr.store_nr as usize].live = false;
                     }
                 }
                 for (s_nr, s) in self.database.allocations.iter().enumerate() {
@@ -1519,7 +1519,7 @@ impl State {
                     if s.is_locked() {
                         continue;
                     }
-                    if !s.free {
+                    if s.live {
                         if let Some((p, n)) = alloc_pcs.get(&(s_nr as u16)) {
                             panic!(
                                 "Database {s_nr} not correctly freed (allocated by \
@@ -1991,7 +1991,7 @@ impl State {
                     return format!("ref({},{},{})", val.store_nr, val.rec, val.pos);
                 }
                 let store = &self.database.allocations[val.store_nr as usize];
-                if store.free {
+                if !store.live {
                     return format!("ref({},{},{})=<freed>", val.store_nr, val.rec, val.pos);
                 }
                 // Guard: record must be within the store buffer.
@@ -2018,7 +2018,7 @@ impl State {
                 };
                 // Guard: don't access freed stores (OpFreeRef may have already run).
                 if (val.store_nr as usize) < self.database.allocations.len()
-                    && self.database.allocations[val.store_nr as usize].free
+                    && !self.database.allocations[val.store_nr as usize].live
                 {
                     return format!("ref({},{},{})=<freed>", val.store_nr, val.rec, val.pos);
                 }

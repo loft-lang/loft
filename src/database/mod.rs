@@ -956,7 +956,7 @@ impl WorkerStores {
         // Worker output slots are writable (free=true→false handled by
         // the worker's first claim).  Mark non-free so debug invariants
         // don't think this is a freed slot.
-        store.free = false;
+        store.live = true;
         self.stores.allocations.push(store);
         if store_nr >= self.stores.max {
             self.stores.max = store_nr + 1;
@@ -1012,7 +1012,7 @@ impl WorkerStores {
             .enumerate()
             .skip(parent_store_count as usize)
         {
-            if slot.free {
+            if !slot.live {
                 continue;
             }
             let s = std::mem::replace(slot, crate::store::Store::new_freed_sentinel());
@@ -1171,7 +1171,7 @@ impl Stores {
         }
         assert!(
             (dest_store as usize) < self.allocations.len()
-                && !self.allocations[dest_store as usize].free,
+                && self.allocations[dest_store as usize].live,
             "materialize: destination store #{dest_store} is not live"
         );
         // Byte size of the record, then the word count a record needs: one
@@ -1234,7 +1234,7 @@ impl Stores {
         // `validate()` call on an adopted store (the bundle writer's
         // first push) died on "Using a freed store" (the @P317
         // bitmap-vs-flag dual invariant, F3 in the sweep catalog).
-        store.free = false;
+        store.live = true;
         // Inline the free-slot scan rather than calling allocation.rs's
         // private `find_free_slot` — keeping mod.rs from depending on
         // that private helper avoids cross-file plumbing for one
@@ -1315,7 +1315,7 @@ impl Stores {
             .enumerate()
             .skip(parent_store_count as usize)
         {
-            if slot.free {
+            if !slot.live {
                 continue;
             }
             let s = std::mem::replace(slot, crate::store::Store::new_freed_sentinel());
@@ -1424,7 +1424,7 @@ mod worker_output_slot_tests {
         assert_eq!(taken.capacity_words(), cap);
         // Sentinel left behind has tiny capacity (Store::new_freed_sentinel = 4 words)
         // and is marked free.
-        assert!(ws.stores.allocations[pos].free);
+        assert!(!ws.stores.allocations[pos].live);
     }
 
     #[test]
@@ -1436,7 +1436,7 @@ mod worker_output_slot_tests {
         let store = donor.take_slot(slot.store_nr);
         let nr = parent.adopt_store(store);
         assert!((nr as usize) < parent.allocations.len() || (nr as usize) == initial_len);
-        assert!(!parent.allocations[nr as usize].free);
+        assert!(parent.allocations[nr as usize].live);
     }
 
     #[test]
@@ -1487,7 +1487,7 @@ mod worker_output_slot_tests {
         let s0 = ws.add_output_slot(8);
         let _s1 = ws.add_output_slot(16);
         // Mark s0 as freed.
-        ws.stores.allocations[s0.store_nr as usize].free = true;
+        ws.stores.allocations[s0.store_nr as usize].live = false;
         let owned = ws.take_all_owned(0);
         assert_eq!(owned.len(), 1, "freed slot skipped");
         assert_eq!(owned[0].0, 1);

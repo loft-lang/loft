@@ -120,7 +120,8 @@ impl Stores {
 /// One more holder of `store_nr`: a closure copy now names the store its source record owns.
 /// Private to this file — [`Stores::copy_closure_record`] is its only caller.
 fn share_with_closure_copy(stores: &mut Stores, store_nr: u16) {
-    if (store_nr as usize) >= stores.allocations.len() || stores.allocations[store_nr as usize].free
+    if (store_nr as usize) >= stores.allocations.len()
+        || !stores.allocations[store_nr as usize].live
     {
         return;
     }

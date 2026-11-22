@@ -151,7 +151,7 @@ impl Stores {
             return;
         }
         let store = &self.allocations[rec.store_nr as usize];
-        if store.free {
+        if !store.live {
             bad(
                 problems,
                 format!(

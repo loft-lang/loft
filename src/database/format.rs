@@ -869,7 +869,7 @@ impl Stores {
         let errors = self
             .allocations
             .get(of.store_nr as usize)
-            .filter(|s| !s.free)
+            .filter(|s| s.live)
             .map(|s| s.parse_errors.clone())
             .unwrap_or_default();
         self.text_vector(&errors)
@@ -1393,7 +1393,7 @@ impl Stores {
         // (store index, usage, created_at bytecode pos, known_type)
         let mut rows: Vec<(usize, crate::store::StoreUsage, u32, u16)> = Vec::new();
         for (i, s) in self.allocations.iter().enumerate() {
-            if s.free {
+            if !s.live {
                 continue;
             }
             let u = s.usage();

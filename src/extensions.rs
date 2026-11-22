@@ -1443,7 +1443,7 @@ fn shared_store_dispatch_raw(
         let rb = popped[hd].dbref;
         let rf = ret.dbref;
         let rb_free = (rb.store_nr as usize) < stores.allocations.len()
-            && stores.allocations[rb.store_nr as usize].free;
+            && !stores.allocations[rb.store_nr as usize].live;
         eprintln!(
             "[shared-ret] lib_idx={lib_idx} retbuf=({},{},{}) return=({},{},{}) \
              same={} retbuf_freed={}",

@@ -755,7 +755,7 @@ impl State {
             // error: a free of a REUSED store re-tagged by a different `OpDatabase`
             // owner (the wrong-store / cross-owner free this gate exists to catch).
             assert!(
-                st.free || st.tag == 0 || st.tag == tag,
+                !st.live || st.tag == 0 || st.tag == tag,
                 "store-tag mismatch on free: store #{} has tag {} but OpFreeRefTag expected {}",
                 db.store_nr,
                 st.tag,
@@ -1858,7 +1858,7 @@ impl State {
         // freed it, and the copy site.  Gated on LOFT_UAF; capped to avoid flood.
         if crate::keys::uaf_any_enabled()
             && (data.store_nr as usize) < self.database.allocations.len()
-            && self.database.allocations[data.store_nr as usize].free
+            && !self.database.allocations[data.store_nr as usize].live
         {
             thread_local! {
                 static REPORTED: std::cell::RefCell<std::collections::HashSet<u16>> =
@@ -1894,7 +1894,7 @@ impl State {
         if crate::keys::uaf_reuse_enabled()
             && data.rec != 0
             && (data.store_nr as usize) < self.database.allocations.len()
-            && !self.database.allocations[data.store_nr as usize].free
+            && self.database.allocations[data.store_nr as usize].live
         {
             let mut problems = 0u32;
             self.database
@@ -2082,7 +2082,7 @@ impl State {
         if raw_tp & crate::keys::COPY_FREE_SOURCE != 0
             && (dst.store_nr == u16::MAX
                 || (dst.store_nr as usize) >= self.database.allocations.len()
-                || self.database.allocations[dst.store_nr as usize].free)
+                || !self.database.allocations[dst.store_nr as usize].live)
         {
             *self.mut_var::<DbRef>(pos) = DbRef::NULL;
             let code_pos = self.code_pos;
@@ -2093,7 +2093,7 @@ impl State {
             && dst.store_nr != u16::MAX
             && (dst.rec, dst.pos) == (1, 8)
             && (dst.store_nr as usize) < self.database.allocations.len()
-            && !self.database.allocations[dst.store_nr as usize].free
+            && self.database.allocations[dst.store_nr as usize].live
             && !self.database.allocations[dst.store_nr as usize].holds_only_root()
         {
             if src.store_nr == dst.store_nr {
@@ -2235,7 +2235,7 @@ impl State {
             // Sentinel guard: the `allocations[..]` prechecks below index by store_nr.
             && src.store_nr != u16::MAX
             && !self.database.is_stack_store(src.store_nr)
-            && !self.database.allocations[src.store_nr as usize].free
+            && self.database.allocations[src.store_nr as usize].live
             && !self.database.allocations[src.store_nr as usize].read_only
             && !self.database.allocations[src.store_nr as usize].is_free_protected()
         {

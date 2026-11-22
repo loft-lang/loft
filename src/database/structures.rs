@@ -2003,7 +2003,7 @@ impl Stores {
     #[inline(always)]
     fn append_store(&mut self, slot: &DbRef) -> &mut Store {
         let i = slot.store_nr as usize;
-        if crate::keys::strict_stores() && self.allocations[i].free {
+        if crate::keys::strict_stores() && !self.allocations[i].live {
             self.append_to_freed_store(slot);
         }
         &mut self.allocations[i]

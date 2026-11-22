@@ -1428,7 +1428,7 @@ impl Stores {
         self.release_slot(new_slot);
         let s = &self.allocations[slot as usize];
         store.set_known_type(s.known_type);
-        store.free = s.free;
+        store.live = s.live;
         store.set_created_at(s.created_at);
         store.last_op_at = s.last_op_at;
         store.pinned = s.pinned;

@@ -768,8 +768,8 @@ fn revive_record_chain(
     {
         let store = &mut stores.allocations[store_nr as usize];
         store.unlock();
-        if store.free {
-            store.free = false;
+        if !store.live {
+            store.live = true;
         }
     }
     let wi = store_nr as usize / 64;

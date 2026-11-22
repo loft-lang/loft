@@ -1969,7 +1969,7 @@ impl State {
             // twice would hand a live slot back to the pool.
             if buf.store_nr == COROUTINE_STORE
                 || (buf.store_nr as usize) >= self.database.allocations.len()
-                || self.database.allocations[buf.store_nr as usize].free
+                || !self.database.allocations[buf.store_nr as usize].live
             {
                 continue;
             }
@@ -2053,7 +2053,7 @@ impl State {
                 if db.store_nr != COROUTINE_STORE
                     && db.store_nr != crate::database::NATIVE_COROUTINE_STORE
                     && ((db.store_nr as usize) >= self.database.allocations.len()
-                        || self.database.allocations[db.store_nr as usize].free)
+                        || !self.database.allocations[db.store_nr as usize].live)
                 {
                     continue;
                 }
@@ -5748,7 +5748,7 @@ impl State {
                 (w.store_nr, w.rec, w.off, w.len, w.content, w.narrow)
             };
             if store_nr as usize >= self.database.allocations.len()
-                || self.database.allocations[store_nr as usize].free
+                || !self.database.allocations[store_nr as usize].live
             {
                 continue;
             }
@@ -8162,7 +8162,7 @@ impl State {
                     if (s_nr == 0 && self.database.stack_store_at_zero)
                         || s.is_locked()
                         || self.const_refs.iter().any(|cr| cr.store_nr == s_nr as u16)
-                        || s.free
+                        || !s.live
                     {
                         continue;
                     }
@@ -8511,7 +8511,7 @@ impl State {
             if s.is_locked() || self.const_refs.iter().any(|cr| cr.store_nr == s_nr as u16) {
                 continue;
             }
-            if !s.free {
+            if s.live {
                 let tn = self
                     .database
                     .types
