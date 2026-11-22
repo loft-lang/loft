@@ -2002,10 +2002,9 @@ pub fn push_args(e: el::El, vars: el_vars::Vars, t: ir::TypeT, w: ir::Node, x: i
 // `at_close`: the definitions are made at the literal's `]` although the element is declared —
 // a `vector<T>?` local, whose declared type is no vector hint to the literal.
 pub fn vector_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared: ir::TypeT, at_close: boolean = false, typed: boolean = false) -> Ex {
-  if el_vars::rebind_must_mint(vars, v) {
-    el::refuse(e, "a vector literal rebinding a local a closure shares");
-    return ex(ir::NdNull, ir::TyVoid);
-  }
+  // (A local a closure shares — `rebind_must_mint` — takes a fresh store, as any literal
+  // rebinding a local that has one does (`vector_build`'s late store): the closure keeps the
+  // store it was built with.)
   vector_build(e, vars, v, n, declared, at_close: at_close, typed: typed).x
 }
 
