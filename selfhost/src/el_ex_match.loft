@@ -1300,6 +1300,10 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
   }
   // The destination's element temp, minted on both passes as the literal path mints it.
   celm = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: if v >= 0 { [v] } else { [] } });
+  // (`is_field`: into a field the element is a reference into the field's store — never freed.)
+  if v < 0 {
+    vars.vars[celm].skip_free = true;
+  }
   // A field's comprehension pushes into the field's place: no store of its own, no local.
   place = vars.comp_place;
   vars.comp_place = [];

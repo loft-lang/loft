@@ -1008,6 +1008,10 @@ pub fn closure_value(e: el::El, vars: el_vars::Vars, d: integer, rec_nm: text, c
     if cv >= 0 && !vars.captured.contains(cv) {
       vars.captured += [cv];
     }
+    // (`set_captured`: on the variable itself, which every later store of the table carries.)
+    if cv >= 0 {
+      vars.vars[cv].captured = true;
+    }
     if record_type(e, c.tp) || el_types::base(c.tp) is TyVector || keyed_kind(el_types::base(c.tp)) {
       el_vars::in_use(vars, cv, true);
       if keyed_kind(el_types::base(c.tp)) {
@@ -2915,6 +2919,12 @@ pub fn first_vector_bind(e: el::El, vars: el_vars::Vars, v: integer, t: ir::Type
 
 pub fn vec_copy_bind(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> Ex {
   elm = match el_types::base(x.tp) { TyVector { inner } => inner, _ => ir::TyVoid };
+  // loft#1840 — `(B-Copy)`: the local now holds a COPY of a place, so a `+=` into it that
+  // nothing reads is a lost write (`mark_copy_bound`, read by the `lost-write` lint).  Not for
+  // the self-assign, which copies nothing.
+  if !(el_ir::unspan(x.code) == ir::NdVar { n: v }) && copied_place(e, x.code) {
+    vars.vars[v].copy_bound = true;
+  }
   field_read = !(el_ir::unspan(x.code) is NdVar);
   if vars.amp_vectors.contains(v) {
     el::refuse(e, "a whole-vector rebind of a vector local a `&` links (refilled in place)");
@@ -3358,6 +3368,16 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
     }
   }
   r
+}
+
+// `Parser::is_copied_place`: a value read out of a place — a variable, a text field read off one,
+// any projection rooted at a container variable — rather than built fresh.
+fn copied_place(e: el::El, n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdVar { n: _ } => true,
+    NdCall { def_nr, args } => if el::def(e, def_nr).name == "OpGetText" { len(args) > 0 && copied_place(e, args[0]!) } else { binds::projection_container_var(e.b, el_ir::unspan(n)) != null },
+    _ => binds::projection_container_var(e.b, el_ir::unspan(n)) != null
+  }
 }
 
 // An assignment target's root local and the type of the place it names — a local, a field of
@@ -4342,6 +4362,13 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
   x = expression(e, vars, rhs!);
   vars.boxed_tuple_at = outer_boxed;
   vars.assign_target = outer_target;
+  // loft#1840 — `(B-Copy)`: a whole-value bind of a text or a collection read out of a place
+  // (`is_copied_place`) leaves the local holding a COPY — a `+=` into it that nothing reads is a
+  // lost write (`mark_copy_bound`, at the text bind, `lower_vec_copy_bind` and the keyed
+  // replace alike).
+  if op == "=" && v >= 0 && !(el_ir::unspan(x.code) == ir::NdVar { n: v }) && (el_types::base(x.tp) is TyText || el_types::is_collection(el_types::base(x.tp))) && copied_place(e, x.code) {
+    vars.vars[v].copy_bound = true;
+  }
   if op == "=" {
     ux = unbox_tuple_element(e, vars, x);
     if ux != null {

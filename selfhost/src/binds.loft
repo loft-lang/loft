@@ -873,7 +873,7 @@ pub fn owned_ref(b: ir::Bundle, ops: own::Ops, d: integer, f: ir::Function, v: i
 // chain reads out of; null for `None`.  The walk is `projection_walk` (:3634) with
 // `nullable_reads` false; its offset, depth and index bookkeeping never changes where it stops
 // or what variable it answers, so only the variable is carried.
-fn projection_container_var(b: ir::Bundle, value: ir::Node) -> integer? {
+pub fn projection_container_var(b: ir::Bundle, value: ir::Node) -> integer? {
   match value {
     NdSpan { pos: _, inner } => projection_container_var(b, inner),
     NdIf { cond, t, f } => {
