@@ -423,12 +423,26 @@ static FILE *loft_trace_file(void) {
 }
 /* The line of the events that follow (loft_rt.h, which sets it once the frames exist). */
 static void (*loft_trace_site_hook)(FILE *f);
+/* A `par` worker's name (`loft_par_job_run`; 0 on the main thread): a worker's table is a copy
+ * of its caller's, so its stores' serials repeat another thread's, and the trace names them
+ * `<worker>.<serial>` as the interpreter's does — one name per store however threads
+ * interleave. */
+static LOFT_TLS uint32_t loft_trace_worker = 0;
+/* One event, written whole (its line formatted first), the worker's name before its store. */
+static void loft_trace_emit(FILE *f, const char *line) {
+    if (loft_trace_site_hook) loft_trace_site_hook(f);
+    if (loft_trace_worker && line[0] != 'M' && line[0] != '\0' && line[1] == ' ')
+        fprintf(f, "%c %u.%s", line[0], (unsigned) loft_trace_worker, line + 2);
+    else
+        fputs(line, f);
+}
 #define LOFT_TRACE(...)                                                                     \
     do {                                                                                    \
         FILE *loft_tf_ = loft_trace_file();                                                 \
         if (loft_tf_) {                                                                     \
-            if (loft_trace_site_hook) loft_trace_site_hook(loft_tf_);                       \
-            fprintf(loft_tf_, __VA_ARGS__);                                                 \
+            char loft_tb_[192];                                                             \
+            snprintf(loft_tb_, sizeof loft_tb_, __VA_ARGS__);                               \
+            loft_trace_emit(loft_tf_, loft_tb_);                                            \
         }                                                                                   \
     } while (0)
 #else

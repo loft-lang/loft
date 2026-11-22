@@ -28,6 +28,10 @@ dropped outside the store.  Room is capacity and observably nothing (`(Col-Capac
 is the rewrite's, not a divergence of the store model (@C122; STORE_MODEL.md); `--attribute`
 names it, and what no switch accounts for is the allocator's to explain.
 
+A difference of ORDER alone is named as such (`order only:`): each store's own events alike
+with separate stores interleaving otherwise, or a release walk's records the same in another
+order.  The store model is per store, and neither order is part of it.
+
 Inside a `par` region the comparison is approximate: the workers' events interleave in the
 trace, and each interpreter worker numbers its stores on its own, so the order there is not
 the program's."""
@@ -73,7 +77,7 @@ def program_events(lines):
             made.setdefault(f[1], []).append(i)
         elif len(f) == 2 and f[0] == "S" and made.get(f[1]):
             own.add(made[f[1]].pop())
-    out, names, started, dropped, at = [], {}, False, set(), "?"
+    out, names, started, dropped, at, made = [], {}, False, set(), "?", 0
     for i, f in enumerate(rows):
         if not f:
             continue
@@ -91,7 +95,10 @@ def program_events(lines):
         if not started or len(f) < 2 or f[0] == "S" or f[1] in dropped:
             continue
         if f[0] == "N":
-            names[f[1]] = str(len(names) + 1)
+            # A counter, not the table's size: a number made again (a freed slot reused)
+            # replaces its key without growing the table, and two stores took one name.
+            made += 1
+            names[f[1]] = str(made)
         if f[1] not in names:
             continue
         f[1] = names[f[1]]
@@ -142,6 +149,48 @@ def compare(prog, env):
         i = min(len(want), len(got))
     return i, want, got
 
+def per_store(events):
+    """Each store's own events in order, the stores taken as a multiset: what a program's
+    stores went through, whatever order separate stores' events interleave in."""
+    seq = {}
+    for e in events:
+        f = str(e).split()
+        seq.setdefault(f[1], []).append(" ".join([f[0]] + f[2:]))
+    return sorted(seq.values())
+
+def runs_as_sets(events):
+    """The events with each run of one kind (a release walk's deletes, a scope exit's frees)
+    taken as a set: the same records released, in any order."""
+    out, cur = [], []
+    for e in events:
+        if cur and cur[0].split()[0] != str(e).split()[0]:
+            out += sorted(cur)
+            cur = []
+        cur.append(str(e))
+    return out + sorted(cur)
+
+def no_capacity(events):
+    """The events with a made store's starting capacity left out (`N <store>`): room a store
+    starts with places no record, and a slot made again keeps the buffer it had (a par
+    worker's stack slot, 1024 words, on the interpreter)."""
+    return [" ".join(str(e).split()[:2]) if str(e).startswith("N ") else str(e) for e in events]
+
+def order_only(want, got):
+    """Why two traces that differ by position still describe the same stores, or None: each
+    store's own events alike (separate stores interleave in the order a program's expressions
+    run — a par region's workers too), or each run of one kind alike as a set (a release walk's
+    order); a made store's starting capacity aside."""
+    if len(want) != len(got):
+        return None
+    want, got = no_capacity(want), no_capacity(got)
+    if want == got:
+        return "the same events, a store's starting capacity aside"
+    if runs_as_sets(want) == runs_as_sets(got):
+        return "the same records in each run, in another order (a release walk's order)"
+    if per_store(want) == per_store(got):
+        return "the same events per store, interleaved in another order"
+    return None
+
 def attribute(prog):
     """The C-only rewrite under whose switch the program agrees, or None."""
     for rule, switch in C_ONLY_REWRITES:
@@ -177,6 +226,10 @@ def main():
             a = f"{want[k]:<18} @{want[k].line}" if k < len(want) else "-"
             b = f"{got[k]:<18} @{got[k].line}" if k < len(got) else "-"
             print(f"   {'>' if k == i else ' '} {a:<28} {b}")
+        why = order_only(want, got)
+        if why:
+            print(f"    order only: {why}")
+            continue
         if attr:
             who = attribute(prog)
             print(f"    the rewrite's: {who[0]} (agrees under {who[1]})" if who

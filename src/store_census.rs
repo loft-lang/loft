@@ -184,6 +184,21 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
+/// `LOFT_ALLOC_TRACE`'s par workers: each worker thread numbers its stores on its own, so the
+/// trace names a worker's store `<worker>.<serial>` — one name per store however the threads
+/// interleave (0 is the main thread, whose names stay bare).
+#[cfg(feature = "op-census")]
+thread_local! {
+    static WORKER: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// A par worker's state is being built on this thread: its stores take a worker's names.
+#[cfg(feature = "op-census")]
+pub fn enter_worker() {
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+    WORKER.with(|w| w.set(NEXT.fetch_add(1, Ordering::Relaxed)));
+}
+
 /// Is `LOFT_ALLOC_TRACE` set?  The interpreter then runs its full loop, which publishes every
 /// op's position ([`at_pc`]).
 #[cfg(feature = "op-census")]
@@ -222,7 +237,15 @@ fn site_line() -> Option<u32> {
 #[cfg(feature = "op-census")]
 pub fn alloc_event(line: std::fmt::Arguments) {
     use std::sync::Mutex;
-    let text = line.to_string();
+    let mut text = line.to_string();
+    let worker = WORKER.with(std::cell::Cell::get);
+    if worker != 0 && !text.starts_with('M') {
+        let mut parts = text.splitn(3, ' ');
+        if let (Some(kind), Some(store)) = (parts.next(), parts.next()) {
+            let rest = parts.next().map_or(String::new(), |r| format!(" {r}"));
+            text = format!("{kind} {worker}.{store}{rest}");
+        }
+    }
     let site = if text.starts_with(['M', 'S']) {
         None
     } else {

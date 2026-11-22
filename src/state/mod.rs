@@ -9147,6 +9147,8 @@ impl State {
         library: Arc<Vec<Call>>,
     ) -> State {
         let mut db = worker.stores;
+        #[cfg(feature = "op-census")]
+        crate::store_census::enter_worker();
         // DEFINED: the stack census reads the stack store whole (`Store::defined`).
         let stack_cur = db.database_defined(1000);
         crate::store_census::set_stack_store(stack_cur.store_nr);

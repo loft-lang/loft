@@ -22,7 +22,10 @@ keep a value out of the store, or write in another place.  A program cannot obse
 it is the rewrite's, not the model's (@C122; a store trace reports the build, @C135).
 `scripts/c_alloc_diff.py --attribute` runs a program that differs again with each C-only rewrite
 switched off, and names the one under which it agrees; only what no switch accounts for is a row
-below.
+below.  The model is per store: the order in which separate stores' events interleave (the
+order a program's expressions run, a `par` region's threads) and the order a release walk
+deletes one store's records are not part of it, and the tool names such a difference
+`order only`.
 
 ## Contents
 - [The store](#the-store) — the record a store is, field by field
@@ -109,7 +112,7 @@ fixes name a row the same way.  D20 onward come from the field-by-field comparis
 from P0b (what the C runtime lacks).  State: **open**, **fixing** (on the branch named), or
 **decided** (the decision and its measurement).  A closed row moves to
 [STORE_MODEL-history.md](STORE_MODEL-history.md) with its commit; D1–D8, D9a–D17,
-D18–D19j, D20–D25, D27, D29–D31, D33, D34 and D36–D44 are there.  (D8's second half, the gates
+D18–D19j, D20–D25, D27, D29–D31, D33, D34 and D36–D46 are there.  (D8's second half, the gates
 stated in `(H-SwapIn)`, closed with it.)
 
 ### Correctness
