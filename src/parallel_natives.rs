@@ -452,6 +452,7 @@ fn parallel_queue_dispatch(stores: &mut Stores, stack: &mut DbRef, stitch: Queue
 /// `parallel_queue_dispatch` — the shared scaffolding that was
 /// duplicated across all 5 `n_parallel_queue*` fns.
 fn n_parallel_queue(stores: &mut Stores, stack: &mut DbRef) {
+    crate::store_census::par_mark('P');
     parallel_queue_dispatch(stores, stack, QueueStitch::Int);
 }
 
@@ -551,6 +552,7 @@ fn n_parallel_buf_drop(stores: &mut Stores, _stack: &mut DbRef) {
         .par_buffer_stack
         .pop()
         .expect("parallel_buf_drop: par_buffer_stack is already empty");
+    crate::store_census::par_mark('Q');
 }
 
 /// Plan-06 spine step 8c — text-return Queue runtime entry.  Same
@@ -567,6 +569,7 @@ fn n_parallel_buf_drop(stores: &mut Stores, _stack: &mut DbRef) {
 /// heap text-vector.  Reads use `n_parallel_buf_get_text` (clones
 /// into scratch following the standard text-return convention).
 fn n_parallel_queue_text(stores: &mut Stores, stack: &mut DbRef) {
+    crate::store_census::par_mark('P');
     parallel_queue_dispatch(stores, stack, QueueStitch::Text);
 }
 
@@ -597,6 +600,7 @@ fn n_parallel_buf_drop_text(stores: &mut Stores, _stack: &mut DbRef) {
         .par_text_buffer_stack
         .pop()
         .expect("parallel_buf_drop_text: par_text_buffer_stack is already empty");
+    crate::store_census::par_mark('Q');
 }
 
 /// Plan-06 spine step 8d.1 — reference-return Queue runtime entry.
@@ -613,6 +617,7 @@ fn n_parallel_buf_drop_text(stores: &mut Stores, _stack: &mut DbRef) {
 /// Step 8d.2 wires this through the parser; until then this is
 /// exercised only by Rust unit tests in `tests/threading.rs`.
 fn n_parallel_queue_ref(stores: &mut Stores, stack: &mut DbRef) {
+    crate::store_census::par_mark('P');
     parallel_queue_dispatch(stores, stack, QueueStitch::Ref);
 }
 
@@ -655,6 +660,7 @@ fn n_parallel_buf_drop_ref(stores: &mut Stores, _stack: &mut DbRef) {
         };
         stores.free_named(&synthetic, "par_buf_drop_ref");
     }
+    crate::store_census::par_mark('Q');
 }
 
 /// Plan-06 ARC.md A3 — narrow-primitive Queue runtime entry.  Same
@@ -667,6 +673,7 @@ fn n_parallel_buf_drop_ref(stores: &mut Stores, _stack: &mut DbRef) {
 ///
 /// Reads use `n_parallel_buf_get_narrow(idx, return_size, signed)`.
 fn n_parallel_queue_narrow(stores: &mut Stores, stack: &mut DbRef) {
+    crate::store_census::par_mark('P');
     parallel_queue_dispatch(stores, stack, QueueStitch::Narrow);
 }
 
@@ -726,6 +733,7 @@ fn n_parallel_buf_drop_narrow(stores: &mut Stores, _stack: &mut DbRef) {
         .par_narrow_buffer_stack
         .pop()
         .expect("parallel_buf_drop_narrow: par_narrow_buffer_stack is already empty");
+    crate::store_census::par_mark('Q');
 }
 
 /// Plan-06 ARC.md A3.6 — typed reader for `single` (f32) returns
@@ -801,6 +809,7 @@ fn n_parallel_buf_get_float(stores: &mut Stores, stack: &mut DbRef) {
 /// `Set(b_var, Call(buf_get_fn, [idx]))` so the body's
 /// `CallRef(b_var, ...)` reads `b_var`'s 20-byte slot directly.
 fn n_parallel_queue_fn(stores: &mut Stores, stack: &mut DbRef) {
+    crate::store_census::par_mark('P');
     parallel_queue_dispatch(stores, stack, QueueStitch::Fn);
 }
 
@@ -842,4 +851,5 @@ fn n_parallel_buf_drop_fn(stores: &mut Stores, _stack: &mut DbRef) {
         .par_fn_buffer_stack
         .pop()
         .expect("parallel_buf_drop_fn: par_fn_buffer_stack is already empty");
+    crate::store_census::par_mark('Q');
 }

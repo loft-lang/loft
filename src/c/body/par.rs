@@ -49,9 +49,14 @@ impl FnWriter<'_> {
                 | "n_parallel_queue_fn"
                 | "n_parallel_discard",
                 [input, esz, _, _, func, rest @ ..],
-            ) => self
-                .par_queue(name, input, esz, &args[3], func, rest, ind)
-                .map(Some),
+            ) => {
+                // `LOFT_ALLOC_TRACE`'s par region opens here and closes at the drop (D46).
+                if name != "n_parallel_discard" {
+                    self.line(ind, "(void) LOFT_TRACE_MARK(\"P\");");
+                }
+                self.par_queue(name, input, esz, &args[3], func, rest, ind)
+                    .map(Some)
+            }
             ("n_parallel_fold", [input, init, func, threads, rest @ ..]) => self
                 .par_fold(input, init, func, threads, rest, ind)
                 .map(Some),
@@ -87,8 +92,14 @@ impl FnWriter<'_> {
                 | "n_parallel_buf_drop_narrow"
                 | "n_parallel_buf_drop_fn",
                 [],
-            ) => Ok(Some(E::new("loft_par_drop(0)", K::Void))),
-            ("n_parallel_buf_drop_ref", []) => Ok(Some(E::new("loft_par_drop(1)", K::Void))),
+            ) => Ok(Some(E::new(
+                "(loft_par_drop(0), (void) LOFT_TRACE_MARK(\"Q\"))",
+                K::Void,
+            ))),
+            ("n_parallel_buf_drop_ref", []) => Ok(Some(E::new(
+                "(loft_par_drop(1), (void) LOFT_TRACE_MARK(\"Q\"))",
+                K::Void,
+            ))),
             _ => Ok(None),
         }
     }

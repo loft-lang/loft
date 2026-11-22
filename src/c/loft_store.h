@@ -436,6 +436,14 @@ static void loft_trace_emit(FILE *f, const char *line) {
     else
         fputs(line, f);
 }
+/* A `par` region's bounds (`P`, `Q`), marked where the loop's queue starts and its buffer is
+ * dropped, as the interpreter marks them (`store_census::par_mark`); usable in an expression. */
+static int loft_trace_mark(const char *m) {
+    FILE *f = loft_trace_file();
+    if (f) fprintf(f, "%s\n", m);
+    return 0;
+}
+#define LOFT_TRACE_MARK(m) loft_trace_mark(m)
 #define LOFT_TRACE(...)                                                                     \
     do {                                                                                    \
         FILE *loft_tf_ = loft_trace_file();                                                 \
@@ -447,6 +455,7 @@ static void loft_trace_emit(FILE *f, const char *line) {
     } while (0)
 #else
 #define LOFT_TRACE(...) do { } while (0)
+#define LOFT_TRACE_MARK(m) 0
 #endif
 
 static int32_t loft_st_i32(const loft_store_t *s, uint32_t rec, uint32_t fld) {

@@ -199,6 +199,17 @@ pub fn enter_worker() {
     WORKER.with(|w| w.set(NEXT.fetch_add(1, Ordering::Relaxed)));
 }
 
+/// `LOFT_ALLOC_TRACE`'s par regions: `P` where a `par` loop's queue starts (`n_parallel_queue…`)
+/// and `Q` where its buffer is dropped (`n_parallel_buf_drop…`), as the C runtime marks the same
+/// two calls — what lies between is the par machinery, each runtime's own (STORE_MODEL D46).
+#[inline]
+pub fn par_mark(mark: char) {
+    #[cfg(feature = "op-census")]
+    alloc_event(format_args!("{mark}"));
+    #[cfg(not(feature = "op-census"))]
+    let _ = mark;
+}
+
 /// Is `LOFT_ALLOC_TRACE` set?  The interpreter then runs its full loop, which publishes every
 /// op's position ([`at_pc`]).
 #[cfg(feature = "op-census")]
@@ -239,14 +250,14 @@ pub fn alloc_event(line: std::fmt::Arguments) {
     use std::sync::Mutex;
     let mut text = line.to_string();
     let worker = WORKER.with(std::cell::Cell::get);
-    if worker != 0 && !text.starts_with('M') {
+    if worker != 0 && !text.starts_with(['M', 'P', 'Q']) {
         let mut parts = text.splitn(3, ' ');
         if let (Some(kind), Some(store)) = (parts.next(), parts.next()) {
             let rest = parts.next().map_or(String::new(), |r| format!(" {r}"));
             text = format!("{kind} {worker}.{store}{rest}");
         }
     }
-    let site = if text.starts_with(['M', 'S']) {
+    let site = if text.starts_with(['M', 'S', 'P', 'Q']) {
         None
     } else {
         site_line()

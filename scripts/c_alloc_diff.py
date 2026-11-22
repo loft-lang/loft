@@ -56,10 +56,12 @@ C_ONLY_REWRITES = [
 ]
 
 class Event(str):
-    """One event line, compared as its text, with the source line it ran at (`@`, `?` unknown)."""
-    def __new__(cls, text, line):
+    """One event line, compared as its text, with the source line it ran at (`@`, `?` unknown)
+    and whether it ran inside a `par` region (between the trace's `P` and `Q`)."""
+    def __new__(cls, text, line, par=False):
         e = super().__new__(cls, text)
         e.line = line
+        e.par = par
         return e
 
 def program_events(lines):
@@ -77,12 +79,15 @@ def program_events(lines):
             made.setdefault(f[1], []).append(i)
         elif len(f) == 2 and f[0] == "S" and made.get(f[1]):
             own.add(made[f[1]].pop())
-    out, names, started, dropped, at, made = [], {}, False, set(), "?", 0
+    out, names, started, dropped, at, made, par = [], {}, False, set(), "?", 0, 0
     for i, f in enumerate(rows):
         if not f:
             continue
         if f[0] == "@":
             at = f[1] if len(f) > 1 else "?"
+            continue
+        if f[0] in ("P", "Q") and len(f) == 1:
+            par = par + 1 if f[0] == "P" else max(par - 1, 0)
             continue
         if f[0] == "M":
             started = True
@@ -102,7 +107,7 @@ def program_events(lines):
         if f[1] not in names:
             continue
         f[1] = names[f[1]]
-        out.append(Event(" ".join(f), at))
+        out.append(Event(" ".join(f), at, par > 0))
     return out
 
 def interp(prog, d, env):
@@ -175,20 +180,43 @@ def no_capacity(events):
     worker's stack slot, 1024 words, on the interpreter)."""
     return [" ".join(str(e).split()[:2]) if str(e).startswith("N ") else str(e) for e in events]
 
+def region_only(want, got):
+    """STORE_MODEL D46: a `par` region's machinery is each runtime's own — the events between its
+    `P` and `Q`, and where a store alive across the region ends (the interpreter hands a
+    worker's stores to the parent at the join and frees them there, the C in the worker).
+    Answers whether everything else is alike: every event before the first region, event for
+    event, and every store made after one, per store."""
+    def split(ev):
+        first = next((k for k, e in enumerate(ev) if e.par), None)
+        if first is None:
+            return None
+        last = max(k for k, e in enumerate(ev) if e.par)
+        before = ev[:first]
+        crossing = {e.split()[1] for e in ev[:last + 1]}
+        after = [e for e in ev[last + 1:] if e.split()[1] not in crossing]
+        return before, after
+    w, g = split(want), split(got)
+    if w is None or g is None:
+        return False
+    return w[0] == g[0] and per_store(w[1]) == per_store(g[1])
+
 def order_only(want, got):
     """Why two traces that differ by position still describe the same stores, or None: each
     store's own events alike (separate stores interleave in the order a program's expressions
-    run — a par region's workers too), or each run of one kind alike as a set (a release walk's
-    order); a made store's starting capacity aside."""
-    if len(want) != len(got):
-        return None
-    want, got = no_capacity(want), no_capacity(got)
-    if want == got:
-        return "the same events, a store's starting capacity aside"
-    if runs_as_sets(want) == runs_as_sets(got):
-        return "the same records in each run, in another order (a release walk's order)"
-    if per_store(want) == per_store(got):
-        return "the same events per store, interleaved in another order"
+    run), each run of one kind alike as a set (a release walk's order), or everything outside
+    the `par` regions alike (D46); a made store's starting capacity aside."""
+    want = [Event(t, e.line, e.par) for t, e in zip(no_capacity(want), want)]
+    got = [Event(t, e.line, e.par) for t, e in zip(no_capacity(got), got)]
+    if len(want) == len(got):
+        if want == got:
+            return "the same events, a store's starting capacity aside"
+        if runs_as_sets(want) == runs_as_sets(got):
+            return "the same records in each run, in another order (a release walk's order)"
+        if per_store(want) == per_store(got):
+            return "the same events per store, interleaved in another order"
+    if region_only(want, got):
+        return ("the same before its par region and in every store made after it; inside, and "
+                "where a store alive across it ends, each runtime's par machinery (D46)")
     return None
 
 def agrees(r):
