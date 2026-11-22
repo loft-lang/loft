@@ -454,6 +454,40 @@ pub fn run_parallel_text(
 /// slots it fills (an out-of-line child's old record, `OpSetChildRec`), and a reused store
 /// slot's bytes read back as a record id nobody wrote — the worker panicked on one in
 /// about a tenth of runs, and in every run with one worker (`L-OutOfLine`'s par cell).
+/// What a worker's one answer destination is made as (STORE_MODEL D46), read off the worker's
+/// return type before any worker starts.
+#[derive(Clone, Copy)]
+enum AnswerDest {
+    Wrapper,
+    Null,
+    Seeded,
+}
+
+impl AnswerDest {
+    fn of(ret: &crate::data::Type) -> AnswerDest {
+        match ret.base() {
+            crate::data::Type::Vector(..) => AnswerDest::Wrapper,
+            crate::data::Type::Reference(..) | crate::data::Type::Enum(_, true, _) => AnswerDest::Null,
+            _ => AnswerDest::Seeded,
+        }
+    }
+}
+
+fn answer_dest(db: &mut Stores, kind: AnswerDest) -> DbRef {
+    match kind {
+        AnswerDest::Wrapper => {
+            // The wrapper: its header and the vector's slot, as `loft_database(&b, 8)` makes it.
+            let d = db.vector_buffer(2);
+            let store = db.store_mut(&d);
+            let bytes = store.record_words(d.rec) * 8;
+            store.zero_range(d.rec, d.pos, bytes.saturating_sub(d.pos));
+            d
+        }
+        AnswerDest::Null => DbRef::NULL,
+        AnswerDest::Seeded => worker_dest(db),
+    }
+}
+
 fn worker_dest(db: &mut Stores) -> DbRef {
     let d = db.vector_buffer(100);
     let store = db.store_mut(&d);
@@ -541,6 +575,7 @@ pub fn run_parallel_queue_ref(
     // simple `parallel_workers` path.
     let trace = WorkerTrace::new();
     let trace_ref = &trace;
+    let answer = AnswerDest::of(ret_type);
     let batches: Vec<(Vec<(usize, DbRef)>, Stores)> = map_workers(n_workers, |t| {
         trace_ref.record();
         let start = t * n_rows / n_workers;
@@ -596,9 +631,17 @@ pub fn run_parallel_queue_ref(
             // returned vector is empty.  A 100-word real store
             // is enough seed; the standard claim path grows it
             // as the worker appends.
-            let hidden_dests: Vec<DbRef> = (0..n_hidden_dests)
-                .map(|_| worker_dest(&mut state.database))
-                .collect();
+            // STORE_MODEL D46 — the one destination of a worker's answer made as the C makes
+            // it: a vector's wrapper root exactly, and a record's or a struct-enum's the null
+            // sentinel, which the callee's `OpDatabase` makes a fresh store for.  More than one
+            // destination keeps the seeded store.
+            let hidden_dests: Vec<DbRef> = if n_hidden_dests == 1 {
+                vec![answer_dest(&mut state.database, answer)]
+            } else {
+                (0..n_hidden_dests)
+                    .map(|_| worker_dest(&mut state.database))
+                    .collect()
+            };
             // Every element reaches the worker the way its first parameter reads it.
             // This route used to answer `DbRef` for a text or wide element as well,
             // which SIGSEGV'd a struct-returning worker over `vector<text>`.
