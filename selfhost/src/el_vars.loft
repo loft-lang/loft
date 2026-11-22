@@ -281,6 +281,8 @@ pub struct Vars {
   pub retype_to: vector<ir::TypeT>,
   // The bind `object_into` builds into declares its local (`assignment`'s `declaring`).
   pub bind_declares: boolean = false,
+  // The local whose binding the slice bind being lowered STARTS (`binding_starts`), or -1.
+  pub bind_starts: integer = -1,
   // `Parser::lambda_counter`: the lambdas this body made, naming the next `__lambda_<fn>_<N>`
   pub lambdas: integer = 0,
   // `Parser::expected` for the one node a bind is about to read (`expect_node`): the type its

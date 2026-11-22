@@ -534,7 +534,14 @@ pub fn slice_copy(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> ir::Node
   // A local rebound to a slice of ITSELF (`t = t[1..]`) keeps that range in place
   // (`OpKeepRange`): carried for plain scalars.
   keep = el_ir::unspan(subj) == ir::NdVar { n: v } && is_scalar(elem) && !vars.vars[v].argument;
-  if (len(el_types::deps(el_vars::tp(vars, v))) > 0 || vars.vars[v].argument) && !keep {
+  // (`vector_needs_db_at_bind`: a bind that STARTS the local's binding finds it holding nothing,
+  // whatever the first pass's dependency list — which names a later `s = other` — says.)
+  starts = !vars.vars[v].argument && vars.bind_starts == v && !(el_vars::tp(vars, v) is TyRefVar);
+  // A plain-scalar slice rebinding a local that holds its store already is cleared and copied
+  // into that store (`slice_copy_form` without `needs_db`).
+  vdeps = el_types::deps(el_vars::tp(vars, v));
+  rebind = !keep && !starts && !vars.vars[v].argument && len(vdeps) > 0 && is_scalar(elem);
+  if (len(vdeps) > 0 || vars.vars[v].argument) && !keep && !starts && !rebind {
     el::refuse(e, "a vector slice bound to a local that has a store");
     return null;
   }
@@ -570,6 +577,15 @@ pub fn slice_copy(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> ir::Node
   r = rows!;
   if keep {
     return ir::NdInsert { items: [init, el_ir::cl(e, "OpKeepRange", [ir::NdVar { n: v }, ir::NdVar { n: lov }, ir::NdVar { n: hiv }, ir::NdInt { n: rec }])] };
+  }
+  // (`owns_vdb_backing`: a store that holds nothing but this vector may be a view of the source.)
+  if rebind {
+    owns = len(vdeps) == 1 && starts_with(el_vars::name_of(vars, vdeps[0]), "__vdb_");
+    return ir::NdInsert { items: [
+      el_ir::cl(e, "OpClearVector", [ir::NdVar { n: v }]),
+      init,
+      el_ir::cl(e, if owns { "OpSliceView" } else { "OpSliceVector" }, [ir::NdVar { n: v }, subj, ir::NdVar { n: lov }, ir::NdVar { n: hiv }, ir::NdInt { n: rec }])
+    ] };
   }
   db = el_vars::work_vec_db(vars, ir::TyReference { n: r.main_def, dep: [] });
   el_vars::depend(vars, v, db);

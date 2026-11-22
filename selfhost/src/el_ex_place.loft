@@ -2640,6 +2640,44 @@ fn replace_field_reads(n: ir::Node, rec: integer, pos: integer, src: integer) ->
   }
 }
 
+// `name: &T = place` (`@FR-B-Ref`): the local is a link to the place, typed `&T`, bound as
+// `name = &place` binds it (`OpCreateStack` of a scalar local, the link itself copied where the
+// place already is one).
+pub fn amp_declaration(e: el::El, vars: el_vars::Vars, name: text, tn: integer, rhs: integer) -> Ex {
+  v = el_ex_object::binding_var(e, vars, name);
+  if v < 0 {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  declared = el_types::parse_type(e, tn);
+  if declared == null {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  // (`place_view`: pass 1 made a link to a heap place the place's record view; the annotation
+  // names that record, so the view stands.)
+  have = match el_types::base(el_vars::tp(vars, v)) { TyReference { n: hn } => hn, TyEnum { n: en, is_ref: er } => if er { en } else { -1 }, _ => -1 };
+  want = match el_types::base(declared!) { TyReference { n: wn } => wn, TyEnum { n: wen, is_ref: wr } => if wr { wen } else { -2 }, _ => -2 };
+  if have != want && !el_vars::change_var_type(e, vars, v, ir::TyRefVar { inner: declared! }) {
+    el::refuse(e, "a declaration that changes a local's type");
+  }
+  if !vars.annotated.contains(v) {
+    vars.annotated += [v];
+  }
+  x = el_ex_vector::unary(e, vars, "&", rhs);
+  // `@FR-B-Ref-Lvalue` — a link to a heap PLACE is the place's record view (`b: &P = v[1]` IS
+  // `b = &v[1]`), and a link to a record local borrows that local: the local takes the link's
+  // own type, not the annotation's bare `RefVar`.
+  match x.tp {
+    TyRefVar { inner: xi } => if len(el_types::deps(xi)) > 0 {
+      el_vars::set_type(vars, v, x.tp);
+    },
+    _ => if !(x.code is NdVar) && !(x.code is NdNull) {
+      el_vars::set_type(vars, v, x.tp);
+    }
+  }
+  el_vars::set_defined(vars, v);
+  ex(el_ir::v_set(v, x.code), ir::TyVoid)
+}
+
 pub fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text, tn: integer?, rhs: integer?) -> Ex {
   if rhs != null {
     unqualify_literal(e, rhs!);
@@ -2844,7 +2882,10 @@ pub fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text,
     return ex(el_ir::v_set(v, x.code), ir::TyVoid);
   }
   if x.code is NdIter {
-    return el_ex_vector::slice_bind(e, vars, v, x);
+    vars.bind_starts = v;
+    sb = el_ex_vector::slice_bind(e, vars, v, x);
+    vars.bind_starts = -1;
+    return sb;
   }
   // A declared local copies a whole record or vector local as an inferred one does.
   x.tp = el_ex_assign::record_copy_type(e, vars, v, rhs!, x.tp);
