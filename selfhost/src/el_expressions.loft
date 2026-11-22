@@ -2555,6 +2555,20 @@ pub fn finish_body(e: el::El, vars: el_vars::Vars, body: ir::Node) -> ir::Node {
         }
         bl.operators = ops;
       }
+      // `unique_elm_var` (loft#664): an element NEVER owns a store — its record is the slot the
+      // container's `OpNewRecord` carved out — so every element temp is an inline ref.  Rust's
+      // element borrows its container wherever it has one, and the inline-ref preamble nulls only
+      // one that borrows nothing; an element left here with no borrow is a gap the state report
+      // shows (`LOFT_REPORT_STATE`), not marked, so the preamble does not null it.  Asked of the
+      // pass that ends here: the mark is cumulative, and the first pass's borrows are not the
+      // answer.
+      if !e.first_pass {
+        for ev in vars.vars {
+          if starts_with(ev.name, "_elm_") && len(el_types::deps(ev.type_def[0] ?? ir::TyVoid)) > 0 {
+            el_vars::mark_inline(vars, ev#index);
+          }
+        }
+      }
       // `work_references`, each set at the head, after the work texts in the same way
       // (`work_ref_takes_preamble`): a promoted return buffer is an argument and takes none, nor
       // does one that borrows (a caller's hidden buffer and an `__ncc_` temp still do); a text

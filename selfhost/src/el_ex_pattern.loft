@@ -2255,7 +2255,9 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
   // append alike.
   elm = -1;
   if len(items) > 0 {
-    elm = if elm_made >= 0 { elm_made } else { el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: if value { [] } else { [v] } }) };
+    // (`unique_elm_var`: the element borrows its container — `depend(elm, vec)` — a value
+    // literal's `_vec_N` as a local destination.)
+    elm = if elm_made >= 0 { elm_made } else { el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [v] }) };
     // The first pass makes each item through the local (`OpNewRecord(v, …)` into this temp):
     // one record made through it, what `child_allocs` counts.
     if e.first_pass && !value {
