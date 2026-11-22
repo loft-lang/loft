@@ -333,7 +333,6 @@ impl FnWriter<'_> {
     /// the caller's, and writes only the rows of its range.
     #[expect(
         clippy::too_many_arguments,
-        clippy::too_many_lines,
         reason = "the site's parts, computed by par_queue, written in the order the unit holds them: the context, the body, the adopt step, the call"
     )]
     fn par_threaded(
