@@ -1490,6 +1490,16 @@ pub fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::N
   if bufs {
     g2 = given;
     t2 = types;
+    // (`process_call_args` converts the given arguments before `add_defaults` mints the
+    // buffers: a text value's work text is numbered ahead of them.)
+    for a in def.attributes {
+      if a#index < len(given) && !(a.hidden) {
+        tvl = el_ex_match::text_value_link(e, vars, given[a#index], types[a#index] ?? ir::TyUnknown { n: 0 }, a.typedef[0]);
+        if tvl != null {
+          g2[a#index] = tvl!;
+        }
+      }
+    }
     for a in def.attributes {
       if a#index >= len(given) {
         // Minted on both passes, as `add_defaults` mints it, so the buffers number alike.

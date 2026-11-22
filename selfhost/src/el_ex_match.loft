@@ -196,6 +196,25 @@ fn scalar_read(e: el::El, n: ir::Node) -> boolean {
   }
 }
 
+// `Parser::convert`'s `&text` arm for a text VALUE — no variable, place or tuple member (a text
+// place goes to the callee's store-text twin, `@st1`, not carried): the
+// value is copied into a work text, which is linked (a "text_ref"); the callee reads it, and its
+// writes are dropped with the copy.  Null for any other argument.
+pub fn text_value_link(e: el::El, vars: el_vars::Vars, arg: ir::Node, at: ir::TypeT, pt: ir::TypeT) -> ir::Node? {
+  inner = match pt { TyRefVar { inner } => inner, _ => return null };
+  place = el_ir::unspan(arg);
+  if !(inner is TyText) || !(el_types::base(at) is TyText) || place is NdVar || place is NdTupleGet || match place { NdBlock { block: lb } => lb[0].name == "default ref" || lb[0].name == "text_ref", _ => false } || calls(e, place, "OpGetField") || calls(e, place, "OpGetVector") || calls(e, place, "OpGetText") {
+    return null;
+  }
+  wt = el_vars::work_text(vars);
+  tls: vector<ir::Node> = [];
+  if place != ir::NdText { s: "" } {
+    tls += [el_ir::cl(e, "OpAppendText", [ir::NdVar { n: wt }, arg])];
+  }
+  tls += [el_ir::cl(e, "OpCreateStack", [ir::NdVar { n: wt }])];
+  el_ir::v_block(tls, ir::TyReference { n: el::def_nr(e, "reference"), dep: [wt] }, "text_ref")
+}
+
 // `Parser::convert`'s `RefVar` arm for an argument handed to a `&T` parameter: a local holding a
 // `T` is linked (`OpCreateStack`), and a local that is itself a `&T` link is forwarded as it is
 // (a link to the link would point at this frame's slot).  A place — a field, an element, a tuple
@@ -205,8 +224,9 @@ pub fn link_argument(e: el::El, vars: el_vars::Vars, arg: ir::Node, at: ir::Type
     TyRefVar { inner } => inner,
     _ => pt
   };
-  // A "default ref" (`add_defaults`' fresh stack text) already is the link.
-  is_default_ref = match arg { NdBlock { block } => (block[0]!).name == "default ref", _ => false };
+  // A "default ref" (`add_defaults`' fresh stack text) already is the link, as a "text_ref"
+  // (`text_value_link`, linked before the defaults were added) is.
+  is_default_ref = match arg { NdBlock { block } => (block[0]!).name == "default ref" || (block[0]!).name == "text_ref", _ => false };
   if is_default_ref {
     return arg;
   }
@@ -238,6 +258,10 @@ pub fn link_argument(e: el::El, vars: el_vars::Vars, arg: ir::Node, at: ir::Type
         vars.vars[wv].skip_free = true;
       }
       return ir::NdInsert { items: [el_ir::v_set(wv, arg), el_ir::cl(e, "OpCreateStack", [ir::NdVar { n: wv }])] };
+    }
+    tv = text_value_link(e, vars, arg, at, pt);
+    if tv != null {
+      return tv;
     }
     refuse_known(e, at, "a `&` argument that is not a local");
     return null;

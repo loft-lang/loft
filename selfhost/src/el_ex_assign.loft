@@ -687,7 +687,8 @@ fn expression_node(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
       }
       noted_bind(e, vars, ab)
     },
-    SLet { fixed, name, amp, tfixed, tp, e: rhs } => noted_bind(e, vars, el_ex_place::declaration(e, vars, fixed || amp || tfixed, name, tp, rhs)),
+    // (`q: &integer = a` is the link `q = &a`, annotated: `parse_assign`'s `&`-typed declaration.)
+    SLet { fixed, name, amp, tfixed, tp, e: rhs } => if amp && !fixed && !tfixed && tp != null && rhs != null { noted_bind(e, vars, el_ex_place::amp_declaration(e, vars, name, tp!, rhs!)) } else { noted_bind(e, vars, el_ex_place::declaration(e, vars, fixed || amp || tfixed, name, tp, rhs)) },
     SCall { at, f, args } => el_ex_object::call_expression(e, vars, at, f, args),
     SString { parts } => {
       // (`@FR-F-Target`: a template whose expected type is a struct with a `lit` method builds
@@ -4358,7 +4359,10 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
     return ex(x.code, ir::TyVoid);
   }
   if x.code is NdIter {
-    return el_ex_vector::slice_bind(e, vars, v, x);
+    vars.bind_starts = if declaring { v } else { -1 };
+    sb = el_ex_vector::slice_bind(e, vars, v, x);
+    vars.bind_starts = -1;
+    return sb;
   }
   read_through_length = vars.len_read;
   // A generator's handle is bound as it is, the local typed as its iterator.
