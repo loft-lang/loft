@@ -877,7 +877,8 @@ pub fn appends_call_in_loop(e: el::El, n: integer, name: text, looped: boolean) 
     },
     _ => {}
   }
-  inner = looped || e.p.nodes[n] is SFor || e.p.nodes[n] is SWhile;
+  // (`var_call_rebound_nested`: nested is inside a loop or an `if` arm.)
+  inner = looped || e.p.nodes[n] is SFor || e.p.nodes[n] is SWhile || e.p.nodes[n] is SIf;
   for c in el_length::children(e, n) {
     if appends_call_in_loop(e, c, name, inner) {
       return true;
