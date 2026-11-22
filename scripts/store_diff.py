@@ -49,8 +49,11 @@ def trace_of(path):
 
 
 def read_dump(path, names):
-    """`{history name: (header, {record: (words, hex)})}` for every store the trace names."""
-    out, cur = {}, None
+    """`{history name: (header, {record: (words, hex)})}` for every store the trace names, and
+    `"__slots"`: each slot number → the history name of the store in it (a stored reference
+    names a store by its slot, which the two runtimes number differently)."""
+    out, cur, slots = {}, None, {}
+    out["__slots"] = slots
     if not os.path.exists(path):
         return out
     for line in open(path, encoding="utf-8"):
@@ -62,6 +65,8 @@ def read_dump(path, names):
             cur = None
             if name is not None:
                 cur = out.setdefault(name, ((f[2], f[3]), {}))
+                if len(f) > 4:
+                    slots[int(f[4])] = name
         elif f[0] == "R" and cur is not None:
             cur[1][int(f[1])] = (int(f[2]), f[3] if len(f) > 3 else "")
     return out
@@ -113,13 +118,39 @@ def byte_runs(a, b):
     return runs
 
 
+def is_unwritten(h):
+    """A run of the `LOFT_POISON_CLAIM` pattern (`efbeadde`, from any byte of it)."""
+    pat = "efbeadde" * (len(h) // 8 + 2)
+    return bool(h) and any(pat[k:k + len(h)] == h for k in range(0, 8, 2))
+
+
+def is_zero(h):
+    return bool(h) and set(h) == {"0"}
+
+
+def same_store_refs(a, b, lo, hi, wslots, gslots):
+    """Does every aligned 4-byte word the run `lo..hi` touches either agree, or hold on each
+    side a slot number of the same store by history — one stored reference to one store?"""
+    for w in range(lo - lo % 4, hi, 4):
+        x, y = a[2 * w:2 * w + 8], b[2 * w:2 * w + 8]
+        if x == y:
+            continue
+        if len(x) < 8 or len(y) < 8:
+            return False
+        sx, sy = int.from_bytes(bytes.fromhex(x), "little"), int.from_bytes(bytes.fromhex(y), "little")
+        if not (sx in wslots and sy in gslots and wslots[sx] == gslots[sy]):
+            return False
+    return True
+
+
 def differences(want, got, wsites=None, gsites=None, noise=None):
     """Every difference, as lines: a store one side lacks, a record one side lacks, a record of
     another size, and each run of differing bytes — each store named with the line it was made
     at on each side (`@ interp/C`)."""
     out = []
     wsites, gsites = wsites or {}, gsites or {}
-    for name in sorted(set(want) | set(got), key=lambda n: [int(x) if x.isdigit() else x for x in re.split(r"(\d+)", n)]):
+    wslots, gslots = want.get("__slots", {}), got.get("__slots", {})
+    for name in sorted((set(want) | set(got)) - {"__slots"}, key=lambda n: [int(x) if x.isdigit() else x for x in re.split(r"(\d+)", n)]):
         if name not in got:
             out.append(f"store {name}: live in the interpreter, not in the C")
             continue
@@ -140,6 +171,14 @@ def differences(want, got, wsites=None, gsites=None, noise=None):
             elif wr[rec][1] != gr[rec][1]:
                 masked = (noise or {}).get((name, rec), set())
                 for lo, hi, x, y in byte_runs(wr[rec][1], gr[rec][1]):
+                    if same_store_refs(wr[rec][1], gr[rec][1], lo, hi, wslots, gslots):
+                        continue
+                    if is_unwritten(x) != is_unwritten(y) and (is_zero(x) or is_zero(y)):
+                        span = f"byte {lo}" if hi == lo + 1 else f"bytes {lo}..{hi - 1}"
+                        side = "the interpreter" if is_zero(x) else "the C"
+                        out.append(f"store {tag} record {rec}: {span} zeroed by {side}, unwritten by the other "
+                                   f"(padding, if no field covers it)")
+                        continue
                     if all(k in masked for k in range(lo, hi)):
                         out.append(f"store {tag} record {rec}: {hi - lo} byte(s) at {lo} vary from run "
                                    f"to run (masked: a clock, an address — nothing a seed fixes)")
@@ -168,14 +207,14 @@ def compare(prog, env, plant=False):
             again, _ = run_interp(prog, d2, env)
         except Exception as e:  # noqa: BLE001 — a probe that cannot run says why and moves on
             return None, f"error {type(e).__name__}: {e}"
-    records = sum(len(r) for _, r in want.values())
-    return differences(want, got, wsites, gsites, noise_of(want, again)), len(want), records
+    records = sum(len(v[1]) for k, v in want.items() if k != "__slots")
+    return differences(want, got, wsites, gsites, noise_of(want, again)), len(want) - 1, records
 
 
 def noise_of(a, b):
     """`{(store, record): {byte}}` — the bytes two runs of one side disagree on."""
     out = {}
-    for name in set(a) & set(b):
+    for name in (set(a) & set(b)) - {"__slots"}:
         for rec in set(a[name][1]) & set(b[name][1]):
             x, y = a[name][1][rec][1], b[name][1][rec][1]
             for lo, hi, _, _ in byte_runs(x, y):
@@ -224,8 +263,13 @@ def main():
                 print(f"{prog}: the planted byte was NOT reported: the comparison is blind")
                 failed += 1
             continue
+        padding = [x for x in lines if x.endswith("(padding, if no field covers it)")]
+        lines = [x for x in lines if x not in padding]
         if not lines:
-            print(f"{prog}: same ({stores} stores, {records} records)")
+            extra = f", apart from {len(padding)} run(s) of padding" if padding else ""
+            print(f"{prog}: same ({stores} stores, {records} records{extra})")
+            for line in padding[:5]:
+                print("    " + line)
             continue
         print(f"{prog}: {len(lines)} difference(s)")
         for line in lines[:20]:

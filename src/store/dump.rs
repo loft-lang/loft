@@ -38,10 +38,11 @@ impl Store {
     fn dump_into(&self, out: &mut String) {
         let _ = writeln!(
             out,
-            "S {} {} {}",
+            "S {} {} {} {}",
             self.dump_name(),
             self.known_type,
-            self.size
+            self.size,
+            self.store_nr
         );
         for rec in self.claims.positions() {
             let words = self.read::<i32>(rec, 0).max(1) as u32;

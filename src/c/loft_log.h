@@ -554,7 +554,8 @@ static void loft_store_dump_one(loft_store_t *s) {
     static int planted = 0;
     FILE *f = loft_dump_file();
     if (!f || s->serial == 0) return;
-    fprintf(f, "S %s %u %u\n", loft_trace_name(s), (unsigned) s->known, (unsigned) s->size);
+    fprintf(f, "S %s %u %u %u\n", loft_trace_name(s), (unsigned) s->known, (unsigned) s->size,
+            (unsigned) (s - loft_stores));
     for (uint32_t w = 0; w < s->claims.nwords; w++) {
         for (uint32_t b = 0; b < 64; b++) {
             if (!loft_bit64_test(s->claims.bits[w], b)) continue;
