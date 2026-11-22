@@ -19,7 +19,7 @@ The position is gated by a committed baseline (`elab_gate.baseline.tsv` beside t
 does not agree yet, with its verdict.  `--check` fails on a drop and on any `differ` (an image
 that is not Rust's), listed or not; both need the whole corpus and the suite at the pin.
 """
-import argparse, collections, concurrent.futures as cf, glob, os, re, shutil, subprocess, sys, tempfile
+import argparse, threading, collections, concurrent.futures as cf, glob, os, re, shutil, subprocess, sys, tempfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bench"))
 import baseline  # noqa: E402  one baseline format for every survey
@@ -119,6 +119,43 @@ def contract_facts(text):
         if m:
             out[m.group(1)] = dict(kv.split("=", 1) for kv in m.group(2).split(" ") if "=" in kv)
     return out
+
+
+# The image's function state (`LOFT_REPORT_STATE`, `report::state_report`): per program that
+# agrees on its image, the state items its functions carry differently, by kind.
+STATE = {}
+STATE_LOCK = threading.Lock()
+STATE_LINE = re.compile(r"^\[state\] fn=(\S+) (var=\S+|param=\S+|def|inline_refs)(.*)$")
+
+
+def state_table(text):
+    """{(function, subject): set of items} of a `[state]` report."""
+    out = {}
+    for l in text.splitlines():
+        m = STATE_LINE.match(l)
+        if m:
+            out[(m.group(1), m.group(2))] = set(m.group(3).split())
+    return out
+
+
+def state_compare(rust, port, own, path=None):
+    """{kind: count} of the state items the two images carry differently over the program's
+    own functions — a flag by its name, a dep list as `deps`, the inline refs as
+    `inline_refs`.  `LOFT_ELAB_STATE_FILE=<file>`: each differing item, one
+    `program\tfunction\tsubject\titem\tside` line (`rust` = only Rust carries it)."""
+    kinds = collections.Counter()
+    lines = []
+    for key in set(rust) | set(port):
+        if key[0] not in own:
+            continue
+        r, p = rust.get(key, set()), port.get(key, set())
+        for item in r ^ p:
+            kinds["inline_refs" if key[1] == "inline_refs" else item.split("=")[0]] += 1
+            lines.append(f"{path}\t{key[0]}\t{key[1]}\t{item}\t{'rust' if item in r else 'loft'}\n")
+    if lines and path and os.environ.get("LOFT_ELAB_STATE_FILE"):
+        with STATE_LOCK, open(os.environ["LOFT_ELAB_STATE_FILE"], "a", encoding="utf-8") as fh:
+            fh.write("".join(lines))
+    return kinds
 
 
 def contract_compare(rust, port, own):
@@ -261,9 +298,9 @@ def one(loft, defs, elab, std, path, tmp, env, i):
                            capture_output=True, timeout=180)
         if r.returncode != 0 or not os.path.exists(img):
             return "noimage", "", {}
-        o = subprocess.run([defs, img, "program", std], env=env, capture_output=True, text=True,
+        o = subprocess.run([defs, img, "program", std], env=dict(env, LOFT_REPORT_STATE="1"), capture_output=True, text=True,
                            errors="replace", timeout=300)
-        m = subprocess.run([elab, img, path, std], env=dict(env, LOFT_REPORT_CONTRACT="1"), capture_output=True, text=True,
+        m = subprocess.run([elab, img, path, std], env=dict(env, LOFT_REPORT_CONTRACT="1", LOFT_REPORT_STATE="1"), capture_output=True, text=True,
                            errors="replace", timeout=300)
     except subprocess.TimeoutExpired:
         return "differ", "timed out", {}
@@ -327,6 +364,7 @@ def one(loft, defs, elab, std, path, tmp, env, i):
         own = {mm.group(1) for mm in (re.match(r"^#\d+ (\S+) type=1 ", l) for l in want) if mm}
         CONTRACT[path] = contract_compare(contract_facts(r.stderr.decode("utf-8", "replace")),
                                           contract_facts(m.stderr), own)
+        STATE[path] = state_compare(state_table(o.stderr), state_table(m.stderr), own, path)
         return "agree", "", fns
     for k, (a, b) in enumerate(zip(want, mine)):
         if a != b:
@@ -440,6 +478,9 @@ def main():
             if verdict == "agree" and f in CONTRACT:
                 cd, _ = CONTRACT[f]
                 refusals = "contract " + ("agree" if not cd else "differ: " + ", ".join(sorted(cd)))
+                sd = STATE.get(f)
+                if sd is not None:
+                    refusals += "; state " + ("agree" if not sd else "differ: " + ", ".join(sorted(sd)))
             verdicts.append(f"{verdict}\t{rel}" + (f"\t{refusals}" if refusals else ""))
             if verdict == "refused":
                 reasons.update(set(detail))
@@ -479,6 +520,15 @@ def main():
         print(f"contract: {cagree} of {len(CONTRACT)} agreeing programs carry every derived fact alike"
               + ("; differ on " + ", ".join(f"{k} {v}" for k, v in cdiff.most_common()) if cdiff else "")
               + ("; not derived yet: " + ", ".join(f"{k} {v}" for k, v in cmiss.most_common()) if cmiss else ""))
+    if STATE:
+        # The image's function state over the programs that agree on their code: a flag the
+        # later passes read (frees, copies, the lints) that the two images carry differently.
+        sagree = sum(1 for sd in STATE.values() if not sd)
+        skinds = collections.Counter()
+        for sd in STATE.values():
+            skinds.update({k: 1 for k in sd})
+        print(f"state: {sagree} of {len(STATE)} agreeing programs carry the same function state"
+              + ("; differ on " + ", ".join(f"{k} {v}" for k, v in skinds.most_common(12)) if skinds else ""))
     fv = collections.Counter(fn_results.values())
     print(f"definitions of refused programs: {fv['agree']} of {len(fn_results)} agree; {fv['refused']} "
           f"refused, {fv['beside']} beside a refusal")
