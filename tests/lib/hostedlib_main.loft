@@ -8,7 +8,18 @@
 // @falsified-at: none — the receipt is `tests/hosted_unit.rs`'s (the table refresh struck).
 use hostedlib::*;
 
+// A store freed below one still alive, its words negative: the unit makes its constants
+// (`WIDTHS`) at its first call, in the store the interpreter hands it next — this hole.
+fn churn(k: integer) -> vector<integer> {
+  v: vector<integer> = [];
+  for i in 0..k { v += [0 - (i * 7919 + 123456789)]; }
+  w: vector<integer> = [len(v)];
+  w
+}
+
 fn main() {
+  kept = churn(4000);
+  assert(kept[0] == 4000, "churn {kept[0]}");
   b = bag_new("alpha", 5);
   // items 5, then 1, 4, 7, 10 (step 3): total 5 + 22 = 27; weight 2 * 27 = 54; length 5
   b.fill(4, 3);
