@@ -1818,6 +1818,9 @@ pub fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
   elm = -1;
   if len(items) > 0 {
     elm = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [rec] });
+    // (`parse_vector`'s `is_field`: the element is a reference INTO the field's store, which the
+    // owning record frees — the element's own free is suppressed.)
+    vars.vars[elm].skip_free = true;
   }
   r = holder;
   at = ir::NdVar { n: elm };

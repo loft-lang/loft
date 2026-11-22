@@ -3360,19 +3360,46 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
   r
 }
 
+// An assignment target's root local and the type of the place it names — a local, a field of
+// one, an element — read off the syntax; root -1 where it is no such place.
+struct AppendPlace {
+  root: integer,
+  tp: ir::TypeT
+}
+
+fn append_place(e: el::El, vars: el_vars::Vars, n: integer) -> AppendPlace {
+  match e.p.nodes[n] {
+    SName { name, member } => {
+      v = if member == "" { el_vars::var(vars, name) } else { -1 };
+      AppendPlace { root: v, tp: if v >= 0 { el_vars::tp(vars, v) } else { ir::TyVoid } }
+    },
+    SMember { e: inner, name, call } => {
+      if call || inner == null {
+        return AppendPlace { root: -1, tp: ir::TyVoid };
+      }
+      b = append_place(e, vars, inner!);
+      sd = struct_ref(e, el_types::base(b.tp));
+      fa = if sd >= 0 { attr_nr(el::def(e, sd), name) } else { -1 };
+      AppendPlace { root: if fa >= 0 { b.root } else { -1 }, tp: if fa >= 0 { el::def(e, sd).attributes[fa].typedef[0] ?? ir::TyVoid } else { ir::TyVoid } }
+    },
+    SIndex { e: inner } => {
+      if inner == null {
+        return AppendPlace { root: -1, tp: ir::TyVoid };
+      }
+      b = append_place(e, vars, inner!);
+      AppendPlace { root: b.root, tp: match el_types::base(b.tp) { TyVector { inner: vi } => vi, _ => ir::TyVoid } }
+    },
+    _ => AppendPlace { root: -1, tp: ir::TyVoid }
+  }
+}
+
 fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: text, target: integer, rhs: integer?) -> Ex {
-  // loft#1840 — the program's own append into a collection or a text local, recorded on that
-  // local for the `lost-write` lint (`mark_user_appended`).  (A field or element target is
-  // rooted at its local in Rust too — not carried yet.)
+  // loft#1840 — the program's own append into a collection or a text, recorded on the local
+  // the place is rooted at (`lhs_root_var`) for the `lost-write` lint (`mark_user_appended`).
   if op == "+=" {
-    match e.p.nodes[target] {
-      SName { name: an, member: am } => {
-        av = if am == "" { el_vars::var(vars, an) } else { -1 };
-        if av >= 0 && (el_types::is_collection(el_types::base(el_vars::tp(vars, av))) || el_types::base(el_vars::tp(vars, av)) is TyText) {
-          vars.vars[av].user_appended = true;
-        }
-      },
-      _ => {}
+    pl = append_place(e, vars, target);
+    if pl.root >= 0 && (el_types::is_collection(el_types::base(pl.tp)) || el_types::base(pl.tp) is TyText) {
+      vars.vars[pl.root].user_appended = true;
     }
   }
   // loft#1205 (`@FR-E-Asgn-Discharge`): `n[i]? += 1` — the `?` is peeled to the element it
