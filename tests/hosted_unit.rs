@@ -50,6 +50,7 @@ fn run(lib: &std::path::Path, hosted: bool) -> (bool, String, String) {
             .env("LOFT_NO_RUSTC", "1")
             .env("LOFT_REQUIRE_NATIVE", "1")
             .env("LOFT_POISON", "1")
+            .env("LOFT_STRICT_STORES", "1")
             .env("LOFT_PROFILE", "1");
     } else {
         cmd.env("LOFT_NO_NATIVE_LIBS", "1");

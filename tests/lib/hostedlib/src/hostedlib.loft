@@ -41,3 +41,11 @@ pub fn ratio(t: text, d: integer) -> float {
 pub fn mix(a: integer, b: integer) -> integer {
   a * 31 + b
 }
+
+/// `n` records alive at once, one per level, each in a store of its own the unit makes: the
+/// interpreter's table grows (and may move) under the C while every level still holds its own.
+pub fn deep(n: integer) -> integer {
+  if n == 0 { return 0; }
+  b = bag_new("d", n);
+  deep(n - 1) + b.total
+}

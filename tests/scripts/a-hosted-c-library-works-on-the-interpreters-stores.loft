@@ -19,5 +19,7 @@ fn main() {
   assert(len(c.items) == 201, "length {len(c.items)}");
   assert(ratio("hosted", 4) == 1.5, "ratio");
   assert(mix(2, 3) == 65, "mix");
+  // 400 stores alive at once inside the unit: 1 + … + 400 = 80200
+  assert(deep(400) == 80200, "deep {deep(400)}");
   println("{b.name} {b.total} {b.weight()} {c.total} {len(c.items)} {ratio(c.name, 2)} {mix(1, 1)}");
 }
