@@ -57,6 +57,14 @@ Two more things a unit built for any program has to hold, both found by the swee
 - **Its constants are its own.**  A library constant is built where the unit is generated (the
   library alone), not taken from a consumer's compile, which builds only what it reaches.
 
+**What the open unit costs.**  A rewrite admitted by facts about every caller is not admitted in
+a unit whose callers are unknown.  `@FR-H-TextReplace` is the one the sweep met: a text field
+written anew keeps the text it replaced until its store dies, where the interpreter, which
+knows the callers, writes in place.  The value is the same and placed otherwise; a library
+that rewrites a text field in a loop grows its store by the old texts.  Giving the unit the
+admission it can prove from the library alone (a parameter no export hands out) is the cure,
+measured before it is built.
+
 ## What the verify cannot compare
 
 A call run twice — compiled on a copy of the world, interpreted on the world — answers alike
@@ -65,6 +73,12 @@ binding, a library native) touches that function's own state, which no copy hold
 once, and counted under "made without a comparison", as a call with a tuple argument and one
 with a file-backed store live are.  Such a library is checked by its suite's own answers
 (P5a's interpreted-against-adopted output), not by the per-call comparison.
+
+A store whose bytes differ is compared again by value: its root rendered through its type
+(`Stores::show`), which follows references rather than record numbers.  The same value placed
+otherwise is counted ("alike in value, placed otherwise"), not failed; a store with no known
+type fails on its bytes.  The verify's own control, `LOFT_HOSTED_VERIFY_CONTROL`, interprets the
+call on both sides: a difference it shows is the copy's, not the unit's.
 
 ## Failure paths
 
