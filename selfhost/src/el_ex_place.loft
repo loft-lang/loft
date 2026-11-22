@@ -3087,11 +3087,17 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
     }
     // A user call whose arguments read the local makes the abandoned attempt stage it first,
-    // one more `__ref_N` left declared (1a-parser.md § Rust accidents): refused by name.
+    // one more `__ref_N` left declared (1a-parser.md § Rust accidents), typed as the attempt's
+    // own work refs and abandoned with them.
+    staged = false;
     for op in ops[2..] {
-      if user_call_reads(e, op, v) {
-        el::refuse(e, "a literal of a droppable rebinding a local a call in it reads (the abandoned attempt's staging)");
-        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+      if !staged && user_call_reads(e, op, v) {
+        if ref_mark >= vars.work_ref {
+          el::refuse(e, "a literal of a droppable rebinding a local a call in it reads (the abandoned attempt's staging)");
+          return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+        }
+        el_vars::work_ref(vars, el_vars::tp(vars, el_vars::var(vars, "__ref_{ref_mark + 1}")));
+        staged = true;
       }
     }
     abandon_work_refs(vars, ref_mark, p2_mark);
