@@ -15,6 +15,7 @@ use el_schema;
 use narrow;
 use el_convert;
 use el_definitions;
+use el_trace;
 
 // An expression's IR and type.
 pub struct Ex {
@@ -571,6 +572,7 @@ pub fn rename_onto(e: el::El, vars: el_vars::Vars, rb: integer, v: integer) {
     return;
   }
   a = attr_nr(el::def(e, d), "__retbuf");
+  el_trace::retpromo(e, vars, v, "Rename");
   e.b.data.definitions[d].attributes[a].name = el_vars::name_of(vars, v);
   vars.vars[rb].argument = false;
   vars.vars[rb].skip_free = true;

@@ -29,6 +29,9 @@ fn main() {
     from = el::std_count(std!);
   }
   print(report::defs_report(b!, from, templates: env_variable("LOFT_DEFS_TEMPLATES") == "1"));
+  if env_variable("LOFT_REPORT_STATE") == "1" {
+    eprintln(report::state_report(b!, from));
+  }
   if std != null {
     print(report::schema_from(b!, el::type_count(std!)));
   }

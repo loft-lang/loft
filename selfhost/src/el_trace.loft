@@ -172,3 +172,14 @@ fn shape(e: el::El, t: ir::TypeT) -> text {
     _ => "other"
   }
 }
+
+// `LOFT_TRACE_RETPROMO=1` (src/parser/control.rs `classify_ret_promotion`): the return-buffer
+// decision this port takes for candidate `v` — `Rename` (the local becomes the buffer) or `Bind`
+// (it keeps its store and is copied in) — in the Rust line's shape, so `elab_probe.py one` sets
+// the two side by side.
+pub fn retpromo(e: el::El, vars: el_vars::Vars, v: integer, verdict: text) {
+  if len(env_variable("LOFT_TRACE_RETPROMO")) == 0 || e.source == el::STD_SOURCE || v < 0 || v >= len(vars.vars) {
+    return;
+  }
+  eprintln("[retpromo] fn={el::def(e, e.context).name} name={el_vars::name_of(vars, v)} pass={if e.first_pass { 1 } else { 2 }} => {verdict}");
+}

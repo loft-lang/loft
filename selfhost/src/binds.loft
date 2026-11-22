@@ -565,7 +565,7 @@ fn names_hidden_attr(d: ir::Definition, nm: text) -> boolean {
 
 // src/data.rs:4812 fn hidden_return_buffer_attr — the index of the hidden RETURN BUFFER
 // attribute, its type read BARE; null for `None`.
-fn hidden_return_buffer_attr(d: ir::Definition) -> integer? {
+pub fn hidden_return_buffer_attr(d: ir::Definition) -> integer? {
   for a in d.attributes {
     if !a.hidden || a.work_buffer {
       continue;
@@ -585,7 +585,7 @@ fn hidden_return_buffer_attr(d: ir::Definition) -> integer? {
 
 // src/data.rs:5387 fn return_adopts_fresh_store — an empty return dep, or the lone `["??"]`
 // one-buffer marker (`u16::MAX`).
-fn return_adopts_fresh_store(d: ir::Definition) -> boolean {
+pub fn return_adopts_fresh_store(d: ir::Definition) -> boolean {
   deps = own::depend_of(returned(d));
   if len(deps) == 0 {
     return true;

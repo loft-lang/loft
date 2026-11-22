@@ -351,7 +351,7 @@ fn tp_depend(f: ir::Function, v: integer) -> vector<integer> {
 }
 
 // src/data.rs:4906 fn returns_borrowed_view.
-fn returns_borrowed_view(d: ir::Definition) -> boolean {
+pub fn returns_borrowed_view(d: ir::Definition) -> boolean {
   for x in depend_of(d.returned[0]!) {
     a = d.attributes[x];
     if a == null || !a.hidden {
@@ -1156,7 +1156,7 @@ fn structural_arg_base(b: ir::Bundle, callee_d: integer, callee_base: integer, c
 }
 
 // src/use_analysis.rs:3848 fn returns_one_of_several_args.
-fn returns_one_of_several_args(b: ir::Bundle, callee: integer) -> boolean {
+pub fn returns_one_of_several_args(b: ir::Bundle, callee: integer) -> boolean {
   if callee >= len(b.data.definitions) {
     return false;
   }

@@ -104,6 +104,35 @@ ROUTE = re.compile(r"^state (\d) (\d+):(\d+) (route|refuse) (.*)$")
 # (elaborator-instruments.md § 2), filled by `one` when the state trace is on:
 # path -> [(side, pass, line, col, text)], side `rust` / `port` / `refuse`.
 ROUTES = {}
+# The reimplementation contract (`LOFT_REPORT_CONTRACT`, src/parser/contract.rs and
+# selfhost/src/el_contract.loft): per program that agrees on its image, the facts its functions
+# carry differently — {fact: count} — and the facts this port does not derive yet (`?`).
+CONTRACT = {}
+CONTRACT_LINE = re.compile(r"^\[contract\] fn=(\S+) (.*)$")
+
+
+def contract_facts(text):
+    """{function: {fact: value}} of a `[contract]` report."""
+    out = {}
+    for l in text.splitlines():
+        m = CONTRACT_LINE.match(l)
+        if m:
+            out[m.group(1)] = dict(kv.split("=", 1) for kv in m.group(2).split(" ") if "=" in kv)
+    return out
+
+
+def contract_compare(rust, port, own):
+    """({fact: functions that differ}, {fact: functions this port does not derive}) over the
+    program's own functions."""
+    differ, missing = collections.Counter(), collections.Counter()
+    for f in own:
+        r, p = rust.get(f, {}), port.get(f, {})
+        for k, v in r.items():
+            if p.get(k) == "?":
+                missing[k] += 1
+            elif p.get(k) != v:
+                differ[k] += 1
+    return differ, missing
 
 FN_END = re.compile(r"^state 1 \d+:\d+ fn-end (.+?) (?:ret=|var \d+ )")
 
@@ -228,13 +257,13 @@ def one(loft, defs, elab, std, path, tmp, env, i):
     lib_args = [a for d in libs for a in ("--lib", d)]
     env = dict(env, LOFT_ELAB_LIB=":".join(libs))
     try:
-        r = subprocess.run([loft] + lib_args + [path], env=dict(env, LOFT_EMIT_PARSED=img),
+        r = subprocess.run([loft] + lib_args + [path], env=dict(env, LOFT_EMIT_PARSED=img, LOFT_REPORT_CONTRACT="1"),
                            capture_output=True, timeout=180)
         if r.returncode != 0 or not os.path.exists(img):
             return "noimage", "", {}
         o = subprocess.run([defs, img, "program", std], env=env, capture_output=True, text=True,
                            errors="replace", timeout=300)
-        m = subprocess.run([elab, img, path, std], env=env, capture_output=True, text=True,
+        m = subprocess.run([elab, img, path, std], env=dict(env, LOFT_REPORT_CONTRACT="1"), capture_output=True, text=True,
                            errors="replace", timeout=300)
     except subprocess.TimeoutExpired:
         return "differ", "timed out", {}
@@ -295,6 +324,9 @@ def one(loft, defs, elab, std, path, tmp, env, i):
     if refused:
         return "refused", refused, fns
     if mine == want:
+        own = {mm.group(1) for mm in (re.match(r"^#\d+ (\S+) type=1 ", l) for l in want) if mm}
+        CONTRACT[path] = contract_compare(contract_facts(r.stderr.decode("utf-8", "replace")),
+                                          contract_facts(m.stderr), own)
         return "agree", "", fns
     for k, (a, b) in enumerate(zip(want, mine)):
         if a != b:
@@ -404,6 +436,10 @@ def main():
                 results[baseline.name_of(f, root, suite)] = verdict
             rel = os.path.relpath(f, os.path.dirname(root))
             refusals = " | ".join(sorted(set(detail))) if verdict == "refused" else ""
+            # An agreeing program's contract verdict: the facts its functions carry differently.
+            if verdict == "agree" and f in CONTRACT:
+                cd, _ = CONTRACT[f]
+                refusals = "contract " + ("agree" if not cd else "differ: " + ", ".join(sorted(cd)))
             verdicts.append(f"{verdict}\t{rel}" + (f"\t{refusals}" if refusals else ""))
             if verdict == "refused":
                 reasons.update(set(detail))
@@ -431,6 +467,18 @@ def main():
     n = total = sum(tot.values()) - tot["noimage"]
     print(f"{tot['agree']} of {n} programs agree; {tot['refused']} refused, {tot['differ']} differ"
           + (f"; {tot['noimage']} the Rust front end refuses" if tot["noimage"] else ""))
+    if CONTRACT:
+        # The reimplementation contract over the programs that agree on their image: a fact a
+        # function carries differently is a behaviour the port gets wrong whatever its code
+        # says; a fact the port does not derive yet (`?`) is counted apart.
+        cagree = sum(1 for cd, _ in CONTRACT.values() if not cd)
+        cdiff, cmiss = collections.Counter(), collections.Counter()
+        for cd, cm in CONTRACT.values():
+            cdiff.update({k: 1 for k in cd})
+            cmiss.update({k: 1 for k in cm})
+        print(f"contract: {cagree} of {len(CONTRACT)} agreeing programs carry every derived fact alike"
+              + ("; differ on " + ", ".join(f"{k} {v}" for k, v in cdiff.most_common()) if cdiff else "")
+              + ("; not derived yet: " + ", ".join(f"{k} {v}" for k, v in cmiss.most_common()) if cmiss else ""))
     fv = collections.Counter(fn_results.values())
     print(f"definitions of refused programs: {fv['agree']} of {len(fn_results)} agree; {fv['refused']} "
           f"refused, {fv['beside']} beside a refusal")

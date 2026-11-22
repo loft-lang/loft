@@ -9257,7 +9257,7 @@ impl Parser {
     /// arg for `f`'s value), which is pass-stable.  A callee whose body is
     /// not parsed yet (forward ref, `code == Null`) is assumed to CONSUME —
     /// the common multi-site wrapper case #355 needs.
-    fn callee_forwards_foreign_store(&self, d_nr: u32) -> bool {
+    pub(super) fn callee_forwards_foreign_store(&self, d_nr: u32) -> bool {
         let def = self.data.def(d_nr);
         if *def.code() == Value::Null {
             return false; // unparsed / native stub — assume it consumes.

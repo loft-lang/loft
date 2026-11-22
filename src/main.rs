@@ -10348,6 +10348,12 @@ fn main() {
     if let Some(out) = std::env::var_os("LOFT_EMIT_PARSED")
         && p.diagnostics.level() < Level::Error
     {
+        // @PLN91 — the reimplementation contract's per-function facts beside the image
+        // (`parser/contract.rs`), which the loft-written front end must reproduce.  Before the
+        // image: writing it ends the process.
+        if std::env::var_os("LOFT_REPORT_CONTRACT").is_some() {
+            eprint!("{}", p.contract_report());
+        }
         emit_parsed_image(&p, &out.to_string_lossy());
     }
     if p.diagnostics.level() < Level::Error {
