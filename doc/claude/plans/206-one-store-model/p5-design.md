@@ -114,4 +114,16 @@ it; any other rebuilds it, or interprets where no `cc` is found.
 
 ## Measured
 
-(Filled in as each phase lands.)
+- **P5b** — `tests/hosted_unit.rs`: a unit built by one program is adopted by one that loads
+  another library first (`Bag` is type 100 in the first, 107 in the second) and verifies; with
+  `loft_tp_out` struck it stops at the first record answer.  The C runtime reaches `known` only
+  through `LOFT_KNOWN` / `LOFT_SET_KNOWN` (a scan, falsified).
+- **P5a** — `scripts/hosted_suite.py` over the five library repositories' `origin/main` (199
+  test files): 123 the same call by call, 44 the same by their output (every call reached state
+  outside the stores), 27 never reaching a unit, 5 that run only inside their package (a module
+  named as the package's own, a dependency of another name), **none differing**.  On the way
+  there the sweep found, in the unit: a value-record signature the bridge did not call, a shim
+  linked as a second copy, an iterator crossing the bridge, constants taken from the consumer;
+  and in the verify: a world it went on in after freeing the caller's views, a twin answering
+  where no caller reads, a copy that restarted the lazy sweep, a nested verify, calls touching a
+  file or a generator run twice, and placement taken for a wrong value.
