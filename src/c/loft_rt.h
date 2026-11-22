@@ -1918,6 +1918,10 @@ static void loft_database_wrapper(const struct loft_tdesc_s *T, loft_ref *var, u
     }
     loft_database(var, bytes);
     loft_stores[var->store_nr].known = tp;
+    /* The root carries its type at byte 4, as `OpDatabase` writes it and the typed mint does
+     * (`loft_database_typed`): `sizeof` of a reference reads it (`OpSizeofRef`), on the
+     * interpreter's side of a hosted unit too (STORE_MODEL D47). */
+    loft_set_u32(&loft_stores[var->store_nr], var->rec, 4, tp);
 }
 
 static loft_fn loft_fn_make(int64_t d, loft_ref clos) {

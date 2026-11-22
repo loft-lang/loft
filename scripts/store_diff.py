@@ -18,6 +18,10 @@ it names each store by what happened to it (`c_alloc_diff.program_names`), so th
 history, not by slot.  Both run under `LOFT_POISON_CLAIM`: a byte no one wrote reads the same
 pattern on both, and a difference is a value one side wrote and the other did not.
 
+A hash table is pseudo-random: both sides run with one fixed `LOFT_HASH_SEED`, so its seed and
+its entries' places agree.  What still varies from run to run — the noise control runs the
+interpreter twice — is named, not hidden: `vary from run to run`.
+
 What a byte comparison cannot see — a store freed on one side and live on the other — is a
 store missing from one dump, reported as such.  A program the C writer refuses, or that has no
 `main`, is skipped and says why."""
@@ -27,6 +31,21 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import c_alloc_diff as cad  # noqa: E402
 
 LOFT = cad.LOFT
+
+
+def trace_of(path):
+    """The trace's name map and each store's making site: `({trace name: history name},
+    {history name: line})` — the line the interpreter or the C wrote beside the store's `N`."""
+    if not os.path.exists(path):
+        return {}, {}
+    lines = open(path, encoding="utf-8").read().splitlines()
+    events, names = cad.program_walk(lines)
+    sites = {}
+    for e in events:
+        f = str(e).split()
+        if f[0] == "N":
+            sites.setdefault(f[1], e.line)
+    return names, sites
 
 
 def read_dump(path, names):
@@ -53,8 +72,8 @@ def run_interp(prog, d, env):
     subprocess.run([LOFT, "--interpret", prog],
                    env={**env, "LOFT_ALLOC_TRACE": t, "LOFT_STORE_DUMP": dump, "LOFT_POISON_CLAIM": "1"},
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=300)
-    names = cad.program_names(open(t, encoding="utf-8")) if os.path.exists(t) else {}
-    return read_dump(dump, names)
+    names, sites = trace_of(t)
+    return read_dump(dump, names), sites
 
 
 def run_c(prog, d, env, plant):
@@ -76,8 +95,8 @@ def run_c(prog, d, env, plant):
         return None, "cc: " + r.stderr[:300]
     subprocess.run([exe], env={**env, "LOFT_ALLOC_TRACE": t, "LOFT_STORE_DUMP": dump},
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=300)
-    names = cad.program_names(open(t, encoding="utf-8")) if os.path.exists(t) else {}
-    return read_dump(dump, names), None
+    names, sites = trace_of(t)
+    return (read_dump(dump, names), sites), None
 
 
 def byte_runs(a, b):
@@ -94,10 +113,12 @@ def byte_runs(a, b):
     return runs
 
 
-def differences(want, got):
+def differences(want, got, wsites=None, gsites=None, noise=None):
     """Every difference, as lines: a store one side lacks, a record one side lacks, a record of
-    another size, and each differing record's first differing byte."""
+    another size, and each run of differing bytes — each store named with the line it was made
+    at on each side (`@ interp/C`)."""
     out = []
+    wsites, gsites = wsites or {}, gsites or {}
     for name in sorted(set(want) | set(got), key=lambda n: [int(x) if x.isdigit() else x for x in re.split(r"(\d+)", n)]):
         if name not in got:
             out.append(f"store {name}: live in the interpreter, not in the C")
@@ -106,34 +127,60 @@ def differences(want, got):
             out.append(f"store {name}: live in the C, not in the interpreter")
             continue
         (wh, wr), (gh, gr) = want[name], got[name]
+        tag = f"{name} @{wsites.get(name, '?')}/{gsites.get(name, '?')}"
         if wh[0] != gh[0]:
-            out.append(f"store {name}: root type {wh[0]} in the interpreter, {gh[0]} in the C")
+            out.append(f"store {tag}: root type {wh[0]} in the interpreter, {gh[0]} in the C")
         for rec in sorted(set(wr) | set(gr)):
             if rec not in gr:
-                out.append(f"store {name} record {rec}: claimed in the interpreter only")
+                out.append(f"store {tag} record {rec}: claimed in the interpreter only")
             elif rec not in wr:
-                out.append(f"store {name} record {rec}: claimed in the C only")
+                out.append(f"store {tag} record {rec}: claimed in the C only")
             elif wr[rec][0] != gr[rec][0]:
-                out.append(f"store {name} record {rec}: {wr[rec][0]} words in the interpreter, {gr[rec][0]} in the C")
+                out.append(f"store {tag} record {rec}: {wr[rec][0]} words in the interpreter, {gr[rec][0]} in the C")
             elif wr[rec][1] != gr[rec][1]:
+                masked = (noise or {}).get((name, rec), set())
                 for lo, hi, x, y in byte_runs(wr[rec][1], gr[rec][1]):
+                    if all(k in masked for k in range(lo, hi)):
+                        out.append(f"store {tag} record {rec}: {hi - lo} byte(s) at {lo} vary from run "
+                                   f"to run (masked: a clock, an address — nothing a seed fixes)")
+                        continue
                     span = f"byte {lo}" if hi == lo + 1 else f"bytes {lo}..{hi - 1}"
-                    out.append(f"store {name} record {rec}: {span} {x} in the interpreter, {y} in the C")
+                    out.append(f"store {tag} record {rec}: {span} {x} in the interpreter, {y} in the C")
     return out
 
 
 def compare(prog, env, plant=False):
-    """`(None, why)` when not compared, else `(lines, stores, records)`."""
+    """`(None, why)` when not compared, else `(lines, stores, records)`.  Both sides hash with
+    one fixed seed (`LOFT_HASH_SEED`), so a hash table's seed and its entries' places are the
+    same: a table is pseudo-random, and seeded alike it is comparable byte for byte."""
+    env = {"LOFT_HASH_SEED": "0x9E3779B97F4A7C15", **env}
     with tempfile.TemporaryDirectory() as d:
         try:
-            got, why = run_c(prog, d, env, plant)
-            if got is None:
+            cres, why = run_c(prog, d, env, plant)
+            if cres is None:
                 return None, why
-            want = run_interp(prog, d, env)
+            got, gsites = cres
+            want, wsites = run_interp(prog, d, env)
+            # The noise control: a second interpreter run.  A byte that differs between two
+            # runs of one side varies by itself (a seed, a clock, an address) and is masked.
+            d2 = os.path.join(d, "again")
+            os.makedirs(d2)
+            again, _ = run_interp(prog, d2, env)
         except Exception as e:  # noqa: BLE001 — a probe that cannot run says why and moves on
             return None, f"error {type(e).__name__}: {e}"
     records = sum(len(r) for _, r in want.values())
-    return differences(want, got), len(want), records
+    return differences(want, got, wsites, gsites, noise_of(want, again)), len(want), records
+
+
+def noise_of(a, b):
+    """`{(store, record): {byte}}` — the bytes two runs of one side disagree on."""
+    out = {}
+    for name in set(a) & set(b):
+        for rec in set(a[name][1]) & set(b[name][1]):
+            x, y = a[name][1][rec][1], b[name][1][rec][1]
+            for lo, hi, _, _ in byte_runs(x, y):
+                out.setdefault((name, rec), set()).update(range(lo, hi))
+    return out
 
 
 def attribute(prog):
