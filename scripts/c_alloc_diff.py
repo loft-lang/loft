@@ -34,8 +34,8 @@ with separate stores interleaving otherwise, or a release walk's records the sam
 order.  The store model is per store, and neither order is part of it.
 
 Inside a `par` region the comparison is approximate: the workers' events interleave in the
-trace, and each interpreter worker numbers its stores on its own, so the order there is not
-the program's."""
+trace by the threads' timing, so the order there is not the program's.  Each worker numbers its
+stores on its own, and a store is named `<worker>.<serial>` by the worker that made it."""
 import os, re, subprocess, sys, tempfile
 
 LOFT = os.environ.get("LOFT_BIN", "target/op-census/release/loft")
@@ -185,8 +185,9 @@ def no_capacity(events):
     return [" ".join(str(e).split()[:2]) if str(e).startswith("N ") else str(e) for e in events]
 
 def region_only(want, got):
-    """STORE_MODEL D46: a `par` region's machinery is each runtime's own until P2 converges it —
-    the events between its `P` and `Q`, and WHERE a store the region touches ends.  Everything
+    """STORE_MODEL D46: inside a `par` region the workers' events interleave by the threads'
+    timing — the events between its `P` and `Q`, and WHERE a store the region touches ends, are
+    not compared event by event.  Everything
     else is held to the model: every event outside the regions, per store (each store named
     by its first appearance outside them, so a store made inside a region and used after it
     is compared too), with only a touched store's free exempt from its place — and that free
@@ -238,7 +239,7 @@ def order_only(want, got):
             return "the same stores, each with the same events, made or interleaved in another order"
     if region_only(want, got):
         return ("the same outside its par regions, store by store; inside them, and where a "
-                "store they touch is freed, each runtime's par machinery (D46)")
+                "store they touch is freed, the threads' timing (D46)")
     return None
 
 def agrees(r):

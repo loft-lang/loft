@@ -27,6 +27,16 @@ order a program's expressions run, a `par` region's threads) and the order a rel
 deletes one store's records are not part of it, and the tool names such a difference
 `order only`.
 
+**A `par` region.**  Both runtimes gather a `par` loop's results alike (D46): a worker's
+answer destination is shaped by its return type, and a record result reaches the loop with the
+store the worker made it in, taken into the caller's table, its stored references renumbered.
+Inside the region the workers' events interleave by the threads' timing, so
+`LOFT_ALLOC_TRACE` marks it (`P` at `n_parallel_queue…`, `Q` at `n_parallel_buf_drop…`) and
+names each store `<worker>.<serial>` by the worker that made it, whichever thread writes the
+event.  `scripts/c_alloc_diff.py` holds everything outside a region to the model, store by
+store; a store the region touched may be freed in another place but as often on both sides, at
+most once.  Its `--self-test` holds those verdicts (`tests/c_alloc_order.rs`).
+
 ## Contents
 - [The store](#the-store) — the record a store is, field by field
 - [The store table](#the-store-table)
@@ -139,7 +149,6 @@ stated in `(H-SwapIn)`, closed with it.)
 
 | # | Divergence | State |
 |---|---|---|
-| D46 | a `par` region's machinery | decided — two parts.  The worker's answer destination CONVERGED this round: the interpreter seeded every one with a 100-word root record (`parallel::worker_dest`), where the C makes a vector answer's wrapper exactly and hands a record answer the null sentinel; it now makes them as the C does (`answer_dest`), and an allocating `par` loop's region has the same claims in the same words on both (21 claims, 73 words; it was 465).  How the results are gathered is the interpreter's model, measured smaller: it adopts the worker stores and keeps no results store (`a-value-read-and-dropped-is-built-outside-the-store`'s `c7`: 6 stores, 162 words) where the C copies the rows' records into a results store and frees the workers (7 stores, 196 words); the C converges in P2.  Meanwhile `LOFT_ALLOC_TRACE` marks the region (`P` at `n_parallel_queue…`, `Q` at `n_parallel_buf_drop…`) and names a worker's store `<worker>.<serial>` on both backends, and `scripts/c_alloc_diff.py` holds everything outside it to the model: every event outside the regions, store by store, with only a touched store's free exempt from its place and held to occurring as often on both sides, at most once.  An adversarial review broke an earlier, wider form; its cases are the tool's `--self-test` (`tests/c_alloc_order.rs`), which the earlier form fails 7 of 14, and a real difference injected before or after an allocating region is reported unaccounted |
 | D26 | the interpreter's stack lives in a store; C's is the C stack | decided — each runtime's own: the value stack is how the interpreter executes, not a heap store of the program.  `LOFT_ALLOC_TRACE` marks it (`S`, a state's stack and constant store, a par worker's stack too) and `scripts/c_alloc_diff.py` leaves it out, under which the two agree; P4's hosted C unit meets it at the frame boundary |
 | D28 | the store table: a `Vec<Store>` beside the type table against a thread-local array | decided — one model: a numbered table of stores, a `DbRef`'s `store_nr` its index, the type table beside it; only the layout of that table differs, which P3 (one layout) builds |
 

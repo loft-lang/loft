@@ -620,9 +620,9 @@ number.  `par_fold` is `run_parallel_fold`'s arithmetic: the rows in `min(thread
 slices as `parallel_workers` splits them, each folded from `init`, the partials folded from
 `init` in slice order.  On a POSIX or Windows host (not `-DLOFT_NO_POSIX` or WASI) a site whose worker answers a scalar, a text, nothing, or a struct or struct-enum record
 runs on threads (`loft_par_run`, plan 203 C4): each worker from a copy of the caller's store
-table, a record row copied after the join into the caller's result store with the claims it
-owns (`loft_par_adopt`), as native's queue copies it.  `LOFT_TRACE_PAR_WORKERS` reports the
-workers each loop ran.
+table.  After the join, a record row's store is taken into the caller's table and every stored
+reference the row reaches is renumbered (`loft_par_move_rows`), as the interpreter adopts a
+worker's stores (STORE_MODEL D46).  `LOFT_TRACE_PAR_WORKERS` reports the workers each loop ran.
 
 **Linked groups.**  A record type several collections of one struct share (`@FR-Col-Group`)
 enters every member (`loft_group_finish`); an element write through the vector member hands
