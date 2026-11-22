@@ -961,6 +961,14 @@ pub fn yield_from(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
 // one) is copied into a pass-2 backing first (`yield_copy`).  Carried for a record of plain
 // scalars and texts; any other record is refused by name, since one owning a resource cannot be
 // copied at all (`owns_droppable`).
+// A range over two equal integer literals (`0..0`): `try_const_unroll_comprehension` makes no push.
+fn empty_constant_range(e: el::El, source: integer) -> boolean {
+  match e.p.nodes[source] {
+    SRange { lo, hi, inclusive } => !inclusive && lo != null && hi != null && match e.p.nodes[lo!] { SInt { v: l0 } => match e.p.nodes[hi!] { SInt { v: h0 } => l0 == h0, _ => false }, _ => false },
+    _ => false
+  }
+}
+
 pub fn yield_owned_record(e: el::El, vars: el_vars::Vars, v: ir::Node, tp: ir::TypeT, step: ir::TypeT) -> ir::Node? {
   if yield_is_fresh(e, vars, v, tp) {
     return v;
@@ -1556,9 +1564,10 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
     el_vars::depend(vars, v, db);
     if made {
       el_vars::set_var_type(vars, celm, ir::TyReference { n: if made_d >= 0 { made_d } else { 0 }, dep: [if had_store { v } else { db }] });
-    } else if !had_store {
+    } else if !had_store && fill_count < 0 && !empty_constant_range(e, source) {
       // (`insert_new`: a fresh local's element borrows the backing minted for it, whatever the
-      // element's type.)
+      // element's type — where an element is pushed at all: a fill copies one constant, and a
+      // constant range with nothing in it unrolls to no push.)
       el_vars::depend(vars, celm, db);
     }
     items = [

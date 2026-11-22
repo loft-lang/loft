@@ -571,6 +571,11 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
     || enum_view_local_tail(e, vars, code, result);
   // (A body that ends in a `return` statement delivered its value there, `record_return`.)
   expr_tail = el_ex_deliver::tail_syntax(e, vars.body) >= 0 && !(e.p.nodes[el_ex_deliver::tail_syntax(e, vars.body)] is SJump);
+  // (`state_route_delivery`: the selector's `MaterializeView` verdict at the tail, as Rust prints
+  // it — the routes join then shows a verdict one side takes and the other does not.)
+  if mv_tail && rb >= 0 && !lambda && expr_tail && el_ex_copy::record_result(result) && el_trace::on() {
+    el_trace::route(e, "classify_reference_delivery=MaterializeView");
+  }
   if rb >= 0 && !lambda && expr_tail && el_ex_copy::record_result(result) && mv_tail {
     mt = view_tail(e, vars, code, rb, result);
     if mt != null {
@@ -585,6 +590,13 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   if rb >= 0 && !lambda && expr_tail && !mat_tail && el_ex_copy::record_result(result) && len(el_types::deps(b.tp)) > 0 && ((tail_is_join(raw_tail(code)) && bind_leaves(e, vars, raw_tail(code)) > 0) || coalesce_bind_tail(e, vars, code, b.tp, result)) && el::def(e, e.context).def_type != el::DT_GENERIC {
     bjoin = bind_tail(e, vars, code, result);
     if bjoin != null {
+      // (A tail the selector sends to `MaterializeView` on this pass: `materialize_view_return`
+      // mints its work ref, and `ref_return`'s `Bind { substitute }` puts the buffer in its place
+      // and unregisters it — `skip_free`, no null-init.)
+      if mv_tail && !e.first_pass {
+        mvw = el_vars::work_ref(vars, el_types::without_deps(el_types::base(result)));
+        el_vars::unregister_work_ref(vars, mvw);
+      }
       code = bjoin!;
       mat_tail = true;
     }
@@ -938,6 +950,8 @@ fn projects_into_local(e: el::El, vars: el_vars::Vars, n: ir::Node, every_arm: b
     NdBlock { block } => len(block[0].operators) > 0 && projects_into_local(e, vars, el_ir::last(block[0].operators), every_arm, arms),
     NdInsert { items } => len(items) > 0 && projects_into_local(e, vars, items[-1]!, every_arm, arms),
     NdIf { cond: _, t, f } => (every_arm || arms) && (projects_into_local(e, vars, t, every_arm, arms) || projects_into_local(e, vars, f, every_arm, arms)),
+    // (A tuple element read is a projection too, rooted at its tuple local.)
+    NdTupleGet { var: tb, idx: _ } => tb >= 0 && tb < len(vars.vars) && !vars.vars[tb].argument,
     NdCall { def_nr, args } => {
       nm = el::def(e, def_nr).name;
       if (nm != "OpGetField" && nm != "OpGetVector") || len(args) == 0 {
@@ -949,6 +963,8 @@ fn projects_into_local(e: el::El, vars: el_vars::Vars, n: ir::Node, every_arm: b
       }
       match projection_base(args[0]!) {
         NdVar { n: base } => !vars.vars[base].argument,
+        // (A field of a tuple element, `t.0.items`, roots at the tuple local.)
+        NdTupleGet { var: tb, idx: _ } => tb >= 0 && tb < len(vars.vars) && !vars.vars[tb].argument,
         NdCall { def_nr: bd } => {
           bn = el::def(e, bd).name;
           if bn == "OpGetField" || bn == "OpGetVector" { projects_into_local(e, vars, projection_base(args[0]!), false, arms) } else { true }
@@ -1061,7 +1077,33 @@ fn bind_tail(e: el::El, vars: el_vars::Vars, code: ir::Node, result: ir::TypeT) 
 // parameters — borrow something that is no parameter of the function?  Such a value views a
 // store this frame frees (`w[i].a` over a local vector, a loop's element), and its copy takes a
 // work ref; a read off a local that OWNS its record (no borrow at all) does not.
+// `Parser::var_is_mint`: a compiler local that owns its store — its self-dep (a work ref's) is
+// the ownership marker, not a view.
+fn var_is_mint(vars: el_vars::Vars, d: integer) -> boolean {
+  el_vars::is_compiler_generated(vars, d) && owns_store(vars, d)
+}
+
+// `Function::owns_store`: no inline ref, no `skip_free`, and independent — no borrow, or a lone
+// self-dep on anything but a record.
+fn owns_store(vars: el_vars::Vars, v: integer) -> boolean {
+  if v < 0 || v >= len(vars.vars) || vars.inline_refs.contains(v) || vars.vars[v].skip_free {
+    return false;
+  }
+  t = el_vars::tp(vars, v);
+  ds = el_types::deps(t);
+  record = match el_types::base(t) { TyReference { n: _, dep: _ } => true, TyEnum { n: _, is_ref, dep: _ } => is_ref, _ => false };
+  len(ds) == 0 || (len(ds) == 1 && ds[0]! == v && !record)
+}
+
 pub fn ls_views_local(e: el::El, vars: el_vars::Vars, ls: vector<integer>) -> boolean {
+  // (`return_views_local`'s first clause: a SELF-dep on a local the user named — a self-read
+  // rebind, `cur = cur.next` — views a record reached through its own field, which may be any
+  // store this frame frees; a mint's self-dep is its ownership marker.)
+  for sv in ls {
+    if sv >= 0 && sv < len(vars.vars) && attr_nr(el::def(e, e.context), el_vars::name_of(vars, sv)) < 0 && !var_is_mint(vars, sv) && el_types::deps(el_vars::tp(vars, sv)).contains(sv) {
+      return true;
+    }
+  }
   work: vector<integer> = [for x in ls { x }];
   at = 0;
   while at < len(work) {
