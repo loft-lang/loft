@@ -8,8 +8,9 @@
 //! red while anything stays interpreted.
 //!
 //! @falsified-at: none — a SABOTAGE (2026-11-22): with `build-native` printing no `interpreted:`
-//!   lines (`src/main.rs`), the baseline missing `upto` passes.  CHANNEL: the script's exit
-//!   status.  WITNESS: "now interpreted, not in the baseline: upto".
+//!   lines (`src/main.rs`), every library reads as compiled whole and the measured baseline no
+//!   longer holds.  CHANNEL: the script's exit status.  WITNESS: "now compiled, still in the
+//!   baseline (write it down: --update): label_of".
 use loft::file_access as fa;
 use loft::platform::process::harness_command;
 
