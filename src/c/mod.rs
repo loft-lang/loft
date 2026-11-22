@@ -23,6 +23,7 @@ mod deliver;
 mod eq;
 mod files;
 mod fnval;
+pub mod hosted;
 mod parse;
 mod reflect;
 mod show;
@@ -1990,15 +1991,41 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
 ///
 /// # Errors
 /// The first function the C backend does not carry yet.
-#[expect(
-    clippy::too_many_lines,
-    reason = "the unit's assembly in one place: runtime, prototypes, bodies, the log binding"
-)]
 pub fn emit_unit_for(
     data: &Data,
     stores: &Stores,
     roots: &[u32],
     browser: bool,
+) -> Result<String, Refusal> {
+    emit_unit_with(data, stores, roots, browser, None)
+}
+
+/// `@PLN206 P4` — a hosted unit (`hosted.rs`) for the library functions `roots`, whose bridge
+/// symbols are named over the library's whole `export` set, written for the type layout
+/// `layout_fp`.
+///
+/// # Errors
+/// The first function the C backend does not carry.
+pub fn emit_hosted_unit(
+    data: &Data,
+    stores: &Stores,
+    roots: &[u32],
+    export: &std::collections::HashSet<u32>,
+    layout_fp: u64,
+) -> Result<String, Refusal> {
+    emit_unit_with(data, stores, roots, false, Some((export, layout_fp)))
+}
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "the unit's assembly in one place: runtime, prototypes, bodies, the log binding"
+)]
+fn emit_unit_with(
+    data: &Data,
+    stores: &Stores,
+    roots: &[u32],
+    browser: bool,
+    hosted: Option<(&std::collections::HashSet<u32>, u64)>,
 ) -> Result<String, Refusal> {
     crate::opt::non_sentinel::begin_c_generation();
     // `#c_twin`: the C backend calls a twin's C routine and never compiles its loft body, so it
@@ -2074,6 +2101,9 @@ pub fn emit_unit_for(
     // `file_map` is the one producer of a foreign store (@PLN174): a unit that does not reach
     // it compiles `loft_at` without the foreign record's test.
     let mut out = String::new();
+    if hosted.is_some() {
+        out.push_str(&hosted::defines());
+    }
     let reached = crate::opt::names::reachable_functions(data, &all);
     let (defines, parses, reflects) = unit_defines(data, stores, &cx, &reached);
     out.push_str(&defines);
@@ -2157,6 +2187,13 @@ pub fn emit_unit_for(
         wide_ledger::write(data, &fns, &out[at..]);
     }
     trace_tables(&cx);
+    if let Some((export, layout_fp)) = hosted {
+        let written = hosted::exports(&cx, export, roots, layout_fp).map_err(|why| Refusal {
+            function: data.def(roots[0]).original_name().clone(),
+            why,
+        })?;
+        out.push_str(&written);
+    }
     Ok(out)
 }
 

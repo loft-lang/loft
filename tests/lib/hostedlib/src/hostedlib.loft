@@ -1,0 +1,43 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN206 P4 — a library a hosted C unit carries (`tests/hosted_unit.rs`): every act a body does
+// on the interpreter's stores — a record answered through the caller's buffer, a vector grown
+// field by field in the caller's store, a text read, a record walked and changed in place.
+
+pub struct Bag {
+  pub name: text,
+  pub items: vector<integer>,
+  pub total: integer,
+}
+
+/// A record the caller's hidden buffer receives.
+pub fn bag_new(name: text, seed: integer) -> Bag {
+  Bag { name: name, items: [seed], total: seed }
+}
+
+/// Grow the bag's vector `n` times: claims and resizes in the store the caller owns.
+pub fn fill(self: Bag, n: integer, step: integer) {
+  for i in 0..n {
+    v = i * step + 1;
+    self.items += [v];
+    self.total += v;
+  }
+}
+
+/// Walk the vector.
+pub fn weight(self: const Bag) -> integer {
+  w = 0;
+  for x in self.items { w += x * 2; }
+  w
+}
+
+/// A text parameter's bytes, a float answer.
+pub fn ratio(t: text, d: integer) -> float {
+  len(t) as float / d as float
+}
+
+/// Scalars alone.
+pub fn mix(a: integer, b: integer) -> integer {
+  a * 31 + b
+}

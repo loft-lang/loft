@@ -1588,8 +1588,45 @@ static void loft_note_site(uint32_t nr) {
 }
 #endif
 
+/* ── A hosted unit (`@PLN206 P4`, `-DLOFT_HOSTED`) ──────────────────────────────────────────
+ * A unit the interpreter adopts works on the interpreter's stores: `loft_stores` is the
+ * interpreter's table, whose entries are its `Store`s (`LOFT_HOST_STORE_TAIL`), and a store's
+ * birth and death are the interpreter's acts (`host_abi::HostedTable`).  Everything inside a
+ * store the unit does itself on the shared prefix.  `loft_host_stores` is the interpreter's
+ * `Stores` of the bridge call running on this thread. */
+#ifdef LOFT_HOSTED
+typedef struct {
+    uint8_t *(*table)(void *stores, uint32_t *n, uint64_t *serial);
+    uint32_t (*store_new)(void *stores);
+    void (*store_free)(void *stores, uint32_t nr);
+    uint32_t store_tail;
+} loft_hosted_table;
+static const loft_hosted_table *loft_hosted = 0;
+static LOFT_TLS void *loft_host_stores = 0;
+
+/* The table as the interpreter holds it now: after a bridge call starts and after every act
+ * the interpreter does for the unit, either of which may move it. */
+static void loft_host_sync(void) {
+    uint32_t n = 0;
+    uint64_t serial = 0;
+    loft_stores = (loft_store_t *) loft_hosted->table(loft_host_stores, &n, &serial);
+    loft_nstores = n;
+    loft_stores_allocated = serial;
+    loft_hint_table = 0;
+}
+#endif
+
 static uint32_t loft_store_make(int counted) {
     uint32_t nr = 0;
+#ifdef LOFT_HOSTED
+    /* The interpreter makes the store: a live, counted one with no record. */
+    if (loft_host_stores) {
+        (void) counted;
+        nr = loft_hosted->store_new(loft_host_stores);
+        loft_host_sync();
+        return nr;
+    }
+#endif
 #ifdef LOFT_STRICT_STORES
     /* `no_slot_reuse`: every slot below the floor was made once, and stays dead once freed. */
     nr = loft_strict_floor;
@@ -2114,6 +2151,15 @@ static void loft_free_ref(loft_ref r) {
         if (loft_evacs[i].old.store_nr == r.store_nr) loft_evacs[i] = loft_evacs[--loft_nevacs];
         else i++;
     }
+#ifdef LOFT_HOSTED
+    /* The interpreter releases the store (`Stores::free_named`): its own fields and its
+     * table's bookkeeping go with it. */
+    if (loft_host_stores) {
+        loft_hosted->store_free(loft_host_stores, r.store_nr);
+        loft_host_sync();
+        return;
+    }
+#endif
     if (loft_release_file_leases_hook) loft_release_file_leases_hook(r.store_nr);
     s->live = 0;
     loft_store_freed(r.store_nr);

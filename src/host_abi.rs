@@ -92,10 +92,30 @@ pub struct HostTable {
     /// or `u32::MAX`.
     pub fn_id:
         unsafe extern "C" fn(ids: *const std::ffi::c_void, key: *const u8, len: usize) -> u32,
+    /// `@PLN206 P4` — what a HOSTED C unit asks of this interpreter's stores.  Last, so the
+    /// fields a rustc artifact reads keep their offsets.
+    pub hosted: &'static HostedTable,
 }
 
 /// The [`HostTable`] layout version; a cdylib refuses a table of another.
-pub const HOST_ABI: u32 = 5;
+pub const HOST_ABI: u32 = 6;
+
+/// `@PLN206 P4` — the acts a hosted C unit leaves to the interpreter (`p3-p4-design.md`): the
+/// store table itself, and a store's birth and death, which touch the interpreter's own fields
+/// and its table's bookkeeping.  Everything inside a store the unit does itself, on the shared
+/// `loft_store_t` prefix (`store.rs`).  `#[repr(C)]`: the unit reads it by these offsets.
+#[repr(C)]
+pub struct HostedTable {
+    /// The store table: its address, its length in `*n`, and the store counter in `*serial`.
+    /// Asked again after every act below, which may move the table.
+    pub table: unsafe extern "C" fn(stores: *mut Stores, n: *mut u32, serial: *mut u64) -> *mut u8,
+    /// A fresh store with no record, live and counted: its number.
+    pub store_new: unsafe extern "C" fn(stores: *mut Stores) -> u32,
+    /// Release store `nr` as the interpreter releases one (`Stores::free_named`).
+    pub store_free: unsafe extern "C" fn(stores: *mut Stores, nr: u32),
+    /// The unit's `LOFT_HOST_STORE_TAIL`, which `store::HOST_STORE_TAIL` must equal.
+    pub store_tail: u32,
+}
 
 /// @PLN199 G0b-2 — a library artifact's table of ids (`__tid` / `__fid`): written by its
 /// `loft_shared_init` before any of its code runs, read by that code after.  The write-once

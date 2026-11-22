@@ -1,0 +1,23 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN206 P4 — the consumer `tests/hosted_unit.rs` runs against `tests/lib/hostedlib`, interpreted
+// and adopted through a hosted C unit.  Values hand-computed.
+use hostedlib::*;
+
+fn main() {
+  b = bag_new("alpha", 5);
+  // items 5, then 1, 4, 7, 10 (step 3): total 5 + 22 = 27; weight 2 * 27 = 54; length 5
+  b.fill(4, 3);
+  assert(b.total == 27, "total {b.total}");
+  assert(b.weight() == 54, "weight {b.weight()}");
+  assert(len(b.items) == 5, "length {len(b.items)}");
+  // many growths in one store: 200 more items of step 1 → 1..200, sum 20100
+  c = bag_new("beta", 0);
+  c.fill(200, 1);
+  assert(c.total == 20100, "total {c.total}");
+  assert(len(c.items) == 201, "length {len(c.items)}");
+  assert(ratio("hosted", 4) == 1.5, "ratio");
+  assert(mix(2, 3) == 65, "mix");
+  println("{b.name} {b.total} {b.weight()} {c.total} {len(c.items)} {ratio(c.name, 2)} {mix(1, 1)}");
+}

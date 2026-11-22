@@ -53,6 +53,17 @@ pub fn cached_or_build_shared_cdylib(
     )? {
         Adopt::Fresh(so) => Ok(Some(so)),
         Adopt::Interpret => Ok(None),
+        // `@PLN206 P4` — a hosted C unit, which works on this interpreter's stores, instead of
+        // a rustc artifact (`LOFT_LIB_BACKEND=c`).
+        Adopt::Build(key) if crate::c::hosted::selected() => crate::c::hosted::build_artifact(
+            data,
+            stores,
+            export_set,
+            &key.out_dir,
+            &key.stem,
+            key.fp,
+        )
+        .map(Some),
         Adopt::Build(key) => crate::native_lib::build_shared_artifact(
             data,
             stores,

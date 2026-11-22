@@ -207,7 +207,47 @@ pub static HOST_TABLE: HostTable = HostTable {
     call_ref: host_call_ref,
     type_id: crate::lib_ids::host_type_id,
     fn_id: crate::lib_ids::host_fn_id,
+    hosted: &HOSTED_TABLE,
 };
+
+/// `@PLN206 P4` — the stores a hosted C unit works on are this interpreter's: the table it
+/// indexes, and the two acts it leaves to the interpreter.
+pub static HOSTED_TABLE: crate::host_abi::HostedTable = crate::host_abi::HostedTable {
+    table: hosted_table,
+    store_new: hosted_store_new,
+    store_free: hosted_store_free,
+    store_tail: crate::store::HOST_STORE_TAIL as u32,
+};
+
+/// The table's address and length, and the store counter, for a hosted unit's `loft_stores`.
+unsafe extern "C" fn hosted_table(stores: *mut Stores, n: *mut u32, serial: *mut u64) -> *mut u8 {
+    // SAFETY: the unit calls this only inside a bridge call, with the `Stores` it was handed.
+    let stores = unsafe { &mut *stores };
+    unsafe {
+        *n = stores.allocations.len() as u32;
+        *serial = stores.stores_allocated;
+    }
+    stores.allocations.as_mut_ptr().cast()
+}
+
+/// A store for the unit's `loft_store_make`: live, counted, no record yet.
+unsafe extern "C" fn hosted_store_new(stores: *mut Stores) -> u32 {
+    // SAFETY: as `hosted_table`.
+    let stores = unsafe { &mut *stores };
+    u32::from(stores.null_named("__hosted").store_nr)
+}
+
+/// The unit's `loft_free_ref`, past its own checks: the interpreter's release.
+unsafe extern "C" fn hosted_store_free(stores: *mut Stores, nr: u32) {
+    // SAFETY: as `hosted_table`.
+    let stores = unsafe { &mut *stores };
+    let r = DbRef {
+        store_nr: nr as u16,
+        rec: 0,
+        pos: 0,
+    };
+    stores.free_named(&r, "__hosted");
+}
 
 /// @PLN199 D2 / D3 — the host's coroutine table as a library cdylib sees it: the runtime's
 /// own (`CoroutineHost::HERE`) for a compiled generator, and the interpreter running this
@@ -602,8 +642,14 @@ pub fn adopt_shared_cdylib(
     // that has those keys, so neither the program's type table nor its function numbering is
     // part of what it is built for: the loft that built it and the sources it carries are.
     // A literal build (`LOFT_NO_LIB_IDS=1`) still serves one program, and keeps both.
-    let program_fp = if std::env::var_os("LOFT_NO_LIB_IDS").is_some() {
-        mix_fp(layout_fp, fn_numbering_fingerprint(data, export_set))
+    // A hosted C unit (`@PLN206 P4`) names types and functions by this program's numbers, as a
+    // literal build does, and is a different artifact from a rustc one: its own key.
+    let hosted = crate::c::hosted::selected();
+    let program_fp = if std::env::var_os("LOFT_NO_LIB_IDS").is_some() || hosted {
+        mix_fp(
+            mix_fp(layout_fp, fn_numbering_fingerprint(data, export_set)),
+            u64::from(hosted),
+        )
     } else {
         0
     };

@@ -10485,8 +10485,9 @@ fn main() {
     // N1/Phase D).
     // `LOFT_NO_NATIVE_LIBS=1` forces ALL `use`d libraries to interpret — the parity
     // reference (a library run native ≡ run interpreted) and a manual escape hatch.
-    let native_libs_off =
-        std::env::var_os("LOFT_NO_NATIVE_LIBS").is_some() || loft::native_build::rustc_off();
+    // A hosted C unit (`LOFT_LIB_BACKEND=c`, @PLN206 P4) needs no rustc.
+    let native_libs_off = std::env::var_os("LOFT_NO_NATIVE_LIBS").is_some()
+        || (loft::native_build::rustc_off() && !loft::c::hosted::selected());
     let force_build_fail = std::env::var_os("LOFT_FORCE_NATIVE_BUILD_FAIL").is_some();
     // Crawler / efficiency aid (`LOFT_REQUIRE_NATIVE=1`, the inverse of
     // `LOFT_NO_NATIVE_LIBS`): turn every native→interpreter fallback below into a
@@ -10582,6 +10583,13 @@ fn main() {
             }
         }
         let export = loft::native_lib::library_export_set(&p.data, pkg_dir);
+        // `@PLN206 P4` — a hosted C unit carries the functions its bridge carries; the rest
+        // of the library interprets, and is neither built nor marked.
+        let export = if loft::c::hosted::selected() {
+            loft::c::hosted::hosted_exports(&p.data, &p.database, &export)
+        } else {
+            export
+        };
         if export.is_empty() {
             continue;
         }
