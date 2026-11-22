@@ -6326,6 +6326,12 @@ pub(crate) fn refuse_stack_buffer(is_stack: bool, what: &str) {
     }
 }
 
+/// `@PLN206 P3` — the length of the interpreter's own fields after the shared prefix: what a
+/// hosted C unit is built with (`-DLOFT_HOST_STORE_TAIL`), so its `loft_store_t` is a `Store`
+/// and `loft_stores[nr]` is `allocations[nr]` (`src/store/layout.rs` checks both sizes).
+pub const HOST_STORE_TAIL: usize =
+    std::mem::size_of::<Store>() - std::mem::offset_of!(Store, stack_buffer);
+
 #[cfg(test)]
 mod layout;
 

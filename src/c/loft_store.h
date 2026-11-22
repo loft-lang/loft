@@ -292,6 +292,16 @@ typedef struct {
      * changes shape or its content is replaced (`loft_h_reshaped`).  A handle resolved under
      * another value resolves again.  Never persisted. */
     uint64_t hgen;
+#ifdef LOFT_HOST_STORE_TAIL
+    /* `@PLN206 P3` — a HOSTED unit works on the interpreter's store table: each entry is an
+     * interpreter `Store`, whose own fields follow the shared prefix in these bytes, which this
+     * runtime never reads or writes.  The host passes their length (`store::HOST_STORE_TAIL`),
+     * so `loft_stores[nr]` is the interpreter's `allocations[nr]`. */
+#if defined(LOFT_FOREIGN) || defined(LOFT_ALLOC_TRACE)
+#error "a hosted unit keeps no store field of its own: build it without LOFT_FOREIGN and LOFT_ALLOC_TRACE"
+#endif
+    unsigned char host[LOFT_HOST_STORE_TAIL];
+#endif
 #ifdef LOFT_FOREIGN
     /* `Store::foreign`: the bytes this store serves under `LOFT_FOREIGN_REC`; an owner of 0 for
      * every ordinary store. */

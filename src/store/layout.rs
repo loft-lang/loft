@@ -79,13 +79,20 @@ fn c_offsets() -> Option<String> {
     }
     src += "#include <stddef.h>\nint main(void) {\n";
     for (f, _) in rust_offsets() {
-        let _ = writeln!(src, "    printf(\"{f} %zu\\n\", offsetof(loft_store_t, {f}));");
+        let _ = writeln!(
+            src,
+            "    printf(\"{f} %zu\\n\", offsetof(loft_store_t, {f}));"
+        );
     }
     for f in ["bits", "nwords", "live", "cap"] {
-        let _ = writeln!(src, "    printf(\"bits.{f} %zu\\n\", offsetof(loft_bits, {f}));");
+        let _ = writeln!(
+            src,
+            "    printf(\"bits.{f} %zu\\n\", offsetof(loft_bits, {f}));"
+        );
     }
     src += "    printf(\"bits.size %zu\\n\", sizeof(loft_bits));\n";
     src += "    printf(\"end %zu\\n\", offsetof(loft_store_t, hgen) + sizeof(uint64_t));\n";
+    src += "    printf(\"hosted %zu\\n\", sizeof(loft_store_t));\n";
     src += "    return 0;\n}\n";
     let dir = std::env::temp_dir().join(format!("loft-store-layout-{}", std::process::id()));
     crate::file_access::create_dir_all(&dir).ok()?;
@@ -93,6 +100,7 @@ fn c_offsets() -> Option<String> {
     let exe = dir.join("layout");
     crate::file_access::write(&c, src).ok()?;
     let built = crate::platform::process::harness_command("cc")
+        .arg(format!("-DLOFT_HOST_STORE_TAIL={}", super::HOST_STORE_TAIL))
         .args(["-std=c11", "-w", "-o"])
         .arg(&exe)
         .arg(&c)
@@ -136,5 +144,11 @@ fn the_store_prefix_is_the_c_runtimes_loft_store_t() {
         c.get("end"),
         Some(&offset_of!(Store, stack_buffer)),
         "the shared prefix ends at the same byte"
+    );
+    // A hosted unit's store is a whole `Store`, so its table indexes the interpreter's.
+    assert_eq!(
+        c.get("hosted"),
+        Some(&std::mem::size_of::<Store>()),
+        "a hosted loft_store_t is the size of a Store"
     );
 }
