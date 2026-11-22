@@ -129,18 +129,23 @@ fn the_c_twin_is_reached_only_at_its_three_sites() {
 fn the_count_is_reached_only_through_its_module() {
     // The field and its type: declared in `mod.rs`, initialised at the three `Stores`
     // constructors (`mod.rs` twice, the worker stores in `allocation.rs`), read in the module.
+    // `src/store/layout.rs` names the C runtime's field of that name: the layout test pairs
+    // every C field with the interpreter's offset (`Store::c_share_count`, which stays 0).
     for needle in ["closure_shares", "ClosureShares"] {
         let rust: Vec<String> = files_naming(needle)
             .into_iter()
             .filter(|f| f.ends_with(".rs"))
             .collect();
+        let mut expected = vec![
+            "src/database/allocation.rs",
+            "src/database/closure_share.rs",
+            "src/database/mod.rs",
+        ];
+        if needle == "closure_shares" {
+            expected.push("src/store/layout.rs");
+        }
         assert_eq!(
-            rust,
-            vec![
-                "src/database/allocation.rs",
-                "src/database/closure_share.rs",
-                "src/database/mod.rs",
-            ],
+            rust, expected,
             "`{needle}` is named outside the closure-share module and its constructors"
         );
     }

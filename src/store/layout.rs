@@ -58,7 +58,7 @@ fn rust_offsets() -> Vec<(&'static str, usize)> {
         ("orphaned", offset_of!(Store, orphaned)),
         ("mapped", offset_of!(Store, mapped)),
         ("map_file", offset_of!(Store, map_file)),
-        ("closure_shares", offset_of!(Store, closure_shares)),
+        ("closure_shares", offset_of!(Store, c_share_count)),
         ("hgen", offset_of!(Store, hgen)),
     ]
 }
@@ -99,22 +99,21 @@ fn c_offsets() -> Option<String> {
     let c = dir.join("layout.c");
     let exe = dir.join("layout");
     crate::file_access::write(&c, src).ok()?;
-    let built = crate::platform::process::harness_command("cc")
+    use crate::platform::process::{Program, Spawn};
+    let built = Spawn::new(Program::search("cc"))
         .arg(format!("-DLOFT_HOST_STORE_TAIL={}", super::HOST_STORE_TAIL))
         .args(["-std=c11", "-w", "-o"])
         .arg(&exe)
         .arg(&c)
         .arg("-lm")
-        .output()
+        .run(&[])
         .ok()?;
     assert!(
         built.status.success(),
         "the runtime header did not compile: {}",
         String::from_utf8_lossy(&built.stderr)
     );
-    let out = crate::platform::process::harness_command(&exe)
-        .output()
-        .ok()?;
+    let out = Spawn::new(Program::os(&exe)).run(&[]).ok()?;
     Some(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 

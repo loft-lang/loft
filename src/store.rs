@@ -789,10 +789,10 @@ pub struct Store {
     mapped: usize,
     /// The C runtime's open mapped file.  0 here, as `mapped`.
     map_file: isize,
-    /// The C runtime's closure-share count (`loft_copy_closure`).  The interpreter keeps its
-    /// shares in `Stores::closure_shares` and leaves this 0; a hosted call is never made on a
-    /// closure's store (`p3-p4-design.md`, failure path 5).
-    closure_shares: u32,
+    /// The C runtime's closure-copy share count (`loft_copy_closure`), at its offset.  Not the
+    /// interpreter's count, which `closure_share.rs` keeps beside the table: this stays 0, and a
+    /// hosted call is never made on a closure's store (`p3-p4-design.md`, failure path 5).
+    c_share_count: u32,
     /// The C runtime's table-handle generation (`@FR-R-TableHandle`, `loft_h_reshaped`).  The
     /// interpreter caches no table handle and leaves it 0.
     hgen: u64,
@@ -1507,7 +1507,7 @@ impl Store {
             placed: U32List::default(),
             mapped: 0,
             map_file: 0,
-            closure_shares: 0,
+            c_share_count: 0,
             hgen: 0,
             claimed_end: 0,
             defined,
@@ -1710,7 +1710,7 @@ impl Store {
             placed: U32List::default(),
             mapped: 0,
             map_file: 0,
-            closure_shares: 0,
+            c_share_count: 0,
             hgen: 0,
             claimed_end: 0,
             defined: true,
@@ -1834,7 +1834,7 @@ impl Store {
             placed: U32List::default(),
             mapped: 0,
             map_file: 0,
-            closure_shares: 0,
+            c_share_count: 0,
             hgen: 0,
             claimed_end: 0,
             defined: true,
@@ -1966,7 +1966,7 @@ impl Store {
             placed: U32List::default(),
             mapped: 0,
             map_file: 0,
-            closure_shares: 0,
+            c_share_count: 0,
             hgen: 0,
             claimed_end: 0,
             defined: true,
@@ -3798,7 +3798,7 @@ impl Store {
             placed: U32List::default(),
             mapped: 0,
             map_file: 0,
-            closure_shares: 0,
+            c_share_count: 0,
             hgen: 0,
             claimed_end: 0,
             defined: self.defined,
@@ -3884,7 +3884,7 @@ impl Store {
             placed: self.placed.clone(),
             mapped: 0,
             map_file: 0,
-            closure_shares: 0,
+            c_share_count: 0,
             hgen: 0,
             claimed_end: 0,
             defined: self.defined,
@@ -3945,7 +3945,7 @@ impl Store {
             placed: U32List::default(),
             mapped: 0,
             map_file: 0,
-            closure_shares: 0,
+            c_share_count: 0,
             hgen: 0,
             claimed_end: 0,
             defined: self.defined,
