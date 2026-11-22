@@ -172,6 +172,11 @@ the scope pass), so a wrong one is seen where it is made rather than as a fault 
 | `LOFT_REPORT_CONTRACT=1` | one `[contract]` line per program function: the buffer the result is delivered through, a bufferless text answer, a result that views a parameter, a fn-ref answered, a result the caller adopts fresh, a store-text instance, one of several arguments answered, a store forwarded that it does not own, whether every exit fills the buffer, the operator a one-op wrapper forwards to, the parameters rebound with an owned store | `src/parser/contract.rs`, beside `LOFT_EMIT_PARSED` | `selfhost/src/el_contract.loft`; `?` = not derived yet |
 | `LOFT_REPORT_STATE=1` | `[state]` lines: per function its purity, result promises, 32-bit regime, closure captures; per parameter a `const` read and a default; per variable the flags the scope pass and the emitters read | `defs` (`selfhost/compare/defs.loft`) on the parser image | `elab`, from its own image |
 
+When a `[state]` flag differs, `LOFT_TRACE_VARFLAGS=<name>|*` on the Rust front end prints the
+line that set it (`value_const`, `inline_ref`, `captured`, `user_named`, `user_appended`,
+`copy_bound`), as `LOFT_SKIPFREE_TRACE=<name>|*` does for `skip_free` — the rule to port, found in
+one run.
+
 Both are kept in both front ends for good: they are the reimplementation contract
 (`plans/91-self-host/1a-parser.md` § The behaviour contract) and the first place to look when a
 function misbehaves.  A conclusion that internal state hides and that turns out to matter is
