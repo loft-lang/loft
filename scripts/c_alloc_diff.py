@@ -5,6 +5,7 @@
 
     scripts/c_alloc_diff.py FILE...     # each program: `same (N events)`, or the first event
                                         # that differs with its context, or why it was skipped
+    scripts/c_alloc_diff.py --self-test # the comparison's verdicts on hand-made traces
     scripts/c_alloc_diff.py --attribute FILE...
                                         # a program that differs is run again with each C-only
                                         # rewrite switched off: one under which it agrees is
@@ -155,24 +156,27 @@ def compare(prog, env):
     return i, want, got
 
 def per_store(events):
-    """Each store's own events in order, the stores taken as a multiset: what a program's
-    stores went through, whatever order separate stores' events interleave in."""
+    """Each store's own events in order, by the store's name: what each store went through,
+    whatever order separate stores' events interleave in.  The names come from the order the
+    stores were made (`program_events`), so a record that moved to another store differs."""
     seq = {}
     for e in events:
         f = str(e).split()
         seq.setdefault(f[1], []).append(" ".join([f[0]] + f[2:]))
-    return sorted(seq.values())
+    return seq
 
 def runs_as_sets(events):
-    """The events with each run of one kind (a release walk's deletes, a scope exit's frees)
-    taken as a set: the same records released, in any order."""
+    """The events with each run of releases — a release walk's deletes, a scope exit's frees —
+    taken as a set: the same records released, in any order.  Claims keep their order: where a
+    record lands is part of the model."""
     out, cur = [], []
     for e in events:
-        if cur and cur[0].split()[0] != str(e).split()[0]:
-            out += sorted(cur)
+        k = str(e).split()[0]
+        if cur and cur[0].split()[0] != k:
+            out += sorted(cur) if cur[0].split()[0] in ("D", "F") else cur
             cur = []
         cur.append(str(e))
-    return out + sorted(cur)
+    return out + (sorted(cur) if cur and cur[0].split()[0] in ("D", "F") else cur)
 
 def no_capacity(events):
     """The events with a made store's starting capacity left out (`N <store>`): room a store
@@ -181,42 +185,60 @@ def no_capacity(events):
     return [" ".join(str(e).split()[:2]) if str(e).startswith("N ") else str(e) for e in events]
 
 def region_only(want, got):
-    """STORE_MODEL D46: a `par` region's machinery is each runtime's own — the events between its
-    `P` and `Q`, and where a store alive across the region ends (the interpreter hands a
-    worker's stores to the parent at the join and frees them there, the C in the worker).
-    Answers whether everything else is alike: every event before the first region, event for
-    event, and every store made after one, per store."""
-    def split(ev):
-        first = next((k for k, e in enumerate(ev) if e.par), None)
-        if first is None:
-            return None
-        last = max(k for k, e in enumerate(ev) if e.par)
-        before = ev[:first]
-        crossing = {e.split()[1] for e in ev[:last + 1]}
-        after = [e for e in ev[last + 1:] if e.split()[1] not in crossing]
-        return before, after
-    w, g = split(want), split(got)
-    if w is None or g is None:
+    """STORE_MODEL D46: a `par` region's machinery is each runtime's own until P2 converges it —
+    the events between its `P` and `Q`, and WHERE a store the region touches ends.  Everything
+    else is held to the model: every event outside the regions, per store (each store named
+    by its first appearance outside them, so a store made inside a region and used after it
+    is compared too), with only a touched store's free exempt from its place — and that free
+    must occur as often on both sides, at most once (no leak, no double free)."""
+    def outer(ev):
+        names, seq, frees, touched = {}, {}, {}, set()
+        for e in ev:
+            f = str(e).split()
+            if f[0] == "F":
+                frees[f[1]] = frees.get(f[1], 0) + 1
+            if e.par:
+                touched.add(f[1])
+                continue
+            if f[1] not in names:
+                names[f[1]] = str(len(names) + 1)
+            seq.setdefault(names[f[1]], []).append(" ".join([f[0]] + f[2:]))
+        return names, seq, frees, touched
+    wn, ws, wf, wt = outer(want)
+    gn, gs, gf, gt = outer(got)
+    # Both sides ran the region: one without it is no machinery difference.
+    if not (wt and gt):
         return False
-    return w[0] == g[0] and per_store(w[1]) == per_store(g[1])
+    # The stores a region touched, on either side, by their outer names.
+    exempt = {wn[s] for s in wt if s in wn} | {gn[s] for s in gt if s in gn}
+    def strip(seq):
+        return {k: [x for x in v if not (k in exempt and x == "F")] for k, v in seq.items()}
+    if strip(ws) != strip(gs):
+        return False
+    wfree = {wn[s]: c for s, c in wf.items() if s in wn}
+    gfree = {gn[s]: c for s, c in gf.items() if s in gn}
+    return all(wfree.get(k, 0) == gfree.get(k, 0) <= 1 for k in exempt)
 
 def order_only(want, got):
     """Why two traces that differ by position still describe the same stores, or None: each
     store's own events alike (separate stores interleave in the order a program's expressions
-    run), each run of one kind alike as a set (a release walk's order), or everything outside
+    run), each run of releases alike as a set (a release walk's order), or everything outside
     the `par` regions alike (D46); a made store's starting capacity aside."""
     want = [Event(t, e.line, e.par) for t, e in zip(no_capacity(want), want)]
     got = [Event(t, e.line, e.par) for t, e in zip(no_capacity(got), got)]
-    if len(want) == len(got):
+    if len(want) == len(got) and not any(e.par for e in want + got):
         if want == got:
             return "the same events, a store's starting capacity aside"
         if runs_as_sets(want) == runs_as_sets(got):
-            return "the same records in each run, in another order (a release walk's order)"
-        if per_store(want) == per_store(got):
-            return "the same events per store, interleaved in another order"
+            return "the same records in each run of releases, in another order"
+        # A store's number is only the order it was made in, which two backends may take
+        # differently (`981-split-ownership-return`): the stores match when each one's whole
+        # history has its twin on the other side — the per-store model's equivalence.
+        if sorted(per_store(want).values()) == sorted(per_store(got).values()):
+            return "the same stores, each with the same events, made or interleaved in another order"
     if region_only(want, got):
-        return ("the same before its par region and in every store made after it; inside, and "
-                "where a store alive across it ends, each runtime's par machinery (D46)")
+        return ("the same outside its par regions, store by store; inside them, and where a "
+                "store they touch is freed, each runtime's par machinery (D46)")
     return None
 
 def agrees(r):
@@ -235,8 +257,59 @@ def attribute(prog):
                 " ".join(f"{sw}=1" for _, sw in C_ONLY_REWRITES))
     return None
 
+# The cases the comparison's verdict is held to (`--self-test`): a pair of event traces (`;`
+# between events, `P`/`Q` a par region) and whether `order_only` may accept them.  The rejects
+# are an adversarial review's holes in an earlier region check (STORE_MODEL D46): work between
+# two regions, a store claimed differently or leaked or freed twice after one, a truncated
+# trace, claims whose places differ.
+SELF_TEST = [
+    ("serial work between two regions differs", False,
+     "N 5 8;P;C 5 4 0;Q;C 5 4 4;N 6 8;C 6 2 0;F 6;P;C 5 2 8;Q;F 5",
+     "N 5 8;P;C 5 4 0;Q;C 5 9 4;N 6 8;C 6 7 0;P;C 5 2 8;Q;F 5"),
+    ("a store from before a region claimed differently after it", False,
+     "N 5 8;C 5 4 0;P;N 7 8;Q;C 5 4 4;D 5 0;F 5", "N 5 8;C 5 4 0;P;N 7 8;Q;C 5 6 20;F 5"),
+    ("a store alive across a region never freed on one side", False,
+     "N 5 8;C 5 4 0;P;N 7 8;Q;F 5", "N 5 8;C 5 4 0;P;N 7 8;Q"),
+    ("a trace that stops after the region", False,
+     "N 5 8;C 5 4 0;P;N 7 8;Q;C 5 4 4;D 5 0;D 5 4;F 5", "N 5 8;C 5 4 0;P;N 7 8;Q"),
+    ("a store freed twice after the region", False,
+     "N 5 8;P;N 7 8;Q;F 5", "N 5 8;P;N 7 8;Q;F 5;F 5"),
+    ("a store made in the region, used differently after it", False,
+     "P;N 5 8;Q;C 5 4 0;C 5 4 4;F 5", "P;N 5 8;Q;C 5 4 8;F 5"),
+    ("an extra store after the region", False,
+     "N 5 8;P;N 7 8;Q;F 5", "N 5 8;P;N 7 8;Q;N 9 8;F 9;F 5"),
+    ("a difference before the region", False,
+     "N 5 8;C 5 4 0;P;C 5 1 4;Q;F 5", "N 5 8;C 5 4 8;P;C 5 1 4;Q;F 5"),
+    ("two claims of one store in each other's places", False,
+     "N 5 8;C 5 4 8;C 5 4 0;F 5", "N 5 8;C 5 4 0;C 5 4 8;F 5"),
+    ("an extra store inside one side's region", True,
+     "N 5 8;P;N 7 8;Q;N 9 8;C 9 4 0;F 9;F 5", "N 5 8;P;N 7 8;N 8 8;Q;N 9 8;C 9 4 0;F 9;F 5"),
+    ("a store's starting capacity alone", True, "N 5 8;C 5 4 0;F 5", "N 5 99;C 5 4 0;F 5"),
+    ("a release walk's order", True,
+     "N 5 8;C 5 4 0;C 5 4 4;D 5 0;D 5 4;F 5", "N 5 8;C 5 4 0;C 5 4 4;D 5 4;D 5 0;F 5"),
+    ("two stores made in the other order", True,
+     "N 5 8;N 6 8;C 5 4 0;C 6 8 0;F 5;F 6", "N 5 8;N 6 8;C 5 8 0;C 6 4 0;F 6;F 5"),
+    ("where a store the region touches is freed", True,
+     "N 5 8;C 5 4 0;P;N 7 8;C 5 2 4;Q;F 5", "N 5 8;C 5 4 0;P;N 7 8;C 5 2 4;F 5;Q"),
+]
+
+def self_test():
+    """Exit status 1 when `order_only` gives any `SELF_TEST` case the wrong verdict."""
+    def ev(s):
+        return program_events(["M"] + [x.strip() for x in s.split(";")])
+    bad = 0
+    for name, accept, a, b in SELF_TEST:
+        got = order_only(ev(a), ev(b)) is not None
+        if got != accept:
+            bad += 1
+            print(f"wrong verdict: {name}: {'accepted' if got else 'rejected'}")
+    print(f"{len(SELF_TEST) - bad} of {len(SELF_TEST)} verdicts right")
+    return 1 if bad else 0
+
 def main():
     args = sys.argv[1:]
+    if args == ["--self-test"]:
+        return self_test()
     if not args or any(a in ("-h", "--help") for a in args):
         print(__doc__)
         return 0

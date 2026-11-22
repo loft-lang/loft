@@ -272,3 +272,29 @@ fn a_function_value_answering_a_vector_is_carried_by_every_backend() {
         );
     }
 }
+
+/// `scripts/c_alloc_diff.py`'s verdicts on hand-made traces (`--self-test`): what it may accept
+/// as order alone or as a `par` region's machinery (STORE_MODEL D45, D46) and what it must
+/// reject — work between two regions, a store claimed differently, leaked or freed twice after
+/// one, a truncated trace, claims in each other's places.
+///
+/// @falsified-at: none — the receipt is the region check an adversarial review broke
+///   (2026-11-22, the script at 039169797): 7 of the 14 verdicts wrong.
+///   CHANNEL: the self-test's exit status.
+#[test]
+fn the_allocation_comparison_holds_its_verdicts() {
+    let out = harness_command("python3")
+        .arg("scripts/c_alloc_diff.py")
+        .arg("--self-test")
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output();
+    let Ok(out) = out else {
+        eprintln!("skipped: no python3 on PATH");
+        return;
+    };
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+}
