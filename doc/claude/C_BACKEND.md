@@ -242,23 +242,33 @@ long test `main` can cost minutes.  `src/c/split.rs` therefore writes a function
 consecutive top-level statements, and the locals that live across parts share one frame
 struct.  A body the pass cannot read for certain stays whole: a `setjmp`, a preprocessor
 conditional, a block comment over lines, or a label it cannot place.  A split changes no
-answer.  The parts are for MSVC: by default the function is written both ways, the parts under
-`#if defined(_MSC_VER)` and the whole body under `#else`, because on gcc and clang a split costs
-a hot function its registers — every call builds the frame struct and makes two indirect calls
-(a recursive decoder ran 12× its Rust twin split and 2× whole).
+answer.  The function is written both ways, the parts under `#if LOFT_C_SPLIT_ABOVE > 0 &&
+<its sites> > LOFT_C_SPLIT_ABOVE` and the whole body under `#else`, so each C compiler takes
+the parts above its own size (`loft_cc.h`):
+- **MSVC: 300**, for `cl`'s optimiser time.
+- **gcc and clang (clang-cl too): 2000**, for their memory: they stay linear in time, but the
+  self-hosted elaborator's 165 000-site `assignment_inner` took `cc1 -O2` past 8.8 GB.  Below
+  that size a split only costs a hot function its registers — every call builds the frame
+  struct and makes two indirect calls (a recursive decoder ran 12× its Rust twin split and 2×
+  whole).
 
 - **Where it runs:** every semantics build — `--native-c`, `--native-debug`, `loft test`,
   `--emit-c`, the C sweep (`scripts/c_sweep.py`), and the non-`--ship` wasm and page builds.
-- **Where it never runs:** a shipped artefact keeps every function whole, so its C is
-  exactly what it would be without the pass (NATIVE.md § Optimisation tiers).  That covers a
-  `--ship` run (`loft::c::ship_units`) and an ESP app (`emit_esp_program`), even under
-  `LOFT_C_SPLIT`.
-- **Switches:** `LOFT_C_SPLIT=<n>` sets the budget and writes the parts for every compiler
-  (`1` keeps the default, MSVC-only parts; `0` turns the pass off), `LOFT_NO_C_SPLIT=1` turns it off over any setting (the bisect step), and
+- **Where it does not run by default:** a shipped artefact keeps every function whole, so its
+  C is exactly what it would be without the pass (NATIVE.md § Optimisation tiers).  That
+  covers a `--ship` run (`loft::c::ship_units`) and an ESP app (`emit_esp_program`), even under
+  `LOFT_C_SPLIT`.  `LOFT_C_SPLIT_SHIP=1` writes a shipped unit's parts too, under the same
+  per-compiler size: for a build that must fit a machine's memory, such as the gate's tools on
+  a GitHub runner.
+- **Switches:** `LOFT_C_SPLIT_ABOVE=<n>` sets the unit's size for every C compiler (`0` keeps
+  every function whole there); `-DLOFT_C_SPLIT_ABOVE=<n>` does the same when compiling an
+  `--emit-c` unit by hand.  `LOFT_C_SPLIT=<n>` sets the budget and writes the parts alone, for
+  every compiler and size (`1` keeps the default; `0` turns the pass off), `LOFT_NO_C_SPLIT=1` turns it off over any setting (the bisect step), and
   `LOFT_TRACE_C_SPLIT=1` names each over-budget function, its parts and its frame size, or
   why it stayed whole.
 - **Guards:** `tests/c_split.rs` runs the split cells on both backends at budget 4, and
-  asserts that the default build splits and a `--ship` unit holds no part.  The rule is
+  asserts that the default build splits under the per-compiler size and that a `--ship` unit
+  holds a part only under `LOFT_C_SPLIT_SHIP=1`.  The rule is
   `(R-CSplit)` in [formal/rewrites.md](formal/rewrites.md); the plan and its measurements are
   [@PLN212](https://github.com/loft-lang/plans/issues/212).
 - **The runtime stays in the unit:** every unit carries the whole C runtime and compiles

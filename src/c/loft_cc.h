@@ -116,6 +116,19 @@ LOFT_NORETURN void loft_android_exit(int code);
  * the integer registers: 32 % of `par`'s worker).  Nothing under strict C99. */
 /* `LOFT_NOINLINE`: a function kept out of its caller — the test runner's release, whose caller
  * holds a `setjmp`, so its locals stay out of that frame. */
+/* `LOFT_C_SPLIT_ABOVE` (`@FR-R-CSplit`): the runtime-call sites above which a function written
+ * in parts is compiled as its parts, per C compiler.  MSVC's `cl /O1` grows quadratic in time
+ * above about 400; gcc and clang stay linear in time but not in memory (one 165 000-site
+ * function took `cc1 -O2` past 8.8 GB), and below that a split only costs a hot function its
+ * registers.  `-DLOFT_C_SPLIT_ABOVE=<n>` (or `LOFT_C_SPLIT_ABOVE=<n>` when loft writes the
+ * unit) sets it, `0` never.  Speed and memory only: both forms hold the same statements. */
+#ifndef LOFT_C_SPLIT_ABOVE
+#if defined(_MSC_VER) && !defined(__clang__)
+#define LOFT_C_SPLIT_ABOVE 300
+#else
+#define LOFT_C_SPLIT_ABOVE 2000
+#endif
+#endif
 /* `-DLOFT_SIZE`: a build for a small binary (an ESP-IDF app, `--native-esp`).  The hot helpers
  * are offered for inlining rather than forced: forced, every one of a program's field and
  * element accesses carries the whole helper, one-time code included (a 30-entry key table was

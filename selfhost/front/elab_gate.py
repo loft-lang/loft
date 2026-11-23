@@ -49,9 +49,12 @@ def build(loft, src, out, env):
     # `LOFT_ELAB_TOOL_BUILD=dev`: a development build of the tools.  The verdicts are the same;
     # the optimised (`--ship`) compile of the elaborator needs more than 5.5 GB in cc1, which a
     # 7 GB CI runner no longer holds (runs 44227446673, 44231429943, 44233220732).
+    # `LOFT_C_SPLIT_SHIP=1`: the optimised build writes the elaborator's giant functions in
+    # parts too (`@FR-R-CSplit`, gcc and clang above 2000 call sites), so cc1's memory stays
+    # bounded: one 165 000-site function took it past 8.8 GB, out of a GitHub runner's 15.
     ship = [] if os.environ.get("LOFT_ELAB_TOOL_BUILD") == "dev" else ["--ship"]
     b = subprocess.run([loft, "--native-c", *ship, "--out", out, src],
-                       env=dict(env, LOFT_TIMEOUT=str(BUILD_SECONDS)),
+                       env=dict(env, LOFT_TIMEOUT=str(BUILD_SECONDS), LOFT_C_SPLIT_SHIP="1"),
                        capture_output=True, text=True, timeout=BUILD_SECONDS + 60)
     exe = os.path.join(out, os.path.splitext(os.path.basename(src))[0])
     if not os.path.exists(exe):

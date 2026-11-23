@@ -2160,6 +2160,9 @@ fn emit_unit_with(
     out.push_str(
         "#if defined(__GNUC__) && !defined(LOFT_LINT_RUNTIME_UNUSED)\n#pragma GCC diagnostic push\n#pragma GCC diagnostic ignored \"-Wunused-function\"\n#endif\n",
     );
+    if let Some(define) = split::above_define() {
+        out.push_str(&define);
+    }
     out.push_str(RUNTIME);
     out.push_str(RUNTIME_END);
     out.push_str(&c_libraries(data, &cx.ffi_libs.borrow(), cx.open));
@@ -5062,9 +5065,13 @@ fn framed(
         Some(body) => format!("{body_storage} {} {fr}({params}) {{\n{body}}}\n", held(ret)),
         None => whole,
     };
+    // The parts alone where a budget was asked for; otherwise both forms, and the C compiler
+    // takes the parts above its own size (`LOFT_C_SPLIT_ABOVE`, loft_cc.h).
     let text = match parts {
-        Some(parts) if split::everywhere() => parts,
-        Some(parts) => format!("#if defined(_MSC_VER)\n{parts}#else\n{whole}#endif\n"),
+        Some((parts, _)) if split::everywhere() => parts,
+        Some((parts, sites)) => format!(
+            "#if LOFT_C_SPLIT_ABOVE > 0 && {sites} > LOFT_C_SPLIT_ABOVE\n{parts}#else\n{whole}#endif\n"
+        ),
         None => whole,
     };
     let _ = write!(cx.gen_bodies.borrow_mut(), "\n{text}");
@@ -5135,6 +5142,12 @@ pub fn ship_units() {
 /// so the C compiler's optimiser time stays bounded.
 pub fn functions_whole() -> bool {
     crate::ship_tier::shipped_units() || ESP_UNIT.with(std::cell::Cell::get)
+}
+
+/// Whether a shipped unit is written with its parts all the same (`LOFT_C_SPLIT_SHIP=1`): a
+/// build that must fit a machine's memory, such as the gate's tools on a GitHub runner.
+pub fn split_shipped() -> bool {
+    split::split_shipped()
 }
 
 thread_local! {

@@ -5723,16 +5723,19 @@ Sites: `opt::frame_calls::GuardFree` (`registers_buffers`, `is_guard_free`), the
                  the function.  A body the pass cannot read for certain stays whole: a
                  `setjmp`, a preprocessor conditional, a block comment over lines, a
                  label it cannot place.
-                 TIERS: a semantics build alone.  A shipped unit (`--ship`, an ESP app)
+                 TIERS: every semantics build.  A shipped unit (`--ship`, an ESP app)
                  keeps every function whole, so its C is the C it is without the rule
-                 (`functions_whole`).  The parts are compiled by MSVC alone: the body is
-                 written both ways, the parts under `#if defined(_MSC_VER)`, because gcc
-                 and clang stay linear on a large function and a split costs a hot
-                 function its registers.
+                 (`functions_whole`), unless `LOFT_C_SPLIT_SHIP=1` asks for the parts.
+                 The body is written both ways, the parts under `#if LOFT_C_SPLIT_ABOVE
+                 > 0 && <its sites> > LOFT_C_SPLIT_ABOVE`, and each C compiler takes the
+                 parts above its own size (`loft_cc.h`): MSVC above 300, for its
+                 optimiser time; gcc and clang above 2000, for their memory, since below
+                 that a split only costs a hot function its registers.  Either arm
+                 holds the same statements, so the compiler's choice changes no answer.
                  Measured on `cl /O1`, the eight slowest programs of the C sweep: 592 s
                  whole, 98 s in parts, every answer the same.  Switch `LOFT_NO_C_SPLIT=1`;
-                 `LOFT_C_SPLIT=<n>` sets the budget and writes the parts for every
-                 compiler; `LOFT_TRACE_C_SPLIT=1` names each function split.  Site
+                 `LOFT_C_SPLIT=<n>` sets the budget and writes the parts alone;
+                 `LOFT_C_SPLIT_ABOVE=<n>` (or `-DLOFT_C_SPLIT_ABOVE=<n>`) the size; `LOFT_TRACE_C_SPLIT=1` names each function split.  Site
                  `src/c/split.rs`; guard `tests/c_split.rs`.
 
   (R-Inline)     a loft function the C writes in at most twelve statements is declared

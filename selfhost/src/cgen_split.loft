@@ -33,8 +33,9 @@ pub fn budget() -> integer {
   if n == 1 || n < 0 { BUDGET } else { n }
 }
 
-// `everywhere`: the parts are written for every C compiler only where a budget was asked for
-// (`LOFT_C_SPLIT=<n>`, `n > 1`); by default for MSVC alone, the whole body in the `#else` arm.
+// `everywhere`: the parts are written alone, for every C compiler and size, only where a budget
+// was asked for (`LOFT_C_SPLIT=<n>`, `n > 1`); by default the unit carries both forms and
+// `LOFT_C_SPLIT_ABOVE` (loft_cc.h) picks one per C compiler.
 pub fn everywhere() -> boolean {
   v = env_variable("LOFT_C_SPLIT") ?? "";
   n = (v.trim() as integer?) ?? 0;
@@ -173,6 +174,29 @@ fn call_sites(s: text) -> integer {
     }
   }
   count
+}
+
+// `body_sites`: a body's runtime-call sites, as `split_body` counts them; the unit compares it
+// with `LOFT_C_SPLIT_ABOVE` to pick the parts or the whole body.
+pub fn body_sites(body: text) -> integer {
+  src = if body.ends_with("\n") { body[0..body.size() - 1] } else { body };
+  lines: vector<text> = [for l in src.split('\n') { l }];
+  sok = false;
+  stmts = statements(lines, sok);
+  total = 0;
+  if sok {
+    for s in stmts {
+      total += call_sites(bare_text(s));
+    }
+  }
+  total
+}
+
+// `above_define`: the unit's own `LOFT_C_SPLIT_ABOVE` (`LOFT_C_SPLIT_ABOVE=<n>`), written ahead
+// of the runtime so it overrides loft_cc.h's per-compiler default; "" keeps that default.
+pub fn above_define() -> text {
+  n = ((env_variable("LOFT_C_SPLIT_ABOVE") ?? "").trim() as integer?) ?? -1;
+  if n < 0 { "" } else { "#define LOFT_C_SPLIT_ABOVE {n}\n" }
 }
 
 // Does `(R-CSplit)` write `body` in parts?
