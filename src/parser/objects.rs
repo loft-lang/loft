@@ -611,6 +611,38 @@ impl Parser {
             .and_then(|(_, l)| *l)
     }
 
+    /// The spelling `old` is bound under, and the position-named variable a bind after its
+    /// block ended takes here ([`Self::rebind_after_block`]).
+    fn rebind_names(&self, old: u16) -> (String, String) {
+        let bound = self.vars.name(old).to_string();
+        let name = bound.split('#').next().unwrap_or(&bound).to_string();
+        // Digits only, like a loop's `name#N`, so every reader that strips `#<digits>` to
+        // recover the spelling (diagnostics, the never-read lint) treats it the same; the
+        // position is far above any loop counter a name reaches.
+        let pos = self.lexer.pos();
+        let own = format!(
+            "{name}#{}",
+            u64::from(pos.line) * 100_000 + u64::from(pos.pos.min(99_999))
+        );
+        (name, own)
+    }
+
+    /// `@FR-B-Scope` — a bind after `old`'s block ended, at the KNOWN type `tp`, that starts a
+    /// new binding although no type refusal forces it.  Pass 1 splits where it cannot type the
+    /// ended binding yet: bound onto the ended variable, the new binding's type became the
+    /// ended binding's, and pass 2's first bind of the ended binding then met it as a type
+    /// change (`if c { b = later_r(); return b.a } b = earlier_v();`).  Pass 2 splits wherever
+    /// pass 1 did, so the split is the statement's on both passes.
+    pub(crate) fn rebind_split_unforced(&self, old: u16, tp: &Type) -> bool {
+        if tp.is_unknown() || self.vars.is_declared(old) {
+            return false;
+        }
+        if self.first_pass {
+            return self.vars.tp(old).is_unknown();
+        }
+        self.vars.var(&self.rebind_names(old).1) != u16::MAX
+    }
+
     /// `@FR-B-Scope`, loft#1700 — a bind after the block that bound `old`'s name has ended
     /// starts a NEW binding, and where it has another type it gets a variable of its own, as
     /// a `for` loop's and a pattern's do; the spelling names it until the enclosing block
@@ -623,16 +655,7 @@ impl Parser {
     /// the new type yet and skip the split pass 2 makes, and a position names the same
     /// statement on both passes whichever of them splits (`w#300010`, line 3 column 10).
     pub(crate) fn rebind_after_block(&mut self, old: u16, tp: &Type) -> u16 {
-        let bound = self.vars.name(old).to_string();
-        let name = bound.split('#').next().unwrap_or(&bound).to_string();
-        // Digits only, like a loop's `name#N`, so every reader that strips `#<digits>` to
-        // recover the spelling (diagnostics, the never-read lint) treats it the same; the
-        // position is far above any loop counter a name reaches.
-        let pos = self.lexer.pos();
-        let own = format!(
-            "{name}#{}",
-            u64::from(pos.line) * 100_000 + u64::from(pos.pos.min(99_999))
-        );
+        let (name, own) = self.rebind_names(old);
         // `Rewritten` is the literal's built-in-place signal, not a type a variable holds.
         let v = self
             .vars

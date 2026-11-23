@@ -5699,6 +5699,7 @@ use a separate collection or add after the loop"
                     && (self
                         .vars
                         .retype_would_be_refused(var_nr, &s_type, &self.data)
+                        || self.rebind_split_unforced(var_nr, &s_type)
                         // `@FR-N-Join` joins the writes of ONE binding.  Asked of a binding
                         // that has ended, it widened the ended one's variable: every read in
                         // the block that bound it non-null then stored "a nullable" value,
@@ -10441,7 +10442,8 @@ use a separate collection or add after the loop"
                 if !is_ref
                     && self.bind_after_end.is_some_and(|(v, _)| v == v_nr)
                     && (self.vars.was_loop_var(v_nr)
-                        || self.vars.retype_would_be_refused(v_nr, &tp, &self.data))
+                        || self.vars.retype_would_be_refused(v_nr, &tp, &self.data)
+                        || self.rebind_split_unforced(v_nr, &tp))
                 {
                     self.bind_after_end = None;
                     v_nr = self.rebind_after_block(v_nr, &tp);
