@@ -640,8 +640,8 @@ fn main() {
 // machinery (script + log.conf + read the captured log) is already here.
 // ---------------------------------------------------------------------------
 
-/// The three backends every logged cell runs on.
-const LEGS: [&str; 3] = ["--interpret", "--native"];
+/// The two backends every logged cell runs on.
+const LEGS: [&str; 2] = ["--interpret", "--native"];
 
 /// Run a script under a plain (non-production) backend with a logger attached,
 /// and return the captured log.
