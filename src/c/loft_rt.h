@@ -484,6 +484,20 @@ static uint32_t loft_ncbl = 0;
 static void *loft_cbl_handles[64];
 static uint32_t loft_ncbl_handles = 0;
 #endif
+#if defined(LOFT_HOSTED) && defined(LOFT_DL)
+/* A hosted unit has no `main` to bind its libraries: the interpreter opened the unit, and with
+ * it the libraries it links (`loft_cl`, its own `[c] shim` among them).  Their handles join the
+ * ones `loft_c_bound_sym` searches, so a `#c` symbol of a package with optional libraries,
+ * reached by name (`loft_c_lazy_sym`), finds the unit's own shim — the program's global scope,
+ * which a whole program exports its shims to, does not hold a unit's.  Called by
+ * `loft_shared_init`. */
+static void loft_host_bind_libraries(void) {
+    for (uint32_t i = 0; i < loft_ncl && loft_ncbl_handles < 64; i++) {
+        void *h = loft_dl_open(loft_cl[i], LOFT_DL_LOCAL);
+        if (h) loft_cbl_handles[loft_ncbl_handles++] = h;
+    }
+}
+#endif
 
 /* A `#c` symbol in this program (its linked libraries, its shims), else in a library
  * `loft_c_bind_libraries` opened.  Null when nothing exports it. */

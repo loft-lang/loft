@@ -495,7 +495,7 @@ pub(crate) fn exports(
          memcpy(&abi, loft_t, 4);\n    if (abi != LOFT_HOST_ABI) return 0;\n    \
          memcpy(&h, loft_t + LOFT_HT_HOSTED, sizeof h);\n    \
          if (h->store_tail != LOFT_HOST_STORE_TAIL) return 0;\n    \
-         loft_hosted = h;\n    memcpy(&loft_host_call_ref, loft_t + LOFT_HT_CALL_REF, sizeof loft_host_call_ref);\n    loft_map_types(loft_t, loft_ids);\n    loft_map_fns(loft_t, loft_ids);\n    loft_bind_tables();\n    return 1;\n}}\n\
+         loft_hosted = h;\n    memcpy(&loft_host_call_ref, loft_t + LOFT_HT_CALL_REF, sizeof loft_host_call_ref);\n    loft_map_types(loft_t, loft_ids);\n    loft_map_fns(loft_t, loft_ids);\n    loft_bind_tables();\n#ifdef LOFT_DL\n    loft_host_bind_libraries();\n#endif\n    return 1;\n}}\n\
          __attribute__((visibility(\"default\"))) uint64_t loft_type_layout_fp_v1(void) {{ return UINT64_C({layout_fp}); }}\n"
     );
     Ok(out)
