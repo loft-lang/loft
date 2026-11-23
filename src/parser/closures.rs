@@ -566,6 +566,24 @@ pub(super) fn collect_param_reassigns(
 
 /// Walk `code` marking every parameter slot rebound to an OWNED value — directly by a
 /// `Value::Set`, or by being handed on to a callee that rebinds the parameter it lands in.
+/// The parameter — its attribute index — that variable `v` of `fn_nr` is, or `None` for a
+/// local.  A parameter's variable is numbered by its attribute index only while every
+/// attribute exists before the body's first local: a hidden one added later (a text work
+/// buffer, `__work_N`) is numbered after the locals, and a local below the attribute count
+/// is no parameter.
+fn param_attr(data: &Data, fn_nr: u32, v: u16, n_params: usize) -> Option<usize> {
+    let def = data.def(fn_nr);
+    let vars = def.variables();
+    if v >= vars.count() || !vars.is_argument(v) {
+        return None;
+    }
+    let name = vars.name(v);
+    def.attributes()
+        .iter()
+        .take(n_params)
+        .position(|a| a.name == name)
+}
+
 pub(super) fn collect_param_rebinds_owned(
     code: &Value,
     fn_nr: u32,
@@ -575,14 +593,14 @@ pub(super) fn collect_param_rebinds_owned(
     cache: &mut HashMap<u32, Vec<bool>>,
 ) {
     if let Value::Set(v, rhs) = code.unspan()
-        && (*v as usize) < n_params
+        && let Some(a) = param_attr(data, fn_nr, *v, n_params)
         && !matches!(rhs.unspan(), Value::Null)
         && matches!(
             crate::use_analysis::ownership_of(data, fn_nr, rhs),
             crate::use_analysis::Own::Owned
         )
     {
-        out[*v as usize] = true;
+        out[a] = true;
     }
     if let Value::Call(callee, args) = code.unspan()
         && *data.def(*callee).code() != Value::Null
@@ -592,9 +610,9 @@ pub(super) fn collect_param_rebinds_owned(
             if i < inner.len()
                 && inner[i]
                 && let Value::Var(v) = arg.unspan()
-                && (*v as usize) < n_params
+                && let Some(a) = param_attr(data, fn_nr, *v, n_params)
             {
-                out[*v as usize] = true;
+                out[a] = true;
             }
         }
     }
