@@ -34,7 +34,12 @@ impl State {
     /// `HostedTable::handover` — take the routine `key` over at the head of its loop `scope`,
     /// when the frame the interpreter keeps there can be filled from `entries`.  False leaves
     /// the routine running compiled, to its next loop head or its return.
-    pub(crate) fn accept_handover(&mut self, key: &str, scope: u16, entries: &[HandoverEntry]) -> bool {
+    pub(crate) fn accept_handover(
+        &mut self,
+        key: &str,
+        scope: u16,
+        entries: &[HandoverEntry],
+    ) -> bool {
         let taken = self.handover_verdict(key, scope, entries);
         if std::env::var_os("LOFT_TRACE_HANDOVER").is_some() {
             match &taken {
@@ -89,10 +94,16 @@ impl State {
             };
             let size = u32::from(crate::variables::size(&entry.tp, ctx));
             let Some(e) = offered.get(&entry.name) else {
-                return Err(format!("the frame holds `{}`, which the routine does not offer", entry.name));
+                return Err(format!(
+                    "the frame holds `{}`, which the routine does not offer",
+                    entry.name
+                ));
             };
             let Some(w) = slot_write(&entry.tp, size, str_slot, e) else {
-                return Err(format!("`{}` is offered in a shape its slot does not take", entry.name));
+                return Err(format!(
+                    "`{}` is offered in a shape its slot does not take",
+                    entry.name
+                ));
             };
             taken.insert(entry.name.clone());
             held_spans.push((u32::from(entry.slot), u32::from(entry.slot) + size));
@@ -103,7 +114,9 @@ impl State {
             .iter()
             .find(|(name, e)| e.kind == 3 && e.rr != 0 && !taken.contains(*name))
         {
-            return Err(format!("the routine holds a store in `{name}`, which the frame does not"));
+            return Err(format!(
+                "the routine holds a store in `{name}`, which the frame does not"
+            ));
         }
         // A local in scope the frame does not hold yet starts empty where its scope's end will
         // release it — a text, a reference — unless its slot is another local's.
@@ -174,7 +187,7 @@ impl State {
                     let at = store.addr_span_mut(cur.rec, pos, std::mem::size_of::<String>());
                     // SAFETY: a text local's slot, written as a fresh `String` (no drop of what
                     // the slot held: nothing of this frame was there).
-                    unsafe { std::ptr::write(at.cast::<String>(), t) };
+                    unsafe { std::ptr::write_unaligned(at.cast::<String>(), t) };
                 }
                 SlotWrite::View(p, len) => {
                     let at = store.addr_span_mut(cur.rec, pos, std::mem::size_of::<Str>());

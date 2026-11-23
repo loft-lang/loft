@@ -135,11 +135,7 @@ pub(crate) fn handle(session: &mut ReplSession, line: &str) -> (Vec<String>, boo
     let req = text(&parsed, "req").unwrap_or("");
     let mut out = Vec::new();
     match req {
-        "launch" => match {
-            // `@PLN206 P7` — `"native": true` runs the program's own functions compiled too.
-            session.set_native_program(bp_bool(&parsed, "native").unwrap_or(false));
-            session.load_program(text(&parsed, "file").unwrap_or(""))
-        } {
+        "launch" => match launch(session, &parsed) {
             Ok(Ok(())) => out.push(resp_ok(id, "")),
             Ok(Err(diags)) => out.push(resp_err(id, &diags_msg(&diags))),
             Err(e) => out.push(resp_err(id, &format!("cannot read file: {e}"))),
@@ -532,6 +528,16 @@ fn num(p: &Parsed, key: &str) -> Option<i64> {
     // also accepts a `Number` (truncated) for backward compatibility.
     field(p, key).and_then(Parsed::as_i64)
 }
+/// `launch`: load the request's `file`, with the program's own functions compiled when it asks
+/// `"native": true` (`@PLN206 P7`).
+fn launch(
+    session: &mut ReplSession,
+    parsed: &Parsed,
+) -> std::io::Result<Result<(), Vec<crate::diagnostics::DiagEntry>>> {
+    session.set_native_program(bp_bool(parsed, "native").unwrap_or(false));
+    session.load_program(text(parsed, "file").unwrap_or(""))
+}
+
 fn bp_bool(p: &Parsed, key: &str) -> Option<bool> {
     match field(p, key) {
         Some(Parsed::Bool(b)) => Some(*b),

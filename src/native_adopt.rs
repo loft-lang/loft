@@ -16,8 +16,8 @@ use crate::host_abi::LAYOUT_FP_SYMBOL;
 use crate::host_abi::{HOST_ABI, HostTable, LibArg};
 use crate::keys::DbRef;
 use crate::opt::native_key::{
-    artifact_sources, auto_cdylib_stem, contributing_fingerprint,
-    library_export_set, mix_fp, platform_cdylib_name, source_content_hash, source_newer_than,
+    artifact_sources, auto_cdylib_stem, contributing_fingerprint, library_export_set, mix_fp,
+    platform_cdylib_name, source_content_hash, source_newer_than,
 };
 use std::collections::HashSet;
 

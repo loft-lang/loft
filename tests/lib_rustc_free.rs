@@ -31,7 +31,8 @@ struct Scratch {
 
 impl Scratch {
     fn new(tag: &str) -> Self {
-        let root = std::env::temp_dir().join(format!("loft-rustc-free-{tag}-{}", std::process::id()));
+        let root =
+            std::env::temp_dir().join(format!("loft-rustc-free-{tag}-{}", std::process::id()));
         let _ = fa::remove_dir_all(&root);
         let bin = root.join("bin");
         fa::create_dir_all(&bin).expect("bin");
@@ -106,9 +107,13 @@ impl Scratch {
     /// Did the run build a C unit for the package: its `.c` and the shared library compiled
     /// from it (the `.c` is written before the compiler is asked, so it alone proves nothing).
     fn built_c_unit(&self, name: &str) -> bool {
-        let entries = fa::read_dir(self.root.join("lib").join(name).join("native-auto"))
-            .unwrap_or_default();
-        let has = |ext: &str| entries.iter().any(|e| fa::has_extension(e.os_spelling(), ext));
+        let entries =
+            fa::read_dir(self.root.join("lib").join(name).join("native-auto")).unwrap_or_default();
+        let has = |ext: &str| {
+            entries
+                .iter()
+                .any(|e| fa::has_extension(e.os_spelling(), ext))
+        };
         has("c") && has(loft::platform::dll_extension())
     }
 
@@ -124,7 +129,8 @@ impl Drop for Scratch {
     }
 }
 
-const TALLY: &str = "pub fn tally(n: integer) -> integer {\n  t = 0;\n  for i in 0..n { t += i % 5; }\n  t\n}\n";
+const TALLY: &str =
+    "pub fn tally(n: integer) -> integer {\n  t = 0;\n  for i in 0..n { t += i % 5; }\n  t\n}\n";
 /// By hand: `i % 5` over `0..1000` is 200 rounds of 0 + 1 + 2 + 3 + 4 = 2000.
 const USE_TALLY: &str = "use counts;\nfn main() {\n  println(\"{counts::tally(1000)}\");\n}\n";
 
@@ -140,7 +146,10 @@ fn a_librarys_loft_code_never_resolves_to_a_rustc_built_artifact() {
     // a. The default: a C unit, no rustc.
     let (ok, out, err) = s.run(&["--interpret"], &prog, &[]);
     assert!(ok && out == "2000\n", "a: {out}{err}");
-    assert!(s.built_c_unit("counts"), "a: the library runs as a C unit: {err}");
+    assert!(
+        s.built_c_unit("counts"),
+        "a: the library runs as a C unit: {err}"
+    );
     assert_eq!(s.calls(), "", "a: rustc was asked to build a library");
     // b. The old opt-out names no backend any more: still the C unit, no rustc.
     s.clear("counts");
@@ -159,12 +168,13 @@ fn a_librarys_loft_code_never_resolves_to_a_rustc_built_artifact() {
     assert_eq!(s.calls(), "", "c: rustc was asked to build a library");
     // d. A library that also declares a Rust crate for its natives: its loft code is a C unit.
     s.package("crated", "\n[native]\ncrate = \"crated-native\"\n", TALLY);
-    let prog = s.program(
-        "use crated;\nfn main() {\n  println(\"{crated::tally(1000)}\");\n}\n",
-    );
+    let prog = s.program("use crated;\nfn main() {\n  println(\"{crated::tally(1000)}\");\n}\n");
     let (ok, out, err) = s.run(&["--interpret"], &prog, &[]);
     assert!(ok && out == "2000\n", "d: {out}{err}");
-    assert!(s.built_c_unit("crated"), "d: the library runs as a C unit: {err}");
+    assert!(
+        s.built_c_unit("crated"),
+        "d: the library runs as a C unit: {err}"
+    );
     assert_eq!(s.calls(), "", "d: rustc was asked to build a library");
 }
 

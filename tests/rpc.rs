@@ -694,7 +694,7 @@ fn rpc_debugs_a_program_using_a_library_with_a_tuple_parameter() {
         .position(|l| l.starts_with("pub fn weight"))
         .expect("weight")
         + 2;
-    let requests = vec![
+    let requests = [
         format!(r#"{{"id":1,"req":"launch","file":"{}"}}"#, json_path(&prog)),
         format!(
             r#"{{"id":2,"req":"setBreakpoints","file":"{}","breakpoints":[{{"line":{line}}}]}}"#,
@@ -706,8 +706,13 @@ fn rpc_debugs_a_program_using_a_library_with_a_tuple_parameter() {
     ];
     let input = Cursor::new(requests.join("\n").into_bytes());
     let mut out: Vec<u8> = Vec::new();
-    loft::rpc::run_rpc("default", &[lib_root.to_string_lossy().to_string()], input, &mut out)
-        .expect("rpc run");
+    loft::rpc::run_rpc(
+        "default",
+        &[lib_root.to_string_lossy().to_string()],
+        input,
+        &mut out,
+    )
+    .expect("rpc run");
     let out = String::from_utf8(out).expect("utf8");
     let _ = fa::remove_dir_all(&lib_root);
     assert!(
@@ -740,7 +745,7 @@ fn rpc_stops_in_a_compiled_library_and_its_callees_stay_compiled() {
         return;
     }
     let (lib_root, lib_file, prog) = plain_library("p7a");
-    let requests = vec![
+    let requests = [
         format!(r#"{{"id":1,"req":"launch","file":"{}"}}"#, json_path(&prog)),
         format!(
             r#"{{"id":2,"req":"setBreakpoints","file":"{}","breakpoints":[{{"line":6}}]}}"#,
@@ -756,8 +761,13 @@ fn rpc_stops_in_a_compiled_library_and_its_callees_stay_compiled() {
     let before = loft::state::SHARED_DISPATCH_HITS.load(Ordering::Relaxed);
     let input = Cursor::new(requests.join("\n").into_bytes());
     let mut out: Vec<u8> = Vec::new();
-    loft::rpc::run_rpc("default", &[lib_root.to_string_lossy().to_string()], input, &mut out)
-        .expect("rpc run");
+    loft::rpc::run_rpc(
+        "default",
+        &[lib_root.to_string_lossy().to_string()],
+        input,
+        &mut out,
+    )
+    .expect("rpc run");
     let hits = loft::state::SHARED_DISPATCH_HITS.load(Ordering::Relaxed) - before;
     let out = String::from_utf8(out).expect("utf8");
     let _ = fa::remove_dir_all(&lib_root);
@@ -765,10 +775,19 @@ fn rpc_stops_in_a_compiled_library_and_its_callees_stay_compiled() {
         out.contains(r#""event":"stopped""#) && out.contains(r#""function":"weigh""#),
         "stops inside the library: {out}"
     );
-    assert!(out.contains(r#"{"id":4,"ok":true,"value":4}"#), "the parameter: {out}");
-    assert!(out.contains(r#""function":"twice""#), "twice beneath it: {out}");
+    assert!(
+        out.contains(r#"{"id":4,"ok":true,"value":4}"#),
+        "the parameter: {out}"
+    );
+    assert!(
+        out.contains(r#""function":"twice""#),
+        "twice beneath it: {out}"
+    );
     assert!(out.contains("a 40 41"), "the answers: {out}");
-    assert!(hits >= 5, "helper runs compiled: {hits} bridge call(s)\n{out}");
+    assert!(
+        hits >= 5,
+        "helper runs compiled: {hits} bridge call(s)\n{out}"
+    );
 }
 
 /// The library and program of the `@PLN206 P7a` tests: `main` → `twice` → `weigh` → `helper`,
@@ -815,7 +834,7 @@ fn rpc_steps_into_compiled_routines_as_into_interpreted_ones() {
         return;
     }
     let (lib_root, _, prog) = plain_library("p7a_step");
-    let requests = vec![
+    let requests = [
         format!(r#"{{"id":1,"req":"launch","file":"{}"}}"#, json_path(&prog)),
         format!(
             r#"{{"id":2,"req":"setBreakpoints","file":"{}","breakpoints":[{{"line":3}}]}}"#,
@@ -830,23 +849,39 @@ fn rpc_steps_into_compiled_routines_as_into_interpreted_ones() {
     ];
     let input = Cursor::new(requests.join("\n").into_bytes());
     let mut out: Vec<u8> = Vec::new();
-    loft::rpc::run_rpc("default", &[lib_root.to_string_lossy().to_string()], input, &mut out)
-        .expect("rpc run");
+    loft::rpc::run_rpc(
+        "default",
+        &[lib_root.to_string_lossy().to_string()],
+        input,
+        &mut out,
+    )
+    .expect("rpc run");
     let out = String::from_utf8(out).expect("utf8");
     let _ = fa::remove_dir_all(&lib_root);
     let stops: Vec<(String, String)> = out
         .lines()
         .filter(|l| l.contains(r#""event":"stopped""#))
         .map(|l| {
-            let f = l.split(r#""function":""#).nth(1).and_then(|r| r.split('"').next());
-            let n = l.rsplit(r#""line":"#).next().and_then(|r| r.split('}').next());
+            let f = l
+                .split(r#""function":""#)
+                .nth(1)
+                .and_then(|r| r.split('"').next());
+            let n = l
+                .rsplit(r#""line":"#)
+                .next()
+                .and_then(|r| r.split('}').next());
             (f.unwrap_or("?").to_string(), n.unwrap_or("?").to_string())
         })
         .collect();
-    let want: Vec<(String, String)> = [("main", "3"), ("twice", "12"), ("weigh", "6"), ("weigh", "7")]
-        .iter()
-        .map(|(f, n)| ((*f).to_string(), (*n).to_string()))
-        .collect();
+    let want: Vec<(String, String)> = [
+        ("main", "3"),
+        ("twice", "12"),
+        ("weigh", "6"),
+        ("weigh", "7"),
+    ]
+    .iter()
+    .map(|(f, n)| ((*f).to_string(), (*n).to_string()))
+    .collect();
     assert_eq!(stops, want, "{out}");
     assert!(out.contains("a 40 41"), "the answers: {out}");
 }

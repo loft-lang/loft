@@ -5183,7 +5183,6 @@ pub fn kept_element_copy() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_KEPT_ELEMENT_COPY"))
 }
 
-
 /// Is `LOFT_POISON_CLAIM` set: is a hosted unit built to fill its claims as the interpreter does
 /// (what `LOFT_HOSTED_VERIFY` compares by)?
 #[must_use]

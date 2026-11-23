@@ -1343,7 +1343,8 @@ impl State {
         // iterator's statements, its test and the body, as a compiled round does.  A seeded
         // counter enters past its step, its counters kept otherwise than the unit's: no site.
         if r.seed.is_none() {
-            self.loop_sites.insert((stack.def_nr, lp.scope()), self.code_pos);
+            self.loop_sites
+                .insert((stack.def_nr, lp.scope()), self.code_pos);
         }
         for p in &r.pre {
             self.generate(p, stack, false);

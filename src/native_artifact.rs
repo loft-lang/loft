@@ -127,13 +127,8 @@ pub fn adopt_for_session(parser: &mut crate::parser::Parser, entry: &str, defaul
         if export.is_empty() {
             continue;
         }
-        let built = cached_or_build_shared_cdylib(
-            &parser.data,
-            &export,
-            pkg_dir,
-            &pending,
-            &context,
-        );
+        let built =
+            cached_or_build_shared_cdylib(&parser.data, &export, pkg_dir, &pending, &context);
         if let Ok(Some(so)) = built {
             let probe = crate::interp::native_adopt::probe_and_mark_exports(
                 &mut parser.data,
@@ -142,7 +137,9 @@ pub fn adopt_for_session(parser: &mut crate::parser::Parser, entry: &str, defaul
                 &so,
             );
             if probe.marked > 0 {
-                parser.pending_native_libs.push(so.to_string_lossy().into_owned());
+                parser
+                    .pending_native_libs
+                    .push(so.to_string_lossy().into_owned());
             }
         }
     }
@@ -188,28 +185,7 @@ pub fn adopt_program_for_session(
     if export.is_empty() {
         return Ok(0);
     }
-    // The key: this loft, its switches that change a unit, and every source the program loaded.
-    let mut files: Vec<String> = (0..parser.data.definitions())
-        .map(|d| parser.data.def(d).position().file.as_str().to_string())
-        .filter(|f| !f.is_empty())
-        .collect();
-    files.sort_unstable();
-    files.dedup();
-    let mut parts: Vec<Vec<u8>> = vec![
-        crate::cache::loft_build_fingerprint().to_le_bytes().to_vec(),
-        crate::cache::loft_exe_identity().to_le_bytes().to_vec(),
-        vec![
-            u8::from(crate::keys::no_handover()),
-            u8::from(crate::keys::poison_claim()),
-            u8::from(crate::keys::hosted_planted()),
-        ],
-    ];
-    for f in &files {
-        parts.push(f.as_bytes().to_vec());
-        parts.push(crate::cache::file_hash(f).map_or_else(Vec::new, |h| h.to_vec()));
-    }
-    let refs: Vec<&[u8]> = parts.iter().map(Vec::as_slice).collect();
-    let fp = crate::cache::stable_hash(&refs);
+    let fp = program_unit_key(&parser.data);
     let out_dir = crate::cache::cache_base_dir().join("debug-units");
     let stem = format!("loft_debug_{fp:016x}");
     let so = out_dir.join(crate::opt::native_key::platform_cdylib_name(&stem));
@@ -249,7 +225,9 @@ pub fn adopt_program_for_session(
         &so,
     );
     if let Some(missing) = probe.refused {
-        return Err(format!("the unit names `{missing}`, which this program has not"));
+        return Err(format!(
+            "the unit names `{missing}`, which this program has not"
+        ));
     }
     if std::env::var_os("LOFT_TRACE_HANDOVER").is_some() {
         eprintln!(
@@ -260,9 +238,39 @@ pub fn adopt_program_for_session(
         );
     }
     if probe.marked > 0 {
-        parser.pending_native_libs.push(so.to_string_lossy().into_owned());
+        parser
+            .pending_native_libs
+            .push(so.to_string_lossy().into_owned());
     }
     Ok(probe.marked)
+}
+
+/// The key of a program's unit: this loft, the switches that change a unit, and every source
+/// the program loaded (by path and content).
+fn program_unit_key(data: &Data) -> u64 {
+    let mut files: Vec<String> = (0..data.definitions())
+        .map(|d| data.def(d).position().file.as_str().to_string())
+        .filter(|f| !f.is_empty())
+        .collect();
+    files.sort_unstable();
+    files.dedup();
+    let mut parts: Vec<Vec<u8>> = vec![
+        crate::cache::loft_build_fingerprint()
+            .to_le_bytes()
+            .to_vec(),
+        crate::cache::loft_exe_identity().to_le_bytes().to_vec(),
+        vec![
+            u8::from(crate::keys::no_handover()),
+            u8::from(crate::keys::poison_claim()),
+            u8::from(crate::keys::hosted_planted()),
+        ],
+    ];
+    for f in &files {
+        parts.push(f.as_bytes().to_vec());
+        parts.push(crate::cache::file_hash(f).map_or_else(Vec::new, |h| h.to_vec()));
+    }
+    let refs: Vec<&[u8]> = parts.iter().map(Vec::as_slice).collect();
+    crate::cache::stable_hash(&refs)
 }
 
 /// The program's own functions a unit can carry: those written in the program's directory —

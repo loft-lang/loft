@@ -5677,22 +5677,21 @@ fn run_file_debugger() -> ! {
     };
     let stdin = std::io::stdin();
     let mut stderr = std::io::stderr();
-    let code =
-        match loft::repl::run_file_debug_as(
-            &stdlib,
-            &lib_dirs,
-            file,
-            line,
-            args.iter().any(|a| a == "--native"),
-            stdin.lock(),
-            &mut stderr,
-        ) {
-            Ok(()) => 0,
-            Err(e) => {
-                eprintln!("loft debug: {e}");
-                1
-            }
-        };
+    let code = match loft::repl::run_file_debug_as(
+        &stdlib,
+        &lib_dirs,
+        file,
+        line,
+        args.iter().any(|a| a == "--native"),
+        stdin.lock(),
+        &mut stderr,
+    ) {
+        Ok(()) => 0,
+        Err(e) => {
+            eprintln!("loft debug: {e}");
+            1
+        }
+    };
     std::process::exit(code);
 }
 
@@ -9486,11 +9485,7 @@ fn main() {
                         println!("{line}");
                     }
                     match loft::native_artifact::cached_or_build_shared_cdylib(
-                        &p.data,
-                        &export,
-                        &pkg_str,
-                        &pending,
-                        &context,
+                        &p.data, &export, &pkg_str, &pending, &context,
                     ) {
                         Ok(Some(so)) => {
                             // @PLN199 G2b — the artifact's full name (the stem a consumer's run

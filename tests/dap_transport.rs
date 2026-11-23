@@ -80,7 +80,7 @@ impl Dap {
         match stderr {
             Some(path) => {
                 cmd.env("LOFT_TRACE_HANDOVER", "1")
-                    .stderr(std::fs::File::create(path).expect("stderr file"));
+                    .stderr(Stdio::from(fa::create(path).expect("stderr file")));
             }
             None => {
                 cmd.stderr(Stdio::null());
@@ -1221,12 +1221,17 @@ fn pause_and_finish(tag: &str, lib: Option<&str>, prog: &str, want: impl Fn(i64,
         trace()
     );
     let ev = d.request("evaluate", r#"{"expression":"t","context":"repl"}"#);
-    let body = field(&d.recv_response(ev), "body").cloned().expect("evaluate body");
+    let body = field(&d.recv_response(ev), "body")
+        .cloned()
+        .expect("evaluate body");
     let p: i64 = field_str(&body, "result")
         .and_then(|r| r.parse().ok())
         .expect("t at the pause");
     let limit: i64 = 8_000_000_000;
-    assert!(p > 0 && p < limit, "the pause came inside the loop: t = {p}");
+    assert!(
+        p > 0 && p < limit,
+        "the pause came inside the loop: t = {p}"
+    );
     let locals = d.current_locals_ref();
     let sv = d.request(
         "setVariable",
@@ -1280,7 +1285,9 @@ const USE_SPINNER: &str =
 ///   interpreted".
 #[test]
 fn a_pause_hands_a_running_compiled_library_routine_to_the_interpreter() {
-    let lib = SPIN.replace("fn helper", "pub fn helper").replace("fn spin", "pub fn spin");
+    let lib = SPIN
+        .replace("fn helper", "pub fn helper")
+        .replace("fn spin", "pub fn spin");
     pause_and_finish("p7_lib", Some(&lib), USE_SPINNER, spin_answer);
 }
 
@@ -1308,8 +1315,7 @@ fn a_handed_over_routine_keeps_its_vector_and_text() {
 ///   interpreted".
 #[test]
 fn a_pause_hands_the_programs_own_compiled_routine_to_the_interpreter() {
-    let prog = format!(
-        "{SPIN}\nfn main() {{\n  r = spin(8000000000);\n  println(\"r {{r}}\");\n}}\n"
-    );
+    let prog =
+        format!("{SPIN}\nfn main() {{\n  r = spin(8000000000);\n  println(\"r {{r}}\");\n}}\n");
     pause_and_finish("p7_prog", None, &prog, spin_answer);
 }

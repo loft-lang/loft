@@ -1435,9 +1435,9 @@ impl<'a> FnWriter<'a> {
                     CType::Text if w.params[v] || w.borrowed[v] => {
                         format!("loft_ho_put({name}, 2, 0, {var}, loft_ref_null());")
                     }
-                    CType::Text => format!(
-                        "loft_ho_put({name}, 2, 0, loft_view(&{var}), loft_ref_null());"
-                    ),
+                    CType::Text => {
+                        format!("loft_ho_put({name}, 2, 0, loft_view(&{var}), loft_ref_null());")
+                    }
                     CType::Ref => format!("loft_ho_put({name}, 3, 0, loft_ho_nostr(), {var});"),
                     _ => continue,
                 };
@@ -1457,10 +1457,10 @@ impl<'a> FnWriter<'a> {
             )
         };
         let mut out = String::with_capacity(self.body.len());
-        let mut rest = self.body.as_str();
-        while let Some(at) = rest.find("/*LOFT_SAFEPOINT:") {
-            out.push_str(&rest[..at]);
-            let tail = &rest[at + "/*LOFT_SAFEPOINT:".len()..];
+        let mut left = self.body.as_str();
+        while let Some(at) = left.find("/*LOFT_SAFEPOINT:") {
+            out.push_str(&left[..at]);
+            let tail = &left[at + "/*LOFT_SAFEPOINT:".len()..];
             let end = tail.find("*/").unwrap_or(0);
             let (scope, flag_list) = tail[..end].split_once(':').unwrap_or((&tail[..end], ""));
             let flags: std::collections::HashMap<u16, String> = flag_list
@@ -1475,9 +1475,9 @@ impl<'a> FnWriter<'a> {
                 out,
                 "/*LOFT_SP*/ if (LOFT_UNLIKELY(loft_pause_asked())) {{ {puts}if (loft_ho_commit({key}, {scope}u)) {ret} }} /*LOFT_PS*/"
             );
-            rest = &tail[end + 2..];
+            left = &tail[end + 2..];
         }
-        out.push_str(rest);
+        out.push_str(left);
         self.body = out;
     }
 

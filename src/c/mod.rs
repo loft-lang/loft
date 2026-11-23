@@ -5006,7 +5006,9 @@ fn strip_safepoints(body: &str) -> String {
     let mut rest = body;
     while let Some(at) = rest.find("/*LOFT_SP*/") {
         out.push_str(&rest[..at]);
-        rest = rest[at..].find("/*LOFT_PS*/").map_or("", |e| &rest[at + e + "/*LOFT_PS*/".len()..]);
+        rest = rest[at..]
+            .find("/*LOFT_PS*/")
+            .map_or("", |e| &rest[at + e + "/*LOFT_PS*/".len()..]);
     }
     out.push_str(rest);
     out

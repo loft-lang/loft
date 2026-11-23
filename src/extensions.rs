@@ -1456,7 +1456,7 @@ fn shared_store_dispatch_raw(
     }
     // `@PLN206` coverage — a hosted C unit answers a text as its bytes (`loft_la_set_text`) and
     // leaves the destination to the dispatcher, which writes them into it here, before the unit
-    // runs again.  A rustc artifact writes the destination itself and answers no bytes.
+    // runs again.
     // The destination is this call's own, read before the call: a nested call made while it ran
     // (an interpreted body, the verify's twin) sets and takes the shared field for itself.
     if let Some(dest) = text_dest_of_call

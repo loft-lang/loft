@@ -204,6 +204,10 @@ impl State {
         routing.wanted.contains(&d).then_some(d)
     }
 
+    /// Print the bytecode of function `d_nr` to stdout.
+    ///
+    /// # Panics
+    /// When the dump cannot be written or is not UTF-8.
     pub fn print_code(&mut self, d_nr: u32, data: &Data) {
         let mut buf = Vec::new();
         self.dump_code(&mut buf, d_nr, data, true).unwrap();

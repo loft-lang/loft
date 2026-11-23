@@ -55,9 +55,7 @@ pub mod live_reload {
 
 /// Adopting a library's compiled artifact.
 pub mod native_adopt {
-    pub use crate::native_adopt::{
-        Adopt, adopt_shared_cdylib, probe_and_mark_exports,
-    };
+    pub use crate::native_adopt::{Adopt, adopt_shared_cdylib, probe_and_mark_exports};
 }
 
 /// Function and line timing.
