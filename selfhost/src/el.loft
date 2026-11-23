@@ -157,6 +157,8 @@ pub struct El {
   pub declined: vector<text>,
   // the source text, by line, for a message that quotes the program (`Lexer::text_between`)
   pub lines: vector<text>,
+  // @PLN204 the files under the 32-bit regime (`#width 32`, `Data::width32_sources`)
+  pub width32_files: vector<text>,
   // `Parser::cur_type_vars`: the header variables of the function being read, each spelling
   // to its placeholder definition
   pub type_vars: vector<TypeVar>,
@@ -255,6 +257,7 @@ pub fn new_el(p: syntax::Syntax, file: text, default: boolean) -> El {
     subject_names: [],
     declined: [],
     lines: [],
+    width32_files: [],
     type_vars: [],
     bodies2: [],
     stale: [],
