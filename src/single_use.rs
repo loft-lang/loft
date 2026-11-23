@@ -33,6 +33,7 @@ fn uses(node: &Value, counts: &mut crate::fxhash::FxHashMap<u16, (usize, usize)>
         Value::Var(n) => counts.entry(*n).or_default().0 += 1,
         Value::Set(n, _) => counts.entry(*n).or_default().1 += 1,
         // Transparent: the wrapped node is counted as its child, below.
+        Value::Span(_) => {}
         _ => {}
     }
     node.for_each_child(&mut |c| uses(c, counts));
