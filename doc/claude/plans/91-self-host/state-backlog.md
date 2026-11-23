@@ -103,8 +103,9 @@ The 11 items are three cases:
   return buffer, so the variable names no storage at all."  Callers: control.rs ~12673 and
   ~14115.  The port never mints the ref (its `r6_0` state has no `__ref_1`), and Rust's ref
   is named by no op, has no slot and is never freed.  **Inert**: the same flag on a variable no
-  code names.  (A full-interpreter trace names src/state/codegen.rs ~521 instead, which is
-  codegen's own `skip_free` sweep.  The image is written before it, so trace the image run.)
+  code names.  (A full-interpreter run prints a second line from codegen's own `skip_free` sweep,
+  src/state/codegen.rs ~521, under the spelling `n___lambda_…`; the image's rule is the
+  `__lambda_…` line.  DEBUG_TRACE.md § A function's contract and state.)
 
 **This generalises § 0.**  Every inert class so far is one of two things:
 - a flag on a VARIABLE NO PASS-2 CODE NAMES (a capture placeholder; a retired work ref);
