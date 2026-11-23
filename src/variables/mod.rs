@@ -576,6 +576,11 @@ pub struct Function {
     /// Set on pass 1 and read on pass 2, where such a local's own declaration
     /// (`a: text? = null`) stores into the buffer.
     nullable_text_buffers: std::collections::HashSet<u16>,
+    /// The pass-1 capture placeholders (`Parser::parse_var_inner`'s capture arm): a lambda's
+    /// read of a capture before its closure record exists makes a variable of the capture's
+    /// name.  Set on pass 1 and read once the lambda's pass 2 is parsed
+    /// ([`Self::retire_capture_placeholders`]).
+    capture_placeholders: std::collections::HashSet<u16>,
     /// loft#1721 — a `??` temp (`__ncc_N`) mapped to the stores its DEFAULT arm may deliver.
     /// The `??` result names the temp alone (its type deps; naming the default's store there
     /// too made store confinement free that store at its own block's exit), so a closure
@@ -960,6 +965,7 @@ impl Function {
             untyped_binds: std::collections::HashSet::new(),
             pass1_untyped_bind: std::collections::HashSet::new(),
             nullable_text_buffers: std::collections::HashSet::new(),
+            capture_placeholders: std::collections::HashSet::new(),
             join_owners: HashMap::new(),
             ref_evacuations: Vec::new(),
             ref_named: Vec::new(),
@@ -1209,6 +1215,10 @@ impl Function {
         self.nullable_text_buffers.clear();
         self.nullable_text_buffers
             .clone_from(&other.nullable_text_buffers);
+        // CARRIED: pass 1 makes the capture placeholders and the lambda's pass 2 retires them.
+        self.capture_placeholders.clear();
+        self.capture_placeholders
+            .clone_from(&other.capture_placeholders);
         self.loop_ord = 0;
         other.loop_ord = 0;
         self.loop_ord_of.clear();
@@ -1291,6 +1301,7 @@ impl Function {
             untyped_binds: std::collections::HashSet::new(),
             pass1_untyped_bind: std::collections::HashSet::new(),
             nullable_text_buffers: other.nullable_text_buffers.clone(),
+            capture_placeholders: other.capture_placeholders.clone(),
             join_owners: other.join_owners.clone(),
             ref_evacuations: other.ref_evacuations.clone(),
             ref_named: other.ref_named.clone(),
@@ -6287,6 +6298,36 @@ impl Function {
         self.variables.get(v as usize).is_some_and(|var| {
             var.copy_bound && !var.amp_link && !var.amp_container_link && !var.store_text_link
         })
+    }
+
+    /// `v` is a pass-1 capture placeholder ([`Self::capture_placeholders`]).
+    pub fn mark_capture_placeholder(&mut self, v: u16) {
+        if (v as usize) < self.variables.len() {
+            self.capture_placeholders.insert(v);
+        }
+    }
+
+    /// Retire the capture placeholders the lambda's pass-2 `code` does not name.  On pass 2 a
+    /// capture is read through the closure record, so such a placeholder names no storage and
+    /// no code; the variable table keeps it only because the table carries over from pass 1.
+    /// It keeps its index (nothing renumbers) and loses every flag its pass-1 reads gave it:
+    /// `user_named`, `user_appended`, `value_const` and its deps.  The image then carries no
+    /// conclusion about a variable nothing uses (@PLN91 R1: the self-hosted front end makes no
+    /// placeholder).
+    pub fn retire_capture_placeholders(&mut self, code: &Value) {
+        let mut retired: Vec<u16> = self.capture_placeholders.iter().copied().collect();
+        retired.sort_unstable();
+        for v in retired {
+            if code.reads_var(v) {
+                continue;
+            }
+            if let Some(var) = self.variables.get_mut(v as usize) {
+                var.user_named = false;
+                var.user_appended = false;
+                var.value_const = false;
+                var.type_def = var.type_def.without_deps();
+            }
+        }
     }
 
     /// A user identifier names `v` (loft#1834).

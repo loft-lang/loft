@@ -1978,6 +1978,12 @@ or build a local and use that."
         self.parse_code();
         self.closure_param = outer_closure_param;
         self.data.op_code(d_nr);
+        if !self.first_pass {
+            // A capture read on pass 1 made a placeholder variable; pass 2 reads the closure
+            // record instead, so the placeholders its code does not name are retired.
+            self.vars
+                .retire_capture_placeholders(self.data.def(d_nr).code());
+        }
         self.state_trace_fn_end(d_nr);
         self.data.definitions[d_nr as usize]
             .variables
@@ -2427,6 +2433,12 @@ or build a local and use that."
         }
         self.closure_param = outer_closure_param;
         self.data.op_code(d_nr);
+        if !self.first_pass {
+            // A capture read on pass 1 made a placeholder variable; pass 2 reads the closure
+            // record instead, so the placeholders its code does not name are retired.
+            self.vars
+                .retire_capture_placeholders(self.data.def(d_nr).code());
+        }
         self.state_trace_fn_end(d_nr);
         self.data.definitions[d_nr as usize]
             .variables

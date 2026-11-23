@@ -1259,6 +1259,7 @@ impl Parser {
                 // First pass, no closure param, or field not found — placeholder variable.
                 let v_nr = self.create_var(name, &ctype);
                 self.vars.mark_user_named(v_nr);
+                self.vars.mark_capture_placeholder(v_nr);
                 if v_nr != u16::MAX && self.capture_const.contains(name) {
                     self.vars.set_value_const(v_nr);
                 }
