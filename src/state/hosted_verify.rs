@@ -588,10 +588,10 @@ fn answer_difference(
                 _ => None,
             }
         }
-        t => {
+        _ => {
             // A value crosses in its own width: a boolean or a plain enum is its byte, a
             // character or a single its 32 bits; the slot's bits above are not the answer.
-            let mask: u64 = match t {
+            let mask: u64 = match ret.base() {
                 Type::Boolean | Type::Enum(_, false, _) => 0xFF,
                 Type::Character | Type::Single => 0xFFFF_FFFF,
                 _ => u64::MAX,

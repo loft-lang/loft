@@ -8723,7 +8723,9 @@ impl State {
                     }),
                     // A `&T` argument is the `DbRef` of the slot it names, as a generator is
                     // its handle (`extensions::marshal_arg_t`).
-                    t if crate::data::is_dbref_slot(t) || matches!(t, Type::RefVar(_)) => {
+                    t if crate::data::is_dbref_slot(t)
+                        || matches!(a.typedef.base(), Type::RefVar(_)) =>
+                    {
                         st.put_stack(arg.dbref);
                     }
                     // A function value: its number and its closure, as the stack holds one.
