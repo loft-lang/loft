@@ -2063,6 +2063,11 @@ impl State {
         // and leave it alone.  Measured without this: `fn fwd(f, v) -> P { r = f(v); r }` over
         // a capture-returning lambda frees the CALLER'S capture on the first call and reads
         // freed bytes on every one after (`plans/150-fnref-return-ownership`).
+        // Whether this copy is an exchange site (`ReBind::exchange`, no `OpDatabase` before it)
+        // is what the bytecode says, before a borrowed answer clears the flag below: that
+        // clearing decides whether the source may be given up, not whether the destination
+        // still needs a store or a reset.
+        let exchange_site = raw_tp & crate::keys::COPY_FREE_SOURCE != 0;
         let raw_tp = match self.take_fnref_borrowed_return() {
             Some(b) if b.store_nr == src.store_nr && !crate::keys::no_fnref_borrowed_return() => {
                 raw_tp & !crate::keys::COPY_FREE_SOURCE
@@ -2079,7 +2084,7 @@ impl State {
         // there, which resets the slot) has no store to exchange into: the copy makes a fresh
         // one first, as the `OpDatabase` an ordinary copy is preceded by does.
         let mut dst = dst;
-        if raw_tp & crate::keys::COPY_FREE_SOURCE != 0
+        if exchange_site
             && (dst.store_nr == u16::MAX
                 || (dst.store_nr as usize) >= self.database.allocations.len()
                 || !self.database.allocations[dst.store_nr as usize].live)
@@ -2089,7 +2094,7 @@ impl State {
             self.alloc_record_at(pos, tp, code_pos);
             dst = self.get_var::<DbRef>(pos);
         }
-        if raw_tp & crate::keys::COPY_FREE_SOURCE != 0
+        if exchange_site
             && dst.store_nr != u16::MAX
             && (dst.rec, dst.pos) == (1, 8)
             && (dst.store_nr as usize) < self.database.allocations.len()
@@ -2099,7 +2104,10 @@ impl State {
             if src.store_nr == dst.store_nr {
                 return;
             }
-            if self.database.try_swap_rebind(&src, &dst, tp) {
+            // A borrowed answer (a capture the call handed back) is copied, never taken.
+            if raw_tp & crate::keys::COPY_FREE_SOURCE != 0
+                && self.database.try_swap_rebind(&src, &dst, tp)
+            {
                 // The released slot holds `v`'s old tree, freed as the C runtime's
                 // `loft_swap_in` frees it: no buffer refill on this backend takes a spare up.
                 if self.database.spare_store == Some(src.store_nr) {
