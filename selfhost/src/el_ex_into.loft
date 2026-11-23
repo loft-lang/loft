@@ -430,7 +430,13 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
               TyVector { inner: wvi } => {
                 wmd = el::def_nr(e, "main_vector<{el_types::elem_name(e, wvi)}>");
                 if wmd >= 0 {
-                  el_vars::work_vec_db(vars, ir::TyReference { n: wmd, dep: [] });
+                  // `snapshot_read_destination`'s copy, as Rust makes it before the build takes
+                  // another route: `_build_src_N` and then the store it is built in, the copy
+                  // borrowing that store (`vector_db`'s `depend(vec, db)`).
+                  wsrc = el_vars::create_unique(vars, "build_src", ir::TyVector { inner: wvi, dep: [] });
+                  el_vars::set_defined(vars, wsrc);
+                  wdb = el_vars::work_vec_db(vars, ir::TyReference { n: wmd, dep: [] });
+                  el_vars::set_type(vars, wsrc, ir::TyVector { inner: wvi, dep: [wdb] });
                 }
               },
               _ => {}

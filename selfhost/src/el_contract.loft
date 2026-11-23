@@ -15,6 +15,7 @@ use el_expressions;
 use own;
 use binds;
 use opt_split_table;
+use opt_names;
 use el_ir;
 use types;
 
@@ -22,7 +23,9 @@ use types;
 pub fn report(e: el::El, from: integer) -> text {
   r = "";
   for d in e.b.data.definitions {
-    if d#index < from || d.def_type != 1 || (d.code[0] ?? ir::NdNull) is NdNull {
+    // (`contract_report` skips a definition declared in the standard library — an instance of
+    // a library generic too, which keeps its template's position — as Rust's `is_stdlib` does.)
+    if d#index < from || d.def_type != 1 || (d.code[0] ?? ir::NdNull) is NdNull || opt_names::is_stdlib(d) {
       continue;
     }
     bi = binds::hidden_return_buffer_attr(d);
