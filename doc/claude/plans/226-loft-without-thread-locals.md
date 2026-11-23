@@ -18,7 +18,7 @@ Open, `status:active` on [loft-lang/plans#226](https://github.com/loft-lang/plan
 | P1 | done: the B-tree hints, hash scratch, image checks, JSON errors and null sentinel, key seeds, the typed parse's walk and errors, the upgrade walk and the engine's message deadline are context fields too (unguarded: a header's switch is set at different points of a unit, and a field costs words) |
 | P4 | done: the URL loader's state is context fields; the `net` component keeps its own context per caller context (below) |
 | P5 | done: `LOFT_TLS` is gone (`git grep LOFT_TLS -- src/c` names only the TLS transport's `LOFT_TLS_UNAVAILABLE`); a strict C99 `par` unit runs on threads |
-| P4b | open: the Rust `thread_local!` blocks |
+| P4b | in progress: 55 `thread_local!` blocks in 31 files remain (`git grep -c 'thread_local!' -- src`).  Moved: the compile passes' memos into `Data` (`PassCell`, `DefsMemo`, the copy manifest), a run's checks and reports into `Stores` (`checks`, `run`, `render`, `hosted_cx`), the bind notes and text yields into `State`, the C emission options into `UnitShape`; four locks removed ([LOCKS.md](../LOCKS.md)).  Open, by group: the interpreter's call frames and FFI claim (`call_frames`, `extensions`); the rustc writer's runtime (`codegen_runtime`, gone with @PLN225); the engine host and live reload; wasm and the browser; the censuses and verifiers; the compile memos main added since (`PARAM_WRITES`, `SPAN_MEMO`, `WRITTEN_PARAMS`) |
 
 ### Decisions taken while building it
 
@@ -40,6 +40,7 @@ Open, `status:active` on [loft-lang/plans#226](https://github.com/loft-lang/plan
   16 bits alone (`loft_ffi_store_nr`); the context pointer rides above them
   (`loft_ffi_handle`).  It needs 64-bit pointers, asserted at compile time.  The interpreter's
   own callbacks (`extensions.rs`, `CURRENT_STORES`) can carry theirs the same way in P4b.
+- **A Rust thread-local becomes a field of what it describes.**  A compile pass's memo lives in `Data` behind a `PassCell` (a `Mutex`, because `Data` is shared with `par` workers; cloned empty), a run's checks and one-time reports in `Stores` (`RefCell`, a worker's `Stores` its own), an emission's options in `UnitShape`.  A flag read from the environment is `env_once!`.
 - **The TLS archive keeps its C ABI** (`loft_tls.c`, `loft_ssh.c`, compiled apart): its
   prototypes take no context.
 - **A component has a context of its own per caller context.**  The caller's own cannot be
