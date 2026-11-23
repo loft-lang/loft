@@ -137,6 +137,9 @@ fn a_hosted_c_library_works_on_the_interpreters_stores() {
 ///   (`loft_la_fn`), the unit looks the program's number up among its own functions.
 ///   WITNESS: "`twice_by` … the answer's bits are 0x8 interpreted, 0x8000000000000000 compiled",
 ///   and without the verify "assertion failed: twice_by null".
+///   A SABOTAGE (2026-11-23): with a unit parking stores across calls (`loft_host_enter`
+///   leaving `loft_no_park` off), `styled`'s lifted record is never freed.  WITNESS:
+///   "[strict-store] NEVER FREED: 1 stores not freed at program exit: kt=100 Bag×1".
 ///   And a SABOTAGE (2026-11-22): with the verify going on in the compiled COPY of the world
 ///   (`hosted_verify.rs` before the twin ran on the copy), the caller's loop text points into
 ///   a buffer the swap freed.  WITNESS: the "nested views" assertion of `hostedlib_main.loft`.
