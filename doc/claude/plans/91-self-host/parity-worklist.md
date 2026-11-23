@@ -1,5 +1,9 @@
 # @PLN91 — contract, state and reasons to PARITY: the worklist (owner's priority, 2026-11-23)
 
+**Reached** on 2026-11-23: every program agreeing on its IR agrees on every layer, and the agree
+merge (c4197ed04) makes `agree` require all four.  The next worklist is the refusals:
+[refusal-worklist.md](refusal-worklist.md).
+
 **The rule:** parity first, before any refusal-led subject.  When the contract, state and reasons
 layers all agree, the gate's `agree` itself is redefined: a program or definition agrees only when
 its IR, its contract facts, its state and the rules behind its flags ALL align (owner: "merge
