@@ -314,7 +314,8 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
             }
             vt = el_types::with_deps(el_types::without_deps(el_types::base(el_vars::tp(vars, v))), [v]);
             vtmp = el_vars::work_ref(vars, vt);
-            el_vars::set_skip_free(vars, vtmp, "parse_object_field");
+            // (No `skip_free`: `parse_object_field` marks a staged temp a view only where the
+            // staged value is a projection call; the whole local staged here is a copy.)
             staged += [el_ir::v_set(vtmp, args[1]!)];
             ops[op#index] = ir::NdCall { def_nr: def_nr, args: [args[0]!, ir::NdVar { n: vtmp }, args[2]!] };
           }
