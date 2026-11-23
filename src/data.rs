@@ -12950,7 +12950,10 @@ impl Data {
                     .first_bound(&self.definitions[*d as usize].name)
                     .is_some_and(|first| first != *d && self.is_type_def(first))
             {
-                name.push_str(&format!("#{d}"));
+                let _ = {
+                    use std::fmt::Write as _;
+                    write!(name, "#{d}")
+                };
             }
             false
         });

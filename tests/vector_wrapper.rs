@@ -36,9 +36,9 @@ fn loft(args: &[&str], src: &Path) -> std::process::Output {
 /// The program written to a file of its own per test: the tests run on threads of one process.
 fn program(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("loft_vector_wrapper_{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("temp dir");
+    loft::file_access::create_dir_all(&dir).expect("temp dir");
     let src = dir.join(format!("shadow_{tag}.loft"));
-    std::fs::write(&src, SHADOW).expect("write the program");
+    loft::file_access::write(&src, SHADOW).expect("write the program");
     src
 }
 
