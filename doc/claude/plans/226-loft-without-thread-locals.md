@@ -84,6 +84,20 @@ depth count and the work-buffer parks are fields of that context.  P0 measures t
 argument on a call-heavy program against today's thread-local reads; the rustc writer pays it
 on every call already.
 
+## P0 — measured
+
+A
+recursive function, a zero-argument runtime function and two `par` worker threads, each worker
+handed its own context made by the caller before the thread starts, written in strict C11
+(`cc -std=c11 -pedantic -Wall -Wextra`): no warning, and a ThreadSanitizer run reports nothing;
+each thread's count is its own.  On 39 088 169 calls of a recursive function, a depth count in
+a context argument runs 0.183 s, the same count in a plain global 0.182 s, none at all 0.094 s
+(`-O3`, Apple clang, arm64).  The argument costs what a global costs.
+
+**The shape (owner: nothing hidden).**  `cx` is written at every call and in every signature,
+as the rustc writer writes `cell` — never supplied by a macro, which would hide the argument
+as a thread-local hides the state.
+
 ## Phases
 
 | Phase | What | Validated by | Effort |
