@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @F51 — debugger (breakpoints, frame capture, scripted RPC)
 //! `@PLN206 P7` — a compiled routine handed to the interpreter mid-run.  A pause the debugger
 //! asks for while a hosted unit's routine runs reaches the routine the interpreter called at
 //! its next loop head (`loft_pause_asked`); it offers its locals by name, and when every local

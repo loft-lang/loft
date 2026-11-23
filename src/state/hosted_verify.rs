@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// @I66 — Bytecode VM / executor
+// @F128 — compiled libraries (a used library runs as compiled C under the interpreter)
 
 //! `@PLN206 P4d` — `LOFT_HOSTED_VERIFY=1`: each call into a compiled library artifact (a hosted C
 //! unit or a rustc one) runs twice — compiled, on a copy of the stores taken before the call, and

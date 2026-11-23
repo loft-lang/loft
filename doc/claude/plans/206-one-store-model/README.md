@@ -5,6 +5,12 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 # @PLN206 — one store model
 
+**Status — DONE 2026-11-23.**  Every phase finished on `tuxedo-pr2606-next`; the reference
+content lives in [`STORE_MODEL.md`](../../STORE_MODEL.md) (the model and its divergences),
+[`C_BACKEND.md`](../../C_BACKEND.md) § A library as a hosted unit and § What switching to C loses,
+and [`DEBUG.md`](../../DEBUG.md) (the debugger over compiled code).  A hand-written Rust native
+part leaves with the rustc writer, in @PLN225 R3.  The files below are the plan's record.
+
 The plan is [loft-lang/plans#206](https://github.com/loft-lang/plans/issues/206): its phases,
 their state and its documentation list live on the issue.  The model itself, and every
 divergence between the two runtimes with its decision, is
