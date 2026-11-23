@@ -107,6 +107,11 @@ Remaining rough edges are tracked in
 
 Editors get the same engine over DAP (`loft-dap`); see [@I91](../features/I91.md).
 
+**Libraries run compiled under the debugger** (their hosted C units, as in a plain run).  A
+library routine the debugger needs — a breakpoint in it or in a routine it can reach, or a step
+into it — runs interpreted, and the routines it calls stay compiled; `LOFT_NO_NATIVE_LIBS=1`
+interprets every library ([plans/206-one-store-model/p7-design.md](plans/206-one-store-model/p7-design.md)).
+
 ---
 
 ### A C build in gdb or lldb

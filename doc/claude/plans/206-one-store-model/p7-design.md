@@ -63,3 +63,43 @@ interpreter keeps for it (the verify's twin already runs that bytecode on the sa
 P7a is complete on its own: everything a plain run gets from the units, the debugger gets, and
 every stop the interpreter-only debugger made it still makes.  P7b and P7c are the "interrupt a
 running C program" half.
+
+## Measured
+
+- **P7a done.**  `ReplSession::load_program` adopts the units (`native_artifact::adopt_for_session`)
+  and wires their bridges; `State::debug_route` turns a static call the debugger wants into an
+  ordinary call.  Guards in `tests/rpc.rs`: a breakpoint two compiled calls deep stops, reads its
+  parameter, and the routine's callee runs compiled (bridge hits, `SHARED_DISPATCH_HITS`);
+  stepping into compiled routines makes the all-interpreted debugger's stops.  Found on the way
+  and fixed: a debug session failed on a library with a tuple parameter (`tuple_def`'s stale
+  binding); the RPC server died with no word on a fault a request did not catch; a step into
+  stopped at the callee's prologue and named the previous function's last line.
+
+## P7b and P7c: the hand-over
+
+A C routine cannot pause in place — the debugger pauses by returning to its driver — so a pause
+while a compiled routine runs is a hand-over: the **outermost** compiled routine (the one the
+interpreter called) continues interpreted from its next safepoint, and the interpreter's own
+pause then stops it there.  A routine it is in a call to finishes compiled: its frame is live
+under the call.
+
+The host side exists: a frame is laid out as `State::fn_call` lays it (arguments at the base,
+the return address after them), each local's slot at a pc is `State::frame_view`, and the eval
+stack's depth at a pc is `State::stack`.  What remains:
+
+1. **Safepoints in the unit.**  At each loop head of a hosted function, `if` the host's pause
+   flag (`debugger::INTERRUPT`, its address in `HostedTable`) is set and this frame is the
+   bridge's direct callee (`loft_nframes` against the bridge's base), hand over.
+2. **The site's bytecode position.**  The unit and the interpreter compile one source from two
+   IRs; a site is named by its loop's source position, which the interpreter maps to the loop
+   head's pc in its own code for the function.
+3. **The locals.**  Each local the interpreter holds at that pc (`frame_view`), found among the
+   unit's by name, written into its slot: scalars and references bit for bit (one store model),
+   a text through the interpreter's `String`.  A site where a held local has no counterpart or a
+   shape the hand-over cannot write refuses, and the routine runs on to its next site.
+4. **The unwind.**  The routine returns to its bridge without its own end-of-routine releases
+   (the interpreter's frame owns its stores now); the dispatcher turns the static call into the
+   interpreter frame at the site, and the main loop carries on — paused there.
+
+Red when a routine handed over answers otherwise than the same routine run whole, or leaks or
+frees a store twice; `LOFT_HOSTED_VERIFY`'s comparison is the instrument.
