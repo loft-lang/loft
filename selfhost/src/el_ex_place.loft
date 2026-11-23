@@ -1242,11 +1242,13 @@ pub fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: i
       fe = el_vars::create_unique(vars, "elm", ir::TyReference { n: eld, dep: [] });
       el_vars::register_work_ref(vars, fe);
     }
-    built = el_ex_object::object_fresh(e, vars, rd, fields, ir::TyReference { n: rd, dep: [] });
-    if el_types::is_unknown(built.tp) {
+    // (Named apart from the `built` below, so a loft without the `@FR-B-Scope` split fix
+    // (2e7b305c7) builds this file: the first pass types only the later binding there.)
+    rec = el_ex_object::object_fresh(e, vars, rd, fields, ir::TyReference { n: rd, dep: [] });
+    if el_types::is_unknown(rec.tp) {
       return ex(ir::NdNull, ir::TyVoid);
     }
-    return ex(el_ir::cl(e, "OpCopyRecord", [built.code, place, ir::NdInt { n: el::def(e, rd).known_type }]), ir::TyVoid);
+    return ex(el_ir::cl(e, "OpCopyRecord", [rec.code, place, ir::NdInt { n: el::def(e, rd).known_type }]), ir::TyVoid);
   }
   // `@FR-H-RefSet`: a `reference<T>` field (`h.r`, the pointer read `OpGetDbRef(<owner>,
   // <pos>)`) is RE-POINTED by a literal: the record built apart in its own `__ref_p2_N` — its
