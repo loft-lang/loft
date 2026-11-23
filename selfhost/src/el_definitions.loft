@@ -1532,8 +1532,10 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
     // `@FR-Const-Foreign` (@C139): `-> const T` hands out value-const data.
     e.b.data.definitions[e.context].returned_const = ret_const;
     // @PLN187 — where the declared result and each parameter's declared type name a user
-    // `type` alias (`parse_function`'s `returned_fact`, `pending_param_facts`).
-    e.b.data.definitions[e.context].returned_fact = if ret != null { alias_fact(e, ret!) } else { "" };
+    // `type` alias (`parse_function`'s `returned_fact`, `pending_param_facts`).  A lambda's
+    // result keeps none, as `parse_lambda` records none: a lambda is called through its `fn`
+    // type, whose own fact the call reads, never by its definition.
+    e.b.data.definitions[e.context].returned_fact = if ret != null && !starts_with(name, "__lambda_") { alias_fact(e, ret!) } else { "" };
     for pn in params {
       match e.p.nodes[pn] {
         SParam { name: an, tp } => {
