@@ -530,8 +530,6 @@ pub fn slice_bind(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> Ex {
 // holds a store or an element type with no rows.
 pub fn slice_copy(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> ir::Node? {
   elem = match x.tp { TyIterator { step } => step, _ => ir::TyVoid };
-  elm_v = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [v] });
-  se = el_vars::create_unique(vars, "slice_elm", elem);
   init = ir::NdNull;
   subj = ir::NdNull;
   match x.code { NdIter { create, init: ii } => { subj = create; init = ii; }, _ => {} }
@@ -582,6 +580,9 @@ pub fn slice_copy(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> ir::Node
   if keep {
     return ir::NdInsert { items: [init, el_ir::cl(e, "OpKeepRange", [ir::NdVar { n: v }, ir::NdVar { n: lov }, ir::NdVar { n: hiv }, ir::NdInt { n: rec }])] };
   }
+  // (The keep form mints no element temp: `parse_assign_op` returns before `materialize_iterator`.)
+  elm_v = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [v] });
+  se = el_vars::create_unique(vars, "slice_elm", elem);
   // (`owns_vdb_backing`: a store that holds nothing but this vector may be a view of the source.)
   if rebind {
     owns = len(vdeps) == 1 && starts_with(el_vars::name_of(vars, vdeps[0]), "__vdb_");

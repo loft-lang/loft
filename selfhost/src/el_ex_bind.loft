@@ -278,6 +278,9 @@ pub fn first_vector_bind(e: el::El, vars: el_vars::Vars, v: integer, t: ir::Type
 
 pub fn vec_copy_bind(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> Ex {
   elm = match el_types::base(x.tp) { TyVector { inner } => inner, _ => ir::TyVoid };
+  // (`unique_elm_var`: an element of a record type — a template's type variable among them — is
+  // typed as that type, so an instance at a scalar drops the element's borrows with it.)
+  elm_n = match el_types::base(elm) { TyReference { n } => n, _ => 0 };
   // loft#1840 — `(B-Copy)`: the local now holds a COPY of a place, so a `+=` into it that
   // nothing reads is a lost write (`mark_copy_bound`, read by the `lost-write` lint).  Not for
   // the self-assign, which copies nothing.
@@ -309,7 +312,7 @@ pub fn vec_copy_bind(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> Ex {
       _ => if bnm == "" { -1 } else { el_schema::schema_type(e, bnm) }
     };
     if bnm != "" && brec >= 0 && el::def_nr(e, "main_vector<{bnm}>") >= 0 {
-      el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [v] });
+      el_vars::create_unique(vars, "elm", ir::TyReference { n: elm_n, dep: [v] });
       return ex(ir::NdInsert { items: [
         el_ir::cl(e, "OpClearVector", [ir::NdVar { n: v }]),
         el_ir::cl(e, "OpAppendVector", [ir::NdVar { n: v }, x.code, ir::NdInt { n: brec }])
@@ -329,7 +332,7 @@ pub fn vec_copy_bind(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> Ex {
       for d in el_types::deps(el_vars::tp(vars, v)) {
         el_vars::make_independent(vars, v, d);
       }
-      el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [v] });
+      el_vars::create_unique(vars, "elm", ir::TyReference { n: elm_n, dep: [v] });
     } else if len(el_types::deps(x.tp)) > 0 {
       // The first pass keeps the borrow the bind's read gives (`depend_all`): only the second
       // strips it, so a literal bound before reads the local as backed and mints late.
@@ -350,7 +353,7 @@ pub fn vec_copy_bind(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> Ex {
     el::refuse(e, "a whole-vector copy bind of this element type: {type_kind(elm)}");
     return ex(ir::NdNull, ir::TyVoid);
   }
-  cel = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [v] });
+  cel = el_vars::create_unique(vars, "elm", ir::TyReference { n: elm_n, dep: [v] });
   rows = vector_rows(e, elm, 0, true);
   if rows == null {
     return ex(ir::NdNull, ir::TyVoid);
