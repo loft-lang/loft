@@ -57,7 +57,12 @@ pub fn cached_or_build_shared_cdylib(
         // `@PLN206 P4` — a hosted C unit, which works on this interpreter's stores, instead of
         // a rustc artifact (`LOFT_LIB_BACKEND=c`).
         Adopt::Build(key) if crate::c::hosted::selected() => {
-            let mut alone = parse_library_alone(pkg_dir, &context.default_dir, &context.lib_dirs)?;
+            let mut alone = parse_library_alone(
+                pkg_dir,
+                &context.default_dir,
+                &context.lib_dirs,
+                context.scope_entry.as_deref(),
+            )?;
             let export = alone.export.clone();
             let p = &mut alone.parser;
             crate::c::hosted::build_artifact(
@@ -90,6 +95,9 @@ pub fn cached_or_build_shared_cdylib(
 pub struct LibraryContext {
     pub default_dir: String,
     pub lib_dirs: Vec<String>,
+    /// The program's entry file, whose resolution scope (its lock pins) the library's own
+    /// dependencies resolve by, as they did in the program; `None` for `build-native`.
+    pub scope_entry: Option<String>,
 }
 
 /// A library parsed alone: the program `use <name>;` over the standard library, the way every
@@ -112,17 +120,24 @@ pub struct LibraryAlone {
 /// reads.
 ///
 /// # Errors
-/// The package has no `[package] name`, the standard library does not load, or the library
-/// does not parse.
+/// The package has no name, the standard library does not load, or the library does not parse.
 pub fn parse_library_alone(
     pkg_dir: &str,
     default_dir: &str,
     lib_dirs: &[String],
+    scope_entry: Option<&str>,
 ) -> Result<LibraryAlone, String> {
     let pkg_path = crate::file_access::plain_canonical(std::path::Path::new(pkg_dir));
     let pkg_dir = pkg_path.to_string_lossy().to_string();
+    // The name `use` finds it by: its `[package] name`, else its directory's, as the
+    // interpreter resolves a library with no `[package]` section.
     let name = crate::manifest::read_manifest(&pkg_path.join("loft.toml").to_string_lossy())
         .and_then(|m| m.name)
+        .or_else(|| {
+            pkg_path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+        })
         .ok_or_else(|| format!("{pkg_dir} is not a loft package (no [package] name)"))?;
     let mut p = crate::parser::Parser::new();
     // The package's own parent first: `use <name>` must find THIS checkout before a
@@ -134,6 +149,11 @@ pub fn parse_library_alone(
         if !p.lib_dirs.contains(d) {
             p.lib_dirs.push(d.clone());
         }
+    }
+    // The library's dependencies resolve as the program's did: by its lock pins, not the newest
+    // release — the unit carries their code, and the artifact's key names the program's copies.
+    if let Some(entry) = scope_entry {
+        p.govern_by(entry);
     }
     p.parse_stdlib(default_dir)
         .map_err(|e| format!("the standard library: {e}"))?;

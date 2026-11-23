@@ -258,7 +258,12 @@ fn bridge(cx: &Cx<'_>, d: u32, symbol: &str) -> Result<String, String> {
                 let c = cx
                     .ctype(&a.typedef)
                     .ok_or_else(|| format!("parameter `{}` has no C shape", a.name))?;
-                let unc = || format!("parameter `{}` of a shape the bridge does not carry", a.name);
+                let unc = || {
+                    format!(
+                        "parameter `{}` of a shape the bridge does not carry",
+                        a.name
+                    )
+                };
                 // A tuple crosses as its leaves, one slot each in element order, as the
                 // dispatcher pops them (`SharedSig::pops`): the C tuple is built from them.
                 if let CType::Tuple(id) = c {

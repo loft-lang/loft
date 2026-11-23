@@ -1182,6 +1182,13 @@ impl Parser {
     ) {
     }
 
+    /// Resolve every registry `use` by the scope of the program `entry` — its lock pins — as a
+    /// parse with another entry (a library parsed alone, `native_artifact::parse_library_alone`)
+    /// would otherwise not.
+    pub fn govern_by(&mut self, entry: &str) {
+        self.program_scope = Some(crate::resolution_scope::resolution_scope(entry));
+    }
+
     /// @PLN143 arc E — say once when the declaration in force has fallen behind.
     ///
     /// A `loft.lock` has no expiry, so a pin holds forever and nothing about the

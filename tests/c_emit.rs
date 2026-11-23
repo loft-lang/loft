@@ -5900,6 +5900,8 @@ fn a_library_artifact_lists_only_its_own_packages_c_libraries() {
     )
     .expect("write program");
     let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+        // The rustc artifact, whose generated source this reads.
+        .env("LOFT_LIB_BACKEND", "rust")
         .env("LOFT_TIMEOUT", "600")
         .arg("--interpret")
         .arg("--lib")

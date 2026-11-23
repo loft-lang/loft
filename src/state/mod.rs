@@ -8732,7 +8732,10 @@ impl State {
                         raw[..8].copy_from_slice(&arg.scalar.to_ne_bytes());
                         // SAFETY: `raw[8..]` is exactly one `DbRef` wide.
                         unsafe {
-                            std::ptr::write_unaligned(raw[8..].as_mut_ptr().cast::<DbRef>(), arg.dbref);
+                            std::ptr::write_unaligned(
+                                raw[8..].as_mut_ptr().cast::<DbRef>(),
+                                arg.dbref,
+                            );
                         }
                         st.put_stack(raw);
                     }

@@ -9415,7 +9415,7 @@ fn main() {
                 let manifest =
                     loft::manifest::read_manifest(&pkg_path.join("loft.toml").to_string_lossy());
                 let pkg_str = pkg_path.to_string_lossy().to_string();
-                loft::keys::set_lib_rust_crate(Some(&pkg_str));
+                loft::interp::native_adopt::scope_library(&pkg_str);
                 // Machine-readable so a publish script can capture it.  The KEY
                 // line differs by native model, because the two cdylibs have
                 // different ABI contracts (see the auto-native branch below):
@@ -9470,11 +9470,13 @@ fn main() {
                     let context = loft::native_artifact::LibraryContext {
                         default_dir: default_dir.clone(),
                         lib_dirs: lib_dirs.clone(),
+                        scope_entry: None,
                     };
                     let alone = match loft::native_artifact::parse_library_alone(
                         &pkg_str,
                         &default_dir,
                         &context.lib_dirs,
+                        None,
                     ) {
                         Ok(a) => a,
                         Err(e) => {
@@ -10588,7 +10590,7 @@ fn main() {
         extensions::preload_native_libs(&mut p.data, &hand_written);
     }
     for pkg_dir in &pending_native {
-        loft::keys::set_lib_rust_crate(Some(pkg_dir));
+        loft::interp::native_adopt::scope_library(pkg_dir);
         if file_access::is_under(&abs_file, pkg_dir) {
             continue;
         }
@@ -10680,6 +10682,7 @@ fn main() {
         let lib_context = loft::native_artifact::LibraryContext {
             default_dir: default_str.clone(),
             lib_dirs: p.lib_dirs.clone(),
+            scope_entry: Some(abs_file.clone()),
         };
         let mut built = if force_build_fail {
             Err("LOFT_FORCE_NATIVE_BUILD_FAIL".to_string())

@@ -5197,13 +5197,9 @@ thread_local! {
     static LIB_RUST_CRATE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-/// Say whether the library built or adopted next has a Rust crate (`[native] crate` and no
-/// `[c] shim`): a hosted C unit cannot carry its natives, so it takes the rustc artifact.
-/// Read from the package's manifest; `None` (no package) clears it.
-pub fn set_lib_rust_crate(pkg_dir: Option<&str>) {
-    let rust = pkg_dir
-        .and_then(|d| crate::manifest::read_manifest(&format!("{d}/loft.toml")))
-        .is_some_and(|m| m.native_crate.is_some() && m.c_shim.is_empty());
+/// Say whether the library built or adopted next has a Rust crate: a hosted C unit cannot carry
+/// its natives, so it takes the rustc artifact (`native_adopt::scope_library`).
+pub fn set_lib_rust_crate(rust: bool) {
     LIB_RUST_CRATE.with(|c| c.set(rust));
 }
 

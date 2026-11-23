@@ -83,7 +83,12 @@ impl Cx<'_> {
             let up = upcall_shapes(params, *ret);
             if up && !buf {
                 let proto: Vec<String> = std::iter::once("loft_fn f".to_string())
-                    .chain(params.iter().enumerate().map(|(i, (c, _))| format!("{} a{i}", passed(*c))))
+                    .chain(
+                        params
+                            .iter()
+                            .enumerate()
+                            .map(|(i, (c, _))| format!("{} a{i}", passed(*c))),
+                    )
                     .collect();
                 let _ = writeln!(
                     out,
@@ -184,7 +189,12 @@ impl Cx<'_> {
                 continue;
             }
             let list: Vec<String> = std::iter::once("loft_fn f".to_string())
-                .chain(params.iter().enumerate().map(|(i, (c, _))| format!("{} a{i}", passed(*c))))
+                .chain(
+                    params
+                        .iter()
+                        .enumerate()
+                        .map(|(i, (c, _))| format!("{} a{i}", passed(*c))),
+                )
                 .collect();
             let n = params.len();
             let _ = writeln!(
@@ -426,6 +436,11 @@ impl Cx<'_> {
 /// (`fnref::upcall_carries`): each parameter a full-width integer, a float, a boolean, a text or
 /// a store reference, passed by value, and the answer one of those or nothing.
 fn upcall_shapes(params: &[(CType, u8)], ret: CType) -> bool {
-    let carried = |c: CType| matches!(c, CType::Int | CType::Float | CType::Bool | CType::Text | CType::Ref);
+    let carried = |c: CType| {
+        matches!(
+            c,
+            CType::Int | CType::Float | CType::Bool | CType::Text | CType::Ref
+        )
+    };
     params.iter().all(|(c, m)| *m == 0 && carried(*c)) && (ret == CType::Void || carried(ret))
 }

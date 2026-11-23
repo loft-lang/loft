@@ -51,8 +51,15 @@ fn the_coverage_check_holds_its_baseline_both_ways() {
         if strict {
             cmd.arg("--strict");
         }
-        let out = cmd.arg(&pkg).env("LOFT_NO_CACHE", "1").output().expect("run the check");
-        (out.status.success(), String::from_utf8_lossy(&out.stdout).into_owned())
+        let out = cmd
+            .arg(&pkg)
+            .env("LOFT_NO_CACHE", "1")
+            .output()
+            .expect("run the check");
+        (
+            out.status.success(),
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+        )
     };
     let both = "hostedlib\tupto\tan iterator\n";
     let (ok, out) = check(both, false);
@@ -60,11 +67,20 @@ fn the_coverage_check_holds_its_baseline_both_ways() {
     assert!(out.contains("hostedlib: 1 interpreted"), "{out}");
     let (ok, out) = check("", false);
     assert!(!ok, "a function interpreted and not listed is red: {out}");
-    assert!(out.contains("now interpreted, not in the baseline: upto"), "{out}");
+    assert!(
+        out.contains("now interpreted, not in the baseline: upto"),
+        "{out}"
+    );
     let (ok, out) = check(&format!("{both}hostedlib\tbag_new\ta record\n"), false);
     assert!(!ok, "a listed function the unit carries is red: {out}");
-    assert!(out.contains("now compiled, still in the baseline (write it down: --update): bag_new"), "{out}");
+    assert!(
+        out.contains("now compiled, still in the baseline (write it down: --update): bag_new"),
+        "{out}"
+    );
     let (ok, out) = check(both, true);
     let _ = fa::remove_dir_all(&work);
-    assert!(!ok, "--strict is red while anything stays interpreted: {out}");
+    assert!(
+        !ok,
+        "--strict is red while anything stays interpreted: {out}"
+    );
 }

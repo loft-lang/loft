@@ -327,6 +327,8 @@ fn mixed_library_dispatches_native_and_interprets_rest() {
     let _ = fa::remove_dir_all(native_auto);
 
     let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+        // The rustc artifact, whose generated source this reads.
+        .env("LOFT_LIB_BACKEND", "rust")
         .arg("--lib")
         .arg("tests/lib")
         .arg(&prog)
@@ -488,6 +490,8 @@ fn the_same_library_at_two_places_generates_the_same_artifact() {
     .unwrap();
     let source = |lib: &std::path::Path, prog: &std::path::Path| -> (String, String) {
         let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+            // The rustc artifact, whose generated source this reads.
+            .env("LOFT_LIB_BACKEND", "rust")
             .arg("--interpret")
             .arg("--lib")
             .arg(lib)
@@ -951,6 +955,8 @@ fn a_shared_bridge_mints_the_type_its_library_registered() {
     .unwrap();
     for mode in ["--interpret", "--native"] {
         let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+            // The rustc artifact, whose generated source this reads.
+            .env("LOFT_LIB_BACKEND", "rust")
             .arg(mode)
             .arg("--lib")
             .arg(&lib)

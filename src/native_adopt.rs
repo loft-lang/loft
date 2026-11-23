@@ -598,6 +598,15 @@ pub(crate) fn report_unprobeable(so: &std::path::Path, why: &str) {
     );
 }
 
+/// Scope the library backend to the package built or adopted next: one whose native part is a
+/// Rust crate (`[native] crate`, no `[c] shim`) takes the rustc artifact, every other a hosted C
+/// unit (`keys::lib_backend_c`).
+pub fn scope_library(pkg_dir: &str) {
+    let rust = crate::manifest::read_manifest(&format!("{pkg_dir}/loft.toml"))
+        .is_some_and(|m| m.native_crate.is_some() && m.c_shim.is_empty());
+    crate::keys::set_lib_rust_crate(rust);
+}
+
 /// What a run does with a library's compiled artifact.
 pub enum Adopt {
     /// An artifact built for this program and this loft: dispatch to it.

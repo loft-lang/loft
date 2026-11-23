@@ -279,8 +279,10 @@ impl State {
                 _ => None,
             })
             .collect();
-        let before_call: Vec<Vec<u8>> =
-            slots.iter().map(|(_, r, n)| slot_bytes(&self.database, r, *n)).collect();
+        let before_call: Vec<Vec<u8>> = slots
+            .iter()
+            .map(|(_, r, n)| slot_bytes(&self.database, r, *n))
+            .collect();
         // The compiled run, on the world itself — what the program goes on with, as it does
         // without the switch: the caller's views into its stores stay where they point, and
         // what the unit makes once (its constants) lives in the world the program keeps.
@@ -300,8 +302,10 @@ impl State {
         // The interpreted twin, on the copy taken before the call.  The interpreter's own
         // stacks are lent to it (its frames run on them), and handed back after; the
         // call-back's bookkeeping is put back, as the compiled world is the one kept.
-        let compiled_slots: Vec<Vec<u8>> =
-            slots.iter().map(|(_, r, n)| slot_bytes(&self.database, r, *n)).collect();
+        let compiled_slots: Vec<Vec<u8>> = slots
+            .iter()
+            .map(|(_, r, n)| slot_bytes(&self.database, r, *n))
+            .collect();
         for ((_, r, _), b) in slots.iter().zip(&before_call) {
             set_slot_bytes(&mut self.database, r, b);
         }
@@ -342,7 +346,10 @@ impl State {
             let maker = (0..self.fn_positions.len())
                 .filter(|&f| self.fn_positions[f] != u32::MAX && self.fn_positions[f] <= at)
                 .max_by_key(|&f| self.fn_positions[f])
-                .map_or_else(|| "?".to_string(), |f| data.def(f as u32).original_name().clone());
+                .map_or_else(
+                    || "?".to_string(),
+                    |f| data.def(f as u32).original_name().clone(),
+                );
             why.push_str(&format!(" — made at bytecode {at}, in `{maker}`"));
         }
         if diff.is_none() {
@@ -368,7 +375,9 @@ impl State {
 /// The `n` bytes at slot `r`, as the interpreter holds them.
 fn slot_bytes(stores: &Stores, r: &DbRef, n: usize) -> Vec<u8> {
     let store = stores.store(r);
-    (0..n as u32).map(|i| *store.addr::<u8>(r.rec, r.pos + i)).collect()
+    (0..n as u32)
+        .map(|i| *store.addr::<u8>(r.rec, r.pos + i))
+        .collect()
 }
 
 fn set_slot_bytes(stores: &mut Stores, r: &DbRef, bytes: &[u8]) {
