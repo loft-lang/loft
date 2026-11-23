@@ -514,9 +514,10 @@ pub(super) fn callee_param_writes(
     if *def.code() == Value::Null || n == 0 {
         return vec![false; n];
     }
-    let body = def.code().clone();
+    // Walked in place: every borrow here is shared, and a clone of each callee's whole body
+    // per question was most of `loft check`'s time on a large program (loft#2620).
     let mut written = crate::fxhash::FxHashSet::default();
-    find_written_vars(&body, data, def.variables(), &mut written, cache);
+    find_written_vars(def.code(), data, def.variables(), &mut written, cache);
     let result: Vec<bool> = (0..n).map(|i| written.contains(&(i as u16))).collect();
     // Monotone merge with any prior placeholder entry.
     let prev = cache.get(&fn_nr).cloned().unwrap_or_else(|| vec![false; n]);

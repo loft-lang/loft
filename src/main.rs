@@ -10501,7 +10501,14 @@ fn main() {
     // A browser build compiles every library into the page's wasm, and a C build links each
     // package's `[c] shim`: a default-native host cdylib would be built and never linked
     // (`extensions::browser_target`, `extensions::c_target`).
+    // A plain `check` ends at "ok" below without running or linking anything, so a library
+    // cdylib built here would be built and never loaded: on the self-hosted elaborator that
+    // planning was minutes of a check whose own work takes seconds.  Same condition as the
+    // `--check` exit below, which skips the whole-program build for the same reason.
+    let check_ends_before_native =
+        check_only && (!native_mode || !native_requested) && native_emit.is_none();
     let mut pending_native = if native_libs_off
+        || check_ends_before_native
         || loft::interp::extensions::browser_target()
         || loft::interp::extensions::c_target()
     {
@@ -11021,7 +11028,7 @@ fn main() {
     // command line NAMES (`--native`, `--native-c`, …) goes on to the native pipeline, which
     // compiles but does not run the binary: native being the default run mode is no request
     // for it, and taking it for one made every plain `--check` a full rustc build.
-    if check_only && (!native_mode || !native_requested) && native_emit.is_none() {
+    if check_ends_before_native {
         println!("ok");
         return;
     }
