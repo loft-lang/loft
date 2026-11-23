@@ -3204,10 +3204,9 @@ impl Output<'_> {
                 // required"* the moment an element was written.
                 let var_tp = variables.tp(var).base().clone();
                 match &var_tp {
-                    Type::Vector(elm_tp, _) => {
-                        let elm_name = elm_tp.name(self.data);
-                        self.data.name_type(&format!("main_vector<{elm_name}>"), 0)
-                    }
+                    Type::Vector(elm_tp, _) => self
+                        .data
+                        .name_type(&self.data.vector_wrapper_name(elm_tp), 0),
                     // P188: keyed-collection locals need an OpDatabase
                     // call against the specific keyed-collection type so
                     // the backing store is allocated and the root pointer

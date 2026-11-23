@@ -1430,9 +1430,7 @@ impl State {
             // pre_alloc_vector is a no-op, leaving the vector empty — probe 59 INT would read
             // seq[0] as null).  Allocate a fresh store with a properly-claimed vector record.
             crate::data::Type::Vector(elm_tp, _) => {
-                let elm_name = elm_tp.name(data);
-                let tp_name = format!("main_vector<{elm_name}>");
-                let tp_id = self.database.name(&tp_name);
+                let tp_id = self.database.name(&data.vector_wrapper_name(elm_tp));
                 if tp_id == u16::MAX {
                     return Some(self.database.null());
                 }

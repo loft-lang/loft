@@ -890,7 +890,7 @@ impl Scopes<'_> {
                     // NAMES a collection view on this tree — which is what made the same idea
                     // inert where it does not (loft#1399).
                     Type::Vector(inner, _) => {
-                        let wrapper = format!("main_vector<{}>", inner.name(data));
+                        let wrapper = data.vector_wrapper_name(&inner);
                         if data.name_type(&wrapper, data.def(self.d_nr).source) == u16::MAX {
                             return None;
                         }
@@ -994,7 +994,7 @@ impl Scopes<'_> {
                         // The buffer's function-entry allocation names the wrapper type by
                         // name; a vector kind this program never built has none, and the
                         // refill op names the element type only the registry knows.
-                        let wrapper = format!("main_vector<{}>", inner.name(data));
+                        let wrapper = data.vector_wrapper_name(&inner);
                         if data.name_type(&wrapper, data.def(self.d_nr).source) == u16::MAX {
                             return None;
                         }

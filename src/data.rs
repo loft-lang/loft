@@ -10934,7 +10934,7 @@ impl Data {
             let owner = self.type_def_nr(tp);
             self.set_parent(d, owner);
         }
-        let name = format!("main_vector<{}>", tp.name(self));
+        let name = self.vector_wrapper_name(tp);
         let d_nr = self.def_nr(&name);
         if d_nr == u32::MAX {
             let vd = self.add_def(&name, lexer.pos(), DefType::Struct);
@@ -12909,7 +12909,53 @@ impl Data {
     /// the bytecode writer's `OpDatabase` names for it, and every other writer with it.
     #[must_use]
     pub fn owned_vector_type(&self, elm: &Type, source: u16) -> u16 {
-        self.name_type(&format!("main_vector<{}>", elm.name(self)), source)
+        self.name_type(&self.vector_wrapper_name(elm), source)
+    }
+
+    /// The name of the record that wraps a vector of `elm` in a store of its own,
+    /// `main_vector<elm>` — the one spelling every site that mints, finds or compares such a
+    /// wrapper uses.  The wrapper is global (source 0) and found by name, while a type's name
+    /// is not unique: a program may declare a `File` beside the standard library's.  So each
+    /// type inside `elm` whose name was first bound to another TYPE adds `#<its def>` (a
+    /// constant or a function of that name owns no wrapper: the library's constant `E` leaves
+    /// a program's `struct E` its plain one):
+    /// the first definition of a name (the standard library's, which is parsed first) keeps
+    /// the plain wrapper, and a later one of the same name gets its own instead of reusing a
+    /// wrapper whose element has another layout.  A name only one definition carries stays
+    /// plain, so every other wrapper is spelled as before.
+    /// Is definition `d` a type a value can have — a struct, an enum or one of its variants,
+    /// or a named type — and so a type a vector wrapper can be made for?
+    fn is_type_def(&self, d: u32) -> bool {
+        self.definitions.get(d as usize).is_some_and(|def| {
+            matches!(
+                def.def_type,
+                DefType::Struct | DefType::Enum | DefType::EnumValue | DefType::Type
+            )
+        })
+    }
+
+    #[must_use]
+    pub fn vector_wrapper_name(&self, elm: &Type) -> String {
+        let mut name = format!("main_vector<{}>", elm.name(self));
+        elm.any_node(&mut |t| {
+            if let Type::Enum(d, _, _)
+            | Type::Reference(d, _)
+            | Type::Sorted(d, _, _)
+            | Type::Index(d, _, _)
+            | Type::Radix(d, _, _)
+            | Type::Trie(d, _, _)
+            | Type::Hash(d, _, _) = t
+                && (*d as usize) < self.definitions.len()
+                && self
+                    .def_names
+                    .first_bound(&self.definitions[*d as usize].name)
+                    .is_some_and(|first| first != *d && self.is_type_def(first))
+            {
+                name.push_str(&format!("#{d}"));
+            }
+            false
+        });
+        name
     }
 
     /** Get the definition by name

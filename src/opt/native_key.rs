@@ -78,7 +78,7 @@ pub(crate) fn is_synthetic_name(stored_name: &str) -> bool {
 /// type-table layout (#461), so the row registered here is the row the caller has.
 pub(crate) fn hidden_dest_type_name(data: &Data, stores: &Stores, t: &Type) -> Option<String> {
     match t.base() {
-        Type::Vector(elm, _) => Some(format!("main_vector<{}>", elm.name(data))),
+        Type::Vector(elm, _) => Some(data.vector_wrapper_name(elm)),
         Type::Reference(td, _) | Type::Enum(td, true, _) => {
             let def = data.def(*td);
             Some(

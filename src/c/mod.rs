@@ -3127,7 +3127,7 @@ fn program_main(data: &Data, stores: &Stores, main: u32) -> Result<(u32, String)
         }
         match a.typedef.base() {
             Type::Vector(elm, _) => {
-                let tp = data.name_type(&format!("main_vector<{}>", elm.name(data)), 0);
+                let tp = data.name_type(&data.vector_wrapper_name(elm), 0);
                 if tp == u16::MAX {
                     args.push("loft_ref_null()".to_string());
                     continue;

@@ -376,9 +376,7 @@ impl Cx<'_> {
         let mut visible = 0;
         let vec_buf = match def.returned().ret_promo_base() {
             Type::Vector(elm, _) => {
-                let tp = self
-                    .data
-                    .name_type(&format!("main_vector<{}>", elm.name(self.data)), 0);
+                let tp = self.data.name_type(&self.data.vector_wrapper_name(elm), 0);
                 (tp != u16::MAX).then_some(tp)
             }
             _ => None,

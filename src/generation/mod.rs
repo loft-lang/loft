@@ -8843,8 +8843,9 @@ extern crate loft;"
             }
             match a.typedef.base() {
                 Type::Vector(elm_tp, _) => {
-                    let elm_name = elm_tp.name(self.data);
-                    let tp = self.data.name_type(&format!("main_vector<{elm_name}>"), 0);
+                    let tp = self
+                        .data
+                        .name_type(&self.data.vector_wrapper_name(elm_tp), 0);
                     if tp == u16::MAX {
                         // No wrapper registered — the sentinel is what a
                         // pre-#629 build passed, and the body's null guards
@@ -9679,7 +9680,7 @@ extern crate loft;"
             else {
                 continue;
             };
-            let vec_struct_name = format!("main_vector<{}>", elem_tp.name(self.data));
+            let vec_struct_name = self.data.vector_wrapper_name(&elem_tp);
             let vec_struct_dnr = self.data.def_nr(&vec_struct_name);
             if vec_struct_dnr == u32::MAX {
                 continue;
