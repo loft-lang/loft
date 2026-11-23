@@ -864,6 +864,30 @@ fn rpc_steps_into_compiled_routines_as_into_interpreted_ones() {
 ///   CHANNEL: the stop event.  WITNESS: "the pause stops inside spin".
 #[test]
 fn rpc_a_pause_hands_a_running_compiled_routine_to_the_interpreter() {
+    pause_and_finish(
+        "p7c",
+        "pub fn helper(n: integer) -> integer {\n  n + 1\n}\n\npub fn spin(limit: integer) -> integer {\n  t = 0;\n  k = 0;\n  while t < limit {\n    t += 1;\n    k = helper(k);\n  }\n  t + k\n}\n",
+        |limit, p| limit + p + 3,
+    );
+}
+
+/// `@PLN206 P7` — the same hand-over with the routine's heap in hand: a vector and a text the
+/// compiled routine built before its long loop (the 1000 values of `i % 7`, fifty `x`s),
+/// carried into the interpreter's frame by reference and by value, and used there.  By hand: the sum of
+/// `t % 7` for `t` below 1000 is 142 * 21 + (0 + 1 + 2 + 3 + 4 + 5) = 2997, so the answer is
+/// 2997 * 1000 + 50, whatever round the pause came in.
+#[test]
+fn rpc_a_handed_over_routine_keeps_its_vector_and_text() {
+    pause_and_finish(
+        "p7c_heap",
+        "pub fn helper(n: integer) -> integer {\n  n + 1\n}\n\npub fn spin(limit: integer) -> integer {\n  v: vector<integer> = [];\n  for i in 0..1000 { v += [i % 7]; }\n  s = \"\";\n  for j in 0..50 { s += \"x\"; }\n  t = 0;\n  while t < limit {\n    t = helper(t);\n  }\n  total = 0;\n  for x in v { total += x; }\n  total * 1000 + len(s)\n}\n",
+        |_, _| 2_997_050,
+    );
+}
+
+/// Run `spinner::spin(limit)` (the library `lib`) under the debugger, pause it while it runs
+/// compiled, set `t` to `limit - 3` and continue: the answer `want(limit, t at the pause)`.
+fn pause_and_finish(tag: &str, lib: &str, want: impl Fn(i64, i64) -> i64) {
     if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
@@ -872,7 +896,7 @@ fn rpc_a_pause_hands_a_running_compiled_routine_to_the_interpreter() {
         eprintln!("skipped: no cc on PATH");
         return;
     }
-    let lib_root = std::env::temp_dir().join(format!("loft_rpc_p7c_{}", std::process::id()));
+    let lib_root = std::env::temp_dir().join(format!("loft_rpc_{tag}_{}", std::process::id()));
     let pkg = lib_root.join("spinner");
     fa::create_dir_all(pkg.join("src")).expect("package dir");
     fa::write(
@@ -880,14 +904,10 @@ fn rpc_a_pause_hands_a_running_compiled_routine_to_the_interpreter() {
         "[package]\nname = \"spinner\"\nversion = \"0.1.0\"\n\n[library]\nentry = \"src/spinner.loft\"\n",
     )
     .expect("manifest");
-    fa::write(
-        pkg.join("src/spinner.loft"),
-        "pub fn helper(n: integer) -> integer {\n  n + 1\n}\n\npub fn spin(limit: integer) -> integer {\n  t = 0;\n  k = 0;\n  while t < limit {\n    t += 1;\n    k = helper(k);\n  }\n  t + k\n}\n",
-    )
-    .expect("library");
-    let limit: i64 = 20_000_000_000;
+    fa::write(pkg.join("src/spinner.loft"), lib).expect("library");
+    let limit: i64 = 2_000_000_000;
     let prog = tmp_program(
-        "p7c",
+        tag,
         &format!("use spinner;\nfn main() {{\n  r = spinner::spin({limit});\n  println(\"r {{r}}\");\n}}\n"),
     );
     let requests = [
@@ -929,6 +949,6 @@ fn rpc_a_pause_hands_a_running_compiled_routine_to_the_interpreter() {
         .and_then(|v| v.trim().parse().ok())
         .expect("t at the pause");
     assert!(p > 0 && p < limit, "the pause came inside the loop: t = {p}\n{out}");
-    let want = format!("r {}", limit + p + 3);
+    let want = format!("r {}", want(limit, p));
     assert!(out.contains(&want), "{want}: {out}");
 }

@@ -1637,11 +1637,15 @@ static const loft_hosted_table *loft_hosted = 0;
 static LOFT_TLS void *loft_host_stores = 0;
 /* The depth of the routine a bridge call called, less one: set by the bridge, restored after. */
 static LOFT_TLS uint32_t loft_br_hdepth = 0xFFFFFFFFu;
+/* A hand-over the interpreter refused holds for the rest of the bridge call: the routine runs on
+ * compiled, and the interpreter takes the pause once it returns.  Asking again each round would
+ * cost the round a call into the interpreter. */
+static LOFT_TLS int loft_ho_off = 0;
 
 /* `@PLN206 P7` — a pause the debugger asked for, seen by the routine the interpreter called
  * (no deeper one: that routine's frame is live under the call it is in), at a loop's head. */
 static int loft_pause_asked(void) {
-    return loft_hosted && loft_hosted->pause && *loft_hosted->pause
+    return loft_hosted && loft_hosted->pause && *loft_hosted->pause && !loft_ho_off
         && LOFT_HDEPTH == loft_br_hdepth + 1u;
 }
 /* One local of the routine, offered to the interpreter by name: kind 0 integer, 1 float,
@@ -1672,8 +1676,10 @@ static loft_str loft_ho_nostr(void) { loft_str s = { 0, 0 }; return s; }
 static int loft_ho_commit(const char *key, uint32_t scope) {
     uint32_t n = loft_nhov;
     loft_nhov = 0;
-    return (int) loft_hosted->handover(loft_host_stores, key, strlen(key), scope,
-                                       (const unsigned char *) loft_hov, n);
+    int taken = (int) loft_hosted->handover(loft_host_stores, key, strlen(key), scope,
+                                            (const unsigned char *) loft_hov, n);
+    if (!taken) loft_ho_off = 1;
+    return taken;
 }
 
 /* The table as the interpreter holds it now: after a bridge call starts and after every act

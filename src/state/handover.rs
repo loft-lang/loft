@@ -35,19 +35,36 @@ impl State {
     /// when the frame the interpreter keeps there can be filled from `entries`.  False leaves
     /// the routine running compiled, to its next loop head or its return.
     pub(crate) fn accept_handover(&mut self, key: &str, scope: u16, entries: &[HandoverEntry]) -> bool {
+        let taken = self.handover_verdict(key, scope, entries);
+        if let Err(why) = &taken
+            && std::env::var_os("LOFT_TRACE_HANDOVER").is_some()
+        {
+            eprintln!("[handover] {key} at loop {scope}: refused — {why}");
+        }
+        taken.is_ok()
+    }
+
+    /// Whether the routine `key` can be taken over at the head of its loop `scope`, and the
+    /// hand-over queued when it can; the reason when it cannot (`LOFT_TRACE_HANDOVER=1`).
+    fn handover_verdict(
+        &mut self,
+        key: &str,
+        scope: u16,
+        entries: &[HandoverEntry],
+    ) -> Result<(), String> {
         if self.debug.is_none() || crate::state::hosted_verify_enabled() {
-            return false;
+            return Err("no debugger".into());
         }
         let handle = self.data_ptr.clone();
         let Some(data) = handle.get() else {
-            return false;
+            return Err("no program".into());
         };
         let d_nr = self.bridge_call_d;
         if d_nr == u32::MAX || crate::lib_ids::fn_key(data, d_nr) != key {
-            return false;
+            return Err("not the routine the interpreter called".into());
         }
         let Some(&pc) = self.loop_sites.get(&(d_nr, scope)) else {
-            return false;
+            return Err("the interpreter keeps no head for this loop".into());
         };
         let offered: std::collections::HashMap<String, &HandoverEntry> = entries
             .iter()
@@ -71,21 +88,21 @@ impl State {
             };
             let size = u32::from(crate::variables::size(&entry.tp, ctx));
             let Some(e) = offered.get(&entry.name) else {
-                return false;
+                return Err(format!("the frame holds `{}`, which the routine does not offer", entry.name));
             };
             let Some(w) = slot_write(&entry.tp, size, str_slot, e) else {
-                return false;
+                return Err(format!("`{}` is offered in a shape its slot does not take", entry.name));
             };
             taken.insert(entry.name.clone());
             held_spans.push((u32::from(entry.slot), u32::from(entry.slot) + size));
             writes.push((u32::from(entry.slot), w));
         }
         // A store the routine holds that the frame does not would be held by no one.
-        if offered
+        if let Some((name, _)) = offered
             .iter()
-            .any(|(name, e)| e.kind == 3 && e.rr != 0 && !taken.contains(name))
+            .find(|(name, e)| e.kind == 3 && e.rr != 0 && !taken.contains(*name))
         {
-            return false;
+            return Err(format!("the routine holds a store in `{name}`, which the frame does not"));
         }
         // A local in scope the frame does not hold yet starts empty where its scope's end will
         // release it — a text, a reference — unless its slot is another local's.
@@ -111,7 +128,7 @@ impl State {
             writes.push((from, w));
         }
         self.pending_handover = Some(Handover { d_nr, pc, writes });
-        true
+        Ok(())
     }
 
     /// The static call whose routine handed itself over continues as that routine's frame at
