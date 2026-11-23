@@ -73,23 +73,22 @@ fn section<'a>(text: &'a str, name: &str) -> &'a str {
 const OFF: &[(&str, &str)] = &[("LOFT_NO_ADOPT_FIRST_BIND", "1")];
 
 /// 2000 rounds; the named control and the lifted cell mint one store a call (the callee's
-/// wrapper, whose store `(R-ReturnField)` hands through at the field's position since
-/// 2026-09-30 — it was two, the wrapper and a copy of the field, before that rule), and the
-/// switch puts the copy's store at the lift back.
+/// wrapper, whose store `(R-ReturnField)` hands through at the field's position), and the
+/// switch puts the copy's store at the lift back.  The census is the interpreter's: the C
+/// backend counts no mints.
 #[test]
 fn the_lifted_cell_mints_as_the_named_control_does() {
-    for mode in ["--interpret", "--native"] {
-        let named = store_mints(mode, "c1", &[]);
-        let lifted = store_mints(mode, "c2", &[]);
-        assert_eq!(named, 2000, "{mode}: the named control's mints");
-        assert_eq!(lifted, named, "{mode}: the lifted cell's mints");
-        let lifted_off = store_mints(mode, "c2", OFF);
-        assert_eq!(
-            lifted_off,
-            lifted + 2000,
-            "{mode}: the switch restores the copy's store per call"
-        );
-    }
+    let mode = "--interpret";
+    let named = store_mints(mode, "c1", &[]);
+    let lifted = store_mints(mode, "c2", &[]);
+    assert_eq!(named, 2000, "{mode}: the named control's mints");
+    assert_eq!(lifted, named, "{mode}: the lifted cell's mints");
+    let lifted_off = store_mints(mode, "c2", OFF);
+    assert_eq!(
+        lifted_off,
+        lifted + 2000,
+        "{mode}: the switch restores the copy's store per call"
+    );
 }
 
 /// The lifted bind is the named bind's: a plain adopt, the buffer's free guarded by
