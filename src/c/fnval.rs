@@ -256,8 +256,14 @@ impl Cx<'_> {
     fn fn_number_code(&self) -> String {
         let values: Vec<u32> = self.fn_values.borrow().iter().copied().collect();
         let n = values.len();
-        let mut out = String::from("\n/* `@PLN206` — the interpreter's number of each function the unit names as a value. */\n");
-        let _ = writeln!(out, "static const char *const loft_fkeys[{}] = {{", n.max(1));
+        let mut out = String::from(
+            "\n/* `@PLN206` — the interpreter's number of each function the unit names as a value. */\n",
+        );
+        let _ = writeln!(
+            out,
+            "static const char *const loft_fkeys[{}] = {{",
+            n.max(1)
+        );
         for &d in &values {
             let key = crate::lib_ids::fn_key(self.data, d);
             let _ = writeln!(out, "    {},", super::body::c_string(&key));
@@ -268,7 +274,11 @@ impl Cx<'_> {
             out,
             "static const int64_t loft_funits[{}] = {{ {} }};\nstatic int64_t loft_fhosts[{}];",
             n.max(1),
-            if unit.is_empty() { "0".to_string() } else { unit.join(", ") },
+            if unit.is_empty() {
+                "0".to_string()
+            } else {
+                unit.join(", ")
+            },
             n.max(1)
         );
         let _ = writeln!(

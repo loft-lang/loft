@@ -156,11 +156,8 @@ pub struct HostedTable {
     /// The program's directory (`Stores::source_dir`): its bytes, their count in `*len` —
     /// what `source_dir()` answers — and in `*relative` whether a relative path resolves
     /// against it (`Stores::program_relative`; `#cwd` and `LOFT_PATHS` turn it off).
-    pub source_dir: unsafe extern "C" fn(
-        stores: *mut Stores,
-        len: *mut usize,
-        relative: *mut u32,
-    ) -> *const u8,
+    pub source_dir:
+        unsafe extern "C" fn(stores: *mut Stores, len: *mut usize, relative: *mut u32) -> *const u8,
     /// A generator the unit made, handed to the interpreter's coroutine table: its frame's
     /// slot in the unit, the kind of what it yields (0 integer, 1 float, 2 text, 3 reference,
     /// 4 boolean), and the unit's step and release; its handle written into `ret.dbref`.
@@ -176,7 +173,8 @@ pub struct HostedTable {
 
 /// A hosted unit's generator step: the frame in `slot` runs to its next `yield`, whose value
 /// of `kind` lands in `out`; 1 when it yielded, 0 when it ran to its end.
-pub type GenNext = unsafe extern "C" fn(stores: *mut Stores, slot: u32, kind: u32, out: *mut LibArg) -> u32;
+pub type GenNext =
+    unsafe extern "C" fn(stores: *mut Stores, slot: u32, kind: u32, out: *mut LibArg) -> u32;
 /// A hosted unit's generator release: the frame in `slot` gives back what it holds.
 pub type GenFree = unsafe extern "C" fn(stores: *mut Stores, slot: u32);
 
