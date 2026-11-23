@@ -34,6 +34,20 @@ accidental is a RUST change: fix it in Rust first, prove the change moves no IR 
 Rust side unchanged) and no suite cell (both backends), and the port follows.  The classes
 above become Rust work:
 
+**And (owner, same day): "There should always be a corresponding routine between the two
+implementations for a decision that can be compared."**  Strict equality is compared ROUTINE
+against routine.  Each decision is made in one Rust function and in the port function that
+mirrors it, and the reasons layer names that function.  A port that reaches Rust's answer by a
+different routine is a defect even when the output agrees.  For each change below, the Rust
+routine and its port counterpart:
+- R1: Rust's `parse_var_inner` capture arm; the port's capture-read road (el_ex_name) mirrors
+  it once the placeholder is gone.
+- R2: Rust's `collect_mutated_captures` (+ `walk_for_mutations`).  The port's per-capture
+  `writes_a_name` is NOT its counterpart, so the port ports the fixed routine.
+- R3: Rust's append-through-a-capture mark (expressions.rs ~11065) and its port counterpart.
+- R4: Rust's `unregister_work_ref` and its two callers.  The port needs the counterpart (the
+  porter carried it for `pick` in 71006afc3).
+
 | # | Rust change | removes | site |
 |---|---|---|---|
 | R1 | the pass-1 capture placeholder does not survive into pass 2's variable table (or is not made) | 446 items: `user_named` 417, `deps`/`user_appended` 29 | objects.rs `parse_var_inner`'s capture arm (~1261: `create_var` + `mark_user_named`) |
