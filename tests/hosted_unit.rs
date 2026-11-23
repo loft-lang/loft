@@ -127,6 +127,12 @@ fn a_hosted_c_library_works_on_the_interpreters_stores() {
 ///   0x3f98a9fb43afe516 interpreted, 0x3f98a9fb43afe518 compiled".
 ///   A SABOTAGE (2026-11-23): with every leaf of a tuple argument read from its first slot
 ///   (`hosted::bridge`), `spread` answers wrong.  WITNESS: "assertion failed: spread".
+///   A SABOTAGE (2026-11-23): with a `&` argument's slot not written back after the call
+///   (`hosted::bridge`).  WITNESS: "the `&` argument `x` holds 2a00000000000000 interpreted,
+///   2800000000000000 compiled", and without the verify "assertion failed: bump 40".
+///   A SABOTAGE (2026-11-23): with the twin started from the slot the compiled call left
+///   (`hosted_verify.rs`, the restore struck), `bump` adds twice.  WITNESS: "holds
+///   2c00000000000000 interpreted".
 ///   And a SABOTAGE (2026-11-22): with the verify going on in the compiled COPY of the world
 ///   (`hosted_verify.rs` before the twin ran on the copy), the caller's loop text points into
 ///   a buffer the swap freed.  WITNESS: the "nested views" assertion of `hostedlib_main.loft`.
