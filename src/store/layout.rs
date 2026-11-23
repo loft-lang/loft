@@ -78,6 +78,9 @@ fn c_offsets() -> Option<String> {
         src += &crate::file_access::read_to_string(root.join(h)).ok()?;
         src.push('\n');
     }
+    // `loft_store.h` declares the locked-write refusal `loft_rt.h` defines; an offset probe
+    // writes nothing, so it links against a stub.
+    src += "static int loft_locked_write(void) { return 0; }\n";
     src += "#include <stddef.h>\nint main(void) {\n";
     for (f, _) in rust_offsets() {
         let _ = writeln!(
