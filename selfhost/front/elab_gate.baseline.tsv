@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	d5b0b3076eed6780b24a3fd2434f67e3f311a52e
 
-layer	elab	agree	1408	of	2138
+layer	elab	agree	1401	of	2138
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -73,6 +73,7 @@ elab	refused	loft-suite/rules/binding/B-View/1665-a-text-payload-binding-stops-w
 elab	refused	loft-suite/rules/binding/B-View/a-view-materialises-where-its-container-is-disturbed-whatever-spells-it.loft
 elab	refused	loft-suite/rules/binding/B-View/a-view-written-back-into-its-written-place-restores-nothing.loft
 elab	refused	loft-suite/rules/binding/Const-Foreign/a-mapped-vector-appended-as-an-element-is-copied.loft
+elab	unaligned	loft-suite/rules/binding/Const-Foreign/a-view-of-foreign-data-reads-in-place-and-its-copies-are-the-readers-own.loft
 elab	refused	loft-suite/rules/binding/Const-Value/a-copy-out-of-a-const-is-the-copys-own.loft
 elab	refused	loft-suite/rules/binding/Const-Value/a-link-a-view-and-a-discharge-of-a-const-value-read-as-the-value.loft
 elab	refused	loft-suite/rules/binding/Const-Value/a-value-const-scalar-local-can-be-declared.loft
@@ -445,6 +446,7 @@ elab	refused	loft-suite/rules/rewrites/R-Place/a-literal-vector-field-is-built-i
 elab	refused	loft-suite/rules/rewrites/R-Prefill/164-prefill-image.loft
 elab	refused	loft-suite/rules/rewrites/R-PushFill/a-nested-comprehension-pushes-each-row-through-a-window.loft
 elab	refused	loft-suite/rules/rewrites/R-SameRead/a-slice-match-reads-its-subject-once.loft
+elab	unaligned	loft-suite/rules/rewrites/R-SliceBorrow/a-slice-that-escapes-or-outlives-its-source-keeps-the-bytes-it-was-cut-from.loft
 elab	refused	loft-suite/rules/rewrites/R-SliceInto/a-slice-appended-into-a-place-is-the-fresh-clamped-value-its-bounds-read-first.loft
 elab	refused	loft-suite/rules/rewrites/R-TailSelf/a-result-held-in-a-store-is-delivered-as-the-call-would.loft
 elab	refused	loft-suite/rules/rewrites/R-TailSelf/a-tail-self-call-the-frame-cannot-jump-warns.loft
@@ -504,6 +506,7 @@ elab	refused	loft-suite/rules/types/N-Decl/a-comprehension-takes-its-declared-el
 elab	refused	loft-suite/rules/types/N-Decl/a-destructured-name-takes-its-declared-type.loft
 elab	refused	loft-suite/rules/types/N-Decl/a-null-test-on-an-inline-nullable-struct-narrows-it.loft
 elab	refused	loft-suite/rules/types/N-Decl/a-vector-literal-argument-takes-its-parameters-nullable-element.loft
+elab	unaligned	loft-suite/rules/types/N-Default/a-default-of-a-method-chain-is-a-collection-of-its-own.loft
 elab	refused	loft-suite/rules/types/N-Domain/1450-a-projection-is-not-more-non-null-than-its-receiver.loft
 elab	refused	loft-suite/rules/types/N-Domain/1450h-the-math-guard-is-read-in-every-spelling.loft
 elab	refused	loft-suite/rules/types/N-Idem/1771-a-nullable-type-argument-collapses-t-optional.loft
@@ -521,6 +524,7 @@ elab	refused	loft-suite/rules/types/N-Reserve/152-the-fallback-and-failure-spell
 elab	refused	loft-suite/rules/types/N-Reserve/a-nullable-narrow-value-spends-its-top-code-on-null-in-every-place.loft
 elab	refused	loft-suite/rules/types/N-Road/1934-a-nullable-record-return-takes-its-dense-twins-buffer.loft
 elab	refused	loft-suite/rules/types/N-Road/1989-a-literal-bound-to-a-nullable-local-is-built-in-the-local.loft
+elab	unaligned	loft-suite/rules/types/N-Road/a-returned-element-read-at-a-constant-index-past-the-end-is-null.loft
 elab	refused	loft-suite/rules/types/N-Road/every-shape-takes-the-same-road-in-both-spellings.loft
 elab	refused	loft-suite/rules/types/N-Shape/1489-a-capture-is-bound-and-returned-as-a-whole-value.loft
 elab	refused	loft-suite/rules/types/N-Shape/1493-a-branch-arm-yielding-a-locals-field-delivers-a-copy.loft
@@ -532,6 +536,7 @@ elab	refused	loft-suite/rules/types/N-Shape/1981-a-format-spec-on-a-nullable-val
 elab	refused	loft-suite/rules/types/N-Shape/2233-a-coalesce-tail-delivers-into-the-callers-buffer-a-lambdas-too.loft
 elab	refused	loft-suite/rules/types/N-Shape/a-bounded-generic-at-a-nullable-reaches-its-operator.loft
 elab	refused	loft-suite/rules/types/N-Shape/a-generic-builds-a-vector-of-a-nullable-or-a-tuple.loft
+elab	unaligned	loft-suite/rules/types/N-Shape/a-nullable-vector-local-at-the-tail-keeps-its-writes.loft
 elab	refused	loft-suite/rules/types/N-Shape/a-tuple-member-releases-once-whatever-it-is-declared-and-beside.loft
 elab	refused	loft-suite/rules/types/N-Shape/an-append-after-a-fn-ref-call-releases-its-backing.loft
 elab	refused	loft-suite/rules/types/N-Store/153-n-store-a-bare-null-into-a-declared-local-warns.loft
@@ -549,6 +554,7 @@ elab	refused	loft-suite/rules/types/T-Chk-Vec/a-comprehension-body-is-checked-ag
 elab	refused	loft-suite/rules/types/T-Chk-Vec/an-expected-element-type-reaches-every-literal-position.loft
 elab	refused	loft-suite/rules/types/T-Chk/1682-a-null-member-in-the-first-tuple-arm-does-not-pin-the-join.loft
 elab	refused	loft-suite/rules/types/T-Chk/2337-an-empty-literal-arm-builds-its-fields-collection.loft
+elab	unaligned	loft-suite/rules/types/T-Syn/a-struct-literal-inside-sizeof-or-type-name-synthesises-its-type.loft
 elab	refused	loft-suite/rules/types/T-Syn/type-name-of-a-generic-instance-names-its-arguments-as-written.loft
 elab	refused	loft-suite/rules/types/W-Lit/a-literal-right-operand-checks-at-its-left-operands-width.loft
 elab	refused	loft-suite/rules/types/W-Op/a-u32-operand-makes-the-operation-64-bit.loft
@@ -711,6 +717,7 @@ elab	refused	tests/scripts/a-match-binding-borrows-its-text-while-the-stores-dif
 elab	refused	tests/scripts/a-module-names-its-importers-type-from-a-private-function.loft
 elab	refused	tests/scripts/a-name-only-some-listed-patterns-bind-is-nullable.loft
 elab	refused	tests/scripts/a-narrow-slot-is-checked-wherever-a-value-reaches-it.loft
+elab	unaligned	tests/scripts/a-non-escaping-vector-local-is-a-caller-buffer.loft
 elab	refused	tests/scripts/a-non-null-four-byte-element-reads-every-code-as-a-value.loft
 elab	refused	tests/scripts/a-nullable-vector-result-returns-null-from-every-exit.loft
 elab	refused	tests/scripts/a-one-byte-slice-appended-is-the-general-slice.loft
@@ -737,7 +744,7 @@ elab	refused	tests/scripts/sort-places-null-first-and-keeps-equal-floats-in-orde
 elab	refused	tests/scripts/store_compact_b2.loft
 elab	refused	tests/scripts/store_compact_slack_730.loft
 
-layer	elab-functions	agree	13422	of	22822
+layer	elab-functions	agree	13442	of	22822
 elab-functions	agree	lib/docs.loft::Anchor
 elab-functions	agree	lib/docs.loft::Character
 elab-functions	agree	lib/docs.loft::Double
@@ -3017,7 +3024,17 @@ elab-functions	agree	loft-suite/rules/closures/L-CapHeap/1725-a-reassigned-join-
 elab-functions	agree	loft-suite/rules/closures/L-CapHeap/1725-a-reassigned-join-capture-keeps-the-store-its-record-holds.loft::__closure_r7_0
 elab-functions	agree	loft-suite/rules/closures/L-CapHeap/1725-a-reassigned-join-capture-keeps-the-store-its-record-holds.loft::__closure_r8_0
 elab-functions	agree	loft-suite/rules/closures/L-CapHeap/1725-a-reassigned-join-capture-keeps-the-store-its-record-holds.loft::__closure_r9_0
+elab-functions	agree	loft-suite/rules/closures/L-CapHeap/1725-a-reassigned-join-capture-keeps-the-store-its-record-holds.loft::n___lambda_r10_0
+elab-functions	agree	loft-suite/rules/closures/L-CapHeap/1725-a-reassigned-join-capture-keeps-the-store-its-record-holds.loft::n___lambda_r1_0
+elab-functions	agree	loft-suite/rules/closures/L-CapHeap/1725-a-reassigned-join-capture-keeps-the-store-its-record-holds.loft::n___lambda_r2_0
+elab-functions	agree	loft-suite/rules/closures/L-CapHeap/1725-a-reassigned-join-capture-keeps-the-store-its-record-holds.loft::n___lambda_r3_0
+elab-functions	agree	loft-suite/rules/closures/L-CapHeap/1725-a-reassigned-join-capture-keeps-the-store-its-record-holds.loft::n___lambda_r4_0
+elab-functions	agree	loft-suite/rules/closures/L-CapHeap/1725-a-reassigned-join-capture-keeps-the-store-its-record-holds.loft::n___lambda_r5_0
+elab-functions	agree	loft-suite/rules/closures/L-CapHeap/1725-a-reassigned-join-capture-keeps-the-store-its-record-holds.loft::n___lambda_r6_0
+elab-functions	agree	loft-suite/rules/closures/L-CapHeap/1725-a-reassigned-join-capture-keeps-the-store-its-record-holds.loft::n___lambda_r6_1
 elab-functions	agree	loft-suite/rules/closures/L-CapHeap/1725-a-reassigned-join-capture-keeps-the-store-its-record-holds.loft::n___lambda_r7_0
+elab-functions	agree	loft-suite/rules/closures/L-CapHeap/1725-a-reassigned-join-capture-keeps-the-store-its-record-holds.loft::n___lambda_r8_0
+elab-functions	agree	loft-suite/rules/closures/L-CapHeap/1725-a-reassigned-join-capture-keeps-the-store-its-record-holds.loft::n___lambda_r9_0
 elab-functions	agree	loft-suite/rules/closures/L-CapHeap/1725-a-reassigned-join-capture-keeps-the-store-its-record-holds.loft::n_mp
 elab-functions	agree	loft-suite/rules/closures/L-CapHeap/1725-a-reassigned-join-capture-keeps-the-store-its-record-holds.loft::n_none
 elab-functions	agree	loft-suite/rules/closures/L-CapHeap/1725-a-reassigned-join-capture-keeps-the-store-its-record-holds.loft::n_r1
@@ -3683,10 +3700,20 @@ elab-functions	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-clos
 elab-functions	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft::__closure_two_0
 elab-functions	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft::__closure_u___closure_field_0
 elab-functions	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft::__closure_w_0
+elab-functions	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft::n___lambda_after_0
+elab-functions	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft::n___lambda_branch_0
+elab-functions	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft::n___lambda_derived_0
+elab-functions	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft::n___lambda_early_0
+elab-functions	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft::n___lambda_field_0
+elab-functions	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft::n___lambda_local_0
+elab-functions	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft::n___lambda_looped_0
 elab-functions	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft::n___lambda_nullable_0
 elab-functions	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft::n___lambda_parameter_0
 elab-functions	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft::n___lambda_test_a_captured_text_the_closure_writes_is_the_functions_result_0
 elab-functions	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft::n___lambda_through_a_local_0
+elab-functions	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft::n___lambda_twice_0
+elab-functions	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft::n___lambda_two_0
+elab-functions	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft::n___lambda_w_0
 elab-functions	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft::n_parameter
 elab-functions	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft::n_run
 elab-functions	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft::n_test_a_frame_and_its_closure_both_write_a_captured_text
@@ -14161,7 +14188,7 @@ elab-functions	agree	tests/scripts/store_compact_slack_730.loft::SRec
 elab-functions	agree	tests/scripts/store_compact_slack_730.loft::n___upgrade_drain
 elab-functions	agree	tests/scripts/store_compact_slack_730.loft::n_digest_of
 
-layer	elab-pass1	agree	13253	of	18529
+layer	elab-pass1	agree	13324	of	18549
 elab-pass1	agree	lib/code.loft::t_4Code_add_block
 elab-pass1	agree	lib/code.loft::t_4Code_add_if
 elab-pass1	agree	lib/code.loft::t_4Code_add_loop
@@ -15700,6 +15727,9 @@ elab-pass1	agree	loft-suite/rules/capabilities/Cap-Trusted/trusted-code-and-a-gr
 elab-pass1	agree	loft-suite/rules/capabilities/Cap-Trusted/trusted-code-and-a-granted-leaf-are-not-descended.loft::n_peek_file
 elab-pass1	agree	loft-suite/rules/capabilities/Cap-Trusted/trusted-code-and-a-granted-leaf-are-not-descended.loft::n_test_a_granted_leaf_is_not_descended
 elab-pass1	agree	loft-suite/rules/capabilities/Cap-Trusted/trusted-code-and-a-granted-leaf-are-not-descended.loft::n_test_undesignated_code_is_trusted
+elab-pass1	agree	loft-suite/rules/closures/L-Apply/a-closure-call-reduces-its-arguments-in-order-and-drops-its-frame.loft::n___lambda_test_arguments_before_the_body_in_order_0
+elab-pass1	agree	loft-suite/rules/closures/L-Apply/a-closure-call-reduces-its-arguments-in-order-and-drops-its-frame.loft::n___lambda_test_arguments_before_the_body_in_order_1
+elab-pass1	agree	loft-suite/rules/closures/L-Apply/a-closure-call-reduces-its-arguments-in-order-and-drops-its-frame.loft::n___lambda_test_arguments_before_the_body_in_order_2
 elab-pass1	agree	loft-suite/rules/closures/L-Apply/a-closure-call-reduces-its-arguments-in-order-and-drops-its-frame.loft::n___lambda_test_each_application_drops_its_frame_0
 elab-pass1	agree	loft-suite/rules/closures/L-Apply/a-closure-call-reduces-its-arguments-in-order-and-drops-its-frame.loft::n_apply
 elab-pass1	agree	loft-suite/rules/closures/L-Apply/a-closure-call-reduces-its-arguments-in-order-and-drops-its-frame.loft::n_digits
@@ -15744,6 +15774,7 @@ elab-pass1	agree	loft-suite/rules/closures/L-CapHeap/1085b-a-nullable-local-free
 elab-pass1	agree	loft-suite/rules/closures/L-CapHeap/1085b-a-nullable-local-frees-what-it-displaces.loft::n_test_an_always_borrowing_callee_displaces_nothing
 elab-pass1	agree	loft-suite/rules/closures/L-CapHeap/1085b-a-nullable-local-frees-what-it-displaces.loft::n_test_the_dense_twin_is_unchanged
 elab-pass1	agree	loft-suite/rules/closures/L-CapHeap/1085b-a-nullable-local-frees-what-it-displaces.loft::n_test_the_parameter_borrow_rows
+elab-pass1	agree	loft-suite/rules/closures/L-CapHeap/1725-a-reassigned-join-capture-keeps-the-store-its-record-holds.loft::n___lambda_r5_0
 elab-pass1	agree	loft-suite/rules/closures/L-CapHeap/1725-a-reassigned-join-capture-keeps-the-store-its-record-holds.loft::n_none
 elab-pass1	agree	loft-suite/rules/closures/L-CapHeap/1725-a-reassigned-join-capture-keeps-the-store-its-record-holds.loft::n_r1
 elab-pass1	agree	loft-suite/rules/closures/L-CapHeap/1725-a-reassigned-join-capture-keeps-the-store-its-record-holds.loft::n_r10
@@ -15818,9 +15849,11 @@ elab-pass1	agree	loft-suite/rules/closures/L-CapKeep/2273-a-fn-ref-copied-out-of
 elab-pass1	agree	loft-suite/rules/closures/L-CapKeep/2273-a-fn-ref-copied-out-of-a-field-is-a-copy.loft::n___lambda_f5_1
 elab-pass1	agree	loft-suite/rules/closures/L-CapKeep/2273-a-fn-ref-copied-out-of-a-field-is-a-copy.loft::n___lambda_install_0
 elab-pass1	agree	loft-suite/rules/closures/L-CapKeep/2273-a-fn-ref-copied-out-of-a-field-is-a-copy.loft::n___lambda_k1_0
+elab-pass1	agree	loft-suite/rules/closures/L-CapKeep/2273-a-fn-ref-copied-out-of-a-field-is-a-copy.loft::n___lambda_k2_0
 elab-pass1	agree	loft-suite/rules/closures/L-CapKeep/2273-a-fn-ref-copied-out-of-a-field-is-a-copy.loft::n___lambda_k3_0
 elab-pass1	agree	loft-suite/rules/closures/L-CapKeep/2273-a-fn-ref-copied-out-of-a-field-is-a-copy.loft::n___lambda_k4_0
 elab-pass1	agree	loft-suite/rules/closures/L-CapKeep/2273-a-fn-ref-copied-out-of-a-field-is-a-copy.loft::n___lambda_mk_0
+elab-pass1	agree	loft-suite/rules/closures/L-CapKeep/2273-a-fn-ref-copied-out-of-a-field-is-a-copy.loft::n___lambda_mkh_0
 elab-pass1	agree	loft-suite/rules/closures/L-CapKeep/2273-a-fn-ref-copied-out-of-a-field-is-a-copy.loft::n___lambda_n1_0
 elab-pass1	agree	loft-suite/rules/closures/L-CapKeep/2273-a-fn-ref-copied-out-of-a-field-is-a-copy.loft::n___lambda_n4_0
 elab-pass1	agree	loft-suite/rules/closures/L-CapKeep/2273-a-fn-ref-copied-out-of-a-field-is-a-copy.loft::n_c5
@@ -16522,10 +16555,52 @@ elab-pass1	agree	loft-suite/rules/closures/L-CapRebind/a-rebind-of-a-captured-lo
 elab-pass1	agree	loft-suite/rules/closures/L-CapRebind/a-rebind-of-a-captured-local-leaves-the-record-the-store-its-build-named.loft::n_twice
 elab-pass1	agree	loft-suite/rules/closures/L-CapRebind/a-rebind-of-a-captured-local-leaves-the-record-the-store-its-build-named.loft::n_twice_self
 elab-pass1	agree	loft-suite/rules/closures/L-CapRebind/a-rebind-of-a-captured-local-leaves-the-record-the-store-its-build-named.loft::t_3RbH_OpDrop
+elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft::n___lambda_after_0
+elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft::n___lambda_branch_0
+elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft::n___lambda_derived_0
+elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft::n___lambda_early_0
+elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft::n___lambda_field_0
+elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft::n___lambda_local_0
+elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft::n___lambda_looped_0
+elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft::n___lambda_nullable_0
+elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft::n___lambda_parameter_0
+elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft::n___lambda_test_a_captured_text_the_closure_writes_is_the_functions_result_0
+elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft::n___lambda_through_a_local_0
+elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft::n___lambda_twice_0
+elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft::n___lambda_two_0
+elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft::n___lambda_w_0
 elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft::n_parameter
 elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft::n_run
 elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft::n_test_a_frame_and_its_closure_both_write_a_captured_text
 elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-captured-text-a-closure-writes-is-the-functions-writes-and-all.loft::n_through_a_local
+elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-narrow-integer-capture-is-boxed-like-its-canonical-twin.loft::n___lambda_a_boolean_still_lands_0
+elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-narrow-integer-capture-is-boxed-like-its-canonical-twin.loft::n___lambda_a_boolean_still_lands_1
+elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-narrow-integer-capture-is-boxed-like-its-canonical-twin.loft::n___lambda_a_bounds_only_narrow_width_is_boxed_too_0
+elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-narrow-integer-capture-is-boxed-like-its-canonical-twin.loft::n___lambda_a_bounds_only_narrow_width_is_boxed_too_1
+elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-narrow-integer-capture-is-boxed-like-its-canonical-twin.loft::n___lambda_a_canonical_integer_still_lands_0
+elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-narrow-integer-capture-is-boxed-like-its-canonical-twin.loft::n___lambda_a_canonical_integer_still_lands_1
+elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-narrow-integer-capture-is-boxed-like-its-canonical-twin.loft::n___lambda_a_character_still_lands_0
+elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-narrow-integer-capture-is-boxed-like-its-canonical-twin.loft::n___lambda_a_character_still_lands_1
+elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-narrow-integer-capture-is-boxed-like-its-canonical-twin.loft::n___lambda_a_float_still_lands_0
+elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-narrow-integer-capture-is-boxed-like-its-canonical-twin.loft::n___lambda_a_float_still_lands_1
+elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-narrow-integer-capture-is-boxed-like-its-canonical-twin.loft::n___lambda_a_plain_enum_still_lands_0
+elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-narrow-integer-capture-is-boxed-like-its-canonical-twin.loft::n___lambda_a_plain_enum_still_lands_1
+elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-narrow-integer-capture-is-boxed-like-its-canonical-twin.loft::n___lambda_a_single_still_lands_0
+elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-narrow-integer-capture-is-boxed-like-its-canonical-twin.loft::n___lambda_a_single_still_lands_1
+elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-narrow-integer-capture-is-boxed-like-its-canonical-twin.loft::n___lambda_a_text_still_lands_0
+elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-narrow-integer-capture-is-boxed-like-its-canonical-twin.loft::n___lambda_a_text_still_lands_1
+elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-narrow-integer-capture-is-boxed-like-its-canonical-twin.loft::n___lambda_i16_write_lands_through_an_indirect_call_0
+elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-narrow-integer-capture-is-boxed-like-its-canonical-twin.loft::n___lambda_i16_write_lands_through_an_indirect_call_1
+elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-narrow-integer-capture-is-boxed-like-its-canonical-twin.loft::n___lambda_i32_write_lands_through_an_indirect_call_0
+elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-narrow-integer-capture-is-boxed-like-its-canonical-twin.loft::n___lambda_i32_write_lands_through_an_indirect_call_1
+elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-narrow-integer-capture-is-boxed-like-its-canonical-twin.loft::n___lambda_i8_write_lands_through_an_indirect_call_0
+elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-narrow-integer-capture-is-boxed-like-its-canonical-twin.loft::n___lambda_i8_write_lands_through_an_indirect_call_1
+elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-narrow-integer-capture-is-boxed-like-its-canonical-twin.loft::n___lambda_u16_write_lands_through_an_indirect_call_0
+elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-narrow-integer-capture-is-boxed-like-its-canonical-twin.loft::n___lambda_u16_write_lands_through_an_indirect_call_1
+elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-narrow-integer-capture-is-boxed-like-its-canonical-twin.loft::n___lambda_u32_write_lands_through_an_indirect_call_0
+elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-narrow-integer-capture-is-boxed-like-its-canonical-twin.loft::n___lambda_u32_write_lands_through_an_indirect_call_1
+elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-narrow-integer-capture-is-boxed-like-its-canonical-twin.loft::n___lambda_u8_write_lands_through_an_indirect_call_0
+elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-narrow-integer-capture-is-boxed-like-its-canonical-twin.loft::n___lambda_u8_write_lands_through_an_indirect_call_1
 elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/a-narrow-integer-capture-is-boxed-like-its-canonical-twin.loft::n_call_it
 elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/two-closures-share-a-struct-field-in-both-directions.loft::n___lambda_test_one_closure_reassigning_a_scalar_keeps_its_own_write_0
 elab-pass1	agree	loft-suite/rules/closures/L-CapWrite/two-closures-share-a-struct-field-in-both-directions.loft::n___lambda_test_two_closures_over_one_struct_see_each_others_writes_0
@@ -19218,6 +19293,10 @@ elab-pass1	agree	loft-suite/rules/operational/E-And/2259-two-calls-with-one-text
 elab-pass1	agree	loft-suite/rules/operational/E-And/2259-two-calls-with-one-text-are-two-calls.loft::n_test_identical_calls_each_run
 elab-pass1	agree	loft-suite/rules/operational/E-And/2259-two-calls-with-one-text-are-two-calls.loft::n_tick2259
 elab-pass1	agree	loft-suite/rules/operational/E-And/2259-two-calls-with-one-text-are-two-calls.loft::n_walk2259
+elab-pass1	agree	loft-suite/rules/operational/E-And/a-decided-left-operand-skips-a-side-effecting-right.loft::n___lambda_test_a_chain_runs_only_what_it_needs_0
+elab-pass1	agree	loft-suite/rules/operational/E-And/a-decided-left-operand-skips-a-side-effecting-right.loft::n___lambda_test_a_null_left_operand_reads_false_0
+elab-pass1	agree	loft-suite/rules/operational/E-And/a-decided-left-operand-skips-a-side-effecting-right.loft::n___lambda_test_and_skips_the_right_when_the_left_is_false_0
+elab-pass1	agree	loft-suite/rules/operational/E-And/a-decided-left-operand-skips-a-side-effecting-right.loft::n___lambda_test_the_word_spellings_short_circuit_too_0
 elab-pass1	agree	loft-suite/rules/operational/E-And/a-decided-left-operand-skips-a-side-effecting-right.loft::n_nb
 elab-pass1	agree	loft-suite/rules/operational/E-And/a-decided-left-operand-skips-a-side-effecting-right.loft::n_test_a_chain_runs_only_what_it_needs
 elab-pass1	agree	loft-suite/rules/operational/E-And/a-decided-left-operand-skips-a-side-effecting-right.loft::n_test_a_null_left_operand_reads_false
@@ -19278,6 +19357,7 @@ elab-pass1	agree	loft-suite/rules/operational/E-Asgn/the-place-of-an-assignment-
 elab-pass1	agree	loft-suite/rules/operational/E-Coalesce/a-discharged-value-is-owned-by-its-binding.loft::n_show
 elab-pass1	agree	loft-suite/rules/operational/E-Coalesce/a-discharged-value-is-owned-by-its-binding.loft::n_total
 elab-pass1	agree	loft-suite/rules/operational/E-Concat/2046-a-character-joins-with-text-and-adds-with-an-integer.loft::n_nc
+elab-pass1	agree	loft-suite/rules/operational/E-Default/the-types-default-discharges-each-kind.loft::n___lambda_test_a_call_under_default_is_evaluated_once_0
 elab-pass1	agree	loft-suite/rules/operational/E-Default/the-types-default-discharges-each-kind.loft::n_nbool
 elab-pass1	agree	loft-suite/rules/operational/E-Default/the-types-default-discharges-each-kind.loft::n_nf
 elab-pass1	agree	loft-suite/rules/operational/E-Default/the-types-default-discharges-each-kind.loft::n_ni
@@ -19435,6 +19515,9 @@ elab-pass1	agree	loft-suite/rules/operational/E-Op/a-representable-result-and-th
 elab-pass1	agree	loft-suite/rules/operational/E-Op/a-representable-result-and-the-uncomputable-one.loft::n_test_float_results_follow_ieee
 elab-pass1	agree	loft-suite/rules/operational/E-Op/a-representable-result-and-the-uncomputable-one.loft::n_test_integer_add_and_subtract_at_the_edge
 elab-pass1	agree	loft-suite/rules/operational/E-Op/a-representable-result-and-the-uncomputable-one.loft::n_test_integer_multiply_and_divide
+elab-pass1	agree	loft-suite/rules/operational/E-Or/a-true-left-operand-skips-a-side-effecting-right.loft::n___lambda_test_a_null_left_operand_lets_the_right_decide_0
+elab-pass1	agree	loft-suite/rules/operational/E-Or/a-true-left-operand-skips-a-side-effecting-right.loft::n___lambda_test_a_null_left_operand_lets_the_right_decide_1
+elab-pass1	agree	loft-suite/rules/operational/E-Or/a-true-left-operand-skips-a-side-effecting-right.loft::n___lambda_test_or_skips_the_right_when_the_left_is_true_0
 elab-pass1	agree	loft-suite/rules/operational/E-Or/a-true-left-operand-skips-a-side-effecting-right.loft::n_nb
 elab-pass1	agree	loft-suite/rules/operational/E-Or/a-true-left-operand-skips-a-side-effecting-right.loft::n_test_a_null_left_operand_lets_the_right_decide
 elab-pass1	agree	loft-suite/rules/operational/E-Or/a-true-left-operand-skips-a-side-effecting-right.loft::n_test_or_skips_the_right_when_the_left_is_true
@@ -19492,6 +19575,7 @@ elab-pass1	agree	loft-suite/rules/operational/E-Uncomp-NN/every-uncomputable-arr
 elab-pass1	agree	loft-suite/rules/operational/E-Uncomp-NN/every-uncomputable-arrival-takes-the-default-whatever-code-is-spare.loft::n_test_zero_above_the_range
 elab-pass1	agree	loft-suite/rules/operational/E-Uncomp-NN/every-uncomputable-arrival-takes-the-default-whatever-code-is-spare.loft::n_test_zero_below_the_range
 elab-pass1	agree	loft-suite/rules/operational/E-Uncomp-NN/every-uncomputable-arrival-takes-the-default-whatever-code-is-spare.loft::n_test_zero_inside_the_range
+elab-pass1	agree	loft-suite/rules/operational/E-Uncomp-Seen/a-store-that-did-not-take-is-seen-only-beside-it.loft::n___lambda_test_the_next_if_reads_it_through_a_short_circuit_0
 elab-pass1	agree	loft-suite/rules/operational/E-Uncomp-Seen/a-store-that-did-not-take-is-seen-only-beside-it.loft::n_test_one_statement_apart_it_is_not_observed
 elab-pass1	agree	loft-suite/rules/operational/E-Uncomp-Seen/a-store-that-did-not-take-is-seen-only-beside-it.loft::n_test_the_next_if_reads_it_through_a_short_circuit
 elab-pass1	agree	loft-suite/rules/operational/E-Uncomp/1246-a-nullable-narrow-slot-answers-null.loft::n_as_arg
@@ -20068,6 +20152,7 @@ elab-pass1	agree	loft-suite/rules/ownership/O-Move/1327-an-opaque-fn-ref-return-
 elab-pass1	agree	loft-suite/rules/ownership/O-Move/1327-an-opaque-fn-ref-return-may-be-its-argument.loft::n_plain1327
 elab-pass1	agree	loft-suite/rules/ownership/O-Move/1327-an-opaque-fn-ref-return-may-be-its-argument.loft::n_test_a_branch_over_the_same_opaque_target
 elab-pass1	agree	loft-suite/rules/ownership/O-Move/1327-an-opaque-fn-ref-return-may-be-its-argument.loft::n_test_a_closure_through_a_parameter_does_not_free_the_callers_vector
+elab-pass1	agree	loft-suite/rules/ownership/O-Move/1327-an-opaque-fn-ref-return-may-be-its-argument.loft::n_test_a_named_function_parameter_is_unmoved
 elab-pass1	agree	loft-suite/rules/ownership/O-Move/1327-an-opaque-fn-ref-return-may-be-its-argument.loft::n_test_the_dense_parameter_spelling
 elab-pass1	agree	loft-suite/rules/ownership/O-Move/1327-an-opaque-fn-ref-return-may-be-its-argument.loft::n_test_the_mint_arm_costs_no_store_per_call
 elab-pass1	agree	loft-suite/rules/ownership/O-Move/1327-an-opaque-fn-ref-return-may-be-its-argument.loft::n_test_the_same_call_in_the_frame_that_owns_the_closure
@@ -23246,6 +23331,7 @@ elab-pass1	agree	selfhost/front/cells/a-generic-building-a-vector-of-its-variabl
 elab-pass1	agree	selfhost/front/cells/a-keyed-collection-returned-and-bound-from-a-call.loft::n_main
 elab-pass1	agree	selfhost/front/cells/a-keyed-literal-at-a-functions-tail.loft::n_main
 elab-pass1	agree	selfhost/front/cells/a-keyed-local-bound-from-a-field-or-an-if.loft::n_main
+elab-pass1	agree	selfhost/front/cells/a-lambda-appends-to-a-captured-vector.loft::n___lambda_main_0
 elab-pass1	agree	selfhost/front/cells/a-lambda-appends-to-a-captured-vector.loft::n_main
 elab-pass1	agree	selfhost/front/cells/a-link-that-walks-a-chain-of-child-records.loft::n_main
 elab-pass1	agree	selfhost/front/cells/a-link-that-walks-a-chain-of-child-records.loft::n_total
@@ -23786,6 +23872,7 @@ elab-pass1	agree	tests/scripts/1200-a-nullable-record-local-frees-what-it-displa
 elab-pass1	agree	tests/scripts/1200-a-nullable-record-local-frees-what-it-displaces.loft::n_test_the_source_return_may_be_dense
 elab-pass1	agree	tests/scripts/1200-a-nullable-record-local-frees-what-it-displaces.loft::n_test_the_surviving_store_is_still_returned
 elab-pass1	agree	tests/scripts/1200-a-nullable-record-local-frees-what-it-displaces.loft::n_test_two_arms_that_both_assign
+elab-pass1	agree	tests/scripts/1235-a-returned-text-outlives-its-store.loft::n___lambda_boxed1235_0
 elab-pass1	agree	tests/scripts/1235-a-returned-text-outlives-its-store.loft::n_boxed1235
 elab-pass1	agree	tests/scripts/1235-a-returned-text-outlives-its-store.loft::n_coalesce1235
 elab-pass1	agree	tests/scripts/1235-a-returned-text-outlives-its-store.loft::n_elem1235
@@ -25231,6 +25318,7 @@ elab-pass1	agree	tests/scripts/2493-a-block-arm-ending-in-a-local-joins-an-optio
 elab-pass1	agree	tests/scripts/2493-a-block-arm-ending-in-a-local-joins-an-optional-result.loft::n_txt
 elab-pass1	agree	tests/scripts/2493-a-block-arm-ending-in-a-local-joins-an-optional-result.loft::n_word
 elab-pass1	agree	tests/scripts/2494-a-tuple-text-member-read-off-a-tuple-borrows-in-a-str-slot.loft::n_side
+elab-pass1	agree	tests/scripts/2496-a-forward-typed-capture-beside-a-boolean-vector-has-its-storage.loft::n___lambda_summed_0
 elab-pass1	agree	tests/scripts/2496-a-forward-typed-capture-beside-a-boolean-vector-has-its-storage.loft::n_both
 elab-pass1	agree	tests/scripts/2496-a-forward-typed-capture-beside-a-boolean-vector-has-its-storage.loft::n_each
 elab-pass1	agree	tests/scripts/2496-a-forward-typed-capture-beside-a-boolean-vector-has-its-storage.loft::n_marked
@@ -25454,6 +25542,7 @@ elab-pass1	agree	tests/scripts/683-declaration-order-index-key.loft::n_f683_type
 elab-pass1	agree	tests/scripts/683-declaration-order-index-key.loft::n_k683_one
 elab-pass1	agree	tests/scripts/683-declaration-order-index-key.loft::n_k683_two
 elab-pass1	agree	tests/scripts/685-mutated-scalar-param-capture.loft::n___lambda_p685_bool_0
+elab-pass1	agree	tests/scripts/685-mutated-scalar-param-capture.loft::n___lambda_p685_char_0
 elab-pass1	agree	tests/scripts/685-mutated-scalar-param-capture.loft::n___lambda_p685_const_copied_0
 elab-pass1	agree	tests/scripts/685-mutated-scalar-param-capture.loft::n___lambda_p685_float_0
 elab-pass1	agree	tests/scripts/685-mutated-scalar-param-capture.loft::n___lambda_p685_int_0
@@ -25464,6 +25553,7 @@ elab-pass1	agree	tests/scripts/685-mutated-scalar-param-capture.loft::n___lambda
 elab-pass1	agree	tests/scripts/685-mutated-scalar-param-capture.loft::n___lambda_p685_param_and_local_1
 elab-pass1	agree	tests/scripts/685-mutated-scalar-param-capture.loft::n___lambda_p685_preset_0
 elab-pass1	agree	tests/scripts/685-mutated-scalar-param-capture.loft::n___lambda_p685_readonly_0
+elab-pass1	agree	tests/scripts/685-mutated-scalar-param-capture.loft::n___lambda_p685_text_len_0
 elab-pass1	agree	tests/scripts/685-mutated-scalar-param-capture.loft::n___lambda_p685_two_params_0
 elab-pass1	agree	tests/scripts/685-mutated-scalar-param-capture.loft::n___lambda_p685_two_params_1
 elab-pass1	agree	tests/scripts/685-mutated-scalar-param-capture.loft::n___lambda_p685_uncalled_0
@@ -25503,7 +25593,14 @@ elab-pass1	agree	tests/scripts/686-forward-declared-capture.loft::n_f686_scalar
 elab-pass1	agree	tests/scripts/686-forward-declared-capture.loft::n_f686_two_lambdas
 elab-pass1	agree	tests/scripts/686-forward-declared-capture.loft::n_f686_vector
 elab-pass1	agree	tests/scripts/686-forward-declared-capture.loft::n_main
+elab-pass1	agree	tests/scripts/687-mutated-text-param-capture.loft::n___lambda_p687_local_not_returned_0
+elab-pass1	agree	tests/scripts/687-mutated-text-param-capture.loft::n___lambda_p687_param_int_parent_0
+elab-pass1	agree	tests/scripts/687-mutated-text-param-capture.loft::n___lambda_p687_param_nested_return_0
+elab-pass1	agree	tests/scripts/687-mutated-text-param-capture.loft::n___lambda_p687_param_not_returned_0
+elab-pass1	agree	tests/scripts/687-mutated-text-param-capture.loft::n___lambda_p687_param_returned_0
 elab-pass1	agree	tests/scripts/687-mutated-text-param-capture.loft::n___lambda_p687_scalar_in_text_parent_0
+elab-pass1	agree	tests/scripts/687-mutated-text-param-capture.loft::n___lambda_p687_two_locals_0
+elab-pass1	agree	tests/scripts/687-mutated-text-param-capture.loft::n___lambda_p687_two_locals_1
 elab-pass1	agree	tests/scripts/687-mutated-text-param-capture.loft::n_p687_local_not_returned
 elab-pass1	agree	tests/scripts/687-mutated-text-param-capture.loft::n_p687_param_int_parent
 elab-pass1	agree	tests/scripts/687-mutated-text-param-capture.loft::n_p687_param_nested_return
@@ -27097,6 +27194,7 @@ elab-pass1	agree	tests/scripts/a-vector-of-raw-scalars-is-written-as-one-block.l
 elab-pass1	agree	tests/scripts/a-vector-of-raw-scalars-is-written-as-one-block.loft::n_put_u8
 elab-pass1	agree	tests/scripts/a-vector-of-scalars-clears-without-a-release-walk.loft::n_crossings
 elab-pass1	agree	tests/scripts/a-vector-of-scalars-clears-without-a-release-walk.loft::n_test_a_record_buffer_refilled
+elab-pass1	agree	tests/scripts/a-vector-only-read-keeps-its-header-beside-a-writer.loft::n___lambda_c6_0
 elab-pass1	agree	tests/scripts/a-vector-only-read-keeps-its-header-beside-a-writer.loft::n_c13
 elab-pass1	agree	tests/scripts/a-vector-only-read-keeps-its-header-beside-a-writer.loft::n_c14
 elab-pass1	agree	tests/scripts/a-vector-only-read-keeps-its-header-beside-a-writer.loft::n_c2
