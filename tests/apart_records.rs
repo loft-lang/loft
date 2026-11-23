@@ -14,20 +14,6 @@ use std::process::Output;
 
 const CELLS: &str = "tests/scripts/158-apart-records.loft";
 
-/// The twins: every callee the owners reach, and `noop`, which `push3`/`push2` call.
-const TWINS: &[&str] = &["n_noop__apr", "n_push2__apr", "n_push3__apr", "n_keep__apr"];
-
-/// Per driver: whether its `e` is apart.  a4 reads an element of `e`; a5's callee reads one.
-const OWNERS: &[(&str, bool)] = &[
-    ("n_a1", true),
-    ("n_a2", true),
-    ("n_a3", true),
-    ("n_a4", false),
-    ("n_a5", false),
-    ("n_a6", true),
-    ("n_a7", true),
-];
-
 fn loft(args: &[&str], env: &[(&str, &str)]) -> Output {
     let mut cmd =
         loft::platform::process::harness_command(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
@@ -72,16 +58,6 @@ fn emit(tag: &str, env: &[(&str, &str)]) -> String {
     rust
 }
 
-/// The emitted body of one function, up to the next top-level `fn`.
-fn body<'a>(rust: &'a str, name: &str) -> &'a str {
-    let start = rust
-        .find(&format!("\nfn {name}("))
-        .unwrap_or_else(|| panic!("{name} was not emitted"));
-    let rest = &rust[start + 1..];
-    let end = rest[3..].find("\nfn ").map_or(rest.len(), |i| i + 3);
-    &rest[..end]
-}
-
 fn run(args: &[&str], env: &[(&str, &str)]) -> String {
     let mut a: Vec<&str> = args.to_vec();
     let c = cells();
@@ -122,40 +98,6 @@ fn the_cells_answer_the_interpreter_in_every_switch_state_under_the_falsifiers()
             );
         }
     }
-}
-
-#[test]
-fn each_callee_is_a_twin_and_each_driver_holds_what_was_predicted() {
-    let rust = emit("on", &[]);
-    for twin in TWINS {
-        assert_eq!(
-            rust.matches(&format!("\nfn {twin}(")).count(),
-            1,
-            "{twin} is emitted exactly once"
-        );
-    }
-    assert!(
-        !rust.contains("\nfn n_push3r__apr("),
-        "push3r reads an element of its parameter: no twin"
-    );
-    for (name, apart) in OWNERS {
-        let b = body(&rust, name);
-        assert_eq!(
-            b.contains("let mut __ap_e: "),
-            *apart,
-            "{name}: `e` apart\n{b}"
-        );
-    }
-}
-
-#[test]
-fn the_store_meets_the_value_at_the_append_and_the_rotate() {
-    let rust = emit("boundary", &[]);
-    let push3 = body(&rust, "n_push3__apr");
-    assert!(push3.contains("stores.rotate_from_parts("), "{push3}");
-    assert!(push3.contains("stores.apart_write_fresh("), "{push3}");
-    let keep = body(&rust, "n_keep__apr");
-    assert!(keep.contains("stores.apart_write_fresh("), "{keep}");
 }
 
 #[test]

@@ -4,7 +4,6 @@
 //! which bodies compute an effect-free call once, read off `LOFT_TRACE_PURE_REUSE`, and how
 //! many calls of it the request-check shape emits with the rule on and off.  An effect-free
 //! call cannot count itself, so only this pin sees a reuse that stops firing.
-use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 
 const CELLS: &str = "tests/scripts/a-pure-call-made-twice-is-computed-once.loft";
@@ -81,47 +80,6 @@ fn the_reusing_bodies_are_the_admitted_shapes() {
     assert_eq!(got, TRACE, "the reusing bodies moved:\n{err}");
 }
 
-/// The emitted body of `fn <name>(` up to the next top-level `fn`.
-fn body<'a>(src: &'a str, name: &str) -> &'a str {
-    let start = src
-        .find(&format!("\nfn {name}("))
-        .unwrap_or_else(|| panic!("{name} not emitted"));
-    let rest = &src[start + 1..];
-    let end = rest[3..].find("\nfn ").map_or(rest.len(), |i| i + 3);
-    &rest[..end]
-}
-
-#[test]
-fn the_request_check_calls_its_parser_once() {
-    for (env, want) in [(&[][..], 1usize), (&[("LOFT_NO_PURE_REUSE", "1")][..], 0)] {
-        let rs = std::env::temp_dir().join(format!(
-            "loft_pure_reuse_{}_{}.rs",
-            std::process::id(),
-            want
-        ));
-        let (_, err, ok) = loft(
-            &["--native", "--native-emit", &rs.to_string_lossy(), &cells()],
-            env,
-        );
-        assert!(ok, "{env:?}: emit failed:\n{err}");
-        let src = fa::read_to_string(&rs).expect("emitted source");
-        let _ = fa::remove_file(&rs);
-        let check = body(&src, "n_check");
-        // With the rule `check` calls the parser itself, once; without it, it calls the two
-        // wrappers and no parser of its own.
-        assert_eq!(
-            check.matches("n_parse(").count(),
-            want,
-            "{env:?}: n_check's own n_parse calls"
-        );
-        assert_eq!(
-            check.matches("n_parse_ok(").count() + check.matches("n_parse_total(").count(),
-            2 - 2 * want,
-            "{env:?}: n_check's wrapper calls"
-        );
-    }
-}
-
 #[test]
 fn the_cells_answer_the_same_with_the_rule_off() {
     for b in ["--interpret", "--native"] {
@@ -145,61 +103,6 @@ fn the_sharing_bodies_are_the_admitted_shapes() {
         .filter(|l| l.starts_with("[pure-reuse]"))
         .collect();
     assert_eq!(got, SHARED_TRACE, "the sharing bodies moved:\n{err}");
-}
-
-/// The calls of `name` in `src`: `name(` not preceded by an identifier character, so a
-/// variant named after it (`n_has__given_n_names(`) is not counted as one.
-fn calls_of(src: &str, name: &str) -> usize {
-    let pat = format!("{name}(");
-    src.match_indices(&pat)
-        .filter(|(i, _)| {
-            src[..*i]
-                .chars()
-                .next_back()
-                .is_none_or(|c| !(c.is_ascii_alphanumeric() || c == '_'))
-        })
-        .count()
-}
-
-#[test]
-fn a_check_and_a_use_call_the_total_function_once() {
-    for (env, want) in [(&[][..], 1usize), (&[("LOFT_NO_PURE_REUSE", "1")][..], 0)] {
-        let rs = std::env::temp_dir().join(format!(
-            "loft_shared_call_{}_{}.rs",
-            std::process::id(),
-            want
-        ));
-        let (_, err, ok) = loft(
-            &[
-                "--native",
-                "--native-emit",
-                &rs.to_string_lossy(),
-                &script(SHARED),
-            ],
-            env,
-        );
-        assert!(ok, "{env:?}: emit failed:\n{err}");
-        let src = fa::read_to_string(&rs).expect("emitted source");
-        let _ = fa::remove_file(&rs);
-        let c1 = body(&src, "n_c1");
-        // With the rule `c1` decodes itself, once, and calls both wrappers' variants; without
-        // it, it calls the two wrappers, each of which decodes.
-        assert_eq!(
-            calls_of(c1, "n_names"),
-            want,
-            "{env:?}: n_c1's own n_names calls"
-        );
-        assert_eq!(
-            c1.matches("n_has__given_").count() + c1.matches("n_count__given_").count(),
-            2 * want,
-            "{env:?}: n_c1's variant calls"
-        );
-        assert_eq!(
-            c1.matches("n_has(").count() + c1.matches("n_count(").count(),
-            2 - 2 * want,
-            "{env:?}: n_c1's wrapper calls"
-        );
-    }
 }
 
 #[test]

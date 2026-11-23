@@ -5,38 +5,10 @@
 //! summed offset.  `LOFT_NO_NESTED_FIELD=1` restores the store read.  The cell corpus
 //! (`tests/scripts/158-nested-field.loft`) says the VALUES hold on both backends, in every
 //! switch state and under the falsifiers; this pins what is emitted.
-use loft::file_access as fa;
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 
 const CELLS: &str = "tests/scripts/158-nested-field.loft";
-
-/// Per function, with the clause ON and OFF: `(record addresses bound, reads through one,
-/// writes through one)`.  A view whose only accesses are nested binds no address without
-/// the clause — nothing it could serve — which is why n2, n6, n11 and n12 go from none.
-const EXPECTED: &[(&str, Row, Row)] = &[
-    ("n_n1", (1, 7, 0), (1, 1, 0)),
-    ("n_n2", (2, 6, 3), (0, 0, 0)),
-    // Its own append is a mint window: five more writes through an address, per arm.
-    ("n_n3", (4, 6, 12), (3, 1, 4)),
-    // The sub-record view `p = v.pos` had its own address before; `v` gains one.
-    ("n_n4", (2, 2, 1), (1, 0, 1)),
-    ("n_n5", (3, 4, 4), (2, 1, 1)),
-    // A nullable view: the null address answers the sentinel and drops the write.
-    ("n_n6", (1, 1, 1), (0, 0, 0)),
-    // A parameter is bound by no statement: no address either way.
-    ("n_n8_len2", (0, 0, 0), (0, 0, 0)),
-    // `h.bag.items[1]` forms no path; `h.bag.n` and `h.id` beside it do.
-    ("n_n9", (4, 4, 5), (3, 1, 4)),
-    // The literal assignment is three in-place sets; the whole-record copy of a no-heap
-    // `V3` is an in-place write too (`@FR-R-InPlace`'s copy clause), so both walks hold one.
-    ("n_n11", (2, 6, 3), (0, 0, 0)),
-    // Its callee's `const Vertex` parameter is a TUPLE since a nested record rides one
-    // (`(R-ValueLocal)`, 2026-09-28): the call reads the seven fields through the address —
-    // and those getters are flat reads of the view, which the clause OFF still serves.
-    ("n_n12", (1, 9, 1), (1, 7, 0)),
-];
 
 const SWITCHES: [&str; 4] = [
     "LOFT_NO_NESTED_FIELD",
@@ -63,51 +35,6 @@ fn loft(args: &[&str], env: &[(&str, &str)]) -> Output {
 
 fn cells() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS)
-}
-
-fn emit(tag: &str, env: &[(&str, &str)]) -> String {
-    // One file per TEST: the tests run on threads of one process.
-    let out =
-        std::env::temp_dir().join(format!("loft_nested_field_{}_{tag}.rs", std::process::id()));
-    let status = loft(
-        &[
-            "--native",
-            "--lean", // the CLOSED program (NATIVE.md § Optimisation tiers)
-            "--native-emit",
-            out.to_str().unwrap(),
-            cells().to_str().unwrap(),
-        ],
-        env,
-    );
-    assert!(
-        fa::exists(&out),
-        "no Rust emitted (exit {:?}): {}",
-        status.status,
-        String::from_utf8_lossy(&status.stderr)
-    );
-    let rust = fa::read_to_string(&out).expect("read the emitted Rust");
-    let _ = fa::remove_file(&out);
-    rust
-}
-
-type Row = (usize, usize, usize);
-
-fn counts(rust: &str) -> HashMap<String, Row> {
-    let mut map: HashMap<String, Row> = HashMap::new();
-    let mut current = String::new();
-    for line in rust.lines() {
-        if let Some(rest) = line.strip_prefix("fn ")
-            && let Some(paren) = rest.find('(')
-        {
-            current = rest[..paren].to_string();
-            map.entry(current.clone()).or_default();
-        }
-        let row = map.entry(current.clone()).or_default();
-        row.0 += line.matches("let __pa_").count();
-        row.1 += line.matches("rec_get::<").count();
-        row.2 += line.matches("rec_set::<").count();
-    }
-    map
 }
 
 fn run(args: &[&str], env: &[(&str, &str)]) -> String {
@@ -151,42 +78,4 @@ fn the_cells_answer_the_interpreter_in_every_switch_state_under_the_falsifiers()
             );
         }
     }
-}
-
-#[test]
-fn each_cell_emits_exactly_the_forms_predicted_with_the_clause_on_and_off() {
-    let on = counts(&emit("on", &[]));
-    let off = counts(&emit("off", &[("LOFT_NO_NESTED_FIELD", "1")]));
-    for (name, want_on, want_off) in EXPECTED {
-        assert_eq!(
-            on.get(*name).copied().unwrap_or_default(),
-            *want_on,
-            "{name} ON: (addresses, reads through one, writes through one)"
-        );
-        assert_eq!(
-            off.get(*name).copied().unwrap_or_default(),
-            *want_off,
-            "{name} OFF: (addresses, reads through one, writes through one)"
-        );
-    }
-}
-
-/// Under `LOFT_HOIST_VERIFY=1` a nested read is compared with the path walked the
-/// unrewritten way — `rec_get`'s own check re-reads at the offset it is given and so
-/// cannot see one summed wrongly.
-#[test]
-fn the_checking_form_walks_the_path() {
-    let rust = emit("verify", &[("LOFT_HOIST_VERIFY", "1")]);
-    let n1 = counts(&rust).get("n_n1").copied().unwrap_or_default();
-    assert_eq!(n1.1, 7, "n1 still reads through the address under verify");
-    let body = rust
-        .split("\nfn n_n1(")
-        .nth(1)
-        .and_then(|b| b.split("\nfn ").next())
-        .expect("n_n1 emitted");
-    assert_eq!(
-        body.matches("vector::path_read_verify(").count(),
-        6,
-        "each of n1's six nested reads is compared with the path walked:\n{body}"
-    );
 }

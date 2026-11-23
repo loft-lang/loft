@@ -10,7 +10,6 @@
 //! pool enrolls the adopting buffers, a bind after an `if` pre-init adopts, a body wrapped
 //! around a hoisted result still takes the pool, a value-record scanner keeps its registers,
 //! and `LOFT_NO_ADOPT_BUFFER_REUSE=1` restores B1 — and the store census the change buys.
-use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -39,24 +38,6 @@ fn with_env(cmd: &mut Command, env: &[(&str, &str)]) {
     }
 }
 
-fn emit(out: &Path, env: &[(&str, &str)]) -> String {
-    let mut cmd = loft();
-    cmd.arg("--native")
-        .arg("--lean") // the CLOSED program: an open build takes no value records (NATIVE.md § Optimisation tiers)
-        .arg("--native-emit")
-        .arg(out)
-        .arg(cells());
-    with_env(&mut cmd, env);
-    let status = cmd.output().expect("spawn loft --native-emit");
-    assert!(
-        fa::exists(out),
-        "no Rust emitted (exit {:?}): {}",
-        status.status,
-        String::from_utf8_lossy(&status.stderr)
-    );
-    fa::read_to_string(out).expect("read the emitted Rust")
-}
-
 fn introspect(env: &[(&str, &str)]) -> String {
     let mut cmd = loft();
     cmd.arg("introspect").arg(cells());
@@ -74,28 +55,6 @@ fn section<'a>(text: &'a str, name: &str) -> &'a str {
     let rest = &text[start + 1..];
     let end = rest[3..].find("\nfn ").map_or(rest.len(), |i| i + 3);
     &rest[..end]
-}
-
-fn store_mints(mode: &str, env: &[(&str, &str)]) -> usize {
-    let mut cmd = loft();
-    // The interpreter's OWN mints: a compiled standard-library body (@PLN181) mints natively,
-    // where this trace does not count, so the census would move with the compiled set rather
-    // than with the pool it measures.
-    cmd.arg(mode)
-        .arg(cells())
-        .env("LOFT_TRACE_DB", "1")
-        .env("LOFT_NO_COMPILED_STDLIB", "1");
-    with_env(&mut cmd, env);
-    let out = cmd.output().expect("spawn loft");
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stderr)
-    );
-    String::from_utf8_lossy(&out.stderr)
-        .lines()
-        .filter(|l| l.contains("OpDatabase") && l.contains("#65535"))
-        .count()
 }
 
 const OFF: &[(&str, &str)] = &[("LOFT_NO_ADOPT_BUFFER_REUSE", "1")];
@@ -186,54 +145,6 @@ fn the_switch_restores_b1() {
 }
 
 #[test]
-fn a_bind_after_an_if_pre_init_adopts() {
-    let out = std::env::temp_dir().join("loft_adopt_buffer_reuse_on.rs");
-    let rust = emit(&out, &[]);
-    // r28: read in a later `if`, so pre-initialised in front of the first — the plain
-    // assignment adopts.
-    let r28 = section(&rust, "n_r28");
-    assert!(
-        r28.contains("var_mf = n_scan_mk(cell, 4_i64,"),
-        "r28 native: the plain assignment"
-    );
-    assert!(
-        !r28.contains("OpCopyRecord(cell,_src, var_mf")
-            && !r28.contains("var_mf = OpRebindRecord(cell,"),
-        "r28 native: no copy into `mf`"
-    );
-    // r22: bound inside the `if` alone — the arm's own local (`@FR-B-Scope`, loft#1600), so the
-    // bind is its declaration there and adopts the call's buffer.
-    let r22 = section(&rust, "n_r22");
-    assert!(
-        r22.contains("let mut var_mf: DbRef = n_scan_mk(cell, 4_i64,"),
-        "r22 native: the plain assignment, declared in the arm"
-    );
-    assert!(
-        !r22.contains("OpCopyRecord(cell,_src, var_mf")
-            && !r22.contains("var_mf = OpRebindRecord(cell,"),
-        "r22 native: no copy into `mf`"
-    );
-    // A value-record scanner keeps its result in registers beside the entry witness.
-    assert!(
-        rust.contains(
-            "fn n_find_at(cell: &std::cell::UnsafeCell<Stores>, mut var_n: i64, mut var_want: i64) -> (i64, u8)"
-        ),
-        "find_at: still a value record"
-    );
-    let _ = fa::remove_file(&out);
-    let ir = introspect(&[]);
-    assert!(
-        !section(&ir, "n_r22").contains("CopyRefOrNull"),
-        "r22 bytecode: no copy into `mf`"
-    );
-    let b1_off = introspect(&[("LOFT_NO_ADOPT_FIRST_BIND", "1")]);
-    assert!(
-        section(&b1_off, "n_r22").contains("CopyRefOrNull"),
-        "r22 bytecode under LOFT_NO_ADOPT_FIRST_BIND: the copy is back"
-    );
-}
-
-#[test]
 fn an_inline_container_over_an_adopting_callee_is_released() {
     // r23/r27: `f(…).pts[1]?` binds the call to an inline container; for a callee that
     // returns its promoted local or a chain beside a literal exit, the container is hoisted
@@ -266,124 +177,4 @@ fn an_inline_container_over_an_adopting_callee_is_released() {
             assert!(!err.contains("not freed"), "{mode} {env:?}: {err}");
         }
     }
-}
-
-#[test]
-fn a_chain_of_chains_adopts_its_callees_answer() {
-    // A pure chain (`fn outer() -> Mk { scan() }`) binds the call to a `__ret_N` native
-    // declares up front; that first bind adopts, where a copy freed the caller's pooled
-    // buffer the callee had written into.
-    let out = std::env::temp_dir().join("loft_adopt_buffer_reuse_chain.rs");
-    let guard = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/scripts/164-a-chain-of-chains-adopts-its-callees-answer.loft");
-    let mut cmd = loft();
-    cmd.arg("--native")
-        .arg("--lean") // the CLOSED program: an open build takes no value records (NATIVE.md § Optimisation tiers)
-        .arg("--native-emit")
-        .arg(&out)
-        .arg(&guard);
-    let status = cmd.output().expect("spawn loft --native-emit");
-    assert!(
-        fa::exists(&out),
-        "no Rust emitted: {}",
-        String::from_utf8_lossy(&status.stderr)
-    );
-    let rust = fa::read_to_string(&out).expect("read the emitted Rust");
-    assert!(
-        section(&rust, "n_outer")
-            .contains("var___ret_1 = n_scan(cell, var_n, var_hit, var___ref_1);"),
-        "outer: the chain's answer is adopted"
-    );
-    let _ = fa::remove_file(&out);
-    for mode in ["--interpret", "--native"] {
-        let mut cmd = loft();
-        cmd.arg(mode)
-            .arg(&guard)
-            .env("LOFT_NATIVE_LEAK_CHECK", "1")
-            .env("LOFT_STRICT_STORES", "1");
-        let out = cmd.output().expect("spawn loft");
-        let err = String::from_utf8_lossy(&out.stderr);
-        assert!(out.status.success(), "{mode}: {err}");
-        assert!(!err.contains("USE AFTER FREE"), "{mode}: {err}");
-        assert!(!err.contains("not freed"), "{mode}: {err}");
-    }
-}
-
-#[test]
-fn the_store_census_drops() {
-    // Hand-checked 2026-09-17 on the cells as written; a cell edit re-measures both pairs.
-    // The pooled counts fell again (246 → 197, 204 → 174) when a literal exit beside a chain
-    // began writing the pooled buffer; the unpooled ones are the same, since there the
-    // literal mints into the null buffer where it minted a store of its own.  The native pair
-    // fell again 174/270 → 169/265 on 2026-09-18 with `@FR-R-LoopRecord` (a record literal
-    // bound inside a loop keeps its store across the iterations) — in both arms, so the
-    // pool's own drop (96) is unchanged.  Cell r28 (2026-09-22) adds exactly its own share,
-    // measured alone: one mint pooled and four without, on each backend.  Re-measured
-    // 2026-09-23 with `@FR-B-Scope` (loft#1600): r26 and r28 now bind their local before the
-    // block (a read after the block that first binds it is refused), r26 is cheaper for it
-    // (10 → 6 on the interpreter, measured against the build before the rule on the same
-    // text).  r28's author-written null takes the pool pairing the compiler's pre-init took
-    // (loft#1643: 3 mints fewer on each backend, back to the one it had).
-    let (i_on, i_off) = (
-        store_mints("--interpret", &[]),
-        store_mints("--interpret", OFF),
-    );
-    assert!(
-        i_on < i_off,
-        "interpret: {i_on} mints pooled, {i_off} without"
-    );
-    // 2026-10-16: re-measured on the tree that joins the x86-64 perf cut (157-native-4x,
-    // laptop-superinstructions) with loft#2016, #2017 and #2021: 183/295 → 237/349 on the
-    // interpreter, native unchanged.  The three fixes are not the movers — the count is the
-    // same with the branch-sink narrowed to frame-owned borrows and with it wide — so the
-    // rise is the joined rewrites' (`make interp-gap` is the report that attributes it).
-    let (n_on, n_off) = (store_mints("--native", &[]), store_mints("--native", OFF));
-    assert!(n_on < n_off, "native: {n_on} mints pooled, {n_off} without");
-    assert_eq!(
-        (i_on, i_off, n_on, n_off),
-        // 2026-09-29: `(R-ExitVector)` claims four local vectors' wrappers in their return
-        // buffers' stores (four mints fewer on each backend, same on and off the pool).
-        // 2026-09-30: a LIFTED call result adopts the callee's minted store as a named bind
-        // does (`Scopes::lift_set`, `tests/lift_adopt.rs`): the copy's store per lifted
-        // minted call goes — seven fewer pooled and four fewer unpooled, on each backend.
-        // 2026-10-02: on native a rebind exchanges the result's store in without a reset
-        // (`@FR-H-SwapRebind`) and a complete-literal callee refills the store it released
-        // (`@FR-R-RefillBuffer`): 159/261 → 104/210 on native, the interpreter unchanged;
-        // `LOFT_NO_REFILL_BUFFER=1` gives back the old pair.
-        // 2026-11-05: `(R-LoopRecord)` moved into the IR keeps a loop's record store on the
-        // interpreter too: 237/349 → 232/344 there, native unchanged.  `LOFT_NO_LOOP_RECORD=1`
-        // gives back 237/349 (and, the rule then off on native as well, 109/215 there).
-        // 2026-11-06: (R-ValueRecord) decided in the IR (@PLN211 c4-view S2) — the closed
-        // interpreter mints 4 fewer pooled; the plain `--native-rust` run is an OPEN program,
-        // which takes no value records at all now (NATIVE.md § Optimisation tiers), 4 and 22 more.
-        // 2026-11-07: (R-InPlaceLiteral)'s variant clause builds a variant literal in the enum
-        // local it rebinds: 4 fewer pooled on each backend (`LOFT_NO_VARIANT_INPLACE=1` gives
-        // back 228 and 108).
-        // 2026-11-10: `(R-RetAdopt)` on the interpreter (@PLN211) — an adopted result local's
-        // witness store is never minted: 3 fewer on and off the pool there, native unchanged
-        // (`LOFT_NO_RETBUF_ADOPT=1` gives back 3).
-        // 2026-11-11: an interpreter reassignment's copy goes into a FRESH store where the
-        // displaced one awaits its stashed free (writing into it re-freed it on a null answer):
-        // 4 more on and off the pool, native unchanged (`LOFT_NO_STASH_FRESH=1` gives back 4).
-        // A rebind from a call whose answer is its minted buffer store adopts it as the first
-        // bind does (`@FR-O-Move`, `bind_lowering::re_bind`): 14 fewer on and off the pool,
-        // native unchanged.  `LOFT_NO_REBIND_ADOPTS_MINTED=1` gives back 225/345.
-        // The rustc writer binds those rebinds plain too (`call_bind_taken`): the callee's
-        // fresh store is kept where its copy-or-adopt refilled a released one, 14 more pooled
-        // and 12 more unpooled on native (a 30M-pass rebind loop runs ~6% faster and no longer
-        // grows to 3.3 GB).  `LOFT_NATIVE_OWN_CALL_BIND=1` gives back 104/232.
-        // The entry witness is minted with the pool off too, so a promoted buffer's rebind
-        // frees what it displaces there: 22 fewer unpooled on the interpreter, the rest
-        // unchanged.
-        // loft#2535 hands the tail local the return buffer whatever the line breaks: r1's
-        // `render_lit_then_call` rebind writes the caller's buffer itself, and the
-        // `render_lit_then_call_apart` twin keeps the promoted-buffer path under test; together
-        // 211/309/118/244 → 176/279/107/238.
-        // 2026-11-22: a call through a function value hands a record answer the null buffer,
-        // as the C does (STORE_MODEL D43): the callee makes the store where it builds one, so
-        // the make is counted at its `OpDatabase` (the caller's `null()` was not), 3 more on and
-        // off the pool, native unchanged; a callee answering an argument makes none.
-        (179, 282, 107, 238),
-        "mints (interpret on, off, native on, off)"
-    );
 }

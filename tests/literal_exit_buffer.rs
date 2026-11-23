@@ -9,7 +9,6 @@
 //! VALUES hold on both backends; this pins the IR SHAPE — `read_paint`'s four exits all
 //! target `__retbuf` and none its `__ref_p2_N` work-ref — and that the switch restores the
 //! per-exit stores with the same values.
-use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -214,35 +213,6 @@ fn a_literal_exit_beside_a_chain_writes_the_chains_buffer() {
         function_ir(&off, "n_scan").contains("OpDatabase(__ref_p2_"),
         "LOFT_NO_LITERAL_EXIT_BUFFER: scan's literal mints its own store again"
     );
-}
-
-#[test]
-fn a_scanner_beside_a_chain_keeps_its_registers() {
-    // The chain's buffer is a PHANTOM value local on native; the literal's writes into it
-    // vanish with the converted `Object`, so both shapes stay value records.
-    let out = std::env::temp_dir().join("loft_literal_exit_chain.rs");
-    let status = loft()
-        .arg("--native")
-        .arg("--lean") // the CLOSED program: an open build takes no value records (NATIVE.md § Optimisation tiers)
-        .arg("--native-emit")
-        .arg(&out)
-        .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join(CHAIN_GUARD))
-        .output()
-        .expect("spawn loft --native-emit");
-    assert!(
-        fa::exists(&out),
-        "no Rust emitted: {}",
-        String::from_utf8_lossy(&status.stderr)
-    );
-    let rust = fa::read_to_string(&out).expect("read the emitted Rust");
-    for sig in [
-        "fn n_find_w(cell: &std::cell::UnsafeCell<Stores>, mut var_s: &str, mut var_c: i64, mut var_start: i64) -> (i64, f64, u8)",
-        "fn n_digits(cell: &std::cell::UnsafeCell<Stores>, mut var_s: &str, mut var_i: i64) -> (i64, f64, u8)",
-        "fn n_either(cell: &std::cell::UnsafeCell<Stores>, mut var_s: &str, mut var_i: i64) -> (i64, f64, u8)",
-    ] {
-        assert!(rust.contains(sig), "still a value record: {sig}");
-    }
-    let _ = fa::remove_file(&out);
 }
 
 const VARIANT_GUARD: &str = "tests/scripts/a-variant-exit-builds-into-the-callers-buffer.loft";

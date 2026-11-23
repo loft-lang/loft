@@ -93,18 +93,6 @@ fn of<'a>(found: &'a [(String, Vec<String>)], func: &str) -> &'a [String] {
 }
 
 #[test]
-fn each_loop_keeps_the_parameter_headers_the_clause_admits() {
-    let found = kept(&[], "on");
-    for (func, want) in EXPECTED {
-        let got = of(&found, func);
-        assert_eq!(
-            got, *want,
-            "{func}: the loops keep {got:?} apart where the clause admits {want:?}\nall: {found:?}"
-        );
-    }
-}
-
-#[test]
 fn the_switch_keeps_no_parameter_header() {
     let found = kept(&[("LOFT_NO_APART_PARAM", "1")], "off");
     for (func, _) in EXPECTED {

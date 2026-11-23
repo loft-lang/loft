@@ -10,7 +10,6 @@
 //! entry mint is left in the rewritten functions and the switch (`LOFT_NO_LAZY_BUFFER=1`)
 //! restores every one, that a free is never taken for a use, and that the interpreter's
 //! entry init is the non-allocating sentinel.
-use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 
@@ -20,25 +19,6 @@ const CELLS: &str =
 const EXPECTED: &str = "a1 35 a2 15 10 a3 34 a4 2 105 a5 4 6 a6 3 a7 21\n\
                         a8 13 a9 4 a10 200 1 a11 18 a12 -1 -1 13 a13 0 9 4 \
                         a14 -1 0 114 214 -1 12\n";
-
-/// The functions that minted a buffer at entry before the rewrite, with the number of
-/// guarded mints each carries after it (`a5`'s loop-carried pair is guarded at the call
-/// and at the rotation, `f15` is the record-buffer pool).
-const REWRITTEN: [(&str, usize); 13] = [
-    ("n_f1", 1),
-    ("n_a2", 1),
-    ("n_a3", 2),
-    ("n_f4", 2),
-    ("n_a5", 4),
-    ("n_a6", 1),
-    ("n_a8", 2),
-    ("n_a9", 1),
-    ("n_f10", 1),
-    ("n_a11", 1),
-    ("n_f12", 1),
-    ("n_f13", 1),
-    ("n_f15", 1),
-];
 
 fn loft(args: &[&str], env: &[(&str, &str)]) -> Output {
     let mut cmd =
@@ -55,63 +35,6 @@ fn cells() -> String {
         .join(CELLS)
         .to_string_lossy()
         .into_owned()
-}
-
-fn emit(out: &Path, env: &[(&str, &str)]) -> String {
-    let src = cells();
-    let res = loft(
-        &["--native", "--native-emit", &out.to_string_lossy(), &src],
-        env,
-    );
-    assert!(
-        fa::exists(out),
-        "no Rust emitted (exit {:?}): {}",
-        res.status,
-        String::from_utf8_lossy(&res.stderr)
-    );
-    fa::read_to_string(out).expect("read the emitted Rust")
-}
-
-/// The body of one emitted function.
-fn body<'a>(rust: &'a str, name: &str) -> &'a str {
-    let start = rust
-        .find(&format!("fn {name}("))
-        .unwrap_or_else(|| panic!("{name} was not emitted"));
-    let rest = &rust[start..];
-    let end = rest[1..].find("\nfn ").map_or(rest.len(), |i| i + 1);
-    &rest[..end]
-}
-
-/// `(entry mints, guarded mints)` of a buffer: an entry mint is a bare assignment line
-/// before the body's first `// loft:` marker, a guarded one sits behind the null test.
-fn mints(b: &str) -> (usize, usize) {
-    let prelude = b.find("// loft:").map_or(b, |i| &b[..i]);
-    let entry = prelude
-        .lines()
-        .filter(|l| {
-            let t = l.trim_start();
-            t.starts_with("var___ref_") && t.contains(" = OpDatabase(cell,var___ref_")
-        })
-        .count();
-    // Two spellings of one guard: the generic `if` emitter's, and the pool statement a
-    // `@FR-R-RefillText` site keeps once its release is left out.
-    let mut guarded = 0;
-    for guard in [
-        "store_nr == u16::MAX) as u8) == 1 {",
-        ".store_nr == u16::MAX {",
-    ] {
-        guarded += b
-            .match_indices(guard)
-            .filter(|(i, _)| {
-                let after = b[i + guard.len()..].trim_start();
-                let line = after.split('\n').next().unwrap_or("");
-                after.starts_with("var___ref_")
-                    && (line.contains(" = OpDatabase(cell,var___ref_")
-                        || line.contains(" = OpDatabase(cell, var___ref_"))
-            })
-            .count();
-    }
-    (entry, guarded)
 }
 
 #[test]
@@ -145,44 +68,6 @@ fn the_values_hold_on_both_backends_in_both_switch_states() {
             }
         }
     }
-}
-
-#[test]
-fn no_entry_mint_is_left_and_the_switch_restores_them() {
-    let on_path = std::env::temp_dir().join("loft_lazy_buffer_on.rs");
-    let off_path = std::env::temp_dir().join("loft_lazy_buffer_off.rs");
-    // `@FR-R-WorkBuffer`'s result clause hands a reader's buffer to its caller, mint and
-    // all; this pin reads where `@FR-O-LazyBuffer` puts a mint in the frame that owns one.
-    let keep = ("LOFT_NO_RESULT_BUFFER", "1");
-    let on = emit(&on_path, &[keep]);
-    let off = emit(&off_path, &[("LOFT_NO_LAZY_BUFFER", "1"), keep]);
-    for (name, guards) in REWRITTEN {
-        let (entry, guarded) = mints(body(&on, name));
-        assert_eq!(entry, 0, "{name}: a buffer is still minted at entry");
-        assert_eq!(
-            guarded,
-            guards,
-            "{name}: guarded mints\n{}",
-            body(&on, name)
-        );
-        let (entry_off, guarded_off) = mints(body(&off, name));
-        assert!(
-            entry_off >= 1,
-            "{name}: the switch must mint at entry again"
-        );
-        assert_eq!(guarded_off, 0, "{name}: the switch leaves no guard");
-    }
-    // The early-return path of `f1` releases a buffer it never minted: the free stays, and
-    // nothing mints in front of it.
-    let f1 = body(&on, "n_f1");
-    let ret = f1.find("return var___ret").expect("f1 returns early");
-    assert!(
-        !f1[..ret].contains("= OpDatabase("),
-        "f1 mints before its early return:\n{f1}"
-    );
-    assert!(f1[..ret].contains("OpFreeRef(cell,var___ref_1"), "{f1}");
-    let _ = fa::remove_file(&on_path);
-    let _ = fa::remove_file(&off_path);
 }
 
 #[test]

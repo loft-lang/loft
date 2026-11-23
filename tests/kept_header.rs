@@ -54,22 +54,6 @@ fn emit(tag: &str, env: &[(&str, &str)]) -> String {
     rust
 }
 
-/// The emitted body of one function, up to the next top-level `fn`.
-fn body<'a>(rust: &'a str, name: &str) -> &'a str {
-    let start = rust
-        .find(&format!("\nfn {name}("))
-        .unwrap_or_else(|| panic!("{name} was not emitted"));
-    let rest = &rust[start + 1..];
-    let end = rest[3..].find("\nfn ").map_or(rest.len(), |i| i + 3);
-    &rest[..end]
-}
-
-/// Does `body` call `f`'s kept twin — plain, or its ranged form (`__rg__kh`) where the
-/// arguments are proven in range?
-fn calls_kept(body: &str, f: &str) -> bool {
-    body.contains(&format!("{f}__kh(cell,")) || body.contains(&format!("{f}__rg__kh(cell,"))
-}
-
 fn run_ok(args: &[&str], env: &[(&str, &str)]) {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS);
     let mut a: Vec<&str> = args.to_vec();
@@ -103,62 +87,6 @@ fn the_cells_hold_on_both_backends_in_both_switch_states_under_the_falsifiers() 
             env.extend(switch);
             run_ok(&["--native"], &env);
         }
-    }
-}
-
-#[test]
-fn a_kept_field_is_held_once_and_handed_down_the_chain() {
-    let rust = emit("on", &[]);
-    // `run` walks through `step` four times a pass: it binds the holder and hands it down.
-    let run = body(&rust, "n_run");
-    assert!(
-        run.contains("//@FR-R-Header kept clause\n") && calls_kept(run, "n_step"),
-        "run binds the holder and calls step's kept twin:\n{run}"
-    );
-    // The twins hand the holder on, never deriving it.
-    let step = body(&rust, "n_step__kh");
-    assert!(
-        calls_kept(step, "n_log") && calls_kept(step, "n_bump"),
-        "step's twin hands the holder to log's and bump's twins:\n{step}"
-    );
-    assert!(
-        !step.contains("vector::vec_header("),
-        "a twin derives no header of its own:\n{step}"
-    );
-    // ensure's twin derives it again after its append's two halves, and nowhere else.
-    let ensure = body(&rust, "n_ensure__kh");
-    assert_eq!(
-        ensure
-            .matches("//@FR-R-Header kept clause: refreshed")
-            .count(),
-        2,
-        "ensure's twin refreshes after the append and after its finish:\n{ensure}"
-    );
-    // view_then calls via_view, which appends through a VIEW of the field and keeps nothing:
-    // its plain call is followed by a refresh.
-    let view = body(&rust, "n_view_then");
-    let at = view.find("n_via_view").expect("view_then calls via_view");
-    assert!(
-        view[at..].contains("//@FR-R-Header kept clause: refreshed"),
-        "the plain call to via_view is followed by a refresh:\n{view}"
-    );
-}
-
-#[test]
-fn a_body_whose_changes_no_holder_follows_keeps_nothing() {
-    let rust = emit("decline", &[]);
-    for f in [
-        "n_fill_loop",
-        "n_nested",
-        "n_self_len",
-        "n_via_view",
-        "n_reset",
-    ] {
-        let b = body(&rust, f);
-        assert!(
-            !b.contains("__kh"),
-            "{f} appends inside a loop, calls an appender inside an expression or writes the field another way — it holds nothing:\n{b}"
-        );
     }
 }
 

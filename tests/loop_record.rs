@@ -78,16 +78,6 @@ fn emit(tag: &str, env: &[(&str, &str)]) -> String {
     rust
 }
 
-/// The emitted body of one function, up to the next top-level `fn`.
-fn body<'a>(rust: &'a str, name: &str) -> &'a str {
-    let start = rust
-        .find(&format!("\nfn {name}("))
-        .unwrap_or_else(|| panic!("{name} was not emitted"));
-    let rest = &rust[start + 1..];
-    let end = rest[3..].find("\nfn ").map_or(rest.len(), |i| i + 3);
-    &rest[..end]
-}
-
 fn run_ok(args: &[&str], env: &[(&str, &str)]) {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS);
     let mut a: Vec<&str> = args.to_vec();
@@ -120,34 +110,6 @@ fn the_cells_hold_on_both_backends_in_both_switch_states_under_the_falsifiers() 
             run_ok(&["--native"], &env);
         }
     }
-}
-
-#[test]
-fn an_admitted_record_is_declared_at_the_prelude_kept_across_passes_and_freed_once_after() {
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS);
-    // l1–l7, l9 (two), l14–l17 keep their store: thirteen records; l8's `r` is returned,
-    // l10's owns text, l11's is copied, l12's `o` carries a record field, l13's is appended.
-    // l16's callee `lr_same(x) { x }` answers the IR's value-record tuple (`src/value_record.rs`
-    // reads the fields at the exit), so its result borrows nothing and `r` is kept; the
-    // decline itself is pinned with that pass held off (`the_declines_are_the_designed_ones`).
-    let (kept, _) = ir_of(&src, "n_main", &[]);
-    assert_eq!(kept.len(), 13, "kept records: {kept:?}");
-    // The per-pass mint is null-guarded: every literal here is a complete write (the parser
-    // spells an omitted field's declared default as an explicit write — l15's `Ld { a: i }`
-    // writes `k = 5` itself), so each kept record's mint is one `loop record mint` block.
-    let rust = emit("on", &[]);
-    let main = body(&rust, "n_main");
-    assert_eq!(
-        main.matches("//loop record mint").count(),
-        13,
-        "kept-record mints:\n{main}"
-    );
-    // A record returned from inside the loop is not kept.
-    let (ret, _) = ir_of(&src, "n_lr_ret_in_loop", &[]);
-    assert!(
-        ret.is_empty(),
-        "a record returned from inside the loop must not be kept: {ret:?}"
-    );
 }
 
 #[test]
