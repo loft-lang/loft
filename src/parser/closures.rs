@@ -507,6 +507,9 @@ pub(super) fn callee_param_writes(
     if let Some(v) = cache.get(&fn_nr) {
         return v.clone();
     }
+    if let Some(v) = summarised_param_writes(data, fn_nr) {
+        return v;
+    }
     let def = data.def(fn_nr);
     let n = def.attributes().len();
     // Break recursion: insert a placeholder before walking the body.
@@ -514,9 +517,10 @@ pub(super) fn callee_param_writes(
     if *def.code() == Value::Null || n == 0 {
         return vec![false; n];
     }
-    let body = def.code().clone();
+    // Walked in place: every borrow here is shared, and a clone of each callee's whole body
+    // per question was most of `loft check`'s time on a large program (loft#2620).
     let mut written = crate::fxhash::FxHashSet::default();
-    find_written_vars(&body, data, def.variables(), &mut written, cache);
+    find_written_vars(def.code(), data, def.variables(), &mut written, cache);
     let result: Vec<bool> = (0..n).map(|i| written.contains(&(i as u16))).collect();
     // Monotone merge with any prior placeholder entry.
     let prev = cache.get(&fn_nr).cloned().unwrap_or_else(|| vec![false; n]);
@@ -999,4 +1003,75 @@ fn collection_return_views_whole_binds(ret: &Type) -> bool {
     !crate::env_once!(std::env::var_os("LOFT_NO_COLLECTION_LOCAL_VIEW").is_some())
         && !matches!(ret.base(), Type::Reference(_, _) | Type::Enum(_, true, _))
         && crate::data::has_lifetime_concern(ret)
+}
+
+/// Whole-program parameter-write facts for the scope pass: per function, the
+/// [`callee_param_writes`] answer as the LEAST FIXPOINT over the call graph, computed once from
+/// the bodies as the scope pass receives them (loft#2620).
+///
+/// Asked per question with an empty cache, every answer re-walked the callee's whole call graph
+/// — the scope pass asks per function and per rewrite candidate, so a check of a 167-module
+/// program spent a large part of its cold minute in these walks — and the answer depended on
+/// the order the pass happened to reach functions in: a callee already scanned answered from
+/// its rewritten body, one not yet from the parser's, and a recursion cycle answered from
+/// whichever member was asked first.  The summary is one answer per function: the parser's
+/// bodies as the scope pass starts, and for a cycle every write any member makes through the
+/// cycle.  A program without recursion gets the same answer a fresh walk gave.
+#[must_use]
+pub(crate) struct ParamWritesSummary {
+    prev: Option<(usize, crate::fxhash::FxHashMap<u32, Vec<bool>>)>,
+}
+
+std::thread_local! {
+    static PARAM_WRITES: std::cell::RefCell<Option<(usize, crate::fxhash::FxHashMap<u32, Vec<bool>>)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Compute the summary for `data` and answer [`callee_param_writes`] from it until dropped.
+pub(crate) fn param_writes_summary(data: &Data) -> ParamWritesSummary {
+    let mut cur: crate::fxhash::FxHashMap<u32, Vec<bool>> = crate::fxhash::FxHashMap::default();
+    let fns: Vec<u32> = (0..data.definitions())
+        .filter(|&d| *data.def(d).code() != Value::Null && !data.def(d).attributes().is_empty())
+        .collect();
+    for d in 0..data.definitions() {
+        cur.insert(d, vec![false; data.def(d).attributes().len()]);
+    }
+    // Monotone: a round only adds writes, so it stops; each round reads the facts so far.
+    loop {
+        let mut changed = false;
+        for &d in &fns {
+            let def = data.def(d);
+            let mut written = crate::fxhash::FxHashSet::default();
+            find_written_vars(def.code(), data, def.variables(), &mut written, &mut cur);
+            let entry = cur.get_mut(&d).expect("every definition has an entry");
+            for (i, w) in entry.iter_mut().enumerate() {
+                if !*w && written.contains(&(i as u16)) {
+                    *w = true;
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    let key = std::ptr::from_ref(data) as usize;
+    let prev = PARAM_WRITES.with(|m| m.replace(Some((key, cur))));
+    ParamWritesSummary { prev }
+}
+
+impl Drop for ParamWritesSummary {
+    fn drop(&mut self) {
+        let prev = self.prev.take();
+        PARAM_WRITES.with(|m| *m.borrow_mut() = prev);
+    }
+}
+
+/// The summary's answer for `fn_nr`, when one is open for this `Data` and holds it.
+fn summarised_param_writes(data: &Data, fn_nr: u32) -> Option<Vec<bool>> {
+    let key = std::ptr::from_ref(data) as usize;
+    PARAM_WRITES.with(|m| match &*m.borrow() {
+        Some((k, map)) if *k == key => map.get(&fn_nr).cloned(),
+        _ => None,
+    })
 }

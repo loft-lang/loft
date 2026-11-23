@@ -11301,6 +11301,7 @@ extern crate loft;"
         // loft#1697 — the body cannot change while it is emitted, so the ownership oracle's
         // whole-function walk is done once here instead of once per question.
         let _defs_memo = crate::use_analysis::defs_memo_scope(self.data, def_nr);
+        let _own_memo = crate::use_analysis::ownership_memo_scope(self.data);
         let def = self.data.def(def_nr);
         // Skip Op functions with no callable body.
         if def.name().starts_with("Op") && *def.code() == Value::Null {

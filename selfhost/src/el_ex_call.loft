@@ -31,6 +31,7 @@ use el_ex_pattern;
 use el_ex_vector;
 use el_ex_name;
 use binds;
+use el_ex_into;
 
 // Does `n` read a variable whose template type names placeholder `h`?
 pub fn reads_over(n: ir::Node, tv: ir::Function, h: integer) -> boolean {
@@ -376,6 +377,10 @@ pub fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::T
     code = rewrite_vector_writes(e, wv, code, stale_row, bound);
     f = el_vars::stored(wv);
   }
+  // (`instance_prealloc`, the same walk's `OpPreAllocVector` arm, over every instance body.)
+  pv = el_vars::load(f);
+  code = instance_preallocs(e, pv, code);
+  f = el_vars::stored(pv);
   if rows_known && stale_row != fresh_row {
     code = retarget_rows(e, code, stale_row, fresh_row);
   }
@@ -924,6 +929,11 @@ fn write_triplets(e: el::El, vars: el_vars::Vars, ops: vector<ir::Node>, stale: 
       TyVector { inner: ci } => ir::TyVector { inner: ci, dep: [outv] },
       _ => ir::TyReference { n: type_def_nr(e, concrete), dep: [outv] }
     });
+    // (It REPLACES the template's own reservation of `out` directly in front, sized for the
+    // parameter's placeholder: kept, the instance reserved twice, `@FR-H-Stride`.)
+    if len(out) > 0 && match out[-1]! { NdCall { def_nr: pd, args: pa } => el::def(e, pd).name == "OpPreAllocVector" && len(pa) > 0 && pa[0]! == w, _ => false } {
+      out = out[0..len(out) - 1];
+    }
     out += [el_ir::cl(e, "OpPreAllocVector", [w, ir::NdInt { n: 1 }, ir::NdInt { n: size }])];
     out += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: vec_tp }, ir::NdInt { n: 65535 }]))];
     if concrete is TyVector {
@@ -938,6 +948,59 @@ fn write_triplets(e: el::El, vars: el_vars::Vars, ops: vector<ir::Node>, stale: 
     skip = 2;
   }
   out
+}
+
+// `Parser::instance_prealloc` (`@FR-H-Stride`): a reservation in an instance's body,
+// `OpPreAllocVector(v, n, size)`, takes the element width of the vector it reserves as that
+// vector's type stands in the instance — its storage element row's size — where the template
+// sized it for the parameter's placeholder.  A vector with no element row keeps the reservation
+// as written (capacity, which no read observes: `(Col-Capacity)`).
+pub fn instance_preallocs(e: el::El, vars: el_vars::Vars, n: ir::Node) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: instance_preallocs(e, vars, inner) },
+    NdCall { def_nr, args } => {
+      a2: vector<ir::Node> = [for a in args { instance_preallocs(e, vars, a) }];
+      if el::def(e, def_nr).name == "OpPreAllocVector" && len(a2) == 3 && a2[2]! is NdInt {
+        match a2[0]! {
+          NdVar { n: pv } => {
+            match el_types::base(el_vars::tp(vars, pv)) {
+              TyVector { inner: pin } => {
+                row = el_schema::content_type(e, el_types::without_deps(pin));
+                if row >= 0 && row < len(e.b.types) {
+                  a2[2] = ir::NdInt { n: e.b.types[row]!.size };
+                }
+              },
+              _ => {}
+            }
+          },
+          _ => {}
+        }
+      }
+      ir::NdCall { def_nr: def_nr, args: a2 }
+    },
+    NdCallRef { var, args } => ir::NdCallRef { var: var, args: [for a in args { instance_preallocs(e, vars, a) }] },
+    NdSet { var, inner } => ir::NdSet { var: var, inner: instance_preallocs(e, vars, inner) },
+    NdTuplePut { var, idx, inner } => ir::NdTuplePut { var: var, idx: idx, inner: instance_preallocs(e, vars, inner) },
+    NdReturn { inner } => ir::NdReturn { inner: instance_preallocs(e, vars, inner) },
+    NdDrop { inner } => ir::NdDrop { inner: instance_preallocs(e, vars, inner) },
+    NdYield { inner } => ir::NdYield { inner: instance_preallocs(e, vars, inner) },
+    NdIf { cond, t, f } => ir::NdIf { cond: instance_preallocs(e, vars, cond), t: instance_preallocs(e, vars, t), f: instance_preallocs(e, vars, f) },
+    NdInsert { items } => ir::NdInsert { items: [for o in items { instance_preallocs(e, vars, o) }] },
+    NdTuple { items } => ir::NdTuple { items: [for o in items { instance_preallocs(e, vars, o) }] },
+    NdParallel { arms } => ir::NdParallel { arms: [for o in arms { instance_preallocs(e, vars, o) }] },
+    NdIter { var, create, next, init } => ir::NdIter { var: var, create: instance_preallocs(e, vars, create), next: instance_preallocs(e, vars, next), init: instance_preallocs(e, vars, init) },
+    NdBlock { block } => {
+      b = block[0];
+      b.operators = [for o in b.operators { instance_preallocs(e, vars, o) }];
+      ir::NdBlock { block: [b] }
+    },
+    NdLoop { block } => {
+      b = block[0];
+      b.operators = [for o in b.operators { instance_preallocs(e, vars, o) }];
+      ir::NdLoop { block: [b] }
+    },
+    _ => n
+  }
 }
 
 // `retarget_parametric_type_rows`' rewrite: every `tp` / `…_tp` argument of an operator in `n`
@@ -1642,12 +1705,12 @@ pub fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::N
     }
     // `convert`'s tagged arm (`@FR-L-Null-Tag`, loft#1138): a `__nullable<S>` slot handed to an
     // `S?` parameter is read through its tag, so absence arrives as the reference null.
-    if is_nullable_wrapper(e, at) && pt is TyOptional && struct_ref(e, el_types::base(pt)) == el_ex_place::nullable_payload(e, el_types::struct_enum_def(at)) {
+    if is_nullable_wrapper(e, at) && pt is TyOptional && struct_ref(e, el_types::base(pt)) == el_ex_into::nullable_payload(e, el_types::struct_enum_def(at)) {
       if e.first_pass {
         conv += [arg];
         continue;
       }
-      rx = el_ex_place::read_through_tag(e, vars, ex(arg, at));
+      rx = el_ex_into::read_through_tag(e, vars, ex(arg, at));
       if rx == null {
         return null;
       }
@@ -1963,7 +2026,7 @@ pub fn template_object(e: el::El, vars: el_vars::Vars, parts: vector<integer>, t
   if e.first_pass {
     list = [el_ir::v_set(var, ir::NdNull), el_ir::cl(e, "OpDatabase", [ir::NdVar { n: var }, ir::NdInt { n: el::def(e, target).known_type }])];
   } else {
-    fl = el_ex_place::object_fields(e, vars, var, target, []);
+    fl = el_ex_into::object_fields(e, vars, var, target, []);
     if fl == null {
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
     }
@@ -3140,7 +3203,7 @@ pub fn coalesce(e: el::El, vars: el_vars::Vars, l: integer, r: integer) -> Ex {
   }
   // An `S?` slot's subject is the `S?` it holds (`read_through_tag`).
   if is_nullable_wrapper(e, x.tp) {
-    rx = el_ex_place::read_through_tag(e, vars, x);
+    rx = el_ex_into::read_through_tag(e, vars, x);
     if rx == null {
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
     }
@@ -3276,7 +3339,9 @@ pub fn record_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   owned = every_tail_is_an_owned_call(e, x.code);
   // A call default answers a record in its own buffer; beside a held subject that arm owns it
   // (`join-arm-owner`: the buffer bound to the call, then answered).
-  dbuf = match el_ir::unspan(d.code) { NdCall { args } => hidden_ref_arg(vars, args), _ => -2 };
+  // (An operator's read — `k[6]`'s `OpGetVector` — is a view of a record some store holds,
+  // not a call answering one.)
+  dbuf = match el_ir::unspan(d.code) { NdCall { def_nr: dc, args } => if starts_with(el::def(e, dc).name, "Op") { -2 } else { hidden_ref_arg(vars, args) }, _ => -2 };
   // A default that is itself a `??` chain ending in a call (`a ?? b ?? make()`) owns that arm
   // as a view of the chain (`own_joined_call_arms`) — not carried.
   if !e.first_pass && chain_ends_in_call(vars, d.code) {

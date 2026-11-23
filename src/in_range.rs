@@ -576,6 +576,9 @@ pub fn rewrite_program(data: &mut Data) -> usize {
     if off() {
         return 0;
     }
+    // The parameter-write facts `own_length_locals` asks of every callee, once for the program
+    // as this pass starts (loft#2620): per pair it re-walked the callee's call graph.
+    let _param_writes = crate::parser::param_writes_summary(data);
     let ops = Ops {
         add_int: data.def_nr("OpAddInt"),
         le_int: data.def_nr("OpLeInt"),

@@ -1427,7 +1427,10 @@ impl Scopes<'_> {
             }
         }
         fnref_stand_down(&mut ls, &fnref_releases, function, data);
-        captured_record_stand_down(&mut ls, function, data, self.d_nr);
+        let sets = self
+            .captured_fnref_sets
+            .get_or_insert_with(|| captured_fnref_sets(data, self.d_nr));
+        captured_record_stand_down(&mut ls, function, data, self.d_nr, sets);
         captured_view_stand_down(&mut guarded, function, data);
         if !guarded.is_empty() {
             guarded.append(&mut ls);
@@ -1657,15 +1660,13 @@ fn fnref_stand_down(
 /// `R`'s release pair whenever `R` is live (the cascade's own test) and its slot names `r`'s
 /// store — so `r`'s free does nothing.  `LOFT_NO_CAPTURED_RECORD_STAND_DOWN=1` restores the
 /// double release.
-fn captured_record_stand_down(ls: &mut Vec<Value>, function: &Function, data: &Data, d_nr: u32) {
-    if crate::env_once!(std::env::var_os("LOFT_NO_CAPTURED_RECORD_STAND_DOWN").is_some()) {
-        return;
-    }
+/// Every `OpSetDbRef(R, off, OpFnRefClosure(h, …))` of `d_nr`'s body, in walk order, as
+/// `(R, off, h)`: the syntactic half of [`captured_record_stand_down`]'s search, a function of
+/// the body alone.
+fn captured_fnref_sets(data: &Data, d_nr: u32) -> Vec<(u16, i32, u16)> {
     let set_dbref = data.def_nr("OpSetDbRef");
     let fn_closure = data.def_nr("OpFnRefClosure");
-    let free = data.def_nr("OpFreeRef");
-    // (capturing record R, slot offset, the record r the captured fn-ref was built over).
-    let mut adopted: Vec<(u16, i32, u16)> = Vec::new();
+    let mut sets = Vec::new();
     data.def(d_nr).code.walk(&mut |n| {
         if let Value::Call(d, args) = n
             && *d == set_dbref
@@ -1673,19 +1674,40 @@ fn captured_record_stand_down(ls: &mut Vec<Value>, function: &Function, data: &D
             && let Value::Call(c, cargs) = held.unspan()
             && *c == fn_closure
             && let Some(Value::Var(h)) = cargs.first().map(Value::unspan)
-            && function.name(*big).starts_with("___clos_")
         {
-            for r in function.tp(*h).depend() {
-                if r != *big
-                    && r < function.count()
-                    && function.name(r).starts_with("___clos_")
-                    && !adopted.contains(&(*big, *off, r))
-                {
-                    adopted.push((*big, *off, r));
-                }
-            }
+            sets.push((*big, *off, *h));
         }
     });
+    sets
+}
+
+fn captured_record_stand_down(
+    ls: &mut Vec<Value>,
+    function: &Function,
+    data: &Data,
+    d_nr: u32,
+    sets: &[(u16, i32, u16)],
+) {
+    if crate::env_once!(std::env::var_os("LOFT_NO_CAPTURED_RECORD_STAND_DOWN").is_some()) {
+        return;
+    }
+    let free = data.def_nr("OpFreeRef");
+    // (capturing record R, slot offset, the record r the captured fn-ref was built over).
+    let mut adopted: Vec<(u16, i32, u16)> = Vec::new();
+    for &(big, off, h) in sets {
+        if !function.name(big).starts_with("___clos_") {
+            continue;
+        }
+        for r in function.tp(h).depend() {
+            if r != big
+                && r < function.count()
+                && function.name(r).starts_with("___clos_")
+                && !adopted.contains(&(big, off, r))
+            {
+                adopted.push((big, off, r));
+            }
+        }
+    }
     let plain_free = |ls: &[Value], x: u16| {
         ls.iter().position(|st| {
             matches!(st.unspan(), Value::Call(d, a) if *d == free
@@ -1696,6 +1718,9 @@ fn captured_record_stand_down(ls: &mut Vec<Value>, function: &Function, data: &D
         matches!(st.unspan(), Value::If(_, t, _) if matches!(t.unspan(), Value::Call(_, a)
             if matches!(a.as_slice(), [v] if matches!(v.unspan(), Value::Var(y) if *y == x))))
     };
+    if adopted.is_empty() {
+        return;
+    }
     // A record confined to one loop pass BORROWS what it captured (`@FR-L-CapOwn`): its cascade
     // releases nothing, so nothing is handed to it.
     let confined = super::closure_keep::pass_confined_records(data, function, &data.def(d_nr).code);

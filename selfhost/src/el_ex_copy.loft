@@ -29,6 +29,7 @@ use el_ex_match;
 use el_ex_vector;
 use el_expressions;
 use el_ex_deliver;
+use el_ex_into;
 
 pub fn copy_arms(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, td: integer, owned: ir::TypeT) -> ir::Node? {
   if el_trace::on() {
@@ -82,7 +83,7 @@ pub fn copy_arms(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, td: i
     }
   }
   x = el_ir::unspan(n);
-  user = el_ex_place::any_user_call(e, [x]);
+  user = el_ex_into::any_user_call(e, [x]);
   // `bind_return_source` (loft#2006, loft#2561): a source with a user call in it cannot be read
   // again to test it, so it is read ONCE first — a read path whose root is that call binds the
   // call (`_ret_root_N`); a read path rooted at a variable or at a lifted container, and a
@@ -123,7 +124,7 @@ pub fn copy_arms(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, td: i
     }
   }
   x = el_ir::unspan(src);
-  user = el_ex_place::any_user_call(e, [x]);
+  user = el_ex_into::any_user_call(e, [x]);
   kt = ir::NdInt { n: el::def(e, td).known_type };
   b = ir::NdVar { n: rb };
   copy = el_ir::v_block([el_ir::v_set(rb, ir::NdNull), el_ir::cl(e, "OpDatabase", [b, kt]), el_ir::cl(e, "OpCopyRecord", [src, b, kt]), b], owned, "materialized_view_return");

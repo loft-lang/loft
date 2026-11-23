@@ -173,6 +173,7 @@ pub(super) fn run_scan_phase(
     let mut scopes = Scopes {
         database,
         d_nr,
+        captured_fnref_sets: None,
         max_scope: 1,
         scope: 0,
         stack: Vec::new(),
@@ -537,7 +538,10 @@ pub(super) fn run_scan_phase(
     // ownership oracle's whole-function walk holds for the whole scan: done once, not once per
     // call site `inline_struct_return` asks about.
     let defs_memo = crate::use_analysis::defs_memo_scope(data, d_nr);
+    // …and every callee's: `scan` borrows `data` shared, so no body changes inside (loft#2620).
+    let own_memo = crate::use_analysis::ownership_memo_scope(data);
     let mut code = scopes.scan(orig_code, &mut function, data);
+    drop(own_memo);
     drop(defs_memo);
     // The witness starts FALSE: on entry the buffer holds the CALLER's store, which this
     // function must never release.  A transition site is reachable with no prior assignment at

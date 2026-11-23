@@ -333,6 +333,13 @@ pub struct Vars {
   pub enum_hint: integer = -1,
   // H7's loop buffer partners, `buf * 65536 + partner` (`rotate_loop_retbufs`).
   pub rot_partners: vector<integer> = [],
+  // Compiler temporaries the port reads through a syntax name of its own making
+  // (`place_through_discharge`'s `__place_N`): no mention of them is a user's.
+  pub compiler_named: vector<integer> = [],
+  // A `__place_N` holding an element reached through an effectful index whose COLLECTION field
+  // is written (`k[bump()].mpts += […]`): Rust's F2 hoist writes that field through
+  // `OpGetField(place, off, tp)`, the port through the place itself.
+  pub field_places: vector<integer> = [],
   // `@FR-F-ParamTuple`'s copy seeds, built at the start of pass 2 (`tuple_param_seeds`): the
   // shadow of each, and its copy's code and type.
   pub tp_seed_shadows: vector<integer> = [],
@@ -676,6 +683,11 @@ pub fn drop_use(v: Vars, nr: integer) {
 }
 
 pub fn mark_user_named(v: Vars, nr: integer, why: text) {
+  // (A name the compiler wrote into the syntax to read its own temporary through — a
+  // `__place_N` — is no user's mention.)
+  if v.compiler_named.contains(nr) {
+    return;
+  }
   trace_flag(v, "user_named", nr, why);
   v.vars[nr].user_named = true;
 }
@@ -1473,4 +1485,41 @@ pub fn binding_recorded(v: Vars, nr: integer) -> boolean {
     }
   }
   false
+}
+
+// A capture's pass-1 placeholder (Rust's `parse_var_inner` capture arm makes one with
+// `create_var`): the lambda's non-argument variable named after capture `name`, or -1.  Found by
+// name and argument-ness, not through `names` — pass 2 unmaps it.
+pub fn capture_placeholder(v: Vars, name: text) -> integer {
+  for x in v.vars {
+    if x.name == name && !x.argument {
+      return x#index;
+    }
+  }
+  -1
+}
+
+// `Function::retire_capture_placeholders` (Rust, @PLN91 R1): after the lambda's pass 2, every
+// capture placeholder the code does not name loses `user_named`, `user_appended`, `value_const`
+// and its deps — each clear traced as `-<flag>`; its index is kept, so nothing renumbers.
+pub fn retire_capture_placeholders(v: Vars, code: ir::Node, caps: vector<text>) {
+  for name in caps {
+    p = capture_placeholder(v, name);
+    if p < 0 || el_ir::reads_var(code, p) {
+      continue;
+    }
+    if v.vars[p].user_named {
+      trace_flag(v, "-user_named", p, "retire_capture_placeholders");
+      v.vars[p].user_named = false;
+    }
+    if v.vars[p].user_appended {
+      trace_flag(v, "-user_appended", p, "retire_capture_placeholders");
+      v.vars[p].user_appended = false;
+    }
+    if v.vars[p].value_const {
+      trace_flag(v, "-value_const", p, "retire_capture_placeholders");
+      v.vars[p].value_const = false;
+    }
+    v.vars[p].type_def = [el_types::without_deps(tp(v, p))];
+  }
 }

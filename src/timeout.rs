@@ -99,6 +99,7 @@ static BREADCRUMB: Mutex<Breadcrumb> = Mutex::new(Breadcrumb {
     fn_name: "",
     file: String::new(),
     line: 0,
+    parse_fn: String::new(),
 });
 
 /// loft#952 — the interpreter's most recently entered loft function, as a `d_nr`
@@ -146,6 +147,10 @@ struct Breadcrumb {
     file: String,
     /// Line in `file` of the last advanced checkpoint.
     line: u32,
+    /// The function the parser is reading (`name (pass N)`), set by
+    /// [`checkpoint_parse_fn`] — owned, so a hang deep inside one function's parse names it
+    /// instead of reporting the program file at line 0.  "" outside a function.
+    parse_fn: String,
 }
 
 /// Arm the watchdog for `timeout_secs` total execution time.  The
@@ -467,12 +472,21 @@ fn blocked_suffix() -> String {
 /// empty, so a placeholder is visibly a placeholder.
 fn report_fields() -> (&'static str, String, String, u32) {
     let (phase, fn_name, file, line) = match BREADCRUMB.try_lock() {
-        Ok(bc) => (bc.phase, bc.fn_name, bc.file.clone(), bc.line),
-        Err(_) => ("", "", String::new(), 0),
+        Ok(bc) => (
+            bc.phase,
+            if bc.fn_name.is_empty() {
+                bc.parse_fn.clone()
+            } else {
+                bc.fn_name.to_string()
+            },
+            bc.file.clone(),
+            bc.line,
+        ),
+        Err(_) => ("", String::new(), String::new(), 0),
     };
     let (fn_name, file, line) = match interp_position() {
         Some((n, f, l)) => (n.to_string(), f.to_string(), l),
-        None => (fn_name.to_string(), file, line),
+        None => (fn_name, file, line),
     };
     (
         if phase.is_empty() { "?" } else { phase },
@@ -616,6 +630,33 @@ pub fn checkpoint_parse(file: &str, line: u32) {
     if let Ok(mut bc) = BREADCRUMB.try_lock() {
         bc.phase = "parse";
         bc.fn_name = "";
+        bc.parse_fn.clear();
+        if bc.file != file {
+            bc.file.clear();
+            bc.file.push_str(file);
+        }
+        bc.line = line;
+    }
+    if deadline_reached() {
+        graceful_exit();
+    }
+}
+
+/// Parser checkpoint per FUNCTION (loft#2620): the function being read, its file and line
+/// and the pass, so a hang inside one function's parse is reported where it is.  Same cost
+/// as [`checkpoint_parse`] when disarmed: one relaxed load and a branch.
+#[inline]
+pub fn checkpoint_parse_fn(file: &str, line: u32, name: &str, first_pass: bool) {
+    if !ARMED.load(Ordering::Relaxed) {
+        return;
+    }
+    if let Ok(mut bc) = BREADCRUMB.try_lock() {
+        bc.phase = "parse";
+        bc.fn_name = "";
+        bc.parse_fn.clear();
+        bc.parse_fn.push_str(name);
+        bc.parse_fn
+            .push_str(if first_pass { " (pass 1)" } else { " (pass 2)" });
         if bc.file != file {
             bc.file.clear();
             bc.file.push_str(file);

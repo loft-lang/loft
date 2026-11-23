@@ -1,0 +1,611 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Expression elaboration, part: an append to a vector FIELD (`o.v += …`) — its items built
+// into the field's own records, staged where they read the field; split out of `el_ex_place`
+// (assignments to places), which it reads through.
+use el_ex_base::*;
+use ir;
+use syntax::*;
+use lex;
+use el;
+use el_ir;
+use fold;
+use el_vars;
+use el_types;
+use el_schema;
+use el_convert;
+use frame;
+use el_length;
+use el_par;
+use el_definitions;
+use el_dispatch;
+use el_trace;
+use own;
+use el_expressions;
+use el_ex_assign;
+use el_ex_object;
+use el_ex_call;
+use el_ex_null;
+use el_ex_match;
+use el_ex_pattern;
+use el_ex_vector;
+use el_ex_copy;
+use el_ex_deliver;
+use el_ex_bind;
+use el_ex_closure;
+use el_ex_into;
+use el_ex_place;
+use el_ex_into;
+
+// `field += [items]` on a collection field of a record local (`parse_vector_inner` with
+// `is_field`): no room made first; a scalar item pushed onto the field's place; a text or a
+// struct literal item a record made through the owning struct's field (`OpNewRecord(r, struct,
+// field)`, its value or fields, `OpFinishRecord`) — a keyed collection indexes it there.
+// The literal of `rd` built apart for a pointer field (`object_fresh`); null where it was refused.
+pub fn object_fresh_into_pointer(e: el::El, vars: el_vars::Vars, rd: integer, fields: vector<integer>) -> ir::Node? {
+  built = el_ex_object::object_fresh(e, vars, rd, fields, ir::TyReference { n: rd, dep: [] });
+  if !e.first_pass && el_types::is_unknown(built.tp) {
+    return null;
+  }
+  built.code
+}
+
+// The own-buffer build of one record item: a `_vec_N` of the element's vector type with a backing
+// of its own, room for one element, the element `elm` made in it (`OpNewRecord(_vec_N, <vector
+// row>, 65535)`), its field `writes`, `OpFinishRecord` — the block answering the vector.
+// (`inner` carries the owner's borrow for a keyed field's element, `ref(C)["c"]`, as Rust's
+// element type does there; `linked`: the element of a keyed field, held by its four-byte id.)
+fn own_buffer_item(e: el::El, vars: el_vars::Vars, inner: ir::TypeT, elm: integer, writes: vector<ir::Node>, lit: integer, linked: boolean = false) -> ir::Node? {
+  // (The element's vector is declared here where nothing declared it yet — a keyed field's
+  // records have no plain vector of their own — as Rust's arm does, `vector_def`, at the `]`.)
+  bare = el_types::without_deps(inner);
+  enm = el_types::elem_name(e, bare);
+  made_here = false;
+  if enm != "" && el::def_nr(e, "main_vector<{enm}>") < 0 {
+    match e.p.nodes[lit] {
+      SVecLit { at: lat } => { el_schema::make_vector_def(e, bare, enm, el::pos_at(e, el_ex_base::closing_bracket(e, lat)), true); },
+      _ => {}
+    }
+    made_here = true;
+    // (Laid out at once: the backing below is given its store type here, on this pass.)
+    el_schema::lay_out_late(e, el::def_nr(e, "main_vector<{enm}>"));
+  }
+  rows = vector_rows(e, bare, 0, true);
+  rd = heap_def(bare);
+  if rows == null || rd < 0 {
+    el::refuse(e, "a field append built apart of this element type: {type_kind(inner)}");
+    return null;
+  }
+  // (Rust's `vector_def` is made from the element type as it stands — a keyed field's element
+  // borrowing its owner — so the definitions' types carry that borrow; their layout, laid out
+  // above from the bare type, does not.)
+  if made_here && inner != bare {
+    wtp = ir::TyVector { inner: inner, dep: [] };
+    vdn = el::def_nr(e, "vector<{enm}>");
+    if vdn >= 0 {
+      e.b.data.definitions[vdn].returned = [wtp];
+    }
+    mvn = el::def_nr(e, "main_vector<{enm}>");
+    if mvn >= 0 {
+      for va in el::def(e, mvn).attributes {
+        e.b.data.definitions[mvn].attributes[va#index].typedef = [wtp];
+      }
+    }
+  }
+  vec = el_vars::create_unique(vars, "vec", ir::TyVector { inner: inner, dep: [] });
+  el_vars::set_defined(vars, vec);
+  ls = el_ex_pattern::literal_store(e, vars, vec, rows!);
+  size = if linked || el_ex_base::linked_record(e, inner) { 4 } else { el_ex_base::record_size(e, inner) };
+  ls += [el_ir::cl(e, "OpPreAllocVector", [ir::NdVar { n: vec }, ir::NdInt { n: 1 }, ir::NdInt { n: size }])];
+  el_vars::set_var_type(vars, elm, ir::TyReference { n: rd, dep: [vec] });
+  ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [ir::NdVar { n: vec }, ir::NdInt { n: rows!.vec_known }, ir::NdInt { n: 65535 }]))];
+  ls += writes;
+  ls += [el_ir::cl(e, "OpFinishRecord", [ir::NdVar { n: vec }, ir::NdVar { n: elm }, ir::NdInt { n: rows!.vec_known }, ir::NdInt { n: 65535 }]), ir::NdVar { n: vec }];
+  el_ir::v_block(ls, el_vars::tp(vars, vec), "Vector")
+}
+
+// Does `n` build a record or a vector in place anywhere inside (an "Object" or "Vector" block)?
+fn builds_record(n: ir::Node) -> boolean {
+  match n {
+    NdBlock { block } => {
+      if block[0].name == "Object" || block[0].name == "Vector" {
+        return true;
+      }
+    },
+    _ => {}
+  }
+  for c in el_ir::children(n) {
+    if builds_record(c) {
+      return true;
+    }
+  }
+  false
+}
+
+// Is `n` a vector whose elements are vectors (`vv` of `vv[0] += [9]`)?
+fn vector_of_vectors(e: el::El, vars: el_vars::Vars, n: ir::Node) -> boolean {
+  match el_types::base(el_ex_place::place_type(e, vars, n)) {
+    TyVector { inner } => el_types::base(inner) is TyVector,
+    _ => false
+  }
+}
+
+pub fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
+  // (An append that pushes names the field's vector row on the first pass, ahead of the struct
+  // that holds it — as a literal that fills the field does.)
+  if e.first_pass && match e.p.nodes[n] { SVecLit { items: ai } => len(ai) > 0, _ => false } {
+    match el_types::base(p.tp) {
+      TyVector { inner: avi } => { el_schema::pushed_vector_row(e, avi); },
+      _ => {}
+    }
+  }
+  place = el_ir::unspan(p.code);
+  // `vv[0] += [9]`, `h.ws[i] += [9]`: an ELEMENT of a vector of vectors is a place
+  // (`@FR-B-View`) — each plain item pushed onto the element read, as onto a field.  An index
+  // that is no plain variable or constant (a block, a call) runs once: the element held in a
+  // `__place_N` (typed as the outer vector, borrowing its root) and pushed onto that
+  // (`@FR-E-Asgn-Compound`, loft#2581).
+  ev_inner = match el_types::base(p.tp) { TyVector { inner: evi } => evi, _ => ir::TyVoid };
+  ev_items: vector<integer> = match e.p.nodes[n] { SVecLit { items: evits } => evits, _ => [] };
+  // (The element read as the port spells it, `OpGetField(OpGetVector(vv, 4, 0), 0, <row>)`:
+  // Rust pushes onto the `OpGetVector` itself.  Only where the outer vector's element IS a
+  // vector: a record element's first field (`ds[0].xs`, offset 0) has the same shape, and is
+  // the field Rust pushes onto.)
+  ev_place = match place { NdCall { def_nr: egd, args: ega } => if el::def(e, egd).name == "OpGetField" && len(ega) == 3 && calls(e, el_ir::unspan(ega[0]!), "OpGetVector") && match el_ir::unspan(ega[0]!) { NdCall { def_nr: egd2, args: ega2 } => el::def(e, egd2).name == "OpGetVector" && len(ega2) > 0 && vector_of_vectors(e, vars, ega2[0]!), _ => false } && el_ir::unspan(ega[1]!) == ir::NdInt { n: 0 } { el_ir::unspan(ega[0]!) } else { place }, _ => place };
+  match ev_place {
+    NdCall { def_nr: evd, args: eva } => {
+      if el::def(e, evd).name == "OpGetVector" && len(eva) == 3 && el_ex_pattern::push_op(ev_inner) != "" && el_convert::plain_scalar(ev_inner) && len(ev_items) > 0 && len([for evx in ev_items if (e.p.nodes[evx] is SRepeat) { 1 }]) == 0 {
+        // (`parse_vector` mints the literal's element temp on both passes before its items —
+        // `unique_elm_var`, borrowing what the place borrows, the outer vector's root — and
+        // `is_field` suppresses its free: it is a reference into the element's store.)
+        evr = place_root(e, el_ir::unspan(eva[0]!));
+        evelm = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: if evr >= 0 { [evr] } else { [] } });
+        el_vars::set_skip_free(vars, evelm, "parse_vector_inner");
+        evals: vector<Ex> = [for evx2 in ev_items { el_ex_assign::expression(e, vars, evx2) }];
+        if e.first_pass {
+          return ex(ir::NdNull, ir::TyVoid);
+        }
+        ops: vector<ir::Node> = [];
+        recv = ev_place;
+        idx = el_ir::unspan(eva[2]!);
+        if !(idx is NdInt || idx is NdVar) {
+          evroot = place_root(e, el_ir::unspan(eva[0]!));
+          evouter = el_types::without_deps(el_types::base(el_ex_place::place_type(e, vars, el_ir::unspan(eva[0]!))));
+          evp = el_vars::create_unique(vars, "_place", el_types::with_deps(evouter, if evroot >= 0 { [evroot] } else { [] }));
+          ops += [el_ir::v_set(evp, ev_place)];
+          recv = ir::NdVar { n: evp };
+        }
+        for ev in evals {
+          evs = stored(e, vars, ev, ev_inner);
+          if evs == null {
+            refuse_known(e, ev.tp, "an item appended to an element of another type: {type_kind(ev.tp)}");
+            return ex(ir::NdNull, ir::TyVoid);
+          }
+          ops += [el_ir::cl(e, el_ex_pattern::push_op(ev_inner), el_ex_pattern::push_args(e, vars, ev_inner, recv, evs!))];
+        }
+        return ex(if len(ops) == 1 { ops[0]! } else { ir::NdInsert { items: ops } }, ir::TyVoid);
+      }
+    },
+    _ => {}
+  }
+  // The record holding the field — a local, or itself a field or an element of one — and the
+  // variable at its root, which the items' record borrows.
+  holder = ir::NdNull;
+  pos = -1;
+  match place {
+    NdCall { def_nr, args } => {
+      if el::def(e, def_nr).name == "OpGetField" && len(args) == 3 {
+        holder = el_ir::unspan(args[0]);
+        match el_ir::unspan(args[1] ?? ir::NdNull) {
+          NdInt { n: off } => { pos = off; },
+          _ => {}
+        }
+      }
+    },
+    _ => {}
+  }
+  rec = place_root(e, holder);
+  local = holder is NdVar;
+  pd = el_ex_place::record_place_def(e, vars, holder);
+  if !e.first_pass && (rec < 0 || pd < 0 || el::def(e, pd).def_type != el::DT_STRUCT) {
+    hk = match el_ir::unspan(holder) { NdCall { def_nr } => el::def(e, def_nr).name, NdVar { n: _ } => "a local", NdNull => "no holder", _ => "a value" };
+    el::refuse(e, "an append to a collection that is not a field of a record: {hk} of {type_kind(el_ex_place::place_type(e, vars, holder))}");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  // A field of a `for` variable's element (`c.hexes += [Ent { id: i, q: c.cx }]`): Rust stages
+  // the items' field values ahead of the build (`self_read_root` over the loop's view) — not
+  // carried: refused by name.
+  if !e.first_pass && vars.active_loops.contains(rec) {
+    el::refuse(e, "an append to a field of a loop variable's element");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  pkt = if pd >= 0 { el::def(e, pd).known_type } else { -1 };
+  fnr = -1;
+  if !e.first_pass {
+    for f in el_schema::struct_fields(e, pkt) {
+      if f.position == pos {
+        fnr = f#index;
+      }
+    }
+  }
+  pk = el_types::keyed_elem(el_types::base(p.tp));
+  inner = match el_types::base(p.tp) {
+    TyVector { inner: i } => i,
+    _ => if pk >= 0 { ir::TyReference { n: pk, dep: [] } } else { ir::TyUnknown { n: 0 } }
+  };
+  // (An element type named by a forward reference — `default: vector<Value>` above `enum
+  // Value` — is still the stub's on the first pass; it settles at the file's end.)
+  forward_elem = e.first_pass && el_types::base(p.tp) is TyVector && el_types::is_unknown(inner);
+  if !forward_elem && ((fnr < 0 && !e.first_pass) || el_types::is_unknown(inner)) {
+    el::refuse(e, "an append to a collection of this type: {type_kind(p.tp)}");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  items: vector<integer> = [];
+  match e.p.nodes[n] {
+    SVecLit { items: its } => { items = its; },
+    _ => {}
+  }
+  // A record-element literal that reads the field's record under another name — a local viewing
+  // it (`for o in self.options { self.extra += [Opt { long: o.long }] }`) — is built in a vector
+  // of its own and appended after every part is read (loft#2397, `parse_vector`'s own-buffer
+  // arm).  @FR-E-Asgn-Compound @FR-I-Comp
+  if !e.first_pass && heap_def(inner) >= 0 && el_ex_place::alias_reads(e, vars, rec, inner, items) {
+    built = el_ex_pattern::vector_value(e, vars, n).x;
+    kt = el::def(e, heap_def(inner)).known_type;
+    return ex(el_ir::cl(e, "OpAppendVector", [p.code, built.code, ir::NdInt { n: kt }]), ir::TyVoid);
+  }
+  elm = -1;
+  if len(items) > 0 {
+    elm = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [rec] });
+    // (`parse_vector`'s `is_field` — the place is a field read (`OpGetField`): the element is a
+    // reference INTO the field's store, which the owning record frees, its own free suppressed.
+    // Another place — an element, a local viewing a vector — keeps the element's free.)
+    if match el_ir::unspan(p.code) { NdCall { def_nr: pfd } => el::def(e, pfd).name == "OpGetField", _ => false } {
+      el_vars::set_skip_free(vars, elm, "parse_vector_inner");
+    }
+  }
+  r = holder;
+  at = ir::NdVar { n: elm };
+  push = el_ex_pattern::push_op(inner);
+  ls: vector<ir::Node> = [];
+  // The first pass makes each item through the record (`OpNewRecord`), scalars too: what
+  // `child_allocs` counts there.
+  if e.first_pass && elm >= 0 && local {
+    vars.allocs += [rec];
+  }
+  if forward_elem {
+    for it in items {
+      fsd = struct_literal_def(e, it);
+      fvl = el_ex_pattern::variant_literal(e, it);
+      match e.p.nodes[it] {
+        SStructLit { name: fln, fields: flf } => {
+          if fvl && el::def_nr(e, fln) >= 0 {
+            el_ex_pattern::first_pass_fields(e, vars, el::def_nr(e, fln), flf);
+          } else if fsd >= 0 {
+            el_ex_pattern::literal_field_exprs(e, vars, it);
+          } else {
+            el_ex_assign::expression(e, vars, it);
+          }
+        },
+        _ => { el_ex_assign::expression(e, vars, it); }
+      }
+    }
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  for it in items {
+    if e.p.nodes[it] is SRepeat {
+      el::refuse(e, "a repeated vector item");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    // An item of a `vector<S?>` field (`parse_item`'s tagged arms, as `vector_build` has them).
+    if is_nullable_wrapper(e, inner) {
+      tsyn = el_types::struct_enum_def(inner);
+      pay = el_ex_into::nullable_payload(e, tsyn);
+      steps: vector<ir::Node> = [];
+      if el_ex_into::literal_of(e, it, pay) {
+        nb = el_ex_into::nullable_some_literal(e, vars, tsyn, it);
+        if nb == null {
+          return ex(ir::NdNull, ir::TyVoid);
+        }
+        if !e.first_pass {
+          steps = [el_ir::cl(e, "OpCopyRecord", [nb!, at, ir::NdInt { n: el::def(e, tsyn).known_type + 16384 }])];
+        }
+      } else {
+        tx = el_ex_assign::expression(e, vars, it);
+        if tx.tp is TyNull {
+          steps = [];
+        } else if struct_ref(e, el_types::base(tx.tp)) == pay {
+          if !e.first_pass {
+            if el_ir::reads_var(tx.code, rec) {
+              el::refuse(e, "a field append whose item reads the field's record");
+              return ex(ir::NdNull, ir::TyVoid);
+            }
+            steps = el_ex_into::nullable_slot_write(e, vars, tsyn, at, tx.code, fresh: true);
+          }
+        } else {
+          if !el_types::is_unknown(tx.tp) {
+            el::refuse(e, "an item of a vector of nullable records that is no record of it: {type_kind(tx.tp)}");
+          }
+          return ex(ir::NdNull, ir::TyVoid);
+        }
+      }
+      if !e.first_pass {
+        el_vars::set_var_type(vars, elm, ir::TyReference { n: el::variant_of(e, tsyn, "Some"), dep: [rec] });
+        ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [r, ir::NdInt { n: pkt }, ir::NdInt { n: fnr }]))];
+        ls += steps;
+        ls += [el_ir::cl(e, "OpFinishRecord", [r, at, ir::NdInt { n: pkt }, ir::NdInt { n: fnr }])];
+      }
+      continue;
+    }
+    // A variant literal of a struct-enum element (`self.code += [Integer { v: v }]`) is built
+    // in the new element as a struct literal is, its `enum` field taking the variant's ordinal
+    // (the form a struct literal's vector FIELD has in `el_ex_object::field_vector`).
+    vsen = el_types::struct_enum_def(inner);
+    if vsen >= 0 && elm >= 0 && el_ex_pattern::variant_literal(e, it) {
+      vvfs: vector<integer> = [];
+      vvd = -1;
+      match e.p.nodes[it] {
+        SStructLit { name: vvn, fields: vvf } => { vvfs = vvf; vvd = el::def_nr(e, vvn); },
+        _ => {}
+      }
+      if vvd < 0 {
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      el_vars::set_var_type(vars, elm, ir::TyReference { n: vsen, dep: [rec] });
+      if e.first_pass {
+        el_ex_pattern::first_pass_fields(e, vars, vvd, vvfs);
+        continue;
+      }
+      vvbody = el_ex_into::fields_at(e, vars, elm, at, vvd, vvfs);
+      if vvbody == null {
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [r, ir::NdInt { n: pkt }, ir::NdInt { n: fnr }]))];
+      ls += vvbody!;
+      ls += [el_ir::cl(e, "OpFinishRecord", [r, at, ir::NdInt { n: pkt }, ir::NdInt { n: fnr }])];
+      continue;
+    }
+    sd = struct_literal_def(e, it);
+    if sd >= 0 {
+      if !el_types::is_equal(e, inner, ir::TyReference { n: sd, dep: [] }) {
+        el::refuse(e, "a vector item of another type than the field's: {display_type_name(e, inner)} then {el::def(e, sd).name}");
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      if e.first_pass {
+        el_ex_pattern::literal_field_exprs(e, vars, it);
+        continue;
+      }
+      el_vars::set_var_type(vars, elm, ir::TyReference { n: sd, dep: [rec] });
+      fields: vector<integer> = [];
+      match e.p.nodes[it] {
+        SStructLit { fields: fs } => { fields = fs; },
+        _ => {}
+      }
+      fl = el_ex_into::object_fields(e, vars, elm, sd, fields);
+      if fl == null {
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      // `snapshot_read_destination`: an item reading the field it is appended to is built from
+      // a snapshot of the field, its values staged first (`stage_append_fields`) — not carried.
+      // One literal item on a record LOCAL, its field values plain (no nested construction, no
+      // user call reaching the record) is carried: where a value reads the record, every value
+      // that is no constant is evaluated into a `__ref_N` first, in source order
+      // (`stage_append_fields`); where one reads the FIELD, the field is copied into a
+      // `_build_src_N` before that and the reads go to the copy (`literal_reads_dest`).
+      reads_rec = false;
+      reads_fld = false;
+      plain_values = true;
+      for op in fl! {
+        if op#index >= 2 {
+          if el_ir::reads_var(op, rec) {
+            reads_rec = true;
+          }
+          if reads_field(op, rec, pos) {
+            reads_fld = true;
+          }
+          match el_ir::unspan(op) {
+            NdCall { def_nr: wd, args: wa } => {
+              // (A scalar or text value of any shape is staged whole; a record or collection
+              // value built here — a nested construction — is not carried.)
+              // (The value is the last argument: a narrow write's `min` before it is a
+              // constant parameter, which `value_args` passes over.)
+              wvi = len(wa) - 1;
+              wpt = el::def(e, wd).attributes[wvi];
+              staged_kind = wpt != null && (el_ex_call::scalar(el_types::base(wpt!.typedef[0] ?? ir::TyVoid)) || el_types::base(wpt!.typedef[0] ?? ir::TyVoid) is TyText);
+              // (Only a nested record CONSTRUCTION moves ahead of the mint, which is not
+              // carried; any other record or collection value is a view and keeps its place.)
+              // (A write of another arity — a vector field's append — is no plain value.)
+              if !starts_with(el::def(e, wd).name, "OpSet") || !plain_setter(e, wd, len(wa)) {
+                plain_values = false;
+              } else {
+                built_here = match el_ir::unspan(wa[wvi]!) { NdBlock { block: cb } => cb[0].name == "Object" || cb[0].name == "EnumUnitLit" || cb[0].name == "Vector", _ => false };
+                if !staged_kind && built_here {
+                  plain_values = false;
+                }
+              }
+            },
+            _ => { plain_values = false; }
+          }
+        }
+      }
+      // (A call that may write the field — handed the record — is staged too, and the field
+      // snapshotted first, as Rust's form has it: `_build_src_N` filled from the field, then every
+      // value, the call's answer among them, read before the element is made.)
+      call_reads = el_ex_place::loft_call_reads(e, [for op in fl! if op#index >= 2 { op }], rec);
+      // (A KEYED field builds no vector: the values are staged, the record made through the
+      // owner, and nothing snapshotted.)
+      keyed_field = el_ex_base::keyed_kind(el_types::base(p.tp));
+      // (A keyed field's value that builds a record anywhere inside — a `?` default's `Object` —
+      // is built apart in a vector of its own and filled in by Rust (`OpFillKeyed`), the
+      // own-buffer road, not carried: still refused.)
+      if keyed_field && len([for op in fl! if op#index >= 2 && builds_record(op) { 1 }]) > 0 {
+        plain_values = false;
+      }
+      staged_ok = local && len(items) == 1 && plain_values;
+      // `parse_vector`'s own-buffer arm (loft#2397, `@FR-I-Comp`): an item that reads the field
+      // and holds a value built in place — a vector literal, a `?` default's record — cannot be
+      // staged as plain values: it is built apart, in a vector of its own (the element made
+      // there), then appended whole — `OpAppendVector(<field>, <vec>, <tp>)` for a vector field,
+      // `OpFillKeyed(<owner>, <vec>, <keyed tp>, <owner tp>, <field>)` for a keyed one.
+      setters_plain = len([for op in fl! if op#index >= 2 && !(match el_ir::unspan(op) { NdCall { def_nr: od, args: oa } => starts_with(el::def(e, od).name, "OpSet") && plain_setter(e, od, len(oa)), NdInsert { items: oi } => len(oi) == 0, _ => false }) { 1 }]) == 0;
+      in_place = len([for op in fl! if op#index >= 2 && builds_record(op) { 1 }]) > 0;
+      if !e.first_pass && local && len(items) == 1 && (reads_rec || reads_fld) && !staged_ok && setters_plain && in_place {
+        ob = own_buffer_item(e, vars, if keyed_field { el_types::with_deps(inner, [rec]) } else { inner }, elm, [for op in fl! if op#index >= 2 { op }], n, linked: keyed_field);
+        if ob == null {
+          return ex(ir::NdNull, ir::TyVoid);
+        }
+        if keyed_field {
+          return ex(el_ir::cl(e, "OpFillKeyed", [r, ob!, ir::NdInt { n: el_schema::keyed_type(e, el_types::without_deps(el_types::base(p.tp))) }, ir::NdInt { n: pkt }, ir::NdInt { n: fnr }]), ir::TyVoid);
+        }
+        return ex(el_ir::cl(e, "OpAppendVector", [p.code, ob!, ir::NdInt { n: el::def(e, heap_def(inner)).known_type }]), ir::TyVoid);
+      }
+      if (reads_rec || reads_fld) && !staged_ok {
+        why = if !local { "through a place that is no local" } else if len(items) != 1 { "among several items" } else if !plain_values { "beside a value built in place" } else { "through a call that may write it" };
+        el::refuse(e, "a field append whose item reads the field: {why}");
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      writes: vector<ir::Node> = [for op in fl! if op#index >= 2 { op }];
+      if reads_rec || reads_fld {
+        if (reads_fld || call_reads) && !keyed_field {
+          // (Asked only where the element's vector type is declared already: `vector_rows`
+          // would declare it here, at a place Rust does not.)
+          known_elem = el_types::elem_name(e, inner) != "" && el::def_nr(e, "main_vector<{el_types::elem_name(e, inner)}>") >= 0;
+          rows = if known_elem { vector_rows(e, inner, 0, true) } else { null };
+          row = if known_elem { el_ex_vector::append_row(e, inner) } else { -1 };
+          if rows == null || row < 0 {
+            el::refuse(e, "a field append whose item reads the field: of this element type");
+            return ex(ir::NdNull, ir::TyVoid);
+          }
+          src = el_vars::create_unique(vars, "build_src", ir::TyVector { inner: inner, dep: [] });
+          ls += el_ex_pattern::literal_store(e, vars, src, rows!);
+          ls += [el_ir::cl(e, "OpAppendVector", [ir::NdVar { n: src }, p.code, ir::NdInt { n: row }])];
+          writes = [for op in writes { el_ex_place::replace_field_reads(op, rec, pos, src) }];
+        }
+        // (The staging asks after the snapshot took the field's reads: values that read
+        // nothing of the record any more are written as they stand.)
+        still_reads = len([for op in writes if el_ir::reads_var(op, rec) { 1 }]) > 0;
+        staged_writes: vector<ir::Node> = [];
+        for op in writes {
+          if !still_reads {
+            staged_writes += [op];
+            continue;
+          }
+          match el_ir::unspan(op) {
+            NdCall { def_nr: wd, args: wa } => {
+              svi = len(wa) - 1;
+              val = el_ir::unspan(wa[svi]!);
+              constant = val is NdInt || val is NdLong || val is NdFloat || val is NdSingle || val is NdBoolean || val is NdText || val is NdNull || val is NdEnum;
+              pt = el::def(e, wd).attributes[svi]!.typedef[0] ?? ir::TyVoid;
+              if !constant && (el_ex_call::scalar(el_types::base(pt)) || el_types::base(pt) is TyText) {
+                tmp = el_vars::work_ref(vars, pt);
+                ls += [el_ir::v_set(tmp, wa[svi]!)];
+                staged_args = wa;
+                staged_args[svi] = ir::NdVar { n: tmp };
+                staged_writes += [ir::NdCall { def_nr: wd, args: staged_args }];
+              } else {
+                staged_writes += [op];
+              }
+            },
+            _ => { staged_writes += [op]; }
+          }
+        }
+        writes = staged_writes;
+      }
+      ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [r, ir::NdInt { n: pkt }, ir::NdInt { n: fnr }]))];
+      ls += writes;
+      ls += [el_ir::cl(e, "OpFinishRecord", [r, at, ir::NdInt { n: pkt }, ir::NdInt { n: fnr }])];
+      continue;
+    }
+    x = el_ex_assign::expression(e, vars, it);
+    // (A value typed by one of a struct enum's variants — `sh = Circle { … }` — is an item of
+    // the enum's vector: Rust's append asks no type of it.)
+    if !el_types::is_unknown(x.tp) && !el_types::is_equal(e, inner, x.tp) && !variant_of(e, inner, x.tp) {
+      el::refuse(e, "a vector item of another type than the field's: {display_type_name(e, inner)} then {display_type_name(e, x.tp)}");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    // An item handing the record's own local to a function is evaluated before the append
+    // (`parse_append_vector`'s staging into a `__ref_N`, minted on both passes) — not carried.
+    if el_ex_object::hands_to_call(e, x.code, rec) {
+      el::refuse(e, "a field append whose item hands its record to a call");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    if e.first_pass {
+      // The first pass makes each item through the record (`OpNewRecord(<holder>, …)`), scalars
+      // too: a store `else` on the append reads its place off that claim on this pass, and the
+      // second pass keeps the `_store_target_N` type it gave (the holder's).
+      if elm >= 0 && it#index == 0 {
+        ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [r, ir::NdInt { n: pkt }, ir::NdInt { n: fnr }]))];
+      }
+      continue;
+    }
+    // An `i32` item that is a `??` is narrowed inside it, as a literal's item is
+    // (`range_guard_inside_discharge`; a bare variable's two reads each cast).
+    if match inner { TyInteger { spec } => el_types::int4(spec), _ => false } {
+      fbare = match el_ir::unspan(x.code) { NdIf { cond: fbc, t: fbt } => el_ir::unspan(fbt) is NdVar && match el_ir::unspan(fbc) { NdCall { args: fbca } => len(fbca) == 1 && el_ir::unspan(fbca[0] ?? ir::NdNull) == el_ir::unspan(fbt), _ => false }, _ => false };
+      if fbare || match el_ir::unspan(x.code) { NdBlock { block: fnb } => fnb[0].name == "ncc", _ => false } {
+        fgx = el_convert::guard_discharge(e, vars, x.code, inner);
+        if fgx == null {
+          el::refuse(e, "an `i32` vector item that is a `??`");
+          return ex(ir::NdNull, ir::TyVoid);
+        }
+        x = ex(fgx!, x.tp);
+      }
+    }
+    if push != "" {
+      ls += [el_ir::cl(e, push, el_ex_pattern::push_args(e, vars, inner, place, x.code))];
+    } else if inner is TyText || elem_size(inner) == 2 {
+      ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [r, ir::NdInt { n: pkt }, ir::NdInt { n: fnr }]))];
+      ls += [el_ex_pattern::elem_write(e, inner, at, x.code)];
+      ls += [el_ir::cl(e, "OpFinishRecord", [r, at, ir::NdInt { n: pkt }, ir::NdInt { n: fnr }])];
+    } else if struct_ref(e, inner) >= 0 {
+      el_vars::set_var_type(vars, elm, ir::TyReference { n: struct_ref(e, inner), dep: [rec] });
+      copy = el_ex_match::record_item_copy(e, vars, elm, struct_ref(e, inner), x);
+      if copy == null {
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [r, ir::NdInt { n: pkt }, ir::NdInt { n: fnr }]))];
+      ls += copy!;
+      ls += [el_ir::cl(e, "OpFinishRecord", [r, at, ir::NdInt { n: pkt }, ir::NdInt { n: fnr }])];
+    } else if el_types::struct_enum_def(inner) >= 0 {
+      // A struct-enum element (a unit variant `Dot`, a local, a call, an element) is copied
+      // into the fresh element as a struct's is, at the ENUM's type (`inner_nr`).
+      sen = el_types::struct_enum_def(inner);
+      el_vars::set_var_type(vars, elm, ir::TyReference { n: sen, dep: [rec] });
+      copy = el_ex_match::record_item_copy(e, vars, elm, sen, x);
+      if copy == null {
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [r, ir::NdInt { n: pkt }, ir::NdInt { n: fnr }]))];
+      ls += copy!;
+      ls += [el_ir::cl(e, "OpFinishRecord", [r, at, ir::NdInt { n: pkt }, ir::NdInt { n: fnr }])];
+    } else {
+      el::refuse(e, "a record item appended that is not a literal");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+  }
+  // A keyed field's items are made with the element's vector type as their known type
+  // (`build_vector_list`'s `vector_of`, there being no field-known one), which registers it.
+  if !e.first_pass && len(items) > 0 && keyed_kind(el_types::base(p.tp)) {
+    el_ex_pattern::vector_of(e, inner);
+  }
+  ex(ir::NdInsert { items: ls }, ir::TyVoid)
+}
+
+// A field write `OpSet<kind>(record, position, value)`, or a narrow one with a constant `min`
+// before the value (`OpSetShortRaw(record, position, min, value)`).
+fn plain_setter(e: el::El, wd: integer, n: integer) -> boolean {
+  n == 3 || (n == 4 && len(el::def(e, wd).attributes) == 4 && el::def(e, wd).attributes[2].constant)
+}
+
+// Is `t` a record variant of the struct enum `inner` (a local typed `Circle` of `vector<Sh>`)?
+fn variant_of(e: el::El, inner: ir::TypeT, t: ir::TypeT) -> boolean {
+  sen = el_types::struct_enum_def(inner);
+  if sen < 0 {
+    return false;
+  }
+  match el_types::base(t) {
+    TyReference { n } => el::def(e, n).def_type == el::DT_ENUM_VALUE && el::def(e, n).parent == sen,
+    _ => false
+  }
+}
