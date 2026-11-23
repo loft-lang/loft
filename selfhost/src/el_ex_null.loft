@@ -175,8 +175,8 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
       if e.first_pass {
         // (The default's arm is asked on both passes, its flags cumulative.)
         // (`build_null_coalesce_default_inner` is handed the subject's type as read — on this pass
-        // a call's answer borrows nothing yet, so an empty default takes the owned arm.)
-        el_ex_call::register_default_literal(e, vars, d.code, lhs);
+        // a call's answer borrows what its callee's first pass declared, `callee_result_borrows`.)
+        el_ex_call::register_default_literal(e, vars, d.code, lhs, borrows: el_ex_call::callee_result_borrows(e, x.code));
         return ex(ir::NdNull, ht);
       }
       // `@PLN102` (`build_null_coalesce`): an OWNED vector subject — every borrow one of this
