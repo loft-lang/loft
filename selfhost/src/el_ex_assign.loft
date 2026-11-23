@@ -1872,11 +1872,12 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
   // (A text `&` bind — `c = &s`, a view of the text — is a copied place too; a collection `&`
   // link never reaches this rule in Rust.)
   text_val = el_types::base(x.tp) is TyText || match x.tp { TyRefVar { inner: tvi } => el_types::base(tvi) is TyText, _ => false };
-  // (A text link's value names its place through `OpVarRef`: the place is what it names.)
+  // (A text link to a variable is `OpCreateStack(v)`: the place it names; a link to a link,
+  // `OpVarRef(t)`, is not a copy of a place.)
   // (A text link into a field or an element is the two-argument `OpGetField`/`OpGetVector`
   // of its record: the place it names.)
   text_place = copied_place(e, x.code) || match el_ir::unspan(x.code) {
-    NdCall { def_nr: tvd, args: tva } => (el::def(e, tvd).name == "OpVarRef" && len(tva) == 1 && copied_place(e, tva[0]!)) || ((el::def(e, tvd).name == "OpGetField" || el::def(e, tvd).name == "OpGetVector") && len(tva) >= 2 && copied_place(e, tva[0]!)),
+    NdCall { def_nr: tvd, args: tva } => (el::def(e, tvd).name == "OpCreateStack" && len(tva) == 1 && copied_place(e, tva[0]!)) || ((el::def(e, tvd).name == "OpGetField" || el::def(e, tvd).name == "OpGetVector") && len(tva) >= 2 && copied_place(e, tva[0]!)),
     _ => false
   };
   if op == "=" && v >= 0 && (!amp_bind || text_val) && !(el_ir::unspan(x.code) == ir::NdVar { n: v }) && text_val && text_place {
