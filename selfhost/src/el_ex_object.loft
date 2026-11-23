@@ -1378,7 +1378,11 @@ pub fn binding_var(e: el::El, vars: el_vars::Vars, name: text) -> integer {
     el_vars::mark_user_named(vars, v, "parse_var_inner");
     return v;
   }
-  el_vars::mark_user_named(vars, v, "parse_var_inner");
+  // (Only where the variable IS the name written — a match binding's `_mv_n_1`, a rebound
+  // capture's `n#1` stay the compiler's.)
+  if el_vars::name_of(vars, v) == name {
+    el_vars::mark_user_named(vars, v, "parse_var_inner");
+  }
   el_vars::in_use(vars, v, true);
   if !e.first_pass {
     el_vars::set_defined(vars, v);
