@@ -63,8 +63,8 @@ static int64_t loft_la_bits(const unsigned char *a, size_t i) {
     memcpy(&v, a + i * LOFT_LA_SIZE + LOFT_LA_SCALAR, 8);
     return v;
 }
-static loft_ref loft_la_ref(const unsigned char *a, size_t i) {
-    const unsigned char *d = a + i * LOFT_LA_SIZE + LOFT_LA_DBREF;
+/* A `DbRef` as the interpreter holds one in memory — in a slot, or on its stack. */
+static loft_ref loft_db_read(const unsigned char *d) {
     uint16_t nr;
     loft_ref r = { 0, 0, 0, 0 };
     memcpy(&nr, d + LOFT_DB_STORE, 2);
@@ -72,6 +72,23 @@ static loft_ref loft_la_ref(const unsigned char *a, size_t i) {
     memcpy(&r.pos, d + LOFT_DB_POS, 4);
     r.store_nr = nr;
     return r;
+}
+static void loft_db_write(unsigned char *d, loft_ref r) {
+    uint16_t nr = r.store_nr;
+    memcpy(d + LOFT_DB_STORE, &nr, 2);
+    memcpy(d + LOFT_DB_REC, &r.rec, 4);
+    memcpy(d + LOFT_DB_POS, &r.pos, 4);
+}
+static loft_ref loft_la_ref(const unsigned char *a, size_t i) {
+    return loft_db_read(a + i * LOFT_LA_SIZE + LOFT_LA_DBREF);
+}
+/* The reference a `&` argument's slot holds: the caller's variable, on the interpreter's
+ * stack, in its own layout — not a record field's. */
+static loft_ref loft_slot_ref(loft_ref at, uint32_t fld) {
+    return loft_db_read(loft_stores[at.store_nr].buf + (size_t) at.rec * 8 + at.pos + fld);
+}
+static void loft_slot_set_ref(loft_ref at, uint32_t fld, loft_ref r) {
+    loft_db_write(loft_stores[at.store_nr].buf + (size_t) at.rec * 8 + at.pos + fld, r);
 }
 static loft_str loft_la_text(const unsigned char *a, size_t i) {
     loft_str s;
@@ -92,11 +109,7 @@ static void loft_la_set_text(unsigned char *a, loft_str s) {
     memcpy(a + LOFT_LA_TLEN, &s.len, sizeof s.len);
 }
 static void loft_la_set_ref(unsigned char *a, loft_ref r) {
-    unsigned char *d = a + LOFT_LA_DBREF;
-    uint16_t nr = r.store_nr;
-    memcpy(d + LOFT_DB_STORE, &nr, 2);
-    memcpy(d + LOFT_DB_REC, &r.rec, 4);
-    memcpy(d + LOFT_DB_POS, &r.pos, 4);
+    loft_db_write(a + LOFT_LA_DBREF, r);
 }
 
 /* A bridge call works on the `Stores` it is handed: the table is read from it, and the unit's
@@ -171,6 +184,7 @@ fn bridge(cx: &Cx<'_>, d: u32, symbol: &str) -> Result<String, String> {
     // outer call's.
     let mut work = 0usize;
     let mut slot = 0usize;
+    let (mut places, mut back) = (String::new(), String::new());
     // The tuple parameters the function takes by address (`@FR-R-ValueRecord`'s pointer clause).
     let by_address = cx.vr_ptr_params(d);
     for (i, a) in def.attributes().iter().enumerate() {
@@ -195,6 +209,30 @@ fn bridge(cx: &Cx<'_>, d: u32, symbol: &str) -> Result<String, String> {
                 args.push(format!(
                     "(loft_n > {slot} && loft_la_ref(loft_a, {slot}).rec != 0 ? loft_la_ref(loft_a, {slot}) : loft_ref_null())"
                 ));
+                slot += 1;
+            }
+            // A `&T` argument is the `DbRef` of the slot it names (`marshal_arg_t`); the C
+            // function takes a pointer to the value held: read into a local, its address
+            // handed in, written back after the call — the callee may bind it anew.
+            BridgeAttrKind::Marshal if matches!(a.typedef.base(), Type::RefVar(_)) => {
+                let Type::RefVar(inner) = a.typedef.base() else {
+                    unreachable!()
+                };
+                let (get, set, held) = match cx.ctype(inner) {
+                    Some(CType::Ref) => ("loft_slot_ref", "loft_slot_set_ref", "loft_ref"),
+                    Some(CType::Int) => ("loft_get_int", "loft_set_int", "int64_t"),
+                    Some(CType::Float) => ("loft_get_float", "loft_set_float", "double"),
+                    _ => {
+                        return Err(format!(
+                            "parameter `{}` of a shape the bridge does not carry",
+                            a.name
+                        ));
+                    }
+                };
+                let at = format!("loft_la_ref(loft_a, {slot})");
+                let _ = writeln!(places, "    {held} loft_p{slot} = {get}({at}, 0);");
+                let _ = writeln!(back, "    {set}({at}, 0, loft_p{slot});");
+                args.push(format!("&loft_p{slot}"));
                 slot += 1;
             }
             BridgeAttrKind::Marshal => {
@@ -295,7 +333,7 @@ fn bridge(cx: &Cx<'_>, d: u32, symbol: &str) -> Result<String, String> {
     }
     Ok(format!(
         "\n__attribute__((visibility(\"default\"))) void {symbol}(void *loft_st, const unsigned char *loft_a, size_t loft_n, unsigned char *loft_r) {{\n    \
-         void *loft_prev = loft_host_enter(loft_st);\n    (void) loft_n;\n{held}{store}{freed}{plant}    loft_host_leave(loft_prev);\n}}\n"
+         void *loft_prev = loft_host_enter(loft_st);\n    (void) loft_n;\n{held}{places}{store}{back}{freed}{plant}    loft_host_leave(loft_prev);\n}}\n"
     ))
 }
 

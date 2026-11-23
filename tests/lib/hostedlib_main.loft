@@ -48,6 +48,13 @@ fn main() {
     seen = "{seen}{label_of(t)}={k.total};";
   }
   assert(seen == "hosted:4=467;stores:4=467;", "views {seen}");
+  // `&` arguments: 40 + 2; a bag grown through its reference, 0 + 5 and one item more
+  bx = 40;
+  bump(bx, 2);
+  assert(bx == 42, "bump {bx}");
+  rb = bag_new("ref", 0);
+  grow_ref(rb, 5);
+  assert(rb.total == 5 && len(rb.items) == 2, "grow_ref {rb.total} {len(rb.items)}");
   // a tuple handed in: 3 * 4 * 0.5 = 6, and -0.25 when its flag is off
   assert(spread((3, 0.5, true), 4) == 6.0 && spread((3, 0.25, false), 4) == 0.0 - 0.25, "spread");
   // e^-3.726127510713071 = 0.024085927969257424 (2^32 times: 103448272.92177233…); E to that

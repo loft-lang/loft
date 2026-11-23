@@ -258,6 +258,29 @@ impl State {
                 a
             })
             .collect();
+        // `&` arguments name slots of the caller's variables, on the interpreter's stacks, which
+        // the twin is lent and the compiled call writes first: the twin starts from each slot
+        // as it was before the call, and the two answers are compared like a store's.
+        let slots: Vec<(String, DbRef, usize)> = def
+            .attributes()
+            .iter()
+            .zip(popped)
+            .filter(|(a, _)| !a.hidden)
+            .filter_map(|(a, p)| match a.typedef.base() {
+                crate::data::Type::RefVar(inner) => Some((
+                    a.name.clone(),
+                    p.dbref,
+                    if crate::data::is_dbref_slot(inner.base()) {
+                        std::mem::size_of::<DbRef>()
+                    } else {
+                        8
+                    },
+                )),
+                _ => None,
+            })
+            .collect();
+        let before_call: Vec<Vec<u8>> =
+            slots.iter().map(|(_, r, n)| slot_bytes(&self.database, r, *n)).collect();
         // The compiled run, on the world itself — what the program goes on with, as it does
         // without the switch: the caller's views into its stores stay where they point, and
         // what the unit makes once (its constants) lives in the world the program keeps.
@@ -277,6 +300,11 @@ impl State {
         // The interpreted twin, on the copy taken before the call.  The interpreter's own
         // stacks are lent to it (its frames run on them), and handed back after; the
         // call-back's bookkeeping is put back, as the compiled world is the one kept.
+        let compiled_slots: Vec<Vec<u8>> =
+            slots.iter().map(|(_, r, n)| slot_bytes(&self.database, r, *n)).collect();
+        for ((_, r, _), b) in slots.iter().zip(&before_call) {
+            set_slot_bytes(&mut self.database, r, b);
+        }
         let (fb, fc) = (self.fnref_bufs.len(), self.fnref_calls.len());
         lend_stacks(&mut self.database, &mut twin);
         std::mem::swap(&mut self.database, &mut *twin);
@@ -287,6 +315,18 @@ impl State {
         self.database.hosted_view = crate::host_abi::TableView::of(&mut self.database);
         self.fnref_bufs.truncate(fb);
         self.fnref_calls.truncate(fc);
+        let mut slot_diff = None;
+        for ((name, r, n), compiled_b) in slots.iter().zip(&compiled_slots) {
+            let interp_b = slot_bytes(&self.database, r, *n);
+            if slot_diff.is_none() && &interp_b != compiled_b {
+                slot_diff = Some(format!(
+                    "the `&` argument `{name}` holds {} interpreted, {} compiled",
+                    hex(&interp_b),
+                    hex(compiled_b)
+                ));
+            }
+            set_slot_bytes(&mut self.database, r, compiled_b);
+        }
         let (interp, compiled): (&Stores, &Stores) = (&twin, &self.database);
         let (mut diff, placed_otherwise) = stores_difference(&before, interp, compiled);
         // Which function's code made the store that differs: its bytecode position, mapped to
@@ -306,6 +346,9 @@ impl State {
             why.push_str(&format!(" — made at bytecode {at}, in `{maker}`"));
         }
         if diff.is_none() {
+            diff = slot_diff;
+        }
+        if diff.is_none() {
             diff = answer_difference(data, d_nr, (&ret_i, interp), (&ret_c, compiled));
         }
         if let Some(why) = diff {
@@ -320,6 +363,23 @@ impl State {
             PLACED_OTHERWISE.fetch_add(1, Relaxed);
         }
     }
+}
+
+/// The `n` bytes at slot `r`, as the interpreter holds them.
+fn slot_bytes(stores: &Stores, r: &DbRef, n: usize) -> Vec<u8> {
+    let store = stores.store(r);
+    (0..n as u32).map(|i| *store.addr::<u8>(r.rec, r.pos + i)).collect()
+}
+
+fn set_slot_bytes(stores: &mut Stores, r: &DbRef, bytes: &[u8]) {
+    let store = stores.store_mut(r);
+    for (i, b) in bytes.iter().enumerate() {
+        *store.addr_mut::<u8>(r.rec, r.pos + i as u32) = *b;
+    }
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
 thread_local! {

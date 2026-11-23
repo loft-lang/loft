@@ -8721,7 +8721,11 @@ impl State {
                         ptr: arg.text_ptr,
                         len: arg.text_len as u32,
                     }),
-                    t if crate::data::is_dbref(t) => st.put_stack(arg.dbref),
+                    // A `&T` argument is the `DbRef` of the slot it names, as a generator is
+                    // its handle (`extensions::marshal_arg_t`).
+                    t if crate::data::is_dbref_slot(t) || matches!(t, Type::RefVar(_)) => {
+                        st.put_stack(arg.dbref);
+                    }
                     _ => st.put_stack(arg.scalar),
                 }
             }

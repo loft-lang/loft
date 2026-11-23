@@ -73,6 +73,16 @@ pub fn rename(self: Bag, n: text) {
   self.name = n;
 }
 
+// `&` arguments: the slot each names is read, handed in by address and written back.
+pub fn bump(x: &integer, k: integer) {
+  x += k;
+}
+
+pub fn grow_ref(self: &Bag, k: integer) {
+  self.total += k;
+  self.items += [k];
+}
+
 // A tuple argument: its leaves cross one slot each, and the unit builds its own tuple.
 pub fn spread(p: (integer, float, boolean), k: integer) -> float {
   if p.2 { (p.0 * k) as float * p.1 } else { 0.0 - p.1 }
