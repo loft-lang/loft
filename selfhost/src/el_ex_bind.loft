@@ -702,6 +702,7 @@ pub fn place_through_discharge(e: el::El, vars: el_vars::Vars, op: text, target:
     return ex(ir::NdNull, ir::TyVoid);
   }
   pl = el_vars::create_unique(vars, "_place", el_types::base(s.tp));
+  vars.compiler_named += [pl];
   e.p.nodes += [SName { at: at, name: el_vars::name_of(vars, pl), member: "" }];
   through = len(e.p.nodes) - 1;
   e.p.nodes += [SMember { at: at, e: through, name: field, args: [], call: false }];

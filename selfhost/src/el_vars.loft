@@ -333,6 +333,9 @@ pub struct Vars {
   pub enum_hint: integer = -1,
   // H7's loop buffer partners, `buf * 65536 + partner` (`rotate_loop_retbufs`).
   pub rot_partners: vector<integer> = [],
+  // Compiler temporaries the port reads through a syntax name of its own making
+  // (`place_through_discharge`'s `__place_N`): no mention of them is a user's.
+  pub compiler_named: vector<integer> = [],
   // `@FR-F-ParamTuple`'s copy seeds, built at the start of pass 2 (`tuple_param_seeds`): the
   // shadow of each, and its copy's code and type.
   pub tp_seed_shadows: vector<integer> = [],
@@ -676,6 +679,11 @@ pub fn drop_use(v: Vars, nr: integer) {
 }
 
 pub fn mark_user_named(v: Vars, nr: integer, why: text) {
+  // (A name the compiler wrote into the syntax to read its own temporary through — a
+  // `__place_N` — is no user's mention.)
+  if v.compiler_named.contains(nr) {
+    return;
+  }
   trace_flag(v, "user_named", nr, why);
   v.vars[nr].user_named = true;
 }
