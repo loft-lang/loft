@@ -118,6 +118,7 @@ PORT_STATE_KINDS = set()
 # differences}, decided after the run (a kind not derived yet is known only then).
 REFUSED_FN_LAYERS = {}
 REFUSED_LAYERS = {}  # refused program -> (the port reported a layer, Rust did)
+AGREE_SILENT = set()  # agreeing programs one side reported no contract and no state for
 CONTRACT_LINE = re.compile(r"^\[contract\] fn=(\S+) (.*)$")
 
 
@@ -224,14 +225,20 @@ def state_compare(rust, port, own, path=None):
 
 def contract_compare(rust, port, own):
     """({fact: functions that differ}, {fact: functions this port does not derive}) over the
-    program's own functions."""
+    program's own functions.  Every fact either side reports is compared, so a fact only one
+    side has differs; a fact the port prints as `?` (not derived) differs too, and is also
+    counted apart for the line.  A function only one side reports differs on `report`."""
     differ, missing = collections.Counter(), collections.Counter()
     for f in own:
+        if (f in rust) != (f in port):
+            differ["report"] += 1
+            continue
         r, p = rust.get(f, {}), port.get(f, {})
-        for k, v in r.items():
+        for k in sorted(set(r) | set(p)):
             if p.get(k) == "?":
                 missing[k] += 1
-            elif p.get(k) != v:
+                differ[k] += 1
+            elif p.get(k) != r.get(k):
                 differ[k] += 1
     return differ, missing
 
@@ -523,9 +530,11 @@ def one(loft, defs, elab, std, path, tmp, env, i):
         # The program's functions, and its records and field-carrying variants (their layout and
         # field facts are state lines too).
         own = {mm.group(1) for mm in (re.match(r"^#\d+ (\S+) type=[145] ", l) for l in want) if mm}
-        CONTRACT[path] = contract_compare(contract_facts(r.stderr.decode("utf-8", "replace")),
-                                          contract_facts(m.stderr), own)
+        rc_all, mc_all = contract_facts(r.stderr.decode("utf-8", "replace")), contract_facts(m.stderr)
+        CONTRACT[path] = contract_compare(rc_all, mc_all, own)
         port_state = state_table(m.stderr)
+        if own and (not (rc_all or state_table(o.stderr)) or not (mc_all or port_state)):
+            AGREE_SILENT.add(path)
         with STATE_LOCK:
             PORT_STATE_KINDS.update(state_kinds(port_state))
         STATE[path] = state_compare(state_table(o.stderr), port_state, own, path)
@@ -627,9 +636,9 @@ def main():
         futs = {ex.submit(one, loft, defs, elab, std, f, tmp, penv, i): (part, f)
                 for i, (part, f) in enumerate(todo)}
         done = [(futs[fut][0], futs[fut][1]) + tuple(fut.result()) for fut in cf.as_completed(futs)]
-        # A state kind the port reports in no program of this run is not derived yet: counted apart,
-        # it holds no program or definition back until the port first reports it (the owner's
-        # ruling, as for `buffer_exits`).  Decided over the whole run, so the verdicts follow it.
+        # A state kind the port reports in no program of this run is not derived yet.  It is
+        # listed apart on the state line AND holds every program and definition that carries it
+        # back: an agree holds on every layer, with no exception for a fact not yet ported.
         rust_kinds = collections.Counter()
         for sd in STATE.values():
             rust_kinds.update({k: 1 for k in sd})
@@ -641,22 +650,21 @@ def main():
         for f in list(STATE):
             sd = STATE[f]
             state_not_derived.update({k: 1 for k in sd if k in not_derived})
-            STATE[f] = collections.Counter({k: v for k, v in sd.items() if k not in not_derived})
         for part, f, verdict, detail, fns in done:
             if verdict == "refused":
                 for k, (cd, sd, rd) in REFUSED_FN_LAYERS.get(f, {}).items():
-                    sd = {x: n for x, n in sd.items() if x not in not_derived}
                     if cd or sd or rd:
                         fns[k] = ("unaligned", "; ".join(
                             f"{layer} differ: {tagged(layer, kinds)}"
                             for layer, kinds in (("contract", cd), ("state", sd), ("reasons", rd)) if kinds))
             # An agree is valid only when everything aligns (the owner's definition): a program
             # whose IR agrees but whose contract facts, state or flag reasons do not is
-            # `unaligned`, counted apart from `differ` (which is the IR's).  A fact the port does
-            # not derive yet (`buffer_exits`, P1) stays apart in the contract's `cm`: not derived
-            # is no difference, so it holds no program back until the port derives it.
-            if verdict == "agree" and f in CONTRACT:
-                if CONTRACT[f][0] or STATE.get(f) or REASONS.get(f):
+            # `unaligned`, counted apart from `differ` (which is the IR's).  A fact not derived
+            # yet differs like any other, and a program either side reported no layer for
+            # (`AGREE_SILENT`) is unaligned too: silence never reads as alignment.
+            if verdict == "agree":
+                if f not in CONTRACT or CONTRACT[f][0] or STATE.get(f) or REASONS.get(f) \
+                        or f in AGREE_SILENT:
                     verdict = "unaligned"
             # By function only where it adds to the program's verdict: a refused program (a program
             # that agrees pins all its definitions through the `elab` block already).
@@ -682,6 +690,8 @@ def main():
                 rd = REASONS.get(f)
                 if rd is not None:
                     refusals += "; reasons " + ("agree" if not rd else "differ: " + tagged("reasons", rd))
+                if f in AGREE_SILENT:
+                    refusals += "; a side reported no layer"
             verdicts.append(f"{verdict}\t{rel}" + (f"\t{refusals}" if refusals else ""))
             if verdict == "refused":
                 reasons.update(set(detail))
