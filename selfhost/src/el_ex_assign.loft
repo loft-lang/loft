@@ -903,6 +903,21 @@ fn append_place(e: el::El, vars: el_vars::Vars, n: integer) -> AppendPlace {
       bt = match b.tp { TyRefVar { inner: bi } => bi, _ => b.tp };
       AppendPlace { root: b.root, tp: match el_types::base(bt) { TyVector { inner: vi } => vi, _ => ir::TyVoid } }
     },
+    // A member of a tuple held as a `__tuple<…>` record — a `&` tuple link (`t.0 += "!"` on
+    // `t: &(text, E)`) — is that record's field, rooted at the link as `lhs_root_var` reads the
+    // field read; a plain tuple's member is no place rooted at a variable (Rust's `TupleGet`).
+    STupleGet { e: tin, index } => {
+      if tin == null {
+        return AppendPlace { root: -1, tp: ir::TyVoid };
+      }
+      b = append_place(e, vars, tin!);
+      bt = match b.tp { TyRefVar { inner: bi } => bi, _ => b.tp };
+      td = match el_types::base(bt) { TyReference { n: tn } => if starts_with(el::def(e, tn).name, "__tuple<") { tn } else { -1 }, _ => -1 };
+      if td < 0 || index < 0 || index >= len(el::def(e, td).attributes) {
+        return AppendPlace { root: -1, tp: ir::TyVoid };
+      }
+      AppendPlace { root: b.root, tp: el::def(e, td).attributes[index].typedef[0] ?? ir::TyVoid }
+    },
     _ => AppendPlace { root: -1, tp: ir::TyVoid }
   }
 }
