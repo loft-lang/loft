@@ -24,6 +24,7 @@ use own;
 use el_expressions;
 use el_ex_assign;
 use el_ex_place;
+use el_ex_into;
 use el_ex_object;
 use el_ex_null;
 use el_ex_match;
@@ -1642,12 +1643,12 @@ pub fn call_args(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::N
     }
     // `convert`'s tagged arm (`@FR-L-Null-Tag`, loft#1138): a `__nullable<S>` slot handed to an
     // `S?` parameter is read through its tag, so absence arrives as the reference null.
-    if is_nullable_wrapper(e, at) && pt is TyOptional && struct_ref(e, el_types::base(pt)) == el_ex_place::nullable_payload(e, el_types::struct_enum_def(at)) {
+    if is_nullable_wrapper(e, at) && pt is TyOptional && struct_ref(e, el_types::base(pt)) == el_ex_into::nullable_payload(e, el_types::struct_enum_def(at)) {
       if e.first_pass {
         conv += [arg];
         continue;
       }
-      rx = el_ex_place::read_through_tag(e, vars, ex(arg, at));
+      rx = el_ex_into::read_through_tag(e, vars, ex(arg, at));
       if rx == null {
         return null;
       }
@@ -1963,7 +1964,7 @@ pub fn template_object(e: el::El, vars: el_vars::Vars, parts: vector<integer>, t
   if e.first_pass {
     list = [el_ir::v_set(var, ir::NdNull), el_ir::cl(e, "OpDatabase", [ir::NdVar { n: var }, ir::NdInt { n: el::def(e, target).known_type }])];
   } else {
-    fl = el_ex_place::object_fields(e, vars, var, target, []);
+    fl = el_ex_into::object_fields(e, vars, var, target, []);
     if fl == null {
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
     }
@@ -3140,7 +3141,7 @@ pub fn coalesce(e: el::El, vars: el_vars::Vars, l: integer, r: integer) -> Ex {
   }
   // An `S?` slot's subject is the `S?` it holds (`read_through_tag`).
   if is_nullable_wrapper(e, x.tp) {
-    rx = el_ex_place::read_through_tag(e, vars, x);
+    rx = el_ex_into::read_through_tag(e, vars, x);
     if rx == null {
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
     }

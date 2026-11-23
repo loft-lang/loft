@@ -28,6 +28,7 @@ use el_ex_vector;
 use el_ex_copy;
 use el_ex_bind;
 use el_ex_closure;
+use el_ex_into;
 
 // `Parser::chain_return_buffer_var` (@PLN164 B2): the buffer only chain exits renamed — a hidden
 // `__ref_N` the body names nowhere but inside a `one_buffer_chain` — is the caller's too, so a
@@ -1747,7 +1748,7 @@ pub fn keyed_for(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex) -> Ex {
   // (`depending` replaces the deps).  A variable or a pure projection is walked in place.
   held_src = -1;
   held_fill = ir::NdNull;
-  if (ct is TySorted || ct is TyIndex) && el_ex_place::any_user_call(e, [x.code]) {
+  if (ct is TySorted || ct is TyIndex) && el_ex_into::any_user_call(e, [x.code]) {
     held_src = el_vars::create_unique(vars, "vector", ct);
     // (Typed as this pass's source: a `??` viewing a local borrows it, `["h"]`.)
     if !e.first_pass {
@@ -2679,7 +2680,7 @@ fn match_expr_inner(e: el::El, vars: el_vars::Vars, subject: integer, arms: vect
   // arm are each read through their OWN tag, at the arm — the `null` arm the sentinel — and the
   // match is the POINTER `S?`, viewing the slot's owner; nothing is read after the join.
   if !e.first_pass && el_ex_base::is_nullable_wrapper(e, result) && len([for a in out if a.tp is TyNull { 1 }]) > 0 {
-    npt = ir::TyOptional { inner: ir::TyReference { n: el_ex_place::nullable_payload(e, el_types::struct_enum_def(result)), dep: el_types::deps(result) } };
+    npt = ir::TyOptional { inner: ir::TyReference { n: el_ex_into::nullable_payload(e, el_types::struct_enum_def(result)), dep: el_types::deps(result) } };
     tl = el_ex_null::tag_leaves(e, vars, chain, result, npt);
     if tl != null {
       chain = tl!;
