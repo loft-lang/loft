@@ -100,6 +100,31 @@ pub struct LibraryContext {
     pub scope_entry: Option<String>,
 }
 
+/// The spelling of `pkg` (canonical) the parse loaded the package's sources by, when it is
+/// another than `pkg` itself.
+fn loaded_spelling(data: &crate::data::Data, pkg: &std::path::Path) -> Option<String> {
+    let pkg_text = pkg.to_string_lossy();
+    let mut seen = std::collections::HashSet::new();
+    for d in 0..data.definitions() {
+        let file = data.def(d).position().file.as_str();
+        if !seen.insert(file) {
+            continue;
+        }
+        if crate::file_access::is_under(file, &pkg_text) {
+            return None;
+        }
+        for dir in std::path::Path::new(file).ancestors().skip(1) {
+            if dir.as_os_str().is_empty() {
+                break;
+            }
+            if crate::file_access::plain_canonical(dir) == pkg {
+                return Some(dir.to_string_lossy().to_string());
+            }
+        }
+    }
+    None
+}
+
 /// A library parsed alone: the program `use <name>;` over the standard library, the way every
 /// program that uses the library sees its definitions.  What a library's own artifact is built
 /// from (`loft build-native`, a hosted C unit — `@PLN206 P5`), so the artifact is the library's
@@ -171,6 +196,10 @@ pub fn parse_library_alone(
     }
     // The slot and scope analysis the writers depend on, as the run path does before its build.
     crate::scopes::check(&mut p.data, &mut p.database);
+    // The package as the parse spelled it: a registry library resolves through `LOFT_HOME`,
+    // which may name the canonical directory another way (`/var` for `/private/var`), and the
+    // export set is read by path prefix.
+    let pkg_dir = loaded_spelling(&p.data, &pkg_path).unwrap_or(pkg_dir);
     let export = crate::native_lib::library_export_set(&p.data, &pkg_dir);
     let mut pending = std::mem::take(&mut p.pending_native_compile);
     if !pending.iter().any(|d| d == &pkg_dir) {
