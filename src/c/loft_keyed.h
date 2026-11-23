@@ -1938,9 +1938,9 @@ static void loft_par_job_init(loft_cx *cx, loft_par_job *j, loft_par_body body, 
     j->hi = hi;
 #ifdef LOFT_ALLOC_TRACE
     {
-        /* `@FR-D-conc-3`: counted by every starting thread, without an atomic. */
+        /* `@FR-C-Publish`: counted by every starting thread. */
         static uint32_t trace_ids = 0;
-        j->trace_id = ++trace_ids;
+        LOFT_PUB_ADD(trace_ids, 1u, j->trace_id);
     }
 #endif
     j->table = (loft_store_t *) calloc(room, sizeof *j->table);

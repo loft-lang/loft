@@ -182,14 +182,7 @@ second thread is kept out.
 
 ## Deviations
 
-OPEN: **1**.  The closed entries are in [concurrency-history.md](concurrency-history.md); conformance is shared with operational.md's D-op-1.
-
-- **D-conc-3 (OPEN, @PLN226) — `C-Publish`: four lazily set values of the C runtime are written
-  without an atomic or a lock by whichever thread arrives first** — the symbol a library call
-  resolves on its first call (the emitted `static … (*fp)`), `loft_fault_file`'s `ready` and
-  file, `loft_had_fatal`, and `LOFT_ALLOC_TRACE`'s worker numbers.  Every thread writes the same
-  value or sets the same flag, so no answer has been seen to change, but each is a data race in
-  ISO C.  No conformance program reaches one from two threads at once.
+OPEN: **0**.  The closed entries are in [concurrency-history.md](concurrency-history.md); conformance is shared with operational.md's D-op-1.
 
 - **Conformance is differential** — `par` is enforced across the two backends by the @PLN89
   differential oracle (D-op-1), which carries a parallel-reduction program

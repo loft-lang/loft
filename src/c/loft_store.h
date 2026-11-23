@@ -446,13 +446,17 @@ static void loft_heap_moved(loft_cx *cx, const loft_store_t *s, uint32_t old_wor
 static FILE *loft_trace_file(loft_cx *cx) {
     static FILE *f = 0;
     static int opened = 0;
+    /* `@FR-C-Publish`: opened once, under the lock. */
+    loft_pub_lock();
     if (!opened) {
         const char *p = getenv(LOFT_ALLOC_TRACE_ENV);
         opened = 1;
         if (p && *p) f = fopen(p, "w");
         if (f) setvbuf(f, 0, _IONBF, 0);
     }
-    return f;
+    FILE *got = f;
+    loft_pub_unlock();
+    return got;
 }
 /* The line of the events that follow (loft_rt.h, which sets it once the frames exist). */
 static void (*loft_trace_site_hook)(loft_cx *cx, FILE *f);

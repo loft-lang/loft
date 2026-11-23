@@ -135,11 +135,17 @@ static char *loft_name_refusal(loft_cx *cx, const char *p, size_t n, size_t *len
 static void loft_log_refusal_once(loft_cx *cx, loft_str raw, const char *why, size_t why_len) {
     static loft_text *said = 0;
     static size_t nsaid = 0;
+    /* `@FR-C-Publish`: the paths said are the program's, under the lock. */
+    loft_pub_lock();
     for (size_t i = 0; i < nsaid; i++)
-        if (said[i].len == raw.len && memcmp(said[i].p, raw.p, raw.len) == 0) return;
+        if (said[i].len == raw.len && memcmp(said[i].p, raw.p, raw.len) == 0) {
+            loft_pub_unlock();
+            return;
+        }
     said = (loft_text *) realloc(said, (nsaid + 1) * sizeof *said);
     if (!said) { fputs("loft: out of memory\n", stderr); abort(); }
     said[nsaid++] = loft_text_own(cx, raw);
+    loft_pub_unlock();
     fputs("loft: the path `", stderr);
     fwrite(raw.p, 1, raw.len, stderr);
     fputs("` is refused: ", stderr);

@@ -358,4 +358,59 @@ static inline int64_t loft_plain_div_v(int64_t a, int64_t b, int rem, const char
 #define LOFT_SHIP_NEG(a) ((int64_t) (0 - (uint64_t) (a)))
 #define LOFT_SHIP_SHL(a, b) ((int64_t) ((uint64_t) (a) << ((b) & 63)))
 
+
+/* ── Published data (`@FR-C-Publish`) ──────────────────────────────────────────────────────
+ * Data more than one thread may write: a value set lazily by whichever thread asks first (a
+ * flag read from the environment, a resolved symbol), a program-wide flag or counter, a log file
+ * opened on first use.  Each read and write goes through these: the compiler's atomics where this
+ * layer found them, one program-wide lock otherwise, and plain access in a unit without threads.
+ * A lazily set value is computed by whichever threads arrive first, each the same answer, and
+ * published once seen; anything longer than one word is set under `loft_pub_lock`. */
+#if !defined(LOFT_THREADS)
+static inline void loft_pub_lock(void) {}
+static inline void loft_pub_unlock(void) {}
+#elif defined(LOFT_GNU) || defined(LOFT_MSVC)
+#if defined(LOFT_GNU)
+static volatile int loft_pub_spin = 0;
+static inline void loft_pub_lock(void) {
+    while (__atomic_exchange_n(&loft_pub_spin, 1, __ATOMIC_ACQUIRE)) {
+    }
+}
+static inline void loft_pub_unlock(void) { __atomic_store_n(&loft_pub_spin, 0, __ATOMIC_RELEASE); }
+#else
+#include <intrin.h>
+static volatile long loft_pub_spin = 0;
+static inline void loft_pub_lock(void) {
+    while (_InterlockedExchange(&loft_pub_spin, 1)) {
+    }
+}
+static inline void loft_pub_unlock(void) { _InterlockedExchange(&loft_pub_spin, 0); }
+#endif
+#elif defined(_WIN32)
+#include <windows.h>
+static SRWLOCK loft_pub_srw = SRWLOCK_INIT;
+static inline void loft_pub_lock(void) { AcquireSRWLockExclusive(&loft_pub_srw); }
+static inline void loft_pub_unlock(void) { ReleaseSRWLockExclusive(&loft_pub_srw); }
+#else
+#include <pthread.h>
+static pthread_mutex_t loft_pub_mutex = PTHREAD_MUTEX_INITIALIZER;
+static inline void loft_pub_lock(void) { pthread_mutex_lock(&loft_pub_mutex); }
+static inline void loft_pub_unlock(void) { pthread_mutex_unlock(&loft_pub_mutex); }
+#endif
+
+/* LOFT_PUB_GET(slot, out): read `slot` into `out`; LOFT_PUB_SET(slot, v): publish `v`;
+ * LOFT_PUB_SWAP(slot, v, out): publish `v`, `out` the value it replaced; LOFT_PUB_ADD(slot, d,
+ * out): add `d`, `out` the sum.  Statements, so the lock's spelling is one expression list. */
+#if defined(LOFT_THREADS) && defined(LOFT_GNU)
+#define LOFT_PUB_GET(slot, out) ((out) = __atomic_load_n(&(slot), __ATOMIC_ACQUIRE))
+#define LOFT_PUB_SET(slot, v) __atomic_store_n(&(slot), (v), __ATOMIC_RELEASE)
+#define LOFT_PUB_SWAP(slot, v, out) ((out) = __atomic_exchange_n(&(slot), (v), __ATOMIC_SEQ_CST))
+#define LOFT_PUB_ADD(slot, d, out) ((out) = __atomic_add_fetch(&(slot), (d), __ATOMIC_SEQ_CST))
+#else
+#define LOFT_PUB_GET(slot, out) (loft_pub_lock(), (out) = (slot), loft_pub_unlock())
+#define LOFT_PUB_SET(slot, v) (loft_pub_lock(), (slot) = (v), loft_pub_unlock())
+#define LOFT_PUB_SWAP(slot, v, out) (loft_pub_lock(), (out) = (slot), (slot) = (v), loft_pub_unlock())
+#define LOFT_PUB_ADD(slot, d, out) (loft_pub_lock(), (out) = ((slot) += (d)), loft_pub_unlock())
+#endif
+
 #endif

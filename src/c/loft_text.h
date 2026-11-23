@@ -339,9 +339,13 @@ static int64_t loft_now_us(loft_cx *cx) {
     clock_gettime(CLOCK_MONOTONIC, &t);
     return (int64_t) t.tv_sec * 1000000 + t.tv_nsec / 1000;
 #elif defined(_WIN32)
-    static long long freq = 0;
-    long long count = 0;
-    if (!freq) QueryPerformanceFrequency((union _LARGE_INTEGER *) &freq);
+    static long long known = 0;
+    long long freq, count = 0;
+    LOFT_PUB_GET(known, freq);
+    if (!freq) {
+        QueryPerformanceFrequency((union _LARGE_INTEGER *) &freq);
+        LOFT_PUB_SET(known, freq);
+    }
     QueryPerformanceCounter((union _LARGE_INTEGER *) &count);
     return (int64_t) (count / freq * 1000000 + count % freq * 1000000 / freq);
 #else

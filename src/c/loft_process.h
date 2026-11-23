@@ -123,6 +123,9 @@ static void loft_proc_forward(int sig) {
 
 static void loft_proc_track(loft_cx *cx, pid_t group, int on) {
     static int installed = 0;
+    /* `@FR-C-Publish`: the handlers installed once, and the groups table written, under the
+     * lock. */
+    loft_pub_lock();
     if (!installed) {
         installed = 1;
         for (int i = 0; i < 4; i++) {
@@ -138,13 +141,15 @@ static void loft_proc_track(loft_cx *cx, pid_t group, int on) {
             sigaction(loft_proc_forwarded[i], &act, 0);
         }
     }
+    /* The groups table too: any thread that starts or ends a child writes it. */
     for (size_t i = 0; i < 256; i++) {
         if (on && loft_proc_groups[i] == 0) {
             loft_proc_groups[i] = group;
-            return;
+            break;
         }
         if (!on && loft_proc_groups[i] == group) loft_proc_groups[i] = 0;
     }
+    loft_pub_unlock();
 }
 
 /* A started child: its id (which names its group) and the pipes this program holds, -1 for one
@@ -766,6 +771,8 @@ static int loft_rec_replay(loft_cx *cx, loft_words *w, const char *in, size_t in
             loft_push(cx, &a->err, w->v[i], w->len[i]);
         }
     } else {
+        /* `@FR-C-Publish`: the replay's count per key is the program's, under the lock. */
+        loft_pub_lock();
         size_t slot = nused;
         for (size_t i = 0; i < nused; i++)
             if (used_key[i].len == key.len && memcmp(used_key[i].p, key.p, key.len) == 0) slot = i;
@@ -778,6 +785,7 @@ static int loft_rec_replay(loft_cx *cx, loft_words *w, const char *in, size_t in
         }
         size_t k = used_n[slot] < nm - 1 ? used_n[slot] : nm - 1;
         used_n[slot]++;
+        loft_pub_unlock();
         loft_text code = { 0, 0, 0 };
         a->code = -1;
         if (loft_rec_read(cx, matching[k], "code", &code)) {

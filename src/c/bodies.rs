@@ -409,8 +409,10 @@ fn lookup(names: &[String]) -> String {
         t,
         "}};\nstatic const int64_t loft_body_count = {};\n\n\
          int64_t loft_body_find(const char *name, int64_t len) {{\n    \
-         static int off = -1;\n    \
-         if (off < 0) {{\n        const char *e = getenv(\"LOFT_NO_COMPILED_BODIES\");\n        off = e && *e && strcmp(e, \"0\") != 0;\n    }}\n    \
+         static int seen = -1;\n    \
+         int off;\n    \
+         LOFT_PUB_GET(seen, off);\n    \
+         if (off < 0) {{\n        const char *e = getenv(\"LOFT_NO_COMPILED_BODIES\");\n        off = e && *e && strcmp(e, \"0\") != 0;\n        LOFT_PUB_SET(seen, off);\n    }}\n    \
          if (off) return -1;\n    \
          static const char shared[] = \"loft_shared_\";\n    \
          if (len >= (int64_t) sizeof shared - 1 && memcmp(name, shared, sizeof shared - 1) == 0) {{\n        \

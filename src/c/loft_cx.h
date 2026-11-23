@@ -245,6 +245,8 @@ struct loft_cx {
     loft_bt_hint bt_hints[LOFT_BT_HINTS];
     /* the engine host (`loft_engine.h`) */
     loft_word eh_by;
+    void *eh_sleep_timer;  /* the thread's high-resolution sleep timer (Windows) */
+    int eh_sleep_tried;
     /* the hash (`loft_hash.h`) */
     loft_ref h_filed;
     struct loft_live_scratch *scratches;

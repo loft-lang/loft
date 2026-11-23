@@ -513,7 +513,7 @@ static int loft_log_production_fault(loft_cx *cx, int sev, const char *label, co
     loft_push(cx, &m, message.p, message.len);
     loft_log_record(cx, sev, loft_lit(cx, m.p, m.len), file, line);
     free(m.p);
-    loft_had_fatal = 1;
+    loft_set_fatal(cx);
     return 1;
 }
 
@@ -523,10 +523,11 @@ static int loft_log_production_fault(loft_cx *cx, int sev, const char *label, co
  * Answers 0 outside production, where the write halts. */
 static int loft_log_locked_write(loft_cx *cx, const char *advice) {
     static uint64_t discarded = 0;
+    uint64_t n;
     loft_log_init(cx);
     if (!loft_lg.production) return 0;
-    discarded++;
-    if ((discarded & (discarded - 1)) == 0) {
+    LOFT_PUB_ADD(discarded, 1, n);
+    if ((n & (n - 1)) == 0) {
         loft_text m = { 0, 0, 0 };
         static const char label[] = "[write_to_locked_store] ";
         loft_push(cx, &m, label, sizeof label - 1);
@@ -551,17 +552,22 @@ static int loft_log_locked_write(loft_cx *cx, const char *advice) {
 static FILE *loft_dump_file(loft_cx *cx) {
     static FILE *f = 0;
     static int opened = 0;
+    loft_pub_lock();
     if (!opened) {
         const char *path = getenv("LOFT_STORE_DUMP");
         opened = 1;
         if (path && *path) f = fopen(path, "w");
     }
-    return f;
+    FILE *got = f;
+    loft_pub_unlock();
+    return got;
 }
 static void loft_store_dump_one(loft_cx *cx, loft_store_t *s) {
     static int planted = 0;
     FILE *f = loft_dump_file(cx);
     if (!f || s->serial == 0) return;
+    /* `@FR-C-Publish`: one store's lines whole, and the planted byte once, under the lock. */
+    loft_pub_lock();
     fprintf(f, "S %s %u %u %u\n", loft_trace_name(cx, s), (unsigned) s->known, (unsigned) s->size, /* LOFT_RAW_KNOWN: the store as it is in memory */
             (unsigned) (s - cx->stores));
     for (uint32_t w = 0; w < s->claims.nwords; w++) {
@@ -582,6 +588,7 @@ static void loft_store_dump_one(loft_cx *cx, loft_store_t *s) {
             fputc('\n', f);
         }
     }
+    loft_pub_unlock();
     (void) planted;
 }
 static void loft_store_dump(loft_cx *cx) {

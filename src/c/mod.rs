@@ -3118,7 +3118,7 @@ fn emit_program_counted(
     let mut out = emit_unit(data, stores, &[main])?;
     let _ = write!(
         out,
-        "\nint main(int argc, char **argv) {{\n    loft_cx *cx = &loft_main_cx;\n    loft_bind_tables();\n    loft_start(cx, argc, argv);\n    {}\n    {call}\n    loft_leak_report(cx);\n    return loft_had_fatal;\n}}\n",
+        "\nint main(int argc, char **argv) {{\n    loft_cx *cx = &loft_main_cx;\n    loft_bind_tables();\n    loft_start(cx, argc, argv);\n    {}\n    {call}\n    loft_leak_report(cx);\n    return loft_fatal_status(cx);\n}}\n",
         anchor(stores),
     );
     // The finished program names what it uses: what nothing names is not written.
@@ -3248,7 +3248,7 @@ pub fn emit_esp_program(data: &Data, stores: &Stores) -> Result<String, Refusal>
         "{ESP_ENTRY}\n    loft_cx *cx = &loft_main_cx;\n    loft_esp_note(cx, \"app\", -1);\n    loft_esp_nvs(cx);\n    \
          loft_esp_board(cx);\n    loft_esp_assets(cx);\n    loft_bind_tables();\n    \
          loft_start(cx, 0, 0);\n    {}\n    loft_esp_note(cx, \"main\", -1);\n    loft_esp_release(cx);\n    {call}\n    \
-         loft_leak_report(cx);\n    loft_esp_end(cx, loft_had_fatal);\n}}\n",
+         loft_leak_report(cx);\n    loft_esp_end(cx, loft_fatal_status(cx));\n}}\n",
         anchor(stores),
     );
     crate::rewrite_census::write();
@@ -4058,9 +4058,12 @@ fn c_binding(cx: &Cx, d: u32) -> Result<(String, String), String> {
         let pkg = data.c_owner_pkg(&file).unwrap_or_default();
         (
             format!(
-                "    static {ret_text} (*loft_cfp)({params_text}) = 0;\n    \
-                 if (!loft_cfp) {{ void *loft_p = loft_c_lazy_sym(cx, {}, {}); \
-                 memcpy(&loft_cfp, &loft_p, sizeof loft_p); }}\n    \
+                "    static void *loft_cfs = 0;\n    \
+                 {ret_text} (*loft_cfp)({params_text});\n    \
+                 void *loft_p;\n    \
+                 LOFT_PUB_GET(loft_cfs, loft_p);\n    \
+                 if (!loft_p) {{ loft_p = loft_c_lazy_sym(cx, {}, {}); LOFT_PUB_SET(loft_cfs, loft_p); }}\n    \
+                 memcpy(&loft_cfp, &loft_p, sizeof loft_p);\n    \
                  if (!loft_cfp) loft_c_missing_symbol(cx, {});",
                 body::c_string(&sig.symbol),
                 body::c_string(pkg),
@@ -4074,9 +4077,12 @@ fn c_binding(cx: &Cx, d: u32) -> Result<(String, String), String> {
         (
             format!(
                 "#if defined({when})\n    \
-                 static {ret_text} (*loft_cfp)({params_text}) = 0;\n    \
-                 if (!loft_cfp) {{ void *loft_p = loft_c_bound_sym(cx, {sym}); \
-                 memcpy(&loft_cfp, &loft_p, sizeof loft_p); }}\n    \
+                 static void *loft_cfs = 0;\n    \
+                 {ret_text} (*loft_cfp)({params_text});\n    \
+                 void *loft_p;\n    \
+                 LOFT_PUB_GET(loft_cfs, loft_p);\n    \
+                 if (!loft_p) {{ loft_p = loft_c_bound_sym(cx, {sym}); LOFT_PUB_SET(loft_cfs, loft_p); }}\n    \
+                 memcpy(&loft_cfp, &loft_p, sizeof loft_p);\n    \
                  if (!loft_cfp) loft_c_missing_symbol(cx, {sym});\n\
                  #else\n    \
                  extern {ret_text} ({})({params_text});\n    \
@@ -4531,21 +4537,23 @@ fn library_native(
     let mut body = String::new();
     let _ = writeln!(
         body,
-        "    static {ffi_ret} (*fp)({}) = 0;",
+        "    static void *fp_sym = 0;\n    {ffi_ret} (*fp)({});\n    void *s_;",
         if ffi_params.is_empty() {
             "void".to_string()
         } else {
             ffi_params.join(", ")
         }
     );
-    // `@FR-D-conc-3`: `fp` is set by the first thread that calls, without an atomic.
+    // `@FR-C-Publish`: the symbol is published by the first thread that resolves it.
     // The build's own path for a run in place; a shipped program finds the file by name among
     // the libraries it opened at start (`loft_c_bind_libraries`).  ISO C has no conversion from
     // an object pointer to a function pointer, so the symbol is copied into `fp` (strict C99
     // refuses the cast; every host's ABI makes the bytes the same).
     let _ = writeln!(
         body,
-        "    if (!fp) {{ void *s_ = loft_ffi_sym(cx, {}, {}, {}); memcpy(&fp, &s_, sizeof fp); }}",
+        "    LOFT_PUB_GET(fp_sym, s_);\n    \
+         if (!s_) {{ s_ = loft_ffi_sym(cx, {}, {}, {}); LOFT_PUB_SET(fp_sym, s_); }}\n    \
+         memcpy(&fp, &s_, sizeof fp);",
         body::c_string(lib),
         body::c_string(&crate::file_access::file_name(lib).unwrap_or_default()),
         body::c_string(def.native())

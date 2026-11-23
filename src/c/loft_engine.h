@@ -589,10 +589,13 @@ static int64_t loft_ehc_now(loft_cx *cx) { return loft_now_us(cx) - loft_ehc.sta
  * tier answers. ── */
 
 static int loft_eh_debug_on(loft_cx *cx) {
-    static int on = -1;
+    static int seen = -1;
+    int on;
+    LOFT_PUB_GET(seen, on);
     if (on < 0) {
         const char *v = getenv("LOFT_DEBUG_CONTROL");
         on = v && strcmp(v, "1") == 0;
+        LOFT_PUB_SET(seen, on);
     }
     return on;
 }
@@ -704,8 +707,9 @@ static void loft_eh_close_all(void) {
 
 static void loft_eh_close_at_exit(loft_cx *cx) {
     static int armed = 0;
-    if (armed) return;
-    armed = 1;
+    int was;
+    LOFT_PUB_SWAP(armed, 1, was);
+    if (was) return;
     atexit(loft_eh_close_all);
 }
 
@@ -1053,12 +1057,12 @@ static void loft_eh_sleep_us(loft_cx *cx, int64_t us) {
 #ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
 #define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
 #endif
-    static HANDLE timer = 0;
-    static int tried = 0;
-    if (!tried) {
-        tried = 1;
-        timer = CreateWaitableTimerExW(0, 0, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
+    /* The thread's own timer (`@FR-C-Own`): one timer two threads waited on would wake one. */
+    if (!cx->eh_sleep_tried) {
+        cx->eh_sleep_tried = 1;
+        cx->eh_sleep_timer = CreateWaitableTimerExW(0, 0, CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS);
     }
+    HANDLE timer = (HANDLE) cx->eh_sleep_timer;
     LARGE_INTEGER due;
     due.QuadPart = -(LONGLONG) us * 10;
     if (timer && SetWaitableTimer(timer, &due, 0, 0, 0, FALSE)) {
@@ -1440,12 +1444,15 @@ static int64_t loft_kernel_client_pump(loft_cx *cx) {
         free(msg.p);
     }
     if (loft_ehc.udp >= 0) {
-        static int64_t drop_nth = -1;
+        static int64_t drop_seen = -1;
         static uint64_t received = 0;
+        int64_t drop_nth;
+        LOFT_PUB_GET(drop_seen, drop_nth);
         if (drop_nth < 0) {
             const char *v = getenv("LOFT_UDP_DROP_NTH");
             int64_t d = 0;
             drop_nth = v && loft_eh_int(cx, v, strlen(v), &d) && d > 0 ? d : 0;
+            LOFT_PUB_SET(drop_seen, drop_nth);
         }
         char buf[2048];
         for (;;) {
@@ -1458,7 +1465,9 @@ static int64_t loft_kernel_client_pump(loft_cx *cx) {
             if (len >= 2 && buf[0] == 'A' && buf[1] == ':') {
                 loft_ehc.udp_bound = 1;
             } else if (loft_eh_seq_frame(cx, buf, (size_t) len, &seq, &body, &bl)) {
-                if (drop_nth > 0 && ++received % (uint64_t) drop_nth == 0) continue;
+                uint64_t nth = 0;
+                if (drop_nth > 0) LOFT_PUB_ADD(received, 1u, nth);
+                if (drop_nth > 0 && nth % (uint64_t) drop_nth == 0) continue;
                 loft_eh_conflate(cx, &loft_ehc.slots, seq, body, bl);
             }
         }

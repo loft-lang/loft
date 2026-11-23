@@ -23,15 +23,18 @@
 /* `LOFT_FAULT_LOG=<file>` — each store fault as one JSON line, the Rust runtime's
  * `fault_log` in the same format (`"backend":"c"`), beside the message printed anyway. */
 static inline FILE *loft_fault_file(loft_cx *cx) {
-    /* `@FR-D-conc-3`: opened by the first thread that faults, without a lock. */
+    /* `@FR-C-Publish`: opened once, by the first thread that faults, under the lock. */
     static int ready = 0;
     static FILE *f = NULL;
+    loft_pub_lock();
     if (!ready) {
         const char *p = getenv("LOFT_FAULT_LOG");
         ready = 1;
         if (p && *p) f = fopen(p, "a");
     }
-    return f;
+    FILE *got = f;
+    loft_pub_unlock();
+    return got;
 }
 static inline void loft_fault_str(loft_cx *cx, FILE *f, const char *s, size_t n) {
     size_t i;
@@ -558,8 +561,15 @@ static void loft_eprint(loft_cx *cx, loft_str s) {
 }
 
 /* The run's exit status: 1 once a fault was fatal, or surfaced under `--dev-soft-halt`. */
-/* `@FR-D-conc-3`: set by whichever thread faults, without an atomic. */
+/* Whether a fault made the program's status 1: set by whichever thread faults, read by `main`
+ * at the end (`@FR-C-Publish`). */
 static int loft_had_fatal = 0;
+static void loft_set_fatal(loft_cx *cx) { LOFT_PUB_SET(loft_had_fatal, 1); }
+static int loft_fatal_status(loft_cx *cx) {
+    int v;
+    LOFT_PUB_GET(loft_had_fatal, v);
+    return v;
+}
 
 /* `--dev-soft-halt` (`LOFT_DEV_SOFT_HALT=1`, `ops::dev_soft_halt`): every recoverable fault is
  * surfaced on stderr as it happens and the run ends non-zero, as the interpreter does — a
@@ -579,7 +589,7 @@ static LOFT_COLD int loft_soft_halt(loft_cx *cx) {
  * it. */
 static LOFT_COLD loft_word loft_ovf(loft_cx *cx, const char *op, loft_word a, loft_word b) {
     if (loft_soft_halt(cx)) {
-        loft_had_fatal = 1;
+        loft_set_fatal(cx);
         fprintf(stderr, "soft-halt: integer overflow: %lld %s %lld\n", (long long) a, op,
                 (long long) b);
     }
@@ -806,24 +816,14 @@ static void loft_lazy_contain(loft_cx *cx, const char *label, const char *prefix
  * reach it together, as the interpreter's `REPORTING` lock makes it: the first to claim the halt
  * prints and ends the process; a later one waits for that end.  Not under the test runner, whose
  * faults jump back to the test rather than end anything. */
-#if defined(LOFT_MSVC)
-#include <intrin.h>
-#endif
-/* `@FR-C-Publish`: claimed with an atomic exchange. */
-static volatile long loft_halt_claimed = 0;
+/* `@FR-C-Publish`: claimed by one exchange; a later claimant waits for the end. */
+static long loft_halt_claimed = 0;
 static void loft_halt_claim(loft_cx *cx) {
     long was;
     if (cx->in_test) return;
-#if defined(LOFT_GNU)
-    was = __atomic_exchange_n(&loft_halt_claimed, 1L, __ATOMIC_SEQ_CST);
-#elif defined(LOFT_MSVC)
-    was = _InterlockedExchange(&loft_halt_claimed, 1L);
-#else
-    was = loft_halt_claimed;
-    loft_halt_claimed = 1;
-#endif
+    LOFT_PUB_SWAP(loft_halt_claimed, 1L, was);
     if (was)
-        for (;;) (void) loft_halt_claimed;
+        for (;;) LOFT_PUB_GET(loft_halt_claimed, was);
 }
 
 /* A production run's fault logger (`loft_log_production_fault`), bound by a unit's `main`; null
@@ -1469,7 +1469,7 @@ static LOFT_COLD void loft_fault_report(loft_cx *cx, const char *message, const 
             const char *close = strchr(m, ']');
             if (close) m = close[1] == ' ' ? close + 2 : close + 1;
         }
-        loft_had_fatal = 1;
+        loft_set_fatal(cx);
         fprintf(stderr, "soft-halt: %s at %s:%u\n", m, file, (unsigned) line);
     }
 }
@@ -2222,10 +2222,13 @@ static int loft_slice_give(loft_cx *cx, uint32_t nr) {
  * free checks, so a store made in between would be the one released.  `LOFT_ALLOW_REFREE` lets
  * it pass; a `-DLOFT_DOUBLE_FREE` build counts instead. */
 static int loft_refree_allowed(loft_cx *cx) {
-    static int v = -1;
+    static int on = -1;
+    int v;
+    LOFT_PUB_GET(on, v);
     if (v < 0) {
         const char *e = getenv("LOFT_ALLOW_REFREE");
         v = e && *e && strcmp(e, "0") != 0;
+        LOFT_PUB_SET(on, v);
     }
     return v;
 }
@@ -3966,8 +3969,13 @@ static int loft_swap_in(loft_cx *cx, uint16_t tp, loft_ref src, loft_ref dst, in
 #endif
     /* `LOFT_TRACE_STORE_SWAP=1` names each exchange as the interpreter does (`[swap-in]`). */
     {
-        static int trace = -1;
-        if (trace < 0) trace = getenv("LOFT_TRACE_STORE_SWAP") != NULL;
+        static int traced = -1;
+        int trace;
+        LOFT_PUB_GET(traced, trace);
+        if (trace < 0) {
+            trace = getenv("LOFT_TRACE_STORE_SWAP") != NULL;
+            LOFT_PUB_SET(traced, trace);
+        }
         if (trace)
             fprintf(stderr, "[swap-in] store #%u takes the content of #%u (tp=%u); #%u released\n",
                     (unsigned) dst.store_nr, (unsigned) src.store_nr, (unsigned) tp, (unsigned) src.store_nr);
