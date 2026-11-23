@@ -112,3 +112,28 @@ The 11 items are three cases:
 - the def-level `mutated_capture` temps.
 
 Under the strict-equality ruling this is no gate filter: it is the list of Rust changes R1–R4 above.
+
+## R1, designed (11-23; built after R2 lands)
+
+The placeholder is load-bearing on PASS 1, so it is retired, not removed:
+- **Why pass 1 needs it:** a capture read has no closure record yet, so `parse_var_inner`'s
+  capture arm (objects.rs ~1261) makes a variable of the capture's name, which types the read
+  and is the target of a write.  `collect_mutated_captures` finds the pass-1 writes through it,
+  and that decides each capture's storage (auto-Reference for a mutated one).
+- **Pass 2:** reads go through the closure record, and no pass-2 code names the placeholder.
+  But the variable table persists across the passes, so it reaches the image with its flags:
+  `user_named`, a self-dep (`deps=n` on a boxed capture), `user_appended`, and `value_const`
+  (`capture_const`).
+
+The change:
+1. Mark the variable at its creation as a pass-1 capture placeholder (an explicit mark, not a
+   name test).
+2. Once the lambda's pass 2 has parsed its body, clear those four flags on each marked variable
+   no pass-2 code names.
+3. The variable keeps its index (no renumbering), but carries no flag, so the state report has
+   nothing on it to compare.
+
+It is a retire like `unregister_work_ref`.  The decision leaves the comparison and the port
+needs no counterpart, since it makes no placeholder.  Prediction: the 446 items (`user_named`
+417, `deps` 20, `user_appended` 9) gone, nothing new, the IR identical, and the closure suite
+cells green on both backends.
