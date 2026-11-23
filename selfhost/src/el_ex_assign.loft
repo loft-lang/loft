@@ -1973,6 +1973,15 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
     }
   }
   if el_ex_place::promotes_text_param(e, vars, v) {
+    // (`change_var_type`'s `depend_all` runs on the parameter itself, the variable the bind
+    // names, before the bind moves to its shadow: it borrows what the value borrows.)
+    pds = el_types::deps(el_vars::tp(vars, v));
+    for pd in el_types::deps(x.tp) {
+      if !pds.contains(pd) {
+        pds += [pd];
+      }
+    }
+    el_vars::set_var_type(vars, v, el_types::with_deps(el_vars::tp(vars, v), pds));
     v = el_vars::promote_text_param(vars, v);
   }
   // A vector local a `&` link names, rebound from a call that takes it (`l = &v; v = extend(v,
