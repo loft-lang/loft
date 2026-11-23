@@ -1155,6 +1155,10 @@ pub fn work_ref(v: Vars, t: ir::TypeT) -> integer {
     v.work_ref += 1;
   }
   nr = add_variable(v, "__ref_{v.work_ref}", t);
+  // (A `__ref_N` name is a site within one pass only: the mint claims the flags, and a
+  // `skip_free` a substitution left on the name the other pass used is no longer true —
+  // a freshly minted buffer has a use, loft#1082.)
+  v.vars[nr].skip_free = false;
   v.work_refs = sorted_in(v.work_refs, nr);
   v.ref_sites += [RefSite { nr: nr, site: v.site }];
   nr
