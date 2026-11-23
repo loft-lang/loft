@@ -856,7 +856,10 @@ fn append_place(e: el::El, vars: el_vars::Vars, n: integer) -> AppendPlace {
         // `lhs_root_var` of the lowered target is `__closure`.)
         for c in e.captures {
           if c.name == name {
-            return AppendPlace { root: e.closure_var, tp: c.tp };
+            // (A cell the closure writes through is its `value` field's place: the field's own
+            // type, as the lowered target's is.)
+            ccd = el_cell::cell_of(e, c.tp);
+            return AppendPlace { root: e.closure_var, tp: if ccd >= 0 { el::def(e, ccd).attributes[0]!.typedef[0] ?? ir::TyVoid } else { c.tp } };
           }
         }
       }
@@ -893,6 +896,7 @@ fn append_place(e: el::El, vars: el_vars::Vars, n: integer) -> AppendPlace {
 }
 
 fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: text, target: integer, rhs: integer?) -> Ex {
+  el_ex_name::capture_target_placeholder(e, vars, target);
   // loft#1840 — the program's own append into a collection or a text, recorded on the local
   // the place is rooted at (`lhs_root_var`) for the `lost-write` lint (`mark_user_appended`).
   if op == "+=" {
