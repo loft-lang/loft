@@ -2506,7 +2506,7 @@ impl<'a> Ownership<'a> {
         let defs = span_round_defs(self.data, d_nr).unwrap_or_else(|| {
             let mut defs = Defs::default();
             collect_defs(&def.code, &FillOps::of(self.data), &mut defs);
-            std::rc::Rc::new(defs)
+            std::sync::Arc::new(defs)
         });
         // @FR-O-Oracle — the answer must be a function of the VALUE, never of who asked.
         // The in-flight var set belongs to the function whose body is being walked: a slot
@@ -5403,30 +5403,9 @@ pub fn ownership_of(data: &Data, d_nr: u32, value: &Value) -> Own {
     ownership_of_with(data, d_nr, value, &function_defs(data, d_nr))
 }
 
-/// The one function whose [`function_defs`] may be reused, and the value once asked.
-type DefsMemoSlot = Option<(u32, Option<std::sync::Arc<Defs>>)>;
-
-/// [`DefsMemoSlot`] kept in its program's `Data` (`Data::defs_memo`), set only inside a
-/// [`DefsMemoScope`].  Shared with the scope by a handle, so the writer that opened the scope
-/// may still write the `Data` (a code position, a text-view mark) — never a body.  A clone of
-/// the `Data` starts it empty.
-#[derive(Default)]
-pub(crate) struct DefsMemo(std::sync::Arc<std::sync::Mutex<DefsMemoSlot>>);
-
-impl Clone for DefsMemo {
-    fn clone(&self) -> Self {
-        Self::default()
-    }
-}
-
-impl DefsMemo {
-    fn with<R>(&self, f: impl FnOnce(&mut DefsMemoSlot) -> R) -> R {
-        f(&mut self
-            .0
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner))
-    }
-}
+/// The one function whose [`function_defs`] may be reused, and the value once asked; kept in
+/// its program's `Data` (`Data::defs_memo`), set only inside a [`DefsMemoScope`].
+pub(crate) type DefsMemo = (u32, Option<std::sync::Arc<Defs>>);
 
 /// A span in which ONE function's body cannot change, so its [`function_defs`] is computed on
 /// the first [`ownership_of`] about it and reused for every later one (loft#1697).
@@ -5438,28 +5417,10 @@ impl DefsMemo {
 /// (the reason given on `function_defs`): it is entered where nothing rewrites one — the
 /// emission of a single function — for this `Data` and this function, and it restores whatever
 /// it replaced when dropped, so a nested span leaves the outer one intact.
-#[must_use]
-pub(crate) struct DefsMemoScope {
-    memo: std::sync::Arc<std::sync::Mutex<DefsMemoSlot>>,
-    prev: DefsMemoSlot,
-}
+pub(crate) type DefsMemoScope = crate::data::ScopedSpan<DefsMemo>;
 
 pub(crate) fn defs_memo_scope(data: &Data, d_nr: u32) -> DefsMemoScope {
-    let prev = data.defs_memo.with(|m| m.replace((d_nr, None)));
-    DefsMemoScope {
-        memo: data.defs_memo.0.clone(),
-        prev,
-    }
-}
-
-impl Drop for DefsMemoScope {
-    fn drop(&mut self) {
-        let prev = self.prev.take();
-        *self
-            .memo
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = prev;
-    }
+    data.defs_memo.open((d_nr, None))
 }
 
 /// The callee facts every ownership question in one span shares: per function, the round's
@@ -5474,56 +5435,29 @@ impl Drop for DefsMemoScope {
 /// cold minute there (loft#2620).  A class is shared only when its derivation met no
 /// recursion cut above its own frame ([`Ownership::return_ownership`]): such a class is the
 /// one a question about that function alone derives.
-struct SpanMemo {
-    key: usize,
-    round_defs: HashMap<u32, std::rc::Rc<Defs>>,
+pub(crate) struct SpanMemo {
+    round_defs: HashMap<u32, std::sync::Arc<Defs>>,
     ret: HashMap<u32, Own>,
 }
 
-std::thread_local! {
-    static SPAN_MEMO: std::cell::RefCell<Option<SpanMemo>> = const { std::cell::RefCell::new(None) };
-}
-
-#[must_use]
-pub(crate) struct OwnershipMemoScope {
-    prev: Option<SpanMemo>,
-}
+pub(crate) type OwnershipMemoScope = crate::data::ScopedSpan<SpanMemo>;
 
 /// Open a span in which no body of `data` changes: see [`SpanMemo`].  Restores whatever span
 /// it replaced when dropped, so a nested one leaves the outer one intact.
 pub(crate) fn ownership_memo_scope(data: &Data) -> OwnershipMemoScope {
-    let key = std::ptr::from_ref(data) as usize;
-    let prev = SPAN_MEMO.with(|m| {
-        m.replace(Some(SpanMemo {
-            key,
-            round_defs: HashMap::default(),
-            ret: HashMap::default(),
-        }))
-    });
-    OwnershipMemoScope { prev }
-}
-
-impl Drop for OwnershipMemoScope {
-    fn drop(&mut self) {
-        let prev = self.prev.take();
-        SPAN_MEMO.with(|m| *m.borrow_mut() = prev);
-    }
-}
-
-fn span_return_class(data: &Data, d_nr: u32) -> Option<Own> {
-    let key = std::ptr::from_ref(data) as usize;
-    SPAN_MEMO.with(|m| match &*m.borrow() {
-        Some(s) if s.key == key => s.ret.get(&d_nr).copied(),
-        _ => None,
+    data.span_memo.open(SpanMemo {
+        round_defs: HashMap::default(),
+        ret: HashMap::default(),
     })
 }
 
+fn span_return_class(data: &Data, d_nr: u32) -> Option<Own> {
+    data.span_memo.with(|m| m.as_ref()?.ret.get(&d_nr).copied())
+}
+
 fn span_put_return_class(data: &Data, d_nr: u32, class: Own) {
-    let key = std::ptr::from_ref(data) as usize;
-    SPAN_MEMO.with(|m| {
-        if let Some(s) = &mut *m.borrow_mut()
-            && s.key == key
-        {
+    data.span_memo.with(|m| {
+        if let Some(s) = m {
             s.ret.insert(d_nr, class);
         }
     });
@@ -5531,22 +5465,18 @@ fn span_put_return_class(data: &Data, d_nr: u32, class: Own) {
 
 /// The round's definitions walk of `d_nr` ([`collect_defs`] over its body), from the open
 /// span, computed there on first use; `None` with no span open for this `Data`.
-fn span_round_defs(data: &Data, d_nr: u32) -> Option<std::rc::Rc<Defs>> {
-    let key = std::ptr::from_ref(data) as usize;
-    let open = SPAN_MEMO.with(|m| match &*m.borrow() {
-        Some(s) if s.key == key => Some(s.round_defs.get(&d_nr).cloned()),
-        _ => None,
-    })?;
+fn span_round_defs(data: &Data, d_nr: u32) -> Option<std::sync::Arc<Defs>> {
+    let open = data
+        .span_memo
+        .with(|m| Some(m.as_ref()?.round_defs.get(&d_nr).cloned()))?;
     if let Some(defs) = open {
         return Some(defs);
     }
     let mut defs = Defs::default();
     collect_defs(&data.def(d_nr).code, &FillOps::of(data), &mut defs);
-    let defs = std::rc::Rc::new(defs);
-    SPAN_MEMO.with(|m| {
-        if let Some(s) = &mut *m.borrow_mut()
-            && s.key == key
-        {
+    let defs = std::sync::Arc::new(defs);
+    data.span_memo.with(|m| {
+        if let Some(s) = m {
             s.round_defs.insert(d_nr, defs.clone());
         }
     });
@@ -11363,15 +11293,10 @@ pub fn debug_dead_store_dump(
 /// graph, from the bodies as the scope pass receives them — the twin of
 /// `parser::closures::param_writes_summary` (loft#2620): one answer per function, not one per
 /// asking function and the order it walked the graph in.
-#[must_use]
-pub(crate) struct WrittenParamsSummary {
-    prev: Option<(usize, HashMap<u32, HashSet<u16>>)>,
-}
+pub(crate) type WrittenParamsSummary = crate::data::ScopedSpan<WrittenParams>;
 
-std::thread_local! {
-    static WRITTEN_PARAMS: std::cell::RefCell<Option<(usize, HashMap<u32, HashSet<u16>>)>> =
-        const { std::cell::RefCell::new(None) };
-}
+/// Per function, the parameters it writes through (`Data::written_params`).
+pub(crate) type WrittenParams = HashMap<u32, HashSet<u16>>;
 
 pub(crate) fn written_params_summary(data: &Data) -> WrittenParamsSummary {
     // Per function: its own write-through parameters, and the (callee, position, parameter)
@@ -11422,22 +11347,12 @@ pub(crate) fn written_params_summary(data: &Data) -> WrittenParamsSummary {
             break;
         }
     }
-    let key = std::ptr::from_ref(data) as usize;
-    let prev = WRITTEN_PARAMS.with(|m| m.replace(Some((key, cur))));
-    WrittenParamsSummary { prev }
-}
-
-impl Drop for WrittenParamsSummary {
-    fn drop(&mut self) {
-        let prev = self.prev.take();
-        WRITTEN_PARAMS.with(|m| *m.borrow_mut() = prev);
-    }
+    data.written_params.open(cur)
 }
 
 fn summarised_written_params(data: &Data, callee: u32) -> Option<HashSet<u16>> {
-    let key = std::ptr::from_ref(data) as usize;
-    WRITTEN_PARAMS.with(|m| match &*m.borrow() {
-        Some((k, map)) if *k == key => match map.get(&callee) {
+    data.written_params.with(|m| match m {
+        Some(map) => match map.get(&callee) {
             Some(w) => Some(w.clone()),
             // A native (no loft body) writes nothing a walk could read: `callee_written_params`
             // answers it empty, and so does the summary.  A body made after the summary was

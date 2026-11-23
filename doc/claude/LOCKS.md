@@ -78,7 +78,7 @@ handlers' install.
 
 | Lock | Guards | Threads | Why | Instead | Visible |
 |---|---|---|---|---|---|
-| `PassCell` (`data.rs`: range, non-null, copy-manifest, catch-up, trace, depth), `DefsMemo` (`use_analysis.rs`), `LazyDriverCache`, `OpSetCache`, `NameOnlyCache` (`data.rs`) | memos and scratch about one program | the compiling thread; `Data` is shared read-only with the interpreter's `par` workers | only so `Data` stays shareable — never contended | a compile-session object the passes take by `&mut`, holding these memos (`C-Own`) | none |
+| `PassCell` (`data.rs`: range, non-null, copy-manifest, catch-up, trace, depth), `ScopedCell` (`data.rs`: the definitions, ownership-span, parameter-write and written-parameter memos), `LazyDriverCache`, `OpSetCache`, `NameOnlyCache` (`data.rs`) | memos and scratch about one program | the compiling thread; `Data` is shared read-only with the interpreter's `par` workers | only so `Data` stays shareable — never contended | a compile-session object the passes take by `&mut`, holding these memos (`C-Own`) | none |
 | `FOUND` (`spent.rs`), `WHERE` and the counts (`rewrite_census.rs`), `SEEN` (`timeout.rs` give-up reports) | per-program compile state | the compiling thread; test threads race on them | process globals for a program's state | the compile session; census totals merged into a process total at exit | none; stops cross-talk between test threads |
 | `NAMES` (`lexer.rs` `intern_file`), `POOL` (`diagnostics.rs`), `SEEN` (`ir_read.rs`) | interned file names, codes and block names as `&'static str` | every compile and the runtime | `'static` names need a process table | a per-`Data` interner (names live as long as the program) — a large change | none |
 | `CACHE` (`registry_index.rs`), `INDEX_MEMO` (`install.rs`), `CACHE` (`native_utils.rs`) | parsed registry index; file hashes | compile and build threads, test threads | genuinely shared caches (a parse or a 14 MB hash once per process) | per compile session, paid once per program | none |
@@ -109,6 +109,6 @@ All are off unless a `LOFT_*` switch arms them.
 The locks marked **not needed**, and the hot ones, go first: `C_BINDINGS` (every `#c` call),
 `store_budget` (every allocation under a ceiling), the wiring tables (`NATIVE_SIGS` with its
 thread-local cache).  Then the
-compile session that takes the `Data` memos (`PassCell`, `DefsMemo`) and the per-program
+compile session that takes the `Data` memos (`PassCell`, `ScopedCell`) and the per-program
 globals of the compiler.  The logger and the tallies follow the per-thread-then-merged form once
 the order of their lines is agreed.  @PLN226 P4b carries them.

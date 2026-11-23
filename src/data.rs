@@ -5815,6 +5815,60 @@ impl<T: Default> PassCell<T> {
     }
 }
 
+/// `@PLN226` — a pass's memo that holds only inside a SPAN: [`Self::open`] sets it and answers a
+/// guard that puts the previous value back when dropped, so a nested span leaves the outer one
+/// intact.  The guard keeps a handle, not the `Data`, so the code inside the span may still
+/// borrow the `Data` mutably; each span's own doc says why no body it reads changes inside it.
+/// A clone of the `Data` starts it empty, as [`PassCell`] does.
+pub struct ScopedCell<T>(std::sync::Arc<std::sync::Mutex<Option<T>>>);
+
+impl<T> Default for ScopedCell<T> {
+    fn default() -> Self {
+        Self(std::sync::Arc::default())
+    }
+}
+
+impl<T> Clone for ScopedCell<T> {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+impl<T> ScopedCell<T> {
+    /// Run `f` on the open span's value, `None` outside any span.
+    pub fn with<R>(&self, f: impl FnOnce(&mut Option<T>) -> R) -> R {
+        f(&mut self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner))
+    }
+
+    /// Open a span holding `value` until the answered guard drops.
+    pub fn open(&self, value: T) -> ScopedSpan<T> {
+        ScopedSpan {
+            prev: self.with(|m| m.replace(value)),
+            cell: self.0.clone(),
+        }
+    }
+}
+
+/// The open span of a [`ScopedCell`]; dropping it restores the value the span replaced.
+#[must_use]
+pub struct ScopedSpan<T> {
+    cell: std::sync::Arc<std::sync::Mutex<Option<T>>>,
+    prev: Option<T>,
+}
+
+impl<T> Drop for ScopedSpan<T> {
+    fn drop(&mut self) {
+        let prev = self.prev.take();
+        *self
+            .cell
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = prev;
+    }
+}
+
 /// The suffix [`Data::retire_def_name`] gives a definition taken out of the name index.  A
 /// retired definition is still the one at its number: [`Data::def_identity`] reads the name it
 /// was declared under.
@@ -6105,7 +6159,14 @@ pub struct Data {
     pub(crate) nn_memo: PassCell<crate::opt::non_sentinel::NnMemo>,
     /// `@PLN226` — the ownership oracle's definitions of the function being emitted
     /// (`use_analysis::defs_memo_scope`).
-    pub(crate) defs_memo: crate::use_analysis::DefsMemo,
+    pub(crate) defs_memo: ScopedCell<crate::use_analysis::DefsMemo>,
+    /// `@PLN226` — every callee's return class and definitions walk inside a span in which no
+    /// body changes (`use_analysis::ownership_memo_scope`).
+    pub(crate) span_memo: ScopedCell<crate::use_analysis::SpanMemo>,
+    /// `@PLN226` — the parameter-write summary (`parser::param_writes_summary`).
+    pub(crate) param_writes: ScopedCell<crate::parser::ParamWrites>,
+    /// `@PLN226` — the written-parameter summary (`use_analysis::written_params_summary`).
+    pub(crate) written_params: ScopedCell<crate::use_analysis::WrittenParams>,
     /// The open instances [`Data::instance_def`] is catching up (`catch_up_open_instance`).
     catching_up: PassCell<HashSet<u32>>,
     /// `LOFT_TRACE_REFILL_TEXT`'s lines already printed (`hoist::trace_refill_text_once`).
@@ -6831,7 +6892,10 @@ impl Data {
             name_only: NameOnlyCache::default(),
             range_memo: PassCell::default(),
             nn_memo: PassCell::default(),
-            defs_memo: crate::use_analysis::DefsMemo::default(),
+            defs_memo: ScopedCell::default(),
+            span_memo: ScopedCell::default(),
+            param_writes: ScopedCell::default(),
+            written_params: ScopedCell::default(),
             catching_up: PassCell::default(),
             refill_traced: PassCell::default(),
             buffer_complete_depth: PassCell::default(),
