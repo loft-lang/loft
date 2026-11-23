@@ -4870,22 +4870,39 @@ fn unloaded_native(cx: &Cx, d: u32, ret: CType) -> Result<(String, String), Stri
     // Any other native is a Rust crate's, which a C build never links (`native_build::c_target`):
     // the interpreter's "cdylib missing or stale / a poisoned call index" reading does not apply
     // to a call the C makes by name, so the message says what does.
-    let library = cx.data.native_symbol_crates.get(def.native()).map_or_else(
-        || "its library".to_string(),
-        |krate| {
+    // The package by the crate the symbol was registered from, else by the manifest above the
+    // function's own source: a hand-written cdylib (`[library] native`) registers no crate.
+    let library = cx
+        .data
+        .native_symbol_crates
+        .get(def.native())
+        .map(|krate| {
             cx.data
                 .native_packages
                 .iter()
                 .find(|(c, _)| c.replace('-', "_") == *krate)
                 .map_or_else(|| krate.clone(), |(_, pkg_dir)| package_identity(pkg_dir).0)
-        },
-    );
+        })
+        .or_else(|| {
+            std::path::Path::new(def.position().file.as_str())
+                .ancestors()
+                .skip(1)
+                .find(|d| crate::file_access::exists(d.join("loft.toml")))
+                .map(|d| package_identity(&d.to_string_lossy()).0)
+        });
     let msg = if let Some(why) = unbuildable {
         format!("native function {}: {why}", def.native())
     } else {
         // A Rust-only native part is refused here, at build, rather than compiled into a stub
         // that panics at the call: such a release is deprecated (its native part is Rust,
         // which loft does not build), and a newer release of the library has a C part.
+        let Some(library) = library else {
+            return Err(format!(
+                "native {} (its library has only a Rust native part, which loft does not build \
+                 — take a release of it with a C part)",
+                def.original_name()
+            ));
+        };
         let package = library
             .split_whitespace()
             .next()
