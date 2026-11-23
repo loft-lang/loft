@@ -3276,7 +3276,9 @@ pub fn record_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   owned = every_tail_is_an_owned_call(e, x.code);
   // A call default answers a record in its own buffer; beside a held subject that arm owns it
   // (`join-arm-owner`: the buffer bound to the call, then answered).
-  dbuf = match el_ir::unspan(d.code) { NdCall { args } => hidden_ref_arg(vars, args), _ => -2 };
+  // (An operator's read — `k[6]`'s `OpGetVector` — is a view of a record some store holds,
+  // not a call answering one.)
+  dbuf = match el_ir::unspan(d.code) { NdCall { def_nr: dc, args } => if starts_with(el::def(e, dc).name, "Op") { -2 } else { hidden_ref_arg(vars, args) }, _ => -2 };
   // A default that is itself a `??` chain ending in a call (`a ?? b ?? make()`) owns that arm
   // as a view of the chain (`own_joined_call_arms`) — not carried.
   if !e.first_pass && chain_ends_in_call(vars, d.code) {
