@@ -2023,7 +2023,10 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
   if !e.first_pass && keyed_kind(kcur) && !(kcur is TyRefVar) && keyed_kind(x.tp) && !(x.code is NdInsert) && !(x.code is NdNull) {
     // (`(B-Copy)` for the keyed kinds, recorded at the replace as `lower_vec_copy_bind` records a
     // vector's: a keyed value read out of a place is COPIED into the local's own store.)
-    if copied_place(e, x.code) {
+    // (A NESTED projection — `m.inn.h`, a field of an element — is bound as a view below, as
+    // Rust's `keyed_projection_views` declines the copy: no replace, no mark.)
+    kview = match el_ir::unspan(x.code) { NdCall { def_nr: kvd, args: kva } => el::def(e, kvd).name == "OpGetField" && place_root(e, el_ir::unspan(x.code)) >= 0 && !(len(kva) > 0 && el_ir::unspan(kva[0]) is NdVar), _ => false };
+    if copied_place(e, x.code) && !kview {
       el_vars::mark_copy_bound(vars, v, "parse_assign_op_inner");
     }
     match el_ir::unspan(x.code) {
