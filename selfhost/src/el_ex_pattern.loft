@@ -2046,7 +2046,7 @@ pub fn vector_value(e: el::El, vars: el_vars::Vars, n: integer, hinted: boolean 
   v = el_vars::create_unique(vars, "vec", ir::TyVector { inner: ir::TyUnknown { n: 0 }, dep: [] });
   // (`parse_single`'s receiver rename: the literal a bind's chain starts with is read through a
   // receiver of its own, an inline ref — its null init mints no store.)
-  if is_recv {
+  if is_recv && !vars.recv_subscripted {
     el_vars::mark_inline(vars, v, "parse_single");
   }
   vector_build(e, vars, v, n, elem, value: true, hinted: hinted, borrows: borrows, at_close: !el_types::is_unknown(elem), elm_made: pre)

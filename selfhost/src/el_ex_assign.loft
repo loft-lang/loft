@@ -964,19 +964,7 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
   }
   // The literal a plain bind's value chain starts with is built as a receiver (`recv_literal`).
   if op == "=" && rhs != null && e.p.nodes[target] is SName {
-    root = rhs!;
-    more = true;
-    while more {
-      more = false;
-      match e.p.nodes[root] {
-        SMember { e: me } => { if me != null { root = me!; more = true; } },
-        SIndex { e: ie } => { if ie != null { root = ie!; more = true; } },
-        _ => {}
-      }
-    }
-    if root != rhs! && e.p.nodes[root] is SVecLit {
-      vars.recv_literal = root;
-    }
+    receiver_literal(e, vars, rhs!);
   }
   if rhs != null {
     el_ex_place::unqualify_literal(e, rhs!);
@@ -2588,5 +2576,27 @@ fn target_root_name(e: el::El, n: integer) -> text {
     SIndex { e: ie } => if ie == null { "" } else { target_root_name(e, ie!) },
     STupleGet { e: te } => if te == null { "" } else { target_root_name(e, te!) },
     _ => ""
+  }
+}
+
+// The literal a bind's value chain starts with (`t = [..].map(f)`, `a = [10, 20][1]`) is built
+// as a receiver (`recv_literal`); one SUBSCRIPTED directly (`[..][i]`, `[..][a..b]`) is a known
+// receiver in Rust (`parse_vector`'s `subscripted`): no rename, so no inline mark
+// (`recv_subscripted`).
+pub fn receiver_literal(e: el::El, vars: el_vars::Vars, rhs: integer) {
+  root = rhs;
+  parent = -1;
+  more = true;
+  while more {
+    more = false;
+    match e.p.nodes[root] {
+      SMember { e: me } => { if me != null { parent = root; root = me!; more = true; } },
+      SIndex { e: ie } => { if ie != null { parent = root; root = ie!; more = true; } },
+      _ => {}
+    }
+  }
+  if root != rhs && e.p.nodes[root] is SVecLit {
+    vars.recv_literal = root;
+    vars.recv_subscripted = parent >= 0 && e.p.nodes[parent] is SIndex;
   }
 }
