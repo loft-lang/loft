@@ -44,7 +44,7 @@ Each subject names the Rust setter to trace with `LOFT_TRACE_VARFLAGS=*` (its `f
 |---|---|---|---|---|
 | S1 | `user_named` on `__place_N`, port-only | 26 / 8 | porter (lead 1) | Rust marks a mention only where the variable IS the name written (objects.rs `parse_var_inner`); the port marks `record_compound`'s held place (el_ex_place ~1004).  READABLE: `__place_1` is a `_`-name, so `is_compiler_generated` answers false on the port |
 | S2 | `inline_refs` on a keyed `??` holder (`__ncc_N`), port-only | 24 / 7 | porter | Rust marks it `skip_free` and decides its null init by its deps (`keyed_null_mints`); the port reads the inline mark for codegen, so the null-init decision must move onto the deps first |
-| S3 | `skip_free` on a lambda's `__ref_N`, Rust-only | 11 / 7 | new, to measure | all in lambdas answering a record through a fn-ref (a-rebind-exchanges…, 1353, a-plain-bind-of-a-fn-ref-result…).  Porter's notes point at `RetPromotion::Bind { substitute }` unregistering the ref and `suppress_collapsed_workrefs`' second caller (control.rs ~5025, unported) |
+| S3 | `skip_free` on a `__ref_N`, Rust-only | 11 / 7 | MEASURED (11-23) | see § S3 below |
 | S4 | `deps` on a tuple element's `__ref_N`, Rust-only | 7 / 5 | porter (suspect) | `unbox_tuple_from_dbref`'s work ref (`deps=rs`, `deps=t`, `deps=v`): the work ref borrows the tuple it unboxes |
 | S5 | contract `rebinds` | 10 progs | new, to measure | the parameters rebound with a store the body owns.  The contract lines are not dumped per function yet: needs a gate pass with the contract difference written out |
 | S6 | contract `buffer_exits` | all 1401 not derived | porter (unported) | the placement analysis `callee_buffer_exits`.  The largest unported fact |
@@ -58,3 +58,29 @@ keyed-branch-arms, reversed-range-forms and store-else-on-an-append all have no 
 7fe954324.  The next refusal-led subjects come from the tip's ranking: lambda families such as
 "a lambda answering a record or a collection beside a shared capture" (35 sites) and "a lambda
 that captures a local of its function: TyFunction" (28).
+
+## S3, measured (11-23, on the join's Rust af1def05e)
+
+The 11 items are three cases:
+- **2471/2472's `pick`, `pick_b`, `pick2`, `pick3` (4):** the decision-order rule the porter is
+  carrying (the shadow holds the copy seed's type during the body).  Rust's selector then takes
+  `MaterializeView`, which mints `__ref_1` and retires it.
+- **N-Road's `local_at` `__ref_2` (1):** on the porter's list.
+- **Six lambdas in four programs** (1659 ×3, a-rebind-exchanges… `r6_0`, 1353 `main_2`,
+  a-plain-bind-of-a-fn-ref… `_1`).  `LOFT_TRACE_VARFLAGS=*` in image mode
+  (`LOFT_EMIT_PARSED`): set by `Function::unregister_work_ref` (src/variables/mod.rs ~4822).
+  "Retire a work-ref the one-buffer binding substituted out of the IR: every use now names the
+  return buffer, so the variable names no storage at all."  Callers: control.rs ~12673 and
+  ~14115.  The port never mints the ref (its `r6_0` state has no `__ref_1`), and Rust's ref
+  is named by no op, has no slot and is never freed.  **Inert**: the same flag on a variable no
+  code names.  (A full-interpreter trace names src/state/codegen.rs ~521 instead, which is
+  codegen's own `skip_free` sweep.  The image is written before it, so trace the image run.)
+
+**This generalises § 0.**  Every inert class so far is one of two things:
+- a flag on a VARIABLE NO PASS-2 CODE NAMES (a capture placeholder; a retired work ref);
+- the def-level `mutated_capture` temps.
+
+One filter replaces the per-flag reader list: compare a variable's flags only where an op of
+the function names the variable, or the variable is an argument.  Compare `mutated_capture`
+only over the lambda's real captures.  Positive control: a work ref that IS named by code must
+stay compared, and so must a `_`-named capture written in a lambda.
