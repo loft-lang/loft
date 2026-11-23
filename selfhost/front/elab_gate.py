@@ -108,6 +108,12 @@ ROUTES = {}
 # selfhost/src/el_contract.loft): per program that agrees on its image, the facts its functions
 # carry differently — {fact: count} — and the facts this port does not derive yet (`?`).
 CONTRACT = {}
+# The state kinds the PORT reports anywhere in the run (`one` adds each program's): a kind it
+# reports nowhere is a fact it does not derive yet, counted apart like the contract's `?`.
+PORT_STATE_KINDS = set()
+# A refused program's agreeing definitions: path -> {definition: (contract, state, reasons)
+# differences}, decided after the run (a kind not derived yet is known only then).
+REFUSED_FN_LAYERS = {}
 REFUSED_LAYERS = {}  # refused program -> (the port reported a layer, Rust did)
 CONTRACT_LINE = re.compile(r"^\[contract\] fn=(\S+) (.*)$")
 
@@ -176,6 +182,18 @@ def tier(layer, kind):
 def tagged(layer, kinds):
     """A program's differing kinds (a set or a counter's keys), each with its tier."""
     return ", ".join(f"{k} [{tier(layer, k)}]" for k in sorted(kinds))
+
+
+def state_kinds(table):
+    """The kinds of the items a state table carries, as `state_compare` names them."""
+    out = set()
+    for (fn, subject), items in table.items():
+        for item in items:
+            kind = "inline_refs" if subject == "inline_refs" else item.split("=")[0]
+            out.add(kind)
+            if kind == "user_named":
+                out.add("user_named(_)")
+    return out
 
 
 def state_compare(rust, port, own, path=None):
@@ -485,16 +503,18 @@ def one(loft, defs, elab, std, path, tmp, env, i):
             # A port that reports no layer for the program compares nothing: counted apart, so
             # silence never reads as alignment.
             REFUSED_LAYERS[path] = (bool(mc) or bool(ms), bool(rc) or bool(rs))
+            with STATE_LOCK:
+                PORT_STATE_KINDS.update(state_kinds(ms))
             state_compare(rs, ms, ok, path)
             reasons_compare(rr, mr, ok, path)
+            layers = {}
             for k in ok:
                 cd, _ = contract_compare(rc, mc, {k})
                 sd = state_compare(rs, ms, {k})
                 rd = reasons_compare(rr, mr, {k})
                 if cd or sd or rd:
-                    fns[k] = ("unaligned", "; ".join(
-                        f"{layer} differ: {tagged(layer, kinds)}"
-                        for layer, kinds in (("contract", cd), ("state", sd), ("reasons", rd)) if kinds))
+                    layers[k] = (cd, sd, rd)
+            REFUSED_FN_LAYERS[path] = layers
         return "refused", refused, fns
     if mine == want:
         # The program's functions, and its records and field-carrying variants (their layout and
@@ -502,7 +522,10 @@ def one(loft, defs, elab, std, path, tmp, env, i):
         own = {mm.group(1) for mm in (re.match(r"^#\d+ (\S+) type=[145] ", l) for l in want) if mm}
         CONTRACT[path] = contract_compare(contract_facts(r.stderr.decode("utf-8", "replace")),
                                           contract_facts(m.stderr), own)
-        STATE[path] = state_compare(state_table(o.stderr), state_table(m.stderr), own, path)
+        port_state = state_table(m.stderr)
+        with STATE_LOCK:
+            PORT_STATE_KINDS.update(state_kinds(port_state))
+        STATE[path] = state_compare(state_table(o.stderr), port_state, own, path)
         REASONS[path] = reasons_compare(flag_reasons(r.stderr.decode("utf-8", "replace"), True),
                                         flag_reasons(m.stderr, False), own, path)
         return "agree", "", fns
@@ -600,9 +623,30 @@ def main():
     with cf.ThreadPoolExecutor(o.jobs) as ex:
         futs = {ex.submit(one, loft, defs, elab, std, f, tmp, penv, i): (part, f)
                 for i, (part, f) in enumerate(todo)}
-        for fut in cf.as_completed(futs):
-            part, f = futs[fut]
-            verdict, detail, fns = fut.result()
+        done = [(futs[fut][0], futs[fut][1]) + tuple(fut.result()) for fut in cf.as_completed(futs)]
+        # A state kind the port reports in no program of this run is not derived yet: counted apart,
+        # it holds no program or definition back until the port first reports it (the owner's
+        # ruling, as for `buffer_exits`).  Decided over the whole run, so the verdicts follow it.
+        rust_kinds = collections.Counter()
+        for sd in STATE.values():
+            rust_kinds.update({k: 1 for k in sd})
+        for layers in REFUSED_FN_LAYERS.values():
+            for _, sd, _ in layers.values():
+                rust_kinds.update({k: 1 for k in sd})
+        not_derived = {k for k in rust_kinds if k not in PORT_STATE_KINDS}
+        state_not_derived = collections.Counter()
+        for f in list(STATE):
+            sd = STATE[f]
+            state_not_derived.update({k: 1 for k in sd if k in not_derived})
+            STATE[f] = collections.Counter({k: v for k, v in sd.items() if k not in not_derived})
+        for part, f, verdict, detail, fns in done:
+            if verdict == "refused":
+                for k, (cd, sd, rd) in REFUSED_FN_LAYERS.get(f, {}).items():
+                    sd = {x: n for x, n in sd.items() if x not in not_derived}
+                    if cd or sd or rd:
+                        fns[k] = ("unaligned", "; ".join(
+                            f"{layer} differ: {tagged(layer, kinds)}"
+                            for layer, kinds in (("contract", cd), ("state", sd), ("reasons", rd)) if kinds))
             # An agree is valid only when everything aligns (the owner's definition): a program
             # whose IR agrees but whose contract facts, state or flag reasons do not is
             # `unaligned`, counted apart from `differ` (which is the IR's).  A fact the port does
@@ -683,7 +727,8 @@ def main():
         for sd in STATE.values():
             skinds.update({k: 1 for k in sd})
         print(f"state: {sagree} of {len(STATE)} agreeing programs carry the same function state"
-              + ("; differ on " + ", ".join(f"{k} {v} [{tier('state', k)}]" for k, v in skinds.most_common(12)) if skinds else ""))
+              + ("; differ on " + ", ".join(f"{k} {v} [{tier('state', k)}]" for k, v in skinds.most_common(12)) if skinds else "")
+              + ("; not derived yet: " + ", ".join(f"{k} {v}" for k, v in state_not_derived.most_common()) if state_not_derived else ""))
     if REASONS:
         # The rule behind each flag both front ends set: the port follows Rust's reasoning, so a
         # flag set by another rule is a difference even where the state agrees.
