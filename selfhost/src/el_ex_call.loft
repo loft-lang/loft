@@ -3156,10 +3156,21 @@ pub fn coalesce(e: el::El, vars: el_vars::Vars, l: integer, r: integer) -> Ex {
   }
   // A field's view as the subject: its literal default is built against the subject's type,
   // which names the record it borrows — no store of its own (`build_null_coalesce_default`).
+  first_new = len(vars.vars);
   d = match e.p.nodes[r] {
     SVecLit { items } => if len(items) > 0 && el_types::base(x.tp) is TyVector { el_ex_pattern::vector_value(e, vars, r, borrows: [], elem: match el_types::base(x.tp) { TyVector { inner } => inner, _ => ir::TyUnknown { n: 0 } }).x } else { el_ex_assign::expression(e, vars, r) },
     _ => el_ex_assign::expression(e, vars, r)
   };
+  // (The first pass builds a literal default's value into a `_vec_N` whose code it leaves out;
+  // `build_null_coalesce_default_inner` decides that buffer's flags on this pass all the same.)
+  if e.first_pass && el_types::base(x.tp) is TyVector && el_ex_place::vec_lit_len(e, r) > 0 {
+    for lv in vars.vars {
+      if lv#index >= first_new && starts_with(lv.name, "_vec_") {
+        register_default_literal(e, vars, el_ir::v_block([ir::NdVar { n: lv#index }], el_vars::tp(vars, lv#index), "Vector"), if x.code is NdVar { x.tp } else { el_types::base(x.tp) }, borrows: callee_result_borrows(e, x.code));
+        break;
+      }
+    }
+  }
   // `build_null_coalesce_default` reads the default against the subject's type: an untyped
   // `[]` is the subject's empty vector, built there.
   if el_ex_pattern::is_empty_literal(d.code) && el_types::base(x.tp) is TyVector {
@@ -3183,15 +3194,8 @@ pub fn coalesce(e: el::El, vars: el_vars::Vars, l: integer, r: integer) -> Ex {
     // (`build_null_coalesce_default_inner` decides the literal's flags on the first pass too, on
     // that pass's subject type — the flags are cumulative: a subject that borrows nothing yet
     // leaves the buffer never freed, and the second pass then keeps the backing's free.)
-    // (A loft call's first-pass answer borrows what its callee's own first pass declared — its
-    // hidden buffer, where the callee answers a local — which this port's first pass leaves
-    // off the call; such a subject takes neither arm there.)
-    callee_borrows = match el_ir::unspan(x.code) {
-      NdCall { def_nr: cd } => buffered_loft_call(e, x.code) && len(el_types::deps(el_types::base(el::def(e, cd).returned[0] ?? ir::TyVoid))) > 0,
-      _ => false
-    };
-    if e.first_pass && !fresh_native_call(e, x.code) && !callee_borrows {
-      register_default_literal(e, vars, lit, if x.code is NdVar { x.tp } else { el_types::base(x.tp) });
+    if e.first_pass && !fresh_native_call(e, x.code) {
+      register_default_literal(e, vars, lit, if x.code is NdVar { x.tp } else { el_types::base(x.tp) }, borrows: callee_result_borrows(e, x.code));
     }
   }
   // A keyed subject's `[]` is that collection, empty, in a `__kvb_N` of its own (`parse_vector`'s
@@ -3474,7 +3478,18 @@ fn inline_slot_word(e: el::El, n: ir::Node) -> boolean {
   }
 }
 
-pub fn register_default_literal(e: el::El, vars: el_vars::Vars, d: ir::Node, lhs: ir::TypeT) {
+// A loft call's first-pass answer borrows what its callee declared by then, which this port's
+// first pass leaves off the call (`vector_buffer_call`): a callee of the program had its own first
+// pass only — its answer borrows the buffer where that pass renamed a local or a call's answer
+// onto it (`Bind`, `Rename`) — and a library's is complete, its declared result read as it stands.
+pub fn callee_result_borrows(e: el::El, code: ir::Node) -> boolean {
+  match el_ir::unspan(code) {
+    NdCall { def_nr: cd } => buffered_loft_call(e, code) && if el::def(e, cd).source == el::MAIN_SOURCE { e.p1_bind.contains(cd) } else { len(el_types::deps(el_types::base(el::def(e, cd).returned[0] ?? ir::TyVoid))) > 0 },
+    _ => false
+  }
+}
+
+pub fn register_default_literal(e: el::El, vars: el_vars::Vars, d: ir::Node, lhs: ir::TypeT, borrows: boolean = false) {
   match el_ir::unspan(d) {
     NdBlock { block } => {
       if block[0].name != "Vector" || len(block[0].operators) == 0 {
@@ -3496,7 +3511,7 @@ pub fn register_default_literal(e: el::El, vars: el_vars::Vars, d: ir::Node, lhs
           wds = el_types::deps(el_vars::tp(vars, w));
           bk = if el_vars::tp(vars, w) is TyVector && len(wds) > 0 { wds[0] } else { -1 };
           el_vars::set_var_type(vars, w, el_types::with_deps(el_vars::tp(vars, w), []));
-          if lhs is TyVector && len(el_types::deps(lhs)) == 0 {
+          if lhs is TyVector && len(el_types::deps(lhs)) == 0 && !borrows {
             el_vars::set_skip_free(vars, w, "build_null_coalesce_default_inner");
           } else if backed {
             el_vars::mark_inline(vars, w, "build_null_coalesce_default_inner");
