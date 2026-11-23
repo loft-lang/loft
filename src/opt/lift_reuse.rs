@@ -167,8 +167,15 @@ fn plan(data: &Data, d: u32) -> Option<Plan> {
 
 /// A tuple whose every element is a scalar: a value with no store and nothing it borrows.
 fn scalar_tuple(tp: &Type) -> bool {
-    matches!(tp, Type::Tuple(elems) if !elems.is_empty()
-        && elems.iter().all(|e| value_field_type(e).is_some()))
+    match tp {
+        // A nullable tuple carries a presence the shared variable would hand from one lift to
+        // the next; `(R-ValueRecord)` keeps such a value a record anyway.
+        Type::Optional(_) => false,
+        Type::Tuple(elems) => {
+            !elems.is_empty() && elems.iter().all(|e| value_field_type(e).is_some())
+        }
+        _ => false,
+    }
 }
 
 /// How many nodes of `n` name variable `v`.

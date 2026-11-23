@@ -58,7 +58,6 @@ tests/scripts/a-field-path-handed-to-a-tuple-parameter-is-read-at-the-call.loft
 tests/scripts/a-file-read-whole-reserves-exactly-its-length.loft
 tests/scripts/a-format-bound-text-is-a-view-of-its-work-text-on-c.loft
 tests/scripts/a-fresh-copy-into-a-minted-slot-needs-no-prefill.loft
-tests/scripts/a-function-of-many-record-temporaries-compiles-in-seconds.loft
 tests/scripts/a-function-value-fills-its-callers-record.loft
 tests/scripts/a-generic-body-writes-a-narrow-element-as-its-vector-reads-it.loft
 tests/scripts/a-grid-index-inside-its-rows-and-stride-is-read-plainly.loft
