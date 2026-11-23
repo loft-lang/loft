@@ -5,10 +5,10 @@
  * compiler.  The runtime and the generator write these macros, never a raw builtin or
  * attribute.  Three compile-time modes; a mode changes speed, never a value:
  *
- *   -DLOFT_STRICT   pure ISO C11, clean under `cc -std=c11 -pedantic -Werror`: every macro
- *                   is its exact standard fallback.  The unit's floor is C11 for one feature,
- *                   `_Thread_local`; threads themselves are the host's (POSIX, Windows), never
- *                   C11's optional `<threads.h>` or `<stdatomic.h>`.
+ *   -DLOFT_STRICT   pure ISO C, clean under `cc -std=c11 -pedantic -Werror`: every macro
+ *                   is its exact standard fallback.  Threads are the host's (POSIX, Windows),
+ *                   never C11's optional `<threads.h>` or `<stdatomic.h>`; no state is a
+ *                   thread-local — a thread's own is its store context (`loft_cx.h`).
  *   (default)       gcc / clang / MSVC extensions where detected, the fallback otherwise.
  *   -DLOFT_VERIFY   the default, and every PROOF the generator relied on is checked again:
  *                   a false one aborts naming its site (the C twin of LOFT_HOIST_VERIFY=1).
@@ -61,23 +61,10 @@ LOFT_NORETURN void loft_android_exit(int code);
 /* `par` and `parallel { }` on threads (@PLN203 C4, `@FR-C-Arms`): POSIX threads on a POSIX
  * host, the CRT's on Windows, none under `-DLOFT_NO_POSIX` or on WASI, where a `par` loop runs
  * its rows in order — the same answer (@FR-C-Det) — and a `parallel` block its arms in order.
- * `LOFT_TLS` marks the runtime state each thread keeps its own of: the compiler's spelling of
- * it, or under `-DLOFT_STRICT` C11's `_Thread_local` — so a strict build compiled as C99, which
- * has none, runs on one thread.  Empty without threads. */
-#if !defined(LOFT_NO_THREADS) && (defined(LOFT_POSIX_HOST) || defined(_WIN32)) \
-    && (!defined(LOFT_STRICT) || (defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L))
+ * What a thread keeps of its own is its store context (`loft_cx.h`, @PLN226), made by the
+ * thread that starts it: no thread-local, so a strict build runs `par` on threads as C99 too. */
+#if !defined(LOFT_NO_THREADS) && (defined(LOFT_POSIX_HOST) || defined(_WIN32))
 #define LOFT_THREADS 1
-#if defined(LOFT_STRICT)
-#define LOFT_TLS _Thread_local
-#elif defined(_MSC_VER)
-#define LOFT_TLS __declspec(thread)
-#elif defined(__GNUC__) || defined(__clang__)
-#define LOFT_TLS __thread
-#else
-#define LOFT_TLS _Thread_local
-#endif
-#else
-#define LOFT_TLS
 #endif
 
 /* A file's modification time in nanoseconds from a `struct stat` (a lazy source's pin): Darwin

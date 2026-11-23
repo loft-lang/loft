@@ -25,11 +25,9 @@ int loft_ssh_is_open(struct loft_ssh *s);
 void loft_ssh_close(struct loft_ssh *s);
 
 /* The sessions, by handle; a closed one's slot stays empty. */
-static LOFT_TLS struct loft_ssh **loft_ssh_tab;
-static LOFT_TLS size_t loft_ssh_n, loft_ssh_cap;
 
 static struct loft_ssh *loft_ssh_at(loft_cx *cx, int64_t h) {
-    return h >= 0 && (size_t) h < loft_ssh_n ? loft_ssh_tab[h] : 0;
+    return h >= 0 && (size_t) h < cx->ssh_n ? cx->ssh_tab[h] : 0;
 }
 
 static void loft_ssh_trace(loft_cx *cx, const char *what, const char *why) {
@@ -80,18 +78,18 @@ static int64_t loft_ssh_connect(loft_cx *cx, loft_str host, int64_t port) {
         loft_sock_close(cx, fd);
         return -1;
     }
-    if (loft_ssh_n == loft_ssh_cap) {
-        size_t cap = loft_ssh_cap ? loft_ssh_cap * 2 : 8;
-        struct loft_ssh **t = (struct loft_ssh **) realloc(loft_ssh_tab, cap * sizeof *t);
+    if (cx->ssh_n == cx->ssh_cap) {
+        size_t cap = cx->ssh_cap ? cx->ssh_cap * 2 : 8;
+        struct loft_ssh **t = (struct loft_ssh **) realloc(cx->ssh_tab, cap * sizeof *t);
         if (!t) {
             loft_ssh_close(s);
             return -1;
         }
-        loft_ssh_tab = t;
-        loft_ssh_cap = cap;
+        cx->ssh_tab = t;
+        cx->ssh_cap = cap;
     }
-    loft_ssh_tab[loft_ssh_n] = s;
-    return (int64_t) loft_ssh_n++;
+    cx->ssh_tab[cx->ssh_n] = s;
+    return (int64_t) cx->ssh_n++;
 }
 
 /* The server's host key as OpenSSH names it (`SHA256:…`), "" for an unknown handle. */
@@ -147,7 +145,7 @@ static uint8_t loft_ssh_is_open_h(loft_cx *cx, int64_t h) {
 static void loft_ssh_close_h(loft_cx *cx, int64_t h) {
     struct loft_ssh *s = loft_ssh_at(cx, h);
     if (!s) return;
-    loft_ssh_tab[h] = 0;
+    cx->ssh_tab[h] = 0;
     loft_ssh_close(s);
 }
 

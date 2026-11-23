@@ -253,6 +253,31 @@ static loft_ref loft_ffi_own_record(loft_cx *cx, const loft_tdesc *T, uint16_t t
     return d;
 }
 
+static void *loft_ffi_sym(loft_cx *cx, const char *path, const char *file, const char *sym);
+
+/* A component's context for this caller context (@PLN226): made by the component's own
+ * `loft_cx_make_v1` the first time this context calls into it, handed to each of its symbols
+ * first, and ended by its `loft_cx_end_v1` with this context (`loft_cx_end`).  The component
+ * keeps its connection tables and answers there, so a `par` worker's are its own. */
+static void *loft_component_cx(loft_cx *cx, const char *path, const char *file) {
+    for (int i = 0; i < cx->ncomps; i++)
+        if (strcmp(cx->comps[i].path, path) == 0) return cx->comps[i].cx;
+    if (cx->ncomps == (int) (sizeof cx->comps / sizeof cx->comps[0])) {
+        fputs("loft: more components than a context holds\n", stderr);
+        abort();
+    }
+    void *(*make)(void);
+    void (*end)(void *);
+    void *m = loft_ffi_sym(cx, path, file, "loft_cx_make_v1");
+    void *e = loft_ffi_sym(cx, path, file, "loft_cx_end_v1");
+    memcpy(&make, &m, sizeof make);
+    memcpy(&end, &e, sizeof end);
+    cx->comps[cx->ncomps].path = path;
+    cx->comps[cx->ncomps].end = end;
+    cx->comps[cx->ncomps].cx = make();
+    return cx->comps[cx->ncomps++].cx;
+}
+
 /* Symbol `sym` of a library's native part, resolved once per call site: in a shipped program
  * (`LOFT_BIND_LIBS`) the library named `file` it opened at start by search order
  * (`loft_c_bind_libraries`), else the library at `path`, where this build found it.  A library or

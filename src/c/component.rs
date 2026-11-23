@@ -15,6 +15,11 @@
 
 use crate::platform::process::{Program, Spawn};
 
+/// The symbols a component exports where the linker is told each (macOS): the typed symbols,
+/// the registrations, and its context's make and end (@PLN226).  Part of the build's key, so a
+/// change of the list builds the library again.
+const EXPORTED: &[&str] = &["n_*", "loft_register_*", "loft_cx_*"];
+
 /// The components loft knows how to build.
 pub const NAMES: &[&str] = &["net"];
 
@@ -78,6 +83,7 @@ pub fn build(name: &str, out_dir: &std::path::Path) -> Result<std::path::PathBuf
         .iter()
         .flat_map(|(n, text)| [n.as_bytes(), text.as_bytes()])
         .chain([cc.as_bytes(), tls.as_os_str().as_encoded_bytes()])
+        .chain(EXPORTED.iter().map(|e| e.as_bytes()))
         .collect();
     let key = format!("{:016x}", crate::cache::stable_hash(&parts));
     let fp = crate::cache::loft_ffi_fingerprint();
@@ -185,8 +191,9 @@ fn compile(
     // The archive's own symbols stay inside the library: GNU ld drops them from the export
     // table, and on macOS only the loft-ffi names are exported.
     if crate::platform::host_lib_os() == crate::platform::LibOs::Macos {
-        cmd.push_arg("-Wl,-exported_symbol,_n_*")
-            .push_arg("-Wl,-exported_symbol,_loft_register_*");
+        for pattern in EXPORTED {
+            cmd.push_arg(format!("-Wl,-exported_symbol,_{pattern}"));
+        }
     } else {
         cmd.push_arg("-Wl,--exclude-libs,ALL");
     }

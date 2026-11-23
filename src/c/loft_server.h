@@ -43,7 +43,7 @@ int loft_tls_poll(struct loft_tls *t, int ms);
  * then never returns. */
 #define LOFT_SRV_SEND_MS 5000
 
-typedef struct {
+typedef struct loft_srv_listener {
     int fd; /* -1: a closed slot */
     void *tls; /* a `struct loft_tls_server *` for a TLS listener */
     /* The origins whose pages may open a WebSocket here, one per line; 0 or "": any.  A browser
@@ -51,17 +51,6 @@ typedef struct {
      * not a browser sends none and is not asked. */
     char *origins;
 } loft_srv_listener;
-
-static LOFT_TLS loft_srv_listener *loft_srv_ls;
-static LOFT_TLS size_t loft_srv_nls;
-static LOFT_TLS loft_stream loft_srv_parked = { -1, 0 };
-static LOFT_TLS loft_text loft_srv_method, loft_srv_path, loft_srv_heads, loft_srv_body;
-static LOFT_TLS loft_stream *loft_srv_clients; /* fd -1: a free slot */
-static LOFT_TLS size_t loft_srv_nclients;
-static LOFT_TLS loft_text loft_srv_msg;
-static LOFT_TLS int64_t loft_srv_msg_op;
-static LOFT_TLS int64_t loft_srv_ev_kind = -1, loft_srv_ev_cid = -1;
-static LOFT_TLS loft_text loft_srv_ev_payload;
 
 static loft_text loft_srv_copy(loft_cx *cx, const loft_text *t) { return loft_text_own(cx, loft_lit(cx, t->p ? t->p : "", t->len)); }
 
@@ -110,11 +99,10 @@ static int loft_srv_header(loft_cx *cx, const loft_text *heads, const char *name
 /* Why the last request was not taken, as the status the peer is told before the connection
  * closes: 413 a body above the limit, 408 a request that outran its budget, 0 anything else
  * (a peer that went away or sent no request gets no answer). */
-static LOFT_TLS int loft_srv_refused = 0;
 
-/* Tell the peer why (`loft_srv_refused`), when there is a why. */
+/* Tell the peer why (`cx->srv_refused`), when there is a why. */
 static void loft_srv_say_refusal(loft_cx *cx, loft_stream *s) {
-    const char *line = loft_srv_refused == 413 ? "413 Payload Too Large" : loft_srv_refused == 408 ? "408 Request Timeout" : 0;
+    const char *line = cx->srv_refused == 413 ? "413 Payload Too Large" : cx->srv_refused == 408 ? "408 Request Timeout" : 0;
     if (!line) return;
     char resp[96];
     int n = snprintf(resp, sizeof resp, "HTTP/1.1 %s\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", line);
@@ -124,12 +112,12 @@ static void loft_srv_say_refusal(loft_cx *cx, loft_stream *s) {
 static int loft_srv_parse_request(loft_cx *cx, loft_stream *s, loft_word budget_ms) {
     loft_text raw = { 0, 0, 0 };
     loft_word late = budget_ms ? loft_now_us(cx) + budget_ms * 1000 : 0;
-    loft_srv_refused = 0;
+    cx->srv_refused = 0;
     while (raw.len < 4 || memcmp(raw.p + raw.len - 4, "\r\n\r\n", 4) != 0) {
         char b;
         int slow = late && loft_now_us(cx) > late;
         if (slow || loft_stream_read(cx, s, &b, 1) != 1 || raw.len > LOFT_SRV_MAX_HEAD) {
-            if (slow) loft_srv_refused = 408;
+            if (slow) cx->srv_refused = 408;
             free(raw.p);
             return 0;
         }
@@ -185,7 +173,7 @@ static int loft_srv_parse_request(loft_cx *cx, loft_stream *s, loft_word budget_
     char *body = length > LOFT_SRV_MAX_BODY ? NULL : (char *) malloc(length ? (size_t) length : 1);
     /* Too large, or no memory for it: this request is dropped, the server goes on. */
     if (!body) {
-        loft_srv_refused = 413;
+        cx->srv_refused = 413;
         free(head.p);
         free(heads.p);
         return 0;
@@ -194,7 +182,7 @@ static int loft_srv_parse_request(loft_cx *cx, loft_stream *s, loft_word budget_
         int slow = late && loft_now_us(cx) > late;
         long r = slow ? 0 : loft_stream_read(cx, s, body + got, (size_t) length - got);
         if (r <= 0) {
-            if (slow) loft_srv_refused = 408;
+            if (slow) cx->srv_refused = 408;
             free(body);
             free(head.p);
             free(heads.p);
@@ -202,11 +190,11 @@ static int loft_srv_parse_request(loft_cx *cx, loft_stream *s, loft_word budget_
         }
         got += (size_t) r;
     }
-    loft_srv_set(cx, &loft_srv_method, w[0], wn[0]);
-    loft_srv_set(cx, &loft_srv_path, w[1], wn[1]);
-    loft_srv_set(cx, &loft_srv_heads, heads.p, heads.len);
-    loft_srv_body.len = 0;
-    loft_push_lossy(cx, &loft_srv_body, body, (size_t) length);
+    loft_srv_set(cx, &cx->srv_method, w[0], wn[0]);
+    loft_srv_set(cx, &cx->srv_path, w[1], wn[1]);
+    loft_srv_set(cx, &cx->srv_heads, heads.p, heads.len);
+    cx->srv_body.len = 0;
+    loft_push_lossy(cx, &cx->srv_body, body, (size_t) length);
     free(body);
     free(head.p);
     free(heads.p);
@@ -231,8 +219,8 @@ static int loft_srv_upgrade(loft_cx *cx, loft_stream *s, const loft_text *heads)
 /* ── Listening and accepting ── */
 
 static loft_srv_listener *loft_srv_listener_at(loft_cx *cx, int64_t h) {
-    if (h < 0 || (uint64_t) h >= loft_srv_nls || loft_srv_ls[h].fd < 0) return 0;
-    return &loft_srv_ls[h];
+    if (h < 0 || (uint64_t) h >= cx->srv_nls || cx->srv_ls[h].fd < 0) return 0;
+    return &cx->srv_ls[h];
 }
 
 /* Bind `addr:port`: the handle, or -1 with the reason on stderr.  A bind that works says nothing
@@ -284,13 +272,13 @@ static int64_t loft_srv_bind(loft_cx *cx, const char *addr, size_t an, int64_t p
     }
     if (getenv("LOFT_NET_LISTEN_BANNER"))
         fprintf(stderr, "loft server listening on %s (%s)\n", at, tls ? "https/wss" : "http/ws");
-    loft_srv_listener *grown = (loft_srv_listener *) realloc(loft_srv_ls, (loft_srv_nls + 1) * sizeof *grown);
+    loft_srv_listener *grown = (loft_srv_listener *) realloc(cx->srv_ls, (cx->srv_nls + 1) * sizeof *grown);
     if (!grown) { fputs("loft: out of memory\n", stderr); abort(); }
-    loft_srv_ls = grown;
-    loft_srv_ls[loft_srv_nls].fd = fd;
-    loft_srv_ls[loft_srv_nls].tls = tls;
-    loft_srv_ls[loft_srv_nls].origins = 0;
-    return (int64_t) loft_srv_nls++;
+    cx->srv_ls = grown;
+    cx->srv_ls[cx->srv_nls].fd = fd;
+    cx->srv_ls[cx->srv_nls].tls = tls;
+    cx->srv_ls[cx->srv_nls].origins = 0;
+    return (int64_t) cx->srv_nls++;
 }
 
 static int64_t loft_srv_listen_tls(loft_cx *cx, const char *addr, size_t an, int64_t port, const char *cert, size_t cn,
@@ -348,8 +336,8 @@ static int loft_srv_accept(loft_cx *cx, int64_t h, int nonblocking, loft_stream 
 }
 
 static void loft_srv_park(loft_cx *cx, loft_stream conn) {
-    if (loft_srv_parked.fd >= 0) loft_stream_close(cx, &loft_srv_parked);
-    loft_srv_parked = conn;
+    if (cx->srv_parked.fd >= 0) loft_stream_close(cx, &cx->srv_parked);
+    cx->srv_parked = conn;
 }
 
 /* Accept and parse one request, parking its connection for the response. */
@@ -425,11 +413,11 @@ static const char *loft_srv_status_text(loft_cx *cx, int64_t status) {
 /* Write the whole response on the parked connection and close it (a TLS session with its
  * close_notify, so the client reads a clean end and not a truncation). */
 static void loft_srv_send_and_close(loft_cx *cx, const char *p, size_t n) {
-    if (loft_srv_parked.fd < 0) return;
-    loft_stream_write_all(cx, &loft_srv_parked, p, n);
-    loft_stream_close(cx, &loft_srv_parked);
-    loft_srv_parked.fd = -1;
-    loft_srv_parked.tls = 0;
+    if (cx->srv_parked.fd < 0) return;
+    loft_stream_write_all(cx, &cx->srv_parked, p, n);
+    loft_stream_close(cx, &cx->srv_parked);
+    cx->srv_parked.fd = -1;
+    cx->srv_parked.tls = 0;
 }
 
 /* A response with the library's fixed headers: no caching, the connection closed. */
@@ -508,31 +496,31 @@ static loft_text loft_srv_slice(loft_cx *cx, loft_str body, int64_t off, int64_t
 
 /* A client in the first free slot: its id. */
 static int64_t loft_srv_add_client(loft_cx *cx, loft_stream conn) {
-    for (size_t i = 0; i < loft_srv_nclients; i++) {
-        if (loft_srv_clients[i].fd < 0) {
-            loft_srv_clients[i] = conn;
+    for (size_t i = 0; i < cx->srv_nclients; i++) {
+        if (cx->srv_clients[i].fd < 0) {
+            cx->srv_clients[i] = conn;
             return (int64_t) i;
         }
     }
-    loft_stream *grown = (loft_stream *) realloc(loft_srv_clients, (loft_srv_nclients + 1) * sizeof *grown);
+    loft_stream *grown = (loft_stream *) realloc(cx->srv_clients, (cx->srv_nclients + 1) * sizeof *grown);
     if (!grown) { fputs("loft: out of memory\n", stderr); abort(); }
-    loft_srv_clients = grown;
-    loft_srv_clients[loft_srv_nclients] = conn;
-    return (int64_t) loft_srv_nclients++;
+    cx->srv_clients = grown;
+    cx->srv_clients[cx->srv_nclients] = conn;
+    return (int64_t) cx->srv_nclients++;
 }
 
 static loft_stream *loft_srv_client(loft_cx *cx, int64_t id) {
-    if (id < 0 || (uint64_t) id >= loft_srv_nclients || loft_srv_clients[id].fd < 0) return 0;
-    return &loft_srv_clients[id];
+    if (id < 0 || (uint64_t) id >= cx->srv_nclients || cx->srv_clients[id].fd < 0) return 0;
+    return &cx->srv_clients[id];
 }
 
 /* The parked connection upgraded into a client: its id, or -1. */
 static int64_t loft_srv_ws_upgrade(loft_cx *cx) {
-    if (loft_srv_parked.fd < 0) return -1;
-    loft_stream conn = loft_srv_parked;
-    loft_srv_parked.fd = -1;
-    loft_srv_parked.tls = 0;
-    if (!loft_srv_upgrade(cx, &conn, &loft_srv_heads)) {
+    if (cx->srv_parked.fd < 0) return -1;
+    loft_stream conn = cx->srv_parked;
+    cx->srv_parked.fd = -1;
+    cx->srv_parked.tls = 0;
+    if (!loft_srv_upgrade(cx, &conn, &cx->srv_heads)) {
         loft_stream_close(cx, &conn);
         return -1;
     }
@@ -557,9 +545,9 @@ static uint8_t loft_srv_ws_recv(loft_cx *cx, int64_t id) {
             continue;
         }
         if (op == 0xA) continue;
-        loft_srv_msg.len = 0;
-        loft_push_lossy(cx, &loft_srv_msg, p.p ? p.p : "", p.len);
-        loft_srv_msg_op = op;
+        cx->srv_msg.len = 0;
+        loft_push_lossy(cx, &cx->srv_msg, p.p ? p.p : "", p.len);
+        cx->srv_msg_op = op;
         free(p.p);
         return 1;
     }
@@ -597,17 +585,17 @@ static int64_t loft_srv_accept_client(loft_cx *cx, int64_t h) {
     }
     const char *v;
     size_t vn;
-    if (!loft_srv_header(cx, &loft_srv_heads, "sec-websocket-key", &v, &vn)) {
+    if (!loft_srv_header(cx, &cx->srv_heads, "sec-websocket-key", &v, &vn)) {
         loft_srv_park(cx, conn);
         return -3;
     }
-    if (!loft_srv_origin_allowed(cx, loft_srv_listener_at(cx, h), &loft_srv_heads)) {
+    if (!loft_srv_origin_allowed(cx, loft_srv_listener_at(cx, h), &cx->srv_heads)) {
         static const char no[] = "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
         (void) loft_stream_write_all(cx, &conn, no, sizeof no - 1);
         loft_stream_close(cx, &conn);
         return -2;
     }
-    if (!loft_srv_upgrade(cx, &conn, &loft_srv_heads)) {
+    if (!loft_srv_upgrade(cx, &conn, &cx->srv_heads)) {
         loft_stream_close(cx, &conn);
         return -2;
     }
@@ -658,16 +646,16 @@ static int loft_srv_poll_client(loft_cx *cx, loft_stream *c) {
             continue;
         }
         if (op == 0xA) continue;
-        loft_srv_ev_payload.len = 0;
-        loft_push_lossy(cx, &loft_srv_ev_payload, p.p ? p.p : "", p.len);
+        cx->srv_ev_payload.len = 0;
+        loft_push_lossy(cx, &cx->srv_ev_payload, p.p ? p.p : "", p.len);
         free(p.p);
         return 1;
     }
 }
 
 static uint8_t loft_srv_event(loft_cx *cx, int64_t kind, int64_t cid) {
-    loft_srv_ev_kind = kind;
-    loft_srv_ev_cid = cid;
+    cx->srv_ev_kind = kind;
+    cx->srv_ev_cid = cid;
     return 1;
 }
 
@@ -679,15 +667,15 @@ static uint8_t loft_srv_ws_next_event(loft_cx *cx, int64_t h) {
     if (got >= 0) {
         /* A connect carries the upgrade request's headers (`Key: Value` lines), so a program
          * can decide about a client by what it sent — its origin, a cookie, a token. */
-        loft_srv_set(cx, &loft_srv_ev_payload, loft_srv_heads.p, loft_srv_heads.len);
+        loft_srv_set(cx, &cx->srv_ev_payload, cx->srv_heads.p, cx->srv_heads.len);
         return loft_srv_event(cx, 0, got);
     }
     if (got == -3) {
-        loft_srv_set(cx, &loft_srv_ev_payload, loft_srv_path.p, loft_srv_path.len);
+        loft_srv_set(cx, &cx->srv_ev_payload, cx->srv_path.p, cx->srv_path.len);
         return loft_srv_event(cx, 3, -1);
     }
-    for (size_t i = 0; i < loft_srv_nclients; i++) {
-        loft_stream *c = &loft_srv_clients[i];
+    for (size_t i = 0; i < cx->srv_nclients; i++) {
+        loft_stream *c = &cx->srv_clients[i];
         if (c->fd < 0) continue;
         int r = loft_srv_poll_client(cx, c);
         if (r == 1) return loft_srv_event(cx, 1, (int64_t) i);
@@ -695,7 +683,7 @@ static uint8_t loft_srv_ws_next_event(loft_cx *cx, int64_t h) {
             loft_stream_close(cx, c);
             c->fd = -1;
             c->tls = 0;
-            loft_srv_ev_payload.len = 0;
+            cx->srv_ev_payload.len = 0;
             return loft_srv_event(cx, 2, (int64_t) i);
         }
     }
@@ -705,13 +693,13 @@ static uint8_t loft_srv_ws_next_event(loft_cx *cx, int64_t h) {
 /* A text frame to every client: how many took it. */
 static int64_t loft_srv_ws_broadcast(loft_cx *cx, loft_str msg) {
     int64_t sent = 0;
-    for (size_t i = 0; i < loft_srv_nclients; i++)
-        if (loft_srv_clients[i].fd >= 0 && loft_ws_write_frame(cx, &loft_srv_clients[i], 0x1, msg.p, msg.len, 0)) sent++;
+    for (size_t i = 0; i < cx->srv_nclients; i++)
+        if (cx->srv_clients[i].fd >= 0 && loft_ws_write_frame(cx, &cx->srv_clients[i], 0x1, msg.p, msg.len, 0)) sent++;
     return sent;
 }
 
 static void loft_srv_sleep_ms(loft_cx *cx, int64_t ms) { loft_sock_nap(cx, ms); }
 
-static int64_t loft_srv_clients_len(loft_cx *cx) { return (int64_t) loft_srv_nclients; }
+static int64_t loft_srv_clients_len(loft_cx *cx) { return (int64_t) cx->srv_nclients; }
 static uint8_t loft_srv_client_active(loft_cx *cx, int64_t id) { return loft_srv_client(cx, id) != 0; }
 #endif

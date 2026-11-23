@@ -2526,6 +2526,7 @@ fn the_c_store_allocator_places_every_record_where_store_does() {
     let mut c = String::from(
         "#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n",
     );
+    c.push_str(include_str!("../src/c/loft_width.h"));
     c.push_str(include_str!("../src/c/loft_cx.h"));
     c.push_str(include_str!("../src/c/loft_store.h"));
     c.push_str(
@@ -2710,6 +2711,7 @@ fn a_store_bound_to_a_file_holds_the_same_bytes_on_both_runtimes() {
         "#if !defined(_WIN32)\n#define _POSIX_C_SOURCE 200809L\n#define LOFT_POSIX_HOST 1\n#endif\n\
          #include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n",
     );
+    c.push_str(include_str!("../src/c/loft_width.h"));
     c.push_str(include_str!("../src/c/loft_cx.h"));
     c.push_str(include_str!("../src/c/loft_store.h"));
     c.push_str("#if defined(_WIN32)\n#include <windows.h>\n#endif\n");
@@ -3716,6 +3718,7 @@ fn a_growth_past_the_word_count_stops_the_c() {
     let mut c = String::from(
         "#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n",
     );
+    c.push_str(include_str!("../src/c/loft_width.h"));
     c.push_str(include_str!("../src/c/loft_cx.h"));
     c.push_str(include_str!("../src/c/loft_store.h"));
     c.push_str(

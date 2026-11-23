@@ -11,7 +11,6 @@ typedef struct { uint8_t *p; size_t n; } loft_bytes;
 
 /* Set by `loft_fetch` when the host answered that it has no such file (403, 404, 410, a
  * `file://` path that cannot be read) — `net::Miss::Absent` — rather than the request failing. */
-static LOFT_TLS int loft_fetch_absent = 0;
 
 static void loft_bytes_push(loft_cx *cx, loft_bytes *b, size_t *cap, const uint8_t *p, size_t n) {
     if (b->n + n > *cap) {
@@ -29,7 +28,7 @@ static int loft_fetch_file(loft_cx *cx, const char *path, loft_bytes *out, char 
     FILE *f = fopen(path, "rb");
     if (!f) {
         int e = errno;
-        loft_fetch_absent = 1;
+        cx->fetch_absent = 1;
         snprintf(err, cap, "file:// read error for %s: %s (os error %d)", path, strerror(e), e);
         return 0;
     }
@@ -51,7 +50,7 @@ static int loft_fetch_http(loft_cx *cx, const char *url, loft_bytes *out, char *
     }
     if (h.status < 200 || h.status >= 300) {
         snprintf(err, cap, "HTTP error: %s: status code %d", url, (int) h.status);
-        loft_fetch_absent = h.status == 403 || h.status == 404 || h.status == 410;
+        cx->fetch_absent = h.status == 403 || h.status == 404 || h.status == 410;
         loft_http_close(cx, &h);
         return 0;
     }
@@ -157,7 +156,7 @@ static int loft_net_size(loft_cx *cx, const char *url, uint64_t *size, char *err
 static int loft_fetch(loft_cx *cx, const char *url, loft_bytes *out, char *err, size_t cap) {
     out->p = 0;
     out->n = 0;
-    loft_fetch_absent = 0;
+    cx->fetch_absent = 0;
     if (strncmp(url, "file://", 7) == 0) return loft_fetch_file(cx, url + 7, out, err, cap);
 #ifdef LOFT_SOCKETS
     if (strncmp(url, "http://", 7) == 0 || strncmp(url, "https://", 8) == 0) return loft_fetch_http(cx, url, out, err, cap);
@@ -168,10 +167,9 @@ static int loft_fetch(loft_cx *cx, const char *url, loft_bytes *out, char *err, 
 }
 
 /* The layout gate of an image at `u` (`check_sidecar` over HTTP): `<u>.dschema` fetched and
- * classified.  A host's own "not there" (`loft_fetch_absent`) refuses it as a bare image, a request
+ * classified.  A host's own "not there" (`cx->fetch_absent`) refuses it as a bare image, a request
  * that failed refuses naming why; `recorded` gets the sidecar's slot.  1 when it may be read. */
 /* The sidecar text a URL gate kept for a converting load (gate 3). */
-static LOFT_TLS char *loft_net_gate_kept;
 
 static int loft_net_gate_pinned(loft_cx *cx, const char *u, const loft_sidecar *sc, const char *who, long *recorded, int convert,
                                 const char *schema_sha);
@@ -192,7 +190,7 @@ static int loft_net_gate_pinned(loft_cx *cx, const char *u, const loft_sidecar *
     snprintf(side, ulen + 9, "%s.dschema", u);
     int got = loft_fetch(cx, side, &b, err, sizeof err);
     free(side);
-    if (!got && !loft_fetch_absent) {
+    if (!got && !cx->fetch_absent) {
         /* The request failed: nothing is known about the sidecar. */
         char why[1200];
         snprintf(why, sizeof why, "its layout sidecar (`.dschema`) could not be fetched: %s", err);
@@ -223,8 +221,8 @@ static int loft_net_gate_pinned(loft_cx *cx, const char *u, const loft_sidecar *
      * (`url_layout_gate`'s `Ok(Some(sidecar))`), so the sidecar is fetched once. */
     char *copy = convert ? loft_up_dup_text(cx, text) : 0;
     int verdict = loft_image_gate_text(cx, u, text, sc, who, convert);
-    free(loft_net_gate_kept);
-    loft_net_gate_kept = verdict == 3 ? copy : 0;
+    free(cx->net_gate_kept);
+    cx->net_gate_kept = verdict == 3 ? copy : 0;
     if (verdict != 3) free(copy);
     return verdict;
 }
@@ -268,8 +266,8 @@ static int loft_image_load_url(loft_cx *cx, loft_ref r, loft_str url, const char
 #ifdef LOFT_UPGRADE
     if (gate == 3) {
         /* An image of another layout converted in memory, as `store_load` converts a file. */
-        char *text = loft_net_gate_kept;
-        loft_net_gate_kept = 0;
+        char *text = cx->net_gate_kept;
+        cx->net_gate_kept = 0;
         loft_ub why = { 0, 0, 0 };
         int ok = loft_up_load(cx, r, sc, text, b.p, b.n, u, &why);
         if (!ok)

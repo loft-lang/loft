@@ -21,10 +21,6 @@ int loft_tls_write_all(struct loft_tls *t, const void *buf, size_t n);
 void loft_tls_close(struct loft_tls *t);
 #endif
 
-typedef struct {
-    int fd;
-    void *tls; /* a `struct loft_tls *` once `loft_stream_tls` succeeded */
-} loft_stream;
 
 /* TLS over the connected socket for `host` (the name its certificate must carry): 1, else 0 with
  * `err` saying why. */

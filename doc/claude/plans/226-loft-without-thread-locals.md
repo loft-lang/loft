@@ -16,8 +16,9 @@ Open, `status:active` on [loft-lang/plans#226](https://github.com/loft-lang/plan
 | P2b | done: the state of `loft_text.h`, `loft_store.h`, `loft_rt.h`, `par`, the FFI claim log and the hosted bridge is fields of `struct loft_cx` (`src/c/loft_cx.h`); workers', hosted units' and HTTP workers' contexts made as below; TSan clean on the `par` corpus |
 | P3 | done: the parks are main-thread statics (below) |
 | P1 | done: the B-tree hints, hash scratch, image checks, JSON errors and null sentinel, key seeds, the typed parse's walk and errors, the upgrade walk and the engine's message deadline are context fields too (unguarded: a header's switch is set at different points of a unit, and a field costs words) |
-| P4 | open: `loft_web.h`, `loft_server.h`, `loft_ssh.h`, `loft_net.h` — state the `net` component shares, whose typed symbols take no context yet |
-| P4b, P5 | open |
+| P4 | done: the URL loader's state is context fields; the `net` component keeps its own context per caller context (below) |
+| P5 | done: `LOFT_TLS` is gone (`git grep LOFT_TLS -- src/c` names only the TLS transport's `LOFT_TLS_UNAVAILABLE`); a strict C99 `par` unit runs on threads |
+| P4b | open: the Rust `thread_local!` blocks |
 
 ### Decisions taken while building it
 
@@ -41,8 +42,16 @@ Open, `status:active` on [loft-lang/plans#226](https://github.com/loft-lang/plan
   own callbacks (`extensions.rs`, `CURRENT_STORES`) can carry theirs the same way in P4b.
 - **The TLS archive keeps its C ABI** (`loft_tls.c`, `loft_ssh.c`, compiled apart): its
   prototypes take no context.
-- **The `net` component passes a null context**, which means "no text pool"; it reaches no other
-  field.  Its web, server and SSH state is P4's, and needs a context in the component's ABI.
+- **A component has a context of its own per caller context.**  The caller's own cannot be
+  passed: the component is compiled with its own switches, so its struct is laid out its own
+  way.  `libloft_net` exports `loft_cx_make_v1` / `loft_cx_end_v1`; its typed symbols and its
+  bridges (`loft_register_bridges_cx_v1`) take that context first.  A C unit keeps one per
+  component in its own context (`loft_component_cx`, ended by `loft_cx_end`), the interpreter
+  one per `Stores` (`c_libs::CX_BRIDGES`, kept in `HostedContexts`).  The interpreter's own bit
+  above the store number in `opaque` (`CTX_RETURN_STORE`) is why the context is an argument and
+  not packed in the handle.
+- **A component's cache key names its export list** (`component.rs` `EXPORTED`): a change of it
+  rebuilds the library, where a stale one lacked the new symbols.
 
 ## Goal
 

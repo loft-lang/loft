@@ -2880,10 +2880,8 @@ fn unit_defines(
         //   and no test follows the match
         crate::rewrite_census::fired("R-NoLocks", 1);
     }
-    // `@FR-R-NoThreads`: the runtime keeps its store table, frames and pools thread-local
-    // (`LOFT_TLS`) for the threads that run loft code — a `par` loop's workers and an engine
-    // kernel's HTTP workers.  A unit with neither runs loft code on one thread, and its tables
-    // are plain statics: on macOS every thread-local access is a call (`_tlv_get_addr`).
+    // `@FR-R-NoThreads`: a unit with no `par` loop on threads and no engine kernel (whose HTTP
+    // workers are threads) runs loft code on one thread: it starts no thread and links none.
     let engine = reached
         .iter()
         .filter_map(|&d| in_binary_native(data.def(d).native()))
@@ -4499,6 +4497,19 @@ fn library_native(
         log.push_str("    uint16_t ns = (uint16_t) loft_store_new(cx);\n");
         ffi_params.insert(0, "loft_ffi_store".into());
         ffi_args.insert(0, "loft_ffi_store_of(cx, ns)".into());
+    }
+    // `@PLN226`: a component (`[native] component`) keeps its state in a context of its own per
+    // caller context, handed to each of its symbols first (`loft_component_cx`).
+    if crate::native_build::component_of(pkg_dir).is_some() {
+        ffi_params.insert(0, "void *".into());
+        ffi_args.insert(
+            0,
+            format!(
+                "loft_component_cx(cx, {}, {})",
+                body::c_string(lib),
+                body::c_string(&crate::file_access::file_name(lib).unwrap_or_default())
+            ),
+        );
     }
     cx.ffi_libs
         .borrow_mut()

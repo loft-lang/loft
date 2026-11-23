@@ -8,8 +8,9 @@
  * (`loft_par_job_init`), and a worker reaches the stores it shares with that thread only through
  * its own table (formal/concurrency.md `C-Par`).  Nothing here is a thread-local.
  *
- * It comes right after `loft_cc.h` in every unit, and holds by value only the types defined here;
- * a field that points to a runtime type names its struct tag, which the runtime defines later. */
+ * It comes right after `loft_cc.h` in every unit (and after `loft_width.h`, whose `loft_word` it
+ * names), and holds by value only the types defined here; a field that points to a runtime type
+ * names its struct tag, which the runtime defines later. */
 #ifndef LOFT_CX_H
 #define LOFT_CX_H
 #include <stddef.h>
@@ -72,6 +73,12 @@ typedef struct { int unused; } loft_no_jmp_buf;
 
 /* `Store::parse_errors`: what the parse that built a store's root reported, by store. */
 typedef struct loft_perrs { loft_text *e; size_t n; uint16_t tp; } loft_perrs;
+
+/* A connection: its socket, and its TLS session once one is set up (`loft_https.h`). */
+typedef struct {
+    int fd;
+    void *tls; /* a `struct loft_tls *` once `loft_stream_tls` succeeded */
+} loft_stream;
 
 /* The index's descent hints (`loft_btree.h`). */
 #define LOFT_BT_HINTS 4
@@ -219,6 +226,10 @@ struct loft_cx {
     uint32_t *ffi_log_recs;
     uint32_t ffi_log_n, ffi_log_cap;
 #endif
+    /* the components this context called, each with its own context of theirs
+     * (`loft_component_cx`, `loft_ffi_host.h`), ended with this one */
+    struct { const char *path; void *cx; void (*end)(void *); } comps[4];
+    int ncomps;
     /* `par` (`loft_keyed.h`) */
     struct loft_par_buf *par_bufs;
     int npar;
@@ -231,7 +242,7 @@ struct loft_cx {
     /* the index (`loft_btree.h`) */
     loft_bt_hint bt_hints[LOFT_BT_HINTS];
     /* the engine host (`loft_engine.h`) */
-    int64_t eh_by;
+    loft_word eh_by;
     /* the hash (`loft_hash.h`) */
     loft_ref h_filed;
     struct loft_live_scratch *scratches;
@@ -292,6 +303,43 @@ struct loft_cx {
     uint16_t *ur_old;
     uint16_t *ur_ver;
     size_t ur_n;
+    /* URL loads (`loft_net.h`) */
+    int fetch_absent;
+    char *net_gate_kept;
+    /* the HTTP and WebSocket client (`loft_web.h`, the `net` component) */
+    loft_text web_body;
+    loft_text web_heads;
+    loft_text web_pack;
+    loft_text web_msg;
+    loft_word web_op;
+    struct loft_web_conn *web_conns;
+    size_t web_nconns;
+    loft_word *web_group;
+    size_t web_ngroup;
+    size_t web_group_cap;
+    size_t web_group_offset;
+    uint64_t ws_mask_seed;
+    /* the server (`loft_server.h`, the `net` component) */
+    struct loft_srv_listener *srv_ls;
+    size_t srv_nls;
+    loft_stream srv_parked;
+    loft_text srv_method;
+    loft_text srv_path;
+    loft_text srv_heads;
+    loft_text srv_body;
+    loft_stream *srv_clients;  /* fd -1: a free slot */
+    size_t srv_nclients;
+    loft_text srv_msg;
+    loft_word srv_msg_op;
+    loft_word srv_ev_kind;
+    loft_word srv_ev_cid;
+    loft_text srv_ev_payload;
+    int srv_refused;
+    loft_text net_answer;  /* the `net` component's last text answer (`net_text`) */
+    /* SSH sessions (`loft_ssh.h`, the `net` component) */
+    struct loft_ssh **ssh_tab;
+    size_t ssh_n;
+    size_t ssh_cap;
 };
 
 /* The main thread's context: the one `main` hands to everything it calls.  Its fields start at
@@ -303,12 +351,21 @@ static loft_cx loft_main_cx = {
     .vc_own = LOFT_VC_LIVE,
     .uo_from = { 0xFFFF, 0, 0, 0 },
     .uo_scratch = -1,
+    .srv_parked = { -1, 0 },
+    .srv_ev_kind = -1,
+    .srv_ev_cid = -1,
     .in_test = 0
 };
 
 /* A context as a new thread starts it: what `loft_main_cx` holds before `main` runs. */
 static void loft_cx_fresh(loft_cx *cx) {
     memset(cx, 0, sizeof *cx);
+    {
+        loft_stream r = { -1, 0 };
+        cx->srv_parked = r;
+    }
+    cx->srv_ev_kind = -1;
+    cx->srv_ev_cid = -1;
     cx->vc_own = LOFT_VC_LIVE;
     {
         loft_ref r = { 0xFFFF, 0, 0, 0 };

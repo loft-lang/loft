@@ -9,12 +9,6 @@
 #if defined(LOFT_SOCKETS)
 #include <time.h>
 
-static LOFT_TLS loft_text loft_web_body;
-static LOFT_TLS loft_text loft_web_heads;
-static LOFT_TLS loft_text loft_web_pack;
-static LOFT_TLS loft_text loft_web_msg;
-static LOFT_TLS int64_t loft_web_op = 0;
-
 static void loft_web_set(loft_cx *cx, loft_text *t, const char *p, size_t n) {
     t->len = 0;
     if (n) loft_push(cx, t, p, n);
@@ -44,8 +38,8 @@ static uint64_t loft_web_max_body(loft_cx *cx) {
 }
 
 static int64_t loft_web_http_do(loft_cx *cx, loft_str method, loft_str url, loft_str body, loft_str headers) {
-    loft_web_body.len = 0;
-    loft_web_heads.len = 0;
+    cx->web_body.len = 0;
+    cx->web_heads.len = 0;
     char *m = loft_cstr_own(cx, method), *u = loft_cstr_own(cx, url), *b = loft_cstr_own(cx, body);
     int known = !strcmp(m, "GET") || !strcmp(m, "POST") || !strcmp(m, "PUT") || !strcmp(m, "DELETE") || !strcmp(m, "HEAD");
     loft_text lines = { 0, 0, 0 };
@@ -84,10 +78,10 @@ static int64_t loft_web_http_do(loft_cx *cx, loft_str method, loft_str url, loft
                 const char *v = c + 1, *ve = le;
                 while (v < ve && isspace((unsigned char) *v)) v++;
                 while (ve > v && isspace((unsigned char) ve[-1])) ve--;
-                if (loft_web_heads.len) loft_push(cx, &loft_web_heads, "\n", 1);
-                loft_push(cx, &loft_web_heads, p, (size_t) (c - p));
-                loft_push_cstr(cx, &loft_web_heads, ": ");
-                loft_push(cx, &loft_web_heads, v, (size_t) (ve - v));
+                if (cx->web_heads.len) loft_push(cx, &cx->web_heads, "\n", 1);
+                loft_push(cx, &cx->web_heads, p, (size_t) (c - p));
+                loft_push_cstr(cx, &cx->web_heads, ": ");
+                loft_push(cx, &cx->web_heads, v, (size_t) (ve - v));
             }
             p = e ? e + 1 : end;
         }
@@ -96,14 +90,14 @@ static int64_t loft_web_http_do(loft_cx *cx, loft_str method, loft_str url, loft
         uint64_t most = loft_web_max_body(cx);
         int over = 0;
         while (!over && (r = loft_http_read(cx, &h, buf, sizeof buf)) > 0) {
-            over = most && (uint64_t) loft_web_body.len + (uint64_t) r > most;
-            if (!over) loft_push(cx, &loft_web_body, buf, (size_t) r);
+            over = most && (uint64_t) cx->web_body.len + (uint64_t) r > most;
+            if (!over) loft_push(cx, &cx->web_body, buf, (size_t) r);
         }
         loft_http_close(cx, &h);
         /* A body past the ceiling is refused, not cut short: half a response reads as a whole
          * one of something else. */
         if (over) {
-            loft_web_body.len = 0;
+            cx->web_body.len = 0;
             status = 0;
         }
     }
@@ -114,14 +108,14 @@ static int64_t loft_web_http_do(loft_cx *cx, loft_str method, loft_str url, loft
     return status;
 }
 
-static loft_text loft_web_http_body(loft_cx *cx) { return loft_web_copy(cx, &loft_web_body); }
-static loft_text loft_web_http_headers(loft_cx *cx) { return loft_web_copy(cx, &loft_web_heads); }
+static loft_text loft_web_http_body(loft_cx *cx) { return loft_web_copy(cx, &cx->web_body); }
+static loft_text loft_web_http_headers(loft_cx *cx) { return loft_web_copy(cx, &cx->web_heads); }
 
 /* A URL's `Content-Length` by a `HEAD`, or -1. */
 static int64_t loft_web_http_head_size(loft_cx *cx, loft_str url) {
     int64_t status = loft_web_http_do(cx, loft_lit(cx, "HEAD", 4), url, loft_lit(cx, "", 0), loft_lit(cx, "", 0));
     if (status < 200 || status >= 400) return -1;
-    loft_text h = loft_web_heads;
+    loft_text h = cx->web_heads;
     for (size_t i = 0; i < h.len;) {
         size_t e = i;
         while (e < h.len && h.p[e] != '\n') e++;
@@ -136,22 +130,22 @@ static int64_t loft_web_http_head_size(loft_cx *cx, loft_str url) {
 
 /* ── The pack builder and byte reads ── */
 
-static void loft_web_pack_reset(loft_cx *cx) { loft_web_pack.len = 0; }
+static void loft_web_pack_reset(loft_cx *cx) { cx->web_pack.len = 0; }
 static void loft_web_pack_u8(loft_cx *cx, int64_t b) {
     char c = (char) (b & 0xff);
-    loft_push(cx, &loft_web_pack, &c, 1);
+    loft_push(cx, &cx->web_pack, &c, 1);
 }
 static void loft_web_pack_u16_le(loft_cx *cx, int64_t v) {
     char c[2] = { (char) (v & 0xff), (char) ((v >> 8) & 0xff) };
-    loft_push(cx, &loft_web_pack, c, 2);
+    loft_push(cx, &cx->web_pack, c, 2);
 }
 static void loft_web_pack_u32_le(loft_cx *cx, int64_t v) {
     char c[4] = { (char) (v & 0xff), (char) ((v >> 8) & 0xff), (char) ((v >> 16) & 0xff), (char) ((v >> 24) & 0xff) };
-    loft_push(cx, &loft_web_pack, c, 4);
+    loft_push(cx, &cx->web_pack, c, 4);
 }
 static loft_text loft_web_pack_take(loft_cx *cx) {
-    loft_text t = loft_web_copy(cx, &loft_web_pack);
-    loft_web_pack.len = 0;
+    loft_text t = loft_web_copy(cx, &cx->web_pack);
+    cx->web_pack.len = 0;
     return t;
 }
 static int64_t loft_web_byte_at(loft_cx *cx, int64_t idx, loft_str t) {
@@ -162,17 +156,12 @@ static void loft_web_frame_yield(loft_cx *cx) {}
 
 /* ── The WebSocket client ── */
 
-typedef struct {
+typedef struct loft_web_conn {
     char *url;    /* 0: a closed slot */
     loft_stream st; /* `fd < 0`: down, reconnected after the backoff */
     int64_t last_attempt_ms;
     int backoff;
 } loft_web_conn;
-
-static LOFT_TLS loft_web_conn *loft_web_conns = 0;
-static LOFT_TLS size_t loft_web_nconns = 0;
-static LOFT_TLS int64_t *loft_web_group = 0;
-static LOFT_TLS size_t loft_web_ngroup = 0, loft_web_group_cap = 0, loft_web_group_offset = 0;
 
 static const int64_t loft_web_backoff_ms[] = { 100, 250, 500, 1000, 2500, 5000, 10000 };
 #define LOFT_WEB_BACKOFFS ((int) (sizeof loft_web_backoff_ms / sizeof loft_web_backoff_ms[0]))
@@ -234,11 +223,10 @@ static void loft_web_random(loft_cx *cx, uint8_t *out, size_t n) {
 #elif defined(__APPLE__) || defined(__linux__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
     if (n <= 256 && getentropy(out, n) == 0) return;
 #endif
-    static LOFT_TLS uint64_t seed = 0;
-    if (!seed) seed = (uint64_t) loft_now_us(cx) ^ 0xDEADBEEFull;
+    if (!cx->ws_mask_seed) cx->ws_mask_seed = (uint64_t) loft_now_us(cx) ^ 0xDEADBEEFull;
     for (size_t i = 0; i < n; i++) {
-        seed = seed * 6364136223846793005ull + 1442695040888963407ull;
-        out[i] = (uint8_t) (seed >> 33);
+        cx->ws_mask_seed = cx->ws_mask_seed * 6364136223846793005ull + 1442695040888963407ull;
+        out[i] = (uint8_t) (cx->ws_mask_seed >> 33);
     }
 }
 
@@ -327,8 +315,8 @@ static int loft_web_open(loft_cx *cx, const char *url, loft_stream *out) {
 }
 
 static loft_web_conn *loft_web_get(loft_cx *cx, int64_t h) {
-    if (h < 0 || (uint64_t) h >= loft_web_nconns || !loft_web_conns[h].url) return 0;
-    return &loft_web_conns[h];
+    if (h < 0 || (uint64_t) h >= cx->web_nconns || !cx->web_conns[h].url) return 0;
+    return &cx->web_conns[h];
 }
 
 static void loft_web_down(loft_cx *cx, loft_web_conn *c) {
@@ -360,14 +348,14 @@ static int64_t loft_web_ws_connect(loft_cx *cx, loft_str url) {
         free(u);
         return -1;
     }
-    loft_web_conns = (loft_web_conn *) realloc(loft_web_conns, (loft_web_nconns + 1) * sizeof *loft_web_conns);
-    if (!loft_web_conns) { fputs("loft: out of memory\n", stderr); abort(); }
-    loft_web_conn *c = &loft_web_conns[loft_web_nconns];
+    cx->web_conns = (loft_web_conn *) realloc(cx->web_conns, (cx->web_nconns + 1) * sizeof *cx->web_conns);
+    if (!cx->web_conns) { fputs("loft: out of memory\n", stderr); abort(); }
+    loft_web_conn *c = &cx->web_conns[cx->web_nconns];
     c->url = u;
     c->backoff = 0;
     loft_web_open(cx, u, &c->st);
     c->last_attempt_ms = loft_web_now_ms(cx);
-    return (int64_t) loft_web_nconns++;
+    return (int64_t) cx->web_nconns++;
 }
 
 static uint8_t loft_web_send(loft_cx *cx, int64_t h, int opcode, loft_str msg) {
@@ -400,10 +388,10 @@ static int loft_web_take(loft_cx *cx, loft_web_conn *c, int ms) {
     if (!got || op == 0x8) {
         loft_web_down(cx, c);
     } else if (op == 0x1 || op == 0x2) {
-        loft_web_msg.len = 0;
-        if (op == 0x1) loft_push_lossy(cx, &loft_web_msg, payload.p, payload.len);
-        else loft_web_set(cx, &loft_web_msg, payload.p, payload.len);
-        loft_web_op = op;
+        cx->web_msg.len = 0;
+        if (op == 0x1) loft_push_lossy(cx, &cx->web_msg, payload.p, payload.len);
+        else loft_web_set(cx, &cx->web_msg, payload.p, payload.len);
+        cx->web_op = op;
         answer = 1;
     } else if (op == 0x9) {
         loft_web_write_frame(cx, &c->st, 0xA, payload.p, payload.len);
@@ -418,8 +406,8 @@ static uint8_t loft_web_ws_client_recv(loft_cx *cx, int64_t h) {
     return c && loft_web_ensure(cx, c) && loft_web_take(cx, c, 7);
 }
 
-static loft_text loft_web_ws_client_message(loft_cx *cx) { return loft_web_copy(cx, &loft_web_msg); }
-static int64_t loft_web_ws_client_opcode(loft_cx *cx) { return loft_web_op; }
+static loft_text loft_web_ws_client_message(loft_cx *cx) { return loft_web_copy(cx, &cx->web_msg); }
+static int64_t loft_web_ws_client_opcode(loft_cx *cx) { return cx->web_op; }
 
 /* Closed for good: a close frame is sent and the handle never reconnects. */
 static void loft_web_ws_client_close(loft_cx *cx, int64_t h) {
@@ -434,28 +422,28 @@ static void loft_web_ws_client_close(loft_cx *cx, int64_t h) {
 }
 
 static void loft_web_ws_group_clear(loft_cx *cx) {
-    loft_web_ngroup = 0;
-    loft_web_group_offset = 0;
+    cx->web_ngroup = 0;
+    cx->web_group_offset = 0;
 }
 static void loft_web_ws_group_add(loft_cx *cx, int64_t h) {
-    if (loft_web_ngroup == loft_web_group_cap) {
-        loft_web_group_cap = loft_web_group_cap ? 2 * loft_web_group_cap : 8;
-        loft_web_group = (int64_t *) realloc(loft_web_group, loft_web_group_cap * sizeof *loft_web_group);
-        if (!loft_web_group) { fputs("loft: out of memory\n", stderr); abort(); }
+    if (cx->web_ngroup == cx->web_group_cap) {
+        cx->web_group_cap = cx->web_group_cap ? 2 * cx->web_group_cap : 8;
+        cx->web_group = (int64_t *) realloc(cx->web_group, cx->web_group_cap * sizeof *cx->web_group);
+        if (!cx->web_group) { fputs("loft: out of memory\n", stderr); abort(); }
     }
-    loft_web_group[loft_web_ngroup++] = h;
+    cx->web_group[cx->web_ngroup++] = h;
 }
 
 /* The first grouped handle, round from where the last poll left off, with a message ready, or
  * -1; each socket is probed without waiting. */
 static int64_t loft_web_ws_group_poll(loft_cx *cx) {
-    size_t n = loft_web_ngroup;
+    size_t n = cx->web_ngroup;
     for (size_t i = 0; i < n; i++) {
-        size_t at = (loft_web_group_offset + i) % n;
-        loft_web_conn *c = loft_web_get(cx, loft_web_group[at]);
+        size_t at = (cx->web_group_offset + i) % n;
+        loft_web_conn *c = loft_web_get(cx, cx->web_group[at]);
         if (c && loft_web_ensure(cx, c) && loft_web_take(cx, c, 0)) {
-            loft_web_group_offset = (at + 1) % n;
-            return loft_web_group[at];
+            cx->web_group_offset = (at + 1) % n;
+            return cx->web_group[at];
         }
     }
     return -1;
