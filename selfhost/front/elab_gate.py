@@ -155,7 +155,13 @@ def state_table(text):
 # `user_named` decides "compiler temporary" (`Function::is_compiler_generated`) only for a name
 # starting with `_`, which codegen reads; on any other name it only feeds the never-read lint.
 TIERS = {
-    "state": {"user_named(_)": "T2", "user_named": "T4", "user_appended": "T4", "copy_bound": "T4"},
+    "state": {"user_named(_)": "T2", "user_named": "T4", "user_appended": "T4", "copy_bound": "T4",
+              # What a program can observe of a definition: a field's runtime check and its
+              # message, a key, a write-once or public field, visibility, which generic instance,
+              # the C binding.
+              "check": "T1", "check_message": "T1", "primary": "T1", "const_field": "T1",
+              "pub_field": "T1", "pub": "T1", "instance_of": "T1", "instance_args": "T1",
+              "c_symbol": "T1", "c_sig": "T1"},
     "contract": {},
     "reasons": {},
 }
@@ -491,7 +497,9 @@ def one(loft, defs, elab, std, path, tmp, env, i):
                         for layer, kinds in (("contract", cd), ("state", sd), ("reasons", rd)) if kinds))
         return "refused", refused, fns
     if mine == want:
-        own = {mm.group(1) for mm in (re.match(r"^#\d+ (\S+) type=1 ", l) for l in want) if mm}
+        # The program's functions, and its records and field-carrying variants (their layout and
+        # field facts are state lines too).
+        own = {mm.group(1) for mm in (re.match(r"^#\d+ (\S+) type=[145] ", l) for l in want) if mm}
         CONTRACT[path] = contract_compare(contract_facts(r.stderr.decode("utf-8", "replace")),
                                           contract_facts(m.stderr), own)
         STATE[path] = state_compare(state_table(o.stderr), state_table(m.stderr), own, path)
