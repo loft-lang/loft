@@ -156,14 +156,21 @@ pub fn parse_library_alone(
     let pkg_dir = pkg_path.to_string_lossy().to_string();
     // The name `use` finds it by: its `[package] name`, else its directory's, as the
     // interpreter resolves a library with no `[package]` section.
-    let name = crate::manifest::read_manifest(&pkg_path.join("loft.toml").to_string_lossy())
-        .and_then(|m| m.name)
+    let manifest = crate::manifest::read_manifest(&pkg_path.join("loft.toml").to_string_lossy());
+    let name = manifest
+        .as_ref()
+        .and_then(|m| m.name.clone())
         .or_else(|| {
             pkg_path
                 .file_name()
                 .map(|n| n.to_string_lossy().to_string())
         })
         .ok_or_else(|| format!("{pkg_dir} is not a loft package (no [package] name)"))?;
+    // What it declares it depends on is loaded with it, as in any program that loads it: a
+    // `[c] shim` may include a dependency's header that no `use` of its loft names.
+    let deps: Vec<String> = manifest
+        .map(|m| m.dependencies.into_iter().map(|(d, _)| d).collect())
+        .unwrap_or_default();
     let mut p = crate::parser::Parser::new();
     // The package's own parent first: `use <name>` must find THIS checkout before a
     // same-named registry package, or `library_export_set` (by `pkg_dir` prefix) sees none.
@@ -187,12 +194,22 @@ pub fn parse_library_alone(
         std::process::id(),
         name
     ));
-    crate::file_access::write(&tmp, format!("use {name};\n"))
+    let mut program = format!("use {name};\n");
+    for d in &deps {
+        program.push_str(&format!("use {d};\n"));
+    }
+    crate::file_access::write(&tmp, program)
         .map_err(|e| format!("write {}: {e}", tmp.display()))?;
     p.parse(&tmp.to_string_lossy(), false);
     let _ = crate::file_access::remove_file(&tmp);
     if p.diagnostics.level() >= crate::diagnostics::Level::Error {
-        return Err(format!("`{name}` does not parse alone"));
+        let first = p
+            .diagnostics
+            .lines()
+            .into_iter()
+            .find(|l| l.contains("rror"))
+            .unwrap_or_default();
+        return Err(format!("`{name}` does not parse alone: {first}"));
     }
     // The slot and scope analysis the writers depend on, as the run path does before its build.
     crate::scopes::check(&mut p.data, &mut p.database);
