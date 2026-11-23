@@ -2743,7 +2743,7 @@ impl State {
                 continue; // null / STRING_NULL — not store-backed
             }
             for (store_idx, store) in self.database.allocations.iter().enumerate() {
-                if store.free || store_idx as u16 == self.stack_cur.store_nr {
+                if !store.live || store_idx as u16 == self.stack_cur.store_nr {
                     continue;
                 }
                 let start = store.ptr as u64;
@@ -2858,7 +2858,7 @@ impl State {
                 .allocations
                 .iter()
                 .enumerate()
-                .filter(|(_, s)| !s.free && !s.read_only)
+                .filter(|(_, s)| s.live && !s.read_only)
                 .map(|(i, s)| (i as u16, s.generation))
                 .collect();
             self.coroutine_frame_mut(idx).saved_store_generations = gens;

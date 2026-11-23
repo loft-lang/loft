@@ -2692,7 +2692,7 @@ impl Stores {
             );
         }
         #[cfg(debug_assertions)]
-        if s.free && !crate::keys::strict_stores() {
+        if !s.live && !crate::keys::strict_stores() {
             crate::loft_eprintln!(
                 "[store] ACCESS FREED store #{} rec={} pos={} — data will be garbage",
                 r.store_nr,
@@ -3156,7 +3156,7 @@ impl Stores {
             );
         }
         #[cfg(debug_assertions)]
-        if self.allocations[r.store_nr as usize].free && !crate::keys::strict_stores() {
+        if !self.allocations[r.store_nr as usize].live && !crate::keys::strict_stores() {
             crate::loft_eprintln!(
                 "[store] WRITE TO FREED store #{} rec={} pos={} — corruption",
                 r.store_nr,

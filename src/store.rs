@@ -8523,7 +8523,7 @@ mod tests {
     #[should_panic(expected = "high-water mark")]
     fn a_mark_past_capacity_is_caught() {
         let mut store = Store::new(64);
-        store.free = false;
+        store.live = true;
         let a = store.claim(5);
         store.write::<i32>(a + 5, 0, 100); // claimed, and 100 > 64 - 6
         let _ = store.usage();
