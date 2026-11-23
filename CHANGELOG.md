@@ -44,7 +44,9 @@ and `LOFT_LIB_BACKEND=rust` keeps the Rust build.  Under `loft debug` the librar
 too: a library function with a breakpoint in it, or one you step into, runs in the interpreter so
 the debugger can stop there, and the functions it calls stay compiled.  Pausing a program while a
 compiled library function runs moves that function into the interpreter at the top of its
-current loop, with its variables as they were, and stops there.
+current loop, with its variables as they were, and stops there.  `loft debug --native` (in an
+editor, `"native": true` in the launch configuration) compiles your program's own functions too,
+`main` aside, so you debug the program as it runs compiled.
 
 **`store_memory()` reports your program's stores, the same on every backend.**  It no longer
 counts the interpreter's own value stack and constant store.

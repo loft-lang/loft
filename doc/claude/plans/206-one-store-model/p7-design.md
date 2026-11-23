@@ -34,7 +34,13 @@ interpreter keeps for it (the verify's twin already runs that bytecode on the sa
 3. **The session** (`ReplSession`): a debug session adopts each `use`d library's unit as a plain
    run does, with the same blocks (`native_adopt::scope_library`, the export set, `hosted_split`,
    `cached_or_build_shared_cdylib`, `probe_and_mark_exports`); a library that does not build
-   interprets, as before.
+   interprets, as before.  Asked for `--native` (rpc and DAP `launch`: `"native": true`), it
+   also builds the program's own functions, `main` aside, into one unit
+   (`native_artifact::adopt_program_for_session`): the program runs compiled with `main` the
+   interpreter's driver.  That unit is generated from the program parsed exactly as the session
+   parsed it (`Parser::open_program`, the path as spelled), because its bridge names and keys
+   carry the source label the parse gives; it is cached in the user cache (`debug-units/`) under
+   this loft and every source the program loaded.
 4. **The pause point** (P7b, P7c): a loop head, named in both forms by the function's key and
    the loop's scope number — the unit's `loft_ho_commit(key, scope)`, the interpreter's
    `State::loop_sites[(def, scope)]` (recorded by `gen_loop` and `gen_rotated_loop`).
@@ -78,6 +84,14 @@ running C program" half.
   `rpc_a_handed_over_routine_keeps_its_vector_and_text`).  The safepoints cost about 4% on a
   loop whose body is one multiply and modulo; `LOFT_NO_HANDOVER=1` builds without them (its own
   unit key).
+- **The program's own functions** run compiled under `loft debug --native`, and a pause hands one
+  over as it does a library's.  The guards drive `loft-dap` processes with a real `pause`
+  request (`tests/dap_transport.rs`: `a_pause_hands_a_running_compiled_library_routine_to_the_interpreter`,
+  `a_handed_over_routine_keeps_its_vector_and_text`,
+  `a_pause_hands_the_programs_own_compiled_routine_to_the_interpreter`), each red with the
+  safepoints answering no.
+- **Not covered:** a standalone executable built by `loft --native` has no interpreter to hand a
+  routine to; `loft debug --native` is how a compiled program is debugged.
 
 ## P7b and P7c: the hand-over
 

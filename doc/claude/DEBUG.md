@@ -102,13 +102,13 @@ anywhere in the frame — so the debugger names that rather than printing the sl
 contents under `i`'s name. Reading such a local explains itself, and editing it is
 refused. Compiler temps (`__work_N`, `i#index`) are hidden; `:vars all` shows them.
 
-Remaining rough edges are tracked in
-[@PLN120](plans/120-debugger-shape/README.md).
+Remaining rough edges are tracked in [@PLN120](plans/120-debugger-shape/README.md).
 
 Editors get the same engine over DAP (`loft-dap`); see [@I91](../features/I91.md).
 
-**Libraries run compiled under the debugger**; a routine holding (or reaching) a breakpoint, stepped
-into, or paused while it runs continues interpreted, its callees compiled ([P7](plans/206-one-store-model/p7-design.md)).
+**Libraries run compiled under the debugger**, and with `loft debug --native` (DAP: `"native": true`) the
+program's own functions too, `main` aside; a routine holding (or reaching) a breakpoint, stepped into,
+or paused while it runs continues interpreted, its callees compiled ([P7](plans/206-one-store-model/p7-design.md)).
 
 ---
 

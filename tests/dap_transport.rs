@@ -1272,6 +1272,12 @@ fn pause_and_finish(tag: &str, lib: Option<&str>, prog: &str, want: impl Fn(i64,
 const USE_SPINNER: &str =
     "use spinner;\nfn main() {\n  r = spinner::spin(8000000000);\n  println(\"r {r}\");\n}\n";
 
+/// A routine of a library, which runs compiled by default.
+///
+/// @falsified-at: none — a SABOTAGE (2026-11-23): with the unit's loop heads asking for no
+///   pause (`loft_pause_asked` answering 0, `src/c/loft_rt.h`), the routine finishes compiled
+///   and the pause stops in `main`.  CHANNEL: the stack frame.  WITNESS: "it stops inside spin,
+///   interpreted".
 #[test]
 fn a_pause_hands_a_running_compiled_library_routine_to_the_interpreter() {
     let lib = SPIN.replace("fn helper", "pub fn helper").replace("fn spin", "pub fn spin");
@@ -1282,6 +1288,11 @@ fn a_pause_hands_a_running_compiled_library_routine_to_the_interpreter() {
 /// built before its long loop, carried into the interpreter's frame and used there.  By hand:
 /// the sum of `i % 7` for `i` below 1000 is 142 * 21 + (0 + 1 + 2 + 3 + 4 + 5) = 2997, so the
 /// answer is 2997 * 1000 + 50, whatever round the pause came in.
+///
+/// @falsified-at: none — a SABOTAGE (2026-11-23): with the unit's loop heads asking for no
+///   pause (`loft_pause_asked` answering 0, `src/c/loft_rt.h`), the routine finishes compiled
+///   and the pause stops in `main`.  CHANNEL: the stack frame.  WITNESS: "it stops inside spin,
+///   interpreted".
 #[test]
 fn a_handed_over_routine_keeps_its_vector_and_text() {
     let lib = "pub fn helper(n: integer) -> integer {\n  n + 1\n}\n\npub fn spin(limit: integer) -> integer {\n  v: vector<integer> = [];\n  for i in 0..1000 { v += [i % 7]; }\n  s = \"\";\n  for j in 0..50 { s += \"x\"; }\n  t = 0;\n  while t < limit {\n    t = helper(t);\n  }\n  total = 0;\n  for x in v { total += x; }\n  total * 1000 + len(s)\n}\n";
@@ -1290,6 +1301,11 @@ fn a_handed_over_routine_keeps_its_vector_and_text() {
 
 /// `"native": true`: the program's own functions run compiled — `main` the interpreter's
 /// driver — and a pause in one of them hands it over as a library's routine is.
+///
+/// @falsified-at: none — a SABOTAGE (2026-11-23): with the unit's loop heads asking for no
+///   pause (`loft_pause_asked` answering 0, `src/c/loft_rt.h`), the routine finishes compiled
+///   and the pause stops in `main`.  CHANNEL: the stack frame.  WITNESS: "it stops inside spin,
+///   interpreted".
 #[test]
 fn a_pause_hands_the_programs_own_compiled_routine_to_the_interpreter() {
     let prog = format!(
