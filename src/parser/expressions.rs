@@ -5706,7 +5706,16 @@ use a separate collection or add after the loop"
                         // and a later block's non-null bind stayed nullable.
                         || self.vars.rebind_differs_in_absence(var_nr, &s_type))))
         {
+            let ended = var_nr;
             var_nr = self.rebind_after_block(var_nr, &s_type);
+            // The value was parsed before the split, and a literal builds IN PLACE into the
+            // variable its bind named (`OpDatabase(jt)`, `OpSetInt(jt, …)`): the ended one.  The
+            // value cannot READ the ended binding (`@FR-B-Scope` refuses that), so every mention
+            // of it is the build target, and it is the new binding's — left on the ended
+            // variable, the read after the bind met a variable nothing set (a codegen ICE).
+            if var_nr != u16::MAX {
+                crate::parser::collections::rename_var(code, ended, var_nr);
+            }
             new_binding = Value::Var(var_nr);
             new_binding_type = self.vars.tp(var_nr).clone();
             (&new_binding, &new_binding_type)
