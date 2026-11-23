@@ -53,9 +53,8 @@ longer judged ([PERFORMANCE.md](PERFORMANCE.md) § the lanes), no new rewrite la
 or in the C writer — and a compiled library ships C, never a rustc-built cdylib
 ([@PLN206](https://github.com/loft-lang/plans/issues/206)).  A backend stays only while it answers
 every program as the others do (`@C170`), so the writer, `--native-rust`, leaves the tree under
-[@PLN225](plans/225-retire-rustc-writer/README.md), with every rewrite only it applies; the
-libraries it compiles for interpreted programs are built by the C backend instead (@PLN206
-P3–P6).  No @PLN91 gate reads the writer's output.  The reasons are measured in
+[@PLN225](plans/225-retire-rustc-writer/README.md), with every rewrite only it applies; a
+library an interpreted program uses runs as its C unit, which each release ships (@PLN206).  No @PLN91 gate reads the writer's output.  The reasons are measured in
 [plans/203-c99-default-backend.md](plans/203-c99-default-backend.md) § The position; the order
 as it read before is in
 [ROADMAP-history.md § The rustc backend](ROADMAP-history.md#the-rustc-backend--the-order-as-it-read-until-2026-11-21).
@@ -185,7 +184,6 @@ open plan.  Silent-wrong defects are issues, not plans: `gh issue list --label s
 | [@PLN179](https://github.com/loft-lang/plans/issues/179) | future | Scripts in loft — the repo's Python/bash tooling ported, each port proven against its original |
 | [@PLN191](https://github.com/loft-lang/plans/issues/191) | active | The loft crate split into a DAG of crates — an edit rebuilds its own layer, a clean release build compiles the layers in parallel (P0 measures incremental release first) |
 | [@PLN200](https://github.com/loft-lang/plans/issues/200) | next | The interpreter and the code generators as defined parts — `opt` (what every backend asks, the interpreter's optimisations), `interp` (a contract), `lower` (a compiled target's decisions as data) apart from the Rust writer: the base for an ANSI-C backend ([plan](plans/200-backend-structure.md)) |
-| [@PLN206](https://github.com/loft-lang/plans/issues/206) | active | One store model — the interpreter and the C runtime implement the same stores (C's model the standard, the interpreter moving to it unless measurably better), so libraries ship C binaries the interpreter runs and no rustc is needed ([model](STORE_MODEL.md)) |
 | [@PLN203](https://github.com/loft-lang/plans/issues/203) | active | The C99 backend as the only compiled target — the driver, diagnostics parity, the stdlib census, `par` with threads, libraries and hosts without rustc, the wasm and browser targets from C, the perf lane, three platforms, then the flip that shelves the Rust writer ([plan](plans/203-c99-default-backend.md)) |
 | [@PLN82](https://github.com/loft-lang/plans/issues/82) | parked | Constant store, phases B and C |
 

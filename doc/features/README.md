@@ -105,6 +105,7 @@ canonical; these pages are its generated shadow. Regenerate with
 | [@F125](F125.md) | Text slicing — `s[a..b]`, `s[a..]`, `s[..b]`, `s[i]` (byte offsets; `char_slice` for characters) |
 | [@F126](F126.md) | A store's failure arm — `place = value else { … }` runs when the write did not land |
 | [@F127](F127.md) | Store upgrade — a changed struct converts its stored data, or says why it cannot |
+| [@F128](F128.md) | Compiled libraries — a `use`d library runs as compiled C under the interpreter |
 
 ## Infrastructure (`@I`)
 
