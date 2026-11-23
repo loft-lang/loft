@@ -1036,17 +1036,14 @@ static LOFT_TLS uint32_t loft_hdepth = 0;
 #define loft_frame_push(fn, file, decl) ((void) loft_hdepth++)
 #define loft_frame_pop() ((void) loft_hdepth--)
 #define LOFT_HDEPTH loft_hdepth
-#elif defined(LOFT_MAX_CALL_DEPTH) && defined(LOFT_DEPTH_COUNT)
+#elif defined(LOFT_MAX_CALL_DEPTH) && defined(LOFT_DEPTH_COUNT) && !defined(LOFT_THREADS)
 /* A build with no call chain (the ship tier) still stops a runaway recursion at the call-depth
  * cap both other backends enforce (`--ship`: every fault check stays): a depth count alone.  It
  * keeps no frames, so it cannot name the running function the report names: the report says
- * what happened and no place.  Per thread where `par` runs on threads.  Only a unit that can
- * nest past the cap counts (`LOFT_DEPTH_COUNT`: a cycle in its call graph, `c::may_recurse`). */
-#if defined(LOFT_THREADS)
-static LOFT_TLS uint32_t loft_cdepth = 0;
-#else
+ * what happened and no place.  Only a unit that can nest past the cap counts
+ * (`LOFT_DEPTH_COUNT`: a cycle in its call graph, `c::may_recurse`), and only one whose `par`
+ * runs on no threads: a worker's count is a field of its store context (@PLN226). */
 static uint32_t loft_cdepth = 0;
-#endif
 #define loft_frame_push(fn, file, decl) \
     (LOFT_UNLIKELY(++loft_cdepth > (uint32_t) LOFT_MAX_CALL_DEPTH) ? loft_stack_overflow("", 0) : (void) 0)
 #define loft_frame_pop() ((void) loft_cdepth--)

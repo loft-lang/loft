@@ -2980,7 +2980,23 @@ fn unit_defines(
     // A build with no call chain counts its depth only where calls can nest past the cap: a
     // unit whose call graph has no cycle (and no call through a function value, whose target
     // the graph does not show) nests no deeper than its distinct functions.
-    if may_recurse(data, reached) {
+    let recurse = may_recurse(data, reached);
+    if std::env::var_os("LOFT_PROBE_RECURSE").is_some() {
+        eprintln!("PROBE may_recurse={recurse} reached={}", reached.len());
+        for &d in reached {
+            if data.def(d).name().contains("walk") {
+                let mut calls = Vec::new();
+                data.def(d).code.any_node(&mut |n| {
+                    if let Value::Call(c, _) = n {
+                        calls.push(data.def(*c).name().to_string());
+                    }
+                    false
+                });
+                eprintln!("PROBE {} calls {:?}", data.def(d).name(), calls);
+            }
+        }
+    }
+    if recurse {
         out.push_str("#define LOFT_DEPTH_COUNT 1\n");
     }
     (out, parses, reflects)
