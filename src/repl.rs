@@ -2022,6 +2022,8 @@ impl ReplSession {
         let pending = self.parser.pending_native_libs.clone();
         crate::interp::extensions::load_all(state, pending);
         crate::interp::extensions::wire_native_fns(state, &self.parser.data);
+        // The bridges of the compiled library units the session adopted (`@PLN206 P7a`).
+        crate::interp::extensions::wire_shared_native_fns(state, &self.parser.data);
     }
 
     /// Build a session over an existing `parser` already loaded with a program's
@@ -2264,7 +2266,18 @@ impl ReplSession {
         // program load, not an append — the REPL's incremental path is `eval`, not this.
         let lib_dirs = std::mem::take(&mut self.parser.lib_dirs);
         self.parser = Parser::open_program(&self.stdlib_dir, &lib_dirs)?;
-        Ok(self.load_program_str(&src, path))
+        let loaded = self.load_program_str(&src, path);
+        // `@PLN206 P7a` — the libraries run compiled, as in a plain run; a routine the
+        // debugger wants runs interpreted (`Debugger::wants`).
+        if loaded.is_ok() {
+            let entry = crate::file_access::plain_canonical(std::path::Path::new(path));
+            crate::native_artifact::adopt_for_session(
+                &mut self.parser,
+                &entry.to_string_lossy(),
+                &self.stdlib_dir,
+            );
+        }
+        Ok(loaded)
     }
 
     /// @PLN16 M5e slice 2 — **check** `path` and return ALL its diagnostics (errors AND
@@ -2411,6 +2424,7 @@ impl ReplSession {
             compile::byte_code(&mut state, &mut data);
             crate::interp::extensions::load_all(&mut state, pending_native.clone());
             crate::interp::extensions::wire_native_fns(&mut state, &data);
+            crate::interp::extensions::wire_shared_native_fns(&mut state, &data);
             // `execute_argv` prepends `n_` itself — pass the bare user name (`name`), not an
             // already-prefixed one, or it looks up `n_n_<name>` → "Unknown definition".
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {

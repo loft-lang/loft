@@ -102,6 +102,84 @@ pub struct LibraryContext {
     pub scope_entry: Option<String>,
 }
 
+/// `@PLN206 P7a` — adopt the compiled units of the libraries `parser` loaded, for a session that
+/// runs the program (the debugger): the steps a plain run takes per library
+/// (`native_adopt::scope_library`, the export set and `hosted_split`,
+/// `cached_or_build_shared_cdylib`, `probe_and_mark_exports`), each adopted artifact queued for
+/// `extensions::load_all`.  A library that does not build interprets, as it did, with nothing
+/// said: a debug session asked for no build.  `LOFT_NO_NATIVE_LIBS` keeps every library
+/// interpreted.
+pub fn adopt_for_session(parser: &mut crate::parser::Parser, entry: &str, default_dir: &str) {
+    let pending = std::mem::take(&mut parser.pending_native_compile);
+    if pending.is_empty() || std::env::var_os("LOFT_NO_NATIVE_LIBS").is_some() {
+        return;
+    }
+    let hand_written = parser.pending_native_libs.clone();
+    crate::interp::extensions::preload_native_libs(&mut parser.data, &hand_written);
+    let context = LibraryContext {
+        default_dir: default_dir.to_string(),
+        lib_dirs: parser.lib_dirs.clone(),
+        scope_entry: Some(entry.to_string()),
+    };
+    for pkg_dir in &pending {
+        if crate::file_access::is_under(entry, pkg_dir)
+            || crate::manifest::read_manifest(&format!("{pkg_dir}/loft.toml"))
+                .is_some_and(|m| m.native_in_binary)
+        {
+            continue;
+        }
+        crate::native_adopt::scope_library(pkg_dir);
+        let export_of = |p: &crate::parser::Parser| {
+            let export = crate::native_lib::library_export_set(&p.data, pkg_dir);
+            if crate::c::hosted::selected() {
+                crate::c::hosted::hosted_split(&p.data, &p.database, &export).0
+            } else {
+                export
+            }
+        };
+        let mut export = export_of(parser);
+        if export.is_empty() {
+            continue;
+        }
+        let mut built = cached_or_build_shared_cdylib(
+            &parser.data,
+            &parser.database,
+            &export,
+            pkg_dir,
+            &pending,
+            &context,
+        );
+        // No C compiler: the rustc artifact, as a plain run takes it.
+        if let Err(e) = &built
+            && crate::c::hosted::selected()
+            && e.starts_with(crate::c::hosted::NO_COMPILER)
+        {
+            crate::keys::set_lib_rust_crate(true);
+            export = export_of(parser);
+            built = cached_or_build_shared_cdylib(
+                &parser.data,
+                &parser.database,
+                &export,
+                pkg_dir,
+                &pending,
+                &context,
+            );
+        }
+        if let Ok(Some(so)) = built {
+            let probe = crate::interp::native_adopt::probe_and_mark_exports(
+                &mut parser.data,
+                &parser.database,
+                &export,
+                &so,
+            );
+            if probe.marked > 0 {
+                parser.pending_native_libs.push(so.to_string_lossy().into_owned());
+            }
+        }
+    }
+    crate::keys::set_lib_rust_crate(false);
+}
+
 /// The spelling of `pkg` (canonical) the parse loaded the package's sources by, when it is
 /// another than `pkg` itself.
 fn loaded_spelling(data: &crate::data::Data, pkg: &std::path::Path) -> Option<String> {

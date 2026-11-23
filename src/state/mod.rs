@@ -1515,6 +1515,29 @@ impl State {
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub fn static_call(&mut self) {
         let call = self.code::<u16>();
+        // `@PLN206 P7a` — a compiled routine the debugger wants runs its bytecode: its static
+        // call pushed the arguments as an ordinary call does, one stepped slot per attribute.
+        if self.debug.is_some()
+            && let Some(d_nr) = self.debug_route(call)
+        {
+            let handle = self.data_ptr.clone();
+            if let Some(data) = handle.get() {
+                let args_size: u32 = data
+                    .def(d_nr)
+                    .attributes()
+                    .iter()
+                    .map(|a| {
+                        crate::variables::aligned_stack_step(u32::from(crate::variables::size(
+                            &a.typedef,
+                            &crate::data::Context::Argument,
+                        )))
+                    })
+                    .sum();
+                let to = self.fn_positions[d_nr as usize];
+                self.fn_call(d_nr, args_size as u16, i64::from(to));
+                return;
+            }
+        }
         // Fix #87: resolve n_stack_trace index lazily, then only snapshot for that call.
         if self.stack_trace_lib_nr == u16::MAX
             && let Some(&nr) = self.library_names.get("n_stack_trace")
@@ -9045,6 +9068,7 @@ impl State {
         let start_depth = self.call_stack.len();
         if let Some(d) = self.debug.as_mut() {
             d.paused = None;
+            d.stepping_into = mode == StepMode::Into;
             // The undo/redo history survives a step; only an edit still in flight
             // (armed, not committed) is dropped, because a half-recorded edit has no
             // meaning at the next pause.

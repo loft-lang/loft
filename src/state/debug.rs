@@ -137,6 +137,73 @@ impl State {
     # Panics
     When unknown operators are encountered in the byte-code.
     */
+    /// `@PLN206 P7a` — the compiled routine a static call to library index `call` runs
+    /// interpreted instead, when the debugger wants it: a step into is under way, or a
+    /// breakpoint is in the routine or in a routine it can reach (`p7-design.md`).  A generator
+    /// is not routed: its static call answers a handle the interpreter's coroutine creation
+    /// would have to make.
+    pub(crate) fn debug_route(&mut self, call: u16) -> Option<u32> {
+        let handle = self.data_ptr.clone();
+        let data = handle.get()?;
+        let dbg = self.debug.as_deref_mut()?;
+        let routing = dbg.routing.get_or_insert_with(|| {
+            let mut by_index = std::collections::HashMap::new();
+            for d in 0..data.definitions() {
+                let def = data.def(d);
+                if def.native().starts_with("loft_shared_")
+                    && !matches!(def.returned().base(), crate::data::Type::Iterator(..))
+                    && (d as usize) < self.fn_positions.len()
+                    && self.fn_positions[d as usize] != u32::MAX
+                    && let Some(&i) = self.library_names.get(def.native())
+                {
+                    by_index.insert(i, d);
+                }
+            }
+            crate::debugger::Routing {
+                by_index,
+                wanted_key: (usize::MAX, 0),
+                wanted: std::collections::HashSet::new(),
+            }
+        });
+        let d = *routing.by_index.get(&call)?;
+        if dbg.stepping_into {
+            return Some(d);
+        }
+        let key = dbg.breakpoint_key();
+        if key.0 == 0 {
+            return None;
+        }
+        let offsets: Vec<u32> = dbg.breakpoint_offsets().collect();
+        let routing = dbg.routing.as_mut()?;
+        if routing.wanted_key != key {
+            // Each breakpoint's routine: the one whose code starts last at or before it.
+            let mut holding = std::collections::HashSet::new();
+            for pc in offsets {
+                let mut best: Option<(u32, u32)> = None;
+                for (f, &start) in self.fn_positions.iter().enumerate() {
+                    if start != u32::MAX && start <= pc && best.is_none_or(|(s, _)| start > s) {
+                        best = Some((start, f as u32));
+                    }
+                }
+                if let Some((_, f)) = best {
+                    holding.insert(f);
+                }
+            }
+            let routines: Vec<u32> = routing.by_index.values().copied().collect();
+            routing.wanted = routines
+                .into_iter()
+                .filter(|&r| {
+                    holding.contains(&r)
+                        || crate::opt::names::reachable_functions(data, &[r])
+                            .iter()
+                            .any(|f| holding.contains(f))
+                })
+                .collect();
+            routing.wanted_key = key;
+        }
+        routing.wanted.contains(&d).then_some(d)
+    }
+
     pub fn print_code(&mut self, d_nr: u32, data: &Data) {
         let mut buf = Vec::new();
         self.dump_code(&mut buf, d_nr, data, true).unwrap();
