@@ -33,13 +33,14 @@ before the block (`qx = 0.0;` ahead of the `if`) or give the block a value
 
 ### New
 
-**A library can run as compiled C under the interpreter.**  Set `LOFT_LIB_BACKEND=c` and a
-library your program `use`s is compiled through the C backend, with no Rust toolchain, and the
-interpreter calls into it, working on the same data.  `loft build-native <package>` compiles it
-ahead of time; a machine with no C compiler then runs that build, its `[c] shim` included.  A
-function whose answer the compiled code does not carry yet (a text, a vector, a tuple, an
-iterator) keeps running interpreted, with the same result.  `LOFT_HOSTED_VERIFY=1` runs each
-call both ways and stops at the first that differs.
+**Libraries run compiled, with no Rust toolchain.**  A library a program `use`s is compiled
+through C the first time it runs, and later runs pick the build up; the interpreter calls into
+it, working on the same data, with the same answers.  All you need is a C compiler (`cc`):
+without one the library runs interpreted, and loft says so.  `loft build-native <package>`
+compiles it ahead of time, so a machine with no C compiler runs that build, its `[c] shim`
+included.  A function that returns a generator still runs interpreted, with the same result.
+`LOFT_HOSTED_VERIFY=1` runs each call both ways and stops at the first that differs, and
+`LOFT_LIB_BACKEND=rust` keeps the Rust build.
 
 **`store_memory()` reports your program's stores, the same on every backend.**  It no longer
 counts the interpreter's own value stack and constant store.

@@ -645,9 +645,9 @@ prints `FAIL <name>` and exits 1 when any test failed.  A test annotated `@EXPEC
 only by failing with one of its messages — the annotations are read by the same parser
 `loft --tests` uses (`test_runner::parse_annotations`).
 
-## A library as a hosted unit (`LOFT_LIB_BACKEND=c`)
+## A library as a hosted unit
 
-A `use`d library runs under the interpreter as a **hosted unit**: its functions compiled through
+A `use`d library runs under the interpreter as a **hosted unit** — the default: its functions compiled through
 this writer into a shared library that works on the interpreter's own stores, with no rustc
 (@PLN206; design in `plans/206-one-store-model/p3-p4-design.md` and `p5-design.md`).  A store
 is one `#[repr(C)]` layout on both sides (`Store` begins with `loft_store_t`), so the unit reads
@@ -655,8 +655,12 @@ and writes the records the interpreter holds; a store's birth and death go throu
 interpreter (`HostTable::hosted`), and the unit reads the store table in place
 (`host_abi::TableView`).
 
-- **Built** by `loft build-native <package>` with `LOFT_LIB_BACKEND=c` (it reports `backend: c`,
-  `loft_exe_id`, `host_abi`, `cc`), or by the first run that adopts the library.  It lands in
+- **Built** by `loft build-native <package>` (it reports `backend: c`, `loft_exe_id`,
+  `host_abi`, `cc`, and each public function it leaves interpreted as `interpreted: <name>\t<why>`),
+  or by the first run that adopts the library.  With no C compiler and no unit built before, the
+  library interprets and the run says to install one.  A package whose native part is a Rust
+  crate (`[native] crate`, no `[c] shim`) takes the rustc artifact
+  (`keys::set_lib_rust_crate`); a `[native] component` is a C library the unit calls.  It lands in
   the package's `native-auto/` under a name that carries the loft binary, the library's sources
   and the build switches; any program run by that loft adopts it, whichever built it.
 - **Generated from the library alone** (`native_artifact::parse_library_alone`, the program
@@ -674,15 +678,28 @@ interpreter (`HostTable::hosted`), and the unit reads the store table in place
   (the one the interpreter opened), never a copy from its archive.  A run with no compiler
   finds a built shim by its sources key (`c_shim::source_key`, the `.src` beside it).
 - **What crosses the bridge** (`hosted::bridge`, one `loft_shared_<name>` per export over
-  `LibArg`): scalars, records (the caller's buffer), texts in.  A text answer, a vector answer,
-  a tuple, an iterator or a function value is not carried: that function interprets, answering
-  the same.  A library the writer declines whole runs interpreted, with a note; `build-native`
-  passes it.  Library CI's **Hosted C** step builds each package's unit and runs its tests
-  adopted with no compiler (`library-ci-reusable.yml`).
+  `LibArg`):
+  - in: scalars, texts, records and vectors, a tuple of scalars (one slot per leaf), a `&`
+    argument (its slot, read and written back in the interpreter's `DbRef` layout:
+    `loft_slot_ref`), and a function value — tagged `LOFT_HOST_FN`, since it names the
+    program's function, and called back in the interpreter (`HostTable::call_ref`, one
+    `loft_up<n>` per signature);
+  - out: a scalar, a text (its bytes, which the dispatcher copies into the caller's
+    destination), a record or a vector (the caller's buffer), a tuple of scalars.
+  - Each text work slot of a call is a buffer of its own.  A unit parks no store across calls
+    (`loft_no_park`): no program end drains a unit's parks.
+  - Not carried: an iterator (the unit does not forward to the host's coroutine table), a
+    tuple with a text or a record inside.  Such a function interprets, answering the same.
+    A library the writer declines whole interprets too.
+- **Coverage**: `scripts/hosted_coverage.py` builds each package and holds what stays
+  interpreted to a baseline that only shrinks (`scripts/hosted_coverage.baseline`; the guard
+  `tests/hosted_coverage.rs`, the nightly `lib-main-health.yml`).  Library CI's **Hosted C**
+  step builds each package's unit and runs its tests adopted with no compiler
+  (`library-ci-reusable.yml`).
 
 | Switch / tool | What it does |
 |---|---|
-| `LOFT_LIB_BACKEND=c` | build and adopt a `use`d library as a hosted unit (the rustc artifact otherwise) |
+| `LOFT_LIB_BACKEND=rust` | build and adopt a `use`d library as a rustc artifact instead of a hosted unit |
 | `LOFT_HOSTED_VERIFY=1` | each call into a compiled library artifact also runs interpreted, on a copy of the world taken before it; the stores (bytes, then value, then root type) and the answer must agree.  Reports the unit's reach and the calls compared.  Compares each function's first 64 calls, then its 128th, 256th, …; `=all` compares every call.  A call reaching state outside the stores (a C function, a file, the clock) is made once and counted |
 | `LOFT_HOSTED_VERIFY_CONTROL=1` | the verify's control: the call interpreted on both sides, so a difference is the copy's |
 | `LOFT_HOSTED_PLANT=1` | builds a unit whose first record call writes one stray byte: the verify must name that call |

@@ -10,7 +10,7 @@ interpreted, against a baseline that only shrinks (@PLN206 coverage).
     scripts/hosted_coverage.py --baseline FILE ...             # default: scripts/hosted_coverage.baseline
     scripts/hosted_coverage.py --loft PATH ...                 # default: target/release/loft
 
-Each package is built as a hosted C unit (`loft build-native` with `LOFT_LIB_BACKEND=c`), which
+Each package is built as a hosted C unit (`loft build-native`; `LOFT_LIB_BACKEND=c` is the default), which
 names every public function the C bridge does not carry and why (`interpreted: <name>\\t<why>`):
 such a function runs interpreted under a program that adopts the library, answering the same,
 only slower.  A package whose native part is a Rust crate (`[native] crate`) has no unit at all until
