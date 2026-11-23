@@ -5993,6 +5993,10 @@ pub fn post_scope_lints(
     if diags.level() >= crate::diagnostics::Level::Error {
         return;
     }
+    // `data` is borrowed shared for every lint: the callee facts each one asks are computed once
+    // for the program (loft#2620) — the copy lint's survival walk asked them per function.
+    let _param_writes = crate::parser::param_writes_summary(data);
+    let _own_memo = ownership_memo_scope(data);
     // @PLN90 W5 — the enforced copy lint (gated `LOFT_WARN_COPIES`).
     warn_copies(data, diags, fallback_file);
     // @PLN107 S4a — the dead-store / lost-write lint (gated `LOFT_DEAD_STORES`).
