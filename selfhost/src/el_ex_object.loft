@@ -2464,7 +2464,7 @@ pub fn store_else(e: el::El, vars: el_vars::Vars, code: ir::Node, orelse: intege
 // the variable the place is read out of (`depending`).  On the second pass the name is the first
 // pass's variable, whose type it keeps.
 fn store_target(e: el::El, vars: el_vars::Vars, target: ir::Node) -> integer {
-  wt = el_vars::create_unique(vars, "store_target", store_target_type(e, vars, target));
+  wt = el_vars::create_unique(vars, "store_target", store_temp_type(e, vars, target));
   el_vars::set_defined(vars, wt);
   el_vars::set_skip_free(vars, wt, "parse_store_else");
   src = borrow_source(target);
@@ -2472,6 +2472,18 @@ fn store_target(e: el::El, vars: el_vars::Vars, target: ir::Node) -> integer {
     el_vars::depend(vars, wt, src);
   }
   wt
+}
+
+// The type `_store_target_N` takes: what the target answers — but an F2-hoisted element place
+// whose collection field the port writes directly (`field_places`) is written in Rust through
+// `OpGetField(place, off, tp)`, which its `store_target_type` types by the operator's declared
+// result.
+fn store_temp_type(e: el::El, vars: el_vars::Vars, target: ir::Node) -> ir::TypeT {
+  match target {
+    NdVar { n } => if vars.field_places.contains(n) { return el::def(e, el::def_nr(e, "OpGetField")).returned[0] ?? ir::TyVoid; },
+    _ => {}
+  }
+  store_target_type(e, vars, target)
 }
 
 // `store_target_type`: what the store's target answers — a place reached through a discharge

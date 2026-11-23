@@ -704,6 +704,19 @@ pub fn place_through_discharge(e: el::El, vars: el_vars::Vars, op: text, target:
   }
   pl = el_vars::create_unique(vars, "_place", el_types::base(s.tp));
   vars.compiler_named += [pl];
+  // (Rust holds a `?` discharge in the place and writes the field through it; an effectful index
+  // takes the F2 hoist, which writes a COLLECTION field through `OpGetField(place, off, tp)`.)
+  discharge = match e.p.nodes[subject] { SPostfix { op: dop } => dop == "?", _ => false };
+  fsd = struct_ref(e, el_types::base(s.tp));
+  ftp: ir::TypeT = ir::TyVoid;
+  for fa in el::def(e, fsd).attributes {
+    if fa.name == field {
+      ftp = fa.typedef[0] ?? ir::TyVoid;
+    }
+  }
+  if !discharge && (el_types::base(ftp) is TyVector || el_types::is_collection(el_types::base(ftp))) {
+    vars.field_places += [pl];
+  }
   e.p.nodes += [SName { at: at, name: el_vars::name_of(vars, pl), member: "" }];
   through = len(e.p.nodes) - 1;
   e.p.nodes += [SMember { at: at, e: through, name: field, args: [], call: false }];
