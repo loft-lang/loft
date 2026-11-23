@@ -96,11 +96,17 @@ impl Cx<'_> {
         let types = self.eq_types.borrow();
         let mut out = String::new();
         for &tp in types.iter() {
-            let _ = writeln!(out, "static int loft_eq{tp}(loft_cx *cx, loft_ref a, loft_ref b);");
+            let _ = writeln!(
+                out,
+                "static int loft_eq{tp}(loft_cx *cx, loft_ref a, loft_ref b);"
+            );
         }
         for &tp in types.iter() {
             let t = &self.stores.types[tp as usize];
-            let _ = writeln!(out, "static int loft_eq{tp}(loft_cx *cx, loft_ref a, loft_ref b) {{");
+            let _ = writeln!(
+                out,
+                "static int loft_eq{tp}(loft_cx *cx, loft_ref a, loft_ref b) {{"
+            );
             out.push_str("    if (loft_same_place(cx, a, b)) return 1;\n");
             out.push_str("    if (a.rec == 0 || b.rec == 0) return a.rec == 0 && b.rec == 0;\n");
             match &t.parts {
@@ -109,7 +115,9 @@ impl Cx<'_> {
                     out.push_str("    return 1;\n");
                 }
                 Parts::Enum(values) => {
-                    out.push_str("    uint8_t v = *loft_at(cx, loft_store_of(cx, a), a.rec, a.pos);\n");
+                    out.push_str(
+                        "    uint8_t v = *loft_at(cx, loft_store_of(cx, a), a.rec, a.pos);\n",
+                    );
                     out.push_str(
                         "    if (v != *loft_at(cx, loft_store_of(cx, b), b.rec, b.pos)) return 0;\n",
                     );

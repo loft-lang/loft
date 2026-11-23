@@ -145,10 +145,21 @@ fn loops_at_once_race_on_nothing_under_thread_sanitizer() {
         .env("LOFT_NO_CACHE", "1")
         .output()
         .expect("loft --emit-c runs");
-    assert!(emitted.status.success(), "--emit-c: {}", String::from_utf8_lossy(&emitted.stderr));
+    assert!(
+        emitted.status.success(),
+        "--emit-c: {}",
+        String::from_utf8_lossy(&emitted.stderr)
+    );
     let exe = dir.join("parpar");
     let built = loft::platform::process::harness_command("cc")
-        .args(["-std=c11", "-w", "-O1", "-g", "-fsanitize=thread", "-pthread"])
+        .args([
+            "-std=c11",
+            "-w",
+            "-O1",
+            "-g",
+            "-fsanitize=thread",
+            "-pthread",
+        ])
         .args(["-DLOFT_CALL_CHAIN", "-DLOFT_POSIX_HOST"])
         .arg(&c)
         .arg("-o")
@@ -156,7 +167,11 @@ fn loops_at_once_race_on_nothing_under_thread_sanitizer() {
         .arg("-lm")
         .output()
         .expect("cc runs");
-    assert!(built.status.success(), "cc: {}", String::from_utf8_lossy(&built.stderr));
+    assert!(
+        built.status.success(),
+        "cc: {}",
+        String::from_utf8_lossy(&built.stderr)
+    );
     // A race shows only sometimes: five runs, each must answer and report none.
     for run in 0..5 {
         let out = loft::platform::process::harness_command(&exe)

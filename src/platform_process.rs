@@ -1240,8 +1240,7 @@ mod os {
         use std::sync::mpsc;
         type Spawned = (Command, std::io::Result<Child>);
         type Job = (Command, mpsc::Sender<Spawned>);
-        static KEEPER: std::sync::OnceLock<Option<mpsc::Sender<Job>>> =
-            std::sync::OnceLock::new();
+        static KEEPER: std::sync::OnceLock<Option<mpsc::Sender<Job>>> = std::sync::OnceLock::new();
         let keeper = KEEPER.get_or_init(|| {
             let (tx, rx) = mpsc::channel::<Job>();
             std::thread::Builder::new()

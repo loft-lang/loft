@@ -259,6 +259,10 @@ impl FnWriter<'_> {
     }
 
     /// The natives over keyed collections, or `None` for another.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "a routing table, one row per keyed native"
+    )]
     pub(super) fn keyed_native(
         &mut self,
         name: &str,
@@ -334,7 +338,10 @@ impl FnWriter<'_> {
                 let r = as_ref(es.next().ok_or("a slice without its collection")?)?;
                 let ints = es.map(as_int).collect::<Result<Vec<_>, _>>()?;
                 Ok(Some(E::new(
-                    format!("loft_spatial_range(cx, {r}, {keys}, {n}, {})", ints.join(", ")),
+                    format!(
+                        "loft_spatial_range(cx, {r}, {keys}, {n}, {})",
+                        ints.join(", ")
+                    ),
                     K::Ref,
                 )))
             }
@@ -598,7 +605,10 @@ impl FnWriter<'_> {
                 self.cx.describe_type(tp);
                 let r = self.expr(r, ind)?;
                 Ok(Some(E::new(
-                    format!("loft_store_verify(cx, loft_types, loft_ntypes, {})", as_ref(r)?),
+                    format!(
+                        "loft_store_verify(cx, loft_types, loft_ntypes, {})",
+                        as_ref(r)?
+                    ),
                     K::Bool,
                 )))
             }
@@ -940,7 +950,10 @@ impl FnWriter<'_> {
             "n_store_load_prefix" => {
                 let pre = as_view(next()?)?;
                 E::new(
-                    format!("loft_pg_load_prefix(cx, {head}, {pre}, {})", as_int(next()?)?),
+                    format!(
+                        "loft_pg_load_prefix(cx, {head}, {pre}, {})",
+                        as_int(next()?)?
+                    ),
                     K::Int,
                 )
             }
@@ -994,7 +1007,11 @@ impl FnWriter<'_> {
                     ("", String::new())
                 };
                 Ok(Some(E::new(
-                    format!("loft_array_get{at}(cx, {}, {}{site})", as_ref(v)?, as_int(i)?),
+                    format!(
+                        "loft_array_get{at}(cx, {}, {}{site})",
+                        as_ref(v)?,
+                        as_int(i)?
+                    ),
                     K::Ref,
                 )))
             }
@@ -1081,7 +1098,10 @@ impl FnWriter<'_> {
                 }
                 self.cx.copy_type(tp)?;
                 Ok(Some(E::new(
-                    format!("loft_remove_claims(cx, loft_types, {tp}, {})", as_ref(dest)?),
+                    format!(
+                        "loft_remove_claims(cx, loft_types, {tp}, {})",
+                        as_ref(dest)?
+                    ),
                     K::Void,
                 )))
             }
@@ -1690,7 +1710,9 @@ impl FnWriter<'_> {
                     "loft_hash_remove(cx, loft_types, {elem}, {data}, {rec}, {keys}, {nk}, {view})"
                 ),
                 Keyed::Sorted => {
-                    format!("loft_sorted_remove_owned(cx, loft_types, {elem}, {data}, {rec}, {size})")
+                    format!(
+                        "loft_sorted_remove_owned(cx, loft_types, {elem}, {data}, {rec}, {size})"
+                    )
                 }
                 Keyed::Index => format!(
                     "loft_ix_remove(cx, loft_types, {elem}, {data}, {rec}, {keys}, {nk}, {view})"

@@ -80,7 +80,6 @@ pub(crate) struct TimelineState {
     total_free: u64,
 }
 
-
 /// True when `LOFT_STORES=timeline` (read once — the environment is stable for a run).
 fn timeline_on() -> bool {
     crate::env_once!(std::env::var("LOFT_STORES").as_deref() == Ok("timeline"))
@@ -104,7 +103,9 @@ pub fn timeline_summary(stores: &Stores, real_leaked: usize) {
         };
         crate::loft_eprintln!(
             "[timeline] SUMMARY: {} allocs, {} frees, peak {} concurrently-live (working set) — {verdict}",
-            t.total_alloc, t.total_free, t.peak_live
+            t.total_alloc,
+            t.total_free,
+            t.peak_live
         );
     }
 }
@@ -286,7 +287,10 @@ impl Stores {
     /// survivable, but the record is still corrupt and a run that says nothing about
     /// it would be a run that hides its own bug.
     fn refuse_owned_edge(&self, rec: &DbRef, tp: u16, cur: u32, kind: &str) {
-        if self.run.first_report(RunReport::OwnedEdge, rec.store_nr, rec.rec, rec.pos) {
+        if self
+            .run
+            .first_report(RunReport::OwnedEdge, rec.store_nr, rec.rec, rec.pos)
+        {
             let tn = self.types.get(tp as usize).map_or("?", |t| t.name.as_str());
             crate::loft_eprintln!(
                 "loft: BUG (#796): refused to walk a {kind} edge of `{tn}` (kt={tp}) at \
@@ -2058,8 +2062,8 @@ impl Stores {
             // that IS dangerous — a stale reference releasing a slot handed to a new owner —
             // finds the slot LIVE and takes the ordinary path below.  `LOFT_STRICT_STORES` is what converts that case into
             // this one, by never recycling a slot.
-            let same_site =
-                crate::keys::strict_free_site(&self.checks, al).is_some_and(|(pc, _)| pc == self.alloc_pc);
+            let same_site = crate::keys::strict_free_site(&self.checks, al)
+                .is_some_and(|(pc, _)| pc == self.alloc_pc);
             crate::keys::note_double_free(same_site);
         }
         let store = &mut self.allocations[al as usize];
@@ -3327,6 +3331,7 @@ impl Stores {
     /// # Safety
     /// Same contract as [`clone_for_light_worker`](Self::clone_for_light_worker): the
     /// parent `Stores` must outlive the worker.
+    #[expect(clippy::too_many_lines, reason = "a field-by-field constructor")]
     pub unsafe fn clone_for_light_worker_with_scratch(
         &self,
         scratch_stores: usize,
@@ -5013,7 +5018,12 @@ impl Stores {
                             let a = &self.allocations[rec.store_nr as usize];
                             (!a.live, a.known_type)
                         };
-                        if self.run.first_report(RunReport::StaleTextClaim, rec.store_nr, rec.rec, rec.pos) {
+                        if self.run.first_report(
+                            RunReport::StaleTextClaim,
+                            rec.store_nr,
+                            rec.rec,
+                            rec.pos,
+                        ) {
                             crate::loft_eprintln!(
                                 "[uaf-claim] remove_claims: TEXT field at store #{} rec={} pos={} \
                                  holds STALE pointer cur={cur} past store end (cap_words={cap}; \
@@ -5204,7 +5214,10 @@ impl Stores {
         let (pc, _op, _d) = crate::crash_report::last_context();
         let line = crate::crash_report::source_loc_for_pc(pc).map_or(0, |p| p.line);
         let cap = self.store(to).capacity_words();
-        if self.run.first_report(RunReport::WatchedOob, to.store_nr, to.rec, bad_pos) {
+        if self
+            .run
+            .first_report(RunReport::WatchedOob, to.store_nr, to.rec, bad_pos)
+        {
             let (s_nr, s_rec, s_pos) = src.map_or((u16::MAX, 0, 0), |s| (s.store_nr, s.rec, s.pos));
             crate::loft_eprintln!(
                 "[watch-store/{ctx}] OOB text-ptr now in watched store #{}: dst rec={} field \

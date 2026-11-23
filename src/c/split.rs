@@ -42,9 +42,7 @@ const DEFAULT_BUDGET: usize = 300;
 /// The budget the split runs under, or `None` when it is off: a unit that keeps its functions
 /// whole (`Cx::whole`, a shipped artefact), or a switch.
 pub(crate) fn budget(whole: bool) -> Option<usize> {
-    if whole
-        || crate::env_once!(std::env::var("LOFT_NO_C_SPLIT").is_ok_and(|v| v != "0"))
-    {
+    if whole || crate::env_once!(std::env::var("LOFT_NO_C_SPLIT").is_ok_and(|v| v != "0")) {
         return None;
     }
     *crate::env_once!(@value Option<usize>, {

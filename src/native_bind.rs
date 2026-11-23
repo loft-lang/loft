@@ -71,7 +71,6 @@ pub struct Library {
     pub symbols: &'static [Symbol],
 }
 
-
 /// @PLN197 — did [`bind`] load the C library the program's `__C_LIBS` names `name`?  Then
 /// it is open, its symbols are in `c_libs`' loaded set, and the `#c` resolver must not go
 /// looking for it by name — which would fail, since its directory is not in the binary.
@@ -169,7 +168,11 @@ fn candidates(lib: &Library, dirs: &[(PathBuf, bool)]) -> Vec<PathBuf> {
 }
 
 #[cfg(feature = "native-extensions")]
-fn bind_one(lib: &'static Library, dirs: &[(PathBuf, bool)], bound: &mut Bound) -> Result<(), String> {
+fn bind_one(
+    lib: &'static Library,
+    dirs: &[(PathBuf, bool)],
+    bound: &mut Bound,
+) -> Result<(), String> {
     // A row with no file is a C library linked INTO the binary (@PLN197): nothing to load,
     // only its name to mark present.
     if lib.file.is_empty() {
@@ -217,7 +220,11 @@ fn bind_one(lib: &'static Library, dirs: &[(PathBuf, bool)], bound: &mut Bound) 
 }
 
 #[cfg(not(feature = "native-extensions"))]
-fn bind_one(lib: &'static Library, dirs: &[(PathBuf, bool)], _bound: &mut Bound) -> Result<(), String> {
+fn bind_one(
+    lib: &'static Library,
+    dirs: &[(PathBuf, bool)],
+    _bound: &mut Bound,
+) -> Result<(), String> {
     Err(missing_library(lib, dirs, &[]))
 }
 

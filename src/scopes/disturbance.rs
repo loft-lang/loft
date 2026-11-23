@@ -32,6 +32,10 @@ use crate::variables::Function;
 /// values from its copy, so the author is told only of one that is written through.  Every
 /// copy is still named under `LOFT_TRACE_DISTURB=1`, which is how a guard sees one the
 /// author is not told of.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each argument is one part of the advice"
+)]
 pub(super) fn report_materialised_view(
     data: &crate::data::Data,
     cause: ViewCause,

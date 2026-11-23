@@ -256,7 +256,8 @@ impl FnWriter<'_> {
         let fr = self.temp(CType::Ref);
         self.line(ind, &format!("{fr} = {};", as_ref(file)?));
         let value = self.expr(&Value::Var(var), ind)?;
-        let put = |n: u8, x: &str| format!("loft_put(cx, &loft_b, (uint64_t) ({x}), {n}, loft_le);");
+        let put =
+            |n: u8, x: &str| format!("loft_put(cx, &loft_b, (uint64_t) ({x}), {n}, loft_le);");
         let ser = match (tp, self.narrow_kind(tp)) {
             (0 | 1, _) => put(8, &as_int(value)?),
             (2, _) => put(4, &format!("loft_bits32(cx, {})", super::as_single(value)?)),
@@ -293,6 +294,10 @@ impl FnWriter<'_> {
     /// `OpReadFile(f, OpCreateStack(v), n, tp)` (State::read_file and `dispatch_read_data`): `n`
     /// bytes from the File's next position, decoded into `v` — a text takes what arrived; any
     /// other value only all `n` bytes, and no fewer than its width, or it stays as it was.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one arm per value kind the read decodes"
+    )]
     fn read_file(
         &mut self,
         f: &Value,
@@ -358,7 +363,9 @@ impl FnWriter<'_> {
                 if !(self.shapes[var as usize] == CType::Text && self.text_held(var)) {
                     return Err("a file read into a text that is not a local".into());
                 }
-                format!("loft_text_set(cx, &{name}, loft_lit(cx, (const char *) loft_d, (size_t) loft_n));")
+                format!(
+                    "loft_text_set(cx, &{name}, loft_lit(cx, (const char *) loft_d, (size_t) loft_n));"
+                )
             }
             (0 | 1, _) => format!("{{ uint64_t u = {}; memcpy(&{name}, &u, 8); }}", take(8)),
             (2, _) => format!("{name} = loft_f32(cx, (uint32_t) {});", take(4)),

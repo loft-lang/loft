@@ -5384,7 +5384,10 @@ impl Clone for DefsMemo {
 
 impl DefsMemo {
     fn with<R>(&self, f: impl FnOnce(&mut DefsMemoSlot) -> R) -> R {
-        f(&mut self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner))
+        f(&mut self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner))
     }
 }
 
@@ -5415,7 +5418,10 @@ pub(crate) fn defs_memo_scope(data: &Data, d_nr: u32) -> DefsMemoScope {
 impl Drop for DefsMemoScope {
     fn drop(&mut self) {
         let prev = self.prev.take();
-        *self.memo.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = prev;
+        *self
+            .memo
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = prev;
     }
 }
 

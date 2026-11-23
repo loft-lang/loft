@@ -244,7 +244,10 @@ impl FnWriter<'_> {
                             "((void) (loft_vec_keep_range(cx, {}, {lo}, {hi}, {size}), {h} = loft_ph_of(cx, {h}.v, {hs})))",
                             as_ref(v)?
                         ),
-                        None => format!("loft_vec_keep_range(cx, {}, {lo}, {hi}, {size})", as_ref(v)?),
+                        None => format!(
+                            "loft_vec_keep_range(cx, {}, {lo}, {hi}, {size})",
+                            as_ref(v)?
+                        ),
                     },
                     K::Void,
                 ))
@@ -341,7 +344,10 @@ impl FnWriter<'_> {
         match (name, args) {
             ("OpStoreBuf", [h]) => {
                 let h = self.expr(h, ind)?;
-                Ok(E::new(format!("loft_store_buf(cx, {})", as_ref(h)?), K::Ref))
+                Ok(E::new(
+                    format!("loft_store_buf(cx, {})", as_ref(h)?),
+                    K::Ref,
+                ))
             }
             ("OpAdoptChildRec", [f, v, tp]) => {
                 let tp = u16::try_from(Self::literal(tp, "type")?)
@@ -416,7 +422,10 @@ impl FnWriter<'_> {
                 let tp = self.copyable(tp)?;
                 let r = self.expr(r, ind)?;
                 Ok(E::new(
-                    format!("loft_demote_rec(cx, loft_types, {tp}, {}, {fld})", as_ref(r)?),
+                    format!(
+                        "loft_demote_rec(cx, loft_types, {tp}, {}, {fld})",
+                        as_ref(r)?
+                    ),
                     K::Void,
                 ))
             }

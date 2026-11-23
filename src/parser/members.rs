@@ -1104,7 +1104,8 @@ impl Parser {
             self.vars.make_independent(base, dep);
             let fname = self.data.def(self.context).original_name();
             let at = self.lexer.pos();
-            crate::copy_manifest::note_rekeyed_view(&self.data,
+            crate::copy_manifest::note_rekeyed_view(
+                &self.data,
                 &vname,
                 &cname,
                 &field,

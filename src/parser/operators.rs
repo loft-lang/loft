@@ -3279,7 +3279,8 @@ impl Parser {
                             );
                             // @PLN130 — parser-emitted materialisation of a projection into a
                             // store `w` owns; see `ParserMaterialise`.
-                            crate::copy_manifest::record(&self.data,
+                            crate::copy_manifest::record(
+                                &self.data,
                                 self.context,
                                 w,
                                 kt,

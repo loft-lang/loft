@@ -194,7 +194,11 @@ impl Cx<'_> {
             if i > 0 {
                 out.push_str("    loft_show_sep(cx, s, fmt, ind, c);\n");
             }
-            let _ = writeln!(out, "    loft_show_name(cx, s, fmt, {});", c_string(&f.name));
+            let _ = writeln!(
+                out,
+                "    loft_show_name(cx, s, fmt, {});",
+                c_string(&f.name)
+            );
             // `@FR-F-Render-Ref` — the field's name is its segment of the reference-render path
             // (a no-op outside `loft_show_top`).
             let _ = writeln!(out, "    loft_rr_push(cx, {});", c_string(&f.name));
@@ -387,7 +391,9 @@ impl Cx<'_> {
                 "loft_push(cx, s, \"{}\", 2);".into()
             };
             let plain = if payload {
-                format!(" loft_push_char(cx, s, ' '); loft_showf{vtp}(cx, s, r, fmt, ind, {complex});")
+                format!(
+                    " loft_push_char(cx, s, ' '); loft_showf{vtp}(cx, s, r, fmt, ind, {complex});"
+                )
             } else {
                 String::new()
             };

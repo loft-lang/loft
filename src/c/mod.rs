@@ -1750,12 +1750,6 @@ pub(crate) fn runtime_name(data: &Data, d: u32) -> &str {
     if def.is_stdlib() { def.name() } else { "" }
 }
 
-/// The C runtime function that implements native `name` (a stored `n_…` name), if any.  Asked of
-/// a definition, the name is its [`runtime_name`].
-#[expect(
-    clippy::too_many_lines,
-    reason = "a routing table, one row per native the C runtime carries"
-)]
 /// `@PLN226`: an argument list with the store context first.
 pub(crate) fn cx_args(args: &[String]) -> String {
     std::iter::once("cx")
@@ -1782,6 +1776,12 @@ pub(crate) fn cx_params(params: &[String]) -> String {
         .join(", ")
 }
 
+/// The C runtime function that implements native `name` (a stored `n_…` name), if any.  Asked of
+/// a definition, the name is its [`runtime_name`].
+#[expect(
+    clippy::too_many_lines,
+    reason = "a routing table, one row per native the C runtime carries"
+)]
 pub(crate) fn native_c(name: &str) -> Option<&'static str> {
     match name {
         "n_assert" => Some("loft_assert"),
@@ -2058,6 +2058,10 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
 /// `#line`s, a shipped artefact that keeps its functions whole (an ESP app), a hosted unit's
 /// source root.
 #[derive(Default, Clone)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent options of one emission"
+)]
 pub(crate) struct UnitShape {
     pub(crate) browser: bool,
     pub(crate) wasm: bool,
@@ -2229,7 +2233,9 @@ fn emit_unit_with(
         out.push_str(&cx.main_vector_test());
     }
     if !cx.upgrades.borrow().is_empty() {
-        out.push_str("static const loft_ptype *loft_up_ptypes(loft_cx *cx) { return loft_ptypes; }\n");
+        out.push_str(
+            "static const loft_ptype *loft_up_ptypes(loft_cx *cx) { return loft_ptypes; }\n",
+        );
     }
     if reflects {
         out.push_str(&cx.reflect_table());
@@ -3329,7 +3335,10 @@ __attribute__((export_name("loft_asyncify_ok"))) int32_t loft_asyncify_ok(void) 
 /// (the program's own, as the interpreter's `Stores::resolve_path` anchors it) and whether
 /// the program anchors there at all (`#cwd` says no).
 fn anchor(stores: &Stores) -> String {
-    format!("loft_set_anchor(cx, {});", i32::from(stores.program_relative))
+    format!(
+        "loft_set_anchor(cx, {});",
+        i32::from(stores.program_relative)
+    )
 }
 
 /// The C shape of each of a function's variables, in number order: a `&` parameter its target's,
@@ -5226,7 +5235,6 @@ pub fn functions_whole() -> bool {
     crate::ship_tier::shipped_units()
 }
 
-
 /// [`emit_program`] for a `--native-wasm` module: the same unit, written knowing it is compiled
 /// to wasm32, so a `#c` binding no `[c] shim` provides is refused by name rather
 /// than failing at the wasm link.
@@ -5398,8 +5406,12 @@ fn emit_tests_shaped(
             Type::Text(_) => format!("loft_text loft_r = {call}(cx); loft_text_free(cx, &loft_r);"),
             _ => format!("{call}(cx);"),
         };
-        let _ = writeln!(wrappers, "static void loft_test_run{i}(loft_cx *cx) {{ {run} }}");
-        let run = format!("{{ void (*volatile loft_f)(loft_cx *) = loft_test_run{i}; loft_f(cx); }}");
+        let _ = writeln!(
+            wrappers,
+            "static void loft_test_run{i}(loft_cx *cx) {{ {run} }}"
+        );
+        let run =
+            format!("{{ void (*volatile loft_f)(loft_cx *) = loft_test_run{i}; loft_f(cx); }}");
         if subs.is_empty() {
             let _ = writeln!(
                 out,

@@ -3535,7 +3535,8 @@ impl State {
             // stamp belongs to exactly the pop that matches its push. Clearing on pop stops
             // a stale stamp from surviving to a later unrelated read once a non-DbRef push
             // reuses the offset — the main residual-false-positive source.
-            let stamped = crate::keys::uaf_shadow_gen(&self.database.checks, self.stack_pos, db.store_nr);
+            let stamped =
+                crate::keys::uaf_shadow_gen(&self.database.checks, self.stack_pos, db.store_nr);
             crate::keys::uaf_clear_shadow(&mut self.database.checks, self.stack_pos);
             // Only stamped < current is a genuine reuse-SINCE-push (gen increases
             // monotonically per slot). A stamped >= current is not a reuse-since-push; the
@@ -3544,69 +3545,77 @@ impl State {
                 && (db.store_nr as usize) < self.database.allocations.len()
                 && let Some(stamped) = stamped
                 && stamped < crate::keys::uaf_slot_gen(&self.database.checks, db.store_nr)
+                && self.database.run.first_report(
+                    crate::database::RunReport::StaleGenerator,
+                    0,
+                    self.code_pos,
+                    0,
+                )
             {
-                if self.database.run.first_report(crate::database::RunReport::StaleGenerator, 0, self.code_pos, 0) {
-                    let line = self
+                let line = self
+                    .line_numbers
+                    .range(..=self.code_pos)
+                    .next_back()
+                    .map_or(0, |(_, &v)| v);
+                // @PLN118 arc B — attribute the FREE site. Prefer the CAUSAL free (the one
+                // that took the slot to `stamped + 1`, making THIS ref stale) over the
+                // last free — a heavily-reused slot's last free is a different occupant's.
+                // Names the chokepoint (the dropped dep) rather than only the read symptom.
+                // @PLN118 arc E — also name the freeing OP (recorded with the free site) so
+                // the report says WHICH free to fix, not just where; needs `Data`, valid
+                // throughout execution (null only in a parallel worker, tolerated below).
+                // A parallel worker may hold no table; `get` answers None for it.
+                let handle = &self.data_ptr;
+                let data: Option<&Data> = handle.get();
+                let op_name = |opc: u16| -> String {
+                    data.and_then(|d| d.operator_name(opc))
+                        .map_or_else(|| format!("op#{opc}"), str::to_string)
+                };
+                let free_str = crate::keys::uaf_freed_pc_at_gen(
+                    &self.database.checks,
+                    db.store_nr,
+                    stamped + 1,
+                )
+                .or_else(|| crate::keys::uaf_freed_pc(&self.database.checks, db.store_nr))
+                .map_or_else(String::new, |(fpc, _d, op)| {
+                    let fline = self
                         .line_numbers
-                        .range(..=self.code_pos)
+                        .range(..=fpc)
                         .next_back()
                         .map_or(0, |(_, &v)| v);
-                    // @PLN118 arc B — attribute the FREE site. Prefer the CAUSAL free (the one
-                    // that took the slot to `stamped + 1`, making THIS ref stale) over the
-                    // last free — a heavily-reused slot's last free is a different occupant's.
-                    // Names the chokepoint (the dropped dep) rather than only the read symptom.
-                    // @PLN118 arc E — also name the freeing OP (recorded with the free site) so
-                    // the report says WHICH free to fix, not just where; needs `Data`, valid
-                    // throughout execution (null only in a parallel worker, tolerated below).
-                    // A parallel worker may hold no table; `get` answers None for it.
-                    let handle = &self.data_ptr;
-                    let data: Option<&Data> = handle.get();
-                    let op_name = |opc: u16| -> String {
-                        data.and_then(|d| d.operator_name(opc))
-                            .map_or_else(|| format!("op#{opc}"), str::to_string)
-                    };
-                    let free_str = crate::keys::uaf_freed_pc_at_gen(&self.database.checks, db.store_nr, stamped + 1)
-                        .or_else(|| crate::keys::uaf_freed_pc(&self.database.checks, db.store_nr))
-                        .map_or_else(String::new, |(fpc, _d, op)| {
-                            let fline = self
-                                .line_numbers
-                                .range(..=fpc)
-                                .next_back()
-                                .map_or(0, |(_, &v)| v);
-                            format!(
-                                " (freed at code_pos={fpc}, line {fline}, by {})",
-                                op_name(op)
-                            )
-                        });
-                    // @PLN118 arc E — the READING op is the one currently dispatching (this
-                    // pop happens inside its handler); `last_context` holds its opcode byte.
-                    let (_rpc, read_op, _fd) = crate::crash_report::last_context();
-                    let read_op_str = op_name(read_op);
-                    // @PLN118 arc B refinement — a stale read DURING a record deep-copy is the
-                    // copy reading a stale SUB-reference: the copy is incomplete and the source
-                    // free is CORRECT — so name the COPY as the op to fix, not the free. A stale
-                    // read outside a copy IS a premature-free candidate. This is the distinction
-                    // that turns "prematurely freed" (which points at a correctly-placed temp
-                    // free) into "incomplete record-copy" (which points at the actual op).
-                    let verdict = if crate::keys::uaf_in_copy(&self.database.checks) {
-                        "INCOMPLETE RECORD-COPY — a copy read a stale sub-reference; the copy \
-                         did not finish deep-copying before the source was freed (the free is \
-                         correct — fix the copy, not the free)"
-                    } else {
-                        "PREMATURE FREE — a plain deref of a store freed while this ref was live \
-                         (fix the free / the dropped dep)"
-                    };
-                    eprintln!(
-                        "[uaf-gen] stale DbRef popped: store #{} (rec={}, pos={}) was gen {stamped} \
-                         at push but is now gen {} (freed+reused since) — read at code_pos={} \
-                         (line {line}) by {read_op_str}{free_str} — {verdict}",
-                        db.store_nr,
-                        db.rec,
-                        db.pos,
-                        crate::keys::uaf_slot_gen(&self.database.checks, db.store_nr),
-                        self.code_pos,
-                    );
-                }
+                    format!(
+                        " (freed at code_pos={fpc}, line {fline}, by {})",
+                        op_name(op)
+                    )
+                });
+                // @PLN118 arc E — the READING op is the one currently dispatching (this
+                // pop happens inside its handler); `last_context` holds its opcode byte.
+                let (_rpc, read_op, _fd) = crate::crash_report::last_context();
+                let read_op_str = op_name(read_op);
+                // @PLN118 arc B refinement — a stale read DURING a record deep-copy is the
+                // copy reading a stale SUB-reference: the copy is incomplete and the source
+                // free is CORRECT — so name the COPY as the op to fix, not the free. A stale
+                // read outside a copy IS a premature-free candidate. This is the distinction
+                // that turns "prematurely freed" (which points at a correctly-placed temp
+                // free) into "incomplete record-copy" (which points at the actual op).
+                let verdict = if crate::keys::uaf_in_copy(&self.database.checks) {
+                    "INCOMPLETE RECORD-COPY — a copy read a stale sub-reference; the copy \
+                     did not finish deep-copying before the source was freed (the free is \
+                     correct — fix the copy, not the free)"
+                } else {
+                    "PREMATURE FREE — a plain deref of a store freed while this ref was live \
+                     (fix the free / the dropped dep)"
+                };
+                eprintln!(
+                    "[uaf-gen] stale DbRef popped: store #{} (rec={}, pos={}) was gen {stamped} \
+                     at push but is now gen {} (freed+reused since) — read at code_pos={} \
+                     (line {line}) by {read_op_str}{free_str} — {verdict}",
+                    db.store_nr,
+                    db.rec,
+                    db.pos,
+                    crate::keys::uaf_slot_gen(&self.database.checks, db.store_nr),
+                    self.code_pos,
+                );
             }
         }
         r
@@ -8003,7 +8012,13 @@ impl State {
                     let freed = std::mem::take(&mut self.database.uaf_freed_this_op);
                     let d_nr = self.call_stack.last().map_or(u32::MAX, |f| f.d_nr);
                     for &slot in &freed {
-                        crate::keys::uaf_record_free(&mut self.database.checks, slot, op_pos_rt, d_nr, u16::from(op));
+                        crate::keys::uaf_record_free(
+                            &mut self.database.checks,
+                            slot,
+                            op_pos_rt,
+                            d_nr,
+                            u16::from(op),
+                        );
                     }
                 }
             }

@@ -2787,7 +2787,13 @@ impl State {
                 // The facts the decision read and the arm it decided (`rb`), not a
                 // recomputation: the arm this writer emits is noted where it emits it, and a
                 // row whose two differ says so (`generate_set`).
-                self.note_bind(&rb.trace_facts(stack.data, stack.def_nr, &stack.function, v, value));
+                self.note_bind(&rb.trace_facts(
+                    stack.data,
+                    stack.def_nr,
+                    &stack.function,
+                    v,
+                    value,
+                ));
                 self.note_bind(&format!("decided={}", rb.arm.trace_name()));
             }
             if rb.free == DisplacedFree::Stash {
@@ -2967,7 +2973,8 @@ impl State {
                     if stash_old_for_post_free {
                         self.free_stashed(stack, v, entry_w, buffer_witness);
                     }
-                    crate::copy_manifest::record(stack.data,
+                    crate::copy_manifest::record(
+                        stack.data,
                         stack.def_nr,
                         v,
                         tp_nr,
@@ -3305,7 +3312,8 @@ impl State {
                     // (`__lift_N = file(path)`) is compiled here, not through any first-bind
                     // path, so instrumenting only the first-bind emitters left every
                     // reassignment copy off the manifest.
-                    crate::copy_manifest::record(stack.data,
+                    crate::copy_manifest::record(
+                        stack.data,
                         stack.def_nr,
                         v,
                         tp_nr,
@@ -3356,7 +3364,8 @@ impl State {
                     self.code_add(stack.var_pos(v));
                     self.code_add(tp_nr);
                     // @PLN130 — reassignment `v = src`, both same-struct References (#306).
-                    crate::copy_manifest::record(stack.data,
+                    crate::copy_manifest::record(
+                        stack.data,
                         stack.def_nr,
                         v,
                         tp_nr,
@@ -3821,7 +3830,8 @@ impl State {
         self.code_add(tp_nr);
         self.generate(value, stack, false);
         // @PLN130 — past the adopt-the-fresh-store return above: this arm deep-copies.
-        crate::copy_manifest::record(stack.data,
+        crate::copy_manifest::record(
+            stack.data,
             stack.def_nr,
             v,
             tp_nr,
@@ -3991,7 +4001,8 @@ impl State {
         self.code_add(tp_nr);
         // @PLN130 — recorded HERE, past the last-use-move return above, so the manifest
         // claims a copy only where one is actually written.
-        crate::copy_manifest::record(stack.data,
+        crate::copy_manifest::record(
+            stack.data,
             stack.def_nr,
             v,
             tp_nr,
@@ -4053,7 +4064,8 @@ impl State {
         stack.add_op("OpCopyRefOrNull", self);
         self.code_add(stack.var_pos(v));
         self.code_add(tp_nr);
-        crate::copy_manifest::record(stack.data,
+        crate::copy_manifest::record(
+            stack.data,
             stack.def_nr,
             v,
             tp_nr,
@@ -4095,7 +4107,8 @@ impl State {
         );
         self.generate(&copy_val, stack, false);
         // @PLN130 — tuple destructuring deep-copies unconditionally.
-        crate::copy_manifest::record(stack.data,
+        crate::copy_manifest::record(
+            stack.data,
             stack.def_nr,
             v,
             tp_nr,
@@ -4349,7 +4362,8 @@ impl State {
         // `gen_set_first_ref_copy` handles a `Call(OpCopyRecord, [Call(inner), …])` shape the
         // corpus never produces (its own doc records zero fires), so instrumenting that one
         // alone left every call-return copy off the manifest.
-        crate::copy_manifest::record(stack.data,
+        crate::copy_manifest::record(
+            stack.data,
             stack.def_nr,
             v,
             tp_nr,
@@ -7521,7 +7535,6 @@ fn is_return_temp_owning_its_arms(stack: &Stack, v: u16) -> bool {
 }
 
 // ── `LOFT_TRACE_BIND` — the strict comparison's binds layer (1b-compare.md) ──
-
 
 /// Is `LOFT_TRACE_BIND` set?
 fn bind_trace_on() -> bool {

@@ -1860,7 +1860,12 @@ impl State {
             && (data.store_nr as usize) < self.database.allocations.len()
             && !self.database.allocations[data.store_nr as usize].live
         {
-            let first = self.database.run.first_report(crate::database::RunReport::LeakNamed, data.store_nr, 0, 0);
+            let first = self.database.run.first_report(
+                crate::database::RunReport::LeakNamed,
+                data.store_nr,
+                0,
+                0,
+            );
             if first {
                 let line_of = |ln: &std::collections::BTreeMap<u32, u32>, pc: u32| -> u32 {
                     ln.range(..=pc).next_back().map_or(0, |(_, &v)| v)
@@ -1896,8 +1901,12 @@ impl State {
             self.database
                 .validate_claims(&data, tp, "uaf-reuse-src", &mut problems);
             if problems > 0 {
-                let first =
-                    self.database.run.first_report(crate::database::RunReport::ReuseNamed, data.store_nr, 0, 0);
+                let first = self.database.run.first_report(
+                    crate::database::RunReport::ReuseNamed,
+                    data.store_nr,
+                    0,
+                    0,
+                );
                 if first {
                     let line = self
                         .line_numbers

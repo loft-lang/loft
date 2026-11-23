@@ -285,7 +285,9 @@ impl FnWriter<'_> {
                 self.line(ind, "} else {");
                 // A copy into a field of an element being built writes its default instead.
                 let null_arm = self.fresh_null_arm(args, &d).unwrap_or_else(|| {
-                    format!("loft_copy_record(cx, loft_types, {tp}, loft_ref_null(cx), {d}, {flags});")
+                    format!(
+                        "loft_copy_record(cx, loft_types, {tp}, loft_ref_null(cx), {d}, {flags});"
+                    )
                 });
                 self.line(ind + 1, &null_arm);
                 self.line(ind, "}");
@@ -791,7 +793,9 @@ impl FnWriter<'_> {
                 } else {
                     format!("loft_field(cx, {r}, {})", root.1)
                 };
-                format!("loft_field(cx, loft_vec_get(cx, {container}, {stride}, INT64_C(-1)), {off})")
+                format!(
+                    "loft_field(cx, loft_vec_get(cx, {container}, {stride}, INT64_C(-1)), {off})"
+                )
             }
         })
     }

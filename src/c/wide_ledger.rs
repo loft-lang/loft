@@ -252,7 +252,11 @@ pub(crate) fn crossings(program: &str) -> BTreeMap<Entry, u32> {
                     class: class_of(callee),
                     what: if class_of(callee) == "value" {
                         // The conversion's own name: `loft_w64(cx, ` is `loft_w64`.
-                        conv.split('(').next().unwrap_or(conv).trim_end().to_string()
+                        conv.split('(')
+                            .next()
+                            .unwrap_or(conv)
+                            .trim_end()
+                            .to_string()
                     } else {
                         callee.to_string()
                     },

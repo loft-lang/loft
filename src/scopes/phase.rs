@@ -157,7 +157,8 @@ pub(super) fn run_scan_phase(
             data.display_type_name(view_tp),
             matches!(view_tp, Type::Enum(_, true, _)),
         );
-        crate::copy_manifest::note_written_back_view(data,
+        crate::copy_manifest::note_written_back_view(
+            data,
             orig_vars.name(w.view),
             orig_vars.name(w.container),
             &def.original_name(),

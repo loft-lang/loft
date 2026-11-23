@@ -6756,7 +6756,10 @@ fn refill_text_site_declines(
 /// Print a `LOFT_TRACE_REFILL_TEXT` line once: a function is emitted more than once (its
 /// twins, a second pass) and each verdict is named the first time.
 pub fn trace_refill_text_once(data: &Data, line: &str) {
-    if data.refill_traced.with(|seen| seen.insert(line.to_string())) {
+    if data
+        .refill_traced
+        .with(|seen| seen.insert(line.to_string()))
+    {
         eprintln!("{line}");
     }
 }

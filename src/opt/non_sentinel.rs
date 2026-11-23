@@ -182,7 +182,6 @@ enum ParamState {
     Known(std::sync::Arc<HashMap<u32, Vec<bool>>>),
 }
 
-
 /// `@FR-R-NonSentinelParam` — the parameters, per function, that hold a non-sentinel value on
 /// entry: a scalar parameter (integer or float) of a loft function that is never used as a
 /// function VALUE (an `FnRef`, or its number handed to a function-typed parameter) and that has
@@ -207,7 +206,8 @@ fn proven_params(data: &Data) -> std::sync::Arc<HashMap<u32, Vec<bool>>> {
     }
     if crate::env_once!(std::env::var("LOFT_NO_NN_PARAMS").is_ok_and(|v| v != "0")) {
         let k = std::sync::Arc::new(HashMap::new());
-        data.nn_memo.with(|m| m.params = ParamState::Known(k.clone()));
+        data.nn_memo
+            .with(|m| m.params = ParamState::Known(k.clone()));
         return k;
     }
     use crate::data::Type;
@@ -329,7 +329,8 @@ fn proven_params(data: &Data) -> std::sync::Arc<HashMap<u32, Vec<bool>>> {
             .sum(),
     );
     let k = std::sync::Arc::new(assumed);
-    data.nn_memo.with(|m| m.params = ParamState::Known(k.clone()));
+    data.nn_memo
+        .with(|m| m.params = ParamState::Known(k.clone()));
     k
 }
 

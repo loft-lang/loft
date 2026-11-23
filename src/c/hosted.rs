@@ -397,7 +397,9 @@ fn bridge(cx: &Cx<'_>, d: u32, symbol: &str) -> Result<String, String> {
             gen_kind.unwrap_or(0)
         ),
         CType::Void => format!("    {call};\n"),
-        CType::Int | CType::Int32 => format!("    loft_la_set_bits(cx, loft_r, (int64_t) {call});\n"),
+        CType::Int | CType::Int32 => {
+            format!("    loft_la_set_bits(cx, loft_r, (int64_t) {call});\n")
+        }
         CType::Bool | CType::Enum | CType::Char => {
             format!("    loft_la_set_bits(cx, loft_r, (int64_t) {call});\n")
         }

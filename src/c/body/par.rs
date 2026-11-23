@@ -69,7 +69,10 @@ impl FnWriter<'_> {
                 let i = self.expr(i, ind)?;
                 let t = self.temp(CType::Text);
                 self.line(ind, &format!("loft_text_free(cx, &{t});"));
-                self.line(ind, &format!("{t} = loft_par_get_text(cx, {});", as_int(i)?));
+                self.line(
+                    ind,
+                    &format!("{t} = loft_par_get_text(cx, {});", as_int(i)?),
+                );
                 Ok(Some(self.held(t, CType::Text)))
             }
             ("n_parallel_buf_get_narrow", [_, _, _]) => {
@@ -427,7 +430,9 @@ impl FnWriter<'_> {
         if record.is_some() {
             self.line(
                 ind + 1,
-                &format!("loft_par_run(cx, {n}, {t}, loft_parbody{id}, &loft_c, loft_paradopt{id});"),
+                &format!(
+                    "loft_par_run(cx, {n}, {t}, loft_parbody{id}, &loft_c, loft_paradopt{id});"
+                ),
             );
         } else {
             self.line(

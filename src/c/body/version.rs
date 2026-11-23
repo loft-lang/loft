@@ -635,7 +635,9 @@ impl FnWriter<'_> {
             ends.push((first, last));
         }
         if let [(f0, l0), (f1, l1)] = ends.as_slice() {
-            guard.push(format!("loft_vg_area(cx, {f0}, {l0}, {f1}, {l1}, {MIN_TRIPS})"));
+            guard.push(format!(
+                "loft_vg_area(cx, {f0}, {l0}, {f1}, {l1}, {MIN_TRIPS})"
+            ));
             crate::rewrite_census::fired("R-Version/nest", 1);
         }
         // The corners of the box over the loops some argument moves with: a linear value takes
@@ -668,7 +670,9 @@ impl FnWriter<'_> {
                     let t = if at[slot] { last } else { first };
                     let v = format!("{flag}_{side}{k}");
                     self.decls.push(format!("int64_t {v} = 0;"));
-                    guard.push(format!("loft_vg_lin(cx, {part}, INT64_C({coef}), {t}, &{v})"));
+                    guard.push(format!(
+                        "loft_vg_lin(cx, {part}, INT64_C({coef}), {t}, &{v})"
+                    ));
                     vals.push(v);
                 }
             }

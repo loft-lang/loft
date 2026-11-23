@@ -667,7 +667,10 @@ impl FnWriter<'_> {
         self.line(ind + 1, "loft_ref loft_dcc = loft_ref_null(cx);");
         self.line(
             ind + 1,
-            &format!("loft_bind_copy(cx, loft_types, {}, &loft_dcc, {name});", dv.tp),
+            &format!(
+                "loft_bind_copy(cx, loft_types, {}, &loft_dcc, {name});",
+                dv.tp
+            ),
         );
         for d in moved {
             let dn = self.var(*d);

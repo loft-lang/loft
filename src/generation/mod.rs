@@ -2386,10 +2386,13 @@ impl Output<'_> {
                 (None, None) => Some("no refill buffer"),
             };
             let name = self.data.def(def_nr).name();
-            hoist::trace_refill_text_once(self.data, &match why {
-                None => format!("refill-text: {name} keeps its elements"),
-                Some(w) => format!("refill-text: {name} keeps no elements — {w}"),
-            });
+            hoist::trace_refill_text_once(
+                self.data,
+                &match why {
+                    None => format!("refill-text: {name} keeps its elements"),
+                    Some(w) => format!("refill-text: {name} keeps no elements — {w}"),
+                },
+            );
         }
         self.refill_text = if self.switches.refill_text_disabled {
             hoist::RefillTextSites::default()

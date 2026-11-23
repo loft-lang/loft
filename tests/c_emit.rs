@@ -3473,7 +3473,9 @@ fn a_copy_check_c_build_names_a_copy_that_lost_elements() {
     assert_eq!(unit.matches(from).count(), 1, "the runtime text moved");
     let broken = unit.replacen(
         from,
-        &format!("{from}        if (len == 3) loft_set_u32(cx, loft_store_of(cx, to), into, 4, 2);\n"),
+        &format!(
+            "{from}        if (len == 3) loft_set_u32(cx, loft_store_of(cx, to), into, 4, 2);\n"
+        ),
         1,
     );
     let (out, err) = run("broken-plain", &broken, false);
@@ -7837,7 +7839,10 @@ fn main() {
         body.contains("int32_t v3_i_index"),
         "a 32-bit loop index:\n{body}"
     );
-    assert!(body.contains("loft_add32(cx, v1_t, "), "a 32-bit sum:\n{body}");
+    assert!(
+        body.contains("loft_add32(cx, v1_t, "),
+        "a 32-bit sum:\n{body}"
+    );
 }
 
 /// A C build never builds a library's Rust native crate: the C links `[c] shim`s and loft's

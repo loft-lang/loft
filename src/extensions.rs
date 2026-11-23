@@ -1728,7 +1728,9 @@ fn call_bridge(
     let mut ret = LoftValue::VOID;
     // `@PLN226` — a component's bridge takes this `Stores`' context of that component first.
     if let Some(c) = cx {
-        let ccx = stores.hosted_cx.of(c.make as *const std::ffi::c_void, c.make, c.end);
+        let ccx = stores
+            .hosted_cx
+            .of(c.make as *const std::ffi::c_void, c.make, c.end);
         // SAFETY: a bridge the component registered through `loft_register_bridges_cx_v1`.
         let bridge: unsafe extern "C" fn(
             *mut std::ffi::c_void,
@@ -1737,7 +1739,15 @@ fn call_bridge(
             usize,
             *mut LoftValue,
         ) = unsafe { std::mem::transmute(bridge_ptr) };
-        unsafe { bridge(ccx, ls, args.as_ptr(), args.len(), std::ptr::from_mut(&mut ret)) };
+        unsafe {
+            bridge(
+                ccx,
+                ls,
+                args.as_ptr(),
+                args.len(),
+                std::ptr::from_mut(&mut ret),
+            )
+        };
         return ret;
     }
     // SAFETY: `bridge_ptr` is a `loft_ffi::LoftBridgeFn` registered by the

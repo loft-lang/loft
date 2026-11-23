@@ -2244,7 +2244,8 @@ impl ShowDb<'_> {
                     .store()
                     .get_u32_raw(self.rec, self.pos + u32::from(fld.position));
                 if rec != 0 {
-                    self.stores.rendering(|r| r.tail = Some((rec, content, indent.saturating_add(1))));
+                    self.stores
+                        .rendering(|r| r.tail = Some((rec, content, indent.saturating_add(1))));
                     with_refs(self.stores, |r| {
                         r.tail_path = Some(r.path.clone());
                         r.path.pop();

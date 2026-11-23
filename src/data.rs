@@ -5808,7 +5808,10 @@ impl<T: Default> Clone for PassCell<T> {
 impl<T: Default> PassCell<T> {
     /// Run `f` on the cell's value.
     pub fn with<R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
-        f(&mut self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner))
+        f(&mut self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner))
     }
 }
 
@@ -6608,7 +6611,6 @@ pub(crate) fn builtin_type_alias(name: &str) -> Option<&'static str> {
         _ => return None,
     })
 }
-
 
 impl Data {
     /// The definitions the C backend works from: each `#c_twin`'s loft body taken out, so the

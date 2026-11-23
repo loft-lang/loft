@@ -442,7 +442,10 @@ impl Cx<'_> {
             }
         }
         for g in &seals {
-            let _ = writeln!(out, "static inline void lt_seal_{g}(loft_cx *cx, lt_{g} *s);");
+            let _ = writeln!(
+                out,
+                "static inline void lt_seal_{g}(loft_cx *cx, lt_{g} *s);"
+            );
         }
         for g in &seals {
             let none = BTreeSet::new();

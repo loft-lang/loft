@@ -61,7 +61,9 @@ impl FnWriter<'_> {
                 continue;
             }
             match self.shapes.get(t as usize) {
-                Some(CType::Ref) => self.line(ind, &format!("{} = loft_ref_null(cx);", self.var(t))),
+                Some(CType::Ref) => {
+                    self.line(ind, &format!("{} = loft_ref_null(cx);", self.var(t)))
+                }
                 Some(CType::Fn) => {
                     self.line(ind, &format!("{}.clos = loft_ref_null(cx);", self.var(t)));
                 }
@@ -109,7 +111,10 @@ impl FnWriter<'_> {
                 };
                 let t = self.temp(c);
                 if c == CType::Text {
-                    self.line(ind, &format!("loft_text_set(cx, &{t}, loft_null_text(cx));"));
+                    self.line(
+                        ind,
+                        &format!("loft_text_set(cx, &{t}, loft_null_text(cx));"),
+                    );
                     self.line(ind, &format!("loft_gen_next(cx, {g}, &{t});"));
                     return Ok(Some(self.held(t, CType::Text)));
                 }
@@ -124,7 +129,10 @@ impl FnWriter<'_> {
                 } else {
                     self.null_tuple_keeping_texts(&t, c, ind);
                     for l in &leaves {
-                        self.line(ind, &format!("loft_text_set(cx, &{l}, loft_null_text(cx));"));
+                        self.line(
+                            ind,
+                            &format!("loft_text_set(cx, &{l}, loft_null_text(cx));"),
+                        );
                     }
                 }
                 self.line(ind, &format!("loft_gen_next(cx, {g}, &{t});"));

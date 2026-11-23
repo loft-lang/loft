@@ -176,7 +176,9 @@ impl Cx<'_> {
             // An absent value, or one naming no function of this signature: the result's null.
             match ret {
                 CType::Void => out.push_str("}\n"),
-                CType::Text => out.push_str("    return loft_text_own(cx, loft_null_text(cx));\n}\n"),
+                CType::Text => {
+                    out.push_str("    return loft_text_own(cx, loft_null_text(cx));\n}\n")
+                }
                 c => {
                     let _ = writeln!(
                         out,
