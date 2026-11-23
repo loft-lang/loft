@@ -2801,7 +2801,9 @@ fn shadow_views_local(vars: el_vars::Vars, n: ir::Node) -> boolean {
 // (`unregister_work_ref`) — on both passes, as Rust's `ref_return` does at every such exit.
 fn tail_view_work_ref(e: el::El, vars: el_vars::Vars, code: ir::Node, result: ir::TypeT) {
   tv = match code { NdBlock { block } => match el_ir::unspan(el_ir::last(block[0].operators)) { NdVar { n } => n, _ => -1 }, _ => -1 };
-  if tv < 0 || vars.vars[tv].argument || heap_def(el_vars::tp(vars, tv)) < 0 || !el_ex_copy::views_local(vars, tv) {
+  // (A local the program wrote: a compiler temp at the tail — a branch tail's `___ret_join_N` —
+  // is delivered by its own road, `tail_is_borrowing_branch`.)
+  if tv < 0 || vars.vars[tv].argument || el_vars::is_compiler_generated(vars, tv) || heap_def(el_vars::tp(vars, tv)) < 0 || !el_ex_copy::views_local(vars, tv) {
     return;
   }
   tw = el_vars::work_ref(vars, el_types::without_deps(el_types::base(result)));
