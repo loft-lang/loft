@@ -46,6 +46,8 @@ pub fn boxed_tuple_return(e: el::El, t: ir::TypeT) -> ir::TypeT {
 }
 
 pub fn elab_file(e: el::El, file: integer) {
+  // (Each pass reads a file's field defaults into a struct context table of its own, from 0.)
+  e.dflt_vars = 0;
   match e.p.nodes[file] {
     SFile { items } => {
       claim_declared_type_names(e, items);
@@ -668,6 +670,10 @@ fn hoists_default(e: el::El, init: integer, t: ir::TypeT) -> boolean {
   }
   match t {
     TyReference { n: sd, dep } => len(dep) == 0 && el::def(e, sd).def_type == el::DT_STRUCT && (e.p.nodes[init] is SStructLit || e.p.nodes[init] is SCall),
+    // (A struct enum's variant literal WITH fields builds at the variant's offsets, so it is
+    // hoisted as a nested struct's is — `default_replayable_in_place`'s `struct_typed` `Object`;
+    // a unit variant's `EnumUnitLit` replays in place.)
+    TyEnum { n: _, is_ref } => is_ref && e.p.nodes[init] is SStructLit,
     _ => false
   }
 }
@@ -702,6 +708,11 @@ fn reads_dollar(e: el::El, n: integer) -> boolean {
 // answers the type at `tn` — a definition of its own, parsed as any function's body is (its tail
 // delivered through its hidden buffer).  Answers the call that stands for the default.
 fn hoisted_default(e: el::El, name: text, tn: integer, init: integer) -> ir::Node? {
+  // (Rust reads a record literal default in place before it hoists it: its build takes the
+  // next slot of the file's default table.)
+  if e.p.nodes[init] is SStructLit {
+    e.dflt_vars += 1;
+  }
   at = match e.p.nodes[init] { SVecLit { at: va } => va, SString { at: sa } => sa, SStructLit { at: la } => la, SCall { at: ca } => ca, _ => el_ex_null::node_start(e, init) };
   // (The default is no statement of a block in Rust, so it carries no line marker: the
   // synthetic statement stands at token 0, which gives none.)
@@ -818,7 +829,12 @@ fn null_literal(e: el::El, n: ir::Node) -> boolean {
 
 fn field_default_value(e: el::El, init: integer, ft: ir::TypeT) -> ir::Node? {
   vars = el_vars::new_vars("__default", e.file);
+  // (The file's one default table: this default's variables follow the earlier defaults'.)
+  for pad in 0..e.dflt_vars {
+    el_vars::add_variable(vars, "__dflt_slot_{pad}", ir::TyVoid);
+  }
   x = el_ex_assign::expression(e, vars, init);
+  e.dflt_vars = len(vars.vars);
   if el_types::is_unknown(x.tp) {
     // An untyped `[]` (a collection field's empty default, Rust's `__dflt_<S>_<f>` builder) is
     // not carried.
@@ -828,18 +844,25 @@ fn field_default_value(e: el::El, init: integer, ft: ir::TypeT) -> ir::Node? {
     return if e.first_pass { ir::NdNull } else { null };
   }
   plain_enum = match el_types::base(x.tp) { TyEnum { is_ref } => !is_ref, _ => false };
-  plain = el_convert::plain_scalar(el_types::base(x.tp)) || plain_enum || (el_types::base(x.tp) is TyText && el_ir::unspan(x.code) is NdText);
+  // (A struct enum's unit variant, `EnumUnitLit`, replays in place: it builds in a work ref of
+  // its own, never through the record.)
+  unit_variant = match el_ir::unspan(x.code) { NdBlock { block: ub } => ub[0].name == "EnumUnitLit", _ => false } || (e.first_pass && el_types::struct_enum_def(el_types::base(x.tp)) >= 0 && e.p.nodes[init] is SName);
+  plain = el_convert::plain_scalar(el_types::base(x.tp)) || plain_enum || unit_variant || (el_types::base(x.tp) is TyText && el_ir::unspan(x.code) is NdText);
   slot = false;
   for v in 0..len(vars.vars) {
     if el_ir::reads_var(x.code, v) {
       slot = true;
     }
   }
-  if !plain || slot {
+  if !plain || (slot && !unit_variant) {
     el::refuse(e, "a field default of this kind: {el_ex_base::type_kind(x.tp)}");
     return null;
   }
   if e.first_pass {
+    return x.code;
+  }
+  // (The unit variant's block is stored as built: each construction re-homes it.)
+  if unit_variant {
     return x.code;
   }
   el_convert::convert(e, vars, x.code, x.tp, el_types::base(ft), false)
