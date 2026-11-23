@@ -175,33 +175,32 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 
 | rule | applied by |
 |---|---|
-| `(R-Alias)` | `/versioned` c, native |
-| `(R-Apart)` | `R-Apart` c, native · `/records` c, native · `/records/boundary` c · `/vector` c, native |
-| `(R-AppendTwin)` | `R-AppendTwin` c, native · `/loop-window` c · `/mint` c |
-| `(R-Base)` | `R-Base` c, native · `/counter` c · `/grid` c · `/guard` c · `/length-local` c · `/wrap-select` c |
+| `(R-Alias)` | `/versioned` c |
+| `(R-Apart)` | `R-Apart` c · `/records` c · `/records/boundary` c · `/vector` c |
+| `(R-AppendTwin)` | `R-AppendTwin` c · `/loop-window` c · `/mint` c |
+| `(R-Base)` | `R-Base` c · `/counter` c · `/grid` c · `/guard` c · `/length-local` c · `/wrap-select` c |
 | `(R-BoundAppend)` | `R-BoundAppend` parse |
-| `(R-BoundedNest)` | `R-BoundedNest` native · `/kernel` ir |
+| `(R-BoundedNest)` | `/kernel` ir |
 | `(R-BufferReturn)` | `R-BufferReturn` c · `/bind` c |
 | `(R-ByteCopy)` | `R-ByteCopy` ir |
 | `(R-CSplit)` | `R-CSplit` c |
 | `(R-CTail)` | `R-CTail` c |
 | `(R-CallLine)` | not counted — executor: a frame's line derived from its call position |
-| `(R-Callee)` | `R-Callee` c, native |
-| `(R-CharWalk)` | `R-CharWalk` c, native |
+| `(R-Callee)` | `R-Callee` c |
+| `(R-CharWalk)` | `R-CharWalk` c |
 | `(R-CodeBase)` | not counted — executor: bytecode reads through a cached base |
 | `(R-Cold)` | counted; admitted on no bench program |
 | `(R-Compact)` | `R-Compact` ir · `/prepend` ir |
 | `(R-CompleteWrite)` | `R-CompleteWrite` ir |
 | `(R-Const)` | `R-Const` ir · `/fn` parse |
 | `(R-CopyView)` | `R-CopyView` ir · `/walk` ir |
-| `(R-Counter)` | `R-Counter` ir, c, native |
-| `(R-CTail)` | not counted — writer: where an exit's releases are written; no statement an exit runs changes |
+| `(R-Counter)` | `R-Counter` ir, c |
 | `(R-CtorLiteral)` | `R-CtorLiteral` parse |
 | `(R-DeadResult)` | not counted — unbuilt: designed; its switch is planned |
 | `(R-DecodeView)` | counted; admitted on no bench program |
 | `(R-DeferredCopy)` | counted; admitted on no bench program |
 | `(R-Demote)` | `R-Demote` parse · `/place` parse |
-| `(R-Destination)` | `R-Destination` c, native |
+| `(R-Destination)` | `R-Destination` c |
 | `(R-DischargeInto)` | `R-DischargeInto` parse |
 | `(R-DispatchPublish)` | not counted — executor: the lean loop publishes one position per op |
 | `(R-DispatchStop)` | not counted — executor: the lean loop tests one flag per op |
@@ -211,25 +210,25 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-ExitVector)` | `R-ExitVector` ir · `/record` ir |
 | `(R-ExpPow)` | counted; admitted on no bench program |
 | `(R-FastTable)` | not counted — executor: the stack access mode fixed per run |
-| `(R-FaultFlag)` | `R-FaultFlag` native |
-| `(R-FieldAppend)` | `R-FieldAppend` c, native · `/bare` c, native |
-| `(R-FileHold)` | `R-FileHold` c, native |
-| `(R-Fill)` | `R-Fill` c, native · `/guarded` c |
+| `(R-FaultFlag)` | counted; admitted on no bench program |
+| `(R-FieldAppend)` | `R-FieldAppend` c · `/bare` c |
+| `(R-FileHold)` | `R-FileHold` c |
+| `(R-Fill)` | `R-Fill` c · `/guarded` c |
 | `(R-FirstClaim)` | `R-FirstClaim` interp |
-| `(R-FlatCopy)` | `R-FlatCopy` c, native |
+| `(R-FlatCopy)` | `R-FlatCopy` c |
 | `(R-FnRefBuffer)` | `R-FnRefBuffer` c · `/frame` c |
-| `(R-FnRefValue)` | `R-FnRefValue` native |
-| `(R-FoldCompare)` | `R-FoldCompare` native |
+| `(R-FnRefValue)` | counted; admitted on no bench program |
+| `(R-FoldCompare)` | counted; admitted on no bench program |
 | `(R-FormatAppend)` | `R-FormatAppend` parse · `/c` c |
 | `(R-ForwardResult)` | `R-ForwardResult` ir |
 | `(R-ForwardWalk)` | `R-ForwardWalk` parse |
 | `(R-FrameHeadroom)` | not counted — executor: one capacity test per frame entry |
 | `(R-Fuse)` | `R-Fuse` interp · `/field` interp · `/jump` interp · `/tag` interp · `/text` interp |
-| `(R-GroupPush)` | `R-GroupPush` native |
-| `(R-GuardFree)` | `R-GuardFree` c, native |
-| `(R-GuardedChain)` | `R-GuardedChain` c, native · `/operators` c, native · `/versions` c |
-| `(R-HandOver)` | `/rotate` c, native |
-| `(R-Header)` | `R-Header` c, native · `/apart` c, native · `/apart-param` c, native · `/function` native · `/grown` c · `/grown-held` c · `/kept` native · `/kept-growth` c · `/kept-twin` c, native · `/narrow` c · `/rebind` c · `/text` c, native |
+| `(R-GroupPush)` | counted; admitted on no bench program |
+| `(R-GuardFree)` | `R-GuardFree` c |
+| `(R-GuardedChain)` | `R-GuardedChain` c · `/operators` c · `/versions` c |
+| `(R-HandOver)` | `/rotate` c |
+| `(R-Header)` | `R-Header` c · `/apart` c · `/apart-param` c · `/grown` c · `/grown-held` c · `/kept-growth` c · `/kept-twin` c · `/narrow` c · `/rebind` c · `/text` c |
 | `(R-HostStore)` | `R-HostStore` ir |
 | `(R-HotInline)` | not counted — executor: #hot operators inlined into the lean loop |
 | `(R-InPlace)` | not counted — condition: the write test the header hoists ask; counted under them |
@@ -237,24 +236,24 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-InRange)` | `R-InRange` parse · `/length-local` parse · `/wrapped` parse |
 | `(R-Inline)` | `R-Inline` c · `/helper` c |
 | `(R-InlineLeaf)` | `R-InlineLeaf` parse |
-| `(R-Inputs)` | `R-Inputs` c, native |
-| `(R-Invariant)` | `R-Invariant` c, native · `/hoist` c |
+| `(R-Inputs)` | `R-Inputs` c |
+| `(R-Invariant)` | `R-Invariant` c · `/hoist` c |
 | `(R-KeyList)` | not counted — executor: key descriptors derived once per type |
 | `(R-KeyedEntry)` | `R-KeyedEntry` ir · `/subscript` ir |
-| `(R-LazySplit)` | `R-LazySplit` c, native |
-| `(R-Leaf)` | `R-Leaf` native |
-| `(R-LeafChain)` | `R-LeafChain` native |
+| `(R-LazySplit)` | `R-LazySplit` c |
+| `(R-Leaf)` | counted; admitted on no bench program |
+| `(R-LeafChain)` | counted; admitted on no bench program |
 | `(R-LiftReuse)` | `R-LiftReuse` ir |
-| `(R-LitDiv)` | `R-LitDiv` native |
-| `(R-LitHoist)` | `R-LitHoist` native |
+| `(R-LitDiv)` | counted; admitted on no bench program |
+| `(R-LitHoist)` | counted; admitted on no bench program |
 | `(R-LiteralAppend)` | `R-LiteralAppend` ir |
 | `(R-LiteralWalk)` | `R-LiteralWalk` parse |
 | `(R-LoopBuffer)` | `R-LoopBuffer` ir |
 | `(R-LoopRecord)` | `R-LoopRecord` ir · `/refill` ir |
 | `(R-LoopSlot)` | `R-LoopSlot` interp |
 | `(R-MaskRange)` | `R-MaskRange` parse |
-| `(R-Mint)` | `R-Mint` c, native |
-| `(R-MoveAppend)` | `R-MoveAppend` native |
+| `(R-Mint)` | `R-Mint` c |
+| `(R-MoveAppend)` | counted; admitted on no bench program |
 | `(R-MoveChild)` | `R-MoveChild` parse |
 | `(R-MoveLast)` | `R-MoveLast` ir · `/host` ir · `/local` ir |
 | `(R-NoLocks)` | `R-NoLocks` c |
@@ -268,57 +267,57 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-Place)` | `R-Place` ir |
 | `(R-Prefill)` | not counted — runtime: admitted per TYPE at its first mint |
 | `(R-PureReuse)` | `R-PureReuse` ir |
-| `(R-Push)` | `R-Push` c, native · `/read` c · `/sole` c |
-| `(R-PushFill)` | `R-PushFill` c, native · `/fill` ir · `/hash` c, native · `/held-run` c · `/record` native · `/run` c, native · `/run-header` c · `/several` ir · `/text` c |
-| `(R-PushRec)` | `R-PushRec` c, native · `/apart` c, native |
-| `(R-Range)` | `R-Range` c, native · `/index` c |
-| `(R-RangedCall)` | `R-RangedCall` c, native · `/guard` c |
+| `(R-Push)` | `R-Push` c · `/read` c · `/sole` c |
+| `(R-PushFill)` | `R-PushFill` c · `/fill` ir · `/hash` c · `/held-run` c · `/run` c · `/run-header` c · `/several` ir · `/text` c |
+| `(R-PushRec)` | `R-PushRec` c · `/apart` c |
+| `(R-Range)` | `R-Range` c · `/index` c |
+| `(R-RangedCall)` | `R-RangedCall` c · `/guard` c |
 | `(R-Rebind)` | `R-Rebind` ir |
 | `(R-RebindBuffer)` | counted; admitted on no bench program |
-| `(R-RecPtr)` | `R-RecPtr` c, native · `/held` c · `/index` native · `/nested` native · `/param` c · `/text` c |
+| `(R-RecPtr)` | `R-RecPtr` c · `/held` c · `/param` c · `/text` c |
 | `(R-RefParam)` | `R-RefParam` c |
-| `(R-RefillBuffer)` | `R-RefillBuffer` native |
-| `(R-RefillText)` | `R-RefillText` native |
-| `(R-Refresh)` | `R-Refresh` native · `/keep-header` c |
+| `(R-RefillBuffer)` | counted; admitted on no bench program |
+| `(R-RefillText)` | counted; admitted on no bench program |
+| `(R-Refresh)` | `/keep-header` c |
 | `(R-RegisterTable)` | not counted — executor: position and stack top passed in registers |
 | `(R-RepeatRun)` | `R-RepeatRun` ir |
-| `(R-RetAdopt)` | `R-RetAdopt` interp, c, native |
+| `(R-RetAdopt)` | `R-RetAdopt` interp, c |
 | `(R-ReturnField)` | `R-ReturnField` ir |
 | `(R-Reuse)` | `R-Reuse` ir |
 | `(R-Rotate)` | `R-Rotate` interp |
 | `(R-SameRead)` | `R-SameRead` parse · `/filed` c |
-| `(R-Scalar)` | `R-Scalar` c, native |
+| `(R-Scalar)` | `R-Scalar` c |
 | `(R-ScaleFold)` | `R-ScaleFold` parse |
 | `(R-SelfReplace)` | `R-SelfReplace` parse |
 | `(R-SharedCall)` | not counted — unbuilt: only its narrow case is built, counted as R-PureReuse/shared |
 | `(R-SingleUse)` | `R-SingleUse` parse |
 | `(R-SliceArg)` | `/range` ir |
-| `(R-SliceBorrow)` | `R-SliceBorrow` interp, native |
+| `(R-SliceBorrow)` | `R-SliceBorrow` interp |
 | `(R-SliceInto)` | `R-SliceInto` ir · `/transient` c |
 | `(R-SpecChain)` | `R-SpecChain` c |
-| `(R-SplitTable)` | `R-SplitTable` c, native |
+| `(R-SplitTable)` | `R-SplitTable` c |
 | `(R-StackBase)` | not counted — executor: a slot addressed from a cached base |
 | `(R-StartStep)` | `R-StartStep` interp |
 | `(R-State)` | not counted — condition: the hoist state the header rules share; counted under them |
 | `(R-StickySum)` | `R-StickySum` c |
-| `(R-StreamWalk)` | `R-StreamWalk` native |
+| `(R-StreamWalk)` | counted; admitted on no bench program |
 | `(R-Switch)` | not counted — meta: every rewrite's switch and falsifier |
 | `(R-TableHandle)` | `R-TableHandle` c |
 | `(R-Tabulate)` | `R-Tabulate` c |
 | `(R-TailSelf)` | `R-TailSelf` parse |
-| `(R-TextBorrow)` | `R-TextBorrow` interp, c, native · `/tested` c, native |
-| `(R-TextClear)` | `R-TextClear` native |
+| `(R-TextBorrow)` | `R-TextBorrow` interp, c · `/tested` c |
+| `(R-TextClear)` | counted; admitted on no bench program |
 | `(R-TextLen)` | `R-TextLen` parse |
 | `(R-TextRun)` | counted; admitted on no bench program |
 | `(R-Transient)` | `R-Transient` c |
-| `(R-TypedKeyed)` | `R-TypedKeyed` c, native · `/compound` c, native · `/remove` c · `/text` c, native |
-| `(R-TypedRead)` | `R-TypedRead` c, native · `/float` c |
-| `(R-ValueLocal)` | `R-ValueLocal` parse, c, native |
-| `(R-ValueRecord)` | `R-ValueRecord` parse, c, native · `/view` c, native |
+| `(R-TypedKeyed)` | `R-TypedKeyed` c · `/compound` c · `/remove` c · `/text` c |
+| `(R-TypedRead)` | `R-TypedRead` c · `/float` c |
+| `(R-ValueLocal)` | `R-ValueLocal` parse, c |
+| `(R-ValueRecord)` | `R-ValueRecord` parse, c · `/view` c |
 | `(R-VecCopy)` | `R-VecCopy` ir |
 | `(R-Version)` | `R-Version` c · `/nest` c |
-| `(R-View)` | `R-View` c, native |
-| `(R-ViewReturn)` | `R-ViewReturn` native |
+| `(R-View)` | `R-View` c |
+| `(R-ViewReturn)` | counted; admitted on no bench program |
 | `(R-WorkBuffer)` | `R-WorkBuffer` parse · `/onward` parse · `/result` parse |
 | `(R-WorkPark)` | `R-WorkPark` c |
 | `(R-WorkView)` | not counted — unbuilt: no code; the C's (R-TextBorrow) format clause covers the shape |
