@@ -1,0 +1,21 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN206 P5 — a library whose shim keeps a counter (`tests/hosted_unit.rs`).  `bump` crosses the
+// C bridge, so an adopted program calls it in the hosted unit; `label` answers a text, which the
+// bridge does not carry, so it interprets and reads the counter through the interpreter's own
+// copy of the shim.  One shim state in the process answers the bumps in the label.
+
+fn hs_bump(by: integer) -> integer;
+#c "hs_bump" "int64_t(int64_t)"
+
+fn hs_peek() -> integer;
+#c "hs_peek" "int64_t(void)"
+
+pub fn bump(by: integer) -> integer {
+  hs_bump(by)
+}
+
+pub fn label() -> text {
+  "count {hs_peek()}"
+}

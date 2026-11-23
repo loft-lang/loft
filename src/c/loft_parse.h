@@ -1451,7 +1451,7 @@ static void loft_perrs_deliver(loft_ref data, loft_ref to, uint16_t tp, int fres
     if (to.rec != 1 || to.pos != 8) return;
     loft_perrs_of(to.store_nr > data.store_nr ? to.store_nr : data.store_nr);
     loft_perrs *dest = &loft_store_perrs[to.store_nr];
-    uint16_t known = loft_stores[to.store_nr].known;
+    uint16_t known = LOFT_KNOWN(loft_stores[to.store_nr]);
     uint16_t root = known == 0xFFFF ? dest->tp : known;
     if (!fresh && root != tp) return;
     loft_perrs *src = &loft_store_perrs[data.store_nr];
@@ -1488,7 +1488,7 @@ static uint16_t loft_parsed_vector(loft_ref db) {
 static void loft_perrs_deliver_vector(loft_ref data, loft_ref to, int whole) {
     if (data.store_nr == to.store_nr || to.store_nr == 0xFFFF || to.store_nr >= loft_nstores || to.rec != 1) return;
     if (!loft_stores[to.store_nr].live) return;
-    if (loft_parsed_vector(to) == 0xFFFF && !loft_is_main_vector(loft_stores[to.store_nr].known)) return;
+    if (loft_parsed_vector(to) == 0xFFFF && !loft_is_main_vector(LOFT_KNOWN(loft_stores[to.store_nr]))) return;
     uint16_t parsed = loft_parsed_vector(data);
     loft_perrs *dest = loft_perrs_of(to.store_nr);
     if (!whole && (parsed == 0xFFFF || dest->tp != 0xFFFF || loft_vec_len(to) != 0)) return;
@@ -1513,6 +1513,9 @@ static loft_ref loft_text_target(loft_pw *w, uint16_t tp) {
     if (words < 8) words = 8;
     loft_ref r = loft_ref_null();
     loft_database(&r, (words - 1) * 8);
+    /* The store's root is a `tp` record, which `known` says (STORE_MODEL D48): the interpreter
+     * reads it for a store it frees, a hosted unit's stores included. */
+    LOFT_SET_KNOWN(loft_stores[r.store_nr], tp);
     loft_perrs_clear(loft_perrs_of(r.store_nr));
     loft_pw_default(w, tp, 1, 1, r);
     return r;
@@ -1843,6 +1846,7 @@ static loft_ref loft_struct_from_jsonvalue(const loft_ptype *P, loft_ref src, ui
     if (words < 2) words = 2;
     loft_ref r = loft_ref_null();
     loft_database(&r, (words - 1) * 8);
+    LOFT_SET_KNOWN(loft_stores[r.store_nr], kt); /* the root's type, as `loft_text_target` (D48) */
     size_t seen = loft_jerr_n;
     loft_jsv_struct(&w, r, kt, src);
     loft_perrs *pe = loft_perrs_of(r.store_nr);

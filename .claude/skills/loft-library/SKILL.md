@@ -53,8 +53,9 @@ step, because the two tiers differ by an order of magnitude:
 - **Tier 2 — `#native` external Rust bindings.** The browser column has no automatic path:
   you must hand-build a **`wasm.bridge` crate** (host-import module + JS/WASI host shim). This
   is where the real cost and nearly all the bugs live — and a Rust crate does not load in a
-  C build, so the mandatory `--native-c` leg needs a `[c] shim` beside it (Tier 1½ is where
-  native parts are moving: libraries ship C binaries, @PLN206). Only pay it when the library needs a
+  C build and keeps the library from being compiled: a library's native part is a `[c] shim`
+  (Tier 1½), and each loft release builds every published library's C unit (@PLN206).
+  Only pay it when the library needs a
   CAPABILITY loft lacks (a real host capability: crypto, sockets, the DOM, files) — never
   for speed on a routine loft can express (formal/performance.md `(Perf-Cure)`).
 

@@ -225,6 +225,12 @@ pub fn copy_source_may_be_absent(e: el::El, vars: el_vars::Vars, n: ir::Node) ->
 // anything but a parameter, such a local, or a call of a function the program declares.
 pub fn branch_view_leaves(e: el::El, vars: el_vars::Vars, n: ir::Node, bound: boolean) -> integer {
   match el_ir::unspan(n) {
+    // A record member of a by-value tuple parameter's shadow (`__tp_p.0`, `@FR-F-ParamTuple`)
+    // views a local: copied with the branch.
+    NdTupleGet { var: tgv, idx: tgi } => {
+      tm = match el_vars::tp(vars, tgv) { TyTuple { elems: tge } => tge[tgi] ?? ir::TyVoid, _ => ir::TyVoid };
+      if starts_with(el_vars::name_of(vars, tgv), "__tp_") && heap_def(tm) >= 0 && !(tm is TyOptional) { 1 } else { -1 }
+    },
     NdIf { cond: _, t, f } => {
       a = branch_view_leaves(e, vars, t, bound);
       b = branch_view_leaves(e, vars, f, bound);
@@ -871,7 +877,8 @@ pub fn appends_call_in_loop(e: el::El, n: integer, name: text, looped: boolean) 
     },
     _ => {}
   }
-  inner = looped || e.p.nodes[n] is SFor || e.p.nodes[n] is SWhile;
+  // (`var_call_rebound_nested`: nested is inside a loop or an `if` arm.)
+  inner = looped || e.p.nodes[n] is SFor || e.p.nodes[n] is SWhile || e.p.nodes[n] is SIf;
   for c in el_length::children(e, n) {
     if appends_call_in_loop(e, c, name, inner) {
       return true;

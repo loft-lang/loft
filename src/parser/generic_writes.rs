@@ -222,11 +222,39 @@ impl Parser {
                     Self::rewrite_vector_write_triplets(ops, bindings, vars, data, database);
                 Value::Loop(lp)
             }
+            Value::Call(d, args) if data.def(d).name() == "OpPreAllocVector" => {
+                Self::instance_prealloc(d, args, vars, data, database)
+            }
             Value::Call(d, args) => {
                 Self::rewrite_indexed_element_write(d, args, bindings, data, database)
             }
             other => other,
         }
+    }
+
+    /// `@FR-H-Stride` — a reservation in an instance's body takes the element width of the
+    /// vector it reserves, as that vector's type stands in the instance: the template sized it
+    /// for the parameter's placeholder.  A tuple element (`vector<(T, T)>`) never passes the
+    /// triplet rewrite above, so `pairs<integer>` reserved the 12 bytes the template measured
+    /// for 16-byte elements, and a push header took that reservation (`loft_ph_prealloc`).
+    /// The width comes from the same home the triplet rewrite asks: the vector's storage
+    /// element row (`Data::vector_element_type`) and its size in the store.  A vector whose
+    /// type is not a vector here, or whose element has no row, keeps the reservation as
+    /// written: a reservation is capacity, which no read observes (`(Col-Capacity)`).
+    fn instance_prealloc(
+        d: u32,
+        mut args: Vec<Value>,
+        vars: &crate::variables::Function,
+        data: &Data,
+        database: &mut Stores,
+    ) -> Value {
+        if let [Value::Var(v), _, Value::Int(size)] = args.as_mut_slice()
+            && let Type::Vector(elem, _) = vars.tp(*v).base()
+            && let Some(row) = data.vector_element_type(elem, database)
+        {
+            *size = i32::from(database.size(row));
+        }
+        Value::Call(d, args)
     }
 
     /// The binding a parametric element write stands for: the type variable whose record
@@ -453,7 +481,15 @@ impl Parser {
                 );
                 // 1. OpPreAllocVector(Var(out_var), Int(1), Int(elem_size))
                 //    Mirrors `vectors.rs:1161-1178` for perf parity with
-                //    concrete-T vector pushes.
+                //    concrete-T vector pushes.  It REPLACES the template's own reservation
+                //    in front of the triplet, which was sized for the parameter's placeholder:
+                //    kept, the instance reserved twice, the first time at the wrong stride, and a
+                //    push header takes the first reservation it is handed (`loft_ph_prealloc`).
+                if matches!(out.last(), Some(Value::Call(op, a))
+                    if *op == pre_alloc_d && matches!(a.first(), Some(Value::Var(w)) if *w == out_var))
+                {
+                    out.pop();
+                }
                 out.push(Value::Call(
                     pre_alloc_d,
                     vec![Value::Var(out_var), Value::Int(1), Value::Int(elem_size)],

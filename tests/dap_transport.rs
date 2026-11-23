@@ -69,12 +69,24 @@ fn read_frames(stdout: ChildStdout) -> Receiver<Option<Vec<u8>>> {
 
 impl Dap {
     fn start() -> Self {
-        let mut child = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft-dap"))
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn loft-dap");
+        Self::start_with(&[], None)
+    }
+
+    /// The adapter with `args` (`--lib <dir>`), its stderr written to `stderr` with the
+    /// hand-over traced (`LOFT_TRACE_HANDOVER`) when one is given.
+    fn start_with(args: &[&str], stderr: Option<&std::path::Path>) -> Self {
+        let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft-dap"));
+        cmd.args(args).stdin(Stdio::piped()).stdout(Stdio::piped());
+        match stderr {
+            Some(path) => {
+                cmd.env("LOFT_TRACE_HANDOVER", "1")
+                    .stderr(Stdio::from(fa::create(path).expect("stderr file")));
+            }
+            None => {
+                cmd.stderr(Stdio::null());
+            }
+        }
+        let mut child = cmd.spawn().expect("spawn loft-dap");
         let stdin = child.stdin.take().unwrap();
         let messages = read_frames(child.stdout.take().unwrap());
         Dap {
@@ -151,11 +163,22 @@ impl Dap {
 
     /// Launch a program written to a temp file; returns its path (kept alive for the run).
     fn launch(&mut self, tag: &str, src: &str, stop_on_entry: bool) -> std::path::PathBuf {
+        self.launch_as(tag, src, stop_on_entry, false)
+    }
+
+    /// [`launch`](Self::launch), with the program's own functions compiled when `native`.
+    fn launch_as(
+        &mut self,
+        tag: &str,
+        src: &str,
+        stop_on_entry: bool,
+        native: bool,
+    ) -> std::path::PathBuf {
         let path = tmp_program(tag, src);
         let seq = self.request(
             "launch",
             &format!(
-                r#"{{"program":{},"stopOnEntry":{stop_on_entry}}}"#,
+                r#"{{"program":{},"stopOnEntry":{stop_on_entry},"native":{native}}}"#,
                 json::to_json_string(&Parsed::Str(path.to_string_lossy().into_owned()))
             ),
         );
@@ -1129,4 +1152,170 @@ fn pause_stops_a_running_program_and_continue_resumes_it() {
     assert!(out.contains(DONE), "{out:?}");
     d.disconnect();
     let _ = fa::remove_file(&path);
+}
+
+// ── @PLN206 P7 — a pause while a compiled routine runs ────────────────────────────────────
+// The routine `spin` runs compiled (a library's hosted unit, or the program's own under
+// `"native": true`); a DAP `pause` while its long loop runs hands it to the interpreter at its
+// loop head, where the debugger stops it.  The test reads `t` there, sets it to `limit - 3`
+// and continues: three more interpreted rounds.  Each runs in its own adapter process, because
+// the pause flag is process-wide.
+
+const SPIN: &str = "fn helper(n: integer) -> integer {\n  n + 1\n}\n\nfn spin(limit: integer) -> integer {\n  t = 0;\n  k = 0;\n  while t < limit {\n    t += 1;\n    k = helper(k);\n  }\n  t + k\n}\n";
+
+/// By hand: at the loop head `k == t`; with `t` set to `limit - 3` the loop runs three more
+/// rounds, so `t` ends at `limit` and `k` at `p + 3`: the answer `limit + p + 3`.
+fn spin_answer(limit: i64, p: i64) -> i64 {
+    limit + p + 3
+}
+
+/// Pause `spin(limit)` while it runs compiled, then finish it interpreted: the answer
+/// `want(limit, t at the pause)`.  `lib` is the `spinner` package's source (the routine a
+/// library's), or `None` with `prog` holding `spin` itself (the program's own, `"native"`).
+fn pause_and_finish(tag: &str, lib: Option<&str>, prog: &str, want: impl Fn(i64, i64) -> i64) {
+    if loft::platform::process::harness_command("cc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let root = std::env::temp_dir().join(format!("loft_dap_{tag}_{}", std::process::id()));
+    fa::create_dir_all(&root).expect("scratch dir");
+    let mut args: Vec<String> = Vec::new();
+    if let Some(lib) = lib {
+        let pkg = root.join("spinner");
+        fa::create_dir_all(pkg.join("src")).expect("package dir");
+        fa::write(
+            pkg.join("loft.toml"),
+            "[package]\nname = \"spinner\"\nversion = \"0.1.0\"\n\n[library]\nentry = \"src/spinner.loft\"\n",
+        )
+        .expect("manifest");
+        fa::write(pkg.join("src/spinner.loft"), lib).expect("library");
+        args = vec!["--lib".into(), root.to_string_lossy().into_owned()];
+    }
+    let stderr = root.join("stderr.txt");
+    let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let mut d = Dap::start_with(&arg_refs, Some(&stderr));
+    d.handshake();
+    let path = d.launch_as(tag, prog, false, lib.is_none());
+    d.configuration_done();
+    // The program is running: `spin` is a long compiled loop by now.
+    std::thread::sleep(Duration::from_millis(700));
+    let ps = d.request("pause", r#"{"threadId":1}"#);
+    let _ = d.recv_response(ps);
+    let stopped = d.recv_event("stopped");
+    let trace = || fa::read_to_string(&stderr).unwrap_or_default();
+    assert_eq!(
+        field_str(&stopped, "reason").as_deref(),
+        Some("pause"),
+        "the pause stops the run: {stopped:?}\n{}",
+        trace()
+    );
+    let frames = d.stack_frames();
+    assert_eq!(
+        frames.first().and_then(|f| field_str(f, "name")).as_deref(),
+        Some("spin"),
+        "it stops inside spin, interpreted: {frames:?}\n{}",
+        trace()
+    );
+    let ev = d.request("evaluate", r#"{"expression":"t","context":"repl"}"#);
+    let body = field(&d.recv_response(ev), "body")
+        .cloned()
+        .expect("evaluate body");
+    let p: i64 = field_str(&body, "result")
+        .and_then(|r| r.parse().ok())
+        .expect("t at the pause");
+    let limit: i64 = 8_000_000_000;
+    assert!(
+        p > 0 && p < limit,
+        "the pause came inside the loop: t = {p}"
+    );
+    let locals = d.current_locals_ref();
+    let sv = d.request(
+        "setVariable",
+        &format!(
+            r#"{{"variablesReference":{locals},"name":"t","value":"{}"}}"#,
+            limit - 3
+        ),
+    );
+    let _ = d.recv_response(sv);
+    let cont = d.request("continue", r#"{"threadId":1}"#);
+    let _ = d.recv_response(cont);
+    let mut printed = String::new();
+    loop {
+        let m = d.recv();
+        if field_str(&m, "type").as_deref() != Some("event") {
+            continue;
+        }
+        match field_str(&m, "event").as_deref() {
+            Some("output") => {
+                printed.push_str(
+                    &field(&m, "body")
+                        .and_then(|b| field_str(b, "output"))
+                        .unwrap_or_default(),
+                );
+            }
+            Some("terminated") => break,
+            _ => {}
+        }
+    }
+    d.disconnect();
+    let trace = trace();
+    let _ = fa::remove_file(&path);
+    let _ = fa::remove_dir_all(&root);
+    assert!(
+        trace.contains("[handover]") && trace.contains(": taken"),
+        "the compiled routine was taken over, not run to its return: {trace}"
+    );
+    let want = format!("r {}", want(limit, p));
+    assert!(printed.contains(&want), "{want}: {printed}\n{trace}");
+}
+
+/// The program every library case runs: `spinner::spin(8_000_000_000)`, its answer printed.
+const USE_SPINNER: &str =
+    "use spinner;\nfn main() {\n  r = spinner::spin(8000000000);\n  println(\"r {r}\");\n}\n";
+
+/// A routine of a library, which runs compiled by default.
+///
+/// @falsified-at: none — a SABOTAGE (2026-11-23): with the unit's loop heads asking for no
+///   pause (`loft_pause_asked` answering 0, `src/c/loft_rt.h`), the routine finishes compiled
+///   and the pause stops in `main`.  CHANNEL: the stack frame.  WITNESS: "it stops inside spin,
+///   interpreted".
+#[test]
+fn a_pause_hands_a_running_compiled_library_routine_to_the_interpreter() {
+    let lib = SPIN
+        .replace("fn helper", "pub fn helper")
+        .replace("fn spin", "pub fn spin");
+    pause_and_finish("p7_lib", Some(&lib), USE_SPINNER, spin_answer);
+}
+
+/// The same hand-over with the routine's heap in hand: a vector and a text the compiled routine
+/// built before its long loop, carried into the interpreter's frame and used there.  By hand:
+/// the sum of `i % 7` for `i` below 1000 is 142 * 21 + (0 + 1 + 2 + 3 + 4 + 5) = 2997, so the
+/// answer is 2997 * 1000 + 50, whatever round the pause came in.
+///
+/// @falsified-at: none — a SABOTAGE (2026-11-23): with the unit's loop heads asking for no
+///   pause (`loft_pause_asked` answering 0, `src/c/loft_rt.h`), the routine finishes compiled
+///   and the pause stops in `main`.  CHANNEL: the stack frame.  WITNESS: "it stops inside spin,
+///   interpreted".
+#[test]
+fn a_handed_over_routine_keeps_its_vector_and_text() {
+    let lib = "pub fn helper(n: integer) -> integer {\n  n + 1\n}\n\npub fn spin(limit: integer) -> integer {\n  v: vector<integer> = [];\n  for i in 0..1000 { v += [i % 7]; }\n  s = \"\";\n  for j in 0..50 { s += \"x\"; }\n  t = 0;\n  while t < limit {\n    t = helper(t);\n  }\n  total = 0;\n  for x in v { total += x; }\n  total * 1000 + len(s)\n}\n";
+    pause_and_finish("p7_heap", Some(lib), USE_SPINNER, |_, _| 2_997_050);
+}
+
+/// `"native": true`: the program's own functions run compiled — `main` the interpreter's
+/// driver — and a pause in one of them hands it over as a library's routine is.
+///
+/// @falsified-at: none — a SABOTAGE (2026-11-23): with the unit's loop heads asking for no
+///   pause (`loft_pause_asked` answering 0, `src/c/loft_rt.h`), the routine finishes compiled
+///   and the pause stops in `main`.  CHANNEL: the stack frame.  WITNESS: "it stops inside spin,
+///   interpreted".
+#[test]
+fn a_pause_hands_the_programs_own_compiled_routine_to_the_interpreter() {
+    let prog =
+        format!("{SPIN}\nfn main() {{\n  r = spin(8000000000);\n  println(\"r {{r}}\");\n}}\n");
+    pause_and_finish("p7_prog", None, &prog, spin_answer);
 }

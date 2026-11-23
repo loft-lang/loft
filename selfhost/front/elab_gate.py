@@ -19,7 +19,7 @@ The position is gated by a committed baseline (`elab_gate.baseline.tsv` beside t
 does not agree yet, with its verdict.  `--check` fails on a drop and on any `differ` (an image
 that is not Rust's), listed or not; both need the whole corpus and the suite at the pin.
 """
-import argparse, collections, concurrent.futures as cf, glob, os, re, shutil, subprocess, sys, tempfile
+import argparse, threading, collections, concurrent.futures as cf, glob, os, re, shutil, subprocess, sys, tempfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bench"))
 import baseline  # noqa: E402  one baseline format for every survey
@@ -104,6 +104,135 @@ ROUTE = re.compile(r"^state (\d) (\d+):(\d+) (route|refuse) (.*)$")
 # (elaborator-instruments.md § 2), filled by `one` when the state trace is on:
 # path -> [(side, pass, line, col, text)], side `rust` / `port` / `refuse`.
 ROUTES = {}
+# The reimplementation contract (`LOFT_REPORT_CONTRACT`, src/parser/contract.rs and
+# selfhost/src/el_contract.loft): per program that agrees on its image, the facts its functions
+# carry differently — {fact: count} — and the facts this port does not derive yet (`?`).
+CONTRACT = {}
+CONTRACT_LINE = re.compile(r"^\[contract\] fn=(\S+) (.*)$")
+
+
+def contract_facts(text):
+    """{function: {fact: value}} of a `[contract]` report."""
+    out = {}
+    for l in text.splitlines():
+        m = CONTRACT_LINE.match(l)
+        if m:
+            out[m.group(1)] = dict(kv.split("=", 1) for kv in m.group(2).split(" ") if "=" in kv)
+    return out
+
+
+# The image's function state (`LOFT_REPORT_STATE`, `report::state_report`): per program that
+# agrees on its image, the state items its functions carry differently, by kind.
+STATE = {}
+STATE_LOCK = threading.Lock()
+STATE_LINE = re.compile(r"^\[state\] fn=(\S+) (var=\S+|param=\S+|def|inline_refs)(.*)$")
+
+
+def state_table(text):
+    """{(function, subject): set of items} of a `[state]` report."""
+    out = {}
+    for l in text.splitlines():
+        m = STATE_LINE.match(l)
+        if m:
+            out[(m.group(1), m.group(2))] = set(m.group(3).split())
+    return out
+
+
+def state_compare(rust, port, own, path=None):
+    """{kind: count} of the state items the two images carry differently over the program's
+    own functions — a flag by its name, a dep list as `deps`, the inline refs as
+    `inline_refs`.  `LOFT_ELAB_STATE_FILE=<file>`: each differing item, one
+    `program\tfunction\tsubject\titem\tside` line (`rust` = only Rust carries it)."""
+    kinds = collections.Counter()
+    lines = []
+    for key in set(rust) | set(port):
+        if key[0] not in own:
+            continue
+        r, p = rust.get(key, set()), port.get(key, set())
+        for item in r ^ p:
+            kinds["inline_refs" if key[1] == "inline_refs" else item.split("=")[0]] += 1
+            lines.append(f"{path}\t{key[0]}\t{key[1]}\t{item}\t{'rust' if item in r else 'loft'}\n")
+    if lines and path and os.environ.get("LOFT_ELAB_STATE_FILE"):
+        with STATE_LOCK, open(os.environ["LOFT_ELAB_STATE_FILE"], "a", encoding="utf-8") as fh:
+            fh.write("".join(lines))
+    return kinds
+
+
+def contract_compare(rust, port, own):
+    """({fact: functions that differ}, {fact: functions this port does not derive}) over the
+    program's own functions."""
+    differ, missing = collections.Counter(), collections.Counter()
+    for f in own:
+        r, p = rust.get(f, {}), port.get(f, {})
+        for k, v in r.items():
+            if p.get(k) == "?":
+                missing[k] += 1
+            elif p.get(k) != v:
+                differ[k] += 1
+    return differ, missing
+
+# The rule that set each image flag (`LOFT_TRACE_VARFLAGS=*`, src/variables/mod.rs
+# `trace_flag`, mirrored by `el_vars::trace_flag`): part of the contract — the same flag on the
+# same variable is set by the same Rust rule.  Rust prints the line of the setter's call, which
+# `rust_rule` resolves to the function enclosing it; the port prints that function's name.
+REASONS = {}
+VARFLAG_LINE = re.compile(r"^\[varflag\] (\S+) (\S+) \(var=\d+\) in (\S+) @ (\S+)")
+RUST_FN = re.compile(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:const\s+|unsafe\s+)*fn\s+(\w+)")
+RUST_FNS = {}
+RUST_FNS_LOCK = threading.Lock()
+RUST_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+
+def rust_rule(loc):
+    """The Rust function enclosing `file:line:col` — a flag's reason."""
+    f, line = loc.split(":")[:2]
+    with RUST_FNS_LOCK:
+        if f not in RUST_FNS:
+            fns = []
+            try:
+                with open(os.path.join(RUST_ROOT, f), encoding="utf-8") as fh:
+                    for n, l in enumerate(fh, 1):
+                        m = RUST_FN.match(l)
+                        if m:
+                            fns.append((n, m.group(1)))
+            except OSError:
+                pass
+            RUST_FNS[f] = fns
+        fns = RUST_FNS[f]
+    name = loc
+    for n, fn in fns:
+        if n > int(line):
+            break
+        name = fn
+    return name
+
+
+def flag_reasons(text, rust):
+    """{(function, variable, flag): set of reasons} of a `[varflag]` trace."""
+    out = collections.defaultdict(set)
+    for l in text.splitlines():
+        m = VARFLAG_LINE.match(l)
+        if m:
+            flag, var, fn, why = m.groups()
+            out[(fn[2:] if fn.startswith("n_") else fn, var, flag)].add(rust_rule(why) if rust else why)
+    return out
+
+
+def reasons_compare(rust, port, own, path=None):
+    """{flag: count} of the flags both front ends set on a variable of the program's own
+    functions but by different rules.  `LOFT_ELAB_REASON_FILE=<file>`: each, one
+    `program\tfunction\tvariable\tflag\trust rules\tport rules` line."""
+    own = {f[2:] if f.startswith("n_") else f for f in own}
+    kinds = collections.Counter()
+    lines = []
+    for key in set(rust) & set(port):
+        if key[0] in own and rust[key] != port[key]:
+            kinds[key[2]] += 1
+            lines.append(f"{path}\t{key[0]}\t{key[1]}\t{key[2]}\t{','.join(sorted(rust[key]))}\t{','.join(sorted(port[key]))}\n")
+    if lines and path and os.environ.get("LOFT_ELAB_REASON_FILE"):
+        with STATE_LOCK, open(os.environ["LOFT_ELAB_REASON_FILE"], "a", encoding="utf-8") as fh:
+            fh.write("".join(lines))
+    return kinds
 
 FN_END = re.compile(r"^state 1 \d+:\d+ fn-end (.+?) (?:ret=|var \d+ )")
 
@@ -228,13 +357,13 @@ def one(loft, defs, elab, std, path, tmp, env, i):
     lib_args = [a for d in libs for a in ("--lib", d)]
     env = dict(env, LOFT_ELAB_LIB=":".join(libs))
     try:
-        r = subprocess.run([loft] + lib_args + [path], env=dict(env, LOFT_EMIT_PARSED=img),
+        r = subprocess.run([loft] + lib_args + [path], env=dict(env, LOFT_EMIT_PARSED=img, LOFT_REPORT_CONTRACT="1", LOFT_TRACE_VARFLAGS="*"),
                            capture_output=True, timeout=180)
         if r.returncode != 0 or not os.path.exists(img):
             return "noimage", "", {}
-        o = subprocess.run([defs, img, "program", std], env=env, capture_output=True, text=True,
+        o = subprocess.run([defs, img, "program", std], env=dict(env, LOFT_REPORT_STATE="1"), capture_output=True, text=True,
                            errors="replace", timeout=300)
-        m = subprocess.run([elab, img, path, std], env=env, capture_output=True, text=True,
+        m = subprocess.run([elab, img, path, std], env=dict(env, LOFT_REPORT_CONTRACT="1", LOFT_REPORT_STATE="1", LOFT_TRACE_VARFLAGS="*"), capture_output=True, text=True,
                            errors="replace", timeout=300)
     except subprocess.TimeoutExpired:
         return "differ", "timed out", {}
@@ -295,6 +424,12 @@ def one(loft, defs, elab, std, path, tmp, env, i):
     if refused:
         return "refused", refused, fns
     if mine == want:
+        own = {mm.group(1) for mm in (re.match(r"^#\d+ (\S+) type=1 ", l) for l in want) if mm}
+        CONTRACT[path] = contract_compare(contract_facts(r.stderr.decode("utf-8", "replace")),
+                                          contract_facts(m.stderr), own)
+        STATE[path] = state_compare(state_table(o.stderr), state_table(m.stderr), own, path)
+        REASONS[path] = reasons_compare(flag_reasons(r.stderr.decode("utf-8", "replace"), True),
+                                        flag_reasons(m.stderr, False), own, path)
         return "agree", "", fns
     for k, (a, b) in enumerate(zip(want, mine)):
         if a != b:
@@ -404,6 +539,16 @@ def main():
                 results[baseline.name_of(f, root, suite)] = verdict
             rel = os.path.relpath(f, os.path.dirname(root))
             refusals = " | ".join(sorted(set(detail))) if verdict == "refused" else ""
+            # An agreeing program's contract verdict: the facts its functions carry differently.
+            if verdict == "agree" and f in CONTRACT:
+                cd, _ = CONTRACT[f]
+                refusals = "contract " + ("agree" if not cd else "differ: " + ", ".join(sorted(cd)))
+                sd = STATE.get(f)
+                if sd is not None:
+                    refusals += "; state " + ("agree" if not sd else "differ: " + ", ".join(sorted(sd)))
+                rd = REASONS.get(f)
+                if rd is not None:
+                    refusals += "; reasons " + ("agree" if not rd else "differ: " + ", ".join(sorted(rd)))
             verdicts.append(f"{verdict}\t{rel}" + (f"\t{refusals}" if refusals else ""))
             if verdict == "refused":
                 reasons.update(set(detail))
@@ -431,6 +576,36 @@ def main():
     n = total = sum(tot.values()) - tot["noimage"]
     print(f"{tot['agree']} of {n} programs agree; {tot['refused']} refused, {tot['differ']} differ"
           + (f"; {tot['noimage']} the Rust front end refuses" if tot["noimage"] else ""))
+    if CONTRACT:
+        # The reimplementation contract over the programs that agree on their image: a fact a
+        # function carries differently is a behaviour the port gets wrong whatever its code
+        # says; a fact the port does not derive yet (`?`) is counted apart.
+        cagree = sum(1 for cd, _ in CONTRACT.values() if not cd)
+        cdiff, cmiss = collections.Counter(), collections.Counter()
+        for cd, cm in CONTRACT.values():
+            cdiff.update({k: 1 for k in cd})
+            cmiss.update({k: 1 for k in cm})
+        print(f"contract: {cagree} of {len(CONTRACT)} agreeing programs carry every derived fact alike"
+              + ("; differ on " + ", ".join(f"{k} {v}" for k, v in cdiff.most_common()) if cdiff else "")
+              + ("; not derived yet: " + ", ".join(f"{k} {v}" for k, v in cmiss.most_common()) if cmiss else ""))
+    if STATE:
+        # The image's function state over the programs that agree on their code: a flag the
+        # later passes read (frees, copies, the lints) that the two images carry differently.
+        sagree = sum(1 for sd in STATE.values() if not sd)
+        skinds = collections.Counter()
+        for sd in STATE.values():
+            skinds.update({k: 1 for k in sd})
+        print(f"state: {sagree} of {len(STATE)} agreeing programs carry the same function state"
+              + ("; differ on " + ", ".join(f"{k} {v}" for k, v in skinds.most_common(12)) if skinds else ""))
+    if REASONS:
+        # The rule behind each flag both front ends set: the port follows Rust's reasoning, so a
+        # flag set by another rule is a difference even where the state agrees.
+        ragree = sum(1 for rd in REASONS.values() if not rd)
+        rkinds = collections.Counter()
+        for rd in REASONS.values():
+            rkinds.update(rd)
+        print(f"reasons: {ragree} of {len(REASONS)} agreeing programs set each shared flag by the same rule"
+              + ("; differ on " + ", ".join(f"{k} {v}" for k, v in rkinds.most_common(8)) if rkinds else ""))
     fv = collections.Counter(fn_results.values())
     print(f"definitions of refused programs: {fv['agree']} of {len(fn_results)} agree; {fv['refused']} "
           f"refused, {fv['beside']} beside a refusal")

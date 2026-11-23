@@ -23,6 +23,7 @@ mod deliver;
 mod eq;
 mod files;
 mod fnval;
+pub mod hosted;
 mod parse;
 mod reflect;
 mod show;
@@ -57,6 +58,7 @@ const RUNTIME: &str = concat!(
     include_str!("loft_radix_walk.h"),
     include_str!("loft_paged_load.h"),
     include_str!("loft_keyed.h"),
+    include_str!("loft_par_move.h"),
     include_str!("loft_json.h"),
     include_str!("loft_parse.h"),
     include_str!("loft_upgrade.h"),
@@ -200,6 +202,10 @@ pub(crate) fn passed(c: CType) -> String {
 
 /// What every function of a unit shares: the program, its stores' layouts and the tuple
 /// structs the unit's functions name.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each flag is one independent fact about the unit being written"
+)]
 pub(crate) struct Cx<'a> {
     pub(crate) data: &'a Data,
     /// The `#c_twin`s, whose bodies `data` does not hold (`Data::with_c_twins_bound`).
@@ -305,6 +311,17 @@ pub(crate) struct Cx<'a> {
     /// The unit marks each statement with its loft line (`#line`), for a debugger
     /// ([`emit_program_with_source_lines`]).
     pub(crate) source_lines: bool,
+    /// Every statement records its line as the frame's site (`LOFT_C_TRACE_SITES`), for the
+    /// allocation trace's store sites; otherwise only a statement that calls a frame does.
+    pub(crate) trace_sites: bool,
+    /// The unit's functions are called from outside it (a hosted unit's exports, `@PLN206 P5`):
+    /// an OPEN unit, which takes no whole-program rewrite that changes a signature, as an
+    /// `open_world` program takes none (NATIVE.md § Optimisation tiers).
+    pub(crate) open: bool,
+    /// `@PLN206 P5` — where a hosted unit names its library's sources from: the package's
+    /// parent directory, so a fault site reads `<library>/src/<file>.loft` on every machine the
+    /// unit is adopted on, not the path of the one that built it (`Self::source_name`).
+    pub(crate) source_root: Option<String>,
     pub(crate) browser: bool,
     /// The unit is compiled to wasm32 — a page's module or a `--native-wasm` program
     /// ([`emit_wasm_program`]): no shared library can be opened there.
@@ -428,6 +445,9 @@ impl<'a> Cx<'a> {
             browser,
             wasm: browser || WASM_UNIT.with(std::cell::Cell::get),
             source_lines: SOURCE_LINES.with(std::cell::Cell::get),
+            trace_sites: crate::keys::c_trace_sites(),
+            open: false,
+            source_root: SOURCE_ROOT.with(|r| r.borrow().clone()),
             tuples: std::cell::RefCell::new(Vec::new()),
             tuple_casts: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             copy_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
@@ -528,6 +548,24 @@ impl<'a> Cx<'a> {
             .map(|l| format!("loft_ap_{}", l.rust))
     }
 
+    /// The name a fault site, a frame and a line mark give source `file`: in a hosted unit, a
+    /// library file from the package's parent directory and a standard-library file from
+    /// `default/` (as the compiled standard library names it, `bodies.rs`), so the unit is the
+    /// same text wherever it is built; in a program, the file as it was found.
+    pub(crate) fn source_name(&self, file: &str) -> String {
+        let Some(root) = &self.source_root else {
+            return file.to_string();
+        };
+        let root = root.trim_end_matches('/');
+        if let Some(rest) = file.strip_prefix(root).and_then(|r| r.strip_prefix('/')) {
+            return rest.to_string();
+        }
+        match file.rfind("/default/") {
+            Some(at) => file[at + 1..].to_string(),
+            None => file.to_string(),
+        }
+    }
+
     pub(crate) fn value_records(
         &self,
     ) -> std::rc::Rc<crate::opt::value_records::layout::ValueRecords> {
@@ -536,7 +574,7 @@ impl<'a> Cx<'a> {
                 use crate::opt::value_records::layout as vl;
                 // An OPEN program takes no whole-program rewrite (NATIVE.md § Optimisation
                 // tiers): no value records.
-                let vr = if self.data.open_world {
+                let vr = if self.data.open_world || self.open {
                     vl::ValueRecords::default()
                 } else {
                     crate::opt::value_records::value_records(self.data, self.stores, false)
@@ -1073,6 +1111,11 @@ impl<'a> Cx<'a> {
             Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
                 for f in fields {
                     self.describe_type(f.content);
+                    // A stored reference's target, which a walk that follows it reads
+                    // (`loft_par_move_rows`).
+                    if f.target != u16::MAX {
+                        self.describe_type(f.target);
+                    }
                 }
             }
             Parts::Vector(c)
@@ -1129,8 +1172,8 @@ impl<'a> Cx<'a> {
     }
 
     /// A struct's field rows, `loft_fields{tp}`: each field's byte position, its type, whether it
-    /// is a view member of a linked group (it borrows its records) and whether it is hidden (a
-    /// `#`-named field).
+    /// is a view member of a linked group (it borrows its records), whether it is hidden (a
+    /// `#`-named field), its group, and a stored reference's target type (`Field::target`).
     fn field_rows(&self, tp: u16, fields: &[crate::database::Field]) -> String {
         let list: Vec<String> = fields
             .iter()
@@ -1148,15 +1191,15 @@ impl<'a> Cx<'a> {
                     None => (0, 0),
                 };
                 format!(
-                    "{{ {}, {}, {view}, {hidden}, {group} }}",
-                    f.position, f.content
+                    "{{ {}, {}, {view}, {hidden}, {group}, {} }}",
+                    f.position, f.content, f.target
                 )
             })
             .collect();
         format!(
             "static const loft_fld loft_fields{tp}[] = {{ {} }};",
             if list.is_empty() {
-                "{ 0, 0, 0, 0, 0 }".into()
+                "{ 0, 0, 0, 0, 0, 0xFFFF }".into()
             } else {
                 list.join(", ")
             }
@@ -1984,15 +2027,51 @@ pub fn emit_unit(data: &Data, stores: &Stores, roots: &[u32]) -> Result<String, 
 ///
 /// # Errors
 /// The first function the C backend does not carry yet.
-#[expect(
-    clippy::too_many_lines,
-    reason = "the unit's assembly in one place: runtime, prototypes, bodies, the log binding"
-)]
 pub fn emit_unit_for(
     data: &Data,
     stores: &Stores,
     roots: &[u32],
     browser: bool,
+) -> Result<String, Refusal> {
+    emit_unit_with(data, stores, roots, browser, None)
+}
+
+/// `@PLN206 P4` — a hosted unit (`hosted.rs`) for the library functions `roots`, whose bridge
+/// symbols are named over the library's whole `export` set, written for the type layout
+/// `layout_fp`.
+///
+/// # Errors
+/// The first function the C backend does not carry.
+pub fn emit_hosted_unit(
+    data: &Data,
+    stores: &Stores,
+    roots: &[u32],
+    export: &std::collections::HashSet<u32>,
+    layout_fp: u64,
+    source_root: &str,
+) -> Result<String, Refusal> {
+    SOURCE_ROOT.with(|r| *r.borrow_mut() = Some(source_root.to_string()));
+    let unit = emit_unit_with(data, stores, roots, false, Some((export, layout_fp)));
+    SOURCE_ROOT.with(|r| *r.borrow_mut() = None);
+    unit
+}
+
+thread_local! {
+    /// Set for the length of one [`emit_hosted_unit`]: the directory a hosted unit names its
+    /// library's sources from (`Cx::source_name`).
+    static SOURCE_ROOT: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "the unit's assembly in one place: runtime, prototypes, bodies, the log binding"
+)]
+fn emit_unit_with(
+    data: &Data,
+    stores: &Stores,
+    roots: &[u32],
+    browser: bool,
+    hosted: Option<(&std::collections::HashSet<u32>, u64)>,
 ) -> Result<String, Refusal> {
     crate::opt::non_sentinel::begin_c_generation();
     // `#c_twin`: the C backend calls a twin's C routine and never compiles its loft body, so it
@@ -2034,6 +2113,7 @@ pub fn emit_unit_for(
     trace_reach(data, roots, &all, &fns);
     let mut cx = Cx::new(data, stores, browser);
     cx.c_twins = twins;
+    cx.open = hosted.is_some();
     cx.frames
         .set(reachable_has(data, &all, |n| n == "n_stack_trace"));
     cx.lazy
@@ -2068,6 +2148,9 @@ pub fn emit_unit_for(
     // `file_map` is the one producer of a foreign store (@PLN174): a unit that does not reach
     // it compiles `loft_at` without the foreign record's test.
     let mut out = String::new();
+    if hosted.is_some() {
+        out.push_str(&hosted::defines());
+    }
     let reached = crate::opt::names::reachable_functions(data, &all);
     let (defines, parses, reflects) = unit_defines(data, stores, &cx, &reached);
     out.push_str(&defines);
@@ -2079,7 +2162,7 @@ pub fn emit_unit_for(
     );
     out.push_str(RUNTIME);
     out.push_str(RUNTIME_END);
-    out.push_str(&c_libraries(data, &cx.ffi_libs.borrow()));
+    out.push_str(&c_libraries(data, &cx.ffi_libs.borrow(), cx.open));
     out.push_str(&cx.tr_typedefs()); // runtime types alone; a tuple may point at one
     out.push_str(&cx.typedefs());
     out.push_str(&cx.tr_protos());
@@ -2151,6 +2234,13 @@ pub fn emit_unit_for(
         wide_ledger::write(data, &fns, &out[at..]);
     }
     trace_tables(&cx);
+    if let Some((export, layout_fp)) = hosted {
+        let written = hosted::exports(&cx, export, roots, layout_fp).map_err(|why| Refusal {
+            function: data.def(roots[0]).original_name().clone(),
+            why,
+        })?;
+        out.push_str(&written);
+    }
     Ok(out)
 }
 
@@ -2253,7 +2343,11 @@ fn lazy_driver_table(
     clippy::too_many_lines,
     reason = "one pass over the declared libraries: the header, the shim's three forms, the link lines"
 )]
-fn c_libraries(data: &Data, ffi_libs: &std::collections::BTreeSet<(String, String)>) -> String {
+fn c_libraries(
+    data: &Data,
+    ffi_libs: &std::collections::BTreeSet<(String, String)>,
+    hosted: bool,
+) -> String {
     let mut out = String::new();
     // A required library is linked: the file the package ships, else its soname in the system
     // linker's spelling.  An optional one (`[c] optional-libs`) never is — it is
@@ -2438,6 +2532,31 @@ fn c_libraries(data: &Data, ffi_libs: &std::collections::BTreeSet<(String, Strin
                 "/* `#c` library {} (package {}) */",
                 lib.name, lib.pkg_dir
             );
+        } else if let Some(so) = hosted
+            .then(|| std::path::Path::new(&lib.pkg_dir).join(&lib.name))
+            // Linked by name where a run path finds it (`platform::c_rpath_arg`; none on
+            // Windows, which takes the archive below).
+            .filter(|so| {
+                crate::platform::c_rpath_arg(so.parent()).is_some()
+                    && crate::file_access::exists(so)
+            })
+        {
+            // `@PLN206 P5` — a hosted unit runs in the interpreter's process, which has the
+            // shim's shared library loaded already (`name`, the library `c_shim::build` made
+            // for the parse): linked by its own name, the unit reaches
+            // that one image, so a shim's state (a generator, a table, a handle counter) is
+            // one in the process.  A copy linked in from the archive would be a second.
+            let _ = writeln!(
+                out,
+                "/* `[c] shim` of package {}, the interpreter's shared image */",
+                lib.pkg_dir
+            );
+            for a in crate::platform::c_link_shared_args(&so)
+                .into_iter()
+                .chain(crate::platform::c_rpath_arg(so.parent()))
+            {
+                let _ = writeln!(out, "/* link: {a} */");
+            }
         } else if let Ok(archive) = crate::c_shim::cc_archive(&lib.pkg_dir, &lib.shim) {
             // Archived for the compiler that links this unit (`c_shim::cc_archive`), whatever
             // the host's static-link archiver for rustc is.  The sources are named
@@ -2693,7 +2812,16 @@ fn unit_defines(
     if crate::keys::width32_all() {
         out.push_str("#ifndef LOFT_WIDTH32\n#define LOFT_WIDTH32\n#endif\n");
     }
-    if reached.iter().any(|&d| data.def(d).name() == "n_file_map") {
+    // The standard library's `file_map`, not a library's function of the same name (the
+    // self-hosted front end's `crt::file_map` maps through its own shim): a def is named by its
+    // function name alone, so the name test is the stdlib's only with its source.
+    let reaches_std = |name: &str| {
+        reached.iter().any(|&d| {
+            let def = data.def(d);
+            def.name() == name && def.is_stdlib()
+        })
+    };
+    if reaches_std("n_file_map") {
         out.push_str("#define LOFT_FOREIGN 1\n");
     }
     // `@FR-Path-Case` — a unit that reaches the file library compares a name with the entries
@@ -2709,9 +2837,8 @@ fn unit_defines(
     }
     // `@FR-R-NoLocks`: a store is read-only only through `#lock = …`, a mapped file
     // (`file_map`) or a constant store; a unit that reaches none of them meets no locked write.
-    let locks = reached
-        .iter()
-        .any(|&d| matches!(data.def(d).name(), "n_set_store_lock" | "n_file_map"))
+    let locks = reaches_std("n_set_store_lock")
+        || reaches_std("n_file_map")
         || cx
             .consts
             .borrow()
@@ -2961,7 +3088,7 @@ fn emit_program_counted(
     if main >= data.definitions() {
         return emit_tests(data, stores, expected);
     }
-    let (main, call) = program_main(data, main)?;
+    let (main, call) = program_main(data, stores, main)?;
     let mut out = emit_unit(data, stores, &[main])?;
     let _ = write!(
         out,
@@ -2972,30 +3099,64 @@ fn emit_program_counted(
     Ok(tidy::drop_unnamed(&out, RUNTIME_END))
 }
 
-/// The program's `main` and the C statement that calls it: with nothing, or — as the
-/// interpreter's `State::execute_argv` and native's entry hand it — the program's arguments as
-/// a `vector<text>` (`loft_arguments`, the ones after its name), freed when `main` returns.
-/// Any other parameter is refused.
-fn program_main(data: &Data, main: u32) -> Result<(u32, String), Refusal> {
-    let attrs = data.def(main).attributes();
+/// The program's `main` and the C statement that calls it, as the interpreter's
+/// `State::execute_argv` and the other backends' entries call it: a declared `vector<text>`
+/// parameter receives the program's arguments (`loft_arguments`, the ones after its name); the
+/// HIDDEN return buffer `ref_return` adds to a heap-returning `main` is supplied as an ordinary
+/// caller supplies it — a vector's as a real record of `main_vector<T>`, since a vector body
+/// writes straight into its caller's record; a struct's or a data enum's as null, which its body
+/// mints; a text's as a work buffer the caller owns.  Each is freed when `main` returns.  Any
+/// other parameter is refused.
+fn program_main(data: &Data, stores: &Stores, main: u32) -> Result<(u32, String), Refusal> {
     let name = c_name(data, main);
-    match attrs {
-        [] => Ok((main, format!("{name}();"))),
-        [a] if !a.hidden
-            && matches!(a.typedef.base(), Type::Vector(e, _) if matches!(e.base(), Type::Text(_))) =>
-        {
-            Ok((
-                main,
-                format!(
-                    "{{ loft_ref loft_main_args = loft_arguments(); {name}(loft_main_args); loft_free_ref(loft_main_args); }}"
-                ),
-            ))
+    let refuse = || Refusal {
+        function: "main".into(),
+        why: "a main that takes arguments other than `vector<text>`".into(),
+    };
+    let (mut pre, mut args, mut post) = (String::new(), Vec::new(), String::new());
+    for (i, a) in data.def(main).attributes().iter().enumerate() {
+        if !a.hidden {
+            if !matches!(a.typedef.base(), Type::Vector(e, _) if matches!(e.base(), Type::Text(_)))
+            {
+                return Err(refuse());
+            }
+            let _ = write!(pre, "loft_ref loft_main_args = loft_arguments(); ");
+            args.push("loft_main_args".to_string());
+            post.push_str("loft_free_ref(loft_main_args); ");
+            continue;
         }
-        _ => Err(Refusal {
-            function: "main".into(),
-            why: "a main that takes arguments other than `vector<text>`".into(),
-        }),
+        match a.typedef.base() {
+            Type::Vector(elm, _) => {
+                let tp = data.name_type(&format!("main_vector<{}>", elm.name(data)), 0);
+                if tp == u16::MAX {
+                    args.push("loft_ref_null()".to_string());
+                    continue;
+                }
+                let size = stores.enum_parent_size(tp);
+                let b = format!("loft_main_ret{i}");
+                let _ = write!(
+                    pre,
+                    "loft_ref {b} = loft_ref_null(); loft_database_typed(&{b}, {size}, {tp}); "
+                );
+                args.push(b.clone());
+                let _ = write!(post, "loft_free_ref({b}); ");
+            }
+            Type::Reference(..) | Type::Enum(_, true, _) => {
+                args.push("loft_ref_null()".to_string())
+            }
+            Type::RefVar(t) if matches!(t.base(), Type::Text(_)) => {
+                let b = format!("loft_main_text{i}");
+                let _ = write!(pre, "loft_text {b} = {{ 0, 0, 0 }}; ");
+                args.push(format!("&{b}"));
+                let _ = write!(post, "loft_text_free(&{b}); ");
+            }
+            _ => return Err(refuse()),
+        }
     }
+    Ok((
+        main,
+        format!("{{ {pre}{name}({}); {post}}}", args.join(", ")),
+    ))
 }
 
 /// C99 for a browser page's module (`--native-c --html`, @PLN203 C6): the unit as
@@ -3015,7 +3176,7 @@ pub fn emit_browser_program(data: &Data, stores: &Stores) -> Result<String, Refu
             why: "a page without a main".into(),
         });
     }
-    let (main, call) = program_main(data, main)?;
+    let (main, call) = program_main(data, stores, main)?;
     let mut out = emit_unit_for(data, stores, &[main], true)?;
     out.push_str(ASYNCIFY_REGION);
     let _ = write!(
@@ -3053,7 +3214,7 @@ pub fn emit_esp_program(data: &Data, stores: &Stores) -> Result<String, Refusal>
     }
     ESP_UNIT.with(|s| s.set(true));
     let _reset = Reset;
-    let (main, call) = program_main(data, main)?;
+    let (main, call) = program_main(data, stores, main)?;
     let mut out = emit_unit(data, stores, &[main])?;
     let _ = write!(
         out,
@@ -4709,22 +4870,39 @@ fn unloaded_native(cx: &Cx, d: u32, ret: CType) -> Result<(String, String), Stri
     // Any other native is a Rust crate's, which a C build never links (`native_build::c_target`):
     // the interpreter's "cdylib missing or stale / a poisoned call index" reading does not apply
     // to a call the C makes by name, so the message says what does.
-    let library = cx.data.native_symbol_crates.get(def.native()).map_or_else(
-        || "its library".to_string(),
-        |krate| {
+    // The package by the crate the symbol was registered from, else by the manifest above the
+    // function's own source: a hand-written cdylib (`[library] native`) registers no crate.
+    let library = cx
+        .data
+        .native_symbol_crates
+        .get(def.native())
+        .map(|krate| {
             cx.data
                 .native_packages
                 .iter()
                 .find(|(c, _)| c.replace('-', "_") == *krate)
                 .map_or_else(|| krate.clone(), |(_, pkg_dir)| package_identity(pkg_dir).0)
-        },
-    );
+        })
+        .or_else(|| {
+            std::path::Path::new(def.position().file.as_str())
+                .ancestors()
+                .skip(1)
+                .find(|d| crate::file_access::exists(d.join("loft.toml")))
+                .map(|d| package_identity(&d.to_string_lossy()).0)
+        });
     let msg = if let Some(why) = unbuildable {
         format!("native function {}: {why}", def.native())
     } else {
         // A Rust-only native part is refused here, at build, rather than compiled into a stub
         // that panics at the call: such a release is deprecated (its native part is Rust,
         // which loft does not build), and a newer release of the library has a C part.
+        let Some(library) = library else {
+            return Err(format!(
+                "native {} (its library has only a Rust native part, which loft does not build \
+                 — take a release of it with a C part)",
+                def.original_name()
+            ));
+        };
         let package = library
             .split_whitespace()
             .next()
@@ -4822,6 +5000,20 @@ fn always_inline_body(storage: &str) -> String {
     }
 }
 
+/// `body` without its hand-over points (`FnWriter::expand_safepoints`).
+fn strip_safepoints(body: &str) -> String {
+    let mut out = String::with_capacity(body.len());
+    let mut rest = body;
+    while let Some(at) = rest.find("/*LOFT_SP*/") {
+        out.push_str(&rest[..at]);
+        rest = rest[at..]
+            .find("/*LOFT_PS*/")
+            .map_or("", |e| &rest[at + e + "/*LOFT_PS*/".len()..]);
+    }
+    out.push_str(rest);
+    out
+}
+
 fn framed(
     cx: &Cx,
     d: u32,
@@ -4834,7 +5026,17 @@ fn framed(
     let def = cx.data.def(d);
     // `@FR-R-CSplit`: a body over the size budget goes out as a chain of parts.
     let fr = format!("{name}__fr");
-    let parts = split::split(storage, &held(ret).clone(), &fr, params, body);
+    let mut parts = split::split(storage, &held(ret).clone(), &fr, params, body);
+    // `@PLN206 P7` — a body written in parts keeps no hand-over: a part's `return` leaves the
+    // part, not the routine.
+    let unsplit;
+    let body = if parts.is_some() && body.contains("/*LOFT_SP*/") {
+        unsplit = strip_safepoints(body);
+        parts = split::split(storage, &held(ret).clone(), &fr, params, &unsplit);
+        unsplit.as_str()
+    } else {
+        body
+    };
     // `@FR-R-Inline`: a body hinted inline is ALWAYS inlined into its frame wrapper, so the
     // wrapper and the body are one unit and the compiler decides once whether that unit goes
     // into the caller.  Hinted alike, gcc could take the wrapper into a loop and leave the
@@ -4885,7 +5087,7 @@ fn framed(
     let push = format!(
         "    loft_frame_push({}, {}, {});\n",
         body::c_string(&frame_name),
-        body::c_string(&def.position().file),
+        body::c_string(&cx.source_name(&def.position().file)),
         def.position().line
     );
     // The body names the texts it holds (`LOFT_HOLD`); the frame drops them on its return.

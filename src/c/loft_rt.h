@@ -146,7 +146,7 @@ static loft_text loft_store_memory(const char *const *names, uint32_t nnames) {
     for (uint32_t k = 0; k < live && k < 8; k++) {
         uint32_t i = rows[k];
         loft_usage u = us[i];
-        uint16_t kt = loft_stores[i].known;
+        uint16_t kt = LOFT_KNOWN(loft_stores[i]);
         const char *tname = kt < nnames && names[kt] ? names[kt] : "?";
         char idx[16];
         snprintf(idx, sizeof idx, "%u", i);
@@ -483,6 +483,20 @@ static uint32_t loft_ncbl = 0;
 #if defined(LOFT_DL)
 static void *loft_cbl_handles[64];
 static uint32_t loft_ncbl_handles = 0;
+#endif
+#if defined(LOFT_HOSTED) && defined(LOFT_DL)
+/* A hosted unit has no `main` to bind its libraries: the interpreter opened the unit, and with
+ * it the libraries it links (`loft_cl`, its own `[c] shim` among them).  Their handles join the
+ * ones `loft_c_bound_sym` searches, so a `#c` symbol of a package with optional libraries,
+ * reached by name (`loft_c_lazy_sym`), finds the unit's own shim — the program's global scope,
+ * which a whole program exports its shims to, does not hold a unit's.  Called by
+ * `loft_shared_init`. */
+static void loft_host_bind_libraries(void) {
+    for (uint32_t i = 0; i < loft_ncl && loft_ncbl_handles < 64; i++) {
+        void *h = loft_dl_open(loft_cl[i], LOFT_DL_LOCAL);
+        if (h) loft_cbl_handles[loft_ncbl_handles++] = h;
+    }
+}
 #endif
 
 /* A `#c` symbol in this program (its linked libraries, its shims), else in a library
@@ -846,7 +860,8 @@ static void loft_stack_overflow(const char *file, uint32_t line) {
 /* `stack_trace()` reads the frames, so a unit that reaches it keeps them in every build; any
  * other unit keeps them where the build asks for the call chain a fault prints
  * (`-DLOFT_CALL_CHAIN`, the semantics tier) and compiles the pushes away where it does not. */
-#if (defined(LOFT_FRAMES) || defined(LOFT_LEAK_SITES) || defined(LOFT_STRICT_STORES) || defined(LOFT_DOUBLE_FREE)) \
+#if (defined(LOFT_FRAMES) || defined(LOFT_LEAK_SITES) || defined(LOFT_STRICT_STORES) || defined(LOFT_DOUBLE_FREE) \
+     || defined(LOFT_ALLOC_TRACE)) \
     && !defined(LOFT_CALL_CHAIN)
 #define LOFT_CALL_CHAIN 1
 #endif
@@ -889,12 +904,38 @@ static void loft_frame_pop(void) {
 static void loft_frame_site(uint32_t line) {
     if (loft_nframes) loft_frames[loft_nframes - 1].site = line;
 }
+#ifdef LOFT_ALLOC_TRACE
+/* `LOFT_ALLOC_TRACE`'s sites (`store_census::alloc_event`): `@ <line>` before an event whose
+ * source line — the running function's — is not the last one written.  The writer records a
+ * line only before a statement that can fault, so a function that has none gives its
+ * declaration instead, written `~<line>`. */
+static void loft_trace_site(FILE *f) {
+    static LOFT_TLS uint32_t last = 0;
+    if (!loft_nframes) return;
+    const loft_frame *fr = &loft_frames[loft_nframes - 1];
+    uint32_t key = fr->site ? fr->site : fr->decl | 0x80000000u;
+    if ((key & 0x7FFFFFFFu) == 0 || key == last) return;
+    last = key;
+    fprintf(f, fr->site ? "@ %u\n" : "@ ~%u\n", (unsigned) (key & 0x7FFFFFFFu));
+}
+static void (*loft_trace_site_hook)(FILE *f) = loft_trace_site;
+#endif
 /* A test that failed left its frames pushed (`longjmp`); the next starts from none. */
 #define LOFT_FRAMES_RESET() (loft_nframes = 0)
+#define LOFT_HDEPTH ((uint32_t) loft_nframes)
 #else
 #define LOFT_FRAMES_RESET() ((void) 0)
+#ifdef LOFT_HOSTED
+/* `@PLN206 P7` — a hosted unit's call depth with no call chain to read it from: what tells a
+ * routine it is the one the interpreter called (`loft_pause_asked`). */
+static LOFT_TLS uint32_t loft_hdepth = 0;
+#define loft_frame_push(fn, file, decl) ((void) loft_hdepth++)
+#define loft_frame_pop() ((void) loft_hdepth--)
+#define LOFT_HDEPTH loft_hdepth
+#else
 #define loft_frame_push(fn, file, decl) ((void) 0)
 #define loft_frame_pop() ((void) 0)
+#endif
 #define loft_frame_site(line) ((void) 0)
 #endif
 
@@ -1449,7 +1490,7 @@ static LOFT_TLS uint32_t loft_strict_floor = 0;
 static LOFT_COLD void loft_strict_use_after_free(loft_ref r) {
     uint64_t n = loft_strict_violations++;
     if (n < 20) {
-        uint16_t kt = loft_stores[r.store_nr].known;
+        uint16_t kt = LOFT_KNOWN(loft_stores[r.store_nr]);
         const loft_free_site *w = loft_freed_site(r.store_nr);
         loft_free_site here = loft_site_here();
         fflush(stdout);
@@ -1571,8 +1612,110 @@ static void loft_note_site(uint32_t nr) {
 }
 #endif
 
+/* ── A hosted unit (`@PLN206 P4`, `-DLOFT_HOSTED`) ──────────────────────────────────────────
+ * A unit the interpreter adopts works on the interpreter's stores: `loft_stores` is the
+ * interpreter's table, whose entries are its `Store`s (`LOFT_HOST_STORE_TAIL`), and a store's
+ * birth and death are the interpreter's acts (`host_abi::HostedTable`).  Everything inside a
+ * store the unit does itself on the shared prefix.  `loft_host_stores` is the interpreter's
+ * `Stores` of the bridge call running on this thread. */
+#ifdef LOFT_HOSTED
+typedef struct {
+    uint8_t *(*table)(void *stores, uint32_t *n, uint64_t *serial);
+    uint32_t (*store_new)(void *stores);
+    void (*store_free)(void *stores, uint32_t nr);
+    uint32_t store_tail;
+    const unsigned char *(*source_dir)(void *stores, size_t *len, uint32_t *relative);
+    void (*gen_adopt)(void *stores, uint32_t slot, uint32_t kind,
+                      uint32_t (*next)(void *, uint32_t, uint32_t, unsigned char *),
+                      void (*release)(void *, uint32_t), unsigned char *ret);
+    /* `@PLN206 P7` — the debugger's pause request, and the hand-over of a routine to it. */
+    const volatile uint8_t *pause;
+    uint32_t (*handover)(void *stores, const char *key, size_t key_len, uint32_t scope,
+                         const unsigned char *entries, uint32_t n);
+} loft_hosted_table;
+static const loft_hosted_table *loft_hosted = 0;
+static LOFT_TLS void *loft_host_stores = 0;
+/* The depth of the routine a bridge call called, less one: set by the bridge, restored after. */
+static LOFT_TLS uint32_t loft_br_hdepth = 0xFFFFFFFFu;
+/* A hand-over the interpreter refused holds for the rest of the bridge call: the routine runs on
+ * compiled, and the interpreter takes the pause once it returns.  Asking again each round would
+ * cost the round a call into the interpreter. */
+static LOFT_TLS int loft_ho_off = 0;
+
+/* `@PLN206 P7` — a pause the debugger asked for, seen by the routine the interpreter called
+ * (no deeper one: that routine's frame is live under the call it is in), at a loop's head. */
+static int loft_pause_asked(void) {
+    return loft_hosted && loft_hosted->pause && *loft_hosted->pause && !loft_ho_off
+        && LOFT_HDEPTH == loft_br_hdepth + 1u;
+}
+/* One local of the routine, offered to the interpreter by name: kind 0 integer, 1 float,
+ * 2 text, 3 reference, 4 boolean or plain enum, 5 single. */
+typedef struct {
+    const char *name;
+    uint32_t kind, rs;
+    loft_word bits;
+    const char *p;
+    size_t len;
+    uint32_t rr, rp;
+} loft_ho_entry;
+static LOFT_TLS loft_ho_entry loft_hov[256];
+static LOFT_TLS uint32_t loft_nhov = 0;
+static void loft_ho_put(const char *name, uint32_t kind, loft_word bits, loft_str t, loft_ref r) {
+    if (loft_nhov >= 256) return;
+    loft_ho_entry *e = &loft_hov[loft_nhov++];
+    e->name = name;
+    e->kind = kind;
+    e->bits = bits;
+    e->p = t.p;
+    e->len = t.len;
+    e->rs = r.store_nr;
+    e->rr = r.rec;
+    e->rp = r.pos;
+}
+static loft_str loft_ho_nostr(void) { loft_str s = { 0, 0 }; return s; }
+static int loft_ho_commit(const char *key, uint32_t scope) {
+    uint32_t n = loft_nhov;
+    loft_nhov = 0;
+    int taken = (int) loft_hosted->handover(loft_host_stores, key, strlen(key), scope,
+                                            (const unsigned char *) loft_hov, n);
+    if (!taken) loft_ho_off = 1;
+    return taken;
+}
+
+/* The table as the interpreter holds it now: after a bridge call starts and after every act
+ * the interpreter does for the unit, either of which may move it. */
+static void loft_host_sync(void) {
+#ifdef LOFT_STORES_VIEW_AT
+    /* `host_abi::TableView`, kept current inside the interpreter's `Stores` before each bridge
+     * call and after each act the unit leaves to it: read in place, no call back. */
+    typedef struct { uint8_t *table; uint32_t n; uint64_t serial; } loft_table_view;
+    loft_table_view v;
+    memcpy(&v, (const char *) loft_host_stores + LOFT_STORES_VIEW_AT, sizeof v);
+    loft_stores = (loft_store_t *) v.table;
+    loft_nstores = v.n;
+    loft_stores_allocated = v.serial;
+#else
+    uint32_t n = 0;
+    uint64_t serial = 0;
+    loft_stores = (loft_store_t *) loft_hosted->table(loft_host_stores, &n, &serial);
+    loft_nstores = n;
+    loft_stores_allocated = serial;
+#endif
+    loft_hint_table = 0;
+}
+#endif
+
 static uint32_t loft_store_make(int counted) {
     uint32_t nr = 0;
+#ifdef LOFT_HOSTED
+    /* The interpreter makes the store: a live, counted one with no record. */
+    if (loft_host_stores) {
+        (void) counted;
+        nr = loft_hosted->store_new(loft_host_stores);
+        loft_host_sync();
+        return nr;
+    }
+#endif
 #ifdef LOFT_STRICT_STORES
     /* `no_slot_reuse`: every slot below the floor was made once, and stays dead once freed. */
     nr = loft_strict_floor;
@@ -1620,16 +1763,19 @@ static uint32_t loft_store_make(int counted) {
     }
     loft_st_init(s);
     s->live = 1;
-    s->known = 0xFFFF;
+    LOFT_SET_KNOWN(*s, 0xFFFF);
     s->pinned = 0;
     s->protect = 0;
     s->frame_holds = 0;
     s->orphaned = 0;
     s->closure_shares = 0;
     s->serial = 0;
+#ifdef LOFT_ALLOC_TRACE
+    s->trace_worker = loft_trace_worker;
+#endif
     if (counted) {
         s->serial = ++loft_stores_allocated;
-        LOFT_TRACE("N %llu %u\n", (unsigned long long) s->serial, s->size);
+        LOFT_TRACE("N %s %u\n", loft_trace_name(s), s->size);
     }
     return nr;
 }
@@ -1808,7 +1954,7 @@ static void loft_database(loft_ref *var, uint32_t bytes) {
     loft_set_u32(s, rec, 4, 0xFFFFu);
     loft_st_entomb_kept(s, kept, nkept);
     free(kept);
-    s->known = 0xFFFF;
+    LOFT_SET_KNOWN(*s, 0xFFFF);
 #ifdef LOFT_PARSE
     loft_perrs_reset((uint16_t) nr);
 #endif
@@ -1839,8 +1985,8 @@ static void loft_database_typed(loft_ref *var, uint32_t bytes, uint16_t tp) {
         return;
     }
     loft_database(var, bytes);
-    loft_stores[var->store_nr].known = tp;
-    loft_set_u32(&loft_stores[var->store_nr], var->rec, 4, tp);
+    LOFT_SET_KNOWN(loft_stores[var->store_nr], tp);
+    loft_set_u32(&loft_stores[var->store_nr], var->rec, 4, loft_tp_out(tp));
 }
 
 /* OpDatabase of a vector wrapper (`main_vector<T>`, Stores::mint_at_place, @FR-R-Place): a
@@ -1853,14 +1999,18 @@ static void loft_remove_claims(const struct loft_tdesc_s *T, uint16_t tp, loft_r
 
 static void loft_database_wrapper(const struct loft_tdesc_s *T, loft_ref *var, uint32_t bytes, uint16_t tp) {
     if (var->store_nr != 0xFFFF && var->rec != 0 && var->store_nr < loft_nstores
-        && !(var->rec == 1 && loft_stores[var->store_nr].known == tp)) {
+        && !(var->rec == 1 && LOFT_KNOWN(loft_stores[var->store_nr]) == tp)) {
         /* The collection the place held is released, then its handle emptied. */
         loft_remove_claims(T, tp, *var);
         loft_set_u32(&loft_stores[var->store_nr], var->rec, var->pos, 0);
         return;
     }
     loft_database(var, bytes);
-    loft_stores[var->store_nr].known = tp;
+    LOFT_SET_KNOWN(loft_stores[var->store_nr], tp);
+    /* The root carries its type at byte 4, as `OpDatabase` writes it and the typed mint does
+     * (`loft_database_typed`): `sizeof` of a reference reads it (`OpSizeofRef`), on the
+     * interpreter's side of a hosted unit too (STORE_MODEL D47). */
+    loft_set_u32(&loft_stores[var->store_nr], var->rec, 4, loft_tp_out(tp));
 }
 
 static loft_fn loft_fn_make(int64_t d, loft_ref clos) {
@@ -1873,6 +2023,14 @@ static loft_fn loft_fn_make(int64_t d, loft_ref clos) {
 static loft_fn loft_fn_of(int64_t d) {
     return loft_fn_make(d, loft_ref_null());
 }
+
+#ifdef LOFT_HOSTED
+/* `@PLN206` — a hosted unit's function values carry the interpreter's function numbers, as its
+ * stores carry the interpreter's type numbers: the unit's function `d` as the interpreter
+ * numbers it, and back (`-1`: none of the unit's, one the interpreter calls). */
+static loft_word loft_fhost(loft_word d);
+static loft_word loft_funit(loft_word h);
+#endif
 
 /* `Stores::evacuated` (`@FR-H-RefHome`): the copy each record a stored reference named was
  * evacuated to, per holder store, so a second holder in that store shares the one copy; an
@@ -2027,7 +2185,7 @@ static int loft_refree_allowed(void) {
  * (`Stores::is_own_root`): a value held inline can share its position. */
 static int loft_drop_own_root(loft_ref r, uint16_t tp) {
     return r.rec == LOFT_ST_PRIMARY && r.pos == 8 && r.store_nr < loft_nstores
-        && loft_stores[r.store_nr].live && loft_stores[r.store_nr].known == tp;
+        && loft_stores[r.store_nr].live && LOFT_KNOWN(loft_stores[r.store_nr]) == tp;
 }
 
 static void loft_drop_enter(loft_ref r, uint16_t tp) {
@@ -2063,6 +2221,9 @@ static void loft_refree_fail(uint32_t nr) {
     LOFT_EXIT(1);
 }
 
+#if defined(LOFT_STORE_DUMP) && defined(LOFT_ALLOC_TRACE)
+static void loft_store_dump_one(loft_store_t *s); /* loft_log.h */
+#endif
 static void loft_free_ref(loft_ref r) {
     if (r.store_nr == 0xFFFE) {
         loft_gen_free(r);
@@ -2094,7 +2255,20 @@ static void loft_free_ref(loft_ref r) {
         if (loft_evacs[i].old.store_nr == r.store_nr) loft_evacs[i] = loft_evacs[--loft_nevacs];
         else i++;
     }
+#ifdef LOFT_HOSTED
+    /* The interpreter releases the store (`Stores::free_named`): its own fields and its
+     * table's bookkeeping go with it. */
+    if (loft_host_stores) {
+        loft_hosted->store_free(loft_host_stores, r.store_nr);
+        loft_host_sync();
+        return;
+    }
+#endif
     if (loft_release_file_leases_hook) loft_release_file_leases_hook(r.store_nr);
+#if defined(LOFT_STORE_DUMP) && defined(LOFT_ALLOC_TRACE)
+    /* `@PLN206 P4c` — the store's final content, for `scripts/store_diff.py`. */
+    loft_store_dump_one(s);
+#endif
     s->live = 0;
     loft_store_freed(r.store_nr);
 #if defined(LOFT_STRICT_STORES) || defined(LOFT_DOUBLE_FREE)
@@ -2107,7 +2281,7 @@ static void loft_free_ref(loft_ref r) {
     if (r.store_nr + 1u == loft_strict_floor)
         while (loft_strict_floor > 0 && !loft_stores[loft_strict_floor - 1].live) loft_strict_floor--;
 #endif
-    LOFT_TRACE("F %llu\n", (unsigned long long) s->serial);
+    LOFT_TRACE("F %s\n", loft_trace_name(s));
 #ifdef LOFT_FOREIGN
     /* A foreign store's bytes go with the handle: the owner drops here. */
     loft_st_release_foreign(s);
@@ -2252,6 +2426,11 @@ static loft_ref loft_const_store(const uint32_t *words, uint32_t n) {
         s->size = n;
     }
     memcpy(s->buf, words, (size_t) n * 8);
+    /* The words past the constant's are zero, as in a fresh store: a hosted unit makes its
+     * constants at its first call, in a store the interpreter may hand back from an earlier
+     * use, whose old words would read as blocks.  (`n` drops the constant's trailing zero
+     * words, so its last record may reach past `n`.) */
+    if (n < s->size) memset(s->buf + (size_t) n * 8, 0, (size_t) (s->size - n) * 8);
     loft_st_resync(s);
     s->pinned = 1;
     s->read_only = 1; /* `Store::lock_constant`: constant data is read-only, as on the interpreter */
@@ -2603,7 +2782,7 @@ static void loft_slice_take(const struct loft_tdesc_s *T, loft_ref *var, uint32_
     if (v != 0) loft_set_u32(s, v, 4, 0);
     loft_sp_used[i] = 1;
     s->pinned = 0;
-    s->known = tp;
+    LOFT_SET_KNOWN(*s, tp);
     *var = r;
 }
 
@@ -3464,9 +3643,10 @@ typedef struct { int8_t type; uint16_t pos; int32_t start; } loft_key;
  * hidden (a `#`-named field, which `type_at` passes over). */
 /* A struct's field: its byte position, its type, whether it is a view member of a linked group
  * (it borrows its records; 2 when they are `vector<S?>` elements, whose null ones it does not
- * file), whether it is hidden (`#`-named), and the group it is in — 1 + the field number of the
- * group's owner (the member that holds the records), 0 for none. */
-typedef struct { uint16_t pos; uint16_t type; uint8_t view; uint8_t hidden; uint16_t group; } loft_fld;
+ * file), whether it is hidden (`#`-named), the group it is in — 1 + the field number of the
+ * group's owner (the member that holds the records), 0 for none — and a stored reference's
+ * target type (`Field::target`), 0xFFFF for any other field. */
+typedef struct { uint16_t pos; uint16_t type; uint8_t view; uint8_t hidden; uint16_t group; uint16_t target; } loft_fld;
 typedef struct loft_tdesc_s {
     uint8_t kind;
     uint16_t size;             /* the type's bytes */
@@ -3701,7 +3881,7 @@ static int loft_swap_in(uint16_t tp, loft_ref src, loft_ref dst, int reset_dest)
     if (src.store_nr == dst.store_nr || src.store_nr >= loft_nstores || dst.store_nr >= loft_nstores) return 0;
     if (src.rec != 1 || src.pos != 8 || dst.rec != 1 || dst.pos != 8) return 0;
     loft_store_t *a = &loft_stores[src.store_nr], *b = &loft_stores[dst.store_nr];
-    if (!a->live || !b->live || a->known != tp || b->known != tp || a->pinned || b->pinned) return 0;
+    if (!a->live || !b->live || LOFT_KNOWN(*a) != tp || LOFT_KNOWN(*b) != tp || a->pinned || b->pinned) return 0;
     /* `Store::content_swappable`: neither store locked (a lock is the slot's, and would move
      * with the content) nor serving foreign bytes nor bound to a file; only the RELEASED store's
      * protection refuses (`free_protect_depth`), a protected destination takes the content. */
@@ -3726,6 +3906,14 @@ static int loft_swap_in(uint16_t tp, loft_ref src, loft_ref dst, int reset_dest)
 #ifdef LOFT_PARSE
     loft_perrs_swap(src.store_nr, dst.store_nr);
 #endif
+    /* `LOFT_TRACE_STORE_SWAP=1` names each exchange as the interpreter does (`[swap-in]`). */
+    {
+        static int trace = -1;
+        if (trace < 0) trace = getenv("LOFT_TRACE_STORE_SWAP") != NULL;
+        if (trace)
+            fprintf(stderr, "[swap-in] store #%u takes the content of #%u (tp=%u); #%u released\n",
+                    (unsigned) dst.store_nr, (unsigned) src.store_nr, (unsigned) tp, (unsigned) src.store_nr);
+    }
     loft_free_ref(src);
     return 1;
 }
@@ -3734,15 +3922,31 @@ static int loft_swap_in(uint16_t tp, loft_ref src, loft_ref dst, int reset_dest)
  * `x = f(…)` whose result the bind gives up EXCHANGES the result's store into `*dst` without
  * the reset the copy would run first — `x`'s previous tree leaves with the released slot.
  * The emitter calls it only for a direct call whose result is given up and whose type keeps no
- * stored reference (`Cx::swap_safe`); a destination that is not its store's typed root (a first
- * bind, a witnessed local) declines here, and the caller resets and copies.  Answers 1 when it
- * exchanged.  `-DLOFT_NO_SWAP_REBIND` keeps the reset and the copy. */
-static int loft_swap_rebind(uint16_t tp, loft_ref src, loft_ref *dst) {
+ * stored reference (`Cx::swap_safe`); a destination that holds no store takes a fresh one
+ * first, and one that is not its store's typed root (a witnessed local's view) declines here,
+ * and the caller resets and copies.  Answers 1 when the result was bound (exchanged, or copied
+ * into the fresh store and given up).  `-DLOFT_NO_SWAP_REBIND` keeps the reset and the copy. */
+static int loft_swap_rebind(const loft_tdesc *T, uint16_t tp, loft_ref src, loft_ref *dst) {
 #ifdef LOFT_NO_SWAP_REBIND
-    (void) tp; (void) src; (void) dst;
+    (void) T; (void) tp; (void) src; (void) dst;
     return 0;
 #else
-    if (dst->store_nr == 0xFFFF || dst->rec != 1 || dst->pos != 8) return 0;
+    if (dst->store_nr == 0xFFFF) {
+        /* `@FR-H-SwapIn`: a destination that holds no store takes a fresh typed one and the
+         * exchange into it, reset — the bytecode's `OpDatabase` then its free-source copy.  An
+         * exchange refused copies into that store and gives the result up, as the copy does. */
+        if (src.store_nr == 0xFFFF || src.rec == 0) return 0;
+        loft_database_typed(dst, T[tp].size, tp);
+        if (loft_swap_in(tp, src, *dst, 1)) return 1;
+#ifdef LOFT_PARSE
+        loft_perrs_deliver(src, *dst, tp, 1);
+#endif
+        loft_copy_bytes(*dst, 0, src, 0, T[tp].size);
+        loft_copy_claims(T, tp, src, *dst);
+        loft_free_ref(src);
+        return 1;
+    }
+    if (dst->rec != 1 || dst->pos != 8) return 0;
     return loft_swap_in(tp, src, *dst, 0);
 #endif
 }
@@ -4077,6 +4281,21 @@ LOFT_HOT_INLINE void loft_win_grow_into(loft_win *w, loft_ref v, uint32_t size, 
     *w = t;
 }
 
+/* `@FR-Col-Capacity` through a push window: `OpPreAllocVector`'s count, reserved exactly as
+ * `loft_vec_prealloc` reserves it — which acts only while the vector has no record — and the
+ * window derived again over the record it claimed.  A window over a record takes one test; the
+ * reservation is out of line, through a copy, for the reason `loft_win_grow_into` gives. */
+LOFT_COLD static loft_win loft_win_prealloced(loft_ref v, uint32_t count, uint32_t size) {
+    loft_vec_prealloc(v, count, size);
+    return loft_win_of(v, size);
+}
+
+LOFT_HOT_INLINE void loft_win_prealloc(loft_win *w, loft_ref v, uint32_t count, uint32_t size) {
+    if (LOFT_LIKELY(w->rec != 0)) return;
+    loft_win t = loft_win_prealloced(v, count, size);
+    *w = t;
+}
+
 /* A push through the window: one comparison, one store and a bump while it fits (the element's
  * bytes as the ordinary push writes them, encoded by the caller), the growth arm otherwise. */
 LOFT_HOT_INLINE void loft_win_put8(loft_win *w, loft_ref v, uint64_t bits) {
@@ -4240,6 +4459,16 @@ LOFT_PH_PUTB(1, uint8_t)
 LOFT_HOT_INLINE loft_ph loft_ph_reserved(loft_ph h, int64_t k, uint32_t size) {
     loft_vec_reserve_run(h.v, k, size);
     return loft_ph_of(h.v, size);
+}
+
+/* `@FR-Col-Capacity` through a held push header: `OpPreAllocVector`'s known count, reserved
+ * exactly as `loft_vec_prealloc` reserves it — which acts only while the vector has no record —
+ * and the header derived again so its mints fill that record.  A header already holding the
+ * record takes one test and nothing else. */
+LOFT_HOT_INLINE void loft_ph_prealloc(loft_ph *h, uint32_t count, uint32_t size) {
+    if (LOFT_LIKELY(h->rec != 0)) return;
+    loft_vec_prealloc(h->v, count, size);
+    *h = loft_ph_of(h->v, size);
 }
 
 /* A loop's push header read as a held vector header: its record and length are current — every
@@ -4657,7 +4886,7 @@ static void loft_vec_clear_release_body(const loft_tdesc *T, uint32_t loft_ntype
         if (r0 != 0 && loft_u32(s, r0, 4) == 0) return;
     }
     if (v.rec == 1) {
-        uint16_t kt = s->known;
+        uint16_t kt = LOFT_KNOWN(*s);
         int one_field = kt < loft_ntypes && T[kt].kind == LOFT_T_STRUCT && T[kt].n == 1;
         uint16_t vec_tp = 0xFFFF;
         if (one_field) vec_tp = T[kt].fields[0].type;
@@ -4699,7 +4928,7 @@ static void loft_database_room(const loft_tdesc *T, uint32_t nt, loft_ref *var, 
 #ifndef LOFT_NO_KEEP_ROOM
     if (var->store_nr != 0xFFFF && var->rec == 1 && var->store_nr < loft_nstores
         && loft_stores[var->store_nr].live && !loft_stores[var->store_nr].frame_holds
-        && loft_stores[var->store_nr].known == tp && tp < nt && T[tp].kind == LOFT_T_STRUCT
+        && LOFT_KNOWN(loft_stores[var->store_nr]) == tp && tp < nt && T[tp].kind == LOFT_T_STRUCT
         && T[tp].n == 1) {
         uint16_t vt = T[tp].fields[0].type;
         uint16_t elem = vt < nt && T[vt].kind == LOFT_T_VECTOR ? T[vt].elem : 0xFFFF;
@@ -7514,7 +7743,7 @@ static int loft_reset_pool_root(loft_ref r, uint16_t tp, uint32_t size, const ui
 #else
     if (r.store_nr == 0xFFFF || r.rec != 1 || r.pos != 8 || r.store_nr >= loft_nstores) return 0;
     loft_store_t *s = &loft_stores[r.store_nr];
-    if (!s->live || s->pinned || s->known != tp || s->frame_holds) return 0;
+    if (!s->live || s->pinned || LOFT_KNOWN(*s) != tp || s->frame_holds) return 0;
     /* A locked store is not re-minted, nor one bound to a file or serving foreign bytes: the
      * caller walks. */
     if (s->read_only || s->mapped) return 0;

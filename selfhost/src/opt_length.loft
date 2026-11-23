@@ -47,7 +47,7 @@ fn vec_base(b: ir::Bundle, v: ir::Node, bare: &boolean) -> integer {
 }
 
 // `parser::op_writes_first_arg`
-fn writes_first(name: text) -> boolean {
+pub fn writes_first(name: text) -> boolean {
   name.starts_with("OpSet") || name.starts_with("OpPush") || name.starts_with("OpAppendStack") || name.starts_with("OpClearStack") || name.starts_with("OpFormat") || name == "OpNewRecord" || name == "OpAppendCopy" || name == "OpAppendVector" || name == "OpSliceVector" || name == "OpAppendTextBytes" || name == "OpKeepRange" || name == "OpAppendText" || name == "OpAppendCharacter" || name == "OpClearVector" || name == "OpClearText" || name == "OpClearKeyed" || name == "OpHashRemove" || name == "OpInsertVector" || name == "OpRemoveVector" || name == "OpReverseVector" || name == "OpSortVector" || name == "OpReplaceVector" || name == "OpFinishRecord"
 }
 
@@ -83,17 +83,17 @@ fn is_ref_var(t: ir::TypeT) -> boolean {
 }
 
 // The memo of `callee_param_writes`: per definition whether it was asked, and its answer.
-struct Cache {
+pub struct Cache {
   asked: vector<boolean>,
   rows: vector<vector<boolean>>,
 }
 
-fn new_cache(b: ir::Bundle) -> Cache {
+pub fn new_cache(b: ir::Bundle) -> Cache {
   Cache { asked: [for _ in 0..len(b.data.definitions) { false }], rows: [for _ in 0..len(b.data.definitions) { [] }] }
 }
 
 // `closures::callee_param_writes`: per parameter of function `d`, whether its body writes it.
-fn param_writes(b: ir::Bundle, d: integer, c: Cache) -> vector<boolean> {
+pub fn param_writes(b: ir::Bundle, d: integer, c: Cache) -> vector<boolean> {
   if c.asked[d]! {
     return c.rows[d]!;
   }

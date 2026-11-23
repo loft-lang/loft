@@ -240,18 +240,21 @@ typedef struct { const uint8_t *base; uint32_t len, elem; loft_fowner *owner; } 
 typedef struct { loft_fspan span; uint8_t header[8]; uint32_t slot_rec, slot_pos; } loft_foreign;
 #endif
 
-/* `loft_store_t`: the `Store` fields the allocator reads, and the C runtime's own beside them
- * (`known`: the type a wrapper mint gave the store's first record, 0xFFFF for any other;
- * `protect`: the calls in flight that hold this store as an argument). */
+/* `loft_store_t` (`@PLN206 P3`): the fields up to `hgen` are the interpreter's `Store`, in its
+ * order and with its types (`#[repr(C)]`), so both allocators read and write one store with one
+ * meaning — `tests/store_layout.rs` compares every offset; a flag is a `uint8_t` holding 0 or 1,
+ * a Rust `bool`.  The fields after `hgen` are this runtime's alone.  (`known`: the type of the
+ * store's root record, 0xFFFF for none; `protect`: the calls in flight that hold this store as
+ * an argument.) */
 typedef struct {
     uint8_t *buf;
     uint32_t size;
-    int live;
+    uint8_t live;
     uint16_t known;
-    int pinned;
-    int protect;
+    uint8_t pinned;
+    uint32_t protect;
     /* `Store::read_only` set by the author's `#lock = true` (`@FR-H-WriteLocked`). */
-    int read_only;
+    uint8_t read_only;
     uint64_t serial;
     loft_bits claims, referenced, removed, lazy_free, parked_set;
     /* `@FR-H-DropOnce` (`Store::released_root`): the root record's value was released by its
@@ -260,22 +263,23 @@ typedef struct {
     uint32_t parked_heads[LOFT_PARK_MAX_WORDS + 1];
     uint32_t parked_count;
     uint32_t claimed_end, free_root, wild, dead_words;
-    int needs_coalesce, lazy;
+    uint8_t needs_coalesce, lazy;
     /* `Store::defined`: the buffer was zeroed when made, and a growth zeroes its new tail. */
-    int defined;
-    /* `Store::park` off — a store loaded from an image parks nothing (`Store::load`). */
-    int no_park;
-    /* `Store::placed_foreign` (`@FR-H-RootExtent`): the live records placed here that are not
-     * elements of the root collection; while any lives, a clear does not reset the store and
-     * no exchange takes its content. */
+    uint8_t defined;
+    /* `Store::no_park` — a store loaded from an image parks nothing (`Store::load`). */
+    uint8_t no_park;
+    /* `Store::placed` (`@FR-H-RootExtent`): the live records placed here that are not elements
+     * of the root collection; while any lives, a clear does not reset the store and no exchange
+     * takes its content. */
     uint32_t *placed, nplaced, placed_cap;
-    /* `Stores::frame_held` (`@FR-G-Arg-Rebind`): the live generator frames holding this store
+    /* `Store::frame_holds` (`@FR-G-Arg-Rebind`): the live generator frames holding this store
      * as an argument, and whether its owner released it while they did. */
     uint32_t frame_holds;
-    int orphaned;
-    /* `Store::file` (`@FR-S-Mapped`, loft_mapped.h): the length in bytes of the file `buf`
-     * maps, shared — grown and cut with the file and unmapped when the store is released — and
-     * 0 for a store in memory; `map_file` is the open file (a descriptor, or a Windows handle). */
+    uint8_t orphaned;
+    /* `@FR-S-Mapped` (loft_mapped.h): the length in bytes of the file `buf` maps, shared — grown
+     * and cut with the file and unmapped when the store is released — and 0 for a store in
+     * memory; `map_file` is the open file (a descriptor, or a Windows handle).  The interpreter's
+     * own file-backed store keeps 0 here (its mapping is `Store::file`). */
     size_t mapped;
     intptr_t map_file;
     /* `src/database/closure_share.rs` — the closure-copy share count, the one reference count in
@@ -284,17 +288,58 @@ typedef struct {
      * `loft_copy_closure` alone, taken back by `loft_free_ref` alone; nothing else may read or
      * write it — find the store's owner instead. */
     uint32_t closure_shares;
+    /* `@FR-R-TableHandle`: the store's table generation — a new value whenever a table in it
+     * changes shape or its content is replaced (`loft_h_reshaped`).  A handle resolved under
+     * another value resolves again.  Never persisted. */
+    uint64_t hgen;
+#ifdef LOFT_HOST_STORE_TAIL
+    /* `@PLN206 P3` — a HOSTED unit works on the interpreter's store table: each entry is an
+     * interpreter `Store`, whose own fields follow the shared prefix in these bytes, which this
+     * runtime never reads or writes.  The host passes their length (`store::HOST_STORE_TAIL`),
+     * so `loft_stores[nr]` is the interpreter's `allocations[nr]`. */
+#if defined(LOFT_FOREIGN) || defined(LOFT_ALLOC_TRACE)
+#error "a hosted unit keeps no store field of its own: build it without LOFT_FOREIGN and LOFT_ALLOC_TRACE"
+#endif
+    unsigned char host[LOFT_HOST_STORE_TAIL];
+#endif
 #ifdef LOFT_FOREIGN
     /* `Store::foreign`: the bytes this store serves under `LOFT_FOREIGN_REC`; an owner of 0 for
      * every ordinary store. */
     loft_foreign foreign;
 #endif
-    /* `@FR-R-TableHandle`: the store's table generation — a new value whenever a table in it
-     * changes shape or its content is replaced (`loft_h_reshaped`).  A handle resolved under
-     * another value resolves again.  Never persisted.  Last: the
-     * fields the hot paths read keep their offsets. */
-    uint64_t hgen;
+#ifdef LOFT_ALLOC_TRACE
+    /* `LOFT_ALLOC_TRACE`: the `par` worker that made the store (0 the caller's thread), so each
+     * event names it `<worker>.<serial>` whichever thread writes it (`Store::trace_worker`). */
+    uint32_t trace_worker;
+#endif
 } loft_store_t;
+
+/* `@PLN206 P5` — a store's root type, as `known` and the root record's tag hold it.  A hosted
+ * unit is generated from its library alone, so its code names types by that program's numbers;
+ * the interpreter that adopts it numbers them by its own.  The two meet only here: what the unit
+ * writes into a shared store goes out through `loft_tp_out`, and what it reads comes in through
+ * `loft_tp_in`, by the maps `loft_shared_init` fills from the types' keys (`lib_ids`).  Every
+ * other build is the identity.  A raw `known` outside these macros is marked `LOFT_RAW_KNOWN`
+ * (`tests/hosted_unit.rs` holds the rule). */
+#ifdef LOFT_HOSTED
+static uint16_t *loft_tp_host;   /* the unit's type number -> the interpreter's */
+static uint32_t loft_tp_host_n;
+static uint16_t *loft_tp_unit;   /* the interpreter's -> the unit's */
+static uint32_t loft_tp_unit_n;
+static inline uint16_t loft_tp_out(uint16_t t) {
+    if (!loft_tp_host || t == 0xFFFF) return t;
+    return t < loft_tp_host_n ? loft_tp_host[t] : 0xFFFF;
+}
+static inline uint16_t loft_tp_in(uint16_t t) {
+    if (!loft_tp_unit || t == 0xFFFF) return t;
+    return t < loft_tp_unit_n ? loft_tp_unit[t] : 0xFFFF;
+}
+#else
+#define loft_tp_out(t) (t)
+#define loft_tp_in(t) (t)
+#endif
+#define LOFT_KNOWN(st) loft_tp_in((st).known)
+#define LOFT_SET_KNOWN(st, tp) ((st).known = loft_tp_out(tp))
 
 /* A header built without `loft_cc.h` (the replays of tests/c_emit.rs) keeps one copy of its
  * state: no threads. */
@@ -386,7 +431,7 @@ static void loft_heap_moved(const loft_store_t *s, uint32_t old_words, uint32_t 
     }
     if (loft_heap_limit && loft_heap_total + (new_b - old_b) > loft_heap_limit) {
         char used[32], cap[32], from[32], to[32];
-        uint16_t kt = s->known;
+        uint16_t kt = LOFT_KNOWN(*s);
         loft_heap_human(used, loft_heap_total);
         loft_heap_human(cap, loft_heap_limit);
         loft_heap_human(from, old_b);
@@ -421,9 +466,49 @@ static FILE *loft_trace_file(void) {
     }
     return f;
 }
-#define LOFT_TRACE(...) do { FILE *loft_tf_ = loft_trace_file(); if (loft_tf_) fprintf(loft_tf_, __VA_ARGS__); } while (0)
+/* The line of the events that follow (loft_rt.h, which sets it once the frames exist). */
+static void (*loft_trace_site_hook)(FILE *f);
+/* A `par` worker's name (`loft_par_job_run`; 0 on the main thread): a worker's table is a copy
+ * of its caller's, so its stores' serials repeat another thread's.  A store records the worker
+ * that made it (`trace_worker`), and the trace names it `<worker>.<serial>` as the
+ * interpreter's does — one name per store however threads interleave, and after its adoption
+ * into the caller's table. */
+static LOFT_TLS uint32_t loft_trace_worker = 0;
+/* One event, written whole (its line formatted first). */
+static void loft_trace_emit(FILE *f, const char *line) {
+    if (loft_trace_site_hook) loft_trace_site_hook(f);
+    fputs(line, f);
+}
+/* A store's name in the trace: its serial, prefixed with the worker that made it
+ * (`Store::trace_name`).  One buffer per thread, read before the next call. */
+static const char *loft_trace_name(const loft_store_t *s) {
+    static LOFT_TLS char loft_tn_[48];
+    if (s->trace_worker)
+        snprintf(loft_tn_, sizeof loft_tn_, "%u.%llu", (unsigned) s->trace_worker, (unsigned long long) s->serial);
+    else
+        snprintf(loft_tn_, sizeof loft_tn_, "%llu", (unsigned long long) s->serial);
+    return loft_tn_;
+}
+/* A `par` region's bounds (`P`, `Q`), marked where the loop's queue starts and its buffer is
+ * dropped, as the interpreter marks them (`store_census::par_mark`); usable in an expression. */
+static int loft_trace_mark(const char *m) {
+    FILE *f = loft_trace_file();
+    if (f) fprintf(f, "%s\n", m);
+    return 0;
+}
+#define LOFT_TRACE_MARK(m) loft_trace_mark(m)
+#define LOFT_TRACE(...)                                                                     \
+    do {                                                                                    \
+        FILE *loft_tf_ = loft_trace_file();                                                 \
+        if (loft_tf_) {                                                                     \
+            char loft_tb_[192];                                                             \
+            snprintf(loft_tb_, sizeof loft_tb_, __VA_ARGS__);                               \
+            loft_trace_emit(loft_tf_, loft_tb_);                                            \
+        }                                                                                   \
+    } while (0)
 #else
 #define LOFT_TRACE(...) do { } while (0)
+#define LOFT_TRACE_MARK(m) 0
 #endif
 
 static int32_t loft_st_i32(const loft_store_t *s, uint32_t rec, uint32_t fld) {
@@ -1158,7 +1243,7 @@ static uint32_t loft_st_claim(loft_store_t *s, uint32_t size) {
     if (LOFT_WRITE_REFUSED(s)) return loft_st_claim_discarded(s, size);
     uint32_t pos = loft_st_claim_inner(s, size);
     if (pos == LOFT_ST_PRIMARY) s->released_root = 0;
-    LOFT_TRACE("C %llu %d %u\n", (unsigned long long) s->serial, loft_st_i32(s, pos, 0), pos);
+    LOFT_TRACE("C %s %d %u\n", loft_trace_name(s), loft_st_i32(s, pos, 0), pos);
 #ifdef LOFT_POISON_CLAIM
     loft_st_poison_range(s, pos, 4, (uint32_t) loft_st_i32(s, pos, 0) * 8 - 4);
 #endif
@@ -1187,7 +1272,7 @@ static void loft_st_delete(loft_store_t *s, uint32_t rec) {
     /* `read_only` is immutability: nothing in a locked store changes, deletes included
      * (`Store::delete`). */
     if (LOFT_WRITE_REFUSED(s)) return;
-    LOFT_TRACE("D %llu %u\n", (unsigned long long) s->serial, rec);
+    LOFT_TRACE("D %s %u\n", loft_trace_name(s), rec);
     for (uint32_t i = 0; i < s->nplaced;) {
         if (s->placed[i] == rec) s->placed[i] = s->placed[--s->nplaced];
         else i++;
@@ -1260,14 +1345,14 @@ static uint32_t loft_st_resize_inner(loft_store_t *s, uint32_t rec, uint32_t siz
             /* The absorbed region promises nothing, as a claim's payload does not. */
             loft_st_poison_range(s, rec, (uint32_t) claim * 8, (uint32_t) (loft_st_i32(s, rec, 0) - claim) * 8);
 #endif
-            LOFT_TRACE("R %llu %u %d %u\n", (unsigned long long) s->serial, rec, loft_st_i32(s, rec, 0), rec);
+            LOFT_TRACE("R %s %u %d %u\n", loft_trace_name(s), rec, loft_st_i32(s, rec, 0), rec);
             return rec;
         }
     }
     uint32_t nw = loft_st_claim(s, size);
     memcpy(s->buf + (size_t) nw * 8 + 4, s->buf + (size_t) rec * 8 + 4, (size_t) claim * 8 - 4);
     loft_st_delete(s, rec);
-    LOFT_TRACE("R %llu %u %d %u\n", (unsigned long long) s->serial, rec, loft_st_i32(s, nw, 0), nw);
+    LOFT_TRACE("R %s %u %d %u\n", loft_trace_name(s), rec, loft_st_i32(s, nw, 0), nw);
     return nw;
 }
 

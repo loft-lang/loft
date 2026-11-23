@@ -797,6 +797,8 @@ impl Stores {
         // the slack a small struct has.
         let words = std::cmp::max(8, 1 + u32::from(self.size(tp)).div_ceil(8));
         let db = self.database(words);
+        // The store's root is a `tp` record (STORE_MODEL D48, as the C's `loft_text_target`).
+        self.allocations[db.store_nr as usize].set_known_type(tp);
         let into = DbRef {
             store_nr: db.store_nr,
             rec: db.rec,
@@ -869,7 +871,7 @@ impl Stores {
         let errors = self
             .allocations
             .get(of.store_nr as usize)
-            .filter(|s| !s.free)
+            .filter(|s| s.live)
             .map(|s| s.parse_errors.clone())
             .unwrap_or_default();
         self.text_vector(&errors)
@@ -1393,7 +1395,10 @@ impl Stores {
         // (store index, usage, created_at bytecode pos, known_type)
         let mut rows: Vec<(usize, crate::store::StoreUsage, u32, u16)> = Vec::new();
         for (i, s) in self.allocations.iter().enumerate() {
-            if s.free {
+            // The program's heap stores only: a state's value stack and its constant store are
+            // how the interpreter executes (STORE_MODEL D26), and a compiled program has
+            // neither, so the report answers the same on both backends.
+            if !s.live || s.runtime_own {
                 continue;
             }
             let u = s.usage();

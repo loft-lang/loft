@@ -759,12 +759,19 @@ impl Run<'_> {
         }
     }
 
+    /// What leaves the frame at an exit — `value`, handed back from the variable `answer`
+    /// when it is one, and every parameter — still naming a store the frame released.
+    pub(super) fn leaving(&mut self, s: &State, value: &Val, answer: Option<u16>) {
+        self.leaving_captures(s, value);
+        self.leaving_points(s, answer);
+    }
+
     /// A closure record the function hands back takes what its slots hold to the caller, which
     /// calls it there: a capture whose store this frame already released — ended on every path
     /// where it exists — is read after its end by the caller (`@FR-L-CapOwn`; loft#2210's
     /// owner-slot hand-off under `LOFT_NO_WRITE_OUT_NCC_ARM`).  Records inside records are
     /// followed through their own slots.
-    pub(super) fn leaving_captures(&mut self, s: &State, value: &Val) {
+    fn leaving_captures(&mut self, s: &State, value: &Val) {
         let mut todo: Vec<SKey> = Self::stores_of(&value.pts);
         let mut seen: BTreeSet<SKey> = BTreeSet::new();
         while let Some(rec) = todo.pop() {
@@ -789,6 +796,30 @@ impl Run<'_> {
                     if s.slots.contains_key(&k) {
                         todo.push(k);
                     }
+                }
+            }
+        }
+    }
+
+    /// A holder that outlives the frame — a parameter, the return buffer among them, or the
+    /// variable handed back — keeps the references written into it: one naming a record whose
+    /// store this frame ended on every path is read after its end by the caller
+    /// (`@FR-H-RefHome`, loft#2612).
+    fn leaving_points(&mut self, s: &State, answer: Option<u16>) {
+        let holders: Vec<u16> = self.params.iter().copied().chain(answer).collect();
+        for h in holders {
+            for k in Self::stores_of(&s.points.get(&h).cloned().unwrap_or_default()) {
+                let info = info_of(s, k);
+                if info.has(ENDED) && !info.has(LIVE) && !info.has(HANDED) {
+                    let name = self.var_name(h);
+                    self.find(
+                        "use-after-end",
+                        k.site,
+                        format!(
+                            "`{name}` leaves the function with a reference to a record whose \
+                             store this frame released: the caller reads it after its end"
+                        ),
+                    );
                 }
             }
         }

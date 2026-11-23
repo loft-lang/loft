@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// @PLN203 C-gap: a declared twin case of process_run disagrees on the C — its `--native` runs as `--native-rust` until then.
+// @PLN203 C-gap: the run under the emulated Windows host keeps `--native-rust` until the C
+// runtime emulates that host (`windows_rules.rs`); every other leg here runs on the C.
 //
 // @PLN179 strand 4 — `lib/process`, on both backends.  The library's own test files carry
 // the cells and their hand-computed values: `command.loft` the composition matrix (a value
@@ -49,7 +50,7 @@ fn the_composition_matrix_holds_interpreted() {
 
 #[test]
 fn the_composition_matrix_holds_compiled() {
-    run("--native-rust", "command.loft");
+    run("--native", "command.loft");
 }
 
 // approved exemption: `run.loft` and `start.loft` drive `sh -c`, `cat`, `printf`, `sleep` and `/dev/zero`, which have no Windows equivalent; Windows substitutes: the composition matrix above, and `windows_rules::a_loft_programs_stop_takes_what_its_child_started`
@@ -64,7 +65,7 @@ mod spawns_sh {
 
     #[test]
     fn no_stream_is_left_without_a_reader_compiled() {
-        run("--native-rust", "run.loft");
+        run("--native", "run.loft");
     }
 
     // `lines.loft` — the streaming view (@PLN179 strand 4b): the design's gate probes, each
@@ -79,7 +80,7 @@ mod spawns_sh {
 
     #[test]
     fn lines_stream_as_they_arrive_compiled() {
-        run("--native-rust", "lines.loft");
+        run("--native", "lines.loft");
     }
 
     #[test]
@@ -89,7 +90,7 @@ mod spawns_sh {
 
     #[test]
     fn a_started_program_and_its_tree_compiled() {
-        run("--native-rust", "start.loft");
+        run("--native", "start.loft");
     }
 
     #[test]
@@ -99,12 +100,13 @@ mod spawns_sh {
 
     #[test]
     fn a_stop_takes_the_tree_compiled() {
-        run("--native-rust", "../tests-unix/tree.loft");
+        run("--native", "../tests-unix/tree.loft");
     }
 
     #[test]
     fn a_started_program_and_its_tree_under_the_emulated_windows_host() {
         run_on("--interpret", "start.loft", "windows");
+        // The C runtime does not emulate the Windows host yet (`windows_rules.rs`).
         run_on("--native-rust", "start.loft", "windows");
         run_on("--interpret", "../tests-unix/tree.loft", "windows");
     }
@@ -188,7 +190,7 @@ fn a_type_trigger_loads_the_library_with_nothing_naming_it() {
         "fn main() {\n  w = \"a b\";\n  c: Command = \"printf %s|{w}|\";\n  r = c.run();\n  println(\"{r.ok} {r.stdout}\");\n}\n",
     )
     .expect("script");
-    for backend in ["--interpret", "--native-rust"] {
+    for backend in ["--interpret", "--native"] {
         let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .arg(backend)
             .arg(dir.join("p.loft"))

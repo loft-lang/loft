@@ -16,9 +16,8 @@ use crate::host_abi::LAYOUT_FP_SYMBOL;
 use crate::host_abi::{HOST_ABI, HostTable, LibArg};
 use crate::keys::DbRef;
 use crate::opt::native_key::{
-    artifact_sources, auto_cdylib_stem, contributing_fingerprint, fn_numbering_fingerprint,
-    library_export_set, mix_fp, platform_cdylib_name, source_content_hash, source_newer_than,
-    type_layout_fingerprint,
+    artifact_sources, auto_cdylib_stem, contributing_fingerprint, library_export_set, mix_fp,
+    platform_cdylib_name, source_content_hash, source_newer_than,
 };
 use std::collections::HashSet;
 
@@ -207,7 +206,177 @@ pub static HOST_TABLE: HostTable = HostTable {
     call_ref: host_call_ref,
     type_id: crate::lib_ids::host_type_id,
     fn_id: crate::lib_ids::host_fn_id,
+    hosted: &HOSTED_TABLE,
 };
+
+/// `@PLN206 P4` — the stores a hosted C unit works on are this interpreter's: the table it
+/// indexes, and the two acts it leaves to the interpreter.
+pub static HOSTED_TABLE: crate::host_abi::HostedTable = crate::host_abi::HostedTable {
+    table: hosted_table,
+    store_new: hosted_store_new,
+    store_free: hosted_store_free,
+    store_tail: crate::store::HOST_STORE_TAIL as u32,
+    source_dir: hosted_source_dir,
+    gen_adopt: hosted_gen_adopt,
+    pause: &crate::debugger::INTERRUPT,
+    handover: hosted_handover,
+};
+
+/// `HostedTable::handover` — the interpreter running this bridge call takes the routine over.
+unsafe extern "C" fn hosted_handover(
+    _stores: *mut Stores,
+    key: *const u8,
+    key_len: usize,
+    scope: u32,
+    entries: *const crate::host_abi::HandoverEntry,
+    n: u32,
+) -> u32 {
+    let state = crate::extensions::host_state();
+    if state.is_null() {
+        return 0;
+    }
+    // SAFETY: the unit's key bytes and its entry array, valid for this call.
+    let key = unsafe { std::slice::from_raw_parts(key, key_len) };
+    let entries = unsafe { std::slice::from_raw_parts(entries, n as usize) };
+    let Ok(key) = std::str::from_utf8(key) else {
+        return 0;
+    };
+    u32::from(unsafe { (*state).accept_handover(key, scope as u16, entries) })
+}
+
+/// A generator a hosted unit made, driven by the interpreter (`@PLN206`): each step runs the
+/// unit's frame to its next `yield` (`loft_shared_gen_next`), and the handle's release gives the
+/// frame back (`loft_shared_gen_free`).
+struct HostedGen {
+    stores: *mut Stores,
+    slot: u32,
+    kind: u32,
+    next: crate::host_abi::GenNext,
+    free: crate::host_abi::GenFree,
+    ended: bool,
+}
+
+impl HostedGen {
+    fn step(&mut self, stores: &mut Stores) -> Option<LibArg> {
+        if self.ended {
+            return None;
+        }
+        let mut out = LibArg::ZERO;
+        // SAFETY: the unit's own step for its own frame, on the stores it works on.
+        if unsafe { (self.next)(stores, self.slot, self.kind, &raw mut out) } == 0 {
+            self.ended = true;
+            return None;
+        }
+        Some(out)
+    }
+}
+
+impl crate::codegen_runtime::LoftCoroutine for HostedGen {
+    fn next_i64(&mut self, stores: &mut Stores) -> i64 {
+        self.step(stores)
+            .map_or(crate::codegen_runtime::COROUTINE_EXHAUSTED, |a| a.scalar)
+    }
+
+    fn next_text(&mut self, stores: &mut Stores) -> String {
+        match self.step(stores) {
+            Some(a) if !a.text_ptr.is_null() => {
+                // SAFETY: the unit's yielded bytes, valid until its next step.
+                let b = unsafe { std::slice::from_raw_parts(a.text_ptr, a.text_len) };
+                String::from_utf8_lossy(b).into_owned()
+            }
+            _ => crate::store::STRING_NULL.to_string(),
+        }
+    }
+
+    fn next_dbref(&mut self, stores: &mut Stores) -> DbRef {
+        self.step(stores).map_or(DbRef::NULL, |a| a.dbref)
+    }
+
+    fn done(&self) -> bool {
+        self.ended
+    }
+}
+
+impl Drop for HostedGen {
+    fn drop(&mut self) {
+        // SAFETY: the interpreter's stores the frame was made on, alive while it runs.
+        unsafe { (self.free)(self.stores, self.slot) };
+    }
+}
+
+/// `HostedTable::gen_adopt`.
+unsafe extern "C" fn hosted_gen_adopt(
+    stores: *mut Stores,
+    slot: u32,
+    kind: u32,
+    next: crate::host_abi::GenNext,
+    free: crate::host_abi::GenFree,
+    ret: *mut LibArg,
+) {
+    let coro: Box<dyn crate::codegen_runtime::LoftCoroutine> = Box::new(HostedGen {
+        stores,
+        slot,
+        kind,
+        next,
+        free,
+        ended: false,
+    });
+    // SAFETY: as `hosted_table`; `Stores` is the `UnsafeCell`'s only field.
+    let cell = unsafe { &*(stores.cast::<std::cell::UnsafeCell<Stores>>()) };
+    let handle = crate::codegen_runtime::alloc_coroutine_held(cell, coro);
+    // SAFETY: the bridge's answer slot.
+    unsafe { (*ret).dbref = handle };
+    let stores = unsafe { &mut *stores };
+    stores.hosted_view = crate::host_abi::TableView::of(stores);
+}
+
+/// The program's directory, for a hosted unit's `source_dir()` and its relative paths.
+unsafe extern "C" fn hosted_source_dir(
+    stores: *mut Stores,
+    len: *mut usize,
+    relative: *mut u32,
+) -> *const u8 {
+    // SAFETY: as `hosted_table`.
+    let stores = unsafe { &*stores };
+    unsafe {
+        *len = stores.source_dir.len();
+        *relative = u32::from(stores.program_relative);
+    }
+    stores.source_dir.as_ptr()
+}
+
+/// The table's address and length, and the store counter, for a hosted unit's `loft_stores`.
+unsafe extern "C" fn hosted_table(stores: *mut Stores, n: *mut u32, serial: *mut u64) -> *mut u8 {
+    // SAFETY: the unit calls this only inside a bridge call, with the `Stores` it was handed.
+    let stores = unsafe { &mut *stores };
+    unsafe {
+        *n = stores.allocations.len() as u32;
+        *serial = stores.stores_allocated;
+    }
+    stores.allocations.as_mut_ptr().cast()
+}
+
+/// A store for the unit's `loft_store_make`: live, counted, no record yet.
+unsafe extern "C" fn hosted_store_new(stores: *mut Stores) -> u32 {
+    // SAFETY: as `hosted_table`.
+    let stores = unsafe { &mut *stores };
+    let nr = u32::from(stores.null_named("__hosted").store_nr);
+    stores.hosted_view = crate::host_abi::TableView::of(stores);
+    nr
+}
+
+/// The unit's `loft_free_ref`, past its own checks: the interpreter's release.
+unsafe extern "C" fn hosted_store_free(stores: *mut Stores, nr: u32) {
+    // SAFETY: as `hosted_table`.
+    let stores = unsafe { &mut *stores };
+    let r = DbRef {
+        store_nr: nr as u16,
+        rec: 0,
+        pos: 0,
+    };
+    stores.free_named(&r, "__hosted");
+    stores.hosted_view = crate::host_abi::TableView::of(stores);
+}
 
 /// @PLN199 D2 / D3 — the host's coroutine table as a library cdylib sees it: the runtime's
 /// own (`CoroutineHost::HERE`) for a compiled generator, and the interpreter running this
@@ -325,6 +494,10 @@ pub(crate) unsafe extern "C" fn host_call_ref(
     } else {
         unsafe { (*state).call_back(d_nr, closure, args) }
     };
+    // The call made and freed stores: a hosted unit reads the table again from this view
+    // (`loft_host_sync`), which only the interpreter keeps current.
+    let stores = unsafe { &mut *stores };
+    stores.hosted_view = crate::host_abi::TableView::of(stores);
     unsafe { *ret = result };
 }
 
@@ -585,7 +758,6 @@ pub struct ArtifactKey {
 /// When the package's `native-auto/` directory or its build lock cannot be made.
 pub fn adopt_shared_cdylib(
     data: &Data,
-    stores: &Stores,
     export_set: &HashSet<u32>,
     pkg_dir: &str,
     pending: &[String],
@@ -597,16 +769,16 @@ pub fn adopt_shared_cdylib(
     // them, reused by a consumer whose table differs, read the WRONG type and corrupted
     // (the moros GLB header wrote 8-byte fields for `as i32` → version 0).  A literal build
     // still folds the caller's layout into its key for that reason.
-    let layout_fp = type_layout_fingerprint(stores);
-    // @PLN199 G0c — an artifact that names its ids by key (`lib_ids`) runs in any program
-    // that has those keys, so neither the program's type table nor its function numbering is
-    // part of what it is built for: the loft that built it and the sources it carries are.
-    // A literal build (`LOFT_NO_LIB_IDS=1`) still serves one program, and keeps both.
-    let program_fp = if std::env::var_os("LOFT_NO_LIB_IDS").is_some() {
-        mix_fp(layout_fp, fn_numbering_fingerprint(data, export_set))
-    } else {
-        0
-    };
+    // A hosted C unit (`@PLN206 P5`) names types by the numbers of the program that generated it
+    // and translates them by key where they cross into the stores (`loft_tp_out`, `loft_tp_in`),
+    // so it runs in any program: neither the program's type table nor its function numbering is
+    // part of what it is built for, only the loft that built it and the sources it carries.  A
+    // unit built with the verify's switches or without its safepoints (`LOFT_NO_HANDOVER`) is
+    // another artifact: its own key.
+    let program_fp = 1
+        | (u64::from(crate::keys::poison_claim()) << 1)
+        | (u64::from(crate::keys::hosted_planted()) << 2)
+        | (u64::from(crate::keys::no_handover()) << 3);
     // And WHICH packages were compiled in.  The artifact carries the code of every library
     // it reaches, a dependency's included, so two runs that resolved `use probepkg` to
     // different versions build different libraries — with the SAME layout when the versions

@@ -1,0 +1,2 @@
+# The public library functions a hosted C unit leaves interpreted, and why
+# (scripts/hosted_coverage.py; only shrinks).  <package>\t<function>\t<why>

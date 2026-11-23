@@ -281,6 +281,14 @@ pub struct Vars {
   pub retype_to: vector<ir::TypeT>,
   // The bind `object_into` builds into declares its local (`assignment`'s `declaring`).
   pub bind_declares: boolean = false,
+  // The local whose binding the slice bind being lowered STARTS (`binding_starts`), or -1.
+  pub bind_starts: integer = -1,
+  // loft#1540 — the value-const variable the `for` being read walks the elements of, or -1:
+  // the loop variable it binds is a view of it, read-only too (`mark_const_view`).
+  pub const_loop_root: integer = -1,
+  // `Parser::foreign_bound` (`@FR-Const-Foreign`, @C139): the locals whose first binding is a
+  // `-> const T` producer's value — value-const, and foreign to any later bind of them.
+  pub foreign_bound: vector<integer>,
   // `Parser::lambda_counter`: the lambdas this body made, naming the next `__lambda_<fn>_<N>`
   pub lambdas: integer = 0,
   // `Parser::expected` for the one node a bind is about to read (`expect_node`): the type its
@@ -311,6 +319,25 @@ pub struct Vars {
   // A slice about to be walked reversed (`rev(v[..k])` in a comprehension, `reverse_iterator`):
   // the slice's walk starts at its top and needs no `_next`.  Consumed by the slice.
   pub rev_slice: boolean = false,
+  // `unordered_iterator` (`@FR-Col-Unordered`): the `for` source was written `unordered(c)`; the
+  // keyed walk takes it (a hash's slot-order snapshot, `n_hash_unsorted`).
+  pub unordered_walk: boolean = false,
+  // `fit_armed` / `fuse_fit_test` (`@FR-E-Uncomp-Seen`): the read of the narrow place a compound
+  // step just stored into (empty for none), the `_fit_N` temp a `!place` in the next `if`'s
+  // condition took (-1 until one did), and whether that condition is being read.
+  pub fit_read: vector<ir::Node> = [],
+  pub fit_var: integer = -1,
+  pub fit_cond: boolean = false,
+  // The plain enum a bare variant name resolves in first (`enum_hint`, `@FR-T-Chk-Var`): set
+  // while an item is checked at an enum element; -1 elsewhere.
+  pub enum_hint: integer = -1,
+  // H7's loop buffer partners, `buf * 65536 + partner` (`rotate_loop_retbufs`).
+  pub rot_partners: vector<integer> = [],
+  // `@FR-F-ParamTuple`'s copy seeds, built at the start of pass 2 (`tuple_param_seeds`): the
+  // shadow of each, and its copy's code and type.
+  pub tp_seed_shadows: vector<integer> = [],
+  pub tp_seed_codes: vector<ir::Node> = [],
+  pub tp_seed_types: vector<ir::TypeT> = [],
   // `Variable::captured`: the locals a closure built in this body reads (second pass)
   pub captured: vector<integer>,
   pub lambda_node: integer = -1,
@@ -473,8 +500,52 @@ pub fn set_defined(v: Vars, nr: integer) {
   v.defined[nr] = true;
 }
 
-pub fn set_value_const(v: Vars, nr: integer) {
+// `Function::trace_flag` (`LOFT_TRACE_VARFLAGS=<name>|*`): the line the Rust front end prints
+// where a flag the image carries is set, in its format, `why` standing in its location: the name
+// of the Rust rule (the function enclosing its setter call) this site mirrors.  The rule that set
+// a flag is part of the reimplementation contract (`elab_gate.py`), so every write of one of
+// these flags goes through a setter below.
+fn trace_flag(v: Vars, flag: text, nr: integer, why: text) {
+  want = env_variable("LOFT_TRACE_VARFLAGS");
+  if len(want) > 0 && nr >= 0 && nr < len(v.vars) {
+    nm = name_of(v, nr);
+    if want == "*" || want == nm {
+      eprintln("[varflag] {flag} {nm} (var={nr}) in {v.name} @ {why}");
+    }
+  }
+}
+
+// `Function::set_value_const`
+pub fn set_value_const(v: Vars, nr: integer, why: text) {
+  trace_flag(v, "value_const", nr, why);
   v.vars[nr].value_const = true;
+}
+
+// `Function::set_skip_free`: the variable's store is not this frame's to free.
+pub fn set_skip_free(v: Vars, nr: integer, why: text) {
+  trace_flag(v, "skip_free", nr, why);
+  v.vars[nr].skip_free = true;
+}
+
+// `Function::set_captured`: a closure built in this body captures the variable.
+pub fn set_captured(v: Vars, nr: integer, why: text) {
+  trace_flag(v, "captured", nr, why);
+  if !v.captured.contains(nr) {
+    v.captured += [nr];
+  }
+  v.vars[nr].captured = true;
+}
+
+// `Function::mark_user_appended`: the program's own `+=` wrote into the variable's content.
+pub fn mark_user_appended(v: Vars, nr: integer, why: text) {
+  trace_flag(v, "user_appended", nr, why);
+  v.vars[nr].user_appended = true;
+}
+
+// `Function::mark_copy_bound`: the variable was bound by a copy of another value.
+pub fn mark_copy_bound(v: Vars, nr: integer, why: text) {
+  trace_flag(v, "copy_bound", nr, why);
+  v.vars[nr].copy_bound = true;
 }
 
 // `Function::in_use`: count a use (or take one back).
@@ -568,6 +639,18 @@ pub fn unregister_work_ref(v: Vars, nr: integer) {
     }
   }
   v.work_refs = kept;
+  // A work ref substituted out names no storage: no free, and no leaked store (loft#906).
+  if nr >= 0 && nr < len(v.vars) {
+    set_skip_free(v, nr, "unregister_work_ref");
+  }
+}
+
+// `Function::retire_work_buffer_ref` (`@FR-R-WorkBuffer`'s transitive clause): work ref `nr`
+// became this function's own work-buffer parameter, so it leaves the refs this frame mints for
+// its callees — no work ref, no caller's hidden buffer.
+pub fn retire_work_buffer_ref(v: Vars, nr: integer) {
+  v.work_refs = [for w in v.work_refs if w != nr { w }];
+  v.vars[nr].caller_hidden_buf = false;
 }
 
 pub fn mark_built(v: Vars, nr: integer) {
@@ -592,7 +675,8 @@ pub fn drop_use(v: Vars, nr: integer) {
   }
 }
 
-pub fn mark_user_named(v: Vars, nr: integer) {
+pub fn mark_user_named(v: Vars, nr: integer, why: text) {
+  trace_flag(v, "user_named", nr, why);
   v.vars[nr].user_named = true;
 }
 
@@ -1071,6 +1155,10 @@ pub fn work_ref(v: Vars, t: ir::TypeT) -> integer {
     v.work_ref += 1;
   }
   nr = add_variable(v, "__ref_{v.work_ref}", t);
+  // (A `__ref_N` name is a site within one pass only: the mint claims the flags, and a
+  // `skip_free` a substitution left on the name the other pass used is no longer true —
+  // a freshly minted buffer has a use, loft#1082.)
+  v.vars[nr].skip_free = false;
   v.work_refs = sorted_in(v.work_refs, nr);
   v.ref_sites += [RefSite { nr: nr, site: v.site }];
   nr
@@ -1145,8 +1233,8 @@ pub fn rebind_witness(v: Vars, p: integer) -> integer {
     }
   }
   orig = work_ref(v, tp(v, p));
-  v.vars[orig].skip_free = true;
-  mark_inline(v, orig);
+  set_skip_free(v, orig, "ensure_rebind_witness");
+  mark_inline(v, orig, "ensure_rebind_witness");
   v.rebind_params += [p];
   v.rebind_origs += [orig];
   orig
@@ -1155,7 +1243,8 @@ pub fn rebind_witness(v: Vars, p: integer) -> integer {
 // `Function::work_refs_p2`: the second pass's `__ref_p2_N`, a record literal's own buffer.
 // `Function::mark_inline_ref`: the work-ref is nulled where it is first used, never at the top
 // — a set, so a mark the first pass made and the second makes again counts once.
-pub fn mark_inline(v: Vars, nr: integer) {
+pub fn mark_inline(v: Vars, nr: integer, why: text) {
+  trace_flag(v, "inline_ref", nr, why);
   if !v.inline_refs.contains(nr) {
     v.inline_refs += [nr];
   }
@@ -1244,6 +1333,12 @@ pub fn stored(v: Vars) -> ir::Function {
   // `Function::rebind_orig` is stored per variable: the witness of each rebound parameter.
   for p in v.rebind_params {
     f.variables[p].rebind_orig = v.rebind_origs[p#index] ?? 65535;
+  }
+  // `Variable::captured`: a local a closure built in this body captures (`set_captured`).
+  for c in v.captured {
+    if c >= 0 && c < len(f.variables) {
+      f.variables[c].captured = true;
+    }
   }
   for n in v.names {
     f.names += [ir::NameNr { name: n.name, nr: n.nr }];

@@ -10,6 +10,15 @@
 #ifndef LOFT_OS_H
 #define LOFT_OS_H
 
+/* Floating-point arithmetic is rounded at every operation, as the interpreter rounds it: no
+ * `a * b + c` fused into one instruction rounded once.  Clang fuses by default, even under
+ * `-std=c11`; GCC does not in an ISO mode and warns on the pragma. */
+#if defined(__clang__)
+#pragma STDC FP_CONTRACT OFF
+#elif defined(_MSC_VER)
+#pragma fp_contract(off)
+#endif
+
 /* The OS beyond ISO C — a monotonic clock, a path's kind, directories, truncate — is POSIX where
  * the platform is one (`LOFT_POSIX`); `-DLOFT_NO_POSIX` builds against ISO C alone, where the
  * clock is `clock()` and the directory operations answer Other.  WASI (wasm32-wasi) is POSIX for

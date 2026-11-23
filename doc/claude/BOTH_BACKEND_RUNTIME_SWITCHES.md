@@ -200,6 +200,12 @@ write that never prefills and a callee's buffer is minted once per caller activa
 
 ## Runtime: the free tree
 
+The allocator's seven policy switches below (`LOFT_NO_PARK`, `LOFT_NO_LAZY_FREE`,
+`LOFT_NO_TOMBSTONE`, `LOFT_NO_FREE_FOOTER`, `LOFT_NO_WILD_BUMP`, `LOFT_NO_CARVE_IN_PLACE`,
+`LOFT_NO_WILDERNESS`) reach a C build too: the driver adds the `-DLOFT_NO_*` of the same name,
+and the allocator differential holds the two runtimes byte for byte under each (C_BACKEND.md
+§ What switching to C loses).
+
 **Free-block footers (@PLN157 § V-v, default-ON, both backends, `@FR-H-FreeFooter`):** a
 store's FREE block carries its size at both ends, so a record delete coalesces BACKWARD in
 O(1) off the footer (tree-confirmed — claimed data can spell a false footer) instead of
@@ -223,7 +229,7 @@ that cannot grow in place, of a record nothing claimed follows, grows the store 
 record where it is — moving it left its old block as a hole beside the new one at every
 doubling of a tail buffer.  **`LOFT_NO_TAIL_GROW=1`** (interpreter; read once) moves it again:
 the A/B for a footprint, and a bisect step for a store-layout fault.  The C runtime has no
-switch, as for the wilderness.
+switch for it.
 
 **A text loop variable borrows its element on both backends (`@FR-R-TextBorrow`,
 @PLN198):** the interpreter binds `for p in words` over a `vector<text>` as a `Str` view under

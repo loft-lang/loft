@@ -3047,3 +3047,16 @@ Writing heap.md's rules shrank operational.md's D-op-1: the heap/store steps it 
 *"unwritten … the interpreter remains their spec"* gained a written contract.  The
 free-discipline conformance row once said "0 open" while ownership.md's register carried an
 open entry, which is why it now points at that register's own `OPEN` line.
+
+## H-SwapIn: the keyed collections, arrays and child records move whole (2026-11-21)
+
+`(H-SwapIn)` listed the keyed collections, arrays and child records among what keeps the copy,
+while `(H-SwapKeyed)` reasoned that a keyed collection's own pointers are record numbers inside
+its store and so survive the exchange.  The C runtime (`swap_safe`) had exchanged such records
+all along; the interpreter (`tree_holds_no_stored_refs`) copied them (STORE_MODEL D39).  Owner's
+ruling: the rule takes `(H-SwapKeyed)`'s reasoning, so only a stored reference keeps the copy.
+Probed before the change on both backends under `LOFT_STRICT_STORES=1` — a record holding a
+`hash`, `sorted`, `index`, child records, and a vector beside a keyed collection of its element
+type, rebound from a copying call: every answer equal to the copy path's
+(`LOFT_NO_STORE_SWAP=1`), the hand-computed ones exact.  Guard:
+`tests/store_swap.rs::a_record_holding_keyed_collections_or_children_moves_whole_on_both_backends`.

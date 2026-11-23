@@ -672,7 +672,9 @@ fn store_type(e: el::El, t: ir::TypeT, field: boolean) -> integer {
     },
     TyEnum { n } => enum_content(e, n),
     // A nullable struct enum's slot is the enum's record (its null the zero tag).
-    TyOptional { inner } => match inner { TyEnum { n, is_ref } => if is_ref { enum_content(e, n) } else { -1 }, TyInteger { spec: ns } => if el_types::int4(ns) { int_part(e, ns, el::NONE, true) } else if el_types::nullable_scalar_elem(e, t) == "integer" { schema_type(e, "integer") } else { -1 }, TyFloat => known(e, "float"), TyBoolean => known(e, "boolean"), TyText { dep: _ } => known(e, "text"), _ => -1 },
+    // (A nullable plain enum is stored as the enum's byte, its null inside: `vector<C?>` is laid
+    // out as `vector<C>`.)
+    TyOptional { inner } => match inner { TyEnum { n, is_ref: _ } => enum_content(e, n), TyInteger { spec: ns } => if el_types::int4(ns) { int_part(e, ns, el::NONE, true) } else if el_types::nullable_scalar_elem(e, t) == "integer" { schema_type(e, "integer") } else { -1 }, TyFloat => known(e, "float"), TyBoolean => known(e, "boolean"), TyText { dep: _ } => known(e, "text"), _ => -1 },
     TyBoolean => known(e, "boolean"),
     TyFloat => known(e, "float"),
     TySingle => known(e, "single"),

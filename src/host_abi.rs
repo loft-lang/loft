@@ -92,10 +92,119 @@ pub struct HostTable {
     /// or `u32::MAX`.
     pub fn_id:
         unsafe extern "C" fn(ids: *const std::ffi::c_void, key: *const u8, len: usize) -> u32,
+    /// `@PLN206 P4` — what a HOSTED C unit asks of this interpreter's stores.  Last, so the
+    /// fields a rustc artifact reads keep their offsets.
+    pub hosted: &'static HostedTable,
 }
 
 /// The [`HostTable`] layout version; a cdylib refuses a table of another.
-pub const HOST_ABI: u32 = 5;
+pub const HOST_ABI: u32 = 7;
+
+/// `@PLN206 P4` — the store table as a hosted C unit reads it, kept inside `Stores`
+/// (`Stores::hosted_view`) at an offset the unit is built with (`LOFT_STORES_VIEW_AT`): set
+/// before each bridge call and after each act the unit leaves to the interpreter, the only times
+/// the table changes while a unit runs, so the unit reads it without a call back.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct TableView {
+    pub table: *mut u8,
+    pub n: u32,
+    pub serial: u64,
+}
+
+impl Default for TableView {
+    fn default() -> Self {
+        TableView {
+            table: std::ptr::null_mut(),
+            n: 0,
+            serial: 0,
+        }
+    }
+}
+
+// SAFETY: a copy of the table's address, read only on the thread whose `Stores` holds it.
+unsafe impl Send for TableView {}
+unsafe impl Sync for TableView {}
+
+impl TableView {
+    /// The view of `stores`' table as it stands.
+    #[must_use]
+    pub fn of(stores: &mut Stores) -> TableView {
+        TableView {
+            table: stores.allocations.as_mut_ptr().cast(),
+            n: stores.allocations.len() as u32,
+            serial: stores.stores_allocated,
+        }
+    }
+}
+
+/// `@PLN206 P4` — the acts a hosted C unit leaves to the interpreter (`p3-p4-design.md`): the
+/// store table itself, and a store's birth and death, which touch the interpreter's own fields
+/// and its table's bookkeeping.  Everything inside a store the unit does itself, on the shared
+/// `loft_store_t` prefix (`store.rs`).  `#[repr(C)]`: the unit reads it by these offsets.
+#[repr(C)]
+pub struct HostedTable {
+    /// The store table: its address, its length in `*n`, and the store counter in `*serial`.
+    /// Asked again after every act below, which may move the table.
+    pub table: unsafe extern "C" fn(stores: *mut Stores, n: *mut u32, serial: *mut u64) -> *mut u8,
+    /// A fresh store with no record, live and counted: its number.
+    pub store_new: unsafe extern "C" fn(stores: *mut Stores) -> u32,
+    /// Release store `nr` as the interpreter releases one (`Stores::free_named`).
+    pub store_free: unsafe extern "C" fn(stores: *mut Stores, nr: u32),
+    /// The unit's `LOFT_HOST_STORE_TAIL`, which `store::HOST_STORE_TAIL` must equal.
+    pub store_tail: u32,
+    /// The program's directory (`Stores::source_dir`): its bytes, their count in `*len` —
+    /// what `source_dir()` answers — and in `*relative` whether a relative path resolves
+    /// against it (`Stores::program_relative`; `#cwd` and `LOFT_PATHS` turn it off).
+    pub source_dir:
+        unsafe extern "C" fn(stores: *mut Stores, len: *mut usize, relative: *mut u32) -> *const u8,
+    /// A generator the unit made, handed to the interpreter's coroutine table: its frame's
+    /// slot in the unit, the kind of what it yields (0 integer, 1 float, 2 text, 3 reference,
+    /// 4 boolean), and the unit's step and release; its handle written into `ret.dbref`.
+    pub gen_adopt: unsafe extern "C" fn(
+        stores: *mut Stores,
+        slot: u32,
+        kind: u32,
+        next: GenNext,
+        free: GenFree,
+        ret: *mut LibArg,
+    ),
+    /// `@PLN206 P7` — the debugger's pause request (`debugger::INTERRUPT`), which a unit's loop
+    /// heads read.
+    pub pause: &'static std::sync::atomic::AtomicBool,
+    /// `@PLN206 P7` — the routine at a loop head (`key`, the loop's `scope`) offers its `n`
+    /// locals ([`HandoverEntry`]); 1 when the interpreter takes the routine over from there
+    /// (`State::accept_handover`), and the unit then returns without its own releases.
+    pub handover: unsafe extern "C" fn(
+        stores: *mut Stores,
+        key: *const u8,
+        key_len: usize,
+        scope: u32,
+        entries: *const HandoverEntry,
+        n: u32,
+    ) -> u32,
+}
+
+/// `@PLN206 P7` — one local a unit's routine offers at a hand-over (`loft_ho_entry`): kind 0
+/// integer, 1 float, 2 text, 3 reference, 4 boolean or plain enum, 5 single.
+#[repr(C)]
+pub struct HandoverEntry {
+    pub name: *const std::ffi::c_char,
+    pub kind: u32,
+    pub rs: u32,
+    pub bits: i64,
+    pub p: *const u8,
+    pub len: usize,
+    pub rr: u32,
+    pub rp: u32,
+}
+
+/// A hosted unit's generator step: the frame in `slot` runs to its next `yield`, whose value
+/// of `kind` lands in `out`; 1 when it yielded, 0 when it ran to its end.
+pub type GenNext =
+    unsafe extern "C" fn(stores: *mut Stores, slot: u32, kind: u32, out: *mut LibArg) -> u32;
+/// A hosted unit's generator release: the frame in `slot` gives back what it holds.
+pub type GenFree = unsafe extern "C" fn(stores: *mut Stores, slot: u32);
 
 /// @PLN199 G0b-2 — a library artifact's table of ids (`__tid` / `__fid`): written by its
 /// `loft_shared_init` before any of its code runs, read by that code after.  The write-once

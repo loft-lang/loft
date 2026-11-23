@@ -1,0 +1,151 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — the reimplementation contract's per-function facts (src/parser/contract.rs): how a
+// function behaves as its callers and the later passes see it, beyond its code, asked of each
+// function by the predicate this front end acts on.  `LOFT_REPORT_CONTRACT=1` prints one
+// `[contract]` line per program function in the Rust line's format, and `elab_gate.py` /
+// `elab_probe.py` compare the two.  A fact this port does not derive yet prints `?`: a gap the
+// comparison shows, never a value guessed.
+use ir;
+use el;
+use el_types;
+use el_ex_call;
+use el_expressions;
+use own;
+use binds;
+use opt_split_table;
+
+// One `[contract]` line per function from definition `from` on.
+pub fn report(e: el::El, from: integer) -> text {
+  r = "";
+  for d in e.b.data.definitions {
+    if d#index < from || d.def_type != 1 || (d.code[0] ?? ir::NdNull) is NdNull {
+      continue;
+    }
+    bi = binds::hidden_return_buffer_attr(d);
+    buffer = if bi != null && bi! >= 0 && bi! < len(d.attributes) { d.attributes[bi!].name } else { "-" };
+    ops: vector<ir::Node> = [];
+    w = opt_split_table::one_op_wrapper(e.b, d#index, ops);
+    wrapper = if w >= 0 { e.b.data.definitions[w].name } else { "-" };
+    rb = el_ex_call::param_rebinds_owned(e, d#index, []);
+    rebinds = "";
+    for a in d.attributes {
+      if rb[a#index] ?? false {
+        rebinds += if rebinds == "" { a.name } else { ",{a.name}" };
+      }
+    }
+    r += "[contract] fn={d.name} buffer={buffer} bufferless_text={bit(bufferless_text(d))} borrowed_view={bit(own::returns_borrowed_view(d))} fnref_return={bit(fnref_return(d))} adopts_fresh={bit(binds::return_adopts_fresh_store(d))} store_text_instance={bit(starts_with(d.name, "n_") && d.name.contains("@"))} one_of_several={bit(own::returns_one_of_several_args(e.b, d#index))} forwards_foreign={bit(callee_forwards_foreign_store(e, d))} buffer_exits=? wrapper={wrapper} rebinds={if rebinds == "" { "-" } else { rebinds }}\n";
+  }
+  r
+}
+
+// `Parser::callee_forwards_foreign_store`: the body's tail is a call that answers a heap value
+// (a record, a vector, a struct enum — the declared type itself, no `?`) and is handed no hidden
+// heap buffer: the store it answers is the callee's, not one this function fills.  (Not the
+// port's `el_expressions::forwards_foreign_store`, which follows a tail chain to a native.)
+fn callee_forwards_foreign_store(e: el::El, d: ir::Definition) -> boolean {
+  code = d.code[0] ?? ir::NdNull;
+  if code is NdNull {
+    return false;
+  }
+  tail_forwards(e, code)
+}
+
+fn tail_forwards(e: el::El, n: ir::Node) -> boolean {
+  match unspan(n) {
+    NdCall { def_nr, args } => !hands_hidden_heap_buffer(e, def_nr, args) && heap_answer(el::def(e, def_nr).returned[0] ?? ir::TyVoid),
+    NdBlock { block } => len(block[0].operators) > 0 && tail_forwards(e, block[0].operators[-1]!),
+    NdInsert { items } => len(items) > 0 && tail_forwards(e, items[-1]!),
+    NdReturn { inner } => tail_forwards(e, inner),
+    _ => false
+  }
+}
+
+// `collect_hidden_ref_args` is not empty: a hidden parameter of a heap type handed a variable.
+fn hands_hidden_heap_buffer(e: el::El, d: integer, args: vector<ir::Node>) -> boolean {
+  for a in el::def(e, d).attributes {
+    if a.hidden && heap_answer(a.typedef[0] ?? ir::TyVoid) && (args[a#index] ?? ir::NdNull) is NdVar {
+      return true;
+    }
+  }
+  false
+}
+
+fn heap_answer(t: ir::TypeT) -> boolean {
+  match t {
+    TyReference { n: _ } => true,
+    TyVector { inner: _ } => true,
+    TyEnum { n: _, is_ref } => is_ref,
+    _ => false
+  }
+}
+
+fn bit(b: boolean) -> integer {
+  if b { 1 } else { 0 }
+}
+
+// `Definition::returns_bufferless_text`: a loft body answering a text (or `text?`) with no hidden
+// `&text` work buffer.
+fn bufferless_text(d: ir::Definition) -> boolean {
+  el_types::base(d.returned[0] ?? ir::TyVoid) is TyText && (d.code[0] ?? ir::NdNull) is NdBlock && !starts_with(d.name, "Op") && el_ex_call::text_work_buffers(d) == 0
+}
+
+// `Definition::has_fnref_return_site`: some return site — a `return` value or the body's tail —
+// calls through a function-typed PARAMETER.
+fn fnref_return(d: ir::Definition) -> boolean {
+  for s in return_sites(d) {
+    match unspan(s) {
+      NdCallRef { var } => {
+        if var >= 0 && var < len(d.variables.variables) && d.variables.variables[var].argument && el_types::base(d.variables.variables[var].type_def[0] ?? ir::TyVoid) is TyFunction {
+          return true;
+        }
+      },
+      _ => {}
+    }
+  }
+  false
+}
+
+// `Definition::return_sites`: every `return`'s value, then the body's tail where it is no
+// `return` or loop (the body read through a leading `Insert`).
+fn return_sites(d: ir::Definition) -> vector<ir::Node> {
+  sites: vector<ir::Node> = [];
+  code = d.code[0] ?? ir::NdNull;
+  returns_in(code, sites);
+  body = match code { NdInsert { items } => items[-1] ?? code, _ => code };
+  match body {
+    NdBlock { block } => {
+      if len(block[0].operators) > 0 {
+        tail = block[0].operators[-1]!;
+        if !(unspan(tail) is NdReturn) && !(unspan(tail) is NdLoop) {
+          sites += [tail];
+        }
+      }
+    },
+    _ => {}
+  }
+  sites
+}
+
+fn returns_in(n: ir::Node, sites: vector<ir::Node>) {
+  match n {
+    NdReturn { inner } => { sites += [inner]; returns_in(inner, sites); },
+    NdSpan { inner } => returns_in(inner, sites),
+    NdBlock { block } => { for o in block[0].operators { returns_in(o, sites); } },
+    NdLoop { block } => { for o in block[0].operators { returns_in(o, sites); } },
+    NdInsert { items } => { for o in items { returns_in(o, sites); } },
+    NdIf { cond, t, f } => { returns_in(cond, sites); returns_in(t, sites); returns_in(f, sites); },
+    NdSet { inner } => returns_in(inner, sites),
+    NdCall { args } => { for o in args { returns_in(o, sites); } },
+    NdCallRef { args } => { for o in args { returns_in(o, sites); } },
+    _ => {}
+  }
+}
+
+fn unspan(n: ir::Node) -> ir::Node {
+  match n {
+    NdSpan { inner } => unspan(inner),
+    _ => n
+  }
+}

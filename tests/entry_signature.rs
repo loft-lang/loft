@@ -1,6 +1,5 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// @PLN203 C-gap: main's argv and returned values do not reach the C entry as on the other backends — its `--native` runs as `--native-rust` until then.
 //
 // #618 / #629 — the ENTRY function's call must supply every argument its
 // signature declares, on BOTH backends.
@@ -49,7 +48,7 @@ fn write_probe(name: &str, src: &str) -> std::path::PathBuf {
 /// what makes these cells able to fail.
 fn both_backends(name: &str, src: &str, expect: &str) {
     let path = write_probe(name, src);
-    for backend in ["--interpret", "--native-rust"] {
+    for backend in ["--interpret", "--native"] {
         let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .args([backend])
             .arg(&path)
@@ -192,7 +191,7 @@ fn entry_declaring_argv_both_backends() {
         "argv.loft",
         "fn main(args: vector<text>) {\n  println(\"argc={len(args)}\");\n}\n",
     );
-    for backend in ["--interpret", "--native-rust"] {
+    for backend in ["--interpret", "--native"] {
         let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
             .args([backend])
             .arg(&path)
@@ -210,30 +209,28 @@ fn entry_declaring_argv_both_backends() {
     }
 }
 
-/// A plain `fn main()` takes no extra argument, so the entry call must be
-/// exactly what it always was — the common path stays byte-identical.
+/// A plain `fn main()` takes no extra argument, so the C entry calls it with none: no
+/// arguments vector and no return buffer is made for it.
 #[test]
 fn plain_entry_is_unchanged() {
     let path = write_probe("plain.loft", "fn main() {\n  println(\"plain\");\n}\n");
+    let c = fa::with_extension(&path, "c");
     let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
-        .args(["--native-rust"])
+        .arg("--emit-c")
+        .arg(&c)
         .arg(&path)
-        .env("LOFT_NO_CACHE", "1")
-        .env("LOFT_KEEP_NATIVE_RS", "1")
         .env("LOFT_TIMEOUT", "180")
         .output()
         .expect("spawn loft");
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    let rs = stderr
-        .lines()
-        .find_map(|l| l.split("source preserved at ").nth(1))
-        .and_then(|l| l.split_whitespace().next())
-        .map(std::path::PathBuf::from)
-        .expect("LOFT_KEEP_NATIVE_RS should report the generated path");
-    let src = fa::read_to_string(&rs).expect("read generated rust");
     assert!(
-        src.contains("    n_main(&cell);\n"),
-        "a plain entry must still be called with just the cell"
+        out.status.success(),
+        "--emit-c: {}",
+        String::from_utf8_lossy(&out.stderr)
     );
-    let _ = fa::remove_file(&rs);
+    let src = fa::read_to_string(&c).expect("read the emitted C");
+    assert!(
+        src.contains("    { n_main(); }\n"),
+        "a plain entry must be called with no argument"
+    );
+    let _ = fa::remove_file(&c);
 }

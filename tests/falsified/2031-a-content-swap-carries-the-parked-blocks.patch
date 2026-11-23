@@ -1,16 +1,19 @@
 diff --git a/src/store.rs b/src/store.rs
+index 4a9abd575..9fad7c666 100644
 --- a/src/store.rs
 +++ b/src/store.rs
-@@ -3212,12 +3212,6 @@
+@@ -3673,14 +3673,6 @@ impl Store {
          std::mem::swap(&mut a.dead_words, &mut b.dead_words);
          std::mem::swap(&mut a.lazy_free, &mut b.lazy_free);
-         std::mem::swap(&mut a.placed_foreign, &mut b.placed_foreign);
+         std::mem::swap(&mut a.placed, &mut b.placed);
 -        // `@FR-H-Park` — the parked blocks are positions in the memory that moves, so the
 -        // lists and the set move with it (loft#2031: left behind, a store's set named live
 -        // records of the content it received, a delete parked one of them twice, and the
 -        // flush walked a list whose links were that record's bytes — for ever).
--        std::mem::swap(&mut a.park, &mut b.park);
--        std::mem::swap(&mut a.parked, &mut b.parked);
+-        std::mem::swap(&mut a.no_park, &mut b.no_park);
+-        std::mem::swap(&mut a.parked_set, &mut b.parked_set);
+-        std::mem::swap(&mut a.parked_heads, &mut b.parked_heads);
+-        std::mem::swap(&mut a.parked_count, &mut b.parked_count);
          std::mem::swap(&mut a.known_type, &mut b.known_type);
          std::mem::swap(&mut a.parse_errors, &mut b.parse_errors);
          std::mem::swap(&mut a.parse_type, &mut b.parse_type);

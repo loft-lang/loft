@@ -216,6 +216,10 @@ BOOLEAN WINAPI SystemFunction036(PVOID buffer, ULONG length);
 #if defined(_MSC_VER)
 #pragma comment(lib, "advapi32.lib")
 #endif
+#elif defined(__ANDROID__)
+/* bionic declares `getentropy` only from API 28, above the build's default 24;
+ * `arc4random_buf` is in <stdlib.h> at every level. */
+#include <stdlib.h>
 #elif defined(__APPLE__) || defined(__linux__)
 /* `getentropy`: glibc's <unistd.h> declares it only outside the unit's strict POSIX request
  * (`loft_os.h`); <sys/random.h> declares it on every request. */
@@ -224,6 +228,9 @@ BOOLEAN WINAPI SystemFunction036(PVOID buffer, ULONG length);
 static void loft_web_random(uint8_t *out, size_t n) {
 #if defined(_WIN32)
     if (SystemFunction036(out, (ULONG) n)) return;
+#elif defined(__ANDROID__)
+    arc4random_buf(out, n);
+    return;
 #elif defined(__APPLE__) || defined(__linux__) || defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__)
     if (n <= 256 && getentropy(out, n) == 0) return;
 #endif

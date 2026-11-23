@@ -1,0 +1,126 @@
+diff --git a/selfhost/src/el_ex_deliver.loft b/selfhost/src/el_ex_deliver.loft
+index 333016e92..8e735e345 100644
+--- a/selfhost/src/el_ex_deliver.loft
++++ b/selfhost/src/el_ex_deliver.loft
+@@ -155,7 +155,10 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
+       // `nrvo_collapse_defining_call`: the local's one defining call, a statement of the body,
+       // is handed the buffer as its own (`v = make(n, v)`); any other call bind is refused.
+       if bound_from_call(code, renamed) {
+-        collapsed = collapse_defining_call(vars, bl, renamed);
++        // `nrvo_collapse_tail_set`'s fast path first: the statement before the tail binding the
++        // local from a call (and the consecutive ones before it) hands that call the buffer.
++        chain = collapse_tail_chain(e, vars, bl, renamed);
++        collapsed = if chain != null { chain } else { collapse_defining_call(vars, bl, renamed) };
+         if collapsed == null {
+           el::refuse(e, "a vector local that takes the return buffer, bound from a call");
+           return code;
+@@ -1334,6 +1337,109 @@ fn collapse_defining_call(vars: el_vars::Vars, bl: ir::Block, v: integer) -> ir:
+   out
+ }
+ 
++// `nrvo_collapse_tail_set` (2)–(6): the body's tail is the local `v` the buffer was renamed onto,
++// and the statement before it (line markers skipped) is `v = call(…)` whose return buffer is a
++// `__ref_N` / `__rref_N` work ref: that call is handed `v` as its buffer, and so is each earlier
++// CONSECUTIVE `v = call(…)`, the walk stopping at any other statement or a call that reads `v`
++// (it would build into the record it reads).  A work ref no longer used is a vector the call no
++// longer fills: skip-free (`suppress_collapsed_workrefs`).  Null where the statement before the
++// tail is no such call.
++fn collapse_tail_chain(e: el::El, vars: el_vars::Vars, bl: ir::Block, v: integer) -> ir::Block? {
++  last = len(bl.operators) - 1;
++  pen = last - 1;
++  while pen >= 0 && el_ir::is_line(bl.operators[pen]!) {
++    pen -= 1;
++  }
++  if pen < 0 {
++    return null;
++  }
++  out = bl;
++  refs: vector<integer> = [];
++  first = true;
++  at = pen;
++  while at >= 0 {
++    if el_ir::is_line(out.operators[at]!) {
++      at -= 1;
++      continue;
++    }
++    w = buffer_work_ref(e, vars, out.operators[at]!, v);
++    if w == -2 {
++      // (The call already builds into `v`: the chain declines at the statement before the tail,
++      // and an earlier link is passed over.)
++      if first {
++        return null;
++      }
++      at -= 1;
++      continue;
++    }
++    if w < 0 {
++      if first {
++        return null;
++      }
++      break;
++    }
++    first = false;
++    match el_ir::unspan(out.operators[at]!) {
++      NdSet { var, inner } => match el_ir::unspan(inner) {
++        NdCall { def_nr, args } => {
++          a2 = [for a in args { if el_ir::unspan(a) == ir::NdVar { n: w } { ir::NdVar { n: v } } else { a } }];
++          out.operators[at] = respan(out.operators[at]!, ir::NdSet { var: var, inner: ir::NdCall { def_nr: def_nr, args: a2 } });
++        },
++        _ => {}
++      },
++      _ => {}
++    }
++    refs += [w];
++    at -= 1;
++  }
++  for w in refs {
++    if el_vars::tp(vars, w) is TyVector && len([for o in out.operators if el_ir::reads_var(o, w) { 1 }]) == 0 {
++      vars.vars[w].skip_free = true;
++    }
++  }
++  out
++}
++
++// The work ref a statement `v = call(…)` hands its callee as the return buffer (its last,
++// hidden argument, a `__ref_N` / `__rref_N`), -2 where that buffer is `v` already, -1 for any other
++// statement or a call that reads `v` in another argument.
++fn buffer_work_ref(e: el::El, vars: el_vars::Vars, st: ir::Node, v: integer) -> integer {
++  match el_ir::unspan(st) {
++    NdSet { var, inner } => {
++      if var != v {
++        return -1;
++      }
++      match el_ir::unspan(inner) {
++        NdCall { def_nr, args } => {
++          cd = el::def(e, def_nr);
++          if len(args) == 0 || len(cd.attributes) != len(args) || !cd.attributes[len(args) - 1].hidden {
++            return -1;
++          }
++          w = match el_ir::unspan(args[len(args) - 1]!) { NdVar { n } => n, _ => -1 };
++          if w < 0 {
++            return -1;
++          }
++          if w == v {
++            return -2;
++          }
++          nm = el_vars::name_of(vars, w);
++          if !starts_with(nm, "__ref_") && !starts_with(nm, "__rref_") {
++            return -1;
++          }
++          for a in args {
++            if a#index < len(args) - 1 && el_ir::reads_var(a, v) {
++              return -1;
++            }
++          }
++          w
++        },
++        _ => -1
++      }
++    },
++    _ => -1
++  }
++}
++
+ // `n` with its innermost node replaced by `inner`, its position spans kept.
+ fn respan(n: ir::Node, inner: ir::Node) -> ir::Node {
+   match n {

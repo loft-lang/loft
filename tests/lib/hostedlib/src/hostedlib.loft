@@ -1,0 +1,188 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN206 P4 — a library a hosted C unit carries (`tests/hosted_unit.rs`): every act a body does
+// on the interpreter's stores — a record answered through the caller's buffer, a vector grown
+// field by field in the caller's store, a text read, a record walked and changed in place.
+
+pub struct Bag {
+  pub name: text,
+  pub items: vector<integer>,
+  pub total: integer,
+}
+
+/// A record the caller's hidden buffer receives.
+pub fn bag_new(name: text, seed: integer) -> Bag {
+  Bag { name: name, items: [seed], total: seed }
+}
+
+/// Grow the bag's vector `n` times: claims and resizes in the store the caller owns.
+pub fn fill(self: Bag, n: integer, step: integer) {
+  for i in 0..n {
+    v = i * step + 1;
+    self.items += [v];
+    self.total += v;
+  }
+}
+
+/// Walk the vector.
+pub fn weight(self: const Bag) -> integer {
+  w = 0;
+  for x in self.items { w += x * 2; }
+  w
+}
+
+/// A text parameter's bytes, a float answer.
+pub fn ratio(t: text, d: integer) -> float {
+  len(t) as float / d as float
+}
+
+/// Scalars alone.
+pub fn mix(a: integer, b: integer) -> integer {
+  a * 31 + b
+}
+
+/// `n` records alive at once, one per level, each in a store of its own the unit makes: the
+/// interpreter's table grows (and may move) under the C while every level still holds its own.
+pub fn deep(n: integer) -> integer {
+  if n == 0 { return 0; }
+  b = bag_new("d", n);
+  deep(n - 1) + b.total
+}
+
+// Generators the unit makes: the interpreter drives each one's frame through the unit's step
+// (`HostedTable::gen_adopt`) — integers, and texts.
+pub fn upto(n: integer) -> iterator<integer> {
+  for i in 1..n + 1 {
+    yield i;
+  }
+}
+
+pub fn words_of(t: text) -> iterator<text> {
+  for w in t.split(' ') {
+    yield "<{w}>";
+  }
+}
+
+// A generator the interpreter made is not the unit's to drive: this stays interpreted.
+pub fn total_of(it: iterator<integer>) -> integer {
+  t = 0;
+  for x in it { t += x; }
+  t
+}
+
+// A constant table, read by a function that interprets (its text result does not cross the
+// bridge): a view the interpreter holds into a constant's store must outlive a verified call.
+WIDTHS = [5, 3, 4, 2];
+
+pub fn label_of(t: text) -> text {
+  "{t}:{WIDTHS[len(t) % 4]}"
+}
+
+// A text field written anew: the interpreter writes it in place where its program proves no
+// caller borrows the old text (`@FR-H-TextReplace`), a unit, which knows no caller, writes a new
+// one — the same value placed otherwise, which the verify accepts by value.
+pub fn rename(self: Bag, n: text) {
+  self.name = n;
+}
+
+// `&` arguments: the slot each names is read, handed in by address and written back.
+pub fn bump(x: &integer, k: integer) {
+  x += k;
+}
+
+pub fn grow_ref(self: &Bag, k: integer) {
+  self.total += k;
+  self.items += [k];
+}
+
+// Function values the program hands in: they name the program's functions, so the unit hands
+// each call back to the interpreter — an integer, a text and a record answer.
+pub fn twice_by(f: fn(integer) -> integer, x: integer) -> integer {
+  f(f(x))
+}
+
+pub fn wrapped(f: fn(text) -> text, t: text) -> text {
+  "[{f(t)}|{f(t + "!")}]"
+}
+
+pub fn made_by(mk: fn(text, integer) -> Bag, n: text) -> integer {
+  b = mk(n, 4);
+  b.fill(2, 1);
+  b.total
+}
+
+// A record a function value answers, lifted out of the loop: a unit frees the lifted store
+// rather than parking it for the next call — no program end drains a unit's parks.
+pub fn styled(resolve: fn(integer) -> Bag, w: fn(Bag) -> integer, k: integer) -> integer {
+  t = 0;
+  for i in 0..k { t += w(resolve(i)); }
+  t
+}
+
+// A tuple argument: its leaves cross one slot each, and the unit builds its own tuple.
+pub fn spread(p: (integer, float, boolean), k: integer) -> float {
+  if p.2 { (p.0 * k) as float * p.1 } else { 0.0 - p.1 }
+}
+
+// An exponential decay: `exp` is one routine on every route — as a power of E, the unit's C
+// `pow`, a compiled `powf` and the interpreter answered up to two units in the last place apart.
+pub fn decay(fall: float) -> float {
+  exp(0.0 - fall)
+}
+
+// A text built from another carried function's text answers: its interpreted twin calls
+// `label_of` interpreted too, each nested answer landing in this call's own text, not the outer
+// one's destination.
+pub fn tag(t: text) -> text {
+  a = label_of(t);
+  b = label_of(t);
+  "<{a}|{b}>"
+}
+
+// A text local returned on one path and held while the answer is built on the other: the
+// compiler gives the local a text slot of its own beside the result's work slot, each one the
+// bridge must hand a buffer of its own.
+pub fn framed(t: text) -> text {
+  base = label_of(t);
+  if len(base) > 20 { return base; }
+  base + "\n#{len(base)}"
+}
+
+// The same, a level deeper and through a format hook (`"{bag}"`), as `time`'s `DateTime` is.
+pub operator to_text(self: Bag, spec: text) -> text {
+  r = if spec == "short" { "{label_of(self.name)}" } else { "{tag(self.name)}" };
+  r
+}
+
+// A carried function whose answer is built from another carried function's records: its
+// interpreted twin calls `bag_new` interpreted too, answering into the caller's buffer.
+pub fn twice(name: text) -> Bag {
+  b = bag_new(name, 3);
+  c = bag_new(name, 4);
+  b.total = b.total + c.total;
+  b
+}
+
+// A write to a file: run twice, the bytes land twice, so the verify makes such a call once.
+pub fn append_word(p: text, n: integer) {
+  f = file(p);
+  f#format = LittleEndian;
+  f += (n as i32);
+}
+
+// A vector answered into the caller's buffer: the evens below `n`, and the bag's items grown
+// by `k` each (a vector built from a record's field).
+pub fn evens(n: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  for i in 0..n {
+    if i % 2 == 0 { out += [i]; }
+  }
+  out
+}
+
+pub fn grown(self: const Bag, k: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  for v in self.items { out += [v + k]; }
+  out
+}

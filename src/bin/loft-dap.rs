@@ -204,10 +204,13 @@ impl Adapter {
                     .and_then(|a| field_bool(a, "stopOnEntry"))
                     .unwrap_or(false);
                 self.program = program.clone();
+                // `@PLN206 P7` — `"native": true` runs the program's own functions compiled.
+                let native = args.and_then(|a| field_bool(a, "native")).unwrap_or(false);
                 let rpc = json::to_json_string(&obj(vec![
                     ("id", Parsed::Int(request_seq)),
                     ("req", Parsed::Str("launch".into())),
                     ("file", Parsed::Str(program)),
+                    ("native", Parsed::Bool(native)),
                 ]));
                 let (msgs, _) = driver.drive(&rpc);
                 match rpc_ok(&msgs, request_seq) {

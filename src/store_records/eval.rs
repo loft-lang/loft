@@ -174,7 +174,7 @@ impl Run<'_> {
                     Value::Var(x) => Some(*x),
                     _ => None,
                 };
-                self.leaving_captures(&s, &value);
+                self.leaving(&s, &value, x);
                 Self::hand_on_var(&mut s, x, &value);
                 self.exit(&s, "a return");
                 None
@@ -1021,7 +1021,10 @@ impl Run<'_> {
                 // A stashed local re-initialises its own store in place after the call unless
                 // the copy lands in a fresh store (`ReBind::copies_into_fresh`, the code
                 // generator's own answer); anything else starts from a fresh one.
-                let in_place = rb.free == DisplacedFree::Stash && !rb.copies_into_fresh();
+                // An exchange (`ReBind::exchange`, STORE_MODEL D43) keeps `x`'s store too: the
+                // answer moves into it and the old tree leaves with the released slot.
+                let in_place =
+                    (rb.free == DisplacedFree::Stash && !rb.copies_into_fresh()) || rb.exchange;
                 if in_place && Self::stores_of(&old).len() == 1 && old.len() == 1 {
                     Val {
                         pts: old.clone(),
@@ -1541,6 +1544,16 @@ impl Run<'_> {
                 None
             }
         })
+    }
+
+    /// The variable a place is rooted at: `h`, or `h` under field selections (`h.s`, a
+    /// struct enum's inline variant).
+    pub(super) fn root_var(place: Option<&Value>, get_field: u32) -> Option<u16> {
+        match place?.unspan() {
+            Value::Var(x) => Some(*x),
+            Value::Call(op, args) if *op == get_field => Self::root_var(args.first(), get_field),
+            _ => None,
+        }
     }
 
     /// The variable a value block hands back as its tail (`{#Object __ref_p2_N = …;

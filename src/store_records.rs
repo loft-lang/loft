@@ -925,6 +925,8 @@ struct Ops {
     get_dbref: u32,
     ref_present: u32,
     place: u32,
+    evacuate: u32,
+    get_field: u32,
     free_in: u32,
     store_live: u32,
     not: u32,
@@ -947,6 +949,8 @@ impl Ops {
             get_dbref: data.def_nr("OpGetDbRef"),
             ref_present: data.def_nr("OpConvBoolFromRef"),
             place: data.def_nr("OpPlaceRecord"),
+            evacuate: data.def_nr("OpEvacuate"),
+            get_field: data.def_nr("OpGetField"),
             free_in: data.def_nr("OpFreeRecordIn"),
             store_live: data.def_nr("OpStoreLive"),
             not: data.def_nr("OpNot"),
@@ -1377,7 +1381,7 @@ fn run_fn<'a>(
                     run.first_sets.insert(at);
                 } else {
                     let rb = crate::bind_lowering::re_bind(data, d_nr, vars, *x, val);
-                    if matches!(rb.free, crate::bind_lowering::DisplacedFree::Pre { .. }) {
+                    if rb.displaces_owned() {
                         owned_reassigned.insert(*x);
                     }
                     run.rebinds.insert(at, rb);
@@ -1415,7 +1419,7 @@ fn run_fn<'a>(
     closure_records(data, vars, &body, &mut run.fn_record, &mut run.leaving);
     if let Some((mut s, value)) = run.eval(&body, st) {
         run.answer = run.answer.join(run.summary_of(&value.pts));
-        run.leaving_captures(&s, &value);
+        run.leaving(&s, &value, Run::tail_var(&body));
         Run::hand_on(&mut s, &value);
         run.exit(&s, "the end of the function");
     }

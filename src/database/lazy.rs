@@ -275,7 +275,7 @@ impl Stores {
             // A store the driver already freed, or one that was reused and is
             // live again, is not this window's to free: `free_named` no-ops on
             // an already-free slot, and the `free` check keeps the count honest.
-            if (slot as usize) < self.allocations.len() && !self.allocations[slot as usize].free {
+            if (slot as usize) < self.allocations.len() && self.allocations[slot as usize].live {
                 self.free_named(
                     &DbRef {
                         store_nr: slot,

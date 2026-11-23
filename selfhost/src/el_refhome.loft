@@ -17,6 +17,8 @@ use ir;
 use el;
 use el_ir;
 use el_types;
+use el_vars;
+use opt_length;
 
 pub fn check_stored_reference_homes(e: el::El) {
   // (`stored_reference_homes` moves nothing, so nothing is refused, unless the program
@@ -329,4 +331,193 @@ fn store_binds(e: el::El, vars: ir::Function, n: ir::Node, v: integer) -> intege
     c += store_binds(e, vars, ch, v);
   }
   c
+}
+
+// H7, `Parser::rotate_loop_retbufs` (src/parser/expressions.rs; its doc comment is the spec): a
+// function returning a heap value clears the caller's return buffer on entry, and a loop runs
+// one call site again — after one round the target IS the site's `__ref_N`, so the next call
+// would clear its own argument.  Such a site takes a second buffer and the two are rotated after
+// each call: `t = f(t, …, __ref_N); OpPutRef(__ref_N, partner); OpPutRef(partner, t)`.  Second
+// pass only; the partners (each `buf * 65536 + partner`) are recorded in `vars.rot_partners`,
+// whose null-inits the preamble places beside their buffers'.
+pub fn rotate_loop_retbufs(e: el::El, vars: el_vars::Vars, body: ir::Node) -> ir::Node {
+  rotate_in(e, vars, body, false)
+}
+
+fn rotate_in(e: el::El, vars: el_vars::Vars, n: ir::Node, in_loop: boolean) -> ir::Node {
+  match n {
+    NdLoop { block } => { b = block[0]; b.operators = rotate_list(e, vars, b.operators, true); ir::NdLoop { block: [b] } },
+    NdBlock { block } => { b = block[0]; b.operators = rotate_list(e, vars, b.operators, in_loop); ir::NdBlock { block: [b] } },
+    NdInsert { items } => ir::NdInsert { items: [for x in items { rotate_in(e, vars, x, in_loop) }] },
+    NdCall { def_nr, args } => ir::NdCall { def_nr: def_nr, args: [for x in args { rotate_in(e, vars, x, in_loop) }] },
+    NdIf { cond, t, f } => ir::NdIf { cond: rotate_in(e, vars, cond, in_loop), t: rotate_in(e, vars, t, in_loop), f: rotate_in(e, vars, f, in_loop) },
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: rotate_in(e, vars, inner, in_loop) },
+    NdSet { var, inner } => ir::NdSet { var: var, inner: rotate_in(e, vars, inner, in_loop) },
+    NdReturn { inner } => ir::NdReturn { inner: rotate_in(e, vars, inner, in_loop) },
+    NdDrop { inner } => ir::NdDrop { inner: rotate_in(e, vars, inner, in_loop) },
+    _ => n
+  }
+}
+
+fn rotate_list(e: el::El, vars: el_vars::Vars, ops: vector<ir::Node>, in_loop: boolean) -> vector<ir::Node> {
+  out: vector<ir::Node> = [];
+  for op in ops {
+    o = rotate_in(e, vars, op, in_loop);
+    out += [o];
+    if !in_loop {
+      continue;
+    }
+    tb = self_feeding_call(e, vars, o);
+    if len(tb) != 2 {
+      continue;
+    }
+    target = tb[0]!;
+    buf = tb[1]!;
+    partner = -1;
+    for rp in vars.rot_partners {
+      if rp / 65536 == buf {
+        partner = rp % 65536;
+      }
+    }
+    if partner < 0 {
+      partner = el_vars::work_ref(vars, el_types::without_deps(el_vars::tp(vars, buf)));
+      vars.vars[partner].caller_hidden_buf = true;
+      vars.rot_partners += [buf * 65536 + partner];
+    }
+    out += [el_ir::cl(e, "OpPutRef", [ir::NdVar { n: buf }, ir::NdVar { n: partner }]), el_ir::cl(e, "OpPutRef", [ir::NdVar { n: partner }, ir::NdVar { n: target }])];
+  }
+  out
+}
+
+// `self_feeding_call`: `[target, buffer]` where the statement binds a vector local to a loft
+// call that both reads it and writes into a caller-held `__ref_N` return buffer; empty else.
+fn self_feeding_call(e: el::El, vars: el_vars::Vars, stmt: ir::Node) -> vector<integer> {
+  target = -1;
+  value = ir::NdNull;
+  match el_ir::unspan(stmt) {
+    NdSet { var, inner } => { target = var; value = el_ir::unspan(inner); },
+    _ => { return []; }
+  }
+  if vars.vars[target].argument || vars.vars[target].caller_hidden_buf || !(el_vars::tp(vars, target) is TyVector) {
+    return [];
+  }
+  match value {
+    NdCall { def_nr, args } => {
+      fname = el::def(e, def_nr).name;
+      if !(starts_with(fname, "n_") || starts_with(fname, "t_") || starts_with(fname, "f_") || starts_with(fname, "i_")) || el::def(e, def_nr).native != "" {
+        return [];
+      }
+      buf = -1;
+      for a in args {
+        match el_ir::unspan(a) {
+          NdVar { n: w } => { if vars.vars[w].caller_hidden_buf && starts_with(el_vars::name_of(vars, w), "__ref_") { buf = w; } },
+          _ => {}
+        }
+      }
+      if buf < 0 {
+        return [];
+      }
+      for a in args {
+        if el_ir::unspan(a) != ir::NdVar { n: buf } && el_ir::mentions(a, target) > 0 {
+          return [target, buf];
+        }
+      }
+      []
+    },
+    _ => []
+  }
+}
+
+// `passes::MemberWalk::only_read` (`@FR-F-ParamTuple`'s copy elision): does the finished body
+// only READ the tuple shadow `p` — no write op, `&` argument or writing callee takes a place
+// inside a member (`TupleGet(p, _)`, or a local bound from one, to a fixed point), no callee
+// pass 2 has not read yet takes one, no closure is built and no fn-ref called, and `p` is not
+// returned where the function answers a tuple with a heap member (`ret_holds_ref`)?  Every
+// unknown errs toward copying.
+pub fn tuple_only_read(e: el::El, vars: el_vars::Vars, code: ir::Node, p: integer, ret_holds_ref: boolean) -> boolean {
+  aliases: vector<integer> = [];
+  grew = true;
+  while grew {
+    before = len(aliases);
+    collect_member_aliases(code, p, aliases);
+    grew = len(aliases) > before;
+  }
+  c = opt_length::new_cache(e.b);
+  !member_writes(e, code, p, aliases, ret_holds_ref, c)
+}
+
+fn reaches_member(v: ir::Node, p: integer, aliases: vector<integer>, whole: boolean) -> boolean {
+  match el_ir::unspan(v) {
+    NdTupleGet { var, idx: _ } => {
+      if var == p {
+        return true;
+      }
+      aliases.contains(var)
+    },
+    NdVar { n } => (n == p && whole) || aliases.contains(n),
+    _ => {
+      for ch in el_ir::children(el_ir::unspan(v)) {
+        if reaches_member(ch, p, aliases, whole) {
+          return true;
+        }
+      }
+      false
+    }
+  }
+}
+
+fn collect_member_aliases(code: ir::Node, p: integer, aliases: vector<integer>) {
+  match el_ir::unspan(code) {
+    NdSet { var, inner } => {
+      if var != p && !aliases.contains(var) && reaches_member(inner, p, aliases, true) {
+        aliases += [var];
+      }
+    },
+    _ => {}
+  }
+  for ch in el_ir::children(el_ir::unspan(code)) {
+    collect_member_aliases(ch, p, aliases);
+  }
+}
+
+fn member_writes(e: el::El, code: ir::Node, p: integer, aliases: vector<integer>, ret_holds_ref: boolean, c: opt_length::Cache) -> boolean {
+  hit = match el_ir::unspan(code) {
+    NdCall { def_nr, args } => {
+      callee = el::def(e, def_nr);
+      if starts_with(callee.name, "n___lambda_") {
+        return true;
+      }
+      first = opt_length::writes_first(callee.name);
+      second = callee.name == "OpCopyRecord" || callee.name == "OpRemove";
+      user = len(callee.code) > 0 && ((callee.code[0] ?? ir::NdNull) is NdBlock);
+      // (A callee pass 2 has read already — declared above, or the library's — answers by its
+      // summary; any other is taken to write every parameter.)
+      finished = def_nr < e.context || callee.source != e.source;
+      cw: vector<boolean> = if user && finished { opt_length::param_writes(e.b, def_nr, c) } else if user { [for _ in args { true }] } else { [] };
+      w = false;
+      for a in args {
+        i = a#index;
+        by_ref = i < len(callee.attributes) && ((callee.attributes[i]!.typedef[0] ?? ir::TyVoid) is TyRefVar);
+        if (by_ref && reaches_member(a, p, aliases, true)) || (((i == 0 && first) || (i == 1 && second)) && reaches_member(a, p, aliases, false)) || ((cw[i] ?? false) && reaches_member(a, p, aliases, false)) {
+          w = true;
+        }
+      }
+      w
+    },
+    NdCallRef { var: _ } => true,
+    NdFnRef { def_nr: _ } => true,
+    NdFnRefDnr { n: _ } => true,
+    NdReturn { inner } => ret_holds_ref && reaches_member(inner, p, aliases, true),
+    NdYield { inner } => reaches_member(inner, p, aliases, true),
+    _ => false
+  };
+  if hit {
+    return true;
+  }
+  for ch in el_ir::children(el_ir::unspan(code)) {
+    if member_writes(e, ch, p, aliases, ret_holds_ref, c) {
+      return true;
+    }
+  }
+  false
 }

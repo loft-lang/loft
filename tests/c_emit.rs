@@ -5877,7 +5877,7 @@ fn main() {\n\
 /// program that uses it beside `lctab_b` builds `lctab`'s artifact, which another program
 /// adopts by its key — so a second `lctab_b` that program took from elsewhere would be loaded
 /// twice, its C state in the process twice.  By hand: `lctab_b` is 4 * 5 + 11 = 31, and the
-/// artifact lists one library, `lctab`'s shim.
+/// unit's bound-library table (`loft_cboundlibs`) lists one library, `lctab`'s shim.
 ///
 /// @falsified-at d268b48cc: the artifact lists `liblctab_b_shim_….so` beside `lctab`'s own.
 #[test]
@@ -5918,21 +5918,21 @@ fn a_library_artifact_lists_only_its_own_packages_c_libraries() {
         .expect("lctab's native-auto: the run built no artifact")
         .into_iter()
         .filter(|p| {
-            fa::file_name(p).is_some_and(|n| n.starts_with("loft_auto_") && n.ends_with(".rs"))
+            fa::file_name(p).is_some_and(|n| n.starts_with("loft_auto_") && n.ends_with(".c"))
         })
         .map(|p| fa::read_to_string(&p).expect("read the artifact's source"))
         .collect();
     assert!(
         !sources.is_empty(),
-        "no `loft_auto_*.rs` in {}",
+        "no `loft_auto_*.c` in {}",
         auto.display()
     );
     for src in sources {
         let table = src
-            .split("static __C_LIBS")
+            .split("loft_cboundlibs[] =")
             .nth(1)
-            .and_then(|t| t.split("];").next())
-            .expect("the artifact has a __C_LIBS table")
+            .and_then(|t| t.split("};").next())
+            .expect("the unit has a bound-library table")
             .to_string();
         // `lctab_shim_<hash>`: `liblctab_shim_…` on Unix, `lctab_shim_….dll` on Windows,
         // which gives a library no `lib` prefix.  lctab_b's is `…lctab_b_shim_…`.

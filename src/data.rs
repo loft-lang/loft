@@ -11409,7 +11409,14 @@ impl Data {
         // a cache reload's `rebuild_indices` reproduces the global binding (see
         // `vector_def`).
         self.def_names.insert_if_absent(&name, STD_SOURCE, d);
+        let requested_from = self.definitions[d as usize].source;
         self.definitions[d as usize].source = STD_SOURCE;
+        // …and drop the binding `add_def` made under the requesting source, as `vector_def`
+        // does: nothing records it, so a rebuild cannot reproduce it, and a debug session's
+        // rollback reported it dropped for a library with a tuple parameter.
+        if requested_from != STD_SOURCE {
+            self.def_names.remove(&name, requested_from);
+        }
         self.definitions[d as usize].returned = Type::Reference(d, Deps::none());
         let mut indices: Vec<u16> = Vec::with_capacity(types.len());
         let mut sizes_aligns: Vec<(u16, u8)> = Vec::with_capacity(types.len());
@@ -11707,7 +11714,14 @@ impl Data {
         // same synthetic struct.  Stamp `source = 0` too so a cache reload's
         // `rebuild_indices` reproduces the global binding (see `vector_def`).
         self.def_names.insert_if_absent(&name, STD_SOURCE, d);
+        let requested_from = self.definitions[d as usize].source;
         self.definitions[d as usize].source = STD_SOURCE;
+        // …and drop the binding `add_def` made under the requesting source, as `vector_def`
+        // does: nothing records it, so a rebuild cannot reproduce it, and a debug session's
+        // rollback reported it dropped for a library with a tuple parameter.
+        if requested_from != STD_SOURCE {
+            self.def_names.remove(&name, requested_from);
+        }
         self.definitions[d as usize].returned = Type::Reference(d, Deps::none());
         // `_d_nr`: 4-byte signed integer holding the function's
         // def-nr.  The integer alias `i32` carries the `size(4)`

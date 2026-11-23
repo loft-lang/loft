@@ -844,6 +844,17 @@ impl Run<'_> {
                 }
             }
         }
+        // …and its stored references: the copy points where the source did (`out.s = s`,
+        // `@FR-H-RefHome`'s copy route, loft#2612).
+        if d == ops.copy_record
+            && let (Some(src), Some(dst)) = (
+                Self::first_var(args, 0),
+                Self::root_var(args.get(1), ops.get_field),
+            )
+            && let Some(p) = s.points.get(&src).cloned()
+        {
+            s.points.entry(dst).or_default().extend(p);
+        }
         // A null written into a capture slot (`OpSetDbRef(w, off, OpNullRefSentinel())`, a
         // stand-down letting a record give up its capture): the slot holds null from here.
         if d == ops.set_dbref
@@ -956,11 +967,24 @@ impl Run<'_> {
                         .filter(|p| matches!(p, Pt::Store(k) if owned_elsewhere(k)))
                         .collect();
                     Self::hand_on(&mut s, &handed);
-                    if let Some(h) = Self::first_var(args, 0) {
+                    // The holder is the variable the place is rooted at: a field of it, or a
+                    // struct enum's variant inline in it, is written there too (loft#2612).
+                    if let Some(h) = Self::root_var(args.first(), ops.get_field) {
                         uncover_all(&mut s, &pointed);
                         s.points.entry(h).or_default().extend(pointed);
                     }
                 }
+            }
+        }
+        // `OpEvacuate(h, fld, owner, tp)` copies the record `h`'s reference names, where it
+        // lives in `owner`'s store, into `h`'s own and re-points the reference there
+        // (`@FR-H-RefHome`): from here `h` points into `owner`'s store no more.
+        if d == ops.evacuate
+            && let (Some(h), Some(owner)) = (Self::first_var(args, 0), Self::first_var(args, 2))
+        {
+            let gone = Self::stores_of(&Self::pts(&s, owner));
+            if let Some(p) = s.points.get_mut(&h) {
+                p.retain(|x| !matches!(x, Pt::Store(k) if gone.contains(k)));
             }
         }
         // A fn-ref answer carries its closure record's store (`FnRef(_, w)` reads `w`), which

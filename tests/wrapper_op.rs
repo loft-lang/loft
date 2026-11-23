@@ -6,7 +6,7 @@
 //!
 //! The cell corpus (`bytecode-comparisons/V-o-wrapper-op-cells.loft`) can only say the VALUES
 //! hold, because the wrapper's body IS the op.  This pins the EMISSION: no wrapper CALL is
-//! left (a definition may stay), `exp` — whose body converts a constant — stays a call, a
+//! left (a definition may stay), `exp` (`OpMathFuncFloat(10, v)`) is its op too, a
 //! `len` inside a hoisted loop and after a view binding reads the header's length, and the
 //! switch (`LOFT_NO_WRAPPER_INLINE=1`) restores the calls.  Read off `--native-emit`.
 use loft::file_access as fa;
@@ -86,8 +86,8 @@ fn a_wrapper_call_is_its_op_and_the_header_serves_its_length() {
     );
     assert_eq!(
         calls(&rust, "t_5float_exp"),
-        1,
-        "`exp` converts a constant in its body and is not a one-op wrapper: it stays a call"
+        0,
+        "`exp` is one op, the exponential routine (loft#2615): its op"
     );
     // A USER one-op function is not a wrapper: its call is observable (the live tier's
     // flip, the shadow call stack), so `dbl(21)` in c11 stays a call.

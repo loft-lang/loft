@@ -242,7 +242,7 @@ static int loft_image_load_url(loft_ref r, loft_str url, const char *sha, const 
     loft_bytes b;
     long recorded = -1;
     loft_gate_trie_v1 = 0;
-    int gate = sc && loft_stores[r.store_nr].known == sc->tp ? loft_net_gate_pinned(u, sc, who, &recorded, 1, schema_sha) : 1;
+    int gate = sc && LOFT_KNOWN(loft_stores[r.store_nr]) == sc->tp ? loft_net_gate_pinned(u, sc, who, &recorded, 1, schema_sha) : 1;
     if (gate == 0) {
         free(u);
         return 0;

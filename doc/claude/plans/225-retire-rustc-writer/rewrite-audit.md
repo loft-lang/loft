@@ -14,7 +14,7 @@ loses only its rust half.
 (`bench/portal/rewrite_census.tsv`, 61 bench programs on each writer).  `decided in` is where a
 rule's decision code lives; `applied by` is which phases admitted it at least once.
 
-## Remove: applied by the writer alone (21)
+## Remove: applied by the writer alone (22)
 
 | Rule | Decided in | Programs / admissions | What it does |
 |---|---|---|---|
@@ -39,6 +39,7 @@ rule's decision code lives; `applied by` is which phases admitted it at least on
 | `R-LitHoist` | ir, rust | 1 / 1 | An invariant loop-body vector literal builds once per activation. |
 | `R-MoveAppend` | ir, rust | 1 / 1 | `for f in call() { V += [f] }` moves each minted element instead of copying it. |
 | `R-ViewReturn` | ir, rust | 1 / 1 | A function returning a materialised view gets a twin answering (address, owned). |
+| `R-RebindBuffer` | rust | 0 / 0 | A rebind `x = f(…)` in a loop adopts the fresh result and hands `x`'s old store to the call's buffer.  Admitted on no bench program, so the census does not list it; the C and the interpreter make and free the same stores without it (STORE_MODEL D33). |
 
 **Where the C backend has code for them** (`decided in` names `c`, yet the C backend admitted
 none on 61 programs): `R-Header/*`, `R-RecPtr/*`, `R-PushFill/record`, `R-BoundedNest`,
@@ -66,7 +67,7 @@ The census covers the 61 bench programs, not every program.  Before a rule's IR,
 or C code is deleted, two exact comparisons hold on the whole corpus:
 
 1. **No C admission anywhere.**  `scripts/c_sweep.py` over the corpus with the census on
-   (`LOFT_REWRITE_CENSUS`) admits none of the 21 in the `c` phase.  Positive control: a kept rule
+   (`LOFT_REWRITE_CENSUS`) admits none of the 22 in the `c` phase.  Positive control: a kept rule
    in the same run (`R-Base`) shows admissions, so a silent census is not a blind one.
 2. **The C emission does not move.**  The corpus's emitted C is byte-identical before and after
    removing each rule's IR, interpreter and C code: removing a decision the C backend never

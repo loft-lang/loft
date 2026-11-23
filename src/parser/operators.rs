@@ -2963,7 +2963,17 @@ impl Parser {
             }
             if self.lexer.has_token(".") {
                 wrap_chain = true;
-                *parent_tp = t.clone();
+                // `@FR-L-Null-Which` — the HOLDER of the field this `.` reaches is the receiver
+                // as the field read sees it: a tagged `__nullable<S>` slot is read through its
+                // tag first (`field` → `read_through_tag`), so the holder is the pointer `S?`,
+                // never the slot.  Recorded in the slot's spelling, a write's right side took
+                // the holder for its expected type: `h.root.left = Node { … }` under
+                // `root: Node?` built the literal as a tagged `__nullable<Node>` and copied the
+                // tag word into the child's `key` (loft#2609), and the group questions
+                // `field_site` asks of the holder named the synthetic enum.
+                *parent_tp = self
+                    .tagged_pointer_type(&t)
+                    .map_or_else(|| t.clone(), |(_, pointer)| pointer);
                 // Through `base()`: a tuple reached with its `?` on — `v[i]` by a VARIABLE
                 // index, or `h[k].t` once `@FR-Col-Lookup` and `(N-Prop)` are both in — is
                 // `Optional(Tuple)`, and the bare spelling declined it.  `.0` then fell to the

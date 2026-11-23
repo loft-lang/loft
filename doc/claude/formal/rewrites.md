@@ -200,7 +200,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-DecodeView)` | counted; admitted on no bench program |
 | `(R-DeferredCopy)` | counted; admitted on no bench program |
 | `(R-Demote)` | `R-Demote` parse · `/place` parse |
-| `(R-Destination)` | counted; admitted on no bench program |
+| `(R-Destination)` | `R-Destination` c, native |
 | `(R-DischargeInto)` | `R-DischargeInto` parse |
 | `(R-DispatchPublish)` | not counted — executor: the lean loop publishes one position per op |
 | `(R-DispatchStop)` | not counted — executor: the lean loop tests one flag per op |
@@ -208,7 +208,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-ElementPath)` | not counted — executor: the interpreter's element read operator |
 | `(R-Escape)` | not counted — meta: the contract every rewrite keeps |
 | `(R-ExitVector)` | `R-ExitVector` ir · `/record` ir |
-| `(R-ExpPow)` | `R-ExpPow` parse |
+| `(R-ExpPow)` | counted; admitted on no bench program |
 | `(R-FastTable)` | not counted — executor: the stack access mode fixed per run |
 | `(R-FaultFlag)` | `R-FaultFlag` native |
 | `(R-FieldAppend)` | `R-FieldAppend` c, native · `/bare` c, native |
