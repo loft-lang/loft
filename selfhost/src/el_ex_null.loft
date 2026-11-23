@@ -138,7 +138,7 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
       if e.first_pass {
         // (The default's arm is asked on both passes, its flags cumulative, as
         // `build_null_coalesce_default_inner` asks it.)
-        el_ex_call::register_default_literal(e, vars, d.code, el_types::with_deps(el_types::without_deps(lhs), [held]));
+        el_ex_call::register_default_literal(e, vars, d.code, lhs);
         return ex(ir::NdNull, lhs);
       }
       h = ir::NdVar { n: held };
@@ -147,7 +147,7 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
       read = if elem_subject { el_ir::cl(e, "OpGetField", [nullable_arith(e, el_ir::unspan(x.code), false), ir::NdInt { n: 0 }, ir::NdInt { n: element_place_type(e, lhs) }]) } else { nullable_arith(e, x.code, true) };
       // (loft#2567: the default builds a store of its own for every subject; its `_vec_N` is
       // the registered buffer a call subject's is, declared in the statement.)
-      el_ex_call::register_default_literal(e, vars, d.code, el_types::with_deps(el_types::without_deps(lhs), [held]));
+      el_ex_call::register_default_literal(e, vars, d.code, lhs);
       return ex(el_ir::v_block([el_ir::v_set(held, read), el_ir::v_if(present, h, d.code)], lhs, "ncc"), lhs);
     }
     // A native call answers a fresh vector: held in a `__ncc_N` of its own type (nulled before
@@ -174,7 +174,9 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
       fresh = native || len(el_types::deps(lhs)) == 0;
       if e.first_pass {
         // (The default's arm is asked on both passes, its flags cumulative.)
-        el_ex_call::register_default_literal(e, vars, d.code, if fresh { lhs } else { ht });
+        // (`build_null_coalesce_default_inner` is handed the subject's type as read — on this pass
+        // a call's answer borrows nothing yet, so an empty default takes the owned arm.)
+        el_ex_call::register_default_literal(e, vars, d.code, lhs);
         return ex(ir::NdNull, ht);
       }
       // `@PLN102` (`build_null_coalesce`): an OWNED vector subject — every borrow one of this
@@ -201,7 +203,7 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
       }
       // Typed as this pass's subject, peeled: the borrow its call's buffer gives it.
       el_vars::set_var_type(vars, held, lhs);
-      el_ex_call::register_default_literal(e, vars, d.code, ht);
+      el_ex_call::register_default_literal(e, vars, d.code, lhs);
       h = ir::NdVar { n: held };
       present = el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpVectorIsNull", [h])]);
       return ex(el_ir::v_block([el_ir::v_set(held, x.code), el_ir::v_if(present, h, d.code)], ht, "ncc"), ht);
