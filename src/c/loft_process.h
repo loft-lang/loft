@@ -49,7 +49,7 @@ static const char loft_proc_empty[] = "an empty command: there is no program to 
  * `enc` is not one. */
 typedef struct { char **v; size_t *len; size_t n; } loft_words;
 
-static void loft_words_free(loft_words *w) {
+static void loft_words_free(loft_cx *cx, loft_words *w) {
     for (size_t i = 0; i < w->n; i++) free(w->v[i]);
     free(w->v);
     free(w->len);
@@ -58,7 +58,7 @@ static void loft_words_free(loft_words *w) {
     w->n = 0;
 }
 
-static int loft_words_decode(const char *p, size_t len, loft_words *w) {
+static int loft_words_decode(loft_cx *cx, const char *p, size_t len, loft_words *w) {
     w->v = 0;
     w->len = 0;
     w->n = 0;
@@ -71,7 +71,7 @@ static int loft_words_decode(const char *p, size_t len, loft_words *w) {
             digits++;
         }
         if (!digits || i >= len || p[i] != ':' || n > len - i - 1) {
-            loft_words_free(w);
+            loft_words_free(cx, w);
             return 0;
         }
         i++;
@@ -92,10 +92,10 @@ static int loft_words_decode(const char *p, size_t len, loft_words *w) {
 /* One answer of the native: the integer the library reads, and its two texts. */
 typedef struct { int64_t code; loft_text out, err; } loft_proc_answer;
 
-static void loft_proc_say(loft_proc_answer *a, int64_t code, const char *out, const char *err) {
+static void loft_proc_say(loft_cx *cx, loft_proc_answer *a, int64_t code, const char *out, const char *err) {
     a->code = code;
-    if (out) loft_push_cstr(&a->out, out);
-    if (err) loft_push_cstr(&a->err, err);
+    if (out) loft_push_cstr(cx, &a->out, out);
+    if (err) loft_push_cstr(cx, &a->err, err);
 }
 
 #if defined(LOFT_POSIX_HOST)
@@ -121,7 +121,7 @@ static void loft_proc_forward(int sig) {
     }
 }
 
-static void loft_proc_track(pid_t group, int on) {
+static void loft_proc_track(loft_cx *cx, pid_t group, int on) {
     static int installed = 0;
     if (!installed) {
         installed = 1;
@@ -152,13 +152,13 @@ static void loft_proc_track(pid_t group, int on) {
 typedef pid_t loft_pid;
 typedef struct { loft_pid pid; int in, out, err; } loft_child;
 
-static void loft_proc_cloexec(int fd) {
+static void loft_proc_cloexec(loft_cx *cx, int fd) {
     fcntl(fd, F_SETFD, fcntl(fd, F_GETFD) | FD_CLOEXEC);
 }
 
-static void loft_proc_close(int fd) { close(fd); }
-static void loft_proc_mkdir(const char *dir) { mkdir(dir, 0777); }
-static void loft_proc_nap(int64_t us) {
+static void loft_proc_close(loft_cx *cx, int fd) { close(fd); }
+static void loft_proc_mkdir(loft_cx *cx, const char *dir) { mkdir(dir, 0777); }
+static void loft_proc_nap(loft_cx *cx, int64_t us) {
     struct timespec ts = { (time_t) (us / 1000000), (long) (us % 1000000) * 1000 };
     nanosleep(&ts, 0);
 }
@@ -166,26 +166,26 @@ static void loft_proc_nap(int64_t us) {
 /* Start `argv` in a group of its own: stdin a pipe when `pin` (else empty), stdout and stderr
  * pipes when `pout`/`perr` (else this program's own).  0 and `why` the OS's error, said as
  * `{program}: {error} (os error N)`, when it cannot be started. */
-static int loft_spawn(char **argv, const size_t *lens, size_t n, int pin, int pout, int perr, loft_child *c,
+static int loft_spawn(loft_cx *cx, char **argv, const size_t *lens, size_t n, int pin, int pout, int perr, loft_child *c,
                       loft_text *why) {
     for (size_t i = 0; i < n; i++) {
         if (strlen(argv[i]) != lens[i]) {
-            loft_push_cstr(why, argv[0]);
-            loft_push_cstr(why, ": nul byte found in provided data");
+            loft_push_cstr(cx, why, argv[0]);
+            loft_push_cstr(cx, why, ": nul byte found in provided data");
             return 0;
         }
     }
     int in[2] = { -1, -1 }, out[2] = { -1, -1 }, err[2] = { -1, -1 }, report[2] = { -1, -1 };
     if ((pin && pipe(in) != 0) || (pout && pipe(out) != 0) || (perr && pipe(err) != 0) || pipe(report) != 0) {
         int e = errno;
-        loft_push_cstr(why, argv[0]);
-        loft_push_cstr(why, ": ");
-        loft_push_cstr(why, strerror(e));
+        loft_push_cstr(cx, why, argv[0]);
+        loft_push_cstr(cx, why, ": ");
+        loft_push_cstr(cx, why, strerror(e));
         return 0;
     }
     int ends[8] = { in[0], in[1], out[0], out[1], err[0], err[1], report[0], report[1] };
     for (int i = 0; i < 8; i++)
-        if (ends[i] >= 0) loft_proc_cloexec(ends[i]);
+        if (ends[i] >= 0) loft_proc_cloexec(cx, ends[i]);
     /* Whatever this program wrote reaches its stream before the child's output does. */
     fflush(0);
     pid_t parent = getpid();
@@ -233,14 +233,14 @@ static int loft_spawn(char **argv, const size_t *lens, size_t n, int pin, int po
         if (perr) close(err[0]);
         char m[64];
         snprintf(m, sizeof m, " (os error %d)", e);
-        loft_push_cstr(why, argv[0]);
-        loft_push_cstr(why, ": ");
-        loft_push_cstr(why, strerror(e));
-        loft_push_cstr(why, m);
+        loft_push_cstr(cx, why, argv[0]);
+        loft_push_cstr(cx, why, ": ");
+        loft_push_cstr(cx, why, strerror(e));
+        loft_push_cstr(cx, why, m);
         return 0;
     }
     setpgid(pid, pid);
-    loft_proc_track(pid, 1);
+    loft_proc_track(cx, pid, 1);
     c->pid = pid;
     c->in = pin ? in[1] : -1;
     c->out = pout ? out[0] : -1;
@@ -251,7 +251,7 @@ static int loft_spawn(char **argv, const size_t *lens, size_t n, int pin, int po
 
 /* Has the child ended?  Asked without reaping it (`WNOWAIT`), so its id stays its own and a stop
  * of its group reaches nothing else; `block` waits.  A child that cannot be asked reads as ended. */
-static int loft_child_exited(pid_t pid, int block) {
+static int loft_child_exited(loft_cx *cx, pid_t pid, int block) {
     for (;;) {
         siginfo_t info;
         memset(&info, 0, sizeof info);
@@ -262,8 +262,8 @@ static int loft_child_exited(pid_t pid, int block) {
 }
 
 /* `exit_code`: the program's own code, `128 + n` for signal `n`, -1 when it cannot be told. */
-static int64_t loft_child_reap(pid_t pid) {
-    loft_proc_track(pid, 0);
+static int64_t loft_child_reap(loft_cx *cx, pid_t pid) {
+    loft_proc_track(cx, pid, 0);
     int status = 0;
     while (waitpid(pid, &status, 0) < 0) {
         if (errno != EINTR) return -1;
@@ -274,35 +274,35 @@ static int64_t loft_child_reap(pid_t pid) {
 }
 
 /* Wait up to `ms` for the child to end, backing off from 1 ms to 20: 1 when it did. */
-static int loft_child_wait(pid_t pid, int64_t ms) {
-    int64_t until = loft_now_us() + ms * 1000, step = 1000;
+static int loft_child_wait(loft_cx *cx, pid_t pid, int64_t ms) {
+    int64_t until = loft_now_us(cx) + ms * 1000, step = 1000;
     for (;;) {
-        if (loft_child_exited(pid, 0)) return 1;
-        int64_t now = loft_now_us();
+        if (loft_child_exited(cx, pid, 0)) return 1;
+        int64_t now = loft_now_us(cx);
         if (now >= until) return 0;
-        loft_proc_nap(step < until - now ? step : until - now);
+        loft_proc_nap(cx, step < until - now ? step : until - now);
         step = step * 2 < 20000 ? step * 2 : 20000;
     }
 }
 
 /* `stop_tree`: the group is asked to end (`SIGTERM`), given two seconds, then killed, and the
  * child reaped — so its code usually reads as ended by `SIGTERM`. */
-static int64_t loft_child_stop(pid_t pid) {
+static int64_t loft_child_stop(loft_cx *cx, pid_t pid) {
     killpg(pid, SIGTERM);
-    int64_t until = loft_now_us() + 2000000;
-    while (loft_now_us() < until && !loft_child_exited(pid, 0)) {
+    int64_t until = loft_now_us(cx) + 2000000;
+    while (loft_now_us(cx) < until && !loft_child_exited(cx, pid, 0)) {
         struct timespec ts = { 0, 5000000 };
         nanosleep(&ts, 0);
     }
     killpg(pid, SIGKILL);
     kill(pid, SIGKILL);
-    return loft_child_reap(pid);
+    return loft_child_reap(cx, pid);
 }
 
 /* One `poll` round over the child's pipes: each output read into its text (EOF closes it), the
  * input fed as far as the pipe takes it (closed once all of it is in, or the child closed its
  * end).  `ms` -1 blocks.  Answers whether any pipe is still open. */
-static int loft_child_pump(loft_child *c, loft_text *out, loft_text *err, const char *in, size_t inlen,
+static int loft_child_pump(loft_cx *cx, loft_child *c, loft_text *out, loft_text *err, const char *in, size_t inlen,
                            size_t *fed, int ms) {
     struct pollfd fds[3];
     int nf = 0, io = -1, ie = -1, ii = -1;
@@ -319,7 +319,7 @@ static int loft_child_pump(loft_child *c, loft_text *out, loft_text *err, const 
         if (at[k] < 0 || !(fds[at[k]].revents & (POLLIN | POLLHUP | POLLERR))) continue;
         ssize_t r = read(*ends[k], buf, sizeof buf);
         if (r > 0) {
-            if (into[k]) loft_push(into[k], buf, (size_t) r);
+            if (into[k]) loft_push(cx, into[k], buf, (size_t) r);
         } else if (r == 0 || (errno != EINTR && errno != EAGAIN)) {
             close(*ends[k]);
             *ends[k] = -1;
@@ -352,42 +352,42 @@ typedef struct { HANDLE proc, job; } loft_win_child;
 static loft_win_child loft_win_children[256];
 typedef struct { loft_pid pid; int in, out, err; } loft_child;
 
-static void loft_proc_close(int fd) { _close(fd); }
-static void loft_proc_mkdir(const char *dir) { _mkdir(dir); }
-static void loft_proc_nap(int64_t us) { Sleep((DWORD) ((us + 999) / 1000)); }
-static void loft_proc_track(loft_pid pid, int on) {
+static void loft_proc_close(loft_cx *cx, int fd) { _close(fd); }
+static void loft_proc_mkdir(loft_cx *cx, const char *dir) { _mkdir(dir); }
+static void loft_proc_nap(loft_cx *cx, int64_t us) { Sleep((DWORD) ((us + 999) / 1000)); }
+static void loft_proc_track(loft_cx *cx, loft_pid pid, int on) {
     (void) pid;
     (void) on;
 }
 
-static loft_win_child *loft_win_child_of(loft_pid pid) {
+static loft_win_child *loft_win_child_of(loft_cx *cx, loft_pid pid) {
     return pid >= 1 && pid <= 256 && loft_win_children[pid - 1].proc ? &loft_win_children[pid - 1] : 0;
 }
 
 /* One argument as the MSVC runtime's parser reads it back — `std::process`'s own quoting: quoted
  * when empty or holding a space or tab, a quote escaped, the backslashes before one doubled. */
-static void loft_win_quote(loft_text *cmd, const char *arg) {
+static void loft_win_quote(loft_cx *cx, loft_text *cmd, const char *arg) {
     int quote = !*arg || strchr(arg, ' ') || strchr(arg, '\t');
-    if (quote) loft_push_char(cmd, '"');
+    if (quote) loft_push_char(cx, cmd, '"');
     size_t backslashes = 0;
     for (const char *p = arg; *p; p++) {
         if (*p == '\\') {
             backslashes++;
         } else {
             if (*p == '"')
-                for (size_t i = 0; i <= backslashes; i++) loft_push_char(cmd, '\\');
+                for (size_t i = 0; i <= backslashes; i++) loft_push_char(cx, cmd, '\\');
             backslashes = 0;
         }
-        loft_push_char(cmd, *p);
+        loft_push_char(cx, cmd, *p);
     }
     if (quote) {
-        for (size_t i = 0; i < backslashes; i++) loft_push_char(cmd, '\\');
-        loft_push_char(cmd, '"');
+        for (size_t i = 0; i < backslashes; i++) loft_push_char(cx, cmd, '\\');
+        loft_push_char(cx, cmd, '"');
     }
 }
 
 /* `{program}: {the OS's message} (os error N)`, as Rust's `io::Error` says it. */
-static void loft_win_error(loft_text *why, const char *program, DWORD e) {
+static void loft_win_error(loft_cx *cx, loft_text *why, const char *program, DWORD e) {
     char msg[512];
     DWORD n = FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, 0, e, 0, msg,
                              (DWORD) sizeof msg, 0);
@@ -395,34 +395,34 @@ static void loft_win_error(loft_text *why, const char *program, DWORD e) {
     msg[n] = 0;
     char tail[48];
     snprintf(tail, sizeof tail, " (os error %lu)", (unsigned long) e);
-    loft_push_cstr(why, program);
-    loft_push_cstr(why, ": ");
-    loft_push_cstr(why, n ? msg : "unknown error");
-    loft_push_cstr(why, tail);
+    loft_push_cstr(cx, why, program);
+    loft_push_cstr(cx, why, ": ");
+    loft_push_cstr(cx, why, n ? msg : "unknown error");
+    loft_push_cstr(cx, why, tail);
 }
 
 /* This program's own stream `which` as a handle the child inherits. */
-static HANDLE loft_win_inherit(DWORD which) {
+static HANDLE loft_win_inherit(loft_cx *cx, DWORD which) {
     HANDLE h = GetStdHandle(which), dup = 0;
     if (!h || h == INVALID_HANDLE_VALUE) return 0;
     if (!DuplicateHandle(GetCurrentProcess(), h, GetCurrentProcess(), &dup, 0, TRUE, DUPLICATE_SAME_ACCESS)) return 0;
     return dup;
 }
 
-static int loft_spawn(char **argv, const size_t *lens, size_t n, int pin, int pout, int perr, loft_child *c,
+static int loft_spawn(loft_cx *cx, char **argv, const size_t *lens, size_t n, int pin, int pout, int perr, loft_child *c,
                       loft_text *why) {
     for (size_t i = 0; i < n; i++) {
         if (strlen(argv[i]) != lens[i]) {
-            loft_push_cstr(why, argv[0]);
-            loft_push_cstr(why, ": nul byte found in provided data");
+            loft_push_cstr(cx, why, argv[0]);
+            loft_push_cstr(cx, why, ": nul byte found in provided data");
             return 0;
         }
     }
     size_t slot = 0;
     while (slot < 256 && loft_win_children[slot].proc) slot++;
     if (slot == 256) {
-        loft_push_cstr(why, argv[0]);
-        loft_push_cstr(why, ": too many programs running at once");
+        loft_push_cstr(cx, why, argv[0]);
+        loft_push_cstr(cx, why, ": too many programs running at once");
         return 0;
     }
     SECURITY_ATTRIBUTES sa;
@@ -434,18 +434,18 @@ static int loft_spawn(char **argv, const size_t *lens, size_t n, int pin, int po
              (!perr || CreatePipe(&err_r, &err_w, &sa, 0));
     HANDLE child_in = pin ? in_r : CreateFileA("NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &sa,
                                                OPEN_EXISTING, 0, 0);
-    HANDLE child_out = pout ? out_w : loft_win_inherit(STD_OUTPUT_HANDLE);
-    HANDLE child_err = perr ? err_w : loft_win_inherit(STD_ERROR_HANDLE);
+    HANDLE child_out = pout ? out_w : loft_win_inherit(cx, STD_OUTPUT_HANDLE);
+    HANDLE child_err = perr ? err_w : loft_win_inherit(cx, STD_ERROR_HANDLE);
     /* The ends this program keeps are not the child's. */
     if (in_w) SetHandleInformation(in_w, HANDLE_FLAG_INHERIT, 0);
     if (out_r) SetHandleInformation(out_r, HANDLE_FLAG_INHERIT, 0);
     if (err_r) SetHandleInformation(err_r, HANDLE_FLAG_INHERIT, 0);
     loft_text cmd = { 0, 0, 0 };
     for (size_t i = 0; i < n; i++) {
-        if (i) loft_push_char(&cmd, ' ');
-        loft_win_quote(&cmd, argv[i]);
+        if (i) loft_push_char(cx, &cmd, ' ');
+        loft_win_quote(cx, &cmd, argv[i]);
     }
-    loft_push_char(&cmd, 0);
+    loft_push_char(cx, &cmd, 0);
     /* Whatever this program wrote reaches its stream before the child's output does. */
     fflush(0);
     /* The command line as UTF-16, as `std::process` hands it over: through the ANSI call a
@@ -475,7 +475,7 @@ static int loft_spawn(char **argv, const size_t *lens, size_t n, int pin, int po
         HANDLE mine[3] = { in_w, out_r, err_r };
         for (int i = 0; i < 3; i++)
             if (mine[i]) CloseHandle(mine[i]);
-        loft_win_error(why, argv[0], e);
+        loft_win_error(cx, why, argv[0], e);
         return 0;
     }
     CloseHandle(pi.hThread);
@@ -499,15 +499,15 @@ static int loft_spawn(char **argv, const size_t *lens, size_t n, int pin, int po
     return 1;
 }
 
-static int loft_child_exited(loft_pid pid, int block) {
-    loft_win_child *w = loft_win_child_of(pid);
+static int loft_child_exited(loft_cx *cx, loft_pid pid, int block) {
+    loft_win_child *w = loft_win_child_of(cx, pid);
     return !w || WaitForSingleObject(w->proc, block ? INFINITE : 0) == WAIT_OBJECT_0;
 }
 
 /* `exit_code`, with `own_code`'s reading: a code an MSYS/Cygwin program a signal ended gives
  * (`n << 8`) reads as the `128 + n` it answers on Unix. */
-static int64_t loft_child_reap(loft_pid pid) {
-    loft_win_child *w = loft_win_child_of(pid);
+static int64_t loft_child_reap(loft_cx *cx, loft_pid pid) {
+    loft_win_child *w = loft_win_child_of(cx, pid);
     if (!w) return -1;
     WaitForSingleObject(w->proc, INFINITE);
     DWORD code = 0;
@@ -520,18 +520,18 @@ static int64_t loft_child_reap(loft_pid pid) {
     return r;
 }
 
-static int loft_child_wait(loft_pid pid, int64_t ms) {
-    loft_win_child *w = loft_win_child_of(pid);
+static int loft_child_wait(loft_cx *cx, loft_pid pid, int64_t ms) {
+    loft_win_child *w = loft_win_child_of(cx, pid);
     return !w || WaitForSingleObject(w->proc, ms < 0 ? 0 : (DWORD) ms) == WAIT_OBJECT_0;
 }
 
 /* `stop_tree`: the job ended at once with the code a stop reads as on Unix (`128 + SIGTERM`). */
-static int64_t loft_child_stop(loft_pid pid) {
-    loft_win_child *w = loft_win_child_of(pid);
+static int64_t loft_child_stop(loft_cx *cx, loft_pid pid) {
+    loft_win_child *w = loft_win_child_of(cx, pid);
     if (!w) return -1;
     if (w->job) TerminateJobObject(w->job, 143);
     else TerminateProcess(w->proc, 143);
-    return loft_child_reap(pid);
+    return loft_child_reap(cx, pid);
 }
 
 /* The input a writer thread owns: its pipe and a copy of the bytes. */
@@ -555,9 +555,9 @@ static DWORD WINAPI loft_win_feed_run(LPVOID arg) {
 /* One round over the child's pipes, as the POSIX pump's: each output read into its text (its end
  * closes it), the input fed as far as the pipe takes it (closed once all of it is in, or the child
  * closed its end).  `ms` -1 waits until something moves.  Answers whether any pipe is still open. */
-static int loft_child_pump(loft_child *c, loft_text *out, loft_text *err, const char *in, size_t inlen,
+static int loft_child_pump(loft_cx *cx, loft_child *c, loft_text *out, loft_text *err, const char *in, size_t inlen,
                            size_t *fed, int ms) {
-    int64_t until = ms < 0 ? -1 : loft_now_us() + (int64_t) ms * 1000, step = 500;
+    int64_t until = ms < 0 ? -1 : loft_now_us(cx) + (int64_t) ms * 1000, step = 500;
     char buf[65536];
     for (;;) {
         if (c->out < 0 && c->err < 0 && c->in < 0) return 0;
@@ -576,7 +576,7 @@ static int loft_child_pump(loft_child *c, loft_text *out, loft_text *err, const 
             }
             if (!avail) continue;
             if (ReadFile(h, buf, avail < sizeof buf ? avail : (DWORD) sizeof buf, &got, 0) && got) {
-                if (into[k]) loft_push(into[k], buf, (size_t) got);
+                if (into[k]) loft_push(cx, into[k], buf, (size_t) got);
             } else {
                 _close(*ends[k]);
                 *ends[k] = -1;
@@ -605,9 +605,9 @@ static int loft_child_pump(loft_child *c, loft_text *out, loft_text *err, const 
             moved = 1;
         }
         if (moved) break;
-        int64_t now = loft_now_us();
+        int64_t now = loft_now_us(cx);
         if (until >= 0 && now >= until) break;
-        loft_proc_nap(until >= 0 && until - now < step ? until - now : step);
+        loft_proc_nap(cx, until >= 0 && until - now < step ? until - now : step);
         step = step * 2 < 10000 ? step * 2 : 10000;
     }
     return c->out >= 0 || c->err >= 0 || c->in >= 0;
@@ -617,12 +617,12 @@ static int loft_child_pump(loft_child *c, loft_text *out, loft_text *err, const 
 #if defined(LOFT_PROC_HOST)
 /* `run_live`: run to completion with `input` on stdin, both streams collected; with `limit_ms`
  * >= 0 a child still running then is stopped with its tree and the code is -2. */
-static void loft_run_live(loft_words *w, const char *in, size_t inlen, int64_t limit_ms, loft_proc_answer *a) {
+static void loft_run_live(loft_cx *cx, loft_words *w, const char *in, size_t inlen, int64_t limit_ms, loft_proc_answer *a) {
     loft_child c;
     loft_text out = { 0, 0, 0 }, err = { 0, 0, 0 }, why = { 0, 0, 0 };
-    if (!loft_spawn(w->v, w->len, w->n, inlen > 0, 1, 1, &c, &why)) {
+    if (!loft_spawn(cx, w->v, w->len, w->n, inlen > 0, 1, 1, &c, &why)) {
         a->code = -1;
-        loft_push(&a->err, why.p, why.len);
+        loft_push(cx, &a->err, why.p, why.len);
         free(why.p);
         return;
     }
@@ -630,29 +630,29 @@ static void loft_run_live(loft_words *w, const char *in, size_t inlen, int64_t l
     int timed_out = 0;
     if (limit_ms >= 0) {
         /* The clock is watched on the child's end, not on its pipes. */
-        int64_t until = loft_now_us() + limit_ms * 1000;
+        int64_t until = loft_now_us(cx) + limit_ms * 1000;
         for (;;) {
-            if (loft_child_exited(c.pid, 0)) break;
-            int64_t left = until - loft_now_us();
+            if (loft_child_exited(cx, c.pid, 0)) break;
+            int64_t left = until - loft_now_us(cx);
             if (left <= 0) {
                 timed_out = 1;
                 break;
             }
             int ms = (int) (left / 1000 < 20 ? left / 1000 : 20);
-            if (!loft_child_pump(&c, &out, &err, in, inlen, &fed, ms)) {
-                if (!loft_child_wait(c.pid, left / 1000 + 1)) timed_out = 1;
+            if (!loft_child_pump(cx, &c, &out, &err, in, inlen, &fed, ms)) {
+                if (!loft_child_wait(cx, c.pid, left / 1000 + 1)) timed_out = 1;
                 break;
             }
         }
-        a->code = timed_out ? loft_child_stop(c.pid) : loft_child_reap(c.pid);
+        a->code = timed_out ? loft_child_stop(cx, c.pid) : loft_child_reap(cx, c.pid);
         if (timed_out) a->code = -2;
-        while (loft_child_pump(&c, &out, &err, in, inlen, &fed, -1)) {}
+        while (loft_child_pump(cx, &c, &out, &err, in, inlen, &fed, -1)) {}
     } else {
-        while (loft_child_pump(&c, &out, &err, in, inlen, &fed, -1)) {}
-        a->code = loft_child_reap(c.pid);
+        while (loft_child_pump(cx, &c, &out, &err, in, inlen, &fed, -1)) {}
+        a->code = loft_child_reap(cx, c.pid);
     }
-    loft_push_lossy(&a->out, out.p, out.len);
-    loft_push_lossy(&a->err, err.p, err.len);
+    loft_push_lossy(cx, &a->out, out.p, out.len);
+    loft_push_lossy(cx, &a->err, err.p, err.len);
     free(out.p);
     free(err.p);
 }
@@ -662,17 +662,17 @@ static void loft_run_live(loft_words *w, const char *in, size_t inlen, int64_t l
  * the first unused entry whose `argv` and `stdin` match (the same call twice walks its entries
  * and stays on the last), and a run with none answers -1 and says so. ── */
 
-static const char *loft_rec_dir(const char *var) {
+static const char *loft_rec_dir(loft_cx *cx, const char *var) {
     const char *d = getenv(var);
     return d && *d ? d : 0;
 }
 
 /* The `argv` file's bytes: one word per line; 0 for a word a line cannot hold. */
-static int loft_rec_key(loft_words *w, loft_text *key) {
+static int loft_rec_key(loft_cx *cx, loft_words *w, loft_text *key) {
     for (size_t i = 0; i < w->n; i++) {
         if (memchr(w->v[i], '\n', w->len[i])) return 0;
-        loft_push(key, w->v[i], w->len[i]);
-        loft_push(key, "\n", 1);
+        loft_push(cx, key, w->v[i], w->len[i]);
+        loft_push(cx, key, "\n", 1);
     }
     return 1;
 }
@@ -682,11 +682,11 @@ static int loft_rec_cmp(const void *a, const void *b) {
 }
 
 /* The subdirectories of `dir`, in name order, malloc'd; their count in `*n`. */
-static char **loft_rec_entries(const char *dir, size_t *n) {
+static char **loft_rec_entries(loft_cx *cx, const char *dir, size_t *n) {
     *n = 0;
     char **out = 0;
     size_t nn = 0;
-    char **names = loft_dir_names(dir, &nn);
+    char **names = loft_dir_names(cx, dir, &nn);
     if (!names) return 0;
     for (size_t i = 0; i < nn; i++) {
         size_t len = strlen(dir) + strlen(names[i]) + 2;
@@ -694,7 +694,7 @@ static char **loft_rec_entries(const char *dir, size_t *n) {
         if (!p) { fputs("loft: out of memory\n", stderr); abort(); }
         snprintf(p, len, "%s/%s", dir, names[i]);
         free(names[i]);
-        if (!loft_is_dir(p)) {
+        if (!loft_is_dir(cx, p)) {
             free(p);
             continue;
         }
@@ -708,19 +708,19 @@ static char **loft_rec_entries(const char *dir, size_t *n) {
 }
 
 /* `entry/name`'s bytes into `t`; 0 when it cannot be read. */
-static int loft_rec_read(const char *entry, const char *name, loft_text *t) {
+static int loft_rec_read(loft_cx *cx, const char *entry, const char *name, loft_text *t) {
     char p[8192];
     snprintf(p, sizeof p, "%s/%s", entry, name);
     FILE *f = fopen(p, "rb");
     if (!f) return 0;
     char buf[65536];
     size_t r;
-    while ((r = fread(buf, 1, sizeof buf, f)) > 0) loft_push(t, buf, r);
+    while ((r = fread(buf, 1, sizeof buf, f)) > 0) loft_push(cx, t, buf, r);
     fclose(f);
     return 1;
 }
 
-static void loft_rec_write(const char *entry, const char *name, const char *p, size_t n) {
+static void loft_rec_write(loft_cx *cx, const char *entry, const char *name, const char *p, size_t n) {
     char path[8192];
     snprintf(path, sizeof path, "%s/%s", entry, name);
     FILE *f = fopen(path, "wb");
@@ -729,41 +729,41 @@ static void loft_rec_write(const char *entry, const char *name, const char *p, s
     fclose(f);
 }
 
-static int loft_rec_replay(loft_words *w, const char *in, size_t inlen, loft_proc_answer *a) {
-    const char *dir = loft_rec_dir("LOFT_RUN_REPLAY");
+static int loft_rec_replay(loft_cx *cx, loft_words *w, const char *in, size_t inlen, loft_proc_answer *a) {
+    const char *dir = loft_rec_dir(cx, "LOFT_RUN_REPLAY");
     if (!dir) return 0;
     static loft_text *used_key = 0;
     static size_t *used_n = 0, nused = 0;
     loft_text key = { 0, 0, 0 };
-    if (!loft_rec_key(w, &key)) {
+    if (!loft_rec_key(cx, w, &key)) {
         a->code = -1;
-        loft_push_cstr(&a->err, "process: no recording in ");
-        loft_push_cstr(&a->err, dir);
-        loft_push_cstr(&a->err, " for: a word holding a newline cannot be recorded");
+        loft_push_cstr(cx, &a->err, "process: no recording in ");
+        loft_push_cstr(cx, &a->err, dir);
+        loft_push_cstr(cx, &a->err, " for: a word holding a newline cannot be recorded");
         free(key.p);
         return 1;
     }
     size_t n = 0, nm = 0;
-    char **all = loft_rec_entries(dir, &n);
+    char **all = loft_rec_entries(cx, dir, &n);
     char **matching = (char **) malloc((n + 1) * sizeof *matching);
     if (!matching) { fputs("loft: out of memory\n", stderr); abort(); }
     for (size_t i = 0; i < n; i++) {
         loft_text argv = { 0, 0, 0 }, stdin_ = { 0, 0, 0 };
-        int ok = loft_rec_read(all[i], "argv", &argv) && argv.len == key.len &&
+        int ok = loft_rec_read(cx, all[i], "argv", &argv) && argv.len == key.len &&
                  (key.len == 0 || memcmp(argv.p, key.p, key.len) == 0);
-        loft_rec_read(all[i], "stdin", &stdin_);
+        loft_rec_read(cx, all[i], "stdin", &stdin_);
         if (ok && stdin_.len == inlen && (inlen == 0 || memcmp(stdin_.p, in, inlen) == 0)) matching[nm++] = all[i];
         free(argv.p);
         free(stdin_.p);
     }
     if (nm == 0) {
         a->code = -1;
-        loft_push_cstr(&a->err, "process: no recording in ");
-        loft_push_cstr(&a->err, dir);
-        loft_push_cstr(&a->err, " for: ");
+        loft_push_cstr(cx, &a->err, "process: no recording in ");
+        loft_push_cstr(cx, &a->err, dir);
+        loft_push_cstr(cx, &a->err, " for: ");
         for (size_t i = 0; i < w->n; i++) {
-            if (i) loft_push(&a->err, " ", 1);
-            loft_push(&a->err, w->v[i], w->len[i]);
+            if (i) loft_push(cx, &a->err, " ", 1);
+            loft_push(cx, &a->err, w->v[i], w->len[i]);
         }
     } else {
         size_t slot = nused;
@@ -773,15 +773,15 @@ static int loft_rec_replay(loft_words *w, const char *in, size_t inlen, loft_pro
             used_key = (loft_text *) realloc(used_key, (nused + 1) * sizeof *used_key);
             used_n = (size_t *) realloc(used_n, (nused + 1) * sizeof *used_n);
             if (!used_key || !used_n) { fputs("loft: out of memory\n", stderr); abort(); }
-            used_key[nused] = loft_text_own(loft_view(&key));
+            used_key[nused] = loft_text_own(cx, loft_view(cx, &key));
             used_n[nused++] = 0;
         }
         size_t k = used_n[slot] < nm - 1 ? used_n[slot] : nm - 1;
         used_n[slot]++;
         loft_text code = { 0, 0, 0 };
         a->code = -1;
-        if (loft_rec_read(matching[k], "code", &code)) {
-            loft_push(&code, "", 1);
+        if (loft_rec_read(cx, matching[k], "code", &code)) {
+            loft_push(cx, &code, "", 1);
             char *end = 0;
             const char *s = code.p;
             while (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r') s++;
@@ -790,8 +790,8 @@ static int loft_rec_replay(loft_words *w, const char *in, size_t inlen, loft_pro
             if (end && end != s && *end == 0) a->code = v;
         }
         free(code.p);
-        loft_rec_read(matching[k], "stdout", &a->out);
-        loft_rec_read(matching[k], "stderr", &a->err);
+        loft_rec_read(cx, matching[k], "stdout", &a->out);
+        loft_rec_read(cx, matching[k], "stderr", &a->err);
     }
     for (size_t i = 0; i < n; i++) free(all[i]);
     free(all);
@@ -800,43 +800,43 @@ static int loft_rec_replay(loft_words *w, const char *in, size_t inlen, loft_pro
     return 1;
 }
 
-static void loft_rec_record(loft_words *w, const char *in, size_t inlen, const loft_proc_answer *a) {
-    const char *dir = loft_rec_dir("LOFT_RUN_RECORD");
+static void loft_rec_record(loft_cx *cx, loft_words *w, const char *in, size_t inlen, const loft_proc_answer *a) {
+    const char *dir = loft_rec_dir(cx, "LOFT_RUN_RECORD");
     if (!dir) return;
     loft_text key = { 0, 0, 0 };
-    if (!loft_rec_key(w, &key)) {
+    if (!loft_rec_key(cx, w, &key)) {
         free(key.p);
         return;
     }
-    loft_proc_mkdir(dir);
+    loft_proc_mkdir(cx, dir);
     size_t n = 0;
-    char **all = loft_rec_entries(dir, &n);
+    char **all = loft_rec_entries(cx, dir, &n);
     for (size_t i = 0; i < n; i++) free(all[i]);
     free(all);
     const char *slash = strrchr(w->v[0], '/');
     const char *program = slash ? slash + 1 : w->v[0];
     char entry[8192];
     snprintf(entry, sizeof entry, "%s/%03zu-%s", dir, n + 1, *program ? program : "program");
-    loft_proc_mkdir(entry);
+    loft_proc_mkdir(cx, entry);
     char code[32];
     snprintf(code, sizeof code, "%lld\n", (long long) a->code);
-    loft_rec_write(entry, "argv", key.p, key.len);
-    loft_rec_write(entry, "stdin", in, inlen);
-    loft_rec_write(entry, "stdout", a->out.p, a->out.len);
-    loft_rec_write(entry, "stderr", a->err.p, a->err.len);
-    loft_rec_write(entry, "code", code, strlen(code));
+    loft_rec_write(cx, entry, "argv", key.p, key.len);
+    loft_rec_write(cx, entry, "stdin", in, inlen);
+    loft_rec_write(cx, entry, "stdout", a->out.p, a->out.len);
+    loft_rec_write(cx, entry, "stderr", a->err.p, a->err.len);
+    loft_rec_write(cx, entry, "code", code, strlen(code));
     free(key.p);
 }
 
 /* `run_until`: the run, answered from a recording when one is armed, and written to one. */
-static void loft_run_until(loft_words *w, const char *in, size_t inlen, int64_t limit_ms, loft_proc_answer *a) {
+static void loft_run_until(loft_cx *cx, loft_words *w, const char *in, size_t inlen, int64_t limit_ms, loft_proc_answer *a) {
     if (w->n == 0) {
-        loft_proc_say(a, -1, 0, loft_proc_empty);
+        loft_proc_say(cx, a, -1, 0, loft_proc_empty);
         return;
     }
-    if (loft_rec_replay(w, in, inlen, a)) return;
-    loft_run_live(w, in, inlen, limit_ms, a);
-    loft_rec_record(w, in, inlen, a);
+    if (loft_rec_replay(cx, w, in, inlen, a)) return;
+    loft_run_live(cx, w, in, inlen, limit_ms, a);
+    loft_rec_record(cx, w, in, inlen, a);
 }
 
 /* ── Started programs and line cursors, by the handle the library holds ── */
@@ -846,13 +846,13 @@ static loft_started *loft_started_tab = 0;
 static size_t loft_nstarted = 0;
 static int64_t loft_next_started = 1;
 
-static loft_started *loft_started_find(int64_t h) {
+static loft_started *loft_started_find(loft_cx *cx, int64_t h) {
     for (size_t i = 0; i < loft_nstarted; i++)
         if (loft_started_tab[i].h == h) return &loft_started_tab[i];
     return 0;
 }
 
-static void loft_started_drop(loft_started *s) {
+static void loft_started_drop(loft_cx *cx, loft_started *s) {
     *s = loft_started_tab[--loft_nstarted];
 }
 
@@ -874,23 +874,23 @@ static loft_cursor **loft_cursors = 0;
 static size_t loft_ncursors = 0;
 static int64_t loft_next_cursor = 1;
 
-static loft_cursor *loft_cursor_find(int64_t h) {
+static loft_cursor *loft_cursor_find(loft_cx *cx, int64_t h) {
     for (size_t i = 0; i < loft_ncursors; i++)
         if (loft_cursors[i]->h == h) return loft_cursors[i];
     return 0;
 }
 
-static void loft_cursor_open(int err, loft_words *w, loft_str input, loft_proc_answer *a) {
+static void loft_cursor_open(loft_cx *cx, int err, loft_words *w, loft_str input, loft_proc_answer *a) {
     if (w->n == 0) {
-        loft_proc_say(a, -1, 0, loft_proc_empty);
+        loft_proc_say(cx, a, -1, 0, loft_proc_empty);
         return;
     }
     loft_cursor *k = (loft_cursor *) calloc(1, sizeof *k);
     if (!k) { fputs("loft: out of memory\n", stderr); abort(); }
     loft_text why = { 0, 0, 0 };
-    if (!loft_spawn(w->v, w->len, w->n, input.len > 0, 1, 1, &k->c, &why)) {
+    if (!loft_spawn(cx, w->v, w->len, w->n, input.len > 0, 1, 1, &k->c, &why)) {
         a->code = -1;
-        loft_push(&a->err, why.p, why.len);
+        loft_push(cx, &a->err, why.p, why.len);
         free(why.p);
         free(k);
         return;
@@ -908,28 +908,28 @@ static void loft_cursor_open(int err, loft_words *w, loft_str input, loft_proc_a
 }
 
 /* One round over the cursor's pipes: the chosen stream into `line`, the other into `other`. */
-static int loft_cursor_pump(loft_cursor *k, int ms) {
-    return k->err ? loft_child_pump(&k->c, &k->other, &k->line, k->input, k->inlen, &k->fed, ms)
-                  : loft_child_pump(&k->c, &k->line, &k->other, k->input, k->inlen, &k->fed, ms);
+static int loft_cursor_pump(loft_cx *cx, loft_cursor *k, int ms) {
+    return k->err ? loft_child_pump(cx, &k->c, &k->other, &k->line, k->input, k->inlen, &k->fed, ms)
+                  : loft_child_pump(cx, &k->c, &k->line, &k->other, k->input, k->inlen, &k->fed, ms);
 }
 
 /* Wait for the program to end and settle its streams, once: nobody reads the chosen stream any
  * more (its pipe closes), the other is drained to its end; `stop` ends the tree first. */
-static void loft_cursor_finish(loft_cursor *k, int stop) {
+static void loft_cursor_finish(loft_cx *cx, loft_cursor *k, int stop) {
     if (k->finished) return;
     k->finished = 1;
     int *chosen = k->err ? &k->c.err : &k->c.out;
     if (*chosen >= 0) {
-        loft_proc_close(*chosen);
+        loft_proc_close(cx, *chosen);
         *chosen = -1;
     }
-    if (stop) k->code = loft_child_stop(k->c.pid);
-    while (loft_cursor_pump(k, -1)) {}
-    if (!stop) k->code = loft_child_reap(k->c.pid);
+    if (stop) k->code = loft_child_stop(cx, k->c.pid);
+    while (loft_cursor_pump(cx, k, -1)) {}
+    if (!stop) k->code = loft_child_reap(cx, k->c.pid);
 }
 
-static void loft_cursor_next(int64_t h, loft_proc_answer *a) {
-    loft_cursor *k = loft_cursor_find(h);
+static void loft_cursor_next(loft_cx *cx, int64_t h, loft_proc_answer *a) {
+    loft_cursor *k = loft_cursor_find(cx, h);
     if (!k) {
         a->code = -1;
         return;
@@ -941,22 +941,22 @@ static void loft_cursor_next(int64_t h, loft_proc_answer *a) {
             size_t n = nl ? (size_t) (nl - k->line.p) : k->line.len;
             size_t take = nl ? n + 1 : n;
             if (nl && n > 0 && k->line.p[n - 1] == '\r') n--;
-            loft_push_lossy(&a->out, k->line.p, n);
+            loft_push_lossy(cx, &a->out, k->line.p, n);
             memmove(k->line.p, k->line.p + take, k->line.len - take);
             k->line.len -= take;
             a->code = 1;
             return;
         }
         if (!open) {
-            loft_cursor_finish(k, 0);
+            loft_cursor_finish(cx, k, 0);
             a->code = 0;
             return;
         }
-        loft_cursor_pump(k, -1);
+        loft_cursor_pump(cx, k, -1);
     }
 }
 
-static void loft_cursor_done(int64_t h, int stop, loft_proc_answer *a) {
+static void loft_cursor_done(loft_cx *cx, int64_t h, int stop, loft_proc_answer *a) {
     size_t at = loft_ncursors;
     for (size_t i = 0; i < loft_ncursors; i++)
         if (loft_cursors[i]->h == h) at = i;
@@ -966,9 +966,9 @@ static void loft_cursor_done(int64_t h, int stop, loft_proc_answer *a) {
     }
     loft_cursor *k = loft_cursors[at];
     loft_cursors[at] = loft_cursors[--loft_ncursors];
-    loft_cursor_finish(k, stop);
+    loft_cursor_finish(cx, k, stop);
     a->code = k->code;
-    loft_push_lossy(k->err ? &a->out : &a->err, k->other.p, k->other.len);
+    loft_push_lossy(cx, k->err ? &a->out : &a->err, k->other.p, k->other.len);
     free(k->line.p);
     free(k->other.p);
     free(k->input);
@@ -976,16 +976,16 @@ static void loft_cursor_done(int64_t h, int stop, loft_proc_answer *a) {
 }
 
 /* `start()`: the program runs beside this one, its input empty and its output this program's. */
-static void loft_proc_start(loft_words *w, loft_proc_answer *a) {
+static void loft_proc_start(loft_cx *cx, loft_words *w, loft_proc_answer *a) {
     if (w->n == 0) {
-        loft_proc_say(a, -1, 0, loft_proc_empty);
+        loft_proc_say(cx, a, -1, 0, loft_proc_empty);
         return;
     }
     loft_child c;
     loft_text why = { 0, 0, 0 };
-    if (!loft_spawn(w->v, w->len, w->n, 0, 0, 0, &c, &why)) {
+    if (!loft_spawn(cx, w->v, w->len, w->n, 0, 0, 0, &c, &why)) {
         a->code = -1;
-        loft_push(&a->err, why.p, why.len);
+        loft_push(cx, &a->err, why.p, why.len);
         free(why.p);
         return;
     }
@@ -1003,7 +1003,7 @@ static void loft_proc_start(loft_words *w, loft_proc_answer *a) {
 
 /* Run `git [-C dir] <words>` to completion, stdin empty, stdout collected: 1 and its exit code
  * (-2 for one a signal ended), or 0 and why git could not be run. */
-static int loft_git_run(const char *dir, char **words, size_t nwords, loft_text *out, int64_t *code, loft_text *why) {
+static int loft_git_run(loft_cx *cx, const char *dir, char **words, size_t nwords, loft_text *out, int64_t *code, loft_text *why) {
     char *argv[16];
     size_t lens[16], n = 0;
     argv[n++] = (char *) "git";
@@ -1016,17 +1016,17 @@ static int loft_git_run(const char *dir, char **words, size_t nwords, loft_text 
     for (size_t i = 0; i < n; i++) lens[i] = strlen(argv[i]);
     loft_child c;
     loft_text err = { 0, 0, 0 };
-    if (!loft_spawn(argv, lens, n, 0, 1, 1, &c, why)) return 0;
+    if (!loft_spawn(cx, argv, lens, n, 0, 1, 1, &c, why)) return 0;
     size_t fed = 0;
-    while (loft_child_pump(&c, out, &err, "", 0, &fed, -1)) {}
+    while (loft_child_pump(cx, &c, out, &err, "", 0, &fed, -1)) {}
     free(err.p);
 #if defined(LOFT_POSIX_HOST)
-    loft_proc_track(c.pid, 0);
+    loft_proc_track(cx, c.pid, 0);
     int status = 0;
     while (waitpid(c.pid, &status, 0) < 0 && errno == EINTR) {}
     *code = WIFEXITED(status) ? WEXITSTATUS(status) : -2;
 #else
-    *code = loft_child_reap(c.pid);
+    *code = loft_child_reap(cx, c.pid);
 #endif
     return 1;
 }
@@ -1034,9 +1034,9 @@ static int loft_git_run(const char *dir, char **words, size_t nwords, loft_text 
 /* `git_query(kind, a, b, n, dir, out) -> integer`: the exit status and the output; -1 when git
  * could not be asked at all, `out` then saying why (loft#1061: a failed query outside a
  * repository is not an empty answer). */
-static int64_t loft_git_query(int64_t kind, loft_str a, loft_str b, int64_t n, loft_str dir, loft_text *out) {
+static int64_t loft_git_query(loft_cx *cx, int64_t kind, loft_str a, loft_str b, int64_t n, loft_str dir, loft_text *out) {
     out->len = 0;
-    char *sa = loft_cstr_own(a), *sb = loft_cstr_own(b), *sd = loft_cstr_own(dir);
+    char *sa = loft_cstr_own(cx, a), *sb = loft_cstr_own(cx, b), *sd = loft_cstr_own(cx, dir);
     char count[32], range[8192], pretty[64];
     snprintf(count, sizeof count, "-%lld", (long long) (n < 1 ? 1 : n > 100000 ? 100000 : n));
     snprintf(range, sizeof range, "%s...HEAD", sa);
@@ -1069,40 +1069,40 @@ static int64_t loft_git_query(int64_t kind, loft_str a, loft_str b, int64_t n, l
     if (nw == 0) {
         snprintf(m, sizeof m, "this loft does not know git query %lld — the library is newer than the binary",
                  (long long) kind);
-        loft_push_cstr(out, m);
+        loft_push_cstr(cx, out, m);
     } else if (a.len && a.p[0] == '-') {
         /* A git ref cannot begin with `-`: refusing one closes the option position. */
-        loft_push_cstr(out, "'");
-        loft_push(out, a.p, a.len);
-        loft_push_cstr(out, "' cannot be a git ref — a ref may not begin with '-'");
+        loft_push_cstr(cx, out, "'");
+        loft_push(cx, out, a.p, a.len);
+        loft_push_cstr(cx, out, "' cannot be a git ref — a ref may not begin with '-'");
     } else {
         loft_text got = { 0, 0, 0 }, why = { 0, 0, 0 };
-        if (!loft_git_run(sd, w, nw, &got, &code, &why)) {
+        if (!loft_git_run(cx, sd, w, nw, &got, &code, &why)) {
             code = -1;
-            loft_push_cstr(out, "cannot run git: ");
+            loft_push_cstr(cx, out, "cannot run git: ");
             /* The spawn says `git: <error>`; the query says it after its own words. */
             size_t skip = why.len >= 5 && memcmp(why.p, "git: ", 5) == 0 ? 5 : 0;
-            loft_push(out, why.p + skip, why.len - skip);
+            loft_push(cx, out, why.p + skip, why.len - skip);
         } else if (code == 0) {
-            loft_push_lossy(out, got.p, got.len);
+            loft_push_lossy(cx, out, got.p, got.len);
         } else {
             /* Asked in an exit status (`rev-parse --git-dir`), never read from git's prose. */
             char *probe[2] = { (char *) "rev-parse", (char *) "--git-dir" };
             loft_text o = { 0, 0, 0 }, y = { 0, 0, 0 };
             int64_t pc = -1;
-            if (loft_git_run(sd, probe, 2, &o, &pc, &y) && pc == 0) {
-                loft_push_lossy(out, got.p, got.len);
+            if (loft_git_run(cx, sd, probe, 2, &o, &pc, &y) && pc == 0) {
+                loft_push_lossy(cx, out, got.p, got.len);
             } else {
                 code = -1;
-                loft_push_cstr(out, "not a git repository: ");
+                loft_push_cstr(cx, out, "not a git repository: ");
                 if (*sd) {
-                    loft_push_cstr(out, sd);
+                    loft_push_cstr(cx, out, sd);
                 } else {
                     char cwd[4096];
 #if defined(_WIN32)
-                    loft_push_cstr(out, _getcwd(cwd, (int) sizeof cwd) ? cwd : "the working directory");
+                    loft_push_cstr(cx, out, _getcwd(cwd, (int) sizeof cwd) ? cwd : "the working directory");
 #else
-                    loft_push_cstr(out, getcwd(cwd, sizeof cwd) ? cwd : "the working directory");
+                    loft_push_cstr(cx, out, getcwd(cwd, sizeof cwd) ? cwd : "the working directory");
 #endif
                 }
             }
@@ -1118,16 +1118,16 @@ static int64_t loft_git_query(int64_t kind, loft_str a, loft_str b, int64_t n, l
     return code;
 }
 #else
-static int64_t loft_git_query(int64_t kind, loft_str a, loft_str b, int64_t n, loft_str dir, loft_text *out) {
+static int64_t loft_git_query(loft_cx *cx, int64_t kind, loft_str a, loft_str b, int64_t n, loft_str dir, loft_text *out) {
     (void) kind; (void) a; (void) b; (void) n; (void) dir;
     out->len = 0;
-    loft_push_cstr(out, "cannot run git: this build cannot start a program");
+    loft_push_cstr(cx, out, "cannot run git: this build cannot start a program");
     return -1;
 }
 #endif
 
 /* A word that is a whole decimal integer (`str::parse::<i64>`); 0 when it is not one. */
-static int loft_proc_number(loft_words *w, size_t i, int64_t *v) {
+static int loft_proc_number(loft_cx *cx, loft_words *w, size_t i, int64_t *v) {
     if (i >= w->n || w->len[i] == 0) return 0;
     char *end = 0;
     errno = 0;
@@ -1138,13 +1138,13 @@ static int loft_proc_number(loft_words *w, size_t i, int64_t *v) {
 }
 
 /* `control`: one of the library's operations, `@<op>:<words>` (see process_run.rs). */
-static void loft_proc_control(const char *op, size_t oplen, loft_words *w, loft_str input, loft_proc_answer *a) {
+static void loft_proc_control(loft_cx *cx, const char *op, size_t oplen, loft_words *w, loft_str input, loft_proc_answer *a) {
 #define LOFT_OP(s) (oplen == sizeof s - 1 && memcmp(op, s, oplen) == 0)
     int64_t h = 0, ms = 0;
     if (LOFT_OP("path")) {
         /* PathText::program on this host: a name no platform takes refuses the path; the
          * child is handed its normal form. */
-        loft_str raw = w->n ? loft_lit(w->v[0], w->len[0]) : loft_lit("", 0);
+        loft_str raw = w->n ? loft_lit(cx, w->v[0], w->len[0]) : loft_lit(cx, "", 0);
         size_t first = 0;
 #if defined(_WIN32)
         /* A drive or a share is the path's prefix, not a name. */
@@ -1153,7 +1153,7 @@ static void loft_proc_control(const char *op, size_t oplen, loft_words *w, loft_
             if (!pfx) { fputs("loft: out of memory\n", stderr); abort(); }
             size_t plen = 0;
             int rooted = 0;
-            first = loft_win_prefix(raw, pfx, &plen, &rooted);
+            first = loft_win_prefix(cx, raw, pfx, &plen, &rooted);
             free(pfx);
         }
 #endif
@@ -1161,119 +1161,119 @@ static void loft_proc_control(const char *op, size_t oplen, loft_words *w, loft_
             size_t s = i;
             while (i < raw.len && raw.p[i] != '/' && raw.p[i] != '\\') i++;
             size_t why_len = 0;
-            char *why = i > s ? loft_name_refusal(raw.p + s, i - s, &why_len) : 0;
+            char *why = i > s ? loft_name_refusal(cx, raw.p + s, i - s, &why_len) : 0;
             i++;
             if (why) {
                 a->code = -1;
-                loft_push_cstr(&a->err, "path `");
-                loft_push(&a->err, raw.p, raw.len);
-                loft_push_cstr(&a->err, "`: ");
-                loft_push(&a->err, why, why_len);
+                loft_push_cstr(cx, &a->err, "path `");
+                loft_push(cx, &a->err, raw.p, raw.len);
+                loft_push_cstr(cx, &a->err, "`: ");
+                loft_push(cx, &a->err, why, why_len);
                 free(why);
                 return;
             }
         }
-        char *norm = loft_normalize(raw, "", 0);
+        char *norm = loft_normalize(cx, raw, "", 0);
         a->code = 0;
-        loft_push_cstr(&a->out, norm ? norm : "");
+        loft_push_cstr(cx, &a->out, norm ? norm : "");
         free(norm);
         return;
     }
 #if defined(LOFT_PROC_HOST)
     if (LOFT_OP("start")) {
-        loft_proc_start(w, a);
+        loft_proc_start(cx, w, a);
     } else if (LOFT_OP("run")) {
         if (w->n == 0) {
-            loft_proc_say(a, -1, 0, loft_proc_malformed);
+            loft_proc_say(cx, a, -1, 0, loft_proc_malformed);
             return;
         }
         int64_t limit = 0;
-        if (!loft_proc_number(w, 0, &limit) || limit < 0) limit = 0;
+        if (!loft_proc_number(cx, w, 0, &limit) || limit < 0) limit = 0;
         loft_words rest = { w->v + 1, w->len + 1, w->n - 1 };
-        loft_run_until(&rest, input.p, input.len, limit, a);
+        loft_run_until(cx, &rest, input.p, input.len, limit, a);
     } else if (LOFT_OP("wait")) {
-        if (!loft_proc_number(w, 0, &h) || !loft_proc_number(w, 1, &ms)) {
-            loft_proc_say(a, -1, 0, loft_proc_malformed);
+        if (!loft_proc_number(cx, w, 0, &h) || !loft_proc_number(cx, w, 1, &ms)) {
+            loft_proc_say(cx, a, -1, 0, loft_proc_malformed);
             return;
         }
-        loft_started *s = loft_started_find(h);
+        loft_started *s = loft_started_find(cx, h);
         if (!s) {
             a->code = -1;
             return;
         }
-        if (loft_child_wait(s->pid, ms < 0 ? 0 : ms)) {
+        if (loft_child_wait(cx, s->pid, ms < 0 ? 0 : ms)) {
             char code[32];
-            snprintf(code, sizeof code, "%lld", (long long) loft_child_reap(s->pid));
-            loft_started_drop(s);
-            loft_proc_say(a, 1, code, 0);
+            snprintf(code, sizeof code, "%lld", (long long) loft_child_reap(cx, s->pid));
+            loft_started_drop(cx, s);
+            loft_proc_say(cx, a, 1, code, 0);
         } else {
             a->code = 0;
         }
     } else if (LOFT_OP("alive")) {
-        loft_started *s = loft_proc_number(w, 0, &h) ? loft_started_find(h) : 0;
-        a->code = s && !loft_child_exited(s->pid, 0);
+        loft_started *s = loft_proc_number(cx, w, 0, &h) ? loft_started_find(cx, h) : 0;
+        a->code = s && !loft_child_exited(cx, s->pid, 0);
     } else if (LOFT_OP("stop")) {
-        loft_started *s = loft_proc_number(w, 0, &h) ? loft_started_find(h) : 0;
+        loft_started *s = loft_proc_number(cx, w, 0, &h) ? loft_started_find(cx, h) : 0;
         if (!s) {
             a->code = 0;
             return;
         }
         char code[32];
-        snprintf(code, sizeof code, "%lld", (long long) loft_child_stop(s->pid));
-        loft_started_drop(s);
-        loft_proc_say(a, 1, code, 0);
+        snprintf(code, sizeof code, "%lld", (long long) loft_child_stop(cx, s->pid));
+        loft_started_drop(cx, s);
+        loft_proc_say(cx, a, 1, code, 0);
     } else if (LOFT_OP("lines")) {
         if (w->n == 0) {
-            loft_proc_say(a, -1, 0, loft_proc_malformed);
+            loft_proc_say(cx, a, -1, 0, loft_proc_malformed);
             return;
         }
         loft_words rest = { w->v + 1, w->len + 1, w->n - 1 };
-        loft_cursor_open(w->len[0] == 3 && memcmp(w->v[0], "err", 3) == 0, &rest, input, a);
+        loft_cursor_open(cx, w->len[0] == 3 && memcmp(w->v[0], "err", 3) == 0, &rest, input, a);
     } else if (LOFT_OP("next") || LOFT_OP("done") || LOFT_OP("lstop")) {
-        if (!loft_proc_number(w, 0, &h)) {
-            loft_proc_say(a, -1, 0, loft_proc_malformed);
+        if (!loft_proc_number(cx, w, 0, &h)) {
+            loft_proc_say(cx, a, -1, 0, loft_proc_malformed);
             return;
         }
-        if (LOFT_OP("next")) loft_cursor_next(h, a);
-        else loft_cursor_done(h, LOFT_OP("lstop"), a);
+        if (LOFT_OP("next")) loft_cursor_next(cx, h, a);
+        else loft_cursor_done(cx, h, LOFT_OP("lstop"), a);
     } else {
-        loft_proc_say(a, -1, 0, loft_proc_malformed);
+        loft_proc_say(cx, a, -1, 0, loft_proc_malformed);
     }
 #else
     (void) h;
     (void) ms;
     (void) input;
-    loft_proc_say(a, -1, 0, "process: this build cannot start a program");
+    loft_proc_say(cx, a, -1, 0, "process: this build cannot start a program");
 #endif
 #undef LOFT_OP
 }
 
 /* `process_run(argv, input, out, err) -> integer`: the whole run, `out` and `err` replaced. */
-static int64_t loft_process_run(loft_str argv, loft_str input, loft_text *out, loft_text *err) {
+static int64_t loft_process_run(loft_cx *cx, loft_str argv, loft_str input, loft_text *out, loft_text *err) {
     loft_proc_answer a = { 0, { 0, 0, 0 }, { 0, 0, 0 } };
     loft_words w;
     if (argv.len && argv.p[0] == '@' && memchr(argv.p, ':', argv.len)) {
         const char *colon = (const char *) memchr(argv.p, ':', argv.len);
-        if (loft_words_decode(colon + 1, argv.len - (size_t) (colon + 1 - argv.p), &w)) {
-            loft_proc_control(argv.p + 1, (size_t) (colon - argv.p - 1), &w, input, &a);
-            loft_words_free(&w);
+        if (loft_words_decode(cx, colon + 1, argv.len - (size_t) (colon + 1 - argv.p), &w)) {
+            loft_proc_control(cx, argv.p + 1, (size_t) (colon - argv.p - 1), &w, input, &a);
+            loft_words_free(cx, &w);
         } else {
-            loft_proc_say(&a, -1, 0, loft_proc_malformed);
+            loft_proc_say(cx, &a, -1, 0, loft_proc_malformed);
         }
-    } else if (loft_words_decode(argv.p, argv.len, &w)) {
+    } else if (loft_words_decode(cx, argv.p, argv.len, &w)) {
 #if defined(LOFT_PROC_HOST)
-        loft_run_until(&w, input.p, input.len, -1, &a);
+        loft_run_until(cx, &w, input.p, input.len, -1, &a);
 #else
-        loft_proc_say(&a, -1, 0, "process: this build cannot start a program");
+        loft_proc_say(cx, &a, -1, 0, "process: this build cannot start a program");
 #endif
-        loft_words_free(&w);
+        loft_words_free(cx, &w);
     } else {
-        loft_proc_say(&a, -1, 0, loft_proc_malformed);
+        loft_proc_say(cx, &a, -1, 0, loft_proc_malformed);
     }
     out->len = 0;
     err->len = 0;
-    loft_push(out, a.out.p, a.out.len);
-    loft_push(err, a.err.p, a.err.len);
+    loft_push(cx, out, a.out.p, a.out.len);
+    loft_push(cx, err, a.err.p, a.err.len);
     free(a.out.p);
     free(a.err.p);
     return a.code;

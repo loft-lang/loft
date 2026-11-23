@@ -179,11 +179,11 @@ fn compiled() -> Vec<String> {
         .unwrap_or_else(|r| panic!("the scalar subset is carried, but: {r}"));
     c.push_str("\n#include <stdio.h>\n\nstatic void show(int64_t v) {\n");
     c.push_str("    if (v == LOFT_NULL) printf(\"null\\n\"); else printf(\"%lld\\n\", (long long) v);\n}\n\n");
-    c.push_str("int main(void) {\n");
+    c.push_str("int main(void) {\n    loft_cx *cx = &loft_main_cx;\n");
     for (f, args, _) in CASES {
         let args: Vec<String> = args.iter().map(|a| format!("INT64_C({a})")).collect();
         let name = loft::c::c_name(&p.data, p.data.def_nr(&format!("n_{f}")));
-        let _ = writeln!(c, "    show({name}({}));", args.join(", "));
+        let _ = writeln!(c, "    show({name}(cx, {}));", args.join(", "));
     }
     c.push_str("    return 0;\n}\n");
     let dir = scratch("cc");
@@ -1461,7 +1461,7 @@ fn main() {
         let text = fa::read_to_string(&c).expect("read the C");
         assert_eq!(
             text.lines()
-                .filter(|l| l.contains("loft_stab_fill(&st"))
+                .filter(|l| l.contains("loft_stab_fill(cx, &st"))
                 .count(),
             tables,
             "{mode}: the tables filled"
@@ -1680,7 +1680,7 @@ fn main() {
         assert_eq!(calls, twins, "{mode}: the calls handed held headers");
         assert_eq!(
             body.lines()
-                .filter(|l| l.contains("loft_vh_fresh(h"))
+                .filter(|l| l.contains("loft_vh_fresh(cx, h"))
                 .count(),
             fresh,
             "{mode}: the reads that derive their base again"
@@ -1935,11 +1935,11 @@ fn main() {
         let text = fa::read_to_string(&c).expect("read the C");
         let opened = text
             .lines()
-            .filter(|l| l.trim_start().starts_with("pw") && l.contains(" = loft_win_of(pv"))
+            .filter(|l| l.trim_start().starts_with("pw") && l.contains(" = loft_win_of(cx, pv"))
             .count();
         assert_eq!(opened, windows, "{mode}: the windows opened");
         assert_eq!(
-            text.matches("loft_win_slot(&pw").count(),
+            text.matches("loft_win_slot(cx, &pw").count(),
             slots,
             "{mode}: the record slots"
         );
@@ -1973,7 +1973,7 @@ fn main() {
     assert!(
         fa::read_to_string(&c)
             .expect("read the C")
-            .contains(" = loft_win_of(pv"),
+            .contains(" = loft_win_of(cx, pv"),
         "the locked vector's loop is windowed"
     );
     let out = build(
@@ -2529,30 +2529,31 @@ fn the_c_store_allocator_places_every_record_where_store_does() {
     c.push_str(
         r#"
 int main(int argc, char **argv) {
+    loft_cx *cx = &loft_main_cx;
     loft_store_t s;
     memset(&s, 0, sizeof s);
     s.size = 100;
     s.buf = (uint8_t *) calloc(s.size, 8);
     s.defined = 1;
-    loft_st_init(&s);
+    loft_st_init(cx, &s);
     FILE *f = fopen(argv[argc - 1], "r");
     char op;
     unsigned a, b;
     while (fscanf(f, " %c", &op) == 1) {
-        if (op == 'C') { if (fscanf(f, "%u", &a) != 1) return 2; printf("%u\n", loft_st_claim(&s, a)); }
-        else if (op == 'D') { if (fscanf(f, "%u", &a) != 1) return 2; loft_st_delete(&s, a); }
-        else if (op == 'R') { if (fscanf(f, "%u %u", &a, &b) != 2) return 2; printf("%u\n", loft_st_resize(&s, a, b)); }
-        else if (op == 'N') { if (fscanf(f, "%u", &a) != 1) return 2; loft_st_note_referenced(&s, a); }
-        else if (op == 'I') loft_st_init(&s);
+        if (op == 'C') { if (fscanf(f, "%u", &a) != 1) return 2; printf("%u\n", loft_st_claim(cx, &s, a)); }
+        else if (op == 'D') { if (fscanf(f, "%u", &a) != 1) return 2; loft_st_delete(cx, &s, a); }
+        else if (op == 'R') { if (fscanf(f, "%u %u", &a, &b) != 2) return 2; printf("%u\n", loft_st_resize(cx, &s, a, b)); }
+        else if (op == 'N') { if (fscanf(f, "%u", &a) != 1) return 2; loft_st_note_referenced(cx, &s, a); }
+        else if (op == 'I') loft_st_init(cx, &s);
     }
     printf("size %u\n", s.size);
     uint64_t h = UINT64_C(0xcbf29ce484222325);
     for (size_t i = 0; i < (size_t) s.size * 8; i++) h = (h ^ s.buf[i]) * UINT64_C(0x100000001b3);
     printf("bytes %016llx\n", (unsigned long long) h);
     for (uint32_t pos = 1; pos < s.size;) {
-        int32_t h = loft_st_i32(&s, pos, 0);
+        int32_t h = loft_st_i32(cx, &s, pos, 0);
         uint32_t words = (uint32_t) (h < 0 ? -h : h);
-        if (h < 0) printf("%u %d %d\n", pos, h, loft_st_i32(&s, pos + words - 1, 4));
+        if (h < 0) printf("%u %d %d\n", pos, h, loft_st_i32(cx, &s, pos + words - 1, 4));
         else printf("%u %d\n", pos, h);
         pos += words;
     }
@@ -2714,9 +2715,10 @@ fn a_store_bound_to_a_file_holds_the_same_bytes_on_both_runtimes() {
         r#"
 /* argv: the file, the operations, `w` to bind it or `r` for a read surface. */
 int main(int argc, char **argv) {
+    loft_cx *cx = &loft_main_cx;
     loft_store_t s;
     memset(&s, 0, sizeof s);
-    int rc = loft_st_open_mapped(&s, argv[1], argv[3][0] == 'r');
+    int rc = loft_st_open_mapped(cx, &s, argv[1], argv[3][0] == 'r');
     printf("open %d\n", rc);
     if (rc != 1) return 0;
     printf("size %u ro %d\n", s.size, s.read_only);
@@ -2724,14 +2726,14 @@ int main(int argc, char **argv) {
     char op;
     unsigned a, b;
     while (fscanf(f, " %c", &op) == 1) {
-        if (op == 'C') { if (fscanf(f, "%u", &a) != 1) return 2; printf("%u\n", loft_st_claim(&s, a)); }
-        else if (op == 'D') { if (fscanf(f, "%u", &a) != 1) return 2; loft_st_delete(&s, a); }
-        else if (op == 'R') { if (fscanf(f, "%u %u", &a, &b) != 2) return 2; printf("%u\n", loft_st_resize(&s, a, b)); }
-        else if (op == 'N') { if (fscanf(f, "%u", &a) != 1) return 2; loft_st_note_referenced(&s, a); }
-        else if (op == 'X') { uint32_t cut = loft_st_reclaim_tail(&s); printf("%u\nsize %u\n", cut, s.size); }
+        if (op == 'C') { if (fscanf(f, "%u", &a) != 1) return 2; printf("%u\n", loft_st_claim(cx, &s, a)); }
+        else if (op == 'D') { if (fscanf(f, "%u", &a) != 1) return 2; loft_st_delete(cx, &s, a); }
+        else if (op == 'R') { if (fscanf(f, "%u %u", &a, &b) != 2) return 2; printf("%u\n", loft_st_resize(cx, &s, a, b)); }
+        else if (op == 'N') { if (fscanf(f, "%u", &a) != 1) return 2; loft_st_note_referenced(cx, &s, a); }
+        else if (op == 'X') { uint32_t cut = loft_st_reclaim_tail(cx, &s); printf("%u\nsize %u\n", cut, s.size); }
     }
     fclose(f);
-    loft_st_close_mapped(&s);
+    loft_st_close_mapped(cx, &s);
     return 0;
 }
 "#,
@@ -2977,7 +2979,7 @@ fn a_strict_store_c_build_names_a_use_after_free_and_a_store_never_freed() {
     let unit = fa::read_to_string(&c).expect("read the C");
     // The type the program mints its `P` as, read off the unit.
     let tp: u32 = unit
-        .split("loft_database_typed(&v0_p, 16, ")
+        .split("loft_database_typed(cx, &v0_p, 16, ")
         .nth(1)
         .and_then(|t| t.split(')').next())
         .and_then(|t| t.parse().ok())
@@ -2994,15 +2996,15 @@ fn a_strict_store_c_build_names_a_use_after_free_and_a_store_never_freed() {
         let mut text = unit.clone();
         let _ = write!(
             text,
-            "\nint main(void) {{\n    loft_bind_tables();\n    loft_start(0, 0);\n    \
-             loft_ref r = loft_ref_null();\n    loft_database_typed(&r, 16, {tp});\n    \
-             loft_ref k = loft_ref_null();\n    loft_database_typed(&k, 16, {tp});\n    \
-             loft_set_int(r, 0, INT64_C(7));\n    loft_free_ref(r);\n    \
-             printf(\"stale %lld\\n\", (long long) loft_get_int(r, 0));\n    \
-             loft_ref q = loft_ref_null();\n    loft_database_typed(&q, 16, {tp});\n    \
+            "\nint main(void) {{\n    loft_cx *cx = &loft_main_cx;\n    loft_bind_tables();\n    loft_start(cx, 0, 0);\n    \
+             loft_ref r = loft_ref_null(cx);\n    loft_database_typed(cx, &r, 16, {tp});\n    \
+             loft_ref k = loft_ref_null(cx);\n    loft_database_typed(cx, &k, 16, {tp});\n    \
+             loft_set_int(cx, r, 0, INT64_C(7));\n    loft_free_ref(cx, r);\n    \
+             printf(\"stale %lld\\n\", (long long) loft_get_int(cx, r, 0));\n    \
+             loft_ref q = loft_ref_null(cx);\n    loft_database_typed(cx, &q, 16, {tp});\n    \
              printf(\"fresh store %u, freed %u\\n\", (unsigned) q.store_nr, (unsigned) r.store_nr);\n    \
-             {}\n    loft_free_ref(k);\n    loft_leak_report();\n    return 0;\n}}\n",
-            if free_q { "loft_free_ref(q);" } else { "" }
+             {}\n    loft_free_ref(cx, k);\n    loft_leak_report(cx);\n    return 0;\n}}\n",
+            if free_q { "loft_free_ref(cx, q);" } else { "" }
         );
         fa::write(&src, &text).expect("write the cell");
         let cc = loft::platform::process::harness_command("cc")
@@ -3119,7 +3121,7 @@ fn a_strict_store_c_build_names_the_free_that_killed_a_store_and_the_census_its_
     );
     let unit = fa::read_to_string(&c).expect("read the C");
     let tp: u32 = unit
-        .split("loft_database_typed(&v0_p, 16, ")
+        .split("loft_database_typed(cx, &v0_p, 16, ")
         .nth(1)
         .and_then(|t| t.split(')').next())
         .and_then(|t| t.parse().ok())
@@ -3131,16 +3133,16 @@ fn a_strict_store_c_build_names_the_free_that_killed_a_store_and_the_census_its_
     );
     let _ = write!(
         text,
-        "\nint main(void) {{\n    loft_bind_tables();\n    loft_start(0, 0);\n    \
-         loft_frame_push(\"cell\", \"cell.loft\", 3);\n    \
-         loft_ref r = loft_ref_null();\n    loft_database_typed(&r, 16, {tp});\n    \
-         loft_ref k = loft_ref_null();\n    loft_database_typed(&k, 16, {tp});\n    \
-         loft_frame_site(9);\n    loft_free_ref(r);\n    \
-         loft_frame_site(11);\n    printf(\"stale %lld\\n\", (long long) loft_get_int(r, 0));\n    \
-         loft_frame_site(12);\n    loft_free_ref(r);\n    \
-         loft_frame_site(13);\n    loft_database_typed(&r, 16, {tp});\n    \
-         loft_free_ref(r);\n    loft_free_ref(k);\n    loft_frame_pop();\n    \
-         loft_leak_report();\n    return 0;\n}}\n"
+        "\nint main(void) {{\n    loft_cx *cx = &loft_main_cx;\n    loft_bind_tables();\n    loft_start(cx, 0, 0);\n    \
+         loft_frame_push(cx, \"cell\", \"cell.loft\", 3);\n    \
+         loft_ref r = loft_ref_null(cx);\n    loft_database_typed(cx, &r, 16, {tp});\n    \
+         loft_ref k = loft_ref_null(cx);\n    loft_database_typed(cx, &k, 16, {tp});\n    \
+         loft_frame_site(cx, 9);\n    loft_free_ref(cx, r);\n    \
+         loft_frame_site(cx, 11);\n    printf(\"stale %lld\\n\", (long long) loft_get_int(cx, r, 0));\n    \
+         loft_frame_site(cx, 12);\n    loft_free_ref(cx, r);\n    \
+         loft_frame_site(cx, 13);\n    loft_database_typed(cx, &r, 16, {tp});\n    \
+         loft_free_ref(cx, r);\n    loft_free_ref(cx, k);\n    loft_frame_pop(cx);\n    \
+         loft_leak_report(cx);\n    return 0;\n}}\n"
     );
     let src = dir.join("cell.c");
     let exe = dir.join("cell");
@@ -3351,9 +3353,9 @@ fn a_keyed_verify_c_build_names_a_fast_path_that_answers_wrong() {
     for (name, from, to, wrong, says) in [
         (
             "descent",
-            "        r.rec = loft_bt_find_exact(data, keys, nk, kv, n);\n#ifdef LOFT_KEYED_VERIFY",
-            "        r.rec = loft_bt_find_exact(data, keys, nk, kv, n);\n        \
-             if (r.rec) r.rec = loft_bt_record(data, loft_bt_first(data));\n#ifdef LOFT_KEYED_VERIFY",
+            "        r.rec = loft_bt_find_exact(cx, data, keys, nk, kv, n);\n#ifdef LOFT_KEYED_VERIFY",
+            "        r.rec = loft_bt_find_exact(cx, data, keys, nk, kv, n);\n        \
+             if (r.rec) r.rec = loft_bt_record(cx, data, loft_bt_first(cx, data));\n#ifdef LOFT_KEYED_VERIFY",
             "777 300 0\n",
             "LOFT_KEYED_VERIFY: the exact descent answers record",
         ),
@@ -3462,11 +3464,11 @@ fn a_copy_check_c_build_names_a_copy_that_lost_elements() {
         !err.contains("[copy_check]"),
         "a correct copy was reported:\n{err}"
     );
-    let from = "        loft_copy_bytes(dst_v, 4, src_v, 4, (size_t) len * size + 4);\n";
+    let from = "        loft_copy_bytes(cx, dst_v, 4, src_v, 4, (size_t) len * size + 4);\n";
     assert_eq!(unit.matches(from).count(), 1, "the runtime text moved");
     let broken = unit.replacen(
         from,
-        &format!("{from}        if (len == 3) loft_set_u32(loft_store_of(to), into, 4, 2);\n"),
+        &format!("{from}        if (len == 3) loft_set_u32(cx, loft_store_of(cx, to), into, 4, 2);\n"),
         1,
     );
     let (out, err) = run("broken-plain", &broken, false);
@@ -3528,7 +3530,7 @@ fn a_leak_site_c_build_names_where_a_kept_store_was_made() {
     );
     let unit = fa::read_to_string(&c).expect("read the C");
     let tp: u32 = unit
-        .split("loft_database_typed(&v0_p, 8, ")
+        .split("loft_database_typed(cx, &v0_p, 8, ")
         .nth(1)
         .and_then(|t| t.split(')').next())
         .and_then(|t| t.parse().ok())
@@ -3540,13 +3542,13 @@ fn a_leak_site_c_build_names_where_a_kept_store_was_made() {
     );
     let _ = write!(
         text,
-        "\nint main(void) {{\n    loft_bind_tables();\n    loft_start(0, 0);\n    \
-         loft_frame_push(\"leaky\", \"x.loft\", 3);\n    loft_frame_site(7);\n    \
-         loft_ref a = loft_ref_null(); loft_database_typed(&a, 8, {tp});\n    \
-         loft_ref b = loft_ref_null(); loft_database_typed(&b, 8, {tp});\n    \
-         loft_frame_site(9);\n    \
-         loft_ref c = loft_ref_null(); loft_database_typed(&c, 8, {tp});\n    \
-         loft_frame_pop();\n    loft_leak_report();\n    return 0;\n}}\n"
+        "\nint main(void) {{\n    loft_cx *cx = &loft_main_cx;\n    loft_bind_tables();\n    loft_start(cx, 0, 0);\n    \
+         loft_frame_push(cx, \"leaky\", \"x.loft\", 3);\n    loft_frame_site(cx, 7);\n    \
+         loft_ref a = loft_ref_null(cx); loft_database_typed(cx, &a, 8, {tp});\n    \
+         loft_ref b = loft_ref_null(cx); loft_database_typed(cx, &b, 8, {tp});\n    \
+         loft_frame_site(cx, 9);\n    \
+         loft_ref c = loft_ref_null(cx); loft_database_typed(cx, &c, 8, {tp});\n    \
+         loft_frame_pop(cx);\n    loft_leak_report(cx);\n    return 0;\n}}\n"
     );
     let src = dir.join("leak.c");
     fa::write(&src, &text).expect("write the cell");
@@ -3713,8 +3715,8 @@ fn a_growth_past_the_word_count_stops_the_c() {
     );
     c.push_str(include_str!("../src/c/loft_store.h"));
     c.push_str(
-        "\nint main(void) {\n    loft_store_t s;\n    memset(&s, 0, sizeof s);\n    \
-         s.size = 0xF0000000u;\n    printf(\"grew to %u\\n\", loft_claim_grow(&s, 0x20000000u, 0, 0));\n    \
+        "\nint main(void) {\n    loft_cx *cx = &loft_main_cx;\n    loft_store_t s;\n    memset(&s, 0, sizeof s);\n    \
+         s.size = 0xF0000000u;\n    printf(\"grew to %u\\n\", loft_claim_grow(cx, &s, 0x20000000u, 0, 0));\n    \
          return 0;\n}\n",
     );
     let dir = scratch("grow-limit");
@@ -3959,36 +3961,37 @@ fn the_c_hash_table_files_every_entry_where_hash_does() {
     }
     c.push_str(
         r#"
-static void loft_init(void) {}
+static void loft_init(loft_cx *cx) { (void) cx; }
 static const loft_tdesc T[1] = { { LOFT_T_STRUCT, 16, 0, 0, 0, 0, 0, 0, 0, 0 } };
 static const loft_key K_INT[1] = { { 1, 0, 0 } };
 static const loft_key K_TEXT[1] = { { 6, 0, 0 } };
 
 int main(int argc, char **argv) {
+    loft_cx *cx = &loft_main_cx;
     static loft_store_t st;
     st.size = 100;
     st.buf = (uint8_t *) calloc(st.size, 8);
     st.defined = 1;
     st.live = 1;
-    loft_st_init(&st);
+    loft_st_init(cx, &st);
     loft_stores = &st;
     loft_nstores = 1;
     const loft_key *keys[4] = { K_INT, K_TEXT, K_INT, K_INT };
     uint32_t strides[4] = { 16, 16, 0, 16 };
-    uint32_t root = loft_st_claim(&st, 3);
+    uint32_t root = loft_st_claim(cx, &st, 3);
     loft_ref h[4];
     for (int t = 0; t < 4; t++) {
         h[t].store_nr = 0;
         h[t].rec = root;
         h[t].pos = 8 + 4 * (uint32_t) t;
-        loft_h_write_seed(&st, loft_h_ensure_table(h[t], strides[t]), UINT64_C(0x0123456789abcdef));
+        loft_h_write_seed(cx, &st, loft_h_ensure_table(cx, h[t], strides[t]), UINT64_C(0x0123456789abcdef));
     }
     loft_ref own = { 0, 0, 8 };
-    own.rec = loft_st_claim(&st, 3);
+    own.rec = loft_st_claim(cx, &st, 3);
     int64_t own_key = 1000000, own_value = 7;
-    memcpy(loft_at(&st, own.rec, 8), &own_key, 8);
-    memcpy(loft_at(&st, own.rec, 16), &own_value, 8);
-    (void) loft_hash_insert(T, 0, h[3], own, K_INT, 1, 0);
+    memcpy(loft_at(cx, &st, own.rec, 8), &own_key, 8);
+    memcpy(loft_at(cx, &st, own.rec, 16), &own_value, 8);
+    (void) loft_hash_insert(cx, T, 0, h[3], own, K_INT, 1, 0);
     FILE *f = fopen(argv[argc - 1], "r");
     char op;
     unsigned t, k;
@@ -3998,41 +4001,41 @@ int main(int argc, char **argv) {
         int len;
         if (op == 'S') {
             if (fscanf(f, "%lld", &v) != 1) return 2;
-            loft_h_reserve(h[t], v, strides[t], keys[t], 1);
+            loft_h_reserve(cx, h[t], v, strides[t], keys[t], 1);
             continue;
         }
         if (fscanf(f, "%u", &k) != 1) return 2;
         len = sprintf(name, "k%u", k);
         if (op == 'I') {
             if (fscanf(f, "%lld", &v) != 1) return 2;
-            loft_ref e = loft_hash_entry(h[t], 16, t == 2);
+            loft_ref e = loft_hash_entry(cx, h[t], 16, t == 2);
             if (t == 1) {
-                uint32_t text = loft_st_claim(&st, (uint32_t) (len + 15) / 8);
-                loft_set_u32(&st, text, 4, (uint32_t) len);
-                memcpy(loft_at(&st, text, 8), name, (size_t) len);
-                loft_set_u32(&st, e.rec, e.pos, text);
+                uint32_t text = loft_st_claim(cx, &st, (uint32_t) (len + 15) / 8);
+                loft_set_u32(cx, &st, text, 4, (uint32_t) len);
+                memcpy(loft_at(cx, &st, text, 8), name, (size_t) len);
+                loft_set_u32(cx, &st, e.rec, e.pos, text);
             } else {
                 int64_t kk = k;
-                memcpy(loft_at(&st, e.rec, e.pos), &kk, 8);
+                memcpy(loft_at(cx, &st, e.rec, e.pos), &kk, 8);
             }
             int64_t vv = v;
-            memcpy(loft_at(&st, e.rec, e.pos + 8), &vv, 8);
-            (void) loft_hash_insert(T, 0, h[t], e, keys[t], 1, 0);
+            memcpy(loft_at(cx, &st, e.rec, e.pos + 8), &vv, 8);
+            (void) loft_hash_insert(cx, T, 0, h[t], e, keys[t], 1, 0);
             continue;
         }
-        loft_kv kv = t == 1 ? loft_kv_text(loft_lit(name, (size_t) len)) : loft_kv_int(k);
-        loft_ref found = loft_h_find(h[t], keys[t], &kv, 1);
+        loft_kv kv = t == 1 ? loft_kv_text(cx, loft_lit(cx, name, (size_t) len)) : loft_kv_int(cx, k);
+        loft_ref found = loft_h_find(cx, h[t], keys[t], &kv, 1);
         if (op == 'R') {
-            if (found.rec != 0) loft_hash_remove(T, 0, h[t], found, keys[t], 1, 0);
+            if (found.rec != 0) loft_hash_remove(cx, T, 0, h[t], found, keys[t], 1, 0);
         } else {
             printf("%u %u\n", found.rec, found.pos);
         }
     }
     for (int t = 0; t < 4; t++) {
         uint32_t n;
-        printf("len %lld\n", (long long) loft_hash_len(h[t]));
+        printf("len %lld\n", (long long) loft_hash_len(cx, h[t]));
         for (int by_slot = 0; by_slot < 2; by_slot++) {
-            loft_ref *e = loft_hash_refs(h[t], keys[t], 1, by_slot, &n);
+            loft_ref *e = loft_hash_refs(cx, h[t], keys[t], 1, by_slot, &n);
             for (uint32_t i = 0; i < n; i++) printf("%c %u %u\n", by_slot ? 's' : 'k', e[i].rec, e[i].pos);
             free(e);
         }
@@ -4258,7 +4261,7 @@ fn the_c_index_files_every_record_where_btree_does() {
     }
     c.push_str(
         r#"
-static void loft_init(void) {}
+static void loft_init(loft_cx *cx) { (void) cx; }
 static const loft_tdesc T[1] = { { LOFT_T_STRUCT, 24, 0, 0, 0, 0, 0, 0, 0, 0 } };
 static const loft_key K_INT[1] = { { 1, 0, 0 } };
 static const loft_key K_TEXT[1] = { { 6, 0, 0 } };
@@ -4271,25 +4274,26 @@ static int name_of(char *out, unsigned k) {
     return sprintf(out, "p%07ux%u", k / 2, k);
 }
 
-static int values(int t, unsigned k, int parts, char *buf, loft_kv *kv) {
-    if (t == 0) { kv[0] = loft_kv_int(k); return 1; }
-    if (t == 1) { int len = name_of(buf, k); kv[0] = loft_kv_text(loft_lit(buf, (size_t) len)); return 1; }
-    kv[0] = loft_kv_int(k % 10);
-    kv[1] = loft_kv_int(k);
+static int values(loft_cx *cx, int t, unsigned k, int parts, char *buf, loft_kv *kv) {
+    if (t == 0) { kv[0] = loft_kv_int(cx, k); return 1; }
+    if (t == 1) { int len = name_of(buf, k); kv[0] = loft_kv_text(cx, loft_lit(cx, buf, (size_t) len)); return 1; }
+    kv[0] = loft_kv_int(cx, k % 10);
+    kv[1] = loft_kv_int(cx, k);
     return parts;
 }
 
 int main(int argc, char **argv) {
+    loft_cx *cx = &loft_main_cx;
     st.size = 100;
     st.buf = (uint8_t *) calloc(st.size, 8);
     st.defined = 1;
     st.live = 1;
-    loft_st_init(&st);
+    loft_st_init(cx, &st);
     loft_stores = &st;
     loft_nstores = 1;
     const loft_key *keys[3] = { K_INT, K_TEXT, K_PAIR };
     int nks[3] = { 1, 1, 2 };
-    uint32_t root = loft_st_claim(&st, 3);
+    uint32_t root = loft_st_claim(cx, &st, 3);
     loft_ref ix[3];
     for (int t = 0; t < 3; t++) {
         ix[t].store_nr = 0;
@@ -4303,42 +4307,42 @@ int main(int argc, char **argv) {
         char buf[64], buf2[64];
         loft_kv kv[2], kv2[2];
         if (op == 'I') {
-            loft_ref e = { 0, loft_st_claim(&st, 3), 8 };
-            loft_set_u32(&st, e.rec, 4, root);
+            loft_ref e = { 0, loft_st_claim(cx, &st, 3), 8 };
+            loft_set_u32(cx, &st, e.rec, 4, root);
             if (t == 1) {
                 int len = name_of(buf, k);
-                uint32_t text = loft_st_claim(&st, (uint32_t) (len + 15) / 8);
-                loft_set_u32(&st, text, 4, (uint32_t) len);
-                memcpy(loft_at(&st, text, 8), buf, (size_t) len);
-                loft_set_u32(&st, e.rec, 8, text);
+                uint32_t text = loft_st_claim(cx, &st, (uint32_t) (len + 15) / 8);
+                loft_set_u32(cx, &st, text, 4, (uint32_t) len);
+                memcpy(loft_at(cx, &st, text, 8), buf, (size_t) len);
+                loft_set_u32(cx, &st, e.rec, 8, text);
             } else {
                 int64_t kk = k;
-                memcpy(loft_at(&st, e.rec, 8), &kk, 8);
+                memcpy(loft_at(cx, &st, e.rec, 8), &kk, 8);
             }
             int64_t vv = k % 10;
-            memcpy(loft_at(&st, e.rec, 16), &vv, 8);
-            (void) loft_ix_insert(T, 0, ix[t], e, keys[t], nks[t], 0);
+            memcpy(loft_at(cx, &st, e.rec, 16), &vv, 8);
+            (void) loft_ix_insert(cx, T, 0, ix[t], e, keys[t], nks[t], 0);
         } else if (op == 'R') {
-            int n = values((int) t, k, 2, buf, kv);
-            loft_ref found = loft_ix_find(ix[t], keys[t], nks[t], kv, n);
-            if (found.rec != 0) loft_ix_remove(T, 0, ix[t], found, keys[t], nks[t], 0);
+            int n = values(cx, (int) t, k, 2, buf, kv);
+            loft_ref found = loft_ix_find(cx, ix[t], keys[t], nks[t], kv, n);
+            if (found.rec != 0) loft_ix_remove(cx, T, 0, ix[t], found, keys[t], nks[t], 0);
         } else if (op == 'F') {
-            int n = values((int) t, k, 2, buf, kv);
-            uint32_t found = loft_bt_find_exact(ix[t], keys[t], nks[t], kv, n);
-            n = values((int) t, k, 1, buf, kv);
-            uint32_t below = loft_bt_record(ix[t], loft_bt_find(ix[t], 1, keys[t], nks[t], kv, n));
+            int n = values(cx, (int) t, k, 2, buf, kv);
+            uint32_t found = loft_bt_find_exact(cx, ix[t], keys[t], nks[t], kv, n);
+            n = values(cx, (int) t, k, 1, buf, kv);
+            uint32_t below = loft_bt_record(cx, ix[t], loft_bt_find(cx, ix[t], 1, keys[t], nks[t], kv, n));
             printf("%u %u\n", found, below);
         } else {
             uint32_t low, high;
             if (fscanf(f, "%u %u", &till, &ex) != 2) return 2;
-            int n = values((int) t, k, 1, buf, kv);
-            int n2 = values((int) t, till, 1, buf2, kv2);
+            int n = values(cx, (int) t, k, 1, buf, kv);
+            int n2 = values(cx, (int) t, till, 1, buf2, kv2);
             printf("w");
-            if (loft_bt_range(ix[t], keys[t], nks[t], kv, n, kv2, n2, (int) ex, &low, &high)) {
+            if (loft_bt_range(cx, ix[t], keys[t], nks[t], kv, n, kv2, n2, (int) ex, &low, &high)) {
                 for (uint32_t p = low;;) {
-                    printf(" %u", loft_bt_record(ix[t], p));
+                    printf(" %u", loft_bt_record(cx, ix[t], p));
                     if (p == high || p == 0) break;
-                    p = loft_bt_next(ix[t], p);
+                    p = loft_bt_next(cx, ix[t], p);
                 }
             }
             printf("\n");
@@ -4346,8 +4350,8 @@ int main(int argc, char **argv) {
     }
     for (int t = 0; t < 3; t++) {
         uint32_t n;
-        uint32_t *all = loft_bt_records(ix[t], &n);
-        printf("len %u", loft_bt_len(ix[t]));
+        uint32_t *all = loft_bt_records(cx, ix[t], &n);
+        printf("len %u", loft_bt_len(cx, ix[t]));
         for (uint32_t i = 0; i < n; i++) printf(" %u", all[i]);
         printf("\n");
         free(all);
@@ -4563,7 +4567,7 @@ fn the_c_trees_place_every_record_where_radix_tree_does() {
     }
     c.push_str(
         r#"
-static void loft_init(void) {}
+static void loft_init(loft_cx *cx) { (void) cx; }
 static const loft_tdesc T[1] = { { LOFT_T_STRUCT, 16, 0, 0, 0, 0, 0, 0, 0, 0 } };
 static const loft_key K_AXES[2] = { { 1, 0, 0 }, { 1, 8, 0 } };
 static const loft_key K_WORD[1] = { { 6, 0, 0 } };
@@ -4585,14 +4589,15 @@ static void ids(const char *tag, uint32_t *r, const uint32_t *n) {
 }
 
 int main(int argc, char **argv) {
+    loft_cx *cx = &loft_main_cx;
     st.size = 100;
     st.buf = (uint8_t *) calloc(st.size, 8);
     st.defined = 1;
     st.live = 1;
-    loft_st_init(&st);
+    loft_st_init(cx, &st);
     loft_stores = &st;
     loft_nstores = 1;
-    uint32_t root = loft_st_claim(&st, 3);
+    uint32_t root = loft_st_claim(cx, &st, 3);
     loft_ref pts = { 0, root, 8 }, words = { 0, root, 12 };
     FILE *f = fopen(argv[argc - 1], "r");
     char op, buf[64];
@@ -4603,54 +4608,54 @@ int main(int argc, char **argv) {
         if (op == 'P' || op == 'Q') {
             if (fscanf(f, "%lld %lld", &x, &y) != 2) return 2;
             if (op == 'P') {
-                loft_ref e = { 0, loft_st_claim(&st, 3), 8 };
+                loft_ref e = { 0, loft_st_claim(cx, &st, 3), 8 };
                 int64_t xx = x, yy = y;
-                loft_set_u32(&st, e.rec, 4, root);
-                memcpy(loft_at(&st, e.rec, 8), &xx, 8);
-                memcpy(loft_at(&st, e.rec, 16), &yy, 8);
-                (void) loft_rx_insert_record(T, 0, pts, e, K_AXES, 2, 0, 0);
+                loft_set_u32(cx, &st, e.rec, 4, root);
+                memcpy(loft_at(cx, &st, e.rec, 8), &xx, 8);
+                memcpy(loft_at(cx, &st, e.rec, 16), &yy, 8);
+                (void) loft_rx_insert_record(cx, T, 0, pts, e, K_AXES, 2, 0, 0);
             } else {
-                loft_kv kv[2] = { loft_kv_int(x), loft_kv_int(y) };
-                loft_ref found = loft_rx_find(pts, K_AXES, 2, 0, kv, 2);
-                if (found.rec != 0) loft_rx_remove_owned(T, 0, pts, found, K_AXES, 2, 0, 0);
+                loft_kv kv[2] = { loft_kv_int(cx, x), loft_kv_int(cx, y) };
+                loft_ref found = loft_rx_find(cx, pts, K_AXES, 2, 0, kv, 2);
+                if (found.rec != 0) loft_rx_remove_owned(cx, T, 0, pts, found, K_AXES, 2, 0, 0);
             }
         } else if (op == 'T' || op == 'U') {
             if (fscanf(f, "%u", &k) != 1) return 2;
             int len = word_of(buf, k);
             if (op == 'T') {
-                loft_ref e = { 0, loft_st_claim(&st, 2), 8 };
-                loft_set_u32(&st, e.rec, 4, root);
-                uint32_t t = loft_st_claim(&st, (uint32_t) (len + 15) / 8);
-                loft_set_u32(&st, t, 4, (uint32_t) len);
-                memcpy(loft_at(&st, t, 8), buf, (size_t) len);
-                loft_set_u32(&st, e.rec, 8, t);
-                (void) loft_rx_insert_record(T, 0, words, e, K_WORD, 1, 1, 0);
+                loft_ref e = { 0, loft_st_claim(cx, &st, 2), 8 };
+                loft_set_u32(cx, &st, e.rec, 4, root);
+                uint32_t t = loft_st_claim(cx, &st, (uint32_t) (len + 15) / 8);
+                loft_set_u32(cx, &st, t, 4, (uint32_t) len);
+                memcpy(loft_at(cx, &st, t, 8), buf, (size_t) len);
+                loft_set_u32(cx, &st, e.rec, 8, t);
+                (void) loft_rx_insert_record(cx, T, 0, words, e, K_WORD, 1, 1, 0);
             } else {
-                loft_kv kv = loft_kv_text(loft_lit(buf, (size_t) len));
-                loft_ref found = loft_rx_find(words, K_WORD, 1, 1, &kv, 1);
-                if (found.rec != 0) loft_rx_remove_owned(T, 0, words, found, K_WORD, 1, 1, 0);
+                loft_kv kv = loft_kv_text(cx, loft_lit(cx, buf, (size_t) len));
+                loft_ref found = loft_rx_find(cx, words, K_WORD, 1, 1, &kv, 1);
+                if (found.rec != 0) loft_rx_remove_owned(cx, T, 0, words, found, K_WORD, 1, 1, 0);
             }
         } else if (op == 'F') {
             if (fscanf(f, "%lld %lld %u", &x, &y, &k) != 3) return 2;
-            loft_kv kv[2] = { loft_kv_int(x), loft_kv_int(y) };
+            loft_kv kv[2] = { loft_kv_int(cx, x), loft_kv_int(cx, y) };
             int len = word_of(buf, k);
-            loft_kv kw = loft_kv_text(loft_lit(buf, (size_t) len));
-            printf("%u %u\n", loft_rx_find(pts, K_AXES, 2, 0, kv, 2).rec, loft_rx_find(words, K_WORD, 1, 1, &kw, 1).rec);
+            loft_kv kw = loft_kv_text(cx, loft_lit(cx, buf, (size_t) len));
+            printf("%u %u\n", loft_rx_find(cx, pts, K_AXES, 2, 0, kv, 2).rec, loft_rx_find(cx, words, K_WORD, 1, 1, &kw, 1).rec);
         } else if (op == 'N') {
             if (fscanf(f, "%lld %lld %u", &x, &y, &lim) != 3) return 2;
             int64_t from[2] = { x, y };
-            ids("n", loft_rx_near(pts, K_AXES, 2, from, lim, &n), &n);
+            ids("n", loft_rx_near(cx, pts, K_AXES, 2, from, lim, &n), &n);
         } else if (op == 'B') {
             if (fscanf(f, "%lld %lld %lld %lld", &x, &y, &tx, &ty) != 4) return 2;
             int64_t from[2] = { x, y }, till[2] = { tx, ty };
-            ids("b", loft_rx_box(pts, K_AXES, 2, from, till, SIZE_MAX, &n), &n);
+            ids("b", loft_rx_box(cx, pts, K_AXES, 2, from, till, SIZE_MAX, &n), &n);
         } else if (op == 'X') {
             if (fscanf(f, "%63s", buf) != 1) return 2;
-            ids("x", loft_rx_prefix(words, K_WORD, loft_lit(buf, strlen(buf)), SIZE_MAX, &n), &n);
+            ids("x", loft_rx_prefix(cx, words, K_WORD, loft_lit(cx, buf, strlen(buf)), SIZE_MAX, &n), &n);
         }
     }
-    ids("p", loft_rx_records(pts, &n), &n);
-    ids("t", loft_rx_records(words, &n), &n);
+    ids("p", loft_rx_records(cx, pts, &n), &n);
+    ids("t", loft_rx_records(cx, words, &n), &n);
     printf("size %u\n", st.size);
     uint64_t fnv = UINT64_C(0xcbf29ce484222325);
     for (size_t i = 0; i < (size_t) st.size * 8; i++) fnv = (fnv ^ st.buf[i]) * UINT64_C(0x100000001b3);
@@ -5201,7 +5206,7 @@ fn the_c_reads_json_as_json_rs_does() {
     }
     c.push_str(
         r#"
-static void loft_init(void) {}
+static void loft_init(loft_cx *cx) { (void) cx; }
 
 static void hex(const char *p, size_t n) {
     for (size_t i = 0; i < n; i++) printf("%02x", (unsigned char) p[i]);
@@ -5237,6 +5242,7 @@ static void dump(const loft_jv *v) {
 }
 
 int main(int argc, char **argv) {
+    loft_cx *cx = &loft_main_cx;
     FILE *f = fopen(argv[1], "rb");
     if (!f) return 2;
     static char buf[1 << 16];
@@ -5251,7 +5257,7 @@ int main(int argc, char **argv) {
             loft_jv v;
             loft_jfault e;
             loft_text path = { 0, 0, 0 };
-            if (loft_json_parse((const uint8_t *) buf, n, lenient, &v, &e, &path)) {
+            if (loft_json_parse(cx, (const uint8_t *) buf, n, lenient, &v, &e, &path)) {
                 dump(&v);
             } else {
                 printf("E%zu|", e.at);
@@ -5260,8 +5266,8 @@ int main(int argc, char **argv) {
                 hex(e.msg, strlen(e.msg));
             }
             printf("\n");
-            loft_jv_free(&v);
-            loft_text_free(&path);
+            loft_jv_free(cx, &v);
+            loft_text_free(cx, &path);
         }
     }
     (void) argc;
@@ -7820,7 +7826,7 @@ fn main() {
         body.contains("int32_t v3_i_index"),
         "a 32-bit loop index:\n{body}"
     );
-    assert!(body.contains("loft_add32(v1_t, "), "a 32-bit sum:\n{body}");
+    assert!(body.contains("loft_add32(cx, v1_t, "), "a 32-bit sum:\n{body}");
 }
 
 /// A C build never builds a library's Rust native crate: the C links `[c] shim`s and loft's
@@ -8194,7 +8200,7 @@ fn a_programs_c_is_the_same_on_every_emission() {
         );
         let unit = fa::read_to_string(&c).expect("read the C");
         assert!(
-            unit.contains("= n_mix(t1, t2, t3, t4);")
+            unit.contains("= n_mix(cx, t1, t2, t3, t4);")
                 && unit.find("t1 = v5___lift_1;") < unit.find("t4 = v8___lift_4;"),
             "the arguments in order"
         );
@@ -8272,59 +8278,60 @@ fn the_transient_arena_gives_back_what_a_mark_took() {
     }
     c.push_str(
         r#"
-static void loft_init(void) {}
+static void loft_init(loft_cx *cx) { (void) cx; }
 
 static int fails = 0;
 #define CHECK(c, what) do { if (!(c)) { printf("FAIL %s\n", what); fails++; } } while (0)
 
 int main(void) {
+    loft_cx *cx = &loft_main_cx;
     /* one mark: the same place again after the give-back */
-    loft_ta_mark_t m0 = loft_ta_mark();
-    unsigned char *a = (unsigned char *) loft_ta_alloc(3);
-    unsigned char *b = (unsigned char *) loft_ta_alloc(10);
+    loft_ta_mark_t m0 = loft_ta_mark(cx);
+    unsigned char *a = (unsigned char *) loft_ta_alloc(cx, 3);
+    unsigned char *b = (unsigned char *) loft_ta_alloc(cx, 10);
     CHECK(b == a + 8, "3 bytes take 8");
     CHECK(((uintptr_t) a & 7) == 0 && ((uintptr_t) b & 7) == 0, "8-aligned");
     memset(a, 0xAB, 3);
     memset(b, 0xCD, 10);
-    loft_ta_back(m0);
-    unsigned char *a2 = (unsigned char *) loft_ta_alloc(3);
+    loft_ta_back(cx, m0);
+    unsigned char *a2 = (unsigned char *) loft_ta_alloc(cx, 3);
     CHECK(a2 == a, "the mark's space is reused");
     CHECK(a2[0] == 0 && a2[1] == 0 && a2[2] == 0, "a reused allocation is zeroed");
-    loft_ta_back(m0);
+    loft_ta_back(cx, m0);
     /* nested marks */
-    loft_ta_mark_t outer = loft_ta_mark();
-    void *o1 = loft_ta_alloc(16);
-    loft_ta_mark_t inner = loft_ta_mark();
-    void *i1 = loft_ta_alloc(16);
-    loft_ta_back(inner);
-    void *i2 = loft_ta_alloc(16);
+    loft_ta_mark_t outer = loft_ta_mark(cx);
+    void *o1 = loft_ta_alloc(cx, 16);
+    loft_ta_mark_t inner = loft_ta_mark(cx);
+    void *i1 = loft_ta_alloc(cx, 16);
+    loft_ta_back(cx, inner);
+    void *i2 = loft_ta_alloc(cx, 16);
     CHECK(i2 == i1, "the inner mark's space");
-    loft_ta_back(outer);
-    CHECK(loft_ta_alloc(16) == o1, "the outer mark's space");
-    loft_ta_back(outer);
+    loft_ta_back(cx, outer);
+    CHECK(loft_ta_alloc(cx, 16) == o1, "the outer mark's space");
+    loft_ta_back(cx, outer);
     /* spill: past the base block, into blocks of their own */
-    loft_ta_mark_t s0 = loft_ta_mark();
-    void *base = loft_ta_alloc(LOFT_TA_BASE - 64);
+    loft_ta_mark_t s0 = loft_ta_mark(cx);
+    void *base = loft_ta_alloc(cx, LOFT_TA_BASE - 64);
     CHECK(loft_ta_spill == 0, "the base block holds it");
-    unsigned char *sp = (unsigned char *) loft_ta_alloc(128);
+    unsigned char *sp = (unsigned char *) loft_ta_alloc(cx, 128);
     CHECK(loft_ta_spill != 0, "a spill block");
     CHECK(((uintptr_t) sp & 7) == 0, "a spill is 8-aligned");
-    loft_ta_mark_t sm = loft_ta_mark();
-    unsigned char *same = (unsigned char *) loft_ta_alloc(64);
+    loft_ta_mark_t sm = loft_ta_mark(cx);
+    unsigned char *same = (unsigned char *) loft_ta_alloc(cx, 64);
     CHECK(same == sp + 128, "the same spill block");
-    loft_ta_back(sm);
-    CHECK(loft_ta_alloc(64) == same, "a mark inside a spill block gives its top back");
-    loft_ta_back(sm);
-    loft_ta_mark_t s1 = loft_ta_mark();
-    unsigned char *big = (unsigned char *) loft_ta_alloc(3 * LOFT_TA_BASE);
+    loft_ta_back(cx, sm);
+    CHECK(loft_ta_alloc(cx, 64) == same, "a mark inside a spill block gives its top back");
+    loft_ta_back(cx, sm);
+    loft_ta_mark_t s1 = loft_ta_mark(cx);
+    unsigned char *big = (unsigned char *) loft_ta_alloc(cx, 3 * LOFT_TA_BASE);
     big[3 * LOFT_TA_BASE - 1] = 1;
     CHECK(loft_ta_spill->cap >= 3 * LOFT_TA_BASE, "a block as big as the allocation");
-    loft_ta_back(s1);
-    CHECK(loft_ta_alloc(8) == sp + 128, "back to the first spill, its top kept");
-    loft_ta_back(s0);
+    loft_ta_back(cx, s1);
+    CHECK(loft_ta_alloc(cx, 8) == sp + 128, "back to the first spill, its top kept");
+    loft_ta_back(cx, s0);
     CHECK(loft_ta_spill == 0, "every spill freed");
-    CHECK(loft_ta_alloc(8) == base, "back in the base block");
-    loft_ta_back(s0);
+    CHECK(loft_ta_alloc(cx, 8) == base, "back in the base block");
+    loft_ta_back(cx, s0);
     printf("%s\n", fails ? "failed" : "ok");
     return fails;
 }
@@ -8613,7 +8620,7 @@ fn a_return_inside_a_loop_frees_the_texts_a_later_statement_declares() {
         let mut freed: Vec<&str> = body[..i]
             .iter()
             .rev()
-            .take_while(|p| p.contains("loft_text_free(&") || p.starts_with("#line "))
+            .take_while(|p| p.contains("loft_text_free(cx, &") || p.starts_with("#line "))
             .copied()
             .collect();
         if let Some(label) = label {
@@ -8632,7 +8639,7 @@ fn a_return_inside_a_loop_frees_the_texts_a_later_statement_declares() {
             assert!(
                 freed
                     .iter()
-                    .any(|f| f.contains(&format!("loft_text_free(&{t});"))),
+                    .any(|f| f.contains(&format!("loft_text_free(cx, &{t});"))),
                 "return {returns} frees {t}\n{}",
                 body.join("\n")
             );
@@ -9040,7 +9047,7 @@ fn a_text_call_result_is_read_from_its_work_buffer() {
     };
     let keep = body("n_keep");
     assert!(
-        keep.contains("n_built__wr(") && keep.contains("loft_text_move(&v1_t, &"),
+        keep.contains("n_built__wr(") && keep.contains("loft_text_move(cx, &v1_t, &"),
         "a bound result takes the call site's buffer:\n{keep}"
     );
     let pass = body("n_pass");

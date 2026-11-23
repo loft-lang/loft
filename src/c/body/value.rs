@@ -145,7 +145,7 @@ impl FnWriter<'_> {
                 Ok(Some(E::new("1", K::Cond)))
             }
             "OpRefAlias" if first.is_some_and(|v| self.vr_storeless(v)) => {
-                Ok(Some(E::new("loft_ref_null()", K::Ref)))
+                Ok(Some(E::new("loft_ref_null(cx)", K::Ref)))
             }
             // The presence test of a `τ?` value local reads its presence word; a dense one
             // the gate served this test for is surely present.
@@ -214,7 +214,7 @@ impl FnWriter<'_> {
                 let val = as_shape(self.cx, val, c)?;
                 // A write through an absent `τ?` struct lands nowhere, and is reported, as the
                 // setter's null record arm does.
-                let dropped = format!("loft_write_dropped(loft_ref_null(), {})", self.site());
+                let dropped = format!("loft_write_dropped(cx, loft_ref_null(cx), {})", self.site());
                 Ok(Some(match self.vr_presence(key, &self.var(v)) {
                     Some(p) => E::new(
                         format!("(({p} == 1) ? (void) ({m} = {val}) : {dropped})"),
@@ -265,7 +265,7 @@ impl FnWriter<'_> {
         self.line(
             ind,
             &format!(
-                "if (LOFT_UNLIKELY({present}{d}.store_nr == 0xFFFF)) loft_write_dropped({d}, {});",
+                "if (LOFT_UNLIKELY({present}{d}.store_nr == 0xFFFF)) loft_write_dropped(cx, {d}, {});",
                 self.site()
             ),
         );
@@ -285,7 +285,7 @@ impl FnWriter<'_> {
                 self.line(ind, "} else {");
                 // A copy into a field of an element being built writes its default instead.
                 let null_arm = self.fresh_null_arm(args, &d).unwrap_or_else(|| {
-                    format!("loft_copy_record(loft_types, {tp}, loft_ref_null(), {d}, {flags});")
+                    format!("loft_copy_record(cx, loft_types, {tp}, loft_ref_null(cx), {d}, {flags});")
                 });
                 self.line(ind + 1, &null_arm);
                 self.line(ind, "}");
@@ -330,9 +330,9 @@ impl FnWriter<'_> {
                 // As `loft_rec_w`: a locked store halts the run, or in production answers 0,
                 // the null record, whose writes the run below skips.
                 Some((pa, pl, off)) => format!(
-                    "({pa} && !(LOFT_UNLIKELY({pl}) && loft_locked_write_on((uint8_t) {pl}))) ? {pa} + {off} : (uint8_t *) 0"
+                    "({pa} && !(LOFT_UNLIKELY({pl}) && loft_locked_write_on(cx, (uint8_t) {pl}))) ? {pa} + {off} : (uint8_t *) 0"
                 ),
-                None => format!("loft_rec_w({d})"),
+                None => format!("loft_rec_w(cx, {d})"),
             };
             self.line(ind, &format!("{{ uint8_t *loft_w = {at}; if (loft_w) {{"));
             for (i, at, rt) in fields {
@@ -366,18 +366,18 @@ impl FnWriter<'_> {
                 } else {
                     "loft_vec_add"
                 };
-                self.line(ind, &format!("loft_set_int4({d}, {at}, INT64_C(0));"));
+                self.line(ind, &format!("loft_set_int4(cx, {d}, {at}, INT64_C(0));"));
                 self.line(
                     ind,
-                    &format!("{add}(loft_types, {elem}, loft_field({d}, {at}), {s}.f{i});"),
+                    &format!("{add}(cx, loft_types, {elem}, loft_field(cx, {d}, {at}), {s}.f{i});"),
                 );
                 continue;
             }
             let set = match *rt {
-                "f64" => format!("loft_set_float({d}, {at}, {s}.f{i});"),
-                "f32" => format!("loft_set_single({d}, {at}, {s}.f{i});"),
-                "bool" => format!("loft_set_byte({d}, {at}, {s}.f{i});"),
-                _ => format!("loft_set_int({d}, {at}, {s}.f{i});"),
+                "f64" => format!("loft_set_float(cx, {d}, {at}, {s}.f{i});"),
+                "f32" => format!("loft_set_single(cx, {d}, {at}, {s}.f{i});"),
+                "bool" => format!("loft_set_byte(cx, {d}, {at}, {s}.f{i});"),
+                _ => format!("loft_set_int(cx, {d}, {at}, {s}.f{i});"),
             };
             self.line(ind, &set);
         }
@@ -555,12 +555,12 @@ impl FnWriter<'_> {
         for (off, kind) in &layout.fields {
             parts.push(match *kind {
                 k if crate::opt::value_records::layout::is_view_part(k) => {
-                    format!("loft_field({rt}, {off})")
+                    format!("loft_field(cx, {rt}, {off})")
                 }
-                "f64" => format!("loft_pa_f64({pt}, {off})"),
-                "f32" => format!("loft_pa_f32({pt}, {off})"),
-                "bool" => format!("loft_pa_bool({pt}, {off})"),
-                _ => format!("loft_pa_i64({pt}, {off})"),
+                "f64" => format!("loft_pa_f64(cx, {pt}, {off})"),
+                "f32" => format!("loft_pa_f32(cx, {pt}, {off})"),
+                "bool" => format!("loft_pa_bool(cx, {pt}, {off})"),
+                _ => format!("loft_pa_i64(cx, {pt}, {off})"),
             });
         }
         if layout.nullable {
@@ -569,7 +569,7 @@ impl FnWriter<'_> {
         self.line(
             ind,
             &format!(
-                "{{ const uint8_t *{pt} = loft_rec_ptr({rt}); {target} = ({}) {{ {} }}; }}",
+                "{{ const uint8_t *{pt} = loft_rec_ptr(cx, {rt}); {target} = ({}) {{ {} }}; }}",
                 held(c),
                 parts.join(", ")
             ),
@@ -772,10 +772,10 @@ impl FnWriter<'_> {
     ) -> Result<String, String> {
         use crate::opt::value_records::layout::LeafSource;
         Ok(match src {
-            LeafSource::Null => "loft_ref_null()".into(),
+            LeafSource::Null => "loft_ref_null(cx)".into(),
             LeafSource::Elem { elem, off, .. } => {
                 let e = self.expr(&Value::Var(*elem), ind)?;
-                format!("loft_field({}, {off})", as_ref(e)?)
+                format!("loft_field(cx, {}, {off})", as_ref(e)?)
             }
             LeafSource::Last {
                 root,
@@ -789,9 +789,9 @@ impl FnWriter<'_> {
                 let container = if root.1 == crate::use_analysis::ANY_FIELD {
                     r
                 } else {
-                    format!("loft_field({r}, {})", root.1)
+                    format!("loft_field(cx, {r}, {})", root.1)
                 };
-                format!("loft_field(loft_vec_get({container}, {stride}, INT64_C(-1)), {off})")
+                format!("loft_field(cx, loft_vec_get(cx, {container}, {stride}, INT64_C(-1)), {off})")
             }
         })
     }
@@ -1033,7 +1033,7 @@ impl FnWriter<'_> {
         self.line(
             ind,
             &format!(
-                "if (!({b}.store_nr != 0xFFFF && {b}.rec != 0)) loft_database_typed(&{b}, {size}, {tp});"
+                "if (!({b}.store_nr != 0xFFFF && {b}.rec != 0)) loft_database_typed(cx, &{b}, {size}, {tp});"
             ),
         );
         self.vr_write_fields(callee_key, &b, &t, 0, i64::MAX, None, ind)?;

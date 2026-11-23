@@ -655,7 +655,7 @@ impl FnWriter<'_> {
                             Value::Int(n) => format!("INT64_C({n})"),
                             _ => unreachable!("dc_indexed admits a variable or a literal"),
                         };
-                        format!("loft_dc_is_elem({name}, {vn}, {size}, {kc})")
+                        format!("loft_dc_is_elem(cx, {name}, {vn}, {size}, {kc})")
                     })
                     .collect();
                 crate::rewrite_census::fired("R-DeferredCopy/index", 1);
@@ -664,17 +664,17 @@ impl FnWriter<'_> {
             _ => flag.clone(),
         };
         self.line(ind, &format!("if ({cond}) {{"));
-        self.line(ind + 1, "loft_ref loft_dcc = loft_ref_null();");
+        self.line(ind + 1, "loft_ref loft_dcc = loft_ref_null(cx);");
         self.line(
             ind + 1,
-            &format!("loft_bind_copy(loft_types, {}, &loft_dcc, {name});", dv.tp),
+            &format!("loft_bind_copy(cx, loft_types, {}, &loft_dcc, {name});", dv.tp),
         );
         for d in moved {
             let dn = self.var(*d);
             self.line(
                 ind + 1,
                 &format!(
-                    "{dn} = loft_dc_remap(loft_types, {}, {name}, loft_dcc, {dn});",
+                    "{dn} = loft_dc_remap(cx, loft_types, {}, {name}, loft_dcc, {dn});",
                     dv.tp
                 ),
             );
@@ -690,7 +690,7 @@ impl FnWriter<'_> {
             .collect();
         for (v, pa) in held {
             let vn = self.var(v);
-            self.line(ind + 1, &format!("{pa} = loft_rec_ptr({vn});"));
+            self.line(ind + 1, &format!("{pa} = loft_rec_ptr(cx, {vn});"));
         }
         self.line(ind, "}");
         crate::rewrite_census::fired("R-DeferredCopy/point", 1);

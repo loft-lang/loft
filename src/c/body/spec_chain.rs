@@ -112,7 +112,7 @@ impl FnWriter<'_> {
                     // answer — an overflow, a null operand, the sentinel — sets the flag.
                     let literal = |v: &str| v.starts_with("INT64_C(");
                     if *name == "OpMulInt" && !*proven && (literal(&a) || literal(&b)) {
-                        self.line(ind, &format!("{r} = loft_mul({a}, {b});"));
+                        self.line(ind, &format!("{r} = loft_mul(cx, {a}, {b});"));
                         self.line(ind, &format!("{bad} |= ({r} == LOFT_NULL);"));
                         vals.push(r);
                         continue;
@@ -263,7 +263,7 @@ impl FnWriter<'_> {
                     _ => "loft_xor",
                 };
                 format!(
-                    "{f}({}, {})",
+                    "{f}(cx, {}, {})",
                     Self::checked_chain(nodes, *lhs),
                     Self::checked_chain(nodes, *rhs)
                 )

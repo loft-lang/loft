@@ -92,9 +92,9 @@ impl Cx<'_> {
     /// which keeps every other render's output and code as they were.
     pub(crate) fn show_top_call(&self, tp: u16, s: &str, r: &str, fmt: &str) -> String {
         if self.stores.reaches_reference(tp, &mut Vec::new()) {
-            format!("loft_show_top({s}, {}, {r}, {fmt})", Self::show_fn(tp))
+            format!("loft_show_top(cx, {s}, {}, {r}, {fmt})", Self::show_fn(tp))
         } else {
-            format!("{}({s}, {r}, {fmt}, 0)", Self::show_fn(tp))
+            format!("{}(cx, {s}, {r}, {fmt}, 0)", Self::show_fn(tp))
         }
     }
 
@@ -126,12 +126,12 @@ impl Cx<'_> {
         for &tp in types.iter() {
             let _ = writeln!(
                 out,
-                "static void loft_show{tp}(loft_text *s, loft_ref r, int fmt, int ind);"
+                "static void loft_show{tp}(loft_cx *cx, loft_text *s, loft_ref r, int fmt, int ind);"
             );
             if chains {
                 let _ = writeln!(
                     out,
-                    "static void loft_show1_{tp}(loft_text *s, loft_ref r, int fmt, int ind);"
+                    "static void loft_show1_{tp}(loft_cx *cx, loft_text *s, loft_ref r, int fmt, int ind);"
                 );
             }
         }
@@ -145,7 +145,7 @@ impl Cx<'_> {
             let body = if chains {
                 let _ = writeln!(
                     out,
-                    "static void loft_show{tp}(loft_text *s, loft_ref r, int fmt, int ind) {{\n    loft_show_run(s, loft_show1_{tp}, r, fmt, ind);\n}}"
+                    "static void loft_show{tp}(loft_cx *cx, loft_text *s, loft_ref r, int fmt, int ind) {{\n    loft_show_run(cx, s, loft_show1_{tp}, r, fmt, ind);\n}}"
                 );
                 format!("loft_show1_{tp}")
             } else {
@@ -153,15 +153,15 @@ impl Cx<'_> {
             };
             let _ = writeln!(
                 out,
-                "static void {body}(loft_text *s, loft_ref r, int fmt, int ind) {{"
+                "static void {body}(loft_cx *cx, loft_text *s, loft_ref r, int fmt, int ind) {{"
             );
-            out.push_str("    if (r.rec == 0) { loft_push(s, \"null\", 4); return; }\n");
+            out.push_str("    if (r.rec == 0) { loft_push(cx, s, \"null\", 4); return; }\n");
             // `@FR-F-Render-Ref` — a record's pointer is the path the walk wrote it at.
             if matches!(
                 self.stores.types[tp as usize].parts,
                 Parts::Struct(_) | Parts::EnumValue(..) | Parts::Enum(_)
             ) {
-                out.push_str("    loft_rr_record(r);\n");
+                out.push_str("    loft_rr_record(cx, r);\n");
             }
             self.show_body(&mut out, tp, chains);
             out.push_str("}\n");
@@ -183,21 +183,21 @@ impl Cx<'_> {
             .collect();
         let _ = writeln!(
             out,
-            "static void loft_showf{tp}(loft_text *s, loft_ref r, int fmt, int ind, int complex_type) {{"
+            "static void loft_showf{tp}(loft_cx *cx, loft_text *s, loft_ref r, int fmt, int ind, int complex_type) {{"
         );
         let _ = writeln!(
             out,
-            "    int c = loft_show_open(s, fmt, ind, complex_type, {});",
+            "    int c = loft_show_open(cx, s, fmt, ind, complex_type, {});",
             i32::from(!shown.is_empty())
         );
         for (i, f) in shown.iter().enumerate() {
             if i > 0 {
-                out.push_str("    loft_show_sep(s, fmt, ind, c);\n");
+                out.push_str("    loft_show_sep(cx, s, fmt, ind, c);\n");
             }
-            let _ = writeln!(out, "    loft_show_name(s, fmt, {});", c_string(&f.name));
+            let _ = writeln!(out, "    loft_show_name(cx, s, fmt, {});", c_string(&f.name));
             // `@FR-F-Render-Ref` — the field's name is its segment of the reference-render path
             // (a no-op outside `loft_show_top`).
-            let _ = writeln!(out, "    loft_rr_push({});", c_string(&f.name));
+            let _ = writeln!(out, "    loft_rr_push(cx, {});", c_string(&f.name));
             // The last field's child is the tail of a chain, left for the loop (which takes
             // the path along and pops it).
             if chains
@@ -207,7 +207,7 @@ impl Cx<'_> {
             {
                 let _ = writeln!(
                     out,
-                    "    loft_show_tail(s, loft_show1_{c}, loft_ref_from_child_rec(loft_field(r, {})), ind + 1);",
+                    "    loft_show_tail(cx, s, loft_show1_{c}, loft_ref_from_child_rec(cx, loft_field(cx, r, {})), ind + 1);",
                     f.position
                 );
                 continue;
@@ -215,23 +215,23 @@ impl Cx<'_> {
             if self.is_reference_field(f) {
                 let _ = writeln!(
                     out,
-                    "    loft_show_ref_field(s, loft_field(r, {}), fmt, ind + 1, {});",
+                    "    loft_show_ref_field(cx, s, loft_field(cx, r, {}), fmt, ind + 1, {});",
                     f.position,
                     Self::show_fn(f.target)
                 );
             } else {
                 let _ = writeln!(
                     out,
-                    "    {}(s, loft_field(r, {}), fmt, ind + 1);",
+                    "    {}(cx, s, loft_field(cx, r, {}), fmt, ind + 1);",
                     Self::show_fn(f.content),
                     f.position
                 );
             }
-            out.push_str("    loft_rr_pop();\n");
+            out.push_str("    loft_rr_pop(cx);\n");
         }
         let _ = writeln!(
             out,
-            "    loft_show_close(s, fmt, ind, c, {});\n}}",
+            "    loft_show_close(cx, s, fmt, ind, c, {});\n}}",
             i32::from(!shown.is_empty())
         );
     }
@@ -239,21 +239,21 @@ impl Cx<'_> {
     fn show_body(&self, out: &mut String, tp: u16, chains: bool) {
         // A variant's JSON wrapper closes after a pending chain (`loft_show_brace`).
         let brace = if chains {
-            "loft_show_brace(s);"
+            "loft_show_brace(cx, s);"
         } else {
-            "loft_push_char(s, '}');"
+            "loft_push_char(cx, s, '}');"
         };
         let t = &self.stores.types[tp as usize];
         let complex = i32::from(t.is_complex());
         match &t.parts {
             Parts::Struct(_) => {
-                let _ = writeln!(out, "    loft_showf{tp}(s, r, fmt, ind, {complex});");
+                let _ = writeln!(out, "    loft_showf{tp}(cx, s, r, fmt, ind, {complex});");
             }
             Parts::EnumValue(..) => {
                 let open = c_string(&format!("{{\"{}\":", t.name));
                 let _ = writeln!(
                     out,
-                    "    if (fmt & 2) {{ loft_push_cstr(s, {open}); loft_showf{tp}(s, r, fmt, ind, {complex}); {brace} }}\n    else loft_showf{tp}(s, r, fmt, ind, {complex});"
+                    "    if (fmt & 2) {{ loft_push_cstr(cx, s, {open}); loft_showf{tp}(cx, s, r, fmt, ind, {complex}); {brace} }}\n    else loft_showf{tp}(cx, s, r, fmt, ind, {complex});"
                 );
             }
             Parts::Enum(values) => self.enum_body(out, &t.name, values, complex, brace),
@@ -269,7 +269,7 @@ impl Cx<'_> {
                 let (keys, n) = self.keys_of(tp);
                 let _ = writeln!(
                     out,
-                    "    loft_show_keyed(s, r, fmt, ind, {}, {keys}, {n}, {}, {}, {});",
+                    "    loft_show_keyed(cx, s, r, fmt, ind, {}, {keys}, {n}, {}, {}, {});",
                     match t.parts {
                         Parts::Hash(..) => 1,
                         Parts::Index(..) => 2,
@@ -285,7 +285,7 @@ impl Cx<'_> {
                 let e = &self.stores.types[*elem as usize];
                 let _ = writeln!(
                     out,
-                    "    if (loft_vec_absent(r)) {{ loft_push(s, \"null\", 4); return; }}\n    loft_show_list(s, r, fmt, ind, {}, {}, {}, {});",
+                    "    if (loft_vec_absent(cx, r)) {{ loft_push(cx, s, \"null\", 4); return; }}\n    loft_show_list(cx, s, r, fmt, ind, {}, {}, {}, {});",
                     self.stores.size(*elem),
                     i32::from(e.is_complex()),
                     i32::from(matches!(e.parts, Parts::Struct(_) | Parts::EnumValue(..))),
@@ -295,49 +295,49 @@ impl Cx<'_> {
             Parts::Byte(min, nullable) => {
                 let _ = writeln!(
                     out,
-                    "    (void) fmt; (void) ind;\n    loft_show_byte(s, r, {min}, {});",
+                    "    (void) fmt; (void) ind;\n    loft_show_byte(cx, s, r, {min}, {});",
                     i32::from(*nullable)
                 );
             }
             Parts::Short(min, nullable) => {
                 let _ = writeln!(
                     out,
-                    "    (void) fmt; (void) ind;\n    loft_show_short(s, r, {min}, {});",
+                    "    (void) fmt; (void) ind;\n    loft_show_short(cx, s, r, {min}, {});",
                     i32::from(*nullable)
                 );
             }
             Parts::ShortRaw(min, nullable) => {
                 let _ = writeln!(
                     out,
-                    "    (void) fmt; (void) ind;\n    loft_show_short_raw(s, r, {min}, {});",
+                    "    (void) fmt; (void) ind;\n    loft_show_short_raw(cx, s, r, {min}, {});",
                     i32::from(*nullable)
                 );
             }
             Parts::Int(_, nullable) => {
                 let _ = writeln!(
                     out,
-                    "    (void) fmt; (void) ind;\n    loft_show_int4(s, r, {});",
+                    "    (void) fmt; (void) ind;\n    loft_show_int4(cx, s, r, {});",
                     i32::from(*nullable)
                 );
             }
             Parts::IntRaw(_, nullable) => {
                 let _ = writeln!(
                     out,
-                    "    (void) fmt; (void) ind;\n    loft_show_int_raw(s, r, {});",
+                    "    (void) fmt; (void) ind;\n    loft_show_int_raw(cx, s, r, {});",
                     i32::from(*nullable)
                 );
             }
             Parts::DbRef => {
-                out.push_str("    (void) fmt; (void) ind;\n    loft_show_dbref(s, r);\n")
+                out.push_str("    (void) fmt; (void) ind;\n    loft_show_dbref(cx, s, r);\n")
             }
             Parts::ChildRec(c) if self.stores.child_rec_is_value(*c) => {
                 let _ = writeln!(
                     out,
-                    "    {}(s, loft_ref_from_child_rec(r), fmt, ind);",
+                    "    {}(cx, s, loft_ref_from_child_rec(cx, r), fmt, ind);",
                     Self::show_fn(*c)
                 );
             }
-            _ => out.push_str("    (void) fmt; (void) ind;\n    loft_show_child(s, r);\n"),
+            _ => out.push_str("    (void) fmt; (void) ind;\n    loft_show_child(cx, s, r);\n"),
         }
     }
 
@@ -353,7 +353,7 @@ impl Cx<'_> {
     ) {
         if name.starts_with("__nullable<") {
             // A present element renders as the dense value its `Some` variant carries.
-            out.push_str("    switch (*loft_at(loft_store_of(r), r.rec, r.pos)) {\n");
+            out.push_str("    switch (*loft_at(cx, loft_store_of(cx, r), r.rec, r.pos)) {\n");
             for (i, (vtp, _)) in values.iter().enumerate() {
                 if let Some(Parts::EnumValue(_, st)) =
                     self.stores.types.get(*vtp as usize).map(|t| &t.parts)
@@ -361,7 +361,7 @@ impl Cx<'_> {
                 {
                     let _ = writeln!(
                         out,
-                        "    case {}: {}(s, loft_field(r, {}), fmt, ind); return;",
+                        "    case {}: {}(cx, s, loft_field(cx, r, {}), fmt, ind); return;",
                         i + 1,
                         Self::show_fn(pf.content),
                         pf.position
@@ -369,11 +369,11 @@ impl Cx<'_> {
                 }
             }
             out.push_str(
-                "    case 0: loft_push(s, \"null\", 4); return;\n    default: return;\n    }\n",
+                "    case 0: loft_push(cx, s, \"null\", 4); return;\n    default: return;\n    }\n",
             );
             return;
         }
-        out.push_str("    uint8_t v = *loft_at(loft_store_of(r), r.rec, r.pos);\n");
+        out.push_str("    uint8_t v = *loft_at(cx, loft_store_of(cx, r), r.rec, r.pos);\n");
         out.push_str("    switch (v) {\n");
         for (i, (vtp, name)) in values.iter().enumerate() {
             let payload = matches!(
@@ -382,22 +382,22 @@ impl Cx<'_> {
             );
             let json_open = c_string(&format!("{{\"{name}\":"));
             let body = if payload {
-                format!("loft_showf{vtp}(s, r, fmt, ind, {complex});")
+                format!("loft_showf{vtp}(cx, s, r, fmt, ind, {complex});")
             } else {
-                "loft_push(s, \"{}\", 2);".into()
+                "loft_push(cx, s, \"{}\", 2);".into()
             };
             let plain = if payload {
-                format!(" loft_push_char(s, ' '); loft_showf{vtp}(s, r, fmt, ind, {complex});")
+                format!(" loft_push_char(cx, s, ' '); loft_showf{vtp}(cx, s, r, fmt, ind, {complex});")
             } else {
                 String::new()
             };
             let _ = writeln!(
                 out,
-                "    case {}:\n        if (fmt & 2) {{ loft_push_cstr(s, {json_open}); {body} {brace} }}\n        else {{ loft_push_cstr(s, {});{plain} }}\n        return;",
+                "    case {}:\n        if (fmt & 2) {{ loft_push_cstr(cx, s, {json_open}); {body} {brace} }}\n        else {{ loft_push_cstr(cx, s, {});{plain} }}\n        return;",
                 i + 1,
                 c_string(name)
             );
         }
-        out.push_str("    default:\n        loft_push_cstr(s, (fmt & 2) || v == 0 || v == 255 ? \"null\" : \"?\");\n    }\n");
+        out.push_str("    default:\n        loft_push_cstr(cx, s, (fmt & 2) || v == 0 || v == 255 ? \"null\" : \"?\");\n    }\n");
     }
 }

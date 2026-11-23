@@ -420,7 +420,7 @@ fn a_vector_index_past_the_build_s_width_is_outside_the_vector() {
         "a 32-bit unit compiles its runtime at 32 bits"
     );
     assert!(
-        c32.contains("loft_vh_addr(") && c32.contains(", loft_n32(v"),
+        c32.contains("loft_vh_addr(") && c32.contains(", loft_n32(cx, v"),
         "an i64 index is narrowed at the accessor"
     );
     let c64 = emit_c("held-c64", HELD, None);
@@ -560,7 +560,7 @@ fn a_removal_in_a_walk_steps_a_32_bit_index_back() {
     assert!(c32.contains("loft_vec_walk_remove32("), "the 32-bit index");
     let c64 = emit_c("remove-c64", REMOVE, None);
     assert!(
-        c64.contains("loft_vec_walk_remove(") && !c64.contains("loft_vec_walk_remove32(l"),
+        c64.contains("loft_vec_walk_remove(") && !c64.contains("loft_vec_walk_remove32(cx, l"),
         "the 64-bit index"
     );
 }
@@ -607,7 +607,7 @@ fn the_32_bit_runtime_forms_answer_as_the_64_bit_ones() {
     }
     let c32 = emit_c("edges-c32", EDGES, Some("32"));
     for form in [
-        "loft_format_int32(&",
+        "loft_format_int32(cx, &",
         "loft_set_int4_32_at(",
         "loft_vec_get32(",
     ] {
@@ -649,7 +649,7 @@ fn a_cast_to_integer_is_an_i32_under_the_regime() {
     );
     let program = c32.rsplit("loft_tnames").next().unwrap_or("");
     assert!(
-        !program.contains("loft_f2i_at((double)"),
+        !program.contains("loft_f2i_at(cx, (double)"),
         "no double on the way: {}",
         program
             .lines()

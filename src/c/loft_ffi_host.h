@@ -9,7 +9,7 @@
 /* The handle's context is the store's NUMBER, as the interpreter's host sets it
  * (`extensions::make_loft_store`): a library names the store of a heap answer by it
  * (`loft_ffi_store_nr`), and the store table may move while the call runs. */
-static loft_store_t *loft_ffi_ctx_store(loft_ffi_store_ctx c) {
+static loft_store_t *loft_ffi_ctx_store(loft_cx *cx, loft_ffi_store_ctx c) {
     return &loft_stores[(uint16_t) (uintptr_t) c.opaque];
 }
 
@@ -23,13 +23,13 @@ static LOFT_TLS uint16_t loft_ffi_log_store;
 static LOFT_TLS uint32_t *loft_ffi_log_recs;
 static LOFT_TLS uint32_t loft_ffi_log_n, loft_ffi_log_cap;
 
-static void loft_ffi_log_begin(uint16_t nr) {
+static void loft_ffi_log_begin(loft_cx *cx, uint16_t nr) {
     loft_ffi_log_on = 1;
     loft_ffi_log_store = nr;
     loft_ffi_log_n = 0;
 }
 
-static void loft_ffi_log_note(uint16_t nr, uint32_t old, uint32_t rec) {
+static void loft_ffi_log_note(loft_cx *cx, uint16_t nr, uint32_t old, uint32_t rec) {
     if (!loft_ffi_log_on || nr != loft_ffi_log_store) return;
     if (old) {
         for (uint32_t i = 0; i < loft_ffi_log_n; i++)
@@ -44,26 +44,32 @@ static void loft_ffi_log_note(uint16_t nr, uint32_t old, uint32_t rec) {
 }
 
 static uint32_t loft_ffi_claim(loft_ffi_store_ctx c, uint32_t words) {
-    uint32_t rec = loft_claim(loft_ffi_ctx_store(c), words);
-    loft_ffi_log_note((uint16_t) (uintptr_t) c.opaque, 0, rec);
+    /* @PLN226 P2b: the calling thread's context, reached through the store handle. */
+    loft_cx *cx = &loft_main_cx;
+    uint32_t rec = loft_claim(cx, loft_ffi_ctx_store(cx, c), words);
+    loft_ffi_log_note(cx, (uint16_t) (uintptr_t) c.opaque, 0, rec);
     return rec;
 }
 
 static void loft_ffi_reload(loft_ffi_store_ctx c, uint8_t **ptr, uint32_t *size) {
-    loft_store_t *s = loft_ffi_ctx_store(c);
+    /* @PLN226 P2b: the calling thread's context, reached through the store handle. */
+    loft_cx *cx = &loft_main_cx;
+    loft_store_t *s = loft_ffi_ctx_store(cx, c);
     *ptr = s->buf;
     *size = s->size;
 }
 
 static uint32_t loft_ffi_resize(loft_ffi_store_ctx c, uint32_t rec, uint32_t words) {
-    uint32_t to = loft_st_resize(loft_ffi_ctx_store(c), rec, words);
-    loft_ffi_log_note((uint16_t) (uintptr_t) c.opaque, rec, to);
+    /* @PLN226 P2b: the calling thread's context, reached through the store handle. */
+    loft_cx *cx = &loft_main_cx;
+    uint32_t to = loft_st_resize(cx, loft_ffi_ctx_store(cx, c), rec, words);
+    loft_ffi_log_note(cx, (uint16_t) (uintptr_t) c.opaque, rec, to);
     return to;
 }
 
 /* Store `nr` as the library sees it.  A library that hands bytes over to be adopted
  * (`foreign_fn`) is not carried yet: the field is null, as on a host that predates it. */
-static loft_ffi_store loft_ffi_store_of(uint16_t nr) {
+static loft_ffi_store loft_ffi_store_of(loft_cx *cx, uint16_t nr) {
     loft_store_t *s = &loft_stores[nr];
     loft_ffi_store f;
     f.ptr = s->buf;
@@ -80,46 +86,46 @@ static loft_ffi_store loft_ffi_store_of(uint16_t nr) {
  * a vector record of the store the library is handed, in one block, and that record is what
  * the library reads.  Only a unit that maps a file has a foreign store. */
 #ifdef LOFT_FOREIGN
-static int loft_ffi_is_foreign(loft_ref a) {
-    return a.rec != 0 && a.store_nr < loft_nstores && loft_st_is_foreign(&loft_stores[a.store_nr]);
+static int loft_ffi_is_foreign(loft_cx *cx, loft_ref a) {
+    return a.rec != 0 && a.store_nr < loft_nstores && loft_st_is_foreign(cx, &loft_stores[a.store_nr]);
 }
 
-static uint32_t loft_ffi_copy_in(uint32_t pin, loft_ref a) {
+static uint32_t loft_ffi_copy_in(loft_cx *cx, uint32_t pin, loft_ref a) {
     loft_fspan sp = loft_stores[a.store_nr].foreign.span;
     size_t bytes = (size_t) sp.len * sp.elem;
     loft_store_t *d = &loft_stores[pin];
-    uint32_t rec = loft_st_claim(d, (uint32_t) ((bytes + 15) / 8));
-    loft_st_set_u32(d, rec, 4, sp.len);
+    uint32_t rec = loft_st_claim(cx, d, (uint32_t) ((bytes + 15) / 8));
+    loft_st_set_u32(cx, d, rec, 4, sp.len);
     if (bytes) memcpy(d->buf + (size_t) rec * 8 + 8, sp.base, bytes);
     return rec;
 }
 
 /* `Stores::bridge_args_done`: whether the library wrote through the copy — its length or a byte. */
-static int loft_ffi_copy_changed(loft_ref a, uint32_t pin, uint32_t rec) {
+static int loft_ffi_copy_changed(loft_cx *cx, loft_ref a, uint32_t pin, uint32_t rec) {
     loft_fspan sp = loft_stores[a.store_nr].foreign.span;
     loft_store_t *d = &loft_stores[pin];
-    return loft_st_u32(d, rec, 4) != sp.len
+    return loft_st_u32(cx, d, rec, 4) != sp.len
         || (sp.len && memcmp(d->buf + (size_t) rec * 8 + 8, sp.base, (size_t) sp.len * sp.elem) != 0);
 }
 #else
-#define loft_ffi_is_foreign(a) 0
-#define loft_ffi_copy_in(pin, a) 0u
-#define loft_ffi_copy_changed(a, pin, rec) 0
+#define loft_ffi_is_foreign(cx, a) 0
+#define loft_ffi_copy_in(cx, pin, a) 0u
+#define loft_ffi_copy_changed(cx, a, pin, rec) 0
 #endif
 
 /* A heap answer as loft holds it (`codegen_runtime::from_loft_ref` / `from_loft_record`): a
  * vector behind a one-word header whose slot at +4 names its data record, a record as it is. */
-static loft_ref loft_ffi_vector_answer(loft_ffi_ref r) {
-    if (r.rec == 0 && r.pos == 0) return loft_ref_null();
+static loft_ref loft_ffi_vector_answer(loft_cx *cx, loft_ffi_ref r) {
+    if (r.rec == 0 && r.pos == 0) return loft_ref_null(cx);
     loft_store_t *s = &loft_stores[r.store_nr];
-    uint32_t h = loft_claim(s, 1);
-    loft_set_u32(s, h, 4, r.rec);
+    uint32_t h = loft_claim(cx, s, 1);
+    loft_set_u32(cx, s, h, 4, r.rec);
     loft_ref v = { r.store_nr, h, 4, 0 };
     return v;
 }
 
-static loft_ref loft_ffi_record_answer(loft_ffi_ref r) {
-    if (r.rec == 0 && r.pos == 0) return loft_ref_null();
+static loft_ref loft_ffi_record_answer(loft_cx *cx, loft_ffi_ref r) {
+    if (r.rec == 0 && r.pos == 0) return loft_ref_null(cx);
     loft_ref v = { r.store_nr, r.rec, r.pos, 0 };
     return v;
 }
@@ -136,18 +142,18 @@ static void loft_ffi_reg_find(const uint8_t *name, size_t len, const void *fn, v
  * table registers under that name — which may be another symbol (`loft_save_png =>
  * n_save_png`, the store-aware variant the interpreter calls too) — else the symbol of that
  * name. */
-static void *loft_ffi_lookup(void *h, const char *sym) {
+static void *loft_ffi_lookup(loft_cx *cx, void *h, const char *sym) {
     void *p = 0;
     typedef void (*loft_ffi_reg_fn)(void (*)(const uint8_t *, size_t, const void *, void *), void *);
     loft_ffi_reg_fn reg;
-    void *r = loft_dl_sym(h, "loft_register_v1");
+    void *r = loft_dl_sym(cx, h, "loft_register_v1");
     memcpy(&reg, &r, sizeof reg);
     if (r) {
         loft_ffi_reg_q q = { sym, strlen(sym), 0 };
         reg(loft_ffi_reg_find, &q);
         memcpy(&p, &q.found, sizeof p);
     }
-    return p ? p : loft_dl_sym(h, sym);
+    return p ? p : loft_dl_sym(cx, h, sym);
 }
 #endif
 
@@ -155,7 +161,7 @@ static void *loft_ffi_lookup(void *h, const char *sym) {
  * `from` in a store of its own, for ONE native call whose answer must not be claimed where `from`
  * lives: a store the workers of a running `par` share (`loft_par_sharing`), or a pinned one.
  * Every record keeps its number, so the arguments only change their store. */
-static void loft_ffi_bits_copy(loft_bits *d, const loft_bits *s) {
+static void loft_ffi_bits_copy(loft_cx *cx, loft_bits *d, const loft_bits *s) {
     if (d->cap < s->nwords) {
         d->bits = (uint64_t *) realloc(d->bits, (size_t) s->nwords * sizeof(uint64_t));
         if (!d->bits) { fputs("loft: out of memory\n", stderr); abort(); }
@@ -166,22 +172,22 @@ static void loft_ffi_bits_copy(loft_bits *d, const loft_bits *s) {
     d->live = s->live;
 }
 
-static uint16_t loft_ffi_clone_store(uint16_t from) {
-    uint16_t ns = (uint16_t) loft_store_new();
+static uint16_t loft_ffi_clone_store(loft_cx *cx, uint16_t from) {
+    uint16_t ns = (uint16_t) loft_store_new(cx);
     loft_store_t *d = &loft_stores[ns];
     const loft_store_t *s = &loft_stores[from];
     if (d->size != s->size) {
-        loft_heap_moved(d, d->size, s->size);
+        loft_heap_moved(cx, d, d->size, s->size);
         d->buf = (uint8_t *) realloc(d->buf, (size_t) s->size * 8);
         if (!d->buf) { fputs("loft: out of memory\n", stderr); abort(); }
         d->size = s->size;
     }
     memcpy(d->buf, s->buf, (size_t) s->size * 8);
-    loft_ffi_bits_copy(&d->claims, &s->claims);
-    loft_ffi_bits_copy(&d->referenced, &s->referenced);
-    loft_ffi_bits_copy(&d->removed, &s->removed);
-    loft_ffi_bits_copy(&d->lazy_free, &s->lazy_free);
-    loft_ffi_bits_copy(&d->parked_set, &s->parked_set);
+    loft_ffi_bits_copy(cx, &d->claims, &s->claims);
+    loft_ffi_bits_copy(cx, &d->referenced, &s->referenced);
+    loft_ffi_bits_copy(cx, &d->removed, &s->removed);
+    loft_ffi_bits_copy(cx, &d->lazy_free, &s->lazy_free);
+    loft_ffi_bits_copy(cx, &d->parked_set, &s->parked_set);
     memcpy(d->parked_heads, s->parked_heads, sizeof d->parked_heads);
     d->parked_count = s->parked_count;
     d->claimed_end = s->claimed_end;
@@ -197,22 +203,22 @@ static uint16_t loft_ffi_clone_store(uint16_t from) {
 }
 
 /* The store a pinned native call works in: `pn` itself, or a copy of it when it is shared. */
-static uint16_t loft_ffi_call_store(uint16_t pn) {
-    return (loft_par_sharing || loft_stores[pn].pinned) ? loft_ffi_clone_store(pn) : pn;
+static uint16_t loft_ffi_call_store(loft_cx *cx, uint16_t pn) {
+    return (loft_par_sharing || loft_stores[pn].pinned) ? loft_ffi_clone_store(cx, pn) : pn;
 }
 
 /* The copy a call was given goes once its answer is copied out. */
-static void loft_ffi_drop_call_store(uint16_t cs, uint16_t pn) {
+static void loft_ffi_drop_call_store(loft_cx *cx, uint16_t cs, uint16_t pn) {
     if (cs != pn) {
         loft_ref m = { cs, 0, 0, 0 };
-        loft_free_ref(m);
+        loft_free_ref(cx, m);
     }
 }
 
 /* The logged records go, the log closes. */
-static void loft_ffi_log_drop(uint16_t nr) {
+static void loft_ffi_log_drop(loft_cx *cx, uint16_t nr) {
     for (uint32_t i = 0; i < loft_ffi_log_n; i++)
-        if (loft_ffi_log_recs[i]) loft_st_delete(&loft_stores[nr], loft_ffi_log_recs[i]);
+        if (loft_ffi_log_recs[i]) loft_st_delete(cx, &loft_stores[nr], loft_ffi_log_recs[i]);
     loft_ffi_log_on = 0;
     loft_ffi_log_n = 0;
 }
@@ -221,24 +227,24 @@ static void loft_ffi_log_drop(uint16_t nr) {
  * store it was pinned to, copied out into a store of its own with its element type (a vector,
  * `loft_vec_add`) or its record type (`loft_copy_record`); then only what the call claimed is
  * deleted, and the vector's header. */
-static loft_ref loft_ffi_own_vector(const loft_tdesc *T, uint16_t elem_tp, loft_ref h) {
+static loft_ref loft_ffi_own_vector(loft_cx *cx, const loft_tdesc *T, uint16_t elem_tp, loft_ref h) {
     if (h.rec == 0) { loft_ffi_log_on = 0; return h; }
-    uint16_t ns = (uint16_t) loft_store_new();
-    uint32_t root = loft_claim(&loft_stores[ns], 1);
-    loft_set_u32(&loft_stores[ns], root, 4, 0);
+    uint16_t ns = (uint16_t) loft_store_new(cx);
+    uint32_t root = loft_claim(cx, &loft_stores[ns], 1);
+    loft_set_u32(cx, &loft_stores[ns], root, 4, 0);
     loft_ref v = { ns, root, 4, 0 };
-    loft_vec_add(T, elem_tp, v, h);
-    loft_ffi_log_drop(h.store_nr);
-    loft_st_delete(&loft_stores[h.store_nr], h.rec);
+    loft_vec_add(cx, T, elem_tp, v, h);
+    loft_ffi_log_drop(cx, h.store_nr);
+    loft_st_delete(cx, &loft_stores[h.store_nr], h.rec);
     return v;
 }
 
-static loft_ref loft_ffi_own_record(const loft_tdesc *T, uint16_t tp, loft_ref r) {
+static loft_ref loft_ffi_own_record(loft_cx *cx, const loft_tdesc *T, uint16_t tp, loft_ref r) {
     if (r.rec == 0) { loft_ffi_log_on = 0; return r; }
     loft_ref d = { 0xFFFF, 0, 0, 0 };
-    loft_database_typed(&d, T[tp].size, tp);
-    loft_copy_record(T, tp, r, d, 4);
-    loft_ffi_log_drop(r.store_nr);
+    loft_database_typed(cx, &d, T[tp].size, tp);
+    loft_copy_record(cx, T, tp, r, d, 4);
+    loft_ffi_log_drop(cx, r.store_nr);
     return d;
 }
 
@@ -247,16 +253,16 @@ static loft_ref loft_ffi_own_record(const loft_tdesc *T, uint16_t tp, loft_ref r
  * (`loft_c_bind_libraries`), else the library at `path`, where this build found it.  A library or
  * symbol that is not there halts the program naming both, as the interpreter refuses a native
  * whose library did not load. */
-static void *loft_ffi_sym(const char *path, const char *file, const char *sym) {
+static void *loft_ffi_sym(loft_cx *cx, const char *path, const char *file, const char *sym) {
 #if defined(LOFT_DL)
 #if defined(LOFT_BIND_LIBS)
     for (uint32_t i = 0; i < loft_ncbl && i < 64; i++) {
         if (!loft_cbl_row_handle[i] || strcmp(loft_cbl[i].file, file) != 0) continue;
-        void *p = loft_ffi_lookup(loft_cbl_row_handle[i], sym);
+        void *p = loft_ffi_lookup(cx, loft_cbl_row_handle[i], sym);
         if (p) return p;
         char m[1024];
         snprintf(m, sizeof m, "native function %s is not available: the library does not export it", sym);
-        loft_panic(loft_lit(m, strlen(m)), loft_lit(file, strlen(file)), 0);
+        loft_panic(cx, loft_lit(cx, m, strlen(m)), loft_lit(cx, file, strlen(file)), 0);
         return 0;
     }
 #endif
@@ -271,26 +277,26 @@ static void *loft_ffi_sym(const char *path, const char *file, const char *sym) {
         if (k + 4 <= sizeof own) {
             memcpy(own, file, k);
             memcpy(own + k, ".so", 4);
-            void *ha = loft_dl_open(own, LOFT_DL_LOCAL);
-            void *pa = ha ? loft_ffi_lookup(ha, sym) : 0;
+            void *ha = loft_dl_open(cx, own, LOFT_DL_LOCAL);
+            void *pa = ha ? loft_ffi_lookup(cx, ha, sym) : 0;
             if (pa) return pa;
         }
     }
 #endif
     (void) file;
-    void *h = loft_dl_open(path, LOFT_DL_LOCAL);
-    void *p = h ? loft_ffi_lookup(h, sym) : 0;
+    void *h = loft_dl_open(cx, path, LOFT_DL_LOCAL);
+    void *p = h ? loft_ffi_lookup(cx, h, sym) : 0;
     if (p) return p;
     char m[1024];
     snprintf(m, sizeof m, "native function %s is not available: %s", sym,
-             h ? "the library does not export it" : loft_dl_error());
-    loft_panic(loft_lit(m, strlen(m)), loft_lit(path, strlen(path)), 0);
+             h ? "the library does not export it" : loft_dl_error(cx));
+    loft_panic(cx, loft_lit(cx, m, strlen(m)), loft_lit(cx, path, strlen(path)), 0);
     return 0;
 #else
     (void) file;
     char m[512];
     snprintf(m, sizeof m, "native function %s: this host cannot open a library's native part (%s)", sym, path);
-    loft_panic(loft_lit(m, strlen(m)), loft_lit("", 0), 0);
+    loft_panic(cx, loft_lit(cx, m, strlen(m)), loft_lit(cx, "", 0), 0);
     return 0;
 #endif
 }

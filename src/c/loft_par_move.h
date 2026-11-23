@@ -16,13 +16,13 @@ typedef struct { loft_store_t *wt; uint32_t wn, parent_n; uint16_t *moved; } lof
 
 /* Worker store `k` (`k >= parent_n`) in the caller's table: its slot there, taken now if no
  * row or reference brought it yet; `fresh` says it was. */
-static uint16_t loft_par_take(loft_par_move *m, uint32_t k, int *fresh) {
+static uint16_t loft_par_take(loft_cx *cx, loft_par_move *m, uint32_t k, int *fresh) {
     uint16_t *slot = &m->moved[k - m->parent_n];
     *fresh = *slot == 0xFFFF;
     if (*fresh) {
-        uint32_t nr = loft_store_make(0);
+        uint32_t nr = loft_store_make(cx, 0);
         loft_store_t *s = &loft_stores[nr];
-        loft_heap_moved(s, s->size, 0);
+        loft_heap_moved(cx, s, s->size, 0);
         free(s->buf);
         free(s->claims.bits);
         free(s->referenced.bits);
@@ -37,7 +37,7 @@ static uint16_t loft_par_take(loft_par_move *m, uint32_t k, int *fresh) {
     return *slot;
 }
 
-static void loft_par_move_rows(const loft_tdesc *T, uint32_t ntypes, uint16_t kt, loft_par_slot *b, loft_word lo,
+static void loft_par_move_rows(loft_cx *cx, const loft_tdesc *T, uint32_t ntypes, uint16_t kt, loft_par_slot *b, loft_word lo,
                                loft_word hi, uint32_t parent_n) {
     loft_par_move m = { loft_stores, loft_nstores, parent_n, 0 };
     m.moved = (uint16_t *) malloc((size_t) (m.wn > parent_n ? m.wn - parent_n : 1) * sizeof *m.moved);
@@ -59,9 +59,9 @@ static void loft_par_move_rows(const loft_tdesc *T, uint32_t ntypes, uint16_t kt
             continue;
         }
         int fresh;
-        b[i].r.store_nr = loft_par_take(&m, r.store_nr, &fresh);
+        b[i].r.store_nr = loft_par_take(cx, &m, r.store_nr, &fresh);
         b[i].adopted = (uint8_t) fresh;
-        loft_refs_push_tp(&todo, b[i].r, kt);
+        loft_refs_push_tp(cx, &todo, b[i].r, kt);
     }
     loft_refs seen = { 0, 0, 0, 0 };
     for (size_t w = 0; w < todo.n; w++) {
@@ -71,27 +71,27 @@ static void loft_par_move_rows(const loft_tdesc *T, uint32_t ntypes, uint16_t kt
         for (size_t v = 0; v < seen.n && !again; v++)
             again = seen.p[v].store_nr == at.store_nr && seen.p[v].rec == at.rec && seen.p[v].pos == at.pos;
         if (again || tp >= ntypes) continue;
-        loft_refs_push(&seen, at);
+        loft_refs_push(cx, &seen, at);
         loft_refs slots = { 0, 0, 0, 0 };
         slots.tp = (uint16_t *) malloc(16 * sizeof *slots.tp);
         if (!slots.tp) { fputs("loft: out of memory\n", stderr); abort(); }
-        loft_kind_slots(T, tp, at, &slots, 0, LOFT_T_DBREF);
+        loft_kind_slots(cx, T, tp, at, &slots, 0, LOFT_T_DBREF);
         for (size_t k = 0; k < slots.n; k++) {
             /* The stored words as they stand: the number names a store of the worker's table,
              * which no read through the caller's may resolve. */
             loft_ref sl = slots.p[k];
-            loft_store_t *hs = loft_store_of(sl);
-            loft_ref x = { (uint16_t) loft_u32(hs, sl.rec, sl.pos), loft_u32(hs, sl.rec, sl.pos + 4),
-                           loft_u32(hs, sl.rec, sl.pos + 8), 0 };
+            loft_store_t *hs = loft_store_of(cx, sl);
+            loft_ref x = { (uint16_t) loft_u32(cx, hs, sl.rec, sl.pos), loft_u32(cx, hs, sl.rec, sl.pos + 4),
+                           loft_u32(cx, hs, sl.rec, sl.pos + 8), 0 };
             /* A reference into a store the worker freed names nothing to take: the interpreter
              * adopts only live stores (`adopt_worker_excess`), and leaves such a number as it is. */
             if (x.store_nr == 0xFFFF || x.store_nr < parent_n || x.store_nr >= m.wn) continue;
             if (m.moved[x.store_nr - parent_n] == 0xFFFF && !m.wt[x.store_nr].live) continue;
             int fresh;
-            x.store_nr = loft_par_take(&m, x.store_nr, &fresh);
-            if (fresh) loft_par_hold(x.store_nr);
-            loft_set_u32(loft_store_of(sl), sl.rec, sl.pos, x.store_nr);
-            if (slots.tp[k] != 0xFFFF && x.rec != 0) loft_refs_push_tp(&todo, x, slots.tp[k]);
+            x.store_nr = loft_par_take(cx, &m, x.store_nr, &fresh);
+            if (fresh) loft_par_hold(cx, x.store_nr);
+            loft_set_u32(cx, loft_store_of(cx, sl), sl.rec, sl.pos, x.store_nr);
+            if (slots.tp[k] != 0xFFFF && x.rec != 0) loft_refs_push_tp(cx, &todo, x, slots.tp[k]);
         }
         free(slots.p);
         free(slots.tp);

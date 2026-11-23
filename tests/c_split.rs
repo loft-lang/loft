@@ -214,7 +214,7 @@ fn a_unit_carries_its_runtime_and_compiles_alone() {
             "{args:?}: the unit includes a file of loft's"
         );
         assert!(
-            unit.contains("static void loft_leak_report(void) {"),
+            unit.contains("static void loft_leak_report(loft_cx *cx) {"),
             "{args:?}: the unit defines the runtime it calls"
         );
     }

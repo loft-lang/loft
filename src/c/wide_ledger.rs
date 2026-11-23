@@ -37,7 +37,7 @@ pub(crate) struct Entry {
 }
 
 /// The conversions the emitter writes where two widths meet.
-const CROSSINGS: [&str; 3] = ["loft_w64(", "loft_n32(", "(double) "];
+const CROSSINGS: [&str; 3] = ["loft_w64(cx, ", "loft_n32(cx, ", "(double) "];
 
 /// Is a value of `tp` held in 64 bits, and by whose choice?  `Some(true)`: its declaration
 /// asks for them (`i64`, `u32`, `f64`).  `Some(false)`: it is the plain `integer` no
@@ -314,18 +314,18 @@ static const char *const names[] = { \"a (b\" };
 
 static int32_t n_show__fr(loft_ref v0_v, int64_t v1_key) {
     int32_t t1;
-    t1 = loft_n32(loft_vec_len(v0_v));
-    loft_format_long(&w, loft_w64(t1), 10, \"a ( in a text\", 2);
-    loft_format_float(&w, (double) v2_f, 0);
-    t2 = n_wide(loft_w64(t1));
-    if (v1_key < loft_w64(t1)) {
-        t3 = loft_add32(t1, loft_n32(v1_key));
+    t1 = loft_n32(cx, loft_vec_len(cx, v0_v));
+    loft_format_long(cx, &w, loft_w64(cx, t1), 10, \"a ( in a text\", 2);
+    loft_format_float(cx, &w, (double) v2_f, 0);
+    t2 = n_wide(loft_w64(cx, t1));
+    if (v1_key < loft_w64(cx, t1)) {
+        t3 = loft_add32(cx, t1, loft_n32(cx, v1_key));
     }
     return t1;
 }
 
 static void n_plain(int32_t v0_a) {
-    v1_b = loft_add32(v0_a, INT32_C(1));
+    v1_b = loft_add32(cx, v0_a, INT32_C(1));
 }
 ";
 

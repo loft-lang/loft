@@ -165,11 +165,7 @@ impl Cx<'_> {
             out,
             "\n/* @FR-R-Version: {}'s precondition. */\nstatic inline int {name}({}) {{\n    int ok = 1;",
             self.data.def(d).original_name(),
-            if params.is_empty() {
-                "void".to_string()
-            } else {
-                params.join(", ")
-            }
+            crate::c::cx_params(&params)
         );
         for t in &leaf.tests {
             let op = if t.strict { "<" } else { "<=" };
@@ -195,21 +191,21 @@ fn pre_expr(l: &Lin, leaves: &[Lin]) -> String {
             format!("a{i}")
         }
         Lin::Add(a, b, _) => format!(
-            "loft_vg_add({}, {}, &ok)",
+            "loft_vg_add(cx, {}, {}, &ok)",
             pre_expr(a, leaves),
             pre_expr(b, leaves)
         ),
         Lin::Sub(a, b, _) => format!(
-            "loft_vg_sub({}, {}, &ok)",
+            "loft_vg_sub(cx, {}, {}, &ok)",
             pre_expr(a, leaves),
             pre_expr(b, leaves)
         ),
         Lin::Mul(a, b, _) => format!(
-            "loft_vg_mul({}, {}, &ok)",
+            "loft_vg_mul(cx, {}, {}, &ok)",
             pre_expr(a, leaves),
             pre_expr(b, leaves)
         ),
-        Lin::Neg(a, _) => format!("loft_vg_neg({}, &ok)", pre_expr(a, leaves)),
+        Lin::Neg(a, _) => format!("loft_vg_neg(cx, {}, &ok)", pre_expr(a, leaves)),
     }
 }
 
@@ -616,12 +612,12 @@ impl FnWriter<'_> {
                 (first, last)
             };
             guard.push(match &lv.first {
-                First::Index(ix) => format!("loft_vg_lin({}, 1, 1, &{first})", self.var(*ix)),
+                First::Index(ix) => format!("loft_vg_lin(cx, {}, 1, 1, &{first})", self.var(*ix)),
                 First::Next(nx) => format!("(({first} = {}), 1)", self.var(*nx)),
                 First::Seed(x, index_form) => {
                     let seed = as_int(self.expr(x, ind)?)?;
                     if *index_form {
-                        format!("loft_vg_lin({seed}, 1, 1, &{first})")
+                        format!("loft_vg_lin(cx, {seed}, 1, 1, &{first})")
                     } else {
                         format!("(({first} = {seed}) != LOFT_NULL)")
                     }
@@ -633,13 +629,13 @@ impl FnWriter<'_> {
             };
             let min = if levels.len() == 1 { MIN_TRIPS } else { 1 };
             guard.push(format!(
-                "loft_vg_span({first}, {end}, {}, {min}, &{last})",
+                "loft_vg_span(cx, {first}, {end}, {}, {min}, &{last})",
                 i32::from(lv.inclusive)
             ));
             ends.push((first, last));
         }
         if let [(f0, l0), (f1, l1)] = ends.as_slice() {
-            guard.push(format!("loft_vg_area({f0}, {l0}, {f1}, {l1}, {MIN_TRIPS})"));
+            guard.push(format!("loft_vg_area(cx, {f0}, {l0}, {f1}, {l1}, {MIN_TRIPS})"));
             crate::rewrite_census::fired("R-Version/nest", 1);
         }
         // The corners of the box over the loops some argument moves with: a linear value takes
@@ -672,11 +668,11 @@ impl FnWriter<'_> {
                     let t = if at[slot] { last } else { first };
                     let v = format!("{flag}_{side}{k}");
                     self.decls.push(format!("int64_t {v} = 0;"));
-                    guard.push(format!("loft_vg_lin({part}, INT64_C({coef}), {t}, &{v})"));
+                    guard.push(format!("loft_vg_lin(cx, {part}, INT64_C({coef}), {t}, &{v})"));
                     vals.push(v);
                 }
             }
-            guard.push(format!("{pre}({})", vals.join(", ")));
+            guard.push(format!("{pre}({})", crate::c::cx_args(&vals)));
         }
         self.line(ind, &format!("{flag} = {};", guard.join("\n        && ")));
         // @decline-owed: a callee that is no leaf (`version_callee_decline`) and the nest's
@@ -793,22 +789,22 @@ pub(super) fn version_access(
 ) -> String {
     match (name, value) {
         ("OpSetInt", Some(v)) => {
-            format!("loft_vh_put_int({held}, {size}, {index}, {fld}, {v})")
+            format!("loft_vh_put_int(cx, {held}, {size}, {index}, {fld}, {v})")
         }
         ("OpSetInt4Raw", Some(v)) => {
-            format!("loft_vh_put_u32({held}, {size}, {index}, {fld}, {v})")
+            format!("loft_vh_put_u32(cx, {held}, {size}, {index}, {fld}, {v})")
         }
         ("OpSetFloat", Some(v)) => {
-            format!("loft_vh_put_float({held}, {size}, {index}, {fld}, {v})")
+            format!("loft_vh_put_float(cx, {held}, {size}, {index}, {fld}, {v})")
         }
         ("OpSetBoolean", Some(v)) => {
-            format!("loft_vh_put_bool({held}, {size}, {index}, {fld}, {v})")
+            format!("loft_vh_put_bool(cx, {held}, {size}, {index}, {fld}, {v})")
         }
-        ("OpGetFloat", None) => format!("loft_vh_at_float({held}, {size}, {index}, {fld})"),
+        ("OpGetFloat", None) => format!("loft_vh_at_float(cx, {held}, {size}, {index}, {fld})"),
         ("OpGetBoolean", None) => {
-            format!("loft_pa_bool(loft_vh_at_addr({held}, {size}, {index}), {fld})")
+            format!("loft_pa_bool(cx, loft_vh_at_addr(cx, {held}, {size}, {index}), {fld})")
         }
-        _ => format!("loft_vh_at_int({held}, {size}, {index}, {fld})"),
+        _ => format!("loft_vh_at_int(cx, {held}, {size}, {index}, {fld})"),
     }
 }
 

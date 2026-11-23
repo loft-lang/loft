@@ -96,12 +96,12 @@ impl Cx<'_> {
         let types = self.eq_types.borrow();
         let mut out = String::new();
         for &tp in types.iter() {
-            let _ = writeln!(out, "static int loft_eq{tp}(loft_ref a, loft_ref b);");
+            let _ = writeln!(out, "static int loft_eq{tp}(loft_cx *cx, loft_ref a, loft_ref b);");
         }
         for &tp in types.iter() {
             let t = &self.stores.types[tp as usize];
-            let _ = writeln!(out, "static int loft_eq{tp}(loft_ref a, loft_ref b) {{");
-            out.push_str("    if (loft_same_place(a, b)) return 1;\n");
+            let _ = writeln!(out, "static int loft_eq{tp}(loft_cx *cx, loft_ref a, loft_ref b) {{");
+            out.push_str("    if (loft_same_place(cx, a, b)) return 1;\n");
             out.push_str("    if (a.rec == 0 || b.rec == 0) return a.rec == 0 && b.rec == 0;\n");
             match &t.parts {
                 Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
@@ -109,9 +109,9 @@ impl Cx<'_> {
                     out.push_str("    return 1;\n");
                 }
                 Parts::Enum(values) => {
-                    out.push_str("    uint8_t v = *loft_at(loft_store_of(a), a.rec, a.pos);\n");
+                    out.push_str("    uint8_t v = *loft_at(cx, loft_store_of(cx, a), a.rec, a.pos);\n");
                     out.push_str(
-                        "    if (v != *loft_at(loft_store_of(b), b.rec, b.pos)) return 0;\n",
+                        "    if (v != *loft_at(cx, loft_store_of(cx, b), b.rec, b.pos)) return 0;\n",
                     );
                     out.push_str("    switch (v) {\n");
                     for (i, (vtp, _)) in values.iter().enumerate() {
@@ -134,7 +134,7 @@ impl Cx<'_> {
                     let (keys, n) = self.keys_of(tp);
                     let _ = writeln!(
                         out,
-                        "    return loft_eq_keyed(a, b, {}, {keys}, {n}, {});",
+                        "    return loft_eq_keyed(cx, a, b, {}, {keys}, {n}, {});",
                         match t.parts {
                             Parts::Hash(..) => 1,
                             Parts::Index(..) => 2,
@@ -147,7 +147,7 @@ impl Cx<'_> {
                 Parts::Vector(elem) | Parts::Sorted(elem, _) => {
                     let _ = writeln!(
                         out,
-                        "    return loft_eq_vector(a, b, {}, {});",
+                        "    return loft_eq_vector(cx, a, b, {}, {});",
                         self.stores.size(*elem),
                         Self::eq_fn(*elem)
                     );
@@ -155,20 +155,20 @@ impl Cx<'_> {
                 Parts::ChildRec(elem) => {
                     let _ = writeln!(
                         out,
-                        "    return loft_eq_child(a, b, {});",
+                        "    return loft_eq_child(cx, a, b, {});",
                         Self::eq_fn(*elem)
                     );
                 }
                 Parts::Byte(min, _) => {
-                    let _ = writeln!(out, "    (void) {min};\n    return loft_eq_byte(a, b);");
+                    let _ = writeln!(out, "    (void) {min};\n    return loft_eq_byte(cx, a, b);");
                 }
                 Parts::Short(..) | Parts::ShortRaw(..) => {
-                    out.push_str("    return loft_eq_u16(a, b);\n");
+                    out.push_str("    return loft_eq_u16(cx, a, b);\n");
                 }
                 Parts::Int(..) | Parts::IntRaw(..) => {
-                    out.push_str("    return loft_eq_u32(a, b);\n")
+                    out.push_str("    return loft_eq_u32(cx, a, b);\n")
                 }
-                _ => out.push_str("    return loft_eq_dbref(a, b);\n"),
+                _ => out.push_str("    return loft_eq_dbref(cx, a, b);\n"),
             }
             out.push_str("}\n");
         }
@@ -180,19 +180,19 @@ impl Cx<'_> {
     fn eq_fields(out: &mut String, fields: &[Field], ind: &str) {
         for f in fields.iter().filter(|f| Self::compared(f)) {
             let (pa, pb) = (
-                format!("loft_field(a, {})", f.position),
-                format!("loft_field(b, {})", f.position),
+                format!("loft_field(cx, a, {})", f.position),
+                format!("loft_field(cx, b, {})", f.position),
             );
             let test = if f.name == "enum" {
-                format!("loft_eq_byte({pa}, {pb})")
+                format!("loft_eq_byte(cx, {pa}, {pb})")
             } else if f.target != u16::MAX {
                 format!(
-                    "loft_eq_reference({pa}, {pb}, {}, {})",
+                    "loft_eq_reference(cx, {pa}, {pb}, {}, {})",
                     f.target,
                     Self::eq_fn(f.target)
                 )
             } else {
-                format!("{}({pa}, {pb})", Self::eq_fn(f.content))
+                format!("{}(cx, {pa}, {pb})", Self::eq_fn(f.content))
             };
             let _ = writeln!(out, "{ind}if (!{test}) return 0;");
         }

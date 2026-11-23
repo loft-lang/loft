@@ -52,7 +52,7 @@
 
 /* The socket library ready for use: Winsock started — before the first name lookup or socket;
  * a second `WSAStartup` only counts — and nothing to do under POSIX. */
-static void loft_sock_ready(void) {
+static void loft_sock_ready(loft_cx *cx) {
 #if defined(_WIN32)
     static volatile int started = 0;
     if (started) return;
@@ -64,9 +64,9 @@ static void loft_sock_ready(void) {
 
 /* A socket as the runtime holds it: an `int`, -1 for none.  Winsock's SOCKET is a kernel handle,
  * which fits. */
-static int loft_sock_open(int family, int type, int proto) {
+static int loft_sock_open(loft_cx *cx, int family, int type, int proto) {
 #if defined(_WIN32)
-    loft_sock_ready();
+    loft_sock_ready(cx);
     SOCKET s = socket(family, type, proto);
     return s == INVALID_SOCKET ? -1 : (int) s;
 #else
@@ -74,7 +74,7 @@ static int loft_sock_open(int family, int type, int proto) {
 #endif
 }
 
-static void loft_sock_close(int fd) {
+static void loft_sock_close(loft_cx *cx, int fd) {
 #if defined(_WIN32)
     closesocket((SOCKET) fd);
 #else
@@ -83,7 +83,7 @@ static void loft_sock_close(int fd) {
 }
 
 /* The last socket call's failure, as POSIX names it: interrupted, would block, in progress. */
-static int loft_sock_interrupted(void) {
+static int loft_sock_interrupted(loft_cx *cx) {
 #if defined(_WIN32)
     return WSAGetLastError() == WSAEINTR;
 #else
@@ -91,7 +91,7 @@ static int loft_sock_interrupted(void) {
 #endif
 }
 
-static int loft_sock_would_block(void) {
+static int loft_sock_would_block(loft_cx *cx) {
 #if defined(_WIN32)
     return WSAGetLastError() == WSAEWOULDBLOCK;
 #else
@@ -99,7 +99,7 @@ static int loft_sock_would_block(void) {
 #endif
 }
 
-static int loft_sock_in_progress(void) {
+static int loft_sock_in_progress(loft_cx *cx) {
 #if defined(_WIN32)
     return WSAGetLastError() == WSAEWOULDBLOCK;
 #else
@@ -108,7 +108,7 @@ static int loft_sock_in_progress(void) {
 }
 
 /* The last failure as an errno value, for a message. */
-static int loft_sock_error(void) {
+static int loft_sock_error(loft_cx *cx) {
 #if defined(_WIN32)
     return WSAGetLastError();
 #else
@@ -117,7 +117,7 @@ static int loft_sock_error(void) {
 }
 
 /* Up to `n` bytes; the count, 0 at the end, -1 on a failure. */
-static long loft_sock_recv(int fd, void *buf, size_t n, int flags) {
+static long loft_sock_recv(loft_cx *cx, int fd, void *buf, size_t n, int flags) {
 #if defined(_WIN32)
     return (long) recv((SOCKET) fd, (char *) buf, (int) (n > 0x7fffffff ? 0x7fffffff : n), flags);
 #else
@@ -125,7 +125,7 @@ static long loft_sock_recv(int fd, void *buf, size_t n, int flags) {
 #endif
 }
 
-static long loft_sock_send(int fd, const void *buf, size_t n, int flags) {
+static long loft_sock_send(loft_cx *cx, int fd, const void *buf, size_t n, int flags) {
 #if defined(_WIN32)
     return (long) send((SOCKET) fd, (const char *) buf, (int) (n > 0x7fffffff ? 0x7fffffff : n), flags);
 #else
@@ -134,7 +134,7 @@ static long loft_sock_send(int fd, const void *buf, size_t n, int flags) {
 }
 
 /* A socket a child process does not inherit. */
-static void loft_sock_cloexec(int fd) {
+static void loft_sock_cloexec(loft_cx *cx, int fd) {
 #if defined(_WIN32)
     SetHandleInformation((HANDLE) (intptr_t) fd, HANDLE_FLAG_INHERIT, 0);
 #else
@@ -142,7 +142,7 @@ static void loft_sock_cloexec(int fd) {
 #endif
 }
 
-static void loft_sock_blocking(int fd, int on) {
+static void loft_sock_blocking(loft_cx *cx, int fd, int on) {
 #if defined(_WIN32)
     u_long nb = on ? 0 : 1;
     ioctlsocket((SOCKET) fd, FIONBIO, &nb);
@@ -153,7 +153,7 @@ static void loft_sock_blocking(int fd, int on) {
 }
 
 /* `SO_RCVTIMEO` / `SO_SNDTIMEO` (`opt`) at `ms`: a `timeval` under POSIX, milliseconds on Windows. */
-static void loft_sock_timeout_opt(int fd, int opt, int64_t ms) {
+static void loft_sock_timeout_opt(loft_cx *cx, int fd, int opt, int64_t ms) {
 #if defined(_WIN32)
     DWORD v = (DWORD) (ms < 0 ? 0 : ms);
     setsockopt((SOCKET) fd, SOL_SOCKET, opt, (const char *) &v, sizeof v);
@@ -164,7 +164,7 @@ static void loft_sock_timeout_opt(int fd, int opt, int64_t ms) {
 }
 
 /* An integer socket option (`SO_REUSEADDR`, `TCP_NODELAY`, …). */
-static int loft_sock_flag(int fd, int level, int opt, int on) {
+static int loft_sock_flag(loft_cx *cx, int fd, int level, int opt, int on) {
 #if defined(_WIN32)
     return setsockopt((SOCKET) fd, level, opt, (const char *) &on, sizeof on);
 #else
@@ -175,16 +175,16 @@ static int loft_sock_flag(int fd, int level, int opt, int on) {
 /* A listener that takes its port back at once after a restart, and never shares a live one:
  * `SO_REUSEADDR` under POSIX; on Windows that option lets a second socket bind over a live
  * listener, so it is `SO_EXCLUSIVEADDRUSE` there (`std::net::TcpListener` sets neither). */
-static void loft_sock_listener_addr(int fd) {
+static void loft_sock_listener_addr(loft_cx *cx, int fd) {
 #if defined(_WIN32)
-    loft_sock_flag(fd, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, 1);
+    loft_sock_flag(cx, fd, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, 1);
 #else
-    loft_sock_flag(fd, SOL_SOCKET, SO_REUSEADDR, 1);
+    loft_sock_flag(cx, fd, SOL_SOCKET, SO_REUSEADDR, 1);
 #endif
 }
 
 /* The pending error of a connect that finished (`SO_ERROR`): 0 when it connected. */
-static int loft_sock_pending_error(int fd) {
+static int loft_sock_pending_error(loft_cx *cx, int fd) {
     int err = 0;
 #if defined(_WIN32)
     int el = sizeof err;
@@ -199,7 +199,7 @@ static int loft_sock_pending_error(int fd) {
 /* `poll` over sockets: `WSAPoll` on Windows, whose `pollfd` holds a SOCKET. */
 typedef struct { int fd; short events, revents; } loft_pollfd;
 
-static int loft_sock_poll(loft_pollfd *p, size_t n, int ms) {
+static int loft_sock_poll(loft_cx *cx, loft_pollfd *p, size_t n, int ms) {
 #if defined(_WIN32)
     WSAPOLLFD one[16], *w = n <= 16 ? one : (WSAPOLLFD *) malloc(n * sizeof *w);
     if (!w) return -1;
@@ -228,7 +228,7 @@ static int loft_sock_poll(loft_pollfd *p, size_t n, int ms) {
 }
 
 /* A listening socket bound to `a`: 0, else -1 with the failure in `loft_sock_error`. */
-static int loft_sock_bind_listen(int fd, const struct sockaddr *a, size_t al, int backlog) {
+static int loft_sock_bind_listen(loft_cx *cx, int fd, const struct sockaddr *a, size_t al, int backlog) {
 #if defined(_WIN32)
     return bind((SOCKET) fd, a, (int) al) == 0 && listen((SOCKET) fd, backlog) == 0 ? 0 : -1;
 #else
@@ -238,7 +238,7 @@ static int loft_sock_bind_listen(int fd, const struct sockaddr *a, size_t al, in
 
 /* The next connection on listener `fd`: its socket, else -1 (`loft_sock_would_block` says
  * whether one was only not pending yet). */
-static int loft_sock_accept(int fd) {
+static int loft_sock_accept(loft_cx *cx, int fd) {
 #if defined(_WIN32)
     SOCKET s = accept((SOCKET) fd, 0, 0);
     return s == INVALID_SOCKET ? -1 : (int) s;
@@ -248,7 +248,7 @@ static int loft_sock_accept(int fd) {
 }
 
 /* `fd` bound to `a` without listening (a datagram socket, or before `listen`): 0, else -1. */
-static int loft_sock_bind(int fd, const struct sockaddr *a, socklen_t al) {
+static int loft_sock_bind(loft_cx *cx, int fd, const struct sockaddr *a, socklen_t al) {
 #if defined(_WIN32)
     return bind((SOCKET) fd, a, (int) al) == 0 ? 0 : -1;
 #else
@@ -257,7 +257,7 @@ static int loft_sock_bind(int fd, const struct sockaddr *a, socklen_t al) {
 }
 
 /* `fd`'s own address (`getsockname`) or its peer's (`getpeername`): 0, else -1. */
-static int loft_sock_name(int fd, int peer, struct sockaddr *a, socklen_t *al) {
+static int loft_sock_name(loft_cx *cx, int fd, int peer, struct sockaddr *a, socklen_t *al) {
 #if defined(_WIN32)
     int n = (int) *al;
     int r = peer ? getpeername((SOCKET) fd, a, &n) : getsockname((SOCKET) fd, a, &n);
@@ -269,7 +269,7 @@ static int loft_sock_name(int fd, int peer, struct sockaddr *a, socklen_t *al) {
 }
 
 /* A datagram socket's peer fixed (`connect` on UDP: no handshake): 0, else -1. */
-static int loft_sock_connect_to(int fd, const struct sockaddr *a, socklen_t al) {
+static int loft_sock_connect_to(loft_cx *cx, int fd, const struct sockaddr *a, socklen_t al) {
 #if defined(_WIN32)
     return connect((SOCKET) fd, a, (int) al) == 0 ? 0 : -1;
 #else
@@ -281,7 +281,7 @@ static int loft_sock_connect_to(int fd, const struct sockaddr *a, socklen_t al) 
  * Winsock reports one as WSAECONNRESET on the NEXT `recvfrom`, which a pump reads as "nothing
  * waiting" and so delays the datagrams queued behind it by a whole pump; POSIX reports none on
  * an unconnected socket. */
-static void loft_sock_udp_quiet(int fd) {
+static void loft_sock_udp_quiet(loft_cx *cx, int fd) {
 #if defined(_WIN32)
 #ifndef SIO_UDP_CONNRESET
 #define SIO_UDP_CONNRESET _WSAIOW(IOC_VENDOR, 12)
@@ -295,7 +295,7 @@ static void loft_sock_udp_quiet(int fd) {
 }
 
 /* One datagram to `a`: the count sent, -1 on a failure. */
-static long loft_sock_sendto(int fd, const void *buf, size_t n, const struct sockaddr *a, socklen_t al) {
+static long loft_sock_sendto(loft_cx *cx, int fd, const void *buf, size_t n, const struct sockaddr *a, socklen_t al) {
 #if defined(_WIN32)
     return (long) sendto((SOCKET) fd, (const char *) buf, (int) (n > 0x7fffffff ? 0x7fffffff : n), 0, a, (int) al);
 #else
@@ -305,7 +305,7 @@ static long loft_sock_sendto(int fd, const void *buf, size_t n, const struct soc
 
 /* One datagram and its source: the count, -1 when none is waiting (the socket non-blocking) or
  * on a failure. */
-static long loft_sock_recvfrom(int fd, void *buf, size_t n, struct sockaddr *a, socklen_t *al) {
+static long loft_sock_recvfrom(loft_cx *cx, int fd, void *buf, size_t n, struct sockaddr *a, socklen_t *al) {
 #if defined(_WIN32)
     int fl = (int) *al;
     long r = (long) recvfrom((SOCKET) fd, (char *) buf, (int) (n > 0x7fffffff ? 0x7fffffff : n), 0, a, &fl);
@@ -319,16 +319,16 @@ static long loft_sock_recvfrom(int fd, void *buf, size_t n, struct sockaddr *a, 
 /* Up to `n` bytes waiting on `fd`, left there: the count, 0 when the peer closed, -1 when none
  * is waiting yet, -2 on a failure.  POSIX peeks without blocking (`MSG_DONTWAIT`); Winsock has
  * no such flag, so the socket is non-blocking for the peek. */
-static long loft_sock_peek(int fd, void *buf, size_t n) {
+static long loft_sock_peek(loft_cx *cx, int fd, void *buf, size_t n) {
     for (;;) {
 #if defined(_WIN32)
-        loft_sock_blocking(fd, 0);
-        long r = loft_sock_recv(fd, buf, n, MSG_PEEK);
-        int interrupted = r < 0 && loft_sock_interrupted(), waiting = r < 0 && loft_sock_would_block();
-        loft_sock_blocking(fd, 1);
+        loft_sock_blocking(cx, fd, 0);
+        long r = loft_sock_recv(cx, fd, buf, n, MSG_PEEK);
+        int interrupted = r < 0 && loft_sock_interrupted(cx), waiting = r < 0 && loft_sock_would_block(cx);
+        loft_sock_blocking(cx, fd, 1);
 #else
-        long r = loft_sock_recv(fd, buf, n, MSG_PEEK | MSG_DONTWAIT);
-        int interrupted = r < 0 && loft_sock_interrupted(), waiting = r < 0 && loft_sock_would_block();
+        long r = loft_sock_recv(cx, fd, buf, n, MSG_PEEK | MSG_DONTWAIT);
+        int interrupted = r < 0 && loft_sock_interrupted(cx), waiting = r < 0 && loft_sock_would_block(cx);
 #endif
         if (interrupted) continue;
         return r >= 0 ? r : waiting ? -1 : -2;
@@ -336,7 +336,7 @@ static long loft_sock_peek(int fd, void *buf, size_t n) {
 }
 
 /* Sleep `ms`. */
-static void loft_sock_nap(int64_t ms) {
+static void loft_sock_nap(loft_cx *cx, int64_t ms) {
     if (ms <= 0) return;
 #if defined(_WIN32)
     Sleep((DWORD) ms);
@@ -347,20 +347,20 @@ static void loft_sock_nap(int64_t ms) {
 }
 
 /* Connect within `ms`: 1 when the TCP handshake completed. */
-static int loft_sock_connect_within(int fd, const struct sockaddr *a, socklen_t al, int64_t ms) {
-    loft_sock_blocking(fd, 0);
+static int loft_sock_connect_within(loft_cx *cx, int fd, const struct sockaddr *a, socklen_t al, int64_t ms) {
+    loft_sock_blocking(cx, fd, 0);
 #if defined(_WIN32)
     int r = connect((SOCKET) fd, a, (int) al);
 #else
     int r = connect(fd, a, al);
 #endif
-    if (r != 0 && !loft_sock_in_progress()) return 0;
+    if (r != 0 && !loft_sock_in_progress(cx)) return 0;
     if (r != 0) {
         loft_pollfd p = { fd, POLLOUT, 0 };
-        if (loft_sock_poll(&p, 1, (int) ms) <= 0) return 0;
-        if (loft_sock_pending_error(fd) != 0) return 0;
+        if (loft_sock_poll(cx, &p, 1, (int) ms) <= 0) return 0;
+        if (loft_sock_pending_error(cx, fd) != 0) return 0;
     }
-    loft_sock_blocking(fd, 1);
+    loft_sock_blocking(cx, fd, 1);
     return 1;
 }
 #endif

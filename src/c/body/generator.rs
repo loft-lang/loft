@@ -37,7 +37,7 @@ impl FnWriter<'_> {
         } else {
             let e = self.expr(x, ind)?;
             let put = match c {
-                CType::Text => format!("loft_text_set((loft_text *) out, {});", as_view(e)?),
+                CType::Text => format!("loft_text_set(cx, (loft_text *) out, {});", as_view(e)?),
                 other => format!(
                     "*({} *) out = {};",
                     held(other),
@@ -61,9 +61,9 @@ impl FnWriter<'_> {
                 continue;
             }
             match self.shapes.get(t as usize) {
-                Some(CType::Ref) => self.line(ind, &format!("{} = loft_ref_null();", self.var(t))),
+                Some(CType::Ref) => self.line(ind, &format!("{} = loft_ref_null(cx);", self.var(t))),
                 Some(CType::Fn) => {
-                    self.line(ind, &format!("{}.clos = loft_ref_null();", self.var(t)));
+                    self.line(ind, &format!("{}.clos = loft_ref_null(cx);", self.var(t)));
                 }
                 _ => {}
             }
@@ -109,8 +109,8 @@ impl FnWriter<'_> {
                 };
                 let t = self.temp(c);
                 if c == CType::Text {
-                    self.line(ind, &format!("loft_text_set(&{t}, loft_null_text());"));
-                    self.line(ind, &format!("loft_gen_next({g}, &{t});"));
+                    self.line(ind, &format!("loft_text_set(cx, &{t}, loft_null_text(cx));"));
+                    self.line(ind, &format!("loft_gen_next(cx, {g}, &{t});"));
                     return Ok(Some(self.held(t, CType::Text)));
                 }
                 // An exhausted generator answers null members: a text member reads its null,
@@ -124,23 +124,23 @@ impl FnWriter<'_> {
                 } else {
                     self.null_tuple_keeping_texts(&t, c, ind);
                     for l in &leaves {
-                        self.line(ind, &format!("loft_text_set(&{l}, loft_null_text());"));
+                        self.line(ind, &format!("loft_text_set(cx, &{l}, loft_null_text(cx));"));
                     }
                 }
-                self.line(ind, &format!("loft_gen_next({g}, &{t});"));
+                self.line(ind, &format!("loft_gen_next(cx, {g}, &{t});"));
                 Ok(Some(E::new(t, super::kind_of(c))))
             }
             ("OpCoroutineRetain", [g]) => {
                 let g = self.expr(g, ind)?;
                 Ok(Some(E::new(
-                    format!("loft_gen_retain({})", as_ref(g)?),
+                    format!("loft_gen_retain(cx, {})", as_ref(g)?),
                     K::Ref,
                 )))
             }
             ("OpCoroutineExhausted", [g]) => {
                 let g = self.expr(g, ind)?;
                 Ok(Some(E::new(
-                    format!("loft_gen_exhausted({})", as_ref(g)?),
+                    format!("loft_gen_exhausted(cx, {})", as_ref(g)?),
                     K::Bool,
                 )))
             }
@@ -225,8 +225,8 @@ impl FnWriter<'_> {
         // `@FR-G-Arg-Rebind`: a frame that ran to its end gives back its argument holds.
         let holds = self.held_args();
         for n in &holds {
-            self.line(1, &format!("loft_release_frame_hold(fr->hold_{n});"));
-            self.line(1, &format!("fr->hold_{n} = loft_ref_null();"));
+            self.line(1, &format!("loft_release_frame_hold(cx, fr->hold_{n});"));
+            self.line(1, &format!("fr->hold_{n} = loft_ref_null(cx);"));
         }
         // Every variable and temporary is a field: a parameter as it is passed, the rest as
         // they are held.
@@ -266,7 +266,7 @@ impl FnWriter<'_> {
         }
         let _ = writeln!(
             decls,
-            " }} loft_gen{d};\nstatic void loft_resume{d}(void *frp, void *out);\nstatic void loft_genfree{d}(void *frp);"
+            " }} loft_gen{d};\nstatic void loft_resume{d}(loft_cx *cx, void *frp, void *out);\nstatic void loft_genfree{d}(loft_cx *cx, void *frp);"
         );
         // A generator with a link names its locals IN the frame: a link to one points at the
         // frame field, which lives across resumes, where a restored copy would not.
@@ -280,7 +280,7 @@ impl FnWriter<'_> {
                 .collect()
         };
         let mut bodies = format!(
-            "\n#define LOFT_SAVE{d} do {{ {} }} while (0)\nstatic void loft_resume{d}(void *frp, void *out) {{\n    loft_gen{d} *fr = (loft_gen{d} *) frp;\n",
+            "\n#define LOFT_SAVE{d} do {{ {} }} while (0)\nstatic void loft_resume{d}(loft_cx *cx, void *frp, void *out) {{\n    loft_gen{d} *fr = (loft_gen{d} *) frp;\n",
             saves.join(" ")
         );
         for (ty, n, _, _) in &fields {
@@ -306,7 +306,7 @@ impl FnWriter<'_> {
         let mut creator = self.write_creator(&fields);
         let _ = writeln!(
             creator,
-            "    return loft_gen_new(fr, loft_resume{d}, loft_genfree{d});"
+            "    return loft_gen_new(cx, fr, loft_resume{d}, loft_genfree{d});"
         );
         Ok((creator, GenParts { decls, bodies }))
     }
@@ -376,11 +376,11 @@ impl FnWriter<'_> {
         let d = self.d;
         let _ = writeln!(
             bodies,
-            "static void loft_genfree{d}(void *frp) {{\n    loft_gen{d} *fr = (loft_gen{d} *) frp;\n    if (!fr->done) {{"
+            "static void loft_genfree{d}(loft_cx *cx, void *frp) {{\n    loft_gen{d} *fr = (loft_gen{d} *) frp;\n    if (!fr->done) {{"
         );
         for (_, n, c, param) in fields {
             if *c == CType::Text && !param {
-                let _ = writeln!(bodies, "        loft_text_free(&fr->{n});");
+                let _ = writeln!(bodies, "        loft_text_free(cx, &fr->{n});");
             }
             if let CType::Tuple(id) = c
                 && !param
@@ -388,7 +388,7 @@ impl FnWriter<'_> {
                 let mut leaves = Vec::new();
                 self.tuple_text_leaves(&format!("fr->{n}"), *id, &mut leaves);
                 for l in leaves {
-                    let _ = writeln!(bodies, "        loft_text_free(&{l});");
+                    let _ = writeln!(bodies, "        loft_text_free(cx, &{l});");
                 }
             }
         }
@@ -408,7 +408,7 @@ impl FnWriter<'_> {
                 let _ = writeln!(
                     bodies,
                     "        if (fr->{n}.rec != 0 && fr->{n}.store_nr != fr->{w}.store_nr) \
-                     {{ loft_free_ref(fr->{n}); }} fr->{n} = loft_ref_null();"
+                     {{ loft_free_ref(cx, fr->{n}); }} fr->{n} = loft_ref_null(cx);"
                 );
             }
         }
@@ -418,17 +418,17 @@ impl FnWriter<'_> {
             }
             let _ = writeln!(
                 bodies,
-                "        if (fr->{n}.rec != 0) {{ loft_free_ref(fr->{n}); fr->{n} = loft_ref_null(); }}"
+                "        if (fr->{n}.rec != 0) {{ loft_free_ref(cx, fr->{n}); fr->{n} = loft_ref_null(cx); }}"
             );
         }
         bodies.push_str("    }\n");
         for (_, n, c, param) in fields {
             if *c == CType::Text && *param {
-                let _ = writeln!(bodies, "    loft_text_free(&fr->own_{n});");
+                let _ = writeln!(bodies, "    loft_text_free(cx, &fr->own_{n});");
             }
         }
         for n in self.held_args() {
-            let _ = writeln!(bodies, "    loft_release_frame_hold(fr->hold_{n});");
+            let _ = writeln!(bodies, "    loft_release_frame_hold(cx, fr->hold_{n});");
         }
         bodies.push_str("    free(fr);\n}\n");
     }
@@ -445,7 +445,7 @@ impl FnWriter<'_> {
                 if *c == CType::Text {
                     let _ = writeln!(
                         creator,
-                        "    fr->own_{n} = loft_text_own({n});\n    fr->{n} = loft_view(&fr->own_{n});"
+                        "    fr->own_{n} = loft_text_own(cx, {n});\n    fr->{n} = loft_view(cx, &fr->own_{n});"
                     );
                 } else {
                     let _ = writeln!(creator, "    fr->{n} = {n};");
@@ -461,7 +461,7 @@ impl FnWriter<'_> {
         for n in self.held_args() {
             let _ = writeln!(
                 creator,
-                "    fr->hold_{n} = loft_hold_for_frame({n}) ? {n} : loft_ref_null();"
+                "    fr->hold_{n} = loft_hold_for_frame(cx, {n}) ? {n} : loft_ref_null(cx);"
             );
         }
         creator
