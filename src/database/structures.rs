@@ -1281,17 +1281,54 @@ impl Stores {
         })
     }
 
-    /// `@FR-H-RefHome` — the record type a user's `reference<T>` field at byte `byte_off` of
-    /// record type `struct_tp` names: the type a copy of its record is made as.
-    #[must_use]
-    pub fn reference_field_target(&self, struct_tp: u16, byte_off: u16) -> Option<u16> {
-        let (Parts::Struct(fields) | Parts::EnumValue(_, fields)) =
-            &self.types.get(struct_tp as usize)?.parts
-        else {
-            return None;
+    /// `@FR-H-RefHome` — the user's `reference<T>` fields (a stored reference with a target
+    /// type) at byte `byte_off` of a record of type `tp`.  A struct or a variant has at most
+    /// one.  A struct enum's record is one of its variants, and the place a variant literal
+    /// writes into is typed as the enum, so each variant's field there counts (loft#2612).
+    fn reference_fields_at(&self, tp: u16, byte_off: u16) -> Vec<&Field> {
+        let user_ref = |f: &&Field| {
+            f.position == byte_off
+                && f.target != u16::MAX
+                && matches!(
+                    self.types.get(f.content as usize).map(|t| &t.parts),
+                    Some(Parts::DbRef)
+                )
         };
-        let f = fields.iter().find(|f| f.position == byte_off)?;
-        (f.target != u16::MAX).then_some(f.target)
+        match self.types.get(tp as usize).map(|t| &t.parts) {
+            Some(Parts::Struct(fields) | Parts::EnumValue(_, fields)) => {
+                fields.iter().filter(user_ref).collect()
+            }
+            Some(Parts::Enum(variants)) if self.is_struct_enum(tp) => variants
+                .iter()
+                .filter_map(
+                    |(v, _)| match self.types.get(*v as usize).map(|t| &t.parts) {
+                        Some(Parts::EnumValue(_, fields)) => fields.iter().find(user_ref),
+                        _ => None,
+                    },
+                )
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// `@FR-H-RefHome` — the record type a user's `reference<T>` field at byte `byte_off` of
+    /// record type `struct_tp` names: the type a copy of its record is made as.  Where the
+    /// variants of a struct enum name different types there, the one `value_tp` (the type of
+    /// the record written) is; `None` when that does not settle it.
+    #[must_use]
+    pub fn reference_field_target(
+        &self,
+        struct_tp: u16,
+        byte_off: u16,
+        value_tp: Option<u16>,
+    ) -> Option<u16> {
+        let fields = self.reference_fields_at(struct_tp, byte_off);
+        let first = fields.first()?.target;
+        if fields.iter().all(|f| f.target == first) {
+            return Some(first);
+        }
+        let v = value_tp?;
+        fields.iter().any(|f| f.target == v).then_some(v)
     }
 
     /// `@FR-H-RefHome` — the name of the field at byte `byte_off` of record type `struct_tp`
@@ -1299,18 +1336,9 @@ impl Stores {
     /// any other field, a closure's captured reference included.
     #[must_use]
     pub fn reference_field_name(&self, struct_tp: u16, byte_off: u16) -> Option<String> {
-        let (Parts::Struct(fields) | Parts::EnumValue(_, fields)) =
-            &self.types.get(struct_tp as usize)?.parts
-        else {
-            return None;
-        };
-        let f = fields.iter().find(|f| f.position == byte_off)?;
-        (f.target != u16::MAX
-            && matches!(
-                self.types.get(f.content as usize).map(|t| &t.parts),
-                Some(Parts::DbRef)
-            ))
-        .then(|| f.name.clone())
+        self.reference_fields_at(struct_tp, byte_off)
+            .first()
+            .map(|f| f.name.clone())
     }
 
     /// `@FR-H-Removed` — the element type whose records a clear of the vector field at

@@ -354,6 +354,13 @@ else { P { … } }`) keeps the value form at a first bind of a local assigned ag
 frees the `??`'s stores under the escaping closure: the records report a closure record handed
 back whose capture slot names a store the frame already released (`leaving_captures`).
 
+A stored reference only points (`@FR-H-RefHome`): the holder the place is rooted at (`h`,
+`h.f`, a struct enum's variant inline in `h`) records the store it names, a copy of the
+holder (`OpCopyRecord`) points where its source did, and `OpEvacuate` drops the home's store
+from it.  A holder that leaves the frame — a parameter, the return buffer, the variable handed
+back — still pointing at a store the frame released is a use after end (`leaving_points`);
+`LOFT_NO_REF_HOME=1` re-creates it.
+
 A closure record HOLDS what it captures: each capture slot, keyed by the record's store and
 offset, keeps the captured value, and the captured stores are handed on only when a value
 naming the record leaves (a return, a store into another owner).  Which record owns a capture

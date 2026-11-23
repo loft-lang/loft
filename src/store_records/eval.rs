@@ -174,7 +174,7 @@ impl Run<'_> {
                     Value::Var(x) => Some(*x),
                     _ => None,
                 };
-                self.leaving_captures(&s, &value);
+                self.leaving(&s, &value, x);
                 Self::hand_on_var(&mut s, x, &value);
                 self.exit(&s, "a return");
                 None
@@ -1544,6 +1544,16 @@ impl Run<'_> {
                 None
             }
         })
+    }
+
+    /// The variable a place is rooted at: `h`, or `h` under field selections (`h.s`, a
+    /// struct enum's inline variant).
+    pub(super) fn root_var(place: Option<&Value>, get_field: u32) -> Option<u16> {
+        match place?.unspan() {
+            Value::Var(x) => Some(*x),
+            Value::Call(op, args) if *op == get_field => Self::root_var(args.first(), get_field),
+            _ => None,
+        }
     }
 
     /// The variable a value block hands back as its tail (`{#Object __ref_p2_N = …;

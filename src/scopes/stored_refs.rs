@@ -779,11 +779,12 @@ impl Walk<'_> {
             Value::Call(d, args) if self.data.def(*d).name() == "OpGetField" => {
                 let (v, off) = self.fixed_place(args.first()?)?;
                 // A field holding a collection names the collection, not bytes of the record.
+                // A struct enum's field holds one of its variants inline (loft#2612).
                 let inline = self.record_type(place).is_some_and(|t| {
                     matches!(
                         self.database.types.get(t as usize).map(|t| &t.parts),
                         Some(Parts::Struct(_) | Parts::EnumValue(..))
-                    )
+                    ) || self.database.is_struct_enum(t)
                 });
                 if !inline {
                     return None;
@@ -906,10 +907,7 @@ impl Walk<'_> {
                     match args.first()?.unspan() {
                         // A vector local: its element type is declared on it.
                         Value::Var(v) => match self.function.tp(*v).base() {
-                            Type::Vector(elm, _) => match elm.base() {
-                                Type::Reference(d, _) => Some(self.data.def(*d).known_type()),
-                                _ => None,
-                            },
+                            Type::Vector(elm, _) => self.record_def(elm),
                             _ => None,
                         },
                         vector => self.database.collection_content(self.record_type(vector)?),
@@ -922,11 +920,17 @@ impl Walk<'_> {
                 },
                 _ => None,
             },
-            Value::Var(v) => match self.function.tp(*v).base() {
-                Type::Reference(d, _) => Some(self.data.def(*d).known_type()),
-                _ => None,
-            },
+            Value::Var(v) => self.record_def(self.function.tp(*v)),
             Value::Block(b) => b.operators.last().and_then(|t| self.record_type(t)),
+            _ => None,
+        }
+    }
+
+    /// The known record type a value of type `tp` is: a struct's, or a struct enum's, whose
+    /// record is one of its variants (loft#2612).
+    fn record_def(&self, tp: &Type) -> Option<u16> {
+        match tp.base() {
+            Type::Reference(d, _) | Type::Enum(d, true, _) => Some(self.data.def(*d).known_type()),
             _ => None,
         }
     }
@@ -969,9 +973,10 @@ impl Walk<'_> {
                 .map(|o| (v, o));
         }
         if let (Some(kt), Value::Int(pos)) = (self.record_type(holder), pos.unspan()) {
+            let written = self.record_type(value);
             hold.target = u16::try_from(*pos)
                 .ok()
-                .and_then(|p| self.database.reference_field_target(kt, p))
+                .and_then(|p| self.database.reference_field_target(kt, p, written))
                 .unwrap_or(u16::MAX);
         }
         let direct = matches!(holder.unspan(), Value::Var(_));

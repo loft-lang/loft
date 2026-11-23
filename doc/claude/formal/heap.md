@@ -422,7 +422,8 @@ through calls: what it cannot see, no `deps` can.
 **Where `(H-RefHome)` holds in the code.**
 - *The analysis.* `scopes::stored_reference_homes` (`src/scopes/stored_refs.rs`), run after
   pass 2 by `Parser::check_reshape_under_reference`, compares at every `OpSetDbRef` into a
-  user's `reference<T>` field the holder's life with the record's home (`Walk::holder_life`,
+  user's `reference<T>` field — a struct enum's variant field too, whose place is typed as the
+  enum (`Stores::reference_field_name`) — the holder's life with the record's home (`Walk::holder_life`,
   `Walk::home_life`), through copies of the holder and calls (a per-callee summary, `ParamPair`).
   `Walk::resolve` keeps an outlived home (`hoist`, `place`, `place_own`, `evacuate`) or refuses it.
 - *The placement.* `scopes::apply_places` claims the record in the holder's store
