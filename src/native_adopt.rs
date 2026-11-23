@@ -219,7 +219,31 @@ pub static HOSTED_TABLE: crate::host_abi::HostedTable = crate::host_abi::HostedT
     store_tail: crate::store::HOST_STORE_TAIL as u32,
     source_dir: hosted_source_dir,
     gen_adopt: hosted_gen_adopt,
+    pause: &crate::debugger::INTERRUPT,
+    handover: hosted_handover,
 };
+
+/// `HostedTable::handover` — the interpreter running this bridge call takes the routine over.
+unsafe extern "C" fn hosted_handover(
+    _stores: *mut Stores,
+    key: *const u8,
+    key_len: usize,
+    scope: u32,
+    entries: *const crate::host_abi::HandoverEntry,
+    n: u32,
+) -> u32 {
+    let state = crate::extensions::host_state();
+    if state.is_null() {
+        return 0;
+    }
+    // SAFETY: the unit's key bytes and its entry array, valid for this call.
+    let key = unsafe { std::slice::from_raw_parts(key, key_len) };
+    let entries = unsafe { std::slice::from_raw_parts(entries, n as usize) };
+    let Ok(key) = std::str::from_utf8(key) else {
+        return 0;
+    };
+    u32::from(unsafe { (*state).accept_handover(key, scope as u16, entries) })
+}
 
 /// A generator a hosted unit made, driven by the interpreter (`@PLN206`): each step runs the
 /// unit's frame to its next `yield` (`loft_shared_gen_next`), and the handle's release gives the

@@ -169,6 +169,34 @@ pub struct HostedTable {
         free: GenFree,
         ret: *mut LibArg,
     ),
+    /// `@PLN206 P7` — the debugger's pause request (`debugger::INTERRUPT`), which a unit's loop
+    /// heads read.
+    pub pause: &'static std::sync::atomic::AtomicBool,
+    /// `@PLN206 P7` — the routine at a loop head (`key`, the loop's `scope`) offers its `n`
+    /// locals ([`HandoverEntry`]); 1 when the interpreter takes the routine over from there
+    /// (`State::accept_handover`), and the unit then returns without its own releases.
+    pub handover: unsafe extern "C" fn(
+        stores: *mut Stores,
+        key: *const u8,
+        key_len: usize,
+        scope: u32,
+        entries: *const HandoverEntry,
+        n: u32,
+    ) -> u32,
+}
+
+/// `@PLN206 P7` — one local a unit's routine offers at a hand-over (`loft_ho_entry`): kind 0
+/// integer, 1 float, 2 text, 3 reference, 4 boolean or plain enum, 5 single.
+#[repr(C)]
+pub struct HandoverEntry {
+    pub name: *const std::ffi::c_char,
+    pub kind: u32,
+    pub rs: u32,
+    pub bits: i64,
+    pub p: *const u8,
+    pub len: usize,
+    pub rr: u32,
+    pub rp: u32,
 }
 
 /// A hosted unit's generator step: the frame in `slot` runs to its next `yield`, whose value

@@ -4983,6 +4983,18 @@ fn always_inline_body(storage: &str) -> String {
     }
 }
 
+/// `body` without its hand-over points (`FnWriter::expand_safepoints`).
+fn strip_safepoints(body: &str) -> String {
+    let mut out = String::with_capacity(body.len());
+    let mut rest = body;
+    while let Some(at) = rest.find("/*LOFT_SP*/") {
+        out.push_str(&rest[..at]);
+        rest = rest[at..].find("/*LOFT_PS*/").map_or("", |e| &rest[at + e + "/*LOFT_PS*/".len()..]);
+    }
+    out.push_str(rest);
+    out
+}
+
 fn framed(
     cx: &Cx,
     d: u32,
@@ -4995,7 +5007,17 @@ fn framed(
     let def = cx.data.def(d);
     // `@FR-R-CSplit`: a body over the size budget goes out as a chain of parts.
     let fr = format!("{name}__fr");
-    let parts = split::split(storage, &held(ret).clone(), &fr, params, body);
+    let mut parts = split::split(storage, &held(ret).clone(), &fr, params, body);
+    // `@PLN206 P7` — a body written in parts keeps no hand-over: a part's `return` leaves the
+    // part, not the routine.
+    let unsplit;
+    let body = if parts.is_some() && body.contains("/*LOFT_SP*/") {
+        unsplit = strip_safepoints(body);
+        parts = split::split(storage, &held(ret).clone(), &fr, params, &unsplit);
+        unsplit.as_str()
+    } else {
+        body
+    };
     // `@FR-R-Inline`: a body hinted inline is ALWAYS inlined into its frame wrapper, so the
     // wrapper and the body are one unit and the compiler decides once whether that unit goes
     // into the caller.  Hinted alike, gcc could take the wrapper into a loop and leave the

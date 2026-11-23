@@ -1324,6 +1324,7 @@ impl<'a> FnWriter<'a> {
         if !slots.is_empty() {
             let _ = writeln!(out, "    LOFT_HOLD({}, {});", slots.len(), slots.join(", "));
         }
+        self.expand_safepoints();
         self.body = self.expand_epilogues();
         let statements = self.statement_count();
         out.push_str(&self.body);
@@ -1384,6 +1385,100 @@ impl<'a> FnWriter<'a> {
         //   recursive frame finds its slot empty and takes nothing
         crate::rewrite_census::fired("R-WorkPark", n);
         out
+    }
+
+    /// `@PLN206 P7` — each loop head's marker as the hand-over it stands for: when the debugger
+    /// asks for a pause and this routine is the one the interpreter called
+    /// (`loft_pause_asked`), every declared local is offered by name (`loft_ho_put`), and when
+    /// the interpreter takes the routine over (`loft_ho_commit`) the routine returns at once,
+    /// none of its own releases run: the interpreter's frame holds what it held.  Written once
+    /// the locals are declared, so a local the body left undeclared is not named.
+    fn expand_safepoints(&mut self) {
+        if !self.body.contains("/*LOFT_SAFEPOINT:") {
+            return;
+        }
+        // The puts, per safepoint: a sticky sum's checked value depends on the flags in force there.
+        let declared: Vec<u16> = (0..self.shapes.len() as u16)
+            .filter(|&vv| {
+                let v = vv as usize;
+                !(self.apr_holds(vv)
+                    || self.undeclared.contains(&vv)
+                    || self.store_links[v]
+                    || self.links[v]
+                    || self.vr_ptr[v]
+                    || matches!(self.vars.tp(vv).base(), crate::data::Type::RefVar(_)))
+            })
+            .collect();
+        let puts_for = |w: &Self, flags: &std::collections::HashMap<u16, String>| -> String {
+            let mut puts = String::new();
+            for &vv in &declared {
+                let v = vv as usize;
+                let name = c_string(w.vars.name(vv));
+                let var = match flags.get(&vv) {
+                    Some(f) => format!("({f} ? LOFT_NULL : {})", w.var(vv)),
+                    None => w.var(vv),
+                };
+                let none = "loft_ho_nostr(), loft_ref_null()";
+                let put = match w.shapes[v] {
+                    CType::Int | CType::Int32 | CType::Char => {
+                        format!("loft_ho_put({name}, 0, (int64_t) {var}, {none});")
+                    }
+                    CType::Float => format!(
+                        "{{ double b0 = {var}; int64_t b; memcpy(&b, &b0, 8); loft_ho_put({name}, 1, b, {none}); }}"
+                    ),
+                    CType::Single => format!(
+                        "{{ float b0 = {var}; uint32_t b; memcpy(&b, &b0, 4); loft_ho_put({name}, 5, (int64_t) b, {none}); }}"
+                    ),
+                    CType::Bool | CType::Enum => {
+                        format!("loft_ho_put({name}, 4, (int64_t) {var}, {none});")
+                    }
+                    CType::Text if w.params[v] || w.borrowed[v] => {
+                        format!("loft_ho_put({name}, 2, 0, {var}, loft_ref_null());")
+                    }
+                    CType::Text => format!(
+                        "loft_ho_put({name}, 2, 0, loft_view(&{var}), loft_ref_null());"
+                    ),
+                    CType::Ref => format!("loft_ho_put({name}, 3, 0, loft_ho_nostr(), {var});"),
+                    _ => continue,
+                };
+                puts.push_str(&put);
+                puts.push(' ');
+            }
+            puts
+        };
+        let key = c_string(&crate::lib_ids::fn_key(self.cx.data, self.d));
+        let ret = if self.ret == CType::Void {
+            "return;".to_string()
+        } else {
+            format!(
+                "{{ {} loft_hr = {}; return loft_hr; }}",
+                held(self.ret),
+                self.cx.initial(self.ret)
+            )
+        };
+        let mut out = String::with_capacity(self.body.len());
+        let mut rest = self.body.as_str();
+        while let Some(at) = rest.find("/*LOFT_SAFEPOINT:") {
+            out.push_str(&rest[..at]);
+            let tail = &rest[at + "/*LOFT_SAFEPOINT:".len()..];
+            let end = tail.find("*/").unwrap_or(0);
+            let (scope, flag_list) = tail[..end].split_once(':').unwrap_or((&tail[..end], ""));
+            let flags: std::collections::HashMap<u16, String> = flag_list
+                .split(',')
+                .filter_map(|p| {
+                    let (v, f) = p.split_once('=')?;
+                    Some((v.parse().ok()?, f.to_string()))
+                })
+                .collect();
+            let puts = puts_for(self, &flags);
+            let _ = write!(
+                out,
+                "/*LOFT_SP*/ if (LOFT_UNLIKELY(loft_pause_asked())) {{ {puts}if (loft_ho_commit({key}, {scope}u)) {ret} }} /*LOFT_PS*/"
+            );
+            rest = &tail[end + 2..];
+        }
+        out.push_str(rest);
+        self.body = out;
     }
 
     /// `v`'s C spelling.  A link holds its source's ADDRESS, so every use dereferences it and
@@ -5733,6 +5828,28 @@ impl<'a> FnWriter<'a> {
         } else {
             let sums = self.open_sticky_sums(b, ind);
             self.line(ind, "for (;;) {");
+            // `@PLN206 P7` — the loop's head, where a hosted unit's routine can hand itself over
+            // to the debugging interpreter (`expand_safepoints`).  Not where a round leaves
+            // state of its own in flight: a write window, a held file cursor, a sticky sum.
+            // A sticky sum is offered as its checked value, its flag read (`flag ? null : sum`).
+            if self.cx.open
+                && self.windows.is_empty()
+                && self.ap_loop_windows.is_empty()
+                && self.text_windows.is_empty()
+                && self.file_holds.is_empty()
+                && !self.in_range_copy
+            {
+                let flags: Vec<String> = self
+                    .sticky
+                    .iter()
+                    .chain(sums.iter())
+                    .map(|(v, f)| format!("{v}={f}"))
+                    .collect();
+                self.line(
+                    ind + 1,
+                    &format!("/*LOFT_SAFEPOINT:{}:{}*/", b.scope, flags.join(",")),
+                );
+            }
             self.block_stmt(b, ind + 1)?;
             self.line(ind, &format!("cont_{l}:;"));
             self.line(ind, "}");

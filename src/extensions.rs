@@ -1447,6 +1447,13 @@ fn shared_store_dispatch_raw(
     let ret = unsafe { *ret_ptr };
     // Reborrowed after the call: the bridge may have called back into the interpreter.
     let stores: &mut crate::database::Stores = unsafe { &mut *stores_raw };
+    // `@PLN206 P7` — the routine handed itself over to the interpreter (`State::accept_handover`):
+    // it answers nothing, and the static call continues as the interpreter's frame.
+    let state = host_state();
+    if !state.is_null() && unsafe { (*state).pending_handover.is_some() } {
+        crate::call_frames::leave_shared_bridge(outer_bridge);
+        return;
+    }
     // `@PLN206` coverage — a hosted C unit answers a text as its bytes (`loft_la_set_text`) and
     // leaves the destination to the dispatcher, which writes them into it here, before the unit
     // runs again.  A rustc artifact writes the destination itself and answers no bytes.

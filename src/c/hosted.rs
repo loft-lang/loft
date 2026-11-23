@@ -434,7 +434,9 @@ fn bridge(cx: &Cx<'_>, d: u32, symbol: &str) -> Result<String, String> {
     }
     Ok(format!(
         "\n__attribute__((visibility(\"default\"))) void {symbol}(void *loft_st, const unsigned char *loft_a, size_t loft_n, unsigned char *loft_r) {{\n    \
-         void *loft_prev = loft_host_enter(loft_st);\n    (void) loft_n;\n{held}{places}{store}{back}{freed}{plant}    loft_host_leave(loft_prev);\n}}\n"
+         void *loft_prev = loft_host_enter(loft_st);\n    (void) loft_n;\n    \
+         uint32_t loft_bhd = loft_br_hdepth;\n    loft_br_hdepth = LOFT_HDEPTH;\n\
+         {held}{places}{store}{back}{freed}{plant}    loft_br_hdepth = loft_bhd;\n    loft_host_leave(loft_prev);\n}}\n"
     ))
 }
 

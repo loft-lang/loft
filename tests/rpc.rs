@@ -850,3 +850,85 @@ fn rpc_steps_into_compiled_routines_as_into_interpreted_ones() {
     assert_eq!(stops, want, "{out}");
     assert!(out.contains("a 40 41"), "the answers: {out}");
 }
+
+/// `@PLN206 P7` — a pause while a compiled routine runs hands that routine to the interpreter at
+/// its loop's head, and the routines it calls stay compiled.  `spin` counts `t` up to `limit`
+/// and calls `helper` each round — compiled, it would run for seconds; a pause from another
+/// thread (as `loft-dap`'s `pause` sets `debugger::INTERRUPT`) stops it inside `spin` with its
+/// locals read through the interpreter's frame.  `t` set to `limit - 3` there, the routine runs
+/// its last three rounds interpreted, `helper` still compiled: `k` ends at `P + 3` for the `P`
+/// rounds before the pause, and the answer is `t + k` = `limit + P + 3`.
+///
+/// @falsified-at: none — a SABOTAGE (2026-11-23): with the unit's loop heads asking for no
+///   pause (`loft_pause_asked` answering 0, `src/c/loft_rt.h`), the run finishes compiled.
+///   CHANNEL: the stop event.  WITNESS: "the pause stops inside spin".
+#[test]
+fn rpc_a_pause_hands_a_running_compiled_routine_to_the_interpreter() {
+    if loft::platform::process::harness_command("cc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let lib_root = std::env::temp_dir().join(format!("loft_rpc_p7c_{}", std::process::id()));
+    let pkg = lib_root.join("spinner");
+    fa::create_dir_all(pkg.join("src")).expect("package dir");
+    fa::write(
+        pkg.join("loft.toml"),
+        "[package]\nname = \"spinner\"\nversion = \"0.1.0\"\n\n[library]\nentry = \"src/spinner.loft\"\n",
+    )
+    .expect("manifest");
+    fa::write(
+        pkg.join("src/spinner.loft"),
+        "pub fn helper(n: integer) -> integer {\n  n + 1\n}\n\npub fn spin(limit: integer) -> integer {\n  t = 0;\n  k = 0;\n  while t < limit {\n    t += 1;\n    k = helper(k);\n  }\n  t + k\n}\n",
+    )
+    .expect("library");
+    let limit: i64 = 20_000_000_000;
+    let prog = tmp_program(
+        "p7c",
+        &format!("use spinner;\nfn main() {{\n  r = spinner::spin({limit});\n  println(\"r {{r}}\");\n}}\n"),
+    );
+    let requests = [
+        format!(r#"{{"id":1,"req":"launch","file":"{}"}}"#, json_path(&prog)),
+        r#"{"id":2,"req":"run"}"#.to_string(),
+        r#"{"id":3,"req":"eval","expr":"t"}"#.to_string(),
+        r#"{"id":4,"req":"setValue","target":"t","value":"limit - 3"}"#.to_string(),
+        r#"{"id":5,"req":"continue"}"#.to_string(),
+        r#"{"id":6,"req":"disconnect"}"#.to_string(),
+    ];
+    use std::sync::atomic::Ordering;
+    // The pause once `spin` runs compiled: its bridge call counted, then a moment inside it.
+    let before = loft::state::SHARED_DISPATCH_HITS.load(Ordering::Relaxed);
+    let pauser = std::thread::spawn(move || {
+        let start = std::time::Instant::now();
+        while loft::state::SHARED_DISPATCH_HITS.load(Ordering::Relaxed) == before
+            && start.elapsed() < std::time::Duration::from_secs(120)
+        {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        loft::interp::debugger::INTERRUPT.store(true, Ordering::Relaxed);
+    });
+    let input = Cursor::new(requests.join("\n").into_bytes());
+    let mut out: Vec<u8> = Vec::new();
+    loft::rpc::run_rpc("default", &[lib_root.to_string_lossy().to_string()], input, &mut out)
+        .expect("rpc run");
+    pauser.join().expect("pauser");
+    let out = String::from_utf8(out).expect("utf8");
+    let _ = fa::remove_dir_all(&lib_root);
+    assert!(
+        out.contains(r#""event":"stopped""#) && out.contains(r#""function":"spin""#),
+        "the pause stops inside spin: {out}"
+    );
+    let p: i64 = out
+        .split(r#"{"id":3,"ok":true,"value":"#)
+        .nth(1)
+        .and_then(|r| r.split('}').next())
+        .and_then(|v| v.trim().parse().ok())
+        .expect("t at the pause");
+    assert!(p > 0 && p < limit, "the pause came inside the loop: t = {p}\n{out}");
+    let want = format!("r {}", limit + p + 3);
+    assert!(out.contains(&want), "{want}: {out}");
+}

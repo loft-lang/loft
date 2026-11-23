@@ -922,10 +922,20 @@ static void (*loft_trace_site_hook)(FILE *f) = loft_trace_site;
 #endif
 /* A test that failed left its frames pushed (`longjmp`); the next starts from none. */
 #define LOFT_FRAMES_RESET() (loft_nframes = 0)
+#define LOFT_HDEPTH ((uint32_t) loft_nframes)
 #else
 #define LOFT_FRAMES_RESET() ((void) 0)
+#ifdef LOFT_HOSTED
+/* `@PLN206 P7` — a hosted unit's call depth with no call chain to read it from: what tells a
+ * routine it is the one the interpreter called (`loft_pause_asked`). */
+static LOFT_TLS uint32_t loft_hdepth = 0;
+#define loft_frame_push(fn, file, decl) ((void) loft_hdepth++)
+#define loft_frame_pop() ((void) loft_hdepth--)
+#define LOFT_HDEPTH loft_hdepth
+#else
 #define loft_frame_push(fn, file, decl) ((void) 0)
 #define loft_frame_pop() ((void) 0)
+#endif
 #define loft_frame_site(line) ((void) 0)
 #endif
 
@@ -1618,9 +1628,53 @@ typedef struct {
     void (*gen_adopt)(void *stores, uint32_t slot, uint32_t kind,
                       uint32_t (*next)(void *, uint32_t, uint32_t, unsigned char *),
                       void (*release)(void *, uint32_t), unsigned char *ret);
+    /* `@PLN206 P7` — the debugger's pause request, and the hand-over of a routine to it. */
+    const volatile uint8_t *pause;
+    uint32_t (*handover)(void *stores, const char *key, size_t key_len, uint32_t scope,
+                         const unsigned char *entries, uint32_t n);
 } loft_hosted_table;
 static const loft_hosted_table *loft_hosted = 0;
 static LOFT_TLS void *loft_host_stores = 0;
+/* The depth of the routine a bridge call called, less one: set by the bridge, restored after. */
+static LOFT_TLS uint32_t loft_br_hdepth = 0xFFFFFFFFu;
+
+/* `@PLN206 P7` — a pause the debugger asked for, seen by the routine the interpreter called
+ * (no deeper one: that routine's frame is live under the call it is in), at a loop's head. */
+static int loft_pause_asked(void) {
+    return loft_hosted && loft_hosted->pause && *loft_hosted->pause
+        && LOFT_HDEPTH == loft_br_hdepth + 1u;
+}
+/* One local of the routine, offered to the interpreter by name: kind 0 integer, 1 float,
+ * 2 text, 3 reference, 4 boolean or plain enum, 5 single. */
+typedef struct {
+    const char *name;
+    uint32_t kind, rs;
+    int64_t bits;
+    const char *p;
+    size_t len;
+    uint32_t rr, rp;
+} loft_ho_entry;
+static LOFT_TLS loft_ho_entry loft_hov[256];
+static LOFT_TLS uint32_t loft_nhov = 0;
+static void loft_ho_put(const char *name, uint32_t kind, int64_t bits, loft_str t, loft_ref r) {
+    if (loft_nhov >= 256) return;
+    loft_ho_entry *e = &loft_hov[loft_nhov++];
+    e->name = name;
+    e->kind = kind;
+    e->bits = bits;
+    e->p = t.p;
+    e->len = t.len;
+    e->rs = r.store_nr;
+    e->rr = r.rec;
+    e->rp = r.pos;
+}
+static loft_str loft_ho_nostr(void) { loft_str s = { 0, 0 }; return s; }
+static int loft_ho_commit(const char *key, uint32_t scope) {
+    uint32_t n = loft_nhov;
+    loft_nhov = 0;
+    return (int) loft_hosted->handover(loft_host_stores, key, strlen(key), scope,
+                                       (const unsigned char *) loft_hov, n);
+}
 
 /* The table as the interpreter holds it now: after a bridge call starts and after every act
  * the interpreter does for the unit, either of which may move it. */

@@ -7,6 +7,7 @@
 pub(crate) mod codegen;
 pub(crate) use hosted_verify::enabled as hosted_verify_enabled;
 pub mod debug;
+mod handover;
 mod hosted_verify;
 mod io;
 mod text;
@@ -647,6 +648,14 @@ pub struct State {
     /// indistinguishable from coverage — the same shape as the backend-scope note.
     pub entered_fns: Option<Vec<bool>>,
     pub(crate) fn_positions: Vec<u32>,
+    /// `@PLN206 P7` — each loop's head by (function, block scope): where a compiled routine
+    /// handed over at that loop continues (`handover.rs`).
+    pub(crate) loop_sites: std::collections::HashMap<(u32, u16), u32>,
+    /// `@PLN206 P7` — a hand-over the running bridge call's routine made, taken up when the
+    /// static call returns (`State::resume_handover`).
+    pub(crate) pending_handover: Option<handover::Handover>,
+    /// `@PLN206 P7` — the routine the running static call called, while debugging.
+    pub(crate) bridge_call_d: u32,
     /// The last `(code position, definition)` pair [`State::worker_d_nr`] answered: a `par`
     /// worker enters the same function for every element.
     worker_fn_memo: (u32, u32),
@@ -1028,6 +1037,9 @@ impl State {
             types: FxHashMap::default(),
             library: Arc::new(Vec::new()),
             library_names: FxHashMap::default(),
+            loop_sites: std::collections::HashMap::new(),
+            pending_handover: None,
+            bridge_call_d: u32::MAX,
             native_stub_symbols: std::collections::HashSet::new(),
             text_positions: BTreeSet::new(),
             line_numbers: BTreeMap::new(),
@@ -1517,9 +1529,19 @@ impl State {
         let call = self.code::<u16>();
         // `@PLN206 P7a` — a compiled routine the debugger wants runs its bytecode: its static
         // call pushed the arguments as an ordinary call does, one stepped slot per attribute.
-        if self.debug.is_some()
-            && let Some(d_nr) = self.debug_route(call)
-        {
+        let routed = if self.debug.is_some() {
+            let routed = self.debug_route(call);
+            self.bridge_call_d = self
+                .debug
+                .as_deref()
+                .and_then(|d| d.routing.as_ref())
+                .and_then(|r| r.by_index.get(&call).copied())
+                .unwrap_or(u32::MAX);
+            routed
+        } else {
+            None
+        };
+        if let Some(d_nr) = routed {
             let handle = self.data_ptr.clone();
             if let Some(data) = handle.get() {
                 let args_size: u32 = data
@@ -1694,6 +1716,10 @@ impl State {
         // run past the buffer.  Native fns push bounded results (scalars /
         // Str / DbRef / small structs), so 1 KiB is ample.
         self.invoke_native(call);
+        // `@PLN206 P7` — the routine handed itself over: it continues here, interpreted.
+        if self.pending_handover.is_some() {
+            self.resume_handover();
+        }
     }
 
     /// Run library function `call` on the arguments at the top of the stack, as `OpStaticCall`
@@ -9283,6 +9309,9 @@ impl State {
             bytecode,
             library,
             library_names: FxHashMap::default(),
+            loop_sites: std::collections::HashMap::new(),
+            pending_handover: None,
+            bridge_call_d: u32::MAX,
             native_stub_symbols: std::collections::HashSet::new(),
             stack: FxHashMap::default(),
             vars: FxHashMap::default(),

@@ -1270,6 +1270,8 @@ impl State {
         }
         stack.add_loop(self.code_pos);
         let pos = self.code_pos;
+        // `@PLN206 P7` — the loop's head, where a compiled routine handed over here continues.
+        self.loop_sites.insert((stack.def_nr, lp.scope()), pos);
         for v in lp.operators().iter() {
             self.generate_node(v, stack, false);
         }
@@ -1337,6 +1339,12 @@ impl State {
             self.line_numbers.insert(self.code_pos, l);
         }
         stack.patch_continues(self);
+        // `@PLN206 P7` — the test block is the loop's head: from here a round runs the
+        // iterator's statements, its test and the body, as a compiled round does.  A seeded
+        // counter enters past its step, its counters kept otherwise than the unit's: no site.
+        if r.seed.is_none() {
+            self.loop_sites.insert((stack.def_nr, lp.scope()), self.code_pos);
+        }
         for p in &r.pre {
             self.generate(p, stack, false);
         }
