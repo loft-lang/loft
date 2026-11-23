@@ -40,7 +40,9 @@ published libraries, so `loft install` gives a machine with no C compiler the co
 too; a library with no build for your loft runs interpreted.  `loft build-native <package>`
 compiles it ahead of time, so a machine with no C compiler runs that build, its `[c] shim`
 included.`LOFT_HOSTED_VERIFY=1` runs each call both ways and stops at the first that differs, and
-`LOFT_LIB_BACKEND=rust` keeps the Rust build.
+`LOFT_LIB_BACKEND=rust` keeps the Rust build.  Under `loft debug` the libraries run compiled too:
+a library function with a breakpoint in it, or one you step into, runs in the interpreter so the
+debugger can stop there, and the functions it calls stay compiled.
 
 **`store_memory()` reports your program's stores, the same on every backend.**  It no longer
 counts the interpreter's own value stack and constant store.
@@ -93,6 +95,11 @@ because the wrapper reports the same version.  The compiler's path is now part o
 key.
 
 ### Bug fixes
+
+**`loft debug` runs a program that imports a library with `use lib::*;` when the library takes
+a tuple.**  The session stopped before the program ran, with an internal assertion about an
+"import alias"; over `--rpc` the server ended without a word.  It runs now, and a fault the
+debugger cannot handle is reported instead of ending the session silently.
 
 **`exp` answers the same in every library build.**  `exp(v)` was computed as `E` raised to the
 power `v`, which can land a unit or two in the last place away from e^v, and a library built
