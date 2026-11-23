@@ -141,6 +141,8 @@ pub fn slice_alt(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
       continue;
     } else if nm != "" {
       bv = pattern_bind(vars, nm, named_t, names);
+      // (A named element beside the group is a view into the subject: `mark_slice_element_view`.)
+      el_ex_match::slice_element_view(vars, bv, named_t);
       binds += [el_ir::v_set(bv, slice_elem(e, elm, at))];
     } else if e.p.nodes[h] is PName {
       va = slice_variant(e, vars, h, sed, slice_elem(e, elm, at), names);
@@ -491,6 +493,8 @@ pub fn slice_rep(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
       continue;
     } else if nm != "" {
       bv = pattern_bind(vars, nm, named_t, names);
+      // (A named element around the run is a view into the subject: `mark_slice_element_view`.)
+      el_ex_match::slice_element_view(vars, bv, named_t);
       binds += [el_ir::v_set(bv, slice_elem(e, elm, at))];
     } else if e.p.nodes[h] is PName {
       va = slice_variant(e, vars, h, sed, slice_elem(e, elm, at), names);
@@ -605,6 +609,8 @@ pub fn slice_rep(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
       continue;
     } else if nm != "" {
       bv = pattern_bind(vars, nm, named_t, names);
+      // (A named element around the run is a view into the subject: `mark_slice_element_view`.)
+      el_ex_match::slice_element_view(vars, bv, named_t);
       binds += [el_ir::v_set(bv, slice_elem(e, elm, at))];
     } else if e.p.nodes[t] is PName {
       va = slice_variant(e, vars, t, sed, slice_elem(e, elm, at), names);
