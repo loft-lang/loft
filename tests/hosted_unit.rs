@@ -554,3 +554,70 @@ fn a_hosted_unit_is_the_same_text_wherever_it_is_built() {
     assert!(!a.is_empty(), "the unit was written");
     assert!(a == b, "the units differ");
 }
+
+/// A library's own function named like a stdlib native is the library's: a unit that reaches
+/// `crt::file_map` (the self-hosted front end's library) reaches no mapped file, so it is built
+/// without the foreign-store layer a hosted unit cannot carry.  The define is the stdlib's
+/// `file_map` only (`c::unit_defines`, `Definition::is_stdlib`).
+///
+/// @falsified-at: none — a SABOTAGE (2026-11-23): with the test by name alone again
+///   (`unit_defines`, `def.is_stdlib()` struck), the unit fails `cc`.  CHANNEL: the exit status.
+///   WITNESS: "a hosted unit keeps no store field of its own".
+#[test]
+fn a_library_function_named_like_a_stdlib_native_builds_as_a_hosted_unit() {
+    if !have_cc() {
+        eprintln!("skipped: no cc on PATH");
+        return;
+    }
+    let lib = std::env::temp_dir().join(format!("loft-hosted-unit-name-{}", std::process::id()));
+    let _ = fa::remove_dir_all(&lib);
+    let pkg = lib.join("maplib");
+    fa::create_dir_all(pkg.join("src")).expect("package dir");
+    fa::write(
+        pkg.join("loft.toml"),
+        "[package]\nname    = \"maplib\"\nversion = \"0.1.0\"\nloft    = \">=0.8\"\n\n\
+         [library]\nentry   = \"src/maplib.loft\"\n",
+    )
+    .expect("write manifest");
+    fa::write(
+        pkg.join("src/maplib.loft"),
+        "pub fn file_map(out: vector<integer>, n: integer) -> integer {\n  \
+         for i in 0..n { out += [i * 3]; }\n  out.len()\n}\n",
+    )
+    .expect("write library");
+    let prog = lib.join("main.loft");
+    fa::write(
+        &prog,
+        "use maplib;\n\nfn main() {\n  v: vector<integer> = [];\n  \
+         n = maplib::file_map(v, 5);\n  println(\"{n} {v}\");\n}\n",
+    )
+    .expect("write program");
+    let run = |hosted: bool| {
+        let mut cmd = harness_command(env!("CARGO_BIN_EXE_loft"));
+        cmd.arg("--interpret")
+            .arg("--lib")
+            .arg(&lib)
+            .arg(&prog)
+            .env("LOFT_NO_CACHE", "1");
+        if hosted {
+            cmd.env("LOFT_LIB_BACKEND", "c")
+                .env("LOFT_NO_RUSTC", "1")
+                .env("LOFT_REQUIRE_NATIVE", "1");
+        } else {
+            cmd.env("LOFT_NO_NATIVE_LIBS", "1");
+        }
+        let out = cmd.output().expect("run loft");
+        (
+            out.status.success(),
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+    let (ok, want, err) = run(false);
+    assert!(ok, "interpreted: {err}");
+    assert_eq!(want, "5 [0,3,6,9,12]\n");
+    let (ok, got, err) = run(true);
+    assert!(ok, "hosted: {err}");
+    assert_eq!(got, want, "the hosted unit answers as the interpreter does");
+    let _ = fa::remove_dir_all(&lib);
+}

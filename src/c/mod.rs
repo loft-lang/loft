@@ -2812,7 +2812,16 @@ fn unit_defines(
     if crate::keys::width32_all() {
         out.push_str("#ifndef LOFT_WIDTH32\n#define LOFT_WIDTH32\n#endif\n");
     }
-    if reached.iter().any(|&d| data.def(d).name() == "n_file_map") {
+    // The standard library's `file_map`, not a library's function of the same name (the
+    // self-hosted front end's `crt::file_map` maps through its own shim): a def is named by its
+    // function name alone, so the name test is the stdlib's only with its source.
+    let reaches_std = |name: &str| {
+        reached.iter().any(|&d| {
+            let def = data.def(d);
+            def.name() == name && def.is_stdlib()
+        })
+    };
+    if reaches_std("n_file_map") {
         out.push_str("#define LOFT_FOREIGN 1\n");
     }
     // `@FR-Path-Case` — a unit that reaches the file library compares a name with the entries
@@ -2828,9 +2837,8 @@ fn unit_defines(
     }
     // `@FR-R-NoLocks`: a store is read-only only through `#lock = …`, a mapped file
     // (`file_map`) or a constant store; a unit that reaches none of them meets no locked write.
-    let locks = reached
-        .iter()
-        .any(|&d| matches!(data.def(d).name(), "n_set_store_lock" | "n_file_map"))
+    let locks = reaches_std("n_set_store_lock")
+        || reaches_std("n_file_map")
         || cx
             .consts
             .borrow()
