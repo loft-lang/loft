@@ -94,6 +94,7 @@ fn program(image: text, f: text, std_image: text) {
   el_drop::synth_copy_cascades(e);
   el_upgrade::synth_upgrade_drain(e);
   el_drop::synth_drop_cascades(e);
+  el_definitions::mark_width32(e, upto);
   print(report::defs_report(e.b, upto, templates: env_variable("LOFT_DEFS_TEMPLATES") == "1"));
   if env_variable("LOFT_REPORT_STATE") == "1" {
     eprintln(report::state_report(e.b, upto));

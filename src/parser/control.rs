@@ -17091,6 +17091,13 @@ impl Parser {
     }
 
     pub(crate) fn parse_type_name(&mut self, val: &mut Value) -> Type {
+        // The call answers a text on both passes.  Pass 2 writes the name below; pass 1 cannot
+        // name every type yet, but left `*val` as the caller passed it, so a bind's place test
+        // (`is_copied_place`) read that instead and `c = type_name(T { … })` was marked
+        // `copy_bound` for a text literal no place holds.
+        if self.first_pass {
+            *val = Value::Text(String::new());
+        }
         // Try parsing as a type name first (like sizeof does).
         let mut found = false;
         let lnk = self.lexer.link();

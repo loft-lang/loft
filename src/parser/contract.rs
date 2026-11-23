@@ -30,7 +30,6 @@ impl Parser {
     /// - `rebinds` — the visible parameters the body rebinds with a store it owns.
     pub fn contract_report(&self) -> String {
         let mut out = String::new();
-        let mut rebinds_cache = HashMap::new();
         for d_nr in 0..self.data.definitions() {
             let def = self.data.def(d_nr);
             if def.def_type() != DefType::Function || def.is_stdlib() || *def.code() == Value::Null
@@ -51,8 +50,11 @@ impl Parser {
                 || "-".to_string(),
                 |(op, _)| self.data.def(op).name().to_string(),
             );
+            // A cache of its own per function, as the call site asks it: one shared across the
+            // report keeps the partial answer of a function first reached inside a call cycle
+            // (`second` of `first`/`second` read the in-progress `first` as rebinding nothing).
             let rebinds =
-                crate::parser::callee_param_rebinds_owned(d_nr, &self.data, &mut rebinds_cache);
+                crate::parser::callee_param_rebinds_owned(d_nr, &self.data, &mut HashMap::new());
             let named = |keep: &dyn Fn(usize) -> bool| -> String {
                 let names: Vec<&str> = (0..attrs.len())
                     .filter(|&i| keep(i))

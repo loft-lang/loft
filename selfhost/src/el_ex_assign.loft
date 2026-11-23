@@ -803,6 +803,18 @@ pub fn assignment(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, o
   fb_known = match e.p.nodes[target] { SName { name: fbn, member: fbm } => if fbm == "" { el_vars::var(vars, fbn) } else { -2 }, _ => -2 };
   first_bind = fb_known == -1 || (fb_known >= 0 && !el_vars::was_defined(vars, fb_known) && !vars.vars[fb_known].argument);
   r = assignment_inner(e, vars, at, fixed, op, target, rhs);
+  // loft#1540 — a whole-variable bind that VIEWS a value-const value makes the variable
+  // read-only too (`mark_const_view`), asked of the value the statement finally binds
+  // (`bound_rhs`): a copy the bind lowered to (a whole vector, a bare variable) is no view.
+  if op == "=" {
+    mv = match e.p.nodes[target] { SName { name: mvn, member: mvm } => if mvm == "" { el_vars::var(vars, mvn) } else { -1 }, _ => -1 };
+    if mv >= 0 {
+      brhs = bound_rhs(r.code, mv);
+      if brhs != null {
+        el_ex_base::mark_const_view(e, vars, mv, brhs!, false);
+      }
+    }
+  }
   // `@FR-Const-Foreign` (`bind_foreign_value`): a local whose FIRST binding is foreign data is
   // value-const, so every write through it is refused.
   if op == "=" && fb_known != -2 {
@@ -856,7 +868,10 @@ fn append_place(e: el::El, vars: el_vars::Vars, n: integer) -> AppendPlace {
         // `lhs_root_var` of the lowered target is `__closure`.)
         for c in e.captures {
           if c.name == name {
-            return AppendPlace { root: e.closure_var, tp: c.tp };
+            // (A cell the closure writes through is its `value` field's place: the field's own
+            // type, as the lowered target's is.)
+            ccd = el_cell::cell_of(e, c.tp);
+            return AppendPlace { root: e.closure_var, tp: if ccd >= 0 { el::def(e, ccd).attributes[0]!.typedef[0] ?? ir::TyVoid } else { c.tp } };
           }
         }
       }
@@ -888,11 +903,62 @@ fn append_place(e: el::El, vars: el_vars::Vars, n: integer) -> AppendPlace {
       bt = match b.tp { TyRefVar { inner: bi } => bi, _ => b.tp };
       AppendPlace { root: b.root, tp: match el_types::base(bt) { TyVector { inner: vi } => vi, _ => ir::TyVoid } }
     },
+    // A member of a tuple held as a `__tuple<…>` record — a `&` tuple link (`t.0 += "!"` on
+    // `t: &(text, E)`) — is that record's field, rooted at the link as `lhs_root_var` reads the
+    // field read; a plain tuple's member is no place rooted at a variable (Rust's `TupleGet`).
+    STupleGet { e: tin, index } => {
+      if tin == null {
+        return AppendPlace { root: -1, tp: ir::TyVoid };
+      }
+      b = append_place(e, vars, tin!);
+      bt = match b.tp { TyRefVar { inner: bi } => bi, _ => b.tp };
+      td = match el_types::base(bt) { TyReference { n: tn } => if starts_with(el::def(e, tn).name, "__tuple<") { tn } else { -1 }, _ => -1 };
+      if td < 0 || index < 0 || index >= len(el::def(e, td).attributes) {
+        return AppendPlace { root: -1, tp: ir::TyVoid };
+      }
+      AppendPlace { root: b.root, tp: el::def(e, td).attributes[index].typedef[0] ?? ir::TyVoid }
+    },
     _ => AppendPlace { root: -1, tp: ir::TyVoid }
   }
 }
 
+// `child_rec_place`: the field a `&` read of an out-of-line child names — the `OpGetField` inside
+// `OpRefFromChildRec(OpGetField(_, _, kt))`, with a known type `kt` that is not 0 — or null.
+fn repoint_place(e: el::El, code: ir::Node) -> ir::Node? {
+  match el_ir::unspan(code) {
+    NdCall { def_nr, args } => {
+      if el::def(e, def_nr).name != "OpRefFromChildRec" || len(args) == 0 {
+        return null;
+      }
+      f = el_ir::unspan(args[0]!);
+      match f {
+        NdCall { def_nr: g, args: ga } => {
+          if el::def(e, g).name != "OpGetField" {
+            return null;
+          }
+          kt = match el_ir::unspan(ga[2] ?? ir::NdNull) { NdInt { n } => n, _ => 0 };
+          if kt == 0 { null } else { args[0]! }
+        },
+        _ => null
+      }
+    },
+    _ => null
+  }
+}
+
 fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: text, target: integer, rhs: integer?) -> Ex {
+  el_ex_name::capture_target_placeholder(e, vars, target);
+  // (`parse_var_inner`: Rust parses the target as an expression, so the target's variable —
+  // a bare name or the root of a projected place, `t.0`, `g.by_k`, `v[i].f` — is a user's
+  // mention of it, parameters included: marked on every route, whichever lowering the place
+  // then takes.  A bare name marks a variable that exists already; a first bind makes it.)
+  trn = match e.p.nodes[target] { SName { name: bn, member: bm } => if bm == "" { bn } else { "" }, _ => target_root_name(e, target) };
+  if trn != "" {
+    trv = el_vars::var(vars, trn);
+    if trv >= 0 && el_vars::name_of(vars, trv) == trn {
+      el_vars::mark_user_named(vars, trv, "parse_var_inner");
+    }
+  }
   // loft#1840 — the program's own append into a collection or a text, recorded on the local
   // the place is rooted at (`lhs_root_var`) for the `lost-write` lint (`mark_user_appended`).
   if op == "+=" {
@@ -948,19 +1014,7 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
   }
   // The literal a plain bind's value chain starts with is built as a receiver (`recv_literal`).
   if op == "=" && rhs != null && e.p.nodes[target] is SName {
-    root = rhs!;
-    more = true;
-    while more {
-      more = false;
-      match e.p.nodes[root] {
-        SMember { e: me } => { if me != null { root = me!; more = true; } },
-        SIndex { e: ie } => { if ie != null { root = ie!; more = true; } },
-        _ => {}
-      }
-    }
-    if root != rhs! && e.p.nodes[root] is SVecLit {
-      vars.recv_literal = root;
-    }
+    receiver_literal(e, vars, rhs!);
   }
   if rhs != null {
     el_ex_place::unqualify_literal(e, rhs!);
@@ -1405,12 +1459,40 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
   if amp_rhs && match e.p.nodes[rhs!] { SUnary { e: o } => o != null && !(e.p.nodes[o!] is SName), _ => false } && !vars.amp_places.contains(v) {
     vars.amp_places += [v];
   }
+  // `repoint_slot_param` (`@FR-B-Ref-Repoint`, `@FR-F-ParamRef`): `slot = &slot.f` on a `&S`
+  // PARAMETER whose `S` is held out of line re-points the parameter to the FIELD — the field's
+  // address in a cell of this frame (`OpSlotTag`), the parameter pointing at the cell
+  // (`OpCreateStack`) — so a later read sees the child and a whole write is the field write.
+  // A parameter is no local slot link: its whole write (`slot = slot.right`) is a plain bind,
+  // as `slot_link_whole_write` declines an argument.
+  if amp_rhs && !e.first_pass && op == "=" && vars.vars[v].argument && binds::slot_link_def(e.b, el_vars::tp(vars, v)) != null {
+    rx = expression(e, vars, rhs!);
+    rfield = repoint_place(e, rx.code);
+    if rfield != null {
+      rd = binds::slot_link_def(e.b, el_vars::tp(vars, v))!;
+      cell = -1;
+      for ro in vars.repoint_of {
+        if ro == v {
+          cell = vars.repoint_cells[ro#index] ?? -1;
+        }
+      }
+      if cell < 0 {
+        cell = el_vars::create_unique(vars, "slot_{el_vars::name_of(vars, v)}", ir::TyReference { n: rd, dep: [] });
+        el_vars::set_skip_free(vars, cell, "repoint_slot_param");
+        vars.repoint_cells += [cell];
+        vars.repoint_of += [v];
+      }
+      el_vars::set_defined(vars, cell);
+      return ex(ir::NdInsert { items: [el_ir::v_set(cell, el_ir::cl(e, "OpSlotTag", [rfield!])), el_ir::v_set(v, el_ir::cl(e, "OpCreateStack", [ir::NdVar { n: cell }]))] }, ir::TyVoid);
+    }
+    // (Any other place is bound as it always is; the read above minted nothing.)
+  }
   // A link to a CHILD record that is written whole later (`cur = &n.next; … cur = cur.next`):
   // the bind holds the child's slot in `_slot_<name>_N` and reads the child through it; the
   // write moves the next child into that slot (`OpMoveChildRec`) and reads it again.  The
   // first pass records the write; the second pass's bind acts on it.
   lkey = e.context * 65536 + v;
-  if !amp_rhs && vars.amp_places.contains(v) && e.first_pass && op == "=" && !e.slot_links.contains(lkey) {
+  if !amp_rhs && vars.amp_places.contains(v) && e.first_pass && op == "=" && !e.slot_links.contains(lkey) && !vars.vars[v].argument {
     e.slot_links += [lkey];
   }
   if amp_rhs && !e.first_pass && op == "=" && e.slot_links.contains(lkey) {
@@ -1896,11 +1978,6 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
   if op == "=" && v >= 0 && (!amp_bind || text_val) && !(el_ir::unspan(x.code) == ir::NdVar { n: v }) && text_val && text_place {
     el_vars::mark_copy_bound(vars, v, "parse_assign_op_inner");
   }
-  // loft#1540 — a whole-variable bind that VIEWS a value-const value makes the variable
-  // read-only too (`mark_const_view`; a bare variable copies, so it is no view).
-  if op == "=" && v >= 0 {
-    el_ex_base::mark_const_view(e, vars, v, x.code, false);
-  }
   if op == "=" {
     ux = el_ex_tuple::unbox_tuple_element(e, vars, x);
     if ux != null {
@@ -1962,6 +2039,15 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
     }
   }
   if el_ex_place::promotes_text_param(e, vars, v) {
+    // (`change_var_type`'s `depend_all` runs on the parameter itself, the variable the bind
+    // names, before the bind moves to its shadow: it borrows what the value borrows.)
+    pds = el_types::deps(el_vars::tp(vars, v));
+    for pd in el_types::deps(x.tp) {
+      if !pds.contains(pd) {
+        pds += [pd];
+      }
+    }
+    el_vars::set_var_type(vars, v, el_types::with_deps(el_vars::tp(vars, v), pds));
     v = el_vars::promote_text_param(vars, v);
   }
   // A vector local a `&` link names, rebound from a call that takes it (`l = &v; v = extend(v,
@@ -2562,4 +2648,55 @@ pub fn ended_binding(vars: el_vars::Vars, name: text) -> integer {
   now = el_vars::current_loop(vars);
   was = el_vars::binding_loop(vars, known);
   if el_vars::was_loop_var(vars, known) || !(now >= 0 && was >= 0 && now != was) { known } else { -1 }
+}
+
+// The bare name a projected place (`t.0`, `p.a`, `p.v[i]`) is rooted at, or "".
+fn target_root_name(e: el::El, n: integer) -> text {
+  match e.p.nodes[n] {
+    SName { name, member } => if member == "" { name } else { "" },
+    SMember { e: re, call } => if re == null || call { "" } else { target_root_name(e, re!) },
+    SIndex { e: ie } => if ie == null { "" } else { target_root_name(e, ie!) },
+    STupleGet { e: te } => if te == null { "" } else { target_root_name(e, te!) },
+    _ => ""
+  }
+}
+
+// The literal a bind's value chain starts with (`t = [..].map(f)`, `a = [10, 20][1]`) is built
+// as a receiver (`recv_literal`); one SUBSCRIPTED directly (`[..][i]`, `[..][a..b]`) is a known
+// receiver in Rust (`parse_vector`'s `subscripted`): no rename, so no inline mark
+// (`recv_subscripted`).
+pub fn receiver_literal(e: el::El, vars: el_vars::Vars, rhs: integer) {
+  root = rhs;
+  parent = -1;
+  more = true;
+  while more {
+    more = false;
+    match e.p.nodes[root] {
+      SMember { e: me } => { if me != null { parent = root; root = me!; more = true; } },
+      SIndex { e: ie } => { if ie != null { parent = root; root = ie!; more = true; } },
+      _ => {}
+    }
+  }
+  if root != rhs && e.p.nodes[root] is SVecLit {
+    vars.recv_literal = root;
+    vars.recv_subscripted = parent >= 0 && e.p.nodes[parent] is SIndex;
+  }
+}
+
+// `bound_rhs`: the value a statement binds `dst` to — the `Set` of it, the last one of an
+// `Insert` that holds several — or null.
+fn bound_rhs(code: ir::Node, dst: integer) -> ir::Node? {
+  match el_ir::unspan(code) {
+    NdSet { var, inner } => if var == dst { inner } else { null },
+    NdInsert { items } => {
+      for k in 0..len(items) {
+        b = bound_rhs(items[len(items) - 1 - k]!, dst);
+        if b != null {
+          return b;
+        }
+      }
+      null
+    },
+    _ => null
+  }
 }

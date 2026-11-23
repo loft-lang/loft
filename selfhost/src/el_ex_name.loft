@@ -447,9 +447,17 @@ pub fn global_name(e: el::El, vars: el_vars::Vars, source: integer, name: text) 
   if fd >= 0 && el::def(e, fd).def_type == el::DT_FUNCTION {
     return ex(ir::NdInt { n: fd }, el_types::function_value_type(e, fd));
   }
-  // A name declared below its use (a constant) is unknown on the first pass alone: untyped
-  // there, resolved — or refused — on the second.
+  // A name declared below its use (a constant, a function) is unknown on the first pass alone:
+  // untyped there, resolved — or refused — on the second.  (`parse_var_inner`'s unresolved arm:
+  // the first pass makes a variable of that name, user-named, the forward reference it most
+  // likely is — the second pass resolves the name past it, `name_expression`.)
   if e.first_pass && d < 0 {
+    // (Only a lower-case name, a function's spelling: a capitalised one the port cannot resolve
+    // is a constant or a type variable it does not carry, which Rust resolves.)
+    if !looks_like_a_type(name) && len(name) > 0 && name[0..1] == name[0..1].to_lowercase() {
+      uv = el_vars::add_variable(vars, name, ir::TyUnknown { n: 0 });
+      el_vars::mark_user_named(vars, uv, "parse_var_inner");
+    }
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   el::refuse(e, "a name that is not a variable: {kind}");
@@ -466,6 +474,11 @@ pub fn name_expression(e: el::El, vars: el_vars::Vars, name: text, member: text,
     return global_name(e, vars, el::get_source(e, name), member);
   }
   v = el_vars::var(vars, name);
+  // (The first pass's variable for a name it could not resolve — a function or a constant
+  // declared further down — never bound and never typed: the second pass resolves the name.)
+  if v >= 0 && !e.first_pass && el_types::is_unknown(el_vars::tp(vars, v)) && !el_vars::was_defined(vars, v) && !vars.vars[v].argument && (el_ex_object::look(e, -1, name) >= 0 || el_ex_object::look(e, -1, "n_{name}") >= 0) {
+    v = -1;
+  }
   // A user's mention names the variable (loft#1834) — only where it IS the name written: a
   // user's `s` can resolve to the compiler's own `_mv_s_1`, which stays the compiler's.
   if v >= 0 && el_vars::name_of(vars, v) == name {
@@ -481,13 +494,8 @@ pub fn name_expression(e: el::El, vars: el_vars::Vars, name: text, member: text,
           // capture's name, user-named — later reads on this pass find it as a local; pass 2
           // reads the closure record and retires it.)
           if e.first_pass {
-            // (Typed as Rust's arm types it, `t = ctype`: the captured type with no deps — a loop
-            // over it gives a bare element, which pass 2's `loop_variable` re-types.)
-            ctp = el_types::without_deps(c.tp);
-            pv = el_vars::add_variable(vars, name, ctp);
-            el_vars::mark_user_named(vars, pv, "parse_var_inner");
-            el_vars::in_use(vars, pv, true);
-            return ex(ir::NdVar { n: pv }, ctp);
+            pv = make_capture_placeholder(vars, c);
+            return ex(ir::NdVar { n: pv }, el_vars::tp(vars, pv));
           }
           return ex(ir::NdNull, c.tp);
         }
@@ -578,4 +586,47 @@ pub fn keyed_arm_local(n: ir::Node) -> integer {
     NdVar { n: v } => v,
     _ => -1
   }
+}
+
+// `parse_var_inner`'s capture arm on the first pass: a placeholder variable of the capture's
+// name, user-named, in use — later reads on this pass find it as a local; pass 2 reads the
+// closure record and retires it.  Typed as Rust's arm types it, `t = ctype`: the captured type
+// with no deps (a loop over it gives a bare element, which pass 2's `loop_variable` re-types).
+pub fn make_capture_placeholder(vars: el_vars::Vars, c: el::Capture) -> integer {
+  ctp = el_types::without_deps(c.tp);
+  pv = el_vars::add_variable(vars, c.name, ctp);
+  el_vars::mark_user_named(vars, pv, "parse_var_inner");
+  el_vars::in_use(vars, pv, true);
+  pv
+}
+
+// An assignment's target that is a capture the lambda has no variable for yet, on the first
+// pass: its placeholder, made as the lhs is parsed (before the value), as Rust's is.
+pub fn capture_target_placeholder(e: el::El, vars: el_vars::Vars, target: integer) {
+  if !e.first_pass || e.closure_var >= 0 {
+    return;
+  }
+  match e.p.nodes[target] {
+    SName { name, member } => {
+      if member == "" && el_vars::var(vars, name) < 0 {
+        for c in e.captures {
+          if c.name == name {
+            make_capture_placeholder(vars, c);
+            return;
+          }
+        }
+      }
+    },
+    _ => {}
+  }
+}
+
+// `parse_var_inner`'s `looks_like_a_type`: a capitalised name with a lower-case letter and no
+// `_` (`Point`) is a type written before its declaration, never a variable.
+fn looks_like_a_type(name: text) -> boolean {
+  if len(name) == 0 {
+    return false;
+  }
+  first = name[0..1];
+  first != first.to_lowercase() && name != name.to_uppercase() && !name.contains("_")
 }

@@ -3503,6 +3503,12 @@ fn sink_bind_arms(e: el::El, vars: el_vars::Vars, out: vector<SMArm>, elm: ir::T
       continue;
     }
     last = el_ir::unspan(el_ir::last(bl.operators));
+    // loft#1840 — `(B-Copy)`: the local now holds a COPY of the arm's capture, a place, so a
+    // `+=` into it that nothing reads is a lost write (`lower_vec_copy_bind`'s
+    // `mark_copy_bound`, which the arm's copy stands for; a literal arm builds the local).
+    if el_ex_assign::copied_place(e, last) {
+      el_vars::mark_copy_bound(vars, r, "lower_vec_copy_bind");
+    }
     st = el_ex_pattern::literal_store(e, vars, r, rows!);
     if rdb < 0 {
       rdb = len(vars.vars) - 1;

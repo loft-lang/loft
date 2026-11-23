@@ -267,6 +267,9 @@ pub struct Vars {
   // The slot variable of a `&` link to a child record (`_slot_<name>_N`), per link, in step.
   pub slot_vars: vector<integer> = [],
   pub slot_of: vector<integer> = [],
+  // The cell a re-pointed `&` PARAMETER points at (`repoint_slot_param`), per parameter, in step.
+  pub repoint_cells: vector<integer> = [],
+  pub repoint_of: vector<integer> = [],
   // The tuple literal at the tail of a function answering a boxed tuple: its members are
   // written into the record, so a text member may be any value.
   pub boxed_tail: integer = -1,
@@ -336,6 +339,8 @@ pub struct Vars {
   // Compiler temporaries the port reads through a syntax name of its own making
   // (`place_through_discharge`'s `__place_N`): no mention of them is a user's.
   pub compiler_named: vector<integer> = [],
+  // The receiver literal (`recv_literal`) is subscripted directly (`[..][i]`): no inline mark.
+  pub recv_subscripted: boolean = false,
   // A `__place_N` holding an element reached through an effectful index whose COLLECTION field
   // is written (`k[bump()].mpts += […]`): Rust's F2 hoist writes that field through
   // `OpGetField(place, off, tp)`, the port through the place itself.
@@ -541,6 +546,13 @@ pub fn set_captured(v: Vars, nr: integer, why: text) {
     v.captured += [nr];
   }
   v.vars[nr].captured = true;
+}
+
+// `Function::mark_caller_hidden_buf`: the work ref is a hidden buffer the caller hands a
+// callee (nulled in the preamble whatever its deps say).
+pub fn mark_caller_hidden_buf(v: Vars, nr: integer, why: text) {
+  trace_flag(v, "caller_hidden_buf", nr, why);
+  v.vars[nr].caller_hidden_buf = true;
 }
 
 // `Function::mark_user_appended`: the program's own `+=` wrote into the variable's content.
@@ -1521,5 +1533,16 @@ pub fn retire_capture_placeholders(v: Vars, code: ir::Node, caps: vector<text>) 
       v.vars[p].value_const = false;
     }
     v.vars[p].type_def = [el_types::without_deps(tp(v, p))];
+  }
+}
+
+// `vector_db`'s guarded-backing clause (loft#1486): a GUARDED backing the local is leaving — a
+// skip-free inline `__vdb_N` it names — goes back to owning its store, now the local names a new
+// backing (`Function::clear_skip_free`, untraced as Rust's is).
+pub fn release_guarded_backings(v: Vars, local: integer) {
+  for d in el_types::deps(tp(v, local)) {
+    if d >= 0 && d < len(v.vars) && v.vars[d].skip_free && v.inline_refs.contains(d) && starts_with(v.vars[d].name, "__vdb") {
+      v.vars[d].skip_free = false;
+    }
   }
 }

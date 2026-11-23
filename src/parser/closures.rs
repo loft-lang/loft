@@ -566,6 +566,26 @@ pub(super) fn collect_param_reassigns(
 
 /// Walk `code` marking every parameter slot rebound to an OWNED value — directly by a
 /// `Value::Set`, or by being handed on to a callee that rebinds the parameter it lands in.
+/// The VISIBLE parameter — its attribute index — that variable `v` of `fn_nr` is, or `None`
+/// for a local or a hidden parameter (a return buffer renamed onto a local, a text work
+/// buffer: the caller writes no argument for either).  A parameter's variable is numbered by
+/// its attribute index only while every attribute exists before the body's first local: a
+/// hidden one added later is numbered after the locals, and a local below the attribute
+/// count is no parameter.
+fn param_attr(data: &Data, fn_nr: u32, v: u16, n_params: usize) -> Option<usize> {
+    let def = data.def(fn_nr);
+    let vars = def.variables();
+    if v >= vars.count() || !vars.is_argument(v) {
+        return None;
+    }
+    let name = vars.name(v);
+    def.attributes()
+        .iter()
+        .take(n_params)
+        .position(|a| a.name == name)
+        .filter(|&a| !def.attributes()[a].hidden)
+}
+
 pub(super) fn collect_param_rebinds_owned(
     code: &Value,
     fn_nr: u32,
@@ -575,14 +595,14 @@ pub(super) fn collect_param_rebinds_owned(
     cache: &mut HashMap<u32, Vec<bool>>,
 ) {
     if let Value::Set(v, rhs) = code.unspan()
-        && (*v as usize) < n_params
+        && let Some(a) = param_attr(data, fn_nr, *v, n_params)
         && !matches!(rhs.unspan(), Value::Null)
         && matches!(
             crate::use_analysis::ownership_of(data, fn_nr, rhs),
             crate::use_analysis::Own::Owned
         )
     {
-        out[*v as usize] = true;
+        out[a] = true;
     }
     if let Value::Call(callee, args) = code.unspan()
         && *data.def(*callee).code() != Value::Null
@@ -592,9 +612,9 @@ pub(super) fn collect_param_rebinds_owned(
             if i < inner.len()
                 && inner[i]
                 && let Value::Var(v) = arg.unspan()
-                && (*v as usize) < n_params
+                && let Some(a) = param_attr(data, fn_nr, *v, n_params)
             {
-                out[*v as usize] = true;
+                out[a] = true;
             }
         }
     }
@@ -1036,23 +1056,47 @@ pub(crate) fn param_writes_summary(data: &Data) -> ParamWritesSummary {
     for d in 0..data.definitions() {
         cur.insert(d, vec![false; data.def(d).attributes().len()]);
     }
-    // Monotone: a round only adds writes, so it stops; each round reads the facts so far.
-    loop {
-        let mut changed = false;
-        for &d in &fns {
-            let def = data.def(d);
-            let mut written = crate::fxhash::FxHashSet::default();
-            find_written_vars(def.code(), data, def.variables(), &mut written, &mut cur);
-            let entry = cur.get_mut(&d).expect("every definition has an entry");
-            for (i, w) in entry.iter_mut().enumerate() {
-                if !*w && written.contains(&(i as u16)) {
-                    *w = true;
-                    changed = true;
-                }
+    // Monotone: a walk only adds writes, so it stops; each walk reads the facts so far.  The
+    // first pass walks every body; after it only the CALLERS of a function whose facts grew are
+    // walked again (a worklist), since a body's answer reads its callees' facts and nothing else.
+    let mut callers: crate::fxhash::FxHashMap<u32, Vec<u32>> = crate::fxhash::FxHashMap::default();
+    for &d in &fns {
+        let mut seen = crate::fxhash::FxHashSet::default();
+        data.def(d).code().any_node(&mut |n| {
+            if let Value::Call(c, _) = n
+                && *c != d
+                && seen.insert(*c)
+            {
+                callers.entry(*c).or_default().push(d);
+            }
+            false
+        });
+    }
+    let mut queue: std::collections::VecDeque<u32> = fns.iter().copied().collect();
+    let mut queued: crate::fxhash::FxHashSet<u32> = fns.iter().copied().collect();
+    while let Some(d) = queue.pop_front() {
+        queued.remove(&d);
+        let def = data.def(d);
+        let mut written = crate::fxhash::FxHashSet::default();
+        find_written_vars(def.code(), data, def.variables(), &mut written, &mut cur);
+        let entry = cur.get_mut(&d).expect("every definition has an entry");
+        let mut grew = false;
+        for (i, w) in entry.iter_mut().enumerate() {
+            if !*w && written.contains(&(i as u16)) {
+                *w = true;
+                grew = true;
             }
         }
-        if !changed {
-            break;
+        if grew {
+            // A self call reads its own facts too.
+            if queued.insert(d) {
+                queue.push_back(d);
+            }
+            for &c in callers.get(&d).map_or(&[][..], Vec::as_slice) {
+                if queued.insert(c) {
+                    queue.push_back(c);
+                }
+            }
         }
     }
     let key = std::ptr::from_ref(data) as usize;

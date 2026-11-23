@@ -748,7 +748,7 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       }
       // A VARIANT local answered by its enum's function (`o = Box { … }; o` → `Shape`), built in
       // its own store as its variant: copied into the buffer behind its null test, the result
-      // taking the one-buffer marker (`["??"]`).
+      // naming the buffer (its hidden attribute).
       if built == null && el_types::struct_enum_def(result) >= 0 && !(result is TyOptional) {
         vt = match el_ir::unspan(body_tail(code)) { NdVar { n: tv } => tv, _ => -1 };
         if vt >= 0 && !vars.vars[vt].argument && match el_types::base(el_vars::tp(vars, vt)) { TyReference { n: tvd } => el::def(e, tvd).def_type == el::DT_ENUM_VALUE, _ => false } {
@@ -762,7 +762,10 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
           vbl.result = [owned];
           built = ir::NdBlock { block: [vbl] };
           if_copied = true;
-          e.b.data.definitions[e.context].returned = [el_types::with_deps(el_types::without_deps(result), [el_types::MARKER])];
+          // (The result names the buffer itself — its hidden attribute, as Rust's `ref_return`
+          // leaves it: no borrow, and no lone one-buffer marker to adopt.)
+          rba = attr_nr(el::def(e, e.context), "__retbuf");
+          e.b.data.definitions[e.context].returned = [el_types::with_deps(el_types::without_deps(result), if rba >= 0 { [rba] } else { [el_types::MARKER] })];
         }
       }
       kind = el_ex_copy::tail_kind(e, vars, code);
