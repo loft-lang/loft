@@ -602,6 +602,11 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       mat_tail = true;
     }
   }
+  // (A struct-enum result answered by a function value's call or a vector match at the tail:
+  // the exit's work ref is minted and substituted out, `ref_return` on both passes.)
+  if rb >= 0 && !mat_tail && match body_tail(code) { NdCallRef { var: _ } => true, NdBlock { block: tvb } => tvb[0].name == "vector_match" && el_ex_null::match_subject_is_local(vars, body_tail(code)), _ => false } {
+    el_ex_null::enum_exit_work_ref(e, vars, result);
+  }
   if rb >= 0 && e.first_pass && !mat_tail && el_ex_null::merge_view_call(e, vars, code) == null {
     rename_ret_buffer(e, vars, code, rb);
   }
@@ -784,6 +789,10 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
         el::refuse(e, "a function returning a record from something other than a literal: {kind}");
       }
     }
+  } else if rb >= 0 && e.first_pass && !renamed_now {
+    // (`materialize_view_return` at a tail viewing a local, the buffer already renamed by an
+    // earlier exit: its work ref is minted and substituted out, on this pass as on the next.)
+    tail_view_work_ref(e, vars, code, result);
   } else if rb >= 0 && !e.first_pass && !renamed_now {
     // Delivered in the renamed buffer: the body answers a record of the placeholder's.
     match code {
@@ -810,6 +819,7 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
         // A tail viewing a local is copied into the work ref the first pass renamed the buffer
         // onto (`var_return`).
         if buf >= 0 && bound == null {
+          tail_view_work_ref(e, vars, ir::NdBlock { block: [bl] }, result);
           match el_ir::unspan(el_ir::last(bl.operators)) {
             NdVar { n: tv } => {
               if tv != buf && heap_def(el_vars::tp(vars, tv)) >= 0 {
@@ -2788,5 +2798,23 @@ fn shadow_views_local(vars: el_vars::Vars, n: ir::Node) -> boolean {
       }
       false
     }
+  }
+}
+
+// `materialize_view_return` at a body tail that is a local viewing another local's store, where
+// an earlier exit renamed the buffer: the exit's work ref is minted and substituted out
+// (`unregister_work_ref`) — on both passes, as Rust's `ref_return` does at every such exit.
+fn tail_view_work_ref(e: el::El, vars: el_vars::Vars, code: ir::Node, result: ir::TypeT) {
+  tv = match code { NdBlock { block } => match el_ir::unspan(el_ir::last(block[0].operators)) { NdVar { n } => n, _ => -1 }, _ => -1 };
+  // (A local the program wrote: a compiler temp at the tail — a branch tail's `___ret_join_N` —
+  // is delivered by its own road, `tail_is_borrowing_branch`.)
+  if tv < 0 || vars.vars[tv].argument || el_vars::is_compiler_generated(vars, tv) || heap_def(el_vars::tp(vars, tv)) < 0 || !el_ex_copy::views_local(vars, tv) {
+    return;
+  }
+  tw = el_vars::work_ref(vars, el_types::without_deps(el_types::base(result)));
+  // (A STRUCT ENUM's view at the tail is bound, `RetPromotion::Bind`: its work ref is minted
+  // and kept — the enum keeps `__retbuf`; a record's is substituted out.)
+  if !el_convert::struct_enum(el_types::base(result)) && tw != el_ex_null::return_buffer(e, vars) {
+    el_vars::unregister_work_ref(vars, tw);
   }
 }

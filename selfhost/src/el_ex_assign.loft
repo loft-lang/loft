@@ -1154,6 +1154,14 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
           vt2 = el_types::with_deps(el_types::without_deps(el_types::base(mt)), [tvar]);
           av = el_vars::create_unique(vars, "vec", vt2);
           el_vars::set_defined(vars, av);
+          // (`parse_vector`'s accumulator SEEDED from the tuple place: an inline ref, so its null
+          // init claims no store the seed overwrites — on the second pass, as Rust marks it.  The
+          // literal's element temp is minted beside it, an inline ref borrowing the tuple.)
+          if !e.first_pass {
+            el_vars::mark_inline(vars, av, "build_vector_list");
+          }
+          aelm = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [tvar] });
+          el_vars::mark_inline(vars, aelm, "unique_elm_var");
           axs: vector<Ex> = [];
           for ai2 in aitems {
             axs += [expression(e, vars, ai2)];
