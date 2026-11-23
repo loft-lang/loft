@@ -34,7 +34,7 @@ use crate::data::{Context, Data, DefType, Type};
 use crate::database::Stores;
 use crate::generation::{Output, returns_owned_string, rust_type};
 pub(crate) use crate::native_gate::is_text_work_buffer;
-use crate::opt::native_key::{linked_packages, native_pkg_lib};
+use crate::opt::native_key::linked_packages;
 use crate::platform::process::{Program, Spawn};
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -1313,31 +1313,6 @@ pub use crate::toolchain::{
     NO_RUSTC, find_loft_rlib, rustc_available, rustc_version, toolchain_failure_hint,
 };
 
-/// `--extern name=path` flags for the optional feature-dep rlibs (random/png/…) in
-/// `deps` that the generated stdlib code may reference — every `libX-<hash>.rlib`
-/// except `libloft*` (which is passed explicitly as `--extern loft=`).
-fn extra_externs(deps: &[std::path::PathBuf]) -> Vec<(String, std::path::PathBuf)> {
-    let mut out = Vec::new();
-    for e in deps
-        .iter()
-        .filter_map(|d| crate::file_access::read_dir(d).ok())
-        .flatten()
-    {
-        let n = e.file_name().unwrap_or_default();
-        if !n.starts_with("lib") || !has_rlib_ext(n) || n.starts_with("libloft") {
-            continue;
-        }
-        if let Some(stem) = n
-            .strip_prefix("lib")
-            .and_then(|s| s.rsplit_once('-'))
-            .map(|x| x.0)
-        {
-            out.push((stem.to_string(), e.os_spelling()));
-        }
-    }
-    out
-}
-
 /// Pick the `loft_ffi` rlib in `deps` that `libloft` was built against.
 ///
 /// loft's `deps/` can hold several `libloft_ffi-<hash>.rlib` with the same
@@ -1459,16 +1434,6 @@ fn loft_ffi_candidate_links(
     ok
 }
 
-/// On Windows MSVC, the build-script output dirs holding native import libraries
-/// (e.g. `windows.0.48.5.lib` from `windows-sys`) must be passed to a hand-driven
-/// `rustc` as `-L` paths — cargo adds them via `cargo:rustc-link-search` but we
-/// don't, so the cdylib link fails `LNK1181: cannot open input file …`.  Mirrors
-/// the `--native` test runner's `find_native_lib_dirs`.  Empty (a no-op) off Windows
-/// (`platform::import_lib_search_dirs`).
-fn native_lib_search_dirs(rlib: &std::path::Path) -> Vec<std::path::PathBuf> {
-    crate::platform::import_lib_search_dirs(rlib)
-}
-
 /// @PLN26 — whether a cdylib links `[native] crate` packages by C-ABI (their
 /// `.so`) rather than as Rust rlibs.  The library-crate twin of
 /// `native_utils::native_cabi_enabled` (the binary-crate copy the executable path
@@ -1477,285 +1442,6 @@ fn native_lib_search_dirs(rlib: &std::path::Path) -> Vec<std::path::PathBuf> {
 /// link (the escape hatch); the C-ABI path is the default on every host.
 fn native_cabi_link_enabled() -> bool {
     crate::platform::native_cabi_link()
-}
-
-/// @PLN26 phase 2 — the rustc link flags for ONE native package's resolved cdylib
-/// `.so`: `-L native=<dir>` + `-l dylib=<name>` + an RPATH (the build/prebuilt
-/// dir and `$ORIGIN` for an installed binary shipping the `.so` beside it).  On
-/// Windows a DLL links through its import library and there is no RPATH, so this
-/// bridges `<stem>.dll.lib` → `<stem>.lib`; the host loads the package's DLL before the
-/// artifact ([`load_linked_packages`]), so the artifact's import resolves to it.
-///
-/// Returns empty when the `.so` can't be resolved ([`crate::extensions::resolve_native_lib`]
-/// already printed why) — the link then fails loudly on the undefined symbol
-/// rather than silently mis-linking.  The `.so` seals the package's whole Rust
-/// crate graph (its own `loft_ffi` + `loft_register_v1` included), so no
-/// `-L dependency=` / per-crate pinning is needed and two packages no longer
-/// collide on `loft_register_v1`.
-///
-/// Mirrors the C-ABI branch of `native_utils::add_native_extern_flags` (the
-/// executable path); kept separate because that helper lives in the binary crate
-/// and this builder lives in the library crate.
-fn native_pkg_cabi_link_args(crate_name: &str, pkg_dir: &str) -> Vec<String> {
-    let Some((stem, so_path)) = native_pkg_lib(crate_name, pkg_dir) else {
-        return Vec::new();
-    };
-    let Some(so_dir) = so_path.parent() else {
-        return Vec::new();
-    };
-    // `-l dylib=<name>` derived from the RESOLVED file (strip `lib` prefix +
-    // extension) so a prebuilt or non-`lib<stem>` cdylib links.
-    let file_stem = crate::file_access::file_stem(&so_path);
-    let libname = file_stem
-        .as_deref()
-        .map_or(stem.as_str(), |s| s.strip_prefix("lib").unwrap_or(s));
-    let mut args = vec![
-        "-L".to_string(),
-        format!("native={}", so_dir.display()),
-        "-l".to_string(),
-        format!("dylib={libname}"),
-    ];
-    match crate::platform::bridge_import_lib(so_dir, libname) {
-        // Disallow-the-unverifiable-loudly: with NEITHER import-lib name present
-        // the link dies on an opaque `LNK1181`, so name it rather than mis-link.
-        crate::platform::ImportLib::Missing => eprintln!(
-            "loft: native package `{crate_name}` cdylib at {} has no import \
-             library (`{libname}.dll.lib` / `{libname}.lib`) — Windows links a \
-             DLL through its import lib; rebuild the package's \
-             cdylib with a toolchain that emits one.",
-            so_dir.display()
-        ),
-        crate::platform::ImportLib::Ready => {}
-        // A host that links the shared library directly: two RPATH entries, the
-        // build/prebuilt dir (run-from-build-tree) AND `$ORIGIN` (an installed binary
-        // shipping the `.so` beside it).  `$ORIGIN` is literal; the dynamic loader
-        // expands it at run time.
-        crate::platform::ImportLib::NotUsed => {
-            args.push(format!("-Clink-arg=-Wl,-rpath,{}", so_dir.display()));
-            args.push("-Clink-arg=-Wl,-rpath,$ORIGIN".to_string());
-        }
-    }
-    args
-}
-
-/// @PLN11 Arc N / N3 — generate **and compile** the shared-store cdylib for
-/// `export_set` into `out_dir`, returning the built cdylib path.  This is the
-/// production build step `use <lib>` runs after `byte_code`: it locates the
-/// running build's `libloft.rlib` ([`find_loft_rlib`]), writes `lib.rs`
-/// ([`generate_shared_cdylib_lib_rs`]), and invokes `rustc` with the `--native`
-/// flag set (cdylib, edition 2024, `--extern loft=` + feature-dep externs).
-///
-/// # Errors
-/// Returns a message if the rlib can't be found, the source can't be written,
-/// `rustc` can't be launched, or compilation fails (the message includes the
-/// `rustc` stderr tail and the kept `lib.rs` path for inspection).
-pub fn build_shared_cdylib(
-    data: &Data,
-    stores: &Stores,
-    export_set: &HashSet<u32>,
-    out_dir: &std::path::Path,
-    stem: &str,
-) -> Result<std::path::PathBuf, String> {
-    build_keyed_cdylib(
-        data,
-        stores,
-        export_set,
-        out_dir,
-        stem,
-        type_layout_fingerprint(stores),
-    )
-}
-
-/// [`build_shared_cdylib`], declaring itself built for `artifact_fp` (the key
-/// [`artifact_matches_layout`] asks it for).
-#[expect(clippy::too_many_lines, reason = "inherited")]
-fn build_keyed_cdylib(
-    data: &Data,
-    stores: &Stores,
-    export_set: &HashSet<u32>,
-    out_dir: &std::path::Path,
-    stem: &str,
-    artifact_fp: u64,
-) -> Result<std::path::PathBuf, String> {
-    // Same pre-check as `auto_build_native` / the driver's native path: a
-    // live rustc differing from loft's build rustc cannot link the
-    // SVH-locked rlib below (E0514) — fail with the reason instead of a
-    // compiler spew (callers fall back to interpreting the library).
-    if let Some(reason) = crate::cache::rustc_mismatch() {
-        return Err(format!("{reason} — rebuild loft to restore native"));
-    }
-    // Name the cure, not just the absence.  This fires when `libloft.rlib` has not
-    // been built for the running binary's `target/` — the ordinary way to reach it
-    // is a run of `cargo build --bin loft` (or `--tests`), which refreshes the
-    // binary and leaves the library rlib behind.  Left bare, the message costs a
-    // full gate: it surfaces as several unrelated-looking native tests failing ~9
-    // minutes in, each naming a file that is present when you go and look.
-    // The per-unit layout's rlib, put where the lookup reads it (`refresh_runtime_uplift`).
-    if let Some(exe_dir) = current_runtime_profile_dir() {
-        for (dir, _) in crate::toolchain::rlib_search_dirs(&exe_dir) {
-            refresh_runtime_uplift(&dir);
-        }
-    }
-    let (rlib, deps) = find_loft_rlib().ok_or(
-        "libloft.rlib not found for this build — run `cargo build --release --lib` \
-         (or `make check-rlib` to check before a gate); a `cargo build --bin loft` \
-         refreshes the binary but not the library rlib the native path links",
-    )?;
-    let src = shared_cdylib_source(data, stores, export_set, false, artifact_fp);
-    crate::file_access::create_dir_all(out_dir).map_err(|e| format!("create {e}"))?;
-    let rs = out_dir.join(format!("{stem}.rs"));
-    crate::file_access::write(&rs, &src).map_err(|e| format!("write {e}"))?;
-    let so = out_dir.join(platform_cdylib_name(stem));
-    // Compile to a temp name, rename into place on success: a concurrent
-    // reader (fast path of `cached_or_build_shared_cdylib`) then always sees
-    // either the old complete `.so` or the new complete one, never a torn
-    // file mid-write ("file too short" on dlopen).
-    let tmp_so = out_dir.join(format!("{stem}.building"));
-
-    // Pass rustc args via an `@argfile`: the `--extern <crate>=<path>` list + `-L`
-    // search paths routinely exceed Windows' ~32 KB `CreateProcessW` command-line
-    // limit (os error 206: "The filename or extension is too long"), and the
-    // argfile form is cross-platform — the same fix the `--native` test runner
-    // already uses (PLAN49).
-    let mut args: Vec<String> = vec![
-        "--edition=2024".to_string(),
-        "-C".to_string(),
-        "debuginfo=0".to_string(),
-        "--crate-type".to_string(),
-        "cdylib".to_string(),
-        "-o".to_string(),
-        tmp_so.display().to_string(),
-        rs.display().to_string(),
-    ];
-    // Full optimisation, as `--ship` compiles a program: a library cdylib is a
-    // shipped binary (`src/native_release_args.txt`).
-    args.extend(crate::cache::release_rustc_args());
-    args.extend(crate::native_lib::loft_extern_args(&rlib));
-    for d in &deps {
-        args.extend(["-L".to_string(), d.display().to_string()]);
-    }
-    // macOS records the `-o` path inside the Mach-O as its INSTALL NAME, and the
-    // rename below moves the file without touching it — so this cdylib claimed to
-    // live at `<stem>.building`, in an absolute build directory. Harmless only for
-    // as long as every consumer `dlopen`s it BY PATH (a path load ignores the
-    // recorded name); it breaks the moment one is resolved through `@rpath` or the
-    // package is moved. Same flag, same reason, as the `cc`-built shim.
-    let final_name = crate::file_access::file_name(&so).unwrap_or_else(|| stem.to_string());
-    for flag in crate::platform::install_name_args(&final_name, crate::platform::host_lib_os()) {
-        args.push("-C".to_string());
-        args.push(format!("link-arg={flag}"));
-    }
-    for (name, path) in extra_externs(&deps) {
-        args.push("--extern".to_string());
-        args.push(format!("{name}={}", path.display()));
-    }
-    // @PLN26 phase 2 — a shared-store library cdylib that USES a `[native] crate`
-    // package links that package by C-ABI, exactly as the executable native path
-    // does: its `.so` (sealing the package's whole Rust crate graph — its own
-    // `loft_ffi` + `loft_register_v1` included) via `-L native`/`-l dylib`/RPATH,
-    // and its fns as `extern "C"` decls naming `loft_ffi::Loft*` (codegen gated on
-    // the SAME `native_cabi_link_enabled()` consulted by `emit_program`, so codegen
-    // and link can't disagree).  The sealed `.so` is why two native packages no
-    // longer collide on `loft_register_v1` — the old 2-package limit is lifted.
-    if !data.native_packages.is_empty() {
-        // The legacy rlib link (LOFT_NATIVE_CABI=0) CAN'T link a native package
-        // into a cdylib: pulling the package rlib in brings a SECOND `loft_ffi`
-        // rlib (duplicate `loft_register_v1`, two `StableCrateId`s) — unlinkable.
-        // Refuse THAT combo loudly and fall back to interpret (codegen emitted
-        // `extern crate <pkg>` for it, which has no matching `--extern` anyway).
-        if !native_cabi_link_enabled() {
-            let names: Vec<&str> = data
-                .native_packages
-                .iter()
-                .map(|(c, _)| c.as_str())
-                .collect();
-            eprintln!(
-                "loft: a shared-store cdylib using `[native] crate` package(s) {names:?} \
-                 needs the C-ABI link path, but LOFT_NATIVE_CABI=0 forces the legacy rlib \
-                 link (which cannot take two `loft_ffi` rlibs into one cdylib); interpreting \
-                 it instead.  Unset LOFT_NATIVE_CABI to use the C-ABI path."
-            );
-            return Err(
-                "shared-store cdylib + native package needs the C-ABI path (LOFT_NATIVE_CABI=0 set)"
-                    .to_string(),
-            );
-        }
-        // The C-ABI decls name `loft_ffi::LoftStore`/`LoftRef`/`LoftStr`; loft's
-        // own `loft_ffi` rlib must be on the command (the package `.so` is C-ABI,
-        // so this is the only `loft_ffi` the cdylib's Rust code names).  Mirrors
-        // the standalone native compile in main.rs.
-        // Pick the `loft_ffi` `libloft` was built against, NOT the first one in dir
-        // order: with two copies present, naming the wrong one puts a second
-        // `loft_ffi` in the link → "colliding StableCrateId" (see `loft_ffi_for_libloft`).
-        if let Some(ffi) = loft_ffi_for_libloft(&rlib, &deps) {
-            args.push("--extern".to_string());
-            args.push(format!("loft_ffi={}", ffi.display()));
-        }
-        // Link each native package's resolved cdylib `.so` (the same `-L native`
-        // / `-l dylib` / RPATH the executable path emits) so the cdylib's
-        // `extern "C"` calls resolve at link time and the `.so` loads at run time.
-        for (crate_name, pkg_dir) in &linked_packages(data, export_set) {
-            args.extend(native_pkg_cabi_link_args(crate_name, pkg_dir));
-        }
-    }
-    // Windows MSVC: add the build-script `-L` dirs holding native import libs
-    // (`windows.0.48.5.lib` etc.) or the link fails LNK1181.  No-op off Windows.
-    for dir in native_lib_search_dirs(&rlib) {
-        args.push("-L".to_string());
-        args.push(dir.display().to_string());
-    }
-    // @PLN54 S9 — mixed-boundary (@C71) AddressSanitizer.  When the interpreter
-    // HOST is ASan-instrumented (LOFT_NATIVE_ASAN=1), instrument the auto-built
-    // cdylib too, so an out-of-bounds / use-after-free on the `*mut Stores` the
-    // host shares with this cdylib BY RAW POINTER is caught on BOTH sides of the
-    // boundary — the one cross-boundary surface no in-process sanitizer sees
-    // (ASan sees only the host's own accesses; Miri cannot `dlopen` a cdylib).
-    // Needs nightly rustc (set on the Command below).  Opt-in, off by default.
-    if std::env::var_os("LOFT_NATIVE_ASAN").is_some() {
-        args.push("-Zsanitizer=address".to_string());
-    }
-    // One arg per line; quote any containing whitespace (rustc's argfile parser is
-    // whitespace-separated, newline-separated is a strict subset).
-    let argfile = out_dir.join(format!("{stem}.args"));
-    let contents = args
-        .iter()
-        .map(|s| {
-            if s.contains(char::is_whitespace) {
-                format!("\"{}\"", s.replace('"', "\\\""))
-            } else {
-                s.clone()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    crate::file_access::write(&argfile, contents).map_err(|e| format!("write {e}"))?;
-    let mut rustc = Spawn::new(Program::search("rustc")).arg(format!("@{}", argfile.display()));
-    // @PLN54 S9 — the ASan cdylib (above) needs nightly rustc for `-Zsanitizer`.
-    if std::env::var_os("LOFT_NATIVE_ASAN").is_some()
-        && std::env::var_os("RUSTUP_TOOLCHAIN").is_none()
-    {
-        rustc.push_env("RUSTUP_TOOLCHAIN", "nightly");
-    }
-    crate::timeout::blocked_on("rustc compiling a library");
-    let output = rustc.run(b"");
-    crate::timeout::unblocked();
-    let output =
-        output.map_err(|e| format!("launch rustc: {e} (is the Rust toolchain installed?)"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let hint = toolchain_failure_hint(&stderr)
-            .map(|h| format!("{h}\n\n"))
-            .unwrap_or_default();
-        let tail: Vec<&str> = stderr.lines().rev().take(30).collect();
-        let tail: String = tail.into_iter().rev().collect::<Vec<_>>().join("\n");
-        return Err(format!(
-            "{hint}cdylib compile failed (source kept at {}):\n{tail}",
-            rs.display()
-        ));
-    }
-    crate::file_access::rename(&tmp_so, &so)
-        .map_err(|e| format!("install as {}: {e}", so.display()))?;
-    Ok(so)
 }
 
 /// How many built artifacts a package's `native-auto/` keeps.
@@ -1767,7 +1453,7 @@ fn build_keyed_cdylib(
 /// to shift type layouts.  Across the tree it was 25 GB.
 ///
 /// Generous on purpose.  A pruned artifact that is wanted again is REBUILT, so the
-/// cost of keeping too few is `rustc` latency and the cost of keeping too many is
+/// cost of keeping too few is a rebuild and the cost of keeping too many is
 /// disk; 8 covers a package used from several consumer contexts in one session
 /// while still bounding the directory.
 const KEEP_ARTIFACTS: usize = 8;
@@ -1796,7 +1482,7 @@ const KEEP_ARTIFACTS: usize = 8;
 /// fresh fast path takes none).  That is why [`artifact_layout_probe`] refuses to
 /// adopt an artifact it cannot OPEN: the loser of that race rebuilds instead of
 /// dlopening a file that just vanished.
-fn prune_artifacts(dir: &std::path::Path, family: &str) {
+pub(crate) fn prune_artifacts(dir: &std::path::Path, family: &str) {
     let ext = crate::platform::dll_extension();
     let Ok(entries) = crate::file_access::read_dir(dir) else {
         return;
@@ -1838,32 +1524,6 @@ fn artifact_stem(so: impl crate::file_access::HostPath) -> Option<String> {
         name.strip_prefix("lib")
             .map_or_else(|| name.clone(), str::to_string),
     )
-}
-
-/// The building half of `native_artifact::cached_or_build_shared_cdylib`: build the artifact `stem` for `fp`
-/// into `out_dir`, record `fp` beside it, and prune the package's older artifacts.  Called
-/// while the caller holds the package's build lock.
-///
-/// # Errors
-/// Propagates a build failure from `build_keyed_cdylib`.
-pub fn build_shared_artifact(
-    data: &Data,
-    stores: &Stores,
-    export_set: &HashSet<u32>,
-    pkg_dir: &str,
-    out_dir: &std::path::Path,
-    stem: &str,
-    fp: u64,
-) -> Result<std::path::PathBuf, String> {
-    let built = build_keyed_cdylib(data, stores, export_set, out_dir, stem, fp)?;
-    crate::cache::write_native_artifact_fingerprint(out_dir, fp);
-    // Bound the directory, while the build lock is still held.  A new artifact
-    // appears per consumer type-layout (#715) and nothing collected the old
-    // ones — 25 GB across this repo's fixtures, 532 files in one package.
-    // Scoped to THIS package's auto-native family: a `[c] shim` cdylib shares
-    // the directory and is never rebuilt, so an unscoped sweep eats it.
-    prune_artifacts(out_dir, &auto_cdylib_stem(pkg_dir));
-    Ok(built)
 }
 
 #[cfg(test)]

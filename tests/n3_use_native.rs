@@ -88,12 +88,12 @@ fn cdylib_present_for(dir: &std::path::Path, pkg: &str) -> bool {
 #[test]
 fn use_compile_native_library_dispatches_on_real_binary() {
     // The binary auto-builds the cdylib via rustc; skip where it isn't available.
-    if loft::platform::process::harness_command("rustc")
+    if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_err()
     {
-        eprintln!("skip: rustc unavailable");
+        eprintln!("skip: no cc on PATH");
         return;
     }
 
@@ -165,12 +165,12 @@ fn use_compile_native_library_dispatches_on_real_binary() {
 /// missing option read as present.
 #[test]
 fn a_compiled_librarys_nullable_text_answer_reaches_the_script() {
-    if loft::platform::process::harness_command("rustc")
+    if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_err()
     {
-        eprintln!("skip: rustc unavailable");
+        eprintln!("skip: no cc on PATH");
         return;
     }
     let pid = std::process::id();
@@ -231,12 +231,12 @@ fn a_compiled_librarys_nullable_text_answer_reaches_the_script() {
 /// artifact existed.
 #[test]
 fn source_dir_inside_a_compiled_library_is_the_programs() {
-    if loft::platform::process::harness_command("rustc")
+    if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_err()
     {
-        eprintln!("skip: rustc unavailable");
+        eprintln!("skip: no cc on PATH");
         return;
     }
     let pid = std::process::id();
@@ -298,12 +298,12 @@ fn source_dir_inside_a_compiled_library_is_the_programs() {
 // @speed 1.2
 #[test]
 fn mixed_library_dispatches_native_and_interprets_rest() {
-    if loft::platform::process::harness_command("rustc")
+    if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_err()
     {
-        eprintln!("skip: rustc unavailable");
+        eprintln!("skip: no cc on PATH");
         return;
     }
 
@@ -327,8 +327,6 @@ fn mixed_library_dispatches_native_and_interprets_rest() {
     let _ = fa::remove_dir_all(native_auto);
 
     let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
-        // The rustc artifact, whose generated source this reads.
-        .env("LOFT_LIB_BACKEND", "rust")
         .arg("--lib")
         .arg("tests/lib")
         .arg(&prog)
@@ -341,24 +339,22 @@ fn mixed_library_dispatches_native_and_interprets_rest() {
         out.status.success(),
         "loft exited non-zero.\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
-    // triple(7)=21, apply_inc(10)=11 (both native), label(4)=40 (interpreted) — identical
-    // to all-interp.
+    // triple(7)=21, apply_inc(10)=11, label(4)=40 — identical to all-interp.
     assert_eq!(stdout, "21\n11\n40\n", "mixed-library output");
 
-    // The gate split the library: the cdylib exports `triple` and `apply_inc` but NOT
-    // `label`, and NOT the synthetic lambdas.
-    // loft#715 — the generated source is named for the caller's type-layout
-    // fingerprint, like the cdylib beside it, so find it by prefix.
+    // The library's unit exports its public functions, and NOT the synthetic lambdas.
+    // loft#715 — the generated source is named for its key, like the library beside it,
+    // so find it by prefix.
     let rs_path = fa::read_dir(native_auto)
         .expect("native-auto dir should exist")
         .into_iter()
         .map(|e| e.os_spelling())
         .find(|p| {
             fa::file_name(p)
-                .is_some_and(|n| n.starts_with("loft_auto_mathmixed") && n.ends_with(".rs"))
+                .is_some_and(|n| n.starts_with("loft_auto_mathmixed") && n.ends_with(".c"))
         })
-        .expect("generated cdylib source should exist");
-    let lib_rs = fa::read_to_string(&rs_path).expect("read generated cdylib source");
+        .expect("generated unit source should exist");
+    let lib_rs = fa::read_to_string(&rs_path).expect("read generated unit source");
     assert!(
         lib_rs.contains("loft_shared_mathmixed__n_triple"),
         "triple should have a native bridge"
@@ -463,12 +459,12 @@ fn a_librarys_lambda_names_do_not_depend_on_what_was_parsed_before_it() {
 /// program's type table.
 #[test]
 fn the_same_library_at_two_places_generates_the_same_artifact() {
-    if loft::platform::process::harness_command("rustc")
+    if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_err()
     {
-        eprintln!("skip: rustc unavailable");
+        eprintln!("skip: no cc on PATH");
         return;
     }
     let tmp = std::env::temp_dir().join(format!("loft_n3_g1_{}", std::process::id()));
@@ -490,8 +486,6 @@ fn the_same_library_at_two_places_generates_the_same_artifact() {
     .unwrap();
     let source = |lib: &std::path::Path, prog: &std::path::Path| -> (String, String) {
         let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
-            // The rustc artifact, whose generated source this reads.
-            .env("LOFT_LIB_BACKEND", "rust")
             .arg("--interpret")
             .arg("--lib")
             .arg(lib)
@@ -507,7 +501,7 @@ fn the_same_library_at_two_places_generates_the_same_artifact() {
         let rs = fa::read_dir(lib.join("mathmixed/native-auto"))
             .expect("the run built mathmixed")
             .into_iter()
-            .find(|e| fa::has_extension(e, "rs"))
+            .find(|e| fa::has_extension(e, "c"))
             .expect("a generated source");
         let name = fa::file_name(rs.os_spelling()).unwrap_or_default();
         (name, fa::read_to_string(&rs).unwrap_or_default())
@@ -542,12 +536,12 @@ const GATEFULL_CALLABLE: usize = 51;
 
 #[test]
 fn the_native_gate_trace_names_what_stays_interpreted_and_why() {
-    if loft::platform::process::harness_command("rustc")
+    if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_err()
     {
-        eprintln!("skip: rustc unavailable");
+        eprintln!("skip: no cc on PATH");
         return;
     }
     let tmp = std::env::temp_dir().join(format!("loft_n3_gate_trace_{}", std::process::id()));
@@ -744,12 +738,12 @@ fn require_native_errors_when_rustc_is_absent() {
 /// entry points from the same package in sequence both succeed cleanly.
 #[test]
 fn entry_package_is_never_auto_native_compiled() {
-    if loft::platform::process::harness_command("rustc")
+    if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_err()
     {
-        eprintln!("skip: rustc unavailable");
+        eprintln!("skip: no cc on PATH");
         return;
     }
 
@@ -821,12 +815,12 @@ fn entry_package_is_never_auto_native_compiled() {
 /// must notice the layout changed and rebuild, so the write stays 4 bytes wide.
 #[test]
 fn cdylib_type_indices_stay_valid_across_consumer_contexts() {
-    if loft::platform::process::harness_command("rustc")
+    if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_err()
     {
-        eprintln!("skip: rustc unavailable");
+        eprintln!("skip: no cc on PATH");
         return;
     }
 
@@ -926,12 +920,12 @@ fn cdylib_type_indices_stay_valid_across_consumer_contexts() {
 /// generated bridge asks for — beside the answer the program must give on both backends.
 #[test]
 fn a_shared_bridge_mints_the_type_its_library_registered() {
-    if loft::platform::process::harness_command("rustc")
+    if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_err()
     {
-        eprintln!("skip: rustc unavailable");
+        eprintln!("skip: no cc on PATH");
         return;
     }
     let pid = std::process::id();
@@ -955,8 +949,6 @@ fn a_shared_bridge_mints_the_type_its_library_registered() {
     .unwrap();
     for mode in ["--interpret", "--native"] {
         let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
-            // The rustc artifact, whose generated source this reads.
-            .env("LOFT_LIB_BACKEND", "rust")
             .arg(mode)
             .arg("--lib")
             .arg(&lib)
@@ -972,13 +964,13 @@ fn a_shared_bridge_mints_the_type_its_library_registered() {
             String::from_utf8_lossy(&out.stderr)
         );
     }
-    // The interpreted run built the library's shared cdylib; its bridge must ask for the
-    // library's row — by key since @PLN199 G0b-2 (`sharedname::Holder` in its id table), and
-    // never by the bare name the program's own `Holder` can hold.
+    // The interpreted run built the library's unit; it must ask for the library's row by key
+    // (`sharedname::Holder` in its id table), never by the bare name the program's own
+    // `Holder` can hold.
     let generated: Vec<String> = fa::read_dir(lib.join("sharedname/native-auto"))
-        .expect("the interpreted run built the library's cdylib")
+        .expect("the interpreted run built the library's unit")
         .into_iter()
-        .filter(|e| fa::has_extension(e, "rs"))
+        .filter(|e| fa::has_extension(e, "c"))
         .map(|e| fa::read_to_string(&e).unwrap_or_default())
         .collect();
     assert!(!generated.is_empty(), "no generated bridge source");
@@ -1004,10 +996,10 @@ fn a_shared_bridge_mints_the_type_its_library_registered() {
 /// corruption, whose crash lands arbitrarily far from its cause.
 ///
 /// So the artifact now names the key it was built for (`loft_type_layout_fp_v1`) and the
-/// adopter asks. This plants one context's artifact at the other's exact filename
-/// — the aliasing #715 argues is unreachable — and requires that it be rejected.  Since
-/// @PLN199 G0c an artifact that names its ids by key serves every context, so the foreign
-/// one is a literal build (`LOFT_NO_LIB_IDS=1`), which is keyed on its program.
+/// adopter asks. This plants one key's artifact at the other's exact filename — the
+/// aliasing #715 argues is unreachable — and requires that it be rejected.  A hosted C unit
+/// names its ids by key and serves every program, so the foreign one is a unit built under
+/// another key: with `LOFT_POISON_CLAIM`, which changes what the unit does.
 ///
 /// The test carries its own control, because "it rebuilt" has a boring competing
 /// explanation: copying a file changes its mtime, and a rebuild triggered by mtime
@@ -1017,12 +1009,12 @@ fn a_shared_bridge_mints_the_type_its_library_registered() {
 // @speed 3.3
 #[test]
 fn a_foreign_context_artifact_is_rejected_not_adopted() {
-    if loft::platform::process::harness_command("rustc")
+    if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_err()
     {
-        eprintln!("skip: rustc unavailable");
+        eprintln!("skip: no cc on PATH");
         return;
     }
     let pid = std::process::id();
@@ -1058,7 +1050,7 @@ fn a_foreign_context_artifact_is_rejected_not_adopted() {
             .arg(prog)
             .env("LOFT_NO_CACHE", "1");
         if literal {
-            cmd.env("LOFT_NO_LIB_IDS", "1");
+            cmd.env("LOFT_POISON_CLAIM", "1");
         }
         cmd.output().expect("run the loft binary")
     };
@@ -1091,20 +1083,17 @@ fn a_foreign_context_artifact_is_rejected_not_adopted() {
     assert_eq!(after_bare.len(), 1, "the bare context built one artifact");
     let bare_so = after_bare[0].clone();
 
-    // @PLN199 G0c — an artifact that names its ids by key serves both contexts, so the
-    // foreign one is made by a LITERAL build, which is still built for its program alone.
+    // A unit serves every program, so the foreign one is built under another key.
     assert!(
         run_with(&shifted, true).status.success(),
         "shifted context runs"
     );
     let two = sos();
-    if two.len() < 2 {
-        // Both contexts fingerprinted the same, so there is no foreign artifact to
-        // plant and nothing to assert. Say so rather than passing quietly.
-        eprintln!("skip: the two contexts share a type-layout fingerprint");
-        let _ = fa::remove_dir_all(&tmp);
-        return;
-    }
+    assert_eq!(
+        two.len(),
+        2,
+        "the unit built under another key is another artifact: {two:?}"
+    );
     let other_so = two.iter().find(|p| **p != bare_so).unwrap().clone();
 
     let mtime = |p: &std::path::Path| fa::metadata(p).unwrap().modified().unwrap();
@@ -1175,12 +1164,12 @@ fn a_foreign_context_artifact_is_rejected_not_adopted() {
 /// `default/`: exactly the "same rlib, different executable" shape of the report.
 #[test]
 fn an_artifact_built_by_another_loft_executable_is_not_adopted() {
-    if loft::platform::process::harness_command("rustc")
+    if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_err()
     {
-        eprintln!("skip: rustc unavailable");
+        eprintln!("skip: no cc on PATH");
         return;
     }
     let pid = std::process::id();
@@ -1326,7 +1315,7 @@ fn an_artifact_built_by_another_loft_executable_is_not_adopted() {
 /// stay; a library that only exports `KTile` does not reproduce this.
 #[test]
 fn keyed_collection_over_imported_struct_keeps_type_ids_aligned() {
-    if loft::platform::process::harness_command("rustc")
+    if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_err()
@@ -1431,7 +1420,7 @@ fn keyed_collection_over_imported_struct_keeps_type_ids_aligned() {
 /// library's own API is what proves the element type survived the round trip.
 #[test]
 fn inserting_into_a_keyed_collection_over_an_imported_struct_works() {
-    if loft::platform::process::harness_command("rustc")
+    if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_err()
@@ -1512,12 +1501,12 @@ fn inserting_into_a_keyed_collection_over_an_imported_struct_works() {
 // @speed 12.8
 #[test]
 fn a_packages_artifact_directory_stays_bounded() {
-    if loft::platform::process::harness_command("rustc")
+    if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_err()
     {
-        eprintln!("skip: rustc unavailable");
+        eprintln!("skip: no cc on PATH");
         return;
     }
     let pid = std::process::id();
@@ -1701,12 +1690,12 @@ fn sole_artifact(dir: &std::path::Path) -> std::path::PathBuf {
 
 #[test]
 fn an_unwirable_cdylib_interprets_instead_of_panicking() {
-    if loft::platform::process::harness_command("rustc")
+    if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_err()
     {
-        eprintln!("skip: rustc unavailable");
+        eprintln!("skip: no cc on PATH");
         return;
     }
     let pid = std::process::id();
@@ -1810,12 +1799,12 @@ fn an_unwirable_cdylib_interprets_instead_of_panicking() {
 /// dispatches into the stand-in's (deliberately wrong-ABI) body.
 #[test]
 fn a_partially_exporting_cdylib_marks_only_what_resolves() {
-    if loft::platform::process::harness_command("rustc")
+    if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_err()
     {
-        eprintln!("skip: rustc unavailable");
+        eprintln!("skip: no cc on PATH");
         return;
     }
     let pid = std::process::id();
@@ -1892,12 +1881,12 @@ fn a_partially_exporting_cdylib_marks_only_what_resolves() {
 // @speed 1.2
 #[test]
 fn a_fn_ref_call_into_a_native_library_answers_the_record_it_built() {
-    if loft::platform::process::harness_command("rustc")
+    if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_err()
     {
-        eprintln!("skip: rustc unavailable");
+        eprintln!("skip: no cc on PATH");
         return;
     }
     let tmp = std::env::temp_dir().join(format!("loft_n3_1663_{}", std::process::id()));
@@ -2000,12 +1989,12 @@ fn a_fn_ref_call_into_a_native_library_answers_the_record_it_built() {
 /// the box.  Measured before the fix: the second run printed the first run's version.
 #[test]
 fn a_dependency_version_is_part_of_its_users_native_artifact() {
-    if loft::platform::process::harness_command("rustc")
+    if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_err()
     {
-        eprintln!("skip: rustc unavailable");
+        eprintln!("skip: no cc on PATH");
         return;
     }
     let tmp = std::env::temp_dir().join(format!("loft_n3_depver_{}", std::process::id()));
@@ -2118,12 +2107,12 @@ fn a_dependency_version_is_part_of_its_users_native_artifact() {
 /// answers `17 17 17`.
 #[test]
 fn two_compiled_libraries_exporting_one_name_each_answer_their_own() {
-    if loft::platform::process::harness_command("rustc")
+    if loft::platform::process::harness_command("cc")
         .arg("--version")
         .output()
         .is_err()
     {
-        eprintln!("skip: rustc unavailable");
+        eprintln!("skip: no cc on PATH");
         return;
     }
     let tmp = std::env::temp_dir().join(format!("loft_n3_samename_{}", std::process::id()));

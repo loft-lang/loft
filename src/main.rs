@@ -9422,15 +9422,9 @@ fn main() {
                 let manifest =
                     loft::manifest::read_manifest(&pkg_path.join("loft.toml").to_string_lossy());
                 let pkg_str = pkg_path.to_string_lossy().to_string();
-                loft::interp::native_adopt::scope_library(&pkg_str);
-                // Machine-readable so a publish script can capture it.  The KEY
-                // line differs by native model, because the two cdylibs have
-                // different ABI contracts (see the auto-native branch below):
-                //   • hand-written links loft-ffi's `#[repr(C)]` surface → valid for
-                //     ANY loft on the same loft-ffi → `loft_ffi_fp`;
-                //   • auto-compiled `extern crate loft` (statically embeds libloft,
-                //     shares repr(Rust) `Stores`/`DbRef` by memory) → valid only for a
-                //     byte-identical loft build → `loft_build_fp` + the rustc it used.
+                // Machine-readable so a publish script can capture it: the unit, the name a
+                // consumer's run computes for it, and the loft, host interface and compiler it
+                // was built with (`@PLN206` — a library's compiled form is its hosted C unit).
                 let report = |cdylib: String, stem: String, keys: &[String]| {
                     println!("cdylib: {cdylib}");
                     println!("stem: {stem}");
@@ -9439,30 +9433,7 @@ fn main() {
                         println!("{k}");
                     }
                 };
-                // On the C backend a package's Rust crate is not what is built: its loft is
-                // compiled into a hosted unit, which reaches the crate's natives as a C program
-                // does (loft's C runtime, or the package's component) — `@PLN206`.
-                if let Some(stem) = manifest
-                    .as_ref()
-                    .and_then(|m| m.native.clone())
-                    .filter(|_| !loft::c::hosted::selected())
-                {
-                    // Hand-written `native/` crate — links the loft-ffi C ABI, so the
-                    // wide loft-ffi key is the correct compatibility gate.
-                    let keys = [format!(
-                        "loft_ffi_fp: {}",
-                        loft::cache::loft_ffi_fingerprint()
-                    )];
-                    match loft::interp::extensions::auto_build_native(&pkg_str, &stem) {
-                        Some(cdylib) => report(cdylib, stem, &keys),
-                        None => {
-                            eprintln!(
-                                "loft build-native: building `{stem}` failed (see the cargo error above)"
-                            );
-                            std::process::exit(1);
-                        }
-                    }
-                } else if let Some(name) = manifest.and_then(|m| m.name) {
+                if let Some(name) = manifest.and_then(|m| m.name) {
                     // @PLN21 Phase 4b — AUTO-COMPILED native (the default
                     // "libraries compile, scripts interpret" path): parse the
                     // library the `use`-resolution way, then build its auto-native
@@ -9505,73 +9476,37 @@ fn main() {
                     // not carry, with why: `interpreted: <name>\t<why>`, one line each, for
                     // `scripts/hosted_coverage.py`.  Printed whether the unit builds or the
                     // whole library is declined.
-                    let interpreted: Vec<String> = if loft::c::hosted::selected() {
+                    let interpreted: Vec<String> =
                         loft::c::hosted::hosted_split(&p.data, &p.database, &export)
                             .1
                             .into_iter()
                             .map(|(fn_name, why)| format!("interpreted: {fn_name}\t{why}"))
-                            .collect()
-                    } else {
-                        Vec::new()
-                    };
+                            .collect();
                     for line in &interpreted {
                         println!("{line}");
                     }
                     match loft::native_artifact::cached_or_build_shared_cdylib(
                         &p.data,
-                        &p.database,
                         &export,
                         &pkg_str,
                         &pending,
                         &context,
                     ) {
                         Ok(Some(so)) => {
-                            // This cdylib `extern crate loft`s — it statically embeds
-                            // libloft and operates on the host's repr(Rust)
-                            // `Stores`/`DbRef` by shared memory, so it is valid ONLY
-                            // for a byte-identical loft build (the `loft_build_fp` rlib
-                            // hash, which already folds in source + rustc).  Reporting
-                            // `loft_ffi_fp` here would mislabel it as widely portable —
-                            // a corruption-shaped trap for any consumer that gated on
-                            // it.  rustc is named too, for human/diagnostic clarity.
-                            // @PLN199 G2b — the artifact's full name (the stem a consumer's
-                            // run computes) and the loft it runs in, the two fields of its
-                            // registry binary entry.
+                            // @PLN199 G2b — the artifact's full name (the stem a consumer's run
+                            // computes) and the loft it runs in, the two fields of its registry
+                            // binary entry.
                             let full_stem = file_access::file_stem(&so)
                                 .map(|s| s.strip_prefix("lib").unwrap_or(&s).to_string())
                                 .unwrap_or_default();
-                            // `@PLN206 P5` — a hosted C unit: the loft it runs in (its name
-                            // carries it), the host interface it was built against and the
-                            // compiler; no rustc took part.
-                            if loft::c::hosted::selected() {
-                                report(
-                                    so.to_string_lossy().to_string(),
-                                    full_stem,
-                                    &[
-                                        "backend: c".to_string(),
-                                        format!(
-                                            "loft_exe_id: {}",
-                                            loft::cache::loft_exe_identity()
-                                        ),
-                                        format!("host_abi: {}", loft::host_abi::HOST_ABI),
-                                        format!("cc: {}", loft::c::hosted::compiler_identity()),
-                                    ],
-                                );
-                                return;
-                            }
                             report(
                                 so.to_string_lossy().to_string(),
                                 full_stem,
                                 &[
+                                    "backend: c".to_string(),
                                     format!("loft_exe_id: {}", loft::cache::loft_exe_identity()),
-                                    format!(
-                                        "loft_build_fp: {}",
-                                        loft::cache::loft_build_fingerprint()
-                                    ),
-                                    format!(
-                                        "rustc: {}",
-                                        option_env!("LOFT_BUILD_RUSTC").unwrap_or("unknown")
-                                    ),
+                                    format!("host_abi: {}", loft::host_abi::HOST_ABI),
+                                    format!("cc: {}", loft::c::hosted::compiler_identity()),
                                 ],
                             );
                         }
@@ -9583,10 +9518,7 @@ fn main() {
                         }
                         // `@PLN206 P5` — a library the C writer declines has no unit: it runs
                         // interpreted, answering the same.  Said, and not a failure.
-                        Err(e)
-                            if loft::c::hosted::selected()
-                                && e.starts_with(loft::c::hosted::REFUSED) =>
-                        {
+                        Err(e) if e.starts_with(loft::c::hosted::REFUSED) => {
                             println!("interpreted: {e}");
                         }
                         Err(e) => {
@@ -10535,9 +10467,8 @@ fn main() {
     // N1/Phase D).
     // `LOFT_NO_NATIVE_LIBS=1` forces ALL `use`d libraries to interpret — the parity
     // reference (a library run native ≡ run interpreted) and a manual escape hatch.
-    // A hosted C unit (`LOFT_LIB_BACKEND=c`, @PLN206 P4) needs no rustc.
-    let native_libs_off = std::env::var_os("LOFT_NO_NATIVE_LIBS").is_some()
-        || (loft::native_build::rustc_off() && !loft::c::hosted::selected());
+    // A library compiles to a hosted C unit (@PLN206); no rustc takes part.
+    let native_libs_off = std::env::var_os("LOFT_NO_NATIVE_LIBS").is_some();
     let force_build_fail = std::env::var_os("LOFT_FORCE_NATIVE_BUILD_FAIL").is_some();
     // Crawler / efficiency aid (`LOFT_REQUIRE_NATIVE=1`, the inverse of
     // `LOFT_NO_NATIVE_LIBS`): turn every native→interpreter fallback below into a
@@ -10574,10 +10505,6 @@ fn main() {
     // and says so; a warm load would replay the marks without the notice, so such a run is
     // not cached.
     let mut any_partial_native = false;
-    // loft#706's heal, for a library: a crate the runtime rlib links rebuilt after it (E0460)
-    // or by another rustc (E0514) fails every library's cdylib with the library blamed.  The
-    // runtime is rebuilt once per run, and the library tried again.
-    let mut lib_runtime_rebuilt = false;
     // #460 — never auto-native-compile the package that OWNS the entry file: that
     // package is the *script* being run, not a `use`d library, and the model is
     // "libraries compile, scripts interpret".  Its export set is entry-point
@@ -10597,7 +10524,6 @@ fn main() {
         extensions::preload_native_libs(&mut p.data, &hand_written);
     }
     for pkg_dir in &pending_native {
-        loft::interp::native_adopt::scope_library(pkg_dir);
         if file_access::is_under(&abs_file, pkg_dir) {
             continue;
         }
@@ -10636,7 +10562,7 @@ fn main() {
         let export = loft::native_lib::library_export_set(&p.data, pkg_dir);
         // `@PLN206 P4` — a hosted C unit carries the functions its bridge carries; the rest
         // of the library interprets, and is neither built nor marked.
-        let export = if loft::c::hosted::selected() {
+        let export = {
             let (carried, declined) = loft::c::hosted::hosted_split(&p.data, &p.database, &export);
             // The unit's reach, under the switch that reads what crossed it.
             if loft::keys::hosted_verify() {
@@ -10678,8 +10604,6 @@ fn main() {
                 );
             }
             carried
-        } else {
-            export
         };
         if export.is_empty() {
             continue;
@@ -10691,56 +10615,17 @@ fn main() {
             lib_dirs: p.lib_dirs.clone(),
             scope_entry: Some(abs_file.clone()),
         };
-        let mut built = if force_build_fail {
+        let built = if force_build_fail {
             Err("LOFT_FORCE_NATIVE_BUILD_FAIL".to_string())
         } else {
             loft::native_artifact::cached_or_build_shared_cdylib(
                 &p.data,
-                &p.database,
                 &export,
                 pkg_dir,
                 &pending_native,
                 &lib_context,
             )
         };
-        if let Err(e) = &built
-            && !lib_runtime_rebuilt
-            && native_utils::crate_resolution_failure(e)
-            && let Some(tree) = native_utils::loft_source_tree()
-        {
-            lib_runtime_rebuilt = true;
-            if native_utils::rebuild_runtime(
-                &tree,
-                "a crate the runtime rlib links was rebuilt after it, or by another rustc",
-            ) {
-                built = loft::native_artifact::cached_or_build_shared_cdylib(
-                    &p.data,
-                    &p.database,
-                    &export,
-                    pkg_dir,
-                    &pending_native,
-                    &lib_context,
-                );
-            }
-        }
-        // No C compiler to build a hosted unit with: the rustc artifact instead — one the
-        // release shipped for this loft, or built where rustc is — and interpreted otherwise,
-        // said as that route says it.
-        if let Err(e) = &built
-            && loft::c::hosted::selected()
-            && e.starts_with(loft::c::hosted::NO_COMPILER)
-        {
-            loft::keys::set_lib_rust_crate(true);
-            let export = loft::native_lib::library_export_set(&p.data, pkg_dir);
-            built = loft::native_artifact::cached_or_build_shared_cdylib(
-                &p.data,
-                &p.database,
-                &export,
-                pkg_dir,
-                &pending_native,
-                &lib_context,
-            );
-        }
         match built {
             Ok(Some(so)) => {
                 // loft#831 — the build succeeding does not mean this process can
@@ -10823,75 +10708,48 @@ fn main() {
                 any_dev_interpret = true;
             }
             Err(e) => {
-                // The fallback rule: interpreting a library instead of building it
-                // native is graceful ONLY when native is impossible here — i.e. there
-                // is no Rust toolchain.  When `rustc` IS installed, a failed native
-                // build is a REAL failure: silently interpreting it would hand back a
-                // partly-interpreted binary (or one whose `#native` functions panic at
-                // runtime) while the caller asked for native.  So hard-fail when a
-                // toolchain is present (and always under LOFT_REQUIRE_NATIVE); fall back
-                // only when there is genuinely no toolchain to build with.
-                // `@PLN206 P5` — a hosted C unit the writer declined: the library interprets,
-                // as each function the bridge declines does (only `LOFT_REQUIRE_NATIVE` asks
-                // otherwise).  A unit `cc` refused is a writer defect, and fails below.
-                // No C compiler to build with: the library interprets too, and the one thing to
-                // do about it is said.
-                if !native_required
-                    && loft::c::hosted::selected()
-                    && e.starts_with(loft::c::hosted::REFUSED)
-                {
+                // `@PLN206` — a library the C writer declines interprets, as each function the
+                // bridge declines does (only `LOFT_REQUIRE_NATIVE` asks otherwise); with no C
+                // compiler to build with it interprets too, and the one thing to do about it is
+                // said.  Anything else — `cc` refusing a unit the writer made — is a defect, and
+                // stops the run rather than hand back a partly-interpreted one.
+                if !native_required && e.starts_with(loft::c::hosted::REFUSED) {
                     if loft::keys::hosted_verify() {
                         eprintln!("loft: library '{pkg_dir}' runs interpreted this run — {e}");
                     }
                     continue;
                 }
-                if !native_required
-                    && loft::c::hosted::selected()
-                    && e.starts_with(loft::c::hosted::NO_COMPILER)
-                {
+                if !native_required && e.starts_with(loft::c::hosted::NO_COMPILER) {
+                    if std::env::var_os("LOFT_TRACE_NATIVE_GATE").is_some() {
+                        eprintln!(
+                            "[native-gate] {}: interpreted — no compiled unit for this loft and \
+                             no C compiler",
+                            loft::file_access::file_name(pkg_dir).unwrap_or_default()
+                        );
+                    }
                     eprintln!(
                         "loft: library '{pkg_dir}' runs interpreted: install a C compiler (cc) \
                          to run it compiled."
                     );
                     continue;
                 }
-                if native_required || loft::native_lib::rustc_available() {
-                    let why = if native_required {
-                        "LOFT_REQUIRE_NATIVE is set"
-                    } else {
-                        "rustc is installed, so this is a real build failure, not a \
-                         missing-toolchain fallback"
-                    };
-                    // Name the escape hatch that actually applies.  `--interpret`
-                    // chooses the interpreter for the PROGRAM; a `use`d library
-                    // still builds its cdylib, so advising it sent a blocked
-                    // reader nowhere — the failing command already was
-                    // `--interpret` (loft#815).  `LOFT_NO_NATIVE_LIBS=1` is the
-                    // switch that makes every library interpret.
-                    eprintln!(
-                        "loft: library '{pkg_dir}' failed to build native ({e}).\n\
-                         {why} — refusing to silently interpret it (that would hand back a \
-                         partly-interpreted binary, or one whose #native functions panic \
-                         when called).  Fix the library's native build, or set \
-                         LOFT_NO_NATIVE_LIBS=1 to run every `use`d library interpreted on \
-                         purpose (--interpret alone does not: it selects the interpreter \
-                         for your program, while a library still builds its cdylib)."
-                    );
-                    std::process::exit(1);
-                }
-                if std::env::var_os("LOFT_TRACE_NATIVE_GATE").is_some() {
-                    // @PLN199 G3b — the partition trace names why the whole library is
-                    // interpreted: no artifact built by this loft, and no `rustc` to build one.
-                    eprintln!(
-                        "[native-gate] {}: interpreted — no compiled artifact for this loft and \
-                         no rustc",
-                        loft::file_access::file_name(pkg_dir).unwrap_or_default()
-                    );
-                }
+                let why = if native_required {
+                    "LOFT_REQUIRE_NATIVE is set"
+                } else {
+                    "a C compiler is installed, so this is a real build failure"
+                };
+                // Name the escape hatch that actually applies.  `--interpret` chooses the
+                // interpreter for the PROGRAM; a `use`d library still builds its unit, so
+                // advising it sent a blocked reader nowhere (loft#815).
                 eprintln!(
-                    "loft: library '{pkg_dir}' has no native build and no Rust toolchain to \
-                     build one ({e}); interpreting it.  Install rustc for a native build."
+                    "loft: library '{pkg_dir}' failed to build native ({e}).\n\
+                     {why} — refusing to silently interpret it (that would hand back a \
+                     partly-interpreted program).  Set LOFT_NO_NATIVE_LIBS=1 to run every \
+                     `use`d library interpreted on purpose (--interpret alone does not: it \
+                     selects the interpreter for your program, while a library still builds \
+                     its unit)."
                 );
+                std::process::exit(1);
             }
         }
     }

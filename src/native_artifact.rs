@@ -45,20 +45,17 @@ use std::collections::HashSet;
 /// Propagates a build failure from [`build_shared_cdylib`](crate::native_lib::build_shared_cdylib).
 pub fn cached_or_build_shared_cdylib(
     data: &Data,
-    stores: &Stores,
     export_set: &HashSet<u32>,
     pkg_dir: &str,
     pending: &[String],
     context: &LibraryContext,
 ) -> Result<Option<std::path::PathBuf>, String> {
-    match crate::interp::native_adopt::adopt_shared_cdylib(
-        data, stores, export_set, pkg_dir, pending,
-    )? {
+    match crate::interp::native_adopt::adopt_shared_cdylib(data, export_set, pkg_dir, pending)? {
         Adopt::Fresh(so) => Ok(Some(so)),
         Adopt::Interpret => Ok(None),
-        // `@PLN206 P4` — a hosted C unit, which works on this interpreter's stores, instead of
-        // a rustc artifact (`LOFT_LIB_BACKEND=c`).
-        Adopt::Build(key) if crate::c::hosted::selected() => {
+        // `@PLN206` — a library's compiled form is a hosted C unit, which works on this
+        // interpreter's stores; no rustc takes part.
+        Adopt::Build(key) => {
             let mut alone = parse_library_alone(
                 pkg_dir,
                 &context.default_dir,
@@ -67,7 +64,7 @@ pub fn cached_or_build_shared_cdylib(
             )?;
             let export = alone.export.clone();
             let p = &mut alone.parser;
-            crate::c::hosted::build_artifact(
+            let built = crate::c::hosted::build_artifact(
                 &mut p.data,
                 &mut p.database,
                 &export,
@@ -75,19 +72,16 @@ pub fn cached_or_build_shared_cdylib(
                 &key.out_dir,
                 &key.stem,
                 key.fp,
-            )
-            .map(Some)
+            )?;
+            crate::cache::write_native_artifact_fingerprint(&key.out_dir, key.fp);
+            // Bound the directory while the build lock is still held: a unit appears per key
+            // (a loft, a switch), and nothing else collects the old ones.
+            crate::native_lib::prune_artifacts(
+                &key.out_dir,
+                &crate::opt::native_key::auto_cdylib_stem(pkg_dir),
+            );
+            Ok(Some(built))
         }
-        Adopt::Build(key) => crate::native_lib::build_shared_artifact(
-            data,
-            stores,
-            export_set,
-            pkg_dir,
-            &key.out_dir,
-            &key.stem,
-            key.fp,
-        )
-        .map(Some),
     }
 }
 
@@ -128,43 +122,18 @@ pub fn adopt_for_session(parser: &mut crate::parser::Parser, entry: &str, defaul
         {
             continue;
         }
-        crate::interp::native_adopt::scope_library(pkg_dir);
-        let export_of = |p: &crate::parser::Parser| {
-            let export = crate::native_lib::library_export_set(&p.data, pkg_dir);
-            if crate::c::hosted::selected() {
-                crate::c::hosted::hosted_split(&p.data, &p.database, &export).0
-            } else {
-                export
-            }
-        };
-        let mut export = export_of(parser);
+        let export = crate::native_lib::library_export_set(&parser.data, pkg_dir);
+        let export = crate::c::hosted::hosted_split(&parser.data, &parser.database, &export).0;
         if export.is_empty() {
             continue;
         }
-        let mut built = cached_or_build_shared_cdylib(
+        let built = cached_or_build_shared_cdylib(
             &parser.data,
-            &parser.database,
             &export,
             pkg_dir,
             &pending,
             &context,
         );
-        // No C compiler: the rustc artifact, as a plain run takes it.
-        if let Err(e) = &built
-            && crate::c::hosted::selected()
-            && e.starts_with(crate::c::hosted::NO_COMPILER)
-        {
-            crate::keys::set_lib_rust_crate(true);
-            export = export_of(parser);
-            built = cached_or_build_shared_cdylib(
-                &parser.data,
-                &parser.database,
-                &export,
-                pkg_dir,
-                &pending,
-                &context,
-            );
-        }
         if let Ok(Some(so)) = built {
             let probe = crate::interp::native_adopt::probe_and_mark_exports(
                 &mut parser.data,
@@ -177,7 +146,6 @@ pub fn adopt_for_session(parser: &mut crate::parser::Parser, entry: &str, defaul
             }
         }
     }
-    crate::keys::set_lib_rust_crate(false);
 }
 
 /// `@PLN206 P7` — `loft debug --native`: the program's own functions, `main` aside, built as one
@@ -191,8 +159,7 @@ pub fn adopt_for_session(parser: &mut crate::parser::Parser, entry: &str, defaul
 /// (`debug-units/`).  Answers how many functions now run compiled.
 ///
 /// # Errors
-/// When the program does not parse alone, the unit does not build, or the libraries run on the
-/// rustc route (`LOFT_LIB_BACKEND=rust`), which has no hand-over.
+/// When the program does not parse alone, or the unit does not build.
 pub fn adopt_program_for_session(
     parser: &mut crate::parser::Parser,
     path: &str,
@@ -200,10 +167,6 @@ pub fn adopt_program_for_session(
 ) -> Result<usize, String> {
     use crate::file_access as fa;
     let default_dir_given = default_dir;
-    crate::keys::set_lib_rust_crate(false);
-    if !crate::c::hosted::selected() {
-        return Err("the libraries are built by rustc here (LOFT_LIB_BACKEND)".into());
-    }
     let entry = fa::plain_canonical(std::path::Path::new(path));
     let program_dir = entry
         .parent()

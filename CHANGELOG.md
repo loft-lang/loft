@@ -39,8 +39,11 @@ it, working on the same data, with the same answers.  A release ships these buil
 published libraries, so `loft install` gives a machine with no C compiler the compiled library
 too; a library with no build for your loft runs interpreted.  `loft build-native <package>`
 compiles it ahead of time, so a machine with no C compiler runs that build, its `[c] shim`
-included.  `LOFT_HOSTED_VERIFY=1` runs each call both ways and stops at the first that differs,
-and `LOFT_LIB_BACKEND=rust` keeps the Rust build.  Under `loft debug` the libraries run compiled
+included.  `LOFT_HOSTED_VERIFY=1` runs each call both ways and stops at the first that differs.
+**No library is built through rustc any more**: `LOFT_LIB_BACKEND=rust` is gone, a machine with
+no C compiler and no shipped build runs the library interpreted, and `loft build-native` builds
+only the C form — a library's own native code is C (a `[c] shim`).  A hand-written Rust
+`[library] native` cdylib still loads where cargo builds it, but its library is not compiled.  Under `loft debug` the libraries run compiled
 too: a library function with a breakpoint in it, or one you step into, runs in the interpreter so
 the debugger can stop there, and the functions it calls stay compiled.  Pausing a program while a
 compiled library function runs moves that function into the interpreter at the top of its

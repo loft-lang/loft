@@ -13,7 +13,7 @@
 `loft test` interprets a library from its source, so a library's own suite never crosses the
 compiled unit.  This runs each test file as a consumer program instead: a file with no `main`
 gets one that calls its `test_*` functions in order.  The first run interprets everything; the
-second adopts each library's hosted unit (`LOFT_LIB_BACKEND=c`, the default) with `LOFT_HOSTED_VERIFY` and `LOFT_POISON_CLAIM`, so every
+second adopts each library's hosted unit with `LOFT_HOSTED_VERIFY` and `LOFT_POISON_CLAIM`, so every
 call into the unit is also run interpreted on a copy of the world and compared (`P4d`).
 
 A file is
@@ -109,14 +109,14 @@ def shadow_of(pkg, work):
 
 def judge(loft, libs, pkg, name, path, timeout):
     base = {**os.environ, "LOFT_NO_RUSTC": "1", "LOFT_HASH_SEED": "0x9E3779B97F4A7C15"}
-    for k in ("LOFT_LIB_BACKEND", "LOFT_HOSTED_VERIFY", "LOFT_POISON_CLAIM"):
+    for k in ("LOFT_HOSTED_VERIFY", "LOFT_POISON_CLAIM"):
         base.pop(k, None)
     # Every library interpreted: a `use`d library runs as a hosted unit by default.
     code_i, out_i, err_i = run(loft, libs, path, {**base, "LOFT_NO_NATIVE_LIBS": "1"}, timeout, pkg)
     if code_i != 0:
         tail = (err_i.strip().splitlines() or ["?"])[-1][:160]
         return name, "skipped", f"interpreted exit {code_i}: {tail}", None
-    adopted = {**base, "LOFT_LIB_BACKEND": "c", "LOFT_HOSTED_VERIFY": "1", "LOFT_POISON_CLAIM": "1"}
+    adopted = {**base, "LOFT_HOSTED_VERIFY": "1", "LOFT_POISON_CLAIM": "1"}
     if PREBUILT:
         # No C compiler: only a unit `loft build-native` made beforehand can be adopted.
         adopted["PATH"] = NO_CC

@@ -20,7 +20,7 @@ use crate::native_gate::BridgeAttrKind;
 use std::collections::HashSet;
 use std::fmt::Write as _;
 
-pub use crate::keys::{hosted_planted as planted, lib_backend_c as selected, poison_claim};
+pub use crate::keys::{hosted_planted as planted, poison_claim};
 
 /// What the unit is told about the interpreter it runs in, as `#define`s before the runtime:
 /// the length of a `Store`'s own fields, the `HostTable` it is handed, and where a `LibArg`

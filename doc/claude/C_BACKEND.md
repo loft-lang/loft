@@ -660,12 +660,13 @@ interpreter (`HostTable::hosted`), and the unit reads the store table in place
   or by the first run that adopts the library.  A release ships each published library's unit
   for each platform (`scripts/release-lib-artifacts.sh`, P6), which `loft install` fetches, so a
   machine with no C compiler runs it compiled.  With no C compiler and no unit, the library
-  takes the rustc artifact one rustc builds, and interprets otherwise.  A `[c] shim` package
-  needs a C compiler for its shim on any backend.  A package whose native part is a Rust
-  crate (`[native] crate`, no `[c] shim`) takes the rustc artifact
-  (`keys::set_lib_rust_crate`); a `[native] component` is a C library the unit calls.  It lands in
-  the package's `native-auto/` under a name that carries the loft binary, the library's sources
-  and the build switches; any program run by that loft adopts it, whichever built it.
+  interprets.  No rustc takes part: a library never resolves to a rustc-built artifact
+  (`tests/lib_rustc_free.rs`).  A `[c] shim` package needs a C compiler for its shim on any
+  backend; a `[native] component` is a C library the unit calls.  A function that calls a
+  Rust-only native (a hand-written `[library] native` cdylib) is not carried, and its library
+  interprets with that cdylib loaded.  The unit lands in the package's `native-auto/` under a
+  name that carries the loft binary, the library's sources and the build switches; any program
+  run by that loft adopts it, whichever built it, and the directory keeps the newest eight.
 - **Generated from the library alone** (`native_artifact::parse_library_alone`, the program
   `use <name>;`), so the unit is the same text wherever it is built: its sources are named from
   the package's parent directory (`Cx::source_name`), its constants built with it.  Its types
@@ -708,7 +709,6 @@ interpreter (`HostTable::hosted`), and the unit reads the store table in place
 
 | Switch / tool | What it does |
 |---|---|
-| `LOFT_LIB_BACKEND=rust` | build and adopt a `use`d library as a rustc artifact instead of a hosted unit |
 | `LOFT_HOSTED_VERIFY=1` | each call into a compiled library artifact also runs interpreted, on a copy of the world taken before it; the stores (bytes, then value, then root type) and the answer must agree.  Reports the unit's reach and the calls compared.  Compares each function's first 64 calls, then its 128th, 256th, …; `=all` compares every call.  A call reaching state outside the stores (a C function, a file, the clock) is made once and counted |
 | `LOFT_HOSTED_VERIFY_CONTROL=1` | the verify's control: the call interpreted on both sides, so a difference is the copy's |
 | `LOFT_HOSTED_PLANT=1` | builds a unit whose first record call writes one stray byte: the verify must name that call |

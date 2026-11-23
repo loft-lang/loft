@@ -10,7 +10,7 @@ interpreted, against a baseline that only shrinks (@PLN206 coverage).
     scripts/hosted_coverage.py --baseline FILE ...             # default: scripts/hosted_coverage.baseline
     scripts/hosted_coverage.py --loft PATH ...                 # default: target/release/loft
 
-Each package is built as a hosted C unit (`loft build-native`; `LOFT_LIB_BACKEND=c` is the default), which
+Each package is built as a hosted C unit (`loft build-native`), which
 names every public function the C bridge does not carry and why (`interpreted: <name>\\t<why>`):
 such a function runs interpreted under a program that adopts the library, answering the same,
 only slower.  A package whose native part is a Rust crate (`[native] crate`) has no unit at all until
@@ -38,25 +38,12 @@ def package_name(pkg):
     return m.group(1) if m else os.path.basename(pkg)
 
 
-def rust_crate(pkg):
-    """Is the package's native part a Rust crate (`[native] crate = …`)?  A `[native] component`
-    is a C-ABI library loft ships beside its binary, which a unit calls like any C function."""
-    section = None
-    for line in open(os.path.join(pkg, "loft.toml"), encoding="utf-8"):
-        line = line.strip()
-        if line.startswith("["):
-            section = line
-        elif section == "[native]" and re.match(r"crate\s*=", line):
-            return True
-    return False
-
-
 def measure(loft, libs, pkg):
     """`({function: why}, None)`, or `(None, why not measured)`."""
     args = [loft]
     for lib in libs:
         args += ["--lib", lib]
-    env = {**os.environ, "LOFT_LIB_BACKEND": "c", "LOFT_NO_RUSTC": "1"}
+    env = {**os.environ, "LOFT_NO_RUSTC": "1"}
     r = subprocess.run(args + ["build-native", pkg], capture_output=True, text=True, env=env, timeout=900)
     out = {}
     for line in r.stdout.splitlines():
@@ -115,14 +102,10 @@ def main():
             pkgs.append(os.path.abspath(a))
     base = read_baseline(baseline)
     failed = 0
-    totals, owed = {}, []
+    totals = {}
     for pkg in pkgs:
         name = package_name(pkg)
         if name is None:
-            continue
-        if rust_crate(pkg):
-            owed.append(name)
-            print(f"{name}: a Rust native crate — no C unit until it has a [c] shim")
             continue
         now, why_not = measure(loft, libs, pkg)
         if now is None:
@@ -159,8 +142,6 @@ def main():
     print()
     for why, n in sorted(totals.items(), key=lambda kv: -kv[1]):
         print(f"interpreted  {n:5}  {why}")
-    if owed:
-        print(f"owe a [c] shim: {', '.join(owed)}")
     return 1 if failed else 0
 
 

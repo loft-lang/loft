@@ -26,7 +26,7 @@ python3 scripts/c_alloc_diff.py --attribute FILE…   # allocator events, interp
 python3 scripts/store_diff.py --attribute FILE…     # every store's final bytes, the same pair
 python3 scripts/store_diff.py --plant FILE          # its positive control
 python3 scripts/hosted_suite.py --lib ROOT… PKG…   # a library's tests, interpreted and adopted
-LOFT_LIB_BACKEND=c LOFT_HOSTED_VERIFY=1 LOFT_POISON_CLAIM=1 loft --interpret --lib DIR prog.loft
+LOFT_HOSTED_VERIFY=1 LOFT_POISON_CLAIM=1 loft --interpret --lib DIR prog.loft
 ```
 
 The two Python tools need the op-census build

@@ -65,33 +65,12 @@ in gzip + tar headers).  The sha256 is stable across
 machines; the registry's gate-3 re-runs `loft package` from
 the tagged source to verify byte-for-byte equality.
 
-**Prebuilt cdylibs (@PLN21) — the producer is shipped, and no library calls it
-yet.**  The distribution half (workflow artefacts into `index.json`
-`binaries[<triple>]`) is open ([PACKAGES.md](PACKAGES.md) § PKG.PREBUILT), so
-today a consumer builds a native library from source on first use.  A *native*
-library adopts it by calling the reusable producer workflow, so a consumer can
-`use` it with **no Rust toolchain** and a broken host build is caught before merge:
-
-```yaml
-# .github/workflows/prebuild.yml
-on:
-  pull_request:
-    paths: ['native/**', 'loft.toml']   # PR → validate it builds on every host
-  push:
-    tags: ['*-v*']                      # a `<name>-v<version>` tag → build + attach
-jobs:
-  prebuild:
-    uses: loft-lang/loft/.github/workflows/prebuild-native.yml@main
-    with:
-      publish: ${{ startsWith(github.ref, 'refs/tags/') }}
-```
-
-On a PR it builds the cdylib per host triple (a validation
-gate); on the tag it attaches each `lib<stem>.<ext>` to the
-release and prints the `binaries[<triple>]` entry (with its
-`loft_ffi_fp`) to paste into the registry PR below.  Prebuilts
-are optional and per-platform: ship the common targets, others
-fall back to a source build on first use.
+**Compiled libraries need nothing from you.**  A library's compiled form is its hosted C
+unit: each loft release builds the units of every published library with the loft it ships
+(`scripts/release-lib-artifacts.sh`), and its registry row lists them, so `loft install` gives
+a machine with no C compiler the compiled library.  A library's own native code is C (a
+`[c] shim`); a hand-written Rust cdylib (`[library] native`) is not prebuilt, and is built from
+source on first use where cargo is installed ([PACKAGES.md](PACKAGES.md) § PKG.PREBUILT).
 
 ### 4c. Emit the registry entry
 

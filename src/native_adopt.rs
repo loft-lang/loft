@@ -16,9 +16,8 @@ use crate::host_abi::LAYOUT_FP_SYMBOL;
 use crate::host_abi::{HOST_ABI, HostTable, LibArg};
 use crate::keys::DbRef;
 use crate::opt::native_key::{
-    artifact_sources, auto_cdylib_stem, contributing_fingerprint, fn_numbering_fingerprint,
+    artifact_sources, auto_cdylib_stem, contributing_fingerprint,
     library_export_set, mix_fp, platform_cdylib_name, source_content_hash, source_newer_than,
-    type_layout_fingerprint,
 };
 use std::collections::HashSet;
 
@@ -729,17 +728,6 @@ pub(crate) fn report_unprobeable(so: &std::path::Path, why: &str) {
     );
 }
 
-/// Scope the library backend to the package built or adopted next: one whose native part is a
-/// Rust crate (`[native] crate`, no `[c] shim`) takes the rustc artifact, every other a hosted C
-/// unit (`keys::lib_backend_c`).  A `[native] component` reads as a crate to the manifest's
-/// other readers, but is a C library the unit calls.
-pub fn scope_library(pkg_dir: &str) {
-    let rust = crate::manifest::read_manifest(&format!("{pkg_dir}/loft.toml")).is_some_and(|m| {
-        m.native_crate.is_some() && m.native_component.is_none() && m.c_shim.is_empty()
-    });
-    crate::keys::set_lib_rust_crate(rust);
-}
-
 /// What a run does with a library's compiled artifact.
 pub enum Adopt {
     /// An artifact built for this program and this loft: dispatch to it.
@@ -770,7 +758,6 @@ pub struct ArtifactKey {
 /// When the package's `native-auto/` directory or its build lock cannot be made.
 pub fn adopt_shared_cdylib(
     data: &Data,
-    stores: &Stores,
     export_set: &HashSet<u32>,
     pkg_dir: &str,
     pending: &[String],
@@ -782,26 +769,16 @@ pub fn adopt_shared_cdylib(
     // them, reused by a consumer whose table differs, read the WRONG type and corrupted
     // (the moros GLB header wrote 8-byte fields for `as i32` → version 0).  A literal build
     // still folds the caller's layout into its key for that reason.
-    let layout_fp = type_layout_fingerprint(stores);
-    // @PLN199 G0c — an artifact that names its ids by key (`lib_ids`) runs in any program
-    // that has those keys, so neither the program's type table nor its function numbering is
-    // part of what it is built for: the loft that built it and the sources it carries are.
-    // A literal build (`LOFT_NO_LIB_IDS=1`) still serves one program, and keeps both.
     // A hosted C unit (`@PLN206 P5`) names types by the numbers of the program that generated it
     // and translates them by key where they cross into the stores (`loft_tp_out`, `loft_tp_in`),
-    // so it runs in any program, as a keyed rustc artifact does; it is a different artifact
-    // from a rustc one, and from a unit built with the verify's switches or without its
-    // safepoints (`LOFT_NO_HANDOVER`): its own key.
-    let hosted = crate::keys::lib_backend_c();
-    let program_fp = if hosted {
-        1 | (u64::from(crate::keys::poison_claim()) << 1)
-            | (u64::from(crate::keys::hosted_planted()) << 2)
-            | (u64::from(crate::keys::no_handover()) << 3)
-    } else if std::env::var_os("LOFT_NO_LIB_IDS").is_some() {
-        mix_fp(layout_fp, fn_numbering_fingerprint(data, export_set))
-    } else {
-        0
-    };
+    // so it runs in any program: neither the program's type table nor its function numbering is
+    // part of what it is built for, only the loft that built it and the sources it carries.  A
+    // unit built with the verify's switches or without its safepoints (`LOFT_NO_HANDOVER`) is
+    // another artifact: its own key.
+    let program_fp = 1
+        | (u64::from(crate::keys::poison_claim()) << 1)
+        | (u64::from(crate::keys::hosted_planted()) << 2)
+        | (u64::from(crate::keys::no_handover()) << 3);
     // And WHICH packages were compiled in.  The artifact carries the code of every library
     // it reaches, a dependency's included, so two runs that resolved `use probepkg` to
     // different versions build different libraries — with the SAME layout when the versions

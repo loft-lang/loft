@@ -103,10 +103,13 @@ impl Scratch {
         fa::read_to_string(self.root.join("calls.log")).unwrap_or_default()
     }
 
+    /// Did the run build a C unit for the package: its `.c` and the shared library compiled
+    /// from it (the `.c` is written before the compiler is asked, so it alone proves nothing).
     fn built_c_unit(&self, name: &str) -> bool {
-        fa::read_dir(self.root.join("lib").join(name).join("native-auto"))
-            .map(|es| es.iter().any(|e| fa::has_extension(e.os_spelling(), "c")))
-            .unwrap_or(false)
+        let entries = fa::read_dir(self.root.join("lib").join(name).join("native-auto"))
+            .unwrap_or_default();
+        let has = |ext: &str| entries.iter().any(|e| fa::has_extension(e.os_spelling(), ext));
+        has("c") && has(loft::platform::dll_extension())
     }
 
     fn clear(&self, name: &str) {
