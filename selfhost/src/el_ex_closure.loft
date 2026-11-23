@@ -223,7 +223,7 @@ fn rust_mutated_captures(e: el::El, d: integer, caps: vector<el::Capture>, body:
   code = def.code[0] ?? ir::NdNull;
   // (The captures the body writes — Rust's placeholders, which this port does not make — asked
   // by name, then the variables the walk finds written.)
-  out: vector<text> = [for mc in caps if writes_a_name(e, body, [mc]) { mc.name }];
+  out: vector<text> = [for mc in caps if writes_rooted(e, body, mc.name) { mc.name }];
   if el_ir::is_null(code) {
     return out;
   }
@@ -770,6 +770,30 @@ pub fn captured_names(e: el::El, vars: el_vars::Vars, n: integer, own: vector<te
 }
 
 // Does the syntax at `n` assign, step or link one of `caps` by name?
+// `walk_for_mutations` on a placeholder: does the body write `name` — assigned whole, or a part of
+// it written through an index or a field (`seen[x] += 1`, `s.f = v`: the accessor chain's
+// root)?  Apart from `writes_a_name`, which decides the cells and asks the whole name only.
+fn writes_rooted(e: el::El, n: integer, name: text) -> boolean {
+  target = match e.p.nodes[n] {
+    SAssign { target: t } => t,
+    _ => -1
+  };
+  while target >= 0 {
+    match e.p.nodes[target] {
+      SName { name: tn, member: tm } => { return tm == "" && tn == name; },
+      SIndex { e: ie } => { target = ie ?? -1; },
+      SMember { e: me, call } => { target = if call { -1 } else { me ?? -1 }; },
+      _ => { target = -1; }
+    }
+  }
+  for c in el_length::children(e, n) {
+    if writes_rooted(e, c, name) {
+      return true;
+    }
+  }
+  false
+}
+
 pub fn writes_a_name(e: el::El, n: integer, caps: vector<el::Capture>) -> boolean {
   target = match e.p.nodes[n] {
     SAssign { target: t } => t,
