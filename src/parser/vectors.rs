@@ -1989,10 +1989,9 @@ or build a local and use that."
         // right attribute type (auto-Reference for mutated
         // Reference captures vs inline-bytes for everything else).
         // The collect helper accepts a missing closure_record and
-        // derives captured names from the lambda's variable table
-        // in that case.
+        // takes the lambda's capture list instead.
         if !self.captured_names.is_empty() {
-            collect_mutated_captures(&mut self.data, d_nr);
+            collect_mutated_captures(&mut self.data, d_nr, &self.captured_names);
             // Plan-22 phase 02d-i (2026-05-12): accumulate scalar
             // mutated-captures onto the parent function's
             // `scalars_to_box` field.  Phase 02d-iii will use this
@@ -2440,10 +2439,9 @@ or build a local and use that."
         // right attribute type (auto-Reference for mutated
         // Reference captures vs inline-bytes for everything else).
         // The collect helper accepts a missing closure_record and
-        // derives captured names from the lambda's variable table
-        // in that case.
+        // takes the lambda's capture list instead.
         if !self.captured_names.is_empty() {
-            collect_mutated_captures(&mut self.data, d_nr);
+            collect_mutated_captures(&mut self.data, d_nr, &self.captured_names);
             // Plan-22 phase 02d-i (2026-05-12): accumulate scalar
             // mutated-captures onto the parent function's
             // `scalars_to_box` field.  Phase 02d-iii will use this
@@ -9861,40 +9859,21 @@ fn accumulate_scalars_to_box(
 /// Detection-only: no IR rewrite, no codegen change, no behavior
 /// difference between this commit and the prior state.  The
 /// stored result is consulted by later phases.
-fn collect_mutated_captures(data: &mut crate::data::Data, lambda_d_nr: u32) {
-    // Plan-22 phase 02c (2026-05-12): the captured-name list comes
-    // from EITHER the closure record's attributes (when synthesize
-    // ran first — the original phase 01 path) OR from the lambda's
-    // variables that match a synthesized `__closure_<N>` struct
-    // name pattern (not currently used).  The phase-02c flow runs
-    // collect_mutated_captures BEFORE synthesize, so we accept the
-    // closure_record == MAX case as "not yet built; no names from
-    // there" and fall through to using the variables table.
-    //
-    // Phase 01's existing API stays compatible: when synthesize has
-    // already run, this function uses the closure record's
-    // attributes (the original behaviour).
+fn collect_mutated_captures(
+    data: &mut crate::data::Data,
+    lambda_d_nr: u32,
+    captures: &[(String, Type)],
+) {
+    // The candidates are the lambda's CAPTURES: the closure record's attributes once
+    // `synthesize_closure_record` has built it, else the parser's capture list for this lambda
+    // (`captured_names`), which is what that record is built from.  Never the lambda's whole
+    // variable table: its own locals and temporaries (`i`, `_ncr_1`, `__ncc_1`, `_elm_1`) are
+    // no captures, and listed as mutated they read as written to a caller matching names
+    // (`lambda_mutated_captures`) and differ from the self-hosted front end (@PLN91 R2).
     let closure_d_nr = data.def(lambda_d_nr).closure_record();
     let variables = data.def(lambda_d_nr).variables().clone();
     let captured_names: Vec<String> = if closure_d_nr == u32::MAX {
-        // Pre-synthesize call site — derive captured names from the
-        // lambda's variable table.  Captured names are local
-        // placeholder vars created in objects.rs:187 / control.rs:3614
-        // during body parsing.  Filter out `__closure` (the closure
-        // param), `__work*` (text work buffers), and any argument.
-        // The body walker then double-filters via the captured_names
-        // membership check in `mark()`, so over-inclusion here is
-        // safe (just spurious work).
-        (0..variables.count())
-            .filter_map(|v| {
-                let name = variables.name(v);
-                if name == "__closure" || name.starts_with("__work") || variables.is_argument(v) {
-                    None
-                } else {
-                    Some(name.to_string())
-                }
-            })
-            .collect()
+        captures.iter().map(|(n, _)| n.clone()).collect()
     } else {
         data.def(closure_d_nr)
             .attributes
