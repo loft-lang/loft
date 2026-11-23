@@ -2032,10 +2032,16 @@ pub fn vector_value(e: el::El, vars: el_vars::Vars, n: integer, hinted: boolean 
   if e.first_pass && vars.recv_literal == n && match e.p.nodes[n] { SVecLit { items: ri } => len(ri) > 0, _ => false } {
     pre = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [] });
   }
-  if vars.recv_literal == n {
+  is_recv = vars.recv_literal == n;
+  if is_recv {
     vars.recv_literal = -1;
   }
   v = el_vars::create_unique(vars, "vec", ir::TyVector { inner: ir::TyUnknown { n: 0 }, dep: [] });
+  // (`parse_single`'s receiver rename: the literal a bind's chain starts with is read through a
+  // receiver of its own, an inline ref — its null init mints no store.)
+  if is_recv {
+    el_vars::mark_inline(vars, v, "parse_single");
+  }
   vector_build(e, vars, v, n, elem, value: true, hinted: hinted, borrows: borrows, at_close: !el_types::is_unknown(elem), elm_made: pre)
 }
 

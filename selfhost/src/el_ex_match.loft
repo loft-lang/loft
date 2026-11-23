@@ -534,6 +534,11 @@ pub fn for_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
   vec = if par == null && in_type is TyUnknown && !(e.p.nodes[source] is SVecLit) { -1 } else { el_vars::create_unique(vars, "vector", in_type) };
   if !e.first_pass {
     el_vars::set_var_type(vars, vec, in_type);
+    // (`hold_loop_source`: a KEYED source that is a view — its type names what it borrows — is
+    // written before its one read, so its null init mints no store.)
+    if keyed_kind(el_types::base(in_type)) && len(el_types::deps(in_type)) > 0 {
+      el_vars::mark_inline(vars, vec, "hold_loop_source");
+    }
   }
   elem = ir::TyUnknown { n: 0 };
   match in_type {
@@ -1402,6 +1407,11 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
     vec = el_vars::create_unique(vars, "vector", in_type);
     if !e.first_pass {
       el_vars::set_var_type(vars, vec, in_type);
+    // (`hold_loop_source`: a KEYED source that is a view — its type names what it borrows — is
+    // written before its one read, so its null init mints no store.)
+    if keyed_kind(el_types::base(in_type)) && len(el_types::deps(in_type)) > 0 {
+      el_vars::mark_inline(vars, vec, "hold_loop_source");
+    }
     }
     elem = match in_type { TyVector { inner } => inner, _ => ir::TyUnknown { n: 0 } };
   }
@@ -1740,6 +1750,11 @@ pub fn keyed_for(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex) -> Ex {
     // (Typed as this pass's source: a `??` viewing a local borrows it, `["h"]`.)
     if !e.first_pass {
       el_vars::set_var_type(vars, held_src, ct);
+    // (`hold_loop_source`: a KEYED source that is a view — its type names what it borrows — is
+    // written before its one read, so its null init mints no store.)
+    if keyed_kind(el_types::base(ct)) && len(el_types::deps(ct)) > 0 {
+      el_vars::mark_inline(vars, held_src, "hold_loop_source");
+    }
     }
     held_fill = el_ir::v_set(held_src, x.code);
     ct = el_types::with_deps(ct, [held_src]);

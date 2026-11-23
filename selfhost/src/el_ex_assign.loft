@@ -1850,11 +1850,19 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
   if op == "=" && v >= 0 && !e.first_pass && match e.p.nodes[rhs!] { SUnary { op: ao } => ao == "&", _ => false } && el_types::is_collection(el_types::base(x.tp)) {
     el_vars::set_skip_free(vars, v, "parse_assign_op_inner");
   }
-  // (A vector's is recorded by its own lowering, `lower_vec_copy_bind`; here a text's and a
-  // keyed collection's, as `parse_assign_op_inner` records them.)
+  // (A vector's is recorded by its own lowering, `lower_vec_copy_bind`, a keyed collection's by
+  // the keyed replace below; here a text's, as `parse_assign_op_inner` records it.)
   // (A text `&` bind — `c = &s`, a view of the text — is a copied place too; a collection `&`
   // link never reaches this rule in Rust.)
-  if op == "=" && v >= 0 && (!amp_bind || el_types::base(x.tp) is TyText) && !(el_ir::unspan(x.code) == ir::NdVar { n: v }) && (el_types::base(x.tp) is TyText || (el_types::is_collection(el_types::base(x.tp)) && !(el_types::base(x.tp) is TyVector))) && copied_place(e, x.code) {
+  text_val = el_types::base(x.tp) is TyText || match x.tp { TyRefVar { inner: tvi } => el_types::base(tvi) is TyText, _ => false };
+  // (A text link's value names its place through `OpVarRef`: the place is what it names.)
+  // (A text link into a field or an element is the two-argument `OpGetField`/`OpGetVector`
+  // of its record: the place it names.)
+  text_place = copied_place(e, x.code) || match el_ir::unspan(x.code) {
+    NdCall { def_nr: tvd, args: tva } => (el::def(e, tvd).name == "OpVarRef" && len(tva) == 1 && copied_place(e, tva[0]!)) || ((el::def(e, tvd).name == "OpGetField" || el::def(e, tvd).name == "OpGetVector") && len(tva) >= 2 && copied_place(e, tva[0]!)),
+    _ => false
+  };
+  if op == "=" && v >= 0 && (!amp_bind || text_val) && !(el_ir::unspan(x.code) == ir::NdVar { n: v }) && text_val && text_place {
     el_vars::mark_copy_bound(vars, v, "parse_assign_op_inner");
   }
   // loft#1540 — a whole-variable bind that VIEWS a value-const value makes the variable
@@ -2013,6 +2021,11 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
   }
   kg: vector<ir::Node> = [];
   if !e.first_pass && keyed_kind(kcur) && !(kcur is TyRefVar) && keyed_kind(x.tp) && !(x.code is NdInsert) && !(x.code is NdNull) {
+    // (`(B-Copy)` for the keyed kinds, recorded at the replace as `lower_vec_copy_bind` records a
+    // vector's: a keyed value read out of a place is COPIED into the local's own store.)
+    if copied_place(e, x.code) {
+      el_vars::mark_copy_bound(vars, v, "parse_assign_op_inner");
+    }
     match el_ir::unspan(x.code) {
       NdVar { n: src } => {
         el_vars::drop_use(vars, v);
