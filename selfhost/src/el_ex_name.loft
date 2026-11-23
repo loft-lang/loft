@@ -25,6 +25,7 @@ use el_trace;
 use own;
 use binds;
 use el_ex_place;
+use el_ex_into;
 use el_ex_object;
 use el_ex_call;
 use el_ex_null;
@@ -550,7 +551,7 @@ pub fn unit_variant(e: el::El, vars: el_vars::Vars, en: integer, vd: integer) ->
     return ex(if a < 0 { ir::NdNull } else { el::def(e, en).attributes[a]!.value[0] }, ret);
   }
   w = el_vars::work_ref(vars, ret);
-  body = el_ex_place::fields_at(e, vars, w, ir::NdVar { n: w }, vd, []);
+  body = el_ex_into::fields_at(e, vars, w, ir::NdVar { n: w }, vd, []);
   if body == null {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }

@@ -23,6 +23,7 @@ use own;
 use el_expressions;
 use el_ex_assign;
 use el_ex_place;
+use el_ex_into;
 use el_ex_call;
 use el_ex_null;
 use el_ex_pattern;
@@ -956,7 +957,7 @@ pub fn keyed_items(e: el::El, vars: el_vars::Vars, v: integer, n: integer, fd: i
       SStructLit { fields: fs } => { fields = fs; },
       _ => {}
     }
-    fl = el_ex_place::object_fields(e, vars, elm, sd, fields);
+    fl = el_ex_into::object_fields(e, vars, elm, sd, fields);
     if fl == null {
       return null;
     }
