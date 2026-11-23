@@ -1,5 +1,7 @@
 # @PLN91 — a `&`-linked vector rebound with `=`: refilled in place, through a staging store (prepared subject)
 
+**Status: DONE** — measured at 0a1a8b43c: H-RootExtent a-vector-stores-extent… agrees in every layer.  Kept as the record of the subject.
+
 **The subject:** the other half of "a vector local rebound from a call that takes it", which
 loop-rebind-rotates-buffers.md left refused.  H-RootExtent/a-vector-stores-extent-is-its-collection-
 through-swaps-and-placements now stops at :35 (after the loop half, c3f3e1328):

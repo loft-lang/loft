@@ -2445,7 +2445,11 @@ impl<'a> Ownership<'a> {
         if self.visiting.contains(&d_nr) {
             // The frame the cut reaches: the class of every derivation opened ABOVE it now
             // depends on this question's path, and is kept out of the span memo.
-            let at = self.frames.iter().rposition(|&(f, _)| f == d_nr).unwrap_or(0);
+            let at = self
+                .frames
+                .iter()
+                .rposition(|&(f, _)| f == d_nr)
+                .unwrap_or(0);
             self.min_cut = self.min_cut.min(at);
             // Recursion back-edge.  A call to the function being classified answers the
             // class its sites have reached so far ([`NOT_YET`]); one to an OUTER frame is
@@ -11383,9 +11387,7 @@ pub(crate) fn written_params_summary(data: &Data) -> WrittenParamsSummary {
         for d in fns {
             let mut add = Vec::new();
             for &(c, i, v) in &onward[&d] {
-                if cur.get(&c).is_some_and(|w| w.contains(&(i as u16)))
-                    && !cur[&d].contains(&v)
-                {
+                if cur.get(&c).is_some_and(|w| w.contains(&(i as u16))) && !cur[&d].contains(&v) {
                     add.push(v);
                 }
             }
