@@ -659,49 +659,36 @@ static int loft_pw_walk(loft_cx *cx, loft_pw *w, const loft_jv *v, uint16_t tp, 
  * hold a reference knows: the path it is at, the record each pointer names (first one wins),
  * and every reference field read so far as (its slot, its pointer, the type it names), written
  * once the whole document is read. */
-static LOFT_TLS int loft_rd_on;
-static LOFT_TLS loft_text loft_rd_path;            /* "/leaves/1" */
-static LOFT_TLS size_t *loft_rd_marks;
-static LOFT_TLS size_t loft_rd_nmarks, loft_rd_cmarks;
-typedef struct { size_t at, len; loft_ref r; uint16_t tp; } loft_rd_place;
+typedef struct loft_rd_place { size_t at, len; loft_ref r; uint16_t tp; } loft_rd_place;
 /* The records this read marked as named (`@FR-H-Removed`), so the marks no reference ends up
  * needing are taken back when the read ends. */
-static LOFT_TLS loft_ref *loft_rd_marked;
-static LOFT_TLS size_t loft_rd_nmarked, loft_rd_cmarked;
-static LOFT_TLS loft_rd_place *loft_rd_at;
-static LOFT_TLS size_t loft_rd_nat, loft_rd_cat;
-static LOFT_TLS size_t *loft_rd_tab;
-static LOFT_TLS size_t loft_rd_ctab;
-static LOFT_TLS loft_text loft_rd_pool;
-typedef struct { loft_ref slot; size_t at, len; uint16_t tp; } loft_rd_pend;
-static LOFT_TLS loft_rd_pend *loft_rd_pending;
-static LOFT_TLS size_t loft_rd_npend, loft_rd_cpend;
+typedef struct loft_rd_pend { loft_ref slot; size_t at, len; uint16_t tp; } loft_rd_pend;
 
 static void loft_rd_push_raw(loft_cx *cx, const char *seg, size_t n) {
-    if (!loft_rd_on) return;
-    if (loft_rd_nmarks == loft_rd_cmarks) {
-        loft_rd_cmarks = loft_rd_cmarks ? loft_rd_cmarks * 2 : 32;
-        loft_rd_marks = (size_t *) realloc(loft_rd_marks, loft_rd_cmarks * sizeof(size_t));
-        if (!loft_rd_marks) abort();
+    if (!cx->rd_on) return;
+    if (cx->rd_nmarks == cx->rd_cmarks) {
+        cx->rd_cmarks = cx->rd_cmarks ? cx->rd_cmarks * 2 : 32;
+        cx->rd_marks = (size_t *) realloc(cx->rd_marks, cx->rd_cmarks * sizeof(size_t));
+        if (!cx->rd_marks) abort();
     }
-    loft_rd_marks[loft_rd_nmarks++] = loft_rd_path.len;
-    loft_push_char(cx, &loft_rd_path, '/');
+    cx->rd_marks[cx->rd_nmarks++] = cx->rd_path.len;
+    loft_push_char(cx, &cx->rd_path, '/');
     for (size_t i = 0; i < n; i++) {
-        if (seg[i] == '~') loft_push(cx, &loft_rd_path, "~0", 2);
-        else if (seg[i] == '/') loft_push(cx, &loft_rd_path, "~1", 2);
-        else loft_push_char(cx, &loft_rd_path, seg[i]);
+        if (seg[i] == '~') loft_push(cx, &cx->rd_path, "~0", 2);
+        else if (seg[i] == '/') loft_push(cx, &cx->rd_path, "~1", 2);
+        else loft_push_char(cx, &cx->rd_path, seg[i]);
     }
 }
 
 static void loft_rd_push_index(loft_cx *cx, size_t i) {
-    if (!loft_rd_on) return;
+    if (!cx->rd_on) return;
     char b[24];
     int n = snprintf(b, sizeof b, "%zu", i);
     loft_rd_push_raw(cx, b, (size_t) n);
 }
 
 static void loft_rd_pop(loft_cx *cx) {
-    if (loft_rd_on && loft_rd_nmarks) loft_rd_path.len = loft_rd_marks[--loft_rd_nmarks];
+    if (cx->rd_on && cx->rd_nmarks) cx->rd_path.len = cx->rd_marks[--cx->rd_nmarks];
 }
 
 static size_t loft_rd_hash(loft_cx *cx, const char *p, size_t n) {
@@ -712,13 +699,13 @@ static size_t loft_rd_hash(loft_cx *cx, const char *p, size_t n) {
 
 /* The record pointer `p` (without its '#') names, or NULL. */
 static const loft_rd_place *loft_rd_find(loft_cx *cx, const char *p, size_t n) {
-    if (!loft_rd_ctab) return 0;
-    size_t m = loft_rd_ctab - 1;
+    if (!cx->rd_ctab) return 0;
+    size_t m = cx->rd_ctab - 1;
     for (size_t i = loft_rd_hash(cx, p, n) & m;; i = (i + 1) & m) {
-        size_t k = loft_rd_tab[i];
+        size_t k = cx->rd_tab[i];
         if (k == 0) return 0;
-        const loft_rd_place *e = &loft_rd_at[k - 1];
-        if (e->len == n && (n == 0 || memcmp(loft_rd_pool.p + e->at, p, n) == 0)) return e;
+        const loft_rd_place *e = &cx->rd_at[k - 1];
+        if (e->len == n && (n == 0 || memcmp(cx->rd_pool.p + e->at, p, n) == 0)) return e;
     }
 }
 
@@ -734,12 +721,12 @@ static void loft_rd_mark(loft_cx *cx, loft_ref r) {
     loft_store_t *s = &cx->stores[r.store_nr];
     if (r.rec < LOFT_ST_PRIMARY || r.rec >= s->size || loft_bits_contains(cx, &s->referenced, r.rec)) return;
     loft_bits_insert(cx, &s->referenced, r.rec);
-    if (loft_rd_nmarked == loft_rd_cmarked) {
-        loft_rd_cmarked = loft_rd_cmarked ? loft_rd_cmarked * 2 : 64;
-        loft_rd_marked = (loft_ref *) realloc(loft_rd_marked, loft_rd_cmarked * sizeof(loft_ref));
-        if (!loft_rd_marked) abort();
+    if (cx->rd_nmarked == cx->rd_cmarked) {
+        cx->rd_cmarked = cx->rd_cmarked ? cx->rd_cmarked * 2 : 64;
+        cx->rd_marked = (loft_ref *) realloc(cx->rd_marked, cx->rd_cmarked * sizeof(loft_ref));
+        if (!cx->rd_marked) abort();
     }
-    loft_rd_marked[loft_rd_nmarked++] = r;
+    cx->rd_marked[cx->rd_nmarked++] = r;
 }
 
 /* A record of type `tp` is read here: the path names it.  The first record read at a path
@@ -747,9 +734,9 @@ static void loft_rd_mark(loft_cx *cx, loft_ref r) {
  * replaces what the first one built — and then the path names the record that took its place
  * (`Stores::read_place`). */
 static void loft_rd_record(loft_cx *cx, loft_ref r, uint16_t tp) {
-    if (!loft_rd_on) return;
-    const char *p = loft_rd_path.len ? loft_rd_path.p : "";
-    size_t n = loft_rd_path.len;
+    if (!cx->rd_on) return;
+    const char *p = cx->rd_path.len ? cx->rd_path.p : "";
+    size_t n = cx->rd_path.len;
     loft_rd_place *had = (loft_rd_place *) loft_rd_find(cx, p, n);
     if (had) {
         if (!loft_rd_removed(cx, had->r)) return;
@@ -759,53 +746,53 @@ static void loft_rd_record(loft_cx *cx, loft_ref r, uint16_t tp) {
         return;
     }
     loft_rd_mark(cx, r);
-    if (loft_rd_nat == loft_rd_cat) {
-        loft_rd_cat = loft_rd_cat ? loft_rd_cat * 2 : 64;
-        loft_rd_at = (loft_rd_place *) realloc(loft_rd_at, loft_rd_cat * sizeof(loft_rd_place));
-        if (!loft_rd_at) abort();
+    if (cx->rd_nat == cx->rd_cat) {
+        cx->rd_cat = cx->rd_cat ? cx->rd_cat * 2 : 64;
+        cx->rd_at = (loft_rd_place *) realloc(cx->rd_at, cx->rd_cat * sizeof(loft_rd_place));
+        if (!cx->rd_at) abort();
     }
-    if (2 * (loft_rd_nat + 1) > loft_rd_ctab) {
-        size_t c = loft_rd_ctab ? loft_rd_ctab * 2 : 128;
-        free(loft_rd_tab);
-        loft_rd_tab = (size_t *) calloc(c, sizeof(size_t));
-        if (!loft_rd_tab) abort();
-        loft_rd_ctab = c;
-        for (size_t k = 0; k < loft_rd_nat; k++) {
-            const loft_rd_place *e = &loft_rd_at[k];
-            size_t i = loft_rd_hash(cx, e->len ? loft_rd_pool.p + e->at : "", e->len) & (c - 1);
-            while (loft_rd_tab[i]) i = (i + 1) & (c - 1);
-            loft_rd_tab[i] = k + 1;
+    if (2 * (cx->rd_nat + 1) > cx->rd_ctab) {
+        size_t c = cx->rd_ctab ? cx->rd_ctab * 2 : 128;
+        free(cx->rd_tab);
+        cx->rd_tab = (size_t *) calloc(c, sizeof(size_t));
+        if (!cx->rd_tab) abort();
+        cx->rd_ctab = c;
+        for (size_t k = 0; k < cx->rd_nat; k++) {
+            const loft_rd_place *e = &cx->rd_at[k];
+            size_t i = loft_rd_hash(cx, e->len ? cx->rd_pool.p + e->at : "", e->len) & (c - 1);
+            while (cx->rd_tab[i]) i = (i + 1) & (c - 1);
+            cx->rd_tab[i] = k + 1;
         }
     }
-    loft_rd_place e = { loft_rd_pool.len, n, r, tp };
-    if (n) loft_push(cx, &loft_rd_pool, p, n);
-    loft_rd_at[loft_rd_nat++] = e;
-    size_t i = loft_rd_hash(cx, p, n) & (loft_rd_ctab - 1);
-    while (loft_rd_tab[i]) i = (i + 1) & (loft_rd_ctab - 1);
-    loft_rd_tab[i] = loft_rd_nat;
+    loft_rd_place e = { cx->rd_pool.len, n, r, tp };
+    if (n) loft_push(cx, &cx->rd_pool, p, n);
+    cx->rd_at[cx->rd_nat++] = e;
+    size_t i = loft_rd_hash(cx, p, n) & (cx->rd_ctab - 1);
+    while (cx->rd_tab[i]) i = (i + 1) & (cx->rd_ctab - 1);
+    cx->rd_tab[i] = cx->rd_nat;
 }
 
 /* A reference field's pointer, parked until the document is read: `ptr` is the text after '#'. */
 static void loft_rd_park(loft_cx *cx, loft_ref slot, const char *ptr, size_t n, uint16_t tp) {
-    if (loft_rd_npend == loft_rd_cpend) {
-        loft_rd_cpend = loft_rd_cpend ? loft_rd_cpend * 2 : 16;
-        loft_rd_pending = (loft_rd_pend *) realloc(loft_rd_pending, loft_rd_cpend * sizeof(loft_rd_pend));
-        if (!loft_rd_pending) abort();
+    if (cx->rd_npend == cx->rd_cpend) {
+        cx->rd_cpend = cx->rd_cpend ? cx->rd_cpend * 2 : 16;
+        cx->rd_pending = (loft_rd_pend *) realloc(cx->rd_pending, cx->rd_cpend * sizeof(loft_rd_pend));
+        if (!cx->rd_pending) abort();
     }
-    loft_rd_pend e = { slot, loft_rd_pool.len, n, tp };
-    if (n) loft_push(cx, &loft_rd_pool, ptr, n);
-    loft_rd_pending[loft_rd_npend++] = e;
+    loft_rd_pend e = { slot, cx->rd_pool.len, n, tp };
+    if (n) loft_push(cx, &cx->rd_pool, ptr, n);
+    cx->rd_pending[cx->rd_npend++] = e;
 }
 
 static void loft_rd_start(loft_cx *cx) {
-    loft_rd_on = 1;
-    loft_rd_path.len = 0;
-    loft_rd_nmarks = 0;
-    loft_rd_nat = 0;
-    loft_rd_nmarked = 0;
-    loft_rd_npend = 0;
-    loft_rd_pool.len = 0;
-    if (loft_rd_ctab) memset(loft_rd_tab, 0, loft_rd_ctab * sizeof(size_t));
+    cx->rd_on = 1;
+    cx->rd_path.len = 0;
+    cx->rd_nmarks = 0;
+    cx->rd_nat = 0;
+    cx->rd_nmarked = 0;
+    cx->rd_npend = 0;
+    cx->rd_pool.len = 0;
+    if (cx->rd_ctab) memset(cx->rd_tab, 0, cx->rd_ctab * sizeof(size_t));
 }
 
 /* `resolve_read_refs`: every parked reference takes the record its pointer names, or a misfit
@@ -813,9 +800,9 @@ static void loft_rd_start(loft_cx *cx) {
  * the document itself replaced.  A reference is stored through `loft_set_dbref`, as every
  * other one is, so its record is marked as named. */
 static void loft_rd_resolve(loft_cx *cx, loft_werrs *errs) {
-    for (size_t k = 0; k < loft_rd_npend; k++) {
-        const loft_rd_pend *e = &loft_rd_pending[k];
-        const char *ptr = e->len ? loft_rd_pool.p + e->at : "";
+    for (size_t k = 0; k < cx->rd_npend; k++) {
+        const loft_rd_pend *e = &cx->rd_pending[k];
+        const char *ptr = e->len ? cx->rd_pool.p + e->at : "";
         const loft_rd_place *t = 0;
         if (e->len >= 1 && ptr[0] == '#') t = loft_rd_find(cx, ptr + 1, e->len - 1);
         const char *why = 0;
@@ -825,8 +812,8 @@ static void loft_rd_resolve(loft_cx *cx, loft_werrs *errs) {
         if (!why) {
             loft_set_dbref(cx, e->slot, 0, t->r);
             /* Named now: taken out of the marks this read gives back below. */
-            for (size_t i = 0; i < loft_rd_nmarked; i++) {
-                if (loft_rd_marked[i].store_nr == t->r.store_nr && loft_rd_marked[i].rec == t->r.rec) loft_rd_marked[i].rec = 0;
+            for (size_t i = 0; i < cx->rd_nmarked; i++) {
+                if (cx->rd_marked[i].store_nr == t->r.store_nr && cx->rd_marked[i].rec == t->r.rec) cx->rd_marked[i].rec = 0;
             }
         } else {
             loft_werr *we = loft_werrs_push(cx, errs, 0);
@@ -840,13 +827,13 @@ static void loft_rd_resolve(loft_cx *cx, loft_werrs *errs) {
     }
     /* A record no reference came to name gives its mark back: it is removed as any other
      * record is.  One removed during the read keeps its position. */
-    for (size_t i = 0; i < loft_rd_nmarked; i++) {
-        loft_ref r = loft_rd_marked[i];
+    for (size_t i = 0; i < cx->rd_nmarked; i++) {
+        loft_ref r = cx->rd_marked[i];
         if (r.rec != 0 && r.store_nr < cx->nstores && cx->stores[r.store_nr].live && !loft_rd_removed(cx, r))
             loft_bits_remove(cx, &cx->stores[r.store_nr].referenced, r.rec);
     }
-    loft_rd_nmarked = 0;
-    loft_rd_on = 0;
+    cx->rd_nmarked = 0;
+    cx->rd_on = 0;
 }
 
 static int loft_jp_opening(loft_cx *cx, const loft_jp *p) {
@@ -907,16 +894,16 @@ static int loft_rd_refs_list(loft_cx *cx, loft_pw *w, loft_jp *p, loft_werrs *er
         char want[40];
         int wn = snprintf(want, sizeof want, "#/$refs/%zu", idx);
         uint16_t tp = 0xFFFF;
-        for (size_t k = 0; k < loft_rd_npend; k++) {
-            const loft_rd_pend *e = &loft_rd_pending[k];
-            if (e->len == (size_t) wn && memcmp(loft_rd_pool.p + e->at, want, (size_t) wn) == 0) { tp = e->tp; break; }
+        for (size_t k = 0; k < cx->rd_npend; k++) {
+            const loft_rd_pend *e = &cx->rd_pending[k];
+            if (e->len == (size_t) wn && memcmp(cx->rd_pool.p + e->at, want, (size_t) wn) == 0) { tp = e->tp; break; }
         }
         if (tp != 0 && tp != 0xFFFF && w->P[tp].kind == LOFT_P_RECORD) {
             uint32_t nr = loft_claim(cx, loft_store_of(cx, to), 1 + (w->P[tp].size + 7u) / 8u);
             loft_ref rec = { to.store_nr, nr, 8, 0 };
             loft_pw_default(cx, w, tp, 0, 0, rec);
-            loft_rd_path.len = 0;
-            loft_rd_nmarks = 0;
+            cx->rd_path.len = 0;
+            cx->rd_nmarks = 0;
             loft_rd_push_raw(cx, "$refs", 5);
             loft_rd_push_index(cx, idx);
             if (!loft_pr_into(cx, w, p, errs, next, tp, tp, 0xFFFF, rec, next, f)) return 0;
@@ -932,8 +919,8 @@ static int loft_rd_refs_list(loft_cx *cx, loft_pw *w, loft_jp *p, loft_werrs *er
         more = r;
         idx++;
     }
-    loft_rd_path.len = 0;
-    loft_rd_nmarks = 0;
+    cx->rd_path.len = 0;
+    cx->rd_nmarks = 0;
     return 1;
 }
 
@@ -948,12 +935,12 @@ static int loft_rd_value_wrapper(loft_cx *cx, loft_pw *w, loft_jp *p, loft_werrs
         if (!loft_jp_member(cx, p, &name, &key_at, &value_at, f)) { loft_text_free(cx, &name); return 0; }
         int ok;
         if (name.len == 6 && memcmp(name.p, "$value", 6) == 0) {
-            loft_rd_path.len = 0;
-            loft_rd_nmarks = 0;
+            cx->rd_path.len = 0;
+            cx->rd_nmarks = 0;
             loft_rd_push_raw(cx, "$value", 6);
             ok = loft_pr_into(cx, w, p, errs, value_at, tp, tp, 0xFFFF, to, value_at, f);
-            loft_rd_path.len = 0;
-            loft_rd_nmarks = 0;
+            cx->rd_path.len = 0;
+            cx->rd_nmarks = 0;
         } else if (name.len == 5 && memcmp(name.p, "$refs", 5) == 0) {
             ok = loft_rd_refs_list(cx, w, p, errs, to, value_at, f);
         } else {
@@ -1041,10 +1028,10 @@ static void loft_pr_frame_open(loft_cx *cx, loft_pw *w, loft_pr_frame *fr, loft_
     fr->fld = to.rec == 0 ? 0 : to.pos;
     fr->rec = to.rec == 0 ? loft_claim(cx, loft_store_of(cx, to), (t->size + 7u) / 8u) : to.rec;
     /* `@FR-F-Read-Ref` — this record's pointer is the path it is read at, first one wins. */
-    if (loft_rd_on) {
+    if (cx->rd_on) {
         loft_ref me = { to.store_nr, fr->rec, fr->fld, 0 };
         loft_rd_record(cx, me, tp);
-        fr->top = loft_rd_path.len == 0;
+        fr->top = cx->rd_path.len == 0;
     }
     if (t->n > sizeof fr->found_local) {
         fr->found_heap = (uint8_t *) calloc(t->n, 1);
@@ -1174,7 +1161,7 @@ static int loft_pr_struct(loft_cx *cx, loft_pw *w, loft_jp *p, loft_werrs *errs,
         const loft_ptype *ct = &w->P[fd->content];
         /* `@FR-F-Read-Ref` — the member's name is its segment of the path. */
         loft_rd_push_raw(cx, name.p ? name.p : "", name.len);
-        if (loft_rd_on && ct->kind == LOFT_P_DBREF) {
+        if (cx->rd_on && ct->kind == LOFT_P_DBREF) {
             int okr;
             if (loft_rd_reference_field(cx, p, errs, fd, target, value_at, key_at, &okr, f)) {
                 loft_text_free(cx, &name);
@@ -1399,15 +1386,6 @@ static int loft_pr_into(loft_cx *cx, loft_pw *w, loft_jp *p, loft_werrs *errs, s
     return 1;
 }
 
-/* `Store::parse_errors`: what the parse that built a store's root reported, by store. */
-typedef struct { loft_text *e; size_t n; uint16_t tp; } loft_perrs;
-/* A header built without `loft_cc.h` (the replays of tests/c_emit.rs) keeps one copy of its
- * state: no threads. */
-#ifndef LOFT_TLS
-#define LOFT_TLS
-#endif
-static LOFT_TLS loft_perrs *loft_store_perrs = 0;
-static LOFT_TLS size_t loft_store_nperrs = 0;
 
 static void loft_perrs_clear(loft_cx *cx, loft_perrs *pe) {
     for (size_t i = 0; i < pe->n; i++) loft_text_free(cx, &pe->e[i]);
@@ -1418,29 +1396,29 @@ static void loft_perrs_clear(loft_cx *cx, loft_perrs *pe) {
 }
 
 static loft_perrs *loft_perrs_of(loft_cx *cx, uint16_t store_nr) {
-    if (store_nr >= loft_store_nperrs) {
+    if (store_nr >= cx->store_nperrs) {
         size_t n = (size_t) store_nr + 16;
-        loft_store_perrs = (loft_perrs *) realloc(loft_store_perrs, n * sizeof *loft_store_perrs);
-        if (!loft_store_perrs) { fputs("loft: out of memory\n", stderr); abort(); }
-        for (size_t i = loft_store_nperrs; i < n; i++) {
-            loft_store_perrs[i].e = 0;
-            loft_store_perrs[i].n = 0;
-            loft_store_perrs[i].tp = 0xFFFF;
+        cx->store_perrs = (loft_perrs *) realloc(cx->store_perrs, n * sizeof *cx->store_perrs);
+        if (!cx->store_perrs) { fputs("loft: out of memory\n", stderr); abort(); }
+        for (size_t i = cx->store_nperrs; i < n; i++) {
+            cx->store_perrs[i].e = 0;
+            cx->store_perrs[i].n = 0;
+            cx->store_perrs[i].tp = 0xFFFF;
         }
-        loft_store_nperrs = n;
+        cx->store_nperrs = n;
     }
-    return &loft_store_perrs[store_nr];
+    return &cx->store_perrs[store_nr];
 }
 
 static void loft_perrs_reset(loft_cx *cx, uint16_t nr) {
-    if (nr < loft_store_nperrs) loft_perrs_clear(cx, &loft_store_perrs[nr]);
+    if (nr < cx->store_nperrs) loft_perrs_clear(cx, &cx->store_perrs[nr]);
 }
 
 static void loft_perrs_swap(loft_cx *cx, uint16_t a, uint16_t b) {
     loft_perrs_of(cx, a > b ? a : b);
-    loft_perrs t = loft_store_perrs[a];
-    loft_store_perrs[a] = loft_store_perrs[b];
-    loft_store_perrs[b] = t;
+    loft_perrs t = cx->store_perrs[a];
+    cx->store_perrs[a] = cx->store_perrs[b];
+    cx->store_perrs[b] = t;
 }
 
 /* `deliver_parse_errors`: a write of a whole `tp` record into another store's root brings the
@@ -1450,11 +1428,11 @@ static void loft_perrs_deliver(loft_cx *cx, loft_ref data, loft_ref to, uint16_t
     if (data.store_nr == to.store_nr || data.store_nr >= cx->nstores || to.store_nr >= cx->nstores) return;
     if (to.rec != 1 || to.pos != 8) return;
     loft_perrs_of(cx, to.store_nr > data.store_nr ? to.store_nr : data.store_nr);
-    loft_perrs *dest = &loft_store_perrs[to.store_nr];
+    loft_perrs *dest = &cx->store_perrs[to.store_nr];
     uint16_t known = LOFT_KNOWN(cx->stores[to.store_nr]);
     uint16_t root = known == 0xFFFF ? dest->tp : known;
     if (!fresh && root != tp) return;
-    loft_perrs *src = &loft_store_perrs[data.store_nr];
+    loft_perrs *src = &cx->store_perrs[data.store_nr];
     int parsed = data.rec == 1 && data.pos == 8 && src->tp == tp;
     loft_text *copy = 0;
     size_t n = parsed ? src->n : 0;
@@ -1477,8 +1455,8 @@ static int loft_is_main_vector(loft_cx *cx, uint16_t tp);
 
 /* `parsed_vector`: the vector type a parse built `db`'s store for, when `db` is its root. */
 static uint16_t loft_parsed_vector(loft_cx *cx, loft_ref db) {
-    if (db.store_nr == 0xFFFF || db.store_nr >= loft_store_nperrs || db.rec != 1 || !loft_ptab) return 0xFFFF;
-    uint16_t tp = loft_store_perrs[db.store_nr].tp;
+    if (db.store_nr == 0xFFFF || db.store_nr >= cx->store_nperrs || db.rec != 1 || !loft_ptab) return 0xFFFF;
+    uint16_t tp = cx->store_perrs[db.store_nr].tp;
     return tp != 0xFFFF && loft_ptab[tp].kind == LOFT_P_VECTOR ? tp : 0xFFFF;
 }
 
@@ -1495,7 +1473,7 @@ static void loft_perrs_deliver_vector(loft_cx *cx, loft_ref data, loft_ref to, i
     loft_text *copy = 0;
     size_t n = 0;
     if (parsed != 0xFFFF) {
-        loft_perrs *src = &loft_store_perrs[data.store_nr];
+        loft_perrs *src = &cx->store_perrs[data.store_nr];
         n = src->n;
         if (n) copy = (loft_text *) calloc(n, sizeof *copy);
         for (size_t i = 0; i < n; i++) copy[i] = loft_text_own(cx, loft_view(cx, &src->e[i]));
@@ -1847,13 +1825,13 @@ static loft_ref loft_struct_from_jsonvalue(loft_cx *cx, const loft_ptype *P, lof
     loft_ref r = loft_ref_null(cx);
     loft_database(cx, &r, (words - 1) * 8);
     LOFT_SET_KNOWN(cx->stores[r.store_nr], kt); /* the root's type, as `loft_text_target` (D48) */
-    size_t seen = loft_jerr_n;
+    size_t seen = cx->jerr_n;
     loft_jsv_struct(cx, &w, r, kt, src);
     loft_perrs *pe = loft_perrs_of(cx, r.store_nr);
     loft_perrs_clear(cx, pe);
-    pe->n = loft_jerr_n - seen;
+    pe->n = cx->jerr_n - seen;
     pe->e = pe->n ? (loft_text *) calloc(pe->n, sizeof *pe->e) : 0;
-    for (size_t i = 0; i < pe->n; i++) pe->e[i] = loft_text_own(cx, loft_view(cx, &loft_jerr[seen + i]));
+    for (size_t i = 0; i < pe->n; i++) pe->e[i] = loft_text_own(cx, loft_view(cx, &cx->jerr[seen + i]));
     pe->tp = kt;
     return r;
 }

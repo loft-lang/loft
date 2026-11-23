@@ -120,7 +120,7 @@ fn gate_swaps(mode: &str, tag: &str, rebinds: &str) -> (usize, String) {
 ///
 /// @falsified-at: none — the gate predates the guard, so the receipt is a SABOTAGE (2026-11-21):
 ///   with the scratch term struck from both gates (`swap_stores_in_as`'s
-///   `!self.live_scratches.is_empty()`, `loft_swap_blocked`'s `loft_nscratches != 0`), the walk
+///   `!self.live_scratches.is_empty()`, `loft_swap_blocked`'s `cx->nscratches != 0`), the walk
 ///   run exchanges as the after run does and the difference reads 0, not 3, on both backends.
 ///   CHANNEL: the `[swap-in]` count.  WITNESS: 5 and 5 instead of 5 and 2.
 ///   HOLDS: `sum 63 len 3` on every run, gate or no gate.

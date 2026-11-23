@@ -858,29 +858,22 @@ static void loft_jp_render_path(loft_cx *cx, const loft_jp *p, loft_text *out) {
     }
 }
 
-/* A header built without `loft_cc.h` (the replays of tests/c_emit.rs) keeps one copy of its
- * state: no threads. */
-#ifndef LOFT_TLS
-#define LOFT_TLS
-#endif
 /* `stores.last_json_errors`: the errors of the last parse, in order; `json_errors()` reads them
  * joined by `|`. */
-static LOFT_TLS loft_text *loft_jerr = 0;
-static LOFT_TLS size_t loft_jerr_n = 0, loft_jerr_cap = 0;
 
 static void loft_jerr_clear(loft_cx *cx) {
-    for (size_t i = 0; i < loft_jerr_n; i++) loft_text_free(cx, &loft_jerr[i]);
-    loft_jerr_n = 0;
+    for (size_t i = 0; i < cx->jerr_n; i++) loft_text_free(cx, &cx->jerr[i]);
+    cx->jerr_n = 0;
 }
 
 /* One more error, its text taken over. */
 static void loft_jerr_take(loft_cx *cx, loft_text t) {
-    if (loft_jerr_n == loft_jerr_cap) {
-        loft_jerr_cap = loft_jerr_cap ? loft_jerr_cap * 2 : 4;
-        loft_jerr = (loft_text *) realloc(loft_jerr, loft_jerr_cap * sizeof *loft_jerr);
-        if (!loft_jerr) { fputs("loft: out of memory\n", stderr); abort(); }
+    if (cx->jerr_n == cx->jerr_cap) {
+        cx->jerr_cap = cx->jerr_cap ? cx->jerr_cap * 2 : 4;
+        cx->jerr = (loft_text *) realloc(cx->jerr, cx->jerr_cap * sizeof *cx->jerr);
+        if (!cx->jerr) { fputs("loft: out of memory\n", stderr); abort(); }
     }
-    loft_jerr[loft_jerr_n++] = t;
+    cx->jerr[cx->jerr_n++] = t;
 }
 
 static void loft_jerr_push(loft_cx *cx, loft_str msg) {
@@ -992,15 +985,13 @@ static loft_ref loft_jv_alloc(loft_cx *cx) {
 
 /* `jv_null_sentinel`: the one JNull the readers answer for a miss, in a store nothing frees. */
 static loft_ref loft_jv_null(loft_cx *cx) {
-    static LOFT_TLS loft_ref sentinel;
-    static LOFT_TLS int made = 0;
-    if (!made) {
-        sentinel = loft_jv_alloc(cx);
-        loft_set_byte(cx, sentinel, 0, LOFT_JD_NULL);
-        cx->stores[sentinel.store_nr].pinned = 1;
-        made = 1;
+    if (!cx->jv_sentinel_made) {
+        cx->jv_sentinel = loft_jv_alloc(cx);
+        loft_set_byte(cx, cx->jv_sentinel, 0, LOFT_JD_NULL);
+        cx->stores[cx->jv_sentinel.store_nr].pinned = 1;
+        cx->jv_sentinel_made = 1;
     }
-    return sentinel;
+    return cx->jv_sentinel;
 }
 
 /* `json::format_error(input, err, 2, 1)`: where, the path, the message, and the lines around
@@ -1071,9 +1062,9 @@ static loft_ref loft_json_parse_value(loft_cx *cx, loft_str raw) {
 
 static loft_text loft_json_errors(loft_cx *cx) {
     loft_text t = { 0, 0, 0 };
-    for (size_t i = 0; i < loft_jerr_n; i++) {
+    for (size_t i = 0; i < cx->jerr_n; i++) {
         if (i) loft_push_char(cx, &t, '|');
-        loft_text_append(cx, &t, loft_view(cx, &loft_jerr[i]));
+        loft_text_append(cx, &t, loft_view(cx, &cx->jerr[i]));
     }
     return t;
 }
@@ -1088,7 +1079,7 @@ static int64_t loft_jv_count(loft_cx *cx, loft_ref v, uint32_t rec) {
     return rec == 0 ? 0 : (int64_t) loft_u32(cx, loft_store_of(cx, v), rec, 4);
 }
 
-/* `field`: the member named `name` of an object, in place; the JNull sentinel otherwise. */
+/* `field`: the member named `name` of an object, in place; the JNull sentinel (`loft_jv_null`) otherwise. */
 static loft_ref loft_jv_field(loft_cx *cx, loft_ref v, loft_str name) {
     uint32_t fr = loft_jv_kids(cx, v, LOFT_JD_OBJECT);
     int64_t n = loft_jv_count(cx, v, fr);
@@ -1115,7 +1106,7 @@ static uint8_t loft_jv_has_field(loft_cx *cx, loft_ref v, loft_str name) {
     return 0;
 }
 
-/* `item`: element `index` of an array, in place; the JNull sentinel otherwise. */
+/* `item`: element `index` of an array, in place; the JNull sentinel (`loft_jv_null`) otherwise. */
 static loft_ref loft_jv_item(loft_cx *cx, loft_ref v, int64_t index) {
     int32_t i = (int32_t) index;
     uint32_t ir = loft_jv_kids(cx, v, LOFT_JD_ARRAY);

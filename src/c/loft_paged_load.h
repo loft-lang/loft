@@ -37,15 +37,15 @@ static int loft_pg_begin(loft_cx *cx, loft_pg *r, loft_ref local, loft_str path,
     }
     uint16_t known = LOFT_KNOWN(cx->stores[local.store_nr]);
     char err[1100];
-    loft_gate_paged = 1;
-    loft_gate_trie_v1 = 0;
+    cx->gate_paged = 1;
+    cx->gate_trie_v1 = 0;
 #ifdef LOFT_NET
     int ok = known == 0xFFFF || (url ? loft_net_gate(cx, p, sc, 0, 0, 0) : loft_image_gate(cx, p, sc, 0, 0));
 #else
     int ok = known == 0xFFFF || (!url && loft_image_gate(cx, p, sc, 0, 0));
     if (url && !ok) loft_pg_refuse(cx, p, "this build has no HTTP transport, so it cannot range-read it");
 #endif
-    loft_gate_paged = 0;
+    cx->gate_paged = 0;
     if (ok && !loft_pg_open(cx, r, p, err, sizeof err)) {
         loft_pg_refuse(cx, p, "it cannot be opened as a paged source");
         ok = 0;
@@ -57,7 +57,7 @@ static int loft_pg_begin(loft_cx *cx, loft_pg *r, loft_ref local, loft_str path,
         ok = 0;
     }
     if (!ok) loft_pg_close(cx, r);
-    else r->trie_v1 = loft_gate_trie_v1;
+    else r->trie_v1 = cx->gate_trie_v1;
     free(p);
     return ok;
 }

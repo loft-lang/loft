@@ -273,15 +273,14 @@ static int loft_eh_write_all(loft_cx *cx, int fd, const char *p, size_t n) {
 /* `MESSAGE_BUDGET`: how long one message may take to arrive once its first bytes are here — the
  * upgrade request's head, and a frame.  The socket's read timeout bounds ONE read, and the pump
  * serves every peer from one thread: a peer that sends a byte per read would hold it for as long
- * as it liked.  `loft_eh_by` is when the message being read must be whole; 0 outside one. */
+ * as it liked.  `cx->eh_by` is when the message being read must be whole; 0 outside one. */
 #define LOFT_EH_MESSAGE_US 5000000
-static LOFT_TLS loft_word loft_eh_by;
 
 /* Exactly `n` bytes, within the socket's read timeout and the message's budget, or 0. */
 static int loft_eh_read_exact(loft_cx *cx, int fd, void *buf, size_t n) {
     uint8_t *p = (uint8_t *) buf;
     while (n > 0) {
-        if (loft_eh_by && loft_now_us(cx) > loft_eh_by) return 0;
+        if (cx->eh_by && loft_now_us(cx) > cx->eh_by) return 0;
         long r = loft_sock_recv(cx, fd, p, n, 0);
         if (r < 0 && loft_sock_interrupted(cx)) continue;
         if (r <= 0) return 0;
@@ -405,13 +404,13 @@ static int loft_eh_read_frame(loft_cx *cx, int fd, loft_text *out, int from_clie
     if (peeked == 0 || peeked == -2) return 2;
     if (peeked < 0) return 0;
     if (peeked < 2) return 0;
-    loft_eh_by = loft_now_us(cx) + LOFT_EH_MESSAGE_US;
+    cx->eh_by = loft_now_us(cx) + LOFT_EH_MESSAGE_US;
     int answer = loft_eh_read_frame_in(cx, fd, out, from_client);
-    loft_eh_by = 0;
+    cx->eh_by = 0;
     return answer;
 }
 
-/* The frame whose first two bytes are waiting, read within `loft_eh_by`. */
+/* The frame whose first two bytes are waiting, read within `cx->eh_by`. */
 static int loft_eh_read_frame_in(loft_cx *cx, int fd, loft_text *out, int from_client) {
     uint8_t hdr[2];
     if (!loft_eh_read_exact(cx, fd, hdr, 2)) return 2;

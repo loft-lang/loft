@@ -15,7 +15,8 @@ Open, `status:active` on [loft-lang/plans#226](https://github.com/loft-lang/plan
 | P2a | done (f048ff16e): every C runtime and emitted function takes `loft_cx *cx` first; fixed ABIs declare theirs |
 | P2b | done: the state of `loft_text.h`, `loft_store.h`, `loft_rt.h`, `par`, the FFI claim log and the hosted bridge is fields of `struct loft_cx` (`src/c/loft_cx.h`); workers', hosted units' and HTTP workers' contexts made as below; TSan clean on the `par` corpus |
 | P3 | done: the parks are main-thread statics (below) |
-| P1, P4 | open: the rest of `git grep -c LOFT_TLS -- src/c` |
+| P1 | done: the B-tree hints, hash scratch, image checks, JSON errors and null sentinel, key seeds, the typed parse's walk and errors, the upgrade walk and the engine's message deadline are context fields too (unguarded: a header's switch is set at different points of a unit, and a field costs words) |
+| P4 | open: `loft_web.h`, `loft_server.h`, `loft_ssh.h`, `loft_net.h` — state the `net` component shares, whose typed symbols take no context yet |
 | P4b, P5 | open |
 
 ### Decisions taken while building it

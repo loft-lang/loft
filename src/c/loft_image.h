@@ -778,21 +778,15 @@ static int loft_version_triple(loft_cx *cx, const char *v, size_t n, unsigned lo
 /* The schema gate (`check_beside`, `classify`, `Release::admits`): the sidecar beside `path`
  * against the layout the program reads its store as.  1 when the image may be read as it is: its
  * sidecar names this layout.  `who` names the caller in what a refusal says. */
-/* A header built without `loft_cc.h` (the replays of tests/c_emit.rs) keeps one copy of its
- * state: no threads. */
-#ifndef LOFT_TLS
-#define LOFT_TLS
-#endif
 /* `Stores::paged_refusal`: the last refusal a loader made, which a lazy fetch reads back as the
  * reason its source could not serve it (loft#802). */
-static LOFT_TLS char *loft_pg_refusal = 0;
 
 static void loft_pg_record(loft_cx *cx, const char *path, const char *reason) {
     size_t n = strlen(path) + strlen(reason) + 32;
-    free(loft_pg_refusal);
-    loft_pg_refusal = (char *) malloc(n);
-    if (!loft_pg_refusal) { fputs("loft: out of memory\n", stderr); abort(); }
-    snprintf(loft_pg_refusal, n, "refusing %s — %s", path, reason);
+    free(cx->pg_refusal);
+    cx->pg_refusal = (char *) malloc(n);
+    if (!cx->pg_refusal) { fputs("loft: out of memory\n", stderr); abort(); }
+    snprintf(cx->pg_refusal, n, "refusing %s — %s", path, reason);
 }
 
 /* A refusal of the gate: said on stderr, and recorded as a loader's is.  A paged loader (no
@@ -821,11 +815,10 @@ static int loft_dump_old_order(loft_cx *cx, const char *dump, const char *want) 
 }
 
 /* placement::TRIE's tag, and the gate's two per-thread flags for a PAGED read (loft#2241): a
- * paged loader asks (`loft_gate_paged`) whether an image whose only difference is a trie
+ * paged loader asks (`cx->gate_paged`) whether an image whose only difference is a trie
  * written under placement token 1 may be read as it was written, and is told so
- * (`loft_gate_trie_v1`).  A whole load converts nothing here, so it refuses such an image. */
+ * (`cx->gate_trie_v1`).  A whole load converts nothing here, so it refuses such an image. */
 #define LOFT_TRIE_TAG ",placement=2"
-static LOFT_TLS int loft_gate_paged, loft_gate_trie_v1;
 
 /* placement::trie_read_as_own: `dump` with each trie part of token 1 (rendered with no tag) given
  * this build's tag — a row's layout part is its last tab-separated column.  malloc'd. */
@@ -912,17 +905,17 @@ static int loft_image_gate_text(loft_cx *cx, const char *path, char *text, const
         return 0;
     }
     ok = hash == sc->hash && strcmp(dump, sc->dump) == 0;
-    loft_gate_trie_v1 = 0;
+    cx->gate_trie_v1 = 0;
     /* A trie written under placement token 1 reads as this build's (loft#2241): a paged read
      * reads it as written, a whole load converts it once it can walk the type (`sc->types`,
      * loft_trie_refile).  The key-order verdict is asked of the dump with its tries read as
      * this build's, so an image old in both ways converts in both. */
-    if (!ok && (loft_gate_paged || sc->types)) {
+    if (!ok && (cx->gate_paged || sc->types)) {
         char *own = loft_trie_read_as_own(cx, dump);
         int trie_v1 = strcmp(own, dump) != 0;
         if (trie_v1 && strcmp(own, sc->dump) == 0) ok = 1;
         else if (convert && sc->rekey && loft_dump_old_order(cx, own, sc->dump)) ok = 2;
-        loft_gate_trie_v1 = ok && trie_v1;
+        cx->gate_trie_v1 = ok && trie_v1;
         free(own);
     } else if (!ok && convert && sc->rekey && loft_dump_old_order(cx, dump, sc->dump)) {
         ok = 2;
@@ -1202,8 +1195,6 @@ static uint8_t loft_store_verify(loft_cx *cx, const loft_tdesc *T, uint32_t nt, 
  * in use, whose own references carry its store's number; otherwise an image that is not
  * adopted yet, whose references still carry the slot it was written from — that slot, or -1
  * for an image that records none. */
-#define LOFT_VC_LIVE (-2L)
-static LOFT_TLS long loft_vc_own = LOFT_VC_LIVE;
 static int loft_image_adopt(loft_cx *cx, loft_ref r, uint8_t *bytes, size_t n, int untrusted, const loft_sidecar *sc,
                             long recorded, const char *what, const char *who);
 
@@ -1220,14 +1211,14 @@ static int loft_image_load(loft_cx *cx, loft_ref r, loft_str path, const loft_si
     const char *who = untrusted ? "store_load_untrusted" : "store_load";
     if (r.store_nr == 0xFFFF || r.store_nr >= cx->nstores || loft_path_refused(cx, path)) return 0;
     char *p = loft_cpath(cx, path, 0);
-    loft_gate_trie_v1 = 0;
+    cx->gate_trie_v1 = 0;
     int gate = sc && LOFT_KNOWN(cx->stores[r.store_nr]) == sc->tp ? loft_image_gate(cx, p, sc, who, 1) : 1;
     if (p[0] == 0 || gate == 0) {
         free(p);
         return 0;
     }
-    int trie_v1 = loft_gate_trie_v1;
-    loft_gate_trie_v1 = 0;
+    int trie_v1 = cx->gate_trie_v1;
+    cx->gate_trie_v1 = 0;
     FILE *f = fopen(p, "rb");
     free(p);
     if (!f) return 0;
@@ -1333,9 +1324,9 @@ static int loft_image_adopt(loft_cx *cx, loft_ref r, uint8_t *bytes, size_t n, i
         t->buf = bytes;
         t->size = words;
         loft_ref root = { r.store_nr, LOFT_ST_PRIMARY, 8, 0 };
-        loft_vc_own = recorded >= 0 ? recorded : -1L;
+        cx->vc_own = recorded >= 0 ? recorded : -1L;
         int sound = loft_store_verify(cx, loft_T, loft_T_n, root);
-        loft_vc_own = LOFT_VC_LIVE;
+        cx->vc_own = LOFT_VC_LIVE;
         t->buf = held_buf;
         t->size = held_size;
         if (!sound) {
@@ -1393,20 +1384,17 @@ static int loft_image_adopt(loft_cx *cx, loft_ref r, uint8_t *bytes, size_t n, i
 /* The store the walk is in: which of its words start a claimed block, read off its chain once
  * (the claim set is the allocator's, and an image standing in a slot has none yet), and how
  * deep the walk is. */
-static LOFT_TLS uint64_t *loft_vc_starts;
-static LOFT_TLS uint32_t loft_vc_words;
-static LOFT_TLS uint32_t loft_vc_depth;
 #define LOFT_VC_MAX_DEPTH 4096
 
 static void loft_vc_begin(loft_cx *cx, const loft_store_t *s) {
-    loft_vc_words = s->size;
-    loft_vc_depth = 0;
-    loft_vc_starts = (uint64_t *) calloc(((size_t) s->size + 63) / 64 + 1, sizeof *loft_vc_starts);
-    if (!loft_vc_starts) { fputs("loft: out of memory\n", stderr); abort(); }
+    cx->vc_words = s->size;
+    cx->vc_depth = 0;
+    cx->vc_starts = (uint64_t *) calloc(((size_t) s->size + 63) / 64 + 1, sizeof *cx->vc_starts);
+    if (!cx->vc_starts) { fputs("loft: out of memory\n", stderr); abort(); }
     for (uint32_t pos = LOFT_ST_PRIMARY; pos < s->size;) {
         int32_t h;
         memcpy(&h, s->buf + (size_t) pos * 8, 4);
-        if (h > 0) loft_vc_starts[pos >> 6] |= (uint64_t) 1 << (pos & 63);
+        if (h > 0) cx->vc_starts[pos >> 6] |= (uint64_t) 1 << (pos & 63);
         if (h == 0 || h == INT32_MIN) break;
         uint32_t n = (uint32_t) (h < 0 ? -h : h);
         if (n > s->size - pos) break;
@@ -1417,7 +1405,7 @@ static void loft_vc_begin(loft_cx *cx, const loft_store_t *s) {
 /* The words of the claimed block that starts at `rec`; 0 for a number that is past the store,
  * inside a block, or a free block's. */
 static uint32_t loft_vc_block(loft_cx *cx, const loft_store_t *s, uint32_t rec) {
-    if (rec < LOFT_ST_PRIMARY || rec >= loft_vc_words || !((loft_vc_starts[rec >> 6] >> (rec & 63)) & 1)) return 0;
+    if (rec < LOFT_ST_PRIMARY || rec >= cx->vc_words || !((cx->vc_starts[rec >> 6] >> (rec & 63)) & 1)) return 0;
     int32_t h;
     memcpy(&h, s->buf + (size_t) rec * 8, 4);
     return h > 0 ? (uint32_t) h : 0;
@@ -1671,13 +1659,13 @@ static uint32_t *loft_vc_index(loft_cx *cx, loft_store_t *s, uint32_t a, uint32_
 
 static void loft_validate_claims(loft_cx *cx, const loft_tdesc *T, uint32_t nt, uint16_t tp, loft_ref r, uint32_t *problems) {
     if (*problems > 8) return;
-    if (loft_vc_depth > LOFT_VC_MAX_DEPTH) {
+    if (cx->vc_depth > LOFT_VC_MAX_DEPTH) {
         LOFT_VC_BAD("nested more than %d deep \xe2\x80\x94 records that name each other", LOFT_VC_MAX_DEPTH);
         return;
     }
-    loft_vc_depth++;
+    cx->vc_depth++;
     loft_validate_claims_at(cx, T, nt, tp, r, problems);
-    loft_vc_depth--;
+    cx->vc_depth--;
 }
 
 static void loft_validate_claims_at(loft_cx *cx, const loft_tdesc *T, uint32_t nt, uint16_t tp, loft_ref r, uint32_t *problems) {
@@ -1874,14 +1862,14 @@ static void loft_validate_claims_at(loft_cx *cx, const loft_tdesc *T, uint32_t n
         uint32_t sn = loft_u32(cx, s, r.rec, r.pos);
         uint32_t to = loft_u32(cx, s, r.rec, r.pos + 4);
         uint32_t at_byte = loft_u32(cx, s, r.rec, r.pos + 8);
-        int here = loft_vc_own == LOFT_VC_LIVE ? sn == r.store_nr : (loft_vc_own >= 0 && sn == (uint32_t) loft_vc_own);
+        int here = cx->vc_own == LOFT_VC_LIVE ? sn == r.store_nr : (cx->vc_own >= 0 && sn == (uint32_t) cx->vc_own);
         if (to == 0) return;
         if (here) {
             uint32_t words = loft_vc_block(cx, s, to);
             if (!words) LOFT_VC_BAD("stored reference names record %u, which is not a record", to);
             else if (at_byte < 8 || (uint64_t) at_byte >= (uint64_t) words * 8)
                 LOFT_VC_BAD("stored reference names byte %u of record %u, which holds %u words", at_byte, to, words);
-        } else if (loft_vc_own != LOFT_VC_LIVE) {
+        } else if (cx->vc_own != LOFT_VC_LIVE) {
             LOFT_VC_BAD("stored reference names store #%u, which is not part of the file", sn);
         } else if (sn != 0xFFFFu && sn >= cx->nstores) {
             LOFT_VC_BAD("stored DbRef names store #%u, out of range", sn);
@@ -1938,7 +1926,7 @@ static uint8_t loft_store_verify(loft_cx *cx, const loft_tdesc *T, uint32_t nt, 
     uint32_t problems = 0;
     loft_vc_begin(cx, &cx->stores[r.store_nr]);
     loft_validate_claims(cx, T, nt, tp, r, &problems);
-    free(loft_vc_starts);
-    loft_vc_starts = 0;
+    free(cx->vc_starts);
+    cx->vc_starts = 0;
     return problems == 0;
 }

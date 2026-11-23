@@ -1492,7 +1492,7 @@ impl FnWriter<'_> {
         let (ints, text_find) = typed_lookup_keys(kind, &types, &values, nk, &data, &keys);
         // `@FR-R-SameRead`'s filed clause: the previous statement filed a record into this hash,
         // so where that insert landed (the store takes writes, neither handle is null) and the
-        // entry it filed (`loft_h_filed`: an inline table moves a staged record into itself, so
+        // entry it filed (`cx->h_filed`: an inline table moves a staged record into itself, so
         // the record handed to the insert is not always the entry) holds the key looked up, that
         // entry IS the one under the key (`@FR-Col-Insert`: the latest insert wins); otherwise
         // the lookup runs as written.
@@ -1520,7 +1520,7 @@ impl FnWriter<'_> {
                     crate::rewrite_census::fired("R-SameRead/filed", 1);
                     let kpos = self.cx.stores.types[tp as usize].keys[0].position;
                     format!(
-                        "((!LOFT_WRITE_REFUSED(loft_store_of(cx, {data})) && {data}.rec != 0 && loft_h_filed.rec != 0 && loft_get_int(cx, loft_h_filed, {kpos}) == {key}) ? loft_h_filed : loft_h_find_i64(cx, {data}, {keys}, {key}))"
+                        "((!LOFT_WRITE_REFUSED(loft_store_of(cx, {data})) && {data}.rec != 0 && cx->h_filed.rec != 0 && loft_get_int(cx, cx->h_filed, {kpos}) == {key}) ? cx->h_filed : loft_h_find_i64(cx, {data}, {keys}, {key}))"
                     )
                 }
                 [key] => find_i64(key),

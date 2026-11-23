@@ -1626,7 +1626,6 @@ static void loft_hash_displace(loft_cx *cx, const loft_tdesc *T, uint16_t elem, 
  * nothing: the entry itself.  An inline table copies a STAGED entry into itself and deletes the
  * stage, so the record handed to the insert is not always the entry afterwards.  Read by
  * `@FR-R-SameRead`'s filed clause, in the statement right after the insert. */
-static LOFT_TLS loft_ref loft_h_filed;
 
 /* The one-probe insert on a decoded table: `claim` of `count` (a power of two) tagged slots, its
  * `seed` and entries.  Shared by `loft_h_insert_int_fast` and the table handle's insert. */
@@ -1704,12 +1703,12 @@ static void loft_h_verify_filed(loft_cx *cx, loft_ref c, loft_ref rec, const lof
 
 static loft_ref loft_hash_insert(loft_cx *cx, const loft_tdesc *T, uint16_t elem, loft_ref c, loft_ref rec, const loft_key *keys,
                                  int nk, int secondary) {
-    loft_h_filed = loft_ref_null(cx);
+    cx->h_filed = loft_ref_null(cx);
     if (c.store_nr == 0xFFFF || c.rec == 0 || rec.rec == 0) return loft_ref_null(cx);
     if (loft_h_insert_int_fast(cx, c, rec, keys, nk)) {
         loft_h_verify_filed(cx, c, rec, keys);
         /* The one-probe insert takes no inline table, so the record it filed is the entry. */
-        loft_h_filed = rec;
+        cx->h_filed = rec;
         return loft_ref_null(cx);
     }
     loft_hprobe p = loft_h_probe_for_insert(cx, c, rec, keys, nk);
@@ -1733,7 +1732,7 @@ static loft_ref loft_hash_insert(loft_cx *cx, const loft_tdesc *T, uint16_t elem
     }
 #endif
     if (p.kind == LOFT_H_FREE) {
-        loft_h_filed = loft_h_add_at(cx, c, rec, p.bucket, p.index, p.tag, keys, nk);
+        cx->h_filed = loft_h_add_at(cx, c, rec, p.bucket, p.index, p.tag, keys, nk);
         return loft_ref_null(cx);
     }
     if (p.kind == LOFT_H_PRESENT) {
@@ -1741,7 +1740,7 @@ static loft_ref loft_hash_insert(loft_cx *cx, const loft_tdesc *T, uint16_t elem
         loft_forget_in_scratches(cx, c, p.entry);
         uint32_t gone = loft_h_replace_at(cx, c, p.bucket, p.index);
         if (!secondary) loft_h_release_removed(cx, T, elem, c, 0, p.entry, gone);
-        loft_h_filed = rec;
+        cx->h_filed = rec;
         return p.entry;
     }
     /* Stores::dedup_keyed: the entry under the key, displaced, then the add. */
@@ -1754,7 +1753,7 @@ static loft_ref loft_hash_insert(loft_cx *cx, const loft_tdesc *T, uint16_t elem
         loft_hash_displace(cx, T, elem, c, existing, keys, nk, secondary);
         displaced = existing;
     }
-    loft_h_filed = loft_h_add(cx, c, rec, keys, nk);
+    cx->h_filed = loft_h_add(cx, c, rec, keys, nk);
     return displaced;
 }
 
@@ -1961,7 +1960,7 @@ LOFT_HOT_INLINE loft_ref loft_hh_insert(loft_cx *cx, loft_hh *h, const loft_tdes
         if (!LOFT_WRITE_REFUSED(s) && loft_h_insert_int_at(cx, c, s, h->claim, h->count, h->seed, &ents, rec, keys)) {
             loft_h_verify_filed(cx, c, rec, keys);
             /* As `loft_hash_insert`'s one-probe path: no inline table, so `rec` is the entry. */
-            loft_h_filed = rec;
+            cx->h_filed = rec;
             return loft_ref_null(cx);
         }
     }
@@ -2066,18 +2065,11 @@ static void loft_hash_remove_claims(loft_cx *cx, const loft_tdesc *T, uint16_t t
  * collection mid-walk reads 0 there (`forget_in_scratches`, loft#1710), which a step passes. */
 #define LOFT_SCRATCH_MARK 0x5C4A0000u
 
-typedef struct { loft_ref source, scratch; } loft_live_scratch;
-/* A header built without `loft_cc.h` (the replays of tests/c_emit.rs) keeps one copy of its
- * state: no threads. */
-#ifndef LOFT_TLS
-#define LOFT_TLS
-#endif
-static LOFT_TLS loft_live_scratch *loft_scratches = 0;
-static LOFT_TLS int loft_nscratches = 0, loft_scratch_cap = 0;
+typedef struct loft_live_scratch { loft_ref source, scratch; } loft_live_scratch;
 
 static void loft_forget_in_scratches(loft_cx *cx, loft_ref c, loft_ref e) {
-    for (int i = 0; i < loft_nscratches; i++) {
-        loft_live_scratch *w = &loft_scratches[i];
+    for (int i = 0; i < cx->nscratches; i++) {
+        loft_live_scratch *w = &cx->scratches[i];
         if (w->source.store_nr != c.store_nr || w->source.rec != c.rec || w->source.pos != c.pos) continue;
         loft_store_t *s = loft_store_of(cx, w->scratch);
         uint32_t vec = loft_u32(cx, s, w->scratch.rec, 4), len = loft_u32(cx, s, vec, 4);
@@ -2117,14 +2109,14 @@ static loft_ref loft_scratch_of(loft_cx *cx, loft_ref c, const loft_ref *e, cons
     loft_set_u32(cx, s, header, 8, c.store_nr);
     loft_set_u32(cx, s, header, 12, LOFT_SCRATCH_MARK | width);
     loft_ref x = { home, header, 4, 0 };
-    if (loft_nscratches == loft_scratch_cap) {
-        loft_scratch_cap = loft_scratch_cap ? loft_scratch_cap * 2 : 8;
-        loft_scratches = (loft_live_scratch *) realloc(loft_scratches, (size_t) loft_scratch_cap * sizeof *loft_scratches);
-        if (!loft_scratches) { fputs("loft: out of memory\n", stderr); abort(); }
+    if (cx->nscratches == cx->scratch_cap) {
+        cx->scratch_cap = cx->scratch_cap ? cx->scratch_cap * 2 : 8;
+        cx->scratches = (loft_live_scratch *) realloc(cx->scratches, (size_t) cx->scratch_cap * sizeof *cx->scratches);
+        if (!cx->scratches) { fputs("loft: out of memory\n", stderr); abort(); }
     }
-    loft_scratches[loft_nscratches].source = c;
-    loft_scratches[loft_nscratches].scratch = x;
-    loft_nscratches++;
+    cx->scratches[cx->nscratches].source = c;
+    cx->scratches[cx->nscratches].scratch = x;
+    cx->nscratches++;
     return x;
 }
 
@@ -2169,9 +2161,9 @@ static loft_ref loft_hash_unsorted(loft_cx *cx, loft_ref c, const loft_key *keys
 /* OpFreeScratch (Stores::free_iteration_scratch): the snapshot's two records go back. */
 static void loft_free_scratch(loft_cx *cx, loft_ref x) {
     if (x.store_nr == 0xFFFF || x.rec <= 1) return;
-    for (int i = 0; i < loft_nscratches; i++) {
-        if (loft_scratches[i].scratch.store_nr != x.store_nr || loft_scratches[i].scratch.rec != x.rec) continue;
-        loft_scratches[i] = loft_scratches[--loft_nscratches];
+    for (int i = 0; i < cx->nscratches; i++) {
+        if (cx->scratches[i].scratch.store_nr != x.store_nr || cx->scratches[i].scratch.rec != x.rec) continue;
+        cx->scratches[i] = cx->scratches[--cx->nscratches];
         break;
     }
     loft_store_t *s = loft_store_of(cx, x);

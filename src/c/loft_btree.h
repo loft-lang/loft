@@ -769,9 +769,6 @@ static uint32_t loft_bt_position(loft_cx *cx, loft_ref data, const loft_key *key
  * live leaf, inside its count, and holds exactly the record asked for — and a record is in an
  * index once — so a stale hint costs a descent, never a wrong slot.  Per thread and outside
  * the store, so a walk writes nothing.  -DLOFT_NO_WALK_HINT descends on every step. */
-#define LOFT_BT_HINTS 4
-typedef struct { uint16_t store_nr; uint32_t arena, rec, pos; } loft_bt_hint;
-static LOFT_TLS loft_bt_hint loft_bt_hints[LOFT_BT_HINTS];
 
 static uint32_t loft_bt_hinted(loft_cx *cx, loft_store_t *s, uint16_t store_nr, uint32_t a, uint32_t rec) {
 #ifdef LOFT_NO_WALK_HINT
@@ -779,7 +776,7 @@ static uint32_t loft_bt_hinted(loft_cx *cx, loft_store_t *s, uint16_t store_nr, 
     return 0;
 #else
     for (int k = 0; k < LOFT_BT_HINTS; k++) {
-        const loft_bt_hint *h = &loft_bt_hints[k];
+        const loft_bt_hint *h = &cx->bt_hints[k];
         if (h->rec != rec || h->arena != a || h->store_nr != store_nr) continue;
         uint32_t n = h->pos / LOFT_BT_FANOUT, i = h->pos % LOFT_BT_FANOUT;
         int live = n != 0 && n < loft_bt_hdr(cx, s, a, LOFT_BT_H_USED) && loft_bt_is_leaf(cx, s, a, n)
@@ -792,7 +789,7 @@ static uint32_t loft_bt_hinted(loft_cx *cx, loft_store_t *s, uint16_t store_nr, 
 
 /* btree::remember: `pos` as the hint for `rec`, replacing this arena's hint or the oldest. */
 static void loft_bt_remember(loft_cx *cx, uint16_t store_nr, uint32_t a, uint32_t rec, uint32_t pos) {
-    loft_bt_hint *h = loft_bt_hints;
+    loft_bt_hint *h = cx->bt_hints;
     if (!(h[0].store_nr == store_nr && h[0].arena == a)) {
         int at = LOFT_BT_HINTS - 1;
         for (int k = 0; k < LOFT_BT_HINTS; k++) {

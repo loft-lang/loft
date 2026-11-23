@@ -958,9 +958,8 @@ static const char *loft_um_closure(loft_cx *cx, loft_upmap *m, int nw, uint16_t 
     if (id < d->count) (*cache)[id] = all.p;
     else {
         /* An id the description has no row for: cached nowhere, so freed by the next call. */
-        static LOFT_TLS char *loose = 0;
-        free(loose);
-        loose = all.p;
+        free(cx->upgrade_loose);
+        cx->upgrade_loose = all.p;
     }
     return all.p;
 }
@@ -1457,52 +1456,46 @@ static void loft_um_derive(loft_cx *cx, loft_upmap *m, const loft_ld *old, uint1
 static const loft_ptype *loft_up_ptypes(loft_cx *cx);
 
 /* ── What a converting load owes the program's drain (`Owed`, src/database/upgrade.rs) ── */
-typedef struct { loft_ref rec; int64_t key; loft_ref old; } loft_uowe;
-static LOFT_TLS loft_uowe *loft_uo;
-static LOFT_TLS size_t loft_uo_n, loft_uo_cap, loft_uo_at;
-static LOFT_TLS loft_ref loft_uo_from = { 0xFFFF, 0, 0, 0 };
-static LOFT_TLS int loft_uo_scratch = -1;
+typedef struct loft_uowe { loft_ref rec; int64_t key; loft_ref old; } loft_uowe;
 
 /* The `upgrade` routines the drain's wrapper registered (`Stores::upgrade_routine`). */
-static LOFT_TLS uint16_t *loft_ur_tp, *loft_ur_old, *loft_ur_ver;
-static LOFT_TLS size_t loft_ur_n;
 
 static void loft_uo_push(loft_cx *cx, loft_ref rec, int64_t key, loft_ref old) {
-    if (loft_uo_n == loft_uo_cap) {
-        loft_uo_cap = loft_uo_cap ? loft_uo_cap * 2 : 32;
-        loft_uo = (loft_uowe *) realloc(loft_uo, loft_uo_cap * sizeof *loft_uo);
-        if (!loft_uo) { fputs("loft: out of memory\n", stderr); abort(); }
+    if (cx->uo_n == cx->uo_cap) {
+        cx->uo_cap = cx->uo_cap ? cx->uo_cap * 2 : 32;
+        cx->uo = (loft_uowe *) realloc(cx->uo, cx->uo_cap * sizeof *cx->uo);
+        if (!cx->uo) { fputs("loft: out of memory\n", stderr); abort(); }
     }
     loft_uowe o = { rec, key, old };
-    loft_uo[loft_uo_n++] = o;
+    cx->uo[cx->uo_n++] = o;
 }
 
 /* `reset_owed`: forget what a drain still owed, releasing the routines' scratch store. */
 static void loft_uo_reset(loft_cx *cx) {
-    loft_uo_n = 0;
-    loft_uo_at = 0;
-    loft_uo_from = loft_ref_null(cx);
-    if (loft_uo_scratch >= 0) loft_store_drop(cx, (uint16_t) loft_uo_scratch);
-    loft_uo_scratch = -1;
+    cx->uo_n = 0;
+    cx->uo_at = 0;
+    cx->uo_from = loft_ref_null(cx);
+    if (cx->uo_scratch >= 0) loft_store_drop(cx, (uint16_t) cx->uo_scratch);
+    cx->uo_scratch = -1;
 }
 
 /* `owed_key` / `routine_key`: the key a drain matches an owed fill by. */
 static int64_t loft_uo_key(loft_cx *cx, uint16_t tp, uint16_t field) { return ((int64_t) tp << 16) | field; }
 
 static int64_t loft_store_upgrade_owed_next(loft_cx *cx) {
-    if (loft_uo_at >= loft_uo_n) return -1;
-    return loft_uo[loft_uo_at++].key;
+    if (cx->uo_at >= cx->uo_n) return -1;
+    return cx->uo[cx->uo_at++].key;
 }
 
 static loft_ref loft_store_upgrade_owed_record(loft_cx *cx) {
-    return loft_uo_at > 0 && loft_uo_at <= loft_uo_n ? loft_uo[loft_uo_at - 1].rec : loft_ref_null(cx);
+    return cx->uo_at > 0 && cx->uo_at <= cx->uo_n ? cx->uo[cx->uo_at - 1].rec : loft_ref_null(cx);
 }
 
 static loft_ref loft_store_upgrade_owed_old(loft_cx *cx) {
-    return loft_uo_at > 0 && loft_uo_at <= loft_uo_n ? loft_uo[loft_uo_at - 1].old : loft_ref_null(cx);
+    return cx->uo_at > 0 && cx->uo_at <= cx->uo_n ? cx->uo[cx->uo_at - 1].old : loft_ref_null(cx);
 }
 
-static loft_ref loft_store_upgrade_owed_from(loft_cx *cx) { return loft_uo_from; }
+static loft_ref loft_store_upgrade_owed_from(loft_cx *cx) { return cx->uo_from; }
 
 static uint8_t loft_store_upgrade_owed_finish(loft_cx *cx) {
     loft_uo_reset(cx);
@@ -1514,15 +1507,15 @@ static void loft_store_upgrade_routine(loft_cx *cx, int64_t tp, int64_t old, int
     if (tp < 0 || old < 0 || version < 0 || tp >= (int64_t) loft_ntn || old >= (int64_t) loft_ntn ||
         version >= (int64_t) loft_ntn)
         return;
-    for (size_t i = 0; i < loft_ur_n; i++)
-        if (loft_ur_tp[i] == tp) { loft_ur_old[i] = (uint16_t) old; loft_ur_ver[i] = (uint16_t) version; return; }
-    loft_ur_tp = (uint16_t *) realloc(loft_ur_tp, (loft_ur_n + 1) * sizeof *loft_ur_tp);
-    loft_ur_old = (uint16_t *) realloc(loft_ur_old, (loft_ur_n + 1) * sizeof *loft_ur_old);
-    loft_ur_ver = (uint16_t *) realloc(loft_ur_ver, (loft_ur_n + 1) * sizeof *loft_ur_ver);
-    if (!loft_ur_tp || !loft_ur_old || !loft_ur_ver) { fputs("loft: out of memory\n", stderr); abort(); }
-    loft_ur_tp[loft_ur_n] = (uint16_t) tp;
-    loft_ur_old[loft_ur_n] = (uint16_t) old;
-    loft_ur_ver[loft_ur_n++] = (uint16_t) version;
+    for (size_t i = 0; i < cx->ur_n; i++)
+        if (cx->ur_tp[i] == tp) { cx->ur_old[i] = (uint16_t) old; cx->ur_ver[i] = (uint16_t) version; return; }
+    cx->ur_tp = (uint16_t *) realloc(cx->ur_tp, (cx->ur_n + 1) * sizeof *cx->ur_tp);
+    cx->ur_old = (uint16_t *) realloc(cx->ur_old, (cx->ur_n + 1) * sizeof *cx->ur_old);
+    cx->ur_ver = (uint16_t *) realloc(cx->ur_ver, (cx->ur_n + 1) * sizeof *cx->ur_ver);
+    if (!cx->ur_tp || !cx->ur_old || !cx->ur_ver) { fputs("loft: out of memory\n", stderr); abort(); }
+    cx->ur_tp[cx->ur_n] = (uint16_t) tp;
+    cx->ur_old[cx->ur_n] = (uint16_t) old;
+    cx->ur_ver[cx->ur_n++] = (uint16_t) version;
 }
 
 /* ── The converter (`Stores::upgrade_store_run`) ── */
@@ -1781,7 +1774,7 @@ static int loft_uc_elements(loft_cx *cx, loft_urun *r, uint32_t elem, loft_ref f
         if (rec.rec == 0) { loft_uc_fail(cx, r, "a collection of the new store could not take an element"); ok = 0; break; }
         if (esize) memset(loft_at(cx, loft_store_of(cx, rec), rec.rec, rec.pos), 0, esize);
         if (src.pos == 8 && !r->projecting) loft_uc_rec_put(cx, r, src.rec, rec);
-        size_t owed_from = loft_uo_n, fix_from = r->nfix;
+        size_t owed_from = cx->uo_n, fix_from = r->nfix;
         loft_ucont at = { rec, elem_tp, 0xFFFF };
         if (!loft_uc_convert(cx, r, elem, src, rec, at)) { ok = 0; break; }
         /* The key, copied before filing: an inline table moves the staged entry into itself. */
@@ -1805,9 +1798,9 @@ static int loft_uc_elements(loft_cx *cx, loft_urun *r, uint32_t elem, loft_ref f
             for (int k = 0; k < nk; k++) free(own[k]);
         }
         if (filed.rec != rec.rec || filed.pos != rec.pos || filed.store_nr != rec.store_nr) {
-            for (size_t k = owed_from; k < loft_uo_n; k++) {
-                loft_uc_moved(cx, &loft_uo[k].rec, rec, filed);
-                loft_uc_moved(cx, &loft_uo[k].old, rec, filed);
+            for (size_t k = owed_from; k < cx->uo_n; k++) {
+                loft_uc_moved(cx, &cx->uo[k].rec, rec, filed);
+                loft_uc_moved(cx, &cx->uo[k].old, rec, filed);
             }
             for (size_t k = fix_from; k < r->nfix; k++) loft_uc_moved(cx, &r->fix[k].holder, rec, filed);
             loft_urec *m = src.pos == 8 ? loft_uc_rec_get(cx, r, src.rec) : 0;
@@ -1839,7 +1832,7 @@ static void loft_uc_triple(loft_cx *cx, const char *v, int64_t t[3]) {
 /* `upgrade_scratch`: the store of the routines' records, made on first use with the `Release`
  * of the store's release as its first record. */
 static uint16_t loft_uc_scratch(loft_cx *cx, loft_urun *r, uint16_t version_tp) {
-    if (loft_uo_scratch >= 0) return (uint16_t) loft_uo_scratch;
+    if (cx->uo_scratch >= 0) return (uint16_t) cx->uo_scratch;
     uint32_t words = (8 + r->P[version_tp].size + 7) / 8;
     if (words < 2) words = 2;
     uint16_t nr = loft_store_scratch(cx, words + 3);
@@ -1855,9 +1848,9 @@ static uint16_t loft_uc_scratch(loft_cx *cx, loft_urun *r, uint16_t version_tp) 
         else memcpy(at, &t[f], 8);
     }
     LOFT_SET_KNOWN(*s, version_tp);
-    loft_uo_scratch = nr;
+    cx->uo_scratch = nr;
     loft_ref from = { nr, rec, 8, 0 };
-    loft_uo_from = from;
+    cx->uo_from = from;
     return nr;
 }
 
@@ -1866,8 +1859,8 @@ static uint16_t loft_uc_scratch(loft_cx *cx, loft_urun *r, uint16_t version_tp) 
 static int loft_uc_owe_routine(loft_cx *cx, loft_urun *r, uint32_t proj, loft_ref from, loft_ref item, uint16_t tp, uint16_t nid) {
     uint16_t old_tp = 0xFFFF, version_tp = 0xFFFF;
     (void) nid;
-    for (size_t i = 0; i < loft_ur_n; i++)
-        if (loft_ur_tp[i] == tp) { old_tp = loft_ur_old[i]; version_tp = loft_ur_ver[i]; }
+    for (size_t i = 0; i < cx->ur_n; i++)
+        if (cx->ur_tp[i] == tp) { old_tp = cx->ur_old[i]; version_tp = cx->ur_ver[i]; }
     if (old_tp == 0xFFFF || version_tp == 0xFFFF) return 1;
     uint16_t sc = loft_uc_scratch(cx, r, version_tp);
     loft_store_t *s = &cx->stores[sc];
@@ -2108,16 +2101,16 @@ static int loft_up_load(loft_cx *cx, loft_ref r, const loft_sidecar *sc, const c
     if (!loft_up_own(cx, up, sc->tp, &nd, &new_root, why)) goto done;
     /* A store older than this program goes through the routines; one this release or a later
      * one wrote is converted by name alone. */
-    if (loft_up_newer(cx, up->version, h.version) && loft_ur_n) {
-        rt_new = (uint16_t *) malloc(loft_ur_n * sizeof *rt_new);
-        rt_old = (uint16_t *) malloc(loft_ur_n * sizeof *rt_old);
+    if (loft_up_newer(cx, up->version, h.version) && cx->ur_n) {
+        rt_new = (uint16_t *) malloc(cx->ur_n * sizeof *rt_new);
+        rt_old = (uint16_t *) malloc(cx->ur_n * sizeof *rt_old);
         if (!rt_new || !rt_old) { fputs("loft: out of memory\n", stderr); abort(); }
-        for (size_t i = 0; i < loft_ur_n; i++) {
+        for (size_t i = 0; i < cx->ur_n; i++) {
             uint16_t a = LOFT_LD_NONE, b = LOFT_LD_NONE;
             for (uint16_t k = 0; k < nd.count; k++) {
                 if (nd.n[k].kind == LOFT_LN_NAME) continue;
-                if (nd.n[k].prog == loft_ur_tp[i]) a = k;
-                if (nd.n[k].prog == loft_ur_old[i]) b = k;
+                if (nd.n[k].prog == cx->ur_tp[i]) a = k;
+                if (nd.n[k].prog == cx->ur_old[i]) b = k;
             }
             if (a == LOFT_LD_NONE || b == LOFT_LD_NONE) continue;
             rt_new[nrt] = a;
@@ -2175,9 +2168,9 @@ static int loft_up_load(loft_cx *cx, loft_ref r, const loft_sidecar *sc, const c
         }
     }
     loft_store_drop(cx, dst_nr);
-    for (size_t i = 0; i < loft_uo_n; i++) {
-        if (loft_uo[i].rec.store_nr == dst_nr) loft_uo[i].rec.store_nr = r.store_nr;
-        if (loft_uo[i].old.store_nr == dst_nr) loft_uo[i].old.store_nr = r.store_nr;
+    for (size_t i = 0; i < cx->uo_n; i++) {
+        if (cx->uo[i].rec.store_nr == dst_nr) cx->uo[i].rec.store_nr = r.store_nr;
+        if (cx->uo[i].old.store_nr == dst_nr) cx->uo[i].old.store_nr = r.store_nr;
     }
     loft_up_repoint(cx, &run, dst_nr, r.store_nr);
     dst_nr = 0xFFFF;
@@ -2229,11 +2222,11 @@ static uint16_t loft_up_rebuild(loft_cx *cx, uint16_t slot, const loft_sidecar *
     } else {
         loft_urun run;
         memset(&run, 0, sizeof run);
-        size_t owed = loft_uo_n;
+        size_t owed = cx->uo_n;
         dst = loft_up_convert(cx, &run, &m, &od, &nd, new_root, sc->tp, slot, slot, "", why);
         if (dst != 0xFFFF) loft_up_repoint(cx, &run, dst, dst);
         /* The identity conversion adds no field, so it owes nothing. */
-        loft_uo_n = owed;
+        cx->uo_n = owed;
         loft_up_run_free(cx, &run);
     }
     loft_um_free(cx, &m);

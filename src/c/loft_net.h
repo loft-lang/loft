@@ -241,14 +241,14 @@ static int loft_image_load_url(loft_cx *cx, loft_ref r, loft_str url, const char
     char err[1024];
     loft_bytes b;
     long recorded = -1;
-    loft_gate_trie_v1 = 0;
+    cx->gate_trie_v1 = 0;
     int gate = sc && LOFT_KNOWN(cx->stores[r.store_nr]) == sc->tp ? loft_net_gate_pinned(cx, u, sc, who, &recorded, 1, schema_sha) : 1;
     if (gate == 0) {
         free(u);
         return 0;
     }
-    int trie_v1 = loft_gate_trie_v1;
-    loft_gate_trie_v1 = 0;
+    int trie_v1 = cx->gate_trie_v1;
+    cx->gate_trie_v1 = 0;
     if (!loft_fetch(cx, u, &b, err, sizeof err)) {
         fprintf(stderr, sha ? "store loader: refusing %s — fetch failed: %s\n" : "store loader: %s — fetch failed: %s\n", u, err);
         free(u);

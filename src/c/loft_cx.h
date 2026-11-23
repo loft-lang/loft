@@ -70,6 +70,16 @@ typedef struct { int unused; } loft_no_jmp_buf;
 
 #define LOFT_SLICE_POOL 16
 
+/* `Store::parse_errors`: what the parse that built a store's root reported, by store. */
+typedef struct loft_perrs { loft_text *e; size_t n; uint16_t tp; } loft_perrs;
+
+/* The index's descent hints (`loft_btree.h`). */
+#define LOFT_BT_HINTS 4
+typedef struct { uint16_t store_nr; uint32_t arena, rec, pos; } loft_bt_hint;
+
+/* A stored image's check: no store owns the walk (`loft_image.h`). */
+#define LOFT_VC_LIVE (-2L)
+
 #ifdef LOFT_HOSTED
 /* One local of the routine, offered to the interpreter by name: kind 0 integer, 1 float,
  * 2 text, 3 reference, 4 boolean or plain enum, 5 single. */
@@ -218,6 +228,70 @@ struct loft_cx {
 #endif
     struct loft_store_t *par_caller;
     uint32_t par_caller_n;
+    /* the index (`loft_btree.h`) */
+    loft_bt_hint bt_hints[LOFT_BT_HINTS];
+    /* the engine host (`loft_engine.h`) */
+    int64_t eh_by;
+    /* the hash (`loft_hash.h`) */
+    loft_ref h_filed;
+    struct loft_live_scratch *scratches;
+    int nscratches;
+    int scratch_cap;
+    /* stored images (`loft_image.h`) */
+    char *pg_refusal;
+    int gate_paged;
+    int gate_trie_v1;
+    long vc_own;
+    uint64_t *vc_starts;
+    uint32_t vc_words;
+    uint32_t vc_depth;
+    /* JSON (`loft_json.h`) */
+    loft_text *jerr;
+    size_t jerr_n;
+    size_t jerr_cap;
+    loft_ref jv_sentinel;
+    int jv_sentinel_made;
+    /* key seeds (`loft_keys.h`) */
+    uint64_t dm_seed;
+    uint64_t dm_key;
+    uint64_t dm_hv;
+    int dm_ok;
+    int seed_fixed_read;
+    int seed_fixed_set;
+    uint64_t seed_fixed;
+    uint64_t seed_counter;
+    /* the typed parse (`loft_parse.h`) */
+    int rd_on;
+    loft_text rd_path;  /* "/leaves/1" */
+    size_t *rd_marks;
+    size_t rd_nmarks;
+    size_t rd_cmarks;
+    loft_ref *rd_marked;
+    size_t rd_nmarked;
+    size_t rd_cmarked;
+    struct loft_rd_place *rd_at;
+    size_t rd_nat;
+    size_t rd_cat;
+    size_t *rd_tab;
+    size_t rd_ctab;
+    loft_text rd_pool;
+    struct loft_rd_pend *rd_pending;
+    size_t rd_npend;
+    size_t rd_cpend;
+    loft_perrs *store_perrs;
+    size_t store_nperrs;
+    /* store upgrades (`loft_upgrade.h`) */
+    char *upgrade_loose;
+    struct loft_uowe *uo;
+    size_t uo_n;
+    size_t uo_cap;
+    size_t uo_at;
+    loft_ref uo_from;
+    int uo_scratch;
+    uint16_t *ur_tp;
+    uint16_t *ur_old;
+    uint16_t *ur_ver;
+    size_t ur_n;
 };
 
 /* The main thread's context: the one `main` hands to everything it calls.  Its fields start at
@@ -226,12 +300,21 @@ static loft_cx loft_main_cx = {
 #ifdef LOFT_HOSTED
     .br_hdepth = 0xFFFFFFFFu,
 #endif
+    .vc_own = LOFT_VC_LIVE,
+    .uo_from = { 0xFFFF, 0, 0, 0 },
+    .uo_scratch = -1,
     .in_test = 0
 };
 
 /* A context as a new thread starts it: what `loft_main_cx` holds before `main` runs. */
 static void loft_cx_fresh(loft_cx *cx) {
     memset(cx, 0, sizeof *cx);
+    cx->vc_own = LOFT_VC_LIVE;
+    {
+        loft_ref r = { 0xFFFF, 0, 0, 0 };
+        cx->uo_from = r;
+    }
+    cx->uo_scratch = -1;
 #ifdef LOFT_HOSTED
     cx->br_hdepth = 0xFFFFFFFFu;
 #endif

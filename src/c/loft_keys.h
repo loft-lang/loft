@@ -275,24 +275,19 @@ static void loft_sip_kv(loft_cx *cx, loft_sip *h, loft_kv k) {
     else if (k.kind == LOFT_KV_TEXT) loft_sip_str(cx, h, k.s);
 }
 
-#ifndef LOFT_TLS
-#define LOFT_TLS
-#endif
 /* The last integer digest computed, per thread: a lookup that misses and the insert that follows
  * it (`v = get(c, k); if v < 0 { put(c, k, …) }`, which finds `k` again and files a record under
  * it) digest the same key under the same seed two or three times in a row.  The digest is a pure
  * function of the pair, so the memo only answers what the computation would. */
-static LOFT_TLS uint64_t loft_dm_seed, loft_dm_key, loft_dm_hv;
-static LOFT_TLS int loft_dm_ok;
 
 /* keys::key_hash of the one integer key `[key]` under `seed`: the seed's word and the key's, then
  * the finish for sixteen bytes — what the general digest computes for `loft_kv_int(key)`,
  * unrolled (`@FR-R-TypedKeyed`'s digest). */
 LOFT_HOT_INLINE uint64_t loft_digest_i64(loft_cx *cx, uint64_t seed, int64_t key) {
-    if (loft_dm_ok && loft_dm_key == (uint64_t) key && loft_dm_seed == seed) return loft_dm_hv;
-    loft_dm_seed = seed;
-    loft_dm_key = (uint64_t) key;
-    loft_dm_ok = 1;
+    if (cx->dm_ok && cx->dm_key == (uint64_t) key && cx->dm_seed == seed) return cx->dm_hv;
+    cx->dm_seed = seed;
+    cx->dm_key = (uint64_t) key;
+    cx->dm_ok = 1;
     loft_sip h;
     uint8_t b[8];
     loft_sip_init(cx, &h);
@@ -303,8 +298,8 @@ LOFT_HOT_INLINE uint64_t loft_digest_i64(loft_cx *cx, uint64_t seed, int64_t key
     h.length = 16;
     h.tail = 0;
     h.ntail = 0;
-    loft_dm_hv = loft_sip_finish(cx, &h);
-    return loft_dm_hv;
+    cx->dm_hv = loft_sip_finish(cx, &h);
+    return cx->dm_hv;
 }
 
 /* keys::ints_hash: the digest of `n` integer key parts — the seed's word and one per part, no
@@ -393,24 +388,17 @@ static uint64_t loft_ref_digest(loft_cx *cx, loft_ref e, const loft_key *keys, i
     return loft_sip_finish(cx, &h);
 }
 
-/* A header built without `loft_cc.h` (the replays of tests/c_emit.rs) keeps one copy of its
- * state: no threads. */
-#ifndef LOFT_TLS
-#define LOFT_TLS
-#endif
 
 /* keys::fresh_seed: a new table's seed — LOFT_HASH_SEED's value (decimal or 0x hex) when set, so
  * a persisted store is byte-reproducible, else an unpredictable one (the hash-DoS defence).
- * Never 0, which marks an unseeded table.  Each seed is a per-thread counter mixed (splitmix64)
+ * Never 0, which marks an unseeded table.  Each seed is its context's counter mixed (splitmix64)
  * under the two keys `loft_start` read from the operating system's entropy once: distinct and
  * unpredictable per table, with no system call in a hash's life.  Read per table,
  * `/dev/urandom` cost an open, an fstat, a read and a close for every hash made. */
 static uint64_t loft_fresh_seed(loft_cx *cx) {
-    static LOFT_TLS int fixed_read = 0, fixed_set = 0;
-    static LOFT_TLS uint64_t fixed = 0, counter = 0;
-    if (!fixed_read) {
+    if (!cx->seed_fixed_read) {
         const char *raw = getenv("LOFT_HASH_SEED");
-        fixed_read = 1;
+        cx->seed_fixed_read = 1;
         if (raw) {
             const char *v = raw;
             while (*v == ' ' || *v == '\t') v++;
@@ -420,8 +408,8 @@ static uint64_t loft_fresh_seed(loft_cx *cx) {
                 unsigned long long n = strtoull(hex ? v + 2 : v, &end, hex ? 16 : 10);
                 while (end && (*end == ' ' || *end == '\t' || *end == '\n')) end++;
                 if (end && *end == 0 && (!hex || v[2] != 0) && v[0] != '-' && v[0] != '+') {
-                    fixed = (uint64_t) n;
-                    fixed_set = 1;
+                    cx->seed_fixed = (uint64_t) n;
+                    cx->seed_fixed_set = 1;
                 } else {
                     fprintf(stderr, "warning: LOFT_HASH_SEED=\"%s\" is not a 64-bit number — hashing stays "
                                     "random, so a persisted store will NOT be byte-reproducible\n", raw);
@@ -429,12 +417,12 @@ static uint64_t loft_fresh_seed(loft_cx *cx) {
             }
         }
     }
-    uint64_t s = fixed;
-    if (!fixed_set) {
+    uint64_t s = cx->seed_fixed;
+    if (!cx->seed_fixed_set) {
         if (loft_seed_k0 == 0) loft_seed_keys(cx);
-        /* The counter is per thread and its address differs per thread, so two threads never
+        /* The counter is the context's and its address differs per context, so two threads never
          * draw the same seed. */
-        s = (loft_seed_k0 + ++counter * UINT64_C(0x9E3779B97F4A7C15)) ^ loft_seed_k1 ^ (uint64_t) (size_t) &counter;
+        s = (loft_seed_k0 + ++cx->seed_counter * UINT64_C(0x9E3779B97F4A7C15)) ^ loft_seed_k1 ^ (uint64_t) (size_t) &cx->seed_counter;
         s ^= s >> 30;
         s *= UINT64_C(0xBF58476D1CE4E5B9);
         s ^= s >> 27;

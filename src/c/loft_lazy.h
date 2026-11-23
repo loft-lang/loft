@@ -786,8 +786,8 @@ static int loft_lazy_miss(loft_cx *cx, loft_ref coll, const loft_kv *key, int n)
         return 0;
     }
     if (db == 1) return loft_lazy_sql_fetch(cx, b, source + 7 /* after `sqlite:` */, key, n);
-    free(loft_pg_refusal);
-    loft_pg_refusal = 0;
+    free(cx->pg_refusal);
+    cx->pg_refusal = 0;
     if (b->fetch(cx, coll, loft_view(cx, &b->source), key, n) > 0) return 1;
     /* Unreachable is decided by the open, a refusal by what the loader said, else the key is
      * absent from a source that was reached (`fetch_from_file`). */
@@ -800,7 +800,7 @@ static int loft_lazy_miss(loft_cx *cx, loft_ref coll, const loft_kv *key, int n)
         loft_lazy_refuse(cx, coll, loft_lit(cx, why, strlen(why)));
         return 0;
     }
-    if (loft_pg_refusal) loft_lazy_refuse(cx, coll, loft_lit(cx, loft_pg_refusal, strlen(loft_pg_refusal)));
+    if (cx->pg_refusal) loft_lazy_refuse(cx, coll, loft_lit(cx, cx->pg_refusal, strlen(cx->pg_refusal)));
     return 0;
 }
 
@@ -836,7 +836,7 @@ static void loft_lazy_fail(loft_cx *cx, loft_ref coll, loft_str why) {
  * (it names its source by store) or a lazy binding or a lazy refusal is recorded (each names a
  * collection by store). */
 static int loft_swap_blocked(loft_cx *cx) {
-    return loft_nscratches != 0
+    return cx->nscratches != 0
 #ifdef LOFT_LAZY
         || loft_nlazy != 0 || loft_nlazy_errs != 0
 #endif

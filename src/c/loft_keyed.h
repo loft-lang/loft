@@ -610,9 +610,9 @@ static loft_ref loft_keyed_entry_ints(loft_cx *cx, const loft_tdesc *T, uint16_t
      * whose writes are skipped (`@FR-H-WriteLocked`). */
     if (LOFT_WRITE_REFUSED(loft_store_of(cx, c))) return loft_h_find_ints(cx, c, keys, nk, ks);
     int live = 0;
-    for (int i = 0; i < loft_nscratches && !live; i++)
-        live = loft_scratches[i].source.store_nr == c.store_nr && loft_scratches[i].source.rec == c.rec &&
-               loft_scratches[i].source.pos == c.pos;
+    for (int i = 0; i < cx->nscratches && !live; i++)
+        live = cx->scratches[i].source.store_nr == c.store_nr && cx->scratches[i].source.rec == c.rec &&
+               cx->scratches[i].source.pos == c.pos;
     if (!live) {
         loft_ref e = loft_h_entry_ints(cx, c, keys, nk, ks);
 #ifdef LOFT_KEYED_VERIFY
@@ -649,9 +649,9 @@ static loft_ref loft_keyed_entry_text(loft_cx *cx, const loft_tdesc *T, uint16_t
     if (c.store_nr == 0xFFFF || c.rec == 0) return loft_ref_null(cx);
     if (LOFT_WRITE_REFUSED(loft_store_of(cx, c))) return loft_h_find_text(cx, c, keys, key);
     int live = 0;
-    for (int i = 0; i < loft_nscratches && !live; i++)
-        live = loft_scratches[i].source.store_nr == c.store_nr && loft_scratches[i].source.rec == c.rec &&
-               loft_scratches[i].source.pos == c.pos;
+    for (int i = 0; i < cx->nscratches && !live; i++)
+        live = cx->scratches[i].source.store_nr == c.store_nr && cx->scratches[i].source.rec == c.rec &&
+               cx->scratches[i].source.pos == c.pos;
     if (!live) {
         loft_ref e = loft_h_entry_text(cx, c, keys, key);
 #ifdef LOFT_KEYED_VERIFY
@@ -1799,6 +1799,28 @@ static void loft_cx_end(loft_cx *cx) {
 #if defined(LOFT_FFI)
     free(cx->ffi_log_recs);
 #endif
+    free(cx->scratches);
+    free(cx->pg_refusal);
+    free(cx->vc_starts);
+    for (size_t i = 0; i < cx->jerr_n; i++) loft_text_free(cx, &cx->jerr[i]);
+    free(cx->jerr);
+    loft_text_free(cx, &cx->rd_path);
+    loft_text_free(cx, &cx->rd_pool);
+    free(cx->rd_marks);
+    free(cx->rd_marked);
+    free(cx->rd_at);
+    free(cx->rd_tab);
+    free(cx->rd_pending);
+    for (size_t i = 0; i < cx->store_nperrs; i++) {
+        for (size_t j = 0; j < cx->store_perrs[i].n; j++) loft_text_free(cx, &cx->store_perrs[i].e[j]);
+        free(cx->store_perrs[i].e);
+    }
+    free(cx->store_perrs);
+    free(cx->upgrade_loose);
+    free(cx->uo);
+    free(cx->ur_tp);
+    free(cx->ur_old);
+    free(cx->ur_ver);
     /* The pool last: the texts above went back into it. */
     for (int c = 0; c < LOFT_TP_CLASSES; c++)
         while (cx->tp_n[c]) free(cx->tp_blocks[c][--cx->tp_n[c]]);
