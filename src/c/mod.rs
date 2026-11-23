@@ -556,13 +556,18 @@ impl<'a> Cx<'a> {
         let Some(root) = &self.source_root else {
             return file.to_string();
         };
+        // Both spelled with `/`: on Windows the package directory arrives with the host's
+        // separator and a source position may hold either, so a bare prefix test misses and
+        // the unit names the machine's path.
+        let root = crate::file_access::portable_str(root);
         let root = root.trim_end_matches('/');
+        let file = crate::file_access::portable_str(file);
         if let Some(rest) = file.strip_prefix(root).and_then(|r| r.strip_prefix('/')) {
             return rest.to_string();
         }
         match file.rfind("/default/") {
             Some(at) => file[at + 1..].to_string(),
-            None => file.to_string(),
+            None => file,
         }
     }
 
@@ -2534,10 +2539,13 @@ fn c_libraries(
             );
         } else if let Some(so) = hosted
             .then(|| std::path::Path::new(&lib.pkg_dir).join(&lib.name))
-            // Linked by name where a run path finds it (`platform::c_rpath_arg`; none on
-            // Windows, which takes the archive below).
+            // Linked by name where a run path finds it (`platform::c_rpath_arg`).  Windows has
+            // none and needs none: a gcc-style linker takes the DLL by its path and records its
+            // name, and the loader answers that name with the image already in the process.
+            // MSVC's `cl` links only an import library, so it takes the archive below.
             .filter(|so| {
-                crate::platform::c_rpath_arg(so.parent()).is_some()
+                (crate::platform::c_rpath_arg(so.parent()).is_some()
+                    || !crate::platform::c_compiler_is_msvc(&crate::platform::c_unit_compiler()))
                     && crate::file_access::exists(so)
             })
         {
