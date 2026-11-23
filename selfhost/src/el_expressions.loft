@@ -784,6 +784,10 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
         el::refuse(e, "a function returning a record from something other than a literal: {kind}");
       }
     }
+  } else if rb >= 0 && e.first_pass && !renamed_now {
+    // (`materialize_view_return` at a tail viewing a local, the buffer already renamed by an
+    // earlier exit: its work ref is minted and substituted out, on this pass as on the next.)
+    tail_view_work_ref(e, vars, code, result);
   } else if rb >= 0 && !e.first_pass && !renamed_now {
     // Delivered in the renamed buffer: the body answers a record of the placeholder's.
     match code {
@@ -810,6 +814,7 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
         // A tail viewing a local is copied into the work ref the first pass renamed the buffer
         // onto (`var_return`).
         if buf >= 0 && bound == null {
+          tail_view_work_ref(e, vars, ir::NdBlock { block: [bl] }, result);
           match el_ir::unspan(el_ir::last(bl.operators)) {
             NdVar { n: tv } => {
               if tv != buf && heap_def(el_vars::tp(vars, tv)) >= 0 {
@@ -2788,5 +2793,19 @@ fn shadow_views_local(vars: el_vars::Vars, n: ir::Node) -> boolean {
       }
       false
     }
+  }
+}
+
+// `materialize_view_return` at a body tail that is a local viewing another local's store, where
+// an earlier exit renamed the buffer: the exit's work ref is minted and substituted out
+// (`unregister_work_ref`) — on both passes, as Rust's `ref_return` does at every such exit.
+fn tail_view_work_ref(e: el::El, vars: el_vars::Vars, code: ir::Node, result: ir::TypeT) {
+  tv = match code { NdBlock { block } => match el_ir::unspan(el_ir::last(block[0].operators)) { NdVar { n } => n, _ => -1 }, _ => -1 };
+  if tv < 0 || vars.vars[tv].argument || heap_def(el_vars::tp(vars, tv)) < 0 || !el_ex_copy::views_local(vars, tv) {
+    return;
+  }
+  tw = el_vars::work_ref(vars, el_types::without_deps(el_types::base(result)));
+  if tw != el_ex_null::return_buffer(e, vars) {
+    el_vars::unregister_work_ref(vars, tw);
   }
 }
