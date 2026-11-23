@@ -4545,7 +4545,7 @@ hex_shape	ecc2b2e31	c	R-Fuse/text	36
 hex_shape	ecc2b2e31	c	R-GuardFree	75
 hex_shape	ecc2b2e31	c	R-Header	51
 hex_shape	ecc2b2e31	c	R-Header/narrow	13
-hex_shape	ecc2b2e31	c	R-Inline	33
+hex_shape	ecc2b2e31	c	R-Inline	31
 hex_shape	ecc2b2e31	c	R-Inline/helper	15
 hex_shape	ecc2b2e31	c	R-InlineLeaf	210
 hex_shape	ecc2b2e31	c	R-Inputs	57

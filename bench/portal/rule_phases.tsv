@@ -90,7 +90,7 @@ R-InPlaceLiteral/child	parse	1	1	0	0	0	0
 R-InRange	parse	12	92	0	0	0	0
 R-InRange/length-local	parse	6	20	0	0	0	0
 R-InRange/wrapped	parse	8	22	0	0	0	0
-R-Inline	c	61	0	0	0	688	0
+R-Inline	c	61	0	0	0	686	0
 R-Inline/helper	c	35	0	0	0	243	0
 R-InlineLeaf	parse	61	2972	0	0	0	0
 R-Inputs	c,native	36	0	0	0	1087	10502
