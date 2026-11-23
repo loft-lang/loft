@@ -1036,23 +1036,47 @@ pub(crate) fn param_writes_summary(data: &Data) -> ParamWritesSummary {
     for d in 0..data.definitions() {
         cur.insert(d, vec![false; data.def(d).attributes().len()]);
     }
-    // Monotone: a round only adds writes, so it stops; each round reads the facts so far.
-    loop {
-        let mut changed = false;
-        for &d in &fns {
-            let def = data.def(d);
-            let mut written = crate::fxhash::FxHashSet::default();
-            find_written_vars(def.code(), data, def.variables(), &mut written, &mut cur);
-            let entry = cur.get_mut(&d).expect("every definition has an entry");
-            for (i, w) in entry.iter_mut().enumerate() {
-                if !*w && written.contains(&(i as u16)) {
-                    *w = true;
-                    changed = true;
-                }
+    // Monotone: a walk only adds writes, so it stops; each walk reads the facts so far.  The
+    // first pass walks every body; after it only the CALLERS of a function whose facts grew are
+    // walked again (a worklist), since a body's answer reads its callees' facts and nothing else.
+    let mut callers: crate::fxhash::FxHashMap<u32, Vec<u32>> = crate::fxhash::FxHashMap::default();
+    for &d in &fns {
+        let mut seen = crate::fxhash::FxHashSet::default();
+        data.def(d).code().any_node(&mut |n| {
+            if let Value::Call(c, _) = n
+                && *c != d
+                && seen.insert(*c)
+            {
+                callers.entry(*c).or_default().push(d);
+            }
+            false
+        });
+    }
+    let mut queue: std::collections::VecDeque<u32> = fns.iter().copied().collect();
+    let mut queued: crate::fxhash::FxHashSet<u32> = fns.iter().copied().collect();
+    while let Some(d) = queue.pop_front() {
+        queued.remove(&d);
+        let def = data.def(d);
+        let mut written = crate::fxhash::FxHashSet::default();
+        find_written_vars(def.code(), data, def.variables(), &mut written, &mut cur);
+        let entry = cur.get_mut(&d).expect("every definition has an entry");
+        let mut grew = false;
+        for (i, w) in entry.iter_mut().enumerate() {
+            if !*w && written.contains(&(i as u16)) {
+                *w = true;
+                grew = true;
             }
         }
-        if !changed {
-            break;
+        if grew {
+            // A self call reads its own facts too.
+            if queued.insert(d) {
+                queue.push_back(d);
+            }
+            for &c in callers.get(&d).map_or(&[][..], Vec::as_slice) {
+                if queued.insert(c) {
+                    queue.push_back(c);
+                }
+            }
         }
     }
     let key = std::ptr::from_ref(data) as usize;

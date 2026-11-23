@@ -25,16 +25,17 @@ fn trace() -> bool {
     crate::env_once!(std::env::var("LOFT_TRACE_SINGLE_USE").is_ok_and(|v| v != "0"))
 }
 
-/// How often `v` reads and assigns `t`.
-fn uses(node: &Value, tmp: u16, reads: &mut usize, sets: &mut usize) {
+/// How often `node` reads and assigns each variable, as `(reads, sets)` per variable number:
+/// one walk for the whole function (loft#2620 — counted per candidate, the walk was the
+/// square of the function's size).
+fn uses(node: &Value, counts: &mut crate::fxhash::FxHashMap<u16, (usize, usize)>) {
     match node {
-        Value::Var(n) if *n == tmp => *reads += 1,
-        Value::Set(n, _) if *n == tmp => *sets += 1,
+        Value::Var(n) => counts.entry(*n).or_default().0 += 1,
+        Value::Set(n, _) => counts.entry(*n).or_default().1 += 1,
         // Transparent: the wrapped node is counted as its child, below.
-        Value::Span(_) => {}
         _ => {}
     }
-    node.for_each_child(&mut |c| uses(c, tmp, reads, sets));
+    node.for_each_child(&mut |c| uses(c, counts));
 }
 
 /// The value a single-expression block wraps, or the node itself.
@@ -85,11 +86,11 @@ fn substitute(v: &mut Value, t: u16, e: &mut Option<Value>) {
 fn rewrite_in(
     data: &Data,
     vars: &crate::variables::Function,
-    code: &Value,
+    counts: &crate::fxhash::FxHashMap<u16, (usize, usize)>,
     node: &mut Value,
 ) -> usize {
     let mut moved = 0;
-    node.for_each_child_mut(&mut |c| moved += rewrite_in(data, vars, code, c));
+    node.for_each_child_mut(&mut |c| moved += rewrite_in(data, vars, counts, c));
     let block = match node {
         // A loop's body is a block of statements like any other (a comprehension's is).
         Value::Block(b) | Value::Loop(b) => b,
@@ -101,13 +102,16 @@ fn rewrite_in(
             at += 1;
             continue;
         };
-        let (tmp, value) = (*tmp, bare(e).clone());
-        let (mut reads, mut sets) = (0, 0);
-        uses(code, tmp, &mut reads, &mut sets);
+        let tmp = *tmp;
+        // The name and capture tests first: only a comprehension temporary is a candidate.
+        if !vars.name(tmp).starts_with("_comp_") || vars.is_captured(tmp) {
+            at += 1;
+            continue;
+        }
+        let value = bare(e).clone();
+        let (reads, sets) = counts.get(&tmp).copied().unwrap_or_default();
         let admitted = reads == 1
             && sets == 1
-            && !vars.is_captured(tmp)
-            && vars.name(tmp).starts_with("_comp_")
             && pure(data, &value)
             && matches!(value.unspan(), Value::Call(..))
             && read_after_pure(data, &block.operators[at + 1], tmp) == Some(true);
@@ -138,9 +142,12 @@ pub fn rewrite_program(data: &mut Data) -> usize {
             continue;
         }
         let name = def.name().to_string();
-        let snapshot = def.code().clone();
+        // Counted on the body as it stands before any move: a move leaves the counts of the
+        // other temporaries as they were (it substitutes one read of the moved one).
+        let mut counts = crate::fxhash::FxHashMap::default();
+        uses(def.code(), &mut counts);
         let mut code = std::mem::replace(&mut data.definitions[d as usize].code, Value::Null);
-        let n = rewrite_in(data, &vars, &snapshot, &mut code);
+        let n = rewrite_in(data, &vars, &counts, &mut code);
         data.definitions[d as usize].code = code;
         if n > 0 {
             if trace() {
