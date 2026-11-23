@@ -132,7 +132,8 @@ fn cc_flags(tier: Tier) -> Vec<String> {
             .map(|a| (*a).to_string()),
     );
     // A fault in a semantics or a debug build names the frames it fired under; a shipped
-    // binary compiles the pushes away, as the Rust writer's lean tier drops its frame names.
+    // binary compiles the frame names away and keeps the call-depth cap, as the rustc writer's
+    // `--ship` builds its lean tier (`cr_call_push_lean`).
     match tier {
         Tier::Check => flags.extend(["-O1".into(), "-DLOFT_CALL_CHAIN".into()]),
         Tier::Release => flags.push("-O3".into()),

@@ -732,6 +732,14 @@ interpreter (`HostTable::hosted`), and the unit reads the store table in place
 5. A sweep that turns up a `differ` is a defect to fix before going on — it is usually an
    older rule the new construct now reaches.
 
+**Port, never reinvent (owner).**  The C carries loft's design, not a new one: a counter, a
+cache, a fallback or a gate the C needs is the one the interpreter (or the rustc writer's
+runtime) already has, ported.  A mechanism made up for the C is, in almost every case, a
+regression.  Where loft's own design is the flaw — a thread-local, a reference count — the
+cure is that design's fix on every backend, never a C variant of it: thread-locals and
+reference counts hide bugs and are almost never needed (@PLN226: per-thread state is a field
+of the `Stores` a worker is handed).
+
 **Lazy stores.**  `store_bind_lazy` binds a collection to a `.store` image (`LAZY_STORES.md`):
 a keyed lookup that misses on a bound collection fetches that one key through the paged
 loader the collection's kind takes — a hash's and a trie's key, a spatial's point as the

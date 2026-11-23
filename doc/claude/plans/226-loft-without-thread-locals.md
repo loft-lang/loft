@@ -3,7 +3,7 @@ Copyright (c) 2026 Jurjen Stellingwerff
 SPDX-License-Identifier: LGPL-3.0-or-later
 -->
 
-# 226 — The C runtime without thread-locals
+# 226 — loft without thread-locals
 
 ## Status
 
@@ -12,9 +12,18 @@ Design stated by the owner; no phase started.
 
 ## Goal
 
-The C runtime and the C it emits keep no state in thread-locals: `LOFT_TLS` and every
-`static LOFT_TLS` declaration are gone, and `par`, `par_fold` and `parallel { }` answer as
-they do today on every host, threads or none.
+loft keeps no state in thread-locals: the C runtime and the C it emits (`LOFT_TLS`, 178
+lines) and the Rust runtime and interpreter (`thread_local!`, 85 blocks in 44 files —
+`git grep -c 'thread_local!' -- src`).  `par`, `par_fold` and `parallel { }` answer as they do
+today on every host, threads or none.
+
+Thread-locals, like reference counts, are almost never needed and hide bugs (owner): state
+that outlives the run, the test or the worker it belongs to.  The Rust ones exist to avoid
+adding a field to `Stores` (`NATIVE.md` § N8b: "Thread-local storage avoids modifying
+`Stores`") — the call frames and depth (`call_frames.rs`), the native coroutines, the
+lazy-driver flag, the bridge markers — while every compiled function already receives its
+`Stores` and every `par` worker already has its own.  Each becomes a field of the `Stores` (or
+`State`) it belongs to, and the C ports that design (C_BACKEND.md § Port, never reinvent).
 
 ## The design (owner)
 
@@ -47,6 +56,7 @@ So there are two kinds of state, and neither is per-thread in the C sense:
 | Frames, the call chain, the depth count, the fault jump, the test jump, held texts, the lazy-driver jump | `loft_rt.h` | fields of the store context |
 | Scratch of ONE runtime call (JSON parse errors, the reflection and record-reference walks, `show`'s closers, equality jobs, pack buffers, upgrade tables) | `loft_parse.h`, `loft_json.h`, `loft_upgrade.h`, `loft_image.h`, `loft_keyed.h`, `loft_rt.h` | a local of that call (on the stack, or allocated and freed by the call) |
 | Per-function work-buffer parks the emitter writes (`static LOFT_TLS loft_text` slots, `body.rs`, `split.rs`) | emitted code | fields of the store context (a park per function slot) |
+| Rust: call frames and depth, crash report, lazy-driver flag, bridge markers, store census, key caches, engine host, extensions (`thread_local!`) | `src/call_frames.rs`, `crash_report.rs`, `engine_host.rs`, `extensions.rs`, `database/allocation.rs`, `keys.rs`, `store_census.rs`, … | fields of the `Stores` or `State` they describe; the writer's (`codegen_runtime.rs`) go with @PLN225 R7 |
 | Server, web and SSH connection tables | `loft_server.h`, `loft_web.h`, `loft_ssh.h`, `loft_net.h` | the server's own state, owned by the thread that runs the server loop: a global, or a value the loop holds |
 | The hosted unit's bridge answer and generator text (`hosted.rs`) | emitted code | the bridge call's own stack, or the `Stores` the interpreter hands the call |
 | The FFI call log, B-tree hints, hash-seed state | `loft_ffi_host.h`, `loft_btree.h`, `loft_hash.h` | per call, or main's global where only main writes |
@@ -83,9 +93,10 @@ on every call already.
 | **P2** | The store context: every emitted function and store-touching runtime helper takes it first; main's is the program's, a worker's is made by the main thread before it starts (the common stores borrowed read-only, its own writable) and holds its frames and fault state. | `git grep LOFT_TLS -- src/c/loft_rt.h src/c/loft_store.h` empty; `tests/par_*.rs`, `runtime_errors` (worker faults), `lazy_sql_source` (contained faults) green on the C; TSan run of the `par` corpus clean. | L |
 | **P3** | Emitted state: the work-buffer parks and slots (`body.rs`, `split.rs`) as fields of the store context; the hosted unit's bridge state on the call. | No emitted `LOFT_TLS`; `c_emit`, `hosted_unit`, `stdlib_unit` green. | M |
 | **P4** | Server, web, SSH, FFI log, hints: owned by the thread that runs them. | Their suites green; `git grep LOFT_TLS -- src/c` empty. | M |
+| **P4b** | The Rust thread-locals: each a field of the `Stores` / `State` it describes (call frames and depth first — the C's frames port them). | `git grep 'thread_local!' -- src` empty; the full suite on both backends; `runtime_errors`, `par_*`, `lazy_sql_source` on the interpreter. | M |
 | **P5** | Remove `LOFT_TLS` itself, the C11 floor's one reason (`C_BACKEND.md`: `_Thread_local`), and "a strict C99 build runs on one thread". | `cc -std=c99 -pedantic -DLOFT_STRICT` builds a `par` unit that runs on threads; full suite and the threading CI legs green. | S |
 
-**Order:** P0 → P1 (independent) → P2 → P3 → P4 → P5.
+**Order:** P0 → P1 (independent) → P2 → P3 → P4 → P4b → P5.
 
 ## Cross-arc dependencies
 
