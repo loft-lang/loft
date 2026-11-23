@@ -7736,11 +7736,9 @@ impl Stores {
         match &self.types[tp as usize].parts {
             _ if is_keyed(tp) => tp,
             Parts::Struct(fields) | Parts::EnumValue(_, fields) => {
-                // The target ref's `pos` is the collection's claim slot, NOT the
-                // struct field offset, so it can't select the field. A wrapper with
-                // exactly ONE keyed-collection field is the reported idiom (`struct
-                // Wrap { data: hash<T[k]> }`) and unambiguous; use it. A struct with
-                // several keyed fields can't be disambiguated yet → refuse.
+                // Asked of the type alone, a wrapper with exactly ONE keyed-collection
+                // field (`struct Wrap { data: hash<T[k]> }`) is unambiguous; with several,
+                // the reference decides (`collection_type_at`).
                 let mut keyed = fields.iter().filter(|f| is_keyed(f.content));
                 match (keyed.next(), keyed.next()) {
                     (Some(f), None) => f.content,
@@ -7749,6 +7747,26 @@ impl Stores {
             }
             _ => u16::MAX,
         }
+    }
+
+    /// [`Self::collection_type_of_store`] for the collection the reference `pos` names: in a
+    /// store rooting a struct, the keyed field whose payload offset is `pos`
+    /// (`store::RECORD_PAYLOAD` past the record's start, where a field reference sits), so a
+    /// struct holding several keyed collections answers the one the reference was taken of,
+    /// as the C backend does from the field it was bound through.  Otherwise as
+    /// `collection_type_of_store`.
+    pub(crate) fn collection_type_at(&self, tp: u16, pos: u32) -> u16 {
+        if tp != u16::MAX
+            && let Some(Parts::Struct(fields) | Parts::EnumValue(_, fields)) =
+                self.types.get(tp as usize).map(|t| &t.parts)
+            && let Some(f) = fields.iter().find(|f| {
+                u32::from(f.position) + crate::store::RECORD_PAYLOAD == pos
+                    && self.collection_type_of_store(f.content) == f.content
+            })
+        {
+            return f.content;
+        }
+        self.collection_type_of_store(tp)
     }
 
     /// True when an entry of type `content_tp` can be partially loaded today —
