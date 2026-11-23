@@ -387,17 +387,14 @@ pub(crate) enum RunReport {
 /// made from `&self` reads; a `par` worker's `Stores` is its own, as each thread's sets were.
 #[derive(Default)]
 pub(crate) struct RunDiagnostics {
-    reported: std::sync::Mutex<std::collections::HashSet<(RunReport, u16, u32, u32)>>,
-    pub(crate) timeline: std::sync::Mutex<allocation::TimelineState>,
+    reported: std::cell::RefCell<std::collections::HashSet<(RunReport, u16, u32, u32)>>,
+    pub(crate) timeline: std::cell::RefCell<allocation::TimelineState>,
 }
 
 impl RunDiagnostics {
     /// Whether `(what, a, b, c)` is reported for the first time this run (and mark it so).
     pub(crate) fn first_report(&self, what: RunReport, a: u16, b: u32, c: u32) -> bool {
-        self.reported
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert((what, a, b, c))
+        self.reported.borrow_mut().insert((what, a, b, c))
     }
 }
 

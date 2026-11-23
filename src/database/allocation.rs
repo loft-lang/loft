@@ -96,7 +96,7 @@ pub fn timeline_summary(stores: &Stores, real_leaked: usize) {
         return;
     }
     {
-        let t = stores.run.timeline.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let t = stores.run.timeline.borrow_mut();
         let verdict = if real_leaked == 0 {
             "NO leak (every user store freed)".to_string()
         } else {
@@ -1015,7 +1015,7 @@ impl Stores {
             }
             Some("timeline") => {
                 let seq = {
-                    let mut t = self.run.timeline.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                    let mut t = self.run.timeline.borrow_mut();
                     let s = t.seq;
                     t.seq += 1;
                     t.total_alloc += 1;
@@ -2107,7 +2107,7 @@ impl Stores {
                 // a reader matches alloc↔free across slot reuse. `?` = a free with no live
                 // alloc record (a double-free or a pre-timeline store).
                 let (seq, live_after) = {
-                    let mut t = self.run.timeline.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                    let mut t = self.run.timeline.borrow_mut();
                     t.total_free += 1;
                     let s = t.live.remove(&al);
                     (s, t.live.len())
