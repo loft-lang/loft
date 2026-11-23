@@ -186,6 +186,12 @@ The gate compares with STRICT equality (owner): a flag no Rust reader sees is co
 same — "that leads to far easier comparison of code.  If you dislike the rust implementation
 that one has to move first."  An inert difference is removed by changing RUST first (with its
 IR unchanged and its suite cells green on both backends), never by filtering the comparison.
+And it is ROUTINE against routine (owner): "There should always be a corresponding routine
+between the two implementations for a decision that can be compared."  Every compared decision
+(a flag, a contract fact, a route) is made in one Rust function and in the port function that
+mirrors it and names it (the reasons layer); a port routine that reaches Rust's answer another
+way is a defect even where the output agrees.  A try names the Rust routine each new port
+routine mirrors.
 
 The port follows Rust's REASONING, not its in-memory data structures: unless Rust is clearly
 wrong, a conclusion is reached by the rule Rust reaches it by, because a port that gets the same
