@@ -288,30 +288,15 @@ impl Yielded {
     }
 }
 
-std::thread_local! {
-    /// @PLN199 C2 — the text result of this thread's last call back into the interpreter
-    /// (`State::call_back`), which the compiled caller copies before it calls back again.
-    static CALL_BACK_TEXT: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
-}
-
-std::thread_local! {
-    /// @PLN199 D1 — the text each compiled generator handle last yielded to the interpreter:
-    /// it arrives as an owned `String`, and the interpreter's yield is a `Str` over it, so the
-    /// bytes live here until the handle's next advance replaces them or its free drops them.
-    /// Per thread, as the generator table it shadows.
-    static NATIVE_TEXT_YIELDS: std::cell::RefCell<Vec<(DbRef, String)>> =
-        const { std::cell::RefCell::new(Vec::new()) };
-}
-
-/// Keep `text`, the yield of compiled generator `gen_ref`, and answer a `Str` over it — or
-/// the null text when the generator is exhausted (`STRING_NULL`), which drops what it held.
-pub(crate) fn hold_native_text_yield(gen_ref: DbRef, text: String) -> Str {
-    if text == STRING_NULL {
-        release_native_text_yield(gen_ref);
-        return Str::new(STRING_NULL);
-    }
-    NATIVE_TEXT_YIELDS.with(|y| {
-        let mut y = y.borrow_mut();
+impl State {
+    /// Keep `text`, the yield of compiled generator `gen_ref`, and answer a `Str` over it — or
+    /// the null text when the generator is exhausted (`STRING_NULL`), which drops what it held.
+    pub(crate) fn hold_native_text_yield(&mut self, gen_ref: DbRef, text: String) -> Str {
+        if text == STRING_NULL {
+            self.release_native_text_yield(gen_ref);
+            return Str::new(STRING_NULL);
+        }
+        let y = &mut self.native_text_yields;
         let at = if let Some(i) = y
             .iter()
             .position(|(g, _)| g.rec == gen_ref.rec && g.pos == gen_ref.pos)
@@ -324,15 +309,13 @@ pub(crate) fn hold_native_text_yield(gen_ref: DbRef, text: String) -> Str {
         };
         // The `String`'s buffer stays put while the vector moves its header.
         Str::new(y[at].1.as_str())
-    })
-}
+    }
 
-/// Drop the text compiled generator `gen_ref` last yielded — at its free.
-pub(crate) fn release_native_text_yield(gen_ref: DbRef) {
-    NATIVE_TEXT_YIELDS.with(|y| {
-        y.borrow_mut()
+    /// Drop the text compiled generator `gen_ref` last yielded — at its free.
+    pub(crate) fn release_native_text_yield(&mut self, gen_ref: DbRef) {
+        self.native_text_yields
             .retain(|(g, _)| !(g.rec == gen_ref.rec && g.pos == gen_ref.pos));
-    });
+    }
 }
 
 /// Lifecycle state of a coroutine frame (CO1.1).
@@ -498,6 +481,13 @@ pub struct CoroutineFrame {
 
 /// Internal State of the interpreter to run bytecode.
 pub struct State {
+    /// @PLN199 C2 — the text result of the last call back into this interpreter
+    /// (`State::call_back`), which the compiled caller copies before it calls back again.
+    pub(crate) call_back_text: String,
+    /// @PLN199 D1 — the text each compiled generator handle last yielded to the interpreter:
+    /// it arrives as an owned `String`, and the interpreter's yield is a `Str` over it, so the
+    /// bytes live here until the handle's next advance replaces them or its free drops them.
+    pub(crate) native_text_yields: Vec<(DbRef, String)>,
     /// `LOFT_TRACE_BIND` — the notes of each bind being lowered: a frame per `generate_set`,
     /// since a value's own lowering can contain binds of its own (`codegen.rs`).
     pub(crate) bind_notes: Vec<Vec<String>>,
@@ -1019,6 +1009,8 @@ impl State {
             crate::database::CONST_STORE
         );
         State {
+            call_back_text: String::new(),
+            native_text_yields: Vec::new(),
             bind_notes: Vec::new(),
             bind_fn_start: 0,
             bytecode: Arc::new(Vec::new()),
@@ -2643,7 +2635,8 @@ impl State {
             // handle until its next advance or its free (`hold_native_text_yield`).
             (0, n) if n == std::mem::size_of::<Str>() as u32 => {
                 let v = cr::coroutine_next_text(gen_ref, &mut self.database);
-                self.put_stack(hold_native_text_yield(gen_ref, v));
+                let held = self.hold_native_text_yield(gen_ref, v);
+                self.put_stack(held);
             }
             _ => self.push_null_value(packed_size),
         }
@@ -3552,11 +3545,7 @@ impl State {
                 && let Some(stamped) = stamped
                 && stamped < crate::keys::uaf_slot_gen(&self.database.checks, db.store_nr)
             {
-                thread_local! {
-                    static REPORTED_GEN: std::cell::RefCell<std::collections::HashSet<u32>> =
-                        std::cell::RefCell::new(std::collections::HashSet::new());
-                }
-                if REPORTED_GEN.with(|s| s.borrow_mut().insert(self.code_pos)) {
+                if self.database.run.first_report(crate::database::RunReport::StaleGenerator, 0, self.code_pos, 0) {
                     let line = self
                         .line_numbers
                         .range(..=self.code_pos)
@@ -8187,7 +8176,7 @@ impl State {
         // @PLN103 P3.3 — the store-timeline working-set-vs-leak summary (no-op unless
         // `LOFT_STORES=timeline`), reconciled with the authoritative leak count so the
         // interp eval-stack/const infrastructure is not false-positived as a leak.
-        crate::database::timeline_summary(leaked.len());
+        crate::database::timeline_summary(&self.database, leaked.len());
         // @PLN104 — the text-buffer analogue: orphaned stack-frame `String`s (loft#568),
         // which the store timeline above cannot see (they are not loft stores). No-op unless
         // `LOFT_TEXT_TIMELINE`.
@@ -8812,13 +8801,11 @@ impl State {
                 let s = self.reenter_ret::<Str>(d_nr, pos, push);
                 // Copied out before the buffers it points into are dropped; the compiled
                 // caller copies it again before its next call back.
-                CALL_BACK_TEXT.with(|t| {
-                    let mut t = t.borrow_mut();
-                    t.clear();
-                    t.push_str(s.str());
-                    ret.text_ptr = t.as_ptr();
-                    ret.text_len = t.len();
-                });
+                let t = &mut self.call_back_text;
+                t.clear();
+                t.push_str(s.str());
+                ret.text_ptr = t.as_ptr();
+                ret.text_len = t.len();
             }
             Type::Float => ret.scalar = self.reenter_ret::<f64>(d_nr, pos, push).to_bits() as i64,
             Type::Boolean => ret.scalar = i64::from(self.reenter_ret::<u8>(d_nr, pos, push)),
@@ -9300,6 +9287,8 @@ impl State {
         let stack_cap_bytes = db.store(&stack_cur).byte_capacity() as u32;
         let stack_base = stack_base_of(&db, &stack_cur);
         State {
+            call_back_text: String::new(),
+            native_text_yields: Vec::new(),
             bind_notes: Vec::new(),
             bind_fn_start: 0,
             stack_cur,

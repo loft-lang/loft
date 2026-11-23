@@ -5,6 +5,7 @@
 
 // @PLN184 A1 exemption: store persistence keeps its OS calls; the daily windows-latest run proves them.
 #![allow(clippy::disallowed_methods, clippy::disallowed_types)]
+use super::RunReport;
 use crate::btree;
 use crate::database::types::{HeapSlot, RelSlot};
 use crate::database::{Parts, Stores, WorkerStores};
@@ -71,7 +72,7 @@ enum PagedKind {
 // REUSED slot index (P0.4), so `seq` (a monotonic alloc counter) disambiguates slot reuse.
 // `live` maps each live slot to its current seq so a free prints the SAME id as its alloc.
 #[derive(Default)]
-struct TimelineState {
+pub(crate) struct TimelineState {
     seq: u64,
     live: std::collections::HashMap<u16, u64>,
     peak_live: usize,
@@ -79,9 +80,6 @@ struct TimelineState {
     total_free: u64,
 }
 
-thread_local! {
-    static TIMELINE: std::cell::RefCell<TimelineState> = std::cell::RefCell::new(TimelineState::default());
-}
 
 /// True when `LOFT_STORES=timeline` (read once — the environment is stable for a run).
 fn timeline_on() -> bool {
@@ -93,12 +91,12 @@ fn timeline_on() -> bool {
 /// AUTHORITATIVE count from `collect_store_leaks()` (which excludes the eval-stack / const /
 /// locked runtime infrastructure the raw timeline `live` map would false-positive on — the
 /// interp-vs-native divergence this reconciles). Called at exit; no-op unless timeline mode.
-pub fn timeline_summary(real_leaked: usize) {
+pub fn timeline_summary(stores: &Stores, real_leaked: usize) {
     if !timeline_on() {
         return;
     }
-    TIMELINE.with(|t| {
-        let t = t.borrow();
+    {
+        let t = stores.run.timeline.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let verdict = if real_leaked == 0 {
             "NO leak (every user store freed)".to_string()
         } else {
@@ -108,7 +106,7 @@ pub fn timeline_summary(real_leaked: usize) {
             "[timeline] SUMMARY: {} allocs, {} frees, peak {} concurrently-live (working set) — {verdict}",
             t.total_alloc, t.total_free, t.peak_live
         );
-    });
+    }
 }
 
 /// One owned nested-heap child of a container record, as enumerated by
@@ -288,11 +286,7 @@ impl Stores {
     /// survivable, but the record is still corrupt and a run that says nothing about
     /// it would be a run that hides its own bug.
     fn refuse_owned_edge(&self, rec: &DbRef, tp: u16, cur: u32, kind: &str) {
-        thread_local! {
-            static SEEN: std::cell::RefCell<std::collections::HashSet<(u16, u32, u32)>> =
-                std::cell::RefCell::new(std::collections::HashSet::new());
-        }
-        if SEEN.with(|s| s.borrow_mut().insert((rec.store_nr, rec.rec, rec.pos))) {
+        if self.run.first_report(RunReport::OwnedEdge, rec.store_nr, rec.rec, rec.pos) {
             let tn = self.types.get(tp as usize).map_or("?", |t| t.name.as_str());
             crate::loft_eprintln!(
                 "loft: BUG (#796): refused to walk a {kind} edge of `{tn}` (kt={tp}) at \
@@ -1020,15 +1014,15 @@ impl Stores {
                 );
             }
             Some("timeline") => {
-                let seq = TIMELINE.with(|t| {
-                    let mut t = t.borrow_mut();
+                let seq = {
+                    let mut t = self.run.timeline.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                     let s = t.seq;
                     t.seq += 1;
                     t.total_alloc += 1;
                     t.live.insert(result.store_nr, s);
                     t.peak_live = t.peak_live.max(t.live.len());
                     s
-                });
+                };
                 let label = if name.is_empty() { "·" } else { name };
                 crate::loft_eprintln!(
                     "[timeline] alloc #{}.{seq}  {label:<14} live={active} size={size}",
@@ -2112,12 +2106,12 @@ impl Stores {
                 // @PLN103 P3 — print the SAME `<store_nr>.<seq>` id the alloc printed, so
                 // a reader matches alloc↔free across slot reuse. `?` = a free with no live
                 // alloc record (a double-free or a pre-timeline store).
-                let (seq, live_after) = TIMELINE.with(|t| {
-                    let mut t = t.borrow_mut();
+                let (seq, live_after) = {
+                    let mut t = self.run.timeline.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                     t.total_free += 1;
                     let s = t.live.remove(&al);
                     (s, t.live.len())
-                });
+                };
                 let seq = seq.map_or_else(|| "?".to_string(), |s| s.to_string());
                 let label = if name.is_empty() { "·" } else { name };
                 crate::loft_eprintln!(
@@ -3401,6 +3395,7 @@ impl Stores {
             hosted_view: crate::host_abi::TableView::default(),
             hosted_cx: crate::host_abi::HostedContexts::default(),
             checks: crate::keys::StoreChecks::default(),
+            run: super::RunDiagnostics::default(),
             const_refs: self.const_refs.clone(),
             const_texts: self.const_texts.clone(),
             last_json_errors: Vec::new(),
@@ -5017,11 +5012,7 @@ impl Stores {
                             let a = &self.allocations[rec.store_nr as usize];
                             (!a.live, a.known_type)
                         };
-                        thread_local! {
-                            static RPT: std::cell::RefCell<std::collections::HashSet<(u16, u32, u32)>> =
-                                std::cell::RefCell::new(std::collections::HashSet::new());
-                        }
-                        if RPT.with(|s| s.borrow_mut().insert((rec.store_nr, rec.rec, rec.pos))) {
+                        if self.run.first_report(RunReport::StaleTextClaim, rec.store_nr, rec.rec, rec.pos) {
                             crate::loft_eprintln!(
                                 "[uaf-claim] remove_claims: TEXT field at store #{} rec={} pos={} \
                                  holds STALE pointer cur={cur} past store end (cap_words={cap}; \
@@ -5212,11 +5203,7 @@ impl Stores {
         let (pc, _op, _d) = crate::crash_report::last_context();
         let line = crate::crash_report::source_loc_for_pc(pc).map_or(0, |p| p.line);
         let cap = self.store(to).capacity_words();
-        thread_local! {
-            static RPT_W: std::cell::RefCell<std::collections::HashSet<(u16, u32, u32)>> =
-                std::cell::RefCell::new(std::collections::HashSet::new());
-        }
-        if RPT_W.with(|s| s.borrow_mut().insert((to.store_nr, to.rec, bad_pos))) {
+        if self.run.first_report(RunReport::WatchedOob, to.store_nr, to.rec, bad_pos) {
             let (s_nr, s_rec, s_pos) = src.map_or((u16::MAX, 0, 0), |s| (s.store_nr, s.rec, s.pos));
             crate::loft_eprintln!(
                 "[watch-store/{ctx}] OOB text-ptr now in watched store #{}: dst rec={} field \

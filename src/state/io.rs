@@ -790,7 +790,7 @@ impl State {
         }
         // @PLN199 D1 — a compiled library's generator lives in the host's native table.
         if db.store_nr == crate::database::NATIVE_COROUTINE_STORE {
-            super::release_native_text_yield(db);
+            self.release_native_text_yield(db);
             crate::codegen_runtime::free_native_coroutine(db, &mut self.database);
             return;
         }
@@ -1860,11 +1860,7 @@ impl State {
             && (data.store_nr as usize) < self.database.allocations.len()
             && !self.database.allocations[data.store_nr as usize].live
         {
-            thread_local! {
-                static REPORTED: std::cell::RefCell<std::collections::HashSet<u16>> =
-                    std::cell::RefCell::new(std::collections::HashSet::new());
-            }
-            let first = REPORTED.with(|s| s.borrow_mut().insert(data.store_nr));
+            let first = self.database.run.first_report(crate::database::RunReport::LeakNamed, data.store_nr, 0, 0);
             if first {
                 let line_of = |ln: &std::collections::BTreeMap<u32, u32>, pc: u32| -> u32 {
                     ln.range(..=pc).next_back().map_or(0, |(_, &v)| v)
@@ -1900,11 +1896,8 @@ impl State {
             self.database
                 .validate_claims(&data, tp, "uaf-reuse-src", &mut problems);
             if problems > 0 {
-                thread_local! {
-                    static REPORTED_REUSE: std::cell::RefCell<std::collections::HashSet<u16>> =
-                        std::cell::RefCell::new(std::collections::HashSet::new());
-                }
-                let first = REPORTED_REUSE.with(|s| s.borrow_mut().insert(data.store_nr));
+                let first =
+                    self.database.run.first_report(crate::database::RunReport::ReuseNamed, data.store_nr, 0, 0);
                 if first {
                     let line = self
                         .line_numbers

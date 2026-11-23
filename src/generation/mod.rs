@@ -9164,7 +9164,7 @@ extern crate loft;"
             // runs on the native `__run` thread where the alloc/free events were recorded.
             writeln!(
                 w,
-                "    #[cfg(not(target_arch = \"wasm32\"))] if std::env::var(\"LOFT_STORES\").as_deref() == Ok(\"timeline\") {{ let stores: &Stores = unsafe {{ &*cell.get() }}; loft::database::timeline_summary(stores.collect_store_leaks().len()); }}"
+                "    #[cfg(not(target_arch = \"wasm32\"))] if std::env::var(\"LOFT_STORES\").as_deref() == Ok(\"timeline\") {{ let stores: &Stores = unsafe {{ &*cell.get() }}; loft::database::timeline_summary(stores, stores.collect_store_leaks().len()); }}"
             )?;
             writeln!(
                 w,
@@ -9205,7 +9205,7 @@ extern crate loft;"
             w.write_all(NATIVE_STRICT_STORE_TAIL.as_bytes())?;
             writeln!(
                 w,
-                "    #[cfg(not(target_arch = \"wasm32\"))] if std::env::var(\"LOFT_STORES\").as_deref() == Ok(\"timeline\") {{ let stores: &Stores = unsafe {{ &*cell.get() }}; loft::database::timeline_summary(stores.collect_store_leaks().len()); }}"
+                "    #[cfg(not(target_arch = \"wasm32\"))] if std::env::var(\"LOFT_STORES\").as_deref() == Ok(\"timeline\") {{ let stores: &Stores = unsafe {{ &*cell.get() }}; loft::database::timeline_summary(stores, stores.collect_store_leaks().len()); }}"
             )?;
             writeln!(
                 w,
