@@ -213,6 +213,121 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
 // expression, a fresh `___clos_N` record of it filled from the captured locals
 // (`fn_ref_with_closure`), answering `FnRef(lambda, ___clos_N)` typed as the function borrowing
 // that record.
+// `collect_mutated_captures`: it runs before the closure record exists, so its candidate names
+// are the lambda's variables — every one but an argument, `__closure` and a `__work` buffer (the
+// over-inclusion Rust's comment calls "spurious work", 1a-parser.md § Rust suspects) — and the
+// marked ones are those the body writes (`walk_for_mutations`).  Before the body is
+// elaborated, the captures it writes by name (`writes_a_name`).
+fn rust_mutated_captures(e: el::El, d: integer, caps: vector<el::Capture>, body: integer) -> vector<text> {
+  def = el::def(e, d);
+  code = def.code[0] ?? ir::NdNull;
+  // (The captures the body writes — Rust's placeholders, which this port does not make — asked
+  // by name, then the variables the walk finds written.)
+  out: vector<text> = [for mc in caps if writes_a_name(e, body, [mc]) { mc.name }];
+  if el_ir::is_null(code) {
+    return out;
+  }
+  f = def.variables;
+  cand: vector<text> = [];
+  cp = -1;
+  for x in f.variables {
+    if x.name == "__closure" {
+      cp = x#index;
+    } else if !starts_with(x.name, "__work") && !x.argument {
+      cand += [x.name];
+    }
+  }
+  walk_mutations(e, code, cand, cp, f, out);
+  out
+}
+
+fn mark_mutated(name: text, cand: vector<text>, out: vector<text>) {
+  if cand.contains(name) && !out.contains(name) {
+    out += [name];
+  }
+}
+
+// `op_writes_first_arg`: the operators that write into their first argument.
+fn writes_first_arg(nm: text) -> boolean {
+  starts_with(nm, "OpSet") || starts_with(nm, "OpPush") || starts_with(nm, "OpAppendStack") || starts_with(nm, "OpClearStack") || starts_with(nm, "OpFormat")
+    || nm == "OpNewRecord" || nm == "OpAppendCopy" || nm == "OpAppendVector" || nm == "OpSliceVector" || nm == "OpAppendTextBytes" || nm == "OpKeepRange"
+    || nm == "OpAppendText" || nm == "OpAppendCharacter" || nm == "OpClearVector" || nm == "OpClearText" || nm == "OpClearKeyed" || nm == "OpHashRemove"
+    || nm == "OpInsertVector" || nm == "OpRemoveVector"
+}
+
+// `accessor_root_var`: the variable an accessor chain (`Get…` calls) is rooted at, or -1.
+fn accessor_root(e: el::El, n: ir::Node) -> integer {
+  match n {
+    NdSpan { pos: _, inner } => accessor_root(e, inner),
+    NdVar { n: rv } => rv,
+    NdCall { def_nr, args } => if starts_with(el::def(e, def_nr).name, "OpGet") && len(args) > 0 { accessor_root(e, args[0]!) } else { -1 },
+    _ => -1
+  }
+}
+
+// `capture_field_of`: the closure-record field an accessor rooted at the closure parameter reads.
+fn capture_field(e: el::El, n: ir::Node, cp: integer) -> integer {
+  match n {
+    NdSpan { pos: _, inner } => capture_field(e, inner, cp),
+    NdCall { def_nr, args } => {
+      if cp < 0 || !starts_with(el::def(e, def_nr).name, "OpGet") || len(args) < 2 {
+        return -1;
+      }
+      if el_ir::unspan(args[0]!) == ir::NdVar { n: cp } {
+        return match el_ir::unspan(args[1]!) { NdInt { n: fld } => fld, _ => -1 };
+      }
+      capture_field(e, args[0]!, cp)
+    },
+    _ => -1
+  }
+}
+
+// `walk_for_mutations`.
+fn walk_mutations(e: el::El, n: ir::Node, cand: vector<text>, cp: integer, f: ir::Function, out: vector<text>) {
+  match n {
+    NdSpan { pos: _, inner } => walk_mutations(e, inner, cand, cp, f, out),
+    NdSet { var, inner } => {
+      if var >= 0 && var < len(f.variables) {
+        mark_mutated(f.variables[var]!.name, cand, out);
+      }
+      walk_mutations(e, inner, cand, cp, f, out);
+    },
+    NdCall { def_nr, args } => {
+      if def_nr >= 0 && def_nr < len(e.b.data.definitions) && writes_first_arg(el::def(e, def_nr).name) && len(args) > 0 {
+        match el_ir::unspan(args[0]!) {
+          NdVar { n: wv } => {
+            fld = if wv == cp && len(args) > 1 { match el_ir::unspan(args[1]!) { NdInt { n: fi } => fi, _ => -1 } } else { -1 };
+            if wv == cp && fld >= 0 && fld < len(cand) {
+              mark_mutated(cand[fld]!, cand, out);
+            } else if wv >= 0 && wv < len(f.variables) {
+              mark_mutated(f.variables[wv]!.name, cand, out);
+            }
+          },
+          NdCall { def_nr: _ } => {
+            root = accessor_root(e, args[0]!);
+            if root >= 0 && root < len(f.variables) {
+              mark_mutated(f.variables[root]!.name, cand, out);
+            }
+            cf = capture_field(e, args[0]!, cp);
+            if cf >= 0 && cf < len(cand) {
+              mark_mutated(cand[cf]!, cand, out);
+            }
+          },
+          _ => {}
+        }
+      }
+      for a in args { walk_mutations(e, a, cand, cp, f, out); }
+    },
+    NdCallRef { var: _, args } => { for a in args { walk_mutations(e, a, cand, cp, f, out); } },
+    NdInsert { items } => { for a in items { walk_mutations(e, a, cand, cp, f, out); } },
+    NdBlock { block } => { for c in block[0].operators { walk_mutations(e, c, cand, cp, f, out); } },
+    NdLoop { block } => { for c in block[0].operators { walk_mutations(e, c, cand, cp, f, out); } },
+    NdIf { cond, t, f: fb } => { walk_mutations(e, cond, cand, cp, f, out); walk_mutations(e, t, cand, cp, f, out); walk_mutations(e, fb, cand, cp, f, out); },
+    NdReturn { inner } => walk_mutations(e, inner, cand, cp, f, out),
+    _ => {}
+  }
+}
+
 pub fn closure_value(e: el::El, vars: el_vars::Vars, d: integer, rec_nm: text, caps: vector<el::Capture>, body: integer, written: vector<text>) -> Ex {
   vars.last_closure = d;
   vars.last_closure_body = body;
@@ -221,8 +336,10 @@ pub fn closure_value(e: el::El, vars: el_vars::Vars, d: integer, rec_nm: text, c
   // release read.
   // (Asked of every capture, not of `written`: a written parameter boxed through a shadow
   // reaches the second pass as a forward capture and is no cell of this build.)
-  if d >= 0 {
-    e.b.data.definitions[d].mutated_captures = [for mc in caps if writes_a_name(e, body, [mc]) { ir::NameRef { name: mc.name } }];
+  // (Rust's list is its FIRST pass's: there the captures are placeholder variables of the
+  // lambda's table, and the second pass does not take the list from the variables again.)
+  if d >= 0 && e.first_pass {
+    e.b.data.definitions[d].mutated_captures = [for mc in rust_mutated_captures(e, d, caps, body) { ir::NameRef { name: mc } }];
   }
   // A closure answering a text is not carried: the borrows of its body's answer (a parameter's
   // view) and of its capture fields are not reproduced yet.
