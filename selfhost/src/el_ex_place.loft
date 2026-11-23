@@ -4614,6 +4614,9 @@ fn write_back_call(e: el::El, vars: el_vars::Vars, field: ir::Node, k: ir::Node,
     return null;
   }
   r = el_vars::create_unique(vars, "written_back", ir::TyReference { n: d, dep: [host] });
+  // (`mark_view_elided`: read by the write and the guarded release alone — the call's result
+  // is delivered to it as it is, never the bind's copy.)
+  vars.vars[r].view_elided = true;
   el_vars::set_defined(vars, r);
   el_vars::set_skip_free(vars, r, "write_back_call");
   rv = ir::NdVar { n: r };

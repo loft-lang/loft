@@ -2466,6 +2466,10 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
     if store && !vars.store_links.contains(v) {
       vars.store_links += [v];
     }
+    // (`set_store_text_link`: the variable flag the image carries.)
+    if store {
+      vars.vars[v].store_text_link = true;
+    }
   }
   // `narrow_store_checks`: a `??` stored into a narrow local is guarded inside; any other value
   // takes the slot's declared range (`guard_declared_range`).
