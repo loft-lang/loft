@@ -9343,9 +9343,14 @@ impl<'a> FnWriter<'a> {
         }
         let arith = match name {
             // The `Nullable` forms answer the same values; only the overflow report differs.
-            "OpAddInt" | "OpAddLong" | "OpAddIntNullable" => Some("loft_add"),
-            "OpMinInt" | "OpMinLong" | "OpMinIntNullable" => Some("loft_sub"),
-            "OpMulInt" | "OpMulLong" | "OpMulIntNullable" => Some("loft_mul"),
+            // `@FR-E-Report` — the undefended forms surface an overflow under
+            // `--dev-soft-halt`; the `Nullable` forms, the operand of `??`, say nothing.
+            "OpAddInt" | "OpAddLong" => Some("loft_add_r"),
+            "OpMinInt" | "OpMinLong" => Some("loft_sub_r"),
+            "OpMulInt" | "OpMulLong" => Some("loft_mul_r"),
+            "OpAddIntNullable" => Some("loft_add"),
+            "OpMinIntNullable" => Some("loft_sub"),
+            "OpMulIntNullable" => Some("loft_mul"),
             // `@FR-E-Report` — the unguarded division reports a zero divisor; its `Nullable`
             // twin, the operand of `??`, says nothing.
             "OpDivInt" | "OpDivLong" => Some("loft_div_at"),

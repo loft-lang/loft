@@ -578,6 +578,34 @@ static void loft_eprint(loft_str s) {
     fwrite(s.p, 1, s.len, stderr);
 }
 
+/* The run's exit status: 1 once a fault was fatal, or surfaced under `--dev-soft-halt`. */
+static int loft_had_fatal = 0;
+
+/* `--dev-soft-halt` (`LOFT_DEV_SOFT_HALT=1`, `ops::dev_soft_halt`): every recoverable fault is
+ * surfaced on stderr as it happens and the run ends non-zero, as the interpreter does — a
+ * triage flag; `(E-Report)` is otherwise unchanged. */
+static int loft_soft_halt_flag = -1;
+static LOFT_COLD int loft_soft_halt(void) {
+    if (loft_soft_halt_flag < 0) {
+        const char *v = getenv("LOFT_DEV_SOFT_HALT");
+        loft_soft_halt_flag = v && (strcmp(v, "1") == 0 || strcmp(v, "true") == 0);
+    }
+    return loft_soft_halt_flag;
+}
+
+/* An undefended integer overflow (`ops::note_integer_overflow`): the null it answers, surfaced
+ * under `--dev-soft-halt`.  Reached only from the overflow arm the checked operators already
+ * have, so an operation that fits pays nothing; the `??`-defended (`Nullable`) forms never call
+ * it. */
+static LOFT_COLD loft_word loft_ovf(const char *op, loft_word a, loft_word b) {
+    if (loft_soft_halt()) {
+        loft_had_fatal = 1;
+        fprintf(stderr, "soft-halt: integer overflow: %lld %s %lld\n", (long long) a, op,
+                (long long) b);
+    }
+    return LOFT_NULL;
+}
+
 /* The integer operators: null in, null out; an overflow or a division by zero is null. */
 /* The checked operators: a null operand or an overflow answers null.  The multiply of two
  * computed operands asks LOFT_MUL_OVF (a flag test where the portable check divides); with a
@@ -639,6 +667,26 @@ LOFT_HOT_INLINE int64_t loft_mul(int64_t a, int64_t b) {
     }
     /* b == -1 overflows only for INT64_MIN, which is null and answered above. */
     return a * b;
+}
+
+/* The UNDEFENDED `+ - *` (`OpAddInt`, not `OpAddIntNullable`): the same values, and an overflow
+ * surfaced under `--dev-soft-halt` (`loft_ovf`). */
+LOFT_HOT_INLINE loft_word loft_add_r(loft_word a, loft_word b) {
+    loft_word r;
+    if (a == LOFT_NULL || b == LOFT_NULL) return LOFT_NULL;
+    return LOFT_ADD_OVF(a, b, &r) ? loft_ovf("+", a, b) : r;
+}
+
+LOFT_HOT_INLINE loft_word loft_sub_r(loft_word a, loft_word b) {
+    loft_word r;
+    if (a == LOFT_NULL || b == LOFT_NULL) return LOFT_NULL;
+    return LOFT_SUB_OVF(a, b, &r) ? loft_ovf("-", a, b) : r;
+}
+
+LOFT_HOT_INLINE loft_word loft_mul_r(loft_word a, loft_word b) {
+    loft_word r = loft_mul(a, b);
+    if (LOFT_UNLIKELY(r == LOFT_NULL) && a != LOFT_NULL && b != LOFT_NULL) return loft_ovf("*", a, b);
+    return r;
 }
 
 LOFT_HOT_INLINE int64_t loft_div(int64_t a, int64_t b) {
@@ -1399,6 +1447,17 @@ static void (*loft_warn_logger)(loft_str, loft_str, int64_t) = 0;
 static LOFT_COLD void loft_fault_report(const char *message, const char *file, uint32_t line) {
     if (loft_warn_logger && !loft_in_test)
         loft_warn_logger(loft_lit(message, strlen(message)), loft_lit(file, strlen(file)), line);
+    /* `--dev-soft-halt`: the fault on stderr as well, in the interpreter's words — the message
+     * without its `[kind]` label — and the run ends non-zero. */
+    if (!loft_in_test && loft_soft_halt()) {
+        const char *m = message;
+        if (*m == '[') {
+            const char *close = strchr(m, ']');
+            if (close) m = close[1] == ' ' ? close + 2 : close + 1;
+        }
+        loft_had_fatal = 1;
+        fprintf(stderr, "soft-halt: %s at %s:%u\n", m, file, (unsigned) line);
+    }
 }
 
 /* `loft_fault_report` with a message built from `fmt`, for the kinds that name their values. */

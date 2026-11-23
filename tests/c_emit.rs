@@ -5623,7 +5623,11 @@ fn under_the_probe_a_locally_stepped_accumulator_wraps_and_the_checked_c_keeps_i
     for f in ["n_line", "n_total"] {
         let b = body(&sc, f);
         assert!(
-            !b.contains("_OVF(") && !b.contains("loft_mul(") && !b.contains("loft_add("),
+            !b.contains("_OVF(")
+                && !b.contains("loft_mul(")
+                && !b.contains("loft_add(")
+                && !b.contains("loft_mul_r(")
+                && !b.contains("loft_add_r("),
             "{f} under the probe still checks an operator:\n{b}"
         );
     }

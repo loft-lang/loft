@@ -160,12 +160,16 @@ fn wrapped_call(text: &[u8], after: usize) -> &str {
 
 /// Is `callee` one of the runtime's 64-bit OPERATORS — the checked `loft_add`, the wrapping
 /// `LOFT_PLAIN_ADD` — which compute what the program wrote and take no loft `integer` as a
-/// length or an index does?  Its `_at` form reports a fault at a source position.
+/// length or an index does?  Its `_at` form reports a fault at a source position, its `_r` form
+/// an overflow under `--dev-soft-halt`.
 fn is_wide_operator(callee: &str) -> bool {
     if callee.starts_with("LOFT_PLAIN_") {
         return true;
     }
-    let name = callee.strip_suffix("_at").unwrap_or(callee);
+    let name = callee
+        .strip_suffix("_at")
+        .or_else(|| callee.strip_suffix("_r"))
+        .unwrap_or(callee);
     matches!(
         name,
         "loft_add"

@@ -511,7 +511,7 @@ fn the_wide_ledger_names_what_is_64_bit_and_why() {
     );
     assert_eq!(
         of("op"),
-        ["n_key__fr loft_mul"],
+        ["n_key__fr loft_mul_r"],
         "the i64 product: {lines:?}"
     );
     let _ = emit_c("ledger64", WIDE, None);
