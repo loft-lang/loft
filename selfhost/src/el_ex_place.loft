@@ -4685,6 +4685,8 @@ pub fn field_default(e: el::El, vars: el_vars::Vars, d: integer, a: integer, r: 
       if starts_with(el::def(e, hd).name, "n___dflt_") && ft is TyReference {
         rkt = el::def(e, match ft { TyReference { n: rsd } => rsd, _ => 0 }).known_type;
         rw = el_vars::work_ref(vars, el_types::without_deps(ft));
+        // (`add_defaults`: the hidden buffer a callee answers into is the caller's.)
+        vars.vars[rw].caller_hidden_buf = true;
         return [el_ir::cl(e, "OpCopyRecord", [ir::NdCall { def_nr: hd, args: [ir::NdVar { n: rw }] }, el_ir::cl(e, "OpGetField", [r, ir::NdInt { n: pos }, ir::NdInt { n: rkt }]), ir::NdInt { n: rkt }])];
       }
       if starts_with(el::def(e, hd).name, "n___dflt_") {
@@ -4697,6 +4699,8 @@ pub fn field_default(e: el::El, vars: el_vars::Vars, d: integer, a: integer, r: 
           return null;
         }
         hw = el_vars::work_ref(vars, el_types::without_deps(ft));
+        // (`add_defaults`: the hidden buffer a callee answers into is the caller's.)
+        vars.vars[hw].caller_hidden_buf = true;
         return [
           el_ir::cl(e, "OpSetInt4", [r, ir::NdInt { n: pos }, ir::NdInt { n: 0 }]),
           el_ir::cl(e, "OpAppendVector", [el_ir::cl(e, "OpGetField", [r, ir::NdInt { n: pos }, ir::NdInt { n: hvt }]), ir::NdCall { def_nr: hd, args: [ir::NdVar { n: hw }] }, ir::NdInt { n: hrow }])
