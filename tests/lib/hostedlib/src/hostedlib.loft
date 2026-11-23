@@ -50,12 +50,25 @@ pub fn deep(n: integer) -> integer {
   deep(n - 1) + b.total
 }
 
-// A generator: one crossing the bridge would live in the unit's coroutine table, not the
-// interpreter's, so the bridge leaves it interpreted (`hosted::bridge`).
+// Generators the unit makes: the interpreter drives each one's frame through the unit's step
+// (`HostedTable::gen_adopt`) — integers, and texts.
 pub fn upto(n: integer) -> iterator<integer> {
   for i in 1..n + 1 {
     yield i;
   }
+}
+
+pub fn words_of(t: text) -> iterator<text> {
+  for w in t.split(' ') {
+    yield "<{w}>";
+  }
+}
+
+// A generator the interpreter made is not the unit's to drive: this stays interpreted.
+pub fn total_of(it: iterator<integer>) -> integer {
+  t = 0;
+  for x in it { t += x; }
+  t
 }
 
 // A constant table, read by a function that interprets (its text result does not cross the

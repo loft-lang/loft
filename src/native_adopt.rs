@@ -218,7 +218,94 @@ pub static HOSTED_TABLE: crate::host_abi::HostedTable = crate::host_abi::HostedT
     store_free: hosted_store_free,
     store_tail: crate::store::HOST_STORE_TAIL as u32,
     source_dir: hosted_source_dir,
+    gen_adopt: hosted_gen_adopt,
 };
+
+/// A generator a hosted unit made, driven by the interpreter (`@PLN206`): each step runs the
+/// unit's frame to its next `yield` (`loft_shared_gen_next`), and the handle's release gives the
+/// frame back (`loft_shared_gen_free`).
+struct HostedGen {
+    stores: *mut Stores,
+    slot: u32,
+    kind: u32,
+    next: crate::host_abi::GenNext,
+    free: crate::host_abi::GenFree,
+    ended: bool,
+}
+
+impl HostedGen {
+    fn step(&mut self, stores: &mut Stores) -> Option<LibArg> {
+        if self.ended {
+            return None;
+        }
+        let mut out = LibArg::ZERO;
+        // SAFETY: the unit's own step for its own frame, on the stores it works on.
+        if unsafe { (self.next)(stores, self.slot, self.kind, &raw mut out) } == 0 {
+            self.ended = true;
+            return None;
+        }
+        Some(out)
+    }
+}
+
+impl crate::codegen_runtime::LoftCoroutine for HostedGen {
+    fn next_i64(&mut self, stores: &mut Stores) -> i64 {
+        self.step(stores)
+            .map_or(crate::codegen_runtime::COROUTINE_EXHAUSTED, |a| a.scalar)
+    }
+
+    fn next_text(&mut self, stores: &mut Stores) -> String {
+        match self.step(stores) {
+            Some(a) if !a.text_ptr.is_null() => {
+                // SAFETY: the unit's yielded bytes, valid until its next step.
+                let b = unsafe { std::slice::from_raw_parts(a.text_ptr, a.text_len) };
+                String::from_utf8_lossy(b).into_owned()
+            }
+            _ => crate::store::STRING_NULL.to_string(),
+        }
+    }
+
+    fn next_dbref(&mut self, stores: &mut Stores) -> DbRef {
+        self.step(stores).map_or(DbRef::NULL, |a| a.dbref)
+    }
+
+    fn done(&self) -> bool {
+        self.ended
+    }
+}
+
+impl Drop for HostedGen {
+    fn drop(&mut self) {
+        // SAFETY: the interpreter's stores the frame was made on, alive while it runs.
+        unsafe { (self.free)(self.stores, self.slot) };
+    }
+}
+
+/// `HostedTable::gen_adopt`.
+unsafe extern "C" fn hosted_gen_adopt(
+    stores: *mut Stores,
+    slot: u32,
+    kind: u32,
+    next: crate::host_abi::GenNext,
+    free: crate::host_abi::GenFree,
+    ret: *mut LibArg,
+) {
+    let coro: Box<dyn crate::codegen_runtime::LoftCoroutine> = Box::new(HostedGen {
+        stores,
+        slot,
+        kind,
+        next,
+        free,
+        ended: false,
+    });
+    // SAFETY: as `hosted_table`; `Stores` is the `UnsafeCell`'s only field.
+    let cell = unsafe { &*(stores.cast::<std::cell::UnsafeCell<Stores>>()) };
+    let handle = crate::codegen_runtime::alloc_coroutine_held(cell, coro);
+    // SAFETY: the bridge's answer slot.
+    unsafe { (*ret).dbref = handle };
+    let stores = unsafe { &mut *stores };
+    stores.hosted_view = crate::host_abi::TableView::of(stores);
+}
 
 /// The program's directory, for a hosted unit's `source_dir()` and its relative paths.
 unsafe extern "C" fn hosted_source_dir(

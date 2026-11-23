@@ -161,7 +161,24 @@ pub struct HostedTable {
         len: *mut usize,
         relative: *mut u32,
     ) -> *const u8,
+    /// A generator the unit made, handed to the interpreter's coroutine table: its frame's
+    /// slot in the unit, the kind of what it yields (0 integer, 1 float, 2 text, 3 reference,
+    /// 4 boolean), and the unit's step and release; its handle written into `ret.dbref`.
+    pub gen_adopt: unsafe extern "C" fn(
+        stores: *mut Stores,
+        slot: u32,
+        kind: u32,
+        next: GenNext,
+        free: GenFree,
+        ret: *mut LibArg,
+    ),
 }
+
+/// A hosted unit's generator step: the frame in `slot` runs to its next `yield`, whose value
+/// of `kind` lands in `out`; 1 when it yielded, 0 when it ran to its end.
+pub type GenNext = unsafe extern "C" fn(stores: *mut Stores, slot: u32, kind: u32, out: *mut LibArg) -> u32;
+/// A hosted unit's generator release: the frame in `slot` gives back what it holds.
+pub type GenFree = unsafe extern "C" fn(stores: *mut Stores, slot: u32);
 
 /// @PLN199 G0b-2 — a library artifact's table of ids (`__tid` / `__fid`): written by its
 /// `loft_shared_init` before any of its code runs, read by that code after.  The write-once

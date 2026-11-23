@@ -175,7 +175,11 @@ impl State {
             return;
         };
         let def = data.def(d_nr);
-        if reaches_outside(data, d_nr) {
+        // A generator's frame lives outside the stores, in a coroutine table: its answer is a
+        // handle, and running it twice would make two frames.
+        if reaches_outside(data, d_nr)
+            || matches!(def.returned().base(), crate::data::Type::Iterator(..))
+        {
             UNVERIFIED_NATIVE.fetch_add(1, Relaxed);
             unsafe { bridge(&raw mut self.database, args.as_ptr(), args.len(), ret) };
             return;

@@ -60,7 +60,7 @@ pub(crate) fn defines() -> String {
 }
 
 /// The `LibArg` accessors and the bridge's entry and exit, written once per unit.
-const SLOTS: &str = r"
+const SLOTS: &str = r#"
 /* ── The bridge's slots (`host_abi::LibArg`, by the offsets above) ── */
 static int64_t loft_la_bits(const unsigned char *a, size_t i) {
     int64_t v;
@@ -173,7 +173,52 @@ static void loft_host_leave(void *prev) {
     loft_host_stores = prev;
     if (prev) loft_host_sync();
 }
-";
+
+/* `@PLN206` — a generator the unit made, driven by the interpreter (`HostedTable::gen_adopt`):
+ * one step of the frame in `slot`, its value of `kind` (0 integer, 1 float, 2 text, 3
+ * reference, 4 boolean) in `out`; 1 when it yielded, 0 when it ran to its end. */
+static LOFT_TLS loft_text loft_gen_text;
+__attribute__((visibility("default"))) uint32_t loft_shared_gen_next(void *loft_st, uint32_t slot, uint32_t kind, unsigned char *out) {
+    void *prev = loft_host_enter(loft_st);
+    loft_ref g = { 0xFFFE, slot, 0, 0 };
+    loft_gen_slot *s = loft_gen_of(g);
+    uint32_t got = 0;
+    if (s && !((loft_gen_head *) s->frame)->done) {
+        if (kind == 2) {
+            loft_text_set(&loft_gen_text, loft_null_text());
+            s->resume(s->frame, &loft_gen_text);
+            loft_la_set_text(out, loft_view(&loft_gen_text));
+        } else if (kind == 3) {
+            loft_ref v = loft_ref_null();
+            s->resume(s->frame, &v);
+            loft_la_set_ref(out, v);
+        } else if (kind == 1) {
+            double v = loft_f64(LOFT_NULL);
+            int64_t b;
+            s->resume(s->frame, &v);
+            memcpy(&b, &v, 8);
+            loft_la_set_bits(out, b);
+        } else if (kind == 4) {
+            uint8_t v = 255;
+            s->resume(s->frame, &v);
+            loft_la_set_bits(out, (int64_t) v);
+        } else {
+            int64_t v = LOFT_NULL;
+            s->resume(s->frame, &v);
+            loft_la_set_bits(out, v);
+        }
+        got = !((loft_gen_head *) s->frame)->done;
+    }
+    loft_host_leave(prev);
+    return got;
+}
+__attribute__((visibility("default"))) void loft_shared_gen_free(void *loft_st, uint32_t slot) {
+    void *prev = loft_host_enter(loft_st);
+    loft_ref g = { 0xFFFE, slot, 0, 0 };
+    loft_gen_free(g);
+    loft_host_leave(prev);
+}
+"#;
 
 /// The C value of argument slot `slot` read as shape `c`, when one slot carries it.
 fn slot_arg(c: CType, slot: usize) -> Option<String> {
@@ -197,18 +242,27 @@ fn bridge(cx: &Cx<'_>, d: u32, symbol: &str) -> Result<String, String> {
     let data = cx.data;
     let def = data.def(d);
     let ret_text = matches!(def.returned().base(), Type::Text(_));
-    // A generator lives in its runtime's coroutine table: one the unit makes is not the
-    // interpreter's to drive, and one the interpreter made is not the unit's.  The rustc
-    // artifact forwards its coroutines to the host (`HostTable::coroutines`); a hosted C unit
-    // does not yet, so an iterator crossing either way stays interpreted.
-    if matches!(def.returned().base(), Type::Iterator(..))
-        || def
-            .attributes()
-            .iter()
-            .any(|a| matches!(a.typedef.base(), Type::Iterator(..)))
+    // A generator lives in its runtime's coroutine table.  One the unit makes crosses out:
+    // the interpreter drives it through the unit's step (`HostedTable::gen_adopt`).  One the
+    // interpreter made is not the unit's to drive: an iterator argument stays interpreted.
+    if def
+        .attributes()
+        .iter()
+        .any(|a| matches!(a.typedef.base(), Type::Iterator(..)))
     {
-        return Err("an iterator".into());
+        return Err("an iterator argument".into());
     }
+    let gen_kind = match def.returned().base() {
+        Type::Iterator(elem, _) => Some(match cx.ctype(elem) {
+            Some(CType::Int) => 0,
+            Some(CType::Float) => 1,
+            Some(CType::Text) => 2,
+            Some(CType::Ref) => 3,
+            Some(CType::Bool) => 4,
+            _ => return Err("an iterator of a shape the bridge does not carry".into()),
+        }),
+        _ => None,
+    };
     let mut args = Vec::new();
     // A text work slot is the call's own: one per slot, as a C caller holds one local per slot
     // — two slots sharing a buffer write over each other (a local held in one while the result
@@ -310,6 +364,11 @@ fn bridge(cx: &Cx<'_>, d: u32, symbol: &str) -> Result<String, String> {
         .ctype(def.returned())
         .ok_or_else(|| "a result of no C shape".to_string())?;
     let store = match ret {
+        // A generator: its frame handed to the interpreter's coroutine table.
+        CType::Ref if gen_kind.is_some() => format!(
+            "    {{ loft_ref loft_g = {call};\n      if (loft_g.store_nr == 0xFFFE) loft_hosted->gen_adopt(loft_st, loft_g.rec, {}u, loft_shared_gen_next, loft_shared_gen_free, loft_r);\n      else loft_la_set_ref(loft_r, loft_ref_null()); }}\n",
+            gen_kind.unwrap_or(0)
+        ),
         CType::Void => format!("    {call};\n"),
         CType::Int | CType::Int32 => format!("    loft_la_set_bits(loft_r, (int64_t) {call});\n"),
         CType::Bool | CType::Enum | CType::Char => {

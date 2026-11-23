@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //! `@PLN206` coverage — `scripts/hosted_coverage.py`, the check that every library runs compiled:
 //! the public functions a library's hosted C unit leaves interpreted, against a baseline that only
-//! shrinks.  `tests/lib/hostedlib` leaves one (`upto`, an iterator): a baseline naming it passes,
+//! shrinks.  `tests/lib/hostedlib` leaves one (`total_of`, an iterator argument): a baseline naming it passes,
 //! one missing it goes red (coverage lost), one naming a function the unit carries goes red
 //! (coverage won and not written down), and `--strict` goes red while anything stays
 //! interpreted.
@@ -10,7 +10,7 @@
 //! @falsified-at: none — a SABOTAGE (2026-11-22): with `build-native` printing no `interpreted:`
 //!   lines (`src/main.rs`), every library reads as compiled whole and the measured baseline no
 //!   longer holds.  CHANNEL: the script's exit status.  WITNESS: "now compiled, still in the
-//!   baseline (write it down: --update): upto".
+//!   baseline (write it down: --update): upto" (when `upto` was the declined one).
 use loft::file_access as fa;
 use loft::platform::process::harness_command;
 
@@ -61,14 +61,14 @@ fn the_coverage_check_holds_its_baseline_both_ways() {
             String::from_utf8_lossy(&out.stdout).into_owned(),
         )
     };
-    let both = "hostedlib\tupto\tan iterator\n";
+    let both = "hostedlib\ttotal_of\tan iterator argument\n";
     let (ok, out) = check(both, false);
     assert!(ok, "the measured baseline holds: {out}");
     assert!(out.contains("hostedlib: 1 interpreted"), "{out}");
     let (ok, out) = check("", false);
     assert!(!ok, "a function interpreted and not listed is red: {out}");
     assert!(
-        out.contains("now interpreted, not in the baseline: upto"),
+        out.contains("now interpreted, not in the baseline: total_of"),
         "{out}"
     );
     let (ok, out) = check(&format!("{both}hostedlib\tbag_new\ta record\n"), false);

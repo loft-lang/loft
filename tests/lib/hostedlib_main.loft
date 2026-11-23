@@ -120,5 +120,13 @@ fn main() {
   u = 0;
   for x in upto(4) { u += x; }
   assert(u == 10, "upto {u}");
+  // a text generator, and one stopped early: "<a><bb>" then the first word only
+  ws = "";
+  for wd in words_of("a bb") { ws += wd; }
+  assert(ws == "<a><bb>", "words_of {ws}");
+  for wd in words_of("x y z") { ws = wd; break; }
+  assert(ws == "<x>", "early stop {ws}");
+  // an interpreted generator handed to an interpreted function: 1 + 2 + 3
+  assert(total_of(upto(3)) == 6, "total_of");
   println("{b.name} {b.total} {b.weight()} {c.total} {len(c.items)} {ratio(c.name, 2)} {mix(1, 1)}");
 }
