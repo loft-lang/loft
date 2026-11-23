@@ -93,6 +93,11 @@ key.
 
 ### Bug fixes
 
+**`exp` answers the same in every library build.**  `exp(v)` was computed as `E` raised to the
+power `v`, which can land a unit or two in the last place away from e^v, and a library built
+natively could round it differently from the same code interpreted.  It is now the exponential
+itself, on every backend.
+
 **A loop over a `&vector` parameter visits every element.**  A `for` over a `&vector<T?>`
 parameter stopped at the first `null` element, so `[1, null, 3]` was walked as `[1]`, with no
 message.  It now walks the whole vector, as a loop over the vector itself does.  `rev(v)` on such
