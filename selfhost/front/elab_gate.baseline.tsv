@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	85fc9d6d90a8394d823ea8c4659dc942af1ac842
+suite	d5b0b3076eed6780b24a3fd2434f67e3f311a52e
 
-layer	elab	agree	1404	of	2133
+layer	elab	agree	1408	of	2138
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -228,6 +228,7 @@ elab	refused	loft-suite/rules/heap/H-Materialise/1693-a-disturbed-struct-enum-vi
 elab	refused	loft-suite/rules/heap/H-Move/1623-a-returned-join-binding-hands-out-its-arms-temps.loft
 elab	refused	loft-suite/rules/heap/H-Move/a-moved-local-is-spent-only-on-the-path-that-moved-it.loft
 elab	refused	loft-suite/rules/heap/H-RefHome/2597-a-holder-releases-only-the-record-in-its-own-store.loft
+elab	refused	loft-suite/rules/heap/H-RefHome/2612-a-variant-literal-keeps-the-record-its-reference-names.loft
 elab	refused	loft-suite/rules/heap/H-RefHome/a-generic-recursive-enum-links-its-nodes-through-locals.loft
 elab	refused	loft-suite/rules/heap/H-RefHome/a-record-a-stored-reference-names-lives-as-long-as-its-holder-however-it-was-built.loft
 elab	refused	loft-suite/rules/heap/H-RefHome/a-stored-reference-its-record-outlives-reads-it.loft
@@ -238,7 +239,6 @@ elab	refused	loft-suite/rules/heap/H-TextReplace/1873-an-assigned-text-field-rel
 elab	refused	loft-suite/rules/heap/H-TextReplace/a-text-field-written-through-a-parameter-releases-what-it-replaces-unless-a-text-parameter-is-read-after.loft
 elab	refused	loft-suite/rules/heap/H-View/1985-a-parsed-vector-is-owned-by-what-binds-it.loft
 elab	refused	loft-suite/rules/heap/H-Write-Else/178-store-else.loft
-elab	refused	loft-suite/rules/heap/H-Write-Else/a-place-discharged-with-a-record-always-lands.loft
 elab	refused	loft-suite/rules/heap/H-WriteOOB/a-write-to-a-place-that-names-nothing-lands-nowhere.loft
 elab	refused	loft-suite/rules/interfaces/G-Gen-Scope/a-type-variable-is-a-name-only-inside-the-definition-it-heads.loft
 elab	refused	loft-suite/rules/interfaces/G-Gen/an-unbounded-variable-moves-values-and-a-bound-adds-methods.loft
@@ -714,6 +714,7 @@ elab	refused	tests/scripts/a-narrow-slot-is-checked-wherever-a-value-reaches-it.
 elab	refused	tests/scripts/a-non-null-four-byte-element-reads-every-code-as-a-value.loft
 elab	refused	tests/scripts/a-nullable-vector-result-returns-null-from-every-exit.loft
 elab	refused	tests/scripts/a-one-byte-slice-appended-is-the-general-slice.loft
+elab	refused	tests/scripts/a-par-workers-record-results-reach-the-caller-with-their-stores.loft
 elab	refused	tests/scripts/a-placed-call-copies-an-answer-from-elsewhere.loft
 elab	refused	tests/scripts/a-qualified-name-reaches-what-a-library-publishes.loft
 elab	refused	tests/scripts/a-record-built-into-a-callers-slot-needs-no-prefill.loft
@@ -736,7 +737,7 @@ elab	refused	tests/scripts/sort-places-null-first-and-keeps-equal-floats-in-orde
 elab	refused	tests/scripts/store_compact_b2.loft
 elab	refused	tests/scripts/store_compact_slack_730.loft
 
-layer	elab-functions	agree	13366	of	22784
+layer	elab-functions	agree	13422	of	22822
 elab-functions	agree	lib/docs.loft::Anchor
 elab-functions	agree	lib/docs.loft::Character
 elab-functions	agree	lib/docs.loft::Double
@@ -2348,18 +2349,35 @@ elab-functions	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-t
 elab-functions	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_an_owned_null_arm_source_is_still_freed
 elab-functions	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_as_if
 elab-functions	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_as_match
+elab-functions	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_bound
 elab-functions	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_bump
 elab-functions	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_bx
 elab-functions	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_check
+elab-functions	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_ctx_block
+elab-functions	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_ctx_condition
+elab-functions	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_ctx_field
+elab-functions	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_ctx_if_arm
+elab-functions	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_ctx_interpolation
+elab-functions	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_ctx_loop
+elab-functions	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_ctx_nested
+elab-functions	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_ctx_write
+elab-functions	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_element
 elab-functions	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_find
 elab-functions	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_get
 elab-functions	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_head_from_local
 elab-functions	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_head_from_nullable_parameter
 elab-functions	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_head_from_parameter
+elab-functions	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_in_a_field
 elab-functions	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_local_view
+elab-functions	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_minted
 elab-functions	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_mk
+elab-functions	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_nullable_local
 elab-functions	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_owned_or_null
 elab-functions	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_pick
+elab-functions	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_pick_argument
+elab-functions	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_pick_default
+elab-functions	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_pick_minted
+elab-functions	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_returned
 elab-functions	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_same
 elab-functions	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_set
 elab-functions	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_test_chosen
@@ -2369,6 +2387,9 @@ elab-functions	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-t
 elab-functions	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_test_spelling
 elab-functions	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_test_through_a_parameter
 elab-functions	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_the_local_subject_control_still_answers
+elab-functions	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_three
+elab-functions	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_through_param
+elab-functions	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_two
 elab-functions	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::vector<In>
 elab-functions	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::vector<Tok>
 elab-functions	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::vector<Tok?>
@@ -5606,6 +5627,36 @@ elab-functions	agree	loft-suite/rules/heap/H-RefHome/2597-a-holder-releases-only
 elab-functions	agree	loft-suite/rules/heap/H-RefHome/2597-a-holder-releases-only-the-record-in-its-own-store.loft::t_5Maybe_OpDropAll
 elab-functions	agree	loft-suite/rules/heap/H-RefHome/2597-a-holder-releases-only-the-record-in-its-own-store.loft::t_5Outer_OpDropAll
 elab-functions	agree	loft-suite/rules/heap/H-RefHome/2597-a-holder-releases-only-the-record-in-its-own-store.loft::t_6Shared_OpDropAll
+elab-functions	agree	loft-suite/rules/heap/H-RefHome/2612-a-variant-literal-keeps-the-record-its-reference-names.loft::(schema)
+elab-functions	agree	loft-suite/rules/heap/H-RefHome/2612-a-variant-literal-keeps-the-record-its-reference-names.loft::A
+elab-functions	agree	loft-suite/rules/heap/H-RefHome/2612-a-variant-literal-keeps-the-record-its-reference-names.loft::B
+elab-functions	agree	loft-suite/rules/heap/H-RefHome/2612-a-variant-literal-keeps-the-record-its-reference-names.loft::Box
+elab-functions	agree	loft-suite/rules/heap/H-RefHome/2612-a-variant-literal-keeps-the-record-its-reference-names.loft::Doc
+elab-functions	agree	loft-suite/rules/heap/H-RefHome/2612-a-variant-literal-keeps-the-record-its-reference-names.loft::Dot
+elab-functions	agree	loft-suite/rules/heap/H-RefHome/2612-a-variant-literal-keeps-the-record-its-reference-names.loft::Held
+elab-functions	agree	loft-suite/rules/heap/H-RefHome/2612-a-variant-literal-keeps-the-record-its-reference-names.loft::Maybe
+elab-functions	agree	loft-suite/rules/heap/H-RefHome/2612-a-variant-literal-keeps-the-record-its-reference-names.loft::Off
+elab-functions	agree	loft-suite/rules/heap/H-RefHome/2612-a-variant-literal-keeps-the-record-its-reference-names.loft::On
+elab-functions	agree	loft-suite/rules/heap/H-RefHome/2612-a-variant-literal-keeps-the-record-its-reference-names.loft::Pin
+elab-functions	agree	loft-suite/rules/heap/H-RefHome/2612-a-variant-literal-keeps-the-record-its-reference-names.loft::Shape
+elab-functions	agree	loft-suite/rules/heap/H-RefHome/2612-a-variant-literal-keeps-the-record-its-reference-names.loft::Tag
+elab-functions	agree	loft-suite/rules/heap/H-RefHome/2612-a-variant-literal-keeps-the-record-its-reference-names.loft::Two
+elab-functions	agree	loft-suite/rules/heap/H-RefHome/2612-a-variant-literal-keeps-the-record-its-reference-names.loft::i_4text_n_assert_eq
+elab-functions	agree	loft-suite/rules/heap/H-RefHome/2612-a-variant-literal-keeps-the-record-its-reference-names.loft::n_boxed
+elab-functions	agree	loft-suite/rules/heap/H-RefHome/2612-a-variant-literal-keeps-the-record-its-reference-names.loft::n_fill
+elab-functions	agree	loft-suite/rules/heap/H-RefHome/2612-a-variant-literal-keeps-the-record-its-reference-names.loft::n_held
+elab-functions	agree	loft-suite/rules/heap/H-RefHome/2612-a-variant-literal-keeps-the-record-its-reference-names.loft::n_on
+elab-functions	agree	loft-suite/rules/heap/H-RefHome/2612-a-variant-literal-keeps-the-record-its-reference-names.loft::n_pin
+elab-functions	agree	loft-suite/rules/heap/H-RefHome/2612-a-variant-literal-keeps-the-record-its-reference-names.loft::n_show
+elab-functions	agree	loft-suite/rules/heap/H-RefHome/2612-a-variant-literal-keeps-the-record-its-reference-names.loft::n_show_two
+elab-functions	agree	loft-suite/rules/heap/H-RefHome/2612-a-variant-literal-keeps-the-record-its-reference-names.loft::n_test_a_literal_in_the_field
+elab-functions	agree	loft-suite/rules/heap/H-RefHome/2612-a-variant-literal-keeps-the-record-its-reference-names.loft::n_test_a_named_local
+elab-functions	agree	loft-suite/rules/heap/H-RefHome/2612-a-variant-literal-keeps-the-record-its-reference-names.loft::n_test_a_struct_literal
+elab-functions	agree	loft-suite/rules/heap/H-RefHome/2612-a-variant-literal-keeps-the-record-its-reference-names.loft::n_test_copied_into_a_parameter
+elab-functions	agree	loft-suite/rules/heap/H-RefHome/2612-a-variant-literal-keeps-the-record-its-reference-names.loft::n_test_inline_in_a_struct
+elab-functions	agree	loft-suite/rules/heap/H-RefHome/2612-a-variant-literal-keeps-the-record-its-reference-names.loft::n_test_two_variants_one_offset
+elab-functions	agree	loft-suite/rules/heap/H-RefHome/2612-a-variant-literal-keeps-the-record-its-reference-names.loft::n_two_a
+elab-functions	agree	loft-suite/rules/heap/H-RefHome/2612-a-variant-literal-keeps-the-record-its-reference-names.loft::n_two_b
 elab-functions	agree	loft-suite/rules/heap/H-RefHome/a-record-a-stored-reference-names-lives-as-long-as-its-holder-however-it-was-built.loft::(schema)
 elab-functions	agree	loft-suite/rules/heap/H-RefHome/a-record-a-stored-reference-names-lives-as-long-as-its-holder-however-it-was-built.loft::Bag
 elab-functions	agree	loft-suite/rules/heap/H-RefHome/a-record-a-stored-reference-names-lives-as-long-as-its-holder-however-it-was-built.loft::Blue
@@ -5863,22 +5914,6 @@ elab-functions	agree	loft-suite/rules/heap/H-Write-Else/178-store-else.loft::n_t
 elab-functions	agree	loft-suite/rules/heap/H-Write-Else/178-store-else.loft::n_work
 elab-functions	agree	loft-suite/rules/heap/H-Write-Else/178-store-else.loft::t_39__closure_test_nested_and_in_a_lambda_0_OpDropAll
 elab-functions	agree	loft-suite/rules/heap/H-Write-Else/178-store-else.loft::vector<P>
-elab-functions	agree	loft-suite/rules/heap/H-Write-Else/a-place-discharged-with-a-record-always-lands.loft::(schema)
-elab-functions	agree	loft-suite/rules/heap/H-Write-Else/a-place-discharged-with-a-record-always-lands.loft::Count
-elab-functions	agree	loft-suite/rules/heap/H-Write-Else/a-place-discharged-with-a-record-always-lands.loft::Mark
-elab-functions	agree	loft-suite/rules/heap/H-Write-Else/a-place-discharged-with-a-record-always-lands.loft::Pt
-elab-functions	agree	loft-suite/rules/heap/H-Write-Else/a-place-discharged-with-a-record-always-lands.loft::main_vector<Mark>
-elab-functions	agree	loft-suite/rules/heap/H-Write-Else/a-place-discharged-with-a-record-always-lands.loft::main_vector<Pt>
-elab-functions	agree	loft-suite/rules/heap/H-Write-Else/a-place-discharged-with-a-record-always-lands.loft::n_bump
-elab-functions	agree	loft-suite/rules/heap/H-Write-Else/a-place-discharged-with-a-record-always-lands.loft::n_main
-elab-functions	agree	loft-suite/rules/heap/H-Write-Else/a-place-discharged-with-a-record-always-lands.loft::n_w1
-elab-functions	agree	loft-suite/rules/heap/H-Write-Else/a-place-discharged-with-a-record-always-lands.loft::n_w2
-elab-functions	agree	loft-suite/rules/heap/H-Write-Else/a-place-discharged-with-a-record-always-lands.loft::n_w3
-elab-functions	agree	loft-suite/rules/heap/H-Write-Else/a-place-discharged-with-a-record-always-lands.loft::n_w4
-elab-functions	agree	loft-suite/rules/heap/H-Write-Else/a-place-discharged-with-a-record-always-lands.loft::n_w6
-elab-functions	agree	loft-suite/rules/heap/H-Write-Else/a-place-discharged-with-a-record-always-lands.loft::n_w7
-elab-functions	agree	loft-suite/rules/heap/H-Write-Else/a-place-discharged-with-a-record-always-lands.loft::vector<Mark>
-elab-functions	agree	loft-suite/rules/heap/H-Write-Else/a-place-discharged-with-a-record-always-lands.loft::vector<Pt>
 elab-functions	agree	loft-suite/rules/heap/H-WriteOOB/a-write-to-a-place-that-names-nothing-lands-nowhere.loft::__const_n_mk
 elab-functions	agree	loft-suite/rules/heap/H-WriteOOB/a-write-to-a-place-that-names-nothing-lands-nowhere.loft::n_fill
 elab-functions	agree	loft-suite/rules/heap/H-WriteOOB/a-write-to-a-place-that-names-nothing-lands-nowhere.loft::n_grid
@@ -13838,6 +13873,28 @@ elab-functions	agree	tests/scripts/a-one-byte-slice-appended-is-the-general-slic
 elab-functions	agree	tests/scripts/a-one-byte-slice-appended-is-the-general-slice.loft::n_test_every_index_of_an_ascii_table
 elab-functions	agree	tests/scripts/a-one-byte-slice-appended-is-the-general-slice.loft::n_test_indexes_at_and_before_the_ends
 elab-functions	agree	tests/scripts/a-one-byte-slice-appended-is-the-general-slice.loft::n_test_short_multi_byte_pieces
+elab-functions	agree	tests/scripts/a-par-workers-record-results-reach-the-caller-with-their-stores.loft::(schema)
+elab-functions	agree	tests/scripts/a-par-workers-record-results-reach-the-caller-with-their-stores.loft::Bag
+elab-functions	agree	tests/scripts/a-par-workers-record-results-reach-the-caller-with-their-stores.loft::Doc
+elab-functions	agree	tests/scripts/a-par-workers-record-results-reach-the-caller-with-their-stores.loft::Dot
+elab-functions	agree	tests/scripts/a-par-workers-record-results-reach-the-caller-with-their-stores.loft::Leaf
+elab-functions	agree	tests/scripts/a-par-workers-record-results-reach-the-caller-with-their-stores.loft::Linked
+elab-functions	agree	tests/scripts/a-par-workers-record-results-reach-the-caller-with-their-stores.loft::Maybe
+elab-functions	agree	tests/scripts/a-par-workers-record-results-reach-the-caller-with-their-stores.loft::Mid
+elab-functions	agree	tests/scripts/a-par-workers-record-results-reach-the-caller-with-their-stores.loft::Pin
+elab-functions	agree	tests/scripts/a-par-workers-record-results-reach-the-caller-with-their-stores.loft::Shape
+elab-functions	agree	tests/scripts/a-par-workers-record-results-reach-the-caller-with-their-stores.loft::Top
+elab-functions	agree	tests/scripts/a-par-workers-record-results-reach-the-caller-with-their-stores.loft::main_vector<Doc>
+elab-functions	agree	tests/scripts/a-par-workers-record-results-reach-the-caller-with-their-stores.loft::main_vector<Leaf>
+elab-functions	agree	tests/scripts/a-par-workers-record-results-reach-the-caller-with-their-stores.loft::main_vector<Mid>
+elab-functions	agree	tests/scripts/a-par-workers-record-results-reach-the-caller-with-their-stores.loft::n_bag
+elab-functions	agree	tests/scripts/a-par-workers-record-results-reach-the-caller-with-their-stores.loft::n_maybe
+elab-functions	agree	tests/scripts/a-par-workers-record-results-reach-the-caller-with-their-stores.loft::n_nested
+elab-functions	agree	tests/scripts/a-par-workers-record-results-reach-the-caller-with-their-stores.loft::n_own
+elab-functions	agree	tests/scripts/a-par-workers-record-results-reach-the-caller-with-their-stores.loft::n_shape
+elab-functions	agree	tests/scripts/a-par-workers-record-results-reach-the-caller-with-their-stores.loft::vector<Doc>
+elab-functions	agree	tests/scripts/a-par-workers-record-results-reach-the-caller-with-their-stores.loft::vector<Leaf>
+elab-functions	agree	tests/scripts/a-par-workers-record-results-reach-the-caller-with-their-stores.loft::vector<Mid>
 elab-functions	agree	tests/scripts/a-placed-call-copies-an-answer-from-elsewhere.loft::(schema)
 elab-functions	agree	tests/scripts/a-qualified-name-reaches-what-a-library-publishes.loft::(schema)
 elab-functions	agree	tests/scripts/a-qualified-name-reaches-what-a-library-publishes.loft::C98Vec
@@ -14104,7 +14161,7 @@ elab-functions	agree	tests/scripts/store_compact_slack_730.loft::SRec
 elab-functions	agree	tests/scripts/store_compact_slack_730.loft::n___upgrade_drain
 elab-functions	agree	tests/scripts/store_compact_slack_730.loft::n_digest_of
 
-layer	elab-pass1	agree	13210	of	18469
+layer	elab-pass1	agree	13253	of	18529
 elab-pass1	agree	lib/code.loft::t_4Code_add_block
 elab-pass1	agree	lib/code.loft::t_4Code_add_if
 elab-pass1	agree	lib/code.loft::t_4Code_add_loop
@@ -15128,13 +15185,29 @@ elab-pass1	agree	loft-suite/rules/calls/F-ParamGrow/1251-a-heap-parameter-is-sha
 elab-pass1	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_an_owned_null_arm_source_is_still_freed
 elab-pass1	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_as_if
 elab-pass1	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_as_match
+elab-pass1	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_bound
 elab-pass1	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_bump
 elab-pass1	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_check
+elab-pass1	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_ctx_block
+elab-pass1	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_ctx_condition
+elab-pass1	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_ctx_field
+elab-pass1	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_ctx_if_arm
+elab-pass1	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_ctx_interpolation
+elab-pass1	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_ctx_loop
+elab-pass1	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_ctx_nested
+elab-pass1	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_ctx_write
 elab-pass1	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_find
 elab-pass1	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_get
+elab-pass1	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_in_a_field
 elab-pass1	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_local_view
+elab-pass1	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_minted
+elab-pass1	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_nullable_local
 elab-pass1	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_owned_or_null
 elab-pass1	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_pick
+elab-pass1	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_pick_argument
+elab-pass1	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_pick_default
+elab-pass1	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_pick_minted
+elab-pass1	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_returned
 elab-pass1	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_same
 elab-pass1	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_set
 elab-pass1	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_test_chosen
@@ -15144,6 +15217,9 @@ elab-pass1	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-c
 elab-pass1	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_test_spelling
 elab-pass1	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_test_through_a_parameter
 elab-pass1	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_the_local_subject_control_still_answers
+elab-pass1	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_three
+elab-pass1	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_through_param
+elab-pass1	agree	loft-suite/rules/calls/F-ParamHeap/a-heap-argument-shares-the-callers-store-and-nothing-in-the-frame-releases-it.loft::n_two
 elab-pass1	agree	loft-suite/rules/calls/F-ParamRebind/a-rebind-built-apart-leaves-the-callers-store.loft::n_called
 elab-pass1	agree	loft-suite/rules/calls/F-ParamRebind/a-rebind-built-apart-leaves-the-callers-store.loft::n_tot
 elab-pass1	agree	loft-suite/rules/calls/F-ParamRebind/a-whole-write-through-a-link-to-a-plain-parameter-rebinds-the-callees-name-only.loft::n_chain
@@ -18210,6 +18286,15 @@ elab-pass1	agree	loft-suite/rules/heap/H-RefHome/2597-a-holder-releases-only-the
 elab-pass1	agree	loft-suite/rules/heap/H-RefHome/2597-a-holder-releases-only-the-record-in-its-own-store.loft::n_test_two_holders
 elab-pass1	agree	loft-suite/rules/heap/H-RefHome/2597-a-holder-releases-only-the-record-in-its-own-store.loft::n_two_holders
 elab-pass1	agree	loft-suite/rules/heap/H-RefHome/2597-a-holder-releases-only-the-record-in-its-own-store.loft::t_3Tex_OpDrop
+elab-pass1	agree	loft-suite/rules/heap/H-RefHome/2612-a-variant-literal-keeps-the-record-its-reference-names.loft::n_fill
+elab-pass1	agree	loft-suite/rules/heap/H-RefHome/2612-a-variant-literal-keeps-the-record-its-reference-names.loft::n_show
+elab-pass1	agree	loft-suite/rules/heap/H-RefHome/2612-a-variant-literal-keeps-the-record-its-reference-names.loft::n_show_two
+elab-pass1	agree	loft-suite/rules/heap/H-RefHome/2612-a-variant-literal-keeps-the-record-its-reference-names.loft::n_test_a_literal_in_the_field
+elab-pass1	agree	loft-suite/rules/heap/H-RefHome/2612-a-variant-literal-keeps-the-record-its-reference-names.loft::n_test_a_named_local
+elab-pass1	agree	loft-suite/rules/heap/H-RefHome/2612-a-variant-literal-keeps-the-record-its-reference-names.loft::n_test_a_struct_literal
+elab-pass1	agree	loft-suite/rules/heap/H-RefHome/2612-a-variant-literal-keeps-the-record-its-reference-names.loft::n_test_copied_into_a_parameter
+elab-pass1	agree	loft-suite/rules/heap/H-RefHome/2612-a-variant-literal-keeps-the-record-its-reference-names.loft::n_test_inline_in_a_struct
+elab-pass1	agree	loft-suite/rules/heap/H-RefHome/2612-a-variant-literal-keeps-the-record-its-reference-names.loft::n_test_two_variants_one_offset
 elab-pass1	agree	loft-suite/rules/heap/H-RefHome/a-record-a-stored-reference-names-lives-as-long-as-its-holder-however-it-was-built.loft::n_a_call_result_into_a_parameter_and_a_returned_holder
 elab-pass1	agree	loft-suite/rules/heap/H-RefHome/a-record-a-stored-reference-names-lives-as-long-as-its-holder-however-it-was-built.loft::n_a_home_of_a_loop_or_an_if_copied_out
 elab-pass1	agree	loft-suite/rules/heap/H-RefHome/a-record-a-stored-reference-names-lives-as-long-as-its-holder-however-it-was-built.loft::n_a_keyed_home_copied_out
@@ -18697,6 +18782,19 @@ elab-pass1	agree	loft-suite/rules/layout/L-Null-Which/2572-a-join-of-a-nullable-
 elab-pass1	agree	loft-suite/rules/layout/L-Null-Which/2572-a-join-of-a-nullable-field-with-null-reads-its-tag.loft::n_null_first
 elab-pass1	agree	loft-suite/rules/layout/L-Null-Which/2572-a-join-of-a-nullable-field-with-null-reads-its-tag.loft::n_null_last
 elab-pass1	agree	loft-suite/rules/layout/L-Null-Which/2572-a-join-of-a-nullable-field-with-null-reads-its-tag.loft::n_two_fields
+elab-pass1	agree	loft-suite/rules/layout/L-Null-Which/2609-a-literal-written-under-a-tagged-holder-is-the-field-s-value.loft::n_deep
+elab-pass1	agree	loft-suite/rules/layout/L-Null-Which/2609-a-literal-written-under-a-tagged-holder-is-the-field-s-value.loft::n_first
+elab-pass1	agree	loft-suite/rules/layout/L-Null-Which/2609-a-literal-written-under-a-tagged-holder-is-the-field-s-value.loft::n_local
+elab-pass1	agree	loft-suite/rules/layout/L-Null-Which/2609-a-literal-written-under-a-tagged-holder-is-the-field-s-value.loft::n_local_view
+elab-pass1	agree	loft-suite/rules/layout/L-Null-Which/2609-a-literal-written-under-a-tagged-holder-is-the-field-s-value.loft::n_main
+elab-pass1	agree	loft-suite/rules/layout/L-Null-Which/2609-a-literal-written-under-a-tagged-holder-is-the-field-s-value.loft::n_nested
+elab-pass1	agree	loft-suite/rules/layout/L-Null-Which/2609-a-literal-written-under-a-tagged-holder-is-the-field-s-value.loft::n_plain
+elab-pass1	agree	loft-suite/rules/layout/L-Null-Which/2609-a-literal-written-under-a-tagged-holder-is-the-field-s-value.loft::n_second
+elab-pass1	agree	loft-suite/rules/layout/L-Null-Which/2618-the-child-of-an-absent-holder-reads-null.loft::n_dropped_write
+elab-pass1	agree	loft-suite/rules/layout/L-Null-Which/2618-the-child-of-an-absent-holder-reads-null.loft::n_main
+elab-pass1	agree	loft-suite/rules/layout/L-Null-Which/2618-the-child-of-an-absent-holder-reads-null.loft::n_pointer
+elab-pass1	agree	loft-suite/rules/layout/L-Null-Which/2618-the-child-of-an-absent-holder-reads-null.loft::n_present
+elab-pass1	agree	loft-suite/rules/layout/L-Null-Which/2618-the-child-of-an-absent-holder-reads-null.loft::n_tagged
 elab-pass1	agree	loft-suite/rules/layout/L-Null-Which/the-field-decides-whether-a-nullable-takes-a-tag.loft::n_main
 elab-pass1	agree	loft-suite/rules/layout/L-Null-Which/the-field-decides-whether-a-nullable-takes-a-tag.loft::n_test_a_sentinel_field_lays_out_like_its_dense_twin
 elab-pass1	agree	loft-suite/rules/layout/L-Null-Which/the-field-decides-whether-a-nullable-takes-a-tag.loft::n_test_a_view_of_a_pointer_field_survives_its_clear
@@ -25971,6 +26069,8 @@ elab-pass1	agree	tests/scripts/a-function-reads-its-vector-parameter-through-one
 elab-pass1	agree	tests/scripts/a-function-reads-its-vector-parameter-through-one-header.loft::n_f7
 elab-pass1	agree	tests/scripts/a-function-reads-its-vector-parameter-through-one-header.loft::n_f8
 elab-pass1	agree	tests/scripts/a-function-reads-its-vector-parameter-through-one-header.loft::n_f9
+elab-pass1	agree	tests/scripts/a-function-value-answering-a-vector-is-carried-by-every-backend.loft::n_grown
+elab-pass1	agree	tests/scripts/a-function-value-answering-a-vector-is-carried-by-every-backend.loft::n_main
 elab-pass1	agree	tests/scripts/a-function-value-fills-its-callers-record.loft::n_walk
 elab-pass1	agree	tests/scripts/a-function-value-fills-its-callers-record.loft::n_width
 elab-pass1	agree	tests/scripts/a-generator-yields-a-tuple-with-a-text-member-on-both-backends.loft::n_g1
