@@ -3223,6 +3223,8 @@ pub fn literal_store(e: el::El, vars: el_vars::Vars, v: integer, r: VecRows, reb
   if rebind {
     el_vars::set_skip_free(vars, db, "vector_db_init");
     el_vars::mark_inline(vars, db, "vector_db_init");
+  } else {
+    el_vars::release_guarded_backings(vars, v);
   }
   el_vars::depend(vars, v, db);
   [

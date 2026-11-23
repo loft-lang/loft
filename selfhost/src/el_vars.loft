@@ -1532,3 +1532,14 @@ pub fn retire_capture_placeholders(v: Vars, code: ir::Node, caps: vector<text>) 
     v.vars[p].type_def = [el_types::without_deps(tp(v, p))];
   }
 }
+
+// `vector_db`'s guarded-backing clause (loft#1486): a GUARDED backing the local is leaving — a
+// skip-free inline `__vdb_N` it names — goes back to owning its store, now the local names a new
+// backing (`Function::clear_skip_free`, untraced as Rust's is).
+pub fn release_guarded_backings(v: Vars, local: integer) {
+  for d in el_types::deps(tp(v, local)) {
+    if d >= 0 && d < len(v.vars) && v.vars[d].skip_free && v.inline_refs.contains(d) && starts_with(v.vars[d].name, "__vdb") {
+      v.vars[d].skip_free = false;
+    }
+  }
+}
