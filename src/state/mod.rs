@@ -8726,6 +8726,16 @@ impl State {
                     t if crate::data::is_dbref_slot(t) || matches!(t, Type::RefVar(_)) => {
                         st.put_stack(arg.dbref);
                     }
+                    // A function value: its number and its closure, as the stack holds one.
+                    Type::Function(..) => {
+                        let mut raw = [0u8; 8 + std::mem::size_of::<DbRef>()];
+                        raw[..8].copy_from_slice(&arg.scalar.to_ne_bytes());
+                        // SAFETY: `raw[8..]` is exactly one `DbRef` wide.
+                        unsafe {
+                            std::ptr::write_unaligned(raw[8..].as_mut_ptr().cast::<DbRef>(), arg.dbref);
+                        }
+                        st.put_stack(raw);
+                    }
                     _ => st.put_stack(arg.scalar),
                 }
             }

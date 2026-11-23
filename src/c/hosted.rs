@@ -35,6 +35,8 @@ pub(crate) fn defines() -> String {
          #define LOFT_HOST_ABI {}\n\
          #define LOFT_HT_HOSTED {}\n\
          #define LOFT_HT_TYPE_ID {}\n\
+         #define LOFT_HT_CALL_REF {}\n\
+         #define LOFT_HOST_FN (INT64_C(1) << 62)\n\
          #define LOFT_STORES_VIEW_AT {}\n\
          #define LOFT_LA_SIZE {}\n#define LOFT_LA_SCALAR {}\n#define LOFT_LA_DBREF {}\n\
          #define LOFT_LA_TPTR {}\n#define LOFT_LA_TLEN {}\n\
@@ -43,6 +45,7 @@ pub(crate) fn defines() -> String {
         crate::host_abi::HOST_ABI,
         offset_of!(HostTable, hosted),
         offset_of!(HostTable, type_id),
+        offset_of!(HostTable, call_ref),
         offset_of!(crate::database::Stores, hosted_view),
         size_of::<LibArg>(),
         offset_of!(LibArg, scalar),
@@ -63,6 +66,10 @@ static int64_t loft_la_bits(const unsigned char *a, size_t i) {
     memcpy(&v, a + i * LOFT_LA_SIZE + LOFT_LA_SCALAR, 8);
     return v;
 }
+/* The interpreter's call of a function value (`HostTable::call_ref`, `State::call_back`). */
+typedef void (*loft_call_ref_fn)(void *, uint32_t, const unsigned char *, const unsigned char *,
+                                 size_t, unsigned char *);
+static loft_call_ref_fn loft_host_call_ref = 0;
 /* A `DbRef` as the interpreter holds one in memory — in a slot, or on its stack. */
 static loft_ref loft_db_read(const unsigned char *d) {
     uint16_t nr;
@@ -89,6 +96,14 @@ static loft_ref loft_slot_ref(loft_ref at, uint32_t fld) {
 }
 static void loft_slot_set_ref(loft_ref at, uint32_t fld, loft_ref r) {
     loft_db_write(loft_stores[at.store_nr].buf + (size_t) at.rec * 8 + at.pos + fld, r);
+}
+/* A function value the interpreter hands in: its number is the program's, not the unit's, so
+ * it is tagged (`LOFT_HOST_FN`) and a dispatcher hands it back to the interpreter. */
+static loft_fn loft_la_fn(const unsigned char *a, size_t i) {
+    loft_fn f;
+    f.d = loft_la_bits(a, i) | LOFT_HOST_FN;
+    f.clos = loft_la_ref(a, i);
+    return f;
 }
 static loft_str loft_la_text(const unsigned char *a, size_t i) {
     loft_str s;
@@ -156,6 +171,7 @@ fn slot_arg(c: CType, slot: usize) -> Option<String> {
         CType::Char => format!("(uint32_t) {bits}"),
         CType::Ref => format!("loft_la_ref(loft_a, {slot})"),
         CType::Text => format!("loft_la_text(loft_a, {slot})"),
+        CType::Fn => format!("loft_la_fn(loft_a, {slot})"),
         _ => return None,
     })
 }
@@ -383,6 +399,7 @@ pub(crate) fn exports(
         );
         out.push_str(&bridge(cx, d, &symbol)?);
     }
+    out.push_str(&cx.upcall_code());
     out.push_str(&type_keys(cx));
     let _ = write!(
         out,
@@ -393,7 +410,7 @@ pub(crate) fn exports(
          memcpy(&abi, loft_t, 4);\n    if (abi != LOFT_HOST_ABI) return 0;\n    \
          memcpy(&h, loft_t + LOFT_HT_HOSTED, sizeof h);\n    \
          if (h->store_tail != LOFT_HOST_STORE_TAIL) return 0;\n    \
-         loft_hosted = h;\n    loft_map_types(loft_t, loft_ids);\n    loft_bind_tables();\n    return 1;\n}}\n\
+         loft_hosted = h;\n    memcpy(&loft_host_call_ref, loft_t + LOFT_HT_CALL_REF, sizeof loft_host_call_ref);\n    loft_map_types(loft_t, loft_ids);\n    loft_bind_tables();\n    return 1;\n}}\n\
          __attribute__((visibility(\"default\"))) uint64_t loft_type_layout_fp_v1(void) {{ return UINT64_C({layout_fp}); }}\n"
     );
     Ok(out)

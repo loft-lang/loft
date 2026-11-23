@@ -8,6 +8,10 @@
 // @falsified-at: none — the receipt is `tests/hosted_unit.rs`'s (the table refresh struck).
 use hostedlib::*;
 
+fn plus3(x: integer) -> integer { x + 3 }
+
+fn shout(t: text) -> text { "{t}{t}" }
+
 // A store freed below one still alive, its words negative: the unit makes its constants
 // (`WIDTHS`) at its first call, in the store the interpreter hands it next — this hole.
 fn churn(k: integer) -> vector<integer> {
@@ -55,6 +59,13 @@ fn main() {
   rb = bag_new("ref", 0);
   grow_ref(rb, 5);
   assert(rb.total == 5 && len(rb.items) == 2, "grow_ref {rb.total} {len(rb.items)}");
+  // function values handed in, called back: (2 + 3) + 3; a capturing lambda, (2 * 7) * 7;
+  // a text twice, twice; a record the program's function makes, 4 + 1 + 2
+  assert(twice_by(plus3, 2) == 8, "twice_by {twice_by(plus3, 2)}");
+  kf = 7;
+  assert(twice_by(fn(x: integer) -> integer { x * kf }, 2) == 98, "lambda");
+  assert(wrapped(shout, "ab") == "[abab|ab!ab!]", "wrapped {wrapped(shout, "ab")}");
+  assert(made_by(bag_new, "mk") == 7, "made_by {made_by(bag_new, "mk")}");
   // a tuple handed in: 3 * 4 * 0.5 = 6, and -0.25 when its flag is off
   assert(spread((3, 0.5, true), 4) == 6.0 && spread((3, 0.25, false), 4) == 0.0 - 0.25, "spread");
   // e^-3.726127510713071 = 0.024085927969257424 (2^32 times: 103448272.92177233…); E to that

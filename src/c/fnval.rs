@@ -78,13 +78,49 @@ impl Cx<'_> {
             if buf {
                 list.push("loft_ref rb".to_string());
             }
+            // `@PLN206` — in a hosted unit, a function value the interpreter handed in names the
+            // program's function: the call goes back to the interpreter (`loft_up{id}`).
+            let up = upcall_shapes(params, *ret);
+            if up && !buf {
+                let proto: Vec<String> = std::iter::once("loft_fn f".to_string())
+                    .chain(params.iter().enumerate().map(|(i, (c, _))| format!("{} a{i}", passed(*c))))
+                    .collect();
+                let _ = writeln!(
+                    out,
+                    "\n#ifdef LOFT_HOSTED\nstatic {} loft_up{id}({});\n#endif",
+                    held(*ret),
+                    proto.join(", ")
+                );
+            }
             let _ = writeln!(
                 out,
-                "\nstatic {} loft_call{id}{}({}) {{\n    switch (f.d) {{",
+                "\nstatic {} loft_call{id}{}({}) {{",
                 held(*ret),
                 if buf { "b" } else { "" },
                 list.join(", ")
             );
+            if up {
+                let args: Vec<String> = std::iter::once("f".to_string())
+                    .chain((0..params.len()).map(|i| format!("a{i}")))
+                    .collect();
+                // A record answer the interpreter made is the caller's, as an arm's minted one.
+                let hold = *ret == CType::Ref && !buf;
+                let call = format!("loft_up{id}({})", args.join(", "));
+                let body = if *ret == CType::Void {
+                    format!("{call}; return;")
+                } else if hold {
+                    format!(
+                        "uint64_t sn = loft_stores_allocated; loft_ref r = {call}; loft_fnref_mint(r, sn, f.clos); return r;"
+                    )
+                } else {
+                    format!("return {call};")
+                };
+                let _ = writeln!(
+                    out,
+                    "#ifdef LOFT_HOSTED\n    if (f.d & LOFT_HOST_FN) {{ {body} }}\n#endif"
+                );
+            }
+            out.push_str("    switch (f.d) {\n");
             // A place is a link the arm hands to the place twin.
             let linked: Vec<(CType, bool)> = params.iter().map(|(c, m)| (*c, *m > 0)).collect();
             let places: Vec<bool> = params.iter().map(|(_, m)| *m == 2).collect();
@@ -137,12 +173,71 @@ impl Cx<'_> {
         Ok(out)
     }
 
+    /// `@PLN206` — a hosted unit's call of a function value the interpreter handed in, one per
+    /// signature that can cross (`upcall_shapes`): each argument in a `LibArg` slot, the call
+    /// made by the interpreter (`HostTable::call_ref`), the answer read back.  The interpreter's
+    /// table may move under the call: the unit reads it again after.
+    pub(crate) fn upcall_code(&self) -> String {
+        let mut out = String::new();
+        for (id, (params, ret)) in self.fn_sigs.borrow().iter().enumerate() {
+            if !upcall_shapes(params, *ret) {
+                continue;
+            }
+            let list: Vec<String> = std::iter::once("loft_fn f".to_string())
+                .chain(params.iter().enumerate().map(|(i, (c, _))| format!("{} a{i}", passed(*c))))
+                .collect();
+            let n = params.len();
+            let _ = writeln!(
+                out,
+                "\nstatic {} loft_up{id}({}) {{\n    unsigned char la[{} * LOFT_LA_SIZE], cl[LOFT_LA_SIZE], r[LOFT_LA_SIZE];\n    \
+                 memset(la, 0, sizeof la);\n    memset(cl, 0, sizeof cl);\n    memset(r, 0, sizeof r);\n    loft_la_set_ref(cl, f.clos);",
+                held(*ret),
+                list.join(", "),
+                n.max(1)
+            );
+            for (i, (c, _)) in params.iter().enumerate() {
+                let at = format!("la + {i} * LOFT_LA_SIZE");
+                let _ = writeln!(
+                    out,
+                    "    {}",
+                    match c {
+                        CType::Int => format!("loft_la_set_bits({at}, a{i});"),
+                        CType::Bool => format!("loft_la_set_bits({at}, (int64_t) a{i});"),
+                        CType::Float => format!(
+                            "{{ int64_t b; memcpy(&b, &a{i}, 8); loft_la_set_bits({at}, b); }}"
+                        ),
+                        CType::Text => format!("loft_la_set_text({at}, a{i});"),
+                        _ => format!("loft_la_set_ref({at}, a{i});"),
+                    }
+                );
+            }
+            let _ = writeln!(
+                out,
+                "    loft_host_call_ref(loft_host_stores, (uint32_t) (f.d & ~LOFT_HOST_FN), cl, la, {n}, r);\n    loft_host_sync();"
+            );
+            let _ = writeln!(
+                out,
+                "    {}\n}}",
+                match ret {
+                    CType::Void => "return;".to_string(),
+                    CType::Int => "return loft_la_bits(r, 0);".to_string(),
+                    CType::Bool => "return (uint8_t) loft_la_bits(r, 0);".to_string(),
+                    CType::Float => "return loft_f64(loft_la_bits(r, 0));".to_string(),
+                    CType::Text => "return loft_text_own(loft_la_text(r, 0));".to_string(),
+                    _ => "return loft_la_ref(r, 0);".to_string(),
+                }
+            );
+        }
+        out
+    }
+
     /// `loft_drop_closure` (`State::drop_fn_ref`): a function value's closure record releases
     /// what it captured through its type's drop cascade — the hooks of the captured values run
     /// there.  A value with no record, or one in a freed store, releases nothing.
     pub(crate) fn drop_code(&self, fns: &[u32]) -> String {
         let mut out = String::from(
-            "\nstatic void loft_drop_closure(loft_fn f) {\n    if (!loft_store_live(f.clos)) return;\n    switch (f.d) {\n",
+            "\nstatic void loft_drop_closure(loft_fn f) {\n    if (!loft_store_live(f.clos)) return;\n\
+             #ifdef LOFT_HOSTED\n    if (f.d & LOFT_HOST_FN) return; /* the interpreter's closure */\n#endif\n    switch (f.d) {\n",
         );
         for &d in self.fn_values.borrow().iter() {
             let cascade = self.data.drop_cascade_nr(self.data.def(d).closure_record());
@@ -325,4 +420,12 @@ impl Cx<'_> {
         }
         Ok(())
     }
+}
+
+/// Can a call of a function value of these shapes go back to the interpreter
+/// (`fnref::upcall_carries`): each parameter a full-width integer, a float, a boolean, a text or
+/// a store reference, passed by value, and the answer one of those or nothing.
+fn upcall_shapes(params: &[(CType, u8)], ret: CType) -> bool {
+    let carried = |c: CType| matches!(c, CType::Int | CType::Float | CType::Bool | CType::Text | CType::Ref);
+    params.iter().all(|(c, m)| *m == 0 && carried(*c)) && (ret == CType::Void || carried(ret))
 }

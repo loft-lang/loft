@@ -83,6 +83,22 @@ pub fn grow_ref(self: &Bag, k: integer) {
   self.items += [k];
 }
 
+// Function values the program hands in: they name the program's functions, so the unit hands
+// each call back to the interpreter — an integer, a text and a record answer.
+pub fn twice_by(f: fn(integer) -> integer, x: integer) -> integer {
+  f(f(x))
+}
+
+pub fn wrapped(f: fn(text) -> text, t: text) -> text {
+  "[{f(t)}|{f(t + "!")}]"
+}
+
+pub fn made_by(mk: fn(text, integer) -> Bag, n: text) -> integer {
+  b = mk(n, 4);
+  b.fill(2, 1);
+  b.total
+}
+
 // A tuple argument: its leaves cross one slot each, and the unit builds its own tuple.
 pub fn spread(p: (integer, float, boolean), k: integer) -> float {
   if p.2 { (p.0 * k) as float * p.1 } else { 0.0 - p.1 }
