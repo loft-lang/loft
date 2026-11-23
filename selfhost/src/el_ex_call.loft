@@ -1477,8 +1477,9 @@ pub fn param_rebinds_owned(e: el::El, f: integer, seen: vector<integer>) -> vect
   out
 }
 
-// `param_attr` (src/parser/closures.rs): the parameter — its attribute index — that variable
-// `v` of `f` is, or -1 for a local.  A parameter's variable is numbered by its attribute index
+// `param_attr` (src/parser/closures.rs): the VISIBLE parameter — its attribute index — that
+// variable `v` of `f` is, or -1 for a local or a hidden parameter (a renamed return buffer, a
+// text work buffer).  A parameter's variable is numbered by its attribute index
 // only while every attribute exists before the body's first local: a hidden one added later (a
 // text work buffer, `__work_N`) is numbered after the locals.
 fn param_attr(e: el::El, f: integer, v: integer, n: integer) -> integer {
@@ -1490,7 +1491,7 @@ fn param_attr(e: el::El, f: integer, v: integer, n: integer) -> integer {
   name = vs[v]!.name;
   for at in df.attributes {
     if at#index < n && at.name == name {
-      return at#index;
+      return if at.hidden { -1 } else { at#index };
     }
   }
   -1

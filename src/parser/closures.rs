@@ -566,11 +566,12 @@ pub(super) fn collect_param_reassigns(
 
 /// Walk `code` marking every parameter slot rebound to an OWNED value — directly by a
 /// `Value::Set`, or by being handed on to a callee that rebinds the parameter it lands in.
-/// The parameter — its attribute index — that variable `v` of `fn_nr` is, or `None` for a
-/// local.  A parameter's variable is numbered by its attribute index only while every
-/// attribute exists before the body's first local: a hidden one added later (a text work
-/// buffer, `__work_N`) is numbered after the locals, and a local below the attribute count
-/// is no parameter.
+/// The VISIBLE parameter — its attribute index — that variable `v` of `fn_nr` is, or `None`
+/// for a local or a hidden parameter (a return buffer renamed onto a local, a text work
+/// buffer: the caller writes no argument for either).  A parameter's variable is numbered by
+/// its attribute index only while every attribute exists before the body's first local: a
+/// hidden one added later is numbered after the locals, and a local below the attribute
+/// count is no parameter.
 fn param_attr(data: &Data, fn_nr: u32, v: u16, n_params: usize) -> Option<usize> {
     let def = data.def(fn_nr);
     let vars = def.variables();
@@ -582,6 +583,7 @@ fn param_attr(data: &Data, fn_nr: u32, v: u16, n_params: usize) -> Option<usize>
         .iter()
         .take(n_params)
         .position(|a| a.name == name)
+        .filter(|&a| !def.attributes()[a].hidden)
 }
 
 pub(super) fn collect_param_rebinds_owned(
