@@ -909,16 +909,15 @@ fn append_place(e: el::El, vars: el_vars::Vars, n: integer) -> AppendPlace {
 
 fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: text, target: integer, rhs: integer?) -> Ex {
   el_ex_name::capture_target_placeholder(e, vars, target);
-  // (`parse_var_inner`: Rust parses the target as an expression, so the root of a projected
-  // place — `t.0`, `g.by_k`, `v[i].f` — is a user's mention of its variable, parameters
-  // included: marked on every route, whichever lowering the place then takes.)
-  if !(e.p.nodes[target] is SName) {
-    trn = target_root_name(e, target);
-    if trn != "" {
-      trv = el_vars::var(vars, trn);
-      if trv >= 0 && el_vars::name_of(vars, trv) == trn {
-        el_vars::mark_user_named(vars, trv, "parse_var_inner");
-      }
+  // (`parse_var_inner`: Rust parses the target as an expression, so the target's variable —
+  // a bare name or the root of a projected place, `t.0`, `g.by_k`, `v[i].f` — is a user's
+  // mention of it, parameters included: marked on every route, whichever lowering the place
+  // then takes.  A bare name marks a variable that exists already; a first bind makes it.)
+  trn = match e.p.nodes[target] { SName { name: bn, member: bm } => if bm == "" { bn } else { "" }, _ => target_root_name(e, target) };
+  if trn != "" {
+    trv = el_vars::var(vars, trn);
+    if trv >= 0 && el_vars::name_of(vars, trv) == trn {
+      el_vars::mark_user_named(vars, trv, "parse_var_inner");
     }
   }
   // loft#1840 — the program's own append into a collection or a text, recorded on the local
