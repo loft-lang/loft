@@ -39,10 +39,9 @@ import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 FALSIFIED = ROOT / "tests/falsified"
-# Generated from the tree it sits in, so a receipt's hunk of it is never applied: the control
-# regenerates it (`falsify.sh`, which excludes the same file — the two must agree).
+# A receipt cut while the standard library's compiled bodies were a generated Rust file may
+# carry a hunk of that file, which no longer exists: left out (`falsify.sh` leaves out the same).
 GENERATED = "src/compiled_stdlib_gen.rs"
-MARKER = f"# regenerate: {GENERATED}\n"
 
 
 def git(*args, cwd=ROOT, check=True):
@@ -130,10 +129,7 @@ def refresh(patch, write=True):
                 return False
             if not write:
                 return True
-            # The rewritten patch has no hunk of the generated file; keep the fact that the
-            # control must regenerate it.
-            names = GENERATED in patch.read_text(encoding="utf-8", errors="replace")
-            patch.write_text((MARKER if names else "") + diff, encoding="utf-8")
+            patch.write_text(diff, encoding="utf-8")
             return True
         finally:
             git("worktree", "remove", "--force", str(wt), check=False)

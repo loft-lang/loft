@@ -9951,7 +9951,8 @@ fn main() {
     // @PLN199 A2 — the functions `compiled_stdlib::mark` will route below, under the same
     // condition, named to the parser before it reads a call to one.
     if !native_mode && html_out.is_none() {
-        p.compiled_bridges = loft::interp::compiled_stdlib::names();
+        let stdlib_dir = std::path::Path::new(&dir).join("default");
+        p.compiled_bridges = loft::compiled_stdlib::prepare(&stdlib_dir.to_string_lossy());
     }
     p.library_bridges =
         !native_mode && html_out.is_none() && std::env::var_os("LOFT_NO_NATIVE_LIBS").is_none();
@@ -10748,18 +10749,20 @@ fn main() {
             }
         }
     }
-    // @PLN181 — the standard library's compiled loft bodies, routed like a `use`d library's
-    // (@C71) when the program is INTERPRETED; `--native` compiles those bodies itself, and a
-    // browser build has no bridge dispatcher.  Declines on its own when the program's type
-    // table does not start with the standard library's (`compiled_stdlib::mark`).
+    // @PLN181 — the standard library's compiled loft bodies, its C unit adopted like a `use`d
+    // library's (@C71) when the program is INTERPRETED; `--native` compiles those bodies itself,
+    // and a browser build has no bridge dispatcher.  Without a unit they interpret.
     if !native_mode && html_out.is_none() {
         let t = std::time::Instant::now();
-        let n = loft::interp::compiled_stdlib::mark(&mut p.data, &p.database, &default_str);
+        let (n, unit) = loft::compiled_stdlib::mark(&mut p.data, &p.database);
         if loft::keys::env_set("LOFT_TIMING") {
             eprintln!(
                 "compiled stdlib: {n} function(s) dispatched to their compiled bodies ({} us)",
                 t.elapsed().as_micros()
             );
+        }
+        if let Some(so) = unit {
+            auto_native_libs.push(so.to_string_lossy().into_owned());
         }
     }
     // @PLN119 arc A — mark each process-placed library's routable functions
@@ -13713,7 +13716,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
         match loft::c::bodies::emit_bodies(
             &p.data,
             &state.database,
-            &loft::stdlib_codegen::export_set(&p.data),
+            &loft::native_gate::export_set(&p.data),
         ) {
             Ok(c) => {
                 if let Err(e) = fa::write(&out, c) {

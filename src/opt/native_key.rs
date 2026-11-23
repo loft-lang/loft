@@ -363,24 +363,6 @@ pub(crate) fn source_newer_than(pkg_dirs: &[String], artifact: &std::path::Path)
     newest.is_some_and(|src| src > art_mtime)
 }
 
-/// The fingerprint of the first `n` types of `stores`, or `None` when it has fewer.  The same
-/// facts `native_lib`'s whole-table fingerprint hashes (name, size, alignment), over a prefix.
-pub(crate) fn prefix_fingerprint(stores: &Stores, n: usize) -> Option<u64> {
-    if stores.types.len() < n {
-        return None;
-    }
-    let mut facts: Vec<Vec<u8>> = Vec::with_capacity(n + 1);
-    facts.push((n as u64).to_le_bytes().to_vec());
-    for t in &stores.types[..n] {
-        let mut f = t.name.as_bytes().to_vec();
-        f.extend_from_slice(&t.size_bytes().to_le_bytes());
-        f.push(t.align_bytes());
-        facts.push(f);
-    }
-    let parts: Vec<&[u8]> = facts.iter().map(Vec::as_slice).collect();
-    Some(crate::cache::stable_hash(&parts))
-}
-
 /// @PLN199 G1 — the `[native]` packages a library artifact links: those that declare a
 /// `#native` definition its exports reach.  The program around it may load others; linked
 /// too, their symbols shared the artifact's flat C-ABI namespace, and one exported by two of

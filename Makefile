@@ -182,9 +182,6 @@ help:
 	  | sed 's/^# \{0,1\}//'
 
 all:
-	@# `cargo fmt`, not `rustfmt src/*.rs`: the latter also reformats the `include!`d
-	@# generated sources cargo fmt never reaches (src/compiled_stdlib_gen.rs), which left
-	@# every `make install` with a dirty tree and a stale-stdlib test failure.
 	@cargo fmt
 	@RUSTFLAGS=-g cargo build --release
 
@@ -3033,11 +3030,6 @@ script-census:  ## @PLN179 the work list: every Python/bash script by what a lof
 script-reasons:  ## @PLN179 the reasons register, rendered from findings/*.md (ARGS=--count prints the open number instead)
 	@cargo build --release --bin loft -q
 	@if [ "$(ARGS)" = "--count" ]; then target/release/loft --interpret scripts/script_reasons --count; else target/release/loft --interpret scripts/script_reasons > doc/claude/plans/179-scripts-in-loft/REASONS.md.new && mv doc/claude/plans/179-scripts-in-loft/REASONS.md.new doc/claude/plans/179-scripts-in-loft/REASONS.md; fi
-
-.PHONY: compiled-stdlib
-compiled-stdlib:  ## @PLN181 regenerate src/compiled_stdlib_gen.rs — the stdlib's compiled loft bodies (run after changing default/*.loft)
-	@out=$$(cargo run --release -q --bin loft-stdlib-gen) || exit 1; echo "$$out"; \
-	case "$$out" in *regenerated*) cargo build --release --bin loft -q ;; esac
 
 .PHONY: kernel-ratio
 kernel-ratio:  ## every kernel against the loft body it stands in for, both backends — a kernel within 2x is due for removal (doc/claude/KERNELS.md; a report)

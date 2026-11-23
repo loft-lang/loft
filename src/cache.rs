@@ -448,7 +448,7 @@ pub fn host_triple() -> String {
 ///
 /// Returns an empty vec on any read error; the caller treats that as
 /// A hash that is the same on every toolchain: these values are written into a COMMITTED
-/// file (`src/compiled_stdlib_gen.rs`, the stdlib stamp), and `DefaultHasher` promises
+/// file (the stdlib stamp, a unit's key), and `DefaultHasher` promises
 /// stability only within one Rust release.
 pub(crate) fn stable_hash(parts: &[&[u8]]) -> u64 {
     use sha2::{Digest, Sha256};
@@ -497,7 +497,7 @@ pub fn collect_stdlib_sources(default_dir: &str) -> Vec<(String, String)> {
 }
 
 /// The standard library's two fingerprints — the stdlib cache key ([`stdlib_cache_key`])
-/// and the compiled stdlib's source hash (`compiled_stdlib::source_hash`) — WITHOUT reading
+/// and the standard library's source hash (the key of its C unit, `compiled_stdlib`) — WITHOUT reading
 /// its sources when nothing has moved.
 ///
 /// A warm start read and hashed every `default/*.loft` twice: once for the program bundle's

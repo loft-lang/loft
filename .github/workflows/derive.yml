@@ -1,6 +1,6 @@
 name: Derived artefacts (regenerate and commit back)
 
-# The derived artefacts that are a PURE function of the tree — the compiled stdlib, the
+# The derived artefacts that are a PURE function of the tree — the
 # target surface, the browser bundle, the feature shadow, the ignored-tests baseline and the
 # reference pages: every `scripts/derived_artefacts.json` entry marked `"ci": true` — are
 # regenerated here and committed back to the branch, instead of by hand on each checkout.

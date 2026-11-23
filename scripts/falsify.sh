@@ -290,22 +290,10 @@ locked_cargo() { # <dir> <target-dir> <cargo subcommand> <its arguments…>
   fi
 }
 
-# The compiled standard library is GENERATED from the tree it sits in, so a receipt's hunk of
-# it is never applied: it conflicts on every regeneration, and what it carried is derivable.
-# A control whose patch names the file builds its own instead — the empty stub first, because
-# HEAD's generated file need not compile against a reverted runtime, then the control's own
-# generator.  `receipts_ci.py` and `doc_hygiene::every_patch_receipt_still_applies` apply with
-# the same exclusion: the three must agree, or a patch the gate calls applicable is scored on
-# a control that does not build.
+# A receipt cut while the standard library's compiled bodies were a generated Rust file may
+# carry a hunk of that file, which no longer exists: `git apply` leaves it out, as
+# `receipts_ci.py` and `doc_hygiene::every_patch_receipt_still_applies` do.
 GENERATED_STDLIB=src/compiled_stdlib_gen.rs
-regen_stdlib() { # <dir> <target-dir>
-  local stub="$ROOT/scripts/compiled_stdlib_stub.rs"
-  cp "$stub" "$1/$GENERATED_STDLIB" || return 1
-  locked_cargo "$1" "$2" test --test compiled_stdlib regen_compiled_stdlib -- --ignored \
-    || return 1
-  # The generator ran only if the stub is gone.
-  ! cmp -s "$stub" "$1/$GENERATED_STDLIB"
-}
 
 # `timeout(1)` is coreutils; macOS ships without it (and often without `gtimeout`).  Fall
 # back to loft's own `LOFT_TIMEOUT` watchdog alone — weaker (a hang OUTSIDE the runtime's
@@ -559,8 +547,6 @@ if [ -n "$BULK" ]; then
 fi
 # ─────────────────────────────────────────────────────────────────────────────────────────
 
-# `$WT.stub` marks a control still holding the stub: the stub build leaves a `debug/loft` too,
-# and a run killed before the regeneration must not be scored on it.
 if [ -n "$INSTALLED_BIN" ]; then
   # No build: only the SOURCE tree at the installed commit, because a guard runs inside the
   # tree it is scored against (its `lib/`, its fixtures — `signature` says why).
@@ -581,7 +567,7 @@ if [ -n "$INSTALLED_BIN" ]; then
     case "${e##*/}" in Cargo.toml|target|.git) continue ;; esac
     ln -s "$e" "$RUN_DIR/${e##*/}"
   done
-elif [ ! -x "$TGT/debug/loft" ] || [ -e "$WT.stub" ]; then
+elif [ ! -x "$TGT/debug/loft" ]; then
   if [ -n "$PATCHFILE" ]; then
     [ -d "$WT" ] || {
       git worktree add --detach "$WT" HEAD >/dev/null 2>&1 || {
@@ -596,18 +582,12 @@ elif [ ! -x "$TGT/debug/loft" ] || [ -e "$WT.stub" ]; then
         git worktree remove --force "$WT" >/dev/null 2>&1; exit 3; }
     }
     echo "building the control from $PATCHFILE (cached at $TGT) …" >&2
-    if grep -q "$GENERATED_STDLIB" "$PATCH_ABS"; then
-      : > "$WT.stub"
-      regen_stdlib "$WT" "$TGT" || {
-        echo "the control's compiled standard library does not regenerate" >&2; exit 1; }
-    fi
   else
     [ -d "$WT" ] || git worktree add --detach "$WT" "$SHA" >/dev/null 2>&1 || {
       echo "cannot create a worktree at $SHA" >&2; exit 1; }
     echo "building the control at $SHA (cached at $TGT) …" >&2
   fi
   build "$WT" "$TGT" >/dev/null || { echo "the control does not build" >&2; exit 1; }
-  rm -f "$WT.stub"
 fi
 # The installed control runs WITHOUT `--path`: it loads the stdlib it was installed with.
 if [ -n "$INSTALLED_BIN" ]; then
@@ -799,11 +779,6 @@ elif [ $falsified_any -eq 1 ]; then
         echo "      The EXISTING tests/falsified/$pbase.patch is untouched."
       fi
     else
-      # The fix moved the generated standard library: say so in a line `git apply` skips, and
-      # the control regenerates the file instead of carrying a copy that goes stale.
-      if ! git -C "$ROOT" diff --quiet "$SHA" -- "$GENERATED_STDLIB" 2>/dev/null; then
-        { echo "# regenerate: $GENERATED_STDLIB"; cat "$new"; } > "$new.m" && mv "$new.m" "$new"
-      fi
       mv "$new" "$pdir/$pbase.patch"
       echo
       echo "…and the receipt that does not decay — written to tests/falsified/$pbase.patch."

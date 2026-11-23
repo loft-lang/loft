@@ -490,22 +490,6 @@ mod __coro {
 }
 ";
 
-/// [`HOST_INIT_SRC`] for code linked into the host itself: its table is the host's own.
-pub(crate) const IN_HOST_TABLE_SRC: &str = "
-#[allow(dead_code)]
-fn __host() -> &'static loft::native_lib::HostTable {
-    &loft::native_adopt::HOST_TABLE
-}
-
-#[allow(dead_code, unused_imports)]
-mod __coro {
-    pub use crate::codegen_runtime::{
-        alloc_coroutine_held, coroutine_is_exhausted, coroutine_next_dbref, coroutine_next_i64,
-        coroutine_next_into, coroutine_next_text, coroutine_retain,
-    };
-}
-";
-
 /// Build the shared `--native` program (header + `init` + only the functions
 /// reachable from `entry` + their deps) for `data`.  Both cdylib generators
 /// append their export wrappers to this.

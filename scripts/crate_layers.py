@@ -94,7 +94,7 @@ LAYERS: list[tuple[str, list[str]]] = [
         "text_len", "value_record", "zero_count",
     ]),
     ("interp", [
-        "c_call", "compile", "compiled_stdlib", "debugger", "extensions", "fill", "fuzz_keyed",
+        "c_call", "compile", "debugger", "extensions", "fill", "fuzz_keyed",
         "fuzz_oracle", "interp", "introspect", "live_dispatch", "live_reload", "native_adopt",
         "parallel", "parallel_natives", "profiler", "stack", "state", "wasm_gl",
     ]),
@@ -102,13 +102,13 @@ LAYERS: list[tuple[str, list[str]]] = [
         "lower",
     ]),
     ("rust", [
-        "create", "generation", "native_lib", "stdlib_codegen",
+        "create", "generation", "native_lib",
     ]),
     ("c", [
         "c",
     ]),
     ("facade", [
-        "doc_site", "fix_apply", "host", "lib_placement", "lsp", "native_artifact", "repl", "rpc",
+        "compiled_stdlib", "doc_site", "fix_apply", "host", "lib_placement", "lsp", "native_artifact", "repl", "rpc",
         "script", "serve", "startup_cache", "wasm_debug", "wasm_entry", "wasm_threads",
     ]),
 ]

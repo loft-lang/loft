@@ -1110,10 +1110,7 @@ pub fn wire_shared_native_fns(state: &mut crate::state::State, data: &crate::dat
                 def.original_name(),
             );
         };
-        // @PLN181 — the compiled standard library is in this binary, not in a cdylib.
-        let found = crate::compiled_stdlib::bridge(sym)
-            .map(|p| (p, false))
-            .or_else(|| try_dlsym(sym));
+        let found = try_dlsym(sym);
         let Some((ptr, _uses_v1)) = found else {
             unwired("bridge symbol not found in any loaded cdylib");
             continue;

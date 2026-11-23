@@ -14,11 +14,6 @@ pub mod compile {
     pub use crate::compile::{byte_code, byte_code_with_store, close_program, show_code};
 }
 
-/// The standard library's compiled bodies, routed at start-up.
-pub mod compiled_stdlib {
-    pub use crate::compiled_stdlib::{mark, names};
-}
-
 /// Breakpoints, stepping and watches.
 pub mod debugger {
     pub use crate::debugger::{BreakHit, INTERRUPT, STOPPED_BY_INTERRUPT, StepMode, WatchHit};
