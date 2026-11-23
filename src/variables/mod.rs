@@ -4836,7 +4836,9 @@ impl Function {
         }
     }
 
+    #[track_caller]
     pub fn mark_caller_hidden_buf(&mut self, var_nr: u16) {
+        self.trace_flag("caller_hidden_buf", var_nr);
         if (var_nr as usize) < self.variables.len() {
             self.variables[var_nr as usize].caller_hidden_buf = true;
         }
