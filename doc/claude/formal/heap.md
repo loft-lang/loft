@@ -354,8 +354,11 @@ parameter (via `&`) is host, a genuinely-copied one is script-owned.
                 refilling it removes its records, H-Removed); a literal, a call result whose
                 callee builds into the record it is offered, or a refilled local's own record
                 is built in the holder's store; and a record a parameter or the returned value
-                names is copied into that holder's store just before its home is freed, one
-                copy per record and store.  What none of these keeps is refused where the
+                names, or a named local holder minted again after the record's home was (its
+                own literal in the same loop pass clears whatever was built in its store), is
+                copied into that holder's store just before its home is freed, one copy per
+                record and store; a copy of such a holder taken before then is judged by the
+                home's own life.  What none of these keeps is refused where the
                 reference is written, copied, or handed to a callee that links it: an element
                 of a parameter's collection or a copy into one, two parameters naming one
                 record, a record holding a stored reference, a callee answering a local.  A
@@ -426,6 +429,9 @@ through calls: what it cannot see, no `deps` can.
   enum (`Stores::reference_field_name`) — the holder's life with the record's home (`Walk::holder_life`,
   `Walk::home_life`), through copies of the holder and calls (a per-callee summary, `ParamPair`).
   `Walk::resolve` keeps an outlived home (`hoist`, `place`, `place_own`, `evacuate`) or refuses it.
+  `Walk::reassigned_after` (the walk's assignment order) declines `place_own` for a holder minted
+  after the home and admits it to `evacuate`; a hold kept that way carries `evacuated_from`, so
+  `Walk::copy` judges a copy taken inside the home's block by the home's life.
 - *The placement.* `scopes::apply_places` claims the record in the holder's store
   (`OpPlaceRecord`) for a variable borrowing the holder; `scopes::keep_placed_results` drops the
   free of a placed call result (callee test: `place_result::callee_keeps_an_offered_record`).
