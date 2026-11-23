@@ -12977,6 +12977,10 @@ impl Data {
     #[must_use]
     pub fn vector_wrapper_name(&self, elm: &Type) -> String {
         let mut name = format!("main_vector<{}>", elm.name(self));
+        // Each definition once, in the order the walk meets it: peeled through `base()` (a
+        // nullable element names the same type, @FR-N-Shape), an `Optional` node and the node
+        // inside it are the same definition.
+        let mut seen: Vec<u32> = Vec::new();
         elm.any_node(&mut |t| {
             if let Type::Enum(d, _, _)
             | Type::Reference(d, _)
@@ -12984,13 +12988,15 @@ impl Data {
             | Type::Index(d, _, _)
             | Type::Radix(d, _, _)
             | Type::Trie(d, _, _)
-            | Type::Hash(d, _, _) = t
+            | Type::Hash(d, _, _) = t.base()
+                && !seen.contains(d)
                 && (*d as usize) < self.definitions.len()
                 && self
                     .def_names
                     .first_bound(&self.definitions[*d as usize].name)
                     .is_some_and(|first| first != *d && self.is_type_def(first))
             {
+                seen.push(*d);
                 let _ = {
                     use std::fmt::Write as _;
                     write!(name, "#{d}")
