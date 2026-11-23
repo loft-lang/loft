@@ -5367,10 +5367,25 @@ pub fn ownership_of(data: &Data, d_nr: u32, value: &Value) -> Own {
 }
 
 /// The one function whose [`function_defs`] may be reused, and the value once asked.
-type DefsMemoSlot = Option<(usize, u32, Option<std::rc::Rc<Defs>>)>;
+type DefsMemoSlot = Option<(u32, Option<std::sync::Arc<Defs>>)>;
 
-std::thread_local! {
-    static DEFS_MEMO: std::cell::RefCell<DefsMemoSlot> = const { std::cell::RefCell::new(None) };
+/// [`DefsMemoSlot`] kept in its program's `Data` (`Data::defs_memo`), set only inside a
+/// [`DefsMemoScope`].  Shared with the scope by a handle, so the writer that opened the scope
+/// may still write the `Data` (a code position, a text-view mark) — never a body.  A clone of
+/// the `Data` starts it empty.
+#[derive(Default)]
+pub(crate) struct DefsMemo(std::sync::Arc<std::sync::Mutex<DefsMemoSlot>>);
+
+impl Clone for DefsMemo {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+impl DefsMemo {
+    fn with<R>(&self, f: impl FnOnce(&mut DefsMemoSlot) -> R) -> R {
+        f(&mut self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner))
+    }
 }
 
 /// A span in which ONE function's body cannot change, so its [`function_defs`] is computed on
@@ -5379,43 +5394,44 @@ std::thread_local! {
 /// `ownership_of` re-derives the whole function's definitions per question, and the native
 /// emitter asks per assignment and per rewrite candidate — so emitting a function cost the
 /// square of its size: a 1 500-function program spent 2 s in codegen where it had spent
-/// 33 ms.  The memo is not on `Data` because the scope pass REWRITES bodies
-/// (the reason given on `function_defs`); this span is entered where nothing rewrites one —
-/// the emission of a single function — keyed by this `Data` and this function, and it restores
-/// whatever it replaced when dropped, so a nested span leaves the outer one intact.
+/// 33 ms.  The memo is held only inside this span, because the scope pass REWRITES bodies
+/// (the reason given on `function_defs`): it is entered where nothing rewrites one — the
+/// emission of a single function — for this `Data` and this function, and it restores whatever
+/// it replaced when dropped, so a nested span leaves the outer one intact.
 #[must_use]
 pub(crate) struct DefsMemoScope {
+    memo: std::sync::Arc<std::sync::Mutex<DefsMemoSlot>>,
     prev: DefsMemoSlot,
 }
 
 pub(crate) fn defs_memo_scope(data: &Data, d_nr: u32) -> DefsMemoScope {
-    let key = std::ptr::from_ref(data) as usize;
-    let prev = DEFS_MEMO.with(|m| m.replace(Some((key, d_nr, None))));
-    DefsMemoScope { prev }
+    let prev = data.defs_memo.with(|m| m.replace((d_nr, None)));
+    DefsMemoScope {
+        memo: data.defs_memo.0.clone(),
+        prev,
+    }
 }
 
 impl Drop for DefsMemoScope {
     fn drop(&mut self) {
         let prev = self.prev.take();
-        DEFS_MEMO.with(|m| *m.borrow_mut() = prev);
+        *self.memo.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = prev;
     }
 }
 
 /// The memoised definitions of `d_nr`, computed on first use, when a [`DefsMemoScope`] for this
 /// `Data` and this function is open; `None` otherwise.
-fn memoised_defs(data: &Data, d_nr: u32) -> Option<std::rc::Rc<Defs>> {
-    let key = std::ptr::from_ref(data) as usize;
-    let open = DEFS_MEMO.with(|m| match &*m.borrow() {
-        Some((k, n, got)) if *k == key && *n == d_nr => Some(got.clone()),
+fn memoised_defs(data: &Data, d_nr: u32) -> Option<std::sync::Arc<Defs>> {
+    let open = data.defs_memo.with(|m| match m {
+        Some((n, got)) if *n == d_nr => Some(got.clone()),
         _ => None,
     })?;
     if let Some(defs) = open {
         return Some(defs);
     }
-    let defs = std::rc::Rc::new(function_defs(data, d_nr));
-    DEFS_MEMO.with(|m| {
-        if let Some((k, n, got)) = &mut *m.borrow_mut()
-            && *k == key
+    let defs = std::sync::Arc::new(function_defs(data, d_nr));
+    data.defs_memo.with(|m| {
+        if let Some((n, got)) = m
             && *n == d_nr
         {
             *got = Some(defs.clone());

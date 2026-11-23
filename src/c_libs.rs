@@ -65,7 +65,7 @@ pub(crate) static NATIVE_REGISTRY: Mutex<Option<HashMap<String, FnPtr>>> = Mutex
 #[cfg(feature = "native-extensions")]
 pub(crate) static BRIDGE_REGISTRY: Mutex<Option<HashMap<String, FnPtr>>> = Mutex::new(None);
 
-/// `@PLN226` — a component's own context: what its `loft_cx_make_v1` makes and its
+/// `@FR-C-Boundary` — a component's own context: what its `loft_cx_make_v1` makes and its
 /// `loft_cx_end_v1` ends.  Each caller context keeps one per component
 /// (`host_abi::HostedContexts`, keyed by `make`) and hands it to the component's bridges first.
 #[cfg(feature = "native-extensions")]

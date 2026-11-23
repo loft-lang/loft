@@ -29,7 +29,7 @@
 #define NET_EXPORT __attribute__((visibility("default")))
 #endif
 
-/* ── The component's context (@PLN226) ──
+/* ── The component's context (`@FR-C-Boundary`) ──
  * Each caller context — a C unit's main thread or `par` worker, an interpreter `Stores` —
  * keeps one of the component's own, made by `loft_cx_make_v1` the first time it calls in and
  * ended by `loft_cx_end_v1` with it, and hands it to every symbol first: the connection tables,

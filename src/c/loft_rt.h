@@ -23,6 +23,7 @@
 /* `LOFT_FAULT_LOG=<file>` — each store fault as one JSON line, the Rust runtime's
  * `fault_log` in the same format (`"backend":"c"`), beside the message printed anyway. */
 static inline FILE *loft_fault_file(loft_cx *cx) {
+    /* `@FR-D-conc-3`: opened by the first thread that faults, without a lock. */
     static int ready = 0;
     static FILE *f = NULL;
     if (!ready) {
@@ -557,6 +558,7 @@ static void loft_eprint(loft_cx *cx, loft_str s) {
 }
 
 /* The run's exit status: 1 once a fault was fatal, or surfaced under `--dev-soft-halt`. */
+/* `@FR-D-conc-3`: set by whichever thread faults, without an atomic. */
 static int loft_had_fatal = 0;
 
 /* `--dev-soft-halt` (`LOFT_DEV_SOFT_HALT=1`, `ops::dev_soft_halt`): every recoverable fault is
@@ -807,6 +809,7 @@ static void loft_lazy_contain(loft_cx *cx, const char *label, const char *prefix
 #if defined(LOFT_MSVC)
 #include <intrin.h>
 #endif
+/* `@FR-C-Publish`: claimed with an atomic exchange. */
 static volatile long loft_halt_claimed = 0;
 static void loft_halt_claim(loft_cx *cx) {
     long was;
@@ -2118,6 +2121,10 @@ static inline loft_ta_mark_t loft_ta_mark(loft_cx *cx) {
 static inline void *loft_ta_alloc(loft_cx *cx, size_t n) {
     n = (n + 7) & ~(size_t) 7;
     if (!cx->ta_spill && cx->ta_top + n <= LOFT_TA_BASE) {
+        if (LOFT_UNLIKELY(!cx->ta_base)) {
+            cx->ta_base = (uint64_t *) malloc(LOFT_TA_BASE);
+            if (!cx->ta_base) { fputs("loft: out of memory\n", stderr); abort(); }
+        }
         void *p = (unsigned char *) cx->ta_base + cx->ta_top;
         cx->ta_top += n;
         memset(p, 0, n);
@@ -3379,8 +3386,8 @@ LOFT_HOT_INLINE void loft_free_var(loft_cx *cx, loft_ref *v) {
 }
 
 /* @FR-R-FnRefBuffer's frame clause: a kept record store parked between calls of the function
- * that keeps it, one slot per function, a static the main thread owns: a `par` worker and a
- * hosted unit's bridge call (`cx->no_park`) neither take nor park.  Taking empties the slot, so
+ * that keeps it, one slot per function, a static the main thread owns (`@FR-C-Main`): a `par`
+ * worker and a hosted unit's bridge call (`cx->no_park`) neither take nor park.  Taking empties the slot, so
  * a recursive or re-entered frame mints its own; parking into a full slot frees instead. */
 static inline void loft_park_take(loft_cx *cx, loft_ref *slot, loft_ref *v) {
     if (cx->no_park || v->store_nr != 0xFFFF || slot->store_nr == 0xFFFF) return;

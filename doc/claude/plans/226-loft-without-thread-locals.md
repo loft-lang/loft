@@ -155,6 +155,33 @@ as a thread-local hides the state.
 
 **Order:** P0 → P1 (independent) → P2 → P3 → P4 → P4b → P5.
 
+## Cost
+
+Each rule of formal/concurrency.md § Each thread's own state, measured 2026-11-23 against
+f048ff16e (the context argument in place, the state still in thread-locals): arm64 macOS, the
+median of nine alternated runs, each program's answer checked.
+
+| Case | Program | Thread-locals | Contexts |
+|---|---|---|---|
+| B1 — a worker's context made and ended | 3 000 `par` loops, 8 rows, 4 threads (`--native-c`) | 105.8 ms | 99.6 ms |
+| B2 — a component call | 40 M `web_natives::byte_at` (`--native-c`) | 22.9 ms | 22.4 ms |
+| B3 — a hosted bridge call | 2 M `clamp` through the compiled stdlib (`--interpret`), less start-up | 130.3 ms | 130.3 ms |
+| B4 — the compile passes' memos behind a lock | `--emit-c` of 947-feature-worked-examples, less start-up | 544.5 ms | 544.1 ms |
+
+- **B1 first read 12 % slower** (108.7 against 96.7 ms): the context held the transient
+  arena's 64 KiB first block by value and `loft_cx_fresh` zeroed it for every worker.  The block
+  is now allocated by the first transient value a thread builds; a context is 4.4 KiB.
+- **Start-up read 100 ms slower, and was not this work.**  `cache::loft_build_fingerprint`
+  locates the rlib through `cargo_layout::refresh_runtime_uplift`, which asked `same_file` before
+  the modification times — and `same_file` compares content when the uplift is a copy, so every
+  start read two 87 MB rlibs (90 ms of kernel time, 175 MB resident).  Fixed: the times first.
+  What remains in this checkout (about 70 ms) is `classic_deps_is_debris` checking the identity
+  of each per-unit build directory, 3 048 of them after weeks of builds; a fresh tree has a
+  handful, and an installed `loft` has none of that layout.
+- **Loops at once** (`C-Nest`): two `par` loops in two `parallel` arms and a `par` loop nested in
+  a worker answer the hand-computed values on both backends, and twenty ThreadSanitizer runs of
+  the C report no race.
+
 ## Cross-arc dependencies
 
 - **@PLN225** (retire the rustc writer): its ship-tier call-depth count (`--ship` keeps every

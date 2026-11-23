@@ -210,8 +210,8 @@ static void loft_text_free(loft_cx *cx, loft_text *t) {
     t->cap = 0;
 }
 
-/* The parks are statics the main thread owns: a `par` worker and a hosted unit's bridge call
- * (`cx->no_park`) neither take from them nor park into them. */
+/* The parks are statics the main thread owns (`@FR-C-Main`): a `par` worker and a hosted unit's
+ * bridge call (`cx->no_park`) neither take from them nor park into them. */
 
 /* A frame's work text kept between its calls (`FnWriter::park_work_texts`): taken empty from
  * its slot at entry — the slot left empty, so a recursive frame takes nothing — and parked

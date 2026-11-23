@@ -194,7 +194,7 @@ pub struct HostedTable {
     ) -> *mut std::ffi::c_void,
 }
 
-/// `@PLN226` — the store contexts hosted C units keep for one `Stores`, one per unit it called
+/// `@FR-C-Boundary` — the store contexts hosted C units keep for one `Stores`, one per unit it called
 /// into: what a unit's code keeps of the calling thread's own (its frames, its fault jump, its
 /// scratch; `src/c/loft_cx.h`), made by the unit at the first call and ended by it when this
 /// `Stores` drops.  A `par` worker's `Stores` is its own, so its calls into a unit work in a

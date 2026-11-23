@@ -292,8 +292,10 @@ pub fn refresh_runtime_uplift(profile: &std::path::Path) {
     let Some(unit_rlib) = newest else {
         return;
     };
+    // The times first: `same_file` compares content when the two are not one link, which reads
+    // both rlibs (tens of MB) — every run of a tree whose uplift is a copy paid that at start.
     if crate::file_access::exists(&uplifted)
-        && (same_file(&unit_rlib, &uplifted) || modified(&unit_rlib) <= modified(&uplifted))
+        && (modified(&unit_rlib) <= modified(&uplifted) || same_file(&unit_rlib, &uplifted))
     {
         return;
     }

@@ -1788,7 +1788,7 @@ impl<'a> Output<'a> {
     pub fn new(data: &'a Data, stores: &'a Stores) -> Self {
         // A generation run is about ONE program; per-definition facts from the previous
         // run name other functions by the same numbers.
-        begin_program();
+        begin_program(data);
         Output {
             data,
             stores,
@@ -2386,7 +2386,7 @@ impl Output<'_> {
                 (None, None) => Some("no refill buffer"),
             };
             let name = self.data.def(def_nr).name();
-            hoist::trace_refill_text_once(&match why {
+            hoist::trace_refill_text_once(self.data, &match why {
                 None => format!("refill-text: {name} keeps its elements"),
                 Some(w) => format!("refill-text: {name} keeps no elements — {w}"),
             });

@@ -1779,6 +1779,7 @@ static void loft_cx_end(loft_cx *cx) {
     free(cx->eq_seen);
     loft_text_free(cx, &cx->fail_msg);
     loft_text_free(cx, &cx->lazy_fault);
+    free(cx->ta_base);
     while (cx->ta_spill) {
         loft_ta_blk *b = cx->ta_spill;
         cx->ta_spill = b->prev;
@@ -1896,7 +1897,8 @@ static void loft_par_free_table(loft_cx *cx, loft_store_t *table, uint32_t from,
 #endif
 
 /* A worker's end: the stores it made are destroyed with its table and its context — or, when it
- * keeps them, its table as it now stands handed back for the caller to adopt from. */
+ * keeps them, its table as it now stands handed back for the caller to adopt from, read only after
+ * the join (`@FR-C-Own`). */
 static void loft_par_job_run(loft_cx *cx, loft_par_job *j) {
     j->body(cx, j->ctx, j->lo, j->hi);
     if (j->keep) {
@@ -1936,6 +1938,7 @@ static void loft_par_job_init(loft_cx *cx, loft_par_job *j, loft_par_body body, 
     j->hi = hi;
 #ifdef LOFT_ALLOC_TRACE
     {
+        /* `@FR-D-conc-3`: counted by every starting thread, without an atomic. */
         static uint32_t trace_ids = 0;
         j->trace_id = ++trace_ids;
     }
@@ -1951,9 +1954,9 @@ static void loft_par_job_init(loft_cx *cx, loft_par_job *j, loft_par_body body, 
     j->n = room;
     j->parent_n = cx->nstores;
     j->keep = keep;
-    /* The worker's own context, made here before its thread starts (formal/concurrency.md
-     * `C-Par`): the table above, the caller's stores in it read-only, its frames and scratch
-     * empty, and no parking of work buffers. */
+    /* `@FR-C-Own`: the worker's own context, made here before its thread starts; `@FR-C-Shared`:
+     * its table the copy above, the caller's stores in it shared and read-only (`pinned`); its
+     * frames and scratch empty; `@FR-C-Main`: it parks nothing. */
     loft_cx_fresh(&j->cx);
     j->cx.stores = j->table;
     j->cx.nstores = j->n;
@@ -2009,6 +2012,8 @@ static void loft_par_run(loft_cx *cx, int64_t n, int64_t threads, loft_par_body 
 #if defined(LOFT_THREADS) && !defined(LOFT_HOSTED)
     if (t > 1) {
         int64_t k;
+        /* `@FR-C-Shared`, `@FR-C-Nest`: this context's stores are shared until the join; a worker
+         * that starts workers of its own counts on its own context. */
         cx->par_sharing++;
         loft_par_job *jobs = (loft_par_job *) calloc((size_t) t, sizeof *jobs);
         loft_thread_id *ids = (loft_thread_id *) calloc((size_t) t, sizeof *ids);
@@ -2021,8 +2026,8 @@ static void loft_par_run(loft_cx *cx, int64_t n, int64_t threads, loft_par_body 
         for (k = 1; k < t; k++)
             loft_par_job_join(cx, &jobs[k], ids[k]);
         cx->par_sharing--;
-        /* Each worker's records taken into the caller's table with its table current, one worker
-         * at a time (`loft_par_move_rows`); the caller's table travels in through
+        /* `@FR-C-Adopt`: each worker's records taken into the caller's table with its table
+         * current, after the join, one worker at a time (`loft_par_move_rows`); the caller's table travels in through
          * `cx->par_caller` and back, so a growth of it in one worker's adoption is seen by the
          * next. */
         for (k = 1; adopt && k < t; k++) {

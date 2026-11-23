@@ -9,7 +9,8 @@
 /* The handle's context is the store's NUMBER in its low 16 bits, as the interpreter's host sets
  * it (`extensions::make_loft_store`): a library names the store of a heap answer by it
  * (`loft_ffi_store_nr`, which reads those bits alone), and the store table may move while the
- * call runs.  Above them it carries the store context of the thread that made the call, which a
+ * call runs.  Above them it carries the store context of the thread that made the call
+ * (`@FR-C-Boundary`), which a
  * callback the library makes into this runtime works in: a `par` worker's own table, its own
  * claim log.  Room for both needs 64-bit pointers. */
 typedef char loft_ffi_handle_fits[sizeof(uintptr_t) >= 8 ? 1 : -1];
@@ -208,6 +209,7 @@ static uint16_t loft_ffi_clone_store(loft_cx *cx, uint16_t from) {
 }
 
 /* The store a pinned native call works in: `pn` itself, or a copy of it when it is shared. */
+/* `@FR-C-Shared`: a shared store is never grown while workers run. */
 static uint16_t loft_ffi_call_store(loft_cx *cx, uint16_t pn) {
     return (cx->par_sharing || cx->stores[pn].pinned) ? loft_ffi_clone_store(cx, pn) : pn;
 }
@@ -255,7 +257,7 @@ static loft_ref loft_ffi_own_record(loft_cx *cx, const loft_tdesc *T, uint16_t t
 
 static void *loft_ffi_sym(loft_cx *cx, const char *path, const char *file, const char *sym);
 
-/* A component's context for this caller context (@PLN226): made by the component's own
+/* A component's context for this caller context (`@FR-C-Boundary`): made by the component's own
  * `loft_cx_make_v1` the first time this context calls into it, handed to each of its symbols
  * first, and ended by its `loft_cx_end_v1` with this context (`loft_cx_end`).  The component
  * keeps its connection tables and answers there, so a `par` worker's are its own. */

@@ -54,7 +54,7 @@ pub mod writes;
 /// program, and the next program a process compiles names other functions by the same
 /// addresses and numbers (loft#2122, loft#2142).  Called by the first pass of a program that
 /// asks them, `leaf_inline::rewrite_program`, and by `generation::Output::new`.
-pub(crate) fn begin_program() {
-    non_sentinel::begin_generation();
-    range::begin_generation();
+pub(crate) fn begin_program(data: &crate::data::Data) {
+    non_sentinel::begin_generation(data);
+    range::begin_generation(data);
 }

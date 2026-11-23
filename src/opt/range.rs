@@ -474,18 +474,20 @@ fn call_range<F: RangeFacts + ?Sized>(
         return None;
     }
     let memo_key = (std::ptr::from_ref(def) as usize, elem, key);
-    if let Some(hit) = CALL_MEMO.with(|m| m.borrow().get(&memo_key).copied()) {
+    if let Some(hit) = data.range_memo.with(|m| m.calls.get(&memo_key).copied()) {
         return hit;
     }
     // `range_vars` re-enters `range` at depth 0, so `depth` cannot bound this recursion:
     // an explicit nesting count does, and the memo entry is marked IN PROGRESS (unranged)
     // before the analysis, so a recursive callee meets itself as unranged instead of
     // analysing itself again (cbor's `encode` crashed the compiler on the stack).
-    if LONG_DEPTH.with(std::cell::Cell::get) >= CALL_DEPTH {
+    if data.range_memo.with(|m| m.long_depth) >= CALL_DEPTH {
         return None;
     }
-    CALL_MEMO.with(|m| m.borrow_mut().insert(memo_key.clone(), None));
-    LONG_DEPTH.with(|d| d.set(d.get() + 1));
+    data.range_memo.with(|m| {
+        m.calls.insert(memo_key.clone(), None);
+        m.long_depth += 1;
+    });
     // The longer body: its own facts under the parameters' seeds.
     let code = def.code();
     let callee_nn = super::non_sentinel::non_sentinel_vars(data, def.variables(), code);
@@ -526,24 +528,22 @@ fn call_range<F: RangeFacts + ?Sized>(
             },
         }
     }
-    LONG_DEPTH.with(|d| d.set(d.get() - 1));
     let answer = if ok { out } else { None };
-    CALL_MEMO.with(|m| m.borrow_mut().insert(memo_key, answer));
+    data.range_memo.with(|m| {
+        m.long_depth -= 1;
+        m.calls.insert(memo_key, answer);
+    });
     answer
 }
 
-thread_local! {
-    /// How many longer-body analyses `call_range` is nested in right now.
-    static LONG_DEPTH: std::cell::Cell<u8> = const { std::cell::Cell::new(0) };
-    /// `call_range`'s memo for longer bodies: (callee definition address, argument ranges).
-    /// A fact about ONE program: once its `Data` is freed, another program's definition can
-    /// take the same address, and kept, the memo handed it the first one's range — a proof
-    /// for the wrong body, which can drop an overflow guard.  [`begin_generation`] clears it.
+/// `call_range`'s state about ONE program, kept in its `Data` (`Data::range_memo`): how many
+/// longer-body analyses it is nested in right now, and its memo for longer bodies, by (callee
+/// definition address, argument ranges) — a definition's address is the program's alone.
+#[derive(Default)]
+pub(crate) struct RangeMemo {
+    long_depth: u8,
     #[allow(clippy::type_complexity)]
-    static CALL_MEMO: std::cell::RefCell<
-        HashMap<(usize, Option<u16>, Vec<Option<Range>>), Option<Range>>,
-    > =
-        std::cell::RefCell::new(HashMap::new());
+    calls: HashMap<(usize, Option<u16>, Vec<Option<Range>>), Option<Range>>,
 }
 
 /// The range of element `i` of the tuple `v` answers: a tuple literal's own element, an `if`
@@ -780,8 +780,8 @@ fn seed_while_counters(
 
 /// Forget every memoised call range: a new run is about a new program.  Called by
 /// [`super::begin_program`], beside `non_sentinel::begin_generation`.
-pub(crate) fn begin_generation() {
-    CALL_MEMO.with(|m| m.borrow_mut().clear());
+pub(crate) fn begin_generation(data: &Data) {
+    data.range_memo.with(|m| m.calls.clear());
 }
 
 /// `LOFT_NO_RANGED_CALLS=1` — `@FR-R-RangedCall` off: no callee body longer than one

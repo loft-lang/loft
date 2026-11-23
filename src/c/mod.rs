@@ -2100,7 +2100,6 @@ fn emit_unit_with(
     browser: bool,
     hosted: Option<(&std::collections::HashSet<u32>, u64)>,
 ) -> Result<String, Refusal> {
-    crate::opt::non_sentinel::begin_c_generation();
     // `#c_twin`: the C backend calls a twin's C routine and never compiles its loft body, so it
     // works from the definitions with those bodies taken out.
     let bound = data.with_c_twins_bound();
@@ -2108,6 +2107,8 @@ fn emit_unit_with(
         Some((d, t)) => (d, t.clone()),
         None => (data, Vec::new()),
     };
+    // The analysis memos of the definitions this writer works from (`Data::nn_memo`).
+    crate::opt::non_sentinel::begin_c_generation(data);
     // A closure's drop cascade (`OpDropFnRef`) is called through the value, never by name: each
     // lambda the program reaches brings its record's cascade along.
     let mut all: Vec<u32> = roots.to_vec();
@@ -4498,9 +4499,12 @@ fn library_native(
         ffi_params.insert(0, "loft_ffi_store".into());
         ffi_args.insert(0, "loft_ffi_store_of(cx, ns)".into());
     }
-    // `@PLN226`: a component (`[native] component`) keeps its state in a context of its own per
-    // caller context, handed to each of its symbols first (`loft_component_cx`).
-    if crate::native_build::component_of(pkg_dir).is_some() {
+    // `@FR-C-Boundary`: a component loft builds from its own runtime (`component::NAMES`) keeps
+    // its state in a context of its own per caller context, handed to each of its symbols first
+    // (`loft_component_cx`).  Any other component is a plain loft-ffi library and takes none.
+    if crate::native_build::component_of(pkg_dir)
+        .is_some_and(|name| component::NAMES.contains(&name.as_str()))
+    {
         ffi_params.insert(0, "void *".into());
         ffi_args.insert(
             0,
@@ -4534,6 +4538,7 @@ fn library_native(
             ffi_params.join(", ")
         }
     );
+    // `@FR-D-conc-3`: `fp` is set by the first thread that calls, without an atomic.
     // The build's own path for a run in place; a shipped program finds the file by name among
     // the libraries it opened at start (`loft_c_bind_libraries`).  ISO C has no conversion from
     // an object pointer to a function pointer, so the symbol is copied into `fp` (strict C99

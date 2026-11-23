@@ -498,6 +498,12 @@ pub struct CoroutineFrame {
 
 /// Internal State of the interpreter to run bytecode.
 pub struct State {
+    /// `LOFT_TRACE_BIND` — the notes of each bind being lowered: a frame per `generate_set`,
+    /// since a value's own lowering can contain binds of its own (`codegen.rs`).
+    pub(crate) bind_notes: Vec<Vec<String>>,
+    /// Where the function being generated starts, so a bind row's line is a line of that
+    /// function: a bind before its first line marker (a hoisted null init) names line 0.
+    pub(crate) bind_fn_start: u32,
     pub(crate) bytecode: Arc<Vec<u8>>,
     pub(crate) stack_cur: DbRef,
     /// @PLN18 02 — the stack store's high-water mark: the highest `stack_pos`
@@ -1013,6 +1019,8 @@ impl State {
             crate::database::CONST_STORE
         );
         State {
+            bind_notes: Vec::new(),
+            bind_fn_start: 0,
             bytecode: Arc::new(Vec::new()),
             code_base: std::ptr::null(),
             code_len: 0,
@@ -9289,6 +9297,8 @@ impl State {
         let stack_cap_bytes = db.store(&stack_cur).byte_capacity() as u32;
         let stack_base = stack_base_of(&db, &stack_cur);
         State {
+            bind_notes: Vec::new(),
+            bind_fn_start: 0,
             stack_cur,
             stack_pos: 4,
             stack_high: 4,

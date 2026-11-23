@@ -175,7 +175,7 @@ static void loft_host_leave(loft_cx *cx, void *prev) {
     if (prev) loft_host_sync(cx);
 }
 
-/* `@PLN226` — the context a bridge call works in: the calling interpreter thread's, kept in the
+/* `@FR-C-Boundary` — the context a bridge call works in: the calling interpreter thread's, kept in the
  * `Stores` it hands (`HostedTable::cx_of`), made the first time that `Stores` calls in and ended
  * when it drops.  A `par` worker's `Stores` is its own, and so is its context here. */
 static const char loft_host_unit = 0;

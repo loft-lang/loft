@@ -138,33 +138,33 @@ pub fn non_sentinel(data: &Data, vars: &HashMap<u16, bool>, v: &Value) -> bool {
     }
 }
 
-thread_local! {
-    /// [`callee_returns_non_sentinel`]'s answers, per definition NUMBER — so they are facts
-    /// about ONE program, and [`begin_generation`] clears them when the next generation run
-    /// starts.  Kept across runs, a number meant another program's function: the test
-    /// harness generates the whole corpus in one thread, a script's `fn n_int() -> integer?
-    /// { return null; }` was answered from an earlier script whose definition of the same
-    /// number never returned null, and `n_int() ?? 99` was emitted as `if true` — the
-    /// null test folded away, the program reading null where it asked for 99, silently.  A
-    /// single `loft --native` run generates one program and never showed it.
-    static RETURNS: std::cell::RefCell<HashMap<u32, bool>> = std::cell::RefCell::new(HashMap::new());
+/// The non-null analysis's state about ONE program, kept in its `Data` (`Data::nn_memo`), so
+/// it is about that program and no other: [`callee_returns_non_sentinel`]'s answers per
+/// definition NUMBER (held across programs, a number meant another program's function — the
+/// harness generates the whole corpus in one process, a script's `fn n_int() -> integer?
+/// { return null; }` was answered from an earlier script whose definition of the same number
+/// never returned null, and `n_int() ?? 99` was emitted as `if true`, silently), the program-wide
+/// parameter facts, and whether those seed the proof (`begin_c_generation`).
+#[derive(Default)]
+pub(crate) struct NnMemo {
+    returns: HashMap<u32, bool>,
+    params: ParamState,
+    param_proof: bool,
 }
 
 /// Forget every per-definition answer: a new generation run is about a new program.
 /// Called by [`super::begin_program`].
-pub(crate) fn begin_generation() {
-    RETURNS.with(|m| m.borrow_mut().clear());
-    PARAMS.with(|m| *m.borrow_mut() = ParamState::Unknown);
-    PARAM_PROOF.with(|p| p.set(false));
+pub(crate) fn begin_generation(data: &Data) {
+    data.nn_memo.with(|m| *m = NnMemo::default());
 }
 
 /// The C backend's generation start: the per-program memos cleared, and the program-wide
 /// parameter fact (`@FR-R-NonSentinelParam`) switched on.  The Rust generator leaves it off:
 /// its ranged-call clause measures a twin's gain against the unseeded proof, and the C carries
 /// no such clause, so the fact is the C's alone.
-pub(crate) fn begin_c_generation() {
-    begin_generation();
-    PARAM_PROOF.with(|p| p.set(true));
+pub(crate) fn begin_c_generation(data: &Data) {
+    begin_generation(data);
+    data.nn_memo.with(|m| m.param_proof = true);
 }
 
 /// Is the release-pass probe on (generation time)?  Its integer `+ - *` wrap.
@@ -173,18 +173,15 @@ fn probe_closes() -> bool {
 }
 
 /// Where the program-wide parameter facts stand ([`proven_params`]).
+#[derive(Default)]
 enum ParamState {
+    #[default]
     Unknown,
     /// Being computed: the current assumption, read by every query until it settles.
-    Computing(std::rc::Rc<HashMap<u32, Vec<bool>>>),
-    Known(std::rc::Rc<HashMap<u32, Vec<bool>>>),
+    Computing(std::sync::Arc<HashMap<u32, Vec<bool>>>),
+    Known(std::sync::Arc<HashMap<u32, Vec<bool>>>),
 }
 
-thread_local! {
-    static PARAMS: std::cell::RefCell<ParamState> = const { std::cell::RefCell::new(ParamState::Unknown) };
-    /// Whether the program-wide parameter fact seeds the proof (`begin_c_generation`).
-    static PARAM_PROOF: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
 
 /// `@FR-R-NonSentinelParam` — the parameters, per function, that hold a non-sentinel value on
 /// entry: a scalar parameter (integer or float) of a loft function that is never used as a
@@ -200,8 +197,8 @@ thread_local! {
     clippy::too_many_lines,
     reason = "the candidates, then the fixpoint over every call site, kept as one reading"
 )]
-fn proven_params(data: &Data) -> std::rc::Rc<HashMap<u32, Vec<bool>>> {
-    let state = PARAMS.with(|m| match &*m.borrow() {
+fn proven_params(data: &Data) -> std::sync::Arc<HashMap<u32, Vec<bool>>> {
+    let state = data.nn_memo.with(|m| match &m.params {
         ParamState::Known(k) | ParamState::Computing(k) => Some(k.clone()),
         ParamState::Unknown => None,
     });
@@ -209,8 +206,8 @@ fn proven_params(data: &Data) -> std::rc::Rc<HashMap<u32, Vec<bool>>> {
         return k;
     }
     if crate::env_once!(std::env::var("LOFT_NO_NN_PARAMS").is_ok_and(|v| v != "0")) {
-        let k = std::rc::Rc::new(HashMap::new());
-        PARAMS.with(|m| *m.borrow_mut() = ParamState::Known(k.clone()));
+        let k = std::sync::Arc::new(HashMap::new());
+        data.nn_memo.with(|m| m.params = ParamState::Known(k.clone()));
         return k;
     }
     use crate::data::Type;
@@ -291,8 +288,10 @@ fn proven_params(data: &Data) -> std::rc::Rc<HashMap<u32, Vec<bool>>> {
             if set.len() != round_len {
                 round_len = set.len();
                 let now = as_flags(&shape, set);
-                PARAMS.with(|m| *m.borrow_mut() = ParamState::Computing(std::rc::Rc::new(now)));
-                RETURNS.with(|m| m.borrow_mut().clear());
+                data.nn_memo.with(|m| {
+                    m.params = ParamState::Computing(std::sync::Arc::new(now));
+                    m.returns.clear();
+                });
                 caller_facts.clear();
             }
             for (c, args) in sites.get(&f).map_or(&[][..], Vec::as_slice) {
@@ -316,7 +315,7 @@ fn proven_params(data: &Data) -> std::rc::Rc<HashMap<u32, Vec<bool>>> {
         },
     );
     let mut assumed = as_flags(&shape, &proven);
-    RETURNS.with(|m| m.borrow_mut().clear());
+    data.nn_memo.with(|m| m.returns.clear());
     assumed.retain(|_, f| f.iter().any(|x| *x));
     // @decline-owed: a function taken as a value or never called directly; a parameter the body
     //   rebinds or lends; a parameter one call site passes an argument the proof does not
@@ -329,8 +328,8 @@ fn proven_params(data: &Data) -> std::rc::Rc<HashMap<u32, Vec<bool>>> {
             .map(|f| f.iter().filter(|x| **x).count())
             .sum(),
     );
-    let k = std::rc::Rc::new(assumed);
-    PARAMS.with(|m| *m.borrow_mut() = ParamState::Known(k.clone()));
+    let k = std::sync::Arc::new(assumed);
+    data.nn_memo.with(|m| m.params = ParamState::Known(k.clone()));
     k
 }
 
@@ -381,7 +380,7 @@ pub(crate) fn candidate_params(data: &Data, d: u32) -> Option<Vec<bool>> {
 
 /// The program-wide proven parameters of `d` (`@FR-R-NonSentinelParam`), if any.
 pub(crate) fn proven_param_flags(data: &Data, d: u32) -> Option<Vec<bool>> {
-    if !PARAM_PROOF.with(std::cell::Cell::get) {
+    if !data.nn_memo.with(|m| m.param_proof) {
         return None;
     }
     proven_params(data).get(&d).cloned()
@@ -404,10 +403,10 @@ fn assigned_in(code: &Value, p: u16) -> bool {
 /// tail and every `return` are judged under the callee's own var facts (its parameters
 /// trusted for nothing), so `fn get_pixel(…) { …; data[i] ?? 0 }` answers true through the
 /// discharge and a body that can return a parameter or an arithmetic result answers false.
-/// Memoised per definition for the generation run (see [`RETURNS`]); a cycle answers false at the re-entry,
+/// Memoised per definition for the generation run (see [`NnMemo`]); a cycle answers false at the re-entry,
 /// which only declines.  A native (no body) answers false.
 fn callee_returns_non_sentinel(data: &Data, d_nr: u32) -> bool {
-    if let Some(known) = RETURNS.with(|m| m.borrow().get(&d_nr).copied()) {
+    if let Some(known) = data.nn_memo.with(|m| m.returns.get(&d_nr).copied()) {
         return known;
     }
     let def = data.def(d_nr);
@@ -415,7 +414,7 @@ fn callee_returns_non_sentinel(data: &Data, d_nr: u32) -> bool {
         return false;
     }
     // Pessimistic entry: a recursive callee reads itself as unproven.
-    RETURNS.with(|m| m.borrow_mut().insert(d_nr, false));
+    data.nn_memo.with(|m| m.returns.insert(d_nr, false));
     let vars = non_sentinel_vars(data, def.variables(), def.code());
     // A `Loop` tail is no exit (`(R-TailSelf)`'s frame loop returns only from inside it), so
     // the `return`s below are every exit.
@@ -429,7 +428,7 @@ fn callee_returns_non_sentinel(data: &Data, d_nr: u32) -> bool {
         }
         false
     });
-    RETURNS.with(|m| m.borrow_mut().insert(d_nr, every_exit));
+    data.nn_memo.with(|m| m.returns.insert(d_nr, every_exit));
     every_exit
 }
 
@@ -525,7 +524,7 @@ pub fn non_sentinel_vars_seeded(
     }
     // `@FR-R-NonSentinelParam`: the parameters every call proves (`proven_params`).
     let d = data.def_nr(&function.name);
-    if PARAM_PROOF.with(std::cell::Cell::get)
+    if data.nn_memo.with(|m| m.param_proof)
         && (d as usize) < data.definitions.len()
         && std::ptr::eq(data.def(d).variables(), function)
         && let Some(flags) = proven_params(data).get(&d)

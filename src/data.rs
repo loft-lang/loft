@@ -5790,6 +5790,28 @@ impl Clone for NameOnlyCache {
     }
 }
 
+/// `@PLN226` — a pass's memo or scratch about THIS program, kept with it rather than in a
+/// thread-local: a thread-local outlived the program it was about, and the next program a
+/// process compiled read its answers by the same definition numbers and addresses (loft#2122,
+/// loft#2142).  Behind a lock, so the `Data` stays shareable with the threads that read it;
+/// each access is one short closure, never held across a call that asks again.  A clone starts
+/// EMPTY, as [`OpSetCache`] does: its definitions diverge from the original's.
+#[derive(Default)]
+pub struct PassCell<T: Default>(std::sync::Mutex<T>);
+
+impl<T: Default> Clone for PassCell<T> {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+impl<T: Default> PassCell<T> {
+    /// Run `f` on the cell's value.
+    pub fn with<R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
+        f(&mut self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner))
+    }
+}
+
 /// The suffix [`Data::retire_def_name`] gives a definition taken out of the name index.  A
 /// retired definition is still the one at its number: [`Data::def_identity`] reads the name it
 /// was declared under.
@@ -6074,6 +6096,19 @@ pub struct Data {
     op_sets: OpSetCache,
     /// @PLN187 — the name-only types ([`Self::is_name_only`]).
     name_only: NameOnlyCache,
+    /// `@PLN226` — the range analysis's call memo (`opt::range`).
+    pub(crate) range_memo: PassCell<crate::opt::range::RangeMemo>,
+    /// `@PLN226` — the non-null analysis's answers (`opt::non_sentinel`).
+    pub(crate) nn_memo: PassCell<crate::opt::non_sentinel::NnMemo>,
+    /// `@PLN226` — the ownership oracle's definitions of the function being emitted
+    /// (`use_analysis::defs_memo_scope`).
+    pub(crate) defs_memo: crate::use_analysis::DefsMemo,
+    /// The open instances [`Data::instance_def`] is catching up (`catch_up_open_instance`).
+    catching_up: PassCell<HashSet<u32>>,
+    /// `LOFT_TRACE_REFILL_TEXT`'s lines already printed (`hoist::trace_refill_text_once`).
+    pub(crate) refill_traced: PassCell<HashSet<String>>,
+    /// How deep `ret_adopt::buffer_complete` is nested in itself.
+    pub(crate) buffer_complete_depth: PassCell<u32>,
 }
 
 #[must_use]
@@ -6572,11 +6607,6 @@ pub(crate) fn builtin_type_alias(name: &str) -> Option<&'static str> {
     })
 }
 
-thread_local! {
-    /// The open instances `Data::instance_def` is catching up (`catch_up_open_instance`).
-    static CATCHING_UP: std::cell::RefCell<std::collections::HashSet<u32>> =
-        std::cell::RefCell::new(std::collections::HashSet::new());
-}
 
 impl Data {
     /// The definitions the C backend works from: each `#c_twin`'s loft body taken out, so the
@@ -6795,6 +6825,12 @@ impl Data {
             caller_index: std::sync::OnceLock::new(),
             op_sets: OpSetCache::default(),
             name_only: NameOnlyCache::default(),
+            range_memo: PassCell::default(),
+            nn_memo: PassCell::default(),
+            defs_memo: crate::use_analysis::DefsMemo::default(),
+            catching_up: PassCell::default(),
+            refill_traced: PassCell::default(),
+            buffer_complete_depth: PassCell::default(),
         }
     }
 
@@ -11069,10 +11105,10 @@ impl Data {
         if let Some(nr) = self.def_names.get(&name, STD_SOURCE) {
             // Re-entrant through the field being added (`t: vector<Lst<T>>` names this very
             // instance), so an instance already being caught up is answered as it stands.
-            if self.is_open_instance(nr) && CATCHING_UP.with(|c| c.borrow_mut().insert(nr)) {
+            if self.is_open_instance(nr) && self.catching_up.with(|c| c.insert(nr)) {
                 let bindings: Vec<(u32, Type)> = params.iter().copied().zip(args).collect();
                 self.catch_up_open_instance(lexer, template, nr, &bindings);
-                CATCHING_UP.with(|c| c.borrow_mut().remove(&nr));
+                self.catching_up.with(|c| c.remove(&nr));
             }
             return nr;
         }

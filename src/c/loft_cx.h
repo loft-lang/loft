@@ -6,7 +6,7 @@
  * function as its first argument `cx`, as the rustc writer hands its `Stores` cell.  The main
  * thread's is `loft_main_cx`; a `par` worker's is made by the thread that starts it
  * (`loft_par_job_init`), and a worker reaches the stores it shares with that thread only through
- * its own table (formal/concurrency.md `C-Par`).  Nothing here is a thread-local.
+ * its own table.  Nothing here is a thread-local: `@FR-C-Own`, `@FR-C-Shared`.
  *
  * It comes right after `loft_cc.h` in every unit (and after `loft_width.h`, whose `loft_word` it
  * names), and holds by value only the types defined here; a field that points to a runtime type
@@ -168,7 +168,9 @@ struct loft_cx {
     struct loft_evac *evacs;
     uint32_t nevacs;
     uint32_t evac_cap;
-    uint64_t ta_base[LOFT_TA_BASE / 8];
+    /* the transient arena's first block, LOFT_TA_BASE bytes, allocated by the first transient
+     * value the thread builds: a context the thread makes for every worker stays small */
+    uint64_t *ta_base;
     size_t ta_top;
     struct loft_ta_blk *ta_spill;
     loft_ref sp_ref[LOFT_SLICE_POOL];
