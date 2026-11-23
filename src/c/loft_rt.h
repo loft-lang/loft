@@ -892,6 +892,8 @@ static void loft_stack_overflow(const char *file, uint32_t line) {
     char msg[96];
     int n = snprintf(msg, sizeof msg, "call stack overflow \xe2\x80\x94 exceeded %d stack frames",
                      (int) LOFT_MAX_CALL_DEPTH);
+    /* Inside a lazy driver it ends the driver, not the program, as an assertion does. */
+    if (loft_lazy_jmp) loft_lazy_contain("stack_overflow", loft_lit(msg, (size_t) n));
     fflush(stdout);
     fputs("error: ", stderr);
     fwrite(msg, 1, (size_t) n, stderr);
