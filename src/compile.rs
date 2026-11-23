@@ -134,6 +134,10 @@ pub fn close_program(data: &mut Data, database: &mut crate::database::Stores) {
     // across the passes, on both backends (after the loop buffers: a different variable kind).
     crate::opt::loop_record::rewrite_program(data, database);
     laps.lap("loop_record");
+    // `@FR-R-LiftReuse` — the scalar lifts of different top-level statements share their
+    // variables, on both backends.  Last: it renumbers variables the passes above name.
+    crate::opt::lift_reuse::rewrite_program(data);
+    laps.lap("lift_reuse");
     laps.report("close_program", data.definitions());
     // The store records (STORE_RECORDS.md), on the closed program: an observer.
     crate::store_records::observe(data);

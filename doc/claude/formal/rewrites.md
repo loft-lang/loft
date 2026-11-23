@@ -1463,6 +1463,48 @@ store, once per loop; `(R-CompleteWrite)` applied in the IR ahead of this pass r
 (counts the pass's trace and reads its IR), `tests/ctor_literal.rs`.  How the writers' clauses
 were priced and ported: [rewrites-history.md § (R-LoopRecord) in the writers](rewrites-history.md#r-looprecord-in-the-writers).
 
+### Lifted values whose lives do not overlap share one variable
+
+```
+  (R-LiftReuse)  a lifted call result (`__lift_N`) whose type is a tuple of scalars
+                 shares its variable with another lift of the same type when their
+                 LIVE RANGES do not overlap.  A lift's live range is the body's
+                 top-level operators from its first mention (every spelling) to its
+                 last, entry initialisations `v = <literal>` ahead of it skipped.
+                 Admitted where that first mention WRITES before anything reads: a
+                 direct `v = rhs` operator, `rhs` not naming `v` — the top-level
+                 operators run in order, so it dominates every later mention however
+                 nested — or one operator holding every mention, whose own first
+                 mention is such a write in an operator list holding the rest.  A
+                 tuple of scalars owns no store, no heap and borrows nothing, so the
+                 next lift writing the shared variable disturbs nothing but the
+                 variable.  A lift renumbered onto another's variable loses its entry
+                 initialisation, which is dead; the shared variable keeps its own.
+                 A lift of any other type (a record reference, a tuple with a view
+                 leaf), a first mention that reads or sits under an `if`, a call
+                 argument or a loop header, declines and keeps its variable and its
+                 initialisation.  Observably nothing changes but the frame's size.
+```
+
+**In words.** A straight-line builder — `m.add_vertex(vertex(vec3(..), vec3(..),
+vec2(..)))` per line — lifts three or four records per line, and `(R-ValueRecord)` makes
+each a tuple of floats.  Each lift had a variable of its own, null-initialised at entry:
+128 lines gave 512 locals and 4096 initialisations, which a C compiler pays for whether or
+not the function is split (`@FR-R-CSplit` puts them in the frame, and the initialisations
+fill its first parts).  Shared, the 512 lifts are 4 variables with 4 initialisations.
+Switch `LOFT_NO_LIFT_REUSE=1`; trace `LOFT_TRACE_LIFT_REUSE=1` (one line per function: how
+many lifts share how many variables).
+
+**Where it is applied: the IR, once for every backend** (`@FR-R-Phase`).  The pass is
+`opt::lift_reuse`, the last rewrite of `close_program`: it renumbers each admitted lift onto
+the first lift of its shared variable (`Value::renumber_frame_var`, the variable table's
+deps in tandem), drops the renumbered lifts' entry initialisations — the shared variable's
+own stays at the top level, where the rustc writer declares it — and lays the frame out
+again.  It sees a
+tuple lift only on a closed program (`(R-ValueRecord)` runs there); an open one's lifts are
+record references and decline.  Guard
+`tests/scripts/lifted-values-whose-lives-do-not-overlap-share-one-variable.loft`.
+
 ### A return buffer refills the store a rebind released
 
 ```
