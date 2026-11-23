@@ -107,12 +107,30 @@ record declared below its use, a library's, an alias.
 **Probe:** 947-feature-worked-examples (9), 03-crystal-incr (7),
 2497-a-return-naming-a-record-declared-below-is-that-record (5).
 
+## The rule: register, then refuse
+
+**A refusal never drops a definition Rust registers.**  Wherever the port refuses a construct
+that registers definitions in Rust — a lambda and its closure record, a vector type, a function
+whose default it cannot lower, a constant — it registers them first, as Rust does (same name,
+same kind, same place), and then refuses; nothing of the construct is elaborated.  A definition
+dropped instead shifts the number of every definition after it, so they all differ in numbers
+only and no correct port of them can show.  The rule binds every new refusal site.
+
+**Measured:** the gate prints `definitions one side registers: N Rust only, M port only` and
+writes them per program (`LOFT_ELAB_ONE_SIDED_FILE`); a try's result line names any Rust-only
+definition new against its base (`NEW RUST-ONLY DEFINITION(S)`, `one_sided.tsv`).
+
+**Order of work:** before an R-item starts, the tester aligns the numbering in the programs it
+touches (R9), except where the R-item itself is the cause (R2's constants, R4's templates): then
+the item's port shows as definitions won, not hidden behind shifted numbers.
+
 ## R9 — what a refused construct never registers (tester)
 
 A construct the port refuses before it registers its definitions shifts the number of every
 definition after it, so those definitions differ in numbers only (`beside numbers`).  The fix at
 each site is to register what Rust registers, then refuse.  Done: the refused lambda
-(7201cfb57: 277 definitions).  Next, by the shifts each causes:
+(7201cfb57: 277 definitions); an unnamed vector element type, a refused parameter default and an
+expected empty literal (6711b88de: 84).  Next, by the shifts each causes:
 - a vector of an element type the port refuses, which never registers its `vector<…>` (102);
 - a named argument (86, one program);
 - a vector of tuples with a member of an unsupported kind (52);
